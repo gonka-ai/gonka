@@ -30,7 +30,8 @@ type rangePruner interface {
 //
 // Pruning runs only when callers invoke PruneOnce — typically from an
 // epoch-change hook (dapi runtime-config publish or devshardd long-poll).
-// Start runs one catch-up PruneOnce after recovery; it does not start a timer.
+// Start runs one catch-up PruneOnce before session recovery so RecoverSessions
+// never lists rows retention has already dropped. It does not start a timer.
 type ManagedStorage struct {
 	inner  Storage
 	retain uint64
@@ -44,8 +45,8 @@ type ManagedStorage struct {
 
 // NewManagedStorage wraps inner with a pruner that retains the last `retain`
 // epochs (current epoch counts as one of them, so retain=3 keeps current + 2
-// previous). Call Start after migration/recovery for a one-shot catch-up prune,
-// and register epoch-change listeners that call PruneOnce.
+// previous). Call Start (or PruneOnce) before recovery for a one-shot
+// catch-up prune, and register epoch-change listeners that call PruneOnce.
 //
 // epochs is optional. If non-nil, PruneOnce consults it so the retention horizon
 // advances even on quiet hosts. Pass nil in tests where you drive pruning only
@@ -76,6 +77,12 @@ func (m *ManagedStorage) observe(epochID uint64) {
 	}
 }
 
+// ObserveEpoch advances the prune horizon from an external epoch clock
+// (devshardd wires this to runtime-config OnEpochChange).
+func (m *ManagedStorage) ObserveEpoch(epochID uint64) {
+	m.observe(epochID)
+}
+
 // CurrentEpochID returns the epoch observed by the managed pruner. It is used
 // only for temporary payload fallback during epoch-0 migration.
 func (m *ManagedStorage) CurrentEpochID() uint64 {
@@ -85,8 +92,24 @@ func (m *ManagedStorage) CurrentEpochID() uint64 {
 	return m.maxObservedEpoch.Load()
 }
 
-// Start runs a single catch-up prune after recovery. Epoch transitions must
-// trigger additional PruneOnce calls via the host's epoch-change hook.
+// PruneCutoff returns the exclusive epoch lower bound for retention: every
+// epoch < cutoff is pruneable. Returns 0 when not enough epochs have been
+// observed yet. HostManager uses the same value to EvictBefore in-memory sessions.
+func (m *ManagedStorage) PruneCutoff() uint64 {
+	if m.epochs != nil {
+		m.observe(m.epochs.CurrentEpochID())
+	}
+	maxE := m.maxObservedEpoch.Load()
+	if maxE+1 <= m.retain {
+		return 0
+	}
+	return maxE + 1 - m.retain
+}
+
+// Start runs a single catch-up prune. Call it before session recovery so
+// RecoverSessions never lists rows that retention has already dropped.
+// Epoch transitions must trigger additional PruneOnce calls via the host's
+// epoch-change hook.
 func (m *ManagedStorage) Start() {
 	m.PruneOnce(context.Background())
 }
@@ -107,14 +130,11 @@ func (m *ManagedStorage) PruneOnceAsync(ctx context.Context) {
 // PruneOnce runs a single retention pass. Exported so tests and epoch hooks can
 // drive pruning without a background loop.
 func (m *ManagedStorage) PruneOnce(_ context.Context) {
-	if m.epochs != nil {
-		m.observe(m.epochs.CurrentEpochID())
-	}
-	maxE := m.maxObservedEpoch.Load()
-	if maxE+1 <= m.retain {
+	cutoff := m.PruneCutoff()
+	if cutoff == 0 {
 		return // not enough epochs yet
 	}
-	cutoff := maxE + 1 - m.retain // every epoch < cutoff is pruneable
+	maxE := m.maxObservedEpoch.Load()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -154,6 +174,14 @@ func (m *ManagedStorage) Ready() bool {
 		return r.Ready()
 	}
 	return true
+}
+
+// FatalErrors forwards failures that require replacing the owning process.
+func (m *ManagedStorage) FatalErrors() <-chan error {
+	if reporter, ok := m.inner.(interface{ FatalErrors() <-chan error }); ok {
+		return reporter.FatalErrors()
+	}
+	return nil
 }
 
 // --- Storage delegation ---
@@ -219,12 +247,24 @@ func (m *ManagedStorage) InsertSealedInference(escrowID string, row InferenceRow
 	return m.inner.InsertSealedInference(escrowID, row)
 }
 
+func (m *ManagedStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.inner.InsertSealedInferences(escrowID, rows)
+}
+
+func (m *ManagedStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.inner.BulkInsertSealedInferences(escrowID, rows)
+}
+
 func (m *ManagedStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	return m.inner.GetSealedInference(escrowID, inferenceID)
 }
 
 func (m *ManagedStorage) DeleteSealedInferences(escrowID string) error {
 	return m.inner.DeleteSealedInferences(escrowID)
+}
+
+func (m *ManagedStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	return m.inner.SealedInferenceIDs(escrowID)
 }
 
 func (m *ManagedStorage) ClearValidationObs(escrowID string) error {
@@ -237,6 +277,10 @@ func (m *ManagedStorage) RecordValidationsAppliedOnce(escrowID string, entries [
 
 func (m *ManagedStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
 	return m.inner.DrainInferenceValidationObs(escrowID, inferenceID)
+}
+
+func (m *ManagedStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	return m.inner.DrainInferenceValidationObsBatch(escrowID, inferenceIDs)
 }
 
 func (m *ManagedStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
@@ -300,20 +344,28 @@ func (m *ManagedStorage) AcquireOneStale(ctx context.Context, escrowID, instance
 	return ls.AcquireOneStale(ctx, escrowID, instanceAddr, ttl)
 }
 
-func (m *ManagedStorage) SetResult(ctx context.Context, escrowID string, inferenceID uint64, status LeaseStatus, instanceAddr string) error {
+func (m *ManagedStorage) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, instanceAddr string) error {
 	ls, ok := m.inner.(LeaseStore)
 	if !ok {
 		return fmt.Errorf("storage backend does not support validation leases")
 	}
-	return ls.SetResult(ctx, escrowID, inferenceID, status, instanceAddr)
+	return ls.SetResult(ctx, escrowID, inferenceID, epochID, status, instanceAddr)
 }
 
-func (m *ManagedStorage) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID uint64, instanceAddr string) (bool, error) {
+func (m *ManagedStorage) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
 	ls, ok := m.inner.(LeaseStore)
 	if !ok {
 		return false, fmt.Errorf("storage backend does not support validation leases")
 	}
-	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
+	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, instanceAddr)
+}
+
+func (m *ManagedStorage) Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
+	ls, ok := m.inner.(LeaseStore)
+	if !ok {
+		return fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.Release(ctx, escrowID, inferenceID, epochID, instanceAddr)
 }
 
 var _ Storage = (*ManagedStorage)(nil)

@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
+	"time"
 
 	"common/chain"
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/cmd/devshardd/events"
 
@@ -16,6 +18,10 @@ import (
 )
 
 const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
+
+// warmKeyQueryTimeout bounds a single grantee lookup. WarmKeyResolver has no
+// context parameter, so the deadline has to be applied here.
+const warmKeyQueryTimeout = 10 * time.Second
 
 type warmCacheKey struct {
 	host string
@@ -82,11 +88,7 @@ func (b *ChainBridge) OnSettlementFinalizedHandler(fn func(string) error) {
 }
 
 func parseEscrowID(escrowID string) (uint64, error) {
-	id, err := strconv.ParseUint(escrowID, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid escrow id %q: %w", escrowID, err)
-	}
-	return id, nil
+	return devshardpkg.ParseEscrowID(escrowID)
 }
 
 // -- MainnetBridge query methods --
@@ -116,7 +118,7 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 	copy(slots, e.Slots)
 
 	return &bridge.EscrowInfo{
-		EscrowID:                  escrowID,
+		EscrowID:                  strconv.FormatUint(id, 10),
 		Amount:                    e.Amount,
 		CreatorAddress:            e.Creator,
 		AppHash:                   appHash,
@@ -131,6 +133,7 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 		ValidationRate:            e.ValidationRate,
 		VoteThresholdFactor:       e.VoteThresholdFactor,
 		EpochID:                   e.EpochIndex,
+		Settled:                   e.Settled,
 	}, nil
 }
 
@@ -176,7 +179,11 @@ func (b *ChainBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool,
 		return cached.(bool), nil
 	}
 
-	resp, err := b.client.InferenceQueryClient().GranteesByMessageType(context.Background(),
+	// Callers reach this from state-machine apply while holding session locks,
+	// so an unresponsive node must not stall the escrow indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), warmKeyQueryTimeout)
+	defer cancel()
+	resp, err := b.client.InferenceQueryClient().GranteesByMessageType(ctx,
 		&inferencetypes.QueryGranteesByMessageTypeRequest{
 			GranterAddress: validatorAddress,
 			MessageTypeUrl: warmKeyMsgTypeGRPC,

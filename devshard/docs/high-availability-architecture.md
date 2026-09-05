@@ -194,6 +194,21 @@ Operator signals (versiond / host logs and Prometheus):
 - `reconcile_fast_forward` — expected on failover onto a lagging replica.
 - `diff_persist_retry` / `devshard_diff_persist_retry_total` — transient Postgres blips.
 - `diff_fork_detected` / `devshard_diff_fork_detected_total` — **must stay 0** in healthy HA; non-zero means real divergence and needs alert investigation.
+- `postgres readiness lost` / `postgres readiness recovered` — the live database
+  failed or recovered across the two-probe readiness hysteresis. The devshardd
+  process stays alive; `/readyz` returns `503` while database readiness is lost.
+  With the default 5-second interval and 5-second probe deadline, a fully
+  blackholed database can take about 20 seconds after the last successful probe
+  to make `/readyz` return `503`. An upstream health checker adds its own polling
+  delay before it removes the replica from traffic.
+- `devshard_postgres_health_probe_total{result="success|database_error"}` —
+  outcomes from the dedicated PostgreSQL health connection. A single
+  `database_error` can be a transient connection reset and does not make the
+  service unready. Alert on `postgres readiness lost` or a sustained error
+  rate, not on one counter increment.
+- `devshard_postgres_pool_saturated` — whether all application-pool connections
+  were in use at the latest probe. Saturation is reported independently and does
+  not by itself make `/readyz` fail.
 
 Gateway catch-up and sticky failover remain independent: router
 `proxy_next_upstream` moves the HTTP request; host reconcile heals RAM from
@@ -231,7 +246,8 @@ Therefore:
 > instance selects Postgres. SQLite is for single-instance / local-dev / tests
 > only. This rule is also stated in
 > [release-0.2.14-v4.md](./release-0.2.14-v4.md) and
-> [rolling-update.md](./rolling-update.md).
+> [rolling-update.md](./rolling-update.md). Router / NON_HA pin changes for
+> 0.2.15 are in [v5-deploy-test-plan.md](./v5-deploy-test-plan.md).
 
 Compose: `local-test-net/docker-compose.devshard-postgres.yml`,
 `deploy/join/docker-compose.versiond.yml` bring up one shared `devshard-postgres`

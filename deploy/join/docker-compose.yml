@@ -72,6 +72,9 @@ services:
       - DAPI_API__ADMIN_SERVER_PORT=9200
       - DAPI_API__NODE_MANAGER_GRPC_PORT=${NODE_MANAGER_GRPC_PORT:-9400}
       - DAPI_API__NODE_MANAGER_LOCK_TTL_SECONDS=${NODE_MANAGER_LOCK_TTL_SECONDS:-1200}
+      # ML-node ping job (dapi → broker inventory /readyz, later /api/v1/clock).
+      # Observability only. true stops the job; interval/timeout/concurrency are not env-wired (15s/2s/8).
+      - DAPI_API__MLNODE_PING_DISABLED=${DAPI_API__MLNODE_PING_DISABLED:-false}
       # Optional OpenTelemetry configuration
       - DAPI_OTEL_ENABLED=${DAPI_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
@@ -107,6 +110,10 @@ services:
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd
+      - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
+      # The base deployment has no versiond load balancer, so there is nothing
+      # to announce to before closing admission.
+      - VERSIOND_DRAIN_ANNOUNCE=0s
       - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
       - NODE_HOST=node
       - KEY_NAME=${KEY_NAME}
@@ -124,6 +131,8 @@ services:
       - ./devshards/data:/opt/versiond/data
     depends_on:
       - api
+    # External SIGKILL backstop after versiond's complete internal budget.
+    stop_grace_period: ${VERSIOND_STOP_GRACE_PERIOD:-30m}
     restart: always
 
   bridge:

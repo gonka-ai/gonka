@@ -28,7 +28,7 @@ type KillableClient struct {
 	killed atomic.Bool
 }
 
-func (c *KillableClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+func (c *KillableClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	if c.killed.Load() {
 		return nil, fmt.Errorf("host killed")
 	}
@@ -221,7 +221,7 @@ func runFault(t *testing.T, failPct int) {
 		StartedAt:   1000,
 	}
 	for _, infID := range pendingDeadIDs {
-		votes, err := session.CollectTimeoutVotes(ctx, infID,
+		votes, _, _, err := session.CollectTimeoutVotes(ctx, infID,
 			types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, verifiers, nil)
 		require.NoError(t, err, "collect timeout votes for inference %d", infID)
 		session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{
