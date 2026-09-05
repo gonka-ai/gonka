@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -22,14 +23,33 @@ const (
 	envPort         = "EDGE_API_PORT"
 	envChainGRPCURL = "CHAIN_GRPC_URL"
 	envChainRPCURL  = "CHAIN_RPC_URL"
-	shutdownTimeout = 10 * time.Second
+
+	envDrainAnnounce  = "EDGE_API_DRAIN_ANNOUNCE"
+	envShutdownBudget = "EDGE_API_SHUTDOWN_BUDGET"
+
+	// minDrainAnnounce is the health-check observation contract for a balancer.
+	// The deployment that enables a balancer verifies its concrete check window
+	// against this value. Zero explicitly means no readiness-aware balancer.
+	minDrainAnnounce = 5 * time.Second
+	// The default is the minimum supported readiness announcement window.
+	defaultDrainAnnounce = 5 * time.Second
+	// defaultShutdownBudget bounds how long accepted requests may drain.
+	defaultShutdownBudget = 2 * time.Minute
+	// observabilityShutdownTimeout flushes traces after serving has stopped.
+	observabilityShutdownTimeout = 10 * time.Second
 )
 
 func main() {
+	if exitCode := run(); exitCode != 0 {
+		os.Exit(exitCode)
+	}
+}
+
+func run() int {
 	cfg, err := loadConfig()
 	if err != nil {
 		slog.Error("config", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	if cfg.ChainRPCDerived {
 		slog.Warn("chain rpc endpoint derived from gRPC host; set it explicitly to override",
@@ -39,6 +59,8 @@ func main() {
 		"port", cfg.Port,
 		"chain_grpc", cfg.ChainGRPCURL,
 		"chain_rpc", cfg.ChainRPCURL,
+		"drain_announce", cfg.DrainAnnounce,
+		"shutdown_budget", cfg.ShutdownBudget,
 	)
 
 	shutdownObs, err := observability.Init(context.Background(), observability.Config{
@@ -46,10 +68,10 @@ func main() {
 	})
 	if err != nil {
 		slog.Error("otel init", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), observabilityShutdownTimeout)
 		defer cancel()
 		_ = shutdownObs(ctx)
 	}()
@@ -57,35 +79,154 @@ func main() {
 	chainClient, err := chain.NewWithQueryFallback(cfg.ChainGRPCURL, cfg.ChainRPCURL)
 	if err != nil {
 		slog.Error("chain client", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
-	e := server.New(chainClient)
+	srv := server.New(chainClient)
 	addr := fmt.Sprintf(":%d", cfg.Port)
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
+		if err := srv.Start(addr); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(stop)
 
 	select {
 	case err := <-errCh:
 		slog.Error("server", "error", err)
-		os.Exit(1)
+		return 1
 	case sig := <-stop:
 		slog.Info("shutdown", "signal", sig.String())
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	if err := drainAndShutdown(srv, cfg, stop); err != nil {
+		slog.Error("graceful shutdown did not finish; closed remaining connections",
+			"error", err, "budget", cfg.ShutdownBudget)
+		return 1
+	}
+	return 0
+}
+
+// drainableServer is the part of the server the shutdown sequence needs.
+type drainableServer interface {
+	BeginDrain()
+	Shutdown(ctx context.Context) error
+	ForceClose() error
+}
+
+// drainAndShutdown is the whole shutdown sequence, and the order is the point:
+// report unready first so the balancer stops routing here, keep serving for the
+// announce window so it has time to notice, and only then wait for the requests
+// already accepted. It returns nil when every one of them finished.
+func drainAndShutdown(srv drainableServer, cfg config, force <-chan os.Signal) error {
+	srv.BeginDrain()
+	if sig := awaitDrainAnnouncement(cfg.DrainAnnounce, force); sig != nil {
+		return closeRemainingConnections(srv,
+			fmt.Errorf("operator sent %s during drain announcement", sig))
+	}
+	return gracefulShutdown(srv, cfg.ShutdownBudget, force)
+}
+
+// gracefulShutdown waits for accepted requests, but never becomes something an
+// operator cannot interrupt: signal.Notify took SIGTERM away from the runtime,
+// so a further signal has to be handled here or the only way out of a stuck
+// drain would be SIGKILL. Either that signal or the budget expiring closes the
+// remaining connections instead of leaving them to be cut mid-write.
+//
+// The budget is watched directly rather than only through the error Shutdown
+// returns, so it holds even if Shutdown never gets as far as looking at its
+// context — blocking on a lock, say. A ceiling that depends on the cooperation
+// of the thing it is bounding is not a ceiling.
+func gracefulShutdown(srv drainableServer, budget time.Duration, force <-chan os.Signal) error {
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
-	if err := e.Shutdown(ctx); err != nil {
-		slog.Error("shutdown", "error", err)
-		os.Exit(1)
+
+	done := make(chan error, 1)
+	go func() { done <- srv.Shutdown(ctx) }()
+
+	var reason error
+	select {
+	case err := <-done:
+		if err == nil {
+			return nil
+		}
+		reason = shutdownFailure(budget, err)
+	case <-ctx.Done():
+		if err, completed := completedShutdown(done); completed {
+			if err == nil {
+				return nil
+			}
+			reason = shutdownFailure(budget, err)
+		} else {
+			reason = fmt.Errorf("shutdown budget %s expired", budget)
+		}
+	case sig := <-force:
+		if err, completed := completedShutdown(done); completed {
+			if err == nil {
+				return nil
+			}
+			reason = shutdownFailure(budget, err)
+		} else {
+			reason = fmt.Errorf("operator sent %s during shutdown", sig)
+			// Stop the still-running Shutdown from holding the budget open.
+			cancel()
+		}
+	}
+	return closeRemainingConnections(srv, reason)
+}
+
+func closeRemainingConnections(srv drainableServer, reason error) error {
+	slog.Warn("closing remaining connections", "reason", reason)
+	if err := srv.ForceClose(); err != nil {
+		return errors.Join(reason, err)
+	}
+	return reason
+}
+
+// completedShutdown resolves the select race where Shutdown and an escalation
+// become ready together. Once Shutdown has produced its result, a queued signal
+// or deadline must not turn a clean process exit into a forced failure.
+func completedShutdown(done <-chan error) (error, bool) {
+	select {
+	case err := <-done:
+		return err, true
+	default:
+		return nil, false
+	}
+}
+
+// shutdownFailure keeps the real cause: Shutdown reports a closed listener the
+// same way it reports a deadline, and calling a broken listener a timeout would
+// send the next operator looking at the wrong setting.
+func shutdownFailure(budget time.Duration, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("shutdown budget %s expired: %w", budget, err)
+	}
+	return fmt.Errorf("shutdown failed: %w", err)
+}
+
+// awaitDrainAnnouncement keeps serving for the announce window so the balancer
+// can observe the failing readiness check. A second signal is returned to the
+// caller as an escalation; consuming it here must not make it disappear before
+// the force-close phase.
+func awaitDrainAnnouncement(window time.Duration, force <-chan os.Signal) os.Signal {
+	if window <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(window)
+	defer timer.Stop()
+	slog.Info("announcing drain; still serving accepted traffic", "window", window)
+	select {
+	case sig := <-force:
+		slog.Info("drain announcement cut short", "signal", sig.String())
+		return sig
+	case <-timer.C:
+		return nil
 	}
 }
 
@@ -93,6 +234,10 @@ type config struct {
 	Port         int
 	ChainGRPCURL string
 	ChainRPCURL  string
+	// DrainAnnounce is how long the process keeps serving after /readyz starts
+	// failing; ShutdownBudget is how long it then waits for accepted requests.
+	DrainAnnounce  time.Duration
+	ShutdownBudget time.Duration
 	// ChainRPCDerived records that ChainRPCURL was guessed from the gRPC host
 	// rather than configured, so main can say so once at startup.
 	ChainRPCDerived bool
@@ -128,10 +273,60 @@ func loadConfig() (config, error) {
 		derived = true
 	}
 
+	drainAnnounce, err := durationFromEnv(envDrainAnnounce, defaultDrainAnnounce)
+	if err != nil {
+		return config{}, err
+	}
+	if err := validateDrainAnnounce(drainAnnounce); err != nil {
+		return config{}, err
+	}
+	shutdownBudget, err := durationFromEnv(envShutdownBudget, defaultShutdownBudget)
+	if err != nil {
+		return config{}, err
+	}
+	if shutdownBudget <= 0 {
+		return config{}, fmt.Errorf("%s must be positive", envShutdownBudget)
+	}
+
 	return config{
 		Port:            port,
 		ChainGRPCURL:    grpcURL,
 		ChainRPCURL:     rpcURL,
 		ChainRPCDerived: derived,
+		DrainAnnounce:   drainAnnounce,
+		ShutdownBudget:  shutdownBudget,
 	}, nil
+}
+
+// validateDrainAnnounce accepts zero as an explicit direct-deployment mode.
+// With a balancer, the window must cover a check that may consume its full 3s
+// timeout plus the 1s interval before it starts, with one second of margin.
+func validateDrainAnnounce(announce time.Duration) error {
+	if announce == 0 {
+		return nil
+	}
+	if announce < minDrainAnnounce {
+		return fmt.Errorf(
+			"%s=%s is below %s: the balancer needs up to ~4s to observe the failing check (inter 1s, timeout check 3s), and a shorter window closes the listener while traffic still arrives; use 0 to declare there is no balancer",
+			envDrainAnnounce, announce, minDrainAnnounce)
+	}
+	return nil
+}
+
+// durationFromEnv rejects a malformed value instead of silently falling back:
+// a typo in a shutdown budget would otherwise be found only during an outage.
+// A zero announce window is legitimate — it means "no balancer in front".
+func durationFromEnv(key string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s=%q: %w", key, raw, err)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s=%q must not be negative", key, raw)
+	}
+	return value, nil
 }
