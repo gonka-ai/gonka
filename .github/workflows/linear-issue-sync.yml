@@ -1,0 +1,76 @@
+name: Linear Issue Sync
+
+# Mirrors incoming GitHub issues into Linear (a lighter version of the PR sync:
+# no reviewer sub-issues, no Q&A hand-off). Also, for external authors, posts a
+# polite acknowledgment comment and adds the issue to the triage board.
+#
+# Fail-soft: this is a side-channel automation and never blocks anything. Missing
+# config or any error becomes a warning annotation and the job exits 0.
+
+on:
+  issues:
+    types:
+      - opened
+      - reopened
+      - closed
+      - milestoned
+      - demilestoned
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: linear-issue-sync-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (scripts only)
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: .github/scripts/linear-issue-sync
+        run: npm install --no-audit --no-fund
+
+      - name: Sync issue to Linear
+        working-directory: .github/scripts/linear-issue-sync
+        env:
+          # --- Required secret ---
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          # --- Required config (repository Variables) ---
+          LINEAR_TEAM_KEY: ${{ vars.LINEAR_TEAM_KEY }}
+
+          # --- Optional Linear config (defaults in the script) ---
+          MILESTONE_PROJECT_PREFIX: ${{ vars.LINEAR_MILESTONE_PROJECT_PREFIX }}
+          FIRST_CONTRIBUTOR_LABEL: ${{ vars.LINEAR_FIRST_CONTRIBUTOR_LABEL }}
+          BACKLOG_STATE_NAME: ${{ vars.LINEAR_BACKLOG_STATE_NAME }}
+          RELEASE_START_STATE_NAME: ${{ vars.LINEAR_RELEASE_START_STATE_NAME }}
+          DONE_STATE_NAME: ${{ vars.LINEAR_DONE_STATE_NAME }}
+          CANCELLED_STATE_NAME: ${{ vars.LINEAR_CANCELLED_STATE_NAME }}
+
+          # --- GitHub triage board (Projects v2) for external issues ---
+          PROJECT_OWNER: ${{ github.repository_owner }}
+          PROJECT_NUMBER: ${{ vars.TRIAGE_PROJECT_NUMBER || '7' }}
+          STATUS_FIELD_NAME: "Status"
+          STATUS_VALUE: "new"
+          # PAT with Projects access (same secret as the PR triage workflow). If
+          # unset, board updates are skipped (Linear syncing still works).
+          PROJECTS_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
+
+          # --- Acknowledgment comment ---
+          POST_ACK: ${{ vars.ISSUE_POST_ACK }}
+          ACK_MESSAGE: ${{ vars.EXTERNAL_ISSUE_ACK_MESSAGE }}
+
+          # --- GitHub context ---
+          GITHUB_EVENT_ACTION: ${{ github.event.action }}
+          GH_TOKEN: ${{ github.token }}
+        run: node issue-sync.mjs
