@@ -305,3 +305,23 @@ func TestReadyReflectsSessionRecoveryProgress(t *testing.T) {
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code, "draining must still report 503")
 }
+
+func TestAdminExposesPprofNotPublic(t *testing.T) {
+	lifecycle := newLifecycleState()
+	e := buildServer(lifecycle)
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	rec = httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "goroutine")
+
+	rec = httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/heap", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotEmpty(t, rec.Body.Bytes())
+}

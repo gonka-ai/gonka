@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -94,6 +95,17 @@ func buildAdminServer(
 			return echo.NewHTTPError(http.StatusBadRequest, "invalid storage challenge operation")
 		}
 		return runStorageProof(c, storageProof, request.Operation, request.Nonce)
+	})
+	// Canonical /debug/pprof/ paths so Index sub-profile links resolve.
+	// Bound only when DEVSHARD_ADMIN_ADDR is set (same network trust as /drain).
+	e.Any("/debug/pprof/", echo.WrapHandler(http.HandlerFunc(pprof.Index)))
+	e.Any("/debug/pprof/cmdline", echo.WrapHandler(http.HandlerFunc(pprof.Cmdline)))
+	e.Any("/debug/pprof/profile", echo.WrapHandler(http.HandlerFunc(pprof.Profile)))
+	e.Any("/debug/pprof/symbol", echo.WrapHandler(http.HandlerFunc(pprof.Symbol)))
+	e.Any("/debug/pprof/trace", echo.WrapHandler(http.HandlerFunc(pprof.Trace)))
+	e.Any("/debug/pprof/:name", func(c echo.Context) error {
+		pprof.Handler(c.Param("name")).ServeHTTP(c.Response(), c.Request())
+		return nil
 	})
 
 	return e

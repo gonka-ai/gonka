@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"time"
 
 	"common/chain"
@@ -66,17 +65,6 @@ func (s closeStack) Close() {
 	for i := len(s) - 1; i >= 0; i-- {
 		s[i]()
 	}
-}
-
-type phaseEpochProvider struct {
-	phase *chain.Phase
-}
-
-func (p phaseEpochProvider) CurrentEpochID() uint64 {
-	if p.phase == nil {
-		return 0
-	}
-	return p.phase.EpochID()
 }
 
 func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error) {
@@ -277,9 +265,6 @@ func buildHostManager(
 		return nil, fmt.Errorf("devshard storage: %w", err)
 	}
 	store := devshardstorage.NewManagedStorage(innerStore, sessionEpochRetain, chainParams)
-	if cancel := paramsSetup.RegisterEpochPrune(store); cancel != nil {
-		closers.Add(cancel)
-	}
 	closers.Add(func() { _ = store.Close() })
 
 	leaseValidator := inference.NewLeaseValidator(validator, phase, store, instanceAddr, cfg.ValidationLeaseTTL)
@@ -313,9 +298,45 @@ func buildHostManager(
 
 	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
 
-	store.Start()
-
+	// Close hosts before the epoch-change cancel so LIFO shutdown cancels
+	// epoch callbacks first. Do not use manager.Close(): store close and
+	// height-sync close are already on this stack.
 	closers.Add(manager.CloseHosts)
+
+	// Single epoch clock: runtime-config OnEpochChange (dapi long-poll or
+	// chain-poll fallback) advances phase + managed-storage horizon, then
+	// prunes DB, evicts in-memory hosts, and drops old payload epochs.
+	applyEpoch := func(newEpoch uint64, pruneAsync bool) {
+		phase.SetEpoch(newEpoch)
+		store.ObserveEpoch(newEpoch)
+		if pruneAsync {
+			store.PruneOnceAsync(ctx)
+		} else {
+			store.PruneOnce(ctx)
+		}
+		if cutoff := store.PruneCutoff(); cutoff > 0 {
+			manager.EvictBefore(cutoff)
+		}
+		if newEpoch >= sessionEpochRetain+1 {
+			expiredPayloadEpoch := newEpoch - sessionEpochRetain
+			if err := payloadStore.DropEpoch(ctx, expiredPayloadEpoch); err != nil {
+				logCleanupError("payload epoch cleanup failed", err)
+			}
+		}
+	}
+	if cancel := chainParams.OnEpochChange(func(_, newEpoch uint64) {
+		applyEpoch(newEpoch, true)
+	}); cancel != nil {
+		closers.Add(cancel)
+	}
+	// Initial snapshot apply does not fire OnEpochChange; seed clocks and catch up.
+	if epoch := chainParams.CurrentEpochID(); epoch > 0 {
+		applyEpoch(epoch, false)
+	} else if boot := phase.EpochID(); boot > 0 {
+		applyEpoch(boot, false)
+	} else {
+		store.Start()
+	}
 
 	// Recovery used to run inline here, so a host with a large backlog kept the
 	// listener closed and answered 502 until every session was rebuilt. Run it
@@ -340,24 +361,9 @@ func buildHostManager(
 		validationRetry.Run(validationRetryCtx)
 	}()
 
-	var lastCleanEpoch atomic.Uint64
-	chainRuntime.chainEvents.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {
+	// Height-sync still needs Comet headers. Prune/evict stay on OnEpochChange.
+	chainRuntime.chainEvents.OnNewBlock(func(_ context.Context, e events.NewBlockEvent) {
 		manager.ObserveChainHeader(blocks.HashOnlyHeader(e.BlockHeight, e.Time, e.ChainID, e.BlockHash))
-
-		currentEpoch := phase.EpochID()
-		if currentEpoch <= lastCleanEpoch.Load() {
-			return
-		}
-		lastCleanEpoch.Store(currentEpoch)
-
-		store.PruneOnceAsync(bctx)
-
-		if currentEpoch >= 4 {
-			expiredPayloadEpoch := currentEpoch - 3
-			if err := payloadStore.DropEpoch(bctx, expiredPayloadEpoch); err != nil {
-				logCleanupError("payload epoch cleanup failed", err)
-			}
-		}
 	})
 
 	return manager, nil

@@ -223,7 +223,7 @@ func TestRetryStaleValidationsForEscrow_LeaseFromPreviousEpochIsSkipped(t *testi
 		},
 	}
 	phase := new(chain.Phase)
-	phase.Update(11, 0)
+	phase.SetEpoch(11)
 	rl := &ValidationRetryLoop{
 		leases:       leases,
 		manager:      &stubSessionManager{snap: inferenceSnap(1, types.StatusFinished)},
