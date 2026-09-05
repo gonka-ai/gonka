@@ -1862,9 +1862,9 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, error) {
 	return h.signer.Sign(sigData)
 }
 
-// signProposer marshals msg and signs it, returning the proposer signature.
+// signProposer signs the domain-separated proposer preimage.
 func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
-	data, err := proto.Marshal(msg)
+	data, err := signing.CanonicalProposerBytes(msg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal proposer msg: %w", err)
 	}
