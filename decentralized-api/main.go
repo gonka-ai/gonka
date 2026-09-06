@@ -133,6 +133,11 @@ func main() {
 	chainBridge := broker.NewBrokerChainBridgeImpl(recorder, configManager.GetChainNodeConfig().Url)
 	nodeBroker := broker.NewBroker(chainBridge, chainPhaseTracker, participantInfo, configManager.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{}, configManager)
 
+	// Background tracker for "is this participant in the current active set?" —
+	// admin handlers read its cached answer so they don't trigger a chain RPC
+	// per request. Started below once the cancellable context is available.
+	activityTracker := participant.NewActivityTracker(recorder, participantInfo.GetAddress(), 30*time.Second)
+
 	nodes := configManager.GetNodes()
 	for _, node := range nodes {
 		responseChan := nodeBroker.LoadNodeToBroker(&node)
@@ -193,6 +198,10 @@ func main() {
 
 	// Create a cancellable context for the entire system
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start the participant activity tracker so admin handlers can answer
+	// "is this participant active?" without a per-request RPC.
+	activityTracker.Start(ctx)
 	defer cancel() // Ensure resources are cleaned up
 
 	// Start periodic config auto-flush of dynamic data to DB
@@ -281,7 +290,7 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, blockQueue, payloadStore)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, blockQueue, payloadStore, activityTracker)
 	adminServer.Start(addr)
 
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
