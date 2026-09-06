@@ -398,6 +398,7 @@ fun GsonBuilder.registerCosmosTypes(): GsonBuilder {
         .registerTypeAdapter(java.lang.Long::class.java, LongDeserializer())
         .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
         .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
+        .registerTypeAdapter(FeeParamsData::class.java, FeeParamsDataSerializer())
         .registerTypeAdapter(ConfirmationPoCPhase::class.java, ConfirmationPoCPhaseDeserializer())
         .registerTypeAdapter(InferenceStatus::class.java, InferenceStatusDeserializer())
         .registerTypeAdapter(DevshardInferenceStatus::class.java, DevshardInferenceStatusDeserializer())
@@ -821,4 +822,3 @@ val defaultInferenceResponse = """
 """.trimIndent()
 
 val defaultInferenceResponseObject = cosmosJson.fromJson(defaultInferenceResponse, OpenAIResponse::class.java)
-

@@ -18,6 +18,9 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgClaimRewards{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgSetClaimRecipients{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitPocBatch{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),

@@ -874,8 +874,41 @@ func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoc
 	return inferenceServingNodeIds
 }
 
+type computedWeights struct {
+	participants []*types.ActiveParticipant
+	freshNodeIDs map[string]map[string]struct{}
+}
+
+func participantNodeIDs(participants []*types.ActiveParticipant) map[string]map[string]struct{} {
+	nodeIDs := make(map[string]map[string]struct{})
+	for _, participant := range participants {
+		if participant == nil {
+			continue
+		}
+		for _, modelNodes := range participant.MlNodes {
+			if modelNodes == nil {
+				continue
+			}
+			for _, node := range modelNodes.MlNodes {
+				if node == nil || node.NodeId == "" {
+					continue
+				}
+				if nodeIDs[participant.Index] == nil {
+					nodeIDs[participant.Index] = make(map[string]struct{})
+				}
+				nodeIDs[participant.Index][node.NodeId] = struct{}{}
+			}
+		}
+	}
+	return nodeIDs
+}
+
 // ComputeNewWeights computes new weights for active participants using off-chain store commits.
 func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
+	return am.computeNewWeights(ctx, upcomingEpoch).participants
+}
+
+func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.Epoch) computedWeights {
 	epochStartBlockHeight := upcomingEpoch.PocStartBlockHeight
 	am.LogInfo("ComputeNewWeights: computing new weights", types.PoC,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -893,7 +926,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 			"upcomingEpoch.Index", upcomingEpoch.Index,
 			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
 			"error", err)
-		return nil
+		return computedWeights{}
 	}
 
 	// Get weight distributions for per-node weights
@@ -1009,7 +1042,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 			"upcomingEpoch.Index", upcomingEpoch.Index,
 			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
 			"error", err)
-		return nil
+		return computedWeights{}
 	}
 	guardianEnabled := am.keeper.GetGenesisGuardianEnabled(ctx)
 	guardianAddrs := am.keeper.GetGenesisGuardianAddresses(ctx)
@@ -1089,6 +1122,7 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		validationSlots,
 	)
 	pocMiningParticipants := calculator.Calculate()
+	freshNodeIDs := participantNodeIDs(pocMiningParticipants)
 
 	// Merge preserved participants with PoC mining participants (per-model)
 	var allActiveParticipants []*types.ActiveParticipant
@@ -1151,7 +1185,10 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 		"pocMiningParticipants", len(pocMiningParticipants),
 		"totalActiveParticipants", len(allActiveParticipants))
 
-	return allActiveParticipants
+	return computedWeights{
+		participants: allActiveParticipants,
+		freshNodeIDs: freshNodeIDs,
+	}
 }
 
 // filterStoreCommitsFromInferenceNodes filters store commits and their weight distributions

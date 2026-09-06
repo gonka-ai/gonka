@@ -1,7 +1,9 @@
 package app
 
 import (
+	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
@@ -9,11 +11,13 @@ import (
 
 type PocPeriodValidationDecorator struct {
 	inferenceKeeper *inferencemodulekeeper.Keeper
+	cdc             codec.Codec
 }
 
-func NewPocPeriodValidationDecorator(ik *inferencemodulekeeper.Keeper) PocPeriodValidationDecorator {
+func NewPocPeriodValidationDecorator(ik *inferencemodulekeeper.Keeper, cdc codec.Codec) PocPeriodValidationDecorator {
 	return PocPeriodValidationDecorator{
 		inferenceKeeper: ik,
+		cdc:             cdc,
 	}
 }
 
@@ -128,27 +132,65 @@ func (ppd PocPeriodValidationDecorator) checkPocMessageTooLate(ctx sdk.Context, 
 	return nil
 }
 
+func (ppd PocPeriodValidationDecorator) checkPocMessageSender(ctx sdk.Context, msg sdk.Msg) error {
+	if ppd.inferenceKeeper == nil {
+		return nil
+	}
+
+	cdc, err := ppd.msgCodec()
+	if err != nil {
+		return err
+	}
+
+	signers, _, err := cdc.GetMsgV1Signers(msg)
+	if err != nil {
+		return err
+	}
+	if len(signers) != 1 {
+		return authztypes.ErrAuthorizationNumOfSigners
+	}
+
+	granter := sdk.AccAddress(signers[0])
+	found, err := ppd.inferenceKeeper.Participants.Has(ctx, granter)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return inferencetypes.ErrParticipantNotFound
+	}
+	return nil
+}
+
 func (ppd PocPeriodValidationDecorator) checkMessage(ctx sdk.Context, msg sdk.Msg) error {
 	switch m := msg.(type) {
 	case *inferencetypes.MsgSubmitPocBatch,
 		*inferencetypes.MsgSubmitPocValidationsV2,
 		*inferencetypes.MsgPoCV2StoreCommit, *inferencetypes.MsgMLNodeWeightDistribution:
+		if err := ppd.checkPocMessageSender(ctx, msg); err != nil {
+			return err
+		}
 		return ppd.checkPocMessageTooLate(ctx, msg)
 
 	case *authztypes.MsgExec:
-		// Recursively validate messages inside MsgExec
-		if ppd.inferenceKeeper == nil {
-			return nil
+		// Recursively validate messages inside MsgExec. Fail closed on
+		// unpack errors and nested wrappers — this is a mempool admission filter.
+		if ppd.cdc == nil {
+			return sdkerrors.ErrInvalidRequest.Wrap("codec is required to unpack MsgExec")
 		}
 		for _, innerMsg := range m.Msgs {
 			var unwrapped sdk.Msg
-			if err := ppd.inferenceKeeper.Codec().UnpackAny(innerMsg, &unwrapped); err != nil {
-				ppd.inferenceKeeper.LogDebug(
-					"AnteHandle: PocPeriodValidation - failed to unpack authz MsgExec inner msg",
-					inferencetypes.PoC,
-					"error", err,
-				)
-				continue
+			if err := ppd.cdc.UnpackAny(innerMsg, &unwrapped); err != nil {
+				if ppd.inferenceKeeper != nil {
+					ppd.inferenceKeeper.LogDebug(
+						"AnteHandle: PocPeriodValidation - failed to unpack authz MsgExec inner msg",
+						inferencetypes.PoC,
+						"error", err,
+					)
+				}
+				return err
+			}
+			if _, nested := unwrapped.(*authztypes.MsgExec); nested {
+				return errNestedMsgExec
 			}
 			if err := ppd.checkMessage(ctx, unwrapped); err != nil {
 				return err
@@ -176,4 +218,11 @@ func (ppd PocPeriodValidationDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, s
 	}
 
 	return next(ctx, tx, simulate)
+}
+
+func (ppd PocPeriodValidationDecorator) msgCodec() (codec.Codec, error) {
+	if ppd.cdc != nil {
+		return ppd.cdc, nil
+	}
+	return nil, sdkerrors.ErrInvalidRequest.Wrap("codec is required for PoC sender check")
 }

@@ -15,6 +15,14 @@ import (
 const testPoCModelID = "test-poc-model"
 const testPoCModelID2 = "test-poc-model-2"
 
+func registerPoCParticipant(t *testing.T, k keeper.Keeper, ctx sdk.Context, addr string) {
+	t.Helper()
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(addr), types.Participant{
+		Index:   addr,
+		Address: addr,
+	}))
+}
+
 // Test SetPocValidationV2 error handling (no panic)
 func TestSetPocValidationV2_InvalidAddress(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
@@ -104,6 +112,8 @@ func TestSubmitPocValidationsV2_DuplicateSkipped(t *testing.T) {
 	}
 	k.SetEpoch(sdkCtx, upcomingEpoch)
 
+	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+
 	msgServer := keeper.NewMsgServerImpl(k)
 
 	// First submission should succeed
@@ -154,6 +164,8 @@ func TestSubmitPocValidationsV2_PartialSuccess(t *testing.T) {
 		PocStartBlockHeight: 100,
 	}
 	k.SetEpoch(sdkCtx, upcomingEpoch)
+
+	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
 
 	msgServer := keeper.NewMsgServerImpl(k)
 
@@ -272,8 +284,7 @@ func TestPoCV2StoreCommit_InvalidCreatorAddress(t *testing.T) {
 		}},
 	}
 	_, err = msgServer.PoCV2StoreCommit(sdkCtx, msg)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid")
+	require.ErrorContains(t, err, "decoding bech32 failed")
 }
 
 func setupPoCV2StoreCommitTest(
@@ -298,7 +309,19 @@ func setupPoCV2StoreCommitTest(
 		PocValidationDelay:    5,
 		PocValidationDuration: 10,
 	}
-	params.FeeParams = feeParams
+	if feeParams != nil {
+		fp := types.DefaultFeeParams()
+		fp.EnabledFeeGroups = []string{types.FeeGroupEpoch}
+		if epoch := fp.GroupByName(types.FeeGroupEpoch); epoch != nil {
+			for _, rule := range epoch.Msgs {
+				if d := rule.GetStoredDelta(); d != nil && rule.Base != nil {
+					rule.Base.Gas = feeParams.BaseValidationGas
+					d.GasPerUnit = feeParams.GasPerPocCount
+				}
+			}
+		}
+		params.FeeParams = fp
+	}
 	require.NoError(t, k.SetParams(sdkCtx, params))
 
 	k.SetEffectiveEpochIndex(sdkCtx, 0)
@@ -310,6 +333,8 @@ func setupPoCV2StoreCommitTest(
 	for _, modelID := range modelIDs {
 		k.SetModel(sdkCtx, &types.Model{Id: modelID})
 	}
+
+	registerPoCParticipant(t, k, sdkCtx, testutil.Executor)
 
 	return k, sdkCtx, keeper.NewMsgServerImpl(k)
 }
@@ -344,25 +369,19 @@ func TestPoCV2StoreCommit_MultiModelFirstSubmissionChargesBaseGasOnce(t *testing
 	}
 
 	kNoFee, noFeeCtx, noFeeMsgServer := setupPoCV2StoreCommitTest(t, 110, nil, testPoCModelID, testPoCModelID2)
-	beforeNoFeeGas := noFeeCtx.GasMeter().GasConsumed()
 	_, err := noFeeMsgServer.PoCV2StoreCommit(noFeeCtx, msg)
 	require.NoError(t, err)
-	noFeeGasDelta := noFeeCtx.GasMeter().GasConsumed() - beforeNoFeeGas
 
 	feeParams := &types.FeeParams{
 		BaseValidationGas: 1_000,
 		GasPerPocCount:    10,
 	}
 	kWithFee, withFeeCtx, withFeeMsgServer := setupPoCV2StoreCommitTest(t, 110, feeParams, testPoCModelID, testPoCModelID2)
-	beforeWithFeeGas := withFeeCtx.GasMeter().GasConsumed()
+	rec := newExtraGasRecorder()
+	withFeeCtx = withFeeCtx.WithGasMeter(rec)
 	_, err = withFeeMsgServer.PoCV2StoreCommit(withFeeCtx, msg)
 	require.NoError(t, err)
-	withFeeGasDelta := withFeeCtx.GasMeter().GasConsumed() - beforeWithFeeGas
-	// Expected explicit charges: 1 * BaseValidationGas + (3 + 5) * GasPerPocCount = 1080.
-	// The observed delta also picks up a small read-per-byte overhead because
-	// the withFee Params proto has more bytes than the noFee proto; allow a
-	// tolerance of 200 gas to absorb that without masking real regressions.
-	require.InDelta(t, float64(1_080), float64(withFeeGasDelta-noFeeGasDelta), 200)
+	require.Equal(t, storetypes.Gas(1_080), rec.extra)
 
 	commits, err := kNoFee.GetAllPoCV2StoreCommitsForStage(noFeeCtx, 100)
 	require.NoError(t, err)
@@ -459,10 +478,8 @@ func TestPoCV2StoreCommit_AggregateDeltaGasAcrossModels(t *testing.T) {
 			makePoCV2CommitEntry(testPoCModelID2, 30, 4),
 		},
 	}
-	beforeNoFeeGas := noFeeNextCtx.GasMeter().GasConsumed()
 	_, err = noFeeMsgServer.PoCV2StoreCommit(noFeeNextCtx, secondMsg)
 	require.NoError(t, err)
-	noFeeGasDelta := noFeeNextCtx.GasMeter().GasConsumed() - beforeNoFeeGas
 
 	feeParams := &types.FeeParams{
 		BaseValidationGas: 1_000,
@@ -472,15 +489,11 @@ func TestPoCV2StoreCommit_AggregateDeltaGasAcrossModels(t *testing.T) {
 	_, err = withFeeMsgServer.PoCV2StoreCommit(withFeeCtx, firstMsg)
 	require.NoError(t, err)
 
-	withFeeNextCtx := withFeeCtx.WithBlockHeight(111).WithGasMeter(storetypes.NewGasMeter(1_000_000_000))
-	beforeWithFeeGas := withFeeNextCtx.GasMeter().GasConsumed()
+	rec := newExtraGasRecorder()
+	withFeeNextCtx := withFeeCtx.WithBlockHeight(111).WithGasMeter(rec)
 	_, err = withFeeMsgServer.PoCV2StoreCommit(withFeeNextCtx, secondMsg)
 	require.NoError(t, err)
-	withFeeGasDelta := withFeeNextCtx.GasMeter().GasConsumed() - beforeWithFeeGas
-	// Expected explicit charges: no base (not the first commit) + (5 + 10) *
-	// GasPerPocCount = 150. Tolerance 100 absorbs the per-byte overhead from
-	// the larger withFee Params proto without masking real regressions.
-	require.InDelta(t, float64(150), float64(withFeeGasDelta-noFeeGasDelta), 100)
+	require.Equal(t, storetypes.Gas(150), rec.extra)
 
 	commits, err := kNoFee.GetAllPoCV2StoreCommitsForStage(noFeeNextCtx, 100)
 	require.NoError(t, err)

@@ -111,9 +111,9 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgSetClaimRecipients)(nil)):               {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitHardwareDiff)(nil)):               {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitPocBatch)(nil)):                   {ParticipantPermission},
-	reflect.TypeOf((*types.MsgSubmitPocValidationsV2)(nil)):           {NoPermission},
-	reflect.TypeOf((*types.MsgPoCV2StoreCommit)(nil)):                 {NoPermission},
-	reflect.TypeOf((*types.MsgMLNodeWeightDistribution)(nil)):         {NoPermission},
+	reflect.TypeOf((*types.MsgSubmitPocValidationsV2)(nil)):           {ParticipantPermission},
+	reflect.TypeOf((*types.MsgPoCV2StoreCommit)(nil)):                 {ParticipantPermission},
+	reflect.TypeOf((*types.MsgMLNodeWeightDistribution)(nil)):         {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitSeed)(nil)):                       {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitUnitOfComputePriceProposal)(nil)): {ActiveParticipantPermission},
 

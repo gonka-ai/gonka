@@ -126,7 +126,9 @@ var (
 	ClaimRecipientsPrefix           = collections.NewPrefix(106)
 	ClaimRecipientsByEpochPrefix    = collections.NewPrefix(107)
 	DelegationRewardTransferSnapshotPrefix = collections.NewPrefix(108)
-	ParamsKey                              = []byte("p_inference")
+	// Prefix 109 was reserved for an unused period-base KeySet and is left
+	// unused so it is not silently reused.
+	ParamsKey = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

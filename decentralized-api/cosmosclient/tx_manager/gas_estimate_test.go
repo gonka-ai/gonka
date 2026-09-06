@@ -96,6 +96,167 @@ func TestEstimateMsgGas_PoCV2_LinearInCount(t *testing.T) {
 	require.Equal(t, want, estimateMsgGas(multi))
 }
 
+func TestEstimateStoreCommitGas_UsesDeltaNotTotal(t *testing.T) {
+	msg := &inferencetypes.MsgPoCV2StoreCommit{
+		Entries: []*inferencetypes.PoCV2CommitEntry{{ModelId: "m1", Count: 200}},
+	}
+	first := estimateMsgGasHinted(msg, GasHints{})
+	require.Equal(t, gasPoCV2Base+200*gasPoCV2PerCount, first)
+
+	second := estimateMsgGasHinted(msg, GasHints{StoreCommitPrev: map[string]uint32{"m1": 100}})
+	require.Equal(t, uint64(100)*gasPoCV2PerCount, second, "unhinted second commit uses delta 100, not total 200")
+}
+
+func TestEstimateStoreCommitGas_FeeTreeLoadedIncludesIntrinsicFloor(t *testing.T) {
+	msg := &inferencetypes.MsgPoCV2StoreCommit{
+		Entries: []*inferencetypes.PoCV2CommitEntry{{ModelId: "m1", Count: 200}},
+	}
+	loaded := GasHints{
+		FeeTreeLoaded:      true,
+		HasStoreCommitRate: true,
+		StoreCommitRate:    100,
+		HasStoreCommitBase: true,
+		StoreCommitBase:    500_000,
+	}
+	require.Equal(t, gasStoreCommitIntrinsic+500_000+200*100, estimateMsgGasHinted(msg, loaded),
+		"first commit is intrinsic + period base + total×rate")
+
+	incremental := loaded
+	incremental.StoreCommitPrev = map[string]uint32{"m1": 199}
+	require.Equal(t, gasStoreCommitIntrinsic+100, estimateMsgGasHinted(msg, incremental),
+		"delta=1 must keep the intrinsic floor; surcharge is only 1×rate")
+
+	zero := GasHints{
+		FeeTreeLoaded:      true,
+		HasStoreCommitRate: true,
+		StoreCommitRate:    0,
+		HasStoreCommitBase: true,
+		StoreCommitBase:    0,
+	}
+	require.Equal(t, gasStoreCommitIntrinsic, estimateMsgGasHinted(msg, zero),
+		"zero surcharge must not collapse the intrinsic floor")
+}
+
+func TestFeeTreeLoad_NilClearsPricing(t *testing.T) {
+	fp := inferencetypes.DefaultFeeParams()
+	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupEpoch}
+	fp.Groups[0].MinGasPrice = 10
+
+	c := newFeeTreeCache()
+	c.Load(fp)
+	require.Equal(t, int64(10), c.PriceForMsgs([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}))
+	require.True(t, c.hints().HasStoreCommitRate)
+
+	c.Load(nil)
+	h := c.hints()
+	require.True(t, h.FeeTreeLoaded)
+	require.False(t, h.HasStoreCommitRate)
+	require.False(t, h.HasStoreCommitBase)
+	require.Equal(t, int64(0), c.PriceForMsgs([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}))
+}
+
+func TestFeeTreeLoad_ZeroGasIsOptOutNotDefault(t *testing.T) {
+	fp := inferencetypes.DefaultFeeParams()
+	fp.Groups[0].Msgs[0].Base.Gas = 0
+	fp.Groups[0].Msgs[0].GetStoredDelta().GasPerUnit = 0
+
+	c := newFeeTreeCache()
+	c.Load(fp)
+	h := c.hints()
+	require.True(t, h.HasStoreCommitRate)
+	require.True(t, h.HasStoreCommitBase)
+	require.True(t, h.FeeTreeLoaded)
+	require.Equal(t, uint64(0), h.StoreCommitRate)
+	require.Equal(t, uint64(0), h.StoreCommitBase)
+
+	msg := &inferencetypes.MsgPoCV2StoreCommit{
+		Entries: []*inferencetypes.PoCV2CommitEntry{{ModelId: "m1", Count: 200}},
+	}
+	require.Equal(t, gasStoreCommitIntrinsic, estimateMsgGasHinted(msg, h),
+		"explicit zero rules must not fall back to 600k/150 defaults, but must keep the intrinsic floor")
+}
+
+func TestFeeTreeLoad_DefaultStoreCommitHeadroom(t *testing.T) {
+	c := newFeeTreeCache()
+	c.Load(inferencetypes.DefaultFeeParams())
+	h := c.hints()
+	require.Equal(t, uint64(150), h.StoreCommitRate)
+	require.Equal(t, uint64(600_000), h.StoreCommitBase)
+}
+
+func TestFeeTreeLoad_AbsentStoreCommitRuleIsZeroMagnifier(t *testing.T) {
+	fp := inferencetypes.DefaultFeeParams()
+	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupEpoch}
+	epoch := fp.GroupByName(inferencetypes.FeeGroupEpoch)
+	require.NotNil(t, epoch)
+	filtered := epoch.Msgs[:0]
+	hdURL := sdk.MsgTypeURL(&inferencetypes.MsgSubmitHardwareDiff{})
+	for _, rule := range epoch.Msgs {
+		if rule != nil && rule.TypeUrl == hdURL {
+			filtered = append(filtered, rule)
+		}
+	}
+	epoch.Msgs = filtered
+
+	c := newFeeTreeCache()
+	c.Load(fp)
+	h := c.hints()
+	require.True(t, h.FeeTreeLoaded)
+	require.False(t, h.HasStoreCommitRate)
+	require.False(t, h.HasStoreCommitBase)
+
+	msg := &inferencetypes.MsgPoCV2StoreCommit{
+		Entries: []*inferencetypes.PoCV2CommitEntry{{ModelId: "m1", Count: 200}},
+	}
+	require.Equal(t, gasStoreCommitIntrinsic, estimateMsgGasHinted(msg, h),
+		"loaded tree with no StoreCommit leaf must not fall back to 600k/150, but must keep the intrinsic floor")
+}
+
+func TestEstimateHardwareDiffGas_InventoryDeltaNotBlobSize(t *testing.T) {
+	prev := []*inferencetypes.HardwareNode{{
+		LocalId: "n1",
+		Status:  inferencetypes.HardwareNodeStatus_INFERENCE,
+		Host:    "127.0.0.1",
+		Port:    "8080",
+	}}
+	same := &inferencetypes.HardwareNode{
+		LocalId: "n1",
+		Status:  inferencetypes.HardwareNodeStatus_INFERENCE,
+		Host:    "127.0.0.1",
+		Port:    "8080",
+	}
+	added := &inferencetypes.HardwareNode{
+		LocalId: "n2",
+		Status:  inferencetypes.HardwareNodeStatus_INFERENCE,
+		Host:    "127.0.0.1",
+		Port:    "8081",
+	}
+	hints := GasHints{
+		HasHDGasPerByte: true,
+		HDGasPerByte:    100,
+		HDUnitSize:      1000,
+		HardwarePrev:    prev,
+	}
+
+	rewrite := &inferencetypes.MsgSubmitHardwareDiff{
+		Creator:       "creator",
+		NewOrModified: []*inferencetypes.HardwareNode{same},
+	}
+	require.Equal(t, gasSubmitHardwareDiff, estimateMsgGasHinted(rewrite, hints),
+		"same-size rewrite must not charge extra gas")
+
+	grow := &inferencetypes.MsgSubmitHardwareDiff{
+		Creator:       "creator",
+		NewOrModified: []*inferencetypes.HardwareNode{added},
+	}
+	qty := hardwareDiffByteDelta(grow, prev)
+	require.Greater(t, qty, uint64(0))
+	blob := uint64(added.Size())
+	require.NotEqual(t, blob, qty, "delta must not be N × size(new_or_modified)")
+	extra := qty * 100 / 1000
+	require.Equal(t, gasSubmitHardwareDiff+extra+extra/2, estimateMsgGasHinted(grow, hints))
+}
+
 // TestEstimateMsgGas_MLNodeDistribution_LinearInNodes asserts the gas grows
 // linearly with the total number of node entries summed across all model
 // entries.
@@ -252,6 +413,29 @@ func TestBroadcastMessages_EmptyBatch_NoOp(t *testing.T) {
 	require.True(t, ts.IsZero())
 }
 
+func TestSaturatingMulAdd(t *testing.T) {
+	require.Equal(t, uint64(0), saturatingMul(0, 99))
+	require.Equal(t, uint64(12), saturatingMul(3, 4))
+	require.Equal(t, ^uint64(0), saturatingMul(^uint64(0), 2))
+	require.Equal(t, ^uint64(0), saturatingAdd(^uint64(0), 1))
+	require.Equal(t, uint64(5), saturatingAdd(2, 3))
+}
+
+func TestEstimateStoreCommitGas_OverflowSaturatesThenBatchCaps(t *testing.T) {
+	msg := &inferencetypes.MsgPoCV2StoreCommit{
+		Entries: []*inferencetypes.PoCV2CommitEntry{{ModelId: "m", Count: ^uint32(0)}},
+	}
+	hints := GasHints{
+		FeeTreeLoaded:      true,
+		HasStoreCommitRate: true,
+		StoreCommitRate:    ^uint64(0),
+		HasStoreCommitBase: true,
+		StoreCommitBase:    0,
+	}
+	require.Equal(t, ^uint64(0), estimateStoreCommitGas(msg, hints))
+	require.Equal(t, uint64(BatchGasLimit), estimateBatchGas([]sdk.Msg{msg}, 0, hints))
+}
+
 // TestEstimateMsgGas_AllInferenceOperationKeyPermsHaveExplicitEstimate
 // catches the case where someone adds a new message type to the warm key's
 // authz permission list (InferenceOperationKeyPerms) but forgets to add it
@@ -274,4 +458,21 @@ func TestEstimateMsgGas_AllInferenceOperationKeyPermsHaveExplicitEstimate(t *tes
 					"add a case to lookupMsgGas in gas_estimate.go", msg)
 		})
 	}
+}
+
+func TestIsHardwareDiffOnly(t *testing.T) {
+	require.True(t, isHardwareDiffOnly([]sdk.Msg{&inferencetypes.MsgSubmitHardwareDiff{}}))
+	require.False(t, isHardwareDiffOnly(nil))
+	require.False(t, isHardwareDiffOnly([]sdk.Msg{
+		&inferencetypes.MsgSubmitHardwareDiff{},
+		&inferencetypes.MsgSubmitHardwareDiff{},
+	}))
+	require.False(t, isHardwareDiffOnly([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}))
+}
+
+func TestGasWantedFromSimulate(t *testing.T) {
+	require.Equal(t, uint64(500_000), gasWantedFromSimulate(500_000, 0), "zero sim keeps static")
+	require.Equal(t, uint64(500_000), gasWantedFromSimulate(500_000, 100_000), "sim below static keeps static")
+	require.Equal(t, uint64(1_500_000), gasWantedFromSimulate(500_000, 1_000_000), "sim×1.5 when larger")
+	require.Equal(t, uint64(BatchGasLimit), gasWantedFromSimulate(500_000, BatchGasLimit), "cap at BatchGasLimit")
 }

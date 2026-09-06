@@ -35,6 +35,7 @@ func (am AppModule) buildDelegationWeightCalculator(
 	activeParticipants []*types.ActiveParticipant,
 	coefficients map[string]mathsdk.LegacyDec,
 	params types.Params,
+	previous *previousConfirmedWeights,
 ) *DelegationWeightCalculator {
 	nextEpochDelegations, nextEpochRefusals, found := am.loadRegularDelegationSnapshotState(ctx)
 	if !found {
@@ -42,8 +43,12 @@ func (am AppModule) buildDelegationWeightCalculator(
 		nextEpochDelegations = map[string]map[string]string{}
 		nextEpochRefusals = map[string]map[string]bool{}
 	}
-	prevState := am.getEffectiveValidationBaseState(ctx)
-	consensusWeights, totalWeight := prevState.weights, prevState.totalWeight
+	consensusWeights := map[string]int64{}
+	totalWeight := int64(0)
+	if previous != nil {
+		consensusWeights = previous.weights
+		totalWeight = previous.totalWeight
+	}
 	initialModelID := params.GetDelegationParams().GetInitialModelId()
 	groups := buildGroupData(activeParticipants, coefficients, initialModelID, am)
 
@@ -200,6 +205,7 @@ func (am AppModule) prepareEpochParticipationState(
 	params types.Params,
 	pocStageStartHeight int64,
 	upcomingEpochIndex uint64,
+	previous *previousConfirmedWeights,
 ) (*epochParticipationState, error) {
 	coefficients, err := am.resolveEpochCoefficients(
 		ctx,
@@ -213,7 +219,13 @@ func (am AppModule) prepareEpochParticipationState(
 		am.LogInfo("dynamic coefficient clamped to current governance bounds", types.PoC,
 			"model_id", modelID, "upcoming_epoch", upcomingEpochIndex)
 	}
-	calculator := am.buildDelegationWeightCalculator(ctx, activeParticipants, coefficients.Effective, params)
+	calculator := am.buildDelegationWeightCalculator(
+		ctx,
+		activeParticipants,
+		coefficients.Effective,
+		params,
+		previous,
+	)
 	eligibleModels := calculator.EligibleGroups()
 	participationByModel := buildParticipationByModel(calculator, eligibleModels)
 
@@ -237,7 +249,8 @@ func (am AppModule) prepareEpochParticipationState(
 		bootstrapInputs,
 	)
 	if err != nil {
-		return nil, err
+		am.LogError("failed to resolve bootstrap penalty modes; skipping bootstrap penalties", types.PoC, "error", err)
+		return state, nil
 	}
 	state.bootstrapPenaltyByModel = bootstrapPenaltyByModel
 
@@ -444,10 +457,11 @@ func (am AppModule) buildBootstrapDelegationSnapshot(
 	effectiveParticipants := baseState.participants
 	consensusWeights := baseState.weights
 	totalNetworkWeight := baseState.totalWeight
-	// Active = models with existing voting powers. Must match computeStoreCommitVotingPowers.
+	// Active = models that already have positive validation voting power.
+	// Presence of an empty placeholder must not count; those are accounting-only.
 	activeModels := make(map[string]bool)
 	for _, mvp := range baseState.existingModelVotingPowers {
-		if mvp != nil && mvp.ModelId != "" {
+		if modelHasActiveVotingPower(mvp) {
 			activeModels[mvp.ModelId] = true
 		}
 	}
@@ -864,10 +878,12 @@ func (am AppModule) computeAndSetVotingPowers(
 	participationByModel map[string]map[string]ParticipationMode,
 	caps VotingPowerCapParams,
 ) {
-	finalWeights := make(map[string]int64, len(activeParticipants))
-	for _, p := range activeParticipants {
-		finalWeights[p.Index] = p.Weight
-	}
+	// Voting power is a trust weight, so it is derived from CapWeight (capped at
+	// the participant's previous-epoch confirmed weight) rather than the real
+	// Weight. resolveTrustWeights returns CapWeight once the cap has been applied
+	// (as it always is before this in production) and falls back to Weight only
+	// for contexts that build participants without running the cap.
+	finalWeights := resolveTrustWeights(activeParticipants, true)
 
 	participantVP := make(map[string][]*types.ModelVotingPower)
 

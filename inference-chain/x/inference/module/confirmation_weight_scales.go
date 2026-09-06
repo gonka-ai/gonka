@@ -20,15 +20,7 @@ func buildConfirmationWeightScales(
 		}
 	}
 
-	confirmable := make(map[string]bool)
-	for _, p := range activeParticipants {
-		for _, vp := range p.VotingPowers {
-			if vp != nil && vp.VotingPower > 0 && eligible[vp.ModelId] {
-				confirmable[vp.ModelId] = true
-			}
-		}
-	}
-
+	realModels := modelsWithRealNodes(activeParticipants, eligible)
 	scales := make([]*types.ConfirmationWeightScale, 0, len(coefficients.Scales))
 	for _, scale := range coefficients.Scales {
 		if scale == nil || scale.ModelId == "" {
@@ -42,7 +34,7 @@ func buildConfirmationWeightScales(
 			BaseCoefficient:         cloneCoefficientDecimal(scale.BaseCoefficient),
 			AdaptiveStep:            cloneCoefficientDecimal(scale.AdaptiveStep),
 			PrevSign:                scale.PrevSign,
-			ExcludeFromConfirmation: !confirmable[scale.ModelId],
+			ExcludeFromConfirmation: !realModels[scale.ModelId],
 		})
 	}
 	slices.SortFunc(scales, func(a, b *types.ConfirmationWeightScale) int {
@@ -70,4 +62,25 @@ func cloneDynamicCoefficientConfig(
 		RelativeDifficulty: cloneCoefficientDecimal(value.RelativeDifficulty),
 		TargetShareBps:     value.TargetShareBps,
 	}
+}
+
+func modelsWithRealNodes(activeParticipants []*types.ActiveParticipant, eligible map[string]bool) map[string]bool {
+	real := make(map[string]bool)
+	for _, p := range activeParticipants {
+		if p == nil {
+			continue
+		}
+		for i, modelID := range p.Models {
+			if modelID == "" || !eligible[modelID] || i >= len(p.MlNodes) || p.MlNodes[i] == nil {
+				continue
+			}
+			for _, node := range p.MlNodes[i].MlNodes {
+				if node != nil && node.PocWeight > 0 {
+					real[modelID] = true
+					break
+				}
+			}
+		}
+	}
+	return real
 }

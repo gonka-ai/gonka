@@ -313,6 +313,7 @@ func NewSetNodesActualStatusCommand(statusUpdates []StatusUpdate) SetNodesActual
 
 type StatusUpdate struct {
 	NodeId                 string
+	RegistrationSeq        uint64
 	PrevStatus             types.HardwareNodeStatus
 	NewStatus              types.HardwareNodeStatus
 	Timestamp              time.Time
@@ -333,6 +334,14 @@ func (c SetNodesActualStatusCommand) Execute(b *Broker) {
 		node, exists := b.nodes[nodeId]
 		if !exists {
 			logging.Error("Cannot set status: node not found", types.Nodes, "node_id", nodeId)
+			continue
+		}
+
+		if node.State.RegistrationSeq != update.RegistrationSeq {
+			logging.Info("Skipping status update: registration seq mismatch", types.Nodes,
+				"node_id", nodeId,
+				"update_registration_seq", update.RegistrationSeq,
+				"current_registration_seq", node.State.RegistrationSeq)
 			continue
 		}
 
