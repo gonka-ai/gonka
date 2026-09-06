@@ -1,6 +1,7 @@
 # versiond-router
 
-HAProxy in front of N `versiond` instances. It has two jobs:
+HAProxy in front of N `versiond` instances. Production Compose runs several
+independent copies as a fleet behind `proxy-router`; every copy has two jobs:
 
 1. **Stickiness** — every request for one session lands on the same `versiond`,
    so the instance holding that session's hot state keeps serving it.
@@ -12,6 +13,10 @@ Membership comes from DNS, health from active checks, and protocol names from
 the existing governance `/versions` feed. The only persistent router state is a
 last-known-good catalog projection. Adding a host or approving a protocol name
 does not require a router reload.
+
+Fleet replicas do not coordinate or share mutable routing state. Given the same
+catalog, placement settings, DNS membership and health view, each independently
+builds the same address-keyed hash ring.
 
 ---
 
@@ -79,6 +84,49 @@ seconds; stop one and its slot empties.
 `VERSIOND_ROUTER_POOL_SLOTS` (default 64) caps how many instances can be in the
 pool at once. Unused slots cost nothing; they exist because HAProxy allocates
 server slots at startup.
+
+## Membership: explicit endpoint list
+
+DNS discovery only sees containers that share a Docker network with the
+router. Bare-metal deployments that run `versiond` on other machines list the
+members explicitly in a JSON file and point `VERSIOND_POOL_ENDPOINTS_FILE` at
+it:
+
+```json
+[
+  { "id": "versiond",   "host": "versiond",   "port": 8080 },
+  { "id": "versiond-b", "host": "10.20.0.12", "port": 8080 },
+  { "id": "versiond-c", "host": "10.20.0.13", "port": 18080 }
+]
+```
+
+- `id` names the member (`[A-Za-z0-9][A-Za-z0-9._-]*`, unique).
+- `host` is an IPv4 address or a DNS name. A name keeps re-resolving through the
+  Docker resolver, so a local container listed by its container name rejoins
+  after it is recreated with a new address. IPv6 literals are not supported.
+- `port` defaults to `VERSIOND_PORT`.
+
+When the file is set it replaces DNS discovery for every HA backend: each entry
+becomes one `server versiond<n>` line with the same active checks,
+`init-state fully-down`, and `hash-key addr` as the DNS template, so every
+router computes the same ring from the same list. The catalog reconciler
+addresses `versiond1..versiondN`, so the list is also the pool capacity: an
+unlisted host cannot join, and `VERSIOND_ROUTING_ACTIVATION_MIN_READY` must not
+exceed the number of entries.
+
+`VERSIOND_LEGACY_HOST` may name an entry by `id`; the legacy backends then use
+that entry's host and port. Any other value keeps the single-host DNS contract.
+
+The pre-HAProxy `VERSIOND_HOSTS` list (whitespace or comma separated, entries
+optionally `host:port`) is still accepted and renders the same explicit list.
+It is ignored when an endpoint file is set. Prefer the file for new
+deployments.
+
+In `deploy/join`, set `VERSIOND_POOL_ENDPOINTS_FILE` in `config.env` (a relative
+path is resolved from the directory of `config.env`) and run
+`./versiond-router-fleet.sh apply`; the fleet mounts the file into every slot,
+includes its SHA-256 in the slot contract, and rolls the slots one at a time
+after an edit.
 
 ## Health: one question per version
 
@@ -300,8 +348,9 @@ marker.
 
 ## Looking at the pool
 
-The canonical runbook contains the full command for inspecting the pool. Its
-output looks like this:
+`deploy/join/versiond-router-fleet.sh status` validates every expected slot and
+its admission through the active parent proxy. To inspect one slot's measured
+versiond pool, run its internal `pool-status` diagnostic; output looks like:
 
 ```text
 versiond_pool_v4
@@ -336,12 +385,62 @@ process serving long enough for the active check to observe that state. Legacy
 can only react after route health fails or the process leaves DNS. The graceful
 host lifecycle is intentionally delivered as a separate change.
 
+The router fleet itself is managed with `versiond-router-fleet.sh`. `apply`
+bootstraps missing slots and rolls changed ones while preserving
+`VERSIOND_ROUTER_MIN_READY`; `rollout` forces that rolling reconciliation;
+`maintenance-rollout` is required for placement-contract changes that cannot
+mix old and new rings. Before replacing a slot, the fleet drains every matching
+coarse and per-version server in the parent HAProxy and confirms withdrawal.
+After the old process stops, those servers are reset to health `DOWN`; the new
+address must complete a fresh L7 `rise` before it is admitted. Whole-node
+maintenance uses `stop-all --maintenance`, then `down --maintenance` after the
+main Compose project is down. Fleet resources are ownership-labelled, so
+cleanup does not cross into another fleet.
+
+A fresh installation has three ordered phases:
+
+```sh
+./versiond-router-fleet.sh prepare-networks
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+./versiond-router-fleet.sh apply
+```
+
+The first command creates the external front/back networks consumed by the main
+Compose project. The main project then creates its default metrics network;
+`apply` discovers that network and starts the independent slot projects. Set
+`VERSIOND_ROUTER_METRICS_NETWORK` explicitly when rendering `spec-hash` before
+the main project exists. The release updater owns this ordering for existing
+hosts and preserves any additional Compose overlays.
+
+If a host crash interrupts an operation after the parent entered runtime
+`DRAIN`, `status` reports incomplete parent admission. The next `up`, `apply`,
+`rollout`, or `start` repairs `DRAIN` entries that still point at a live fleet
+slot: it resets their health to `DOWN`, returns them to `READY`, and waits for a
+fresh L7 rise. This avoids restarting the public proxy and never admits the
+replacement from inherited health state.
+
+Fleet slots preserve `X-Real-IP` and `X-Forwarded-Proto` from the policy tier.
+Their data listener is reachable only through the fleet-owned front network;
+the public/policy proxy is responsible for deriving those headers from the
+external connection before forwarding a request there.
+
+Do not stop or recreate slot projects with raw `docker compose` commands.
+`stop`, `start`, `rollout`, and `maintenance-rollout` provide the parent drain,
+fresh-health boundary, and long SSE drain budget. Before taking the main Compose
+project down, run `stop-all --maintenance`; after the main project is down, use
+`down --maintenance` to remove the slot projects and fleet-owned networks.
+`status`, `verify-admission`, and `wait-version` are read-only and remain
+available while a mutating fleet or host-update operation holds the deployment
+lock.
+
 ## Configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `VERSIOND_POOL_HOST` | `versiond-pool` | DNS name resolving to every pool member |
-| `VERSIOND_PORT` | `8080` | upstream port |
+| `VERSIOND_POOL_ENDPOINTS_FILE` | *(empty)* | JSON array of `{id, host, port}` members; replaces DNS discovery when set (see [Membership: explicit endpoint list](#membership-explicit-endpoint-list)) |
+| `VERSIOND_HOSTS` | *(empty)* | legacy whitespace/comma host list, entries optionally `host:port`; used only when no endpoint file is set |
+| `VERSIOND_PORT` | `8080` | upstream port and the default endpoint port |
 | `VERSIOND_LEGACY_HOST` | *(none)* | single host owning pre-HA SQLite data dirs. **Required** whenever `VERSIOND_NON_HA_VERSIONS` is non-empty — the router refuses to start otherwise, because the owner of one host's data cannot default to a name that resolves to the whole pool. Unused (and may be omitted) when no version is pinned |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | static version path segments pinned to the legacy host, whitespace and/or comma separated; retains the wider path-safe startup grammar described above |
 | `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor using the wider path-safe startup grammar; compatible governance additions are learned without changing it |
@@ -358,7 +457,8 @@ host lifecycle is intentionally delivered as a separate change.
 | `GONKA_HA` | *(unset)* | authoritative HA deployment latch; stamps `Devshard-Ha` even while only one pool member is usable. With it off, the router still stamps the header whenever more than one host is usable in the selected backend. Booleans share one grammar with devshardd: `1/t/true/yes/on` on, empty/`0/f/false/no/off` off, anything else refuses to start |
 | `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | internal liveness/readiness listener port; the shipped Compose healthcheck follows this value |
 | `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives the data and admin listeners. Empty binds both listeners on all container interfaces; a named interface keeps an additional loopback admin bind |
-| `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives a second metrics bind. Metrics always remain available on loopback; the join overlay sets `versiond-router` for its internal Prometheus scraper |
+| `VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS` | `false` | preserve `X-Real-IP` and `X-Forwarded-Proto` only when the listener is isolated behind the trusted public/policy proxy tier |
+| `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives a second metrics bind. Metrics always remain available on loopback; fleet slots bind their metrics-network address and share the `versiond-router-metrics` discovery alias |
 | `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric DNS resolver address, with an optional port, used by HAProxy `server-template` slots |
 | `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members; catalog mode supports up to `256`, keeping each atomic server-state Runtime API batch below HAProxy's default command buffer. The resolver accepts DNS payloads up to 8192 bytes so the default pool fits in one answer |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
@@ -366,6 +466,13 @@ host lifecycle is intentionally delivered as a separate change.
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect and header timeouts |
 | `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server idle timeout |
 | `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | upgraded/CONNECT idle timeout; independent of SSE |
+| `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | private live/readiness listener consumed by the parent proxy and fleet checks |
+| `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(all interfaces)* | per-slot front-network address used for data and admin listeners |
+| `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(loopback)* | per-slot metrics-network address |
+| `VERSIOND_ROUTER_METRICS_NETWORK` | *(auto-detected)* | main Compose network used for Prometheus discovery |
+| `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric resolver; part of the fleet placement contract |
+| `VERSIOND_ROUTER_STOP_GRACE_PERIOD` | `10s` | routine Compose cleanup ceiling; fleet rollout supplies its own drain deadline |
+| `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE` | `false` | explicit one-command acknowledgement for `maintenance-rollout` |
 
 The entrypoint validates every numeric setting, renders `haproxy.cfg` and
 `non_ha.map`, runs `haproxy -c` on the result, and only then execs HAProxy. A bad
@@ -393,7 +500,7 @@ is refused before the config is rendered.
 
 | Endpoint | Where | Notes |
 | --- | --- | --- |
-| `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; the join HA overlay also binds it to the internal Compose network for DNS-based scraping, never to a host port |
+| `/metrics` | loopback and the slot's internal metrics-network address | Prometheus exporter; never published on a host port |
 | Diagnostic Runtime API | `/var/run/haproxy/haproxy.sock` | local `level user` socket, no TCP bind; raw HAProxy map commands remain writable |
 | Reconciler Runtime API | `/var/run/haproxy/reconciler.sock` | local `level admin` socket used for catalog map and server-state changes |
 | Admin HTTP | port `8404` inside the container | liveness and readiness only; wildcard-bound by default or restricted to loopback plus `VERSIOND_ROUTER_FRONT_BIND_HOST`; never published on a host port by the shipped Compose files |
@@ -410,14 +517,14 @@ The Prometheus output includes two synthetic backends.
 intact. A pending version or source outage therefore makes only convergence
 red; corruption of an accepted map makes both signals red. Serving readiness is
 not proof that every desired future name is available, so a parent that routes
-by version must still use per-version readiness. Compose health is a startup
-liveness gate: a catalog-aware router uses admin `/livez`, while the
-transitional nginx image retains its compatible `/healthz` probe. It deliberately
-does not wait for version children to download and start, because the shared
-public proxy also serves APIs that do not depend on devshard routing. Use
-unqualified admin `/readyz` for the stricter data-plane signal; it requires at
-least one published per-version backend to have a ready child and does not use
-the coarse supervisor pool.
+by version must still use per-version readiness. The transitional singleton's
+Compose health is only a startup compatibility gate: a catalog-aware image uses
+admin `/livez`, while the nginx image retains its `/healthz` probe.
+Independently managed fleet slots intentionally use the stricter unqualified
+admin `/readyz`, because fleet reserve and rollout commands must count serving
+capacity rather than merely live processes. Consequently a complete
+versiond-pool outage also blocks fleet mutation until serving capacity returns;
+unrelated public APIs remain available through the policy tier.
 Catalog diagnostics never include the configured source URL, so credentials or
 signed query parameters are not copied into status output or router logs.
 Each router image owns its graceful-stop signal: the transitional nginx image
@@ -425,6 +532,17 @@ uses `SIGQUIT`, while the HAProxy image declares `SIGUSR1`. The shipped Compose
 overlay only bounds the drain with `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default
 `10s`) before Docker forces termination, so selecting one image cannot override
 the shutdown contract of the other.
+
+`VERSIOND_ROUTER_PULL_POLICY=always` is the release default and requires the
+registry to be reachable before a slot operation. During a registry incident,
+an operator may use `missing` only when the intended image or digest is already
+present locally; `never` is the fully offline option. Prefer immutable digests
+for either offline mode.
+
+Prometheus discovers slots through the shared `versiond-router-metrics` DNS
+alias. Alert on the expected target count as well as each target's `up` value:
+a Docker DNS failure or removed slot disappears from service discovery instead
+of producing an `up == 0` series for its old address.
 
 The shipped Compose files do not publish the admin or metrics listener on a host
 port. They can be reached by containers on the same internal network when their
@@ -441,6 +559,8 @@ same-UID process.
 $ make test-render
 test-hash-ring: ok
 test-render: ok
+$ make test-fleet
+versiond-router-fleet_test: ok
 ```
 
 `test-render` renders the mixed (legacy pinning) and all-HA shapes, asserts on
@@ -460,6 +580,11 @@ escrow to reach the same address each time. Remove `hash-key addr` from the
 template and it fails, naming the sessions that moved.
 
 Both require Docker.
+
+`test-fleet` starts three slots as separate Compose projects and covers
+idempotent apply, ready-reserve enforcement, rolling replacement, placement
+maintenance with exact rollback, admission through the parent proxy, and
+ownership-bounded teardown of expected and orphan resources.
 
 ## Related docs
 

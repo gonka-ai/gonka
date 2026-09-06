@@ -1,6 +1,6 @@
-.PHONY: all build-docker release test-render
-.PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose test-join-compose
-.PHONY: test-join-versiond-healthcheck test-pool-status
+.PHONY: all build-docker release test-render test-compose-contract test-fleet
+.PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose
+.PHONY: test-join-versiond-healthcheck test-pool-status test-endpoints-render
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
@@ -37,136 +37,22 @@ test-local-compose:
 		|| { echo 'test-local-compose: versiond drain backstop is missing' >&2; exit 1; }; \
 	echo 'test-local-compose: ok'
 
-test-join-compose:
-	@set -eu; \
-	tmp=$$(mktemp); tmp_json=$$(mktemp); tmp_capability=$$(mktemp); \
-	rm -f "$$tmp_capability"; \
-	trap 'rm -f "$$tmp" "$$tmp_json" "$$tmp_capability"' EXIT; \
-	VERSIOND_ROUTER_IMAGE= VERSIOND_ROUTING_CATALOG_URL= \
-	DEVSHARD_POSTGRES_PASSWORD=test \
-		docker compose --project-directory ../deploy/join \
-		-f ../deploy/join/docker-compose.yml \
-		-f ../deploy/join/docker-compose.versiond.yml config > "$$tmp"; \
-	VERSIOND_ROUTER_IMAGE= VERSIOND_ROUTING_CATALOG_URL= \
-	DEVSHARD_POSTGRES_PASSWORD=test \
-		docker compose --project-directory ../deploy/join \
-		-f ../deploy/join/docker-compose.yml \
-		-f ../deploy/join/docker-compose.versiond.yml config --format json > "$$tmp_json"; \
-	jq -e '.services["versiond-router"].volumes | any(.type == "volume" and .source == "versiond-router-state" and .target == "/var/lib/gonka-router")' \
-		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: router catalog state is not persistent' >&2; exit 1; }; \
-	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("-x /usr/local/lib/router-runtime/catalog-reconciler")) and ($$check | contains("catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL")) and ($$check | contains("VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image")) and ($$check | contains("VERSIOND_ROUTER_ADMIN_PORT")) and ($$check | contains("/livez")) and ($$check | contains("/readyz") | not) and ($$check | contains("127.0.0.1:8080/healthz"))' \
-		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: router healthcheck does not validate image/catalog compatibility and probe liveness' >&2; exit 1; }; \
-	healthcheck=$$(jq -r '.services["versiond-router"].healthcheck.test[1]' \
-		"$$tmp_json" | sed 's/\$$\$$/\$$/g' \
-		| sed "s#/usr/local/lib/router-runtime/catalog-reconciler#$$tmp_capability#g"); \
-	probe_healthcheck() ( VERSIOND_ROUTER_ADMIN_PORT=8404; export VERSIOND_ROUTER_ADMIN_PORT; wget() { return 0; }; eval "$$healthcheck"; ); \
-	VERSIOND_ROUTING_CATALOG_URL= probe_healthcheck \
-		|| { echo 'test-join-compose: legacy image without catalog URL was rejected' >&2; exit 1; }; \
-	if VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions \
-		probe_healthcheck >/dev/null 2>&1; then \
-		echo 'test-join-compose: legacy image accepted catalog URL' >&2; exit 1; \
-	fi; \
-	: > "$$tmp_capability"; chmod +x "$$tmp_capability"; \
-	if VERSIOND_ROUTING_CATALOG_URL= probe_healthcheck >/dev/null 2>&1; then \
-		echo 'test-join-compose: catalog-capable image accepted empty catalog URL' >&2; exit 1; \
-	fi; \
-	VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions probe_healthcheck \
-		|| { echo 'test-join-compose: catalog-capable image with catalog URL was rejected' >&2; exit 1; }; \
-	jq -e '.services.proxy.depends_on["versiond-router"] | .condition == "service_healthy" and .required == false' \
-		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: router health is not an optional public-proxy dependency' >&2; exit 1; }; \
-	jq -e '(.services["versiond-router"] | has("stop_signal") | not) and .services["versiond-router"].stop_grace_period == "10s"' \
-		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: Compose overrides the selected image stop signal or loses the bounded grace' >&2; exit 1; }; \
-	grep -q 'VERSIOND_POOL_HOST: versiond-pool' "$$tmp" \
-		|| { echo 'test-join-compose: pool host is not rendered' >&2; exit 1; }; \
-	grep -q 'VERSIOND_ROUTER_METRICS_BIND_HOST: versiond-router' "$$tmp" \
-		|| { echo 'test-join-compose: router metrics are not available to the internal scraper' >&2; exit 1; }; \
-	router_scrape=$$(grep -A8 'job_name: versiond-router' ../deploy/join/observability/prometheus.yml); \
-	printf '%s\n' "$$router_scrape" | grep -q -- '- versiond-router' \
-		&& printf '%s\n' "$$router_scrape" | grep -q 'port: 8405' \
-		|| { echo 'test-join-compose: router metrics DNS scrape job is missing' >&2; exit 1; }; \
-	[ "$$(grep -c -- '- versiond-pool' "$$tmp")" -ge 2 ] \
-		|| { echo 'test-join-compose: not every versiond joins the pool alias' >&2; exit 1; }; \
-	grep -q 'VERSIOND_HOSTS: versiond versiond2' "$$tmp" \
-		|| { echo 'test-join-compose: legacy router compatibility was lost' >&2; exit 1; }; \
-	[ "$$(grep -c 'GONKA_HA: "true"' "$$tmp")" -eq 3 ] \
-		|| { echo 'test-join-compose: HA deployment latch is not shared by both versiond hosts and the router' >&2; exit 1; }; \
-	[ "$$(grep -c 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp")" -eq 3 ] \
-		|| { echo 'test-join-compose: legacy pins are not shared by both versiond hosts and the router' >&2; exit 1; }; \
-	grep -Eq '^[[:space:]]*VERSIOND_VERSIONS: v4 v5$$' "$$tmp" \
-		|| { echo 'test-join-compose: per-version routing contract is missing' >&2; exit 1; }; \
-	grep -q 'image: ghcr.io/product-science/versiond-router:0.2.15' "$$tmp" \
-		|| { echo 'test-join-compose: published legacy router default changed' >&2; exit 1; }; \
-	grep -q 'VERSIOND_ROUTING_CATALOG_URL: ""' "$$tmp" \
-		|| { echo 'test-join-compose: catalog was enabled on the legacy router image' >&2; exit 1; }; \
-	grep -q 'VERSIOND_ROUTING_ACTIVATION_MIN_READY: "2"' "$$tmp" \
-		|| { echo 'test-join-compose: two-replica catalog reserve is not explicit' >&2; exit 1; }; \
-	grep -q 'VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS: "false"' "$$tmp" \
-		|| { echo 'test-join-compose: automatic catalog removals are not disabled' >&2; exit 1; }; \
-	grep -q 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp" \
-		|| { echo 'test-join-compose: legacy version pins are missing' >&2; exit 1; }; \
-	VERSIOND_ROUTER_IMAGE=ghcr.io/product-science/versiond-router@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-	VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions \
-	VERSIOND_ROUTING_CATALOG_POLL_SECONDS=7 \
-	VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=11 \
-	VERSIOND_ROUTING_CATALOG_MAX_BYTES=123456 \
-	VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=13 \
-	VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=17 \
-	VERSIOND_ROUTING_ACTIVATION_MIN_READY=1 \
-	VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true \
-	VERSIOND_ROUTER_VERSION_CAPACITY=19 \
-	VERSIOND_ROUTER_ADMIN_PORT=18404 \
-	VERSIOND_ROUTER_FRONT_BIND_HOST=router-front \
-	VERSIOND_ROUTER_METRICS_BIND_HOST=router-metrics \
-	HAPROXY_DNS_RESOLVER=10.96.0.10:53 \
-	DEVSHARD_POSTGRES_PASSWORD=test \
-		docker compose --project-directory ../deploy/join \
-		-f ../deploy/join/docker-compose.yml \
-		-f ../deploy/join/docker-compose.versiond.yml config > "$$tmp"; \
-	grep -q 'image: ghcr.io/product-science/versiond-router@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$$tmp" \
-		|| { echo 'test-join-compose: release router image override was ignored' >&2; exit 1; }; \
-	grep -q 'VERSIOND_ROUTING_CATALOG_URL: http://api:9100/versions' "$$tmp" \
-		|| { echo 'test-join-compose: release catalog URL override was ignored' >&2; exit 1; }; \
-	for expected in \
-		'VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "7"' \
-		'VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS: "11"' \
-		'VERSIOND_ROUTING_CATALOG_MAX_BYTES: "123456"' \
-		'VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS: "13"' \
-		'VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS: "17"' \
-		'VERSIOND_ROUTING_ACTIVATION_MIN_READY: "1"' \
-		'VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS: "true"' \
-		'VERSIOND_ROUTER_VERSION_CAPACITY: "19"' \
-		'VERSIOND_ROUTER_ADMIN_PORT: "18404"' \
-		'VERSIOND_ROUTER_FRONT_BIND_HOST: router-front' \
-		'VERSIOND_ROUTER_METRICS_BIND_HOST: router-metrics' \
-		'HAPROXY_DNS_RESOLVER: 10.96.0.10:53'; do \
-		grep -q "$$expected" "$$tmp" \
-			|| { echo "test-join-compose: override '$$expected' was ignored" >&2; exit 1; }; \
-	done; \
-	GONKA_HA=off VERSIOND_NON_HA_VERSIONS= VERSIOND_VERSIONS= \
-	VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
-	DEVSHARD_POSTGRES_PASSWORD=test \
-		docker compose --project-directory ../deploy/join \
-		-f ../deploy/join/docker-compose.yml \
-		-f ../deploy/join/docker-compose.versiond.yml config > "$$tmp"; \
-	grep -q 'VERSIOND_NON_HA_VERSIONS: ""' "$$tmp" \
-		|| { echo 'test-join-compose: explicit empty legacy pins were replaced by defaults' >&2; exit 1; }; \
-	grep -q 'VERSIOND_VERSIONS: ""' "$$tmp" \
-		|| { echo 'test-join-compose: explicit empty version list was replaced by defaults' >&2; exit 1; }; \
-	grep -q 'VERSIOND_ROUTER_ALLOW_COARSE_READINESS: "true"' "$$tmp" \
-		|| { echo 'test-join-compose: coarse-readiness opt-in was not forwarded' >&2; exit 1; }; \
-	[ "$$(grep -Ec "GONKA_HA: ['\"]off['\"]" "$$tmp")" -eq 3 ] \
-		|| { echo 'test-join-compose: explicit GONKA_HA value diverged between versiond and router' >&2; exit 1; }; \
-	echo 'test-join-compose: ok'
-
 test-catalog-cache:
 	@../router-runtime/catalog-cache_test.sh
 
+test-compose-contract:
+	@../deploy/join/versiond-compose-config_test.sh
+
+test-fleet:
+	@../deploy/join/versiond-router-fleet_test.sh
+
 test-pool-status:
 	@./pool-status_test.sh
+
+# Explicit endpoint lists, the legacy VERSIOND_HOSTS form, and DNS discovery
+# must all render valid pools; the real image validates each shape.
+test-endpoints-render:
+	@HAPROXY_IMAGE=$(HAPROXY_IMAGE) ./endpoints-render_test.sh
 
 # The join deployment temporarily supports both the pinned pre-/readyz image
 # and the replacement built from this release. A 404 means the endpoint does
@@ -350,7 +236,7 @@ test-version-routing:
 	state=gonka-version-probe-state; \
 	cleanup() { \
 		docker rm -f gonka-vp-router gonka-vp-a gonka-vp-b gonka-vp-legacy \
-			gonka-vp-catalog \
+			gonka-vp-catalog gonka-vp-bind-a gonka-vp-bind-b \
 			>/dev/null 2>&1 || true; \
 		docker network rm $$net >/dev/null 2>&1 || true; \
 		docker volume rm $$state >/dev/null 2>&1 || true; \
@@ -434,6 +320,30 @@ test-version-routing:
 	[ "$$(docker image inspect gonka-versiond-router-probe \
 		--format '{{.Config.StopSignal}}')" = SIGUSR1 ] \
 		|| fail "HAProxy router image does not own its soft-stop signal"; \
+	for name in a b; do \
+		docker run -d --name gonka-vp-bind-$$name --network $$net \
+			--network-alias versiond-router-ingress \
+			-e VERSIOND_ROUTER_FRONT_BIND_HOST=versiond-router-ingress \
+			-e VERSIOND_ROUTER_METRICS_BIND_HOST=versiond-router-ingress \
+			gonka-versiond-router-probe >/dev/null; \
+	done; \
+	wait_local_bind() { \
+		name=$$1; \
+		address=$$(docker inspect -f \
+			'{{with index .NetworkSettings.Networks "gonka-version-probe"}}{{.IPAddress}}{{end}}' \
+			gonka-vp-bind-$$name); \
+		for i in $$(seq 80); do \
+			if docker exec gonka-vp-bind-$$name grep -q \
+				"^[[:space:]]*bind $$address:8080" /etc/haproxy/haproxy.cfg \
+				2>/dev/null; then return 0; fi; \
+			sleep 0.1; \
+		done; \
+		fail "router $$name did not select its own address from the shared alias"; \
+	}; \
+	for name in a b; do wait_local_bind $$name; done; \
+	docker restart gonka-vp-bind-a >/dev/null; \
+	for name in a b; do wait_local_bind $$name; done; \
+	docker rm -f gonka-vp-bind-a gonka-vp-bind-b >/dev/null; \
 	cache_now=$$(date +%s); \
 	docker run --rm --user 0:0 -e CACHE_NOW=$$cache_now \
 		-v $$state:/state --entrypoint sh gonka-versiond-router-probe -c \
@@ -1385,7 +1295,7 @@ test-version-routing:
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
 		-e VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=6 \
 		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
-		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=1 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
 		gonka-versiond-router-probe >/dev/null; \
@@ -1395,6 +1305,9 @@ test-version-routing:
 			| jq -e '.state == "capacity-exhausted"' >/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
+	[ "$$(docker exec gonka-vp-router grep -c '^backend versiond_dynamic_' \
+		/etc/haproxy/haproxy.cfg)" -eq 3 ] \
+		|| fail "accepted LKG routes did not raise the inner router's effective capacity"; \
 	for i in $$(seq 16); do \
 		pending_cache_after=$$(docker exec gonka-vp-router \
 			jq -er .fetched_at_unix /var/lib/gonka-router/catalog.json); \
@@ -1542,7 +1455,7 @@ test-version-routing:
 		|| fail "catalog reconciliation did not recover after clock rollback"; \
 	echo "test-version-routing: ok"
 
-test-render: test-local-compose test-join-compose test-join-versiond-healthcheck test-catalog-cache test-pool-status test-hash-ring test-version-routing
+test-render: test-local-compose test-compose-contract test-join-versiond-healthcheck test-catalog-cache test-pool-status test-endpoints-render test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
@@ -1616,6 +1529,21 @@ test-render: test-local-compose test-join-compose test-join-versiond-healthcheck
 		|| fail "X-Real-IP is not unconditionally replaced"; \
 	grep -Eq '^[[:space:]]*http-request set-header X-Forwarded-Proto %\[ssl_fc,iif\(https,http\)\][[:space:]]*$$' "$$tmpdir/mixed.cfg" \
 		|| fail "X-Forwarded-Proto is not unconditionally replaced"; \
+	HAPROXY_BIN=true \
+	VERSIOND_ROUTER_RENDER_ONLY=1 \
+	VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS=true \
+	VERSIOND_VERSIONS=v4 \
+	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/trusted-ingress.cfg" \
+	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/trusted-ingress.map" \
+	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/trusted-ingress.versions.map" \
+	VERSIOND_ROUTER_READY_RULES="$$tmpdir/trusted-ingress.ready.rules" \
+	./entrypoint.sh; \
+	if grep -Eq 'http-request set-header (X-Real-IP|X-Forwarded-Proto)' \
+		"$$tmpdir/trusted-ingress.cfg"; then \
+		fail "trusted ingress identity is overwritten by the inner router"; \
+	fi; \
 	grep -q '^[[:space:]]*http-request deny deny_status 413 if { req.hdr_val(content-length) gt 10485760 }' "$$tmpdir/mixed.cfg" \
 		|| fail "the advertised request body cap is gone"; \
 	grep -Eq '^[[:space:]]*accepted_payload_size 8192([[:space:]]|$$)' "$$tmpdir/mixed.cfg" \
@@ -1941,11 +1869,14 @@ test-render: test-local-compose test-join-compose test-join-versiond-healthcheck
 	mkdir "$$tmpdir/bin"; \
 	printf '%s\n' '#!/bin/sh' \
 		'case "$$2" in' \
-		'  router-front) printf "%s\\n" "192.0.2.10 STREAM router-front" ;;' \
-		'  router-metrics) printf "%s\\n" "192.0.2.11 STREAM router-metrics" ;;' \
+		'  router-front) printf "%s\\n" "192.0.2.99 STREAM router-front" "192.0.2.10 STREAM router-front" ;;' \
+		'  router-metrics) printf "%s\\n" "192.0.2.99 STREAM router-metrics" "192.0.2.11 STREAM router-metrics" ;;' \
 		'  *) exec /usr/bin/getent "$$@" ;;' \
 		'esac' > "$$tmpdir/bin/getent"; \
-	chmod +x "$$tmpdir/bin/getent"; \
+	printf '%s\n' '#!/bin/sh' \
+		'printf "%s\\n" "2: eth0 inet 192.0.2.10/24 scope global eth0" "3: eth1 inet 192.0.2.11/24 scope global eth1"' \
+		> "$$tmpdir/bin/ip"; \
+	chmod +x "$$tmpdir/bin/getent" "$$tmpdir/bin/ip"; \
 	PATH="$$tmpdir/bin:$$PATH" HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTER_ADMIN_PORT=18404 \
 		VERSIOND_ROUTER_FRONT_BIND_HOST=router-front \
