@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
@@ -13,8 +15,28 @@ const (
 	MaxDealerPartCommitmentsCount         = 4096
 	MaxEncryptedSharesParticipantsCount   = 4096
 	MaxEncryptedSharesPerParticipantCount = 16384
-	maxEncryptedShareCiphertextLen        = 1024
+	MaxEncryptedShareCiphertextLen        = 1024
+	// geth ECIES minimum: uncompressed R (65) + MAC (32) + AES block (16) = 113.
+	// The cosmos-sdk fork length gate is rLen+hLen+1 = 98; a 98-byte MAC-valid
+	// blob then panics in symDecrypt (make([]byte, len(ct)-BlockSize)). Honest
+	// Encrypt of a 32-byte BLS share is 145 bytes (65-byte R + 16-byte IV +
+	// 32-byte ciphertext + 32-byte MAC).
+	MinEncryptedShareCiphertextLen    = 113
+	HonestEncryptedShareCiphertextLen = 145
 )
+
+func ValidateEncryptedShareCiphertextLen(share []byte) error {
+	if len(share) == 0 {
+		return fmt.Errorf("must be non-empty")
+	}
+	if len(share) < MinEncryptedShareCiphertextLen {
+		return fmt.Errorf("is below ECIES minimum (%d bytes)", MinEncryptedShareCiphertextLen)
+	}
+	if len(share) > MaxEncryptedShareCiphertextLen {
+		return fmt.Errorf("exceeds maximum allowed size")
+	}
+	return nil
+}
 
 func (m *MsgSubmitDealerPart) ValidateBasic() error {
 	// creator address
@@ -62,11 +84,8 @@ func (m *MsgSubmitDealerPart) ValidateBasic() error {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "encrypted_shares_for_participants[%d].encrypted_shares exceeds maximum allowed count", i)
 		}
 		for j, shareCiphertext := range participantShares.EncryptedShares {
-			if len(shareCiphertext) == 0 {
-				return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "encrypted_shares_for_participants[%d].encrypted_shares[%d] must be non-empty", i, j)
-			}
-			if len(shareCiphertext) > maxEncryptedShareCiphertextLen {
-				return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "encrypted_shares_for_participants[%d].encrypted_shares[%d] exceeds maximum allowed size", i, j)
+			if err := ValidateEncryptedShareCiphertextLen(shareCiphertext); err != nil {
+				return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "encrypted_shares_for_participants[%d].encrypted_shares[%d] %s", i, j, err.Error())
 			}
 		}
 	}
