@@ -2,6 +2,7 @@ package completionapi
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -13,7 +14,34 @@ const (
 
 	// MaxSSELineBytes bounds one line: the first chunk carries one id per prompt token.
 	MaxSSELineBytes = 16 << 20
+
+	// MaxResponseBytes bounds one untrusted HTTP response body after transport
+	// decompression, so a gzip bomb cannot expand past this into process memory.
+	MaxResponseBytes = 50 << 20
 )
+
+var ErrResponseTooLarge = fmt.Errorf("response exceeds %d byte limit", MaxResponseBytes)
+
+type cappedReader struct {
+	r         io.Reader
+	remaining int64
+}
+
+func NewCappedResponseReader(body io.Reader) io.Reader {
+	return &cappedReader{r: body, remaining: MaxResponseBytes + 1}
+}
+
+func (c *cappedReader) Read(p []byte) (int, error) {
+	if c.remaining <= 0 {
+		return 0, ErrResponseTooLarge
+	}
+	if int64(len(p)) > c.remaining {
+		p = p[:c.remaining]
+	}
+	n, err := c.r.Read(p)
+	c.remaining -= int64(n)
+	return n, err
+}
 
 // ProcessHTTPResponse reads an HTTP response body, detects SSE vs JSON from Content-Type,
 // and feeds the data through the given ResponseProcessor.
@@ -32,7 +60,7 @@ func IsEventStream(resp *http.Response) bool {
 }
 
 func processSSE(body io.Reader, processor ResponseProcessor) error {
-	scanner := bufio.NewScanner(body)
+	scanner := bufio.NewScanner(NewCappedResponseReader(body))
 	scanner.Buffer(make([]byte, 0, initialSSELineBytes), MaxSSELineBytes)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -47,7 +75,7 @@ func processSSE(body io.Reader, processor ResponseProcessor) error {
 }
 
 func processJSON(body io.Reader, processor ResponseProcessor) error {
-	data, err := io.ReadAll(body)
+	data, err := io.ReadAll(NewCappedResponseReader(body))
 	if err != nil {
 		return err
 	}
