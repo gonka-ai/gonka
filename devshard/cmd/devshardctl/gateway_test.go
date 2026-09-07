@@ -1537,9 +1537,6 @@ func TestGatewayPooledChatDoesNotCacheTransientErrorResponse(t *testing.T) {
 	require.EqualValues(t, 2, calls.Load(), "transient error responses must not be served from cache")
 }
 
-// A stream that ends with `[DONE]` but no terminal choice reason is the
-// production shape of a hard-timeout truncation: it must reach the runtime
-// again on retry instead of replaying the truncated body for the cache TTL.
 func TestGatewayPooledChatDoesNotCacheIncompleteResponse(t *testing.T) {
 	tests := map[string]struct {
 		body        string

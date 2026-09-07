@@ -122,8 +122,6 @@ func (c *chatResponseCache) Get(key string, now time.Time) (cachedChatResponse, 
 		c.deleteLocked(key)
 		return cachedChatResponse{}, false
 	}
-	// Set is the only producer (the cache is process memory), so Get keeps the
-	// pre-existing error screen only and does not repeat the completion scan.
 	if responseBodyHasNonCacheableError(entry.Body) {
 		c.deleteLocked(key)
 		return cachedChatResponse{}, false
@@ -292,12 +290,10 @@ func cacheableResponse(statusCode int, body []byte) bool {
 	return false
 }
 
-// cacheableChatResponse adds semantic completion on top of cacheableResponse:
-// a 2xx chat body is replayable only when every observed choice ended with a
-// terminal reason, whether the client asked for a stream or received the
-// aggregated non-streaming shape. Deterministic error bodies (already vetted by
-// cacheableResponse) stay replayable: the streaming handler emits a host
-// rejection as a 200 SSE error event, so they never carry choices.
+// cacheableChatResponse layers semantic completion on cacheableResponse: a 2xx
+// chat body replays only when every observed choice carries a terminal reason.
+// Deterministic error bodies (a host rejection streams as a 200 SSE error
+// event) stay cacheable as before.
 func cacheableChatResponse(statusCode int, body []byte, stream bool) bool {
 	if !cacheableResponse(statusCode, body) {
 		return false
@@ -326,9 +322,7 @@ func responseBodyHasErrorPayload(body []byte) bool {
 	return ok
 }
 
-// completeStreamingChatResponse requires `[DONE]` after every observed choice
-// carried a terminal reason. A `[DONE]` written before that (or with no choice
-// events at all) is framing, not completion.
+// A `[DONE]` before every observed choice is terminal is framing, not completion.
 func completeStreamingChatResponse(body []byte) bool {
 	seen := make(map[string]struct{})
 	finished := make(map[string]struct{})
@@ -346,9 +340,6 @@ func completeStreamingChatResponse(body []byte) bool {
 	return false
 }
 
-// completeChatChoices checks a single aggregated chat.completion payload: the
-// non-streaming path folds a truncated stream into a normal-looking object
-// whose choices simply never got a terminal reason.
 func completeChatChoices(payload []byte) bool {
 	seen := make(map[string]struct{})
 	finished := make(map[string]struct{})
@@ -356,10 +347,7 @@ func completeChatChoices(payload []byte) bool {
 	return len(seen) > 0 && len(finished) == len(seen)
 }
 
-// trackChoiceCompletion records each choice in payload by index and marks it
-// finished when finish_reason or stop_reason carries a non-null value. Fields
-// are decoded as raw JSON so a host that types index or the reasons unusually
-// still has its choices tracked instead of dropping the whole event.
+// Fields are raw JSON so an oddly typed index or reason does not drop the event.
 func trackChoiceCompletion(payload []byte, seen, finished map[string]struct{}) {
 	if !bytes.Contains(payload, []byte(`"choices"`)) {
 		return
