@@ -1,6 +1,9 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-ARG VLLM_BASE_IMAGE=ghcr.io/gonka-ai/vllm:v0.25.1-poc-v4-cu13-hopper-blackwell@sha256:82877b425fd8f3c156446452665ef59f371d26d527cc4b65ea592d30500b86da
+# vLLM 0.28 residual for GLM-5.3-Flash: gonka-ai/vllm release/v0.28.0-glm53 + gonka-poc v0.1.4,
+# built with docker/Dockerfile.gonka-poc there. Tag is provisional; pin the published
+# digest (@sha256:...) before merge, as for 0.25.1.
+ARG VLLM_BASE_IMAGE=ghcr.io/gonka-ai/vllm:v0.28.0-glm53-poc-cu13-hopper-blackwell
 ARG MLNODE_RELEASE_VERSION=unknown
 FROM ${VLLM_BASE_IMAGE} AS base
 
@@ -13,7 +16,10 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
     checkinstall \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --upgrade "setuptools<81" wheel pip \
+    # --ignore-installed: the 0.28 base installs its packages with uv, which leaves no
+    # RECORD for pip to uninstall against; a plain --upgrade fails with
+    # uninstall-no-record-file. No-op on pip-installed bases.
+    && pip install --upgrade --ignore-installed "setuptools<81" wheel pip \
     && curl -fLO https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1u/openssl-1.1.1u.tar.gz \
     && tar -xzf openssl-1.1.1u.tar.gz \
     && cd openssl-1.1.1u \
@@ -32,7 +38,7 @@ RUN ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \
     && ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \
         /usr/local/lib/libnvrtc.so \
     && ldconfig \
-    && python3 -c "import vllm; assert vllm.__version__.startswith('0.25.1')" \
+    && python3 -c "import vllm; assert vllm.__version__.startswith('0.28.0')" \
     && python3 -c "from gonka_poc.worker import PoCWorkerExtension; from vllm.v1.worker.gpu.sample.replay import ReplayState"
 
 ################################################################################
