@@ -43,13 +43,8 @@ Public proxy (/devshard/...)
 
 
 
-These steps describe the **HA overlay**. A single-versiond installation remains
-supported without the inner router fleet. Existing edge-api nginx routing is unchanged.
-Use the release image references in `config.env` (`VERSIOND_IMAGE`,
-`VERSIOND_ROUTER_IMAGE`, `PROXY_ROUTER_IMAGE`, `PROXY_POLICY_IMAGE`); use the
-actual approved protocol name wherever the examples say `v5`.
-For an existing installation, follow the [release update instructions][v5-release]
-before using the day-to-day operations in section 2.5.
+This guide describes installing devshard in HA mode. To update an existing
+installation, first follow the [release update instructions][v5-release].
 
 ## Step 1 - Install Postgres (preferably HA itself)
 
@@ -171,6 +166,10 @@ source ./config.env
 ```
 
 Add to `config.env` (password is required; DB/user have compose defaults):
+
+Set `VERSIOND_IMAGE`, `VERSIOND_ROUTER_IMAGE`, `PROXY_ROUTER_IMAGE` and
+`PROXY_POLICY_IMAGE` to the release image references. Replace `v5` in the
+examples with the actual approved protocol name.
 
 ```bash
 export DEVSHARD_POSTGRES_DB=devshardd
