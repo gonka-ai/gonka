@@ -1537,6 +1537,54 @@ func TestGatewayPooledChatDoesNotCacheTransientErrorResponse(t *testing.T) {
 	require.EqualValues(t, 2, calls.Load(), "transient error responses must not be served from cache")
 }
 
+// A stream that ends with `[DONE]` but no terminal choice reason is the
+// production shape of a hard-timeout truncation: it must reach the runtime
+// again on retry instead of replaying the truncated body for the cache TTL.
+func TestGatewayPooledChatDoesNotCacheIncompleteResponse(t *testing.T) {
+	tests := map[string]struct {
+		body        string
+		contentType string
+		response    string
+	}{
+		"streaming": {
+			body:        `{"model":"Qwen/Test","stream":true,"messages":[{"role":"user","content":"hello"}]}`,
+			contentType: "text/event-stream",
+			response: `data: {"id":"chatcmpl-partial","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"reasoning":"still working"},"finish_reason":null}]}` + "\n\n" +
+				"data: [DONE]\n\n",
+		},
+		"non-streaming": {
+			body:        `{"model":"Qwen/Test","messages":[{"role":"user","content":"hello"}]}`,
+			contentType: "application/json",
+			response:    `{"id":"chatcmpl-partial","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"partial"},"finish_reason":null}]}`,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			var calls atomic.Int32
+			rt := &devshardRuntime{
+				id:    "12",
+				model: "Qwen/Test",
+				handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls.Add(1)
+					w.Header().Set("Content-Type", tt.contentType)
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(tt.response))
+				}),
+			}
+			g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+			g.settings.ModelLimits = []GatewayModelLimitSettings{{ModelID: "Qwen/Test", AccessMode: string(gatewayAccessModeOpen)}}
+
+			for range 2 {
+				req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tt.body))
+				rec := httptest.NewRecorder()
+				g.handlePooledChat(rec, req)
+				require.Equal(t, http.StatusOK, rec.Code)
+			}
+			require.EqualValues(t, 2, calls.Load(), "incomplete responses must not be served from cache")
+		})
+	}
+}
+
 func TestGatewayPooledChatCachesOpenAIStyleBadRequestWithFreshRequestID(t *testing.T) {
 	var calls atomic.Int32
 	rt := &devshardRuntime{

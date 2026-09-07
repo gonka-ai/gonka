@@ -122,7 +122,9 @@ func (c *chatResponseCache) Get(key string, now time.Time) (cachedChatResponse, 
 		c.deleteLocked(key)
 		return cachedChatResponse{}, false
 	}
-	if !cacheableChatResponse(entry.StatusCode, entry.Body, entry.Stream) {
+	// Set is the only producer (the cache is process memory), so Get keeps the
+	// pre-existing error screen only and does not repeat the completion scan.
+	if responseBodyHasNonCacheableError(entry.Body) {
 		c.deleteLocked(key)
 		return cachedChatResponse{}, false
 	}
@@ -293,7 +295,9 @@ func cacheableResponse(statusCode int, body []byte) bool {
 // cacheableChatResponse adds semantic completion on top of cacheableResponse:
 // a 2xx chat body is replayable only when every observed choice ended with a
 // terminal reason, whether the client asked for a stream or received the
-// aggregated non-streaming shape.
+// aggregated non-streaming shape. Deterministic error bodies (already vetted by
+// cacheableResponse) stay replayable: the streaming handler emits a host
+// rejection as a 200 SSE error event, so they never carry choices.
 func cacheableChatResponse(statusCode int, body []byte, stream bool) bool {
 	if !cacheableResponse(statusCode, body) {
 		return false
@@ -305,9 +309,21 @@ func cacheableChatResponse(statusCode int, body []byte, stream bool) bool {
 		return true
 	}
 	if stream {
-		return completeStreamingChatResponse(body)
+		if completeStreamingChatResponse(body) {
+			return true
+		}
+	} else if completeChatChoices(bytes.TrimSpace(body)) {
+		return true
 	}
-	return completeChatChoices(bytes.TrimSpace(body))
+	return responseBodyHasErrorPayload(body)
+}
+
+func responseBodyHasErrorPayload(body []byte) bool {
+	if _, ok := sseChunkErrorDetails(body); ok {
+		return true
+	}
+	_, ok := jsonErrorPayloadDetails(body)
+	return ok
 }
 
 // completeStreamingChatResponse requires `[DONE]` after every observed choice

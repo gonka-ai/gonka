@@ -55,10 +55,11 @@ func TestGatewayChatCacheCaptureRejectsIncompleteNonStreamingResponse(t *testing
 
 func TestGatewayChatCacheCaptureAllowsCompleteStreamingResponse(t *testing.T) {
 	tests := map[string]string{
-		"finish_reason":      `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + "data: [DONE]\n\n",
-		"stop_reason only":   `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null,"stop_reason":128009}]}` + "\n\n" + "data: [DONE]\n\n",
-		"string index":       `data: {"choices":[{"index":"0","delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + "data: [DONE]\n\n",
-		"usage chunk before": `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + `data: {"choices":[],"usage":{"completion_tokens":1}}` + "\n\n" + "data: [DONE]\n\n",
+		"finish_reason":       `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + "data: [DONE]\n\n",
+		"stop_reason only":    `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null,"stop_reason":128009}]}` + "\n\n" + "data: [DONE]\n\n",
+		"string index":        `data: {"choices":[{"index":"0","delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + "data: [DONE]\n\n",
+		"usage chunk before":  `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + `data: {"choices":[],"usage":{"completion_tokens":1}}` + "\n\n" + "data: [DONE]\n\n",
+		"deterministic error": `data: {"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}` + "\n\n" + "data: [DONE]\n\n",
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -262,10 +263,11 @@ func TestChatResponseCacheDropsPreviouslyCachedNonCacheableErrors(t *testing.T) 
 	require.Empty(t, entry.Body)
 }
 
-func TestChatResponseCacheGetDropsPreviouslyCachedIncompleteStream(t *testing.T) {
+func TestChatResponseCacheSetRejectsIncompleteStream(t *testing.T) {
 	cache := newChatResponseCache(time.Minute, 0)
 	now := time.Now()
-	cache.entries["incomplete"] = cachedChatResponse{
+
+	cache.Set("incomplete", cachedChatResponse{
 		EscrowID:   "escrow-1",
 		Stream:     true,
 		StatusCode: http.StatusOK,
@@ -273,11 +275,9 @@ func TestChatResponseCacheGetDropsPreviouslyCachedIncompleteStream(t *testing.T)
 			`data: {"choices":[{"index":0,"delta":{"reasoning":"still working"},"finish_reason":null}]}` + "\n\n" +
 				"data: [DONE]\n\n",
 		),
-		ExpiresAt: now.Add(time.Minute),
-	}
+	}, now)
 
-	entry, ok := cache.Get("incomplete", now)
-
-	require.False(t, ok)
-	require.Empty(t, entry.Body)
+	count, totalBytes := cache.Stats()
+	require.Equal(t, 0, count)
+	require.Equal(t, int64(0), totalBytes)
 }
