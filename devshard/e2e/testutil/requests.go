@@ -152,12 +152,36 @@ func LatestSessionNonce(t *testing.T, client *http.Client, clientURL string) uin
 	return NumericField(t, session, "latest_nonce")
 }
 
+// The gateway refuses finalize with 409 while the escrow still has work in
+// flight, including the background race cleanup that outlives the winning
+// completion response, so a finalize issued right after a completion can be
+// refused for a moment. Retry that case briefly instead of failing the test.
+const (
+	finalizeConflictRetryFor      = 2 * time.Second
+	finalizeConflictRetryInterval = 100 * time.Millisecond
+)
+
 func FinalizeSession(t *testing.T, client *http.Client, clientURL string) map[string]any {
 	t.Helper()
 	DebugLogf(t, "finalizing devshard session")
-	settlement := PostJSON(t, client, clientURL+"/v1/finalize", map[string]any{})
+	settlement := postFinalizeRetryingConflict(t, client, clientURL+"/v1/finalize")
 	settlementJSON, err := json.MarshalIndent(settlement, "", "  ")
 	require.NoError(t, err)
 	t.Logf("SettlementContract:\n%s", settlementJSON)
 	return settlement
+}
+
+func postFinalizeRetryingConflict(t *testing.T, client *http.Client, url string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(finalizeConflictRetryFor)
+	for {
+		resp := PostJSONRaw(t, client, url, map[string]any{}, AdminAPIKey)
+		if resp.StatusCode != http.StatusConflict || !time.Now().Before(deadline) {
+			require.Less(t, resp.StatusCode, 300, "POST %s returned %d: %s", url, resp.StatusCode, resp.Body)
+			require.NotNil(t, resp.JSON, "response body should be JSON: %s", resp.Body)
+			return resp.JSON
+		}
+		DebugLogf(t, "finalize refused with 409, retrying: %s", resp.Body)
+		time.Sleep(finalizeConflictRetryInterval)
+	}
 }
