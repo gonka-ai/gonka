@@ -11,6 +11,7 @@ import (
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -181,6 +182,31 @@ func TestMsgExecAuthorizationDecorator_SkipsWhenNotFeeBypassed(t *testing.T) {
 	nextCalled, err := runMsgExecAuthzAnte(t, decorator, ctx, wrapExec(t, testutil.Executor, seedMsg(testutil.Creator)))
 	require.NoError(t, err)
 	require.True(t, nextCalled)
+}
+
+func TestMsgExecAuthorizationDecorator_InnerDealerPartValidateBasicFails(t *testing.T) {
+	_, ctx, ak, decorator := setupMsgExecAuthzAnte(t)
+
+	granter := sdk.MustAccAddressFromBech32(testutil.Creator)
+	grantee := sdk.MustAccAddressFromBech32(testutil.Executor)
+	commitment := make([]byte, 96)
+	commitment[0] = 0x01
+	short := make([]byte, 98)
+	short[0] = 0x04
+	inner := &blstypes.MsgSubmitDealerPart{
+		Creator:     testutil.Creator,
+		EpochId:     1,
+		Commitments: [][]byte{commitment},
+		EncryptedSharesForParticipants: []blstypes.EncryptedSharesForParticipant{{
+			EncryptedShares: [][]byte{short},
+		}},
+	}
+	ak.save(grantee, granter, authz.NewGenericAuthorization(sdk.MsgTypeURL(inner)))
+
+	nextCalled, err := runMsgExecAuthzAnte(t, decorator, ctx, wrapExec(t, testutil.Executor, inner))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "below ECIES minimum")
+	require.False(t, nextCalled)
 }
 
 func TestMsgExecAuthorizationDecorator_DirectMessagePassesThrough(t *testing.T) {
