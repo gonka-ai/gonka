@@ -1,4 +1,4 @@
-name: Go Build and Test
+name: Build and Test
 
 on:
   pull_request:
@@ -9,6 +9,39 @@ on:
       - main
 
 jobs:
+  p0-probe-fixture:
+    runs-on: ubuntu-22.04
+    name: Reproduce P0 Wasm fixture
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
+        with:
+          toolchain: 1.86.0
+          components: rustfmt
+
+      - name: Check Rust source
+        working-directory: ./inference-chain/contracts/p0-probe
+        run: |
+          cargo fmt --check
+          cargo test --locked
+
+      - name: Rebuild and check fixture
+        working-directory: ./inference-chain/contracts/p0-probe
+        run: |
+          make build CONTAINER_ENGINE=docker
+          make check CONTAINER_ENGINE=docker
+
+      - name: Require canonical rebuild to match committed fixture
+        run: |
+          git diff --exit-code -- inference-chain/contracts/p0-probe
+          test -z "$(git status --porcelain=v1 --untracked-files=all -- inference-chain/contracts/p0-probe)"
+
   check-storage-ddl:
     # Pinned runner because the ripgrep apt version below only exists in the
     # 22.04 (jammy) package archive. Bumping the runner requires bumping the

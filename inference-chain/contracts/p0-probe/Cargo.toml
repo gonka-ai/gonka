@@ -1,0 +1,30 @@
+[package]
+name = "p0-probe"
+version = "0.1.0"
+authors = ["Inference Team"]
+description = "Test-only CosmWasm fixture for Gonka gRPC allowlist regression tests"
+edition = "2021"
+rust-version = "1.86"
+resolver = "2"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+codegen-units = 1
+panic = "abort"
+incremental = false
+overflow-checks = true
+
+[dependencies]
+cosmwasm-schema = "3.0.1"
+cosmwasm-std = { version = "3.0.1", features = ["cosmwasm_2_0"] }
+prost = "0.12"
+schemars = "0.8.12"
+serde = { version = "1.0.184", default-features = false, features = ["derive"] }
