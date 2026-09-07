@@ -1417,7 +1417,7 @@ func TestGatewayPooledChatCachesNonStreamingResponseWithFreshRequestID(t *testin
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":"chatcmpl-original","choices":[{"message":{"role":"assistant","content":"hello"}}]}`))
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-original","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}`))
 		}),
 	}
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
@@ -1591,7 +1591,7 @@ func TestGatewayChatCacheSharedAcrossDifferentEscrowRoutes(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":"chatcmpl-12","choices":[{"message":{"role":"assistant","content":"from escrow 12"}}]}`))
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-12","choices":[{"index":0,"message":{"role":"assistant","content":"from escrow 12"},"finish_reason":"stop"}]}`))
 		}),
 	}
 	rt44 := &devshardRuntime{
@@ -1601,7 +1601,7 @@ func TestGatewayChatCacheSharedAcrossDifferentEscrowRoutes(t *testing.T) {
 			calls44.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":"chatcmpl-44","choices":[{"message":{"role":"assistant","content":"from escrow 44"}}]}`))
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-44","choices":[{"index":0,"message":{"role":"assistant","content":"from escrow 44"},"finish_reason":"stop"}]}`))
 		}),
 	}
 	g := NewGateway([]*devshardRuntime{rt12, rt44}, NewGatewayLimiter(0, 0), "Qwen/Test")

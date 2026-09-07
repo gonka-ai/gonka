@@ -290,6 +290,10 @@ func cacheableResponse(statusCode int, body []byte) bool {
 	return false
 }
 
+// cacheableChatResponse adds semantic completion on top of cacheableResponse:
+// a 2xx chat body is replayable only when every observed choice ended with a
+// terminal reason, whether the client asked for a stream or received the
+// aggregated non-streaming shape.
 func cacheableChatResponse(statusCode int, body []byte, stream bool) bool {
 	if !cacheableResponse(statusCode, body) {
 		return false
@@ -297,12 +301,21 @@ func cacheableChatResponse(statusCode int, body []byte, stream bool) bool {
 	if statusCode == 0 {
 		statusCode = http.StatusOK
 	}
-	return !stream || statusCode < 200 || statusCode >= 300 || completeStreamingChatResponse(body)
+	if statusCode < 200 || statusCode >= 300 {
+		return true
+	}
+	if stream {
+		return completeStreamingChatResponse(body)
+	}
+	return completeChatChoices(bytes.TrimSpace(body))
 }
 
+// completeStreamingChatResponse requires `[DONE]` after every observed choice
+// carried a terminal reason. A `[DONE]` written before that (or with no choice
+// events at all) is framing, not completion.
 func completeStreamingChatResponse(body []byte) bool {
-	seen := make(map[int]struct{})
-	finished := make(map[int]struct{})
+	seen := make(map[string]struct{})
+	finished := make(map[string]struct{})
 	for _, line := range bytes.Split(body, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if !bytes.HasPrefix(line, []byte("data:")) {
@@ -310,36 +323,56 @@ func completeStreamingChatResponse(body []byte) bool {
 		}
 		payload := bytes.TrimSpace(line[len("data:"):])
 		if bytes.Equal(payload, []byte("[DONE]")) {
-			if len(seen) == 0 {
-				return false
-			}
-			for index := range seen {
-				if _, ok := finished[index]; !ok {
-					return false
-				}
-			}
-			return true
+			return len(seen) > 0 && len(finished) == len(seen)
 		}
-		if !bytes.Contains(payload, []byte(`"choices"`)) {
-			continue
-		}
-		var event struct {
-			Choices []struct {
-				Index        int    `json:"index"`
-				FinishReason string `json:"finish_reason"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal(payload, &event); err != nil {
-			continue
-		}
-		for _, choice := range event.Choices {
-			seen[choice.Index] = struct{}{}
-			if strings.TrimSpace(choice.FinishReason) != "" {
-				finished[choice.Index] = struct{}{}
-			}
-		}
+		trackChoiceCompletion(payload, seen, finished)
 	}
 	return false
+}
+
+// completeChatChoices checks a single aggregated chat.completion payload: the
+// non-streaming path folds a truncated stream into a normal-looking object
+// whose choices simply never got a terminal reason.
+func completeChatChoices(payload []byte) bool {
+	seen := make(map[string]struct{})
+	finished := make(map[string]struct{})
+	trackChoiceCompletion(payload, seen, finished)
+	return len(seen) > 0 && len(finished) == len(seen)
+}
+
+// trackChoiceCompletion records each choice in payload by index and marks it
+// finished when finish_reason or stop_reason carries a non-null value. Fields
+// are decoded as raw JSON so a host that types index or the reasons unusually
+// still has its choices tracked instead of dropping the whole event.
+func trackChoiceCompletion(payload []byte, seen, finished map[string]struct{}) {
+	if !bytes.Contains(payload, []byte(`"choices"`)) {
+		return
+	}
+	var event struct {
+		Choices []struct {
+			Index        json.RawMessage `json:"index"`
+			FinishReason json.RawMessage `json:"finish_reason"`
+			StopReason   json.RawMessage `json:"stop_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(payload, &event); err != nil {
+		return
+	}
+	for _, choice := range event.Choices {
+		index := string(bytes.TrimSpace(choice.Index))
+		if index == "" {
+			index = "0"
+		}
+		seen[index] = struct{}{}
+		if jsonValuePresent(choice.FinishReason) || jsonValuePresent(choice.StopReason) {
+			finished[index] = struct{}{}
+		}
+	}
+}
+
+func jsonValuePresent(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) && !bytes.Equal(trimmed, []byte(`""`))
 }
 
 func responseBodyHasNonCacheableError(body []byte) bool {

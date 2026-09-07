@@ -24,28 +24,55 @@ func TestGatewayChatCacheCaptureRejectsCanceledRequestError(t *testing.T) {
 func TestGatewayChatCacheCaptureAllowsSuccessfulResponse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	capture := &gatewayChatCacheCapture{ResponseWriter: rec}
-	writeJSONPayload(capture, http.StatusOK, []byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	writeJSONPayload(capture, http.StatusOK, []byte(`{"choices":[{"index":0,"message":{"content":"ok"},"finish_reason":"stop"}]}`))
 
 	entry, ok := capture.cacheEntry("escrow-1", false, "req-source", nil)
 
 	require.True(t, ok)
 	require.Equal(t, http.StatusOK, entry.StatusCode)
-	require.JSONEq(t, `{"choices":[{"message":{"content":"ok"}}]}`, string(entry.Body))
+	require.JSONEq(t, `{"choices":[{"index":0,"message":{"content":"ok"},"finish_reason":"stop"}]}`, string(entry.Body))
+}
+
+func TestGatewayChatCacheCaptureRejectsIncompleteNonStreamingResponse(t *testing.T) {
+	tests := map[string]string{
+		"aggregated truncation": `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"partial"},"finish_reason":null}]}`,
+		"no choices":            `{"id":"cmpl-1","object":"chat.completion","choices":[]}`,
+		"second choice open":    `{"choices":[{"index":0,"message":{"content":"a"},"finish_reason":"stop"},{"index":1,"message":{"content":"b"},"finish_reason":null}]}`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			capture := &gatewayChatCacheCapture{ResponseWriter: rec}
+			writeJSONPayload(capture, http.StatusOK, []byte(body))
+
+			entry, ok := capture.cacheEntry("escrow-1", false, "req-source", nil)
+
+			require.False(t, ok)
+			require.Empty(t, entry.Body)
+		})
+	}
 }
 
 func TestGatewayChatCacheCaptureAllowsCompleteStreamingResponse(t *testing.T) {
-	rec := httptest.NewRecorder()
-	capture := &gatewayChatCacheCapture{ResponseWriter: rec}
-	_, err := capture.Write([]byte(
-		`data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" +
-			"data: [DONE]\n\n",
-	))
-	require.NoError(t, err)
+	tests := map[string]string{
+		"finish_reason":      `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + "data: [DONE]\n\n",
+		"stop_reason only":   `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null,"stop_reason":128009}]}` + "\n\n" + "data: [DONE]\n\n",
+		"string index":       `data: {"choices":[{"index":"0","delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + "data: [DONE]\n\n",
+		"usage chunk before": `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + `data: {"choices":[],"usage":{"completion_tokens":1}}` + "\n\n" + "data: [DONE]\n\n",
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			capture := &gatewayChatCacheCapture{ResponseWriter: rec}
+			_, err := capture.Write([]byte(body))
+			require.NoError(t, err)
 
-	entry, ok := capture.cacheEntry("escrow-1", true, "req-source", nil)
+			entry, ok := capture.cacheEntry("escrow-1", true, "req-source", nil)
 
-	require.True(t, ok)
-	require.True(t, entry.Stream)
+			require.True(t, ok)
+			require.True(t, entry.Stream)
+		})
+	}
 }
 
 func TestGatewayChatCacheCaptureRejectsIncompleteStreamingResponse(t *testing.T) {
@@ -53,6 +80,8 @@ func TestGatewayChatCacheCaptureRejectsIncompleteStreamingResponse(t *testing.T)
 		"partial without done": `data: {"choices":[{"index":0,"delta":{"reasoning":"still working"},"finish_reason":null}]}` + "\n\n",
 		"synthetic done":       `data: {"choices":[{"index":0,"delta":{"reasoning":"still working"},"finish_reason":null}]}` + "\n\n" + "data: [DONE]\n\n",
 		"finish without done":  `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n",
+		"done only":            "data: [DONE]\n\n",
+		"second choice open":   `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"},{"index":1,"delta":{"content":"b"},"finish_reason":null}]}` + "\n\n" + "data: [DONE]\n\n",
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -133,7 +162,7 @@ func okBody(marker byte, size int) []byte {
 	for i := range filler {
 		filler[i] = 'a' + (marker+byte(i))%26
 	}
-	return []byte(`{"choices":[{"message":{"content":"` + string(filler) + `"}}]}`)
+	return []byte(`{"choices":[{"index":0,"message":{"content":"` + string(filler) + `"},"finish_reason":"stop"}]}`)
 }
 
 func cacheEntryForTest(marker byte, bodySize int) cachedChatResponse {
