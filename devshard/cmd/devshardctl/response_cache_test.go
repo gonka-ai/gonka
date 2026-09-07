@@ -33,6 +33,42 @@ func TestGatewayChatCacheCaptureAllowsSuccessfulResponse(t *testing.T) {
 	require.JSONEq(t, `{"choices":[{"message":{"content":"ok"}}]}`, string(entry.Body))
 }
 
+func TestGatewayChatCacheCaptureAllowsCompleteStreamingResponse(t *testing.T) {
+	rec := httptest.NewRecorder()
+	capture := &gatewayChatCacheCapture{ResponseWriter: rec}
+	_, err := capture.Write([]byte(
+		`data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" +
+			"data: [DONE]\n\n",
+	))
+	require.NoError(t, err)
+
+	entry, ok := capture.cacheEntry("escrow-1", true, "req-source", nil)
+
+	require.True(t, ok)
+	require.True(t, entry.Stream)
+}
+
+func TestGatewayChatCacheCaptureRejectsIncompleteStreamingResponse(t *testing.T) {
+	tests := map[string]string{
+		"partial without done": `data: {"choices":[{"index":0,"delta":{"reasoning":"still working"},"finish_reason":null}]}` + "\n\n",
+		"synthetic done":       `data: {"choices":[{"index":0,"delta":{"reasoning":"still working"},"finish_reason":null}]}` + "\n\n" + "data: [DONE]\n\n",
+		"finish without done":  `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n",
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			capture := &gatewayChatCacheCapture{ResponseWriter: rec}
+			_, err := capture.Write([]byte(body))
+			require.NoError(t, err)
+
+			entry, ok := capture.cacheEntry("escrow-1", true, "req-source", nil)
+
+			require.False(t, ok)
+			require.Empty(t, entry.Body)
+		})
+	}
+}
+
 func TestGatewayChatCacheCaptureAllowsDeterministicOpenAIStyleBadRequest(t *testing.T) {
 	rec := httptest.NewRecorder()
 	capture := &gatewayChatCacheCapture{ResponseWriter: rec}
@@ -192,6 +228,26 @@ func TestChatResponseCacheDropsPreviouslyCachedNonCacheableErrors(t *testing.T) 
 	}
 
 	entry, ok := cache.Get("bad", time.Now())
+
+	require.False(t, ok)
+	require.Empty(t, entry.Body)
+}
+
+func TestChatResponseCacheGetDropsPreviouslyCachedIncompleteStream(t *testing.T) {
+	cache := newChatResponseCache(time.Minute, 0)
+	now := time.Now()
+	cache.entries["incomplete"] = cachedChatResponse{
+		EscrowID:   "escrow-1",
+		Stream:     true,
+		StatusCode: http.StatusOK,
+		Body: []byte(
+			`data: {"choices":[{"index":0,"delta":{"reasoning":"still working"},"finish_reason":null}]}` + "\n\n" +
+				"data: [DONE]\n\n",
+		),
+		ExpiresAt: now.Add(time.Minute),
+	}
+
+	entry, ok := cache.Get("incomplete", now)
 
 	require.False(t, ok)
 	require.Empty(t, entry.Body)

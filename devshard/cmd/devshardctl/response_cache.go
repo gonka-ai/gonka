@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -121,7 +122,7 @@ func (c *chatResponseCache) Get(key string, now time.Time) (cachedChatResponse, 
 		c.deleteLocked(key)
 		return cachedChatResponse{}, false
 	}
-	if responseBodyHasNonCacheableError(entry.Body) {
+	if !cacheableChatResponse(entry.StatusCode, entry.Body, entry.Stream) {
 		c.deleteLocked(key)
 		return cachedChatResponse{}, false
 	}
@@ -133,7 +134,7 @@ func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.T
 	if c == nil || key == "" || len(entry.Body) == 0 || strings.TrimSpace(entry.EscrowID) == "" {
 		return
 	}
-	if !cacheableResponse(entry.StatusCode, entry.Body) {
+	if !cacheableChatResponse(entry.StatusCode, entry.Body, entry.Stream) {
 		return
 	}
 	if entry.ExpiresAt.IsZero() {
@@ -255,7 +256,7 @@ func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourc
 	}
 	statusCode := w.statusCode()
 	body := w.body.Bytes()
-	if !cacheableResponse(statusCode, body) {
+	if !cacheableChatResponse(statusCode, body, stream) {
 		return cachedChatResponse{}, false
 	}
 	return cachedChatResponse{
@@ -285,6 +286,58 @@ func cacheableResponse(statusCode int, body []byte) bool {
 	if statusCode == http.StatusBadRequest {
 		details, ok := jsonErrorPayloadDetails(body)
 		return ok && isCacheableOpenAIErrorDetails(details)
+	}
+	return false
+}
+
+func cacheableChatResponse(statusCode int, body []byte, stream bool) bool {
+	if !cacheableResponse(statusCode, body) {
+		return false
+	}
+	if statusCode == 0 {
+		statusCode = http.StatusOK
+	}
+	return !stream || statusCode < 200 || statusCode >= 300 || completeStreamingChatResponse(body)
+}
+
+func completeStreamingChatResponse(body []byte) bool {
+	seen := make(map[int]struct{})
+	finished := make(map[int]struct{})
+	for _, line := range bytes.Split(body, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(line[len("data:"):])
+		if bytes.Equal(payload, []byte("[DONE]")) {
+			if len(seen) == 0 {
+				return false
+			}
+			for index := range seen {
+				if _, ok := finished[index]; !ok {
+					return false
+				}
+			}
+			return true
+		}
+		if !bytes.Contains(payload, []byte(`"choices"`)) {
+			continue
+		}
+		var event struct {
+			Choices []struct {
+				Index        int    `json:"index"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(payload, &event); err != nil {
+			continue
+		}
+		for _, choice := range event.Choices {
+			seen[choice.Index] = struct{}{}
+			if strings.TrimSpace(choice.FinishReason) != "" {
+				finished[choice.Index] = struct{}{}
+			}
+		}
 	}
 	return false
 }
