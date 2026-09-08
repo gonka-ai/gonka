@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
@@ -64,6 +65,24 @@ func (g *ObsRepairGate) Ready() bool {
 		return r.Ready()
 	}
 	return true
+}
+
+// FatalErrors forwards failures that require replacing the owning process.
+func (g *ObsRepairGate) FatalErrors() <-chan error {
+	if reporter, ok := g.Storage.(interface{ FatalErrors() <-chan error }); ok {
+		return reporter.FatalErrors()
+	}
+	return nil
+}
+
+// StorageProof preserves access to the live PostgreSQL backend through the
+// observation-repair wrapper.
+func (g *ObsRepairGate) StorageProof(ctx context.Context, operation ProofOperation, nonce string) (StorageProof, error) {
+	provider, ok := g.Storage.(ProofProvider)
+	if !ok {
+		return StorageProof{}, errPostgresProofUnavailable
+	}
+	return provider.StorageProof(ctx, operation, nonce)
 }
 
 // PruneCutoff forwards the managed-storage retention horizon so recovery can

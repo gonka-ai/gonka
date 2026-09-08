@@ -15,6 +15,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	devshardpkg "devshard"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -69,10 +70,23 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 }
 
 func TestHTTPClient_CatalogHealthzURL(t *testing.T) {
-	cfg := DefaultClientConfig()
-	cfg.RoutePrefix = "/devshard/v2"
-	c := NewHTTPClient("http://router:8080", "1", nil, cfg)
-	require.Equal(t, "http://router:8080/v2/healthz", c.CatalogHealthzURL())
+	for _, tc := range []struct {
+		name, base, prefix, want string
+	}{
+		{"public host", "https://host.example", "/devshard/v2", "https://host.example/devshard/v2/healthz"},
+		{"direct router", "http://router:8080", "/devshard/v2", "http://router:8080/devshard/v2/healthz"},
+		{"normalized", " https://host.example/ ", " /devshard/v2/ ", "https://host.example/devshard/v2/healthz"},
+		{"default version", "https://host.example", "", "https://host.example" + devshardpkg.DefaultRoutePrefix() + "/healthz"},
+		{"empty base", " ", "/devshard/v2", ""},
+		{"invalid prefix", "https://host.example", "/other/v2", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultClientConfig()
+			cfg.RoutePrefix = tc.prefix
+			c := NewHTTPClient(tc.base, "1", nil, cfg)
+			require.Equal(t, tc.want, c.CatalogHealthzURL())
+		})
+	}
 	require.Empty(t, (*HTTPClient)(nil).CatalogHealthzURL())
 }
 
