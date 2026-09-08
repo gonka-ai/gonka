@@ -6,8 +6,6 @@
 
 **Release:** `devshard-0.2.15-v5`. Core checked at `39240311fb` with gateway and storage fixes from [PR #1730](https://github.com/gonka-ai/gonka/pull/1730) through `bf4de2d21`; versiond fleet and updater checked in the integration from [PR #1611](https://github.com/gonka-ai/gonka/pull/1611) at `9a4ec48886` on 2026-09-08.
 
-**Sandbox validation:** fresh startup, gateway inference, updater preflight, session failover and recovery after a PostgreSQL fence loss passed with these fixes. Use component builds containing the fixes; this does not verify published release images. See the [repeat run report](devshard-v5-sandbox-retest-2026-09-08.md), including a recovered first-start payload schema race and the test scope.
-
 ---
 
 ## Why this matters
