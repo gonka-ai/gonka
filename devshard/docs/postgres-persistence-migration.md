@@ -14,6 +14,12 @@ The supported upgrade recreates `devshard-postgres` in place. Do not run
 `docker compose down` before the first new-layout start: Compose must carry the
 existing anonymous volume into the replacement container.
 
+The bundled database uses the PostgreSQL Alpine/musl image family. Its
+entrypoint rejects a glibc-based replacement before touching `PGDATA`, even
+when the PostgreSQL major version matches. Moving the cluster to another libc
+family requires a dedicated PostgreSQL migration that rebuilds
+collation-dependent database objects.
+
 ```bash
 docker compose <the same ordered -f options> \
   up -d --force-recreate devshard-postgres

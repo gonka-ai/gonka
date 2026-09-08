@@ -12,7 +12,6 @@ import (
 
 func testAck() *types.MsgHeightAck {
 	return &types.MsgHeightAck{
-		TurnSeq:           3,
 		RefNonce:          10,
 		SlotId:            1,
 		ObservedHeight:    42,

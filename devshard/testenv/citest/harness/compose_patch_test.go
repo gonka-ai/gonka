@@ -42,20 +42,20 @@ func TestPatchComposeInsertEnvAfterAll(t *testing.T) {
 services:
   versiond-0:
     environment:
-      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      VERSIOND_ORACLE_URL: http://mock-dapi:12345/versions
   versiond-1:
     environment:
-      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      VERSIOND_ORACLE_URL: http://mock-dapi:12345/versions
   devshardctl:
     environment:
-      DEVSHARD_PUBLIC_API: http://mock-dapi:9100
+      DEVSHARD_PUBLIC_API: http://mock-dapi:12345
 `), 0o644))
 
 	EnableHeightSyncCompose(t, path)
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	text := string(body)
-	require.Equal(t, 3, strings.Count(text, "DEVSHARD_CHAINORACLE_URL: http://mock-dapi:9100"))
+	require.Equal(t, 3, strings.Count(text, "DEVSHARD_CHAINORACLE_URL: http://mock-dapi:12345"))
 	require.Equal(t, 3, strings.Count(text, "DEVSHARD_LOG_LEVEL: debug"))
 }
 
@@ -173,4 +173,32 @@ volumes:
 	body, err = os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, 2, strings.Count(string(body), "VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions"))
+}
+
+func TestPatchComposeServiceInsertEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  versiond-0:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      KEY_NAME: versiond-0
+  versiond-2:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      KEY_NAME: versiond-2
+`), 0o644))
+
+	PatchComposeServiceInsertEnv(t, path, "versiond-2", "VERSIOND_ORACLE_URL",
+		`DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA: "-20"`,
+		`DEVSHARD_TESTENV_ORACLE_FABRICATE_HASH: "true"`,
+	)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	text := string(body)
+	require.Equal(t, 1, strings.Count(text, `DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA: "-20"`))
+	require.Contains(t, text, `DEVSHARD_TESTENV_ORACLE_FABRICATE_HASH: "true"`)
+	require.NotContains(t, text[strings.Index(text, "versiond-0:"):strings.Index(text, "versiond-2:")],
+		"DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA")
 }

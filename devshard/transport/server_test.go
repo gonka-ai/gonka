@@ -189,7 +189,7 @@ func TestServer_Inference_ValidAuth(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}
@@ -271,7 +271,7 @@ func TestServer_GetDiffs(t *testing.T) {
 	ir := InferenceRequest{
 		Diffs:   []DiffJSON{dj},
 		Nonce:   1,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	}
 	body, _ := json.Marshal(ir)
 	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/chat/completions", body)
@@ -296,7 +296,7 @@ func TestServer_GetMempool(t *testing.T) {
 	ir := InferenceRequest{
 		Diffs:   []DiffJSON{dj},
 		Nonce:   1,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	}
 	body, _ := json.Marshal(ir)
 	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/chat/completions", body)
@@ -372,7 +372,7 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// inference 1 % 1 = 0, executor = slot 0.
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
 	}}}
@@ -461,7 +461,7 @@ func TestServer_StreamingInference(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 		Stream: true,
@@ -602,7 +602,7 @@ func TestServer_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 		Diffs: []DiffJSON{dj},
@@ -691,7 +691,7 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 	ir := InferenceRequest{
 		Diffs:   []DiffJSON{dj},
 		Nonce:   1,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	}
 	body, _ := json.Marshal(ir)
 

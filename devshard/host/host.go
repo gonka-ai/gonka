@@ -111,7 +111,21 @@ const (
 	// carries no ExecutionTimeout (zero is a legal value that
 	// NormalizeSessionConfig deliberately preserves).
 	defaultExecutionBudget = 32 * time.Minute
+
+	finishObsMinRetention = 2 * time.Hour
 )
+
+type inferenceFinishObs struct {
+	nonce uint64
+	at    time.Time
+}
+
+type disappearedFinishObs struct {
+	finishNonce  uint64
+	finishAt     int64
+	currentNonce uint64
+	currentAt    int64
+}
 
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
@@ -151,6 +165,8 @@ type Host struct {
 	validationStartOnce   sync.Once
 	validationCloseOnce   sync.Once
 	validationClosed      bool
+	validationCtx         context.Context
+	validationCancel      context.CancelFunc
 
 	maxNonce devshard.MaxNonceProvider // nil = do not enforce
 
@@ -169,6 +185,11 @@ type Host struct {
 	repairProbe     heightsync.RepairProbeFn
 	repairInFlight  atomic.Bool
 	closeReady      *heightsync.CloseReady
+
+	// finishObs is host-local observability: Finish nonce and wall clock when
+	// this host applied MsgFinishInference. Used when validation later finds
+	// the live record gone (sealed/drained). Not part of consensus.
+	finishObs map[uint64]inferenceFinishObs
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -249,6 +270,7 @@ func NewHost(
 		validating:         make(map[uint64]struct{}),
 		validationCooldown: make(map[uint64]time.Time),
 		completedResponses: make(map[uint64][]byte),
+		finishObs:          make(map[uint64]inferenceFinishObs),
 		ownSeed:            ownSeed,
 		peerSeen:           heightsync.NewPeerSeen(uint32(len(group)), 0),
 		heartbeatCfg:       heightsync.DefaultHeartbeatConfig(),
@@ -275,6 +297,9 @@ func (h *Host) Start() {
 		if h.validationClosed {
 			return
 		}
+		ctx, cancel := context.WithCancel(context.Background())
+		h.validationCtx = ctx
+		h.validationCancel = cancel
 		q := make(chan validateJob, defaultValidationQueueSize)
 		h.validationQueue = q
 		h.startValidationWorkers(q, defaultValidationWorkers)
@@ -288,6 +313,10 @@ func (h *Host) Close() {
 		h.validationLifecycleMu.Lock()
 		defer h.validationLifecycleMu.Unlock()
 		h.validationClosed = true
+		if h.validationCancel != nil {
+			h.validationCancel()
+			h.validationCancel = nil
+		}
 		if h.validationQueue != nil {
 			close(h.validationQueue)
 			h.validationQueue = nil
@@ -715,6 +744,7 @@ func (h *Host) applyAndPersist(ctx context.Context, diff types.Diff) error {
 	for _, tx := range diff.Txs {
 		if fi := tx.GetFinishInference(); fi != nil {
 			delete(h.completedResponses, fi.InferenceId)
+			h.recordFinishObsLocked(fi.InferenceId, diff.Nonce, time.Now())
 		}
 		if ti := tx.GetTimeoutInference(); ti != nil {
 			delete(h.completedResponses, ti.InferenceId)
@@ -762,17 +792,18 @@ func (h *Host) maybeSaveSnapshotLocked(nonce uint64, shouldSnapshot, settledNow 
 	state := h.sm.ExportState()
 	committedEntries := h.sm.ExportCommittedEntries()
 	sealedNonces := h.sm.ExportSealedNonces()
+	heightSyncFloor := h.sm.ExportHeightSyncFloor()
 
 	go func() {
 		if !settledNow {
 			defer h.snapshotInFlight.Store(false)
 		}
-		writeSnapshot(store, escrowID, nonce, state, committedEntries, sealedNonces)
+		writeSnapshot(store, escrowID, nonce, state, committedEntries, sealedNonces, heightSyncFloor)
 	}()
 }
 
-func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64) {
-	data, err := MarshalStateSnapshotWithCommitted(state, committedEntries, sealedNonces)
+func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *types.FloorIndexProto) {
+	data, err := MarshalStateSnapshotWithCommitted(state, committedEntries, sealedNonces, heightSyncFloor)
 	if err != nil {
 		logging.Warn("failed to marshal host snapshot", "escrow_id", escrowID, "nonce", nonce, "error", err)
 		return
@@ -816,6 +847,52 @@ func (h *Host) collectStaleFinishesLocked() []*types.DevshardTx {
 	}
 	grace := finishGossipGraceRotations * uint64(len(h.group))
 	return h.mempool.StaleFinishes(h.sm.LatestNonce(), grace)
+}
+
+func (h *Host) recordFinishObsLocked(inferenceID, finishNonce uint64, at time.Time) {
+	if h.finishObs == nil {
+		h.finishObs = make(map[uint64]inferenceFinishObs)
+	}
+	h.finishObs[inferenceID] = inferenceFinishObs{nonce: finishNonce, at: at}
+	h.pruneFinishObsLocked(at)
+}
+
+func (h *Host) pruneFinishObsLocked(now time.Time) {
+	retention := h.finishObsRetention()
+	for id, obs := range h.finishObs {
+		if now.Sub(obs.at) > retention {
+			delete(h.finishObs, id)
+		}
+	}
+}
+
+func (h *Host) finishObsRetention() time.Duration {
+	cfg := h.sm.Config()
+	timeout := cfg.ExecutionTimeout
+	if timeout < 0 {
+		timeout = 0
+	}
+	sec := int64(cfg.InferenceSealGraceSeconds) + timeout
+	d := time.Duration(sec*2) * time.Second
+	if d < finishObsMinRetention {
+		return finishObsMinRetention
+	}
+	return d
+}
+
+func (h *Host) disappearedFinishObs(inferenceID uint64) disappearedFinishObs {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := disappearedFinishObs{
+		currentNonce: h.sm.LatestNonce(),
+		currentAt:    time.Now().Unix(),
+	}
+	if obs, ok := h.finishObs[inferenceID]; ok {
+		out.finishNonce = obs.nonce
+		out.finishAt = obs.at.Unix()
+		delete(h.finishObs, inferenceID)
+	}
+	return out
 }
 
 // signIfAccepted computes state root, checks acceptance, signs if allowed,
@@ -1200,9 +1277,37 @@ func (h *Host) startValidationWorkers(q <-chan validateJob, count int) {
 	for i := 0; i < count; i++ {
 		go func() {
 			for job := range q {
-				h.validateAsync(context.Background(), job)
+				h.validateAsync(h.validationJobContext(), job)
 			}
 		}()
+	}
+}
+
+func (h *Host) validationJobContext() context.Context {
+	h.validationLifecycleMu.RLock()
+	ctx := h.validationCtx
+	h.validationLifecycleMu.RUnlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func (h *Host) validationIsClosed() bool {
+	h.validationLifecycleMu.RLock()
+	defer h.validationLifecycleMu.RUnlock()
+	return h.validationClosed
+}
+
+// EnqueueDueValidations offers collectValidationJobs work to the validation
+// queue. GET /mempool catch-up uses this so an HA survivor can re-acquire
+// after the owner Released on graceful stop, without waiting for a new chat.
+func (h *Host) EnqueueDueValidations() {
+	h.mu.Lock()
+	jobs := h.collectValidationJobs()
+	h.mu.Unlock()
+	for _, job := range jobs {
+		h.enqueueValidation(job)
 	}
 }
 
@@ -1290,8 +1395,10 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	})
 	if err != nil {
 		if !errors.Is(err, devshard.ErrValidationAlreadyLeased) {
-			h.stampValidationCooldown(job.inferenceID)
-			h.releaseValidationLease(ctx, job.inferenceID)
+			if !h.validationIsClosed() {
+				h.stampValidationCooldown(job.inferenceID)
+				h.releaseValidationLease(ctx, job.inferenceID)
+			}
 		}
 		// Payload already pruned on the executor: the validation window is
 		// effectively over for us. Drop silently -- no MsgValidation, no
@@ -1318,13 +1425,18 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	if !ok {
 		h.stampValidationCooldown(job.inferenceID)
 		h.releaseValidationLease(ctx, job.inferenceID)
+		obs := h.disappearedFinishObs(job.inferenceID)
 		observability.FailValidationFinished(ctx, h.escrowID,
 			observability.ReasonInferenceDisappeared, observability.WhereHostValidate,
 			"validate: inference disappeared", nil,
 			"inference_id", job.inferenceID,
 			"executor_address", job.executorAddress,
 			"validator_slot", job.validatorSlot,
-			"validation_flow", string(job.flow))
+			"validation_flow", string(job.flow),
+			"finish_nonce", obs.finishNonce,
+			"finish_at", obs.finishAt,
+			"current_nonce", obs.currentNonce,
+			"current_at", obs.currentAt)
 		return
 	}
 	observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusOK)
@@ -1802,6 +1914,9 @@ func verifyPayloadWorkload(p *InferencePayload) error {
 	}
 	if bodyMaxTokens > p.MaxTokens {
 		return fmt.Errorf("%w: prompt max_tokens %d exceeds declared %d", types.ErrPayloadMismatch, bodyMaxTokens, p.MaxTokens)
+	}
+	if p.MaxTokens < completionapi.MinTokensFloor {
+		return fmt.Errorf("%w: declared max_tokens %d below floor %d", types.ErrPayloadMismatch, p.MaxTokens, completionapi.MinTokensFloor)
 	}
 	return nil
 }

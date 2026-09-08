@@ -445,6 +445,33 @@ func TestFallback_RejectsTxBroadcastOnBothTransports(t *testing.T) {
 	assert.Zero(t, rpc.calls())
 }
 
+func TestUnorderedTxConn_BroadcastUsesSelectedRPCTransport(t *testing.T) {
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, _ := newTestFallback(direct, rpc)
+	client := &Client{conn: direct, queryConn: fb}
+	conn := client.UnorderedTxConn()
+
+	// Account/GetTx queries select RPC before the unordered broadcast.
+	require.NoError(t, conn.Invoke(context.Background(), "/cosmos.auth.v1beta1.Query/Account", &struct{}{}, &struct{}{}))
+	_, err := txServiceClient(conn).BroadcastTx(context.Background(), &txtypes.BroadcastTxRequest{})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, direct.calls(), "broadcast must not retry the unavailable gRPC transport")
+	assert.Equal(t, 2, rpc.calls(), "one query and one broadcast must use RPC")
+}
+
+func TestUnorderedTxConn_DoesNotRetryFailedBroadcast(t *testing.T) {
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, _ := newTestFallback(direct, rpc)
+	client := &Client{conn: direct, queryConn: fb}
+
+	_, err := txServiceClient(client.UnorderedTxConn()).BroadcastTx(
+		context.Background(), &txtypes.BroadcastTxRequest{})
+	require.ErrorIs(t, err, errUnavailable)
+	assert.Equal(t, 1, direct.calls())
+	assert.Zero(t, rpc.calls(), "an ambiguous broadcast error must never trigger a second submission")
+}
+
 func TestFallback_TxServiceQueriesStillRoute(t *testing.T) {
 	direct, rpc := &stubConn{}, &stubConn{}
 	fb, _ := newTestFallback(direct, rpc)

@@ -15,6 +15,7 @@ import (
 	"devshard/state"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/types"
 )
 
 // HTTPSessionConfig holds the parameters needed to create an HTTP-backed user session.
@@ -26,6 +27,10 @@ type HTTPSessionConfig struct {
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 	RoutePrefix      string                          // HTTP path prefix used to reach hosts; default devshard.DefaultRoutePrefix()
 	RequestAdmission transport.RequestAdmissionController
+	// RequireHeightSeed fails closed on chat/warmup until half the roster
+	// returns a host-signed Anchor. Default false in this library; the
+	// gateway sets it from DEVSHARD_REQUIRE_HEIGHT_SEED (default true).
+	RequireHeightSeed bool
 	// ExtraClientConfig is merged into each transport.HTTPClient when non-nil.
 	// Used to attach courier-mode HeightSync (peer-tip cache; no local follower).
 	ExtraClientConfig *transport.ClientConfig
@@ -34,6 +39,10 @@ type HTTPSessionConfig struct {
 	// Escrow is an optional pre-fetched chain escrow. When set, NewHTTPSession
 	// skips Bridge.GetEscrow and builds the group from this value.
 	Escrow *bridge.EscrowInfo
+	// Optional bind-time timeout overrides. These are mainly for integration
+	// harnesses that need protocol timeouts shorter than production defaults.
+	RefusalTimeoutSeconds   *int64
+	ExecutionTimeoutSeconds *int64
 }
 
 func deferredWarmKeyResolver(resolve state.WarmKeyResolver) (state.WarmKeyResolver, func()) {
@@ -144,6 +153,13 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 
 	config := bridge.SessionConfigAtBind(len(group), escrow)
+	if cfg.RefusalTimeoutSeconds != nil {
+		config.RefusalTimeout = *cfg.RefusalTimeoutSeconds
+	}
+	if cfg.ExecutionTimeoutSeconds != nil {
+		config.ExecutionTimeout = *cfg.ExecutionTimeoutSeconds
+	}
+	config = types.NormalizeSessionConfig(config, len(group))
 
 	storagePath := resolveHTTPSessionStoragePath(cfg.EscrowID, cfg.StoragePath)
 	if err := os.MkdirAll(filepath.Dir(storagePath), 0755); err != nil {
@@ -219,6 +235,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		}
 		enableWarmKeyResolver()
 		session.SetParticipantKeys(participantKeys)
+		session.SetRequireHeightSeed(cfg.RequireHeightSeed)
 		if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
 			hs := cfg.ExtraClientConfig.HeightSync
 			session.SetHeightSyncCadence(hs.K(), hs.SlotsNum())
@@ -277,6 +294,9 @@ func httpSessionSMOpts(cfg HTTPSessionConfig, extra ...state.SMOption) []state.S
 func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOption {
 	if cfg.Heartbeat != nil {
 		extra = append(extra, WithHeartbeatConfig(*cfg.Heartbeat))
+	}
+	if cfg.RequireHeightSeed {
+		extra = append(extra, WithRequireHeightSeed(true))
 	}
 	return extra
 }

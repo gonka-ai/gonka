@@ -47,7 +47,7 @@ func TestFilterHostRaises_MismatchedEnvelopeOmitsRaise(t *testing.T) {
 
 func TestFilterHostRaises_SequencerStampsPass(t *testing.T) {
 	hash := []byte{0xaa}
-	hb := hbTx(1, 180, 3, hash, nil)
+	hb := hbTx(180, 3, hash, nil)
 	kept, n := heightsync.FilterHostRaises(100, 90, true, map[uint32]struct{}{0: {}}, []*types.DevshardTx{hb})
 	require.Zero(t, n)
 	require.Len(t, kept, 1)

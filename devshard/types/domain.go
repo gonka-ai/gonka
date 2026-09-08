@@ -9,7 +9,7 @@ import (
 // link-time stamp is set (plain `go test` / local builds). Release binaries set
 // the protocol name via `make devshardd-build DEVSHARD_VERSION=<name>` — same
 // as approved_versions.name. See devshard/docs/upgrade.md.
-const DevshardStateRootAndProtocolVersion = "v2"
+const DevshardStateRootAndProtocolVersion = "v5"
 
 // DefaultStateRootVersion is the tag used when no explicit bind version is provided.
 const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
@@ -80,14 +80,17 @@ type HostStats struct {
 type ProtocolVersion string
 
 const (
-	ProtocolV1 ProtocolVersion = "1"
-	ProtocolV2 ProtocolVersion = "2"
-	ProtocolV3 ProtocolVersion = "3"
+	ProtocolV1             ProtocolVersion = "1"
+	ProtocolV2             ProtocolVersion = "2"
+	ProtocolV3             ProtocolVersion = "3"
+	ProtocolV4             ProtocolVersion = "4"
+	ProtocolV5             ProtocolVersion = "5"
+	DefaultProtocolVersion                 = ProtocolV5
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
 // Empty string defaults to ProtocolV1. A leading "v"/"V" is stripped so
-// route segments like "v4" stamp as "4". Any remaining non-empty token is
+// route segments like "v5" stamp as "5". Any remaining non-empty token is
 // accepted — this is a local registry stamp, not the session/settlement
 // protocol tag. Callers that want a major-only stamp (v2.1.0 -> 2) truncate
 // before calling.
@@ -119,6 +122,8 @@ type SessionConfig struct {
 	VoteThreshold             uint32
 	ValidationRate            uint32 // basis points (10000 = 100%, 1000 = 10%)
 	InferenceSealGraceNonces  uint32
+	// InferenceSealGraceSeconds is extra state-clock time after ExecutionTimeout
+	// before a still-Finished inference may auto-seal.
 	InferenceSealGraceSeconds uint32
 	AutoSealEveryNNonces      uint32
 }
@@ -152,7 +157,7 @@ type EscrowState struct {
 	// HeightSyncLastCompletedHeight is h_last (complete turns only). Derived from
 	// Diff replay; not hashed into the state root (tracker is reconstructible).
 	HeightSyncLastCompletedHeight uint64
-	HeightSyncLatestTurnSeq       uint64
+	HeightSyncLatestTurnStart     uint64
 
 	// SealedAcc is the Phase 1 incremental accumulator over sealed inference
 	// commitments (32 bytes). Updated on each SealInference and settlement drain.

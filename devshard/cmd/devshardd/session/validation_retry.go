@@ -111,12 +111,23 @@ func (r *ValidationRetryLoop) retryStaleValidationsOnce(ctx context.Context) {
 // retryStaleValidationsForEscrow claims stale validation leases for this escrow
 // until AcquireOneStale returns none.
 func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context, escrowID string) {
+	caughtUp := false
 	for {
 		// Don't claim work this process cannot do. The snapshot can still
 		// unload between this check and AcquireOneStale; retryStaleValidation
 		// releases if that happens.
-		if _, ok := r.manager.hostSnapshot(escrowID); !ok {
+		snap, ok := r.manager.hostSnapshot(escrowID)
+		if !ok {
 			return
+		}
+		if !caughtUp {
+			if live, ok := snap.(*host.Host); ok {
+				if err := live.CatchUpFromStore(ctx); err != nil {
+					slog.Warn("devshardd: validation retry: catch-up from store failed",
+						"escrow", escrowID, "error", err)
+				}
+			}
+			caughtUp = true
 		}
 
 		inferenceID, leaseEpochID, err := r.leases.AcquireOneStale(ctx, escrowID, r.instanceAddr, r.leaseTTL)
@@ -176,6 +187,9 @@ func (r *ValidationRetryLoop) retryStaleValidation(ctx context.Context, escrowID
 	h, ok := r.manager.hostSnapshot(escrowID)
 	if !ok {
 		r.releaseOwnedLease(ctx, escrowID, inferenceID, epochID)
+		if ctx.Err() != nil {
+			return fmt.Errorf("session %s not loaded: %w", escrowID, ctx.Err())
+		}
 		return fmt.Errorf("session %s not loaded", escrowID)
 	}
 

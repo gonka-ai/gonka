@@ -6,17 +6,24 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/httpguard"
 	blockclient "devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/failover"
 	"devshard/chainoracle/blocks/tipcache"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	httpguard.SetAllowPrivate(true)
+	os.Exit(m.Run())
+}
 
 type recOracle struct {
 	hdr   *blocks.Header

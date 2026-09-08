@@ -161,25 +161,29 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 }
 
 // MarshalStateSnapshotProto serializes a state snapshot envelope to protobuf.
-func MarshalStateSnapshotProto(state *EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64) ([]byte, error) {
+// heightSyncFloor is derived RAM (not hashed); nil omits the field so legacy
+// readers still load the hashed EscrowState.
+func MarshalStateSnapshotProto(state *EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *FloorIndexProto) ([]byte, error) {
 	msg := &StateSnapshotProto{
 		State:            EscrowStateToProto(state),
 		CommittedEntries: cloneBytesMap(committedEntries),
 		SealedNonces:     cloneUint64Map(sealedNonces),
+		HeightSyncFloor:  heightSyncFloor,
 	}
 	return proto.Marshal(msg)
 }
 
 // UnmarshalStateSnapshotProto deserializes a protobuf state snapshot envelope.
-func UnmarshalStateSnapshotProto(data []byte) (*EscrowState, map[uint64][]byte, map[uint64]uint64, error) {
+// A nil height-sync floor means the snapshot predates the field (rebuild from the journal).
+func UnmarshalStateSnapshotProto(data []byte) (*EscrowState, map[uint64][]byte, map[uint64]uint64, *FloorIndexProto, error) {
 	msg := &StateSnapshotProto{}
 	if err := proto.Unmarshal(data, msg); err != nil {
-		return nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: %w", err)
 	}
 	if msg.State == nil {
-		return nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: missing state")
+		return nil, nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: missing state")
 	}
-	return EscrowStateFromProto(msg.State), cloneBytesMap(msg.CommittedEntries), cloneUint64Map(msg.SealedNonces), nil
+	return EscrowStateFromProto(msg.State), cloneBytesMap(msg.CommittedEntries), cloneUint64Map(msg.SealedNonces), msg.HeightSyncFloor, nil
 }
 
 func inferenceRecordToProto(id uint64, rec *InferenceRecord) *InferenceRecordProto {

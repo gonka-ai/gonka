@@ -15,8 +15,9 @@ gen-compose: ## Render config, keyrings, docker-compose.yml, and .env from confi
 clean-keyring: ## Delete generated ./keyring (then run make gen-compose).
 	rm -rf keyring
 
-# devshard_testenv compiles in payload fault injection (DEVSHARD_TESTENV_PAYLOAD_*),
-# which the production build omits. Never use these binaries for a release.
+# devshard_testenv compiles in payload fault injection (DEVSHARD_TESTENV_PAYLOAD_*)
+# and oracle overlays (DEVSHARD_TESTENV_ORACLE_*), which the production build
+# omits. Never use these binaries for a release.
 TESTENV_BUILD_TAGS := devshard_testenv
 
 build-devshardd: ## Build linux devshardd for containers (requires Docker).
@@ -71,7 +72,7 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
-.PHONY: citest-observability citest-grpc-transport citest-height-sync citest-height-sync-dapi-compat test-gateway-smoke
+.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping test-gateway-smoke
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites, so they are excluded from the auto-discovered CI matrix.
@@ -109,14 +110,20 @@ citest-versiond-rolling-update: citest-images ## Same-version versiond rolling u
 citest-versiond-host-evacuation: citest-images ## Router-controlled versiond host evacuation and replacement.
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestVersiondHostEvacuation$$' -count=1 -v -timeout 30m
 
+citest-versiond-warm-cutover: citest-images ## v5 warm-cutover boot + overlap swap (recovery_complete gate).
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestVersiondWarmCutover' -count=1 -v -timeout 30m
+
 citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_|TestA5_' -count=1 -v -timeout 30m
+
+citest-force-upstream-streaming: citest-images ## Force-upstream streaming + aggregate spill citest.
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestGatewayForcedStream|TestGatewayAggregateSpill|TestGatewayAggregateOversize' -count=1 -v -timeout 60m
 
 citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway citest (see docs/chain-transport-consolidation.md).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
 	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
 
-citest-observability: citest-images ## Phase 10 O1 observability smoke (Jaeger spans + Loki logs + metrics).
+citest-observability: citest-images ## Phase 10 O1 (isolated overlay; host histogram scrape).
 	$(MAKE) build-devshardd
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestO1_ObservabilitySmoke -count=1 -v -timeout 30m
 
@@ -130,6 +137,10 @@ citest-height-sync: citest-images ## Height-sync container e2e against mock-dapi
 citest-height-sync-dapi-compat: citest-images ## Height-sync backward compat: new dapi /block/* vs old dapi 404.
 	$(MAKE) build-devshardd
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestHeightSync_(MockDapiBlockLatest|CadenceEmitsAnchor|LegacyDapiChatCompletes)$$' -count=1 -v -timeout 45m
+
+citest-host-ping: citest-images ## Gateway host-ping e2e (E1–E6, F3–F4); rebuilds devshardd for /clock.
+	$(MAKE) build-devshardd
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestHostPing' -count=1 -v -timeout 30m
 
 OBS_OVERLAY := $(COMPOSE_BASE) -f docker-compose.observability.yml -f docker-compose.observability.ip.yml
 

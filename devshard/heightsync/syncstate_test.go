@@ -91,13 +91,13 @@ func TestHeartbeat_HashOnlyOracle_TurnCompletes(t *testing.T) {
 	require.False(t, o.proveCalled, "hash-only heartbeat must not request Strong / Prove")
 
 	tr := heightsync.NewTurnTracker(4, 3, cfg)
-	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
+	tr.Observe(10, []*types.DevshardTx{heartbeatTx(500, 4)}, 500)
 	tr.Observe(14, []*types.DevshardTx{
-		ackTx(1, 10, 0, 500, st),
-		ackTx(1, 10, 1, 500, st),
-		ackTx(1, 10, 2, 500, st),
+		ackTx(10, 0, 500, st),
+		ackTx(10, 1, 500, st),
+		ackTx(10, 2, 500, st),
 	}, 500)
-	require.Equal(t, heightsync.TurnComplete, tr.Record(1).State)
+	require.Equal(t, heightsync.TurnComplete, tr.Record(10).State)
 	require.False(t, o.proveCalled)
 }
 
@@ -115,18 +115,18 @@ func TestPeerSeen_BitmapAndExpiry(t *testing.T) {
 
 func TestComposeSyncVector_ReportsPreviousTurn(t *testing.T) {
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
-	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
+	tr.Observe(10, []*types.DevshardTx{heartbeatTx(500, 4)}, 500)
 	tr.Observe(14, []*types.DevshardTx{
-		ackTx(1, 10, 0, 500, types.SyncState_SYNCED),
-		ackTx(1, 10, 2, 501, types.SyncState_SYNCED),
+		ackTx(10, 0, 500, types.SyncState_SYNCED),
+		ackTx(10, 2, 501, types.SyncState_SYNCED),
 	}, 501)
-	vec := heightsync.ComposeSyncVector(4, tr.Record(1))
+	vec := heightsync.ComposeSyncVector(4, tr.Record(10))
 	require.Len(t, vec, 4)
 	require.Equal(t, types.AckStatus_ACKED, vec[0].Status)
 	require.Equal(t, types.AckStatus_MISSING, vec[1].Status)
 	require.Equal(t, types.AckStatus_ACKED, vec[2].Status)
 
-	logAcks := tr.Record(1).Acks
+	logAcks := tr.Record(10).Acks
 	require.Empty(t, heightsync.CheckVectorAgainstLog(vec, logAcks))
 
 	vec[1].Status = types.AckStatus_ACKED

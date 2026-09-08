@@ -20,7 +20,7 @@ func TestMarkLog_CapacityDropsOldest(t *testing.T) {
 	if !log.HasKind(MarkVectorContradiction) {
 		t.Fatal("newest kind must be retained")
 	}
-	if log.HasKind(MarkFloorOutOfBand) {
+	if log.HasKind(MarkHeightUnbacked) {
 		t.Fatal("dropped kind must be gone")
 	}
 }

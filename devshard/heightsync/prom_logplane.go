@@ -310,7 +310,7 @@ func IncMarks(kind string) {
 func markKindLabel(kind string) string {
 	switch MarkKind(kind) {
 	case MarkDisputeOriginator, MarkDisputeCarrier, MarkVectorContradiction,
-		MarkDeferredFail, MarkAdmissionDelta, MarkFloorOutOfBand:
+		MarkDeferredFail, MarkAdmissionDelta, MarkHeightUnbacked:
 		return kind
 	case "":
 		return "unknown"

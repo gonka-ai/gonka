@@ -42,7 +42,7 @@ func setupBindTestManager(t *testing.T, escrowID string) (*HostManager, *storage
 			TokenPrice:     1,
 		},
 	}
-	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	return mgr, store, user, hosts[0]
 }
 
@@ -125,6 +125,19 @@ func TestOwnerChat_BindsSession(t *testing.T) {
 	// Inference may fail downstream; bind must have happened regardless.
 	meta, err := store.GetSessionMeta(escrowID)
 	require.NoError(t, err, "owner chat must CreateSession; http=%d body=%s", rec.Code, rec.Body.String())
+	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, user.Address(), meta.CreatorAddr)
+}
+
+func TestHeightSyncSeed_BindsSession(t *testing.T) {
+	const escrowID = "9711"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	rec := signedPOST(t, e, user, "/sessions/"+escrowID+"/height-sync", escrowID, []byte("{}"))
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "owner seed must CreateSession; http=%d body=%s", rec.Code, rec.Body.String())
 	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
 	require.Equal(t, user.Address(), meta.CreatorAddr)
 }
@@ -228,7 +241,7 @@ func TestOwnerChat_FirstBindSingleGetEscrow(t *testing.T) {
 		},
 	}
 	br := &countingGetEscrowBridge{MainnetBridge: inner}
-	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 
 	e := echo.New()
 	mgr.Register(e.Group(""))
@@ -288,7 +301,7 @@ func TestGetOrCreate_RecoversBeforeCreate(t *testing.T) {
 			Slots:          addresses,
 		},
 	}
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 
 	srv, err := mgr.getOrCreate("1", nil)
 	require.NoError(t, err)

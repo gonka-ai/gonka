@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/httpguard"
 	"devshard/chainoracle/blocks/verifier"
 )
 
@@ -60,8 +61,24 @@ type Lookup struct {
 	unary *http.Client
 }
 
+const defaultLookupTimeout = 10 * time.Second
+
+// defaultUnaryClient is the default Lookup transport. Dial-time SSRF guard
+// matches transport/client.go: DEVSHARD_CHAINORACLE_URL is operator env today,
+// but httpguard is process-wide and cheap if the URL source ever moves.
+func defaultUnaryClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = httpguard.NewDialer().DialContext
+	return &http.Client{
+		Timeout:   defaultLookupTimeout,
+		Transport: transport,
+	}
+}
+
 // NewLookup builds a unary client. A missing /block/:height (old dapi)
 // returns DummyHeader rather than an error so L6 stays quiet.
+// HTTPClient, when set, is used as-is (timeout filled if zero) and skips the
+// default guard — tests inject httptest.Client that way.
 func NewLookup(cfg HTTPConfig) (*Lookup, error) {
 	if cfg.BaseURL == "" {
 		return nil, fmt.Errorf("blockoracle/client: empty base url")
@@ -71,10 +88,10 @@ func NewLookup(cfg HTTPConfig) (*Lookup, error) {
 	}
 	hc := cfg.HTTPClient
 	if hc == nil {
-		hc = &http.Client{Timeout: 10 * time.Second}
+		hc = defaultUnaryClient()
 	} else if hc.Timeout == 0 {
 		cp := *hc
-		cp.Timeout = 10 * time.Second
+		cp.Timeout = defaultLookupTimeout
 		hc = &cp
 	}
 	return &Lookup{

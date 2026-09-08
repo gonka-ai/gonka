@@ -157,9 +157,9 @@ func TestValidationLeaseRacePendingStretch(t *testing.T) {
 	harness.RequireLeaseExclusivityPass(t, final, 1)
 }
 
-// TestValidationLeaseRaceStaleReclaim covers manual plan §7b: short TTL, slow ML
-// so leases stay pending in-flight, stop the owning replica mid-validate, then
-// the survivor reclaims after TTL and submits.
+// TestValidationLeaseRaceStaleReclaim covers manual plan §7b: graceful stop
+// aborts in-flight Validate and frees the Postgres row; the survivor catch-up
+// then re-acquires on the hot path and submits. This is not TTL steal.
 func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -174,13 +174,9 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 		}
 	})
 
-	harness.Step(t, "short lease TTL + retry interval on HA replicas")
-	harness.PatchVersiondLeaseTTL(t, stack.ComposePath, "15s", "5s")
-	// Recreate HA pair + solo so TTL env applies everywhere validations can run.
-	stack.RecreateServices(t, harness.VersiondHostIDs(cfg)...)
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
-	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd after TTL patch", stack)
+	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health", stack)
 
 	dapi := harness.MockDAPIFromEndpoints(eps)
 	harness.SetValidationRate100(t, client, dapi.HTTP)
@@ -212,7 +208,7 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 				},
 				MaxTokens: 16,
 			}
-			// Chat may fail after the replica is killed; best-effort to create pending leases.
+			// Chat may fail after the replica is stopped; best-effort to create pending leases.
 			if _, err := harness.TryPostGatewayChatCompletion(slowClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req); err != nil {
 				t.Logf("citest: 7b chat %d: %v", i, err)
 			}
@@ -221,23 +217,27 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 
 	pending := harness.WaitLeasePending(t, stack, cfg, 1, 40*time.Second)
 	require.Equal(t, 0, pending.DuplicateGroups)
-	beforeTerminal := pending.Submitted + pending.Skipped
+	submittedBefore := pending.Submitted
+	pendingBefore := pending.Pending
+	wantNonce := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey).LatestNonce
+	require.Greater(t, wantNonce, uint64(0), "gateway must have durable diffs before the victim is stopped")
 
 	victim := cfg.Hosts[1].ID
 	survivor := cfg.Hosts[0].ID
-	harness.Step(t, "stop replica %s mid-validate; re-warm survivor %s from shared PG", victim, survivor)
+	harness.Step(t, "stop replica %s mid-validate; catch up survivor %s; sibling re-acquires", victim, survivor)
 	stack.StopService(t, victim)
-	// Sticky traffic often lived on the victim; survivor must catch up Finished
-	// inferences from Postgres so ValidationRetryLoop can reclaim the abandoned lease.
-	harness.WarmEscrowOnHost(t, stack, cfg, survivor, escrow)
 
-	time.Sleep(18 * time.Second) // > 15s TTL
-
-	harness.Step(t, "restore ML; survivor ValidationRetryLoop should reclaim + advance lease")
+	harness.Step(t, "restore ML so survivor Validate can finish after re-acquire")
 	harness.ResetMockOpenAIFault(t, client, mockOpenAI)
 
-	final := harness.WaitLeaseTerminal(t, stack, cfg, beforeTerminal+1, 2*time.Minute)
+	// Sticky traffic often lived on the victim. GET /mempool catch-up loads
+	// Finished inferences and enqueues validation so Acquire can insert a
+	// new pending row (graceful stop already Released the old one).
+	harness.WarmEscrowOnHost(t, stack, cfg, survivor, escrow)
+	harness.WaitHostDurableNonce(t, stack, cfg, survivor, escrow, wantNonce, 2*time.Minute)
+
+	final := harness.WaitLeaseSubmittedGrowth(t, stack, cfg, submittedBefore+pendingBefore, 2*time.Minute)
 	harness.RequireLeaseExclusivityPass(t, final, 1)
-	require.Greater(t, final.Submitted+final.Skipped, beforeTerminal)
+	require.GreaterOrEqual(t, final.Submitted, submittedBefore+pendingBefore)
 	wg.Wait()
 }

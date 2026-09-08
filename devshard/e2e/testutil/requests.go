@@ -31,6 +31,10 @@ func SendCompletionRaw(t *testing.T, client *http.Client, clientURL, content, be
 	return PostJSONRaw(t, client, clientURL+"/v1/chat/completions", ChatCompletionBody(content, false), bearerToken)
 }
 
+func SendCompletionRawE(client *http.Client, clientURL, content, bearerToken string) (RawResponse, error) {
+	return PostJSONRawE(client, clientURL+"/v1/chat/completions", ChatCompletionBody(content, false), bearerToken)
+}
+
 type StreamResponse struct {
 	ContentType string
 	Events      []string
@@ -83,6 +87,28 @@ func ChatCompletionBody(content string, stream bool) map[string]any {
 	return body
 }
 
+const ToolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
+
+// The gateway classifies a state divergence off this wording, so a stub host has to reproduce it verbatim.
+const StateRootDivergenceMessage = "apply diff nonce 1: post_state_root does not match computed state root: diff 00, computed 11"
+
+func ToolCompletionBody(content string, stream bool) map[string]any {
+	body := ChatCompletionBody(content, stream)
+	body["tool_choice"] = "auto"
+	body["tools"] = []map[string]any{{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "lookup_status",
+			"description": "Return a test status string.",
+			"parameters": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+	}}
+	return body
+}
+
 func readSSEEvents(t *testing.T, body io.Reader) (string, []string) {
 	t.Helper()
 	var raw strings.Builder
@@ -101,24 +127,59 @@ func readSSEEvents(t *testing.T, body io.Reader) (string, []string) {
 	return raw.String(), events
 }
 
+// DriveUntilValidationObserved waits until one slot appears in validated_by on
+// at least two inferences. validateAsync publishes MsgValidation after the
+// HTTP response, so each check drains host mempools with SyncHosts instead of
+// only spraying extra completions at 250ms.
 func DriveUntilValidationObserved(t *testing.T, client *http.Client, clientURL string) {
 	t.Helper()
 	const maxExtraCompletions = 20
 	const validationTarget = 2
-	for attempt := 0; attempt <= maxExtraCompletions; attempt++ {
-		state := GetJSON(t, client, clientURL+"/v1/debug/inferences")
-		reached, summary := HasInferenceValidationTarget(t, state, validationTarget)
-		DebugLogf(t, "inference validation evidence before finalize target=%d reached=%t (%s)",
-			validationTarget, reached, summary)
+	const drainTimeout = 3 * time.Second
+	const drainInterval = 250 * time.Millisecond
+
+	for extra := 0; extra <= maxExtraCompletions; extra++ {
+		reached, summary := drainUntilInferenceValidationTarget(t, client, clientURL, validationTarget, drainTimeout, drainInterval)
 		if reached {
 			return
 		}
-		if attempt == maxExtraCompletions {
+		if extra == maxExtraCompletions {
 			t.Fatalf("no host reached at least %d completed validations before finalize after %d extra completion rounds: %s",
 				validationTarget, maxExtraCompletions, summary)
 		}
-		SendCompletion(t, client, clientURL, fmt.Sprintf("validation probe %d", attempt+1))
-		time.Sleep(250 * time.Millisecond)
+		SendCompletion(t, client, clientURL, fmt.Sprintf("validation probe %d", extra+1))
+	}
+}
+
+func drainUntilInferenceValidationTarget(t *testing.T, client *http.Client, clientURL string, target uint64, timeout, interval time.Duration) (bool, string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	check := func() (bool, string) {
+		t.Helper()
+		state := GetJSON(t, client, clientURL+"/v1/debug/inferences")
+		reached, summary := HasInferenceValidationTarget(t, state, target)
+		DebugLogf(t, "inference validation evidence before finalize target=%d reached=%t (%s)",
+			target, reached, summary)
+		return reached, summary
+	}
+	for {
+		reached, summary := check()
+		if reached {
+			return true, summary
+		}
+		expired := !time.Now().Before(deadline)
+		// Compose mempool validations/finishes. The final SyncHosts after the
+		// drain window closes the hole where validateAsync published too late
+		// for the previous compose. Best-effort: a transient 500 should not
+		// abort a drain that can succeed on the next tick.
+		resp := PostJSONRaw(t, client, clientURL+"/v1/debug/sync-hosts", map[string]any{}, AdminAPIKey)
+		if resp.StatusCode >= 300 {
+			DebugLogf(t, "sync-hosts during validation drain status=%d body=%s", resp.StatusCode, resp.Body)
+		}
+		if expired {
+			return check()
+		}
+		time.Sleep(interval)
 	}
 }
 

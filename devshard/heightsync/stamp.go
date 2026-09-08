@@ -51,6 +51,37 @@ func RefStamp(tx *types.DevshardTx) (uint64, []byte, bool) {
 	return msg.GetObservedHeight(), msg.GetObservedBlockHash(), true
 }
 
+// ExecutorStamp returns the inference id and reference height of a host-signed
+// executor stamp: MsgConfirmStart, whose executor_sig covers
+// ExecutorReceiptContent, or MsgFinishInference, whose proposer_sig covers the
+// message. Both bind the height to the executor slot, so a stamped leg proves
+// the same host round-trip a MsgHeightAck does and is worth the same claim on
+// the cadence (spec §10.5). The id attributes it: the executor of inference i is
+// group[i % len(group)], the arithmetic RefProducingNonce already relies on.
+//
+// MsgStartInference is excluded even though it carries a stamp: that height is
+// the sequencer's own reading, and a producer cannot discharge its own cadence.
+func ExecutorStamp(tx *types.DevshardTx) (inferenceID, height uint64, ok bool) {
+	if tx == nil {
+		return 0, 0, false
+	}
+	var id uint64
+	var msg any
+	switch {
+	case tx.GetConfirmStart() != nil:
+		id, msg = tx.GetConfirmStart().InferenceId, tx.GetConfirmStart()
+	case tx.GetFinishInference() != nil:
+		id, msg = tx.GetFinishInference().InferenceId, tx.GetFinishInference()
+	default:
+		return 0, 0, false
+	}
+	h, stamped := inferenceStamp(msg)
+	if !stamped {
+		return 0, 0, false
+	}
+	return id, h, true
+}
+
 // RefProducingNonce is the nonce whose handling produced a reference stamp.
 //
 // This is the nonce the stamp must be judged against, not the nonce it lands at:
@@ -99,13 +130,38 @@ func TxStamp(tx *types.DevshardTx) (uint64, bool) {
 	return h, ok
 }
 
+// SequencerComposed reports whether tx is user-signed (MsgHeartbeat /
+// MsgStartInference). Those stamps never raise F (spec §14 rule 3) and must
+// not raise the turn clock.
+func SequencerComposed(tx *types.DevshardTx) bool {
+	if tx == nil {
+		return false
+	}
+	return tx.GetStartInference() != nil || tx.GetHeartbeat() != nil
+}
+
+// HostSignedStamp is a Diff-resident height bound to a host key: ack, confirm,
+// or finish. Heartbeat and start are excluded — they are user claims.
+func HostSignedStamp(tx *types.DevshardTx) (uint64, bool) {
+	if tx == nil {
+		return 0, false
+	}
+	if tx.GetHeightAck() == nil && tx.GetConfirmStart() == nil && tx.GetFinishInference() == nil {
+		return 0, false
+	}
+	return TxStamp(tx)
+}
+
 // LogResidentHeight is the clock TurnTracker.Observe must use: the highest
-// Diff-resident stamp in txs, else lastCompleted (h_last). A live oracle read
-// is never a legal input — turn state is a pure function of the log.
+// *host-signed* Diff-resident stamp in txs, else lastCompleted (h_last). User
+// heartbeats and starts are claims, not turn time — feeding them to
+// windowClosed would let one sequencer stamp close every open ack window.
+// A live oracle read is never a legal input — turn state is a pure function
+// of the log.
 func LogResidentHeight(txs []*types.DevshardTx, lastCompleted uint64) uint64 {
 	var h uint64
 	for _, tx := range txs {
-		if s, ok := TxStamp(tx); ok && s > h {
+		if s, ok := HostSignedStamp(tx); ok && s > h {
 			h = s
 		}
 	}

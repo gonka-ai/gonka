@@ -43,4 +43,6 @@ var (
 	ErrInvalidGroup          = errors.New("invalid group")
 	ErrEscrowIDMismatch      = errors.New("escrow_id does not match session")
 	ErrNonceLimitExceeded    = errors.New("nonce exceeds chain max_nonce limit")
+	ErrMaxTokensBelowFloor   = errors.New("max_tokens below min_tokens floor")
+	ErrFloorNotRestored      = errors.New("height-sync floor not restored")
 )

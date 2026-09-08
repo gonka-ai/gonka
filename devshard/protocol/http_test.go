@@ -297,7 +297,7 @@ func TestHTTP_Auth_Rejected(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -318,7 +318,7 @@ func TestHTTP_GossipPropagation(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -347,7 +347,7 @@ func TestHTTP_EquivocationDetection(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -400,7 +400,7 @@ func TestHTTP_TimeoutRefused(t *testing.T) {
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}, verifiers, allDiffs)
 	require.NoError(t, err)
@@ -540,7 +540,7 @@ func TestHTTP_ChallengeReceipt_RejectsTimeout(t *testing.T) {
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}, verifiers, allDiffs)
 	require.NoError(t, err)
@@ -923,7 +923,7 @@ func TestHTTP_GossipAmplification(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -1088,7 +1088,7 @@ func TestHTTP_GossipIntegration(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -1114,7 +1114,7 @@ func TestHTTP_EquivocationViaGossipHTTP(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -1144,7 +1144,7 @@ func TestHTTP_LazyTxGossipHTTP(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -1267,7 +1267,7 @@ func TestAttack_GossipUnverifiedNonce(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -1299,7 +1299,7 @@ func TestAttack_GossipEmptySigBypass(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)

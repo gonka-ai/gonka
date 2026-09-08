@@ -18,12 +18,25 @@ import (
 // outbound inference request that carries a non-nil height-sync section (after the
 // optional config HeightSyncRequestMutateHook). Used by testenv devshardctl debug only.
 func (c *HTTPClient) SetOneShotHeightSyncRequestMutateHook(fn func(*heightsync.HeightSyncSection, uint64)) {
-	if c == nil {
+	if c == nil || c.oneShot == nil {
 		return
 	}
-	c.oneShotMu.Lock()
-	defer c.oneShotMu.Unlock()
-	c.oneShotHeightSyncMutate = fn
+	c.oneShot.mu.Lock()
+	defer c.oneShot.mu.Unlock()
+	c.oneShot.heightSyncMutate = fn
+}
+
+// takeOneShotHeightSyncMutate returns the pending hook and clears it, so the
+// hook runs once even across clones that share this state.
+func (c *HTTPClient) takeOneShotHeightSyncMutate() func(*heightsync.HeightSyncSection, uint64) {
+	if c == nil || c.oneShot == nil {
+		return nil
+	}
+	c.oneShot.mu.Lock()
+	defer c.oneShot.mu.Unlock()
+	fn := c.oneShot.heightSyncMutate
+	c.oneShot.heightSyncMutate = nil
+	return fn
 }
 
 func (c *HTTPClient) updateObservedPeerTip(hs *heightsync.HeightSyncSection) {
@@ -136,13 +149,15 @@ func (c *HTTPClient) ObservedStampNow() (uint64, []byte, bool) {
 
 // SeedHeightSync calls the optional host cold-start RPC and records the returned
 // Anchor in the peer-tip cache. ok is false when height sync is disabled, the RPC
-// is unavailable (404), or the host omitted the section (oracle miss).
+// is unavailable (404), or the host omitted the section (oracle miss). One HTTP
+// attempt, bounded by HeightSeedTimeout rather than QueryTimeout: the session
+// seed loop owns 429/503 retry, not doPostRaw.
 func (c *HTTPClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 	if c == nil || c.heightSyncPeerTips == nil {
 		return false, nil
 	}
 	var out heightSyncSeedResponse
-	err = c.post(ctx, "/sessions/"+c.escrowID+"/height-sync", c.config.QueryTimeout, struct{}{}, &out)
+	err = c.postOnce(ctx, "/sessions/"+c.escrowID+"/height-sync", c.heightSeedTimeout(), struct{}{}, &out)
 	if err != nil {
 		return false, err
 	}
@@ -156,6 +171,13 @@ func (c *HTTPClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 		out.HeightSync.MainnetHeight,
 	)
 	return ok, nil
+}
+
+func (c *HTTPClient) heightSeedTimeout() time.Duration {
+	if c != nil && c.config.HeightSeedTimeout > 0 {
+		return c.config.HeightSeedTimeout
+	}
+	return DefaultHeightSeedTimeout
 }
 
 func (c *HTTPClient) logEmitUserHeightSync(sec *heightsync.HeightSyncSection, nonce uint64) {
@@ -332,12 +354,7 @@ func (c *HTTPClient) wrapInferenceRequest(ctx context.Context, req host.HostRequ
 		if hook := c.config.HeightSyncRequestMutateHook; hook != nil {
 			hook(sec, req.Nonce)
 		}
-		c.oneShotMu.Lock()
-		fn := c.oneShotHeightSyncMutate
-		if fn != nil {
-			c.oneShotHeightSyncMutate = nil
-		}
-		c.oneShotMu.Unlock()
+		fn := c.takeOneShotHeightSyncMutate()
 		if fn != nil {
 			fn(sec, req.Nonce)
 		}

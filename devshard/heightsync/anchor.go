@@ -154,6 +154,19 @@ func (s *AnchorScheduler) SlotsNum() uint64 {
 	return s.slotsNum
 }
 
+// SourceKind is the decide-log label for the scheduler's oracle ("peer_tip_cache"
+// for courier, "local_block_oracle" for host followers). Tests assert the
+// gateway never uses the local-oracle constructor.
+func (s *AnchorScheduler) SourceKind() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	src := s.source
+	s.mu.Unlock()
+	return snapshotOracleForDecide(src, time.Now()).SourceKind
+}
+
 // MustNewAnchorScheduler panics if the configuration is invalid; useful
 // in tests and call-sites that already validated the config.
 func MustNewAnchorScheduler(k, slots uint64, src OracleSource) *AnchorScheduler {

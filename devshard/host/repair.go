@@ -60,8 +60,8 @@ func (h *Host) RepairResponderBudget() *heightsync.RepairResponderBudget {
 }
 
 // HeightSyncTurnRecord is the SM turn copy, or nil.
-func (h *Host) HeightSyncTurnRecord(turnSeq uint64) *heightsync.SyncTurnRecord {
-	return h.sm.HeightSyncTurnRecord(turnSeq)
+func (h *Host) HeightSyncTurnRecord(turnStart uint64) *heightsync.SyncTurnRecord {
+	return h.sm.HeightSyncTurnRecord(turnStart)
 }
 
 // HeightSyncMarks returns marks recorded on applyCore.
@@ -116,7 +116,7 @@ func (h *Host) MaybeRepair(ctx context.Context) {
 	if len(due) == 0 {
 		return
 	}
-	h.repairBudget.Prune(h.sm.HeightSyncLatestTurnSeq())
+	h.repairBudget.Prune()
 
 	for _, tgt := range due {
 		for _, j := range tgt.Missing {
@@ -126,7 +126,7 @@ func (h *Host) MaybeRepair(ctx context.Context) {
 			if h.CloseReadyArmed() {
 				return
 			}
-			delay, skip := h.repairBudget.Begin(tgt.TurnSeq, j, h.CloseReadyArmed())
+			delay, skip := h.repairBudget.Begin(tgt.TurnStart, j, h.CloseReadyArmed())
 			if skip == heightsync.RepairSkipArmed {
 				return
 			}
@@ -136,7 +136,7 @@ func (h *Host) MaybeRepair(ctx context.Context) {
 			if err := h.repairBudget.Sleep(ctx, delay); err != nil {
 				return
 			}
-			still := h.sm.HeightSyncMissingAcks(tgt.TurnSeq)
+			still := h.sm.HeightSyncMissingAcks(tgt.TurnStart)
 			landed := true
 			for _, s := range still {
 				if s == j {
@@ -144,13 +144,13 @@ func (h *Host) MaybeRepair(ctx context.Context) {
 					break
 				}
 			}
-			if skip := h.repairBudget.AfterWait(tgt.TurnSeq, j, landed); skip != heightsync.RepairSkipNone {
+			if skip := h.repairBudget.AfterWait(tgt.TurnStart, j, landed); skip != heightsync.RepairSkipNone {
 				continue
 			}
 
 			req := &heightsync.RepairRequest{
-				TurnSeq:           tgt.TurnSeq,
-				RefNonce:          heightsync.HeartbeatNonceForSlot(tgt.SpanStart, j, uint32(len(h.group))),
+				TurnStart:         tgt.TurnStart,
+				RefNonce:          heightsync.HeartbeatNonceForSlot(tgt.TurnStart, j, uint32(len(h.group))),
 				RequesterSlot:     h.PrimarySlot(),
 				ObservedHeight:    hNow,
 				ObservedBlockHash: append([]byte(nil), hash...),
@@ -158,15 +158,15 @@ func (h *Host) MaybeRepair(ctx context.Context) {
 			if err := heightsync.SignRepairRequest(h.signer, req); err != nil {
 				logging.Debug("repair request sign failed", "subsystem", "heightsync",
 					"escrow", h.escrowID, "slot", j, "error", err)
-				h.repairBudget.Record(tgt.TurnSeq, j, heightsync.RepairOutcomeUnreachable)
+				h.repairBudget.Record(tgt.TurnStart, j, heightsync.RepairOutcomeUnreachable)
 				continue
 			}
 			resp, err := probe(ctx, j, req)
 			if err != nil || resp == nil || resp.Outcome != heightsync.RepairOutcomeHeight {
-				h.repairBudget.Record(tgt.TurnSeq, j, heightsync.RepairOutcomeUnreachable)
+				h.repairBudget.Record(tgt.TurnStart, j, heightsync.RepairOutcomeUnreachable)
 				continue
 			}
-			h.repairBudget.Record(tgt.TurnSeq, j, heightsync.RepairOutcomeHeight)
+			h.repairBudget.Record(tgt.TurnStart, j, heightsync.RepairOutcomeHeight)
 			h.ingestRepairHeight(j, resp)
 		}
 	}
@@ -211,10 +211,10 @@ func (h *Host) ingestRepairHeight(slot uint32, resp *heightsync.RepairResponse) 
 // Unknown turns and exhausted responder budget reject before the oracle read
 // and never assign blame.
 func (h *Host) BuildRepairHeightResponse(ctx context.Context, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
-	if req == nil || h.sm.HeightSyncTurnRecord(req.TurnSeq) == nil {
+	if req == nil || h.sm.HeightSyncTurnRecord(req.TurnStart) == nil {
 		return nil, heightsync.ErrRepairUnknownTurn
 	}
-	if h.repairResponder != nil && !h.repairResponder.Allow(req.TurnSeq, req.RequesterSlot) {
+	if h.repairResponder != nil && !h.repairResponder.Allow(req.TurnStart, req.RequesterSlot) {
 		return nil, heightsync.ErrRepairResponderBudget
 	}
 
@@ -224,7 +224,7 @@ func (h *Host) BuildRepairHeightResponse(ctx context.Context, req *heightsync.Re
 	defer h.mu.Unlock()
 
 	hRef := req.ObservedHeight
-	if rec := h.sm.HeightSyncTurnRecord(req.TurnSeq); rec != nil && rec.HReq > 0 {
+	if rec := h.sm.HeightSyncTurnRecord(req.TurnStart); rec != nil && rec.HReq > 0 {
 		hRef = rec.HReq
 	}
 	st := heightsync.EvaluateSyncStateFromHeader(h.oracle, hdr, hdrErr, hRef, h.heartbeatCfg)
@@ -243,14 +243,12 @@ func (h *Host) BuildRepairHeightResponse(ctx context.Context, req *heightsync.Re
 	}
 
 	slot := h.PrimarySlot()
-	if rec := h.sm.HeightSyncTurnRecord(req.TurnSeq); rec != nil && h.slotIDs[slot] {
+	if rec := h.sm.HeightSyncTurnRecord(req.TurnStart); rec != nil && h.slotIDs[slot] {
 		item := heartbeatTarget{
 			nonce: req.RefNonce,
 			slot:  slot,
-			hb: &types.MsgHeartbeat{
-				TurnSeq:        req.TurnSeq,
-				ObservedHeight: hRef,
-			},
+			// The turn is not carried on the ack; ref_nonce names it.
+			hb: &types.MsgHeartbeat{ObservedHeight: hRef},
 		}
 		ack := h.buildHeightAckLocked(item, hdr, hdrErr, time.Now())
 		if err := heightsync.SignAck(h.signer, ack); err == nil {

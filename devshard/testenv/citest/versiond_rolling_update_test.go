@@ -128,12 +128,19 @@ func exerciseVersiondRollingFlip(
 
 // TestVersiondRollingUpdateHybridFallback verifies that the same sha-flip
 // does not overlap old and new children when devshardd storage is not Postgres.
+// Hybrid is not fail-closed multi-instance, so the running version is pinned to
+// the legacy (single-host) router pool. Otherwise HA /healthz 503s with
+// "DEVSHARD_STORAGE_MODE=postgres (got hybrid)" and the stack never becomes ready.
 func TestVersiondRollingUpdateHybridFallback(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	env := bootVersiondRollingStack(t, "citest-versiond-rolling-hybrid-*", false, func(stack *harness.Stack, _ *config.File) {
+	env := bootVersiondRollingStack(t, "citest-versiond-rolling-hybrid-*", true, func(stack *harness.Stack, cfg *config.File) {
 		harness.PatchVersiondStorageMode(t, stack.ComposePath, "hybrid")
+		harness.PatchRouterHADeployment(t, stack.ComposePath, false)
+		require.NotEmpty(t, cfg.Versiond.VersionName)
+		harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_NON_HA_VERSIONS",
+			fmt.Sprintf("%q", cfg.Versiond.VersionName))
 	})
 	client := harness.GatewayChatClient()
 

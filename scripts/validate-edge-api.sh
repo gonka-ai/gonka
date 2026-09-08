@@ -11,6 +11,9 @@ echo "==> common/queryapi unit tests (contract + proof roundtrip)"
 echo "==> common observability + chain (edge-api transport deps)"
 (cd "${REPO_ROOT}/common" && go test ./observability/... ./chain/... -count=1)
 
+echo "==> common/probe unit tests"
+(cd "${REPO_ROOT}/common" && go test ./probe/... -count=1)
+
 echo "==> docker compose render (local-test-net base + genesis)"
 KEY_NAME=genesis EDGE_API_BUILD_CONTEXT=. docker compose --project-directory "${REPO_ROOT}" \
   -f local-test-net/docker-compose-base.yml \

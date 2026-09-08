@@ -59,6 +59,9 @@ backend ${BACKEND_NAME}
 
     http-response set-header X-Upstream-Addr %[bc_dst]:%[bc_dst_port]
     http-response set-header X-Versiond-Backend ${RESPONSE_BACKEND}
+    # Only the frontend catalog guard may mint this header. A host 503 must
+    # not be able to skip quarantine by echoing it.
+    http-response del-header X-Devshard-Router-Error
 
     # hash-key addr is what makes this ring stable. By default a server's
     # position is its numeric slot id, and DNS hands the answers to

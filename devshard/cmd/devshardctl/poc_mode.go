@@ -1,16 +1,19 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"sync"
+
+	"common/completionapi"
 )
 
 const (
 	pocRequestModeOff     = "off"
 	pocRequestModeRelaxed = "relaxed"
 
-	pocProbeMaxTokens = uint64(1)
+	pocProbeMaxTokens = uint64(completionapi.MinTokensFloor)
 )
 
 var (
@@ -21,7 +24,7 @@ var (
 	currentPoCGeneration      bool
 	currentPoCPreservedLoaded bool
 	currentPoCPreservedModels = map[string]map[string]struct{}{}
-	pocProbePromptBody        = []byte(`{"messages":[{"role":"user","content":"."}],"max_tokens":1}`)
+	pocProbePromptBody        = []byte(fmt.Sprintf(`{"messages":[{"role":"user","content":"."}],"max_tokens":%d}`, pocProbeMaxTokens))
 )
 
 func ConfigurePoCRequestMode(raw string) {

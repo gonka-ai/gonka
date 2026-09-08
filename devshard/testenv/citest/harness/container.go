@@ -23,6 +23,7 @@ func (s *Stack) containerID(service string) (string, error) {
 	args = append(args, "ps", "-q", service)
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("resolve container ID for %s: %w: %s", service, err, output)

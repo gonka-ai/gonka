@@ -197,7 +197,7 @@ func TestParticipantLimiterRecordsQuarantineTransitions(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 	limiter.SetMetrics(m)
 
-	limiter.ObserveResultWithBodyForModel("participant-1", "Qwen/Test", "/sessions/12/chat/completions", http.StatusServiceUnavailable, "")
+	limiter.ObserveResultWithBodyForModel("participant-1", "Qwen/Test", "/sessions/12/chat/completions", http.StatusServiceUnavailable, "", "", "")
 	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
 		limiter.ObserveEmptyStreamForModel("participant-2", "Qwen/Test")
 	}
@@ -219,6 +219,7 @@ func TestGatewayParticipantTimingMetricsRecordAddressAndModel(t *testing.T) {
 		SendTime:       now,
 		ReceiptTime:    now.Add(100 * time.Millisecond),
 		FirstToken:     now.Add(300 * time.Millisecond),
+		FirstContent:   now.Add(400 * time.Millisecond),
 		TotalTime:      900 * time.Millisecond,
 		InputTokens:    10,
 	})
@@ -232,6 +233,30 @@ func TestGatewayParticipantTimingMetricsRecordAddressAndModel(t *testing.T) {
 	requireMetricHistogramCount(t, families, "devshard_gateway_participant_total_attempt_seconds", labels, 1)
 }
 
+// A role-only chunk is a token, not content: the first_content metric must not count it, or it
+// reports a prefill no client ever waited for.
+func TestGatewayFirstContentMetricIgnoresAContentlessStream(t *testing.T) {
+	m := NewDevshardMetrics()
+	now := time.Now()
+
+	m.ObserveRequestSample("12", RequestSample{
+		HostIdx:        1,
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		SendTime:       now,
+		ReceiptTime:    now.Add(100 * time.Millisecond),
+		FirstToken:     now.Add(300 * time.Millisecond),
+		TotalTime:      900 * time.Millisecond,
+		InputTokens:    10,
+	})
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	labels := map[string]string{"participant_key": "participant-1", "model": "Qwen/Test"}
+	requireMetricHistogramAbsent(t, families, "devshard_gateway_participant_first_content_seconds", labels)
+	requireMetricHistogramCount(t, families, "devshard_gateway_participant_receipt_seconds", labels, 1)
+}
+
 func TestGatewayAttemptMetricClassifiers(t *testing.T) {
 	now := time.Now()
 
@@ -240,10 +265,10 @@ func TestGatewayAttemptMetricClassifiers(t *testing.T) {
 	errorStreamAttempt := &inflight{errorSource: "error.BadRequestError"}
 	errorStreamAttempt.setReceiptAt(now)
 
-	require.Equal(t, "empty_stream", gatewayAttemptFailureReason(emptyStreamAttempt, nil))
-	require.Equal(t, "error_stream", gatewayAttemptFailureReason(errorStreamAttempt, nil))
-	require.Equal(t, "eof_transport", gatewayAttemptFailureReason(&inflight{err: io.EOF}, nil))
-	require.Equal(t, "phase_transition_aborted", gatewayAttemptFailureReason(&inflight{phaseTransitionAborted: true}, nil))
+	require.Equal(t, "empty_stream", gatewayAttemptFailureReason(emptyStreamAttempt, nil, ""))
+	require.Equal(t, "error_stream", gatewayAttemptFailureReason(errorStreamAttempt, nil, ""))
+	require.Equal(t, "eof_transport", gatewayAttemptFailureReason(&inflight{err: io.EOF}, nil, ""))
+	require.Equal(t, "phase_transition_aborted", gatewayAttemptFailureReason(&inflight{phaseTransitionAborted: true}, nil, ""))
 
 	require.Equal(t, "user_visible_winner", gatewayAttemptVisibility(&inflight{nonce: 7}, 7, true))
 	require.Equal(t, "no_winner", gatewayAttemptVisibility(&inflight{nonce: 7, suspicious: true}, 7, true))
@@ -266,6 +291,20 @@ func requireMetricCounterValue(t *testing.T, families []*dto.MetricFamily, name 
 		}
 	}
 	t.Fatalf("metric %s with labels %v not found", name, labels)
+}
+
+func requireMetricHistogramAbsent(t *testing.T, families []*dto.MetricFamily, name string, labels map[string]string) {
+	t.Helper()
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if metricLabelsMatch(metric, labels) {
+				t.Fatalf("histogram %s with labels %v was observed %d times", name, labels, metric.Histogram.GetSampleCount())
+			}
+		}
+	}
 }
 
 func requireMetricHistogramCount(t *testing.T, families []*dto.MetricFamily, name string, labels map[string]string, want uint64) {

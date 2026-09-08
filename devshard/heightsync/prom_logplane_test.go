@@ -12,7 +12,7 @@ import (
 
 func TestIncMarks_UnknownMapsToUnknown(t *testing.T) {
 	require.Equal(t, "dispute_originator", markKindLabel(string(MarkDisputeOriginator)))
-	require.Equal(t, "floor_out_of_band", markKindLabel(string(MarkFloorOutOfBand)))
+	require.Equal(t, "height_unbacked", markKindLabel(string(MarkHeightUnbacked)))
 	require.Equal(t, "unknown", markKindLabel("not-a-kind"))
 	require.Equal(t, "unknown", markKindLabel(""))
 
@@ -96,7 +96,6 @@ func TestIncHeartbeatTurn_UsesRecordReason(t *testing.T) {
 	tr := NewTurnTracker(2, 1, DefaultHeartbeatConfig())
 	tr.Observe(1, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq:        1,
 			SlotsNum:       2,
 			ObservedHeight: 10,
 			Reason:         string(ReasonQuietSession),
@@ -104,7 +103,6 @@ func TestIncHeartbeatTurn_UsesRecordReason(t *testing.T) {
 	}}, 10)
 	tr.Observe(2, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{
-			TurnSeq:        1,
 			RefNonce:       1,
 			SlotId:         0,
 			ObservedHeight: 10,

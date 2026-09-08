@@ -39,6 +39,40 @@ type staticFinishedSession struct {
 
 func (s *staticFinishedSession) IsNonceFinished(uint64) bool { return s.finished }
 
+func TestErrorMissRunnable_RequiresSignedFinish(t *testing.T) {
+	unfinished := &staticFinishedSession{finished: false}
+	finished := &staticFinishedSession{finished: true}
+
+	noArtifact := &inflight{nonce: 7, errorSource: "error.InternalServerError", errorTerminal: true}
+	require.True(t, errorMissEnabledFor(noArtifact))
+	require.False(t, errorMissRunnable(noArtifact, nil), "EOF without Finish is not a miss")
+	require.True(t, shouldRunHandleTimeoutOn(noArtifact, unfinished, false), "ordinary timeout still runs")
+	require.False(t, shouldRunHandleTimeoutOn(noArtifact, finished, false), "finished nonce without Finish still skips")
+
+	withFinish := &inflight{
+		nonce:         7,
+		errorSource:   "error.InternalServerError",
+		errorTerminal: true,
+		resp: &host.HostResponse{
+			Mempool: []*types.DevshardTx{
+				{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 7}}},
+			},
+		},
+	}
+	require.True(t, errorMissRunnable(withFinish, nil))
+	require.True(t, shouldRunHandleTimeoutOn(withFinish, finished, true), "miss still runs after the nonce finished")
+
+	happy := &inflight{
+		nonce: 7,
+		resp: &host.HostResponse{
+			Mempool: []*types.DevshardTx{
+				{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 7}}},
+			},
+		},
+	}
+	require.False(t, errorMissRunnable(happy, nil), "a signed Finish without a terminal error is not a miss")
+}
+
 func TestShouldRunHandleTimeout_NilGuards(t *testing.T) {
 	require.False(t, shouldRunHandleTimeout(nil, nil))
 	require.False(t, shouldRunHandleTimeoutOn(&inflight{probe: true, errorSource: "error.x"}, &staticFinishedSession{}, true))

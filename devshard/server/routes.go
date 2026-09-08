@@ -14,6 +14,7 @@ import (
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/types"
 )
 
 // ErrInitializing means devshard storage is not ready to serve session state yet.
@@ -35,9 +36,18 @@ type PayloadHandler interface {
 	HandlePayloads(c echo.Context, srv *transport.Server) error
 }
 
+// StaleSessionReloader evicts an in-memory session that fell behind the shared
+// store and recovers it again. HostManager implements this; tests may not.
+type StaleSessionReloader interface {
+	ReloadStaleSession(escrowID string, stale *transport.Server) (*transport.Server, error)
+	RememberStaleNonce(escrowID string)
+}
+
 // RegisterLazySessionRoutes mounts the standard devshard HTTP surface on g.
-// Observability and host protocol routes resolve existing sessions only.
-// Only owner chat may bind a new session (via OwnerChatBinder).
+// Observability and most host protocol routes resolve existing sessions only.
+// Owner chat and the height-sync seed RPC may bind a new session (via
+// OwnerChatBinder): seed runs at session-open, before any inference, so it
+// cannot wait for chat to create the host session.
 func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
@@ -45,7 +55,7 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 
 	g.POST("/sessions/:id/chat/completions", withOwnerChat(binder, true,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }))
-	g.POST("/sessions/:id/height-sync", withSessionAuth(resolver, false,
+	g.POST("/sessions/:id/height-sync", withOwnerChat(binder, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSync }))
 	g.POST("/sessions/:id/heightsync/repair", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSyncRepair }))
@@ -108,7 +118,9 @@ func withSession(
 			return sessionHTTPError(c, err)
 		}
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
-		return pick(srv)(c)
+		return retryIfStale(c, resolver, srv, pick(srv)(c), func(next *transport.Server) error {
+			return pick(next)(c)
+		})
 	}
 }
 
@@ -126,7 +138,10 @@ func withSessionAuth(
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 		handler := pick(srv)
 		wrapped := srv.RateLimitMiddleware(recordChatTerminal)(handler)
-		return srv.AuthMiddleware(wrapped)(c)
+		return retryIfStale(c, resolver, srv, srv.AuthMiddleware(wrapped)(c), func(next *transport.Server) error {
+			h := pick(next)
+			return next.AuthMiddleware(next.RateLimitMiddleware(recordChatTerminal)(h))(c)
+		})
 	}
 }
 
@@ -143,7 +158,9 @@ func withOwnerChat(
 		}
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 		handler := pick(srv)
-		return srv.RateLimitMiddleware(recordChatTerminal)(handler)(c)
+		return retryIfStale(c, binder, srv, srv.RateLimitMiddleware(recordChatTerminal)(handler)(c), func(next *transport.Server) error {
+			return next.RateLimitMiddleware(recordChatTerminal)(pick(next))(c)
+		})
 	}
 }
 
@@ -216,6 +233,8 @@ func routeLabel(c echo.Context) string {
 		return "challenge_receipt"
 	case strings.Contains(path, "gossip"):
 		return "gossip"
+	case strings.Contains(path, "/height-sync"):
+		return "height_sync"
 	default:
 		return "other"
 	}
@@ -242,4 +261,30 @@ func sessionHTTPError(c echo.Context, err error) error {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())
 	}
 	return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+}
+
+func isInvalidNonce(err error) bool {
+	return err != nil && errors.Is(err, types.ErrInvalidNonce)
+}
+
+// retryIfStale reloads a session that failed apply with ErrInvalidNonce and
+// retries the handler once. A second mismatch is treated as a bad client nonce
+// and negative-cached rather than spinning reload.
+func retryIfStale(c echo.Context, source any, stale *transport.Server, err error, retry func(*transport.Server) error) error {
+	if !isInvalidNonce(err) {
+		return err
+	}
+	reloader, ok := source.(StaleSessionReloader)
+	if !ok {
+		return err
+	}
+	next, reloadErr := reloader.ReloadStaleSession(c.Param("id"), stale)
+	if reloadErr != nil {
+		return err
+	}
+	err = retry(next)
+	if isInvalidNonce(err) {
+		reloader.RememberStaleNonce(c.Param("id"))
+	}
+	return err
 }

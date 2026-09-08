@@ -250,3 +250,31 @@ func TestPayloadReadLimit_ZeroUsesDefault(t *testing.T) {
 	assert.Equal(t, int64(1<<20), payloadReadLimit(1<<20))
 	assert.Equal(t, int64(maxPayloadResponseBytesHard), payloadReadLimit(maxPayloadResponseBytesHard+1))
 }
+
+func TestFetchPayloadsHTTP_ValidResponseDecodes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(PayloadResponse{
+			InferenceId:       "inf-1",
+			PromptPayload:     []byte(`{"model":"test"}`),
+			ResponsePayload:   []byte(`{"choices":[]}`),
+			ExecutorSignature: "sig",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	resp, err := FetchPayloadsHTTP(
+		context.Background(),
+		server.Client(),
+		server.URL+"?inference_id=inf-1",
+		"gonka1validator",
+		1,
+		4,
+		"sig",
+		0,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "inf-1", resp.InferenceId)
+	assert.Equal(t, []byte(`{"model":"test"}`), resp.PromptPayload)
+	assert.Equal(t, "sig", resp.ExecutorSignature)
+}

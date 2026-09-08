@@ -99,7 +99,7 @@ func TestCloseReady_OverlayShortensIdle(t *testing.T) {
 	now = now.Add(10 * time.Second)
 	h.EvaluateCloseReady(ctx)
 	armed, _ := h.CloseReadyView().Armed()
-	require.True(t, armed, "overlay T_idle=9s arms before the compiled 12s")
+	require.True(t, armed, "overlay T_idle=9s arms before the compiled 24s")
 }
 
 func TestCloseReady_DisarmsOnContact(t *testing.T) {

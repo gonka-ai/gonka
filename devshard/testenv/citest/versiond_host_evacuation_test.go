@@ -122,16 +122,27 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	// is a smoke test rather than the proof; the proof is deterministic and
 	// lives in `make -C versiond-router test-hash-ring`.
 	harness.Step(t, "restarting the router must not re-home %s", escrowID)
+	// Quiet heartbeats go through the router. Leaving the gateway up while the
+	// router is down connection-refuses those seeds and quarantines every host
+	// (W_tot=0 → 429 (0/0) on the paused stream). SQLite HA migration already
+	// stops the gateway across router recreates for the same reason.
+	env.stack.StopService(t, "devshardctl")
 	env.stack.StopService(t, "versiond-router")
 	env.stack.StartService(t, "versiond-router")
 	// The harness publishes random host ports, and Docker picks a new one when
-	// the container comes back, so every endpoint has to be re-resolved.
-	env.eps = env.stack.Endpoints(t, env.cfg)
+	// the container comes back. Endpoints() also queries the gateway, so only
+	// the router URL is re-resolved while the gateway is still down.
+	env.eps.RouterHTTP = env.stack.RouterHTTP(t)
 	pool = harness.WaitRouterVersionBackend(t, env.stack, version, hostEvacuationObservationTimeout)
 	harness.WaitRouterPoolState(t, env.stack, env.cfg, pool, targetHost,
 		harness.RouterSlotUp, hostEvacuationObservationTimeout)
 	requireSessionAvailableOnHost(t, env, escrowID, targetHost,
 		hostEvacuationObservationTimeout)
+
+	env.stack.StartGateway(t)
+	env.eps = env.stack.Endpoints(t, env.cfg)
+	harness.WaitGETOK(t, client, env.eps.GatewayHTTP+"/v1/status", 3*time.Minute, "gateway after router restart", env.stack)
+	harness.WaitGatewayChatReady(t, client, env.eps.GatewayHTTP, 3*time.Minute, env.stack)
 
 	pauseStream := true
 	harness.PatchMockOpenAIFault(t, client, env.eps.MockOpenAIHTTP, mockopenai.FaultPatch{

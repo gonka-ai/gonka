@@ -8,6 +8,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/bls"
 	"decentralized-api/internal/event_listener"
+	"decentralized-api/internal/mlnodeping"
 	"decentralized-api/internal/modelmanager"
 	"decentralized-api/internal/nats/server"
 	adminserver "decentralized-api/internal/server/admin"
@@ -269,6 +270,11 @@ func main() {
 	)
 	go mlnodeBackgroundManager.Start(ctx)
 
+	mlnodePingJob := mlnodeping.New(nodeBroker, mlnodeping.Config{
+		Disabled: configManager.GetApiConfig().MLNodePingDisabled,
+	})
+	mlnodePingJob.Start(ctx)
+
 	addr := fmt.Sprintf(":%v", configManager.GetApiConfig().PublicServerPort)
 	logging.Info("start public server on addr", types.Server, "addr", addr)
 
@@ -342,6 +348,7 @@ func main() {
 	logging.Info("Servers started", types.Server, "addr", addr)
 
 	<-ctx.Done()
+	mlnodePingJob.Stop()
 
 	ctxFlush, cancelFlush := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelFlush()

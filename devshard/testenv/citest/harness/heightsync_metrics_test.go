@@ -31,3 +31,12 @@ func TestAnyMetricHasLabel(t *testing.T) {
 	require.True(t, AnyMetricHasLabel(body, "devshard_id", "99"))
 	require.False(t, AnyMetricHasLabel(body, "devshard_id", "12"))
 }
+
+func TestAnyHeightSyncMetricHasLabel(t *testing.T) {
+	body := `devshard_gateway_picker_choice_total{devshard_id="99",model="m"} 1
+devshard_gateway_heightsync_height_spread{devshard_id="12"} 5
+`
+	require.True(t, AnyHeightSyncMetricHasLabel(body, "devshard_id", "12"))
+	require.False(t, AnyHeightSyncMetricHasLabel(body, "devshard_id", "99"),
+		"picker/receipt vecs are process-lifetime and out of H47's height-sync family")
+}

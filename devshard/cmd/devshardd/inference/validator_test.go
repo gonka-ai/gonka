@@ -88,7 +88,7 @@ func successInner(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpk
 func TestResolveValidationEpoch(t *testing.T) {
 	t.Parallel()
 	phase := new(chain.Phase)
-	phase.Update(10, 0)
+	phase.SetEpoch(10)
 	assert.Equal(t, uint64(5), resolveValidationEpoch(phase, 5))
 	assert.Equal(t, uint64(10), resolveValidationEpoch(phase, 0))
 }
@@ -100,7 +100,7 @@ func TestLeaseValidator_AcquireUsesRequestEpoch(t *testing.T) {
 		},
 	}
 	phase := new(chain.Phase)
-	phase.Update(11, 0)
+	phase.SetEpoch(11)
 	c := NewLeaseValidator(&stubValidator{fn: successInner}, phase, store, "validator-addr", time.Hour)
 
 	req := makeReq()
@@ -341,6 +341,28 @@ func TestLeaseValidator_InnerError_Releases(t *testing.T) {
 	require.Len(t, store.releaseCalls, 1, "forgotten acquire must not release again")
 }
 
+func TestLeaseValidator_Canceled_Releases(t *testing.T) {
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+			return true, nil
+		},
+	}
+	c := newTestLeaseValidator(store, func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		return nil, context.Canceled
+	})
+
+	result, err := c.Validate(context.Background(), makeReq())
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, result)
+	require.Empty(t, store.setResultCalls)
+	require.Equal(t, []string{"escrow-1/42/0/validator-addr"}, store.releaseCalls,
+		"graceful abort must free the row so a sibling can re-acquire")
+
+	err = c.ReleaseValidationLease(context.Background(), "escrow-1", 42)
+	require.NoError(t, err)
+	require.Len(t, store.releaseCalls, 1, "forgotten acquire must not release again")
+}
+
 func TestLeaseValidator_AlreadyLeased_DoesNotRelease(t *testing.T) {
 	store := &stubLeases{
 		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
@@ -409,7 +431,7 @@ func faultReq(epoch uint64) devshardpkg.ValidateRequest {
 
 func newFaultTestValidator(phaseEpoch uint64, voteFalse bool, fetch payloadFetchFunc, executeML mlExecuteFunc, thresholds ValidationThresholdResolver) *Validator {
 	phase := new(chain.Phase)
-	phase.Update(phaseEpoch, 0)
+	phase.SetEpoch(phaseEpoch)
 	if thresholds == nil {
 		thresholds = stubThresholdResolver{threshold: 0.9}
 	}
@@ -655,7 +677,7 @@ func cancelledCtx() context.Context {
 
 func TestExecutorFaultVerdict_DisabledOrCancelled(t *testing.T) {
 	phase := new(chain.Phase)
-	phase.Update(10, 0)
+	phase.SetEpoch(10)
 	req := faultReq(10)
 	err := tagExecutorPayloadFault(errors.New("executor returned status 500"))
 

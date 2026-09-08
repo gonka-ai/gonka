@@ -85,9 +85,8 @@ func TestTheStoredPayloadIsSlimAndItsHashCoversTheSlimBytes(t *testing.T) {
 	}
 }
 
-// The executor's two outputs must diverge: the gateway keeps the logprobs it may owe a client that
-// asked for them, while the stored payload drops what a validator rebuilds from the alternatives.
-func TestTheGatewayKeepsLogprobsWhileTheStoredPayloadSheds(t *testing.T) {
+// The executor's two outputs diverge: the gateway is sent logprobs only when it asked; the store always keeps them.
+func TestTheGatewayGetsStreamedLogprobsOnlyWhenItAsked(t *testing.T) {
 	// An alternative's bytes must spell its token, or the executor rightly refuses to slim the chunk.
 	spell := func(token string) string {
 		spelled := make([]string, len(token))
@@ -117,62 +116,81 @@ func TestTheGatewayKeepsLogprobsWhileTheStoredPayloadSheds(t *testing.T) {
 	}))
 	defer server.Close()
 
-	store := &recordingPayloadStore{}
-	toGateway := httptest.NewRecorder()
-	_, err := executeInference(context.Background(),
-		devshardpkg.ExecuteRequest{
-			InferenceID: 1, EscrowID: "60453", Model: "m",
-			Prompt:         []byte(`{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`),
-			ResponseWriter: toGateway,
+	for _, testCase := range []struct {
+		name          string
+		prompt        string
+		wantForwarded bool
+	}{
+		{
+			name:   "the gateway asked for none",
+			prompt: `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`,
 		},
-		store, 1,
-		func(ctx context.Context, _ string, requestBody []byte) (*http.Response, error) {
-			request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
-			return http.DefaultClient.Do(request)
+		{
+			name:          "the gateway asked for both",
+			prompt:        `{"model":"m","stream":true,"logprobs":true,"top_logprobs":5,"messages":[{"role":"user","content":"hi"}]}`,
+			wantForwarded: true,
 		},
-		fixedChainParams{})
-	if err != nil {
-		t.Fatalf("executeInference: %v", err)
-	}
-
-	forwarded := toGateway.Body.String()
-	for _, dropped := range []string{"token_ids", "prompt_token_ids", "prompt_logprobs"} {
-		if strings.Contains(forwarded, dropped) {
-			t.Fatalf("%q reached the gateway: %s", dropped, forwarded)
-		}
-	}
-	// The gateway decides per client intent whether logprobs reach the caller, so it cannot be handed
-	// a stream they were already cut from.
-	if !strings.Contains(forwarded, `"logprobs"`) || !strings.Contains(forwarded, `"bytes"`) {
-		t.Fatalf("the gateway lost the logprobs it may owe the client: %s", forwarded)
-	}
-	if !strings.Contains(forwarded, `"content":"Hi"`) {
-		t.Fatalf("the answer did not reach the gateway: %s", forwarded)
-	}
-
-	// The keys live inside JSON strings in the envelope, where a search of the raw blob never matches
-	// them, so each stored event is decoded and inspected as the object it is.
-	for _, chunk := range storedChunks(t, store.responsePayload) {
-		for _, dropped := range []string{"bytes", "token_ids", "prompt_token_ids", "prompt_logprobs"} {
-			if bytes.Contains(mustMarshal(t, chunk), []byte(`"`+dropped+`"`)) {
-				t.Fatalf("the stored payload kept %q: %v", dropped, chunk)
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := &recordingPayloadStore{}
+			toGateway := httptest.NewRecorder()
+			_, err := executeInference(context.Background(),
+				devshardpkg.ExecuteRequest{
+					InferenceID: 1, EscrowID: "60453", Model: "m",
+					Prompt:         []byte(testCase.prompt),
+					ResponseWriter: toGateway,
+				},
+				store, 1,
+				func(ctx context.Context, _ string, requestBody []byte) (*http.Response, error) {
+					request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
+					return http.DefaultClient.Do(request)
+				},
+				fixedChainParams{})
+			if err != nil {
+				t.Fatalf("executeInference: %v", err)
 			}
-		}
-	}
-	response, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(store.responsePayload)
-	if err != nil {
-		t.Fatalf("a validator cannot parse the stored payload: %v", err)
-	}
-	enforced, err := response.GetEnforcedTokens()
-	if err != nil {
-		t.Fatalf("GetEnforcedTokens: %v", err)
-	}
-	if len(enforced.Tokens) != 2 || enforced.Tokens[0].Token != "258" || enforced.Tokens[1].Token != "494" {
-		encoded, _ := json.Marshal(enforced)
-		t.Fatalf("the stored payload no longer replays the executor's token path: %s", encoded)
-	}
-	if len(enforced.Tokens[0].TopTokens) != 2 {
-		t.Fatalf("the alternatives a validator pins its replay to went missing: %+v", enforced.Tokens[0])
+
+			forwarded := toGateway.Body.String()
+			for _, dropped := range []string{"token_ids", "prompt_token_ids", "prompt_logprobs"} {
+				if strings.Contains(forwarded, dropped) {
+					t.Fatalf("%q reached the gateway: %s", dropped, forwarded)
+				}
+			}
+			if carried := strings.Contains(forwarded, `"logprobs"`); carried != testCase.wantForwarded {
+				t.Fatalf("logprobs reached the gateway = %t, want %t: %s", carried, testCase.wantForwarded, forwarded)
+			}
+			if testCase.wantForwarded && !strings.Contains(forwarded, `"bytes"`) {
+				t.Fatalf("the gateway was handed the slimmed copy: %s", forwarded)
+			}
+			if !strings.Contains(forwarded, `"content":"Hi"`) {
+				t.Fatalf("the answer did not reach the gateway: %s", forwarded)
+			}
+
+			// The keys live inside JSON strings in the envelope, where a search of the raw blob never
+			// matches them, so each stored event is decoded and inspected as the object it is.
+			for _, storedChunk := range storedChunks(t, store.responsePayload) {
+				for _, dropped := range []string{"bytes", "token_ids", "prompt_token_ids", "prompt_logprobs"} {
+					if bytes.Contains(mustMarshal(t, storedChunk), []byte(`"`+dropped+`"`)) {
+						t.Fatalf("the stored payload kept %q: %v", dropped, storedChunk)
+					}
+				}
+			}
+			response, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(store.responsePayload)
+			if err != nil {
+				t.Fatalf("a validator cannot parse the stored payload: %v", err)
+			}
+			enforced, err := response.GetEnforcedTokens()
+			if err != nil {
+				t.Fatalf("GetEnforcedTokens: %v", err)
+			}
+			if len(enforced.Tokens) != 2 || enforced.Tokens[0].Token != "258" || enforced.Tokens[1].Token != "494" {
+				encoded, _ := json.Marshal(enforced)
+				t.Fatalf("the stored payload no longer replays the executor's token path: %s", encoded)
+			}
+			if len(enforced.Tokens[0].TopTokens) != 2 {
+				t.Fatalf("the alternatives a validator pins its replay to went missing: %+v", enforced.Tokens[0])
+			}
+		})
 	}
 }
 
@@ -215,7 +233,7 @@ func mustMarshal(t *testing.T, value any) []byte {
 
 // A host may answer with plain JSON while the client is streaming, and that relay is its own branch:
 // it must hand the gateway the forwarded copy, not the slimmed one the store keeps.
-func TestAJSONHostRelayedToAStreamingClientKeepsItsLogprobs(t *testing.T) {
+func TestAJSONHostRelayedToAStreamingClientCarriesLogprobsOnlyWhenAsked(t *testing.T) {
 	body := `{"id":"x","object":"chat.completion","created":1786458557,"model":"m","prompt_token_ids":[1,2],` +
 		`"choices":[{"index":0,"finish_reason":"length","token_ids":[3],"message":{"role":"assistant","content":"Hi"},` +
 		`"logprobs":{"content":[{"token":"258","logprob":-0.5,"bytes":[32,97],` +
@@ -227,34 +245,58 @@ func TestAJSONHostRelayedToAStreamingClientKeepsItsLogprobs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	store := &recordingPayloadStore{}
-	toGateway := httptest.NewRecorder()
-	_, err := executeInference(context.Background(),
-		devshardpkg.ExecuteRequest{
-			InferenceID: 1, EscrowID: "60453", Model: "m",
-			Prompt:         []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`),
-			ResponseWriter: toGateway,
+	for _, testCase := range []struct {
+		name          string
+		prompt        string
+		wantForwarded bool
+	}{
+		{
+			name:   "the gateway asked for none",
+			prompt: `{"model":"m","messages":[{"role":"user","content":"hi"}]}`,
 		},
-		store, 1,
-		func(ctx context.Context, _ string, requestBody []byte) (*http.Response, error) {
-			request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
-			return http.DefaultClient.Do(request)
+		{
+			name:          "the gateway asked for both",
+			prompt:        `{"model":"m","logprobs":true,"top_logprobs":5,"messages":[{"role":"user","content":"hi"}]}`,
+			wantForwarded: true,
 		},
-		fixedChainParams{})
-	if err != nil {
-		t.Fatalf("executeInference: %v", err)
-	}
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := &recordingPayloadStore{}
+			toGateway := httptest.NewRecorder()
+			_, err := executeInference(context.Background(),
+				devshardpkg.ExecuteRequest{
+					InferenceID: 1, EscrowID: "60453", Model: "m",
+					Prompt:         []byte(testCase.prompt),
+					ResponseWriter: toGateway,
+				},
+				store, 1,
+				func(ctx context.Context, _ string, requestBody []byte) (*http.Response, error) {
+					request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
+					return http.DefaultClient.Do(request)
+				},
+				fixedChainParams{})
+			if err != nil {
+				t.Fatalf("executeInference: %v", err)
+			}
 
-	relayed := toGateway.Body.String()
-	if !strings.Contains(relayed, `"bytes"`) {
-		t.Fatalf("the gateway was handed the slimmed copy: %s", relayed)
-	}
-	for _, dropped := range []string{"token_ids", "prompt_token_ids"} {
-		if strings.Contains(relayed, dropped) {
-			t.Fatalf("%q reached the gateway: %s", dropped, relayed)
-		}
-	}
-	if strings.Contains(string(store.responsePayload), `"bytes"`) {
-		t.Fatalf("the stored payload kept what no validator reads: %s", store.responsePayload)
+			relayed := toGateway.Body.String()
+			if carried := strings.Contains(relayed, `"logprobs"`); carried != testCase.wantForwarded {
+				t.Fatalf("logprobs reached the gateway = %t, want %t: %s", carried, testCase.wantForwarded, relayed)
+			}
+			if testCase.wantForwarded && !strings.Contains(relayed, `"bytes"`) {
+				t.Fatalf("the gateway was handed the slimmed copy: %s", relayed)
+			}
+			for _, dropped := range []string{"token_ids", "prompt_token_ids"} {
+				if strings.Contains(relayed, dropped) {
+					t.Fatalf("%q reached the gateway: %s", dropped, relayed)
+				}
+			}
+			if strings.Contains(string(store.responsePayload), `"bytes"`) {
+				t.Fatalf("the stored payload kept what no validator reads: %s", store.responsePayload)
+			}
+			if !strings.Contains(string(store.responsePayload), "logprobs") {
+				t.Fatalf("the stored payload lost what the validator replays against: %s", store.responsePayload)
+			}
+		})
 	}
 }
