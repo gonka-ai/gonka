@@ -91,6 +91,13 @@ func (w *NodeWorker) run() {
 
 func (w *NodeWorker) execute(item commandWithContext) {
 	defer w.wg.Done()
+	if w.isStopping() {
+		// Defense in depth: a command admitted before shutdown may still
+		// finish, but skip starting ML-node work if we already know we are
+		// stopping. There is still a tiny window between this check and
+		// cmd.Execute.
+		return
+	}
 
 	result := item.cmd.Execute(item.ctx, w)
 	result.DeploymentGeneration = item.generation
