@@ -134,9 +134,6 @@ func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.T
 	if c == nil || key == "" || len(entry.Body) == 0 || strings.TrimSpace(entry.EscrowID) == "" {
 		return
 	}
-	if !cacheableChatResponse(entry.StatusCode, entry.Body, entry.Stream) {
-		return
-	}
 	if entry.ExpiresAt.IsZero() {
 		entry.ExpiresAt = now.Add(c.ttl)
 	}
@@ -243,21 +240,23 @@ func (w *gatewayChatCacheCapture) statusCode() int {
 	return w.status
 }
 
-// cacheEntry builds a cache entry from the captured response, rejecting it
-// when the request itself failed (requestErr, e.g. a client disconnect) or
-// the response is not a deterministic, cacheable outcome (see
-// cacheableResponse).
-func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourceRequestID string, requestErr error) (cachedChatResponse, bool) {
-	if w == nil || w.writeErr != nil || w.body.Len() == 0 {
-		return cachedChatResponse{}, false
-	}
-	if requestErr != nil {
-		return cachedChatResponse{}, false
+// cacheEntry builds a cache entry from the captured response. The returned
+// reason is empty when the entry is cacheable and otherwise names why it was
+// skipped: request_error, write_error, empty_body, status, transient_error,
+// incomplete, no_choices.
+func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourceRequestID string, requestErr error) (cachedChatResponse, string) {
+	switch {
+	case w == nil || w.body.Len() == 0:
+		return cachedChatResponse{}, "empty_body"
+	case w.writeErr != nil:
+		return cachedChatResponse{}, "write_error"
+	case requestErr != nil:
+		return cachedChatResponse{}, "request_error"
 	}
 	statusCode := w.statusCode()
 	body := w.body.Bytes()
-	if !cacheableChatResponse(statusCode, body, stream) {
-		return cachedChatResponse{}, false
+	if reason := cacheableChatResponse(statusCode, body, stream); reason != "" {
+		return cachedChatResponse{}, reason
 	}
 	return cachedChatResponse{
 		EscrowID:        escrowID,
@@ -266,91 +265,127 @@ func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourc
 		ContentType:     w.Header().Get("Content-Type"),
 		Body:            append([]byte(nil), body...),
 		SourceRequestID: sourceRequestID,
-	}, true
+	}, ""
 }
 
 // cacheableResponse reports whether a response is a deterministic outcome
 // safe to replay for a duplicate request: any 2xx, or a 400 whose OpenAI-style
 // error body is itself deterministic (bad request shape), as opposed to a
 // transient failure (rate limit, timeout, capability exhaustion, ...).
-func cacheableResponse(statusCode int, body []byte) bool {
-	if len(body) == 0 || responseBodyHasNonCacheableError(body) {
-		return false
+// The result is empty when cacheable, otherwise the skip reason.
+func cacheableResponse(statusCode int, body []byte) string {
+	if len(body) == 0 {
+		return "empty_body"
+	}
+	if responseBodyHasNonCacheableError(body) {
+		return "transient_error"
 	}
 	if statusCode == 0 {
 		statusCode = http.StatusOK
 	}
 	if statusCode >= 200 && statusCode < 300 {
-		return true
+		return ""
 	}
 	if statusCode == http.StatusBadRequest {
-		details, ok := jsonErrorPayloadDetails(body)
-		return ok && isCacheableOpenAIErrorDetails(details)
+		if details, ok := jsonErrorPayloadDetails(body); ok && isCacheableOpenAIErrorDetails(details) {
+			return ""
+		}
 	}
-	return false
+	return "status"
 }
 
 // cacheableChatResponse layers semantic completion on cacheableResponse: a 2xx
 // chat body replays only when every observed choice carries a terminal reason.
-// Deterministic error bodies (a host rejection streams as a 200 SSE error
-// event) stay cacheable as before.
-func cacheableChatResponse(statusCode int, body []byte, stream bool) bool {
-	if !cacheableResponse(statusCode, body) {
-		return false
+// A deterministic error body with no choices (a host rejection streams as a
+// 200 SSE error event) stays cacheable; an error after a partial choice does not.
+func cacheableChatResponse(statusCode int, body []byte, stream bool) string {
+	if reason := cacheableResponse(statusCode, body); reason != "" {
+		return reason
 	}
-	if statusCode == 0 {
-		statusCode = http.StatusOK
+	if statusCode != 0 && (statusCode < 200 || statusCode >= 300) {
+		return ""
 	}
-	if statusCode < 200 || statusCode >= 300 {
-		return true
-	}
+	var state choiceCompletion
 	if stream {
-		if completeStreamingChatResponse(body) {
+		state = foldStreamCompletion(body)
+	} else {
+		state.ingest(bytes.TrimSpace(body))
+		state.done = true
+	}
+	return state.reason()
+}
+
+type choiceCompletion struct {
+	seen     map[string]struct{}
+	finished map[string]struct{}
+	sawError bool
+	done     bool
+}
+
+func (s *choiceCompletion) reason() string {
+	switch {
+	case len(s.seen) == 0 && s.sawError:
+		return ""
+	case len(s.seen) == 0:
+		return "no_choices"
+	case !s.done || len(s.finished) != len(s.seen):
+		return "incomplete"
+	}
+	return ""
+}
+
+// foldStreamCompletion walks SSE events the way aggregateSSEStreamReader does:
+// a blank line ends an event and consecutive data: lines are joined. A `[DONE]`
+// before every observed choice is terminal is framing, not completion.
+func foldStreamCompletion(body []byte) choiceCompletion {
+	var state choiceCompletion
+	var event []byte
+	ingest := func() bool {
+		data := bytes.TrimSpace(event)
+		event = event[:0]
+		if len(data) == 0 {
+			return false
+		}
+		if bytes.Equal(data, []byte("[DONE]")) {
+			state.done = true
 			return true
 		}
-	} else if completeChatChoices(bytes.TrimSpace(body)) {
-		return true
+		state.ingest(data)
+		return false
 	}
-	return responseBodyHasErrorPayload(body)
-}
-
-func responseBodyHasErrorPayload(body []byte) bool {
-	if _, ok := sseChunkErrorDetails(body); ok {
-		return true
-	}
-	_, ok := jsonErrorPayloadDetails(body)
-	return ok
-}
-
-// A `[DONE]` before every observed choice is terminal is framing, not completion.
-func completeStreamingChatResponse(body []byte) bool {
-	seen := make(map[string]struct{})
-	finished := make(map[string]struct{})
 	for _, line := range bytes.Split(body, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if !bytes.HasPrefix(line, []byte("data:")) {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
+			if ingest() {
+				return state
+			}
 			continue
 		}
-		payload := bytes.TrimSpace(line[len("data:"):])
-		if bytes.Equal(payload, []byte("[DONE]")) {
-			return len(seen) > 0 && len(finished) == len(seen)
+		if !bytes.HasPrefix(trimmed, []byte("data:")) {
+			continue
 		}
-		trackChoiceCompletion(payload, seen, finished)
+		if len(event) > 0 {
+			event = append(event, '\n')
+		}
+		event = append(event, bytes.TrimSpace(trimmed[len("data:"):])...)
 	}
-	return false
+	ingest()
+	return state
 }
 
-func completeChatChoices(payload []byte) bool {
-	seen := make(map[string]struct{})
-	finished := make(map[string]struct{})
-	trackChoiceCompletion(payload, seen, finished)
-	return len(seen) > 0 && len(finished) == len(seen)
-}
-
-// Fields are raw JSON so an oddly typed index or reason does not drop the event.
-func trackChoiceCompletion(payload []byte, seen, finished map[string]struct{}) {
+// ingest records each choice by index and marks it finished on a terminal
+// finish_reason or stop_reason; a finished choice stays finished, as in the
+// aggregator. Fields are raw JSON so an oddly typed index does not drop the event.
+func (s *choiceCompletion) ingest(payload []byte) {
+	if isHostErrorPayload(payload) {
+		s.sawError = true
+		return
+	}
 	if !bytes.Contains(payload, []byte(`"choices"`)) {
 		return
+	}
+	if normalized, replaced := replaceNonFiniteNumbers(payload); replaced {
+		payload = normalized
 	}
 	var event struct {
 		Choices []struct {
@@ -362,21 +397,36 @@ func trackChoiceCompletion(payload []byte, seen, finished map[string]struct{}) {
 	if err := json.Unmarshal(payload, &event); err != nil {
 		return
 	}
+	if s.seen == nil {
+		s.seen = make(map[string]struct{})
+		s.finished = make(map[string]struct{})
+	}
 	for _, choice := range event.Choices {
 		index := string(bytes.TrimSpace(choice.Index))
 		if index == "" {
 			index = "0"
 		}
-		seen[index] = struct{}{}
-		if jsonValuePresent(choice.FinishReason) || jsonValuePresent(choice.StopReason) {
-			finished[index] = struct{}{}
+		s.seen[index] = struct{}{}
+		if terminalReason(choice.FinishReason) || terminalReason(choice.StopReason) {
+			s.finished[index] = struct{}{}
 		}
 	}
 }
 
-func jsonValuePresent(raw json.RawMessage) bool {
+// terminalReason accepts a non-empty string or a number (vLLM stop_reason may be
+// a token id); null, booleans, and empty strings are not terminal.
+func terminalReason(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
-	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) && !bytes.Equal(trimmed, []byte(`""`))
+	if len(trimmed) == 0 {
+		return false
+	}
+	switch trimmed[0] {
+	case '"':
+		return len(trimmed) > 2
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		return true
+	}
+	return false
 }
 
 func responseBodyHasNonCacheableError(body []byte) bool {

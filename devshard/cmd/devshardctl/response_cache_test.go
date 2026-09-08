@@ -15,9 +15,9 @@ func TestGatewayChatCacheCaptureRejectsCanceledRequestError(t *testing.T) {
 	capture := &gatewayChatCacheCapture{ResponseWriter: rec}
 	writeGatewayJSONError(capture, http.StatusBadGateway, context.Canceled.Error())
 
-	entry, ok := capture.cacheEntry("escrow-1", false, "req-source", context.Canceled)
+	entry, reason := capture.cacheEntry("escrow-1", false, "req-source", context.Canceled)
 
-	require.False(t, ok)
+	require.Equal(t, "request_error", reason)
 	require.Empty(t, entry.Body)
 }
 
@@ -26,40 +26,53 @@ func TestGatewayChatCacheCaptureAllowsSuccessfulResponse(t *testing.T) {
 	capture := &gatewayChatCacheCapture{ResponseWriter: rec}
 	writeJSONPayload(capture, http.StatusOK, []byte(`{"choices":[{"index":0,"message":{"content":"ok"},"finish_reason":"stop"}]}`))
 
-	entry, ok := capture.cacheEntry("escrow-1", false, "req-source", nil)
+	entry, reason := capture.cacheEntry("escrow-1", false, "req-source", nil)
 
-	require.True(t, ok)
+	require.Empty(t, reason)
 	require.Equal(t, http.StatusOK, entry.StatusCode)
 	require.JSONEq(t, `{"choices":[{"index":0,"message":{"content":"ok"},"finish_reason":"stop"}]}`, string(entry.Body))
 }
 
 func TestGatewayChatCacheCaptureRejectsIncompleteNonStreamingResponse(t *testing.T) {
-	tests := map[string]string{
-		"aggregated truncation": `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"partial"},"finish_reason":null}]}`,
-		"no choices":            `{"id":"cmpl-1","object":"chat.completion","choices":[]}`,
-		"second choice open":    `{"choices":[{"index":0,"message":{"content":"a"},"finish_reason":"stop"},{"index":1,"message":{"content":"b"},"finish_reason":null}]}`,
+	tests := map[string]struct{ body, reason string }{
+		"aggregated truncation": {`{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"partial"},"finish_reason":null}]}`, "incomplete"},
+		"no choices":            {`{"id":"cmpl-1","object":"chat.completion","choices":[]}`, "no_choices"},
+		"second choice open":    {`{"choices":[{"index":0,"message":{"content":"a"},"finish_reason":"stop"},{"index":1,"message":{"content":"b"},"finish_reason":null}]}`, "incomplete"},
+		"empty finish_reason":   {`{"choices":[{"index":0,"message":{"content":"a"},"finish_reason":""}]}`, "incomplete"},
+		"boolean finish_reason": {`{"choices":[{"index":0,"message":{"content":"a"},"finish_reason":false}]}`, "incomplete"},
 	}
-	for name, body := range tests {
+	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			capture := &gatewayChatCacheCapture{ResponseWriter: rec}
-			writeJSONPayload(capture, http.StatusOK, []byte(body))
+			writeJSONPayload(capture, http.StatusOK, []byte(tt.body))
 
-			entry, ok := capture.cacheEntry("escrow-1", false, "req-source", nil)
+			entry, reason := capture.cacheEntry("escrow-1", false, "req-source", nil)
 
-			require.False(t, ok)
+			require.Equal(t, tt.reason, reason)
 			require.Empty(t, entry.Body)
 		})
 	}
 }
 
+// vLLM sends content, the terminal chunk, and usage as separate events; the
+// fixtures keep that shape so completion has to be carried across events.
+const (
+	sseContentChunk  = `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}` + "\n\n"
+	sseTerminalChunk = `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n"
+	sseUsageChunk    = `data: {"choices":[],"usage":{"completion_tokens":1}}` + "\n\n"
+	sseDone          = "data: [DONE]\n\n"
+)
+
 func TestGatewayChatCacheCaptureAllowsCompleteStreamingResponse(t *testing.T) {
 	tests := map[string]string{
-		"finish_reason":       `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + "data: [DONE]\n\n",
-		"stop_reason only":    `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null,"stop_reason":128009}]}` + "\n\n" + "data: [DONE]\n\n",
-		"string index":        `data: {"choices":[{"index":"0","delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + "data: [DONE]\n\n",
-		"usage chunk before":  `data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}` + "\n\n" + `data: {"choices":[],"usage":{"completion_tokens":1}}` + "\n\n" + "data: [DONE]\n\n",
-		"deterministic error": `data: {"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}` + "\n\n" + "data: [DONE]\n\n",
+		"vllm shape":          sseContentChunk + sseTerminalChunk + sseUsageChunk + sseDone,
+		"stop_reason only":    sseContentChunk + `data: {"choices":[{"index":0,"delta":{},"finish_reason":null,"stop_reason":128009}]}` + "\n\n" + sseDone,
+		"string index":        `data: {"choices":[{"index":"0","delta":{"content":"ok"},"finish_reason":null}]}` + "\n\n" + `data: {"choices":[{"index":"0","delta":{},"finish_reason":"stop"}]}` + "\n\n" + sseDone,
+		"null after finish":   sseContentChunk + sseTerminalChunk + `data: {"choices":[{"index":0,"delta":{},"finish_reason":null}]}` + "\n\n" + sseDone,
+		"multi-line event":    sseContentChunk + `data: {"choices":[{"index":0,` + "\n" + `data: "delta":{},"finish_reason":"stop"}]}` + "\n\n" + sseDone,
+		"non-finite logprob":  sseContentChunk + `data: {"choices":[{"index":0,"delta":{},"logprobs":{"content":[{"token":"x","logprob":-Infinity}]},"finish_reason":"stop"}]}` + "\n\n" + sseDone,
+		"deterministic error": `data: {"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}` + "\n\n" + sseDone,
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -68,32 +81,38 @@ func TestGatewayChatCacheCaptureAllowsCompleteStreamingResponse(t *testing.T) {
 			_, err := capture.Write([]byte(body))
 			require.NoError(t, err)
 
-			entry, ok := capture.cacheEntry("escrow-1", true, "req-source", nil)
+			entry, reason := capture.cacheEntry("escrow-1", true, "req-source", nil)
 
-			require.True(t, ok)
+			require.Empty(t, reason)
 			require.True(t, entry.Stream)
 		})
 	}
 }
 
 func TestGatewayChatCacheCaptureRejectsIncompleteStreamingResponse(t *testing.T) {
-	tests := map[string]string{
-		"partial without done": `data: {"choices":[{"index":0,"delta":{"reasoning":"still working"},"finish_reason":null}]}` + "\n\n",
-		"synthetic done":       `data: {"choices":[{"index":0,"delta":{"reasoning":"still working"},"finish_reason":null}]}` + "\n\n" + "data: [DONE]\n\n",
-		"finish without done":  `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}` + "\n\n",
-		"done only":            "data: [DONE]\n\n",
-		"second choice open":   `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"},{"index":1,"delta":{"content":"b"},"finish_reason":null}]}` + "\n\n" + "data: [DONE]\n\n",
+	tests := map[string]struct{ body, reason string }{
+		"partial without done":       {sseContentChunk, "incomplete"},
+		"synthetic done":             {sseContentChunk + sseDone, "incomplete"},
+		"finish without done":        {sseContentChunk + sseTerminalChunk, "incomplete"},
+		"done only":                  {sseDone, "no_choices"},
+		"second choice open":         {sseContentChunk + `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"},{"index":1,"delta":{"content":"b"},"finish_reason":null}]}` + "\n\n" + sseDone, "incomplete"},
+		"empty finish_reason":        {sseContentChunk + `data: {"choices":[{"index":0,"delta":{},"finish_reason":""}]}` + "\n\n" + sseDone, "incomplete"},
+		"boolean stop_reason":        {sseContentChunk + `data: {"choices":[{"index":0,"delta":{},"finish_reason":null,"stop_reason":false}]}` + "\n\n" + sseDone, "incomplete"},
+		"partial then winner error":  {sseContentChunk + `data: {"error":{"message":"inference: winner inference incomplete (nonce_finished=false)"}}` + "\n\n", "incomplete"},
+		"partial then host error":    {sseContentChunk + `data: {"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}` + "\n\n" + sseDone, "incomplete"},
+		"partial then empty stream":  {sseContentChunk + `data: {"error":{"message":"empty content stream"}}` + "\n\n" + sseDone, "incomplete"},
+		"partial then upstream time": {sseContentChunk + `data: {"error":{"message":"upstream timeout"}}` + "\n\n", "transient_error"},
 	}
-	for name, body := range tests {
+	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			capture := &gatewayChatCacheCapture{ResponseWriter: rec}
-			_, err := capture.Write([]byte(body))
+			_, err := capture.Write([]byte(tt.body))
 			require.NoError(t, err)
 
-			entry, ok := capture.cacheEntry("escrow-1", true, "req-source", nil)
+			entry, reason := capture.cacheEntry("escrow-1", true, "req-source", nil)
 
-			require.False(t, ok)
+			require.Equal(t, tt.reason, reason)
 			require.Empty(t, entry.Body)
 		})
 	}
@@ -104,9 +123,9 @@ func TestGatewayChatCacheCaptureAllowsDeterministicOpenAIStyleBadRequest(t *test
 	capture := &gatewayChatCacheCapture{ResponseWriter: rec}
 	writeJSONPayload(capture, http.StatusBadRequest, []byte(`{"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}`))
 
-	entry, ok := capture.cacheEntry("escrow-1", false, "req-source", nil)
+	entry, reason := capture.cacheEntry("escrow-1", false, "req-source", nil)
 
-	require.True(t, ok)
+	require.Empty(t, reason)
 	require.Equal(t, http.StatusBadRequest, entry.StatusCode)
 	require.JSONEq(t, `{"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}`, string(entry.Body))
 }
@@ -116,31 +135,43 @@ func TestGatewayChatCacheCaptureRejectsRuntimeAndCapabilityErrors(t *testing.T) 
 		name   string
 		status int
 		body   string
+		reason string
 	}{
 		{
 			name:   "context canceled",
 			status: http.StatusBadGateway,
 			body:   `{"error":{"message":"context canceled"}}`,
+			reason: "transient_error",
 		},
 		{
 			name:   "rate limited",
 			status: http.StatusTooManyRequests,
 			body:   `{"error":{"message":"rate limit exceeded","type":"RateLimitError","code":429}}`,
+			reason: "transient_error",
 		},
 		{
 			name:   "unsupported model",
 			status: http.StatusBadRequest,
 			body:   `{"error":{"message":"unsupported model \"Nope/Model\"","type":"BadRequestError","code":400}}`,
+			reason: "transient_error",
 		},
 		{
 			name:   "context length",
 			status: http.StatusBadRequest,
 			body:   `{"error":{"message":"This model's maximum context length is 131072 tokens. However, you requested 150000 tokens.","type":"BadRequestError","code":400}}`,
+			reason: "transient_error",
 		},
 		{
 			name:   "server error",
 			status: http.StatusInternalServerError,
 			body:   `{"error":{"message":"internal server error","type":"InternalServerError","code":500}}`,
+			reason: "transient_error",
+		},
+		{
+			name:   "unexpected status",
+			status: http.StatusBadGateway,
+			body:   `{"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}`,
+			reason: "status",
 		},
 	}
 
@@ -150,9 +181,9 @@ func TestGatewayChatCacheCaptureRejectsRuntimeAndCapabilityErrors(t *testing.T) 
 			capture := &gatewayChatCacheCapture{ResponseWriter: rec}
 			writeJSONPayload(capture, tt.status, []byte(tt.body))
 
-			entry, ok := capture.cacheEntry("escrow-1", false, "req-source", nil)
+			entry, reason := capture.cacheEntry("escrow-1", false, "req-source", nil)
 
-			require.False(t, ok)
+			require.Equal(t, tt.reason, reason)
 			require.Empty(t, entry.Body)
 		})
 	}
@@ -261,23 +292,4 @@ func TestChatResponseCacheDropsPreviouslyCachedNonCacheableErrors(t *testing.T) 
 
 	require.False(t, ok)
 	require.Empty(t, entry.Body)
-}
-
-func TestChatResponseCacheSetRejectsIncompleteStream(t *testing.T) {
-	cache := newChatResponseCache(time.Minute, 0)
-	now := time.Now()
-
-	cache.Set("incomplete", cachedChatResponse{
-		EscrowID:   "escrow-1",
-		Stream:     true,
-		StatusCode: http.StatusOK,
-		Body: []byte(
-			`data: {"choices":[{"index":0,"delta":{"reasoning":"still working"},"finish_reason":null}]}` + "\n\n" +
-				"data: [DONE]\n\n",
-		),
-	}, now)
-
-	count, totalBytes := cache.Stats()
-	require.Equal(t, 0, count)
-	require.Equal(t, int64(0), totalBytes)
 }

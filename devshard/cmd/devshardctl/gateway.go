@@ -1516,6 +1516,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	cacheKey := chatCacheKey(requestModel, body, clientIntent)
 	stream := chatRequestStream(body)
 	if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
+		g.metrics.RecordChatCache(requestModel, "hit")
 		logRequestStage(ctx, "gateway_cache_hit", "escrow", entry.EscrowID, "model", requestModel, "stream", stream)
 		g.recordCachedAccountingAlias(ctx, entry)
 		serveCachedChatResponse(w, r, entry)
@@ -1552,9 +1553,14 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 
 	if capture := g.serveChatToRuntime(rt, "/v1/chat/completions", body, w, r); capture != nil {
 		sourceRequestID, _ := requestLogFromContext(ctx)
-		if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
+		entry, reason := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err())
+		if reason == "" {
 			g.chatCache.Set(cacheKey, entry, time.Now())
+			g.metrics.RecordChatCache(requestModel, "stored")
 			logRequestStage(ctx, "gateway_cache_stored", "escrow", rt.id, "model", requestModel, "stream", stream, "bytes", len(entry.Body))
+		} else {
+			g.metrics.RecordChatCache(requestModel, "skipped_"+reason)
+			logRequestStage(ctx, "gateway_cache_skipped", "escrow", rt.id, "model", requestModel, "stream", stream, "reason", reason)
 		}
 	}
 }
@@ -1655,6 +1661,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		cacheKey := chatCacheKey(limitModel, body, clientIntent)
 		stream := chatRequestStream(body)
 		if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
+			g.metrics.RecordChatCache(limitModel, "hit")
 			logRequestStage(ctx, "gateway_devshard_cache_hit", "escrow", entry.EscrowID, "model", limitModel, "stream", stream)
 			g.recordCachedAccountingAlias(ctx, entry)
 			g.recordGatewayRequestOutcome(limitModel, "cached", "cache_hit")
@@ -1684,9 +1691,14 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 
 		if capture := g.serveChatToRuntime(rt, innerPath, body, w, r); capture != nil {
 			sourceRequestID, _ := requestLogFromContext(ctx)
-			if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
+			entry, reason := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err())
+			if reason == "" {
 				g.chatCache.Set(cacheKey, entry, time.Now())
+				g.metrics.RecordChatCache(limitModel, "stored")
 				logRequestStage(ctx, "gateway_devshard_cache_stored", "escrow", rt.id, "model", limitModel, "stream", stream, "bytes", len(entry.Body))
+			} else {
+				g.metrics.RecordChatCache(limitModel, "skipped_"+reason)
+				logRequestStage(ctx, "gateway_devshard_cache_skipped", "escrow", rt.id, "model", limitModel, "stream", stream, "reason", reason)
 			}
 		}
 		return
