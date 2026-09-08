@@ -2,6 +2,8 @@
 
 **Result: not accepted.** Fresh topology startup succeeded, but an unmodified gateway could not start inference and the updater preflight failed. A targeted fence-loss test also failed automatic child recovery. Container health and fleet admission did not detect these failures.
 
+**Follow-up:** the two causes were fixed on `sn/devshard-v5-ha-install-fixes` and a new empty deployment passed these checks. See the [repeat run report](devshard-v5-sandbox-retest-2026-09-08.md). The results below describe the original, unmodified revisions.
+
 ## Scope and source
 
 - Guide: `docs/devshard-host-ha-setup.md` at `2b2a50534`.

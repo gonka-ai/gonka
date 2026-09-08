@@ -61,7 +61,7 @@ Feature: Install and upgrade an HA host
     And the router's admin /readyz?version=<required-version> returns 503
     And the required version's backend has no ready upstreams
     When that version becomes ready and I finish admission
-    Then the public /<required-version>/healthz path used by the gateway also returns 200
+    Then the public /devshard/<required-version>/healthz path used by the gateway returns 200
     And the gateway completes its height seed through the public endpoint
     And inference through the public endpoint succeeds with correct accounting
     And every local member returns a nonempty identity and generation targets from /internal/storage-identity
