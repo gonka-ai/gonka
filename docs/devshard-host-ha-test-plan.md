@@ -61,7 +61,11 @@ Feature: Install and upgrade an HA host
     And the router's admin /readyz?version=<required-version> returns 503
     And the required version's backend has no ready upstreams
     When that version becomes ready and I finish admission
-    Then inference through the public endpoint succeeds with correct accounting
+    Then the public /<required-version>/healthz path used by the gateway also returns 200
+    And the gateway completes its height seed through the public endpoint
+    And inference through the public endpoint succeeds with correct accounting
+    And every local member returns a nonempty identity and generation targets from /internal/storage-identity
+    And the updater --check succeeds with database probes enabled
 
   Scenario: Detect an incompatible router image and catalog configuration
     Given the versiond-router fleet on a separate test deployment
@@ -316,6 +320,8 @@ Feature: Versiond and router HA lifecycle
     Given a ready child with writable PostgreSQL and accepted work
     When I terminate only its dedicated PostgreSQL fence connection
     Then it becomes unready and cannot silently continue with an unfenced storage session
+    And the affected child exits and versiond starts a replacement generation
+    And the replacement receives traffic only after fresh storage and per-version readiness checks
     And interrupted work is recorded as a failure rather than successful graceful completion
     And a survivor continues the escrow with committed state and accounting intact
 

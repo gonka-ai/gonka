@@ -6,6 +6,8 @@
 
 **Release:** `devshard-0.2.15-v5`. Core checked at `39240311fb`; versiond fleet and updater checked in the integration from [PR #1611](https://github.com/gonka-ai/gonka/pull/1611) at `9a4ec48886` on 2026-09-08.
 
+**Sandbox validation:** the topology starts, but the checked revisions fail the public gateway catalog probe, updater storage proof and automatic recovery after a PostgreSQL fence loss. See the [fresh-install run report](devshard-v5-sandbox-validation-2026-09-08.md). These failures must be resolved before accepting this component set.
+
 ---
 
 ## Why this matters
@@ -708,8 +710,17 @@ done
 ./versiond-router-fleet.sh wait-version v5
 # Repeat with version=v4 if retained; /healthz or router /livez alone is insufficient.
 
-# 5) Postgres mode on every HA child (after binary download)
-# From versiond / devshardd logs: storage mode postgres / PG connected
+# The gateway also probes this public path before starting inference.
+curl -fsS "http://127.0.0.1:${API_PORT:-8000}/v5/healthz"
+# It must return 200 too; /devshard/v5/healthz alone does not test this path.
+
+# 5) Postgres mode and storage proof on every HA child (after binary download)
+# From versiond / devshardd logs: storage mode postgres / PG connected.
+for replica in versiond versiond2; do
+  docker exec "$replica" wget -qO- http://127.0.0.1:8080/internal/storage-identity
+done
+# Require a nonempty identity and generation targets from every member.
+# A 503 here blocks the updater even when normal readiness passes.
 
 # 6) Stop the sticky replica (not a random one) and confirm route failover
 curl -si http://127.0.0.1:8000/devshard/v5/healthz | grep -iE 'HTTP/|X-Upstream|X-Versiond'
@@ -729,7 +740,7 @@ Healthy signs:
 - Router sticky-routes across the HA pool (`VERSIOND_NON_HA_VERSIONS` empty).
 - Stopping the **sticky** upstream moves subsequent traffic to a ready peer (killing an unused replica does not prove HA).
 
-PostgreSQL outages make v5 children unready and fail closed. Losing a database fence terminates the affected child; `versiond` restarts it, and it must become ready again before receiving traffic.
+PostgreSQL outages make v5 children unready and fail closed. After a database fence loss, verify that the affected child exits and `versiond` replaces it before it receives traffic again. A child left running and unready fails recovery acceptance; this occurred in the sandbox run above.
 
 The health URL is only a routing smoke check. Also use a real funded escrow: record an inference, serving member, committed nonce and cost, stop that member, and continue the **same session** on a survivor. Verify committed state and accounting; test retained v4 and new v5 escrows separately. HAProxy does not replay non-idempotent requests after sending them and does not retry application 503 responses. A crash can interrupt an in-flight stream; use the [test plan](devshard-host-ha-test-plan.md) for graceful-drain, crash and restart checks.
 
