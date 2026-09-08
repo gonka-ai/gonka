@@ -2375,6 +2375,9 @@ func (g *Gateway) parseChatReservation(r *http.Request, defaultModel string) ([]
 		captureFilterRejectedRequest(r, originalBody, err, model, "")
 		return nil, chatRequest{}, 0, err
 	}
+	if err := ensureNormalizedBodyFitsHostTransport(r.Context(), updatedBody, firstNonEmpty(req.Model, routedModel)); err != nil {
+		return nil, chatRequest{}, 0, err
+	}
 
 	inputTokens := estimatePromptTokens(updatedBody)
 	return updatedBody, req, inputTokens, nil

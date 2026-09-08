@@ -18,7 +18,7 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 
 | Limit | Value | Source |
 |-------|-------|--------|
-| Max body size | 10 MiB | gateway-level; pre-`json.Unmarshal` check |
+| Max body size | 7 MiB | gateway-level, measured on the body **after** normalization — which always grows it a little and can grow it a lot, so send less than the raw number ([why](troubleshooting.md#reject-oversize-body)) |
 | Max nesting depth | 32 | `ensureRequestNestingDepth`; defense against deeply-nested JSON DoS |
 | Max messages count | 2048 | OpenAI Chat Completions convention; defensive cap |
 | Max choices (`n`) | 1 | forced to 1 when present; reservation/settlement budget a single `MaxTokens` output ([why](troubleshooting.md#coerce-n-when-temperature-zero)) |
