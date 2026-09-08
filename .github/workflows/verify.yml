@@ -268,6 +268,7 @@ jobs:
       - name: Check the join update script
         run: |
           shellcheck deploy/join/deployment-lock.sh deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh \
+            deploy/join/versiond-storage-check.sh \
             deploy/join/update-devshard-regression_test.sh deploy/join/compose-contract_test.sh \
             deploy/join/update-devshard-e2e_test.sh
           deploy/join/update-devshard_test.sh
@@ -287,6 +288,13 @@ jobs:
         uses: actions/checkout@v4
       - name: Run the real updater against a pre-v5 deployment
         run: deploy/join/update-devshard-e2e_test.sh
+      - name: Check remote storage against real PostgreSQL
+        run: |
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+          python3 deploy/join/versiond-storage-check_test.py
 
   test-public-proxy-router:
     runs-on: ubuntu-latest

@@ -43,6 +43,10 @@ wait_timeout=${UPDATE_WAIT_TIMEOUT_SECONDS:-2100}
 topology=auto
 check_only=false
 dry_run=false
+storage_check_only=false
+storage_reference_env=
+storage_containers=()
+topology_option=false
 
 fail() {
     echo "update-devshard: $*" >&2
@@ -52,6 +56,7 @@ fail() {
 usage() {
     cat >&2 <<'EOF'
 Usage: update-devshard.sh [--check] [--dry-run] [--topology auto|single|ha]
+       update-devshard.sh --check-storage --reference-env FILE [--container NAME ...]
 
 Run from deploy/join after `git fetch` and checking out the release.
 config.env is read from this directory (or GONKA_CONFIG_ENV).
@@ -60,6 +65,15 @@ config.env is read from this directory (or GONKA_CONFIG_ENV).
   --dry-run    print every command without running it
   --topology   override detection (auto: HA when the versiond service
                declares GONKA_HA=true, which the HA overlay sets)
+
+  --check-storage  verify running HA devshard processes against an independently
+                   configured PostgreSQL; no config.env or Compose required
+  --reference-env  shell file with the known working pool's PGHOST, PGDATABASE,
+                   PGUSER and connection/TLS settings (requires local psql)
+  --container      versiond container to check; repeat for several (default: versiond)
+
+Storage checking writes a control value through each process's database pool.
+Run checks one host at a time, before admitting new/replaced replicas to traffic.
 
 Compose files come from COMPOSE_FILE when set, otherwise from the labels of
 the running versiond container, otherwise from the stock files.
@@ -70,9 +84,17 @@ while (($# > 0)); do
     case $1 in
         --check) check_only=true; shift ;;
         --dry-run) dry_run=true; shift ;;
+        --check-storage) storage_check_only=true; shift ;;
+        --reference-env)
+            (($# >= 2)) || fail "--reference-env requires a file"
+            storage_reference_env=$2; shift 2 ;;
+        --container)
+            (($# >= 2)) || fail "--container requires a name"
+            storage_containers+=("$2"); shift 2 ;;
         --topology)
             (($# >= 2)) || fail "--topology requires a value"
             topology=$2
+            topology_option=true
             shift 2
             ;;
         -h | --help) usage; exit 0 ;;
@@ -80,6 +102,19 @@ while (($# > 0)); do
     esac
 done
 case $topology in auto | single | ha) ;; *) fail "--topology must be auto, single, or ha" ;; esac
+
+if [[ $storage_check_only == true ]]; then
+    [[ $check_only == false && $dry_run == false && $topology_option == false ]] || \
+        fail "--check-storage cannot be combined with --check, --dry-run or --topology"
+    [[ -n $storage_reference_env ]] || fail "--check-storage requires --reference-env"
+    # shellcheck source=deploy/join/versiond-storage-check.sh
+    source "$script_dir/versiond-storage-check.sh"
+    check_versiond_storage "$docker_bin" "$script_dir" "$config_env" \
+        "$storage_reference_env" "${storage_containers[@]}"
+    exit 0
+fi
+[[ -z $storage_reference_env && ${#storage_containers[@]} == 0 ]] || \
+    fail "--reference-env and --container require --check-storage"
 
 # --- configuration ----------------------------------------------------------
 

@@ -248,10 +248,16 @@ A `PGHOST` that now points at another working database, or at a copy, is
 refused, because a rolling replacement would otherwise leave old replicas
 writing to one history and new replicas to another. Set
 `UPDATE_ACCEPT_DATABASE_CHANGE=true` only for an intended migration to a
-restored copy, and only with every replica stopped first. Replicas on other
-machines are not part of this check; their `config.env` is copied from the
-network node, and a wrong `PGHOST` there is caught by the same check the
-next time the network node is updated.
+restored copy, and only with every local and remote replica stopped first.
+
+The supported v4-to-v5 upgrade starts with all versiond replicas on one host.
+Multi-host versiond is introduced in v5; configure it after updating the
+network node, following [Multi-host versiond](#multi-host-versiond).
+
+These checks cover only the versiond replicas that the updater manages on
+this host. On other hosts, run the updater's separate `--check-storage` mode
+before admitting replicas to the pool; see [Multi-host versiond](#multi-host-versiond).
+All replicas must connect to the same PostgreSQL database.
 
 The write probe opens PostgreSQL with the model's credentials from a helper
 container that borrows a running versiond's volumes, so a CA or client
@@ -446,7 +452,8 @@ On the **network node**:
    devshard-postgres`. It publishes chain gRPC/RPC, the node manager and
    PostgreSQL on the private interface only. Firewall those ports from the
    public network.
-4. `./versiond-router-fleet.sh apply` rolls the routers onto the new list.
+4. After the remote replicas pass the database check described below,
+   `./versiond-router-fleet.sh apply` rolls the routers onto the new list.
 
 On each **remote machine**:
 
@@ -456,10 +463,32 @@ On each **remote machine**:
 2. Copy `.inference/keyring-file` from the network node into `./.inference`;
    the same `KEY_NAME` and `KEYRING_PASSWORD` apply.
 3. `docker compose -f docker-compose.versiond-remote.yml up -d --wait`.
+4. Install `psql` (the PostgreSQL client) and `jq` on this host. Copy
+   `pool-postgres.env.template` to `pool-postgres.env`, set its permissions
+   to `600`, and fill it with the existing pool's known working PostgreSQL
+   connection settings. Obtain these independently of the replica being
+   checked; certificate paths refer to files on this host. Then run:
 
-Remote hosts are updated one at a time with
-`docker compose -f docker-compose.versiond-remote.yml pull && ... up -d --wait`;
-the routers withdraw a host while it fails `/readyz` and readmit it afterwards.
+   ```bash
+   ./update-devshard.sh --check-storage --reference-env ./pool-postgres.env
+   ```
+
+   Continue only when it prints `Storage check passed` and exits with code 0.
+   It checks the running `versiond` container without requiring the network
+   node's Compose services. For other container names, supply `--container NAME`
+   (repeat for several). Each HA devshardd writes a control value through its
+   own database connection, and the checker reads it from the reference
+   database. Run checks one host at a time, with no updater running elsewhere.
+5. Apply the endpoint list on the network node to admit the checked replicas.
+
+Update remote hosts one at a time. Stop the remote service with
+`docker compose -f docker-compose.versiond-remote.yml stop versiond` and let
+it finish draining. Remove its entry from the endpoint file and run
+`./versiond-router-fleet.sh apply` on the network node before starting its
+replacement. On the remote host, run
+`docker compose -f docker-compose.versiond-remote.yml pull`, then
+`docker compose -f docker-compose.versiond-remote.yml up -d --wait`.
+Repeat the database check before restoring its entry and applying the list.
 Versions in `VERSIOND_NON_HA_VERSIONS` stay on `VERSIOND_LEGACY_HOST` (the
 network node's `versiond` by default) because their state is local SQLite.
 
