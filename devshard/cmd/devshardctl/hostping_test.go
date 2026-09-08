@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +14,21 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
+
+type notifyingHostPingSink struct {
+	inner    *hostPingSink
+	observed chan struct{}
+	once     sync.Once
+}
+
+func (s *notifyingHostPingSink) Observe(result probe.Result) {
+	s.inner.Observe(result)
+	s.once.Do(func() { close(s.observed) })
+}
+
+func (s *notifyingHostPingSink) Forget(key string) {
+	s.inner.Forget(key)
+}
 
 func TestHostPingTargetsRefcountAndDedupe(t *testing.T) {
 	targets := newHostPingTargets()
@@ -188,6 +207,74 @@ func TestHostPingObserveAfterReleaseDoesNotRestoreSeries(t *testing.T) {
 	require.False(t, job.targets.hasEscrow("e1"))
 	require.Empty(t, job.targets.Targets())
 	assertNoHostPingSeriesForHost(t, metrics, dial)
+	requireHostPingTargets(t, metrics, 0)
+}
+
+func TestHostPingInFlightProbeAfterReleaseDoesNotRestoreSeries(t *testing.T) {
+	probeStarted := make(chan struct{})
+	unblockProbe := make(chan struct{})
+	var startOnce sync.Once
+	var unblockOnce sync.Once
+	releaseProbe := func() {
+		unblockOnce.Do(func() { close(unblockProbe) })
+	}
+	t.Cleanup(releaseProbe)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startOnce.Do(func() { close(probeStarted) })
+		select {
+		case <-unblockProbe:
+			w.WriteHeader(http.StatusNoContent)
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	metrics := NewDevshardMetrics()
+	job := newHostPingJob(metrics, hostPingConfig{
+		Interval:    10 * time.Second,
+		Timeout:     2 * time.Second,
+		Concurrency: 1,
+	})
+	const escrowID = "e1"
+	const participantKey = "pk-in-flight"
+	job.ObserveEscrowHost(escrowID, server.URL, "", participantKey)
+
+	prober, err := probe.New(probe.Config{
+		Interval:    10 * time.Second,
+		Timeout:     2 * time.Second,
+		Concurrency: 1,
+		Transport:   server.Client().Transport,
+	})
+	require.NoError(t, err)
+	observed := make(chan struct{})
+	sink := &notifyingHostPingSink{
+		inner:    &hostPingSink{metrics: metrics, targets: job.targets},
+		observed: observed,
+	}
+	scheduler := probe.NewScheduler(prober, job.targets, sink, &hostPingObserver{metrics: metrics})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go scheduler.Run(ctx)
+
+	select {
+	case <-probeStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("host ping probe did not start")
+	}
+
+	job.ReleaseEscrow(escrowID)
+	assertNoHostPingSeriesForHost(t, metrics, server.URL)
+	requireHostPingTargets(t, metrics, 0)
+
+	releaseProbe()
+	select {
+	case <-observed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("host ping probe result was not observed")
+	}
+
+	assertNoHostPingSeriesForHost(t, metrics, server.URL)
 	requireHostPingTargets(t, metrics, 0)
 }
 
