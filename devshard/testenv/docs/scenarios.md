@@ -1,8 +1,9 @@
 # Stack citest scenarios
 
-Implemented Go integration tests for the devshard testenv v2 stack. Each scenario
-boots a real Docker Compose stack (mock-chain, mock-dapi, mock-openai, versiond × 2,
-versiond-router, devshardctl, Postgres) and asserts production-like behaviour end to end.
+Implemented Go integration tests for the devshard testenv v2 stack. Most scenarios
+boot a real Docker Compose stack (mock-chain, mock-dapi, mock-openai, versiond × 2,
+versiond-router, devshardctl, Postgres) and assert production-like behaviour end to end.
+The unjoined-router scenario uses two separate Compose projects, described below.
 
 **Design history:** [`testenv-v2-plan.md`](./testenv-v2-plan.md) (planning doc; scenarios below are what shipped).
 
@@ -34,6 +35,7 @@ HTTP/gRPC helpers, log dump on failure.
 cd devshard/testenv
 make build-devshardd
 make citest-stack                 # all core stack behavior tests
+make citest-unjoined-router-fleet # two routers, explicit endpoints, separate networks
 make citest-validation-lease-race # validation lease race only
 make citest-payload-withholding   # executor payload withholding (500 → invalidate)
 make citest-versiond-rolling-update
@@ -72,6 +74,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 |----------|------------------|------|
 | **Stack smoke** | Full stack boots; all boundaries healthy | `TestStackSmoke` |
 | **Router stickiness** | Same session → same versiond upstream | `TestRouterStickiness` |
+| **Unjoined router fleet** | Two routers on a separate network agree on explicit versiond endpoints and failover | `TestUnjoinedRouterFleet` |
 | **Params long-poll** | Governance patch wakes `GetRuntimeConfig` | `TestParamsLongPoll` |
 | **Epoch switch** | Epoch advance fast-forwards chain + bumps epoch in long-poll | `TestEpochSwitch` |
 | **Gateway chat** | devshardctl → router → devshardd → mock-openai (stream + non-stream) | `TestGatewayChat` |
@@ -162,6 +165,52 @@ versiond across repeated requests, and at least two distinct upstreams are reach
 
 **Pass criteria:** Stable upstream for session A; at least one session B routes elsewhere.
 Validates deploy/join-style sticky routing before chat or long-poll scenarios depend on it.
+
+---
+
+## Unjoined router fleet
+
+**What we test:** Two real versiond-routers use `VERSIOND_POOL_ENDPOINTS_FILE`
+to reach the same PostgreSQL-backed versiond pair without sharing its Docker
+network. This covers the missing cross-router routing check in
+[issue #1733](https://github.com/gonka-ai/gonka/issues/1733).
+
+**Topology:** Compose A contains two versionds, shared Postgres, and the three
+mocks. Compose B contains two HAProxy routers from
+[`docker-compose.unjoined-routers.yml`](../docker-compose.unjoined-routers.yml).
+Both routers mount the same endpoint JSON. Each endpoint uses the Linux Docker
+daemon's default bridge gateway address and a versiond's randomly published host
+port. Neither router joins a network belonging to Compose A. The scenario uses
+static version configuration and does not start a gateway, public proxy, or
+the fleet CLI. It does not create sessions or run chat, height-sync, or host-ping
+scenarios.
+
+**How:**
+
+1. Wait for both versionds' `/readyz` and `/<version>/healthz`.
+2. Write the canonical `{id, host, port}` entries and start both routers. Verify
+   their network attachments are disjoint from the versionds', their mounted
+   endpoint files match, and `getent hosts versiond-pool` fails inside each router.
+3. Wait for each router's `/healthz`, per-version `/readyz`, and both endpoints
+   to be `UP` in its version backend.
+4. Find two session IDs assigned to different versionds. For each session, send
+   eight `/<version>/sessions/<session>/healthz` requests through each router.
+   Require the exact same canonical `X-Upstream-Addr` on every request. These
+   synthetic session paths currently return an upstream 404 because devshardd
+   only registers `/healthz`; HTTP 200 is also accepted, but gateway failures and
+   other status codes fail the test. Child readiness was checked separately.
+5. Stop `versiond-0`. Within one shared 45-second window, both routers must send
+   its session to `versiond-1`. Repeat the eight-request checks for both sessions:
+   the moved session reaches the survivor, and the survivor's session stays there.
+
+**Pass criteria:** Membership comes from the endpoint file, both routers agree
+on the full upstream address, both versionds receive traffic before the stop,
+and both routers converge on the survivor afterward. Failures dump both Compose
+projects' logs.
+
+Run `make build-devshardd` then `make citest-unjoined-router-fleet` on a Linux
+Docker daemon. This is a separate auto-discovered CI matrix target and is not
+included in `citest-stack`.
 
 ---
 
