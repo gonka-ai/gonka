@@ -26,11 +26,13 @@ source ./config.env
 ./update-devshard.sh
 ```
 
-`--check` changes nothing. The second command prints every `docker compose`
-command it runs and stops at the first failure; rerunning it is safe.
+`--check` leaves services in place but writes PostgreSQL probes and storage
+challenges. The second command prints its Compose steps. Failed public-ingress
+or versiond replacements restore the saved container configuration and stop;
+an interrupted replacement is recovered on the next normal run.
 
-Single-versiond hosts stay single; hosts with the HA overlay keep both
+Single-versiond hosts stay single; hosts with the HA overlay keep their configured
 replicas. Operator Compose overlays are picked up from the running deployment.
-To roll back, set the previous image tags in `config.env` and run the script
-again. Details, multi-host versiond, and the PostgreSQL rollback boundary:
+For a planned rollback, select compatible previous images and Compose files,
+then follow the release guide. Details, multi-host versiond, and the PostgreSQL rollback boundary:
 `devshard/docs/release-0.2.15-v5.md` in the release.

@@ -76,7 +76,8 @@ trap 'rm -rf "$tmpdir"' EXIT
 # placeholders because fake Docker returns a rendered model directly.
 script_dir=$tmpdir/join
 mkdir -p "$script_dir/versiond-router-slot"
-cp "$source_dir/update-devshard.sh" "$source_dir/deployment-lock.sh" "$script_dir/"
+cp "$source_dir/update-devshard.sh" "$source_dir/deployment-lock.sh" "$source_dir/updater-rollback.sh" \
+    "$source_dir/updater-container-state.py" "$script_dir/"
 : >"$script_dir/docker-compose.yml"
 : >"$script_dir/docker-compose.versiond.yml"
 : >"$script_dir/versiond-router-slot/docker-compose.yml"
@@ -192,12 +193,21 @@ case ${1:-} in
     run)
         case " $* " in
             *"SELECT identity"*) printf 'db-1\n' ;;
-            *"SELECT challenge"*) printf '%s\n' "${FAKE_NONCE:-}" ;;
+            *"SELECT challenge"*) cat "$FAKE_STATE/nonce" ;;
+            *"current_setting"*) printf '1000|3\n' ;;
             *) printf 'f\n' ;;
         esac
         exit 0
         ;;
     exec)
+        if [[ " $* " == *storage-challenge* ]]; then
+            for ((i = 1; i <= $#; i++)); do
+                if [[ ${!i} == --post-data ]]; then j=$((i+1)); payload=${!j}; fi
+            done
+            jq -r .nonce <<<"$payload" >"$FAKE_STATE/nonce"
+            jq -cn --argjson request "$payload" '{identity:"db-1",snapshot:$request.snapshot,generation:$request.generation,found:true}'
+            exit 0
+        fi
         case $FAKE_SCENARIO in
             proof-headers)
                 if [[ " $* " == *storage-identity* ]]; then
@@ -278,6 +288,8 @@ run_updater() {
     env -u COMPOSE_FILE -u COMPOSE_PATH_SEPARATOR \
         FAKE_SCENARIO="$scenario" \
         FAKE_LOG="$tmpdir/log" \
+        UPDATE_STATE_DIR="$tmpdir/state/updater" \
+        GONKA_DEPLOYMENT_LOCK="$tmpdir/deployment.lock" \
         FAKE_STATE="$tmpdir/state" \
         FAKE_SCRIPT_DIR="$script_dir" \
         FAKE_RENDERED_SINGLE="$tmpdir/single.json" \
@@ -323,7 +335,7 @@ detect_proof_headers() {
     fi
     docker run --rm --pull=never "$image" sh -c '
         mkdir -p /tmp/www
-        printf '\''{"identity":"db-1"}\n'\'' >/tmp/www/index.html
+        printf '\''{"identity":"db-1","snapshot":"snap-1","children":1,"targets":[{"generation":"gen-1","version":"v5","pool_max_connections":4}]}\n'\'' >/tmp/www/index.html
         /bin/busybox httpd -p 127.0.0.1:18080 -h /tmp/www
         /bin/busybox wget -qO- -S -T 5 http://127.0.0.1:18080/index.html
     ' >"$tmpdir/proof-body" 2>"$tmpdir/proof-headers"
@@ -331,7 +343,7 @@ detect_proof_headers() {
     body=$(<"$tmpdir/proof-body")
     headers=$(<"$tmpdir/proof-headers")
     wire=$headers$'\n'$body
-    if ((status != 0)) || [[ $headers != *"HTTP/1.1 200 OK"* ]] || [[ $body != *'{"identity":"db-1"}'* ]]; then
+    if ((status != 0)) || [[ $headers != *"HTTP/1.1 200 OK"* ]] || [[ $body != *'{"identity":"db-1","snapshot":"snap-1","children":1,"targets":[{"generation":"gen-1","version":"v5","pool_max_connections":4}]}'* ]]; then
         SCENARIO_DETAIL="cached $image did not produce the expected BusyBox header-plus-body response"
         return 2
     fi

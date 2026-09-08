@@ -18,7 +18,8 @@ fail() {
 # directory that holds placeholder files; the fake docker never reads them.
 script_dir=$tmpdir/join
 mkdir -p "$script_dir"
-cp "$source_dir/update-devshard.sh" "$source_dir/deployment-lock.sh" "$script_dir/"
+cp "$source_dir/update-devshard.sh" "$source_dir/deployment-lock.sh" "$source_dir/updater-rollback.sh" \
+    "$source_dir/updater-container-state.py" "$script_dir/"
 : >"$script_dir/docker-compose.yml"
 : >"$script_dir/docker-compose.versiond.yml"
 : >"$script_dir/docker-compose.observability.yml"
@@ -41,12 +42,24 @@ case "$1 ${2:-} ${3:-}" in
             *"SELECT challenge"*)
                 [[ -f $FAKE_STATE/nonce && ${FAKE_TARGET_IS_CLONE:-false} != true ]] && cat "$FAKE_STATE/nonce"
                 ;;
+            *"current_setting"*) printf '%s|3\n' "${FAKE_MAX_CONNECTIONS:-1000}" ;;
             *"SELECT identity"*) printf '%s\n' "${FAKE_TARGET_IDENTITY:-db-1}" ;;
             *"pg_is_in_recovery"*) printf 'f\n' ;;
         esac
         exit 0
         ;;
     "exec "*)
+        knob=FAKE_PROOF_${2#cid-}
+        mode=${!knob:-${FAKE_PROOF_MODE:-valid}}
+        case $mode in
+            404) printf '  HTTP/1.1 404 Not Found\n' >&2; exit 1 ;;
+            503) printf '  HTTP/1.1 503 Service Unavailable\n' >&2; exit 1 ;;
+            timeout) printf 'wget: download timed out\n' >&2; exit 1 ;;
+            exec-failed) printf 'permission denied\n' >&2; exit 126 ;;
+            malformed) printf '{bad json\n'; exit 0 ;;
+            identity-only) printf '{"identity":"db-1"}\n'; exit 0 ;;
+            empty-targets) printf '{"identity":"db-1","snapshot":"snap-1","children":0,"targets":[]}\n'; exit 0 ;;
+        esac
         case " $* " in
             *storage-challenge*)
                 payload=
@@ -54,9 +67,10 @@ case "$1 ${2:-} ${3:-}" in
                     [[ ${!i} == --post-data ]] && { j=$((i + 1)); payload=${!j}; }
                 done
                 printf '%s' "$payload" | jq -r .nonce >"$FAKE_STATE/nonce"
-                printf '{"identity":"%s","found":true}\n' "${FAKE_RUNNING_IDENTITY:-db-1}"
+                jq -cn --arg identity "${FAKE_RUNNING_IDENTITY:-db-1}" --argjson request "$payload" \
+                    '{identity:$identity,snapshot:$request.snapshot,generation:$request.generation,found:true}'
                 ;;
-            *) printf '{"identity":"%s","snapshot":"snap-1","targets":[{"generation":"gen-1"}]}\n' "${FAKE_RUNNING_IDENTITY:-db-1}" ;;
+            *) printf '{"identity":"%s","snapshot":"snap-1","children":1,"targets":[{"generation":"gen-1","version":"v5","pool_max_connections":4}]}\n' "${FAKE_RUNNING_IDENTITY:-db-1}" ;;
         esac
         exit 0
         ;;
@@ -67,7 +81,7 @@ case "$1 ${2:-} ${3:-}" in
         ;;
     "image inspect "*)
         case " ${FAKE_MISSING_IMAGES:-} " in
-            *" ${*: -1} "*) exit 1 ;;
+            *" ${*: -1} "*) [[ -f $FAKE_STATE/pulled ]] || exit 1 ;;
         esac
         printf 'id-%s\n' "${*: -1}"
         exit 0
@@ -91,6 +105,11 @@ if [[ $1 == inspect ]]; then
         *) echo "Error response from daemon: No such object: $name" >&2; exit 1 ;;
     esac
     case $format in
+        "") jq -cn --arg name "$name" --arg health "${FAKE_HEALTH:-healthy}" \
+            '[{Id:("cid-"+$name), Name:("/"+$name), Image:("old-"+$name),
+              Config:{Labels:{"com.docker.compose.project":"gonka"}},
+              State:{Running:true,Status:"running",Health:{Status:$health}}}]' ;;
+        *Config.Env*) printf '["PGHOST=devshard-postgres","PGDATABASE=devshardd"]\n' ;;
         *.Image}}*) printf 'old-%s\n' "${name#cid-}" ;;
         *Health*) printf '%s\n' "${FAKE_HEALTH:-healthy}" ;;
         *working_dir*) printf '%s\n' "${FAKE_WORKING_DIR}" ;;
@@ -110,6 +129,7 @@ if [[ $1 == inspect ]]; then
 fi
 if [[ $1 == compose ]]; then
     case " $* " in
+        *" pull "*) touch "$FAKE_STATE/pulled"; exit 0 ;;
         *" config --format json "*)
             case " $* " in
                 *"docker-compose.versiond.yml"*) cat "$FAKE_RENDERED_HA" ;;
@@ -118,6 +138,7 @@ if [[ $1 == compose ]]; then
             exit 0
             ;;
         *" ps --all --quiet "*)
+            [[ ${FAKE_FAIL_PS_ALL:-} != "${*: -1}" ]] || { echo 'permission denied' >&2; exit 1; }
             service=${*: -1}
             case " ${FAKE_CONTAINERS:-} " in
                 *" $service "*) printf 'cid-%s\n' "$service" ;;
@@ -196,6 +217,8 @@ run_update() {
     rm -rf "$tmpdir/state"; mkdir -p "$tmpdir/state"
     env PATH="$tmpdir:$PATH" \
         FAKE_LOG="$tmpdir/log" \
+        UPDATE_STATE_DIR="$tmpdir/state/updater" \
+        GONKA_DEPLOYMENT_LOCK="$tmpdir/deployment.lock" \
         FAKE_STATE="$tmpdir/state" \
         FAKE_MISSING_IMAGES="${FAKE_MISSING_IMAGES:-ghcr.io/example/versiond:new ghcr.io/example/proxy-router:new ghcr.io/example/proxy:new postgres@sha256:abc}" \
         FAKE_WORKING_DIR="$script_dir" \
@@ -295,14 +318,12 @@ if run_update env FAKE_CONTAINERS="versiond proxy" FAKE_CONFIG_FILES="docker-com
     FAKE_FAIL_UP=versiond; then
     fail "an unhealthy replacement was reported as success"
 fi
-grep -q 'put back on its previous image' "$tmpdir/err" || \
+grep -q 'restoring the previous service specifications' "$tmpdir/err" || \
     fail "rollback message: $(cat "$tmpdir/err")"
-[[ $(grep -c 'up -d --no-deps --wait --wait-timeout 2100 versiond$' "$tmpdir/log") -eq 2 ]] || \
-    fail "the previous image was not put back: $(grep versiond "$tmpdir/log")"
-grep -q '^tag old-versiond gonka-previous/versiond$' "$tmpdir/log" || \
-    fail "the previous image was not kept under a durable tag"
-grep -q '^env VERSIOND_IMAGE=gonka-previous/versiond$' "$tmpdir/log" || \
-    fail "rollback did not use the durable previous tag"
+grep -q '^start cid-versiond$' "$tmpdir/log" || fail "saved versiond was not restored"
+grep -Eq '^tag old-versiond gonka-previous/[0-9a-f]+/versiond$' "$tmpdir/log" || \
+    fail "the previous image was not retained under a deployment tag"
+[[ ! -d $tmpdir/state/updater/pending ]] || fail "successful recovery left a pending transaction"
 
 # An unhealthy candidate never overwrites the previous tag.
 UPDATE_ARGS=(--dry-run)
@@ -402,7 +423,7 @@ fi
 grep -q 'container devshard-postgres exists but the Compose model is a single-versiond one' "$tmpdir/err" || \
     fail "partial-model message: $(cat "$tmpdir/err")"
 
-# --check runs the preflight and changes nothing.
+# --check runs database probes without replacing services.
 UPDATE_ARGS=(--check)
 run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
     FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
@@ -417,10 +438,17 @@ run_update env FAKE_CONTAINERS="" || fail "--dry-run failed: $(cat "$tmpdir/err"
 grep -q '^+ docker compose .* up -d --no-deps --wait --wait-timeout 2100 versiond$' "$tmpdir/out" || \
     fail "--dry-run did not print the versiond step"
 
+# A dry run need not have the candidate PostgreSQL image cached locally.
+UPDATE_ARGS=(--dry-run)
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" || \
+    fail "HA dry run failed: $(cat "$tmpdir/err")"
+[[ -z $(mutations) ]] || fail "HA dry run replaced services"
+
 # COMPOSE_FILE wins over container labels.
 UPDATE_ARGS=(--dry-run)
 run_update env FAKE_CONTAINERS="versiond" FAKE_CONFIG_FILES="docker-compose.yml" \
-    COMPOSE_FILE="docker-compose.yml:docker-compose.versiond.yml" || \
+    COMPOSE_FILE="docker-compose.yml:docker-compose.versiond.yml" UPDATE_SKIP_POSTGRES_PROBE=true || \
     fail "COMPOSE_FILE run failed: $(cat "$tmpdir/err")"
 grep -q 'Topology: ha' "$tmpdir/out" || fail "COMPOSE_FILE overlay did not select HA"
 
@@ -467,6 +495,112 @@ if run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
     FAKE_RENDERED_HA="$tmpdir/ha-no-net.json"; then
     fail "HA model without router networks was accepted"
 fi
-grep -q 'needs docker-compose.versiond.yml' "$tmpdir/err" || fail "HA overlay message: $(cat "$tmpdir/err")"
+grep -q 'update remote versiond containers on their own hosts' "$tmpdir/err" || fail "HA overlay message: $(cat "$tmpdir/err")"
 
+# Invalid timeout settings must be rejected before even querying Docker.
+UPDATE_ARGS=(--check)
+for duration in 0 -1 1s 08 86401; do
+    if run_update env UPDATE_WAIT_TIMEOUT_SECONDS="$duration"; then fail "accepted invalid duration $duration"; fi
+    grep -q 'must be an integer' "$tmpdir/err" || fail "duration refusal missing"
+    [[ ! -s $tmpdir/log ]] || fail "invalid duration reached Docker"
+done
+
+# Host requirements are checked before the first Docker call, including timeout.
+mkdir -p "$tmpdir/restricted-path"
+for tool in bash dirname env jq timeout flock sha256sum python3; do
+    ln -s "$(command -v "$tool")" "$tmpdir/restricted-path/$tool"
+done
+ln -s "$tmpdir/docker" "$tmpdir/restricted-path/docker"
+for tool in docker jq timeout flock sha256sum python3; do
+    mv "$tmpdir/restricted-path/$tool" "$tmpdir/missing-tool"
+    if run_update env PATH="$tmpdir/restricted-path"; then fail "missing $tool accepted"; fi
+    grep -q "$tool is required" "$tmpdir/err" || fail "missing utility message: $(cat "$tmpdir/err")"
+    [[ ! -s $tmpdir/log ]] || fail "missing $tool reached Docker"
+    mv "$tmpdir/missing-tool" "$tmpdir/restricted-path/$tool"
+done
+
+# The pin owner is a setting, not a fixed service name.
+UPDATE_ARGS=()
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" VERSIOND_LEGACY_HOST=versiond2 || \
+    fail "non-default owner failed: $(cat "$tmpdir/err")"
+[[ $(grep 'up -d .* versiond' "$tmpdir/log" | tail -1) == *' versiond2' ]] || fail "legacy owner was not last"
+
+# A failed Compose listing must never be interpreted as an absent container.
+if run_update env FAKE_CONTAINERS="versiond proxy" FAKE_CONFIG_FILES=docker-compose.yml FAKE_FAIL_PS_ALL=proxy; then
+    fail "failed Compose ps was accepted"
+fi
+grep -q 'cannot list proxy for rollback' "$tmpdir/err" || fail "listing failure was swallowed"
+! grep -q 'up -d .*proxy' "$tmpdir/log" || fail "proxy replaced after failed listing"
+
+# A valid first replica cannot mask an unavailable or malformed second proof.
+UPDATE_ARGS=(--check)
+for mode in 503 timeout exec-failed malformed identity-only empty-targets; do
+    if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+        FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" FAKE_PROOF_versiond2="$mode"; then
+        fail "accepted $mode proof from the second replica"
+    fi
+    [[ -z $(mutations) ]] || fail "mutated services after a failed proof"
+    grep -Eq 'storage (lineage|proof)' "$tmpdir/err" || fail "unexpected $mode refusal: $(cat "$tmpdir/err")"
+done
+
+# All-legacy proofs are safe only for the known bundled cluster migration.
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" FAKE_PROOF_MODE=404 || \
+    fail "bundled legacy migration refused: $(cat "$tmpdir/err")"
+jq '.services.versiond.environment.PGHOST = "external" | .services.versiond2.environment.PGHOST = "external"' \
+    "$tmpdir/ha.json" >"$tmpdir/ha-external.json"
+if run_update env FAKE_CONTAINERS="versiond versiond2" FAKE_PROOF_MODE=404 \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" FAKE_RENDERED_HA="$tmpdir/ha-external.json"; then
+    fail "unproven external legacy database accepted"
+fi
+grep -q 'cannot prove' "$tmpdir/err" || fail "legacy external refusal: $(cat "$tmpdir/err")"
+
+jq '.services.versiond.environment.PGPORT = "15432" | .services.versiond2.environment.PGPORT = "15432"' \
+    "$tmpdir/ha.json" >"$tmpdir/ha-port.json"
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" FAKE_PROOF_MODE=404 \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" FAKE_RENDERED_HA="$tmpdir/ha-port.json"; then
+    fail "legacy database port change accepted"
+fi
+grep -q 'existing database differs' "$tmpdir/err" || fail "legacy port change refusal missing"
+
+# A database-change override cannot bypass live writers, even with probes disabled.
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    UPDATE_ACCEPT_DATABASE_CHANGE=true UPDATE_SKIP_POSTGRES_PROBE=true; then fail "live database change accepted"; fi
+grep -q 'requires all versiond writers stopped' "$tmpdir/err" || fail "offline guard missing"
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" FAKE_STOPPED="versiond versiond2" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" UPDATE_ACCEPT_DATABASE_CHANGE=true || \
+    fail "offline database change refused: $(cat "$tmpdir/err")"
+
+# The budget is enforced against usable server slots: R=2, N=3, P=4 needs 82.
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" VERSIOND_VERSIONS="v4 v5 v6" \
+    FAKE_MAX_CONNECTIONS=85 || fail "exact capacity refused: $(cat "$tmpdir/err")"
+grep -q 'budget 82 fits 82' "$tmpdir/out" || fail "capacity formula mismatch"
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" VERSIOND_VERSIONS="v4 v5 v6" \
+    FAKE_MAX_CONNECTIONS=84; then fail "insufficient capacity accepted"; fi
+grep -q 'need 82, available 81' "$tmpdir/err" || fail "capacity refusal missing"
+[[ -z $(mutations) ]] || fail "capacity checked after replacing services"
+
+# Running replicas marked for removal still consume connections until stopped.
+if run_update env FAKE_CONTAINERS="versiond versiond2 versiond3 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" FAKE_RENDERED_HA="$tmpdir/ha3.json" \
+    VERSIOND_VERSIONS="v4 v5 v6" FAKE_MAX_CONNECTIONS=125; then fail "decommissioned live replica omitted from capacity"; fi
+grep -q 'need 123, available 122' "$tmpdir/err" || fail "decommissioned capacity mismatch"
+
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" VERSIOND_VERSIONS="v4 v5 v6" \
+    VERSIOND_HOSTS="versiond versiond2 remote" UPDATE_POSTGRES_CONNECTION_RESERVE=10 FAKE_MAX_CONNECTIONS=135; then
+    fail "remote membership or operator reserve omitted from capacity"
+fi
+grep -q 'need 133, available 132' "$tmpdir/err" || fail "remote capacity mismatch"
+
+jq '.services.versiond2.environment.PGHOSTADDR = "127.0.0.2"' "$tmpdir/ha.json" >"$tmpdir/ha-hostaddr.json"
+if run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" FAKE_RENDERED_HA="$tmpdir/ha-hostaddr.json"; then
+    fail "unsupported PGHOSTADDR accepted"
+fi
+grep -q 'versiond2 sets PGHOSTADDR' "$tmpdir/err" || fail "PGHOSTADDR refusal missing"
 echo "update-devshard_test: ok"

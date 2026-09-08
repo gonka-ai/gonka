@@ -7,7 +7,7 @@
 check_versiond_storage() (
     set -Eeuo pipefail
     local storage_docker=$1 storage_script_dir=$2 storage_config_env=$3 reference_env=$4
-    local name tool lock_dir key reference_identity proof state id running
+    local name tool lock_dir key reference_identity proof state id running project
     local checked index snapshot generation nonce request response observed current
     local -a containers reference_keys reference_args ids proofs generations
     shift 4
@@ -15,7 +15,7 @@ check_versiond_storage() (
     ((${#containers[@]} > 0)) || containers=(versiond)
     [[ -f $reference_env && -r $reference_env ]] || fail "cannot read reference settings: $reference_env"
     [[ $reference_env == */* ]] || reference_env=./$reference_env
-    for tool in "$storage_docker" jq psql timeout flock; do
+    for tool in "$storage_docker" jq psql timeout flock sha256sum; do
         command -v "$tool" >/dev/null 2>&1 || fail "$tool is required for --check-storage"
     done
     for name in "${containers[@]}"; do
@@ -28,7 +28,13 @@ check_versiond_storage() (
     # shellcheck source=deploy/join/deployment-lock.sh
     source "$storage_script_dir/deployment-lock.sh"
     lock_dir=$(cd -- "$(dirname -- "$storage_config_env")" && pwd -P)
-    gonka_acquire_deployment_lock "$lock_dir" || exit 1
+    project=$("$storage_docker" inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${containers[0]}") || \
+        fail "cannot inspect container ${containers[0]}"
+    [[ $project != '<no value>' ]] || project=
+    # Unlabelled standalone containers have no Compose project. Give their
+    # local checks a stable identity without borrowing an unrelated proxy's.
+    project=${project:-versiond-storage-check}
+    gonka_acquire_deployment_lock "$lock_dir" "$project" || exit 1
 
     # Isolate libpq from the caller's PGHOST/PGSERVICE/PGOPTIONS, and from any
     # replica configuration. The reference file uses config.env shell syntax.

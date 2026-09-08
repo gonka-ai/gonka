@@ -18,7 +18,7 @@
 # (wget through the container, jq, psql) works against real binaries.
 #
 # The release files use fixed container names (versiond, proxy,
-# devshard-postgres, ...) and the updater tags gonka-previous/<service>, so
+# devshard-postgres, ...), so
 # this test cannot share a host with a deployment. It refuses to start when
 # those names exist.
 
@@ -29,6 +29,7 @@ repo_dir=$(cd -- "$script_dir/../.." && pwd -P)
 suffix=$$
 project=gonka-e2e-$suffix
 tmpdir=$(mktemp -d)
+export UPDATE_STATE_DIR=$tmpdir/updater-state
 join=$tmpdir/join
 stub_image=gonka-e2e-versiond-stub:$suffix
 router_image=gonka-e2e-versiond-router:$suffix
@@ -165,7 +166,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply(200, json.dumps({
                 "identity": result.stdout.strip(),
                 "snapshot": "snapshot-1",
-                "targets": [{"generation": generation}],
+                "children": 1,
+                "targets": [{"generation": generation, "version": "v5", "pool_max_connections": 4}],
             }), "application/json")
         return self.reply(404, "not found\n")
 
@@ -182,7 +184,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if result.returncode != 0:
             return self.reply(503, result.stderr)
         result = sql("SELECT identity FROM devshard_storage_identity WHERE singleton")
-        return self.reply(200, json.dumps({"identity": result.stdout.strip(), "found": True}), "application/json")
+        return self.reply(200, json.dumps({"identity": result.stdout.strip(), "snapshot": "snapshot-1", "generation": generation, "found": True}), "application/json")
 
     def log_message(self, *_):
         pass
@@ -222,6 +224,24 @@ CMD ["python3", "/stub/versiond.py"]
 EOF
 docker build -q -t "$stub_image" "$tmpdir/stub" >/dev/null || fail "cannot build the versiond stub image"
 
+# Real nginx listeners for the pre-v5 public proxy and singleton router. Their
+# mounted configuration stays available after the release files are refreshed.
+cat >"$join/old-proxy.conf" <<'NGINX'
+events {}
+http { server {
+    listen 80;
+    location = / { return 200 "old nginx\n"; }
+    location /devshard/ { proxy_pass http://versiond-router:8080/; }
+} }
+NGINX
+cat >"$join/old-router.conf" <<'NGINX'
+events {}
+http {
+    upstream pool { server versiond:8080; server versiond2:8080; }
+    server { listen 8080; location / { proxy_pass http://pool; } }
+}
+NGINX
+
 # Pre-v5 files, shaped like the 0.2.15 release: services the updater relies
 # on (names, labels, the anonymous PostgreSQL volume, the router singleton),
 # images replaced by the stubs. api is the catalog and is never updated.
@@ -253,8 +273,11 @@ services:
     restart: always
   proxy:
     container_name: proxy
-    image: ${E2E_STUB_IMAGE}
-    command: ["python3", "-m", "http.server", "80"]
+    image: ${PROXY_POLICY_IMAGE}
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    command: []
+    volumes:
+      - ./old-proxy.conf:/etc/nginx/nginx.conf:ro
     ports:
       - "${API_PORT:-8000}:80"
     healthcheck:
@@ -318,8 +341,11 @@ services:
       - ./devshards2/data:/opt/versiond/data
   versiond-router:
     container_name: versiond-router
-    image: ${E2E_STUB_IMAGE}
-    command: ["python3", "-m", "http.server", "8080"]
+    image: ${PROXY_POLICY_IMAGE}
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    command: []
+    volumes:
+      - ./old-router.conf:/etc/nginx/nginx.conf:ro
     restart: always
 EOF
 
@@ -366,6 +392,8 @@ psql_db() {
 psql_db "CREATE TABLE e2e_marker (id int PRIMARY KEY); INSERT INTO e2e_marker VALUES (42)" >/dev/null || \
     fail "cannot write into the pre-v5 database"
 v4_postgres_id=$(docker inspect --format '{{.Id}}' devshard-postgres)
+curl --fail --silent "http://127.0.0.1:$api_port/devshard/v4/healthz" >/dev/null || \
+    fail "pre-v5 nginx does not route through the public port"
 
 # --- the release lands on the host --------------------------------------------
 cp -R "$script_dir/." "$join/"
@@ -375,6 +403,36 @@ updater=("$join/update-devshard.sh")
 "${updater[@]}" --check >"$tmpdir/check.log" 2>&1 || fail "--check failed: $(tail -n 20 "$tmpdir/check.log")"
 grep -q 'Topology: ha' "$tmpdir/check.log" || fail "--check did not detect the HA topology: $(cat "$tmpdir/check.log")"
 [[ $(docker inspect --format '{{.Id}}' devshard-postgres) == "$v4_postgres_id" ]] || fail "--check changed the deployment"
+
+# Fail the route-aware admission boundary after the new public stack starts.
+# The previous nginx must serve again before retry; the old router stays up.
+docker inspect proxy >"$tmpdir/old-proxy.json"
+cat >"$tmpdir/fail-admission" <<'SH'
+#!/usr/bin/env bash
+[[ $1 != verify-admission ]] || { echo 'injected public admission failure' >&2; exit 42; }
+exec "$REAL_FLEET" "$@"
+SH
+chmod +x "$tmpdir/fail-admission"
+if REAL_FLEET="$join/versiond-router-fleet.sh" VERSIOND_ROUTER_FLEET_BIN="$tmpdir/fail-admission" \
+    "${updater[@]}" >"$tmpdir/update.log" 2>&1; then
+    fail "public admission failure was accepted"
+fi
+grep -q 'injected public admission failure' "$tmpdir/update.log" || fail "did not reach the admission failure"
+[[ ! -d $UPDATE_STATE_DIR/pending ]] || fail "public rollback is incomplete"
+docker container inspect versiond-router >/dev/null || fail "removed the legacy router on a failed cutover"
+docker inspect proxy >"$tmpdir/restored-proxy.json"
+python3 - "$tmpdir/old-proxy.json" "$tmpdir/restored-proxy.json" <<'PYCODE'
+import json, sys
+old, restored = [json.load(open(path))[0] for path in sys.argv[1:]]
+assert restored["Image"] == old["Image"]
+assert restored["Config"] == dict(old["Config"], Image=old["Image"])
+assert restored["State"]["Health"]["Status"] == "healthy"
+assert restored["HostConfig"]["Binds"] == old["HostConfig"]["Binds"]
+assert restored["NetworkSettings"]["Ports"] == old["NetworkSettings"]["Ports"]
+PYCODE
+curl --fail --silent "http://127.0.0.1:$api_port/devshard/v4/healthz" >/dev/null || \
+    fail "restored nginx does not serve through the published port"
+echo "update-devshard-e2e_test: failed admission restored nginx and public traffic"
 
 "${updater[@]}" >"$tmpdir/update.log" 2>&1 || fail "the cutover failed"
 
@@ -441,9 +499,12 @@ grep -q 'no replica serves a storage proof\|first cutover\|nothing to compare' "
 
 # --- a second run changes nothing -----------------------------------------------
 ids_before=$(service_ids versiond versiond2 proxy proxy-policy proxy-policy2 devshard-postgres)
+anchors_before=$(sha256sum "$UPDATE_STATE_DIR"/previous/*.json)
 "${updater[@]}" >"$tmpdir/update.log" 2>&1 || fail "the rerun on a converged host failed"
 [[ $(service_ids versiond versiond2 proxy proxy-policy proxy-policy2 devshard-postgres) == "$ids_before" ]] || \
     fail "the rerun recreated containers on a converged host"
+[[ $(sha256sum "$UPDATE_STATE_DIR"/previous/*.json) == "$anchors_before" ]] || \
+    fail "the rerun overwrote the previous release specifications"
 grep -q 'wrote a challenge' "$tmpdir/update.log" || \
     fail "the rerun did not prove the database lineage through the replicas: $(grep -i 'postgres' "$tmpdir/update.log")"
 converged "rerun"

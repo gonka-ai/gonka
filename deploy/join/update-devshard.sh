@@ -3,33 +3,14 @@
 # Update the devshard services of one Gonka join deployment to the release in
 # this checkout.
 #
-# This script only sequences ordinary `docker compose` commands in the order
-# that keeps the deployment serving, and prints every command before running
-# it. Nothing here cannot be done by hand; it exists so the order does not have
-# to be remembered. State lives in Docker and config.env only: rerunning the
-# script is safe, and rolling back is setting the previous image tags in
-# config.env and running it again.
-#
-# Order (HA topology):
-#   1. shared PostgreSQL          (entrypoint migrates a v4 anonymous volume)
-#   2. versiond-router fleet      (HAProxy routers also serve pre-v5 versiond)
-#   3. private policy nginx, then the public proxy (the one connection cut)
-#   4. the legacy versiond-router singleton is removed
-#   5. every other versiond replica, then versiond (the legacy owner), each
-#      behind active router checks with --wait
-#
-# The single-versiond topology performs steps 3 and 5 only. Any number of
-# local versiond services (versiond, versiond2, versiond3, ...) is handled;
-# the shipped overlay defines two, docker-compose.versiond3.yml adds a third.
-#
-# Failure model: every step is one service behind a healthcheck. When a
-# replaced service does not become healthy, its previous image is put back
-# with the same `up` and the script stops; the deployment keeps serving the
-# previous release of that service and the new release of the services
-# replaced before it, which the HA design tolerates (routers and replicas roll
-# one at a time by design). Fix the cause and rerun; Compose skips the services
-# that already match. The whole run holds the deployment lock shared with
-# versiond-router-fleet.sh, so two operators cannot interleave.
+# The host updater sequences PostgreSQL, the router fleet, public ingress, and
+# versiond replicas. VERSIOND_LEGACY_HOST is replaced last. Public ingress is
+# replaced as a group because its proxy and policy workers depend on each other.
+# Failed replacements restore the saved Docker specification; an interrupted
+# replacement is recovered on the next normal run. PostgreSQL restores only its
+# image, retaining the migration target and its data. See the release guide for
+# maintenance requirements and rollback limits.
+# The entire run holds the same deployment lock as versiond-router-fleet.sh.
 
 set -Eeuo pipefail
 
@@ -61,8 +42,8 @@ Usage: update-devshard.sh [--check] [--dry-run] [--topology auto|single|ha]
 Run from deploy/join after `git fetch` and checking out the release.
 config.env is read from this directory (or GONKA_CONFIG_ENV).
 
-  --check      detect the topology and run the preflight; change nothing
-  --dry-run    print every command without running it
+  --check      run the preflight without replacing services (writes DB probes)
+  --dry-run    run the preflight, then print the replacement commands
   --topology   override detection (auto: HA when the versiond service
                declares GONKA_HA=true, which the HA overlay sets)
 
@@ -125,9 +106,16 @@ source "$config_env"
 set +a
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 
-for tool in "$docker_bin" jq; do
+for tool in "$docker_bin" jq timeout flock sha256sum python3; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
 done
+for setting in UPDATE_WAIT_TIMEOUT_SECONDS UPDATE_POSTGRES_PROBE_SECONDS; do
+    value=${!setting:-}
+    [[ -n $value ]] || continue
+    [[ $value =~ ^[1-9][0-9]{0,5}$ && $value -le 86400 ]] || \
+        fail "$setting must be an integer from 1 to 86400 seconds"
+done
+wait_timeout=${UPDATE_WAIT_TIMEOUT_SECONDS:-2100}
 "$docker_bin" info >/dev/null 2>&1 || fail "cannot reach the Docker daemon with $docker_bin"
 compose_version=$("$docker_bin" compose version --short 2>/dev/null) || \
     fail "Docker Compose v2 is required"
@@ -142,7 +130,6 @@ compose_core=${compose_core%%[-+]*}
 # concurrent checks would otherwise overwrite each other's nonce.
 # shellcheck source=deploy/join/deployment-lock.sh
 source "$script_dir/deployment-lock.sh"
-gonka_acquire_deployment_lock "$config_dir" || exit 1
 
 # --- what to run and how ----------------------------------------------------
 
@@ -315,7 +302,7 @@ if [[ $topology == ha ]]; then
             "$service does not declare GONKA_HA=true; every replica of an HA deployment must"
     done
     has_ha_model || fail \
-        "HA topology needs docker-compose.versiond.yml in the Compose file list"
+        "the host updater requires the network node's HA Compose model; update remote versiond containers on their own hosts with Docker Compose, then run --check-storage before pool admission"
 else
     for candidate in "${candidates[@]}"; do
         [[ $candidate == devshard-postgres || $candidate =~ ^versiond[0-9]+$ ]] || continue
@@ -327,12 +314,45 @@ if ! has_service proxy-policy || ! has_service proxy-policy2; then
     fail "the Compose model predates this release; refresh the checkout"
 fi
 echo "Topology: $topology (${versiond_services[*]})"
+gonka_acquire_deployment_lock "$config_dir" "$project_name" || exit 1
+# shellcheck source=deploy/join/updater-rollback.sh
+source "$script_dir/updater-rollback.sh"
+initialize_rollback
 
 # --- preflight --------------------------------------------------------------
 
 service_env() {
     jq -r --arg s "$1" --arg k "$2" '.services[$s].environment[$k] // ""' <<<"$rendered"
 }
+
+replicas() {
+    jq -r --arg s "$1" '.services[$s].deploy.replicas // 1' <<<"$rendered"
+}
+
+active_versiond=()
+for service in "${versiond_services[@]}"; do
+    count=$(replicas "$service")
+    [[ $count == 0 || $count == 1 ]] || fail "$service must have 0 or 1 replicas; add separate versiond services for more hosts"
+    [[ $count == 0 ]] || active_versiond+=("$service")
+done
+((${#active_versiond[@]} > 0)) || fail "every versiond service has 0 replicas"
+legacy_owner=${VERSIOND_LEGACY_HOST:-versiond}
+if [[ $topology == ha ]] && has_service "$legacy_owner" && [[ $(replicas "$legacy_owner") == 0 ]]; then
+    pinned=$(service_env "$legacy_owner" VERSIOND_NON_HA_VERSIONS)
+    [[ -z ${pinned//[[:space:],;]/} ]] || fail \
+        "$legacy_owner is VERSIOND_LEGACY_HOST and still owns the pinned versions '$pinned'; it cannot be set to 0 replicas while VERSIOND_NON_HA_VERSIONS is non-empty"
+fi
+
+# The migration override is an offline operation, never a way to skip a
+# failing proof on a live writer. This guard also applies when probes are skipped.
+if [[ ${UPDATE_ACCEPT_DATABASE_CHANGE:-false} == true ]]; then
+    for service in "${versiond_services[@]}"; do
+        id=$("${compose[@]}" ps --quiet "$service") || fail "cannot list $service"
+        [[ -z $id ]] || fail "UPDATE_ACCEPT_DATABASE_CHANGE requires all versiond writers stopped; $service is running"
+    done
+    [[ -z ${VERSIOND_POOL_ENDPOINTS_FILE:-} && -z ${VERSIOND_HOSTS:-} ]] || fail \
+        "UPDATE_ACCEPT_DATABASE_CHANGE cannot verify remote writers are stopped; migrate a multi-host database using the offline recovery procedure"
+fi
 
 postgres_mode=none
 if [[ $topology == ha ]]; then
@@ -348,9 +368,9 @@ if [[ $topology == ha ]]; then
                 fail "$first and $service disagree on $key ('$a' vs '$b'); every replica must share one PostgreSQL"
             fi
         done
-        # These libpq settings can send the supervisor's lookups or a child's
-        # writes to a database other than the one named by PGHOST/PGDATABASE.
-        for key in DATABASE_URL PGSERVICE PGSERVICEFILE PGOPTIONS; do
+        # Reject implicit libpq destinations and settings unsupported by the
+        # child pgx connection parser; use the explicit shared destination.
+        for key in DATABASE_URL PGSERVICE PGSERVICEFILE PGOPTIONS PGHOSTADDR; do
             [[ -z $(service_env "$service" "$key") ]] || fail \
                 "$service sets $key; HA replicas must use only PGHOST, PGPORT, PGDATABASE, PGUSER and PGPASSWORD so every process reaches the same database"
         done
@@ -409,9 +429,6 @@ running_versiond_container() {
     return 1
 }
 
-# The database lineage the running replicas use, read through the first one
-# that answers. A pre-v5 versiond has no such endpoint; that is the first
-# cutover and there is nothing to compare yet.
 # Reads a versiond's storage proof through its loopback-only endpoint. Prints
 # the JSON; returns 1 for a pre-v5 image (404); any other failure stops the
 # run, because an unavailable proof on a v5 replica is not "unsupported".
@@ -432,6 +449,90 @@ versiond_storage_proof() {
     return 3
 }
 
+validate_storage_proof() {
+    jq -e '
+        (.identity | type == "string" and length > 0) and
+        (.snapshot | type == "string" and length > 0) and
+        (.targets | type == "array" and length > 0) and
+        (.children == (.targets | length)) and
+        all(.targets[];
+            (.generation | type == "string" and length > 0) and
+            (.version | type == "string" and length > 0) and
+            (.pool_max_connections | type == "number" and . > 0 and . == floor)) and
+        (([.targets[].generation] | unique | length) == (.targets | length))
+    ' >/dev/null
+}
+
+# v4 has no application-pool proof. Only the bundled cluster's checked
+# volume migration establishes provenance automatically for that first cut.
+check_legacy_database() {
+    local service=$1 id=$2 previous_host previous_database previous_port candidate_port environment
+    [[ $postgres_mode == local ]] || fail \
+        "$service has no storage proof API; an online update cannot prove continuity with external PostgreSQL. Stop every writer and use UPDATE_ACCEPT_DATABASE_CHANGE=true only after verifying the intended database"
+    environment=$("$docker_bin" inspect --format '{{json .Config.Env}}' "$id") || fail "cannot read the existing environment of $service"
+    previous_host=$(jq -r '[.[] | select(startswith("PGHOST=")) | ltrimstr("PGHOST=")][0] // ""' <<<"$environment") || \
+        fail "cannot read the existing PGHOST of $service"
+    previous_database=$(jq -r '[.[] | select(startswith("PGDATABASE=")) | ltrimstr("PGDATABASE=")][0] // ""' <<<"$environment") || \
+        fail "cannot read the existing PGDATABASE of $service"
+    previous_port=$(jq -r '[.[] | select(startswith("PGPORT=")) | ltrimstr("PGPORT=")][0] // ""' <<<"$environment") || \
+        fail "cannot read the existing PGPORT of $service"
+    candidate_port=$(service_env "$service" PGPORT)
+    [[ $previous_host == devshard-postgres && $previous_database == "$(service_env "$service" PGDATABASE)" && \
+       ${previous_port:-5432} == "${candidate_port:-5432}" ]] || \
+        fail "$service has no storage proof and its existing database differs from the bundled migration target; stop writers and verify the database before an offline migration"
+}
+
+check_connection_budget() {
+    local versions capacity maximum reserved available required pool observed_pool remote_count endpoint_file reserve service id
+    local members=${#active_versiond[@]} largest_pool=0
+    # A decommissioned replica still consumes connections until the final
+    # stop step. Count it together with every candidate that will be started.
+    for service in "${versiond_services[@]}"; do
+        [[ " ${active_versiond[*]} " != *" $service "* ]] || continue
+        id=$("${compose[@]}" ps --quiet "$service") || fail "cannot list $service for PostgreSQL capacity"
+        [[ -z $id ]] || ((members += 1))
+    done
+    versions=$(printf '%s\n' "${VERSIOND_VERSIONS:-v4 v5}"; \
+        for proof in "${proof_documents[@]}"; do jq -r '.targets[].version' <<<"$proof"; done)
+    versions=$(jq -nr --arg names "$versions" --arg legacy "${VERSIOND_NON_HA_VERSIONS:-v1 v2 v3}" '
+        ($legacy | [splits("[ ,;\\s]+") | select(length > 0)]) as $legacy |
+        $names | [splits("[ ,;\\s]+") | select(length > 0)] | unique - $legacy | length')
+    ((versions > 0 && versions <= 10000)) || fail "cannot determine the HA version count for PostgreSQL capacity"
+    for service in "${active_versiond[@]}"; do
+        pool=$(service_env "$service" PG_POOL_MAX_CONNS)
+        pool=${pool:-4}
+        [[ $pool =~ ^[1-9][0-9]{0,5}$ ]] || fail "$service has an invalid PG_POOL_MAX_CONNS"
+        ((pool <= largest_pool)) || largest_pool=$pool
+    done
+    for proof in "${proof_documents[@]}"; do
+        observed_pool=$(jq '[.targets[].pool_max_connections] | max' <<<"$proof")
+        ((observed_pool <= 999999)) || fail "running PostgreSQL pool capacity is invalid"
+        ((observed_pool <= largest_pool)) || largest_pool=$observed_pool
+    done
+    if [[ -n ${VERSIOND_POOL_ENDPOINTS_FILE:-} ]]; then
+        endpoint_file=$VERSIOND_POOL_ENDPOINTS_FILE
+        [[ $endpoint_file == /* ]] || endpoint_file=$config_dir/$endpoint_file
+        remote_count=$(jq -er 'select(type == "array" and length > 0) | length' "$endpoint_file") || \
+            fail "cannot read versiond pool membership for PostgreSQL capacity"
+        ((remote_count <= members)) || members=$remote_count
+    elif [[ -n ${VERSIOND_HOSTS:-} ]]; then
+        remote_count=$(jq -nr --arg hosts "$VERSIOND_HOSTS" '$hosts | [splits("[ ,;\\s]+") | select(length > 0)] | unique | length')
+        ((remote_count <= members)) || members=$remote_count
+    fi
+    ((members <= 10000)) || fail "versiond pool membership exceeds the supported capacity calculation"
+    reserve=${UPDATE_POSTGRES_CONNECTION_RESERVE:-0}
+    [[ $reserve =~ ^[0-9]{1,6}$ ]] || fail "UPDATE_POSTGRES_CONNECTION_RESERVE must be an integer from 0 to 999999"
+    required=$((members * (2 * versions * (largest_pool + 2) + 5) + 10#$reserve))
+    capacity=$(postgres_probe "SELECT current_setting('max_connections')::integer || '|' || (current_setting('superuser_reserved_connections')::integer + COALESCE(current_setting('reserved_connections', true), '0')::integer)") || \
+        fail "cannot read PostgreSQL connection capacity"
+    IFS='|' read -r maximum reserved <<<"$capacity"
+    [[ $maximum =~ ^[1-9][0-9]{0,8}$ && $reserved =~ ^[0-9]{1,9}$ ]] || fail "invalid PostgreSQL connection capacity response"
+    available=$((maximum - reserved))
+    ((available >= required)) || fail \
+        "PostgreSQL connection capacity is too small: need $required, available $available ($maximum total, $reserved server-reserved); includes $members replicas, $versions HA versions, pool size $largest_pool and $reserve operator-reserved connections"
+    echo "PostgreSQL: connection budget $required fits $available available connections"
+}
+
 if [[ $topology == ha && ${UPDATE_SKIP_POSTGRES_PROBE:-false} != true ]]; then
     probe_needed=true
     if [[ $postgres_mode == local ]]; then
@@ -440,6 +541,10 @@ if [[ $topology == ha && ${UPDATE_SKIP_POSTGRES_PROBE:-false} != true ]]; then
         postgres_up=$("${compose[@]}" ps --quiet devshard-postgres) || fail \
             "cannot list devshard-postgres"
         if [[ -z $postgres_any ]]; then
+            for service in "${versiond_services[@]}"; do
+                id=$("${compose[@]}" ps --quiet "$service") || fail "cannot list $service"
+                [[ -z $id ]] || fail "$service is running but bundled PostgreSQL is absent; this is not a fresh installation"
+            done
             probe_needed=false   # fresh install: nothing to open yet
         elif [[ -z $postgres_up ]]; then
             fail "devshard-postgres exists but is not running; start it (docker compose start devshard-postgres) so the update can verify the database before changing anything"
@@ -469,11 +574,14 @@ if [[ $topology == ha && ${UPDATE_SKIP_POSTGRES_PROBE:-false} != true ]]; then
             id=${id%%$'\n'*}
             proof_status=0
             proof=$(versiond_storage_proof "$id") || proof_status=$?
-            ((proof_status != 1)) || continue   # pre-v5 image, no proof API
+            if ((proof_status == 1)); then
+                check_legacy_database "$service" "$id"
+                continue
+            fi
             ((proof_status == 0)) || fail \
                 "$service did not answer its storage proof; a v5 replica whose proof is unavailable is not \"unsupported\""
-            identity=$(jq -er '.identity | strings | select(length > 0)' <<<"$proof") || fail \
-                "$service returned a storage proof without an identity"
+            validate_storage_proof <<<"$proof" || fail "$service returned an incomplete or invalid storage proof"
+            identity=$(jq -r .identity <<<"$proof")
             proof_containers+=("$service=$id")
             proof_documents+=("$proof")
             if [[ -z $running_identity ]]; then
@@ -496,16 +604,18 @@ if [[ $topology == ha && ${UPDATE_SKIP_POSTGRES_PROBE:-false} != true ]]; then
             for index in "${!proof_containers[@]}"; do
                 service=${proof_containers[index]%%=*}
                 id=${proof_containers[index]#*=}
-                snapshot=$(jq -r '.snapshot // ""' <<<"${proof_documents[index]}")
+                snapshot=$(jq -r .snapshot <<<"${proof_documents[index]}")
                 while IFS= read -r generation; do
-                    [[ -n $snapshot && -n $generation ]] || continue
                     nonce=$(cat /proc/sys/kernel/random/uuid)
                     request=$(jq -cn --arg n "$nonce" --arg s "$snapshot" --arg g "$generation" \
                         '{operation:"write", nonce:$n, snapshot:$s, generation:$g}')
-                    "$docker_bin" exec "$id" /bin/busybox wget -qO- -T 5 \
+                    response=$("$docker_bin" exec "$id" /bin/busybox wget -qO- -T 5 \
                         --header 'Content-Type: application/json' --post-data "$request" \
-                        http://127.0.0.1:8080/internal/storage-challenge >/dev/null 2>&1 || fail \
+                        http://127.0.0.1:8080/internal/storage-challenge 2>/dev/null) || fail \
                         "$service (generation $generation) could not write a storage challenge through its PostgreSQL pool; inspect 'docker compose logs $service'"
+                    jq -e --arg id "$running_identity" --arg s "$snapshot" --arg g "$generation" \
+                        '.identity == $id and .snapshot == $s and .generation == $g and .found == true' \
+                        <<<"$response" >/dev/null || fail "$service returned an invalid storage challenge response"
                     observed=$(postgres_probe 'SELECT challenge::text FROM devshard_storage_identity WHERE singleton' 2>/dev/null || true)
                     [[ $observed == "$nonce" ]] || fail \
                         "the database the model names did not receive the challenge $service (generation $generation) just wrote; that generation runs on a copy of the running database, not on it. Fix PGHOST, or set UPDATE_ACCEPT_DATABASE_CHANGE=true only for an intended move"
@@ -513,7 +623,16 @@ if [[ $topology == ha && ${UPDATE_SKIP_POSTGRES_PROBE:-false} != true ]]; then
                 done < <(jq -r '.targets[]?.generation // empty' <<<"${proof_documents[index]}")
             done
             echo "PostgreSQL: database lineage $running_identity unchanged; $challenged generation(s) wrote a challenge the model's database shows"
+            for index in "${!proof_containers[@]}"; do
+                service=${proof_containers[index]%%=*}
+                id=${proof_containers[index]#*=}
+                proof=$(versiond_storage_proof "$id") || fail "$service lost its storage proof after verification"
+                validate_storage_proof <<<"$proof" || fail "$service returned an invalid final storage proof"
+                [[ $(jq -r .snapshot <<<"$proof") == $(jq -r .snapshot <<<"${proof_documents[index]}") && \
+                   $(jq -r .identity <<<"$proof") == "$running_identity" ]] || fail "$service changed processes or database during verification; retry"
+            done
         fi
+        check_connection_budget
     fi
 fi
 
@@ -546,7 +665,7 @@ for service in "${versiond_services[@]}" devshard-postgres proxy-policy proxy; d
 done
 
 if [[ $check_only == true ]]; then
-    echo "Preflight passed; nothing was changed"
+    echo "Preflight passed; no services were replaced"
     exit 0
 fi
 
@@ -582,36 +701,36 @@ desired_image_id() {
     "$docker_bin" image inspect --format '{{.Id}}' "$reference" 2>/dev/null
 }
 
-# Replace one service and wait for its healthcheck. The image it ran before
-# is kept under the gonka-previous/<service> tag in Docker's own store, so it
-# survives a killed run: a rerun that finds an unhealthy candidate still puts
-# the real previous image back, and an operator can do the same by hand with
-# <IMAGE_VAR>=gonka-previous/<service>. If the replacement never becomes
-# healthy, the previous image is put back with the same command and the run
-# stops; the host keeps serving.
-# The gonka-previous/<service> tag always names the last image that was
-# serving: a candidate that never became healthy must not overwrite it, and a
-# configuration-only change still refreshes it from the healthy container it
-# replaces.
+# PostgreSQL keeps its current data/configuration even on rollback. Retain its
+# prior image only when a healthy service actually changes.
 remember_previous() {
-    local service=$1 previous_tag current health
-    previous_tag=gonka-previous/$service
+    local service=$1 previous_tag current health existing
+    [[ $dry_run == false ]] || return 0
+    previous_tag=gonka-previous/${GONKA_DEPLOYMENT_KEY:0:16}/$service
     current=
-    if [[ -n $("${compose[@]}" ps --all --quiet "$service") ]]; then
+    existing=$("${compose[@]}" ps --all --quiet "$service") || fail "cannot list $service for rollback"
+    if [[ -n $existing ]]; then
         current=$(current_image "$service") || fail "cannot read the current image of $service"
     fi
     [[ -n $current ]] || return 0
     health=$(container_health "$service") || fail "cannot read the health of $service"
-    if [[ $health == healthy ]]; then
-        run "$docker_bin" tag "$current" "$previous_tag"
-    elif ! "$docker_bin" image inspect "$previous_tag" >/dev/null 2>&1; then
+    if [[ $health == healthy ]] && service_changed "$service" "$existing"; then
         run "$docker_bin" tag "$current" "$previous_tag"
     fi
 }
 
 up() {
     local service=$1 previous_tag variable
-    previous_tag=gonka-previous/$service
+    if [[ $service != devshard-postgres ]]; then
+        begin_replacement "$service"
+        run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service" || \
+            fail "$service did not become healthy; restoring its previous specification"
+        commit_replacement
+        return 0
+    fi
+    # PostgreSQL data/configuration is the migration target. Restore only its
+    # prior image on failure; putting the old PGDATA path back could fork history.
+    previous_tag=gonka-previous/${GONKA_DEPLOYMENT_KEY:0:16}/$service
     remember_previous "$service"
     if run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service"; then
         return 0
@@ -624,29 +743,10 @@ up() {
             --wait-timeout "$wait_timeout" "$service"; then
             fail "$service was put back on its previous image and the update stopped here; inspect 'docker compose logs $service', fix the cause and rerun"
         fi
-        fail "$service could not be put back either: its service definition changed beyond the image (the first nginx-to-HAProxy proxy cutover is the known case). Restore the previous release's Compose files (git checkout <previous release> -- deploy/join) and run 'docker compose up -d $service'"
+        fail "$service could not be restored; inspect its logs and repair the current PostgreSQL configuration without switching back to the pre-migration data directory"
     fi
     fail "$service did not become healthy; the update stopped here ('docker compose logs $service')"
 }
-
-replicas() {
-    jq -r --arg s "$1" '.services[$s].deploy.replicas // 1' <<<"$rendered"
-}
-
-# Replicas whose desired count is 0 are decommissioned and left alone.
-active_versiond=()
-for service in "${versiond_services[@]}"; do
-    [[ $(replicas "$service") == 0 ]] || active_versiond+=("$service")
-done
-((${#active_versiond[@]} > 0)) || fail "every versiond service has 0 replicas"
-# Versions in VERSIOND_NON_HA_VERSIONS keep SQLite state on the legacy owner
-# only; decommissioning it would take those versions off the network.
-legacy_owner=${VERSIOND_LEGACY_HOST:-versiond}
-if [[ $topology == ha ]] && has_service "$legacy_owner" && [[ $(replicas "$legacy_owner") == 0 ]]; then
-    pinned=$(service_env "$legacy_owner" VERSIOND_NON_HA_VERSIONS)
-    [[ -z ${pinned//[[:space:],;]/} ]] || fail \
-        "$legacy_owner is VERSIOND_LEGACY_HOST and still owns the pinned versions '$pinned'; it cannot be set to 0 replicas while VERSIOND_NON_HA_VERSIONS is non-empty"
-fi
 
 pull_services=()
 missing_images=()
@@ -712,17 +812,19 @@ echo "Step: public proxy listener, then the private policy workers one at a time
 # first without waiting for its health (it needs a policy worker for that),
 # keep the previous proxy image under its tag, then bring the workers up and
 # finally wait for the proxy itself.
-remember_previous proxy
-run "${compose[@]}" up -d --no-deps proxy
-up proxy-policy2
-up proxy-policy
-up proxy
+begin_replacement proxy proxy-policy2 proxy-policy
+run "${compose[@]}" up -d --no-deps proxy || fail "public proxy creation failed"
+for service in proxy-policy2 proxy-policy proxy; do
+    run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service" || \
+        fail "$service did not become healthy during public cutover"
+done
 if [[ $topology == ha ]]; then
     # The proxy healthcheck covers its policy workers only. Before the legacy
     # router is removed and versiond is replaced, the new public proxy must
     # admit every router slot and every live route end to end.
-    run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" verify-admission
+    run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" verify-admission || fail "public route admission failed"
 fi
+commit_replacement
 
 if container_exists versiond-router; then
     # The pre-v5 overlay ran one nginx versiond-router service. The fleet slots
@@ -740,8 +842,12 @@ echo "Step: versiond replicas (${active_versiond[*]})"
 # Last replica first, the legacy owner last: while it is being replaced, the
 # other replicas already run the new release behind the routers.
 for ((i = ${#active_versiond[@]} - 1; i >= 0; i--)); do
+    [[ ${active_versiond[i]} != "$legacy_owner" ]] || continue
     up "${active_versiond[i]}"
 done
+if [[ " ${active_versiond[*]} " == *" $legacy_owner "* ]]; then
+    up "$legacy_owner"
+fi
 # A replica whose desired count is 0 is decommissioned: stop and remove it so
 # `restart: always` cannot bring it back into the pool.
 for service in "${versiond_services[@]}"; do

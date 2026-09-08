@@ -268,7 +268,7 @@ jobs:
       - name: Check the join update script
         run: |
           shellcheck deploy/join/deployment-lock.sh deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh \
-            deploy/join/versiond-storage-check.sh \
+            deploy/join/versiond-storage-check.sh deploy/join/updater-rollback.sh \
             deploy/join/update-devshard-regression_test.sh deploy/join/compose-contract_test.sh \
             deploy/join/update-devshard-e2e_test.sh
           deploy/join/update-devshard_test.sh
@@ -277,6 +277,7 @@ jobs:
           # UPD-PROOF-HEADERS exercises the real BusyBox wget; the harness never pulls.
           docker pull -q busybox:1.36
           deploy/join/update-devshard-regression_test.sh --gate
+          python3 deploy/join/updater-rollback_test.py
       - name: Check that every host a service resolves is published on a shared network
         run: deploy/join/compose-contract_test.sh
 

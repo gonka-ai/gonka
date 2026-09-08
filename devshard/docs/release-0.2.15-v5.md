@@ -182,8 +182,8 @@ So v5 can roll out incrementally without coordinating a simultaneous
 
 The update is a fixed sequence of `docker compose` commands.
 `deploy/join/update-devshard.sh` runs them in the right order and prints each
-one; nothing it does is hidden from the operator. Requirements: Docker Compose
-2.24.4 or newer and `jq`.
+one. Requirements: Docker Compose 2.24.4 or newer, Python 3, `jq`, `timeout`,
+`flock`, and `sha256sum`.
 
 From the checkout that runs the node:
 
@@ -196,10 +196,11 @@ source ./config.env
 ./update-devshard.sh
 ```
 
-`--check` detects the topology, renders the Compose model, verifies that both
-HA replicas share one PostgreSQL, checks that the PostgreSQL migration copy
-fits, prints the images that will run, and changes nothing. `--dry-run` prints
-the full command sequence without running it.
+`--check` detects the topology, renders the Compose model, verifies that the local
+HA replicas share one PostgreSQL, checks its connection budget and migration
+space, and prints the images that will run. It does not replace services, but
+it writes database probes, including a challenge through each running HA
+process. `--dry-run` runs the same preflight and prints the replacement commands.
 
 Compose files are taken from `COMPOSE_FILE` when it is set, otherwise from the
 labels of the running `versiond` container (so operator overlays such as
@@ -220,16 +221,19 @@ What the script runs, in order:
 | `versiond-router-fleet.sh prepare-networks` and `apply` | | yes |
 | `up -d --no-deps --wait proxy-policy2`, then `proxy-policy`, then `proxy`; in HA the fleet's `verify-admission` then proves the new public proxy admits every router slot and live route before anything else changes | yes | yes |
 | `docker rm -f versiond-router` (the old nginx singleton) | | if present |
-| `up -d --no-deps --wait` of each replica, last one first, `versiond` last | `versiond` only | yes |
+| `up -d --no-deps --wait` of each replica, `VERSIOND_LEGACY_HOST` last (default `versiond`) | `versiond` only | yes |
 
-Every `up` uses `--wait`, so the next step starts only after the replaced
-service passes its healthcheck.
+The public proxy starts before the policy workers because they need its
+network alias; its health is checked after the workers start. These services
+form one replacement step. Other services use `up --wait` individually.
 
 ### What happens on failure
 
 The script holds the deployment lock for the whole run (the same lock as
 `versiond-router-fleet.sh`), so a second operator or a manual fleet command
-cannot interleave with it.
+cannot interleave with it. The default lock identifies the Docker daemon and
+Compose project, independently of the path to `config.env` or the checkout.
+`--check` and `--dry-run` take this lock too because they write challenges.
 
 Before the first change it renders the model, checks that every replica names
 the same PostgreSQL, opens that PostgreSQL with the configured credentials
@@ -242,13 +246,21 @@ It also checks that the model points at the database the running replicas
 already use. Every running local replica reports its storage lineage through
 `/internal/storage-identity`; they must agree, and the database the model
 names must carry the same lineage. Because a physical copy keeps the
-lineage, one replica then writes a random challenge through its own
-PostgreSQL pool and the model's database must show it: a clone would not.
+lineage, every running HA process writes a random challenge through its own
+PostgreSQL pool and the model's database must show each value: a clone would not.
 A `PGHOST` that now points at another working database, or at a copy, is
 refused, because a rolling replacement would otherwise leave old replicas
 writing to one history and new replicas to another. Set
 `UPDATE_ACCEPT_DATABASE_CHANGE=true` only for an intended migration to a
-restored copy, and only with every local and remote replica stopped first.
+restored copy. The updater refuses this override while a local writer runs,
+and refuses it with explicit pool membership because it cannot check whether
+remote writers have stopped.
+
+During the first v4-to-v5 update, legacy replicas cannot provide this proof.
+The updater permits their bundled PostgreSQL migration only when their existing
+`PGHOST` and `PGDATABASE` match that cluster. An external database cannot be
+verified this way: stop every writer and explicitly acknowledge the intended
+database change before updating.
 
 The supported v4-to-v5 upgrade starts with all versiond replicas on one host.
 Multi-host versiond is introduced in v5; configure it after updating the
@@ -267,40 +279,37 @@ run. A bundled PostgreSQL that exists but is stopped is not a fresh install:
 start it first. `UPDATE_SKIP_POSTGRES_PROBE=true` disables all of this and
 is meant for a host that cannot reach the database at all.
 
-Each step replaces one service and waits for its healthcheck. Before the
-replacement, the image of the *healthy* container it replaces is kept under
-the Docker tag `gonka-previous/<service>`, so the tag always names the last
-image that was serving: a candidate that never became healthy does not
-overwrite it, and a configuration-only update refreshes it. The tag lives in
-Docker's image store, so it survives a killed run and can be used by hand
-(`VERSIOND_IMAGE=gonka-previous/versiond docker compose up -d versiond`).
-Images already on the host are not pulled again, so a rerun after a failure
-does not depend on the registry.
-If the replacement never becomes healthy, the script puts that image back
-with the same `up`, prints the failing service, and stops. The host keeps
-serving: services replaced earlier run the new release, the failed one and
-everything after it run the previous release. That mixed state is the same
-one a rolling update passes through by design (routers and replicas are
-replaced one at a time and both releases serve side by side). Inspect
-`docker compose logs <service>`, fix the cause, and run the script again;
-Compose skips every service that already matches.
+Before replacing public ingress or a versiond container, the updater saves its
+Docker configuration: image ID, command, environment, healthcheck, volume
+sources, published ports, and networks. If replacement or public admission
+fails, it restores that configuration and stops. Public proxy and policy
+workers are restored together, including the old nginx during the first v5
+cutover; the legacy router is removed only after public admission succeeds.
+Services updated in earlier steps remain on their new versions.
 
-Putting an image back cannot undo a changed service definition. The one
-place where the v5 model changes a service beyond its image is the first
-public proxy cutover (nginx to HAProxy): if the new `proxy` never becomes
-healthy, the previous nginx image will not pass the HAProxy healthcheck
-either, and the script says so. The way back is the previous release's
-Compose files: `git checkout <previous release> -- deploy/join` and
-`docker compose up -d proxy`. Every later update of the same model rolls
-back by image alone.
+Records are stored under `${XDG_STATE_HOME:-$HOME/.local/state}/gonka/updater/`,
+in a directory identified by the Docker daemon and Compose project. Set
+`UPDATE_STATE_DIR` to use another persistent directory; all invocations for
+this deployment must use the same directory. Records include the container's
+environment, so keep this directory private. The previous image is pinned as
+`gonka-previous/<deployment-key>/<service>`. A successful no-op rerun does not
+overwrite the previous configuration or image. Mutable image tags are refreshed
+when the registry is available; retry can use cached images if every required
+image is already present. Saved image IDs make rollback independent of a tag
+moving since the container was started.
 
-If the script itself is killed, nothing is left half-done inside a step:
-Compose either recreated the service or it did not. Rerunning resumes from
-the first service that still differs from the model; the deployment is
-recognised through any of its containers, so a missing `versiond` after an
-interrupted replacement does not turn an HA host into a single one, and a
-replica added later with its own overlay is picked up from the longest
-recorded file list.
+A pending replacement is recorded before Compose changes a service. If the
+updater is killed, the next normal run restores that pending step before
+starting preflight and retrying. `--check` and `--dry-run` report pending
+recovery and stop. If restoration fails, the records remain for another retry;
+inspect the reported service's logs and fix the cause before rerunning.
+
+The saved specification preserves mount sources, including anonymous volumes.
+It does not copy application data or preserve the contents of files edited in
+place on the host. Keep the previous release's files available when changing
+mounted configuration. PostgreSQL rollback restores only the image and keeps
+the current migration target; automatically switching back to the old data
+directory could discard writes made since migration.
 
 Two things the script does not undo. The v4 PostgreSQL volume copy is safe
 to repeat but never reversed automatically (see [Rolling back](#rolling-back)).
@@ -319,11 +328,13 @@ v4 volume, is refused rather than started on the wrong history.
 `--check` and `--dry-run` change no service. They do run the PostgreSQL
 probe from a helper container (which may pull the pinned PostgreSQL image)
 and the migration space probe (which may create the empty target directory).
+The storage challenge remains in `devshard_storage_identity.challenge` until
+the next check overwrites it; it does not modify inference records.
 
 Maintenance notes for the first v5 run on an HA host:
 
 - Replacing the public proxy closes the connections the old nginx still holds.
-  Restarting the shared local PostgreSQL interrupts devshard work on both
+  Restarting the shared local PostgreSQL interrupts devshard work on all
   replicas. Schedule the run outside PoC/cPoC and update one host at a time.
 - The HAProxy routers start before versiond is replaced. They accept a
   pre-v5 versiond through its `/<version>/healthz` route checks, so the
@@ -382,6 +393,17 @@ keep during a rolling binary update; the per-replica term is versiond's
 session-lookup pool plus one schema-initializer session. With two replicas,
 three HA versions and the default pool that is 82 connections; three replicas
 need 123.
+
+The updater checks this bound against `max_connections` minus PostgreSQL's
+reserved slots before replacing services. It uses the declared HA versions
+plus versions in live local proofs, the largest configured or observed local
+pool limit, and the larger of local replica count and declared pool membership.
+Remote replicas must fit those version and pool limits. Set
+`UPDATE_POSTGRES_CONNECTION_RESERVE` for connections used by other applications
+or additional capacity requirements. This is a configuration bound; it does
+not reserve server connections or guarantee availability during a database
+outage. A fresh bundled database is checked on subsequent updates, once it is
+running.
 
 ## Day-2 operations
 
@@ -513,8 +535,11 @@ production needs a managed PostgreSQL with synchronous durability.
 
 ## Validation
 
-- `shellcheck deploy/join/deployment-lock.sh deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh`
-- `deploy/join/update-devshard_test.sh` (command sequence for both topologies)
+- `shellcheck -x deploy/join/update-devshard.sh deploy/join/updater-rollback.sh deploy/join/update-devshard_test.sh`
+- `deploy/join/update-devshard_test.sh` (command sequence, proof failures, offline guard, capacity and utilities)
+- `python3 deploy/join/updater-rollback_test.py` (real Docker rollback, lock contention, interrupted recovery and no-op retention)
+- `python3 deploy/join/versiond-storage-check_test.py` (real PostgreSQL lineage, per-generation challenges and capacity boundary)
+- `deploy/join/update-devshard-e2e_test.sh` (v4-to-v5 migration, public admission failure and nginx restoration, retry)
 - `deploy/join/versiond-compose-config_test.sh` (Compose contract, endpoint overlay)
 - `make -C versiond-router test-render` (includes the endpoint list rendering)
 - `make -C versiond-router test-fleet` (real Docker fleet rollout)

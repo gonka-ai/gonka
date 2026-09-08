@@ -120,7 +120,7 @@ class StorageCheck(unittest.TestCase):
             self.configure(i)
         self.sql("UPDATE devshard_storage_identity SET challenge = NULL")
 
-    def check(self, *, members=None, reference=None, extra=()):
+    def check(self, *, members=None, reference=None, extra=(), lock_path=None):
         args = [str(self.join / "update-devshard.sh"), "--check-storage",
                 "--reference-env", str(reference or self.reference)]
         for member in members or self.members[:1]:
@@ -129,6 +129,8 @@ class StorageCheck(unittest.TestCase):
         env = dict(os.environ, PGHOST="wrong.invalid", PGDATABASE="wrong",
                    PGPASSWORD="inherited-secret", PGSERVICE="wrong-service",
                    PGOPTIONS="-c search_path=wrong", GONKA_CONFIG_ENV=str(self.join / "config.env"))
+        if lock_path:
+            env["GONKA_DEPLOYMENT_LOCK"] = str(lock_path)
         result = subprocess.run([*args, *extra], capture_output=True, text=True,
                                 env=env, timeout=90)
         self.assertNotIn("test-password", result.stdout + result.stderr)
@@ -192,10 +194,59 @@ class StorageCheck(unittest.TestCase):
         bad.write_text(self.reference.read_text() + "PGPASSWORD='wrong-password'\n")
         self.assert_failed(self.check(reference=bad), "cannot read the reference PostgreSQL")
 
+    def test_updater_capacity_against_real_postgres(self):
+        # Run the host updater's actual SQL preflight against this isolated
+        # server. No Compose services are created by --check.
+        directory = self.root / "capacity-join"
+        directory.mkdir()
+        for name in ("update-devshard.sh", "deployment-lock.sh", "updater-rollback.sh", "updater-container-state.py"):
+            shutil.copy2(SOURCE / name, directory / name)
+        (directory / "config.env").write_text("VERSIOND_VERSIONS='v4 v5 v6'\n")
+        service = dict(image=self.image, networks=["default", "versiond-router-back"], environment=dict(GONKA_HA="true", DEVSHARD_STORAGE_MODE="postgres",
+                       PGHOST=self.pg, PGDATABASE="reference", PGUSER="postgres", PGPASSWORD="test-password"))
+        model = dict(name=self.prefix, services=dict(versiond=service, versiond2=service),
+                     networks={"default": {"name": self.prefix}, "versiond-router-back": {"name": self.prefix}})
+        for name in ("proxy", "proxy-policy", "proxy-policy2"):
+            model["services"][name] = dict(image=self.image)
+        compose = directory / "docker-compose.yml"
+        compose.write_text(json.dumps(model))
+        env = dict(os.environ, GONKA_CONFIG_ENV=str(directory / "config.env"), COMPOSE_FILE=str(compose),
+                   UPDATE_STATE_DIR=str(directory / "state"))
+
+        def capacity(value):
+            self.sql(f"ALTER SYSTEM SET max_connections = {value}")
+            run("docker", "restart", self.pg)
+            self.pg_env["PGPORT"] = json.loads(run("docker", "inspect", self.pg).stdout)[0][
+                "NetworkSettings"]["Ports"]["5432/tcp"][0]["HostPort"]
+            self.reference.write_text("\n".join(
+                f"{key}='{self.pg_env[key]}'" for key in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE")) + "\n")
+            for _ in range(60):
+                try:
+                    self.sql("SELECT 1")
+                    return
+                except subprocess.CalledProcessError:
+                    time.sleep(0.2)
+            self.fail("PostgreSQL did not restart")
+
+        try:
+            for maximum, succeeds in ((85, True), (84, False)):
+                capacity(maximum)
+                result = subprocess.run([str(directory / "update-devshard.sh"), "--check"], env=env,
+                                        text=True, capture_output=True, timeout=90)
+                if succeeds:
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("budget 82 fits 82", result.stdout)
+                else:
+                    self.assert_failed(result, "need 82, available 81")
+                self.assertFalse((directory / "state/pending").exists())
+                self.assertNotIn("Step:", result.stdout)
+        finally:
+            capacity(100)
+
     def test_local_deployment_lock(self):
         with (self.join / ".gonka-deployment.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self.assert_failed(self.check(), "another deployment operation holds")
+            self.assert_failed(self.check(lock_path=self.join / ".gonka-deployment.lock"), "another deployment operation holds")
 
     def test_reference_without_devshard_schema(self):
         empty = self.root / "empty-reference.env"
