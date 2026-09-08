@@ -358,7 +358,16 @@ postgres_mode=none
 if [[ $topology == ha ]]; then
     first=${versiond_services[0]}
     for service in "${versiond_services[@]}"; do
-        for key in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSSLMODE PGSSLROOTCERT \
+        # TLS is outside this host updater's supported deployment scope.
+        # Reject explicit TLS configuration rather than claiming to validate
+        # candidate certificates through the live container's old mounts.
+        unsupported_tls=$(jq -r --arg s "$service" '
+            [.services[$s].environment | to_entries[] |
+             select(.key | startswith("PGSSL")) | select(.value != null and .value != "") |
+             select(.key != "PGSSLMODE" or .value != "disable") | .key] | join(", ")' <<<"$rendered")
+        [[ -z $unsupported_tls ]] || fail \
+            "$service sets unsupported TLS settings: $unsupported_tls; this host updater supports PostgreSQL without explicit TLS configuration (PGSSLMODE=disable is allowed)"
+        for key in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSSLMODE \
             PGTARGETSESSIONATTRS DEVSHARD_STORAGE_MODE; do
             a=$(service_env "$first" "$key")
             b=$(service_env "$service" "$key")
@@ -398,10 +407,9 @@ postgres_helper_image=$(jq -r '.services["devshard-postgres"].image // ""' <<<"$
 # previous release is still fully running. psql runs from the PostgreSQL image
 # on the deployment network with the same PG* settings as versiond.
 postgres_probe() {
-    local sql=$1 first=${versiond_services[0]} network key value lender
+    local sql=$1 first=${versiond_services[0]} network key value
     local -a args=()
-    for key in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSSLMODE PGSSLROOTCERT \
-        PGSSLCERT PGSSLKEY PGTARGETSESSIONATTRS; do
+    for key in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSSLMODE PGTARGETSESSIONATTRS; do
         value=$(service_env "$first" "$key")
         [[ -z $value ]] || args+=(-e "$key=$value")
     done
@@ -409,24 +417,9 @@ postgres_probe() {
     if [[ -z $network ]] || ! "$docker_bin" network inspect "$network" >/dev/null 2>&1; then
         network=host
     fi
-    # A running versiond lends its volumes read-only, so a CA or client
-    # certificate named by PGSSL* resolves to the same path in the helper.
-    lender=$(running_versiond_container || true)
-    [[ -z $lender ]] || args+=(--volumes-from "$lender:ro")
     timeout "${UPDATE_POSTGRES_PROBE_SECONDS:-60}" \
         "$docker_bin" run --rm --network "$network" "${args[@]}" "$postgres_helper_image" \
         psql -q -w -v ON_ERROR_STOP=1 -Atc "$sql"
-}
-
-running_versiond_container() {
-    local service id
-    for service in "${versiond_services[@]}"; do
-        id=$("${compose[@]}" ps --quiet "$service") || fail "cannot list $service"
-        [[ -n $id ]] || continue
-        printf '%s\n' "${id%%$'\n'*}"
-        return 0
-    done
-    return 1
 }
 
 # Reads a versiond's storage proof through its loopback-only endpoint. Prints
@@ -483,14 +476,15 @@ check_legacy_database() {
 }
 
 check_connection_budget() {
-    local versions capacity maximum reserved available required pool observed_pool remote_count endpoint_file reserve service id
+    local versions capacity maximum reserved available required pool observed_pool endpoint_file reserve service id endpoints additional
     local members=${#active_versiond[@]} largest_pool=0
+    local -a local_members=("${active_versiond[@]}")
     # A decommissioned replica still consumes connections until the final
     # stop step. Count it together with every candidate that will be started.
     for service in "${versiond_services[@]}"; do
         [[ " ${active_versiond[*]} " != *" $service "* ]] || continue
         id=$("${compose[@]}" ps --quiet "$service") || fail "cannot list $service for PostgreSQL capacity"
-        [[ -z $id ]] || ((members += 1))
+        [[ -z $id ]] || { ((members += 1)); local_members+=("$service"); }
     done
     versions=$(printf '%s\n' "${VERSIOND_VERSIONS:-v4 v5}"; \
         for proof in "${proof_documents[@]}"; do jq -r '.targets[].version' <<<"$proof"; done)
@@ -509,16 +503,36 @@ check_connection_budget() {
         ((observed_pool <= 999999)) || fail "running PostgreSQL pool capacity is invalid"
         ((observed_pool <= largest_pool)) || largest_pool=$observed_pool
     done
+    endpoints='[]'
     if [[ -n ${VERSIOND_POOL_ENDPOINTS_FILE:-} ]]; then
         endpoint_file=$VERSIOND_POOL_ENDPOINTS_FILE
         [[ $endpoint_file == /* ]] || endpoint_file=$config_dir/$endpoint_file
-        remote_count=$(jq -er 'select(type == "array" and length > 0) | length' "$endpoint_file") || \
+        endpoints=$(jq -ce 'select(type == "array" and length > 0)' "$endpoint_file") || \
             fail "cannot read versiond pool membership for PostgreSQL capacity"
-        ((remote_count <= members)) || members=$remote_count
     elif [[ -n ${VERSIOND_HOSTS:-} ]]; then
-        remote_count=$(jq -nr --arg hosts "$VERSIOND_HOSTS" '$hosts | [splits("[ ,;\\s]+") | select(length > 0)] | unique | length')
-        ((remote_count <= members)) || members=$remote_count
+        endpoints=$(jq -n --arg hosts "$VERSIOND_HOSTS" '$hosts |
+            [splits("[ ,;\\s]+") | select(length > 0) | split(":") |
+                if length > 2 then error("invalid versiond address") else {host: .[0], port: .[1]} end]') || \
+            fail "cannot read VERSIOND_HOSTS for PostgreSQL capacity"
     fi
+    # Membership can omit local writers (including ones about to be stopped).
+    # Count the union, identifying local entries by service/container address,
+    # never by the router's arbitrary id. Unrecognized aliases/IPs count extra.
+    additional=$(jq -er --argjson endpoints "$endpoints" --arg locals "${local_members[*]}" \
+        --arg port "${VERSIOND_PORT:-8080}" '
+        . as $model |
+        [$locals | split(" ")[] | . as $s |
+            ($s, $model.services[$s].container_name // empty) | ascii_downcase] as $local_hosts |
+        $endpoints | map(
+            if (.host | type) != "string" then error("invalid endpoint host") else . end |
+            .host |= ascii_downcase | .port = ((.port // $port) | tonumber) |
+            if (.host | test("^[a-z0-9][a-z0-9.-]*$")) and
+                (.port >= 1 and .port <= 65535 and .port == (.port | floor))
+            then {host, port} else error("invalid endpoint address") end) |
+        unique_by([.host, .port]) |
+        map(select(.port != 8080 or (.host as $h | $local_hosts | index($h) | not))) | length
+    ' <<<"$rendered") || fail "cannot determine versiond pool membership for PostgreSQL capacity"
+    members=$((members + additional))
     ((members <= 10000)) || fail "versiond pool membership exceeds the supported capacity calculation"
     reserve=${UPDATE_POSTGRES_CONNECTION_RESERVE:-0}
     [[ $reserve =~ ^[0-9]{1,6}$ ]] || fail "UPDATE_POSTGRES_CONNECTION_RESERVE must be an integer from 0 to 999999"

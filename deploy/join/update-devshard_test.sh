@@ -597,6 +597,61 @@ if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
 fi
 grep -q 'need 133, available 132' "$tmpdir/err" || fail "remote capacity mismatch"
 
+# Two local writers plus three distinct remote addresses need 205, not 123.
+# Router ids do not prove that a remote address is a local replica.
+cat >"$tmpdir/endpoints.json" <<'EOF'
+[{"id":"versiond","host":"remote-a"}, {"id":"versiond2","host":"remote-b"},
+ {"id":"third","host":"remote-c"}]
+EOF
+for membership in VERSIOND_POOL_ENDPOINTS_FILE="$tmpdir/endpoints.json" VERSIOND_HOSTS="remote-a remote-b remote-c"; do
+    if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+        FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" VERSIOND_VERSIONS="v4 v5 v6" \
+        "$membership" FAKE_MAX_CONNECTIONS=126; then fail "disjoint remote writers omitted"; fi
+    grep -q 'need 205, available 123' "$tmpdir/err" || fail "mixed capacity mismatch: $(cat "$tmpdir/err")"
+    [[ -z $(mutations) ]] || fail "mixed capacity checked after replacement"
+done
+
+# Local membership and duplicate remote addresses are not counted twice;
+# identical hosts on different ports still represent distinct writers.
+cat >"$tmpdir/endpoints.json" <<'EOF'
+[{"id":"local","host":"versiond"}, {"id":"local2","host":"versiond2","port":8080},
+ {"id":"remote","host":"remote-a"}, {"id":"alias","host":"REMOTE-A","port":8080}]
+EOF
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" VERSIOND_VERSIONS="v4 v5 v6" \
+    VERSIOND_POOL_ENDPOINTS_FILE="$tmpdir/endpoints.json" FAKE_MAX_CONNECTIONS=126 || \
+    fail "overlapping membership refused: $(cat "$tmpdir/err")"
+grep -q 'budget 123 fits 123' "$tmpdir/out" || fail "membership double-counted"
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" VERSIOND_VERSIONS="v4 v5 v6" \
+    VERSIOND_HOSTS="versiond:8080 versiond2 remote-a:8080 remote-a:8081" FAKE_MAX_CONNECTIONS=126; then
+    fail "distinct endpoint port omitted"
+fi
+grep -q 'need 164, available 123' "$tmpdir/err" || fail "host/port capacity mismatch"
+
+# Explicit TLS configuration is outside the updater's supported scope. Reject
+# it before replacement, even if all replicas agree or probes are disabled.
+for key in PGSSLMODE PGSSLROOTCERT PGSSLCERT PGSSLKEY PGSSLSNI PGSSLPASSWORD PGSSLCRL; do
+    for replicas in versiond2 'versiond versiond2'; do
+        jq --arg key "$key" --arg replicas "$replicas" '
+            reduce ($replicas | split(" ")[]) as $s (.; .services[$s].environment[$key] = "require")' \
+            "$tmpdir/ha.json" >"$tmpdir/ha-tls.json"
+        if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+            FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+            FAKE_RENDERED_HA="$tmpdir/ha-tls.json" UPDATE_SKIP_POSTGRES_PROBE=true; then
+            fail "unsupported TLS setting $key accepted"
+        fi
+        grep -q "unsupported TLS settings: $key" "$tmpdir/err" || fail "unsupported TLS diagnostic missing"
+        [[ -z $(mutations) ]] || fail "unsupported TLS checked after replacement"
+    done
+done
+jq '.services.versiond.environment.PGSSLMODE = "disable" |
+    .services.versiond2.environment.PGSSLMODE = "disable"' "$tmpdir/ha.json" >"$tmpdir/ha-no-tls.json"
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" FAKE_RENDERED_HA="$tmpdir/ha-no-tls.json" || \
+    fail "explicit non-TLS configuration refused: $(cat "$tmpdir/err")"
+! grep -q -- '--volumes-from' "$tmpdir/log" || fail "PostgreSQL probe borrowed application mounts"
+
 jq '.services.versiond2.environment.PGHOSTADDR = "127.0.0.2"' "$tmpdir/ha.json" >"$tmpdir/ha-hostaddr.json"
 if run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
     FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" FAKE_RENDERED_HA="$tmpdir/ha-hostaddr.json"; then

@@ -213,6 +213,8 @@ class StorageCheck(unittest.TestCase):
         env = dict(os.environ, GONKA_CONFIG_ENV=str(directory / "config.env"), COMPOSE_FILE=str(compose),
                    UPDATE_STATE_DIR=str(directory / "state"))
 
+        endpoints = directory / "endpoints.json"
+
         def capacity(value):
             self.sql(f"ALTER SYSTEM SET max_connections = {value}")
             run("docker", "restart", self.pg)
@@ -229,15 +231,22 @@ class StorageCheck(unittest.TestCase):
             self.fail("PostgreSQL did not restart")
 
         try:
-            for maximum, succeeds in ((85, True), (84, False)):
+            for maximum, required, hosts in (
+                    (85, 82, []), (84, 82, []),
+                    (126, 205, ["remote-a", "remote-b", "remote-c"]),
+                    (208, 205, ["remote-a", "remote-b", "remote-c"]),
+                    (207, 205, ["remote-a", "remote-b", "remote-c"]),
+                    (126, 123, ["versiond", "versiond2", "remote-a", "remote-a"])):
                 capacity(maximum)
-                result = subprocess.run([str(directory / "update-devshard.sh"), "--check"], env=env,
+                endpoints.write_text(json.dumps([dict(id=str(i), host=host) for i, host in enumerate(hosts)]))
+                scenario_env = dict(env, VERSIOND_POOL_ENDPOINTS_FILE=str(endpoints)) if hosts else env
+                result = subprocess.run([str(directory / "update-devshard.sh"), "--check"], env=scenario_env,
                                         text=True, capture_output=True, timeout=90)
-                if succeeds:
+                if maximum - 3 >= required:
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertIn("budget 82 fits 82", result.stdout)
+                    self.assertIn(f"budget {required} fits {maximum - 3}", result.stdout)
                 else:
-                    self.assert_failed(result, "need 82, available 81")
+                    self.assert_failed(result, f"need {required}, available {maximum - 3}")
                 self.assertFalse((directory / "state/pending").exists())
                 self.assertNotIn("Step:", result.stdout)
         finally:

@@ -271,13 +271,21 @@ this host. On other hosts, run the updater's separate `--check-storage` mode
 before admitting replicas to the pool; see [Multi-host versiond](#multi-host-versiond).
 All replicas must connect to the same PostgreSQL database.
 
-The write probe opens PostgreSQL with the model's credentials from a helper
-container that borrows a running versiond's volumes, so a CA or client
-certificate named by `PGSSL*` resolves; it creates and drops a temporary
-table, so a read-only primary, revoked write rights or a full disk stop the
-run. A bundled PostgreSQL that exists but is stopped is not a fresh install:
-start it first. `UPDATE_SKIP_POSTGRES_PROBE=true` disables all of this and
-is meant for a host that cannot reach the database at all.
+The host updater supports the bundled PostgreSQL and an external writable
+PostgreSQL endpoint reachable from the deployment network without custom TLS
+configuration. PostgreSQL TLS deployment and certificate management are outside
+this updater's scope. It rejects explicitly configured `PGSSL*` options,
+except `PGSSLMODE=disable`; leave them unset for the stock deployment. This
+restriction applies to host updates, not the separate `--check-storage` command
+whose reference connection uses a local PostgreSQL client.
+
+The write probe opens PostgreSQL with the model's credentials from a temporary
+helper container. It creates and drops a temporary table, so a read-only
+primary, revoked write rights or a full disk stop the run.
+A bundled PostgreSQL that exists but is stopped is not a fresh install:
+start it first. `UPDATE_SKIP_POSTGRES_PROBE=true` skips database probes, but
+still validates supported connection settings. It is meant for a host that
+cannot reach the database at all.
 
 Before replacing public ingress or a versiond container, the updater saves its
 Docker configuration: image ID, command, environment, healthcheck, volume
@@ -397,7 +405,13 @@ need 123.
 The updater checks this bound against `max_connections` minus PostgreSQL's
 reserved slots before replacing services. It uses the declared HA versions
 plus versions in live local proofs, the largest configured or observed local
-pool limit, and the larger of local replica count and declared pool membership.
+pool limit, and the union of local writers and declared pool membership.
+Local writers include candidates about to start and running replicas marked
+for removal. Entries addressed by a local Compose service or container name
+on port 8080 are counted once; repeated remote host/port pairs are also counted
+once. Router endpoint IDs do not identify writers. Other aliases and IP
+addresses are counted as additional members because their equivalence to a
+local writer cannot be established from the configuration alone.
 Remote replicas must fit those version and pool limits. Set
 `UPDATE_POSTGRES_CONNECTION_RESERVE` for connections used by other applications
 or additional capacity requirements. This is a configuration bound; it does
