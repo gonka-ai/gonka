@@ -4,7 +4,7 @@
 
 ## Source and isolation
 
-- Fix branch: `sn/devshard-v5-ha-install-fixes`, based on the original core revision `39240311fb`.
+- Fix branch: `sn/devshard-v5-ha-install-fixes` ([PR #1730](https://github.com/gonka-ai/gonka/pull/1730)), based on the original core revision `39240311fb`.
 - `c78fcfbc4`: gateway catalog probes use the public `/devshard/<version>/healthz` path. Direct router probes retain their internal paths; the standalone test host accepts the public form too.
 - `bf4de2d21`: `ObsRepairGate` forwards `StorageProof` and `FatalErrors` to the actual backend, preserving unsupported-backend behavior.
 - Join, router fleet, public proxy, policy workers and updater: unchanged PR #1611 integration `9a4ec48886`, overlaid onto the fixed core. This was not a published release image set.
