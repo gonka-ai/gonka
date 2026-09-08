@@ -288,6 +288,14 @@ func (t *hostPingTargets) refcount(dial string) int {
 	return 0
 }
 
+// dialCount is the O(1) form of snapshotStats' target count. ObserveEscrowHost
+// runs per successful inference, so the gauge publish must not walk the maps.
+func (t *hostPingTargets) dialCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.byDial)
+}
+
 func (t *hostPingTargets) hasEscrow(escrowID string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -442,8 +450,7 @@ func (j *hostPingJob) publishTargetCount() {
 	if j == nil || j.metrics == nil || j.targets == nil {
 		return
 	}
-	n, _, _ := j.targets.snapshotStats()
-	j.metrics.SetHostPingTargets(n)
+	j.metrics.SetHostPingTargets(j.targets.dialCount())
 }
 
 func (j *hostPingJob) ObserveEscrowHost(escrowID, dial, routePrefix, participantKey string) {

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/bridge"
+	"devshard/storage"
 )
 
 // newRetireTestGateway builds a minimal Gateway holding a single active runtime
@@ -28,6 +29,110 @@ func newRetireTestGateway(id string) (*Gateway, *devshardRuntime) {
 		rotationBreakers: make(map[string]*rotationBreaker),
 	}
 	return g, rt
+}
+
+func TestRetentionCutoffMatchesHostPruneHorizon(t *testing.T) {
+	require.Equal(t, uint64(0), storage.RetentionCutoff(1, storage.DefaultEpochRetain))
+	require.Equal(t, uint64(0), storage.RetentionCutoff(2, storage.DefaultEpochRetain))
+	require.Equal(t, uint64(1), storage.RetentionCutoff(3, storage.DefaultEpochRetain))
+	require.Equal(t, uint64(8), storage.RetentionCutoff(10, storage.DefaultEpochRetain))
+}
+
+func TestRetireExpiredEpochEscrowsDropsPastHostCutoff(t *testing.T) {
+	stale := &devshardRuntime{id: "stale", creationEpoch: 7}
+	stale.active.Store(true)
+	kept := &devshardRuntime{id: "kept", creationEpoch: 8}
+	kept.active.Store(true)
+	unspecified := &devshardRuntime{id: "unspecified", creationEpoch: 0}
+	unspecified.active.Store(true)
+
+	g := &Gateway{
+		runtimes: map[string]*devshardRuntime{
+			stale.id:       stale,
+			kept.id:        kept,
+			unspecified.id: unspecified,
+		},
+		runtimeOrder:     []*devshardRuntime{stale, kept, unspecified},
+		rotationBreakers: make(map[string]*rotationBreaker),
+		phaseGate:        &ChainPhaseGate{},
+	}
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 10})
+
+	g.retireExpiredEpochEscrows()
+
+	_, staleRegistered := g.runtimes[stale.id]
+	require.False(t, staleRegistered, "epoch 7 is below cutoff 8 when current=10 retain=3")
+	require.False(t, stale.active.Load())
+	_, keptRegistered := g.runtimes[kept.id]
+	require.True(t, keptRegistered, "epoch 8 is the first retained epoch")
+	require.True(t, kept.active.Load())
+	_, unspecifiedRegistered := g.runtimes[unspecified.id]
+	require.True(t, unspecifiedRegistered, "creationEpoch 0 is unknown; do not invent a prune")
+}
+
+func TestRetireExpiredEpochEscrowsNoopsBeforeHorizon(t *testing.T) {
+	rt := &devshardRuntime{id: "12", creationEpoch: 1}
+	rt.active.Store(true)
+	g := &Gateway{
+		runtimes:         map[string]*devshardRuntime{rt.id: rt},
+		runtimeOrder:     []*devshardRuntime{rt},
+		rotationBreakers: make(map[string]*rotationBreaker),
+		phaseGate:        &ChainPhaseGate{},
+	}
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 2})
+
+	g.retireExpiredEpochEscrows()
+
+	_, still := g.runtimes[rt.id]
+	require.True(t, still)
+	require.True(t, rt.active.Load())
+}
+
+func TestRetireExpiredEpochEscrowsDefersWhileBusy(t *testing.T) {
+	rt := &devshardRuntime{id: "12", creationEpoch: 1}
+	rt.active.Store(true)
+	rt.activeUserRequests.Store(1)
+	g := &Gateway{
+		runtimes:         map[string]*devshardRuntime{rt.id: rt},
+		runtimeOrder:     []*devshardRuntime{rt},
+		rotationBreakers: make(map[string]*rotationBreaker),
+		phaseGate:        &ChainPhaseGate{},
+	}
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 10})
+
+	g.retireExpiredEpochEscrows()
+
+	_, still := g.runtimes[rt.id]
+	require.True(t, still, "busy runtime must stay registered until drain")
+	require.False(t, rt.active.Load(), "admission must close immediately")
+	require.True(t, rt.retirePending.Load())
+
+	// Later ticks must not re-walk a runtime whose retirement is already
+	// queued; runtimeDrained owns it from here.
+	g.retireExpiredEpochEscrows()
+	_, stillAfterSecondTick := g.runtimes[rt.id]
+	require.True(t, stillAfterSecondTick)
+	require.True(t, rt.retirePending.Load())
+}
+
+// A settle in flight reads the runtime's store; retiring closes it. The
+// settlement paths retire on their own, so epoch retention must stand aside.
+func TestRetireExpiredEpochEscrowsSkipsSettlementPending(t *testing.T) {
+	rt := &devshardRuntime{id: "12", creationEpoch: 1}
+	rt.settlementPending.Store(true)
+	g := &Gateway{
+		runtimes:         map[string]*devshardRuntime{rt.id: rt},
+		runtimeOrder:     []*devshardRuntime{rt},
+		rotationBreakers: make(map[string]*rotationBreaker),
+		phaseGate:        &ChainPhaseGate{},
+	}
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 10})
+
+	g.retireExpiredEpochEscrows()
+
+	_, still := g.runtimes[rt.id]
+	require.True(t, still, "settlement owns the retire for a pending escrow")
+	require.False(t, rt.retirePending.Load())
 }
 
 // TestRetireRuntimeRemovesRuntimeFromRegistry pins the core leak fix: retiring a

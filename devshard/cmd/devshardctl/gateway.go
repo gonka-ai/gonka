@@ -881,6 +881,7 @@ const (
 // checkBalances scans all active runtimes and deactivates any whose
 // escrow is close to exhausting its usable balance or nonce budget.
 func (g *Gateway) checkBalances() {
+	g.retireExpiredEpochEscrows()
 	g.mu.Lock()
 	if !g.settings.EscrowRotation.Enabled {
 		g.mu.Unlock()
@@ -4049,6 +4050,54 @@ func (g *Gateway) sortRuntimeOrderLocked() {
 	slices.SortFunc(g.runtimeOrder, func(a, b *devshardRuntime) int {
 		return strings.Compare(a.id, b.id)
 	})
+}
+
+const epochRetentionRetireReason = "epoch retention prune"
+
+// retireExpiredEpochEscrows drops gateway runtimes whose creation epoch is
+// below the host prune cutoff (retain 3: current + two previous). Settlement
+// is not attempted: chain settle only accepts current or previous epoch.
+func (g *Gateway) retireExpiredEpochEscrows() {
+	if g == nil || g.phaseGate == nil {
+		return
+	}
+	current := g.phaseGate.Snapshot().EpochIndex
+	cutoff := storage.RetentionCutoff(current, storage.DefaultEpochRetain)
+	if cutoff == 0 {
+		return
+	}
+
+	g.mu.Lock()
+	type expired struct {
+		id            string
+		creationEpoch uint64
+	}
+	var stale []expired
+	for _, rt := range g.runtimeOrder {
+		if rt == nil || rt.creationEpoch == 0 || rt.creationEpoch >= cutoff {
+			continue
+		}
+		// Settlement owns the runtime until it succeeds, hits ErrEscrowSettled or
+		// exhausts its retries; every one of those paths retires. Closing the
+		// runtime's store underneath an in-flight settle would strand the funds.
+		if rt.settlementPending.Load() {
+			continue
+		}
+		// runtimeDrained fires the deferred retire once requests finish; without
+		// this the 30s tick re-logs the same deferral until the runtime drains.
+		if rt.retirePending.Load() {
+			continue
+		}
+		stale = append(stale, expired{id: rt.id, creationEpoch: rt.creationEpoch})
+	}
+	g.mu.Unlock()
+
+	for _, e := range stale {
+		log.Printf("escrow_epoch_retention_retire escrow=%s creation_epoch=%d current_epoch=%d cutoff=%d",
+			e.id, e.creationEpoch, current, cutoff)
+		g.deactivateDevshardByIDWithReason(e.id, epochRetentionRetireReason)
+		g.retireRuntime(e.id, epochRetentionRetireReason)
+	}
 }
 
 // retireRuntime drops a runtime from the in-memory registry and closes it,

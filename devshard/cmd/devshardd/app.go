@@ -30,7 +30,7 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-const sessionEpochRetain = 3
+const sessionEpochRetain = devshardstorage.DefaultEpochRetain
 
 type chainEventsRunner interface {
 	Start(context.Context) error
