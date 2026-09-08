@@ -171,8 +171,26 @@ message PoCModelConfig {
   string model_id = 1;
   int64 seq_len = 2;
   PoCStatTestParams stat_test = 3;
-  Decimal weight_scale_factor = 4;
+  Decimal weight_scale_factor = 4 [deprecated = true]; // Migration input only; use dynamic_coefficient.
   uint64 penalty_start_epoch = 5;
+  DynamicCoefficientModelConfig dynamic_coefficient = 6;
+}
+
+message DynamicCoefficientModelConfig {
+  option (gogoproto.equal) = true;
+  Decimal coeff_min = 1;
+  Decimal coeff_max = 2;
+  Decimal relative_difficulty = 3;
+  uint32 target_share_bps = 4;
+}
+
+message DynamicCoefficientParams {
+  option (gogoproto.equal) = true;
+  uint32 target_zone_bps = 1;
+  Decimal step_min = 2;
+  Decimal step_max = 3;
+  Decimal bootstrap_step_max = 4;
+  uint32 bootstrap_share_bps = 5;
 }
 
 message PocParams {
@@ -192,6 +210,7 @@ message PocParams {
   bool poc_stronger_rng_enabled = 13;  // Switches input generation to concatenated murmur3 with full 256-bit SHA256 seed (prevents 32-bit seed-collision attacks)
   repeated PoCModelConfig models = 14;
   uint32 validation_vote_threshold_bps = 15;  // Strict vote threshold in basis points, 0 = default 5000; valid range [5000, 10000] so at most one side can pass
+  DynamicCoefficientParams dynamic_coefficient_params = 16;
 }
 
 message Decimal {
