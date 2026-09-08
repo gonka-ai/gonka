@@ -55,7 +55,7 @@ test-join-compose:
 	jq -e '.services["versiond-router"].volumes | any(.type == "volume" and .source == "versiond-router-state" and .target == "/var/lib/gonka-router")' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: router catalog state is not persistent' >&2; exit 1; }; \
-	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("-x /usr/local/lib/router-runtime/catalog-reconciler")) and ($$check | contains("catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL")) and ($$check | contains("VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image")) and ($$check | contains("VERSIOND_ROUTER_ADMIN_PORT")) and ($$check | contains("/livez")) and ($$check | contains("/readyz") | not) and ($$check | contains("127.0.0.1:8080/healthz"))' \
+	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("-x /usr/local/lib/router-runtime/catalog-reconciler")) and ($$check | contains("catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL")) and ($$check | contains("VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image")) and ($$check | contains("VERSIOND_ROUTER_ADMIN_PORT")) and ($$check | contains("/livez")) and ($$check | contains("/readyz") | not) and ($$check | contains("versiond-router-listen-address")) and ($$check | contains(":8080/healthz"))' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: router healthcheck does not validate image/catalog compatibility and probe liveness' >&2; exit 1; }; \
 	healthcheck=$$(jq -r '.services["versiond-router"].healthcheck.test[1]' \
@@ -74,9 +74,12 @@ test-join-compose:
 	fi; \
 	VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions probe_healthcheck \
 		|| { echo 'test-join-compose: catalog-capable image with catalog URL was rejected' >&2; exit 1; }; \
-	jq -e '.services.proxy.depends_on["versiond-router"] | .condition == "service_healthy" and .required == false' \
+	jq -e '((.services.proxy.depends_on // {}) | has("versiond-router") | not)' \
 		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: router health is not an optional public-proxy dependency' >&2; exit 1; }; \
+		|| { echo 'test-join-compose: inner router delays unrelated public proxy startup' >&2; exit 1; }; \
+	jq -e '.services["versiond-router"].volumes | any(.type == "bind" and .target == "/docker-entrypoint.d/50-gonka-public-tier-compat.sh" and .read_only == true)' \
+		"$$tmp_json" >/dev/null \
+		|| { echo 'test-join-compose: legacy router private-listener hook is missing' >&2; exit 1; }; \
 	jq -e '(.services["versiond-router"] | has("stop_signal") | not) and .services["versiond-router"].stop_grace_period == "10s"' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: Compose overrides the selected image stop signal or loses the bounded grace' >&2; exit 1; }; \
@@ -94,8 +97,8 @@ test-join-compose:
 		|| { echo 'test-join-compose: legacy router compatibility was lost' >&2; exit 1; }; \
 	[ "$$(grep -c 'GONKA_HA: "true"' "$$tmp")" -eq 3 ] \
 		|| { echo 'test-join-compose: HA deployment latch is not shared by both versiond hosts and the router' >&2; exit 1; }; \
-	[ "$$(grep -c 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp")" -eq 3 ] \
-		|| { echo 'test-join-compose: legacy pins are not shared by both versiond hosts and the router' >&2; exit 1; }; \
+	[ "$$(grep -c 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp")" -eq 4 ] \
+		|| { echo 'test-join-compose: legacy pins are not shared by both versiond hosts and both router tiers' >&2; exit 1; }; \
 	grep -Eq '^[[:space:]]*VERSIOND_VERSIONS: v4 v5$$' "$$tmp" \
 		|| { echo 'test-join-compose: per-version routing contract is missing' >&2; exit 1; }; \
 	grep -q 'image: ghcr.io/product-science/versiond-router:0.2.15' "$$tmp" \
@@ -350,7 +353,7 @@ test-version-routing:
 	state=gonka-version-probe-state; \
 	cleanup() { \
 		docker rm -f gonka-vp-router gonka-vp-a gonka-vp-b gonka-vp-legacy \
-			gonka-vp-catalog \
+			gonka-vp-catalog gonka-vp-bind-a gonka-vp-bind-b \
 			>/dev/null 2>&1 || true; \
 		docker network rm $$net >/dev/null 2>&1 || true; \
 		docker volume rm $$state >/dev/null 2>&1 || true; \
@@ -434,6 +437,30 @@ test-version-routing:
 	[ "$$(docker image inspect gonka-versiond-router-probe \
 		--format '{{.Config.StopSignal}}')" = SIGUSR1 ] \
 		|| fail "HAProxy router image does not own its soft-stop signal"; \
+	for name in a b; do \
+		docker run -d --name gonka-vp-bind-$$name --network $$net \
+			--network-alias versiond-router-ingress \
+			-e VERSIOND_ROUTER_FRONT_BIND_HOST=versiond-router-ingress \
+			-e VERSIOND_ROUTER_METRICS_BIND_HOST=versiond-router-ingress \
+			gonka-versiond-router-probe >/dev/null; \
+	done; \
+	wait_local_bind() { \
+		name=$$1; \
+		address=$$(docker inspect -f \
+			'{{with index .NetworkSettings.Networks "gonka-version-probe"}}{{.IPAddress}}{{end}}' \
+			gonka-vp-bind-$$name); \
+		for i in $$(seq 80); do \
+			if docker exec gonka-vp-bind-$$name grep -q \
+				"^[[:space:]]*bind $$address:8080" /etc/haproxy/haproxy.cfg \
+				2>/dev/null; then return 0; fi; \
+			sleep 0.1; \
+		done; \
+		fail "router $$name did not select its own address from the shared alias"; \
+	}; \
+	for name in a b; do wait_local_bind $$name; done; \
+	docker restart gonka-vp-bind-a >/dev/null; \
+	for name in a b; do wait_local_bind $$name; done; \
+	docker rm -f gonka-vp-bind-a gonka-vp-bind-b >/dev/null; \
 	cache_now=$$(date +%s); \
 	docker run --rm --user 0:0 -e CACHE_NOW=$$cache_now \
 		-v $$state:/state --entrypoint sh gonka-versiond-router-probe -c \
@@ -1385,7 +1412,7 @@ test-version-routing:
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
 		-e VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=6 \
 		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
-		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=1 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
 		gonka-versiond-router-probe >/dev/null; \
@@ -1395,6 +1422,9 @@ test-version-routing:
 			| jq -e '.state == "capacity-exhausted"' >/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
+	[ "$$(docker exec gonka-vp-router grep -c '^backend versiond_dynamic_' \
+		/etc/haproxy/haproxy.cfg)" -eq 3 ] \
+		|| fail "accepted LKG routes did not raise the inner router's effective capacity"; \
 	for i in $$(seq 16); do \
 		pending_cache_after=$$(docker exec gonka-vp-router \
 			jq -er .fetched_at_unix /var/lib/gonka-router/catalog.json); \
@@ -1616,6 +1646,21 @@ test-render: test-local-compose test-join-compose test-join-versiond-healthcheck
 		|| fail "X-Real-IP is not unconditionally replaced"; \
 	grep -Eq '^[[:space:]]*http-request set-header X-Forwarded-Proto %\[ssl_fc,iif\(https,http\)\][[:space:]]*$$' "$$tmpdir/mixed.cfg" \
 		|| fail "X-Forwarded-Proto is not unconditionally replaced"; \
+	HAPROXY_BIN=true \
+	VERSIOND_ROUTER_RENDER_ONLY=1 \
+	VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS=true \
+	VERSIOND_VERSIONS=v4 \
+	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/trusted-ingress.cfg" \
+	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/trusted-ingress.map" \
+	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/trusted-ingress.versions.map" \
+	VERSIOND_ROUTER_READY_RULES="$$tmpdir/trusted-ingress.ready.rules" \
+	./entrypoint.sh; \
+	if grep -Eq 'http-request set-header (X-Real-IP|X-Forwarded-Proto)' \
+		"$$tmpdir/trusted-ingress.cfg"; then \
+		fail "trusted ingress identity is overwritten by the inner router"; \
+	fi; \
 	grep -q '^[[:space:]]*http-request deny deny_status 413 if { req.hdr_val(content-length) gt 10485760 }' "$$tmpdir/mixed.cfg" \
 		|| fail "the advertised request body cap is gone"; \
 	grep -Eq '^[[:space:]]*accepted_payload_size 8192([[:space:]]|$$)' "$$tmpdir/mixed.cfg" \
@@ -1941,11 +1986,14 @@ test-render: test-local-compose test-join-compose test-join-versiond-healthcheck
 	mkdir "$$tmpdir/bin"; \
 	printf '%s\n' '#!/bin/sh' \
 		'case "$$2" in' \
-		'  router-front) printf "%s\\n" "192.0.2.10 STREAM router-front" ;;' \
-		'  router-metrics) printf "%s\\n" "192.0.2.11 STREAM router-metrics" ;;' \
+		'  router-front) printf "%s\\n" "192.0.2.99 STREAM router-front" "192.0.2.10 STREAM router-front" ;;' \
+		'  router-metrics) printf "%s\\n" "192.0.2.99 STREAM router-metrics" "192.0.2.11 STREAM router-metrics" ;;' \
 		'  *) exec /usr/bin/getent "$$@" ;;' \
 		'esac' > "$$tmpdir/bin/getent"; \
-	chmod +x "$$tmpdir/bin/getent"; \
+	printf '%s\n' '#!/bin/sh' \
+		'printf "%s\\n" "2: eth0 inet 192.0.2.10/24 scope global eth0" "3: eth1 inet 192.0.2.11/24 scope global eth1"' \
+		> "$$tmpdir/bin/ip"; \
+	chmod +x "$$tmpdir/bin/getent" "$$tmpdir/bin/ip"; \
 	PATH="$$tmpdir/bin:$$PATH" HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTER_ADMIN_PORT=18404 \
 		VERSIOND_ROUTER_FRONT_BIND_HOST=router-front \

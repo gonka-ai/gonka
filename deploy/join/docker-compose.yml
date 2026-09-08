@@ -1,3 +1,66 @@
+x-proxy-policy: &proxy-policy
+  image: ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.15-devshard-v5}
+  environment:
+    - NGINX_MODE=${NGINX_MODE:-http}
+    - PROXY_PROTOCOL=true
+    - PROXY_PROTOCOL_PEER=proxy-policy-ingress
+    - PROXY_POLICY_READINESS_HOST=proxy-policy-app-network
+    - SERVER_NAME=${SERVER_NAME:-}
+    - GONKA_API_PORT=9000
+    - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet devshard
+    - EXEMPT_CONN_LIMIT=200
+    - GONKA_API_BLOCKED_ROUTES=poc-batches training
+    - CHAIN_RPC_PORT=26657
+    - CHAIN_API_PORT=1317
+    - CHAIN_GRPC_PORT=9090
+    - DASHBOARD_PORT=5173
+    - CERT_ISSUER_DOMAIN=${CERT_ISSUER_DOMAIN:-}
+    - PROXY_ADD_NODE_PREFIX=${PROXY_ADD_NODE_PREFIX:-false}
+    - PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
+    - PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
+    - DISABLE_GONKA_API=${DISABLE_GONKA_API:-false}
+    - DISABLE_CHAIN_API=${DISABLE_CHAIN_API:-true}
+    - DISABLE_CHAIN_RPC=${DISABLE_CHAIN_RPC:-true}
+    - DISABLE_CHAIN_GRPC=${DISABLE_CHAIN_GRPC:-true}
+    - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
+    - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
+    - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-}
+    - EDGE_API_PORT=${EDGE_API_PORT:-18080}
+  volumes:
+    - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
+  networks:
+    default:
+      aliases:
+        - proxy-policy-app-network
+    proxy-policy-front:
+      aliases:
+        - proxy-policy-front
+  depends_on:
+    node:
+      condition: service_started
+    api:
+      condition: service_started
+    edge-api:
+      condition: service_started
+      required: false
+    versiond:
+      condition: service_started
+    explorer:
+      condition: service_started
+    proxy-ssl:
+      condition: service_healthy
+      required: false
+  restart: unless-stopped
+  # nginx uses SIGQUIT for graceful stop. Keep Docker's SIGKILL backstop beyond
+  # the longest default upstream transfer/SSE timeout (20 minutes).
+  stop_grace_period: ${PROXY_POLICY_STOP_GRACE_PERIOD:-30m}
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://127.0.0.1:8081/health"]
+    interval: 2s
+    timeout: 3s
+    retries: 3
+    start_period: 10s
+
 services:
   tmkms:
     image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15
@@ -162,62 +225,48 @@ services:
     depends_on:
       - api
 
+  proxy-policy2:
+    <<: *proxy-policy
+
+  proxy-policy:
+    <<: *proxy-policy
+
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.2.15
+    image: ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.15-devshard-v5}
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
     environment:
       - NGINX_MODE=${NGINX_MODE:-http}
-      - SERVER_NAME=${SERVER_NAME:-}
-      - GONKA_API_PORT=9000
-      - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet devshard
-      - EXEMPT_CONN_LIMIT=200
-      - GONKA_API_BLOCKED_ROUTES=poc-batches training
-      - CHAIN_RPC_PORT=26657
-      - CHAIN_API_PORT=1317
-      - CHAIN_GRPC_PORT=9090
-      - DASHBOARD_PORT=5173
-      - PROXY_REAL_IP_FROM=172.18.0.1
-      # SSL enablement (entrypoint enables SSL if CERT_ISSUER_DOMAIN is set)
-      - CERT_ISSUER_DOMAIN=${CERT_ISSUER_DOMAIN:-}
-      - PROXY_ADD_NODE_PREFIX=${PROXY_ADD_NODE_PREFIX:-false}
-      # Optional: override proxy-ssl discovery
-      - PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
-      - PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
-      - DISABLE_GONKA_API=${DISABLE_GONKA_API:-false}
-      - DISABLE_CHAIN_API=${DISABLE_CHAIN_API:-true}
-      - DISABLE_CHAIN_RPC=${DISABLE_CHAIN_RPC:-true}
-      - DISABLE_CHAIN_GRPC=${DISABLE_CHAIN_GRPC:-true}
-      - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
-      - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
-      - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-}
-      - EDGE_API_PORT=${EDGE_API_PORT:-18080}
+      - PROXY_POLICY_POOL_HOST=proxy-policy-front
+      - PROXY_POLICY_POOL_SLOTS=${PROXY_POLICY_POOL_SLOTS:-4}
+      - PROXY_ROUTER_POLICY_BIND_HOST=proxy-policy-ingress
+      - PROXY_ROUTER_METRICS_BIND_HOST=proxy-router-metrics
+      - PROXY_ROUTER_PUBLIC_IDLE_SECONDS=${PROXY_ROUTER_PUBLIC_IDLE_SECONDS:-86400}
+      - PROXY_ROUTER_PROXY_PROTOCOL_FROM=${PROXY_ROUTER_PROXY_PROTOCOL_FROM:-}
+      - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
+      - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
+      - PROXY_VERSIOND_PORT=18081
+    networks:
+      default:
+        aliases:
+          - proxy-router-metrics
+      proxy-policy-front:
+        aliases:
+          - proxy-policy-ingress
     volumes:
-      - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
-    depends_on:
-      node:
-        condition: service_started
-      api:
-        condition: service_started
-      edge-api:
-        condition: service_started
-        required: false
-      versiond:
-        condition: service_started
-      explorer:
-        condition: service_started
-      proxy-ssl:
-        condition: service_healthy
-        required: false
+      - proxy-router-state:/var/lib/gonka-router
     restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8404/readyz"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
 
   proxy-ssl:
     container_name: proxy-ssl
@@ -270,3 +319,11 @@ services:
     expose:
       - "5173"
     restart: unless-stopped
+
+networks:
+  proxy-policy-front:
+    name: ${PROXY_POLICY_FRONT_NETWORK:-gonka-proxy-policy-front}
+    internal: true
+
+volumes:
+  proxy-router-state:

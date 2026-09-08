@@ -108,11 +108,8 @@ frontend versiond_in
 
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
 
-    # This router is directly reachable in the current deployment, so neither
-    # value is trusted from the client. A later trusted proxy tier may preserve
-    # its own sanitized values when it is introduced in the same topology.
-    http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]
-    http-request set-header X-Real-IP %[src]
+    ${FORWARDED_PROTO_RULE}
+    ${REAL_IP_RULE}
 
     # Reject an advertised oversize body before opening an upstream connection.
     # HAProxy streams rather than buffers bodies, so devshardd independently
