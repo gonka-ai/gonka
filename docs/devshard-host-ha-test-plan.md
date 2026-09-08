@@ -28,6 +28,61 @@ prove session failover. Use finite SSE requests that finish within the drain
 budget, except in the explicit timeout case. The Gherkin below is a manual
 acceptance specification, not an implemented Cucumber test suite.
 
+## Installation and upgrade checks
+
+Run fresh-install and v4 migration cases on separate deployments. For migration,
+record the old PostgreSQL container, source volume, PostgreSQL `system_identifier` and a
+committed session before changing the deployment. Keep the source and backup
+until the upgraded public route has passed a real inference check.
+
+```gherkin
+Feature: Install and upgrade an HA host
+  Scenario: Admit a fresh HA installation only when its required routes are ready
+    Given an empty installation with explicit PostgreSQL storage for every HA member
+    When I install the RC with one required protocol version deliberately unready
+    Then a healthy proxy or an unrelated healthy version cannot satisfy admission
+    And the fleet reports the required version with no ready upstreams
+    When that version becomes ready and I finish admission
+    Then inference through the public endpoint succeeds with correct accounting
+
+  Scenario: Reject unsafe HA storage before changing a running deployment
+    Given a healthy HA deployment serving a recorded escrow
+    When I run the updater preflight with hybrid storage or a missing PGHOST
+    Then it fails before replacing or stopping a serving container
+    When I repeat with an unreachable or read-only PostgreSQL target
+    Then it fails the write-capable storage check
+    And the existing deployment continues serving the recorded escrow
+
+  Scenario: Reject a different writable database during an update
+    Given healthy HA members sharing one PostgreSQL database
+    When I point the proposed deployment at an independent writable clone
+    And I run the updater preflight
+    Then matching copied database identifiers do not satisfy the live storage challenge
+    And the update fails before replacing or stopping a serving container
+    When one running member's storage proof instead times out or returns an error
+    Then another member's valid proof cannot make the preflight pass
+
+  Scenario: Preserve the bundled v4 PostgreSQL database during migration
+    Given a v4 installation with a recorded session in its PostgreSQL volume
+    When I run the migration preflight and recreate PostgreSQL in place
+    Then the persistent PGDATA preserves the PostgreSQL system_identifier and committed data
+    And the source volume remains available for recovery
+    When I finish the upgrade and later recreate the PostgreSQL container
+    Then the recorded escrow still works with correct committed state and accounting
+    When I repeat on a separate copy with existing installation evidence but neither persistent PGDATA nor a legacy source
+    Then startup refuses to initialize an empty database
+
+  Scenario: Stop a compatible versiond image update at a failed candidate
+    Given a healthy HA deployment with enough surviving capacity
+    When the updater replaces a replica with an image that never becomes healthy
+    Then it restores that replica's previous image and exits with an error
+    And it does not replace the remaining replicas after that failure
+    And survivors serve the recorded escrow with correct committed state
+    When I fix the candidate and rerun the updater
+    Then the update completes and the public route passes real inference
+    And a second unchanged run does not replace healthy containers
+```
+
 ## Acceptance scenarios
 
 ```gherkin
@@ -96,6 +151,18 @@ Feature: Versiond and router HA lifecycle
     When the host returns
     Then it rejoins only after fresh per-version health checks
 
+  Scenario: Withdraw a member that loses its PostgreSQL connection
+    This checks live storage readiness after successful startup.
+    Given the selected member is ready and shares PostgreSQL with its survivors
+    When I exhaust its application connection pool while PostgreSQL stays writable
+    Then pool saturation alone does not make storage unready
+    When I block only that member's access to PostgreSQL
+    Then its affected versions become unready and routers withdraw them
+    And it does not fall back to local SQLite or accept new HA work
+    And survivors continue the recorded escrow with correct committed state
+    When I restore access and the affected child restarts if required
+    Then the member rejoins only after fresh storage and per-version health checks
+
   Scenario: Roll the inner router fleet under inference load
     This checks that replacing routers preserves accepted work and serving reserve.
     Given finite SSE and POST requests are running through the inner fleet
@@ -143,3 +210,8 @@ fault/withdrawal/recovery timestamps, SSE completion or expected interruption,
 escrow IDs and final results/costs. Distinguish a graceful operation from a
 crash or acknowledged membership outage. A passing health check alone is not
 a passing inference-continuity test.
+
+For failed installation or update checks, also attach the command exit status,
+storage-proof result without credentials, and container identities before and
+after failure. Verify the resulting state; an expected error message alone is
+not evidence that the serving deployment or database was preserved.
