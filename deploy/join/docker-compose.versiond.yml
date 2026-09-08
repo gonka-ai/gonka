@@ -7,8 +7,9 @@
 # machines with docker-compose.versiond-remote.yml.
 #
 # Fresh installations only. This overlay uses !reset and requires Docker
-# Compose 2.24.4 or newer. Upgrade an existing host with update-devshard.sh so
-# policy workers cross the required drain and fresh-admission sequence.
+# Compose 2.24.4 or newer. Upgrade an existing host with the release updater,
+# update-devshard.sh, so policy workers cross the required drain and
+# fresh-admission sequence.
 #
 # Cold-start order (update-devshard.sh runs the same steps on an existing host):
 #   ./versiond-router-fleet.sh prepare-networks
