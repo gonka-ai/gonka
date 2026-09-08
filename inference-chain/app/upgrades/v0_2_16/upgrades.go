@@ -234,8 +234,11 @@ func freezeUpcomingCoefficientConfig(ctx context.Context, k keeper.Keeper) error
 		return nil
 	}
 	data, found, err := k.GetEpochGroupDataWithError(ctx, upcoming.Index, "")
-	if err != nil || !found {
+	if err != nil {
 		return err
+	}
+	if !found {
+		return fmt.Errorf("upcoming epoch %d has no root epoch group data", upcoming.Index)
 	}
 	params, err := k.GetParams(ctx)
 	if err != nil {

@@ -132,6 +132,16 @@ func TestFreezeUpcomingCoefficientConfigDuringUpgrade(t *testing.T) {
 	require.Nil(t, data.ConfirmationWeightScales[0].BaseCoefficient)
 }
 
+func TestFreezeUpcomingCoefficientConfigMissingGroupData(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+	require.NoError(t, k.SetEpoch(ctx, &inferencetypes.Epoch{Index: 2, PocStartBlockHeight: 100}))
+
+	err := freezeUpcomingCoefficientConfig(ctx, k)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "upcoming epoch 2 has no root epoch group data")
+}
+
 func TestApplyFeeGroupUpgradeInfo_EmptyKeepsDisabled(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	params, err := k.GetParams(ctx)
