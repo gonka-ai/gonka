@@ -1,0 +1,99 @@
+services:
+  router:
+    image: >-
+      ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    environment:
+      - VERSIOND_ROUTER_SLOT=${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}
+      - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
+      # Legacy static host list from pre-HAProxy installations. Empty means DNS
+      # discovery; docker-compose.endpoints.yml takes precedence over both.
+      - VERSIOND_HOSTS=${VERSIOND_HOSTS:-}
+      - VERSIOND_ROUTER_BACK_NETWORK_NAME=${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}
+      - VERSIOND_ROUTER_METRICS_NETWORK_NAME=${VERSIOND_ROUTER_METRICS_NETWORK:?VERSIOND_ROUTER_METRICS_NETWORK is required}
+      - VERSIOND_ROUTER_FRONT_BIND_HOST=versiond-router-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}-front
+      - VERSIOND_ROUTER_METRICS_BIND_HOST=versiond-router-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}-metrics
+      - VERSIOND_PORT=8080
+      - VERSIOND_ROUTER_ADMIN_PORT=8404
+      - GONKA_HA=true
+      - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
+      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}
+      - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
+      # Only the isolated parent/policy tier can reach this listener, so preserve
+      # the client identity that tier derived from the public PROXY connection.
+      - VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS=${VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS:-true}
+      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL-http://versiond-routing-oracle:9100/versions}
+      - VERSIOND_ROUTING_CATALOG_POLL_SECONDS=${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}
+      - VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
+      - VERSIOND_ROUTING_ACTIVATION_MIN_READY=${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}
+      - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
+      - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
+      - VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}
+      - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
+    labels:
+      ai.gonka.component: versiond-router
+      ai.gonka.fleet: ${VERSIOND_ROUTER_FLEET_ID:-gonka-versiond-router}
+      ai.gonka.slot: ${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}
+      # Every generation of a slot is its own Compose project
+      # (<prefix>-<slot>-<generation>); the fleet keeps the previous generation
+      # as a stopped container until the replacement is committed and tells
+      # generations apart by creation time. The generation is deliberately not
+      # a label: the service configuration, and so its Compose hash, is the
+      # same for every generation of a slot.
+    networks:
+      front:
+        aliases:
+          # Keep the steady-state fleet distinct from the transitional
+          # singleton used by the reversible v4 -> v5 ingress cutover.
+          - versiond-router-fleet
+          - versiond-router-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}-front
+      back: {}
+      metrics:
+        aliases:
+          - versiond-router-metrics
+          - versiond-router-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}-metrics
+    volumes:
+      - router-state:/var/lib/gonka-router
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8404/readyz",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    stop_signal: SIGUSR1
+    # Routine cleanup stays bounded. The fleet rollout passes its explicit,
+    # longer SSE drain budget to `docker compose stop --timeout`.
+    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
+    restart: always
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  front:
+    external: true
+    name: ${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}
+  back:
+    external: true
+    name: ${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}
+  metrics:
+    external: true
+    name: ${VERSIOND_ROUTER_METRICS_NETWORK:?VERSIOND_ROUTER_METRICS_NETWORK is required}
+
+volumes:
+  router-state:
+    # Shared by every generation of the slot, under the name Compose gave it
+    # before generations existed, so a replacement keeps the catalog cache.
+    # versiond-router-fleet.sh creates it with the fleet labels.
+    name: ${VERSIOND_ROUTER_STATE_VOLUME:-${VERSIOND_ROUTER_PROJECT_PREFIX:-gonka-versiond-router}-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}_router-state}
+    external: true

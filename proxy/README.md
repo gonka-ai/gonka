@@ -311,7 +311,7 @@ Avoid:
 - `NGINX_MODE=https`: listen on 443 with SSL; requires `CERT_ISSUER_DOMAIN` and a reachable `proxy-ssl` service to obtain certs if missing.
 - `NGINX_MODE=both`: listen on 80 and 443; same SSL requirements as `https`.
 
-When SSL is enabled, `entrypoint.sh` validates the local certificate/key pair before rendering nginx configuration. A valid pair continues without contacting `proxy-ssl`. A missing, truncated, or mismatched pair is repaired through `setup-ssl.sh` before the first `nginx -t`, including in HTTPS-only mode.
+When SSL is enabled, `entrypoint.sh` validates the local certificate/key pair before rendering nginx configuration. A valid pair continues without contacting `proxy-ssl`. A missing, truncated, or mismatched pair is repaired through `setup-ssl.sh` before the first `nginx -t`, including in HTTPS-only mode. Policy workers sharing one certificate volume serialize every `setup-ssl.sh` call through a shared `flock`, and the in-lock revalidation ensures only one worker places the initial order while its siblings adopt the published bundle; a worker whose pair is already valid starts without waiting for the lock.
 
 If the certificate marker is missing while `private.key` and `order.id` remain, startup first recovers the certificate from that order. A new order is created only when the saved order cannot recover the local key.
 

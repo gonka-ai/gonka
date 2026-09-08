@@ -142,6 +142,8 @@ if [ "$PROXY_PROTOCOL" = "true" ]; then
         echo "PROXY_PROTOCOL_TRUSTED_FROM or PROXY_PROTOCOL_PEER is required when PROXY_PROTOCOL=true" >&2
         exit 1
     }
+    # Bind only to the private policy-front interface. The trusted CIDR is that
+    # same Docker network, whose only non-policy member is proxy-router.
     REAL_IP_CONFIG="set_real_ip_from ${PROXY_PROTOCOL_TRUSTED_FROM};
         real_ip_header proxy_protocol;"
 elif [ -n "$PROXY_REAL_IP_FROM" ]; then
@@ -425,33 +427,67 @@ export STREAMING_CONFIG='
 
 # Validate or repair the TLS bundle before nginx reads it.
 if [ "$SSL_ENABLED" = "true" ]; then
-    tls_bundle_is_valid() {
-        local cert_digest key_digest
-
-        [ -s /etc/nginx/ssl/cert.pem ] && [ -s /etc/nginx/ssl/private.key ] || return 1
+    # Mirrors the repair short-circuit in setup-ssl.sh: a non-empty certificate
+    # whose public key matches the private key.
+    tls_bundle_is_valid() (
+        [ -s /etc/nginx/ssl/cert.pem ] && [ -s /etc/nginx/ssl/private.key ] || exit 1
         cert_digest=$(openssl x509 -in /etc/nginx/ssl/cert.pem -pubkey -noout 2>/dev/null \
             | openssl pkey -pubin -outform DER 2>/dev/null \
-            | openssl dgst -sha256) || return 1
+            | openssl dgst -sha256 2>/dev/null) || exit 1
         key_digest=$(openssl pkey -in /etc/nginx/ssl/private.key -pubout -outform DER 2>/dev/null \
-            | openssl dgst -sha256) || return 1
+            | openssl dgst -sha256 2>/dev/null) || exit 1
         [ -n "$cert_digest" ] && [ "$cert_digest" = "$key_digest" ]
-    }
+    )
 
     run_ssl_setup() (
-        # Policy workers share this volume, so only one may issue or renew at a time.
+        # Multiple private policy workers share the certificate volume. Serialize
+        # issuance/renewal so they cannot publish competing orders or partial
+        # files. flock is tied to this process and cannot leave a stale lock.
         flock 9
-        tls_bundle_is_valid && exit 0
+        if [ "${1:-}" = --if-invalid ]; then
+            shift
+            if tls_bundle_is_valid; then
+                exit 0
+            fi
+            echo "SSL enabled but the TLS bundle is missing or broken; repairing via proxy-ssl"
+        fi
         /setup-ssl.sh "$@"
     ) 9>/etc/nginx/ssl/.gonka-ssl.lock
 
+    # A valid existing bundle is immediately usable. Avoid waiting for a sibling
+    # policy worker that currently holds the shared lock for renewal. The
+    # in-lock recheck still serializes cold-start issuance and repair.
     if ! tls_bundle_is_valid; then
         ssl_setup_status=0
-        run_ssl_setup repair || ssl_setup_status=$?
+        run_ssl_setup --if-invalid repair || ssl_setup_status=$?
         case "$ssl_setup_status" in
           0|10) ;;
           *) echo "WARNING: SSL setup failed; will attempt to continue" ;;
         esac
     fi
+
+    # Every policy worker loads the same files into memory. The worker that wins
+    # the renewal lock reloads through the recovery loop below; its siblings
+    # observe the new fingerprint and reload themselves without any
+    # cross-container control API.
+    CERT_RELOAD_POLL_SECONDS=${PROXY_CERT_RELOAD_POLL_SECONDS:-30}
+    case "$CERT_RELOAD_POLL_SECONDS" in
+        '' | *[!0-9]* | 0)
+            echo "PROXY_CERT_RELOAD_POLL_SECONDS must be a positive integer" >&2
+            exit 1
+            ;;
+    esac
+    (
+        fingerprint=$(cksum /etc/nginx/ssl/cert.pem /etc/nginx/ssl/private.key 2>/dev/null || true)
+        while sleep "$CERT_RELOAD_POLL_SECONDS"; do
+            next=$(cksum /etc/nginx/ssl/cert.pem /etc/nginx/ssl/private.key 2>/dev/null || true)
+            if [ -n "$next" ] && [ "$next" != "$fingerprint" ]; then
+                echo "TLS certificate changed; reloading nginx policy worker"
+                nginx -s reload || true
+                fingerprint=$next
+            fi
+        done
+    ) &
 fi
 
 # Prepare template vars for unified config

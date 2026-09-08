@@ -259,21 +259,12 @@ jobs:
         uses: actions/checkout@v4
       - name: Render and exercise versiond-router
         run: make -C versiond-router test-render
-
-  test-proxy-ssl-install:
-    runs-on: ubuntu-latest
-    name: Test proxy TLS certificate publication
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Exercise atomic certificate installation
-        run: ./proxy/setup-ssl_test.sh
-
-      - name: Build proxy image
-        run: docker build -t gonka-proxy-ssl-recovery-test ./proxy
-
-      - name: Exercise HTTPS recovery from a damaged certificate
-        run: ./proxy/ssl-recovery_test.sh
+      - name: Exercise isolated versiond-router fleet rollouts
+        run: make -C versiond-router test-fleet
+      - name: Gate router fleet failure scenarios
+        run: |
+          shellcheck -x deploy/join/versiond-router-fleet.sh deploy/join/versiond-router-fleet-regression_test.sh
+          deploy/join/versiond-router-fleet-regression_test.sh --gate
 
   test-public-proxy-router:
     runs-on: ubuntu-latest
@@ -289,6 +280,21 @@ jobs:
         run: make -C proxy-router test-routing
       - name: Render private policy configuration
         run: make -C proxy test-render
+
+  test-proxy-ssl-install:
+    runs-on: ubuntu-latest
+    name: Test proxy TLS certificate publication
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Exercise atomic certificate installation
+        run: ./proxy/setup-ssl_test.sh
+
+      - name: Build proxy image
+        run: docker build -t gonka-proxy-ssl-recovery-test ./proxy
+
+      - name: Exercise HTTPS recovery from a damaged certificate
+        run: ./proxy/ssl-recovery_test.sh
 
   build-and-test-edge-api:
     runs-on: ubuntu-latest
