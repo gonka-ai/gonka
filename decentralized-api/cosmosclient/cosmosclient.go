@@ -186,7 +186,9 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		}
 	}()
 
-	mn, err := tx_manager.StartTxManager(ctx, &cosmoclient, apiAccount, time.Second*60, natsConn, accAddress, int64(0), config.GetHeight)
+	txGasMultiplier := nodeConfig.GetTxGasMultiplier()
+	log.Printf("Tx gas multiplier: %g (override with DAPI_CHAIN_NODE__TX_GAS_MULTIPLIER)", txGasMultiplier)
+	mn, err := tx_manager.StartTxManager(ctx, &cosmoclient, apiAccount, time.Second*60, natsConn, accAddress, int64(0), txGasMultiplier, config.GetHeight)
 	if err != nil {
 		return nil, err
 	}
@@ -244,8 +246,8 @@ type CosmosMessageClient interface {
 	NewInferenceQueryClient() inferencetypes.QueryClient
 	NewCometQueryClient() cmtservice.ServiceClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
-	SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error)
-	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
+	SendTransactionAsyncWithRetry(rawTx sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error)
+	SendTransactionAsyncNoRetry(rawTx sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error)
 	SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error
 	Status(ctx context.Context) (*ctypes.ResultStatus, error)
 	GetContext() context.Context
@@ -389,8 +391,12 @@ func (icc *InferenceCosmosClient) SubmitPocValidationsV2(transaction *inferencet
 }
 
 func (icc *InferenceCosmosClient) SubmitPoCV2StoreCommit(transaction *inferencetypes.MsgPoCV2StoreCommit) error {
+	return icc.SubmitPoCV2StoreCommitWithTimeout(transaction, 0)
+}
+
+func (icc *InferenceCosmosClient) SubmitPoCV2StoreCommitWithTimeout(transaction *inferencetypes.MsgPoCV2StoreCommit, timeoutHeight uint64) error {
 	transaction.Creator = icc.Address
-	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
+	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction, tx_manager.TxSendOptions{TimeoutHeight: timeoutHeight})
 	return err
 }
 
@@ -417,6 +423,37 @@ func (icc *InferenceCosmosClient) ApplyFeeTree(fp *inferencetypes.FeeParams) {
 
 func (icc *InferenceCosmosClient) SetStoreCommitPrev(prev map[string]uint32) {
 	icc.manager.SetStoreCommitPrev(prev)
+}
+
+func (icc *InferenceCosmosClient) SimulatePoCV2StoreCommit(msg *inferencetypes.MsgPoCV2StoreCommit) (uint64, error) {
+	if icc == nil || icc.manager == nil {
+		return 0, fmt.Errorf("cosmos client is not initialized")
+	}
+	if msg != nil {
+		msg.Creator = icc.Address
+	}
+	return icc.manager.SimulateMsgs([]sdk.Msg{msg})
+}
+
+func (icc *InferenceCosmosClient) SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint) {
+	if icc == nil || icc.manager == nil {
+		return
+	}
+	icc.manager.SetStoreCommitIntrinsic(gas, calibratedEntries)
+}
+
+func (icc *InferenceCosmosClient) ClearStoreCommitIntrinsic() {
+	if icc == nil || icc.manager == nil {
+		return
+	}
+	icc.manager.ClearStoreCommitIntrinsic()
+}
+
+func (icc *InferenceCosmosClient) StoreCommitRawLeaf() (rate, base uint64, loaded bool) {
+	if icc == nil || icc.manager == nil {
+		return 0, 0, false
+	}
+	return icc.manager.StoreCommitRawLeaf()
 }
 
 func (icc *InferenceCosmosClient) SetHardwarePrev(nodes []*inferencetypes.HardwareNode) {
@@ -485,12 +522,12 @@ func (icc *InferenceCosmosClient) BridgeTransactionsByReceipt(ctx context.Contex
 	return resp.BridgeTransactions, nil
 }
 
-func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error) {
-	return icc.manager.SendTransactionAsyncWithRetry(msg, deadlineBlock...)
+func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error) {
+	return icc.manager.SendTransactionAsyncWithRetry(msg, opts...)
 }
 
-func (icc *InferenceCosmosClient) SendTransactionAsyncNoRetry(msg sdk.Msg) (*sdk.TxResponse, error) {
-	return icc.manager.SendTransactionAsyncNoRetry(msg)
+func (icc *InferenceCosmosClient) SendTransactionAsyncNoRetry(msg sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error) {
+	return icc.manager.SendTransactionAsyncNoRetry(msg, opts...)
 }
 
 // IsPermanentBroadcastError is true when CheckTx rejected the tx with a

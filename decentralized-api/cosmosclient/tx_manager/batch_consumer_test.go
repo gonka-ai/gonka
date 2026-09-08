@@ -28,7 +28,7 @@ type mockTxManager struct {
 	mu             sync.Mutex
 }
 
-func (m *mockTxManager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlock ...int64) error {
+func (m *mockTxManager) SendBatchAsyncWithRetry(msgs []sdk.Msg, opts ...TxSendOptions) error {
 	m.mu.Lock()
 	m.sendBatchCalls = append(m.sendBatchCalls, msgs)
 	m.mu.Unlock()
@@ -41,10 +41,10 @@ func (m *mockTxManager) getBatchCalls() [][]sdk.Msg {
 	return m.sendBatchCalls
 }
 
-func (m *mockTxManager) SendTransactionAsyncWithRetry(sdk.Msg, ...int64) (*sdk.TxResponse, error) {
+func (m *mockTxManager) SendTransactionAsyncWithRetry(sdk.Msg, ...TxSendOptions) (*sdk.TxResponse, error) {
 	return &sdk.TxResponse{}, nil
 }
-func (m *mockTxManager) SendTransactionAsyncNoRetry(sdk.Msg) (*sdk.TxResponse, error) {
+func (m *mockTxManager) SendTransactionAsyncNoRetry(sdk.Msg, ...TxSendOptions) (*sdk.TxResponse, error) {
 	return &sdk.TxResponse{}, nil
 }
 func (m *mockTxManager) SendTransactionSyncNoRetry(proto.Message) (*ctypes.ResultTx, error) {
@@ -66,6 +66,12 @@ func (m *mockTxManager) GetJetStream() nats.JetStreamContext      { return nil }
 func (m *mockTxManager) RefreshFeeTree(*inferencetypes.FeeParams) {}
 func (m *mockTxManager) SetStoreCommitPrev(map[string]uint32)     {}
 func (m *mockTxManager) SetHardwarePrev([]*inferencetypes.HardwareNode) {
+}
+func (m *mockTxManager) SimulateMsgs([]sdk.Msg) (uint64, error) { return 0, nil }
+func (m *mockTxManager) SetStoreCommitIntrinsic(uint64, uint)   {}
+func (m *mockTxManager) ClearStoreCommitIntrinsic()             {}
+func (m *mockTxManager) StoreCommitRawLeaf() (uint64, uint64, bool) {
+	return 0, 0, false
 }
 
 func startTestNatsServer(t *testing.T) (*server.Server, nats.JetStreamContext) {
