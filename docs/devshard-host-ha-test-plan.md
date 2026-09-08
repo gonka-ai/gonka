@@ -11,6 +11,12 @@ verify that an operator can add, replace and remove members while preserving
 accepted inference and committed session state. New edge-api HA is outside
 this release's scope.
 
+Run updater, public HAProxy and router-fleet cases only when the candidate
+includes PRs [#1609](https://github.com/gonka-ai/gonka/pull/1609),
+[#1610](https://github.com/gonka-ai/gonka/pull/1610) and
+[#1611](https://github.com/gonka-ai/gonka/pull/1611) (open on 2026-09-08).
+The single-router v5 layout can run the member, storage and recovery cases.
+
 Run the core scenarios on two local replicas and on one replica per machine.
 Repeat addition/removal with three or four members and a mixed local/remote
 pool. All HA members use the same participant keys and writable PostgreSQL;
@@ -69,8 +75,14 @@ Feature: Install and upgrade an HA host
     And the source volume remains available for recovery
     When I finish the upgrade and later recreate the PostgreSQL container
     Then the recorded escrow still works with correct committed state and accounting
+    And its v4 snapshot and post-snapshot journal recover after the application upgrade
     When I repeat on a separate copy with existing installation evidence but neither persistent PGDATA nor a legacy source
     Then startup refuses to initialize an empty database
+    When I repeat with the recorded source detached and an interrupted migration copy
+    And I attach that exact source through the recovery overlay and restart migration
+    Then incomplete PGDATA is never served
+    And the recovered cluster has the recorded system_identifier and committed session
+    And the original source remains unchanged
 
   Scenario: Stop a compatible versiond image update at a failed candidate
     Given a healthy HA deployment with enough surviving capacity
@@ -81,6 +93,32 @@ Feature: Install and upgrade an HA host
     When I fix the candidate and rerun the updater
     Then the update completes and the public route passes real inference
     And a second unchanged run does not replace healthy containers
+
+  Scenario: Cut over a v4-only installation using the fleet updater
+    Given two pre-v5 supervisors, the original nginx router and recorded PostgreSQL state
+    And the filtered oracle and required bootstrap routes remain v4-only for the cutover
+    When I run the updater with the complete ordered Compose file list
+    Then legacy members are reachable from the new fleet before public admission
+    And the old router is removed only after public admission succeeds
+    And the recorded session works after the database and public-proxy maintenance window
+    When I apply the extended oracle filter and wait for the approved v5 route
+    Then both retained v4 and new v5 inference succeed
+    When a later compatible update is killed during a replica replacement and rerun
+    Then it converges using the same topology without replacing healthy unchanged members
+
+  Scenario: Warm a compatible same-name artifact before switching the serving child
+    Given a v5 session with a snapshot and a later committed journal tail in shared PostgreSQL
+    And a wire-compatible candidate for the unchanged approved protocol exposes recovery_complete
+    When versiond starts the overlapping candidate with deliberately delayed recovery
+    Then a candidate ready response with recovery_complete=false does not switch the route
+    And the predecessor continues serving the recorded escrow
+    When recovery completes and the candidate takes over
+    Then the snapshot and tail preserve the latest nonce, committed state and accounting
+    And the recorded height floor is preserved and the next stamped heartbeat applies
+    And sealed inference lookup and subsequent inference work
+    And recovery failures are checked separately from recovery_complete
+    When I repeat with recovery held beyond VERSIOND_RECOVERY_TIMEOUT
+    Then the candidate is stopped and the predecessor continues serving
 ```
 
 ## Acceptance scenarios
@@ -88,7 +126,7 @@ Feature: Install and upgrade an HA host
 ```gherkin
 Feature: Versiond and router HA lifecycle
   Background:
-    Given the RC version is admitted through the public router and inner fleet
+    Given the RC version is admitted through the public endpoint and its configured routers
     And every participating HA versiond uses the same writable PostgreSQL
     And a funded escrow has a recorded successful inference, nonce and cost
     And healthy survivors have enough capacity to serve the test load
@@ -194,6 +232,33 @@ Feature: Versiond and router HA lifecycle
     When I try a maintenance rollout with an invalid endpoint file
     Then it fails before replacing accepted membership
     And the previously admitted pool continues serving inference
+
+  Scenario: Admit a catalog addition independently of other versions
+    Given an accepted v4 route and a newly approved protocol absent from the bootstrap list
+    And that new protocol is below its ready reserve
+    When the router reads the updated filtered catalog
+    Then v4 continues serving while the new route remains unpublished
+    And a member ready only for v4 receives no requests for the new protocol
+    When the new protocol reaches its configured ready reserve
+    Then it is admitted and real inference succeeds
+    When the catalog becomes unreachable and the router under test restarts with its saved state
+    Then accepted routes still serve through the existing running versiond children
+    And catalog degradation is distinguishable from route readiness
+
+  Scenario: Withdraw a child that loses its PostgreSQL session fence
+    Given a ready child with writable PostgreSQL and accepted work
+    When I terminate only its dedicated PostgreSQL fence connection
+    Then it becomes unready and cannot silently continue with an unfenced storage session
+    And interrupted work is recorded as a failure rather than successful graceful completion
+    And a survivor continues the escrow with committed state and accounting intact
+
+  Scenario: Recover validation ownership after a member crashes before durable submission
+    Given a validation result marked submitted in shared PostgreSQL
+    And its transaction exists only in that member's volatile mempool
+    And the inference remains eligible for validation through the configured TTL and retry interval
+    When that member crashes before the validation is committed
+    Then a survivor reclaims the stale lease and retries submission after expiry
+    And the validation is eventually committed without duplicate accounting
 ```
 
 ## Execution and evidence
