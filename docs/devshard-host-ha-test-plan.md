@@ -8,22 +8,21 @@ Operator commands for adding, stopping, replacing and removing versiond are in
 
 These cases check the v5 versiond pool and router fleet. The purpose is to
 verify that an operator can add, replace and remove members while preserving
-accepted inference and committed session state. New edge-api HA is outside
-this release's scope.
+accepted inference and committed session state.
 
-Run updater, public HAProxy and router-fleet cases only when the candidate
-includes PRs [#1609](https://github.com/gonka-ai/gonka/pull/1609),
-[#1610](https://github.com/gonka-ai/gonka/pull/1610) and
-[#1611](https://github.com/gonka-ai/gonka/pull/1611) (open on 2026-09-08).
-Those scenarios are marked `@fleet_candidate`; they are not acceptance criteria
-for the merged branch alone. Explicit-file steps also require that candidate.
-The single-router v5 layout can run the member, storage and recovery cases.
+Use the release checkout with `update-devshard.sh` from
+[#1611](https://github.com/gonka-ai/gonka/pull/1611), the independent versiond-router
+fleet from [#1610](https://github.com/gonka-ai/gonka/pull/1610), and its public
+`proxy-router` and private nginx policy workers from
+[#1609](https://github.com/gonka-ai/gonka/pull/1609). Set the tested
+`VERSIOND_IMAGE`, `VERSIOND_ROUTER_IMAGE`, `PROXY_ROUTER_IMAGE` and
+`PROXY_POLICY_IMAGE` in `config.env`.
 
-The candidate updater's `--check` takes the deployment lock and writes transient
+The updater's `--check` takes the deployment lock and writes transient
 storage challenges. Keep `UPDATE_SKIP_POSTGRES_PROBE` and
 `UPDATE_ACCEPT_DATABASE_CHANGE` disabled. An explicit 404 from a legacy storage
 proof endpoint is skipped; preflight success does not verify that member's database.
-The policy-worker case marked `@candidate_requirement` is a release gate: the
+The policy-worker case marked `@continuity_requirement` is a release gate: the
 current updater uses ordinary Compose replacement without the public tier's
 runtime drain sequence, so its success alone does not establish continuity.
 
@@ -65,13 +64,13 @@ Feature: Install and upgrade an HA host
     Then inference through the public endpoint succeeds with correct accounting
 
   Scenario: Detect an incompatible router image and catalog configuration
-    Given the merged single-router join layout on a separate test deployment
-    When I enable VERSIOND_ROUTING_CATALOG_URL with the legacy nginx router image
-    Then the router's Compose healthcheck fails even if /healthz responds
-    When I select the catalog-capable HAProxy image but omit the catalog URL
-    Then the router's Compose healthcheck also fails
+    Given the versiond-router fleet on a separate test deployment
+    When I select the legacy nginx router image for a fleet slot
+    Then the slot's admin readiness check fails even if /healthz responds
+    When I select the catalog-capable HAProxy image with an explicitly empty catalog URL
+    Then a newly approved protocol absent from the bootstrap list is not admitted
     When I supply that image and the filtered catalog URL together
-    Then router liveness passes and I separately verify each required version and real inference
+    Then I verify each required version, public admission and real inference
 
   Scenario: Reject unsafe HA child storage without an updater
     Given GONKA_HA=true and a version that is not pinned to a legacy owner
@@ -80,7 +79,6 @@ Feature: Install and upgrade an HA host
     When I use explicit postgres storage with an unreachable or read-only database
     Then it cannot become ready or fall back to SQLite
 
-  @fleet_candidate
   Scenario: Reject unsafe HA storage before changing a running deployment
     Given a healthy HA deployment serving a recorded escrow
     When I run the updater preflight with hybrid storage or a missing PGHOST
@@ -89,7 +87,6 @@ Feature: Install and upgrade an HA host
     Then it fails the write-capable storage check
     And the existing deployment continues serving the recorded escrow
 
-  @fleet_candidate
   Scenario: Reject a different writable database during an update
     Given healthy HA members sharing one PostgreSQL database
     And every running member exposes a nonempty per-generation storage proof
@@ -122,11 +119,11 @@ Feature: Install and upgrade an HA host
     And the original source remains unchanged
 
   Scenario: Keep v4 sessions separate while adding the v5 protocol
-    Given the merged single-router layout with a recorded v4 escrow and its approved v4 artifact
+    Given a v4 installation with a recorded v4 escrow and its approved v4 artifact
     And that v4 artifact supports --print-storage-mode and reports postgres in the HA environment
     And its verified flat binary cache matches the unchanged approved name, URL and SHA256
-    When I preserve PostgreSQL and the local versiond data and replace the router in its maintenance window
-    And I update supervisors one at a time and admit the separately approved v5 protocol
+    When I preserve PostgreSQL and the local versiond data and run the fleet updater in its maintenance window
+    And I admit the separately approved v5 protocol after the supervisor update
     Then the verified flat install is promoted to the version/archive-SHA256 cache layout
     And the protocol data directory and recorded escrow still work through the v4 route
     And a new v5 escrow works through the v5 route with correct committed state and accounting
@@ -134,7 +131,6 @@ Feature: Install and upgrade an HA host
     When I offer a binary reporting protocol v5 for the unchanged v4 slot
     Then versiond rejects the protocol mismatch before replacing its serving v4 child
 
-  @fleet_candidate
   Scenario: Stop a compatible versiond image update at a failed candidate
     Given a healthy HA deployment with enough surviving capacity
     When the updater replaces a replica with an image that never becomes healthy
@@ -145,7 +141,6 @@ Feature: Install and upgrade an HA host
     Then the update completes and the public route passes real inference
     And a second unchanged run does not replace healthy containers
 
-  @fleet_candidate
   Scenario: Cut over a v4-only installation using the fleet updater
     Given multiple pre-v5 supervisors, the original nginx router and recorded PostgreSQL state
     And the retained approved v4 artifact supports the new supervisor's HA storage contract
@@ -263,7 +258,6 @@ Feature: Versiond and router HA lifecycle
     When I restore access and the affected child restarts if required
     Then the member rejoins only after fresh storage and per-version health checks
 
-  @fleet_candidate
   Scenario: Roll the inner router fleet under inference load
     This checks that replacing routers preserves accepted work and serving reserve.
     Given finite SSE and POST requests are running through the inner fleet
@@ -274,7 +268,6 @@ Feature: Versiond and router HA lifecycle
     And inference results and charges remain correct
     And a failed candidate does not remove the remaining serving reserve
 
-  @fleet_candidate
   Scenario: Lose one inner router
     This checks router redundancy rather than versiond redundancy.
     Given traffic is passing through multiple admitted inner routers
@@ -285,7 +278,7 @@ Feature: Versiond and router HA lifecycle
     When I restore the slot with the fleet tooling
     Then it is admitted only after fresh health checks
 
-  @fleet_candidate @candidate_requirement
+  @continuity_requirement
   Scenario: Replace a public policy worker without interrupting accepted inference
     Given the public HAProxy tier with two healthy policy workers and admitted inner routers
     And a finite SSE request is being served through the chosen policy worker
@@ -295,7 +288,6 @@ Feature: Versiond and router HA lifecycle
     And a replacement receives traffic only after fresh health checks
     And final results and accounting remain correct
 
-  @fleet_candidate
   Scenario: Change the explicit multi-host endpoint list
     This checks that every router uses one consistent membership generation.
     Given the fleet uses a recorded endpoint file
