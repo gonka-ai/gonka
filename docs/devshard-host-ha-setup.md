@@ -4,7 +4,7 @@
 **Status:** draft for host operators - edit before wider distribution.  
 **Goal:** run a **high-available (HA)** host stack so a single `versiond` / `devshardd` failure does not take the host offline.
 
-**Release:** `devshard-0.2.15-v5`. Core checked at `39240311fb` with gateway and storage fixes from [PR #1730](https://github.com/gonka-ai/gonka/pull/1730) through `bf4de2d21`; versiond fleet and updater checked in the integration from [PR #1611](https://github.com/gonka-ai/gonka/pull/1611) at `9a4ec48886` on 2026-09-08.
+**Release:** `devshard-0.2.15-v5`. Core checked at `39240311fb` with gateway and storage fixes from [PR #1730](https://github.com/gonka-ai/gonka/pull/1730) through `bf4de2d21`; versiond fleet and updater checked in the integration from [PR #1611](https://github.com/gonka-ai/gonka/pull/1611) through `c0ceb9fa1` on 2026-09-09.
 
 ---
 
@@ -34,14 +34,14 @@ Public HAProxy → nginx policy workers → HAProxy (:18081)
 
 ## Prerequisites
 
-1. Join files from **`devshard-0.2.15-v5`** including the versiond fleet/updater integration: `update-devshard.sh`, `versiond-router-fleet.sh`, `deployment-lock.sh` and `versiond-router-slot/`. Use v5-capable `versiond`, HAProxy `versiond-router` and `proxy-router`, nginx `proxy` policy images, and governance-approved `devshardd` artifacts for the protocols you serve. A tested set from one release candidate is recommended; compatibility depends on the actual component capabilities and protocol artifacts. Select the images explicitly in §2.1. The fleet/updater files are checked from the integration revision above.
+1. Join files from **`devshard-0.2.15-v5`** including the versiond fleet/updater integration: `update-devshard.sh`, `versiond-router-fleet.sh`, `deployment-lock.sh`, `updater-rollback.sh`, `updater-container-state.py` and `versiond-router-slot/`. Use v5-capable `versiond`, HAProxy `versiond-router` and `proxy-router`, nginx `proxy` policy images, and governance-approved `devshardd` artifacts for the protocols you serve. A tested set from one release candidate is recommended; compatibility depends on the actual component capabilities and protocol artifacts. Select the images explicitly in §2.1. The fleet/updater files are checked from the integration revision above.
 2. Working `node` + `api` (dapi) + `proxy` on the host (standard join deployment).
 3. Same participant identity on **every** HA `versiond` replica:
   - same `KEY_NAME` / keyring
   - same `ACCOUNT_PUBKEY`
 4. Only put **Postgres-capable versions** into the HA pool. With `GONKA_HA=true`, v5 `versiond` requires each HA child to support `--print-storage-mode` and report `postgres`; the child must also match its approved protocol name. Keep older versions (`v1` / `v2` / `v3`) pinned to a **legacy** single host if you still serve them.
 5. Confirm the actual `api:9100/versions` response contains the required protocol, downloadable binary URL and SHA256. It follows chain-approved versions; the branch name does not publish a v5 artifact or activate it on-chain. The examples below use protocol `v5`.
-6. Docker Compose **2.24.4 or newer**, Bash, `jq`, `flock`, `sha256sum` and `timeout` on the machine running the fleet/updater scripts.
+6. Docker Compose **2.24.4 or newer**, Bash, Python 3, `jq`, `flock`, `sha256sum` and `timeout` on the machine running the fleet/updater scripts.
 
 ---
 
@@ -620,7 +620,7 @@ bash ./devshard-postgres-migration-preflight.sh \
 
 After verifying migration, recreate PostgreSQL once without the recovery overlay, while writers remain stopped. Keep this same PostgreSQL image and Compose configuration for the updater so it does not recreate the database again after writers restart. Keep the source volume and backup. Never use `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT` to recover a deployment whose database is missing.
 
-**3. Run the updater with the complete deployment configuration.** After a local database copy, restart the retained old member containers with `docker start` and verify their v4 readiness before running the updater (use `/v4/healthz` when an old supervisor returns 404 from `/readyz`). Keep their existing oracle filtered to v4 and public traffic closed during the cutover. Fleet admission needs these serving children before it replaces supervisors. For external/already-migrated PostgreSQL, keep ready survivors running. Pre-v5 supervisors lack host evacuation: finish their accepted work in the maintenance window before replacement.
+**3. Run the updater with the complete deployment configuration.** After a local database copy, restart the retained old member containers with `docker start` and verify their v4 readiness before running the updater (use `/v4/healthz` when an old supervisor returns 404 from `/readyz`). Keep their existing oracle filtered to v4 and public traffic closed during the cutover. Fleet admission needs these serving children before it replaces supervisors. For already-migrated PostgreSQL whose members provide v5 storage proofs, keep ready survivors running. Pre-v5 supervisors lack host evacuation: finish their accepted work in the maintenance window before replacement.
 
 ```bash
 source ./config.env
@@ -642,13 +642,13 @@ docker start versiond versiond2
 ./versiond-router-fleet.sh wait-version v4
 ```
 
-The updater reads `config.env` and the complete Compose model, validates shared writable PostgreSQL, updates local PostgreSQL if used, prepares the router fleet and attaches existing local replicas to its back network. It starts the public proxy, brings up policy workers one at a time, verifies router admission, removes the old singleton router, then replaces local `versiond` replicas one at a time with the stock `versiond` service last. It does not start custom services such as `oracle-v4`, so start the filter explicitly as above. Remote replicas are updated on their own machines using §2.5.
+The updater reads `config.env` and the complete Compose model, validates shared writable PostgreSQL and its connection budget, updates local PostgreSQL if used, prepares the router fleet and attaches existing local replicas to its back network. It starts the public proxy, brings up policy workers one at a time, verifies router admission, removes the old singleton router, then replaces local `versiond` replicas one at a time with `VERSIOND_LEGACY_HOST` last (default `versiond`). It does not start custom services such as `oracle-v4`, so start the filter explicitly as above. Remote replicas are updated on their own machines using §2.5.
 
-`--check` does not replace services, but takes the deployment lock and writes transient PostgreSQL challenges; `--dry-run` also runs preflight. Keep `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled. A legacy storage-proof endpoint returning 404 is skipped; confirm the actual database and recorded session for those members separately. The new routers accept a pre-v5 supervisor's `/readyz` **404** only together with successful route health; a v5 **503** is never a legacy fallback.
+`--check` does not replace services, but takes the deployment lock and writes PostgreSQL challenges; `--dry-run` also runs preflight. Keep `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled. Legacy members returning 404 are accepted only for the verified bundled PostgreSQL migration; confirm their database and recorded session separately. With an external database, upgrade legacy members during maintenance with all writers stopped and the target database independently verified. Start the v5 supervisors using the complete Compose model, check them with `--check-storage` (§2.3), then run the host updater. A legacy 404 cannot establish continuity with an external target. The new routers accept a pre-v5 supervisor's `/readyz` **404** only together with successful route health; a v5 **503** is never a legacy fallback.
 
 Schedule the first public nginx-to-HAProxy replacement and local PostgreSQL copy as maintenance. Once the retained v4 escrow works through the fleet, extend the filter to `VERSIOND_VERSIONS="v4 v5"` as in §2.5, wait for v5 and verify a new v5 escrow. Check per-version readiness on every member and admission through both routing tiers; a healthy public proxy alone is insufficient.
 
-On a failed compatible image replacement, the updater attempts to restore that service's previous image and stops before replacing the remaining services. Inspect logs and the resulting containers, fix the cause and rerun with the same complete file list; already matching healthy services are retained. A first proxy cutover also changes service configuration, so image-only restoration may fail: preserve the previous join files as well. The updater does not guarantee uninterrupted policy-worker replacement; validate accepted SSE with the test plan before relying on that behavior.
+If a versiond replacement or public admission fails, the updater restores the saved container configuration and stops. It restores proxy and policy workers together, including the old nginx on the first cutover. An interrupted replacement is recovered on the next normal run; `--check` reports pending recovery. Keep the same persistent `UPDATE_STATE_DIR` if you override its default under `~/.local/state/gonka/updater/`. Inspect logs, fix the cause and rerun with the same complete file list. Unchanged services and previous-release records are retained. Saved configurations preserve mount sources; keep previous join files because rollback does not undo host-file edits or database writes. The updater does not guarantee uninterrupted policy-worker replacement; validate accepted SSE with the test plan before relying on that behavior.
 
 **State migration and rollback.** Existing HA PostgreSQL data stays in the same database. v5 applies forward schema migrations under a database advisory lock. For first-time conversion of a single-owner deployment, explicit `postgres` mode also imports supported epoch-layout SQLite sessions and file payloads before serving; stop the old writer and migrate each source directory with one owner. Successful sources are quarantined as `*.migrated.<timestamp>`, and conflicting data aborts startup. Older monolithic layouts need separate verification.
 
