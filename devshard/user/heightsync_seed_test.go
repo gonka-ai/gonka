@@ -110,7 +110,7 @@ func setupSeedSession(t *testing.T, seedRPC []bool, opts ...SessionOption) *seed
 		srv, err := transport.NewServer(h, store, verifier, user.Address(), serverOpts...)
 		require.NoError(t, err)
 		e := echo.New()
-		e.GET("/v2/healthz", func(c echo.Context) error {
+		e.GET("/devshard/v2/healthz", func(c echo.Context) error {
 			return c.NoContent(http.StatusOK)
 		})
 		g := e.Group(seedTestRoutePrefix)
@@ -276,7 +276,7 @@ func TestSeed_DeclinedSlotsAreReprobed(t *testing.T) {
 	var hits atomic.Int32
 	inner := env.slots[0].server.Config.Handler
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v2/healthz" {
+		if r.URL.Path == "/devshard/v2/healthz" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -556,7 +556,7 @@ func TestSeed_Gap1DeclinedMakesMissedThenReprobeSucceeds(t *testing.T) {
 		i := i
 		inner := env.slots[i].server.Config.Handler
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/v2/healthz" {
+			if r.URL.Path == "/devshard/v2/healthz" {
 				w.WriteHeader(http.StatusOK)
 				return
 			}
@@ -606,7 +606,7 @@ func TestSeed_Gap2ClockStartsAfterCatalog(t *testing.T) {
 	var seedHits atomic.Int32
 	inner := env.slots[0].server.Config.Handler
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v2/healthz" {
+		if r.URL.Path == "/devshard/v2/healthz" {
 			if !catalogReady.Load() {
 				http.Error(w, "undeclared", http.StatusServiceUnavailable)
 				return
@@ -652,7 +652,7 @@ func TestSeed_Gap4AdmissionErrorIsRetryLater(t *testing.T) {
 	admission := &seedTestAdmission{err: fmt.Errorf("participant request budget exhausted")}
 	inner := env.slots[0].server.Config.Handler
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v2/healthz" {
+		if r.URL.Path == "/devshard/v2/healthz" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}

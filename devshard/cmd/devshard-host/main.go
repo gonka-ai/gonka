@@ -88,9 +88,8 @@ func main() {
 	}
 }
 
-// registerLiveness mounts GET /{version}/healthz for the gateway catalog
-// wait (same public path as versiond / the versiond-router). GET /health
-// is the container start probe and is not catalog admission.
+// registerLiveness mounts the public gateway catalog probe and its internal
+// router form. GET /health is the container start probe, not catalog admission.
 func registerLiveness(e *echo.Echo, version string) {
 	ok := func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
@@ -98,6 +97,7 @@ func registerLiveness(e *echo.Echo, version string) {
 	e.GET("/health", ok)
 	version = strings.Trim(strings.TrimSpace(version), "/")
 	if version != "" {
+		e.GET(devshardpkg.VersionedRoutePrefix(version)+"/healthz", ok)
 		e.GET("/"+version+"/healthz", ok)
 	}
 }

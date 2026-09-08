@@ -301,10 +301,11 @@ type oneShotHooks struct {
 	heightSyncMutate func(*heightsync.HeightSyncSection, uint64)
 }
 
-// CatalogHealthzURL is GET /{version}/healthz at this client's host base
-// (the versiond-router catalog probe). Empty when the client has no
-// versioned prefix or base URL. The GET is unsigned and is not an
-// inference request.
+// CatalogHealthzURL is GET /devshard/{version}/healthz at this client's
+// public host base. The public proxy strips /devshard/ before forwarding
+// to the versiond-router catalog probe; direct routers accept either form.
+// Empty when the client has no valid versioned prefix or base URL. The GET
+// is unsigned and is not an inference request.
 func (c *HTTPClient) CatalogHealthzURL() string {
 	if c == nil {
 		return ""
@@ -317,7 +318,7 @@ func (c *HTTPClient) CatalogHealthzURL() string {
 	if base == "" {
 		return ""
 	}
-	return base + devshardpkg.RouterCatalogHealthzPath(version)
+	return base + devshardpkg.VersionedRoutePrefix(version) + "/healthz"
 }
 
 // NewHTTPClient creates an HTTP client for the devshard transport layer.
