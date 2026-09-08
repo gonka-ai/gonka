@@ -3,7 +3,6 @@ package completionapi
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -11,11 +10,12 @@ import (
 	"common/logging"
 )
 
-// ForcedTopLogprobs is the top_logprobs the validator forces; must equal the devshard gateway's TopLogprobsForcedValue so executor and validator widths are comparable (H1 #3853145).
+// ForcedTopLogprobs is the width devshard pins on every executed request, so executor and validator logprobs stay comparable (H1 #3853145).
 const ForcedTopLogprobs = 5
 
 type ModifiedRequest struct {
-	NewBody []byte
+	NewBody         []byte
+	AsksForLogprobs bool
 }
 
 const MinTokensFloor = 64
@@ -37,12 +37,9 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 		return nil, err
 	}
 
-	originalLogprobsValue := getOriginalLogprobs(requestMap)
-	if originalLogprobsValue == nil || *originalLogprobsValue == false {
-		requestMap["logprobs"] = true
-	}
-
-	// Pin top_logprobs to the protocol constant on both the original and the validation request; a larger client-supplied value must not pass through.
+	asksForLogprobs := logprobsAsked(requestMap)
+	// Pin both fields: anything the engine reads as logprobs-off leaves the inference unvalidatable.
+	requestMap["logprobs"] = true
 	requestMap["top_logprobs"] = ForcedTopLogprobs
 
 	EnforceTokenBudgetFloor(requestMap)
@@ -85,7 +82,8 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	}
 
 	return &ModifiedRequest{
-		NewBody: modifiedRequestBytes,
+		NewBody:         modifiedRequestBytes,
+		AsksForLogprobs: asksForLogprobs,
 	}, nil
 }
 
@@ -222,22 +220,14 @@ func MinTokensOf(requestMap map[string]interface{}) int {
 	return getMinTokens(requestMap)
 }
 
-func getOriginalLogprobs(requestMap map[string]interface{}) *bool {
-	logprobsValue, ok := requestMap["logprobs"]
-	if !ok {
-		return nil
-	}
+// LogprobsAsked reads the pair as one intent: logprobs alone names no width, and a width of zero switches them off.
+func LogprobsAsked(logprobs bool, topLogprobs float64) bool {
+	return logprobs && topLogprobs > 0
+}
 
-	if logprobsValue == nil {
-		return nil
-	}
-
-	if logprobsValueBool, ok := logprobsValue.(bool); ok {
-		return &logprobsValueBool
-	}
-
-	// Interpret any non-boolean value as true
-	log.Printf("Original request logprobs = %v", logprobsValue)
-	trueValue := true
-	return &trueValue
+// Only an explicit boolean asks; the forcing above then overwrites whatever the caller wrote.
+func logprobsAsked(requestMap map[string]interface{}) bool {
+	asked, isBool := requestMap["logprobs"].(bool)
+	width, isNumber := requestMap["top_logprobs"].(float64)
+	return isBool && isNumber && LogprobsAsked(asked, width)
 }

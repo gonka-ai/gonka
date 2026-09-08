@@ -44,25 +44,33 @@ message DevshardTx {
 }
 
 // MsgHeartbeat stamps a user-signed height into Diff and publishes roster sync status.
+//
+// A turn is identified by its span-start nonce, not by a wire field: the diff
+// chain is gapless, so the span a heartbeat belongs to is a function of the log
+// (see TurnTracker.turnStartFor). turn_seq claimed field 1 and is reserved so a
+// sequencer-chosen turn id cannot come back.
 message MsgHeartbeat {
-  uint64 turn_seq                      = 1;
+  reserved 1;
   uint64 observed_height               = 2;
   bytes  observed_block_hash           = 3;
   uint64 slots_num                     = 4;
   string reason                        = 5; // height_cadence|quiet_session|forced|cpoc_band
-  repeated SyncVectorEntry sync_vector = 6; // status of turn_seq - 1
+  repeated SyncVectorEntry sync_vector = 6; // status of the preceding turn
 }
 
 // MsgHeightAck is the host-signed answer to a heartbeat (mempool → Diff).
+//
+// ref_nonce names the heartbeat; the turn follows from it. turn_seq claimed
+// field 1 and was fully derivable from ref_nonce, so it is reserved.
 message MsgHeightAck {
-  uint64    turn_seq            = 1;
+  reserved 1;
   uint64    ref_nonce           = 2;
   uint32    slot_id             = 3;
   uint64    observed_height     = 4;
   bytes     observed_block_hash = 5;
   SyncState sync_state          = 6;
   bytes     peer_seen           = 7; // bitmap, bit j = "slot j fresh within F"
-  bytes     host_sig            = 8; // over fields 1–7, domain heightsync.ack.v1
+  bytes     host_sig            = 8; // over fields 2–7, domain heightsync.ack.v1
 }
 
 message SyncVectorEntry {

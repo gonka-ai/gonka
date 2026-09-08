@@ -270,8 +270,7 @@ func NewStateMachine(
 		o(sm)
 	}
 	sm.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, sm.heartbeatCfg)
-	sm.heightSyncFloor = heightsync.NewFloorIndexWith(
-		heightsync.FloorConfigFor(len(groupCopy), sm.heartbeatCfg))
+	sm.heightSyncFloor = heightsync.NewFloorIndex()
 	sm.floorReady = true
 
 	logging.Info("NewStateMachine", "subsystem", "state",
@@ -581,7 +580,8 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 
 	// Deterministically seal inferences whose grace gates have cleared, before
 	// the root is computed, so the user's signed post_state_root commits to the
-	// same seal the host will fold. Reads only state (nonce + ConfirmedAt clock).
+	// same seal the host will fold. Reads only state (nonce + ConfirmedAt clock,
+	// with Finished requiring InferenceSealGraceSeconds + ExecutionTimeout).
 	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(sm.autoSealIntervalLocked(), nonce) {
 		if _, _, err := sm.autoSealLocked("user", nonce); err != nil {
 			sm.restoreMutable(snap)
@@ -744,7 +744,9 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	// 6b. Deterministically seal inferences whose grace gates have cleared,
 	// folding them into SealedAcc before the root is computed so the seal is
 	// part of post_state_root. The decision reads only state (nonce + the
-	// ConfirmedAt-derived state clock), so user, host and replay all agree.
+	// ConfirmedAt-derived state clock, with Finished requiring
+	// InferenceSealGraceSeconds + ExecutionTimeout), so user, host and replay
+	// all agree.
 	var sealClockWin StateClockWindow
 	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(sm.autoSealIntervalLocked(), nonce) {
 		var err error
@@ -939,6 +941,19 @@ func (sm *StateMachine) Inference(id uint64) (*types.InferenceRecord, bool) {
 	return copyInferenceRecord(rec), true
 }
 
+// InferenceExecutorSlot returns the executor slot of a live inference record.
+// Unlike Inference it does not deep-copy the record, so it is cheap enough for
+// per-response admission checks.
+func (sm *StateMachine) InferenceExecutorSlot(id uint64) (uint32, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	rec, ok := sm.state.Inferences[id]
+	if !ok || rec == nil {
+		return 0, false
+	}
+	return rec.ExecutorSlot, true
+}
+
 // InferenceStatusCounts returns the total number of inferences and a per-status
 // breakdown, computed under the read lock without deep-copying any records.
 func (sm *StateMachine) InferenceStatusCounts() (int, map[types.InferenceStatus]int) {
@@ -973,7 +988,7 @@ type mutableSnapshot struct {
 	HeightSyncTurnSlots           uint64
 	HeightSyncTurnReason          string
 	HeightSyncLastCompletedHeight uint64
-	HeightSyncLatestTurnSeq       uint64
+	HeightSyncLatestTurnStart     uint64
 	turnTracker                   *heightsync.TurnTracker
 	heightSyncFloor               *heightsync.FloorIndex
 }
@@ -1013,7 +1028,7 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 		HeightSyncTurnSlots:           sm.state.HeightSyncTurnSlots,
 		HeightSyncTurnReason:          sm.state.HeightSyncTurnReason,
 		HeightSyncLastCompletedHeight: sm.state.HeightSyncLastCompletedHeight,
-		HeightSyncLatestTurnSeq:       sm.state.HeightSyncLatestTurnSeq,
+		HeightSyncLatestTurnStart:     sm.state.HeightSyncLatestTurnStart,
 		turnTracker:                   sm.turnTracker.Clone(),
 		heightSyncFloor:               sm.heightSyncFloor.Clone(),
 	}
@@ -1039,7 +1054,7 @@ func (sm *StateMachine) restoreMutable(snap mutableSnapshot) {
 	sm.state.HeightSyncTurnSlots = snap.HeightSyncTurnSlots
 	sm.state.HeightSyncTurnReason = snap.HeightSyncTurnReason
 	sm.state.HeightSyncLastCompletedHeight = snap.HeightSyncLastCompletedHeight
-	sm.state.HeightSyncLatestTurnSeq = snap.HeightSyncLatestTurnSeq
+	sm.state.HeightSyncLatestTurnStart = snap.HeightSyncLatestTurnStart
 	sm.turnTracker = snap.turnTracker
 	sm.heightSyncFloor = snap.heightSyncFloor
 }
@@ -1711,6 +1726,40 @@ func (sm *StateMachine) VerifyFinishProposerSig(msg *types.MsgFinishInference) e
 		return nil
 	}
 	return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
+}
+
+// RejectFinishProposerSigLocal reports a proposer-signature failure that can be
+// decided from local state alone: the executor slot's cold key plus any warm
+// binding already cached in state. It never consults the warm-key resolver, so
+// it makes no network call and never takes the write lock.
+//
+// A nil return means "accepted, or not yet decidable". A mismatch is decidable
+// when the slot already has a warm binding, or when no resolver is configured
+// at all, because in neither case could the bridge change the answer. Otherwise
+// the signature may still belong to an unresolved warm key, and that is left to
+// apply-time verification via VerifyFinishProposerSig. Callers must therefore
+// treat nil as "may enqueue", not as "authenticated".
+func (sm *StateMachine) RejectFinishProposerSigLocal(msg *types.MsgFinishInference) error {
+	recovered, err := sm.recoveredProposerAddress(msg)
+	if err != nil {
+		return err
+	}
+
+	sm.mu.RLock()
+	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
+	cached, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
+	canResolve := sm.warmResolver != nil
+	sm.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
+	}
+	if recovered == expected || (hasCached && cached == recovered) {
+		return nil
+	}
+	if hasCached || !canResolve {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
+	}
+	return nil
 }
 
 func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) (string, error) {

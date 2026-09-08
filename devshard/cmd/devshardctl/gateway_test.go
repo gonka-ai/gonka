@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"devshard/user"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -3307,4 +3311,30 @@ func metricLabelsMatch(metric *dto.Metric, want map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// One stalled winner is one event. The strike sits outside the sample's once-guard so the settle path
+// cannot skip it, which leaves the call reachable twice per request -- once from the race and once from
+// the settle -- and each application slides the quarantine window forward.
+func TestStalledWinnerStrikeAppliesOncePerAttempt(t *testing.T) {
+	perf := NewPerfTracker(nil)
+	for range 2 {
+		perf.Record(RequestSample{ParticipantKey: "host:0", Responsive: false, SendTime: time.Now()})
+	}
+	require.True(t, perf.ParticipantFailureThresholdExceeded("host:0"), "precondition: the participant is past the failure threshold")
+
+	redundancy := &Redundancy{perf: perf, participantLimiter: NewParticipantRequestLimiter(10, 10)}
+	inf := &inflight{hostID: "host-A", escrowID: "escrow-x", nonce: 1}
+	inf.contentChunks.Store(1)
+
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	redundancy.recordPostContentWinnerFailureOnce(inf, user.InferenceParams{Model: "m"})
+	redundancy.recordPostContentWinnerFailureOnce(inf, user.InferenceParams{Model: "m"})
+
+	if applied := strings.Count(logs.String(), "participant_limit_stalled_winner_quarantine"); applied != 1 {
+		t.Fatalf("stalled-winner quarantine applied %d times for one attempt, want 1", applied)
+	}
 }

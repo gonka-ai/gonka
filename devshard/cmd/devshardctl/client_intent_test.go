@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,29 +12,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The pooled layer normalizes the body before forwarding it, and normalization force-enables the very
-// fields the strip is meant to remove. Once that happens the body no longer records what the client
-// asked for, so the pooled layer is the last place that can tell the two apart.
-func TestPooledForwardingCarriesTheClientsIntentNotTheForcedBody(t *testing.T) {
+// Normalization rewrites the body the proxy sees, so the pooled layer records the client's own ask.
+func TestPooledForwardingRecordsTheClientsIntentForTheProxy(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name       string
-		clientBody string
-		want       clientResponseIntent
+		name                  string
+		clientBody            string
+		want                  clientResponseIntent
+		wantForwardedLogprobs any
 	}{
 		{
 			name:       "the client asked for nothing",
 			clientBody: `{"model":"Qwen/Test","messages":[{"role":"user","content":"hello"}]}`,
 		},
 		{
-			name:       "the client asked for logprobs alone",
-			clientBody: `{"model":"Qwen/Test","logprobs":true,"messages":[{"role":"user","content":"hello"}]}`,
-			want:       clientResponseIntent{keepLogprobs: true},
+			name:                  "the client asked for logprobs alone",
+			clientBody:            `{"model":"Qwen/Test","logprobs":true,"messages":[{"role":"user","content":"hello"}]}`,
+			wantForwardedLogprobs: true,
 		},
 		{
-			name:       "the client asked for alternatives too",
-			clientBody: `{"model":"Qwen/Test","logprobs":true,"top_logprobs":2,"messages":[{"role":"user","content":"hello"}]}`,
-			want:       clientResponseIntent{keepLogprobs: true, keepTopLogprobs: true},
+			name:                  "the client asked for alternatives too",
+			clientBody:            `{"model":"Qwen/Test","logprobs":true,"top_logprobs":2,"messages":[{"role":"user","content":"hello"}]}`,
+			want:                  clientResponseIntent{keepLogprobs: true, keepTopLogprobs: true},
+			wantForwardedLogprobs: true,
 		},
 	}
 
@@ -49,8 +50,7 @@ func TestPooledForwardingCarriesTheClientsIntentNotTheForcedBody(t *testing.T) {
 				model: "Qwen/Test",
 				handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					forwardedIntent, intentRecorded = clientResponseIntentFromContext(r.Context())
-					body := make([]byte, r.ContentLength)
-					_, _ = r.Body.Read(body)
+					body, _ := io.ReadAll(r.Body)
 					forwardedBody = string(body)
 					w.Header().Set("Content-Type", "application/json")
 					_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
@@ -64,22 +64,24 @@ func TestPooledForwardingCarriesTheClientsIntentNotTheForcedBody(t *testing.T) {
 				http.MethodPost, "/v1/chat/completions", strings.NewReader(testCase.clientBody)))
 
 			require.Equal(t, http.StatusOK, recorder.Code)
-			require.Contains(t, forwardedBody, `"logprobs":true`,
-				"the gateway forces logprobs upstream, so the forwarded body cannot report client intent")
+			var forwarded map[string]any
+			require.NoError(t, json.Unmarshal([]byte(forwardedBody), &forwarded))
+			require.Equal(t, testCase.wantForwardedLogprobs, forwarded["logprobs"],
+				"the forwarded body carries the ask as written")
 			require.True(t, intentRecorded, "the proxy has no other source for the client's intent")
 			require.Equal(t, testCase.want, forwardedIntent)
 		})
 	}
 }
 
-// The proxy sees a normalized body whether it was reached through the pooled layer or directly, so a
-// recorded intent has to outrank it. Reading the body instead hands back the gateway's own forcing.
+// The proxy sees a normalized body either way, so a recorded intent has to outrank it.
 func TestARecordedIntentOutranksTheNormalizedBody(t *testing.T) {
 	t.Parallel()
 	forwarded, _, err := normalizeChatRequestForAuthAndLimits(
-		[]byte(`{"messages":[{"role":"user","content":"hello"}]}`), false, defaultOutputTokenLimits(), "llama")
+		[]byte(`{"messages":[{"role":"user","content":"hello"}],"logprobs":true,"top_logprobs":5}`), false, defaultOutputTokenLimits(), "llama")
 	require.NoError(t, err)
-	require.Contains(t, string(forwarded), `"logprobs":true`, "the fixture must carry the forced fields")
+	require.Contains(t, string(forwarded), `"logprobs":true`, "the fixture must carry the caller's ask")
+	require.Contains(t, string(forwarded), `"top_logprobs":5`, "and the width that makes it an ask")
 
 	var normalized chatRequest
 	require.NoError(t, json.Unmarshal(forwarded, &normalized))
@@ -103,7 +105,6 @@ func TestTheCacheKeySeparatesClientsWhoAskedForDifferentFields(t *testing.T) {
 	keys := map[string]string{}
 	for _, intent := range []clientResponseIntent{
 		{},
-		{keepLogprobs: true},
 		{keepLogprobs: true, keepTopLogprobs: true},
 		{keepUsage: true},
 	} {

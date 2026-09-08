@@ -1660,6 +1660,66 @@ esac
 	}
 }
 
+func TestReconcile_RunningVersionWaitsForDrainingPredecessorBeforeNextSHA(t *testing.T) {
+	dir := t.TempDir()
+	zipData, archiveHash := zipBinary(t, "testapp", []byte("replacement binary"))
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write(zipData)
+	}))
+	defer srv.Close()
+
+	m := NewManager(config.Config{
+		BinDir:     filepath.Join(dir, "bin"),
+		DataDir:    filepath.Join(dir, "data"),
+		BinaryName: "testapp",
+		BasePort:   5000,
+	})
+	current := &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("current archive")),
+		binPath:       filepath.Join(dir, "missing-current-binary"),
+		port:          9001,
+		status:        statusRunning,
+		restart:       true,
+	}
+	predecessor := &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("predecessor archive")),
+		port:          9000,
+		status:        statusDraining,
+	}
+	m.processes["v1"] = current
+	m.draining["v1"] = []*child{predecessor}
+
+	err := m.Reconcile(context.Background(), []oracle.Version{{
+		Name:   "v1",
+		Binary: srv.URL,
+		SHA256: archiveHash,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("download requests while predecessor drains = %d, want 0", got)
+	}
+	m.mu.Lock()
+	gotCurrent := m.processes["v1"]
+	draining := len(m.draining["v1"])
+	_, downloading := m.downloading["v1"]
+	m.mu.Unlock()
+	if gotCurrent != current {
+		t.Fatal("running generation changed while its predecessor was draining")
+	}
+	if draining != 1 {
+		t.Fatalf("draining generations = %d, want 1", draining)
+	}
+	if downloading {
+		t.Fatal("replacement was scheduled while its predecessor was draining")
+	}
+}
+
 func TestDownloadAndStart_DoesNotOverlapDrainingChild(t *testing.T) {
 	dir := t.TempDir()
 	zipData, archiveHash := zipBinary(t, "testapp", []byte("test binary"))
@@ -2214,6 +2274,7 @@ func TestWaitForChildServingReadyFallsBackToHealthzWhenDefaultReadyMissing(
 		&child{port: port},
 		"/ready",
 		time.Second,
+		nil,
 	) {
 		t.Fatal("expected /ready 404 to fall back to /healthz")
 	}
@@ -2232,6 +2293,7 @@ func TestWaitForChildServingReadyDoesNotFallbackForCustomReadyPath(
 		&child{port: port},
 		"/custom-ready",
 		200*time.Millisecond,
+		nil,
 	) {
 		t.Fatal("custom ready path should not use legacy fallback")
 	}
@@ -2261,7 +2323,7 @@ func TestWaitForChildServingReadyRequiresPublicHealth(t *testing.T) {
 
 	c := &child{port: publicPort}
 	setTestAdminPort(c, adminPort)
-	if waitForChildServingReady(context.Background(), c, "/ready", 200*time.Millisecond) {
+	if waitForChildServingReady(context.Background(), c, "/ready", 200*time.Millisecond, nil) {
 		t.Fatal("admin readiness must not hide an unavailable public listener")
 	}
 	if publicHits.Load() == 0 {
@@ -2269,7 +2331,7 @@ func TestWaitForChildServingReadyRequiresPublicHealth(t *testing.T) {
 	}
 
 	publicReady.Store(true)
-	if !waitForChildServingReady(context.Background(), c, "/ready", time.Second) {
+	if !waitForChildServingReady(context.Background(), c, "/ready", time.Second, nil) {
 		t.Fatal("child should become ready when admin and public endpoints are healthy")
 	}
 }
@@ -2297,11 +2359,25 @@ func TestWaitForChildServingReadyRechecksAdminAndPublicTogether(t *testing.T) {
 
 	c := &child{port: publicPort}
 	setTestAdminPort(c, adminPort)
-	if waitForChildServingReady(context.Background(), c, "/ready", 250*time.Millisecond) {
+	if waitForChildServingReady(context.Background(), c, "/ready", 250*time.Millisecond, nil) {
 		t.Fatal("child became ready without admin and public health at the same time")
 	}
 	if adminHits.Load() < 2 {
 		t.Fatal("admin readiness was not rechecked after public health failed")
+	}
+}
+
+func TestWaitForChildServingReadyStopsWhenProcessExits(t *testing.T) {
+	processDone := make(chan struct{})
+	close(processDone)
+	started := time.Now()
+	if waitForChildServingReady(
+		context.Background(), &child{port: 1}, "/ready", time.Minute, processDone,
+	) {
+		t.Fatal("exited child became ready")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("readiness waited %v after the child had already exited", elapsed)
 	}
 }
 
@@ -2625,6 +2701,65 @@ esac
 	routes := m.RouteTable().Load().(proxy.RouteTable)
 	if routes["v1"].Address() != "localhost:9001" {
 		t.Fatalf("route = %q, want old child route", routes["v1"].Address())
+	}
+}
+
+func TestDownloadAndSwap_DrainingPredecessorDefersReplacementStart(t *testing.T) {
+	dir := t.TempDir()
+	zipData, archiveHash := zipBinary(t, "testapp", []byte("replacement binary"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(zipData)
+	}))
+	defer srv.Close()
+
+	m := NewManager(config.Config{
+		BinDir:     filepath.Join(dir, "bin"),
+		DataDir:    filepath.Join(dir, "data"),
+		BinaryName: "testapp",
+		BasePort:   6200,
+	})
+	current := &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("current archive")),
+		port:          9001,
+		status:        statusRunning,
+		restart:       true,
+	}
+	predecessor := &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("predecessor archive")),
+		port:          9000,
+		status:        statusDraining,
+	}
+	m.processes["v1"] = current
+	m.draining["v1"] = []*child{predecessor}
+	m.downloading["v1"] = struct{}{}
+
+	err := m.downloadAndSwap(context.Background(), oracle.Version{
+		Name:   "v1",
+		Binary: srv.URL,
+		SHA256: archiveHash,
+	}, archiveHash, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	gotCurrent := m.processes["v1"]
+	draining := len(m.draining["v1"])
+	children := len(m.children)
+	_, downloading := m.downloading["v1"]
+	m.mu.Unlock()
+	if gotCurrent != current {
+		t.Fatal("running generation changed while its predecessor was draining")
+	}
+	if draining != 1 {
+		t.Fatalf("draining generations = %d, want 1", draining)
+	}
+	if children != 0 {
+		t.Fatalf("replacement children started = %d, want 0", children)
+	}
+	if downloading {
+		t.Fatal("download marker was not cleared after replacement deferral")
 	}
 }
 

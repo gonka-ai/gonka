@@ -190,8 +190,7 @@ func RecoverSession(
 			// A rejected blob degrades to a journal replay; if that cannot run
 			// either, RestoreStateWithFloor fails closed rather than serving
 			// L0 from a floor we could not verify.
-			floor, floorErr := heightsync.FloorIndexFromProto(
-				heightsync.FloorConfigFor(len(snapState.Group), sm.HeartbeatConfig()), floorProto)
+			floor, floorErr := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, floorProto)
 			if floorErr != nil {
 				log.Printf("recover_session escrow=%s snapshot_nonce=%d floor_blob_rejected=%v (rebuilding from diffs)",
 					escrowID, snapNonce, floorErr)
@@ -356,7 +355,7 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 	}
 	restoreHeartbeatProducer(sess, sm)
 	if sess.store == nil {
-		restorePendingTxKeys(sess, nil)
+		restoreAppliedTxKeys(sess, nil)
 		return sess, sm, nil
 	}
 	meta, err := sess.store.GetSessionMeta(sess.escrowID)
@@ -370,7 +369,7 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 			return nil, nil, fmt.Errorf("get diffs for validation obs rebuild: %w", err)
 		}
 	}
-	restorePendingTxKeys(sess, records)
+	restoreAppliedTxKeys(sess, records)
 	if err := storage.RebuildValidationObsFromDiffs(
 		sess.store,
 		sess.escrowID,
@@ -382,7 +381,9 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 	return sess, sm, nil
 }
 
-func restorePendingTxKeys(sess *Session, records []types.DiffRecord) {
+// restoreAppliedTxKeys re-seeds the applied-key set from the reconstructed diff
+// log so a host mempool copy of an already-included tx is not re-queued.
+func restoreAppliedTxKeys(sess *Session, records []types.DiffRecord) {
 	if sess == nil {
 		return
 	}
@@ -391,21 +392,23 @@ func restorePendingTxKeys(sess *Session, records []types.DiffRecord) {
 	for _, diff := range sess.diffs {
 		for _, tx := range diff.Txs {
 			if key := devshardTxKey(tx); key != "" {
-				sess.pendingTxKeys[key] = struct{}{}
+				sess.appliedTxKeys[key] = struct{}{}
 			}
 		}
 	}
 	for _, rec := range records {
 		for _, tx := range rec.Diff.Txs {
 			if key := devshardTxKey(tx); key != "" {
-				sess.pendingTxKeys[key] = struct{}{}
+				sess.appliedTxKeys[key] = struct{}{}
 			}
 		}
 	}
 }
 
-// restoreHeartbeatProducer continues turn_seq from the reconstructed log
-// (spec §10.4). The session tracker is a clone of the SM's so compose can
+// restoreHeartbeatProducer restores the producer from the reconstructed log
+// (spec §10.4). There is no counter to carry over: a turn is named by the nonce
+// its span opens at, so the next span's identity follows from the restored
+// nonce. The session tracker is a clone of the SM's so compose can
 // report turn N's sync_vector without sharing the SM mutex. Wall-clock
 // lastTurnover is not persisted: a recovered quiet session is due immediately
 // rather than waiting out Interval from a lost t_last. An in-flight turn
@@ -416,7 +419,6 @@ func restoreHeartbeatProducer(sess *Session, sm *state.StateMachine) {
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
-	sess.heartbeatTurnSeq = sm.HeightSyncLatestTurnSeq()
 	if clone := sm.HeightSyncCloneTurnTracker(); clone != nil {
 		sess.turnTracker = clone
 	}

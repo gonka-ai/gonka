@@ -10,6 +10,7 @@ import (
 	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/internal/testutil"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/types"
 )
@@ -62,10 +63,9 @@ func testGroup(t *testing.T, n int) ([]*signing.Secp256k1Signer, map[uint32]stri
 	return signers, keys
 }
 
-func signedAck(t *testing.T, signer *signing.Secp256k1Signer, turn, ref uint64, slot uint32, height uint64, hash []byte, st types.SyncState) *types.MsgHeightAck {
+func signedAck(t *testing.T, signer *signing.Secp256k1Signer, ref uint64, slot uint32, height uint64, hash []byte, st types.SyncState) *types.MsgHeightAck {
 	t.Helper()
 	ack := &types.MsgHeightAck{
-		TurnSeq:           turn,
 		RefNonce:          ref,
 		SlotId:            slot,
 		ObservedHeight:    height,
@@ -77,9 +77,8 @@ func signedAck(t *testing.T, signer *signing.Secp256k1Signer, turn, ref uint64, 
 	return ack
 }
 
-func hbTx(turn, height, slots uint64, hash []byte, vec []*types.SyncVectorEntry) *types.DevshardTx {
+func hbTx(height, slots uint64, hash []byte, vec []*types.SyncVectorEntry) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-		TurnSeq:           turn,
 		ObservedHeight:    height,
 		ObservedBlockHash: hash,
 		SlotsNum:          slots,
@@ -107,9 +106,9 @@ func baseState(t *testing.T, n int) (heightsync.LogPlaneState, []*signing.Secp25
 	}, signers
 }
 
-// seedFloor puts one *host* signer's claim into the floor. Heights in these
-// fixtures are inside W_conf of the standing floor, which is the unaided path.
-// Sequencer heartbeats do not establish F (spec §14 rule 3).
+// seedFloor puts one *host* signer's claim into the floor. Sequencer heartbeats
+// do not establish F (spec §14 rule 3), so fixtures that need a floor must go
+// through a host claim.
 func seedFloor(f *heightsync.FloorIndex, nonce, height uint64, hash []byte) {
 	f.Observe(nonce, []heightsync.FloorClaim{{Signer: 0, Height: height, Hash: hash}})
 }
@@ -135,7 +134,7 @@ func finishTxAt(id, height uint64, hash []byte) *types.DevshardTx {
 // ackTxAt builds an unsigned ack. Use where the test drives L0 rather than L2.
 func ackTxAt(refNonce uint64, slot uint32, height uint64, hash []byte) *types.DevshardTx {
 	return signedAckTx(&types.MsgHeightAck{
-		TurnSeq: 1, RefNonce: refNonce, SlotId: slot,
+		RefNonce: refNonce, SlotId: slot,
 		ObservedHeight: height, ObservedBlockHash: hash, PeerSeen: []byte{0xff},
 	})
 }
@@ -143,9 +142,9 @@ func ackTxAt(refNonce uint64, slot uint32, height uint64, hash []byte) *types.De
 func TestLogPlane_FabricatedAckRejected(t *testing.T) {
 	st, signers := baseState(t, 3)
 	hash := []byte{0xaa}
-	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)}, 50)
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 3, hash, nil)}, 50)
 
-	fake := signedAck(t, signers[0], 1, 1, 0, 50, hash, types.SyncState_SYNCED)
+	fake := signedAck(t, signers[0], 1, 0, 50, hash, types.SyncState_SYNCED)
 	fake.HostSig[0] ^= 0xff
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
@@ -158,9 +157,9 @@ func TestLogPlane_FabricatedAckRejected(t *testing.T) {
 func TestLogPlane_AckCausalityRejected(t *testing.T) {
 	st, signers := baseState(t, 3)
 	hash := []byte{0xaa}
-	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)}, 50)
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 3, hash, nil)}, 50)
 
-	ack := signedAck(t, signers[0], 1, 99, 0, 50, hash, types.SyncState_SYNCED)
+	ack := signedAck(t, signers[0], 99, 0, 50, hash, types.SyncState_SYNCED)
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
 		Txs:   []*types.DevshardTx{signedAckTx(ack)},
@@ -168,43 +167,107 @@ func TestLogPlane_AckCausalityRejected(t *testing.T) {
 	require.ErrorIs(t, res.Err, heightsync.ErrAckCausality)
 	require.Equal(t, "ack_causality", res.Reason)
 
-	ack2 := signedAck(t, signers[0], 2, 1, 0, 50, hash, types.SyncState_SYNCED)
+	// An ack naming a turn other than its ref_nonce's used to be the second half
+	// of this check. It is unexpressible now: the turn follows from ref_nonce.
+	ack2 := signedAck(t, signers[0], 1, 0, 50, hash, types.SyncState_SYNCED)
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
 		Txs:   []*types.DevshardTx{signedAckTx(ack2)},
 	}, st)
-	require.ErrorIs(t, res.Err, heightsync.ErrAckCausality)
+	require.NoError(t, res.Err, "ref_nonce 1 names a folded heartbeat")
 }
 
 func TestLogPlane_TwoHeartbeatsInDiffAckOfFirstAccepted(t *testing.T) {
 	st, signers := baseState(t, 3)
 	hash := []byte{0xaa}
 	const landing = uint64(10)
-	ack := signedAck(t, signers[0], 1, landing, 0, 50, hash, types.SyncState_SYNCED)
+	ack := signedAck(t, signers[0], landing, 0, 50, hash, types.SyncState_SYNCED)
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: landing,
 		Txs: []*types.DevshardTx{
-			hbTx(1, 50, 3, hash, nil),
-			hbTx(2, 50, 3, hash, nil),
+			hbTx(50, 3, hash, nil),
+			hbTx(50, 3, hash, nil),
 			signedAckTx(ack),
 		},
 	}, st)
 	require.NoError(t, res.Err, "L3 must accept an ack of the first heartbeat's nonce")
 }
 
+// TestLogPlane_TurnIdentityIsLogAssigned pins the property that replaced the
+// stay-or-next framing rule: a turn is named by the nonce its span opens at, so
+// a heartbeat has no field with which to claim one. The bound L1 used to enforce
+// (reject a jump such as turn 2^60, which would have pruned the retain window)
+// is not needed, because the identity is no longer the sender's to choose.
+func TestLogPlane_TurnIdentityIsLogAssigned(t *testing.T) {
+	hash := []byte{0xaa}
+
+	t.Run("span_shares_one_turn", func(t *testing.T) {
+		st, _ := baseState(t, 3)
+		for nonce := uint64(1); nonce <= 3; nonce++ {
+			res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+				Nonce: nonce,
+				Txs:   []*types.DevshardTx{hbTx(50, 3, hash, nil)},
+			}, st)
+			require.NoError(t, res.Err)
+			st.Tracker.Observe(nonce, []*types.DevshardTx{hbTx(50, 3, hash, nil)}, 50)
+			require.Equal(t, uint64(1), st.Tracker.LatestTurnStart(),
+				"nonce %d is inside the span opened at 1", nonce)
+		}
+		require.Equal(t, 1, st.Tracker.TurnCount())
+		require.Equal(t, [2]uint64{1, 3}, st.Tracker.Record(1).RequestSpan)
+	})
+
+	t.Run("next_span_opens_next_turn", func(t *testing.T) {
+		st, _ := baseState(t, 3)
+		st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 3, hash, nil)}, 50)
+		st.Tracker.Observe(4, []*types.DevshardTx{hbTx(50, 3, hash, nil)}, 50)
+		require.Equal(t, uint64(4), st.Tracker.LatestTurnStart())
+		require.NotNil(t, st.Tracker.Record(1), "opening a turn does not evict its predecessor")
+		require.Equal(t, uint64(1), st.Tracker.TurnBefore(4))
+	})
+
+	t.Run("turn_ids_stay_inside_the_nonce_chain", func(t *testing.T) {
+		// The old attack wrote turn_seq = 1<<60 and emptied the retain window.
+		// A turn id is a nonce now, and applyCore only admits LatestNonce+1, so
+		// the ids the tracker can ever hold are bounded by the log's own length.
+		st, _ := baseState(t, 3)
+		for nonce := uint64(1); nonce <= 10; nonce++ {
+			st.Tracker.Observe(nonce, []*types.DevshardTx{hbTx(50, 3, hash, nil)}, 50)
+		}
+		require.LessOrEqual(t, st.Tracker.LatestTurnStart(), uint64(10))
+		require.NotNil(t, st.Tracker.Record(1), "the first turn is still inside retain")
+	})
+
+	t.Run("ack_of_unknown_ref_nonce_is_l3", func(t *testing.T) {
+		st, signers := baseState(t, 3)
+		st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 3, hash, nil)}, 50)
+		ack := signedAck(t, signers[0], 99, 0, 50, hash, types.SyncState_SYNCED)
+		res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+			Nonce: 2,
+			Txs:   []*types.DevshardTx{signedAckTx(ack)},
+		}, st)
+		require.ErrorIs(t, res.Err, heightsync.ErrAckCausality)
+		require.Equal(t, uint64(1), st.Tracker.LatestTurnStart())
+		require.NotNil(t, st.Tracker.Record(1), "a rejected ack must not disturb turn 1")
+	})
+}
+
 func TestLogPlane_LateAckAfterTurnPruneAccepted(t *testing.T) {
 	st, signers := baseState(t, 3)
 	const n = heightsync.DefaultTurnRetain + 5
+	// One turn per span of 3, so turn starts are 1, 4, 7, ... — enough turns to
+	// push the first one out of the retain window.
 	for i := uint64(1); i <= n; i++ {
-		st.Tracker.Observe(i, []*types.DevshardTx{hbTx(i, 0, 3, nil, nil)}, 0)
+		nonce := 1 + (i-1)*3
+		st.Tracker.Observe(nonce, []*types.DevshardTx{hbTx(0, 3, nil, nil)}, 0)
 	}
 	require.Nil(t, st.Tracker.Record(1), "turn record past retain is gone")
-	seq, ok := st.Tracker.HeartbeatTurn(1)
+	start, ok := st.Tracker.HeartbeatTurn(1)
 	require.True(t, ok, "heartbeatAt must survive turn prune")
-	require.Equal(t, uint64(1), seq)
+	require.Equal(t, uint64(1), start)
 
 	hash := []byte{0xaa}
-	ack := signedAck(t, signers[0], 1, 1, 0, 50, hash, types.SyncState_SYNCED)
+	ack := signedAck(t, signers[0], 1, 0, 50, hash, types.SyncState_SYNCED)
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: n + 1,
 		Txs:   []*types.DevshardTx{signedAckTx(ack)},
@@ -216,13 +279,13 @@ func TestCheckDiffLogPlane_LongOpenSessionBounded(t *testing.T) {
 	st, _ := baseState(t, 3)
 	const n = 5000
 	for i := uint64(1); i <= n; i++ {
-		st.Tracker.Observe(i, []*types.DevshardTx{hbTx(i, 0, 3, nil, nil)}, 0)
+		st.Tracker.Observe(i, []*types.DevshardTx{hbTx(0, 3, nil, nil)}, 0)
 	}
 	require.LessOrEqual(t, st.Tracker.TurnCount(), int(heightsync.DefaultTurnRetain)+1)
 
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: n + 1,
-		Txs:   []*types.DevshardTx{hbTx(n+1, 0, 3, nil, nil)},
+		Txs:   []*types.DevshardTx{hbTx(0, 3, nil, nil)},
 	}, st)
 	require.NoError(t, res.Err)
 }
@@ -251,9 +314,9 @@ func TestLogPlane_AckBelowFloorRejectedAndLiftAccepted(t *testing.T) {
 	st, signers := baseState(t, 3)
 	hash := []byte{0xaa}
 	seedFloor(st.Floor, 1, 80, hash)
-	st.Tracker.Observe(2, []*types.DevshardTx{hbTx(1, 80, 3, hash, nil)}, 80)
+	st.Tracker.Observe(2, []*types.DevshardTx{hbTx(80, 3, hash, nil)}, 80)
 
-	low := signedAck(t, signers[0], 1, 2, 0, 50, hash, types.SyncState_CATCHING_UP)
+	low := signedAck(t, signers[0], 2, 0, 50, hash, types.SyncState_CATCHING_UP)
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 3,
 		Txs:   []*types.DevshardTx{signedAckTx(low)},
@@ -261,7 +324,7 @@ func TestLogPlane_AckBelowFloorRejectedAndLiftAccepted(t *testing.T) {
 	require.ErrorIs(t, res.Err, heightsync.ErrHeightRegression,
 		"an ack below F(ref_nonce) could have carried the floor instead")
 
-	lift := signedAck(t, signers[0], 1, 2, 0, 80, hash, types.SyncState_CATCHING_UP)
+	lift := signedAck(t, signers[0], 2, 0, 80, hash, types.SyncState_CATCHING_UP)
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 3,
 		Txs:   []*types.DevshardTx{signedAckTx(lift)},
@@ -272,9 +335,144 @@ func TestLogPlane_AckBelowFloorRejectedAndLiftAccepted(t *testing.T) {
 	// A heartbeat below the floor is the same violation, one signer over.
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 4,
-		Txs:   []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)},
+		Txs:   []*types.DevshardTx{hbTx(50, 3, hash, nil)},
 	}, st)
 	require.ErrorIs(t, res.Err, heightsync.ErrHeightRegression)
+}
+
+// TestLogPlane_SequencerStampAboveFloorIsMarkedNotRejected pins §10.3.1 on the
+// receiving verifier: a user-signed stamp above F(m) is a height the user could
+// not have read, so it is recorded and logged — and the diff still applies.
+//
+// A MARK and not an INVALID for two reasons. The claim is already inert: rule 3
+// keeps it out of F and the turn clock reads host stamps only, so rejecting the
+// diff buys no protection the log does not already have. And the cost of getting
+// it wrong is asymmetric — one verifier lagging on the floor would refuse a diff
+// the rest accept, which is an escrow split over a claim that changes nothing.
+// The dispute signal this deserves is §18 work.
+func TestLogPlane_SequencerStampAboveFloorIsMarkedNotRejected(t *testing.T) {
+	st, signers := baseState(t, 3)
+	hash := []byte{0xaa}
+	seedFloor(st.Floor, 1, 80, hash)
+
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{hbTx(81, 3, hash, nil)},
+	}, st)
+	require.NoError(t, res.Err, "one block above F is not a reason to refuse the diff")
+	require.Len(t, res.Marks, 1)
+	require.Equal(t, heightsync.MarkHeightUnbacked, res.Marks[0].Kind)
+	require.Equal(t, uint64(2), res.Marks[0].Nonce)
+	require.Contains(t, res.Marks[0].Detail, "heartbeat height 81 > floor 80")
+
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{startTxAt(2, 1<<40, hash)},
+	}, st)
+	require.NoError(t, res.Err)
+	require.Len(t, res.Marks, 1, "start is user-signed too, and 1<<40 is still just a number")
+	require.Equal(t, heightsync.MarkHeightUnbacked, res.Marks[0].Kind)
+
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{hbTx(80, 3, hash, nil)},
+	}, st)
+	require.NoError(t, res.Err)
+	require.Empty(t, res.Marks, "carrying F exactly is the only stamp a user owes")
+
+	// Host stamps have no upper bound here: a host's own reading is what
+	// establishes logical time, and admission (|Δ| > D, Strong) is where a
+	// fabricated one is caught.
+	st.Tracker.Observe(2, []*types.DevshardTx{hbTx(80, 3, hash, nil)}, 80)
+	ack := signedAck(t, signers[0], 2, 0, 1<<40, hash, types.SyncState_SYNCED)
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 3,
+		Txs:   []*types.DevshardTx{signedAckTx(ack)},
+	}, st)
+	require.NoError(t, res.Err)
+	require.Empty(t, res.Marks)
+
+	st.Floor = heightsync.NewFloorIndex()
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 1,
+		Txs:   []*types.DevshardTx{hbTx(1<<40, 3, hash, nil)},
+	}, st)
+	require.NoError(t, res.Err)
+	require.Empty(t, res.Marks,
+		"no floor yet: there is nothing to compare against, and the producer rule stops the stamp being composed at all")
+}
+
+// TestLogPlane_UnbackedStampIsLoggedAtErrorLevel: until disputes land (§18) the
+// log line is the entire signal an operator gets, so it must not be a debug line
+// among the ordinary marks. Marks that fire on honest lag (L5a, L6) stay at debug;
+// this one cannot fire on honest lag, because the producer had the log in front of
+// it and F is in the log.
+func TestLogPlane_UnbackedStampIsLoggedAtErrorLevel(t *testing.T) {
+	capLog := &levelCaptureLogger{}
+	logging.SetLogger(capLog)
+	t.Cleanup(func() { logging.SetLogger(discardLogger{}) })
+
+	st, _ := baseState(t, 3)
+	hash := []byte{0xaa}
+	seedFloor(st.Floor, 1, 80, hash)
+
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{hbTx(500, 3, hash, nil)},
+	}, st)
+	require.NoError(t, res.Err)
+	require.Len(t, res.Marks, 1)
+
+	require.Len(t, capLog.errors, 1, "exactly one error line, naming the check and the reason")
+	line := capLog.errors[0]
+	require.Equal(t, "heightsync: logplane", line.msg)
+	require.Equal(t, "L0", line.kv["check"])
+	require.Equal(t, "MARK", line.kv["verdict"], "the diff is not rejected")
+	require.Equal(t, "height_unbacked", line.kv["reason"])
+	require.Equal(t, uint64(500), line.kv["height"])
+	require.Equal(t, uint64(80), line.kv["floor"])
+	require.Equal(t, "heartbeat", line.kv["leg"])
+	require.Equal(t, uint64(2), line.kv["nonce"])
+}
+
+type logLine struct {
+	msg string
+	kv  map[string]any
+}
+
+type discardLogger struct{}
+
+func (discardLogger) Info(string, ...any)  {}
+func (discardLogger) Debug(string, ...any) {}
+func (discardLogger) Warn(string, ...any)  {}
+func (discardLogger) Error(string, ...any) {}
+
+type levelCaptureLogger struct {
+	errors []logLine
+	warns  []logLine
+}
+
+func (l *levelCaptureLogger) Info(string, ...any)  {}
+func (l *levelCaptureLogger) Debug(string, ...any) {}
+
+func (l *levelCaptureLogger) Warn(msg string, kv ...any) {
+	l.warns = append(l.warns, logLine{msg: msg, kv: pairs(kv)})
+}
+
+func (l *levelCaptureLogger) Error(msg string, kv ...any) {
+	l.errors = append(l.errors, logLine{msg: msg, kv: pairs(kv)})
+}
+
+func pairs(kv []any) map[string]any {
+	out := make(map[string]any, len(kv)/2)
+	for i := 0; i+1 < len(kv); i += 2 {
+		key, ok := kv[i].(string)
+		if !ok {
+			continue
+		}
+		out[key] = kv[i+1]
+	}
+	return out
 }
 
 func TestLogPlane_AckJudgedAgainstRefNonceFloor(t *testing.T) {
@@ -286,17 +484,17 @@ func TestLogPlane_AckJudgedAgainstRefNonceFloor(t *testing.T) {
 	st, signers := baseState(t, 3)
 	hash := []byte{0xaa}
 	seedFloor(st.Floor, 1, 80, hash)
-	st.Tracker.Observe(2, []*types.DevshardTx{hbTx(1, 80, 3, hash, nil)}, 80)
+	st.Tracker.Observe(2, []*types.DevshardTx{hbTx(80, 3, hash, nil)}, 80)
 	seedFloor(st.Floor, 5, 100, hash)
 
-	ack := signedAck(t, signers[0], 1, 2, 0, 80, hash, types.SyncState_SYNCED)
+	ack := signedAck(t, signers[0], 2, 0, 80, hash, types.SyncState_SYNCED)
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 6,
 		Txs:   []*types.DevshardTx{signedAckTx(ack)},
 	}, st)
 	require.NoError(t, res.Err, "80 >= F(2)=80; the landing floor of 100 is not its basis")
 
-	below := signedAck(t, signers[0], 1, 2, 0, 79, hash, types.SyncState_SYNCED)
+	below := signedAck(t, signers[0], 2, 0, 79, hash, types.SyncState_SYNCED)
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 6,
 		Txs:   []*types.DevshardTx{signedAckTx(below)},
@@ -310,7 +508,7 @@ func TestLogPlane_UnstampedLegIsNotRegression(t *testing.T) {
 	seedFloor(st.Floor, 1, 80, []byte{0xaa})
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
-		Txs:   []*types.DevshardTx{hbTx(1, 50, 3, nil, nil)},
+		Txs:   []*types.DevshardTx{hbTx(50, 3, nil, nil)},
 	}, st)
 	require.NoError(t, res.Err)
 
@@ -385,8 +583,8 @@ func TestLogPlane_PerInferenceHeightOrder(t *testing.T) {
 func TestLogPlane_NoEnvelopeSkipsCrossPlaneChecks(t *testing.T) {
 	st, signers := baseState(t, 3)
 	hash := []byte{0xaa}
-	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)}, 50)
-	ack := signedAck(t, signers[0], 1, 1, 0, 50, hash, types.SyncState_SYNCED)
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 3, hash, nil)}, 50)
+	ack := signedAck(t, signers[0], 1, 0, 50, hash, types.SyncState_SYNCED)
 	in := heightsync.LogPlaneInput{
 		Nonce:        2,
 		Txs:          []*types.DevshardTx{signedAckTx(ack)},
@@ -412,8 +610,8 @@ func TestLogPlane_NoEnvelopeSkipsCrossPlaneChecks(t *testing.T) {
 func TestLogPlane_HistoricalReplayNoInvalidation(t *testing.T) {
 	st, signers := baseState(t, 3)
 	hash := []byte{0xaa}
-	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)}, 50)
-	ack := signedAck(t, signers[0], 1, 1, 0, 50, hash, types.SyncState_SYNCED)
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 3, hash, nil)}, 50)
+	ack := signedAck(t, signers[0], 1, 0, 50, hash, types.SyncState_SYNCED)
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce:        2,
 		Txs:          []*types.DevshardTx{signedAckTx(ack)},
@@ -435,7 +633,7 @@ func TestLogPlane_FutureDatedStampDeferredFail(t *testing.T) {
 	}
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce:  1,
-		Txs:    []*types.DevshardTx{hbTx(1, 50, 3, wrong, nil)},
+		Txs:    []*types.DevshardTx{hbTx(50, 3, wrong, nil)},
 		Oracle: or,
 	}, st)
 	require.NoError(t, res.Err, "L6 must not INVALID the diff")
@@ -452,7 +650,7 @@ func TestLogPlane_L6SkipsDummyOracleHeader(t *testing.T) {
 	}
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce:  1,
-		Txs:    []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)},
+		Txs:    []*types.DevshardTx{hbTx(50, 3, hash, nil)},
 		Oracle: or,
 	}, st)
 	require.NoError(t, res.Err)
@@ -463,9 +661,9 @@ func TestHeightAck_FalseSyncedDeferredFail(t *testing.T) {
 	st, signers := baseState(t, 3)
 	goodHash := []byte{0xaa}
 	badHash := []byte{0xbb}
-	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(1, 50, 3, goodHash, nil)}, 50)
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 3, goodHash, nil)}, 50)
 
-	falseSynced := signedAck(t, signers[0], 1, 1, 0, 50, badHash, types.SyncState_SYNCED)
+	falseSynced := signedAck(t, signers[0], 1, 0, 50, badHash, types.SyncState_SYNCED)
 	or := &mapOracle{
 		latest: &blocks.Header{Height: 50, BlockHash: goodHash},
 		at:     map[int64]*blocks.Header{50: {Height: 50, BlockHash: goodHash}},
@@ -478,7 +676,7 @@ func TestHeightAck_FalseSyncedDeferredFail(t *testing.T) {
 	require.NoError(t, res.Err)
 	require.True(t, hasMark(res.Marks, heightsync.MarkDeferredFail))
 
-	honestStale := signedAck(t, signers[1], 1, 1, 1, 50, goodHash, types.SyncState_ORACLE_STALE)
+	honestStale := signedAck(t, signers[1], 1, 1, 50, goodHash, types.SyncState_ORACLE_STALE)
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce:  3,
 		Txs:    []*types.DevshardTx{signedAckTx(honestStale)},
@@ -501,7 +699,7 @@ func TestLogPlane_L6BlamesTheFloorsAuthorForACarriedPair(t *testing.T) {
 	st, signers := baseState(t, 3)
 	dead, live := []byte{0xde}, []byte{0xad}
 	st.Floor.Observe(1, []heightsync.FloorClaim{{Signer: 2, Height: 80, Hash: dead}})
-	st.Tracker.Observe(2, []*types.DevshardTx{hbTx(1, 80, 3, dead, nil)}, 80)
+	st.Tracker.Observe(2, []*types.DevshardTx{hbTx(80, 3, dead, nil)}, 80)
 	or := &mapOracle{
 		latest: &blocks.Header{Height: 90, BlockHash: live},
 		at: map[int64]*blocks.Header{
@@ -510,7 +708,7 @@ func TestLogPlane_L6BlamesTheFloorsAuthorForACarriedPair(t *testing.T) {
 		},
 	}
 
-	carried := signedAck(t, signers[0], 1, 2, 0, 80, dead, types.SyncState_CATCHING_UP)
+	carried := signedAck(t, signers[0], 2, 0, 80, dead, types.SyncState_CATCHING_UP)
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce:  3,
 		Txs:    []*types.DevshardTx{signedAckTx(carried)},
@@ -524,7 +722,7 @@ func TestLogPlane_L6BlamesTheFloorsAuthorForACarriedPair(t *testing.T) {
 	require.Equal(t, uint64(1), res.DeferredFails[0].OriginNonce)
 
 	// A pair the signer chose itself has no origin to point at.
-	own := signedAck(t, signers[1], 1, 2, 1, 90, dead, types.SyncState_SYNCED)
+	own := signedAck(t, signers[1], 2, 1, 90, dead, types.SyncState_SYNCED)
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce:  3,
 		Txs:    []*types.DevshardTx{signedAckTx(own)},
@@ -542,7 +740,7 @@ func TestSyncVector_AckedContradictsLog(t *testing.T) {
 	}}
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 1,
-		Txs:   []*types.DevshardTx{hbTx(2, 50, 3, hash, vec)},
+		Txs:   []*types.DevshardTx{hbTx(50, 3, hash, vec)},
 	}, st)
 	require.NoError(t, res.Err)
 	require.True(t, hasMark(res.Marks, heightsync.MarkVectorContradiction))
@@ -556,7 +754,7 @@ func TestRepairProbe_HeightNoBlame(t *testing.T) {
 	}}
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 1,
-		Txs:   []*types.DevshardTx{hbTx(2, 50, 3, hash, vec)},
+		Txs:   []*types.DevshardTx{hbTx(50, 3, hash, vec)},
 	}, st)
 	require.NoError(t, res.Err)
 	require.False(t, hasMark(res.Marks, heightsync.MarkVectorContradiction))
@@ -565,22 +763,24 @@ func TestRepairProbe_HeightNoBlame(t *testing.T) {
 func TestLogPlane_L7SameDiffAckSatisfiesVector(t *testing.T) {
 	st, signers := baseState(t, 3)
 	hash := []byte{0xaa}
-	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)}, 50)
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 3, hash, nil)}, 50)
 
-	ack := signedAck(t, signers[0], 1, 1, 0, 50, hash, types.SyncState_SYNCED)
+	ack := signedAck(t, signers[0], 1, 0, 50, hash, types.SyncState_SYNCED)
 	vec := []*types.SyncVectorEntry{{
-		SlotId: 0, Status: types.AckStatus_ACKED, ObservedHeight: 50, AckNonce: 2,
+		SlotId: 0, Status: types.AckStatus_ACKED, ObservedHeight: 50, AckNonce: 4,
 	}}
+	// The next turn opens at 4: nonces 1..3 belong to the span already open, so a
+	// heartbeat inside them would join that turn instead of starting one.
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
-		Nonce: 2,
+		Nonce: 4,
 		Txs: []*types.DevshardTx{
 			signedAckTx(ack),
-			hbTx(2, 50, 3, hash, vec),
+			hbTx(50, 3, hash, vec),
 		},
 	}, st)
 	require.NoError(t, res.Err)
 	require.False(t, hasMark(res.Marks, heightsync.MarkVectorContradiction),
-		"an ack in the same diff that completes turn_seq-1 must satisfy L7")
+		"an ack in the same diff that completes the preceding turn must satisfy L7")
 }
 
 func BenchmarkCheckDiffLogPlane_LongSession(b *testing.B) {
@@ -589,16 +789,16 @@ func BenchmarkCheckDiffLogPlane_LongSession(b *testing.B) {
 	const n = 500
 	for i := uint64(1); i <= n; i++ {
 		h := 100 + i
-		txs := []*types.DevshardTx{hbTx(i, h, 3, hash, nil)}
+		txs := []*types.DevshardTx{hbTx(h, 3, hash, nil)}
 		for s := uint32(0); s < 2; s++ {
-			txs = append(txs, signedAckTx(signedAck(&testing.T{}, signers[s], i, i, s, h, hash, types.SyncState_SYNCED)))
+			txs = append(txs, signedAckTx(signedAck(&testing.T{}, signers[s], i, s, h, hash, types.SyncState_SYNCED)))
 		}
 		st.Tracker.Observe(i, txs, h)
 	}
 	if st.Tracker.TurnCount() > int(heightsync.DefaultTurnRetain)+1 {
 		b.Fatalf("turn map not bounded by retain: got %d", st.Tracker.TurnCount())
 	}
-	hb := hbTx(n+1, 100+n+1, 3, hash, nil)
+	hb := hbTx(100+n+1, 3, hash, nil)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -635,12 +835,12 @@ func hasMark(marks []heightsync.AttributableMark, kind heightsync.MarkKind) bool
 // set. Counting Q of those must not be treated as Q independent height witnesses.
 func TestTurnComplete_IsNotAHeightCertificate(t *testing.T) {
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
-	tr.Observe(10, []*types.DevshardTx{hbTx(1, 500, 4, []byte{1}, nil)}, 500)
+	tr.Observe(10, []*types.DevshardTx{hbTx(500, 4, []byte{1}, nil)}, 500)
 
 	tr.Observe(14, []*types.DevshardTx{
-		signedAckTx(&types.MsgHeightAck{TurnSeq: 1, RefNonce: 10, SlotId: 0, ObservedHeight: 500, SyncState: types.SyncState_SYNCED}),
-		signedAckTx(&types.MsgHeightAck{TurnSeq: 1, RefNonce: 10, SlotId: 1, ObservedHeight: 500, SyncState: types.SyncState_SYNCED}),
-		signedAckTx(&types.MsgHeightAck{TurnSeq: 1, RefNonce: 10, SlotId: 2, ObservedHeight: 500, SyncState: types.SyncState_SYNCED}),
+		signedAckTx(&types.MsgHeightAck{RefNonce: 10, SlotId: 0, ObservedHeight: 500, SyncState: types.SyncState_SYNCED}),
+		signedAckTx(&types.MsgHeightAck{RefNonce: 10, SlotId: 1, ObservedHeight: 500, SyncState: types.SyncState_SYNCED}),
+		signedAckTx(&types.MsgHeightAck{RefNonce: 10, SlotId: 2, ObservedHeight: 500, SyncState: types.SyncState_SYNCED}),
 	}, 500)
 	require.True(t, tr.CompletedAtOrAbove(500), "the turn itself completed: Q slots were reachable")
 }
@@ -655,7 +855,7 @@ func TestLogPlane_CheckEnvelopeBindingIndependent(t *testing.T) {
 	}
 	marks := heightsync.CheckEnvelopeBinding(heightsync.LogPlaneInput{
 		Nonce: 1,
-		Txs:   []*types.DevshardTx{hbTx(1, 30, 3, hash, nil)},
+		Txs:   []*types.DevshardTx{hbTx(30, 3, hash, nil)},
 		Sec:   sec,
 	}, heightsync.DefaultHeartbeatConfig())
 	require.True(t, hasMark(marks, heightsync.MarkDisputeCarrier))
@@ -682,7 +882,7 @@ func TestLogPlane_HeartbeatLiftDoesNotTripEnvelopeBinding(t *testing.T) {
 	check := func(h uint64, f *heightsync.FloorIndex) []heightsync.AttributableMark {
 		return heightsync.CheckEnvelopeBinding(heightsync.LogPlaneInput{
 			Nonce: 2,
-			Txs:   []*types.DevshardTx{hbTx(1, h, 3, hash, nil)},
+			Txs:   []*types.DevshardTx{hbTx(h, 3, hash, nil)},
 			Sec:   sec,
 			Floor: f,
 		}, heightsync.DefaultHeartbeatConfig())
@@ -711,7 +911,7 @@ func TestLogPlane_CarryForwardSectionSkipsHeartbeatBinding(t *testing.T) {
 	hash := []byte{0xaa}
 	marks := heightsync.CheckEnvelopeBinding(heightsync.LogPlaneInput{
 		Nonce: 1,
-		Txs:   []*types.DevshardTx{hbTx(1, 30, 3, hash, nil)},
+		Txs:   []*types.DevshardTx{hbTx(30, 3, hash, nil)},
 		Sec: &heightsync.HeightSyncSection{
 			ProofType:             heightsync.AnchorProofType,
 			MainnetHeight:         900,
@@ -748,7 +948,7 @@ func TestLogPlane_AckLiftDoesNotTripEnvelopeBinding(t *testing.T) {
 	seedFloor(floor, 10, 50, hash) // the heartbeat this ack answers carried 50
 
 	check := func(ackHeight uint64) []heightsync.AttributableMark {
-		ack := signedAck(t, signers[0], 1, 10, 0, ackHeight, hash, types.SyncState_CATCHING_UP)
+		ack := signedAck(t, signers[0], 10, 0, ackHeight, hash, types.SyncState_CATCHING_UP)
 		return heightsync.CheckEnvelopeBinding(heightsync.LogPlaneInput{
 			Nonce: 12,
 			Txs:   []*types.DevshardTx{signedAckTx(ack)},
@@ -805,7 +1005,7 @@ func TestCheckEnvelopeBinding_RequestLegBlobBounded(t *testing.T) {
 	}
 	marks := heightsync.CheckEnvelopeBinding(heightsync.LogPlaneInput{
 		Nonce: 1,
-		Txs:   []*types.DevshardTx{hbTx(1, 30, 3, hash, nil)},
+		Txs:   []*types.DevshardTx{hbTx(30, 3, hash, nil)},
 		Sec: &heightsync.HeightSyncSection{
 			ProofType:           heightsync.AnchorProofType,
 			MainnetHeight:       40,
@@ -831,9 +1031,9 @@ func TestLogPlane_AckWithoutVerifierRejected(t *testing.T) {
 	st, signers := baseState(t, 2)
 	st.Verifier = nil
 	hash := []byte{0xaa}
-	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(1, 50, 2, hash, nil)}, 50)
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 2, hash, nil)}, 50)
 
-	ack := signedAck(t, signers[0], 1, 1, 0, 50, hash, types.SyncState_SYNCED)
+	ack := signedAck(t, signers[0], 1, 0, 50, hash, types.SyncState_SYNCED)
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
 		Txs:   []*types.DevshardTx{signedAckTx(ack)},
@@ -848,7 +1048,7 @@ func TestLogPlane_HeartbeatWithoutVerifierOK(t *testing.T) {
 	hash := []byte{0xaa}
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 1,
-		Txs:   []*types.DevshardTx{hbTx(1, 50, 2, hash, nil)},
+		Txs:   []*types.DevshardTx{hbTx(50, 2, hash, nil)},
 	}, st)
 	require.NoError(t, res.Err)
 }
@@ -856,12 +1056,12 @@ func TestLogPlane_HeartbeatWithoutVerifierOK(t *testing.T) {
 func TestLogPlane_OversizedFieldsRejected(t *testing.T) {
 	st, signers := baseState(t, 2)
 	hash := []byte{0xaa}
-	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(1, 50, 2, hash, nil)}, 50)
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 2, hash, nil)}, 50)
 
 	tooBigHash := make([]byte, heightsync.MaxObservedBlockHashBytes+1)
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
-		Txs:   []*types.DevshardTx{hbTx(2, 50, 2, tooBigHash, nil)},
+		Txs:   []*types.DevshardTx{hbTx(50, 2, tooBigHash, nil)},
 	}, st)
 	require.ErrorIs(t, res.Err, heightsync.ErrBadFraming)
 
@@ -871,11 +1071,11 @@ func TestLogPlane_OversizedFieldsRejected(t *testing.T) {
 	}
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
-		Txs:   []*types.DevshardTx{hbTx(2, 50, 2, hash, vec)},
+		Txs:   []*types.DevshardTx{hbTx(50, 2, hash, vec)},
 	}, st)
 	require.ErrorIs(t, res.Err, heightsync.ErrBadFraming)
 
-	ack := signedAck(t, signers[0], 1, 1, 0, 50, hash, types.SyncState_SYNCED)
+	ack := signedAck(t, signers[0], 1, 0, 50, hash, types.SyncState_SYNCED)
 	ack.PeerSeen = []byte{0xff, 0xff}
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
@@ -883,7 +1083,7 @@ func TestLogPlane_OversizedFieldsRejected(t *testing.T) {
 	}, st)
 	require.ErrorIs(t, res.Err, heightsync.ErrBadFraming)
 
-	ack2 := signedAck(t, signers[0], 1, 1, 0, 50, hash, types.SyncState_SYNCED)
+	ack2 := signedAck(t, signers[0], 1, 0, 50, hash, types.SyncState_SYNCED)
 	ack2.ObservedBlockHash = tooBigHash
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,

@@ -110,17 +110,29 @@ func (s *legacyOnlyStorage) LoadSnapshot(escrowID string) (uint64, []byte, error
 func (s *legacyOnlyStorage) InsertSealedInference(escrowID string, row InferenceRow) error {
 	return s.inner.InsertSealedInference(escrowID, row)
 }
+func (s *legacyOnlyStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return s.inner.BulkInsertSealedInferences(escrowID, rows)
+}
+func (s *legacyOnlyStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return s.inner.InsertSealedInferences(escrowID, rows)
+}
 func (s *legacyOnlyStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	return s.inner.GetSealedInference(escrowID, inferenceID)
 }
 func (s *legacyOnlyStorage) DeleteSealedInferences(escrowID string) error {
 	return s.inner.DeleteSealedInferences(escrowID)
 }
+func (s *legacyOnlyStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	return s.inner.SealedInferenceIDs(escrowID)
+}
 func (s *legacyOnlyStorage) ClearValidationObs(escrowID string) error {
 	return s.inner.ClearValidationObs(escrowID)
 }
 func (s *legacyOnlyStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
 	return s.inner.RecordValidationsAppliedOnce(escrowID, entries)
+}
+func (s *legacyOnlyStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	return s.inner.DrainInferenceValidationObsBatch(escrowID, inferenceIDs)
 }
 func (s *legacyOnlyStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
 	return s.inner.DrainInferenceValidationObs(escrowID, inferenceID)

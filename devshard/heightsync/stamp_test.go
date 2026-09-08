@@ -47,15 +47,36 @@ func TestLogResidentHeight_PrefersDiffStampThenFallback(t *testing.T) {
 		t.Fatalf("unstamped fallback: got %d want 40", got)
 	}
 	txs := []*types.DevshardTx{
-		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{
 			ObservedHeight: 7, ObservedBlockHash: []byte{0xaa},
 		}}},
-		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			ObservedHeight: 12, ObservedBlockHash: []byte{0xbb},
 		}}},
 	}
 	if got := LogResidentHeight(txs, 40); got != 12 {
-		t.Fatalf("max stamp: got %d want 12", got)
+		t.Fatalf("max host stamp: got %d want 12", got)
+	}
+}
+
+func TestLogResidentHeight_IgnoresUserStamps(t *testing.T) {
+	hash := []byte{0xaa}
+	user := []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 1 << 40, ObservedBlockHash: hash,
+		}}},
+		{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+			InferenceId: 1, ObservedHeight: 1 << 40, ObservedBlockHash: hash,
+		}}},
+	}
+	if got := LogResidentHeight(user, 500); got != 500 {
+		t.Fatalf("user stamps must not move hNow: got %d want 500", got)
+	}
+	mixed := append(user, &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{
+		ObservedHeight: 510, ObservedBlockHash: hash,
+	}}})
+	if got := LogResidentHeight(mixed, 500); got != 510 {
+		t.Fatalf("host ack still moves hNow: got %d want 510", got)
 	}
 }
 

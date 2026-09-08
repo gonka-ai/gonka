@@ -107,7 +107,7 @@ func TestReadingRefusesWhatItCannotResolve(t *testing.T) {
 // assembles the payload, and hashes exactly the bytes it is about to store.
 func executorStores(t *testing.T, lines []string) (stored []byte, committed [32]byte) {
 	t.Helper()
-	processor := completionapi.NewExecutorResponseProcessor("devshard-60453-7")
+	processor := completionapi.NewExecutorResponseProcessor("devshard-60453-7", true)
 	for _, line := range lines {
 		_, err := processor.ProcessStreamedResponse(line)
 		require.NoError(t, err)
@@ -119,7 +119,7 @@ func executorStores(t *testing.T, lines []string) (stored []byte, committed [32]
 
 func executorStoresJSON(t *testing.T, body []byte) (stored []byte, committed [32]byte) {
 	t.Helper()
-	processor := completionapi.NewExecutorResponseProcessor("devshard-60453-7")
+	processor := completionapi.NewExecutorResponseProcessor("devshard-60453-7", true)
 	_, err := processor.ProcessJsonResponse(body)
 	require.NoError(t, err)
 	stored, err = processor.GetResponseBytes()

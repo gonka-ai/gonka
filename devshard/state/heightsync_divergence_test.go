@@ -26,9 +26,8 @@ var divergedTips = []struct {
 	{5, []byte{0x00, 0x05}},
 }
 
-func divHeartbeatTx(turnSeq, height uint64, hash []byte) *types.DevshardTx {
+func divHeartbeatTx(height uint64, hash []byte) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-		TurnSeq:           turnSeq,
 		ObservedHeight:    height,
 		ObservedBlockHash: hash,
 		SlotsNum:          uint64(len(divergedTips)),
@@ -40,7 +39,6 @@ func divAckTx(t *testing.T, signer *signing.Secp256k1Signer, turnSeq, refNonce u
 	height uint64, hash []byte, st types.SyncState) *types.DevshardTx {
 	t.Helper()
 	ack := &types.MsgHeightAck{
-		TurnSeq:           turnSeq,
 		RefNonce:          refNonce,
 		SlotId:            slot,
 		ObservedHeight:    height,
@@ -121,7 +119,7 @@ func TestHeightSyncDivergence_InferenceFlowNeverBlocked(t *testing.T) {
 	// least that. The two hosts hundreds of blocks behind lift to it and
 	// label themselves CATCHING_UP: the height is shared logical time, the label
 	// is where their real position is reported. Neither is misbehaviour.
-	require.NoError(t, apply(1, divHeartbeatTx(1, top.height, top.hash)))
+	require.NoError(t, apply(1, divHeartbeatTx(top.height, top.hash)))
 
 	honestStates := []types.SyncState{
 		types.SyncState_SYNCED,      // own tip 250, exactly h_req
@@ -191,7 +189,7 @@ func TestHeightSyncDivergence_InferenceFlowNeverBlocked(t *testing.T) {
 	// being 995 blocks out. Nothing in the log can refute that — divergence is
 	// monitoring, and settling a false label needs the LightBlock proof Strong
 	// owns — so the diff applies and the claim is retained verbatim.
-	require.NoError(t, apply(9, divHeartbeatTx(2, top.height, top.hash)))
+	require.NoError(t, apply(9, divHeartbeatTx(top.height, top.hash)))
 	require.NoError(t, apply(10,
 		divAckTx(t, hosts[0], 2, 9, 0, top.height, top.hash, types.SyncState_SYNCED),
 		divAckTx(t, hosts[1], 2, 9, 1, top.height, top.hash, types.SyncState_SYNCED),
@@ -212,7 +210,8 @@ func TestHeightSyncDivergence_InferenceFlowNeverBlocked(t *testing.T) {
 	require.Equal(t, types.PhaseActive, sm.SnapshotState().Phase,
 		"wide divergence must leave the escrow serving")
 
-	rec2 := sm.HeightSyncTurnRecord(2)
+	// The second turn opened at nonce 9, which is its identity.
+	rec2 := sm.HeightSyncTurnRecord(9)
 	require.NotNil(t, rec2)
 	require.Len(t, rec2.Acks, int(slots), "every claim is retained for the dispute layer")
 	require.Equal(t, types.SyncState_SYNCED, rec2.Acks[3].SyncState,
@@ -243,7 +242,7 @@ func TestHeightSyncDivergence_DeadOracleStillCarriesTime(t *testing.T) {
 		return err
 	}
 
-	require.NoError(t, apply(1, divHeartbeatTx(1, top.height, top.hash)))
+	require.NoError(t, apply(1, divHeartbeatTx(top.height, top.hash)))
 	require.NoError(t, apply(2,
 		divAckTx(t, hosts[0], 1, 1, 0, top.height, top.hash, types.SyncState_SYNCED),
 		divAckTx(t, hosts[1], 1, 1, 1, top.height, top.hash, types.SyncState_SYNCED),

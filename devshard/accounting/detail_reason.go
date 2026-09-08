@@ -17,6 +17,7 @@ func normalizeDetailReason(reason string) string {
 	case "", "none":
 		return ""
 	case "phase_transition_aborted", "error_stream", "empty_stream", "model_burn_empty", "sse_truncated",
+		"sse_event_too_large", "response_body_too_large", "aggregate_response_too_large", "aggregate_fold_too_large",
 		"eof_transport", "client_cancelled", "transport_error", "no_receipt",
 		"not_finished", "http_429", "http_503", "http_forbidden", "http_not_found",
 		"http_timestamp_drift", "http_error", "long_response_after_content",
@@ -40,6 +41,7 @@ func normalizeDeliveryReason(reason string) string {
 	case "", "none":
 		return ""
 	case "empty_stream", "model_burn_empty", "error_stream", "sse_truncated",
+		"sse_event_too_large", "response_body_too_large", "aggregate_response_too_large", "aggregate_fold_too_large",
 		"eof_transport", "transport_error", "client_cancelled", "not_finished",
 		"no_receipt", "http_error", "http_429", "http_503", "http_not_found",
 		"http_forbidden", DeliveryClientGone, DeliveryWarmupProbe, DeliveryThrottleProbe:

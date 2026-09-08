@@ -3,14 +3,12 @@ package heightsync
 import (
 	"errors"
 	"fmt"
-	"sort"
 
 	"devshard/types"
 )
 
 // ToProto serializes the derived floor for the snapshot envelope. It is not
-// hashed into the state root. cfg is omitted and recomputed from the roster
-// on restore.
+// hashed into the state root. cfg is omitted; it is retention only.
 func (f *FloorIndex) ToProto() *types.FloorIndexProto {
 	if f == nil {
 		return nil
@@ -24,23 +22,8 @@ func (f *FloorIndex) ToProto() *types.FloorIndexProto {
 			Author: e.author,
 		}
 	}
-	signers := make([]uint32, 0, len(f.claims))
-	for signer := range f.claims {
-		signers = append(signers, signer)
-	}
-	sort.Slice(signers, func(i, j int) bool { return signers[i] < signers[j] })
-	claims := make([]*types.FloorSignerClaimProto, 0, len(signers))
-	for _, signer := range signers {
-		held := f.claims[signer]
-		claims = append(claims, &types.FloorSignerClaimProto{
-			Signer: signer,
-			Height: held.height,
-			Hash:   append([]byte(nil), held.hash...),
-		})
-	}
 	return &types.FloorIndexProto{
 		Entries:   entries,
-		Claims:    claims,
 		Truncated: f.truncated,
 	}
 }
@@ -52,7 +35,7 @@ var ErrFloorBlobInvalid = errors.New("height-sync floor blob invalid")
 
 // FloorIndexFromProto reconstructs a FloorIndex from a snapshot blob.
 // A nil proto means the snapshot omitted the floor (legacy); callers must
-// fall back to a journal replay. An empty proto is a valid fold (no claims).
+// fall back to a journal replay. An empty proto is a valid fold (no entries).
 //
 // The blob is validated before it is trusted. AsOf binary-searches entries and
 // reads the last one as a running maximum, so a blob whose nonces or heights are
@@ -90,24 +73,6 @@ func FloorIndexFromProto(cfg FloorConfig, p *types.FloorIndexProto) (*FloorIndex
 				hash:   append([]byte(nil), e.Hash...),
 				author: e.Author,
 			})
-		}
-	}
-	if len(p.Claims) > 0 {
-		f.claims = make(map[uint32]floorSignerClaim, len(p.Claims))
-		for i, c := range p.Claims {
-			if c == nil {
-				return nil, fmt.Errorf("%w: claim %d is missing", ErrFloorBlobInvalid, i)
-			}
-			if c.Height == 0 || !StampPresent(c.Hash) {
-				return nil, fmt.Errorf("%w: claim %d has no reference height", ErrFloorBlobInvalid, i)
-			}
-			if _, dup := f.claims[c.Signer]; dup {
-				return nil, fmt.Errorf("%w: claim %d repeats signer %d", ErrFloorBlobInvalid, i, c.Signer)
-			}
-			f.claims[c.Signer] = floorSignerClaim{
-				height: c.Height,
-				hash:   append([]byte(nil), c.Hash...),
-			}
 		}
 	}
 	f.truncated = p.Truncated

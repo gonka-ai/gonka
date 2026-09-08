@@ -98,8 +98,5 @@ const (
 	deepSeekV4Flash0731ModelID = "deepseek-ai/DeepSeek-V4-Flash-0731"
 )
 
-// An omitted reasoning_effort renders as "high"; "max" is the strongest prefix the encoder defines.
-const deepSeekDefaultReasoningEffort = "max"
-
 // Sentinel content used by message normalization when an upstream tool result is empty.
 const emptyToolResultContent = "<empty tool result>"

@@ -523,14 +523,18 @@ func (*DevshardTx_HeightAck) isDevshardTx_Tx() {}
 func (*DevshardTx_ErrorMiss) isDevshardTx_Tx() {}
 
 // MsgHeartbeat stamps a user-signed height into Diff and publishes roster sync status.
+//
+// A turn is identified by its span-start nonce, not by a wire field: the diff
+// chain is gapless, so the span a heartbeat belongs to is a function of the log
+// (see TurnTracker.turnStartFor). turn_seq claimed field 1 and is reserved so a
+// sequencer-chosen turn id cannot come back.
 type MsgHeartbeat struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
-	TurnSeq           uint64                 `protobuf:"varint,1,opt,name=turn_seq,json=turnSeq,proto3" json:"turn_seq,omitempty"`
 	ObservedHeight    uint64                 `protobuf:"varint,2,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
 	ObservedBlockHash []byte                 `protobuf:"bytes,3,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
 	SlotsNum          uint64                 `protobuf:"varint,4,opt,name=slots_num,json=slotsNum,proto3" json:"slots_num,omitempty"`
 	Reason            string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`                           // height_cadence|quiet_session|forced|cpoc_band
-	SyncVector        []*SyncVectorEntry     `protobuf:"bytes,6,rep,name=sync_vector,json=syncVector,proto3" json:"sync_vector,omitempty"` // status of turn_seq - 1
+	SyncVector        []*SyncVectorEntry     `protobuf:"bytes,6,rep,name=sync_vector,json=syncVector,proto3" json:"sync_vector,omitempty"` // status of the preceding turn
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -563,13 +567,6 @@ func (x *MsgHeartbeat) ProtoReflect() protoreflect.Message {
 // Deprecated: Use MsgHeartbeat.ProtoReflect.Descriptor instead.
 func (*MsgHeartbeat) Descriptor() ([]byte, []int) {
 	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *MsgHeartbeat) GetTurnSeq() uint64 {
-	if x != nil {
-		return x.TurnSeq
-	}
-	return 0
 }
 
 func (x *MsgHeartbeat) GetObservedHeight() uint64 {
@@ -608,16 +605,18 @@ func (x *MsgHeartbeat) GetSyncVector() []*SyncVectorEntry {
 }
 
 // MsgHeightAck is the host-signed answer to a heartbeat (mempool → Diff).
+//
+// ref_nonce names the heartbeat; the turn follows from it. turn_seq claimed
+// field 1 and was fully derivable from ref_nonce, so it is reserved.
 type MsgHeightAck struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
-	TurnSeq           uint64                 `protobuf:"varint,1,opt,name=turn_seq,json=turnSeq,proto3" json:"turn_seq,omitempty"`
 	RefNonce          uint64                 `protobuf:"varint,2,opt,name=ref_nonce,json=refNonce,proto3" json:"ref_nonce,omitempty"`
 	SlotId            uint32                 `protobuf:"varint,3,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
 	ObservedHeight    uint64                 `protobuf:"varint,4,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
 	ObservedBlockHash []byte                 `protobuf:"bytes,5,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
 	SyncState         SyncState              `protobuf:"varint,6,opt,name=sync_state,json=syncState,proto3,enum=devshard.v1.SyncState" json:"sync_state,omitempty"`
 	PeerSeen          []byte                 `protobuf:"bytes,7,opt,name=peer_seen,json=peerSeen,proto3" json:"peer_seen,omitempty"` // bitmap, bit j = "slot j fresh within F"
-	HostSig           []byte                 `protobuf:"bytes,8,opt,name=host_sig,json=hostSig,proto3" json:"host_sig,omitempty"`    // over fields 1–7, domain heightsync.ack.v1
+	HostSig           []byte                 `protobuf:"bytes,8,opt,name=host_sig,json=hostSig,proto3" json:"host_sig,omitempty"`    // over fields 2–7, domain heightsync.ack.v1
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -650,13 +649,6 @@ func (x *MsgHeightAck) ProtoReflect() protoreflect.Message {
 // Deprecated: Use MsgHeightAck.ProtoReflect.Descriptor instead.
 func (*MsgHeightAck) Descriptor() ([]byte, []int) {
 	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *MsgHeightAck) GetTurnSeq() uint64 {
-	if x != nil {
-		return x.TurnSeq
-	}
-	return 0
 }
 
 func (x *MsgHeightAck) GetRefNonce() uint64 {
@@ -1128,17 +1120,15 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"height_ack\x18\v \x01(\v2\x19.devshard.v1.MsgHeightAckH\x00R\theightAck\x12:\n" +
 	"\n" +
 	"error_miss\x18\x0e \x01(\v2\x19.devshard.v1.MsgErrorMissH\x00R\terrorMissB\x04\n" +
-	"\x02txJ\x04\b\f\x10\rJ\x04\b\r\x10\x0e\"\xf6\x01\n" +
-	"\fMsgHeartbeat\x12\x19\n" +
-	"\bturn_seq\x18\x01 \x01(\x04R\aturnSeq\x12'\n" +
+	"\x02txJ\x04\b\f\x10\rJ\x04\b\r\x10\x0e\"\xe1\x01\n" +
+	"\fMsgHeartbeat\x12'\n" +
 	"\x0fobserved_height\x18\x02 \x01(\x04R\x0eobservedHeight\x12.\n" +
 	"\x13observed_block_hash\x18\x03 \x01(\fR\x11observedBlockHash\x12\x1b\n" +
 	"\tslots_num\x18\x04 \x01(\x04R\bslotsNum\x12\x16\n" +
 	"\x06reason\x18\x05 \x01(\tR\x06reason\x12=\n" +
 	"\vsync_vector\x18\x06 \x03(\v2\x1c.devshard.v1.SyncVectorEntryR\n" +
-	"syncVector\"\xa7\x02\n" +
-	"\fMsgHeightAck\x12\x19\n" +
-	"\bturn_seq\x18\x01 \x01(\x04R\aturnSeq\x12\x1b\n" +
+	"syncVectorJ\x04\b\x01\x10\x02\"\x92\x02\n" +
+	"\fMsgHeightAck\x12\x1b\n" +
 	"\tref_nonce\x18\x02 \x01(\x04R\brefNonce\x12\x17\n" +
 	"\aslot_id\x18\x03 \x01(\rR\x06slotId\x12'\n" +
 	"\x0fobserved_height\x18\x04 \x01(\x04R\x0eobservedHeight\x12.\n" +
@@ -1146,7 +1136,7 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\n" +
 	"sync_state\x18\x06 \x01(\x0e2\x16.devshard.v1.SyncStateR\tsyncState\x12\x1b\n" +
 	"\tpeer_seen\x18\a \x01(\fR\bpeerSeen\x12\x19\n" +
-	"\bhost_sig\x18\b \x01(\fR\ahostSig\"\xa0\x01\n" +
+	"\bhost_sig\x18\b \x01(\fR\ahostSigJ\x04\b\x01\x10\x02\"\xa0\x01\n" +
 	"\x0fSyncVectorEntry\x12\x17\n" +
 	"\aslot_id\x18\x01 \x01(\rR\x06slotId\x12.\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x16.devshard.v1.AckStatusR\x06status\x12'\n" +

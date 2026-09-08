@@ -134,7 +134,6 @@ func main() {
 	initGatewaySlog()
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
-	ConfigureGhostAccountability(os.Getenv("DEVSHARD_GHOST_ACCOUNTABILITY"))
 	// Wire the dial-time SSRF guard before any outbound dial. Host URLs come
 	// from chain state and are participant-controlled; the gateway's own chain
 	// RPC/public-API clients are unguarded, so private self-hosted endpoints

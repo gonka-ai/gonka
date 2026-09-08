@@ -220,6 +220,18 @@ func LogprobContentEntryCount(payload map[string]any) int {
 	return len(content)
 }
 
+// AnyChoiceCarriesLogprobs reports whether a choice holds a logprobs object; the fold path writes null when none arrived.
+func AnyChoiceCarriesLogprobs(payload map[string]any) bool {
+	choices, _ := payload["choices"].([]any)
+	for _, raw := range choices {
+		choice, _ := raw.(map[string]any)
+		if logprobs, carried := choice["logprobs"].(map[string]any); carried && logprobs != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // MaxTopLogprobsWidth returns the widest top_logprobs array under logprobs.content.
 func MaxTopLogprobsWidth(payload map[string]any) int {
 	choices, _ := payload["choices"].([]any)

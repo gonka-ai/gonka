@@ -34,7 +34,6 @@ func heartbeatDiff(t *testing.T, user signing.Signer, nonce, turnSeq, height, sl
 	t.Helper()
 	return testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq:        turnSeq,
 			ObservedHeight: height,
 			SlotsNum:       slots,
 			Reason:         string(heightsync.ReasonQuietSession),
@@ -52,7 +51,6 @@ func stampedHeartbeatDiff(t *testing.T, user signing.Signer, nonce, turnSeq, hei
 func signedAckTx(t *testing.T, signer *signing.Secp256k1Signer, turn, ref uint64, slot uint32, height uint64, hash []byte) *types.DevshardTx {
 	t.Helper()
 	ack := &types.MsgHeightAck{
-		TurnSeq:           turn,
 		RefNonce:          ref,
 		SlotId:            slot,
 		ObservedHeight:    height,
@@ -96,7 +94,6 @@ func TestHost_HeartbeatAck_OwnSlotIntoMempool(t *testing.T) {
 	acks := mempoolHeightAcks(resp.Mempool)
 	require.Len(t, acks, 1)
 	ack := acks[0]
-	require.Equal(t, uint64(1), ack.TurnSeq)
 	require.Equal(t, uint64(3), ack.RefNonce)
 	require.Equal(t, uint32(0), ack.SlotId)
 	require.Equal(t, uint64(100), ack.ObservedHeight)
@@ -325,18 +322,21 @@ func TestHost_HeartbeatAck_LagsButClearsHostFloor(t *testing.T) {
 		"the lag is not hidden: it moves to the label the gateway monitors")
 }
 
-// TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach is the second half
-// of the producer rule (proposal §13 / §14): when the floor is more than
-// W_conf above the host tip, omit the stamp rather than carry a poisoned pair.
+// TestHost_HeartbeatAck_CarriesAFloorFarAboveOwnTip pins what replaced the
+// producer rule's second escape.
 //
-// Carrying the floor is honest while the gap is ordinary lag: the floor is a
-// height in the log and the carrier is visibly not its author. Past W_conf no
-// plausible chain advance explains the distance — the floor is poisoned, or on a
-// branch this host will never see — and repeating it under this host's signature
-// would turn one bad claim into a roster of them. Omission is legal at any
-// floor, so the honest answer is to say nothing about the height and still ack,
-// which keeps the host inside the cadence and the turn completing.
-func TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach(t *testing.T) {
+// The escape said: if F is more than W_conf above my own tip, omit rather than
+// carry, because no plausible chain advance explains the distance. Read from the
+// other side it said something much worse — the first party to stamp a height
+// nobody else can reach silences every other host's stamp for the rest of the
+// session, and nothing lowers a floor. Distance is not evidence, and the carrier
+// is not where a bad height is judged: the floor is visibly in the log with its
+// author attached (L6), and the height only got there through an envelope that
+// had to clear |Δ| > D at admission (§8/§15).
+//
+// So a lagging host carries, at any distance, and reports its real position in
+// sync_state instead.
+func TestHost_HeartbeatAck_CarriesAFloorFarAboveOwnTip(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -348,28 +348,26 @@ func TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach(t *testing.T) {
 	or.setHash([]byte{0xbb})
 	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or)) // executor(3) = 0
 
-	// A peer host-ack walks the floor up one window at a time, which is the only
-	// way a single host signer may raise it, leaving F(4) = 512 against a host at 1.
+	// A peer host-ack sets F = 10_000 in one step against a host still at 1.
 	const slots = uint64(3)
+	const far = uint64(10_000)
 	top := []byte{0xaa}
-	w := heightsync.DefaultConfirmWindowBlocks
-	d1 := stampedHeartbeatDiff(t, user, 1, 1, w, slots, top)
+	d1 := heartbeatDiff(t, user, 1, 1, 0, slots)
 	d2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{
-		signedAckTx(t, hosts[1], 1, 1, 1, w, top),
-		stampedHeartbeatDiff(t, user, 2, 2, 2*w, slots, top).Txs[0],
+		signedAckTx(t, hosts[1], 1, 1, 1, far, top),
+		heartbeatDiff(t, user, 2, 2, 0, slots).Txs[0],
 	})
-	d3 := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{
-		signedAckTx(t, hosts[1], 2, 2, 1, 2*w, top),
-		stampedHeartbeatDiff(t, user, 3, 3, 3*w, slots, top).Txs[0],
-	})
+	// The soliciting heartbeat carries F, as §10.3.1 requires of a user stamp, so
+	// the host is asked to ack a height 10_000 blocks above anything it has seen.
+	d3 := stampedHeartbeatDiff(t, user, 3, 3, far, slots, top)
 	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3}})
 	require.NoError(t, err)
 
 	acks := mempoolHeightAcks(resp.Mempool)
-	require.Len(t, acks, 1, "the ack is still owed: silence is worse for the roster")
+	require.Len(t, acks, 1)
 	require.Equal(t, uint64(3), acks[0].RefNonce)
-	require.Zero(t, acks[0].ObservedHeight, "a floor this far above own tip is declined, not carried")
-	require.Empty(t, acks[0].ObservedBlockHash, "absence is keyed on the hash")
+	require.Equal(t, far, acks[0].ObservedHeight, "the floor is carried however far above own tip 1 it is")
+	require.Equal(t, top, acks[0].ObservedBlockHash, "the carried pair is the floor's, not the host's")
 	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].SyncState,
 		"the host's real position still reaches the gateway through the label")
 }

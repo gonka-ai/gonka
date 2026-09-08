@@ -67,15 +67,17 @@ render endpoints \
     VERSIOND_ROUTER_VERSION_CAPACITY=2 2>"$tmpdir/endpoints.err"
 grep -q 'explicit list of 3 endpoint(s)' "$tmpdir/endpoints.err" || \
     fail "endpoint mode did not report its membership"
-! pool_servers endpoints | grep -q 'server-template' || \
+# Pipeline assertions must read all input: grep -q can close the pipe early,
+# giving a producer SIGPIPE and failing pipefail even when the match exists.
+! pool_servers endpoints | grep 'server-template' >/dev/null || \
     fail "endpoint mode still renders a DNS server-template"
-pool_servers endpoints | grep -q '^ *server versiond1 versiond:8080 .*resolvers docker init-addr none' || \
+pool_servers endpoints | grep '^ *server versiond1 versiond:8080 .*resolvers docker init-addr none' >/dev/null || \
     fail "a named endpoint must keep re-resolving through the Docker resolver"
-pool_servers endpoints | grep -q '^ *server versiond2 10.20.0.12:18080 check inter 1s fall 1 rise 2 init-state fully-down hash-key addr' || \
+pool_servers endpoints | grep '^ *server versiond2 10.20.0.12:18080 check inter 1s fall 1 rise 2 init-state fully-down hash-key addr' >/dev/null || \
     fail "an explicit port was not rendered"
-! pool_servers endpoints | grep '10.20.0.12' | grep -q resolvers || \
+! pool_servers endpoints | grep '10.20.0.12' | grep resolvers >/dev/null || \
     fail "an IPv4 literal must not carry resolver options"
-pool_servers endpoints | grep -q '^ *server versiond3 10.20.0.13:8080 ' || \
+pool_servers endpoints | grep '^ *server versiond3 10.20.0.13:8080 ' >/dev/null || \
     fail "VERSIOND_PORT was not applied as the default endpoint port"
 # Every HA backend (coarse, two static versions, two dynamic slots) lists all
 # three members; the legacy backend lists only the owner.
@@ -84,10 +86,10 @@ pool_servers endpoints | grep -q '^ *server versiond3 10.20.0.13:8080 ' || \
 [[ $(grep -c '^backend versiond_legacy_v1' "$tmpdir/endpoints.cfg") -eq 1 ]] || \
     fail "legacy backend is missing"
 sed -n '/^backend versiond_legacy_v1/,/^backend /p' "$tmpdir/endpoints.cfg" | \
-    grep -q '^ *server versiond1 versiond:8080 ' || \
+    grep '^ *server versiond1 versiond:8080 ' >/dev/null || \
     fail "legacy backend must resolve VERSIOND_LEGACY_HOST through the endpoint list"
 ! sed -n '/^backend versiond_legacy_v1/,/^backend /p' "$tmpdir/endpoints.cfg" | \
-    grep -q '10.20.0' || fail "legacy backend must list only the owner"
+    grep '10.20.0' >/dev/null || fail "legacy backend must list only the owner"
 grep -q '^ *server versiond1 .* disabled$' "$tmpdir/endpoints.cfg" || \
     fail "dynamic slots must start disabled in endpoint mode"
 
@@ -97,7 +99,7 @@ render legacy-dns \
     VERSIOND_LEGACY_HOST=versiond-old \
     VERSIOND_POOL_ENDPOINTS_FILE="$tmpdir/endpoints.json" 2>/dev/null
 sed -n '/^backend versiond_legacy_v1/,/^backend /p' "$tmpdir/legacy-dns.cfg" | \
-    grep -q '^ *server-template versiond 1 versiond-old:8080 ' || \
+    grep '^ *server-template versiond 1 versiond-old:8080 ' >/dev/null || \
     fail "an unlisted legacy owner must fall back to its DNS name"
 
 # Legacy VERSIOND_HOSTS renders the same explicit list, with optional ports.
@@ -106,9 +108,9 @@ render hosts \
     VERSIOND_HOSTS="versiond versiond2:18080" 2>"$tmpdir/hosts.err"
 grep -q 'VERSIOND_HOSTS is a legacy setting' "$tmpdir/hosts.err" || \
     fail "legacy VERSIOND_HOSTS must be reported"
-pool_servers hosts | grep -q '^ *server versiond1 versiond:8080 ' || \
+pool_servers hosts | grep '^ *server versiond1 versiond:8080 ' >/dev/null || \
     fail "VERSIOND_HOSTS entry without a port did not get VERSIOND_PORT"
-pool_servers hosts | grep -q '^ *server versiond2 versiond2:18080 ' || \
+pool_servers hosts | grep '^ *server versiond2 versiond2:18080 ' >/dev/null || \
     fail "VERSIOND_HOSTS host:port entry was not rendered"
 
 # An endpoint file wins over VERSIOND_HOSTS.
@@ -121,9 +123,9 @@ render precedence \
 
 # DNS discovery is unchanged when neither explicit form is set.
 render dns GONKA_HA=true VERSIOND_VERSIONS=v4 2>/dev/null
-pool_servers dns | grep -q '^ *server-template versiond 64 versiond-pool:8080 .*resolvers docker init-addr none' || \
+pool_servers dns | grep '^ *server-template versiond 64 versiond-pool:8080 .*resolvers docker init-addr none' >/dev/null || \
     fail "DNS mode no longer renders the pool server-template"
-! pool_servers dns | grep -q '^ *server versiond1 ' || \
+! pool_servers dns | grep '^ *server versiond1 ' >/dev/null || \
     fail "DNS mode must not render explicit servers"
 
 # Rejected inputs.

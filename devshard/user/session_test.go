@@ -369,7 +369,10 @@ func TestUser_PendingTxDedup(t *testing.T) {
 }
 
 func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
-	session := &Session{pendingTxKeys: make(map[string]struct{})}
+	session := &Session{
+		pendingTxKeys: make(map[string]struct{}),
+		appliedTxKeys: make(map[string]struct{}),
+	}
 
 	keyed := []struct {
 		name string
@@ -414,7 +417,7 @@ func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 		{
 			name: "height_ack",
 			tx: &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
-				HeightAck: &types.MsgHeightAck{TurnSeq: 5, SlotId: 2},
+				HeightAck: &types.MsgHeightAck{RefNonce: 5, SlotId: 2},
 			}},
 			key: "height_ack:5:2",
 		},
@@ -429,27 +432,38 @@ func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 			session.addPendingTx(tc.tx)
 			require.Len(t, session.PendingTxs(), before+1,
 				"same host-proposed tx key must not be queued twice")
+
+			// Draining the queue without applying anything must release the
+			// key, so an honest tx is not shadowed by one that never landed.
 			session.clearPendingTxs()
 			session.addPendingTx(tc.tx)
+			require.Len(t, session.PendingTxs(), 1,
+				"a key that never applied must be reusable")
+
+			// Once it applies, the key is retained and later mempool copies
+			// from other hosts are ignored.
+			session.retainPendingLocked(nil, []*types.DevshardTx{tc.tx})
+			session.addPendingTx(tc.tx)
 			require.Empty(t, session.PendingTxs(),
-				"clearing applied pending txs preserves the dedup key")
+				"an applied tx must not be re-queued from another host mempool")
+			session.clearPendingTxs()
 		})
 	}
 
 	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
-		HeightAck: &types.MsgHeightAck{TurnSeq: 5, SlotId: 3},
+		HeightAck: &types.MsgHeightAck{RefNonce: 5, SlotId: 3},
 	}})
 	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
-		HeightAck: &types.MsgHeightAck{TurnSeq: 6, SlotId: 2},
+		HeightAck: &types.MsgHeightAck{RefNonce: 6, SlotId: 2},
 	}})
 	require.Len(t, session.PendingTxs(), 2,
-		"height ack dedup identity is turn_seq plus slot")
+		"height ack dedup identity is ref_nonce plus slot")
 
 	unkeyedStart := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{
 		StartInference: &types.MsgStartInference{InferenceId: 7},
 	}}
 	unkeyedHeartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{
-		Heartbeat: &types.MsgHeartbeat{TurnSeq: 5, SlotsNum: 3},
+		Heartbeat: &types.MsgHeartbeat{SlotsNum: 3},
 	}}
 	require.Empty(t, devshardTxKey(unkeyedStart))
 	require.Empty(t, devshardTxKey(unkeyedHeartbeat))
@@ -460,6 +474,561 @@ func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 	session.addPendingTx(unkeyedHeartbeat)
 	require.Len(t, session.PendingTxs(), before+4,
 		"user-authored/unkeyed txs are outside host-proposed pending dedup")
+}
+
+func TestHostMayProposeTx(t *testing.T) {
+	require.False(t, hostMayProposeTx(nil))
+	require.False(t, hostMayProposeTx(&types.DevshardTx{}))
+	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_StartInference{
+		StartInference: &types.MsgStartInference{InferenceId: 2},
+	}}))
+	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{
+		TimeoutInference: &types.MsgTimeoutInference{InferenceId: 1},
+	}}))
+	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_FinalizeRound{
+		FinalizeRound: &types.MsgFinalizeRound{},
+	}}))
+	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{
+		Heartbeat: &types.MsgHeartbeat{},
+	}}))
+	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_ForceHeightSyncTurn{
+		ForceHeightSyncTurn: &types.MsgForceHeightSyncTurn{TriggerNonce: 1},
+	}}))
+	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_ErrorMiss{
+		ErrorMiss: &types.MsgErrorMiss{InferenceId: 1},
+	}}))
+	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{}}),
+		"nil inner Finish must not pass the allowlist")
+	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
+		FinishInference: &types.MsgFinishInference{InferenceId: 1},
+	}}))
+	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
+		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1},
+	}}))
+	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_Validation{
+		Validation: &types.MsgValidation{InferenceId: 1, ValidatorSlot: 2},
+	}}))
+	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{
+		ValidationVote: &types.MsgValidationVote{InferenceId: 1, VoterSlot: 2},
+	}}))
+	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
+		HeightAck: &types.MsgHeightAck{RefNonce: 1, SlotId: 0},
+	}}))
+}
+
+func TestDevshardTxKey_NilInnerDoesNotPanic(t *testing.T) {
+	require.Empty(t, devshardTxKey(nil))
+	require.Empty(t, devshardTxKey(&types.DevshardTx{}))
+	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{}}))
+	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{}}))
+	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_Validation{}}))
+	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{}}))
+	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_RevealSeed{}}))
+	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{}}))
+	require.Equal(t, "finish:7", devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
+		FinishInference: &types.MsgFinishInference{InferenceId: 7},
+	}}))
+}
+
+func TestProcessResponse_DropsUserProposedMempoolTxs(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	_, err := session.SendInference(ctx, params)
+	require.NoError(t, err)
+
+	injectedStart := injectedStartTx(2)
+	injectedTimeout := &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{
+		TimeoutInference: &types.MsgTimeoutInference{InferenceId: 1},
+	}}
+	injectedFinalize := &types.DevshardTx{Tx: &types.DevshardTx_FinalizeRound{
+		FinalizeRound: &types.MsgFinalizeRound{},
+	}}
+	honestAck := &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
+		HeightAck: &types.MsgHeightAck{RefNonce: 1, SlotId: 0},
+	}}
+
+	err = session.ProcessResponse(0, &host.HostResponse{
+		Nonce: session.Nonce(),
+		Mempool: []*types.DevshardTx{
+			injectedStart, injectedTimeout, injectedFinalize, honestAck,
+		},
+	}, 1)
+	require.NoError(t, err)
+
+	pending := session.PendingTxs()
+	require.Nil(t, findPendingStart(pending, 2), "host Mempool Start must not be queued")
+	require.Nil(t, findPendingTimeout(pending, 1), "host Mempool Timeout must not be queued")
+	require.Nil(t, findPendingFinalize(pending), "host Mempool Finalize must not be queued")
+	require.NotNil(t, findPendingHeightAck(pending, 1, 0), "host-proposed HeightAck must still queue")
+	require.Equal(t, types.PhaseActive, session.StateMachine().SnapshotState().Phase)
+}
+
+// TestSendInference_HostInjectedStartIsDropped is the attack-shaped fixture:
+// the selected participant returns a valid nonce-1 receipt/Finish and also
+// appends an unsigned Start(2) to the same Mempool. The gateway must keep
+// Confirm/Finish and drop Start so ordinary Finalize cannot reserve attacker
+// cost on nonce 2.
+func TestSendInference_HostInjectedStartIsDropped(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 8_000_000_000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+
+	execIdx := 1 // nonce 1 % 3
+	wrapHostWithMempoolInjection(session, execIdx, []*types.DevshardTx{
+		injectedStartTx(2),
+		{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{InferenceId: 1}}},
+		{Tx: &types.DevshardTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}},
+	})
+
+	resp, err := session.SendInference(ctx, params)
+	require.NoError(t, err)
+	require.NotNil(t, findPendingStart(resp.Mempool, 2), "fixture must place Start2 on the host response")
+	require.NotNil(t, findPendingFinalize(resp.Mempool), "fixture must place Finalize on the host response")
+	require.True(t, HasMsgFinish(resp.Mempool, 1), "honest Finish1 must still be on the response")
+
+	pending := session.PendingTxs()
+	require.Nil(t, findPendingStart(pending, 2), "injected Start2 must not enter pending")
+	require.Nil(t, findPendingTimeout(pending, 1), "injected Timeout must not enter pending")
+	require.Nil(t, findPendingFinalize(pending), "injected Finalize must not enter pending")
+	require.NotNil(t, findRecoveryFinish(pending, 1), "host Finish1 must still be queued")
+	require.Equal(t, types.PhaseActive, session.StateMachine().SnapshotState().Phase)
+	_, hasInjected := session.StateMachine().Inference(2)
+	require.False(t, hasInjected)
+
+	require.NoError(t, session.Finalize(ctx))
+	requireNoInjectedStartInDiffs(t, session, 1)
+	_, hasInjected = session.StateMachine().Inference(2)
+	require.False(t, hasInjected, "injected Start must not create an inference record")
+	st := session.StateMachine().SnapshotState()
+	for slot, hs := range st.HostStats {
+		require.Less(t, hs.Cost, uint64(799_999_800),
+			"slot %d must not be paid the injected reservation", slot)
+	}
+}
+
+func TestSendInference_HostInjectedStartDoesNotBlockNextUserInference(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 8_000_000_000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+
+	wrapHostWithMempoolInjection(session, 1, []*types.DevshardTx{injectedStartTx(2)})
+	resp, err := session.SendInference(ctx, params)
+	require.NoError(t, err)
+	require.NotNil(t, findPendingStart(resp.Mempool, 2))
+	require.Nil(t, findPendingStart(session.PendingTxs(), 2))
+
+	resp2, err := session.SendInference(ctx, params)
+	require.NoError(t, err, "dropped Start2 must not make the next user Start fail compose")
+	require.Equal(t, uint64(2), resp2.Nonce)
+
+	rec, ok := session.StateMachine().Inference(2)
+	require.True(t, ok, "nonce 2 must be the creator's next inference")
+	require.Equal(t, uint64(testutil.TestMaxTokens), rec.MaxTokens, "nonce 2 must use creator params, not the injected reservation")
+	require.Equal(t, uint64(100+testutil.TestMaxTokens), rec.ReservedCost)
+
+	foundUserStart2 := false
+	for _, d := range session.Diffs() {
+		for _, tx := range d.Txs {
+			start := tx.GetStartInference()
+			if start == nil || start.InferenceId != 2 {
+				continue
+			}
+			foundUserStart2 = true
+			require.Equal(t, uint64(testutil.TestMaxTokens), start.MaxTokens)
+		}
+	}
+	require.True(t, foundUserStart2, "creator Start2 must be in a signed Diff")
+}
+
+func TestProcessResponse_InjectedStartDoesNotReserveOnFinalize(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 8_000_000_000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	_, err := session.SendInference(ctx, params)
+	require.NoError(t, err)
+
+	err = session.ProcessResponse(1, &host.HostResponse{
+		Nonce:   session.Nonce(),
+		Mempool: []*types.DevshardTx{injectedStartTx(2)},
+	}, 1)
+	require.NoError(t, err)
+	require.Nil(t, findPendingStart(session.PendingTxs(), 2))
+
+	require.NoError(t, session.Finalize(ctx))
+	requireNoInjectedStartInDiffs(t, session, 1)
+	_, hasInjected := session.StateMachine().Inference(2)
+	require.False(t, hasInjected, "injected Start must not create an inference record")
+}
+
+// TestProcessResponse_ForgedConfirmDoesNotShadowHonestConfirm covers the dedup
+// half of the injection surface. A dedup key is claimed at enqueue time, so a
+// host that races in a bogus ConfirmStart used to burn confirm:<id> for the
+// lifetime of the session: the tx failed to apply and was discarded, but its
+// key survived and silently dropped the executor's real ConfirmStart, leaving
+// the inference unconfirmable and settling it at full reserved cost. Keys are
+// now retained only for txs that actually applied.
+func TestProcessResponse_ForgedConfirmDoesNotShadowHonestConfirm(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+	nonce := prepared.diff.Nonce
+	execIdx := int(nonce % uint64(len(session.clients)))
+	execHost := session.clients[execIdx].(*InProcessClient).Host
+
+	_, _, err = execHost.ChallengeReceipt(ctx, nonce, &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}, []types.Diff{prepared.diff})
+	require.NoError(t, err)
+
+	var honestConfirm *types.DevshardTx
+	for _, tx := range execHost.MempoolTxs() {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == nonce {
+			honestConfirm = tx
+			break
+		}
+	}
+	require.NotNil(t, honestConfirm, "fixture must produce the executor's ConfirmStart")
+
+	forged := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: nonce,
+		ExecutorSig: []byte("not-a-signature"),
+		ConfirmedAt: 1000,
+	}}}
+
+	// A non-executor host wins the race to confirm:<id>.
+	nonExecIdx := (execIdx + 1) % len(session.clients)
+	require.NoError(t, session.ProcessResponse(nonExecIdx, &host.HostResponse{
+		Nonce:   nonce,
+		Mempool: []*types.DevshardTx{forged},
+	}, nonce))
+	require.NotNil(t, findPendingConfirm(session.PendingTxs(), nonce),
+		"fixture must queue the forged ConfirmStart")
+
+	require.NoError(t, session.SendPendingDiff(ctx))
+	require.Nil(t, findPendingConfirm(session.PendingTxs(), nonce),
+		"forged ConfirmStart must be dropped by best-effort apply")
+	rec, ok := session.StateMachine().Inference(nonce)
+	require.True(t, ok)
+	require.NotEqual(t, types.StatusStarted, rec.Status,
+		"forged ConfirmStart must not start the inference")
+
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
+		Nonce:   session.Nonce(),
+		Mempool: []*types.DevshardTx{honestConfirm},
+	}, nonce))
+	require.NotNil(t, findPendingConfirm(session.PendingTxs(), nonce),
+		"executor ConfirmStart must not be shadowed by the failed forgery")
+
+	require.NoError(t, session.SendPendingDiff(ctx))
+	rec, ok = session.StateMachine().Inference(nonce)
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status,
+		"honest ConfirmStart must still be able to start the inference")
+}
+
+// TestProcessResponse_AppliedConfirmIsNotRequeued is the counterpart: once a tx
+// actually lands in a diff, another host's mempool copy must stay out.
+func TestProcessResponse_AppliedConfirmIsNotRequeued(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+	nonce := prepared.diff.Nonce
+	execIdx := int(nonce % uint64(len(session.clients)))
+	execHost := session.clients[execIdx].(*InProcessClient).Host
+
+	_, _, err = execHost.ChallengeReceipt(ctx, nonce, &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}, []types.Diff{prepared.diff})
+	require.NoError(t, err)
+
+	var honestConfirm *types.DevshardTx
+	for _, tx := range execHost.MempoolTxs() {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == nonce {
+			honestConfirm = tx
+			break
+		}
+	}
+	require.NotNil(t, honestConfirm)
+
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
+		Nonce: nonce, Mempool: []*types.DevshardTx{honestConfirm},
+	}, nonce))
+	require.NoError(t, session.SendPendingDiff(ctx))
+	rec, ok := session.StateMachine().Inference(nonce)
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+
+	require.NoError(t, session.ProcessResponse((execIdx+1)%len(session.clients), &host.HostResponse{
+		Nonce: session.Nonce(), Mempool: []*types.DevshardTx{honestConfirm},
+	}, nonce))
+	require.Nil(t, findPendingConfirm(session.PendingTxs(), nonce),
+		"a ConfirmStart already in a diff must not be re-queued from another mempool")
+}
+
+// TestProcessResponse_DropsHostTxForUnknownInference pins the admission-time
+// existence check. Confirm, Validation and Vote for an id the sequencer does
+// not track can never apply, so admitting them only buys a signature recovery
+// at compose time -- and, since a failed tx now releases its dedup key, would
+// let a host park unbounded made-up ids in pending and replay them every round.
+func TestProcessResponse_DropsHostTxForUnknownInference(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 100)
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+	nonce := prepared.diff.Nonce
+
+	const unknownID = 4242
+	require.NoError(t, session.ProcessResponse(0, &host.HostResponse{
+		Nonce: nonce,
+		Mempool: []*types.DevshardTx{
+			{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+				InferenceId: unknownID, ExecutorSig: []byte("sig"), ConfirmedAt: 1000,
+			}}},
+			{Tx: &types.DevshardTx_Validation{Validation: &types.MsgValidation{
+				InferenceId: unknownID, ValidatorSlot: 0, Valid: true,
+			}}},
+			{Tx: &types.DevshardTx_ValidationVote{ValidationVote: &types.MsgValidationVote{
+				InferenceId: unknownID, VoterSlot: 0,
+			}}},
+			// Slot-scoped txs carry no inference id and must be unaffected.
+			{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{RefNonce: 1, SlotId: 0}}},
+		},
+	}, nonce))
+
+	pending := session.PendingTxs()
+	require.Nil(t, findPendingConfirm(pending, unknownID),
+		"ConfirmStart for an unknown inference must not queue")
+	for _, tx := range pending {
+		if v := tx.GetValidation(); v != nil {
+			require.NotEqual(t, uint64(unknownID), v.InferenceId,
+				"Validation for an unknown inference must not queue")
+		}
+		if v := tx.GetValidationVote(); v != nil {
+			require.NotEqual(t, uint64(unknownID), v.InferenceId,
+				"ValidationVote for an unknown inference must not queue")
+		}
+	}
+	require.NotNil(t, findPendingHeightAck(pending, 1, 0),
+		"slot-scoped HeightAck must still queue")
+}
+
+func TestProcessResponse_DropsFinishNotSignedByExecutor(t *testing.T) {
+	session, hosts, _ := setupSession(t, 3, 100000, 100)
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+	nonce := prepared.diff.Nonce
+	execIdx := int(nonce % uint64(len(session.group)))
+
+	unsigned := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
+		FinishInference: &types.MsgFinishInference{
+			InferenceId: nonce, ExecutorSlot: uint32(execIdx), EscrowId: "escrow-1",
+		},
+	}}
+	wrongSigner := signedFinishTx(t, hosts, nonce, execIdx, (execIdx+1)%len(hosts))
+	wrongSlot := signedFinishTx(t, hosts, nonce, (execIdx+1)%len(hosts), (execIdx+1)%len(hosts))
+	unknown := signedFinishTx(t, hosts, 99, execIdx, execIdx)
+	valid := signedFinishTx(t, hosts, nonce, execIdx, execIdx)
+
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
+		Nonce:   nonce,
+		Mempool: []*types.DevshardTx{unsigned, wrongSigner, wrongSlot, unknown},
+	}, nonce))
+	require.Nil(t, findRecoveryFinish(session.PendingTxs(), nonce), "unsigned or wrong-executor Finish must not queue")
+	require.Nil(t, findRecoveryFinish(session.PendingTxs(), 99), "Finish for an unknown inference must not queue")
+
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
+		Nonce:   nonce,
+		Mempool: []*types.DevshardTx{valid},
+	}, nonce))
+	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), nonce), "executor-signed Finish must queue")
+}
+
+func TestHandleTimeout_RecoveryDropsInjectedStartAndUnsignedFinish(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+	nonce := prepared.diff.Nonce
+	execIdx := int(nonce % uint64(len(session.clients)))
+	execHost := session.clients[execIdx].(*InProcessClient).Host
+
+	payload := &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}
+	receipt, _, err := execHost.ChallengeReceipt(ctx, nonce, payload, []types.Diff{prepared.diff})
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt)
+
+	var confirmTx *types.DevshardTx
+	for _, tx := range execHost.MempoolTxs() {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == nonce {
+			confirmTx = tx
+			break
+		}
+	}
+	require.NotNil(t, confirmTx)
+
+	unsignedFinish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
+		FinishInference: &types.MsgFinishInference{
+			InferenceId: nonce, ExecutorSlot: uint32(execIdx), EscrowId: "escrow-1",
+		},
+	}}
+	injected := []*types.DevshardTx{confirmTx, unsignedFinish, injectedStartTx(2)}
+	for i, c := range session.clients {
+		session.clients[i] = &timeoutRecoveryClient{HostClient: c, mempool: injected}
+	}
+
+	_, err = session.HandleTimeout(ctx, nonce, time.Unix(0, 0), payload)
+	require.NoError(t, err, "valid ConfirmStart recovery must still publish")
+
+	rec, ok := session.StateMachine().SnapshotState().Inferences[nonce]
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+	_, hasInjected := session.StateMachine().Inference(2)
+	require.False(t, hasInjected)
+	require.Nil(t, findPendingStart(session.PendingTxs(), 2))
+	requireNoInjectedStartInDiffs(t, session, nonce)
+	for _, d := range session.Diffs() {
+		for _, tx := range d.Txs {
+			require.Nil(t, tx.GetFinishInference(), "unsigned recovery Finish must not land in a Diff")
+		}
+	}
+}
+
+func injectedStartTx(inferenceID uint64) *types.DevshardTx {
+	return &types.DevshardTx{Tx: &types.DevshardTx_StartInference{
+		StartInference: &types.MsgStartInference{
+			InferenceId: inferenceID, Model: "llama", InputLength: 100, MaxTokens: 799_999_800,
+		},
+	}}
+}
+
+type mempoolInjectingClient struct {
+	HostClient
+	extra []*types.DevshardTx
+}
+
+func wrapHostWithMempoolInjection(session *Session, hostIdx int, extra []*types.DevshardTx) {
+	session.clients[hostIdx] = &mempoolInjectingClient{HostClient: session.clients[hostIdx], extra: extra}
+}
+
+func (c *mempoolInjectingClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	resp, err := c.HostClient.Send(ctx, req, stream, receiptHandler)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	cloned := make([]*types.DevshardTx, len(resp.Mempool), len(resp.Mempool)+len(c.extra))
+	copy(cloned, resp.Mempool)
+	resp.Mempool = append(cloned, c.extra...)
+	return resp, nil
+}
+
+func (c *mempoolInjectingClient) GetSignatures(ctx context.Context, nonce uint64) (map[uint32][]byte, error) {
+	if f, ok := c.HostClient.(SignatureFetcher); ok {
+		return f.GetSignatures(ctx, nonce)
+	}
+	return nil, fmt.Errorf("inner client has no signatures")
+}
+
+func requireNoInjectedStartInDiffs(t *testing.T, session *Session, creatorStartID uint64) {
+	t.Helper()
+	for _, d := range session.Diffs() {
+		for _, tx := range d.Txs {
+			start := tx.GetStartInference()
+			if start == nil {
+				continue
+			}
+			require.Equal(t, creatorStartID, start.InferenceId, "only the creator-composed Start may land in a Diff")
+		}
+	}
+}
+
+func findPendingStart(txs []*types.DevshardTx, inferenceID uint64) *types.MsgStartInference {
+	for _, tx := range txs {
+		if start := tx.GetStartInference(); start != nil && start.InferenceId == inferenceID {
+			return start
+		}
+	}
+	return nil
+}
+
+func findPendingFinalize(txs []*types.DevshardTx) *types.MsgFinalizeRound {
+	for _, tx := range txs {
+		if fin := tx.GetFinalizeRound(); fin != nil {
+			return fin
+		}
+	}
+	return nil
+}
+
+func findPendingHeightAck(txs []*types.DevshardTx, refNonce uint64, slotID uint32) *types.MsgHeightAck {
+	for _, tx := range txs {
+		ack := tx.GetHeightAck()
+		if ack != nil && ack.RefNonce == refNonce && ack.SlotId == slotID {
+			return ack
+		}
+	}
+	return nil
+}
+
+func signedFinishTx(t *testing.T, hosts []*signing.Secp256k1Signer, nonce uint64, executorSlot, signerIdx int) *types.DevshardTx {
+	t.Helper()
+	msg := &types.MsgFinishInference{
+		InferenceId:  nonce,
+		ResponseHash: []byte("hash"),
+		InputTokens:  80,
+		OutputTokens: 40,
+		ExecutorSlot: uint32(executorSlot),
+		EscrowId:     "escrow-1",
+	}
+	msg.ProposerSig = testutil.SignProposerTx(t, hosts[signerIdx], msg)
+	return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: msg}}
 }
 
 func TestProcessResponse_NilReturnsNamedError(t *testing.T) {
@@ -1774,6 +2343,15 @@ func findRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *type
 func findRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 	for _, tx := range txs {
 		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+func findPendingConfirm(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
 			return tx
 		}
 	}

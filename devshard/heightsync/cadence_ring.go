@@ -26,7 +26,7 @@ const DefaultCadenceRingCapacity = 64
 type CadenceEvent struct {
 	At                 time.Time        `json:"at"`
 	Event              CadenceEventKind `json:"event"`
-	TurnSeq            uint64           `json:"turn_seq"`
+	TurnStart          uint64           `json:"turn_start"`
 	HRef               uint64           `json:"h_ref"`
 	Span               int              `json:"span"`
 	SlotsAcked         int              `json:"slots_acked"`
@@ -42,7 +42,7 @@ func (e CadenceEvent) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		At                 time.Time        `json:"at"`
 		Event              CadenceEventKind `json:"event"`
-		TurnSeq            uint64           `json:"turn_seq"`
+		TurnStart          uint64           `json:"turn_start"`
 		HRef               uint64           `json:"h_ref"`
 		Span               int              `json:"span"`
 		SlotsAcked         int              `json:"slots_acked"`
@@ -51,7 +51,7 @@ func (e CadenceEvent) MarshalJSON() ([]byte, error) {
 		DurationToTurnover int64            `json:"duration_to_turnover"`
 		Reason             string           `json:"reason,omitempty"`
 	}{
-		At: e.At, Event: e.Event, TurnSeq: e.TurnSeq, HRef: e.HRef,
+		At: e.At, Event: e.Event, TurnStart: e.TurnStart, HRef: e.HRef,
 		Span: e.Span, SlotsAcked: e.SlotsAcked, Quorum: e.Quorum,
 		Outcome: e.Outcome, DurationToTurnover: e.DurationToTurnover.Milliseconds(),
 		Reason: e.Reason,
@@ -123,7 +123,7 @@ func logCadence(ev CadenceEvent) {
 	kvs := []any{
 		LogFieldSubsystem, "heightsync",
 		LogFieldEvent, string(ev.Event),
-		LogFieldTurnSeq, ev.TurnSeq,
+		LogFieldTurnStart, ev.TurnStart,
 		LogFieldHeight, ev.HRef,
 		"span", ev.Span,
 		"slots_acked", ev.SlotsAcked,

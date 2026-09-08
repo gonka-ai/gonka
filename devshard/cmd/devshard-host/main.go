@@ -88,9 +88,8 @@ func main() {
 	}
 }
 
-// registerLiveness mounts GET /{version}/healthz for the gateway catalog
-// wait (same public path as versiond / the versiond-router). GET /health
-// is the container start probe and is not catalog admission.
+// registerLiveness mounts the public gateway catalog probe and its internal
+// router form. GET /health is the container start probe, not catalog admission.
 func registerLiveness(e *echo.Echo, version string) {
 	ok := func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
@@ -98,6 +97,7 @@ func registerLiveness(e *echo.Echo, version string) {
 	e.GET("/health", ok)
 	version = strings.Trim(strings.TrimSpace(version), "/")
 	if version != "" {
+		e.GET(devshardpkg.VersionedRoutePrefix(version)+"/healthz", ok)
 		e.GET("/"+version+"/healthz", ok)
 	}
 }
@@ -361,8 +361,7 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 		// A rejected blob degrades to a journal replay; if that cannot run
 		// either, RestoreStateWithFloor fails closed rather than serving L0
 		// from a floor we could not verify.
-		floor, floorErr := heightsync.FloorIndexFromProto(
-			heightsync.FloorConfigFor(len(snapState.Group), sm.HeartbeatConfig()), floorProto)
+		floor, floorErr := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, floorProto)
 		if floorErr != nil {
 			log.Printf("recover_host escrow=%s snapshot_nonce=%d floor_blob_rejected=%v (rebuilding from diffs)",
 				escrowID, snapNonce, floorErr)
