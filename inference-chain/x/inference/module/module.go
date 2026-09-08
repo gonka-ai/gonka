@@ -33,6 +33,7 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/testenv"
 	"github.com/productscience/inference/x/inference/calculations"
+	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
@@ -536,6 +537,14 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to initialize epoch sub-groups", types.EpochGroup, "error", err.Error())
 			return err
 		}
+		frozenCoefficients, err := coefficient.Freeze(params.PocParams)
+		if err != nil {
+			am.LogError("Unable to freeze dynamic coefficient config", types.PoC, "error", err.Error())
+			return err
+		}
+		newGroup.GroupData.DynamicCoefficientParams = frozenCoefficients.Params
+		newGroup.GroupData.ConfirmationWeightScales = frozenCoefficients.Scales
+		am.keeper.SetEpochGroupData(ctx, *newGroup.GroupData)
 
 		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
 		preservedSnapshot, err := modelAssigner.SamplePreservedForEpisode(ctx, *currentEpoch, upcomingEpoch.PocStartBlockHeight)
@@ -675,14 +684,18 @@ func (am AppModule) runWeightPipeline(
 	params types.Params,
 	upcomingEpoch types.Epoch,
 	previous *previousConfirmedWeights,
-) weightPipelineResult {
-	participation := am.prepareEpochParticipationState(
+) (weightPipelineResult, error) {
+	participation, err := am.prepareEpochParticipationState(
 		ctx,
 		participants,
 		params,
 		upcomingEpoch.PocStartBlockHeight,
+		upcomingEpoch.Index,
 		previous,
 	)
+	if err != nil {
+		return weightPipelineResult{}, err
+	}
 	consensusWeights, groupSummaries := participation.calculator.ComputeConsensusWeights(participation.eligibleModels)
 	for _, participant := range participants {
 		participant.Weight = consensusWeights[participant.Index]
@@ -735,7 +748,7 @@ func (am AppModule) runWeightPipeline(
 		rewardTransfers:    rewardTransfers.Records(),
 		beforeCollateral:   beforeCollateral,
 		collateralErr:      collateralErr,
-	}
+	}, nil
 }
 
 // onEndOfPoCValidationStage handles all epoch formation logic at the end of PoC validation.
@@ -837,7 +850,10 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	if !usedFallback {
 		pipelinePrevious = zeroFailedMissRateWeights(previous, failedMissRate)
 	}
-	pipeline := am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, pipelinePrevious)
+	pipeline, err := am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, pipelinePrevious)
+	if err != nil {
+		return fmt.Errorf("run weight pipeline: %w", err)
+	}
 	fallbackReason := ""
 	if usedFallback {
 		fallbackReason = "no_fresh_poc_node"
@@ -853,7 +869,10 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 			return fmt.Errorf("no eligible fallback participants for upcoming epoch %d", upcomingEpoch.Index)
 		}
 		pipelinePrevious = previous
-		pipeline = am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, pipelinePrevious)
+		pipeline, err = am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, pipelinePrevious)
+		if err != nil {
+			return fmt.Errorf("run fallback weight pipeline: %w", err)
+		}
 		if !hasPositiveWeight(pipeline.participants) {
 			return fmt.Errorf("epoch %d fallback participants have no positive final weight", upcomingEpoch.Index)
 		}
@@ -888,7 +907,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	confirmationWeightScales := buildConfirmationWeightScales(
 		participationState.eligibleModels,
 		activeParticipants,
-		params.PocParams,
+		participationState.coefficients,
 	)
 
 	emitWeightPipelineLogs(am, upcomingEpoch.Index, pipeline.groupSummaries,
