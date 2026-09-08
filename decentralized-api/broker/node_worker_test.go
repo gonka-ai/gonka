@@ -7,6 +7,7 @@ import (
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -837,6 +838,155 @@ func TestNodeWorker_ShutdownIdempotent(t *testing.T) {
 			return NodeResult{Succeeded: true}
 		},
 	}))
+}
+
+func TestNodeWorker_ConcurrentSubmitAndShutdown(t *testing.T) {
+	const (
+		rounds           = 25
+		submitters       = 8
+		submitsPerWorker = 32
+		brokerQueueCap   = 4096
+		shutdownTimeout  = 2 * time.Second
+	)
+
+	waitFor := func(round int, what string, fn func()) {
+		t.Helper()
+		done := make(chan struct{})
+		go func() {
+			fn()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(shutdownTimeout):
+			t.Fatalf("round %d: %s did not terminate", round, what)
+		}
+	}
+
+	for round := 0; round < rounds; round++ {
+		broker := NewTestBroker2(brokerQueueCap)
+
+		// Idle worker: reconcile-style Submit racing with RemoveWorker/Shutdown.
+		idleNode := createTestNode("idle")
+		idle := NewNodeWorkerWithClient("idle", idleNode, mlnodeclient.NewMockClient(), broker)
+		idleGroup := NewNodeWorkGroup()
+		require.True(t, idleGroup.AddWorker("idle", idle))
+
+		idleStart := make(chan struct{})
+		var idleSubmittersWg sync.WaitGroup
+		idleSubmittersWg.Add(submitters)
+		for i := 0; i < submitters; i++ {
+			go func() {
+				defer idleSubmittersWg.Done()
+				<-idleStart
+				for j := 0; j < submitsPerWorker; j++ {
+					idle.Submit(context.Background(), &TestCommand{
+						ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+							return NodeResult{Succeeded: true}
+						},
+					})
+				}
+			}()
+		}
+		var idleShutdownersWg sync.WaitGroup
+		idleShutdownersWg.Add(2)
+		go func() {
+			defer idleShutdownersWg.Done()
+			<-idleStart
+			idleGroup.RemoveWorker("idle")
+		}()
+		go func() {
+			defer idleShutdownersWg.Done()
+			<-idleStart
+			idle.Shutdown()
+		}()
+		close(idleStart)
+		waitFor(round, "idle submitters", idleSubmittersWg.Wait)
+		waitFor(round, "idle RemoveWorker/Shutdown", idleShutdownersWg.Wait)
+		require.False(t, idle.Submit(context.Background(), &TestCommand{
+			ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+				t.Error("command must not execute after shutdown")
+				return NodeResult{Succeeded: true}
+			},
+		}), "round %d: Submit after idle shutdown must be rejected", round)
+
+		// Busy worker: in-flight Execute holds the run loop. After
+		// RemoveWorker returns, stopping is set and the queue is drained.
+		// Releasing in-flight must not let those queued commands start.
+		node := createTestNode("n1")
+		worker := NewNodeWorkerWithClient("n1", node, mlnodeclient.NewMockClient(), broker)
+		group := NewNodeWorkGroup()
+		require.True(t, group.AddWorker("n1", worker))
+
+		inFlightStarted := make(chan struct{})
+		unblockInFlight := make(chan struct{})
+		require.True(t, worker.Submit(context.Background(), &TestCommand{
+			ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+				close(inFlightStarted)
+				<-unblockInFlight
+				return NodeResult{Succeeded: true}
+			},
+		}))
+		<-inFlightStarted
+
+		var extraExecuted atomic.Int32
+		start := make(chan struct{})
+		var submittersWg sync.WaitGroup
+		submittersWg.Add(submitters)
+		for i := 0; i < submitters; i++ {
+			go func() {
+				defer submittersWg.Done()
+				<-start
+				for j := 0; j < submitsPerWorker; j++ {
+					worker.Submit(context.Background(), &TestCommand{
+						ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+							extraExecuted.Add(1)
+							return NodeResult{Succeeded: true}
+						},
+					})
+				}
+			}()
+		}
+
+		removed := make(chan struct{})
+		go func() {
+			<-start
+			group.RemoveWorker("n1")
+			close(removed)
+		}()
+		shutdownDone := make(chan struct{})
+		go func() {
+			<-start
+			worker.Shutdown()
+			close(shutdownDone)
+		}()
+
+		close(start)
+		select {
+		case <-removed:
+		case <-time.After(shutdownTimeout):
+			t.Fatalf("round %d: RemoveWorker did not terminate", round)
+		}
+		waitFor(round, "submitters", submittersWg.Wait)
+		require.Equal(t, int32(0), extraExecuted.Load(),
+			"round %d: queued command began before in-flight was released", round)
+
+		close(unblockInFlight)
+		select {
+		case <-shutdownDone:
+		case <-time.After(shutdownTimeout):
+			t.Fatalf("round %d: Shutdown did not terminate", round)
+		}
+		require.Equal(t, int32(0), extraExecuted.Load(),
+			"round %d: queued command began after shutdown", round)
+
+		require.False(t, worker.Submit(context.Background(), &TestCommand{
+			ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+				t.Error("command must not execute after shutdown")
+				return NodeResult{Succeeded: true}
+			},
+		}), "round %d: Submit after shutdown must be rejected", round)
+	}
 }
 
 func TestNodeWorker_CheckClientVersionAlive(t *testing.T) {
