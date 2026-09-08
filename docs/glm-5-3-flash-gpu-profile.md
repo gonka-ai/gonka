@@ -2,9 +2,7 @@
 
 This document records the release inputs for
 [`zai-org/GLM-5.3-Flash`](https://huggingface.co/zai-org/GLM-5.3-Flash) at revision
-`04c4e9e95c5da8862dced7e5056455116f83a7e0`, in the same shape as
-[`release-candidate-gpu-profile.md`](release-candidate-gpu-profile.md) does for
-DeepSeek-V4-Flash-0731.
+`04c4e9e95c5da8862dced7e5056455116f83a7e0`.
 
 The model is `Glm5NextForConditionalGeneration` — a KDA linear-attention and NoPE sparse-MLA
 hybrid, FP8 `e4m3` with dynamic activation scaling, 305.8 GiB over 62 shards. It requires
@@ -28,11 +26,7 @@ the research and the reproducible evidence that made this integration possible.
 | `stat_test.p_mismatch` | 0.10 |
 | `stat_test.p_value_threshold` | 0.05 |
 | `Model.validation_threshold` | **0.951** |
-| `ValidationParams.logprobs_mode` | **`raw_logprobs`** — see *Logprobs mode* below |
-
-Both numbers are chosen against measured distributions rather than carried over from another
-model. DeepSeek-V4-Flash-0731 shipped 0.41 / 0.10 / 0.05 with τ = 0.90; GLM-5.3-Flash separates
-differently and needs its own pair.
+| `ValidationParams.logprobs_mode` | `processed_logprobs` — unchanged |
 
 ## PoC gate: why 0.44
 
@@ -75,31 +69,32 @@ replays, 0 length mismatches. Measured `distance2`:
 | mode | honest mean | NVFP4 mean | × floor | best F1 | TP @ FP 5 % |
 |---|---:|---:|---:|---:|---:|
 | processed | 0.024969 | 0.054328 | 2.18× | 0.918 | 88.5 % |
-| **raw** | 0.029738 | 0.076863 | **2.58×** | **0.998** | **99.8 %** |
+| raw | 0.029738 | 0.076863 | 2.58× | 0.998 | 99.8 % |
 
 A `validation_threshold` of τ rejects an answer whose distance reaches 1 − τ. At τ = 0.951
 (cut 0.049), over those same 1000-answer distributions:
 
 | mode | honest rejected | fraud caught |
 |---|---:|---:|
-| **raw** | **0.0 %** | **99.5 %** |
-| processed | 0.5 % | 64.2 % |
+| **processed** | **0.5 %** | **64.2 %** |
+| raw | 0.0 % | 99.5 % |
 
-### Logprobs mode
+The chain runs `processed_logprobs` and this proposal keeps it there. The operating point is
+therefore 0.5 % honest loss for 64.2 % detection of an NVFP4 substitution on a single replay.
+Detection compounds across replays — a node serving the quantised build is sampled repeatedly,
+not once — while the 0.5 % honest loss is the cost paid per validation, so the asymmetry is
+the right way round for a single-replay gate.
 
-τ = 0.951 is a raw-mode number. `ValidationParams.logprobs_mode` is a chain-wide governance
-parameter whose default and current value is `processed_logprobs`
-(`inference-chain/x/inference/types/params.go`), and in that mode the same τ catches only
-64.2 % of the NVFP4 fraud. Two coherent options:
+For reference if the threshold is ever revisited: within `processed`, τ = 0.955 gives 1.5 % /
+75.1 % and τ = 0.960 gives 4.5 % / 85.6 %. Honest loss climbs faster than detection past that.
 
-* switch `logprobs_mode` to `raw_logprobs` and take τ = 0.951 — 0 % honest loss, 99.5 % caught;
-* stay on `processed_logprobs`, in which case τ = 0.960 is the comparable operating point
-  (4.5 % honest rejected, 85.6 % caught) and the gate is strictly worse on both axes.
+### Logprobs mode is a chain parameter, not a node flag
 
-This document proposes the first. Note that the node profiles below deliberately do **not**
-pass a server-wide `--logprobs-mode`: validation requests carry the mode per request, and vLLM
-auto-detects it from `enforced_tokens` when they do not
-(`vllm/entrypoints/openai/chat_completion/serving.py`). The chain parameter is what decides.
+The node profiles below deliberately do not pass a server-wide `--logprobs-mode`. Validation
+requests carry the mode per request, and vLLM auto-detects it from `enforced_tokens` when they
+do not (`vllm/entrypoints/openai/chat_completion/serving.py`). What decides is
+`ValidationParams.logprobs_mode` in `inference-chain/x/inference/types/params.go`, which is
+`processed_logprobs` and stays that way here.
 
 ## Hardware profiles
 
@@ -149,16 +144,15 @@ honest cross-generation floor documented above, not a clean 0 %.
 
 ## Fraud arms and what the gates do to them
 
-| arm | what it is | PoC at 0.44 | inference at τ 0.951, raw |
+| arm | what it is | PoC at 0.44 | inference at τ 0.951, processed |
 |---|---|---:|---:|
-| `LibertAIDAI/GLM-5.3-Flash-NVFP4` | NVFP4 quantisation, 181.3 GiB | 31.7 % – 97 % past gate | 99.5 % caught |
+| `LibertAIDAI/GLM-5.3-Flash-NVFP4` | NVFP4 quantisation, 181.3 GiB | 31.7 % – 97 % past gate | 64.2 % caught |
 | `patrickbdevaney/GLM-5.3-Flash-REAP50-FP8` | 50 % expert pruning | 90 %+ past gate | not measured |
 
 The economic shape is the familiar one: the honest checkpoint needs 305.8 GiB and does not fit
 a single B300 (~242 GiB usable at `gmu 0.90`), while the NVFP4 build needs 181.3 GiB and does.
-Unlike DeepSeek-V4-Flash-0731 — where NVFP4 stayed at 1.34× the noise floor and was close to
-undetectable — the GLM-5.3 quantisation separates at 2.58× and is caught essentially every
-time. Both gates hold here.
+The PoC gate is the stronger of the two against this substitution and catches it on every arm
+measured; the inference gate is the corroborating signal.
 
 ## Operational notes
 
