@@ -335,10 +335,10 @@ func (s *Slots) Snapshot() (max, cur int64) // alias of Stats
 func (s *Slots) Restore(max, cur int64)     // tests
 ```
 
-`max == 0` means unlimited: `TryAcquire` always succeeds and does **not**
-increment `cur` (so `FilesOpen` stays 0 when caps are disabled). That matches
-host default `AllowUnlimited` behaviour; tests that need a live open count must
-set a finite `MaxFiles`.
+`max == 0` means unlimited: `TryAcquire` always succeeds but still increments
+`cur`, so `FilesOpen` stays accurate while caps are disabled and a later
+`SetMax` to a finite n cannot admit extra holders. A nil `*Slots` still admits
+without a counter (no object to track).
 
 ### 5.6 `Index`
 
@@ -408,8 +408,9 @@ events, never point past readable data. Little-endian int64 entries, 8 bytes eac
    unless every read path flushes and honors `ReadableLen`.
 6. **Don't serve a truncated body after a latched write error.** Check
    `OpenReader` / domain wrappers before folding or replaying.
-7. **Don't expect `FilesOpen` to track holders when `MaxFiles == 0`.** Unlimited
-   slots do not increment `cur`.
+7. **Don't treat `FilesMax == 0` as `FilesOpen == 0`.** Unlimited still counts
+   holders, so a live retune to a finite `MaxFiles` blocks until in-flight
+   files close.
 
 ### 6.3 Recommended call-site recipes
 
@@ -476,7 +477,8 @@ idx, err := dir.CreateIndex()
 ## 7. Observability
 
 `Dir.Stats()` is the supported live view: `FilesOpen`, `FilesMax`,
-`BytesWritten`, `SweepCount`, path/prefix/enabled. Internal create-refuse /
+`BytesWritten`, `SweepCount`, path/prefix/enabled. `FilesOpen` is the live
+holder count even when `FilesMax` is 0 (unlimited). Internal create-refuse /
 create-fail atomics exist on `Dir` for future metric wiring; binaries may also
 keep domain counters (gateway degrade refused, etc.).
 

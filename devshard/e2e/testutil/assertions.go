@@ -240,9 +240,11 @@ func HasInferenceValidationTarget(t *testing.T, state map[string]any, target uin
 	require.True(t, ok, "state inferences should be an object")
 
 	counts := map[uint64]uint64{}
+	statusCounts := map[string]int{}
 	for inferenceID, raw := range inferences {
 		inference, ok := raw.(map[string]any)
 		require.True(t, ok, "state inference %s should be an object", inferenceID)
+		statusCounts[fmt.Sprint(inference["status"])]++
 		validatedBy, ok := inference["validated_by"].([]any)
 		if !ok {
 			continue
@@ -265,7 +267,8 @@ func HasInferenceValidationTarget(t *testing.T, state map[string]any, target uin
 		}
 	}
 	if summary == "" {
-		summary = fmt.Sprintf("%d inferences, none validated yet", len(inferences))
+		summary = fmt.Sprintf("%d inferences (finished=%d started=%d timed_out=%d), none validated yet",
+			len(inferences), statusCounts["finished"], statusCounts["started"], statusCounts["timed_out"])
 	}
 	return reached, summary
 }

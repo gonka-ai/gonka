@@ -26,6 +26,11 @@ func TestClassifyVoteError_NamesWhatTheVerifierAnsweredWith(t *testing.T) {
 			class: VoteErrorVersionUnsupported,
 		},
 		{
+			name:  "escrow already bound to a different binary tag",
+			err:   &transport.UpstreamStatusError{Path: "/sessions/1/verify-timeout", StatusCode: http.StatusConflict, Body: "session version conflict: stored v3, host v4"},
+			class: VoteErrorVersionUnsupported,
+		},
+		{
 			name:  "verifier no longer holds the escrow",
 			err:   &transport.UpstreamStatusError{StatusCode: http.StatusInternalServerError, Body: "escrow not found"},
 			class: VoteErrorEscrowMissing,

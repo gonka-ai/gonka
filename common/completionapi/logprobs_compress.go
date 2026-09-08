@@ -7,12 +7,29 @@ import (
 	"strings"
 )
 
+// Above this size, skipping a prompt-wide array's decode beats a second look at the bytes.
+const skipDecodeAboveBytes = 4 << 10
+
 var droppedLogprobFields = []string{"bytes", "logprob"}
 
 // fieldsNoValidatorReads are the serving engine's own bookkeeping. Nothing in validation reads them
 // and the gateway drops all three on arrival (internalStrippedFields, devshardctl/stream_rewrite.go),
 // so the hashed payload carries them for nothing.
 var fieldsNoValidatorReads = []string{"token_ids", "prompt_token_ids", "prompt_logprobs"}
+
+// fieldsOnlyAskingCallersSee is what a caller that did not ask for logprobs must not be sent.
+var fieldsOnlyAskingCallersSee = []string{"logprobs"}
+
+// The same names, quoted once, for a scan that runs before the decode.
+var quotedFieldsNoValidatorReads = quoteFieldNames(fieldsNoValidatorReads)
+
+func quoteFieldNames(fields []string) [][]byte {
+	quoted := make([][]byte, len(fields))
+	for index, field := range fields {
+		quoted[index] = []byte(`"` + field + `"`)
+	}
+	return quoted
+}
 
 // CompressResponsePayload slims a whole stored response, streamed envelope or plain completion. The
 // executor slims chunk by chunk as it parses them, so this is the entry point for a payload nobody
@@ -42,6 +59,38 @@ func SlimStoredDocument(document any) error {
 	}
 	dropFields(document, fieldsNoValidatorReads)
 	return compressLogprobsIn(document)
+}
+
+// decodeDocumentWithoutUnreadFields keeps a prompt-wide array as bytes, not as decoded values.
+func decodeDocumentWithoutUnreadFields(payload []byte) (any, error) {
+	if len(payload) < skipDecodeAboveBytes || !carriesUnreadField(payload) {
+		return decodeJSONDocument(payload)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return decodeJSONDocument(payload)
+	}
+	for _, field := range fieldsNoValidatorReads {
+		delete(fields, field)
+	}
+	document := make(map[string]any, len(fields))
+	for key, value := range fields {
+		decoded, err := decodeJSONDocument(value)
+		if err != nil {
+			return decodeJSONDocument(payload)
+		}
+		document[key] = decoded
+	}
+	return document, nil
+}
+
+func carriesUnreadField(payload []byte) bool {
+	for _, field := range quotedFieldsNoValidatorReads {
+		if bytes.Contains(payload, field) {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeJSONDocument(payload []byte) (any, error) {
@@ -126,61 +175,70 @@ func dropFields(node any, fields []string) {
 	}
 }
 
+// compressLogprobsIn checks every position before it strips any, so a refused document is left as it arrived.
 func compressLogprobsIn(node any) error {
-	switch typed := node.(type) {
-	case map[string]any:
-		if content, ok := typed["logprobs"].(map[string]any); ok {
-			if err := compressLogprobContent(content["content"]); err != nil {
-				return err
-			}
-		}
-		for _, child := range typed {
-			if err := compressLogprobsIn(child); err != nil {
-				return err
-			}
-		}
-	case []any:
-		for _, child := range typed {
-			if err := compressLogprobsIn(child); err != nil {
-				return err
-			}
-		}
+	compressible, err := verifiedLogprobPositions(node, nil)
+	if err != nil {
+		return err
+	}
+	for _, position := range compressible {
+		stripPosition(position)
 	}
 	return nil
 }
 
-func compressLogprobContent(content any) error {
-	positions, ok := content.([]any)
-	if !ok {
-		return nil
-	}
-	for index, raw := range positions {
-		position, ok := raw.(map[string]any)
-		if !ok {
-			continue
+// verifiedLogprobPositions gathers what still has to be slimmed; one with no logprob of its own was already done.
+func verifiedLogprobPositions(node any, found []map[string]any) ([]map[string]any, error) {
+	switch typed := node.(type) {
+	case map[string]any:
+		if content, isObject := typed["logprobs"].(map[string]any); isObject {
+			positions, isArray := content["content"].([]any)
+			if isArray {
+				for index, raw := range positions {
+					position, isObject := raw.(map[string]any)
+					if !isObject {
+						continue
+					}
+					if _, unslimmed := position["logprob"]; !unslimmed {
+						continue
+					}
+					if err := verifyPositionCompressible(index, position); err != nil {
+						return nil, err
+					}
+					found = append(found, position)
+				}
+			}
 		}
-		// A position with no logprob of its own was already slimmed, so a second pass has nothing to
-		// verify and nothing to drop. Without this a re-run fails on its own output.
-		if _, unslimmed := position["logprob"]; !unslimmed {
-			continue
+		for _, child := range typed {
+			var err error
+			if found, err = verifiedLogprobPositions(child, found); err != nil {
+				return nil, err
+			}
 		}
-		if err := verifyPositionCompressible(index, position); err != nil {
-			return err
-		}
-		for _, field := range droppedLogprobFields {
-			delete(position, field)
-		}
-		alternatives, ok := position["top_logprobs"].([]any)
-		if !ok {
-			continue
-		}
-		for _, raw := range alternatives {
-			if alternative, ok := raw.(map[string]any); ok {
-				delete(alternative, "bytes")
+	case []any:
+		for _, child := range typed {
+			var err error
+			if found, err = verifiedLogprobPositions(child, found); err != nil {
+				return nil, err
 			}
 		}
 	}
-	return nil
+	return found, nil
+}
+
+func stripPosition(position map[string]any) {
+	for _, field := range droppedLogprobFields {
+		delete(position, field)
+	}
+	alternatives, isArray := position["top_logprobs"].([]any)
+	if !isArray {
+		return
+	}
+	for _, raw := range alternatives {
+		if alternative, isObject := raw.(map[string]any); isObject {
+			delete(alternative, "bytes")
+		}
+	}
 }
 
 func verifyPositionCompressible(index int, position map[string]any) error {

@@ -38,6 +38,11 @@ var (
 	errChildPortPoolExhausted = errors.New("child port pool exhausted")
 	errLegacyDrainStatus      = errors.New("drain status endpoint unavailable")
 	ErrHostDraining           = errors.New("versiond host is draining")
+	// ErrRecoveryTimeout is returned by the warm-cutover wait when a
+	// replacement devshardd child's recovery backlog did not drain before
+	// VERSIOND_RECOVERY_TIMEOUT. The new child is stopped and the old one
+	// keeps serving; the next reconcile retries.
+	ErrRecoveryTimeout = errors.New("child recovery did not complete before timeout")
 )
 
 type child struct {
@@ -168,6 +173,9 @@ func normalizeConfig(cfg config.Config) config.Config {
 	}
 	if cfg.ReadyTimeout <= 0 {
 		cfg.ReadyTimeout = 60 * time.Second
+	}
+	if cfg.RecoveryTimeout <= 0 {
+		cfg.RecoveryTimeout = 30 * time.Minute
 	}
 	if cfg.DrainPath == "" {
 		cfg.DrainPath = "/drain"
@@ -454,7 +462,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 				version:        v,
 				overrideSrc:    overrideSrc,
 				binPath:        binPath,
-				blockedByDrain: !isRunning && isDraining,
+				blockedByDrain: isDraining,
 			})
 			continue
 		}
@@ -510,6 +518,10 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		if snap.isRunning {
 			matches, metadata, diskBinaryHash, stateErr := installedVersionMatches(filepath.Dir(snap.child.binPath), snap.child.binPath, desiredHash)
 			if stateErr == nil && matches {
+				continue
+			}
+			if snap.isDraining {
+				slog.Info("version replacement deferred while previous child is draining", "version", snap.version.Name)
 				continue
 			}
 			logInstalledVersionMismatch(
@@ -568,11 +580,16 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		m.downloading[a.version.Name] = struct{}{}
 		scheduledDownloads = append(scheduledDownloads, a)
 	}
+	scheduledSwaps := make([]versionAction, 0, len(toSwap))
 	for _, a := range toSwap {
 		if _, already := m.downloading[a.version.Name]; already {
 			continue
 		}
+		if current, running := m.processes[a.version.Name]; !running || current != a.child || m.versionStartBlockedLocked(a.version.Name) {
+			continue
+		}
 		m.downloading[a.version.Name] = struct{}{}
+		scheduledSwaps = append(scheduledSwaps, a)
 	}
 
 	var toStop []*child
@@ -586,7 +603,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		}
 	}
 
-	changed := len(scheduledDownloads) > 0 || len(toSwap) > 0 || len(toStop) > 0 || started > 0
+	changed := len(scheduledDownloads) > 0 || len(scheduledSwaps) > 0 || len(toStop) > 0 || started > 0
 	if changed {
 		m.rebuildRoutes()
 	}
@@ -613,7 +630,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 
 	// Download first, then overlap generations where their storage permits it;
 	// otherwise the stop/start path withdraws the old route before stopping it.
-	for _, a := range toSwap {
+	for _, a := range scheduledSwaps {
 		if err := m.downloadAndSwap(ctx, a.version, a.sha256, a.child); err != nil {
 			slog.Error("swap failed, keeping old version", "version", a.version.Name, "error", err)
 			actionErrs = append(actionErrs, fmt.Errorf("swap %s: %w", a.version.Name, err))
@@ -631,8 +648,9 @@ type versionAction struct {
 	child   *child // non-nil for swap actions
 }
 
-// versionStartBlockedLocked reports whether a retired generation with the same
-// version name still owns the version's data directory.
+// versionStartBlockedLocked reports whether a predecessor with the same version
+// name is still draining. Besides protecting the version's data directory, this
+// bounds each version to one current generation and one predecessor.
 func (m *Manager) versionStartBlockedLocked(name string) bool {
 	return len(m.draining[name]) > 0
 }
@@ -689,6 +707,11 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 		if m.hostDraining {
 			m.mu.Unlock()
 			return ErrHostDraining
+		}
+		if m.versionStartBlockedLocked(v.Name) {
+			m.mu.Unlock()
+			slog.Info("override replacement deferred while previous child is draining", "version", v.Name)
+			return nil
 		}
 		proxyDrained, retired := m.retireChildForStopStartLocked(existing)
 		m.mu.Unlock()
@@ -924,8 +947,9 @@ func (m *Manager) downloadAndStart(ctx context.Context, v oracle.Version, sha st
 }
 
 // downloadAndSwap downloads the new binary. Shared-storage generations overlap:
-// the replacement starts on a fresh port before the route swap. Other storage
-// modes withdraw and drain the old route before a stop/start replacement.
+// the replacement starts on a fresh port before the route swap, with at most one
+// predecessor per version. Other storage modes withdraw and drain the old route
+// before a stop/start replacement.
 func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha string, old *child) error {
 	dlErr := m.downloadBinary(ctx, v, sha)
 	if dlErr != nil || ctx.Err() != nil {
@@ -944,6 +968,17 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		delete(m.downloading, v.Name)
 		m.mu.Unlock()
 		return ErrHostDraining
+	}
+	if current, running := m.processes[v.Name]; !running || current != old {
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		return fmt.Errorf("current child changed before replacement start")
+	}
+	if m.versionStartBlockedLocked(v.Name) {
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		slog.Info("version replacement deferred while previous child is draining", "version", v.Name)
+		return nil
 	}
 	m.mu.Unlock()
 	preflight, err := preflightChildWithAdminProbeContext(
@@ -1009,6 +1044,17 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		m.mu.Unlock()
 		return ErrHostDraining
 	}
+	if current, running := m.processes[v.Name]; !running || current != old {
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		return fmt.Errorf("current child changed before replacement start")
+	}
+	if m.versionStartBlockedLocked(v.Name) {
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		slog.Info("version replacement deferred while previous child is draining", "version", v.Name)
+		return nil
+	}
 	newChild, startErr := m.newChild(ctx, v, sha, newBinPath, false)
 	if startErr != nil {
 		delete(m.downloading, v.Name)
@@ -1024,6 +1070,27 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		delete(m.downloading, v.Name)
 		m.mu.Unlock()
 		return err
+	}
+
+	// Warm-cutover gate: in the overlap branch only, wait for the new
+	// child's recovery backlog to drain before publishing it. Solo start
+	// and the stop/start branch never reach here — there is no healthy old
+	// generation to keep serving, so waiting would just be an outage. Only
+	// devshardd carries recovery_complete on its /ready body; non-devshard
+	// binaries skip. See ready-on-boot-warm-cutover-plan.md flow D.
+	if m.devshardAdminEligible() {
+		if err := m.waitForChildRecoveryComplete(ctx, newChild.child, old, m.cfg.RecoveryTimeout); err != nil {
+			newChild.child.Stop()
+			_ = waitForChildContext(ctx, newChild.child)
+			m.mu.Lock()
+			delete(m.downloading, v.Name)
+			m.mu.Unlock()
+			if errors.Is(err, ErrRecoveryTimeout) {
+				slog.Warn("warm-cutover wait timed out; old child keeps serving",
+					"version", v.Name, "timeout", m.cfg.RecoveryTimeout)
+			}
+			return err
+		}
 	}
 
 	m.mu.Lock()
@@ -1650,7 +1717,9 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			return
 		}
 
-		if !waitForChildServingReady(ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout) {
+		if !waitForChildServingReady(
+			ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout, proc.Done(),
+		) {
 			slog.Warn("child did not become ready in time", "version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(), "ready_path", m.cfg.ReadyPath)
 			proc.ForceStop()
 			_ = proc.Wait()
@@ -1989,12 +2058,19 @@ func (c *child) adminAddr() string {
 // waitForChildServingReady gates the Starting -> Running transition. Modern
 // devshardd children must be logically ready on their admin listener and also
 // serve health checks on the public listener that receives proxied traffic.
-func waitForChildServingReady(ctx context.Context, c *child, path string, timeout time.Duration) bool {
+func waitForChildServingReady(
+	ctx context.Context,
+	c *child,
+	path string,
+	timeout time.Duration,
+	processDone <-chan struct{},
+) bool {
 	adminPort := int(c.adminPort.Load())
 	if adminPort == 0 {
 		return waitForReadiness(
 			ctx,
 			timeout,
+			processDone,
 			func(probeCtx context.Context, client *http.Client) bool {
 				ready, viaLegacy := readyEndpointReady(probeCtx, client, c.port, path, true)
 				if viaLegacy {
@@ -2004,7 +2080,7 @@ func waitForChildServingReady(ctx context.Context, c *child, path string, timeou
 			},
 		)
 	}
-	return waitForReadiness(ctx, timeout, func(probeCtx context.Context, client *http.Client) bool {
+	return waitForReadiness(ctx, timeout, processDone, func(probeCtx context.Context, client *http.Client) bool {
 		ready, _ := readyEndpointReady(probeCtx, client, adminPort, path, false)
 		return ready && publicEndpointReady(probeCtx, client, c.port)
 	})
@@ -2013,6 +2089,7 @@ func waitForChildServingReady(ctx context.Context, c *child, path string, timeou
 func waitForReadiness(
 	ctx context.Context,
 	timeout time.Duration,
+	processDone <-chan struct{},
 	probe func(context.Context, *http.Client) bool,
 ) bool {
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -2025,6 +2102,9 @@ func waitForReadiness(
 		retry := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-probeCtx.Done():
+			retry.Stop()
+			return false
+		case <-processDone:
 			retry.Stop()
 			return false
 		case <-retry.C:
@@ -2068,6 +2148,120 @@ func getHTTPStatus(ctx context.Context, client *http.Client, port int, path stri
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode, nil
+}
+
+// getChildRecoveryStatus probes the admin readiness endpoint and returns the
+// HTTP status plus a pointer to the recovery_complete field from the body, or
+// nil if the body does not carry it (a pre-v5 devshardd, or a body that does not
+// parse). The pointer distinguishes "field absent" (nil) from "field present and
+// false" so the warm-cutover wait can skip an older child instead of hanging.
+//
+// getHTTPStatus above stays status-only on purpose: the readiness monitor
+// (watchChildReadiness) calls it and must never consult the body — if recovery
+// ever gated the monitor, the host would leave the HAProxy pool for the whole
+// backlog. Only the warm-cutover wait reads the body, and only from the overlap
+// branch of downloadAndSwap.
+func getChildRecoveryStatus(ctx context.Context, client *http.Client, port int, path string) (int, *bool, error) {
+	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, port, normalizeHTTPPath(path))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	var parsed struct {
+		RecoveryComplete *bool `json:"recovery_complete"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		// Unparseable body → treat as field absent and let the caller skip
+		// the wait (cold cutover, flow B semantics). A devshardd that ships
+		// the field always returns valid JSON on /ready.
+		return resp.StatusCode, nil, nil
+	}
+	return resp.StatusCode, parsed.RecoveryComplete, nil
+}
+
+// waitForChildRecoveryComplete is the warm-cutover gate. It runs only in the
+// overlap branch of downloadAndSwap, after the replacement child is ready to
+// serve and before the route swap: the new child is published warm (recovery
+// backlog drained) rather than cold. Solo start and stop/start never reach
+// here — there is no healthy old generation to keep serving, so waiting would
+// just be an outage.
+//
+// Bail-outs (companion ready-on-boot-warm-cutover-plan.md flow D), all of which
+// cut over or abort rather than hang:
+//   - recovery_complete absent from the body → skip the wait, cut over cold
+//     (flow B semantics; an un-updated child cannot know about the field).
+//   - old child stops being Running → abandon the wait and publish
+//     immediately. A warming-but-unpublished child plus a dead old child is
+//     an outage, so the cold cutover is the safer direction.
+//   - hostDraining or ctx done → abort, stop the new child.
+//   - VERSIOND_RECOVERY_TIMEOUT elapsed → abort, old keeps serving, retry next
+//     reconcile.
+//
+// Returns nil to proceed with the swap (recovery complete, field absent, or old
+// child died). Returns an error to abort (host draining, ctx done, or timeout).
+func (m *Manager) waitForChildRecoveryComplete(ctx context.Context, newChild, old *child, timeout time.Duration) error {
+	adminPort := int(newChild.adminPort.Load())
+	if adminPort == 0 {
+		// Legacy child with no admin listener: no body to read, no field to
+		// wait on. Cut over cold.
+		return nil
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	client := &http.Client{Timeout: childReadyTimeout}
+	path := m.cfg.ReadyPath
+	ticker := time.NewTicker(childReadyInterval)
+	defer ticker.Stop()
+	for {
+		status, recoveryComplete, err := getChildRecoveryStatus(pollCtx, client, adminPort, path)
+		switch {
+		case err == nil && status == http.StatusOK && recoveryComplete != nil && *recoveryComplete:
+			slog.Info("warm cutover: new child recovery complete",
+				"version", newChild.version.Name, "admin_port", adminPort)
+			return nil
+		case err == nil && recoveryComplete == nil:
+			// Field absent: a pre-v5 child or a non-devshard body. Skip the
+			// wait and cut over cold (flow B). Logging at info rather than
+			// warn because an un-updated child is the expected case for a
+			// mixed-version estate.
+			slog.Info("warm cutover: child /ready body has no recovery_complete; skipping wait",
+				"version", newChild.version.Name, "status", status)
+			return nil
+		}
+
+		// Old child died → publish immediately. An unpublished warming child
+		// plus a dead old child is an outage; the cold cutover is safer.
+		m.mu.Lock()
+		oldRunning := old.status == statusRunning && !childDone(old)
+		hostDraining := m.hostDraining
+		m.mu.Unlock()
+		if !oldRunning {
+			slog.Info("warm cutover: old child stopped during wait; publishing new child",
+				"version", newChild.version.Name)
+			return nil
+		}
+		if hostDraining {
+			return ErrHostDraining
+		}
+
+		select {
+		case <-pollCtx.Done():
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return ErrRecoveryTimeout
+		case <-ticker.C:
+		}
+	}
 }
 
 func legacyReadyFallbackAllowed(path string, status int) bool {

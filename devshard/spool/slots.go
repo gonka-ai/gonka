@@ -2,7 +2,8 @@ package spool
 
 import "sync"
 
-// Slots is a reset-safe counting semaphore. SetMax never zeroes cur, so a
+// Slots is a reset-safe counting semaphore. SetMax never zeroes cur, and
+// TryAcquire always counts holders (even when max == 0 / unlimited), so a
 // retune while slots are held cannot inflate available capacity.
 type Slots struct {
 	mu  sync.Mutex
@@ -23,11 +24,9 @@ func (s *Slots) TryAcquire() bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.max < 1 {
-		// Unlimited (max == 0): always succeed without tracking holders.
-		return true
-	}
-	if s.cur >= s.max {
+	// Unlimited (max == 0): skip the cap, but still count holders so a later
+	// SetMax to a finite n cannot inflate available capacity.
+	if s.max >= 1 && s.cur >= s.max {
 		return false
 	}
 	s.cur++

@@ -2,24 +2,16 @@ package chain
 
 import "sync/atomic"
 
-// Phase tracks the current epoch and block height, updated by the event listener.
+// Phase tracks the current chain epoch. In standalone devshardd it is updated
+// from runtime-config OnEpochChange (long-poll or chain-poll fallback), not from
+// per-block Comet subscriptions.
 // It is safe for concurrent access.
 type Phase struct {
-	epochID     atomic.Uint64
-	blockHeight atomic.Int64
+	epochID atomic.Uint64
 }
 
 // EpochID returns the current epoch index.
 func (p *Phase) EpochID() uint64 { return p.epochID.Load() }
 
-// BlockHeight returns the latest observed block height.
-func (p *Phase) BlockHeight() int64 { return p.blockHeight.Load() }
-
-// Update sets epoch and block height. Called on every new block.
-func (p *Phase) Update(epochID uint64, blockHeight int64) {
-	p.epochID.Store(epochID)
-	p.blockHeight.Store(blockHeight)
-}
-
-// SetBlockHeight updates only the block height, used when the epoch query fails.
-func (p *Phase) SetBlockHeight(h int64) { p.blockHeight.Store(h) }
+// SetEpoch stores the current epoch index.
+func (p *Phase) SetEpoch(epochID uint64) { p.epochID.Store(epochID) }

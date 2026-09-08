@@ -11,13 +11,20 @@ overlay** (`docker-compose.versiond.yml`) — router health, how
 `VERSIOND_NON_HA_VERSIONS` must be set, catalog admission, and the citest
 that proves it — and the v5 gateway height-sync follower
 (`DEVSHARD_GATEWAY_CHAIN_ORACLE`), which applies to every
-`devshardctl` whether or not the overlay is on.
+`devshardctl` whether or not the overlay is on. The same is true of
+**host ping** (`DEVSHARD_GATEWAY_HOST_PING_*` on the gateway,
+`DAPI_API__MLNODE_PING_DISABLED` on dapi): observability only, on by
+default, not HA-overlay-specific.
 
 Related: [versiond-router/README.md](../../versiond-router/README.md),
 [release-0.2.14-v4.md](./release-0.2.14-v4.md),
+[v5-merged-features-test-plan.md](./v5-merged-features-test-plan.md) (PR inventory + per-block test plans),
+[v5-manual-height-sync.md](./v5-manual-height-sync.md) (operator Gherkin for height-sync),
+[v5-manual-residual.md](./v5-manual-residual.md) (operator Gherkin for warm cutover, host ping, proxy stamp),
 [rolling-update.md](./rolling-update.md),
 [testenv/docs/scenarios.md](../testenv/docs/scenarios.md),
-[HEIGHT_SYNC_PROTOCOL_PROPOSAL.md](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) §6.
+[HEIGHT_SYNC_PROTOCOL_PROPOSAL.md](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) §6,
+[gateway-host-ping-observability.md](./proposals/gateway-host-ping-observability.md).
 
 ---
 
@@ -201,6 +208,50 @@ when the gate is on.
 
 ---
 
+## Host ping observability (`DEVSHARD_GATEWAY_HOST_PING_*`)
+
+Applies to **every** v5 gateway (`devshardctl`) and dapi, single-instance
+and HA. Design: [gateway-host-ping-observability.md](./proposals/gateway-host-ping-observability.md).
+
+Two independent probe jobs. Neither feeds routing, quarantine, or
+`PerfTracker`. A probe outage must not 429 chat.
+
+| Prober | Targets | Preferred path | Fallback |
+| --- | --- | --- | --- |
+| Gateway | Distinct dials of **used** escrows (≥1 successful inference) | `{host}{RoutePrefix}/clock` | `{host}{RoutePrefix}/healthz` + HTTP `Date` |
+| Dapi | Broker ML-node inventory (`PoCUrl`) | `{PoCUrl}/api/v1/clock` (mlnode Step 5; may 404 today) | `{PoCUrl}/readyz` |
+
+`devshardd` always mounts `GET /clock` (lifecycle-bypass, same as
+`/healthz`). There is **no** env to turn that endpoint off.
+
+### Gateway (`devshardctl`)
+
+Read from the process environment on every start (not from `gateway.db`).
+Join: `deploy/join/config.devshard.env.template` and
+`docker-compose.devshard-gateway.yml`. Testenv: gencompose `devshardctl`
+service.
+
+| Env | Default | Role |
+| --- | --- | --- |
+| `DEVSHARD_GATEWAY_HOST_PING_DISABLED` | `false` | Kill switch. `true` / `1` / `on` (via `boolvalue.Parse`) stops the job; chat is unchanged |
+| `DEVSHARD_GATEWAY_HOST_PING_INTERVAL` | `15s` | Tick period (`time.ParseDuration`). Keep **below** HTTP idle timeout (120s) so samples stay warm-RTT |
+| `DEVSHARD_GATEWAY_HOST_PING_TIMEOUT` | `2s` | Per-target HTTP timeout. Must stay ≪ interval |
+| `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY` | `8` | In-flight probes per tick. `≤0` falls back to 8 |
+
+Empty or invalid values log a warning and keep the default. Capability
+re-probe TTL is **not** env-configurable (10m in process).
+
+### Dapi (`api`)
+
+Interval / timeout / concurrency are the same 15s / 2s / 8 **in code**,
+not env-wired. The only operator switch is:
+
+| Env | Default | Role |
+| --- | --- | --- |
+| `DAPI_API__MLNODE_PING_DISABLED` | `false` | Turns off the ML-node ping job (`api.mlnode_ping_disabled` in node config). Join compose: `deploy/join/docker-compose.yml` |
+
+---
+
 ## Testenv multi KEY_NAME (corrects v4 §1.1.1)
 
 v4 §1.1.1 says testenv multi mode uses `KEY_NAME=hosts[0]` on **every**
@@ -263,6 +314,51 @@ Skip this list for single-instance v5 (base `docker-compose.yml` only).
 - [ ] If you do set it (`true` / `1` / `on`), confirm chat still waits for
       host seed quorum — a warm local tip must not skip `height_seed`.
 
+### Host ping (all v5 deploys)
+
+- [ ] Leave the four `DEVSHARD_GATEWAY_HOST_PING_*` vars at defaults unless
+      you need a faster scrape (citest uses `INTERVAL=3s`) or a kill
+      switch. Unset is the same as the table above.
+- [ ] `DEVSHARD_GATEWAY_HOST_PING_DISABLED=true` must still serve chat;
+      `devshard_gateway_host_ping_up` must not appear.
+- [ ] After a successful chat, gateway `/metrics` shows
+      `devshard_gateway_host_ping_up{host=…}` and
+      `devshard_gateway_host_ping_targets` ≥ 1. Unused registered hosts
+      stay off the target set.
+- [ ] Leave `DAPI_API__MLNODE_PING_DISABLED` unset/`false` unless you need
+      to stop dapi → mlnode probes. Scrape `api:9100/metrics` for
+      `dapi_mlnode_ping_*`.
+
+### Warm cutover (all v5 deploys with a Postgres HA pair)
+
+The v5 headline change: an overlap swap publishes the new child only after its
+recovery backlog has drained. Full mechanics in
+[rolling-update.md](./rolling-update.md) §1.3–§1.5; release notes in
+[release-0.2.15-v5.md](./release-0.2.15-v5.md).
+
+- [ ] `VERSIOND_RECOVERY_TIMEOUT` is either unset (defaults to `30m`) or set
+      longer than a full recovery of your longest journal. It is **not** the
+      60s `VERSIOND_READY_TIMEOUT` — reusing that value would abort every
+      overlap swap.
+- [ ] Admin `/ready` returns **200 within seconds of boot**, before recovery
+      finishes. A 503-until-recovered child is a pre-v5 binary: the swap will
+      cut over cold (safe, but not warm).
+- [ ] `curl -s <admin>/ready | jq .recovery_complete` is `false` during
+      recovery and `true` once drained. Absent field ⇒ pre-v5 child.
+- [ ] `sessions_pending` in the same body (and the Prometheus gauge) trends to
+      zero. It counts the recovery queue **plus** in-flight sealed-index /
+      validation-obs repairs, so it can stay non-zero briefly after the
+      backlog drains.
+- [ ] During a same-name SHA swap, `versiond` logs
+      `warm cutover: new child recovery complete` **before**
+      `swapped child route; old child draining`. If you instead see
+      `warm-cutover wait timed out; old child keeps serving`, the old child is
+      still serving (no outage) — raise `VERSIOND_RECOVERY_TIMEOUT` and let the
+      next reconcile retry.
+- [ ] A solo restart (single host, no healthy old generation) publishes on
+      status 200 alone and does **not** wait. Confirm the host rejoins the pool
+      without waiting out its backlog.
+
 ---
 
 ## Automated tests (what moved vs v4 §1.6)
@@ -287,6 +383,44 @@ cd devshard/testenv && TESTENV_CITEST=1 go test -tags=testenvci ./citest/ \
 | 2 | Recreate router with `VERSIOND_NON_HA_VERSIONS=<VersionName>` | `/{version}/healthz` 200 |
 | 3 | Session probes | Every response: `X-Versiond-Backend: versiond_legacy`, upstream = `versiond-0` |
 | 4 | Stop non-legacy versiond; repeat probes | Still pinned to the same legacy upstream |
+
+### `TestVersiondWarmCutover*` — the v5 warm-cutover gate
+
+Covers the "Warm cutover" checklist above end to end, so the manual `/ready`
+body poll is a confirmation rather than the only proof.
+
+```bash
+make -C devshard/testenv build-devshardd
+make -C devshard/testenv citest-versiond-warm-cutover
+```
+
+| Test | Expect |
+| --- | --- |
+| `TestVersiondWarmCutoverBoot` | Public `/healthz` 200 with `VERSIOND_RECOVERY_TIMEOUT` set; both hosts report the child `running`; a chat round-trip serves — i.e. boot is admitted on status alone, not gated on recovery |
+| `TestVersiondWarmCutoverOverlapWaitsThenServes` | A same-name SHA flip drives the new SHA to `running` (only reachable after the warm wait returns; a timed-out wait aborts the swap), new traffic serves, old child retires |
+
+Bail-outs (absent field, old-child death, `hostDraining`, ctx cancel, timeout)
+and the "monitor never reads the body" pin are unit-level in
+`versioned/internal/process/manager_recovery_wait_test.go` — the admin `/ready`
+listener is container-loopback on a dynamic port, so it is not reachable from a
+citest process. Scenario write-up:
+[`testenv/docs/scenarios.md`](../testenv/docs/scenarios.md) §"Versiond warm
+cutover".
+
+### `TestHostPing*` — gateway host ping
+
+Pins the env table above: default job on, used-host target set, kill
+switch, probe failure must not quarantine.
+
+```bash
+make -C devshard/testenv build-devshardd
+make -C devshard/testenv citest-host-ping
+```
+
+| Test | Expect |
+| --- | --- |
+| `TestHostPing` | Unused host has no `host_ping_up`; after chat, gauges appear (interval patched to `3s`); deactivate drops series |
+| `TestHostPingKillSwitch` | `DEVSHARD_GATEWAY_HOST_PING_DISABLED=true`; chat 200; no `host_ping_up` |
 
 ### `TestSQLiteToPostgresHAMigration` — v4 §1.7 on a real child
 

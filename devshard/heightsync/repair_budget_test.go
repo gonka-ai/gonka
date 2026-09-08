@@ -129,18 +129,18 @@ func TestMissingAcksDue_RequiresWindowClosed(t *testing.T) {
 	tr := NewTurnTracker(4, 3, cfg)
 	tr.Observe(10, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq: 1, ObservedHeight: 500, ObservedBlockHash: []byte{0xaa}, SlotsNum: 4,
+			ObservedHeight: 500, ObservedBlockHash: []byte{0xaa}, SlotsNum: 4,
 		}},
 	}}, 500)
-	require.Nil(t, tr.MissingAcksDue(1, 500), "window still open at h_req")
+	require.Nil(t, tr.MissingAcksDue(tr.LatestTurnStart(), 500), "window still open at h_req")
 	// Probing while the producer is still collecting acks is steady-state
 	// waste: the window has to outlast the turnover budget first.
 	inside := 500 + cfg.AckDeadlineBlocks
-	require.Nil(t, tr.MissingAcksDue(1, inside), "still inside the turnover budget")
-	require.Equal(t, []uint32{0, 1, 2, 3}, tr.MissingAcks(1))
+	require.Nil(t, tr.MissingAcksDue(tr.LatestTurnStart(), inside), "still inside the turnover budget")
+	require.Equal(t, []uint32{0, 1, 2, 3}, tr.MissingAcks(tr.LatestTurnStart()))
 	tr.AdvanceHeight(inside + 1)
-	require.Equal(t, []uint32{0, 1, 2, 3}, tr.MissingAcksDue(1, inside+1))
-	require.Equal(t, []uint32{0, 1, 2, 3}, tr.MissingAcksDue(1, 0),
+	require.Equal(t, []uint32{0, 1, 2, 3}, tr.MissingAcksDue(tr.LatestTurnStart(), inside+1))
+	require.Equal(t, []uint32{0, 1, 2, 3}, tr.MissingAcksDue(tr.LatestTurnStart(), 0),
 		"a log-driven degrade is due even when h_last has not moved")
 }
 
@@ -172,29 +172,29 @@ func TestRepairDueAll_IncludesDegradedOlderTurn(t *testing.T) {
 	hash := []byte{0xaa}
 	tr.Observe(1, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq: 1, ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
+			ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
 		}},
 	}}, 500)
 	tr.Observe(2, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq: 1, ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
+			ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
 		}},
 	}}, 500)
 	past := 500 + cfg.AckDeadlineBlocks + 1
 	tr.Observe(3, []*types.DevshardTx{{
-		Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			InferenceId: 3, ObservedHeight: past, ObservedBlockHash: hash,
 		}},
-	}}, 0)
+	}}, past)
 	tr.Observe(4, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq: 2, ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
+			ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
 		}},
 	}}, 500)
 	due := tr.RepairDueAll()
 	var turns []uint64
 	for _, d := range due {
-		turns = append(turns, d.TurnSeq)
+		turns = append(turns, d.TurnStart)
 	}
 	require.Contains(t, turns, uint64(1), "turn 1 must still be probed after turn 2 opened")
 }

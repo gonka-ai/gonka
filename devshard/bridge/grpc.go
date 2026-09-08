@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"common/chain"
 	devshardpkg "devshard"
@@ -14,6 +15,10 @@ import (
 )
 
 const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
+
+// warmKeyQueryTimeout bounds a single grantee lookup. WarmKeyResolver has no
+// context parameter, so the deadline has to be applied here.
+const warmKeyQueryTimeout = 10 * time.Second
 
 type warmCacheKey struct {
 	host string
@@ -154,7 +159,11 @@ func (b *GRPCBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, 
 		return cached.(bool), nil
 	}
 
-	resp, err := b.client.InferenceQueryClient().GranteesByMessageType(context.Background(),
+	// Callers reach this from state-machine apply while holding session locks,
+	// so an unresponsive node must not stall the escrow indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), warmKeyQueryTimeout)
+	defer cancel()
+	resp, err := b.client.InferenceQueryClient().GranteesByMessageType(ctx,
 		&inferencetypes.QueryGranteesByMessageTypeRequest{
 			GranterAddress: validatorAddress,
 			MessageTypeUrl: warmKeyMsgTypeGRPC,

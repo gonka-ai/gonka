@@ -185,7 +185,7 @@ func TestContainerE2E_HeightSync_QuietEscrowHeartbeat(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, _, eps := harness.BootHeightSyncStack(t, "citest-hs-h26-*")
+	stack, cfg, eps := harness.BootHeightSyncStack(t, "citest-hs-h26-*")
 	client := harness.GatewayChatClient()
 	admin := harness.TestenvAdminAPIKey
 	t.Cleanup(func() {
@@ -195,23 +195,21 @@ func TestContainerE2E_HeightSync_QuietEscrowHeartbeat(t *testing.T) {
 	})
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	// §10.3.1: F is host-signed and lands on the next nonce. Seed only warms
+	// the envelope; a session that never infers never heartbeats.
+	seedHeightSyncFloor(t, cfg, eps)
 
-	// Wait for the turn itself, not any cadence log. The loop ticks immediately
-	// and logs skipped_no_height before seed_ok (~50ms); the first real turn is
-	// due one Interval later (6s). "heightsync: cadence" matches the skip and
-	// used to sneak through when Interval was 3s and chat-ready already covered
-	// that wait. Stretching the timeout does not help: WaitComposeLogsContain
-	// returns on the first match.
+	// Wait for the turn itself, not any cadence log. skipped_no_height is
+	// expected until F exists; after the bootstrap the first quiet turn is
+	// due one Interval later (6s). "heightsync: cadence" matches the skip
+	// and used to sneak through when Interval was 3s. Stretching the timeout
+	// does not help: WaitComposeLogsContain returns on the first match.
 	logs := stack.WaitComposeLogsContain(t, 2*time.Minute, "heartbeat_opened", "devshardctl")
 	repair := strings.Count(logs, "repair request") + strings.Count(logs, "RepairProbe")
 	require.Zero(t, repair, "healthy quiet path must send zero repair probes")
 
 	metricsURL := eps.GatewayHTTP + "/metrics"
-	body := harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
-		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",
-			map[string]string{"event": "heartbeat_opened"})
-		return ok && v >= 1
-	})
+	body := waitHeartbeatOpened(t, client, metricsURL)
 	require.NotContains(t, body, "devshard_gateway_heightsync_peer_seen{",
 		"peer matrix series stay off by default (H48)")
 	body = harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
@@ -257,13 +255,10 @@ func TestContainerE2E_HeightSync_OneHostStopped(t *testing.T) {
 	})
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	seedHeightSyncFloor(t, cfg, eps)
 
 	metricsURL := eps.GatewayHTTP + "/metrics"
-	harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
-		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",
-			map[string]string{"event": "heartbeat_opened"})
-		return ok && v >= 1
-	})
+	waitHeartbeatOpened(t, client, metricsURL)
 
 	harness.Step(t, "stop "+solo+" (solo identity / one slot down)")
 	stack.StopService(t, solo)
@@ -457,9 +452,10 @@ func TestContainerE2E_HeightSync_PeerMatrixOptIn(t *testing.T) {
 	})
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
-	postHeightSyncChat(t, cfg, eps, "citest height-sync peer matrix")
+	seedHeightSyncFloor(t, cfg, eps)
 
 	metricsURL := eps.GatewayHTTP + "/metrics"
+	waitHeartbeatOpened(t, client, metricsURL)
 	body := harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
 		return strings.Contains(b, "devshard_gateway_heightsync_peer_seen{") &&
 			strings.Contains(b, "devshard_gateway_heightsync_peer_seen_count{")
@@ -473,6 +469,26 @@ func TestContainerE2E_HeightSync_PeerMatrixOptIn(t *testing.T) {
 	harness.GetDebugHeightSync(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, &debug)
 	require.NotEmpty(t, debug.Escrows)
 	require.Contains(t, debug.Escrows[0], "peer_seen")
+}
+
+// seedHeightSyncFloor is citest's §10.3.1 bootstrap. Chat 1's start is
+// hashless; confirm/finish ride chat 2 and raise F. After this the escrow
+// still owes Interval of quiet before heartbeat_opened: executor stamps
+// set lastTurnoverFromStamp, so extra chat during that wait substitutes
+// discharged_by_inference instead.
+func seedHeightSyncFloor(t *testing.T, cfg *config.File, eps harness.Endpoints) {
+	t.Helper()
+	postHeightSyncChat(t, cfg, eps, "citest height-sync seed floor a")
+	postHeightSyncChat(t, cfg, eps, "citest height-sync seed floor b")
+}
+
+func waitHeartbeatOpened(t *testing.T, client *http.Client, metricsURL string) string {
+	t.Helper()
+	return harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
+		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",
+			map[string]string{"event": "heartbeat_opened"})
+		return ok && v >= 1
+	})
 }
 
 func postHeightSyncChat(t *testing.T, cfg *config.File, eps harness.Endpoints, prompt string) {

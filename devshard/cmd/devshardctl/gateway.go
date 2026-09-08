@@ -81,6 +81,8 @@ type Gateway struct {
 	roundRobinSeed        atomic.Uint64
 
 	suspiciousHosts map[string]struct{}
+
+	hostPing *hostPingJob
 }
 
 type devshardRuntime struct {
@@ -816,6 +818,8 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	}
 	g.reconcilePendingSettlements()
 	g.startEscrowRotatorIfEnabled()
+	g.hostPing = newHostPingJob(g.metrics, loadHostPingConfig())
+	g.hostPing.start()
 	go g.balanceCheckLoop()
 	return g
 }
@@ -1305,6 +1309,9 @@ func (g *Gateway) Close() error {
 		g.phaseGate.Stop()
 	}
 	g.stopEscrowRotator()
+	if g.hostPing != nil {
+		g.hostPing.stop()
+	}
 	for _, rt := range g.runtimeOrder {
 		if err := rt.close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -4085,15 +4092,54 @@ func (g *Gateway) retireRuntimeLocked(id, reason string) *devshardRuntime {
 	if g.capacity != nil {
 		g.capacity.RemoveEscrow(id)
 	}
+	// Admin deactivate may skip deactivateDevshardByIDWithReason; always release
+	// here too. ReleaseEscrow is idempotent.
+	g.releaseHostPing(id)
 	return rt
 }
 
 func (g *Gateway) attachMetrics(rt *devshardRuntime) {
-	if g == nil || g.metrics == nil || rt == nil || rt.proxy == nil || rt.proxy.redundancy == nil {
+	if g == nil || rt == nil || rt.proxy == nil || rt.proxy.redundancy == nil {
 		return
 	}
-	rt.proxy.redundancy.metrics = g.metrics
+	if g.metrics != nil {
+		rt.proxy.redundancy.metrics = g.metrics
+	}
 	rt.proxy.redundancy.devshardID = rt.id
+	escrowID := rt.id
+	rt.proxy.redundancy.onHostObserved = func(hostIdx int, participantKey string) {
+		g.observeHostPing(escrowID, hostIdx, participantKey)
+	}
+}
+
+// observeHostPing records a dial target after the first successful non-probe
+// inference to that escrow host. Probe failures never call this.
+func (g *Gateway) observeHostPing(escrowID string, hostIdx int, participantKey string) {
+	if g == nil || g.hostPing == nil {
+		return
+	}
+	g.mu.Lock()
+	rt := g.runtimes[escrowID]
+	g.mu.Unlock()
+	if rt == nil || rt.session == nil {
+		return
+	}
+	clients := rt.session.Clients()
+	if hostIdx < 0 || hostIdx >= len(clients) {
+		return
+	}
+	dial, routePrefix, ok := hostClientDialInfo(clients[hostIdx])
+	if !ok {
+		return
+	}
+	g.hostPing.ObserveEscrowHost(escrowID, dial, routePrefix, participantKey)
+}
+
+func (g *Gateway) releaseHostPing(escrowID string) {
+	if g == nil || g.hostPing == nil {
+		return
+	}
+	g.hostPing.ReleaseEscrow(escrowID)
 }
 
 // attachRaceCleanupBarrier wires the runtime's background race cleanups into the drain barrier so settle/store-close wait for them, not just for foreground requests.
@@ -4161,6 +4207,7 @@ func (g *Gateway) deactivateDevshardByIDWithReason(id, reason string) bool {
 		}
 	}
 	log.Printf("devshard %s deactivated: %s", id, reason)
+	g.releaseHostPing(id)
 	return true
 }
 

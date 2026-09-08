@@ -75,6 +75,7 @@ func TestLoad_CustomValues(t *testing.T) {
 	t.Setenv("VERSIOND_BINARY_NAME", "myapp")
 	t.Setenv("VERSIOND_HOST_SHUTDOWN_BUDGET", "12m")
 	t.Setenv("VERSIOND_DRAIN_ANNOUNCE", "9s")
+	t.Setenv("VERSIOND_RECOVERY_TIMEOUT", "45m")
 
 	cfg, err := Load()
 	if err != nil {
@@ -94,6 +95,23 @@ func TestLoad_CustomValues(t *testing.T) {
 	}
 	if cfg.DrainAnnounce != 9*time.Second {
 		t.Errorf("DrainAnnounce = %v, want %v", cfg.DrainAnnounce, 9*time.Second)
+	}
+	if cfg.RecoveryTimeout != 45*time.Minute {
+		t.Errorf("RecoveryTimeout = %v, want %v", cfg.RecoveryTimeout, 45*time.Minute)
+	}
+}
+
+// RecoveryTimeout must default to 30m when unset: it bounds the warm-cutover
+// wait, which is minutes-to-hours for a long journal, and must not reuse the
+// 60s ReadyTimeout that gates "is the process up at all".
+func TestLoad_RecoveryTimeoutDefault(t *testing.T) {
+	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.RecoveryTimeout != 30*time.Minute {
+		t.Errorf("RecoveryTimeout default = %v, want %v", cfg.RecoveryTimeout, 30*time.Minute)
 	}
 }
 

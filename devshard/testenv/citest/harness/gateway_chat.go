@@ -31,8 +31,8 @@ type ChatCompletionRequest struct {
 	MaxTokens     int                `json:"max_tokens,omitempty"`
 	Stream        bool               `json:"stream,omitempty"`
 	StreamOptions *ChatStreamOptions `json:"stream_options,omitempty"`
-	Logprobs      bool               `json:"logprobs,omitempty"`
-	TopLogprobs   int                `json:"top_logprobs,omitempty"`
+	Logprobs      *bool              `json:"logprobs,omitempty"`
+	TopLogprobs   *int               `json:"top_logprobs,omitempty"`
 	Seed          *int               `json:"seed,omitempty"`
 }
 
@@ -69,6 +69,12 @@ type GatewayChatHTTPResult struct {
 	Body        []byte
 	Header      http.Header
 }
+
+// LogprobsAsk names an explicit ask, false included, which a bare bool would drop as empty.
+func LogprobsAsk(asked bool) *bool { return &asked }
+
+// TopLogprobsWidth names an explicit width, zero included, which a bare int would drop as empty.
+func TopLogprobsWidth(width int) *int { return &width }
 
 // PostGatewayChatCompletion posts non-stream /v1/chat/completions and requires HTTP 200.
 func PostGatewayChatCompletion(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) ChatCompletionResponse {

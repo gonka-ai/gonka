@@ -470,8 +470,18 @@ down after boot.
 - Each PostgreSQL-backed child uses its application pool plus two dedicated
   sessions: one for readiness and one for the advisory fence. Schema bootstrap
   transiently opens a separate pool. External PostgreSQL capacity planning must
-  include every simultaneously running child generation on both versiond
-  replicas.
+  include every simultaneously running child generation on every versiond
+  replica.
+- A version has at most one current generation and one draining predecessor
+  per versiond. When a further same-name replacement arrives while the
+  predecessor is still draining, versiond defers it and retries on the next
+  reconcile instead of starting a third generation; a replacement whose current
+  child changed between planning and start is re-planned. This bounds the
+  PostgreSQL connections a version can hold: for `N` current HA children,
+  `R` versiond replicas and pool limit `P`, size `max_connections` for at
+  least `2 * N * (P + 2) + R * 5` non-reserved connections (the doubled child
+  term is the draining predecessor; the per-replica term is versiond's
+  four-connection session-lookup pool plus one schema-initializer session).
 - Migration bootstrap and all pending application steps are serialized by a
   database-scoped advisory lock. Before starting children in an HA deployment,
   versiond runs `devshardd --initialize-postgres-schema` through a current

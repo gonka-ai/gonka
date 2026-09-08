@@ -77,7 +77,14 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 	if lookup != nil {
 		hist = lookup
 	}
-	oracle := failover.New(cache, hist, chainOracle)
+	var oracle blocks.BlockOracle = failover.New(cache, hist, chainOracle)
+	if d, fab := testenvOracleFromEnv(); d != 0 || fab {
+		oracle = wrapTestenvOracleOverlay(oracle, d, fab)
+		logging.Info("height sync testenv oracle overlay", inferenceTypes.System,
+			"height_delta", d,
+			"fabricate_hash", fab,
+		)
+	}
 
 	sched, err := heightsync.NewAnchorSchedulerFromOracle(k, slots, oracle)
 	if err != nil {

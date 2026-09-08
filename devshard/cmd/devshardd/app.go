@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"time"
 
 	"common/chain"
@@ -68,17 +67,6 @@ func (s closeStack) Close() {
 	}
 }
 
-type phaseEpochProvider struct {
-	phase *chain.Phase
-}
-
-func (p phaseEpochProvider) CurrentEpochID() uint64 {
-	if p.phase == nil {
-		return 0
-	}
-	return p.phase.EpochID()
-}
-
 func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error) {
 	if err := requireHADeploymentStorage(); err != nil {
 		return nil, err
@@ -131,7 +119,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	e := buildServer(lifecycle)
 	var admin *echo.Echo
 	if cfg.AdminAddr != "" {
-		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof)
+		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryProgressSnapshot)
 	}
 	manager.Register(e.Group(""))
 	chainRuntime.chainEvents.OnReady(lifecycle.SetReady)
@@ -277,9 +265,6 @@ func buildHostManager(
 		return nil, fmt.Errorf("devshard storage: %w", err)
 	}
 	store := devshardstorage.NewManagedStorage(innerStore, sessionEpochRetain, chainParams)
-	if cancel := paramsSetup.RegisterEpochPrune(store); cancel != nil {
-		closers.Add(cancel)
-	}
 	closers.Add(func() { _ = store.Close() })
 
 	leaseValidator := inference.NewLeaseValidator(validator, phase, store, instanceAddr, cfg.ValidationLeaseTTL)
@@ -311,14 +296,63 @@ func buildHostManager(
 	closers.Add(manager.CloseHeightSync)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
+	// Close hosts before the epoch-change cancel so LIFO shutdown cancels
+	// epoch callbacks first. Do not use manager.Close(): store close and
+	// height-sync close are already on this stack.
+	closers.Add(manager.CloseHosts)
+
+	// Single epoch clock: runtime-config OnEpochChange (dapi long-poll or
+	// chain-poll fallback) advances phase + managed-storage horizon, then
+	// prunes DB and drops old payload epochs. evict closes in-memory hosts
+	// for those epochs. Boot uses evict=false: prune runs before StartRecovery,
+	// so recovery never lists rows PruneOnce already dropped and there is
+	// nothing to evict from a just-rebuilt map. Live OnEpochChange uses
+	// evict=true because sessions are already in RAM.
+	applyEpoch := func(newEpoch uint64, pruneAsync, evict bool) {
+		phase.SetEpoch(newEpoch)
+		store.ObserveEpoch(newEpoch)
+		if pruneAsync {
+			store.PruneOnceAsync(ctx)
+		} else {
+			store.PruneOnce(ctx)
+		}
+		if evict {
+			if cutoff := store.PruneCutoff(); cutoff > 0 {
+				manager.EvictBefore(cutoff)
+			}
+		}
+		if newEpoch >= sessionEpochRetain+1 {
+			expiredPayloadEpoch := newEpoch - sessionEpochRetain
+			if err := payloadStore.DropEpoch(ctx, expiredPayloadEpoch); err != nil {
+				logCleanupError("payload epoch cleanup failed", err)
+			}
+		}
+	}
+	if cancel := chainParams.OnEpochChange(func(_, newEpoch uint64) {
+		applyEpoch(newEpoch, true, true)
+	}); cancel != nil {
+		closers.Add(cancel)
+	}
+	// Initial snapshot apply does not fire OnEpochChange; seed clocks and
+	// prune before recovery so the backlog is already retention-trimmed.
+	if epoch := chainParams.CurrentEpochID(); epoch > 0 {
+		applyEpoch(epoch, false, false)
+	} else if boot := phase.EpochID(); boot > 0 {
+		applyEpoch(boot, false, false)
+	} else {
+		store.Start()
+	}
+
 	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
 
-	if err := manager.RecoverSessions(); err != nil {
-		slog.Warn("recover sessions failed", "error", err)
-	}
-	store.Start()
-
-	closers.Add(manager.CloseHosts)
+	// Recovery used to run inline here, so a host with a large backlog kept the
+	// listener closed and answered 502 until every session was rebuilt. Run it
+	// in the background instead: /ready stays false until the backlog drains,
+	// and any session requested before its turn is recovered on demand.
+	closers.Add(manager.StartRecovery(ctx))
+	// A validation-obs or sealed-index rebuild interrupted after its clear
+	// leaves those rows empty, and recovery will not retry once a snapshot exists.
+	closers.Add(manager.WaitRecoveryRepairs)
 
 	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, instanceAddr)
 	validationRetry.WithInterval(cfg.ValidationRetryInterval)
@@ -334,24 +368,9 @@ func buildHostManager(
 		validationRetry.Run(validationRetryCtx)
 	}()
 
-	var lastCleanEpoch atomic.Uint64
-	chainRuntime.chainEvents.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {
+	// Height-sync still needs Comet headers. Prune/evict stay on OnEpochChange.
+	chainRuntime.chainEvents.OnNewBlock(func(_ context.Context, e events.NewBlockEvent) {
 		manager.ObserveChainHeader(blocks.HashOnlyHeader(e.BlockHeight, e.Time, e.ChainID, e.BlockHash))
-
-		currentEpoch := phase.EpochID()
-		if currentEpoch <= lastCleanEpoch.Load() {
-			return
-		}
-		lastCleanEpoch.Store(currentEpoch)
-
-		store.PruneOnceAsync(bctx)
-
-		if currentEpoch >= 4 {
-			expiredPayloadEpoch := currentEpoch - 3
-			if err := payloadStore.DropEpoch(bctx, expiredPayloadEpoch); err != nil {
-				logCleanupError("payload epoch cleanup failed", err)
-			}
-		}
 	})
 
 	return manager, nil

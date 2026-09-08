@@ -241,10 +241,18 @@ type Session struct {
 	participantKeys []string
 	clients         []HostClient
 	nonce           uint64
-	diffs           []types.Diff        // append-only log
-	hostSyncNonce   map[int]uint64      // hostIdx -> last nonce sent
-	pendingTxs      []*types.DevshardTx // from host mempools, for next diff
-	pendingTxKeys   map[string]struct{} // dedup set keyed by tx_type:id
+	diffs           []types.Diff                 // append-only log
+	hostSyncNonce   map[int]uint64               // hostIdx -> last nonce sent
+	pendingTxs      []*types.DevshardTx          // from host mempools, for next diff
+	// pendingTxKeys dedups the current pendingTxs slice by tx_type:id. It is
+	// rebuilt from what compose retained, so a tx that failed to apply frees
+	// its key again -- otherwise the first host to propose a bogus tx would
+	// permanently shadow the honest tx sharing that key.
+	pendingTxKeys map[string]struct{}
+	// appliedTxKeys holds tx_type:id for txs that actually landed in a diff,
+	// so another host's mempool copy is not re-queued after the fact. Only
+	// this set survives across compose rounds.
+	appliedTxKeys map[string]struct{}
 	// pinnedFinishIDs holds inference IDs whose pending Finish and ErrorMiss
 	// must not be drained by a concurrent composeDiffLocked (heartbeat,
 	// PrepareInference, unrelated SendPendingDiff). HandleErrorMiss pins
@@ -279,11 +287,10 @@ type Session struct {
 	heightSyncK     uint64
 	heightSyncSlots uint64
 
-	heartbeatCfg     heightsync.HeartbeatConfig
-	heartbeat        *heightsync.Heartbeat
-	turnTracker      *heightsync.TurnTracker
-	observedHeight   func() (height uint64, hash []byte, ok bool)
-	heartbeatTurnSeq uint64 // producer counter; RecoverSession restores from SM MaxTurnSeq
+	heartbeatCfg   heightsync.HeartbeatConfig
+	heartbeat      *heightsync.Heartbeat
+	turnTracker    *heightsync.TurnTracker
+	observedHeight func() (height uint64, hash []byte, ok bool)
 	// heartbeatFlushLeft is the number of ack-carrying rounds still owed to the
 	// open turn. The heartbeat cadence is wall clock, so the producer does not
 	// wait for a block tick to collect acks.
@@ -470,6 +477,7 @@ func NewSession(
 		clients:         clients,
 		hostSyncNonce:   make(map[int]uint64),
 		pendingTxKeys:   make(map[string]struct{}),
+		appliedTxKeys:   make(map[string]struct{}),
 		pinnedFinishIDs: make(map[uint64]int),
 		signatures:      make(map[uint64]map[uint32][]byte),
 		nonceStates:     make(map[uint64]*nonceOutcome),
@@ -827,7 +835,7 @@ func (s *Session) composeDiffLockedInclude(extraTxs []*types.DevshardTx, include
 		}
 		s.diffs = append(s.diffs, diff)
 		s.nonce = nonce
-		s.retainPendingLocked(held)
+		s.retainPendingLocked(held, vd.Applied)
 		s.maybeSaveSnapshotLocked()
 		s.observeTurnLocked(diff)
 		s.diffObserver(diff)
@@ -844,7 +852,7 @@ func (s *Session) composeDiffLockedInclude(extraTxs []*types.DevshardTx, include
 	}
 	s.diffs = append(s.diffs, diff)
 	s.nonce = nonce
-	s.retainPendingLocked(held)
+	s.retainPendingLocked(held, applied)
 	s.observeTurnLocked(diff)
 	s.diffObserver(diff)
 	return diff, hostIdx, nil
@@ -923,11 +931,20 @@ func (s *Session) splitPendingForComposeLocked(includePinned []uint64) (candidat
 	return candidates, held
 }
 
-func (s *Session) retainPendingLocked(held []*types.DevshardTx) {
-	s.pendingTxs = held
-	if len(s.pendingTxKeys) <= maxPendingTxKeys {
-		return
+// retainPendingLocked installs the txs compose held back and records the ones
+// it actually applied. Candidates that were dropped by best-effort apply are
+// deliberately not remembered: freeing their key lets an honest tx with the
+// same tx_type:id be queued on a later response.
+func (s *Session) retainPendingLocked(held, applied []*types.DevshardTx) {
+	for _, tx := range applied {
+		if key := devshardTxKey(tx); key != "" {
+			s.appliedTxKeys[key] = struct{}{}
+		}
 	}
+	if len(s.appliedTxKeys) > maxAppliedTxKeys {
+		clear(s.appliedTxKeys)
+	}
+	s.pendingTxs = held
 	clear(s.pendingTxKeys)
 	for _, tx := range held {
 		if key := devshardTxKey(tx); key != "" {
@@ -1053,6 +1070,7 @@ func (s *Session) maybeSaveSnapshotLocked() {
 	state := s.sm.ExportState()
 	committedEntries := s.sm.ExportCommittedEntries()
 	sealedNonces := s.sm.ExportSealedNonces()
+	heightSyncFloor := s.sm.ExportHeightSyncFloor()
 	cursor := make(map[int]uint64, len(s.hostSyncNonce))
 	for k, v := range s.hostSyncNonce {
 		cursor[k] = v
@@ -1063,7 +1081,7 @@ func (s *Session) maybeSaveSnapshotLocked() {
 
 	go func() {
 		defer s.snapshotInFlight.Store(false)
-		writeSnapshot(store, escrowID, nonce, state, cursor, committedEntries, sealedNonces)
+		writeSnapshot(store, escrowID, nonce, state, cursor, committedEntries, sealedNonces, heightSyncFloor)
 	}()
 }
 
@@ -1112,6 +1130,7 @@ func (s *Session) FlushSnapshot() error {
 	stateCopy := s.sm.ExportState()
 	committedEntries := s.sm.ExportCommittedEntries()
 	sealedNonces := s.sm.ExportSealedNonces()
+	heightSyncFloor := s.sm.ExportHeightSyncFloor()
 	cursor := make(map[int]uint64, len(s.hostSyncNonce))
 	for k, v := range s.hostSyncNonce {
 		cursor[k] = v
@@ -1121,7 +1140,7 @@ func (s *Session) FlushSnapshot() error {
 	escrowID := s.escrowID
 	s.mu.Unlock()
 
-	return writeSnapshotErr(store, escrowID, nonce, stateCopy, cursor, committedEntries, sealedNonces)
+	return writeSnapshotErr(store, escrowID, nonce, stateCopy, cursor, committedEntries, sealedNonces, heightSyncFloor)
 }
 
 // PrepareInference composes a diff, applies it locally, advances nonce,
@@ -1703,31 +1722,93 @@ func (s *Session) signDiff(nonce uint64, txs []*types.DevshardTx, postStateRoot 
 }
 
 // devshardTxKey returns a dedup key for host-proposed txs.
-// Returns "" for user-proposed types (start, finalize, timeout).
+// Returns "" when tx is nil, the inner message is nil, or the type is not
+// deduped (user/sequencer types and unknown txs). Dedup identity only; whether
+// a host may enqueue a type is hostMayProposeTx.
 func devshardTxKey(tx *types.DevshardTx) string {
+	if tx == nil {
+		return ""
+	}
 	switch inner := tx.GetTx().(type) {
 	case *types.DevshardTx_FinishInference:
+		if inner.FinishInference == nil {
+			return ""
+		}
 		return fmt.Sprintf("finish:%d", inner.FinishInference.InferenceId)
 	case *types.DevshardTx_ConfirmStart:
+		if inner.ConfirmStart == nil {
+			return ""
+		}
 		return fmt.Sprintf("confirm:%d", inner.ConfirmStart.InferenceId)
 	case *types.DevshardTx_Validation:
+		if inner.Validation == nil {
+			return ""
+		}
 		return fmt.Sprintf("validation:%d:%d", inner.Validation.InferenceId, inner.Validation.ValidatorSlot)
 	case *types.DevshardTx_ValidationVote:
+		if inner.ValidationVote == nil {
+			return ""
+		}
 		return fmt.Sprintf("vote:%d:%d", inner.ValidationVote.InferenceId, inner.ValidationVote.VoterSlot)
 	case *types.DevshardTx_RevealSeed:
+		if inner.RevealSeed == nil {
+			return ""
+		}
 		return fmt.Sprintf("reveal_seed:%d", inner.RevealSeed.SlotId)
 	case *types.DevshardTx_HeightAck:
-		return fmt.Sprintf("height_ack:%d:%d", inner.HeightAck.TurnSeq, inner.HeightAck.SlotId)
+		if inner.HeightAck == nil {
+			return ""
+		}
+		return fmt.Sprintf("height_ack:%d:%d", inner.HeightAck.RefNonce, inner.HeightAck.SlotId)
 	default:
 		return ""
 	}
 }
 
-// addPendingTx appends tx to pendingTxs if not a duplicate.
+// hostMayProposeTx is the response-boundary allowlist. It is independent of
+// devshardTxKey: adding a dedup key for Start must not start enqueueing Starts.
+// Nil inner messages are rejected so a oneof with a nil payload cannot panic
+// later or sneak past the allowlist.
+func hostMayProposeTx(tx *types.DevshardTx) bool {
+	if tx == nil {
+		return false
+	}
+	switch inner := tx.GetTx().(type) {
+	case *types.DevshardTx_FinishInference:
+		return inner.FinishInference != nil
+	case *types.DevshardTx_ConfirmStart:
+		return inner.ConfirmStart != nil
+	case *types.DevshardTx_Validation:
+		return inner.Validation != nil
+	case *types.DevshardTx_ValidationVote:
+		return inner.ValidationVote != nil
+	case *types.DevshardTx_RevealSeed:
+		return inner.RevealSeed != nil
+	case *types.DevshardTx_HeightAck:
+		return inner.HeightAck != nil
+	default:
+		return false
+	}
+}
+
+// hostRecoveryDedupKey is the CollectTimeoutVotes / CollectErrorMissVotes
+// identity for mempool copies. User-proposed types never become recovery.
+func hostRecoveryDedupKey(tx *types.DevshardTx) string {
+	if !hostMayProposeTx(tx) {
+		return ""
+	}
+	return devshardTxKey(tx)
+}
+
+// addPendingTx appends tx to pendingTxs unless its key is already queued or
+// already landed in a diff.
 func (s *Session) addPendingTx(tx *types.DevshardTx) {
+	if tx == nil {
+		return
+	}
 	key := devshardTxKey(tx)
 	if key != "" {
-		if _, dup := s.pendingTxKeys[key]; dup {
+		if s.txKeyQueuedOrApplied(key) {
 			return
 		}
 		s.pendingTxKeys[key] = struct{}{}
@@ -1735,12 +1816,113 @@ func (s *Session) addPendingTx(tx *types.DevshardTx) {
 	s.pendingTxs = append(s.pendingTxs, tx)
 }
 
-// addPendingFromHostLocked queues a mempool/receipt tx from one host response.
-// A host-signed raise that does not match this hop's response-leg envelope is
-// dropped (spec §14 rule 2). In-process and omit-section hops leave HasEnvelope
-// unset and skip the check.
+func (s *Session) txKeyQueuedOrApplied(key string) bool {
+	if _, dup := s.pendingTxKeys[key]; dup {
+		return true
+	}
+	_, applied := s.appliedTxKeys[key]
+	return applied
+}
+
+// hostTxInferenceID returns the inference a host-proposed tx acts on. HeightAck
+// and RevealSeed are slot-scoped rather than inference-scoped.
+func hostTxInferenceID(tx *types.DevshardTx) (uint64, bool) {
+	switch {
+	case tx.GetConfirmStart() != nil:
+		return tx.GetConfirmStart().InferenceId, true
+	case tx.GetFinishInference() != nil:
+		return tx.GetFinishInference().InferenceId, true
+	case tx.GetValidation() != nil:
+		return tx.GetValidation().InferenceId, true
+	case tx.GetValidationVote() != nil:
+		return tx.GetValidationVote().InferenceId, true
+	default:
+		return 0, false
+	}
+}
+
+// rejectUnverifiedHostTx returns a non-nil error when local state can already
+// prove tx cannot apply. Two checks, both map lookups on the hot path:
+//
+// The inference must be live. applyConfirmStart, applyValidation and
+// applyValidationVote all reject an id that is absent or sealed, so admitting
+// one only buys an expensive signature recovery at compose time. Rejecting
+// here also stops a host from parking unbounded made-up ids in pending, which
+// matters now that a tx failing to apply releases its dedup key.
+//
+// A Finish must additionally come from the assigned executor. Confirm and
+// validation still authenticate on apply; Finish is checked here so an
+// unsigned or wrong-slot one cannot sit in pending and ride into a later Diff.
+// That signature check is deliberately resolver-free: a Finish signed by a warm
+// key for a slot with no cached binding is undecidable without a bridge round
+// trip, so it is allowed through and authenticated on apply. Blocking a host
+// response on a chain query would stall every inference on the session.
+func (s *Session) rejectUnverifiedHostTx(tx *types.DevshardTx) error {
+	inferenceID, scoped := hostTxInferenceID(tx)
+	if !scoped {
+		return nil
+	}
+	if s.sm == nil {
+		// Nothing to authenticate against, so admit nothing: an inference-scoped
+		// tx is only admissible when a live record backs it.
+		return types.ErrInferenceNotFound
+	}
+	executorSlot, ok := s.sm.InferenceExecutorSlot(inferenceID)
+	if !ok {
+		return types.ErrInferenceNotFound
+	}
+	fi := tx.GetFinishInference()
+	if fi == nil {
+		return nil
+	}
+	if fi.ExecutorSlot != executorSlot {
+		return types.ErrWrongExecutorSlot
+	}
+	if fi.EscrowId != s.escrowID {
+		return types.ErrEscrowIDMismatch
+	}
+	return s.sm.RejectFinishProposerSigLocal(fi)
+}
+
+// recoveryHostIdx marks a tx recovered from a timeout vote rather than read off
+// one host's response, so there is no response envelope or owning slot set.
+const recoveryHostIdx = -1
+
+// addPendingFromHostLocked queues a mempool/receipt tx from one host response
+// or timeout-recovery copy. User/sequencer types are dropped. Finish must be
+// signed by the assigned executor of a live inference. A host-signed raise
+// that does not match this hop's response-leg envelope is dropped (spec §14
+// rule 2). In-process, recovery, and omit-section hops leave HasEnvelope unset
+// and skip the envelope check.
 func (s *Session) addPendingFromHostLocked(hostIdx int, resp *host.HostResponse, tx *types.DevshardTx) {
 	if tx == nil {
+		return
+	}
+	if !hostMayProposeTx(tx) {
+		logging.Warn("dropped user-proposed tx from host mempool",
+			"subsystem", "session", "escrow", s.escrowID, "host_idx", hostIdx,
+			"tx_type", fmt.Sprintf("%T", tx.GetTx()))
+		return
+	}
+	// Settle dedup before verifying: every host gossips the same Finish, and
+	// signature recovery is far more expensive than the map lookup that would
+	// discard the result anyway. The envelope filter below can swap tx for a
+	// stamped copy, but never changes its dedup key.
+	if key := devshardTxKey(tx); key != "" && s.txKeyQueuedOrApplied(key) {
+		return
+	}
+	if err := s.rejectUnverifiedHostTx(tx); err != nil {
+		// A tx for an inference the sequencer no longer tracks is ordinary
+		// late gossip after auto-seal, not evidence of a misbehaving host.
+		if errors.Is(err, types.ErrInferenceNotFound) {
+			logging.Debug("dropped host tx for unknown or sealed inference",
+				"subsystem", "session", "escrow", s.escrowID, "host_idx", hostIdx,
+				"tx_type", fmt.Sprintf("%T", tx.GetTx()))
+		} else {
+			logging.Warn("dropped host Finish not signed by inference executor",
+				"subsystem", "session", "escrow", s.escrowID, "host_idx", hostIdx,
+				"error", err)
+		}
 		return
 	}
 	if resp != nil && resp.HasEnvelope {
@@ -1772,15 +1954,17 @@ func (s *Session) ownSlotsLocked(hostIdx int) map[uint32]struct{} {
 	return out
 }
 
-const maxPendingTxKeys = 100_000
+const maxAppliedTxKeys = 100_000
 
-// clearPendingTxs resets the pending tx slice. The dedup key set is preserved
-// so that txs already applied in earlier diffs are not re-added from another
-// host's mempool. The key set is bulk-cleared only when it exceeds the cap.
+// clearPendingTxs drops the pending tx slice and the keys that were reserving
+// a slot in it. Keys of txs already applied in earlier diffs are preserved, so
+// another host's mempool copy is still not re-added. The applied set is
+// bulk-cleared only when it exceeds the cap.
 func (s *Session) clearPendingTxs() {
 	s.pendingTxs = nil
-	if len(s.pendingTxKeys) > maxPendingTxKeys {
-		clear(s.pendingTxKeys)
+	clear(s.pendingTxKeys)
+	if len(s.appliedTxKeys) > maxAppliedTxKeys {
+		clear(s.appliedTxKeys)
 	}
 }
 
@@ -2600,10 +2784,7 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && len(recovery) > 0 {
 		s.mu.Lock()
 		for _, tx := range recovery {
-			if tx == nil {
-				continue
-			}
-			s.addPendingTx(tx)
+			s.addPendingFromHostLocked(recoveryHostIdx, nil, tx)
 		}
 		s.mu.Unlock()
 		if err := s.SendPendingDiff(ctx); err != nil {
@@ -3072,7 +3253,7 @@ func (s *Session) collectTimeoutVotes(
 				rejectCauses = append(rejectCauses, res.rejectCause)
 			}
 			for _, tx := range host.RecoveryTxsFor(res.mempool, inferenceID) {
-				key := devshardTxKey(tx)
+				key := hostRecoveryDedupKey(tx)
 				if key == "" {
 					continue
 				}
@@ -3228,9 +3409,9 @@ func (s *Session) CollectErrorMissVotes(
 			}
 			logging.Stage(ctx, "timeout_vote_result", logFields(res.verifierAddr, "accept", false, "reject_cause", res.rejectCause)...)
 			for _, tx := range host.RecoveryTxsFor(res.mempool, inferenceID) {
-				key := devshardTxKey(tx)
+				key := hostRecoveryDedupKey(tx)
 				if key == "" {
-					key = fmt.Sprintf("%p", tx)
+					continue
 				}
 				if _, ok := seenRecovery[key]; ok {
 					continue

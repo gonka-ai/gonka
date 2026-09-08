@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -85,6 +86,34 @@ func BootHeightSyncHAPlusSoloStack(t *testing.T, prefix string) (*Stack, *config
 	require.Len(t, config.OnChainIdentityHosts(cfg), 2, "HA pair + solo is two identities")
 	require.Empty(t, cfg.Hosts[1].SlotIDs, "versiond-1 is the HA replica and must own no slots")
 	require.NotEmpty(t, cfg.Hosts[2].SlotIDs, "the solo must own a slot so stopping it is H43")
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+// BootHeightSyncSoloOracleOverlayStack is height-sync HA pair + solo with a
+// testenv-only Latest() overlay on the solo identity. Delta shifts the solo
+// host's reported tip; fabricate flips the first hash byte. At/Prove/Subscribe
+// stay canonical so L6 reconcile can still see the real header. Production
+// binaries ignore these env vars (build tag devshard_testenv).
+func BootHeightSyncSoloOracleOverlayStack(t *testing.T, prefix string, delta int64, fabricate bool) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	require.True(t, delta != 0 || fabricate, "oracle overlay needs a height delta and/or fabricate_hash")
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 2})
+	stack.RunGencompose(t)
+	EnableHeightSyncCompose(t, stack.ComposePath)
+	cfg := stack.LoadConfig(t)
+	requireThreeVersiondHosts(t, cfg)
+	require.Len(t, config.OnChainIdentityHosts(cfg), 2, "HA pair + solo is two identities")
+	solo := FirstSoloHostID(t, cfg)
+	lines := []string{fmt.Sprintf("DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA: %q", strconv.FormatInt(delta, 10))}
+	if fabricate {
+		lines = append(lines, `DEVSHARD_TESTENV_ORACLE_FABRICATE_HASH: "true"`)
+	}
+	PatchComposeServiceInsertEnv(t, stack.ComposePath, solo, "DEVSHARD_CHAINORACLE_URL", lines...)
+	PatchComposeServiceInsertEnv(t, stack.ComposePath, gatewayComposeService, "DEVSHARD_CHAINORACLE_URL",
+		`DEVSHARD_GATEWAY_CHAIN_ORACLE: "true"`)
 	stack.Up(t)
 	return stack, cfg, stack.Endpoints(t, cfg)
 }

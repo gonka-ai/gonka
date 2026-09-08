@@ -208,3 +208,47 @@ func PatchComposeServiceEnv(t *testing.T, composePath, service, key, value strin
 	t.Fatalf("compose %s: service %q has no %q entry", composePath, service, key)
 	return ""
 }
+
+// PatchComposeServiceInsertEnv adds environment lines after afterKey inside a
+// single service block. Unlike PatchComposeInsertEnvAfterAll this does not
+// touch sibling services, which is what makes it usable for putting one host
+// on a testenv oracle overlay its siblings are not on.
+func PatchComposeServiceInsertEnv(t *testing.T, composePath, service, afterKey string, lines ...string) {
+	t.Helper()
+	require.NotEmpty(t, lines, "compose %s: no env lines to insert into %q", composePath, service)
+	body, err := os.ReadFile(composePath)
+	require.NoError(t, err)
+
+	fileLines := strings.Split(string(body), "\n")
+	start := -1
+	for i, line := range fileLines {
+		if line == "  "+service+":" {
+			start = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, start, 0, "compose %s: service %q not found", composePath, service)
+
+	after := regexp.MustCompile(`^(\s+)` + regexp.QuoteMeta(afterKey) + `:\s*.*$`)
+	for i := start + 1; i < len(fileLines); i++ {
+		if trimmed := strings.TrimLeft(fileLines[i], " "); trimmed != "" &&
+			len(fileLines[i])-len(trimmed) <= 2 {
+			break
+		}
+		m := after.FindStringSubmatch(fileLines[i])
+		if m == nil {
+			continue
+		}
+		indent := m[1]
+		insert := make([]string, 0, len(lines))
+		for _, line := range lines {
+			insert = append(insert, indent+line)
+		}
+		updated := append([]string{}, fileLines[:i+1]...)
+		updated = append(updated, insert...)
+		updated = append(updated, fileLines[i+1:]...)
+		require.NoError(t, os.WriteFile(composePath, []byte(strings.Join(updated, "\n")), 0o644))
+		return
+	}
+	t.Fatalf("compose %s: service %q has no %q entry to insert after", composePath, service, afterKey)
+}

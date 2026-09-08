@@ -29,18 +29,18 @@ func TestLogPlane_DeterminismAcrossVerifiers(t *testing.T) {
 		require.NoError(t, err)
 
 		hb := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq: 1, ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3, Reason: "quiet_session",
+			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3, Reason: "quiet_session",
 		}}}
 		d1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{hb})
 		_, err = sm.ApplyDiff(d1)
 		require.NoError(t, err)
 
 		ack0 := &types.MsgHeightAck{
-			TurnSeq: 1, RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+			RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
 			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
 		}
 		ack1 := &types.MsgHeightAck{
-			TurnSeq: 1, RefNonce: 1, SlotId: 1, ObservedHeight: 50, ObservedBlockHash: hash,
+			RefNonce: 1, SlotId: 1, ObservedHeight: 50, ObservedBlockHash: hash,
 			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
 		}
 		require.NoError(t, heightsync.SignAck(hosts[0], ack0))
@@ -72,13 +72,13 @@ func TestLogPlane_ApplyDiff_FabricatedAckRejected(t *testing.T) {
 	sm, user := newTestSM(t, hosts, 100000)
 	hash := []byte{0xaa}
 	hb := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-		TurnSeq: 1, ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3, Reason: "quiet_session",
+		ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3, Reason: "quiet_session",
 	}}}
 	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{hb}))
 	require.NoError(t, err)
 
 	ack := &types.MsgHeightAck{
-		TurnSeq: 1, RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+		RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
 		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
 	}
 	require.NoError(t, heightsync.SignAck(hosts[0], ack))

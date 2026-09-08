@@ -24,7 +24,7 @@ func TestProxyResponse_HashConsistency(t *testing.T) {
 	inferenceId := "test-inference"
 
 	// Path 1: ProxyResponse (executor path with ResponseWriter).
-	proxyProcessor := completionapi.NewExecutorResponseProcessor(inferenceId)
+	proxyProcessor := completionapi.NewExecutorResponseProcessor(inferenceId, true)
 	proxyResp := &http.Response{
 		StatusCode: 200,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
@@ -39,7 +39,7 @@ func TestProxyResponse_HashConsistency(t *testing.T) {
 	require.NoError(t, err)
 
 	// Path 2: ProcessHTTPResponse (validator path without ResponseWriter).
-	processProcessor := completionapi.NewExecutorResponseProcessor(inferenceId)
+	processProcessor := completionapi.NewExecutorResponseProcessor(inferenceId, true)
 	processResp := &http.Response{
 		StatusCode: 200,
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},

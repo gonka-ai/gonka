@@ -187,11 +187,11 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	if rec := s.turnTracker.Latest(); rec != nil && rec.State != heightsync.TurnOpen {
 		if rec.State == heightsync.TurnDegraded && s.heartbeat.TurnOpen() {
 			s.heartbeat.RecordCadence(heightsync.CadenceEvent{
-				At:      now,
-				Event:   heightsync.CadenceTurnSettledDegraded,
-				TurnSeq: rec.TurnSeq,
-				HRef:    rec.HReq,
-				Outcome: rec.State.String(),
+				At:        now,
+				Event:     heightsync.CadenceTurnSettledDegraded,
+				TurnStart: rec.TurnStart,
+				HRef:      rec.HReq,
+				Outcome:   rec.State.String(),
 			})
 		}
 		s.heartbeat.SettleTurn()
@@ -204,11 +204,18 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	}
 
 	slots := uint64(len(s.group))
-	prevSeq := s.heartbeatTurnSeq
-	s.heartbeatTurnSeq++
-	prev := s.turnTracker.Record(prevSeq)
+	// The turn's identity is the nonce its first heartbeat lands at, so the
+	// producer reports it rather than choosing it. There is no counter to keep in
+	// step with the log: a span that never lands leaves nothing behind, and the
+	// next attempt is named by wherever it lands instead.
+	spanStart := s.nonce + 1
+	prev := s.turnTracker.Latest()
+	var prevStart uint64
+	if prev != nil {
+		prevStart = prev.TurnStart
+	}
 	vector := heightsync.ComposeSyncVector(uint32(slots), prev)
-	spanTxs := s.heartbeat.SpanTxs(s.heartbeatTurnSeq, hNow, hash, slots, reason, vector)
+	spanTxs := s.heartbeat.SpanTxs(hNow, hash, slots, reason, vector)
 	if len(spanTxs) == 0 {
 		return nil, nil
 	}
@@ -232,27 +239,27 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	abandoned := s.heartbeat.OpenTurn(now)
 	if abandoned {
 		s.heartbeat.RecordCadence(heightsync.CadenceEvent{
-			At:      now,
-			Event:   heightsync.CadenceTurnAbandoned,
-			TurnSeq: prevSeq,
-			HRef:    hNow,
-			Reason:  string(reason),
+			At:        now,
+			Event:     heightsync.CadenceTurnAbandoned,
+			TurnStart: prevStart,
+			HRef:      hNow,
+			Reason:    string(reason),
 		})
 	}
 	s.heartbeat.RecordCadence(heightsync.CadenceEvent{
-		At:      now,
-		Event:   heightsync.CadenceHeartbeatOpened,
-		TurnSeq: s.heartbeatTurnSeq,
-		HRef:    hNow,
-		Span:    len(out),
-		Reason:  string(reason),
+		At:        now,
+		Event:     heightsync.CadenceHeartbeatOpened,
+		TurnStart: spanStart,
+		HRef:      hNow,
+		Span:      len(out),
+		Reason:    string(reason),
 	})
 	if s.anchors != nil {
 		s.anchors.Record(hNow, heightsync.AnchorKindHeartbeat)
 		s.anchors.ObserveTip(hNow)
 	}
 	logging.Info("heartbeat span dispatched", "subsystem", "heightsync",
-		"escrow", s.escrowID, "turn_seq", s.heartbeatTurnSeq,
+		"escrow", s.escrowID, "turn_start", spanStart,
 		"height", hNow, "span", len(out), "reason", string(reason))
 	return out, nil
 }
@@ -320,34 +327,28 @@ func (s *Session) hasPendingHeightAckLocked() bool {
 	return false
 }
 
-// referenceStampLocked is the producer side of L0 for the sequencer: a
-// Diff-resident height is max(own view, F(nonce)), or absent. It is never below
-// F(nonce), so an honest sequencer cannot author a regression.
+// referenceStampLocked is the producer side of L0 for the sequencer: a user
+// Diff-resident height is **exactly F(nonce)**, or absent.
 //
-// This covers MsgStartInference and MsgHeartbeat alike — every height in Diff is
-// a reference height (spec §14), and the sequencer is a carrier on both.
+// The user is not a height source (spec §10.3.1). Its own courier tip is a
+// collection of peer claims it did not read from any chain itself, so writing it
+// into Diff would put a user-chosen integer where the log keeps logical time —
+// the whole of P1. It stays where it belongs: on the request-leg envelope, where
+// the receiving host judges it against its own follower (|Δ| > D) and can demand
+// proof.
 //
-// A floor beyond W_conf of the sequencer's own view is declined rather than
-// carried, which leaves the caller with the same situation as an unusable oracle:
-// the start leg goes out unstamped and the heartbeat is skipped. Both are states
-// the protocol already handles — hosts arm close-ready when stamps stop — and
-// both are better than the sequencer signing a height it has no reason to think
-// exists.
+// Absent is the only other branch, and it is what a session before its first
+// inference gets: F does not exist yet, so there is nothing truthful to stamp and
+// no heartbeat may open. The first host-signed stamp seeds F and starts the clock.
 func (s *Session) referenceStampLocked(nonce uint64) (uint64, []byte, bool) {
-	h, hash, ok := s.observedHeightLocked()
-	if !heightsync.StampPresent(hash) {
-		h, hash, ok = 0, nil, false
+	if !s.sm.HeightSyncFloorReady() {
+		return 0, nil, false
 	}
 	floor, floorHash, known := s.sm.HeightSyncFloorAsOf(nonce)
-	if known && floor > h && heightsync.StampPresent(floorHash) {
-		if s.heartbeatCfg.FloorOutOfReach(floor, h) {
-			logging.Warn("height stamp omitted: floor out of reach", "subsystem", "heightsync",
-				"escrow", s.escrowID, "nonce", nonce, "floor", floor, "own_tip", h)
-			return 0, nil, false
-		}
-		return floor, floorHash, true
+	if !known || floor == 0 || !heightsync.StampPresent(floorHash) {
+		return 0, nil, false
 	}
-	return h, hash, ok
+	return floor, floorHash, true
 }
 
 func (s *Session) observedHeightLocked() (uint64, []byte, bool) {

@@ -420,6 +420,10 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.NotContains(t, text, ":1317")
 	require.Contains(t, text, "/health")
 	require.Contains(t, text, "DEVSHARD_MODEL")
+	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_DISABLED")
+	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_INTERVAL")
+	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_TIMEOUT")
+	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY")
 	require.Contains(t, text, "/v1/status")
 }
 

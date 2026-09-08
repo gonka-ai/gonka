@@ -21,10 +21,10 @@ func TestApplyLocalBestEffort_HeartbeatAndAckStayInDiff(t *testing.T) {
 	hash := []byte{0xaa}
 
 	hb := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-		TurnSeq: 1, ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3, Reason: "quiet_session",
+		ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3, Reason: "quiet_session",
 	}}}
 	ack := &types.MsgHeightAck{
-		TurnSeq: 1, RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+		RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
 		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
 	}
 	require.NoError(t, heightsync.SignAck(hosts[0], ack))
@@ -52,7 +52,7 @@ func TestHeightSyncMissingAcksReportsDegradedTurnThroughSMAPI(t *testing.T) {
 		t.Helper()
 		_, applied, err := sm.ApplyLocalBestEffort(nonce, []*types.DevshardTx{{
 			Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-				TurnSeq: turnSeq, ObservedHeight: observedHeight, ObservedBlockHash: hash,
+				ObservedHeight: observedHeight, ObservedBlockHash: hash,
 				SlotsNum: uint64(len(hosts)), Reason: "quiet_session",
 			}},
 		}})
@@ -69,7 +69,25 @@ func TestHeightSyncMissingAcksReportsDegradedTurnThroughSMAPI(t *testing.T) {
 	require.Empty(t, sm.HeightSyncMissingAcks(1), "missing slots are gated until the ack window closes")
 
 	afterDeadline := uint64(500) + heightsync.DefaultHeartbeatConfig().AckDeadlineBlocks + 1
-	appendHeartbeat(uint64(len(hosts))+1, 2, afterDeadline)
+	// User stamps do not close ack windows. A host-signed confirm is the
+	// production clock (stampHeight / LogResidentHeight) that advances hNow.
+	nonce := uint64(len(hosts)) + 1
+	exec := hosts[nonce%uint64(len(hosts))]
+	sig := testutil.SignExecutorReceipt(t, exec, "escrow-1", nonce, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000,
+		testutil.ReceiptStamp{Height: afterDeadline, Hash: hash})
+	_, applied, err := sm.ApplyLocalBestEffort(nonce, []*types.DevshardTx{
+		txStart(&types.MsgStartInference{
+			InferenceId: nonce, PromptHash: []byte("prompt"), Model: "llama",
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			ObservedHeight: 500, ObservedBlockHash: hash,
+		}),
+		txConfirm(&types.MsgConfirmStart{
+			InferenceId: nonce, ExecutorSig: sig, ConfirmedAt: 1000,
+			ObservedHeight: afterDeadline, ObservedBlockHash: hash,
+		}),
+	})
+	require.NoError(t, err)
+	require.Len(t, applied, 2)
 
 	rec = sm.HeightSyncTurnRecord(1)
 	require.NotNil(t, rec)
@@ -79,8 +97,8 @@ func TestHeightSyncMissingAcksReportsDegradedTurnThroughSMAPI(t *testing.T) {
 
 	due := sm.HeightSyncRepairDue()
 	require.Len(t, due, 1)
-	require.Equal(t, uint64(1), due[0].TurnSeq)
-	require.Equal(t, uint64(1), due[0].SpanStart)
+	require.Equal(t, uint64(1), due[0].TurnStart)
+	require.Equal(t, uint64(1), due[0].TurnStart)
 	require.ElementsMatch(t, []uint32{0, 1, 2, 3}, due[0].Missing)
 }
 
@@ -97,7 +115,7 @@ func TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce(t *testing.T) {
 		sm, _ := newTestSM(t, hosts, 100000)
 		_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
 			Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-				TurnSeq: 1, ObservedHeight: 80, ObservedBlockHash: hash, SlotsNum: 3,
+				ObservedHeight: 80, ObservedBlockHash: hash, SlotsNum: 3,
 			}},
 		}})
 		require.NoError(t, err)
@@ -106,7 +124,7 @@ func TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce(t *testing.T) {
 		// Sequencer stamps do not raise F. Seed the floor with a host ack, then
 		// a heartbeat below that floor is L0-invalid.
 		ack := &types.MsgHeightAck{
-			TurnSeq: 1, RefNonce: 1, SlotId: 0, ObservedHeight: 80, ObservedBlockHash: hash,
+			RefNonce: 1, SlotId: 0, ObservedHeight: 80, ObservedBlockHash: hash,
 			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
 		}
 		require.NoError(t, heightsync.SignAck(hosts[0], ack))
@@ -117,7 +135,7 @@ func TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce(t *testing.T) {
 
 		_, applied, err := sm.ApplyLocalBestEffort(3, []*types.DevshardTx{{
 			Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-				TurnSeq: 2, ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+				ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
 			}},
 		}})
 		require.ErrorIs(t, err, heightsync.ErrHeightRegression)
@@ -126,10 +144,13 @@ func TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce(t *testing.T) {
 	})
 
 	t.Run("L1", func(t *testing.T) {
+		// slots_num must match the group. turn_seq 0 used to be the framing
+		// violation checked here; a turn is named by its span-start nonce now, so
+		// there is no turn id on the wire to malform.
 		sm, _ := newTestSM(t, hosts, 100000)
 		_, applied, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
 			Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-				TurnSeq: 0, ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+				ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 4,
 			}},
 		}})
 		require.ErrorIs(t, err, heightsync.ErrBadFraming)
@@ -141,13 +162,13 @@ func TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce(t *testing.T) {
 		sm, _ := newTestSM(t, hosts, 100000)
 		_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
 			Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-				TurnSeq: 1, ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+				ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
 			}},
 		}})
 		require.NoError(t, err)
 
 		ack := &types.MsgHeightAck{
-			TurnSeq: 1, RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+			RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
 			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
 		}
 		require.NoError(t, heightsync.SignAck(hosts[0], ack))
@@ -170,10 +191,10 @@ func TestApplyLocalBestEffort_LogPlaneInvalidAckDroppedKeepsHeartbeat(t *testing
 	sm, _ := newTestSM(t, hosts, 100000)
 	hash := []byte{0xaa}
 	hb := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-		TurnSeq: 1, ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+		ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
 	}}}
 	ack := &types.MsgHeightAck{
-		TurnSeq: 1, RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+		RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
 		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
 	}
 	require.NoError(t, heightsync.SignAck(hosts[0], ack))
@@ -209,11 +230,13 @@ func TestApplyLocalBestEffort_LateAckAfterTurnPruneComposesAndApplies(t *testing
 		return sm
 	}
 	composer, hostSM := newSM(), newSM()
-	const n = heightsync.DefaultTurnRetain + 5
+	// A turn spans slots_num = 3 nonces, so clearing the retain window takes
+	// three times as many diffs as it takes turns.
+	const n = (heightsync.DefaultTurnRetain + 5) * 3
 	for i := uint64(1); i <= n; i++ {
 		d := testutil.SignDiff(t, user, "escrow-1", i, []*types.DevshardTx{{
 			Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-				TurnSeq: i, SlotsNum: 3, Reason: "quiet_session",
+				SlotsNum: 3, Reason: "quiet_session",
 			}},
 		}})
 		_, err := composer.ApplyDiff(d)
@@ -230,7 +253,7 @@ func TestApplyLocalBestEffort_LateAckAfterTurnPruneComposesAndApplies(t *testing
 
 	hash := []byte{0xaa}
 	ack := &types.MsgHeightAck{
-		TurnSeq: 1, RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+		RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
 		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
 	}
 	require.NoError(t, heightsync.SignAck(hosts[0], ack))
@@ -248,7 +271,7 @@ func TestApplyLocalBestEffort_LateAckAfterTurnPruneComposesAndApplies(t *testing
 func l7HeartbeatTx(slots uint64) *types.DevshardTx {
 	hash := []byte{0xaa}
 	return &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-		TurnSeq: 1, ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: slots,
+		ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: slots,
 		SyncVector: []*types.SyncVectorEntry{{
 			SlotId: 0, Status: types.AckStatus_ACKED, ObservedHeight: 40, AckNonce: 9,
 		}},

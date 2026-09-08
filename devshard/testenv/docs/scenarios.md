@@ -38,8 +38,11 @@ make citest-validation-lease-race # validation lease race only
 make citest-payload-withholding   # executor payload withholding (500 → invalidate)
 make citest-versiond-rolling-update
 make citest-versiond-host-evacuation
+make citest-versiond-warm-cutover  # v5 warm-cutover boot + overlap swap
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
 make citest-adversarial           # Phase 9 A1–A5 (A5 is 3-host)
+make citest-host-ping             # gateway host-ping e2e (rebuilds devshardd)
+make citest-height-sync           # height-sync cadence + host-claim overlays (rebuilds devshardd)
 ```
 
 Or run a single scenario:
@@ -80,8 +83,12 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Validation lease race** | Same-key HA lease exclusivity, pending stretch, graceful-stop re-acquire | `TestValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
 | **Payload withholding** | Executor `GET /payloads` 500 → Challenged/Invalidated; D7 off releases the lease | `TestPayloadWithholding_AllCallers500_Invalidates`, `…SelectiveValidator_Challenges`, `…D7Off_LeaseReleasedAndReacquired` |
 | **Versiond rolling update** | Postgres blue/green drain and hybrid fallback | `TestVersiondRollingUpdateSameVersionSHA`, `…HybridFallback` |
+| **Versiond warm cutover** | v5 boot serves while recovery drains; overlap swap waits for `recovery_complete` then publishes | `TestVersiondWarmCutoverBoot`, `TestVersiondWarmCutoverOverlapWaitsThenServes` |
 | **Versiond host evacuation** | Router withdrawal, SSE completion, survivor recovery and readiness-gated rejoin | `TestVersiondHostEvacuation` |
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
+| **Host ping** | Gateway host-ping target set + metrics (unused → chat → ping tier → deactivate); kill switch; probe outage does not quarantine | `TestHostPing`, `TestHostPingKillSwitch` |
+| **Height-sync cadence** | Two chats seed `F` (§10.3.1), then quiet `Interval` → `heartbeat_opened`; one host stopped; peer-matrix opt-in | `TestContainerE2E_HeightSync_QuietEscrowHeartbeat`, `…OneHostStopped`, `…PeerMatrixOptIn` |
+| **Height-sync host claims** | Solo oracle overlay: lag / future `\|Δ\|>D` / fabricated `H+1`; chat 200; detection logs + spread | `TestContainerE2E_HeightSync_HostLowerHeightAutoAligns`, `…HostFutureHeightBeyondD`, `…HostFabricatedHashInsideD` |
 
 Source files under `devshard/testenv/citest/` use the same behavior-oriented
 names. Versiond failover and restart persistence intentionally remain separate
@@ -274,6 +281,82 @@ converge to the new sha without ever reporting an old draining child.
 
 Tests: `TestVersiondRollingUpdateSameVersionSHA` and
 `TestVersiondRollingUpdateHybridFallback`.
+
+---
+
+## Versiond warm cutover
+
+**What we test:** The v5 ready-probe status-vs-body split and the
+`versiond` warm-cutover wait (companion *ready-on-boot-warm-cutover* flow). A
+devshardd child serves on its public listener (`/healthz` 200) while its
+recovery backlog is still draining — the status code answers "can serve",
+the body field `recovery_complete` answers "is warm". Only a version
+replacement with a healthy old generation waits on the body; a solo start
+publishes on status alone. These tests pin the externally visible halves of
+that contract end to end against the real stack.
+
+**Why this is split from the rolling-update suite:** the rolling-update test
+exercises the overlap path as a side effect of a streaming cutover. The
+warm-cutover suite isolates the new v5 contract — `VERSIOND_RECOVERY_TIMEOUT`
+is wired, the public listener serves during recovery, and the overlap swap
+completes (the wait returns) — so a regression in any one of them fails a
+focused test rather than a large streaming one.
+
+**How (boot):**
+
+1. Boot the standard 2-host Postgres stack with `VERSIOND_RECOVERY_TIMEOUT=30s`
+   inserted next to the other `VERSIOND_*` knobs (gencompose does not emit it
+   yet) and `VERSIOND_NON_HA_VERSIONS` cleared.
+2. Wait the devshardd public `/healthz` through the router (`/{version}/healthz`)
+   to return 200 — the status-code path that admits a solo restart.
+3. Require both versiond hosts to report the child `running` with the booted
+   sha.
+4. Send one gateway chat and require mock-openai echo — the admitted child
+   actually serves inference, not just health.
+
+**How (overlap):**
+
+1. Boot the same warm-cutover stack; stop the non-target host so new sessions
+   pin to the target.
+2. `POST /testenv/versions` with the same version name and a new archive sha.
+3. Poll the pinned versiond host `/healthz` until the new sha reaches
+   `running` (3m window, well past the 30s `VERSIOND_RECOVERY_TIMEOUT`). The
+   new sha only becomes `running` after `waitForChildRecoveryComplete` returns
+   and `downloadAndSwap` publishes the new child — a broken or deadlocked warm
+   wait would abort the swap (`ErrRecoveryTimeout`) and the old child would
+   keep serving, so the new sha would never appear and the 3m poll would fail.
+4. Send a new gateway chat and require success on the new child.
+5. Require the old sha to be fully retired (no lingering `draining` child).
+
+The test does **not** assert the timing-sensitive `running(new)` +
+`draining(old)` overlap pair: with no in-flight stream the old child drains and
+is removed in milliseconds, so a 100 ms poll can miss the simultaneous window.
+Asserting the new sha reaches `running` is the load-bearing check — it is
+exactly what a timed-out warm wait would prevent. (The rolling-update suite
+keeps the old child draining with a long stream and asserts the overlap pair
+there.)
+
+**Pass criteria:** Public `/healthz` is 200 with `VERSIOND_RECOVERY_TIMEOUT`
+configured; both hosts report the booted child `running`; a chat round-trip
+succeeds after boot; the sha flip drives the new sha to `running` (warm wait
+returned, swap published); new traffic serves after the swap; the old child
+retires.
+
+**Scope and limits:** the admin `/ready` listener is loopback inside the
+versiond container on a dynamic port and is not reachable from the test host, so
+the `recovery_complete` body field and the wait bail-outs are pinned at the unit
+level (`devshard/cmd/devshardd/lifecycle_test.go` for the body shape,
+`versioned/internal/process/manager_recovery_wait_test.go` for the wait and every
+bail-out). The testenv suite pins the end-to-end effect: the wait returns and the
+swap completes. With the testenv's empty journal the wait is sub-second, so the
+suite does not assert a measurable wait duration.
+
+Run: `make citest-versiond-warm-cutover` from `devshard/testenv/`. Also matched by
+the `citest-stack` pattern (`Versiond.*`); skips if the linux `devshardd` binary
+is absent (run `make build-devshardd` first).
+
+Tests: `TestVersiondWarmCutoverBoot`,
+`TestVersiondWarmCutoverOverlapWaitsThenServes`.
 
 ---
 
@@ -490,10 +573,78 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 
 ---
 
+## Height-sync host claims
+
+**What we test:** One live host reports a **lower** tip, a **future** tip beyond `D`,
+or a **slightly future fabricated hash**. Chat must keep returning 200. Detection is
+logs, marks, and gateway `height_spread` / `host_height_lag`. Dispute / Strong slash
+is not in this release.
+
+In-process pins live next to the Gherkin in
+[`heightsync_host_claims.feature`](../scenarios/heightsync_host_claims.feature)
+(`TestHeightSync_E2E_HostLowerHeightAutoAlignsAndLogs`,
+`…HostFutureHeightBeyondDDetected`, `…HostFabricatedHashInsideDReconciles`).
+
+Citest boots HA pair + solo and patches **only the solo** with a testenv-only
+`Latest()` overlay (`DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA` /
+`DEVSHARD_TESTENV_ORACLE_FABRICATE_HASH`, compiled under `devshard_testenv`).
+Host `Latest()` comes from the Comet tip cache, so changing mock-dapi
+`/block/:height` would not make one host report a different tip.
+
+**Tests:** `TestContainerE2E_HeightSync_HostLowerHeightAutoAligns`,
+`TestContainerE2E_HeightSync_HostFutureHeightBeyondD`,
+`TestContainerE2E_HeightSync_HostFabricatedHashInsideD`
+(`citest/height_sync_host_claims_test.go`)
+
+```gherkin
+Feature: Height-sync host claims
+
+  Scenario: Host reports a lower height than the roster
+    Given an escrow with honest hosts at height H
+    And one host whose oracle tip is much lower than H
+    When the gateway has already aligned on the higher tip
+    And chat is sent to the lagging host
+    Then inferences complete without error
+    And the floor F is the higher host-signed height
+    And operators see negative delta, height_spread, and host_height_lag
+    And a Diff stamp below F after alignment is INVALID(height_regression)
+
+  Scenario: Host reports a future height with unknown hash beyond D
+    Given D is 2
+    And one host claims H+Δ with Δ > D and a hash not in the honest oracle
+    When chat continues
+    Then chat still returns 200
+    And trust_level is untrusted_peer
+    And L5a records MARK(l5a_admission) when that height is bound on a heartbeat or ack
+    And Strong slash is not required in this release
+
+  Scenario: Host reports a slightly future fabricated hash
+    Given one host claims H+1 (Δ ≤ D) with a fabricated block hash
+    When honest followers later reach height H+1 and see the canonical hash
+    Then hosts log warn "heightsync: untrusted peer tip disagrees with oracle at reconciled height"
+    And L6 DEFERRED_FAIL is recorded when Oracle.At(H) is available
+    And chat was never blocked
+```
+
+**How:** `harness.BootHeightSyncSoloOracleOverlayStack`. Overlay shifts only
+`Latest()`; `At` / `Prove` / `Subscribe` stay canonical so reconcile can still
+see the real header. Gateway `DEVSHARD_GATEWAY_CHAIN_ORACLE=true` so courier
+`delta` / `local_aligned` are meaningful.
+
+**Run:** `make -C devshard/testenv citest-height-sync`
+
+**Pass criteria:** Chat 200 throughout. Scenario A: negative `delta`,
+`height_spread` ≥ 15. Scenario B: `trust_level=untrusted_peer`, `l5a_admission`.
+Scenario C: reconcile warn on the honest HA host. A stamp **below** `F` after
+alignment (`INVALID(height_regression)`) stays a unit pin.
+
+---
+
 ## Related test suites
 
 | Suite | Command | Scenarios |
 |-------|---------|-----------|
+| Height-sync | `make citest-height-sync` | Cadence, dapi pause, host claims A/B/C ([`heightsync_host_claims.feature`](../scenarios/heightsync_host_claims.feature)) |
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A5 (fault injection on mock-openai / mock-chain) |
 | Observability | `make citest-observability` | O1 Jaeger + Loki + host histogram scrape (isolated overlay) |

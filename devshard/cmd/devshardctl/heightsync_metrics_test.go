@@ -80,9 +80,9 @@ func TestGatewayHeightSync_QuietCadenceEventsAndRing(t *testing.T) {
 	view := threeSlotView("12")
 	view.CadenceCounts = map[string]uint64{string(heightsync.CadenceHeartbeatOpened): 3}
 	view.CadenceEvents = []heightsync.CadenceEvent{
-		{Event: heightsync.CadenceHeartbeatOpened, TurnSeq: 1, HRef: 10},
-		{Event: heightsync.CadenceHeartbeatOpened, TurnSeq: 2, HRef: 11},
-		{Event: heightsync.CadenceHeartbeatOpened, TurnSeq: 3, HRef: 12},
+		{Event: heightsync.CadenceHeartbeatOpened, TurnStart: 1, HRef: 10},
+		{Event: heightsync.CadenceHeartbeatOpened, TurnStart: 2, HRef: 11},
+		{Event: heightsync.CadenceHeartbeatOpened, TurnStart: 3, HRef: 12},
 	}
 	g := &Gateway{runtimeOrder: []*devshardRuntime{{id: "12", testHeightSyncView: &view}}}
 	families := gatherHeightSync(t, g, false)
@@ -100,8 +100,8 @@ func TestGatewayHeightSync_QuietCadenceEventsAndRing(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Escrows, 1)
 	require.Len(t, body.Escrows[0].CadenceEvents, 3)
-	require.Equal(t, uint64(1), body.Escrows[0].CadenceEvents[0].TurnSeq)
-	require.Equal(t, uint64(3), body.Escrows[0].CadenceEvents[2].TurnSeq)
+	require.Equal(t, uint64(1), body.Escrows[0].CadenceEvents[0].TurnStart)
+	require.Equal(t, uint64(3), body.Escrows[0].CadenceEvents[2].TurnStart)
 }
 
 func TestGatewayHeightSync_InferenceDischargeIsVisible(t *testing.T) {
@@ -126,8 +126,8 @@ func TestGatewayHeightSync_AbandonedTurnCounted(t *testing.T) {
 		string(heightsync.CadenceHeartbeatOpened): 3,
 	}
 	view.CadenceEvents = []heightsync.CadenceEvent{
-		{Event: heightsync.CadenceTurnAbandoned, TurnSeq: 1},
-		{Event: heightsync.CadenceHeartbeatOpened, TurnSeq: 2},
+		{Event: heightsync.CadenceTurnAbandoned, TurnStart: 1},
+		{Event: heightsync.CadenceHeartbeatOpened, TurnStart: 2},
 	}
 	g := &Gateway{runtimeOrder: []*devshardRuntime{{id: "12", testHeightSyncView: &view}}}
 	families := gatherHeightSync(t, g, false)
