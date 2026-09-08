@@ -126,10 +126,11 @@ func (c *chatResponseCache) Get(key string, now time.Time) (cachedChatResponse, 
 	return entry, true
 }
 
-// Set stores without re-validating: cacheEntry is the only gate.
-func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.Time) {
+// Set stores without re-validating: cacheEntry is the only gate. It reports
+// false when the entry does not fit under the byte cap.
+func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.Time) bool {
 	if c == nil || key == "" || len(entry.Body) == 0 || strings.TrimSpace(entry.EscrowID) == "" {
-		return
+		return false
 	}
 	if entry.ExpiresAt.IsZero() {
 		entry.ExpiresAt = now.Add(c.ttl)
@@ -148,9 +149,8 @@ func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.T
 	// the limit. This is a dedup cache -- evicting a "wrong" entry only
 	// costs one cache miss, so eviction order isn't worth tracking.
 	if chatCacheEntrySize(entry) > c.maxBytes {
-		// Entry is too large to fit under the cap; don't cache it.
 		c.deleteLocked(key)
-		return
+		return false
 	}
 	for other := range c.entries {
 		if c.totalBytes <= c.maxBytes {
@@ -160,6 +160,7 @@ func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.T
 			c.deleteLocked(other)
 		}
 	}
+	return true
 }
 
 // Stats reports the current entry count and approximate retained bytes.

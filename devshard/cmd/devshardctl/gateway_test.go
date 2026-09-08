@@ -1586,6 +1586,32 @@ func TestGatewayPooledChatDoesNotCacheIncompleteResponse(t *testing.T) {
 	}
 }
 
+func TestGatewayPooledChatReportsOversizedResponseAsSkipped(t *testing.T) {
+	var calls atomic.Int32
+	rt := &devshardRuntime{
+		id:    "12",
+		model: "Qwen/Test",
+		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"choices":[{"index":0,"message":{"content":"` + strings.Repeat("x", 4096) + `"},"finish_reason":"stop"}]}`))
+		}),
+	}
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.chatCache = newChatResponseCache(0, 1024)
+	g.settings.ModelLimits = []GatewayModelLimitSettings{{ModelID: "Qwen/Test", AccessMode: string(gatewayAccessModeOpen)}}
+	body := `{"model":"Qwen/Test","messages":[{"role":"user","content":"hello"}]}`
+
+	for range 2 {
+		rec := httptest.NewRecorder()
+		g.handlePooledChat(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)))
+		require.Equal(t, http.StatusOK, rec.Code)
+	}
+	require.EqualValues(t, 2, calls.Load())
+	requireChatCacheCount(t, g, "skipped_too_large", 2)
+}
+
 func TestGatewayPooledChatCachesOpenAIStyleBadRequestWithFreshRequestID(t *testing.T) {
 	var calls atomic.Int32
 	rt := &devshardRuntime{

@@ -41,6 +41,15 @@ func TestGatewayChatCacheCaptureAllowsSuccessfulResponse(t *testing.T) {
 	require.JSONEq(t, `{"choices":[{"index":0,"message":{"content":"ok"},"finish_reason":"stop"}]}`, string(entry.Body))
 }
 
+func TestGatewayChatCacheCaptureAllowsMultiChoiceNonStreamingResponse(t *testing.T) {
+	capture := &gatewayChatCacheCapture{ResponseWriter: httptest.NewRecorder()}
+	writeJSONPayload(capture, http.StatusOK, []byte(`{"choices":[{"index":0,"message":{"content":"a"},"finish_reason":"stop"},{"index":1,"message":{"content":"b"},"finish_reason":"length"}]}`))
+
+	_, reason := capture.cacheEntry("escrow-1", false, "req-source", nil)
+
+	require.Empty(t, reason)
+}
+
 func TestGatewayChatCacheCaptureRejectsIncompleteNonStreamingResponse(t *testing.T) {
 	tests := map[string]struct{ body, reason string }{
 		"aggregated truncation": {`{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"partial"},"finish_reason":null}]}`, "incomplete"},
