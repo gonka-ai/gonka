@@ -812,10 +812,33 @@ func parseNewBlockInfo(event *chainevents.JSONRPCResponse) (*chainphase.BlockInf
 		return nil, err
 	}
 
-	return &chainphase.BlockInfo{
+	info := &chainphase.BlockInfo{
 		Height: blockHeight,
 		Hash:   blockHash,
-	}, nil
+	}
+	if block, ok := event.Result.Data.Value["block"].(map[string]interface{}); ok {
+		if header, ok := block["header"].(map[string]interface{}); ok {
+			if chainID, ok := header["chain_id"].(string); ok {
+				info.ChainID = chainID
+			}
+			info.Time = parseBlockHeaderTime(header["time"])
+		}
+	}
+	return info, nil
+}
+
+func parseBlockHeaderTime(v interface{}) time.Time {
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return time.Time{}
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return ts
+	}
+	if ts, err := time.Parse(time.RFC3339, s); err == nil {
+		return ts
+	}
+	return time.Time{}
 }
 
 // Helper functions moved from event_listener.go for parsing block data

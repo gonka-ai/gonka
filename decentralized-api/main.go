@@ -216,6 +216,23 @@ func main() {
 	}
 	hostEventRing := apiconfig.NewHostEventRing(0, uint64(time.Now().UnixNano()))
 	escrowLoadTracker := broker.NewEscrowLoadTracker(0)
+	chainOracle, err := pserver.NewChainOracle(configManager.GetChainNodeConfig().Url)
+	if err != nil {
+		logging.Error("Failed to create chainoracle", types.Server, "error", err)
+	}
+	listenerOpts := []event_listener.EventListenerOption{
+		event_listener.WithStatsStorage(statsStore),
+		event_listener.WithHostEventRing(hostEventRing),
+		event_listener.WithEscrowQuerier(event_listener.NewChainEscrowQuerier(recorder)),
+	}
+	if chainOracle != nil {
+		o := chainOracle
+		listenerOpts = append(listenerOpts, event_listener.WithOnNewBlockHeader(func(info chainphase.BlockInfo) {
+			if err := o.ObserveHex(info.Height, info.Hash, info.Time, info.ChainID); err != nil {
+				logging.Warn("chainoracle observe", types.EventProcessing, "error", err, "height", info.Height)
+			}
+		}))
+	}
 	listener := event_listener.NewEventListener(
 		configManager,
 		offChainValidator,
@@ -224,9 +241,7 @@ func main() {
 		chainPhaseTracker,
 		cancel,
 		blsManager,
-		event_listener.WithStatsStorage(statsStore),
-		event_listener.WithHostEventRing(hostEventRing),
-		event_listener.WithEscrowQuerier(event_listener.NewChainEscrowQuerier(recorder)),
+		listenerOpts...,
 	)
 	go listener.Start(ctx)
 
@@ -261,6 +276,13 @@ func main() {
 	commitWorker := poc.NewCommitWorker(artifactStore, recorder, chainPhaseTracker, participantInfo.GetAddress(), commitInterval)
 	defer commitWorker.Close()
 
+	publicOpts := []pserver.ServerOption{
+		pserver.WithArtifactStore(artifactStore),
+		pserver.WithStatsStorage(statsStore),
+	}
+	if chainOracle != nil {
+		publicOpts = append(publicOpts, pserver.WithChainOracle(chainOracle))
+	}
 	publicServer := pserver.NewServer(
 		nodeBroker,
 		configManager,
@@ -268,8 +290,7 @@ func main() {
 		blockQueue,
 		chainPhaseTracker,
 		payloadStore,
-		pserver.WithArtifactStore(artifactStore),
-		pserver.WithStatsStorage(statsStore),
+		publicOpts...,
 	)
 
 	publicServer.Start(addr)
