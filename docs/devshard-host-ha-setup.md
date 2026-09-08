@@ -480,6 +480,34 @@ docker compose -f docker-compose.versiond-remote.yml up -d
 curl -fsS "http://<B-private-ip>:8080/readyz?version=v5"   # not 127.0.0.1 if bound to LAN IP only
 ```
 
+**On B — check its database before admitting it to the pool.** Install `jq`
+and the PostgreSQL client (`psql`), then prepare a separate reference connection
+file:
+
+```bash
+cd /path/to/gonka/deploy/join
+cp pool-postgres.env.template pool-postgres.env
+chmod 600 pool-postgres.env
+```
+
+Fill `pool-postgres.env` with the existing pool's known working PostgreSQL
+host, port, database, credentials and TLS settings. Obtain these from A or
+the database administrator, independently of the replica being checked.
+Certificate paths refer to files on B. With the intended versiond image and
+configuration running, execute:
+
+```bash
+./update-devshard.sh --check-storage --reference-env ./pool-postgres.env
+```
+
+Continue only when it prints `Storage check passed` and exits with code 0.
+The command checks the running `versiond` container; use `--container NAME`
+for another name, repeating it to check several local containers. It requires
+no network-node Compose services. Each HA devshardd writes a control value
+through its own database connection, and the checker verifies that value in
+the reference database. Run these checks one host at a time, with no updater
+running elsewhere. Resolve any failure before admitting the replica.
+
 **On the machine that runs the router fleet (usually A):** list every local and remote member in `versiond-endpoints.json`. Local service names resolve on the shared router back network; remote addresses must be reachable from every router slot:
 
 ```json
@@ -530,6 +558,13 @@ docker exec versiond2 wget -qO- "http://127.0.0.1:8080/readyz?version=v5"
 A normal stop makes v5 `versiond` unready, announces for 5 seconds while still serving, then closes admission and drains accepted requests/children. Keep the overlay's 30-minute Compose stop grace above the 25-minute host budget. Do not shorten the announce window below the router's detection window; do not set it to `0s` behind HAProxy. Budget exhaustion can force termination, so requests exceeding the budget can be interrupted. Custom duration values need units (`30s`, `5m`); the announce window plus effective child termination grace (10 minutes by default) must remain below the host budget.
 
 For a compatible image replacement, select the new image for that service, stop it, then run `up -d --no-deps` for that service only. Wait for **every required version** to become ready and verify inference before replacing another member. Docker Compose does not enforce a survivor reserve. If the candidate fails, restore that service's prior image/configuration and recreate it; verify it against the current database before proceeding.
+
+For a remote member in an explicit endpoint list, stop it and let it drain,
+then remove its entry using §2.3's membership maintenance procedure before
+starting the replacement. Repeat `--check-storage` on that remote host before
+restoring its entry and admitting it to traffic. The network node's normal
+updater does not inspect remote containers. DNS pools discover a ready
+replacement automatically; keep it out of pool DNS until the check passes.
 
 For permanent removal, stop/drain the member first, remove its service or set its desired replica count to zero (`VERSIOND2_REPLICAS=0` for `versiond2`), and remove its DNS/explicit membership as applicable. The updater respects zero replica counts. Apply explicit-list changes through §2.3's maintenance procedure and confirm the remaining pool serves its sessions. Keep its data and binary directories until recovery is verified. Router recreation is unnecessary for DNS membership changes.
 
