@@ -12,7 +12,7 @@
 
 A single `versiond` process is a single point of failure (SPOF): if that machine or container dies, gateways cannot reach your host for that protocol version.
 
-We now support an **HA host layout**:
+We now support an **HA host layout** with multiple `versiond` replicas. The examples below use `versiond` and `versiond2`; add more replicas as described in §2.4:
 
 ```text
 Public proxy (/devshard/...)
@@ -107,7 +107,7 @@ Use this when the DB runs outside the join host (managed cloud DB or your own Po
   Needed because the stock overlay hardcodes `PGHOST=devshard-postgres`.
 3. Start with **four** `-f` files: base + `versiond` overlay + the v5 override from §2.1 + your external-PG override.
 
-> Do not run two `versiond` instances on SQLite.  
+> Do not run multiple `versiond` instances on SQLite.
 > Keep `GONKA_HA=true`, `DEVSHARD_STORAGE_MODE=postgres` and `PGHOST` on HA `versiond` containers. v5 checks storage before starting HA children as well as when `versiond-router` sends `Devshard-Ha: true`. Hybrid/SQLite fallback is not supported for HA.
 
 
@@ -144,7 +144,7 @@ Example files in your setup. Some are present in the release branch:
 | File                                                           | Role                                                                                                  |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `deploy/join/docker-compose.yml`                               | Base join (`versiond`, `proxy`, …)                                                                    |
-| `deploy/join/docker-compose.versiond.yml`                      | HA overlay: Postgres + second replica (`versiond2`) + `versiond-router`, proxy → router               |
+| `deploy/join/docker-compose.versiond.yml`                      | HA overlay: Postgres + additional replica (`versiond2`) + `versiond-router`, proxy → router               |
 | `deploy/join/docker-compose.devshard-v5.override.yml`     | **Recommended:** v5 images + HA oracle filter + router catalog (you create this; see §2.1) |
 | `deploy/join/docker-compose.devshard-pg-external.override.yml` | Optional: point **every** `versiond`* replica at managed Postgres (see §2.2)                          |
 
@@ -153,7 +153,7 @@ Example files in your setup. Some are present in the release branch:
 
 
 
-### 2.1 Same machine, two instances (fresh v5 installation)
+### 2.1 Same machine, multiple instances (fresh v5 installation)
 
 On the join host (for an existing deployment, prepare these files but follow §2.6 before `up -d`):
 
@@ -298,18 +298,19 @@ docker inspect versiond-router --format '{{range .Config.Env}}{{println .}}{{end
 docker exec oracle-v4 wget -qO- http://127.0.0.1:9100/versions
 # expect the selected approved protocols and their real binary URL/SHA256
 
+# Include every local replica in this list.
 for replica in versiond versiond2; do
   docker exec "$replica" wget -qO- http://127.0.0.1:8080/healthz
   docker exec "$replica" wget -qO- "http://127.0.0.1:8080/readyz?version=v5"
 done
-# expect v5 running and per-version readiness HTTP 200 on both replicas
+# expect v5 running and per-version readiness HTTP 200 on every replica
 docker exec versiond-router wget -qO- "http://127.0.0.1:8404/readyz?version=v5"
 # router container health (/livez) alone does not prove that a route is ready
 ```
 
 #### Optional: still serving pre-v4 (v3) on the same host
 
-Only if you must keep SQLite versions. Prefer a **dedicated non-HA** supervisor for those, not both HA peers on Postgres. Stock overlay defaults:
+Only if you must keep SQLite versions. Prefer a **dedicated non-HA** supervisor for those; keep them off the HA peers on Postgres. Stock overlay defaults:
 
 ```bash
 export VERSIOND_LEGACY_HOST=versiond
@@ -362,7 +363,7 @@ services:
         condition: service_started
 ```
 
-Use Docker Compose with `!override` support. This excludes the local database from `up -d` and removes the local-PG dependency on both replicas; repeat for any extra replicas. Otherwise v5's lost-database guard can reject the unused local database after HA artifacts/state exist.
+Use Docker Compose with `!override` support. This excludes the local database from `up -d` and removes the local-PG dependency on the replicas shown; repeat for every additional replica. Otherwise v5's lost-database guard can reject the unused local database after HA artifacts/state exist.
 
 1. Start (include the v5 override as well if you use the recommended §2.1 layout):
 
@@ -384,7 +385,7 @@ If you fully disable the local `devshard-postgres` service, also remove or overr
 
 Conceptually the same layout, but each machine runs one `versiond`, and one place runs `versiond-router` (or you place the router behind a future load balancer). Prefer a **private network** between machines; bind new listeners to private IPs only if you cannot open extra public ports.
 
-Minimum for two machines:
+Example with one replica per machine:
 
 
 | Role      | Runs                                                            |
@@ -476,7 +477,7 @@ VERSIOND_PORT=8080
 
 **Verify cross-machine HA** the same way as Step 4 §6: find a sticky session whose `X-Upstream-Addr` is the remote replica, stop **that** machine’s `versiond`, wait for withdrawal and confirm the same session continues on a survivor with its committed state intact. `X-Upstream-Addr` shows the final selected peer, not an nginx retry history.
 
-### 2.4 Adding a third replica
+### 2.4 Adding more replicas
 
 1. Add another `versiond` service (new container name + new data volume).
 2. Give it the same image, filtered oracle, identity, HA/Postgres environment and drain settings. On the same Docker network add alias `versiond-pool`; across machines add its reachable address to the pool DNS from §2.3.
@@ -569,7 +570,7 @@ After verifying migration, recreate PostgreSQL once without the recovery overlay
 # Check /readyz?version=v4 and /readyz?version=v5 for every required route.
 ```
 
-A one-router replacement has a routing interruption; schedule it in the maintenance window. Pre-v5 supervisors also lack host evacuation, so let their accepted work finish before stopping them; their active streams can otherwise be interrupted. Check both members and router per-version readiness, then the public route and recorded v4 escrow, and finally a new v5 escrow as in Step 4. If existing containers lack the pool alias, add it in a controlled network change or recreate them during maintenance; an alias in an unapplied compose file alone does not change the running network.
+A one-router replacement has a routing interruption; schedule it in the maintenance window. Pre-v5 supervisors also lack host evacuation, so let their accepted work finish before stopping them; their active streams can otherwise be interrupted. Check per-version readiness on every member and the router, then the public route and recorded v4 escrow, and finally a new v5 escrow as in Step 4. If existing containers lack the pool alias, add it in a controlled network change or recreate them during maintenance; an alias in an unapplied compose file alone does not change the running network.
 
 **State migration and rollback.** Existing HA PostgreSQL data stays in the same database. v5 applies forward schema migrations under a database advisory lock. For first-time conversion of a single-owner deployment, explicit `postgres` mode also imports supported epoch-layout SQLite sessions and file payloads before serving; stop the old writer and migrate each source directory with one owner. Successful sources are quarantined as `*.migrated.<timestamp>`, and conflicting data aborts startup. Older monolithic layouts need separate verification.
 
@@ -649,6 +650,7 @@ docker inspect proxy --format '{{range .Config.Env}}{{println .}}{{end}}' | grep
 docker inspect versiond-router --format '{{range .Config.Env}}{{println .}}{{end}}' | grep VERSIOND_
 
 # 4) Required children running and ready on every member
+# Include every local replica in this list.
 for replica in versiond versiond2; do
   docker exec "$replica" wget -qO- http://127.0.0.1:8080/healthz
   docker exec "$replica" wget -qO- "http://127.0.0.1:8080/readyz?version=v5"
@@ -703,7 +705,7 @@ The health URL is only a routing smoke check. Also use a real funded escrow: rec
 
 ## What not to do
 
-1. **Two versionds on SQLite** — split-brain / missing leases.
+1. **Multiple versionds on SQLite** — split-brain / missing leases.
 2. **Different keys** on HA replicas of the same participant.
 3. **Launch v3 (or other pre-HA binaries) on HA peers with shared Postgres** — use the HA oracle override, or a dedicated non-HA supervisor for legacy versions.
 4. **Two dapi processes** with the same warm/cold keys — duplicates PoC / chain txs.
@@ -714,7 +716,7 @@ The health URL is only a routing smoke check. Also use a real funded escrow: rec
 
 
 
-## Minimal recipe (fresh installation, one host, two versionds, v5)
+## Minimal recipe (fresh installation, one host, v5)
 
 ```bash
 cd deploy/join

@@ -27,7 +27,7 @@ The policy-worker case marked `@candidate_requirement` is a release gate: the
 current updater uses ordinary Compose replacement without the public tier's
 runtime drain sequence, so its success alone does not establish continuity.
 
-Run the core scenarios on two local replicas and on one replica per machine.
+Run the core scenarios with multiple local replicas and with replicas spread across machines.
 Repeat addition/removal with three or four members and a mixed local/remote
 pool. All HA members use the same participant keys and writable PostgreSQL;
 each has its own local data directory. Keep PostgreSQL, ingress and chain
@@ -147,7 +147,7 @@ Feature: Install and upgrade an HA host
 
   @fleet_candidate
   Scenario: Cut over a v4-only installation using the fleet updater
-    Given two pre-v5 supervisors, the original nginx router and recorded PostgreSQL state
+    Given multiple pre-v5 supervisors, the original nginx router and recorded PostgreSQL state
     And the retained approved v4 artifact supports the new supervisor's HA storage contract
     And the filtered oracle and required bootstrap routes remain v4-only for the cutover
     When I run the updater with the complete ordered Compose file list
