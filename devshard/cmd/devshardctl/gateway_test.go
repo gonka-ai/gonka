@@ -1537,6 +1537,7 @@ func TestGatewayPooledChatDoesNotCacheTransientErrorResponse(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Equal(t, "12", rec.Header().Get("X-Devshard-ID"))
 	require.EqualValues(t, 2, calls.Load(), "transient error responses must not be served from cache")
+	requireChatCacheCount(t, g, "skipped_status", 2)
 }
 
 func TestGatewayPooledChatDoesNotCacheIncompleteResponse(t *testing.T) {

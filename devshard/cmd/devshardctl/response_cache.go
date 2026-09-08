@@ -239,16 +239,17 @@ func (w *gatewayChatCacheCapture) statusCode() int {
 
 // cacheEntry builds a cache entry from the captured response. The returned
 // reason is empty when the entry is cacheable and otherwise names why it was
-// skipped: request_error, write_error, empty_body, status, transient_error,
-// incomplete, no_choices.
+// skipped. The capture buffers every body it sees, including the ones it then
+// refuses; a truncated multi-megabyte stream is held and scanned once just to
+// be dropped. Deciding incrementally in Write would avoid that.
 func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourceRequestID string, requestErr error) (cachedChatResponse, string) {
 	switch {
-	case w == nil || w.body.Len() == 0:
-		return cachedChatResponse{}, "empty_body"
-	case w.writeErr != nil:
-		return cachedChatResponse{}, "write_error"
 	case requestErr != nil:
 		return cachedChatResponse{}, "request_error"
+	case w == nil || w.writeErr != nil:
+		return cachedChatResponse{}, "write_error"
+	case w.body.Len() == 0:
+		return cachedChatResponse{}, "empty_body"
 	}
 	statusCode := w.statusCode()
 	body := w.body.Bytes()

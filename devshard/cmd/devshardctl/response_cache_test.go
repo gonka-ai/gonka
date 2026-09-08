@@ -21,6 +21,14 @@ func TestGatewayChatCacheCaptureRejectsCanceledRequestError(t *testing.T) {
 	require.Empty(t, entry.Body)
 }
 
+func TestGatewayChatCacheCaptureReportsRequestErrorBeforeEmptyBody(t *testing.T) {
+	capture := &gatewayChatCacheCapture{ResponseWriter: httptest.NewRecorder()}
+
+	_, reason := capture.cacheEntry("escrow-1", true, "req-source", context.Canceled)
+
+	require.Equal(t, "request_error", reason)
+}
+
 func TestGatewayChatCacheCaptureAllowsSuccessfulResponse(t *testing.T) {
 	rec := httptest.NewRecorder()
 	capture := &gatewayChatCacheCapture{ResponseWriter: rec}
@@ -67,13 +75,14 @@ const (
 
 func TestGatewayChatCacheCaptureAllowsCompleteStreamingResponse(t *testing.T) {
 	tests := map[string]string{
-		"vllm shape":          sseContentChunk + sseTerminalChunk + sseUsageChunk + sseDone,
-		"stop_reason only":    sseContentChunk + `data: {"choices":[{"index":0,"delta":{},"finish_reason":null,"stop_reason":128009}]}` + "\n\n" + sseDone,
-		"string index":        `data: {"choices":[{"index":"0","delta":{"content":"ok"},"finish_reason":null}]}` + "\n\n" + `data: {"choices":[{"index":"0","delta":{},"finish_reason":"stop"}]}` + "\n\n" + sseDone,
-		"null after finish":   sseContentChunk + sseTerminalChunk + `data: {"choices":[{"index":0,"delta":{},"finish_reason":null}]}` + "\n\n" + sseDone,
-		"multi-line event":    sseContentChunk + `data: {"choices":[{"index":0,` + "\n" + `data: "delta":{},"finish_reason":"stop"}]}` + "\n\n" + sseDone,
-		"non-finite logprob":  sseContentChunk + `data: {"choices":[{"index":0,"delta":{},"logprobs":{"content":[{"token":"x","logprob":-Infinity}]},"finish_reason":"stop"}]}` + "\n\n" + sseDone,
-		"deterministic error": `data: {"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}` + "\n\n" + sseDone,
+		"vllm shape":           sseContentChunk + sseTerminalChunk + sseUsageChunk + sseDone,
+		"stop_reason only":     sseContentChunk + `data: {"choices":[{"index":0,"delta":{},"finish_reason":null,"stop_reason":128009}]}` + "\n\n" + sseDone,
+		"string index":         `data: {"choices":[{"index":"0","delta":{"content":"ok"},"finish_reason":null}]}` + "\n\n" + `data: {"choices":[{"index":"0","delta":{},"finish_reason":"stop"}]}` + "\n\n" + sseDone,
+		"null after finish":    sseContentChunk + sseTerminalChunk + `data: {"choices":[{"index":0,"delta":{},"finish_reason":null}]}` + "\n\n" + sseDone,
+		"multi-line event":     sseContentChunk + `data: {"choices":[{"index":0,` + "\n" + `data: "delta":{},"finish_reason":"stop"}]}` + "\n\n" + sseDone,
+		"non-finite logprob":   sseContentChunk + `data: {"choices":[{"index":0,"delta":{},"logprobs":{"content":[{"token":"x","logprob":-Infinity}]},"finish_reason":"stop"}]}` + "\n\n" + sseDone,
+		"deterministic error":  `data: {"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}` + "\n\n" + sseDone,
+		"two choices finished": `data: {"choices":[{"index":0,"delta":{"content":"a"},"finish_reason":null},{"index":1,"delta":{"content":"b"},"finish_reason":null}]}` + "\n\n" + `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"},{"index":1,"delta":{},"finish_reason":"length"}]}` + "\n\n" + sseDone,
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
