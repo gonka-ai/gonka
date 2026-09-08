@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-func TestParseProtocolVersion_DefaultsToV4(t *testing.T) {
+func TestParseProtocolVersion_DefaultsToV41(t *testing.T) {
 	got, err := ParseProtocolVersion("")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if got != ProtocolV4 {
-		t.Fatalf("expected empty protocol to default to %s, got %s", ProtocolV4, got)
+	if got != ProtocolV41 {
+		t.Fatalf("expected empty protocol to default to %s, got %s", ProtocolV41, got)
 	}
 }
 
@@ -52,6 +52,16 @@ func TestParseProtocolVersion_AcceptsRouteStyleV4(t *testing.T) {
 	}
 	if got != ProtocolV4 {
 		t.Fatalf("expected v4 to normalize to %s, got %s", ProtocolV4, got)
+	}
+}
+
+func TestParseProtocolVersion_AcceptsRouteStyleV41(t *testing.T) {
+	got, err := ParseProtocolVersion("v4.1")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != ProtocolV41 {
+		t.Fatalf("expected v4.1 to normalize to %s, got %s", ProtocolV41, got)
 	}
 }
 

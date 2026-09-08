@@ -164,12 +164,14 @@ func TestEscrowProtocolVersionRouteMapping(t *testing.T) {
 		routePrefix     string
 		protocolVersion string
 	}{
-		{"/devshard/mainnet-canary", "4"},
+		{"/devshard/mainnet-canary", "4.1"},
 		{"/devshard/v3", "3"},
 		{"/devshard/v2.1.0", "2"},
 		{"/devshard/3", "3"},
 		{"/devshard/v4", "4"},
 		{"/devshard/4", "4"},
+		{"/devshard/v4.1", "4.1"},
+		{"/devshard/4.1", "4.1"},
 	} {
 		t.Run(testCase.routePrefix, func(t *testing.T) {
 			assert.Equal(t, testCase.protocolVersion, escrowProtocolVersionFor(testCase.routePrefix))
@@ -197,12 +199,18 @@ func TestRotationEscrowPinsRoutePrefixAgainstAGatewayThatMovesOn(t *testing.T) {
 
 func TestCommitmentRoutePrefixKeepsTheVersionTheEscrowWasMintedUnder(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/mainnet-canary")
-	assert.Equal(t, "/devshard/mainnet-canary", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "4"}),
+	assert.Equal(t, "/devshard/mainnet-canary", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "4.1"}),
 		"a named runtime resolving to the same protocol keeps its own prefix")
 	assert.Equal(t, "/devshard/v3", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "3"}),
 		"a gateway that moved versions mid-recovery follows the commitment")
 	assert.Equal(t, "/devshard/mainnet-canary", commitmentRoutePrefix(GatewayEscrowCommitment{}),
 		"a commitment predating the field follows the live prefix")
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4.1")
+	assert.Equal(t, "/devshard/v4.1", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "4.1"}),
+		"a v4.1 gateway keeps a v4.1 commitment on v4.1")
+	assert.Equal(t, "/devshard/v4", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "4"}),
+		"a v4.1 gateway must not drag a v4 commitment onto v4.1")
 }
 
 func TestReconcileCommitmentsCarriesProtocolVersion(t *testing.T) {

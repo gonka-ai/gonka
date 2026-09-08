@@ -82,7 +82,8 @@ const (
 	ProtocolV2             ProtocolVersion = "2"
 	ProtocolV3             ProtocolVersion = "3"
 	ProtocolV4             ProtocolVersion = "4"
-	DefaultProtocolVersion                 = ProtocolV4
+	ProtocolV41            ProtocolVersion = "4.1"
+	DefaultProtocolVersion                 = ProtocolV41
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
@@ -91,6 +92,8 @@ func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 	switch strings.TrimSpace(s) {
 	case "":
 		return DefaultProtocolVersion, nil
+	case string(ProtocolV41), "v4.1":
+		return ProtocolV41, nil
 	case string(ProtocolV4), "v4":
 		return ProtocolV4, nil
 	case string(ProtocolV1), "v1":
