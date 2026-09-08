@@ -66,8 +66,9 @@ func GetCurrentPocStageHeight(epochState *chainphase.EpochState) int64 {
 	return epochState.LatestEpoch.PocStartBlockHeight
 }
 
-// ShouldAcceptStoreCommit returns true if the chain will accept MsgPoCV2StoreCommit
-// at the current block height. Mirrors keeper validation.
+// ShouldAcceptStoreCommit returns true if DAPI should broadcast MsgPoCV2StoreCommit
+// at the current committed height. Tighter than the handler window: once
+// currentHeight >= exchange deadline, the next block is already late.
 func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHeight int64) bool {
 	if epochState.IsNilOrNotSynced() {
 		return false
@@ -80,6 +81,10 @@ func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHei
 		pocStageStartHeight == epochState.ActiveConfirmationPoCEvent.TriggerHeight {
 		event := epochState.ActiveConfirmationPoCEvent
 		epochParams := &epochState.LatestEpoch.EpochParams
+		deadline := event.GetExchangeEnd(epochParams)
+		if currentHeight >= deadline {
+			return false
+		}
 		return event.IsInBatchSubmissionWindow(currentHeight, epochParams)
 	}
 
@@ -93,7 +98,34 @@ func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHei
 		return false
 	}
 
+	deadline := epochState.LatestEpoch.PoCExchangeDeadline()
+	if currentHeight >= deadline {
+		return false
+	}
 	return epochState.LatestEpoch.IsPoCExchangeWindow(currentHeight)
+}
+
+// StoreCommitTimeoutHeight is the tx timeout_height for StoreCommit: last
+// legal inclusion block. 0 means leave unset.
+func StoreCommitTimeoutHeight(epochState *chainphase.EpochState, pocStageStartHeight int64) uint64 {
+	if epochState.IsNilOrNotSynced() {
+		return 0
+	}
+	if epochState.ActiveConfirmationPoCEvent != nil &&
+		epochState.CurrentPhase == types.InferencePhase &&
+		pocStageStartHeight == epochState.ActiveConfirmationPoCEvent.TriggerHeight {
+		event := epochState.ActiveConfirmationPoCEvent
+		end := event.GetExchangeEnd(&epochState.LatestEpoch.EpochParams)
+		if end <= 0 {
+			return 0
+		}
+		return uint64(end)
+	}
+	deadline := epochState.LatestEpoch.PoCExchangeDeadline()
+	if deadline <= 0 {
+		return 0
+	}
+	return uint64(deadline)
 }
 
 // fractionPPMScale is the denominator for integer fraction arithmetic
