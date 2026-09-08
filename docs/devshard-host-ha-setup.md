@@ -4,7 +4,7 @@
 **Status:** draft for host operators - edit before wider distribution.  
 **Goal:** run a **high-available (HA)** host stack so a single `versiond` / `devshardd` failure does not take the host offline.
 
-**Release:** `devshard-0.2.15-v5`. Core checked at `39240311fb` with gateway and storage fixes from [PR #1730](https://github.com/gonka-ai/gonka/pull/1730) through `bf4de2d21`; versiond fleet and updater checked in the integration from [PR #1611](https://github.com/gonka-ai/gonka/pull/1611) through `c0ceb9fa1` on 2026-09-09.
+**Release:** `devshard-0.2.15-v5`. Core checked at `39240311fb` with gateway and storage fixes from [PR #1730](https://github.com/gonka-ai/gonka/pull/1730) through `bf4de2d21`; versiond fleet and updater checked in the integration from [PR #1611](https://github.com/gonka-ai/gonka/pull/1611) through `f6d6a8214` on 2026-09-09.
 
 ---
 
@@ -643,6 +643,8 @@ docker start versiond versiond2
 ```
 
 The updater reads `config.env` and the complete Compose model, validates shared writable PostgreSQL and its connection budget, updates local PostgreSQL if used, prepares the router fleet and attaches existing local replicas to its back network. It starts the public proxy, brings up policy workers one at a time, verifies router admission, removes the old singleton router, then replaces local `versiond` replicas one at a time with `VERSIOND_LEGACY_HOST` last (default `versiond`). It does not start custom services such as `oracle-v4`, so start the filter explicitly as above. Remote replicas are updated on their own machines using §2.5.
+
+The host updater supports bundled PostgreSQL or an external writable endpoint without custom TLS configuration. PostgreSQL TLS setup is outside this procedure: the updater rejects explicit `PGSSL*` settings except `PGSSLMODE=disable`. Leave them unset for the stock deployment.
 
 `--check` does not replace services, but takes the deployment lock and writes PostgreSQL challenges; `--dry-run` also runs preflight. Keep `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled. Legacy members returning 404 are accepted only for the verified bundled PostgreSQL migration; confirm their database and recorded session separately. With an external database, upgrade legacy members during maintenance with all writers stopped and the target database independently verified. Start the v5 supervisors using the complete Compose model, check them with `--check-storage` (§2.3), then run the host updater. A legacy 404 cannot establish continuity with an external target. The new routers accept a pre-v5 supervisor's `/readyz` **404** only together with successful route health; a v5 **503** is never a legacy fallback.
 
