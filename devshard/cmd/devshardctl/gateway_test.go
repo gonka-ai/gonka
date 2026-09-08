@@ -1417,7 +1417,7 @@ func TestGatewayPooledChatCachesNonStreamingResponseWithFreshRequestID(t *testin
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":"chatcmpl-original","choices":[{"message":{"role":"assistant","content":"hello"}}]}`))
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-original","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}`))
 		}),
 	}
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
@@ -1470,7 +1470,7 @@ func TestGatewayPooledChatCachesStreamingResponseWithFreshRequestID(t *testing.T
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.WriteHeader(http.StatusOK)
-			_, _ = fmt.Fprint(w, `data: {"id":"chatcmpl-original","object":"chat.completion.chunk","choices":[{"delta":{"content":"hello"},"finish_reason":null}]}`+"\n\n")
+			_, _ = fmt.Fprint(w, `data: {"id":"chatcmpl-original","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"stop"}]}`+"\n\n")
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
@@ -1503,6 +1503,8 @@ func TestGatewayPooledChatCachesStreamingResponseWithFreshRequestID(t *testing.T
 	require.NotEmpty(t, rec.Header().Get("X-Request-Id"))
 	require.NotEqual(t, firstRequestID, rec.Header().Get("X-Request-Id"))
 	require.EqualValues(t, 1, calls.Load())
+	requireChatCacheCount(t, g, "stored", 1)
+	requireChatCacheCount(t, g, "hit", 1)
 }
 
 func TestGatewayPooledChatDoesNotCacheTransientErrorResponse(t *testing.T) {
@@ -1535,6 +1537,79 @@ func TestGatewayPooledChatDoesNotCacheTransientErrorResponse(t *testing.T) {
 	require.Equal(t, http.StatusBadGateway, rec.Code)
 	require.Equal(t, "12", rec.Header().Get("X-Devshard-ID"))
 	require.EqualValues(t, 2, calls.Load(), "transient error responses must not be served from cache")
+	requireChatCacheCount(t, g, "skipped_status", 2)
+}
+
+func TestGatewayPooledChatDoesNotCacheIncompleteResponse(t *testing.T) {
+	tests := map[string]struct {
+		body        string
+		contentType string
+		response    string
+	}{
+		"streaming": {
+			body:        `{"model":"Qwen/Test","stream":true,"messages":[{"role":"user","content":"hello"}]}`,
+			contentType: "text/event-stream",
+			response: `data: {"id":"chatcmpl-partial","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"reasoning":"still working"},"finish_reason":null}]}` + "\n\n" +
+				"data: [DONE]\n\n",
+		},
+		"non-streaming": {
+			body:        `{"model":"Qwen/Test","messages":[{"role":"user","content":"hello"}]}`,
+			contentType: "application/json",
+			response:    `{"id":"chatcmpl-partial","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"partial"},"finish_reason":null}]}`,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			var calls atomic.Int32
+			rt := &devshardRuntime{
+				id:    "12",
+				model: "Qwen/Test",
+				handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					calls.Add(1)
+					w.Header().Set("Content-Type", tt.contentType)
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(tt.response))
+				}),
+			}
+			g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+			g.settings.ModelLimits = []GatewayModelLimitSettings{{ModelID: "Qwen/Test", AccessMode: string(gatewayAccessModeOpen)}}
+
+			for range 2 {
+				req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tt.body))
+				rec := httptest.NewRecorder()
+				g.handlePooledChat(rec, req)
+				require.Equal(t, http.StatusOK, rec.Code)
+			}
+			require.EqualValues(t, 2, calls.Load(), "incomplete responses must not be served from cache")
+			requireChatCacheCount(t, g, "skipped_incomplete", 2)
+		})
+	}
+}
+
+func TestGatewayPooledChatReportsOversizedResponseAsSkipped(t *testing.T) {
+	var calls atomic.Int32
+	rt := &devshardRuntime{
+		id:    "12",
+		model: "Qwen/Test",
+		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"choices":[{"index":0,"message":{"content":"` + strings.Repeat("x", 4096) + `"},"finish_reason":"stop"}]}`))
+		}),
+	}
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.chatCache = newChatResponseCache(0, 1024)
+	g.settings.ModelLimits = []GatewayModelLimitSettings{{ModelID: "Qwen/Test", AccessMode: string(gatewayAccessModeOpen)}}
+	body := `{"model":"Qwen/Test","messages":[{"role":"user","content":"hello"}]}`
+
+	for range 2 {
+		rec := httptest.NewRecorder()
+		g.handlePooledChat(rec, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)))
+		require.Equal(t, http.StatusOK, rec.Code)
+	}
+	require.EqualValues(t, 2, calls.Load())
+	requireChatCacheCount(t, g, "skipped_too_large", 2)
 }
 
 func TestGatewayPooledChatCachesOpenAIStyleBadRequestWithFreshRequestID(t *testing.T) {
@@ -1591,7 +1666,7 @@ func TestGatewayChatCacheSharedAcrossDifferentEscrowRoutes(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":"chatcmpl-12","choices":[{"message":{"role":"assistant","content":"from escrow 12"}}]}`))
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-12","choices":[{"index":0,"message":{"role":"assistant","content":"from escrow 12"},"finish_reason":"stop"}]}`))
 		}),
 	}
 	rt44 := &devshardRuntime{
@@ -1601,7 +1676,7 @@ func TestGatewayChatCacheSharedAcrossDifferentEscrowRoutes(t *testing.T) {
 			calls44.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"id":"chatcmpl-44","choices":[{"message":{"role":"assistant","content":"from escrow 44"}}]}`))
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-44","choices":[{"index":0,"message":{"role":"assistant","content":"from escrow 44"},"finish_reason":"stop"}]}`))
 		}),
 	}
 	g := NewGateway([]*devshardRuntime{rt12, rt44}, NewGatewayLimiter(0, 0), "Qwen/Test")
@@ -3299,6 +3374,25 @@ func requireMetricGaugeValue(t *testing.T, families []*dto.MetricFamily, name st
 		}
 	}
 	t.Fatalf("metric %s with labels %v not found", name, labels)
+}
+
+func requireChatCacheCount(t *testing.T, g *Gateway, result string, want float64) {
+	t.Helper()
+	families, err := g.metrics.registry.Gather()
+	require.NoError(t, err)
+	labels := map[string]string{"model": "Qwen/Test", "result": result}
+	for _, family := range families {
+		if family.GetName() != "devshard_gateway_chat_cache_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if metricLabelsMatch(metric, labels) {
+				require.Equal(t, want, metric.Counter.GetValue())
+				return
+			}
+		}
+	}
+	t.Fatalf("chat cache metric %s not found", result)
 }
 
 func metricLabelsMatch(metric *dto.Metric, want map[string]string) bool {

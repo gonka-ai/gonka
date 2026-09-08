@@ -57,6 +57,7 @@ type DevshardMetrics struct {
 	timeoutActions         *prometheus.CounterVec
 	errorMissRejects       *prometheus.CounterVec
 	errorMissVerifyRejects *prometheus.CounterVec
+	chatCache              *prometheus.CounterVec
 
 	// Host ping observability (common/probe sink). Fleet warm RTT histogram
 	// cannot share the gauge name, so it uses _warm_rtt_seconds.
@@ -364,6 +365,13 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"cause", "completeness"},
 		),
+		chatCache: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_chat_cache_total",
+				Help: "Total chat response cache outcomes by model: hit, stored, or skipped_<reason>.",
+			},
+			[]string{"model", "result"},
+		),
 		hostPingUp: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "devshard_gateway_host_ping_up",
@@ -467,6 +475,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.timeoutActions,
 		m.errorMissRejects,
 		m.errorMissVerifyRejects,
+		m.chatCache,
 		m.hostPingUp,
 		m.hostPingRTT,
 		m.hostPingWarmRTT,
@@ -534,6 +543,13 @@ func (m *DevshardMetrics) RecordLimitRejection(reason string) {
 		return
 	}
 	m.gatewayLimitRejections.WithLabelValues(reason).Inc()
+}
+
+func (m *DevshardMetrics) RecordChatCache(model, result string) {
+	if m == nil {
+		return
+	}
+	m.chatCache.WithLabelValues(normalizeModelID(model), result).Inc()
 }
 
 func (m *DevshardMetrics) RecordParticipantLimitRejection(participantKey, model, scope string) {
