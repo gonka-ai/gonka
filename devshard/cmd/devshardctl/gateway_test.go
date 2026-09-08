@@ -1503,6 +1503,8 @@ func TestGatewayPooledChatCachesStreamingResponseWithFreshRequestID(t *testing.T
 	require.NotEmpty(t, rec.Header().Get("X-Request-Id"))
 	require.NotEqual(t, firstRequestID, rec.Header().Get("X-Request-Id"))
 	require.EqualValues(t, 1, calls.Load())
+	requireChatCacheCount(t, g, "stored", 1)
+	requireChatCacheCount(t, g, "hit", 1)
 }
 
 func TestGatewayPooledChatDoesNotCacheTransientErrorResponse(t *testing.T) {
@@ -1578,6 +1580,7 @@ func TestGatewayPooledChatDoesNotCacheIncompleteResponse(t *testing.T) {
 				require.Equal(t, http.StatusOK, rec.Code)
 			}
 			require.EqualValues(t, 2, calls.Load(), "incomplete responses must not be served from cache")
+			requireChatCacheCount(t, g, "skipped_incomplete", 2)
 		})
 	}
 }
@@ -3344,6 +3347,25 @@ func requireMetricGaugeValue(t *testing.T, families []*dto.MetricFamily, name st
 		}
 	}
 	t.Fatalf("metric %s with labels %v not found", name, labels)
+}
+
+func requireChatCacheCount(t *testing.T, g *Gateway, result string, want float64) {
+	t.Helper()
+	families, err := g.metrics.registry.Gather()
+	require.NoError(t, err)
+	labels := map[string]string{"model": "Qwen/Test", "result": result}
+	for _, family := range families {
+		if family.GetName() != "devshard_gateway_chat_cache_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if metricLabelsMatch(metric, labels) {
+				require.Equal(t, want, metric.Counter.GetValue())
+				return
+			}
+		}
+	}
+	t.Fatalf("chat cache metric %s not found", result)
 }
 
 func metricLabelsMatch(metric *dto.Metric, want map[string]string) bool {

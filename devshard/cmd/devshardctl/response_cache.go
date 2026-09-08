@@ -122,14 +122,11 @@ func (c *chatResponseCache) Get(key string, now time.Time) (cachedChatResponse, 
 		c.deleteLocked(key)
 		return cachedChatResponse{}, false
 	}
-	if responseBodyHasNonCacheableError(entry.Body) {
-		c.deleteLocked(key)
-		return cachedChatResponse{}, false
-	}
 	entry.Body = append([]byte(nil), entry.Body...)
 	return entry, true
 }
 
+// Set stores without re-validating: cacheEntry is the only gate.
 func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.Time) {
 	if c == nil || key == "" || len(entry.Body) == 0 || strings.TrimSpace(entry.EscrowID) == "" {
 		return
@@ -407,26 +404,22 @@ func (s *choiceCompletion) ingest(payload []byte) {
 			index = "0"
 		}
 		s.seen[index] = struct{}{}
-		if terminalReason(choice.FinishReason) || terminalReason(choice.StopReason) {
+		if terminalString(choice.FinishReason) || terminalString(choice.StopReason) || jsonNumber(choice.StopReason) {
 			s.finished[index] = struct{}{}
 		}
 	}
 }
 
-// terminalReason accepts a non-empty string or a number (vLLM stop_reason may be
-// a token id); null, booleans, and empty strings are not terminal.
-func terminalReason(raw json.RawMessage) bool {
+// finish_reason is terminal only as a non-empty string; stop_reason may also be
+// a token id. null, booleans, and empty strings are never terminal.
+func terminalString(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 {
-		return false
-	}
-	switch trimmed[0] {
-	case '"':
-		return len(trimmed) > 2
-	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-		return true
-	}
-	return false
+	return len(trimmed) > 2 && trimmed[0] == '"'
+}
+
+func jsonNumber(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && (trimmed[0] == '-' || (trimmed[0] >= '0' && trimmed[0] <= '9'))
 }
 
 func responseBodyHasNonCacheableError(body []byte) bool {

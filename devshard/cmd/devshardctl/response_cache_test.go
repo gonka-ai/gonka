@@ -40,6 +40,7 @@ func TestGatewayChatCacheCaptureRejectsIncompleteNonStreamingResponse(t *testing
 		"second choice open":    {`{"choices":[{"index":0,"message":{"content":"a"},"finish_reason":"stop"},{"index":1,"message":{"content":"b"},"finish_reason":null}]}`, "incomplete"},
 		"empty finish_reason":   {`{"choices":[{"index":0,"message":{"content":"a"},"finish_reason":""}]}`, "incomplete"},
 		"boolean finish_reason": {`{"choices":[{"index":0,"message":{"content":"a"},"finish_reason":false}]}`, "incomplete"},
+		"numeric finish_reason": {`{"choices":[{"index":0,"message":{"content":"a"},"finish_reason":0}]}`, "incomplete"},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -277,19 +278,4 @@ func TestChatResponseCacheGetDeletesExpiredAndAdjustsBytes(t *testing.T) {
 	count, totalBytes := cache.Stats()
 	require.Equal(t, 0, count)
 	require.Equal(t, int64(0), totalBytes)
-}
-
-func TestChatResponseCacheDropsPreviouslyCachedNonCacheableErrors(t *testing.T) {
-	cache := newChatResponseCache(time.Minute, 0)
-	cache.entries["bad"] = cachedChatResponse{
-		EscrowID:   "escrow-1",
-		StatusCode: http.StatusBadGateway,
-		Body:       []byte(`{"error":{"message":"context canceled"}}`),
-		ExpiresAt:  time.Now().Add(time.Minute),
-	}
-
-	entry, ok := cache.Get("bad", time.Now())
-
-	require.False(t, ok)
-	require.Empty(t, entry.Body)
 }

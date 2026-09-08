@@ -368,7 +368,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 		chatCache: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "devshard_gateway_chat_cache_total",
-				Help: "Total chat response cache outcomes by model: hit, stored, or skipped_<reason> (incomplete, no_choices, transient_error, status, request_error, write_error, empty_body).",
+				Help: "Total chat response cache outcomes by model: hit, stored, or skipped_<reason>.",
 			},
 			[]string{"model", "result"},
 		),
