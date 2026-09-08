@@ -453,7 +453,7 @@ On the **network node**:
    PostgreSQL on the private interface only. Firewall those ports from the
    public network.
 4. After the remote replicas pass the database check described below,
-   `./versiond-router-fleet.sh apply` rolls the routers onto the new list.
+   admit them using the fleet commands below.
 
 On each **remote machine**:
 
@@ -479,26 +479,35 @@ On each **remote machine**:
    (repeat for several). Each HA devshardd writes a control value through its
    own database connection, and the checker reads it from the reference
    database. Run checks one host at a time, with no updater running elsewhere.
-5. Apply the endpoint list on the network node to admit the checked replicas.
+5. Admit the checked replicas on the network node. For a new fleet, run
+   `./versiond-router-fleet.sh apply`. Changing an existing fleet's endpoint
+   list requires a maintenance window:
+
+   ```bash
+   VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+     ./versiond-router-fleet.sh maintenance-rollout
+   ./versiond-router-fleet.sh verify-admission
+   ```
 
 Update remote hosts one at a time. Stop the remote service with
 `docker compose -f docker-compose.versiond-remote.yml stop versiond` and let
-it finish draining. Remove its entry from the endpoint file and run
-`./versiond-router-fleet.sh apply` on the network node before starting its
-replacement. On the remote host, run
+it finish draining. Remove its entry from the endpoint file and apply that
+membership change using the maintenance procedure above before starting
+its replacement. On the remote host, run
 `docker compose -f docker-compose.versiond-remote.yml pull`, then
 `docker compose -f docker-compose.versiond-remote.yml up -d --wait`.
-Repeat the database check before restoring its entry and applying the list.
+Repeat the database check before restoring its entry through the same
+membership maintenance procedure.
 Versions in `VERSIOND_NON_HA_VERSIONS` stay on `VERSIOND_LEGACY_HOST` (the
 network node's `versiond` by default) because their state is local SQLite.
 
 The endpoint file wins over DNS. A pre-HAProxy `VERSIOND_HOSTS` value in
-`config.env` is still honoured by the fleet, but prefer the file. Editing the
-list rolls the router slots one at a time, so for the duration of that
-rollout (seconds per slot) routers can hold different member lists, exactly as
-they do while a container joins or leaves the DNS pool. An escrow that lands
-on another versiond during that window recovers its state from the shared
-PostgreSQL; that is the HA design, not an error. The shared
+`config.env` is still honoured by the fleet, but prefer the file. Each router
+generation keeps its own copy of the list; editing the file does not change
+running membership. Ordinary `apply` refuses a changed membership contract.
+The maintenance procedure drains the old fleet before admitting the new
+list, so active slots agree on session placement. A session assigned to
+another versiond recovers its state from shared PostgreSQL. The shared
 PostgreSQL remains a single host-local process in this layout; multi-host
 production needs a managed PostgreSQL with synchronous durability.
 
