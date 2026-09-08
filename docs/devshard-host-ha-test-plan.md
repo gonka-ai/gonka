@@ -15,7 +15,17 @@ Run updater, public HAProxy and router-fleet cases only when the candidate
 includes PRs [#1609](https://github.com/gonka-ai/gonka/pull/1609),
 [#1610](https://github.com/gonka-ai/gonka/pull/1610) and
 [#1611](https://github.com/gonka-ai/gonka/pull/1611) (open on 2026-09-08).
+Those scenarios are marked `@fleet_candidate`; they are not acceptance criteria
+for the merged branch alone. Explicit-file steps also require that candidate.
 The single-router v5 layout can run the member, storage and recovery cases.
+
+The candidate updater's `--check` takes the deployment lock and writes transient
+storage challenges. Keep `UPDATE_SKIP_POSTGRES_PROBE` and
+`UPDATE_ACCEPT_DATABASE_CHANGE` disabled. An explicit 404 from a legacy storage
+proof endpoint is skipped; preflight success does not verify that member's database.
+The policy-worker case marked `@candidate_requirement` is a release gate: the
+current updater uses ordinary Compose replacement without the public tier's
+runtime drain sequence, so its success alone does not establish continuity.
 
 Run the core scenarios on two local replicas and on one replica per machine.
 Repeat addition/removal with three or four members and a mixed local/remote
@@ -36,7 +46,9 @@ acceptance specification, not an implemented Cucumber test suite.
 
 ## Installation and upgrade checks
 
-Run fresh-install and v4 migration cases on separate deployments. For migration,
+Run fresh-install and v4 migration cases on separate deployments. Repeat the
+fresh-install case with the external-PG override from §2.2: no local PostgreSQL
+container is created or required by the replicas. For migration,
 record the old PostgreSQL container, source volume, PostgreSQL `system_identifier` and a
 committed session before changing the deployment. Keep the source and backup
 until the upgraded public route has passed a real inference check.
@@ -47,10 +59,28 @@ Feature: Install and upgrade an HA host
     Given an empty installation with explicit PostgreSQL storage for every HA member
     When I install the RC with one required protocol version deliberately unready
     Then a healthy proxy or an unrelated healthy version cannot satisfy admission
-    And the fleet reports the required version with no ready upstreams
+    And the router's admin /readyz?version=<required-version> returns 503
+    And the required version's backend has no ready upstreams
     When that version becomes ready and I finish admission
     Then inference through the public endpoint succeeds with correct accounting
 
+  Scenario: Detect an incompatible router image and catalog configuration
+    Given the merged single-router join layout on a separate test deployment
+    When I enable VERSIOND_ROUTING_CATALOG_URL with the legacy nginx router image
+    Then the router's Compose healthcheck fails even if /healthz responds
+    When I select the catalog-capable HAProxy image but omit the catalog URL
+    Then the router's Compose healthcheck also fails
+    When I supply that image and the filtered catalog URL together
+    Then router liveness passes and I separately verify each required version and real inference
+
+  Scenario: Reject unsafe HA child storage without an updater
+    Given GONKA_HA=true and a version that is not pinned to a legacy owner
+    When I start its v5 child with auto, sqlite or hybrid storage, or with PGHOST missing
+    Then it cannot become an HA serving child
+    When I use explicit postgres storage with an unreachable or read-only database
+    Then it cannot become ready or fall back to SQLite
+
+  @fleet_candidate
   Scenario: Reject unsafe HA storage before changing a running deployment
     Given a healthy HA deployment serving a recorded escrow
     When I run the updater preflight with hybrid storage or a missing PGHOST
@@ -59,13 +89,15 @@ Feature: Install and upgrade an HA host
     Then it fails the write-capable storage check
     And the existing deployment continues serving the recorded escrow
 
+  @fleet_candidate
   Scenario: Reject a different writable database during an update
     Given healthy HA members sharing one PostgreSQL database
+    And every running member exposes a nonempty per-generation storage proof
     When I point the proposed deployment at an independent writable clone
     And I run the updater preflight
     Then matching copied database identifiers do not satisfy the live storage challenge
     And the update fails before replacing or stopping a serving container
-    When one running member's storage proof instead times out or returns an error
+    When one running member's storage proof instead times out or returns a non-404 error
     Then another member's valid proof cannot make the preflight pass
 
   Scenario: Preserve the bundled v4 PostgreSQL database during migration
@@ -75,15 +107,34 @@ Feature: Install and upgrade an HA host
     And the source volume remains available for recovery
     When I finish the upgrade and later recreate the PostgreSQL container
     Then the recorded escrow still works with correct committed state and accounting
-    And its v4 snapshot and post-snapshot journal recover after the application upgrade
+    And the retained v4 artifact recovers its v4 snapshot and post-snapshot journal
+    When I repeat the migration preflight on a copy with insufficient target space
+    Then it fails before PostgreSQL is recreated and the source remains unchanged
+    When I try to start the copied cluster with a different PostgreSQL major or a glibc-based image
+    Then the entrypoint refuses startup without replacing the cluster
     When I repeat on a separate copy with existing installation evidence but neither persistent PGDATA nor a legacy source
     Then startup refuses to initialize an empty database
+    And DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true cannot override an existing .pg-bound marker
     When I repeat with the recorded source detached and an interrupted migration copy
     And I attach that exact source through the recovery overlay and restart migration
     Then incomplete PGDATA is never served
     And the recovered cluster has the recorded system_identifier and committed session
     And the original source remains unchanged
 
+  Scenario: Keep v4 sessions separate while adding the v5 protocol
+    Given the merged single-router layout with a recorded v4 escrow and its approved v4 artifact
+    And that v4 artifact supports --print-storage-mode and reports postgres in the HA environment
+    And its verified flat binary cache matches the unchanged approved name, URL and SHA256
+    When I preserve PostgreSQL and the local versiond data and replace the router in its maintenance window
+    And I update supervisors one at a time and admit the separately approved v5 protocol
+    Then the verified flat install is promoted to the version/archive-SHA256 cache layout
+    And the protocol data directory and recorded escrow still work through the v4 route
+    And a new v5 escrow works through the v5 route with correct committed state and accounting
+    And the v5 child skips stored sessions belonging to v4
+    When I offer a binary reporting protocol v5 for the unchanged v4 slot
+    Then versiond rejects the protocol mismatch before replacing its serving v4 child
+
+  @fleet_candidate
   Scenario: Stop a compatible versiond image update at a failed candidate
     Given a healthy HA deployment with enough surviving capacity
     When the updater replaces a replica with an image that never becomes healthy
@@ -94,8 +145,10 @@ Feature: Install and upgrade an HA host
     Then the update completes and the public route passes real inference
     And a second unchanged run does not replace healthy containers
 
+  @fleet_candidate
   Scenario: Cut over a v4-only installation using the fleet updater
     Given two pre-v5 supervisors, the original nginx router and recorded PostgreSQL state
+    And the retained approved v4 artifact supports the new supervisor's HA storage contract
     And the filtered oracle and required bootstrap routes remain v4-only for the cutover
     When I run the updater with the complete ordered Compose file list
     Then legacy members are reachable from the new fleet before public admission
@@ -119,6 +172,15 @@ Feature: Install and upgrade an HA host
     And recovery failures are checked separately from recovery_complete
     When I repeat with recovery held beyond VERSIOND_RECOVERY_TIMEOUT
     Then the candidate is stopped and the predecessor continues serving
+
+  Scenario: Preserve readiness compatibility during recovery
+    Given a cold restart with committed sessions and a deliberately delayed recovery backlog
+    When the child has ready storage and chain connectivity but recovery_complete=false
+    Then its admin /ready returns 200 and the supervisor can publish it without waiting for the backlog
+    And a request for a recorded escrow recovers its committed state on demand
+    When a compatible overlap candidate omits recovery_complete as older binaries do
+    Then versiond uses the readiness status and skips the warm-cutover wait
+    And a 503 response never becomes ready because its body says recovery_complete=true
 ```
 
 ## Acceptance scenarios
@@ -201,6 +263,7 @@ Feature: Versiond and router HA lifecycle
     When I restore access and the affected child restarts if required
     Then the member rejoins only after fresh storage and per-version health checks
 
+  @fleet_candidate
   Scenario: Roll the inner router fleet under inference load
     This checks that replacing routers preserves accepted work and serving reserve.
     Given finite SSE and POST requests are running through the inner fleet
@@ -211,6 +274,7 @@ Feature: Versiond and router HA lifecycle
     And inference results and charges remain correct
     And a failed candidate does not remove the remaining serving reserve
 
+  @fleet_candidate
   Scenario: Lose one inner router
     This checks router redundancy rather than versiond redundancy.
     Given traffic is passing through multiple admitted inner routers
@@ -221,6 +285,17 @@ Feature: Versiond and router HA lifecycle
     When I restore the slot with the fleet tooling
     Then it is admitted only after fresh health checks
 
+  @fleet_candidate @candidate_requirement
+  Scenario: Replace a public policy worker without interrupting accepted inference
+    Given the public HAProxy tier with two healthy policy workers and admitted inner routers
+    And a finite SSE request is being served through the chosen policy worker
+    When the updater applies a compatible policy image change
+    Then the accepted request completes within the configured graceful bounds
+    And new requests use an admitted policy worker throughout the replacement
+    And a replacement receives traffic only after fresh health checks
+    And final results and accounting remain correct
+
+  @fleet_candidate
   Scenario: Change the explicit multi-host endpoint list
     This checks that every router uses one consistent membership generation.
     Given the fleet uses a recorded endpoint file
