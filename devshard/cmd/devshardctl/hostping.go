@@ -438,6 +438,14 @@ func (j *hostPingJob) reconcileLoop(ctx context.Context) {
 	}
 }
 
+func (j *hostPingJob) publishTargetCount() {
+	if j == nil || j.metrics == nil || j.targets == nil {
+		return
+	}
+	n, _, _ := j.targets.snapshotStats()
+	j.metrics.SetHostPingTargets(n)
+}
+
 func (j *hostPingJob) ObserveEscrowHost(escrowID, dial, routePrefix, participantKey string) {
 	if j == nil || j.cfg.Disabled {
 		return
@@ -445,9 +453,12 @@ func (j *hostPingJob) ObserveEscrowHost(escrowID, dial, routePrefix, participant
 	if j.targets.ObserveEscrowHost(escrowID, dial, routePrefix, participantKey) {
 		j.InvalidateDial(dial)
 	}
-	if j.metrics != nil && participantKey != "" {
+	// hasEscrow is false after ReleaseEscrow, so a late inference cannot
+	// recreate participant_info for a closed escrow.
+	if j.metrics != nil && participantKey != "" && j.targets.hasEscrow(escrowID) {
 		j.metrics.SetHostPingParticipantInfo(normalizeDial(dial), participantKey, true)
 	}
+	j.publishTargetCount()
 }
 
 // InvalidateDial clears the capability cache for a dial so the next probe
@@ -470,6 +481,7 @@ func (j *hostPingJob) ReleaseEscrow(escrowID string) {
 	for dial, participants := range removed {
 		j.metrics.DeleteHostPingMetrics(dial, participants)
 	}
+	j.publishTargetCount()
 }
 
 type hostDialer interface {
