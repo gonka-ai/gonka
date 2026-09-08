@@ -67,7 +67,7 @@ Create a database and user, for example:
 
 Note the primary (or HA) endpoint: host, port (often `5432`), database, user, password. Ensure **all** `versiond` instances can reach it (firewall / VPC / security groups).
 
-For v5, use a writable endpoint that preserves each connection’s PostgreSQL session: the database fence holds a session advisory lock. Transaction pooling cannot provide that contract.
+For v5, connect to PostgreSQL directly or through a connection pooler in **session pooling** mode. **Transaction pooling is not supported.** Use an endpoint that accepts writes, not a read-only replica. The local compose setup already connects directly.
 
 **Option B - Self-managed Postgres** — install Postgres on a dedicated host or cluster, create the role/DB, and configure replication yourself for DB HA:
 
