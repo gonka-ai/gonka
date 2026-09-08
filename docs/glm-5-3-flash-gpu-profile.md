@@ -22,6 +22,7 @@ the research and the reproducible evidence that made this integration possible.
 | parameter | value |
 |---|---|
 | `PoCModelConfig.seq_len` | 1024 |
+| `PoCModelConfig.weight_scale_factor` | **0.62** |
 | `stat_test.dist_threshold` | **0.44** |
 | `stat_test.p_mismatch` | 0.10 |
 | `stat_test.p_value_threshold` | 0.05 |
