@@ -10,6 +10,7 @@ import (
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -72,6 +73,7 @@ func testMsgCodec(t *testing.T) codec.Codec {
 		ValAddressPrefix: "gonkavaloper",
 	}.NewInterfaceRegistry()
 	inferencetypes.RegisterInterfaces(ir)
+	blstypes.RegisterInterfaces(ir)
 	authztypes.RegisterInterfaces(ir)
 	return codec.NewProtoCodec(ir)
 }
