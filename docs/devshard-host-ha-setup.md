@@ -146,12 +146,14 @@ Example files in your setup. Some are present in the release branch:
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `deploy/join/docker-compose.yml`                               | Base join (`versiond`, `proxy`, …)                                                                    |
 | `deploy/join/docker-compose.versiond.yml`                      | HA overlay: Postgres + additional replica (`versiond2`) + shared networks for the router fleet               |
-| `deploy/join/docker-compose.devshard-v5.override.yml`     | **Recommended:** v5 images + HA oracle filter shared by supervisors and both routing tiers (you create this; see §2.1) |
+| `deploy/join/docker-compose.devshard-v5.override.yml`     | v5 images + the **optional** `oracle-filter` used in this example (you create this; see §2.1) |
 | `deploy/join/docker-compose.devshard-pg-external.override.yml` | Optional: point **every** `versiond`* replica at managed Postgres (see §2.2)                          |
 | `deploy/join/versiond-router-slot/` | Router slot Compose files; managed by `versiond-router-fleet.sh` in separate projects |
 | `deploy/join/update-devshard.sh` | Updates the local deployment in order, including the versiond router fleet |
 
-> **Why the HA oracle filter?** `api:9100/versions` follows chain governance and can include pre-HA versions. Without a filter, every HA peer can try to start those children against shared Postgres, which is unsupported and can race on schema migration. `VERSIOND_NON_HA_VERSIONS` controls routing and v5 child HA preflight; it does **not** stop versiond from launching a version. The override and `config.env` give supervisors, router slots and the public proxy the same filtered catalog and empty the non-HA pin list.
+**Optional component: `oracle-filter`.** This guide adds a small Python HTTP service to the example Compose override. It reads `api:9100/versions` and returns only the protocol names selected in `VERSIOND_VERSIONS`. We included it so the example can run only the selected Postgres-capable protocols on HA replicas, while the chain catalog may also contain older protocols, and so supervisors and both routing tiers see the same selected list. It does not approve versions or change the chain catalog.
+
+`oracle-filter` is **not required by versiond or the routers**. They can read `api:9100/versions` directly; see [Running without the filter](#running-without-the-filter). In that case, check the full catalog against your storage and legacy-version layout. `VERSIOND_NON_HA_VERSIONS` controls routing and HA preflight, but does not prevent versiond from launching a version. The examples below use the optional filter and an empty non-HA pin list.
 
 
 
@@ -181,7 +183,8 @@ export PROXY_ROUTER_IMAGE='<v5-proxy-router-image:tag-or-digest>'
 export PROXY_POLICY_IMAGE='<v5-proxy-image:tag-or-digest>'
 export VERSIOND_VERSIONS="v5"
 export VERSIOND_NON_HA_VERSIONS=""
-export VERSIOND_ROUTING_CATALOG_URL=http://oracle-v4:9100/versions
+# Example with the optional filter; without it use http://api:9100/versions.
+export VERSIOND_ROUTING_CATALOG_URL=http://oracle-filter:9100/versions
 export VERSIOND_ROUTER_FLEET_SLOTS="0 1 2"
 export VERSIOND_ROUTER_MIN_READY=2
 # For an upgrade retaining v4 sessions, use "v4 v5" after the checks in §2.6.
@@ -196,8 +199,8 @@ Use the published image references for the tested candidate; the repository does
 cat > docker-compose.devshard-v5.override.yml <<'EOF'
 services:
   # Filtered /versions: only selected HA protocols (prevents v3 children on the HA+Postgres pool)
-  oracle-v4:
-    container_name: oracle-v4
+  oracle-filter:
+    container_name: oracle-filter
     image: python:3.12-alpine
     environment:
       - ORACLE_UPSTREAM=http://api:9100/versions
@@ -239,10 +242,10 @@ services:
   versiond:
     image: ${VERSIOND_IMAGE:?select the v5 versiond image}
     environment:
-      - VERSIOND_ORACLE_URL=http://oracle-v4:9100/versions
+      - VERSIOND_ORACLE_URL=http://oracle-filter:9100/versions
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-}
     depends_on:
-      oracle-v4:
+      oracle-filter:
         condition: service_started
       devshard-postgres:
         condition: service_healthy
@@ -250,23 +253,36 @@ services:
   versiond2:
     image: ${VERSIOND_IMAGE:?select the v5 versiond image}
     environment:
-      - VERSIOND_ORACLE_URL=http://oracle-v4:9100/versions
+      - VERSIOND_ORACLE_URL=http://oracle-filter:9100/versions
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-}
     depends_on:
-      oracle-v4:
+      oracle-filter:
         condition: service_started
       devshard-postgres:
         condition: service_healthy
 
-  # If you add versiond3 (or more), give each the same oracle-v4 env + depends_on.
+  # If you add versiond3 (or more), give each the same oracle-filter env + depends_on.
 
   proxy:
     environment:
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-}
-      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL:?set the filtered catalog URL}
+      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL:?set the routing catalog URL}
       - VERSIOND_VERSIONS=${VERSIOND_VERSIONS:-v5}
 EOF
 ```
+
+#### Running without the filter
+
+For direct catalog access, make these changes to the example before starting it:
+
+1. Remove the `oracle-filter` service from `docker-compose.devshard-v5.override.yml` and its entries in every service's `depends_on`, including any external-PG or extra-replica overrides. Keep the other dependencies and image/storage settings.
+2. Set `VERSIOND_ORACLE_URL=http://api:9100/versions` on every local `versiond` service. On remote hosts, use the reachable private address of the same API.
+3. Set `export VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions` in `config.env` for both routing tiers. Ensure the endpoint is reachable from every router slot.
+4. Skip commands that start, recreate or inspect `oracle-filter` elsewhere in this guide. Query `api:9100/versions` instead when checking the catalog.
+
+With direct access, `VERSIOND_VERSIONS` is a router bootstrap list, **not a filter** on the API catalog. Every version visible to the HA supervisors must fit the deployment's storage layout. For this all-HA example, use direct access when the full catalog contains only protocols compatible with the shared PostgreSQL layout. If you also serve pre-HA protocols, see the dedicated legacy-owner layout below; the HA peers still need a catalog that excludes those protocols. Without the optional filter, newly approved compatible versions are learned from the API without editing a filter allowlist.
+
+#### Start the selected layout
 
 **3. Bring up the main stack and router fleet**
 
@@ -291,7 +307,7 @@ What this starts:
 | Container           | Purpose                                       |
 | ------------------- | --------------------------------------------- |
 | `devshard-postgres` | Shared DB (if not using external PG)          |
-| `oracle-v4`         | Filtered versions oracle (selected HA protocols)            |
+| `oracle-filter`         | Optional versions filter included in this example (selected HA protocols)            |
 | `versiond`          | Replica A — data dir `./devshards/data`       |
 | `versiond2`         | Replica B — data dir `./devshards2/data`      |
 | Router slot containers | Independent HAProxy routers in front of the versiond pool |
@@ -302,17 +318,18 @@ What this starts:
 **4. Confirm**
 
 ```bash
-docker ps --format '{{.Names}}\t{{.Status}}' | grep -E 'oracle-v4|versiond|devshard-postgres'
+docker ps --format '{{.Names}}\t{{.Status}}' | grep -E 'oracle-filter|versiond|devshard-postgres'
 
 docker inspect proxy --format '{{range .Config.Env}}{{println .}}{{end}}' | grep VERSIOND_
 # VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet
 # VERSIOND_NON_HA_VERSIONS=   (empty)
-# VERSIOND_ROUTING_CATALOG_URL=http://oracle-v4:9100/versions
+# VERSIOND_ROUTING_CATALOG_URL=http://oracle-filter:9100/versions
 
 ./versiond-router-fleet.sh status
 ./versiond-router-fleet.sh verify-admission
 
-docker exec oracle-v4 wget -qO- http://127.0.0.1:9100/versions
+# With the optional filter; otherwise query api:9100/versions.
+docker exec oracle-filter wget -qO- http://127.0.0.1:9100/versions
 # expect the selected approved protocols and their real binary URL/SHA256
 
 # Include every local replica in this list.
@@ -362,7 +379,7 @@ services:
     depends_on: !override
       api:
         condition: service_started
-      oracle-v4:
+      oracle-filter:
         condition: service_started
 
   versiond2:
@@ -376,13 +393,13 @@ services:
     depends_on: !override
       api:
         condition: service_started
-      oracle-v4:
+      oracle-filter:
         condition: service_started
 ```
 
 Use Docker Compose with `!override` support. This excludes the local database from `up -d` and removes the local-PG dependency on the replicas shown; repeat for every additional replica. Otherwise v5's lost-database guard can reject the unused local database after HA artifacts/state exist.
 
-1. Start (include the v5 override as well if you use the recommended §2.1 layout):
+1. Start (include the v5 override as well if you use the §2.1 example; omit filter dependencies for direct catalog access):
 
 ```bash
 cd deploy/join
@@ -423,7 +440,7 @@ Example with one replica per machine:
 
 1. Postgres (`5432`) and node-manager gRPC (`9400`) — required.
 2. Chain RPC/gRPC (`26657`, `9090`) — required for remote `devshardd` (same as local `NODE_HOST=node`).
-3. Oracle URL — use the **same filtered oracle** as local HA (e.g. `oracle-v4` on a private port). Pointing remote `versiond` at raw `api:9100/versions` can launch versions excluded from the HA pool.
+3. Oracle URL — use the **same catalog source** as local HA: the optional `oracle-filter` on a private port, or direct API access when running without it. If A uses a filter, bypassing it on B can launch versions excluded from A’s HA pool.
 4. Confirm `PGPASSWORD` / `KEYRING_PASSWORD` in `config.env` match what **running** local `versiond`* containers use.
 
 **On machine B (**`versiond` **only) — one compose file is enough**
@@ -443,7 +460,7 @@ services:
     image: ${VERSIOND_IMAGE:?select the same v5 versiond image as A}
     container_name: versiond
     environment:
-      # Same filtered HA oracle as on A
+      # Same catalog source as on A (optional filter or direct API)
       - VERSIOND_ORACLE_URL=http://<A-private-ip>:19100/versions
       - GONKA_HA=true
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-}
@@ -534,7 +551,7 @@ A private DNS pool is also possible: set `VERSIOND_POOL_HOST` to a name resolvin
 ### 2.4 Adding more replicas
 
 1. Add another `versiond` service (new container name + new data volume). The supplied `docker-compose.versiond3.yml` is an example; copy it with new names/data paths for additional replicas. Include it in every Compose command and the updater's `COMPOSE_FILE`. Its PostgreSQL mount also lets the lost-database guard see that replica's `.pg-bound` marker.
-2. Give it the same image, filtered oracle, identity, HA/Postgres environment and drain settings; extend §2.1's override and §2.2's external-PG override for it. On the router back network add alias `versiond-pool`; across machines follow §2.3.
+2. Give it the same image, catalog source, identity, HA/Postgres environment and drain settings; extend §2.1's override and §2.2's external-PG override for it. On the router back network add alias `versiond-pool`; across machines follow §2.3.
 3. Start it and wait for every required `/readyz?version=...` to return 200. DNS discovery needs no router recreation. An explicit endpoint list needs the maintenance procedure from §2.3; then confirm real inference through the public route.
 
 ### 2.5 Operating versiond members
@@ -568,13 +585,13 @@ replacement automatically; keep it out of pool DNS until the check passes.
 
 For permanent removal, stop/drain the member first, remove its service or set its desired replica count to zero (`VERSIOND2_REPLICAS=0` for `versiond2`), and remove its DNS/explicit membership as applicable. The updater respects zero replica counts. Apply explicit-list changes through §2.3's maintenance procedure and confirm the remaining pool serves its sessions. Keep its data and binary directories until recovery is verified. Router recreation is unnecessary for DNS membership changes.
 
-To add another approved HA protocol in this filtered layout, extend `VERSIOND_VERSIONS` in `config.env`, source it, and recreate only `oracle-v4` with the same ordered files. Supervisors and both routing tiers poll the catalog. Run `./versiond-router-fleet.sh wait-version <version>` and verify real inference before using the new route; the new version can be admitted without replacing routers. Preserve `proxy-router-state` and every slot's `router-state` volume. The catalog retains accepted routes when its source fails and does not automatically remove them by default; removing a protocol requires supervised maintenance after its sessions are no longer needed.
+To add another approved HA protocol in this filtered layout, extend `VERSIOND_VERSIONS` in `config.env`, source it, and recreate only `oracle-filter` with the same ordered files. Supervisors and both routing tiers poll the catalog. Run `./versiond-router-fleet.sh wait-version <version>` and verify real inference before using the new route; the new version can be admitted without replacing routers. Preserve `proxy-router-state` and every slot's `router-state` volume. The catalog retains accepted routes when its source fails and does not automatically remove them by default; removing a protocol requires supervised maintenance after its sessions are no longer needed.
 
 ### 2.6 Upgrade an existing HA deployment to v5
 
 Use the same Postgres, identity and per-replica mounts as the existing deployment. Take a database backup and record the current images, approved binary URLs/SHA256, compose project/files, mounts and a working escrow. Preserve `.inference`, each `devshards*/data` directory, the binary cache and router catalog state. Prepare the v5 files from §2.1 in the **same compose project**, but do not run an unrestricted `up -d` yet.
 
-**1. Keep existing protocols available.** For a v4-only deployment, keep `VERSIOND_VERSIONS="v4"` during the fleet cutover, even if v5 is already approved. Fleet admission runs before supervisor replacement and must be able to use the versions already serving. Add v5 after the cutover; the filtered oracle and bootstrap routes must retain v4 for its active sessions. Before replacing supervisors, check the actual approved v4 binary's `--print-storage-mode` in the HA environment (`postgres`) and `--print-protocol-version` (`v4`). An old artifact without the HA storage probe cannot join the new HA supervisor pool. Use matching gateway/host protocol artifacts. Do not rename a v4 binary/escrow to v5 or assume v4 session state is migrated into the v5 protocol. Keep serving retained v4 sessions under their compatible v4 artifact; use a new escrow for v5.
+**1. Keep existing protocols available.** For a v4-only deployment, keep `VERSIOND_VERSIONS="v4"` during the fleet cutover, even if v5 is already approved. Fleet admission runs before supervisor replacement and must be able to use the versions already serving. Add v5 after the cutover; the catalog and bootstrap routes must retain v4 for its active sessions. The optional filter provides the v4-only selection used by this upgrade example; direct catalog access requires a catalog compatible with the same cutover constraints. Before replacing supervisors, check the actual approved v4 binary's `--print-storage-mode` in the HA environment (`postgres`) and `--print-protocol-version` (`v4`). An old artifact without the HA storage probe cannot join the new HA supervisor pool. Use matching gateway/host protocol artifacts. Do not rename a v4 binary/escrow to v5 or assume v4 session state is migrated into the v5 protocol. Keep serving retained v4 sessions under their compatible v4 artifact; use a new escrow for v5.
 
 Add v5 only after it is approved and the fleet cutover has passed the retained v4 inference check. New supervisors automatically promote verified old `<bin>/<version>/devshardd` installs into `<bin>/<version>/<archive-sha256>/devshardd`. They verify the old metadata against the current oracle and otherwise download again. **Do not delete or manually rename** the cache or `<data>/<version>` directories.
 
@@ -620,7 +637,7 @@ bash ./devshard-postgres-migration-preflight.sh \
 
 After verifying migration, recreate PostgreSQL once without the recovery overlay, while writers remain stopped. Keep this same PostgreSQL image and Compose configuration for the updater so it does not recreate the database again after writers restart. Keep the source volume and backup. Never use `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT` to recover a deployment whose database is missing.
 
-**3. Run the updater with the complete deployment configuration.** After a local database copy, restart the retained old member containers with `docker start` and verify their v4 readiness before running the updater (use `/v4/healthz` when an old supervisor returns 404 from `/readyz`). Keep their existing oracle filtered to v4 and public traffic closed during the cutover. Fleet admission needs these serving children before it replaces supervisors. For already-migrated PostgreSQL whose members provide v5 storage proofs, keep ready survivors running. Pre-v5 supervisors lack host evacuation: finish their accepted work in the maintenance window before replacement.
+**3. Run the updater with the complete deployment configuration.** After a local database copy, restart the retained old member containers with `docker start` and verify their v4 readiness before running the updater (use `/v4/healthz` when an old supervisor returns 404 from `/readyz`). Keep their catalog limited to v4 for this cutover example (using the optional filter if needed), and public traffic closed during the cutover. Fleet admission needs these serving children before it replaces supervisors. For already-migrated PostgreSQL whose members provide v5 storage proofs, keep ready survivors running. Pre-v5 supervisors lack host evacuation: finish their accepted work in the maintenance window before replacement.
 
 ```bash
 source ./config.env
@@ -628,7 +645,8 @@ export COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compos
 # Append EVERY active overlay, in order (external PG, extra replicas, private endpoints, etc.).
 # Persist the complete COMPOSE_FILE in config.env for subsequent updates.
 ./versiond-router-fleet.sh prepare-networks
-docker compose up -d --no-deps oracle-v4
+# Only when using the optional filter:
+docker compose up -d --no-deps oracle-filter
 
 # Include every retained local member stopped for the database copy; start remote ones on their machines.
 # Skip this line if they are already running.
@@ -642,13 +660,13 @@ docker start versiond versiond2
 ./versiond-router-fleet.sh wait-version v4
 ```
 
-The updater reads `config.env` and the complete Compose model, validates shared writable PostgreSQL and its connection budget, updates local PostgreSQL if used, prepares the router fleet and attaches existing local replicas to its back network. It starts the public proxy, brings up policy workers one at a time, verifies router admission, removes the old singleton router, then replaces local `versiond` replicas one at a time with `VERSIOND_LEGACY_HOST` last (default `versiond`). It does not start custom services such as `oracle-v4`, so start the filter explicitly as above. Remote replicas are updated on their own machines using §2.5.
+The updater reads `config.env` and the complete Compose model, validates shared writable PostgreSQL and its connection budget, updates local PostgreSQL if used, prepares the router fleet and attaches existing local replicas to its back network. It starts the public proxy, brings up policy workers one at a time, verifies router admission, removes the old singleton router, then replaces local `versiond` replicas one at a time with `VERSIOND_LEGACY_HOST` last (default `versiond`). It does not start custom services such as `oracle-filter`, so start the filter explicitly as above if you use it. Remote replicas are updated on their own machines using §2.5.
 
 The host updater supports bundled PostgreSQL or an external writable endpoint without custom TLS configuration. PostgreSQL TLS setup is outside this procedure: the updater rejects explicit `PGSSL*` settings except `PGSSLMODE=disable`. Leave them unset for the stock deployment.
 
 `--check` does not replace services, but takes the deployment lock and writes PostgreSQL challenges; `--dry-run` also runs preflight. Keep `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled. Legacy members returning 404 are accepted only for the verified bundled PostgreSQL migration; confirm their database and recorded session separately. With an external database, upgrade legacy members during maintenance with all writers stopped and the target database independently verified. Start the v5 supervisors using the complete Compose model, check them with `--check-storage` (§2.3), then run the host updater. A legacy 404 cannot establish continuity with an external target. The new routers accept a pre-v5 supervisor's `/readyz` **404** only together with successful route health; a v5 **503** is never a legacy fallback.
 
-Schedule the first public nginx-to-HAProxy replacement and local PostgreSQL copy as maintenance. Once the retained v4 escrow works through the fleet, extend the filter to `VERSIOND_VERSIONS="v4 v5"` as in §2.5, wait for v5 and verify a new v5 escrow. Check per-version readiness on every member and admission through both routing tiers; a healthy public proxy alone is insufficient.
+Schedule the first public nginx-to-HAProxy replacement and local PostgreSQL copy as maintenance. Once the retained v4 escrow works through the fleet, extend the optional filter to `VERSIOND_VERSIONS="v4 v5"` as in §2.5, or confirm that the direct catalog exposes both compatible versions, wait for v5 and verify a new v5 escrow. Check per-version readiness on every member and admission through both routing tiers; a healthy public proxy alone is insufficient.
 
 If a versiond replacement or public admission fails, the updater restores the saved container configuration and stops. It restores proxy and policy workers together, including the old nginx on the first cutover. An interrupted replacement is recovered on the next normal run; `--check` reports pending recovery. Keep the same persistent `UPDATE_STATE_DIR` if you override its default under `~/.local/state/gonka/updater/`. Inspect logs, fix the cause and rerun with the same complete file list. Unchanged services and previous-release records are retained. Saved configurations preserve mount sources; keep previous join files because rollback does not undo host-file edits or database writes. The updater does not guarantee uninterrupted policy-worker replacement; validate accepted SSE with the test plan before relying on that behavior.
 
@@ -695,7 +713,8 @@ export PROXY_ROUTER_IMAGE='<v5-proxy-router-image:tag-or-digest>'
 export PROXY_POLICY_IMAGE='<v5-proxy-image:tag-or-digest>'
 export VERSIOND_VERSIONS="v5"
 export VERSIOND_NON_HA_VERSIONS=""
-export VERSIOND_ROUTING_CATALOG_URL=http://oracle-v4:9100/versions
+# Example with the optional filter; without it use http://api:9100/versions.
+export VERSIOND_ROUTING_CATALOG_URL=http://oracle-filter:9100/versions
 export VERSIOND_ROUTER_FLEET_SLOTS="0 1 2"
 export VERSIOND_ROUTER_MIN_READY=2
 # Optional — same as compose default on one machine
@@ -722,7 +741,7 @@ You normally **do not edit these by hand** when using the local `devshard-postgr
 
 | File                                               | Purpose                                                                                     |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `docker-compose.devshard-v5.override.yml`     | **Recommended:** v5 supervisor images + `oracle-v4` for every peer and the router catalog; `VERSIOND_NON_HA_VERSIONS=` empty |
+| `docker-compose.devshard-v5.override.yml`     | v5 supervisor images + optional `oracle-filter` for every peer and the router catalog; `VERSIOND_NON_HA_VERSIONS=` empty |
 | `docker-compose.devshard-pg-external.override.yml` | Managed DB: set `PGHOST=...` under **every** `versiond`* service (see §2.2)                 |
 
 
@@ -733,8 +752,8 @@ You normally **do not edit these by hand** when using the local `devshard-postgr
 ## Step 4 - Verify it works
 
 ```bash
-# 1) Containers (include oracle-v4 when using the recommended override)
-docker ps | grep -E 'oracle-v4|versiond|devshard-postgres'
+# 1) Containers (include oracle-filter when using the optional filter)
+docker ps | grep -E 'oracle-filter|versiond|devshard-postgres'
 
 # 2) Public proxy points at the router fleet
 docker inspect proxy --format '{{range .Config.Env}}{{println .}}{{end}}' | grep VERSIOND_ROUTER_POOL_HOST
@@ -839,7 +858,7 @@ For maintenance of the whole machine, drain the fleet before stopping the main s
 3. **Launch v3 (or other pre-HA binaries) on HA peers with shared Postgres** — use the HA oracle override, or a dedicated non-HA supervisor for legacy versions.
 4. **Two dapi processes** with the same warm/cold keys — duplicates PoC / chain txs.
 5. **Assume local** `devshard-postgres` **on one VM is “full HA”** — replicate the DB or use managed PG.
-6. `**docker compose up` without `-f docker-compose.devshard-v5.override.yml**` when you intended v5 HA — the raw oracle can include pre-HA children, and fleet settings must match the main project.
+6. **Omit the overrides for your chosen layout** when running `docker compose up` — preserve its image, storage and catalog settings. The optional filter is not required when you have configured direct catalog access as described in §2.1.
 
 ---
 
@@ -855,7 +874,7 @@ source ./config.env
 #   DEVSHARD_POSTGRES_PASSWORD=...
 #   VERSIOND_IMAGE / VERSIOND_ROUTER_IMAGE / PROXY_ROUTER_IMAGE / PROXY_POLICY_IMAGE
 #   VERSIOND_VERSIONS=v5 / VERSIOND_NON_HA_VERSIONS=""
-#   VERSIOND_ROUTING_CATALOG_URL=http://oracle-v4:9100/versions
+#   VERSIOND_ROUTING_CATALOG_URL=http://oracle-filter:9100/versions
 #   (optional) DEVSHARD_POSTGRES_DB / USER / VERSIOND_POOL_HOST
 
 # Create docker-compose.devshard-v5.override.yml as in §2.1
@@ -870,7 +889,7 @@ docker compose \
 ./versiond-router-fleet.sh apply
 ./versiond-router-fleet.sh verify-admission
 ./versiond-router-fleet.sh wait-version v5
-docker ps | grep -E 'oracle-v4|versiond|postgres'
+docker ps | grep -E 'oracle-filter|versiond|postgres'
 docker exec versiond wget -qO- http://127.0.0.1:8080/healthz
 ```
 
