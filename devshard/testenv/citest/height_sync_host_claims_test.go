@@ -44,14 +44,30 @@ func waitHostClaimChatReady(t *testing.T, stack *harness.Stack, eps harness.Endp
 
 func composeLogs(t *testing.T, stack *harness.Stack, services ...string) string {
 	t.Helper()
-	out, err := stack.ComposeLogsTail(2000, services...)
+	out, err := stack.ComposeLogsAll(services...)
 	require.NoError(t, err)
 	return out
 }
 
 func composeLogsContains(stack *harness.Stack, needle string, services ...string) bool {
-	out, err := stack.ComposeLogsTail(2000, services...)
-	return err == nil && strings.Contains(out, needle)
+	ok, err := stack.ComposeLogsContain(needle, services...)
+	return err == nil && ok
+}
+
+func dumpHeightSyncLogs(t *testing.T, stack *harness.Stack, services ...string) {
+	t.Helper()
+	out, err := stack.ComposeLogsAll(services...)
+	if err != nil {
+		t.Logf("citest: compose logs: %v", err)
+		return
+	}
+	var matched []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "heightsync") {
+			matched = append(matched, line)
+		}
+	}
+	t.Logf("citest: heightsync log lines (%d):\n%s", len(matched), strings.Join(matched, "\n"))
 }
 
 // TestContainerE2E_HeightSync_HostLowerHeightAutoAligns is scenario A: the solo
@@ -138,5 +154,8 @@ func TestContainerE2E_HeightSync_HostFabricatedHashInsideD(t *testing.T) {
 		postHeightSyncChat(t, cfg, eps, fmt.Sprintf("citest height-sync fabricated hash reconcile %d", n))
 		return composeLogsContains(stack, hostClaimsReconcileWarn, "versiond-0", "versiond-1")
 	})
+	if !ok {
+		dumpHeightSyncLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", solo)
+	}
 	require.True(t, ok, "honest host must warn when its oracle reaches the fabricated height")
 }
