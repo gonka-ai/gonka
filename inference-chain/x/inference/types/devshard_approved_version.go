@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/hex"
 	"fmt"
+	"strings"
 )
 
 const (
@@ -13,11 +14,8 @@ const (
 )
 
 func (v DevshardApprovedVersion) Validate() error {
-	if v.Name == "" {
-		return fmt.Errorf("approved devshard version name cannot be empty")
-	}
-	if len(v.Name) > MaxDevshardApprovedVersionNameLen {
-		return fmt.Errorf("approved devshard version name exceeds maximum length of %d", MaxDevshardApprovedVersionNameLen)
+	if err := ValidateApprovedVersionName(v.Name); err != nil {
+		return err
 	}
 	if v.Binary == "" {
 		return fmt.Errorf("approved devshard version binary cannot be empty")
@@ -43,6 +41,15 @@ func ValidateApprovedVersionName(name string) error {
 	}
 	if len(name) > MaxDevshardApprovedVersionNameLen {
 		return fmt.Errorf("approved devshard version name exceeds maximum length of %d", MaxDevshardApprovedVersionNameLen)
+	}
+	if name == "." || name == ".." {
+		return fmt.Errorf("approved devshard version name %q is not a valid path segment", name)
+	}
+	if strings.TrimSpace(name) != name {
+		return fmt.Errorf("approved devshard version name %q must not have leading or trailing whitespace", name)
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("approved devshard version name %q must be a single path segment", name)
 	}
 	return nil
 }
