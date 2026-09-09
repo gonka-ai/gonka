@@ -60,7 +60,7 @@ func TestStateRoot_MerkleStructure(t *testing.T) {
 	// Manually recompute and verify structure.
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	restHash, err := ComputeRestHashV2(balance, sealedAccBytes32(nil), inferences, nil)
+	restHash, err := ComputeRestHashV2(balance, sealedAccBytes32(nil), inferences, nil, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 	feesBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(feesBytes, fees)
@@ -148,7 +148,7 @@ func TestStateRoot_ExportedHelper_MatchesRestHashV2WithZeroSealedAcc(t *testing.
 
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
-	restHash, err := ComputeRestHashV2(balance, sealedAccBytes32(nil), inferences, nil)
+	restHash, err := ComputeRestHashV2(balance, sealedAccBytes32(nil), inferences, nil, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 	expected := ComputeStateRootFromRestHash(hostStatsHash, restHash, fees, types.PhaseActive, version)
 	require.Equal(t, expected, root)
@@ -167,7 +167,7 @@ func TestStateRoot_V2_SealedAccChangesRestHash(t *testing.T) {
 	fees := uint64(5)
 	version := "v2"
 
-	restHash, err := ComputeRestHashV2(balance, sealedAcc, live, nil)
+	restHash, err := ComputeRestHashV2(balance, sealedAcc, live, nil, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 	rootZeroAcc, err := ComputeStateRoot(balance, hostStats, live, types.PhaseActive, nil, fees, version)
 	require.NoError(t, err)
@@ -179,7 +179,7 @@ func TestStateRoot_V2_SealedAccChangesRestHash(t *testing.T) {
 
 	var otherAcc [32]byte
 	otherAcc[31] = 0x01
-	restOther, err := ComputeRestHashV2(balance, otherAcc, live, nil)
+	restOther, err := ComputeRestHashV2(balance, otherAcc, live, nil, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 	require.NotEqual(t, restHash, restOther, "sealed accumulator must affect v2 rest hash")
 }

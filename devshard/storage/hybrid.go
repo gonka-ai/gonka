@@ -38,6 +38,10 @@ type HybridStorage struct {
 
 	reconnectStop chan struct{}
 	reconnectDone chan struct{}
+	fatalErrors   chan error
+	fatalStop     chan struct{}
+	fatalOnce     sync.Once
+	fatalStopOnce sync.Once
 
 	onPromoted []func()
 	promoted   bool
@@ -97,16 +101,27 @@ type readinessReporter interface {
 // NewHybridStorage wraps a single backend. Every call is forwarded to it. Used
 // by unit tests that need a HybridStorage without dual-backend routing.
 func NewHybridStorage(backend Storage) *HybridStorage {
-	return &HybridStorage{sqlite: backend, degradedOwnerOnly: false}
+	h := &HybridStorage{
+		sqlite:            backend,
+		degradedOwnerOnly: false,
+		fatalErrors:       make(chan error, 1),
+		fatalStop:         make(chan struct{}),
+	}
+	h.forwardFatalErrors(backend)
+	return h
 }
 
 func newHybridRouter(sqlite, pg Storage, preferPG bool, storeDir string) *HybridStorage {
-	return &HybridStorage{
-		sqlite:   sqlite,
-		pg:       pg,
-		preferPG: preferPG,
-		storeDir: storeDir,
+	h := &HybridStorage{
+		sqlite:      sqlite,
+		pg:          pg,
+		preferPG:    preferPG,
+		storeDir:    storeDir,
+		fatalErrors: make(chan error, 1),
+		fatalStop:   make(chan struct{}),
 	}
+	h.forwardFatalErrors(pg)
+	return h
 }
 
 func newDegradedSQLiteRouter(sqlite Storage, storeDir string, newSessionErr error) *HybridStorage {
@@ -115,6 +130,8 @@ func newDegradedSQLiteRouter(sqlite Storage, storeDir string, newSessionErr erro
 		storeDir:          storeDir,
 		degradedOwnerOnly: true,
 		newSessionErr:     newSessionErr,
+		fatalErrors:       make(chan error, 1),
+		fatalStop:         make(chan struct{}),
 	}
 }
 
@@ -178,7 +195,9 @@ func (h *HybridStorage) postgresBackend() Storage {
 
 // Ready reports whether the router can serve. A degraded / SQLite-only router
 // (no Postgres attached) is always ready for the escrows it owns. When Postgres
-// is attached, readiness tracks its async session-index rebuild.
+// is attached, readiness tracks its async session-index rebuild and live
+// database health. Application-pool saturation is reported separately and does
+// not by itself make the router unready.
 func (h *HybridStorage) Ready() bool {
 	pg := h.postgresBackend()
 	if pg == nil {
@@ -188,6 +207,36 @@ func (h *HybridStorage) Ready() bool {
 		return r.Ready()
 	}
 	return true
+}
+
+// FatalErrors forwards terminal failures from the active Postgres backend.
+func (h *HybridStorage) FatalErrors() <-chan error {
+	return h.fatalErrors
+}
+
+func (h *HybridStorage) forwardFatalErrors(backend Storage) {
+	reporter, ok := backend.(interface{ FatalErrors() <-chan error })
+	if !ok {
+		return
+	}
+	errors := reporter.FatalErrors()
+	if errors == nil {
+		return
+	}
+	go func() {
+		select {
+		case err := <-errors:
+			if err != nil {
+				h.fatalOnce.Do(func() {
+					select {
+					case h.fatalErrors <- err:
+					case <-h.fatalStop:
+					}
+				})
+			}
+		case <-h.fatalStop:
+		}
+	}()
 }
 
 func (h *HybridStorage) newSessionError() error {
@@ -389,6 +438,7 @@ func (h *HybridStorage) promotePostgres(pg Storage) error {
 	h.promoted = true
 	hooks := append([]func(){}, h.onPromoted...)
 	h.mu.Unlock()
+	h.forwardFatalErrors(pg)
 	slog.Info("devshard storage: postgres reconnected; leaving degraded sqlite-owned-only mode", "dir", h.storeDir)
 	h.logConflictedEscrows("postgres promotion")
 	for _, hook := range hooks {
@@ -631,6 +681,28 @@ func (h *HybridStorage) InsertSealedInference(escrowID string, row InferenceRow)
 	return b.InsertSealedInference(escrowID, row)
 }
 
+func (h *HybridStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.BulkInsertSealedInferences(escrowID, rows)
+}
+
+func (h *HybridStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.InsertSealedInferences(escrowID, rows)
+}
+
 func (h *HybridStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	b, err := h.routed(escrowID)
 	if err != nil {
@@ -647,6 +719,14 @@ func (h *HybridStorage) DeleteSealedInferences(escrowID string) error {
 	return b.DeleteSealedInferences(escrowID)
 }
 
+func (h *HybridStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	return b.SealedInferenceIDs(escrowID)
+}
+
 func (h *HybridStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
 	b, err := h.routed(escrowID)
 	if err != nil {
@@ -661,6 +741,14 @@ func (h *HybridStorage) DrainInferenceValidationObs(escrowID string, inferenceID
 		return err
 	}
 	return b.DrainInferenceValidationObs(escrowID, inferenceID)
+}
+
+func (h *HybridStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.DrainInferenceValidationObsBatch(escrowID, inferenceIDs)
 }
 
 func (h *HybridStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
@@ -761,7 +849,6 @@ func (h *HybridStorage) pruneBefore(cutoff uint64) error {
 	return nil
 }
 
-
 func (h *HybridStorage) ClearValidationObs(escrowID string) error {
 	b, err := h.routed(escrowID)
 	if err != nil {
@@ -794,7 +881,7 @@ func (h *HybridStorage) AcquireOneStale(ctx context.Context, escrowID, instanceA
 	return ls.AcquireOneStale(ctx, escrowID, instanceAddr, ttl)
 }
 
-func (h *HybridStorage) SetResult(ctx context.Context, escrowID string, inferenceID uint64, status LeaseStatus, instanceAddr string) error {
+func (h *HybridStorage) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, instanceAddr string) error {
 	b, err := h.routed(escrowID)
 	if err != nil {
 		return err
@@ -803,10 +890,10 @@ func (h *HybridStorage) SetResult(ctx context.Context, escrowID string, inferenc
 	if !ok {
 		return fmt.Errorf("storage backend does not support validation leases")
 	}
-	return ls.SetResult(ctx, escrowID, inferenceID, status, instanceAddr)
+	return ls.SetResult(ctx, escrowID, inferenceID, epochID, status, instanceAddr)
 }
 
-func (h *HybridStorage) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID uint64, instanceAddr string) (bool, error) {
+func (h *HybridStorage) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
 	b, err := h.routed(escrowID)
 	if err != nil {
 		return false, err
@@ -815,10 +902,23 @@ func (h *HybridStorage) OwnsPendingLease(ctx context.Context, escrowID string, i
 	if !ok {
 		return false, fmt.Errorf("storage backend does not support validation leases")
 	}
-	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
+	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, instanceAddr)
+}
+
+func (h *HybridStorage) Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	ls, ok := b.(LeaseStore)
+	if !ok {
+		return fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.Release(ctx, escrowID, inferenceID, epochID, instanceAddr)
 }
 
 func (h *HybridStorage) Close() error {
+	h.fatalStopOnce.Do(func() { close(h.fatalStop) })
 	h.mu.Lock()
 	stop := h.reconnectStop
 	done := h.reconnectDone

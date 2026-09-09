@@ -61,6 +61,8 @@ func Defaults() *store.Store {
 		AutoSealEveryNNonces:      100,
 		ValidationRate:            6000,
 		VoteThresholdFactor:       50,
+		RefusalTimeout:            60,
+		ExecutionTimeout:          1200,
 	}
 	s.Grantees[store.GranteeKey{
 		GranterAddress: host,
@@ -134,6 +136,8 @@ func FromFile(f *config.File) (*store.Store, error) {
 	if maxNonce == 0 {
 		maxNonce = 500
 	}
+	refusalTimeout := timeoutOrDefault(f.Params.RefusalTimeout, inferencetypes.DefaultDevshardRefusalTimeout)
+	executionTimeout := timeoutOrDefault(f.Params.ExecutionTimeout, inferencetypes.DefaultDevshardExecutionTimeout)
 	s.Params = inferencetypes.Params{
 		EpochParams: &inferencetypes.EpochParams{
 			EpochLength: epochLengthFromConfig(f.Epoch.EpochLength),
@@ -142,8 +146,8 @@ func FromFile(f *config.File) (*store.Store, error) {
 		DevshardEscrowParams: &inferencetypes.DevshardEscrowParams{
 			DevshardRequestsEnabled: f.Params.DevshardRequestsEnabled,
 			MaxNonce:                maxNonce,
-			RefusalTimeout:          f.Params.RefusalTimeout,
-			ExecutionTimeout:        f.Params.ExecutionTimeout,
+			RefusalTimeout:          refusalTimeout,
+			ExecutionTimeout:        executionTimeout,
 			ValidationRate:          f.Params.ValidationRate,
 			VoteThresholdFactor:     f.Params.VoteThresholdFactor,
 		},
@@ -182,6 +186,8 @@ func FromFile(f *config.File) (*store.Store, error) {
 			AutoSealEveryNNonces:      e.AutoSealEveryNNonces,
 			ValidationRate:            e.ValidationRate,
 			VoteThresholdFactor:       e.VoteThresholdFactor,
+			RefusalTimeout:            timeoutOrDefault(e.RefusalTimeout, refusalTimeout),
+			ExecutionTimeout:          timeoutOrDefault(e.ExecutionTimeout, executionTimeout),
 		}
 	}
 
@@ -254,6 +260,13 @@ func FromFile(f *config.File) (*store.Store, error) {
 	}
 	s.InitAfterLoad()
 	return s, nil
+}
+
+func timeoutOrDefault(value, fallback int64) int64 {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func epochLengthFromConfig(length int64) int64 {

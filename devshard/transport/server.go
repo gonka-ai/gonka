@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	json "github.com/goccy/go-json"
@@ -15,9 +16,11 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"common/chainoracle/blocks"
 	"devshard"
 	"devshard/bridge"
 	"devshard/gossip"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/observability"
@@ -26,19 +29,43 @@ import (
 	"devshard/types"
 )
 
-const contextKeySender = "devshard_sender"
+const (
+	contextKeySender = "devshard_sender"
+
+	// DefaultMaxBodySize matches the public proxy and versiond-router limit.
+	// The transport enforces actual bytes read, so it also covers chunked bodies
+	// and deployments that expose devshardd without the public proxy.
+	DefaultMaxBodySize int64 = 10 * 1024 * 1024
+)
 
 // Server wraps a host.Host and exposes it over HTTP via Echo.
 type Server struct {
-	host        *host.Host
-	store       storage.Storage
-	gossip      *gossip.Gossip // nil until gossip is wired
-	verifier    signing.Verifier
-	userAddr    string               // session user address, allowed alongside group members
-	peerClients map[int]*HTTPClient  // slot index -> client, for timeout verification
-	rateLimit   *rateLimiter         // nil = no limiting
-	maxBodySize int64                // max request body bytes, 0 = no limit
-	bridge      bridge.MainnetBridge // optional, for warm key verification
+	host         *host.Host
+	store        storage.Storage
+	gossip       *gossip.Gossip // nil until gossip is wired
+	verifier     signing.Verifier
+	userAddr     string               // session user address, allowed alongside group members
+	peerClients  map[int]*HTTPClient  // slot index -> client, for timeout verification
+	rateLimit    *rateLimiter         // nil = no limiting
+	maxBodySize  int64                // max request body bytes, 0 = no limit
+	bridge       bridge.MainnetBridge // optional, for warm key verification
+	receiptDelay time.Duration        // optional test hook before receipt SSE write
+
+	heightSync          *heightsync.AnchorScheduler
+	heightSyncLogOracle blocks.BlockOracle
+	heightSyncAudit     *heightsync.AuditRing
+	heightSyncMarks     *heightsync.MarkLog
+	heightSyncSeedRPC   bool
+
+	pendingUntrustedMu        sync.Mutex
+	pendingUntrustedBySession map[string]*pendingUntrustedTip
+
+	heightSyncResponseAfterSignHook func(sec *heightsync.HeightSyncSection, nonce uint64)
+	heightSyncOriginSigner          signing.Signer // test seam; nil uses host.Signer()
+
+	holdInferenceMu    sync.Mutex
+	holdInferenceGate  chan struct{} // closed to release; non-nil while armed
+	holdInferenceArmed bool
 }
 
 // ServerOption configures the Server.
@@ -65,12 +92,23 @@ func WithServerGossip(g *gossip.Gossip) ServerOption {
 
 // WithServerPeerClients sets executor clients for timeout verification.
 func WithServerPeerClients(peers map[int]*HTTPClient) ServerOption {
-	return func(s *Server) { s.peerClients = peers }
+	return func(s *Server) {
+		s.peerClients = peers
+		if s.host != nil {
+			s.host.SetRepairProbe(s.RepairProbe)
+		}
+	}
 }
 
 // WithBridge sets the bridge for warm key verification in transport auth.
 func WithBridge(b bridge.MainnetBridge) ServerOption {
 	return func(s *Server) { s.bridge = b }
+}
+
+// WithReceiptDelay delays the initial receipt SSE event. It is intended for
+// integration tests that need to observe pre-receipt gateway timeout paths.
+func WithReceiptDelay(delay time.Duration) ServerOption {
+	return func(s *Server) { s.receiptDelay = delay }
 }
 
 // NewServer creates an HTTP server wrapping the given host.
@@ -83,10 +121,11 @@ func NewServer(
 	opts ...ServerOption,
 ) (*Server, error) {
 	s := &Server{
-		host:     h,
-		store:    store,
-		verifier: verifier,
-		userAddr: userAddr,
+		host:        h,
+		store:       store,
+		verifier:    verifier,
+		userAddr:    userAddr,
+		maxBodySize: DefaultMaxBodySize,
 	}
 	for _, o := range opts {
 		o(s)
@@ -99,7 +138,6 @@ func (s *Server) Host() *host.Host { return s.host }
 
 // SetGossip attaches a gossip instance for nonce/tx propagation.
 func (s *Server) SetGossip(g *gossip.Gossip) { s.gossip = g }
-
 
 // writeJSON serializes v with goccy/go-json, bypassing Echo's default serializer.
 // TODO: set a custom echo.JSONSerializer using goccy/go-json on all Echo instances
@@ -212,6 +250,13 @@ func VerifyPOSTAuth(c echo.Context, verifier signing.Verifier, escrowID string, 
 
 	body, err := io.ReadAll(c.Request().Body)
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return "", nil, echo.NewHTTPError(
+				http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("request body exceeds %d bytes", maxBytesErr.Limit),
+			)
+		}
 		return "", nil, echo.NewHTTPError(http.StatusBadRequest, "read body")
 	}
 
@@ -307,14 +352,14 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	}
 	observability.Request.SetInferenceBodyBytes(op, len(body))
 
-	var ir InferenceRequest
-	if err := json.Unmarshal(body, &ir); err != nil {
+	unwrapped, err := UnwrapInferenceRequestBody(body)
+	if err != nil {
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(),
 			observability.ReasonParseErr, observability.WhereTransportHandleInference,
-			"HandleInference: invalid json", echo.NewHTTPError(http.StatusBadRequest, "invalid json: "+err.Error()))
+			"HandleInference: decode body", echo.NewHTTPError(http.StatusBadRequest, "decode body: "+err.Error()))
 	}
 
-	req, err := HostRequestFromJSON(ir)
+	req, err := HostRequestFromJSON(unwrapped.Request)
 	if err != nil {
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(),
 			observability.ReasonDecodeErr, observability.WhereTransportHandleInference,
@@ -324,6 +369,29 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		observability.Request.SetModel(op, req.Payload.Model)
 	}
 	observability.Request.SetNonce(op, req.Nonce)
+
+	oracleHdr := s.latestOracleHeader(c.Request().Context())
+	if s.pendingUntrustedBySession != nil {
+		s.reconcilePendingUntrusted(sessionID, oracleHdr)
+	}
+	inboundVal := s.classifyInboundHeightSync(req.Nonce, unwrapped.HeightSync, oracleHdr)
+	if inboundVal.Result == heightsync.ResultInvalidStaleOrigin {
+		heightsync.IncStaleOriginRejected()
+		logging.Warn("heightsync: invalid inbound anchor",
+			heightsync.LogFieldSubsystem, "heightsync",
+			heightsync.LogFieldDirection, "request",
+			heightsync.LogFieldNonce, req.Nonce,
+			heightsync.LogFieldPeerID, sender,
+			heightsync.LogFieldReason, inboundVal.Reason,
+			heightsync.LogFieldClassification, string(inboundVal.Result),
+		)
+	}
+	s.logInboundHeightSync(sender, sessionID, req.Nonce, unwrapped.HeightSync, oracleHdr, inboundVal)
+	s.recordInboundAnchorIfAnchor(sender, unwrapped.HeightSync, c.Request().Method+" "+c.Path(), inboundVal)
+	if inboundVal.Result == heightsync.ResultValidAnchor || inboundVal.Result == heightsync.ResultValidLazyAnchor {
+		s.notePendingUntrustedInbound(sessionID, sender, unwrapped.HeightSync, oracleHdr)
+	}
+	s.recordEnvelopeBindingRequest(c, req, unwrapped.HeightSync, oracleHdr)
 
 	resp, err := s.host.HandleRequest(ctx, req)
 	if err != nil {
@@ -335,10 +403,17 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 				"HandleInference: requests disabled", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()))
 		}
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
-			"HandleInference: handle request", echo.NewHTTPError(http.StatusInternalServerError, err.Error()))
+			"HandleInference: handle request", echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err))
 	}
+	s.recordForceRequestAnchorMissingIfApplicable(sender, req.Nonce, unwrapped.HeightSync, c.Request().Method+" "+c.Path())
 	observability.Request.SetInferenceID(op, resp.InferenceID)
 	observability.Request.SetInferenceResponse(op, resp.Nonce, resp.ExecutionExpected, resp.CachedResponseBody != nil)
+
+	if err := s.waitInferenceResponseHold(ctx, req.Nonce); err != nil {
+		logging.Debug("HandleInference: response hold ended without SSE",
+			"subsystem", "transport", "nonce", req.Nonce, "error", err.Error())
+		return err
+	}
 
 	// Always SSE response.
 	w := c.Response()
@@ -350,13 +425,63 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 
 	// Event 1: receipt + protocol metadata.
 	receiptEvent := DevshardReceiptEvent{
-		StateSig:    resp.StateSig,
-		StateHash:   resp.StateHash,
-		Nonce:       resp.Nonce,
-		Receipt:     resp.Receipt,
-		ConfirmedAt: resp.ConfirmedAt,
+		StateSig:          resp.StateSig,
+		StateHash:         resp.StateHash,
+		Nonce:             resp.Nonce,
+		Receipt:           resp.Receipt,
+		ConfirmedAt:       resp.ConfirmedAt,
+		ObservedHeight:    resp.ObservedHeight,
+		ObservedBlockHash: resp.ObservedBlockHash,
+	}
+	if s.receiptDelay > 0 {
+		timer := time.NewTimer(s.receiptDelay)
+		select {
+		case <-c.Request().Context().Done():
+			timer.Stop()
+			if resp.ExecutionJob != nil {
+				s.host.ReleaseExecution(resp.InferenceID)
+			}
+			return nil
+		case <-timer.C:
+		}
 	}
 	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
+	if s.heightSync != nil {
+		schedK := s.heightSync.K()
+		schedSlots := s.heightSync.SlotsNum()
+		escrowH := s.host.HeightSyncEscrowHints(schedK, schedSlots)
+		h := heightsync.DecideHints{
+			Nonce:              req.Nonce,
+			SessionStart:       req.Nonce == 1,
+			ForceAnchor:        req.ForceHeightSyncAnchor && escrowH == nil,
+			Escrow:             escrowH,
+			OriginatorSenderID: s.host.Signer().Address(),
+			Direction:          "response",
+		}
+		sec, dErr, oracleMiss := s.heightSync.Decide(c.Request().Context(), h)
+		if oracleMiss {
+			heightsync.IncOracleFailure(s.host.Signer().Address())
+		}
+		if dErr != nil {
+			logging.Debug("heightsync: outbound anchor error",
+				heightsync.LogFieldSubsystem, "heightsync",
+				heightsync.LogFieldNonce, req.Nonce,
+				"error", dErr.Error())
+			s.logOutboundHeightSync(nil, req.Nonce)
+		} else if sec != nil {
+			sec.Direction = "response"
+			if s.attachResponseOriginSignature(sec, req.Nonce) {
+				s.recordEnvelopeBindingResponse(req.Nonce, sec)
+				receiptWrapper["height_sync"] = sec
+				s.logOutboundHeightSync(sec, req.Nonce)
+				s.recordOutboundAnchorIfAnchor(sec, c.Request().Method+" "+c.Path())
+			} else {
+				s.logOutboundHeightSync(nil, req.Nonce)
+			}
+		} else {
+			s.logOutboundHeightSync(nil, req.Nonce)
+		}
+	}
 	if werr := writeSSEEvent(w, receiptWrapper); werr != nil {
 		observability.RecordReceiptWriteFailure(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonReceiptWriteErr, observability.WhereTransportWriteReceiptSSE)
 		if resp.ExecutionJob != nil {
@@ -467,10 +592,21 @@ func (s *Server) RateLimitMiddleware(recordChatTerminal bool) echo.MiddlewareFun
 	return rateLimitMiddleware(s.rateLimit, recordChatTerminal)
 }
 
-// SetPeerClients sets the executor clients for timeout verification.
-// Key is slot index (position in group), value is an ExecutorClient.
+// SetPeerClients sets the executor clients for timeout verification and
+// the slot→URL map reused by repair probes (signed with this host's key).
 func (s *Server) SetPeerClients(peers map[int]*HTTPClient) {
 	s.peerClients = peers
+	if s.host != nil {
+		s.host.SetRepairProbe(s.RepairProbe)
+	}
+}
+
+// CloseReadyView is the §12 producer on the hosted session.
+func (s *Server) CloseReadyView() heightsync.CloseReadyView {
+	if s.host == nil {
+		return nil
+	}
+	return s.host.CloseReadyView()
 }
 
 func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
@@ -533,6 +669,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 	nowUnix := time.Now().Unix()
 
 	var accept bool
+	var rejectCause string
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
 		// Fetch stored diffs to forward to executor during challenge.
@@ -546,7 +683,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 				}
 			}
 		}
-		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, st.Config, nowUnix)
+		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, s.host, st.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		accept, err = host.VerifyExecutionTimeout(c.Request().Context(), st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
 	default:
@@ -556,7 +693,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	resp := VerifyTimeoutResponse{Accept: accept}
+	resp := VerifyTimeoutResponse{Accept: accept, RejectCause: rejectCause}
 	if accept {
 		sig, voterSlot, sErr := signTimeoutVote(s.host.EscrowID(), req.InferenceID, reason, s.host.Signer(), s.host.PrimarySlot())
 		if sErr != nil {
@@ -564,12 +701,18 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		}
 		resp.Signature = sig
 		resp.VoterSlot = voterSlot
+	} else {
+		mempoolBytes, mErr := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+		if mErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, mErr.Error())
+		}
+		resp.Mempool = mempoolBytes
 	}
 	return writeJSON(c, http.StatusOK, resp)
 }
 
 // signTimeoutVote marshals and signs a TimeoutVoteContent, returning the
-// signature and the voter's slot ID.
+// signature and the voter's slot ID. Timeout votes are refused/execution only.
 func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutReason, signer signing.Signer, voterSlot uint32) ([]byte, uint32, error) {
 	voteContent := &types.TimeoutVoteContent{
 		EscrowId:    escrowID,
@@ -577,7 +720,7 @@ func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutRe
 		Reason:      reason,
 		Accept:      true,
 	}
-	voteData, err := proto.Marshal(voteContent)
+	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal vote: %w", err)
 	}
@@ -586,6 +729,88 @@ func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutRe
 		return nil, 0, fmt.Errorf("sign vote: %w", err)
 	}
 	return sig, voterSlot, nil
+}
+
+func signErrorMissVote(escrowID string, inferenceID uint64, signer signing.Signer, voterSlot uint32, responseHash []byte) ([]byte, uint32, error) {
+	voteContent := &types.ErrorMissVoteContent{
+		EscrowId:     escrowID,
+		InferenceId:  inferenceID,
+		Accept:       true,
+		ResponseHash: responseHash,
+	}
+	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshal vote: %w", err)
+	}
+	sig, err := signer.Sign(voteData)
+	if err != nil {
+		return nil, 0, fmt.Errorf("sign vote: %w", err)
+	}
+	return sig, voterSlot, nil
+}
+
+func (s *Server) HandleVerifyErrorMiss(c echo.Context) (err error) {
+	op, finish := startHandlerSpan(c, "verify_error_miss")
+	defer finish(&err)
+
+	sender, err := getSender(c)
+	if err != nil {
+		return err
+	}
+	observability.Request.SetSender(op, sender)
+	if !s.isOwner(sender) {
+		return echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+	}
+	if !s.host.CompletionRequestsEnabled() {
+		logging.Debug("HandleVerifyErrorMiss: devshard_requests_enabled=false", "subsystem", "server")
+		return HTTPError(c, http.StatusServiceUnavailable, DevshardErrorRequestsDisabled, devshard.ErrRequestsDisabled.Error())
+	}
+
+	body, err := getBody(c)
+	if err != nil {
+		return err
+	}
+
+	var req VerifyErrorMissRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid json")
+	}
+
+	if len(req.Diffs) > 0 {
+		diffs := make([]types.Diff, 0, len(req.Diffs))
+		for i, dj := range req.Diffs {
+			d, dErr := DiffFromJSON(dj)
+			if dErr != nil {
+				return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("decode diff %d: %v", i, dErr))
+			}
+			diffs = append(diffs, d)
+		}
+		s.host.ApplyCatchUpDiffs(diffs)
+	}
+
+	st := s.host.SnapshotState()
+	localMempool := s.host.MempoolTxs()
+	accept, responseHash, rejectCause, err := host.VerifyErrorMiss(st, req.InferenceID, req.FinishTx, req.ResponsePayload, localMempool, s.host)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
+	resp := VerifyErrorMissResponse{Accept: accept, RejectCause: rejectCause}
+	if accept {
+		sig, voterSlot, sErr := signErrorMissVote(s.host.EscrowID(), req.InferenceID, s.host.Signer(), s.host.PrimarySlot(), responseHash)
+		if sErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, sErr.Error())
+		}
+		resp.Signature = sig
+		resp.VoterSlot = voterSlot
+	} else {
+		mempoolBytes, mErr := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+		if mErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, mErr.Error())
+		}
+		resp.Mempool = mempoolBytes
+	}
+	return writeJSON(c, http.StatusOK, resp)
 }
 
 func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {
@@ -624,10 +849,14 @@ func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {
 
 	receipt, _, err := s.host.ChallengeReceipt(c.Request().Context(), req.InferenceID, PayloadFromJSON(req.Payload), diffs)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err)
 	}
 
-	return writeJSON(c, http.StatusOK, ChallengeReceiptResponse{Receipt: receipt})
+	mempoolBytes, err := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return writeJSON(c, http.StatusOK, ChallengeReceiptResponse{Receipt: receipt, Mempool: mempoolBytes})
 }
 
 func (s *Server) HandleGossipNonce(c echo.Context) (err error) {
@@ -812,6 +1041,14 @@ func (s *Server) HandleGetDiffs(c echo.Context) (err error) {
 func (s *Server) HandleGetMempool(c echo.Context) (err error) {
 	op, finish := startHandlerSpan(c, "get_mempool")
 	defer finish(&err)
+
+	if catchErr := s.host.CatchUpFromStore(c.Request().Context()); catchErr != nil {
+		logging.Debug("get_mempool catch-up from store failed",
+			"subsystem", "transport",
+			"escrow_id", s.host.EscrowID(),
+			"error", catchErr)
+	}
+	s.host.EnqueueDueValidations()
 
 	txs := s.host.MempoolTxs()
 	observability.Request.SetMempoolSize(op, len(txs))

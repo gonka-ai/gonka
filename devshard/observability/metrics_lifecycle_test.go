@@ -5,8 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestClassifyMLNodeHTTP(t *testing.T) {
@@ -35,6 +37,23 @@ func TestClassifyMLNodeHTTP(t *testing.T) {
 				t.Fatalf("ClassifyMLNodeHTTP = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestObservePayloadFetchTTFB(t *testing.T) {
+	ensureMetrics()
+	var m dto.Metric
+	if err := payloadFetchTTFB.Write(&m); err != nil {
+		t.Fatal(err)
+	}
+	before := m.Histogram.GetSampleCount()
+	ObservePayloadFetchTTFB(25 * time.Millisecond)
+	m.Reset()
+	if err := payloadFetchTTFB.Write(&m); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Histogram.GetSampleCount() - before; got != 1 {
+		t.Fatalf("histogram sample delta = %d, want 1", got)
 	}
 }
 
@@ -88,6 +107,24 @@ func TestHADiffPersistMetricsIncrement(t *testing.T) {
 	IncReconcileFastForward()
 	if testutil.ToFloat64(reconcileFastForwardTotal)-beforeFF != 1 {
 		t.Fatalf("reconcile_fast_forward delta want 1")
+	}
+}
+
+func TestObservePostgresHealthProbeTracksOutcomeAndSaturation(t *testing.T) {
+	ensureMetrics()
+
+	before := testutil.ToFloat64(postgresHealthProbeTotal.WithLabelValues("success"))
+	ObservePostgresHealthProbe(true, true)
+	if testutil.ToFloat64(postgresHealthProbeTotal.WithLabelValues("success"))-before != 1 {
+		t.Fatal("postgres successful probe counter delta want 1")
+	}
+	if got := testutil.ToFloat64(postgresPoolSaturated); got != 1 {
+		t.Fatalf("postgres pool-saturated gauge = %v, want 1", got)
+	}
+
+	ObservePostgresHealthProbe(false, false)
+	if got := testutil.ToFloat64(postgresPoolSaturated); got != 0 {
+		t.Fatalf("postgres pool-saturated gauge after clear = %v, want 0", got)
 	}
 }
 

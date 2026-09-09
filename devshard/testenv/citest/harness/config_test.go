@@ -10,6 +10,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestFirstSoloHostID_ThreeHostMulti(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0"},
+			{ID: "versiond-1"},
+			{ID: "versiond-2"},
+		},
+	}
+	require.Equal(t, "versiond-2", FirstSoloHostID(t, cfg))
+}
+
 func TestWriteStackConfig_TwoHostsMultiMode(t *testing.T) {
 	dir := t.TempDir()
 	WriteStackConfig(t, dir)
@@ -33,6 +45,18 @@ func TestWriteValidationLeaseRaceConfig_ValidationRate100(t *testing.T) {
 	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
 	require.NoError(t, err)
 	require.Len(t, cfg.Hosts, 3)
+	require.Equal(t, uint32(10000), cfg.Params.ValidationRate)
+	require.Equal(t, uint32(10000), cfg.Escrows[0].ValidationRate)
+}
+
+func TestWritePayloadWithholdingConfig_FourHosts(t *testing.T) {
+	dir := t.TempDir()
+	WritePayloadWithholdingConfig(t, dir)
+
+	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	require.NoError(t, err)
+	require.Len(t, cfg.Hosts, 4)
+	require.Equal(t, 3, cfg.Escrow.Slots)
 	require.Equal(t, uint32(10000), cfg.Params.ValidationRate)
 	require.Equal(t, uint32(10000), cfg.Escrows[0].ValidationRate)
 }

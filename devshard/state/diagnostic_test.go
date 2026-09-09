@@ -22,7 +22,7 @@ func TestCollectInferenceDiagEntries_LiveAndSealed(t *testing.T) {
 	require.NoError(t, sm.SealInference(1))
 
 	_, err := sm.ApplyLocal(4, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 4, PromptHash: []byte("p2"), Model: "llama", InputLength: 10, MaxTokens: 5, StartedAt: 1000,
+		InferenceId: 4, PromptHash: []byte("p2"), Model: "llama", InputLength: 10, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})})
 	require.NoError(t, err)
 

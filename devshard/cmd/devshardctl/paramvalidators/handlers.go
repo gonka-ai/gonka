@@ -153,6 +153,19 @@ func (h ForceLiteralParameter) HandleParameter(ctx ParameterContext) error {
 	return nil
 }
 
+// DefaultLiteralParameter writes Value only when absent, so a route default never overrules the caller.
+type DefaultLiteralParameter struct {
+	Value any
+}
+
+func (h DefaultLiteralParameter) HandleParameter(ctx ParameterContext) error {
+	if _, exists := ctx.Document[ctx.Parameter]; exists {
+		return nil
+	}
+	ctx.Document[ctx.Parameter] = h.Value
+	return nil
+}
+
 // CapUintParameter caps a uint64-shaped field to Max.
 type CapUintParameter struct {
 	Min uint64

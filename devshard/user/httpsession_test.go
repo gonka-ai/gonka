@@ -27,7 +27,7 @@ func TestNewHTTPSessionOpenStorageFailureStaysFatal(t *testing.T) {
 
 	_, _, err := NewHTTPSession(HTTPSessionConfig{
 		PrivateKeyHex: privateKeyHex,
-		EscrowID:      "escrow-1",
+		EscrowID:      "9801",
 		Bridge:        httpsessionTestBridge{},
 		StoragePath:   storagePath,
 		RoutePrefix:   "/devshard/dev",
@@ -46,20 +46,20 @@ func TestNewHTTPSessionClassifiesNonSequentialReplay(t *testing.T) {
 	store, err := storage.NewSQLite(storagePath)
 	require.NoError(t, err)
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
-		EscrowID:       "escrow-1",
+		EscrowID:       "9801",
 		EpochID:        7,
 		Version:        "dev",
 		CreatorAddr:    "creator",
 		Group:          []types.SlotAssignment{{SlotID: 0, ValidatorAddress: "host-1"}},
 		InitialBalance: 1_000_000,
 	}))
-	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: types.Diff{Nonce: 1}}))
-	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: types.Diff{Nonce: 3}}))
+	require.NoError(t, store.AppendDiff("9801", types.DiffRecord{Diff: types.Diff{Nonce: 1}}))
+	require.NoError(t, store.AppendDiff("9801", types.DiffRecord{Diff: types.Diff{Nonce: 3}}))
 	require.NoError(t, store.Close())
 
 	_, _, err = NewHTTPSession(HTTPSessionConfig{
 		PrivateKeyHex: privateKeyHex,
-		EscrowID:      "escrow-1",
+		EscrowID:      "9801",
 		Bridge:        httpsessionTestBridge{},
 		StoragePath:   storagePath,
 		RoutePrefix:   "/devshard/dev",
@@ -95,7 +95,7 @@ func TestNewHTTPSessionUsesRouteVersionForStorageBind(t *testing.T) {
 
 	session, _, err := NewHTTPSession(HTTPSessionConfig{
 		PrivateKeyHex: privateKeyHex,
-		EscrowID:      "escrow-1",
+		EscrowID:      "9801",
 		Bridge:        httpsessionTestBridge{},
 		StoragePath:   storagePath,
 		RoutePrefix:   " /devshard/dev/ ",
@@ -107,7 +107,7 @@ func TestNewHTTPSessionUsesRouteVersionForStorageBind(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	meta, err := store.GetSessionMeta("escrow-1")
+	meta, err := store.GetSessionMeta("9801")
 	require.NoError(t, err)
 	require.Equal(t, "dev", meta.Version)
 }
@@ -122,7 +122,7 @@ func (httpsessionTestBridge) OnSettlementFinalized(string) error { return nil }
 
 func (httpsessionTestBridge) GetEscrow(string) (*bridge.EscrowInfo, error) {
 	return &bridge.EscrowInfo{
-		EscrowID:       "escrow-1",
+		EscrowID:       "9801",
 		Amount:         1_000_000,
 		CreatorAddress: "creator",
 		Slots:          []string{"host-1"},

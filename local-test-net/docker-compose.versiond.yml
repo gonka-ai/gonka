@@ -1,5 +1,9 @@
 # Versiond overlay: canonical versiond + 2 sticky-routable extras (3 total),
-# nginx versiond-router, and test fixtures (testapp-server, devshardd-artifact-server).
+# HAProxy versiond-router, and test fixtures (testapp-server, devshardd-artifact-server).
+#
+# The router resolves ${KEY_NAME}-versiond-pool to every running instance and
+# health-checks each address, so starting or stopping a versiond updates pool
+# membership without rendering a host list or reloading the router.
 #
 # Paths are relative to --project-directory (repo root). Typical Testermint stack:
 #   base + genesis + versiond [+ devshard-postgres on genesis] [+ devshard-router-proxy on genesis]
@@ -13,6 +17,8 @@
 x-versiond: &versiond
   image: versiond:latest
   platform: ${DOCKER_PLATFORM:-linux/amd64}
+  # Outer Docker backstop; versiond owns the smaller internal shutdown budget.
+  stop_grace_period: 30m
   build:
     context: ./versioned
     dockerfile: Dockerfile
@@ -36,6 +42,14 @@ x-versiond: &versiond
     KEYRING_BACKEND: ${KEYRING_BACKEND:-file}
     KEYRING_PASSWORD: ${KEYRING_PASSWORD:-}
     KEYRING_DIR: ${KEYRING_DIR:-/root/.inference}
+    # GONKA_HA is intentionally not inherited by this generic test fixture.
+    # It starts testapp by default, and devshard scenarios may exercise SQLite
+    # before adding the Postgres overlay; the router still marks HA requests.
+    # Local/dev only: peer hosts and executors register docker-internal
+    # hostnames that resolve to private IPs, so devshardd's dial-time SSRF
+    # guard must be disabled. Production leaves this unset (default false =
+    # private targets blocked). Inherited by the devshardd child process.
+    DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
     # devshardd child storage (overridden by docker-compose.devshard-postgres.yml).
     PGHOST: ${PGHOST:-}
     PGPORT: ${PGPORT:-5432}
@@ -45,8 +59,11 @@ x-versiond: &versiond
   volumes:
     - ./build/devshardd:/opt/overrides/devshardd:ro
     - ./prod-local/${KEY_NAME}:/root/.inference:ro
+  # One DNS name, one A record per running instance: this is the pool.
   networks:
-    - chain-public
+    chain-public:
+      aliases:
+        - ${KEY_NAME}-versiond-pool
   dns:
     - 172.25.0.10
     - 127.0.0.11
@@ -72,15 +89,23 @@ services:
   versiond-router:
     image: ghcr.io/product-science/versiond-router:latest
     build:
-      context: ./versiond-router
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: versiond-router/Dockerfile
     container_name: ${KEY_NAME}-versiond-router
+    # The image owns its graceful-stop signal. Bound the wait so one long stream
+    # cannot leave the test stack without a router during replacement.
+    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
     environment:
-      VERSIOND_HOSTS: ${VERSIOND_HOSTS:-${KEY_NAME}-versiond ${KEY_NAME}-versiond-2 ${KEY_NAME}-versiond-3}
+      VERSIOND_POOL_HOST: ${VERSIOND_POOL_HOST:-${KEY_NAME}-versiond-pool}
       VERSIOND_PORT: ${VERSIOND_PORT:-8080}
       VERSIOND_LEGACY_HOST: ${VERSIOND_LEGACY_HOST:-${KEY_NAME}-versiond}
       # Empty = all versions HA. Set e.g. "v1 v2 v3" for mixed SQLite/Postgres rollouts.
       VERSIOND_NON_HA_VERSIONS: ${VERSIOND_NON_HA_VERSIONS:-}
+      VERSIOND_VERSIONS: ${VERSIOND_VERSIONS:-}
+      # Test scenarios mint version names dynamically, so coarse readiness is
+      # explicit unless a scenario supplies VERSIOND_VERSIONS.
+      VERSIOND_ROUTER_ALLOW_COARSE_READINESS: "1"
+      GONKA_HA: ${GONKA_HA:-true}
     networks:
       - chain-public
 

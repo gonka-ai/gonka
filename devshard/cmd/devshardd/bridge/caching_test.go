@@ -3,6 +3,7 @@ package bridge
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"devshard/bridge"
 	"devshard/storage"
@@ -46,6 +47,7 @@ func TestCachingEscrowBridge_CacheFallbackOnLiveError(t *testing.T) {
 	inner := &fakeBridge{err: errors.New("chain down")}
 	cache := &fakeCacheStore{info: &storage.EscrowCacheInfo{
 		EscrowID: "1", CreatorAddress: "gonka1owner", EpochID: 9, Amount: 500, VoteThresholdFactor: 3,
+		CachedAt: time.Now().Unix(),
 	}}
 	b := NewCachingEscrowBridge(inner, cache, nil)
 
@@ -57,6 +59,35 @@ func TestCachingEscrowBridge_CacheFallbackOnLiveError(t *testing.T) {
 	require.Equal(t, uint32(3), got.VoteThresholdFactor)
 }
 
+// Settlement deletes the warm row, so a row that has gone unrefreshed for a long
+// time cannot be trusted to still mean "open" while the chain is unreachable.
+func TestCachingEscrowBridge_RefusesStaleCacheRow(t *testing.T) {
+	liveErr := errors.New("chain down")
+	inner := &fakeBridge{err: liveErr}
+	cache := &fakeCacheStore{info: &storage.EscrowCacheInfo{
+		EscrowID: "1", CreatorAddress: "gonka1owner", EpochID: 9,
+		CachedAt: time.Now().Add(-2 * DefaultEscrowCacheTTL).Unix(),
+	}}
+	b := NewCachingEscrowBridge(inner, cache, nil)
+
+	_, err := b.GetEscrow("1")
+	require.ErrorIs(t, err, liveErr)
+}
+
+// Rows written before CachedAt existed carry no write time, so they cannot be
+// aged and must not be served.
+func TestCachingEscrowBridge_RefusesUnstampedCacheRow(t *testing.T) {
+	liveErr := errors.New("chain down")
+	inner := &fakeBridge{err: liveErr}
+	cache := &fakeCacheStore{info: &storage.EscrowCacheInfo{
+		EscrowID: "1", CreatorAddress: "gonka1owner", EpochID: 9,
+	}}
+	b := NewCachingEscrowBridge(inner, cache, nil)
+
+	_, err := b.GetEscrow("1")
+	require.ErrorIs(t, err, liveErr)
+}
+
 func TestCachingEscrowBridge_ReturnsLiveErrOnCacheMiss(t *testing.T) {
 	liveErr := errors.New("chain down")
 	inner := &fakeBridge{err: liveErr}
@@ -65,6 +96,15 @@ func TestCachingEscrowBridge_ReturnsLiveErrOnCacheMiss(t *testing.T) {
 
 	_, err := b.GetEscrow("1")
 	require.ErrorIs(t, err, liveErr)
+}
+
+func TestCachingEscrowBridge_PassesThroughSettledFromChain(t *testing.T) {
+	inner := &fakeBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Settled: true}}
+	b := NewCachingEscrowBridge(inner, &fakeCacheStore{err: storage.ErrEscrowCacheNotFound}, nil)
+
+	got, err := b.GetEscrow("1")
+	require.NoError(t, err)
+	require.True(t, got.Settled)
 }
 
 func TestEscrowCacheRoundTrip(t *testing.T) {

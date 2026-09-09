@@ -153,7 +153,10 @@ func TestGRPCProvider_ServerNotSyncedPausesBetweenPolls(t *testing.T) {
 	_, err := New(ctx, cfg)
 	require.NoError(t, err)
 
-	time.Sleep(30 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for len(srv.Calls()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	require.Equal(t, 1, len(srv.Calls()), "expected one initial_fetch while server height is 0, not a busy loop")
 
 	time.Sleep(60 * time.Millisecond)

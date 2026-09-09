@@ -1,10 +1,13 @@
 # Nginx Reverse Proxy
 
-This directory contains the nginx reverse proxy configuration that consolidates all services behind a single entry point.
+This directory contains the nginx HTTP policy worker. In the shipped Compose
+topology, `proxy-router/` owns the public ports and distributes TCP connections
+across multiple private instances of this image. The workers retain TLS, HTTP/2,
+CORS, rate limits, rewrites, and service routing.
 
 ## Overview
 
-The nginx proxy routes requests to different backend services based on URL paths:
+Each nginx policy worker routes requests to backend services by URL path:
 
 - `/api/v1/` → Main application API v1 (proxies to backend `/v1/`)
 - `/v1/` → Direct API v1 (without `/api/` prefix)
@@ -13,7 +16,7 @@ The nginx proxy routes requests to different backend services based on URL paths
 - `/chain-grpc/` → Blockchain gRPC endpoint (port 9090)
 - `/jaeger/` → Jaeger UI when `JAEGER_ENABLED=true` and the observability overlay is running (nginx basic auth required)
 - `/grafana/` → Grafana UI when `GRAFANA_ENABLED=true` and the observability overlay is running (Grafana login required)
-- `/health` → Nginx health check endpoint
+- `/health` → Policy readiness: nginx data listener and application-network DNS
 - `/` → Explorer dashboard when `DASHBOARD_PORT` is set, otherwise a simple "dashboard not configured" page
 
 ## Benefits
@@ -53,6 +56,9 @@ Key runtime environment variables:
 | `PROXY_SSL_PORT` | 8080 | Port for the cert issuer API |
 | `SSL_CERT_SOURCE` | ./secrets/nginx-ssl | Host path bind-mounted at `/etc/nginx/ssl` |
 | `PROXY_SSL_WAIT_SECONDS` | 60 | Max wait for `proxy-ssl` readiness during cert fetch |
+| `PROXY_SSL_RETRY_SECONDS` | 60 | Initial retry delay after issuer or HTTPS recovery failure; doubles up to the renewal interval |
+| `RENEW_INTERVAL_HOURS` | 24 | Interval between successful automatic renewal checks |
+| `RENEW_BEFORE_DAYS` | 30 | Renew the certificate when it expires within this many days |
 | `NODE_ID` | proxy | Node identifier included in cert requests to `proxy-ssl` |
 | `API_SERVICE_NAME` | api | Service name for API upstream |
 | `NODE_SERVICE_NAME` | node | Service name for chain node upstreams |
@@ -73,6 +79,11 @@ Key runtime environment variables:
 | `PROXY_REAL_IP_FROM` | - | Space-separated trusted proxy CIDRs/IPs for nginx `set_real_ip_from` (for example `172.18.0.1/32`). Empty by default (real IP parsing disabled). |
 | `PROXY_REAL_IP_HEADER` | `X-Forwarded-For` | Header used by nginx `real_ip_header` when trusted proxies are configured. |
 | `PROXY_REAL_IP_RECURSIVE` | off | Value for nginx `real_ip_recursive`. Keep `off` unless you explicitly trust a multi-hop proxy chain. |
+| `PROXY_PROTOCOL` | false | Require PROXY v2 on the traffic listeners. The shipped `proxy-policy` service sets this to true; do not expose those listeners directly. |
+| `PROXY_PROTOCOL_TRUSTED_FROM` | `0.0.0.0/0` | Trusted source range on the private container network. Narrow it when the deployment has a stable ingress subnet. |
+| `PROXY_POLICY_READINESS_HOST` | *(empty)* | DNS alias that proves the worker is still attached to its application network; join Compose supplies a network-scoped alias |
+| `PROXY_POLICY_STOP_GRACE_PERIOD` | `30m` | Compose SIGKILL backstop for graceful nginx policy-worker drain; keep above the longest upstream transfer timeout |
+| `PROXY_CERT_RELOAD_POLL_SECONDS` | `30` | How often sibling policy workers check the shared certificate files and reload after another replica renews them. |
 | `DISABLE_GONKA_API` | false | Set to `true` to disable `/api/v1/` and `/v1/` routes |
 | `DISABLE_CHAIN_RPC` | false | Set to `true` to disable `/chain-rpc/` routes |
 | `DISABLE_CHAIN_API` | false | Set to `true` to disable `/chain-api/` routes |
@@ -106,13 +117,13 @@ Key runtime environment variables:
 | `CHAIN_GRPC_RATE_LIMIT_RPS` | 20 | Rate limit for `/chain-grpc/` (default: 20). |
 | `CHAIN_GRPC_RATE_UNIT` | m | Unit for chain gRPC (`s` or `m`). Default `m`. |
 | `CHAIN_GRPC_BURST` | 200 | Burst for chain gRPC. |
-| `EDGE_API_SERVICE_NAME` | (empty) | Upstream for read-only `/v1/` query routes (status, models, epochs, participants, BLS, bridge addresses, etc.) served by **edge-api**. Empty (default) sends all `/v1/` traffic to dapi. Set to `edge-api` to enable, or `edge-api-router` when using the multi-instance overlay. |
-| `EDGE_API_PORT` | 18080 | Port on the edge-api (or edge-api-router) upstream. |
+| `EDGE_API_SERVICE_NAME` | (empty) | Upstream for read-only `/v1/` query routes served by **edge-api**. Empty sends all `/v1/` traffic to dapi. The single topology targets `edge-api`; the multi-instance overlay targets `edge-api-router`. |
+| `EDGE_API_PORT` | 18080 | Port on the selected edge-api or existing edge-api-router upstream. |
 | `EDGE_API_ROUTE_PATHS` | (18 public paths) | Space-separated public Tier A `/v1/` paths steered to edge-api before the catch-all `/v1/` → dapi block. Defaults: `EDGE_API_ROUTE_PATHS_DEFAULT` in `proxy/entrypoint.sh`. |
 | `EDGE_API_OPTIONAL_ROUTE_PATHS` | verify/debug (4) | CPU-heavy helpers (`/v1/verify-proof`, `/v1/verify-block`, `/v1/debug/...`). **Not published by default.** |
 | `EDGE_API_EXPOSE_OPTIONAL_ROUTES` | false | Set `true` to publish optional verify/debug routes to edge-api. Keep `false` and put auth (basic/mTLS/IP allowlist) on nginx if you expose them. When private, proxy returns **403** for those paths. |
-| `VERSIOND_SERVICE_NAME` | versiond | Upstream for `/devshard/` (and legacy `/v1/devshard/` after rewrite). Set to `versiond-router` for sticky multi-versiond overlay. |
-| `VERSIOND_PORT` | 8080 | Port on the versiond (or versiond-router) upstream. |
+| `VERSIOND_SERVICE_NAME` | versiond | Upstream for `/devshard/` (and legacy `/v1/devshard/` after rewrite). The shipped HA topology sets the absolute service `proxy` on its private versiond-router frontend. |
+| `VERSIOND_PORT` | 8080 | Port on the selected versiond upstream; `18081` for the shipped internal distributor. |
 | `DISABLE_DEVSHARD_PROXY` | false | Set to `true` to disable `/devshard/` and `/v1/devshard/` routing to versiond. |
 | `DEVSHARD_OBS_RATE_LIMIT_RPS` | 10 | Per-IP rate limit for public observability GETs (`/devshard/sessions|stats|metrics|healthz` and rewritten legacy obs URLs). Protocol chat/gossip/payloads stay on the exempt zone. |
 | `DEVSHARD_OBS_RATE_UNIT` | s | Unit for obs rate (`s` or `m`). |
@@ -143,6 +154,7 @@ GET /devshard/stats/shards/{escrow_id}
 GET /devshard/metrics
 GET /devshard/healthz                 # versiond supervisor (not a child)
 GET /devshard/{version}/healthz       # that child's healthz
+GET /devshard/{version}/clock          # that child's clock (host-ping RTT/clock); not rewritten
 ```
 
 | Client URL (legacy, still works) | Internal route to versiond |
@@ -153,6 +165,7 @@ GET /devshard/{version}/healthz       # that child's healthz
 | `GET /devshard/{version}/stats/shards…` | `/devshard/stats/shards…` |
 | `GET /devshard/{version}/metrics` | `/devshard/metrics` |
 | `GET /devshard/{version}/healthz` | **not rewritten** — proxied as `/{version}/healthz` to that child |
+| `GET /devshard/{version}/clock` | **not rewritten** — proxied as `/{version}/clock` to that child |
 
 Protocol traffic stays versioned: `POST …/chat/completions`, gossip, challenge-receipt, and `GET …/payloads` are **not** rewritten.
 
@@ -170,19 +183,21 @@ Grafana dashboards in `deploy/join/observability/` scrape Prometheus metrics fro
 devshardd `/metrics` via service discovery — they do not call HTTP diffs URLs.
 For ad-hoc HTTP debugging of a shard, use the versionless paths above.
 
-When `VERSIOND_SERVICE_NAME=versiond-router`, this proxy still has a **single**
-upstream. Multi-host stickiness and **legacy SQLite pinning** are configured on
-**versiond-router** itself:
+In the shipped HA topology this worker has one upstream, `proxy:18081`. The
+public `proxy-router` selects any route-ready inner router; every
+**versiond-router** independently applies the same multi-host stickiness and
+legacy SQLite pinning:
 
 | Router env | Role |
 | --- | --- |
-| `VERSIOND_HOSTS` | HA pool (space-separated) |
-| `VERSIOND_LEGACY_HOST` | Host that owns pre-HA SQLite data dirs (default: first of `VERSIOND_HOSTS`) |
+| `VERSIOND_POOL_HOST` | DNS name resolving to every host in the HA pool (a Compose network alias) |
+| `VERSIOND_LEGACY_HOST` | Host that owns pre-HA SQLite data dirs. Required whenever `VERSIOND_NON_HA_VERSIONS` is non-empty — the router refuses to start without it; unused otherwise |
 | `VERSIOND_NON_HA_VERSIONS` | Version path segments pinned to legacy (whitespace and/or comma). Empty = all versions HA. Future versions are HA by default |
+| `GONKA_HA` | Set by the HA overlay; stamps `Devshard-Ha: true` on pool traffic |
 
-Multi-host HA requests get `Devshard-Ha: true`; `devshardd` requires
-`DEVSHARD_STORAGE_MODE=postgres` + `PGHOST`. See `versiond-router/` and
-`devshard/docs/pr-1366-deploy-test-plan.md`.
+HA requests get `Devshard-Ha: true`; `devshardd` then requires
+`DEVSHARD_STORAGE_MODE=postgres` + `PGHOST`. See
+[versiond-router/README.md](../versiond-router/README.md).
 
 ### edge-api vs dapi routing
 
@@ -202,13 +217,15 @@ export EDGE_API_EXPOSE_OPTIONAL_ROUTES=true
 # Optional: front with nginx basic auth / allowlist before this container.
 ```
 
-Multi-instance edge-api (local-test-net or `deploy/join/docker-compose.edge-api-multi.yml`):
+Multi-instance edge-api (`deploy/join/docker-compose.edge-api-multi.yml`):
 
 ```text
-Client → proxy → edge-api-router:18080 → edge-api-N:18080
+Client -> proxy-router -> proxy-policy -> edge-api-router nginx -> edge-api-N
 ```
 
-This mirrors the `versiond-router` pattern but uses round-robin (read-only queries are stateless).
+This release deliberately preserves the existing edge-api nginx router and does
+not require a new edge-api readiness contract. Moving that pool into the public
+HAProxy is a separate edge-api lifecycle change.
 
 ### Observability UI security
 
@@ -235,6 +252,13 @@ See `docs/observability/observability-overview.md` for the full join-stack setup
 > **Note**: `GLOBAL_RATE_LIMIT_RPS` acts as a total ceiling for a single IP. It must be higher than your highest specific limit (e.g. higher than Exempt limit).
 
 ### Trusted Proxy / Real IP
+
+The two-tier join deployment terminates public connections at `proxy-router`.
+For that topology, configure the external load balancer to send PROXY protocol
+and set `PROXY_ROUTER_PROXY_PROTOCOL_FROM`; the private nginx policy workers
+trust only the PROXY header generated by that public tier. The
+`PROXY_REAL_IP_FROM` settings below apply when this nginx image itself is the
+public listener.
 
 - `PROXY_REAL_IP_FROM` should include only the immediate proxy/LB hop(s) that connect to nginx.
 - Prefer exact addresses or narrow CIDRs (`/32`) over broad private ranges.
@@ -287,7 +311,17 @@ Avoid:
 - `NGINX_MODE=https`: listen on 443 with SSL; requires `CERT_ISSUER_DOMAIN` and a reachable `proxy-ssl` service to obtain certs if missing.
 - `NGINX_MODE=both`: listen on 80 and 443; same SSL requirements as `https`.
 
-When SSL is enabled and no certs are present under `/etc/nginx/ssl`, `entrypoint.sh` will call `setup-ssl.sh` to fetch a certificate via the `proxy-ssl` service.
+When SSL is enabled, `entrypoint.sh` validates the local certificate/key pair before rendering nginx configuration. A valid pair continues without contacting `proxy-ssl`. A missing, truncated, or mismatched pair is repaired through `setup-ssl.sh` before the first `nginx -t`, including in HTTPS-only mode. Policy workers sharing one certificate volume serialize every `setup-ssl.sh` call through a shared `flock`, and the in-lock revalidation ensures only one worker places the initial order while its siblings adopt the published bundle; a worker whose pair is already valid starts without waiting for the lock.
+
+If the certificate marker is missing while `private.key` and `order.id` remain, startup first recovers the certificate from that order. A new order is created only when the saved order cannot recover the local key.
+
+If issuance fails at startup (for example, `proxy-ssl` is not reachable yet) and `NGINX_MODE=both`, the entrypoint temporarily serves HTTP only. A background worker keeps retrying with exponential backoff (starting at `PROXY_SSL_RETRY_SECONDS`, capped at the renewal interval) and, once a certificate is issued, re-renders the HTTPS configuration, validates it with `nginx -t`, and reloads nginx — port 443 comes back without a container restart. The same worker renews certificates issued through `proxy-ssl` (identified by a stored `order.id`) within `RENEW_BEFORE_DAYS` of expiry.
+
+Valid manually supplied certificate/key pairs without `order.id` remain under operator management and are not sent to `proxy-ssl`. An invalid manual pair cannot serve HTTPS, so startup treats it as an incomplete bundle, obtains a replacement from `proxy-ssl`, and stores the resulting `order.id` for automatic renewal.
+
+The worker also repairs legacy incomplete bundles. If HTTPS validation finds a truncated certificate or a certificate that does not match its private key, `setup-ssl.sh repair` first requests the certificate for the stored `order.id` and verifies that it belongs to the local key. It creates a new order only when the stored order cannot recover that key. After a valid pair is published, nginx is validated and reloaded automatically.
+
+`PROXY_SSL_RETRY_SECONDS` and `RENEW_INTERVAL_HOURS` must be positive integers. Invalid values stop the container during configuration validation instead of starting a busy retry loop.
 
 ### Setup Environment
 
@@ -419,43 +453,50 @@ ${PUBLIC_URL}/jaeger/
 ${PUBLIC_URL}/grafana/
 ```
 
-- Update currently running node:
-  - With proxy-ssl (automated certs):
+### Host updates and rollback
 
-```
-source ./config.env && \
-docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy proxy-ssl && \
-docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy proxy-ssl
-```
+`proxy`, `proxy-policy`, and `proxy-policy2` form one deployment unit. Host
+release updates apply the complete active Compose model: the base files plus
+the host's ML, versiond, edge-api, observability, managed-service, and operator
+overrides in their original order.
 
-  - With manual certs (no proxy-ssl):
+The release updater rolls this unit reserve-first. It replaces one policy
+worker, waits until the public HAProxy admits that exact container, replaces
+the other worker, and changes the public `proxy` generation last.
+`proxy-router/test-routing.sh` exercises continuity for non-idempotent requests
+while the replicated policy workers are replaced. The public `proxy` is a
+singleton: replacing it is a maintenance boundary and may interrupt active
+connections.
 
-```
-source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy && \
-docker compose -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy
-```
+Rollback restores the captured image, environment, networks, capabilities, and
+Compose definition for the same deployment unit. The updater targets these
+services explicitly, so unrelated node services and overlay-owned containers
+remain in their existing model. Use the release's host updater and rollback
+instructions with the same `config.env`, Compose files, and profiles that
+describe the running host.
 
-Notes:
-- Ensure your env matches one of the setups above (proxy-ssl vs manual). See sections on environment configuration and manual certificate issuance.
-- General operational guidance aligns with the Quickstart docs at [gonka.ai Host Quickstart](https://gonka.ai/host/quickstart/#how-to-stop-mlnode).
+General operational guidance aligns with the
+[Gonka Host Quickstart](https://gonka.ai/host/quickstart/#how-to-stop-mlnode).
 
 ## Health Check
 
-The proxy includes a health check endpoint at `/health` that returns HTTP 200 with "healthy" response.
+`/health` is served through nginx's production listener and returns `200` while
+the local policy sidecar can resolve the configured application-network alias.
+It returns `503` while that network is unavailable or the sidecar is restarting,
+allowing the public HAProxy to withdraw this policy worker.
 
 ## Troubleshooting
 
 ### TLS/SSL issues
 1. Ensure `NGINX_MODE` is `https` or `both` and `CERT_ISSUER_DOMAIN` is set.
-2. Verify `proxy-ssl` is running and reachable from `proxy` (see `proxy-ssl/README.md`).
-3. Check logs of `proxy` for "SSL setup failed" or config validation errors.
+2. Verify `proxy-ssl` is running and reachable from `proxy-policy` (see `proxy-ssl/README.md`).
+3. Check logs of `proxy-policy` for "SSL setup failed" or config validation errors.
 4. Confirm DNS for `SERVER_NAME`/`CERT_ISSUER_DOMAIN` points to your proxy.
 
 ### Service Not Reachable
 1. Check if the backend service is running: `docker compose ps`
 2. Verify service names match the upstream definitions in nginx.conf
-3. Check nginx logs: `docker compose logs nginx-proxy`
+3. Check nginx logs: `docker compose logs proxy-policy`
 
 ### WebSocket Issues
 WebSocket support is configured for RPC connections and dashboard hot-reloading. If you have issues:
@@ -484,4 +525,4 @@ If you're upgrading from a previous version with hardcoded ports:
 3. **Add** environment variables to your docker-compose.yml
 4. **Rebuild** your nginx container
 
-The entrypoint script provides sensible defaults, so existing setups will continue to work without changes. 
+The entrypoint script provides sensible defaults, so existing setups will continue to work without changes.

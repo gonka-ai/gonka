@@ -17,6 +17,6 @@ type StatusEntry struct {
 func Handler(statusFn func() []StatusEntry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(statusFn())
+		_ = json.NewEncoder(w).Encode(statusFn())
 	}
 }

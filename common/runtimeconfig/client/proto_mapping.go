@@ -53,6 +53,15 @@ func SnapshotFromProto(c *gen.RuntimeConfig) Snapshot {
 		ValidationRate:            c.GetValidationRate(),
 		VoteThresholdFactor:       c.GetVoteThresholdFactor(),
 		ModelValidationThresholds: thresholds,
+		HeightSync: HeightSyncParams{
+			IntervalMs:         c.GetHeightSyncIntervalMs(),
+			TurnTimeoutMs:      c.GetHeightSyncTurnTimeoutMs(),
+			AckDeadlineBlocks:  c.GetHeightSyncAckDeadlineBlocks(),
+			IdleTimeoutMs:      c.GetHeightSyncIdleTimeoutMs(),
+			BlockTimeMs:        c.GetHeightSyncBlockTimeMs(),
+			ProbeStaggerMs:     c.GetHeightSyncProbeStaggerMs(),
+			MaxProbesPerWindow: c.GetHeightSyncMaxProbesPerWindow(),
+		},
 	}
 }
 
@@ -79,17 +88,24 @@ func ProtoFromSnapshot(s Snapshot) *gen.RuntimeConfig {
 		})
 	}
 	return &gen.RuntimeConfig{
-		ParamsBlockHeight:       s.ParamsBlockHeight,
-		CurrentEpochId:          s.CurrentEpochID,
-		LogprobsMode:            s.LogprobsMode,
-		DevshardRequestsEnabled: s.DevshardRequestsEnabled,
-		MaxNonce:                s.MaxNonce,
-		ApprovedVersions:        versions,
-		ServedAtUnix:            servedAt,
-		RefusalTimeout:          s.RefusalTimeout,
-		ExecutionTimeout:        s.ExecutionTimeout,
-		ValidationRate:          s.ValidationRate,
-		VoteThresholdFactor:     s.VoteThresholdFactor,
-		ValidationThresholds:    thresholds,
+		ParamsBlockHeight:            s.ParamsBlockHeight,
+		CurrentEpochId:               s.CurrentEpochID,
+		LogprobsMode:                 s.LogprobsMode,
+		DevshardRequestsEnabled:      s.DevshardRequestsEnabled,
+		MaxNonce:                     s.MaxNonce,
+		ApprovedVersions:             versions,
+		ServedAtUnix:                 servedAt,
+		RefusalTimeout:               s.RefusalTimeout,
+		ExecutionTimeout:             s.ExecutionTimeout,
+		ValidationRate:               s.ValidationRate,
+		VoteThresholdFactor:          s.VoteThresholdFactor,
+		ValidationThresholds:         thresholds,
+		HeightSyncIntervalMs:         s.HeightSync.IntervalMs,
+		HeightSyncTurnTimeoutMs:      s.HeightSync.TurnTimeoutMs,
+		HeightSyncAckDeadlineBlocks:  s.HeightSync.AckDeadlineBlocks,
+		HeightSyncIdleTimeoutMs:      s.HeightSync.IdleTimeoutMs,
+		HeightSyncBlockTimeMs:        s.HeightSync.BlockTimeMs,
+		HeightSyncProbeStaggerMs:     s.HeightSync.ProbeStaggerMs,
+		HeightSyncMaxProbesPerWindow: s.HeightSync.MaxProbesPerWindow,
 	}
 }

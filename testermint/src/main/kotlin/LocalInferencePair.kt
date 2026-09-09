@@ -1131,6 +1131,10 @@ data class LocalInferencePair(
                     // exists in the base dir; a shared base dir makes a second escrow's
                     // proxy load the first escrow's persisted state instead.
                     " DEVSHARD_STORAGE_DIR=/tmp/devshardctl-proxy-${escrowId}" +
+                    // e2e hosts register docker-internal hostnames that resolve to
+                    // private IPs, so the dial-time SSRF guard must be off here.
+                    // Production leaves this unset (default: private targets blocked).
+                    " DEVSHARD_ALLOW_PRIVATE_ADDRESSES=true" +
                     routePrefixEnv +
                     logLevelEnv +
                     " nohup devshardctl >$stderrFile 2>&1 &" +

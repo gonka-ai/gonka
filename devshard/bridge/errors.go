@@ -12,6 +12,7 @@ var (
 	ErrNotImplemented      = errors.New("not implemented")
 	ErrEscrowNotFound      = errors.New("escrow not found")
 	ErrParticipantNotFound = errors.New("participant not found")
+	ErrEscrowSettled       = errors.New("escrow already settled")
 	// ErrChainUnavailable means the chain/query path is temporarily unreachable.
 	// Lazy session create should map this to HTTP 503 so clients can retry.
 	ErrChainUnavailable = errors.New("chain unavailable")
@@ -23,7 +24,8 @@ func ClassifyQueryError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, ErrEscrowNotFound) || errors.Is(err, ErrParticipantNotFound) || errors.Is(err, ErrChainUnavailable) {
+	if errors.Is(err, ErrEscrowNotFound) || errors.Is(err, ErrParticipantNotFound) ||
+		errors.Is(err, ErrChainUnavailable) || errors.Is(err, ErrEscrowSettled) {
 		return err
 	}
 	switch status.Code(err) {

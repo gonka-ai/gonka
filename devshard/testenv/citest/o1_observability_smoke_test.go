@@ -3,7 +3,6 @@
 package citest
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -11,8 +10,10 @@ import (
 	"devshard/testenv/config"
 )
 
-// TestO1_ObservabilitySmoke starts the standard stack with observability services,
-// runs a gateway chat, and asserts devshardd spans and structured logs appear.
+// TestO1_ObservabilitySmoke starts an isolated observability overlay, runs a
+// gateway chat, and asserts Jaeger spans, Loki logs from this compose project,
+// a histogram sample on a versiond host (not sticky router /{version}/metrics),
+// and gateway counters.
 func TestO1_ObservabilitySmoke(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -42,15 +43,10 @@ func TestO1_ObservabilitySmoke(t *testing.T) {
 	resp := harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, adminKey, req)
 	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
 
-	version := cfg.Versiond.VersionName
-	if version == "" {
-		version = "v2"
-	}
-
 	harness.WaitJaegerSpan(t, obs, "devshardd", "devshardd.request", 2*time.Minute)
 	harness.WaitJaegerSpan(t, obs, "devshardd", "devshardd.inference", 2*time.Minute)
 	harness.WaitLokiSubstring(t, obs, "devshard request terminal", 2*time.Minute)
 
-	harness.RequireMetricsBody(t, client, fmt.Sprintf("%s/%s/metrics", eps.RouterHTTP, version), "devshardd_request_duration_seconds")
+	harness.RequireDevsharddMetricSample(t, stack, cfg, "devshardd_request_duration_seconds")
 	harness.RequireMetricsBody(t, client, eps.GatewayHTTP+"/metrics", "devshard_http_requests_total")
 }

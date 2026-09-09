@@ -8,6 +8,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/bls"
 	"decentralized-api/internal/event_listener"
+	"decentralized-api/internal/mlnodeping"
 	"decentralized-api/internal/modelmanager"
 	"decentralized-api/internal/nats/server"
 	adminserver "decentralized-api/internal/server/admin"
@@ -27,6 +28,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
+	"common/httpguard"
 	"common/logging"
 	"decentralized-api/participant"
 	"encoding/json"
@@ -40,6 +42,25 @@ import (
 
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// envAllowPrivateAddresses disables the dial-time SSRF guard on outbound dials to
+// participant-controlled URLs. Set true only in local dev / docker-compose / e2e,
+// where participants register docker-internal hostnames that resolve to private
+// IPs. Production leaves it unset (default false = private targets blocked).
+const envAllowPrivateAddresses = "DAPI_ALLOW_PRIVATE_ADDRESSES"
+
+// envBool parses a boolean env var. Unset or unparseable values return fallback.
+func envBool(key string, fallback bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
 
 // buildEarlyShareGuard constructs the DAPI-only early-share guard from config.
 // Returns nil (a valid disabled guard) when disabled or when the local sqlite
@@ -95,6 +116,16 @@ func main() {
 
 	if configManager.GetApiConfig().TestMode {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
+	}
+
+	// Wire the dial-time SSRF guard before anything can dial out. Guarded
+	// clients read the flag per dial, so this covers clients built later
+	// (notably poc.ProofClient, constructed per PoC validation round).
+	allowPrivateAddresses := envBool(envAllowPrivateAddresses, false)
+	httpguard.SetAllowPrivate(allowPrivateAddresses)
+	if allowPrivateAddresses {
+		slog.Warn("SSRF guard disabled: dials to private/internal addresses are allowed",
+			"env", envAllowPrivateAddresses)
 	}
 
 	natssrv := server.NewServer(configManager.GetNatsConfig())
@@ -239,6 +270,11 @@ func main() {
 	)
 	go mlnodeBackgroundManager.Start(ctx)
 
+	mlnodePingJob := mlnodeping.New(nodeBroker, mlnodeping.Config{
+		Disabled: configManager.GetApiConfig().MLNodePingDisabled,
+	})
+	mlnodePingJob.Start(ctx)
+
 	addr := fmt.Sprintf(":%v", configManager.GetApiConfig().PublicServerPort)
 	logging.Info("start public server on addr", types.Server, "addr", addr)
 
@@ -312,6 +348,7 @@ func main() {
 	logging.Info("Servers started", types.Server, "addr", addr)
 
 	<-ctx.Done()
+	mlnodePingJob.Stop()
 
 	ctxFlush, cancelFlush := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelFlush()

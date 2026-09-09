@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 
+	"devshard/heightsync"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -68,23 +69,26 @@ const snapshotInterval = 500
 // that was stranded behind the prior snapshot self-heals via host-side
 // silent-skip (host.applyAndPersist drops diffs whose Nonce <= currentNonce).
 type sessionSnapshot struct {
-	State         *types.EscrowState `json:"state"`
-	HostSyncNonce map[int]uint64     `json:"host_sync_nonce,omitempty"`
+	State            *types.EscrowState     `json:"state"`
+	HostSyncNonce    map[int]uint64         `json:"host_sync_nonce,omitempty"`
+	CommittedEntries map[uint64][]byte      `json:"committed_entries,omitempty"`
+	SealedNonces     map[uint64]uint64      `json:"sealed_nonces,omitempty"`
+	HeightSyncFloor  *types.FloorIndexProto `json:"height_sync_floor,omitempty"`
 }
 
 // decodeSnapshot decodes the on-disk snapshot blob. Returns the state and
 // the per-host sync cursor (nil for legacy bare-EscrowState snapshots).
-func decodeSnapshot(data []byte) (*types.EscrowState, map[int]uint64, error) {
+func decodeSnapshot(data []byte) (*types.EscrowState, map[int]uint64, map[uint64][]byte, map[uint64]uint64, *types.FloorIndexProto, error) {
 	var blob sessionSnapshot
 	if err := json.Unmarshal(data, &blob); err == nil && blob.State != nil {
-		return blob.State, blob.HostSyncNonce, nil
+		return blob.State, blob.HostSyncNonce, blob.CommittedEntries, blob.SealedNonces, blob.HeightSyncFloor, nil
 	}
 	// Legacy format: top-level EscrowState fields. Re-unmarshal as bare.
 	var bare types.EscrowState
 	if err := json.Unmarshal(data, &bare); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
-	return &bare, nil, nil
+	return &bare, nil, nil, nil, nil, nil
 }
 
 // minHostSyncNonce returns the smallest cursor value across all hosts
@@ -159,7 +163,8 @@ func RecoverSession(
 		return nil, nil, fmt.Errorf("create state machine: %w", err)
 	}
 
-	sess, err := NewSession(sm, signer, escrowID, meta.Group, clients, verifier, WithStorage(store))
+	sess, err := NewSession(sm, signer, escrowID, meta.Group, clients, verifier,
+		WithStorage(store), WithHeartbeatConfig(sm.HeartbeatConfig()))
 	if err != nil {
 		return nil, nil, fmt.Errorf("create session: %w", err)
 	}
@@ -178,11 +183,24 @@ func RecoverSession(
 	replayFrom := uint64(1)
 	snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID)
 	if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
-		snapState, cursor, decodeErr := decodeSnapshot(snapData)
+		snapState, cursor, committedEntries, sealedNonces, floorProto, decodeErr := decodeSnapshot(snapData)
 		if decodeErr != nil {
 			log.Printf("recover_session escrow=%s snapshot_nonce=%d unmarshal_failed=%v (replaying from 1)", escrowID, snapNonce, decodeErr)
 		} else {
-			sm.RestoreState(snapState)
+			// A rejected blob degrades to a journal replay; if that cannot run
+			// either, RestoreStateWithFloor fails closed rather than serving
+			// L0 from a floor we could not verify.
+			floor, floorErr := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, floorProto)
+			if floorErr != nil {
+				log.Printf("recover_session escrow=%s snapshot_nonce=%d floor_blob_rejected=%v (rebuilding from diffs)",
+					escrowID, snapNonce, floorErr)
+				floor = nil
+			}
+			if restErr := sm.RestoreStateWithFloor(snapState, floor); restErr != nil {
+				return nil, nil, fmt.Errorf("restore snapshot nonce %d: %w", snapNonce, restErr)
+			}
+			sm.RestoreCommittedEntries(committedEntries)
+			sm.RestoreSealedNonces(sealedNonces)
 			replayFrom = snapNonce + 1
 			sess.nonce = snapNonce
 			snapshotCursor = cursor
@@ -267,7 +285,7 @@ func RecoverSession(
 
 	for _, rec := range records {
 		sm.InjectWarmKeys(rec.WarmKeyDelta)
-		root, applyErr := sm.ApplyLocal(rec.Nonce, rec.Txs)
+		root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
 		if applyErr != nil {
 			if errors.Is(applyErr, types.ErrInvalidNonce) {
 				return nil, nil, fmt.Errorf("%w: replay nonce %d: %w",
@@ -335,7 +353,9 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 	if err := sm.RebuildSealedInferenceIndex(); err != nil {
 		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
+	restoreHeartbeatProducer(sess, sm)
 	if sess.store == nil {
+		restoreAppliedTxKeys(sess, nil)
 		return sess, sm, nil
 	}
 	meta, err := sess.store.GetSessionMeta(sess.escrowID)
@@ -349,6 +369,7 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 			return nil, nil, fmt.Errorf("get diffs for validation obs rebuild: %w", err)
 		}
 	}
+	restoreAppliedTxKeys(sess, records)
 	if err := storage.RebuildValidationObsFromDiffs(
 		sess.store,
 		sess.escrowID,
@@ -360,6 +381,57 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 	return sess, sm, nil
 }
 
+// restoreAppliedTxKeys re-seeds the applied-key set from the reconstructed diff
+// log so a host mempool copy of an already-included tx is not re-queued.
+func restoreAppliedTxKeys(sess *Session, records []types.DiffRecord) {
+	if sess == nil {
+		return
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	for _, diff := range sess.diffs {
+		for _, tx := range diff.Txs {
+			if key := devshardTxKey(tx); key != "" {
+				sess.appliedTxKeys[key] = struct{}{}
+			}
+		}
+	}
+	for _, rec := range records {
+		for _, tx := range rec.Diff.Txs {
+			if key := devshardTxKey(tx); key != "" {
+				sess.appliedTxKeys[key] = struct{}{}
+			}
+		}
+	}
+}
+
+// restoreHeartbeatProducer restores the producer from the reconstructed log
+// (spec §10.4). There is no counter to carry over: a turn is named by the nonce
+// its span opens at, so the next span's identity follows from the restored
+// nonce. The session tracker is a clone of the SM's so compose can
+// report turn N's sync_vector without sharing the SM mutex. Wall-clock
+// lastTurnover is not persisted: a recovered quiet session is due immediately
+// rather than waiting out Interval from a lost t_last. An in-flight turn
+// still suppresses the next span until TurnTimeout, measured from recovery.
+func restoreHeartbeatProducer(sess *Session, sm *state.StateMachine) {
+	if sess == nil || sm == nil {
+		return
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if clone := sm.HeightSyncCloneTurnTracker(); clone != nil {
+		sess.turnTracker = clone
+	}
+	if sess.heartbeat == nil {
+		return
+	}
+	if rec := sess.turnTracker.Latest(); rec != nil && rec.State == heightsync.TurnOpen {
+		sess.heartbeat.OpenTurn(sess.nowLocked())
+		return
+	}
+	sess.heartbeat.SettleTurn()
+}
+
 // saveSnapshot is the synchronous snapshot writer used during recovery.
 // It deep-copies state via sm.ExportState (under the SM RLock) and the
 // caller-provided cursor before marshaling, so the caller is free to
@@ -369,7 +441,7 @@ func saveSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string
 	for k, v := range hostSyncNonce {
 		cursor[k] = v
 	}
-	writeSnapshot(store, escrowID, nonce, sm.ExportState(), cursor)
+	writeSnapshot(store, escrowID, nonce, sm.ExportState(), cursor, sm.ExportCommittedEntries(), sm.ExportSealedNonces(), sm.ExportHeightSyncFloor())
 }
 
 // writeSnapshot persists a pre-prepared snapshot blob. The caller must
@@ -377,15 +449,15 @@ func saveSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string
 // only the JSON marshal + storage write and can run without any session
 // or state-machine locks held -- this is what enables async background
 // snapshots from the runtime hot path).
-func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, cursor map[int]uint64) {
-	_ = writeSnapshotErr(store, escrowID, nonce, state, cursor)
+func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, cursor map[int]uint64, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *types.FloorIndexProto) {
+	_ = writeSnapshotErr(store, escrowID, nonce, state, cursor, committedEntries, sealedNonces, heightSyncFloor)
 }
 
 // writeSnapshotErr is writeSnapshot with an error return, for synchronous
 // callers (e.g. Session.FlushSnapshot on retire) that want to know whether the
 // snapshot landed. It logs on failure exactly like writeSnapshot.
-func writeSnapshotErr(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, cursor map[int]uint64) error {
-	blob := sessionSnapshot{State: state, HostSyncNonce: cursor}
+func writeSnapshotErr(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, cursor map[int]uint64, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *types.FloorIndexProto) error {
+	blob := sessionSnapshot{State: state, HostSyncNonce: cursor, CommittedEntries: committedEntries, SealedNonces: sealedNonces, HeightSyncFloor: heightSyncFloor}
 	data, err := json.Marshal(blob)
 	if err != nil {
 		log.Printf("recover_session escrow=%s snapshot_marshal_failed=%v", escrowID, err)

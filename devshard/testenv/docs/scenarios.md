@@ -14,7 +14,7 @@ versiond-router, devshardctl, Postgres) and asserts production-like behaviour en
 | **mock-dapi** | NodeManager gRPC (`GetRuntimeConfig` long-poll), chainoracle HTTP, fault proxy |
 | **mock-openai** | OpenAI-compatible ML upstream for devshardd after `AcquireMLNode` |
 | **versiond-0 / versiond-1** | Supervise linux **devshardd** child (protocol `v2`); both load the **same** `KEY_NAME` (HA participant `hosts[0]`) |
-| **versiond-router** | Sticky nginx (`consistent_hash` on session id) |
+| **versiond-router** | Sticky HAProxy (consistent hash on session id, per-version health-checked pools) |
 | **devshardctl** | Gateway (`/v1/chat/completions`, `/v1/status`) |
 | **devshard-postgres** | Shared payload store (required for 2× versiond) |
 
@@ -35,8 +35,14 @@ cd devshard/testenv
 make build-devshardd
 make citest-stack                 # all core stack behavior tests
 make citest-validation-lease-race # validation lease race only
+make citest-payload-withholding   # executor payload withholding (500 → invalidate)
 make citest-versiond-rolling-update
+make citest-versiond-host-evacuation
+make citest-versiond-warm-cutover  # v5 warm-cutover boot + overlap swap
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
+make citest-adversarial           # Phase 9 A1–A5 (A5 is 3-host)
+make citest-host-ping             # gateway host-ping e2e (rebuilds devshardd)
+make citest-height-sync           # height-sync cadence + host-claim overlays (rebuilds devshardd)
 ```
 
 Or run a single scenario:
@@ -74,13 +80,35 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **HA stale standby catch-up** | Sticky primary advances PG, stop it; stale standby catch-up without `23505` | `TestHAStaleStandbyCatchupIdempotent` |
 | **Legacy version pin** | Non-HA path → `VERSIOND_LEGACY_HOST`; HA path remains multi-upstream | `TestLegacyVersionPinnedToSingleHost` |
 | **SQLite to Postgres HA migration** | SQLite single-host, multi-host rejection, migration, HA recovery | `TestSQLiteToPostgresHAMigration` |
-| **Validation lease race** | Same-key HA lease exclusivity, pending stretch, stale reclaim | `TestValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
+| **Validation lease race** | Same-key HA lease exclusivity, pending stretch, graceful-stop re-acquire | `TestValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
+| **Payload withholding** | Executor `GET /payloads` 500 → Challenged/Invalidated; D7 off releases the lease | `TestPayloadWithholding_AllCallers500_Invalidates`, `…SelectiveValidator_Challenges`, `…D7Off_LeaseReleasedAndReacquired` |
 | **Versiond rolling update** | Postgres blue/green drain and hybrid fallback | `TestVersiondRollingUpdateSameVersionSHA`, `…HybridFallback` |
+| **Versiond warm cutover** | v5 boot serves while recovery drains; overlap swap waits for `recovery_complete` then publishes | `TestVersiondWarmCutoverBoot`, `TestVersiondWarmCutoverOverlapWaitsThenServes` |
+| **Versiond host evacuation** | Router withdrawal, SSE completion, survivor recovery and readiness-gated rejoin | `TestVersiondHostEvacuation` |
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
+| **Host ping** | Gateway host-ping target set + metrics (unused → chat → ping tier → deactivate); kill switch; probe outage does not quarantine | `TestHostPing`, `TestHostPingKillSwitch` |
+| **Height-sync cadence** | Two chats seed `F` (§10.3.1), then quiet `Interval` → `heartbeat_opened`; one host stopped; peer-matrix opt-in | `TestContainerE2E_HeightSync_QuietEscrowHeartbeat`, `…OneHostStopped`, `…PeerMatrixOptIn` |
+| **Height-sync host claims** | Solo oracle overlay: lag / future `\|Δ\|>D` / fabricated `H+1`; chat 200; detection logs + spread | `TestContainerE2E_HeightSync_HostLowerHeightAutoAligns`, `…HostFutureHeightBeyondD`, `…HostFabricatedHashInsideD` |
 
 Source files under `devshard/testenv/citest/` use the same behavior-oriented
 names. Versiond failover and restart persistence intentionally remain separate
 test files because they exercise different lifecycle contracts.
+
+### Phase 9 adversarial scenarios
+
+| ID | Name | What we validate | Test | Status |
+|----|------|------------------|------|--------|
+| **A1** | Lost first SSE chunk | `mock-openai` `drop_first_chunk` → gateway stream still completes; assembled text missing first rune | `TestA1_LostFirstChunk` | ✅ |
+| **A2** | ML upstream 5xx | `mock-openai` `http_status=503` → gateway chat HTTP ≥400 | `TestA2_MLUpstream5xx` | ✅ |
+| **A3** | Stale escrow | `POST /testenv/escrow` settle → mock-chain gRPC reports `settled=true` | `TestA3_StaleEscrow` | ✅ |
+| **A4** | Bad warm-key | `POST /testenv/grantees` revoke → warm grantee absent from `GranteesByMessageType` | `TestA4_BadWarmKey` | ✅ |
+| **A5** | Error-finish miss | HTTP 200 SSE error envelope → `MsgErrorMiss`: client `hostApplicationError`, executor `Missed++`, no validation job, full client refund, `HostStats.Cost` unchanged | `TestA5_ErrorFinishMiss` | ✅ |
+
+A1–A4 boot the standard 2× versiond stack. A5 boots a **3-host** stack so two
+non-executor verifiers can exceed `VoteThreshold` (step 10 of
+[`error-finish-miss-protocol-plan.md`](../docs/error-finish-miss-protocol-plan.md)).
+
+Run: `make citest-adversarial` from `devshard/testenv/`.
 
 ### Phase 12 transport scenarios (gRPC-only gateway)
 
@@ -128,7 +156,7 @@ versiond across repeated requests, and at least two distinct upstreams are reach
 
 1. Boot the standard stack; wait for router `/healthz`.
 2. Hit `/{version}/sessions/{sessionA}/healthz` **8 times**; read `X-Upstream-Addr` header
-   (exposed by router nginx template).
+   (set by the router on every response).
 3. Assert every retry returns the **same** upstream address.
 4. Probe up to 64 other session ids until one lands on a **different** upstream.
 
@@ -141,46 +169,74 @@ Validates deploy/join-style sticky routing before chat or long-poll scenarios de
 
 **What we test:** versiond-router sends version prefixes listed in
 `VERSIOND_NON_HA_VERSIONS` only to `VERSIOND_LEGACY_HOST` (`versiond_legacy`),
-while other versions sticky-hash across `VERSIOND_HOSTS` (and get
+while other versions sticky-hash across the `versiond-pool` members (and get
 `Devshard-Ha: true` for multi-host HA).
 
 **How:**
 
-1. Boot the standard stack (`VERSIOND_NON_HA_VERSIONS=v1`; legacy host
-   `versiond-0`).
-2. Probe `/v1/sessions/<id>/healthz` for 16 distinct session ids. Assert every
+1. Boot the standard stack with an empty static version floor. Wait until the
+   governance catalog admits `VersionName` into a `versiond_dynamic_*` pool and
+   verify that the pool reaches both versiond hosts.
+2. Recreate only the router with `VersionName` in
+   `VERSIOND_NON_HA_VERSIONS` and `versiond-0` as the legacy host.
+3. Probe `/<VersionName>/sessions/<id>/healthz` for 16 distinct session ids. Assert every
    response has `X-Versiond-Backend: versiond_legacy` and the same
    `X-Upstream-Addr` mapped to `versiond-0`.
-3. Reuse router-stickiness probes on `VersionName` (e.g. `v2`); require ≥2 distinct
-   upstreams and `X-Versiond-Backend: versiond_ha_pool`.
 4. Stop the non-legacy versiond; repeat legacy probes — still pinned to
    `versiond-0`.
 
-**Pass criteria:** Non-HA path never fans out; HA path still multi-upstream.
-See `devshard/docs/pr-1366-deploy-test-plan.md` §3.2.
+**Pass criteria:** governance admission creates a working multi-host dynamic
+pool, then the explicit non-HA pin constrains that same route to one host.
+See `devshard/docs/v5-deploy-test-plan.md` (v4 nginx dummy-`v1` probes in
+`v4-deploy-test-plan.md` §1.6 do not apply to HAProxy).
+
+---
+
+## Dynamic catalog removal and readmission
+
+**What we test:** the router and the real versiond supervisors interpret a
+non-empty governance snapshot as the same desired set.
+
+**How:**
+
+1. Start both versiond hosts from the catalog and wait for the dynamic route.
+2. Replace the catalog with a non-empty set that omits the running version;
+   require both children to retire and the old path to return `503`.
+3. Stop one host and re-add the version; require the surviving child to start,
+   while the router still returns `503` behind its two-host activation reserve.
+4. Start the second host and require the dynamic route to become available.
+
+**Pass criteria:** removal reaches both control loops, and re-addition cannot
+reuse the old route without satisfying admission again.
 
 ---
 
 ## SQLite → Devshard-Ha fail → Postgres migrate → HA
 
-**What we test:** full §3.3 walkthrough from
-`devshard/docs/pr-1366-deploy-test-plan.md` (Phases 0–4).
+**What we test:** sqlite → Devshard-Ha 503 → postgres migrate → HA (v4
+§1.7 intent; v5 pin/catalog procedure in
+`devshard/docs/v5-deploy-test-plan.md`).
 
 **How:**
 
-1. Boot 2×versiond + Postgres compose patched to `DEVSHARD_STORAGE_MODE=sqlite`
-   and `VERSIOND_HOSTS=versiond-0` only; stop `versiond-1`.
-2. **Phase 0:** NON_HA `v1` → `versiond_legacy`; HA `VersionName` →
-   `versiond_ha_pool` without multi-host `Devshard-Ha` (healthz 200 on sqlite).
-3. **Phase 1:** Gateway chat ×3; inventory `{data}/versiond-0/<version>/_meta.db`
-   (`escrow_epoch`).
-4. **Phase 2:** Expand `VERSIOND_HOSTS` to both hosts; recreate router; start
-   `versiond-1`. HA `/<version>/healthz` → **503**; gateway chat fails; NON_HA
-   still legacy-pinned.
+1. Boot 2×versiond + Postgres compose patched to `DEVSHARD_STORAGE_MODE=sqlite`,
+   `GONKA_HA=""`, and `VERSIOND_NON_HA_VERSIONS` set to the running `VersionName`
+   (a real child, same pattern as `TestLegacyVersionPinnedToSingleHost`); stop
+   `versiond-1`. Do not pin a fictional `v1` — HAProxy L7-checks `/{version}/healthz`.
+2. **Phase 0:** assert `/{VersionName}/healthz` 200 and session probes hit
+   `versiond_legacy` / `versiond-0`. Pin at boot so the router is not recreated
+   while the gateway is seeding.
+3. **Phase 1:** Gateway chat ×3 while still pinned; inventory
+   `{data}/versiond-0/<version>/_meta.db` (`escrow_epoch`).
+4. **Phase 2:** Stop the gateway (router recreates otherwise persist a participant
+   quarantine). Unpin `VersionName`, set `GONKA_HA=true`, start `versiond-1`,
+   recreate the router once. HA `/<version>/healthz` → **503** with routing headers
+   (not catalog NOSRV).
 5. **Phase 3:** Patch `DEVSHARD_STORAGE_MODE=postgres`; recreate both versiond.
    Assert `*.migrated.*`, `.pg-bound`, and Postgres `devshard_session_index`
    matches the SQLite inventory.
-6. **Phase 4:** Gateway chat OK; sticky fan-out across hosts; NON_HA unchanged.
+6. **Phase 4:** Recreate the router (DNS) while the gateway is still down; start
+   the gateway; chat OK; sticky fan-out across hosts.
 
 **Pass criteria:** Multi-host + sqlite is rejected; migrate preserves escrow
 index; HA + postgres serves. Test: `TestSQLiteToPostgresHAMigration`.
@@ -218,11 +274,113 @@ children.
 **Pass criteria:** In Postgres mode, no router-health interruption occurs during
 the swap; new traffic succeeds on the new child; the old stream completes; each
 versiond host is exercised in a pinned subtest and shows the expected
-`running(new sha)` + `draining(old sha)` overlap. In hybrid mode, both hosts
+`running(new sha)` + `draining(old sha)` overlap. In hybrid mode, the running
+version is pinned to `VERSIOND_NON_HA_VERSIONS` (legacy single-host pool, no
+`Devshard-Ha`) so catalog `/healthz` can admit; both versiond hosts still
 converge to the new sha without ever reporting an old draining child.
 
 Tests: `TestVersiondRollingUpdateSameVersionSHA` and
 `TestVersiondRollingUpdateHybridFallback`.
+
+---
+
+## Versiond warm cutover
+
+**What we test:** The v5 ready-probe status-vs-body split and the
+`versiond` warm-cutover wait (companion *ready-on-boot-warm-cutover* flow). A
+devshardd child serves on its public listener (`/healthz` 200) while its
+recovery backlog is still draining — the status code answers "can serve",
+the body field `recovery_complete` answers "is warm". Only a version
+replacement with a healthy old generation waits on the body; a solo start
+publishes on status alone. These tests pin the externally visible halves of
+that contract end to end against the real stack.
+
+**Why this is split from the rolling-update suite:** the rolling-update test
+exercises the overlap path as a side effect of a streaming cutover. The
+warm-cutover suite isolates the new v5 contract — `VERSIOND_RECOVERY_TIMEOUT`
+is wired, the public listener serves during recovery, and the overlap swap
+completes (the wait returns) — so a regression in any one of them fails a
+focused test rather than a large streaming one.
+
+**How (boot):**
+
+1. Boot the standard 2-host Postgres stack with `VERSIOND_RECOVERY_TIMEOUT=30s`
+   inserted next to the other `VERSIOND_*` knobs (gencompose does not emit it
+   yet) and `VERSIOND_NON_HA_VERSIONS` cleared.
+2. Wait the devshardd public `/healthz` through the router (`/{version}/healthz`)
+   to return 200 — the status-code path that admits a solo restart.
+3. Require both versiond hosts to report the child `running` with the booted
+   sha.
+4. Send one gateway chat and require mock-openai echo — the admitted child
+   actually serves inference, not just health.
+
+**How (overlap):**
+
+1. Boot the same warm-cutover stack; stop the non-target host so new sessions
+   pin to the target.
+2. `POST /testenv/versions` with the same version name and a new archive sha.
+3. Poll the pinned versiond host `/healthz` until the new sha reaches
+   `running` (3m window, well past the 30s `VERSIOND_RECOVERY_TIMEOUT`). The
+   new sha only becomes `running` after `waitForChildRecoveryComplete` returns
+   and `downloadAndSwap` publishes the new child — a broken or deadlocked warm
+   wait would abort the swap (`ErrRecoveryTimeout`) and the old child would
+   keep serving, so the new sha would never appear and the 3m poll would fail.
+4. Send a new gateway chat and require success on the new child.
+5. Require the old sha to be fully retired (no lingering `draining` child).
+
+The test does **not** assert the timing-sensitive `running(new)` +
+`draining(old)` overlap pair: with no in-flight stream the old child drains and
+is removed in milliseconds, so a 100 ms poll can miss the simultaneous window.
+Asserting the new sha reaches `running` is the load-bearing check — it is
+exactly what a timed-out warm wait would prevent. (The rolling-update suite
+keeps the old child draining with a long stream and asserts the overlap pair
+there.)
+
+**Pass criteria:** Public `/healthz` is 200 with `VERSIOND_RECOVERY_TIMEOUT`
+configured; both hosts report the booted child `running`; a chat round-trip
+succeeds after boot; the sha flip drives the new sha to `running` (warm wait
+returned, swap published); new traffic serves after the swap; the old child
+retires.
+
+**Scope and limits:** the admin `/ready` listener is loopback inside the
+versiond container on a dynamic port and is not reachable from the test host, so
+the `recovery_complete` body field and the wait bail-outs are pinned at the unit
+level (`devshard/cmd/devshardd/lifecycle_test.go` for the body shape,
+`versioned/internal/process/manager_recovery_wait_test.go` for the wait and every
+bail-out). The testenv suite pins the end-to-end effect: the wait returns and the
+swap completes. With the testenv's empty journal the wait is sub-second, so the
+suite does not assert a measurable wait duration.
+
+Run: `make citest-versiond-warm-cutover` from `devshard/testenv/`. Also matched by
+the `citest-stack` pattern (`Versiond.*`); skips if the linux `devshardd` binary
+is absent (run `make build-devshardd` first).
+
+Tests: `TestVersiondWarmCutoverBoot`,
+`TestVersiondWarmCutoverOverlapWaitsThenServes`.
+
+---
+
+## Versiond host evacuation
+
+**What we test:** stopping a versiond container first withdraws it from the
+HAProxy pool, then lets accepted work finish within a bounded shutdown budget.
+The surviving replica recovers the session from shared PostgreSQL, while a
+restarted host stays out of rotation until its requested version is ready.
+
+**How:**
+
+1. Boot two versiond pool members and pin an active SSE response to one host.
+2. Stop that host and require its per-version backend slot to leave service
+   while the accepted stream still completes with `[DONE]`.
+3. Require new traffic and the existing session to work through the survivor.
+4. Start the host with convergence deliberately blocked; it must remain out of
+   rotation even though its DNS address exists.
+5. Restore convergence and require HAProxy to admit it again.
+
+**Pass criteria:** no continuity probe fails, accepted work is not truncated,
+the stopped process exits without Docker SIGKILL, and rejoin is readiness-gated.
+
+Test: `TestVersiondHostEvacuation`.
 
 ---
 
@@ -231,8 +389,8 @@ Tests: `TestVersiondRollingUpdateSameVersionSHA` and
 **What we test:** join-style same-`KEY_NAME` HA replicas under
 `validation_rate=10000` do not double-validate. Postgres
 `devshard_validation_leases` uniqueness is the PASS/FAIL signal. Also covers
-pending stretch (slow ML) and stale reclaim (short TTL + pause ML + stop
-replica). Manual companion:
+pending stretch (slow ML) and graceful-stop reclaim (abort Validate, free the
+row, survivor catch-up re-acquires). Manual companion:
 [`../../docs/validation-lease-race-manual-test.md`](../../docs/validation-lease-race-manual-test.md).
 
 **Topology:** 3 versionds — `versiond-0`/`versiond-1` HA pair (same `KEY_NAME`),
@@ -248,14 +406,53 @@ never validated).
    and ≥5 lease rows (`TestValidationLeaseRaceCore`).
 3. **7a:** slow mock-openai; observe `pending ≥ 1`; restore ML; uniqueness PASS
    (`TestValidationLeaseRacePendingStretch`).
-4. **7b:** short `DEVSHARD_VALIDATION_LEASE_TTL`; slow then **pause ML (503)**;
-   stop one HA replica; wait TTL; restore ML; submitted grows; uniqueness PASS
+4. **7b:** slow ML so a lease stays pending; stop one HA replica (graceful
+   stop aborts Validate and **frees** the row); catch-up the survivor via
+   `/mempool`; restore ML; submitted grows by the pending count
    (`TestValidationLeaseRaceStaleReclaim`).
 
 **Manual scripts:** `scripts/lease-race-run.sh` (monitor + load + PASS/FAIL).
 
 **Pass criteria:** Monitor / citest report PASS (no duplicate lease keys);
-optional paths prove pending visibility and stale reclaim after ML pause.
+optional paths prove pending visibility and survivor re-acquire after a
+graceful stop frees the in-flight row.
+
+---
+
+## Payload withholding (executor fetch failure)
+
+**What we test:** a withholding executor that fails `GET /sessions/:id/payloads`
+with HTTP 500 cannot suppress validation. Validators publish `MsgValidation{Valid:false}`
+(`Reason: executor_payload_unavailable`), the inference reaches `Challenged`,
+mandatory Phase B votes settle it `Invalidated`. A second scenario faults only
+one validator address. A third turns D7 off so the failure stays an error:
+the Postgres lease is **released** (no 30m pending park) and a later attempt
+can acquire well inside the TTL.
+
+**Topology:** 4 versionds — HA pair + two solos (3 distinct addresses) so
+Phase B still has a voter after the challenger. `validation_rate=10000`.
+Fault injection is `DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS` /
+`DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR` on versiond (not mock-openai).
+
+The env vars are only read by a `devshardd` compiled with the `devshard_testenv`
+build tag. `make build-devshardd` in `testenv/` sets it; release builds do not,
+so a stray env var cannot make a production executor withhold payloads. Run this
+suite via `make citest-payload-withholding`, which rebuilds the tagged binary — a
+binary from a plain `make devshardd-build` silently ignores the fault and the
+tests will time out waiting for a challenge.
+
+**How:**
+
+1. Boot `WritePayloadWithholdingConfig` / `BootPayloadWithholdingStack`.
+2. **All callers 500:** every payload GET returns 500. Drive chat until
+   `/v1/debug/inferences` shows `invalidated` (`TestPayloadWithholding_AllCallers500_Invalidates`).
+3. **Selective:** 500 only for `hosts[2]`'s address. Assert `challenged`
+   (`TestPayloadWithholding_SelectiveValidator_Challenges`).
+4. **D7 off:** `DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE=false`. Observe
+   a pending lease, then pending=0, then a later acquire (`TestPayloadWithholding_D7Off_LeaseReleasedAndReacquired`).
+
+**Pass criteria:** unfixed code keeps inferences `Finished` and parks the lease
+for 30m; fixed code challenges/invalidates and frees the row.
 
 ---
 
@@ -329,8 +526,8 @@ recovery with the same gateway session).
 
 ### Versiond sticky-session failover
 
-**What we test:** Behaviour when a **sticky upstream versiond is stopped** — nginx
-reroutes on the first upstream **502** / connect failure (`proxy_next_upstream`) to a
+**What we test:** Behaviour when a **sticky upstream versiond is stopped** — the
+router redispatches a connection failure to a
 surviving peer; sessions already hashed to a live upstream keep working.
 
 **Test:** `TestVersiondStickySessionFailover` (`citest/versiond_failover_test.go`)
@@ -363,8 +560,9 @@ stays up; restarted devshardd children recover from Postgres.
 2. Gateway chat #1 — assert session nonce advances (`RequireGatewaySessionAdvanced`).
 3. `docker compose stop` + `start` **one** versiond host (`harness.RestartService`);
    wait router + session `healthz` (`WaitVersiondSessionHealthy`).
-4. Assert session stable across restart — same escrow, nonce, balance, phase
-   (`RequireGatewaySessionStable`).
+4. Assert session identity survived restart — same escrow and phase; session /
+   latest nonce did not go backwards (`RequireGatewaySessionStable`). Height-sync
+   heartbeats may advance the producer cursor while a replica drains.
 5. Gateway chat #2 — assert nonce advances again.
 6. Restart **all** versiond hosts; wait healthy; assert stable again.
 7. Gateway chat #3 — final nonce advance.
@@ -375,13 +573,81 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 
 ---
 
+## Height-sync host claims
+
+**What we test:** One live host reports a **lower** tip, a **future** tip beyond `D`,
+or a **slightly future fabricated hash**. Chat must keep returning 200. Detection is
+logs, marks, and gateway `height_spread` / `host_height_lag`. Dispute / Strong slash
+is not in this release.
+
+In-process pins live next to the Gherkin in
+[`heightsync_host_claims.feature`](../scenarios/heightsync_host_claims.feature)
+(`TestHeightSync_E2E_HostLowerHeightAutoAlignsAndLogs`,
+`…HostFutureHeightBeyondDDetected`, `…HostFabricatedHashInsideDReconciles`).
+
+Citest boots HA pair + solo and patches **only the solo** with a testenv-only
+`Latest()` overlay (`DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA` /
+`DEVSHARD_TESTENV_ORACLE_FABRICATE_HASH`, compiled under `devshard_testenv`).
+Host `Latest()` comes from the Comet tip cache, so changing mock-dapi
+`/block/:height` would not make one host report a different tip.
+
+**Tests:** `TestContainerE2E_HeightSync_HostLowerHeightAutoAligns`,
+`TestContainerE2E_HeightSync_HostFutureHeightBeyondD`,
+`TestContainerE2E_HeightSync_HostFabricatedHashInsideD`
+(`citest/height_sync_host_claims_test.go`)
+
+```gherkin
+Feature: Height-sync host claims
+
+  Scenario: Host reports a lower height than the roster
+    Given an escrow with honest hosts at height H
+    And one host whose oracle tip is much lower than H
+    When the gateway has already aligned on the higher tip
+    And chat is sent to the lagging host
+    Then inferences complete without error
+    And the floor F is the higher host-signed height
+    And operators see negative delta, height_spread, and host_height_lag
+    And a Diff stamp below F after alignment is INVALID(height_regression)
+
+  Scenario: Host reports a future height with unknown hash beyond D
+    Given D is 2
+    And one host claims H+Δ with Δ > D and a hash not in the honest oracle
+    When chat continues
+    Then chat still returns 200
+    And trust_level is untrusted_peer
+    And L5a records MARK(l5a_admission) when that height is bound on a heartbeat or ack
+    And Strong slash is not required in this release
+
+  Scenario: Host reports a slightly future fabricated hash
+    Given one host claims H+1 (Δ ≤ D) with a fabricated block hash
+    When honest followers later reach height H+1 and see the canonical hash
+    Then hosts log warn "heightsync: untrusted peer tip disagrees with oracle at reconciled height"
+    And L6 DEFERRED_FAIL is recorded when Oracle.At(H) is available
+    And chat was never blocked
+```
+
+**How:** `harness.BootHeightSyncSoloOracleOverlayStack`. Overlay shifts only
+`Latest()`; `At` / `Prove` / `Subscribe` stay canonical so reconcile can still
+see the real header. Gateway `DEVSHARD_GATEWAY_CHAIN_ORACLE=true` so courier
+`delta` / `local_aligned` are meaningful.
+
+**Run:** `make -C devshard/testenv citest-height-sync`
+
+**Pass criteria:** Chat 200 throughout. Scenario A: negative `delta`,
+`height_spread` ≥ 15. Scenario B: `trust_level=untrusted_peer`, `l5a_admission`.
+Scenario C: reconcile warn on the honest HA host. A stamp **below** `F` after
+alignment (`INVALID(height_regression)`) stays a unit pin.
+
+---
+
 ## Related test suites
 
 | Suite | Command | Scenarios |
 |-------|---------|-----------|
+| Height-sync | `make citest-height-sync` | Cadence, dapi pause, host claims A/B/C ([`heightsync_host_claims.feature`](../scenarios/heightsync_host_claims.feature)) |
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
-| Adversarial | `make citest-adversarial` | A1–A4 (fault injection on mock-openai / mock-chain) |
-| Observability | `make citest-observability` | O1 Jaeger + Loki + Prometheus smoke |
+| Adversarial | `make citest-adversarial` | A1–A5 (fault injection on mock-openai / mock-chain) |
+| Observability | `make citest-observability` | O1 Jaeger + Loki + host histogram scrape (isolated overlay) |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
 
 See [`README.md`](../README.md) for adversarial and observability detail.
@@ -427,6 +693,34 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 **How:** `TestG4_NoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl`.
 
 **Pass criteria:** Test fails if `NewRESTBridge` or `NewRESTChainTxClient` appear in production paths.
+
+---
+
+## A5 — Error-finish miss ✅
+
+**What we test:** a streamed OpenAI error envelope (HTTP 200 SSE, companion to A2's
+HTTP 503) is accounted as `MsgErrorMiss`. Accounting changes; the served
+client response does not.
+
+Specified as step 10 of
+[`error-finish-miss-protocol-plan.md`](../docs/error-finish-miss-protocol-plan.md).
+
+**How:** `TestA5_ErrorFinishMiss` boots a 3-host stack
+(`BootErrorMissAdversarialStack`) so two non-executor verifiers can exceed
+`VoteThreshold`. `POST /testenv/fault` sets mock-openai `stream_error_envelope`;
+the test then posts a non-stream chat through the gateway.
+
+**Pass criteria:**
+
+- Client HTTP 500 `hostApplicationError` with today's EngineCore body.
+- Inference reaches `StatusTimedOut`; executor slot `HostStats.Missed` increments
+  by 1 (settlement copies this counter).
+- Client balance unchanged (full `ReservedCost` refund).
+- Executor `HostStats.Cost` unchanged.
+- No validation votes (`VotesValid` / `VotesInvalid` stay 0) and
+  `CompletedValidations` unchanged.
+
+**Run:** `make citest-adversarial` (or `-run TestA5_`).
 
 ---
 
@@ -509,9 +803,9 @@ pattern and **no `t.Parallel()`**.
   (own project dir, own stack, Docker-assigned ports): `TestStackSmoke`,
   `TestRouterStickiness`, `TestGatewayChat`, `TestEpochSwitch`,
   `TestParamsLongPoll`, `TestLegacyVersionPinnedToSingleHost`, the `G1/G2/G3`,
-  `A1–A4`, `O1`, and **escrow long-poll warm**.
+  `A1–A5`, `O1`, and **escrow long-poll warm**.
 - They are grouped into separate Makefile targets (`citest-stack`,
-  `citest-validation-lease-race`, `citest-versiond-rolling-update`,
+  `citest-validation-lease-race`, `citest-payload-withholding`, `citest-versiond-rolling-update`,
   `citest-adversarial`, `citest-grpc-transport`, `citest-observability`,
   `citest-escrow-longpoll`) so CI can fan them out to **separate runners** — the
   supported form of parallelism today. CI enumerates these targets automatically

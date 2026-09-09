@@ -9,7 +9,7 @@ import (
 // link-time stamp is set (plain `go test` / local builds). Release binaries set
 // the protocol name via `make devshardd-build DEVSHARD_VERSION=<name>` — same
 // as approved_versions.name. See devshard/docs/upgrade.md.
-const DevshardStateRootAndProtocolVersion = "v2"
+const DevshardStateRootAndProtocolVersion = "v5"
 
 // DefaultStateRootVersion is the tag used when no explicit bind version is provided.
 const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
@@ -46,22 +46,24 @@ const (
 
 // InferenceRecord tracks the state of a single inference within a session.
 type InferenceRecord struct {
-	Status       InferenceStatus `json:"status"`
-	ExecutorSlot uint32          `json:"executor_slot"`
-	Model        string          `json:"model"`
-	PromptHash   []byte          `json:"prompt_hash"`
-	ResponseHash []byte          `json:"response_hash,omitempty"`
-	InputLength  uint64          `json:"input_length"`
-	MaxTokens    uint64          `json:"max_tokens"`
-	InputTokens  uint64          `json:"input_tokens,omitempty"`
-	OutputTokens uint64          `json:"output_tokens,omitempty"`
-	ReservedCost uint64          `json:"reserved_cost"`
-	ActualCost   uint64          `json:"actual_cost,omitempty"`
-	StartedAt    int64           `json:"started_at"`
-	ConfirmedAt  int64           `json:"confirmed_at,omitempty"`
-	VotesValid   uint32          `json:"votes_valid,omitempty"`
-	VotesInvalid uint32          `json:"votes_invalid,omitempty"`
-	ValidatedBy  Bitmap128       `json:"validated_by,omitempty"`
+	Status            InferenceStatus `json:"status"`
+	ExecutorSlot      uint32          `json:"executor_slot"`
+	Model             string          `json:"model"`
+	PromptHash        []byte          `json:"prompt_hash"`
+	ResponseHash      []byte          `json:"response_hash,omitempty"`
+	InputLength       uint64          `json:"input_length"`
+	MaxTokens         uint64          `json:"max_tokens"`
+	InputTokens       uint64          `json:"input_tokens,omitempty"`
+	OutputTokens      uint64          `json:"output_tokens,omitempty"`
+	ReservedCost      uint64          `json:"reserved_cost"`
+	ActualCost        uint64          `json:"actual_cost,omitempty"`
+	StartedAt         int64           `json:"started_at"`
+	ConfirmedAt       int64           `json:"confirmed_at,omitempty"`
+	StartedAtHeight   uint64          `json:"started_at_height,omitempty"`
+	ConfirmedAtHeight uint64          `json:"confirmed_at_height,omitempty"`
+	VotesValid        uint32          `json:"votes_valid,omitempty"`
+	VotesInvalid      uint32          `json:"votes_invalid,omitempty"`
+	ValidatedBy       Bitmap128       `json:"validated_by,omitempty"`
 }
 
 // HostStats tracks per-host performance metrics within a session.
@@ -78,41 +80,52 @@ type HostStats struct {
 type ProtocolVersion string
 
 const (
-	ProtocolV1 ProtocolVersion = "1"
-	ProtocolV2 ProtocolVersion = "2"
-	ProtocolV3 ProtocolVersion = "3"
+	ProtocolV1             ProtocolVersion = "1"
+	ProtocolV2             ProtocolVersion = "2"
+	ProtocolV3             ProtocolVersion = "3"
+	ProtocolV4             ProtocolVersion = "4"
+	ProtocolV5             ProtocolVersion = "5"
+	DefaultProtocolVersion                 = ProtocolV5
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
-// Empty string defaults to ProtocolV1.
+// Empty string defaults to ProtocolV1. A leading "v"/"V" is stripped so
+// route segments like "v5" stamp as "5". Any remaining non-empty token is
+// accepted — this is a local registry stamp, not the session/settlement
+// protocol tag. Callers that want a major-only stamp (v2.1.0 -> 2) truncate
+// before calling.
 func ParseProtocolVersion(s string) (ProtocolVersion, error) {
-	switch strings.TrimSpace(s) {
-	case "", string(ProtocolV1), "v1":
+	raw := strings.TrimSpace(s)
+	if raw == "" {
 		return ProtocolV1, nil
-	case string(ProtocolV2), "v2":
-		return ProtocolV2, nil
-	case string(ProtocolV3), "v3":
-		return ProtocolV3, nil
-	default:
-		return "", fmt.Errorf("unknown protocol version %q", s)
 	}
+	out := raw
+	if out[0] == 'v' || out[0] == 'V' {
+		out = out[1:]
+	}
+	if out == "" {
+		return "", fmt.Errorf("unknown protocol version %q", raw)
+	}
+	return ProtocolVersion(out), nil
 }
 
 // SessionConfig holds session-level parameters.
 type SessionConfig struct {
-	RefusalTimeout             int64  // seconds before reason=refused timeout
-	ExecutionTimeout           int64  // seconds before reason=execution timeout
-	TokenPrice                 uint64 // price per input / output token (flat per session)
-	CreateDevshardFee          uint64 // one-time fee charged when creating a devshard session
-	FeePerNonce                uint64 // fee charged per applied nonce (diff)
+	RefusalTimeout    int64  // seconds before reason=refused timeout
+	ExecutionTimeout  int64  // seconds before reason=execution timeout
+	TokenPrice        uint64 // price per input / output token (flat per session)
+	CreateDevshardFee uint64 // one-time fee charged when creating a devshard session
+	FeePerNonce       uint64 // fee charged per applied nonce (diff)
 	// VoteThreshold is frozen in state.Config at session creation (from escrow lane A).
 	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
-	VoteThreshold              uint32
-	ValidationRate             uint32 // basis points (10000 = 100%, 1000 = 10%)
-	InferenceSealGraceNonces   uint32
-	InferenceSealGraceSeconds  uint32
-	AutoSealEveryNNonces       uint32
+	VoteThreshold             uint32
+	ValidationRate            uint32 // basis points (10000 = 100%, 1000 = 10%)
+	InferenceSealGraceNonces  uint32
+	// InferenceSealGraceSeconds is extra state-clock time after ExecutionTimeout
+	// before a still-Finished inference may auto-seal.
+	InferenceSealGraceSeconds uint32
+	AutoSealEveryNNonces      uint32
 }
 
 // EscrowState is the full state of a devshard session.
@@ -122,19 +135,57 @@ type EscrowState struct {
 	// (WithStateRootAndProtocolVersion) and copied into settlement payloads. It
 	// matches CreateSessionParams.Version / host boundVersion (approved_versions.name).
 	StateRootAndProtocolVersion string
-	Config        SessionConfig
-	Group         []SlotAssignment
-	Balance       uint64
-	Fees          uint64 // total fees collected (devshard create + per-nonce)
-	Phase         SessionPhase
-	FinalizeNonce uint64
-	Inferences    map[uint64]*InferenceRecord
-	HostStats     map[uint32]*HostStats
-	WarmKeys      map[uint32]string // slot ID -> warm key address, lazily populated
-	LatestNonce   uint64
+	Config                      SessionConfig
+	Group                       []SlotAssignment
+	Balance                     uint64
+	Fees                        uint64 // total fees collected (devshard create + per-nonce)
+	Phase                       SessionPhase
+	FinalizeNonce               uint64
+	Inferences                  map[uint64]*InferenceRecord
+	HostStats                   map[uint32]*HostStats
+	WarmKeys                    map[uint32]string // slot ID -> warm key address, lazily populated
+	LatestNonce                 uint64
+
+	// Height-sync forced turn + cadence swallow (hashed into state root).
+	HeightSyncForcedStart         uint64
+	HeightSyncForcedEnd           uint64 // inclusive; cleared once LatestNonce > ForcedEnd
+	HeightSyncCadenceSwallowUntil uint64 // suppress periodic Anchor on (SwallowFe, SwallowUntil]
+	HeightSyncSwallowFe           uint64
+	HeightSyncTurnK               uint64 // snapshot K from opening MsgForceHeightSyncTurn
+	HeightSyncTurnSlots           uint64
+	HeightSyncTurnReason          string
+	// HeightSyncLastCompletedHeight is h_last (complete turns only). Derived from
+	// Diff replay; not hashed into the state root (tracker is reconstructible).
+	HeightSyncLastCompletedHeight uint64
+	HeightSyncLatestTurnStart     uint64
+
 	// SealedAcc is the Phase 1 incremental accumulator over sealed inference
 	// commitments (32 bytes). Updated on each SealInference and settlement drain.
 	SealedAcc []byte `json:"sealed_acc,omitempty"`
+}
+
+// HeightSyncEscrowCommit is the subset of EscrowState hashed into the state root.
+type HeightSyncEscrowCommit struct {
+	ForcedStart, ForcedEnd         uint64
+	CadenceSwallowUntil, SwallowFe uint64
+	TurnK, TurnSlots               uint64
+	Reason                         string
+}
+
+// HeightSyncEscrowCommitFromState extracts height-sync fields for state hashing.
+func HeightSyncEscrowCommitFromState(s *EscrowState) HeightSyncEscrowCommit {
+	if s == nil {
+		return HeightSyncEscrowCommit{}
+	}
+	return HeightSyncEscrowCommit{
+		ForcedStart:         s.HeightSyncForcedStart,
+		ForcedEnd:           s.HeightSyncForcedEnd,
+		CadenceSwallowUntil: s.HeightSyncCadenceSwallowUntil,
+		SwallowFe:           s.HeightSyncSwallowFe,
+		TurnK:               s.HeightSyncTurnK,
+		TurnSlots:           s.HeightSyncTurnSlots,
+		Reason:              s.HeightSyncTurnReason,
+	}
 }
 
 // Diff is the protocol primitive: what the user creates and signs.

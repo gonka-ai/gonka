@@ -13,3 +13,22 @@ func setCapacityAwareLimitsForTest(t *testing.T, on bool) {
 		capacityAwareLimitsState.Store(prev)
 	})
 }
+
+func TestConfigureCapacityAwareLimitsUsesDevshardBooleanGrammar(t *testing.T) {
+	setCapacityAwareLimitsForTest(t, false)
+
+	ConfigureCapacityAwareLimits("yes")
+	if !capacityAwareLimitsEnabled() {
+		t.Fatal("yes must enable capacity-aware limits")
+	}
+
+	ConfigureCapacityAwareLimits("f")
+	if capacityAwareLimitsEnabled() {
+		t.Fatal("f must disable capacity-aware limits")
+	}
+
+	ConfigureCapacityAwareLimits("invalid")
+	if capacityAwareLimitsEnabled() {
+		t.Fatal("invalid value must retain the disabled fallback")
+	}
+}

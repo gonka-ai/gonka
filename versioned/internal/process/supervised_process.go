@@ -20,6 +20,64 @@ const (
 	processStateExited
 )
 
+type processEvent uint8
+
+const (
+	processEventStopRequested processEvent = iota
+	processEventForceRequested
+	processEventGraceExpired
+	processEventExited
+)
+
+type processAction uint8
+
+const (
+	processActionSignalTerm processAction = iota
+	processActionSignalKill
+	processActionFinish
+)
+
+type processTransitionKey struct {
+	state processState
+	event processEvent
+}
+
+type processTransitionSpec struct {
+	next   processState
+	action processAction
+}
+
+var processTransitionTable = map[processTransitionKey]processTransitionSpec{
+	{state: processStateRunning, event: processEventStopRequested}: {
+		next:   processStateTerminating,
+		action: processActionSignalTerm,
+	},
+	{state: processStateRunning, event: processEventForceRequested}: {
+		next:   processStateKilling,
+		action: processActionSignalKill,
+	},
+	{state: processStateRunning, event: processEventExited}: {
+		next:   processStateExited,
+		action: processActionFinish,
+	},
+	{state: processStateTerminating, event: processEventForceRequested}: {
+		next:   processStateKilling,
+		action: processActionSignalKill,
+	},
+	{state: processStateTerminating, event: processEventGraceExpired}: {
+		next:   processStateKilling,
+		action: processActionSignalKill,
+	},
+	{state: processStateTerminating, event: processEventExited}: {
+		next:   processStateExited,
+		action: processActionFinish,
+	},
+	{state: processStateKilling, event: processEventExited}: {
+		next:   processStateExited,
+		action: processActionFinish,
+	},
+}
+
 func (s processState) String() string {
 	switch s {
 	case processStateRunning:
@@ -32,6 +90,21 @@ func (s processState) String() string {
 		return "exited"
 	default:
 		return fmt.Sprintf("processState(%d)", s)
+	}
+}
+
+func (e processEvent) String() string {
+	switch e {
+	case processEventStopRequested:
+		return "stop_requested"
+	case processEventForceRequested:
+		return "force_requested"
+	case processEventGraceExpired:
+		return "grace_expired"
+	case processEventExited:
+		return "exited"
+	default:
+		return fmt.Sprintf("processEvent(%d)", e)
 	}
 }
 
@@ -87,45 +160,61 @@ func (p *supervisedProcess) run() {
 		waitCh <- p.cmd.Wait()
 	}()
 
-	var err error
-	select {
-	case err = <-waitCh:
-		p.complete(err)
-		return
-	case <-p.stop:
-		p.transition(processStateTerminating)
-		p.signal(syscall.SIGTERM)
-	case <-p.force:
-		err = p.killAndWait(waitCh)
-		p.complete(err)
-		return
-	case <-p.externalForce:
-		err = p.killAndWait(waitCh)
-		p.complete(err)
-		return
+	stopCh := p.stop
+	forceCh := (<-chan struct{})(p.force)
+	externalForceCh := p.externalForce
+	var graceTimer *time.Timer
+	var graceCh <-chan time.Time
+	stopGraceTimer := func() {
+		if graceTimer != nil {
+			graceTimer.Stop()
+			graceTimer = nil
+			graceCh = nil
+		}
 	}
+	defer stopGraceTimer()
 
-	timer := time.NewTimer(p.grace)
-	defer timer.Stop()
-	select {
-	case err = <-waitCh:
-	case <-timer.C:
-		err = p.killAndWait(waitCh)
-	case <-p.force:
-		err = p.killAndWait(waitCh)
-	case <-p.externalForce:
-		err = p.killAndWait(waitCh)
+	for {
+		var event processEvent
+		var waitErr error
+		select {
+		case waitErr = <-waitCh:
+			event = processEventExited
+		case <-stopCh:
+			stopCh = nil
+			event = processEventStopRequested
+		case <-forceCh:
+			forceCh = nil
+			event = processEventForceRequested
+		case <-externalForceCh:
+			externalForceCh = nil
+			event = processEventForceRequested
+		case <-graceCh:
+			graceCh = nil
+			event = processEventGraceExpired
+		}
+
+		transition, ok := p.applyEvent(event)
+		if !ok {
+			continue
+		}
+		switch transition.action {
+		case processActionSignalTerm:
+			p.signal(syscall.SIGTERM)
+			graceTimer = time.NewTimer(p.grace)
+			graceCh = graceTimer.C
+		case processActionSignalKill:
+			stopGraceTimer()
+			stopCh = nil
+			forceCh = nil
+			externalForceCh = nil
+			p.signal(syscall.SIGKILL)
+		case processActionFinish:
+			stopGraceTimer()
+			p.finish(waitErr)
+			return
+		}
 	}
-	p.complete(err)
-}
-
-func (p *supervisedProcess) killAndWait(waitCh <-chan error) error {
-	p.transition(processStateKilling)
-	p.mu.Lock()
-	p.escalated = true
-	p.mu.Unlock()
-	p.signal(syscall.SIGKILL)
-	return <-waitCh
 }
 
 func (p *supervisedProcess) signal(signal syscall.Signal) {
@@ -156,47 +245,31 @@ func signalProcessGroup(process *os.Process, signal syscall.Signal) error {
 	return nil
 }
 
-func (p *supervisedProcess) transition(next processState) {
+func (p *supervisedProcess) applyEvent(
+	event processEvent,
+) (processTransitionSpec, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !validProcessTransition(p.state, next) {
+	key := processTransitionKey{state: p.state, event: event}
+	transition, ok := processTransitionTable[key]
+	if !ok {
 		slog.Error(
-			"invalid child process state transition",
-			"from", p.state.String(),
-			"to", next.String(),
-			"pid", p.cmd.Process.Pid,
-		)
-		return
-	}
-	p.state = next
-}
-
-func validProcessTransition(from, to processState) bool {
-	switch from {
-	case processStateRunning:
-		return to == processStateTerminating || to == processStateKilling || to == processStateExited
-	case processStateTerminating:
-		return to == processStateKilling || to == processStateExited
-	case processStateKilling:
-		return to == processStateExited
-	case processStateExited:
-		return false
-	default:
-		return false
-	}
-}
-
-func (p *supervisedProcess) complete(err error) {
-	p.mu.Lock()
-	if validProcessTransition(p.state, processStateExited) {
-		p.state = processStateExited
-	} else {
-		slog.Error(
-			"invalid child process completion state",
+			"invalid child process event",
 			"state", p.state.String(),
+			"event", event.String(),
 			"pid", p.cmd.Process.Pid,
 		)
+		return processTransitionSpec{}, false
 	}
+	p.state = transition.next
+	if transition.action == processActionSignalKill {
+		p.escalated = true
+	}
+	return transition, true
+}
+
+func (p *supervisedProcess) finish(err error) {
+	p.mu.Lock()
 	p.err = err
 	p.mu.Unlock()
 	close(p.done)

@@ -237,6 +237,24 @@ func TestOnNonceReceived_SigAccumulation(t *testing.T) {
 	require.Equal(t, []byte("peer-sig"), calls[0].sig)
 }
 
+func TestNonceStatus_ReturnsCopyOfGossipRecord(t *testing.T) {
+	g := NewGossip("escrow-1", 0, nil, nil)
+	require.NoError(t, g.OnNonceReceived(5, []byte("hash5"), []byte("sig5"), 2))
+
+	status, seen := g.NonceStatus(5)
+	require.True(t, seen)
+	require.Equal(t, []byte("hash5"), status.StateHash)
+	require.Equal(t, []byte("sig5"), status.StateSig)
+	require.Equal(t, uint32(2), status.SlotID)
+
+	status.StateHash[0] = 'X'
+	status.StateSig[0] = 'Y'
+	again, seen := g.NonceStatus(5)
+	require.True(t, seen)
+	require.Equal(t, []byte("hash5"), again.StateHash)
+	require.Equal(t, []byte("sig5"), again.StateSig)
+}
+
 func TestOnTxsReceived_ForwardsToMempool(t *testing.T) {
 	mem := &mockMempool{}
 	g := NewGossip("escrow-1", 0, nil, mem)
