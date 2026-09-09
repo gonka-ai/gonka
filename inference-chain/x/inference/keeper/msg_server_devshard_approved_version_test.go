@@ -129,7 +129,7 @@ func TestUpdateParams_RejectsDeprecatedApprovedVersions(t *testing.T) {
 	require.Contains(t, err.Error(), "deprecated")
 }
 
-func TestApprovedVersionsQuery(t *testing.T) {
+func TestDevshardApprovedVersionsQuery(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 	wctx := sdk.UnwrapSDKContext(ctx)
 	_, err := ms.PutDevshardApprovedVersion(wctx, &types.MsgPutDevshardApprovedVersion{
@@ -143,7 +143,7 @@ func TestApprovedVersionsQuery(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	resp, err := k.ApprovedVersions(wctx, &types.QueryApprovedVersionsRequest{})
+	resp, err := k.DevshardApprovedVersions(wctx, &types.QueryDevshardApprovedVersionsRequest{})
 	require.NoError(t, err)
 	require.Len(t, resp.Versions, 2)
 	require.Equal(t, "v1", resp.Versions[0].Name)

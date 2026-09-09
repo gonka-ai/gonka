@@ -135,8 +135,8 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 				{
-					RpcMethod:      "ApprovedVersions",
-					Use:            "approved-versions",
+					RpcMethod:      "DevshardApprovedVersions",
+					Use:            "devshard-approved-versions",
 					Short:          "Query approved devshard versions",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},

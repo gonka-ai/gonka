@@ -309,10 +309,10 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 		genesis.MlnodeVersion = &mlnodeVersion
 	}
 	genesis.ModelList = getModels(&ctx, &k)
-	genesis.ApprovedVersions = getApprovedVersions(&ctx, &k)
+	genesis.DevshardApprovedVersions = getApprovedVersions(&ctx, &k)
 	if genesis.Params.DevshardEscrowParams != nil {
-		if len(genesis.ApprovedVersions) == 0 {
-			genesis.ApprovedVersions = genesis.Params.DevshardEscrowParams.ApprovedVersions
+		if len(genesis.DevshardApprovedVersions) == 0 {
+			genesis.DevshardApprovedVersions = genesis.Params.DevshardEscrowParams.ApprovedVersions
 		}
 		genesis.Params.DevshardEscrowParams.ApprovedVersions = nil
 	}
@@ -364,13 +364,13 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 }
 
 func importDevshardApprovedVersions(ctx sdk.Context, k keeper.Keeper, genState *types.GenesisState) {
-	versions := genState.ApprovedVersions
+	versions := genState.DevshardApprovedVersions
 	if len(versions) == 0 && genState.Params.DevshardEscrowParams != nil {
 		versions = genState.Params.DevshardEscrowParams.ApprovedVersions
 	}
 	if len(versions) > types.MaxDevshardApprovedVersions {
 		//nolint:forbidigo // genesis code
-		panic(fmt.Sprintf("approved_versions exceeds maximum of %d", types.MaxDevshardApprovedVersions))
+		panic(fmt.Sprintf("devshard_approved_versions exceeds maximum of %d", types.MaxDevshardApprovedVersions))
 	}
 	if genState.Params.DevshardEscrowParams != nil {
 		genState.Params.DevshardEscrowParams.ApprovedVersions = nil
@@ -378,7 +378,7 @@ func importDevshardApprovedVersions(ctx sdk.Context, k keeper.Keeper, genState *
 	for i, v := range versions {
 		if v == nil {
 			//nolint:forbidigo // genesis code
-			panic(fmt.Sprintf("approved_versions[%d] cannot be null", i))
+			panic(fmt.Sprintf("devshard_approved_versions[%d] cannot be null", i))
 		}
 		if err := v.Validate(); err != nil {
 			//nolint:forbidigo // genesis code

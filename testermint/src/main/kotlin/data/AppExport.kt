@@ -30,8 +30,8 @@ data class InferenceState(
     val modelList: List<ModelListItem>,
     /** Optional; testermint genesis overrides can seed WGNK unwrap bridge contracts. */
     val bridge: BridgeState? = null,
-    @SerializedName("approved_versions")
-    val approvedVersions: List<DevshardApprovedVersion>? = emptyList(),
+    @SerializedName("devshard_approved_versions")
+    val devshardApprovedVersions: List<DevshardApprovedVersion>? = emptyList(),
 )
 
 /**
@@ -310,7 +310,7 @@ data class DevshardApprovedVersion(
     val sha256: String,
 )
 
-data class ApprovedVersionsWrapper(
+data class DevshardApprovedVersionsWrapper(
     val versions: List<DevshardApprovedVersion>? = emptyList(),
 )
 

@@ -87138,23 +87138,23 @@ func (x *fastReflection_QueryListClaimRecipientsResponse) ProtoMethods() *protoi
 }
 
 var (
-	md_QueryApprovedVersionsRequest protoreflect.MessageDescriptor
+	md_QueryDevshardApprovedVersionsRequest protoreflect.MessageDescriptor
 )
 
 func init() {
 	file_inference_inference_query_proto_init()
-	md_QueryApprovedVersionsRequest = File_inference_inference_query_proto.Messages().ByName("QueryApprovedVersionsRequest")
+	md_QueryDevshardApprovedVersionsRequest = File_inference_inference_query_proto.Messages().ByName("QueryDevshardApprovedVersionsRequest")
 }
 
-var _ protoreflect.Message = (*fastReflection_QueryApprovedVersionsRequest)(nil)
+var _ protoreflect.Message = (*fastReflection_QueryDevshardApprovedVersionsRequest)(nil)
 
-type fastReflection_QueryApprovedVersionsRequest QueryApprovedVersionsRequest
+type fastReflection_QueryDevshardApprovedVersionsRequest QueryDevshardApprovedVersionsRequest
 
-func (x *QueryApprovedVersionsRequest) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_QueryApprovedVersionsRequest)(x)
+func (x *QueryDevshardApprovedVersionsRequest) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_QueryDevshardApprovedVersionsRequest)(x)
 }
 
-func (x *QueryApprovedVersionsRequest) slowProtoReflect() protoreflect.Message {
+func (x *QueryDevshardApprovedVersionsRequest) slowProtoReflect() protoreflect.Message {
 	mi := &file_inference_inference_query_proto_msgTypes[184]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -87166,43 +87166,43 @@ func (x *QueryApprovedVersionsRequest) slowProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-var _fastReflection_QueryApprovedVersionsRequest_messageType fastReflection_QueryApprovedVersionsRequest_messageType
-var _ protoreflect.MessageType = fastReflection_QueryApprovedVersionsRequest_messageType{}
+var _fastReflection_QueryDevshardApprovedVersionsRequest_messageType fastReflection_QueryDevshardApprovedVersionsRequest_messageType
+var _ protoreflect.MessageType = fastReflection_QueryDevshardApprovedVersionsRequest_messageType{}
 
-type fastReflection_QueryApprovedVersionsRequest_messageType struct{}
+type fastReflection_QueryDevshardApprovedVersionsRequest_messageType struct{}
 
-func (x fastReflection_QueryApprovedVersionsRequest_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_QueryApprovedVersionsRequest)(nil)
+func (x fastReflection_QueryDevshardApprovedVersionsRequest_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_QueryDevshardApprovedVersionsRequest)(nil)
 }
-func (x fastReflection_QueryApprovedVersionsRequest_messageType) New() protoreflect.Message {
-	return new(fastReflection_QueryApprovedVersionsRequest)
+func (x fastReflection_QueryDevshardApprovedVersionsRequest_messageType) New() protoreflect.Message {
+	return new(fastReflection_QueryDevshardApprovedVersionsRequest)
 }
-func (x fastReflection_QueryApprovedVersionsRequest_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryApprovedVersionsRequest
+func (x fastReflection_QueryDevshardApprovedVersionsRequest_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryDevshardApprovedVersionsRequest
 }
 
 // Descriptor returns message descriptor, which contains only the protobuf
 // type information for the message.
-func (x *fastReflection_QueryApprovedVersionsRequest) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryApprovedVersionsRequest
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryDevshardApprovedVersionsRequest
 }
 
 // Type returns the message type, which encapsulates both Go and protobuf
 // type information. If the Go type information is not needed,
 // it is recommended that the message descriptor be used instead.
-func (x *fastReflection_QueryApprovedVersionsRequest) Type() protoreflect.MessageType {
-	return _fastReflection_QueryApprovedVersionsRequest_messageType
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) Type() protoreflect.MessageType {
+	return _fastReflection_QueryDevshardApprovedVersionsRequest_messageType
 }
 
 // New returns a newly allocated and mutable empty message.
-func (x *fastReflection_QueryApprovedVersionsRequest) New() protoreflect.Message {
-	return new(fastReflection_QueryApprovedVersionsRequest)
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) New() protoreflect.Message {
+	return new(fastReflection_QueryDevshardApprovedVersionsRequest)
 }
 
 // Interface unwraps the message reflection interface and
 // returns the underlying ProtoMessage interface.
-func (x *fastReflection_QueryApprovedVersionsRequest) Interface() protoreflect.ProtoMessage {
-	return (*QueryApprovedVersionsRequest)(x)
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) Interface() protoreflect.ProtoMessage {
+	return (*QueryDevshardApprovedVersionsRequest)(x)
 }
 
 // Range iterates over every populated field in an undefined order,
@@ -87210,7 +87210,7 @@ func (x *fastReflection_QueryApprovedVersionsRequest) Interface() protoreflect.P
 // Range returns immediately if f returns false.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
-func (x *fastReflection_QueryApprovedVersionsRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 }
 
 // Has reports whether a field is populated.
@@ -87224,13 +87224,13 @@ func (x *fastReflection_QueryApprovedVersionsRequest) Range(f func(protoreflect.
 // In other cases (aside from the nullable cases above),
 // a proto3 scalar field is populated if it contains a non-zero value, and
 // a repeated field is populated if it is non-empty.
-func (x *fastReflection_QueryApprovedVersionsRequest) Has(fd protoreflect.FieldDescriptor) bool {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -87240,13 +87240,13 @@ func (x *fastReflection_QueryApprovedVersionsRequest) Has(fd protoreflect.FieldD
 // associated with the given field number.
 //
 // Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryApprovedVersionsRequest) Clear(fd protoreflect.FieldDescriptor) {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -87256,13 +87256,13 @@ func (x *fastReflection_QueryApprovedVersionsRequest) Clear(fd protoreflect.Fiel
 // the default value of a bytes scalar is guaranteed to be a copy.
 // For unpopulated composite types, it returns an empty, read-only view
 // of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_QueryApprovedVersionsRequest) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
 	default:
 		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsRequest does not contain field %s", descriptor.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsRequest does not contain field %s", descriptor.FullName()))
 	}
 }
 
@@ -87276,13 +87276,13 @@ func (x *fastReflection_QueryApprovedVersionsRequest) Get(descriptor protoreflec
 // empty, read-only value, then it panics.
 //
 // Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryApprovedVersionsRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -87296,36 +87296,36 @@ func (x *fastReflection_QueryApprovedVersionsRequest) Set(fd protoreflect.FieldD
 // It panics if the field does not contain a composite type.
 //
 // Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryApprovedVersionsRequest) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
 // NewField returns a new value that is assignable to the field
 // for the given descriptor. For scalars, this returns the default value.
 // For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_QueryApprovedVersionsRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsRequest"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsRequest"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsRequest does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsRequest does not contain field %s", fd.FullName()))
 	}
 }
 
 // WhichOneof reports which field within the oneof is populated,
 // returning nil if none are populated.
 // It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_QueryApprovedVersionsRequest) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
 	switch d.FullName() {
 	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.QueryApprovedVersionsRequest", d.FullName()))
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.QueryDevshardApprovedVersionsRequest", d.FullName()))
 	}
 	panic("unreachable")
 }
@@ -87333,7 +87333,7 @@ func (x *fastReflection_QueryApprovedVersionsRequest) WhichOneof(d protoreflect.
 // GetUnknown retrieves the entire list of unknown fields.
 // The caller may only mutate the contents of the RawFields
 // if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_QueryApprovedVersionsRequest) GetUnknown() protoreflect.RawFields {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) GetUnknown() protoreflect.RawFields {
 	return x.unknownFields
 }
 
@@ -87344,7 +87344,7 @@ func (x *fastReflection_QueryApprovedVersionsRequest) GetUnknown() protoreflect.
 // An empty RawFields may be passed to clear the fields.
 //
 // SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryApprovedVersionsRequest) SetUnknown(fields protoreflect.RawFields) {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) SetUnknown(fields protoreflect.RawFields) {
 	x.unknownFields = fields
 }
 
@@ -87356,7 +87356,7 @@ func (x *fastReflection_QueryApprovedVersionsRequest) SetUnknown(fields protoref
 // message type, but the details are implementation dependent.
 // Validity is not part of the protobuf data model, and may not
 // be preserved in marshaling or other operations.
-func (x *fastReflection_QueryApprovedVersionsRequest) IsValid() bool {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) IsValid() bool {
 	return x != nil
 }
 
@@ -87366,9 +87366,9 @@ func (x *fastReflection_QueryApprovedVersionsRequest) IsValid() bool {
 // The returned methods type is identical to
 // "google.golang.org/protobuf/runtime/protoiface".Methods.
 // Consult the protoiface package documentation for details.
-func (x *fastReflection_QueryApprovedVersionsRequest) ProtoMethods() *protoiface.Methods {
+func (x *fastReflection_QueryDevshardApprovedVersionsRequest) ProtoMethods() *protoiface.Methods {
 	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*QueryApprovedVersionsRequest)
+		x := input.Message.Interface().(*QueryDevshardApprovedVersionsRequest)
 		if x == nil {
 			return protoiface.SizeOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -87390,7 +87390,7 @@ func (x *fastReflection_QueryApprovedVersionsRequest) ProtoMethods() *protoiface
 	}
 
 	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*QueryApprovedVersionsRequest)
+		x := input.Message.Interface().(*QueryDevshardApprovedVersionsRequest)
 		if x == nil {
 			return protoiface.MarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -87420,7 +87420,7 @@ func (x *fastReflection_QueryApprovedVersionsRequest) ProtoMethods() *protoiface
 		}, nil
 	}
 	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*QueryApprovedVersionsRequest)
+		x := input.Message.Interface().(*QueryDevshardApprovedVersionsRequest)
 		if x == nil {
 			return protoiface.UnmarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -87452,10 +87452,10 @@ func (x *fastReflection_QueryApprovedVersionsRequest) ProtoMethods() *protoiface
 			fieldNum := int32(wire >> 3)
 			wireType := int(wire & 0x7)
 			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryApprovedVersionsRequest: wiretype end group for non-group")
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryDevshardApprovedVersionsRequest: wiretype end group for non-group")
 			}
 			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryApprovedVersionsRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryDevshardApprovedVersionsRequest: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
 			default:
@@ -87493,77 +87493,77 @@ func (x *fastReflection_QueryApprovedVersionsRequest) ProtoMethods() *protoiface
 	}
 }
 
-var _ protoreflect.List = (*_QueryApprovedVersionsResponse_1_list)(nil)
+var _ protoreflect.List = (*_QueryDevshardApprovedVersionsResponse_1_list)(nil)
 
-type _QueryApprovedVersionsResponse_1_list struct {
+type _QueryDevshardApprovedVersionsResponse_1_list struct {
 	list *[]*DevshardApprovedVersion
 }
 
-func (x *_QueryApprovedVersionsResponse_1_list) Len() int {
+func (x *_QueryDevshardApprovedVersionsResponse_1_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_QueryApprovedVersionsResponse_1_list) Get(i int) protoreflect.Value {
+func (x *_QueryDevshardApprovedVersionsResponse_1_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
 }
 
-func (x *_QueryApprovedVersionsResponse_1_list) Set(i int, value protoreflect.Value) {
+func (x *_QueryDevshardApprovedVersionsResponse_1_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*DevshardApprovedVersion)
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_QueryApprovedVersionsResponse_1_list) Append(value protoreflect.Value) {
+func (x *_QueryDevshardApprovedVersionsResponse_1_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*DevshardApprovedVersion)
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_QueryApprovedVersionsResponse_1_list) AppendMutable() protoreflect.Value {
+func (x *_QueryDevshardApprovedVersionsResponse_1_list) AppendMutable() protoreflect.Value {
 	v := new(DevshardApprovedVersion)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_QueryApprovedVersionsResponse_1_list) Truncate(n int) {
+func (x *_QueryDevshardApprovedVersionsResponse_1_list) Truncate(n int) {
 	for i := n; i < len(*x.list); i++ {
 		(*x.list)[i] = nil
 	}
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_QueryApprovedVersionsResponse_1_list) NewElement() protoreflect.Value {
+func (x *_QueryDevshardApprovedVersionsResponse_1_list) NewElement() protoreflect.Value {
 	v := new(DevshardApprovedVersion)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_QueryApprovedVersionsResponse_1_list) IsValid() bool {
+func (x *_QueryDevshardApprovedVersionsResponse_1_list) IsValid() bool {
 	return x.list != nil
 }
 
 var (
-	md_QueryApprovedVersionsResponse          protoreflect.MessageDescriptor
-	fd_QueryApprovedVersionsResponse_versions protoreflect.FieldDescriptor
+	md_QueryDevshardApprovedVersionsResponse          protoreflect.MessageDescriptor
+	fd_QueryDevshardApprovedVersionsResponse_versions protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_query_proto_init()
-	md_QueryApprovedVersionsResponse = File_inference_inference_query_proto.Messages().ByName("QueryApprovedVersionsResponse")
-	fd_QueryApprovedVersionsResponse_versions = md_QueryApprovedVersionsResponse.Fields().ByName("versions")
+	md_QueryDevshardApprovedVersionsResponse = File_inference_inference_query_proto.Messages().ByName("QueryDevshardApprovedVersionsResponse")
+	fd_QueryDevshardApprovedVersionsResponse_versions = md_QueryDevshardApprovedVersionsResponse.Fields().ByName("versions")
 }
 
-var _ protoreflect.Message = (*fastReflection_QueryApprovedVersionsResponse)(nil)
+var _ protoreflect.Message = (*fastReflection_QueryDevshardApprovedVersionsResponse)(nil)
 
-type fastReflection_QueryApprovedVersionsResponse QueryApprovedVersionsResponse
+type fastReflection_QueryDevshardApprovedVersionsResponse QueryDevshardApprovedVersionsResponse
 
-func (x *QueryApprovedVersionsResponse) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_QueryApprovedVersionsResponse)(x)
+func (x *QueryDevshardApprovedVersionsResponse) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_QueryDevshardApprovedVersionsResponse)(x)
 }
 
-func (x *QueryApprovedVersionsResponse) slowProtoReflect() protoreflect.Message {
+func (x *QueryDevshardApprovedVersionsResponse) slowProtoReflect() protoreflect.Message {
 	mi := &file_inference_inference_query_proto_msgTypes[185]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -87575,43 +87575,43 @@ func (x *QueryApprovedVersionsResponse) slowProtoReflect() protoreflect.Message 
 	return mi.MessageOf(x)
 }
 
-var _fastReflection_QueryApprovedVersionsResponse_messageType fastReflection_QueryApprovedVersionsResponse_messageType
-var _ protoreflect.MessageType = fastReflection_QueryApprovedVersionsResponse_messageType{}
+var _fastReflection_QueryDevshardApprovedVersionsResponse_messageType fastReflection_QueryDevshardApprovedVersionsResponse_messageType
+var _ protoreflect.MessageType = fastReflection_QueryDevshardApprovedVersionsResponse_messageType{}
 
-type fastReflection_QueryApprovedVersionsResponse_messageType struct{}
+type fastReflection_QueryDevshardApprovedVersionsResponse_messageType struct{}
 
-func (x fastReflection_QueryApprovedVersionsResponse_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_QueryApprovedVersionsResponse)(nil)
+func (x fastReflection_QueryDevshardApprovedVersionsResponse_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_QueryDevshardApprovedVersionsResponse)(nil)
 }
-func (x fastReflection_QueryApprovedVersionsResponse_messageType) New() protoreflect.Message {
-	return new(fastReflection_QueryApprovedVersionsResponse)
+func (x fastReflection_QueryDevshardApprovedVersionsResponse_messageType) New() protoreflect.Message {
+	return new(fastReflection_QueryDevshardApprovedVersionsResponse)
 }
-func (x fastReflection_QueryApprovedVersionsResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryApprovedVersionsResponse
+func (x fastReflection_QueryDevshardApprovedVersionsResponse_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryDevshardApprovedVersionsResponse
 }
 
 // Descriptor returns message descriptor, which contains only the protobuf
 // type information for the message.
-func (x *fastReflection_QueryApprovedVersionsResponse) Descriptor() protoreflect.MessageDescriptor {
-	return md_QueryApprovedVersionsResponse
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) Descriptor() protoreflect.MessageDescriptor {
+	return md_QueryDevshardApprovedVersionsResponse
 }
 
 // Type returns the message type, which encapsulates both Go and protobuf
 // type information. If the Go type information is not needed,
 // it is recommended that the message descriptor be used instead.
-func (x *fastReflection_QueryApprovedVersionsResponse) Type() protoreflect.MessageType {
-	return _fastReflection_QueryApprovedVersionsResponse_messageType
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) Type() protoreflect.MessageType {
+	return _fastReflection_QueryDevshardApprovedVersionsResponse_messageType
 }
 
 // New returns a newly allocated and mutable empty message.
-func (x *fastReflection_QueryApprovedVersionsResponse) New() protoreflect.Message {
-	return new(fastReflection_QueryApprovedVersionsResponse)
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) New() protoreflect.Message {
+	return new(fastReflection_QueryDevshardApprovedVersionsResponse)
 }
 
 // Interface unwraps the message reflection interface and
 // returns the underlying ProtoMessage interface.
-func (x *fastReflection_QueryApprovedVersionsResponse) Interface() protoreflect.ProtoMessage {
-	return (*QueryApprovedVersionsResponse)(x)
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) Interface() protoreflect.ProtoMessage {
+	return (*QueryDevshardApprovedVersionsResponse)(x)
 }
 
 // Range iterates over every populated field in an undefined order,
@@ -87619,10 +87619,10 @@ func (x *fastReflection_QueryApprovedVersionsResponse) Interface() protoreflect.
 // Range returns immediately if f returns false.
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
-func (x *fastReflection_QueryApprovedVersionsResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
 	if len(x.Versions) != 0 {
-		value := protoreflect.ValueOfList(&_QueryApprovedVersionsResponse_1_list{list: &x.Versions})
-		if !f(fd_QueryApprovedVersionsResponse_versions, value) {
+		value := protoreflect.ValueOfList(&_QueryDevshardApprovedVersionsResponse_1_list{list: &x.Versions})
+		if !f(fd_QueryDevshardApprovedVersionsResponse_versions, value) {
 			return
 		}
 	}
@@ -87639,15 +87639,15 @@ func (x *fastReflection_QueryApprovedVersionsResponse) Range(f func(protoreflect
 // In other cases (aside from the nullable cases above),
 // a proto3 scalar field is populated if it contains a non-zero value, and
 // a repeated field is populated if it is non-empty.
-func (x *fastReflection_QueryApprovedVersionsResponse) Has(fd protoreflect.FieldDescriptor) bool {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.QueryApprovedVersionsResponse.versions":
+	case "inference.inference.QueryDevshardApprovedVersionsResponse.versions":
 		return len(x.Versions) != 0
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -87657,15 +87657,15 @@ func (x *fastReflection_QueryApprovedVersionsResponse) Has(fd protoreflect.Field
 // associated with the given field number.
 //
 // Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryApprovedVersionsResponse) Clear(fd protoreflect.FieldDescriptor) {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.QueryApprovedVersionsResponse.versions":
+	case "inference.inference.QueryDevshardApprovedVersionsResponse.versions":
 		x.Versions = nil
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -87675,19 +87675,19 @@ func (x *fastReflection_QueryApprovedVersionsResponse) Clear(fd protoreflect.Fie
 // the default value of a bytes scalar is guaranteed to be a copy.
 // For unpopulated composite types, it returns an empty, read-only view
 // of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_QueryApprovedVersionsResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.QueryApprovedVersionsResponse.versions":
+	case "inference.inference.QueryDevshardApprovedVersionsResponse.versions":
 		if len(x.Versions) == 0 {
-			return protoreflect.ValueOfList(&_QueryApprovedVersionsResponse_1_list{})
+			return protoreflect.ValueOfList(&_QueryDevshardApprovedVersionsResponse_1_list{})
 		}
-		listValue := &_QueryApprovedVersionsResponse_1_list{list: &x.Versions}
+		listValue := &_QueryDevshardApprovedVersionsResponse_1_list{list: &x.Versions}
 		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsResponse does not contain field %s", descriptor.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsResponse does not contain field %s", descriptor.FullName()))
 	}
 }
 
@@ -87701,17 +87701,17 @@ func (x *fastReflection_QueryApprovedVersionsResponse) Get(descriptor protorefle
 // empty, read-only value, then it panics.
 //
 // Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryApprovedVersionsResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.QueryApprovedVersionsResponse.versions":
+	case "inference.inference.QueryDevshardApprovedVersionsResponse.versions":
 		lv := value.List()
-		clv := lv.(*_QueryApprovedVersionsResponse_1_list)
+		clv := lv.(*_QueryDevshardApprovedVersionsResponse_1_list)
 		x.Versions = *clv.list
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
@@ -87725,45 +87725,45 @@ func (x *fastReflection_QueryApprovedVersionsResponse) Set(fd protoreflect.Field
 // It panics if the field does not contain a composite type.
 //
 // Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryApprovedVersionsResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.QueryApprovedVersionsResponse.versions":
+	case "inference.inference.QueryDevshardApprovedVersionsResponse.versions":
 		if x.Versions == nil {
 			x.Versions = []*DevshardApprovedVersion{}
 		}
-		value := &_QueryApprovedVersionsResponse_1_list{list: &x.Versions}
+		value := &_QueryDevshardApprovedVersionsResponse_1_list{list: &x.Versions}
 		return protoreflect.ValueOfList(value)
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
 // NewField returns a new value that is assignable to the field
 // for the given descriptor. For scalars, this returns the default value.
 // For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_QueryApprovedVersionsResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.QueryApprovedVersionsResponse.versions":
+	case "inference.inference.QueryDevshardApprovedVersionsResponse.versions":
 		list := []*DevshardApprovedVersion{}
-		return protoreflect.ValueOfList(&_QueryApprovedVersionsResponse_1_list{list: &list})
+		return protoreflect.ValueOfList(&_QueryDevshardApprovedVersionsResponse_1_list{list: &list})
 	default:
 		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryApprovedVersionsResponse"))
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.QueryDevshardApprovedVersionsResponse"))
 		}
-		panic(fmt.Errorf("message inference.inference.QueryApprovedVersionsResponse does not contain field %s", fd.FullName()))
+		panic(fmt.Errorf("message inference.inference.QueryDevshardApprovedVersionsResponse does not contain field %s", fd.FullName()))
 	}
 }
 
 // WhichOneof reports which field within the oneof is populated,
 // returning nil if none are populated.
 // It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_QueryApprovedVersionsResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
 	switch d.FullName() {
 	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.QueryApprovedVersionsResponse", d.FullName()))
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.QueryDevshardApprovedVersionsResponse", d.FullName()))
 	}
 	panic("unreachable")
 }
@@ -87771,7 +87771,7 @@ func (x *fastReflection_QueryApprovedVersionsResponse) WhichOneof(d protoreflect
 // GetUnknown retrieves the entire list of unknown fields.
 // The caller may only mutate the contents of the RawFields
 // if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_QueryApprovedVersionsResponse) GetUnknown() protoreflect.RawFields {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) GetUnknown() protoreflect.RawFields {
 	return x.unknownFields
 }
 
@@ -87782,7 +87782,7 @@ func (x *fastReflection_QueryApprovedVersionsResponse) GetUnknown() protoreflect
 // An empty RawFields may be passed to clear the fields.
 //
 // SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_QueryApprovedVersionsResponse) SetUnknown(fields protoreflect.RawFields) {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) SetUnknown(fields protoreflect.RawFields) {
 	x.unknownFields = fields
 }
 
@@ -87794,7 +87794,7 @@ func (x *fastReflection_QueryApprovedVersionsResponse) SetUnknown(fields protore
 // message type, but the details are implementation dependent.
 // Validity is not part of the protobuf data model, and may not
 // be preserved in marshaling or other operations.
-func (x *fastReflection_QueryApprovedVersionsResponse) IsValid() bool {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) IsValid() bool {
 	return x != nil
 }
 
@@ -87804,9 +87804,9 @@ func (x *fastReflection_QueryApprovedVersionsResponse) IsValid() bool {
 // The returned methods type is identical to
 // "google.golang.org/protobuf/runtime/protoiface".Methods.
 // Consult the protoiface package documentation for details.
-func (x *fastReflection_QueryApprovedVersionsResponse) ProtoMethods() *protoiface.Methods {
+func (x *fastReflection_QueryDevshardApprovedVersionsResponse) ProtoMethods() *protoiface.Methods {
 	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*QueryApprovedVersionsResponse)
+		x := input.Message.Interface().(*QueryDevshardApprovedVersionsResponse)
 		if x == nil {
 			return protoiface.SizeOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -87834,7 +87834,7 @@ func (x *fastReflection_QueryApprovedVersionsResponse) ProtoMethods() *protoifac
 	}
 
 	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*QueryApprovedVersionsResponse)
+		x := input.Message.Interface().(*QueryDevshardApprovedVersionsResponse)
 		if x == nil {
 			return protoiface.MarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -87880,7 +87880,7 @@ func (x *fastReflection_QueryApprovedVersionsResponse) ProtoMethods() *protoifac
 		}, nil
 	}
 	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*QueryApprovedVersionsResponse)
+		x := input.Message.Interface().(*QueryDevshardApprovedVersionsResponse)
 		if x == nil {
 			return protoiface.UnmarshalOutput{
 				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -87912,10 +87912,10 @@ func (x *fastReflection_QueryApprovedVersionsResponse) ProtoMethods() *protoifac
 			fieldNum := int32(wire >> 3)
 			wireType := int(wire & 0x7)
 			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryApprovedVersionsResponse: wiretype end group for non-group")
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryDevshardApprovedVersionsResponse: wiretype end group for non-group")
 			}
 			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryApprovedVersionsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: QueryDevshardApprovedVersionsResponse: illegal tag %d (wire type %d)", fieldNum, wire)
 			}
 			switch fieldNum {
 			case 1:
@@ -95155,14 +95155,14 @@ func (x *QueryListClaimRecipientsResponse) GetEntries() []*ClaimRecipientEntry {
 	return nil
 }
 
-type QueryApprovedVersionsRequest struct {
+type QueryDevshardApprovedVersionsRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 }
 
-func (x *QueryApprovedVersionsRequest) Reset() {
-	*x = QueryApprovedVersionsRequest{}
+func (x *QueryDevshardApprovedVersionsRequest) Reset() {
+	*x = QueryDevshardApprovedVersionsRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_inference_query_proto_msgTypes[184]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -95170,18 +95170,18 @@ func (x *QueryApprovedVersionsRequest) Reset() {
 	}
 }
 
-func (x *QueryApprovedVersionsRequest) String() string {
+func (x *QueryDevshardApprovedVersionsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryApprovedVersionsRequest) ProtoMessage() {}
+func (*QueryDevshardApprovedVersionsRequest) ProtoMessage() {}
 
-// Deprecated: Use QueryApprovedVersionsRequest.ProtoReflect.Descriptor instead.
-func (*QueryApprovedVersionsRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use QueryDevshardApprovedVersionsRequest.ProtoReflect.Descriptor instead.
+func (*QueryDevshardApprovedVersionsRequest) Descriptor() ([]byte, []int) {
 	return file_inference_inference_query_proto_rawDescGZIP(), []int{184}
 }
 
-type QueryApprovedVersionsResponse struct {
+type QueryDevshardApprovedVersionsResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
@@ -95189,8 +95189,8 @@ type QueryApprovedVersionsResponse struct {
 	Versions []*DevshardApprovedVersion `protobuf:"bytes,1,rep,name=versions,proto3" json:"versions,omitempty"`
 }
 
-func (x *QueryApprovedVersionsResponse) Reset() {
-	*x = QueryApprovedVersionsResponse{}
+func (x *QueryDevshardApprovedVersionsResponse) Reset() {
+	*x = QueryDevshardApprovedVersionsResponse{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_inference_inference_query_proto_msgTypes[185]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -95198,18 +95198,18 @@ func (x *QueryApprovedVersionsResponse) Reset() {
 	}
 }
 
-func (x *QueryApprovedVersionsResponse) String() string {
+func (x *QueryDevshardApprovedVersionsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*QueryApprovedVersionsResponse) ProtoMessage() {}
+func (*QueryDevshardApprovedVersionsResponse) ProtoMessage() {}
 
-// Deprecated: Use QueryApprovedVersionsResponse.ProtoReflect.Descriptor instead.
-func (*QueryApprovedVersionsResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use QueryDevshardApprovedVersionsResponse.ProtoReflect.Descriptor instead.
+func (*QueryDevshardApprovedVersionsResponse) Descriptor() ([]byte, []int) {
 	return file_inference_inference_query_proto_rawDescGZIP(), []int{185}
 }
 
-func (x *QueryApprovedVersionsResponse) GetVersions() []*DevshardApprovedVersion {
+func (x *QueryDevshardApprovedVersionsResponse) GetVersions() []*DevshardApprovedVersion {
 	if x != nil {
 		return x.Versions
 	}
@@ -96690,16 +96690,17 @@ var file_inference_inference_query_proto_rawDesc = []byte{
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
 	0x2e, 0x43, 0x6c, 0x61, 0x69, 0x6d, 0x52, 0x65, 0x63, 0x69, 0x70, 0x69, 0x65, 0x6e, 0x74, 0x45,
 	0x6e, 0x74, 0x72, 0x79, 0x42, 0x04, 0xc8, 0xde, 0x1f, 0x00, 0x52, 0x07, 0x65, 0x6e, 0x74, 0x72,
-	0x69, 0x65, 0x73, 0x22, 0x1e, 0x0a, 0x1c, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x70, 0x70, 0x72,
-	0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x52, 0x65, 0x71, 0x75,
-	0x65, 0x73, 0x74, 0x22, 0x69, 0x0a, 0x1d, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x70, 0x70, 0x72,
+	0x69, 0x65, 0x73, 0x22, 0x26, 0x0a, 0x24, 0x51, 0x75, 0x65, 0x72, 0x79, 0x44, 0x65, 0x76, 0x73,
+	0x68, 0x61, 0x72, 0x64, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72, 0x73,
+	0x69, 0x6f, 0x6e, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x22, 0x71, 0x0a, 0x25, 0x51,
+	0x75, 0x65, 0x72, 0x79, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x41, 0x70, 0x70, 0x72,
 	0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x52, 0x65, 0x73, 0x70,
 	0x6f, 0x6e, 0x73, 0x65, 0x12, 0x48, 0x0a, 0x08, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73,
 	0x18, 0x01, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
 	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x76,
 	0x73, 0x68, 0x61, 0x72, 0x64, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72,
-	0x73, 0x69, 0x6f, 0x6e, 0x52, 0x08, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x32, 0xfe,
-	0x92, 0x01, 0x0a, 0x05, 0x51, 0x75, 0x65, 0x72, 0x79, 0x12, 0x8f, 0x01, 0x0a, 0x06, 0x50, 0x61,
+	0x73, 0x69, 0x6f, 0x6e, 0x52, 0x08, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x32, 0x9f,
+	0x93, 0x01, 0x0a, 0x05, 0x51, 0x75, 0x65, 0x72, 0x79, 0x12, 0x8f, 0x01, 0x0a, 0x06, 0x50, 0x61,
 	0x72, 0x61, 0x6d, 0x73, 0x12, 0x27, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
 	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79,
 	0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x28, 0x2e,
@@ -97863,31 +97864,33 @@ var file_inference_inference_query_proto_rawDesc = []byte{
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
 	0x65, 0x2f, 0x6c, 0x69, 0x73, 0x74, 0x5f, 0x63, 0x6c, 0x61, 0x69, 0x6d, 0x5f, 0x72, 0x65, 0x63,
 	0x69, 0x70, 0x69, 0x65, 0x6e, 0x74, 0x73, 0x2f, 0x7b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69,
-	0x70, 0x61, 0x6e, 0x74, 0x7d, 0x12, 0xb8, 0x01, 0x0a, 0x10, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76,
-	0x65, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x12, 0x31, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56, 0x65,
-	0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x32, 0x2e,
+	0x70, 0x61, 0x6e, 0x74, 0x7d, 0x12, 0xd9, 0x01, 0x0a, 0x18, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61,
+	0x72, 0x64, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f,
+	0x6e, 0x73, 0x12, 0x39, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x44, 0x65,
+	0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56, 0x65,
+	0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x3a, 0x2e,
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65,
-	0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
-	0x65, 0x22, 0x3d, 0x82, 0xd3, 0xe4, 0x93, 0x02, 0x37, 0x12, 0x35, 0x2f, 0x70, 0x72, 0x6f, 0x64,
-	0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x61,
-	0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73,
-	0x42, 0xb8, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0a, 0x51, 0x75,
-	0x65, 0x72, 0x79, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d,
-	0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61,
-	0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f,
-	0x74, 0x6f, 0x33,
+	0x6e, 0x63, 0x65, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72,
+	0x64, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e,
+	0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x46, 0x82, 0xd3, 0xe4, 0x93, 0x02,
+	0x40, 0x12, 0x3e, 0x2f, 0x70, 0x72, 0x6f, 0x64, 0x75, 0x63, 0x74, 0x73, 0x63, 0x69, 0x65, 0x6e,
+	0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x64, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x5f,
+	0x61, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e,
+	0x73, 0x42, 0xb8, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0a, 0x51,
+	0x75, 0x65, 0x72, 0x79, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73,
+	0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74,
+	0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -98088,8 +98091,8 @@ var file_inference_inference_query_proto_goTypes = []interface{}{
 	(*QueryMaintenanceSchedulabilityResponse)(nil),     // 181: inference.inference.QueryMaintenanceSchedulabilityResponse
 	(*QueryListClaimRecipientsRequest)(nil),            // 182: inference.inference.QueryListClaimRecipientsRequest
 	(*QueryListClaimRecipientsResponse)(nil),           // 183: inference.inference.QueryListClaimRecipientsResponse
-	(*QueryApprovedVersionsRequest)(nil),               // 184: inference.inference.QueryApprovedVersionsRequest
-	(*QueryApprovedVersionsResponse)(nil),              // 185: inference.inference.QueryApprovedVersionsResponse
+	(*QueryDevshardApprovedVersionsRequest)(nil),       // 184: inference.inference.QueryDevshardApprovedVersionsRequest
+	(*QueryDevshardApprovedVersionsResponse)(nil),      // 185: inference.inference.QueryDevshardApprovedVersionsResponse
 	(*QueryDebugStatsResponse_TemporaryTimeStat)(nil),  // 186: inference.inference.QueryDebugStatsResponse.TemporaryTimeStat
 	(*QueryDebugStatsResponse_TemporaryEpochStat)(nil), // 187: inference.inference.QueryDebugStatsResponse.TemporaryEpochStat
 	(*Params)(nil),                     // 188: inference.inference.Params
@@ -98243,7 +98246,7 @@ var file_inference_inference_query_proto_depIdxs = []int32{
 	226, // 101: inference.inference.QueryMaintenanceStatusResponse.active_reservation:type_name -> inference.inference.MaintenanceReservation
 	226, // 102: inference.inference.QueryMaintenanceStatusResponse.scheduled_reservation:type_name -> inference.inference.MaintenanceReservation
 	228, // 103: inference.inference.QueryListClaimRecipientsResponse.entries:type_name -> inference.inference.ClaimRecipientEntry
-	229, // 104: inference.inference.QueryApprovedVersionsResponse.versions:type_name -> inference.inference.DevshardApprovedVersion
+	229, // 104: inference.inference.QueryDevshardApprovedVersionsResponse.versions:type_name -> inference.inference.DevshardApprovedVersion
 	210, // 105: inference.inference.QueryDebugStatsResponse.TemporaryTimeStat.stats:type_name -> inference.inference.DeveloperStatsByTime
 	230, // 106: inference.inference.QueryDebugStatsResponse.TemporaryEpochStat.stats:type_name -> inference.inference.DeveloperStatsByEpoch
 	0,   // 107: inference.inference.Query.Params:input_type -> inference.inference.QueryParamsRequest
@@ -98332,7 +98335,7 @@ var file_inference_inference_query_proto_depIdxs = []int32{
 	178, // 190: inference.inference.Query.MaintenanceConcurrency:input_type -> inference.inference.QueryMaintenanceConcurrencyRequest
 	180, // 191: inference.inference.Query.MaintenanceSchedulability:input_type -> inference.inference.QueryMaintenanceSchedulabilityRequest
 	182, // 192: inference.inference.Query.ListClaimRecipients:input_type -> inference.inference.QueryListClaimRecipientsRequest
-	184, // 193: inference.inference.Query.ApprovedVersions:input_type -> inference.inference.QueryApprovedVersionsRequest
+	184, // 193: inference.inference.Query.DevshardApprovedVersions:input_type -> inference.inference.QueryDevshardApprovedVersionsRequest
 	1,   // 194: inference.inference.Query.Params:output_type -> inference.inference.QueryParamsResponse
 	3,   // 195: inference.inference.Query.Inference:output_type -> inference.inference.QueryGetInferenceResponse
 	5,   // 196: inference.inference.Query.InferenceAll:output_type -> inference.inference.QueryAllInferenceResponse
@@ -98419,7 +98422,7 @@ var file_inference_inference_query_proto_depIdxs = []int32{
 	179, // 277: inference.inference.Query.MaintenanceConcurrency:output_type -> inference.inference.QueryMaintenanceConcurrencyResponse
 	181, // 278: inference.inference.Query.MaintenanceSchedulability:output_type -> inference.inference.QueryMaintenanceSchedulabilityResponse
 	183, // 279: inference.inference.Query.ListClaimRecipients:output_type -> inference.inference.QueryListClaimRecipientsResponse
-	185, // 280: inference.inference.Query.ApprovedVersions:output_type -> inference.inference.QueryApprovedVersionsResponse
+	185, // 280: inference.inference.Query.DevshardApprovedVersions:output_type -> inference.inference.QueryDevshardApprovedVersionsResponse
 	194, // [194:281] is the sub-list for method output_type
 	107, // [107:194] is the sub-list for method input_type
 	107, // [107:107] is the sub-list for extension type_name
@@ -100672,7 +100675,7 @@ func file_inference_inference_query_proto_init() {
 			}
 		}
 		file_inference_inference_query_proto_msgTypes[184].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryApprovedVersionsRequest); i {
+			switch v := v.(*QueryDevshardApprovedVersionsRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -100684,7 +100687,7 @@ func file_inference_inference_query_proto_init() {
 			}
 		}
 		file_inference_inference_query_proto_msgTypes[185].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*QueryApprovedVersionsResponse); i {
+			switch v := v.(*QueryDevshardApprovedVersionsResponse); i {
 			case 0:
 				return &v.state
 			case 1:

@@ -216,12 +216,12 @@ func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequ
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
 }
 
-func (m *MockQueryClient) ApprovedVersions(ctx context.Context, req *types.QueryApprovedVersionsRequest, opts ...grpc.CallOption) (*types.QueryApprovedVersionsResponse, error) {
+func (m *MockQueryClient) DevshardApprovedVersions(ctx context.Context, req *types.QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*types.QueryDevshardApprovedVersionsResponse, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.QueryApprovedVersionsResponse), args.Error(1)
+	return args.Get(0).(*types.QueryDevshardApprovedVersionsResponse), args.Error(1)
 }
 
 const integrationTestSeedParticipant = "some-address"

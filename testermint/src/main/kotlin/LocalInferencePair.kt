@@ -576,8 +576,8 @@ data class LocalInferencePair(
         return this.mostRecentParams ?: error("No inference params available")
     }
 
-    fun getApprovedVersions(): List<DevshardApprovedVersion> {
-        return this.node.queryApprovedVersions().versions ?: emptyList()
+    fun getDevshardApprovedVersions(): List<DevshardApprovedVersion> {
+        return this.node.queryDevshardApprovedVersions().versions ?: emptyList()
     }
 
     fun getEpochData(): EpochResponse {

@@ -31,7 +31,7 @@ import (
 type ChainStateClient interface {
 	EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error)
 	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
-	ApprovedVersions(ctx context.Context, req *types.QueryApprovedVersionsRequest, opts ...grpc.CallOption) (*types.QueryApprovedVersionsResponse, error)
+	DevshardApprovedVersions(ctx context.Context, req *types.QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*types.QueryDevshardApprovedVersionsResponse, error)
 	ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeedsRequest, opts ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error)
 }
 
@@ -265,7 +265,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 			if params.Params.DevshardEscrowParams != nil {
 				cache := apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams, nil)
-				devshardVersions, verr := d.queryClient.ApprovedVersions(ctx, &types.QueryApprovedVersionsRequest{})
+				devshardVersions, verr := d.queryClient.DevshardApprovedVersions(ctx, &types.QueryDevshardApprovedVersionsRequest{})
 				if verr != nil || devshardVersions == nil {
 					logging.Error("Failed to get approved devshard versions, keeping last known list", types.Config, "error", verr)
 					cache.Versions = d.configManager.GetDevshardVersions().Versions

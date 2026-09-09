@@ -116,13 +116,13 @@ func TestGenesis_ApprovedVersionsRoundTrip(t *testing.T) {
 		Sha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
 	}
 	genesisState := mocks.StubGenesisState()
-	genesisState.ApprovedVersions = []*types.DevshardApprovedVersion{v2, v1}
+	genesisState.DevshardApprovedVersions = []*types.DevshardApprovedVersion{v2, v1}
 
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)
-	require.Len(t, got.ApprovedVersions, 2)
-	require.Equal(t, "v1", got.ApprovedVersions[0].Name)
-	require.Equal(t, "v2", got.ApprovedVersions[1].Name)
+	require.Len(t, got.DevshardApprovedVersions, 2)
+	require.Equal(t, "v1", got.DevshardApprovedVersions[0].Name)
+	require.Equal(t, "v2", got.DevshardApprovedVersions[1].Name)
 	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
 }
 
@@ -136,13 +136,13 @@ func TestGenesis_LegacyParamsApprovedVersionsMigrated(t *testing.T) {
 		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
 	genesisState := mocks.StubGenesisState()
-	genesisState.ApprovedVersions = nil
+	genesisState.DevshardApprovedVersions = nil
 	genesisState.Params.DevshardEscrowParams.ApprovedVersions = []*types.DevshardApprovedVersion{legacy}
 
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)
-	require.Len(t, got.ApprovedVersions, 1)
-	require.Equal(t, "v-legacy", got.ApprovedVersions[0].Name)
+	require.Len(t, got.DevshardApprovedVersions, 1)
+	require.Equal(t, "v-legacy", got.DevshardApprovedVersions[0].Name)
 	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
 }
 
@@ -162,7 +162,7 @@ func TestGenesis_ExportPromotesLeftoverParamsApprovedVersions(t *testing.T) {
 	require.NoError(t, k.SetParams(ctx, params))
 
 	got := inference.ExportGenesis(ctx, k)
-	require.Len(t, got.ApprovedVersions, 1)
-	require.Equal(t, "v-legacy", got.ApprovedVersions[0].Name)
+	require.Len(t, got.DevshardApprovedVersions, 1)
+	require.Equal(t, "v-legacy", got.DevshardApprovedVersions[0].Name)
 	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
 }

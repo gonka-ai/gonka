@@ -78,7 +78,7 @@ class VersiondTests : TestermintTest() {
     @Order(1)
     fun `approved versions empty on startup`() {
         logSection("Verifying chain has no approved devshard versions")
-        val approvedVersions = genesis.getApprovedVersions()
+        val approvedVersions = genesis.getDevshardApprovedVersions()
         assertThat(approvedVersions)
             .withFailMessage("Expected no approved devshard versions in the dedicated store")
             .isEmpty()
@@ -109,7 +109,7 @@ class VersiondTests : TestermintTest() {
         )
 
         logSection("Verifying approved devshard versions updated")
-        val versions = genesis.getApprovedVersions()
+        val versions = genesis.getDevshardApprovedVersions()
         assertThat(versions).hasSize(1)
         assertThat(versions[0].name).isEqualTo(versionName)
         assertThat(versions[0].sha256).isEqualTo(testappSha256)
@@ -175,7 +175,7 @@ class VersiondTests : TestermintTest() {
         )
 
         logSection("Verifying chain has both versions")
-        val versions = genesis.getApprovedVersions()
+        val versions = genesis.getDevshardApprovedVersions()
         assertThat(versions).hasSize(2)
         assertThat(versions.map { it.name }).containsExactlyInAnyOrder(v1, v2)
 
@@ -226,7 +226,7 @@ class VersiondTests : TestermintTest() {
 
         try {
             logSection("Submitting governance proposal to update $versionName to rollout sha")
-            val currentVersions = genesis.getApprovedVersions()
+            val currentVersions = genesis.getDevshardApprovedVersions()
             assertThat(currentVersions.any { it.name == versionName && it.sha256 == testappSha256 })
                 .withFailMessage("Expected $versionName to start on sha $testappSha256")
                 .isTrue()
@@ -290,7 +290,7 @@ class VersiondTests : TestermintTest() {
         )
 
         logSection("Verifying $removed is gone from the dedicated store")
-        val versions = genesis.getApprovedVersions()
+        val versions = genesis.getDevshardApprovedVersions()
         assertThat(versions.map { it.name }).doesNotContain(removed)
         assertThat(versions.map { it.name }).contains(TESTAPP_VERSION)
 

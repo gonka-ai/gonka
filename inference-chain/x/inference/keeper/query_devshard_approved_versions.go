@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func (k Keeper) ApprovedVersions(goCtx context.Context, req *types.QueryApprovedVersionsRequest) (*types.QueryApprovedVersionsResponse, error) {
+func (k Keeper) DevshardApprovedVersions(goCtx context.Context, req *types.QueryDevshardApprovedVersionsRequest) (*types.QueryDevshardApprovedVersionsResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
@@ -25,5 +25,5 @@ func (k Keeper) ApprovedVersions(goCtx context.Context, req *types.QueryApproved
 		v := versions[i]
 		out = append(out, &v)
 	}
-	return &types.QueryApprovedVersionsResponse{Versions: out}, nil
+	return &types.QueryDevshardApprovedVersionsResponse{Versions: out}, nil
 }

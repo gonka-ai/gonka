@@ -43,12 +43,12 @@ func (m *mockParamsQueryClient) ListRandomSeeds(ctx context.Context, req *types.
 	return args.Get(0).(*types.QueryRandomSeedsResponse), args.Error(1)
 }
 
-func (m *mockParamsQueryClient) ApprovedVersions(ctx context.Context, req *types.QueryApprovedVersionsRequest, opts ...grpc.CallOption) (*types.QueryApprovedVersionsResponse, error) {
+func (m *mockParamsQueryClient) DevshardApprovedVersions(ctx context.Context, req *types.QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*types.QueryDevshardApprovedVersionsResponse, error) {
 	args := m.Called(ctx, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.QueryApprovedVersionsResponse), args.Error(1)
+	return args.Get(0).(*types.QueryDevshardApprovedVersionsResponse), args.Error(1)
 }
 
 func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*OnNewBlockDispatcher, *apiconfig.ConfigManager) {
@@ -58,7 +58,7 @@ func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*On
 	cm.EnsureRuntimeConfigNotifier()
 	phaseTracker := &chainphase.ChainPhaseTracker{}
 
-	qc.On("ApprovedVersions", mock.Anything, mock.Anything).Return(&types.QueryApprovedVersionsResponse{
+	qc.On("DevshardApprovedVersions", mock.Anything, mock.Anything).Return(&types.QueryDevshardApprovedVersionsResponse{
 		Versions: []*types.DevshardApprovedVersion{
 			{Name: "v1", Binary: "https://example/v1", Sha256: "sha1"},
 		},
@@ -217,7 +217,7 @@ func TestOnNewBlockDispatcher_ApplyRuntimeConfigBlockIfChanged_Notifies(t *testi
 	require.Equal(t, int64(200), cm.RuntimeParamsBlockHeight())
 }
 
-func TestOnNewBlockDispatcher_KeepsVersionsOnApprovedVersionsError(t *testing.T) {
+func TestOnNewBlockDispatcher_KeepsVersionsOnDevshardApprovedVersionsError(t *testing.T) {
 	qc := &mockParamsQueryClient{}
 	dispatcher, cm := newRuntimeCacheTestDispatcher(t, qc)
 
@@ -230,11 +230,11 @@ func TestOnNewBlockDispatcher_KeepsVersionsOnApprovedVersionsError(t *testing.T)
 	})
 
 	for i := len(qc.ExpectedCalls) - 1; i >= 0; i-- {
-		if qc.ExpectedCalls[i].Method == "ApprovedVersions" {
+		if qc.ExpectedCalls[i].Method == "DevshardApprovedVersions" {
 			qc.ExpectedCalls = append(qc.ExpectedCalls[:i], qc.ExpectedCalls[i+1:]...)
 		}
 	}
-	qc.On("ApprovedVersions", mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded).Once()
+	qc.On("DevshardApprovedVersions", mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded).Once()
 	qc.On("Params", mock.Anything, mock.Anything).Return(
 		devshardParamsResponse(false, 30000), nil,
 	).Once()

@@ -432,8 +432,8 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "show-devshard-escrow", id.toString()))
     }
 
-    fun queryApprovedVersions(): ApprovedVersionsWrapper = wrapLog("queryApprovedVersions", false) {
-        execAndParse(listOf("query", "inference", "approved-versions"))
+    fun queryDevshardApprovedVersions(): DevshardApprovedVersionsWrapper = wrapLog("queryDevshardApprovedVersions", false) {
+        execAndParse(listOf("query", "inference", "devshard-approved-versions"))
     }
 
     fun queryPreservedNodesSnapshot(): PreservedNodesSnapshotQueryResponse =
