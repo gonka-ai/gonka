@@ -167,6 +167,7 @@ type Host struct {
 	validationClosed      bool
 	validationCtx         context.Context
 	validationCancel      context.CancelFunc
+	validationWorkers     sync.WaitGroup
 
 	maxNonce devshard.MaxNonceProvider // nil = do not enforce
 
@@ -306,12 +307,13 @@ func (h *Host) Start() {
 	})
 }
 
-// Close releases host-owned background workers. It is safe to call multiple
-// times and safe to call on hosts that were never started.
+// Close cancels in-flight Validate and waits for workers to unwind. Cancel
+// aborts ML immediately; the wait is only so Release can DELETE the pending
+// lease while storage is still open. It is safe to call multiple times and
+// safe to call on hosts that were never started.
 func (h *Host) Close() {
 	h.validationCloseOnce.Do(func() {
 		h.validationLifecycleMu.Lock()
-		defer h.validationLifecycleMu.Unlock()
 		h.validationClosed = true
 		if h.validationCancel != nil {
 			h.validationCancel()
@@ -321,6 +323,8 @@ func (h *Host) Close() {
 			close(h.validationQueue)
 			h.validationQueue = nil
 		}
+		h.validationLifecycleMu.Unlock()
+		h.validationWorkers.Wait()
 	})
 }
 
@@ -1274,8 +1278,10 @@ func (h *Host) collectValidationJobs() []validateJob {
 }
 
 func (h *Host) startValidationWorkers(q <-chan validateJob, count int) {
+	h.validationWorkers.Add(count)
 	for i := 0; i < count; i++ {
 		go func() {
+			defer h.validationWorkers.Done()
 			for job := range q {
 				h.validateAsync(h.validationJobContext(), job)
 			}

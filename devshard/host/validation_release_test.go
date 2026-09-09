@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -332,6 +333,67 @@ func TestHost_ValidateAsync_CanceledReleases(t *testing.T) {
 
 	_, _, release := rec.counts()
 	require.Equal(t, 1, release, "aborted Validate must free the lease for sibling re-acquire")
+}
+
+// releaseOnErrorEngine mimics LeaseValidator: DELETE the pending row when
+// inner Validate fails, including context cancel on shutdown.
+type releaseOnErrorEngine struct {
+	inner    devshard.ValidationEngine
+	releases atomic.Int32
+}
+
+func (e *releaseOnErrorEngine) Validate(ctx context.Context, req devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	res, err := e.inner.Validate(ctx, req)
+	if err != nil {
+		e.releases.Add(1)
+	}
+	return res, err
+}
+
+func TestHost_CloseWaitsForInFlightLeaseRelease(t *testing.T) {
+	inner := newBlockingValidationEngine(1)
+	engine := &releaseOnErrorEngine{inner: inner}
+	h, _, _ := newLeaseReleaseHost(t, engine, nil)
+	h.Start()
+	t.Cleanup(h.Close)
+
+	h.validationLifecycleMu.RLock()
+	q := h.validationQueue
+	h.validationLifecycleMu.RUnlock()
+	require.NotNil(t, q)
+	q <- testValidateJob()
+
+	select {
+	case <-inner.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Validate did not start")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		h.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close did not return after canceling in-flight Validate")
+	}
+	require.Equal(t, int32(1), engine.releases.Load(), "Close must wait until abort Release runs while storage is still open")
+}
+
+func TestHost_CloseWithoutStartDoesNotBlock(t *testing.T) {
+	h, _, _ := newLeaseReleaseHost(t, &scriptedValidationEngine{}, nil)
+	closed := make(chan struct{})
+	go func() {
+		h.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("Close of an unstarted host blocked")
+	}
 }
 
 func TestHost_ValidateAsync_ClosedDoesNotRelease(t *testing.T) {
