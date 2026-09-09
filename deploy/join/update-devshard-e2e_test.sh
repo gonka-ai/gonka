@@ -56,17 +56,17 @@ for name in versiond versiond2 versiond-router proxy proxy-policy proxy-policy2 
     ! docker container inspect "$name" >/dev/null 2>&1 || fail \
         "container $name exists; this test needs the fixed names of the release files"
 done
-previous_tags_before=$(docker image ls --format '{{.Repository}}:{{.Tag}}' 'gonka-previous/*' 2>/dev/null || true)
+deployment_key=$(printf '%s\n%s\n' "$(docker info --format '{{.ID}}')" "$project" | sha256sum | cut -d ' ' -f 1)
 
 cleanup() {
     set +e
     docker ps -aq --filter "label=com.docker.compose.project.working_dir=$join" | xargs -r docker rm -f >/dev/null 2>&1
+    docker ps -aq --filter "label=com.docker.compose.project=$project" | xargs -r docker rm -f >/dev/null 2>&1
     docker volume ls -q --filter "label=com.docker.compose.project=$project" | xargs -r docker volume rm >/dev/null 2>&1
     docker network ls -q --filter "label=com.docker.compose.project=$project" | xargs -r docker network rm >/dev/null 2>&1
     docker network rm "$front" "$back" "$policy_front" >/dev/null 2>&1
-    docker image ls --format '{{.Repository}}:{{.Tag}}' 'gonka-previous/*' 2>/dev/null | while read -r tag; do
-        grep -qx "$tag" <<<"$previous_tags_before" || docker image rm "$tag" >/dev/null 2>&1
-    done
+    docker image ls --format '{{.Repository}}:{{.Tag}}' "gonka-previous/${deployment_key:0:16}/*" 2>/dev/null | \
+        xargs -r docker image rm >/dev/null 2>&1
     docker image ls --format '{{.Repository}}:{{.Tag}}' "gonka/versiond-router-previous" 2>/dev/null | grep -F ":$project-" | \
         xargs -r docker image rm >/dev/null 2>&1
     docker image rm "$stub_image" "$router_image" "$proxy_router_image" "$policy_image" >/dev/null 2>&1
@@ -404,6 +404,28 @@ updater=("$join/update-devshard.sh")
 grep -q 'Topology: ha' "$tmpdir/check.log" || fail "--check did not detect the HA topology: $(cat "$tmpdir/check.log")"
 [[ $(docker inspect --format '{{.Id}}' devshard-postgres) == "$v4_postgres_id" ]] || fail "--check changed the deployment"
 
+# Kill the updater after removing the old PostgreSQL container. Recovery must
+# retain its anonymous source volume and complete migration before preflight.
+cat >"$tmpdir/kill-pg" <<'SH'
+#!/usr/bin/env bash
+if [[ " $* " == *" up -d "* && ${*: -1} == devshard-postgres && ! -f $KILL_MARKER ]]; then
+    touch "$KILL_MARKER"
+    docker stop devshard-postgres >/dev/null
+    docker rm devshard-postgres >/dev/null
+    kill -KILL "$PPID"
+    exit 137
+fi
+exec docker "$@"
+SH
+chmod +x "$tmpdir/kill-pg"
+set +e
+DOCKER_BIN="$tmpdir/kill-pg" KILL_MARKER="$tmpdir/killed-pg" "${updater[@]}" >"$tmpdir/update.log" 2>&1
+killed_status=$?
+set -e
+[[ $killed_status == 137 && -f $UPDATE_STATE_DIR/pending/postgres.json ]] || fail "PostgreSQL interruption did not retain a durable step"
+! docker inspect devshard-postgres >/dev/null 2>&1 || fail "PostgreSQL was not removed by the failpoint"
+echo "update-devshard-e2e_test: killed PostgreSQL replacement retained its recovery journal"
+
 # Fail the route-aware admission boundary after the new public stack starts.
 # The previous nginx must serve again before retry; the old router stays up.
 docker inspect proxy >"$tmpdir/old-proxy.json"
@@ -509,6 +531,35 @@ grep -q 'wrote a challenge' "$tmpdir/update.log" || \
     fail "the rerun did not prove the database lineage through the replicas: $(grep -i 'postgres' "$tmpdir/update.log")"
 converged "rerun"
 
+# An ordinary update must reject a different PGDATA bind before replacing
+# the running database, even if the current DB passes the storage proof.
+pg_before=$(container_of devshard-postgres)
+cp "$join/config.env" "$tmpdir/config.before"
+printf '\nDEVSHARD_POSTGRES_DATA_DIR=%s\n' "$tmpdir/other-database" >>"$join/config.env"
+if "${updater[@]}" >"$tmpdir/update.log" 2>&1; then fail "accepted a different PostgreSQL mount"; fi
+grep -q 'PGDATA or its mount changed' "$tmpdir/update.log" || fail "wrong PGDATA refusal"
+[[ $(container_of devshard-postgres) == "$pg_before" ]] || fail "changed PostgreSQL before refusing its mount"
+cp "$tmpdir/config.before" "$join/config.env"
+echo "update-devshard-e2e_test: changed PostgreSQL mount refused before replacement"
+
+# Generic /readyz remains healthy, but this candidate loses v5. The router
+# must reject that member before commit, restore it, and leave its peer alone.
+peer_before=$(container_of versiond)
+# Use a separate, supported Compose override instead of altering the image.
+cat >"$join/candidate.yml" <<'YAML'
+services:
+  versiond2:
+    environment:
+      SERVES: v4
+YAML
+if COMPOSE_FILE="$join/docker-compose.yml:$join/docker-compose.versiond.yml:$join/candidate.yml" \
+    "${updater[@]}" >"$tmpdir/update.log" 2>&1; then fail "accepted a healthy candidate without v5"; fi
+grep -q 'versiond member gate failed' "$tmpdir/update.log" || fail "did not reach the per-version candidate gate"
+[[ ! -d $UPDATE_STATE_DIR/pending ]] || fail "candidate rollback remains pending"
+[[ $(container_of versiond) == "$peer_before" ]] || fail "stopped the next replica before admitting the candidate"
+curl --fail --silent "http://127.0.0.1:$api_port/devshard/v5/healthz" >/dev/null || fail "lost the v5 public route"
+echo "update-devshard-e2e_test: healthy candidate missing v5 was rolled back before the next replica"
+
 # --- a run killed during the replica step converges on the next one -------------
 # A configuration change makes the replica step do real work again.
 sed -i 's/^VERSIOND_STOP_GRACE_PERIOD=.*/VERSIOND_STOP_GRACE_PERIOD=11s/' "$join/config.env"
@@ -523,10 +574,10 @@ grep -q 'Step: versiond replicas' "$tmpdir/update.log" || fail "the updater neve
 sleep 2
 kill -9 "$updater_pid" 2>/dev/null || true
 wait "$updater_pid" 2>/dev/null || true
-# Whatever Compose command was in flight finishes or fails on its own; the
-# next run must cope with either.
+# A child Compose/fleet check inherits the deployment lock and can finish
+# after its parent is killed. Wait for that operation, not only for Compose.
 for _ in $(seq 120); do
-    pgrep -f "compose.*--project-name $project " >/dev/null 2>&1 || break
+    flock -n "/tmp/gonka-deployment-$deployment_key.lock" true && break
     sleep 1
 done
 "${updater[@]}" >"$tmpdir/update.log" 2>&1 || fail "the run after a killed run failed"

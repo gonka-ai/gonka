@@ -547,6 +547,7 @@ check_connection_budget() {
     echo "PostgreSQL: connection budget $required fits $available available connections"
 }
 
+proof_documents=()
 if [[ $topology == ha && ${UPDATE_SKIP_POSTGRES_PROBE:-false} != true ]]; then
     probe_needed=true
     if [[ $postgres_mode == local ]]; then
@@ -662,6 +663,8 @@ if [[ $postgres_mode == local ]]; then
         | .[0].source // ""' <<<"$rendered")
     [[ -n $postgres_target ]] || fail \
         "devshard-postgres must bind-mount its data directory at /var/lib/postgresql/gonka"
+    postgres_storage=$(python3 "$state_helper" postgres-storage "$postgres_container" <<<"$rendered") || \
+        fail "PostgreSQL storage validation failed before replacement"
     if [[ -n $postgres_container ]]; then
         [[ -x $migration_preflight_bin ]] || fail \
             "missing $migration_preflight_bin"
@@ -669,6 +672,14 @@ if [[ $postgres_mode == local ]]; then
         DOCKER_BIN=$docker_bin POSTGRES_MIGRATION_HELPER_IMAGE=$postgres_helper_image \
             "$migration_preflight_bin" \
             --source-container "$postgres_container" --target-dir "$postgres_target"
+        if [[ $postgres_storage == migrate ]]; then
+            # A completed old copy cannot stand in for the live v4 source.
+            # An interrupted copy is resumed using its saved journal instead.
+            source_image=$("$docker_bin" inspect --format '{{.Image}}' "$postgres_container") || fail "cannot inspect PostgreSQL image"
+            "$docker_bin" run --rm --network none --mount "type=bind,src=$postgres_target,dst=/target,readonly" \
+                --entrypoint sh "$source_image" -ec 'test ! -e /target/data/PG_VERSION && test ! -e /target/.gonka-copy-complete' || \
+                fail "the v4 migration target already contains a copy; verify it during maintenance before replacing the running database"
+        fi
     fi
 fi
 
@@ -684,15 +695,6 @@ if [[ $check_only == true ]]; then
 fi
 
 # --- update -----------------------------------------------------------------
-
-image_variable() {
-    case $1 in
-        versiond*) printf 'VERSIOND_IMAGE\n' ;;
-        devshard-postgres) printf 'DEVSHARD_POSTGRES_IMAGE\n' ;;
-        proxy) printf 'PROXY_ROUTER_IMAGE\n' ;;
-        proxy-policy*) printf 'PROXY_POLICY_IMAGE\n' ;;
-    esac
-}
 
 container_health() {
     local id
@@ -733,33 +735,62 @@ remember_previous() {
     fi
 }
 
+required_versiond_routes=()
+required_legacy_routes=()
+
 up() {
-    local service=$1 previous_tag variable
+    local service=$1 member_id
+    local -a candidate_routes=("${required_versiond_routes[@]}")
+    if [[ $service == "$legacy_owner" ]]; then
+        candidate_routes+=("${required_legacy_routes[@]}")
+    fi
+    if [[ $dry_run == true ]]; then
+        run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service"
+        return
+    fi
     if [[ $service != devshard-postgres ]]; then
+        if [[ $topology == ha ]]; then
+            member_id=$("${compose[@]}" ps --all --quiet "$service") || fail "cannot inspect $service before replacement"
+            if [[ -n $member_id && $(container_health "$service") == healthy ]] && ! service_changed "$service" "$member_id"; then
+                return 0
+            fi
+            if [[ -n $member_id ]]; then
+                run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" verify-member-reserve "$member_id" "${required_versiond_routes[@]}" || \
+                    fail "$service is still needed for a required route; leaving it running"
+            fi
+        fi
         begin_replacement "$service"
         run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service" || \
             fail "$service did not become healthy; restoring its previous specification"
+        if [[ $topology == ha ]]; then
+            member_id=$("${compose[@]}" ps --quiet "$service") || fail "cannot inspect candidate $service"
+            run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" verify-member "$member_id" "${candidate_routes[@]}" || \
+                fail "$service has not been admitted for every required version; restoring it"
+        fi
         commit_replacement
         return 0
     fi
-    # PostgreSQL data/configuration is the migration target. Restore only its
-    # prior image on failure; putting the old PGDATA path back could fork history.
-    previous_tag=gonka-previous/${GONKA_DEPLOYMENT_KEY:0:16}/$service
-    remember_previous "$service"
-    if run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service"; then
+    local id nonce="" staging
+    id=$("${compose[@]}" ps --all --quiet "$service") || fail "cannot list PostgreSQL"
+    if [[ -n $id && $(container_health "$service") == healthy ]] && ! service_changed "$service" "$id"; then
         return 0
     fi
-    variable=$(image_variable "$service")
-    if [[ $dry_run == false && -n $variable ]] && \
-        "$docker_bin" image inspect "$previous_tag" >/dev/null 2>&1; then
-        echo "update-devshard: $service did not become healthy; putting back its previous image ($previous_tag)" >&2
-        if run env "$variable=$previous_tag" "${compose[@]}" up -d --no-deps --wait \
-            --wait-timeout "$wait_timeout" "$service"; then
-            fail "$service was put back on its previous image and the update stopped here; inspect 'docker compose logs $service', fix the cause and rerun"
-        fi
-        fail "$service could not be restored; inspect its logs and repair the current PostgreSQL configuration without switching back to the pre-migration data directory"
+    remember_previous "$service"
+    if [[ -n $id && ${UPDATE_ACCEPT_DATABASE_CHANGE:-false} != true ]]; then
+        nonce=$(python3 "$state_helper" postgres-seal "$id" <<<"$rendered") || \
+            fail "cannot record the running PostgreSQL history before replacement"
     fi
-    fail "$service did not become healthy; the update stopped here ('docker compose logs $service')"
+    mkdir -p "$state_dir"
+    chmod 700 "$state_dir"
+    staging=$(mktemp -d "$state_dir/pending.XXXXXX")
+    (umask 077; python3 "$state_helper" postgres-prepare "$staging/postgres.json" "$project_name" "$id" "$nonce" <<<"$rendered") || \
+        fail "cannot save PostgreSQL recovery state"
+    python3 "$state_helper" publish "$staging" "$state_dir/pending" || fail "cannot publish PostgreSQL recovery state"
+    run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service" || \
+        fail "PostgreSQL replacement failed; recovering the saved migration target"
+    python3 "$state_helper" postgres-verify "$state_dir/pending/postgres.json" || \
+        fail "PostgreSQL history changed after replacement; recovery remains pending"
+    commit_replacement
 }
 
 pull_services=()
@@ -852,6 +883,24 @@ if container_exists versiond-router; then
     fi
 fi
 
+required_versiond_routes=()
+required_legacy_routes=()
+if [[ $topology == ha ]]; then
+    live_routes=$(GONKA_CONFIG_ENV="$config_env" "$fleet_bin" versiond-routes) || fail "cannot preserve the served version set"
+    proof_routes=$(for proof in "${proof_documents[@]}"; do jq -r '.targets[].version' <<<"$proof"; done)
+    routes=$(jq -nr --arg live "$live_routes $proof_routes" '
+        $live | [splits("[ ,;\\s]+") | select(length > 0)] | unique | .[]') || fail "cannot preserve the required version set"
+    while IFS= read -r route; do
+        [[ -n $route ]] || continue
+        [[ $route =~ ^[a-zA-Z0-9][a-zA-Z0-9._+~-]{0,63}$ ]] || fail "invalid required route $route"
+        if jq -en --arg route "$route" --arg legacy "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" '$legacy | [splits("[ ,;\\s]+") | select(length > 0)] | index($route) != null' >/dev/null; then
+            required_legacy_routes+=("$route")
+        else
+            required_versiond_routes+=("$route")
+        fi
+    done <<<"$routes"
+fi
+
 echo "Step: versiond replicas (${active_versiond[*]})"
 # Last replica first, the legacy owner last: while it is being replaced, the
 # other replicas already run the new release behind the routers.
@@ -869,6 +918,10 @@ for service in "${versiond_services[@]}"; do
     existing=$("${compose[@]}" ps --all --quiet "$service") || fail "cannot list $service"
     [[ -n $existing ]] || continue
     echo "Step: decommissioning $service (replicas: 0)"
+    if [[ $topology == ha ]]; then
+        run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" verify-member-reserve "$existing" "${required_versiond_routes[@]}" || \
+            fail "cannot decommission $service: no ready reserve for its routes"
+    fi
     run "${compose[@]}" stop "$service"
     run "${compose[@]}" rm -f "$service"
 done

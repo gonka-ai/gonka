@@ -40,21 +40,43 @@ cluster_exists() {
     [ -s "$1/PG_VERSION" ]
 }
 
-# The identifier initdb stamps on a cluster; a copy keeps it, another cluster
-# never shares it.
-# "X/Y" checkpoint LSN as one decimal number for comparison.
-cluster_checkpoint_lsn() {
-    ccl_output=$(pg_controldata "$1") ||
-        die "cannot read pg_controldata for $1"
-    ccl_lsn=$(printf '%s\n' "$ccl_output" |
-        sed -n 's/^Latest checkpoint location:[[:space:]]*//p' | head -n 1)
-    case "$ccl_lsn" in
-        */*) ;;
-        *) die "pg_controldata for $1 reports no checkpoint location" ;;
-    esac
-    printf '%d\n' "$(( (0x${ccl_lsn%%/*} << 32) + 0x${ccl_lsn##*/} ))"
+# Compare the preserved source with its state at copy time, never with the
+# independently advancing target. Include WAL so uncheckpointed commits and
+# a restart followed by a crash cannot hide behind an unchanged checkpoint.
+source_fingerprint() (
+    cd "$1" || exit 1
+    [ -s global/pg_control ] && [ -d pg_wal ] || exit 1
+    files=$(find -L pg_wal -type f -print) || exit 1
+    files=$(printf '%s\n' "$files" | LC_ALL=C sort) || exit 1
+    [ -n "$files" ] || exit 1
+    hashes=$(sha256sum global/pg_control || exit 1; printf '%s\n' "$files" | while IFS= read -r file; do
+        sha256sum "$file" || exit 1
+    done) || exit 1
+    printf '%s\n' "$hashes" | sha256sum | cut -d ' ' -f 1
+)
+
+write_source_marker() {
+    marker_id=$(cluster_system_identifier "$1") || die "cannot identify the copied source"
+    printf 'gonka-source-v1 %s %s\n' "$marker_id" "$2" \
+        >"$3/.migrated-from-v4" || die "cannot record source provenance"
 }
 
+verify_source_marker() {
+    vsm_dir=$1
+    vsm_format="" vsm_id="" vsm_fingerprint="" vsm_extra=""
+    [ -f "$vsm_dir/.migrated-from-v4" ] || die "migrated PGDATA has no source provenance marker; verify the preserved source before recovery"
+    read -r vsm_format vsm_id vsm_fingerprint vsm_extra <"$vsm_dir/.migrated-from-v4" || die "invalid source provenance marker"
+    [ "$vsm_format" = gonka-source-v1 ] && [ -z "$vsm_extra" ] && \
+        [ "${#vsm_fingerprint}" -eq 64 ] || die "old or invalid source provenance marker; verify the database before recovery"
+    case "$vsm_fingerprint" in *[!0-9a-f]*) die "invalid source fingerprint" ;; esac
+    [ "$vsm_id" = "$(cluster_system_identifier "$vsm_dir")" ] || die "source provenance marker belongs to a different cluster"
+    if cluster_exists "$legacy_data"; then
+        vsm_current=$(source_fingerprint "$legacy_data") || die "cannot fingerprint the preserved v4 source"
+        [ "$vsm_current" = "$vsm_fingerprint" ] || die "the preserved v4 source changed after the copy; refusing divergent histories, even if its checkpoint is below the target"
+    fi
+}
+
+# A physical copy keeps the initdb system identifier.
 cluster_system_identifier() {
     csi_output=$(pg_controldata "$1") ||
         die "cannot read pg_controldata for $1"
@@ -178,15 +200,9 @@ if cluster_exists "$target_data"; then
             die "cannot verify the attached v4 PostgreSQL cluster identity"
         [ "$target_identifier" = "$legacy_identifier" ] ||
             die "persistent PGDATA $target_data is a different cluster (system identifier $target_identifier) than the attached v4 volume ($legacy_identifier); refusing to start on the wrong history. Point DEVSHARD_POSTGRES_DATA_DIR at the migrated copy or detach the wrong volume"
-        # Same cluster, but the v4 volume may have accepted writes after the
-        # copy (a rollback that ran on it). The copy must not silently win
-        # over the newer history.
-        target_lsn=$(cluster_checkpoint_lsn "$target_data") ||
-            die "cannot read the persistent PostgreSQL checkpoint"
-        legacy_lsn=$(cluster_checkpoint_lsn "$legacy_data") ||
-            die "cannot read the attached v4 PostgreSQL checkpoint"
-        [ "$legacy_lsn" -le "$target_lsn" ] ||
-            die "the attached v4 volume advanced past the persistent copy in $target_data (checkpoint $legacy_lsn > $target_lsn); it received writes after the copy. Move the persistent copy aside so the volume is migrated again, or detach the volume if the copy is the history you want"
+        verify_source_marker "$target_data"
+    elif [ -f "$migrated_marker" ]; then
+        verify_source_marker "$target_data"
     elif [ ! -f "$migrated_marker" ] && [ ! -f "$init_complete" ]; then
         die "persistent PGDATA $target_data has no completion marker: its initialization or migration did not finish; remove it to initialize again, or restore it from a backup"
     fi
@@ -197,8 +213,7 @@ elif [ -e "$target_data" ] && directory_has_entries "$target_data"; then
 elif cluster_exists "$staging_data" && [ -f "$staging_complete" ]; then
     validate_cluster "$staging_data"
     log "finishing an interrupted atomic migration"
-    printf '%s\n' "$(cat "$staging_data/PG_VERSION")" >"$staging_data/.migrated-from-v4" ||
-        die "cannot record the v4 migration marker"
+    verify_source_marker "$staging_data"
     publish_staging
 elif cluster_exists "$legacy_data"; then
     validate_cluster "$legacy_data"
@@ -212,6 +227,7 @@ elif cluster_exists "$legacy_data"; then
     mkdir "$staging_data"
 
     log "migrating the preserved v4 PostgreSQL cluster into persistent storage"
+    source_before=$(source_fingerprint "$legacy_data") || die "cannot fingerprint the preserved v4 source"
     cp -a "$legacy_data/." "$staging_data/" || die "PostgreSQL cluster copy failed"
     if [ -e "$staging_data/postmaster.pid" ]; then
         log "legacy cluster was not shut down cleanly; PostgreSQL will recover it from WAL"
@@ -221,11 +237,14 @@ elif cluster_exists "$legacy_data"; then
     validate_cluster "$staging_data"
     [ "$(cat "$legacy_data/PG_VERSION")" = "$(cat "$staging_data/PG_VERSION")" ] ||
         die "migrated PostgreSQL version does not match its source"
+    source_after=$(source_fingerprint "$legacy_data") || die "cannot recheck the preserved v4 source"
+    copied_source=$(source_fingerprint "$staging_data") || die "cannot verify the copied source"
+    [ "$source_before" = "$source_after" ] && [ "$source_before" = "$copied_source" ] || \
+        die "v4 source changed during the copy; stop its PostgreSQL before retrying"
+    write_source_marker "$legacy_data" "$source_before" "$staging_data"
     sync
     : >"$staging_complete"
     sync
-    printf '%s\n' "$(cat "$staging_data/PG_VERSION")" >"$staging_data/.migrated-from-v4" ||
-        die "cannot record the v4 migration marker"
     publish_staging
     log "v4 PostgreSQL migration completed"
 else

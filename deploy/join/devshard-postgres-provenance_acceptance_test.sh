@@ -118,13 +118,16 @@ declare -a fixed=()
 # source; accepting the stale target is the defect.
 if is_selected PG-PROV-01; then
     new_case same-system-id-diverged
-    mkdir -p "$persistent/data"
+    mkdir -p "$legacy/global" "$legacy/pg_wal"
     printf '16\n' >"$legacy/PG_VERSION"
-    printf '16\n' >"$persistent/data/PG_VERSION"
-    printf '0/300\n' >"$legacy/.fake-checkpoint"
-    printf '0/200\n' >"$persistent/data/.fake-checkpoint"
+    printf control >"$legacy/global/pg_control"
+    printf wal >"$legacy/pg_wal/00000001"
+    printf 'stale-v5-copy\n' >"$legacy/acceptance-row"
+    run_entrypoint >"$case_root/setup.stdout" 2>"$case_root/setup.stderr"
+    printf '0/100\n' >"$legacy/.fake-checkpoint"
+    printf '0/900\n' >"$persistent/data/.fake-checkpoint"
     printf 'newer-on-v4\n' >"$legacy/acceptance-row"
-    printf 'stale-v5-copy\n' >"$persistent/data/acceptance-row"
+    printf 'committed after copy' >>"$legacy/pg_wal/00000001"
     status=0
     run_entrypoint >"$case_root/stdout" 2>"$case_root/stderr" || status=$?
     if ((status == 0)) && [[ $(<"$persistent/data/acceptance-row") == stale-v5-copy ]]; then

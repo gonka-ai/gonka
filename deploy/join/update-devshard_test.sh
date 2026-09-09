@@ -49,6 +49,13 @@ case "$1 ${2:-} ${3:-}" in
         exit 0
         ;;
     "exec "*)
+        if [[ " $* " == *" psql "* ]]; then
+            if [[ " $* " == *"INSERT INTO public.gonka_updater_continuity"* ]]; then
+                printf '%s' "${*: -1}" | sed -n "s/.*VALUES (true, '\([^']*\)').*/\1/p" >"$FAKE_STATE/pg_nonce"
+            fi
+            if [[ " $* " == *"SELECT nonce"* ]]; then cat "$FAKE_STATE/pg_nonce"; else printf 't\n'; fi
+            exit 0
+        fi
         knob=FAKE_PROOF_${2#cid-}
         mode=${!knob:-${FAKE_PROOF_MODE:-valid}}
         case $mode in
@@ -107,7 +114,8 @@ if [[ $1 == inspect ]]; then
     case $format in
         "") jq -cn --arg name "$name" --arg health "${FAKE_HEALTH:-healthy}" \
             '[{Id:("cid-"+$name), Name:("/"+$name), Image:("old-"+$name),
-              Config:{Labels:{"com.docker.compose.project":"gonka"}},
+              Config:{Env:["PGDATA=/var/lib/postgresql/gonka/data"],Labels:{"com.docker.compose.project":"gonka"}},
+              Mounts:[{Type:"bind",Source:"/srv/gonka/postgres",Destination:"/var/lib/postgresql/gonka"}],
               State:{Running:true,Status:"running",Health:{Status:$health}}}]' ;;
         *Config.Env*) printf '["PGHOST=devshard-postgres","PGDATABASE=devshardd"]\n' ;;
         *.Image}}*) printf 'old-%s\n' "${name#cid-}" ;;
@@ -173,6 +181,7 @@ chmod +x "$tmpdir/docker"
 cat >"$tmpdir/fleet.sh" <<'EOF'
 #!/usr/bin/env bash
 printf 'fleet %s\n' "$*" >>"$FAKE_LOG"
+if [[ $1 == versiond-routes && -n ${FAKE_FLEET_ROUTES:-} ]]; then printf '%s\n' "$FAKE_FLEET_ROUTES"; fi
 EOF
 cat >"$tmpdir/preflight.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -658,4 +667,14 @@ if run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
     fail "unsupported PGHOSTADDR accepted"
 fi
 grep -q 'versiond2 sets PGHOSTADDR' "$tmpdir/err" || fail "PGHOSTADDR refusal missing"
+# Pinned routes need candidate admission on their owner, but cannot require
+# a second owner before stopping it. HA routes require both reserve/admission.
+UPDATE_ARGS=()
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_FLEET_ROUTES="v4 v5" VERSIOND_NON_HA_VERSIONS=v4 || fail "pinned route update failed"
+grep -qx 'fleet verify-member-reserve cid-versiond v5' "$tmpdir/log" || fail "wrong owner reserve"
+grep -qx 'fleet verify-member cid-versiond v5 v4' "$tmpdir/log" || fail "owner admission omitted pinned v4"
+grep -qx 'fleet verify-member cid-versiond2 v5' "$tmpdir/log" || fail "non-owner required pinned v4"
+
 echo "update-devshard_test: ok"

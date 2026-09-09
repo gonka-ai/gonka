@@ -319,6 +319,24 @@ mounted configuration. PostgreSQL rollback restores only the image and keeps
 the current migration target; automatically switching back to the old data
 directory could discard writes made since migration.
 
+Before replacing bundled PostgreSQL, the updater rejects changes to its data
+mount or `PGDATA` during an ordinary update. The first v4-to-v5 copy is allowed
+only into an unpublished target. It writes a fresh control value to
+`public.gonka_updater_continuity`, then durably records that value, the candidate
+image, the migration target and the retained v4 volume. After startup it checks
+that the value survived before completing the step. A mismatch stops PostgreSQL
+and leaves recovery pending. A retry uses the saved target before reading the
+new deployment configuration; it never switches back to a pre-migration copy.
+The control table contains one row and does not change inference records.
+
+For each HA versiond replacement, the updater preserves the currently served
+HA route set. It requires another admitted member for those routes before
+stopping the old instance, then checks the candidate's per-version readiness
+and admission in every router before completing the step. A candidate that is
+healthy overall but cannot serve a required version is restored before the
+next replica is stopped. Pinned versions are checked on their designated owner
+before its replacement is confirmed; they have no second-owner reserve.
+
 Two things the script does not undo. The v4 PostgreSQL volume copy is safe
 to repeat but never reversed automatically (see [Rolling back](#rolling-back)).
 And a router fleet update runs inside `versiond-router-fleet.sh apply`, which
@@ -331,7 +349,12 @@ A fresh bundled PostgreSQL records `.gonka-init-complete` inside `PGDATA`
 through an initdb hook, and a migrated cluster records `.migrated-from-v4`
 next to it before the copy is published; a persistent cluster without either
 marker, or whose `pg_controldata` system identifier differs from an attached
-v4 volume, is refused rather than started on the wrong history.
+v4 volume, is refused rather than started on the wrong history. The migration
+marker also records a fingerprint of the source control file and WAL at copy
+time. Any subsequent change to the retained source is refused, regardless of
+which copy has the greater checkpoint LSN. Do not restart that old volume as a
+writer. Old experimental markers without this fingerprint require manual
+history verification; do not create a replacement marker to bypass the check.
 
 `--check` and `--dry-run` change no service. They do run the PostgreSQL
 probe from a helper container (which may pull the pinned PostgreSQL image)
@@ -339,9 +362,12 @@ and the migration space probe (which may create the empty target directory).
 The storage challenge remains in `devshard_storage_identity.challenge` until
 the next check overwrites it; it does not modify inference records.
 
-Maintenance notes for the first v5 run on an HA host:
+Maintenance notes for an HA host:
 
-- Replacing the public proxy closes the connections the old nginx still holds.
+- Replacing the single public proxy can close existing connections, both on
+  the first nginx-to-HAProxy cutover and on subsequent image/config changes.
+  Schedule these replacements in a maintenance window; uninterrupted streams
+  across a public-listener replacement are not guaranteed.
   Restarting the shared local PostgreSQL interrupts devshard work on all
   replicas. Schedule the run outside PoC/cPoC and update one host at a time.
 - The HAProxy routers start before versiond is replaced. They accept a
@@ -551,6 +577,7 @@ production needs a managed PostgreSQL with synchronous durability.
 
 - `shellcheck -x deploy/join/update-devshard.sh deploy/join/updater-rollback.sh deploy/join/update-devshard_test.sh`
 - `deploy/join/update-devshard_test.sh` (command sequence, proof failures, offline guard, capacity and utilities)
+- `python3 deploy/join/updater-postgres_test.py` (data-target refusal, durable PostgreSQL recovery, post-start history verification)
 - `python3 deploy/join/updater-rollback_test.py` (real Docker rollback, lock contention, interrupted recovery and no-op retention)
 - `python3 deploy/join/versiond-storage-check_test.py` (real PostgreSQL lineage, per-generation challenges and capacity boundary)
 - `deploy/join/update-devshard-e2e_test.sh` (v4-to-v5 migration, public admission failure and nginx restoration, retry)

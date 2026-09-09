@@ -47,6 +47,9 @@ new_case() {
     initdb_dir="$case_dir/initdb"
     mkdir -p "$legacy" "$persistent" "$existing" \
         "$versiond_data" "$versiond2_data" "$initdb_dir"
+    mkdir -p "$legacy/global" "$legacy/pg_wal"
+    printf control >"$legacy/global/pg_control"
+    printf wal >"$legacy/pg_wal/00000001"
 }
 
 run_entrypoint() {
@@ -115,8 +118,7 @@ run_entrypoint
 new_case target-wins
 printf '16\n' > "$legacy/PG_VERSION"
 printf 'legacy\n' > "$legacy/source"
-mkdir -p "$persistent/data"
-printf '16\n' > "$persistent/data/PG_VERSION"
+run_entrypoint
 printf 'current\n' > "$persistent/data/source"
 touch "$persistent/.gonka-copy-complete"
 run_entrypoint
@@ -126,13 +128,15 @@ run_entrypoint
     "stale migration completion marker survived an existing target"
 
 new_case resume-publish
-mkdir -p "$persistent/.migrating"
-printf '16\n' > "$persistent/.migrating/PG_VERSION"
-printf 'resumed\n' > "$persistent/.migrating/session-row"
-touch "$persistent/.gonka-copy-complete"
+printf '16\n' > "$legacy/PG_VERSION"
+printf 'resumed\n' > "$legacy/session-row"
 run_entrypoint
-[[ $(<"$persistent/data/session-row") == resumed ]] || fail \
-    "complete staging data was not published"
+mv "$persistent/data" "$persistent/.migrating"
+: >"$persistent/.gonka-copy-complete"
+run_entrypoint
+[[ $(<"$persistent/data/session-row") == resumed ]] || fail "complete staging data was not published"
+[[ -f "$persistent/data/.migrated-from-v4" ]] || fail "source provenance lost on resume"
+run_entrypoint || fail "resumed cluster refused on restart"
 
 new_case recopy-partial-staging
 printf '16\n' > "$legacy/PG_VERSION"
@@ -253,25 +257,27 @@ grep -q 'cannot read pg_controldata' "$case_dir/stderr" || fail \
     "controldata failure was not diagnosed: $(cat "$case_dir/stderr")"
 
 new_case resume-publish-marks-migration
-mkdir -p "$persistent/.migrating"
-printf '16\n' > "$persistent/.migrating/PG_VERSION"
-: > "$persistent/.gonka-copy-complete"
+printf '16\n' > "$legacy/PG_VERSION"
+printf 'resumed\n' > "$legacy/session-row"
 run_entrypoint
-[[ -f "$persistent/data/.migrated-from-v4" ]] || fail \
-    "a resumed migration did not record the v4 migration marker"
-run_entrypoint || fail "the resumed cluster was refused on the next start"
+mv "$persistent/data" "$persistent/.migrating"
+: >"$persistent/.gonka-copy-complete"
+run_entrypoint
+[[ $(<"$persistent/data/session-row") == resumed ]] || fail "complete staging data was not published"
+[[ -f "$persistent/data/.migrated-from-v4" ]] || fail "source provenance lost on resume"
+run_entrypoint || fail "resumed cluster refused on restart"
 
 new_case reject-copy-behind-source
 printf '16\n' > "$legacy/PG_VERSION"
-mkdir -p "$persistent/data"
-printf '16\n' > "$persistent/data/PG_VERSION"
-printf '0/300\n' > "$legacy/.fake-checkpoint"
-printf '0/200\n' > "$persistent/data/.fake-checkpoint"
+run_entrypoint
+printf '0/100\n' >"$legacy/.fake-checkpoint"
+printf '0/900\n' >"$persistent/data/.fake-checkpoint"
+printf 'new acknowledged write' >>"$legacy/pg_wal/00000001"
 if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
-    fail "a persistent copy that fell behind its v4 source was accepted"
+    fail "divergent v4 source with lower LSN was accepted"
 fi
-grep -q 'advanced past the persistent copy' "$case_dir/stderr" || fail \
-    "copy-behind-source was not diagnosed: $(cat "$case_dir/stderr")"
+grep -q 'source changed after the copy' "$case_dir/stderr" || fail \
+    "source divergence was not diagnosed: $(cat "$case_dir/stderr")"
 
 new_case reject-stale-sibling-marker
 mkdir -p "$persistent/data"

@@ -23,6 +23,12 @@ initialize_rollback() {
 restore_pending() {
     local file
     [[ -d $state_dir/pending ]] || return 0
+    if [[ -f $state_dir/pending/postgres.json ]]; then
+        # Resume the frozen migration target, never restore old PGDATA.
+        python3 "$state_helper" postgres-recover "$state_dir/pending/postgres.json" || return 1
+        python3 "$state_helper" commit "$state_dir/pending"
+        return $?
+    fi
     # Create/start all old public dependencies before waiting for health. The
     # restore helper handles each original container's exact healthcheck.
     while IFS= read -r file; do
