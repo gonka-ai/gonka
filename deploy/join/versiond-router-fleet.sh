@@ -70,6 +70,11 @@ Commands:
   verify-admission [ROUTE ...]
                      Require every slot, and every listed live route, to be
                      admitted by the active parent proxy.
+  versiond-routes     Print currently served and required versions.
+  verify-member CONTAINER [ROUTE ...]
+                     Wait for this member to be admitted on every router.
+  verify-member-reserve CONTAINER [ROUTE ...]
+                     Require another admitted member before stopping this one.
   wait-version VERSION
                      Wait until every slot has learned VERSION and the configured
                      ready reserve is admitted end to end. This is the
@@ -1198,6 +1203,80 @@ verify_parent_fleet_admission() {
     return 1
 }
 
+# Snapshot routes that actually serve traffic, plus explicitly required
+# routes. The updater checks pinned routes only on their designated owner.
+versiond_routes() {
+    local route
+    for route in "${!expected_routes[@]}"; do
+        if [[ -n ${required_routes[$route]-} ]] || (( $(route_ready_count "$route") > 0 )); then
+            printf '%s\n' "$route"
+        fi
+    done
+}
+
+slot_member_admitted() {
+    local slot=$1 route=$2 addresses=$3 reserve=$4 id map backend servers names stats
+    id=$(slot_id "$slot") || return 1
+    map=$(docker_exec "$id" /bin/sh -ec "for map in /etc/haproxy/versions.map /etc/haproxy/non_ha.map; do printf 'show map %s\\n' \"\$map\" | socat stdio /var/run/haproxy/haproxy.sock; done") || return 1
+    backend=$(awk -v route="$route" '$2 == route {print $3; found=1; exit} END {if (!found) exit 1}' <<<"$map") || return 1
+    [[ $backend =~ ^[a-zA-Z0-9_]+$ ]] || return 1
+    servers=$(docker_exec "$id" /bin/sh -ec "printf 'show servers state $backend\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 1
+    names=$(awk -v addresses="$addresses" -v reserve="$reserve" '
+        BEGIN {split(addresses, list, ","); for (i in list) own[list[i]]=1}
+        $1 == "#" {for(i=2;i<=NF;i++) column[$i]=i-1; next}
+        column["srv_addr"] && column["srv_name"] {
+            address=$column["srv_addr"]
+            if (address != "-" && address != "" && ((address in own) != (reserve == "true"))) print $column["srv_name"]
+        }
+        END {if (!column["srv_addr"] || !column["srv_name"]) exit 1}
+    ' <<<"$servers") || return 1
+    [[ -n $names ]] || return 1
+    stats=$(docker_exec "$id" /bin/sh -ec "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 1
+    awk -F, -v backend="$backend" -v names="$names" '
+        BEGIN {split(names, list, "\n"); for(i in list) candidate[list[i]]=1}
+        NR == 1 {for(i=1;i<=NF;i++) column[$i]=i; next}
+        $1 == backend && ($2 in candidate) && column["status"] && $column["status"] ~ /^UP/ {found=1}
+        END {exit !found}
+    ' <<<"$stats"
+}
+
+verify_versiond_member() {
+    local container=$1 reserve=$2 addresses route encoded_route slot missing deadline=$((SECONDS + wait_timeout))
+    shift 2
+    addresses=$("$docker_bin" inspect --format '{{json .NetworkSettings.Networks}}' "$container" |
+        jq -er '[.[].IPAddress | select(. != "")] | unique | join(",") | select(length > 0)') || fail "cannot find the addresses of versiond member $container"
+    # The caller supplies its preserved route set; an empty set is valid only
+    # during a fresh bootstrap before any HA version has been admitted.
+    (($# > 0)) || return 0
+    while ((SECONDS < deadline)); do
+        missing=
+        for route in "$@"; do
+            # A reused Docker address may still have an old UP status until
+            # the next HAProxy check. Probe the actual candidate as well.
+            if [[ $reserve == false ]]; then
+                encoded_route=$(jq -nr --arg route "$route" '$route | @uri') || return 1
+                if ! docker_exec "$container" /bin/busybox wget -qO /dev/null -T 5 "http://127.0.0.1:8080/readyz?version=$encoded_route" ||
+                    ! docker_exec "$container" /bin/busybox wget -qO /dev/null -T 5 "http://127.0.0.1:8080/$encoded_route/healthz"; then
+                    missing="candidate readiness, version $route"
+                    break
+                fi
+            fi
+            for slot in "${slots[@]}"; do
+                if ! slot_ready "$slot" || ! slot_member_admitted "$slot" "$route" "$addresses" "$reserve"; then
+                    missing="slot $slot, version $route"
+                    break 2
+                fi
+            done
+        done
+        if [[ -z $missing ]]; then
+            verify_parent_fleet_admission "$@"
+            return $?
+        fi
+        sleep 1
+    done
+    fail "versiond member gate failed for $container ($missing, reserve=$reserve); refusing to commit or stop the next replica"
+}
+
 wait_version() {
     local route=$1 deadline missing slot ready parent_ready
     case $route in
@@ -2291,7 +2370,7 @@ fi
 # convergence. Every command that changes containers, networks, or Runtime API
 # state remains serialized.
 case $command in
-    status | verify-admission | wait-version) ;;
+    status | verify-admission | wait-version | versiond-routes | verify-member | verify-member-reserve) ;;
     *) gonka_acquire_deployment_lock "$config_dir" || exit 1 ;;
 esac
 
@@ -2308,6 +2387,15 @@ case $command in
     verify-admission)
         shift
         verify_parent_fleet_admission "$@"
+        ;;
+    versiond-routes) versiond_routes ;;
+    verify-member | verify-member-reserve)
+        (($# >= 2)) || fail "$command requires a container and optional route list"
+        member=$2
+        shift 2
+        reserve=false
+        [[ $command != verify-member-reserve ]] || reserve=true
+        verify_versiond_member "$member" "$reserve" "$@"
         ;;
     wait-version)
         [[ $# == 2 ]] || fail "wait-version requires exactly one VERSION"

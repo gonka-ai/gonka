@@ -8,9 +8,16 @@ existing_versiond=${GONKA_POSTGRES_EXISTING_VERSIOND:-/var/lib/postgresql/gonka-
 versiond_data=${GONKA_POSTGRES_VERSIOND_DATA:-/var/lib/postgresql/gonka-versiond-data}
 versiond2_data=${GONKA_POSTGRES_VERSIOND2_DATA:-/var/lib/postgresql/gonka-versiond2-data}
 official_entrypoint=${GONKA_POSTGRES_OFFICIAL_ENTRYPOINT:-/usr/local/bin/docker-entrypoint.sh}
+initdb_dir=${GONKA_POSTGRES_INITDB_DIR:-/docker-entrypoint-initdb.d}
 target_data=${PGDATA:-$persistent_root/data}
 staging_data=$persistent_root/.migrating
 staging_complete=$persistent_root/.gonka-copy-complete
+# Lives inside PGDATA: the initdb hook that writes it runs as the postgres
+# user, which owns PGDATA but not the bind-mount root around it.
+init_complete=$target_data/.gonka-init-complete
+# Inside PGDATA like the init marker: a marker next to a replaced PGDATA is
+# not evidence about the cluster that is mounted now.
+migrated_marker=$target_data/.migrated-from-v4
 expected_major=
 
 log() {
@@ -33,6 +40,53 @@ cluster_exists() {
     [ -s "$1/PG_VERSION" ]
 }
 
+# Compare the preserved source with its state at copy time, never with the
+# independently advancing target. Include WAL so uncheckpointed commits and
+# a restart followed by a crash cannot hide behind an unchanged checkpoint.
+source_fingerprint() (
+    cd "$1" || exit 1
+    [ -s global/pg_control ] && [ -d pg_wal ] || exit 1
+    files=$(find -L pg_wal -type f -print) || exit 1
+    files=$(printf '%s\n' "$files" | LC_ALL=C sort) || exit 1
+    [ -n "$files" ] || exit 1
+    hashes=$(sha256sum global/pg_control || exit 1; printf '%s\n' "$files" | while IFS= read -r file; do
+        sha256sum "$file" || exit 1
+    done) || exit 1
+    printf '%s\n' "$hashes" | sha256sum | cut -d ' ' -f 1
+)
+
+write_source_marker() {
+    marker_id=$(cluster_system_identifier "$1") || die "cannot identify the copied source"
+    printf 'gonka-source-v1 %s %s\n' "$marker_id" "$2" \
+        >"$3/.migrated-from-v4" || die "cannot record source provenance"
+}
+
+verify_source_marker() {
+    vsm_dir=$1
+    vsm_format="" vsm_id="" vsm_fingerprint="" vsm_extra=""
+    [ -f "$vsm_dir/.migrated-from-v4" ] || die "migrated PGDATA has no source provenance marker; verify the preserved source before recovery"
+    read -r vsm_format vsm_id vsm_fingerprint vsm_extra <"$vsm_dir/.migrated-from-v4" || die "invalid source provenance marker"
+    if [ "$vsm_format" != gonka-source-v1 ] || [ -n "$vsm_extra" ] || [ "${#vsm_fingerprint}" -ne 64 ]; then
+        die "old or invalid source provenance marker; verify the database before recovery"
+    fi
+    case "$vsm_fingerprint" in *[!0-9a-f]*) die "invalid source fingerprint" ;; esac
+    [ "$vsm_id" = "$(cluster_system_identifier "$vsm_dir")" ] || die "source provenance marker belongs to a different cluster"
+    if cluster_exists "$legacy_data"; then
+        vsm_current=$(source_fingerprint "$legacy_data") || die "cannot fingerprint the preserved v4 source"
+        [ "$vsm_current" = "$vsm_fingerprint" ] || die "the preserved v4 source changed after the copy; refusing divergent histories, even if its checkpoint is below the target"
+    fi
+}
+
+# A physical copy keeps the initdb system identifier.
+cluster_system_identifier() {
+    csi_output=$(pg_controldata "$1") ||
+        die "cannot read pg_controldata for $1"
+    csi_id=$(printf '%s\n' "$csi_output" |
+        sed -n 's/^Database system identifier:[[:space:]]*//p' | head -n 1)
+    [ -n "$csi_id" ] || die "pg_controldata for $1 reports no system identifier"
+    printf '%s\n' "$csi_id"
+}
+
 validate_cluster() {
     cluster_version=$(cat "$1/PG_VERSION") ||
         die "cannot read $1/PG_VERSION"
@@ -40,8 +94,21 @@ validate_cluster() {
         die "PostgreSQL cluster in $1 uses major version ${cluster_version:-unknown}; expected $expected_major"
 }
 
+# Every mounted replica data directory: the two shipped ones plus any
+# gonka-versiond<N>-data mount an extra replica overlay adds.
+versiond_data_roots() {
+    printf '%s\n' "$versiond_data" "$versiond2_data"
+    for extra in "$(dirname "$versiond_data")"/gonka-versiond*-data; do
+        [ -d "$extra" ] || continue
+        case "$extra" in
+            "$versiond_data" | "$versiond2_data") ;;
+            *) printf '%s\n' "$extra" ;;
+        esac
+    done
+}
+
 postgres_binding_marker() {
-    for storage_root in "$versiond_data" "$versiond2_data"; do
+    for storage_root in $(versiond_data_roots); do
         [ -d "$storage_root" ] || return 3
         marker=$(find "$storage_root" -type f -name .pg-bound -print -quit) ||
             return 2
@@ -123,6 +190,23 @@ mkdir -p "$persistent_root"
 
 if cluster_exists "$target_data"; then
     validate_cluster "$target_data"
+    if cluster_exists "$legacy_data"; then
+        # Both a persistent cluster and the v4 volume are attached. The
+        # persistent one wins only if it is the copy of that volume; a foreign
+        # PG16 cluster in DEVSHARD_POSTGRES_DATA_DIR must not silently replace
+        # the devshard history.
+        target_identifier=$(cluster_system_identifier "$target_data") ||
+            die "cannot verify the persistent PostgreSQL cluster identity"
+        legacy_identifier=$(cluster_system_identifier "$legacy_data") ||
+            die "cannot verify the attached v4 PostgreSQL cluster identity"
+        [ "$target_identifier" = "$legacy_identifier" ] ||
+            die "persistent PGDATA $target_data is a different cluster (system identifier $target_identifier) than the attached v4 volume ($legacy_identifier); refusing to start on the wrong history. Point DEVSHARD_POSTGRES_DATA_DIR at the migrated copy or detach the wrong volume"
+        verify_source_marker "$target_data"
+    elif [ -f "$migrated_marker" ]; then
+        verify_source_marker "$target_data"
+    elif [ ! -f "$migrated_marker" ] && [ ! -f "$init_complete" ]; then
+        die "persistent PGDATA $target_data has no completion marker: its initialization or migration did not finish; remove it to initialize again, or restore it from a backup"
+    fi
     rm -f "$staging_complete" ||
         die "cannot remove stale PostgreSQL migration completion marker"
 elif [ -e "$target_data" ] && directory_has_entries "$target_data"; then
@@ -130,6 +214,7 @@ elif [ -e "$target_data" ] && directory_has_entries "$target_data"; then
 elif cluster_exists "$staging_data" && [ -f "$staging_complete" ]; then
     validate_cluster "$staging_data"
     log "finishing an interrupted atomic migration"
+    verify_source_marker "$staging_data"
     publish_staging
 elif cluster_exists "$legacy_data"; then
     validate_cluster "$legacy_data"
@@ -143,6 +228,7 @@ elif cluster_exists "$legacy_data"; then
     mkdir "$staging_data"
 
     log "migrating the preserved v4 PostgreSQL cluster into persistent storage"
+    source_before=$(source_fingerprint "$legacy_data") || die "cannot fingerprint the preserved v4 source"
     cp -a "$legacy_data/." "$staging_data/" || die "PostgreSQL cluster copy failed"
     if [ -e "$staging_data/postmaster.pid" ]; then
         log "legacy cluster was not shut down cleanly; PostgreSQL will recover it from WAL"
@@ -152,12 +238,16 @@ elif cluster_exists "$legacy_data"; then
     validate_cluster "$staging_data"
     [ "$(cat "$legacy_data/PG_VERSION")" = "$(cat "$staging_data/PG_VERSION")" ] ||
         die "migrated PostgreSQL version does not match its source"
+    source_after=$(source_fingerprint "$legacy_data") || die "cannot recheck the preserved v4 source"
+    copied_source=$(source_fingerprint "$staging_data") || die "cannot verify the copied source"
+    if [ "$source_before" != "$source_after" ] || [ "$source_before" != "$copied_source" ]; then
+        die "v4 source changed during the copy; stop its PostgreSQL before retrying"
+    fi
+    write_source_marker "$legacy_data" "$source_before" "$staging_data"
     sync
     : >"$staging_complete"
     sync
     publish_staging
-    printf '%s\n' "$(cat "$target_data/PG_VERSION")" \
-        >"$persistent_root/.migrated-from-v4"
     log "v4 PostgreSQL migration completed"
 else
     if [ -e "$staging_data" ] && directory_has_entries "$staging_data"; then
@@ -186,6 +276,15 @@ else
     if directory_has_entries "$existing_versiond" && [ "$allow_empty" != true ]; then
         die "existing versiond artifacts found but no PostgreSQL cluster or .pg-bound marker is attached; this is either first-time HA enablement or a detached drained database (restore the v4 volume, or set DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true once only for confirmed first-time HA enablement)"
     fi
+    # initdb, the role and the database are created by the official entrypoint
+    # before it runs the init scripts; the last script records completion so
+    # a cluster left half-initialised by a crash is refused on the next start.
+    [ -d "$initdb_dir" ] || mkdir -p "$initdb_dir" ||
+        die "cannot create $initdb_dir for the initialization completion hook"
+    printf '%s\n' '#!/bin/sh' 'set -eu' ": >\"$init_complete\"" 'sync' \
+        >"$initdb_dir/zz-gonka-init-complete.sh" ||
+        die "cannot install the initialization completion hook"
+    chmod 755 "$initdb_dir/zz-gonka-init-complete.sh"
     log "no existing PostgreSQL cluster found; initializing persistent PGDATA"
 fi
 

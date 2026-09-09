@@ -2,13 +2,16 @@
 #
 # Requires base docker-compose.yml (single versiond). Adds devshard-postgres,
 # a second versiond instance (versiond2), and the shared networks used by the
-# independently managed versiond-router fleet.
+# independently managed versiond-router fleet. More local replicas are added
+# with docker-compose.versiond3.yml (and copies of it); replicas on other
+# machines with docker-compose.versiond-remote.yml.
 #
 # Fresh installations only. This overlay uses !reset and requires Docker
-# Compose 2.24.4 or newer. Upgrade an existing host with the release updater so
-# policy workers cross the required drain and fresh-admission sequence.
+# Compose 2.24.4 or newer. Upgrade an existing host with the release updater,
+# update-devshard.sh, so policy workers cross the required drain and
+# fresh-admission sequence.
 #
-# Cold-start order (the release updater performs the same phases automatically):
+# Cold-start order (update-devshard.sh runs the same steps on an existing host):
 #   ./versiond-router-fleet.sh prepare-networks
 #   docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
 #   ./versiond-router-fleet.sh apply
@@ -19,7 +22,8 @@
 # only container_name and per-instance data volumes differ.
 
 x-versiond: &versiond
-  image: ghcr.io/product-science/versiond:0.2.15
+  image: >-
+    ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
@@ -87,7 +91,8 @@ x-versiond: &versiond
 services:
   devshard-postgres:
     container_name: devshard-postgres
-    image: ${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}
+    image: >-
+      ${DEVSHARD_POSTGRES_IMAGE:-postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777}
     environment:
       POSTGRES_DB: ${DEVSHARD_POSTGRES_DB:-devshardd}
       POSTGRES_USER: ${DEVSHARD_POSTGRES_USER:-devshardd}
@@ -100,10 +105,11 @@ services:
     command: ["postgres"]
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
-        ]
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$${POSTGRES_PASSWORD}" psql -h 127.0.0.1
+          -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+          -AtX -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null
       interval: 2s
       timeout: 3s
       retries: 30
@@ -123,6 +129,8 @@ services:
   versiond:
     <<: *versiond
     container_name: versiond
+    deploy:
+      replicas: ${VERSIOND_REPLICAS:-1}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin
@@ -131,6 +139,8 @@ services:
   versiond2:
     <<: *versiond
     container_name: versiond2
+    deploy:
+      replicas: ${VERSIOND2_REPLICAS:-1}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin

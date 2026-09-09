@@ -1,5 +1,6 @@
 x-proxy-policy: &proxy-policy
-  image: ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.15-devshard-v5}
+  image: >-
+    ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.15-devshard-v5}
   environment:
     - NGINX_MODE=${NGINX_MODE:-http}
     - PROXY_PROTOCOL=true
@@ -169,14 +170,12 @@ services:
 
   versiond:
     container_name: versiond
-    image: ghcr.io/product-science/versiond:0.2.15
+    image: >-
+      ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd
       - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
-      # The base deployment has no versiond load balancer, so there is nothing
-      # to announce to before closing admission.
-      - VERSIOND_DRAIN_ANNOUNCE=0s
       - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
       - NODE_HOST=node
       - KEY_NAME=${KEY_NAME}
@@ -194,7 +193,25 @@ services:
       - ./devshards/data:/opt/versiond/data
     depends_on:
       - api
-    # External SIGKILL backstop after versiond's complete internal budget.
+    # `docker compose up --wait` and update-devshard.sh gate on this: running is
+    # not enough, versiond must have reconciled its children. A pre-v5 image has
+    # no /readyz and answers 404; fall back to its liveness endpoint only then,
+    # so the previous image still passes when update-devshard.sh puts it back.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          output=$$(/bin/busybox wget -S -O /dev/null
+          http://127.0.0.1:8080/readyz 2>&1);
+          status=$$?;
+          if [ "$$status" -eq 0 ]; then exit 0; fi;
+          case "$$output" in *"HTTP/"*" 404 "*) exec /bin/busybox wget -q
+          -O /dev/null http://127.0.0.1:8080/healthz ;; *) exit "$$status" ;; esac
+      interval: 2s
+      timeout: 3s
+      retries: 3
+      start_period: ${VERSIOND_HEALTH_START_PERIOD:-30m}
+    # Outer Docker backstop; keep it greater than the internal host budget.
     stop_grace_period: ${VERSIOND_STOP_GRACE_PERIOD:-30m}
     restart: always
 
@@ -225,15 +242,24 @@ services:
     depends_on:
       - api
 
+  # Two fixed slots. update-devshard.sh replaces them one at a time behind the
+  # public HAProxy's checks, so one worker keeps serving while the other is
+  # recreated; a plain `docker compose up` of both at once has no such reserve.
+  # Both retain the established TLS, CORS, rate-limit, rewrite and on-chain
+  # routing contract. The public HAProxy sends PROXY v2 so they see the client IP.
   proxy-policy2:
     <<: *proxy-policy
 
   proxy-policy:
     <<: *proxy-policy
 
+  # The only public listener. It balances the policy workers in TCP mode and
+  # owns the active, route-aware versiond-router pools on private ports consumed
+  # by those workers.
   proxy:
     container_name: proxy
-    image: ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.15-devshard-v5}
+    image: >-
+      ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.15-devshard-v5}
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"

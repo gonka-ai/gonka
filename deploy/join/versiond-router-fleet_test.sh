@@ -363,7 +363,12 @@ image=$updated_image
 # Read-only diagnostics remain available while a deployment owns the lock.
 # Mutations still use the deployment-scoped lock regardless of a caller's
 # per-user XDG runtime directory.
-lock_file=$tmpdir/.gonka-deployment.lock
+lock_file=$(
+    # shellcheck source=deploy/join/deployment-lock.sh
+    source "$script_dir/deployment-lock.sh"
+    PROXY_ROUTER_CONTAINER=gonka-router-fleet-proxy-$suffix gonka_acquire_deployment_lock "$tmpdir"
+    printf '%s\n' "$GONKA_DEPLOYMENT_LOCK"
+)
 lock_ready=$tmpdir/lock-ready
 lock_release=$tmpdir/lock-release
 chmod 0444 "$lock_file"
@@ -398,7 +403,10 @@ grep -q 'another deployment operation holds' "$tmpdir/lock.out" || fail \
 (
     exec 9<"$lock_file"
     flock -n 9
+    # The parent intentionally obtains just the path from the discovery subshell.
+    # shellcheck disable=SC2031
     export GONKA_DEPLOYMENT_LOCK=$lock_file
+    # shellcheck disable=SC2031
     export GONKA_DEPLOYMENT_LOCK_HELD=$lock_file
     "${fleet[@]}" prepare-networks >/dev/null
 ) || fail "an inherited deployment lock was not re-entrant"
