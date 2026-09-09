@@ -1,0 +1,33 @@
+# Router-only project for citest-unjoined-router-fleet (#1733).
+# The harness writes the same endpoint file for both slots. Its addresses are
+# Docker-host published ports, reachable without joining the versiond network.
+x-router: &router
+  build:
+    context: ../..
+    dockerfile: versiond-router/Dockerfile
+  image: devshard-versiond-router:latest
+  environment:
+    GONKA_HA: "true"
+    VERSIOND_POOL_ENDPOINTS_FILE: /etc/haproxy/versiond-endpoints.json
+    VERSIOND_NON_HA_VERSIONS: ""
+    VERSIOND_VERSIONS: ${TESTENV_UNJOINED_VERSION:?test protocol required}
+    VERSIOND_ROUTING_ACTIVATION_MIN_READY: "2"
+    VERSIOND_ROUTING_CATALOG_URL: ""
+  volumes:
+    - ./versiond-endpoints.json:/etc/haproxy/versiond-endpoints.json:ro
+  ports:
+    - "127.0.0.1::8080"
+    - "127.0.0.1::8404"
+  networks:
+    - routers
+  stop_grace_period: 5s
+
+services:
+  versiond-router-0:
+    <<: *router
+  versiond-router-1:
+    <<: *router
+
+networks:
+  routers:
+    driver: bridge

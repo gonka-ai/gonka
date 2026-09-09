@@ -71,6 +71,7 @@ dev-logs: ## Follow dev overlay logs.
 
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
+.PHONY: citest-unjoined-router-fleet
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
 .PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping test-gateway-smoke
 
@@ -92,6 +93,11 @@ citest-images: gen-compose ## Pull hub images and build all compose images requi
 
 citest-stack: citest-images ## Full stack behavior citests (needs Docker + build-devshardd).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '$(STACK_CITEST_PATTERN)' -count=1 -v -timeout 90m
+
+citest-unjoined-router-fleet: gen-compose ## Two real routers agree on file-backed versiond membership across disjoint networks (#1733).
+	docker compose $(COMPOSE_BASE) pull devshard-postgres
+	docker compose $(COMPOSE_BASE) build mock-chain mock-dapi mock-openai versiond-router versiond-0
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestUnjoinedRouterFleet$$' -count=1 -v -timeout 20m
 
 citest-validation-lease-race: citest-images ## Validation lease race, pending stretch, and stale reclaim.
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestValidationLeaseRace' -count=1 -v -timeout 45m
