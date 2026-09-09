@@ -772,4 +772,8 @@ if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
 fi
 
-exec "$HAPROXY_BIN" -W -db -f "$OUT"
+# This container replaces HAProxy as a whole; it does not reload worker generations.
+# In master-worker mode the master inherits the background reconciler and can
+# wait for it after the last worker drains, keeping docker stop blocked until
+# its kill timeout. Let the serving process own PID 1 and exit after its drain.
+exec "$HAPROXY_BIN" -db -f "$OUT"

@@ -260,7 +260,7 @@ jobs:
       - name: Render and exercise versiond-router
         run: make -C versiond-router test-render
       - name: Exercise isolated versiond-router fleet rollouts
-        run: make -C versiond-router test-fleet
+        run: make -C versiond-router test-fleet test-shutdown
       - name: Gate router fleet failure scenarios
         run: |
           shellcheck -x deploy/join/versiond-router-fleet.sh deploy/join/versiond-router-fleet-regression_test.sh
