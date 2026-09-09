@@ -247,6 +247,7 @@ func (am AppModule) prepareEpochParticipationState(
 		activeParticipants,
 		pocStageStartHeight,
 		bootstrapInputs,
+		previous,
 	)
 	if err != nil {
 		am.LogError("failed to resolve bootstrap penalty modes; skipping bootstrap penalties", types.PoC, "error", err)
