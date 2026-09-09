@@ -35,7 +35,7 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
 	// Child-only clock contract. Gateway probes {RoutePrefix}/clock; versiond
 	// strips the version segment. Do not mount this on versiond's mux.
-	e.GET("/clock", echo.WrapHandler(probe.Handler(nil)))
+	e.GET("/clock", echo.WrapHandler(wrapClockHandler(probe.Handler(nil), clockFaultActive)))
 
 	return e
 }

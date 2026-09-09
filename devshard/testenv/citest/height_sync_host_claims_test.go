@@ -145,11 +145,14 @@ func TestContainerE2E_HeightSync_HostFabricatedHashInsideD(t *testing.T) {
 	})
 	require.True(t, ok, "H+1 fabricated claim must log untrusted_peer before reconcile")
 
-	// Pending is the last carried H+1. Reconcile warns only when local Latest()
-	// equals that height (not later). Keep chatting across both slots so the
-	// HA host handles a request on the tick that catches the held tip.
+	// Courier delay plus 1s blocks usually deliver the fabricated pair after
+	// honest Latest() has already reached or passed H. The host compares the
+	// claim to Latest() or Oracle.At(H); keep chatting so an HA replica sees it.
 	n := 0
 	ok = harness.AssertEventually(t, 45*time.Second, time.Second, func() bool {
+		if composeLogsContains(stack, hostClaimsReconcileWarn, "versiond-0", "versiond-1") {
+			return true
+		}
 		n++
 		postHeightSyncChat(t, cfg, eps, fmt.Sprintf("citest height-sync fabricated hash reconcile %d", n))
 		return composeLogsContains(stack, hostClaimsReconcileWarn, "versiond-0", "versiond-1")

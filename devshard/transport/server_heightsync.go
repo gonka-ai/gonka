@@ -98,58 +98,119 @@ func (s *Server) latestOracleHeader(ctx context.Context) *blocks.Header {
 	return hdr
 }
 
+func (s *Server) oracleHeaderAt(height int64) *blocks.Header {
+	if s.heightSyncLogOracle == nil || height <= 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	hdr, err := s.heightSyncLogOracle.At(ctx, height)
+	if err != nil || hdr == nil {
+		return nil
+	}
+	return hdr
+}
+
+// canonicalHeaderForClaim is the verifier's view of claimedH: Latest() when that
+// is already the tip, otherwise Oracle.At(H). Nil means the height is still
+// unknown (future tip, missing At, or dummy/old-dapi placeholder).
+func (s *Server) canonicalHeaderForClaim(claimedH int64, latest *blocks.Header) *blocks.Header {
+	if claimedH <= 0 {
+		return nil
+	}
+	if latest != nil && claimedH == latest.Height {
+		if blocks.IsDummyHeader(latest) {
+			return nil
+		}
+		return latest
+	}
+	if latest != nil && claimedH > latest.Height {
+		return nil
+	}
+	hdr := s.oracleHeaderAt(claimedH)
+	if hdr == nil || blocks.IsDummyHeader(hdr) {
+		return nil
+	}
+	return hdr
+}
+
+func (s *Server) logUntrustedHashMismatch(sessionID, peerID string, claimedH int64, claimedHash []byte, canon *blocks.Header) {
+	if canon == nil || bytes.Equal(canon.BlockHash, claimedHash) {
+		return
+	}
+	logging.Warn("heightsync: untrusted peer tip disagrees with oracle at reconciled height",
+		heightsync.LogFieldSubsystem, "heightsync",
+		heightsync.LogFieldSessionID, sessionID,
+		heightsync.LogFieldHeight, claimedH,
+		heightsync.LogFieldPeerID, peerID,
+		"oracle_block_hash_prefix", heightSyncHashPrefix(hex.EncodeToString(canon.BlockHash)),
+		"untrusted_block_hash_prefix", heightSyncHashPrefix(hex.EncodeToString(claimedHash)),
+	)
+}
+
 func (s *Server) reconcilePendingUntrusted(sessionID string, oracleHdr *blocks.Header) {
 	if s.pendingUntrustedBySession == nil || oracleHdr == nil {
 		return
 	}
 	s.pendingUntrustedMu.Lock()
-	defer s.pendingUntrustedMu.Unlock()
 	p := s.pendingUntrustedBySession[sessionID]
-	if p == nil {
+	if p == nil || oracleHdr.Height < p.MainnetHeight {
+		s.pendingUntrustedMu.Unlock()
 		return
 	}
-	if oracleHdr.Height < p.MainnetHeight {
+	tip := pendingUntrustedTip{
+		MainnetHeight: p.MainnetHeight,
+		BlockHash:     append([]byte(nil), p.BlockHash...),
+		PeerID:        p.PeerID,
+	}
+	s.pendingUntrustedMu.Unlock()
+
+	canon := s.canonicalHeaderForClaim(tip.MainnetHeight, oracleHdr)
+	if canon == nil {
+		// At(H) not ready (old dapi dummy / missing historical header). Keep
+		// pending so a later request can still warn.
 		return
 	}
-	if oracleHdr.Height > p.MainnetHeight {
+
+	s.pendingUntrustedMu.Lock()
+	if cur := s.pendingUntrustedBySession[sessionID]; cur != nil &&
+		cur.MainnetHeight == tip.MainnetHeight && bytes.Equal(cur.BlockHash, tip.BlockHash) {
 		delete(s.pendingUntrustedBySession, sessionID)
-		return
 	}
-	if !bytes.Equal(oracleHdr.BlockHash, p.BlockHash) {
-		logging.Warn("heightsync: untrusted peer tip disagrees with oracle at reconciled height",
-			heightsync.LogFieldSubsystem, "heightsync",
-			heightsync.LogFieldSessionID, sessionID,
-			heightsync.LogFieldHeight, p.MainnetHeight,
-			heightsync.LogFieldPeerID, p.PeerID,
-			"oracle_block_hash_prefix", heightSyncHashPrefix(hex.EncodeToString(oracleHdr.BlockHash)),
-			"untrusted_block_hash_prefix", heightSyncHashPrefix(hex.EncodeToString(p.BlockHash)),
-		)
-	}
-	delete(s.pendingUntrustedBySession, sessionID)
+	s.pendingUntrustedMu.Unlock()
+
+	s.logUntrustedHashMismatch(sessionID, tip.PeerID, tip.MainnetHeight, tip.BlockHash, canon)
 }
 
 func (s *Server) notePendingUntrustedInbound(sessionID, peerID string, hs *heightsync.HeightSyncSection, oracleHdr *blocks.Header) {
 	if s.pendingUntrustedBySession == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
 		return
 	}
-	localH := int64(0)
-	if oracleHdr != nil {
-		localH = oracleHdr.Height
-	}
-	if hs.MainnetHeight <= localH {
-		return
-	}
 	raw, err := decodeMainnetBlockHashHex(hs.MainnetBlockHashHex)
 	if err != nil {
 		return
 	}
-	s.pendingUntrustedMu.Lock()
-	defer s.pendingUntrustedMu.Unlock()
-	s.pendingUntrustedBySession[sessionID] = &pendingUntrustedTip{
-		MainnetHeight: hs.MainnetHeight,
-		BlockHash:     append([]byte(nil), raw...),
-		PeerID:        peerID,
+	localH := int64(0)
+	if oracleHdr != nil {
+		localH = oracleHdr.Height
 	}
+	if hs.MainnetHeight > localH {
+		s.pendingUntrustedMu.Lock()
+		s.pendingUntrustedBySession[sessionID] = &pendingUntrustedTip{
+			MainnetHeight: hs.MainnetHeight,
+			BlockHash:     append([]byte(nil), raw...),
+			PeerID:        peerID,
+		}
+		s.pendingUntrustedMu.Unlock()
+		return
+	}
+	// Courier delay / 1s blocks: the lie often arrives after local Latest()
+	// already reached or passed H. Compare now; do not wait for an exact-height tick.
+	canon := s.canonicalHeaderForClaim(hs.MainnetHeight, oracleHdr)
+	if canon == nil {
+		return
+	}
+	s.logUntrustedHashMismatch(sessionID, peerID, hs.MainnetHeight, raw, canon)
 }
 
 func (s *Server) logInboundHeightSync(peerID, sessionID string, nonce uint64, hs *heightsync.HeightSyncSection, oracleHdr *blocks.Header, v heightsync.InboundValidation) {
