@@ -399,7 +399,7 @@ services:
 
 Use Docker Compose with `!override` support. This excludes the local database from `up -d` and removes the local-PG dependency on the replicas shown; repeat for every additional replica. Otherwise v5's lost-database guard can reject the unused local database after HA artifacts/state exist.
 
-1. Start (include the v5 override as well if you use the §2.1 example; omit filter dependencies for direct catalog access):
+3. Start (include the v5 override as well if you use the §2.1 example; omit filter dependencies for direct catalog access):
 
 ```bash
 cd deploy/join
