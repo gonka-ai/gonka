@@ -25,6 +25,9 @@ class PoCParamsModel(BaseModel):
     model: str
     seq_len: int
     k_dim: int = 12
+    # Decode PoC scheme and its step count; absent => prefill scheme.
+    decode: Optional[bool] = None
+    max_tokens: Optional[int] = None
 
 
 class PoCInitGenerateRequest(BaseModel):
@@ -43,6 +46,7 @@ class PoCInitGenerateRequest(BaseModel):
 class ArtifactModel(BaseModel):
     nonce: int
     vector_b64: str
+    k_points_steps: Optional[List[int]] = None  # decode scheme artifact
 
 
 class ValidationModel(BaseModel):
@@ -86,7 +90,7 @@ async def init_generate(body: PoCInitGenerateRequest) -> dict:
     errors = []
     
     async def call_one(port: int, group_id: int):
-        payload = body.model_dump()
+        payload = body.model_dump(exclude_none=True)
         payload["group_id"] = group_id
         payload["n_groups"] = n_groups
         try:
@@ -197,7 +201,7 @@ async def generate(body: PoCGenerateRequest) -> dict:
         raise HTTPException(status_code=503, detail="No vLLM backends available")
     
     try:
-        r = await call_backend(port, "POST", "/api/v1/pow/generate", body.model_dump())
+        r = await call_backend(port, "POST", "/api/v1/pow/generate", body.model_dump(exclude_none=True))
         
         if r.status_code != 200:
             raise HTTPException(status_code=r.status_code, detail=r.text)

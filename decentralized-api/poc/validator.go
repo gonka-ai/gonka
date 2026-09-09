@@ -3,6 +3,7 @@ package poc
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -114,6 +115,7 @@ type participantWork struct {
 	pubKey     string
 	count      uint32
 	rootHash   []byte
+	decodeMax  int64     // decode_max_tokens of the model config; 0 = prefill scheme
 	attempt    int       // current attempt number (0-based)
 	retryAfter time.Time // don't process before this time
 
@@ -438,14 +440,18 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 			continue
 		}
 
-		workItems = append(workItems, participantWork{
+		work := participantWork{
 			address:  commit.ParticipantAddress,
 			modelId:  commit.ModelId,
 			url:      participantResp.Participant.InferenceUrl,
 			pubKey:   commit.HexPubKey,
 			count:    commit.Count,
 			rootHash: commit.RootHash,
-		})
+		}
+		if mc, ok := pocParams.GetModelConfig(commit.ModelId); ok {
+			work.decodeMax = mc.DecodeMaxTokens
+		}
+		workItems = append(workItems, work)
 	}
 
 	if validationSlots > 0 || snapshotFound {
@@ -801,6 +807,7 @@ func (v *OffChainValidator) checkValidateeProofs(
 		Count:                    work.count,
 		LeafIndices:              leafIndices,
 		ParticipantAddress:       work.address,
+		DecodeMaxTokens:          work.decodeMax,
 	})
 	if err != nil {
 		logging.Warn("OffChainValidator: proof fetch/verify failed", types.PoC,
@@ -910,6 +917,16 @@ func (v *OffChainValidator) dispatchToMLNode(
 		return validateAbstain
 	}
 
+	// Under the decode scheme the stored vector is the packed trajectory (proof-verified base64).
+	decode := modelConfig.DecodeMaxTokens > 0
+	if decode {
+		for i := range artifacts {
+			raw, _ := base64.StdEncoding.DecodeString(artifacts[i].VectorB64)
+			artifacts[i].VectorB64 = ""
+			artifacts[i].KPointsSteps = mlnodeclient.BytesToKSteps(raw)
+		}
+	}
+
 	// nodes is a snapshot taken once per stage, so retrying cannot make an executor appear.
 	modelNodes := filterValidationNodesForModel(nodes, work.modelId)
 	if len(modelNodes) == 0 {
@@ -924,11 +941,8 @@ func (v *OffChainValidator) dispatchToMLNode(
 		PublicKey:   work.pubKey,
 		NodeCount:   len(modelNodes),
 		Nonces:      nonces,
-		Params: mlnodeclient.PoCParamsV2{
-			Model:  modelConfig.ModelId,
-			SeqLen: modelConfig.SeqLen,
-		},
-		URL: validationCallbackUrl,
+		Params:      mlnodeclient.DecodePoCParams(modelConfig.ModelId, modelConfig.SeqLen, modelConfig.DecodeMaxTokens),
+		URL:         validationCallbackUrl,
 		Validation: &mlnodeclient.ValidationV2{
 			Artifacts: artifacts,
 		},

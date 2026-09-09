@@ -85,11 +85,14 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 	// Convert artifacts from JSON format to proto format for local storage
 	protoArtifacts := make([]*types.PoCArtifactV2, 0, len(body.Artifacts))
 	for _, a := range body.Artifacts {
-		vectorBytes, err := base64.StdEncoding.DecodeString(a.VectorB64)
-		if err != nil {
-			logging.Error("ArtifactBatchV2-callback. Failed to decode artifact vector", types.PoC,
-				"nonce", a.Nonce, "error", err)
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid base64 in artifact vector")
+		vectorBytes := mlnodeclient.KStepsToBytes(a.KPointsSteps) // decode scheme; empty for prefill
+		if len(vectorBytes) == 0 {
+			vectorBytes, err = base64.StdEncoding.DecodeString(a.VectorB64)
+			if err != nil {
+				logging.Error("ArtifactBatchV2-callback. Failed to decode artifact vector", types.PoC,
+					"nonce", a.Nonce, "error", err)
+				return echo.NewHTTPError(http.StatusBadRequest, "invalid base64 in artifact vector")
+			}
 		}
 		if len(vectorBytes) == 0 {
 			logging.Error("ArtifactBatchV2-callback. Empty artifact vector", types.PoC,
