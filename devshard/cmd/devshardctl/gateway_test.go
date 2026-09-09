@@ -804,6 +804,51 @@ func TestGatewayModelsEndpointRejectsUnsupportedMethod(t *testing.T) {
 	require.Equal(t, "GET, HEAD", rec.Header().Get("Allow"))
 }
 
+func TestAdminStateRedactsPrivateKey(t *testing.T) {
+	const privateKey = "super-secret-private-key"
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, []GatewayDevshardState{
+		{
+			RuntimeConfig: RuntimeConfig{
+				ID:            "12",
+				PrivateKeyHex: privateKey,
+				PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
+				Model:         "Qwen/Test",
+			},
+			Active: true,
+		},
+	}))
+
+	g := NewGateway(nil, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/state", nil)
+	rec := httptest.NewRecorder()
+	g.handleAdminState(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), privateKey)
+
+	var body struct {
+		Devshards []map[string]any `json:"devshards"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Devshards, 1)
+	require.NotContains(t, body.Devshards[0], "private_key")
+	require.Equal(t, "DEVSHARD_PRIVATE_KEY", body.Devshards[0]["private_key_env"])
+}
+
 func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
