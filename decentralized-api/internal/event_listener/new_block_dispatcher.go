@@ -31,6 +31,7 @@ import (
 type ChainStateClient interface {
 	EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error)
 	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
+	DevshardApprovedVersions(ctx context.Context, req *types.QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*types.QueryDevshardApprovedVersionsResponse, error)
 	ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeedsRequest, opts ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error)
 }
 
@@ -262,11 +263,16 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 				_ = d.configManager.SetPoCParams(apiconfig.NewPoCParamsCache(params.Params.PocParams.GetModelConfigs()))
 			}
 
-			// Update devshard versions cache from chain params
 			if params.Params.DevshardEscrowParams != nil {
-				d.configManager.SetDevshardVersions(
-					apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams),
-				)
+				cache := apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams, nil)
+				devshardVersions, verr := d.queryClient.DevshardApprovedVersions(ctx, &types.QueryDevshardApprovedVersionsRequest{})
+				if verr != nil || devshardVersions == nil {
+					logging.Error("Failed to get approved devshard versions, keeping last known list", types.Config, "error", verr)
+					cache.Versions = d.configManager.GetDevshardVersions().Versions
+				} else {
+					cache = apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams, devshardVersions.Versions)
+				}
+				d.configManager.SetDevshardVersions(cache)
 			}
 
 			// Reuse this Params response for the fee-tree cache. Do not issue a

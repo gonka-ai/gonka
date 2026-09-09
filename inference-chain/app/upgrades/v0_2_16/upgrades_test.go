@@ -214,3 +214,64 @@ func TestApplyFeeGroupUpgradeInfo_RejectsInvalid(t *testing.T) {
 	require.Error(t, applyFeeGroupUpgradeInfo(ctx, k, `{"enabled_fee_groups":["bls"],"min_gas_prices":{"bls":10}}`))
 	require.Error(t, applyFeeGroupUpgradeInfo(ctx, k, `{not json`))
 }
+
+func TestMigrateDevshardApprovedVersions(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams.ApprovedVersions = []*inferencetypes.DevshardApprovedVersion{
+		{
+			Name:   "v2",
+			Binary: "https://example.com/v2.zip",
+			Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		},
+		{
+			Name:   "v1",
+			Binary: "https://example.com/v1.zip",
+			Sha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, migrateDevshardApprovedVersions(ctx, k))
+
+	got, err := k.GetApprovedVersions(ctx)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, "v1", got[0].Name)
+	require.Equal(t, "v2", got[1].Name)
+
+	after, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Empty(t, after.DevshardEscrowParams.ApprovedVersions)
+}
+
+func TestLeftoverApprovedVersionsDoNotBlockCoefficientMigrate(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.DynamicCoefficientParams = nil
+	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{
+		ModelId:           "model-a",
+		WeightScaleFactor: inferencetypes.DecimalFromFloat(1),
+	}}
+	params.DevshardEscrowParams.ApprovedVersions = []*inferencetypes.DevshardApprovedVersion{{
+		Name:   "v1",
+		Binary: "https://example.com/v1.zip",
+		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.Error(t, migrateDynamicCoefficientParams(ctx, k))
+	require.NoError(t, migrateDevshardApprovedVersions(ctx, k))
+	require.NoError(t, migrateDynamicCoefficientParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got.PocParams.DynamicCoefficientParams)
+	require.Empty(t, got.DevshardEscrowParams.ApprovedVersions)
+	stored, err := k.GetApprovedVersions(ctx)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	require.Equal(t, "v1", stored[0].Name)
+}

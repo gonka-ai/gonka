@@ -105,6 +105,7 @@ const (
 	Query_MaintenanceConcurrency_FullMethodName                    = "/inference.inference.Query/MaintenanceConcurrency"
 	Query_MaintenanceSchedulability_FullMethodName                 = "/inference.inference.Query/MaintenanceSchedulability"
 	Query_ListClaimRecipients_FullMethodName                       = "/inference.inference.Query/ListClaimRecipients"
+	Query_DevshardApprovedVersions_FullMethodName                  = "/inference.inference.Query/DevshardApprovedVersions"
 )
 
 // QueryClient is the client API for Query service.
@@ -257,6 +258,7 @@ type QueryClient interface {
 	MaintenanceSchedulability(ctx context.Context, in *QueryMaintenanceSchedulabilityRequest, opts ...grpc.CallOption) (*QueryMaintenanceSchedulabilityResponse, error)
 	// Lists the scheduled per-epoch claim recipient overrides for a participant.
 	ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error)
+	DevshardApprovedVersions(ctx context.Context, in *QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*QueryDevshardApprovedVersionsResponse, error)
 }
 
 type queryClient struct {
@@ -1041,6 +1043,15 @@ func (c *queryClient) ListClaimRecipients(ctx context.Context, in *QueryListClai
 	return out, nil
 }
 
+func (c *queryClient) DevshardApprovedVersions(ctx context.Context, in *QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*QueryDevshardApprovedVersionsResponse, error) {
+	out := new(QueryDevshardApprovedVersionsResponse)
+	err := c.cc.Invoke(ctx, Query_DevshardApprovedVersions_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -1191,6 +1202,7 @@ type QueryServer interface {
 	MaintenanceSchedulability(context.Context, *QueryMaintenanceSchedulabilityRequest) (*QueryMaintenanceSchedulabilityResponse, error)
 	// Lists the scheduled per-epoch claim recipient overrides for a participant.
 	ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error)
+	DevshardApprovedVersions(context.Context, *QueryDevshardApprovedVersionsRequest) (*QueryDevshardApprovedVersionsResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1455,6 +1467,9 @@ func (UnimplementedQueryServer) MaintenanceSchedulability(context.Context, *Quer
 }
 func (UnimplementedQueryServer) ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListClaimRecipients not implemented")
+}
+func (UnimplementedQueryServer) DevshardApprovedVersions(context.Context, *QueryDevshardApprovedVersionsRequest) (*QueryDevshardApprovedVersionsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DevshardApprovedVersions not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -3017,6 +3032,24 @@ func _Query_ListClaimRecipients_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_DevshardApprovedVersions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryDevshardApprovedVersionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).DevshardApprovedVersions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_DevshardApprovedVersions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).DevshardApprovedVersions(ctx, req.(*QueryDevshardApprovedVersionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3367,6 +3400,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListClaimRecipients",
 			Handler:    _Query_ListClaimRecipients_Handler,
+		},
+		{
+			MethodName: "DevshardApprovedVersions",
+			Handler:    _Query_DevshardApprovedVersions_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

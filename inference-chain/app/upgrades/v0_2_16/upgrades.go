@@ -52,6 +52,9 @@ func CreateUpgradeHandler(
 		}
 
 		// Future v0.2.16 migration steps land below this line.
+		if err := migrateDevshardApprovedVersions(ctx, k); err != nil {
+			return fromVM, err
+		}
 		if err := migrateDynamicCoefficientParams(ctx, k); err != nil {
 			return fromVM, err
 		}
@@ -312,5 +315,33 @@ func applyFeeGroupUpgradeInfo(ctx context.Context, k keeper.Keeper, infoJSON str
 	k.LogInfo("enabled fee groups from upgrade info", types.Upgrades,
 		"enabled_fee_groups", info.EnabledFeeGroups,
 		"min_gas_prices", info.MinGasPrices)
+	return nil
+}
+
+func migrateDevshardApprovedVersions(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.DevshardEscrowParams == nil {
+		return nil
+	}
+	for i, v := range params.DevshardEscrowParams.ApprovedVersions {
+		if v == nil {
+			return fmt.Errorf("approved_versions[%d] cannot be null", i)
+		}
+		if err := v.Validate(); err != nil {
+			return fmt.Errorf("approved_versions[%d]: %w", i, err)
+		}
+		if err := k.SetApprovedVersion(ctx, *v); err != nil {
+			return err
+		}
+	}
+	n := len(params.DevshardEscrowParams.ApprovedVersions)
+	params.DevshardEscrowParams.ApprovedVersions = nil
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
+	k.LogInfo("migrated approved devshard versions out of params", types.Upgrades, "count", n)
 	return nil
 }

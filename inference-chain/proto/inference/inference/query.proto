@@ -494,6 +494,10 @@ service Query {
   rpc ListClaimRecipients (QueryListClaimRecipientsRequest) returns (QueryListClaimRecipientsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/list_claim_recipients/{participant}";
   }
+
+  rpc DevshardApprovedVersions (QueryDevshardApprovedVersionsRequest) returns (QueryDevshardApprovedVersionsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/devshard_approved_versions";
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -1327,4 +1331,10 @@ message QueryListClaimRecipientsRequest {
 
 message QueryListClaimRecipientsResponse {
   repeated ClaimRecipientEntry entries = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryDevshardApprovedVersionsRequest {}
+
+message QueryDevshardApprovedVersionsResponse {
+  repeated DevshardApprovedVersion versions = 1;
 }
