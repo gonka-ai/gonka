@@ -785,7 +785,7 @@ Healthy signs:
 
 PostgreSQL outages make v5 children unready and fail closed. After a database fence loss, verify that the affected child exits and `versiond` replaces it before it receives traffic again. A child left running and unready fails recovery acceptance.
 
-The health URL is only a routing smoke check. Also use a real funded escrow: record an inference, serving member, committed nonce and cost, stop that member, and continue the **same session** on a survivor. Verify committed state and accounting; test retained v4 and new v5 escrows separately. HAProxy does not replay non-idempotent requests after sending them and does not retry application 503 responses. A crash can interrupt an in-flight stream; use the [test plan](devshard-host-ha-test-plan.md) for graceful-drain, crash and restart checks.
+The health URL is only a routing smoke check. Also use a real funded escrow: record an inference, serving member, committed nonce and cost, stop that member, and continue the **same session** on a survivor. Verify committed state and accounting; test retained v4 and new v5 escrows separately. HAProxy does not replay non-idempotent requests after sending them and does not retry application 503 responses. A crash can interrupt an in-flight stream; use the [test plan](../devshard/docs/devshard-host-ha-test-plan.md) for graceful-drain, crash and restart checks.
 
 ---
 

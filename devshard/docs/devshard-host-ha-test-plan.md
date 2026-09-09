@@ -1,8 +1,8 @@
 # Devshard HA lifecycle test plan
 
-Prepare the deployment using the [HA setup guide](devshard-host-ha-setup.md).
+Prepare the deployment using the [HA setup guide](../../docs/devshard-host-ha-setup.md).
 Operator commands for adding, stopping, replacing and removing versiond are in
-[section 2.5](devshard-host-ha-setup.md#25-operating-versiond-members).
+[section 2.5](../../docs/devshard-host-ha-setup.md#25-operating-versiond-members).
 
 ## Scope and preparation
 
