@@ -318,6 +318,10 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: height sync: %w", cfg.ID, err)
 	}
+	compressRequestBodies, err := compressRequestBodiesFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, err)
+	}
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:           keyHex,
 		EscrowID:                cfg.ID,
@@ -326,6 +330,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		RoutePrefix:             routePrefix,
 		RequestAdmission:        sharedParticipantRequestLimiter,
 		RequireHeightSeed:       requireHeightSeedFromEnv(),
+		CompressRequestBodies:   compressRequestBodies,
 		Escrow:                  escrow,
 		RefusalTimeoutSeconds:   timeoutOverrides.RefusalTimeoutSeconds,
 		ExecutionTimeoutSeconds: timeoutOverrides.ExecutionTimeoutSeconds,

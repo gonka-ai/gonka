@@ -71,6 +71,9 @@ func transportAddress(baseURL string) string {
 // bufio.Scanner ceiling and the gateway raceWriter classify attempt cap.
 const DefaultMaxSSEEventBytes = 1 << 20
 
+// DefaultMaxSSEStreamBytes caps what one inference stream may decode to.
+const DefaultMaxSSEStreamBytes int64 = 256 << 20
+
 // sseReaderBufferSize is the bufio.Reader size used by parseSSEResponse.
 // Oversize aborts after at most DefaultMaxSSEEventBytes + this much unread
 // data in the reader buffer (not the full attacker payload).
@@ -92,10 +95,14 @@ type ClientConfig struct {
 	HeightSeedTimeout time.Duration
 	StreamCallback    func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
 	RoutePrefix       string                          // path prefix for all session routes; default /devshard/<version>
+	// CompressRequestBodies gzips a POST body; safe once every host decompresses.
+	CompressRequestBodies bool
 	// MaxSSEEventBytes caps a single SSE line (including the trailing newline).
 	// Zero means DefaultMaxSSEEventBytes. Oversize lines abort with
 	// ErrSSEEventTooLarge; they are never silently truncated.
 	MaxSSEEventBytes int
+	// MaxSSEStreamBytes caps one decoded stream. Zero means the default.
+	MaxSSEStreamBytes int64
 	// ParticipantKey is the canonical participant identifier passed to
 	// the admission controller for both AllowRequest and ObserveResult.
 	// Callers MUST use the participant's gonka validator address
@@ -152,6 +159,9 @@ var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or devsh
 // MaxSSEEventBytes before a newline arrives. The oversize payload is discarded;
 // callers should treat this as a transport failure and escalate to another host.
 var ErrSSEEventTooLarge = errors.New("sse event exceeds size limit")
+
+// ErrSSEStreamTooLarge is returned when a stream decodes past MaxSSEStreamBytes.
+var ErrSSEStreamTooLarge = errors.New("sse stream exceeds size limit")
 
 // MaxJSONResponseBytes bounds the legacy non-stream JSON inference body. It
 // matches the gateway's own per-request wire-body ceiling, so a body above it
@@ -560,7 +570,7 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 // the caller could not distinguish a successful completion from a peer /
 // middlebox closing the body early.
 //
-// Line size is hard-capped by MaxSSEEventBytes (default 1 MiB). A malicious
+// Line size is capped by MaxSSEEventBytes, the stream by MaxSSEStreamBytes. A malicious
 // executor can otherwise open `data: ` and stream bytes without ever sending a
 // newline; the old unbounded ReadBytes('\n') grew the returned slice for the
 // whole inference deadline. Oversize aborts with ErrSSEEventTooLarge instead of
@@ -569,6 +579,8 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	br := bufio.NewReaderSize(r, sseReaderBufferSize)
 	maxLine := c.maxSSEEventBytes()
+	maxStream := c.maxSSEStreamBytes()
+	var streamBytes int64
 	var result host.HostResponse
 	var writeErrLogged bool
 	var unexpectedLineLogged bool
@@ -578,8 +590,14 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 	for {
 		raw, readErr := readBoundedSSELine(br, maxLine)
 		if len(raw) > 0 {
+			streamBytes += int64(len(raw))
 			line := string(bytes.TrimRight(raw, "\r\n"))
+			// Handled before the bound: the line arrived whole.
 			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &sawMeta)
+			if streamBytes > maxStream {
+				logging.Warn("sse_stream_too_large", "subsystem", "transport", "escrow", c.escrowID, "limit_bytes", maxStream)
+				return &result, fmt.Errorf("%w: %d byte limit", ErrSSEStreamTooLarge, maxStream)
+			}
 		}
 		if readErr != nil {
 			if errors.Is(readErr, ErrSSEEventTooLarge) {
@@ -587,6 +605,13 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 				// the host cannot keep streaming into a discarded buffer.
 				logging.Warn("sse_event_too_large", "subsystem", "transport", "escrow", c.escrowID, "limit_bytes", maxLine)
 				return &result, readErr
+			}
+			// A broken transfer: no terminator redeems a cut trailer.
+			if errors.Is(readErr, io.ErrUnexpectedEOF) {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return &result, fmt.Errorf("read SSE stream: %w", ctxErr)
+				}
+				return &result, ErrSSEStreamTruncated
 			}
 			if readErr == io.EOF {
 				// A cancelled context (client disconnect, race resolved, drain)
@@ -616,6 +641,13 @@ func (c *HTTPClient) maxSSEEventBytes() int {
 		return c.config.MaxSSEEventBytes
 	}
 	return DefaultMaxSSEEventBytes
+}
+
+func (c *HTTPClient) maxSSEStreamBytes() int64 {
+	if c != nil && c.config.MaxSSEStreamBytes > 0 {
+		return c.config.MaxSSEStreamBytes
+	}
+	return DefaultMaxSSEStreamBytes
 }
 
 // readBoundedSSELine reads up to and including the next '\n', aborting as soon
@@ -1069,13 +1101,18 @@ func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byt
 		return nil, fmt.Errorf("sign request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	wireBody, contentEncoding := c.encodeRequestBody(body)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(wireBody))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
+	if contentEncoding != "" {
+		req.Header.Set("Content-Encoding", contentEncoding)
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {

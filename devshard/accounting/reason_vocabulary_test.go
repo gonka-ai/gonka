@@ -100,7 +100,7 @@ func TestNormalizeDeliveryReason_KeepsWhatADeliveryCanBe(t *testing.T) {
 // gateway enforced is a concrete host fault, and collapsing it to unknown loses the per-host report.
 func TestNormalizeReasons_KeepEveryBoundedResponseFailure(t *testing.T) {
 	for _, reason := range []string{
-		"sse_event_too_large", "response_body_too_large",
+		"sse_event_too_large", "sse_stream_too_large", "response_body_too_large",
 		"aggregate_response_too_large", "aggregate_fold_too_large",
 	} {
 		require.Equal(t, reason, normalizeDetailReason(reason))
