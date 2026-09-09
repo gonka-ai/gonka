@@ -93,6 +93,8 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgDeleteGovernanceModel)(nil)):           {GovernancePermission},
 	reflect.TypeOf((*types.MsgRegisterLiquidityPool)(nil)):           {GovernancePermission},
 	reflect.TypeOf((*types.MsgRegisterModel)(nil)):                   {GovernancePermission},
+	reflect.TypeOf((*types.MsgPutDevshardApprovedVersion)(nil)):      {GovernancePermission},
+	reflect.TypeOf((*types.MsgDeleteDevshardApprovedVersion)(nil)):   {GovernancePermission},
 	reflect.TypeOf((*types.MsgRegisterTokenMetadata)(nil)):           {GovernancePermission},
 	reflect.TypeOf((*types.MsgRegisterIbcTokenMetadata)(nil)):        {GovernancePermission},
 	reflect.TypeOf((*types.MsgRegisterWrappedTokenContract)(nil)):    {GovernancePermission},

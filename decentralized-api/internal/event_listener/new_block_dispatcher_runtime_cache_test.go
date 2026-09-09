@@ -43,6 +43,14 @@ func (m *mockParamsQueryClient) ListRandomSeeds(ctx context.Context, req *types.
 	return args.Get(0).(*types.QueryRandomSeedsResponse), args.Error(1)
 }
 
+func (m *mockParamsQueryClient) ApprovedVersions(ctx context.Context, req *types.QueryApprovedVersionsRequest, opts ...grpc.CallOption) (*types.QueryApprovedVersionsResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryApprovedVersionsResponse), args.Error(1)
+}
+
 func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*OnNewBlockDispatcher, *apiconfig.ConfigManager) {
 	t.Helper()
 
@@ -50,6 +58,11 @@ func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*On
 	cm.EnsureRuntimeConfigNotifier()
 	phaseTracker := &chainphase.ChainPhaseTracker{}
 
+	qc.On("ApprovedVersions", mock.Anything, mock.Anything).Return(&types.QueryApprovedVersionsResponse{
+		Versions: []*types.DevshardApprovedVersion{
+			{Name: "v1", Binary: "https://example/v1", Sha256: "sha1"},
+		},
+	}, nil).Maybe()
 	qc.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{EpochParams: &defaultEpochParams},
 		LatestEpoch: types.Epoch{
@@ -112,9 +125,6 @@ func devshardParamsResponseFull(
 				ExecutionTimeout:        executionTimeout,
 				ValidationRate:          validationRate,
 				VoteThresholdFactor:     voteThresholdFactor,
-				ApprovedVersions: []*types.DevshardApprovedVersion{
-					{Name: "v1", Binary: "https://example/v1", Sha256: "sha1"},
-				},
 			},
 		},
 	}
@@ -205,6 +215,40 @@ func TestOnNewBlockDispatcher_ApplyRuntimeConfigBlockIfChanged_Notifies(t *testi
 		t.Fatal("expected notifier wake after block param sync")
 	}
 	require.Equal(t, int64(200), cm.RuntimeParamsBlockHeight())
+}
+
+func TestOnNewBlockDispatcher_KeepsVersionsOnApprovedVersionsError(t *testing.T) {
+	qc := &mockParamsQueryClient{}
+	dispatcher, cm := newRuntimeCacheTestDispatcher(t, qc)
+
+	cm.SetDevshardVersions(apiconfig.DevshardVersionsCache{
+		Versions: []apiconfig.DevshardVersion{
+			{Name: "keep-me", Binary: "https://example/keep", SHA256: "sha-keep"},
+		},
+		DevshardRequestsEnabled: true,
+		MaxNonce:                100,
+	})
+
+	for i := len(qc.ExpectedCalls) - 1; i >= 0; i-- {
+		if qc.ExpectedCalls[i].Method == "ApprovedVersions" {
+			qc.ExpectedCalls = append(qc.ExpectedCalls[:i], qc.ExpectedCalls[i+1:]...)
+		}
+	}
+	qc.On("ApprovedVersions", mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded).Once()
+	qc.On("Params", mock.Anything, mock.Anything).Return(
+		devshardParamsResponse(false, 30000), nil,
+	).Once()
+
+	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
+		Height: 103,
+		Hash:   "real-block-hash-versions-fail",
+	}))
+
+	got := cm.GetDevshardVersions()
+	require.False(t, got.DevshardRequestsEnabled)
+	require.Equal(t, uint32(30000), got.MaxNonce)
+	require.Len(t, got.Versions, 1)
+	require.Equal(t, "keep-me", got.Versions[0].Name)
 }
 
 func TestOnNewBlockDispatcher_NilDevshardEscrowParams_NoPanic(t *testing.T) {
