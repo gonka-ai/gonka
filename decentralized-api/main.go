@@ -312,10 +312,17 @@ func main() {
 	// Negative ports explicitly disable the NodeManager gRPC server.
 	if nmGrpcPort > 0 {
 		nmGrpcServer := grpc.NewServer()
-		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker,
+		nmOpts := []nodemanager.ServerOption{
 			nodemanager.WithHostEventRing(hostEventRing),
 			nodemanager.WithEscrowLoadTracker(escrowLoadTracker),
-		))
+		}
+		// Guard like the HTTP mount below: a nil *observer.Oracle passed as an
+		// interface is not nil, so GetBlockHeader would answer NotFound for a
+		// disabled oracle instead of FailedPrecondition.
+		if chainOracle != nil {
+			nmOpts = append(nmOpts, nodemanager.WithBlockOracle(chainOracle))
+		}
+		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker, nmOpts...))
 		reflection.Register(nmGrpcServer)
 		nodeManagerAddr := fmt.Sprintf(":%v", nmGrpcPort)
 		nmLis, err := net.Listen("tcp", nodeManagerAddr)

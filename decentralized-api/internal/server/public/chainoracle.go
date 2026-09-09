@@ -29,7 +29,8 @@ func NewChainOracle(rpcURL string) (*observer.Oracle, error) {
 }
 
 // WithChainOracle mounts GET /block/:height from the shared oracle (same
-// instance the NewBlock listener Observes into).
+// instance the NewBlock listener Observes into). NodeManager gRPC
+// GetBlockHeader / ProveBlockPath use that same oracle via WithBlockOracle.
 func WithChainOracle(o blocks.BlockOracle) ServerOption {
 	return func(s *Server) {
 		s.chainOracle = o
