@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 import time
 import uuid
@@ -41,10 +42,18 @@ with tempfile.TemporaryDirectory(prefix="gonka-updater-pg-") as temp:
                 "healthcheck": {"test": ["CMD", "pg_isready", "-U", "devshardd"],
                                 "interval": "1s", "timeout": "3s", "retries": 60},
             },
-            "versiond": {"image": "busybox:1.37", "environment": {
+            "versiond": {"image": "busybox:1.36", "command": ["sleep", "600"],
+                         "networks": ["default", "versiond-router-back"], "environment": {
+                "GONKA_HA": "true",
                 "PGUSER": "devshardd", "PGDATABASE": "devshardd", "PGPASSWORD": "test-only"}},
         },
     }
+    model["networks"] = {"default": {}, "versiond-router-back": {}}
+    for name in ("proxy-policy", "proxy-policy2"):
+        model["services"][name] = {"image": "busybox:1.36"}
+    for name in ("update-devshard.sh", "updater-container-state.py", "updater-rollback.sh", "deployment-lock.sh"):
+        shutil.copy2(ROOT / name, directory / name)
+    (directory / "config.env").touch()
     compose_file = directory / "compose.json"
     compose_file.write_text(json.dumps(model))
     compose = ("docker", "compose", "-p", project, "-f", str(compose_file))
@@ -58,7 +67,7 @@ with tempfile.TemporaryDirectory(prefix="gonka-updater-pg-") as temp:
                        "-XwqAt", "-v", "ON_ERROR_STOP=1", "-c", query)
 
     try:
-        checked(*compose, "up", "-d", "--wait", "devshard-postgres")
+        checked(*compose, "up", "-d", "--wait", "devshard-postgres", "versiond")
         container = checked(*compose, "ps", "-q", "devshard-postgres")
         for _ in range(60):
             attempt = helper("postgres-seal", container)
@@ -81,7 +90,8 @@ with tempfile.TemporaryDirectory(prefix="gonka-updater-pg-") as temp:
             assert checked(*compose, "ps", "-q", "devshard-postgres") == container
         print("updater-postgres_test: mount and PGDATA changes refused before replacement", flush=True)
 
-        journal = directory / "postgres.json"
+        (directory / "state/pending").mkdir(parents=True)
+        journal = directory / "state/pending/postgres.json"
         result = helper("postgres-prepare", str(journal), project, container, nonce)
         assert result.returncode == 0, result.stderr
         assert helper("postgres-verify", str(journal)).returncode == 0
@@ -120,6 +130,64 @@ with tempfile.TemporaryDirectory(prefix="gonka-updater-pg-") as temp:
         assert checked("docker", "inspect", "--format", "{{.State.Running}}", container) == "false"
         assert journal.exists()
         print("updater-postgres_test: wrong history stopped; recovery record retained", flush=True)
+
+        # Retry the actual updater without COMPOSE_FILE, first alongside a
+        # canonical versiond container, then with only recovered PostgreSQL.
+        # Hide unrelated fixed service names; all project discovery, labels,
+        # container operations and history checks still use real Docker.
+        compose_file.write_text(json.dumps(model))
+        wrapper = directory / "docker-wrapper"
+        wrapper.write_text("\n".join([
+            "#!/usr/bin/env bash", "set -eu",
+            'if [[ $1 == inspect ]]; then',
+            '  case ${!#} in versiond|devshard-postgres|versiond-router|proxy|proxy-policy|proxy-policy2|api|node)',
+            '    echo "Error response from daemon: No such object: ${!#}" >&2; exit 1 ;; esac',
+            'fi', 'exec docker "$@"', ''
+        ]))
+        wrapper.chmod(0o755)
+        environment = dict(os.environ, DOCKER_BIN=str(wrapper),
+                           GONKA_CONFIG_ENV=str(directory / "config.env"),
+                           UPDATE_STATE_DIR=str(directory / "state"), UPDATE_WAIT_TIMEOUT_SECONDS="90",
+                           UPDATE_ACCEPT_DATABASE_CHANGE="true")
+        for key in ("COMPOSE_FILE", "COMPOSE_PROJECT_NAME", "GONKA_DEPLOYMENT_LOCK",
+                    "GONKA_DEPLOYMENT_LOCK_HELD", "GONKA_DEPLOYMENT_KEY"):
+            environment.pop(key, None)
+
+        def retry():
+            return run(str(directory / "update-devshard.sh"), env=environment, timeout=120)
+
+        for only_postgres in (False, True):
+            if only_postgres:
+                checked(*compose, "rm", "-sf", "versiond")
+            result = retry()
+            assert result.returncode and "history challenge" in result.stderr, result.stdout + result.stderr
+            assert "Recovering the previous service specifications" in result.stdout
+            assert journal.exists()
+            container = checked(*compose, "ps", "-aq", "devshard-postgres")
+            labels = json.loads(checked("docker", "inspect", "--format", "{{json .Config.Labels}}", container))
+            assert labels["ai.gonka.updater.compose.config_files"] == str(compose_file)
+            assert labels["ai.gonka.updater.compose.working_dir"] == str(directory)
+            assert not Path(labels["com.docker.compose.project.config_files"]).exists()
+            assert checked("docker", "inspect", "--format", "{{.State.Running}}", container) == "false"
+        print("updater-postgres_test: repeated failed recovery remains discoverable without COMPOSE_FILE", flush=True)
+
+        # Repair the injected fault and retry once more. Recovery must finish
+        # and remove pending before the intentional live-writer preflight guard.
+        checked("docker", "start", container)
+        for _ in range(60):
+            ready = run("docker", "exec", container, "pg_isready", "-U", "devshardd")
+            if ready.returncode == 0:
+                break
+            time.sleep(1)
+        sql(container, f"UPDATE public.gonka_updater_continuity SET nonce = '{nonce}'")
+        checked("docker", "stop", container)
+        checked(*compose, "up", "-d", "versiond")
+        result = retry()
+        assert result.returncode and "requires all versiond writers stopped" in result.stderr, result.stdout + result.stderr
+        assert not journal.parent.exists()
+        container = checked(*compose, "ps", "-q", "devshard-postgres")
+        assert sql(container, "SELECT value FROM retained") == "42"
+        print("updater-postgres_test: repaired history resumes normal discovery and clears pending", flush=True)
     finally:
         ids = checked("docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}").split()
         if ids:

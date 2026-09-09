@@ -232,10 +232,21 @@ def seal_postgres(container_id):
     print(nonce)
 
 
-def prepare_postgres(path, project, container_id, nonce):
+def prepare_postgres(path, project, container_id, nonce, working_dir=None, config_files=None):
     model = json.load(sys.stdin)
     mode, previous = pg_storage(model, container_id)
     service = copy.deepcopy(model["services"]["devshard-postgres"])
+    # Compose owns its built-in provenance labels and overwrites them with
+    # the temporary recovery file. Keep canonical discovery paths separately,
+    # on the container from creation onward (including interrupted recovery).
+    previous_labels = (previous or {}).get("Config", {}).get("Labels", {})
+    discovery = {"working_dir": working_dir, "config_files": config_files}
+    for key, value in discovery.items():
+        label = "ai.gonka.updater.compose." + key
+        value = value or previous_labels.get(label) or previous_labels.get("com.docker.compose.project." + key)
+        if not value:
+            raise RuntimeError("cannot save canonical Compose discovery paths for PostgreSQL recovery")
+        service.setdefault("labels", {})[label] = value
     # Freeze both the candidate image and the retained v4 volume. Compose
     # cannot inherit an anonymous volume after its old container disappears.
     service["image"] = docker("image", "inspect", "--format", "{{.Id}}", service["image"]).strip()

@@ -308,7 +308,10 @@ moving since the container was started.
 
 A pending replacement is recorded before Compose changes a service. If the
 updater is killed, the next normal run restores that pending step before
-starting preflight and retrying. `--check` and `--dry-run` report pending
+starting preflight and retrying. Recovered PostgreSQL retains the original
+Compose paths for discovery, so another retry does not depend on a deleted
+temporary recovery file or require setting `COMPOSE_FILE`.
+`--check` and `--dry-run` report pending
 recovery and stop. If restoration fails, the records remain for another retry;
 inspect the reported service's logs and fix the cause before rerunning.
 

@@ -157,7 +157,14 @@ container_exists() {
 }
 
 container_label() {
-    "$docker_bin" inspect --format "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null
+    local format="{{index .Config.Labels \"$2\"}}" recovery_label
+    case $2 in
+        com.docker.compose.project.config_files | com.docker.compose.project.working_dir)
+            recovery_label=ai.gonka.updater.compose.${2##*.}
+            format="{{if index .Config.Labels \"$recovery_label\"}}{{index .Config.Labels \"$recovery_label\"}}{{else}}$format{{end}}"
+            ;;
+    esac
+    "$docker_bin" inspect --format "$format" "$1" 2>/dev/null
 }
 
 # --- Compose files and project ---------------------------------------------
@@ -179,6 +186,12 @@ project_name=
 deployment_containers=$("$docker_bin" ps -a --format '{{.Names}}' \
     --filter "label=com.docker.compose.project.working_dir=$script_dir") || fail \
     "cannot list the containers of this deployment"
+# Recovery containers retain canonical paths separately: Compose's built-in
+# labels point to the temporary frozen model, which has already been deleted.
+recovery_containers=$("$docker_bin" ps -a --format '{{.Names}}' \
+    --filter "label=ai.gonka.updater.compose.working_dir=$script_dir") || fail \
+    "cannot list recovered containers of this deployment"
+deployment_containers+=$'\n'$recovery_containers
 candidates=(versiond devshard-postgres proxy proxy-policy2 proxy-policy api node)
 while IFS= read -r candidate; do
     [[ -n $candidate ]] || continue
@@ -783,7 +796,7 @@ up() {
     mkdir -p "$state_dir"
     chmod 700 "$state_dir"
     staging=$(mktemp -d "$state_dir/pending.XXXXXX")
-    (umask 077; python3 "$state_helper" postgres-prepare "$staging/postgres.json" "$project_name" "$id" "$nonce" <<<"$rendered") || \
+    (umask 077; python3 "$state_helper" postgres-prepare "$staging/postgres.json" "$project_name" "$id" "$nonce" "$script_dir" "$(IFS=,; printf '%s' "${compose_files[*]}")" <<<"$rendered") || \
         fail "cannot save PostgreSQL recovery state"
     python3 "$state_helper" publish "$staging" "$state_dir/pending" || fail "cannot publish PostgreSQL recovery state"
     run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service" || \
