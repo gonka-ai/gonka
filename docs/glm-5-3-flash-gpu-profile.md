@@ -158,7 +158,7 @@ measured; the inference gate is the corroborating signal.
 ## MLNode image
 
 Built and verified on 8×H200:
-`ghcr.io/gonka-ai/mlnode:3.0.17-glm53-h200`, on the vLLM base
+`ghcr.io/gonka-ai/mlnode:3.0.17-vllm-0.28.0-h200`, on the vLLM base
 `ghcr.io/gonka-ai/vllm:v0.28.0-glm53-poc-cu13-hopper-blackwell`. It carries vLLM
 `0.28.0.dev0+glm53.gonka.sampler1`, gonka-poc `0.1.4`, and FlashInfer `0.6.18`.
 
