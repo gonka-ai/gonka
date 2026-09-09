@@ -9,6 +9,10 @@ import (
 // ErrSessionNotFound is returned when a session does not exist in storage.
 var ErrSessionNotFound = errors.New("session not found")
 
+// ErrSessionNotActive is returned when a session exists in storage but is not
+// status "active" (typically "settled"). Callers must not recover or serve it.
+var ErrSessionNotActive = errors.New("session not active")
+
 // ErrSessionEpochConflict is returned when local storage finds the same
 // escrow_id mapped to more than one epoch. Mainnet pins this mapping on the
 // DevshardEscrow, so local storage must not choose a different epoch silently.
@@ -25,12 +29,28 @@ var ErrSessionVersionRequired = errors.New("session version required")
 // state-root composition from attaching to live state mid-session.
 var ErrSessionVersionConflict = errors.New("session version conflict")
 
+// ErrEscrowBackendConflict is returned when both SQLite and Postgres claim the
+// same escrow. The router refuses to choose a fork silently.
+var ErrEscrowBackendConflict = errors.New("escrow exists in multiple storage backends")
+
 // ErrSnapshotNotFound is returned when no snapshot exists for a session.
 var ErrSnapshotNotFound = errors.New("snapshot not found")
 
 // ErrEpochPruned is returned when a managed store is asked to create a session
 // in an epoch that has already passed the local retention horizon.
 var ErrEpochPruned = errors.New("epoch already pruned")
+
+// ErrEscrowCacheNotFound is returned when no pre-init escrow cache row exists.
+var ErrEscrowCacheNotFound = errors.New("escrow cache not found")
+
+// ErrStorageIndexRebuilding is returned by escrow-keyed Postgres operations
+// while the session index rebuild has not finished within the per-operation
+// budget. It signals a transient, retryable state (not a hard storage failure),
+// so callers should surface it as "initializing" / 503 rather than a 500.
+var ErrStorageIndexRebuilding = errors.New("devshard postgres session index is rebuilding")
+
+// ErrDiffFork is defined in diff_identity.go and returned by AppendDiff when
+// an existing durable row at the same nonce has a conflicting payload.
 
 // Storage persists devshard session state and diffs.
 //
@@ -44,6 +64,9 @@ type Storage interface {
 	CreateSession(params CreateSessionParams) error
 	MarkSettled(escrowID string) error
 	ListActiveSessions() ([]ActiveSession, error)
+	// AppendDiff persists one diff. Identical replay of the same
+	// (escrow, nonce) payload is idempotent success (HA at-least-once). A
+	// different payload at the same nonce returns ErrDiffFork.
 	AppendDiff(escrowID string, rec types.DiffRecord) error
 	GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error)
 	AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error
@@ -58,6 +81,9 @@ type Storage interface {
 	InsertSealedInference(escrowID string, row InferenceRow) error
 	GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error)
 	DeleteSealedInferences(escrowID string) error
+	// ClearValidationObs removes all live and sealed validation observability
+	// rows for an escrow. Used when rebuilding obs from the diff journal.
+	ClearValidationObs(escrowID string) error
 	// RecordValidationsAppliedOnce records required+completed=1 for each
 	// (inference_id, slot_id) entry at most once per escrow epoch, reusing the
 	// devshard_inference_validation_obs unique key as the dedup ledger via
@@ -68,8 +94,34 @@ type Storage interface {
 	DrainInferenceValidationObs(escrowID string, inferenceID uint64) error
 	// GetValidationObservability returns live + sealed validation counters aggregated by slot.
 	GetValidationObservability(escrowID string) ([]SlotValidationObs, error)
+	// PutEscrowCache stores chain-fetched escrow metadata for later lazy bind.
+	// It must not create a session, stamp a runtime version, or register HasEscrow.
+	PutEscrowCache(info EscrowCacheInfo) error
+	// GetEscrowCache returns cached escrow metadata for lazy CreateSession.
+	GetEscrowCache(escrowID string) (*EscrowCacheInfo, error)
+	// DeleteEscrowCache removes pre-init data (idempotent when missing).
+	DeleteEscrowCache(escrowID string) error
 	PruneEpoch(epochID uint64) error
 	Close() error
+}
+
+// EscrowCacheInfo is chain escrow metadata cached ahead of session bind.
+// No runtime/versiond tag — version is stamped only at CreateSession.
+type EscrowCacheInfo struct {
+	EscrowID                  string   `json:"escrow_id"`
+	Amount                    uint64   `json:"amount"`
+	CreatorAddress            string   `json:"creator_address"`
+	AppHash                   []byte   `json:"app_hash"`
+	Slots                     []string `json:"slots"`
+	TokenPrice                uint64   `json:"token_price"`
+	CreateDevshardFee         uint64   `json:"create_devshard_fee"`
+	FeePerNonce               uint64   `json:"fee_per_nonce"`
+	InferenceSealGraceNonces  uint32   `json:"inference_seal_grace_nonces"`
+	InferenceSealGraceSeconds uint32   `json:"inference_seal_grace_seconds"`
+	AutoSealEveryNNonces      uint32   `json:"auto_seal_every_n_nonces"`
+	ValidationRate            uint32   `json:"validation_rate"`
+	VoteThresholdFactor       uint32   `json:"vote_threshold_factor"`
+	EpochID                   uint64   `json:"epoch_id"`
 }
 
 // ValidationObsEntry identifies one validation or validation-vote application
@@ -80,8 +132,10 @@ type ValidationObsEntry struct {
 }
 
 // SlotValidationObs holds per-slot validation counters for observability APIs only.
-// Counters are populated when hosts apply signed diffs (RecordValidationsAppliedOnce).
-// They are persisted across host restarts but are not part of settlement host_stats.
+// Live rows are recorded when hosts apply signed diffs (RecordValidationsAppliedOnce)
+// and move to sealed storage on inference seal (DrainInferenceValidationObs).
+// Recovery rebuilds both tables from the diff journal (RebuildValidationObsFromDiffs).
+// Counters are not part of settlement host_stats.
 type SlotValidationObs struct {
 	SlotID               uint32
 	RequiredValidations  uint32

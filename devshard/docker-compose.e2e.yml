@@ -1,0 +1,34 @@
+services:
+  e2e-test:
+    image: ${DEVSHARD_E2E_GO_IMAGE:-golang:1.25.9-alpine3.23}
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    tmpfs:
+      - /tmp:rw,exec,size=${DEVSHARD_E2E_GO_TMPFS_SIZE:-1g}
+    environment:
+      DEVSHARD_E2E: "1"
+      DEVSHARD_E2E_MOCK_CHAIN_IMAGE: ${DEVSHARD_E2E_MOCK_CHAIN_IMAGE:-devshard-mock-chain:local}
+      DEVSHARD_E2E_HOST_IMAGE: ${DEVSHARD_E2E_HOST_IMAGE:-devshard-host:local}
+      DEVSHARD_E2E_DEVSHARDCTL_IMAGE: ${DEVSHARD_E2E_DEVSHARDCTL_IMAGE:-devshardctl:local}
+      DEVSHARD_E2E_POSTGRES_IMAGE: ${DEVSHARD_E2E_POSTGRES_IMAGE:-postgres:18.1-bookworm}
+      DEVSHARD_E2E_GOTESTSUM: ${DEVSHARD_E2E_GOTESTSUM:-gotest.tools/gotestsum@v1.13.0}
+      DEVSHARD_E2E_DEBUG: ${DEVSHARD_E2E_DEBUG:-}
+      GOTMPDIR: /tmp
+      TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p build/test-results/e2e
+        format=testname
+        case "$$DEVSHARD_E2E_DEBUG" in
+          1|true|TRUE|yes|YES) format=standard-verbose ;;
+        esac
+        go run "$$DEVSHARD_E2E_GOTESTSUM" \
+          --format "$$format" \
+          --junitfile build/test-results/e2e/junit.xml \
+          -- ./e2e -count=1 -v

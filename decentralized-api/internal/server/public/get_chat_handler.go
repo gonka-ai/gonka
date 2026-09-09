@@ -1,7 +1,7 @@
 package public
 
 import (
-	"decentralized-api/logging"
+	"common/logging"
 	"net/http"
 
 	"github.com/labstack/echo/v4"

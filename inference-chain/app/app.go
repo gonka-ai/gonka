@@ -288,6 +288,13 @@ func New(
 	}
 
 	app.CollateralKeeper.SetRequiredCollateralProvider(app.InferenceKeeper)
+	app.CollateralKeeper.SetMaintenanceChecker(&app.InferenceKeeper)
+
+	// Wire maintenance-aware liveness exemption into slashing keeper.
+	// The adapter bridges inference keeper's AccAddress-based maintenance state
+	// to the slashing keeper's ConsAddress-based liveness checks.
+	maintenanceAdapter := NewMaintenanceSlashingAdapter(&app.InferenceKeeper)
+	app.SlashingKeeper.SetMaintenanceChecker(maintenanceAdapter)
 
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 
@@ -377,6 +384,13 @@ func (app *App) LegacyAmino() *codec.LegacyAmino {
 // for modules to register their own custom testing types.
 func (app *App) AppCodec() codec.Codec {
 	return app.appCodec
+}
+
+// TxConfig returns App's TxConfig.
+//
+// NOTE: This is solely to be used for testing purposes.
+func (app *App) TxConfig() client.TxConfig {
+	return app.txConfig
 }
 
 // GetKey returns the KVStoreKey for the provided store key.

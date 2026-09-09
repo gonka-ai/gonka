@@ -9,7 +9,7 @@
       },
       "id": 1,
       "options": {
-        "content": "Use this dashboard to answer one question quickly: where did a devshard inference stop? Start with Terminal Outcomes and Operator Interruptions, then use logs by request_id for the exact request and failure_where.",
+        "content": "Use this dashboard to answer one question quickly: where did a devshard inference stop? Start with Terminal Outcomes and Operator Interruptions, then use logs by request_id for the exact request and failure_where.\n\nHTTP shard debugging (not this dashboard): prefer versionless `GET /devshard/sessions/{id}/diffs` and `GET /devshard/stats/shards/{id}` — see versionless-observability-plan.md. Legacy `/devshard/{version}/…` obs URLs still work via join-proxy rewrite.",
         "mode": "markdown"
       },
       "title": "How to Read This",

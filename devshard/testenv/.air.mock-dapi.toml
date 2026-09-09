@@ -1,0 +1,19 @@
+# air live-reload config for mock-dapi (Phase 5).
+root = "/workspace/devshard"
+tmp_dir = "/tmp/air/mock-dapi"
+
+[build]
+  cmd = "go build -o /tmp/air/mock-dapi/mockdapi ./testenv/cmd/mockdapi"
+  bin = "/tmp/air/mock-dapi/mockdapi"
+  include_ext = ["go", "yaml", "toml", "proto"]
+  exclude_dir = [".git", "docs", "testenv/docs", "testenv/db"]
+  delay = 500
+  kill_delay = "1s"
+  stop_on_error = true
+
+[log]
+  main_only = false
+  time = true
+
+[misc]
+  clean_on_exit = true

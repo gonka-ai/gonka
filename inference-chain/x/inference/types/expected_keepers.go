@@ -77,6 +77,11 @@ type ValidatorSet interface {
 type StakingKeeper interface {
 	SetComputeValidators(ctx context.Context, computeResults []keeper.ComputeResult, isTestnet bool) ([]types.Validator, error)
 	GetAllValidators(ctx context.Context) (validators []types.Validator, err error)
+	// O(1)/O(log) lookups used by the maintenance feature to avoid full
+	// validator-set scans on the slashing hot path and concurrency checks.
+	GetValidatorByConsAddr(ctx context.Context, consAddr sdk.ConsAddress) (validator types.Validator, err error)
+	GetValidator(ctx context.Context, addr sdk.ValAddress) (validator types.Validator, err error)
+	GetLastTotalPower(ctx context.Context) (math.Int, error)
 }
 
 // CollateralKeeper defines the expected interface for the Collateral module.

@@ -6,6 +6,8 @@ http {
     ${LIMIT_REQ_ZONE_GLOBAL}
     ${LIMIT_REQ_ZONE_EXEMPT}
     ${LIMIT_REQ_ZONE_GONKA_API}
+    ${LIMIT_REQ_ZONE_DEVSHARD_OBS}
+    ${LIMIT_REQ_ZONE_METRICS}
     ${LIMIT_REQ_ZONE_CHAIN_RPC}
     ${LIMIT_REQ_ZONE_CHAIN_API}
     ${LIMIT_REQ_ZONE_CHAIN_GRPC}
@@ -13,6 +15,7 @@ http {
     # Concurrency Zones
     ${LIMIT_CONN_ZONE_GLOBAL}
     ${LIMIT_CONN_ZONE_GONKA_API}
+    ${LIMIT_CONN_ZONE_METRICS}
     ${LIMIT_CONN_ZONE_EXEMPT}
     ${LIMIT_CONN_ZONE_CHAIN_RPC}
     ${LIMIT_CONN_ZONE_CHAIN_API}
@@ -98,10 +101,13 @@ http {
     # Grafana upstream - only included if GRAFANA_ENABLED is set
     ${GRAFANA_UPSTREAM}
 
+    ${EDGE_API_UPSTREAM}
+
     # Versiond upstream - only included if VERSIOND_SERVICE_NAME is set.
     # Routes /devshard/<version>/* to versiond which forwards to the matching
-    # devshard binary. /v1/devshard/* still goes to the api backend (legacy
-    # in-process HostManager).
+    # devshard binary. Observability paths under /devshard/<version>/… are
+    # rewritten internally to versionless /devshard/sessions|stats|metrics|healthz
+    # (see entrypoint); no client-visible redirect.
     ${VERSIOND_UPSTREAM}
 
     # Enable gzip compression
@@ -161,6 +167,36 @@ http {
 
         # Grafana UI (only when GRAFANA_ENABLED is set)
         ${GRAFANA_LOCATION}
+
+        # Public mlnode metrics federation: its own budget so scraping
+        # consumers never compete with inference/API clients (exact-match
+        # locations win over the dynamic /v1/ prefix below).
+        location = /v1/mlnodes/metrics {
+            set $$limit_zone_name "METRICS";
+            ${LIMIT_REQ_RULE_METRICS}
+            ${LIMIT_CONN_RULE_METRICS}
+            ${CORS_CONFIG}
+            proxy_pass http://api_backend/v1/mlnodes/metrics;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+        }
+        location = /api/v1/mlnodes/metrics {
+            set $$limit_zone_name "METRICS";
+            ${LIMIT_REQ_RULE_METRICS}
+            ${LIMIT_CONN_RULE_METRICS}
+            ${CORS_CONFIG}
+            proxy_pass http://api_backend/v1/mlnodes/metrics;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+        }
 
         # Dynamic API Versions (e.g. /v1/, /v2/)
         ${API_VERSION_LOCATIONS}

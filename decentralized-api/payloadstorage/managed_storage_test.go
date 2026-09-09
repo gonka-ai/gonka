@@ -3,16 +3,20 @@ package payloadstorage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 type mockStorage struct {
-	mu      sync.Mutex
-	data    map[string][]byte
-	pruned  []uint64
-	storeCb func(epochId uint64)
+	mu         sync.Mutex
+	data       map[string][]byte
+	pruned     []uint64
+	storeCb    func(epochId uint64)
+	pruneCb    func(epochId uint64) error
+	pruneCtxCb func(ctx context.Context, epochId uint64) error
 }
 
 func newMockStorage() *mockStorage {
@@ -41,19 +45,21 @@ func (m *mockStorage) Retrieve(ctx context.Context, inferenceId string, epochId 
 }
 
 func (m *mockStorage) PruneEpoch(ctx context.Context, epochId uint64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.pruned = append(m.pruned, epochId)
-	return nil
-}
-
-func (m *mockStorage) DeleteInference(ctx context.Context, inferenceId string, epochId uint64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.data[inferenceId]; !ok {
-		return ErrNotFound
+	// pruneCtxCb runs outside the lock so it can block on ctx (simulating a
+	// stuck backend) without deadlocking observers like getPruned.
+	if m.pruneCtxCb != nil {
+		if err := m.pruneCtxCb(ctx, epochId); err != nil {
+			return err
+		}
 	}
-	delete(m.data, inferenceId)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pruneCb != nil {
+		if err := m.pruneCb(epochId); err != nil {
+			return err
+		}
+	}
+	m.pruned = append(m.pruned, epochId)
 	return nil
 }
 
@@ -160,11 +166,8 @@ func TestManagedStorage_AutoPruneTriggersInCleanup(t *testing.T) {
 		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
 	}
 
-	// Trigger cleanup manually
+	// Trigger cleanup manually; pruning runs synchronously
 	ms.cleanup()
-
-	// Wait for async prune goroutines
-	time.Sleep(50 * time.Millisecond)
 
 	pruned := mock.getPruned()
 	// threshold = 10 - 2 = 8
@@ -185,7 +188,6 @@ func TestManagedStorage_AutoPruneSkipsOldEpochs(t *testing.T) {
 
 	// Trigger cleanup
 	ms.cleanup()
-	time.Sleep(50 * time.Millisecond)
 
 	pruned := mock.getPruned()
 	// threshold = 100 - 2 = 98
@@ -203,39 +205,248 @@ func TestManagedStorage_AutoPruneSkipsOldEpochs(t *testing.T) {
 	}
 }
 
-func TestManagedStorage_DeleteInferenceEvictsCache(t *testing.T) {
+func TestManagedStorage_AutoPruneStopsAtFailedEpoch(t *testing.T) {
 	mock := newMockStorage()
-	ms := NewManagedStorageWithSize(mock, 3, time.Minute, 100)
+	pruneErr := errors.New("db connection lost")
+	mock.pruneCb = func(epochId uint64) error {
+		if epochId == 3 {
+			return pruneErr
+		}
+		return nil
+	}
+	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
 	ctx := context.Background()
 
-	if err := ms.Store(ctx, "inf-1", 4, []byte("prompt"), []byte("response")); err != nil {
-		t.Fatalf("Store failed: %v", err)
+	for i := uint64(0); i <= 10; i++ {
+		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
 	}
 
-	// Warm the cache.
-	if _, _, err := ms.Retrieve(ctx, "inf-1", 4); err != nil {
-		t.Fatalf("Retrieve (warm) failed: %v", err)
+	// threshold = 10 - 2 = 8; epoch 3 fails, so only 0-2 should be pruned
+	ms.cleanup()
+
+	pruned := mock.getPruned()
+	if len(pruned) != 3 {
+		t.Errorf("expected 3 epochs pruned before failure, got %d: %v", len(pruned), pruned)
+	}
+	for _, e := range pruned {
+		if e >= 3 {
+			t.Errorf("epoch %d should not be pruned past the failed epoch 3", e)
+		}
 	}
 
-	if err := ms.DeleteInference(ctx, "inf-1", 4); err != nil {
-		t.Fatalf("DeleteInference failed: %v", err)
-	}
-
-	// Backing storage is gone and cache must have been evicted; a fresh Retrieve
-	// has to surface ErrNotFound rather than returning the cached blob.
-	_, _, err := ms.Retrieve(ctx, "inf-1", 4)
-	if err != ErrNotFound {
-		t.Errorf("expected ErrNotFound after DeleteInference, got %v", err)
+	ms.mu.RLock()
+	minPruned := ms.minPruned
+	ms.mu.RUnlock()
+	if minPruned != 3 {
+		t.Errorf("minPruned should stop at failed epoch 3, got %d", minPruned)
 	}
 }
 
-func TestManagedStorage_DeleteInferenceMissing(t *testing.T) {
+func TestManagedStorage_AutoPruneRetriesFailedEpoch(t *testing.T) {
 	mock := newMockStorage()
-	ms := NewManagedStorageWithSize(mock, 3, time.Minute, 100)
+	failOnce := true
+	mock.pruneCb = func(epochId uint64) error {
+		if epochId == 3 && failOnce {
+			failOnce = false
+			return errors.New("transient failure")
+		}
+		return nil
+	}
+	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
 	ctx := context.Background()
 
-	if err := ms.DeleteInference(ctx, "nope", 1); err != ErrNotFound {
-		t.Errorf("expected ErrNotFound for missing payload, got %v", err)
+	for i := uint64(0); i <= 10; i++ {
+		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
+	}
+
+	// First cleanup: prunes 0-2, fails at 3
+	ms.cleanup()
+	// Second cleanup: retries 3, then continues through 7
+	ms.cleanup()
+
+	pruned := mock.getPruned()
+	// threshold = 8: epochs 0-7 all pruned across the two ticks, none skipped
+	if len(pruned) != 8 {
+		t.Errorf("expected 8 epochs pruned after retry, got %d: %v", len(pruned), pruned)
+	}
+	seen := make(map[uint64]bool)
+	for _, e := range pruned {
+		if seen[e] {
+			t.Errorf("epoch %d pruned more than once", e)
+		}
+		seen[e] = true
+	}
+	for e := uint64(0); e < 8; e++ {
+		if !seen[e] {
+			t.Errorf("epoch %d was never pruned", e)
+		}
+	}
+
+	ms.mu.RLock()
+	minPruned := ms.minPruned
+	ms.mu.RUnlock()
+	if minPruned != 8 {
+		t.Errorf("minPruned should reach threshold 8 after retry, got %d", minPruned)
+	}
+}
+
+func TestManagedStorage_AutoPruneTimesOutStuckEpoch(t *testing.T) {
+	mock := newMockStorage()
+	// Epoch 3 blocks until its context is cancelled, simulating a stuck backend
+	// (e.g. a DROP TABLE waiting on a lock). Every other epoch prunes instantly.
+	mock.pruneCtxCb = func(ctx context.Context, epochId uint64) error {
+		if epochId == 3 {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+		return nil
+	}
+	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
+	ms.pruneTimeout = 20 * time.Millisecond
+
+	ctx := context.Background()
+	for i := uint64(0); i <= 10; i++ {
+		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
+	}
+
+	// Without the per-epoch timeout the stuck epoch 3 would block cleanupLoop
+	// forever; with it, cleanup returns once the deadline fires.
+	done := make(chan struct{})
+	go func() {
+		ms.cleanup()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanup never returned: a stuck epoch froze cleanupLoop (per-epoch prune timeout missing)")
+	}
+
+	pruned := mock.getPruned()
+	if len(pruned) != 3 {
+		t.Errorf("expected epochs 0-2 pruned before the stuck epoch, got %d: %v", len(pruned), pruned)
+	}
+	for _, e := range pruned {
+		if e >= 3 {
+			t.Errorf("epoch %d should not be pruned past the stuck epoch 3", e)
+		}
+	}
+
+	ms.mu.RLock()
+	minPruned := ms.minPruned
+	ms.mu.RUnlock()
+	if minPruned != 3 {
+		t.Errorf("minPruned should stop at the stuck epoch 3 so it retries next tick, got %d", minPruned)
+	}
+}
+
+func TestManagedStorage_AutoPruneTimesOutCtxIgnoringBackend(t *testing.T) {
+	mock := newMockStorage()
+	release := make(chan struct{})
+	// Epoch 3 blocks WITHOUT observing ctx, simulating a backend like
+	// FileStorage.os.RemoveAll that ignores cancellation. Only the
+	// goroutine+select wrapper (not a bare ctx) can release cleanupLoop here.
+	mock.pruneCtxCb = func(ctx context.Context, epochId uint64) error {
+		if epochId == 3 {
+			<-release
+		}
+		return nil
+	}
+	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
+	ms.pruneTimeout = 20 * time.Millisecond
+	defer close(release) // let the leaked prune goroutine finish after the test
+
+	ctx := context.Background()
+	for i := uint64(0); i <= 10; i++ {
+		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
+	}
+
+	done := make(chan struct{})
+	go func() {
+		ms.cleanup()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanup never returned: a ctx-ignoring backend froze cleanupLoop")
+	}
+
+	pruned := mock.getPruned()
+	// Epochs 0-2 pruned; epoch 3 is still blocked in the background goroutine,
+	// so it is not counted and minPruned stops there for retry.
+	if len(pruned) != 3 {
+		t.Errorf("expected epochs 0-2 pruned before the stuck epoch, got %d: %v", len(pruned), pruned)
+	}
+
+	ms.mu.RLock()
+	minPruned := ms.minPruned
+	ms.mu.RUnlock()
+	if minPruned != 3 {
+		t.Errorf("minPruned should stop at the stuck epoch 3 for retry, got %d", minPruned)
+	}
+}
+
+func TestManagedStorage_AutoPruneDoesNotStackStuckGoroutines(t *testing.T) {
+	mock := newMockStorage()
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	var stuckInvocations int32
+	// Epoch 3 blocks WITHOUT observing ctx, simulating a ctx-ignoring backend
+	// (FileStorage's os.RemoveAll) whose prune goroutine keeps running after the
+	// deadline. On the OLD code pruneEpochWithTimeout returned on timeout without
+	// tracking that still-running prune, so every cleanup tick spawned a fresh
+	// goroutine for the same stuck epoch -- N ticks meant N live goroutines all
+	// calling PruneEpoch(3) (the maintainer's "stuck tasks keep growing"). The
+	// single-flight guard caps that at exactly one.
+	mock.pruneCtxCb = func(ctx context.Context, epochId uint64) error {
+		if epochId == 3 {
+			atomic.AddInt32(&stuckInvocations, 1)
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+			<-release
+		}
+		return nil
+	}
+	ms := NewManagedStorageWithSize(mock, 2, time.Minute, 100)
+	ms.pruneTimeout = 20 * time.Millisecond
+	defer close(release) // let the single leaked prune goroutine finish after the test
+
+	ctx := context.Background()
+	for i := uint64(0); i <= 10; i++ {
+		ms.Store(ctx, "inf-"+string(rune('a'+i)), i, []byte("p"), []byte("r"))
+	}
+
+	// Drive several cleanup ticks while epoch 3 stays stuck. Tick 1 spawns the
+	// prune goroutine for epoch 3 and times out; ticks 2+ see the in-flight
+	// marker and return without spawning. Old code: 3 invocations (one per tick).
+	const ticks = 3
+	for i := 0; i < ticks; i++ {
+		ms.cleanup()
+	}
+
+	// The stuck prune runs in a background goroutine; wait until it has actually
+	// entered the blocking callback so the count reflects real invocations rather
+	// than an unscheduled goroutine (which would read 0 and spuriously pass/fail).
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stuck prune goroutine never entered PruneEpoch for epoch 3")
+	}
+
+	if got := atomic.LoadInt32(&stuckInvocations); got != 1 {
+		t.Errorf("stuck epoch 3 must be invoked exactly once across %d ticks, got %d "+
+			"(each extra invocation is a leaked background goroutine that never stops)", ticks, got)
+	}
+
+	// Epochs 0-2 pruned once; epoch 3 stuck, so minPruned stops there for retry.
+	ms.mu.RLock()
+	minPruned := ms.minPruned
+	ms.mu.RUnlock()
+	if minPruned != 3 {
+		t.Errorf("minPruned should stop at the stuck epoch 3, got %d", minPruned)
 	}
 }
 
@@ -250,11 +461,9 @@ func TestManagedStorage_NoPruneWhenBelowRetainCount(t *testing.T) {
 	}
 
 	ms.cleanup()
-	time.Sleep(50 * time.Millisecond)
 
 	pruned := mock.getPruned()
 	if len(pruned) != 0 {
 		t.Errorf("should not prune when maxEpoch <= retainCount, got %v", pruned)
 	}
 }
-

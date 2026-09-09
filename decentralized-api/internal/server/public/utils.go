@@ -1,7 +1,7 @@
 package public
 
 import (
-	"decentralized-api/utils"
+	"common/utils"
 
 	"github.com/productscience/inference/x/inference/calculations"
 )

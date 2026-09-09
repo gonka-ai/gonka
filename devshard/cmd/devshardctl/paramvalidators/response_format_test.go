@@ -77,6 +77,7 @@ func TestResponseFormatValidatorRejects(t *testing.T) {
 		{name: "unknown type", body: `{"response_format":{"type":"banana"}}`, wantErr: ErrResponseFormatType},
 		{name: "json_schema wrapper missing", body: `{"response_format":{"type":"json_schema"}}`, wantErr: ErrResponseFormatJSONSchema},
 		{name: "json_schema missing name", body: `{"response_format":{"type":"json_schema","json_schema":{"schema":{"type":"object"}}}}`, wantErr: ErrResponseFormatName},
+		{name: "json_schema whitespace name", body: `{"response_format":{"type":"json_schema","json_schema":{"name":"   ","schema":{"type":"object"}}}}`, wantErr: ErrResponseFormatName},
 		{name: "json_schema name has bad chars", body: `{"response_format":{"type":"json_schema","json_schema":{"name":"bad name","schema":{"type":"object"}}}}`, wantErr: ErrResponseFormatName},
 		{name: "json_schema name too long", body: `{"response_format":{"type":"json_schema","json_schema":{"name":"` + strings.Repeat("a", 65) + `","schema":{"type":"object"}}}}`, wantErr: ErrResponseFormatName},
 		{name: "json_schema missing schema", body: `{"response_format":{"type":"json_schema","json_schema":{"name":"r"}}}`, wantErr: ErrResponseFormatSchemaShape},

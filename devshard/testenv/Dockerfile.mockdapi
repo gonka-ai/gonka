@@ -1,0 +1,16 @@
+# Production-shape mock-dapi image (Phase 5).
+# Build context: repo root (../.. from testenv/).
+FROM golang:1.25.9-alpine3.23 AS build
+RUN apk add --no-cache git ca-certificates
+COPY common/ /src/common
+COPY inference-chain/ /src/inference-chain
+WORKDIR /src/devshard
+COPY devshard/go.mod devshard/go.sum ./
+RUN go mod download
+COPY devshard/ .
+RUN CGO_ENABLED=0 go build -o /mockdapi ./testenv/cmd/mockdapi
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
+COPY --from=build /mockdapi /usr/local/bin/mockdapi
+ENTRYPOINT ["mockdapi"]

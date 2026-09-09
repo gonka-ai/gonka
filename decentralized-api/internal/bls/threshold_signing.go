@@ -1,9 +1,9 @@
 package bls
 
 import (
+	"common/logging"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/utils"
-	"decentralized-api/logging"
 	"fmt"
 	"math/big"
 	"strconv"

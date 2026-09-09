@@ -310,3 +310,16 @@ func (k Keeper) IsAllowedEscrowCreator(ctx context.Context, address string) bool
 	}
 	return false
 }
+
+// GetMaintenanceParams returns maintenance params, falling back to defaults if unset.
+func (k Keeper) GetMaintenanceParams(ctx context.Context) *types.MaintenanceParams {
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetMaintenanceParams", types.System, "error", err)
+		return types.DefaultMaintenanceParams()
+	}
+	if p.MaintenanceParams == nil {
+		return types.DefaultMaintenanceParams()
+	}
+	return p.MaintenanceParams
+}

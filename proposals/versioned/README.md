@@ -255,12 +255,17 @@ On SIGTERM/SIGINT:
 
 ### Logging
 
-versiond sets two per-child env vars from the oracle version name (e.g. `v0.2.11`):
+versiond sets one per-child env var on each child:
 
-- `DEVSHARD_LOG_PREFIX` — prepended to each log line by the child binary so mixed stdout/stderr stays identifiable. Zero overhead in versiond: child stdout/stderr connect directly to versiond's stdout/stderr.
-- `DEVSHARD_BINARY_VERSION` — oracle `approved_versions` name for this slot. **devshardd** reads it at startup and checks it matches the binary's link-time `main.Version` (`-X main.Version=...` at build). That value becomes the session storage tag (`boundVersion`); it is not read from `DEVSHARD_LOG_PREFIX`.
+- `DEVSHARD_BINARY_LOG_VERSION` — build id read from the child via `--print-binary-version` (e.g. `0.2.13-v2-r2`). Used as the log-line prefix. **Not** the protocol slot name (`v2`). devshardd checks it matches the link-time `DEVSHARD_BINARY_VERSION` stamp.
 
-Build artifacts must use the same name as governance: `make devshardd-build DEVSHARD_VERSION=v0.2.11` when the oracle lists `v0.2.11`.
+The protocol slot name (`approved_versions.name`, e.g. `v2`) is embedded via `DEVSHARD_VERSION` at build (`--print-protocol-version`). versiond routes by slot name and verifies it matches before starting the child. Session binding and settlement use the protocol name only.
+
+Build example:
+
+```bash
+make devshardd-build DEVSHARD_VERSION=v2 DEVSHARD_BINARY_VERSION=0.2.13-v2-r2
+```
 
 ### Configuration
 

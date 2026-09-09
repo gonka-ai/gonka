@@ -39,6 +39,7 @@ func ApplyPerfSettings(settings PerfSettings) {
 type RequestSample struct {
 	HostIdx        int
 	ParticipantKey string
+	Model          string
 	Responsive     bool
 	SendTime       time.Time
 	ReceiptTime    time.Time // zero if no receipt

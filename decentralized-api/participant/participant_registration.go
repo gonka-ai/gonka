@@ -2,11 +2,11 @@ package participant
 
 import (
 	"bytes"
+	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/public_entities"
-	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"

@@ -3,38 +3,42 @@ package apiconfig
 import (
 	"time"
 
-	"decentralized-api/logging"
+	"common/logging"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 // runtimeConfigContent is the chain-driven subset of RuntimeConfig used for
 // change detection (excludes ParamsBlockHeight and ServedAt).
 type runtimeConfigContent struct {
-	LogprobsMode            string
-	DevshardRequestsEnabled bool
-	MaxNonce                uint32
-	ApprovedVersions        []DevshardVersion
-	RefusalTimeout          int64
-	ExecutionTimeout        int64
-	ValidationRate          uint32
-	VoteThresholdFactor     uint32
+	LogprobsMode              string
+	DevshardRequestsEnabled   bool
+	MaxNonce                  uint32
+	ApprovedVersions          []DevshardVersion
+	RefusalTimeout            int64
+	ExecutionTimeout          int64
+	ValidationRate            uint32
+	VoteThresholdFactor       uint32
+	ModelValidationThresholds []ModelValidationThreshold
 }
 
 func runtimeConfigSnapshotFromContent(height int64, epochID uint64, c runtimeConfigContent) RuntimeConfigSnapshot {
 	versions := make([]DevshardVersion, len(c.ApprovedVersions))
 	copy(versions, c.ApprovedVersions)
+	thresholds := make([]ModelValidationThreshold, len(c.ModelValidationThresholds))
+	copy(thresholds, c.ModelValidationThresholds)
 	return RuntimeConfigSnapshot{
-		ParamsBlockHeight:       height,
-		CurrentEpochID:          epochID,
-		LogprobsMode:            c.LogprobsMode,
-		DevshardRequestsEnabled: c.DevshardRequestsEnabled,
-		MaxNonce:                c.MaxNonce,
-		ApprovedVersions:        versions,
-		ServedAt:                time.Now(),
-		RefusalTimeout:          c.RefusalTimeout,
-		ExecutionTimeout:        c.ExecutionTimeout,
-		ValidationRate:          c.ValidationRate,
-		VoteThresholdFactor:     c.VoteThresholdFactor,
+		ParamsBlockHeight:         height,
+		CurrentEpochID:            epochID,
+		LogprobsMode:              c.LogprobsMode,
+		DevshardRequestsEnabled:   c.DevshardRequestsEnabled,
+		MaxNonce:                  c.MaxNonce,
+		ApprovedVersions:          versions,
+		ServedAt:                  time.Now(),
+		RefusalTimeout:            c.RefusalTimeout,
+		ExecutionTimeout:          c.ExecutionTimeout,
+		ValidationRate:            c.ValidationRate,
+		VoteThresholdFactor:       c.VoteThresholdFactor,
+		ModelValidationThresholds: thresholds,
 	}
 }
 
@@ -46,10 +50,23 @@ func (a runtimeConfigContent) equal(b runtimeConfigContent) bool {
 		a.RefusalTimeout == b.RefusalTimeout &&
 		a.ExecutionTimeout == b.ExecutionTimeout &&
 		a.ValidationRate == b.ValidationRate &&
-		a.VoteThresholdFactor == b.VoteThresholdFactor
+		a.VoteThresholdFactor == b.VoteThresholdFactor &&
+		modelThresholdsEqual(a.ModelValidationThresholds, b.ModelValidationThresholds)
 }
 
 func devshardVersionsEqual(a, b []DevshardVersion) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func modelThresholdsEqual(a, b []ModelValidationThreshold) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -135,6 +152,9 @@ func copyRuntimeConfigContent(c runtimeConfigContent) runtimeConfigContent {
 	versions := make([]DevshardVersion, len(c.ApprovedVersions))
 	copy(versions, c.ApprovedVersions)
 	c.ApprovedVersions = versions
+	thresholds := make([]ModelValidationThreshold, len(c.ModelValidationThresholds))
+	copy(thresholds, c.ModelValidationThresholds)
+	c.ModelValidationThresholds = thresholds
 	return c
 }
 

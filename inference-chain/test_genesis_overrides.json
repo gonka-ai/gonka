@@ -70,6 +70,15 @@
           "v_min": "0",
           "cap_factor": { "value": "1", "exponent": 0 },
           "initial_model_id": "Qwen/Qwen2.5-7B-Instruct"
+        },
+        "maintenance_params": {
+          "maintenance_enabled": true,
+          "maintenance_min_schedule_lead_blocks": "2",
+          "maintenance_max_window_blocks": "50",
+          "maintenance_max_concurrent_validators": 3,
+          "maintenance_max_concurrent_power_bps": 5000,
+          "maintenance_credit_cap_blocks": "200",
+          "maintenance_credit_earn_per_successful_epoch_blocks": "50"
         }
       },
       "genesis_only_params": {

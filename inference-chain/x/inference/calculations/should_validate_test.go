@@ -18,9 +18,9 @@ func TestShouldValidate(t *testing.T) {
 		name                 string
 		seed                 int64
 		inferenceDetails     *types.InferenceValidationDetails
-		totalPower           uint32
-		validatorPower       uint32
-		executorPower        uint32
+		totalPower           uint64
+		validatorPower       uint64
+		executorPower        uint64
 		expectedResult       bool
 		expectedProbability  float64
 		minValidationAverage float64

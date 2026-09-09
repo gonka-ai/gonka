@@ -122,8 +122,8 @@ type settlementHostStatsJSON struct {
 	Missed               uint32 `json:"missed"`
 	Invalid              uint32 `json:"invalid"`
 	Cost                 uint64 `json:"cost"`
-	RequiredValidations  uint32 `json:"required_validations"`
-	CompletedValidations uint32 `json:"completed_validations"`
+	RequiredValidations  uint32 `json:"required_validations,omitempty"`
+	CompletedValidations uint32 `json:"completed_validations,omitempty"`
 }
 
 type slotSignatureJSON struct {
@@ -204,6 +204,42 @@ func SettleDevshardEscrowCmd() *cobra.Command {
 				RestHash:                    restHash,
 				HostStats:                   hostStats,
 				Signatures:                  sigs,
+			}
+
+			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
+		},
+	}
+
+	flags.AddTxFlagsToCmd(cmd)
+	return cmd
+}
+
+func SetClaimRecipientsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "set-claim-recipients <entries-json>",
+		Short: "Configure per-epoch claim recipient overrides (cold key only)",
+		Long: `Batch-configures recipient overrides for MsgClaimRewards on future epochs.
+
+Pass a JSON array of {epoch, recipient} entries. An empty recipient clears the
+override for that epoch.
+
+Example:
+  inferenced tx inference set-claim-recipients '[{"epoch":123,"recipient":"gonka1..."}]' --from cold-key`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			clientCtx, err := client.GetClientTxContext(cmd)
+			if err != nil {
+				return err
+			}
+
+			var entries []types.ClaimRecipientEntry
+			if err := json.Unmarshal([]byte(args[0]), &entries); err != nil {
+				return fmt.Errorf("parse entries JSON: %w", err)
+			}
+
+			msg := &types.MsgSetClaimRecipients{
+				Creator: clientCtx.GetFromAddress().String(),
+				Entries: entries,
 			}
 
 			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)

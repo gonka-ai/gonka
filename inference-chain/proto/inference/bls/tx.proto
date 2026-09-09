@@ -34,7 +34,9 @@ service Msg {
   rpc SubmitPartialSignature(MsgSubmitPartialSignature) returns (MsgSubmitPartialSignatureResponse);
   
   // RequestThresholdSignature allows external users to request a threshold signature
-  rpc RequestThresholdSignature(MsgRequestThresholdSignature) returns (MsgRequestThresholdSignatureResponse);
+  rpc RequestThresholdSignature(MsgRequestThresholdSignature) returns (MsgRequestThresholdSignatureResponse) {
+    option deprecated = true;
+  }
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -208,6 +210,7 @@ message MsgSubmitPartialSignatureResponse {}
 message MsgRequestThresholdSignature {
   option (cosmos.msg.v1.signer) = "creator";
   option (amino.name)           = "inference/x/bls/MsgRequestThresholdSignature";
+  option deprecated = true;
 
   // creator is the address of the user requesting the threshold signature
   string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
@@ -228,6 +231,8 @@ message MsgRequestThresholdSignature {
 // MsgRequestThresholdSignatureResponse defines the response structure for executing a
 // MsgRequestThresholdSignature message.
 message MsgRequestThresholdSignatureResponse {
+  option deprecated = true;
+
   // derived_request_id is the actual request ID used for KVStore lookups, derived as keccak256(creator || request_id)
   bytes derived_request_id = 1;
 }

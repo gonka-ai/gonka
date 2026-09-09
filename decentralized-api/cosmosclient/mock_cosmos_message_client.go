@@ -3,6 +3,7 @@ package cosmosclient
 import (
 	"context"
 	"decentralized-api/apiconfig"
+	"decentralized-api/cosmosclient/tx_manager"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
@@ -93,21 +94,6 @@ func (m *MockCosmosMessageClient) EncryptBytes(plaintext []byte) ([]byte, error)
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockCosmosMessageClient) StartInference(transaction *inferenceapi.MsgStartInference) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
-func (m *MockCosmosMessageClient) FinishInference(transaction *inferenceapi.MsgFinishInference) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
-func (m *MockCosmosMessageClient) ReportValidation(transaction *inferenceapi.MsgValidation) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
 func (m *MockCosmosMessageClient) SubmitNewUnfundedParticipant(transaction *inferenceapi.MsgSubmitNewUnfundedParticipant) error {
 	args := m.Called(transaction)
 	return args.Error(0)
@@ -130,6 +116,11 @@ func (m *MockCosmosMessageClient) SubmitPocValidationsV2(transaction *inferencet
 
 func (m *MockCosmosMessageClient) SubmitPoCV2StoreCommit(transaction *inferencetypes.MsgPoCV2StoreCommit) error {
 	args := m.Called(transaction)
+	return args.Error(0)
+}
+
+func (m *MockCosmosMessageClient) SubmitPoCV2StoreCommitWithTimeout(transaction *inferencetypes.MsgPoCV2StoreCommit, timeoutHeight uint64) error {
+	args := m.Called(transaction, timeoutHeight)
 	return args.Error(0)
 }
 
@@ -158,13 +149,34 @@ func (m *MockCosmosMessageClient) GetBridgeAddresses(ctx context.Context, chainI
 	return args.Get(0).([]inferencetypes.BridgeContractAddress), args.Error(1)
 }
 
-func (m *MockCosmosMessageClient) SendTransactionAsyncWithRetry(msg sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error) {
-	args := m.Called(msg)
+func (m *MockCosmosMessageClient) BridgeTransactionsByReceipt(ctx context.Context, originChain, blockNumber, receiptIndex string) ([]inferencetypes.BridgeTransaction, error) {
+	args := m.Called(ctx, originChain, blockNumber, receiptIndex)
+	var txs []inferencetypes.BridgeTransaction
+	if r := args.Get(0); r != nil {
+		txs = r.([]inferencetypes.BridgeTransaction)
+	}
+	return txs, args.Error(1)
+}
+
+func txSendOptsCallArgs(msg sdk.Msg, opts []tx_manager.TxSendOptions) []interface{} {
+	args := make([]interface{}, 1+len(opts))
+	args[0] = msg
+	for i, o := range opts {
+		args[i+1] = o
+	}
+	return args
+}
+
+func (m *MockCosmosMessageClient) SendTransactionAsyncWithRetry(msg sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error) {
+	args := m.Called(txSendOptsCallArgs(msg, opts)...)
 	return args.Get(0).(*sdk.TxResponse), args.Error(1)
 }
 
-func (m *MockCosmosMessageClient) SendTransactionAsyncNoRetry(msg sdk.Msg) (*sdk.TxResponse, error) {
-	args := m.Called(msg)
+func (m *MockCosmosMessageClient) SendTransactionAsyncNoRetry(msg sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error) {
+	args := m.Called(txSendOptsCallArgs(msg, opts)...)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).(*sdk.TxResponse), args.Error(1)
 }
 

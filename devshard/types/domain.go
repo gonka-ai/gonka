@@ -5,31 +5,22 @@ import (
 	"strings"
 )
 
-// DevshardStateRootAndProtocolVersion is the devshard state-root and settlement
-// protocol version for this binary. It is stamped into EscrowState and settlement
-// payloads and hashed as version_hash = sha256(tag) in the state-root preimage.
-//
-// This is not the versiond runtime name from DevshardEscrowParams.approved_versions
-// (which binaries may run). Bump this constant and ship a new binary when state-root
-// composition or settlement wire/verification changes. See devshard/docs/protocol-version.md.
+// DevshardStateRootAndProtocolVersion is the default protocol name when no
+// link-time stamp is set (plain `go test` / local builds). Release binaries set
+// the protocol name via `make devshardd-build DEVSHARD_VERSION=<name>` — same
+// as approved_versions.name. See devshard/docs/upgrade.md.
 const DevshardStateRootAndProtocolVersion = "v2"
 
 // DefaultStateRootVersion is the tag used when no explicit bind version is provided.
 const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
 
 // NormalizeVersion returns the state-root / settlement protocol tag, defaulting when empty.
-// It is not used for storage session bind (CreateSessionParams.Version); see LegacyRouteSessionVersion.
 func NormalizeVersion(version string) string {
 	if strings.TrimSpace(version) == "" {
 		return DefaultStateRootVersion
 	}
 	return version
 }
-
-// LegacyRouteSessionVersion is the session/storage bind tag for the historical
-// /v1/devshard HTTP mount and embedded dapi hosts (HostManager boundVersion).
-// It is not DevshardStateRootAndProtocolVersion.
-const LegacyRouteSessionVersion = "v1"
 
 // SessionPhase represents the phase of a devshard session.
 type SessionPhase uint8
@@ -82,11 +73,14 @@ type HostStats struct {
 	CompletedValidations uint32
 }
 
-// ProtocolVersion identifies the devshard protocol version for compatibility.
+// ProtocolVersion identifies the gateway/runtime protocol version for
+// compatibility of rotation-created escrows and related registry stamps.
 type ProtocolVersion string
 
 const (
 	ProtocolV1 ProtocolVersion = "1"
+	ProtocolV2 ProtocolVersion = "2"
+	ProtocolV3 ProtocolVersion = "3"
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
@@ -95,6 +89,10 @@ func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 	switch strings.TrimSpace(s) {
 	case "", string(ProtocolV1), "v1":
 		return ProtocolV1, nil
+	case string(ProtocolV2), "v2":
+		return ProtocolV2, nil
+	case string(ProtocolV3), "v3":
+		return ProtocolV3, nil
 	default:
 		return "", fmt.Errorf("unknown protocol version %q", s)
 	}
@@ -107,7 +105,7 @@ type SessionConfig struct {
 	TokenPrice                 uint64 // price per input / output token (flat per session)
 	CreateDevshardFee          uint64 // one-time fee charged when creating a devshard session
 	FeePerNonce                uint64 // fee charged per applied nonce (diff)
-	// VoteThreshold is frozen at session bind (see ApplyLiveSessionParams).
+	// VoteThreshold is frozen in state.Config at session creation (from escrow lane A).
 	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
 	VoteThreshold              uint32
@@ -122,9 +120,7 @@ type EscrowState struct {
 	EscrowID string
 	// StateRootAndProtocolVersion is the protocol tag stamped at session creation
 	// (WithStateRootAndProtocolVersion) and copied into settlement payloads. It
-	// is part of the signed state-root preimage (version_hash). Peers in one
-	// session must use the same tag. Storage CreateSessionParams.Version is the
-	// separate runtime/bind version for versiond routing, not this field.
+	// matches CreateSessionParams.Version / host boundVersion (approved_versions.name).
 	StateRootAndProtocolVersion string
 	Config        SessionConfig
 	Group         []SlotAssignment

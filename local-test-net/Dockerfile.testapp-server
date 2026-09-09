@@ -1,17 +1,32 @@
-FROM golang:1.24.2-alpine3.20 AS builder
+FROM golang:1.25.9-alpine3.23 AS builder
 RUN apk add --no-cache zip
 
 WORKDIR /build
 COPY versioned/go.mod versioned/go.sum ./
 RUN go mod download
 COPY versioned/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -o testapp ./e2e/testapp
+RUN CGO_ENABLED=0 GOOS=linux go build -o testapp ./e2e/testapp && \
+    CGO_ENABLED=0 GOOS=linux go build \
+        -ldflags "-X main.Version=testapp2 -X main.BinaryVersion=testapp2" \
+        -o testapp2 ./e2e/testapp && \
+    CGO_ENABLED=0 GOOS=linux go build \
+        -ldflags "-X main.Version=testapp -X main.BinaryVersion=testapp-rollout" \
+        -o testapp-rollout ./e2e/testapp
 
-RUN mkdir -p /srv/files && \
-    zip -j /srv/files/testapp.zip testapp && \
-    sha256sum /srv/files/testapp.zip | cut -d' ' -f1 > /srv/files/testapp.zip.sha256
+# versiond extracts VERSIOND_BINARY_NAME ("testapp") from every zip; the slot
+# identity comes from --print-protocol-version inside the binary, not the zip entry name.
+RUN mkdir -p /srv/files /tmp/testapp /tmp/testapp2 /tmp/testapp-rollout && \
+    cp testapp /tmp/testapp/testapp && \
+    cp testapp2 /tmp/testapp2/testapp && \
+    cp testapp-rollout /tmp/testapp-rollout/testapp && \
+    (cd /tmp/testapp && zip -q /srv/files/testapp.zip testapp) && \
+    (cd /tmp/testapp2 && zip -q /srv/files/testapp2.zip testapp) && \
+    (cd /tmp/testapp-rollout && zip -q /srv/files/testapp-rollout.zip testapp) && \
+    sha256sum /srv/files/testapp.zip | cut -d' ' -f1 > /srv/files/testapp.zip.sha256 && \
+    sha256sum /srv/files/testapp2.zip | cut -d' ' -f1 > /srv/files/testapp2.zip.sha256 && \
+    sha256sum /srv/files/testapp-rollout.zip | cut -d' ' -f1 > /srv/files/testapp-rollout.zip.sha256
 
-FROM python:3.12-alpine
+FROM python:3.12-alpine3.21
 COPY --from=builder /srv/files /srv/files
 
 WORKDIR /srv/files

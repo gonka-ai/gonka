@@ -44,7 +44,8 @@ type CapacityState struct {
 	// outside PoC (steady-state baseline). currentWeights is the
 	// latest poll (matches fullWeights outside PoC, may be reduced
 	// during PoC). Only the keys we have actually observed appear in
-	// each map; absence means "unknown" -> fall back to 1.0.
+	// each map; absence means "unknown" -> neutral weight 1.0 so the
+	// picker can still compare load before the first capacity poll.
 	fullWeights    map[string]float64
 	currentWeights map[string]float64
 
@@ -226,6 +227,32 @@ func cloneModelWeights(weights map[string]map[string]float64) map[string]map[str
 	return clone
 }
 
+// SetHostWeightViews replaces the current and full capacity views atomically.
+// Use this when the chain response contains enough data to compute both the
+// PoC-filtered current view and the all-node full baseline in the same poll.
+func (m *CapacityState) SetHostWeightViews(current, baseline map[string]float64, currentByModel, baselineByModel map[string]map[string]float64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.currentWeights = cleanHostWeights(current)
+	m.fullWeights = cleanHostWeights(baseline)
+	m.currentWeightsByModel = cleanModelWeights(currentByModel)
+	m.fullWeightsByModel = cleanModelWeights(baselineByModel)
+}
+
+func cleanHostWeights(weights map[string]float64) map[string]float64 {
+	clean := make(map[string]float64, len(weights))
+	for k, w := range weights {
+		if k == "" || w < 0 {
+			continue
+		}
+		clean[k] = w
+	}
+	return clean
+}
+
 // SetPoCPreserved updates the preserved-host set. Pass nil to mark the
 // preserved set as "not yet loaded" (treat every host as preserved so
 // we don't wedge to zero capacity on a missed poll). Pass a non-nil
@@ -286,8 +313,7 @@ func (m *CapacityState) hostAvailableLocked(host string) bool {
 }
 
 // hostCurrentWeightLocked returns the current raw poc_weight capacity for the
-// host or 1.0 if the state has no entry (best-effort fallback so
-// routing still works before the first chain fetch lands).
+// host, or neutral weight 1.0 if the state has no entry yet.
 func (m *CapacityState) hostCurrentWeightLocked(host string) float64 {
 	if w, ok := m.currentWeights[host]; ok {
 		return w
@@ -308,7 +334,7 @@ func (m *CapacityState) hostCurrentWeightForModelLocked(host, model string) floa
 }
 
 // hostFullWeightLocked returns the steady-state raw poc_weight capacity for the
-// host or 1.0 if no Inference-phase observation has landed yet.
+// host, or neutral weight 1.0 if no observation has landed yet.
 func (m *CapacityState) hostFullWeightLocked(host string) float64 {
 	if w, ok := m.fullWeights[host]; ok {
 		return w

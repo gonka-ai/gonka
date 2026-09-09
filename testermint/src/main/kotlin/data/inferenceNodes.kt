@@ -45,6 +45,29 @@ data class AdminState(
     val epoch: Long
 )
 
+// Chain-side view of a participant's registered hardware inventory, as returned
+// by `query inference hardware-nodes-all`. Distinct from the DAPI-local
+// InferenceNode: this is what epoch formation reads when seating models.
+data class HardwareNodesAllResponse(
+    val nodes: List<ChainHardwareNodes> = emptyList()
+)
+
+data class ChainHardwareNodes(
+    val participant: String = "",
+    @com.google.gson.annotations.SerializedName("hardware_nodes")
+    val hardwareNodes: List<ChainHardwareNode> = emptyList()
+)
+
+data class ChainHardwareNode(
+    @com.google.gson.annotations.SerializedName("local_id")
+    val localId: String = "",
+    val status: String = "",
+    val models: List<String> = emptyList(),
+    val host: String = "",
+    val port: String = "",
+    val version: String = "",
+)
+
 data class ModelConfig(
     val args: List<String>
 )
@@ -73,6 +96,11 @@ data class NodeAdminStateResponse(
 
 data class MlNodeVersionQueryResponse(
     val mlnodeVersion: MlNodeVersion
+)
+
+data class LastUpgradeHeightQueryResponse(
+    val lastUpgradeHeight: Long,
+    val found: Boolean,
 )
 
 data class MlNodeVersion(

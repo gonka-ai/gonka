@@ -84,7 +84,7 @@ func TestAuthzCache_CacheExpired(t *testing.T) {
 func TestAuthzCache_CacheKeyFormat(t *testing.T) {
 	// Test that cache key is correctly formed
 	granterAddress := "gonka1abc"
-	msgTypeUrl := "/inference.inference.MsgStartInference"
+	msgTypeUrl := "/inference.inference.MsgClaimRewards"
 	expectedKey := granterAddress + "|" + msgTypeUrl
 
 	cache := &AuthzCache{

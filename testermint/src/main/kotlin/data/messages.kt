@@ -74,6 +74,26 @@ data class UpdateParams(
     }
 }
 
+data class PutDevshardApprovedVersion(
+    val authority: String = "",
+    val version: DevshardApprovedVersion,
+) : GovernanceMessage {
+    override val type: String = "/inference.inference.MsgPutDevshardApprovedVersion"
+    override fun withAuthority(authority: String): GovernanceMessage {
+        return this.copy(authority = authority)
+    }
+}
+
+data class DeleteDevshardApprovedVersion(
+    val authority: String = "",
+    val name: String,
+) : GovernanceMessage {
+    override val type: String = "/inference.inference.MsgDeleteDevshardApprovedVersion"
+    override fun withAuthority(authority: String): GovernanceMessage {
+        return this.copy(authority = authority)
+    }
+}
+
 data class UpdateRestrictionsParams(
     val authority: String = "",
     val params: RestrictionsParams,
@@ -126,6 +146,18 @@ data class MsgSetTrainingAllowList(
     val role: Int
 ) : GovernanceMessage {
     override val type: String = "/inference.inference.MsgSetTrainingAllowList"
+    override fun withAuthority(authority: String): GovernanceMessage {
+        return this.copy(authority = authority)
+    }
+}
+
+/** Registers Ethereum (etc.) bridge contract addresses for WGNK unwrap releases. */
+data class MsgRegisterBridgeAddresses(
+    val authority: String = "",
+    val chainName: String,
+    val addresses: List<String>,
+) : GovernanceMessage {
+    override val type: String = "/inference.inference.MsgRegisterBridgeAddresses"
     override fun withAuthority(authority: String): GovernanceMessage {
         return this.copy(authority = authority)
     }

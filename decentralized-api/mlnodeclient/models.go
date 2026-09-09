@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"decentralized-api/utils"
+	"common/utils"
 )
 
 const (

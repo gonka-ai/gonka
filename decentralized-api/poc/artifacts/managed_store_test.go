@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ func TestManagedArtifactStore_GetOrCreateStore(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManagedArtifactStore(dir, 3)
 	defer m.Close()
+	m.ActivateStage(100)
 
 	store1, err := m.GetOrCreateStore(100, "model-a")
 	if err != nil {
@@ -52,10 +54,78 @@ func TestManagedArtifactStore_GetStore_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManagedArtifactStore(dir, 3)
 	defer m.Close()
+	m.ActivateStage(999)
 
 	_, err := m.GetStore(999, "missing-model")
 	if err == nil {
 		t.Error("expected error for non-existent epoch")
+	}
+}
+
+func TestManagedArtifactStore_RefuseInactiveStage(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManagedArtifactStore(dir, 3)
+	defer m.Close()
+
+	_, err := m.GetOrCreateStore(100, "model-a")
+	if !errors.Is(err, ErrStageNotActive) {
+		t.Fatalf("expected ErrStageNotActive with no active stage, got %v", err)
+	}
+
+	m.ActivateStage(100)
+	if _, err := m.GetOrCreateStore(100, "model-a"); err != nil {
+		t.Fatalf("GetOrCreateStore active stage: %v", err)
+	}
+
+	_, err = m.GetStore(200, "model-a")
+	if !errors.Is(err, ErrStageNotActive) {
+		t.Fatalf("expected ErrStageNotActive for other height, got %v", err)
+	}
+
+	m.DeactivateStage()
+	_, err = m.GetStore(100, "model-a")
+	if !errors.Is(err, ErrStageNotActive) {
+		t.Fatalf("expected ErrStageNotActive after deactivate, got %v", err)
+	}
+	if m.ActiveStage() != 0 {
+		t.Fatalf("expected active stage 0, got %d", m.ActiveStage())
+	}
+}
+
+func TestManagedArtifactStore_ActivateUnloadsOtherStages(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManagedArtifactStore(dir, 3)
+	defer m.Close()
+
+	m.ActivateStage(100)
+	store100, err := m.GetOrCreateStore(100, "model-a")
+	if err != nil {
+		t.Fatalf("GetOrCreateStore(100): %v", err)
+	}
+	if err := store100.AddWithNode(1, []byte("a"), ""); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := store100.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	m.ActivateStage(200)
+	if got := len(m.snapshotStores()); got != 0 {
+		t.Fatalf("expected no RAM stores after switching stage before open, got %d", got)
+	}
+	if _, err := m.GetStore(100, "model-a"); !errors.Is(err, ErrStageNotActive) {
+		t.Fatalf("expected ErrStageNotActive for previous stage, got %v", err)
+	}
+
+	store200, err := m.GetOrCreateStore(200, "model-a")
+	if err != nil {
+		t.Fatalf("GetOrCreateStore(200): %v", err)
+	}
+	_ = store200
+
+	// Previous stage remains on disk.
+	if _, err := os.Stat(filepath.Join(dir, "100", "model-a")); err != nil {
+		t.Fatalf("stage 100 should remain on disk: %v", err)
 	}
 }
 
@@ -64,11 +134,12 @@ func TestManagedArtifactStore_GetStore_ExistingDir(t *testing.T) {
 
 	// Create epoch 100 with first manager
 	m1 := NewManagedArtifactStore(dir, 3)
+	m1.ActivateStage(100)
 	store, err := m1.GetOrCreateStore(100, "org/model")
 	if err != nil {
 		t.Fatalf("GetOrCreateStore failed: %v", err)
 	}
-	if err := store.Add(1, []byte("test")); err != nil {
+	if err := store.AddWithNode(1, []byte("test"), ""); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
 	if err := m1.Flush(); err != nil {
@@ -79,6 +150,7 @@ func TestManagedArtifactStore_GetStore_ExistingDir(t *testing.T) {
 	// New manager should find existing epoch via GetStore
 	m2 := NewManagedArtifactStore(dir, 3)
 	defer m2.Close()
+	m2.ActivateStage(100)
 
 	store2, err := m2.GetStore(100, "org/model")
 	if err != nil {
@@ -93,13 +165,14 @@ func TestManagedArtifactStore_GetStoresForStage(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManagedArtifactStore(dir, 3)
 	defer m.Close()
+	m.ActivateStage(100)
 
 	for _, modelID := range []string{"z-model", "org/model-a", "model-b"} {
 		store, err := m.GetOrCreateStore(100, modelID)
 		if err != nil {
 			t.Fatalf("GetOrCreateStore(%q) failed: %v", modelID, err)
 		}
-		if err := store.Add(1, []byte(modelID)); err != nil {
+		if err := store.AddWithNode(1, []byte(modelID), ""); err != nil {
 			t.Fatalf("Add failed for %q: %v", modelID, err)
 		}
 	}
@@ -131,6 +204,7 @@ func TestManagedArtifactStore_PruneStore(t *testing.T) {
 		{200, "model-a"},
 		{300, "model-a"},
 	} {
+		m.ActivateStage(tc.height)
 		if _, err := m.GetOrCreateStore(tc.height, tc.modelID); err != nil {
 			t.Fatalf("GetOrCreateStore(%d, %q) failed: %v", tc.height, tc.modelID, err)
 		}
@@ -154,7 +228,7 @@ func TestManagedArtifactStore_PruneStore(t *testing.T) {
 		t.Error("height 300 directory should still exist")
 	}
 
-	// GetStore should fail for pruned height
+	// GetStore should fail for pruned height (also inactive relative to stage 300)
 	if _, err := m.GetStore(100, "model-a"); err == nil {
 		t.Error("expected error for pruned height")
 	}
@@ -176,6 +250,7 @@ func TestManagedArtifactStore_ListStores(t *testing.T) {
 
 	// Create stores (out of order)
 	for _, height := range []int64{300, 100, 200} {
+		m.ActivateStage(height)
 		if _, err := m.GetOrCreateStore(height, "model-a"); err != nil {
 			t.Fatalf("GetOrCreateStore(%d) failed: %v", height, err)
 		}
@@ -201,6 +276,7 @@ func TestManagedArtifactStore_AutoPrune(t *testing.T) {
 
 	// Create stores at heights 100, 200, 300, 400, 500
 	for _, height := range []int64{100, 200, 300, 400, 500} {
+		m.ActivateStage(height)
 		if _, err := m.GetOrCreateStore(height, "model-a"); err != nil {
 			t.Fatalf("GetOrCreateStore(%d) failed: %v", height, err)
 		}
@@ -233,13 +309,14 @@ func TestManagedArtifactStore_Flush(t *testing.T) {
 	dir := t.TempDir()
 	m := NewManagedArtifactStore(dir, 3)
 	defer m.Close()
+	m.ActivateStage(100)
 
 	store, err := m.GetOrCreateStore(100, "model-a")
 	if err != nil {
 		t.Fatalf("GetOrCreateStore failed: %v", err)
 	}
 
-	if err := store.Add(1, []byte("test")); err != nil {
+	if err := store.AddWithNode(1, []byte("test"), ""); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
 
@@ -268,6 +345,7 @@ func TestManagedArtifactStore_ParallelModelStores(t *testing.T) {
 		modelCount     = 12
 		writesPerModel = 200
 	)
+	m.ActivateStage(stage)
 
 	var writeWG sync.WaitGroup
 	writeErrs := make(chan error, modelCount)
@@ -335,7 +413,7 @@ func TestManagedArtifactStore_ParallelModelStores(t *testing.T) {
 				return
 			}
 
-			nodeCounts := store.GetNodeDistribution()
+			nodeCounts := store.GetNodeCounts()
 			expectedNodeID := fmt.Sprintf("node-%02d", modelIdx)
 			if nodeCounts[expectedNodeID] != writesPerModel {
 				readErrs <- fmt.Errorf("GetNodeDistribution(%s): expected %d for %s, got %d", modelID, writesPerModel, expectedNodeID, nodeCounts[expectedNodeID])
@@ -343,7 +421,7 @@ func TestManagedArtifactStore_ParallelModelStores(t *testing.T) {
 			}
 
 			for _, offset := range []uint32{0, writesPerModel / 2, writesPerModel - 1} {
-				nonce, vector, err := store.GetArtifact(offset)
+				nonce, vector, _, err := store.GetArtifactAndProof(offset, writesPerModel)
 				if err != nil {
 					readErrs <- fmt.Errorf("GetArtifact(%s, %d): %w", modelID, offset, err)
 					return

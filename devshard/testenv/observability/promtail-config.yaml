@@ -1,0 +1,52 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: testenv-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    pipeline_stages:
+      - docker: {}
+      # devshardd logs are slog text (key=value); dapi-style JSON is also parsed when present.
+      - json:
+          expressions:
+            level: level
+            service: service
+      - match:
+          selector: '{service=""}'
+          stages:
+            - logfmt:
+                mapping:
+                  level: level
+                  stage: stage
+                  msg: msg
+      - labels:
+          level:
+          service:
+          stage:
+    relabel_configs:
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        regex: "(mock-chain|mock-dapi|mock-openai|versiond-.*|versiond-router|devshardctl|devshard-postgres|jaeger|loki|prometheus|grafana|promtail)"
+        action: keep
+      - source_labels: [__meta_docker_container_name]
+        regex: '/(.*)'
+        target_label: container
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: compose_service
+      - source_labels: [__meta_docker_container_label_com_docker_compose_project]
+        target_label: compose_project
+      - source_labels: [__meta_docker_container_log_stream]
+        target_label: stream
+      - target_label: environment
+        replacement: testenv
+      - source_labels: [__meta_docker_container_id]
+        target_label: __path__
+        replacement: /var/lib/docker/containers/$1/$1-json.log

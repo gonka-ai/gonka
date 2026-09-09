@@ -1,0 +1,12 @@
+# Genesis-only overlay: route Tier A /v1/ paths through edge-api-router
+# (round-robin across edge-api, edge-api-2, edge-api-3) instead of the
+# canonical single edge-api upstream.
+#
+# Requires docker-compose.edge-api.yml. Applied manually or via Testermint:
+#   docker compose -p genesis -f docker-compose-base.yml ... \
+#     -f docker-compose.edge-api.yml \
+#     -f docker-compose.edge-api-router-proxy.yml up -d
+services:
+  proxy:
+    environment:
+      EDGE_API_SERVICE_NAME: edge-api-router

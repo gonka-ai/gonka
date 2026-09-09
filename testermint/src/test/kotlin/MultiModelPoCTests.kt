@@ -22,12 +22,22 @@ class MultiModelPoCTests : TestermintTest() {
                         PoCModelConfig(
                             modelId = defaultModel,
                             seqLen = 256L,
-                            weightScaleFactor = Decimal.fromDouble(coeffA),
+                            dynamicCoefficient = DynamicCoefficientModelConfig(
+                                coeffMin = Decimal.fromDouble(coeffA),
+                                coeffMax = Decimal.fromDouble(coeffA),
+                                relativeDifficulty = Decimal.fromDouble(1.0),
+                                targetShareBps = 5000,
+                            ),
                         ),
                         PoCModelConfig(
                             modelId = secondModel,
                             seqLen = 256L,
-                            weightScaleFactor = Decimal.fromDouble(coeffB),
+                            dynamicCoefficient = DynamicCoefficientModelConfig(
+                                coeffMin = Decimal.fromDouble(coeffB),
+                                coeffMax = Decimal.fromDouble(coeffB),
+                                relativeDifficulty = Decimal.fromDouble(1.0),
+                                targetShareBps = 5000,
+                            ),
                         ),
                     )
                     this[PocParams::pocV2Enabled] = true
@@ -140,26 +150,8 @@ class MultiModelPoCTests : TestermintTest() {
             }
         }
 
-        logSection("Setting up inference responses per model")
-        allPairs.forEach { pair ->
-            pair.mock?.setInferenceResponse(
-                defaultInferenceResponseObject.withResponse("response-model-a"),
-                model = defaultModel,
-            )
-            pair.mock?.setInferenceResponse(
-                defaultInferenceResponseObject.withResponse("response-model-b"),
-                model = secondModel,
-            )
-        }
-
-        logSection("Making inference request for model A")
-        genesis.waitForNextInferenceWindow()
-        val responseA = genesis.makeInferenceRequest(inferenceRequest)
-        assertThat(responseA.choices.first().message.content).isEqualTo("response-model-a")
-
-        logSection("Making inference request for model B")
-        val requestB = cosmosJson.toJson(inferenceRequestObject.copy(model = secondModel))
-        val responseB = genesis.makeInferenceRequest(requestB)
-        assertThat(responseB.choices.first().message.content).isEqualTo("response-model-b")
+        // NOTE: This test previously finished with a classic inference request per model as a routing
+        // smoke check. Classic inference was removed (PR #1386); the PoC weight/commit/slot assertions
+        // above are the substance of this test and do not depend on it.
     }
 }

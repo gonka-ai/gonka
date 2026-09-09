@@ -23,7 +23,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | `--storage-path` | `DEVSHARD_STORAGE_PATH` | no | `~/.cache/gonka/devshard-<escrow-id>.db` | SQLite path for crash recovery |
 | - | `DEVSHARD_API_KEYS` | no | - | Comma-separated public API bearer keys |
 | - | `DEVSHARD_ADMIN_API_KEY` | no | - | Admin bearer key for finalize and `/v1/admin/*` endpoints |
-| - | `DEVSHARD_CHAIN_ID` | no | queried from REST | Chain ID used when signing admin-created escrow transactions |
+| - | `DEVSHARD_CHAIN_ID` | no | `gonka-mainnet` | Chain ID for signing escrow create/settle txs. Known values: `gonka-mainnet` (production), `gonka-testnet` (devnet/testnet), `gonka-test` (testenv mock-chain). |
 | - | `DEVSHARD_TX_FEE_AMOUNT` | no | `1000000` | Fee amount for admin-created escrow transactions |
 | - | `DEVSHARD_TX_FEE_DENOM` | no | `ngonka` | Fee denom for admin-created escrow transactions |
 | - | `DEVSHARD_TX_GAS_LIMIT` | no | `500000` | Fallback gas limit for admin-created escrow and settlement transactions |
@@ -142,12 +142,12 @@ Returns current session state.
   "balance": 5000000000,
   "config": {
     "refusal_timeout": 60,
-    "execution_timeout": 1200,
+    "execution_timeout": 1920,
     "token_price": 1,
     "create_devshard_fee": 10000,
     "fee_per_nonce": 1000,
     "vote_threshold": 8,
-    "validation_rate": 5000,
+    "validation_rate": 1000,
     "inference_seal_grace_nonces": 160,
     "inference_seal_grace_seconds": 3600
   }
@@ -243,11 +243,15 @@ curl http://localhost:8080/v1/admin/devshards/42/participants \
 ```
 
 Each participant entry includes `participant_key`, `slot_count`, `tracked`,
-`quarantined`, `blocked`, `request_allowed`, `available_for_capacity`, `tokens`,
-`burst`, and, when quarantined, `quarantine_until` and
-`quarantine_remaining_ms`. `blocked` means the gateway would reject a request to
-that host now; `available_for_capacity` is stricter and only becomes true once
-the host is fully recovered for capacity-weighted routing.
+`quarantined`, `quarantine_mode`, `model_ids`, `shadow_quarantined`,
+`probe_quarantined`, `probationary`, `blocked`, `request_allowed`,
+`available_for_capacity`, `tokens`, `burst`, `failure_strikes`, and, when quarantined,
+`quarantine_until` and `quarantine_remaining_ms`. `blocked` means probe
+quarantine or token exhaustion would reject a real host call now. Shadow
+quarantine and probation still send real attempts, but the host is treated as
+no-winner for the affected model. `model_ids` lists the models affected by the
+automatic quarantine row; an empty list means legacy/global state.
+`failure_strikes` is the unified per-model soft-failure/probation counter.
 
 ### POST /v1/admin/devshards/{id}/settle
 

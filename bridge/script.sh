@@ -11,6 +11,28 @@ GETH_P2P_PORT=${GETH_P2P_PORT:-30303}
 GETH_DISCOVERY_PORT=${GETH_DISCOVERY_PORT:-$GETH_P2P_PORT}
 PRYSM_P2P_TCP_PORT=${PRYSM_P2P_TCP_PORT:-13000}
 PRYSM_P2P_UDP_PORT=${PRYSM_P2P_UDP_PORT:-12000}
+PRYSM_HTTP_PORT=${PRYSM_HTTP_PORT:-3500}
+
+# Watchdog thresholds (seconds)
+ZERO_PEERS_RESTART_AFTER=${ZERO_PEERS_RESTART_AFTER:-3600}
+ENGINE_RECONNECT_GRACE=${ENGINE_RECONNECT_GRACE:-300}
+
+# Bridge continuity settings.
+# Default endpoints and beacon URL to local production API service if unset.
+BRIDGE_POSTBLOCK=${BRIDGE_POSTBLOCK:-http://api:9200/admin/v1/bridge/block}
+BRIDGE_GETADDRESSES=${BRIDGE_GETADDRESSES:-http://api:9000/v1/bridge/addresses}
+BRIDGE_GETLASTBLOCK=${BRIDGE_GETLASTBLOCK:-http://api:9000/v1/bridge/block/latest}
+BEACON_STATE_URL=${BEACON_STATE_URL:-https://mainnet.checkpoint.sigp.io/}
+
+BRIDGE_CACHE_RANGES=${BRIDGE_CACHE_RANGES:-4}
+
+# Build the optional --bridge.getlastblock flag only when the URL is set, so an empty
+# value is never passed as a bare flag. URLs contain no spaces, so word-splitting the
+# unquoted variable into the geth invocation is safe.
+BRIDGE_GETLASTBLOCK_FLAG=""
+if [ -n "$BRIDGE_GETLASTBLOCK" ]; then
+    BRIDGE_GETLASTBLOCK_FLAG="--bridge.getlastblock $BRIDGE_GETLASTBLOCK"
+fi
 
 require_env_vars() {
     missing=false
@@ -43,13 +65,21 @@ PRYSM_FORMATTED_LOG=/var/log/prysm/beacon.log
 
 # Determine network flags
 NETWORK_FLAGS=""
+CHAIN_ID="ethereum"
 if [ "$ETHEREUM_NETWORK" = "sepolia" ] || [ "$ETHEREUM_NETWORK" = "testnet" ]; then
     echo "Running on Sepolia testnet"
     NETWORK_FLAGS="--sepolia"
+    CHAIN_ID="sepolia"
 else
     echo "Running on Mainnet (default)"
     # Geth defaults to mainnet, no flag needed
 fi
+
+# Watchdog timer variables (separate per client)
+GETH_ZERO_PEERS_START_TIME=0
+PRYSM_ZERO_PEERS_START_TIME=0
+# After geth-only restart: if set, unix time when we may restart Prysm as Engine safety valve
+ENGINE_RECONNECT_CHECK_AFTER=0
 
 echo "Initializing Ethereum Bridge Service Version 0.1.0"
 
@@ -188,6 +218,9 @@ start_geth() {
           --ipcdisable \
          --bridge.postblock $BRIDGE_POSTBLOCK \
          --bridge.getaddresses $BRIDGE_GETADDRESSES \
+         --bridge.chain "$CHAIN_ID" \
+         $BRIDGE_GETLASTBLOCK_FLAG \
+         --bridge.cacheranges "$BRIDGE_CACHE_RANGES" \
          --authrpc.addr 127.0.0.1 \
          --authrpc.port $GETH_AUTHRPC_PORT \
          --authrpc.jwtsecret $JWT_SECRET_PATH \
@@ -215,6 +248,9 @@ start_geth() {
                  --ipcdisable \
                  --bridge.postblock $BRIDGE_POSTBLOCK \
                  --bridge.getaddresses $BRIDGE_GETADDRESSES \
+                 --bridge.chain "$CHAIN_ID" \
+                 $BRIDGE_GETLASTBLOCK_FLAG \
+                 --bridge.cacheranges "$BRIDGE_CACHE_RANGES" \
                  --authrpc.addr 127.0.0.1 \
                  --authrpc.port $GETH_AUTHRPC_PORT \
                  --authrpc.jwtsecret $JWT_SECRET_PATH \
@@ -290,18 +326,19 @@ start_prysm() {
     fi
 }
 
-# Function to restart both processes
+# Restart both (startup / both dead only)
 restart_processes() {
     echo "Restarting both processes..."
-    
-    # Kill existing processes if they exist
+    ENGINE_RECONNECT_CHECK_AFTER=0
+    GETH_ZERO_PEERS_START_TIME=0
+    PRYSM_ZERO_PEERS_START_TIME=0
+
     stop_process "Geth" "$GETH_PID"
     stop_process "Prysm" "$PRYSM_PID"
     stop_process "Prysm log formatter" "$PRYSM_FORMATTER_PID"
-    
-    # Start processes in correct order (Geth first, then Prysm)
+
     if start_geth; then
-        sleep 3  # Give Geth time to start
+        sleep 3
         if start_prysm; then
             echo "Both processes restarted successfully"
         else
@@ -312,46 +349,268 @@ restart_processes() {
     fi
 }
 
-# Function to check if processes are still running and restart if needed
+geth_rpc_call() {
+    # Usage: geth_rpc_call <method>  -> prints raw JSON body or empty
+    curl -s -m 5 -X POST -H "Content-Type: application/json" \
+        -d "{\"jsonrpc\":\"2.0\",\"method\":\"$1\",\"params\":[],\"id\":1}" \
+        "http://127.0.0.1:$GETH_HTTP_PORT" 2>/dev/null || true
+}
+
+get_geth_peer_count() {
+    local resp hex_val
+    resp=$(geth_rpc_call net_peerCount)
+    if [ -z "$resp" ]; then
+        echo "-1"
+        return
+    fi
+    hex_val=$(echo "$resp" | grep -o '"result":"[^"]*"' | cut -d'"' -f4)
+    if [ -z "$hex_val" ]; then
+        echo "-1"
+        return
+    fi
+    printf "%d" "$hex_val" 2>/dev/null || echo "-1"
+}
+
+get_prysm_peer_count() {
+    local resp connected
+    resp=$(curl -s -m 5 "http://127.0.0.1:$PRYSM_HTTP_PORT/eth/v1/node/peer_count" 2>/dev/null || true)
+    if [ -z "$resp" ]; then
+        echo "-1"
+        return
+    fi
+    connected=$(echo "$resp" | sed -n 's/.*"connected"[[:space:]]*:[[:space:]]*"\([0-9]*\)".*/\1/p')
+    if [ -z "$connected" ]; then
+        connected=$(echo "$resp" | sed -n 's/.*"connected"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
+    fi
+    if [ -z "$connected" ]; then
+        echo "-1"
+        return
+    fi
+    echo "$connected"
+}
+
+is_geth_authrpc_up() {
+    # 401/200/etc. means listener is up; 000 / empty means connection failed
+    local code
+    code=$(curl -s -m 2 -o /dev/null -w '%{http_code}' \
+        -X POST -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"engine_exchangeCapabilities","params":[[]],"id":1}' \
+        "http://127.0.0.1:$GETH_AUTHRPC_PORT" 2>/dev/null || echo "000")
+    [ -n "$code" ] && [ "$code" != "000" ]
+}
+
+wait_for_geth_http() {
+    local timeout=${1:-30}
+    local elapsed=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if [ "$(get_geth_peer_count)" != "-1" ]; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    return 1
+}
+
+wait_for_geth_authrpc() {
+    local timeout=${1:-30}
+    local elapsed=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if is_geth_authrpc_up; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    return 1
+}
+
+log_geth_diagnostics() {
+    local peers syncing block prysm_peers cmdline
+    echo "=== Geth diagnostics (before restart) ==="
+    peers=$(get_geth_peer_count)
+    syncing=$(geth_rpc_call eth_syncing)
+    block=$(geth_rpc_call eth_blockNumber)
+    prysm_peers=$(get_prysm_peer_count)
+    echo "geth net_peerCount=$peers  prysm connected=$prysm_peers  (CL peers ≠ EL peers)"
+    echo "eth_syncing=$syncing"
+    echo "eth_blockNumber=$block"
+    if [ -n "$GETH_PID" ] && [ -r "/proc/$GETH_PID/cmdline" ]; then
+        cmdline=$(tr '\0' ' ' < "/proc/$GETH_PID/cmdline" 2>/dev/null || true)
+        echo "geth cmdline: $cmdline"
+        echo "$cmdline" | grep -q -- '--bootnodes' && echo "note: cmdline has --bootnodes" || true
+        echo "$cmdline" | grep -q -- '--nodiscover' && echo "note: cmdline has --nodiscover" || true
+        echo "$cmdline" | grep -q -- '--discovery.dns' && echo "note: cmdline has --discovery.dns" || true
+        echo "$cmdline" | grep -q -- '--nat' && echo "note: cmdline has --nat" || true
+    else
+        echo "geth cmdline: unavailable (pid=$GETH_PID)"
+    fi
+    if [ -f /var/log/geth/geth.log ]; then
+        echo "--- Last 40 lines of Geth log ---"
+        tail -n 40 /var/log/geth/geth.log || true
+        echo "--- End Geth log excerpt ---"
+    fi
+    echo "=== End Geth diagnostics ==="
+}
+
+restart_geth_only() {
+    echo "Restarting Geth only (leaving Prysm running)..."
+    log_geth_diagnostics
+    stop_process "Geth" "$GETH_PID"
+    GETH_ZERO_PEERS_START_TIME=0
+
+    if start_geth; then
+        if wait_for_geth_http 30; then
+            echo "Geth HTTP RPC is up"
+        else
+            echo "WARN: Geth HTTP RPC not ready within 30s"
+        fi
+        if wait_for_geth_authrpc 30; then
+            echo "Geth authrpc is up; Prysm should reconnect"
+            ENGINE_RECONNECT_CHECK_AFTER=$(($(date +%s) + ENGINE_RECONNECT_GRACE))
+            echo "Engine reconnect safety valve armed for ${ENGINE_RECONNECT_GRACE}s"
+        else
+            echo "WARN: Geth authrpc not ready within 30s; not arming Prysm safety valve"
+            ENGINE_RECONNECT_CHECK_AFTER=0
+        fi
+        echo "Geth-only restart complete"
+    else
+        echo "Geth-only restart failed; will retry in monitor loop"
+        ENGINE_RECONNECT_CHECK_AFTER=0
+    fi
+}
+
+restart_prysm_only() {
+    echo "Restarting Prysm only (leaving Geth running)..."
+    ENGINE_RECONNECT_CHECK_AFTER=0
+    PRYSM_ZERO_PEERS_START_TIME=0
+    stop_process "Prysm" "$PRYSM_PID"
+    stop_process "Prysm log formatter" "$PRYSM_FORMATTER_PID"
+    if start_prysm; then
+        echo "Prysm-only restart complete"
+    else
+        echo "Prysm-only restart failed; will retry in monitor loop"
+    fi
+}
+
 check_and_restart_processes() {
-    local restart_needed=false
     local geth_died=false
     local prysm_died=false
-    
-    # Check Geth
-    if [ -n "$GETH_PID" ] && ! kill -0 $GETH_PID 2>/dev/null; then
+    local now peers prysm_peers elapsed
+
+    if [ -n "$GETH_PID" ] && ! kill -0 "$GETH_PID" 2>/dev/null; then
         echo "Geth process (PID: $GETH_PID) died"
         geth_died=true
-        restart_needed=true
     fi
-    
-    # Check Prysm
-    if [ -n "$PRYSM_PID" ] && ! kill -0 $PRYSM_PID 2>/dev/null; then
-        # Retrieve and report the exit status, once
+
+    if [ -n "$PRYSM_PID" ] && ! kill -0 "$PRYSM_PID" 2>/dev/null; then
         if [ -z "$PRYSM_EXIT_STATUS" ]; then
-            if wait $PRYSM_PID 2>/dev/null; then
+            if wait "$PRYSM_PID" 2>/dev/null; then
                 PRYSM_EXIT_STATUS=$?
             else
                 PRYSM_EXIT_STATUS=$?
             fi
         fi
-        echo "Prysm process (PID: $PRYSM_PID) $(describe_exit ${PRYSM_EXIT_STATUS:-"unknown"})"
-        # Show recent raw logs to aid debugging
+        echo "Prysm process (PID: $PRYSM_PID) $(describe_exit ${PRYSM_EXIT_STATUS:-unknown})"
         if [ -f "$PRYSM_RAW_LOG" ]; then
             echo "--- Last 100 lines of Prysm raw log ---"
             tail -n 100 "$PRYSM_RAW_LOG" | sed 's/^/PRSM: /'
             echo "--- End Prysm raw log excerpt ---"
         fi
         prysm_died=true
-        restart_needed=true
-        # Stop formatter if still running; it will be restarted with Prysm
         stop_process "Prysm log formatter" "$PRYSM_FORMATTER_PID"
     fi
-    
-    # Restart if either process died
-    if [ "$restart_needed" = "true" ]; then
-        echo "Restarting processes due to crash..."
+
+    if [ "$geth_died" = "true" ] && [ "$prysm_died" = "true" ]; then
+        echo "Both processes died; full restart..."
         restart_processes
+        return
+    fi
+    if [ "$geth_died" = "true" ]; then
+        echo "Geth died; restarting Geth only..."
+        restart_geth_only
+        return
+    fi
+    if [ "$prysm_died" = "true" ]; then
+        echo "Prysm died; restarting Prysm only..."
+        restart_prysm_only
+        return
+    fi
+
+    # Engine reconnect safety valve after geth-only restart:
+    # - authrpc down → Geth problem, restart Geth again
+    # - authrpc up but Prysm still failing to dial EL → restart Prysm once
+    # - otherwise clear (happy path; do not wipe Prysm)
+    if [ "$ENGINE_RECONNECT_CHECK_AFTER" -gt 0 ]; then
+        now=$(date +%s)
+        if [ "$now" -ge "$ENGINE_RECONNECT_CHECK_AFTER" ]; then
+            ENGINE_RECONNECT_CHECK_AFTER=0
+            if ! is_geth_authrpc_up; then
+                echo "Engine reconnect grace elapsed; authrpc still down — restarting Geth only"
+                restart_geth_only
+                return
+            fi
+            if [ -f "$PRYSM_RAW_LOG" ] && \
+               tail -n 80 "$PRYSM_RAW_LOG" 2>/dev/null | \
+               grep -qiE 'could not connect to execution|error dialing execution|Could not connect to execution client'; then
+                echo "Engine reconnect grace elapsed; authrpc up but Prysm still failing EL dial — restarting Prysm only"
+                restart_prysm_only
+                return
+            fi
+            echo "Engine reconnect grace elapsed; authrpc up and no Prysm EL dial errors — keeping Prysm"
+        fi
+    fi
+
+    # Peer count watchdogs (Mainnet only)
+    if [ "$ETHEREUM_NETWORK" = "sepolia" ] || [ "$ETHEREUM_NETWORK" = "testnet" ]; then
+        GETH_ZERO_PEERS_START_TIME=0
+        PRYSM_ZERO_PEERS_START_TIME=0
+        return
+    fi
+
+    peers=$(get_geth_peer_count)
+    prysm_peers=$(get_prysm_peer_count)
+
+    if [ "$peers" = "0" ]; then
+        if [ "$GETH_ZERO_PEERS_START_TIME" -eq 0 ]; then
+            GETH_ZERO_PEERS_START_TIME=$(date +%s)
+            echo "Geth peer count is zero (prysm connected=$prysm_peers). Starting Geth watchdog timer..."
+        else
+            now=$(date +%s)
+            elapsed=$((now - GETH_ZERO_PEERS_START_TIME))
+            if [ "$elapsed" -ge "$ZERO_PEERS_RESTART_AFTER" ]; then
+                echo "Geth has had zero peers for $elapsed seconds (>= $ZERO_PEERS_RESTART_AFTER). Restarting Geth only..."
+                GETH_ZERO_PEERS_START_TIME=0
+                restart_geth_only
+                return
+            fi
+        fi
+    elif [ "$peers" != "-1" ]; then
+        if [ "$GETH_ZERO_PEERS_START_TIME" -ne 0 ]; then
+            echo "Geth peer count recovered to $peers. Resetting Geth watchdog timer."
+            GETH_ZERO_PEERS_START_TIME=0
+        fi
+    fi
+
+    if [ "$prysm_peers" = "0" ]; then
+        if [ "$PRYSM_ZERO_PEERS_START_TIME" -eq 0 ]; then
+            PRYSM_ZERO_PEERS_START_TIME=$(date +%s)
+            echo "Prysm peer count is zero (geth peers=$peers). Starting Prysm watchdog timer..."
+        else
+            now=$(date +%s)
+            elapsed=$((now - PRYSM_ZERO_PEERS_START_TIME))
+            if [ "$elapsed" -ge "$ZERO_PEERS_RESTART_AFTER" ]; then
+                echo "Prysm has had zero peers for $elapsed seconds (>= $ZERO_PEERS_RESTART_AFTER). Restarting Prysm only..."
+                PRYSM_ZERO_PEERS_START_TIME=0
+                restart_prysm_only
+                return
+            fi
+        fi
+    elif [ "$prysm_peers" != "-1" ]; then
+        if [ "$PRYSM_ZERO_PEERS_START_TIME" -ne 0 ]; then
+            echo "Prysm peer count recovered to $prysm_peers. Resetting Prysm watchdog timer."
+            PRYSM_ZERO_PEERS_START_TIME=0
+        fi
     fi
 }
 

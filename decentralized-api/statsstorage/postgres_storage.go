@@ -24,12 +24,16 @@ CREATE TABLE IF NOT EXISTS inference_stats (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
+
 CREATE INDEX IF NOT EXISTS inference_stats_requested_by_time_idx
     ON inference_stats (requested_by, inference_timestamp);
+
 CREATE INDEX IF NOT EXISTS inference_stats_epoch_idx
     ON inference_stats (epoch_id);
+
 CREATE INDEX IF NOT EXISTS inference_stats_model_time_idx
     ON inference_stats (model, inference_timestamp);
+
 CREATE INDEX IF NOT EXISTS inference_stats_inference_time_idx
     ON inference_stats (inference_timestamp);
 `
@@ -51,15 +55,14 @@ func NewPostgresStorage(ctx context.Context) (*PostgresStorage, error) {
 	s := &PostgresStorage{pool: pool}
 	if err := s.ensureSchema(ctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("ensure schema: %w", err)
+		return nil, err
 	}
 	return s, nil
 }
 
 func (s *PostgresStorage) ensureSchema(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, createInferenceStatsTableSQL)
-	if err != nil {
-		return fmt.Errorf("create inference_stats table: %w", err)
+	if _, err := s.pool.Exec(ctx, createInferenceStatsTableSQL); err != nil {
+		return fmt.Errorf("create inference_stats schema: %w", err)
 	}
 	return nil
 }

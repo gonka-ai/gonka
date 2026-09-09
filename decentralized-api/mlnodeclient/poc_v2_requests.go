@@ -1,8 +1,8 @@
 package mlnodeclient
 
 import (
+	"common/utils"
 	"context"
-	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
 	"io"

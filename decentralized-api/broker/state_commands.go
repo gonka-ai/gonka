@@ -1,8 +1,8 @@
 package broker
 
 import (
+	"common/logging"
 	"decentralized-api/chainphase"
-	"decentralized-api/logging"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -312,11 +312,13 @@ func NewSetNodesActualStatusCommand(statusUpdates []StatusUpdate) SetNodesActual
 }
 
 type StatusUpdate struct {
-	NodeId        string
-	PrevStatus    types.HardwareNodeStatus
-	NewStatus     types.HardwareNodeStatus
-	Timestamp     time.Time
-	MlNodeVersion string
+	NodeId                 string
+	RegistrationSeq        uint64
+	PrevStatus             types.HardwareNodeStatus
+	NewStatus              types.HardwareNodeStatus
+	Timestamp              time.Time
+	MlNodeVersion          string
+	PoCValidationInference bool
 }
 
 func (c SetNodesActualStatusCommand) GetResponseChannelCapacity() int {
@@ -335,6 +337,14 @@ func (c SetNodesActualStatusCommand) Execute(b *Broker) {
 			continue
 		}
 
+		if node.State.RegistrationSeq != update.RegistrationSeq {
+			logging.Info("Skipping status update: registration seq mismatch", types.Nodes,
+				"node_id", nodeId,
+				"update_registration_seq", update.RegistrationSeq,
+				"current_registration_seq", node.State.RegistrationSeq)
+			continue
+		}
+
 		if node.State.StatusTimestamp.After(update.Timestamp) {
 			logging.Info("Skipping status update: older than current", types.Nodes, "node_id", nodeId)
 			continue
@@ -350,6 +360,7 @@ func (c SetNodesActualStatusCommand) Execute(b *Broker) {
 
 		node.State.UpdateStatusAt(update.Timestamp, update.NewStatus)
 		node.State.MlNodeVersion = update.MlNodeVersion
+		node.State.PoCValidationInference = update.PoCValidationInference
 	}
 
 	c.Response <- true

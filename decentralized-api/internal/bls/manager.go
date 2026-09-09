@@ -1,12 +1,12 @@
 package bls
 
 import (
+	"common/logging"
 	"context"
 	"database/sql"
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/event_listener/chainevents"
-	"decentralized-api/logging"
 	"fmt"
 	"sync"
 	"time"

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"decentralized-api/utils"
+	"common/utils"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/productscience/inference/x/inference/calculations"

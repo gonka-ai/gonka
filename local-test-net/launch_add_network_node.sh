@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"${SCRIPT_DIR}/ensure-chain-public.sh"
+
 # Verify parameters:
 # KEY_NAME - name of the key pair to use
 # NODE_CONFIG - name of a file with inference node configuration

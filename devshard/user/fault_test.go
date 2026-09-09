@@ -71,7 +71,7 @@ func runFault(t *testing.T, failPct int) {
 		ExecutionTimeout: 1200,
 		TokenPrice:       1,
 		VoteThreshold:    uint32(faultNumHosts) / 2,
-		ValidationRate:   5000,
+		ValidationRate:   types.DefaultValidationRate,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 
@@ -279,8 +279,12 @@ func runFault(t *testing.T, failPct int) {
 	}
 
 	// --- Post-finalize status counts ---
+	// Terminal records seal once the nonce grace clears, and settlement drains
+	// every remaining live record into SealedAcc, so status accounting must
+	// read the merged live + sealed view rather than st.Inferences.
+	allRecords := session.StateMachine().ExportAllInferenceRecords()
 	statusCounts := make(map[types.InferenceStatus]int)
-	for _, rec := range st.Inferences {
+	for _, rec := range allRecords {
 		statusCounts[rec.Status]++
 	}
 
@@ -293,7 +297,10 @@ func runFault(t *testing.T, failPct int) {
 	// Dead executor slots with pending inferences should have missed > 0.
 	deadSlotsWithMissed := make(map[uint32]bool)
 	for _, infID := range pendingDeadIDs {
-		rec := st.Inferences[infID]
+		rec, ok := allRecords[infID]
+		require.True(t, ok, "inference %d missing from live and sealed records", infID)
+		require.Equal(t, types.StatusTimedOut, rec.Status,
+			"inference %d should be timed out, got %d", infID, rec.Status)
 		deadSlotsWithMissed[rec.ExecutorSlot] = true
 	}
 	totalMissed := 0
@@ -352,8 +359,6 @@ func runFault(t *testing.T, failPct int) {
 	} else {
 		t.Logf("  finalize: failed as expected (%d/%d alive < threshold %d)", aliveHosts, faultNumHosts, threshold)
 	}
-	t.Logf("  alive hosts with req_val>0: %d", aliveWithReqVal)
-	t.Logf("  dead hosts penalized (req_val>0, comp_val=0): %d", numDead)
 	t.Logf("")
 	t.Logf("signatures: %d/%d alive hosts signed", len(signedAlive), faultNumHosts-numDead)
 	t.Logf("")

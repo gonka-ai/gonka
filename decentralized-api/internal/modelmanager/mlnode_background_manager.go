@@ -1,11 +1,11 @@
 package modelmanager
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
-	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"fmt"
@@ -134,10 +134,17 @@ func (m *MLNodeBackgroundManager) checkNodeModels(node apiconfig.InferenceNodeCo
 
 	endpointAvailable := true
 
-	for modelId := range node.Models {
+	for modelId, modelConfig := range node.Models {
 		model := mlnodeclient.Model{
 			HfRepo:   modelId,
 			HfCommit: nil, // nil = latest
+		}
+		if modelConfig.ModelOverride != nil {
+			model.HfRepo = modelConfig.ModelOverride.HfRepo
+			if modelConfig.ModelOverride.HfCommit != "" {
+				commit := modelConfig.ModelOverride.HfCommit
+				model.HfCommit = &commit
+			}
 		}
 
 		statusResp, err := client.CheckModelStatus(ctx, model)
@@ -156,7 +163,8 @@ func (m *MLNodeBackgroundManager) checkNodeModels(node apiconfig.InferenceNodeCo
 			logging.Warn("Failed to check model status",
 				types.System,
 				"node_id", node.Id,
-				"model", modelId,
+				"governance_model", modelId,
+				"load_model", model.HfRepo,
 				"error", err.Error())
 			continue
 		}
@@ -165,7 +173,8 @@ func (m *MLNodeBackgroundManager) checkNodeModels(node apiconfig.InferenceNodeCo
 		case mlnodeclient.ModelStatusNotFound, mlnodeclient.ModelStatusPartial:
 			logging.Info("Pre-downloading model",
 				types.System,
-				"model", modelId,
+				"governance_model", modelId,
+				"load_model", model.HfRepo,
 				"node_id", node.Id)
 
 			_, err := client.DownloadModel(ctx, model)
@@ -180,13 +189,15 @@ func (m *MLNodeBackgroundManager) checkNodeModels(node apiconfig.InferenceNodeCo
 		case mlnodeclient.ModelStatusDownloading:
 			logging.Debug("Model already downloading",
 				types.System,
-				"model", modelId,
+				"governance_model", modelId,
+				"load_model", model.HfRepo,
 				"node_id", node.Id)
 
 		case mlnodeclient.ModelStatusDownloaded:
 			logging.Debug("Model already downloaded",
 				types.System,
-				"model", modelId,
+				"governance_model", modelId,
+				"load_model", model.HfRepo,
 				"node_id", node.Id)
 		}
 	}

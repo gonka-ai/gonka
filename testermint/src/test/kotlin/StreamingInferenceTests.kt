@@ -27,8 +27,9 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
+// Classic inference flow was removed (PR #1386); these tests exercise the deprecated endpoints.
+@Tag("exclude")
 @Timeout(value = 20, unit = TimeUnit.MINUTES)
-
 class StreamingInferenceTests : TestermintTest() {
     @Test
     @Tag("sanity")

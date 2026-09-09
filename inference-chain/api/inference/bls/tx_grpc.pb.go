@@ -45,6 +45,7 @@ type MsgClient interface {
 	SubmitGroupKeyValidationSignature(ctx context.Context, in *MsgSubmitGroupKeyValidationSignature, opts ...grpc.CallOption) (*MsgSubmitGroupKeyValidationSignatureResponse, error)
 	// SubmitPartialSignature allows a participant to submit their partial signature for threshold signing
 	SubmitPartialSignature(ctx context.Context, in *MsgSubmitPartialSignature, opts ...grpc.CallOption) (*MsgSubmitPartialSignatureResponse, error)
+	// Deprecated: Do not use.
 	// RequestThresholdSignature allows external users to request a threshold signature
 	RequestThresholdSignature(ctx context.Context, in *MsgRequestThresholdSignature, opts ...grpc.CallOption) (*MsgRequestThresholdSignatureResponse, error)
 }
@@ -111,6 +112,7 @@ func (c *msgClient) SubmitPartialSignature(ctx context.Context, in *MsgSubmitPar
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *msgClient) RequestThresholdSignature(ctx context.Context, in *MsgRequestThresholdSignature, opts ...grpc.CallOption) (*MsgRequestThresholdSignatureResponse, error) {
 	out := new(MsgRequestThresholdSignatureResponse)
 	err := c.cc.Invoke(ctx, Msg_RequestThresholdSignature_FullMethodName, in, out, opts...)
@@ -137,6 +139,7 @@ type MsgServer interface {
 	SubmitGroupKeyValidationSignature(context.Context, *MsgSubmitGroupKeyValidationSignature) (*MsgSubmitGroupKeyValidationSignatureResponse, error)
 	// SubmitPartialSignature allows a participant to submit their partial signature for threshold signing
 	SubmitPartialSignature(context.Context, *MsgSubmitPartialSignature) (*MsgSubmitPartialSignatureResponse, error)
+	// Deprecated: Do not use.
 	// RequestThresholdSignature allows external users to request a threshold signature
 	RequestThresholdSignature(context.Context, *MsgRequestThresholdSignature) (*MsgRequestThresholdSignatureResponse, error)
 	mustEmbedUnimplementedMsgServer()

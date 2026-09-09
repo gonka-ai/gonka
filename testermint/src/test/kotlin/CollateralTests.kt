@@ -10,6 +10,7 @@ import com.productscience.data.ValidationParams
 import com.productscience.data.getParticipant
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import java.time.Duration
 
@@ -135,7 +136,15 @@ class CollateralTests : TestermintTest() {
         assertThat(finalUnbondingQueue.unbondings).isNullOrEmpty()
     }
 
+    // Classic inference flow removed (PR #1386). This test triggered downtime slashing
+    // via classic bad-inference timeouts (StartInference -> expiration -> MissedRequests).
+    // The downtime-slash mechanism itself is still live: devshard settlement aggregates
+    // per-slot `missed` stats into CurrentEpochStats.MissedRequests
+    // (AggregateDevshardHostStatsIntoCurrentEpochStats -> UpdateParticipantStatus ->
+    // SlashForDowntime), but producing signed settlements with missed>0 needs new
+    // devshard test machinery. TODO(devshard): rewrite via devshard escrow settlement.
     @Test
+    @Tag("exclude")
     fun `a participant is slashed for downtime with unbonding slashed`() {
         // Configure genesis with fast expiration for downtime testing
         val fastExpirationSpec = createSpec(

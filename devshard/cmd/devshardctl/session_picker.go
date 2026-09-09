@@ -317,6 +317,7 @@ func (p *sessionPicker) run() {
 			chosen    *pickerRequest
 			ghost     ghostKind
 			holdUntil time.Time
+			ghostParticipantKey string
 		)
 		prepared, err := p.session.PrepareInferenceFn(func(b user.HostBinding) (user.InferenceParams, bool, error) {
 			p.mu.Lock()
@@ -353,6 +354,7 @@ func (p *sessionPicker) run() {
 			// more load on a host that just told us it's overwhelmed.
 			if p.throttleBlocked != nil && p.throttleBlocked(b.ParticipantKey) {
 				ghost = ghostThrottled
+				ghostParticipantKey = b.ParticipantKey
 				return ghostProbeParams(p.model), true, nil
 			}
 
@@ -451,12 +453,20 @@ func (p *sessionPicker) run() {
 
 		// Phase 4: dispatch.
 		if ghost != ghostNone {
-			logRequestStage(p.logCtx, "session_picker_ghost_probe",
+			logFields := []any{
 				"reason", ghost.reason(),
 				"host_idx", prepared.HostIdx(),
 				"nonce", prepared.Nonce(),
 				"queue_depth", p.queueLen(),
-			)
+			}
+			if ghost == ghostThrottled {
+				logFields = append(logFields,
+					"no_send", true,
+					"participant_key", ghostParticipantKey,
+					"model_id", p.model,
+				)
+			}
+			logRequestStage(p.logCtx, "session_picker_ghost_probe", logFields...)
 			if p.dispatchGhost != nil {
 				p.dispatchGhost(prepared, ghost, ghost.reason())
 			}

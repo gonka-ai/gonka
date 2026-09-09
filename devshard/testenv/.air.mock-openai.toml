@@ -1,0 +1,19 @@
+# air live-reload config for mock-openai (Phase 5b).
+root = "/workspace/devshard"
+tmp_dir = "/tmp/air/mock-openai"
+
+[build]
+  cmd = "go build -o /tmp/air/mock-openai/mockopenai ./testenv/cmd/mockopenai"
+  bin = "/tmp/air/mock-openai/mockopenai"
+  include_ext = ["go", "yaml", "toml", "proto"]
+  exclude_dir = [".git", "docs", "testenv/docs", "testenv/db"]
+  delay = 500
+  kill_delay = "1s"
+  stop_on_error = true
+
+[log]
+  main_only = false
+  time = true
+
+[misc]
+  clean_on_exit = true

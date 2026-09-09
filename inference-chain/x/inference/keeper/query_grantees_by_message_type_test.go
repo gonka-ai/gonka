@@ -1,10 +1,14 @@
 package keeper_test
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -103,9 +107,8 @@ func TestGranteesByMessageTypeQueryWithValidMessageTypes(t *testing.T) {
 	validMessageTypes := []string{
 		"/cosmos.bank.v1beta1.MsgSend",
 		"/cosmos.staking.v1beta1.MsgDelegate",
-		"/inference.inference.MsgStartInference",
-		"/inference.inference.MsgFinishInference",
 		"/inference.inference.MsgClaimRewards",
+		"/inference.inference.MsgSubmitSeed",
 	}
 
 	validGranterAddress := "cosmos1jmjfq0tplp9tmx4v9uemw72y4d2wa5nr3xn9d3"
@@ -151,8 +154,8 @@ func TestGranteesByMessageTypeQuery_PaginatesAllPages(t *testing.T) {
 		),
 		mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(
 			&authztypes.QueryGranterGrantsResponse{
-				Grants:      []*authztypes.GrantAuthorization{},
-				Pagination:  &query.PageResponse{},
+				Grants:     []*authztypes.GrantAuthorization{},
+				Pagination: &query.PageResponse{},
 			},
 			nil,
 		),
@@ -162,4 +165,36 @@ func TestGranteesByMessageTypeQuery_PaginatesAllPages(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, response)
 	require.Empty(t, response.Grantees)
+}
+
+func TestGranteesByMessageTypeQuery_LegacyWarmKeyMarkerAliasesClaimRewards(t *testing.T) {
+	keeper, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	granter := sdk.AccAddress(bytes.Repeat([]byte{1}, 20))
+	grantee := sdk.AccAddress(bytes.Repeat([]byte{2}, 20))
+	authorization, err := codectypes.NewAnyWithValue(
+		authztypes.NewGenericAuthorization(types.WarmKeyGrantMarkerTypeURL),
+	)
+	require.NoError(t, err)
+
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(
+		&authztypes.QueryGranterGrantsResponse{
+			Grants: []*authztypes.GrantAuthorization{{
+				Granter:       granter.String(),
+				Grantee:       grantee.String(),
+				Authorization: authorization,
+			}},
+		},
+		nil,
+	)
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), grantee).Return(
+		authtypes.NewBaseAccountWithAddress(grantee),
+	)
+
+	response, err := keeper.GranteesByMessageType(ctx, &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: granter.String(),
+		MessageTypeUrl: types.LegacyMsgStartInferenceTypeURL,
+	})
+	require.NoError(t, err)
+	require.Len(t, response.Grantees, 1)
+	require.Equal(t, grantee.String(), response.Grantees[0].Address)
 }

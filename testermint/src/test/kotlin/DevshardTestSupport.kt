@@ -51,7 +51,8 @@ val devshardShortSealGraceSpec = spec<AppState> {
                 this[DevshardEscrowParams::defaultInferenceSealGraceNonces] = devshardAutoSealInferenceSealGraceNonces
                 this[DevshardEscrowParams::defaultInferenceSealGraceSeconds] = devshardAutoSealInferenceSealGraceSeconds
                 this[DevshardEscrowParams::defaultAutoSealEveryNNonces] = devshardAutoSealEveryNNonces
-                this[DevshardEscrowParams::validationRate] = 0L
+                // Do not set validationRate=0: chain treats 0 as unset and snapshots
+                // DefaultDevshardValidationRate (1000 = 10%).
             }
         }
     }
@@ -63,6 +64,17 @@ val devshardEscrowAlwaysValidateSpec = spec<AppState> {
         this[InferenceState::params] = spec<InferenceParams> {
             this[InferenceParams::devshardEscrowParams] = spec<DevshardEscrowParams> {
                 this[DevshardEscrowParams::validationRate] = 10_000L
+            }
+        }
+    }
+}
+
+/** 50% devshard escrow validation sampling (basis points). */
+val devshardEscrowHalfValidateSpec = spec<AppState> {
+    this[AppState::inference] = spec<InferenceState> {
+        this[InferenceState::params] = spec<InferenceParams> {
+            this[InferenceParams::devshardEscrowParams] = spec<DevshardEscrowParams> {
+                this[DevshardEscrowParams::validationRate] = 5_000L
             }
         }
     }
@@ -225,8 +237,10 @@ fun LocalInferencePair.waitForDevshardPreFinalize(delay: Duration = devshardPreF
 }
 
 /** Propagate signed diffs to all physical hosts before observability/finalize. */
-fun LocalInferencePair.syncDevshardProxyHosts(proxyUrl: String) {
-    logSection("Syncing devshard proxy hosts")
+fun LocalInferencePair.syncDevshardProxyHosts(proxyUrl: String, log: Boolean = true) {
+    if (log) {
+        logSection("Syncing devshard proxy hosts")
+    }
     val raw = api.executor.exec(
         listOf(
             "sh", "-c",
@@ -375,7 +389,7 @@ fun LocalInferencePair.assertDevshardSettlement(
     assertThat(result.parsed.nonce).isGreaterThanOrEqualTo(activeNonces)
     assertThat(result.parsed.fees).isEqualTo(expectedFees)
 
-    val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations }
+    val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations ?: 0 }
     if (requireCompletedValidations) {
         assertThat(totalCompletedValidations).isGreaterThan(0)
     }
@@ -412,7 +426,7 @@ fun LocalInferencePair.assertDevshardSettlement(
 
 fun LocalInferencePair.getDevshardShardStatsDetail(
     escrowId: Long,
-    routePrefix: String = "/v1/devshard",
+    routePrefix: String = com.productscience.defaultDevshardRoutePrefix(),
 ): DevshardShardStatsDetail {
     val normalizedPrefix = routePrefix.trimEnd('/')
     val path = "$normalizedPrefix/stats/shards/$escrowId"
@@ -434,21 +448,65 @@ fun LocalInferencePair.waitForDevshardValidationObservability(
     minCompleted: Int = 1,
     timeoutMs: Long = 120_000L,
     pollIntervalMs: Long = 2_000L,
-    routePrefix: String = "/v1/devshard",
+    routePrefix: String = com.productscience.defaultDevshardRoutePrefix(),
+    /**
+     * Invoked after an incomplete/failed poll and before sleeping. Use to
+     * re-run [syncDevshardProxyHosts] so late validation diffs from join hosts
+     * land on the pair whose stats endpoint is being polled.
+     */
+    beforeRetry: (() -> Unit)? = null,
 ) {
     val deadline = System.currentTimeMillis() + timeoutMs
+    var lastError: Throwable? = null
+    var lastCompleted: Int? = null
     while (System.currentTimeMillis() < deadline) {
-        val stats = getDevshardShardStatsDetail(escrowId, routePrefix)
-        if (stats.validationObservability.totals.completedValidations >= minCompleted) {
-            return
+        // Treat 404 / transient resolve failures as "not ready yet". Parallel
+        // sessions can lag on genesis versiond's active-session list (same class
+        // of flake that sync-hosts was added for on local-build-pixelplex).
+        try {
+            val stats = getDevshardShardStatsDetail(escrowId, routePrefix)
+            lastError = null
+            lastCompleted = stats.validationObservability.totals.completedValidations
+            if (lastCompleted >= minCompleted) {
+                return
+            }
+        } catch (t: Throwable) {
+            lastError = t
+            lastCompleted = null
         }
+        beforeRetry?.invoke()
         Thread.sleep(pollIntervalMs)
     }
-    val last = getDevshardShardStatsDetail(escrowId, routePrefix)
+    val shardsList = runCatching { getDevshardShardsStatsList(routePrefix) }.getOrElse { e ->
+        "GET stats/shards failed: ${e.message}"
+    }
+    val detail = when {
+        lastError != null -> "last error: ${lastError.message}"
+        lastCompleted != null -> "got $lastCompleted"
+        else -> "no successful stats response"
+    }
     error(
         "timed out waiting for validation observability completed >= $minCompleted " +
-            "(got ${last.validationObservability.totals.completedValidations})",
+            "for escrow $escrowId ($detail); stats/shards=$shardsList",
     )
+}
+
+/** List endpoint used to diagnose detail 404s (current_epoch + active_escrows). */
+fun LocalInferencePair.getDevshardShardsStatsList(
+    routePrefix: String = com.productscience.defaultDevshardRoutePrefix(),
+): String {
+    val normalizedPrefix = routePrefix.trimEnd('/')
+    val path = "$normalizedPrefix/stats/shards"
+    return if (normalizedPrefix.startsWith("/devshard/")) {
+        val url = "${api.getPublicUrl().trimEnd('/')}$path"
+        val (_, response, result) = Fuel.get(url).timeoutRead(10_000).responseString()
+        check(response.statusCode == 200) {
+            "GET $url returned ${response.statusCode}: $result"
+        }
+        result.get()
+    } else {
+        curlFromApiNetwork("${apiContainerPublicUrl()}$path")
+    }
 }
 
 /** True when validation challenged the inference and/or quorum invalidated it. */

@@ -29,6 +29,7 @@ Infrastructure-level constraints that must hold BEFORE this route is served — 
 | `safety_identifier` | strip | **pass-through** (string, ≤512 B) | Moonshot consumes the field for abuse tracking on their hosted backend [[Moonshot-1]](references.md#moonshot) |
 | `frequency_penalty` | clamp [-2, 2] | **force-rewrite to `0.0`** | Moonshot's K2.6 wire accepts only `0.0`; model-side constraint [[Moonshot-1]](references.md#moonshot) |
 | `presence_penalty` | clamp [-2, 2] | **force-rewrite to `0.0`** | same as above [[Moonshot-1]](references.md#moonshot) |
+| `max_tokens` / `max_completion_tokens` | pass-through (capped) | **floor to 16** | Below 16 the model emits only `</think>` (vLLM strips it as a special token) — see [troubleshooting](troubleshooting.md#kimi-empty-content-think-burn). PR [#1227](https://github.com/gonka-ai/gonka/pull/1227). |
 | `tools[].function.strict` | (silent-strip in universal via `ToolsValidator`) | silent-strip — vLLM `kimi_k2` parser ignores | [[vLLM-1]](references.md#vllm) |
 
 ## Native extensions
@@ -38,7 +39,7 @@ Infrastructure-level constraints that must hold BEFORE this route is served — 
 | Param | Type | Behavior | Source |
 |-------|------|----------|--------|
 | `thinking` | object | `{type: "enabled"\|"disabled"\|"adaptive"\|"auto"}`. `adaptive`/`auto` are client-side opt-in (Claude Code CLI / Kimi clients) and resolve to enabled. Validator mirrors the resolved boolean into `chat_template_kwargs.thinking` and **drops top-level `thinking`** — the chat template only reads from kwargs. Sibling `display` field is silent-stripped ([why](troubleshooting.md#strip-display-thinking-sibling)). | [[Anthropic-1]](references.md#anthropic), [[Moonshot-1]](references.md#moonshot) |
-| `thinking_token_budget` | int | Injects `max_tokens / 2` default; clamp ≤ 96 000 and ≤ `max_tokens` (96k matches Moonshot's HLE/AIME reasoning budget) | [[Moonshot-3]](references.md#moonshot) |
+| `thinking_token_budget` | int | Resolution order: (1) if `max_tokens < 256`, force `0` to bypass thinking entirely; (2) else if absent, default to `max_tokens / 2`; (3) cap at 96 000 (Moonshot HLE/AIME budget); (4) clamp to `max_tokens − 64` so visible content always has headroom after `</think>`. See [troubleshooting](troubleshooting.md#kimi-empty-content-think-burn). | [[Moonshot-3]](references.md#moonshot), [[OpenAI-4]](references.md#openai) |
 | `messages[].reasoning_content` | string | Pass-through on assistant turns (Kimi multi-turn replay convention) | [[Moonshot-1]](references.md#moonshot) |
 
 <details>
@@ -53,6 +54,8 @@ Accepted values for `thinking.type`:
 Sibling `display` field (Claude Code UI hint, e.g. `"summarized"`) is silent-stripped because it has no vLLM semantics — the value never reaches the chat template.
 
 Pre-existing `chat_template_kwargs.thinking` wins on conflict (no overwrite of explicit caller intent).
+
+**`thinking:disabled` does NOT zero out `thinking_token_budget`.** Kimi-K2.6 empirically ignores the disable hint on hard prompts (math, code) and still emits a `<think>` block ([PR #1202 live measurements](https://github.com/gonka-ai/gonka/pull/1202)), so the validator keeps `ttb = max_tokens / 2` as a safety net — without it, the model burns the entire `max_tokens` on hidden reasoning and the client gets empty content. If the model ever honors the disable hint cleanly, the unused budget has no downside. To genuinely opt out of thinking, send `thinking_token_budget: 0` explicitly — the validator preserves client-set zero. Sending `max_tokens < 256` also force-zeroes ttb (see [troubleshooting](troubleshooting.md#kimi-empty-content-think-burn)).
 </details>
 
 ## Structured outputs
@@ -65,7 +68,9 @@ Pre-existing `chat_template_kwargs.thinking` wins on conflict (no overwrite of e
 ## Known model-side bugs we work around
 
 - **Duplicate `tool_calls[].id` emission**: vLLM `kimi_k2` parser has a confirmed counter-collision bug when running with `n>1` — `history_tool_call_cnt` recomputed inside the per-choice loop produces colliding `functions.<name>:<idx>` ids. See [vLLM PR #21259](https://github.com/vllm-project/vllm/pull/21259) review thread. The gateway rejects duplicate ids per OpenAI spec — see [troubleshooting](troubleshooting.md#reject-duplicate-tool-call-id). Clients must rewrite ids client-side per Moonshot's official guidance [[Moonshot-3]](references.md#moonshot).
-- **Empty content + `finish_reason=length` when thinking eats the budget**: at small `max_tokens` Kimi-K2.6 routinely consumes the entire budget inside `<think>...</think>` and returns visible content as empty. Mitigated by `thinking_token_budget` default injection (see Native extensions above) — gateway injects `max_tokens / 2` when the field is absent, leaving half the budget for visible content.
+- **Empty content + `finish_reason=length` when thinking eats the budget**: at small `max_tokens` Kimi-K2.6 burns the entire budget inside `<think>...</think>` and vLLM strips `</think>` as a special token, leaving `content=null`. Mitigated on **two layers**:
+  - **Request side**: `thinking_token_budget` resolver (above) — force-zero below 256, default `max_tokens / 2`, content-headroom clamp.
+  - **Response side**: hosts that empty-stream while `usage.completion_tokens > 0` are classified as model burn ([[OpenAI-4]](references.md#openai)) — telemetry-only, no quarantine. See [troubleshooting](troubleshooting.md#kimi-empty-content-think-burn).
 
 ## See also
 - [Troubleshooting](troubleshooting.md)

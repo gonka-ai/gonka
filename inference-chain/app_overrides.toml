@@ -5,3 +5,9 @@ enable = true
 
 # Address defines the API server to listen on.
 address = "tcp://0.0.0.0:1317"
+
+[grpc]
+
+# Bind on all interfaces so sibling containers (edge-api, dapi) can reach chain gRPC.
+# Default cosmos-sdk value is localhost:9090, which refuses cross-container dials.
+address = "0.0.0.0:9090"

@@ -9,7 +9,9 @@ import (
 )
 
 const (
-	LookbackMultiplier = int64(5)
+	LookbackMultiplier               = int64(5)
+	ClaimRecipientPruningThreshold   = uint64(5)
+	ClaimRecipientPruningMaxPerBlock = int64(1000)
 )
 
 func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
@@ -50,6 +52,10 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 		return err
 	}
 	err = k.GetDevshardPruner(params).Prune(ctx, k, currentEpochIndex)
+	if err != nil {
+		return err
+	}
+	err = k.GetClaimRecipientPruner(params).Prune(ctx, k, currentEpochIndex)
 	if err != nil {
 		return err
 	}
@@ -282,6 +288,27 @@ func (k Keeper) GetDevshardPruner(params types.Params) Pruner[collections.Pair[u
 				k.LogError("failed to remove devshard escrow epoch count", types.Pruning, "epoch", epochIndex, "error", err)
 			}
 			return nil
+		},
+		Logger: k,
+	}
+}
+
+func (k Keeper) GetClaimRecipientPruner(params types.Params) Pruner[collections.Pair[uint64, sdk.AccAddress], collections.NoValue] {
+	return Pruner[collections.Pair[uint64, sdk.AccAddress], collections.NoValue]{
+		Threshold:  ClaimRecipientPruningThreshold,
+		PruningMax: ClaimRecipientPruningMaxPerBlock,
+		List:       collections.Map[collections.Pair[uint64, sdk.AccAddress], collections.NoValue](k.ClaimRecipientsByEpoch),
+		Ranger: func(ctx context.Context, epoch int64) collections.Ranger[collections.Pair[uint64, sdk.AccAddress]] {
+			return collections.NewPrefixedPairRange[uint64, sdk.AccAddress](uint64(epoch))
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.ClaimRecipientsPrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.ClaimRecipientsPrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Pair[uint64, sdk.AccAddress]) error {
+			return k.RemoveClaimRecipientForEpoch(sdk.UnwrapSDKContext(ctx), key.K2(), key.K1())
 		},
 		Logger: k,
 	}

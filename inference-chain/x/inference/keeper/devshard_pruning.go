@@ -3,50 +3,47 @@ package keeper
 import (
 	"context"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 const DevshardPruningThreshold = uint64(2)
 const DevshardPruningMax = int64(100)
 
-// distributeUnsettledEscrow splits the escrowed funds equally among unique validators in the group.
+// distributeUnsettledEscrow splits the escrowed funds across the group's slots: each slot
+// receives an equal share, so a validator occupying N slots receives N shares. This matches
+// how settlement pays per slot; distributing per unique address instead under-pays
+// validators that hold more than one slot in the group.
 // Integer division remainder stays in the module account.
 func (k Keeper) distributeUnsettledEscrow(ctx context.Context, escrow types.DevshardEscrow) error {
-	// Count unique addresses (first pass)
-	seen := make(map[string]bool)
-	var uniqueCount uint64
-	for _, addr := range escrow.Slots {
-		if !seen[addr] {
-			seen[addr] = true
-			uniqueCount++
-		}
-	}
-
-	if uniqueCount == 0 {
+	slotCount := uint64(len(escrow.Slots))
+	if slotCount == 0 {
 		return nil
 	}
 
-	share := escrow.Amount / uniqueCount
+	share := escrow.Amount / slotCount
 	if share == 0 {
 		return nil
 	}
 
-	// Pay in slot order (deterministic iteration over escrow.Slots)
-	paid := make(map[string]bool)
+	// Aggregate the per-slot share by recipient (a validator in N slots is owed N shares),
+	// preserving deterministic slot order for the first appearance of each address.
+	amountByAddr := make(map[string]uint64)
+	order := make([]string, 0, len(escrow.Slots))
 	for _, addr := range escrow.Slots {
-		if paid[addr] {
-			continue
+		if _, seen := amountByAddr[addr]; !seen {
+			order = append(order, addr)
 		}
-		paid[addr] = true
+		amountByAddr[addr] += share
+	}
 
-		recipient, err := sdk.AccAddressFromBech32(addr)
+	for _, addr := range order {
+		recipient, err := k.ResolveClaimRecipientAddress(ctx, addr, escrow.EpochIndex)
 		if err != nil {
-			k.LogError("invalid address in unsettled escrow", types.Pruning,
-				"escrow_id", escrow.Id, "address", addr)
+			k.LogError("failed to resolve unsettled escrow recipient", types.Pruning,
+				"escrow_id", escrow.Id, "address", addr, "epoch", escrow.EpochIndex, "error", err)
 			continue
 		}
-		coins, err := types.GetCoins(int64(share))
+		coins, err := types.GetCoins(int64(amountByAddr[addr]))
 		if err != nil {
 			continue
 		}

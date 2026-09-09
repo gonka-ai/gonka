@@ -1,7 +1,6 @@
 package types
 
 import (
-	"encoding/hex"
 	"fmt"
 	"math"
 
@@ -91,6 +90,8 @@ const (
 	LogprobsModeProcessed = "processed_logprobs"
 	LogprobsModeRaw       = "raw_logprobs"
 	DefaultLogprobsMode   = LogprobsModeProcessed
+
+	DefaultPocValidationVoteThresholdBps uint32 = 5000
 )
 
 const (
@@ -104,9 +105,17 @@ const (
 	DefaultDevshardCreateDevshardFee   uint64 = 10_000
 	DefaultDevshardFeePerNonce         uint64 = 1_000
 	DefaultDevshardRefusalTimeout      int64  = 60
-	DefaultDevshardExecutionTimeout    int64  = 1200
-	DefaultDevshardValidationRate      uint32 = 5000
+	DefaultDevshardExecutionTimeout    int64  = 32 * 60
+	DefaultDevshardValidationRate      uint32 = 1000
 	DefaultDevshardVoteThresholdFactor uint32 = 50
+
+	DefaultMaintenanceEnabled                         = false
+	DefaultMaintenanceMinScheduleLeadBlocks    uint64 = 100
+	DefaultMaintenanceMaxWindowBlocks          uint64 = 200
+	DefaultMaintenanceMaxConcurrentValidators  uint32 = 3
+	DefaultMaintenanceMaxConcurrentPowerBps    uint32 = 1000 // 10% in basis points
+	DefaultMaintenanceCreditCapBlocks          uint64 = 400
+	DefaultMaintenanceCreditEarnPerEpochBlocks uint64 = 20
 )
 
 // DefaultSealGraceMultiplier is the multiplier used to compute the default seal grace nonces.
@@ -196,7 +205,9 @@ func DefaultParams() Params {
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
 		DevshardEscrowParams: DefaultDevshardEscrowParams(),
+		MaintenanceParams:    DefaultMaintenanceParams(),
 		DelegationParams:     DefaultDelegationParams(),
+		FeeParams:            DefaultFeeParams(),
 	}
 }
 
@@ -256,12 +267,13 @@ func DefaultPocParams() *PocParams {
 		DefaultDifficulty:            5,
 		ValidationSampleSize:         200,
 		PocDataPruningEpochThreshold: 1,
-		WeightScaleFactor:            DecimalFromFloat(1.0),
 		ModelParams:                  DefaultPoCModelParams(), // Deprecated, kept for backward compatibility
 		ModelId:                      "",                      // Model identifier for PoC
 		SeqLen:                       256,                     // Sequence length for PoC
 		StatTest:                     DefaultPoCStatTestParams(),
 		Models:                       []*PoCModelConfig{DefaultPoCModelConfig()},
+		ValidationVoteThresholdBps:   DefaultPocValidationVoteThresholdBps,
+		DynamicCoefficientParams:     DefaultDynamicCoefficientParams(),
 	}
 }
 
@@ -278,8 +290,23 @@ func DefaultPoCModelConfig() *PoCModelConfig {
 		ModelId:           "",
 		SeqLen:            256,
 		StatTest:          DefaultPoCStatTestParams(),
-		WeightScaleFactor: DecimalFromFloat(1.0),
 		PenaltyStartEpoch: 0,
+		DynamicCoefficient: &DynamicCoefficientModelConfig{
+			CoeffMin:           DecimalFromFloat(1.0),
+			CoeffMax:           DecimalFromFloat(1.0),
+			RelativeDifficulty: DecimalFromFloat(1.0),
+			TargetShareBps:     10000,
+		},
+	}
+}
+
+func DefaultDynamicCoefficientParams() *DynamicCoefficientParams {
+	return &DynamicCoefficientParams{
+		TargetZoneBps:     500,
+		StepMin:           DecimalFromFloat(0.005),
+		StepMax:           DecimalFromFloat(0.05),
+		BootstrapStepMax:  DecimalFromFloat(0.25),
+		BootstrapShareBps: 100,
 	}
 }
 
@@ -377,6 +404,66 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 	}
 }
 
+func DefaultMaintenanceParams() *MaintenanceParams {
+	return &MaintenanceParams{
+		MaintenanceEnabled:                            DefaultMaintenanceEnabled,
+		MaintenanceMinScheduleLeadBlocks:              DefaultMaintenanceMinScheduleLeadBlocks,
+		MaintenanceMaxWindowBlocks:                    DefaultMaintenanceMaxWindowBlocks,
+		MaintenanceMaxConcurrentValidators:            DefaultMaintenanceMaxConcurrentValidators,
+		MaintenanceMaxConcurrentPowerBps:              DefaultMaintenanceMaxConcurrentPowerBps,
+		MaintenanceCreditCapBlocks:                    DefaultMaintenanceCreditCapBlocks,
+		MaintenanceCreditEarnPerSuccessfulEpochBlocks: DefaultMaintenanceCreditEarnPerEpochBlocks,
+	}
+}
+
+// maxMaintenanceBlocksParam bounds every governance-controlled *Blocks field.
+// Set well below math.MaxInt64 so any addition of two such values, or any
+// cast from uint64 to int64, cannot wrap. Concretely: at 5-second blocks,
+// 1e15 blocks is ~158 million years — far beyond any realistic governance
+// configuration, while still safe for arithmetic in callers like
+// msg_server_schedule_maintenance.go (blockHeight + lead) and
+// GrantMaintenanceCredit (CreditBlocks += earn).
+const maxMaintenanceBlocksParam = uint64(1e15)
+
+func (p *MaintenanceParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.MaintenanceMaxWindowBlocks == 0 {
+		return fmt.Errorf("maintenance max window blocks must be positive")
+	}
+	if p.MaintenanceMaxWindowBlocks > maxMaintenanceBlocksParam {
+		return fmt.Errorf("maintenance max window blocks (%d) exceeds safe upper bound %d", p.MaintenanceMaxWindowBlocks, maxMaintenanceBlocksParam)
+	}
+	if p.MaintenanceMinScheduleLeadBlocks > maxMaintenanceBlocksParam {
+		return fmt.Errorf("maintenance min schedule lead blocks (%d) exceeds safe upper bound %d", p.MaintenanceMinScheduleLeadBlocks, maxMaintenanceBlocksParam)
+	}
+	if p.MaintenanceCreditCapBlocks == 0 {
+		return fmt.Errorf("maintenance credit cap blocks must be positive")
+	}
+	if p.MaintenanceCreditCapBlocks > maxMaintenanceBlocksParam {
+		return fmt.Errorf("maintenance credit cap blocks (%d) exceeds safe upper bound %d", p.MaintenanceCreditCapBlocks, maxMaintenanceBlocksParam)
+	}
+	if p.MaintenanceMaxConcurrentValidators == 0 {
+		return fmt.Errorf("maintenance max concurrent validators must be positive")
+	}
+	if p.MaintenanceMaxConcurrentPowerBps > 10000 {
+		return fmt.Errorf("maintenance max concurrent power bps cannot exceed 10000")
+	}
+	// Zero credit-earn silently disables credit accrual: maintenance can be
+	// scheduled exactly once (with whatever credit the participant was seeded
+	// with) and never replenishes. That is a valid governance state but a
+	// confusing one to land on by accident, so reject it here. To intentionally
+	// disable maintenance, set MaintenanceEnabled = false instead.
+	if p.MaintenanceCreditEarnPerSuccessfulEpochBlocks == 0 {
+		return fmt.Errorf("maintenance credit earn per successful epoch blocks must be positive (set maintenance_enabled=false to disable maintenance windows)")
+	}
+	if p.MaintenanceCreditEarnPerSuccessfulEpochBlocks > p.MaintenanceCreditCapBlocks {
+		return fmt.Errorf("maintenance credit earn per successful epoch blocks (%d) must not exceed credit cap (%d)", p.MaintenanceCreditEarnPerSuccessfulEpochBlocks, p.MaintenanceCreditCapBlocks)
+	}
+	return nil
+}
+
 func (p *DevshardEscrowParams) Validate() error {
 	if p.MinAmount == 0 {
 		return fmt.Errorf("devshard escrow min_amount must be positive")
@@ -390,27 +477,8 @@ func (p *DevshardEscrowParams) Validate() error {
 	if p.MaxNonce == 0 {
 		return fmt.Errorf("devshard escrow max_nonce must be positive")
 	}
-	seen := make(map[string]struct{}, len(p.ApprovedVersions))
-	for i, v := range p.ApprovedVersions {
-		if v.Name == "" {
-			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: name cannot be empty", i)
-		}
-		if v.Binary == "" {
-			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: binary cannot be empty", i)
-		}
-		if v.Sha256 == "" {
-			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: sha256 cannot be empty", i)
-		}
-		if len(v.Sha256) != 64 {
-			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: sha256 must be 64 hex characters, got %d", i, len(v.Sha256))
-		}
-		if _, err := hex.DecodeString(v.Sha256); err != nil {
-			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: sha256 is not valid hex: %w", i, err)
-		}
-		if _, dup := seen[v.Name]; dup {
-			return fmt.Errorf("devshard_escrow_params.approved_versions: duplicate name %q", v.Name)
-		}
-		seen[v.Name] = struct{}{}
+	if len(p.ApprovedVersions) > 0 {
+		return fmt.Errorf("devshard_escrow_params.approved_versions is deprecated; use MsgPutDevshardApprovedVersion / MsgDeleteDevshardApprovedVersion")
 	}
 	if p.RefusalTimeout <= 0 {
 		return fmt.Errorf("devshard escrow refusal_timeout must be positive")
@@ -450,12 +518,133 @@ func validateDecimalFraction(d *Decimal, name string) error {
 	if d == nil || (d.Value == 0 && d.Exponent == 0) {
 		return nil
 	}
+	if err := d.Validate(); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
 	dec, err := d.ToLegacyDec()
 	if err != nil {
 		return fmt.Errorf("%s: invalid decimal: %w", name, err)
 	}
 	if dec.IsNegative() || dec.GT(sdkmath.LegacyOneDec()) {
 		return fmt.Errorf("%s must be between 0 and 1, got %s", name, dec.String())
+	}
+	return nil
+}
+
+func validateParamDecimalExponents(p Params) error {
+	check := func(name string, value *Decimal) error {
+		if err := value.Validate(); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		return nil
+	}
+
+	fields := []struct {
+		name  string
+		value *Decimal
+	}{
+		{"epoch_params.poc_slot_allocation", p.EpochParams.GetPocSlotAllocation()},
+		{"tokenomics_params.subsidy_reduction_interval", p.TokenomicsParams.GetSubsidyReductionInterval()},
+		{"tokenomics_params.subsidy_reduction_amount", p.TokenomicsParams.GetSubsidyReductionAmount()},
+		{"tokenomics_params.current_subsidy_percentage", p.TokenomicsParams.GetCurrentSubsidyPercentage()},
+		{"validation_params.false_positive_rate", p.ValidationParams.GetFalsePositiveRate()},
+		{"validation_params.pass_value", p.ValidationParams.GetPassValue()},
+		{"validation_params.min_validation_average", p.ValidationParams.GetMinValidationAverage()},
+		{"validation_params.max_validation_average", p.ValidationParams.GetMaxValidationAverage()},
+		{"validation_params.min_validation_halfway", p.ValidationParams.GetMinValidationHalfway()},
+		{"validation_params.miss_percentage_cutoff", p.ValidationParams.GetMissPercentageCutoff()},
+		{"validation_params.miss_requests_penalty", p.ValidationParams.GetMissRequestsPenalty()},
+		{"validation_params.invalid_reputation_preserve", p.ValidationParams.GetInvalidReputationPreserve()},
+		{"validation_params.bad_participant_invalidation_rate", p.ValidationParams.GetBadParticipantInvalidationRate()},
+		{"validation_params.invalidation_h_threshold", p.ValidationParams.GetInvalidationHThreshold()},
+		{"validation_params.downtime_good_percentage", p.ValidationParams.GetDowntimeGoodPercentage()},
+		{"validation_params.downtime_bad_percentage", p.ValidationParams.GetDowntimeBadPercentage()},
+		{"validation_params.downtime_h_threshold", p.ValidationParams.GetDowntimeHThreshold()},
+		{"validation_params.downtime_reputation_preserve", p.ValidationParams.GetDowntimeReputationPreserve()},
+		{"validation_params.quick_failure_threshold", p.ValidationParams.GetQuickFailureThreshold()},
+		{"validation_params.binom_test_p0", p.ValidationParams.GetBinomTestP0()},
+		{"poc_params.model_params.ffn_dim_multiplier", p.PocParams.GetModelParams().GetFfnDimMultiplier()},
+		{"poc_params.model_params.norm_eps", p.PocParams.GetModelParams().GetNormEps()},
+		{"poc_params.model_params.r_target", p.PocParams.GetModelParams().GetRTarget()},
+		{"poc_params.stat_test.dist_threshold", p.PocParams.GetStatTest().GetDistThreshold()},
+		{"poc_params.stat_test.p_mismatch", p.PocParams.GetStatTest().GetPMismatch()},
+		{"poc_params.stat_test.p_value_threshold", p.PocParams.GetStatTest().GetPValueThreshold()},
+		{"confirmation_poc_params.alpha_threshold", p.ConfirmationPocParams.GetAlphaThreshold()},
+		{"confirmation_poc_params.slash_fraction", p.ConfirmationPocParams.GetSlashFraction()},
+		{"collateral_params.slash_fraction_invalid", p.CollateralParams.GetSlashFractionInvalid()},
+		{"collateral_params.slash_fraction_downtime", p.CollateralParams.GetSlashFractionDowntime()},
+		{"collateral_params.downtime_missed_percentage_threshold", p.CollateralParams.GetDowntimeMissedPercentageThreshold()},
+		{"collateral_params.base_weight_ratio", p.CollateralParams.GetBaseWeightRatio()},
+		{"collateral_params.collateral_per_weight_unit", p.CollateralParams.GetCollateralPerWeightUnit()},
+		{"bitcoin_reward_params.decay_rate", p.BitcoinRewardParams.GetDecayRate()},
+		{"bitcoin_reward_params.utilization_bonus_factor", p.BitcoinRewardParams.GetUtilizationBonusFactor()},
+		{"bitcoin_reward_params.full_coverage_bonus_factor", p.BitcoinRewardParams.GetFullCoverageBonusFactor()},
+		{"bitcoin_reward_params.partial_coverage_bonus_factor", p.BitcoinRewardParams.GetPartialCoverageBonusFactor()},
+		{"dynamic_pricing_params.stability_zone_lower_bound", p.DynamicPricingParams.GetStabilityZoneLowerBound()},
+		{"dynamic_pricing_params.stability_zone_upper_bound", p.DynamicPricingParams.GetStabilityZoneUpperBound()},
+		{"dynamic_pricing_params.price_elasticity", p.DynamicPricingParams.GetPriceElasticity()},
+		{"bandwidth_limits_params.kb_per_input_token", p.BandwidthLimitsParams.GetKbPerInputToken()},
+		{"bandwidth_limits_params.kb_per_output_token", p.BandwidthLimitsParams.GetKbPerOutputToken()},
+		{"delegation_params.refusal_penalty", p.DelegationParams.GetRefusalPenalty()},
+		{"delegation_params.no_participation_penalty", p.DelegationParams.GetNoParticipationPenalty()},
+		{"delegation_params.delegation_share", p.DelegationParams.GetDelegationShare()},
+		{"delegation_params.w_threshold", p.DelegationParams.GetWThreshold()},
+		{"delegation_params.cap_factor", p.DelegationParams.GetCapFactor()},
+		{"delegation_params.max_model_voting_power_percentage", p.DelegationParams.GetMaxModelVotingPowerPercentage()},
+	}
+	for _, field := range fields {
+		if err := check(field.name, field.value); err != nil {
+			return err
+		}
+	}
+	for i, model := range p.PocParams.GetModels() {
+		if model == nil {
+			continue
+		}
+		modelFields := []struct {
+			name  string
+			value *Decimal
+		}{
+			{fmt.Sprintf("poc_params.models[%d].stat_test.dist_threshold", i), model.GetStatTest().GetDistThreshold()},
+			{fmt.Sprintf("poc_params.models[%d].stat_test.p_mismatch", i), model.GetStatTest().GetPMismatch()},
+			{fmt.Sprintf("poc_params.models[%d].stat_test.p_value_threshold", i), model.GetStatTest().GetPValueThreshold()},
+		}
+		if dynamic := model.GetDynamicCoefficient(); dynamic != nil {
+			modelFields = append(modelFields,
+				struct {
+					name  string
+					value *Decimal
+				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_min", i), dynamic.GetCoeffMin()},
+				struct {
+					name  string
+					value *Decimal
+				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_max", i), dynamic.GetCoeffMax()},
+				struct {
+					name  string
+					value *Decimal
+				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.relative_difficulty", i), dynamic.GetRelativeDifficulty()},
+			)
+		}
+		for _, field := range modelFields {
+			if err := check(field.name, field.value); err != nil {
+				return err
+			}
+		}
+	}
+	if dynamic := p.PocParams.GetDynamicCoefficientParams(); dynamic != nil {
+		dynamicFields := []struct {
+			name  string
+			value *Decimal
+		}{
+			{"poc_params.dynamic_coefficient_params.step_min", dynamic.GetStepMin()},
+			{"poc_params.dynamic_coefficient_params.step_max", dynamic.GetStepMax()},
+			{"poc_params.dynamic_coefficient_params.bootstrap_step_max", dynamic.GetBootstrapStepMax()},
+		}
+		for _, field := range dynamicFields {
+			if err := check(field.name, field.value); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -574,6 +763,9 @@ func (p Params) Validate() error {
 	if p.PocParams == nil {
 		return fmt.Errorf("poc params cannot be nil")
 	}
+	if err := validateParamDecimalExponents(p); err != nil {
+		return err
+	}
 	if err := p.ValidationParams.Validate(); err != nil {
 		return err
 	}
@@ -677,12 +869,25 @@ func (p Params) Validate() error {
 		}
 	}
 
+	if p.MaintenanceParams != nil {
+		if err := p.MaintenanceParams.Validate(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 func (p *PocParams) Validate() error {
 	if p == nil {
 		return nil
+	}
+	// Non-zero thresholds below 50% would let both valid and invalid votes
+	// clear the threshold at once, making the accept/reject check order
+	// decide the outcome. Majority (>=5000) guarantees at most one side passes.
+	if p.ValidationVoteThresholdBps != 0 &&
+		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 10000) {
+		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 10000]")
 	}
 	seen := make(map[string]bool)
 	for _, model := range p.GetModelConfigs() {
@@ -699,7 +904,119 @@ func (p *PocParams) Validate() error {
 			return fmt.Errorf("poc_params.models.seq_len cannot be negative")
 		}
 	}
+	if p.DynamicCoefficientParams != nil {
+		if err := p.validateDynamicCoefficientParams(); err != nil {
+			return err
+		}
+	} else {
+		for i, model := range p.Models {
+			if model.WeightScaleFactor == nil {
+				return fmt.Errorf(
+					"poc_params.dynamic_coefficient_params cannot be nil after deprecated weight_scale_factor was removed from model %d",
+					i,
+				)
+			}
+		}
+	}
 	return nil
+}
+
+func (p *PocParams) validateDynamicCoefficientParams() error {
+	params := p.DynamicCoefficientParams
+	if params.TargetZoneBps == 0 || params.TargetZoneBps > 10000 {
+		return fmt.Errorf("poc_params.dynamic_coefficient_params.target_zone_bps must be in [1, 10000]")
+	}
+	if params.BootstrapShareBps > 10000 {
+		return fmt.Errorf("poc_params.dynamic_coefficient_params.bootstrap_share_bps must be <= 10000")
+	}
+
+	stepMin, err := validatePositiveDecimal(
+		"poc_params.dynamic_coefficient_params.step_min",
+		params.StepMin,
+	)
+	if err != nil {
+		return err
+	}
+	stepMax, err := validatePositiveDecimal(
+		"poc_params.dynamic_coefficient_params.step_max",
+		params.StepMax,
+	)
+	if err != nil {
+		return err
+	}
+	bootstrapStepMax, err := validatePositiveDecimal(
+		"poc_params.dynamic_coefficient_params.bootstrap_step_max",
+		params.BootstrapStepMax,
+	)
+	if err != nil {
+		return err
+	}
+	if stepMin.GT(stepMax) {
+		return fmt.Errorf("poc_params.dynamic_coefficient_params.step_min must be <= step_max")
+	}
+	if stepMax.GT(bootstrapStepMax) {
+		return fmt.Errorf("poc_params.dynamic_coefficient_params.step_max must be <= bootstrap_step_max")
+	}
+
+	var targetTotal uint64
+	for i, model := range p.Models {
+		config := model.GetDynamicCoefficient()
+		if config == nil {
+			continue
+		}
+
+		coeffMin, err := validatePositiveDecimal(
+			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_min", i),
+			config.CoeffMin,
+		)
+		if err != nil {
+			return err
+		}
+		coeffMax, err := validatePositiveDecimal(
+			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_max", i),
+			config.CoeffMax,
+		)
+		if err != nil {
+			return err
+		}
+		if coeffMin.GT(coeffMax) {
+			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.coeff_min must be <= coeff_max", i)
+		}
+		if _, err := validatePositiveDecimal(
+			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.relative_difficulty", i),
+			config.RelativeDifficulty,
+		); err != nil {
+			return err
+		}
+		if config.TargetShareBps > 10000 {
+			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.target_share_bps must be <= 10000", i)
+		}
+		if config.TargetShareBps > 0 && config.TargetShareBps <= params.TargetZoneBps {
+			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.target_share_bps must be greater than target_zone_bps", i)
+		}
+		targetTotal += uint64(config.TargetShareBps)
+	}
+	if targetTotal != 10000 {
+		return fmt.Errorf("poc_params dynamic target shares must sum to 10000 bps, got %d", targetTotal)
+	}
+	return nil
+}
+
+func validatePositiveDecimal(name string, value *Decimal) (sdkmath.LegacyDec, error) {
+	if value == nil {
+		return sdkmath.LegacyDec{}, fmt.Errorf("%s cannot be nil", name)
+	}
+	if err := value.Validate(); err != nil {
+		return sdkmath.LegacyDec{}, fmt.Errorf("%s: %w", name, err)
+	}
+	dec, err := value.ToLegacyDec()
+	if err != nil {
+		return sdkmath.LegacyDec{}, fmt.Errorf("%s: %w", name, err)
+	}
+	if !dec.IsPositive() {
+		return sdkmath.LegacyDec{}, fmt.Errorf("%s must be positive", name)
+	}
+	return dec, nil
 }
 
 func (p *ValidationParams) Validate() error {
@@ -891,6 +1208,12 @@ func (p *DynamicPricingParams) Validate() error {
 	}
 
 	// Validate stability zone bounds are logically consistent
+	if err := p.StabilityZoneLowerBound.Validate(); err != nil {
+		return errors.Wrap(err, "invalid stability_zone_lower_bound")
+	}
+	if err := p.StabilityZoneUpperBound.Validate(); err != nil {
+		return errors.Wrap(err, "invalid stability_zone_upper_bound")
+	}
 	lowerBound := p.StabilityZoneLowerBound.ToDecimal()
 	upperBound := p.StabilityZoneUpperBound.ToDecimal()
 	if lowerBound.GreaterThanOrEqual(upperBound) {
@@ -1041,6 +1364,9 @@ func validateDecayRate(i interface{}) error {
 	if legacyDec.LT(sdkmath.LegacyNewDecWithPrec(-1, 2)) { // Less than -0.01
 		return fmt.Errorf("decay rate too extreme (less than -0.01): %s", legacyDec.String())
 	}
+	if err := v.Validate(); err != nil {
+		return err
+	}
 	_, err = GetExponent(v.ToDecimal())
 	if err != nil {
 		return fmt.Errorf("decay rate does not have exponent defined %s", legacyDec.String())
@@ -1080,6 +1406,9 @@ func validateStabilityZoneBound(i interface{}) error {
 	if bound == nil {
 		return fmt.Errorf("stability zone bound cannot be nil")
 	}
+	if err := bound.Validate(); err != nil {
+		return err
+	}
 
 	value := bound.ToDecimal()
 	if value.IsNegative() || value.GreaterThan(decimal.NewFromInt(1)) {
@@ -1095,6 +1424,9 @@ func validatePriceElasticity(i interface{}) error {
 	}
 	if elasticity == nil {
 		return fmt.Errorf("price elasticity cannot be nil")
+	}
+	if err := elasticity.Validate(); err != nil {
+		return err
 	}
 
 	value := elasticity.ToDecimal()
@@ -1195,7 +1527,22 @@ func validateInferencePruningEpochThreshold(i interface{}) error {
 }
 
 func (d *Decimal) ToLegacyDec() (sdkmath.LegacyDec, error) {
+	if err := d.Validate(); err != nil {
+		return sdkmath.LegacyDec{}, err
+	}
 	return sdkmath.LegacyNewDecFromStr(d.ToDecimal().String())
+}
+
+const MaxDecimalExponentAbs int32 = 18
+
+func (d *Decimal) Validate() error {
+	if d == nil {
+		return nil
+	}
+	if d.Exponent < -MaxDecimalExponentAbs || d.Exponent > MaxDecimalExponentAbs {
+		return fmt.Errorf("%w: %d", ErrInvalidDecimalExponent, d.Exponent)
+	}
+	return nil
 }
 
 func (d *Decimal) ToDecimal() decimal.Decimal {
@@ -1266,17 +1613,6 @@ func (p *PocParams) GetModelConfig(modelID string) (*PoCModelConfig, bool) {
 		}
 	}
 	return nil, false
-}
-
-func (p *PocParams) GetWeightScaleFactorDec() sdkmath.LegacyDec {
-	return p.GetPrimaryModelConfig().GetWeightScaleFactorDec()
-}
-
-func (p *PoCModelConfig) GetWeightScaleFactorDec() sdkmath.LegacyDec {
-	if p == nil {
-		return sdkmath.LegacyOneDec()
-	}
-	return p.WeightScaleFactor.LegacyDecOrOne()
 }
 
 var (

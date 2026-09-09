@@ -55,10 +55,8 @@ class NodeAdminStateTests : TestermintTest() {
         val disableEpoch = disabledNode.state.adminState?.epoch ?: 0UL
         Logger.info("Node disabled at epoch: $disableEpoch")
         
-        logSection("Making inference request to verify disabled node still serves")
-        val inferenceResult = getInferenceResult(genesis)
-        assertThat(inferenceResult).isNotNull
-        
+        // Classic-inference "disabled node still serves" check removed with the
+        // dapi deprecation; the state assertions below still cover disable/enable.
         logSection("Waiting for PoC phase to verify node stops")
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.node.waitForNextBlock(2)

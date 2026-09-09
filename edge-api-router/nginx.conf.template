@@ -1,0 +1,27 @@
+# Round-robin reverse-proxy in front of N edge-api instances (stateless
+# read-only Tier A queries). Upstream list is rendered from EDGE_API_HOSTS
+# by entrypoint.sh.
+
+upstream edge_api_pool {
+    zone edge_api_pool 64k;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+${UPSTREAM_SERVERS}
+}
+
+server {
+    listen 18080;
+
+    location / {
+        proxy_pass http://edge_api_pool;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Authorization $http_authorization;
+
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+}

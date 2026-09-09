@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-FROM ghcr.io/gonka-ai/vllm:v0.15.1 AS base
+ARG VLLM_BASE_IMAGE=ghcr.io/gonka-ai/vllm:v0.25.1-poc-v4-cu13-hopper-blackwell@sha256:82877b425fd8f3c156446452665ef59f371d26d527cc4b65ea592d30500b86da
+ARG MLNODE_RELEASE_VERSION=unknown
+FROM ${VLLM_BASE_IMAGE} AS base
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \
@@ -24,6 +26,14 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
 
 ENV PATH="/usr/local/openssl-1.1/bin:${PATH}" \
     LD_LIBRARY_PATH="/usr/local/openssl-1.1/lib:$LD_LIBRARY_PATH"
+
+RUN ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \
+        /usr/local/cuda/lib64/libnvrtc.so \
+    && ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \
+        /usr/local/lib/libnvrtc.so \
+    && ldconfig \
+    && python3 -c "import vllm; assert vllm.__version__.startswith('0.25.1')" \
+    && python3 -c "from gonka_poc.worker import PoCWorkerExtension; from vllm.v1.worker.gpu.sample.replay import ReplayState"
 
 ################################################################################
 FROM base AS builder
@@ -63,11 +73,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m venv /app/packages/api/.venv \
     && . /app/packages/api/.venv/bin/activate \
     && cd /app/packages/api \
-    && poetry install --no-interaction \
-    && pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.9cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
+    && poetry install --no-interaction
 
 ################################################################################
 FROM base AS app
+ARG MLNODE_RELEASE_VERSION
 COPY --from=builder /app/packages/api/.venv /app/packages/api/.venv
 
 COPY packages/api/src /app/packages/api/src
@@ -82,9 +92,15 @@ COPY packages/train/resources /app/packages/train/resources
 
 COPY packages/common/src /app/packages/common/src
 
-ENV PYTHONPATH="/app:/app/packages/api/src"
-ENV VLLM_ALLOW_INSECURE_SERIALIZATION=1
-ENV LD_LIBRARY_PATH="/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
+ENV PYTHONPATH="/app:/app/packages/api/src" \
+    MLNODE_RELEASE_VERSION="${MLNODE_RELEASE_VERSION}" \
+    LD_LIBRARY_PATH="/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}" \
+    MLNODE_VLLM_MODULE="gonka_poc.entrypoint.api_router" \
+    TRITON_PTXAS_PATH="/usr/local/cuda/bin/ptxas" \
+    VLLM_ALLOW_INSECURE_SERIALIZATION=1 \
+    VLLM_RUNNER_TIMEOUT=3600
+
+LABEL org.opencontainers.image.version="${MLNODE_RELEASE_VERSION}"
 
 COPY packages/api/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

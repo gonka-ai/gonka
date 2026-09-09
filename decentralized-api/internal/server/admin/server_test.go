@@ -60,6 +60,22 @@ func (m *mockInferenceQueryClient) EpochGroupData(ctx context.Context, in *types
 	return args.Get(0).(*types.QueryGetEpochGroupDataResponse), args.Error(1)
 }
 
+func (m *mockInferenceQueryClient) EpochInfo(ctx context.Context, in *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error) {
+	args := m.Called(ctx, in)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryEpochInfoResponse), args.Error(1)
+}
+
+func (m *mockInferenceQueryClient) AllPoCV2StoreCommitsForStage(ctx context.Context, in *types.QueryAllPoCV2StoreCommitsForStageRequest, opts ...grpc.CallOption) (*types.QueryAllPoCV2StoreCommitsForStageResponse, error) {
+	args := m.Called(ctx, in)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryAllPoCV2StoreCommitsForStageResponse), args.Error(1)
+}
+
 func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodeclient.MockClientFactory) {
 	// Disable model enforcement in tests
 	os.Setenv("ENFORCED_MODEL_ID", "disabled")
@@ -136,7 +152,7 @@ func setupTestServer(t *testing.T) (*Server, *apiconfig.ConfigManager, *mlnodecl
 	nodeBroker := broker.NewBroker(bridge, phaseTracker, mockParticipant, "", mockClientFactory, configManager)
 
 	// 5. Server
-	s := NewServer(mockCosmos, nodeBroker, configManager, nil, nil, nil)
+	s := NewServer(mockCosmos, nodeBroker, configManager, nil, nil)
 
 	return s, configManager, mockClientFactory
 }

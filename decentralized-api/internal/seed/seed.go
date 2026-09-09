@@ -4,9 +4,9 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 
+	"common/logging"
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"

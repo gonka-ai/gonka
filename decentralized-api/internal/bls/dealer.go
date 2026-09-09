@@ -14,11 +14,11 @@
 package bls
 
 import (
+	"common/logging"
 	"crypto/rand"
 	"crypto/sha256"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/utils"
-	"decentralized-api/logging"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"

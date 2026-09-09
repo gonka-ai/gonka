@@ -90,7 +90,7 @@ func Download(ctx context.Context, url, expectedSHA256, destDir, binaryName stri
 		return fmt.Errorf("hash extracted binary: %w", err)
 	}
 
-	if err := writeInstallMetadata(destDir, InstallMetadata{
+	if err := WriteInstallMetadata(destDir, InstallMetadata{
 		ArchiveSHA256: gotHash,
 		BinarySHA256:  binaryHash,
 	}); err != nil {
@@ -152,7 +152,9 @@ func ReadInstallMetadata(destDir string) (InstallMetadata, error) {
 	return metadata, nil
 }
 
-func writeInstallMetadata(destDir string, metadata InstallMetadata) error {
+// WriteInstallMetadata atomically commits metadata for a verified install.
+// Callers must write and verify the binary before publishing this marker.
+func WriteInstallMetadata(destDir string, metadata InstallMetadata) error {
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("marshal install metadata: %w", err)

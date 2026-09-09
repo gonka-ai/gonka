@@ -1,8 +1,9 @@
 package mlnodeclient
 
 import (
+	"common/logging"
 	"context"
-	"decentralized-api/logging"
+	"strings"
 	"sync"
 	"testing"
 
@@ -59,16 +60,17 @@ type MockClient struct {
 	StopPowV2Called      int
 
 	// PoC v2 state
-	PowStatusV2 string // "IDLE", "GENERATING", etc.
+	PowStatusV2            string // "IDLE", "GENERATING", etc.
+	PoCValidationInference bool
 
 	// Capture parameters
 	LastInferenceModel    string
 	LastInferenceArgs     []string
 	LastInitGenerateV2Req *PoCInitGenerateRequestV2
 	LastGenerateV2Req     *PoCGenerateRequestV2
-	LastModelStatusCheck *Model
-	LastModelDownload    *Model
-	LastModelDelete      *Model
+	LastModelStatusCheck  *Model
+	LastModelDownload     *Model
+	LastModelDelete       *Model
 }
 
 // NewMockClient creates a new mock client with default values
@@ -173,6 +175,7 @@ func (m *MockClient) Reset() {
 	m.LastModelDownload = nil
 	m.LastModelDelete = nil
 	m.PowStatusV2 = ""
+	m.PoCValidationInference = false
 }
 
 func (m *MockClient) Stop(ctx context.Context) error {
@@ -196,7 +199,11 @@ func (m *MockClient) NodeState(ctx context.Context) (*StateResponse, error) {
 	if m.NodeStateError != nil {
 		return nil, m.NodeStateError
 	}
-	return &StateResponse{State: m.CurrentState}, nil
+	return &StateResponse{
+		State:                  m.CurrentState,
+		PoCValidationInference: m.PoCValidationInference,
+		LoadedModel:            m.LastInferenceModel,
+	}, nil
 }
 
 func (m *MockClient) InferenceHealth(ctx context.Context) (bool, error) {
@@ -226,7 +233,20 @@ func (m *MockClient) InferenceUp(ctx context.Context, model string, args []strin
 func (m *MockClient) GetLoadedModels(ctx context.Context) ([]string, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
-	// Return the last inference model that was loaded, if any
+	for i, arg := range m.LastInferenceArgs {
+		if arg == "--served-model-name" && i+1 < len(m.LastInferenceArgs) {
+			var models []string
+			for j := i + 1; j < len(m.LastInferenceArgs) && !strings.HasPrefix(m.LastInferenceArgs[j], "--"); j++ {
+				models = append(models, m.LastInferenceArgs[j])
+			}
+			if len(models) > 0 {
+				return models, nil
+			}
+		}
+		if strings.HasPrefix(arg, "--served-model-name=") {
+			return []string{strings.TrimPrefix(arg, "--served-model-name=")}, nil
+		}
+	}
 	if m.LastInferenceModel != "" {
 		return []string{m.LastInferenceModel}, nil
 	}

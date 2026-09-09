@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"math/bits"
 
 	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -34,33 +35,110 @@ func (k *Keeper) GetSettleParameters(ctx context.Context) (*SettleParameters, er
 	}, nil
 }
 
-func CheckAndPunishForDowntimeForParticipants(participants []types.Participant, rewards map[string]uint64, p0 *types.Decimal, logger log.Logger) {
-	for _, participant := range participants {
-		rewards[participant.Address] = CheckAndPunishForDowntimeForParticipant(participant, rewards[participant.Address], p0, logger)
-	}
+type bitcoinRewardInputs struct {
+	Participants       []types.Participant
+	EpochGroupData     types.EpochGroupData
+	Params             types.Params
+	ValidationParams   *types.ValidationParams
+	SettleParameters   *SettleParameters
+	ParticipantMLNodes map[string]map[string][]*types.MLNodeInfo
+	RewardTransfers    []*types.DelegationRewardTransfer
+	RewardPenalties    []*types.DelegationRewardPenalty
 }
 
-func CheckAndPunishForDowntimeForParticipant(participant types.Participant, reward uint64, p0 *types.Decimal, logger log.Logger) uint64 {
+func (k *Keeper) loadBitcoinRewardInputs(ctx context.Context, epochIndex uint64) (*bitcoinRewardInputs, bool, error) {
+	activeParticipants, found := k.GetActiveParticipants(ctx, epochIndex)
+	if !found {
+		return nil, false, nil
+	}
+	activeParticipantAddresses := make([]string, len(activeParticipants.Participants))
+	for i, participant := range activeParticipants.Participants {
+		activeParticipantAddresses[i] = participant.Index
+	}
+	allParticipants := k.GetParticipants(ctx, activeParticipantAddresses)
+
+	data, found := k.GetEpochGroupData(ctx, epochIndex, "")
+	if !found {
+		return nil, true, types.ErrCurrentEpochGroupNotFound
+	}
+
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return nil, true, err
+	}
+
+	settleParameters, err := k.GetSettleParameters(ctx)
+	if err != nil {
+		return nil, true, err
+	}
+
+	participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, epochIndex, data.ValidationWeights)
+	rewardTransfers, err := k.GetDelegationRewardTransfersForEpoch(ctx, epochIndex)
+	if err != nil {
+		return nil, true, err
+	}
+	rewardPenalties, err := k.GetDelegationRewardPenaltiesForEpoch(ctx, epochIndex)
+	if err != nil {
+		return nil, true, err
+	}
+	validationParams := params.ValidationParams
+	if validationParams == nil {
+		validationParams = types.DefaultValidationParams()
+		k.LogWarn("ValidationParams not found, using default ones", types.Settle)
+	}
+
+	if graceParams, ok := k.GetPunishmentGraceEpoch(ctx, epochIndex); ok && graceParams.BinomTestP0 != nil {
+		graceValidationParams := *validationParams
+		graceValidationParams.BinomTestP0 = graceParams.BinomTestP0
+		validationParams = &graceValidationParams
+		k.LogInfo("using grace BinomTestP0", types.Settle, "epoch", epochIndex)
+	}
+
+	return &bitcoinRewardInputs{
+		Participants:       allParticipants,
+		EpochGroupData:     data,
+		Params:             params,
+		ValidationParams:   validationParams,
+		SettleParameters:   settleParameters,
+		ParticipantMLNodes: participantMLNodes,
+		RewardTransfers:    rewardTransfers,
+		RewardPenalties:    rewardPenalties,
+	}, true, nil
+}
+
+func CheckAndPunishForDowntimeForParticipants(participants []types.Participant, rewards map[string]uint64, p0 *types.Decimal, logger log.Logger) map[string]struct{} {
+	failed := make(map[string]struct{})
+	for _, participant := range participants {
+		reward, passed := CheckAndPunishForDowntimeForParticipant(participant, rewards[participant.Address], p0, logger)
+		rewards[participant.Address] = reward
+		if !passed {
+			failed[participant.Address] = struct{}{}
+		}
+	}
+	return failed
+}
+
+func CheckAndPunishForDowntimeForParticipant(participant types.Participant, reward uint64, p0 *types.Decimal, logger log.Logger) (uint64, bool) {
 	totalRequests := participant.CurrentEpochStats.InferenceCount + participant.CurrentEpochStats.MissedRequests
 	missedRequests := participant.CurrentEpochStats.MissedRequests
 	logger.Info("Checking downtime for participant", "participant", participant.Address, "totalRequests", totalRequests, "missedRequests", missedRequests, "reward", reward)
-	finalReward := CheckAndPunishForDowntime(totalRequests, missedRequests, reward, p0)
+	finalReward, passed := CheckAndPunishForDowntime(totalRequests, missedRequests, reward, p0)
 	logger.Info("Final reward after downtime check", "participant", participant.Address, "finalReward", finalReward)
-	return finalReward
+	return finalReward, passed
 }
 
-func CheckAndPunishForDowntime(total, missed, reward uint64, p0 *types.Decimal) uint64 {
+func CheckAndPunishForDowntime(total, missed, reward uint64, p0 *types.Decimal) (uint64, bool) {
 	if total == 0 {
-		return reward
+		return reward, true
 	}
 	passed, err := calculations.MissedStatTest(int(missed), int(total), p0.ToDecimal())
 	if err != nil {
-		return reward
+		return reward, true
 	}
 	if !passed {
-		return 0
+		return 0, false
 	}
-	return reward
+	return reward, true
 }
 
 // AggregateMLNodesFromModelSubgroups builds a map of participant addresses to their
@@ -92,93 +170,66 @@ func (k *Keeper) AggregateMLNodesFromModelSubgroups(ctx context.Context, epochIn
 	return participantMLNodes
 }
 
-func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, previousEpochIndex uint64) error {
+func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, previousEpochIndex uint64) (map[string]struct{}, error) {
 	if currentEpochIndex == 0 {
 		k.LogInfo("SettleAccounts Skipped For Epoch 0", types.Settle, "currentEpochIndex", currentEpochIndex, "skipping")
-		return nil
+		return nil, nil
 	}
 
 	k.LogInfo("SettleAccounts", types.Settle, "currentEpochIndex", currentEpochIndex)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
-	activeParticipants, found := k.GetActiveParticipants(ctx, currentEpochIndex)
+	inputs, found, err := k.loadBitcoinRewardInputs(ctx, currentEpochIndex)
 	if !found {
 		k.LogError("Active participants not found", types.Settle, "currentEpochIndex", currentEpochIndex)
-		return nil
+		return nil, nil
 	}
-	activeParticipantAddresses := make([]string, len(activeParticipants.Participants))
-	for i, participant := range activeParticipants.Participants {
-		activeParticipantAddresses[i] = participant.Index
+	if err != nil {
+		k.LogError("Error loading bitcoin reward inputs", types.Settle, "error", err)
+		return nil, err
 	}
-	allParticipants := k.GetParticipants(ctx, activeParticipantAddresses)
+	allParticipants := inputs.Participants
 
 	k.LogInfo("Block height", types.Settle, "height", blockHeight)
 	k.LogInfo("Got all participants", types.Settle, "participants", len(allParticipants))
 
-	data, found := k.GetEpochGroupData(ctx, currentEpochIndex, "")
+	data := inputs.EpochGroupData
 	k.LogInfo("Settling for block", types.Settle, "height", currentEpochIndex)
-	if !found {
-		k.LogError("Epoch group data not found", types.Settle, "height", currentEpochIndex)
-		return types.ErrCurrentEpochGroupNotFound
-	}
 	seedSigMap := make(map[string]string)
 	for _, seedSig := range data.MemberSeedSignatures {
 		seedSigMap[seedSig.MemberAddress] = seedSig.Signature
 	}
 
 	// Check governance flag to determine which reward system to use
-	params, err := k.GetParams(ctx)
-	if err != nil {
-		k.LogError("Error getting params", types.Settle, "error", err)
-		return err
-	}
+	params := inputs.Params
 	var amounts []*SettleResult
 	var rewardAmount int64
 	var governanceRewardAmount int64
-	settleParameters, err := k.GetSettleParameters(ctx)
-	if err != nil {
-		k.LogError("Error getting settle parameters", types.Settle, "error", err)
-		return err
-	}
+	settleParameters := inputs.SettleParameters
 	k.LogInfo("Settle parameters", types.Settle, "parameters", settleParameters)
 
 	// Use Bitcoin-style fixed reward system with its own parameters
 	k.LogInfo("Using Bitcoin-style reward system", types.Settle)
 
-	// Aggregate MLNodes from model-specific subgroups for collateral weight normalization.
-	participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, currentEpochIndex, data.ValidationWeights)
-
-	// Check if this is a grace epoch and override BinomTestP0 if so
-	validationParams := params.ValidationParams
-	if validationParams == nil {
-		validationParams = types.DefaultValidationParams()
-		k.LogWarn("ValidationParams not found, using default ones", types.Settle)
-	}
-
-	if graceParams, ok := k.GetPunishmentGraceEpoch(ctx, currentEpochIndex); ok && graceParams.BinomTestP0 != nil {
-		graceValidationParams := *validationParams
-		graceValidationParams.BinomTestP0 = graceParams.BinomTestP0
-		validationParams = &graceValidationParams
-		k.LogInfo("using grace BinomTestP0", types.Settle, "epoch", currentEpochIndex)
-	}
-
 	var bitcoinResult BitcoinResult
-	amounts, bitcoinResult, err = GetBitcoinSettleAmounts(
+	amounts, bitcoinResult, err = GetBitcoinSettleAmountsWithTransfers(
 		allParticipants,
 		&data,
 		params.BitcoinRewardParams,
-		validationParams,
+		inputs.ValidationParams,
 		settleParameters,
-		participantMLNodes,
+		inputs.ParticipantMLNodes,
+		inputs.RewardTransfers,
+		inputs.RewardPenalties,
 		k.Logger(),
 	)
 	if err != nil {
 		k.LogError("Error getting Bitcoin settle amounts", types.Settle, "error", err)
-		return err
+		return nil, err
 	}
 	if bitcoinResult.Amount < 0 {
 		k.LogError("Bitcoin reward amount is negative", types.Settle, "amount", bitcoinResult.Amount)
-		return types.ErrNegativeRewardAmount
+		return nil, types.ErrNegativeRewardAmount
 	}
 	k.LogInfo("Bitcoin reward amount", types.Settle, "amount", bitcoinResult.Amount)
 	rewardAmount = bitcoinResult.Amount
@@ -193,11 +244,11 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	err = k.MintRewardCoins(cacheCtx, rewardAmount, "reward_distribution")
 	if err != nil {
 		k.LogError("Error minting reward coins", types.Settle, "error", err)
-		return err
+		return nil, err
 	}
 	if err := k.AddTokenomicsData(cacheCtx, &types.TokenomicsData{TotalSubsidies: uint64(rewardAmount)}); err != nil {
 		k.LogError("Error updating tokenomics data", types.Settle, "error", err)
-		return err
+		return nil, err
 	}
 
 	// In Bitcoin reward system, any undistributed rewards (e.g. downtime punishments or rounding)
@@ -205,12 +256,12 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	if params.BitcoinRewardParams.UseBitcoinRewards && governanceRewardAmount > 0 {
 		coins, err := types.GetCoins(governanceRewardAmount)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		memo := fmt.Sprintf("bitcoin_reward_to_governance:epoch=%d", currentEpochIndex)
 		if err := k.BankKeeper.SendCoinsFromModuleToModule(cacheCtx, types.ModuleName, govtypes.ModuleName, coins, memo); err != nil {
 			k.LogError("Error transferring undistributed bitcoin rewards to governance", types.Settle, "error", err, "amount", governanceRewardAmount)
-			return err
+			return nil, err
 		}
 		k.LogInfo("Transferred undistributed bitcoin rewards to governance", types.Settle, "amount", governanceRewardAmount)
 	}
@@ -241,12 +292,12 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		}
 		err = k.SetEpochPerformanceSummary(cacheCtx, epochPerformance)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		participant.CurrentEpochStats = types.NewCurrentEpochStats()
 		err := k.SetParticipant(cacheCtx, participant)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -256,8 +307,9 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			k.LogError("Error calculating settle amounts", types.Settle, "error", amount.Error, "participant", amount.Settle.Participant)
 			continue
 		}
-		totalPayment := amount.Settle.WorkCoins + amount.Settle.RewardCoins
-		if totalPayment == 0 {
+		// checked add: a wrapping sum to 0 would skip a real payout
+		paymentSum, paymentCarry := bits.Add64(amount.Settle.WorkCoins, amount.Settle.RewardCoins, 0)
+		if paymentCarry == 0 && paymentSum == 0 {
 			k.LogDebug("No payment needed for participant", types.Settle, "address", amount.Settle.Participant)
 			continue
 		}
@@ -271,7 +323,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		k.LogInfo("Settle for participant", types.Settle, "rewardCoins", amount.Settle.RewardCoins, "workCoins", amount.Settle.WorkCoins, "address", amount.Settle.Participant)
 		if err := k.SetSettleAmountWithGovernanceTransfer(cacheCtx, *amount.Settle); err != nil {
 			k.LogError("Error writing settle amount", types.Settle, "error", err, "participant", amount.Settle.Participant)
-			return err
+			return nil, err
 		}
 	}
 
@@ -291,7 +343,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		}
 	}
 
-	return nil
+	return bitcoinResult.FailedMissRate, nil
 }
 
 type DistributedCoinInfo struct {
@@ -314,6 +366,9 @@ func (rc *DistributedCoinInfo) calculateDistribution(participantWorkDone int64) 
 }
 
 type SettleResult struct {
-	Settle *types.SettleAmount
-	Error  error
+	Settle                  *types.SettleAmount
+	Error                   error
+	ParticipantRewardWeight uint64
+	ParticipantFullWeight   uint64
+	TotalRewardWeight       uint64
 }

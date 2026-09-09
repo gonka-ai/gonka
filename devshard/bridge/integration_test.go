@@ -11,17 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func chainURL(t *testing.T) string {
+func chainGRPCURL(t *testing.T) string {
 	t.Helper()
-	u := os.Getenv("CHAIN_REST_URL")
+	u := os.Getenv("CHAIN_GRPC_URL")
 	if u == "" {
-		u = "http://localhost:1317"
+		u = "localhost:9090"
 	}
 	return u
 }
 
 func TestIntegration_GetEscrow(t *testing.T) {
-	b := NewRESTBridge(chainURL(t))
+	b, err := NewGRPCBridgeFromURL(chainGRPCURL(t))
+	require.NoError(t, err)
 
 	info, err := b.GetEscrow("1")
 	require.NoError(t, err)
@@ -34,7 +35,8 @@ func TestIntegration_GetEscrow(t *testing.T) {
 }
 
 func TestIntegration_GetHostInfo(t *testing.T) {
-	b := NewRESTBridge(chainURL(t))
+	b, err := NewGRPCBridgeFromURL(chainGRPCURL(t))
+	require.NoError(t, err)
 
 	// First get an escrow to find a real host address
 	escrow, err := b.GetEscrow("1")
@@ -49,7 +51,8 @@ func TestIntegration_GetHostInfo(t *testing.T) {
 }
 
 func TestIntegration_BuildGroup(t *testing.T) {
-	b := NewRESTBridge(chainURL(t))
+	b, err := NewGRPCBridgeFromURL(chainGRPCURL(t))
+	require.NoError(t, err)
 
 	group, err := BuildGroup("1", b)
 	require.NoError(t, err)

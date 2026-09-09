@@ -65,6 +65,7 @@ func TestToolsValidatorRejects(t *testing.T) {
 		// function.name required.
 		{name: "function name missing", body: `{"tools":[{"type":"function","function":{}}]}`, wantErr: ErrToolFunctionName},
 		{name: "function name empty", body: `{"tools":[{"type":"function","function":{"name":""}}]}`, wantErr: ErrToolFunctionName},
+		{name: "function name whitespace", body: `{"tools":[{"type":"function","function":{"name":"   "}}]}`, wantErr: ErrToolFunctionName},
 		{name: "function name not a string", body: `{"tools":[{"type":"function","function":{"name":42}}]}`, wantErr: ErrToolFunctionName},
 		{name: "depth exceeds limit", body: `{"tools":[` + toolWithParams(nestedPropertiesSchema(17)) + `]}`, wantErr: ErrSchemaDepth},
 		{name: "deep recursion attack hidden in tool", body: `{"tools":[` + toolWithParams(nestedPropertiesSchema(200)) + `]}`, wantErr: ErrSchemaDepth},

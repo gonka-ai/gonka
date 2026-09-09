@@ -60,13 +60,16 @@ type sessionData struct {
 
 // Memory is an in-memory storage implementation for testing.
 type Memory struct {
-	mu       sync.RWMutex
-	sessions map[string]*sessionData
+	mu               sync.RWMutex
+	sessions         map[string]*sessionData
+	validationLeases map[string]map[uint64]memoryLease
+	escrowCache      map[string]EscrowCacheInfo
 }
 
 func NewMemory() *Memory {
 	return &Memory{
-		sessions: make(map[string]*sessionData),
+		sessions:    make(map[string]*sessionData),
+		escrowCache: make(map[string]EscrowCacheInfo),
 	}
 }
 
@@ -142,8 +145,20 @@ func (m *Memory) AppendDiff(escrowID string, rec types.DiffRecord) error {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
 
-	if _, exists := s.nonceToIndex[rec.Nonce]; exists {
-		return fmt.Errorf("duplicate nonce %d for session %s", rec.Nonce, escrowID)
+	if idx, exists := s.nonceToIndex[rec.Nonce]; exists {
+		existing := s.diffs[idx]
+		if err := checkDiffReplayIdentity(escrowID, rec, existing); err != nil {
+			return err
+		}
+		// Mirror Postgres/SQLite: upsert signatures on identical replay.
+		if existing.Signatures == nil {
+			existing.Signatures = make(map[uint32][]byte, len(rec.Signatures))
+		}
+		for slotID, sig := range rec.Signatures {
+			existing.Signatures[slotID] = append([]byte(nil), sig...)
+		}
+		s.diffs[idx] = existing
+		return nil
 	}
 
 	rec.Signatures = copySignatures(rec.Signatures)
@@ -151,6 +166,16 @@ func (m *Memory) AppendDiff(escrowID string, rec types.DiffRecord) error {
 
 	s.diffs = append(s.diffs, rec)
 	s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
+	return nil
+}
+
+// AppendDiffs appends many diffs under one lock (used by HA migrate).
+func (m *Memory) AppendDiffs(escrowID string, diffs []types.DiffRecord) error {
+	for _, rec := range diffs {
+		if err := m.AppendDiff(escrowID, rec); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -314,7 +339,50 @@ func (m *Memory) DeleteSealedInferences(escrowID string) error {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
 	s.inferences = make(map[uint64]InferenceRow)
+	return nil
+}
+
+func (m *Memory) ClearValidationObs(escrowID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	s.inferenceValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
 	s.sealedValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
+	return nil
+}
+
+// ImportValidationObs replaces live/sealed validation-obs maps for an escrow
+// with the provided rows (HA migrate).
+func (m *Memory) ImportValidationObs(escrowID string, live, sealed []ValidationObsRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	s.inferenceValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
+	s.sealedValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
+	put := func(dst map[uint64]map[uint32]SlotValidationObs, rows []ValidationObsRow) {
+		for _, r := range rows {
+			bySlot := dst[r.InferenceID]
+			if bySlot == nil {
+				bySlot = make(map[uint32]SlotValidationObs)
+				dst[r.InferenceID] = bySlot
+			}
+			bySlot[r.SlotID] = SlotValidationObs{
+				SlotID:               r.SlotID,
+				RequiredValidations:  r.Required,
+				CompletedValidations: r.Completed,
+			}
+		}
+	}
+	put(s.inferenceValidationObs, live)
+	put(s.sealedValidationObs, sealed)
 	return nil
 }
 
@@ -421,6 +489,12 @@ func (m *Memory) PruneEpoch(epochID uint64) error {
 			delete(m.sessions, id)
 		}
 	}
+	m.pruneValidationLeasesBefore(epochID + 1)
+	for id, info := range m.escrowCache {
+		if info.EpochID == epochID {
+			delete(m.escrowCache, id)
+		}
+	}
 	return nil
 }
 
@@ -433,6 +507,53 @@ func (m *Memory) pruneBefore(cutoff uint64) error {
 			delete(m.sessions, id)
 		}
 	}
+	m.pruneValidationLeasesBefore(cutoff)
+	for id, info := range m.escrowCache {
+		if info.EpochID < cutoff {
+			delete(m.escrowCache, id)
+		}
+	}
+	return nil
+}
+
+func (m *Memory) PutEscrowCache(info EscrowCacheInfo) error {
+	if info.EscrowID == "" {
+		return fmt.Errorf("escrow cache: empty escrow_id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := info
+	if info.AppHash != nil {
+		cp.AppHash = append([]byte(nil), info.AppHash...)
+	}
+	if info.Slots != nil {
+		cp.Slots = append([]string(nil), info.Slots...)
+	}
+	m.escrowCache[info.EscrowID] = cp
+	return nil
+}
+
+func (m *Memory) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	info, ok := m.escrowCache[escrowID]
+	if !ok {
+		return nil, ErrEscrowCacheNotFound
+	}
+	cp := info
+	if info.AppHash != nil {
+		cp.AppHash = append([]byte(nil), info.AppHash...)
+	}
+	if info.Slots != nil {
+		cp.Slots = append([]string(nil), info.Slots...)
+	}
+	return &cp, nil
+}
+
+func (m *Memory) DeleteEscrowCache(escrowID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.escrowCache, escrowID)
 	return nil
 }
 

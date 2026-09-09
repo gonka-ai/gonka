@@ -28,6 +28,7 @@ const (
 	ValidationRecovery
 	Allocation
 	PayloadStorage
+	Maintenance
 	Testing = 255
 )
 
@@ -85,6 +86,8 @@ func (s SubSystem) String() string {
 		return "Allocation"
 	case PayloadStorage:
 		return "PayloadStorage"
+	case Maintenance:
+		return "Maintenance"
 	default:
 		return "Unknown"
 	}

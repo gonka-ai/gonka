@@ -1,6 +1,8 @@
 package poc
 
 import (
+	"math"
+
 	"decentralized-api/chainphase"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -64,8 +66,9 @@ func GetCurrentPocStageHeight(epochState *chainphase.EpochState) int64 {
 	return epochState.LatestEpoch.PocStartBlockHeight
 }
 
-// ShouldAcceptStoreCommit returns true if the chain will accept MsgPoCV2StoreCommit
-// at the current block height. Mirrors keeper validation.
+// ShouldAcceptStoreCommit returns true if DAPI should broadcast MsgPoCV2StoreCommit
+// at the current committed height. Tighter than the handler window: once
+// currentHeight >= exchange deadline, the next block is already late.
 func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHeight int64) bool {
 	if epochState.IsNilOrNotSynced() {
 		return false
@@ -78,6 +81,10 @@ func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHei
 		pocStageStartHeight == epochState.ActiveConfirmationPoCEvent.TriggerHeight {
 		event := epochState.ActiveConfirmationPoCEvent
 		epochParams := &epochState.LatestEpoch.EpochParams
+		deadline := event.GetExchangeEnd(epochParams)
+		if currentHeight >= deadline {
+			return false
+		}
 		return event.IsInBatchSubmissionWindow(currentHeight, epochParams)
 	}
 
@@ -91,7 +98,85 @@ func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHei
 		return false
 	}
 
+	deadline := epochState.LatestEpoch.PoCExchangeDeadline()
+	if currentHeight >= deadline {
+		return false
+	}
 	return epochState.LatestEpoch.IsPoCExchangeWindow(currentHeight)
+}
+
+// StoreCommitTimeoutHeight is the tx timeout_height for StoreCommit: last
+// legal inclusion block. 0 means leave unset.
+func StoreCommitTimeoutHeight(epochState *chainphase.EpochState, pocStageStartHeight int64) uint64 {
+	if epochState.IsNilOrNotSynced() {
+		return 0
+	}
+	if epochState.ActiveConfirmationPoCEvent != nil &&
+		epochState.CurrentPhase == types.InferencePhase &&
+		pocStageStartHeight == epochState.ActiveConfirmationPoCEvent.TriggerHeight {
+		event := epochState.ActiveConfirmationPoCEvent
+		end := event.GetExchangeEnd(&epochState.LatestEpoch.EpochParams)
+		if end <= 0 {
+			return 0
+		}
+		return uint64(end)
+	}
+	deadline := epochState.LatestEpoch.PoCExchangeDeadline()
+	if deadline <= 0 {
+		return 0
+	}
+	return uint64(deadline)
+}
+
+// fractionPPMScale is the denominator for integer fraction arithmetic
+// (parts per million).
+const fractionPPMScale = 1_000_000
+
+// EarlyShareCaptureTarget computes the stage height and the "first fraction"
+// capture target block height for the active PoC or confirmation-PoC generation
+// window. ok is false when no generation window is active or inputs are invalid,
+// in which case the early-share guard must skip (fail open).
+//
+// The offset is computed in integer arithmetic: the configured fraction is
+// quantized to parts-per-million once, then offset = round(duration*ppm/1e6).
+// This makes the target height a pure function of (duration, ppm), identical
+// on every validator. Float spellings that agree to six decimal places (e.g.
+// the code default 1.0/3.0 and the documented config literal 0.3333333333)
+// quantize to the same ppm and therefore the same target height, which the
+// previous float multiply did not guarantee.
+//
+//   - Regular PoC: stage = PocStartBlockHeight, target = stage + offset.
+//   - Confirmation PoC: stage = event.TriggerHeight,
+//     target = event.GenerationStartHeight + offset.
+func EarlyShareCaptureTarget(epochState *chainphase.EpochState, firstFraction float64) (stageHeight int64, targetHeight int64, ok bool) {
+	if epochState.IsNilOrNotSynced() {
+		return 0, 0, false
+	}
+	ppm := int64(math.Round(firstFraction * fractionPPMScale))
+	if ppm <= 0 || ppm >= fractionPPMScale {
+		return 0, 0, false
+	}
+	duration := epochState.LatestEpoch.EpochParams.PocStageDuration
+	if duration <= 0 {
+		return 0, 0, false
+	}
+	offset := (duration*ppm + fractionPPMScale/2) / fractionPPMScale
+
+	// Confirmation PoC generation window during the inference phase.
+	if epochState.CurrentPhase == types.InferencePhase &&
+		epochState.ActiveConfirmationPoCEvent != nil &&
+		epochState.ActiveConfirmationPoCEvent.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION {
+		event := epochState.ActiveConfirmationPoCEvent
+		return event.TriggerHeight, event.GenerationStartHeight + offset, true
+	}
+
+	// Regular PoC generation (including the wind-down exchange window).
+	if epochState.CurrentPhase != types.PoCGeneratePhase &&
+		epochState.CurrentPhase != types.PoCGenerateWindDownPhase {
+		return 0, 0, false
+	}
+	stageHeight = epochState.LatestEpoch.PocStartBlockHeight
+	return stageHeight, stageHeight + offset, true
 }
 
 func ShouldHaveDistributedWeights(epochState *chainphase.EpochState) bool {

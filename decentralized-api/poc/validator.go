@@ -6,17 +6,19 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"net/url"
 	"slices"
 	"sync"
 	"time"
 
+	"common/logging"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
+	"decentralized-api/poc/artifacts"
 
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -25,11 +27,13 @@ import (
 const (
 	POC_VALIDATE_GET_NODES_RETRIES     = 30
 	POC_VALIDATE_GET_NODES_RETRY_DELAY = 5 * time.Second
+	maxRetryBackoff                    = 45 * time.Second
 )
 
 // proofFetcher abstracts proof retrieval so it can be stubbed in tests.
 type proofFetcher interface {
 	FetchAndVerifyProofs(ctx context.Context, participantUrl string, req ProofRequest) ([]VerifiedArtifact, error)
+	FetchAndVerifyProofsByNonce(ctx context.Context, participantUrl string, req ProofByNonceRequest) ([]VerifiedArtifact, error)
 }
 
 // nodeBrokerFacade is the subset of broker.Broker used by OffChainValidator.
@@ -38,7 +42,7 @@ type nodeBrokerFacade interface {
 	GetNodes() ([]broker.NodeResponse, error)
 }
 
-// OffChainValidator handles off-chain PoC validation using MMR proofs.
+// OffChainValidator handles off-chain PoC validation using SMST proofs.
 type OffChainValidator struct {
 	recorder         cosmosclient.CosmosMessageClient
 	nodeBroker       nodeBrokerFacade
@@ -49,34 +53,57 @@ type OffChainValidator struct {
 	chainNodeUrl     string
 
 	config ValidationConfig
+	// guard is the optional DAPI-only early-share guard. A nil guard is a no-op.
+	guard         *EarlyShareGuard
+	artifactStore *artifacts.ManagedArtifactStore
 }
 
 // ValidationConfig contains configuration for off-chain validation.
 type ValidationConfig struct {
-	WorkerCount    int
-	RequestTimeout time.Duration
-	MaxRetries     int
-	RetryBackoff   time.Duration
+	WorkerCount        int
+	RequestTimeout     time.Duration
+	MaxRetries         int
+	RetryBackoff       time.Duration
+	PhaseCheckInterval time.Duration
 }
 
 // DefaultValidationConfig returns the default configuration.
 func DefaultValidationConfig() ValidationConfig {
 	return ValidationConfig{
-		WorkerCount:    10,
-		RequestTimeout: 20 * time.Second,
-		MaxRetries:     15,
-		RetryBackoff:   3 * time.Second,
+		WorkerCount:        10,
+		RequestTimeout:     20 * time.Second,
+		MaxRetries:         25,
+		RetryBackoff:       3 * time.Second,
+		PhaseCheckInterval: 3 * time.Second,
 	}
 }
+
+func retryBackoffDelay(base time.Duration, attempt int) time.Duration {
+	if base <= 0 {
+		base = DefaultValidationConfig().RetryBackoff
+	}
+	if attempt < 0 {
+		attempt = 0
+	}
+	delay := time.Duration(float64(base) * math.Pow(1.5, float64(attempt)))
+	if delay > maxRetryBackoff {
+		return maxRetryBackoff
+	}
+	return delay
+}
+
+// Reject a commit whose highest nonce exceeds its artifact count by this factor.
+const porosityThreshold = 100.0
 
 // validateResult represents the outcome of validating a participant.
 type validateResult int
 
 const (
-	validateSuccess       validateResult = iota // Validation succeeded
-	validateFailPermanent                       // Permanent failure (fraud, invalid proof) - no retry
-	validateFailRetry                           // Transient failure (network, ML node) - can retry
-	porosityThreshold     = 100.0
+	validateDispatched    validateResult = iota // Handed to an ML node; its verdict comes on the callback
+	validateFailPermanent                       // Validatee at fault (fraud, invalid proof) - vote -1, no retry
+	validateFailRetry                           // Validatee unreachable - retry, vote -1 once attempts run out
+	validateAbstain                             // We cannot validate - no vote, no retry
+	validateAbstainRetry                        // We cannot validate yet - retry, no vote once attempts run out
 )
 
 // participantWork represents a single participant to validate.
@@ -89,6 +116,9 @@ type participantWork struct {
 	rootHash   []byte
 	attempt    int       // current attempt number (0-based)
 	retryAfter time.Time // don't process before this time
+
+	checksPassed bool               // validatee checks already passed; retries only redo the local dispatch
+	verified     []VerifiedArtifact // artifacts from those checks, reused by every retry
 }
 
 type modelSamplingData struct {
@@ -144,6 +174,8 @@ func NewOffChainValidator(
 	validatorAddress string,
 	chainNodeUrl string,
 	config ValidationConfig,
+	guard *EarlyShareGuard,
+	artifactStore *artifacts.ManagedArtifactStore,
 ) *OffChainValidator {
 	return &OffChainValidator{
 		recorder:         recorder,
@@ -154,6 +186,88 @@ func NewOffChainValidator(
 		validatorAddress: validatorAddress,
 		chainNodeUrl:     chainNodeUrl,
 		config:           config,
+		guard:            guard,
+		artifactStore:    artifactStore,
+	}
+}
+
+// SyncArtifactStoreStage pins GetCurrentPocStageHeight in RAM while synced.
+// The previous stage is unloaded only when that height changes (next PoC or
+// confirmation PoC). Nil/unsynced leaves the pin alone. Invalid height leaves
+// the pin alone (do not fail-closed deactivate, that can drop a live tree).
+func (v *OffChainValidator) SyncArtifactStoreStage(epochState chainphase.EpochState) {
+	if v.artifactStore == nil {
+		return
+	}
+	if epochState.IsNilOrNotSynced() {
+		return
+	}
+	height := GetCurrentPocStageHeight(&epochState)
+	if height <= 0 {
+		return
+	}
+	v.artifactStore.ActivateStage(height)
+}
+
+// MaybeCaptureEarlyShare is invoked once per block by the dispatcher. From the
+// first-fraction height until the end of the generation window it attempts the
+// early-share capture. The capture query is pinned to the exact first-fraction
+// height (see EarlyShareGuard.MaybeCapture), so a capture that runs a few
+// blocks late (after a restart, a slow query, or a transient chain error)
+// still records the identical consensus snapshot every other validator gets.
+// MaybeCapture is idempotent, so per-block re-invocation acts as a retry loop
+// that stops at the first completed capture.
+func (v *OffChainValidator) MaybeCaptureEarlyShare(epochState chainphase.EpochState) {
+	if v.artifactStore != nil {
+		v.maybeWarmEarlySnapshot(epochState)
+	}
+	if v.guard.Enabled() {
+		stage, target, ok := EarlyShareCaptureTarget(&epochState, v.guard.FirstFraction())
+		if ok && epochState.CurrentBlock.Height >= target {
+			go v.guard.MaybeCapture(context.Background(), v.recorder.NewInferenceQueryClient(), stage, target, epochState.CurrentBlock.Height)
+		}
+	}
+}
+
+func (v *OffChainValidator) maybeWarmEarlySnapshot(epochState chainphase.EpochState) {
+	// Use the guard's configured fraction so the warm-up targets the same
+	// checkpoint height validators capture at. FirstFraction is nil-safe and
+	// falls back to the default when the guard is absent.
+	stage, target, ok := EarlyShareCaptureTarget(&epochState, v.guard.FirstFraction())
+	if !ok || epochState.CurrentBlock.Height != target {
+		return
+	}
+	if v.validatorAddress == "" {
+		return
+	}
+
+	stageStores, err := v.artifactStore.GetStoresForStage(stage)
+	if err != nil || len(stageStores) == 0 {
+		return
+	}
+
+	queryClient := v.recorder.NewInferenceQueryClient()
+	for _, stageStore := range stageStores {
+		if stageStore.Store == nil {
+			continue
+		}
+		modelID := stageStore.ModelID
+		store := stageStore.Store
+		go func(modelID string, store artifacts.ArtifactStore) {
+			resp, err := queryClient.PoCV2StoreCommit(context.Background(), &types.QueryPoCV2StoreCommitRequest{
+				PocStageStartBlockHeight: stage,
+				ParticipantAddress:       v.validatorAddress,
+				ModelId:                  modelID,
+			})
+			if err != nil || !resp.Found || resp.Count == 0 {
+				if err != nil {
+					logging.Debug("OffChainValidator: early snapshot warm-up query failed", types.PoC,
+						"stage", stage, "modelId", modelID, "error", err)
+				}
+				return
+			}
+			store.WarmSnapshot(resp.Count)
+		}(modelID, store)
 	}
 }
 
@@ -183,7 +297,6 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		"samplingBlockHash", samplingBlockHash,
 		"pocStartBlockHash", pocStartBlockHash)
 
-	// Get PoC params
 	queryClient := v.recorder.NewInferenceQueryClient()
 	paramsResp, err := queryClient.Params(context.Background(), &types.QueryParamsRequest{})
 	if err != nil {
@@ -196,7 +309,6 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		sampleSize = 200
 	}
 
-	// Get available ML nodes for validation with retry
 	nodes, err := v.getNodesWithRetry(pocStageStartBlockHeight)
 	if err != nil {
 		logging.Error("OffChainValidator: failed to get nodes for validation", types.PoC,
@@ -208,10 +320,8 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		return
 	}
 
-	// Stop generation on all nodes before validation
 	v.stopGenerationOnAllNodes(nodes)
 
-	// Query all store commits for this stage
 	commitsResp, err := queryClient.AllPoCV2StoreCommitsForStage(context.Background(),
 		&types.QueryAllPoCV2StoreCommitsForStageRequest{
 			PocStageStartBlockHeight: pocStageStartBlockHeight,
@@ -238,6 +348,9 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	var snapshotTotalNetworkWeight int64
 	snapshotFound := false
 	modelSampling := make(map[string]*modelSamplingData)
+	// modelVotingPowers holds established per-model voting power (model_id ->
+	// participant -> voting power) for the early-share guard's weighted median.
+	modelVotingPowers := make(map[string]map[string]int64)
 	snapshotResp, err := queryClient.PoCValidationSnapshot(context.Background(),
 		&types.QueryPoCValidationSnapshotRequest{
 			PocStageStartHeight: pocStageStartBlockHeight,
@@ -254,6 +367,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		snapshotTotalNetworkWeight = snapshotResp.Snapshot.TotalNetworkWeight
 		for _, mvw := range snapshotResp.Snapshot.ModelVotingPowers {
 			weights := types.VotingPowerSliceToMap(mvw.VotingPowers)
+			modelVotingPowers[mvw.ModelId] = weights
 			entries, total := calculations.PrepareSortedEntries(weights)
 			modelSampling[mvw.ModelId] = &modelSamplingData{entries: entries, totalWeight: total}
 		}
@@ -303,7 +417,6 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 			}
 		}
 
-		// Get participant's inference URL
 		participantResp, err := queryClient.Participant(context.Background(),
 			&types.QueryGetParticipantRequest{Index: commit.ParticipantAddress})
 		if err != nil {
@@ -318,7 +431,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 			continue
 		}
 
-		// Get participant's public key for ML node (from commit query)
+		// The ML node needs the participant's public key, which only the commit carries.
 		if commit.HexPubKey == "" {
 			logging.Warn("OffChainValidator: participant has no public key", types.PoC,
 				"address", commit.ParticipantAddress)
@@ -349,30 +462,59 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		return
 	}
 
+	// Early-share guard: precompute per-participant decisions over the whole
+	// stage (weighted median needs the full distribution), advancing miss-streak
+	// state only for the participants this validator is assigned to. A nil
+	// runtime means the guard is disabled or skipped (fail open).
+	var gr *guardRuntime
+	if v.guard.Enabled() {
+		assigned := make(map[string]bool, len(workItems))
+		for _, item := range workItems {
+			assigned[earlyShareKey(item.address, item.modelId)] = true
+		}
+		// A confirmation PoC (CPoC) run is identified by an active confirmation
+		// event during the inference phase whose trigger height matches this
+		// stage. Only a passing CPoC clears the miss streak.
+		isConfirmation := epochState.ActiveConfirmationPoCEvent != nil &&
+			epochState.CurrentPhase == types.InferencePhase &&
+			pocStageStartBlockHeight == epochState.ActiveConfirmationPoCEvent.TriggerHeight
+		decisions := v.guard.Evaluate(context.Background(), pocStageStartBlockHeight, isConfirmation, commitsResp.Commits, modelVotingPowers, assigned)
+		if len(decisions) > 0 {
+			gr = &guardRuntime{
+				guard:             v.guard,
+				decisions:         decisions,
+				stage:             pocStageStartBlockHeight,
+				validatorPubKey:   v.pubKey,
+				samplingBlockHash: samplingBlockHash,
+			}
+		}
+	}
+
 	// Randomize order to avoid thundering herd
 	rand.Shuffle(len(workItems), func(i, j int) {
 		workItems[i], workItems[j] = workItems[j], workItems[i]
 	})
 
-	// Create proof client
-	proofClient := NewProofClient(v.recorder, ProofClientConfig{Timeout: v.config.RequestTimeout})
+	proofClient := NewProofClient(v.recorder, ProofClientConfig{
+		Timeout: v.config.RequestTimeout,
+	})
 
-	// Create work channel - buffered to allow re-queueing failed items
-	// Size: initial items + potential retries
+	// Buffered so a worker re-queueing a retry never blocks on a full channel.
 	workChan := make(chan participantWork, len(workItems)*2)
 	var wg sync.WaitGroup
 
-	// Track statistics
 	var statsMu sync.Mutex
-	successCount := 0
+	dispatchedCount := 0
 	failCount := 0
+	abstainCount := 0
 	pendingCount := len(workItems)
 
-	// Context for coordinating shutdown
+	// Context for coordinating shutdown. The phase watcher cancels as soon
+	// as the chain stops accepting validation results for this PoC stage.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	v.cancelWhenValidationPhaseEnds(ctx, cancel, pocStageStartBlockHeight)
 
-	// Start workers
 	numWorkers := v.config.WorkerCount
 	if numWorkers > len(workItems) {
 		numWorkers = len(workItems)
@@ -393,32 +535,86 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 				pocStartBlockHash,
 				pocParams,
 				sampleSize,
+				gr,
 				&statsMu,
-				&successCount,
+				&dispatchedCount,
 				&failCount,
+				&abstainCount,
 				&pendingCount,
 			)
 		}(i)
 	}
 
-	// Send initial work items
 	for _, item := range workItems {
 		workChan <- item
 	}
 
-	// Wait for all workers to complete
 	wg.Wait()
 	close(workChan)
 
 	logging.Info("OffChainValidator: validation complete", types.PoC,
 		"pocStageStartBlockHeight", pocStageStartBlockHeight,
 		"totalParticipants", len(workItems),
-		"successful", successCount,
-		"failed", failCount)
+		"dispatched", dispatchedCount,
+		"votedInvalid", failCount,
+		"abstained", abstainCount)
 }
 
-// worker processes participants from the work channel.
-// Failed items are re-queued for retry instead of blocking on retries.
+func (v *OffChainValidator) cancelWhenValidationPhaseEnds(ctx context.Context, cancel context.CancelFunc, pocStageStartBlockHeight int64) {
+	phaseCheckInterval := v.config.PhaseCheckInterval
+	if phaseCheckInterval <= 0 {
+		phaseCheckInterval = 3 * time.Second
+	}
+
+	go func() {
+		if v.cancelIfValidationPhaseEnded(cancel, pocStageStartBlockHeight) {
+			return
+		}
+
+		ticker := time.NewTicker(phaseCheckInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if v.cancelIfValidationPhaseEnded(cancel, pocStageStartBlockHeight) {
+					return
+				}
+			}
+		}
+	}()
+}
+
+func (v *OffChainValidator) cancelIfValidationPhaseEnded(cancel context.CancelFunc, pocStageStartBlockHeight int64) bool {
+	state := v.phaseTracker.GetCurrentEpochState()
+	if !shouldStopValidationForStage(state, pocStageStartBlockHeight) {
+		return false
+	}
+
+	logging.Info("OffChainValidator: validation phase ended, stopping workers", types.PoC,
+		"currentPhase", state.CurrentPhase,
+		"blockHeight", state.CurrentBlock.Height,
+		"pocStageStartBlockHeight", pocStageStartBlockHeight)
+	cancel()
+	return true
+}
+
+func shouldStopValidationForStage(state *chainphase.EpochState, pocStageStartBlockHeight int64) bool {
+	// A nil or not-synced tracker reading is transient (startup, RPC lag,
+	// catch-up), not evidence that the validation window ended. Cancelling on
+	// it would permanently abandon all in-flight validation for the stage, so
+	// treat it as "wait for the next tick" and only stop on a synced reading
+	// that positively says the phase ended or the stage changed.
+	if state.IsNilOrNotSynced() {
+		return false
+	}
+	return !ShouldAcceptValidatedArtifacts(state) || GetCurrentPocStageHeight(state) != pocStageStartBlockHeight
+}
+
+// worker processes participants from the work channel. Retryable failures go back
+// into the channel rather than blocking the worker on their backoff.
 func (v *OffChainValidator) worker(
 	ctx context.Context,
 	cancel context.CancelFunc,
@@ -431,9 +627,11 @@ func (v *OffChainValidator) worker(
 	pocStartBlockHash string,
 	pocParams *types.PocParams,
 	sampleSize int,
+	gr *guardRuntime,
 	statsMu *sync.Mutex,
-	successCount *int,
+	dispatchedCount *int,
 	failCount *int,
+	abstainCount *int,
 	pendingCount *int,
 ) {
 	nodeCounter := workerID // Start from different nodes per worker
@@ -447,15 +645,26 @@ func (v *OffChainValidator) worker(
 				return
 			}
 
-			// Not ready yet? Put back at end of queue
+			// Not ready yet? Put back at end of queue and sleep briefly to avoid busy-wait spin.
 			if time.Now().Before(work.retryAfter) {
-				workChan <- work
+				select {
+				case workChan <- work:
+				case <-ctx.Done():
+					return
+				}
+
+				select {
+				case <-time.After(100 * time.Millisecond):
+				case <-ctx.Done():
+					return
+				}
 				continue
 			}
 
 			result := v.validateParticipant(
+				ctx,
 				workerID,
-				work,
+				&work,
 				proofClient,
 				nodes,
 				&nodeCounter,
@@ -464,48 +673,60 @@ func (v *OffChainValidator) worker(
 				pocStartBlockHash,
 				pocParams,
 				sampleSize,
+				gr,
 			)
+
+			// Retryable results go back into the queue until the attempt budget is
+			// spent, then settle as their class: validatee failures vote -1, local
+			// failures abstain. A window that closed under the attempt makes the
+			// failure ours whatever its cause, so it abstains too.
+			if result == validateFailRetry || result == validateAbstainRetry {
+				switch {
+				case ctx.Err() != nil:
+					logging.Warn("OffChainValidator: abstaining, validation window closed", types.PoC,
+						"participant", work.address, "modelId", work.modelId, "attempts", work.attempt+1)
+					result = validateAbstain
+
+				case work.attempt < v.config.MaxRetries-1:
+					work.attempt++
+					delay := retryBackoffDelay(v.config.RetryBackoff, work.attempt-1)
+					work.retryAfter = time.Now().Add(delay)
+					select {
+					case workChan <- work:
+						logging.Debug("OffChainValidator: re-queued for retry", types.PoC,
+							"participant", work.address, "attempt", work.attempt, "delay", delay)
+						continue
+					case <-ctx.Done():
+						return
+					}
+
+				case result == validateAbstainRetry:
+					logging.Warn("OffChainValidator: abstaining after local failure retry exhaustion", types.PoC,
+						"participant", work.address, "modelId", work.modelId, "attempts", work.attempt+1)
+					result = validateAbstain
+
+				default:
+					logging.Warn("OffChainValidator: max retries exceeded for transient validation failure", types.PoC,
+						"participant", work.address, "attempts", work.attempt+1)
+					result = validateFailPermanent
+				}
+			}
 
 			var reportParticipant string
 			var reportModelID string
 
 			statsMu.Lock()
 			switch result {
-			case validateSuccess:
-				*successCount++
-				*pendingCount--
+			case validateDispatched:
+				*dispatchedCount++
 			case validateFailPermanent:
 				*failCount++
-				*pendingCount--
-				// Report participant as invalid to chain
-				// Uncomment when stabilized
 				reportParticipant = work.address
 				reportModelID = work.modelId
-			case validateFailRetry:
-				// Re-queue for retry if under max attempts
-				if work.attempt < v.config.MaxRetries-1 {
-					work.attempt++
-					work.retryAfter = time.Now().Add(v.config.RetryBackoff)
-					// Non-blocking send - if channel is full, count as failed
-					select {
-					case workChan <- work:
-						logging.Debug("OffChainValidator: re-queued for retry", types.PoC,
-							"participant", work.address, "attempt", work.attempt)
-					default:
-						*failCount++
-						*pendingCount--
-						logging.Warn("OffChainValidator: queue full, marking as failed", types.PoC,
-							"participant", work.address)
-					}
-				} else {
-					*failCount++
-					*pendingCount--
-					logging.Warn("OffChainValidator: max retries exceeded, reporting as invalid", types.PoC,
-						"participant", work.address, "attempts", work.attempt+1)
-					// Report participant as invalid to chain. We probably should separate only to report failed network requests.
-					// reportAddr = work.address
-				}
+			case validateAbstain:
+				*abstainCount++
 			}
+			*pendingCount--
 
 			done := *pendingCount <= 0
 			statsMu.Unlock()
@@ -522,13 +743,18 @@ func (v *OffChainValidator) worker(
 	}
 }
 
-// validateParticipant validates a single participant.
-// Returns validateResult indicating success, permanent failure, or retryable failure.
+// validateParticipant validates a single participant in two phases.
+//
+// checkValidateeProofs judges the validatee and runs once, its result cached on the
+// work item. dispatchToMLNode is local work and can only abstain, so once the checks
+// pass no local failure can turn the item into a -1.
+//
 // samplingBlockHash: fresh hash for random sampling (anti-cheat)
 // pocStartBlockHash: original PoC start block hash (must match generation for MLNode)
 func (v *OffChainValidator) validateParticipant(
+	ctx context.Context,
 	workerID int,
-	work participantWork,
+	work *participantWork,
 	proofClient proofFetcher,
 	nodes []broker.NodeResponse,
 	nodeCounter *int,
@@ -537,22 +763,37 @@ func (v *OffChainValidator) validateParticipant(
 	pocStartBlockHash string,
 	pocParams *types.PocParams,
 	sampleSize int,
+	gr *guardRuntime,
 ) validateResult {
-	ctx := context.Background()
-	modelNodes := filterValidationNodesForModel(nodes, work.modelId)
-	if len(modelNodes) == 0 {
-		logging.Warn("OffChainValidator: no validation executors for model", types.PoC,
-			"participant", work.address, "modelId", work.modelId)
-		return validateFailRetry
+	logging.Debug("OffChainValidator: validating participant", types.PoC,
+		"worker", workerID, "participant", work.address, "count", work.count,
+		"attempt", work.attempt, "checksPassed", work.checksPassed)
+
+	if !work.checksPassed {
+		if failure, ok := v.checkValidateeProofs(ctx, work, proofClient, pocHeight, samplingBlockHash, sampleSize, gr); !ok {
+			return failure
+		}
 	}
 
-	logging.Debug("OffChainValidator: validating participant", types.PoC,
-		"worker", workerID, "participant", work.address, "count", work.count, "attempt", work.attempt)
+	return v.dispatchToMLNode(ctx, work, nodes, nodeCounter, pocHeight, pocStartBlockHash, pocParams)
+}
 
+// checkValidateeProofs checks proofs against the committed root, duplicate nonces,
+// porosity and the early-share guard. This is the only phase that can vote -1, since
+// only here do we see evidence about the validatee; failures on our own side abstain.
+// It reports whether the validatee passed and, if not, the result the worker settles on.
+func (v *OffChainValidator) checkValidateeProofs(
+	ctx context.Context,
+	work *participantWork,
+	proofClient proofFetcher,
+	pocHeight int64,
+	samplingBlockHash string,
+	sampleSize int,
+	gr *guardRuntime,
+) (failure validateResult, passed bool) {
 	// Sample leaf indices using fresh hash (anti-cheat: prevents validators from predicting sample)
 	leafIndices := sampleLeafIndices(v.pubKey, samplingBlockHash, pocHeight, work.modelId, work.count, sampleSize)
 
-	// Fetch and verify proofs
 	verified, err := proofClient.FetchAndVerifyProofs(ctx, work.url, ProofRequest{
 		PocStageStartBlockHeight: pocHeight,
 		ModelId:                  work.modelId,
@@ -564,19 +805,25 @@ func (v *OffChainValidator) validateParticipant(
 	if err != nil {
 		logging.Warn("OffChainValidator: proof fetch/verify failed", types.PoC,
 			"participant", work.address, "attempt", work.attempt, "error", err)
-		// Proof verification failures, incomplete coverage, and invalid vector data are permanent - no point retrying
+		// The validatee's fault, and retrying cannot change it.
 		if errors.Is(err, ErrProofVerificationFailed) || errors.Is(err, ErrIncompleteCoverage) || errors.Is(err, ErrInvalidVectorData) {
-			return validateFailPermanent
+			return validateFailPermanent, false
 		}
-		// Transient error (network/timeout) - retry
-		return validateFailRetry
+		// We never sent a request, so we learned nothing about the validatee.
+		if errors.Is(err, ErrLocalRequestFailure) {
+			return validateAbstainRetry, false
+		}
+		// Transient on the validatee side (network, timeout).
+		return validateFailRetry, false
 	}
 
-	// Check for duplicate nonces (fraud) - permanent failure
+	// Check for duplicate nonces in response (defense-in-depth).
+	// SMST proofs with index-binding structurally prevent cross-index duplication,
+	// but this guards against a malformed response returning the same artifact twice.
 	if err := CheckDuplicateNonces(verified); err != nil {
 		logging.Warn("OffChainValidator: duplicate nonces detected (fraud)", types.PoC,
 			"participant", work.address, "error", err)
-		return validateFailPermanent
+		return validateFailPermanent, false
 	}
 
 	if maxNonce, porosity, invalid := isPorosityTooHigh(verified, work.count); invalid {
@@ -585,13 +832,66 @@ func (v *OffChainValidator) validateParticipant(
 			"maxNonce", maxNonce,
 			"count", work.count,
 			"porosity", porosity)
-		return validateFailPermanent
+		return validateFailPermanent, false
 	}
 
+	// Early-share guard: compare the early checkpoint against the final
+	// commitment. The inclusion check fails immediately on a cryptographic
+	// mismatch; the low-early-share decision is miss-streak gated and was
+	// precomputed in ValidateAll. In observe mode the guard only logs.
+	if gr != nil && gr.guard != nil {
+		if dec, ok := gr.decisions[earlyShareKey(work.address, work.modelId)]; ok {
+			outcome, reason := gr.guard.decide(ctx, proofClient, gr.stage, *work, dec, gr.validatorPubKey, gr.samplingBlockHash)
+			switch outcome {
+			case earlyGuardVoteNo:
+				if gr.guard.cfg.Enforcing() {
+					logging.Warn("OffChainValidator: early-share guard vote no (enforce)", types.PoC,
+						"participant", work.address, "modelId", work.modelId, "reason", reason)
+					return validateFailPermanent, false
+				}
+				logging.Info("OffChainValidator: early-share guard would vote no (observe)", types.PoC,
+					"participant", work.address, "modelId", work.modelId, "reason", reason)
+			case earlyGuardRetry:
+				if gr.guard.cfg.Enforcing() {
+					logging.Warn("OffChainValidator: early-share guard retry (enforce)", types.PoC,
+						"participant", work.address, "modelId", work.modelId, "reason", reason)
+					return validateFailRetry, false
+				}
+				logging.Info("OffChainValidator: early-share guard would retry (observe)", types.PoC,
+					"participant", work.address, "modelId", work.modelId, "reason", reason)
+			case earlyGuardAbstainRetry:
+				if gr.guard.cfg.Enforcing() {
+					logging.Warn("OffChainValidator: early-share guard abstains after local failure (enforce)", types.PoC,
+						"participant", work.address, "modelId", work.modelId, "reason", reason)
+					return validateAbstainRetry, false
+				}
+				logging.Info("OffChainValidator: early-share guard would abstain after local failure (observe)", types.PoC,
+					"participant", work.address, "modelId", work.modelId, "reason", reason)
+			}
+		}
+	}
+
+	work.verified = verified
+	work.checksPassed = true
+	return failure, true
+}
+
+// dispatchToMLNode hands the verified artifacts to a local ML node for statistical
+// validation. Its verdict, including a -1 on detected fraud, arrives later on the
+// /validated callback. Failures here are all on our side, so they abstain.
+func (v *OffChainValidator) dispatchToMLNode(
+	ctx context.Context,
+	work *participantWork,
+	nodes []broker.NodeResponse,
+	nodeCounter *int,
+	pocHeight int64,
+	pocStartBlockHash string,
+	pocParams *types.PocParams,
+) validateResult {
 	// Convert verified artifacts to ML node format
-	artifacts := make([]mlnodeclient.ArtifactV2, len(verified))
-	nonces := make([]int64, len(verified))
-	for i, a := range verified {
+	artifacts := make([]mlnodeclient.ArtifactV2, len(work.verified))
+	nonces := make([]int64, len(work.verified))
+	for i, a := range work.verified {
 		artifacts[i] = mlnodeclient.ArtifactV2{
 			Nonce:     int64(a.Nonce),
 			VectorB64: a.VectorB64,
@@ -599,15 +899,25 @@ func (v *OffChainValidator) validateParticipant(
 		nonces[i] = int64(a.Nonce)
 	}
 
-	// Send to ML node for statistical validation
 	// IMPORTANT: Use pocStartBlockHash (not samplingBlockHash) to match generation seed
 	validationCallbackUrl := buildValidationCallbackURL(v.callbackUrl, work.modelId)
+	// Commits are gated on governance models, not on PoC params, so a model can
+	// legitimately be committed without a config here.
 	modelConfig, ok := pocParams.GetModelConfig(work.modelId)
 	if !ok {
-		logging.Warn("OffChainValidator: missing model config for validation work", types.PoC,
+		logging.Warn("OffChainValidator: abstaining, missing model config for validation work", types.PoC,
 			"participant", work.address, "modelId", work.modelId)
-		return validateFailPermanent
+		return validateAbstain
 	}
+
+	// nodes is a snapshot taken once per stage, so retrying cannot make an executor appear.
+	modelNodes := filterValidationNodesForModel(nodes, work.modelId)
+	if len(modelNodes) == 0 {
+		logging.Info("OffChainValidator: abstaining, no validation executors for model", types.PoC,
+			"participant", work.address, "modelId", work.modelId)
+		return validateAbstain
+	}
+
 	validationReq := mlnodeclient.PoCGenerateRequestV2{
 		BlockHash:   pocStartBlockHash, // Must match the hash used during generation
 		BlockHeight: pocHeight,
@@ -633,16 +943,16 @@ func (v *OffChainValidator) validateParticipant(
 	validationReq.NodeId = int(node.Node.NodeNum)
 
 	nodeClient := v.nodeBroker.NewNodeClient(&node.Node)
-	_, err = nodeClient.GenerateV2(ctx, validationReq)
+	_, err := nodeClient.GenerateV2(ctx, validationReq)
 	if err == nil {
 		logging.Debug("OffChainValidator: sent to ML node", types.PoC,
 			"participant", work.address, "node", node.Node.Host)
-		return validateSuccess
+		return validateDispatched
 	}
 
 	logging.Warn("OffChainValidator: ML node request failed", types.PoC,
 		"participant", work.address, "node", node.Node.Host, "attempt", work.attempt, "error", err)
-	return validateFailRetry
+	return validateAbstainRetry
 }
 
 // sampleLeafIndices generates deterministic leaf indices using lazy Fisher-Yates.
@@ -697,7 +1007,7 @@ func sampleLeafIndices(validatorPubKey string, blockHash string, blockHeight int
 	return result
 }
 
-// getBlockHash returns the block hash for sampling randomness.
+// getSamplingBlockHash returns the block hash used as sampling randomness.
 func (v *OffChainValidator) getSamplingBlockHash(epochState *chainphase.EpochState) string {
 	if epochState.CurrentBlock.Hash != "" {
 		return epochState.CurrentBlock.Hash
@@ -757,8 +1067,8 @@ func (v *OffChainValidator) stopGenerationOnAllNodes(nodes []broker.NodeResponse
 		"success", successCount, "failed", failCount)
 }
 
-// getNodesWithRetry gets nodes for PoC validation with retry logic.
-// Waits for nodes to become available with up to 30 retries.
+// getNodesWithRetry waits for nodes to become available for PoC validation,
+// retrying up to POC_VALIDATE_GET_NODES_RETRIES times.
 func (v *OffChainValidator) getNodesWithRetry(pocStageStartBlockHeight int64) ([]broker.NodeResponse, error) {
 	return v.getNodesWithRetryConfig(
 		pocStageStartBlockHeight,
@@ -896,8 +1206,8 @@ func filterValidationNodesForModel(nodes []broker.NodeResponse, modelID string) 
 	return filtered
 }
 
-// reportInvalidParticipant submits a validation result with ValidatedWeight=-1 (invalid) to chain.
-// This is called when validation fails permanently (e.g., retry exhaustion).
+// reportInvalidParticipant votes ValidatedWeight=-1 on chain. Reserved for failures
+// the validatee is responsible for; anything on our side abstains instead.
 func (v *OffChainValidator) reportInvalidParticipant(pocHeight int64, participantAddress, modelID string) {
 	msg := &types.MsgSubmitPocValidationsV2{
 		PocStageStartBlockHeight: pocHeight,

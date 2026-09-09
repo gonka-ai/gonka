@@ -1,0 +1,127 @@
+diff --git a/testermint/src/test/kotlin/UpgradeRehearsalPrepTests.kt b/testermint/src/test/kotlin/UpgradeRehearsalPrepTests.kt
+new file mode 100644
+index 000000000..5a2d131fe
+--- /dev/null
++++ b/testermint/src/test/kotlin/UpgradeRehearsalPrepTests.kt
+@@ -0,0 +1,121 @@
++import com.productscience.*
++import org.assertj.core.api.Assertions.assertThat
++import org.junit.jupiter.api.Tag
++import org.junit.jupiter.api.Test
++import org.junit.jupiter.api.Timeout
++import org.tinylog.Logger
++import java.io.File
++import java.time.Instant
++import java.util.concurrent.TimeUnit
++
++class UpgradeRehearsalPrepTests : TestermintTest() {
++    private val rehearsalConfig = inferenceConfig.copy(
++        genesisSpec = createSpec(epochLength = 40, epochShift = 10).merge(devshardNoRestrictionsSpec)
++    )
++
++    @Test
++    @Tag("upgrade-rehearsal")
++    @Timeout(value = 60, unit = TimeUnit.MINUTES)
++    fun `prepare upgrade rehearsal state`() {
++        val (cluster, genesis) = initCluster(config = rehearsalConfig, reboot = true)
++        val startingHeight = genesis.getCurrentBlockHeight()
++        val startingEpoch = genesis.getEpochData().latestEpoch.index
++        val previousRelease = System.getenv("PREVIOUS_RELEASE") ?: "unknown"
++
++        cluster.stubDevshardChatResponse(content = "upgrade rehearsal pre-upgrade")
++
++        logSection("Waiting through an old-version epoch")
++        genesis.waitForNextEpoch()
++
++        logSection("Running pre-upgrade normal inference")
++        genesis.waitForNextInferenceWindow()
++        val normalInference = genesis.makeInferenceRequest(inferenceRequest)
++        assertThat(normalInference.choices.first().message.content).isNotEmpty()
++        genesis.waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
++
++        logSection("Running pre-upgrade devshard settlement")
++        val user = genesis.createFundedDevshardUser("upgrade-rehearsal-pre-devshard-user")
++        genesis.waitForNextInferenceWindow()
++        val escrowAmount = 7_000_000_000L
++        val escrowId = genesis.createDevshardEscrowForUser(
++            escrowAmount,
++            user.keyName,
++            modelId = defaultModel,
++        )
++
++        val handle = genesis.startDevshardProxy(escrowId = escrowId, keyName = user.keyName)
++        var devshardRequests = 0
++        var settlementVersion = ""
++        try {
++            genesis.waitForDevshardProxyWarmup()
++            repeat(5) { index ->
++                val response = genesis.sendChatCompletion(
++                    handle.proxyUrl,
++                    defaultModel,
++                    "upgrade rehearsal pre-upgrade prompt $index",
++                )
++                assertThat(response).isNotEmpty()
++                devshardRequests += 1
++            }
++            val settlement = genesis.assertDevshardSettlement(
++                handle,
++                escrowId,
++                user,
++                escrowAmount,
++                requireCompletedValidations = false,
++            )
++            settlementVersion = settlement.parsed.version
++        } finally {
++            genesis.stopDevshardProxy(escrowId)
++        }
++
++        logSection("Waiting into another old-version epoch")
++        genesis.waitForNextEpoch()
++
++        val finalEpoch = genesis.getEpochData().latestEpoch.index
++        val finalHeight = genesis.getCurrentBlockHeight()
++        val participantIds = genesis.api.getParticipants().map { it.id }
++        val participantWeights = genesis.node.getParticipantCurrentStats()
++            .participantCurrentStats
++            ?.associate { it.participantId to it.weight }
++            ?: emptyMap()
++        assertThat(participantWeights.keys).containsAll(participantIds)
++        participantWeights.values.forEach { weight -> assertThat(weight).isPositive() }
++        val manifest = """
++            {
++              "schema": 1,
++              "phase": "prepared",
++              "preparedAt": "${escapeJson(Instant.now().toString())}",
++              "previousRelease": "${escapeJson(previousRelease)}",
++              "startingHeight": $startingHeight,
++              "finalHeight": $finalHeight,
++              "startingEpoch": "$startingEpoch",
++              "finalEpoch": "$finalEpoch",
++              "normalInferenceId": "${escapeJson(normalInference.id)}",
++              "devshardEscrowId": $escrowId,
++              "devshardRequests": $devshardRequests,
++              "devshardSettlementVersion": "${escapeJson(settlementVersion)}",
++              "participantIds": ${cosmosJson.toJson(participantIds)},
++              "participantWeights": ${cosmosJson.toJson(participantWeights)}
++            }
++        """.trimIndent()
++
++        val output = manifestFile()
++        output.parentFile.mkdirs()
++        output.writeText(manifest)
++        Logger.info("Wrote upgrade rehearsal prep manifest to {}", output.absolutePath)
++    }
++
++    private fun manifestFile(): File =
++        System.getenv("UPGRADE_REHEARSAL_MANIFEST")
++            ?.takeIf { it.isNotBlank() }
++            ?.let(::File)
++            ?: File("../prod-local/upgrade-rehearsal/manifest.json")
++
++    private fun escapeJson(value: String): String =
++        value
++            .replace("\\", "\\\\")
++            .replace("\"", "\\\"")
++            .replace("\n", "\\n")
++            .replace("\r", "\\r")
++}

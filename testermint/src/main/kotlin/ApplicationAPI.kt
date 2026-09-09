@@ -270,6 +270,35 @@ data class ApplicationAPI(
         get(url, "admin/v1/unit-of-compute-price-proposal")
     }
 
+    fun postBridgeBlock(block: BridgeBlockRequest): BridgePostBlockResponse = wrapLog("PostBridgeBlock", true) {
+        val url = urlFor(SERVER_TYPE_ADMIN)
+        // Admin POST runs accept+drain inline. Drain waits up to bridgeConfirmTimeout
+        // (60s) for on-chain vote confirmation — client read timeout must exceed that.
+        val response = Fuel.post("$url/admin/v1/bridge/block")
+            .timeout(30_000)
+            .timeoutRead(180_000)
+            .jsonBody(block, cosmosJson)
+            .responseString()
+        logResponse(response)
+        val (req, resp, result) = response
+        when (result) {
+            is com.github.kittinunf.result.Result.Success ->
+                cosmosJson.fromJson(result.get(), BridgePostBlockResponse::class.java)
+            is com.github.kittinunf.result.Result.Failure -> {
+                val body = resp.data.decodeToString()
+                throw IllegalStateException(
+                    "POST bridge/block failed: ${resp.statusCode} ${resp.responseMessage} body=$body url=${req.url}",
+                    result.getException(),
+                )
+            }
+        }
+    }
+
+    fun getLatestBridgeBlock(chain: String = "ethereum"): LatestBridgeBlockResponse = wrapLog("GetLatestBridgeBlock", false) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        get(url, "v1/bridge/block/latest?chain=$chain")
+    }
+
     fun getPricing(): GetPricingDto = wrapLog("GetPricing", true) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
         get(url, "v1/pricing")
@@ -493,7 +522,7 @@ data class ApplicationAPI(
 
     fun getDevshardMempool(escrowId: Long): DevshardMempoolResponse = wrapLog("GetDevshardMempool", false) {
         val url = urlFor(SERVER_TYPE_PUBLIC)
-        val resp = Fuel.get("$url/v1/devshard/sessions/$escrowId/mempool")
+        val resp = Fuel.get("$url${defaultDevshardRoutePrefix()}/sessions/$escrowId/mempool")
             .timeoutRead(1000 * 30)
             .responseObject<DevshardMempoolResponse>(gsonDeserializer(cosmosJson))
         logResponse(resp)

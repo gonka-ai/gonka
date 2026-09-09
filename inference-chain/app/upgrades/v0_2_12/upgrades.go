@@ -272,7 +272,7 @@ func migrateFeegrantsForFees(
 	seen := make(map[string]bool)
 	var pairs []grantPair
 
-	startInferenceMsgType := sdk.MsgTypeURL(&types.MsgStartInference{})
+	startInferenceMsgType := types.LegacyMsgStartInferenceTypeURL
 	authzKeeper.IterateGrants(ctx, func(granterAddr, granteeAddr sdk.AccAddress, grant authz.Grant) bool {
 		if grant.Authorization.GetTypeUrl() != "/cosmos.authz.v1beta1.GenericAuthorization" {
 			return false

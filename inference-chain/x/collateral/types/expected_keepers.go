@@ -39,3 +39,11 @@ type ParamSubspace interface {
 type RequiredCollateralProvider interface {
 	GetRequiredCollateralForSlash(ctx context.Context, participantAddress sdk.AccAddress) math.Int
 }
+
+// MaintenanceChecker provides a read-only check for whether a participant
+// is currently in an active maintenance window. Used as defense-in-depth
+// by collateral hooks to suppress downtime-driven collateral side effects
+// for maintenance-covered participants.
+type MaintenanceChecker interface {
+	IsParticipantInActiveMaintenance(ctx context.Context, participant sdk.AccAddress) bool
+}

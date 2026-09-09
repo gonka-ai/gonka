@@ -98,7 +98,7 @@ func (v ResponseFormatValidator) validateJSONSchemaWrapper(rf map[string]any) er
 		return fmt.Errorf("%w: must be an object", ErrResponseFormatJSONSchema)
 	}
 	name, ok := wrapper["name"].(string)
-	if !ok || name == "" {
+	if !ok || strings.TrimSpace(name) == "" {
 		return fmt.Errorf("%w: must be a non-empty string", ErrResponseFormatName)
 	}
 	if len(name) > v.MaxNameLen {

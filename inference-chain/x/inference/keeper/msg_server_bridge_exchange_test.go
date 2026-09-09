@@ -6,6 +6,7 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
+	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -89,11 +90,8 @@ func TestBridgeExchange_DoubleVoteCaseBypass(t *testing.T) {
 	// This should fail if fixed, but succeeds if vulnerable
 	_, err = ms.BridgeExchange(ctx, msg2)
 
-	// We assert that it fails (expecting the fix to prevent this)
-	require.Error(t, err, "Second vote should fail as duplicate")
-	if err != nil {
-		require.Contains(t, err.Error(), "validator has already validated this transaction")
-	}
+	require.ErrorIs(t, err, types.ErrBridgeAlreadyValidated)
+	require.Contains(t, err.Error(), types.ErrBridgeAlreadyValidated.Error())
 }
 
 func TestBridgeExchange_NonActiveValidatorRejected(t *testing.T) {
@@ -125,9 +123,208 @@ func TestBridgeExchange_NonActiveValidatorRejected(t *testing.T) {
 
 	_, err := ms.BridgeExchange(ctx, msg)
 
-	// We assert that it fails because the permission check intercepts it
-	require.Error(t, err, "Vote from non-active participant should fail at the permission level")
-	if err != nil {
-		require.Contains(t, err.Error(), "participant is not active")
+	// CheckPermission (Active | PreviousActive) gates the handler; ante uses
+	// ValidateBridgeExchange which re-checks the same active set.
+	require.ErrorIs(t, err, types.ErrActiveParticipantNotFound)
+	require.Contains(t, err.Error(), types.ErrActiveParticipantNotFound.Error())
+}
+
+func TestBridgeExchange_EligibleVoteRecords(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+
+	validator := testutil.Validator
+	addr := sdk.MustAccAddressFromBech32(validator)
+	other := sdk.MustAccAddressFromBech32(testutil.Validator2)
+	epochIndex := uint64(1)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epochIndex))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epochIndex,
+		ModelId:      "",
+		EpochGroupId: 1,
+		TotalWeight:  100, // majority requires 51; keep vote under threshold
+	})
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epochIndex,
+		Participants: []*types.ActiveParticipant{{Index: validator}, {Index: other.String()}},
+	}))
+	mocks.AccountKeeper.EXPECT().HasAccount(ctx, addr).Return(true).AnyTimes()
+	mocks.AccountKeeper.EXPECT().HasAccount(ctx, other).Return(true).AnyTimes()
+	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
+		&group.QueryGroupMembersResponse{
+			Members: []*group.GroupMember{
+				{GroupId: 1, Member: &group.Member{Address: validator, Weight: "10"}},
+				{GroupId: 1, Member: &group.Member{Address: other.String(), Weight: "10"}},
+			},
+		}, nil,
+	).AnyTimes()
+
+	btx := &types.BridgeTransaction{
+		ChainId:              "ethereum",
+		ContractAddress:      "0x123",
+		OwnerAddress:         "0xabc",
+		Amount:               "100",
+		BlockNumber:          "1000",
+		ReceiptIndex:         "1",
+		EpochIndex:           epochIndex,
+		Status:               types.BridgeTransactionStatus_BRIDGE_PENDING,
+		TotalValidationPower: 10,
 	}
+	k.SetBridgeTransaction(ctx, btx)
+	require.NoError(t, k.AddBridgeTransactionValidator(ctx, btx, other.String()))
+
+	msg := &types.MsgBridgeExchange{
+		OriginChain:     "ethereum",
+		ContractAddress: "0x123",
+		OwnerAddress:    "0xabc",
+		Amount:          "100",
+		BlockNumber:     "1000",
+		ReceiptIndex:    "1",
+		Validator:       validator,
+	}
+	_, err := ms.BridgeExchange(ctx, msg)
+	require.NoError(t, err)
+
+	after, found := k.GetBridgeTransactionByContent(ctx, btx)
+	require.True(t, found)
+	has, err := k.HasBridgeTransactionValidator(ctx, after, addr.String())
+	require.NoError(t, err)
+	require.True(t, has)
+}
+
+func TestBridgeExchange_EligibleCreateStores(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+
+	validator := testutil.Validator
+	addr := sdk.MustAccAddressFromBech32(validator)
+	epochIndex := uint64(1)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epochIndex))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epochIndex,
+		ModelId:      "",
+		EpochGroupId: 1,
+		TotalWeight:  20,
+	})
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epochIndex,
+		Participants: []*types.ActiveParticipant{{Index: validator}},
+	}))
+	mocks.AccountKeeper.EXPECT().HasAccount(ctx, addr).Return(true).AnyTimes()
+	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
+		&group.QueryGroupMembersResponse{
+			Members: []*group.GroupMember{
+				{GroupId: 1, Member: &group.Member{Address: validator, Weight: "10"}},
+			},
+		}, nil,
+	).AnyTimes()
+
+	msg := &types.MsgBridgeExchange{
+		OriginChain:     "ethereum",
+		ContractAddress: "0x123",
+		OwnerAddress:    "0xabc",
+		Amount:          "100",
+		BlockNumber:     "1000",
+		ReceiptIndex:    "1",
+		Validator:       validator,
+	}
+	resp, err := ms.BridgeExchange(ctx, msg)
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.Id)
+
+	stored, found := k.GetBridgeTransactionByContent(ctx, &types.BridgeTransaction{
+		ChainId:         msg.OriginChain,
+		ContractAddress: strings.ToLower(msg.ContractAddress),
+		OwnerAddress:    msg.OwnerAddress,
+		Amount:          msg.Amount,
+		BlockNumber:     msg.BlockNumber,
+		ReceiptIndex:    msg.ReceiptIndex,
+	})
+	require.True(t, found)
+	require.Equal(t, types.BridgeTransactionStatus_BRIDGE_PENDING, stored.Status)
+	has, err := k.HasBridgeTransactionValidator(ctx, stored, addr.String())
+	require.NoError(t, err)
+	require.True(t, has)
+}
+
+func TestBridgeExchange_NotInTxEpochGroup(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+
+	validator := testutil.Validator
+	addr := sdk.MustAccAddressFromBech32(validator)
+	epochIndex := uint64(1)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epochIndex))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epochIndex,
+		ModelId:      "",
+		EpochGroupId: 1,
+		TotalWeight:  20,
+	})
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epochIndex,
+		Participants: []*types.ActiveParticipant{{Index: validator}},
+	}))
+	mocks.AccountKeeper.EXPECT().HasAccount(ctx, addr).Return(true).AnyTimes()
+	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
+		&group.QueryGroupMembersResponse{Members: nil}, nil,
+	).AnyTimes()
+
+	btx := &types.BridgeTransaction{
+		ChainId:         "ethereum",
+		ContractAddress: "0x123",
+		OwnerAddress:    "0xabc",
+		Amount:          "100",
+		BlockNumber:     "1000",
+		ReceiptIndex:    "1",
+		EpochIndex:      epochIndex,
+		Status:          types.BridgeTransactionStatus_BRIDGE_PENDING,
+	}
+	k.SetBridgeTransaction(ctx, btx)
+
+	msg := &types.MsgBridgeExchange{
+		OriginChain:     "ethereum",
+		ContractAddress: "0x123",
+		OwnerAddress:    "0xabc",
+		Amount:          "100",
+		BlockNumber:     "1000",
+		ReceiptIndex:    "1",
+		Validator:       validator,
+	}
+	_, err := ms.BridgeExchange(ctx, msg)
+	require.ErrorIs(t, err, types.ErrBridgeValidatorNotInTxEpochGroup)
+	require.Contains(t, err.Error(), types.ErrBridgeValidatorNotInTxEpochGroup.Error())
+}
+
+func TestBridgeExchange_CreateNotInActiveGroup(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+
+	validator := testutil.Validator
+	addr := sdk.MustAccAddressFromBech32(validator)
+	epochIndex := uint64(1)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epochIndex))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epochIndex,
+		ModelId:      "",
+		EpochGroupId: 1,
+		TotalWeight:  20,
+	})
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epochIndex,
+		Participants: []*types.ActiveParticipant{{Index: validator}},
+	}))
+	mocks.AccountKeeper.EXPECT().HasAccount(ctx, addr).Return(true).AnyTimes()
+	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
+		&group.QueryGroupMembersResponse{Members: nil}, nil,
+	).AnyTimes()
+
+	msg := &types.MsgBridgeExchange{
+		OriginChain:     "ethereum",
+		ContractAddress: "0x123",
+		OwnerAddress:    "0xabc",
+		Amount:          "100",
+		BlockNumber:     "1000",
+		ReceiptIndex:    "1",
+		Validator:       validator,
+	}
+	_, err := ms.BridgeExchange(ctx, msg)
+	require.ErrorIs(t, err, types.ErrBridgeValidatorNotInActiveGroup)
+	require.Contains(t, err.Error(), types.ErrBridgeValidatorNotInActiveGroup.Error())
 }

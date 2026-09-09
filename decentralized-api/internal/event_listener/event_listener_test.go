@@ -13,7 +13,7 @@ const (
   "jsonrpc": "2.0",
   "id": "1",
   "result": {
-    "query": "tm.event='Tx' AND message.action='/inference.inference.MsgFinishInference'",
+    "query": "tm.event='Tx' AND message.action='/inference.inference.MsgClaimRewards'",
     "data": {
       "type": "tendermint/event/Tx",
       "value": {
@@ -65,7 +65,7 @@ const (
                 "attributes": [
                   {
                     "key": "action",
-                    "value": "/inference.inference.MsgFinishInference",
+                    "value": "/inference.inference.MsgClaimRewards",
                     "index": true
                   },
                   {
@@ -134,7 +134,7 @@ const (
         "cosmos1pd94n6dp8et2grepmanh9qsajccn7mt76dh0s7"
       ],
       "message.action": [
-        "/inference.inference.MsgFinishInference"
+        "/inference.inference.MsgClaimRewards"
       ],
       "message.msg_index": [
         "0"

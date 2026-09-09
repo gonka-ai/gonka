@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 // CanonicalizeJSON returns a deterministic JSON encoding with sorted keys and
@@ -39,6 +41,31 @@ func CanonicalPromptHash(prompt []byte) ([]byte, error) {
 	}
 	h := sha256.Sum256(canonical)
 	return h[:], nil
+}
+
+// JSONNumericFloat64 converts a JSON-decoded numeric value to float64. Accepts
+// float64, int / int64 / uint64, json.Number, and string (trimmed and parsed)
+// because some clients serialize numerics as strings for fields like
+// temperature / top_p.
+func JSONNumericFloat64(value any) (float64, bool) {
+	switch v := value.(type) {
+	case float64:
+		return v, true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case json.Number:
+		number, err := v.Float64()
+		return number, err == nil
+	case string:
+		number, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		return number, err == nil
+	default:
+		return 0, false
+	}
 }
 
 // JSONNumericUint64 converts a JSON-decoded numeric value to uint64. Accepts

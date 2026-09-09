@@ -14,6 +14,7 @@ func TestDefaultDevshardEscrowParams_FeeDefaults(t *testing.T) {
 	require.Equal(t, types.DefaultDevshardFeePerNonce, p.FeePerNonce)
 	require.Equal(t, types.DefaultDevshardRefusalTimeout, p.RefusalTimeout)
 	require.Equal(t, types.DefaultDevshardExecutionTimeout, p.ExecutionTimeout)
+	require.Equal(t, int64(32*60), p.ExecutionTimeout)
 	require.Equal(t, types.DefaultDevshardValidationRate, p.ValidationRate)
 	require.Equal(t, types.DefaultDevshardVoteThresholdFactor, p.VoteThresholdFactor)
 	require.NoError(t, p.Validate())

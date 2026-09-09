@@ -1,6 +1,8 @@
 package inference
 
 import (
+	"context"
+	"math"
 	"testing"
 
 	"cosmossdk.io/core/header"
@@ -17,6 +19,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/stretchr/testify/require"
 
@@ -34,6 +37,36 @@ func (noopLogger) LogInfo(string, types.SubSystem, ...interface{})  {}
 func (noopLogger) LogError(string, types.SubSystem, ...interface{}) {}
 func (noopLogger) LogWarn(string, types.SubSystem, ...interface{})  {}
 func (noopLogger) LogDebug(string, types.SubSystem, ...interface{}) {}
+
+type noopCollateralKeeper struct{}
+
+func (noopCollateralKeeper) AdvanceEpoch(context.Context, uint64) error {
+	return nil
+}
+
+func (noopCollateralKeeper) GetCollateral(context.Context, sdk.AccAddress) (sdk.Coin, bool) {
+	return sdk.Coin{}, false
+}
+
+func (noopCollateralKeeper) Slash(
+	context.Context,
+	sdk.AccAddress,
+	mathsdk.LegacyDec,
+	string,
+	mathsdk.Int,
+) (sdk.Coin, error) {
+	return sdk.Coin{}, nil
+}
+
+type noopAuthzKeeper struct{}
+
+func (noopAuthzKeeper) GranterGrants(context.Context, *authztypes.QueryGranterGrantsRequest) (*authztypes.QueryGranterGrantsResponse, error) {
+	return &authztypes.QueryGranterGrantsResponse{}, nil
+}
+
+func (noopAuthzKeeper) Grants(context.Context, *authztypes.QueryGrantsRequest) (*authztypes.QueryGrantsResponse, error) {
+	return &authztypes.QueryGrantsResponse{}, nil
+}
 
 func TestPoCWeightCalculator_PocValidated_RejectsWhenVotingPowersMissing(t *testing.T) {
 	wc := &PoCWeightCalculator{
@@ -123,6 +156,207 @@ func TestPoCWeightCalculator_PocValidated_SlotSamplingAcceptsWhenGroupControlsEn
 	}, key)
 
 	require.True(t, ok)
+}
+
+func TestPoCWeightCalculator_PocValidated_SlotSamplingUsesConfiguredVoteThreshold(t *testing.T) {
+	key := types.PoCParticipantModelKey{
+		ParticipantAddress: testutil.Executor,
+		ModelID:            "model-a",
+	}
+	modelVotingPowers := map[string]int64{
+		testutil.Validator: 80,
+	}
+	entries, totalWeight := calculations.PrepareSortedEntries(modelVotingPowers)
+	require.Equal(t, 102, calculations.ComputeSampledSlotCount(totalWeight, 100, 128))
+
+	wc := &PoCWeightCalculator{
+		ModelVotingPowers: map[string]map[string]int64{
+			"model-a": modelVotingPowers,
+		},
+		TotalNetworkWeight: 100,
+		ValidationSlots:    128,
+		AppHash:            "test-hash",
+		sortedVotingPowers: map[string]sortedModelVP{
+			"model-a": {entries: entries, totalWeight: totalWeight},
+		},
+		PocParams: &types.PocParams{ValidationVoteThresholdBps: 8000},
+		Logger:    noopLogger{},
+	}
+
+	ok := wc.pocValidated([]types.PoCValidationV2{
+		{
+			ValidatorParticipantAddress: testutil.Validator,
+			ValidatedWeight:             1,
+		},
+	}, key)
+
+	require.False(t, ok)
+}
+
+func TestPoCWeightCalculator_PocValidated_NonSlotUsesConfiguredVoteThreshold(t *testing.T) {
+	key := types.PoCParticipantModelKey{
+		ParticipantAddress: testutil.Executor,
+		ModelID:            "model-a",
+	}
+	tests := []struct {
+		name         string
+		validWeight  int64
+		thresholdBps uint32
+		want         bool
+	}{
+		{name: "exactly 50 percent rejects", validWeight: 50, thresholdBps: 5000, want: false},
+		{name: "above 50 percent accepts", validWeight: 51, thresholdBps: 5000, want: true},
+		{name: "configured supermajority rejects 60 percent", validWeight: 60, thresholdBps: 6667, want: false},
+		{name: "zero uses 50 percent default", validWeight: 51, thresholdBps: 0, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wc := &PoCWeightCalculator{
+				ModelVotingPowers: map[string]map[string]int64{
+					"model-a": {testutil.Validator: tt.validWeight},
+				},
+				TotalNetworkWeight: 100,
+				PocParams:          &types.PocParams{ValidationVoteThresholdBps: tt.thresholdBps},
+				Logger:             noopLogger{},
+			}
+
+			ok := wc.pocValidated([]types.PoCValidationV2{
+				{
+					ValidatorParticipantAddress: testutil.Validator,
+					ValidatedWeight:             1,
+				},
+			}, key)
+
+			require.Equal(t, tt.want, ok)
+		})
+	}
+}
+
+func TestPassesValidationVoteThresholdAvoidsOverflow(t *testing.T) {
+	require.True(t, passesValidationVoteThreshold(math.MaxInt64, math.MaxInt64, 5000))
+	require.False(t, passesValidationVoteThreshold(math.MaxInt64/2, math.MaxInt64, 5000))
+}
+
+// Regression for the guardian-vote-loss incident: a guardian that could not
+// run a model that epoch has no voting weight for it, so its votes were
+// filtered out before the tiebreaker and participants got rejected on split
+// votes. Guardian votes must be counted in the tiebreaker regardless of
+// per-model voting weight.
+func TestPoCWeightCalculator_GuardianTiebreakerCountsWeightlessGuardianVotes(t *testing.T) {
+	key := types.PoCParticipantModelKey{
+		ParticipantAddress: testutil.Executor,
+		ModelID:            "model-a",
+	}
+	guardian := testutil.Creator
+
+	newCalc := func(guardianVote int64) *PoCWeightCalculator {
+		return &PoCWeightCalculator{
+			ModelVotingPowers: map[string]map[string]int64{
+				"model-a": {
+					testutil.Validator:  40,
+					testutil.Validator2: 40,
+					// guardian intentionally absent: no voting weight for model-a
+				},
+			},
+			TotalNetworkWeight: 100,
+			Validations: map[types.PoCParticipantModelKey][]types.PoCValidationV2{
+				key: {
+					{ValidatorParticipantAddress: testutil.Validator, ValidatedWeight: 1},
+					{ValidatorParticipantAddress: testutil.Validator2, ValidatedWeight: -1},
+					{ValidatorParticipantAddress: guardian, ValidatedWeight: guardianVote},
+				},
+			},
+			GuardianEnabled:   true,
+			GuardianAddresses: map[string]bool{guardian: true},
+			Logger:            noopLogger{},
+		}
+	}
+
+	t.Run("guardian votes valid - accepted", func(t *testing.T) {
+		wc := newCalc(1)
+		filtered := wc.getParticipantValidations(key)
+		// The guardian vote is dropped from the majority list because the
+		// guardian has no voting weight for the model...
+		require.Len(t, filtered, 2)
+		// ...votes split 40/40 with no configured majority, and the guardian's raw
+		// vote decides the tiebreaker.
+		require.True(t, wc.pocValidated(filtered, key))
+	})
+
+	t.Run("guardian votes invalid - rejected", func(t *testing.T) {
+		wc := newCalc(-1)
+		filtered := wc.getParticipantValidations(key)
+		require.Len(t, filtered, 2)
+		require.False(t, wc.pocValidated(filtered, key))
+	})
+}
+
+// Even when ALL votes come from weightless guardians (the filtered majority
+// list is empty), the participant must not be rejected early: the guardian
+// tiebreaker still applies.
+func TestPoCWeightCalculator_Calculate_GuardianOnlyVotesReachTiebreaker(t *testing.T) {
+	key := types.PoCParticipantModelKey{
+		ParticipantAddress: testutil.Executor,
+		ModelID:            "model-a",
+	}
+	guardian := testutil.Creator
+
+	wc := &PoCWeightCalculator{
+		ModelVotingPowers: map[string]map[string]int64{
+			"model-a": {
+				testutil.Validator: 40,
+			},
+		},
+		TotalNetworkWeight: 100,
+		StoreCommits: map[types.PoCParticipantModelKey]types.PoCV2StoreCommit{
+			key: {
+				ParticipantAddress:       testutil.Executor,
+				PocStageStartBlockHeight: 100,
+				Count:                    10,
+				ModelId:                  "model-a",
+			},
+		},
+		NodeWeightDistributions: map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution{
+			key: {
+				ParticipantAddress:       testutil.Executor,
+				PocStageStartBlockHeight: 100,
+				ModelId:                  "model-a",
+				Weights: []*types.MLNodeWeight{{
+					NodeId: "node-a",
+					Weight: 10,
+				}},
+			},
+		},
+		Validations: map[types.PoCParticipantModelKey][]types.PoCValidationV2{
+			key: {
+				{ValidatorParticipantAddress: guardian, ValidatedWeight: 10},
+			},
+		},
+		GuardianEnabled:   true,
+		GuardianAddresses: map[string]bool{guardian: true},
+		Participants: map[string]types.Participant{
+			testutil.Executor: {
+				Index:        testutil.Executor,
+				Address:      testutil.Executor,
+				ValidatorKey: "validator-key",
+				InferenceUrl: "http://executor.example.com",
+			},
+		},
+		Seeds: map[string]types.RandomSeed{
+			testutil.Executor: {
+				Participant: testutil.Executor,
+				EpochIndex:  1,
+				Signature:   "seed-sig",
+			},
+		},
+		Logger:                  noopLogger{},
+		TimeNormalizationFactor: mathsdk.LegacyOneDec(),
+	}
+
+	result := wc.Calculate()
+	require.Len(t, result, 1)
+	require.Equal(t, testutil.Executor, result[0].Index)
 }
 
 func TestPoCWeightCalculator_CalculateParticipantWeight_ProducesRawWeights(t *testing.T) {
@@ -280,6 +514,113 @@ func TestPoCWeightCalculator_Calculate_RejectsWhenVotingPowerIsInsufficient(t *t
 	}
 
 	require.Empty(t, wc.Calculate())
+}
+
+func TestRegularPoCValidationUsesCapWeightElectorate(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const (
+		epoch         = uint64(5)
+		triggerHeight = int64(180)
+	)
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:          epoch,
+		CapWeightApplied: true,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 1_000, CapWeight: 80},
+			{Index: testutil.Validator2, Weight: 1_000, CapWeight: 20},
+		},
+	}))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     epoch,
+		EpochGroupId:   77,
+		SubGroupModels: []string{"model-a"},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 1_000},
+			{MemberAddress: testutil.Validator2, Weight: 1_000},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epoch,
+		EpochGroupId: 78,
+		ModelId:      "model-a",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, VotingPower: 80},
+			{MemberAddress: testutil.Validator2, VotingPower: 20},
+		},
+	})
+
+	key := types.PoCParticipantModelKey{
+		ParticipantAddress: testutil.Executor,
+		ModelID:            "model-a",
+	}
+	storeCommit := types.PoCV2StoreCommit{
+		ParticipantAddress:       testutil.Executor,
+		PocStageStartBlockHeight: triggerHeight,
+		Count:                    40,
+		ModelId:                  "model-a",
+	}
+	require.NoError(t, k.SetPoCV2StoreCommit(ctx, storeCommit))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	am.captureValidationSnapshot(ctx, triggerHeight, triggerHeight, "regular PoC")
+	snapshot, found, err := k.GetPoCValidationSnapshot(ctx, triggerHeight)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, int64(100), snapshot.TotalNetworkWeight)
+	require.Len(t, snapshot.ModelVotingPowers, 1)
+	modelVotingPowers := types.VotingPowerSliceToMap(snapshot.ModelVotingPowers[0].VotingPowers)
+	require.Equal(t, map[string]int64{
+		testutil.Validator:  80,
+		testutil.Validator2: 20,
+	}, modelVotingPowers)
+
+	wc := &PoCWeightCalculator{
+		ModelVotingPowers:  map[string]map[string]int64{"model-a": modelVotingPowers},
+		TotalNetworkWeight: snapshot.TotalNetworkWeight,
+		StoreCommits: map[types.PoCParticipantModelKey]types.PoCV2StoreCommit{
+			key: storeCommit,
+		},
+		NodeWeightDistributions: map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution{
+			key: {
+				ParticipantAddress: testutil.Executor,
+				ModelId:            "model-a",
+				Weights: []*types.MLNodeWeight{{
+					NodeId: "node-a",
+					Weight: 40,
+				}},
+			},
+		},
+		Validations: map[types.PoCParticipantModelKey][]types.PoCValidationV2{
+			key: {{
+				ValidatorParticipantAddress: testutil.Validator,
+				ValidatedWeight:             40,
+			}},
+		},
+		PocParams: &types.PocParams{
+			Models: []*types.PoCModelConfig{{ModelId: "model-a"}},
+		},
+		Participants: map[string]types.Participant{
+			testutil.Executor: {
+				Address:      testutil.Executor,
+				ValidatorKey: "validator-key",
+			},
+		},
+		Seeds: map[string]types.RandomSeed{
+			testutil.Executor: {
+				Participant: testutil.Executor,
+				EpochIndex:  epoch + 1,
+				Signature:   "seed-signature",
+			},
+		},
+		Logger:                  noopLogger{},
+		TimeNormalizationFactor: mathsdk.LegacyOneDec(),
+	}
+
+	result := wc.Calculate()
+	require.Len(t, result, 1)
+	require.Equal(t, int64(40), result[0].Weight)
 }
 
 func TestUpdateConfirmationWeightsV2_UsesPerModelWeightScaleFactor(t *testing.T) {
@@ -881,9 +1222,17 @@ func newMinimalInferenceKeeper(t *testing.T) (keeper.Keeper, sdk.Context) {
 }
 
 func newMinimalInferenceKeeperWithStub(t *testing.T) (keeper.Keeper, sdk.Context, *stubGroupKeeper) {
+	return newMinimalInferenceKeeperWithCollateral(t, noopCollateralKeeper{})
+}
+
+func newMinimalInferenceKeeperWithCollateral(
+	t *testing.T,
+	collateralKeeper types.CollateralKeeper,
+) (keeper.Keeper, sdk.Context, *stubGroupKeeper) {
 	t.Helper()
 
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
 
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 	transientStoreKey := storetypes.NewTransientStoreKey(types.TransientStoreKey)
@@ -920,9 +1269,9 @@ func newMinimalInferenceKeeperWithStub(t *testing.T) (keeper.Keeper, sdk.Context
 		nil,
 		nil,
 		blsKeeper,
+		collateralKeeper,
 		nil,
-		nil,
-		nil,
+		noopAuthzKeeper{},
 		func() wasmkeeper.Keeper { return wasmkeeper.Keeper{} },
 		nil,
 	)

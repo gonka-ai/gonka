@@ -68,6 +68,10 @@ class ParticipantPowerTests : TestermintTest() {
 
         logSection("Setting ${zeroParticipant.name} back to 15 power")
         zeroParticipant.setPocWeight(10)
+        // A returning participant has CapWeight 0 for the first epoch (its previous
+        // confirmed weight was 0) and only reaches the proven weight the following
+        // epoch, so wait two epochs before it is restored to the validator set.
+        zeroParticipant.waitForNextEpoch()
         zeroParticipant.waitForNextEpoch()
         zeroParticipant.node.waitForNextBlock(1)
 
@@ -91,6 +95,10 @@ class ParticipantPowerTests : TestermintTest() {
         val (_, genesis) = initCluster(reboot = true)
         logSection("Changing ${genesis.name} power to 11")
         genesis.setPocWeight(11)
+        // CapWeight (the trust weight backing validator power) is capped at the
+        // previous epoch's confirmed weight, so a weight *increase* only counts
+        // one epoch after it is proven. Wait two epochs for 11 to settle.
+        genesis.waitForNextEpoch()
         genesis.waitForNextEpoch()
         genesis.node.waitForNextBlock(1)
 
@@ -99,6 +107,7 @@ class ParticipantPowerTests : TestermintTest() {
 
         logSection("Changing ${genesis.name} power back to 10")
         genesis.setPocWeight(10)
+        // Lowering weight is immediate (the cap only ever lowers), so one epoch suffices.
         genesis.waitForNextEpoch()
         genesis.node.waitForNextBlock(1)
 

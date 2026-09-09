@@ -1,11 +1,10 @@
 package main
 
 import (
+	"devshard/bridge"
 	"errors"
 	"log"
 	"sync"
-
-	"devshard/bridge"
 )
 
 // EscrowChecker verifies escrow existence against the chain when a host
@@ -14,13 +13,13 @@ import (
 type EscrowChecker struct {
 	mu        sync.Mutex
 	inflight  map[string]bool
-	chainREST func() string
+	newBridge func() bridge.MainnetBridge
 }
 
-func NewEscrowChecker(chainREST func() string) *EscrowChecker {
+func NewEscrowChecker(newBridge func() bridge.MainnetBridge) *EscrowChecker {
 	return &EscrowChecker{
 		inflight:  make(map[string]bool),
-		chainREST: chainREST,
+		newBridge: newBridge,
 	}
 }
 
@@ -46,7 +45,16 @@ func (ec *EscrowChecker) triggerCheck(escrowID string, deactivate func()) {
 		ec.mu.Unlock()
 	}()
 
-	br := newRESTBridgeForProtocol(ec.chainREST(), "")
+	newBridge := ec.newBridge
+	if newBridge == nil {
+		log.Printf("escrow %s chain check skipped: bridge unavailable", escrowID)
+		return
+	}
+	br := newBridge()
+	if br == nil {
+		log.Printf("escrow %s chain check skipped: bridge unavailable", escrowID)
+		return
+	}
 	_, err := br.GetEscrow(escrowID)
 	if err != nil {
 		if errors.Is(err, bridge.ErrEscrowNotFound) {

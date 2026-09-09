@@ -1,9 +1,9 @@
 package admin
 
 import (
+	"common/logging"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/seed"
-	"decentralized-api/logging"
 	"net/http"
 	"strconv"
 
@@ -88,38 +88,11 @@ func (s *Server) postClaimRewardRecover(ctx echo.Context) error {
 		})
 	}
 
-	logging.Info("Starting manual validation recovery", types.Validation,
+	logging.Info("Starting manual reward recovery", types.Claims,
 		"epochIndex", epochIndex,
 		"seed", seedValue,
 		"alreadyClaimed", alreadyClaimed,
 		"forceClaim", req.ForceClaim)
-
-	// Detect missed validations
-	missedInferences, err := s.validator.DetectMissedValidations(epochIndex, seedValue)
-	if err != nil {
-		logging.Error("Failed to detect missed validations", types.Validation, "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to detect missed validations: "+err.Error())
-	}
-
-	missedCount := len(missedInferences)
-	logging.Info("Manual recovery detected missed validations", types.Validation,
-		"epochIndex", epochIndex,
-		"missedCount", missedCount)
-
-	// Execute recovery validations
-	if missedCount > 0 {
-		recoveredCount, _ := s.validator.ExecuteRecoveryValidations(missedInferences)
-
-		logging.Info("Manual recovery validations completed", types.Validation,
-			"epochIndex", epochIndex,
-			"recoveredCount", recoveredCount,
-			"missedCount", missedCount,
-		)
-
-		if recoveredCount > 0 {
-			s.validator.WaitForValidationsToBeRecorded()
-		}
-	}
 
 	// Claim rewards if not already claimed or if forced
 	claimExecuted := false
@@ -151,7 +124,7 @@ func (s *Server) postClaimRewardRecover(ctx echo.Context) error {
 		Message:           "Manual claim reward recovery completed successfully",
 		EpochIndex:        epochIndex,
 		Seed:              seedValue,
-		MissedValidations: missedCount,
+		MissedValidations: 0,
 		AlreadyClaimed:    alreadyClaimed,
 		ClaimExecuted:     claimExecuted,
 	})

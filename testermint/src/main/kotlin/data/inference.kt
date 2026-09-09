@@ -118,60 +118,26 @@ data class InferenceTimeout(
     val inferenceId: String,
 )
 
-data class MsgStartInference(
-    override val type: String = "/inference.inference.MsgStartInference",
-    val creator: String = "",
-    val inferenceId: String,
-    val promptHash: String,
-    val promptPayload: String = "",  // Deprecated - kept for backward compatibility
-    val model: String = "",
-    val requestedBy: String = "",
-    val assignedTo: String = "",
-    val nodeVersion: String = "",
-    val maxTokens: Long = 0,
-    val promptTokenCount: Long = 0,
-    val requestTimestamp: Long = 0,
-    val transferSignature: String = "",
-    val originalPrompt: String = "",  // Deprecated - kept for backward compatibility
-    val originalPromptHash: String = "",  // Phase 3: for dev signature verification
-) : TxMessage
-
-data class MsgFinishInference(
-    override val type: String = "/inference.inference.MsgFinishInference",
-    val creator: String = "",
-    val inferenceId: String = "",
-    val responseHash: String = "",
-    val responsePayload: String = "",  // Deprecated - kept for backward compatibility
-    val promptTokenCount: Long = 0,
-    val completionTokenCount: Long = 0,
-    val executedBy: String = "",
-    val transferredBy: String = "",
-    val requestTimestamp: Long = 0,
-    val transferSignature: String = "",
-    val executorSignature: String = "",
-    val requestedBy: String = "",
-    val originalPrompt: String = "",  // Deprecated - kept for backward compatibility
-    val model: String = "",
-    val promptHash: String = "",          // Phase 3: for TA/executor signature verification
-    val originalPromptHash: String = "",  // Phase 3: for dev signature verification
-) : TxMessage
-
-data class MsgValidation(
-    override val type: String = "/inference.inference.MsgValidation",
-    val creator: String = "",
-    val id: String = "",
-    val inferenceId: String = "",
-    val responseHash: String = "",
-    val responsePayload: String = "",
-    val value: Double = 0.0,
-    val revalidation: Boolean = false,
-) : TxMessage
-
 data class MsgClaimRewards(
     override val type: String = "/inference.inference.MsgClaimRewards",
     val creator: String = "",
     val seed: Long = 0,
     val epochIndex: Long = 0
+) : TxMessage
+
+data class ClaimRecipientEntry(
+    val epoch: Long,
+    val recipient: String
+)
+
+data class ClaimRecipientsResponse(
+    val entries: List<ClaimRecipientEntry> = emptyList()
+)
+
+data class MsgSetClaimRecipients(
+    override val type: String = "/inference.inference.MsgSetClaimRecipients",
+    val creator: String = "",
+    val entries: List<ClaimRecipientEntry> = emptyList()
 ) : TxMessage
 
 // Admin endpoint request/response for storing payloads directly

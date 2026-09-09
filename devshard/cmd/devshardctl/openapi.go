@@ -197,7 +197,7 @@ const openapiSpec = `{
                   "private_key_env": { "type": "string", "description": "Environment variable containing the private key, for example DEVSHARD_PRIVATE_KEY." },
                   "model": { "type": "string", "description": "Model ID associated with the escrow." },
                   "storage_path": { "type": "string", "description": "Path to the existing escrow storage directory as seen by this gateway container." },
-                  "protocol_version": { "type": "string", "description": "Optional devshard protocol version." },
+                  "route_prefix": { "type": "string", "description": "Optional devshard HTTP route prefix (for example /devshard/v2)." },
                   "active": { "type": "boolean", "default": false, "description": "Whether to make the imported escrow routable immediately. Defaults to false." },
                   "perf_path": { "type": "string", "description": "Optional path to a source gateway perf.db. Request accounting rows for this escrow ID are copied into the current gateway perf.db." }
                 }

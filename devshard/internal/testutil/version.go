@@ -1,7 +1,5 @@
 package testutil
 
-// RuntimeTestVersion is the versiond runtime / storage bind tag used in tests
-// (CreateSessionParams.Version, host boundVersion). It is not the state-root
-// or settlement protocol version; use types.DevshardStateRootAndProtocolVersion
-// for hash, settlement, and migration tests. See devshard/docs/protocol-version.md.
-const RuntimeTestVersion = "v1"
+// RuntimeTestVersion is the protocol / session bind tag used in tests
+// (CreateSessionParams.Version, host boundVersion, state-root version).
+const RuntimeTestVersion = "v2"

@@ -261,7 +261,7 @@ class RuntimeConfigTests : TestermintTest() {
             assertThat(cfg.validationRate).isEqualTo(escrow.validationRate.toInt())
             assertThat(cfg.voteThresholdFactor).isEqualTo(escrow.voteThresholdFactor.toInt())
 
-            val chainVersions = escrow.approvedVersions.orEmpty()
+            val chainVersions = genesis.getDevshardApprovedVersions()
             assertThat(cfg.approvedVersionsList.map { it.name })
                 .containsExactlyElementsOf(chainVersions.map { it.name })
         }

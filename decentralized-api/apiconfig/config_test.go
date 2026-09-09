@@ -2,9 +2,9 @@ package apiconfig_test
 
 import (
 	"bytes"
+	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
-	"decentralized-api/logging"
 	"errors"
 	"os"
 	"path/filepath"
@@ -27,6 +27,44 @@ func TestConfigLoad(t *testing.T) {
 	require.Equal(t, "join1", testManager.GetChainNodeConfig().SignerKeyName)
 	require.Equal(t, "test", testManager.GetChainNodeConfig().KeyringBackend)
 	require.Equal(t, "/root/.inference", testManager.GetChainNodeConfig().KeyringDir)
+}
+
+func TestEarlyShareGuardDefaults(t *testing.T) {
+	t.Run("defaults applied when absent from yaml/env", func(t *testing.T) {
+		os.Unsetenv("DAPI_EARLY_SHARE_GUARD__MODE")
+		os.Unsetenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_INCLUSION_PROOF")
+		os.Unsetenv("DAPI_EARLY_SHARE_GUARD__INCLUSION_SAMPLE_SIZE")
+		m := &apiconfig.ConfigManager{KoanProvider: rawbytes.Provider([]byte(testYaml))}
+		require.NoError(t, m.Load())
+
+		got := m.GetEarlyShareGuardConfig()
+		def := apiconfig.DefaultEarlyShareGuardConfig()
+		require.Equal(t, def.Mode, got.Mode)
+		require.Equal(t, def.FirstFraction, got.FirstFraction)
+		require.Equal(t, def.ThresholdRatio, got.ThresholdRatio)
+		require.True(t, got.RequireInclusionProof, "require_inclusion_proof should default to true")
+		require.Equal(t, def.InclusionSampleSize, got.InclusionSampleSize)
+	})
+
+	t.Run("explicit false overrides the true default", func(t *testing.T) {
+		os.Setenv("DAPI_EARLY_SHARE_GUARD__MODE", "enforce")
+		os.Setenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_INCLUSION_PROOF", "false")
+		os.Setenv("DAPI_EARLY_SHARE_GUARD__INCLUSION_SAMPLE_SIZE", "7")
+		defer func() {
+			os.Unsetenv("DAPI_EARLY_SHARE_GUARD__MODE")
+			os.Unsetenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_INCLUSION_PROOF")
+			os.Unsetenv("DAPI_EARLY_SHARE_GUARD__INCLUSION_SAMPLE_SIZE")
+		}()
+		m := &apiconfig.ConfigManager{KoanProvider: rawbytes.Provider([]byte(testYaml))}
+		require.NoError(t, m.Load())
+
+		got := m.GetEarlyShareGuardConfig()
+		require.Equal(t, "enforce", got.Mode)
+		require.False(t, got.RequireInclusionProof, "explicit false must win over default true")
+		require.Equal(t, 7, got.InclusionSampleSize)
+		// Untouched fields keep their defaults.
+		require.Equal(t, apiconfig.DefaultEarlyShareGuardConfig().FirstFraction, got.FirstFraction)
+	})
 }
 
 func TestNewPoCParamsCache(t *testing.T) {
@@ -230,6 +268,33 @@ func TestConfigLoadEnvOverride(t *testing.T) {
 	require.Equal(t, "test", testManager.GetChainNodeConfig().KeyringBackend)
 	require.Equal(t, "/root/.inference", testManager.GetChainNodeConfig().KeyringDir)
 
+}
+
+func TestTxGasMultiplier(t *testing.T) {
+	require.Equal(t, 1.5, apiconfig.DefaultTxGasMultiplier)
+	require.Equal(t, 1.5, apiconfig.ResolveTxGasMultiplier(0))
+	require.Equal(t, 1.5, apiconfig.ResolveTxGasMultiplier(1.0))
+	require.Equal(t, 1.5, apiconfig.ResolveTxGasMultiplier(0.5))
+	require.Equal(t, 1.5, apiconfig.ResolveTxGasMultiplier(15))
+	require.Equal(t, 1.2, apiconfig.ResolveTxGasMultiplier(1.2))
+	require.Equal(t, 2.0, apiconfig.ResolveTxGasMultiplier(2.0))
+	require.Equal(t, 1.5, apiconfig.ChainNodeConfig{}.GetTxGasMultiplier())
+	require.Equal(t, 1.2, apiconfig.ChainNodeConfig{TxGasMultiplier: 1.2}.GetTxGasMultiplier())
+
+	t.Run("unset yaml and env keep default 1.5", func(t *testing.T) {
+		os.Unsetenv("DAPI_CHAIN_NODE__TX_GAS_MULTIPLIER")
+		m := &apiconfig.ConfigManager{KoanProvider: rawbytes.Provider([]byte(testYaml))}
+		require.NoError(t, m.Load())
+		require.Equal(t, 1.5, m.GetChainNodeConfig().GetTxGasMultiplier())
+	})
+
+	t.Run("env override 1.2", func(t *testing.T) {
+		os.Setenv("DAPI_CHAIN_NODE__TX_GAS_MULTIPLIER", "1.2")
+		defer os.Unsetenv("DAPI_CHAIN_NODE__TX_GAS_MULTIPLIER")
+		m := &apiconfig.ConfigManager{KoanProvider: rawbytes.Provider([]byte(testYaml))}
+		require.NoError(t, m.Load())
+		require.InDelta(t, 1.2, m.GetChainNodeConfig().GetTxGasMultiplier(), 1e-9)
+	})
 }
 
 type CaptureWriterProvider struct {

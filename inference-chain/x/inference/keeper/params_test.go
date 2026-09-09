@@ -316,6 +316,23 @@ func TestParamsValidateNilChecks(t *testing.T) {
 	}
 }
 
+func TestPocParamsValidationVoteThresholdBps(t *testing.T) {
+	params := types.DefaultPocParams()
+	require.Equal(t, types.DefaultPocValidationVoteThresholdBps, params.ValidationVoteThresholdBps)
+	require.NoError(t, params.Validate())
+
+	for _, valid := range []uint32{0, 5000, 6667, 10000} {
+		params.ValidationVoteThresholdBps = valid
+		require.NoError(t, params.Validate(), "bps=%d must be valid", valid)
+	}
+
+	// Sub-majority values would let both valid and invalid votes pass at once.
+	for _, invalid := range []uint32{1, 4999, 10001} {
+		params.ValidationVoteThresholdBps = invalid
+		require.ErrorContains(t, params.Validate(), "validation_vote_threshold_bps", "bps=%d must be rejected", invalid)
+	}
+}
+
 func TestValidationParamsNilFieldChecks(t *testing.T) {
 	testCases := []struct {
 		name           string

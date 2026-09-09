@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"devshard/types"
 )
@@ -146,6 +147,15 @@ func (m *ManagedStorage) Close() error {
 	return m.inner.Close()
 }
 
+// Ready reports whether the wrapped storage can serve. Returns true when the
+// inner backend does not report readiness (e.g. SQLite-only).
+func (m *ManagedStorage) Ready() bool {
+	if r, ok := m.inner.(interface{ Ready() bool }); ok {
+		return r.Ready()
+	}
+	return true
+}
+
 // --- Storage delegation ---
 
 func (m *ManagedStorage) CreateSession(params CreateSessionParams) error {
@@ -217,6 +227,10 @@ func (m *ManagedStorage) DeleteSealedInferences(escrowID string) error {
 	return m.inner.DeleteSealedInferences(escrowID)
 }
 
+func (m *ManagedStorage) ClearValidationObs(escrowID string) error {
+	return m.inner.ClearValidationObs(escrowID)
+}
+
 func (m *ManagedStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
 	return m.inner.RecordValidationsAppliedOnce(escrowID, entries)
 }
@@ -229,10 +243,77 @@ func (m *ManagedStorage) GetValidationObservability(escrowID string) ([]SlotVali
 	return m.inner.GetValidationObservability(escrowID)
 }
 
+func (m *ManagedStorage) PutEscrowCache(info EscrowCacheInfo) error {
+	m.mu.RLock()
+	prunedUpTo := m.prunedUpTo
+	m.mu.RUnlock()
+	if info.EpochID < prunedUpTo {
+		slog.Warn("devshard managed storage: escrow cache put skipped; epoch pruned",
+			"escrow_id", info.EscrowID,
+			"epoch_id", info.EpochID,
+			"pruned_up_to", prunedUpTo)
+		return nil
+	}
+	if err := m.inner.PutEscrowCache(info); err != nil {
+		slog.Warn("devshard managed storage: escrow cache put failed",
+			"escrow_id", info.EscrowID,
+			"epoch_id", info.EpochID,
+			"error", err)
+		return nil
+	}
+	m.observe(info.EpochID)
+	return nil
+}
+
+func (m *ManagedStorage) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	return m.inner.GetEscrowCache(escrowID)
+}
+
+func (m *ManagedStorage) DeleteEscrowCache(escrowID string) error {
+	if err := m.inner.DeleteEscrowCache(escrowID); err != nil {
+		slog.Warn("devshard managed storage: escrow cache delete failed",
+			"escrow_id", escrowID,
+			"error", err)
+	}
+	return nil
+}
+
 // PruneEpoch is exposed so callers can trigger an explicit drop. PruneOnce uses
 // this path when the inner store does not implement rangePruner.
 func (m *ManagedStorage) PruneEpoch(epochID uint64) error {
 	return m.inner.PruneEpoch(epochID)
+}
+
+func (m *ManagedStorage) Acquire(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
+	ls, ok := m.inner.(LeaseStore)
+	if !ok {
+		return false, fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.Acquire(ctx, escrowID, inferenceID, epochID, instanceAddr)
+}
+
+func (m *ManagedStorage) AcquireOneStale(ctx context.Context, escrowID, instanceAddr string, ttl time.Duration) (uint64, uint64, error) {
+	ls, ok := m.inner.(LeaseStore)
+	if !ok {
+		return 0, 0, fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.AcquireOneStale(ctx, escrowID, instanceAddr, ttl)
+}
+
+func (m *ManagedStorage) SetResult(ctx context.Context, escrowID string, inferenceID uint64, status LeaseStatus, instanceAddr string) error {
+	ls, ok := m.inner.(LeaseStore)
+	if !ok {
+		return fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.SetResult(ctx, escrowID, inferenceID, status, instanceAddr)
+}
+
+func (m *ManagedStorage) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID uint64, instanceAddr string) (bool, error) {
+	ls, ok := m.inner.(LeaseStore)
+	if !ok {
+		return false, fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
 }
 
 var _ Storage = (*ManagedStorage)(nil)

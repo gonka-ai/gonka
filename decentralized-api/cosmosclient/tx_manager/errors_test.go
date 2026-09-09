@@ -43,38 +43,11 @@ func TestClassifyBroadcastResponse(t *testing.T) {
 			expected: TxActionRetry,
 		},
 		{
-			name: "Code 1143 (ErrDuplicateValidation) should fail",
-			resp: &sdk.TxResponse{
-				Code:      1143,
-				Codespace: "inference",
-				RawLog:    "participant has already validated this inference",
-			},
-			expected: TxActionFail,
-		},
-		{
 			name: "Code 1103 (ErrParticipantNotFound) should fail",
 			resp: &sdk.TxResponse{
 				Code:      1103,
 				Codespace: "inference",
 				RawLog:    "participant not found",
-			},
-			expected: TxActionFail,
-		},
-		{
-			name: "Code 1146 (ErrInferenceFinishProcessed) should fail",
-			resp: &sdk.TxResponse{
-				Code:      1146,
-				Codespace: "inference",
-				RawLog:    "inference has already finished processed",
-			},
-			expected: TxActionFail,
-		},
-		{
-			name: "Code 1147 (ErrInferenceStartProcessed) should fail",
-			resp: &sdk.TxResponse{
-				Code:      1147,
-				Codespace: "inference",
-				RawLog:    "inference has already started processed",
 			},
 			expected: TxActionFail,
 		},
@@ -95,12 +68,12 @@ func TestClassifyBroadcastResponse(t *testing.T) {
 			expected: TxActionRetry,
 		},
 		{
-			name: "Unknown code with non-retryable RawLog should fail",
+			name: "insufficient fee should retry",
 			resp: &sdk.TxResponse{
-				Code:   99,
-				RawLog: "some unknown error",
+				Code:   32,
+				RawLog: "insufficient fee: got 0ngonka, required at least 10ngonka",
 			},
-			expected: TxActionFail,
+			expected: TxActionRetry,
 		},
 	}
 
@@ -111,6 +84,47 @@ func TestClassifyBroadcastResponse(t *testing.T) {
 				t.Errorf("classifyBroadcastResponse() = %v, want %v", result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestErrorFromCheckTx(t *testing.T) {
+	if err := errorFromCheckTx(&sdk.TxResponse{Code: 0, TxHash: "ok"}, nil); err != nil {
+		t.Fatalf("code 0: %v", err)
+	}
+	if err := errorFromCheckTx(&sdk.TxResponse{Code: 19, RawLog: "tx already in mempool"}, nil); err != nil {
+		t.Fatalf("code 19: %v", err)
+	}
+
+	err := errorFromCheckTx(&sdk.TxResponse{Code: 20, RawLog: "mempool is full"}, nil)
+	if !errors.Is(err, ErrTxCheckTxRetry) {
+		t.Fatalf("code 20: got %v, want ErrTxCheckTxRetry", err)
+	}
+	if IsPermanentCheckTxError(err) {
+		t.Fatal("code 20 should not be permanent")
+	}
+
+	err = errorFromCheckTx(&sdk.TxResponse{Code: 1103, Codespace: "inference", RawLog: "participant not found"}, nil)
+	if !errors.Is(err, ErrTxCheckTxFail) {
+		t.Fatalf("business error: got %v, want ErrTxCheckTxFail", err)
+	}
+	if !IsPermanentCheckTxError(err) {
+		t.Fatal("business error should be permanent")
+	}
+
+	err = errorFromCheckTx(&sdk.TxResponse{Code: 32, RawLog: "insufficient fee: got 0ngonka required: 10ngonka"}, nil)
+	if !errors.Is(err, ErrTxCheckTxInsufficientFee) {
+		t.Fatalf("insufficient fee: got %v, want ErrTxCheckTxInsufficientFee", err)
+	}
+	if IsPermanentCheckTxError(err) {
+		t.Fatal("insufficient fee must not be permanent")
+	}
+	if !IsInsufficientFeeCheckTxError(err) {
+		t.Fatal("insufficient fee sentinel not detected")
+	}
+
+	rpcErr := errors.New("connection refused")
+	if got := errorFromCheckTx(nil, rpcErr); got != rpcErr {
+		t.Fatalf("rpc error should pass through, got %v", got)
 	}
 }
 
@@ -147,6 +161,7 @@ func TestIsRetryableRawLog(t *testing.T) {
 
 		// Cosmos SDK transient errors - should be retryable
 		{name: "mempool is full", rawLog: "mempool is full", expected: true},
+		{name: "insufficient fee", rawLog: "insufficient fee: got 0ngonka, required at least 10ngonka", expected: true},
 
 		// Sequence errors - should be retryable
 		{name: "account sequence mismatch", rawLog: "account sequence mismatch, expected 5, got 4", expected: true},
@@ -154,10 +169,7 @@ func TestIsRetryableRawLog(t *testing.T) {
 
 		// Business logic errors - should NOT be retryable
 		{name: "participant not found", rawLog: "participant not found", expected: false},
-		{name: "duplicate validation", rawLog: "participant has already validated this inference", expected: false},
 		{name: "inference not found", rawLog: "inference with id not found", expected: false},
-		{name: "inference already processed", rawLog: "inference has already finished processed", expected: false},
-		{name: "invalid signature", rawLog: "invalid keys provided for StartInference", expected: false},
 		{name: "empty string", rawLog: "", expected: false},
 		{name: "random error", rawLog: "something went wrong", expected: false},
 	}
@@ -277,4 +289,3 @@ func TestIsTxErrorCritical(t *testing.T) {
 		})
 	}
 }
-

@@ -96,6 +96,8 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 			host.WithGrace(grace), host.WithValidator(validators[i]),
 		)
 		require.NoError(t, err)
+		h.Start()
+		t.Cleanup(h.Close)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
@@ -225,6 +227,8 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 			host.WithGrace(grace), host.WithValidator(validators[i]),
 		)
 		require.NoError(t, err)
+		h.Start()
+		t.Cleanup(h.Close)
 		hostBySigner[i] = h
 	}
 	clients := make([]HostClient, len(group))
