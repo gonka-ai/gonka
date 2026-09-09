@@ -41,7 +41,7 @@ Public HAProxy → nginx policy workers → HAProxy (:18081)
   - same `ACCOUNT_PUBKEY`
 4. Only put **Postgres-capable versions** into the HA pool. With `GONKA_HA=true`, v5 `versiond` requires each HA child to support `--print-storage-mode` and report `postgres`; the child must also match its approved protocol name. Keep older versions (`v1` / `v2` / `v3`) pinned to a **legacy** single host if you still serve them.
 5. Confirm the actual `api:9100/versions` response contains the required protocol, downloadable binary URL and SHA256. It follows chain-approved versions; the branch name does not publish a v5 artifact or activate it on-chain. The examples below use protocol `v5`.
-6. Docker Compose **2.24.4 or newer**, Bash, Python 3, `jq`, `flock`, `sha256sum` and `timeout` on the machine running the fleet/updater scripts.
+6. Docker Compose **2.24.4 or newer**, Bash, Python 3, `curl` **7.71 or newer**, `jq`, `flock`, `sha256sum` and `timeout` on the machine running the fleet/updater scripts.
 
 ---
 
@@ -63,10 +63,11 @@ Create a database and user, for example:
 | Database | `devshardd`          |
 | User     | `devshardd`          |
 | Password | strong secret        |
-| SSL      | follow your provider |
 
 
 Note the primary (or HA) endpoint: host, port (often `5432`), database, user, password. Ensure **all** `versiond` instances can reach it (firewall / VPC / security groups).
+
+This procedure, including `update-devshard.sh`, supports bundled PostgreSQL or an external writable endpoint without custom TLS configuration. The updater rejects explicit `PGSSL*` settings except `PGSSLMODE=disable`. A provider setup requiring explicit TLS configuration is outside this procedure; do not disable a provider’s required TLS to fit this example.
 
 For v5, connect to PostgreSQL directly or through a connection pooler in **session pooling** mode. **Transaction pooling is not supported.** Use an endpoint that accepts writes, not a read-only replica. The local compose setup already connects directly.
 
@@ -187,6 +188,8 @@ export VERSIOND_NON_HA_VERSIONS=""
 export VERSIOND_ROUTING_CATALOG_URL=http://oracle-filter:9100/versions
 export VERSIOND_ROUTER_FLEET_SLOTS="0 1 2"
 export VERSIOND_ROUTER_MIN_READY=2
+export COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compose.devshard-v5.override.yml
+# Append every additional override used by this deployment, in the same order.
 # For an upgrade retaining v4 sessions, use "v4 v5" after the checks in §2.6.
 # These fleet settings are read from config.env by both deployment scripts.
 ```
@@ -285,6 +288,8 @@ With direct access, `VERSIOND_VERSIONS` is a router bootstrap list, **not a filt
 #### Start the selected layout
 
 **3. Bring up the main stack and router fleet**
+
+The command below uses local PostgreSQL. For an external database, first create the override in §2.2 and use that section’s startup command instead.
 
 ```bash
 source ./config.env
@@ -399,10 +404,16 @@ services:
 
 Use Docker Compose with `!override` support. This excludes the local database from `up -d` and removes the local-PG dependency on the replicas shown; repeat for every additional replica. Otherwise v5's lost-database guard can reject the unused local database after HA artifacts/state exist.
 
-3. Start (include the v5 override as well if you use the §2.1 example; omit filter dependencies for direct catalog access):
+3. Set the complete file list in `config.env`, including the external-PG override:
 
 ```bash
-cd deploy/join
+export COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compose.devshard-v5.override.yml:docker-compose.devshard-pg-external.override.yml
+```
+
+Then start (omit filter dependencies for direct catalog access):
+
+```bash
+cd /path/to/gonka/deploy/join
 source ./config.env
 ./versiond-router-fleet.sh prepare-networks
 
@@ -422,14 +433,14 @@ If you fully disable the local `devshard-postgres` service, also remove or overr
 
 ### 2.3 Multiple machines (recommended, true host HA)
 
-Conceptually the same layout, but each machine runs one `versiond`, and one place runs the `versiond-router` fleet. Prefer a **private network** between machines; bind new listeners to private IPs only if you cannot open extra public ports.
+Keep the local HA replicas on machine A and add a `versiond` replica on machine B. Machine A runs the `versiond-router` fleet. Use a **private network** between machines and bind the additional listeners to private IPs as shown below.
 
-Example with one replica per machine:
+Example extending the two local replicas from §2.1:
 
 
 | Role      | Runs                                                            |
 | --------- | --------------------------------------------------------------- |
-| Machine A | `versiond` (+ usual node/api/proxy) + `versiond-router` fleet   |
+| Machine A | `versiond` + `versiond2`, usual node/api/proxy and the `versiond-router` fleet |
 | Machine B | `versiond` only — **no** second dapi with the same keys         |
 | Shared    | Postgres reachable from every `versiond` (managed HA preferred) |
 
@@ -443,9 +454,57 @@ Example with one replica per machine:
 3. Oracle URL — use the **same catalog source** as local HA: the optional `oracle-filter` on a private port, or direct API access when running without it. If A uses a filter, bypassing it on B can launch versions excluded from A’s HA pool.
 4. Confirm `PGPASSWORD` / `KEYRING_PASSWORD` in `config.env` match what **running** local `versiond`* containers use.
 
+For the local PostgreSQL and optional-filter example, put A’s private IP in
+`config.env` as `export GONKA_PRIVATE_BIND_IP=<A-private-ip>`, then create
+`docker-compose.devshard-private.override.yml` in `deploy/join`:
+
+```bash
+cat > docker-compose.devshard-private.override.yml <<'EOF'
+services:
+  node:
+    ports:
+      - "${GONKA_PRIVATE_BIND_IP:?set A's private IP}:26657:26657"
+      - "${GONKA_PRIVATE_BIND_IP:?set A's private IP}:9090:9090"
+  api:
+    ports:
+      - "${GONKA_PRIVATE_BIND_IP:?set A's private IP}:${NODE_MANAGER_GRPC_PORT:-9400}:${NODE_MANAGER_GRPC_PORT:-9400}"
+  devshard-postgres:
+    ports:
+      - "${GONKA_PRIVATE_BIND_IP:?set A's private IP}:5432:5432"
+  oracle-filter:
+    ports:
+      - "${GONKA_PRIVATE_BIND_IP:?set A's private IP}:19100:9100"
+EOF
+```
+
+With external PostgreSQL, omit the `devshard-postgres` entry and use the actual
+shared database host/port on B. Without the filter, omit `oracle-filter` and use
+A’s API catalog on port `9100`, already published by the base Compose file.
+
+Include this override after all existing files in A’s Compose commands and
+persist the same complete list in `COMPOSE_FILE` in `config.env`. On a fresh
+installation, include it in the startup command from §2.1 or §2.2. For an
+existing installation, publishing these ports recreates the affected services:
+schedule maintenance, stop all database writers before recreating local
+PostgreSQL, apply the complete configuration, then wait for readiness and run
+`./update-devshard.sh --check` before reopening traffic. Do not restart the
+whole live stack merely to add a remote member.
+
+Before starting B, check these endpoints **from B** (replace A’s private IP):
+
+```bash
+curl -fsS http://<A-private-ip>:19100/versions  # direct catalog: port 9100
+pg_isready -h <A-private-ip> -p 5432           # use the shared DB endpoint
+```
+
+Install the PostgreSQL client for `pg_isready` and the storage check below.
+The readiness probe checks reachability; the later `--check-storage` establishes
+that B uses the same database. Ensure B can also reach A’s chain and node-manager
+ports listed above.
+
 **On machine B (**`versiond` **only) — one compose file is enough**
 
-B does not run `api` / `node`. It runs a single `versiond` that uses **A’s** Postgres, oracle, node-manager, and chain endpoints over the private network.
+B does not run `api` / `node`. Its `versiond` uses the shared PostgreSQL endpoint and A’s catalog, node-manager and chain endpoints over the private network.
 
 1. **Same participant identity as A** — same `KEY_NAME`, `ACCOUNT_PUBKEY`, `KEYRING_PASSWORD`, and a copy of A’s `.inference/keyring-file/` (often root-owned; copy with `sudo`). Mount it read-only as `/root/.inference`. Do **not** start a second `api` with those keys on B.
 2. **Put all connection settings in the** `versiond` **service** `environment:` (compose file). Shell `export`s in `config.env` only help if compose interpolates them into that block — the container must see the vars.
@@ -474,7 +533,8 @@ services:
       - KEYRING_BACKEND=${KEYRING_BACKEND:-file}
       - KEYRING_PASSWORD=${KEYRING_PASSWORD}
       - KEYRING_DIR=/root/.inference
-      - PGHOST=<A-private-ip>
+      - PGHOST=<A-private-ip>  # external PG: use the shared database host
+      - PGPORT=5432            # external PG: use its actual port
       - PG_POOL_MAX_CONNS=${DEVSHARD_POSTGRES_POOL_MAX_CONNS:-4}
       - PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}
       - PGUSER=${DEVSHARD_POSTGRES_USER:-devshardd}
@@ -486,6 +546,12 @@ services:
       - ./devshards-remote/data:/opt/versiond/data
     ports:
       - "<B-private-ip>:8080:8080"   # LAN only — not 0.0.0.0
+    healthcheck:
+      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz?version=v5"]
+      interval: 2s
+      timeout: 3s
+      retries: 3
+      start_period: 30m
     stop_grace_period: 30m
     restart: always
 ```
@@ -493,7 +559,7 @@ services:
 ```bash
 mkdir -p devshards-remote/{bin,data}
 source ./config.env
-docker compose -f docker-compose.versiond-remote.yml up -d
+docker compose -f docker-compose.versiond-remote.yml up -d --wait --wait-timeout 2100
 curl -fsS "http://<B-private-ip>:8080/readyz?version=v5"   # not 127.0.0.1 if bound to LAN IP only
 ```
 
@@ -508,10 +574,9 @@ chmod 600 pool-postgres.env
 ```
 
 Fill `pool-postgres.env` with the existing pool's known working PostgreSQL
-host, port, database, credentials and TLS settings. Obtain these from A or
-the database administrator, independently of the replica being checked.
-Certificate paths refer to files on B. With the intended versiond image and
-configuration running, execute:
+host, port, database and credentials. Obtain these from A or the database
+administrator, independently of the replica being checked. With the intended
+versiond image and configuration running, execute:
 
 ```bash
 ./update-devshard.sh --check-storage --reference-env ./pool-postgres.env
@@ -530,6 +595,7 @@ running elsewhere. Resolve any failure before admitting the replica.
 ```json
 [
   {"id": "local-a", "host": "versiond", "port": 8080},
+  {"id": "local-a-2", "host": "versiond2", "port": 8080},
   {"id": "remote-b", "host": "10.0.0.12", "port": 8080}
 ]
 ```
@@ -561,14 +627,15 @@ Use the same ordered compose files for every operation (append §2.2's external-
 ```bash
 cd /path/to/gonka/deploy/join
 source ./config.env
-dc=(docker compose -f docker-compose.yml -f docker-compose.versiond.yml
-    -f docker-compose.devshard-v5.override.yml)
-# External PG: dc+=(-f docker-compose.devshard-pg-external.override.yml)
+# COMPOSE_FILE must include every active override, including external PG,
+# private ports and additional replicas; keep this list in config.env.
+: "${COMPOSE_FILE:?set the complete Compose file list in config.env}"
+dc=(docker compose)
 
 # Stop only one member, keeping enough ready survivors for the load.
 "${dc[@]}" stop versiond2
 # Restart the same member with its existing data:
-"${dc[@]}" up -d --no-deps versiond2
+"${dc[@]}" up -d --no-deps --wait --wait-timeout 2100 versiond2
 docker exec versiond2 wget -qO- "http://127.0.0.1:8080/readyz?version=v5"
 ```
 
@@ -717,6 +784,8 @@ export VERSIOND_NON_HA_VERSIONS=""
 export VERSIOND_ROUTING_CATALOG_URL=http://oracle-filter:9100/versions
 export VERSIOND_ROUTER_FLEET_SLOTS="0 1 2"
 export VERSIOND_ROUTER_MIN_READY=2
+export COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compose.devshard-v5.override.yml
+# Append every additional override used by this deployment, in the same order.
 # Optional — same as compose default on one machine
 export VERSIOND_POOL_HOST=versiond-pool
 ```
@@ -784,15 +853,40 @@ done
 # Require a nonempty identity and generation targets from every member.
 # A 503 here blocks the updater even when normal readiness passes.
 
-# 6) Stop the sticky replica (not a random one) and confirm route failover
-curl -si http://127.0.0.1:8000/devshard/v5/healthz | grep -iE 'HTTP/|X-Upstream|X-Versiond'
-# map X-Upstream-Addr IP → container (docker inspect -f '{{.Name}} {{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' versiond versiond2 versiond3 …)
-# stop THAT container, e.g.:
-docker stop --time 1800 versiond3
-curl -si http://127.0.0.1:8000/devshard/v5/healthz | grep -iE 'HTTP/|X-Upstream|X-Versiond'
-# After active health checks withdraw the stopped peer, expect 200 on a survivor.
-# X-Upstream-Addr is the final peer (e.g. 172.19.0.14:8080), not a retry list.
-docker start versiond3
+# 6) Stop the local replica that served the probe and confirm route failover.
+# Include every local replica in this list. Remote peers are checked on their hosts.
+(
+  set -euo pipefail
+  replicas=(versiond versiond2)
+  health_url="http://127.0.0.1:${API_PORT:-8000}/devshard/v5/healthz"
+  route_peer() {
+    curl -fsS --max-time 5 --retry 30 --retry-delay 1 --retry-max-time 60 \
+      --retry-connrefused --retry-all-errors -D - -o /dev/null "$health_url" |
+      awk 'tolower($1) == "x-upstream-addr:" {gsub("\r", "", $2); peer=$2} END {print peer}'
+  }
+  before=$(route_peer)
+  test -n "$before"
+  # Match the selected IP against each replica's networks, without joining IPs.
+  serving_replica=$(docker inspect "${replicas[@]}" | jq -er --arg ip "${before%:*}" '
+    [.[] | select(any(.NetworkSettings.Networks[]; .IPAddress == $ip)) |
+      .Name | ltrimstr("/")] |
+    if length == 1 then .[0] else error("selected peer is not one unique local replica") end')
+  printf 'Probe served by %s (%s)\n' "$serving_replica" "$before"
+  # Restore this replica even if the failover check fails.
+  trap 'docker start "$serving_replica" >/dev/null' EXIT
+  docker stop -t 1800 "$serving_replica"
+  after=$(route_peer)
+  test -n "$after" && test "$after" != "$before"
+  printf 'Probe now served by %s\n' "$after"
+  docker start "$serving_replica"
+  trap - EXIT
+  timeout 2100 bash -c '
+    until docker exec "$1" wget -qO- "http://127.0.0.1:8080/readyz?version=v5"; do
+      sleep 2
+    done' _ "$serving_replica"
+)
+# X-Upstream-Addr identifies the final serving peer, not a retry list.
+# With a remote selected peer, stop/restore that peer on its own host (§2.3).
 ```
 
 Healthy signs:
@@ -800,7 +894,7 @@ Healthy signs:
 - `desired_versions` logs / `/healthz` show the selected approved HA versions (v5, plus v4 if retained; no v3 under HA), and `/readyz?version=...` returns 200 on each member.
 - Every HA `versiond*` replica runs its approved `devshardd` artifacts with Postgres storage.
 - Router sticky-routes across the HA pool (`VERSIOND_NON_HA_VERSIONS` empty).
-- Stopping the **sticky** upstream moves subsequent traffic to a ready peer (killing an unused replica does not prove HA).
+- Stopping the replica that served the probe moves subsequent probes to a ready peer. Continuing an actual session is checked separately below.
 
 PostgreSQL outages make v5 children unready and fail closed. After a database fence loss, verify that the affected child exits and `versiond` replaces it before it receives traffic again. A child left running and unready fails recovery acceptance.
 
@@ -824,6 +918,8 @@ The health URL is only a routing smoke check. Also use a real funded escrow: rec
 
 
 Use the fleet script for router lifecycle; slots are separate Compose projects and are not stopped by the main project's `docker compose down`.
+
+**Known shutdown issue:** with catalog refresh enabled, a router slot can remain running after its connections have drained. Stopping or replacing it can then wait for Docker's forced-stop timeout (`VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS`, 1800 seconds by default). Allow for this delay for each replaced slot when scheduling maintenance.
 
 ```bash
 ./versiond-router-fleet.sh status
@@ -867,7 +963,7 @@ For maintenance of the whole machine, drain the fleet before stopping the main s
 ## Minimal recipe (fresh installation, one host, v5)
 
 ```bash
-cd deploy/join
+cd /path/to/gonka/deploy/join
 source ./config.env
 
 # Persist in config.env:
@@ -875,6 +971,7 @@ source ./config.env
 #   VERSIOND_IMAGE / VERSIOND_ROUTER_IMAGE / PROXY_ROUTER_IMAGE / PROXY_POLICY_IMAGE
 #   VERSIOND_VERSIONS=v5 / VERSIOND_NON_HA_VERSIONS=""
 #   VERSIOND_ROUTING_CATALOG_URL=http://oracle-filter:9100/versions
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compose.devshard-v5.override.yml
 #   (optional) DEVSHARD_POSTGRES_DB / USER / VERSIOND_POOL_HOST
 
 # Create docker-compose.devshard-v5.override.yml as in §2.1
