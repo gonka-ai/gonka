@@ -66,8 +66,9 @@ verify_source_marker() {
     vsm_format="" vsm_id="" vsm_fingerprint="" vsm_extra=""
     [ -f "$vsm_dir/.migrated-from-v4" ] || die "migrated PGDATA has no source provenance marker; verify the preserved source before recovery"
     read -r vsm_format vsm_id vsm_fingerprint vsm_extra <"$vsm_dir/.migrated-from-v4" || die "invalid source provenance marker"
-    [ "$vsm_format" = gonka-source-v1 ] && [ -z "$vsm_extra" ] && \
-        [ "${#vsm_fingerprint}" -eq 64 ] || die "old or invalid source provenance marker; verify the database before recovery"
+    if [ "$vsm_format" != gonka-source-v1 ] || [ -n "$vsm_extra" ] || [ "${#vsm_fingerprint}" -ne 64 ]; then
+        die "old or invalid source provenance marker; verify the database before recovery"
+    fi
     case "$vsm_fingerprint" in *[!0-9a-f]*) die "invalid source fingerprint" ;; esac
     [ "$vsm_id" = "$(cluster_system_identifier "$vsm_dir")" ] || die "source provenance marker belongs to a different cluster"
     if cluster_exists "$legacy_data"; then
@@ -239,8 +240,9 @@ elif cluster_exists "$legacy_data"; then
         die "migrated PostgreSQL version does not match its source"
     source_after=$(source_fingerprint "$legacy_data") || die "cannot recheck the preserved v4 source"
     copied_source=$(source_fingerprint "$staging_data") || die "cannot verify the copied source"
-    [ "$source_before" = "$source_after" ] && [ "$source_before" = "$copied_source" ] || \
+    if [ "$source_before" != "$source_after" ] || [ "$source_before" != "$copied_source" ]; then
         die "v4 source changed during the copy; stop its PostgreSQL before retrying"
+    fi
     write_source_marker "$legacy_data" "$source_before" "$staging_data"
     sync
     : >"$staging_complete"
