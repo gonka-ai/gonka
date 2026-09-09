@@ -4,7 +4,7 @@
 **Status:** draft for host operators - edit before wider distribution.  
 **Goal:** run a **high-available (HA)** host stack so a single `versiond` / `devshardd` failure does not take the host offline.
 
-**Release:** `devshard-0.2.15-v5`. Core checked at `39240311fb` with gateway and storage fixes from [PR #1730](https://github.com/gonka-ai/gonka/pull/1730) through `bf4de2d21`; versiond fleet and updater checked in the integration from [PR #1611](https://github.com/gonka-ai/gonka/pull/1611) through `f6d6a8214` on 2026-09-09.
+**Release:** `devshard-0.2.15-v5`. Core checked at `39240311fb` with gateway and storage fixes from [PR #1730](https://github.com/gonka-ai/gonka/pull/1730) through `bf4de2d21`; versiond fleet and updater checked in the integration from [PR #1611](https://github.com/gonka-ai/gonka/pull/1611) through `ab2bb5171` on 2026-09-09.
 
 ---
 
@@ -651,6 +651,14 @@ The host updater supports bundled PostgreSQL or an external writable endpoint wi
 Schedule the first public nginx-to-HAProxy replacement and local PostgreSQL copy as maintenance. Once the retained v4 escrow works through the fleet, extend the filter to `VERSIOND_VERSIONS="v4 v5"` as in §2.5, wait for v5 and verify a new v5 escrow. Check per-version readiness on every member and admission through both routing tiers; a healthy public proxy alone is insufficient.
 
 If a versiond replacement or public admission fails, the updater restores the saved container configuration and stops. It restores proxy and policy workers together, including the old nginx on the first cutover. An interrupted replacement is recovered on the next normal run; `--check` reports pending recovery. Keep the same persistent `UPDATE_STATE_DIR` if you override its default under `~/.local/state/gonka/updater/`. Inspect logs, fix the cause and rerun with the same complete file list. Unchanged services and previous-release records are retained. Saved configurations preserve mount sources; keep previous join files because rollback does not undo host-file edits or database writes. The updater does not guarantee uninterrupted policy-worker replacement; validate accepted SSE with the test plan before relying on that behavior.
+
+The updater refuses an unexpected change to the bundled PostgreSQL data directory. Before replacing PostgreSQL, it saves a control value in the database and a recovery record with the chosen image, data directory and retained source volume. After startup it checks that value before proceeding. If interrupted, rerun with the same persistent updater state directory: recovery uses the saved database target before starting a new preflight. A failed history check stops PostgreSQL and retains the record; investigate the selected data directory before retrying.
+
+Keep the saved v4 volume unchanged after copying. The entrypoint verifies it against the migration record; restarting that old copy as a writer creates a separate history and blocks subsequent starts while the volume is attached. Do not replace the migration marker to bypass this check.
+
+Each HA versiond replacement requires a surviving member for every currently served HA version. The candidate must then pass per-version readiness and admission in every router before the updater proceeds to the next member. Pinned versions are checked on their designated owner before its replacement is confirmed. General container health alone does not complete the step.
+
+Replacing the single public proxy can interrupt existing connections, including on later v5 image or configuration updates. Schedule those replacements during maintenance and let accepted work finish first.
 
 **State migration and rollback.** Existing HA PostgreSQL data stays in the same database. v5 applies forward schema migrations under a database advisory lock. For first-time conversion of a single-owner deployment, explicit `postgres` mode also imports supported epoch-layout SQLite sessions and file payloads before serving; stop the old writer and migrate each source directory with one owner. Successful sources are quarantined as `*.migrated.<timestamp>`, and conflicting data aborts startup. Older monolithic layouts need separate verification.
 
