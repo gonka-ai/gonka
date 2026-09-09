@@ -155,6 +155,52 @@ a single B300 (~242 GiB usable at `gmu 0.90`), while the NVFP4 build needs 181.3
 The PoC gate is the stronger of the two against this substitution and catches it on every arm
 measured; the inference gate is the corroborating signal.
 
+## MLNode image
+
+Built and verified on 8×H200:
+`ghcr.io/gonka-ai/mlnode:3.0.17-glm53-h200`, on the vLLM base
+`ghcr.io/gonka-ai/vllm:v0.28.0-glm53-poc-cu13-hopper-blackwell`. It carries vLLM
+`0.28.0.dev0+glm53.gonka.sampler1`, gonka-poc `0.1.4`, and FlashInfer `0.6.18`.
+
+Three changes to `mlnode/packages/api/Dockerfile` were required for the 0.28 base and are
+included here. The base image ships `wheel` as a distro package with no RECORD file, so the
+combined `pip install --upgrade` could not uninstall it; it is now two calls, with
+`--ignore-installed` for `wheel`. The vLLM version guard was hardcoded to `0.25.1` and is now
+`ARG EXPECTED_VLLM_VERSION`, defaulting to `0.25.1` so existing builds are unaffected. The
+OpenSSL fetch now retries and accepts `ARG OPENSSL_URL`, which allows a local mirror on hosts
+with an unreliable link. Cloning the repository for a build also requires
+`git submodule update --init --recursive`, otherwise Poetry cannot resolve the `gorilla` path
+dependency.
+
+### Verified on this image
+
+All three currently integrated models were started concurrently on disjoint GPUs — DeepSeek
+V4 Flash 0731 at TP=2, MiniMax M2.7 at TP=2, GLM-5.3-Flash at TP=4 — with the arguments from
+their own `deploy/join` profiles. Each was taken through a full cycle of PoC start, PoC stop,
+and inference, twice, in both compiled and eager mode.
+
+| Model | Mode | PoC cycle 1 | PoC cycle 2 | Inference after stop |
+|---|---|---:|---:|---:|
+| DeepSeek V4 Flash 0731 | compiled | 1036.7 | 1036.7 | 0.2 s |
+| DeepSeek V4 Flash 0731 | eager | 998.3 | 998.3 | 2.4 s |
+| MiniMax M2.7 | compiled | 1459.1 | 1459.1 | 0.3 s |
+| MiniMax M2.7 | eager | 1804.6 | 1843.0 | 4.1 s |
+| GLM-5.3-Flash | compiled | 1497.4 | 1497.3 | 0.3 s |
+| GLM-5.3-Flash | eager | 1459.0 | 1497.4 | 3.8 s |
+
+Nonce rates are per instance in nonce/min at PoC batch 16. Every cycle answered the control
+prompt correctly, and the second PoC run matched the first to the decimal, so stopping PoC
+leaves no state that slows the next start.
+
+### MiniMax reasoning parser
+
+`--reasoning-parser minimax_m2_append_think` does not separate reasoning on vLLM 0.28: the
+whole `<think>…</think>` block arrives in `message.content` and `message.reasoning` stays
+empty. `minimax_m2` is correct on this version — reasoning lands in `message.reasoning` and
+`content` holds only the answer. The MiniMax profiles are updated accordingly. This was
+verified on 0.28 only; if 3.0.16 nodes on vLLM 0.25.1 stay in service, re-check the flag there
+before rolling the change out to them.
+
 ## Operational notes
 
 * `NCCL_NVLS_ENABLE=0` is required on the Blackwell hosts tested. Without it NCCL aborts with
