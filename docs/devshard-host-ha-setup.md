@@ -30,8 +30,6 @@ Public HAProxy → nginx policy workers → HAProxy (:18081)
 
 ---
 
-
-
 ## Prerequisites
 
 1. Join files from **`devshard-0.2.15-v5`** including the versiond fleet/updater integration: `update-devshard.sh`, `versiond-router-fleet.sh`, `deployment-lock.sh`, `updater-rollback.sh`, `updater-container-state.py` and `versiond-router-slot/`. Use v5-capable `versiond`, HAProxy `versiond-router` and `proxy-router`, nginx `proxy` policy images, and governance-approved `devshardd` artifacts for the protocols you serve. A tested set from one release candidate is recommended; compatibility depends on the actual component capabilities and protocol artifacts. Select the images explicitly in §2.1. The fleet/updater files are checked from the integration revision above.
@@ -45,8 +43,6 @@ Public HAProxy → nginx policy workers → HAProxy (:18081)
 
 ---
 
-
-
 ## Step 1 - Install Postgres (preferably HA itself)
 
 HA `versiond` removes dependence on one **app** server, but if Postgres is a single VM, **Postgres becomes your new SPOF**. Prefer a **managed / replicated** database.
@@ -57,13 +53,11 @@ HA `versiond` removes dependence on one **app** server, but if Postgres is a sin
 
 Create a database and user, for example:
 
-
 | Setting  | Example              |
 | -------- | -------------------- |
 | Database | `devshardd`          |
 | User     | `devshardd`          |
 | Password | strong secret        |
-
 
 Note the primary (or HA) endpoint: host, port (often `5432`), database, user, password. Ensure **all** `versiond` instances can reach it (firewall / VPC / security groups).
 
@@ -86,14 +80,10 @@ The v5 overlay stores the cluster in `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/
 
 `PGHOST` must be set on **every** `versiond`* replica’s **container environment** (via the HA compose overlay or an override). Putting `export PGHOST=...` only in `config.env` does not change those services unless compose reads that variable into their `environment:` block.
 
-
 | What                                                                                                   | File on the host                                                                                         | Who sets it                                                                        |
 | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | DB name / user / password                                                                              | `deploy/join/config.env` (you edit)                                                                      | You                                                                                |
 | `PGHOST`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `DEVSHARD_STORAGE_MODE` on every `versiond*` container | `deploy/join/docker-compose.versiond.yml` (already in the overlay) **or** a compose **override** you add | Overlay by default; override only for an external DB; repeat for any extra replica |
-
-
-
 
 #### External or managed Postgres
 
@@ -110,9 +100,8 @@ Use this when the DB runs outside the join host (managed cloud DB or your own Po
 3. Start with **four** `-f` files: base + `versiond` overlay + the v5 override from §2.1 + your external-PG override.
 
 > Do not run multiple `versiond` instances on SQLite.
+>
 > Keep `GONKA_HA=true`, `DEVSHARD_STORAGE_MODE=postgres` and `PGHOST` on HA `versiond` containers. v5 checks storage before starting HA children as well as when `versiond-router` sends `Devshard-Ha: true`. Hybrid/SQLite fallback is not supported for HA.
-
-
 
 #### Local compose Postgres (`devshard-postgres`)
 
@@ -136,12 +125,9 @@ Use this when you run the DB from the HA overlay on the join host (Option C).
 
 ---
 
-
-
 ## Step 2 - Run multiple `versiond` instances + `versiond-router`
 
 Example files in your setup. Some are present in the release branch:
-
 
 | File                                                           | Role                                                                                                  |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -155,8 +141,6 @@ Example files in your setup. Some are present in the release branch:
 **Optional component: `oracle-filter`.** This guide adds a small Python HTTP service to the example Compose override. It reads `api:9100/versions` and returns only the protocol names selected in `VERSIOND_VERSIONS`. We included it so the example can run only the selected Postgres-capable protocols on HA replicas, while the chain catalog may also contain older protocols, and so supervisors and both routing tiers see the same selected list. It does not approve versions or change the chain catalog.
 
 `oracle-filter` is **not required by versiond or the routers**. They can read `api:9100/versions` directly; see [Running without the filter](#running-without-the-filter). In that case, check the full catalog against your storage and legacy-version layout. `VERSIOND_NON_HA_VERSIONS` controls routing and HA preflight, but does not prevent versiond from launching a version. The examples below use the optional filter and an empty non-HA pin list.
-
-
 
 ### 2.1 Same machine, multiple instances (fresh v5 installation)
 
@@ -306,7 +290,6 @@ docker compose \
 
 What this starts:
 
-
 | Container           | Purpose                                       |
 | ------------------- | --------------------------------------------- |
 | `devshard-postgres` | Shared DB (if not using external PG)          |
@@ -316,7 +299,6 @@ What this starts:
 | Router slot containers | Independent HAProxy routers in front of the versiond pool |
 | `proxy-policy` / `proxy-policy2` | nginx policy workers for public requests |
 | `proxy` | Public HAProxy; private `/devshard/` routing to the router fleet |
-
 
 #### 4. Confirm
 
@@ -355,8 +337,6 @@ export VERSIOND_NON_HA_VERSIONS="v1 v2 v3"
 ```
 
 Do **not** clear the non-HA pin list in that case; use a split layout instead of launching v3 under `DEVSHARD_STORAGE_MODE=postgres` on HA replicas. Keep HA peers on the filtered oracle; give the dedicated legacy owner its own legacy-only oracle and SQLite data. Set `VERSIOND_LEGACY_HOST` to that owner and `VERSIOND_NON_HA_VERSIONS` to the legacy list in `config.env` for supervisors and both routing tiers. Changing an existing fleet's legacy owner/list requires the maintenance procedure in Step 5.
-
-
 
 ### 2.2 Using external / managed Postgres with the same overlay
 
@@ -435,13 +415,11 @@ Keep the local HA replicas on machine A and add a `versiond` replica on machine 
 
 Example extending the two local replicas from §2.1:
 
-
 | Role      | Runs                                                            |
 | --------- | --------------------------------------------------------------- |
 | Machine A | `versiond` + `versiond2`, usual node/api/proxy and the `versiond-router` fleet |
 | Machine B | `versiond` only — **no** second dapi with the same keys         |
 | Shared    | Postgres reachable from every `versiond` (managed HA preferred) |
-
 
 > **Important:** `decentralized-api` (dapi) is still **single-instance** today. HA here is for **devshard traffic** (`versiond` / `devshardd`), not for running two dapis with one key.
 
@@ -793,11 +771,7 @@ Restoring an old image does not undo database migrations or later committed writ
 
 ---
 
-
-
 ## Step 3 - Environment variables checklist
-
-
 
 ### Put in `deploy/join/config.env` (and `source` it before compose)
 
@@ -843,20 +817,14 @@ You normally **do not edit these by hand** when using the local `devshard-postgr
 - `VERSIOND_DRAIN_ANNOUNCE=5s`, `VERSIOND_HOST_SHUTDOWN_BUDGET=25m`, `stop_grace_period: 30m`
 - policy workers: `VERSIOND_SERVICE_NAME=proxy-policy-ingress`, `VERSIOND_PORT=18081`; public proxy: `VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet`
 
-
-
 ### Put in compose overrides
-
 
 | File                                               | Purpose                                                                                     |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `docker-compose.devshard-v5.override.yml`     | v5 supervisor images + optional `oracle-filter` for every peer and the router catalog; `VERSIOND_NON_HA_VERSIONS=` empty |
 | `docker-compose.devshard-pg-external.override.yml` | Managed DB: set `PGHOST=...` under **every** `versiond`* service (see §2.2)                 |
 
-
 ---
-
-
 
 ## Step 4 - Verify it works
 
@@ -942,10 +910,7 @@ The health URL is only a routing smoke check. Also use a real funded escrow: rec
 
 ---
 
-
-
 ## Step 5 - `versiond-router` fleet operations
-
 
 | Component                | HA status                                                                                                                                                                                   |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -955,7 +920,6 @@ The health URL is only a routing smoke check. Also use a real funded escrow: rec
 | `proxy` (public HAProxy) | One public listener; replacing it or losing its machine can interrupt connections                                                                                                                                      |
 | nginx policy workers    | Replicated behind the public listener; verify accepted-request continuity during replacement |
 | `decentralized-api`      | Still single-instance                                                                                                                                                                       |
-
 
 Use the fleet script for router lifecycle; slots are separate Compose projects and are not stopped by the main project's `docker compose down`.
 
@@ -982,10 +946,7 @@ For maintenance of the whole machine, drain the fleet before stopping the main s
 # ./versiond-router-fleet.sh down --maintenance
 ```
 
-
 ---
-
-
 
 ## What not to do
 
@@ -997,8 +958,6 @@ For maintenance of the whole machine, drain the fleet before stopping the main s
 6. **Omit the overrides for your chosen layout** when running `docker compose up` — preserve its image, storage and catalog settings. The optional filter is not required when you have configured direct catalog access as described in §2.1.
 
 ---
-
-
 
 ## Minimal recipe (fresh installation, one host, v5)
 
