@@ -14,6 +14,7 @@ type RefreshOptInUseCase struct {
 	probe     ports.Probe
 	cards     readiness.Cards
 	claim     readiness.Claim
+	keys      readiness.Keys
 	submitter shard.ChainSubmitter
 	spec      readiness.Spec
 	ttl       time.Duration
@@ -23,6 +24,7 @@ func NewRefreshOptInUseCase(
 	probe ports.Probe,
 	cards readiness.Cards,
 	claim readiness.Claim,
+	keys readiness.Keys,
 	submitter shard.ChainSubmitter,
 	spec readiness.Spec,
 	ttl time.Duration,
@@ -31,6 +33,7 @@ func NewRefreshOptInUseCase(
 		probe:     probe,
 		cards:     cards,
 		claim:     claim,
+		keys:      keys,
 		submitter: submitter,
 		spec:      spec,
 		ttl:       ttl,
@@ -39,7 +42,7 @@ func NewRefreshOptInUseCase(
 
 func (uc *RefreshOptInUseCase) Execute(ctx context.Context, node vo.NodeRef) (readiness.Result, error) {
 	// 1. Collect what the machine and the chain say about this node
-	result := readiness.Collect(ctx, uc.probe, uc.cards, uc.claim, node, uc.spec)
+	result := readiness.Collect(ctx, uc.probe, uc.cards, uc.claim, uc.keys, node, uc.spec)
 	if !result.Ready {
 		return result, nil
 	}

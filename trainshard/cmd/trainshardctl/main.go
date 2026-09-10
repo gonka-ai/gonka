@@ -9,13 +9,16 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"os/signal"
 	"slices"
 	"strings"
+	"syscall"
 
 	"trainshard/internal/application/coord/assembly"
 	"trainshard/internal/application/coord/ops"
 	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared"
+	"trainshard/internal/domain/shared/ports"
 	"trainshard/internal/domain/shared/vo"
 	"trainshard/internal/infrastructure/adapters/chain"
 	clockadapter "trainshard/internal/infrastructure/adapters/clock"
@@ -76,7 +79,10 @@ func drive() error {
 	if err != nil {
 		return err
 	}
-	outside, err := connect(cfg, signer)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	outside, err := connect(ctx, cfg, signer)
 	if err != nil {
 		return err
 	}
@@ -85,12 +91,13 @@ func drive() error {
 	hosts := hosts.New(&http.Client{}, cfg.directory, signer, clock, cfg.timeout)
 
 	assembly.New(assembly.Config{Poll: cfg.pollInterval, Settle: cfg.settleWindow}, assembly.Deps{
-		Chain:     outside.chain,
-		Hosts:     hosts,
-		Verifier:  signer,
-		Submitter: outside.submitter,
-		Lifecycle: outside.lifecycle,
-		Clock:     clock,
+		Chain:      outside.chain,
+		Hosts:      hosts,
+		Verifier:   signer,
+		Delegation: outside.delegation,
+		Submitter:  outside.submitter,
+		Lifecycle:  outside.lifecycle,
+		Clock:      clock,
 	}, os.Stdout).Register(commands)
 	ops.New(ops.Config{Timeout: cfg.timeout}, ops.Deps{
 		Chain:   outside.chain,
@@ -100,7 +107,7 @@ func drive() error {
 		Clock:   clock,
 	}, os.Stdout, os.Stdin).Register(commands)
 
-	return commands[command](context.Background(), args)
+	return commands[command](ctx, args)
 }
 
 type keys interface {
@@ -117,14 +124,15 @@ func key(cfg config) (keys, error) {
 }
 
 type outside struct {
-	chain     shard.ChainReader
-	submitter shard.ChainSubmitter
-	lifecycle shard.ChainLifecycle
-	close     func() error
+	chain      shard.ChainReader
+	delegation ports.Delegation
+	submitter  shard.ChainSubmitter
+	lifecycle  shard.ChainLifecycle
+	close      func() error
 }
 
-func connect(cfg config, signer keys) (outside, error) {
-	client, err := chain.Dial(chain.Config{Address: cfg.chainGRPC})
+func connect(ctx context.Context, cfg config, signer keys) (outside, error) {
+	client, err := chain.Dial(chain.Config{Address: cfg.chainGRPC, Timeout: cfg.chainTimeout})
 	if err != nil {
 		return outside{}, err
 	}
@@ -132,8 +140,15 @@ func connect(cfg config, signer keys) (outside, error) {
 	if !signs {
 		return outside{}, fmt.Errorf("the chain only takes what a key signs")
 	}
-	creator := chain.NewSigner(client, account, cfg.chainID)
-	return outside{chain: client, submitter: creator, lifecycle: creator, close: client.Close}, nil
+	chainID, err := client.ChainID(ctx)
+	if err != nil {
+		return outside{}, errors.Join(err, client.Close())
+	}
+	if cfg.chainID != "" && cfg.chainID != chainID {
+		return outside{}, errors.Join(fmt.Errorf("TRAINSHARDCTL_CHAIN_ID is %q and the chain at %s calls itself %q", cfg.chainID, cfg.chainGRPC, chainID), client.Close())
+	}
+	creator := chain.NewSigner(client, account, chainID, cfg.chainLanding)
+	return outside{chain: client, delegation: client, submitter: creator, lifecycle: creator, close: client.Close}, nil
 }
 
 func catalog() map[string]func(context.Context, []string) error {

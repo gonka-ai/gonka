@@ -114,3 +114,25 @@ func TestConfigDefaults(t *testing.T) {
 		t.Fatalf("defaults overwrote a set value: %+v", kept)
 	}
 }
+
+func TestParseCardsReadsNameAndMemory(t *testing.T) {
+	lines := []string{"NVIDIA H100 80GB HBM3, 81559", "Tesla T4, 15360"}
+
+	cards, err := parseCards(lines)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cards) != 2 || cards[0].Name != "NVIDIA H100 80GB HBM3" || cards[0].MemoryMiB != 81559 || cards[1].MemoryMiB != 15360 {
+		t.Fatalf("cards = %+v", cards)
+	}
+}
+
+func TestParseCardsRefusesALineWithoutMemory(t *testing.T) {
+	if _, err := parseCards([]string{"NVIDIA H100 80GB HBM3"}); err == nil {
+		t.Fatal("want an error for a line with no memory column")
+	}
+	if _, err := parseCards([]string{"NVIDIA H100 80GB HBM3, [N/A]"}); err == nil {
+		t.Fatal("want an error for memory that is not a number")
+	}
+}

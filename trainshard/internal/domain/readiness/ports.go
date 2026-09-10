@@ -17,3 +17,7 @@ type Claim interface {
 	// Hardware returns what the node claimed on chain
 	Hardware(ctx context.Context, node vo.NodeRef) (vo.GPUInventory, error)
 }
+
+type Keys interface {
+	MissingGrants(ctx context.Context, participant vo.Participant, signer vo.Address) ([]string, error)
+}

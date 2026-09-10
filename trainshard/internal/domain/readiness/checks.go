@@ -2,6 +2,7 @@ package readiness
 
 import (
 	"fmt"
+	"strings"
 
 	"trainshard/internal/domain/shared/vo"
 )
@@ -17,10 +18,23 @@ func SameGPUs(machine, claimed vo.GPUInventory, err error) Check {
 	if err != nil {
 		return Failed(CheckGPUsMatchChain, err.Error())
 	}
-	if machine != claimed {
+	if machine.IsZero() {
+		return Failed(CheckGPUsMatchChain, "machine has no gpus")
+	}
+	if machine.Profile != claimed.Profile {
 		return Failed(CheckGPUsMatchChain, fmt.Sprintf("machine has %s, chain says %s", machine, claimed))
 	}
 	return Passed(CheckGPUsMatchChain)
+}
+
+func KeyAuthorized(missing []string, err error) Check {
+	if err != nil {
+		return Failed(CheckKeyAuthorized, err.Error())
+	}
+	if len(missing) > 0 {
+		return Failed(CheckKeyAuthorized, fmt.Sprintf("the key holds no grant for %s", strings.Join(missing, ", ")))
+	}
+	return Passed(CheckKeyAuthorized)
 }
 
 func FreeDisk(free, needed int64, err error) Check {

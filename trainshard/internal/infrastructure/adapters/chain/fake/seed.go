@@ -7,12 +7,19 @@ import (
 
 	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/vo"
+	"trainshard/internal/infrastructure/adapters/gpuprofile"
 )
 
 type seed struct {
 	Height   int64          `json:"height"`
 	Shards   []seedShard    `json:"shards"`
 	Hardware []seedHardware `json:"hardware"`
+	WarmKeys []seedWarmKey  `json:"warm_keys"`
+}
+
+type seedWarmKey struct {
+	Participant string `json:"participant"`
+	Address     string `json:"address"`
 }
 
 type seedShard struct {
@@ -57,7 +64,11 @@ func Load(path string) (*Chain, error) {
 		if err != nil {
 			return nil, err
 		}
-		chain.hardware[node] = vo.GPUInventory{Model: entry.Model, Count: entry.Count}
+		chain.hardware[node] = gpuprofile.Declared(entry.Model, entry.Count)
+	}
+
+	for _, entry := range file.WarmKeys {
+		chain.warmKeys[vo.Address(entry.Address)] = vo.Participant(entry.Participant)
 	}
 
 	for _, entry := range file.Shards {

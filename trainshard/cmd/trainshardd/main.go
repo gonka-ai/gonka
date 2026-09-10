@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	hostdrun "trainshard/internal/application/hostd/run"
 	"trainshard/internal/application/hostd/session"
 	"trainshard/internal/domain/mesh"
+	"trainshard/internal/domain/readiness"
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/vo"
@@ -59,7 +61,7 @@ func serve() error {
 		return err
 	}
 	if signer.Address() != vo.Address(cfg.participant) {
-		return fmt.Errorf("the key signs as %s and this daemon speaks for %s: a node's mesh identity is only believed from its own participant", signer.Address(), cfg.participant)
+		log.Info("the key is not the participant's own, the chain is asked whether it was granted", "signer", signer.Address(), "participant", cfg.participant)
 	}
 
 	outside, err := connect(cfg)
@@ -74,6 +76,14 @@ func serve() error {
 	}
 
 	parts, err := machinery(cfg, clock, log)
+	if err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	cfg.limits.MaxGPUs, err = cards(ctx, parts.gpu, cfg.nodes[0], log)
 	if err != nil {
 		return err
 	}
@@ -114,12 +124,14 @@ func serve() error {
 		Version:          version,
 		SupportedVersion: cfg.supportedVersion,
 		MinFreeDiskBytes: cfg.minFreeDiskBytes,
+		Signer:           signer.Address(),
 		OptInTTL:         cfg.optInTTL,
 		RefreshInterval:  cfg.refreshInterval,
 	}, node.Deps{
 		Probe:     parts.probe,
 		GPU:       parts.gpu,
 		Chain:     outside.chain,
+		Keys:      outside.keys,
 		Submitter: outside.submitter,
 		Clock:     clock,
 		Log:       log,
@@ -139,9 +151,6 @@ func serve() error {
 	runs.Mount(mux, boundary)
 	nodes.Mount(mux, boundary)
 	sessions.Mount(mux, boundary)
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	var workers sync.WaitGroup
 	workers.Add(2)
@@ -189,6 +198,18 @@ type keys interface {
 	Recover(payload, signature []byte) (vo.Address, error)
 }
 
+func cards(ctx context.Context, gpu run.GPU, node vo.NodeRef, log *slog.Logger) (int, error) {
+	inventory, err := gpu.Inventory(ctx, node)
+	if err != nil {
+		return 0, fmt.Errorf("reading the cards: %w", err)
+	}
+	if inventory.IsZero() {
+		return 0, fmt.Errorf("this machine shows no gpus, and a node with none has nothing to offer a run")
+	}
+	log.Info("cards", "profile", inventory.Profile, "count", inventory.Count)
+	return inventory.Count, nil
+}
+
 func key(cfg config) (keys, error) {
 	if cfg.privateKey != "" {
 		return cosmos.FromHex(cfg.privateKey)
@@ -198,6 +219,7 @@ func key(cfg config) (keys, error) {
 
 type outside struct {
 	chain        shard.ChainReader
+	keys         readiness.Keys
 	watcher      shard.ChainWatcher
 	submitter    shard.ChainSubmitter
 	reservations run.Reservations
@@ -217,7 +239,7 @@ func (r reservations) Release(ctx context.Context, shardID vo.ShardID, node vo.N
 }
 
 func connect(cfg config) (outside, error) {
-	client, err := chain.Dial(chain.Config{Address: cfg.chainGRPC, Poll: cfg.chainPoll})
+	client, err := chain.Dial(chain.Config{Address: cfg.chainGRPC, Poll: cfg.chainPoll, Timeout: cfg.chainTimeout})
 	if err != nil {
 		return outside{}, err
 	}
@@ -227,7 +249,7 @@ func connect(cfg config) (outside, error) {
 		Timeout:     cfg.dapiTimeout,
 	})
 	return outside{
-		chain: client, watcher: client, submitter: node,
+		chain: client, keys: client, watcher: client, submitter: node,
 		reservations: reservations{Client: client, dapi: node},
 		control:      node,
 		close:        client.Close,

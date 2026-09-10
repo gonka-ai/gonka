@@ -343,7 +343,7 @@ type gpuStub struct {
 }
 
 func (g *gpuStub) Inventory(context.Context, vo.NodeRef) (vo.GPUInventory, error) {
-	return vo.GPUInventory{Model: "H100", Count: 8}, nil
+	return vo.GPUInventory{Profile: "H100 x8", Count: 8}, nil
 }
 
 func (g *gpuStub) InUse(context.Context, vo.NodeRef) (int, error) { return g.inUse, nil }

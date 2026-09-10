@@ -18,12 +18,13 @@ type Config struct {
 }
 
 type Deps struct {
-	Chain     shard.ChainReader
-	Hosts     mesh.Hosts
-	Verifier  ports.Verifier
-	Submitter shard.ChainSubmitter
-	Lifecycle shard.ChainLifecycle
-	Clock     ports.Clock
+	Chain      shard.ChainReader
+	Hosts      mesh.Hosts
+	Verifier   ports.Verifier
+	Delegation ports.Delegation
+	Submitter  shard.ChainSubmitter
+	Lifecycle  shard.ChainLifecycle
+	Clock      ports.Clock
 }
 
 type Module struct {
@@ -31,7 +32,7 @@ type Module struct {
 }
 
 func New(cfg Config, deps Deps, out io.Writer) *Module {
-	prepare := usecases.NewPrepareMeshUseCase(deps.Chain, deps.Hosts, deps.Verifier, deps.Submitter, deps.Clock, cfg.Poll, cfg.Settle)
+	prepare := usecases.NewPrepareMeshUseCase(deps.Chain, deps.Hosts, deps.Verifier, deps.Delegation, deps.Submitter, deps.Clock, cfg.Poll, cfg.Settle)
 	return &Module{commands: cli.New(prepare, deps.Lifecycle, deps.Clock, out)}
 }
 

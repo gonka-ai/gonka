@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"trainshard/internal/domain/shared/vo"
+	"trainshard/internal/infrastructure/adapters/gpuprofile"
 )
 
 type Config struct {
@@ -48,14 +49,31 @@ func New(cfg Config, runs Runs, log *slog.Logger) *GPUs {
 }
 
 func (g *GPUs) Inventory(ctx context.Context, _ vo.NodeRef) (vo.GPUInventory, error) {
-	lines, err := g.query(ctx, "--query-gpu=name")
+	lines, err := g.query(ctx, "--query-gpu=name,memory.total")
 	if err != nil {
 		return vo.GPUInventory{}, err
 	}
-	if len(lines) == 0 {
-		return vo.GPUInventory{}, nil
+	cards, err := parseCards(lines)
+	if err != nil {
+		return vo.GPUInventory{}, err
 	}
-	return vo.GPUInventory{Model: lines[0], Count: len(lines)}, nil
+	return gpuprofile.FromCards(cards), nil
+}
+
+func parseCards(lines []string) ([]gpuprofile.Card, error) {
+	cards := make([]gpuprofile.Card, 0, len(lines))
+	for _, line := range lines {
+		name, memory, found := strings.Cut(line, ",")
+		if !found {
+			return nil, fmt.Errorf("nvidia-smi line %q has no memory column", line)
+		}
+		mib, err := strconv.Atoi(strings.TrimSpace(memory))
+		if err != nil {
+			return nil, fmt.Errorf("nvidia-smi line %q: %w", line, err)
+		}
+		cards = append(cards, gpuprofile.Card{Name: strings.TrimSpace(name), MemoryMiB: mib})
+	}
+	return cards, nil
 }
 
 func (g *GPUs) InUse(ctx context.Context, _ vo.NodeRef) (int, error) {

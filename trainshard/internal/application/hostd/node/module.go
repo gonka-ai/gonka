@@ -18,6 +18,7 @@ type Deps struct {
 	Probe     ports.Probe
 	GPU       run.GPU
 	Chain     shard.ChainReader
+	Keys      readiness.Keys
 	Submitter shard.ChainSubmitter
 	Clock     ports.Clock
 	Log       *slog.Logger
@@ -33,15 +34,16 @@ func New(cfg Config, deps Deps) *Module {
 		Version:          cfg.Version,
 		SupportedVersion: cfg.SupportedVersion,
 		MinFreeDiskBytes: cfg.MinFreeDiskBytes,
+		Signer:           cfg.Signer,
 	}
 	prover := readiness.NewProver(deps.Probe, deps.Clock)
 
 	return &Module{
 		endpoints: api.NewEndpoints(cfg.Nodes, cfg.Version,
-			usecases.NewEvaluateReadinessUseCase(prover, deps.GPU, deps.Chain, spec)),
+			usecases.NewEvaluateReadinessUseCase(prover, deps.GPU, deps.Chain, deps.Keys, spec)),
 		optIn: worker.NewOptIn(
 			cfg.Nodes,
-			usecases.NewRefreshOptInUseCase(prover, deps.GPU, deps.Chain, deps.Submitter, spec, cfg.OptInTTL),
+			usecases.NewRefreshOptInUseCase(prover, deps.GPU, deps.Chain, deps.Keys, deps.Submitter, spec, cfg.OptInTTL),
 			cfg.RefreshInterval,
 			deps.Log,
 		),

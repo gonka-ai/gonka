@@ -1,18 +1,24 @@
 package mesh
 
 import (
+	"context"
 	"strings"
 
+	"trainshard/internal/domain/shared/ports"
 	"trainshard/internal/domain/shared/vo"
 )
 
 const identityPayloadVersion = "trainshard-mesh-v0"
 
-func VerifyIdentity(identity Identity, signer vo.Address) error {
+func VerifyIdentity(ctx context.Context, identity Identity, signer vo.Address, delegation ports.Delegation) error {
 	if identity.Member.Node.IsZero() || identity.Member.Address == "" || identity.Member.PublicKey == "" {
 		return ErrIncompleteMember
 	}
-	if signer != vo.Address(identity.Member.Node.Participant) {
+	speaks, err := delegation.Speaks(ctx, identity.Member.Node.Participant, signer)
+	if err != nil {
+		return ErrDelegationUnknown
+	}
+	if !speaks {
 		return ErrForeignIdentity
 	}
 	return nil

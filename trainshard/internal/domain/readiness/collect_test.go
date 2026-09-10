@@ -13,6 +13,7 @@ type machine struct {
 	probe *probeStub
 	cards *cardsStub
 	claim *claimStub
+	keys  *keysStub
 	clock *clockStub
 	spec  readiness.Spec
 }
@@ -22,6 +23,7 @@ func newMachine() *machine {
 		probe: newProbeStub(),
 		cards: &cardsStub{inventory: hardware},
 		claim: &claimStub{hardware: hardware},
+		keys:  &keysStub{},
 		clock: newClockStub(),
 		spec:  readiness.Spec{Version: version, MinFreeDiskBytes: diskFloor},
 	}
@@ -29,7 +31,7 @@ func newMachine() *machine {
 
 func (m *machine) collect() readiness.Result {
 	prover := readiness.NewProver(m.probe, m.clock)
-	return readiness.Collect(context.Background(), prover, m.cards, m.claim, nodeA, m.spec)
+	return readiness.Collect(context.Background(), prover, m.cards, m.claim, m.keys, nodeA, m.spec)
 }
 
 func TestCollectKeepsANodeOutForEveryReasonItCanName(t *testing.T) {
@@ -44,9 +46,26 @@ func TestCollectKeepsANodeOutForEveryReasonItCanName(t *testing.T) {
 			want:   "no nvidia runtime",
 		},
 		{
-			name:   "machine has fewer gpus than the chain was told",
-			mutate: func(m *machine) { m.cards.inventory = vo.GPUInventory{Model: "H100", Count: 4} },
-			want:   "machine has 4 x H100, chain says 8 x H100",
+			name: "machine has fewer gpus than the chain was told",
+			mutate: func(m *machine) {
+				m.cards.inventory = vo.GPUInventory{Profile: "NVIDIA H100 80GB HBM3 | 79GB x4", Count: 4}
+			},
+			want: "machine has NVIDIA H100 80GB HBM3 | 79GB x4, chain says NVIDIA H100 80GB HBM3 | 79GB x8",
+		},
+		{
+			name:   "machine has no gpus at all",
+			mutate: func(m *machine) { m.cards.inventory = vo.GPUInventory{}; m.claim.hardware = vo.GPUInventory{} },
+			want:   "machine has no gpus",
+		},
+		{
+			name:   "key was not granted what training needs",
+			mutate: func(m *machine) { m.keys.missing = []string{"/inference.inference.MsgAutokickTrainshardNode"} },
+			want:   "the key holds no grant for /inference.inference.MsgAutokickTrainshardNode",
+		},
+		{
+			name:   "grants cannot be read",
+			mutate: func(m *machine) { m.keys.err = errProbe },
+			want:   "no nvidia runtime",
 		},
 		{
 			name:   "chain cannot be read",
