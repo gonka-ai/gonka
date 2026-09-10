@@ -5,6 +5,7 @@ package queryapitest
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -22,7 +23,10 @@ type stubBLSEpochServer struct{ blstypes.UnimplementedQueryServer }
 
 func (s *stubBLSEpochServer) EpochBLSData(_ context.Context, req *blstypes.QueryEpochBLSDataRequest) (*blstypes.QueryEpochBLSDataResponse, error) {
 	return &blstypes.QueryEpochBLSDataResponse{
-		EpochData: blstypes.EpochBLSData{},
+		EpochData: blstypes.EpochBLSData{
+			EpochId:  req.EpochId,
+			DkgPhase: blstypes.DKGPhase_DKG_PHASE_COMPLETED,
+		},
 	}, nil
 }
 
@@ -53,6 +57,20 @@ func TestGetBLSEpoch_Returns200(t *testing.T) {
 	require.NoError(t, h.GetBLSEpoch(ctx, 1))
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), "epoch_data")
+}
+
+func TestGetBLSEpoch_LegacyEncodingJSONShape(t *testing.T) {
+	h := handlersWithBLS(t, &stubBLSEpochServer{})
+	ctx, rec := echoContext(t, http.MethodGet, "/v1/bls/epoch/7")
+	require.NoError(t, h.GetBLSEpoch(ctx, 7))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	ep, ok := body["epoch_data"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(7), ep["epoch_id"], "epoch_id must be a JSON number")
+	require.Equal(t, float64(blstypes.DKGPhase_DKG_PHASE_COMPLETED), ep["dkg_phase"], "dkg_phase must be a numeric enum")
 }
 
 func TestGetBLSEpoch_Returns500OnGRPCError(t *testing.T) {
@@ -101,8 +119,13 @@ func TestGetBLSSignature_Returns200WithPendingRequest(t *testing.T) {
 	ctx, rec := echoContext(t, http.MethodGet, "/v1/bls/signatures/deadbeef")
 	require.NoError(t, h.GetBLSSignature(ctx, "deadbeef"))
 	assert.Equal(t, http.StatusOK, rec.Code)
-	body := rec.Body.String()
-	assert.Contains(t, body, "signing_request")
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	sr, ok := body["signing_request"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_PENDING_SIGNING), sr["status"],
+		"status must be a numeric enum, not a protojson name")
 }
 
 func TestGetBLSSignature_Returns200WithNilOnNotFound(t *testing.T) {
@@ -114,7 +137,11 @@ func TestGetBLSSignature_Returns200WithNilOnNotFound(t *testing.T) {
 	ctx, rec := echoContext(t, http.MethodGet, "/v1/bls/signatures/deadbeef")
 	require.NoError(t, h.GetBLSSignature(ctx, "deadbeef"))
 	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "{}\n", rec.Body.String()) // omitempty: nil signing_request is omitted
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Contains(t, body, "signing_request")
+	require.Nil(t, body["signing_request"])
 }
 
 func TestGetBLSSignature_Returns500OnGRPCError(t *testing.T) {

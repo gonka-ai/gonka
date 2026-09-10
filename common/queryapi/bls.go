@@ -77,13 +77,10 @@ func (h *Handlers) GetBLSEpoch(ctx echo.Context, id uint64) error {
 		uncompressedValSig, _ = decompressG1To128(res.EpochData.ValidationSignature)
 	}
 
-	epochData, err := protoToRawJSON(&res.EpochData)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to encode BLS epoch data: "+err.Error())
-	}
-
+	// Legacy dapi: encoding/json on EpochData (numeric int64s / enum ints).
+	// ProtoMarshalJSON would stringify ints and emit enum names.
 	return ctx.JSON(http.StatusOK, gen.BLSEpochResponse{
-		EpochData:                          epochData,
+		EpochData:                          res.EpochData,
 		GroupPublicKeyUncompressed256:      uncompressedG2,
 		ValidationSignatureUncompressed128: uncompressedValSig,
 	})
@@ -97,7 +94,6 @@ func (h *Handlers) GetBLSEpochs(ctx echo.Context, id uint64) error {
 // Ported from decentralized-api/internal/server/public/bls_handlers.go:51
 // Changes:
 //   - Not-found detection uses gRPC status code (codes.NotFound) instead of string matching on err.Error().
-//   - Not-found response serializes as {} instead of {"signing_request":null} due to omitempty on BLSSignatureResponse.
 func (h *Handlers) GetBLSSignature(ctx echo.Context, requestId string) error {
 	requestIDBytes, err := hex.DecodeString(requestId)
 	if err != nil {
@@ -110,27 +106,23 @@ func (h *Handlers) GetBLSSignature(ctx echo.Context, requestId string) error {
 	)
 	if err != nil {
 		if status.Code(err) == codes.NotFound {
-			return ctx.JSON(http.StatusOK, gen.BLSSignatureResponse{SigningRequest: nil})
+			// Match 0.2.14 wire shape (omitempty on gen.BLSSignatureResponse would emit {}).
+			return ctx.JSON(http.StatusOK, map[string]any{"signing_request": nil})
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to query BLS signature data: "+err.Error())
 	}
 
-	var uncompressedSig *[]byte
+	var uncompressedSig []byte
 	if res != nil && res.SigningRequest.Status == blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED {
 		sig := res.SigningRequest.FinalSignature
 		if len(sig) == 48 {
-			if b, e := decompressG1To128(sig); e == nil {
-				uncompressedSig = &b
-			}
+			uncompressedSig, _ = decompressG1To128(sig)
 		}
 	}
 
-	sigReq, err := protoToRawJSONPtr(&res.SigningRequest)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to encode BLS signing request: "+err.Error())
-	}
-	return ctx.JSON(http.StatusOK, gen.BLSSignatureResponse{
-		SigningRequest:           sigReq,
-		UncompressedSignature128: uncompressedSig,
+	// Legacy dapi: encoding/json on SigningRequest (not ProtoMarshalJSON).
+	return ctx.JSON(http.StatusOK, map[string]any{
+		"signing_request":            res.SigningRequest,
+		"uncompressed_signature_128": uncompressedSig,
 	})
 }

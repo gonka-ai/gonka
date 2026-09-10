@@ -1,14 +1,10 @@
 {
   "active_participants": {
-    "participants": [],
-    "created_at_block_height": "100",
-    "epoch_group_id": 1,
-    "poc_start_block_height": "90",
-    "effective_block_height": "100",
-    "created_at_epoch": 1
+    "created_at_block_height": 100,
+    "epoch_group_id": 1
   },
   "addresses": [],
-  "active_participants_bytes": "0a000a0431323334",
+  "active_participants_bytes": "10012864",
   "proof_ops": {
     "ops": [
       {
@@ -21,10 +17,36 @@
   "validators": [],
   "block": {
     "header": {
-      "height": "101",
+      "version": {
+        "block": 11
+      },
       "chain_id": "gonka-test",
-      "app_hash": "YXBwaGFzaA=="
-    }
+      "height": 101,
+      "time": "0001-01-01T00:00:00Z",
+      "last_block_id": {
+        "hash": "",
+        "parts": {
+          "total": 0,
+          "hash": ""
+        }
+      },
+      "last_commit_hash": "",
+      "data_hash": "",
+      "validators_hash": "",
+      "next_validators_hash": "",
+      "consensus_hash": "",
+      "app_hash": "61707068617368",
+      "last_results_hash": "",
+      "evidence_hash": "",
+      "proposer_address": "ABABABABABABABABABABABABABABABABABABABAB"
+    },
+    "data": {
+      "txs": []
+    },
+    "evidence": {
+      "evidence": []
+    },
+    "last_commit": null
   },
   "excluded_participants": []
 }
