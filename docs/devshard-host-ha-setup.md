@@ -658,6 +658,14 @@ To add another approved HA protocol in this filtered layout, extend `VERSIOND_VE
 
 Use the same Postgres, identity and per-replica mounts as the existing deployment. Take a database backup and record the current images, approved binary URLs/SHA256, compose project/files, mounts and a working escrow. Preserve `.inference`, each `devshards*/data` directory, the binary cache and router catalog state. Prepare the v5 files from §2.1 in the **same compose project**, but do not run an unrestricted `up -d` yet.
 
+```bash
+cd /path/to/gonka/deploy/join
+source ./config.env
+# Keep every active override in the ordered COMPOSE_FILE saved in config.env.
+: "${COMPOSE_FILE:?set the complete Compose file list in config.env}"
+dc=(docker compose)
+```
+
 **1. Keep existing protocols available.** For a v4-only deployment, keep `VERSIOND_VERSIONS="v4"` during the fleet cutover, even if v5 is already approved. Fleet admission runs before supervisor replacement and must be able to use the versions already serving. Add v5 after the cutover; the catalog and bootstrap routes must retain v4 for its active sessions. The optional filter provides the v4-only selection used by this upgrade example; direct catalog access requires a catalog compatible with the same cutover constraints. Before replacing supervisors, check the actual approved v4 binary's `--print-storage-mode` in the HA environment (`postgres`) and `--print-protocol-version` (`v4`). An old artifact without the HA storage probe cannot join the new HA supervisor pool. Use matching gateway/host protocol artifacts. Do not rename a v4 binary/escrow to v5 or assume v4 session state is migrated into the v5 protocol. Keep serving retained v4 sessions under their compatible v4 artifact; use a new escrow for v5.
 
 Add v5 only after it is approved and the fleet cutover has passed the retained v4 inference check. New supervisors automatically promote verified old `<bin>/<version>/devshardd` installs into `<bin>/<version>/<archive-sha256>/devshardd`. They verify the old metadata against the current oracle and otherwise download again. **Do not delete or manually rename** the cache or `<data>/<version>` directories.
@@ -677,7 +685,7 @@ bash ./devshard-postgres-migration-preflight.sh \
 
 The copy needs the source cluster's size plus 10% free space. Keep the existing PostgreSQL major version and Alpine/musl image family (`postgres:16-alpine` by default); this is a data-directory copy, not `pg_upgrade` or conversion between image variants.
 
-Enter a maintenance window, stop new devshard traffic, let accepted work finish, and stop **all** database-writing HA members, including remote ones. With the compose array from §2.5:
+Enter a maintenance window, stop new devshard traffic, let accepted work finish, and stop **all** database-writing HA members, including remote ones:
 
 ```bash
 # Include every local member; stop remote members on their own machines too.
@@ -698,7 +706,11 @@ export DEVSHARD_POSTGRES_LEGACY_VOLUME='<recorded-old-volume-name>'
 bash ./devshard-postgres-migration-preflight.sh \
   --source-volume "$DEVSHARD_POSTGRES_LEGACY_VOLUME" \
   --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
-"${dc[@]}" -f docker-compose.versiond-postgres-recovery.yml \
+# Command-line -f replaces COMPOSE_FILE, so pass the complete list explicitly.
+files=()
+IFS=':' read -ra parts <<<"$COMPOSE_FILE"
+for f in "${parts[@]}"; do files+=(-f "$f"); done
+docker compose "${files[@]}" -f docker-compose.versiond-postgres-recovery.yml \
   up -d --no-deps devshard-postgres
 ```
 
@@ -707,10 +719,6 @@ After verifying migration, recreate PostgreSQL once without the recovery overlay
 **3. Run the updater with the complete deployment configuration.** After a local database copy, restart the retained old member containers with `docker start` and verify their v4 readiness before running the updater (use `/v4/healthz` when an old supervisor returns 404 from `/readyz`). Keep their catalog limited to v4 for this cutover example (using the optional filter if needed), and public traffic closed during the cutover. Fleet admission needs these serving children before it replaces supervisors. For already-migrated PostgreSQL whose members provide v5 storage proofs, keep ready survivors running. Pre-v5 supervisors lack host evacuation: finish their accepted work in the maintenance window before replacement.
 
 ```bash
-source ./config.env
-export COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compose.devshard-v5.override.yml
-# Append EVERY active overlay, in order (external PG, extra replicas, private endpoints, etc.).
-# Persist the complete COMPOSE_FILE in config.env for subsequent updates.
 ./versiond-router-fleet.sh prepare-networks
 # Only when using the optional filter:
 docker compose up -d --no-deps oracle-filter
