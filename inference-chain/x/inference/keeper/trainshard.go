@@ -6,10 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"math"
 	"sort"
-	"strings"
 
 	"cosmossdk.io/collections"
 	sdkmath "cosmossdk.io/math"
@@ -17,36 +15,6 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 )
-
-// non-accelerator hardware stripped from the GPU profile
-var nonGpuHardwareTypes = map[string]struct{}{
-	"CPU": {}, "RAM": {}, "MEMORY": {}, "DISK": {}, "SSD": {}, "HDD": {},
-	"STORAGE": {}, "NVME": {}, "NIC": {}, "NETWORK": {},
-}
-
-func CanonicalGpuProfileId(node *types.HardwareNode) string {
-	counts := make(map[string]uint32)
-	for _, h := range node.GetHardware() {
-		typ := strings.Join(strings.Fields(strings.ToUpper(strings.TrimSpace(h.GetType()))), " ")
-		if typ == "" {
-			continue
-		}
-		if _, skip := nonGpuHardwareTypes[typ]; skip {
-			continue
-		}
-		counts[typ] += h.GetCount()
-	}
-	typeKeys := make([]string, 0, len(counts))
-	for typ := range counts {
-		typeKeys = append(typeKeys, typ)
-	}
-	sort.Strings(typeKeys)
-	parts := make([]string, len(typeKeys))
-	for i, typ := range typeKeys {
-		parts[i] = fmt.Sprintf("%s x%d", typ, counts[typ])
-	}
-	return strings.Join(parts, " | ")
-}
 
 // IsNodeReserved checks whether a node is held by training: either reserved by
 // an active shard or still inside its return buffer after release
@@ -198,7 +166,7 @@ func (k Keeper) buildTrainingEpochView(ctx context.Context) (*trainingEpochView,
 		profileByLocalId := make(map[string]string)
 		if hardware != nil {
 			for _, hn := range hardware.HardwareNodes {
-				profileByLocalId[hn.GetLocalId()] = CanonicalGpuProfileId(hn)
+				profileByLocalId[hn.GetLocalId()] = types.CanonicalGpuProfileId(hn)
 			}
 		}
 		for i, model := range p.Models {
@@ -954,4 +922,3 @@ func (k Keeper) CollectEpochReservedHostsForModel(ctx context.Context, epochInde
 	})
 	return hosts
 }
-
