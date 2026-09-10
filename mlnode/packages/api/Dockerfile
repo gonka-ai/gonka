@@ -4,6 +4,11 @@ ARG VLLM_BASE_IMAGE=ghcr.io/gonka-ai/vllm:v0.25.1-poc-v4-cu13-hopper-blackwell@s
 ARG MLNODE_RELEASE_VERSION=unknown
 FROM ${VLLM_BASE_IMAGE} AS base
 
+# Ubuntu 24.04 bases ship a stock `ubuntu` account at UID/GID 1000; entrypoint.sh
+# creates appuser at HOST_UID (default 1000) under `set -e`, so the container
+# would die on `useradd: UID 1000 is not unique` before exec. No-op on 22.04.
+RUN if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi
+
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \
     apt-get update && apt-get install -y --no-install-recommends \
