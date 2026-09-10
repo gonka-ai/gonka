@@ -50,11 +50,13 @@ config.env is read from this directory (or GONKA_CONFIG_ENV).
   --check-storage  verify running HA devshard processes against an independently
                    configured PostgreSQL; no config.env or Compose required
   --reference-env  shell file with the known working pool's PGHOST, PGDATABASE,
-                   PGUSER and connection/TLS settings (requires local psql)
+                   PGUSER and connection settings (psql runs in Docker)
   --container      versiond container to check; repeat for several (default: versiond)
 
 Storage checking writes a control value through each process's database pool.
 Run checks one host at a time, before admitting new/replaced replicas to traffic.
+The client uses DEVSHARD_POSTGRES_IMAGE (default postgres:16-alpine) and host
+networking. Explicit TLS settings are unsupported; PGSSLMODE=disable is allowed.
 
 Compose files come from COMPOSE_FILE when set, otherwise from the labels of
 the running versiond container, otherwise from the stock files.

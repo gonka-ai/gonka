@@ -292,12 +292,7 @@ jobs:
       - name: Check PostgreSQL replacement history and recovery
         run: python3 deploy/join/updater-postgres_test.py
       - name: Check remote storage against real PostgreSQL
-        run: |
-          if ! command -v psql >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y postgresql-client
-          fi
-          python3 deploy/join/versiond-storage-check_test.py
+        run: python3 deploy/join/versiond-storage-check_test.py
 
   test-public-proxy-router:
     runs-on: ubuntu-latest

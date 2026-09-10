@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise --check-storage with Docker, BusyBox, psql and real databases.
+"""Exercise --check-storage with Docker, BusyBox and real databases.
 
 Only the versiond proof API is a stand-in; its addressed writes go to actual
 PostgreSQL databases. No running deployment or fixed container names are used.
@@ -9,6 +9,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -36,6 +37,12 @@ class StorageCheck(unittest.TestCase):
         cls.identity = str(uuid.uuid4())
         cls.join = cls.root / "join"
         cls.join.mkdir()
+        # Every check runs without a host psql, including tests of failure paths.
+        cls.cli_bin = cls.root / "cli-bin"
+        cls.cli_bin.mkdir()
+        for tool in ("bash", "cat", "dirname", "docker", "flock", "jq", "sha256sum", "timeout"):
+            (cls.cli_bin / tool).symlink_to(shutil.which(tool))
+        assert shutil.which("psql", path=str(cls.cli_bin)) is None
         # Deliberately no config.env, Compose files, node, api, proxy or fleet.
         for name in ("update-devshard.sh", "versiond-storage-check.sh", "deployment-lock.sh"):
             shutil.copy2(SOURCE / name, cls.join / name)
@@ -106,8 +113,9 @@ class StorageCheck(unittest.TestCase):
 
     @classmethod
     def sql(cls, statement, database="reference"):
-        return run("psql", "-XwqAt", "-v", "ON_ERROR_STOP=1", "-c", statement,
-                   env=dict(cls.pg_env, PGDATABASE=database)).stdout.strip()
+        return run("docker", "exec", "-e", "PGPASSWORD=test-password", cls.pg,
+                   "psql", "-h", "127.0.0.1", "-U", "postgres", "-d", database,
+                   "-XwqAt", "-v", "ON_ERROR_STOP=1", "-c", statement).stdout.strip()
 
     @classmethod
     def configure(cls, member=0, *, mode="normal", databases=None):
@@ -120,7 +128,7 @@ class StorageCheck(unittest.TestCase):
             self.configure(i)
         self.sql("UPDATE devshard_storage_identity SET challenge = NULL")
 
-    def check(self, *, members=None, reference=None, extra=(), lock_path=None):
+    def check(self, *, members=None, reference=None, extra=(), lock_path=None, env_overrides=None):
         args = [str(self.join / "update-devshard.sh"), "--check-storage",
                 "--reference-env", str(reference or self.reference)]
         for member in members or self.members[:1]:
@@ -128,9 +136,11 @@ class StorageCheck(unittest.TestCase):
         # These inherited settings must never override the reference file.
         env = dict(os.environ, PGHOST="wrong.invalid", PGDATABASE="wrong",
                    PGPASSWORD="inherited-secret", PGSERVICE="wrong-service",
-                   PGOPTIONS="-c search_path=wrong", GONKA_CONFIG_ENV=str(self.join / "config.env"))
+                   PGOPTIONS="-c search_path=wrong", GONKA_CONFIG_ENV=str(self.join / "config.env"),
+                   PATH=str(self.cli_bin), DEVSHARD_POSTGRES_IMAGE="postgres:16-alpine")
         if lock_path:
             env["GONKA_DEPLOYMENT_LOCK"] = str(lock_path)
+        env.update(env_overrides or {})
         result = subprocess.run([*args, *extra], capture_output=True, text=True,
                                 env=env, timeout=90)
         self.assertNotIn("test-password", result.stdout + result.stderr)
@@ -193,6 +203,73 @@ class StorageCheck(unittest.TestCase):
         bad = self.root / "bad-reference.env"
         bad.write_text(self.reference.read_text() + "PGPASSWORD='wrong-password'\n")
         self.assert_failed(self.check(reference=bad), "cannot read the reference PostgreSQL")
+
+    def test_explicit_ssl_disable(self):
+        plain = self.root / "plain-reference.env"
+        plain.write_text(self.reference.read_text() + "PGSSLMODE=disable\n")
+        result = self.check(reference=plain, env_overrides={"DEVSHARD_POSTGRES_IMAGE": self.image})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Storage check passed", result.stdout)
+
+    def test_unsupported_tls_settings(self):
+        for key, value in (("PGSSLMODE", "verify-full"), ("PGSSLMODE", "require"),
+                           ("PGSSLROOTCERT", "/missing/root.crt"),
+                           ("PGSSLCERT", "/missing/client.crt"),
+                           ("PGSSLKEY", "/missing/client.key")):
+            with self.subTest(key=key, value=value):
+                unsupported = self.root / "tls-reference.env"
+                unsupported.write_text(self.reference.read_text() + f"{key}={value}\n")
+                self.assert_failed(self.check(reference=unsupported), f"unsupported TLS setting {key}")
+                self.assertEqual(self.sql("SELECT challenge FROM devshard_storage_identity"), "")
+
+    def test_client_image_pull_failure(self):
+        wrapper = self.root / "docker-pull-failure"
+        wrapper.write_text(
+            "#!/bin/bash\n"
+            'if [[ $1 == image && $2 == inspect ]] || [[ $1 == pull ]]; then exit 1; fi\n'
+            f"exec {shlex.quote(shutil.which('docker'))} \"$@\"\n")
+        wrapper.chmod(0o755)
+        self.assert_failed(self.check(env_overrides={"DOCKER_BIN": str(wrapper)}),
+                           "cannot prepare PostgreSQL client image")
+        self.assertEqual(self.sql("SELECT challenge FROM devshard_storage_identity"), "")
+
+    def test_client_cleanup_after_timeout(self):
+        directory = self.root / "timeout-test"
+        directory.mkdir()
+        name_file = directory / "client-name"
+        docker = shlex.quote(shutil.which("docker"))
+        wrapper = directory / "docker-wrapper"
+        wrapper.write_text(
+            "#!/bin/bash\n"
+            'if [[ $1 == run ]]; then\n'
+            '  while (($#)); do\n'
+            '    if [[ $1 == --name ]]; then name=$2; break; fi\n'
+            '    shift\n'
+            '  done\n'
+            f'  {docker} run -d --rm --name "$name" --network none --read-only '
+            '--entrypoint sleep postgres:16-alpine 300 >/dev/null || exit 1\n'
+            f'  printf "%s\\n" "$name" > {shlex.quote(str(name_file))}\n'
+            f'  exec {shlex.quote(shutil.which("sleep"))} 300\n'
+            'fi\n'
+            f'exec {docker} "$@"\n')
+        wrapper.chmod(0o755)
+        # Kill the CLI without signalling its container: cleanup must remove it.
+        timer = directory / "timeout"
+        timer.write_text("#!/bin/bash\nshift\n"
+                         f'exec {shlex.quote(shutil.which("timeout"))} --signal=KILL 5 "$@"\n')
+        timer.chmod(0o755)
+        try:
+            result = self.check(env_overrides={"DOCKER_BIN": str(wrapper),
+                                               "PATH": f"{directory}:{self.cli_bin}"})
+            self.assert_failed(result, "cannot read the reference PostgreSQL")
+            self.assertTrue(name_file.exists(), "client container was never started")
+            client = name_file.read_text().strip()
+            inspected = subprocess.run(["docker", "inspect", client], capture_output=True, text=True)
+            self.assertNotEqual(inspected.returncode, 0, "timed-out client container was retained")
+            self.assertEqual(self.sql("SELECT challenge FROM devshard_storage_identity"), "")
+        finally:
+            if name_file.exists():
+                subprocess.run(["docker", "rm", "-f", name_file.read_text().strip()], capture_output=True)
 
     def test_updater_capacity_against_real_postgres(self):
         # Run the host updater's actual SQL preflight against this isolated
