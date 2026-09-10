@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	devshardpkg "devshard"
 	"common/chain"
 	chaintx "common/chain/tx"
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/runtimeparams"
 	"devshard/storage"
@@ -554,6 +554,13 @@ func (rt *devshardRuntime) close() error {
 	return nil
 }
 
+func (rt *devshardRuntime) stopRedundancy() {
+	if rt == nil || rt.proxy == nil {
+		return
+	}
+	rt.proxy.redundancy.Stop()
+}
+
 // retireClose flushes a final state snapshot at the current (now frozen) nonce
 // so the escrow can later be rebuilt -- read-only for debug/state or fully on
 // reactivation -- without replaying the diff tail accumulated since the last
@@ -561,6 +568,7 @@ func (rt *devshardRuntime) close() error {
 // (deactivate, settle, rotation); plain close() is for transient read-only
 // runtimes and build-failure cleanup, where no snapshot flush is wanted.
 func (rt *devshardRuntime) retireClose(reason string) error {
+	rt.stopRedundancy()
 	if rt.session != nil {
 		if err := rt.session.FlushSnapshot(); err != nil {
 			log.Printf("runtime_retire_flush_snapshot_error escrow=%s reason=%q error=%v", rt.id, reason, err)
@@ -1711,11 +1719,14 @@ func (g *Gateway) serveInactiveDevshardMetadata(w http.ResponseWriter, r *http.R
 
 func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRuntime) {
 	rt.active.Store(false)
-	if g.store == nil {
-		return
+	if g.store != nil {
+		if err := g.store.SetDevshardActive(id, false); err != nil {
+			log.Printf("finalize: persist deactivation for devshard %s: %v", id, err)
+		}
 	}
-	if err := g.store.SetDevshardActive(id, false); err != nil {
-		log.Printf("finalize: persist deactivation for devshard %s: %v", id, err)
+	rt.stopRedundancy()
+	if g.metrics != nil {
+		g.metrics.ForgetEscrow(id)
 	}
 }
 
@@ -2387,11 +2398,11 @@ func legacyPerfSourcePath(storagePath string) string {
 }
 
 type adminDevshardRequest struct {
-	ID              string `json:"id"`
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Model           string `json:"model,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
+	ID            string `json:"id"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Model         string `json:"model,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
 	RoutePrefix   string `json:"route_prefix,omitempty"`
 }
 
@@ -2402,17 +2413,17 @@ type adminImportDevshardRequest struct {
 }
 
 type adminCreateEscrowRequest struct {
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Amount          uint64 `json:"amount"`
-	ModelID         string `json:"model_id,omitempty"`
-	Register        *bool  `json:"register,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
-	RoutePrefix     string `json:"route_prefix,omitempty"`
-	ChainID         string `json:"chain_id,omitempty"`
-	FeeDenom        string `json:"fee_denom,omitempty"`
-	FeeAmount       uint64 `json:"fee_amount,omitempty"`
-	GasLimit        uint64 `json:"gas_limit,omitempty"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Amount        uint64 `json:"amount"`
+	ModelID       string `json:"model_id,omitempty"`
+	Register      *bool  `json:"register,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
+	RoutePrefix   string `json:"route_prefix,omitempty"`
+	ChainID       string `json:"chain_id,omitempty"`
+	FeeDenom      string `json:"fee_denom,omitempty"`
+	FeeAmount     uint64 `json:"fee_amount,omitempty"`
+	GasLimit      uint64 `json:"gas_limit,omitempty"`
 }
 
 type adminSettleEscrowRequest struct {
@@ -3064,10 +3075,10 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              strconv.FormatUint(result.EscrowID, 10),
-			Model:           modelID,
-			StoragePath:     strings.TrimSpace(req.StoragePath),
-			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
+			ID:          strconv.FormatUint(result.EscrowID, 10),
+			Model:       modelID,
+			StoragePath: strings.TrimSpace(req.StoragePath),
+			RoutePrefix: strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: true,
 	}
@@ -3377,11 +3388,11 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              req.ID,
-			PrivateKeyHex:   strings.TrimSpace(req.PrivateKey),
-			PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
-			Model:           strings.TrimSpace(req.Model),
-			StoragePath:     req.StoragePath,
+			ID:            req.ID,
+			PrivateKeyHex: strings.TrimSpace(req.PrivateKey),
+			PrivateKeyEnv: strings.TrimSpace(req.PrivateKeyEnv),
+			Model:         strings.TrimSpace(req.Model),
+			StoragePath:   req.StoragePath,
 			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: active,
@@ -3696,18 +3707,17 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if rt, ok := g.runtimes[id]; ok {
-		if rt.activeUserRequests.Load() > 0 {
+		if rt.escrowHasBackgroundWork() {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, id), http.StatusConflict)
 			return
 		}
-		delete(g.runtimes, id)
-		g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
-		if g.capacity != nil {
-			g.capacity.RemoveEscrow(id)
+		if g.dropRegisteredRuntimeLocked(id) != nil {
+			if err := rt.close(); err != nil {
+				log.Printf("close devshard %s: %v", id, err)
+			}
 		}
-		if err := rt.close(); err != nil {
-			log.Printf("close devshard %s: %v", id, err)
-		}
+	} else if g.metrics != nil {
+		g.metrics.ForgetEscrow(id)
 	}
 	if err := g.store.DeleteDevshard(id); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -3891,6 +3901,25 @@ func (g *Gateway) retireRuntime(id, reason string) bool {
 	return true
 }
 
+// dropRegisteredRuntimeLocked is the single map-removal point for a runtime.
+// Callers must hold g.mu. It forgets escrow-keyed Prometheus children so
+// deactivate/clean/retire cannot leave slot and picker series behind.
+func (g *Gateway) dropRegisteredRuntimeLocked(id string) *devshardRuntime {
+	rt, ok := g.runtimes[id]
+	if !ok {
+		return nil
+	}
+	delete(g.runtimes, id)
+	g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
+	if g.capacity != nil {
+		g.capacity.RemoveEscrow(id)
+	}
+	if g.metrics != nil {
+		g.metrics.ForgetEscrow(id)
+	}
+	return rt
+}
+
 // retireRuntimeLocked removes the runtime from the registry and returns it so
 // the caller can close it outside the lock. It returns nil when nothing was
 // retired: the runtime is unknown, or its retirement was deferred because
@@ -3908,12 +3937,7 @@ func (g *Gateway) retireRuntimeLocked(id, reason string) *devshardRuntime {
 			id, reason, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
 		return nil
 	}
-	delete(g.runtimes, id)
-	g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
-	if g.capacity != nil {
-		g.capacity.RemoveEscrow(id)
-	}
-	return rt
+	return g.dropRegisteredRuntimeLocked(id)
 }
 
 func (g *Gateway) attachMetrics(rt *devshardRuntime) {
@@ -4172,6 +4196,7 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 		id, result.EscrowID, model.ModelID, reason, result.TxHash)
 	if !settings.EscrowRotation.SettlementEnabled {
 		g.deactivateDevshardByIDWithReason(id, reason)
+		g.retireRuntime(id, reason)
 	} else {
 		g.deactivateAndSettleDevshardByID(id, reason)
 	}

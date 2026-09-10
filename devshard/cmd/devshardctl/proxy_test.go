@@ -1964,8 +1964,8 @@ func TestRunInference_ExportsPrometheusMetrics(t *testing.T) {
 	require.Contains(t, body, "devshard_speculative_attempt_starts_total")
 	require.Contains(t, body, `reason="receipt_timeout"`)
 	require.Contains(t, body, `reason="attempt_failed"`)
-	require.Contains(t, body, `devshard_id="escrow-proxy"`)
-	require.Contains(t, body, "devshard_host_total_time_seconds")
+	require.Contains(t, body, `escrow_id="escrow-proxy"`)
+	require.Contains(t, body, "devshard_gateway_participant_total_attempt_seconds")
 }
 
 func TestPerfTrackerIsUnresponsiveUsesThreshold(t *testing.T) {

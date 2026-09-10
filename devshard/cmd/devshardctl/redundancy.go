@@ -574,6 +574,7 @@ type Redundancy struct {
 	onBalanceExhausted   func() // called (once) when local state hits insufficient balance
 	balanceExhaustedOnce sync.Once
 	picker               *sessionPicker
+	stopped              atomic.Bool
 	participantLimiter   *ParticipantRequestLimiter
 	stateBlockMu         sync.RWMutex
 	stateBlockedHosts    map[string]string // escrow-local participant blocks for non-recoverable state divergence
@@ -629,14 +630,16 @@ func NewRedundancyWithThrottle(session *user.Session, perf *PerfTracker, groupSi
 	return e
 }
 
-// Stop terminates the dispatcher goroutine. Production callers do not
-// invoke this (process lifetime). Tests should defer it for clean
-// teardown.
+// Stop terminates the dispatcher goroutine so ghost probes cannot recreate
+// escrow-labelled series after ForgetEscrow. Called on retire and finalize.
 func (e *Redundancy) Stop() {
-	if e == nil || e.picker == nil {
+	if e == nil {
 		return
 	}
-	e.picker.stop()
+	e.stopped.Store(true)
+	if e.picker != nil {
+		e.picker.stop()
+	}
 }
 
 func (e *Redundancy) Decide(primaryHostIdx int, inputTokens uint64) Decision {
@@ -861,9 +864,9 @@ type inflight struct {
 	role        string
 	startReason string
 
-	receiptOnce      sync.Once
-	receiptTimeNano  atomic.Int64 // unix nano; 0 means not received
-	receiptCh        chan struct{} // closed when receipt arrives
+	receiptOnce     sync.Once
+	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
+	receiptCh       chan struct{} // closed when receipt arrives
 
 	tokenOnce       sync.Once
 	firstTokenNano  atomic.Int64 // unix nano; 0 means no content yet
@@ -1195,7 +1198,6 @@ func (rg *raceGroup) promoteFallbackWinner(inf *inflight) error {
 	return nil
 }
 
-
 func (rg *raceGroup) addWinnerHoldCandidate(inf *inflight) {
 	if rg == nil || inf == nil || PairwiseWinnerHold <= 0 {
 		return
@@ -1517,7 +1519,6 @@ func (inf *inflight) releaseClassifyPartial() {
 	}
 	inf.classifyPartial = nil
 }
-
 
 // raceWriter is an io.Writer that only forwards writes from the winning nonce.
 type raceWriter struct {
@@ -2507,7 +2508,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				recordFailureSamples:            true,
 				nonStreamingReducedTokenTimeout: true,
 			}
-			go func() {
+			e.goTrackedRaceCleanup(func() {
 				if err := e.finishRaceOutcome(settleCtx, attempts, params, decision, 0, opts); err != nil {
 					var timeoutErr *nonStreamingReducedMaxTokensTimeoutError
 					if errors.As(err, &timeoutErr) {
@@ -2515,7 +2516,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					}
 					logRequestStage(settleCtx, "background_finish_failed", "escrow", e.devshardID, "error", err)
 				}
-			}()
+			})
 			return &nonStreamingReducedMaxTokensTimeoutError{}
 		case <-stallC:
 			now := time.Now()
@@ -3381,7 +3382,6 @@ func isEmptyStreamAttempt(inf *inflight) bool {
 	return inf.contentChunks.Load() == 0
 }
 
-
 // isModelBurnEmpty: empty stream where the model generated tokens that vLLM
 // stripped (e.g. </think> at small max_tokens). Documented reasoning outcome,
 // not a host fault — must not penalize. Scoped to the reasoning route: the
@@ -3641,7 +3641,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 			e.participantLimiter.ObserveStalledWinner(participantKey)
 		}
 		if e.metrics != nil {
-			e.metrics.ObserveRequestSample(e.devshardID, sample)
+			e.metrics.ObserveRequestSample(sample)
 		}
 	})
 }
@@ -4092,7 +4092,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 		}
 	}
 	if e.metrics != nil {
-		e.metrics.ObserveRequestSample(e.devshardID, sample)
+		e.metrics.ObserveRequestSample(sample)
 	}
 }
 
@@ -4118,7 +4118,9 @@ func ghostProbeParams(model string) user.InferenceParams {
 // the host. The picker invokes this when it must consume a nonce but
 // no real request should land on the host (PoC-required, queue
 // excluded all available hosts past pickerStaleThreshold, or host is
-// reactively throttled). Every kind behaves identically: log + return.
+// reactively throttled). Every kind behaves identically: emit a
+// ghost_no_send slot-decision metric, log, and return without contacting
+// the host.
 //
 // Why silent for every kind:
 //
@@ -4154,14 +4156,26 @@ func ghostProbeParams(model string) user.InferenceParams {
 //
 // Liveness: every nonce the session advances through is accounted for
 // exactly once -- by a real request via the picker, or by this
-// log-only no-op. Without this method the picker would have to dequeue
-// a real request and turn IT into a probe, costing that request a turn.
+// metric-and-log no-op. Without this method the picker would have to
+// dequeue a real request and turn IT into a probe, costing that request
+// a turn.
 //
 // kind is retained on the signature for log-label differentiation only;
 // the dispatch path is identical for every kind.
 func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostKind, reason string) {
-	if prepared == nil || e.session == nil {
+	if prepared == nil || e.session == nil || e.stopped.Load() {
 		return
+	}
+	participantKey := e.participantKeyForHost(prepared.HostIdx())
+	if e.metrics != nil {
+		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+			ParticipantKey: participantKey,
+			Model:          e.model,
+			EscrowID:       e.devshardID,
+			Decision:       "ghost_no_send",
+			Reason:         reason,
+			QuarantineMode: e.quarantineModeForParticipant(participantKey),
+		})
 	}
 	ctx, _ := ensureRequestLogContext(context.Background())
 	logInferenceStage(ctx, e.devshardID, prepared.Nonce(), "ghost_probe_skipped",
