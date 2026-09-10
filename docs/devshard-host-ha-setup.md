@@ -672,7 +672,7 @@ Add v5 only after it is approved and the fleet cutover has passed the retained v
 
 **2. Local PostgreSQL only — migrate the existing cluster during maintenance.** Managed/external PostgreSQL with unchanged data skips this cluster-copy step. Before stopping anything, record the old local source and run the v5 space preflight.
 
-Run each preflight with permission to create its target directory (`devshards/` may be root-owned); if it fails, stop and resolve the error before continuing.
+The commands below create the target directory with `sudo` because `devshards/` may be root-owned. Proceed to migration only after preflight succeeds.
 
 ```bash
 # Run in deploy/join, before removing/recreating the old container.
@@ -680,6 +680,7 @@ docker inspect devshard-postgres --format '{{json .Mounts}}'
 docker exec devshard-postgres sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"'
 # Record the system identifier, source volume at /var/lib/postgresql/data, and backup.
+sudo mkdir -p -- "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}" &&
 bash ./devshard-postgres-migration-preflight.sh \
   --source-container devshard-postgres \
   --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
@@ -705,13 +706,14 @@ If the old volume was already detached, use its **recorded exact name**, not an 
 
 ```bash
 export DEVSHARD_POSTGRES_LEGACY_VOLUME='<recorded-old-volume-name>'
-bash ./devshard-postgres-migration-preflight.sh \
-  --source-volume "$DEVSHARD_POSTGRES_LEGACY_VOLUME" \
-  --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
 # Command-line -f replaces COMPOSE_FILE, so pass the complete list explicitly.
 files=()
 IFS=':' read -ra parts <<<"$COMPOSE_FILE"
 for f in "${parts[@]}"; do files+=(-f "$f"); done
+sudo mkdir -p -- "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}" &&
+bash ./devshard-postgres-migration-preflight.sh \
+  --source-volume "$DEVSHARD_POSTGRES_LEGACY_VOLUME" \
+  --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}" &&
 docker compose "${files[@]}" -f docker-compose.versiond-postgres-recovery.yml \
   up -d --no-deps devshard-postgres
 ```
