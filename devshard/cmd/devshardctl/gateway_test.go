@@ -2720,6 +2720,20 @@ func TestGatewayParseChatReservationUsesPerModelTokenLimits(t *testing.T) {
 	require.Contains(t, string(body), `"max_tokens":2048`)
 }
 
+func TestGatewayParseChatReservationRejectsBodyThatInflatesPastTheCap(t *testing.T) {
+	g := NewGateway(nil, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.settings = GatewaySettings{DefaultModel: "Qwen/Test"}.WithTuningDefaults()
+	angleBrackets := strings.Repeat("<", 1536*1024)
+	body := `{"model":"Qwen/Test","messages":[{"role":"user","content":"` + angleBrackets + `"}]}`
+	require.Less(t, len(body), MaxChatRequestBodySize)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	_, _, _, err := g.parseChatReservation(req, g.settings.DefaultModel)
+
+	require.Error(t, err, "the pooled gateway path must reject before a runtime is reserved")
+	require.Equal(t, http.StatusRequestEntityTooLarge, chatRequestErrorStatus(err, http.StatusBadRequest))
+}
+
 func TestFinalizeRuntimeConfigsUsesPerEscrowStorageDirectories(t *testing.T) {
 	baseDir := "/tmp/devshardctl"
 	runtimes, err := finalizeRuntimeConfigs([]RuntimeConfig{{

@@ -2,7 +2,9 @@ package main
 
 // Body / request-level caps.
 const (
-	MaxChatRequestBodySize       = 10 * 1024 * 1024
+	MaxChatRequestBodySize = 7 * 1024 * 1024
+	maxJSONEscapeExpansion = 6
+
 	MaxLoggedResponseFormatBytes = 2048 * 1024
 	MinTemperature               = 0.0
 	MaxTemperature               = 2.0

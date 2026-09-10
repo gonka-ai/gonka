@@ -518,6 +518,18 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 	if err != nil {
 		return nil, err
 	}
+	if int64(len(body)) > DefaultMaxBodySize {
+		requestSize := measureInferenceRequest(ir)
+		logging.Warn("host_request_body_too_large",
+			"subsystem", "transport",
+			"escrow", c.escrowID,
+			"nonce", req.Nonce,
+			"body_bytes", len(body),
+			"limit_bytes", DefaultMaxBodySize,
+			"prompt_bytes", requestSize.PromptBytes,
+			"diffs_bytes", requestSize.DiffsBytes,
+			"diff_count", requestSize.DiffCount)
+	}
 
 	resp, err := c.doPostRaw(ctx, "/sessions/"+c.escrowID+"/chat/completions", body, contentType)
 	if err != nil {

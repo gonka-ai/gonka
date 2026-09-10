@@ -213,7 +213,7 @@ func TestPayloadResponseByteLimit_DefaultGatewayCapFits(t *testing.T) {
 	limit := PayloadResponseByteLimit(defaultRequestMaxTokensCap)
 	assert.LessOrEqual(t, limit, int64(MaxPayloadResponseBytes))
 	// The flat prompt allowance is always included, so even a zero-token
-	// response carries the full gateway body cap.
+	// response carries the whole prompt bound.
 	assert.Greater(t, limit, int64(maxPromptPayloadBytes))
 }
 
