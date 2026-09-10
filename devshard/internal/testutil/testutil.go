@@ -110,7 +110,7 @@ func SignDiffWithRoot(t *testing.T, signer signing.Signer, escrowID string, nonc
 
 func SignProposerTx(t *testing.T, signer signing.Signer, msg proto.Message) []byte {
 	t.Helper()
-	data, err := deterministicMarshal.Marshal(msg)
+	data, err := signing.CanonicalProposerBytes(msg)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -215,7 +215,7 @@ func SignRevealSeed(t *testing.T, signer *signing.Secp256k1Signer, escrowID stri
 		Signature: seedSig,
 		EscrowId:  escrowID,
 	}
-	data, err := deterministicMarshal.Marshal(msg)
+	data, err := signing.CanonicalProposerBytes(msg)
 	require.NoError(t, err)
 	proposerSig, err := signer.Sign(data)
 	require.NoError(t, err)

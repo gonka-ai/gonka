@@ -7,11 +7,10 @@ import (
 	"log/slog"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
 	"common/chain"
 	devshardpkg "devshard"
 	"devshard/host"
+	"devshard/signing"
 	"devshard/storage"
 	"devshard/types"
 )
@@ -328,7 +327,7 @@ func submitValidationToMempool(h *host.Host, inferenceID uint64, valid bool) err
 		Valid:         valid,
 		EscrowId:      h.EscrowID(),
 	}
-	data, err := proto.Marshal(msg)
+	data, err := signing.CanonicalProposerBytes(msg)
 	if err != nil {
 		return fmt.Errorf("marshal MsgValidation: %w", err)
 	}

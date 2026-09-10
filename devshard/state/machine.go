@@ -1347,9 +1347,7 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	}
 
 	// Proposer sig + escrow_id (expensive, after dedup).
-	cloned := proto.Clone(msg).(*types.MsgValidation)
-	cloned.ProposerSig = nil
-	if err := sm.verifyProposerSig(cloned, msg.ProposerSig, sm.slotToAddress[msg.ValidatorSlot], msg.ValidatorSlot); err != nil {
+	if err := sm.verifyProposerSig(msg, msg.ProposerSig, sm.slotToAddress[msg.ValidatorSlot], msg.ValidatorSlot); err != nil {
 		return err
 	}
 	if msg.EscrowId != sm.state.EscrowID {
@@ -1429,9 +1427,7 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	}
 
 	// Verify proposer signature from voter.
-	clonedVV := proto.Clone(msg).(*types.MsgValidationVote)
-	clonedVV.ProposerSig = nil
-	if err := sm.verifyProposerSig(clonedVV, msg.ProposerSig, sm.slotToAddress[msg.VoterSlot], msg.VoterSlot); err != nil {
+	if err := sm.verifyProposerSig(msg, msg.ProposerSig, sm.slotToAddress[msg.VoterSlot], msg.VoterSlot); err != nil {
 		return err
 	}
 
@@ -1766,9 +1762,7 @@ func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) 
 	if msg == nil {
 		return "", fmt.Errorf("%w: nil finish", types.ErrInvalidProposerSig)
 	}
-	cloned := proto.Clone(msg).(*types.MsgFinishInference)
-	cloned.ProposerSig = nil
-	data, err := deterministicMarshal.Marshal(cloned)
+	data, err := signing.CanonicalProposerBytes(msg)
 	if err != nil {
 		return "", fmt.Errorf("marshal for proposer sig: %w", err)
 	}
@@ -1787,16 +1781,15 @@ func (sm *StateMachine) verifyFinishProposerSigLocked(msg *types.MsgFinishInfere
 	if !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
 	}
-	cloned := proto.Clone(msg).(*types.MsgFinishInference)
-	cloned.ProposerSig = nil
-	return sm.verifyProposerSig(cloned, msg.ProposerSig, addr, msg.ExecutorSlot)
+	return sm.verifyProposerSig(msg, msg.ProposerSig, addr, msg.ExecutorSlot)
 }
 
-// verifyProposerSig verifies that sig was produced by expectedAddress over
-// msgWithoutSig (the proto message with its proposer_sig field already zeroed).
+// verifyProposerSig verifies that sig was produced by expectedAddress over the
+// domain-separated preimage of msg. CanonicalProposerBytes clears proposer_sig
+// on its own copy, so callers pass the message as received.
 // slotID is used for warm key resolution; pass math.MaxUint32 to skip warm key lookup.
-func (sm *StateMachine) verifyProposerSig(msgWithoutSig proto.Message, sig []byte, expectedAddress string, slotID uint32) error {
-	data, err := deterministicMarshal.Marshal(msgWithoutSig)
+func (sm *StateMachine) verifyProposerSig(msg proto.Message, sig []byte, expectedAddress string, slotID uint32) error {
+	data, err := signing.CanonicalProposerBytes(msg)
 	if err != nil {
 		return fmt.Errorf("marshal for proposer sig: %w", err)
 	}
