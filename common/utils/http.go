@@ -32,6 +32,10 @@ func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, p
 			return nil, err
 		}
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
 	}
 
 	if err != nil {
