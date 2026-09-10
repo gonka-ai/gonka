@@ -16,6 +16,9 @@ func (k msgServer) DeleteGovernanceModel(goCtx context.Context, msg *types.MsgDe
 	if _, found := k.GetGovernanceModel(ctx, msg.Id); !found {
 		return nil, types.ErrInvalidModel
 	}
+	if k.IsModelUsedByActiveTrainshard(goCtx, msg.Id) {
+		return nil, types.ErrTrainshardNodeReserved.Wrapf("model %s is used by an active trainshard", msg.Id)
+	}
 
 	k.Keeper.DeleteGovernanceModel(ctx, msg.Id)
 	return &types.MsgDeleteGovernanceModelResponse{}, nil
