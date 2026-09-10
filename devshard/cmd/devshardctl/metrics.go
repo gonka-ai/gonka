@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -39,6 +41,10 @@ type DevshardMetrics struct {
 	participantFirstContent    *prometheus.HistogramVec
 	participantPrefillPerToken *prometheus.HistogramVec
 	participantTotalSeconds    *prometheus.HistogramVec
+
+	exportHost        atomic.Bool
+	exportParticipant atomic.Bool
+	timingMu          sync.Mutex
 
 	gatewayRequests       *prometheus.CounterVec
 	criticalUserFailures  *prometheus.CounterVec
@@ -350,7 +356,39 @@ func NewDevshardMetrics() *DevshardMetrics {
 	)
 
 	m.handler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
+	m.exportHost.Store(true)
+	m.exportParticipant.Store(true)
 	return m
+}
+
+// SetTimingExport turns the two request-sample histogram groups on or off.
+// devshard_host families are {devshard_id, host_idx}; devshard_participant
+// families are {participant_key, model}. Disabling a group Reset()s its
+// vectors so /metrics drops existing children immediately.
+// timingMu serializes flag+Reset against ObserveRequestSample so a sample
+// that saw enabled cannot recreate children after the reset.
+func (m *DevshardMetrics) SetTimingExport(settings GatewayMetricsSettings) {
+	if m == nil {
+		return
+	}
+	host := settings.DevshardHostEnabled()
+	participant := settings.DevshardParticipantEnabled()
+	m.timingMu.Lock()
+	defer m.timingMu.Unlock()
+	m.exportHost.Store(host)
+	m.exportParticipant.Store(participant)
+	if !host {
+		m.hostReceiptSeconds.Reset()
+		m.hostFirstTokenSeconds.Reset()
+		m.hostCTTFLSecondsPerToken.Reset()
+		m.hostTotalSeconds.Reset()
+	}
+	if !participant {
+		m.participantReceiptSeconds.Reset()
+		m.participantFirstContent.Reset()
+		m.participantPrefillPerToken.Reset()
+		m.participantTotalSeconds.Reset()
+	}
 }
 
 func (m *DevshardMetrics) AttachGateway(g *Gateway) {
@@ -500,6 +538,24 @@ func (m *DevshardMetrics) RecordGatewaySlotDecision(decision GatewaySlotDecision
 	).Inc()
 }
 
+func (m *DevshardMetrics) ForgetEscrow(escrowID string) {
+	if m == nil {
+		return
+	}
+	escrowID = strings.TrimSpace(escrowID)
+	if escrowID == "" {
+		return
+	}
+	m.timingMu.Lock()
+	defer m.timingMu.Unlock()
+	m.slotDecisions.DeletePartialMatch(prometheus.Labels{"escrow_id": escrowID})
+	m.pickerChoices.DeletePartialMatch(prometheus.Labels{"devshard_id": escrowID})
+	m.hostReceiptSeconds.DeletePartialMatch(prometheus.Labels{"devshard_id": escrowID})
+	m.hostFirstTokenSeconds.DeletePartialMatch(prometheus.Labels{"devshard_id": escrowID})
+	m.hostCTTFLSecondsPerToken.DeletePartialMatch(prometheus.Labels{"devshard_id": escrowID})
+	m.hostTotalSeconds.DeletePartialMatch(prometheus.Labels{"devshard_id": escrowID})
+}
+
 func (m *DevshardMetrics) RecordGatewayAttemptStarted(start GatewayAttemptStartMetric) {
 	if m == nil {
 		return
@@ -580,27 +636,43 @@ func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample Request
 	if m == nil {
 		return
 	}
+	m.timingMu.Lock()
+	defer m.timingMu.Unlock()
 
-	labels := []string{devshardID, strconv.Itoa(sample.HostIdx)}
+	if m.exportHost.Load() {
+		labels := []string{metricLabel(devshardID, "unknown"), strconv.Itoa(sample.HostIdx)}
+		if receiptSeconds := sample.ReceiptMs() / 1000; receiptSeconds > 0 {
+			m.hostReceiptSeconds.WithLabelValues(labels...).Observe(receiptSeconds)
+		}
+		if !sample.SendTime.IsZero() && !sample.FirstToken.IsZero() {
+			m.hostFirstTokenSeconds.WithLabelValues(labels...).Observe(sample.FirstToken.Sub(sample.SendTime).Seconds())
+		}
+		if cttfl := sample.CTTFL() / 1000; cttfl > 0 {
+			m.hostCTTFLSecondsPerToken.WithLabelValues(labels...).Observe(cttfl)
+		}
+		if sample.TotalTime > 0 {
+			m.hostTotalSeconds.WithLabelValues(labels...).Observe(sample.TotalTime.Seconds())
+		}
+	}
+
+	if !m.exportParticipant.Load() {
+		return
+	}
 	participantLabels := []string{
 		metricLabel(sample.ParticipantKey, "unknown"),
 		metricLabel(sample.Model, "unknown"),
 	}
 	if receiptSeconds := sample.ReceiptMs() / 1000; receiptSeconds > 0 {
-		m.hostReceiptSeconds.WithLabelValues(labels...).Observe(receiptSeconds)
 		m.participantReceiptSeconds.WithLabelValues(participantLabels...).Observe(receiptSeconds)
 	}
 	if !sample.SendTime.IsZero() && !sample.FirstToken.IsZero() {
 		firstContentSeconds := sample.FirstToken.Sub(sample.SendTime).Seconds()
-		m.hostFirstTokenSeconds.WithLabelValues(labels...).Observe(firstContentSeconds)
 		m.participantFirstContent.WithLabelValues(participantLabels...).Observe(firstContentSeconds)
 	}
 	if cttfl := sample.CTTFL() / 1000; cttfl > 0 {
-		m.hostCTTFLSecondsPerToken.WithLabelValues(labels...).Observe(cttfl)
 		m.participantPrefillPerToken.WithLabelValues(participantLabels...).Observe(cttfl)
 	}
 	if sample.TotalTime > 0 {
-		m.hostTotalSeconds.WithLabelValues(labels...).Observe(sample.TotalTime.Seconds())
 		m.participantTotalSeconds.WithLabelValues(participantLabels...).Observe(sample.TotalTime.Seconds())
 	}
 }

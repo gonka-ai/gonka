@@ -28,6 +28,7 @@ type GatewaySettings struct {
 	Redundancy                     RedundancySettings          `json:"redundancy"`
 	Perf                           PerfSettings                `json:"perf"`
 	EscrowRotation                 EscrowRotationSettings      `json:"escrow_rotation"`
+	Metrics                        GatewayMetricsSettings      `json:"metrics"`
 }
 
 type GatewayModelLimitSettings struct {
@@ -90,6 +91,30 @@ type EscrowRotationSettings struct {
 	PrePoCBlocks      int64                         `json:"pre_poc_blocks"`
 	Models            []EscrowRotationModelSettings `json:"models,omitempty"`
 }
+
+// GatewayMetricsSettings toggles the two request-sample histogram groups.
+// Both are recorded by the gateway process; they differ by attribution:
+// devshard_host is {devshard_id, host_idx}; devshard_participant is {participant_key, model}.
+type GatewayMetricsSettings struct {
+	DevshardHost        *bool `json:"devshard_host,omitempty"`
+	DevshardParticipant *bool `json:"devshard_participant,omitempty"`
+}
+
+func (s GatewayMetricsSettings) DevshardHostEnabled() bool {
+	if s.DevshardHost == nil {
+		return true
+	}
+	return *s.DevshardHost
+}
+
+func (s GatewayMetricsSettings) DevshardParticipantEnabled() bool {
+	if s.DevshardParticipant == nil {
+		return true
+	}
+	return *s.DevshardParticipant
+}
+
+func boolPtr(v bool) *bool { return &v }
 
 type EscrowRotationModelSettings struct {
 	ModelID       string `json:"model_id"`
@@ -177,6 +202,12 @@ func (s GatewaySettings) WithTuningDefaults() GatewaySettings {
 		model.PrivateKeyEnv = strings.TrimSpace(model.PrivateKeyEnv)
 	}
 	s.ModelLimits = normalizeGatewayModelLimits(s.ModelLimits)
+	if s.Metrics.DevshardHost == nil {
+		s.Metrics.DevshardHost = boolPtr(true)
+	}
+	if s.Metrics.DevshardParticipant == nil {
+		s.Metrics.DevshardParticipant = boolPtr(true)
+	}
 	return s
 }
 
@@ -445,6 +476,10 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate gateway disabled settings: %w", err)
 	}
+	if err := ensureGatewaySettingsMetricsColumns(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate gateway metrics export settings: %w", err)
+	}
 	if err := ensureGatewayDevshardsColumn(db, "route_prefix", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate gateway devshards route prefix: %w", err)
@@ -574,12 +609,15 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		       perf_sample_size, perf_window_ms,
 		       escrow_rotation_enabled, escrow_rotation_settlement_enabled,
 		       escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
-	       gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url
+		       gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url,
+		       metrics_devshard_host, metrics_devshard_participant
 		FROM gateway_settings
 		WHERE id = 1`)
 	var rotationEnabled int
 	var rotationSettlementEnabled int
 	var disabledEnabled int
+	var metricsDevshardHost int
+	var metricsDevshardParticipant int
 	var rotationModelsJSON string
 	var modelLimitsJSON string
 	var modelAccessJSON string
@@ -632,6 +670,8 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		&disabledEnabled,
 		&state.Settings.Disabled.Message,
 		&state.Settings.Disabled.NewURL,
+		&metricsDevshardHost,
+		&metricsDevshardParticipant,
 	)
 	if err == sql.ErrNoRows {
 		return GatewayState{}, false, nil
@@ -659,6 +699,8 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		state.Settings.ModelLimits = applyLegacyModelAccessToLimits(state.Settings.ModelLimits, legacyModelAccess)
 	}
 	state.Settings.Disabled.Enabled = disabledEnabled != 0
+	state.Settings.Metrics.DevshardHost = boolPtr(metricsDevshardHost != 0)
+	state.Settings.Metrics.DevshardParticipant = boolPtr(metricsDevshardParticipant != 0)
 	state.Settings = state.Settings.WithTuningDefaults()
 
 	rows, err := s.db.Query(`
@@ -747,8 +789,9 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 			escrow_rotation_enabled, escrow_rotation_settlement_enabled,
 			escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
 			gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url,
+			metrics_devshard_host, metrics_devshard_participant,
 			updated_at
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(settings.ChainREST),
 		strings.TrimSpace(settings.PublicAPI),
 		strings.TrimSpace(settings.DefaultModel),
@@ -797,6 +840,8 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 		gatewayBoolToInt(settings.Disabled.Enabled),
 		strings.TrimSpace(settings.Disabled.Message),
 		strings.TrimSpace(settings.Disabled.NewURL),
+		gatewayBoolToInt(settings.Metrics.DevshardHostEnabled()),
+		gatewayBoolToInt(settings.Metrics.DevshardParticipantEnabled()),
 		now,
 	); err != nil {
 		return fmt.Errorf("insert gateway settings: %w", err)
@@ -862,6 +907,8 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		    gateway_disabled_enabled = ?,
 		    gateway_disabled_message = ?,
 		    gateway_disabled_new_url = ?,
+		    metrics_devshard_host = ?,
+		    metrics_devshard_participant = ?,
 		    updated_at = ?
 		WHERE id = 1`,
 		strings.TrimSpace(settings.ChainREST),
@@ -912,6 +959,8 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		gatewayBoolToInt(settings.Disabled.Enabled),
 		strings.TrimSpace(settings.Disabled.Message),
 		strings.TrimSpace(settings.Disabled.NewURL),
+		gatewayBoolToInt(settings.Metrics.DevshardHostEnabled()),
+		gatewayBoolToInt(settings.Metrics.DevshardParticipantEnabled()),
 		time.Now().UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -1575,6 +1624,22 @@ func ensureGatewaySettingsDisabledColumns(db *sql.DB) error {
 		{"gateway_disabled_enabled", "INTEGER NOT NULL DEFAULT 0"},
 		{"gateway_disabled_message", "TEXT NOT NULL DEFAULT ''"},
 		{"gateway_disabled_new_url", "TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, column := range columns {
+		if err := ensureGatewaySettingsColumn(db, column.name, column.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureGatewaySettingsMetricsColumns(db *sql.DB) error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"metrics_devshard_host", "INTEGER NOT NULL DEFAULT 1"},
+		{"metrics_devshard_participant", "INTEGER NOT NULL DEFAULT 1"},
 	}
 	for _, column := range columns {
 		if err := ensureGatewaySettingsColumn(db, column.name, column.ddl); err != nil {
