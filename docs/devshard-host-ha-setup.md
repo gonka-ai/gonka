@@ -670,7 +670,9 @@ dc=(docker compose)
 
 Add v5 only after it is approved and the fleet cutover has passed the retained v4 inference check. New supervisors automatically promote verified old `<bin>/<version>/devshardd` installs into `<bin>/<version>/<archive-sha256>/devshardd`. They verify the old metadata against the current oracle and otherwise download again. **Do not delete or manually rename** the cache or `<data>/<version>` directories.
 
-**2. Local PostgreSQL only — migrate the existing cluster during maintenance.** Managed/external PostgreSQL with unchanged data skips this cluster-copy step. Before stopping anything, record the old local source and run the v5 space preflight:
+**2. Local PostgreSQL only — migrate the existing cluster during maintenance.** Managed/external PostgreSQL with unchanged data skips this cluster-copy step. Before stopping anything, record the old local source and run the v5 space preflight.
+
+Run each preflight with permission to create its target directory (`devshards/` may be root-owned); if it fails, stop and resolve the error before continuing.
 
 ```bash
 # Run in deploy/join, before removing/recreating the old container.
