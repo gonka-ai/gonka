@@ -105,7 +105,7 @@ Use this when the DB runs outside the join host (managed cloud DB or your own Po
    export DEVSHARD_POSTGRES_USER=devshardd
    export DEVSHARD_POSTGRES_PASSWORD='<strong-password>'
    ```
-2. Add a compose override (for example `deploy/join/docker-compose.devshard-pg-external.override.yml`) that sets `PGHOST` (and related vars) under **every** `versiond`* service in the HA pool and disables the unused local database and its dependencies — see Step 2.2.
+2. Add a compose override (for example `deploy/join/docker-compose.devshard-pg-external.override.yml`) that sets `PGHOST` (and related vars) under **every** `versiond`* service in the HA pool and disables the unused local database and its dependencies — see §2.2.
   Needed because the stock overlay hardcodes `PGHOST=devshard-postgres`.
 3. Start with **four** `-f` files: base + `versiond` overlay + the v5 override from §2.1 + your external-PG override.
 
@@ -132,7 +132,7 @@ Use this when you run the DB from the HA overlay on the join host (Option C).
    - PGPASSWORD=${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
    - DEVSHARD_STORAGE_MODE=postgres
    ```
-3. `source ./config.env`, then start with `-f docker-compose.versiond.yml` (see Step 2.1). A fresh empty deployment initializes its persistent cluster automatically. If binaries already exist but no cluster is attached, startup refuses empty initialization: restore the old database, or set `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true` once only for confirmed first-time HA enablement, then unset it. A `.pg-bound` marker always requires restoring the database; the flag cannot bypass it.
+3. `source ./config.env`, then start with `-f docker-compose.versiond.yml` (see §2.1). A fresh empty deployment initializes its persistent cluster automatically. If binaries already exist but no cluster is attached, startup refuses empty initialization: restore the old database, or set `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true` once only for confirmed first-time HA enablement, then unset it. A `.pg-bound` marker always requires restoring the database; the flag cannot bypass it.
 
 ---
 
@@ -162,7 +162,7 @@ Example files in your setup. Some are present in the release branch:
 
 On the join host (for an existing deployment, prepare these files but follow §2.6 before `up -d`):
 
-**1. Credentials in** `config.env`
+#### 1. Credentials in `config.env`
 
 ```bash
 cd /path/to/gonka/deploy/join
@@ -196,7 +196,7 @@ export COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compos
 
 Use the published image references for the tested candidate; the repository does not establish their availability. The fleet has three router slots by default and keeps two ready during replacement; this is independent of the number of `versiond` replicas. Put the fleet settings in `config.env`: router slots run in separate Compose projects and do not inherit the main project's override.
 
-**2. Create** `docker-compose.devshard-v5.override.yml`
+#### 2. Create `docker-compose.devshard-v5.override.yml`
 
 ```bash
 cat > docker-compose.devshard-v5.override.yml <<'EOF'
@@ -274,20 +274,18 @@ services:
 EOF
 ```
 
-#### Running without the filter
+##### Running without the filter
 
 For direct catalog access, make these changes to the example before starting it:
 
-1. Remove the `oracle-filter` service from `docker-compose.devshard-v5.override.yml` and its entries in every service's `depends_on`, including any external-PG or extra-replica overrides. Keep the other dependencies and image/storage settings.
-2. Set `VERSIOND_ORACLE_URL=http://api:9100/versions` on every local `versiond` service. On remote hosts, use the reachable private address of the same API.
-3. Set `export VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions` in `config.env` for both routing tiers. Ensure the endpoint is reachable from every router slot.
-4. Skip commands that start, recreate or inspect `oracle-filter` elsewhere in this guide. Query `api:9100/versions` instead when checking the catalog.
+- Remove the `oracle-filter` service from `docker-compose.devshard-v5.override.yml` and its entries in every service's `depends_on`, including any external-PG or extra-replica overrides. Keep the other dependencies and image/storage settings.
+- Set `VERSIOND_ORACLE_URL=http://api:9100/versions` on every local `versiond` service. On remote hosts, use the reachable private address of the same API.
+- Set `export VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions` in `config.env` for both routing tiers. Ensure the endpoint is reachable from every router slot.
+- Skip commands that start, recreate or inspect `oracle-filter` elsewhere in this guide. Query `api:9100/versions` instead when checking the catalog.
 
 With direct access, `VERSIOND_VERSIONS` is a router bootstrap list, **not a filter** on the API catalog. Every version visible to the HA supervisors must fit the deployment's storage layout. For this all-HA example, use direct access when the full catalog contains only protocols compatible with the shared PostgreSQL layout. If you also serve pre-HA protocols, see the dedicated legacy-owner layout below; the HA peers still need a catalog that excludes those protocols. Without the optional filter, newly approved compatible versions are learned from the API without editing a filter allowlist.
 
-#### Start the selected layout
-
-**3. Bring up the main stack and router fleet**
+#### 3. Bring up the main stack and router fleet
 
 The command below uses local PostgreSQL. For an external database, first create the override in §2.2 and use that section’s startup command instead.
 
@@ -320,7 +318,7 @@ What this starts:
 | `proxy` | Public HAProxy; private `/devshard/` routing to the router fleet |
 
 
-**4. Confirm**
+#### 4. Confirm
 
 ```bash
 docker ps --format '{{.Names}}\t{{.Status}}' | grep -E 'oracle-filter|versiond|devshard-postgres'
@@ -447,7 +445,7 @@ Example extending the two local replicas from §2.1:
 
 > **Important:** `decentralized-api` (dapi) is still **single-instance** today. HA here is for **devshard traffic** (`versiond` / `devshardd`), not for running two dapis with one key.
 
-**On machine A (dapi / Postgres / router side) — publish for B on the private network:**
+#### On machine A (dapi / Postgres / router side) — publish for B on the private network
 
 1. Postgres (`5432`) and node-manager gRPC (`9400`) — required.
 2. Chain RPC/gRPC (`26657`, `9090`) — required for remote `devshardd` (same as local `NODE_HOST=node`).
@@ -502,7 +500,7 @@ The readiness probe checks reachability; the later `--check-storage` establishes
 that B uses the same database. Ensure B can also reach A’s chain and node-manager
 ports listed above.
 
-**On machine B (**`versiond` **only) — one compose file is enough**
+#### On machine B (`versiond` only) — one compose file is enough
 
 B does not run `api` / `node`. Its `versiond` uses the shared PostgreSQL endpoint and A’s catalog, node-manager and chain endpoints over the private network.
 
@@ -563,7 +561,9 @@ docker compose -f docker-compose.versiond-remote.yml up -d --wait --wait-timeout
 curl -fsS "http://<B-private-ip>:8080/readyz?version=v5"   # not 127.0.0.1 if bound to LAN IP only
 ```
 
-**On B — check its database before admitting it to the pool.** Install `jq`
+##### Check B's database before admitting it to the pool
+
+Install `jq`
 and the PostgreSQL client (`psql`), then prepare a separate reference connection
 file:
 
@@ -590,7 +590,9 @@ through its own database connection, and the checker verifies that value in
 the reference database. Run these checks one host at a time, with no updater
 running elsewhere. Resolve any failure before admitting the replica.
 
-**On the machine that runs the router fleet (usually A):** list every local and remote member in `versiond-endpoints.json`. Local service names resolve on the shared router back network; remote addresses must be reachable from every router slot:
+#### On the machine that runs the router fleet (usually A)
+
+List every local and remote member in `versiond-endpoints.json`. Local service names resolve on the shared router back network; remote addresses must be reachable from every router slot:
 
 ```json
 [
@@ -612,7 +614,9 @@ Editing the file alone does not change running membership. Ordinary `apply` refu
 
 A private DNS pool is also possible: set `VERSIOND_POOL_HOST` to a name resolving all reachable members. Docker's local alias does not discover another machine. Every router must resolve that name and the deployment's internal names; subsequent DNS membership changes are discovered automatically. Changing the pool name or resolver requires the same maintenance procedure. Prefer the explicit list when remote hosts use different ports.
 
-**Verify cross-machine HA** the same way as Step 4 §6: find a sticky session whose `X-Upstream-Addr` is the remote replica, stop **that** machine’s `versiond`, wait for withdrawal and confirm the same session continues on a survivor with its committed state intact. `X-Upstream-Addr` shows the final selected peer, not an nginx retry history.
+#### Verify cross-machine HA
+
+Adapt the failover check in [Step 4](#step-4---verify-it-works), item 6 of the command block, to a real session: find a sticky session whose `X-Upstream-Addr` is the remote replica, stop **that** machine’s `versiond`, wait for withdrawal and confirm the same session continues on a survivor with its committed state intact. `X-Upstream-Addr` shows the final selected peer, not an nginx retry history.
 
 ### 2.4 Adding more replicas
 
@@ -666,11 +670,15 @@ source ./config.env
 dc=(docker compose)
 ```
 
-**1. Keep existing protocols available.** For a v4-only deployment, keep `VERSIOND_VERSIONS="v4"` during the fleet cutover, even if v5 is already approved. Fleet admission runs before supervisor replacement and must be able to use the versions already serving. Add v5 after the cutover; the catalog and bootstrap routes must retain v4 for its active sessions. The optional filter provides the v4-only selection used by this upgrade example; direct catalog access requires a catalog compatible with the same cutover constraints. Before replacing supervisors, check the actual approved v4 binary's `--print-storage-mode` in the HA environment (`postgres`) and `--print-protocol-version` (`v4`). An old artifact without the HA storage probe cannot join the new HA supervisor pool. Use matching gateway/host protocol artifacts. Do not rename a v4 binary/escrow to v5 or assume v4 session state is migrated into the v5 protocol. Keep serving retained v4 sessions under their compatible v4 artifact; use a new escrow for v5.
+#### 1. Keep existing protocols available
+
+For a v4-only deployment, keep `VERSIOND_VERSIONS="v4"` during the fleet cutover, even if v5 is already approved. Fleet admission runs before supervisor replacement and must be able to use the versions already serving. Add v5 after the cutover; the catalog and bootstrap routes must retain v4 for its active sessions. The optional filter provides the v4-only selection used by this upgrade example; direct catalog access requires a catalog compatible with the same cutover constraints. Before replacing supervisors, check the actual approved v4 binary's `--print-storage-mode` in the HA environment (`postgres`) and `--print-protocol-version` (`v4`). An old artifact without the HA storage probe cannot join the new HA supervisor pool. Use matching gateway/host protocol artifacts. Do not rename a v4 binary/escrow to v5 or assume v4 session state is migrated into the v5 protocol. Keep serving retained v4 sessions under their compatible v4 artifact; use a new escrow for v5.
 
 Add v5 only after it is approved and the fleet cutover has passed the retained v4 inference check. New supervisors automatically promote verified old `<bin>/<version>/devshardd` installs into `<bin>/<version>/<archive-sha256>/devshardd`. They verify the old metadata against the current oracle and otherwise download again. **Do not delete or manually rename** the cache or `<data>/<version>` directories.
 
-**2. Local PostgreSQL only — migrate the existing cluster during maintenance.** Managed/external PostgreSQL with unchanged data skips this cluster-copy step. Before stopping anything, record the old local source and run the v5 space preflight.
+#### 2. Local PostgreSQL only — migrate the existing cluster during maintenance
+
+Managed/external PostgreSQL with unchanged data skips this cluster-copy step. Before stopping anything, record the old local source and run the v5 space preflight.
 
 The commands below let Docker create the target directory, including under a root-owned `devshards/`, using a temporary container that runs only `true`. Proceed to migration only after preflight succeeds.
 
@@ -734,7 +742,9 @@ docker compose "${files[@]}" -f docker-compose.versiond-postgres-recovery.yml \
 
 After verifying migration, recreate PostgreSQL once without the recovery overlay, while writers remain stopped. Keep this same PostgreSQL image and Compose configuration for the updater so it does not recreate the database again after writers restart. Keep the source volume and backup. Never use `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT` to recover a deployment whose database is missing.
 
-**3. Run the updater with the complete deployment configuration.** After a local database copy, restart the retained old member containers with `docker start` and verify their v4 readiness before running the updater (use `/v4/healthz` when an old supervisor returns 404 from `/readyz`). Keep their catalog limited to v4 for this cutover example (using the optional filter if needed), and public traffic closed during the cutover. Fleet admission needs these serving children before it replaces supervisors. For already-migrated PostgreSQL whose members provide v5 storage proofs, keep ready survivors running. Pre-v5 supervisors lack host evacuation: finish their accepted work in the maintenance window before replacement.
+#### 3. Run the updater with the complete deployment configuration
+
+After a local database copy, restart the retained old member containers with `docker start` and verify their v4 readiness before running the updater (use `/v4/healthz` when an old supervisor returns 404 from `/readyz`). Keep their catalog limited to v4 for this cutover example (using the optional filter if needed), and public traffic closed during the cutover. Fleet admission needs these serving children before it replaces supervisors. For already-migrated PostgreSQL whose members provide v5 storage proofs, keep ready survivors running. Pre-v5 supervisors lack host evacuation: finish their accepted work in the maintenance window before replacement.
 
 ```bash
 ./versiond-router-fleet.sh prepare-networks
@@ -771,7 +781,11 @@ Each HA versiond replacement requires a surviving member for every currently ser
 
 Replacing the single public proxy can interrupt existing connections, including on later v5 image or configuration updates. Schedule those replacements during maintenance and let accepted work finish first.
 
-**State migration and rollback.** Existing HA PostgreSQL data stays in the same database. v5 applies forward schema migrations under a database advisory lock. For first-time conversion of a single-owner deployment, explicit `postgres` mode also imports supported epoch-layout SQLite sessions and file payloads before serving; stop the old writer and migrate each source directory with one owner. Successful sources are quarantined as `*.migrated.<timestamp>`, and conflicting data aborts startup. Older monolithic layouts need separate verification.
+The upgrade is complete after the readiness, router admission and inference checks above pass for every version you intend to serve.
+
+#### Reference: state migration and rollback
+
+Existing HA PostgreSQL data stays in the same database. v5 applies forward schema migrations under a database advisory lock. For first-time conversion of a single-owner deployment, explicit `postgres` mode also imports supported epoch-layout SQLite sessions and file payloads before serving; stop the old writer and migrate each source directory with one owner. Successful sources are quarantined as `*.migrated.<timestamp>`, and conflicting data aborts startup. Older monolithic layouts need separate verification.
 
 A wire-compatible **same-protocol** artifact update is different from adding v5: PostgreSQL children can overlap while the candidate starts and, when supported, reports `recovery_complete=true` (default `VERSIOND_RECOVERY_TIMEOUT=30m`). Check `recovery_failed` and logs separately: completion does not mean every session recovered successfully. Failed preparation keeps the predecessor serving. SQLite/hybrid replacements drain and stop before starting; older candidates without the recovery field skip that recovery wait. Keep pool capacity for overlapping children. Do not repeatedly change the approved artifact while predecessors are still draining.
 
