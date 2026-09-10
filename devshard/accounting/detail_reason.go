@@ -20,7 +20,7 @@ func normalizeDetailReason(reason string) string {
 		"sse_event_too_large", "sse_stream_too_large", "response_body_too_large", "aggregate_response_too_large", "aggregate_fold_too_large",
 		"eof_transport", "client_cancelled", "transport_error", "no_receipt",
 		"not_finished", "http_429", "http_503", "http_forbidden", "http_not_found",
-		"http_timestamp_drift", "http_error", "long_response_after_content",
+		"http_timestamp_drift", "http_error", "http_413", "request_too_large", "catch_up_not_started", "long_response_after_content",
 		"escrow_state_root_diverged", "context_canceled", "timeout_diff_delivery_failed",
 		"timeout_not_applied", "host_served_probe", "poc_unavailable_host", "participant_throttled_no_send",
 		"participant_state_diverged_no_send", "participant_capability_no_send", "no_compatible_request_after_stale",
@@ -44,7 +44,7 @@ func normalizeDeliveryReason(reason string) string {
 		"sse_event_too_large", "sse_stream_too_large", "response_body_too_large", "aggregate_response_too_large", "aggregate_fold_too_large",
 		"eof_transport", "transport_error", "client_cancelled", "not_finished",
 		"no_receipt", "http_error", "http_429", "http_503", "http_not_found",
-		"http_forbidden", DeliveryClientGone, DeliveryWarmupProbe, DeliveryThrottleProbe:
+		"http_forbidden", "http_413", "request_too_large", "catch_up_not_started", DeliveryClientGone, DeliveryWarmupProbe, DeliveryThrottleProbe:
 		return reason
 	default:
 		return "unknown"

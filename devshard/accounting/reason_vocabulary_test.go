@@ -125,3 +125,16 @@ func TestBothVocabulariesNameTheSameReasons(t *testing.T) {
 			"a reason the timeout vocabulary names must survive the detail vocabulary too")
 	}
 }
+
+func TestTheVocabularyKnowsTheOversizeReasons(t *testing.T) {
+	require.Equal(t, "http_413", normalizeDetailReason("http_413"))
+	require.Equal(t, "request_too_large", normalizeDetailReason("request_too_large"))
+	require.Equal(t, "http_413", normalizeDeliveryReason("http_413"))
+	require.Equal(t, "request_too_large", normalizeDeliveryReason("request_too_large"),
+		"deliveryReasonFor hands a failed attempt's reason straight to this vocabulary")
+	require.Equal(t, FailureGatewayPolicy, FailureOriginFromDetail("request_too_large"),
+		"a body the gateway refused to send is the gateway's own call, not a host fault")
+	require.Equal(t, FailureGatewayPolicy, FailureOriginFromDetail("catch_up_not_started"),
+		"an attempt that never reached a host is the gateway's own serialization, not a host fault")
+	require.Equal(t, "catch_up_not_started", normalizeDeliveryReason("catch_up_not_started"))
+}
