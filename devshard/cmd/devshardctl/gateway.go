@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	devshardpkg "devshard"
 	"common/chain"
 	chaintx "common/chain/tx"
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/runtimeparams"
 	"devshard/storage"
@@ -724,6 +724,7 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
 	g.settings = settings
+	g.metrics.SetTimingExport(settings.Metrics)
 	g.baseStorageDir = baseStorageDir
 	g.store = store
 	g.chainClient = chainClient
@@ -1711,12 +1712,12 @@ func (g *Gateway) serveInactiveDevshardMetadata(w http.ResponseWriter, r *http.R
 
 func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRuntime) {
 	rt.active.Store(false)
-	if g.store == nil {
-		return
+	if g.store != nil {
+		if err := g.store.SetDevshardActive(id, false); err != nil {
+			log.Printf("finalize: persist deactivation for devshard %s: %v", id, err)
+		}
 	}
-	if err := g.store.SetDevshardActive(id, false); err != nil {
-		log.Printf("finalize: persist deactivation for devshard %s: %v", id, err)
-	}
+	g.retireRuntime(id, "finalized")
 }
 
 func (g *Gateway) serveChatToRuntime(rt *devshardRuntime, path string, body []byte, w http.ResponseWriter, r *http.Request) *gatewayChatCacheCapture {
@@ -2387,11 +2388,11 @@ func legacyPerfSourcePath(storagePath string) string {
 }
 
 type adminDevshardRequest struct {
-	ID              string `json:"id"`
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Model           string `json:"model,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
+	ID            string `json:"id"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Model         string `json:"model,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
 	RoutePrefix   string `json:"route_prefix,omitempty"`
 }
 
@@ -2402,17 +2403,17 @@ type adminImportDevshardRequest struct {
 }
 
 type adminCreateEscrowRequest struct {
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Amount          uint64 `json:"amount"`
-	ModelID         string `json:"model_id,omitempty"`
-	Register        *bool  `json:"register,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
-	RoutePrefix     string `json:"route_prefix,omitempty"`
-	ChainID         string `json:"chain_id,omitempty"`
-	FeeDenom        string `json:"fee_denom,omitempty"`
-	FeeAmount       uint64 `json:"fee_amount,omitempty"`
-	GasLimit        uint64 `json:"gas_limit,omitempty"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Amount        uint64 `json:"amount"`
+	ModelID       string `json:"model_id,omitempty"`
+	Register      *bool  `json:"register,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
+	RoutePrefix   string `json:"route_prefix,omitempty"`
+	ChainID       string `json:"chain_id,omitempty"`
+	FeeDenom      string `json:"fee_denom,omitempty"`
+	FeeAmount     uint64 `json:"fee_amount,omitempty"`
+	GasLimit      uint64 `json:"gas_limit,omitempty"`
 }
 
 type adminSettleEscrowRequest struct {
@@ -2441,6 +2442,7 @@ type adminSettingsRequest struct {
 	Redundancy                     *adminRedundancyRequest          `json:"redundancy,omitempty"`
 	Perf                           *adminPerfRequest                `json:"perf,omitempty"`
 	EscrowRotation                 *adminEscrowRotationRequest      `json:"escrow_rotation,omitempty"`
+	Metrics                        *adminMetricsRequest             `json:"metrics,omitempty"`
 }
 
 type adminGatewayDisabledRequest struct {
@@ -2491,6 +2493,11 @@ type adminEscrowRotationRequest struct {
 	SettlementEnabled *bool                          `json:"settlement_enabled,omitempty"`
 	PrePoCBlocks      *int64                         `json:"pre_poc_blocks,omitempty"`
 	Models            *[]EscrowRotationModelSettings `json:"models,omitempty"`
+}
+
+type adminMetricsRequest struct {
+	DevshardHost        *bool `json:"devshard_host,omitempty"`
+	DevshardParticipant *bool `json:"devshard_participant,omitempty"`
 }
 
 func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
@@ -2618,6 +2625,9 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		if req.EscrowRotation != nil {
 			applyEscrowRotationRequest(&settings.EscrowRotation, req.EscrowRotation)
 		}
+		if req.Metrics != nil {
+			applyMetricsRequest(&settings.Metrics, req.Metrics)
+		}
 		if err := validateGatewaySettings(settings); err != nil {
 			g.mu.Unlock()
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
@@ -2647,6 +2657,9 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		DefaultRequestMaxTokens = settings.DefaultRequestMaxTokens
 		RequestMaxTokensCap = settings.RequestMaxTokensCap
 		applyGatewayTuningSettings(settings)
+		if g.metrics != nil {
+			g.metrics.SetTimingExport(settings.Metrics)
+		}
 		if g.perf != nil {
 			g.perf.ResizeRings()
 		}
@@ -2837,6 +2850,15 @@ func applyEscrowRotationRequest(settings *EscrowRotationSettings, req *adminEscr
 			settings.Models[i].ModelID = strings.TrimSpace(settings.Models[i].ModelID)
 			settings.Models[i].PrivateKeyEnv = strings.TrimSpace(settings.Models[i].PrivateKeyEnv)
 		}
+	}
+}
+
+func applyMetricsRequest(settings *GatewayMetricsSettings, req *adminMetricsRequest) {
+	if req.DevshardHost != nil {
+		settings.DevshardHost = boolPtr(*req.DevshardHost)
+	}
+	if req.DevshardParticipant != nil {
+		settings.DevshardParticipant = boolPtr(*req.DevshardParticipant)
 	}
 }
 
@@ -3064,10 +3086,10 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              strconv.FormatUint(result.EscrowID, 10),
-			Model:           modelID,
-			StoragePath:     strings.TrimSpace(req.StoragePath),
-			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
+			ID:          strconv.FormatUint(result.EscrowID, 10),
+			Model:       modelID,
+			StoragePath: strings.TrimSpace(req.StoragePath),
+			RoutePrefix: strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: true,
 	}
@@ -3377,11 +3399,11 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              req.ID,
-			PrivateKeyHex:   strings.TrimSpace(req.PrivateKey),
-			PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
-			Model:           strings.TrimSpace(req.Model),
-			StoragePath:     req.StoragePath,
+			ID:            req.ID,
+			PrivateKeyHex: strings.TrimSpace(req.PrivateKey),
+			PrivateKeyEnv: strings.TrimSpace(req.PrivateKeyEnv),
+			Model:         strings.TrimSpace(req.Model),
+			StoragePath:   req.StoragePath,
 			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: active,
@@ -3696,18 +3718,17 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if rt, ok := g.runtimes[id]; ok {
-		if rt.activeUserRequests.Load() > 0 {
+		if rt.escrowHasBackgroundWork() {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, id), http.StatusConflict)
 			return
 		}
-		delete(g.runtimes, id)
-		g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
-		if g.capacity != nil {
-			g.capacity.RemoveEscrow(id)
+		if g.dropRegisteredRuntimeLocked(id) != nil {
+			if err := rt.close(); err != nil {
+				log.Printf("close devshard %s: %v", id, err)
+			}
 		}
-		if err := rt.close(); err != nil {
-			log.Printf("close devshard %s: %v", id, err)
-		}
+	} else if g.metrics != nil {
+		g.metrics.ForgetEscrow(id)
 	}
 	if err := g.store.DeleteDevshard(id); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -3891,6 +3912,25 @@ func (g *Gateway) retireRuntime(id, reason string) bool {
 	return true
 }
 
+// dropRegisteredRuntimeLocked is the single map-removal point for a runtime.
+// Callers must hold g.mu. It forgets escrow-keyed Prometheus children so
+// deactivate/clean/retire cannot leave slot and picker series behind.
+func (g *Gateway) dropRegisteredRuntimeLocked(id string) *devshardRuntime {
+	rt, ok := g.runtimes[id]
+	if !ok {
+		return nil
+	}
+	delete(g.runtimes, id)
+	g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
+	if g.capacity != nil {
+		g.capacity.RemoveEscrow(id)
+	}
+	if g.metrics != nil {
+		g.metrics.ForgetEscrow(id)
+	}
+	return rt
+}
+
 // retireRuntimeLocked removes the runtime from the registry and returns it so
 // the caller can close it outside the lock. It returns nil when nothing was
 // retired: the runtime is unknown, or its retirement was deferred because
@@ -3908,12 +3948,7 @@ func (g *Gateway) retireRuntimeLocked(id, reason string) *devshardRuntime {
 			id, reason, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
 		return nil
 	}
-	delete(g.runtimes, id)
-	g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
-	if g.capacity != nil {
-		g.capacity.RemoveEscrow(id)
-	}
-	return rt
+	return g.dropRegisteredRuntimeLocked(id)
 }
 
 func (g *Gateway) attachMetrics(rt *devshardRuntime) {
@@ -4172,6 +4207,7 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 		id, result.EscrowID, model.ModelID, reason, result.TxHash)
 	if !settings.EscrowRotation.SettlementEnabled {
 		g.deactivateDevshardByIDWithReason(id, reason)
+		g.retireRuntime(id, reason)
 	} else {
 		g.deactivateAndSettleDevshardByID(id, reason)
 	}

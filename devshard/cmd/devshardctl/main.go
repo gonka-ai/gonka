@@ -211,6 +211,10 @@ func mustLoadBootstrapOptions(flags cliFlags, baseStorageDir string) bootstrapOp
 			PrePoCBlocks:      readInt64Env("DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS", 300),
 			Models:            mustReadEscrowRotationModelsEnv(),
 		},
+		Metrics: GatewayMetricsSettings{
+			DevshardHost:        boolPtr(readBoolEnv("GATEWAY_METRICS_DEVSHARD_HOST", true)),
+			DevshardParticipant: boolPtr(readBoolEnv("GATEWAY_METRICS_DEVSHARD_PARTICIPANT", true)),
+		},
 	}.WithTuningDefaults()
 	return opts
 }

@@ -54,6 +54,8 @@ func TestGatewayStoreInitializeAndLoadState(t *testing.T) {
 	require.False(t, state.Settings.Disabled.Enabled)
 	require.Equal(t, defaultGatewayDisabledMessage, state.Settings.Disabled.Message)
 	require.Empty(t, state.Settings.Disabled.NewURL)
+	require.True(t, state.Settings.Metrics.DevshardHostEnabled())
+	require.True(t, state.Settings.Metrics.DevshardParticipantEnabled())
 }
 
 func TestAdminAuthMiddlewareRequiresAdminKey(t *testing.T) {
@@ -150,6 +152,10 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 				PrivateKeyEnv: "KIMI_ROTATION_KEY",
 			}},
 		},
+		Metrics: GatewayMetricsSettings{
+			DevshardHost:        boolPtr(false),
+			DevshardParticipant: boolPtr(true),
+		},
 	}))
 
 	state, ok, err := store.LoadState()
@@ -184,6 +190,8 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 		Amount:        555,
 		PrivateKeyEnv: "KIMI_ROTATION_KEY",
 	}}, state.Settings.EscrowRotation.Models)
+	require.False(t, state.Settings.Metrics.DevshardHostEnabled())
+	require.True(t, state.Settings.Metrics.DevshardParticipantEnabled())
 }
 
 func TestGatewayStoreLoadsLegacyModelAccessIntoModelLimits(t *testing.T) {

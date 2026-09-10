@@ -15,9 +15,9 @@ import (
 
 // fakeGhost records ghost-probe dispatches so tests can assert how
 // many were burned, for what reason, and on which host/nonce.
-// Production Redundancy.runGhostProbe is also non-sending (it logs
-// and returns); the fake just captures the call so assertions can
-// check the exact branch that fired.
+// Production Redundancy.runGhostProbe is also non-sending (it records
+// ghost_no_send, logs, and returns); the fake just captures the call so
+// assertions can check the exact branch that fired.
 type fakeGhost struct {
 	mu      sync.Mutex
 	count   int32

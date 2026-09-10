@@ -4118,7 +4118,9 @@ func ghostProbeParams(model string) user.InferenceParams {
 // the host. The picker invokes this when it must consume a nonce but
 // no real request should land on the host (PoC-required, queue
 // excluded all available hosts past pickerStaleThreshold, or host is
-// reactively throttled). Every kind behaves identically: log + return.
+// reactively throttled). Every kind behaves identically: emit a
+// ghost_no_send slot-decision metric, log, and return without contacting
+// the host.
 //
 // Why silent for every kind:
 //
@@ -4154,14 +4156,26 @@ func ghostProbeParams(model string) user.InferenceParams {
 //
 // Liveness: every nonce the session advances through is accounted for
 // exactly once -- by a real request via the picker, or by this
-// log-only no-op. Without this method the picker would have to dequeue
-// a real request and turn IT into a probe, costing that request a turn.
+// metric-and-log no-op. Without this method the picker would have to
+// dequeue a real request and turn IT into a probe, costing that request
+// a turn.
 //
 // kind is retained on the signature for log-label differentiation only;
 // the dispatch path is identical for every kind.
 func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostKind, reason string) {
 	if prepared == nil || e.session == nil {
 		return
+	}
+	participantKey := e.participantKeyForHost(prepared.HostIdx())
+	if e.metrics != nil {
+		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+			ParticipantKey: participantKey,
+			Model:          e.model,
+			EscrowID:       e.devshardID,
+			Decision:       "ghost_no_send",
+			Reason:         reason,
+			QuarantineMode: e.quarantineModeForParticipant(participantKey),
+		})
 	}
 	ctx, _ := ensureRequestLogContext(context.Background())
 	logInferenceStage(ctx, e.devshardID, prepared.Nonce(), "ghost_probe_skipped",
