@@ -311,7 +311,7 @@ func TestParseSSE_PartialResult(t *testing.T) {
 	require.Equal(t, int64(1000), result.ConfirmedAt)
 }
 
-// truncatedReader returns data followed by an io.ErrUnexpectedEOF to simulate a broken connection.
+// truncatedReader returns data and then io.ErrUnexpectedEOF.
 type truncatedReader struct {
 	data []byte
 	pos  int
@@ -320,11 +320,11 @@ type truncatedReader struct {
 
 func (r *truncatedReader) Read(p []byte) (int, error) {
 	if r.done {
-		return 0, fmt.Errorf("connection reset")
+		return 0, io.ErrUnexpectedEOF
 	}
 	if r.pos >= len(r.data) {
 		r.done = true
-		return 0, fmt.Errorf("connection reset")
+		return 0, io.ErrUnexpectedEOF
 	}
 	n := copy(p, r.data[r.pos:])
 	r.pos += n

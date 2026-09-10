@@ -1,6 +1,8 @@
 package testutil
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"strings"
 	"testing"
@@ -232,4 +234,15 @@ func StartTx(inferenceID uint64) *types.DevshardTx {
 		MaxTokens:   TestMaxTokens,
 		StartedAt:   1000,
 	}}}
+}
+
+// MustGzip compresses body the way a sender puts it on the wire.
+func MustGzip(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err := writer.Write(body)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	return compressed.Bytes()
 }
