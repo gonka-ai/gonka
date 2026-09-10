@@ -238,12 +238,15 @@ type Session struct {
 	// admission controller. Multi-slot validators legitimately repeat
 	// the same key here; ParticipantKeys() de-duplicates for views
 	// that want a per-host (not per-slot) list.
-	participantKeys []string
-	clients         []HostClient
-	nonce           uint64
-	diffs           []types.Diff                 // append-only log
-	hostSyncNonce   map[int]uint64               // hostIdx -> last nonce sent
-	pendingTxs      []*types.DevshardTx          // from host mempools, for next diff
+	participantKeys           []string
+	clients                   []HostClient
+	nonce                     uint64
+	diffs                     []types.Diff   // append-only log
+	hostSyncNonce             map[int]uint64 // hostIdx -> last nonce sent
+	catchUpGate               []chan struct{}
+	catchUpBudgetBytes        int
+	heartbeatGateWaitOverride time.Duration
+	pendingTxs                []*types.DevshardTx // from host mempools, for next diff
 	// pendingTxKeys dedups the current pendingTxs slice by tx_type:id. It is
 	// rebuilt from what compose retained, so a tx that failed to apply frees
 	// its key again -- otherwise the first host to propose a bogus tx would
@@ -476,6 +479,7 @@ func NewSession(
 		participantKeys: make([]string, len(group)),
 		clients:         clients,
 		hostSyncNonce:   make(map[int]uint64),
+		catchUpGate:     newCatchUpGates(len(clients)),
 		pendingTxKeys:   make(map[string]struct{}),
 		appliedTxKeys:   make(map[string]struct{}),
 		pinnedFinishIDs: make(map[uint64]int),
@@ -540,6 +544,19 @@ func (s *Session) diffsForHost(hostIdx int) []types.Diff {
 		}
 	}
 	return result
+}
+
+func (s *Session) finalizeClientFor(hostIdx int) HostClient {
+	type admissionBypasser interface {
+		WithoutAdmission() any
+	}
+	client := s.clients[hostIdx]
+	if bypasser, ok := client.(admissionBypasser); ok {
+		if stripped, ok := bypasser.WithoutAdmission().(HostClient); ok {
+			return stripped
+		}
+	}
+	return client
 }
 
 // validateCatchUp warns if the catch-up diffs for a host are non-contiguous
@@ -750,7 +767,6 @@ func (s *Session) ProcessResponse(hostIdx int, resp *host.HostResponse, inferenc
 type PreparedInference struct {
 	diff    types.Diff
 	hostIdx int
-	catchUp []types.Diff
 	params  InferenceParams
 	isProbe bool
 }
@@ -1189,6 +1205,10 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		return nil, err
 	}
 
+	if transport.EncodedPromptSize(params.Prompt, params.Model)+minimumDiffReserveBytes >= s.catchUpBudgetLocked() {
+		return nil, ErrPromptTooLargeForHost
+	}
+
 	promptHash, err := devshard.CanonicalPromptHash(params.Prompt)
 	if err != nil {
 		return nil, fmt.Errorf("canonical prompt hash: %w", err)
@@ -1244,13 +1264,9 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 
 	s.nonceStates[nonce] = &nonceOutcome{}
 
-	catchUp := s.diffsForHost(hostIdx)
-	// TODO: remove this when we are sure that there is no bug in CatchUp
-	s.validateCatchUp(catchUp, nonce, hostIdx)
 	return &PreparedInference{
 		diff:    diff,
 		hostIdx: hostIdx,
-		catchUp: catchUp,
 		params:  params,
 		isProbe: probe,
 	}, nil
@@ -1282,9 +1298,15 @@ func (p *PreparedInference) Payload() *host.InferencePayload {
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	reserveBytes := transport.EncodedPromptSize(p.params.Prompt, p.params.Model)
+	catchUp, err := s.catchUpTailForHost(ctx, p.hostIdx, p.diff.Nonce, reserveBytes, 0)
+	if err != nil {
+		return nil, err
+	}
+
 	legacyForce := p.params.ForceHeightSyncAnchor && s.heightSyncK == 0
 	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
-		Diffs:                 p.catchUp,
+		Diffs:                 catchUp,
 		Nonce:                 p.diff.Nonce,
 		ForceHeightSyncAnchor: legacyForce,
 		HeightSyncEscrow:      s.heightSyncEscrowHints(),
@@ -1409,115 +1431,106 @@ func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardT
 	return err
 }
 
-// catchUpChunkSize is the maximum number of diffs sent in a single catch-up
-// request. Large sessions can accumulate hundreds of diffs; sending them all
-// at once risks timeouts and oversized request bodies. Chunking lets the host
-// replay state incrementally and the proxy bail out early if any chunk fails.
-const catchUpChunkSize = 200
-
-// catchUpChunkTimeout is the per-chunk timeout for sendCatchUp. Each chunk
-// of 200 diffs gets its own deadline so large catch-ups (thousands of diffs)
-// don't hit a single overall timeout.
-const catchUpChunkTimeout = 60 * time.Second
-
 // sendCatchUp sends existing diffs to a host, admission-free: they are already signed by the group.
 func (s *Session) sendCatchUp(ctx context.Context, hostIdx int) error {
-	return s.sendCatchUpWith(ctx, hostIdx, s.getFinalizeClients()[hostIdx])
+	return s.sendCatchUpWith(ctx, hostIdx, s.finalizeClientFor(hostIdx))
 }
 
 // sendCatchUpWith sends existing diffs to a host using the provided client.
-// Diffs are sent in chunks of catchUpChunkSize with a per-chunk timeout.
-// If any chunk fails (host dead or processResponse error), we stop --
-// there's no point sending later chunks if the host couldn't apply earlier ones.
-// Returns non-nil only on processResponse errors; dead hosts are silently skipped.
 func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostClient) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("host %d: %w: %w", hostIdx, ErrCatchUpNotStarted, err)
+	}
+
+	s.mu.Lock()
+	pending := len(s.diffsForHost(hostIdx))
+	s.mu.Unlock()
+	if pending == 0 {
+		return nil
+	}
+
+	release, err := s.enterCatchUpGate(ctx, hostIdx, 0)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	s.mu.Lock()
 	nonce := s.nonce
 	catchUp := s.diffsForHost(hostIdx)
+	budgetBytes := s.catchUpBudgetLocked()
 	s.mu.Unlock()
 
 	if len(catchUp) == 0 {
 		return nil
 	}
 
-	totalChunks := (len(catchUp) + catchUpChunkSize - 1) / catchUpChunkSize
 	logging.Info("sendCatchUp starting", "subsystem", "finalize", "escrow", s.escrowID,
 		"nonce", nonce, "host", hostIdx,
-		"total_diffs", len(catchUp), "chunks", totalChunks)
+		"total_diffs", len(catchUp), "budget_bytes", budgetBytes)
 
-	chunkIdx := 0
-	for chunkIdx < len(catchUp) {
+	diffIdx := 0
+	chunkNumber := 0
+	for diffIdx < len(catchUp) {
 		if err := ctx.Err(); err != nil {
 			logging.Warn("sendCatchUp context cancelled", "subsystem", "finalize", "escrow", s.escrowID,
 				"nonce", nonce, "host", hostIdx,
-				"chunk", chunkIdx/catchUpChunkSize+1, "error", err)
+				"chunk", chunkNumber+1, "error", err)
 			return nil
 		}
 
-		end := chunkIdx + catchUpChunkSize
-		if end > len(catchUp) {
-			end = len(catchUp)
+		chunk, err := catchUpChunk(catchUp[diffIdx:], budgetBytes)
+		if err != nil {
+			logging.Warn("sendCatchUp diff over budget", "subsystem", "finalize", "escrow", s.escrowID,
+				"nonce", catchUp[diffIdx].Nonce, "host", hostIdx, "budget_bytes", budgetBytes)
+			return fmt.Errorf("catch-up to host %d: %w", hostIdx, err)
 		}
-		chunk := catchUp[chunkIdx:end]
 		chunkNonce := chunk[len(chunk)-1].Nonce
-		chunkNum := chunkIdx/catchUpChunkSize + 1
+		chunkNumber++
 
 		logging.Info("sendCatchUp chunk", "subsystem", "finalize", "escrow", s.escrowID,
 			"nonce", nonce, "host", hostIdx,
-			"chunk", chunkNum, "of", totalChunks,
+			"chunk", chunkNumber,
 			"diffs_in_chunk", len(chunk),
 			"chunk_first_nonce", chunk[0].Nonce,
 			"chunk_last_nonce", chunkNonce)
 
-		chunkCtx, cancel := context.WithTimeout(ctx, catchUpChunkTimeout)
-		resp, err := client.Send(chunkCtx, host.HostRequest{Diffs: chunk, Nonce: chunkNonce}, nil, nil)
-		cancel()
+		resp, err := s.deliverCatchUpChunk(ctx, hostIdx, client, chunk)
 		if err != nil {
 			logging.Warn("sendCatchUp chunk failed", "subsystem", "finalize", "escrow", s.escrowID,
 				"nonce", nonce, "host", hostIdx,
-				"chunk", chunkNum, "error", err)
-			return fmt.Errorf("catch-up chunk %d to host %d: %w", chunkNum, hostIdx, err)
+				"chunk", chunkNumber, "error", err)
+			s.publishHeightSyncView()
+			return fmt.Errorf("catch-up chunk %d to host %d: %w", chunkNumber, hostIdx, err)
 		}
 
 		logging.Info("sendCatchUp chunk response", "subsystem", "finalize", "escrow", s.escrowID,
 			"nonce", nonce, "host", hostIdx,
-			"chunk", chunkNum,
+			"chunk", chunkNumber,
 			"resp_nonce", resp.Nonce, "has_sig", resp.StateSig != nil)
-
-		s.mu.Lock()
-		err = s.processResponse(hostIdx, resp, chunkNonce)
-		if err == nil {
-			s.logSignatureProgress(resp.Nonce)
-		}
-		s.mu.Unlock()
-		if err != nil {
-			s.publishHeightSyncView()
-			return err
-		}
 
 		// Skip forward: if the host is already ahead of what we're about
 		// to send (e.g. it caught up via gossip), jump to the chunk that
 		// contains resp.Nonce+1 to avoid sending diffs the host already has.
-		nextChunkIdx := chunkIdx + catchUpChunkSize
+		nextDiffIdx := diffIdx + len(chunk)
 		if resp.Nonce > chunkNonce {
-			skipTo := 0
+			skipTo := len(catchUp)
 			for i, d := range catchUp {
 				if d.Nonce > resp.Nonce {
 					skipTo = i
 					break
 				}
 			}
-			if skipTo > nextChunkIdx {
-				skippedChunks := (skipTo - nextChunkIdx) / catchUpChunkSize
+			if skipTo > nextDiffIdx {
 				logging.Info("sendCatchUp skip-forward", "subsystem", "finalize", "escrow", s.escrowID,
 					"nonce", nonce, "host", hostIdx,
 					"resp_nonce", resp.Nonce,
-					"skipping_from_idx", nextChunkIdx, "to_idx", skipTo,
-					"skipped_chunks", skippedChunks)
-				nextChunkIdx = skipTo
+					"skipping_from_idx", nextDiffIdx, "to_idx", skipTo,
+					"skipped_diffs", skipTo-nextDiffIdx)
+				nextDiffIdx = skipTo
 			}
 		}
-		chunkIdx = nextChunkIdx
+		diffIdx = nextDiffIdx
 	}
 
 	s.publishHeightSyncView()
@@ -2076,17 +2089,9 @@ func (s *Session) RewindHostCatchUp(hostIdx int, cause string) bool {
 // reach a host the participant budget would refuse. Rebuilt per call: s.clients is small, both callers
 // are network-bound, and a cache would have to be invalidated by anything that swaps a client.
 func (s *Session) getFinalizeClients() []HostClient {
-	type admissionBypasser interface {
-		WithoutAdmission() any
-	}
 	clients := make([]HostClient, len(s.clients))
-	for i, c := range s.clients {
-		clients[i] = c
-		if b, ok := c.(admissionBypasser); ok {
-			if hc, ok := b.WithoutAdmission().(HostClient); ok {
-				clients[i] = hc
-			}
-		}
+	for i := range s.clients {
+		clients[i] = s.finalizeClientFor(i)
 	}
 	return clients
 }
@@ -3133,8 +3138,16 @@ func (s *Session) collectTimeoutVotes(
 				return
 			}
 
-			catchUp := mergeTimeoutCatchUpDiffs(s.catchUpDiffsForVerifier(av.idx), diffs)
-			arts := firstTimeoutArtifacts(artifacts)
+			timeoutArtifacts := firstTimeoutArtifacts(artifacts)
+			drained, ok := s.verifierCatchUpTail(ctx, av.idx, verifyBodyReserveBytes(payload, host.TimeoutArtifacts{}))
+			if err := ctx.Err(); err != nil {
+				results <- voteResult{err: fmt.Errorf("%w: %w", errVoteNotSent, err), verifierIdx: av.idx, verifierAddr: av.verifierAddr}
+				return
+			}
+			if !ok {
+				drained = s.catchUpDiffsForVerifier(av.idx)
+			}
+			catchUp := mergeTimeoutCatchUpDiffs(drained, diffs)
 
 			rec := inflightVerify{
 				Escrow: s.escrowID,
@@ -3151,12 +3164,12 @@ func (s *Session) collectTimeoutVotes(
 			logging.Stage(ctx, "timeout_vote_sent",
 				logFields(av.verifierAddr, "sent_at_ms", rec.SentAt.UnixMilli())...,
 			)
-			accept, sig, voterSlot, mempool, rejectCause, err := av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, catchUp, arts)
+			accept, sig, voterSlot, mempool, rejectCause, err := av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, catchUp, timeoutArtifacts)
 			// The slot is held and a vote is idempotent, so an unanswered request is asked once more.
 			if transport.IsTransientWriteError(err) && ctx.Err() == nil {
 				logging.Debug("retrying a vote the peer never answered", "subsystem", "session",
 					"inference_id", inferenceID, "verifier", av.verifierAddr, "error", err)
-				accept, sig, voterSlot, mempool, rejectCause, err = av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, catchUp, arts)
+				accept, sig, voterSlot, mempool, rejectCause, err = av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, catchUp, timeoutArtifacts)
 			}
 			logVoteRPC(ctx, logFields, av.verifierAddr, err, accept, time.Since(rec.SentAt))
 			if err != nil {
@@ -3370,7 +3383,16 @@ func (s *Session) CollectErrorMissVotes(
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
-			accept, sig, voterSlot, mempool, rejectCause, err := av.verifier.VerifyErrorMiss(ctx, inferenceID, mergeTimeoutCatchUpDiffs(s.catchUpDiffsForVerifier(av.idx), diffs), artifacts)
+			drained, ok := s.verifierCatchUpTail(ctx, av.idx, verifyBodyReserveBytes(nil, artifacts))
+			if err := ctx.Err(); err != nil {
+				results <- voteResult{err: fmt.Errorf("%w: %w", errVoteNotSent, err), verifierIdx: av.idx, verifierAddr: av.verifierAddr}
+				return
+			}
+			if !ok {
+				drained = s.catchUpDiffsForVerifier(av.idx)
+			}
+			catchUp := mergeTimeoutCatchUpDiffs(drained, diffs)
+			accept, sig, voterSlot, mempool, rejectCause, err := av.verifier.VerifyErrorMiss(ctx, inferenceID, catchUp, artifacts)
 			if err != nil {
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
@@ -3443,8 +3465,6 @@ func firstTimeoutArtifacts(artifacts []host.TimeoutArtifacts) host.TimeoutArtifa
 	return artifacts[0]
 }
 
-// catchUpDiffsForVerifier returns diffs this host has not yet been sent.
-// The slice is copied under s.mu so the RPC can proceed without holding the lock.
 func (s *Session) catchUpDiffsForVerifier(hostIdx int) []types.Diff {
 	s.mu.Lock()
 	defer s.mu.Unlock()

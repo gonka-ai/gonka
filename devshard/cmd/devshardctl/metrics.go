@@ -17,6 +17,7 @@ import (
 	"common/probe"
 
 	"devshard/transport"
+	"devshard/user"
 )
 
 type DevshardMetrics struct {
@@ -1273,6 +1274,10 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker, mo
 	if inf.err != nil {
 		var upstreamErr *transport.UpstreamStatusError
 		switch {
+		case errors.Is(inf.err, user.ErrRequestTooLargeForHost):
+			return "request_too_large"
+		case errors.Is(inf.err, user.ErrCatchUpNotStarted):
+			return "catch_up_not_started"
 		case errors.As(inf.err, &upstreamErr):
 			return gatewayHTTPFailureReason(upstreamErr.StatusCode)
 		case errors.Is(inf.err, ErrAggregateResponseTooLarge):
@@ -1314,6 +1319,8 @@ func gatewayHTTPFailureReason(statusCode int) string {
 		return "http_not_found"
 	case http.StatusUnauthorized:
 		return "http_timestamp_drift"
+	case http.StatusRequestEntityTooLarge:
+		return "http_413"
 	default:
 		if statusCode >= 400 {
 			return "http_error"

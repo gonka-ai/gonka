@@ -13,6 +13,8 @@ import (
 
 const heartbeatForceReason = "heartbeat"
 
+const defaultHeartbeatGateWait = 2 * time.Second
+
 type composedDiff struct {
 	diff    types.Diff
 	hostIdx int
@@ -377,10 +379,22 @@ func (s *Session) observedHeightLocked() (uint64, []byte, bool) {
 	return 0, nil, false
 }
 
-func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error {
+func (s *Session) heartbeatGateWait() time.Duration {
 	s.mu.Lock()
-	catchUp := s.diffsForHost(item.hostIdx)
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	if s.heartbeatGateWaitOverride > 0 {
+		return s.heartbeatGateWaitOverride
+	}
+	return defaultHeartbeatGateWait
+}
+
+func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error {
+	catchUp, err := s.catchUpTailForHost(ctx, item.hostIdx, item.diff.Nonce, 0, s.heartbeatGateWait())
+	if err != nil {
+		logging.Warn("heartbeat catch-up ahead failed", "subsystem", "heightsync",
+			"escrow", s.escrowID, "nonce", item.diff.Nonce, "host", item.hostIdx, "error", err)
+		return nil
+	}
 
 	resp, err := s.clients[item.hostIdx].Send(ctx, host.HostRequest{
 		Diffs:            catchUp,

@@ -2294,6 +2294,9 @@ func gatewayStatusCodeForError(err error) int {
 	if errors.As(err, &upstreamErr) && isParticipantThrottleStatus(upstreamErr.StatusCode) {
 		return http.StatusTooManyRequests
 	}
+	if errors.Is(err, user.ErrPromptTooLargeForHost) {
+		return http.StatusRequestEntityTooLarge
+	}
 	return http.StatusBadGateway
 }
 
