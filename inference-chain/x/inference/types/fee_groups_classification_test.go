@@ -24,6 +24,12 @@ import (
 // be added to MessageFeeGroups, IsNetworkDuty, or this map.
 func intentionallyUngrouped() map[string]string {
 	return map[string]string{
+		sdk.MsgTypeURL(&types.MsgCreateTrainshardProposal{}):         "trainshard v0; shard lifecycle is not metered yet",
+		sdk.MsgTypeURL(&types.MsgAssembleTrainshard{}):               "trainshard v0; shard lifecycle is not metered yet",
+		sdk.MsgTypeURL(&types.MsgSettleTrainshard{}):                 "trainshard v0; shard lifecycle is not metered yet",
+		sdk.MsgTypeURL(&types.MsgSetTrainingNodeOptIn{}):             "trainshard v0; host upkeep is not metered yet",
+		sdk.MsgTypeURL(&types.MsgRefreshTrainingNodeOptIn{}):         "trainshard v0; host upkeep is not metered yet",
+		sdk.MsgTypeURL(&types.MsgAutokickTrainshardNode{}):           "trainshard v0; host upkeep is not metered yet",
 		sdk.MsgTypeURL(&genesistransfertypes.MsgTransferOwnership{}): "one-shot genesis transfer",
 	}
 }

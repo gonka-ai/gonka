@@ -4,6 +4,7 @@ package inference.inference;
 import "amino/amino.proto";
 import "gogoproto/gogo.proto";
 import "cosmos_proto/cosmos.proto";
+import "inference/inference/trainshard.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -34,6 +35,7 @@ message Params {
   DelegationParams delegation_params = 16;
   MaintenanceParams maintenance_params = 17;
   PoCChallengeParams poc_challenge_params = 18;
+  TrainingParams training_params = 19;
 }
 
 // PoCChallengeParams defines governance-controlled parameters for PoCChallenge.

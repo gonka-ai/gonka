@@ -108,11 +108,11 @@ type (
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
 		// Devshard escrow collections
-		DevshardEscrows           collections.Map[uint64, types.DevshardEscrow]
-		DevshardEscrowCounter     collections.Item[uint64]
-		DevshardEscrowEpochCount  collections.Map[uint64, uint64]
-		DevshardHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
-		DevshardEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		DevshardEscrows             collections.Map[uint64, types.DevshardEscrow]
+		DevshardEscrowCounter       collections.Item[uint64]
+		DevshardEscrowEpochCount    collections.Map[uint64, uint64]
+		DevshardHostEpochStatsMap   collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
+		DevshardEscrowsByEpoch      collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
 		DevshardApprovedVersionsMap collections.Map[string, types.DevshardApprovedVersion]
 		// Maintenance window collections
 		MaintenanceReservations       collections.Map[uint64, types.MaintenanceReservation]
@@ -142,10 +142,22 @@ type (
 		ClaimRecipients collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
 		// Secondary index for pruning stale recipient overrides by epoch.
 		// Must be updated atomically with ClaimRecipients.
-		ClaimRecipientsByEpoch collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
-		PoCChallenges          collections.Map[sdk.AccAddress, types.PoCChallenge]
-		PoCChallengeCommits    collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
-		PoCChallengeValidations collections.Map[collections.Triple[sdk.AccAddress, string, sdk.AccAddress], types.PoCValidationV2]
+		ClaimRecipientsByEpoch    collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
+		PoCChallenges             collections.Map[sdk.AccAddress, types.PoCChallenge]
+		PoCChallengeCommits       collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
+		PoCChallengeValidations   collections.Map[collections.Triple[sdk.AccAddress, string, sdk.AccAddress], types.PoCValidationV2]
+		Trainshards               collections.Map[uint64, types.Trainshard]
+		TrainshardCounter         collections.Item[uint64]
+		TrainshardActiveIndex     collections.KeySet[uint64]
+		TrainshardExpiryIndex     collections.KeySet[collections.Pair[int64, uint64]]
+		TrainshardClosedIndex     collections.KeySet[collections.Pair[int64, uint64]]
+		TrainshardReservations    collections.Map[collections.Pair[string, string], uint64]
+		TrainshardReleaseIndex    collections.KeySet[collections.Triple[int64, string, string]]
+		TrainshardAutokickRequest collections.Map[collections.Pair[uint64, string], string]
+		TrainingNodeOptIns        collections.Map[collections.Pair[string, string], int64]
+		TrainshardProposals       collections.Map[uint64, types.TrainshardProposal]
+		TrainshardProposalCounter collections.Item[uint64]
+		TrainshardCreatorCooldown collections.Map[string, int64]
 	}
 )
 
@@ -707,6 +719,84 @@ func NewKeeper(
 			"poc_challenge_validation",
 			collections.TripleKeyCodec(sdk.AccAddressKey, collections.StringKey, sdk.AccAddressKey),
 			codec.CollValue[types.PoCValidationV2](cdc),
+		),
+		Trainshards: collections.NewMap(
+			sb,
+			types.TrainshardsPrefix,
+			"trainshards",
+			collections.Uint64Key,
+			codec.CollValue[types.Trainshard](cdc),
+		),
+		TrainshardCounter: collections.NewItem(
+			sb,
+			types.TrainshardCounterPrefix,
+			"trainshard_counter",
+			collections.Uint64Value,
+		),
+		TrainshardActiveIndex: collections.NewKeySet(
+			sb,
+			types.TrainshardActiveIndexPrefix,
+			"trainshard_active_index",
+			collections.Uint64Key,
+		),
+		TrainshardExpiryIndex: collections.NewKeySet(
+			sb,
+			types.TrainshardExpiryIndexPrefix,
+			"trainshard_expiry_index",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key),
+		),
+		TrainshardClosedIndex: collections.NewKeySet(
+			sb,
+			types.TrainshardClosedIndexPrefix,
+			"trainshard_closed_index",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key),
+		),
+		TrainshardReservations: collections.NewMap(
+			sb,
+			types.TrainshardReservationsPrefix,
+			"trainshard_reservations",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+			collections.Uint64Value,
+		),
+		TrainshardReleaseIndex: collections.NewKeySet(
+			sb,
+			types.TrainshardReleaseIndexPrefix,
+			"trainshard_release_index",
+			collections.TripleKeyCodec(collections.Int64Key, collections.StringKey, collections.StringKey),
+		),
+		TrainshardAutokickRequest: collections.NewMap(
+			sb,
+			types.TrainshardAutokickRequestPrefix,
+			"trainshard_autokick_request",
+			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
+			collections.StringValue,
+		),
+		TrainingNodeOptIns: collections.NewMap(
+			sb,
+			types.TrainingNodeOptInsPrefix,
+			"training_node_opt_ins",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+			collections.Int64Value,
+		),
+		TrainshardProposals: collections.NewMap(
+			sb,
+			types.TrainshardProposalsPrefix,
+			"trainshard_proposals",
+			collections.Uint64Key,
+			codec.CollValue[types.TrainshardProposal](cdc),
+		),
+		TrainshardProposalCounter: collections.NewItem(
+			sb,
+			types.TrainshardProposalCounterPrefix,
+			"trainshard_proposal_counter",
+			collections.Uint64Value,
+		),
+		TrainshardCreatorCooldown: collections.NewMap(
+			sb,
+			types.TrainshardCreatorCooldownPrefix,
+			"trainshard_creator_cooldown",
+			collections.StringKey,
+			collections.Int64Value,
 		),
 	}
 
