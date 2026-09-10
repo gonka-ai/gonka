@@ -506,7 +506,7 @@ ports listed above.
 
 B does not run `api` / `node`. Its `versiond` uses the shared PostgreSQL endpoint and A’s catalog, node-manager and chain endpoints over the private network.
 
-1. **Same participant identity as A** — same `KEY_NAME`, `ACCOUNT_PUBKEY`, `KEYRING_PASSWORD`, and a copy of A’s `.inference/keyring-file/` (often root-owned; copy with `sudo`). Mount it read-only as `/root/.inference`. Do **not** start a second `api` with those keys on B.
+1. **Same participant identity as A** — same `KEY_NAME`, `ACCOUNT_PUBKEY`, `KEYRING_PASSWORD`, and a copy of A’s `.inference/keyring-file/`. On A, run `docker cp versiond:/root/.inference/keyring-file .`, then transfer the copied `keyring-file/` to B’s `.inference/`. Mount B’s `.inference/` read-only as `/root/.inference`. Do **not** start a second `api` with those keys on B.
 2. **Put all connection settings in the** `versiond` **service** `environment:` (compose file). Shell `export`s in `config.env` only help if compose interpolates them into that block — the container must see the vars.
 3. **Own data dir** on B (do not share A’s `./devshards*/data`). Binary cache dir may be local.
 4. **Publish** `versiond` **on B’s private IP at port 8080** (recommended) so A’s routers can reach it through the endpoint list or pool DNS configured below. Bind LAN-only, not `0.0.0.0`. Optionally firewall so only A can connect.
@@ -672,7 +672,7 @@ Add v5 only after it is approved and the fleet cutover has passed the retained v
 
 **2. Local PostgreSQL only — migrate the existing cluster during maintenance.** Managed/external PostgreSQL with unchanged data skips this cluster-copy step. Before stopping anything, record the old local source and run the v5 space preflight.
 
-The commands below first try to create the target directory as the current user, then retry with `sudo` if that fails (for example, when `devshards/` is root-owned). Proceed to migration only after preflight succeeds.
+The commands below let Docker create the target directory, including under a root-owned `devshards/`, using a temporary container that runs only `true`. Proceed to migration only after preflight succeeds.
 
 ```bash
 # Run in deploy/join, before removing/recreating the old container.
@@ -680,8 +680,13 @@ docker inspect devshard-postgres --format '{{json .Mounts}}'
 docker exec devshard-postgres sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"'
 # Record the system identifier, source volume at /var/lib/postgresql/data, and backup.
-{ mkdir -p -- "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}" 2>/dev/null ||
-  sudo mkdir -p -- "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"; } &&
+pg_dir="${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
+[[ "$pg_dir" = /* ]] || pg_dir="$PWD/$pg_dir"
+docker run --rm --network none --read-only \
+  --security-opt label=disable \
+  --volume "$pg_dir:/target:ro" \
+  --entrypoint /bin/true \
+  "${POSTGRES_MIGRATION_HELPER_IMAGE:-${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}}" &&
 bash ./devshard-postgres-migration-preflight.sh \
   --source-container devshard-postgres \
   --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
@@ -711,8 +716,13 @@ export DEVSHARD_POSTGRES_LEGACY_VOLUME='<recorded-old-volume-name>'
 files=()
 IFS=':' read -ra parts <<<"$COMPOSE_FILE"
 for f in "${parts[@]}"; do files+=(-f "$f"); done
-{ mkdir -p -- "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}" 2>/dev/null ||
-  sudo mkdir -p -- "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"; } &&
+pg_dir="${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
+[[ "$pg_dir" = /* ]] || pg_dir="$PWD/$pg_dir"
+docker run --rm --network none --read-only \
+  --security-opt label=disable \
+  --volume "$pg_dir:/target:ro" \
+  --entrypoint /bin/true \
+  "${POSTGRES_MIGRATION_HELPER_IMAGE:-${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}}" &&
 bash ./devshard-postgres-migration-preflight.sh \
   --source-volume "$DEVSHARD_POSTGRES_LEGACY_VOLUME" \
   --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}" &&
