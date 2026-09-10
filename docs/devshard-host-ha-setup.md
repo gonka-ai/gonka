@@ -37,8 +37,8 @@ Public HAProxy → nginx policy workers → HAProxy (:18081)
 1. Join files from **`devshard-0.2.15-v5`** including the versiond fleet/updater integration: `update-devshard.sh`, `versiond-router-fleet.sh`, `deployment-lock.sh`, `updater-rollback.sh`, `updater-container-state.py` and `versiond-router-slot/`. Use v5-capable `versiond`, HAProxy `versiond-router` and `proxy-router`, nginx `proxy` policy images, and governance-approved `devshardd` artifacts for the protocols you serve. A tested set from one release candidate is recommended; compatibility depends on the actual component capabilities and protocol artifacts. Select the images explicitly in §2.1. The fleet/updater files are checked from the integration revision above.
 2. Working `node` + `api` (dapi) + `proxy` on the host (standard join deployment).
 3. Same participant identity on **every** HA `versiond` replica:
-  - same `KEY_NAME` / keyring
-  - same `ACCOUNT_PUBKEY`
+   - same `KEY_NAME` / keyring
+   - same `ACCOUNT_PUBKEY`
 4. Only put **Postgres-capable versions** into the HA pool. With `GONKA_HA=true`, v5 `versiond` requires each HA child to support `--print-storage-mode` and report `postgres`; the child must also match its approved protocol name. Keep older versions (`v1` / `v2` / `v3`) pinned to a **legacy** single host if you still serve them.
 5. Confirm the actual `api:9100/versions` response contains the required protocol, downloadable binary URL and SHA256. It follows chain-approved versions; the branch name does not publish a v5 artifact or activate it on-chain. The examples below use protocol `v5`.
 6. Docker Compose **2.24.4 or newer**, Bash, Python 3, `curl` **7.71 or newer**, `jq`, `flock`, `sha256sum` and `timeout` on the machine running the fleet/updater scripts.
@@ -100,11 +100,11 @@ The v5 overlay stores the cluster in `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/
 Use this when the DB runs outside the join host (managed cloud DB or your own Postgres cluster - Options A and B).
 
 1. Put credentials in `deploy/join/config.env`:
-  ```bash
+   ```bash
    export DEVSHARD_POSTGRES_DB=devshardd
    export DEVSHARD_POSTGRES_USER=devshardd
    export DEVSHARD_POSTGRES_PASSWORD='<strong-password>'
-  ```
+   ```
 2. Add a compose override (for example `deploy/join/docker-compose.devshard-pg-external.override.yml`) that sets `PGHOST` (and related vars) under **every** `versiond`* service in the HA pool and disables the unused local database and its dependencies — see Step 2.2.
   Needed because the stock overlay hardcodes `PGHOST=devshard-postgres`.
 3. Start with **four** `-f` files: base + `versiond` overlay + the v5 override from §2.1 + your external-PG override.
@@ -119,19 +119,19 @@ Use this when the DB runs outside the join host (managed cloud DB or your own Po
 Use this when you run the DB from the HA overlay on the join host (Option C).
 
 1. Edit `deploy/join/config.env` and add (or uncomment):
-  ```bash
+   ```bash
    export DEVSHARD_POSTGRES_DB=devshardd
    export DEVSHARD_POSTGRES_USER=devshardd
    export DEVSHARD_POSTGRES_PASSWORD='<strong-password>'
-  ```
+   ```
 2. Leave `PGHOST` / `DEVSHARD_STORAGE_MODE` out of `config.env` — they are already set on every `versiond*` service defined in `docker-compose.versiond.yml` (and must be set the same way on any extra replicas you add):
-  ```yaml
+   ```yaml
    - PGHOST=devshard-postgres
    - PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}
    - PGUSER=${DEVSHARD_POSTGRES_USER:-devshardd}
    - PGPASSWORD=${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
    - DEVSHARD_STORAGE_MODE=postgres
-  ```
+   ```
 3. `source ./config.env`, then start with `-f docker-compose.versiond.yml` (see Step 2.1). A fresh empty deployment initializes its persistent cluster automatically. If binaries already exist but no cluster is attached, startup refuses empty initialization: restore the old database, or set `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true` once only for confirmed first-time HA enablement, then unset it. A `.pg-bound` marker always requires restoring the database; the flag cannot bypass it.
 
 ---
