@@ -27,6 +27,8 @@ func intentionallyUngrouped() map[string]string {
 		sdk.MsgTypeURL(&types.MsgUpdateParams{}):                     "governance params; authority-gated",
 		sdk.MsgTypeURL(&types.MsgRegisterModel{}):                    "governance model registry",
 		sdk.MsgTypeURL(&types.MsgDeleteGovernanceModel{}):            "governance model registry",
+		sdk.MsgTypeURL(&types.MsgPutDevshardApprovedVersion{}):       "governance approved devshard versions",
+		sdk.MsgTypeURL(&types.MsgDeleteDevshardApprovedVersion{}):    "governance approved devshard versions",
 		sdk.MsgTypeURL(&types.MsgCreatePartialUpgrade{}):             "governance upgrade",
 		sdk.MsgTypeURL(&types.MsgRegisterLiquidityPool{}):            "governance liquidity allowlist",
 		sdk.MsgTypeURL(&types.MsgGovernanceCancelBridgeOperation{}):  "governance bridge cancel",

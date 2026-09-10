@@ -45,6 +45,12 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgDeleteGovernanceModel{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgPutDevshardApprovedVersion{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgDeleteDevshardApprovedVersion{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitHardwareDiff{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),

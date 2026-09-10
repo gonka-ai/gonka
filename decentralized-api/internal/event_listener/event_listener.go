@@ -54,6 +54,7 @@ type EventListener struct {
 	hostEvents            *apiconfig.HostEventRing
 	escrowQuery           escrowQuerier
 	participantAddress    string
+	onNewBlockHeader      func(chainphase.BlockInfo)
 
 	eventHandlers []EventHandler
 
@@ -87,6 +88,15 @@ func WithEscrowQuerier(q escrowQuerier) EventListenerOption {
 func WithParticipantAddress(addr string) EventListenerOption {
 	return func(el *EventListener) {
 		el.participantAddress = addr
+	}
+}
+
+// WithOnNewBlockHeader is called for every committed NewBlock after the
+// height/hash are parsed. Used to feed the chainoracle tipcache. Failures
+// in ProcessNewBlock do not skip this callback.
+func WithOnNewBlockHeader(fn func(chainphase.BlockInfo)) EventListenerOption {
+	return func(el *EventListener) {
+		el.onNewBlockHeader = fn
 	}
 }
 
@@ -346,6 +356,10 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		if err != nil {
 			logging.Error("Failed to parse new block info", types.EventProcessing, "error", err, "worker", workerName)
 			return
+		}
+
+		if el.onNewBlockHeader != nil {
+			el.onNewBlockHeader(*blockInfo)
 		}
 
 		// Update BlockObserver with latest height and sync status

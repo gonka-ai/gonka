@@ -31,6 +31,10 @@ var (
 	ErrTxCheckTxInsufficientFee = errors.New("checktx insufficient fee")
 	// CheckTx rejected the tx with a permanent code. Do not resubmit the same payload.
 	ErrTxCheckTxFail = errors.New("checktx failed permanently")
+	// Simulate could not run: fee payer spendable cannot cover DeductFee
+	// for the sim gas_limit. Not a CheckTx result; callers fall back to
+	// static gas and still broadcast. CheckTx rejects a broke wallet.
+	ErrSimulateInsufficientSpendable = errors.New("simulate skipped: insufficient spendable to cover fee")
 )
 
 // TxResponseAction defines the action to take after broadcast based on response classification

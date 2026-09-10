@@ -345,13 +345,17 @@ type KeeperForModelAssigner interface {
 	GetLiveSubGroupsForCurrentEpoch(ctx context.Context) (map[string]types.EpochGroupData, map[string]map[string]bool, error)
 }
 
-func sumLiveRootTotalWeight(rootData types.EpochGroupData, liveRootSet map[string]bool) int64 {
+func sumLiveRootTotalWeight(rootData types.EpochGroupData, liveRootSet map[string]bool, trustWeights map[string]int64) int64 {
 	var total int64
 	for _, vw := range rootData.ValidationWeights {
 		if vw == nil || (liveRootSet != nil && !liveRootSet[vw.MemberAddress]) {
 			continue
 		}
-		total += vw.Weight
+		weight := vw.Weight
+		if trustWeight, ok := trustWeights[vw.MemberAddress]; ok {
+			weight = trustWeight
+		}
+		total += weight
 	}
 	return total
 }
@@ -600,7 +604,12 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 	if err != nil {
 		return types.PreservedNodesSnapshot{EpisodeAnchorHeight: anchorHeight}, nil
 	}
-	liveRootTotalWeight := sumLiveRootTotalWeight(rootData, liveRootSet)
+	trustWeights := map[string]int64{}
+	activeParticipants, found := ma.keeper.GetActiveParticipants(ctx, epoch.Index)
+	if found {
+		trustWeights = resolveTrustWeights(activeParticipants.Participants, activeParticipants.CapWeightApplied)
+	}
+	liveRootTotalWeight := sumLiveRootTotalWeight(rootData, liveRootSet, trustWeights)
 
 	guardianAddresses := ma.keeper.GetGenesisGuardianAddresses(ctx)
 	guardianSet := make(map[string]bool, len(guardianAddresses))

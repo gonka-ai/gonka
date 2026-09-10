@@ -128,7 +128,8 @@ var (
 	DelegationRewardTransferSnapshotPrefix = collections.NewPrefix(108)
 	// Prefix 109 was reserved for an unused period-base KeySet and is left
 	// unused so it is not silently reused.
-	ParamsKey = []byte("p_inference")
+	DevshardApprovedVersionsPrefix = collections.NewPrefix(110)
+	ParamsKey                      = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

@@ -1,10 +1,44 @@
 package types
 
 import (
+	"math/big"
 	"slices"
 
 	mathsdk "cosmossdk.io/math"
 )
+
+// EffectiveConfirmedWeight scales a participant's consensus weight by the
+// confirmed fraction observed via confirmation PoC (cPoC):
+//
+//	effective = weight * confirmationWeight / rawConfirmationTotal
+//
+// confirmationWeight and rawConfirmationTotal must both be computed with the
+// same per-model confirmation weight coefficients (see
+// ConfirmationWeightOfModelNodesWithCoefficients) so the ratio is a pure,
+// coefficient-normalized fraction in [0, 1]. The result is clamped to [0, weight].
+//
+// A non-positive rawConfirmationTotal yields 0.
+func EffectiveConfirmedWeight(weight, confirmationWeight, rawConfirmationTotal int64) int64 {
+	if weight <= 0 {
+		return 0
+	}
+	if rawConfirmationTotal <= 0 {
+		return 0
+	}
+	if confirmationWeight < 0 {
+		confirmationWeight = 0
+	}
+	// Ratio >= 1 is clamped to weight. Do this before Int64() so an
+	// over-confirmed MaxInt64 weight cannot wrap to a negative. After this
+	// guard the quotient is strictly less than weight, so it always fits in int64.
+	if confirmationWeight >= rawConfirmationTotal {
+		return weight
+	}
+	ew := big.NewInt(confirmationWeight)
+	ew.Mul(ew, big.NewInt(weight))
+	ew.Div(ew, big.NewInt(rawConfirmationTotal))
+	return ew.Int64()
+}
 
 func ConfirmationWeightCoefficients(scales []*ConfirmationWeightScale) map[string]mathsdk.LegacyDec {
 	return confirmationCoefficients(scales)
@@ -66,7 +100,7 @@ func ConfirmationWeightOfModelNodesWithCoefficients(
 func confirmationCoefficients(scales []*ConfirmationWeightScale) map[string]mathsdk.LegacyDec {
 	coefficients := make(map[string]mathsdk.LegacyDec, len(scales))
 	for _, scale := range scales {
-		if scale == nil || scale.ModelId == "" {
+		if scale == nil || scale.ModelId == "" || scale.ExcludeFromConfirmation {
 			continue
 		}
 		coefficients[scale.ModelId] = confirmationScaleFactor(scale)
@@ -78,5 +112,17 @@ func confirmationScaleFactor(scale *ConfirmationWeightScale) mathsdk.LegacyDec {
 	if scale == nil {
 		return mathsdk.LegacyOneDec()
 	}
-	return scale.WeightScaleFactor.LegacyDecOrOne()
+	coefficient := scale.EffectiveCoefficient
+	if coefficient == nil {
+		// Deprecated fallback for the single transition epoch formed before v0.2.16.
+		coefficient = scale.WeightScaleFactor
+	}
+	if coefficient == nil {
+		return mathsdk.LegacyOneDec()
+	}
+	dec, err := coefficient.ToLegacyDec()
+	if err != nil {
+		return mathsdk.LegacyOneDec()
+	}
+	return dec
 }

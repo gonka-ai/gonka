@@ -283,6 +283,10 @@ jobs:
         working-directory: edge-api
         run: go build ./...
 
+      - name: Run edge-api lifecycle tests with race detector
+        working-directory: edge-api
+        run: go test -race ./...
+
       - name: Run edge-api tests (fork PRs)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
         run: bash scripts/validate-edge-api.sh
