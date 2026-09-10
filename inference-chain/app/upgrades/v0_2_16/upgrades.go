@@ -13,10 +13,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 
 	"cosmossdk.io/collections"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
+	authz "github.com/cosmos/cosmos-sdk/x/authz"
 
 	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -38,10 +41,22 @@ type UpgradeInfo struct {
 	MinGasPrices     map[string]uint64 `json:"min_gas_prices"`
 }
 
+type AuthzMigrationKeeper interface {
+	IterateGrants(ctx context.Context, handler func(granterAddr, granteeAddr sdk.AccAddress, grant authz.Grant) bool)
+	GetAuthorization(ctx context.Context, grantee, granter sdk.AccAddress, msgType string) (authz.Authorization, *time.Time)
+	SaveGrant(ctx context.Context, grantee, granter sdk.AccAddress, authorization authz.Authorization, expiration *time.Time) error
+}
+
+var trainingWarmKeyMsgTypeURLs = []string{
+	sdk.MsgTypeURL(&types.MsgRefreshTrainingNodeOptIn{}),
+	sdk.MsgTypeURL(&types.MsgAutokickTrainshardNode{}),
+}
+
 func CreateUpgradeHandler(
 	mm *module.Manager,
 	configurator module.Configurator,
 	k keeper.Keeper,
+	authzKeeper AuthzMigrationKeeper,
 ) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
@@ -72,6 +87,9 @@ func CreateUpgradeHandler(
 			return fromVM, err
 		}
 		if err := clearStaleTrainingOptIns(ctx, k); err != nil {
+			return fromVM, err
+		}
+		if err := grantTrainingWarmKeyAuthz(ctx, authzKeeper, k); err != nil {
 			return fromVM, err
 		}
 
@@ -382,6 +400,58 @@ func clearStaleTrainingOptIns(ctx context.Context, k keeper.Keeper) error {
 		}
 	}
 	k.LogInfo("cleared stale training opt-ins", types.Upgrades, "removed", len(stale))
+	return nil
+}
+
+func grantTrainingWarmKeyAuthz(ctx context.Context, authzKeeper AuthzMigrationKeeper, k keeper.Keeper) error {
+	type grantPair struct {
+		granter    sdk.AccAddress
+		grantee    sdk.AccAddress
+		expiration *time.Time
+	}
+
+	now := sdk.UnwrapSDKContext(ctx).BlockTime()
+	seen := make(map[string]bool)
+	var pairs []grantPair
+	authzKeeper.IterateGrants(ctx, func(granter, grantee sdk.AccAddress, grant authz.Grant) bool {
+		if grant.Authorization.GetTypeUrl() != "/cosmos.authz.v1beta1.GenericAuthorization" {
+			return false
+		}
+		var authorization authz.GenericAuthorization
+		if err := k.Codec().Unmarshal(grant.Authorization.Value, &authorization); err != nil {
+			return false
+		}
+		if authorization.Msg != types.WarmKeyGrantMarkerTypeURL && authorization.Msg != types.LegacyMsgStartInferenceTypeURL {
+			return false
+		}
+		if grant.Expiration != nil && !grant.Expiration.After(now) {
+			return false
+		}
+		key := granter.String() + "->" + grantee.String()
+		if !seen[key] {
+			seen[key] = true
+			pairs = append(pairs, grantPair{granter: granter, grantee: grantee, expiration: grant.Expiration})
+		}
+		return false
+	})
+
+	created, skipped := 0, 0
+	for _, pair := range pairs {
+		for _, msgType := range trainingWarmKeyMsgTypeURLs {
+			existing, _ := authzKeeper.GetAuthorization(ctx, pair.grantee, pair.granter, msgType)
+			if existing != nil {
+				skipped++
+				continue
+			}
+			authorization := authz.NewGenericAuthorization(msgType)
+			if err := authzKeeper.SaveGrant(ctx, pair.grantee, pair.granter, authorization, pair.expiration); err != nil {
+				return fmt.Errorf("grant %s from %s to %s: %w", msgType, pair.granter, pair.grantee, err)
+			}
+			created++
+		}
+	}
+	k.LogInfo("backfilled training warm key grants", types.Upgrades,
+		"pairs", len(pairs), "created", created, "skipped", skipped)
 	return nil
 }
 
