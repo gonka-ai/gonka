@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/productscience/inference/testutil"
+	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
@@ -92,7 +93,10 @@ func TestEvaluateConfirmation_InsufficientModelVotingPower(t *testing.T) {
 			scales := buildConfirmationWeightScales(
 				[]string{"model-a", "model-b"},
 				formationParticipants,
-				params.PocParams,
+				&coefficient.Result{Scales: []*types.ConfirmationWeightScale{
+					{ModelId: "model-a", EffectiveCoefficient: types.DecimalFromFloat(1)},
+					{ModelId: "model-b", EffectiveCoefficient: types.DecimalFromFloat(1)},
+				}},
 			)
 			require.Len(t, scales, 2)
 			initialConfirmationWeight := types.ConfirmationWeightOfParticipantWithCoefficients(

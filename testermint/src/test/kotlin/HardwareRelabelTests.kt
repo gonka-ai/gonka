@@ -46,12 +46,22 @@ class HardwareRelabelTests : TestermintTest() {
                         PoCModelConfig(
                             modelId = sourceModel,
                             seqLen = 256L,
-                            weightScaleFactor = Decimal.fromDouble(coeffSource),
+                            dynamicCoefficient = DynamicCoefficientModelConfig(
+                                coeffMin = Decimal.fromDouble(coeffSource),
+                                coeffMax = Decimal.fromDouble(coeffSource),
+                                relativeDifficulty = Decimal.fromDouble(1.0),
+                                targetShareBps = 5000,
+                            ),
                         ),
                         PoCModelConfig(
                             modelId = targetModel,
                             seqLen = 256L,
-                            weightScaleFactor = Decimal.fromDouble(coeffTarget),
+                            dynamicCoefficient = DynamicCoefficientModelConfig(
+                                coeffMin = Decimal.fromDouble(coeffTarget),
+                                coeffMax = Decimal.fromDouble(coeffTarget),
+                                relativeDifficulty = Decimal.fromDouble(1.0),
+                                targetShareBps = 5000,
+                            ),
                         ),
                     )
                     this[PocParams::pocV2Enabled] = true

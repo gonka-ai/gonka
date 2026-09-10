@@ -10,13 +10,40 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/testutil"
+	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
 
+func setFrozenCoefficientConfig(
+	t *testing.T,
+	k keeper.Keeper,
+	ctx sdk.Context,
+	epochIndex uint64,
+	pocParams *types.PocParams,
+) {
+	t.Helper()
+
+	frozen, err := coefficient.Freeze(pocParams)
+	require.NoError(t, err)
+	data, found := k.GetEpochGroupData(ctx, epochIndex, "")
+	if !found {
+		data = types.EpochGroupData{EpochIndex: epochIndex}
+	}
+	data.DynamicCoefficientParams = frozen.Params
+	data.ConfirmationWeightScales = frozen.Scales
+	k.SetEpochGroupData(ctx, data)
+}
+
 func TestOnEndOfPoCValidationStage_ConcentrationCapsFinalTrustWeight(t *testing.T) {
 	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	accounts := newFormationAccountKeeper(
+		t,
+		testutil.Validator,
+		testutil.Validator2,
+		testutil.Executor,
+	)
+	am := NewAppModule(nil, k, accounts, nil, nil, nil)
 
 	const (
 		currentEpoch  = uint64(1)
@@ -27,7 +54,7 @@ func TestOnEndOfPoCValidationStage_ConcentrationCapsFinalTrustWeight(t *testing.
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	params.PocParams.Models = []*types.PoCModelConfig{
-		{ModelId: modelID, WeightScaleFactor: types.DecimalFromFloat(1)},
+		dynamicModel(modelID, nil, dec(1, 0), dec(1, 0), dec(1, 0), 10_000),
 	}
 	params.DelegationParams = &types.DelegationParams{
 		InitialModelId: modelID,
@@ -127,6 +154,7 @@ func TestOnEndOfPoCValidationStage_ConcentrationCapsFinalTrustWeight(t *testing.
 		ModelId:           modelID,
 		ValidationWeights: modelWeights,
 	})
+	setFrozenCoefficientConfig(t, k, ctx, upcomingEpoch, params.PocParams)
 
 	require.NoError(t, am.onEndOfPoCValidationStage(ctx, 250, 1_000))
 
@@ -269,10 +297,9 @@ func newFormationRecoveryFixture(
 
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	params.PocParams.Models = []*types.PoCModelConfig{{
-		ModelId:           modelID,
-		WeightScaleFactor: types.DecimalFromFloat(1),
-	}}
+	params.PocParams.Models = []*types.PoCModelConfig{
+		dynamicModel(modelID, nil, dec(1, 0), dec(1, 0), dec(1, 0), 10_000),
+	}
 	params.PocParams.ValidationSlots = 0
 	params.DelegationParams = &types.DelegationParams{
 		InitialModelId:  modelID,
@@ -321,6 +348,7 @@ func newFormationRecoveryFixture(
 		PocStartBlockHeight: uint64(upcomingEpoch.PocStartBlockHeight),
 		SubGroupModels:      []string{modelID},
 	})
+	setFrozenCoefficientConfig(t, k, ctx, upcomingEpoch.Index, params.PocParams)
 
 	for _, participant := range []string{veteran, delegator, newcomer} {
 		require.NoError(t, k.SetParticipant(ctx, types.Participant{
