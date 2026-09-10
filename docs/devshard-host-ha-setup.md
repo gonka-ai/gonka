@@ -470,10 +470,14 @@ Before starting B, check these endpoints **from B** (replace A’s private IP):
 
 ```bash
 curl -fsS http://<A-private-ip>:19100/versions  # direct catalog: port 9100
-pg_isready -h <A-private-ip> -p 5432           # use the shared DB endpoint
+docker run --rm --network host --read-only \
+  --entrypoint pg_isready "${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}" \
+  -h <A-private-ip> -p 5432                   # use the shared DB endpoint
 ```
 
-Install the PostgreSQL client for `pg_isready` and the storage check below.
+Both `pg_isready` and the storage check below run the PostgreSQL client in Docker
+using host networking. The image is `DEVSHARD_POSTGRES_IMAGE` (`postgres:16-alpine`
+by default), downloaded automatically if needed.
 The readiness probe checks reachability; the later `--check-storage` establishes
 that B uses the same database. Ensure B can also reach A’s chain and node-manager
 ports listed above.
@@ -541,9 +545,7 @@ curl -fsS "http://<B-private-ip>:8080/readyz?version=v5"   # not 127.0.0.1 if bo
 
 ##### Check B's database before admitting it to the pool
 
-Install `jq`
-and the PostgreSQL client (`psql`), then prepare a separate reference connection
-file:
+Prepare a separate reference connection file:
 
 ```bash
 cd /path/to/gonka/deploy/join
