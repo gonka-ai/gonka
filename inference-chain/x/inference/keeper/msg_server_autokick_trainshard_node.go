@@ -30,9 +30,7 @@ func (k msgServer) AutokickTrainshardNode(goCtx context.Context, msg *types.MsgA
 	// a retry of the same kick is a no-op, the same id aimed at another node is a
 	// caller bug that would otherwise silently leave that node in the run
 	switch handled, err := k.TrainshardAutokickRequest.Get(goCtx, requestKey); {
-	case err == nil && (handled == node || handled == ""):
-		// pre-map keys (old KeySet format) decode as empty values; keep their old
-		// semantics and treat them as already handled
+	case err == nil && handled == node:
 		return &types.MsgAutokickTrainshardNodeResponse{}, nil
 	case err == nil:
 		return nil, types.ErrTrainshardAutokickRequestReused.Wrapf("request %q of %d already kicked another node", msg.RequestId, msg.TrainshardId)
