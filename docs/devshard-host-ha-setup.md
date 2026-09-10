@@ -682,6 +682,7 @@ docker exec devshard-postgres sh -c \
 # Record the system identifier, source volume at /var/lib/postgresql/data, and backup.
 pg_dir="${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
 [[ "$pg_dir" = /* ]] || pg_dir="$PWD/$pg_dir"
+# Create the target directory so preflight's space check works under a root-owned parent.
 docker run --rm --network none --read-only \
   --security-opt label=disable \
   --volume "$pg_dir:/target:ro" \
@@ -718,6 +719,7 @@ IFS=':' read -ra parts <<<"$COMPOSE_FILE"
 for f in "${parts[@]}"; do files+=(-f "$f"); done
 pg_dir="${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
 [[ "$pg_dir" = /* ]] || pg_dir="$PWD/$pg_dir"
+# Create the target directory so preflight's space check works under a root-owned parent.
 docker run --rm --network none --read-only \
   --security-opt label=disable \
   --volume "$pg_dir:/target:ro" \
