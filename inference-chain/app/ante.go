@@ -14,6 +14,7 @@ import (
 	circuitkeeper "cosmossdk.io/x/circuit/keeper"
 
 	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
@@ -36,6 +37,8 @@ type HandlerOptions struct {
 	TXCounterStoreService corestoretypes.KVStoreService
 	CircuitKeeper         *circuitkeeper.Keeper
 	InferenceKeeper       *inferencemodulekeeper.Keeper
+	Codec                 codec.Codec
+	AuthzKeeper           AuthzAuthorizationKeeper
 }
 
 // Gas is still charged against the tx's gas limit; this only bypasses fee checks.
@@ -195,7 +198,8 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	anteDecorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
 		wasmkeeper.NewLimitSimulationGasDecorator(options.NodeConfig.SimulationGasLimit), // after setup context to enforce limits early
-		wasmkeeper.NewCountTXDecorator(options.TXCounterStoreService),
+		// wasmd CountTX skips KV in Simulate; this wrapper meters it. Remove when wasmd does.
+		NewCountTXSimulateGasDecorator(options.TXCounterStoreService),
 		wasmkeeper.NewGasRegisterDecorator(options.WasmKeeper.GetGasRegister()),
 		circuitante.NewCircuitBreakerDecorator(options.CircuitKeeper),
 		ante.NewExtensionOptionsDecorator(options.ExtensionOptionChecker),
@@ -226,14 +230,21 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 			Priority: 10_000_000,
 		},
 		ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, GonkaFeeChecker(options.InferenceKeeper)),
+		FeeGroupRepeatedLenDecorator{InferenceKeeper: options.InferenceKeeper},
 		// Cheap mempool filters before signature verification (avoid crypto work on
 		// obviously invalid PoC txs). CheckTx ante failures discard
 		// state (including fee deduction), so fee-first is not an economic throttle.
-		NewPocPeriodValidationDecorator(options.InferenceKeeper),
+		NewPocPeriodValidationDecorator(options.InferenceKeeper, options.Codec),
 		ante.NewSetPubKeyDecorator(options.AccountKeeper),
 		ante.NewValidateSigCountDecorator(options.AccountKeeper),
 		ante.NewSigGasConsumeDecorator(options.AccountKeeper, options.SigGasConsumer),
 		ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler),
+		// SDK skips unordered nonce KV in Simulate; this meters it. Remove when the SDK does.
+		NewUnorderedNonceSimGasDecorator(options.AccountKeeper),
+		// Authz grant lookup after signature verification: the outer Grantee has
+		// proven they signed the transaction before we read grant storage.
+		// CheckTx-only and only for network-duty fee-bypassed txs.
+		NewMsgExecAuthorizationDecorator(options.Codec, options.AuthzKeeper),
 		// Bridge early-reject after sig verification: group membership / bridge-state
 		// reads must not run on unauthenticated txs.
 		NewBridgeExchangeEarlyRejectDecorator(options.InferenceKeeper),
@@ -261,6 +272,8 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 			NodeConfig:            &nodeConfig,
 			WasmKeeper:            &app.WasmKeeper,
 			InferenceKeeper:       &app.InferenceKeeper,
+			Codec:                 app.appCodec,
+			AuthzKeeper:           &app.AuthzKeeper,
 			TXCounterStoreService: runtime.NewKVStoreService(txCounterStoreKey),
 			CircuitKeeper:         &app.CircuitBreakerKeeper,
 		},

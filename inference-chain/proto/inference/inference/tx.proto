@@ -64,6 +64,8 @@ service Msg {
   rpc SetPoCDelegation                 (MsgSetPoCDelegation) returns (MsgSetPoCDelegationResponse);
   rpc RefusePoCDelegation              (MsgRefusePoCDelegation) returns (MsgRefusePoCDelegationResponse);
   rpc DeclarePoCIntent                 (MsgDeclarePoCIntent) returns (MsgDeclarePoCIntentResponse);
+  rpc PutDevshardApprovedVersion       (MsgPutDevshardApprovedVersion) returns (MsgPutDevshardApprovedVersionResponse);
+  rpc DeleteDevshardApprovedVersion    (MsgDeleteDevshardApprovedVersion) returns (MsgDeleteDevshardApprovedVersionResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -468,3 +470,19 @@ message MsgCancelMaintenance {
 }
 
 message MsgCancelMaintenanceResponse {}
+
+message MsgPutDevshardApprovedVersion {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  DevshardApprovedVersion version = 2 [(gogoproto.nullable) = false];
+}
+
+message MsgPutDevshardApprovedVersionResponse {}
+
+message MsgDeleteDevshardApprovedVersion {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string name = 2;
+}
+
+message MsgDeleteDevshardApprovedVersionResponse {}

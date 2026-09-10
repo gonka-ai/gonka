@@ -58,6 +58,15 @@ def test_state_response_includes_version(client):
     assert data["version"]  # non-empty
 
 
+def test_state_response_reports_release_version(client, monkeypatch):
+    monkeypatch.setenv("MLNODE_RELEASE_VERSION", "3.0.14-post2")
+
+    response = client.get("/api/v1/state")
+
+    assert response.status_code == 200
+    assert response.json()["version"] == "3.0.14-post2"
+
+
 def test_stopped_node_returns_only_state_field(client):
     """Node is idle after clean shutdown. No vLLM, no PoC — minimal response."""
     response = client.get("/api/v1/state")

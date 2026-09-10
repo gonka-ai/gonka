@@ -2,6 +2,8 @@ package apiconfig
 
 import (
 	"fmt"
+	"math"
+	"regexp"
 	"strings"
 
 	"decentralized-api/poc/earlyshare"
@@ -100,6 +102,14 @@ type ChainNodeConfig struct {
 	// the DAPI picks up the on-chain default automatically when
 	// cosmovisor restarts it with the new binary.
 	MinGasPriceNgonka int64 `koanf:"min_gas_price_ngonka" json:"min_gas_price_ngonka"`
+	// TxGasMultiplier scales the gas limit DAPI puts on a tx (and therefore
+	// the fee: gas × min gas price). Smaller value → lower fee; larger value
+	// → more room against under-estimation.
+	//
+	// Unset/zero (and any value ≤ 1 or > 5) uses DefaultTxGasMultiplier (1.5).
+	// After the chain ante wrappers meter Finalize-only KV, a host can set
+	// 1.2 to pay less: DAPI_CHAIN_NODE__TX_GAS_MULTIPLIER=1.2
+	TxGasMultiplier float64 `koanf:"tx_gas_multiplier" json:"tx_gas_multiplier"`
 }
 
 // DefaultMinGasPriceNgonka is the gas price used when the config field is unset
@@ -115,6 +125,29 @@ const DefaultMinGasPriceNgonka int64 = 0
 // cosmosclient/cosmosclient.go.
 func (c ChainNodeConfig) GetMinGasPriceNgonka() int64 {
 	return c.MinGasPriceNgonka
+}
+
+// DefaultTxGasMultiplier is the gas-limit scale when the host does not set
+// chain_node.tx_gas_multiplier. 1.5× is the passing bar for HardwareRelabelTests
+// passing bar.
+const DefaultTxGasMultiplier = 1.5
+
+// maxTxGasMultiplier rejects typos such as 15 instead of 1.5.
+const maxTxGasMultiplier = 5.0
+
+// ResolveTxGasMultiplier returns m when it is a usable pad (> 1 and ≤ 5).
+// Zero, NaN, Inf, ≤ 1, and values above 5 fall back to DefaultTxGasMultiplier
+// so a bad config cannot under-size the gas (and fee) on the tx.
+func ResolveTxGasMultiplier(m float64) float64 {
+	if m <= 1.0 || m > maxTxGasMultiplier || math.IsNaN(m) || math.IsInf(m, 0) {
+		return DefaultTxGasMultiplier
+	}
+	return m
+}
+
+// GetTxGasMultiplier returns the host override, or 1.5 when unset/invalid.
+func (c ChainNodeConfig) GetTxGasMultiplier() float64 {
+	return ResolveTxGasMultiplier(c.TxGasMultiplier)
 }
 
 type MLNodeKeyConfig struct {
@@ -165,6 +198,28 @@ func ValidateInferenceNodeBasic(node InferenceNodeConfig) []string {
 	if len(node.Models) == 0 {
 		errors = append(errors, "at least one model must be specified")
 	}
+	for modelID, model := range node.Models {
+		if model.ModelOverride == nil {
+			continue
+		}
+		if strings.TrimSpace(model.ModelOverride.HfRepo) == "" {
+			errors = append(errors, fmt.Sprintf("model %s override hf_repo is required", modelID))
+		}
+		commit := model.ModelOverride.HfCommit
+		trimmedCommit := strings.TrimSpace(commit)
+		switch {
+		case trimmedCommit == "":
+			errors = append(errors, fmt.Sprintf("model %s override hf_commit is required", modelID))
+		case commit != trimmedCommit || !hfCommitPattern.MatchString(commit):
+			errors = append(errors, fmt.Sprintf("model %s override hf_commit must be a 40-character lowercase hexadecimal commit hash", modelID))
+		}
+		for _, arg := range model.Args {
+			key := strings.SplitN(arg, "=", 2)[0]
+			if reservedModelOverrideArgs[key] {
+				errors = append(errors, fmt.Sprintf("model %s override cannot use reserved argument %s", modelID, key))
+			}
+		}
+	}
 
 	return errors
 }
@@ -180,6 +235,10 @@ func (n InferenceNodeConfig) DeepCopy() InferenceNodeConfig {
 				modelCopy.Args = make([]string, len(v.Args))
 				copy(modelCopy.Args, v.Args)
 			}
+			if v.ModelOverride != nil {
+				overrideCopy := *v.ModelOverride
+				modelCopy.ModelOverride = &overrideCopy
+			}
 			result.Models[k] = modelCopy
 		}
 	}
@@ -193,7 +252,21 @@ func (n InferenceNodeConfig) DeepCopy() InferenceNodeConfig {
 }
 
 type ModelConfig struct {
-	Args []string `json:"args"`
+	Args          []string       `koanf:"args" json:"args"`
+	ModelOverride *ModelOverride `koanf:"model_override" json:"model_override,omitempty"`
+}
+
+type ModelOverride struct {
+	HfRepo   string `koanf:"hf_repo" json:"hf_repo"`
+	HfCommit string `koanf:"hf_commit" json:"hf_commit"`
+}
+
+var hfCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+var reservedModelOverrideArgs = map[string]bool{
+	"--model":             true,
+	"--revision":          true,
+	"--served-model-name": true,
 }
 
 type Hardware struct {

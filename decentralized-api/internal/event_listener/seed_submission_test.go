@@ -34,6 +34,10 @@ func (q *seedQueryClient) Params(context.Context, *types.QueryParamsRequest, ...
 	return nil, errors.New("not implemented")
 }
 
+func (q *seedQueryClient) DevshardApprovedVersions(context.Context, *types.QueryDevshardApprovedVersionsRequest, ...grpc.CallOption) (*types.QueryDevshardApprovedVersionsResponse, error) {
+	return &types.QueryDevshardApprovedVersionsResponse{}, nil
+}
+
 func (q *seedQueryClient) ListRandomSeeds(context.Context, *types.QueryRandomSeedsRequest, ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
