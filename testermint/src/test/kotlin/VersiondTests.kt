@@ -77,11 +77,10 @@ class VersiondTests : TestermintTest() {
     @Test
     @Order(1)
     fun `approved versions empty on startup`() {
-        logSection("Verifying chain params have no approved versions")
-        val params = genesis.getParams()
-        val approvedVersions = params.devshardEscrowParams?.approvedVersions ?: emptyList()
+        logSection("Verifying chain has no approved devshard versions")
+        val approvedVersions = genesis.getDevshardApprovedVersions()
         assertThat(approvedVersions)
-            .withFailMessage("Expected no approved versions in initial chain params")
+            .withFailMessage("Expected no approved devshard versions in the dedicated store")
             .isEmpty()
 
         logSection("Verifying dapi serves empty versions list")
@@ -98,21 +97,19 @@ class VersiondTests : TestermintTest() {
         val versionName = TESTAPP_VERSION
 
         logSection("Submitting governance proposal to add $versionName")
-        val params = genesis.getParams()
-        val updatedParams = params.withApprovedVersions(
-            listOf(
-                DevshardApprovedVersion(
+        genesis.runProposal(
+            cluster,
+            PutDevshardApprovedVersion(
+                version = DevshardApprovedVersion(
                     name = versionName,
                     binary = testappBinaryDockerUrl,
                     sha256 = testappSha256,
                 )
             )
         )
-        genesis.runProposal(cluster, UpdateParams(params = updatedParams))
 
-        logSection("Verifying chain params updated")
-        val newParams = genesis.getParams()
-        val versions = newParams.devshardEscrowParams?.approvedVersions ?: emptyList()
+        logSection("Verifying approved devshard versions updated")
+        val versions = genesis.getDevshardApprovedVersions()
         assertThat(versions).hasSize(1)
         assertThat(versions[0].name).isEqualTo(versionName)
         assertThat(versions[0].sha256).isEqualTo(testappSha256)
@@ -166,26 +163,19 @@ class VersiondTests : TestermintTest() {
         val v2 = TESTAPP2_VERSION
 
         logSection("Submitting governance proposal to add $v2 (keeping $v1)")
-        val params = genesis.getParams()
-        val updatedParams = params.withApprovedVersions(
-            listOf(
-                DevshardApprovedVersion(
-                    name = v1,
-                    binary = testappBinaryDockerUrl,
-                    sha256 = testappSha256,
-                ),
-                DevshardApprovedVersion(
+        genesis.runProposal(
+            cluster,
+            PutDevshardApprovedVersion(
+                version = DevshardApprovedVersion(
                     name = v2,
                     binary = testapp2BinaryDockerUrl,
                     sha256 = testapp2Sha256,
-                ),
+                )
             )
         )
-        genesis.runProposal(cluster, UpdateParams(params = updatedParams))
 
-        logSection("Verifying chain params have both versions")
-        val newParams = genesis.getParams()
-        val versions = newParams.devshardEscrowParams?.approvedVersions ?: emptyList()
+        logSection("Verifying chain has both versions")
+        val versions = genesis.getDevshardApprovedVersions()
         assertThat(versions).hasSize(2)
         assertThat(versions.map { it.name }).containsExactlyInAnyOrder(v1, v2)
 
@@ -236,21 +226,21 @@ class VersiondTests : TestermintTest() {
 
         try {
             logSection("Submitting governance proposal to update $versionName to rollout sha")
-            val params = genesis.getParams()
-            val currentVersions = params.devshardEscrowParams?.approvedVersions ?: emptyList()
+            val currentVersions = genesis.getDevshardApprovedVersions()
             assertThat(currentVersions.any { it.name == versionName && it.sha256 == testappSha256 })
                 .withFailMessage("Expected $versionName to start on sha $testappSha256")
                 .isTrue()
 
-            val rolloutVersion = DevshardApprovedVersion(
-                name = versionName,
-                binary = testappRolloutBinaryDockerUrl,
-                sha256 = testappRolloutSha256,
+            genesis.runProposal(
+                cluster,
+                PutDevshardApprovedVersion(
+                    version = DevshardApprovedVersion(
+                        name = versionName,
+                        binary = testappRolloutBinaryDockerUrl,
+                        sha256 = testappRolloutSha256,
+                    )
+                )
             )
-            val updatedParams = params.withApprovedVersions(
-                currentVersions.filterNot { it.name == versionName } + rolloutVersion
-            )
-            genesis.runProposal(cluster, UpdateParams(params = updatedParams))
 
             logSection("Waiting for dapi to expose rollout sha for $versionName")
             waitUntil("dapi serves rollout sha for $versionName", timeoutSeconds = 60) {
@@ -288,25 +278,31 @@ class VersiondTests : TestermintTest() {
             .contains(oldPrefix, newPrefix)
     }
 
+    @Test
+    @Order(6)
+    fun `governance proposal removes a version`() {
+        val removed = TESTAPP2_VERSION
+
+        logSection("Submitting governance proposal to delete $removed")
+        genesis.runProposal(
+            cluster,
+            DeleteDevshardApprovedVersion(name = removed)
+        )
+
+        logSection("Verifying $removed is gone from the dedicated store")
+        val versions = genesis.getDevshardApprovedVersions()
+        assertThat(versions.map { it.name }).doesNotContain(removed)
+        assertThat(versions.map { it.name }).contains(TESTAPP_VERSION)
+
+        logSection("Waiting for dapi to drop $removed")
+        waitUntil("dapi no longer serves $removed", timeoutSeconds = 30) {
+            getDapiVersions().none { it["name"] == removed }
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
-
-    private fun InferenceParams.withApprovedVersions(
-        versions: List<DevshardApprovedVersion>
-    ): InferenceParams {
-        val escrow = this.devshardEscrowParams ?: DevshardEscrowParams(
-            minAmount = 5_000_000_000,
-            maxAmount = 10_000_000_000,
-            maxEscrowsPerEpoch = 100,
-            groupSize = 16,
-            tokenPrice = 1,
-            maxNonce = 20_000,
-        )
-        return this.copy(
-            devshardEscrowParams = escrow.copy(approvedVersions = versions)
-        )
-    }
 
     private fun waitForTestappArtifactSha256(artifactBase: String): String {
         var sha256: String? = null

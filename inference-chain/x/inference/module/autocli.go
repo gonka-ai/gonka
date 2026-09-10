@@ -120,9 +120,24 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 
 				{
+					RpcMethod: "DynamicCoefficients",
+					Use:       "dynamic-coefficients [epoch-index]",
+					Short:     "Query computed dynamic coefficients (0 = current epoch)",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{ProtoField: "epoch_index"},
+					},
+				},
+
+				{
 					RpcMethod:      "ModelsAll",
 					Use:            "models-all",
 					Short:          "Query modelsAll",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "DevshardApprovedVersions",
+					Use:            "devshard-approved-versions",
+					Short:          "Query approved devshard versions",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 
@@ -357,6 +372,14 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 			RpcCommandOptions: []*autocliv1.RpcCommandOptions{
 				{
 					RpcMethod: "UpdateParams",
+					Skip:      true, // skipped because authority gated
+				},
+				{
+					RpcMethod: "PutDevshardApprovedVersion",
+					Skip:      true, // skipped because authority gated
+				},
+				{
+					RpcMethod: "DeleteDevshardApprovedVersion",
 					Skip:      true, // skipped because authority gated
 				},
 				{

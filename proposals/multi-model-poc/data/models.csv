@@ -1,0 +1,15 @@
+model,GPU,nonces/min(8GPU)
+kimi-k2.6,H100,695
+kimi-k2.6,H200,1216
+kimi-k2.6,B200,4480
+kimi-k2.6,B300,4864
+minimax-m2.7-fp8,H100,4736
+minimax-m2.7-fp8,H200,6912
+minimax-m2.7-fp8,B200,10496
+minimax-m2.7-fp8,B300,14336
+deepseek-v4-flash-fp8,H100,3072
+deepseek-v4-flash-fp8,H200,4864
+deepseek-v4-flash-fp8,B200,9216
+deepseek-v4-flash-fp8,B300,13824
+deepseek-v4-flash-fp4,B200,12800
+deepseek-v4-flash-fp4,B300,22528

@@ -18,6 +18,9 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 		&MsgClaimRewards{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgSetClaimRecipients{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitPocBatch{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
@@ -40,6 +43,12 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgDeleteGovernanceModel{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgPutDevshardApprovedVersion{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgDeleteDevshardApprovedVersion{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitHardwareDiff{},

@@ -2,7 +2,6 @@ package app
 
 import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
@@ -57,75 +56,29 @@ func (d NetworkDutySignerDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simul
 	}
 
 	for _, msg := range tx.GetMsgs() {
-		if _, err := d.checkMessage(ctx, msg, "", 0); err != nil {
+		if err := d.checkMessage(ctx, msg); err != nil {
 			return ctx, err
 		}
 	}
 	return next(ctx, tx, simulate)
 }
 
-// maxMsgExecNestingDepth bounds how far the CheckTx-only ante decorators will
-// unwrap nested authz MsgExec wrappers. Shared by NetworkDutySignerDecorator
-// and PocPeriodValidationDecorator, which both walk the same structure at the
-// same position in the chain.
+// checkMessage authorizes one top-level message, unwrapping a single authz
+// MsgExec level. Nested MsgExec is rejected outright (errNestedMsgExec):
+// production wrapping is exactly one level (the DAPI's warm key → participant),
+// and a flat reject matches MsgExecAuthorizationDecorator and
+// PocPeriodValidationDecorator, which sit on the same CheckTx-only chain.
 //
-// Production uses exactly one level (the DAPI's warm key), so the limit exists
-// only to keep unbounded unwrapping from becoming a DoS surface: ante work
-// during CheckTx is not gas-metered, so without a bound an attacker could make
-// every node walk an arbitrarily deep message tree for free. Beyond the limit
-// the transaction is rejected rather than passed through — at that depth the
-// tree cannot be inspected, so it cannot be shown not to carry the message the
-// decorator is looking for.
-const maxMsgExecNestingDepth = 5
-
-// checkMessage authorizes one message, descending through authz MsgExec
-// wrappers. It reports whether the subtree contained a fee-exempt duty, which
-// is what decides whether the enclosing MsgExec needs its own grant checked.
-//
-// executor is the MsgExec grantee that will dispatch msg, or "" when msg is a
-// top-level message of the transaction. At top level SigVerificationDecorator
-// has already authenticated the declared cosmos.msg.v1.signer, so no grant is
-// needed; inside a MsgExec the signature only proves the grantee signed, so the
-// grant that DeliverTx would require must be checked here too.
-//
-// The recursion mirrors authz DispatchActions, which routes a nested MsgExec
-// back into itself with the inner grantee: each level requires a grant from the
-// next level's signer to the level above. Checking only the innermost duty
-// would leave a hole — an attacker could wrap a duty inside a MsgExec naming a
-// warm key that genuinely holds the participant's grant, and inherit the
-// exemption without holding anything themselves.
-//
-// Grants are only required when the subtree actually carries a duty, so
-// ordinary nested traffic is left to authz and the handlers.
-func (d NetworkDutySignerDecorator) checkMessage(ctx sdk.Context, msg sdk.Msg, executor string, depth int) (bool, error) {
+// A direct (non-MsgExec) duty is authorized by the actor named in its body. A
+// one-level MsgExec additionally requires the authz grant that DeliverTx would
+// require of the grantee, because inside MsgExec the signature only proves the
+// grantee signed — not that the named actor authorized it.
+func (d NetworkDutySignerDecorator) checkMessage(ctx sdk.Context, msg sdk.Msg) error {
 	execMsg, isExec := msg.(*authztypes.MsgExec)
 	if !isExec {
-		if _, isDuty := dutyAuthorizationFor(msg); !isDuty {
-			return false, nil
-		}
-		if err := d.checkDutyActor(ctx, msg); err != nil {
-			return true, err
-		}
-		if executor != "" {
-			if err := d.checkExecGrant(ctx, executor, msg); err != nil {
-				return true, err
-			}
-		}
-		return true, nil
+		return d.checkDutyActor(ctx, msg)
 	}
 
-	if depth >= maxMsgExecNestingDepth {
-		d.inferenceKeeper.LogDebug(
-			"AnteHandle: NetworkDutySigner - rejecting MsgExec nested past the inspection limit",
-			inferencetypes.Messages,
-			"depth", depth,
-			"grantee", execMsg.Grantee,
-		)
-		return false, sdkerrors.ErrInvalidRequest.Wrapf(
-			"MsgExec nested more than %d levels cannot be authorized during CheckTx", maxMsgExecNestingDepth)
-	}
-
-	subtreeHasDuty := false
 	for _, innerMsg := range execMsg.Msgs {
 		var unwrapped sdk.Msg
 		if err := d.inferenceKeeper.Codec().UnpackAny(innerMsg, &unwrapped); err != nil {
@@ -133,28 +86,20 @@ func (d NetworkDutySignerDecorator) checkMessage(ctx sdk.Context, msg sdk.Msg, e
 			// reject. ValidateBasic / the authz handler will deal with it.
 			continue
 		}
-		innerHasDuty, err := d.checkMessage(ctx, unwrapped, execMsg.Grantee, depth+1)
-		if err != nil {
-			return innerHasDuty, err
+		if _, nested := unwrapped.(*authztypes.MsgExec); nested {
+			return errNestedMsgExec
 		}
-		subtreeHasDuty = subtreeHasDuty || innerHasDuty
-	}
-
-	// This MsgExec is itself nested and wraps a duty: the outer executor must
-	// hold the grant for MsgExec that authz will require of it in DeliverTx.
-	if subtreeHasDuty && executor != "" {
-		if !d.inferenceKeeper.HasGrantForMsg(ctx, execMsg.Grantee, executor, sdk.MsgTypeURL(execMsg)) {
-			d.inferenceKeeper.LogDebug(
-				"AnteHandle: NetworkDutySigner - rejecting nested MsgExec without a grant for the wrapper",
-				inferencetypes.Messages,
-				"granter", execMsg.Grantee,
-				"grantee", executor,
-			)
-			return true, authztypes.ErrNoAuthorizationFound.Wrapf(
-				"grantee %s has no grant from %s for %s", executor, execMsg.Grantee, sdk.MsgTypeURL(execMsg))
+		if _, isDuty := dutyAuthorizationFor(unwrapped); !isDuty {
+			continue
+		}
+		if err := d.checkDutyActor(ctx, unwrapped); err != nil {
+			return err
+		}
+		if err := d.checkExecGrant(ctx, execMsg.Grantee, unwrapped); err != nil {
+			return err
 		}
 	}
-	return subtreeHasDuty, nil
+	return nil
 }
 
 // checkExecGrant verifies the MsgExec grantee is actually authorized to act for
