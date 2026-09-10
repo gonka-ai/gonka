@@ -26,7 +26,8 @@ func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, p
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	} else {
 		// Marshal the payload to JSON.
-		jsonData, err := json.Marshal(payload)
+		var jsonData []byte
+		jsonData, err = json.Marshal(payload)
 		if err != nil {
 			return nil, err
 		}
@@ -34,10 +35,7 @@ func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, p
 	}
 
 	if err != nil {
-		return nil, err
-	}
-	if req == nil {
-		logging.Error("SendPostJsonRequest. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
+		logging.Error("SendPostJsonRequest. Failed to create HTTP request", types.Server, "url", url, "error", err)
 		return nil, err
 	}
 
