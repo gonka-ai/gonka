@@ -77,10 +77,14 @@ func (h *Handlers) GetBLSEpoch(ctx echo.Context, id uint64) error {
 		uncompressedValSig, _ = decompressG1To128(res.EpochData.ValidationSignature)
 	}
 
-	// Legacy dapi: encoding/json on EpochData (numeric int64s / enum ints).
-	// ProtoMarshalJSON would stringify ints and emit enum names.
+	// Integers as JSON numbers, enums as names (not protojson string ints,
+	// and not encoding/json enum ints).
+	epochData, err := protoToAPIJSON(&res.EpochData)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to encode BLS epoch data: "+err.Error())
+	}
 	return ctx.JSON(http.StatusOK, gen.BLSEpochResponse{
-		EpochData:                          res.EpochData,
+		EpochData:                          epochData,
 		GroupPublicKeyUncompressed256:      uncompressedG2,
 		ValidationSignatureUncompressed128: uncompressedValSig,
 	})
@@ -120,9 +124,12 @@ func (h *Handlers) GetBLSSignature(ctx echo.Context, requestId string) error {
 		}
 	}
 
-	// Legacy dapi: encoding/json on SigningRequest (not ProtoMarshalJSON).
+	sigReq, err := protoToAPIJSON(&res.SigningRequest)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to encode BLS signing request: "+err.Error())
+	}
 	return ctx.JSON(http.StatusOK, map[string]any{
-		"signing_request":            res.SigningRequest,
+		"signing_request":            sigReq,
 		"uncompressed_signature_128": uncompressedSig,
 	})
 }

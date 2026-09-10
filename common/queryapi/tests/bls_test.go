@@ -19,7 +19,9 @@ import (
 
 // --- stub BLS servers ---
 
-type stubBLSEpochServer struct{ blstypes.UnimplementedQueryServer }
+type stubBLSEpochServer struct {
+	blstypes.UnimplementedQueryServer
+}
 
 func (s *stubBLSEpochServer) EpochBLSData(_ context.Context, req *blstypes.QueryEpochBLSDataRequest) (*blstypes.QueryEpochBLSDataResponse, error) {
 	return &blstypes.QueryEpochBLSDataResponse{
@@ -30,7 +32,9 @@ func (s *stubBLSEpochServer) EpochBLSData(_ context.Context, req *blstypes.Query
 	}, nil
 }
 
-type errBLSEpochServer struct{ blstypes.UnimplementedQueryServer }
+type errBLSEpochServer struct {
+	blstypes.UnimplementedQueryServer
+}
 
 func (s *errBLSEpochServer) EpochBLSData(_ context.Context, _ *blstypes.QueryEpochBLSDataRequest) (*blstypes.QueryEpochBLSDataResponse, error) {
 	return nil, status.Error(codes.Internal, "chain unavailable")
@@ -70,7 +74,9 @@ func TestGetBLSEpoch_LegacyEncodingJSONShape(t *testing.T) {
 	ep, ok := body["epoch_data"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, float64(7), ep["epoch_id"], "epoch_id must be a JSON number")
-	require.Equal(t, float64(blstypes.DKGPhase_DKG_PHASE_COMPLETED), ep["dkg_phase"], "dkg_phase must be a numeric enum")
+	phase, ok := ep["dkg_phase"].(string)
+	require.True(t, ok, "dkg_phase must be an enum name, got %T", ep["dkg_phase"])
+	require.Contains(t, phase, "COMPLETED")
 }
 
 func TestGetBLSEpoch_Returns500OnGRPCError(t *testing.T) {
@@ -124,8 +130,9 @@ func TestGetBLSSignature_Returns200WithPendingRequest(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	sr, ok := body["signing_request"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, float64(blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_PENDING_SIGNING), sr["status"],
-		"status must be a numeric enum, not a protojson name")
+	statusVal, ok := sr["status"].(string)
+	require.True(t, ok, "status must be an enum name, got %T", sr["status"])
+	require.Contains(t, statusVal, "PENDING")
 }
 
 func TestGetBLSSignature_Returns200WithNilOnNotFound(t *testing.T) {

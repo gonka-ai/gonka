@@ -47,7 +47,11 @@ func (h *Handlers) GetEpoch(ctx echo.Context, epoch string) error {
 	// active_confirmation_poc_event is omitted when there is no active event.
 	var activeConfirmationPoc *gen.RawProtoJson
 	if epochInfo.ActiveConfirmationPocEvent != nil {
-		var raw gen.RawProtoJson = epochInfo.ActiveConfirmationPocEvent
+		raw, err := protoToAPIJSON(epochInfo.ActiveConfirmationPocEvent)
+		if err != nil {
+			logging.Error("Failed to encode confirmation PoC event", inferencetypes.Server, "error", err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode confirmation PoC event")
+		}
 		activeConfirmationPoc = &raw
 	}
 	return ctx.JSON(http.StatusOK, gen.EpochResponse{
