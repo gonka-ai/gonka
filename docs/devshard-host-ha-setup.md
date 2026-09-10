@@ -475,8 +475,8 @@ docker run --rm --network host --read-only \
   -h <A-private-ip> -p 5432                   # use the shared DB endpoint
 ```
 
-Both `pg_isready` and the storage check below run the PostgreSQL client in Docker
-using host networking. The image is `DEVSHARD_POSTGRES_IMAGE` (`postgres:16-alpine`
+The `pg_isready` probe runs in Docker using host networking.
+The image is `DEVSHARD_POSTGRES_IMAGE` (`postgres:16-alpine`
 by default), downloaded automatically if needed.
 The readiness probe checks reachability; the later `--check-storage` establishes
 that B uses the same database. Ensure B can also reach A’s chain and node-manager
@@ -545,7 +545,8 @@ curl -fsS "http://<B-private-ip>:8080/readyz?version=v5"   # not 127.0.0.1 if bo
 
 ##### Check B's database before admitting it to the pool
 
-Prepare a separate reference connection file:
+For `--check-storage`, install the PostgreSQL client (`psql`) on the host
+running the check, then prepare a separate reference connection file:
 
 ```bash
 cd /path/to/gonka/deploy/join
