@@ -608,6 +608,13 @@ func (rt *devshardRuntime) close() error {
 	return nil
 }
 
+func (rt *devshardRuntime) stopRedundancy() {
+	if rt == nil || rt.proxy == nil {
+		return
+	}
+	rt.proxy.redundancy.Stop()
+}
+
 // retireClose flushes a final state snapshot at the current (now frozen) nonce
 // so the escrow can later be rebuilt -- read-only for debug/state or fully on
 // reactivation -- without replaying the diff tail accumulated since the last
@@ -615,6 +622,7 @@ func (rt *devshardRuntime) close() error {
 // (deactivate, settle, rotation); plain close() is for transient read-only
 // runtimes and build-failure cleanup, where no snapshot flush is wanted.
 func (rt *devshardRuntime) retireClose(reason string) error {
+	rt.stopRedundancy()
 	if rt.session != nil {
 		if err := rt.session.FlushSnapshot(); err != nil {
 			log.Printf("runtime_retire_flush_snapshot_error escrow=%s reason=%q error=%v", rt.id, reason, err)
@@ -1837,11 +1845,14 @@ func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRunti
 	if g.accounting != nil && rt.proxy != nil && rt.proxy.sm != nil {
 		g.accounting.Finalize(id)
 	}
-	if g.store == nil {
-		return
+	if g.store != nil {
+		if err := g.store.SetDevshardActive(id, false); err != nil {
+			log.Printf("finalize: persist deactivation for devshard %s: %v", id, err)
+		}
 	}
-	if err := g.store.SetDevshardActive(id, false); err != nil {
-		log.Printf("finalize: persist deactivation for devshard %s: %v", id, err)
+	rt.stopRedundancy()
+	if g.metrics != nil {
+		g.metrics.ForgetEscrow(id)
 	}
 }
 
@@ -3845,18 +3856,17 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if rt, ok := g.runtimes[id]; ok {
-		if rt.activeUserRequests.Load() > 0 {
+		if rt.escrowHasBackgroundWork() {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, id), http.StatusConflict)
 			return
 		}
-		delete(g.runtimes, id)
-		g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
-		if g.capacity != nil {
-			g.capacity.RemoveEscrow(id)
+		if g.dropRegisteredRuntimeLocked(id) != nil {
+			if err := rt.close(); err != nil {
+				log.Printf("close devshard %s: %v", id, err)
+			}
 		}
-		if err := rt.close(); err != nil {
-			log.Printf("close devshard %s: %v", id, err)
-		}
+	} else if g.metrics != nil {
+		g.metrics.ForgetEscrow(id)
 	}
 	if err := g.store.DeleteDevshard(id); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -4124,6 +4134,28 @@ func (g *Gateway) retireRuntime(id, reason string) bool {
 	return true
 }
 
+// dropRegisteredRuntimeLocked is the single map-removal point for a runtime.
+// Callers must hold g.mu. It forgets escrow-keyed Prometheus children so
+// deactivate/clean/retire cannot leave slot and picker series behind.
+func (g *Gateway) dropRegisteredRuntimeLocked(id string) *devshardRuntime {
+	rt, ok := g.runtimes[id]
+	if !ok {
+		return nil
+	}
+	delete(g.runtimes, id)
+	g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
+	if g.capacity != nil {
+		g.capacity.RemoveEscrow(id)
+	}
+	// Admin deactivate may skip deactivateDevshardByIDWithReason; always release
+	// here too. ReleaseEscrow is idempotent.
+	g.releaseHostPing(id)
+	if g.metrics != nil {
+		g.metrics.ForgetEscrow(id)
+	}
+	return rt
+}
+
 // retireRuntimeLocked removes the runtime from the registry and returns it so
 // the caller can close it outside the lock. It returns nil when nothing was
 // retired: the runtime is unknown, or its retirement was deferred because
@@ -4141,15 +4173,7 @@ func (g *Gateway) retireRuntimeLocked(id, reason string) *devshardRuntime {
 			id, reason, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
 		return nil
 	}
-	delete(g.runtimes, id)
-	g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
-	if g.capacity != nil {
-		g.capacity.RemoveEscrow(id)
-	}
-	// Admin deactivate may skip deactivateDevshardByIDWithReason; always release
-	// here too. ReleaseEscrow is idempotent.
-	g.releaseHostPing(id)
-	return rt
+	return g.dropRegisteredRuntimeLocked(id)
 }
 
 func (g *Gateway) attachMetrics(rt *devshardRuntime) {
@@ -4454,6 +4478,7 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 		id, result.EscrowID, model.ModelID, reason, result.TxHash)
 	if !settings.EscrowRotation.SettlementEnabled {
 		g.deactivateDevshardByIDWithReason(id, reason)
+		g.retireRuntime(id, reason)
 	} else {
 		g.deactivateAndSettleDevshardByID(id, reason)
 	}

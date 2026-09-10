@@ -569,7 +569,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		       perf_sample_size, perf_window_ms,
 		       escrow_rotation_enabled, escrow_rotation_settlement_enabled,
 		       escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
-	       gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url
+		       gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url
 		FROM gateway_settings
 		WHERE id = 1`)
 	var rotationEnabled int

@@ -390,3 +390,23 @@ func TestScheduleAutoSettlementPersistsDeactivationWhenAlreadySettled(t *testing
 		return !state.Devshards[0].Active
 	}, 5*time.Second, 20*time.Millisecond, "already-settled escrow must be persisted inactive")
 }
+
+func TestRetireRuntimeDropsSlotDecisionSeries(t *testing.T) {
+	m := NewDevshardMetrics()
+	g, _ := newRetireTestGateway("12")
+	g.metrics = m
+	m.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "12",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	})
+
+	require.True(t, g.retireRuntime("12", "test"))
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "12"})
+}
