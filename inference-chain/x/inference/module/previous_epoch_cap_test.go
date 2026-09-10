@@ -1,0 +1,712 @@
+package inference
+
+import (
+	"fmt"
+	"testing"
+
+	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
+	"github.com/stretchr/testify/require"
+
+	"github.com/productscience/inference/testutil"
+	"github.com/productscience/inference/x/inference/epochgroup"
+	"github.com/productscience/inference/x/inference/types"
+)
+
+func valOperOf(t *testing.T, accBech32 string) string {
+	t.Helper()
+	acc, err := sdk.AccAddressFromBech32(accBech32)
+	require.NoError(t, err)
+	return sdk.ValAddress(acc).String()
+}
+
+func mustApplyCap(t *testing.T, am AppModule, ctx sdk.Context, participants []*types.ActiveParticipant) []*types.ActiveParticipant {
+	t.Helper()
+	previous, err := am.getPreviousConfirmedWeights(ctx)
+	require.NoError(t, err)
+	return am.applyPreviousConfirmedWeightCap(ctx, participants, previous)
+}
+
+func TestApplyPreviousConfirmedWeightCap_ClampsAndZeroes(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	const prevEpoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+
+	// Previous epoch root group:
+	//   Validator  : consensus weight 100, fully confirmed  -> cap 100
+	//   Validator2 : consensus weight 200, half confirmed   -> cap 100
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     prevEpoch,
+		ModelId:        "",
+		SubGroupModels: []string{"model-a"},
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 50},
+			{MemberAddress: testutil.Validator2, Weight: 200, ConfirmationWeight: 50},
+		},
+	})
+	// Subgroup carries the raw per-node PoC weights (rawConfirmationTotal).
+	//   Validator  : raw 50, confirmed 50 -> fully confirmed  -> cap 100
+	//   Validator2 : raw 100, confirmed 50 -> half confirmed  -> cap 200*50/100 = 100
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "model-a",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 50}}},
+			{MemberAddress: testutil.Validator2, MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+
+	participants := []*types.ActiveParticipant{
+		// Fully-confirmed last epoch, unchanged -> stays 100.
+		{Index: testutil.Validator, Weight: 100},
+		// Only half-confirmed last epoch but tries to jump to 500 -> clamped to 100.
+		{Index: testutil.Validator2, Weight: 500},
+		// Brand new participant -> zeroed.
+		{Index: testutil.Executor, Weight: 300},
+	}
+
+	result := mustApplyCap(t, am, ctx, participants)
+
+	cap := map[string]int64{}
+	weight := map[string]int64{}
+	for _, p := range result {
+		cap[p.Index] = p.CapWeight
+		weight[p.Index] = p.Weight
+	}
+	// CapWeight is capped; Weight (real, for rewards) is preserved.
+	require.Equal(t, int64(100), cap[testutil.Validator], "unchanged fully-confirmed participant")
+	require.Equal(t, int64(100), cap[testutil.Validator2], "clamped to previous confirmed weight")
+	require.Equal(t, int64(0), cap[testutil.Executor], "new participant zeroed")
+	require.Equal(t, int64(100), weight[testutil.Validator], "real weight preserved")
+	require.Equal(t, int64(500), weight[testutil.Validator2], "real weight preserved")
+	require.Equal(t, int64(300), weight[testutil.Executor], "real weight preserved for rewards")
+}
+
+func TestApplyPreviousConfirmedWeightCap_NoConfirmationEventKeepsFullBaseline(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const prevEpoch = uint64(5)
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     prevEpoch,
+		SubGroupModels: []string{"model-a"},
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 100},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "model-a",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	result := mustApplyCap(t, am, ctx, []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 150},
+	})
+
+	require.Equal(t, int64(150), result[0].Weight)
+	require.Equal(t, int64(100), result[0].CapWeight)
+}
+
+func TestApplyPreviousConfirmedWeightCap_GuardianIsCapped(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	const prevEpoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+	guardianOperator := valOperOf(t, testutil.Validator2)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.GenesisGuardianParams = &types.GenesisGuardianParams{
+		GuardianAddresses: []string{guardianOperator},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100},
+			{MemberAddress: testutil.Validator2, Weight: 100},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	result := mustApplyCap(t, am, ctx, []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 500},
+		{Index: testutil.Validator2, Weight: 500},
+	})
+
+	require.Equal(t, int64(100), result[0].CapWeight, "regular participant is capped")
+	require.Equal(t, int64(100), result[1].CapWeight, "guardian follows the same trust cap")
+}
+
+func TestApplyPreviousConfirmedWeightCap_OnlyLivePreviousMembersProvideCap(t *testing.T) {
+	k, ctx, groupStub := newMinimalInferenceKeeperWithStub(t)
+
+	const prevEpoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+	groupStub.excludedMembers = map[string]bool{testutil.Validator2: true}
+
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   prevEpoch,
+		ModelId:      "",
+		EpochGroupId: 77,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100},
+			{MemberAddress: testutil.Validator2, Weight: 100},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	result := mustApplyCap(t, am, ctx, []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 100},
+		{Index: testutil.Validator2, Weight: 100},
+	})
+
+	require.Equal(t, int64(100), result[0].CapWeight, "live previous member keeps cap")
+	require.Equal(t, int64(0), result[1].CapWeight, "removed previous member is treated as absent")
+}
+
+func TestApplyPreviousConfirmedWeightCap_NoScalesUsesConsensusWeight(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	const prevEpoch = uint64(3)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+
+	// No confirmation weight scales: cap is the previous consensus weight itself.
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 120, ConfirmationWeight: 10},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+
+	participants := []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 999},
+	}
+	result := mustApplyCap(t, am, ctx, participants)
+	require.Equal(t, int64(120), result[0].CapWeight, "cap weight clamped to previous consensus weight")
+	require.Equal(t, int64(999), result[0].Weight, "real weight preserved")
+}
+
+func TestApplyPreviousConfirmedWeightCap_BootstrapSkips(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	// No effective epoch index set -> bootstrap, weights untouched.
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	participants := []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 100},
+		{Index: testutil.Executor, Weight: 300},
+	}
+	result := mustApplyCap(t, am, ctx, participants)
+	// Bootstrap: CapWeight defaults to Weight (no capping), Weight untouched.
+	require.Equal(t, int64(100), result[0].CapWeight)
+	require.Equal(t, int64(300), result[1].CapWeight)
+	require.Equal(t, int64(100), result[0].Weight)
+	require.Equal(t, int64(300), result[1].Weight)
+}
+
+func TestApplyPreviousConfirmedWeightCap_MissingPrevGroupErrors(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 7))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	_, err := am.getPreviousConfirmedWeights(ctx)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "load live previous-epoch members")
+}
+
+func TestApplyPreviousConfirmedWeightCap_GroupMembersError(t *testing.T) {
+	k, ctx, groupStub := newMinimalInferenceKeeperWithStub(t)
+
+	const prevEpoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+	groupStub.membersErr = fmt.Errorf("group members unavailable")
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   prevEpoch,
+		ModelId:      "",
+		EpochGroupId: 77,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	_, err := am.getPreviousConfirmedWeights(ctx)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "load live previous-epoch members")
+}
+
+func TestZeroFailedMissRateWeights(t *testing.T) {
+	previous := &previousConfirmedWeights{
+		epochIndex:  5,
+		weights:     map[string]int64{"alice": 40, "bob": 60},
+		totalWeight: 100,
+	}
+
+	result := zeroFailedMissRateWeights(previous, map[string]struct{}{
+		"alice":   {},
+		"unknown": {},
+	})
+
+	require.Equal(t, map[string]int64{"alice": 0, "bob": 60}, result.weights)
+	require.Equal(t, int64(60), result.totalWeight)
+	require.Equal(t, map[string]int64{"alice": 40, "bob": 60}, previous.weights)
+	require.Equal(t, int64(100), previous.totalWeight)
+	require.Same(t, previous, zeroFailedMissRateWeights(previous, nil))
+	require.Nil(t, zeroFailedMissRateWeights(nil, map[string]struct{}{"alice": {}}))
+}
+
+func TestResolveTrustWeights_AppliedAllZeroDoesNotFallBack(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 100, CapWeight: 0},
+		{Index: testutil.Executor, Weight: 300, CapWeight: 0},
+	}
+	weights := resolveTrustWeights(participants, true)
+	require.Equal(t, int64(0), weights[testutil.Validator])
+	require.Equal(t, int64(0), weights[testutil.Executor])
+}
+
+func TestResolveTrustWeights_UsesCapWhenApplied(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 100, CapWeight: 80},
+		{Index: testutil.Validator2, Weight: 200, CapWeight: 200},
+		{Index: testutil.Executor, Weight: 300, CapWeight: 0}, // new participant
+	}
+	weights := resolveTrustWeights(participants, true)
+	require.Equal(t, int64(80), weights[testutil.Validator])
+	require.Equal(t, int64(200), weights[testutil.Validator2])
+	require.Equal(t, int64(0), weights[testutil.Executor], "new participant contributes zero trust weight")
+}
+
+func TestResolveTrustWeights_FallsBackToWeightWhenCapUnset(t *testing.T) {
+	// No CapWeight populated anywhere (e.g. participants built without running the
+	// cap, or a pre-upgrade epoch): fall back to real Weight so we never collapse
+	// to all-zero trust weights.
+	participants := []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 100},
+		{Index: testutil.Validator2, Weight: 200},
+	}
+	weights := resolveTrustWeights(participants, false)
+	require.Equal(t, int64(100), weights[testutil.Validator])
+	require.Equal(t, int64(200), weights[testutil.Validator2])
+}
+
+func TestCapComputeResultsToPreviousConfirmedWeight_ClampsAndRetainsZero(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(9)
+
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epoch,
+		EpochGroupId: epoch,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 100, CapWeight: 100},  // uncapped
+			{Index: testutil.Validator2, Weight: 500, CapWeight: 100}, // clamped
+			{Index: testutil.Executor, Weight: 300, CapWeight: 0},     // retained until post-enhancement filtering
+		},
+	}))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	eg := &epochgroup.EpochGroup{GroupData: &types.EpochGroupData{EpochIndex: epoch}}
+
+	results := []stakingkeeper.ComputeResult{
+		{Power: 100, OperatorAddress: valOperOf(t, testutil.Validator)},
+		{Power: 500, OperatorAddress: valOperOf(t, testutil.Validator2)},
+		{Power: 300, OperatorAddress: valOperOf(t, testutil.Executor)},
+	}
+
+	capped := am.capComputeResultsToPreviousConfirmedWeight(ctx, eg, results)
+
+	powerByOp := map[string]int64{}
+	for _, r := range capped {
+		powerByOp[r.OperatorAddress] = r.Power
+	}
+	require.Len(t, capped, 3, "zero-cap entries remain available for guardian enhancement")
+	require.Equal(t, int64(100), powerByOp[valOperOf(t, testutil.Validator)], "uncapped participant unchanged")
+	require.Equal(t, int64(100), powerByOp[valOperOf(t, testutil.Validator2)], "over-weight participant clamped")
+	require.Equal(t, int64(0), powerByOp[valOperOf(t, testutil.Executor)], "new participant has zero baseline power")
+}
+
+func TestCapComputeResultsToPreviousConfirmedWeight_CapsGuardians(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(9)
+	guardianOperator := valOperOf(t, testutil.Validator2)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.GenesisGuardianParams = &types.GenesisGuardianParams{
+		GuardianAddresses: []string{guardianOperator},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epoch,
+		EpochGroupId: epoch,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 500, CapWeight: 100},
+			{Index: testutil.Validator2, Weight: 500, CapWeight: 100},
+		},
+	}))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	eg := &epochgroup.EpochGroup{GroupData: &types.EpochGroupData{EpochIndex: epoch}}
+
+	capped := am.capComputeResultsToPreviousConfirmedWeight(ctx, eg, []stakingkeeper.ComputeResult{
+		{Power: 500, OperatorAddress: valOperOf(t, testutil.Validator)},
+		{Power: 900, OperatorAddress: guardianOperator},
+	})
+
+	powerByOp := map[string]int64{}
+	for _, r := range capped {
+		powerByOp[r.OperatorAddress] = r.Power
+	}
+	require.Equal(t, int64(100), powerByOp[valOperOf(t, testutil.Validator)], "regular participant is capped")
+	require.Equal(t, int64(100), powerByOp[guardianOperator], "guardian is capped before temporary enhancement")
+}
+
+func TestGuardianEnhancementUsesCappedGovernanceVector(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(9)
+
+	guardianOperator := valOperOf(t, testutil.Validator2)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 500,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{guardianOperator},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetGenesisOnlyParams(ctx, &types.GenesisOnlyParams{
+		TotalSupply:               1_000_000_000,
+		OriginatorSupply:          160_000_000,
+		PreProgrammedSaleAmount:   120_000_000,
+		SupplyDenom:               "gonka",
+		GenesisGuardianMultiplier: types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:    true,
+	}))
+
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:          epoch,
+		EpochGroupId:     epoch,
+		CapWeightApplied: true,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 1_000, CapWeight: 90},
+			{Index: testutil.Validator2, Weight: 1_000, CapWeight: 10},
+		},
+	}))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	eg := &epochgroup.EpochGroup{GroupData: &types.EpochGroupData{EpochIndex: epoch}}
+	baseline := am.capComputeResultsToPreviousConfirmedWeight(ctx, eg, []stakingkeeper.ComputeResult{
+		{Power: 1_000, OperatorAddress: valOperOf(t, testutil.Validator)},
+		{Power: 1_000, OperatorAddress: guardianOperator},
+	})
+	enhanced := positiveComputeResults(am.applyEarlyNetworkProtection(ctx, baseline))
+
+	powerByOperator := make(map[string]int64, len(enhanced))
+	for _, result := range enhanced {
+		powerByOperator[result.OperatorAddress] = result.Power
+	}
+	require.Equal(t, int64(90), powerByOperator[valOperOf(t, testutil.Validator)])
+	require.Equal(t, int64(46), powerByOperator[guardianOperator], "guardian enhancement must use capped non-guardian power")
+
+	stored, found := k.GetActiveParticipants(ctx, epoch)
+	require.True(t, found)
+	require.Equal(t, int64(10), stored.Participants[1].CapWeight, "enhancement must not mutate persisted trust weight")
+	require.Equal(t, int64(1_000), stored.Participants[1].Weight, "enhancement must not mutate real weight")
+}
+
+func TestBLSGuardianGateUsesFullTrustVector(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	guardianOperator := valOperOf(t, testutil.Validator)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 200,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{guardianOperator},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetGenesisOnlyParams(ctx, &types.GenesisOnlyParams{
+		TotalSupply:               1_000_000_000,
+		OriginatorSupply:          160_000_000,
+		PreProgrammedSaleAmount:   120_000_000,
+		SupplyDenom:               "gonka",
+		GenesisGuardianMultiplier: types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:    true,
+	}))
+
+	guardian := &types.ActiveParticipant{Index: testutil.Validator, CapWeight: 10}
+	filtered := &types.ActiveParticipant{Index: testutil.Validator2, CapWeight: 100}
+	survivor := &types.ActiveParticipant{Index: testutil.Executor, CapWeight: 100}
+
+	adjusted := applyBLSGuardianSlotReservation(
+		ctx,
+		k,
+		[]*types.ActiveParticipant{guardian, filtered, survivor},
+		[]*types.ActiveParticipant{guardian, survivor},
+	)
+	require.Nil(t, adjusted, "full trust weight is mature even though the surviving subset is not")
+}
+
+func TestCapComputeResultsToPreviousConfirmedWeight_FallsBackWhenCapUnset(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(11)
+
+	// Pre-upgrade epoch: CapWeight not populated -> do not cap.
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epoch,
+		EpochGroupId: epoch,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 100},
+			{Index: testutil.Validator2, Weight: 500},
+		},
+	}))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	eg := &epochgroup.EpochGroup{GroupData: &types.EpochGroupData{EpochIndex: epoch}}
+
+	results := []stakingkeeper.ComputeResult{
+		{Power: 100, OperatorAddress: valOperOf(t, testutil.Validator)},
+		{Power: 500, OperatorAddress: valOperOf(t, testutil.Validator2)},
+	}
+	capped := am.capComputeResultsToPreviousConfirmedWeight(ctx, eg, results)
+	require.Equal(t, results, capped, "no capping when CapWeight is unset")
+}
+
+func TestCapComputeResultsToPreviousConfirmedWeight_AppliedAllZeroRetains(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(11)
+
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:          epoch,
+		EpochGroupId:     epoch,
+		CapWeightApplied: true,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 100, CapWeight: 0},
+			{Index: testutil.Validator2, Weight: 500, CapWeight: 0},
+		},
+	}))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	eg := &epochgroup.EpochGroup{GroupData: &types.EpochGroupData{EpochIndex: epoch}}
+	capped := am.capComputeResultsToPreviousConfirmedWeight(ctx, eg, []stakingkeeper.ComputeResult{
+		{Power: 100, OperatorAddress: valOperOf(t, testutil.Validator)},
+		{Power: 500, OperatorAddress: valOperOf(t, testutil.Validator2)},
+	})
+	require.Len(t, capped, 2, "authoritative all-zero caps must not fall back to real weight")
+	require.False(t, hasPositiveComputePower(capped))
+}
+
+func TestApplyPreviousConfirmedWeightCap_EpochMismatch(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+	require.NoError(t, k.EpochGroupDataMap.Set(ctx, collections.Join(uint64(5), ""), types.EpochGroupData{
+		EpochIndex: 4,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100},
+		},
+	}))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	_, err := am.getPreviousConfirmedWeights(ctx)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "previous-confirmed-weight epoch mismatch")
+}
+
+func TestGetEffectiveValidationBaseState_UsesTrustWeightsForTotal(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(9)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epoch,
+		EpochGroupId: epoch,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 100, CapWeight: 80},
+			{Index: testutil.Validator2, Weight: 200, CapWeight: 120},
+		},
+	}))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epoch,
+		ModelId:      "",
+		EpochGroupId: 77,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100},
+			{MemberAddress: testutil.Validator2, Weight: 200},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	base := am.getEffectiveValidationBaseState(ctx)
+
+	require.Equal(t, int64(200), base.totalWeight)
+	require.Equal(t, int64(80), base.weights[testutil.Validator])
+	require.Equal(t, int64(120), base.weights[testutil.Validator2])
+}
+
+func TestApplyPreviousConfirmedWeightCap_UsesFullModelDenominator(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	const prevEpoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     prevEpoch,
+		ModelId:        "",
+		SubGroupModels: []string{"model-a", "model-b"},
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 10},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "model-a",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 10}}},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "model-b",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 90}}},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	result := mustApplyCap(t, am, ctx, []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 100},
+	})
+	require.Equal(t, int64(10), result[0].CapWeight)
+	require.Equal(t, int64(100), result[0].Weight)
+}
+
+func TestApplyPreviousConfirmedWeightCap_UnconfirmedModelGetsZeroCap(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	const prevEpoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     prevEpoch,
+		ModelId:        "",
+		SubGroupModels: []string{"model-b"},
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 0},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "model-b",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	result := mustApplyCap(t, am, ctx, []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 100},
+	})
+	require.Equal(t, int64(0), result[0].CapWeight)
+	require.Equal(t, int64(100), result[0].Weight)
+}
+
+func TestGetEffectiveValidationBaseState_OmitsEmptyVoterConfirmationModels(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(9)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epoch,
+		EpochGroupId: epoch,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 100, CapWeight: 80},
+		},
+	}))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     epoch,
+		ModelId:        "",
+		EpochGroupId:   77,
+		SubGroupModels: []string{"model-a"},
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epoch,
+		ModelId:      "model-a",
+		EpochGroupId: 78,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, VotingPower: 80},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	base := am.getEffectiveValidationBaseState(ctx)
+
+	byModel := map[string]bool{}
+	for _, mvp := range base.existingModelVotingPowers {
+		byModel[mvp.ModelId] = true
+	}
+	require.True(t, byModel["model-a"])
+	require.False(t, byModel["model-b"], "zero-voter accounting models must not look active to PoC bootstrap")
+
+	snapshotModels := withAccountingPlaceholderModels(
+		base.existingModelVotingPowers,
+		[]*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+	)
+	snapshotByModel := map[string]bool{}
+	for _, mvp := range snapshotModels {
+		snapshotByModel[mvp.ModelId] = true
+		if mvp.ModelId == "model-b" {
+			require.Empty(t, mvp.VotingPowers)
+			require.False(t, modelHasActiveVotingPower(mvp))
+		}
+	}
+	require.True(t, snapshotByModel["model-a"])
+	require.True(t, snapshotByModel["model-b"], "confirmation snapshots still keep the empty-voter accounting model")
+}
+
+func TestModelHasActiveVotingPower(t *testing.T) {
+	require.False(t, modelHasActiveVotingPower(nil))
+	require.False(t, modelHasActiveVotingPower(&types.ModelVotingPowers{ModelId: "model-b"}))
+	require.False(t, modelHasActiveVotingPower(&types.ModelVotingPowers{
+		ModelId:      "model-b",
+		VotingPowers: []*types.VotingPowerEntry{{Address: testutil.Validator, VotingPower: 0}},
+	}))
+	require.True(t, modelHasActiveVotingPower(&types.ModelVotingPowers{
+		ModelId:      "model-a",
+		VotingPowers: []*types.VotingPowerEntry{{Address: testutil.Validator, VotingPower: 80}},
+	}))
+}

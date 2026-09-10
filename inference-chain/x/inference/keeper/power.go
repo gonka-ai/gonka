@@ -70,13 +70,18 @@ func (k Keeper) GetRootGroupDataWithLiveMembers(ctx context.Context) (types.Epoc
 	if err != nil {
 		return types.EpochGroupData{}, nil, err
 	}
+	if currentGroup == nil || currentGroup.GroupData == nil {
+		return types.EpochGroupData{}, nil, types.ErrEpochGroupDataNotFound
+	}
 	members, err := currentGroup.GetGroupMembers(ctx)
 	if err != nil {
 		return types.EpochGroupData{}, nil, err
 	}
 	liveSet := make(map[string]bool, len(members))
 	for _, m := range members {
-		liveSet[m.Member.Address] = true
+		if m != nil && m.Member != nil {
+			liveSet[m.Member.Address] = true
+		}
 	}
 	return *currentGroup.GroupData, liveSet, nil
 }

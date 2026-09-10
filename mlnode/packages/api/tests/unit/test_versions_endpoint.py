@@ -42,6 +42,17 @@ def test_versions_proxies_vllm_capability():
     call_backend.assert_awaited_once_with(5001, "GET", "/api/v1/pow/versions")
 
 
+def test_versions_reports_release_version(monkeypatch):
+    monkeypatch.setenv("MLNODE_RELEASE_VERSION", "3.0.14-post2")
+    client = TestClient(app)
+
+    with patch("api.proxy.get_healthy_backends", return_value=[]):
+        response = client.get("/api/v1/versions")
+
+    assert response.status_code == 200
+    assert response.json()["version"] == "3.0.14-post2"
+
+
 def test_versions_uses_cached_capability_after_success():
     client = TestClient(app)
     backend_response = make_mock_response(200, {

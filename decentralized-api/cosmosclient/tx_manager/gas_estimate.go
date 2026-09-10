@@ -1,6 +1,8 @@
 package tx_manager
 
 import (
+	"decentralized-api/apiconfig"
+
 	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -49,13 +51,21 @@ const (
 	gasSubmitPocBatch         = uint64(500_000)
 	gasSubmitPocValidationsV2 = uint64(250_000)
 
-	// PoCV2StoreCommit linear formula. WARN: gasPoCV2Base mirrors
-	// FeeParams.base_validation_gas (default 500K), gasPoCV2PerCount
-	// mirrors FeeParams.gas_per_poc_count (default 100). If governance
-	// bumps either, retune both — OOG retry will limp along but at the
-	// cost of wasted block time. Future work: read FeeParams at startup.
+	// PoCV2StoreCommit linear formula used when the fee tree has not been
+	// loaded yet. WARN: gasPoCV2Base mirrors FeeParams.base_validation_gas
+	// (default 500K), gasPoCV2PerCount mirrors FeeParams.gas_per_poc_count
+	// (default 100). If governance bumps either, retune both — OOG retry
+	// will limp along but at the cost of wasted block time.
 	gasPoCV2Base     = uint64(600_000) // 500K base + 50K sdk + 50% headroom
 	gasPoCV2PerCount = uint64(150)     // 100 on-chain + 50%
+
+	// Intrinsic StoreCommit/authz floor when the fee tree is loaded. The
+	// tree period-base and rate×delta are a surcharge on top of this, not
+	// a replacement. A warm-key MsgExec+feegrant CheckTx used ~64k before
+	// the handler; 200k covers ante + handler with headroom. Zeroing the
+	// leaf must not collapse gasWanted below this floor. estimateBatchGas
+	// still adds txOverheadGas separately.
+	gasStoreCommitIntrinsic = uint64(200_000)
 
 	// MLNodeWeightDistribution: linear in total node entries.
 	gasMLNodeBase    = uint64(100_000)
@@ -90,9 +100,79 @@ const (
 	gasDefaultEstimate = uint64(500_000)
 )
 
+// GasHints is the estimator snapshot from FeeTreeCache.
+// StoreCommit and HardwareDiff fields are only read by those estimators.
+type GasHints struct {
+	FeeTreeLoaded   bool
+	StoreCommit     StoreCommitGas
+	HardwareDiff    HardwareDiffGas
+	TxGasMultiplier float64
+}
+
+// StoreCommitGas is split by estimator path.
+// Static fallback uses Padded* + Prev. Measured uses Intrinsic/Entries + Chain*.
+type StoreCommitGas struct {
+	Prev map[string]uint32 // last committed counts this stage (both paths)
+
+	// Static fallback: DAPI-padded tree leaves (100→150, 500k→600k).
+	HasRate    bool
+	HasBase    bool
+	PaddedRate uint64
+	PaddedBase uint64
+
+	// Measured path: once-per-stage dummy Simulate.
+	HasMeasured       bool
+	MeasuredIntrinsic uint64
+	MeasuredEntries   uint // dummy entry count; more entries → static
+	ChainRate         uint64
+	ChainBase         uint64
+}
+
+// HardwareDiffGas is the static extra-bytes formula. A successful Simulate
+// does not read these; they are the fallback when Simulate fails.
+type HardwareDiffGas struct {
+	Prev          []*inferencetypes.HardwareNode
+	HasGasPerByte bool
+	GasPerByte    uint64
+	UnitSize      uint64 // 1 (b), 1000 (kb), or 1_000_000 (mb); 0 treated as 1
+}
+
+func (h GasHints) storeCommitStaticRate() uint64 {
+	sc := h.StoreCommit
+	if sc.HasRate {
+		return sc.PaddedRate
+	}
+	if h.FeeTreeLoaded {
+		return 0
+	}
+	if sc.PaddedRate == 0 {
+		return gasPoCV2PerCount
+	}
+	return sc.PaddedRate
+}
+
+func (h GasHints) storeCommitStaticBase() uint64 {
+	sc := h.StoreCommit
+	if sc.HasBase {
+		return sc.PaddedBase
+	}
+	if h.FeeTreeLoaded {
+		return 0
+	}
+	if sc.PaddedBase == 0 {
+		return gasPoCV2Base
+	}
+	return sc.PaddedBase
+}
+
 // estimateMsgGas returns the gas estimate for a single message.
 func estimateMsgGas(msg sdk.Msg) uint64 {
 	v, _ := lookupMsgGas(msg)
+	return v
+}
+
+func estimateMsgGasHinted(msg sdk.Msg, hints GasHints) uint64 {
+	v, _ := lookupMsgGasHinted(msg, hints)
 	return v
 }
 
@@ -101,17 +181,17 @@ func estimateMsgGas(msg sdk.Msg) uint64 {
 // every msg in InferenceOperationKeyPerms has an explicit case — the value
 // alone can't tell us, since several legit estimates equal the default.
 func lookupMsgGas(msg sdk.Msg) (uint64, bool) {
+	return lookupMsgGasHinted(msg, GasHints{})
+}
+
+func lookupMsgGasHinted(msg sdk.Msg, hints GasHints) (uint64, bool) {
 	switch m := msg.(type) {
 	case *inferencetypes.MsgSubmitPocBatch:
 		return gasSubmitPocBatch, true
 	case *inferencetypes.MsgSubmitPocValidationsV2:
 		return gasSubmitPocValidationsV2, true
 	case *inferencetypes.MsgPoCV2StoreCommit:
-		var totalCount uint64
-		for _, e := range m.Entries {
-			totalCount += uint64(e.Count)
-		}
-		return gasPoCV2Base + totalCount*gasPoCV2PerCount, true
+		return estimateStoreCommitGas(m, hints), true
 	case *inferencetypes.MsgMLNodeWeightDistribution:
 		var totalNodes uint64
 		for _, e := range m.Entries {
@@ -119,7 +199,7 @@ func lookupMsgGas(msg sdk.Msg) (uint64, bool) {
 		}
 		return gasMLNodeBase + totalNodes*gasMLNodePerNode, true
 	case *inferencetypes.MsgSubmitHardwareDiff:
-		return gasSubmitHardwareDiff, true
+		return estimateHardwareDiffGas(m, hints), true
 	case *inferencetypes.MsgClaimRewards:
 		return gasClaimRewards, true
 	case *inferencetypes.MsgSubmitSeed:
@@ -149,12 +229,170 @@ func lookupMsgGas(msg sdk.Msg) (uint64, bool) {
 	}
 }
 
+func estimateHardwareDiffGas(m *inferencetypes.MsgSubmitHardwareDiff, hints GasHints) uint64 {
+	gas := gasSubmitHardwareDiff
+	hd := hints.HardwareDiff
+	if !hd.HasGasPerByte || hd.GasPerByte == 0 {
+		return gas
+	}
+	qty := hardwareDiffByteDelta(m, hd.Prev)
+	div := hd.UnitSize
+	if div == 0 {
+		div = 1
+	}
+	extra := saturatingMul(qty, hd.GasPerByte) / div
+	extra = saturatingAdd(extra, extra/2) // 1.5× headroom, same as *3/2 without overflow
+	return saturatingAdd(gas, extra)
+}
+
+// hardwareDiffByteDelta mirrors chain extra gas: max(0, size(after)−size(before))
+// of the merged inventory, never N × size(new_or_modified).
+func hardwareDiffByteDelta(m *inferencetypes.MsgSubmitHardwareDiff, prev []*inferencetypes.HardwareNode) uint64 {
+	nodeMap := make(map[string]*inferencetypes.HardwareNode, len(prev)+len(m.GetNewOrModified()))
+	for _, n := range prev {
+		if n != nil {
+			nodeMap[n.LocalId] = n
+		}
+	}
+	before := 0
+	if len(nodeMap) > 0 {
+		before = hardwareNodesSize(m.GetCreator(), nodeMap)
+	}
+	for _, n := range m.GetRemoved() {
+		if n != nil {
+			delete(nodeMap, n.LocalId)
+		}
+	}
+	for _, n := range m.GetNewOrModified() {
+		if n != nil {
+			nodeMap[n.LocalId] = n
+		}
+	}
+	after := hardwareNodesSize(m.GetCreator(), nodeMap)
+	if after > before {
+		return uint64(after - before)
+	}
+	return 0
+}
+
+func hardwareNodesSize(participant string, nodeMap map[string]*inferencetypes.HardwareNode) int {
+	nodes := make([]*inferencetypes.HardwareNode, 0, len(nodeMap))
+	for _, n := range nodeMap {
+		nodes = append(nodes, n)
+	}
+	wrap := &inferencetypes.HardwareNodes{
+		Participant:   participant,
+		HardwareNodes: nodes,
+	}
+	return wrap.Size()
+}
+
+func estimateStoreCommitGas(m *inferencetypes.MsgPoCV2StoreCommit, hints GasHints) uint64 {
+	sc := hints.StoreCommit
+	if useMeasuredStoreCommitGas(m, hints) {
+		extra := storeCommitSurcharge(m, sc.ChainRate, sc.ChainBase, sc.Prev)
+		return applySimulateHeadroom(saturatingAdd(sc.MeasuredIntrinsic, extra), hints.TxGasMultiplier)
+	}
+	extra := storeCommitSurcharge(m, hints.storeCommitStaticRate(), hints.storeCommitStaticBase(), sc.Prev)
+	if hints.FeeTreeLoaded {
+		return saturatingAdd(gasStoreCommitIntrinsic, extra)
+	}
+	return extra
+}
+
+func useMeasuredStoreCommitGas(m *inferencetypes.MsgPoCV2StoreCommit, hints GasHints) bool {
+	sc := hints.StoreCommit
+	if !sc.HasMeasured {
+		return false
+	}
+	n := storeCommitEntryCount(m)
+	return sc.MeasuredEntries > 0 && n <= sc.MeasuredEntries
+}
+
+func storeCommitEntryCount(m *inferencetypes.MsgPoCV2StoreCommit) uint {
+	if m == nil {
+		return 0
+	}
+	var n uint
+	for _, e := range m.Entries {
+		if e != nil {
+			n++
+		}
+	}
+	return n
+}
+
+func storeCommitSurcharge(m *inferencetypes.MsgPoCV2StoreCommit, rate, base uint64, prev map[string]uint32) uint64 {
+	var delta uint64
+	for _, e := range m.Entries {
+		if e == nil {
+			continue
+		}
+		p, ok := prev[e.ModelId]
+		if ok {
+			if e.Count > p {
+				delta += uint64(e.Count - p)
+			}
+		} else {
+			delta += uint64(e.Count)
+		}
+	}
+	extra := saturatingMul(delta, rate)
+	// Chain charges period base once per participant+stage
+	// (len(existingByModel)==0), not once per new model in this payload.
+	if len(prev) == 0 {
+		extra = saturatingAdd(extra, base)
+	}
+	return extra
+}
+
+// StoreCommitIntrinsicFromSim peels the dummy commit's chain surcharge
+// (period base + rate×dummyCount) off Simulate gasUsed. Dummy is count=1
+// per local model on an empty stage. Returns false if the peel would
+// underflow — caller keeps the static formula.
+func StoreCommitIntrinsicFromSim(simUsed, rate, base, dummyCount uint64) (uint64, bool) {
+	if simUsed == 0 || dummyCount == 0 {
+		return 0, false
+	}
+	extra := saturatingAdd(base, saturatingMul(rate, dummyCount))
+	if simUsed <= extra {
+		return 0, false
+	}
+	return simUsed - extra, true
+}
+
+func saturatingMul(a, b uint64) uint64 {
+	if a == 0 || b == 0 {
+		return 0
+	}
+	prod := a * b
+	if prod/a != b {
+		return ^uint64(0)
+	}
+	return prod
+}
+
+func saturatingAdd(a, b uint64) uint64 {
+	if a > ^uint64(0)-b {
+		return ^uint64(0)
+	}
+	return a + b
+}
+
 // estimateBatchGas sums per-msg estimates + tx overhead, then doubles per
 // retry attempt (capped at BatchGasLimit) so OOG retries escape the loop.
-func estimateBatchGas(msgs []sdk.Msg, attempt int) uint64 {
+func estimateBatchGas(msgs []sdk.Msg, attempt int, hints ...GasHints) uint64 {
+	var h GasHints
+	if len(hints) > 0 {
+		h = hints[0]
+	}
 	gas := txOverheadGas
+	if batchUsesMeasuredStoreCommitGas(msgs, h) {
+		// Measured intrinsic already includes ante + authz unwrap.
+		gas = 0
+	}
 	for _, m := range msgs {
-		gas += estimateMsgGas(m)
+		gas = saturatingAdd(gas, estimateMsgGasHinted(m, h))
 	}
 	for i := 0; i < attempt; i++ {
 		gas = uint64(float64(gas) * gasRetryMultiplier)
@@ -166,4 +404,84 @@ func estimateBatchGas(msgs []sdk.Msg, attempt int) uint64 {
 		return BatchGasLimit
 	}
 	return gas
+}
+
+func isHardwareDiffOnly(msgs []sdk.Msg) bool {
+	if len(msgs) != 1 {
+		return false
+	}
+	_, ok := msgs[0].(*inferencetypes.MsgSubmitHardwareDiff)
+	return ok
+}
+
+func isStoreCommitOnly(msgs []sdk.Msg) bool {
+	if len(msgs) == 0 {
+		return false
+	}
+	for _, m := range msgs {
+		if _, ok := m.(*inferencetypes.MsgPoCV2StoreCommit); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func batchUsesMeasuredStoreCommitGas(msgs []sdk.Msg, hints GasHints) bool {
+	if !isStoreCommitOnly(msgs) {
+		return false
+	}
+	for _, m := range msgs {
+		sc, ok := m.(*inferencetypes.MsgPoCV2StoreCommit)
+		if !ok || !useMeasuredStoreCommitGas(sc, hints) {
+			return false
+		}
+	}
+	return true
+}
+
+// applySimulateHeadroom pads Simulate gas_used. Unset/invalid multiplier
+// is 1.5× (v + v/2). A host override of 1.2 is v + v/5. Other values use
+// thousandths so we stay in integer arithmetic.
+func applySimulateHeadroom(v uint64, multiplier float64) uint64 {
+	m := apiconfig.ResolveTxGasMultiplier(multiplier)
+	if v == 0 {
+		return 0
+	}
+	if m == apiconfig.DefaultTxGasMultiplier {
+		return saturatingAdd(v, v/2)
+	}
+	if m == 1.2 {
+		return saturatingAdd(v, v/5)
+	}
+	num := uint64(m*1000 + 0.5)
+	if num < 1000 {
+		return saturatingAdd(v, v/2)
+	}
+	prod := saturatingMul(v, num)
+	if prod == ^uint64(0) {
+		return prod
+	}
+	return (prod + 999) / 1000
+}
+
+// gasWantedFromSimulate pads a successful Simulate. static is used only
+// when Simulate returned 0; a working sim is never raised back to the
+// static HardwareDiff floor.
+//
+// Default pad is 1.5× (original HardwareRelabelTests bar). Hosts can set
+// 1.2 via DAPI_CHAIN_NODE__TX_GAS_MULTIPLIER after
+// CountTXSimulateGasDecorator and UnorderedNonceSimGasDecorator meter the
+// Finalize-only KV that Simulate used to skip. If those wrappers go away
+// without the same metering in wasmd/SDK, 1.2 OOGs again (38_627 sim vs
+// 48_212 deliver) — fix the chain; do not treat 1.5 as a substitute for
+// the missing KV.
+func gasWantedFromSimulate(static, simulated uint64, multiplier float64) uint64 {
+	if simulated == 0 {
+		return static
+	}
+	withHeadroom := applySimulateHeadroom(simulated, multiplier)
+	if withHeadroom > BatchGasLimit {
+		return BatchGasLimit
+	}
+	return withHeadroom
 }
