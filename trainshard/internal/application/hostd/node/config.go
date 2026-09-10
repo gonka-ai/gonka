@@ -11,6 +11,7 @@ type Config struct {
 	Version          string
 	SupportedVersion string
 	MinFreeDiskBytes int64
+	Signer           vo.Address
 	OptInTTL         time.Duration
 	RefreshInterval  time.Duration
 }

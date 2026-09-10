@@ -20,6 +20,7 @@ func Collect(
 	ctx context.Context,
 	hosts Hosts,
 	verifier ports.Verifier,
+	delegation ports.Delegation,
 	shardID vo.ShardID,
 	participants []vo.Participant,
 	reserved []vo.NodeRef,
@@ -45,7 +46,7 @@ func Collect(
 			if err != nil {
 				return nil, nil, ErrForeignIdentity
 			}
-			if err := VerifyIdentity(identity, signer); err != nil {
+			if err := VerifyIdentity(ctx, identity, signer, delegation); err != nil {
 				return nil, nil, err
 			}
 			collected[identity.Member.Node] = identity.Member

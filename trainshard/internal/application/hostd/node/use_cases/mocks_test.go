@@ -10,7 +10,7 @@ import (
 
 var (
 	nodeA    = vo.NodeRef{Participant: "gonka1host", NodeID: "node-a"}
-	hardware = vo.GPUInventory{Model: "H100", Count: 8}
+	hardware = vo.GPUInventory{Profile: "H100 x8", Count: 8}
 	errProbe = errors.New("no nvidia runtime")
 )
 
@@ -70,4 +70,13 @@ func (s *submitterStub) OptIn(_ context.Context, _ vo.NodeRef, ttl time.Duration
 
 func (s *submitterStub) Release(context.Context, vo.ShardID, vo.NodeRef, vo.ReleaseReason) error {
 	return nil
+}
+
+type keysStub struct {
+	missing []string
+	err     error
+}
+
+func (k *keysStub) MissingGrants(context.Context, vo.Participant, vo.Address) ([]string, error) {
+	return k.missing, k.err
 }

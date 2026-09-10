@@ -20,6 +20,8 @@ import (
 	authtx "github.com/cosmos/cosmos-sdk/x/auth/tx"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
@@ -37,6 +39,11 @@ type Key interface {
 	Account() cryptotypes.PrivKey
 }
 
+const (
+	landingDefault = 2 * time.Minute
+	blockTime      = 5 * time.Second
+)
+
 // Signer submits what the shard's own actor is allowed to ask of the chain
 type Signer struct {
 	*Client
@@ -45,9 +52,13 @@ type Signer struct {
 	sender   txtypes.ServiceClient
 	config   client.TxConfig
 	chainID  string
+	landing  time.Duration
 }
 
-func NewSigner(client *Client, key Key, chainID string) *Signer {
+func NewSigner(client *Client, key Key, chainID string, landing time.Duration) *Signer {
+	if landing <= 0 {
+		landing = landingDefault
+	}
 	registry := codectypes.NewInterfaceRegistry()
 	cryptocodec.RegisterInterfaces(registry)
 	authtypes.RegisterInterfaces(registry)
@@ -60,6 +71,7 @@ func NewSigner(client *Client, key Key, chainID string) *Signer {
 		sender:   txtypes.NewServiceClient(client.conn),
 		config:   authtx.NewTxConfig(codec.NewProtoCodec(registry), []signingtypes.SignMode{signingtypes.SignMode_SIGN_MODE_DIRECT}),
 		chainID:  chainID,
+		landing:  landing,
 	}
 }
 
@@ -142,10 +154,16 @@ func (s *Signer) submit(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, erro
 		return nil, err
 	}
 
+	at, err := s.Height(ctx)
+	if err != nil {
+		return nil, shared.New("CHAIN_UNREACHABLE", shared.ErrUnavailable, err.Error())
+	}
+
 	builder := s.config.NewTxBuilder()
 	if err := builder.SetMsgs(msg); err != nil {
 		return nil, err
 	}
+	builder.SetTimeoutHeight(uint64(at) + s.blocksToLand())
 	// what is signed covers who signs it, so the key and the sequence go in before the signature that
 	// then replaces this blank one
 	blank := signingtypes.SignatureV2{
@@ -195,6 +213,10 @@ func (s *Signer) submit(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, erro
 // the transaction, so without this the next one would sign with a sequence the account no longer has,
 // and a message the chain then refused would read as done
 func (s *Signer) landed(ctx context.Context, msg sdk.Msg, hash string) (*sdk.TxResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, s.landing)
+	defer cancel()
+
+	var last error
 	for {
 		answer, err := s.sender.GetTx(ctx, &txtypes.GetTxRequest{Hash: hash})
 		switch {
@@ -202,14 +224,27 @@ func (s *Signer) landed(ctx context.Context, msg sdk.Msg, hash string) (*sdk.TxR
 			return nil, refused(msg, answer.TxResponse.Code, answer.TxResponse.RawLog)
 		case err == nil:
 			return answer.TxResponse, nil
+		case status.Code(err) != codes.NotFound:
+			last = err
 		}
 		select {
 		case <-ctx.Done():
-			return nil, shared.New("CHAIN_SLOW", shared.ErrUnavailable,
-				fmt.Sprintf("the chain took %s as %s and never ran it", sdk.MsgTypeURL(msg), hash))
+			return nil, slow(msg, hash, s.landing, last)
 		case <-time.After(s.poll):
 		}
 	}
+}
+
+func (s *Signer) blocksToLand() uint64 {
+	return uint64(max(1, s.landing/blockTime)) + 1
+}
+
+func slow(msg sdk.Msg, hash string, waited time.Duration, last error) error {
+	reason := fmt.Sprintf("the chain took %s as %s and did not run it within %s", sdk.MsgTypeURL(msg), hash, waited)
+	if last != nil {
+		reason += ": " + last.Error()
+	}
+	return shared.New("CHAIN_SLOW", shared.ErrUnavailable, reason)
 }
 
 func refused(msg sdk.Msg, code uint32, log string) error {

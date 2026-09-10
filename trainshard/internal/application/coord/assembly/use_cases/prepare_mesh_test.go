@@ -24,7 +24,7 @@ func prepare(chain *chainStub, hosts *hostsStub, verifier *verifierStub) *usecas
 }
 
 func prepareWithin(chain *chainStub, hosts *hostsStub, verifier *verifierStub, settle time.Duration) *usecases.PrepareMeshUseCase {
-	return usecases.NewPrepareMeshUseCase(chain, hosts, verifier, chain, timex.NewFrozen(now), time.Millisecond, settle)
+	return usecases.NewPrepareMeshUseCase(chain, hosts, verifier, chain, chain, timex.NewFrozen(now), time.Millisecond, settle)
 }
 
 func TestPrepareHandsEveryNodeItsPeerList(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
@@ -17,34 +18,63 @@ import (
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/vo"
+	"trainshard/internal/infrastructure/adapters/gpuprofile"
 )
 
 type Config struct {
 	Address string
 	Poll    time.Duration
+	Timeout time.Duration
 }
 
 type Client struct {
-	conn  *grpc.ClientConn
-	query types.QueryClient
-	poll  time.Duration
+	conn   *grpc.ClientConn
+	query  types.QueryClient
+	poll   time.Duration
+	grants grants
 }
 
 // asking again every second is as often as a chain that makes a block every few has anything new
 const asOftenAsBlocks = time.Second
 
+const callTimeout = 30 * time.Second
+
 func Dial(cfg Config) (*Client, error) {
-	conn, err := grpc.NewClient(cfg.Address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = callTimeout
+	}
+	conn, err := grpc.NewClient(cfg.Address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(within(cfg.Timeout)))
 	if err != nil {
 		return nil, fmt.Errorf("chain %q: %w", cfg.Address, err)
 	}
 	if cfg.Poll <= 0 {
 		cfg.Poll = asOftenAsBlocks
 	}
-	return &Client{conn: conn, query: types.NewQueryClient(conn), poll: cfg.Poll}, nil
+	return &Client{conn: conn, query: types.NewQueryClient(conn), poll: cfg.Poll, grants: grants{answers: map[grantKey]grantAnswer{}}}, nil
+}
+
+func within(timeout time.Duration) grpc.UnaryClientInterceptor {
+	return func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
 }
 
 func (c *Client) Close() error { return c.conn.Close() }
+
+func (c *Client) ChainID(ctx context.Context) (string, error) {
+	info, err := cmtservice.NewServiceClient(c.conn).GetNodeInfo(ctx, &cmtservice.GetNodeInfoRequest{})
+	if err != nil {
+		return "", fmt.Errorf("asking the chain its id: %w", err)
+	}
+	if info.DefaultNodeInfo == nil || info.DefaultNodeInfo.Network == "" {
+		return "", fmt.Errorf("the chain did not say its id")
+	}
+	return info.DefaultNodeInfo.Network, nil
+}
 
 func (c *Client) Height(ctx context.Context) (vo.Height, error) {
 	var stamp metadata.MD
@@ -104,7 +134,7 @@ func (c *Client) Hardware(ctx context.Context, node vo.NodeRef) (vo.GPUInventory
 	}
 	for _, declared := range answer.Nodes.HardwareNodes {
 		if declared.LocalId == string(node.NodeID) {
-			return inventory(declared), nil
+			return gpuprofile.FromHardware(declared.Hardware), nil
 		}
 	}
 	return vo.GPUInventory{}, nil
@@ -220,17 +250,4 @@ func toStatus(status types.TrainshardStatus) shard.Status {
 	default:
 		return shard.StatusUnknown
 	}
-}
-
-// inventory counts every card the node declared; the chain matches a shard by the profile these add
-// up to, so a node with mixed cards is named after the first kind it listed
-func inventory(declared *types.HardwareNode) vo.GPUInventory {
-	held := vo.GPUInventory{}
-	for _, part := range declared.Hardware {
-		if held.Model == "" {
-			held.Model = part.Type
-		}
-		held.Count += int(part.Count)
-	}
-	return held
 }

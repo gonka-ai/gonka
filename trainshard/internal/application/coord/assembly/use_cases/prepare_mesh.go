@@ -24,17 +24,18 @@ type PrepareResult struct {
 }
 
 type PrepareMeshUseCase struct {
-	chain     shard.ChainReader
-	hosts     mesh.Hosts
-	verifier  ports.Verifier
-	submitter shard.ChainSubmitter
-	clock     ports.Clock
-	poll      time.Duration
-	settle    time.Duration
+	chain      shard.ChainReader
+	hosts      mesh.Hosts
+	verifier   ports.Verifier
+	delegation ports.Delegation
+	submitter  shard.ChainSubmitter
+	clock      ports.Clock
+	poll       time.Duration
+	settle     time.Duration
 }
 
-func NewPrepareMeshUseCase(chain shard.ChainReader, hosts mesh.Hosts, verifier ports.Verifier, submitter shard.ChainSubmitter, clock ports.Clock, poll, settle time.Duration) *PrepareMeshUseCase {
-	return &PrepareMeshUseCase{chain: chain, hosts: hosts, verifier: verifier, submitter: submitter, clock: clock, poll: poll, settle: settle}
+func NewPrepareMeshUseCase(chain shard.ChainReader, hosts mesh.Hosts, verifier ports.Verifier, delegation ports.Delegation, submitter shard.ChainSubmitter, clock ports.Clock, poll, settle time.Duration) *PrepareMeshUseCase {
+	return &PrepareMeshUseCase{chain: chain, hosts: hosts, verifier: verifier, delegation: delegation, submitter: submitter, clock: clock, poll: poll, settle: settle}
 }
 
 func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, deadline time.Time) (PrepareResult, error) {
@@ -60,7 +61,7 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 		}
 
 		// 3. Collect signed members
-		members, missing, err := mesh.Collect(ctx, uc.hosts, uc.verifier, shardID, record.Participants(), record.Refs())
+		members, missing, err := mesh.Collect(ctx, uc.hosts, uc.verifier, uc.delegation, shardID, record.Participants(), record.Refs())
 		if err != nil {
 			return PrepareResult{}, err
 		}

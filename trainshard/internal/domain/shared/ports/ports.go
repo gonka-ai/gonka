@@ -34,3 +34,7 @@ type Probe interface {
 	// MeshPortReachable error unless the endpoint is routable and the port is free; only a peer proves the rest
 	MeshPortReachable(ctx context.Context) error
 }
+
+type Delegation interface {
+	Speaks(ctx context.Context, participant vo.Participant, signer vo.Address) (bool, error)
+}

@@ -11,6 +11,7 @@ import (
 
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shared/vo"
+	"trainshard/internal/infrastructure/adapters/gpuprofile"
 )
 
 type config struct {
@@ -58,6 +59,7 @@ type config struct {
 	signatureWindow   time.Duration
 	requestTTL        time.Duration
 	chainPoll         time.Duration
+	chainTimeout      time.Duration
 	dapiTimeout       time.Duration
 }
 
@@ -86,7 +88,7 @@ func load() (config, error) {
 		logFormat:        env("LOG_FORMAT", "text"),
 	}
 
-	gpus, err := number("GPUS", 8)
+	gpus, err := number("GPUS", 0)
 	if err != nil {
 		return config{}, err
 	}
@@ -103,8 +105,8 @@ func load() (config, error) {
 		return config{}, err
 	}
 
-	cfg.inventory = vo.GPUInventory{Model: env("GPU_MODEL", "H100"), Count: int(gpus)}
-	cfg.limits = run.Limits{MaxGPUs: int(gpus), MaxDiskBytes: maxDisk, MaxSources: int(maxSources)}
+	cfg.inventory = gpuprofile.Declared(env("GPU_MODEL", ""), int(gpus))
+	cfg.limits = run.Limits{MaxDiskBytes: maxDisk, MaxSources: int(maxSources)}
 	cfg.minFreeDiskBytes = minFree
 	cfg.deniedCIDRs = list(env("DENIED_CIDRS", ""))
 
@@ -142,6 +144,7 @@ func load() (config, error) {
 		"SIGNATURE_WINDOW":   &cfg.signatureWindow,
 		"REQUEST_TTL":        &cfg.requestTTL,
 		"CHAIN_POLL":         &cfg.chainPoll,
+		"CHAIN_TIMEOUT":      &cfg.chainTimeout,
 		"DAPI_TIMEOUT":       &cfg.dapiTimeout,
 	} {
 		value, err := duration(name, defaults[name])
@@ -167,6 +170,7 @@ var defaults = map[string]time.Duration{
 	"SIGNATURE_WINDOW":   time.Minute,
 	"REQUEST_TTL":        time.Hour,
 	"CHAIN_POLL":         5 * time.Second,
+	"CHAIN_TIMEOUT":      30 * time.Second,
 	"DAPI_TIMEOUT":       30 * time.Second,
 }
 
@@ -177,7 +181,7 @@ func (c config) validate() error {
 	case len(c.nodes) == 0:
 		return fmt.Errorf("TRAINSHARD_NODES is required")
 	case c.keyName == "" && c.privateKey == "":
-		return fmt.Errorf("this daemon needs the participant's own key, which is the only thing a peer believes a mesh identity from: TRAINSHARD_KEY_NAME to take it from the keyring, or TRAINSHARD_PRIVATE_KEY to hand it over directly")
+		return fmt.Errorf("this daemon needs the key the api signs with, the participant's own or a warm key it granted: TRAINSHARD_KEY_NAME to take it from the keyring, or TRAINSHARD_PRIVATE_KEY to hand it over directly")
 	case c.chainGRPC == "":
 		return fmt.Errorf("TRAINSHARD_CHAIN_GRPC is required, it is the only thing that says what this host reserves and to whom")
 	case c.dapiAddress == "":
@@ -195,6 +199,10 @@ func (c config) validate() error {
 		return fmt.Errorf("TRAINSHARD_CONTAINER_NANO_CPUS is required on a docker machine, an unlimited run can starve the inference server")
 	case c.machine == "docker" && len(c.nodes) > 1:
 		return fmt.Errorf("TRAINSHARD_NODES holds %d nodes and a docker machine takes one: the cards are read per machine, so each node would see the other's training as foreign work and drain forever", len(c.nodes))
+	case c.machine == "docker" && !c.inventory.IsZero():
+		return fmt.Errorf("TRAINSHARD_GPUS and TRAINSHARD_GPU_MODEL describe a memory machine; a docker machine reads its cards off nvidia-smi")
+	case c.machine == "memory" && c.inventory.IsZero():
+		return fmt.Errorf("TRAINSHARD_GPUS and TRAINSHARD_GPU_MODEL are required on a memory machine, it has no cards to read")
 
 	case len(c.nodes) > c.meshPorts:
 		return fmt.Errorf("TRAINSHARD_MESH_PORTS covers %d ports and this host holds %d nodes", c.meshPorts, len(c.nodes))

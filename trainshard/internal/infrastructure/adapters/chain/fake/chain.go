@@ -18,6 +18,7 @@ type Chain struct {
 	shards       map[vo.ShardID]shard.Shard
 	reservations map[vo.NodeRef]vo.ShardID
 	hardware     map[vo.NodeRef]vo.GPUInventory
+	warmKeys     map[vo.Address]vo.Participant
 	events       chan struct{}
 }
 
@@ -26,6 +27,7 @@ func newChain() *Chain {
 		shards:       map[vo.ShardID]shard.Shard{},
 		reservations: map[vo.NodeRef]vo.ShardID{},
 		hardware:     map[vo.NodeRef]vo.GPUInventory{},
+		warmKeys:     map[vo.Address]vo.Participant{},
 		events:       make(chan struct{}, 1),
 	}
 }
@@ -84,6 +86,23 @@ func (c *Chain) Hardware(_ context.Context, node vo.NodeRef) (vo.GPUInventory, e
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.hardware[node], nil
+}
+
+func (c *Chain) Speaks(_ context.Context, participant vo.Participant, signer vo.Address) (bool, error) {
+	if vo.Address(participant) == signer {
+		return true, nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.warmKeys[signer] == participant, nil
+}
+
+func (c *Chain) MissingGrants(ctx context.Context, participant vo.Participant, signer vo.Address) ([]string, error) {
+	speaks, err := c.Speaks(ctx, participant, signer)
+	if err != nil || speaks {
+		return nil, err
+	}
+	return []string{"/inference.inference.MsgClaimRewards"}, nil
 }
 
 func (c *Chain) Watch(context.Context) (<-chan struct{}, error) {

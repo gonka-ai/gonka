@@ -10,7 +10,7 @@ import (
 
 var (
 	nodeA    = vo.NodeRef{Participant: "gonka1host", NodeID: "node-a"}
-	hardware = vo.GPUInventory{Model: "H100", Count: 8}
+	hardware = vo.GPUInventory{Profile: "NVIDIA H100 80GB HBM3 | 79GB x8", Count: 8}
 	errProbe = errors.New("no nvidia runtime")
 )
 
@@ -63,4 +63,13 @@ type claimStub struct {
 
 func (c *claimStub) Hardware(context.Context, vo.NodeRef) (vo.GPUInventory, error) {
 	return c.hardware, c.err
+}
+
+type keysStub struct {
+	missing []string
+	err     error
+}
+
+func (k *keysStub) MissingGrants(context.Context, vo.Participant, vo.Address) ([]string, error) {
+	return k.missing, k.err
 }

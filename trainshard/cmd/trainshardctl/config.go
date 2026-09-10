@@ -19,6 +19,8 @@ type config struct {
 	keyName         string
 	chainGRPC       string
 	chainID         string
+	chainTimeout    time.Duration
+	chainLanding    time.Duration
 	directory       hosts.Directory
 	timeout         time.Duration
 
@@ -34,7 +36,7 @@ func load() (config, error) {
 		keyringPassword: env("KEYRING_PASSWORD", ""),
 		keyName:         env("KEY_NAME", ""),
 		chainGRPC:       env("CHAIN_GRPC", ""),
-		chainID:         env("CHAIN_ID", "prod-sim"),
+		chainID:         env("CHAIN_ID", ""),
 		pollInterval:    10 * time.Second,
 		settleWindow:    2 * time.Minute,
 	}
@@ -45,11 +47,17 @@ func load() (config, error) {
 	}
 	cfg.directory = directory
 
-	timeout, err := time.ParseDuration(env("TIMEOUT", "10m"))
-	if err != nil || timeout <= 0 {
-		return config{}, fmt.Errorf("TRAINSHARDCTL_TIMEOUT must be a positive duration, such as 10m")
+	for name, target := range map[string]*time.Duration{
+		"TIMEOUT":       &cfg.timeout,
+		"CHAIN_TIMEOUT": &cfg.chainTimeout,
+		"CHAIN_LANDING": &cfg.chainLanding,
+	} {
+		value, err := time.ParseDuration(env(name, durations[name]))
+		if err != nil || value <= 0 {
+			return config{}, fmt.Errorf("TRAINSHARDCTL_%s must be a positive duration, such as %s", name, durations[name])
+		}
+		*target = value
 	}
-	cfg.timeout = timeout
 
 	switch {
 	case cfg.privateKey == "" && cfg.keyName == "":
@@ -60,6 +68,12 @@ func load() (config, error) {
 		return config{}, fmt.Errorf("TRAINSHARDCTL_CHAIN_GRPC is required, it is the chain that says what the shard reserves")
 	}
 	return cfg, nil
+}
+
+var durations = map[string]string{
+	"TIMEOUT":       "10m",
+	"CHAIN_TIMEOUT": "30s",
+	"CHAIN_LANDING": "2m",
 }
 
 func loadDirectory(path string) (hosts.Directory, error) {

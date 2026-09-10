@@ -8,10 +8,11 @@ const (
 	CheckFreeDisk       CheckName = "free_disk"
 	CheckMeshPort       CheckName = "mesh_port"
 	CheckVersion        CheckName = "version"
+	CheckKeyAuthorized  CheckName = "key_authorized"
 )
 
 func Required() []CheckName {
-	return []CheckName{CheckDockerGPU, CheckGPUsMatchChain, CheckFreeDisk, CheckMeshPort, CheckVersion}
+	return []CheckName{CheckDockerGPU, CheckGPUsMatchChain, CheckFreeDisk, CheckMeshPort, CheckVersion, CheckKeyAuthorized}
 }
 
 type Check struct {

@@ -68,6 +68,10 @@ type chainStub struct {
 	err      error
 }
 
+func (c *chainStub) Speaks(_ context.Context, participant vo.Participant, signer vo.Address) (bool, error) {
+	return vo.Address(participant) == signer, nil
+}
+
 func newChainStub() *chainStub {
 	return &chainStub{record: shardOf(nodeA, nodeB, nodeC), found: true, height: 500, applies: true}
 }

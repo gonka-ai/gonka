@@ -74,3 +74,35 @@ func TestTheDaemonRefusesToStandInForWhatItWasNotGiven(t *testing.T) {
 		})
 	}
 }
+
+func TestADockerMachineReadsItsCardsRatherThanBeingToldThem(t *testing.T) {
+	onADockerMachine(t, "node1")
+	t.Setenv("TRAINSHARD_GPUS", "8")
+	t.Setenv("TRAINSHARD_GPU_MODEL", "H100")
+
+	_, err := load()
+
+	if err == nil || !strings.Contains(err.Error(), "nvidia-smi") {
+		t.Fatalf("got %v, want declared cards refused on a docker machine", err)
+	}
+}
+
+func TestAMemoryMachineHasToBeToldItsCards(t *testing.T) {
+	onADockerMachine(t, "node1")
+	t.Setenv("TRAINSHARD_MACHINE", "memory")
+
+	_, err := load()
+	if err == nil || !strings.Contains(err.Error(), "TRAINSHARD_GPUS") {
+		t.Fatalf("got %v, want a memory machine refused without cards", err)
+	}
+
+	t.Setenv("TRAINSHARD_GPUS", "8")
+	t.Setenv("TRAINSHARD_GPU_MODEL", "H100")
+	cfg, err := load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.inventory.Profile != "H100 x8" || cfg.inventory.Count != 8 {
+		t.Fatalf("got %+v, want the declared cards as the chain would name them", cfg.inventory)
+	}
+}

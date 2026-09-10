@@ -18,10 +18,16 @@ export TRAINSHARD_NODES=node1                    # nodes to lease, comma separat
 export TRAINSHARD_MESH_ENDPOINT=203.0.113.10     # address peers reach you at
 export TRAINSHARD_MESH_PORTS=51820-51827         # one per leased node
 export TRAINSHARD_STATE_DIR=/mnt/xfs/trainshardd # xfs with prjquota
-export TRAINSHARD_GPUS=8
-export TRAINSHARD_GPU_MODEL=H100
 export TRAINSHARD_CONTAINER_MEMORY_BYTES=137438953472
 export TRAINSHARD_CONTAINER_NANO_CPUS=8000000000
+```
+
+The daemon signs with the key the api uses (`KEY_NAME` from `.inference`). If
+that is a warm key rather than the participant's own, it needs the ML ops
+grants from the participant, the same ones the api runs on:
+
+```
+inferenced tx inference grant-ml-ops-permissions <account-key> <warm-address> --from <account-key> --gas auto --gas-adjustment 1.5 --yes
 ```
 
 2. Start the daemon, the same compose command as always plus one file:
@@ -30,7 +36,9 @@ export TRAINSHARD_CONTAINER_NANO_CPUS=8000000000
 docker compose -f docker-compose.yml -f docker-compose.trainshard.yml up -d
 ```
 
-3. Check the opt-in landed on chain (the daemon refreshes it every 5 min):
+3. Check the node is ready. The daemon runs its checks every 5 min (GPUs match
+   what the api put on chain, key granted, disk, mesh port, version) and only
+   refreshes the opt-in when all pass; a failed check is logged with its reason:
 
 ```
 docker logs --tail 20 trainshardd
@@ -40,11 +48,18 @@ inferenced query txs --query "message.action='/inference.inference.MsgRefreshTra
 ## On the coordinator
 
 1. Take the GPU profile string from the hardware the hosts report, it is
-   `<TYPE> x<count>` per node, such as `TESLA T4 x1`:
+   `<TYPE> x<count>` per node with the type upper-cased, such as
+   `TESLA T4 | 15GB x1`:
 
 ```
 inferenced query inference hardware-nodes-all -o json | jq -c '.nodes[].hardware_nodes[].hardware'
 ```
+
+The api fills the hardware in from the mlnode's GPU endpoint as `<name> | <GB>GB`
+per card, and the daemon checks the same string against `nvidia-smi` before it
+opts a node in. A node whose hardware is declared by hand in `node-config.json`
+has to spell it the same way, `{"type":"Tesla T4 | 15GB","count":1}`, or the
+`gpus_match_chain` check keeps it out of the pool.
 
 Any profile is accepted unless governance filled
 `training_params.allowed_gpu_profile_ids`, then yours has to be in that list:
@@ -76,7 +91,7 @@ docker inspect myrepo/trainer:1 --format '{{index .RepoDigests 0}}'
    between runs:
 
 ```
-GPU_PROFILE="TESLA T4 x1"; MAX_NODES=2; MAX_BLOCKS=500; BASE_IMAGE=myrepo/trainer@sha256:...
+GPU_PROFILE="TESLA T4 | 15GB x1"; MAX_NODES=2; MAX_BLOCKS=500; BASE_IMAGE=myrepo/trainer@sha256:...
 
 jq -n --arg a "$(inferenced query auth module-account gov -o json | jq -r .account.value.address)" \
       --arg c "$(inferenced keys show <key> -a)" --arg p "$GPU_PROFILE" --arg i "$BASE_IMAGE" \
@@ -99,7 +114,7 @@ echo '{"gonka1host1...":"http://host1.example.com:9700",
 
 export TRAINSHARD_HOSTS=$PWD/hosts.json
 export TRAINSHARD_CHAIN_GRPC=chain-host:9090
-export TRAINSHARD_CHAIN_ID=gonka-mainnet    # default: prod-sim
+export TRAINSHARD_CHAIN_ID=gonka-mainnet    # optional, read from the chain and only checked when set
 export TRAINSHARD_KEY_NAME=mykey
 export TRAINSHARD_KEYRING_DIR=$HOME/.inference
 export TRAINSHARD_KEYRING_BACKEND=test      # default: file

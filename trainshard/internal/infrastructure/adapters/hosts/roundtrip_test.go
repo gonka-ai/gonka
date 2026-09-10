@@ -91,7 +91,7 @@ func newHost(t *testing.T) *hosts.Client {
 	if err != nil {
 		t.Fatalf("state: %v", err)
 	}
-	machine := memory.New(log, vo.GPUInventory{Model: "H100", Count: 8})
+	machine := memory.New(log, vo.GPUInventory{Profile: "H100 x8", Count: 8})
 
 	module := hostdrun.New(hostdrun.Config{
 		Participant: host,

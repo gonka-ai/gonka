@@ -75,6 +75,21 @@ func (v *verifierStub) Recover(_, signature []byte) (vo.Address, error) {
 	return vo.Address(strings.TrimSpace(string(signature))), nil
 }
 
+type delegationStub struct {
+	warm map[vo.Address]vo.Participant
+	err  error
+}
+
+func (d *delegationStub) Speaks(_ context.Context, participant vo.Participant, signer vo.Address) (bool, error) {
+	if d.err != nil {
+		return false, d.err
+	}
+	if vo.Address(participant) == signer {
+		return true, nil
+	}
+	return d.warm[signer] == participant, nil
+}
+
 func configOf(nodes ...vo.NodeRef) mesh.Config {
 	peers := make([]mesh.Peer, 0, len(nodes))
 	for rank, node := range nodes {

@@ -256,8 +256,8 @@ func fence(pid int, device string, denied []string, allowed []allowance) error {
 	})
 
 	// the interface accepts have to come before the denied ranges and never move below them: the
-	// mesh hands out 10.42 addresses, which sit inside the private ranges an operator denies, so a
-	// deny read first would drop the training's own traffic to its peers
+	// mesh hands out 10.<shard>.0.<rank> addresses, which sit inside the private ranges an operator
+	// denies, so a deny read first would drop the training's own traffic to its peers
 	for _, side := range []struct {
 		chain *nftables.Chain
 		key   expr.MetaKey

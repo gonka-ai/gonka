@@ -15,6 +15,7 @@ type fixture struct {
 	probe     *probeStub
 	cards     *cardsStub
 	claim     *claimStub
+	keys      *keysStub
 	submitter *submitterStub
 }
 
@@ -23,12 +24,13 @@ func newFixture() *fixture {
 		probe:     newProbeStub(),
 		cards:     &cardsStub{inventory: hardware},
 		claim:     &claimStub{hardware: hardware},
+		keys:      &keysStub{},
 		submitter: &submitterStub{},
 	}
 }
 
 func (f *fixture) refresh() *usecases.RefreshOptInUseCase {
-	return usecases.NewRefreshOptInUseCase(f.probe, f.cards, f.claim, f.submitter,
+	return usecases.NewRefreshOptInUseCase(f.probe, f.cards, f.claim, f.keys, f.submitter,
 		readiness.Spec{Version: version, MinFreeDiskBytes: diskFloor}, ttl)
 }
 
@@ -71,5 +73,20 @@ func TestRefreshOptInLetsAnUnhealthyNodeLapse(t *testing.T) {
 	}
 	if len(f.submitter.ttls) != 0 {
 		t.Fatal("nothing may be submitted for a node that failed a check")
+	}
+}
+
+func TestRefreshOptInWaitsForTheKeyToBeGranted(t *testing.T) {
+	f := newFixture()
+	f.keys.missing = []string{"/inference.inference.MsgRefreshTrainingNodeOptIn"}
+	refresh := f.refresh()
+
+	result, err := refresh.Execute(context.Background(), nodeA)
+
+	if err != nil {
+		t.Fatalf("refresh must not fail: %v", err)
+	}
+	if result.Ready || len(f.submitter.ttls) != 0 {
+		t.Fatalf("got ready=%v ttls=%v, want the node kept out until the grant lands", result.Ready, f.submitter.ttls)
 	}
 }
