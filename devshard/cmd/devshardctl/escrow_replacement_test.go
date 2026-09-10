@@ -130,7 +130,10 @@ func TestGatewayScheduleDepletedEscrowReplacementIgnoresARetiredReplacedEscrow(t
 	broadcasts := stubCreateOnChain(t, "TXCONFIRMED", 99)
 	runBalanceTick(t, gateway, depletedRuntime.id)
 	require.EqualValues(t, 1, broadcasts.Load(), "the depleted escrow was not replaced by the balance tick")
-	require.True(t, gateway.retireRuntime(depletedRuntime.id, "settled"), "the replaced escrow was not retired")
+	gateway.mu.Lock()
+	_, stillRegistered := gateway.runtimes[depletedRuntime.id]
+	gateway.mu.Unlock()
+	require.False(t, stillRegistered, "a no-settle replacement must retire the depleted runtime")
 
 	gateway.scheduleDepletedEscrowReplacement(depletedRuntime.id, depletedRuntime.model, "balance_exhausted")
 	waitForReplacementIdle(t, gateway, depletedRuntime.id)
