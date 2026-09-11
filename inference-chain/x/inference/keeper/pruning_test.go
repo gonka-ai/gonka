@@ -502,3 +502,107 @@ func TestDevshardPruningPostPruneHook(t *testing.T) {
 	iter.Close()
 	require.False(t, statsFound, "DevshardHostEpochStats should be cleared")
 }
+
+// setValidationDetails is a helper to seed InferenceValidationDetails for an epoch.
+func setValidationDetails(ctx context.Context, k keeper.Keeper, epochId uint64, count int) {
+	for i := 0; i < count; i++ {
+		k.SetInferenceValidationDetails(ctx, types.InferenceValidationDetails{
+			EpochId:     epochId,
+			InferenceId: fmt.Sprintf("epoch%d-inf-%d", epochId, i),
+		})
+	}
+}
+
+func countValidationDetails(ctx context.Context, k keeper.Keeper, epochId uint64) int {
+	return len(k.GetInferenceValidationDetailsForEpoch(ctx, epochId))
+}
+
+// TestInferenceValidationDetailsPruningThreshold verifies only epochs older than the
+// fixed threshold (5) are pruned, and epochs within the claim window are kept.
+func TestInferenceValidationDetailsPruningThreshold(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	// Seed several epochs. With current epoch 10 and threshold 5, endEpoch = 5,
+	// so epochs 1..5 are eligible and 6..10 must be kept.
+	for e := uint64(1); e <= 10; e++ {
+		setValidationDetails(ctx, k, e, 3)
+	}
+
+	// First call drains epochs 1..5; the marker only advances on a later call
+	// once each epoch is confirmed empty (same behavior as the InferencePruner).
+	require.NoError(t, k.Prune(ctx, 10))
+
+	for e := uint64(1); e <= 5; e++ {
+		require.Equal(t, 0, countValidationDetails(ctx, k, e),
+			"epoch %d should be pruned", e)
+	}
+	for e := uint64(6); e <= 10; e++ {
+		require.Equal(t, 3, countValidationDetails(ctx, k, e),
+			"epoch %d is within the claim window and must be kept", e)
+	}
+
+	// Second call finds epochs 1..5 empty and advances the pruned marker.
+	require.NoError(t, k.Prune(ctx, 10))
+	st, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(5), st.InferenceValidationDetailsPrunedEpoch,
+		"pruned marker should advance to endEpoch once epochs are empty")
+}
+
+// TestInferenceValidationDetailsPruningMaxLimit ensures the per-block max is respected
+// and the pruned-epoch marker only advances once the epoch is fully drained.
+func TestInferenceValidationDetailsPruningMaxLimit(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	// All entries in epoch 1; with current epoch 6 and threshold 5, endEpoch = 1.
+	total := int(keeper.InferenceValidationDetailsPruningMaxPerBlock) + 250
+	setValidationDetails(ctx, k, 1, total)
+	current := int64(6)
+
+	// 1st prune: removes exactly PruningMax, marker not yet advanced.
+	require.NoError(t, k.Prune(ctx, current))
+	remaining := countValidationDetails(ctx, k, 1)
+	require.Equal(t, total-int(keeper.InferenceValidationDetailsPruningMaxPerBlock), remaining)
+	st, _ := k.PruningState.Get(ctx)
+	require.Equal(t, int64(0), st.InferenceValidationDetailsPrunedEpoch,
+		"marker should not advance while items remain")
+
+	// 2nd prune: removes the rest (still < max), marker still not advanced in same call.
+	require.NoError(t, k.Prune(ctx, current))
+	require.Equal(t, 0, countValidationDetails(ctx, k, 1))
+	st, _ = k.PruningState.Get(ctx)
+	require.Equal(t, int64(0), st.InferenceValidationDetailsPrunedEpoch)
+
+	// 3rd prune: epoch 1 empty, marker advances.
+	require.NoError(t, k.Prune(ctx, current))
+	st, _ = k.PruningState.Get(ctx)
+	require.Equal(t, int64(1), st.InferenceValidationDetailsPrunedEpoch,
+		"marker should advance after verifying epoch is empty")
+}
+
+// TestInferenceValidationDetailsPruningIdempotent verifies repeated Prune calls with
+// nothing new to prune are safe and keep the current-window data intact.
+func TestInferenceValidationDetailsPruningIdempotent(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	for e := uint64(1); e <= 8; e++ {
+		setValidationDetails(ctx, k, e, 2)
+	}
+
+	// current 8, threshold 5 => endEpoch 3, so epochs 1..3 pruned, 4..8 kept.
+	require.NoError(t, k.Prune(ctx, 8))
+	require.NoError(t, k.Prune(ctx, 8))
+	require.NoError(t, k.Prune(ctx, 8))
+
+	for e := uint64(1); e <= 3; e++ {
+		require.Equal(t, 0, countValidationDetails(ctx, k, e))
+	}
+	for e := uint64(4); e <= 8; e++ {
+		require.Equal(t, 2, countValidationDetails(ctx, k, e))
+	}
+	st, _ := k.PruningState.Get(ctx)
+	require.Equal(t, int64(3), st.InferenceValidationDetailsPrunedEpoch)
+}
