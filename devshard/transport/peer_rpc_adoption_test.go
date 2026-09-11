@@ -124,3 +124,38 @@ func TestPeerRPCAdoption_ReleaseKeepsReadyPeerConn(t *testing.T) {
 		t.Fatalf("dropping an idle PeerConn must delete host_rpc, got %v", sink.host[peer])
 	}
 }
+
+func TestPeerRPCAdoption_TwoVersionsDoNotCollapse(t *testing.T) {
+	sink := newAdoptionSink()
+	a := NewPeerRPCAdoption(sink)
+	const host = "gonka1host"
+	v5 := host + "@v5"
+	v6 := host + "@v6"
+
+	a.SetPeerConnReady(v5, true)
+	a.SetPeerConnReady(v6, true)
+	a.SetPeerConnReady(v5, false)
+
+	if !sink.host[v6][PeerRPCPathH2] {
+		t.Fatal("v6 h2 must survive v5 going down")
+	}
+	if _, ok := sink.host[v5]; ok {
+		t.Fatalf("idle v5 must be deleted, got %v", sink.host[v5])
+	}
+}
+
+func TestPeerRPCAdoption_BindEscrowAddressSeesVersionedReady(t *testing.T) {
+	sink := newAdoptionSink()
+	a := NewPeerRPCAdoption(sink)
+	const host = "gonka1host"
+
+	a.SetPeerConnReady(host+"@v5", true)
+	a.BindEscrow("escrow-a", host)
+
+	if got := sink.escrow[PeerRPCPathH2]; got != 1 {
+		t.Fatalf("escrow_sessions h2 = %d, want 1 (address bind, versioned ready)", got)
+	}
+	if sink.host[host][PeerRPCPathJSON] {
+		t.Fatal("json host_rpc must not be set when a child PeerConn is ready")
+	}
+}

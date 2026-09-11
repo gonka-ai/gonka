@@ -138,6 +138,17 @@ func TestHADiffPersistMetricsIncrement(t *testing.T) {
 	if got := testutil.ToFloat64(peerRPCEnabled); got != 0 {
 		t.Fatalf("peer_rpc_enabled after clear = %v, want 0", got)
 	}
+
+	beforePeerAttach := testutil.ToFloat64(PeerAttachCounter("gonka1peer", "ok"))
+	IncPeerAttach("gonka1peer", "ok")
+	if testutil.ToFloat64(PeerAttachCounter("gonka1peer", "ok"))-beforePeerAttach != 1 {
+		t.Fatalf("peer_attach ok delta want 1")
+	}
+	SetPeerSessionState("gonka1peer", PeerSessionReady)
+	if testutil.ToFloat64(PeerSessionStateGauge("gonka1peer", PeerSessionReady)) != 1 {
+		t.Fatalf("peer_session_state ready want 1")
+	}
+	ClearPeerSessionState("gonka1peer")
 }
 
 func TestObservePostgresHealthProbeTracksOutcomeAndSaturation(t *testing.T) {

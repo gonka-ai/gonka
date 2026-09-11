@@ -2940,16 +2940,29 @@ func shortAddress(addr string) string {
 	return addr[len(addr)-8:]
 }
 
-// Close stops the heartbeat loop (if started) and releases the underlying
-// storage, if any. Safe to call multiple times.
+// Close stops the heartbeat loop (if started), releases host clients
+// (PeerConn Attach/Watch), and closes the underlying storage, if any.
+// Safe to call multiple times.
 func (s *Session) Close() error {
 	s.StopHeartbeatLoop()
 	s.stopHeightSeedLoop()
 	s.stopHeightSyncFlush()
+	closeHostClients(s.clients)
 	if s.store != nil {
 		return s.store.Close()
 	}
 	return nil
+}
+
+// closeHostClients Releases each unique RPCClient. HTTPClient and in-process
+// stubs have no Close. RPCClient.Close is idempotent, so a shared pointer
+// in several slots is safe to Close more than once.
+func closeHostClients(clients []HostClient) {
+	for _, c := range clients {
+		if closer, ok := c.(interface{ Close() }); ok {
+			closer.Close()
+		}
+	}
 }
 
 // TimeoutVerifier contacts a host for timeout verification votes.

@@ -8,14 +8,15 @@ import (
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
-const maxRecvBytes = 10 << 20
+const maxRecvBytes = 16 << 10
 
 // NewMux serves all transport RPC services. auth is required; nil panics at
 // construction so Attach cannot run on a nil receiver. Unimplemented
 // services still occupy their Connect paths so the public URL shape is
-// stable. Every RPC except Attach is dropped unless X-Devshard-Session names a
-// live host-level handshake. The outer handshakeGate runs before Connect reads
-// the body.
+// stable; handshakeGate answers those as unimplemented before Connect reads
+// the body (finding 58). Every RPC except Attach is dropped unless
+// X-Devshard-Session names a live host-level handshake. The outer
+// handshakeGate runs before Connect reads the body.
 func NewMux(auth *PeerAuthHandler, session *SessionHandler) http.Handler {
 	if auth == nil {
 		panic("rpcserver.NewMux: PeerAuthHandler is required")

@@ -120,6 +120,29 @@ func TestSessionInterceptor_HandshakeAdmitsThenUnimplemented(t *testing.T) {
 	require.Equal(t, connect.CodeUnimplemented, connect.CodeOf(err))
 }
 
+func TestHandshakeGate_UnimplementedRejectsBeforeBody(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	auth := newTestAuth(PeerAuthConfig{})
+	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
+	t.Cleanup(srv.Close)
+	attached := attach(t, rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL), signer, []byte("unimpl-body-attach-nonce-01"))
+
+	post := func(body []byte) int {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, srv.URL+rpcpbconnect.GossipServiceNonceProcedure, bytes.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/proto")
+		SetSessionHeader(req.Header, attached.SessionToken)
+		resp, err := srv.Client().Do(req)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		return resp.StatusCode
+	}
+	require.Equal(t, http.StatusNotImplemented, post(nil))
+	require.Equal(t, http.StatusNotImplemented, post(bytes.Repeat([]byte{0}, maxRecvBytes+1)),
+		"unimplemented must not reach the Connect read cap (finding 58)")
+}
+
 func TestSessionInterceptor_BindsPeerAndToken(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	auth := newTestAuth(PeerAuthConfig{})

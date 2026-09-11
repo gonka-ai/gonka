@@ -44,12 +44,12 @@ const (
 	// Matches transport.nonInferenceRetryBudget: one Attach RTT plus retry.
 	defaultTokenGrace = 5 * time.Second
 	// maxAttachRecvBytes is the HTTP body cap on Attach only. The Connect
-	// mux still allows 10 MiB on authenticated RPCs; this path is
-	// unauthenticated and must not buy a 10 MiB read before ECDSA.
+	// mux allows 16 KiB on authenticated Phase 1 RPCs (finding 58); this
+	// path is unauthenticated and must not buy that read before ECDSA.
 	maxAttachRecvBytes = 4 << 10
 	// retiredNonceTTL is how long a dropped attach_nonce stays unrebindable.
-	// It covers the remaining VerifyAttach window after the row leaves
-	// sessions, so a captured Attach cannot evict a newer session.
+	// Anchored to max(drop time, attach timestamp) so a future-skewed
+	// signature cannot outlive its retirement (finding 55).
 	retiredNonceTTL = time.Duration(transport.MaxTimestampDrift) * time.Second
 	// sweepBatchSize is how many expired session / retired-nonce keys SweepOnce
 	// deletes per write-lock hold. Attach's in-lock sweep at the cap is
@@ -242,7 +242,8 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("unsupported protocol_version"))
 	}
 
-	if err := h.chargeAttach(); err != nil {
+	chargedAt, err := h.chargeAttach()
+	if err != nil {
 		return nil, err
 	}
 
@@ -253,11 +254,15 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	if recovered != msg.PeerAddress {
 		return nil, connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("recovered address %s does not match peer_address", recovered))
 	}
-	if h.peerSessionLive(recovered) {
-		h.refundAttach()
-	}
-	if err := h.checkAllow(ctx, recovered); err != nil {
-		return nil, err
+	// Refund only after a successful bind (finding 54). A live peer whose
+	// Attach then fails (nonce reuse, roster, cap) must keep the charge.
+	wasLive := h.peerSessionLive(recovered)
+	if !wasLive {
+		// Door check is first Attach only. Watch and live renewals are
+		// host-scoped (finding 3): the URL escrow may already be gone.
+		if err := h.checkAllow(ctx, recovered); err != nil {
+			return nil, err
+		}
 	}
 
 	token := append([]byte(nil), msg.AttachNonce...)
@@ -303,6 +308,9 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	h.replaceSessionLocked(recovered, token, expires, msg.Timestamp)
 	h.observeSizesLocked()
 	h.mu.Unlock()
+	if wasLive {
+		h.refundAttach(chargedAt)
+	}
 
 	return connect.NewResponse(&rpcpb.AttachResponse{
 		SessionToken: token,
@@ -515,9 +523,9 @@ func (h *PeerAuthHandler) evictOldestIdleLocked() bool {
 
 // chargeAttach is the process-wide Attach throttle, before ECDSA. Sliding
 // one-minute window. Child sees versiond as src, so this is not per client IP.
-// A later refundAttach drops this charge if VerifyAttach recovered a peer that
-// already holds a live or grace session.
-func (h *PeerAuthHandler) chargeAttach() error {
+// A later refundAttach drops this charge if the Attach succeeds for a peer that
+// already held a live or grace session (finding 42 / 54).
+func (h *PeerAuthHandler) chargeAttach() (time.Time, error) {
 	limit := h.cfg.AttachFloorPerMin
 	now := h.now()
 	cutoff := now.Add(-time.Minute)
@@ -535,17 +543,23 @@ func (h *PeerAuthHandler) chargeAttach() error {
 		if len(h.attachTimes) > 0 {
 			retry = h.attachTimes[0].Add(time.Minute).Sub(now)
 		}
-		return attachFloorExhausted(retryAfterSeconds(retry))
+		return time.Time{}, attachFloorExhausted(retryAfterSeconds(retry))
 	}
 	h.attachTimes = append(h.attachTimes, now)
-	return nil
+	return now, nil
 }
 
-func (h *PeerAuthHandler) refundAttach() {
+func (h *PeerAuthHandler) refundAttach(at time.Time) {
+	if at.IsZero() {
+		return
+	}
 	h.attachMu.Lock()
 	defer h.attachMu.Unlock()
-	if n := len(h.attachTimes); n > 0 {
-		h.attachTimes = h.attachTimes[:n-1]
+	for i := len(h.attachTimes) - 1; i >= 0; i-- {
+		if h.attachTimes[i].Equal(at) {
+			h.attachTimes = append(h.attachTimes[:i], h.attachTimes[i+1:]...)
+			return
+		}
 	}
 }
 
@@ -588,24 +602,31 @@ func retryAfterSeconds(d time.Duration) int {
 
 func (h *PeerAuthHandler) dropSessionLocked(tok string, sess *peerSession) {
 	delete(h.sessions, tok)
-	h.retireNonceLocked(tok)
-	if sess == nil {
-		return
+	var attached int64
+	if sess != nil {
+		attached = sess.attached
+		sess.stopWatchLocked()
+		if h.byPeer[sess.peer] == tok {
+			delete(h.byPeer, sess.peer)
+		}
+		if h.prevByPeer[sess.peer] == tok {
+			delete(h.prevByPeer, sess.peer)
+		}
 	}
-	sess.stopWatchLocked()
-	if h.byPeer[sess.peer] == tok {
-		delete(h.byPeer, sess.peer)
-	}
-	if h.prevByPeer[sess.peer] == tok {
-		delete(h.prevByPeer, sess.peer)
-	}
+	h.retireNonceLocked(tok, attached)
 }
 
-func (h *PeerAuthHandler) retireNonceLocked(tok string) {
+func (h *PeerAuthHandler) retireNonceLocked(tok string, attached int64) {
 	if tok == "" {
 		return
 	}
-	h.retired[tok] = h.now().Add(retiredNonceTTL)
+	until := h.now().Add(retiredNonceTTL)
+	if attached > 0 {
+		if t := time.Unix(attached, 0).Add(retiredNonceTTL); t.After(until) {
+			until = t
+		}
+	}
+	h.retired[tok] = until
 }
 
 func (h *PeerAuthHandler) nonceRetiredLocked(tok string) bool {

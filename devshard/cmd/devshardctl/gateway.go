@@ -318,6 +318,12 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: height sync: %w", cfg.ID, err)
 	}
+	if extraClient == nil {
+		extraClient = &transport.ClientConfig{}
+	}
+	if deps.metrics != nil {
+		extraClient.RPCAdoption = deps.metrics.PeerRPCAdoption()
+	}
 	compressRequestBodies, err := compressRequestBodiesFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, err)
@@ -405,6 +411,7 @@ func (g *Gateway) runtimeBuildDepsFromSettings(perf *PerfTracker, settings Gatew
 		defaultModel: firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
 		perf:         perf,
 		params:       params,
+		metrics:      g.metrics,
 	}
 }
 
@@ -603,6 +610,7 @@ func (rt *devshardRuntime) close() error {
 		rt.stopOnce.Do(func() { close(rt.stopped) })
 	}
 	if rt.session != nil {
+		// Session.Close Releases PeerConn refs (finding 1).
 		rt.session.Close()
 	}
 	return nil
@@ -3849,11 +3857,7 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, id), http.StatusConflict)
 			return
 		}
-		delete(g.runtimes, id)
-		g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
-		if g.capacity != nil {
-			g.capacity.RemoveEscrow(id)
-		}
+		g.unregisterRuntimeLocked(id)
 		if err := rt.close(); err != nil {
 			log.Printf("close devshard %s: %v", id, err)
 		}
@@ -4139,6 +4143,18 @@ func (g *Gateway) retireRuntimeLocked(id, reason string) *devshardRuntime {
 		rt.retirePending.Store(true)
 		log.Printf("runtime_retire_deferred escrow=%s reason=%q active_requests=%d pending_race_cleanup=%d",
 			id, reason, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
+		return nil
+	}
+	return g.unregisterRuntimeLocked(id)
+}
+
+// unregisterRuntimeLocked drops the runtime from the in-memory registry and
+// releases adoption / host-ping. Callers must hold g.mu and have already
+// decided to remove it (retire checks background work; admin clean checks
+// active requests).
+func (g *Gateway) unregisterRuntimeLocked(id string) *devshardRuntime {
+	rt, ok := g.runtimes[id]
+	if !ok {
 		return nil
 	}
 	delete(g.runtimes, id)

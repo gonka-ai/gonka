@@ -1,6 +1,9 @@
 package transport
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 // Peer RPC path labels for gateway adoption metrics (finding 26).
 const (
@@ -38,7 +41,7 @@ func NewPeerRPCAdoption(sink PeerRPCAdoptionSink) *PeerRPCAdoption {
 }
 
 // SetPeerConnReady records whether this host child has a ready PeerConn.
-// peer is the host gonka address (Phase 2 may use addr@version).
+// peer is addr@version (same as the PeerConn registry).
 func (a *PeerRPCAdoption) SetPeerConnReady(peer string, ready bool) {
 	if a == nil || peer == "" {
 		return
@@ -85,12 +88,12 @@ func (a *PeerRPCAdoption) BindEscrow(escrowID, peer string) {
 	peers[peer] = struct{}{}
 	a.hosts[peer]++
 	path := PeerRPCPathJSON
-	if a.ready[peer] {
+	if a.childReady(peer) {
 		path = PeerRPCPathH2
 	}
 	if a.sink != nil {
 		a.sink.IncEscrowSession(path)
-		if !a.ready[peer] {
+		if !a.childReady(peer) {
 			a.sink.SetHostRPC(peer, PeerRPCPathJSON, true)
 		}
 	}
@@ -133,7 +136,7 @@ func (a *PeerRPCAdoption) ReleaseEscrow(escrowID string) {
 			continue
 		}
 		delete(a.hosts, peer)
-		if a.ready[peer] {
+		if a.childReady(peer) {
 			if a.sink != nil {
 				a.sink.DeleteHostRPC(peer, PeerRPCPathJSON)
 			}
@@ -141,6 +144,22 @@ func (a *PeerRPCAdoption) ReleaseEscrow(escrowID string) {
 		}
 		a.deleteIdleHostLocked(peer)
 	}
+}
+
+// childReady is true if this exact id is ready, or (when peer is a bare
+// gonka address) any addr@version child of that host is ready. BindEscrowHosts
+// still passes addresses; PeerConn reports ready as addr@version (finding 8).
+func (a *PeerRPCAdoption) childReady(peer string) bool {
+	if a.ready[peer] {
+		return true
+	}
+	prefix := peer + "@"
+	for id, ok := range a.ready {
+		if ok && strings.HasPrefix(id, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *PeerRPCAdoption) deleteIdleHostLocked(peer string) {

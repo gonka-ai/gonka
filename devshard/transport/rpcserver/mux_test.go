@@ -7,6 +7,8 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 
+	"devshard/transport/rpcpb/rpcpbconnect"
+
 	_ "devshard/transport/rpcpb"
 )
 
@@ -33,6 +35,24 @@ func TestAllProcedurePathsMatchesProtos(t *testing.T) {
 		got[proc] = struct{}{}
 	}
 	require.Equal(t, want, got)
+}
+
+func TestImplementedRPC_Phase1Subset(t *testing.T) {
+	known := make(map[string]struct{})
+	for _, proc := range AllProcedurePaths() {
+		known[proc] = struct{}{}
+	}
+	for _, proc := range []string{
+		rpcpbconnect.PeerAuthServiceAttachProcedure,
+		rpcpbconnect.PeerAuthServiceWatchProcedure,
+		rpcpbconnect.SessionServiceGetSignaturesProcedure,
+	} {
+		_, ok := known[proc]
+		require.True(t, ok, proc)
+		require.True(t, isImplementedRPC(proc), proc)
+	}
+	require.False(t, isImplementedRPC(rpcpbconnect.GossipServiceNonceProcedure))
+	require.False(t, isImplementedRPC(rpcpbconnect.SessionServiceChatProcedure))
 }
 
 func TestNewMux_NilAuthPanics(t *testing.T) {

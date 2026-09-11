@@ -77,6 +77,16 @@ func hostClientConfig(
 	return clientConfig
 }
 
+func asHostClient(v any) HostClient {
+	if v == nil {
+		return nil
+	}
+	if hc, ok := v.(HostClient); ok {
+		return hc
+	}
+	panic(fmt.Sprintf("SelectTransport returned %T, not HostClient", v))
+}
+
 func deferredWarmKeyResolver(resolve state.WarmKeyResolver) (state.WarmKeyResolver, func()) {
 	var recoveryComplete atomic.Bool
 	resolver := func(warmAddr, coldAddr string) (bool, error) {
@@ -204,7 +214,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 
 	clients := make([]HostClient, len(group))
 	participantKeys := make([]string, len(group))
-	clientCache := make(map[string]*transport.HTTPClient)
+	clientCache := make(map[string]HostClient)
 	var sharedPeerTips *transport.HeightSyncPeerTips
 	if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
 		if cfg.ExtraClientConfig.HeightSyncPeerTips != nil {
@@ -212,6 +222,10 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		} else {
 			sharedPeerTips = transport.NewHeightSyncPeerTips()
 		}
+	}
+	endpoints := transport.RPCEndpointsFromEnv()
+	if cfg.ExtraClientConfig != nil && !cfg.ExtraClientConfig.RPCEndpoints.Empty() {
+		endpoints = cfg.ExtraClientConfig.RPCEndpoints
 	}
 	for i, slot := range group {
 		participantKeys[i] = slot.ValidatorAddress
@@ -221,11 +235,13 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		}
 		info, err := cfg.Bridge.GetHostInfo(slot.ValidatorAddress)
 		if err != nil {
+			closeHostClients(hostClientsFromCache(clientCache))
 			sqlStore.Close()
 			return nil, nil, fmt.Errorf("get host info for %s: %w", slot.ValidatorAddress, err)
 		}
-		c := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer,
+		httpClient := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer,
 			hostClientConfig(cfg, routePrefix, slot.ValidatorAddress, sharedPeerTips))
+		c := asHostClient(transport.SelectTransport(httpClient, slot.ValidatorAddress, endpoints, cfg.ExtraClientConfig))
 		clientCache[slot.ValidatorAddress] = c
 		clients[i] = c
 	}
@@ -238,6 +254,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			httpSessionSMOpts(cfg, state.WithWarmKeyResolver(warmKeyResolver))...,
 		)
 		if recErr != nil {
+			closeHostClients(hostClientsFromCache(clientCache))
 			sqlStore.Close()
 			return nil, nil, fmt.Errorf("recover session: %w", recErr)
 		}
@@ -252,6 +269,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		return session, recSM, nil
 	}
 	if !errors.Is(metaErr, storage.ErrSessionNotFound) {
+		closeHostClients(hostClientsFromCache(clientCache))
 		sqlStore.Close()
 		return nil, nil, fmt.Errorf("check existing session: %w", metaErr)
 	}
@@ -265,6 +283,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		Group:          group,
 		InitialBalance: escrow.Amount,
 	}); createErr != nil {
+		closeHostClients(hostClientsFromCache(clientCache))
 		sqlStore.Close()
 		return nil, nil, fmt.Errorf("create storage session: %w", createErr)
 	}
@@ -273,12 +292,14 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		httpSessionSMOpts(cfg, state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey), state.WithVersion(sessionVersion))...,
 	)
 	if err != nil {
+		closeHostClients(hostClientsFromCache(clientCache))
 		sqlStore.Close()
 		return nil, nil, fmt.Errorf("create state machine: %w", err)
 	}
 
 	session, err := NewSession(sm, signer, cfg.EscrowID, group, clients, verifier, httpSessionOpts(cfg, WithStorage(sqlStore))...)
 	if err != nil {
+		closeHostClients(hostClientsFromCache(clientCache))
 		sqlStore.Close()
 		return nil, nil, fmt.Errorf("create session: %w", err)
 	}
@@ -290,6 +311,14 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	session.SetHeightSyncPeerTips(sharedPeerTips)
 
 	return session, sm, nil
+}
+
+func hostClientsFromCache(cache map[string]HostClient) []HostClient {
+	out := make([]HostClient, 0, len(cache))
+	for _, c := range cache {
+		out = append(out, c)
+	}
+	return out
 }
 
 func httpSessionSMOpts(cfg HTTPSessionConfig, extra ...state.SMOption) []state.SMOption {

@@ -3,12 +3,28 @@ package transport
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"hash"
+	"net/http"
 
 	"devshard/signing"
 	"devshard/transport/rpcpb"
 )
+
+// SessionHeader is the bearer from Attach. Every RPC except Attach must carry
+// it. The value is hex of AttachResponse.session_token.
+const SessionHeader = "X-Devshard-Session"
+
+// EncodeSessionToken is the on-wire form of AttachResponse.session_token.
+func EncodeSessionToken(token []byte) string {
+	return hex.EncodeToString(token)
+}
+
+// SetSessionHeader puts the Attach token on a Connect request.
+func SetSessionHeader(h http.Header, token []byte) {
+	h.Set(SessionHeader, EncodeSessionToken(token))
+}
 
 // AttachDomain is the signing domain for PeerAuthService.Attach.
 const AttachDomain = "devshard.attach.v1"

@@ -331,10 +331,21 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 
 	userPeers := make(map[int]*transport.HTTPClient, len(cfg.peerURLs))
 	var gossipPeers []gossip.PeerClient
+	endpoints := transport.RPCEndpointsFromEnv()
 	for i, peerURL := range cfg.peerURLs {
 		userPeers[i] = transport.NewHTTPClient(peerURL, cfg.escrowID, cfg.userSigner)
 		if i != cfg.hostIndex {
-			gossipPeers = append(gossipPeers, transport.NewHTTPClient(peerURL, cfg.escrowID, cfg.signer))
+			hostAddr := ""
+			if i < len(cfg.group) {
+				hostAddr = cfg.group[i].ValidatorAddress
+			}
+			gossipHTTP := transport.NewHTTPClient(peerURL, cfg.escrowID, cfg.signer)
+			selected := transport.SelectTransport(gossipHTTP, hostAddr, endpoints, nil)
+			pc, ok := selected.(gossip.PeerClient)
+			if !ok {
+				return nil, nil, fmt.Errorf("peer %d: SelectTransport returned %T", i, selected)
+			}
+			gossipPeers = append(gossipPeers, pc)
 		}
 	}
 	srv.SetPeerClients(userPeers)

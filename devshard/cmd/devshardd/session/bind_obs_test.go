@@ -306,6 +306,20 @@ func TestSessionServerExisting_NegativeCachesMiss(t *testing.T) {
 	require.Equal(t, first, counted.gets.Load(), "cached miss must not recover again")
 }
 
+func TestSessionServerExisting_MissDoesNotOccupyRecoveryGate(t *testing.T) {
+	mgr := NewHostManager(storage.NewMemory(), mustGenerateKey(t), nil, nil, nil, "v5", nil, nil, nil)
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	const escrowID = "9709"
+	_, err := mgr.SessionServerExisting(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+
+	mgr.recoveryGate.mu.Lock()
+	defer mgr.recoveryGate.mu.Unlock()
+	require.Empty(t, mgr.recoveryGate.requested, "a miss must not occupy the demand set (finding 57)")
+	require.Zero(t, mgr.recoveryGate.inFlight)
+}
+
 func TestOwnerChat_BindsAfterExistingMiss(t *testing.T) {
 	const escrowID = "9712"
 	mgr, store, user, _ := setupBindTestManager(t, escrowID)

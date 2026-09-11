@@ -9,12 +9,13 @@ import (
 	"connectrpc.com/connect"
 
 	"devshard/observability"
+	"devshard/transport"
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
 // SessionHeader is the bearer from Attach. Every RPC except Attach must carry
 // it; requests without a completed handshake are dropped.
-const SessionHeader = "X-Devshard-Session"
+const SessionHeader = transport.SessionHeader
 
 type peerKey struct{}
 type tokenKey struct{}
@@ -53,12 +54,12 @@ func responseWriterFromContext(ctx context.Context) http.ResponseWriter {
 
 // EncodeSessionToken is the on-wire form of AttachResponse.session_token.
 func EncodeSessionToken(token []byte) string {
-	return hex.EncodeToString(token)
+	return transport.EncodeSessionToken(token)
 }
 
 // SetSessionHeader puts the Attach token on a Connect request.
 func SetSessionHeader(h http.Header, token []byte) {
-	h.Set(SessionHeader, EncodeSessionToken(token))
+	transport.SetSessionHeader(h, token)
 }
 
 func isAttachPath(path string) bool {
@@ -69,9 +70,22 @@ func isWatchPath(path string) bool {
 	return path == rpcpbconnect.PeerAuthServiceWatchProcedure
 }
 
+func isImplementedRPC(path string) bool {
+	switch path {
+	case rpcpbconnect.PeerAuthServiceAttachProcedure,
+		rpcpbconnect.PeerAuthServiceWatchProcedure,
+		rpcpbconnect.SessionServiceGetSignaturesProcedure:
+		return true
+	default:
+		return false
+	}
+}
+
 // handshakeGate admits non-Attach RPCs from the session header before Connect
 // reads the body. Unary interceptors run after protobuf decode; this wrapper
 // does not. The ResponseWriter and session token are stashed only on Watch.
+// Known but unimplemented procedures are answered here so Connect never reads
+// the body (finding 58).
 func handshakeGate(auth *PeerAuthHandler, next http.Handler) http.Handler {
 	ew := connect.NewErrorWriter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +107,11 @@ func handshakeGate(auth *PeerAuthHandler, next http.Handler) http.Handler {
 		ctx, err := admitSession(auth, ctx, r.Header, watch)
 		if err != nil {
 			_ = ew.Write(w, r, err)
+			return
+		}
+		if !isImplementedRPC(r.URL.Path) {
+			r.Body = http.MaxBytesReader(w, r.Body, 0)
+			_ = ew.Write(w, r, connect.NewError(connect.CodeUnimplemented, errors.New("method is not implemented")))
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))

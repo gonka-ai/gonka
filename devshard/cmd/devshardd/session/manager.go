@@ -166,11 +166,12 @@ type recoveryGate struct {
 	cond      *sync.Cond
 	inFlight  int
 	requested map[string]struct{}
+	order     []string
 	stopped   bool
 }
 
-// maxRequestedRecoveryEscrows bounds the demand set. Past the cap ordering
-// degrades to list order rather than growing memory without limit.
+// maxRequestedRecoveryEscrows bounds the demand set. Past the cap the oldest
+// demand is dropped so a later genuine request still enters (finding 57).
 const maxRequestedRecoveryEscrows = 4096
 
 // condLocked lazily builds the cond so a zero-value HostManager still works.
@@ -190,8 +191,14 @@ func (g *recoveryGate) begin(escrowID string) {
 	if g.requested == nil {
 		g.requested = make(map[string]struct{})
 	}
-	if len(g.requested) < maxRequestedRecoveryEscrows {
+	if _, exists := g.requested[escrowID]; !exists {
+		for len(g.requested) >= maxRequestedRecoveryEscrows && len(g.order) > 0 {
+			old := g.order[0]
+			g.order = g.order[1:]
+			delete(g.requested, old)
+		}
 		g.requested[escrowID] = struct{}{}
+		g.order = append(g.order, escrowID)
 	}
 	g.inFlight++
 	g.condLocked().Broadcast()
@@ -489,6 +496,16 @@ func (m *HostManager) SessionServerExisting(escrowID string) (*transport.Server,
 	}
 	now := time.Now()
 	if err := m.cachedResolutionFailure(escrowID, now); err != nil {
+		return nil, err
+	}
+	// Peek the store before occupying the recovery gate. A miss must not
+	// fill the demand set or park cold recovery (finding 57).
+	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
+		return nil, err
+	}
+	if _, err := m.store.GetSessionMeta(escrowID); err != nil {
+		err = fmt.Errorf("get session meta: %w", err)
+		m.rememberResolutionFailure(escrowID, err, now)
 		return nil, err
 	}
 	m.recoveryGate.begin(escrowID)

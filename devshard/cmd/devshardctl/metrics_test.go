@@ -157,6 +157,30 @@ func TestPeerRPCAdoptionMetrics_RetireRuntimeDeletesHostRPC(t *testing.T) {
 	requireMetricCounterValue(t, families, "devshard_gateway_escrow_sessions_total", map[string]string{"path": "json"}, 1)
 }
 
+func TestPeerRPCAdoptionMetrics_AdminCleanDeletesHostRPC(t *testing.T) {
+	m := NewDevshardMetrics()
+	const peer = "gonka1host"
+	const id = "12"
+	rt := &devshardRuntime{id: id}
+	g := &Gateway{
+		runtimes:         map[string]*devshardRuntime{id: rt},
+		runtimeOrder:     []*devshardRuntime{rt},
+		metrics:          m,
+		rotationBreakers: make(map[string]*rotationBreaker),
+	}
+	m.PeerRPCAdoption().BindEscrow(id, peer)
+	g.mu.Lock()
+	g.unregisterRuntimeLocked(id)
+	g.mu.Unlock()
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "json"})
+	requireMetricCounterValue(t, families, "devshard_gateway_escrow_sessions_total", map[string]string{"path": "json"}, 1)
+	_, ok := g.runtimes[id]
+	require.False(t, ok)
+}
+
 func TestAttachMetrics_BindsRuntimeParticipantKeysWithoutSession(t *testing.T) {
 	m := NewDevshardMetrics()
 	g := &Gateway{metrics: m}

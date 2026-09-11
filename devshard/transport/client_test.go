@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -708,6 +709,25 @@ func TestReadBoundedResponseBody_RejectsOversizeInsteadOfTruncating(t *testing.T
 	body, err = readBoundedResponseBody(strings.NewReader(legal), 4096)
 	require.NoError(t, err)
 	require.Equal(t, legal, string(body))
+}
+
+func TestHTTPClient_DoesNotFollowRedirect(t *testing.T) {
+	var hitDest atomic.Bool
+	dest := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		hitDest.Store(true)
+	}))
+	t.Cleanup(dest.Close)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, dest.URL+"/stolen", http.StatusFound)
+	}))
+	t.Cleanup(origin.Close)
+
+	c := NewHTTPClient(origin.URL, "escrow-1", testutil.MustGenerateKey(t))
+	resp, err := c.http.Get(origin.URL + "/")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	require.False(t, hitDest.Load(), "session/signature headers must not follow a 302")
 }
 
 // newInfiniteDataLineReader opens an SSE data line that never terminates.

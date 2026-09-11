@@ -127,6 +127,17 @@ type ClientConfig struct {
 	// HeightSyncRequestMutateHook runs after Decide and peer-tip carry-forward,
 	// before the request is marshaled. Tests / debug only.
 	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
+
+	// RPCEndpoints names to send over Connect. Attach starts only if the
+	// set intersects a wired method (signatures today). Empty, chat, or a
+	// typo keeps HTTP. DEVSHARD_RPC_ENDPOINTS is read when this is nil at
+	// SelectTransport time — set it on ExtraClientConfig to override.
+	RPCEndpoints EndpointSet
+	// RPCMaxConnsPerPeer is MaxConnsPerHost on the PeerConn pool. Zero uses
+	// DEVSHARD_RPC_MAX_CONNS_PER_PEER or DefaultRPCMaxConnsPerPeer.
+	RPCMaxConnsPerPeer int
+	// RPCAdoption is the gateway adoption tracker. Nil on hosts.
+	RPCAdoption *PeerRPCAdoption
 }
 
 // RequestAdmissionController can reject participant-bound transport
@@ -347,7 +358,8 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		escrowID:    escrowID,
 		signer:      signer,
 		http: &http.Client{
-			Transport: DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
+			Transport:     DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
+			CheckRedirect: noFollowRedirects,
 		},
 		config:              cfg,
 		heightSync:          cfg.HeightSync,
@@ -364,6 +376,12 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		hc.heightSyncPeerTips = NewHeightSyncPeerTips()
 	}
 	return hc
+}
+
+// noFollowRedirects stops Go from forwarding Authorization / session headers
+// to a different host (finding 15).
+func noFollowRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // cloneSharing returns a copy that shares this client's HTTP transport,

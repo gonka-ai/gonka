@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"connectrpc.com/connect"
 )
 
 // Non-inference 429/503 (and transient dial failures) retry with exponential
@@ -77,11 +79,12 @@ func isContextFinished(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// IsRetryableNonInference reports a 429/503 or transient dial that the
-// non-inference retry loop (and the height-sync seed) should retry. Context
-// cancellation and deadline expiry are not retryable: the caller already
-// decided to stop. Catalog 503s are retryable because they are 503s, not
-// because of their body.
+// IsRetryableNonInference reports a 429/503, Connect Unavailable /
+// ResourceExhausted, or transient dial that the non-inference retry loop
+// (and the height-sync seed) should retry. Connect Unauthenticated is not
+// retryable here (finding 10: rpcRetry allows one extra attempt). Context
+// cancellation and deadline expiry are not retryable. Catalog 503s are
+// retryable because they are 503s, not because of their body.
 func IsRetryableNonInference(err error) bool {
 	if err == nil {
 		return false
@@ -93,6 +96,10 @@ func IsRetryableNonInference(err error) bool {
 	if errors.As(err, &status) {
 		return status.StatusCode == http.StatusTooManyRequests ||
 			status.StatusCode == http.StatusServiceUnavailable
+	}
+	switch connect.CodeOf(err) {
+	case connect.CodeResourceExhausted, connect.CodeUnavailable:
+		return true
 	}
 	return IsTransientWriteError(err)
 }

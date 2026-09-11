@@ -360,6 +360,29 @@ func TestPeerAuth_ExpiredNonceRebindAfterRetiredTTL(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestPeerAuth_RetiredNonceCoversFutureSkew(t *testing.T) {
+	base := time.Unix(1_800_000_000, 0)
+	clock := &testClock{t: base}
+	auth := newTestAuth(PeerAuthConfig{Now: clock.Now})
+	signer := testutil.MustGenerateKey(t)
+	nonce := []byte("skew-retire-nonce-aaaaaaaa")
+	futureTS := base.Unix() + transport.MaxTimestampDrift
+	req, err := signedAttach(signer, nonce, futureTS)
+	require.NoError(t, err)
+	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(req))
+	require.NoError(t, err)
+
+	auth.InvalidateToken(nonce)
+	clock.Advance(time.Duration(transport.MaxTimestampDrift)*time.Second + time.Second)
+	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(req))
+	require.Error(t, err)
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err),
+		"a future-skewed Attach must stay retired while its signature still verifies (finding 55)")
+	require.Contains(t, err.Error(), "attach_nonce already in use")
+	_, ok := auth.LookupToken(nonce)
+	require.False(t, ok)
+}
+
 func TestPeerAuth_OnlyOneGraceToken(t *testing.T) {
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
 	auth := newTestAuth(PeerAuthConfig{SessionTTL: time.Minute, Now: clock.Now})
@@ -584,6 +607,59 @@ func TestPeerAuth_TokenWorksOnOtherEscrow(t *testing.T) {
 		connect.NewRequest(&rpcpb.GetSignaturesRequest{Nonce: 1}), attached.SessionToken))
 	require.NoError(t, err)
 	require.Equal(t, []byte{1}, resp.Msg.Signatures[0])
+}
+
+func TestPeerAuth_LiveRenewalSkipsDoor(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	var doorCalls atomic.Int32
+	auth := newTestAuth(PeerAuthConfig{
+		Allow: func(ctx context.Context, addr string) (bool, error) {
+			doorCalls.Add(1)
+			if EscrowIDFromContext(ctx) == transport.HostRPCEscrowID {
+				return false, storage.ErrSessionNotFound
+			}
+			return addr == signer.Address(), nil
+		},
+	})
+	mux := NewMux(auth, nil)
+	door := httptest.NewServer(withTestEscrow(mux))
+	t.Cleanup(door.Close)
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r.WithContext(WithEscrowID(r.Context(), transport.HostRPCEscrowID)))
+	}))
+	t.Cleanup(host.Close)
+
+	first := attach(t, rpcpbconnect.NewPeerAuthServiceClient(door.Client(), door.URL), signer,
+		[]byte("live-renew-door-nonce-012345"))
+	require.Equal(t, int32(1), doorCalls.Load())
+	second := attach(t, rpcpbconnect.NewPeerAuthServiceClient(host.Client(), host.URL), signer,
+		[]byte("live-renew-host-nonce-012345"))
+	require.Equal(t, int32(1), doorCalls.Load(), "live renewal must not re-run AllowsSender")
+	_, ok := auth.LookupToken(first.SessionToken)
+	require.True(t, ok, "replaced token stays valid for TokenGrace")
+	_, ok = auth.LookupToken(second.SessionToken)
+	require.True(t, ok)
+}
+
+func TestPeerAuth_WatchOnHostPath(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	auth := newTestAuth(PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
+	mux := NewMux(auth, nil)
+	door := httptest.NewServer(withTestEscrow(mux))
+	t.Cleanup(door.Close)
+	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r.WithContext(WithEscrowID(r.Context(), transport.HostRPCEscrowID)))
+	}))
+	t.Cleanup(host.Close)
+
+	attached := attach(t, rpcpbconnect.NewPeerAuthServiceClient(door.Client(), door.URL), signer,
+		[]byte("watch-host-path-nonce-0123456"))
+	client := rpcpbconnect.NewPeerAuthServiceClient(host.Client(), host.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	stream, err := client.Watch(ctx, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), attached.SessionToken))
+	require.NoError(t, err)
+	require.True(t, stream.Receive(), stream.Err(), "Watch on /sessions/_/rpc must admit a live token")
 }
 
 func TestPeerAuth_SecondAttachReplacesOnAnyEscrowPath(t *testing.T) {
@@ -1177,6 +1253,29 @@ func TestPeerAuth_AttachFloorBeforeVerify(t *testing.T) {
 	clock.Advance(time.Minute + time.Second)
 	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("rate-attach-nonce-dddddddddd"))
 	require.NoError(t, err)
+}
+
+func TestPeerAuth_FailedKnownPeerAttachConsumesFloor(t *testing.T) {
+	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
+	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
+	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{AttachFloorPerMin: 2, Now: clock.Now})
+	signer := testutil.MustGenerateKey(t)
+	nonce := []byte("failed-known-attach-nonce-aa")
+	_, err := attachDirect(t, auth, signer, nonce)
+	require.NoError(t, err)
+
+	req, err := signedAttach(signer, nonce, clock.Now().Unix())
+	require.NoError(t, err)
+	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(req))
+	require.Error(t, err)
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+
+	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("failed-known-attach-nonce-bb"))
+	require.Error(t, err)
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err),
+		"a failed Attach from a live peer must keep its floor charge (finding 54)")
+	requireRetryAfter(t, err)
+	require.Greater(t, spy.n.Load(), int32(0))
 }
 
 func TestPeerAuth_KnownPeerReattachDoesNotConsumeFloor(t *testing.T) {
