@@ -1,0 +1,72 @@
+name: Acknowledge External PRs
+
+# Posts a single, polite acknowledgment comment on pull requests opened by people
+# who are NOT collaborators/org members. It sets no expectations and makes no
+# promises about review timelines or whether the PR will be merged.
+#
+# Fail-soft: commenting is a courtesy, never a blocker. Any error is downgraded to
+# a warning annotation and the PR check stays green.
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ack-external-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  acknowledge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post acknowledgment comment
+        uses: actions/github-script@v7
+        env:
+          # Overridable via a repo variable if you want to tweak the wording.
+          ACK_MESSAGE: ${{ vars.EXTERNAL_ACK_MESSAGE }}
+        with:
+          script: |
+            try {
+              const { owner, repo } = context.repo;
+              const author = context.payload.pull_request.user.login;
+              const association = context.payload.pull_request.author_association;
+              const prNumber = context.payload.pull_request.number;
+
+              // Only external contributors; skip bots and internal people.
+              const INTERNAL = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+              if (context.payload.pull_request.user.type === 'Bot' || INTERNAL.has(association)) {
+                core.info(`Skipping acknowledgment for ${author} (${association}).`);
+                return;
+              }
+
+              // Hidden marker so we never post the acknowledgment twice.
+              const MARKER = '<!-- gonka:ack-external -->';
+              const existing = await github.paginate(github.rest.issues.listComments, {
+                owner, repo, issue_number: prNumber, per_page: 100,
+              });
+              if (existing.some(c => (c.body || '').includes(MARKER))) {
+                core.info('Acknowledgment already posted; skipping.');
+                return;
+              }
+
+              const defaultMessage = [
+                `👋 Thanks for opening this pull request and contributing to Gonka, @${author}!`,
+                '',
+                'A maintainer will review it as part of our regular triage. Please note that review',
+                'timelines vary and opening a PR does not guarantee it will be merged. To help things',
+                'along, make sure CI is green and that your change has a clear description (and tests',
+                'where applicable).',
+                '',
+                'We appreciate your patience and your contribution!',
+              ].join('\n');
+
+              const body = `${(process.env.ACK_MESSAGE || defaultMessage)}\n\n${MARKER}`;
+              await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+              core.info(`Posted acknowledgment on PR #${prNumber}.`);
+            } catch (err) {
+              core.warning(`acknowledge-external-prs failed (non-blocking): ${err && err.message ? err.message : err}`);
+            }
