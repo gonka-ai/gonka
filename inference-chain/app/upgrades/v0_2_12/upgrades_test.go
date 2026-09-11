@@ -31,6 +31,7 @@ func TestClearTrainingState(t *testing.T) {
 	store.Set([]byte(inferencetypes.TrainingTaskSequenceKey), []byte{1})
 	store.Set([]byte(inferencetypes.QueuedTrainingTaskKeyPrefix+"1"), []byte{1})
 	store.Set([]byte(inferencetypes.InProgressTrainingTaskKeyPrefix+"1"), []byte{1})
+	store.Set([]byte(inferencetypes.TrainingTaskKvRecordKeyPrefix+"1/key"), []byte{1})
 	store.Set([]byte("TrainingTask/sync/1/store/key/value"), []byte("value"))
 	store.Set([]byte("TrainingTask/sync/1/heartbeat/0/participant/node"), []byte("hb"))
 	store.Set([]byte("TrainingTask/sync/1/barrier/b1/0/participant/node/value"), []byte("barrier"))
@@ -50,6 +51,7 @@ func TestClearTrainingState(t *testing.T) {
 		[]byte(inferencetypes.TrainingTaskSequenceKey),
 		[]byte(inferencetypes.QueuedTrainingTaskKeyPrefix + "1"),
 		[]byte(inferencetypes.InProgressTrainingTaskKeyPrefix + "1"),
+		[]byte(inferencetypes.TrainingTaskKvRecordKeyPrefix + "1/key"),
 		[]byte("TrainingTask/sync/1/store/key/value"),
 		[]byte("TrainingTask/sync/1/heartbeat/0/participant/node"),
 		[]byte("TrainingTask/sync/1/barrier/b1/0/participant/node/value"),
