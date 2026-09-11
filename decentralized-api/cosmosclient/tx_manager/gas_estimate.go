@@ -67,6 +67,7 @@ const (
 
 	// Other host operations.
 	gasSubmitSeed                   = uint64(80_000)
+	gasDeclarePoCIntent             = uint64(100_000) // small KV write + last-write-wins clears
 	gasSubmitNewParticipant         = uint64(150_000)
 	gasSubmitNewUnfundedParticipant = uint64(150_000)
 	gasBridgeExchange               = uint64(500_000)
@@ -124,6 +125,8 @@ func lookupMsgGas(msg sdk.Msg) (uint64, bool) {
 		return gasClaimRewards, true
 	case *inferencetypes.MsgSubmitSeed:
 		return gasSubmitSeed, true
+	case *inferencetypes.MsgDeclarePoCIntent:
+		return gasDeclarePoCIntent, true
 	case *inferencetypes.MsgSubmitNewParticipant:
 		return gasSubmitNewParticipant, true
 	case *inferencetypes.MsgSubmitNewUnfundedParticipant:
