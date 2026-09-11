@@ -10,6 +10,11 @@ import (
 	"sort"
 	"testing"
 
+	"bytes"
+
+	tmproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	tmversion "github.com/cometbft/cometbft/proto/tendermint/version"
+	cmtversion "github.com/cometbft/cometbft/version"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cosmosed25519 "github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
@@ -40,6 +45,22 @@ func TestEpochParticipantsJSONMatchesDapiGolden(t *testing.T) {
 	assert.NotNil(t, got["proof_ops"])
 	assert.Contains(t, got, "validators")
 	assert.Contains(t, got, "excluded_participants")
+
+	ap, ok := got["active_participants"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(100), ap["created_at_block_height"], "int64 fields must stay JSON numbers")
+	require.Equal(t, float64(1), ap["epoch_group_id"])
+
+	// Legacy dapi block shape: native comet types.Block via encoding/json —
+	// numeric height, hex-string app_hash (not protojson string/base64).
+	blk, ok := got["block"].(map[string]any)
+	require.True(t, ok, "block must be present")
+	hdr, ok := blk["header"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(101), hdr["height"], "block height must be a JSON number")
+	appHash, ok := hdr["app_hash"].(string)
+	require.True(t, ok)
+	require.Regexp(t, `^[0-9A-F]+$`, appHash, "app_hash must be hex-uppercase (comet HexBytes)")
 }
 
 func TestEpochParticipantsJSONEncodesValidatorsWithPubKeyAny(t *testing.T) {
@@ -69,7 +90,7 @@ func TestEpochParticipantsJSONEncodesValidatorsWithPubKeyAny(t *testing.T) {
 	require.True(t, ok)
 	require.Regexp(t, `^[0-9A-F]+$`, address, "validator address must be hex-uppercase")
 
-	require.Equal(t, "100", val["voting_power"])
+	require.Equal(t, float64(100), val["voting_power"], "voting_power must be a JSON number (legacy encoding/json shape)")
 }
 
 func loadEpochParticipantsGolden(t *testing.T) map[string]any {
@@ -135,6 +156,19 @@ func (s *stubEpochParticipantsComet) ABCIQuery(_ context.Context, req *cmtservic
 
 func (s *stubEpochParticipantsComet) GetBlockByHeight(_ context.Context, req *cmtservice.GetBlockByHeightRequest) (*cmtservice.GetBlockByHeightResponse, error) {
 	return &cmtservice.GetBlockByHeightResponse{
+		// The handler encodes the comet proto block (converted to native
+		// comet types.Block) for legacy dapi wire compatibility. Version and
+		// ProposerAddress must satisfy comet Header.ValidateBasic, as real
+		// blocks do.
+		Block: &tmproto.Block{
+			Header: tmproto.Header{
+				Version:         tmversion.Consensus{Block: cmtversion.BlockProtocol},
+				Height:          req.Height,
+				ChainID:         "gonka-test",
+				AppHash:         []byte("apphash"),
+				ProposerAddress: bytes.Repeat([]byte{0xAB}, 20),
+			},
+		},
 		SdkBlock: &cmtservice.Block{
 			Header: cmtservice.Header{
 				Height:  req.Height,
