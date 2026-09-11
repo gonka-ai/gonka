@@ -557,7 +557,7 @@ components:
         # cmtservice.ProofOps — absent when not requested
         proof_ops:
           $ref: '#/components/schemas/RawProtoJson'
-        # cmtservice.Validator
+        # cmtservice.Validator — empty when the creation height is unavailable
         validators:
           type: array
           items:
