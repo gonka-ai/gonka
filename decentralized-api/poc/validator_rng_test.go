@@ -2,6 +2,7 @@ package poc
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"sync"
@@ -78,7 +79,7 @@ func (s *stubNodeBroker) GetNodes() ([]broker.NodeResponse, error) {
 
 // runValidateParticipant is a helper that runs validateParticipant with fixed
 // test fixtures and returns the captured GenerateV2 request.
-func runValidateParticipant(t *testing.T, pocStrongerRng bool) *mlnodeclient.PoCGenerateRequestV2 {
+func runValidateParticipant(t *testing.T, pocParams *types.PocParams, artifact VerifiedArtifact) *mlnodeclient.PoCGenerateRequestV2 {
 	t.Helper()
 	mockClient := mlnodeclient.NewMockClient()
 
@@ -100,7 +101,7 @@ func runValidateParticipant(t *testing.T, pocStrongerRng bool) *mlnodeclient.PoC
 
 	// Stub returns one artifact; nonce=1, count=100 -> porosity=0.01, well below threshold.
 	stub := &stubProofFetcher{
-		artifacts: []VerifiedArtifact{{LeafIndex: 0, Nonce: 1, VectorB64: ""}},
+		artifacts: []VerifiedArtifact{artifact},
 	}
 
 	work := participantWork{
@@ -109,18 +110,6 @@ func runValidateParticipant(t *testing.T, pocStrongerRng bool) *mlnodeclient.PoC
 		pubKey:  "testpubkey",
 		count:   100,
 		url:     "http://participant",
-	}
-
-	pocParams := &types.PocParams{
-		PocStrongerRngEnabled: pocStrongerRng,
-		Models: []*types.PoCModelConfig{
-			{
-				ModelId:           "test-model",
-				SeqLen:            256,
-				StatTest:          types.DefaultPoCStatTestParams(),
-				WeightScaleFactor: types.DecimalFromFloat(1.0),
-			},
-		},
 	}
 
 	nodeCounter := 0
@@ -148,14 +137,46 @@ func runValidateParticipant(t *testing.T, pocStrongerRng bool) *mlnodeclient.PoC
 // This is the validation (validator.go) path, analogous to
 // TestStartPoCNodeCommandV2_StrongerRngPropagated for the broker (InitGenerateV2) path.
 func TestValidateParticipant_StrongerRngPropagated(t *testing.T) {
+	artifact := VerifiedArtifact{LeafIndex: 0, Nonce: 1, VectorB64: ""}
 	t.Run("enabled", func(t *testing.T) {
-		req := runValidateParticipant(t, true)
+		params := testModelPocParams()
+		params.PocStrongerRngEnabled = true
+		req := runValidateParticipant(t, params, artifact)
 		assert.True(t, req.PocStrongerRng, "PocStrongerRng must be forwarded to GenerateV2 when enabled")
 	})
 
 	t.Run("disabled", func(t *testing.T) {
-		req := runValidateParticipant(t, false)
+		req := runValidateParticipant(t, testModelPocParams(), artifact)
 		assert.False(t, req.PocStrongerRng, "PocStrongerRng must be forwarded to GenerateV2 when disabled")
+	})
+}
+
+// TestValidateParticipant_DecodeSchemePropagated asserts that a model config with
+// decode_max_tokens switches the GenerateV2 validation request to the decode
+// scheme and unpacks the stored trajectory; without it the request is unchanged.
+func TestValidateParticipant_DecodeSchemePropagated(t *testing.T) {
+	packed := base64.StdEncoding.EncodeToString([]byte{1, 2, 3})
+	artifact := VerifiedArtifact{LeafIndex: 0, Nonce: 1, VectorB64: packed}
+
+	t.Run("decode", func(t *testing.T) {
+		params := testModelPocParams()
+		params.Models[0].DecodeMaxTokens = 256
+		req := runValidateParticipant(t, params, artifact)
+		assert.True(t, req.Params.Decode)
+		assert.Equal(t, int64(256), req.Params.MaxTokens)
+		assert.Equal(t, int64(mlnodeclient.DecodeSeqLen), req.Params.SeqLen)
+		require.Len(t, req.Validation.Artifacts, 1)
+		assert.Equal(t, []int{1, 2, 3}, req.Validation.Artifacts[0].KPointsSteps)
+		assert.Equal(t, "", req.Validation.Artifacts[0].VectorB64)
+	})
+
+	t.Run("prefill", func(t *testing.T) {
+		req := runValidateParticipant(t, testModelPocParams(), artifact)
+		assert.False(t, req.Params.Decode)
+		assert.Equal(t, int64(0), req.Params.MaxTokens)
+		require.Len(t, req.Validation.Artifacts, 1)
+		assert.Nil(t, req.Validation.Artifacts[0].KPointsSteps)
+		assert.Equal(t, packed, req.Validation.Artifacts[0].VectorB64)
 	})
 }
 

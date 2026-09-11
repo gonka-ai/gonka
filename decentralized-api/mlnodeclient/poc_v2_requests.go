@@ -11,11 +11,29 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// DecodeSeqLen is the prompt length of the decode scheme, fixed at 256 tokens;
+// the model config's seq_len belongs to the prefill scheme.
+const DecodeSeqLen = 256
+
 // PoCParamsV2 contains model-specific parameters for PoC v2 generation/validation.
 type PoCParamsV2 struct {
 	Model  string `json:"model"`
 	SeqLen int64  `json:"seq_len"`
+	// Decode scheme and its step count; absent => prefill scheme, as before.
+	Decode    bool  `json:"decode,omitempty"`
+	MaxTokens int64 `json:"max_tokens,omitempty"`
 	// k_dim is intentionally omitted - MLNode will use its default
+}
+
+// DecodePoCParams returns the params of a request: the model's prefill shape,
+// or the decode scheme's fixed prompt length and its step count when the model
+// config selects decode.
+func DecodePoCParams(model string, seqLen int64, decodeMaxTokens int64) PoCParamsV2 {
+	p := PoCParamsV2{Model: model, SeqLen: seqLen}
+	if decodeMaxTokens > 0 {
+		p.SeqLen, p.Decode, p.MaxTokens = DecodeSeqLen, true, decodeMaxTokens
+	}
+	return p
 }
 
 // PoCInitGenerateRequestV2 represents the request body for /api/v1/inference/pow/init/generate.

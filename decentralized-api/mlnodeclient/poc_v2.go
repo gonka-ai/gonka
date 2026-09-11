@@ -5,8 +5,27 @@ package mlnodeclient
 
 // ArtifactV2 represents a single artifact from PoC v2 generation.
 type ArtifactV2 struct {
-	Nonce     int64  `json:"nonce"`
-	VectorB64 string `json:"vector_b64"` // base64-encoded fp16 little-endian vector
+	Nonce        int64  `json:"nonce"`
+	VectorB64    string `json:"vector_b64"`               // base64-encoded fp16 little-endian vector (prefill scheme)
+	KPointsSteps []int  `json:"k_points_steps,omitempty"` // decode scheme: one sphere index per step
+}
+
+// KStepsToBytes packs a decode trajectory into the opaque artifact vector, one byte per step.
+func KStepsToBytes(steps []int) []byte {
+	out := make([]byte, len(steps))
+	for i, k := range steps {
+		out[i] = byte(k)
+	}
+	return out
+}
+
+// BytesToKSteps unpacks it.
+func BytesToKSteps(vector []byte) []int {
+	out := make([]int, len(vector))
+	for i, b := range vector {
+		out[i] = int(b)
+	}
+	return out
 }
 
 // EncodingV2 describes the artifact encoding (protocol-level defaults; informational only).

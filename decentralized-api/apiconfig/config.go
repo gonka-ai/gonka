@@ -256,8 +256,9 @@ type BandwidthParamsCache struct {
 	MaxInferencesPerBlock     uint64  `koanf:"max_inferences_per_block" json:"max_inferences_per_block"`
 }
 type PoCModelConfigCache struct {
-	ModelId string `koanf:"model_id" json:"model_id"`
-	SeqLen  int64  `koanf:"seq_len" json:"seq_len"`
+	ModelId         string `koanf:"model_id" json:"model_id"`
+	SeqLen          int64  `koanf:"seq_len" json:"seq_len"`
+	DecodeMaxTokens int64  `koanf:"decode_max_tokens" json:"decode_max_tokens,omitempty"`
 }
 
 type PoCParamsCache struct {
@@ -271,8 +272,9 @@ func NewPoCParamsCache(modelConfigs []*types.PoCModelConfig) PoCParamsCache {
 			continue
 		}
 		models = append(models, PoCModelConfigCache{
-			ModelId: modelConfig.ModelId,
-			SeqLen:  modelConfig.SeqLen,
+			ModelId:         modelConfig.ModelId,
+			SeqLen:          modelConfig.SeqLen,
+			DecodeMaxTokens: modelConfig.DecodeMaxTokens,
 		})
 	}
 	return PoCParamsCache{Models: models}

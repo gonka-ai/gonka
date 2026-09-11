@@ -173,6 +173,7 @@ message PoCModelConfig {
   PoCStatTestParams stat_test = 3;
   Decimal weight_scale_factor = 4;
   uint64 penalty_start_epoch = 5;
+  int64 decode_max_tokens = 6;  // >0 selects the decode PoC scheme with this many steps; 0 = prefill scheme
 }
 
 message PocParams {

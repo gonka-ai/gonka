@@ -1269,14 +1269,15 @@ func (b *Broker) getCommandForState(
 					return nil
 				}
 				return StartPoCNodeCommandV2{
-					BlockHeight:    pocGenParams.startPoCBlockHeight,
-					BlockHash:      pocGenParams.startPoCBlockHash,
-					PubKey:         b.participantInfo.GetPubKey(),
-					CallbackUrl:    GetPoCCallbackBaseURLV2(b.callbackUrl),
-					TotalNodes:     totalNodes,
-					Model:          modelConfig.ModelId,
-					SeqLen:         modelConfig.SeqLen,
-					PocStrongerRng: pocGenParams.pocStrongerRng,
+					BlockHeight:     pocGenParams.startPoCBlockHeight,
+					BlockHash:       pocGenParams.startPoCBlockHash,
+					PubKey:          b.participantInfo.GetPubKey(),
+					CallbackUrl:     GetPoCCallbackBaseURLV2(b.callbackUrl),
+					TotalNodes:      totalNodes,
+					Model:           modelConfig.ModelId,
+					SeqLen:          modelConfig.SeqLen,
+					PocStrongerRng:  pocGenParams.pocStrongerRng,
+					DecodeMaxTokens: modelConfig.DecodeMaxTokens,
 				}
 			}
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)

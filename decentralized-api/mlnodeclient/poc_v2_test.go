@@ -47,3 +47,16 @@ func TestToValidatedWeight_ValidSmall(t *testing.T) {
 	}
 	require.Equal(t, int64(1), v.ToValidatedWeight())
 }
+
+func TestKStepsBytesRoundTrip(t *testing.T) {
+	steps := []int{0, 15, 7, 255}
+	got := BytesToKSteps(KStepsToBytes(steps))
+	if len(got) != len(steps) {
+		t.Fatalf("len %d != %d", len(got), len(steps))
+	}
+	for i := range steps {
+		if got[i] != steps[i] {
+			t.Fatalf("step %d: %d != %d", i, got[i], steps[i])
+		}
+	}
+}

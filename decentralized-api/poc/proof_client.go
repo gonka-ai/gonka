@@ -51,6 +51,7 @@ type ProofRequest struct {
 	Count                    uint32
 	LeafIndices              []uint32
 	ParticipantAddress       string // participant whose API we're calling
+	DecodeMaxTokens          int64  // >0: artifacts are packed decode trajectories, one byte per step
 }
 
 // ProofByNonceRequest contains parameters for requesting proofs by nonce.
@@ -61,6 +62,7 @@ type ProofByNonceRequest struct {
 	Count                    uint32
 	Nonces                   []int32
 	ParticipantAddress       string // participant whose API we're calling
+	DecodeMaxTokens          int64  // >0: artifacts are packed decode trajectories, one byte per step
 }
 
 // ProofResponse is the response from the proof API.
@@ -185,7 +187,7 @@ func (c *ProofClient) FetchAndVerifyProofs(
 
 	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
 	for _, item := range proofResp.Proofs {
-		artifact, err := verifyProofItem(req.RootHash, req.Count, req.ParticipantAddress, item)
+		artifact, err := verifyProofItem(req.RootHash, req.Count, req.ParticipantAddress, item, req.DecodeMaxTokens)
 		if err != nil {
 			return nil, err
 		}
@@ -277,7 +279,7 @@ func (c *ProofClient) FetchAndVerifyProofsByNonce(
 
 	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
 	for _, item := range proofResp.Proofs {
-		artifact, err := verifyProofItem(req.RootHash, req.Count, req.ParticipantAddress, item)
+		artifact, err := verifyProofItem(req.RootHash, req.Count, req.ParticipantAddress, item, req.DecodeMaxTokens)
 		if err != nil {
 			return nil, err
 		}
@@ -365,7 +367,7 @@ func validateNonceCoverage(requested []int32, proofs []ProofItem) error {
 	return nil
 }
 
-func verifyProofItem(rootHash []byte, count uint32, participantAddress string, item ProofItem) (VerifiedArtifact, error) {
+func verifyProofItem(rootHash []byte, count uint32, participantAddress string, item ProofItem, decodeMaxTokens int64) (VerifiedArtifact, error) {
 	vectorBytes, err := base64.StdEncoding.DecodeString(item.VectorBytes)
 	if err != nil {
 		logging.Warn("Failed to decode vector bytes", types.PoC,
@@ -373,7 +375,15 @@ func verifyProofItem(rootHash []byte, count uint32, participantAddress string, i
 		return VerifiedArtifact{}, fmt.Errorf("invalid vector_bytes encoding for leaf %d: %w", item.LeafIndex, err)
 	}
 
-	if err := ValidateFP16Vector(vectorBytes, DefaultKDim); err != nil {
+	err = ValidateFP16Vector(vectorBytes, DefaultKDim)
+	if decodeMaxTokens > 0 {
+		// Decode scheme: the leaf is the trajectory, the prefill step plus one byte per decode step.
+		err = nil
+		if int64(len(vectorBytes)) != decodeMaxTokens+1 {
+			err = fmt.Errorf("invalid trajectory length: got %d bytes, expected %d", len(vectorBytes), decodeMaxTokens+1)
+		}
+	}
+	if err != nil {
 		logging.Warn("Invalid FP16 vector data", types.PoC,
 			"participant", participantAddress, "leafIndex", item.LeafIndex, "error", err)
 		return VerifiedArtifact{}, fmt.Errorf("%w: leaf %d: %v", ErrInvalidVectorData, item.LeafIndex, err)
