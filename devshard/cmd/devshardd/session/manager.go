@@ -390,6 +390,9 @@ func (m *HostManager) allowRPCPeer(ctx context.Context, addr string) (bool, erro
 	if err != nil {
 		return false, fmt.Errorf("escrow %s is not open on this host: %w", escrowID, err)
 	}
+	if srv == nil {
+		return false, storage.ErrSessionNotFound
+	}
 	return srv.AllowsSender(addr), nil
 }
 
@@ -455,6 +458,9 @@ func (m *HostManager) CloseHosts() {
 	m.sessionsMutex.Unlock()
 
 	for escrowID, srv := range sessions {
+		if srv == nil {
+			continue
+		}
 		srv.Host().Close()
 		observability.DeleteEscrowMetrics(escrowID)
 	}
@@ -481,10 +487,15 @@ func (m *HostManager) SessionServerExisting(escrowID string) (*transport.Server,
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
 	}
+	now := time.Now()
+	if err := m.cachedResolutionFailure(escrowID, now); err != nil {
+		return nil, err
+	}
 	m.recoveryGate.begin(escrowID)
 	defer m.recoveryGate.end()
 	srv, err := m.recoverAndStoreSession(escrowID)
 	if err != nil {
+		m.rememberResolutionFailure(escrowID, err, now)
 		return nil, err
 	}
 	return srv, nil
@@ -612,7 +623,7 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
 	}
-	if err := m.cachedResolutionFailure(escrowID, time.Now()); err != nil {
+	if err := m.cachedCreateBlockingFailure(escrowID, time.Now()); err != nil {
 		return nil, err
 	}
 
@@ -620,7 +631,7 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 		if srv, ok := m.existingServer(escrowID); ok {
 			return srv, nil
 		}
-		if err := m.cachedResolutionFailure(escrowID, time.Now()); err != nil {
+		if err := m.cachedCreateBlockingFailure(escrowID, time.Now()); err != nil {
 			return nil, err
 		}
 
@@ -673,6 +684,18 @@ func (m *HostManager) cachedResolutionFailure(escrowID string, now time.Time) er
 		return nil
 	}
 	return cached.err
+}
+
+// cachedCreateBlockingFailure is the tombstone getOrCreate honors.
+// SessionServerExisting caches a miss so GET /signatures and allowRPCPeer
+// do not recover on every request (finding 46). BindOwnerChat calls Existing
+// first, then getOrCreate; that miss must not block CreateSession.
+func (m *HostManager) cachedCreateBlockingFailure(escrowID string, now time.Time) error {
+	err := m.cachedResolutionFailure(escrowID, now)
+	if errors.Is(err, storage.ErrSessionNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (m *HostManager) rememberResolutionFailure(escrowID string, err error, now time.Time) {

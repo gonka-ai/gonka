@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"connectrpc.com/connect"
@@ -32,6 +34,12 @@ const (
 	defaultMaxStreams     uint32 = 256
 	defaultAttachPerMin   uint32 = 10
 	defaultMaxSessions           = 10_000
+	// defaultAttachFloorPerMin is the process-wide Attach cap (finding 42).
+	// Advertised attach_per_min stays 10 (the Phase 4 per-peer number). The
+	// floor is one first-Attach per current peer per minute so a full map
+	// re-attaching after a Watch mass-break still fits; known-peer renewals
+	// are refunded and do not occupy extra slots.
+	defaultAttachFloorPerMin = defaultMaxSessions
 	// defaultTokenGrace is how long a replaced token still admits RPCs.
 	// Matches transport.nonInferenceRetryBudget: one Attach RTT plus retry.
 	defaultTokenGrace = 5 * time.Second
@@ -52,9 +60,8 @@ const (
 // AllowPeer decides whether a recovered address may use the escrow in
 // ctx (EscrowIDFromContext). Attach uses it as the door (the token is still
 // host-wide). Data RPCs check AllowsSender on the session resolved for that
-// RPC. A non-nil error means the host could not decide — typically the escrow
-// is not open here — and is reported as FailedPrecondition rather than as a
-// rejected peer.
+// RPC. A non-nil error means the host could not decide; mapAllowError maps it
+// the same way JSON sessionHTTPError does, never as a rejected peer.
 type AllowPeer func(ctx context.Context, address string) (bool, error)
 
 // PeerAuthConfig tunes session lifetime. Zero values use defaults.
@@ -70,12 +77,11 @@ type PeerAuthConfig struct {
 	// means defaultTokenGrace. In-flight RPCs carry the old header; they are
 	// new HTTP requests, not a connection established at Attach.
 	TokenGrace time.Duration
-	// AttachPerMin is the process-wide Attach cap, enforced before ECDSA.
-	// Zero means defaultAttachPerMin (the advertised limits.attach_per_min).
-	// Not keyed on peer_address: that is attacker-chosen; recovered address
-	// is after ECDSA. Child is on loopback, so this is the process floor,
-	// not a client-IP limiter.
-	AttachPerMin int
+	// AttachFloorPerMin is the process-wide Attach cap, enforced before ECDSA.
+	// Zero means defaultAttachFloorPerMin. Not keyed on peer_address: that is
+	// attacker-chosen; recovered address is after ECDSA. Child is on loopback,
+	// so this is the process floor, not a client-IP limiter (Phase 4).
+	AttachFloorPerMin int
 	// Allow is the URL-escrow roster check at Attach. Nil skips (tests).
 	Allow AllowPeer
 	// SweepInterval is the expired-session ticker. Zero means SessionTTL/2
@@ -103,6 +109,7 @@ type PeerAuthHandler struct {
 	closeCh   chan struct{}
 	closeOnce sync.Once
 	sweepOnce sync.Once
+	closed    atomic.Bool
 
 	attachMu    sync.Mutex
 	attachTimes []time.Time
@@ -153,8 +160,8 @@ func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerA
 	if cfg.TokenGrace <= 0 {
 		cfg.TokenGrace = defaultTokenGrace
 	}
-	if cfg.AttachPerMin <= 0 {
-		cfg.AttachPerMin = int(defaultAttachPerMin)
+	if cfg.AttachFloorPerMin <= 0 {
+		cfg.AttachFloorPerMin = defaultAttachFloorPerMin
 	}
 	return &PeerAuthHandler{
 		verifier:    verifier,
@@ -206,6 +213,9 @@ func (h *PeerAuthHandler) Attach(ctx context.Context, req *connect.Request[rpcpb
 }
 
 func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb.AttachRequest]) (*connect.Response[rpcpb.AttachResponse], error) {
+	if h.Closed() {
+		return nil, hostShuttingDown()
+	}
 	msg := req.Msg
 	if msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil attach request"))
@@ -232,7 +242,7 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("unsupported protocol_version"))
 	}
 
-	if err := h.allowAttach(); err != nil {
+	if err := h.chargeAttach(); err != nil {
 		return nil, err
 	}
 
@@ -243,6 +253,9 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	if recovered != msg.PeerAddress {
 		return nil, connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("recovered address %s does not match peer_address", recovered))
 	}
+	if h.peerSessionLive(recovered) {
+		h.refundAttach()
+	}
 	if err := h.checkAllow(ctx, recovered); err != nil {
 		return nil, err
 	}
@@ -252,6 +265,10 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	expires := h.now().Add(h.cfg.SessionTTL)
 
 	h.mu.Lock()
+	if h.closed.Load() {
+		h.mu.Unlock()
+		return nil, hostShuttingDown()
+	}
 	if sess, ok := h.sessions[tok]; ok {
 		if !h.now().After(sess.expires) {
 			h.mu.Unlock()
@@ -322,9 +339,17 @@ func (h *PeerAuthHandler) Watch(ctx context.Context, req *connect.Request[rpcpb.
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-h.closeCh:
+			return hostShuttingDown()
 		case <-stop:
+			if h.Closed() {
+				return hostShuttingDown()
+			}
 			return connect.NewError(connect.CodeUnauthenticated, errors.New("session replaced"))
 		case <-ticker.C:
+			if h.Closed() {
+				return hostShuttingDown()
+			}
 			if _, ok := h.LookupToken(token); !ok {
 				return connect.NewError(connect.CodeUnauthenticated, errors.New("session expired"))
 			}
@@ -341,6 +366,9 @@ func (h *PeerAuthHandler) beginWatch(token []byte) (uint64, <-chan struct{}, err
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed.Load() {
+		return 0, nil, hostShuttingDown()
+	}
 	tok := rawTokenKey(token)
 	sess, ok := h.sessions[tok]
 	if !ok {
@@ -361,9 +389,11 @@ func (h *PeerAuthHandler) beginWatch(token []byte) (uint64, <-chan struct{}, err
 	return sess.watchID, sess.cancelWatch, nil
 }
 
-// endWatch clears this Watch. It drops the session only if the token is
-// still the peer's current one. A grace token from a newer Attach stays so
-// in-flight RPCs that still carry the old header are admitted until TokenGrace.
+// endWatch clears this Watch. It does not drop the host session: a stream
+// break must not force a fresh Attach for every escrow this child serves
+// (finding 48). A later Watch on the same token is allowed. Re-Attach, TTL
+// sweep, eviction, and Close still drop. A grace token's Watch is a no-op
+// here if watchID no longer matches (finding 14).
 func (h *PeerAuthHandler) endWatch(token []byte, watchID uint64) {
 	if len(token) == 0 || len(token) > maxAttachNonceBytes || watchID == 0 {
 		return
@@ -377,10 +407,7 @@ func (h *PeerAuthHandler) endWatch(token []byte, watchID uint64) {
 	}
 	sess.watching = false
 	sess.watchID = 0
-	if h.byPeer[sess.peer] == tok {
-		h.dropSessionLocked(tok, sess)
-	}
-	h.observeSizesLocked()
+	sess.cancelWatch = nil
 }
 
 // LookupToken returns the peer address bound to token if it is still valid
@@ -396,7 +423,7 @@ func (h *PeerAuthHandler) LookupToken(token []byte) (string, bool) {
 // (expired), or unknown. Handshake-gate metrics need the expired/forged split;
 // LookupToken stays a bool so Watch and callers do not change.
 func (h *PeerAuthHandler) inspectToken(token []byte) (peer string, ok, expired bool) {
-	if h == nil || len(token) == 0 || len(token) > maxAttachNonceBytes {
+	if h == nil || h.Closed() || len(token) == 0 || len(token) > maxAttachNonceBytes {
 		return "", false, false
 	}
 	h.mu.RLock()
@@ -486,10 +513,12 @@ func (h *PeerAuthHandler) evictOldestIdleLocked() bool {
 	return true
 }
 
-// allowAttach is the process-wide Attach throttle, before ECDSA. Sliding
+// chargeAttach is the process-wide Attach throttle, before ECDSA. Sliding
 // one-minute window. Child sees versiond as src, so this is not per client IP.
-func (h *PeerAuthHandler) allowAttach() error {
-	limit := h.cfg.AttachPerMin
+// A later refundAttach drops this charge if VerifyAttach recovered a peer that
+// already holds a live or grace session.
+func (h *PeerAuthHandler) chargeAttach() error {
+	limit := h.cfg.AttachFloorPerMin
 	now := h.now()
 	cutoff := now.Add(-time.Minute)
 	h.attachMu.Lock()
@@ -502,10 +531,59 @@ func (h *PeerAuthHandler) allowAttach() error {
 	}
 	h.attachTimes = kept
 	if len(h.attachTimes) >= limit {
-		return connect.NewError(connect.CodeResourceExhausted, errors.New("too many attach attempts"))
+		retry := time.Minute
+		if len(h.attachTimes) > 0 {
+			retry = h.attachTimes[0].Add(time.Minute).Sub(now)
+		}
+		return attachFloorExhausted(retryAfterSeconds(retry))
 	}
 	h.attachTimes = append(h.attachTimes, now)
 	return nil
+}
+
+func (h *PeerAuthHandler) refundAttach() {
+	h.attachMu.Lock()
+	defer h.attachMu.Unlock()
+	if n := len(h.attachTimes); n > 0 {
+		h.attachTimes = h.attachTimes[:n-1]
+	}
+}
+
+func (h *PeerAuthHandler) peerSessionLive(addr string) bool {
+	if h == nil || addr == "" {
+		return false
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	now := h.now()
+	live := func(tok string) bool {
+		sess := h.sessions[tok]
+		return sess != nil && !now.After(sess.expires)
+	}
+	if tok, ok := h.byPeer[addr]; ok && live(tok) {
+		return true
+	}
+	if tok, ok := h.prevByPeer[addr]; ok && live(tok) {
+		return true
+	}
+	return false
+}
+
+func attachFloorExhausted(retryAfterSec int) error {
+	err := connect.NewError(connect.CodeResourceExhausted, errors.New("too many attach attempts"))
+	err.Meta().Set("Retry-After", strconv.Itoa(retryAfterSec))
+	return err
+}
+
+func retryAfterSeconds(d time.Duration) int {
+	if d < time.Second {
+		return 1
+	}
+	sec := int((d + time.Second - 1) / time.Second)
+	if sec < 1 {
+		return 1
+	}
+	return sec
 }
 
 func (h *PeerAuthHandler) dropSessionLocked(tok string, sess *peerSession) {
@@ -568,11 +646,31 @@ func (h *PeerAuthHandler) StartSweeper() {
 	})
 }
 
-// Close stops the sweeper. Safe without StartSweeper.
+// Close stops the sweeper, ends every Watch, drops sessions, and refuses new
+// Attach and handshake-gated RPCs. Safe without StartSweeper. http.Server.Shutdown
+// can then drain the Watch handlers. Closed is FailedPrecondition so Phase 2
+// does not retry it as Unavailable.
 func (h *PeerAuthHandler) Close() {
 	h.closeOnce.Do(func() {
+		h.closed.Store(true)
 		close(h.closeCh)
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for tok, sess := range h.sessions {
+			h.dropSessionLocked(tok, sess)
+		}
+		h.observeSizesLocked()
 	})
+}
+
+// Closed reports whether Close has run. Attach and the handshake gate fail
+// closed; in-flight unaries that already bound a peer still finish.
+func (h *PeerAuthHandler) Closed() bool {
+	return h != nil && h.closed.Load()
+}
+
+func hostShuttingDown() error {
+	return connect.NewError(connect.CodeFailedPrecondition, errors.New("host shutting down"))
 }
 
 // SweepOnce drops expired sessions and retired nonces. Exported for tests;

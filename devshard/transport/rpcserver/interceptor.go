@@ -31,7 +31,8 @@ func withPeer(ctx context.Context, addr string) context.Context {
 }
 
 // TokenFromContext is the Attach token the interceptor admitted. Watch uses
-// this instead of WatchRequest.session_token.
+// this instead of WatchRequest.session_token. Unary RPCs do not stash it
+// (finding 51).
 func TokenFromContext(ctx context.Context) []byte {
 	v, _ := ctx.Value(tokenKey{}).([]byte)
 	return v
@@ -70,7 +71,7 @@ func isWatchPath(path string) bool {
 
 // handshakeGate admits non-Attach RPCs from the session header before Connect
 // reads the body. Unary interceptors run after protobuf decode; this wrapper
-// does not. The ResponseWriter is stashed only on Watch (write deadline).
+// does not. The ResponseWriter and session token are stashed only on Watch.
 func handshakeGate(auth *PeerAuthHandler, next http.Handler) http.Handler {
 	ew := connect.NewErrorWriter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -85,10 +86,11 @@ func handshakeGate(auth *PeerAuthHandler, next http.Handler) http.Handler {
 			return
 		}
 		ctx := r.Context()
-		if isWatchPath(r.URL.Path) {
+		watch := isWatchPath(r.URL.Path)
+		if watch {
 			ctx = withResponseWriter(ctx, w)
 		}
-		ctx, err := admitSession(auth, ctx, r.Header)
+		ctx, err := admitSession(auth, ctx, r.Header, watch)
 		if err != nil {
 			_ = ew.Write(w, r, err)
 			return
@@ -132,19 +134,22 @@ func (s *sessionInterceptor) admit(ctx context.Context, procedure string, header
 	// handshakeGate already admitted this request before Connect read the
 	// body, and nothing off the wire can set a context value, so a bound peer
 	// means the token was decoded and looked up one layer out. Admitting again
-	// would double the hex decode, the read lock, and the token copy on every
-	// RPC. The fallback keeps this interceptor a complete gate on its own for
-	// any mux built without the wrapper.
+	// would double the hex decode and the read lock on every RPC. The fallback
+	// keeps this interceptor a complete gate on its own for any mux built
+	// without the wrapper.
 	if PeerFromContext(ctx) != "" {
 		return ctx, nil
 	}
-	return admitSession(s.auth, ctx, header)
+	return admitSession(s.auth, ctx, header, isWatchPath(procedure))
 }
 
-func admitSession(auth *PeerAuthHandler, ctx context.Context, header http.Header) (context.Context, error) {
+func admitSession(auth *PeerAuthHandler, ctx context.Context, header http.Header, stashToken bool) (context.Context, error) {
 	if auth == nil {
 		observability.IncPeerRPCGate(gateReasonMissing)
 		return ctx, handshakeRequired()
+	}
+	if auth.Closed() {
+		return ctx, hostShuttingDown()
 	}
 	enc := header.Get(SessionHeader)
 	if len(enc) == 0 {
@@ -170,11 +175,12 @@ func admitSession(auth *PeerAuthHandler, ctx context.Context, header http.Header
 		return ctx, handshakeRequired()
 	}
 	observability.IncPeerRPCGate(gateReasonAdmitted)
-	observability.Log(ctx, observability.LevelDebug, "peer RPC handshake admitted",
-		observability.StageRequest, observability.WherePeerRPCGate, EscrowIDFromContext(ctx), observability.ReasonOK, nil,
-		"peer", peer)
-	tok := append([]byte(nil), raw...)
-	return withToken(withPeer(ctx, peer), tok), nil
+	ctx = withPeer(ctx, peer)
+	if stashToken {
+		// Watch is the only reader of TokenFromContext (finding 51).
+		ctx = withToken(ctx, append([]byte(nil), raw...))
+	}
+	return ctx, nil
 }
 
 const (
@@ -189,7 +195,9 @@ var errInvalidSessionToken = errors.New("invalid session token")
 
 func observeGateForged(ctx context.Context, err error) {
 	observability.IncPeerRPCGate(gateReasonForged)
-	observability.Log(ctx, observability.LevelWarn, "peer RPC handshake forged",
+	// Debug, not warn: this path needs no credentials (finding 45).
+	// gate_total{reason="forged"} is the operator signal.
+	observability.Log(ctx, observability.LevelDebug, "peer RPC handshake forged",
 		observability.StageRequest, observability.WherePeerRPCGate, EscrowIDFromContext(ctx), observability.ReasonInvalidSignature, err)
 }
 

@@ -940,6 +940,20 @@ func (m *DevshardMetrics) SetHostRPC(peer, mode string, on bool) {
 	m.gatewayHostRPC.WithLabelValues(peer, mode).Set(v)
 }
 
+// DeleteHostRPC drops a host_rpc series so retired peers do not occupy
+// cardinality after the last escrow bind (finding 49).
+func (m *DevshardMetrics) DeleteHostRPC(peer, mode string) {
+	if m == nil || m.gatewayHostRPC == nil || peer == "" {
+		return
+	}
+	switch mode {
+	case transport.PeerRPCPathH2, transport.PeerRPCPathJSON:
+	default:
+		return
+	}
+	m.gatewayHostRPC.DeleteLabelValues(peer, mode)
+}
+
 // PeerRPCAdoption is the gateway-side tracker Phase 2 PeerConn should call.
 func (m *DevshardMetrics) PeerRPCAdoption() *transport.PeerRPCAdoption {
 	if m == nil {

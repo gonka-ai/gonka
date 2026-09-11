@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
+	"devshard/bridge"
 	"devshard/internal/testutil"
 	"devshard/storage"
 	"devshard/transport"
@@ -115,6 +116,110 @@ func TestSessionHandler_GetSignaturesWithoutHandshake(t *testing.T) {
 	_, err := client.GetSignatures(context.Background(), connect.NewRequest(&rpcpb.GetSignaturesRequest{Nonce: 1}))
 	require.Error(t, err)
 	require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err))
+}
+
+func TestMapAllowError(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		code   connect.Code
+		msg    string
+		header string
+	}{
+		{
+			name:   "initializing",
+			err:    fmt.Errorf("wrapped: %w", storage.ErrStorageIndexRebuilding),
+			code:   connect.CodeUnavailable,
+			msg:    "host initializing",
+			header: transport.DevshardErrorInitializing,
+		},
+		{
+			name:   "chain unavailable",
+			err:    fmt.Errorf("get escrow: %w", bridge.ErrChainUnavailable),
+			code:   connect.CodeUnavailable,
+			msg:    "chain unavailable",
+			header: transport.DevshardErrorChainUnavailable,
+		},
+		{
+			name: "session not found",
+			err:  storage.ErrSessionNotFound,
+			code: connect.CodeNotFound,
+			msg:  "session not found",
+		},
+		{
+			name:   "settled",
+			err:    fmt.Errorf("%w: escrow 1", storage.ErrSessionNotActive),
+			code:   connect.CodeFailedPrecondition,
+			msg:    "escrow settled",
+			header: transport.DevshardErrorEscrowSettled,
+		},
+		{
+			name:   "escrow settled",
+			err:    bridge.ErrEscrowSettled,
+			code:   connect.CodeFailedPrecondition,
+			msg:    "escrow settled",
+			header: transport.DevshardErrorEscrowSettled,
+		},
+		{
+			name: "version conflict",
+			err:  storage.ErrSessionVersionConflict,
+			code: connect.CodeFailedPrecondition,
+			msg:  "session version conflict",
+		},
+		{
+			name: "epoch conflict",
+			err:  storage.ErrSessionEpochConflict,
+			code: connect.CodeFailedPrecondition,
+			msg:  "session epoch conflict",
+		},
+		{
+			name: "opaque unknown",
+			err:  errors.New("storage: disk full at /var/lib/devshard"),
+			code: connect.CodeFailedPrecondition,
+			msg:  "escrow is not open on this host",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := mapAllowError(tt.err)
+			require.Equal(t, tt.code, connect.CodeOf(err))
+			require.Contains(t, err.Error(), tt.msg)
+			require.NotContains(t, err.Error(), "disk")
+			require.NotContains(t, err.Error(), "postgres")
+			require.NotContains(t, err.Error(), "rebuilding")
+			var ce *connect.Error
+			require.ErrorAs(t, err, &ce)
+			if tt.header == "" {
+				require.Empty(t, ce.Meta().Get(transport.HeaderDevshardError))
+				return
+			}
+			require.Equal(t, tt.header, ce.Meta().Get(transport.HeaderDevshardError))
+		})
+	}
+}
+
+func TestSessionHandler_GetSignaturesLookupClassified(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		code connect.Code
+		msg  string
+	}{
+		{"not found", storage.ErrSessionNotFound, connect.CodeNotFound, "session not found"},
+		{"chain unavailable", bridge.ErrChainUnavailable, connect.CodeUnavailable, "chain unavailable"},
+		{"settled", storage.ErrSessionNotActive, connect.CodeFailedPrecondition, "escrow settled"},
+		{"version", storage.ErrSessionVersionConflict, connect.CodeFailedPrecondition, "session version conflict"},
+		{"epoch", storage.ErrSessionEpochConflict, connect.CodeFailedPrecondition, "session epoch conflict"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newSessionEnv(t, stubLookup{err: tt.err}, "1")
+			_, err := env.getSignatures(1)
+			require.Error(t, err)
+			require.Equal(t, tt.code, connect.CodeOf(err))
+			require.Contains(t, err.Error(), tt.msg)
+		})
+	}
 }
 
 func TestSessionHandler_GetSignaturesLookupMiss(t *testing.T) {
@@ -232,6 +337,16 @@ func TestSessionHandler_GetSignaturesResolutionMetrics(t *testing.T) {
 	})
 	delta("error", "session_resolve_err", func() {
 		env := newSessionEnv(t, stubLookup{}, "1")
+		_, err := env.getSignatures(1)
+		require.Error(t, err)
+	})
+	delta("error", "get_escrow_err", func() {
+		env := newSessionEnv(t, stubLookup{err: bridge.ErrChainUnavailable}, "1")
+		_, err := env.getSignatures(1)
+		require.Error(t, err)
+	})
+	delta("error", "escrow_settled", func() {
+		env := newSessionEnv(t, stubLookup{err: storage.ErrSessionNotActive}, "1")
 		_, err := env.getSignatures(1)
 		require.Error(t, err)
 	})

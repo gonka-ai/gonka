@@ -4149,6 +4149,7 @@ func (g *Gateway) retireRuntimeLocked(id, reason string) *devshardRuntime {
 	// Admin deactivate may skip deactivateDevshardByIDWithReason; always release
 	// here too. ReleaseEscrow is idempotent.
 	g.releaseHostPing(id)
+	g.metrics.PeerRPCAdoption().ReleaseEscrow(id)
 	return rt
 }
 
@@ -4158,9 +4159,9 @@ func (g *Gateway) attachMetrics(rt *devshardRuntime) {
 	}
 	if g.metrics != nil {
 		rt.proxy.redundancy.metrics = g.metrics
-		if rt.session != nil {
-			g.metrics.PeerRPCAdoption().BindEscrowHosts(rt.id, rt.session.ParticipantKeys())
-		}
+		// Use the runtime snapshot, not session.ParticipantKeys(): admin-add
+		// and settings-reload call this under g.mu (finding 52).
+		g.metrics.PeerRPCAdoption().BindEscrowHosts(rt.id, runtimeParticipantKeys(rt))
 	}
 	rt.proxy.redundancy.devshardID = rt.id
 	escrowID := rt.id

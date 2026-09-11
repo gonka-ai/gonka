@@ -136,6 +136,14 @@ func TestSessionInterceptor_BindsPeerAndToken(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, signer.Address(), PeerFromContext(ctx))
+	require.Empty(t, TokenFromContext(ctx), "unary RPCs must not stash the token (finding 51)")
+
+	ctx, err = (&sessionInterceptor{auth: auth}).admit(
+		context.Background(),
+		rpcpbconnect.PeerAuthServiceWatchProcedure,
+		header,
+	)
+	require.NoError(t, err)
 	require.Equal(t, attached.SessionToken, TokenFromContext(ctx))
 }
 
@@ -148,9 +156,13 @@ func TestAdmitSession_LookupUsesRawToken(t *testing.T) {
 
 	header := make(http.Header)
 	SetSessionHeader(header, nonce)
-	ctx, err := admitSession(auth, context.Background(), header)
+	ctx, err := admitSession(auth, context.Background(), header, false)
 	require.NoError(t, err)
 	require.Equal(t, signer.Address(), PeerFromContext(ctx))
+	require.Empty(t, TokenFromContext(ctx))
+
+	ctx, err = admitSession(auth, context.Background(), header, true)
+	require.NoError(t, err)
 	require.Equal(t, nonce, TokenFromContext(ctx))
 
 	auth.mu.RLock()
@@ -278,37 +290,38 @@ func TestAdmitSession_CountsGateReasons(t *testing.T) {
 	}
 
 	delta(gateReasonMissing, func() {
-		_, err := admitSession(auth, context.Background(), make(http.Header))
+		_, err := admitSession(auth, context.Background(), make(http.Header), false)
 		requireHandshakeRequired(t, err)
 	})
 
 	delta(gateReasonOversized, func() {
 		header := make(http.Header)
 		header.Set(SessionHeader, strings.Repeat("aa", maxAttachNonceBytes+1))
-		_, err := admitSession(auth, context.Background(), header)
+		_, err := admitSession(auth, context.Background(), header, false)
 		requireHandshakeRequired(t, err)
 	})
 
 	delta(gateReasonForged, func() {
 		header := make(http.Header)
 		SetSessionHeader(header, []byte("forged-session-token-xxxx"))
-		_, err := admitSession(auth, context.Background(), header)
+		_, err := admitSession(auth, context.Background(), header, false)
 		requireHandshakeRequired(t, err)
 	})
 
 	delta(gateReasonAdmitted, func() {
 		header := make(http.Header)
 		SetSessionHeader(header, attached.SessionToken)
-		ctx, err := admitSession(auth, context.Background(), header)
+		ctx, err := admitSession(auth, context.Background(), header, false)
 		require.NoError(t, err)
 		require.Equal(t, signer.Address(), PeerFromContext(ctx))
+		require.Empty(t, TokenFromContext(ctx))
 	})
 
 	clock.Advance(31 * time.Second)
 	delta(gateReasonExpired, func() {
 		header := make(http.Header)
 		SetSessionHeader(header, attached.SessionToken)
-		_, err := admitSession(auth, context.Background(), header)
+		_, err := admitSession(auth, context.Background(), header, false)
 		requireHandshakeRequired(t, err)
 	})
 }

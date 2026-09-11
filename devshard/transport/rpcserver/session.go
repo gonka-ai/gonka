@@ -6,6 +6,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"devshard/bridge"
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
@@ -74,7 +75,7 @@ func (h *SessionHandler) GetSignatures(ctx context.Context, req *connect.Request
 	}
 	if srv == nil {
 		recordRPCSessionResolution(ctx, escrowID, storage.ErrSessionNotFound)
-		return nil, connect.NewError(connect.CodeNotFound, errors.New("session not found"))
+		return nil, mapAllowError(storage.ErrSessionNotFound)
 	}
 	recordRPCSessionResolution(ctx, escrowID, nil)
 	if !srv.AllowsSender(peer) {
@@ -90,12 +91,32 @@ func (h *SessionHandler) GetSignatures(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&rpcpb.GetSignaturesResponse{Signatures: sigs}), nil
 }
 
-// mapAllowError is the roster-check failure: JSON maps initializing / index
-// rebuild to 503, and "not open" to a non-retryable conflict/404. Connect
-// Unavailable is the 503; FailedPrecondition is "this escrow is not here".
+// mapAllowError is JSON sessionHTTPError on the Connect path. Wire strings are
+// stable (finding 4); codes match the HTTP status class (finding 44).
 func mapAllowError(err error) error {
 	if isTransientSessionError(err) {
-		return hostInitializing()
+		return withDevshardError(hostInitializing(), transport.DevshardErrorInitializing)
+	}
+	if errors.Is(err, bridge.ErrChainUnavailable) {
+		return withDevshardError(
+			connect.NewError(connect.CodeUnavailable, errors.New("chain unavailable")),
+			transport.DevshardErrorChainUnavailable,
+		)
+	}
+	if errors.Is(err, storage.ErrSessionNotFound) {
+		return connect.NewError(connect.CodeNotFound, errors.New("session not found"))
+	}
+	if errors.Is(err, storage.ErrSessionNotActive) || errors.Is(err, bridge.ErrEscrowSettled) {
+		return withDevshardError(
+			connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow settled")),
+			transport.DevshardErrorEscrowSettled,
+		)
+	}
+	if errors.Is(err, storage.ErrSessionVersionConflict) {
+		return connect.NewError(connect.CodeFailedPrecondition, errors.New("session version conflict"))
+	}
+	if errors.Is(err, storage.ErrSessionEpochConflict) {
+		return connect.NewError(connect.CodeFailedPrecondition, errors.New("session epoch conflict"))
 	}
 	return connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow is not open on this host"))
 }
@@ -104,9 +125,18 @@ func hostInitializing() error {
 	return connect.NewError(connect.CodeUnavailable, errors.New("host initializing"))
 }
 
-// isTransientSessionError is the JSON 503 set. server.ErrInitializing is the
-// same class but lives in server (import cycle); production resolution returns
-// storage.ErrStorageIndexRebuilding from GetSessionMeta.
+func withDevshardError(err error, code string) error {
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		ce.Meta().Set(transport.HeaderDevshardError, code)
+		return ce
+	}
+	return err
+}
+
+// isTransientSessionError is the JSON 503 initializing set. server.ErrInitializing
+// is the same class but lives in server (import cycle); production resolution
+// returns storage.ErrStorageIndexRebuilding from GetSessionMeta.
 func isTransientSessionError(err error) bool {
 	return errors.Is(err, storage.ErrStorageIndexRebuilding)
 }
@@ -129,10 +159,13 @@ func rpcResolutionStatus(err error) (observability.MetricStatus, observability.R
 	if errors.Is(err, storage.ErrStorageIndexRebuilding) {
 		return observability.MetricStatusError, observability.ReasonInitializing
 	}
+	if errors.Is(err, bridge.ErrChainUnavailable) {
+		return observability.MetricStatusError, observability.ReasonGetEscrowErr
+	}
 	if errors.Is(err, storage.ErrSessionNotFound) {
 		return observability.MetricStatusError, observability.ReasonSessionResolveErr
 	}
-	if errors.Is(err, storage.ErrSessionNotActive) {
+	if errors.Is(err, storage.ErrSessionNotActive) || errors.Is(err, bridge.ErrEscrowSettled) {
 		return observability.MetricStatusError, observability.ReasonEscrowSettled
 	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) {

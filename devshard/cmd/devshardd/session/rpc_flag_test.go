@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"devshard/observability"
 	"devshard/storage"
+	"devshard/transport/rpcserver"
 )
 
 func TestHostManager_RPCRoutesGatedByFlag(t *testing.T) {
@@ -86,4 +88,16 @@ func prometheusGauge(t *testing.T, name string) float64 {
 		}
 	}
 	return 0
+}
+
+func TestAllowRPCPeer_NilServer(t *testing.T) {
+	mgr := NewHostManager(storage.NewMemory(), mustGenerateKey(t), nil, nil, nil, "v5", nil, nil, nil)
+	t.Cleanup(func() { _ = mgr.Close() })
+	mgr.sessionsMutex.Lock()
+	mgr.sessions["1"] = nil
+	mgr.sessionsMutex.Unlock()
+
+	ok, err := mgr.allowRPCPeer(rpcserver.WithEscrowID(context.Background(), "1"), "gonka1peer")
+	require.False(t, ok)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 }

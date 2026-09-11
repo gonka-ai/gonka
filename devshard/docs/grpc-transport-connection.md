@@ -80,6 +80,9 @@ The rewrite is a path splice, not a second protocol. Proxies never see the strip
 `/rpc/` route does not exist (404). Existing JSON session routes are untouched.
 Flag on with no host address (no signer or recorder) panics at `Register`
 instead of mounting a handler that rejects every Attach as a bad peer.
+`Close` / `ClosePeerRPC` ends Watch streams, drops host sessions, and refuses
+new Attach and handshake-gated RPCs with `failed_precondition` `"host shutting
+down"` so `http.Server.Shutdown` can drain.
 
 Mounted children export `devshard_peer_rpc_enabled`, Attach/gate counters, and
 `devshard_session_resolution_total{route="rpc_get_signatures"}` so JSON dashboards
@@ -87,7 +90,8 @@ keep counting as traffic moves off GET `/signatures`.
 
 The **gateway** (not the child) counts adoption:
 `devshard_gateway_escrow_sessions_total{path}` once per escrow per host, and
-`devshard_gateway_host_rpc{peer,mode}` once per host with a ready PeerConn.
+`devshard_gateway_host_rpc{peer,mode}` while that host still has a live escrow
+bind (or a ready PeerConn). Retiring the escrow drops idle `host_rpc` series.
 
 ---
 

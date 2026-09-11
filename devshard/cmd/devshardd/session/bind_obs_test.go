@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -277,6 +278,48 @@ func TestSessionServerExisting_NoCreate(t *testing.T) {
 
 	_, err = store.GetSessionMeta(escrowID)
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+type countingGetSessionMetaStore struct {
+	storage.Storage
+	gets atomic.Int32
+}
+
+func (s *countingGetSessionMetaStore) GetSessionMeta(escrowID string) (*storage.SessionMeta, error) {
+	s.gets.Add(1)
+	return s.Storage.GetSessionMeta(escrowID)
+}
+
+func TestSessionServerExisting_NegativeCachesMiss(t *testing.T) {
+	counted := &countingGetSessionMetaStore{Storage: storage.NewMemory()}
+	mgr := NewHostManager(counted, mustGenerateKey(t), nil, nil, nil, "v5", nil, nil, nil)
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	const escrowID = "9708"
+	_, err := mgr.SessionServerExisting(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+	first := counted.gets.Load()
+	require.Greater(t, first, int32(0))
+
+	_, err = mgr.SessionServerExisting(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+	require.Equal(t, first, counted.gets.Load(), "cached miss must not recover again")
+}
+
+func TestOwnerChat_BindsAfterExistingMiss(t *testing.T) {
+	const escrowID = "9712"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+
+	_, err := mgr.SessionServerExisting(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+
+	e := echo.New()
+	mgr.Register(e.Group(""))
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	rec := signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "cached Existing miss must not block first bind; http=%d body=%s", rec.Code, rec.Body.String())
+	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
 }
 
 func TestGetOrCreate_RecoversBeforeCreate(t *testing.T) {

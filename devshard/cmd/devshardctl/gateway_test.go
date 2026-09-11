@@ -3301,6 +3301,20 @@ func requireMetricGaugeValue(t *testing.T, families []*dto.MetricFamily, name st
 	t.Fatalf("metric %s with labels %v not found", name, labels)
 }
 
+func requireMetricGaugeAbsent(t *testing.T, families []*dto.MetricFamily, name string, labels map[string]string) {
+	t.Helper()
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if metricLabelsMatch(metric, labels) {
+				t.Fatalf("metric %s with labels %v still present", name, labels)
+			}
+		}
+	}
+}
+
 func metricLabelsMatch(metric *dto.Metric, want map[string]string) bool {
 	if metric == nil || len(metric.GetLabel()) != len(want) {
 		return false
