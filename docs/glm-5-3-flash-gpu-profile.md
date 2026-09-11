@@ -157,10 +157,22 @@ measured; the inference gate is the corroborating signal.
 
 ## MLNode image
 
-Built and verified on 8×H200:
-`ghcr.io/gonka-ai/mlnode:3.0.17-vllm-0.28.0-h200`, on the vLLM base
-`ghcr.io/gonka-ai/vllm:v0.28.0-glm53-poc-cu13-hopper-blackwell`. It carries vLLM
-`0.28.0.dev0+glm53.gonka.sampler1`, gonka-poc `0.1.4`, and FlashInfer `0.6.18`.
+```
+ghcr.io/gonka-ai/mlnode:3.0.17-vllm-0.28.0
+ghcr.io/gonka-ai/mlnode@sha256:d39b7f2da3242239d5e2fb7e9a1533c4d5e025b919803f4bcd09ef78d6865d86
+```
+
+Built on the vLLM base `ghcr.io/gonka-ai/vllm:v0.28.0-glm53-poc-cu13-hopper-blackwell`, which
+is itself an overlay on `vllm/vllm-openai:glm53-flash`. The image carries vLLM
+`0.28.0.dev0+glm53.gonka.sampler1`, gonka-poc `0.1.4`, FlashInfer `0.6.18` with the `+cu130`
+JIT cache, and torch `2.13.0+cu130`.
+
+**Pin the upstream base by digest.** `vllm/vllm-openai:glm53-flash` is a mutable tag and moved
+from `0.1.dev20051+g487ecf187` to `0.28.1rc1.dev580+g385dce36b` within two days, breaking the
+build with no change on our side. The version guard in `docker/Dockerfile.gonka-poc` caught it
+rather than silently overlaying our residual patches onto a different upstream tree. This
+image was built against
+`vllm/vllm-openai@sha256:2c6da6c6f16ed15c91e412d896dba13701f25fe1861eaec9ddaa4db34d1d21c4`.
 
 Three changes to `mlnode/packages/api/Dockerfile` were required for the 0.28 base and are
 included here. The base image ships `wheel` as a distro package with no RECORD file, so the
@@ -174,32 +186,32 @@ dependency.
 
 ### Verified on this image
 
-All three currently integrated models were started concurrently on disjoint GPUs — DeepSeek
-V4 Flash 0731 at TP=2, MiniMax M2.7 at TP=2, GLM-5.3-Flash at TP=4 — with the arguments from
-their own `deploy/join` profiles. Each was taken through a full cycle of PoC start, PoC stop,
-and inference, twice, in both compiled and eager mode.
+All three currently integrated models were started concurrently on disjoint GPUs and taken
+through a full cycle of PoC start, PoC stop, and inference — twice — on both a Blackwell and a
+Hopper host. Hopper is not redundant here: the sm90 kernels, FlashAttention 3 among them, are
+never exercised on Blackwell.
 
-| Model | Mode | PoC cycle 1 | PoC cycle 2 | Inference after stop |
-|---|---|---:|---:|---:|
-| DeepSeek V4 Flash 0731 | compiled | 1036.7 | 1036.7 | 0.2 s |
-| DeepSeek V4 Flash 0731 | eager | 998.3 | 998.3 | 2.4 s |
-| MiniMax M2.7 | compiled | 1459.1 | 1459.1 | 0.3 s |
-| MiniMax M2.7 | eager | 1804.6 | 1843.0 | 4.1 s |
-| GLM-5.3-Flash | compiled | 1497.4 | 1497.3 | 0.3 s |
-| GLM-5.3-Flash | eager | 1459.0 | 1497.4 | 3.8 s |
+| Model | TP | 8×B200, cycle 1 / 2 | 8×H200, cycle 1 / 2 |
+|---|---:|---:|---:|
+| DeepSeek-V4-Flash-0731 | 2 | 2572.6 / 2534.2 | 998.3 / 998.3 |
+| MiniMax-M2.7 | 2 | 1651.1 / 1651.1 | 1459.0 / 1459.0 |
+| GLM-5.3-Flash | 4 | 2726.2 / 2726.2 | 1497.4 / 1497.4 |
 
 Nonce rates are per instance in nonce/min at PoC batch 16. Every cycle answered the control
-prompt correctly, and the second PoC run matched the first to the decimal, so stopping PoC
-leaves no state that slows the next start.
+prompt correctly and separated reasoning into `message.reasoning`. The second PoC run matches
+the first almost exactly, so stopping PoC leaves no state that slows the next start.
+
+Startup through the stock `entrypoint.sh` was checked separately, since that is the path the
+join compose uses and the one that failed before #1751: the container reaches
+`/api/v1/state`, which reports `"version":"3.0.17"`, with no `useradd` in the logs.
 
 ### MiniMax reasoning parser
 
 `--reasoning-parser minimax_m2_append_think` does not separate reasoning on vLLM 0.28: the
 whole `<think>…</think>` block arrives in `message.content` and `message.reasoning` stays
-empty. `minimax_m2` is correct on this version — reasoning lands in `message.reasoning` and
-`content` holds only the answer. The MiniMax profiles are updated accordingly. This was
-verified on 0.28 only; if 3.0.16 nodes on vLLM 0.25.1 stay in service, re-check the flag there
-before rolling the change out to them.
+empty. `minimax_m2` is correct on this version, confirmed on both hosts above. The MiniMax
+profiles are updated accordingly. This was verified on 0.28 only; if 3.0.16 nodes on vLLM
+0.25.1 stay in service, re-check the flag there before rolling the change out to them.
 
 ## Operational notes
 
