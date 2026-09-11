@@ -5,6 +5,7 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -102,6 +103,12 @@ func (s *Server) createNewNodes(ctx echo.Context) error {
 	var outputNodes []apiconfig.InferenceNodeConfig
 	var errors []string
 	for i, node := range newNodes {
+		if first, dup := laterDuplicateBatchIndex(newNodes, i); dup {
+			errorMsg := fmt.Sprintf("node[%d] (id: %s): duplicate id in batch (first seen at index %d)", i, node.Id, first)
+			errors = append(errors, errorMsg)
+			logging.Error("Failed to add node in batch", types.Nodes, "index", i, "node_id", node.Id, "error", "duplicate id in batch")
+			continue
+		}
 		newNode, err := s.addNode(ctx.Request().Context(), node)
 		if err != nil {
 			errorMsg := fmt.Sprintf("node[%d] (id: %s): %v", i, node.Id, err)
@@ -129,6 +136,21 @@ func (s *Server) createNewNodes(ctx echo.Context) error {
 	}
 
 	return ctx.JSON(http.StatusCreated, outputNodes)
+}
+
+// laterDuplicateBatchIndex reports whether nodes[i] repeats an earlier Id.
+// On a duplicate it returns the first index of that Id.
+func laterDuplicateBatchIndex(nodes []apiconfig.InferenceNodeConfig, i int) (int, bool) {
+	if i < 0 || i >= len(nodes) {
+		return 0, false
+	}
+	id := nodes[i].Id
+	for j := 0; j < i; j++ {
+		if nodes[j].Id == id {
+			return j, true
+		}
+	}
+	return 0, false
 }
 
 func (s *Server) createNewNode(ctx echo.Context) error {
@@ -193,7 +215,11 @@ func (s *Server) addNode(ctx context.Context, newNode apiconfig.InferenceNodeCon
 	response := <-cmd.Response
 	if response.Error != nil {
 		logging.Error("Error creating new node", types.Nodes, "error", response.Error, "node_id", newNode.Id)
-		return apiconfig.InferenceNodeConfig{}, echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("failed to create node: %v", response.Error))
+		status := http.StatusBadRequest
+		if errors.Is(response.Error, broker.ErrNodeAlreadyExists) {
+			status = http.StatusConflict
+		}
+		return apiconfig.InferenceNodeConfig{}, echo.NewHTTPError(status, fmt.Sprintf("failed to create node: %v", response.Error))
 	}
 
 	node := response.Node

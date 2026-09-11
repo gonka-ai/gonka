@@ -10,6 +10,7 @@ import (
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -72,6 +73,7 @@ func testMsgCodec(t *testing.T) codec.Codec {
 		ValAddressPrefix: "gonkavaloper",
 	}.NewInterfaceRegistry()
 	inferencetypes.RegisterInterfaces(ir)
+	blstypes.RegisterInterfaces(ir)
 	authztypes.RegisterInterfaces(ir)
 	return codec.NewProtoCodec(ir)
 }
@@ -263,4 +265,65 @@ func TestPocPeriodValidationDecorator_RejectsNestedMsgExec(t *testing.T) {
 	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, &outer)
 	require.ErrorIs(t, err, errNestedMsgExec)
 	require.False(t, nextCalled)
+}
+
+func storeCommitMsg(creator, modelID string, count uint32) *inferencetypes.MsgPoCV2StoreCommit {
+	return &inferencetypes.MsgPoCV2StoreCommit{
+		Creator:                  creator,
+		PocStageStartBlockHeight: 100,
+		Entries: []*inferencetypes.PoCV2CommitEntry{
+			{ModelId: modelID, Count: count, RootHash: make([]byte, 32)},
+		},
+	}
+}
+
+func TestPocPeriodValidationDecorator_StoreCommitNextBlockClosed(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+	signer := testutil.Creator
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(signer), inferencetypes.Participant{
+		Index:   signer,
+		Address: signer,
+	}))
+
+	k.SetModel(ctx, &inferencetypes.Model{Id: "test-model"})
+
+	msg := storeCommitMsg(signer, "test-model", 10)
+	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, msg)
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+
+	deadlineCtx := ctx.WithBlockHeight(170)
+	nextCalled, err = runPocPeriodAnte(t, decorator, deadlineCtx, msg)
+	require.Error(t, err)
+	require.ErrorIs(t, err, inferencetypes.ErrPocTooLate)
+	require.False(t, nextCalled)
+}
+
+func TestPocPeriodValidationDecorator_StoreCommitRecheckModelOverlap(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+	signer := testutil.Creator
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(signer), inferencetypes.Participant{
+		Index:   signer,
+		Address: signer,
+	}))
+	k.SetModel(ctx, &inferencetypes.Model{Id: "test-model"})
+
+	require.NoError(t, k.SetPoCV2StoreCommit(ctx, inferencetypes.PoCV2StoreCommit{
+		ParticipantAddress:       signer,
+		PocStageStartBlockHeight: 100,
+		Count:                    10,
+		RootHash:                 make([]byte, 32),
+		CommitBlockHeight:        ctx.BlockHeight(),
+		ModelId:                  "test-model",
+	}))
+
+	recheckCtx := ctx.WithIsReCheckTx(true)
+	nextCalled, err := runPocPeriodAnte(t, decorator, recheckCtx, storeCommitMsg(signer, "test-model", 10))
+	require.Error(t, err)
+	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
+	require.False(t, nextCalled)
+
+	nextCalled, err = runPocPeriodAnte(t, decorator, recheckCtx, storeCommitMsg(signer, "test-model", 12))
+	require.NoError(t, err)
+	require.True(t, nextCalled)
 }
