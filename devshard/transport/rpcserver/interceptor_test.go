@@ -262,3 +262,71 @@ func TestSessionInterceptor_OversizedTokenDropped(t *testing.T) {
 	)
 	requireHandshakeRequired(t, err)
 }
+
+func TestAdmitSession_CountsGateReasons(t *testing.T) {
+	clock := &testClock{t: time.Unix(1_000_000, 0)}
+	auth := newTestAuth(PeerAuthConfig{SessionTTL: 30 * time.Second, Now: clock.Now})
+	signer := testutil.MustGenerateKey(t)
+	attached, err := attachDirectAt(t, auth, signer, []byte("gate-metric-attach-nonce01"), clock.Now().Unix())
+	require.NoError(t, err)
+
+	delta := func(reason string, fn func()) {
+		t.Helper()
+		before := metricCounter(t, "devshard_peer_rpc_gate_total", map[string]string{"reason": reason})
+		fn()
+		require.Equal(t, before+1, metricCounter(t, "devshard_peer_rpc_gate_total", map[string]string{"reason": reason}), reason)
+	}
+
+	delta(gateReasonMissing, func() {
+		_, err := admitSession(auth, context.Background(), make(http.Header))
+		requireHandshakeRequired(t, err)
+	})
+
+	delta(gateReasonOversized, func() {
+		header := make(http.Header)
+		header.Set(SessionHeader, strings.Repeat("aa", maxAttachNonceBytes+1))
+		_, err := admitSession(auth, context.Background(), header)
+		requireHandshakeRequired(t, err)
+	})
+
+	delta(gateReasonForged, func() {
+		header := make(http.Header)
+		SetSessionHeader(header, []byte("forged-session-token-xxxx"))
+		_, err := admitSession(auth, context.Background(), header)
+		requireHandshakeRequired(t, err)
+	})
+
+	delta(gateReasonAdmitted, func() {
+		header := make(http.Header)
+		SetSessionHeader(header, attached.SessionToken)
+		ctx, err := admitSession(auth, context.Background(), header)
+		require.NoError(t, err)
+		require.Equal(t, signer.Address(), PeerFromContext(ctx))
+	})
+
+	clock.Advance(31 * time.Second)
+	delta(gateReasonExpired, func() {
+		header := make(http.Header)
+		SetSessionHeader(header, attached.SessionToken)
+		_, err := admitSession(auth, context.Background(), header)
+		requireHandshakeRequired(t, err)
+	})
+}
+
+func TestHandshakeGate_OversizedAttachCountsResourceExhausted(t *testing.T) {
+	auth := newTestAuth(PeerAuthConfig{})
+	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
+	t.Cleanup(srv.Close)
+
+	before := metricCounter(t, "devshard_peer_rpc_attach_total", map[string]string{"result": "resource_exhausted"})
+	body := bytes.Repeat([]byte("x"), maxAttachRecvBytes+1)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+rpcpbconnect.PeerAuthServiceAttachProcedure, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/proto")
+	req.ContentLength = int64(len(body))
+	resp, err := srv.Client().Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	require.Equal(t, before+1, metricCounter(t, "devshard_peer_rpc_attach_total", map[string]string{"result": "resource_exhausted"}))
+}

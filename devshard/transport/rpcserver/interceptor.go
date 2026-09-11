@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"devshard/observability"
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
@@ -75,6 +76,7 @@ func handshakeGate(auth *PeerAuthHandler, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isAttachPath(r.URL.Path) {
 			if r.ContentLength > maxAttachRecvBytes {
+				observability.IncPeerRPCAttach(connect.CodeResourceExhausted.String())
 				_ = ew.Write(w, r, connect.NewError(connect.CodeResourceExhausted, errors.New("attach request too large")))
 				return
 			}
@@ -141,22 +143,54 @@ func (s *sessionInterceptor) admit(ctx context.Context, procedure string, header
 
 func admitSession(auth *PeerAuthHandler, ctx context.Context, header http.Header) (context.Context, error) {
 	if auth == nil {
+		observability.IncPeerRPCGate(gateReasonMissing)
 		return ctx, handshakeRequired()
 	}
 	enc := header.Get(SessionHeader)
-	if len(enc) == 0 || len(enc) > maxAttachNonceBytes*2 {
+	if len(enc) == 0 {
+		observability.IncPeerRPCGate(gateReasonMissing)
+		return ctx, handshakeRequired()
+	}
+	if len(enc) > maxAttachNonceBytes*2 {
+		observability.IncPeerRPCGate(gateReasonOversized)
 		return ctx, handshakeRequired()
 	}
 	raw, err := hex.DecodeString(enc)
 	if err != nil || len(raw) == 0 {
+		observeGateForged(ctx, err)
 		return ctx, handshakeRequired()
 	}
-	peer, ok := auth.LookupToken(raw)
+	peer, ok, expired := auth.inspectToken(raw)
+	if expired {
+		observability.IncPeerRPCGate(gateReasonExpired)
+		return ctx, handshakeRequired()
+	}
 	if !ok {
+		observeGateForged(ctx, errInvalidSessionToken)
 		return ctx, handshakeRequired()
 	}
+	observability.IncPeerRPCGate(gateReasonAdmitted)
+	observability.Log(ctx, observability.LevelDebug, "peer RPC handshake admitted",
+		observability.StageRequest, observability.WherePeerRPCGate, EscrowIDFromContext(ctx), observability.ReasonOK, nil,
+		"peer", peer)
 	tok := append([]byte(nil), raw...)
 	return withToken(withPeer(ctx, peer), tok), nil
+}
+
+const (
+	gateReasonAdmitted  = "admitted"
+	gateReasonMissing   = "missing"
+	gateReasonForged    = "forged"
+	gateReasonExpired   = "expired"
+	gateReasonOversized = "oversized"
+)
+
+var errInvalidSessionToken = errors.New("invalid session token")
+
+func observeGateForged(ctx context.Context, err error) {
+	observability.IncPeerRPCGate(gateReasonForged)
+	observability.Log(ctx, observability.LevelWarn, "peer RPC handshake forged",
+		observability.StageRequest, observability.WherePeerRPCGate, EscrowIDFromContext(ctx), observability.ReasonInvalidSignature, err)
 }
 
 // requirePeer is the data-RPC identity: handshake peer + URL escrow.

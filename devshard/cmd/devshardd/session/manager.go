@@ -372,6 +372,18 @@ func (m *HostManager) SetRPCServerEnabled(enabled bool) {
 	m.rpcServerEnabled = enabled
 }
 
+func (m *HostManager) hostRPCAddress() string {
+	if m.recorder != nil {
+		if addr := strings.TrimSpace(m.recorder.GetAccountAddress()); addr != "" {
+			return addr
+		}
+	}
+	if m.signer != nil {
+		return m.signer.Address()
+	}
+	return ""
+}
+
 func (m *HostManager) allowRPCPeer(ctx context.Context, addr string) (bool, error) {
 	escrowID := rpcserver.EscrowIDFromContext(ctx)
 	srv, err := m.SessionServerExisting(escrowID)
@@ -1280,10 +1292,15 @@ func (m *HostManager) Register(g *echo.Group) {
 	g.GET("/stats/shards/:escrow_id", m.handleStatsShard)
 	var opts []devshardserver.RouteOption
 	if m.rpcServerEnabled {
-		opts = append(opts, devshardserver.WithPeerRPC(
-			m.peerAuthHandler(),
-			rpcserver.NewSessionHandler(rpcserver.AdaptLookup(m.SessionServerExisting)),
-		))
+		if m.hostRPCAddress() == "" {
+			panic("devshard: DEVSHARD_RPC_SERVER_ENABLED requires a host address (signer or recorder)")
+		}
+		if auth := m.peerAuthHandler(); auth != nil {
+			opts = append(opts, devshardserver.WithPeerRPC(
+				auth,
+				rpcserver.NewSessionHandler(rpcserver.AdaptLookup(m.SessionServerExisting)),
+			))
+		}
 	}
 	devshardserver.RegisterLazySessionRoutes(g, m, m, m, opts...)
 }
@@ -1293,11 +1310,10 @@ func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
 		if m.rpcAuthClosed.Load() {
 			return
 		}
-		hostAddr := ""
-		if m.recorder != nil {
-			hostAddr = m.recorder.GetAccountAddress()
-		} else if m.signer != nil {
-			hostAddr = m.signer.Address()
+		hostAddr := m.hostRPCAddress()
+		if hostAddr == "" {
+			slog.Error("devshardd: peer RPC host address is empty; refusing to construct handler")
+			return
 		}
 		h := rpcserver.NewPeerAuthHandler(m.verifier, hostAddr, rpcserver.PeerAuthConfig{
 			Allow: m.allowRPCPeer,
@@ -1315,6 +1331,7 @@ func (m *HostManager) ClosePeerRPC() {
 	if h := m.rpcAuth.Load(); h != nil {
 		h.Close()
 	}
+	observability.SetPeerRPCEnabled(false)
 }
 
 // HandlePayloads serves payloads to validators for devshard validation.

@@ -139,6 +139,14 @@ func TestPeerAuth_AttachLiveNonceRejected(t *testing.T) {
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 }
 
+func TestPeerAuth_AttachCountsOk(t *testing.T) {
+	auth := newTestAuth(PeerAuthConfig{})
+	before := metricCounter(t, "devshard_peer_rpc_attach_total", map[string]string{"result": "ok"})
+	_, err := attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("attach-ok-metric-nonce-012"))
+	require.NoError(t, err)
+	require.Equal(t, before+1, metricCounter(t, "devshard_peer_rpc_attach_total", map[string]string{"result": "ok"}))
+}
+
 func TestPeerAuth_AttachIdentity(t *testing.T) {
 	realSigner := testutil.MustGenerateKey(t)
 	other := testutil.MustGenerateKey(t)
@@ -169,6 +177,7 @@ func TestPeerAuth_AttachIdentity(t *testing.T) {
 		ts := time.Now().Unix()
 		sig, err := transport.SignAttach(other, "other-host", ts, other.Address(), attachNonce, "", nil)
 		require.NoError(t, err)
+		before := metricCounter(t, "devshard_peer_rpc_attach_total", map[string]string{"result": "unauthenticated"})
 		_, err = client.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{
 			PeerAddress: other.Address(),
 			AttachNonce: attachNonce,
@@ -178,6 +187,7 @@ func TestPeerAuth_AttachIdentity(t *testing.T) {
 		}))
 		require.Error(t, err)
 		require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err))
+		require.Equal(t, before+1, metricCounter(t, "devshard_peer_rpc_attach_total", map[string]string{"result": "unauthenticated"}))
 	})
 }
 

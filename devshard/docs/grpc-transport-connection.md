@@ -78,6 +78,16 @@ The rewrite is a path splice, not a second protocol. Proxies never see the strip
 
 `DEVSHARD_RPC_SERVER_ENABLED` (default **false**) gates the Echo mount. Flag off: the
 `/rpc/` route does not exist (404). Existing JSON session routes are untouched.
+Flag on with no host address (no signer or recorder) panics at `Register`
+instead of mounting a handler that rejects every Attach as a bad peer.
+
+Mounted children export `devshard_peer_rpc_enabled`, Attach/gate counters, and
+`devshard_session_resolution_total{route="rpc_get_signatures"}` so JSON dashboards
+keep counting as traffic moves off GET `/signatures`.
+
+The **gateway** (not the child) counts adoption:
+`devshard_gateway_escrow_sessions_total{path}` once per escrow per host, and
+`devshard_gateway_host_rpc{peer,mode}` once per host with a ready PeerConn.
 
 ---
 

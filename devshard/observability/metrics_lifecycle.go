@@ -45,8 +45,11 @@ var (
 	diffForkDetectedTotal     *prometheus.CounterVec
 	reconcileFastForwardTotal prometheus.Counter
 
-	peerRPCSessions prometheus.Gauge
-	peerRPCPeers    prometheus.Gauge
+	peerRPCSessions    prometheus.Gauge
+	peerRPCPeers       prometheus.Gauge
+	peerRPCEnabled     prometheus.Gauge
+	peerRPCAttachTotal *prometheus.CounterVec
+	peerRPCGateTotal   *prometheus.CounterVec
 )
 
 var durationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
@@ -190,6 +193,18 @@ func initRegistry() {
 		Name: "devshard_peer_rpc_peers",
 		Help: "Distinct peers with a host-level peer RPC session on this child.",
 	})
+	peerRPCEnabled = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_peer_rpc_enabled",
+		Help: "Whether the Connect peer-RPC mux is mounted on this child (1) or not (0).",
+	})
+	peerRPCAttachTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_attach_total",
+		Help: "Peer RPC Attach outcomes by Connect code (ok, invalid_argument, unauthenticated, permission_denied, resource_exhausted, failed_precondition, unavailable).",
+	}, []string{"result"})
+	peerRPCGateTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_gate_total",
+		Help: "Peer RPC handshake-gate outcomes (admitted, missing, forged, expired, oversized).",
+	}, []string{"reason"})
 
 	registry.MustRegister(
 		inflight,
@@ -221,6 +236,9 @@ func initRegistry() {
 		reconcileFastForwardTotal,
 		peerRPCSessions,
 		peerRPCPeers,
+		peerRPCEnabled,
+		peerRPCAttachTotal,
+		peerRPCGateTotal,
 	)
 }
 
@@ -441,4 +459,28 @@ func SetPeerRPCSessionCounts(sessions, peers int) {
 	ensureMetrics()
 	peerRPCSessions.Set(float64(sessions))
 	peerRPCPeers.Set(float64(peers))
+}
+
+// SetPeerRPCEnabled records whether the Connect mux is mounted (finding 25).
+func SetPeerRPCEnabled(enabled bool) {
+	ensureMetrics()
+	if enabled {
+		peerRPCEnabled.Set(1)
+		return
+	}
+	peerRPCEnabled.Set(0)
+}
+
+// IncPeerRPCAttach counts one Attach outcome. result is a Connect code
+// string or "ok". No peer address label (finding 23).
+func IncPeerRPCAttach(result string) {
+	ensureMetrics()
+	peerRPCAttachTotal.WithLabelValues(result).Inc()
+}
+
+// IncPeerRPCGate counts one handshake-gate outcome. reason is admitted,
+// missing, forged, expired, or oversized (finding 23).
+func IncPeerRPCGate(reason string) {
+	ensureMetrics()
+	peerRPCGateTotal.WithLabelValues(reason).Inc()
 }

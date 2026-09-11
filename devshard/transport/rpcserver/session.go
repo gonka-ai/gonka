@@ -6,6 +6,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
 	"devshard/transport/rpcpb"
@@ -68,11 +69,14 @@ func (h *SessionHandler) GetSignatures(ctx context.Context, req *connect.Request
 	}
 	srv, err := h.lookup.SessionServerExisting(escrowID)
 	if err != nil {
+		recordRPCSessionResolution(ctx, escrowID, err)
 		return nil, mapAllowError(err)
 	}
 	if srv == nil {
+		recordRPCSessionResolution(ctx, escrowID, storage.ErrSessionNotFound)
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("session not found"))
 	}
+	recordRPCSessionResolution(ctx, escrowID, nil)
 	if !srv.AllowsSender(peer) {
 		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
 	}
@@ -105,4 +109,37 @@ func hostInitializing() error {
 // storage.ErrStorageIndexRebuilding from GetSessionMeta.
 func isTransientSessionError(err error) bool {
 	return errors.Is(err, storage.ErrStorageIndexRebuilding)
+}
+
+const rpcGetSignaturesRoute = "rpc_get_signatures"
+
+func recordRPCSessionResolution(ctx context.Context, escrowID string, err error) {
+	status, reason := rpcResolutionStatus(err)
+	observability.IncSessionResolution(rpcGetSignaturesRoute, status, reason)
+	if err != nil {
+		observability.Log(ctx, observability.LevelWarn, "devshard session resolution failed",
+			observability.StageSessionResolved, observability.WhereRoutesSessionResolve, escrowID, reason, err)
+	}
+}
+
+func rpcResolutionStatus(err error) (observability.MetricStatus, observability.Reason) {
+	if err == nil {
+		return observability.MetricStatusOK, observability.ReasonOK
+	}
+	if errors.Is(err, storage.ErrStorageIndexRebuilding) {
+		return observability.MetricStatusError, observability.ReasonInitializing
+	}
+	if errors.Is(err, storage.ErrSessionNotFound) {
+		return observability.MetricStatusError, observability.ReasonSessionResolveErr
+	}
+	if errors.Is(err, storage.ErrSessionNotActive) {
+		return observability.MetricStatusError, observability.ReasonEscrowSettled
+	}
+	if errors.Is(err, storage.ErrSessionVersionConflict) {
+		return observability.MetricStatusError, observability.ReasonVersionConflict
+	}
+	if errors.Is(err, storage.ErrSessionEpochConflict) {
+		return observability.MetricStatusError, observability.ReasonEpochConflict
+	}
+	return observability.MetricStatusError, observability.ReasonSessionResolveErr
 }

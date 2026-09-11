@@ -196,6 +196,16 @@ func advertisedRateLimits() *rpcpb.RateLimits {
 }
 
 func (h *PeerAuthHandler) Attach(ctx context.Context, req *connect.Request[rpcpb.AttachRequest]) (*connect.Response[rpcpb.AttachResponse], error) {
+	resp, err := h.attach(ctx, req)
+	if err != nil {
+		observability.IncPeerRPCAttach(connect.CodeOf(err).String())
+		return nil, err
+	}
+	observability.IncPeerRPCAttach("ok")
+	return resp, nil
+}
+
+func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb.AttachRequest]) (*connect.Response[rpcpb.AttachResponse], error) {
 	msg := req.Msg
 	if msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil attach request"))
@@ -378,20 +388,27 @@ func (h *PeerAuthHandler) endWatch(token []byte, watchID uint64) {
 // child serves. Roster is the Attach door (URL escrow) and the data RPC's
 // own escrow, not this lookup.
 func (h *PeerAuthHandler) LookupToken(token []byte) (string, bool) {
-	if len(token) == 0 || len(token) > maxAttachNonceBytes {
-		return "", false
+	peer, ok, _ := h.inspectToken(token)
+	return peer, ok
+}
+
+// inspectToken reports whether token is live (ok), present but past TTL
+// (expired), or unknown. Handshake-gate metrics need the expired/forged split;
+// LookupToken stays a bool so Watch and callers do not change.
+func (h *PeerAuthHandler) inspectToken(token []byte) (peer string, ok, expired bool) {
+	if h == nil || len(token) == 0 || len(token) > maxAttachNonceBytes {
+		return "", false, false
 	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	tok := rawTokenKey(token)
-	sess, ok := h.sessions[tok]
-	if !ok {
-		return "", false
+	sess, exists := h.sessions[rawTokenKey(token)]
+	if !exists {
+		return "", false, false
 	}
 	if h.now().After(sess.expires) {
-		return "", false
+		return sess.peer, false, true
 	}
-	return sess.peer, true
+	return sess.peer, true, false
 }
 
 // InvalidateToken drops a session token. Safe if the token is already gone.

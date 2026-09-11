@@ -98,6 +98,20 @@ func TestStartupSkippedEscrowMetric(t *testing.T) {
 	}, 1)
 }
 
+func TestPeerRPCAdoptionMetrics_TwoEscrowsOnePeerConn(t *testing.T) {
+	m := NewDevshardMetrics()
+	const peer = "gonka1host"
+	m.PeerRPCAdoption().SetPeerConnReady(peer, true)
+	m.PeerRPCAdoption().BindEscrow("escrow-a", peer)
+	m.PeerRPCAdoption().BindEscrow("escrow-b", peer)
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterValue(t, families, "devshard_gateway_escrow_sessions_total", map[string]string{"path": "h2"}, 2)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "h2"}, 1)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "json"}, 0)
+}
+
 func TestGatewayMetricsCollectorIncludesParticipantQuarantineState(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 	for i := 0; i < emptyStreamQuarantineThreshold; i++ {

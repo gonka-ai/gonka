@@ -4158,6 +4158,9 @@ func (g *Gateway) attachMetrics(rt *devshardRuntime) {
 	}
 	if g.metrics != nil {
 		rt.proxy.redundancy.metrics = g.metrics
+		if rt.session != nil {
+			g.metrics.PeerRPCAdoption().BindEscrowHosts(rt.id, rt.session.ParticipantKeys())
+		}
 	}
 	rt.proxy.redundancy.devshardID = rt.id
 	escrowID := rt.id

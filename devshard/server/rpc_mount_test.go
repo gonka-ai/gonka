@@ -16,6 +16,7 @@ import (
 
 	devshardpkg "devshard"
 	"devshard/internal/testutil"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/transport"
 	"devshard/transport/rpcpb"
@@ -73,6 +74,7 @@ func TestRPCMount_AttachWatch(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	require.Equal(t, attachNonce, attached.Msg.SessionToken)
+	require.Equal(t, 1.0, rpcEnabledGauge(t))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	watchReq := connect.NewRequest(&rpcpb.WatchRequest{SessionToken: attached.Msg.SessionToken})
@@ -189,4 +191,21 @@ func TestRPCMount_RewritesProcedurePathAndEscrow(t *testing.T) {
 		require.Equal(t, "1", gotEscrow, proc)
 		require.Equal(t, echoPath, req.URL.Path, "Echo request URL must not be mutated in place")
 	}
+}
+
+func rpcEnabledGauge(t *testing.T) float64 {
+	t.Helper()
+	families, err := observability.Registry().Gather()
+	require.NoError(t, err)
+	for _, f := range families {
+		if f.GetName() != "devshard_peer_rpc_enabled" {
+			continue
+		}
+		for _, m := range f.Metric {
+			if m.Gauge != nil {
+				return m.Gauge.GetValue()
+			}
+		}
+	}
+	return 0
 }

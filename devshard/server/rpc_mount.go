@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"devshard/observability"
 	"devshard/transport/rpcserver"
 )
 
@@ -29,6 +30,7 @@ func skipPeerRPC(mw echo.MiddlewareFunc) echo.MiddlewareFunc {
 }
 
 func mountPeerRPC(g *echo.Group, h http.Handler) {
+	observability.SetPeerRPCEnabled(true)
 	g.Any(peerRPCRoute, func(c echo.Context) error {
 		escrowID := c.Param("id")
 		r := c.Request()

@@ -211,6 +211,32 @@ func TestSessionHandler_ResolvesEscrowOnce(t *testing.T) {
 	require.Equal(t, 1, n, "roster and serve must share one SessionServerExisting call")
 }
 
+func TestSessionHandler_GetSignaturesResolutionMetrics(t *testing.T) {
+	delta := func(status, reason string, fn func()) {
+		t.Helper()
+		labels := map[string]string{"route": rpcGetSignaturesRoute, "status": status, "reason": reason}
+		before := metricCounter(t, "devshard_session_resolution_total", labels)
+		fn()
+		require.Equal(t, before+1, metricCounter(t, "devshard_session_resolution_total", labels), status+"/"+reason)
+	}
+
+	delta("ok", "ok", func() {
+		env := newSessionEnv(t, stubLookup{core: stubCore{sigs: map[uint32][]byte{0: {1}}}}, "1")
+		_, err := env.getSignatures(1)
+		require.NoError(t, err)
+	})
+	delta("error", "initializing", func() {
+		env := newSessionEnv(t, stubLookup{err: storage.ErrStorageIndexRebuilding}, "1")
+		_, err := env.getSignatures(1)
+		require.Error(t, err)
+	})
+	delta("error", "session_resolve_err", func() {
+		env := newSessionEnv(t, stubLookup{}, "1")
+		_, err := env.getSignatures(1)
+		require.Error(t, err)
+	})
+}
+
 func TestAdaptLookup_NilServer(t *testing.T) {
 	h := NewSessionHandler(AdaptLookup(func(string) (*transport.Server, error) {
 		return nil, nil
