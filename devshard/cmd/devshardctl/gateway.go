@@ -986,10 +986,11 @@ func bearerToken(r *http.Request) (string, bool) {
 		return "", false
 	}
 	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
+	parts := strings.Fields(auth)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		return "", false
 	}
-	key := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+	key := strings.TrimSpace(parts[1])
 	return key, key != ""
 }
 

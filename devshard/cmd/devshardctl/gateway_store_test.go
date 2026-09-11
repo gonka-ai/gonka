@@ -75,11 +75,23 @@ func TestAdminAuthMiddlewareRequiresAdminKey(t *testing.T) {
 		handler.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusUnauthorized, rec.Code)
 
-		req = httptest.NewRequest(http.MethodGet, path, nil)
-		req.Header.Set("Authorization", "Bearer adminkey")
-		rec = httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-		require.Equal(t, http.StatusNoContent, rec.Code)
+		for name, test := range map[string]struct {
+			header string
+			status int
+		}{
+			"canonical scheme": {header: "Bearer adminkey", status: http.StatusNoContent},
+			"lowercase scheme": {header: "bearer adminkey", status: http.StatusNoContent},
+			"wrong scheme":     {header: "Basic adminkey", status: http.StatusUnauthorized},
+			"wrong key":        {header: "bearer wrong-key", status: http.StatusUnauthorized},
+		} {
+			t.Run(name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodGet, path, nil)
+				req.Header.Set("Authorization", test.header)
+				rec := httptest.NewRecorder()
+				handler.ServeHTTP(rec, req)
+				require.Equal(t, test.status, rec.Code)
+			})
+		}
 	}
 }
 

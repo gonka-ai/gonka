@@ -688,10 +688,8 @@ func isAdminPath(path string) bool {
 
 func adminAuthMiddleware(adminKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		adminAuthenticated := adminKey != "" &&
-			strings.HasPrefix(auth, "Bearer ") &&
-			strings.TrimPrefix(auth, "Bearer ") == adminKey
+		key, ok := bearerToken(r)
+		adminAuthenticated := adminKey != "" && ok && key == adminKey
 		if adminAuthenticated {
 			r = r.WithContext(context.WithValue(r.Context(), adminAuthContextKey{}, true))
 			r = r.WithContext(context.WithValue(r.Context(), adminAPIKeySuffixContextKey{}, apiKeySuffix(adminKey)))
