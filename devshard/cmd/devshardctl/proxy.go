@@ -1115,6 +1115,12 @@ func hostStatsDebugEntry(hs *types.HostStats) map[string]any {
 	if hs.CompletedValidations != 0 {
 		entry["completed_validations"] = hs.CompletedValidations
 	}
+	if hs.Validated != 0 {
+		entry["validated"] = hs.Validated
+	}
+	if hs.Finished != 0 {
+		entry["finished"] = hs.Finished
+	}
 	return entry
 }
 

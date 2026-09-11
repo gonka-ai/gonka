@@ -78,7 +78,7 @@ func buildSettlementTestDataWithNonce(
 		entries[i] = &types.DevshardHostStatsProto{
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
-			CompletedValidations: hs.CompletedValidations,
+			CompletedValidations: hs.CompletedValidations, Validated: hs.Validated, Finished: hs.Finished,
 		}
 	}
 	slices.SortFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
@@ -155,7 +155,7 @@ func buildSettlementTestDataWithVersion(
 		entries[i] = &types.DevshardHostStatsProto{
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
-			CompletedValidations: hs.CompletedValidations,
+			CompletedValidations: hs.CompletedValidations, Validated: hs.Validated, Finished: hs.Finished,
 		}
 	}
 	slices.SortFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
@@ -232,6 +232,7 @@ func makeHostStats(n int, costPerSlot uint64) []*types.DevshardSettlementHostSta
 			Cost:                 costPerSlot,
 			RequiredValidations:  10,
 			CompletedValidations: 9,
+			Finished:             1,
 		}
 	}
 	return stats
@@ -370,6 +371,42 @@ func TestVerifyDevshardSettlement_InvalidExceedsCompletedPerSlot(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid count")
 }
 
+func TestVerifyDevshardSettlement_ValidatedExceedsCompletedTimesSlots(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
+	}
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	hostStats[0].Missed = 1
+	hostStats[0].Finished = 1
+	hostStats[0].Validated = keeper.DevshardGroupSize + 1
+	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
+
+	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "validated count")
+
+	hostStats[0].Validated = keeper.DevshardGroupSize
+	msg = buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
+	require.NoError(t, keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil))
+
+	hostStats[0].Finished = 2
+	msg = buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "finished count")
+
+	hostStats[0].Finished = 1
+	hostStats[0].Validated = 0
+	hostStats[0].Invalid = 2
+	msg = buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid count")
+}
+
 func TestVerifyDevshardSettlement_RemainderSlotMissedAllowed(t *testing.T) {
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 
@@ -379,6 +416,7 @@ func TestVerifyDevshardSettlement_RemainderSlotMissedAllowed(t *testing.T) {
 	}
 	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
 	hostStats[1].Missed = 2 // nonce 19 => slot 1 is one of the remainder slots
+	hostStats[1].Finished = 0
 	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 19)
 
 	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil)
@@ -520,7 +558,7 @@ func TestComputeDevshardHostStatsHash_Deterministic(t *testing.T) {
 		entries[i] = &types.DevshardHostStatsProto{
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
-			CompletedValidations: hs.CompletedValidations,
+			CompletedValidations: hs.CompletedValidations, Validated: hs.Validated, Finished: hs.Finished,
 		}
 	}
 	mapProto := &types.DevshardHostStatsMapProto{Entries: entries}
@@ -545,7 +583,7 @@ func TestVerifyDevshardSettlement_DuplicateHostStatsSlotId(t *testing.T) {
 	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
 	// Duplicate slot_id 0 by appending a copy.
 	hostStats = append(hostStats, &types.DevshardSettlementHostStats{
-		SlotId: 0, Cost: 100_000_000, RequiredValidations: 10, CompletedValidations: 9,
+		SlotId: 0, Cost: 100_000_000, RequiredValidations: 10, CompletedValidations: 9, Finished: 1,
 	})
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
@@ -654,6 +692,19 @@ func TestComputeDevshardHostStatsHash_GoldenValue(t *testing.T) {
 	// the chain-side gogoproto and the devshard-side google-protobuf.
 	actual := hex.EncodeToString(hash)
 	require.Equal(t, "a3231da94dd50999b9f609263ab7b666431576806437944779c10f8124579fd1", actual, "golden hash mismatch: proto marshaling may have drifted")
+}
+
+func TestComputeDevshardHostStatsHash_GoldenValueWithValidated(t *testing.T) {
+	stats := []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Missed: 1, Invalid: 0, Cost: 100, RequiredValidations: 10, CompletedValidations: 9, Validated: 7, Finished: 40},
+		{SlotId: 1, Missed: 0, Invalid: 1, Cost: 200, RequiredValidations: 10, CompletedValidations: 8, Validated: 3, Finished: 41},
+	}
+
+	hash, err := keeper.ComputeDevshardHostStatsHash(stats)
+	require.NoError(t, err)
+
+	actual := hex.EncodeToString(hash)
+	require.Equal(t, "7871c63983e95831adb819783457b199627a3699e6048db1aa7e9aa694f41757", actual, "golden hash mismatch: proto marshaling may have drifted")
 }
 
 func TestVerifyDevshardSettlement_WrongPhaseRejected(t *testing.T) {

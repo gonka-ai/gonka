@@ -291,21 +291,22 @@ func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 	creator := sdk.AccAddress(make([]byte, 20))
 	creator[0] = 0x21
 	escrow := types.DevshardEscrow{
-		Id:         1,
-		Creator:    creator.String(),
-		Amount:     5_000,
-		Slots:      []string{addrH1, addrH1, addrH2, addrH2},
-		EpochIndex: 5,
-		Settled:    false,
+		Id:             1,
+		Creator:        creator.String(),
+		Amount:         5_000,
+		Slots:          []string{addrH1, addrH1, addrH2, addrH2},
+		EpochIndex:     5,
+		Settled:        false,
+		ValidationRate: 5000,
 	}
 	_, err = k.StoreDevshardEscrow(ctx, &escrow, 1)
 	require.NoError(t, err)
 
 	hostStats := []*types.DevshardSettlementHostStats{
-		{SlotId: 0, Missed: 1, Invalid: 2, Cost: 10},
-		{SlotId: 1, Missed: 0, Invalid: 1, Cost: 20},
-		{SlotId: 2, Missed: 2, Invalid: 0, Cost: 30},
-		{SlotId: 3, Missed: 1, Invalid: 1, Cost: 40},
+		{SlotId: 0, Missed: 1, Invalid: 2, Cost: 10, Validated: 1, Finished: 4},
+		{SlotId: 1, Missed: 0, Invalid: 1, Cost: 20, Validated: 2, Finished: 5},
+		{SlotId: 2, Missed: 2, Invalid: 0, Cost: 30, Validated: 0, Finished: 3},
+		{SlotId: 3, Missed: 1, Invalid: 1, Cost: 40, Validated: 3, Finished: 4},
 	}
 	msg := buildSettlementTestDataWithNonce(t, escrow, []*dcrdsecp.PrivateKey{keyH1, keyH1, keyH2, keyH2}, hostStats, 8, 20)
 
@@ -320,21 +321,28 @@ func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 	require.NoError(t, err)
 
 	// assignedPerSlot = 20 / 4 = 5
-	// H1: completed = (5-1) + (5-0) = 9, validated = (4-2) + (5-1) = 6
+	// H1: completed = (5-1) + (5-0) = 9, validated = 1 + 2 = 3
 	participantH1, found := k.GetParticipant(ctx, addrH1)
 	require.True(t, found)
 	require.Equal(t, uint64(9), participantH1.CurrentEpochStats.InferenceCount)
 	require.Equal(t, uint64(1), participantH1.CurrentEpochStats.MissedRequests)
 	require.Equal(t, uint64(3), participantH1.CurrentEpochStats.InvalidatedInferences)
-	require.Equal(t, uint64(6), participantH1.CurrentEpochStats.ValidatedInferences)
+	require.Equal(t, uint64(3), participantH1.CurrentEpochStats.ValidatedInferences)
 
-	// H2: completed = (5-2) + (5-1) = 7, validated = (3-0) + (4-1) = 6
+	// H2: completed = (5-2) + (5-1) = 7, validated = 0 + 3 = 3
 	participantH2, found := k.GetParticipant(ctx, addrH2)
 	require.True(t, found)
 	require.Equal(t, uint64(7), participantH2.CurrentEpochStats.InferenceCount)
 	require.Equal(t, uint64(3), participantH2.CurrentEpochStats.MissedRequests)
 	require.Equal(t, uint64(1), participantH2.CurrentEpochStats.InvalidatedInferences)
-	require.Equal(t, uint64(6), participantH2.CurrentEpochStats.ValidatedInferences)
+	require.Equal(t, uint64(3), participantH2.CurrentEpochStats.ValidatedInferences)
+
+	epochH1, found := k.GetDevshardHostEpochStats(ctx, 5, sdk.MustAccAddressFromBech32(addrH1))
+	require.True(t, found)
+	require.Equal(t, uint32(3), epochH1.Validated)
+	epochH2, found := k.GetDevshardHostEpochStats(ctx, 5, sdk.MustAccAddressFromBech32(addrH2))
+	require.True(t, found)
+	require.Equal(t, uint32(3), epochH2.Validated)
 }
 
 func TestSettleDevshardEscrow_AggregatesParticipantStatsWithRemainderSlots(t *testing.T) {
@@ -367,10 +375,10 @@ func TestSettleDevshardEscrow_AggregatesParticipantStatsWithRemainderSlots(t *te
 	require.NoError(t, err)
 
 	hostStats := []*types.DevshardSettlementHostStats{
-		{SlotId: 0, Missed: 1, Invalid: 0, Cost: 10},
-		{SlotId: 1, Missed: 0, Invalid: 1, Cost: 20},
-		{SlotId: 2, Missed: 0, Invalid: 0, Cost: 30},
-		{SlotId: 3, Missed: 1, Invalid: 0, Cost: 40},
+		{SlotId: 0, Missed: 1, Invalid: 0, Cost: 10, Validated: 0, Finished: 0},
+		{SlotId: 1, Missed: 0, Invalid: 1, Cost: 20, Validated: 1, Finished: 2},
+		{SlotId: 2, Missed: 0, Invalid: 0, Cost: 30, Validated: 1, Finished: 2},
+		{SlotId: 3, Missed: 1, Invalid: 0, Cost: 40, Validated: 0, Finished: 0},
 	}
 	msg := buildSettlementTestDataWithNonce(t, escrow, []*dcrdsecp.PrivateKey{keyH1, keyH2, keyH1, keyH2}, hostStats, 8, 6)
 
@@ -390,7 +398,7 @@ func TestSettleDevshardEscrow_AggregatesParticipantStatsWithRemainderSlots(t *te
 	require.Equal(t, uint64(2), participantH1.CurrentEpochStats.InferenceCount)
 	require.Equal(t, uint64(1), participantH1.CurrentEpochStats.MissedRequests)
 	require.Equal(t, uint64(0), participantH1.CurrentEpochStats.InvalidatedInferences)
-	require.Equal(t, uint64(2), participantH1.CurrentEpochStats.ValidatedInferences)
+	require.Equal(t, uint64(1), participantH1.CurrentEpochStats.ValidatedInferences, "slot 0 unsampled + slot 2 one pass")
 
 	participantH2, found := k.GetParticipant(ctx, addrH2)
 	require.True(t, found)

@@ -124,6 +124,8 @@ type settlementHostStatsJSON struct {
 	Cost                 uint64 `json:"cost"`
 	RequiredValidations  uint32 `json:"required_validations,omitempty"`
 	CompletedValidations uint32 `json:"completed_validations,omitempty"`
+	Validated            uint32 `json:"validated,omitempty"`
+	Finished             uint32 `json:"finished,omitempty"`
 }
 
 type slotSignatureJSON struct {
@@ -179,6 +181,8 @@ func SettleDevshardEscrowCmd() *cobra.Command {
 					Cost:                 hs.Cost,
 					RequiredValidations:  hs.RequiredValidations,
 					CompletedValidations: hs.CompletedValidations,
+					Validated:            hs.Validated,
+					Finished:             hs.Finished,
 				}
 			}
 

@@ -97,6 +97,8 @@ type GatewayHostStats struct {
 	Cost                 uint64 `json:"cost"`
 	RequiredValidations  uint32 `json:"required_validations"`
 	CompletedValidations uint32 `json:"completed_validations"`
+	Validated            uint32 `json:"validated"`
+	Finished             uint32 `json:"finished"`
 }
 
 type gatewayStateBody struct {

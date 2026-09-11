@@ -34,6 +34,8 @@ message DevshardHostEpochStats {
   uint32 required_validations = 6;
   uint32 completed_validations = 7;
   uint32 escrow_count = 8;
+  uint32 validated = 9;
+  uint32 finished = 10;
 }
 
 message DevshardSettlementHostStats {
@@ -43,6 +45,8 @@ message DevshardSettlementHostStats {
   uint64 cost = 4;
   uint32 required_validations = 5;
   uint32 completed_validations = 6;
+  uint32 validated = 7;
+  uint32 finished = 8;
 }
 
 message DevshardSlotSignature {

@@ -1381,3 +1381,24 @@ func metricSeriesCount(t *testing.T, families []*dto.MetricFamily, name string) 
 	t.Fatalf("missing metric %s", name)
 	return 0
 }
+
+func TestTrackerReportsHostStatsValidated(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 30, "m")
+	require.NoError(t, tr.SyncState("e1", 5, map[uint32]*types.HostStats{1: {Validated: 7, Invalid: 1}}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 30}), "p1")
+	require.Equal(t, uint64(7), record.ProtocolValidated)
+	require.Equal(t, uint64(7), record.Slots[0].ProtocolValidated)
+
+	require.NoError(t, tr.SyncState("e1", 6, map[uint32]*types.HostStats{1: {Validated: 3, Invalid: 1}}))
+	record = onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 30}), "p1")
+	require.Equal(t, uint64(3), record.ProtocolValidated)
+	require.Equal(t, uint64(3), record.Slots[0].ProtocolValidated)
+	require.Equal(t, uint64(1), record.ProtocolInvalid)
+
+	require.NoError(t, tr.SyncState("e1", 5, map[uint32]*types.HostStats{1: {Validated: 7, Invalid: 0}}))
+	record = onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 30}), "p1")
+	require.Equal(t, uint64(3), record.ProtocolValidated)
+	require.Equal(t, uint64(1), record.ProtocolInvalid)
+}
