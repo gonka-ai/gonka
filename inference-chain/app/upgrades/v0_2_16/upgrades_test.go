@@ -13,53 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type testGrant struct {
-	granter sdk.AccAddress
-	grantee sdk.AccAddress
-	grant   authz.Grant
-}
-
-type mockAuthzKeeper struct {
-	grants       []testGrant
-	existing     authz.Authorization
-	saved        authz.Authorization
-	savedExpiry  *time.Time
-	savedGranter sdk.AccAddress
-	savedGrantee sdk.AccAddress
-}
-
-func (m *mockAuthzKeeper) IterateGrants(_ context.Context, handler func(sdk.AccAddress, sdk.AccAddress, authz.Grant) bool) {
-	for _, grant := range m.grants {
-		if handler(grant.granter, grant.grantee, grant.grant) {
-			return
-		}
-	}
-}
-
-func (m *mockAuthzKeeper) GetAuthorization(_ context.Context, _, _ sdk.AccAddress, _ string) (authz.Authorization, *time.Time) {
-	return m.existing, nil
-}
-
-func (m *mockAuthzKeeper) SaveGrant(_ context.Context, grantee, granter sdk.AccAddress, authorization authz.Authorization, expiration *time.Time) error {
-	m.saved = authorization
-	m.savedExpiry = expiration
-	m.savedGranter = granter
-	m.savedGrantee = grantee
-	return nil
-}
-
-func warmKeyMarkerGrant(t *testing.T, granter, grantee sdk.AccAddress, expiration *time.Time) testGrant {
-	t.Helper()
-	authorization := authz.NewGenericAuthorization(inferencetypes.WarmKeyGrantMarkerTypeURL)
-	authorizationAny, err := codectypes.NewAnyWithValue(authorization)
-	require.NoError(t, err)
-	return testGrant{
-		granter: granter,
-		grantee: grantee,
-		grant:   authz.Grant{Authorization: authorizationAny, Expiration: expiration},
-	}
-}
-
 // TestUpgradeName pins the future on-chain proposal name. The governance
 // proposal and UpgradeName must stay identical or the handler will not run.
 func TestUpgradeName(t *testing.T) {
@@ -326,6 +279,53 @@ func TestLeftoverApprovedVersionsDoNotBlockCoefficientMigrate(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, stored, 1)
 	require.Equal(t, "v1", stored[0].Name)
+}
+
+type testGrant struct {
+	granter sdk.AccAddress
+	grantee sdk.AccAddress
+	grant   authz.Grant
+}
+
+type mockAuthzKeeper struct {
+	grants       []testGrant
+	existing     authz.Authorization
+	saved        authz.Authorization
+	savedExpiry  *time.Time
+	savedGranter sdk.AccAddress
+	savedGrantee sdk.AccAddress
+}
+
+func (m *mockAuthzKeeper) IterateGrants(_ context.Context, handler func(sdk.AccAddress, sdk.AccAddress, authz.Grant) bool) {
+	for _, grant := range m.grants {
+		if handler(grant.granter, grant.grantee, grant.grant) {
+			return
+		}
+	}
+}
+
+func (m *mockAuthzKeeper) GetAuthorization(_ context.Context, _, _ sdk.AccAddress, _ string) (authz.Authorization, *time.Time) {
+	return m.existing, nil
+}
+
+func (m *mockAuthzKeeper) SaveGrant(_ context.Context, grantee, granter sdk.AccAddress, authorization authz.Authorization, expiration *time.Time) error {
+	m.saved = authorization
+	m.savedExpiry = expiration
+	m.savedGranter = granter
+	m.savedGrantee = grantee
+	return nil
+}
+
+func warmKeyMarkerGrant(t *testing.T, granter, grantee sdk.AccAddress, expiration *time.Time) testGrant {
+	t.Helper()
+	authorization := authz.NewGenericAuthorization(inferencetypes.WarmKeyGrantMarkerTypeURL)
+	authorizationAny, err := codectypes.NewAnyWithValue(authorization)
+	require.NoError(t, err)
+	return testGrant{
+		granter: granter,
+		grantee: grantee,
+		grant:   authz.Grant{Authorization: authorizationAny, Expiration: expiration},
+	}
 }
 
 func TestGrantDeclarePoCIntentAuthzCreatesMissingGrant(t *testing.T) {
