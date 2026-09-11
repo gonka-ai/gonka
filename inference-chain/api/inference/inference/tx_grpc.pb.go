@@ -59,6 +59,9 @@ const (
 	Msg_DeclarePoCIntent_FullMethodName                 = "/inference.inference.Msg/DeclarePoCIntent"
 	Msg_PutDevshardApprovedVersion_FullMethodName       = "/inference.inference.Msg/PutDevshardApprovedVersion"
 	Msg_DeleteDevshardApprovedVersion_FullMethodName    = "/inference.inference.Msg/DeleteDevshardApprovedVersion"
+	Msg_CreatePoCChallenge_FullMethodName               = "/inference.inference.Msg/CreatePoCChallenge"
+	Msg_PoCChallengeStoreCommit_FullMethodName          = "/inference.inference.Msg/PoCChallengeStoreCommit"
+	Msg_SubmitPoCChallengeValidations_FullMethodName    = "/inference.inference.Msg/SubmitPoCChallengeValidations"
 )
 
 // MsgClient is the client API for Msg service.
@@ -109,6 +112,9 @@ type MsgClient interface {
 	DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCIntent, opts ...grpc.CallOption) (*MsgDeclarePoCIntentResponse, error)
 	PutDevshardApprovedVersion(ctx context.Context, in *MsgPutDevshardApprovedVersion, opts ...grpc.CallOption) (*MsgPutDevshardApprovedVersionResponse, error)
 	DeleteDevshardApprovedVersion(ctx context.Context, in *MsgDeleteDevshardApprovedVersion, opts ...grpc.CallOption) (*MsgDeleteDevshardApprovedVersionResponse, error)
+	CreatePoCChallenge(ctx context.Context, in *MsgCreatePoCChallenge, opts ...grpc.CallOption) (*MsgCreatePoCChallengeResponse, error)
+	PoCChallengeStoreCommit(ctx context.Context, in *MsgPoCChallengeStoreCommit, opts ...grpc.CallOption) (*MsgPoCChallengeStoreCommitResponse, error)
+	SubmitPoCChallengeValidations(ctx context.Context, in *MsgSubmitPoCChallengeValidations, opts ...grpc.CallOption) (*MsgSubmitPoCChallengeValidationsResponse, error)
 }
 
 type msgClient struct {
@@ -479,6 +485,33 @@ func (c *msgClient) DeleteDevshardApprovedVersion(ctx context.Context, in *MsgDe
 	return out, nil
 }
 
+func (c *msgClient) CreatePoCChallenge(ctx context.Context, in *MsgCreatePoCChallenge, opts ...grpc.CallOption) (*MsgCreatePoCChallengeResponse, error) {
+	out := new(MsgCreatePoCChallengeResponse)
+	err := c.cc.Invoke(ctx, Msg_CreatePoCChallenge_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) PoCChallengeStoreCommit(ctx context.Context, in *MsgPoCChallengeStoreCommit, opts ...grpc.CallOption) (*MsgPoCChallengeStoreCommitResponse, error) {
+	out := new(MsgPoCChallengeStoreCommitResponse)
+	err := c.cc.Invoke(ctx, Msg_PoCChallengeStoreCommit_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SubmitPoCChallengeValidations(ctx context.Context, in *MsgSubmitPoCChallengeValidations, opts ...grpc.CallOption) (*MsgSubmitPoCChallengeValidationsResponse, error) {
+	out := new(MsgSubmitPoCChallengeValidationsResponse)
+	err := c.cc.Invoke(ctx, Msg_SubmitPoCChallengeValidations_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -527,6 +560,9 @@ type MsgServer interface {
 	DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error)
 	PutDevshardApprovedVersion(context.Context, *MsgPutDevshardApprovedVersion) (*MsgPutDevshardApprovedVersionResponse, error)
 	DeleteDevshardApprovedVersion(context.Context, *MsgDeleteDevshardApprovedVersion) (*MsgDeleteDevshardApprovedVersionResponse, error)
+	CreatePoCChallenge(context.Context, *MsgCreatePoCChallenge) (*MsgCreatePoCChallengeResponse, error)
+	PoCChallengeStoreCommit(context.Context, *MsgPoCChallengeStoreCommit) (*MsgPoCChallengeStoreCommitResponse, error)
+	SubmitPoCChallengeValidations(context.Context, *MsgSubmitPoCChallengeValidations) (*MsgSubmitPoCChallengeValidationsResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -653,6 +689,15 @@ func (UnimplementedMsgServer) PutDevshardApprovedVersion(context.Context, *MsgPu
 }
 func (UnimplementedMsgServer) DeleteDevshardApprovedVersion(context.Context, *MsgDeleteDevshardApprovedVersion) (*MsgDeleteDevshardApprovedVersionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteDevshardApprovedVersion not implemented")
+}
+func (UnimplementedMsgServer) CreatePoCChallenge(context.Context, *MsgCreatePoCChallenge) (*MsgCreatePoCChallengeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreatePoCChallenge not implemented")
+}
+func (UnimplementedMsgServer) PoCChallengeStoreCommit(context.Context, *MsgPoCChallengeStoreCommit) (*MsgPoCChallengeStoreCommitResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PoCChallengeStoreCommit not implemented")
+}
+func (UnimplementedMsgServer) SubmitPoCChallengeValidations(context.Context, *MsgSubmitPoCChallengeValidations) (*MsgSubmitPoCChallengeValidationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitPoCChallengeValidations not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1387,6 +1432,60 @@ func _Msg_DeleteDevshardApprovedVersion_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_CreatePoCChallenge_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCreatePoCChallenge)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).CreatePoCChallenge(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_CreatePoCChallenge_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CreatePoCChallenge(ctx, req.(*MsgCreatePoCChallenge))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_PoCChallengeStoreCommit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgPoCChallengeStoreCommit)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).PoCChallengeStoreCommit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_PoCChallengeStoreCommit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).PoCChallengeStoreCommit(ctx, req.(*MsgPoCChallengeStoreCommit))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SubmitPoCChallengeValidations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSubmitPoCChallengeValidations)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SubmitPoCChallengeValidations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SubmitPoCChallengeValidations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SubmitPoCChallengeValidations(ctx, req.(*MsgSubmitPoCChallengeValidations))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1553,6 +1652,18 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteDevshardApprovedVersion",
 			Handler:    _Msg_DeleteDevshardApprovedVersion_Handler,
+		},
+		{
+			MethodName: "CreatePoCChallenge",
+			Handler:    _Msg_CreatePoCChallenge_Handler,
+		},
+		{
+			MethodName: "PoCChallengeStoreCommit",
+			Handler:    _Msg_PoCChallengeStoreCommit_Handler,
+		},
+		{
+			MethodName: "SubmitPoCChallengeValidations",
+			Handler:    _Msg_SubmitPoCChallengeValidations_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

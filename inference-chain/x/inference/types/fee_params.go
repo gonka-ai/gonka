@@ -376,6 +376,8 @@ func prototypeForTypeURL(typeURL string) proto.Message {
 	switch typeURL {
 	case sdk.MsgTypeURL(&MsgPoCV2StoreCommit{}):
 		return &MsgPoCV2StoreCommit{}
+	case sdk.MsgTypeURL(&MsgPoCChallengeStoreCommit{}):
+		return &MsgPoCChallengeStoreCommit{}
 	case sdk.MsgTypeURL(&MsgSubmitHardwareDiff{}):
 		return &MsgSubmitHardwareDiff{}
 	case sdk.MsgTypeURL(&MsgSubmitPocValidationsV2{}):

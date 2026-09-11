@@ -37,6 +37,7 @@ import "inference/inference/maintenance.proto";
 import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
 import "inference/inference/claim_recipient.proto";
+import "inference/inference/poc_challenge.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -497,6 +498,14 @@ service Query {
 
   rpc DevshardApprovedVersions (QueryDevshardApprovedVersionsRequest) returns (QueryDevshardApprovedVersionsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/devshard_approved_versions";
+  }
+
+  rpc ChallengeGenerationState (QueryChallengeGenerationStateRequest) returns (QueryChallengeGenerationStateResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/challenge_generation_state/{target}";
+  }
+
+  rpc OpenPoCChallenges (QueryOpenPoCChallengesRequest) returns (QueryOpenPoCChallengesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/open_poc_challenges";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -1337,4 +1346,23 @@ message QueryDevshardApprovedVersionsRequest {}
 
 message QueryDevshardApprovedVersionsResponse {
   repeated DevshardApprovedVersion versions = 1;
+}
+
+message QueryChallengeGenerationStateRequest {
+  string target = 1;
+}
+
+message QueryChallengeGenerationStateResponse {
+  bool generating = 1;
+  bool open = 2;
+  int64 poc_stage_start_block_height = 3;
+  string seed_hash = 4;
+  uint32 current_slice_index = 5;
+  repeated PoCChallengeSegment sealed_pending_segments = 6;
+}
+
+message QueryOpenPoCChallengesRequest {}
+
+message QueryOpenPoCChallengesResponse {
+  repeated OpenPoCChallenge challenges = 1;
 }

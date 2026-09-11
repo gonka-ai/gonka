@@ -42,6 +42,10 @@ func (k msgServer) ScheduleMaintenance(goCtx context.Context, msg *types.MsgSche
 		return nil, types.ErrParticipantNotFound
 	}
 
+	if k.IsChallengeGenerating(goCtx, msg.Participant) {
+		return nil, types.ErrPoCChallengeGenerating
+	}
+
 	// Validate duration is positive and within limits
 	if msg.DurationBlocks == 0 {
 		return nil, types.ErrMaintenanceZeroDuration

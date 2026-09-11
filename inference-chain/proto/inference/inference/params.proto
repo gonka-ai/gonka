@@ -33,6 +33,18 @@ message Params {
   // params under field 16.
   DelegationParams delegation_params = 16;
   MaintenanceParams maintenance_params = 17;
+  PoCChallengeParams poc_challenge_params = 18;
+}
+
+// PoCChallengeParams defines governance-controlled parameters for PoCChallenge.
+// Empty allowed_challengers keeps the feature off.
+message PoCChallengeParams {
+  option (gogoproto.equal) = true;
+
+  repeated string allowed_challengers = 1;
+  Decimal payment_ratio = 2;
+  int64 slice_blocks = 3;
+  uint32 max_active_challenges = 4;
 }
 
 // MaintenanceParams defines the governance-controlled parameters for participant maintenance windows.

@@ -44,6 +44,7 @@ import (
 	modulev1 "github.com/productscience/inference/api/inference/inference/module"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -376,6 +377,11 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 
 	inference = am.expireInferenceAndIssueRefund(ctx, inference)
 
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	if am.keeper.IsMissedRequestWaived(ctx, inference.AssignedTo, sdkCtx.BlockHeight()) {
+		return
+	}
+
 	executor.CurrentEpochStats.MissedRequests++
 	err := am.keeper.SetParticipant(ctx, executor)
 	if err != nil {
@@ -410,6 +416,9 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if err != nil {
 		am.LogError("Failed to handle confirmation PoC", types.PoC, "error", err)
 		// Don't return error - allow block processing to continue
+	}
+	if err := pocchallenge.HandleEndBlock(ctx, &am.keeper, am.keeper.PoCChallenge); err != nil {
+		am.LogError("Failed to handle PoC challenge end block", types.PoC, "error", err)
 	}
 
 	params, err := am.keeper.GetParams(ctx)
@@ -774,6 +783,14 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		previousEpochIndex = previousEpoch.Index
 	}
 
+	if err := am.FinalizeOpenChallenges(ctx, effectiveEpoch.Index); err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to finalize PoC challenges", types.PoC, "error", err.Error())
+	}
+	freezeErr := am.keeper.FreezeChallengeUnpaidRewardShares(ctx, effectiveEpoch.Index)
+	if freezeErr != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to freeze challenge unpaid shares", types.PoC, "error", freezeErr.Error())
+	}
+
 	// Settle before collateral AdvanceEpoch so slashing can reach maturing unbonding entries.
 	failedMissRate, err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
 	if err != nil {
@@ -786,6 +803,10 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
 			sdk.NewAttribute("error_category", "settlement"),
 		))
+	} else if freezeErr == nil {
+		if payErr := pocchallenge.SettleChallengePayments(ctx, &am.keeper, am.keeper.PoCChallenge, effectiveEpoch.Index); payErr != nil {
+			am.LogError("onEndOfPoCValidationStage: Unable to settle PoC challenge payments", types.PoC, "error", payErr.Error())
+		}
 	}
 
 	// Signal to the collateral module that the epoch has advanced.

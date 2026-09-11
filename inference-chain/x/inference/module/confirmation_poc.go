@@ -10,6 +10,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 	"github.com/shopspring/decimal"
@@ -56,7 +57,7 @@ func (am AppModule) handleConfirmationPoC(ctx context.Context, blockHeight int64
 	}
 
 	// Handle phase transitions for active event
-	err = am.handleConfirmationPoCPhaseTransitions(ctx, blockHeight, epochContext, epochParams)
+	err = am.handleConfirmationPoCPhaseTransitions(ctx, blockHeight, epochContext, params)
 	if err != nil {
 		am.LogError("Error handling confirmation PoC phase transitions", types.PoC, "error", err)
 		// Continue to check for new triggers
@@ -227,8 +228,12 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	ctx context.Context,
 	blockHeight int64,
 	epochContext *types.EpochContext,
-	epochParams *types.EpochParams,
+	params types.Params,
 ) error {
+	epochParams := params.EpochParams
+	if epochParams == nil {
+		return fmt.Errorf("epoch params not found")
+	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
 	if epochContext.EpochIndex <= 1 {
@@ -260,14 +265,24 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		transitionCount++
 		transitions = append(transitions, "GRACE_PERIOD->GENERATION")
 
+		skipSet, err := am.keeper.PoCChallenge.SnapshotSkip(ctx, event.TriggerHeight)
+		if err != nil {
+			am.LogError("Confirmation PoC: failed to snapshot challenge skip set", types.PoC,
+				"triggerHeight", event.TriggerHeight, "error", err)
+			skipSet = nil
+		}
+
 		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
 		preservedSnapshot, err := modelAssigner.SamplePreservedForEpisode(ctx, types.Epoch{Index: event.EpochIndex}, event.TriggerHeight)
 		if err != nil {
 			am.LogError("Confirmation PoC: failed to sample preserved nodes", types.PoC,
 				"triggerHeight", event.TriggerHeight, "error", err)
-		} else if err := am.captureGenerationStartTimestamp(ctx, sdkCtx.BlockTime().Unix(), event.TriggerHeight, preservedSnapshot); err != nil {
-			am.LogError("Confirmation PoC: failed to store generation start snapshots", types.PoC,
-				"triggerHeight", event.TriggerHeight, "error", err)
+		} else {
+			preservedSnapshot = stripChallengeSkipFromPreserved(preservedSnapshot, skipSet)
+			if err := am.captureGenerationStartTimestamp(ctx, sdkCtx.BlockTime().Unix(), event.TriggerHeight, preservedSnapshot); err != nil {
+				am.LogError("Confirmation PoC: failed to store generation start snapshots", types.PoC,
+					"triggerHeight", event.TriggerHeight, "error", err)
+			}
 		}
 
 		am.LogInfo("Confirmation PoC: GRACE_PERIOD -> GENERATION", types.PoC,
@@ -276,6 +291,16 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 			"blockHeight", blockHeight,
 			"generationStartHeight", event.GenerationStartHeight,
 			"pocSeedBlockHash", event.PocSeedBlockHash[:16]+"...")
+	}
+
+	if event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION {
+		sealHeight := event.GetGenerationEnd(epochParams) + 1
+		if blockHeight >= sealHeight {
+			if err := pocchallenge.SealAllOpen(ctx, am.keeper.PoCChallenge, sealHeight, pocchallenge.SliceBlocks(params)); err != nil {
+				am.LogError("Confirmation PoC: failed to seal challenge segments at generation end", types.PoC,
+					"triggerHeight", event.TriggerHeight, "error", err)
+			}
+		}
 	}
 
 	// GENERATION -> VALIDATION transition
@@ -308,6 +333,12 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 				"eventSequence", event.EventSequence,
 				"error", err)
 		}
+		am.decideVotedChallengeSegments(ctx, event.TriggerHeight)
+		nextStart := event.GetValidationEnd(epochParams) + 1
+		if blockHeight > nextStart {
+			nextStart = blockHeight
+		}
+		am.startNextChallengeSegments(ctx, nextStart, pocchallenge.SafetyWindowHeight(epochContext.NextPoCStart(), epochParams.ConfirmationPocSafetyWindow))
 
 		am.LogInfo("Confirmation PoC: VALIDATION -> COMPLETED", types.PoC,
 			"epochIndex", event.EpochIndex,
@@ -322,6 +353,10 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
 			// Clean up validation snapshot
 			am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight)
+			if err := am.keeper.PoCChallenge.DeleteSkipSet(ctx, event.TriggerHeight); err != nil {
+				am.LogError("Confirmation PoC: failed to delete challenge skip set", types.PoC,
+					"triggerHeight", event.TriggerHeight, "error", err)
+			}
 
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)
 			if err != nil {
@@ -436,10 +471,17 @@ func (am AppModule) evaluateConfirmation(
 
 	// Maintenance-covered participants are expected to be offline: skip both the
 	// ConfirmationWeight haircut and the CPoC ratio write so absence is not
-	// punished via rewards or INACTIVE status.
-	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
+	// punished via rewards or INACTIVE status. Challenge targets generating at
+	// this event's trigger are skipped the same way.
+	skipAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
+	if skipAddrs == nil {
+		skipAddrs = make(map[string]struct{})
+	}
+	for addr := range am.keeper.ConfirmationEvaluationSkipSet(ctx, event.TriggerHeight) {
+		skipAddrs[addr] = struct{}{}
+	}
 
-	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, maintenanceAddrs)
+	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, skipAddrs)
 	if updated {
 		am.LogInfo("evaluateConfirmation: confirmation weights lowered", types.PoC,
 			"epochIndex", event.EpochIndex,

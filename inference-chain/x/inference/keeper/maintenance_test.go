@@ -132,6 +132,26 @@ func TestScheduleMaintenance_Success(t *testing.T) {
 	require.Equal(t, resp.ReservationId, state.ScheduledReservationId)
 }
 
+func TestScheduleMaintenance_RejectsChallengeGenerating(t *testing.T) {
+	t.Parallel()
+	k, ms, ctx := setupMaintenanceTest(t)
+	participant := sample.AccAddress()
+	registerParticipant(t, k, ctx, participant)
+	grantCredit(t, k, ctx, participant, 100)
+	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
+		Target:               participant,
+		ChallengeStartHeight: 1,
+	}))
+
+	_, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
+		DurationBlocks: 50,
+	})
+	require.ErrorIs(t, err, types.ErrPoCChallengeGenerating)
+}
+
 func TestScheduleMaintenance_Failures(t *testing.T) {
 	t.Parallel()
 

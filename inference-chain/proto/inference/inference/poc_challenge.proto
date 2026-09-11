@@ -1,0 +1,73 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+enum PoCChallengeSegmentOutcome {
+  POC_CHALLENGE_SEGMENT_OUTCOME_PENDING = 0;
+  POC_CHALLENGE_SEGMENT_OUTCOME_PASSED = 1;
+  POC_CHALLENGE_SEGMENT_OUTCOME_FAILED = 2;
+  POC_CHALLENGE_SEGMENT_OUTCOME_AUTO_PASSED = 3;
+}
+
+enum PoCChallengeFailReason {
+  POC_CHALLENGE_FAIL_REASON_UNSET = 0;
+  POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED = 1;
+  POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT = 2;
+  POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT = 3;
+  POC_CHALLENGE_FAIL_REASON_NO_VOTE = 4;
+  POC_CHALLENGE_FAIL_REASON_UNRELATED_REMOVAL = 5;
+}
+
+message PoCChallengeSegment {
+  int64 poc_stage_start_block_height = 1;
+  string seed_hash = 2;
+  int64 seal_height = 3; // 0 if open
+  int64 first_vote_height = 4; // 0 if none
+  PoCChallengeSegmentOutcome outcome = 5;
+}
+
+message PoCChallenge {
+  uint64 epoch_index = 1;
+  string challenger = 2;
+  string target = 3;
+  int64 challenge_start_height = 4;
+  uint64 expected_reward = 5;
+  uint64 locked_payment = 6;
+  int64 generation_end_height = 7; // 0 while still generating
+  PoCChallengeFailReason fail_reason = 8;
+  // Open segment plus sealed rows. Readers filter Outcome == PENDING.
+  repeated PoCChallengeSegment segments = 9;
+  uint64 unpaid_reward_share = 10;
+}
+
+message PoCChallengeCommit {
+  string target = 1;
+  int64 poc_stage_start_block_height = 2;
+  string model_id = 3;
+  uint32 slice_index = 4;
+  uint32 count = 5;
+  bytes root_hash = 6;
+  int64 commit_block_height = 7;
+}
+
+message PoCChallengeValidation {
+  string target = 1;
+  int64 poc_stage_start_block_height = 2;
+  string model_id = 3;
+  string validator = 4;
+  int64 validated_weight = 5;
+}
+
+message CountedSliceCommit {
+  int64 poc_stage_start_block_height = 1;
+  uint32 slice_index = 2;
+  string model_id = 3;
+  uint32 count = 4;
+  bytes root_hash = 5;
+}
+
+message OpenPoCChallenge {
+  PoCChallenge challenge = 1;
+  repeated CountedSliceCommit counted_commits = 2;
+}

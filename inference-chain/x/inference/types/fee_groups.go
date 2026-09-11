@@ -45,6 +45,8 @@ var MessageFeeGroups = map[reflect.Type]string{
 	reflect.TypeOf((*MsgSubmitHardwareDiff)(nil)):                 FeeGroupEpoch,
 	reflect.TypeOf((*MsgSubmitSeed)(nil)):                         FeeGroupEpoch,
 	reflect.TypeOf((*MsgPoCV2StoreCommit)(nil)):                   FeeGroupEpoch,
+	reflect.TypeOf((*MsgCreatePoCChallenge)(nil)):                 FeeGroupEpoch,
+	reflect.TypeOf((*MsgPoCChallengeStoreCommit)(nil)):            FeeGroupEpoch,
 	reflect.TypeOf((*MsgMLNodeWeightDistribution)(nil)):           FeeGroupEpoch,
 	reflect.TypeOf((*MsgSubmitPocValidationsV2)(nil)):             FeeGroupEpoch,
 	reflect.TypeOf((*MsgClaimRewards)(nil)):                       FeeGroupEpoch,
@@ -182,6 +184,7 @@ func IsNetworkDuty(msg sdk.Msg) bool {
 	switch msg.(type) {
 	case *MsgSubmitPocBatch,
 		*MsgSubmitPocValidationsV2,
+		*MsgSubmitPoCChallengeValidations,
 		*MsgMLNodeWeightDistribution,
 		*MsgSubmitSeed,
 		*MsgClaimRewards,

@@ -9,6 +9,7 @@ import (
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -143,6 +144,7 @@ type (
 		// Secondary index for pruning stale recipient overrides by epoch.
 		// Must be updated atomically with ClaimRecipients.
 		ClaimRecipientsByEpoch collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
+		PoCChallenge           *pocchallenge.Store
 	}
 )
 
@@ -685,6 +687,8 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
 		),
 	}
+	k.PoCChallenge = pocchallenge.NewStore(sb, cdc)
+
 	// Build the collections schema
 	schema, err := sb.Build()
 	if err != nil {

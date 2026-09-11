@@ -15,6 +15,7 @@ import "inference/inference/devshard_escrow.proto";
 import "inference/inference/maintenance.proto";
 import "inference/inference/poc_delegation.proto";
 import "inference/inference/claim_recipient.proto";
+import "inference/inference/poc_challenge.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -66,6 +67,9 @@ service Msg {
   rpc DeclarePoCIntent                 (MsgDeclarePoCIntent) returns (MsgDeclarePoCIntentResponse);
   rpc PutDevshardApprovedVersion       (MsgPutDevshardApprovedVersion) returns (MsgPutDevshardApprovedVersionResponse);
   rpc DeleteDevshardApprovedVersion    (MsgDeleteDevshardApprovedVersion) returns (MsgDeleteDevshardApprovedVersionResponse);
+  rpc CreatePoCChallenge               (MsgCreatePoCChallenge) returns (MsgCreatePoCChallengeResponse);
+  rpc PoCChallengeStoreCommit          (MsgPoCChallengeStoreCommit) returns (MsgPoCChallengeStoreCommitResponse);
+  rpc SubmitPoCChallengeValidations    (MsgSubmitPoCChallengeValidations) returns (MsgSubmitPoCChallengeValidationsResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -486,3 +490,30 @@ message MsgDeleteDevshardApprovedVersion {
 }
 
 message MsgDeleteDevshardApprovedVersionResponse {}
+
+message MsgCreatePoCChallenge {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  string target = 2;
+}
+
+message MsgCreatePoCChallengeResponse {}
+
+message MsgPoCChallengeStoreCommit {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  int64 poc_stage_start_block_height = 2;
+  uint32 slice_index = 3;
+  repeated PoCV2CommitEntry entries = 4;
+}
+
+message MsgPoCChallengeStoreCommitResponse {}
+
+message MsgSubmitPoCChallengeValidations {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  int64 poc_stage_start_block_height = 2;
+  repeated PoCValidationEntryV2 validations = 3;
+}
+
+message MsgSubmitPoCChallengeValidationsResponse {}

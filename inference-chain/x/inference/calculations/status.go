@@ -77,7 +77,7 @@ func ComputeStatus(
 		return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
 	}
 
-	failedConfirmationPoCDecision := getConfirmationPoCStatus(&newStats, confirmationPocParams)
+	failedConfirmationPoCDecision := ConfirmationPoCStatus(&newStats, confirmationPocParams)
 	if failedConfirmationPoCDecision == Fail {
 		return types.ParticipantStatus_INACTIVE, FailedConfirmationPoC, newStats
 	} else if failedConfirmationPoCDecision == Error {
@@ -135,7 +135,7 @@ func getInvalidationStatus(newStats *types.CurrentEpochStats, oldStats types.Cur
 	return invalidationSprt.Decision()
 }
 
-func getConfirmationPoCStatus(newStats *types.CurrentEpochStats, parameters *types.ConfirmationPoCParams) Decision {
+func ConfirmationPoCStatus(newStats *types.CurrentEpochStats, parameters *types.ConfirmationPoCParams) Decision {
 	if parameters == nil || parameters.AlphaThreshold == nil || parameters.AlphaThreshold.ToDecimal().Equal(decimal.Zero) {
 		return Pass
 	}

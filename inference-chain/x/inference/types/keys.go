@@ -122,13 +122,19 @@ var (
 	// Index of currently-scheduled maintenance reservations (key = reservationID).
 	// Lets concurrency / schedulability queries iterate only the bounded set
 	// of scheduled reservations instead of every participant's MaintenanceState.
-	MaintenanceScheduledIndexPrefix = collections.NewPrefix(105)
-	ClaimRecipientsPrefix           = collections.NewPrefix(106)
-	ClaimRecipientsByEpochPrefix    = collections.NewPrefix(107)
+	MaintenanceScheduledIndexPrefix        = collections.NewPrefix(105)
+	ClaimRecipientsPrefix                  = collections.NewPrefix(106)
+	ClaimRecipientsByEpochPrefix           = collections.NewPrefix(107)
 	DelegationRewardTransferSnapshotPrefix = collections.NewPrefix(108)
 	// Prefix 109 was reserved for an unused period-base KeySet and is left
 	// unused so it is not silently reused.
 	DevshardApprovedVersionsPrefix = collections.NewPrefix(110)
+	// Prefix 114 was reserved for a copied challenge validation snapshot
+	// and is left unused so it is not silently reused.
+	PoCChallengePrefix               = collections.NewPrefix(115)
+	PoCChallengeCommitPrefix         = collections.NewPrefix(116)
+	PoCChallengeValidationPrefix     = collections.NewPrefix(117)
+	ConfirmationEvaluationSkipPrefix = collections.NewPrefix(118)
 	ParamsKey                      = []byte("p_inference")
 )
 

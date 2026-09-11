@@ -48,6 +48,9 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 
 	weights := make(map[string]int64)
 	for _, vw := range epochGroup.GroupData.ValidationWeights {
+		if k.IsChallengeGenerating(goCtx, vw.MemberAddress) {
+			continue
+		}
 		weights[vw.MemberAddress] = vw.Weight
 	}
 	sortedEntries, totalWeight := calculations.PrepareSortedEntries(weights)
@@ -106,6 +109,7 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		InferenceSealGraceSeconds: types.DevshardInferenceSealGraceSecondsForCreate(ep),
 		AutoSealEveryNNonces:      types.DevshardAutoSealEveryNNoncesForCreate(ep),
 		ValidationRate:            types.DevshardValidationRateForCreate(ep),
+		CreateBlockHeight:         ctx.BlockHeight(),
 	}
 
 	id, err := k.StoreDevshardEscrow(goCtx, escrow, nextID)

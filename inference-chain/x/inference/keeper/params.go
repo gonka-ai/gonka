@@ -311,6 +311,19 @@ func (k Keeper) IsAllowedEscrowCreator(ctx context.Context, address string) bool
 	return false
 }
 
+// GetPoCChallengeParams returns PoCChallenge params, falling back to defaults if unset.
+func (k Keeper) GetPoCChallengeParams(ctx context.Context) *types.PoCChallengeParams {
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetPoCChallengeParams", types.System, "error", err)
+		return types.DefaultPoCChallengeParams()
+	}
+	if p.PocChallengeParams == nil {
+		return types.DefaultPoCChallengeParams()
+	}
+	return p.PocChallengeParams
+}
+
 // GetMaintenanceParams returns maintenance params, falling back to defaults if unset.
 func (k Keeper) GetMaintenanceParams(ctx context.Context) *types.MaintenanceParams {
 	p, err := k.GetParams(ctx)

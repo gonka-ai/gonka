@@ -76,6 +76,7 @@ var (
 	fd_DevshardEscrow_auto_seal_every_n_nonces     protoreflect.FieldDescriptor
 	fd_DevshardEscrow_validation_rate              protoreflect.FieldDescriptor
 	fd_DevshardEscrow_vote_threshold_factor        protoreflect.FieldDescriptor
+	fd_DevshardEscrow_create_block_height          protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -97,6 +98,7 @@ func init() {
 	fd_DevshardEscrow_auto_seal_every_n_nonces = md_DevshardEscrow.Fields().ByName("auto_seal_every_n_nonces")
 	fd_DevshardEscrow_validation_rate = md_DevshardEscrow.Fields().ByName("validation_rate")
 	fd_DevshardEscrow_vote_threshold_factor = md_DevshardEscrow.Fields().ByName("vote_threshold_factor")
+	fd_DevshardEscrow_create_block_height = md_DevshardEscrow.Fields().ByName("create_block_height")
 }
 
 var _ protoreflect.Message = (*fastReflection_DevshardEscrow)(nil)
@@ -260,6 +262,12 @@ func (x *fastReflection_DevshardEscrow) Range(f func(protoreflect.FieldDescripto
 			return
 		}
 	}
+	if x.CreateBlockHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.CreateBlockHeight)
+		if !f(fd_DevshardEscrow_create_block_height, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -307,6 +315,8 @@ func (x *fastReflection_DevshardEscrow) Has(fd protoreflect.FieldDescriptor) boo
 		return x.ValidationRate != uint32(0)
 	case "inference.inference.DevshardEscrow.vote_threshold_factor":
 		return x.VoteThresholdFactor != uint32(0)
+	case "inference.inference.DevshardEscrow.create_block_height":
+		return x.CreateBlockHeight != int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrow"))
@@ -355,6 +365,8 @@ func (x *fastReflection_DevshardEscrow) Clear(fd protoreflect.FieldDescriptor) {
 		x.ValidationRate = uint32(0)
 	case "inference.inference.DevshardEscrow.vote_threshold_factor":
 		x.VoteThresholdFactor = uint32(0)
+	case "inference.inference.DevshardEscrow.create_block_height":
+		x.CreateBlockHeight = int64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrow"))
@@ -422,6 +434,9 @@ func (x *fastReflection_DevshardEscrow) Get(descriptor protoreflect.FieldDescrip
 	case "inference.inference.DevshardEscrow.vote_threshold_factor":
 		value := x.VoteThresholdFactor
 		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.DevshardEscrow.create_block_height":
+		value := x.CreateBlockHeight
+		return protoreflect.ValueOfInt64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrow"))
@@ -476,6 +491,8 @@ func (x *fastReflection_DevshardEscrow) Set(fd protoreflect.FieldDescriptor, val
 		x.ValidationRate = uint32(value.Uint())
 	case "inference.inference.DevshardEscrow.vote_threshold_factor":
 		x.VoteThresholdFactor = uint32(value.Uint())
+	case "inference.inference.DevshardEscrow.create_block_height":
+		x.CreateBlockHeight = value.Int()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrow"))
@@ -532,6 +549,8 @@ func (x *fastReflection_DevshardEscrow) Mutable(fd protoreflect.FieldDescriptor)
 		panic(fmt.Errorf("field validation_rate of message inference.inference.DevshardEscrow is not mutable"))
 	case "inference.inference.DevshardEscrow.vote_threshold_factor":
 		panic(fmt.Errorf("field vote_threshold_factor of message inference.inference.DevshardEscrow is not mutable"))
+	case "inference.inference.DevshardEscrow.create_block_height":
+		panic(fmt.Errorf("field create_block_height of message inference.inference.DevshardEscrow is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrow"))
@@ -578,6 +597,8 @@ func (x *fastReflection_DevshardEscrow) NewField(fd protoreflect.FieldDescriptor
 		return protoreflect.ValueOfUint32(uint32(0))
 	case "inference.inference.DevshardEscrow.vote_threshold_factor":
 		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.DevshardEscrow.create_block_height":
+		return protoreflect.ValueOfInt64(int64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrow"))
@@ -701,6 +722,9 @@ func (x *fastReflection_DevshardEscrow) ProtoMethods() *protoiface.Methods {
 		if x.VoteThresholdFactor != 0 {
 			n += 2 + runtime.Sov(uint64(x.VoteThresholdFactor))
 		}
+		if x.CreateBlockHeight != 0 {
+			n += 2 + runtime.Sov(uint64(x.CreateBlockHeight))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -729,6 +753,13 @@ func (x *fastReflection_DevshardEscrow) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.CreateBlockHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.CreateBlockHeight))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0x88
 		}
 		if x.VoteThresholdFactor != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.VoteThresholdFactor))
@@ -1229,6 +1260,25 @@ func (x *fastReflection_DevshardEscrow) ProtoMethods() *protoiface.Methods {
 					b := dAtA[iNdEx]
 					iNdEx++
 					x.VoteThresholdFactor |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 17:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CreateBlockHeight", wireType)
+				}
+				x.CreateBlockHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.CreateBlockHeight |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -3172,6 +3222,7 @@ type DevshardEscrow struct {
 	AutoSealEveryNNonces      uint32   `protobuf:"varint,14,opt,name=auto_seal_every_n_nonces,json=autoSealEveryNNonces,proto3" json:"auto_seal_every_n_nonces,omitempty"`
 	ValidationRate            uint32   `protobuf:"varint,15,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
 	VoteThresholdFactor       uint32   `protobuf:"varint,16,opt,name=vote_threshold_factor,json=voteThresholdFactor,proto3" json:"vote_threshold_factor,omitempty"`
+	CreateBlockHeight         int64    `protobuf:"varint,17,opt,name=create_block_height,json=createBlockHeight,proto3" json:"create_block_height,omitempty"`
 }
 
 func (x *DevshardEscrow) Reset() {
@@ -3302,6 +3353,13 @@ func (x *DevshardEscrow) GetValidationRate() uint32 {
 func (x *DevshardEscrow) GetVoteThresholdFactor() uint32 {
 	if x != nil {
 		return x.VoteThresholdFactor
+	}
+	return 0
+}
+
+func (x *DevshardEscrow) GetCreateBlockHeight() int64 {
+	if x != nil {
+		return x.CreateBlockHeight
 	}
 	return 0
 }
@@ -3522,7 +3580,7 @@ var file_inference_inference_devshard_escrow_proto_rawDesc = []byte{
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x64, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x5f, 0x65,
 	0x73, 0x63, 0x72, 0x6f, 0x77, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x22, 0xe3, 0x04, 0x0a, 0x0e, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x45, 0x73, 0x63,
+	0x22, 0x93, 0x05, 0x0a, 0x0e, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x45, 0x73, 0x63,
 	0x72, 0x6f, 0x77, 0x12, 0x0e, 0x0a, 0x02, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52,
 	0x02, 0x69, 0x64, 0x12, 0x18, 0x0a, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x02,
 	0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x16, 0x0a,
@@ -3560,7 +3618,10 @@ var file_inference_inference_devshard_escrow_proto_rawDesc = []byte{
 	0x74, 0x65, 0x12, 0x32, 0x0a, 0x15, 0x76, 0x6f, 0x74, 0x65, 0x5f, 0x74, 0x68, 0x72, 0x65, 0x73,
 	0x68, 0x6f, 0x6c, 0x64, 0x5f, 0x66, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x18, 0x10, 0x20, 0x01, 0x28,
 	0x0d, 0x52, 0x13, 0x76, 0x6f, 0x74, 0x65, 0x54, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64,
-	0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x22, 0xac, 0x02, 0x0a, 0x16, 0x44, 0x65, 0x76, 0x73, 0x68,
+	0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x12, 0x2e, 0x0a, 0x13, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65,
+	0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x11, 0x20,
+	0x01, 0x28, 0x03, 0x52, 0x11, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x42, 0x6c, 0x6f, 0x63, 0x6b,
+	0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0xac, 0x02, 0x0a, 0x16, 0x44, 0x65, 0x76, 0x73, 0x68,
 	0x61, 0x72, 0x64, 0x48, 0x6f, 0x73, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x53, 0x74, 0x61, 0x74,
 	0x73, 0x12, 0x20, 0x0a, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e, 0x74,
 	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70,

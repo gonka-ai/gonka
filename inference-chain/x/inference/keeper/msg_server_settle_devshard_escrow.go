@@ -9,6 +9,7 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -223,6 +224,10 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			if err != nil {
 				return nil, fmt.Errorf("failed to derive assigned upper bound for slot %d: %w", hs.SlotId, err)
 			}
+			adjusted, waivedAssigned := pocchallenge.WaiveDevshardMissesWhileGenerating(
+				k.PoCChallenge, goCtx, escrow, *hs, assignedToSlot, sdk.UnwrapSDKContext(goCtx).BlockHeight(), addr)
+			*hs = adjusted
+			assignedToSlot = waivedAssigned
 			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(participant, *hs, assignedToSlot); err != nil {
 				return nil, fmt.Errorf("failed to aggregate host stats into participant epoch stats: %w", err)
 			}
