@@ -1,13 +1,19 @@
-use cosmwasm_std::StdError;
+use cosmwasm_std::{OverflowError, StdError};
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum ContractError {
     #[error("{0}")]
     Std(#[from] StdError),
 
+    #[error("{0}")]
+    Overflow(#[from] OverflowError),
+
     #[error("Unauthorized")]
     Unauthorized {},
+
+    #[error("Cannot set to own account")]
+    CannotSetOwnAccount {},
 
     #[error("Cannot set approval that is already expired")]
     Expired {},
@@ -30,8 +36,11 @@ pub enum ContractError {
     #[error("Invalid PNG header")]
     InvalidPngHeader {},
 
+    #[error("Invalid expiration value")]
+    InvalidExpiration {},
+
     #[error("Insufficient funds: balance {balance}, required {required}")]
-    InsufficientFunds { balance: u128, required: u128 },
+    InsufficientFunds { balance: String, required: String },
 
     #[error("Bridge withdrawal not supported yet - query endpoint not ready")]
     WithdrawNotSupported {},

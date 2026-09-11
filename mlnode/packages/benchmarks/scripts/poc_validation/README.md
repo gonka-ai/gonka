@@ -128,7 +128,11 @@ Each artifact JSON includes:
 - `vectors` — list of decoded float arrays (or null on failure)
 - `artifacts` — raw server response with base64 vectors
 - `encoding` — `{dtype, k_dim, endian}`
-- `timing` — `{started_at, finished_at, elapsed_seconds, nonces_per_min}`
+- `timing` — `{started_at, finished_at, elapsed_seconds, measured_nonce_count, post_boundary_nonces, nonces_per_min}`.
+  `nonces_per_min` rates `measured_nonce_count` — the nonces delivered inside the
+  measured interval — against `elapsed_seconds`. Nonces delivered while `pow/stop`
+  drains arrive after the interval closed and are reported separately as
+  `post_boundary_nonces`; `artifacts` still holds all of them.
 
 ## Usage
 

@@ -1,6 +1,7 @@
 package inference
 
 import (
+	"context"
 	"math"
 	"testing"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/stretchr/testify/require"
 
@@ -35,6 +37,36 @@ func (noopLogger) LogInfo(string, types.SubSystem, ...interface{})  {}
 func (noopLogger) LogError(string, types.SubSystem, ...interface{}) {}
 func (noopLogger) LogWarn(string, types.SubSystem, ...interface{})  {}
 func (noopLogger) LogDebug(string, types.SubSystem, ...interface{}) {}
+
+type noopCollateralKeeper struct{}
+
+func (noopCollateralKeeper) AdvanceEpoch(context.Context, uint64) error {
+	return nil
+}
+
+func (noopCollateralKeeper) GetCollateral(context.Context, sdk.AccAddress) (sdk.Coin, bool) {
+	return sdk.Coin{}, false
+}
+
+func (noopCollateralKeeper) Slash(
+	context.Context,
+	sdk.AccAddress,
+	mathsdk.LegacyDec,
+	string,
+	mathsdk.Int,
+) (sdk.Coin, error) {
+	return sdk.Coin{}, nil
+}
+
+type noopAuthzKeeper struct{}
+
+func (noopAuthzKeeper) GranterGrants(context.Context, *authztypes.QueryGranterGrantsRequest) (*authztypes.QueryGranterGrantsResponse, error) {
+	return &authztypes.QueryGranterGrantsResponse{}, nil
+}
+
+func (noopAuthzKeeper) Grants(context.Context, *authztypes.QueryGrantsRequest) (*authztypes.QueryGrantsResponse, error) {
+	return &authztypes.QueryGrantsResponse{}, nil
+}
 
 func TestPoCWeightCalculator_PocValidated_RejectsWhenVotingPowersMissing(t *testing.T) {
 	wc := &PoCWeightCalculator{
@@ -482,6 +514,113 @@ func TestPoCWeightCalculator_Calculate_RejectsWhenVotingPowerIsInsufficient(t *t
 	}
 
 	require.Empty(t, wc.Calculate())
+}
+
+func TestRegularPoCValidationUsesCapWeightElectorate(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const (
+		epoch         = uint64(5)
+		triggerHeight = int64(180)
+	)
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:          epoch,
+		CapWeightApplied: true,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 1_000, CapWeight: 80},
+			{Index: testutil.Validator2, Weight: 1_000, CapWeight: 20},
+		},
+	}))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     epoch,
+		EpochGroupId:   77,
+		SubGroupModels: []string{"model-a"},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 1_000},
+			{MemberAddress: testutil.Validator2, Weight: 1_000},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epoch,
+		EpochGroupId: 78,
+		ModelId:      "model-a",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, VotingPower: 80},
+			{MemberAddress: testutil.Validator2, VotingPower: 20},
+		},
+	})
+
+	key := types.PoCParticipantModelKey{
+		ParticipantAddress: testutil.Executor,
+		ModelID:            "model-a",
+	}
+	storeCommit := types.PoCV2StoreCommit{
+		ParticipantAddress:       testutil.Executor,
+		PocStageStartBlockHeight: triggerHeight,
+		Count:                    40,
+		ModelId:                  "model-a",
+	}
+	require.NoError(t, k.SetPoCV2StoreCommit(ctx, storeCommit))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	am.captureValidationSnapshot(ctx, triggerHeight, triggerHeight, "regular PoC")
+	snapshot, found, err := k.GetPoCValidationSnapshot(ctx, triggerHeight)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, int64(100), snapshot.TotalNetworkWeight)
+	require.Len(t, snapshot.ModelVotingPowers, 1)
+	modelVotingPowers := types.VotingPowerSliceToMap(snapshot.ModelVotingPowers[0].VotingPowers)
+	require.Equal(t, map[string]int64{
+		testutil.Validator:  80,
+		testutil.Validator2: 20,
+	}, modelVotingPowers)
+
+	wc := &PoCWeightCalculator{
+		ModelVotingPowers:  map[string]map[string]int64{"model-a": modelVotingPowers},
+		TotalNetworkWeight: snapshot.TotalNetworkWeight,
+		StoreCommits: map[types.PoCParticipantModelKey]types.PoCV2StoreCommit{
+			key: storeCommit,
+		},
+		NodeWeightDistributions: map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution{
+			key: {
+				ParticipantAddress: testutil.Executor,
+				ModelId:            "model-a",
+				Weights: []*types.MLNodeWeight{{
+					NodeId: "node-a",
+					Weight: 40,
+				}},
+			},
+		},
+		Validations: map[types.PoCParticipantModelKey][]types.PoCValidationV2{
+			key: {{
+				ValidatorParticipantAddress: testutil.Validator,
+				ValidatedWeight:             40,
+			}},
+		},
+		PocParams: &types.PocParams{
+			Models: []*types.PoCModelConfig{{ModelId: "model-a"}},
+		},
+		Participants: map[string]types.Participant{
+			testutil.Executor: {
+				Address:      testutil.Executor,
+				ValidatorKey: "validator-key",
+			},
+		},
+		Seeds: map[string]types.RandomSeed{
+			testutil.Executor: {
+				Participant: testutil.Executor,
+				EpochIndex:  epoch + 1,
+				Signature:   "seed-signature",
+			},
+		},
+		Logger:                  noopLogger{},
+		TimeNormalizationFactor: mathsdk.LegacyOneDec(),
+	}
+
+	result := wc.Calculate()
+	require.Len(t, result, 1)
+	require.Equal(t, int64(40), result[0].Weight)
 }
 
 func TestUpdateConfirmationWeightsV2_UsesPerModelWeightScaleFactor(t *testing.T) {
@@ -1083,9 +1222,17 @@ func newMinimalInferenceKeeper(t *testing.T) (keeper.Keeper, sdk.Context) {
 }
 
 func newMinimalInferenceKeeperWithStub(t *testing.T) (keeper.Keeper, sdk.Context, *stubGroupKeeper) {
+	return newMinimalInferenceKeeperWithCollateral(t, noopCollateralKeeper{})
+}
+
+func newMinimalInferenceKeeperWithCollateral(
+	t *testing.T,
+	collateralKeeper types.CollateralKeeper,
+) (keeper.Keeper, sdk.Context, *stubGroupKeeper) {
 	t.Helper()
 
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
 
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 	transientStoreKey := storetypes.NewTransientStoreKey(types.TransientStoreKey)
@@ -1122,9 +1269,9 @@ func newMinimalInferenceKeeperWithStub(t *testing.T) (keeper.Keeper, sdk.Context
 		nil,
 		nil,
 		blsKeeper,
+		collateralKeeper,
 		nil,
-		nil,
-		nil,
+		noopAuthzKeeper{},
 		func() wasmkeeper.Keeper { return wasmkeeper.Keeper{} },
 		nil,
 	)

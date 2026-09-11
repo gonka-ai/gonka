@@ -20,6 +20,11 @@ message ActiveParticipants {
   int64 effective_block_height = 4;
   int64 created_at_block_height = 5; // Same as effective_block_height???
   uint64 epoch_id = 6; // The current key of the ActiveParticipants entity
+  // cap_weight_applied is true when applyPreviousConfirmedWeightCap ran for this
+  // epoch, including the legitimate all-zero case (every participant is new or
+  // was removed last epoch). False means a pre-upgrade epoch whose CapWeight
+  // field was never populated, so consumers may fall back to Weight.
+  bool cap_weight_applied = 7;
 }
 
 message ActiveParticipant {
@@ -31,4 +36,10 @@ message ActiveParticipant {
   RandomSeed seed = 6;
   repeated ModelMLNodes ml_nodes = 7;
   repeated ModelVotingPower voting_powers = 8;
+  // cap_weight is the trust weight used for governance voting, BLS threshold
+  // signing and cPoC validation voting power. It is capped at the confirmed
+  // weight the participant held in the previous epoch (0 for participants that
+  // were absent last epoch), while weight (field 3) remains the real weight used
+  // for rewards, cPoC confirmation and the next-epoch cap baseline.
+  int64 cap_weight = 9;
 }

@@ -2,7 +2,7 @@
 
 Gonka is a decentralized AI infrastructure designed to optimize computational power for AI model training and inference, offering an alternative to monopolistic, high-cost, centralized cloud providers. As AI models become increasingly complex, their computational demands surge, presenting significant challenges for developers and businesses that rely on costly, centralized resources.
 
-To exchange ideas, follow project updates, and connect with the community, join [Discord](https://discord.com/invite/RADwCT2U6R).
+To exchange ideas, follow project updates, and connect with the community, join [Discord](https://discord.gg/REcpeYc7P7).
 
 ## Introduction
 
@@ -119,4 +119,4 @@ We maintain deployment examples and tooling in the [https://github.com/gonka-ai/
 [https://gonka.ai/docs/model-licenses/](https://gonka.ai/docs/model-licenses/)
 ## Support
 
-Join the [Gonka community on Discord](https://discord.com/invite/RADwCT2U6R) if you need assistance.
+Join the [Gonka community on Discord](https://discord.gg/REcpeYc7P7) if you need assistance.
