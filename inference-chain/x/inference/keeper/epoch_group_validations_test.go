@@ -27,6 +27,67 @@ func createNEpochGroupValidations(keeper keeper.Keeper, ctx context.Context, n i
 	return items
 }
 
+func TestMigrateEpochGroupValidationsToEntries_NoEffectiveEpoch(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	legacy := types.EpochGroupValidations{
+		Participant:         "part0",
+		EpochIndex:          0,
+		ValidatedInferences: []string{"inf0"},
+	}
+	require.NoError(t, k.EpochGroupValidationsMap.Set(ctx, collections.Join(legacy.EpochIndex, legacy.Participant), legacy))
+
+	require.NoError(t, k.MigrateEpochGroupValidationsToEntries(ctx))
+
+	_, found := k.GetEpochGroupValidations(ctx, legacy.Participant, legacy.EpochIndex)
+	require.False(t, found, "without an effective epoch, no new entries should be written")
+	iter, err := k.EpochGroupValidationsMap.Iterate(ctx, nil)
+	require.NoError(t, err)
+	defer iter.Close()
+	values, err := iter.Values()
+	require.NoError(t, err)
+	require.Len(t, values, 1, "without an effective epoch, legacy state is intentionally retained")
+}
+
+func BenchmarkMigrateEpochGroupValidationsToEntries(b *testing.B) {
+	const (
+		currentEpoch = uint64(100)
+		entries      = 1000
+	)
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		k, ctx := keepertest.InferenceKeeper(b)
+		require.NoError(b, k.SetEffectiveEpochIndex(ctx, currentEpoch))
+		for entry := 0; entry < entries; entry++ {
+			legacy := types.EpochGroupValidations{
+				Participant:         "participant-" + strconv.Itoa(entry),
+				EpochIndex:          currentEpoch,
+				ValidatedInferences: []string{"inference-" + strconv.Itoa(entry)},
+			}
+			require.NoError(b, k.EpochGroupValidationsMap.Set(ctx, collections.Join(currentEpoch, legacy.Participant), legacy))
+		}
+		b.StartTimer()
+
+		if err := k.MigrateEpochGroupValidationsToEntries(ctx); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+		iter, err := k.EpochGroupValidationsMap.Iterate(ctx, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		values, err := iter.Values()
+		iter.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(values) != 0 {
+			b.Fatalf("expected legacy map to be empty, got %d entries", len(values))
+		}
+	}
+}
+
 func TestEpochGroupValidationsGet(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 	items := createNEpochGroupValidations(keeper, ctx, 10)
