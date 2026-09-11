@@ -1,0 +1,64 @@
+name: Accept Reconcile (board -> Linear)
+
+# Acceptance is expressed by a maintainer moving a card on the triage board
+# (GitHub Projects v2) to "Accepted". Projects v2 board changes cannot trigger a
+# workflow, so this job polls the board on a schedule and reconciles Linear:
+# every item with Status = Accepted has its Linear parent moved out of Triage
+# into the release project (if milestoned) or "Backlog for future mainnet
+# upgrades" (state Backlog). Idempotent — items already in a project are left
+# alone, so it never overrides a later manual move.
+#
+# Fail-soft: missing config or any error becomes a warning annotation, exit 0.
+
+on:
+  schedule:
+    # Every 15 minutes.
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: accept-reconcile
+  cancel-in-progress: true
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (scripts only)
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: .github/scripts/linear-pr-sync
+        run: npm install --no-audit --no-fund
+
+      - name: Reconcile accepted items into Linear
+        working-directory: .github/scripts/linear-pr-sync
+        env:
+          MODE: reconcile-board
+
+          # --- Linear ---
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          LINEAR_TEAM_KEY: ${{ vars.LINEAR_TEAM_KEY }}
+          MILESTONE_PROJECT_PREFIX: ${{ vars.LINEAR_MILESTONE_PROJECT_PREFIX }}
+          BACKLOG_STATE_NAME: ${{ vars.LINEAR_BACKLOG_STATE_NAME }}
+          RELEASE_START_STATE_NAME: ${{ vars.LINEAR_RELEASE_START_STATE_NAME }}
+          # Project + state for accepted items without a milestone.
+          BACKLOG_PROJECT_NAME: ${{ vars.LINEAR_BACKLOG_PROJECT_NAME }}
+          ACCEPTED_STATE_NAME: ${{ vars.LINEAR_ACCEPTED_STATE_NAME }}
+
+          # --- Triage board (Projects v2) ---
+          PROJECTS_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
+          PROJECT_OWNER: ${{ github.repository_owner }}
+          PROJECT_NUMBER: ${{ vars.TRIAGE_PROJECT_NUMBER || '7' }}
+          STATUS_FIELD_NAME: "Status"
+          # Board status value that means "accepted" (matched case-insensitively).
+          ACCEPTED_STATUS_VALUE: ${{ vars.TRIAGE_ACCEPTED_STATUS_VALUE || 'Accepted' }}
+        run: node sync.mjs
