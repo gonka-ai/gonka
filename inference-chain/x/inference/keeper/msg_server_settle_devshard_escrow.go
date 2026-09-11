@@ -86,6 +86,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	touchedParticipants := make(map[string]bool)
 
 	totalSlots := uint64(len(escrow.Slots))
+	passPolicy := DevshardPassPolicyFor(devshardParams.ApprovedVersions, msg.StateRootAndProtocolVersion, escrow.ValidationRate)
 	// How much of the total fees will be assigned to each slot
 	feePerSlot := msg.Fees / totalSlots
 	// Leftover fees; will be distributed 1 per slot
@@ -215,7 +216,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			if err != nil {
 				return nil, fmt.Errorf("failed to derive assigned upper bound for slot %d: %w", hs.SlotId, err)
 			}
-			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(participant, *hs, assignedToSlot); err != nil {
+			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(participant, *hs, assignedToSlot, totalSlots, passPolicy); err != nil {
 				return nil, fmt.Errorf("failed to aggregate host stats into participant epoch stats: %w", err)
 			}
 			touchedParticipants[addr] = true

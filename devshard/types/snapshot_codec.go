@@ -34,6 +34,8 @@ func EscrowStateToProto(state *EscrowState) *EscrowStateProto {
 			Cost:                 stats.Cost,
 			RequiredValidations:  stats.RequiredValidations,
 			CompletedValidations: stats.CompletedValidations,
+			Validated:            stats.Validated,
+			Finished:             stats.Finished,
 		}
 	}
 
@@ -111,6 +113,8 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 			Cost:                 stats.Cost,
 			RequiredValidations:  stats.RequiredValidations,
 			CompletedValidations: stats.CompletedValidations,
+			Validated:            stats.Validated,
+			Finished:             stats.Finished,
 		}
 	}
 

@@ -403,6 +403,8 @@ message DevshardApprovedVersion {
   string binary = 2;
   // Hash of binary to check if update is already installed
   string sha256 = 3;
+  // Settlements from this version carry HostStats.validated
+  bool reports_validated = 4;
 }
 
 // DevshardEscrowParams defines governance-controlled parameters for devshard escrow creation and settlement.

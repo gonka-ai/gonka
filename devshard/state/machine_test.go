@@ -371,6 +371,32 @@ func TestApplyDiff_Validation_SelfValidation(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrSelfValidation)
 }
 
+func TestApplyDiff_Validation_SelfValidation_OtherOwnedSlot(t *testing.T) {
+	signers := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1})
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+
+	// Inference 1: executor = group[1%4].SlotID = 1, owned by signers[0] who also owns slot 0.
+	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
+
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: true, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[0], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+	_, err = sm.ApplyDiff(diff)
+	require.ErrorIs(t, err, types.ErrSelfValidation)
+
+	st := sm.SnapshotState()
+	require.Equal(t, uint32(0), st.HostStats[1].Validated)
+	require.Equal(t, uint32(0), st.Inferences[1].VotesValid)
+}
+
 func TestApplyDiff_Validation_Invalid_ChallengeVoting(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
@@ -3580,4 +3606,106 @@ func TestApplyPersisted_DoesNotRelaxTheFloorForNewWork(t *testing.T) {
 		InputLength: 100, MaxTokens: 1, StartedAt: 1000,
 	})})
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "a sub-floor reservation must not be composed")
+}
+
+func TestHostStats_Validated_CountsSampledPassesOnly(t *testing.T) {
+	signers := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 1, 1, 1})
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+
+	apply := func(txs ...*types.DevshardTx) error {
+		nonce := sm.SnapshotState().LatestNonce + 1
+		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, txs))
+		return err
+	}
+	validation := func(id uint64, slot uint32, valid bool) *types.DevshardTx {
+		msg := &types.MsgValidation{InferenceId: id, ValidatorSlot: slot, Valid: valid, EscrowId: "escrow-1"}
+		msg.ProposerSig = testutil.SignProposerTx(t, signers[slot], msg)
+		return txValidation(msg)
+	}
+	vote := func(id uint64, slot uint32, valid bool) *types.DevshardTx {
+		msg := &types.MsgValidationVote{InferenceId: id, VoterSlot: slot, VoteValid: valid, EscrowId: "escrow-1"}
+		msg.ProposerSig = testutil.SignProposerTx(t, signers[slot], msg)
+		return txVote(msg)
+	}
+	status := func(id uint64) types.InferenceStatus { return sm.SnapshotState().Inferences[id].Status }
+
+	type inf struct {
+		id                                       uint64
+		executor                                 uint32
+		others                                   []uint32
+		baseValidated, baseInvalid, baseFinished uint32
+	}
+	start := func() inf {
+		id := sm.SnapshotState().LatestNonce + 1
+		executor := group[id%uint64(len(group))].SlotID
+		var others []uint32
+		for _, sa := range group {
+			if sa.SlotID != executor {
+				others = append(others, sa.SlotID)
+			}
+		}
+		hs := *sm.SnapshotState().HostStats[executor]
+		applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, id)
+		return inf{id: id, executor: executor, others: others, baseValidated: hs.Validated, baseInvalid: hs.Invalid, baseFinished: hs.Finished}
+	}
+	validated := func(i inf) uint32 { return sm.SnapshotState().HostStats[i.executor].Validated - i.baseValidated }
+	invalid := func(i inf) uint32 { return sm.SnapshotState().HostStats[i.executor].Invalid - i.baseInvalid }
+	finished := func(i inf) uint32 { return sm.SnapshotState().HostStats[i.executor].Finished - i.baseFinished }
+
+	a := start()
+	require.Equal(t, uint32(1), finished(a))
+	require.Equal(t, uint32(0), validated(a), "unsampled Finished work must not count as a pass")
+	require.NoError(t, apply(validation(a.id, a.others[0], true)))
+	require.Equal(t, uint32(1), validated(a))
+	require.NoError(t, apply(validation(a.id, a.others[0], true)))
+	require.Equal(t, uint32(1), validated(a))
+	require.NoError(t, apply(validation(a.id, a.others[1], true)))
+	require.Equal(t, uint32(2), validated(a))
+	require.Equal(t, types.StatusFinished, status(a.id))
+
+	b := start()
+	require.NoError(t, apply(validation(b.id, b.others[0], true)))
+	require.Equal(t, uint32(1), validated(b))
+	require.NoError(t, apply(validation(b.id, b.others[1], false)))
+	require.Equal(t, types.StatusChallenged, status(b.id))
+	require.Equal(t, uint32(0), validated(b), "a challenge suspends the phase-1 pass")
+	require.NoError(t, apply(vote(b.id, b.others[2], true), vote(b.id, b.others[3], true)))
+	require.Equal(t, types.StatusValidated, status(b.id))
+	require.Equal(t, uint32(1), validated(b), "Challenged -> Validated is one pass")
+	require.Equal(t, uint32(0), invalid(b))
+
+	c := start()
+	require.NoError(t, apply(validation(c.id, c.others[0], true)))
+	require.NoError(t, apply(validation(c.id, c.others[1], true)))
+	require.Equal(t, uint32(2), validated(c))
+	require.NoError(t, apply(validation(c.id, c.others[2], false)))
+	require.Equal(t, uint32(0), validated(c), "a challenge suspends every phase-1 pass")
+	require.NoError(t, apply(vote(c.id, c.others[3], false)))
+	require.Equal(t, types.StatusChallenged, status(c.id))
+	require.Equal(t, uint32(0), validated(c))
+	require.Equal(t, uint32(0), invalid(c))
+
+	d := start()
+	require.NoError(t, apply(validation(d.id, d.others[0], false)))
+	require.NoError(t, apply(vote(d.id, d.others[1], false), vote(d.id, d.others[2], false), vote(d.id, d.others[3], false)))
+	require.Equal(t, types.StatusInvalidated, status(d.id))
+	require.Equal(t, uint32(0), validated(d))
+	require.Equal(t, uint32(1), invalid(d))
+
+	e := start()
+	require.NoError(t, apply(validation(e.id, e.others[0], true)))
+	require.NoError(t, apply(validation(e.id, e.others[1], false)))
+	require.NoError(t, apply(vote(e.id, e.others[2], false), vote(e.id, e.others[3], false)))
+	require.Equal(t, types.StatusInvalidated, status(e.id))
+	require.Equal(t, uint32(0), validated(e), "a pass credited before invalidation must not survive it")
+	require.Equal(t, uint32(1), invalid(e))
+	require.Equal(t, uint32(1), finished(e), "invalidation does not undo the finish count")
 }

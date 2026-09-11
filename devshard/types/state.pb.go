@@ -29,6 +29,8 @@ type HostStatsProto struct {
 	Cost                 uint64                 `protobuf:"varint,4,opt,name=cost,proto3" json:"cost,omitempty"`
 	RequiredValidations  uint32                 `protobuf:"varint,5,opt,name=required_validations,json=requiredValidations,proto3" json:"required_validations,omitempty"`
 	CompletedValidations uint32                 `protobuf:"varint,6,opt,name=completed_validations,json=completedValidations,proto3" json:"completed_validations,omitempty"`
+	Validated            uint32                 `protobuf:"varint,7,opt,name=validated,proto3" json:"validated,omitempty"`
+	Finished             uint32                 `protobuf:"varint,8,opt,name=finished,proto3" json:"finished,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -101,6 +103,20 @@ func (x *HostStatsProto) GetRequiredValidations() uint32 {
 func (x *HostStatsProto) GetCompletedValidations() uint32 {
 	if x != nil {
 		return x.CompletedValidations
+	}
+	return 0
+}
+
+func (x *HostStatsProto) GetValidated() uint32 {
+	if x != nil {
+		return x.Validated
+	}
+	return 0
+}
+
+func (x *HostStatsProto) GetFinished() uint32 {
+	if x != nil {
+		return x.Finished
 	}
 	return 0
 }
@@ -385,14 +401,16 @@ var File_devshard_v1_state_proto protoreflect.FileDescriptor
 
 const file_devshard_v1_state_proto_rawDesc = "" +
 	"\n" +
-	"\x17devshard/v1/state.proto\x12\vdevshard.v1\"\xd7\x01\n" +
+	"\x17devshard/v1/state.proto\x12\vdevshard.v1\"\x91\x02\n" +
 	"\x0eHostStatsProto\x12\x17\n" +
 	"\aslot_id\x18\x01 \x01(\rR\x06slotId\x12\x16\n" +
 	"\x06missed\x18\x02 \x01(\rR\x06missed\x12\x18\n" +
 	"\ainvalid\x18\x03 \x01(\rR\ainvalid\x12\x12\n" +
 	"\x04cost\x18\x04 \x01(\x04R\x04cost\x121\n" +
 	"\x14required_validations\x18\x05 \x01(\rR\x13requiredValidations\x123\n" +
-	"\x15completed_validations\x18\x06 \x01(\rR\x14completedValidations\"J\n" +
+	"\x15completed_validations\x18\x06 \x01(\rR\x14completedValidations\x12\x1c\n" +
+	"\tvalidated\x18\a \x01(\rR\tvalidated\x12\x1a\n" +
+	"\bfinished\x18\b \x01(\rR\bfinished\"J\n" +
 	"\x11HostStatsMapProto\x125\n" +
 	"\aentries\x18\x01 \x03(\v2\x1b.devshard.v1.HostStatsProtoR\aentries\"\xa9\x05\n" +
 	"\x14InferenceRecordProto\x12!\n" +

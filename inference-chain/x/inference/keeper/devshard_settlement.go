@@ -178,6 +178,7 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 		return fmt.Errorf("no slots in escrow")
 	}
 	seenStatSlots := make(map[uint32]bool, len(msg.HostStats))
+	passPolicy := DevshardPassPolicyFor(params.ApprovedVersions, msg.StateRootAndProtocolVersion, escrow.ValidationRate)
 	var totalCost uint64
 	for _, hs := range msg.HostStats {
 		if seenStatSlots[hs.SlotId] {
@@ -194,6 +195,9 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 		completed := assignedToSlot - uint64(hs.Missed)
 		if uint64(hs.Invalid) > completed {
 			return fmt.Errorf("slot %d invalid count %d exceeds completed per slot %d", hs.SlotId, hs.Invalid, completed)
+		}
+		if err := passPolicy.checkSlot(hs, completed, slotCount); err != nil {
+			return fmt.Errorf("slot %d: %w", hs.SlotId, err)
 		}
 		nextTotalCost, carry := bits.Add64(totalCost, hs.Cost, 0)
 		if carry != 0 {
@@ -233,6 +237,8 @@ func ComputeDevshardHostStatsHash(hostStats []*types.DevshardSettlementHostStats
 			Cost:                 hs.Cost,
 			RequiredValidations:  hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated,
+			Finished:             hs.Finished,
 		}
 	}
 	slices.SortStableFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
