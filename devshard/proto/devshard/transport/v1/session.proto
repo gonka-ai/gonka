@@ -1,0 +1,151 @@
+syntax = "proto3";
+package devshard.transport.v1;
+option go_package = "devshard/transport/rpcpb";
+
+import "devshard/v1/diff.proto";
+import "devshard/transport/v1/auth.proto";
+
+// Wire counterparts of transport.DiffJSON / PayloadJSON / InferenceRequest.
+
+message Diff {
+  uint64 nonce           = 1;
+  bytes  txs             = 2; // proto bytes of types.DiffContent
+  bytes  user_sig        = 3;
+  bytes  post_state_root = 4;
+}
+
+message Payload {
+  bytes  prompt       = 1;
+  string model        = 2;
+  uint64 input_length = 3;
+  uint64 max_tokens   = 4;
+  int64  started_at   = 5;
+}
+
+message InferenceRequest {
+  repeated Diff diffs                    = 1;
+  uint64        nonce                    = 2;
+  Payload       payload                  = 3;
+  bool          stream                   = 4;
+  bool          force_height_sync_anchor = 5;
+}
+
+message ChatFrame {
+  bytes chunk = 1; // opaque gzip-stream bytes, sync-flushed per event
+}
+
+message HeightSyncSection {
+  string chain_id                   = 1;
+  string proof_type                 = 2;
+  int64  mainnet_height             = 3;
+  string mainnet_block_hash_hex    = 4;
+  int64  timestamp_unix_ms          = 5;
+  string direction                  = 6;
+  string originator_sender_id      = 7;
+  int64  originator_timestamp_unix_ms = 8;
+  bytes  sender_signature           = 9;
+  int64  tip_stale_after_ms        = 10;
+}
+
+message SeedHeightSyncResponse {
+  HeightSyncSection height_sync = 1;
+}
+
+message RepairRequest {
+  uint64 turn_start          = 1;
+  uint64 ref_nonce           = 2;
+  uint32 requester_slot     = 3;
+  uint64 observed_height    = 4;
+  bytes  observed_block_hash = 5;
+  bytes  requester_sig      = 6;
+}
+
+message RepairResponse {
+  string                outcome             = 1;
+  uint64                observed_height    = 2;
+  bytes                 observed_block_hash = 3;
+  devshard.v1.SyncState  sync_state          = 4;
+  devshard.v1.MsgHeightAck ack               = 5;
+  bytes                 responder_sig     = 6;
+}
+
+message VerifyTimeoutRequest {
+  uint64        inference_id = 1;
+  string        reason       = 2; // "refused" or "execution"
+  Payload       payload      = 3;
+  repeated Diff diffs        = 4;
+}
+
+message VerifyTimeoutResponse {
+  bool           accept       = 1;
+  bytes          signature    = 2;
+  uint32         voter_slot   = 3;
+  repeated bytes mempool     = 4;
+  string         reject_cause = 5;
+}
+
+message VerifyErrorMissRequest {
+  uint64        inference_id     = 1;
+  repeated Diff diffs             = 2;
+  bytes         finish_tx        = 3;
+  bytes         response_payload = 4;
+}
+
+message VerifyErrorMissResponse {
+  bool           accept       = 1;
+  bytes          signature    = 2;
+  uint32         voter_slot   = 3;
+  repeated bytes mempool     = 4;
+  string         reject_cause = 5;
+}
+
+message ChallengeReceiptRequest {
+  uint64        inference_id = 1;
+  Payload       payload      = 2;
+  repeated Diff diffs        = 3;
+}
+
+message ChallengeReceiptResponse {
+  bytes          receipt = 1;
+  repeated bytes mempool = 2;
+}
+
+message GetDiffsRequest {
+  uint64 from = 1;
+  uint64 to   = 2;
+}
+
+message DiffRecord {
+  Diff  diff       = 1;
+  bytes state_hash = 2;
+}
+
+message GetDiffsResponse {
+  repeated DiffRecord records = 1;
+}
+
+message GetMempoolRequest {}
+
+message GetMempoolResponse {
+  repeated bytes txs = 1; // proto bytes of types.DevshardTx
+}
+
+message GetSignaturesRequest {
+  uint64 nonce = 1;
+}
+
+message GetSignaturesResponse {
+  map<uint32, bytes> signatures = 1;
+}
+
+service SessionService {
+  rpc Chat(SignedEnvelope) returns (stream ChatFrame);
+  rpc SeedHeightSync(SignedEnvelope) returns (SeedHeightSyncResponse);
+  rpc RepairHeightSync(SignedEnvelope) returns (RepairResponse);
+  rpc VerifyTimeout(SignedEnvelope) returns (VerifyTimeoutResponse);
+  rpc VerifyErrorMiss(SignedEnvelope) returns (VerifyErrorMissResponse);
+  rpc ChallengeReceipt(SignedEnvelope) returns (ChallengeReceiptResponse);
+  rpc GetDiffs(GetDiffsRequest) returns (GetDiffsResponse);
+  rpc GetMempool(GetMempoolRequest) returns (GetMempoolResponse);
+  rpc GetSignatures(GetSignaturesRequest) returns (GetSignaturesResponse);
+}

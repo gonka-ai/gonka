@@ -40,6 +40,7 @@ import (
 	"devshard/state"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/transport/rpcserver"
 	"devshard/types"
 )
 
@@ -91,6 +92,11 @@ type HostManager struct {
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
 	heightSyncTip    interface{ Observe(h *blocks.Header) }
+
+	rpcServerEnabled bool
+	rpcAuth          atomic.Pointer[rpcserver.PeerAuthHandler]
+	rpcAuthOnce      sync.Once
+	rpcAuthClosed    atomic.Bool
 }
 
 const (
@@ -362,6 +368,19 @@ func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider
 	m.availability = p
 }
 
+func (m *HostManager) SetRPCServerEnabled(enabled bool) {
+	m.rpcServerEnabled = enabled
+}
+
+func (m *HostManager) allowRPCPeer(ctx context.Context, addr string) (bool, error) {
+	escrowID := rpcserver.EscrowIDFromContext(ctx)
+	srv, err := m.SessionServerExisting(escrowID)
+	if err != nil {
+		return false, fmt.Errorf("escrow %s is not open on this host: %w", escrowID, err)
+	}
+	return srv.AllowsSender(addr), nil
+}
+
 // StorageReady reports whether the backing storage is ready to serve. When the
 // store does not expose readiness (e.g. pure SQLite), it is considered ready.
 func (m *HostManager) StorageReady() bool {
@@ -431,6 +450,7 @@ func (m *HostManager) CloseHosts() {
 
 // Close stops all live session hosts and releases storage resources.
 func (m *HostManager) Close() error {
+	m.ClosePeerRPC()
 	m.CloseHosts()
 	m.CloseHeightSync()
 	return m.store.Close()
@@ -1258,7 +1278,43 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 func (m *HostManager) Register(g *echo.Group) {
 	g.GET("/stats/shards", m.handleStatsShards)
 	g.GET("/stats/shards/:escrow_id", m.handleStatsShard)
-	devshardserver.RegisterLazySessionRoutes(g, m, m, m)
+	var opts []devshardserver.RouteOption
+	if m.rpcServerEnabled {
+		opts = append(opts, devshardserver.WithPeerRPC(
+			m.peerAuthHandler(),
+			rpcserver.NewSessionHandler(rpcserver.AdaptLookup(m.SessionServerExisting)),
+		))
+	}
+	devshardserver.RegisterLazySessionRoutes(g, m, m, m, opts...)
+}
+
+func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
+	m.rpcAuthOnce.Do(func() {
+		if m.rpcAuthClosed.Load() {
+			return
+		}
+		hostAddr := ""
+		if m.recorder != nil {
+			hostAddr = m.recorder.GetAccountAddress()
+		} else if m.signer != nil {
+			hostAddr = m.signer.Address()
+		}
+		h := rpcserver.NewPeerAuthHandler(m.verifier, hostAddr, rpcserver.PeerAuthConfig{
+			Allow: m.allowRPCPeer,
+		})
+		h.StartSweeper()
+		m.rpcAuth.Store(h)
+	})
+	return m.rpcAuth.Load()
+}
+
+// ClosePeerRPC stops the host-level session sweeper. Safe if RPC was never mounted.
+func (m *HostManager) ClosePeerRPC() {
+	m.rpcAuthClosed.Store(true)
+	m.rpcAuthOnce.Do(func() {})
+	if h := m.rpcAuth.Load(); h != nil {
+		h.Close()
+	}
 }
 
 // HandlePayloads serves payloads to validators for devshard validation.

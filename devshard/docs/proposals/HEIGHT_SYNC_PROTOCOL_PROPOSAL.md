@@ -22,7 +22,7 @@ Related docs:
 [`height-sync-tests.md`](../height-sync-tests.md) (test catalog — implemented and planned),
 [`height-sync-implementation-plan.md`](../height-sync-implementation-plan.md) (phasing, and the `D*` / `H*` identifiers the catalog carries),
 [`CPOC_PROTOCOL.md`](./CPOC_PROTOCOL.md),
-[`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md),
+[`finalization.md`](./finalization.md),
 [`VALIDATION_PROTOCOL_PROPOSAL.md`](./VALIDATION_PROTOCOL_PROPOSAL.md).
 
 ---
@@ -492,7 +492,7 @@ it fails *silently*:
 | -------------------------------------- | ---------- |
 | No new `(H, hash)` enters circulation; every cached tip ages past `F` | Local oracles go stale / courier cache empty; cPoC holds `Inconclusive` (§17) |
 | cPoC's height interval `I = [h_X, h_carry]` is never tightened from above | [`CPOC_PROTOCOL.md`](./CPOC_PROTOCOL.md) **C14** strategic-delay attack succeeds: a host signs a *fresh lie* during a later genuine cPoC window and the wide band admits it |
-| No **user-signed** height claim exists anywhere in the log — §15 signs the response leg only | [`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md) `USER_TIMEOUT` requires "latest user `HeightSyncSection` … with … sender signature", which is **unsatisfiable** under §15 as written |
+| No **user-signed** height claim exists anywhere in the log — §15 signs the response leg only | [`finalization.md`](./finalization.md) `USER_TIMEOUT` requires a user-signed height claim in `Diff` (`MsgHeartbeat.observed_height`, §10.5). Without heartbeat that claim never appears; the request-leg `HeightSyncSection` is unsigned (§15) and is not evidence |
 | Hosts see only their own tip plus whatever the courier hands them | a host cannot distinguish "the roster is aligned" from "I am the only aligned host" |
 | A host that never answered and a host whose answer the user dropped are indistinguishable | a stalled turn cannot be attributed to anyone |
 
@@ -1150,7 +1150,7 @@ and slashes nobody. It has exactly two effects, both deferred:
 
 1. **Voting eligibility.** When a `FinalizeInit{trigger_reason =
    USER_TIMEOUT}` eventually arrives
-   ([`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md)),
+   ([`finalization.md`](./finalization.md)),
    an **armed** host MAY vote `AGREE`; an **unarmed** host MUST vote
    `REJECT`. An unarmed host is by definition a host the user *is*
    serving, so from its view the timeout claim is false.
@@ -2324,7 +2324,7 @@ the test scenario that proves it (full catalog in
 | Container parity for Strong (Phase E) | ⏳ | follow-on. |
 | **Heartbeat turns** (§10): `MsgHeartbeat` / `MsgHeightAck` protos, time cadence `Interval`, `observed_height` stamps, turn record | 📋 | proposed here. No wire or Go surface exists yet; `ObservedHeightNow()` is the only piece in tree. Blocks cPoC C14 closure and finalization `USER_TIMEOUT` evidence. |
 | **Peer sync status + repair probe** (§11): `sync_vector`, `sync_state`, `peer_seen`, `POST /sessions/:id/heightsync/repair` | 📋 | proposed here. Rides the existing `devshard/gossip` peer client and host mempool; no new transport. |
-| **Close-ready arming** (§12): `CloseReadyView`, `UserTimeoutEvidence` | 📋 | proposed here. Consumer is `FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`; nothing in this layer votes. Missing acks are not cheating evidence (§11.3). |
+| **Close-ready arming** (§12): `CloseReadyView`, `UserTimeoutEvidence` | 📋 | proposed here. Consumer is `finalization.md`; nothing in this layer votes. Missing acks are not cheating evidence (§11.3). |
 | `observed_height` stamps on `MsgStartInference` / `MsgConfirmStart` / `MsgFinishInference` | 📋 | RECOMMENDED (§10.5). Optional migration step: without it the protocol is correct but emits more heartbeats. `MsgConfirmStart` additionally requires the `ExecutorReceiptContent` mirror (§10.5.1) or its height is not a host attestation. |
 | Derived record heights + moving timeouts / seal clock off wall time | 📋 | §10.5.2. Two-step by construction: carry the heights first, switch the decisions later under a version gate, since the seal clock folds into the state root. |
 | On-chain `MsgHeightSyncEvidence` + slashing tx | ⏸ | dispute / cPoC owns. |

@@ -12,6 +12,7 @@ import (
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/transport/rpcserver"
 	"devshard/types"
 )
 
@@ -41,17 +42,40 @@ type StaleSessionReloader interface {
 	RememberStaleNonce(escrowID string)
 }
 
+type routeOptions struct {
+	rpcAuth    *rpcserver.PeerAuthHandler
+	rpcSession *rpcserver.SessionHandler
+}
+
+// RouteOption configures RegisterLazySessionRoutes.
+type RouteOption func(*routeOptions)
+
+// WithPeerRPC mounts Connect handlers under /sessions/:id/rpc/*.
+func WithPeerRPC(auth *rpcserver.PeerAuthHandler, session *rpcserver.SessionHandler) RouteOption {
+	return func(o *routeOptions) {
+		o.rpcAuth = auth
+		o.rpcSession = session
+	}
+}
+
 // RegisterLazySessionRoutes mounts the standard devshard HTTP surface on g.
 // Observability and most host protocol routes resolve existing sessions only.
 // Owner chat and the height-sync seed RPC may bind a new session (via
 // OwnerChatBinder): seed runs at session-open, before any inference, so it
 // cannot wait for chat to create the host session.
-func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler) {
+func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler, opts ...RouteOption) {
+	var cfg routeOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
 	g.Use(canonicalEscrowIDMiddleware)
 	// Before auth: the signature covers the body, not its transfer encoding.
-	g.Use(transport.RequestDecompressionMiddleware)
+	g.Use(skipPeerRPC(transport.RequestDecompressionMiddleware))
 
 	g.POST("/sessions/:id/chat/completions", withOwnerChat(binder, true,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }), transport.ResponseCompressionMiddleware)
@@ -87,6 +111,10 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 			return payloadHandler.HandlePayloads(c, srv)
 		}, transport.ResponseCompressionMiddleware)
+	}
+
+	if cfg.rpcAuth != nil {
+		mountPeerRPC(g, rpcserver.NewMux(cfg.rpcAuth, cfg.rpcSession))
 	}
 }
 

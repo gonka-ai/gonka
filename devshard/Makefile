@@ -43,6 +43,9 @@ devshard-gateway-release:
 
 proto:
 	PATH="$$HOME/go/bin:$$PATH" protoc --proto_path=proto --go_out=. --go_opt=module=devshard proto/devshard/v1/*.proto
+	PATH="$$HOME/go/bin:$$PATH" protoc --proto_path=proto --go_out=. --go_opt=module=devshard \
+		--connect-go_out=. --connect-go_opt=module=devshard \
+		proto/devshard/transport/v1/*.proto
 
 test:
 	go run $(DEVSHARD_GOTESTSUM) --format $(DEVSHARD_TEST_FORMAT) -- $(DEVSHARD_TEST_PACKAGES)

@@ -168,6 +168,14 @@ func TestSessionPayloadPath(t *testing.T) {
 	}
 }
 
+func TestSessionRPCPath(t *testing.T) {
+	got := SessionRPCPath("", "1", "/devshard.transport.v1.PeerAuthService/Attach")
+	want := "/devshard/" + types.DevshardStateRootAndProtocolVersion + "/sessions/1/rpc/devshard.transport.v1.PeerAuthService/Attach"
+	if got != want {
+		t.Fatalf("SessionRPCPath = %q, want %q", got, want)
+	}
+}
+
 func TestVersionlessObservabilityPaths(t *testing.T) {
 	if got := VersionlessSessionDiffsPath("42"); got != "/devshard/sessions/42/diffs" {
 		t.Fatalf("diffs = %q", got)

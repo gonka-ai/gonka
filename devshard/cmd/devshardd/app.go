@@ -290,6 +290,7 @@ func buildHostManager(
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
 	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
+	manager.SetRPCServerEnabled(cfg.RPCServerEnabled)
 	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client); err != nil {
 		return nil, fmt.Errorf("height sync oracle: %w", err)
 	}
@@ -300,6 +301,7 @@ func buildHostManager(
 	// epoch callbacks first. Do not use manager.Close(): store close and
 	// height-sync close are already on this stack.
 	closers.Add(manager.CloseHosts)
+	closers.Add(manager.ClosePeerRPC)
 
 	// Single epoch clock: runtime-config OnEpochChange (dapi long-poll or
 	// chain-poll fallback) advances phase + managed-storage horizon, then

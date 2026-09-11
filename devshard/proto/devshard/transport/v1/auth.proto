@@ -1,0 +1,60 @@
+syntax = "proto3";
+package devshard.transport.v1;
+option go_package = "devshard/transport/rpcpb";
+
+// SignedEnvelope is the dispute-bearing request wrapper. Signature covers
+// the exact payload bytes: sha256(escrow_id || payload || timestamp_be8),
+// matching transport.SignRequest / VerifyRequest.
+message SignedEnvelope {
+  bytes  payload   = 1;
+  bytes  signature = 2;
+  int64  timestamp = 3; // unix seconds, ±30s drift
+  string escrow_id = 4;
+}
+
+message RateLimits {
+  uint32 messages_per_min = 1;
+  uint32 max_streams       = 2;
+  uint32 attach_per_min   = 3;
+}
+
+message AttachRequest {
+  string peer_address     = 1;
+  // Client-chosen RPC attachment id (random UUID). This is not an inference or
+  // tx nonce; it identifies this Attach session and is covered by signature.
+  bytes  attach_nonce     = 2;
+	string protocol_version = 3;
+  bytes  channel_binding  = 4; // unused: HTTP/1.1 has no TLS layer; must be empty
+  bytes  signature        = 5; // ECDSA over AttachSignatureMessage (host_address, timestamp, peer_address, attach_nonce, protocol_version, channel_binding)
+  string host_address     = 6; // gonka address of the host being attached to
+  int64  timestamp         = 7; // unix seconds, ±30s drift (same as VerifyRequest)
+}
+
+message AttachResponse {
+  // HTTP/2 rides InferenceUrl (phase 6), so there is no endpoint to advertise.
+  reserved 4;
+  reserved "h2_endpoint";
+
+  bytes      session_token = 1; // echo of attach_nonce; sent as header on later RPCs
+  int64      expires_at    = 2;
+  RateLimits limits        = 3;
+}
+
+message WatchRequest {
+  bytes session_token = 1;
+}
+
+message Heartbeat {
+  int64 unix_seconds = 1;
+}
+
+message SessionEvent {
+  oneof event {
+    Heartbeat beat = 1;
+  }
+}
+
+service PeerAuthService {
+  rpc Attach(AttachRequest) returns (AttachResponse);
+  rpc Watch(WatchRequest) returns (stream SessionEvent);
+}

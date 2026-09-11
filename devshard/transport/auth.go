@@ -14,8 +14,8 @@ const (
 	// HeaderTimestamp is the HTTP header carrying the unix timestamp.
 	HeaderTimestamp = "X-Devshard-Timestamp"
 
-	// maxTimestampDrift is the maximum allowed clock skew in seconds.
-	maxTimestampDrift = 30
+	// MaxTimestampDrift is the maximum allowed clock skew in seconds.
+	MaxTimestampDrift = 30
 )
 
 // signatureMessage builds the message to sign: sha256(escrow_id || body || timestamp_be8).
@@ -38,14 +38,14 @@ func SignRequest(signer signing.Signer, escrowID string, body []byte, ts int64) 
 }
 
 // VerifyRequest verifies a signed request and returns the recovered sender address.
-// Returns an error if the signature is invalid or the timestamp is outside +-maxTimestampDrift.
+// Returns an error if the signature is invalid or the timestamp is outside +-MaxTimestampDrift.
 func VerifyRequest(verifier signing.Verifier, escrowID string, body []byte, sig []byte, ts, now int64) (string, error) {
 	drift := ts - now
 	if drift < 0 {
 		drift = -drift
 	}
-	if drift > maxTimestampDrift {
-		return "", fmt.Errorf("timestamp drift %ds exceeds maximum %ds", drift, maxTimestampDrift)
+	if drift > MaxTimestampDrift {
+		return "", fmt.Errorf("timestamp drift %ds exceeds maximum %ds", drift, MaxTimestampDrift)
 	}
 
 	msg := signatureMessage(escrowID, body, ts)

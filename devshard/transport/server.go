@@ -170,6 +170,12 @@ func startHandlerSpan(c echo.Context, handlerName string) (*observability.Operat
 	}
 }
 
+// AllowsSender reports whether addr is the session user, a group member,
+// or a verified warm key for any group member.
+func (s *Server) AllowsSender(addr string) bool {
+	return s.isAllowedSender(addr)
+}
+
 // isAllowedSender returns true if addr is the session user, a group member,
 // or a verified warm key for any group member.
 func (s *Server) isAllowedSender(addr string) bool {
@@ -984,13 +990,19 @@ func (s *Server) HandleGetSignatures(c echo.Context) (err error) {
 	}
 	observability.Request.SetNonce(op, nonce)
 
-	sigs, err := s.host.GetSignatures(nonce)
+	sigs, err := s.ServeGetSignatures(nonce)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 	observability.Request.SetSignaturesReturned(op, len(sigs))
 
 	return writeJSON(c, http.StatusOK, SignaturesResponse{Signatures: sigs})
+}
+
+// ServeGetSignatures is the transport-neutral core behind GET .../signatures
+// and SessionService.GetSignatures.
+func (s *Server) ServeGetSignatures(nonce uint64) (map[uint32][]byte, error) {
+	return s.host.GetSignatures(nonce)
 }
 
 func (s *Server) HandleGetDiffs(c echo.Context) (err error) {

@@ -44,6 +44,9 @@ var (
 	diffPersistRetryTotal     *prometheus.CounterVec
 	diffForkDetectedTotal     *prometheus.CounterVec
 	reconcileFastForwardTotal prometheus.Counter
+
+	peerRPCSessions prometheus.Gauge
+	peerRPCPeers    prometheus.Gauge
 )
 
 var durationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
@@ -179,6 +182,14 @@ func initRegistry() {
 		Name: "devshard_reconcile_fast_forward_total",
 		Help: "Times a host fast-forwarded in-memory state from durable diffs (HA stale standby).",
 	})
+	peerRPCSessions = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_peer_rpc_sessions",
+		Help: "Host-level peer RPC sessions (Attach map size) on this child.",
+	})
+	peerRPCPeers = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_peer_rpc_peers",
+		Help: "Distinct peers with a host-level peer RPC session on this child.",
+	})
 
 	registry.MustRegister(
 		inflight,
@@ -208,6 +219,8 @@ func initRegistry() {
 		diffPersistRetryTotal,
 		diffForkDetectedTotal,
 		reconcileFastForwardTotal,
+		peerRPCSessions,
+		peerRPCPeers,
 	)
 }
 
@@ -421,4 +434,11 @@ func IncDiffForkDetected(escrowID string) {
 func IncReconcileFastForward() {
 	ensureMetrics()
 	reconcileFastForwardTotal.Inc()
+}
+
+// SetPeerRPCSessionCounts records host-level Attach map sizes (finding 24).
+func SetPeerRPCSessionCounts(sessions, peers int) {
+	ensureMetrics()
+	peerRPCSessions.Set(float64(sessions))
+	peerRPCPeers.Set(float64(peers))
 }
