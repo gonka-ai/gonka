@@ -9,19 +9,50 @@ check_versiond_storage() (
     local storage_docker=$1 storage_script_dir=$2 storage_config_env=$3 reference_env=$4
     local name tool lock_dir key reference_identity proof state id running project
     local checked index snapshot generation nonce request response observed current
+    local storage_image
     local -a containers reference_keys reference_args ids proofs generations
     shift 4
     containers=("$@")
     ((${#containers[@]} > 0)) || containers=(versiond)
     [[ -f $reference_env && -r $reference_env ]] || fail "cannot read reference settings: $reference_env"
     [[ $reference_env == */* ]] || reference_env=./$reference_env
-    for tool in "$storage_docker" jq psql timeout flock sha256sum; do
+    for tool in "$storage_docker" jq timeout flock sha256sum; do
         command -v "$tool" >/dev/null 2>&1 || fail "$tool is required for --check-storage"
     done
     for name in "${containers[@]}"; do
         [[ $name =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail "invalid container name: $name"
     done
     "$storage_docker" info >/dev/null 2>&1 || fail "cannot reach the Docker daemon"
+
+    # Isolate libpq from the caller's PGHOST/PGSERVICE/PGOPTIONS, and from any
+    # replica configuration. The reference file uses config.env shell syntax.
+    # Only these settings are passed to the containerized PostgreSQL client.
+    reference_keys=(PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSSLMODE
+        PGTARGETSESSIONATTRS PGCONNECT_TIMEOUT)
+    for key in ${!PG@}; do unset "$key"; done
+    # shellcheck disable=SC1090
+    source "$reference_env"
+    for key in PGHOST PGDATABASE PGUSER; do
+        [[ -n ${!key:-} ]] || fail "$reference_env must set $key explicitly"
+    done
+    for key in ${!PG@}; do
+        if [[ $key == PGSSL* && -n ${!key} && \
+            ( $key != PGSSLMODE || ${!key} != disable ) ]]; then
+            fail "$reference_env sets unsupported TLS setting $key; --check-storage supports PostgreSQL without explicit TLS configuration (PGSSLMODE=disable is allowed)"
+        fi
+        [[ " ${reference_keys[*]} " == *" $key "* || -z ${!key:-} ]] || \
+            fail "$reference_env sets unsupported $key; use explicit connection settings"
+    done
+    reference_args=()
+    for key in "${reference_keys[@]}"; do
+        [[ -z ${!key:-} ]] || reference_args+=(--env "$key=${!key}")
+    done
+    storage_image=${VERSIOND_STORAGE_CHECK_IMAGE:-postgres:16-alpine}
+    # Prepare the client before taking the deployment lock so a slow registry
+    # cannot block other deployment operations. Pull progress goes to stderr.
+    "$storage_docker" image inspect "$storage_image" >/dev/null 2>&1 || \
+        timeout --kill-after=5 300 "$storage_docker" pull "$storage_image" >&2 || \
+        fail "cannot prepare PostgreSQL client image $storage_image (download failed or timed out)"
 
     # Use the same local lock as the updater. Cross-host checks must still run
     # sequentially: PostgreSQL has a single challenge field, not a nonce log.
@@ -36,30 +67,19 @@ check_versiond_storage() (
     project=${project:-versiond-storage-check}
     gonka_acquire_deployment_lock "$lock_dir" "$project" || exit 1
 
-    # Isolate libpq from the caller's PGHOST/PGSERVICE/PGOPTIONS, and from any
-    # replica configuration. The reference file uses config.env shell syntax.
-    # Only these settings are passed to psql, including TLS paths on this host.
-    reference_keys=(PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSSLMODE
-        PGSSLROOTCERT PGSSLCERT PGSSLKEY PGTARGETSESSIONATTRS PGCONNECT_TIMEOUT)
-    for key in ${!PG@}; do unset "$key"; done
-    # shellcheck disable=SC1090
-    source "$reference_env"
-    for key in PGHOST PGDATABASE PGUSER; do
-        [[ -n ${!key:-} ]] || fail "$reference_env must set $key explicitly"
-    done
-    for key in ${!PG@}; do
-        [[ " ${reference_keys[*]} " == *" $key "* || -z ${!key:-} ]] || \
-            fail "$reference_env sets unsupported $key; use explicit connection settings"
-    done
-    reference_args=()
-    for key in "${reference_keys[@]}"; do
-        [[ -z ${!key:-} ]] || reference_args+=("$key=${!key}")
-    done
-    reference_psql() {
-        timeout 60 env -i PATH="$PATH" PGCONNECT_TIMEOUT=5 \
-            "${reference_args[@]}" PGOPTIONS='-c statement_timeout=10000' \
-            psql -X -w -qAt -v ON_ERROR_STOP=1 -c "$1"
-    }
+    reference_psql() (
+        local client_name
+        client_name="gonka-storage-psql-$(cat /proc/sys/kernel/random/uuid)"
+        # A killed Docker CLI can leave its container running; remove it on exit.
+        trap '"$storage_docker" rm -fv "$client_name" >/dev/null 2>&1 || true' EXIT
+        # Keep the CLI in the caller's process group so Ctrl+C reaches it too.
+        timeout --foreground 60 "$storage_docker" run --rm --init --name "$client_name" \
+            --network host --read-only \
+            --env PGCONNECT_TIMEOUT=5 "${reference_args[@]}" \
+            --env 'PGOPTIONS=-c statement_timeout=10000' \
+            --entrypoint psql "$storage_image" \
+            -X -w -qAt -v ON_ERROR_STOP=1 -c "$1"
+    )
     reference_identity=$(reference_psql \
         'SELECT identity::text FROM devshard_storage_identity WHERE singleton AND NOT pg_is_in_recovery()') || \
         fail "cannot read the reference PostgreSQL database; check --reference-env and connectivity"
