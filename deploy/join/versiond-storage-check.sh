@@ -9,7 +9,7 @@ check_versiond_storage() (
     local storage_docker=$1 storage_script_dir=$2 storage_config_env=$3 reference_env=$4
     local name tool lock_dir key reference_identity proof state id running project
     local checked index snapshot generation nonce request response observed current
-    local storage_image=${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}
+    local storage_image
     local -a containers reference_keys reference_args ids proofs generations
     shift 4
     containers=("$@")
@@ -23,19 +23,6 @@ check_versiond_storage() (
         [[ $name =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || fail "invalid container name: $name"
     done
     "$storage_docker" info >/dev/null 2>&1 || fail "cannot reach the Docker daemon"
-
-    # Use the same local lock as the updater. Cross-host checks must still run
-    # sequentially: PostgreSQL has a single challenge field, not a nonce log.
-    # shellcheck source=deploy/join/deployment-lock.sh
-    source "$storage_script_dir/deployment-lock.sh"
-    lock_dir=$(cd -- "$(dirname -- "$storage_config_env")" && pwd -P)
-    project=$("$storage_docker" inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${containers[0]}") || \
-        fail "cannot inspect container ${containers[0]}"
-    [[ $project != '<no value>' ]] || project=
-    # Unlabelled standalone containers have no Compose project. Give their
-    # local checks a stable identity without borrowing an unrelated proxy's.
-    project=${project:-versiond-storage-check}
-    gonka_acquire_deployment_lock "$lock_dir" "$project" || exit 1
 
     # Isolate libpq from the caller's PGHOST/PGSERVICE/PGOPTIONS, and from any
     # replica configuration. The reference file uses config.env shell syntax.
@@ -60,18 +47,33 @@ check_versiond_storage() (
     for key in "${reference_keys[@]}"; do
         [[ -z ${!key:-} ]] || reference_args+=(--env "$key=${!key}")
     done
-    # Download once, outside the per-query timeout. Pull progress goes to stderr.
+    storage_image=${VERSIOND_STORAGE_CHECK_IMAGE:-postgres:16-alpine}
+    # Prepare the client before taking the deployment lock so a slow registry
+    # cannot block other deployment operations. Pull progress goes to stderr.
     "$storage_docker" image inspect "$storage_image" >/dev/null 2>&1 || \
-        "$storage_docker" pull "$storage_image" >&2 || \
-        fail "cannot prepare PostgreSQL client image $storage_image"
+        timeout --kill-after=5 300 "$storage_docker" pull "$storage_image" >&2 || \
+        fail "cannot prepare PostgreSQL client image $storage_image (download failed or timed out)"
+
+    # Use the same local lock as the updater. Cross-host checks must still run
+    # sequentially: PostgreSQL has a single challenge field, not a nonce log.
+    # shellcheck source=deploy/join/deployment-lock.sh
+    source "$storage_script_dir/deployment-lock.sh"
+    lock_dir=$(cd -- "$(dirname -- "$storage_config_env")" && pwd -P)
+    project=$("$storage_docker" inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "${containers[0]}") || \
+        fail "cannot inspect container ${containers[0]}"
+    [[ $project != '<no value>' ]] || project=
+    # Unlabelled standalone containers have no Compose project. Give their
+    # local checks a stable identity without borrowing an unrelated proxy's.
+    project=${project:-versiond-storage-check}
+    gonka_acquire_deployment_lock "$lock_dir" "$project" || exit 1
+
     reference_psql() (
         local client_name
         client_name="gonka-storage-psql-$(cat /proc/sys/kernel/random/uuid)"
         # A killed Docker CLI can leave its container running; remove it on exit.
-        trap '"$storage_docker" rm -f "$client_name" >/dev/null 2>&1 || true' EXIT
-        trap 'exit 130' INT
-        trap 'exit 143' TERM
-        timeout 60 "$storage_docker" run --rm --init --name "$client_name" \
+        trap '"$storage_docker" rm -fv "$client_name" >/dev/null 2>&1 || true' EXIT
+        # Keep the CLI in the caller's process group so Ctrl+C reaches it too.
+        timeout --foreground 60 "$storage_docker" run --rm --init --name "$client_name" \
             --network host --read-only \
             --env PGCONNECT_TIMEOUT=5 "${reference_args[@]}" \
             --env 'PGOPTIONS=-c statement_timeout=10000' \

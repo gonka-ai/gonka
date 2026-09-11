@@ -55,8 +55,11 @@ config.env is read from this directory (or GONKA_CONFIG_ENV).
 
 Storage checking writes a control value through each process's database pool.
 Run checks one host at a time, before admitting new/replaced replicas to traffic.
-The client uses DEVSHARD_POSTGRES_IMAGE (default postgres:16-alpine) and host
-networking. Explicit TLS settings are unsupported; PGSSLMODE=disable is allowed.
+The client uses VERSIOND_STORAGE_CHECK_IMAGE (default postgres:16-alpine) and
+host networking. Set the image in --reference-env or export it in the shell;
+config.env is not read in this mode. Missing images are downloaded before
+taking the deployment lock, with a five-minute timeout.
+Explicit TLS settings are unsupported; PGSSLMODE=disable is allowed.
 
 Compose files come from COMPOSE_FILE when set, otherwise from the labels of
 the running versiond container, otherwise from the stock files.
