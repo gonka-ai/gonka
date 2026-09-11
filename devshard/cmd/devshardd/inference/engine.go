@@ -45,7 +45,6 @@ type Engine struct {
 	capacity     *mlnodeclient.Cache
 	payloadStore PayloadStore
 	httpClient   *http.Client
-	chainParams  ChainParamsProvider
 	phase        *chain.Phase
 }
 
@@ -57,7 +56,6 @@ func NewEngine(
 	mgr *mlnodeclient.Manager,
 	capacity *mlnodeclient.Cache,
 	payloadStore PayloadStore,
-	chainParams ChainParamsProvider,
 	phase *chain.Phase,
 ) *Engine {
 	return &Engine{
@@ -66,7 +64,6 @@ func NewEngine(
 		capacity:     capacity,
 		payloadStore: payloadStore,
 		httpClient:   NewNoRedirectClient(mlNodeHTTPTimeout),
-		chainParams:  chainParams,
 		phase:        phase,
 	}
 }
@@ -80,7 +77,7 @@ func NewEngine(
 func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
 	return executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
 		return e.executeMLRequest(ctx, model, req.EscrowID, body)
-	}, e.chainParams)
+	})
 }
 
 func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {

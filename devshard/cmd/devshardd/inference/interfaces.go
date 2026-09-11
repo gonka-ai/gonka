@@ -7,11 +7,6 @@ import (
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 )
 
-// ChainParamsProvider exposes chain validation parameters.
-type ChainParamsProvider interface {
-	LogprobsMode() string
-}
-
 // PayloadAuthClient is the narrow signing/query surface used by payload authentication.
 type PayloadAuthClient interface {
 	NewInferenceQueryClient() inferenceTypes.QueryClient

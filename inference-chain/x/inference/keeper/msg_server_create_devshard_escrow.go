@@ -24,6 +24,11 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 
 	ep := k.GetDevshardEscrowParams(goCtx)
 
+	var vp *types.ValidationParams
+	if p, err := k.GetParams(goCtx); err == nil {
+		vp = p.ValidationParams
+	}
+
 	if msg.Amount < ep.MinAmount || msg.Amount > ep.MaxAmount {
 		return nil, fmt.Errorf("escrow amount %d out of range [%d, %d]", msg.Amount, ep.MinAmount, ep.MaxAmount)
 	}
@@ -106,6 +111,7 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		InferenceSealGraceSeconds: types.DevshardInferenceSealGraceSecondsForCreate(ep),
 		AutoSealEveryNNonces:      types.DevshardAutoSealEveryNNoncesForCreate(ep),
 		ValidationRate:            types.DevshardValidationRateForCreate(ep),
+		LogprobsMode:              types.DevshardLogprobsModeForCreate(vp),
 	}
 
 	id, err := k.StoreDevshardEscrow(goCtx, escrow, nextID)

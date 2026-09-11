@@ -151,5 +151,6 @@ func buildEscrowFromTemplate(st *store.Store, id uint64, creator string, amount 
 			escrow.VoteThresholdFactor = p.VoteThresholdFactor
 		}
 	}
+	escrow.LogprobsMode = inferencetypes.DevshardLogprobsModeForCreate(st.GetParams().ValidationParams)
 	return escrow
 }

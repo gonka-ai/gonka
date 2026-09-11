@@ -8,3 +8,15 @@ func DevshardValidationRateForCreate(ep *DevshardEscrowParams) uint32 {
 	}
 	return ep.ValidationRate
 }
+
+func DevshardLogprobsModeForCreate(vp *ValidationParams) string {
+	if vp == nil {
+		return DefaultLogprobsMode
+	}
+	switch vp.LogprobsMode {
+	case LogprobsModeProcessed, LogprobsModeRaw:
+		return vp.LogprobsMode
+	default:
+		return DefaultLogprobsMode
+	}
+}

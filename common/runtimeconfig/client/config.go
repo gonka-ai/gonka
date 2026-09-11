@@ -8,7 +8,7 @@ import (
 	"common/nodemanager/gen"
 )
 
-const defaultLogprobsMode = "processed"
+const defaultLogprobsMode = "processed_logprobs"
 
 // Config configures the gRPC long-poll runtime config provider.
 type Config struct {
