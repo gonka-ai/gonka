@@ -96,6 +96,7 @@ const (
 	kimiK26ModelID             = "moonshotai/Kimi-K2.6"
 	miniMaxM27ModelID          = "MiniMaxAI/MiniMax-M2.7"
 	deepSeekV4Flash0731ModelID = "deepseek-ai/DeepSeek-V4-Flash-0731"
+	glm53FlashModelID          = "zai-org/GLM-5.3-Flash"
 )
 
 // Sentinel content used by message normalization when an upstream tool result is empty.

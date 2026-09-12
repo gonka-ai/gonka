@@ -3098,3 +3098,47 @@ func TestNormalizeForMinimaxStripsToolsFunctionStrict(t *testing.T) {
 	fn := tools[0].(map[string]any)["function"].(map[string]any)
 	require.NotContains(t, fn, "strict")
 }
+
+// ====================================================================
+// GLM-5.3-Flash route — see docs/chat-api/glm-5.3-flash.md
+// ====================================================================
+
+// Every way a caller says "no thinking" must reach vLLM as thinking on: the template opens <think> anyway, and a false kwarg only switches the parser off (vLLM #54744).
+func TestNormalizeForGLM53KeepsTheReasoningParserOn(t *testing.T) {
+	cases := []struct{ name, body string }{
+		{name: "chat_template_kwargs enable_thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":false}}`},
+		{name: "chat_template_kwargs thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"thinking":false}}`},
+		{name: "top-level enable_thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"enable_thinking":false}`},
+		{name: "reasoning_effort none", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none"}`},
+		{name: "reasoning enabled false", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":false}}`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			out, _, err := normalizeChatRequestForModel([]byte(testCase.body), glm53FlashModelID)
+			require.NoError(t, err)
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal(out, &raw))
+			require.Equal(t, map[string]any{"enable_thinking": true}, raw["chat_template_kwargs"], "vLLM would switch the GLM-5.3 reasoning parser off and leave the scratchpad in content")
+		})
+	}
+}
+
+// Only the thinking switches are overruled; the caller's other template variables reach the template as sent.
+func TestNormalizeForGLM53KeepsOtherTemplateKwargs(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":false,"clear_thinking":true}}`
+	out, _, err := normalizeChatRequestForModel([]byte(body), glm53FlashModelID)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(out, &raw))
+	require.Equal(t, map[string]any{"enable_thinking": true, "clear_thinking": true}, raw["chat_template_kwargs"])
+}
+
+// GLM-5.2-FP8's template does read enable_thinking and renders an empty <think></think> for false, so the caller's switch reaches it unchanged.
+func TestNormalizeForGLM52KeepsEnableThinkingFalse(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":false}}`
+	out, _, err := normalizeChatRequestForModel([]byte(body), "zai-org/GLM-5.2-FP8")
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(out, &raw))
+	require.Equal(t, map[string]any{"enable_thinking": false}, raw["chat_template_kwargs"])
+}
