@@ -100,6 +100,10 @@ type devshardRuntime struct {
 	// same escrow.
 	participantSlotCounts map[string]int
 
+	// routePrefix is the versioned HTTP mount this escrow talks to
+	// (/devshard/v5). Adoption peer ids are addr@version (finding 21).
+	routePrefix string
+
 	// stopped closes when this escrow's runtime does, so work that belongs to one escrow -- and only that
 	// escrow -- ends with it, on retire as well as on gateway shutdown.
 	stopped  chan struct{}
@@ -382,6 +386,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		session:               session,
 		participantKeys:       session.ParticipantKeys(),
 		participantSlotCounts: hostSlotCounts(session.HostParticipantKeyList()),
+		routePrefix:           routePrefix,
 	}
 	rt.active.Store(true)
 	rt.activeConfigured = true
@@ -521,6 +526,7 @@ func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTrac
 		proxy:           proxy,
 		session:         session,
 		participantKeys: session.ParticipantKeys(),
+		routePrefix:     resolveRuntimeRoutePrefix(cfg.RoutePrefix),
 	}
 	rt.active.Store(false)
 	rt.activeConfigured = true
@@ -3437,6 +3443,21 @@ func runtimeParticipantKeys(rt *devshardRuntime) []string {
 	return keys
 }
 
+func runtimeAdoptionPeers(rt *devshardRuntime) []string {
+	keys := runtimeParticipantKeys(rt)
+	prefix := ""
+	if rt != nil {
+		prefix = rt.routePrefix
+	}
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if id := transport.PeerChildID(key, prefix); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func (g *Gateway) handleAdminSettleDevshard(w http.ResponseWriter, r *http.Request, id string) {
 	if g.store == nil {
 		http.Error(w, `{"error":{"message":"gateway state store unavailable"}}`, http.StatusServiceUnavailable)
@@ -4177,7 +4198,7 @@ func (g *Gateway) attachMetrics(rt *devshardRuntime) {
 		rt.proxy.redundancy.metrics = g.metrics
 		// Use the runtime snapshot, not session.ParticipantKeys(): admin-add
 		// and settings-reload call this under g.mu (finding 52).
-		g.metrics.PeerRPCAdoption().BindEscrowHosts(rt.id, runtimeParticipantKeys(rt))
+		g.metrics.PeerRPCAdoption().BindEscrowHosts(rt.id, runtimeAdoptionPeers(rt))
 	}
 	rt.proxy.redundancy.devshardID = rt.id
 	escrowID := rt.id

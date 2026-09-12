@@ -27,7 +27,12 @@ type RPCClient struct {
 	endpoints EndpointSet
 	session   rpcpbconnect.SessionServiceClient
 	gossip    rpcpbconnect.GossipServiceClient
-	closeOnce sync.Once
+	// closeOnce is a pointer so WithoutAdmission can copy RPCClient without
+	// copying a sync.Once (finding 20 / go vet copylocks).
+	closeOnce *sync.Once
+	// ownsConn is true only on the SelectTransport / NewRPCClient value that
+	// holds the registry ref. Finalize clones must not Release.
+	ownsConn bool
 }
 
 // NewRPCClient wraps http with a shared PeerConn. conn may be nil only in
@@ -37,11 +42,16 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		HTTPClient: httpClient,
 		conn:       conn,
 		endpoints:  endpoints,
+		closeOnce:  new(sync.Once),
+		ownsConn:   conn != nil,
 	}
 	if conn != nil && httpClient != nil {
 		base := conn.cfg.connectBase(httpClient.escrowID)
-		c.session = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(conn.cfg.ReadMaxBytes)...)
-		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, connectClientOptions(conn.cfg.ReadMaxBytes)...)
+		opts := connectClientOptions(conn.cfg.ReadMaxBytes)
+		c.session = rpcpbconnect.NewSessionServiceClient(conn.http, base, opts...)
+		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
+		// Chat and validation GetPayload must use DefaultMaxBodySize (10 MiB),
+		// not DefaultRPCReadMaxBytes (finding 27).
 	}
 	return c
 }
@@ -51,11 +61,11 @@ func (c *RPCClient) Uses(name string) bool {
 }
 
 func (c *RPCClient) Close() {
-	if c == nil {
+	if c == nil || c.closeOnce == nil {
 		return
 	}
 	c.closeOnce.Do(func() {
-		if c.conn != nil {
+		if c.ownsConn && c.conn != nil {
 			c.conn.Release()
 		}
 	})
@@ -69,6 +79,8 @@ func (c *RPCClient) WithoutAdmission() any {
 	httpClient, _ := httpAny.(*HTTPClient)
 	out := *c
 	out.HTTPClient = httpClient
+	out.ownsConn = false
+	out.closeOnce = new(sync.Once)
 	return &out
 }
 
@@ -137,7 +149,7 @@ func isRetryableRPC(err error, unauthRetries *int) bool {
 
 func connectClientOptions(maxBytes int) []connect.ClientOption {
 	if maxBytes <= 0 {
-		maxBytes = int(DefaultMaxBodySize)
+		maxBytes = DefaultRPCReadMaxBytes
 	}
 	return []connect.ClientOption{connect.WithReadMaxBytes(maxBytes)}
 }
@@ -279,8 +291,22 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 	return nil, nil, fmt.Errorf("challenge-receipt: rpc endpoint not served until phase 3")
 }
 
-func (c *RPCClient) cloneWithSigner(signer signing.Signer, timeout time.Duration) *HTTPClient {
-	return c.HTTPClient.cloneWithSigner(signer, timeout)
+// cloneWithSigner keeps the PeerConn and endpoint set so a later opted-in
+// method (repair, verify) does not silently fall back to JSON (finding 7).
+// ownsConn is false: same as WithoutAdmission. Repair does not Close the
+// clone; bumping refs would leak. SetPeerClients is still map[int]*HTTPClient
+// until Phase 3 stores SelectTransport results.
+func (c *RPCClient) cloneWithSigner(signer signing.Signer, timeout time.Duration) *RPCClient {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	if c.HTTPClient != nil {
+		out.HTTPClient = c.HTTPClient.cloneWithSigner(signer, timeout)
+	}
+	out.ownsConn = false
+	out.closeOnce = new(sync.Once)
+	return &out
 }
 
 var (

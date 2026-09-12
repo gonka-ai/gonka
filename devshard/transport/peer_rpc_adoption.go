@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"strings"
 	"sync"
 )
 
@@ -23,6 +22,9 @@ type PeerRPCAdoptionSink interface {
 // PeerConn is per (host, version); escrow_sessions_total counts escrow work
 // on that slot, not Attaches. Two escrows sharing one ready PeerConn
 // increment the counter twice and set the host gauge once.
+//
+// peer identities are addr@version on both BindEscrow and SetPeerConnReady
+// (finding 21).
 type PeerRPCAdoption struct {
 	mu    sync.Mutex
 	ready map[string]bool
@@ -41,7 +43,7 @@ func NewPeerRPCAdoption(sink PeerRPCAdoptionSink) *PeerRPCAdoption {
 }
 
 // SetPeerConnReady records whether this host child has a ready PeerConn.
-// peer is addr@version (same as the PeerConn registry).
+// peer is addr@version (same as BindEscrow / PeerChildID).
 func (a *PeerRPCAdoption) SetPeerConnReady(peer string, ready bool) {
 	if a == nil || peer == "" {
 		return
@@ -70,7 +72,7 @@ func (a *PeerRPCAdoption) SetPeerConnReady(peer string, ready bool) {
 
 // BindEscrow records that escrow started talking to peer. Increments
 // once per (escrow, peer). Path is h2 if that peer's PeerConn is ready,
-// otherwise json.
+// otherwise json. peer must be addr@version (finding 21).
 func (a *PeerRPCAdoption) BindEscrow(escrowID, peer string) {
 	if a == nil || escrowID == "" || peer == "" {
 		return
@@ -88,18 +90,19 @@ func (a *PeerRPCAdoption) BindEscrow(escrowID, peer string) {
 	peers[peer] = struct{}{}
 	a.hosts[peer]++
 	path := PeerRPCPathJSON
-	if a.childReady(peer) {
+	if a.ready[peer] {
 		path = PeerRPCPathH2
 	}
 	if a.sink != nil {
 		a.sink.IncEscrowSession(path)
-		if !a.childReady(peer) {
+		if !a.ready[peer] {
 			a.sink.SetHostRPC(peer, PeerRPCPathJSON, true)
 		}
 	}
 }
 
-// BindEscrowHosts binds each unique non-empty peer.
+// BindEscrowHosts binds each unique non-empty peer. Callers pass
+// PeerChildID(addr, routePrefix) so bind and ready share one identity.
 func (a *PeerRPCAdoption) BindEscrowHosts(escrowID string, peers []string) {
 	seen := make(map[string]struct{}, len(peers))
 	for _, peer := range peers {
@@ -136,7 +139,7 @@ func (a *PeerRPCAdoption) ReleaseEscrow(escrowID string) {
 			continue
 		}
 		delete(a.hosts, peer)
-		if a.childReady(peer) {
+		if a.ready[peer] {
 			if a.sink != nil {
 				a.sink.DeleteHostRPC(peer, PeerRPCPathJSON)
 			}
@@ -144,22 +147,6 @@ func (a *PeerRPCAdoption) ReleaseEscrow(escrowID string) {
 		}
 		a.deleteIdleHostLocked(peer)
 	}
-}
-
-// childReady is true if this exact id is ready, or (when peer is a bare
-// gonka address) any addr@version child of that host is ready. BindEscrowHosts
-// still passes addresses; PeerConn reports ready as addr@version (finding 8).
-func (a *PeerRPCAdoption) childReady(peer string) bool {
-	if a.ready[peer] {
-		return true
-	}
-	prefix := peer + "@"
-	for id, ok := range a.ready {
-		if ok && strings.HasPrefix(id, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *PeerRPCAdoption) deleteIdleHostLocked(peer string) {

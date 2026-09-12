@@ -206,6 +206,76 @@ func TestPeerConn_RefreshAttachFailureKeepsWatch(t *testing.T) {
 	require.Greater(t, testutil.ToFloat64(observability.PeerReattachCounter(directMuxPeer(hostAddr), "ttl")), ttlBefore)
 }
 
+func TestPeerConn_PastExpiresAtDoesNotTightLoop(t *testing.T) {
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	auth := &pastExpiryAuth{}
+	path, h := rpcpbconnect.NewPeerAuthServiceHandler(auth)
+	mux := http.NewServeMux()
+	mux.Handle(path, h)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{
+		BackoffMin: 50 * time.Millisecond,
+		BackoffMax: 5 * time.Second,
+		Jitter:     func(d time.Duration) time.Duration { return d },
+	})
+	pc.Start()
+	require.Never(t, pc.Ready, 200*time.Millisecond, 10*time.Millisecond)
+	n := auth.n.Load()
+	require.Greater(t, n, int32(0))
+	require.Less(t, n, int32(8), "bogus expires_at must backoff, not tight-loop Attach")
+}
+
+type pastExpiryAuth struct {
+	n atomic.Int32
+}
+
+func (a *pastExpiryAuth) Attach(_ context.Context, req *connect.Request[rpcpb.AttachRequest]) (*connect.Response[rpcpb.AttachResponse], error) {
+	a.n.Add(1)
+	return connect.NewResponse(&rpcpb.AttachResponse{
+		SessionToken: append([]byte(nil), req.Msg.GetAttachNonce()...),
+		ExpiresAt:    time.Now().Unix() - 60,
+	}), nil
+}
+
+func (a *pastExpiryAuth) Watch(context.Context, *connect.Request[rpcpb.WatchRequest], *connect.ServerStream[rpcpb.SessionEvent]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("watch"))
+}
+
+func TestPeerConn_AttachReadMaxBytes(t *testing.T) {
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	auth := &oversizedAttachAuth{}
+	path, h := rpcpbconnect.NewPeerAuthServiceHandler(auth)
+	mux := http.NewServeMux()
+	mux.Handle(path, h)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{
+		BackoffMin: 50 * time.Millisecond,
+		Jitter:     func(d time.Duration) time.Duration { return d },
+	})
+	pc.Start()
+	require.Never(t, pc.Ready, 200*time.Millisecond, 10*time.Millisecond)
+	require.Greater(t, testutil.ToFloat64(observability.PeerAttachCounter(directMuxPeer(hostAddr), connect.CodeResourceExhausted.String())), 0.0)
+}
+
+type oversizedAttachAuth struct{}
+
+func (a *oversizedAttachAuth) Attach(_ context.Context, _ *connect.Request[rpcpb.AttachRequest]) (*connect.Response[rpcpb.AttachResponse], error) {
+	return connect.NewResponse(&rpcpb.AttachResponse{
+		SessionToken: make([]byte, transport.DefaultRPCReadMaxBytes+1),
+		ExpiresAt:    time.Now().Add(time.Minute).Unix(),
+	}), nil
+}
+
+func (a *oversizedAttachAuth) Watch(context.Context, *connect.Request[rpcpb.WatchRequest], *connect.ServerStream[rpcpb.SessionEvent]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("watch"))
+}
+
 func TestRPCClient_GetSignaturesRoundTrip(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
@@ -282,10 +352,10 @@ func TestPeerConn_DoesNotFollowRedirect(t *testing.T) {
 func TestRPCClient_GetSignaturesReadMaxBytes(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
-	oversized := map[uint32][]byte{1: make([]byte, 8<<10)}
+	oversized := map[uint32][]byte{1: make([]byte, transport.DefaultRPCReadMaxBytes+1)}
 	srv, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond},
 		sigLookup{sigs: oversized})
-	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{ReadMaxBytes: 256})
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{})
 	pc.Start()
 	waitPeerReady(t, pc)
 	cfg := transport.DefaultClientConfig()

@@ -2,8 +2,12 @@ package transport
 
 import (
 	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+
+	"devshard/logging"
 )
 
 // DEVSHARD_RPC_ENDPOINTS names, matching the phase-2 flag (e.g. "gossip,diffs").
@@ -61,6 +65,21 @@ func (s EndpointSet) Has(name string) bool {
 // this list then; chat must start Attach once it uses the host token.
 var attachRPCEndpoints = []string{EndpointSignatures}
 
+var knownRPCEndpoints = map[string]struct{}{
+	EndpointChat:             {},
+	EndpointGossip:           {},
+	EndpointDiffs:            {},
+	EndpointSignatures:       {},
+	EndpointMempool:          {},
+	EndpointSeed:             {},
+	EndpointRepair:           {},
+	EndpointVerifyTimeout:    {},
+	EndpointVerifyErrorMiss:  {},
+	EndpointChallengeReceipt: {},
+}
+
+var unwiredRPCWarnOnce sync.Once
+
 // NeedsAttach is whether this set includes a method that currently needs
 // a host session token. Unknown names are kept in the set but do not
 // start Attach.
@@ -89,7 +108,55 @@ func ParseRPCEndpoints(raw string) EndpointSet {
 
 // RPCEndpointsFromEnv reads DEVSHARD_RPC_ENDPOINTS. Empty / unset is HTTP.
 func RPCEndpointsFromEnv() EndpointSet {
-	return ParseRPCEndpoints(os.Getenv(envRPCEndpoints))
+	set := ParseRPCEndpoints(os.Getenv(envRPCEndpoints))
+	warnUnwiredRPCEndpoints(set)
+	return set
+}
+
+func isAttachRPCEndpoint(name string) bool {
+	for _, n := range attachRPCEndpoints {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// classifyUnwiredRPCEndpoints splits opt-in names that are not yet on
+// Connect (known Phase 3/5 names) from typos (finding 29).
+func classifyUnwiredRPCEndpoints(s EndpointSet) (unwired, unknown []string) {
+	for name := range s {
+		if isAttachRPCEndpoint(name) {
+			continue
+		}
+		if _, ok := knownRPCEndpoints[name]; ok {
+			unwired = append(unwired, name)
+		} else {
+			unknown = append(unknown, name)
+		}
+	}
+	sort.Strings(unwired)
+	sort.Strings(unknown)
+	return unwired, unknown
+}
+
+func warnUnwiredRPCEndpoints(s EndpointSet) {
+	unwired, unknown := classifyUnwiredRPCEndpoints(s)
+	if len(unwired) == 0 && len(unknown) == 0 {
+		return
+	}
+	unwiredRPCWarnOnce.Do(func() {
+		logging.Warn("DEVSHARD_RPC_ENDPOINTS names are not served over Connect; those methods stay HTTP",
+			"subsystem", "transport",
+			"unwired", strings.Join(unwired, ","),
+			"unknown", strings.Join(unknown, ","),
+			"wired", strings.Join(attachRPCEndpoints, ","),
+		)
+	})
+}
+
+func resetUnwiredRPCWarnForTest() {
+	unwiredRPCWarnOnce = sync.Once{}
 }
 
 // RPCMaxConnsPerPeerFromEnv reads DEVSHARD_RPC_MAX_CONNS_PER_PEER.
@@ -110,6 +177,7 @@ func RPCMaxConnsPerPeerFromEnv() int {
 // wired) or when hostAddress is empty (finding 6: never share "@version").
 // Otherwise it returns an *RPCClient and starts the PeerConn attach loop.
 func SelectTransport(httpClient *HTTPClient, hostAddress string, endpoints EndpointSet, extra *ClientConfig) any {
+	warnUnwiredRPCEndpoints(endpoints)
 	if httpClient == nil || !endpoints.NeedsAttach() {
 		return httpClient
 	}

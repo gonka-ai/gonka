@@ -38,6 +38,14 @@ const (
 	DefaultMaxBodySize int64 = 10 * 1024 * 1024
 )
 
+const (
+	// DefaultRPCReadMaxBytes is the Connect read cap for handshake and
+	// ordinary unaries (Attach, Watch, GetSignatures, gossip). Matches the
+	// Phase 1 mux (finding 58). Chat and validation GetPayload keep
+	// DefaultMaxBodySize (finding 27).
+	DefaultRPCReadMaxBytes = 16 << 10
+)
+
 // Server wraps a host.Host and exposes it over HTTP via Echo.
 type Server struct {
 	host         *host.Host
@@ -600,6 +608,9 @@ func (s *Server) RateLimitMiddleware(recordChatTerminal bool) echo.MiddlewareFun
 
 // SetPeerClients sets the executor clients for timeout verification and
 // the slot→URL map reused by repair probes (signed with this host's key).
+// Values are *HTTPClient (user-signed JSON). When repair/verify opt in,
+// store SelectTransport results so cloneWithSigner keeps the PeerConn
+// (finding 7).
 func (s *Server) SetPeerClients(peers map[int]*HTTPClient) {
 	s.peerClients = peers
 	if s.host != nil {

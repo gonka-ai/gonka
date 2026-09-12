@@ -144,18 +144,38 @@ func TestPeerRPCAdoption_TwoVersionsDoNotCollapse(t *testing.T) {
 	}
 }
 
-func TestPeerRPCAdoption_BindEscrowAddressSeesVersionedReady(t *testing.T) {
+func TestPeerRPCAdoption_BindThenReadyOneSeries(t *testing.T) {
 	sink := newAdoptionSink()
 	a := NewPeerRPCAdoption(sink)
-	const host = "gonka1host"
+	const peer = "gonka1host@v5"
 
-	a.SetPeerConnReady(host+"@v5", true)
-	a.BindEscrow("escrow-a", host)
-
-	if got := sink.escrow[PeerRPCPathH2]; got != 1 {
-		t.Fatalf("escrow_sessions h2 = %d, want 1 (address bind, versioned ready)", got)
+	a.BindEscrow("escrow-a", peer)
+	if !sink.host[peer][PeerRPCPathJSON] {
+		t.Fatal("bind before Attach must set json")
 	}
-	if sink.host[host][PeerRPCPathJSON] {
-		t.Fatal("json host_rpc must not be set when a child PeerConn is ready")
+	if sink.host[peer][PeerRPCPathH2] {
+		t.Fatal("h2 must be off before Attach")
+	}
+	if sink.host["gonka1host"] != nil {
+		t.Fatalf("bare address must not get a series, got %v", sink.host["gonka1host"])
+	}
+
+	a.SetPeerConnReady(peer, true)
+	if !sink.host[peer][PeerRPCPathH2] {
+		t.Fatal("ready must set h2 on the same peer id")
+	}
+	if sink.host[peer][PeerRPCPathJSON] {
+		t.Fatal("ready must clear json on the same peer id")
+	}
+	if sink.host["gonka1host"] != nil {
+		t.Fatalf("bare-address json series must not remain, got %v", sink.host["gonka1host"])
+	}
+
+	a.SetPeerConnReady(peer, false)
+	if !sink.host[peer][PeerRPCPathJSON] {
+		t.Fatal("losing the conn must flip the same series to json")
+	}
+	if sink.host[peer][PeerRPCPathH2] {
+		t.Fatal("losing the conn must clear h2 on the same peer id")
 	}
 }

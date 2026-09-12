@@ -3,8 +3,10 @@ package transport
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,8 +17,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"common/httpguard"
+	"devshard/heightsync"
 	devtest "devshard/internal/testutil"
+	"devshard/logging"
 	"devshard/observability"
+	"devshard/transport/rpcpb"
 )
 
 func TestPeerConnConfig_WatchUsesHostEscrow(t *testing.T) {
@@ -61,6 +66,8 @@ func TestPeerConn_NextRefreshWaitJitters(t *testing.T) {
 	require.Equal(t, 3*time.Second, base)
 	require.Equal(t, base/2, pc.nextRefreshWait(now.Add(4*time.Second), 0))
 	require.Equal(t, 25*time.Millisecond, pc.nextRefreshWait(now.Add(4*time.Second), 50*time.Millisecond))
+	require.Equal(t, 50*time.Millisecond, pc.nextRefreshWait(now, 0), "expired-token floor must not jitter")
+	require.Equal(t, 50*time.Millisecond, pc.nextRefreshWait(now.Add(40*time.Millisecond), 0))
 
 	pc.cfg.Jitter = nil
 	var lo, hi time.Duration = time.Hour, 0
@@ -76,6 +83,9 @@ func TestPeerConn_NextRefreshWaitJitters(t *testing.T) {
 		}
 	}
 	require.Less(t, lo, hi, "refresh waits must spread in [d/2, d]")
+	for i := 0; i < 32; i++ {
+		require.Equal(t, 50*time.Millisecond, pc.nextRefreshWait(now, 0), "default jitter must not cut the floor")
+	}
 }
 
 func TestPeerConn_MetricsAreVersioned(t *testing.T) {
@@ -103,6 +113,13 @@ func TestPeerConn_MetricsAreVersioned(t *testing.T) {
 		"closing one child must not ClearPeerSessionState the other")
 }
 
+func TestPeerChildID(t *testing.T) {
+	require.Equal(t, "gonka1host@v5", PeerChildID("gonka1host", "/devshard/v5"))
+	require.Equal(t, "gonka1host@dev", PeerChildID(" gonka1host ", "/devshard/dev"))
+	require.Empty(t, PeerChildID("", "/devshard/v5"))
+	require.Equal(t, "gonka1host@"+PeerConnConfig{HostAddress: "gonka1host"}.version(), PeerChildID("gonka1host", ""))
+}
+
 func TestPeerConn_FailFast(t *testing.T) {
 	pc := NewPeerConn(PeerConnConfig{
 		BaseURL:     "http://127.0.0.1:1",
@@ -118,6 +135,60 @@ func TestPeerConn_FailFast(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrPeerNotReady)
 	require.Less(t, elapsed, 200*time.Millisecond, "unauthenticated RPC must not wait on Attach")
+}
+
+func TestPeerConn_ReadyGatesOnExpiry(t *testing.T) {
+	var now atomic.Int64
+	now.Store(time.Unix(1_000, 0).Unix())
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: "gonka1expired",
+		DirectMux:   true,
+		Now:         func() time.Time { return time.Unix(now.Load(), 0) },
+	})
+	t.Cleanup(pc.Close)
+	pc.setState(stateReady)
+	pc.publishToken([]byte("tok-a"), time.Unix(1_001, 0))
+	require.True(t, pc.Ready())
+	require.True(t, pc.liveSession())
+
+	now.Store(1_002)
+	require.False(t, pc.Ready(), "expired token must not look ready")
+	require.True(t, pc.liveSession(), "Watch / refresh must still see the session")
+
+	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", devtest.MustGenerateKey(t))
+	rpc := NewRPCClient(httpClient, pc, ParseRPCEndpoints(EndpointSignatures))
+	_, err := tokenRequest(rpc, &rpcpb.GetSignaturesRequest{Nonce: 1})
+	require.ErrorIs(t, err, ErrPeerNotReady)
+}
+
+func TestPeerConn_AttachExpiry(t *testing.T) {
+	now := time.Unix(1_000, 0)
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: "gonka1ttl",
+		DirectMux:   true,
+		Now:         func() time.Time { return now },
+	})
+	t.Cleanup(pc.Close)
+
+	got, err := pc.attachExpiry(0)
+	require.NoError(t, err)
+	require.Equal(t, now.Add(defaultAttachTTL), got)
+
+	_, err = pc.attachExpiry(now.Unix())
+	require.ErrorIs(t, err, errAttachTTL, "expires_at == now is not in (now, now+max]")
+	_, err = pc.attachExpiry(now.Unix() - 1)
+	require.ErrorIs(t, err, errAttachTTL)
+	_, err = pc.attachExpiry(now.Add(maxAttachTTL + time.Second).Unix())
+	require.ErrorIs(t, err, errAttachTTL)
+
+	got, err = pc.attachExpiry(now.Unix() + 1)
+	require.NoError(t, err)
+	require.Equal(t, time.Unix(now.Unix()+1, 0), got)
+	got, err = pc.attachExpiry(now.Add(maxAttachTTL).Unix())
+	require.NoError(t, err)
+	require.Equal(t, now.Add(maxAttachTTL), got)
 }
 
 func TestPeerConn_BackoffShape(t *testing.T) {
@@ -253,9 +324,39 @@ func TestPoolWatchRoundTripper_IncrementsExhausted(t *testing.T) {
 		max:  1,
 	}
 	rt.inflight.Store(1)
-	_, err := rt.RoundTrip(httptest.NewRequest(http.MethodGet, "http://example.invalid/", nil))
+	resp, err := rt.RoundTrip(httptest.NewRequest(http.MethodGet, "http://example.invalid/", nil))
 	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Equal(t, int32(1), rt.inflight.Load(), "NoBody is not a live stream")
 	require.Equal(t, 1.0, testutil.ToFloat64(observability.PeerPoolExhaustedCounter(peer))-before)
+}
+
+func TestPoolWatchRoundTripper_CountsUntilBodyClose(t *testing.T) {
+	rt := &poolWatchRoundTripper{
+		base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+		}),
+		peer: "gonka1watchpool",
+		max:  100,
+	}
+	resp, err := rt.RoundTrip(httptest.NewRequest(http.MethodGet, "http://example.invalid/", nil))
+	require.NoError(t, err)
+	require.Equal(t, int32(1), rt.inflight.Load(), "Watch inflight lasts until Body.Close")
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, int32(0), rt.inflight.Load())
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, int32(0), rt.inflight.Load(), "Close is idempotent")
+}
+
+func TestPoolWatchRoundTripper_ErrorDropsInflight(t *testing.T) {
+	rt := &poolWatchRoundTripper{
+		base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, io.EOF
+		}),
+	}
+	_, err := rt.RoundTrip(httptest.NewRequest(http.MethodGet, "http://example.invalid/", nil))
+	require.Error(t, err)
+	require.Equal(t, int32(0), rt.inflight.Load())
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -268,6 +369,41 @@ func TestParseRPCEndpoints(t *testing.T) {
 	require.True(t, set.Has(EndpointGossip))
 	require.True(t, set.Has(EndpointDiffs))
 	require.False(t, set.Has(EndpointSignatures))
+}
+
+func TestClassifyUnwiredRPCEndpoints(t *testing.T) {
+	unwired, unknown := classifyUnwiredRPCEndpoints(ParseRPCEndpoints(EndpointSignatures))
+	require.Empty(t, unwired)
+	require.Empty(t, unknown)
+
+	unwired, unknown = classifyUnwiredRPCEndpoints(EndpointSet{})
+	require.Empty(t, unwired)
+	require.Empty(t, unknown)
+
+	unwired, unknown = classifyUnwiredRPCEndpoints(ParseRPCEndpoints("gossip,typo,chat"))
+	require.Equal(t, []string{EndpointChat, EndpointGossip}, unwired)
+	require.Equal(t, []string{"typo"}, unknown)
+}
+
+func TestSelectTransport_UnwiredNamesWarnOnce(t *testing.T) {
+	resetUnwiredRPCWarnForTest()
+	capLog := &warnCaptureLogger{}
+	logging.SetLogger(capLog)
+	t.Cleanup(func() { logging.SetLogger(discardRestLogger{}) })
+
+	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", devtest.MustGenerateKey(t))
+	got := SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints("gossip,typo"), nil)
+	require.Same(t, httpClient, got)
+	require.Len(t, capLog.warns, 1)
+	require.Contains(t, capLog.warns[0], EndpointGossip)
+	require.Contains(t, capLog.warns[0], "typo")
+
+	_ = SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints(EndpointChat), nil)
+	require.Len(t, capLog.warns, 1, "unwired-name warn is one-shot")
+
+	resetUnwiredRPCWarnForTest()
+	_ = SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints(EndpointSignatures), nil)
+	require.Len(t, capLog.warns, 1, "wired names must not warn")
 }
 
 func TestIsRetryableNonInference_ConnectCodes(t *testing.T) {
@@ -339,6 +475,72 @@ func TestRPCClient_CloseIdempotent(t *testing.T) {
 	rpc.Close()
 	rpc.Close()
 	require.False(t, PeerConnRegistered(host, peerConnConfigFromClient(httpClient, host, nil).version()))
+}
+
+func TestRPCClient_WithoutAdmissionCloseDoesNotRelease(t *testing.T) {
+	peer := devtest.MustGenerateKey(t)
+	host := "gonka1cloneclose"
+	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", peer)
+	rpc := SelectTransport(httpClient, host, ParseRPCEndpoints(EndpointSignatures), nil).(*RPCClient)
+	t.Cleanup(rpc.Close)
+	clone, ok := rpc.WithoutAdmission().(*RPCClient)
+	require.True(t, ok)
+	require.Same(t, rpc.conn, clone.conn)
+	require.False(t, clone.ownsConn)
+	clone.Close()
+	require.True(t, PeerConnRegistered(host, peerConnConfigFromClient(httpClient, host, nil).version()),
+		"finalize clone Close must not Release the parent's PeerConn")
+	rpc.Close()
+	require.False(t, PeerConnRegistered(host, peerConnConfigFromClient(httpClient, host, nil).version()))
+}
+
+func TestRPCClient_CloneWithSignerKeepsConn(t *testing.T) {
+	peer := devtest.MustGenerateKey(t)
+	host := "gonka1clonesigner"
+	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", peer)
+	rpc := SelectTransport(httpClient, host, ParseRPCEndpoints(EndpointSignatures+","+EndpointRepair), nil).(*RPCClient)
+	t.Cleanup(rpc.Close)
+	clone := rpc.cloneWithSigner(devtest.MustGenerateKey(t), time.Second)
+	require.Same(t, rpc.conn, clone.conn)
+	require.False(t, clone.ownsConn)
+	require.True(t, clone.Uses(EndpointSignatures))
+	require.True(t, clone.Uses(EndpointRepair))
+	clone.Close()
+	require.True(t, PeerConnRegistered(host, peerConnConfigFromClient(httpClient, host, nil).version()),
+		"signer clone Close must not Release the parent's PeerConn")
+	_, err := clone.HeightSyncRepair(context.Background(), &heightsync.RepairRequest{})
+	require.ErrorContains(t, err, "not served until phase 3")
+}
+
+func TestSelectTransport_DifferentSignersDoNotSharePeerConn(t *testing.T) {
+	host := "gonka1twosigners"
+	a := NewHTTPClient("http://127.0.0.1:1", "escrow-a", devtest.MustGenerateKey(t))
+	b := NewHTTPClient("http://127.0.0.1:1", "escrow-b", devtest.MustGenerateKey(t))
+	set := ParseRPCEndpoints(EndpointSignatures)
+	rpcA := SelectTransport(a, host, set, nil).(*RPCClient)
+	rpcB := SelectTransport(b, host, set, nil).(*RPCClient)
+	t.Cleanup(rpcA.Close)
+	t.Cleanup(rpcB.Close)
+	require.NotSame(t, rpcA.conn, rpcB.conn)
+	require.Equal(t, a.signer.Address(), rpcA.conn.cfg.Signer.Address())
+	require.Equal(t, b.signer.Address(), rpcB.conn.cfg.Signer.Address())
+}
+
+func TestSelectTransport_DifferentBaseURLDoNotSharePeerConn(t *testing.T) {
+	host := "gonka1twourls"
+	signer := devtest.MustGenerateKey(t)
+	a := NewHTTPClient("http://peer-a.example", "escrow-1", signer)
+	b := NewHTTPClient("http://peer-b.example", "escrow-1", signer)
+	set := ParseRPCEndpoints(EndpointSignatures)
+	rpcA := SelectTransport(a, host, set, nil).(*RPCClient)
+	rpcB := SelectTransport(b, host, set, nil).(*RPCClient)
+	t.Cleanup(rpcA.Close)
+	t.Cleanup(rpcB.Close)
+	require.NotSame(t, rpcA.conn, rpcB.conn)
+	require.Equal(t, a.BaseURL(), rpcA.conn.cfg.BaseURL)
+	require.Equal(t, b.BaseURL(), rpcB.conn.cfg.BaseURL)
+	require.Contains(t, rpcA.conn.cfg.connectBase(a.escrowID), "peer-a.example")
+	require.Contains(t, rpcB.conn.cfg.connectBase(b.escrowID), "peer-b.example")
 }
 
 func TestPeerConn_AcquireReleaseRace(t *testing.T) {
