@@ -61,10 +61,9 @@ func transportAddress(baseURL string) string {
 	return strings.TrimSpace(baseURL)
 }
 
-// DefaultMaxSSEEventBytes is the hard default cap for a single SSE line/event
-// read by the gateway transport client (1 MiB). Matches the historical
-// bufio.Scanner ceiling and the gateway raceWriter classify attempt cap.
-const DefaultMaxSSEEventBytes = 1 << 20
+// DefaultMaxSSEEventBytes is the hard default cap for a single SSE line/event read by the gateway transport client.
+// A host that does not stream writes its whole response, forced logprobs included, as one line, so an event may be as large as the largest body served.
+const DefaultMaxSSEEventBytes = MaxJSONResponseBytes
 
 // sseReaderBufferSize is the bufio.Reader size used by parseSSEResponse.
 // Oversize aborts after at most DefaultMaxSSEEventBytes + this much unread
@@ -373,7 +372,7 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 // the caller could not distinguish a successful completion from a peer /
 // middlebox closing the body early.
 //
-// Line size is hard-capped by MaxSSEEventBytes (default 1 MiB). A malicious
+// Line size is hard-capped by MaxSSEEventBytes (default 16 MiB). A malicious
 // executor can otherwise open `data: ` and stream bytes without ever sending a
 // newline; the old unbounded ReadBytes('\n') grew the returned slice for the
 // whole inference deadline. Oversize aborts with ErrSSEEventTooLarge instead of
