@@ -21,19 +21,20 @@ func newInactiveDevshardGateway(t *testing.T) *Gateway {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 
+	baseStorageDir := t.TempDir()
 	settings := GatewaySettings{DefaultModel: "m"}
 	devshards := []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{
 			ID:            "77",
 			PrivateKeyHex: "secret",
 			Model:         "m",
-			StoragePath:   filepath.Join(t.TempDir(), "escrow-77"),
+			StoragePath:   filepath.Join(baseStorageDir, "escrow-77"),
 		},
 		Active: false,
 	}}
 	require.NoError(t, store.Initialize(settings, devshards))
 
-	return NewManagedGateway(nil, NewGatewayLimiter(0, 0), settings, t.TempDir(), store, nil, nil, nil)
+	return NewManagedGateway(nil, NewGatewayLimiter(0, 0), settings, baseStorageDir, store, nil, nil, nil)
 }
 
 // A non-admin caller may read a non-resident devshard's /v1/status, but only

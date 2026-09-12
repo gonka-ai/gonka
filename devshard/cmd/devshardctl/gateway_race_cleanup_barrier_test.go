@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -107,4 +109,58 @@ func TestConcurrentDrainSettlesExactlyOnce(t *testing.T) {
 		"a concurrent drain must settle exactly once")
 	require.Never(t, func() bool { return settled.Load() > 1 }, 200*time.Millisecond, 20*time.Millisecond,
 		"dedup must keep a double drain from settling twice")
+}
+
+// TestAdminCleanRefusesWhilePendingRaceCleanup pins the delete branch: timeout votes still running on the session block it like settle and retire.
+func TestAdminCleanRefusesWhilePendingRaceCleanup(t *testing.T) {
+	gateway, devshard := newRegisteredInactiveDevshardGateway(t)
+	gateway.startRaceCleanup(devshard)
+
+	recorder := httptest.NewRecorder()
+	gateway.handleAdminCleanDevshard(recorder, httptest.NewRequest(http.MethodDelete, "/v1/admin/devshards/77", nil), "77")
+
+	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
+	require.True(t, storedDevshardExists(t, gateway, "77"), "a devshard whose timeout votes are still running must not be deleted")
+}
+
+// TestAdminCleanDeletesOnceRaceCleanupDrains pins the other side: once the cleanup drains, the delete goes ahead.
+func TestAdminCleanDeletesOnceRaceCleanupDrains(t *testing.T) {
+	gateway, devshard := newRegisteredInactiveDevshardGateway(t)
+	gateway.startRaceCleanup(devshard)
+	gateway.releaseRaceCleanup(devshard)
+
+	recorder := httptest.NewRecorder()
+	gateway.handleAdminCleanDevshard(recorder, httptest.NewRequest(http.MethodDelete, "/v1/admin/devshards/77", nil), "77")
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.False(t, storedDevshardExists(t, gateway, "77"), "a drained devshard must be deleted")
+}
+
+// TestAdminCleanRefusesWhileARequestIsActive pins the foreground half of the same barrier.
+func TestAdminCleanRefusesWhileARequestIsActive(t *testing.T) {
+	gateway, devshard := newRegisteredInactiveDevshardGateway(t)
+	gateway.reserveRuntime(devshard, 0)
+
+	recorder := httptest.NewRecorder()
+	gateway.handleAdminCleanDevshard(recorder, httptest.NewRequest(http.MethodDelete, "/v1/admin/devshards/77", nil), "77")
+
+	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
+	require.True(t, storedDevshardExists(t, gateway, "77"), "a devshard serving a request must not be deleted")
+}
+
+func newRegisteredInactiveDevshardGateway(t *testing.T) (*Gateway, *devshardRuntime) {
+	t.Helper()
+	gateway := newInactiveDevshardGateway(t)
+	devshard := &devshardRuntime{id: "77"}
+	gateway.runtimes["77"] = devshard
+	gateway.runtimeOrder = append(gateway.runtimeOrder, devshard)
+	return gateway, devshard
+}
+
+func storedDevshardExists(t *testing.T, gateway *Gateway, id string) bool {
+	t.Helper()
+	state, _, err := gateway.store.LoadState()
+	require.NoError(t, err)
+	_, found := findGatewayDevshard(state.Devshards, id)
+	return found
 }
