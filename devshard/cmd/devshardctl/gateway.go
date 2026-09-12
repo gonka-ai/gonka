@@ -67,6 +67,7 @@ type Gateway struct {
 	rotationBreakers      map[string]*rotationBreaker
 	runtimeParams         *runtimeparams.Managed
 	runtimeParamsClose    func()
+	maxNonce              devshardpkg.MaxNonceProvider
 	chainClient           *chain.Client
 	finalizeMu            sync.Mutex
 	settlementMu          sync.Mutex
@@ -846,6 +847,7 @@ func (g *Gateway) checkBalances() {
 	copy(runtimes, g.runtimeOrder)
 	g.mu.Unlock()
 
+	chainMaxNonce := g.chainMaxNonce()
 	for _, rt := range runtimes {
 		if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 			continue
@@ -858,9 +860,10 @@ func (g *Gateway) checkBalances() {
 			continue
 		}
 		nonce := rt.proxy.sm.LatestNonce()
-		if nonce >= nonceDeactivationLimit {
+		nonceLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
+		if nonce >= nonceLimit {
 			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — deactivating before replacement",
-				rt.id, nonce, nonceDeactivationLimit)
+				rt.id, nonce, nonceLimit)
 			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "high_nonce")
 		}
 	}
@@ -1838,8 +1841,9 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 
 	var candidates []*devshardRuntime
 	skipReasonCounts := make(map[string]int)
+	chainMaxNonce := g.chainMaxNonce()
 	for _, rt := range g.runtimeOrder {
-		if g.runtimeAtNonceLimit(rt) {
+		if runtimeAtNonceLimit(rt, chainMaxNonce) {
 			if g.settings.EscrowRotation.Enabled {
 				depletedEscrows = append(depletedEscrows, struct {
 					id     string
@@ -1918,12 +1922,11 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 	return chosen, nil
 }
 
-func (g *Gateway) runtimeAtNonceLimit(rt *devshardRuntime) bool {
+func runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32) bool {
 	if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 		return false
 	}
-	nonce := rt.proxy.sm.LatestNonce()
-	return nonce >= nonceDeactivationLimit
+	return rt.proxy.sm.LatestNonce() >= escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
 }
 
 // formatCandidateWeightsLocked returns a compact "id=W(e)" diagnostic
