@@ -9,44 +9,46 @@ rollout mechanics see [rolling-update.md](./rolling-update.md).
 Related: [merge-plan.md](./merge-plan.md) (runtime topology),
 [pixelplex-changes.md](./pixelplex-changes.md) (edge-api extraction),
 [storage-design.md](./storage-design.md) (storage-mode selection).
+Authenticated peer RPC hops (Connect over HTTP/1.1 today, HTTP/2 in phase 6):
+[grpc-transport-connection.md](./grpc-transport-connection.md).
 
 ---
 
 ## 1. Top-level topology
 
-The public listener is `proxy-router/`, a host-local HAProxy. It distributes
-TCP connections across private nginx policy workers, which retain TLS, HTTP/2,
-CORS, rate limits, rewrites, and the existing on-chain route policy. The policy
-workers send only the two horizontally scaled API paths back to private
-HAProxy frontends:
+The public listener is `proxy-router/`, a host-local HAProxy. Today it
+distributes TCP connections on `:80/:443` across private nginx policy workers,
+which retain TLS, HTTP/2, CORS, rate limits, rewrites, and the existing on-chain
+route policy. The policy workers send only the two horizontally scaled API paths
+back to private HAProxy frontends. Phase 6 adds a second public bind on the same
+process (`{DEVSHARD_RPC_H2_PORT}`) for authenticated `/rpc/`; that listen skips
+nginx. It is not shipped yet.
 
 ```text
  clients
     |
     v
- proxy-router (public HAProxy, :80/:443)
+ proxy-router (public HAProxy)
     |
-    | TCP + PROXY v2, active checks
-    v
- proxy-policy slots A/B (private nginx)
+    +-- :80/:443 TCP + PROXY v2 --> proxy-policy slots A/B (private nginx)
+    |        |
+    |        +-- ordinary /v1, chain, dashboard --> existing services
+    |        +-- Tier A /v1 queries --> proxy-router :18082 --> ready edge-api
+    |        +-- /devshard/* (JSON) --> proxy-router :18081
+    |                                      |
+    |                                      +--> ready versiond-router slot 0
+    |                                      +--> ready versiond-router slot 1
+    |                                      +--> ready versiond-router slot 2
+    |                                               |
+    |                                               | identical consistent hash
+    |                                               v
+    |                                        versiond hosts --> devshardd children
+    |                                               |
+    |                                        shared PostgreSQL for HA versions
     |
-    +-- ordinary /v1, chain, dashboard --> existing services
-    |
-    +-- Tier A /v1 queries --> proxy-router :18082
-    |                           |
-    |                           +--> ready edge-api replicas
-    |
-    +-- /devshard/* ------> proxy-router :18081
-                                |
-                                +--> ready versiond-router slot 0
-                                +--> ready versiond-router slot 1
-                                +--> ready versiond-router slot 2
-                                         |
-                                         | identical consistent hash
-                                         v
-                                  versiond hosts --> devshardd children
-                                         |
-                                  shared PostgreSQL for HA versions
+    +-- {DEVSHARD_RPC_H2_PORT} proto h2  (Phase 6; skips nginx)
+            |
+            +--> same versiond-router fleet (proto h2) --> versiond (h2c) --> child (h2c)
 ```
 
 `proxy-router` selects a ready router replica with the same escrow-derived
@@ -68,7 +70,9 @@ The public `proxy-router` process is still a **single host-level failure
 domain**. This deployment protects against failure or replacement of an inner
 router or policy worker, not against loss of the host, Docker daemon, public
 listener, or its network. A future multi-host ingress (provider LB, VIP, or
-Kubernetes Service) belongs above this layer and is outside this change.
+Kubernetes Service) belongs above this layer and is outside this change. Phase 6
+adds `{DEVSHARD_RPC_H2_PORT}` on this same process (below); it does not add a
+second public failure domain.
 
 The stock Compose `devshard-postgres` is likewise one process and one
 host-local storage failure domain. It makes several `versiond` processes share
@@ -82,7 +86,8 @@ failover.
 |---------------|---------|---------|
 | 22 Tier A `/v1/*` query routes | `proxy-router :18082` → ready `edge-api` | Read-only chain queries |
 | Other `/v1/*`, `/api/v1/*` | `dapi` (`api:9000`) | Chat/inference, PoC, payloads, bridge, identity |
-| `/devshard/<version>/sessions/...` (protocol) | `proxy-router :18081` → `versiond-router` fleet → `versiond` → `devshardd` | Chat, gossip, payloads — version binds on owner chat |
+| `/devshard/<version>/sessions/...` (JSON protocol) | `proxy-router :18081` → `versiond-router` fleet → `versiond` → `devshardd` | Chat, gossip, payloads — version binds on owner chat. HTTP/1.1. nginx is on this hop. |
+| `/devshard/<version>/sessions/.../rpc/...` (Connect) | **Today:** same as JSON (InferenceUrl, nginx). **Phase 6:** `{DEVSHARD_RPC_H2_PORT}` on `proxy-router` → versiond-router (`proto h2`) → versiond (h2c) → child (h2c). nginx is **not** on this hop. Same version + escrow hash. | Authenticated peer RPC (Attach / Watch / Chat / …) |
 | `/devshard/sessions/...`, `/devshard/stats/...`, `/devshard/metrics` | `versiond` → bound/`primary` child | Versionless public observability (no bind) |
 | `/devshard/<version>/sessions/.../diffs\|mempool\|signatures` (legacy) | join proxy **internal rewrite** → versionless | Backward-compat for scrapers |
 | `/v1/devshard/*` (legacy) | rewritten → `/devshard/v1/*` → versiond | Backward-compat |
@@ -92,8 +97,10 @@ HTTP policy is rendered by `proxy/entrypoint.sh` into
 `proxy/nginx.unified.conf.template`. Tier A locations are emitted before the
 generic `/v1/ → dapi` location. `proxy-router/entrypoint.sh` separately renders
 the public and private HAProxy pools. The two processes have different owners:
-nginx decides *which service* a path belongs to; HAProxy decides *which healthy
-replica* of that service receives it.
+nginx decides *which service* a path belongs to on InferenceUrl; HAProxy decides
+*which healthy replica* of that service receives it. Authenticated `/rpc/` after
+phase 6 never enters nginx — `proxy-router` is both the public bind and the
+replica picker for that listen.
 
 ### HAProxy service pools
 
@@ -266,17 +273,34 @@ rollout. `versiond-router-fleet.sh wait-version <v>` is the machine-readable
 post-approval gate for per-host end-to-end capacity.
 Streaming responses are not buffered. SSE inactivity is bounded by
 `VERSIOND_ROUTER_STREAM_IDLE_SECONDS`; the separate tunnel timeout applies only
-after an HTTP Upgrade or CONNECT. Request path:
+after an HTTP Upgrade or CONNECT. Request path today (JSON and Connect over
+HTTP/1.1):
 
 ```text
 client
-  → public proxy-router
+  → public proxy-router :80/:443 (TCP)
   → nginx policy worker
   → proxy-router :18081
   → one ready versiond-router replica
   → versiond-N:8080
   → devshardd :500x
 ```
+
+Phase 6 publishes a second public listen on the **same** `proxy-router` process
+(`{DEVSHARD_RPC_H2_PORT}`). Authenticated `/rpc/` skips nginx. HTTP/2 on every hop
+through the child. Version + escrow hash is unchanged, so sticky placement and
+host evacuation stay the same operation:
+
+```text
+client
+  → public proxy-router {DEVSHARD_RPC_H2_PORT}  (TLS+h2 if InferenceUrl is HTTPS, else h2c)
+  → one ready versiond-router replica (proto h2)
+  → versiond-N:8080 (h2c)
+  → devshardd :500x (h2c)
+```
+
+Do not put HAProxy in the versiond image. `:80/:443` stay TCP-to-nginx for JSON
+and `/v1`. See [grpc-transport-connection.md](./grpc-transport-connection.md).
 
 The fleet defaults to three fixed slots and requires two ready peers before one
 slot may stop. Each slot is a separate Compose project built from the same
@@ -516,6 +540,9 @@ highly-available edge-api.
 ## 7. Where to go next
 
 - **Binary rollout (same version, new sha; multi-instance drain):**
-  [rolling-update.md](./rolling-update.md).
+  [rolling-update.md](./rolling-update.md). Host leave the pool:
+  [versiond-host-evacuation.md](./versiond-host-evacuation.md).
+- **Peer RPC hops (Connect HTTP/1.1 now, HTTP/2 skip-nginx later):**
+  [grpc-transport-connection.md](./grpc-transport-connection.md).
 - **Full HA target architecture (HA edge-api event hub, dapi service split,
   signer/NATS, Redis):** [proposals/high-availability.md](./proposals/high-availability.md).

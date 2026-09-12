@@ -6,12 +6,19 @@ Companion to [`grpc-transport-plan.md`](./grpc-transport-plan.md) (design) and
 stay HTTP/1.1 (children are loopback-only), and how phase 6 carries HTTP/2 **end to end**
 on a published gRPC listen that **skips nginx**.
 
+Join hop inventory (JSON today, `/rpc/` after phase 6):
+[`high-availability-architecture.md`](./high-availability-architecture.md). Child binary
+swap vs host evacuation: [`rolling-update.md`](./rolling-update.md). Host leave the
+pool: [`versiond-host-evacuation.md`](./versiond-host-evacuation.md). Path versioning:
+[`upgrade.md`](./upgrade.md).
+
 **Status.** Phase 1 ships the server handshake, the fail-closed session interceptor, and the
 `/rpc/` mount (flag off by default). The client attach loop (`PeerConn`) is phase 2. HTTP/2
-is phase 6: deploy publishes versiond-router (HA) or versiond (non-HA) for authenticated
-`/rpc/` on `{InferenceUrl.host}:{DEVSHARD_RPC_H2_PORT}`, with HTTP/2 through to the child.
-When InferenceUrl is HTTPS, versiond-router terminates the same nginx cert; nginx keeps
-JSON and the public API. The URL shape and handshake do not change between those phases.
+is phase 6: deploy publishes `{DEVSHARD_RPC_H2_PORT}` on **`proxy` (proxy-router)** for
+authenticated `/rpc/`, with HTTP/2 through versiond-router (HA) or versiond (non-HA) to
+the child. When InferenceUrl is HTTPS, `proxy` terminates the same nginx cert; nginx
+keeps JSON and the public API. The URL shape and handshake do not change between those
+phases.
 
 ---
 
@@ -29,8 +36,10 @@ It never replaces `sha256(escrowID ‖ payload ‖ timestamp_be8)`.
 
 ## Existing port, existing HTTP/1.1 hops
 
-`Participant.InferenceUrl` already points at the public HTTP listener (typically nginx
-`:8000` → versiond → `devshardd`). That path is forced to HTTP/1.1 on three hops:
+`Participant.InferenceUrl` already points at the public HTTP listener. On join that
+is **`proxy` (proxy-router)** `:80/:443` in TCP mode to nginx (`proxy-policy`), which
+then returns `/devshard/` to `proxy :18081` → versiond-router (HA) or versiond
+(non-HA) → loopback `devshardd`. That path is forced to HTTP/1.1 on three hops:
 
 1. nginx `location /devshard/` sets `proxy_http_version 1.1`
 2. versiond's public server has no h2c
@@ -55,16 +64,14 @@ No participant updates nginx, versiond, or HAProxy **in phases 1–5**. Only `de
 changes, which versiond already updates. Phase 6 is the hop upgrade.
 
 ```
-client                    nginx :8000              versiond                 devshardd
-  |                          |                        |                        |
-  |  HTTP/1.1 POST            |                        |                        |
-  |  /devshard/v5/sessions/42/rpc/.../Attach            |                        |
-  |------------------------->|  HTTP/1.1               |                        |
-  |                          |----------------------->|  HTTP/1.1             |
-  |                          |                        |----------------------->|
-  |                          |                        |    Echo /sessions/:id/rpc/*
-  |                          |                        |    strip prefix → Connect mux
+client → proxy :80/:443 (TCP) → nginx → proxy :18081 → versiond-router → versiond → child
+         HTTP/1.1 after the public listen
+         POST /devshard/v5/sessions/42/rpc/.../Attach
+         Echo /sessions/:id/rpc/*  →  strip prefix → Connect mux
 ```
+
+Non-HA genesis skips versiond-router (`nginx → versiond`). local-test-net names its
+nginx container `proxy`; that is still this HTTP/1.1 path, not the phase 6 h2 bind.
 
 Connect's native path is `/{package.Service}/{Method}` (no version, no escrow). Echo is the
 translator:
@@ -206,7 +213,7 @@ shape. Children stay on `127.0.0.1`. Authenticated peer RPC does **not** enter n
 Join today (JSON and, until phase 6, RPC):
 
 ```
-client → HAProxy :8000/:443 (TCP) → nginx → versiond-router :18081 → versiond :8080 → 127.0.0.1:child
+client → proxy (proxy-router) :8000/:443 (TCP) → nginx (proxy-policy) → proxy :18081 → versiond-router → versiond :8080 → 127.0.0.1:child
          all HTTP/1.1 after the public listen
 ```
 
@@ -214,15 +221,15 @@ client → HAProxy :8000/:443 (TCP) → nginx → versiond-router :18081 → ver
 on the child is either unreachable or a new public hole that skips version routing and
 escrow stickiness. That design is rejected.
 
-Phase 6 publishes the hop that already hashes version + escrow, and takes nginx off `/rpc/`.
-HTTP/2 is required on **every** hop of that path — not only the public listen. Connect does
-not turn a Go `http.Server` into h2c; each process must opt in.
+Phase 6 publishes `{DEVSHARD_RPC_H2_PORT}` on the existing **`proxy`** container and takes
+nginx off `/rpc/`. HTTP/2 is required on **every** hop of that path — not only the public
+listen. Connect does not turn a Go `http.Server` into h2c; each process must opt in.
 
 ```
-HA:     client → versiond-router (TLS+h2 if InferenceUrl is HTTPS, else h2c)
+HA:     client → proxy (TLS+h2 if InferenceUrl is HTTPS, else h2c)
+                 → versiond-router (h2c, proto h2) → versiond (h2c) → 127.0.0.1:child (h2c)
+Non-HA: client → proxy (TLS+h2 if InferenceUrl is HTTPS, else h2c)
                  → versiond (h2c) → 127.0.0.1:child (h2c)
-Non-HA: client → versiond (h2c; TLS in front if InferenceUrl is HTTPS)
-                 → 127.0.0.1:child (h2c)
 ```
 
 A default `httputil.ReverseProxy` (HTTP/1.1) or a child `http.ListenAndServe` without
@@ -235,9 +242,9 @@ client → nginx (InferenceUrl) → …   # unchanged
 
 | Hop | Change |
 |---|---|
-| nginx / proxy-policy | **Not on `/rpc/`.** Keep InferenceUrl for JSON and the public API. No `grpc_pass`. |
-| versiond-router (HA) | Published gRPC listen. Mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`) **on the router**. `bind … ssl crt … proto h2` when InferenceUrl is HTTPS; **`proto h2` on every backend** to versiond (h2c). Keep version + escrow hash on `:path` |
-| versiond (non-HA) | Published gRPC listen wrapped with `h2c.NewHandler`. This is the first hop when there is no router. HTTPS: same cert on a tiny HAProxy in front of that listen |
+| nginx / proxy-policy | **Not on `/rpc/`.** Keep InferenceUrl for JSON and the public API. No `grpc_pass`. local-test-net's nginx container is also named `proxy` (`proxy/` image) — that is this row, not the h2 bind. |
+| **proxy (proxy-router)** | Public `{DEVSHARD_RPC_H2_PORT}` bind. Skip `proxy-policy`. `proto h2` to versiond-router (HA) or `versiond:8080` (non-HA). Stick-table `conn_rate` / `sess_rate` and path zones on `src`. HTTPS: mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`) and `bind ssl crt … proto h2`. Keep the same version + escrow hash as `versiond_router_in`. `:80/:443` stay TCP-to-nginx. |
+| versiond-router (HA) | Inner hop. `proto h2` on the frontend from `proxy` **and** on every backend to versiond (h2c). Keep version + escrow hash on `:path`. Do not re-key per-IP zones (`RemoteAddr` is `proxy`). |
 | versiond (both) | `h2c.NewHandler` on the listen that serves `/rpc/`; reverse-proxy with an **HTTP/2** transport to the child (not the default HTTP/1.1 `ReverseProxy`); still accept HTTP/1.1 from nginx for JSON |
 | `devshardd` | Wrap the existing loopback `http.Server` with `h2c.NewHandler`. Same Connect mux, no extra bind |
 
@@ -248,10 +255,8 @@ not an on-chain field. Unset (or `DEVSHARD_RPC_H2_UPGRADE` off): stay on Connect
 HTTP/1.1 at InferenceUrl. Do not probe any other port. There is no `h2_endpoint` field
 (proto field 4 is reserved).
 
-Join's public `:80/:443` stay TCP-to-nginx; they do not carry `/rpc/`. A proxy-router
-HTTP/h2 frontend that only dispatches to versiond-router is allowed — nginx still must
-not be in the chain, and TLS still terminates on versiond-router (the cert is not
-remounted on that dispatcher).
+Join's public `:80/:443` stay TCP-to-nginx; they do not carry `/rpc/`. Do not put
+HAProxy inside the versiond image. The cert lives on `proxy`, not on versiond-router.
 
 **Why not `grpc_pass`.** That was the previous phase 6 shape. nginx `limit_req` still
 counts each stream, and `proxy_pass` cannot multiplex. Skipping nginx removes both the 503
@@ -270,12 +275,12 @@ want one wire protocol.
 
 The nginx per-IP ceiling disappears for this path. Replace it on the published listen:
 
-- **TCP / HTTP/2 connection rate per IP** (phase 6, stick-table on `src`) — nginx
-  `limit_conn` analogue. Handshake and Attach do not bound socket opens.
-- **Path zones** (phase 6) on **versiond-router** (HA) or **versiond** (non-HA):
-  Attach / Chat / diffs / gossip as separate `src` budgets. The Connect method is in
-  the URL; no protobuf parse. Inner versiond on HA must not re-key on `RemoteAddr`
-  (the router). The child must not apply Echo IP zones on `/rpc/` (loopback).
+- **TCP / HTTP/2 connection rate per IP** (phase 6, stick-table on `src` at **`proxy`**)
+  — nginx `limit_conn` analogue. Handshake and Attach do not bound socket opens.
+- **Path zones** (phase 6) on **`proxy`**: Attach / Chat / diffs / gossip as separate
+  `src` budgets. The Connect method is in the URL; no protobuf parse. versiond-router
+  and inner versiond on HA must not re-key on `RemoteAddr` (`proxy`). The child must not
+  apply Echo IP zones on `/rpc/` (loopback).
 - **Attach-per-IP before ECDSA** (phase 4) — one connection can still flood handshake RPCs
   on streams. Process-wide Attach/sec floor stays in the child.
 - **Per-peer channel limits** (phase 4) in the **child** interceptor: token-bucket plus
@@ -293,7 +298,7 @@ is the one unauthenticated RPC on this listen — throttle it before ECDSA (phas
 before the port is public.
 
 Phase 6 **reuses nginx's TLS cert** on the published listen: mount `SSL_CERT_SOURCE` on
-versiond-router and `bind ssl crt … proto h2`. That is the same host TLS nginx already
+`proxy` and `bind ssl crt … proto h2`. That is the same host TLS nginx already
 did, not a new identity. `channel_binding` stays empty. Inner hops stay h2c. Phase 6 is
 multiplexing off nginx, not peer mTLS.
 
@@ -305,9 +310,10 @@ only stops preferring the h2 listen. Unset port means HTTP/1.1 on InferenceUrl.
 
 ## What a later RPC looks like
 
-After Attach, a `GetSignatures` (the phase 1 proof handler) is still one POST on
-InferenceUrl. Phase 1 **requires** `x-devshard-session`; the mux interceptor drops the
-request otherwise.
+After Attach, a `GetSignatures` (the phase 1 proof handler) is still one POST with
+the same path shape. Phases 1–5 send it on InferenceUrl (nginx). Phase 6 sends it on
+`{InferenceUrl.host}:{DEVSHARD_RPC_H2_PORT}` (`proxy`, skip nginx). Phase 1 **requires**
+`x-devshard-session`; the mux interceptor drops the request otherwise.
 
 ```
 POST /devshard/v5/sessions/42/rpc/devshard.transport.v1.SessionService/GetSignatures
@@ -317,8 +323,9 @@ x-devshard-session: <token>
 Echo strips to `/devshard.transport.v1.SessionService/GetSignatures`. The mux calls
 `ServeGetSignatures` — the same core as `GET /sessions/42/signatures`. After phase 6, the
 method, proto, token, and path shape are unchanged; a fully rolled host multiplexes that
-POST on HTTP/2 on **every** hop (versiond-router → versiond → child, or versiond → child),
-not nginx. The same handler serves Connect-over-HTTP/1.1 (InferenceUrl fallback) and HTTP/2.
+POST on HTTP/2 on **every** hop (`proxy` → versiond-router → versiond → child, or
+`proxy` → versiond → child), not nginx. The same handler serves Connect-over-HTTP/1.1
+(InferenceUrl fallback) and HTTP/2.
 
 Until phase 7, any behavioral gap between the JSON route and the RPC path is a bug in the
 RPC path.
