@@ -432,6 +432,10 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "show-devshard-escrow", id.toString()))
     }
 
+    fun queryDevshardApprovedVersions(): DevshardApprovedVersionsWrapper = wrapLog("queryDevshardApprovedVersions", false) {
+        execAndParse(listOf("query", "inference", "devshard-approved-versions"))
+    }
+
     fun queryPreservedNodesSnapshot(): PreservedNodesSnapshotQueryResponse =
         wrapLog("queryPreservedNodesSnapshot", false) {
             execAndParse(listOf("query", "inference", "preserved-nodes-snapshot"))
@@ -883,6 +887,11 @@ data class ApplicationCLI(
                     epochIndex.toString()
                 )
             )
+        }
+
+    fun queryHardwareNodesAll(): HardwareNodesAllResponse =
+        wrapLog("queryHardwareNodesAll", infoLevel = false) {
+            execAndParse(listOf("query", "inference", "hardware-nodes-all"))
         }
 
     fun queryEpochGroupData(epochIndex: Long, modelId: String = ""): EpochGroupDataResponse =

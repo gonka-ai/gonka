@@ -1,11 +1,15 @@
 package broker
 
 import (
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
+	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -888,10 +892,11 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	setStatusCommand := NewSetNodesActualStatusCommand(
 		[]StatusUpdate{
 			{
-				NodeId:     node.Id,
-				PrevStatus: types.HardwareNodeStatus_UNKNOWN,
-				NewStatus:  types.HardwareNodeStatus_INFERENCE,
-				Timestamp:  time.Now(),
+				NodeId:          node.Id,
+				RegistrationSeq: nodeRegistrationSeq(t, broker, node.Id),
+				PrevStatus:      types.HardwareNodeStatus_UNKNOWN,
+				NewStatus:       types.HardwareNodeStatus_INFERENCE,
+				Timestamp:       time.Now(),
 			},
 		},
 	)
@@ -949,6 +954,180 @@ func TestNodeRemoval(t *testing.T) {
 	if <-availableNode != nil {
 		t.Fatalf("expected nil, got node")
 	}
+}
+
+func TestRemoveNode_UnknownID(t *testing.T) {
+	broker := NewTestBroker()
+
+	resp := make(chan bool, 2)
+	queueMessage(t, broker, RemoveNode{NodeId: "missing", Response: resp})
+	select {
+	case existed := <-resp:
+		require.False(t, existed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("RemoveNode did not return for an unknown id")
+	}
+
+	nodes, err := broker.GetNodes()
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+}
+
+func TestRemoveNode_NilCancelInFlightTask(t *testing.T) {
+	broker := NewTestBroker()
+	cmd := NewRegisterNodeCommand(testRegisterNodeConfig("node1", "localhost", 8080, 5000))
+	require.NoError(t, broker.QueueMessage(cmd))
+	resp := <-cmd.Response
+	require.NoError(t, resp.Error)
+
+	broker.mu.RLock()
+	nws := broker.nodes["node1"]
+	require.NotNil(t, nws)
+	require.Nil(t, nws.State.cancelInFlightTask)
+	broker.mu.RUnlock()
+
+	removeResp := make(chan bool, 2)
+	queueMessage(t, broker, RemoveNode{NodeId: "node1", Response: removeResp})
+	select {
+	case existed := <-removeResp:
+		require.True(t, existed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("RemoveNode did not return when cancelInFlightTask was nil")
+	}
+
+	nodes, err := broker.GetNodes()
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+	_, exists := broker.nodeWorkGroup.GetWorker("node1")
+	require.False(t, exists)
+}
+
+func TestRemoveNodeDoesNotBlockStartPocCommand(t *testing.T) {
+	broker := NewTestBroker()
+	mockBridge := broker.chainBridge.(*MockBrokerChainBridge)
+	mockBridge.On("GetBlockHash", mock.Anything).Return("hash", nil).Maybe()
+	mockBridge.On("GetParams").Return(&types.QueryParamsResponse{Params: types.Params{}}, nil).Maybe()
+
+	hung := createTestNode("hung-node")
+	live := createTestNode("live-node")
+	hung.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	live.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+
+	broker.mu.Lock()
+	broker.nodes["hung-node"] = hung
+	broker.nodes["live-node"] = live
+	broker.mu.Unlock()
+
+	hungWorker := NewNodeWorkerWithClient("hung-node", hung, mlnodeclient.NewMockClient(), broker)
+	broker.nodeWorkGroup.AddWorker("hung-node", hungWorker)
+
+	started := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.True(t, hungWorker.Submit(ctx, &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			close(started)
+			<-ctx.Done()
+			return NodeResult{Succeeded: false, Error: ctx.Err().Error()}
+		},
+	}))
+	<-started
+
+	broker.phaseTracker.Update(
+		chainphase.BlockInfo{Height: 105, Hash: "hash-poc"},
+		&types.Epoch{Index: 1, PocStartBlockHeight: 100},
+		&types.EpochParams{
+			EpochLength:           100,
+			EpochMultiplier:       1,
+			PocStageDuration:      20,
+			PocExchangeDuration:   1,
+			PocValidationDelay:    2,
+			PocValidationDuration: 10,
+		},
+		true,
+		nil,
+	)
+	require.Equal(t, types.PoCGeneratePhase, broker.phaseTracker.GetCurrentEpochState().CurrentPhase)
+
+	removeResp := make(chan bool, 2)
+	queueMessage(t, broker, RemoveNode{NodeId: "hung-node", Response: removeResp})
+
+	select {
+	case removed := <-removeResp:
+		require.True(t, removed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("RemoveNode blocked the broker command loop while a worker HTTP call was in flight")
+	}
+
+	startPoc := NewStartPocCommand()
+	queueMessage(t, broker, startPoc)
+	select {
+	case <-startPoc.Response:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartPocCommand did not execute; it was likely stuck behind RemoveNode")
+	}
+
+	require.Equal(t, types.HardwareNodeStatus_POC, live.State.IntendedStatus)
+	require.Equal(t, PocStatusGenerating, live.State.PocIntendedStatus)
+
+	broker.mu.RLock()
+	_, hungStillRegistered := broker.nodes["hung-node"]
+	broker.mu.RUnlock()
+	require.False(t, hungStillRegistered)
+}
+
+func TestRemoveNodeCancelsInFlightWorker(t *testing.T) {
+	broker := NewTestBroker()
+
+	hung := createTestNode("hung-node")
+	ctx, cancel := context.WithCancel(context.Background())
+	hung.State.cancelInFlightTask = cancel
+
+	broker.mu.Lock()
+	broker.nodes["hung-node"] = hung
+	broker.mu.Unlock()
+
+	hungWorker := NewNodeWorkerWithClient("hung-node", hung, mlnodeclient.NewMockClient(), broker)
+	broker.nodeWorkGroup.AddWorker("hung-node", hungWorker)
+
+	started := make(chan struct{})
+	finished := make(chan error, 1)
+	require.True(t, hungWorker.Submit(ctx, &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			close(started)
+			<-ctx.Done()
+			finished <- ctx.Err()
+			return NodeResult{Succeeded: false, Error: ctx.Err().Error()}
+		},
+	}))
+	<-started
+
+	var queuedRan atomic.Bool
+	require.True(t, hungWorker.Submit(ctx, &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			queuedRan.Store(true)
+			return NodeResult{Succeeded: true}
+		},
+	}))
+
+	removeResp := make(chan bool, 2)
+	queueMessage(t, broker, RemoveNode{NodeId: "hung-node", Response: removeResp})
+	select {
+	case removed := <-removeResp:
+		require.True(t, removed)
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("RemoveNode blocked the broker command loop")
+	}
+
+	select {
+	case err := <-finished:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("RemoveNode did not cancel the in-flight worker command")
+	}
+	require.False(t, queuedRan.Load(), "queued worker command must not start after RemoveNode")
 }
 
 func TestModelMismatch(t *testing.T) {
@@ -1042,6 +1221,32 @@ func queueMessage(t *testing.T, broker *Broker, command Command) {
 	}
 }
 
+func nodeRegistrationSeq(t *testing.T, broker *Broker, nodeId string) uint64 {
+	t.Helper()
+	nodes, err := broker.GetNodes()
+	require.NoError(t, err)
+	for _, n := range nodes {
+		if n.Node.Id == nodeId {
+			return n.State.RegistrationSeq
+		}
+	}
+	t.Fatalf("node %s not found", nodeId)
+	return 0
+}
+
+func nodeLockCount(t *testing.T, broker *Broker, nodeId string) int {
+	t.Helper()
+	nodes, err := broker.GetNodes()
+	require.NoError(t, err)
+	for _, n := range nodes {
+		if n.Node.Id == nodeId {
+			return n.State.LockCount
+		}
+	}
+	t.Fatalf("node %s not found", nodeId)
+	return 0
+}
+
 func TestReleaseNode(t *testing.T) {
 	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
@@ -1060,12 +1265,88 @@ func TestReleaseNode(t *testing.T) {
 	require.NotNil(t, runningNode)
 	require.Equal(t, node.Id, runningNode.Id)
 	release := make(chan bool, 2)
-	queueMessage(t, broker, ReleaseNode{node.Id, InferenceSuccess{}, release})
+	queueMessage(t, broker, ReleaseNode{
+		NodeId:          runningNode.Id,
+		RegistrationSeq: runningNode.RegistrationSeq,
+		Outcome:         InferenceSuccess{},
+		Response:        release,
+	})
 
 	b := <-release
 	require.True(t, b, "expected release response to be true")
 	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
 	require.NotNil(t, <-availableNode, "expected node1, got nil")
+}
+
+func TestReleaseNode_RejectsStaleRegistrationSeq(t *testing.T) {
+	broker := NewTestBroker()
+	node := apiconfig.InferenceNodeConfig{
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
+		Id:            "node1",
+		MaxConcurrent: 1,
+	}
+	registerNodeAndSetInferenceStatus(t, broker, node)
+
+	availableNode := make(chan *Node, 2)
+	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
+	oldLease := <-availableNode
+	require.NotNil(t, oldLease)
+	oldSeq := oldLease.RegistrationSeq
+	require.NotZero(t, oldSeq)
+
+	remove := make(chan bool, 2)
+	queueMessage(t, broker, RemoveNode{NodeId: node.Id, Response: remove})
+	require.True(t, <-remove)
+
+	registerNodeAndSetInferenceStatus(t, broker, node)
+	require.Equal(t, 0, nodeLockCount(t, broker, node.Id))
+
+	release := make(chan bool, 2)
+	queueMessage(t, broker, ReleaseNode{
+		NodeId:          node.Id,
+		RegistrationSeq: oldSeq,
+		Outcome:         InferenceSuccess{},
+		Response:        release,
+	})
+	require.False(t, <-release)
+	require.Equal(t, 0, nodeLockCount(t, broker, node.Id))
+
+	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
+	require.NotNil(t, <-availableNode)
+	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
+	require.Nil(t, <-availableNode, "stale release must not open an extra admission slot")
+}
+
+func TestReleaseNode_DoesNotDecrementBelowZero(t *testing.T) {
+	broker := NewTestBroker()
+	node := apiconfig.InferenceNodeConfig{
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
+		Id:            "node1",
+		MaxConcurrent: 1,
+	}
+	registerNodeAndSetInferenceStatus(t, broker, node)
+
+	release := make(chan bool, 2)
+	queueMessage(t, broker, ReleaseNode{
+		NodeId:          node.Id,
+		RegistrationSeq: nodeRegistrationSeq(t, broker, node.Id),
+		Outcome:         InferenceSuccess{},
+		Response:        release,
+	})
+	require.False(t, <-release)
+	require.Equal(t, 0, nodeLockCount(t, broker, node.Id))
+
+	availableNode := make(chan *Node, 2)
+	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
+	require.NotNil(t, <-availableNode)
+	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
+	require.Nil(t, <-availableNode, "lock count must not go negative")
 }
 
 func TestRoundTripSegment(t *testing.T) {
@@ -2246,6 +2527,13 @@ func TestAreHardwareNodesEqual_Version(t *testing.T) {
 
 	b.Version = "v1.0.1"
 	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different versions should not be equal")
+
+	a.Version = "v1.0.1"
+	a.Host = "other"
+	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different hosts should not be equal")
+	a.Host = b.Host
+	a.Port = "1"
+	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different ports should not be equal")
 }
 
 func TestConvertInferenceNodeToHardwareNode_Version(t *testing.T) {
@@ -2300,4 +2588,285 @@ func TestSetNodesActualStatusCommand_MlNodeVersion(t *testing.T) {
 	<-cmd.Response
 
 	assert.Equal(t, "v3.0.0", node.State.MlNodeVersion)
+}
+
+func TestSetNodesActualStatusCommand_RejectsStaleRegistrationSeq(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.RegistrationSeq = 2
+	node.State.StatusTimestamp = time.Now().Add(-time.Minute)
+
+	broker := &Broker{
+		nodes: map[string]*NodeWithState{
+			"node-1": node,
+		},
+	}
+
+	cmd := NewSetNodesActualStatusCommand([]StatusUpdate{
+		{
+			NodeId:          "node-1",
+			RegistrationSeq: 1,
+			PrevStatus:      types.HardwareNodeStatus_INFERENCE,
+			NewStatus:       types.HardwareNodeStatus_FAILED,
+			Timestamp:       time.Now(),
+		},
+	})
+	cmd.Execute(broker)
+	<-cmd.Response
+
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.CurrentStatus)
+}
+
+func TestSameRegistration(t *testing.T) {
+	require.False(t, sameRegistration(nil, 1))
+
+	node := createTestNode("n1")
+	node.State.RegistrationSeq = 2
+	require.False(t, sameRegistration(node, 1))
+	require.True(t, sameRegistration(node, 2))
+}
+
+func TestReconcile_SkipsStaleSnapshotAfterReregister(t *testing.T) {
+	phaseTracker := &chainphase.ChainPhaseTracker{}
+	phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "hash-1"},
+		&types.Epoch{Index: 100, PocStartBlockHeight: 100},
+		&types.EpochParams{},
+		true,
+		nil,
+	)
+	b := &Broker{
+		nodes:                make(map[string]*NodeWithState),
+		nodeWorkGroup:        NewNodeWorkGroup(),
+		phaseTracker:         phaseTracker,
+		highPriorityCommands: make(chan Command, 8),
+		lowPriorityCommands:  make(chan Command, 8),
+		configManager:        &apiconfig.ConfigManager{},
+		mlNodeClientFactory:  mlnodeclient.NewMockClientFactory(),
+	}
+
+	oldNode := createTestNodeWithStatus("n1", types.HardwareNodeStatus_UNKNOWN)
+	oldNode.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	oldNode.State.RegistrationSeq = 1
+	oldWorker := NewNodeWorkerWithClient("n1", oldNode, mlnodeclient.NewMockClient(), b)
+	b.nodes["n1"] = oldNode
+	b.nodeWorkGroup.AddWorker("n1", oldWorker)
+
+	replacement := createTestNodeWithStatus("n1", types.HardwareNodeStatus_UNKNOWN)
+	replacement.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	replacement.State.RegistrationSeq = 2
+	newMock := mlnodeclient.NewMockClient()
+	newWorker := NewNodeWorkerWithClient("n1", replacement, newMock, b)
+	defer newWorker.Shutdown()
+
+	snapshotted := make(chan struct{})
+	resume := make(chan struct{})
+	b.afterSnapshot = func() {
+		close(snapshotted)
+		<-resume
+	}
+
+	done := make(chan struct{})
+	go func() {
+		b.reconcile(*phaseTracker.GetCurrentEpochState())
+		close(done)
+	}()
+
+	select {
+	case <-snapshotted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconcile did not snapshot before dispatch")
+	}
+
+	b.mu.Lock()
+	b.nodes["n1"] = replacement
+	b.mu.Unlock()
+	b.nodeWorkGroup.RemoveWorker("n1")
+	b.nodeWorkGroup.AddWorker("n1", newWorker)
+	close(resume)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconcile did not finish after resume")
+	}
+
+	require.Nil(t, replacement.State.ReconcileInfo)
+	require.Nil(t, replacement.State.cancelInFlightTask)
+	require.Equal(t, uint64(0), replacement.State.DeploymentGeneration)
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, 0, newMock.GetInferenceUpCalled())
+	select {
+	case cmd := <-b.highPriorityCommands:
+		t.Fatalf("unexpected command queued after stale snapshot: %T", cmd)
+	default:
+	}
+}
+
+func TestClearReconcileIfSeq_IgnoresReplacement(t *testing.T) {
+	node := createTestNode("n1")
+	node.State.RegistrationSeq = 2
+	node.State.ReconcileInfo = &ReconcileInfo{Status: types.HardwareNodeStatus_INFERENCE}
+	node.State.cancelInFlightTask = func() {}
+	b := &Broker{nodes: map[string]*NodeWithState{"n1": node}}
+
+	b.clearReconcileIfSeq("n1", 1)
+	require.NotNil(t, node.State.ReconcileInfo)
+	require.NotNil(t, node.State.cancelInFlightTask)
+
+	b.clearReconcileIfSeq("n1", 2)
+	require.Nil(t, node.State.ReconcileInfo)
+	require.Nil(t, node.State.cancelInFlightTask)
+}
+
+func TestReconcile_DispatchesWhenRegistrationSeqMatches(t *testing.T) {
+	phaseTracker := &chainphase.ChainPhaseTracker{}
+	phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "hash-1"},
+		&types.Epoch{Index: 100, PocStartBlockHeight: 100},
+		&types.EpochParams{},
+		true,
+		nil,
+	)
+	b := &Broker{
+		nodes:                make(map[string]*NodeWithState),
+		nodeWorkGroup:        NewNodeWorkGroup(),
+		phaseTracker:         phaseTracker,
+		highPriorityCommands: make(chan Command, 8),
+		lowPriorityCommands:  make(chan Command, 8),
+		configManager:        &apiconfig.ConfigManager{},
+		mlNodeClientFactory:  mlnodeclient.NewMockClientFactory(),
+	}
+
+	node := createTestNodeWithStatus("n1", types.HardwareNodeStatus_UNKNOWN)
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	node.State.RegistrationSeq = 1
+	mock := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient("n1", node, mock, b)
+	defer worker.Shutdown()
+	b.nodes["n1"] = node
+	b.nodeWorkGroup.AddWorker("n1", worker)
+
+	b.reconcile(*phaseTracker.GetCurrentEpochState())
+
+	require.NotNil(t, node.State.ReconcileInfo)
+	require.Equal(t, uint64(1), node.State.DeploymentGeneration)
+}
+
+func testRegisterNodeConfig(id, host string, inferencePort, pocPort int) apiconfig.InferenceNodeConfig {
+	return apiconfig.InferenceNodeConfig{
+		Id:               id,
+		Host:             host,
+		InferencePort:    inferencePort,
+		PoCPort:          pocPort,
+		InferenceSegment: "/api",
+		PoCSegment:       "/api",
+		MaxConcurrent:    5,
+		Models:           map[string]apiconfig.ModelConfig{"model1": {}},
+	}
+}
+
+func TestRegisterNode_RejectsDuplicateID(t *testing.T) {
+	b := NewTestBroker()
+	original := testRegisterNodeConfig("node1", "localhost", 8080, 5000)
+	cmd := NewRegisterNodeCommand(original)
+	require.NoError(t, b.QueueMessage(cmd))
+	resp := <-cmd.Response
+	require.NoError(t, resp.Error)
+	require.NotNil(t, resp.Node)
+
+	originalWorker, ok := b.nodeWorkGroup.GetWorker("node1")
+	require.True(t, ok)
+	seq := nodeRegistrationSeq(t, b, "node1")
+	nodeNum := b.curMaxNodesNum.Load()
+	require.Equal(t, uint64(1), seq)
+	require.Equal(t, uint64(1), nodeNum)
+
+	retry := testRegisterNodeConfig("node1", "127.0.0.1", 9090, 5050)
+	cmd2 := NewRegisterNodeCommand(retry)
+	require.NoError(t, b.QueueMessage(cmd2))
+	resp2 := <-cmd2.Response
+	require.Error(t, resp2.Error)
+	require.True(t, errors.Is(resp2.Error, ErrNodeAlreadyExists))
+	require.Nil(t, resp2.Node)
+
+	nodes, err := b.GetNodes()
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Equal(t, "localhost", nodes[0].Node.Host)
+	require.Equal(t, 8080, nodes[0].Node.InferencePort)
+	require.Equal(t, seq, nodes[0].State.RegistrationSeq)
+	require.Equal(t, nodeNum, b.curMaxNodesNum.Load())
+	require.Equal(t, seq, b.nextRegistrationSeq.Load())
+
+	worker, ok := b.nodeWorkGroup.GetWorker("node1")
+	require.True(t, ok)
+	require.Same(t, originalWorker, worker)
+	require.Len(t, b.nodeWorkGroup.workers, 1)
+}
+
+func TestRegisterNode_ConcurrentDuplicateID(t *testing.T) {
+	b := NewTestBroker()
+	cfgs := []apiconfig.InferenceNodeConfig{
+		testRegisterNodeConfig("node1", "localhost", 8080, 5000),
+		testRegisterNodeConfig("node1", "127.0.0.1", 9090, 5050),
+	}
+
+	var wg sync.WaitGroup
+	results := make([]NodeCommandResponse, len(cfgs))
+	wg.Add(len(cfgs))
+	for i, cfg := range cfgs {
+		go func(i int, cfg apiconfig.InferenceNodeConfig) {
+			defer wg.Done()
+			cmd := NewRegisterNodeCommand(cfg)
+			if err := b.QueueMessage(cmd); err != nil {
+				results[i] = NodeCommandResponse{Error: err}
+				return
+			}
+			results[i] = <-cmd.Response
+		}(i, cfg)
+	}
+	wg.Wait()
+
+	successes := 0
+	for _, resp := range results {
+		if resp.Error == nil {
+			successes++
+			require.NotNil(t, resp.Node)
+			continue
+		}
+		require.True(t, errors.Is(resp.Error, ErrNodeAlreadyExists), "unexpected error: %v", resp.Error)
+	}
+	require.Equal(t, 1, successes)
+
+	nodes, err := b.GetNodes()
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Len(t, b.nodeWorkGroup.workers, 1)
+	require.Equal(t, uint64(1), b.curMaxNodesNum.Load())
+	require.Equal(t, uint64(1), b.nextRegistrationSeq.Load())
+}
+
+func TestRegisterNode_DoesNotIncrementCountersWhenWorkerExists(t *testing.T) {
+	b := NewTestBroker()
+	orphan := createTestNode("node1")
+	orphan.Node.Host = "other-host"
+	orphan.Node.InferencePort = 1
+	orphan.Node.PoCPort = 2
+	worker := NewNodeWorkerWithClient("node1", orphan, mlnodeclient.NewMockClient(), b)
+	defer worker.Shutdown()
+	require.True(t, b.nodeWorkGroup.AddWorker("node1", worker))
+
+	cmd := NewRegisterNodeCommand(testRegisterNodeConfig("node1", "localhost", 8080, 5000))
+	require.NoError(t, b.QueueMessage(cmd))
+	resp := <-cmd.Response
+	require.Error(t, resp.Error)
+	require.True(t, errors.Is(resp.Error, ErrNodeAlreadyExists))
+	require.Equal(t, uint64(0), b.curMaxNodesNum.Load())
+	require.Equal(t, uint64(0), b.nextRegistrationSeq.Load())
+	got, ok := b.nodeWorkGroup.GetWorker("node1")
+	require.True(t, ok)
+	require.Same(t, worker, got)
+	nodes, err := b.GetNodes()
+	require.NoError(t, err)
+	require.Empty(t, nodes)
 }

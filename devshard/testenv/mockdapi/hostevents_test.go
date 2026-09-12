@@ -19,7 +19,7 @@ func escrowSub() []gen.HostEventKind {
 
 func TestHostEvents_ImmediateAndCursorUnchanged(t *testing.T) {
 	ring := newHostEventRing()
-	srv := newNodeManagerServer(nil, ring)
+	srv := newNodeManagerServer(nil, ring, nil)
 	ring.AppendEscrowCreated(&gen.EscrowPayload{EscrowId: 7})
 
 	resp, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{
@@ -41,7 +41,7 @@ func TestHostEvents_ImmediateAndCursorUnchanged(t *testing.T) {
 
 func TestHostEvents_LongPollWakesOnAppend(t *testing.T) {
 	ring := newHostEventRing()
-	srv := newNodeManagerServer(nil, ring)
+	srv := newNodeManagerServer(nil, ring, nil)
 	go func() {
 		time.Sleep(150 * time.Millisecond)
 		ring.AppendEscrowCreated(&gen.EscrowPayload{EscrowId: 42})
@@ -59,7 +59,7 @@ func TestHostEvents_LongPollWakesOnAppend(t *testing.T) {
 
 func TestHostEvents_GenerationMismatchResets(t *testing.T) {
 	ring := newHostEventRing()
-	srv := newNodeManagerServer(nil, ring)
+	srv := newNodeManagerServer(nil, ring, nil)
 
 	resp, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{
 		Cursor: 0, Generation: 999, Subscribe: escrowSub(),
@@ -70,7 +70,7 @@ func TestHostEvents_GenerationMismatchResets(t *testing.T) {
 
 func TestHostEvents_SubscribeRequired(t *testing.T) {
 	ring := newHostEventRing()
-	srv := newNodeManagerServer(nil, ring)
+	srv := newNodeManagerServer(nil, ring, nil)
 
 	_, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{Cursor: 0})
 	require.Error(t, err)
