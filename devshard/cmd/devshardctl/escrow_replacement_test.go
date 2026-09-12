@@ -27,7 +27,9 @@ func TestGatewayCheckBalancesTakesADepletedEscrowOutOfServiceBeforeItsReplacemen
 	runBalanceTick(t, gateway, depletedRuntime.id)
 
 	require.False(t, depletedRuntime.active.Load(), "a depleted escrow kept taking inferences while its replacement failed")
-	require.False(t, devshardIDs(t, gateway.store)[depletedRuntime.id].Active, "a depleted escrow stayed saved active while its replacement failed")
+	savedEscrow := devshardIDs(t, gateway.store)[depletedRuntime.id]
+	require.False(t, savedEscrow.Active, "a depleted escrow stayed saved active while its replacement failed")
+	require.False(t, savedEscrow.SettlementPending, "a depleted escrow was saved due for settlement although settlement is disabled")
 }
 
 func TestGatewayCheckBalancesDoesNotRetryAFailedReplacement(t *testing.T) {
@@ -38,6 +40,16 @@ func TestGatewayCheckBalancesDoesNotRetryAFailedReplacement(t *testing.T) {
 	runBalanceTick(t, gateway, depletedRuntime.id)
 
 	require.EqualValues(t, 1, attempts.Load(), "a failed replacement was attempted again for an escrow already out of service")
+}
+
+func TestGatewayCheckBalancesKeepsAnEscrowWithNoReplacementModelInService(t *testing.T) {
+	gateway, depletedRuntime := newReplacementTestGateway(t, withoutSettlement, withoutReplacementModel)
+	stubCreateOnChainFailingBeforeBroadcast(t)
+
+	runBalanceTick(t, gateway, depletedRuntime.id)
+
+	require.True(t, depletedRuntime.active.Load(), "a depleted escrow that rotation cannot replace stopped taking inferences")
+	require.True(t, devshardIDs(t, gateway.store)[depletedRuntime.id].Active, "a depleted escrow that rotation cannot replace was saved inactive")
 }
 
 func TestGatewayCheckBalancesMintsNothingWhileTheDeactivationIsUnsaved(t *testing.T) {
@@ -139,10 +151,10 @@ func TestGatewayScheduleDepletedEscrowReplacementSettlesADeactivatedEscrowOnce(t
 	require.EqualValues(t, 1, settled.Load(), "a late trigger settled an escrow that was already settled")
 }
 
-// newReplacementTestGateway builds a rotating gateway whose escrow "12" sits at the nonce limit, with the real replacement create and a stub runtime builder.
+// newReplacementTestGateway builds a rotating gateway whose escrow "12" sits below the balance threshold, with the real replacement create and a stub runtime builder.
 func newReplacementTestGateway(t *testing.T, modifySettings ...func(*GatewaySettings)) (*Gateway, *devshardRuntime) {
 	t.Helper()
-	depletedRuntime := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit)
+	depletedRuntime := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
 	gateway, _, _ := gatewayTestDepletionGateway(t, depletedRuntime, modifySettings...)
 	stubRuntimeBuilder(t)
 	saved := gatewayCreateDepletionEscrow
@@ -153,6 +165,10 @@ func newReplacementTestGateway(t *testing.T, modifySettings ...func(*GatewaySett
 
 func withoutSettlement(settings *GatewaySettings) {
 	settings.EscrowRotation.SettlementEnabled = false
+}
+
+func withoutReplacementModel(settings *GatewaySettings) {
+	settings.EscrowRotation.Models[0].ModelID = "another-model"
 }
 
 func pendingCommitments(t *testing.T, store *GatewayStore) []GatewayEscrowCommitment {

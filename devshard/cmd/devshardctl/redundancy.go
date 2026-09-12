@@ -1323,10 +1323,7 @@ func (rw *raceWriter) takeParseable(p []byte) []byte {
 	return parseable
 }
 
-// classifyParseable records the first content/non-retriable-error signal for
-// this attempt, marks the whole race when that first error is a context-length
-// rejection from a host that is not suspicious, and returns whether the buffer
-// carried content or a non-retriable error.
+// classifyParseable records the attempt's first content or error, marks the race on a trusted context-length rejection, and reports whether the buffer carried content or a non-retriable error.
 func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError bool) {
 	if len(parseable) == 0 {
 		return false, false
@@ -1354,7 +1351,7 @@ func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError 
 			rw.inf.errorType = details.Type
 			rw.inf.errorMessage = details.Message
 			rw.inf.errorBodySample = append(rw.inf.errorBodySample, parseable...)
-			if parseContextLengthLimit(details.Message) > 0 && !rw.inf.suspicious {
+			if isTrustedContextLengthRejection(rw.inf) {
 				rw.group.markContextLengthRejected()
 			}
 		}
@@ -3195,6 +3192,11 @@ func isErrorStreamAttempt(inf *inflight) bool {
 	return inf != nil && inf.errorSource != ""
 }
 
+// isTrustedContextLengthRejection reports whether the attempt's first error is a context-length rejection from a host that is not suspicious.
+func isTrustedContextLengthRejection(inf *inflight) bool {
+	return isErrorStreamAttempt(inf) && !inf.suspicious && parseContextLengthLimit(inf.errorMessage) > 0
+}
+
 func hostApplicationErrorFromInflight(inf *inflight) *hostApplicationError {
 	if !isErrorStreamAttempt(inf) {
 		return nil
@@ -3686,18 +3688,14 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		var failure error
 		if hostErr := hostApplicationErrorFromAttempts(attempts, winnerNonce); hostErr != nil {
-			captureAllAttemptsFailedRequest(ctx, e.devshardID, params, hostErr)
-			logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", hostErr)
 			failure = hostErr
+		} else if opts.forceTreatAsFailure && anySucceeded {
+			failure = errors.New("inference: winner failed after streaming started (alternate completion ignored)")
 		} else {
-			errMsg := "inference: no non-probe attempt finished"
-			if opts.forceTreatAsFailure && anySucceeded {
-				errMsg = "inference: winner failed after streaming started (alternate completion ignored)"
-			}
-			captureAllAttemptsFailedRequest(ctx, e.devshardID, params, fmt.Errorf("%s", errMsg))
-			logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", errMsg)
-			failure = fmt.Errorf("%s", errMsg)
+			failure = errors.New("inference: no non-probe attempt finished")
 		}
+		captureAllAttemptsFailedRequest(ctx, e.devshardID, params, failure)
+		logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", failure)
 		e.recordGatewayRequestOutcome(params.Model, "failed", gatewayRequestFailureReason(failed))
 		e.completeAccountingRequest(ctx, 0, decision, "failed")
 		e.checkEscrowMissing(ctx, attempts)

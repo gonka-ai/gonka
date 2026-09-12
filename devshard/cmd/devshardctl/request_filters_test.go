@@ -3105,12 +3105,16 @@ func TestNormalizeForMinimaxStripsToolsFunctionStrict(t *testing.T) {
 
 // Every way a caller says "no thinking" must reach vLLM as thinking on: the template opens <think> anyway, and a false kwarg only switches the parser off (vLLM #54744).
 func TestNormalizeForGLM53KeepsTheReasoningParserOn(t *testing.T) {
-	cases := []struct{ name, body string }{
-		{name: "chat_template_kwargs enable_thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":false}}`},
-		{name: "chat_template_kwargs thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"thinking":false}}`},
-		{name: "top-level enable_thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"enable_thinking":false}`},
-		{name: "reasoning_effort none", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none"}`},
-		{name: "reasoning enabled false", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":false}}`},
+	cases := []struct {
+		name               string
+		body               string
+		chatTemplateKwargs map[string]any
+	}{
+		{name: "chat_template_kwargs enable_thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":false}}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
+		{name: "chat_template_kwargs thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"thinking":false}}`, chatTemplateKwargs: map[string]any{"thinking": false, "enable_thinking": true}},
+		{name: "top-level enable_thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"enable_thinking":false}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
+		{name: "reasoning_effort none", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none"}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
+		{name: "reasoning enabled false", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":false}}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -3118,7 +3122,7 @@ func TestNormalizeForGLM53KeepsTheReasoningParserOn(t *testing.T) {
 			require.NoError(t, err)
 			var raw map[string]any
 			require.NoError(t, json.Unmarshal(out, &raw))
-			require.Equal(t, map[string]any{"enable_thinking": true}, raw["chat_template_kwargs"], "vLLM would switch the GLM-5.3 reasoning parser off and leave the scratchpad in content")
+			require.Equal(t, testCase.chatTemplateKwargs, raw["chat_template_kwargs"], "vLLM would switch the GLM-5.3 reasoning parser off and leave the scratchpad in content")
 		})
 	}
 }

@@ -9,6 +9,5 @@ func (v AlwaysOnThinkingValidator) Validate(vctx ValidatorContext) error {
 		return err
 	}
 	chatTemplateKwargs["enable_thinking"] = true
-	delete(chatTemplateKwargs, "thinking")
 	return nil
 }

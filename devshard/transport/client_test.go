@@ -421,6 +421,7 @@ func (r *endlessReader) Read(p []byte) (int, error) {
 func TestMaxSSEEventBytes_DefaultsToHardCap(t *testing.T) {
 	client := &HTTPClient{config: DefaultClientConfig()}
 	require.Equal(t, DefaultMaxSSEEventBytes, client.maxSSEEventBytes())
+	require.Equal(t, MaxJSONResponseBytes, DefaultMaxSSEEventBytes, "a host that does not stream sends its whole response as one event")
 
 	client.config.MaxSSEEventBytes = 4096
 	require.Equal(t, 4096, client.maxSSEEventBytes())

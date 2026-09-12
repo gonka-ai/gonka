@@ -2,7 +2,7 @@
 
 Provider: Z.ai. This doc documents how GLM-5.3-Flash deviates from the [universal contract](README.md). For params that behave the same as universal, see the universal contract directly.
 
-Mirrors the structure of [DeepSeek-V4-Flash-0731](deepseek-v4-flash-0731.md) and [MiniMax-M2.7](minimax-m2.7.md). Thinking cannot be switched off on this model, so the whole thinking contract is documented here. Chain-side wiring (HuggingFace revision pin, ModelArgs) comes from the chain model registry (`models_all` query).
+Mirrors the structure of [DeepSeek-V4-Flash-0731](deepseek-v4-flash-0731.md) and [MiniMax-M2.7](minimax-m2.7.md). Thinking cannot be switched off on this model, so the whole thinking contract is documented here. Chain-side wiring (HuggingFace revision pin, ModelArgs) comes from the chain model registry, read through the [`models_all` query](../../inference-chain/proto/inference/inference/query.proto#L183), because no pull request in this repository registers the model.
 
 ## Model facts
 
@@ -22,7 +22,7 @@ Mirrors the structure of [DeepSeek-V4-Flash-0731](deepseek-v4-flash-0731.md) and
 
 Infrastructure-level constraints that must hold BEFORE this route is served — enforced by vLLM engine configuration, NOT by the gateway:
 
-- **vLLM ≥ 0.29.0 per the vLLM recipe**, which also marks a nightly build as required and ships the model in a dedicated `vllm/vllm-openai:glm53-flash` image until support lands in the standard one ([[vLLM-43]](references.md#vllm)). The gonka-ai vLLM fork has a `release/v0.28.0-glm53` branch; which build the hosts run is not recorded in this repository.
+- **vLLM ≥ 0.29.0 per the vLLM recipe**, which also marks a nightly build as required and ships the model in a dedicated `vllm/vllm-openai:glm53-flash` image until support lands in the standard one ([[vLLM-43]](references.md#vllm)). The gonka-ai vLLM fork has a `release/v0.28.0-glm53` branch ([[vLLM-45]](references.md#vllm)); which build the hosts run is not recorded in this repository.
 - **`--trust-remote-code` is in the registered ModelArgs**, which puts the deployment inside the blast radius of [[CVE-12]](references.md#security-advisories). Mitigation is the same as every other route: the chain pins the HuggingFace revision above, never `main`.
 - **Parsers as registered: `--tool-call-parser glm47` and `--reasoning-parser glm45`**, matching the recipe ([[vLLM-43]](references.md#vllm)). That reasoning parser switches extraction off on a false `thinking`/`enable_thinking` kwarg this template never reads, which the gateway works around — see [Known model-side bugs we work around](#known-model-side-bugs-we-work-around).
 
@@ -53,8 +53,8 @@ How much prior reasoning is replayed in history is controlled by `clear_thinking
 
 | Param | Universal | On GLM-5.3-Flash | Why |
 |-------|-----------|------------------|-----|
-| `chat_template_kwargs.enable_thinking` / `chat_template_kwargs.thinking` | pass-through after the bounds and forbidden-key filter | **overruled**: `enable_thinking` set to `true` and `thinking` removed, whatever the caller sent | [why](troubleshooting.md#force-enable_thinking-glm53) |
-| `enable_thinking` (top-level) | translated to `chat_template_kwargs.enable_thinking` | translated, then overruled to `true` as above | [why](troubleshooting.md#force-enable_thinking-glm53) |
+| `chat_template_kwargs.enable_thinking` | pass-through after the bounds and forbidden-key filter | **overruled**: set to `true`, whatever the caller sent; a caller's `chat_template_kwargs.thinking` passes through and no longer matters, because the parser keeps extraction on when either kwarg is true | [why](troubleshooting.md#coerce-enable_thinking-glm53) |
+| `enable_thinking` (top-level) | translated to `chat_template_kwargs.enable_thinking` | translated, then overruled to `true` as above | [why](troubleshooting.md#coerce-enable_thinking-glm53) |
 | `reasoning_effort` | enum-validated and forwarded on every route | forwarded; rendered as `low`, `high` or `max` per the table above, and never turns thinking off | [[Zai-1]](references.md#zai), [[Zai-3]](references.md#zai) |
 | `thinking` (top-level object) | normalized to `enabled`/`disabled` and forwarded; mirrored to `chat_template_kwargs.thinking` on Kimi | normalized and forwarded with no effect: vLLM declares no top-level `thinking` field, and the template reads no such variable | [[vLLM-1]](references.md#vllm), [[Zai-1]](references.md#zai) |
 
@@ -73,7 +73,7 @@ vLLM's canonical response field is `reasoning`; `reasoning_content` is the depre
 
 ## Known model-side bugs we work around
 
-- **Reasoning leaks into `content` on a false thinking kwarg** ([[vLLM-40]](references.md#vllm)): vLLM's `glm47_moe` parser gates extraction on `thinking`/`enable_thinking`, which this template never reads, so a request carrying a false value — sent by the client, lifted by the gateway, or derived by vLLM from `reasoning_effort: "none"` — gets the scratchpad and a dangling `</think>` as its answer. Worked around request-side by the gateway ([why](troubleshooting.md#force-enable_thinking-glm53)); the upstream issue is still open.
+- **Reasoning leaks into `content` on a false thinking kwarg** ([[vLLM-40]](references.md#vllm)): vLLM's `glm47_moe` parser gates extraction on `thinking`/`enable_thinking`, which this template never reads, so a request carrying a false value — sent by the client, lifted by the gateway, or derived by vLLM from `reasoning_effort: "none"` — gets the scratchpad and a dangling `</think>` as its answer. Worked around request-side by the gateway ([why](troubleshooting.md#coerce-enable_thinking-glm53)); the upstream issue is still open.
 
 ## Known issues (not worked around)
 

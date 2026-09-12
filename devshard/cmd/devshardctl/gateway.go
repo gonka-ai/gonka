@@ -734,7 +734,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder) *Gateway {
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder, maxNonce devshardpkg.MaxNonceProvider) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
@@ -742,6 +742,7 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	g.baseStorageDir = baseStorageDir
 	g.store = store
 	g.chainClient = chainClient
+	g.maxNonce = maxNonce
 	if perf != nil {
 		g.perf = perf
 	}
@@ -861,7 +862,7 @@ func (g *Gateway) checkBalances() {
 		}
 		nonce := rt.proxy.sm.LatestNonce()
 		nonceLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
-		if nonce >= nonceLimit {
+		if chainMaxNonce != 0 && nonce >= nonceLimit {
 			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — deactivating before replacement",
 				rt.id, nonce, nonceLimit)
 			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "high_nonce")
@@ -1844,7 +1845,7 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 	chainMaxNonce := g.chainMaxNonce()
 	for _, rt := range g.runtimeOrder {
 		if runtimeAtNonceLimit(rt, chainMaxNonce) {
-			if g.settings.EscrowRotation.Enabled {
+			if g.settings.EscrowRotation.Enabled && chainMaxNonce != 0 {
 				depletedEscrows = append(depletedEscrows, struct {
 					id     string
 					model  string
@@ -4183,7 +4184,7 @@ func (g *Gateway) scheduleDepletedEscrowReplacement(id, modelID, reason string) 
 	}()
 }
 
-// replaceDepletedEscrow takes a depleted escrow out of service, then tries one replacement for it and does not retry a failed one.
+// replaceDepletedEscrow takes a depleted escrow that rotation can replace out of service, then tries one replacement for it and does not retry a failed one.
 func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason string) error {
 	g.mu.Lock()
 	settings := g.settings
@@ -4191,16 +4192,16 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	if !settings.EscrowRotation.Enabled {
 		return nil
 	}
+	model, ok := replacementModelForDepletedEscrow(settings, modelID)
+	if !ok {
+		return fmt.Errorf("no escrow rotation model configured for %q", modelID)
+	}
 	isTakenOutOfService, err := g.deactivateDepletedEscrow(ctx, id, reason, settings)
 	if err != nil {
 		return fmt.Errorf("deactivate depleted escrow: %w", err)
 	}
 	if !isTakenOutOfService {
 		return nil
-	}
-	model, ok := replacementModelForDepletedEscrow(settings, modelID)
-	if !ok {
-		return fmt.Errorf("no escrow rotation model configured for %q", modelID)
 	}
 
 	var epoch uint64

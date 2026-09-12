@@ -295,8 +295,6 @@ snapshot (public API when configured, otherwise chain gRPC/RPC) and also
 replaces escrows that approach the low-balance or high-nonce limits. When it is
 false, both epoch rotation and depletion replacement are disabled.
 
-An escrow counts as high-nonce 200 nonces short of the nonce its hosts stop accepting work at (chain `max_nonce` minus group size plus one), read live from the runtime params snapshot. Until that snapshot arrives the gateway uses `19800`, the old chain default minus the same margin.
-
 1. During inference phase, when the chain is within `pre_poc_blocks` of PoC,
    the gateway ensures `temp_count` temp escrows exist for the current epoch.
 2. It then locally deactivates active non-temp escrows, finalizes them, and
@@ -305,6 +303,8 @@ An escrow counts as high-nonce 200 nonces short of the nonce its hosts stop acce
    exist for the new epoch.
 4. It then deactivates, finalizes, and settles the previous epoch's temp
    escrows.
+
+An escrow counts as high-nonce 200 nonces short of the nonce its hosts stop accepting work at (chain `max_nonce` minus `group size + 1`), read live from the runtime params snapshot. Until that snapshot arrives the gateway stops routing to an escrow at `19800` (the chain's default `max_nonce` of `20000` minus the same 200 margin, with no group reserve) but does not retire or replace it for its nonce, because such an escrow is healthy whenever the chain allows more nonces.
 
 Set `escrow_rotation.settlement_enabled` to `false` to keep automatic creation
 and local deactivation while skipping automatic finalization and on-chain

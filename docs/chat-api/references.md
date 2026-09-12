@@ -15,7 +15,7 @@ Namespaces:
 - `[OpenRouter-N]` OpenRouter
 - `[CVE-N]` security advisories
 
-Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) are inline links in `troubleshooting.md` and `agents.md`, not here. Captured-requests evidence is referenced inline by request-id. Chain governance changes (model registration, ModelArgs pins) are cited inline by PR number under the appropriate per-model doc, not in this file.
+Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) are inline links in `troubleshooting.md` and `agents.md`, not here. Captured-requests evidence is referenced inline by request-id. Chain governance changes (model registration, ModelArgs pins) are cited inline by PR number under the appropriate per-model doc, not in this file; a model that no pull request registers cites the chain's `models_all` query instead.
 
 ## OpenAI
 
@@ -76,6 +76,8 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[vLLM-41]** [parser/glm47_moe.py source at v0.25.1](https://github.com/vllm-project/vllm/blob/v0.25.1/vllm/parser/glm47_moe.py#L178-L195) — `thinking_enabled` is on when neither `thinking` nor `enable_thinking` is present in `chat_template_kwargs`, otherwise `bool(thinking) or bool(enable_thinking)`; `--reasoning-parser glm45` resolves to this parser through `make_adapters(Glm47MoeParser)`.
 - **[vLLM-42]** [entrypoints/chat_utils.py source at v0.25.1](https://github.com/vllm-project/vllm/blob/v0.25.1/vllm/entrypoints/chat_utils.py#L1750-L1817) — the per-message parser copies an assistant message's `reasoning` into both `reasoning` and `reasoning_content` for the chat template, and passes a `developer` message on with its role unchanged, attaching only `tools`.
 - **[vLLM-43]** [GLM-5.3-Flash recipe](https://github.com/vllm-project/recipes/blob/main/models/zai-org/GLM-5.3-Flash.yaml) — `min_vllm_version: 0.29.0` with `nightly_required: true` and a dedicated `vllm/vllm-openai:glm53-flash` image; `--tool-call-parser glm47 --enable-auto-tool-choice` and `--reasoning-parser glm45`; 1M-token context; native FP8 weights.
+- **[vLLM-44]** [parser/glm47_moe.py in the gonka-ai fork, release/v0.25.1](https://github.com/gonka-ai/vllm/blob/release/v0.25.1/vllm/parser/glm47_moe.py#L185-L191) — the same `thinking`/`enable_thinking` gate as [vLLM-41].
+- **[vLLM-45]** [parser/glm47_moe.py in the gonka-ai fork, release/v0.28.0-glm53](https://github.com/gonka-ai/vllm/blob/release/v0.28.0-glm53/vllm/parser/glm47_moe.py#L185-L191) — the same gate on the fork's GLM-5.3 branch.
 
 ## Moonshot
 
