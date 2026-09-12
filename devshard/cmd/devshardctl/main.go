@@ -18,6 +18,7 @@ import (
 	"devshard/accounting"
 	"devshard/bridge"
 	"devshard/logging"
+	"devshard/runtimeparams"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -462,6 +463,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 	gateway.perfStore = perfStore
 	gateway.runtimeParams = runtimeParams
 	gateway.runtimeParamsClose = runtimeParamsClose
+	gateway.maxNonce = runtimeparams.MaxNonceFromSnapshot(runtimeParams.Provider)
 	return gateway
 }
 

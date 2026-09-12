@@ -503,6 +503,11 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 						MaxSize:  ChatTemplateKwargsMaxSize,
 						MaxNodes: ChatTemplateKwargsMaxNodes,
 					},
+				}).
+				// GLM-5.3-Flash always thinks; a false thinking kwarg only turns vLLM's parser off (vLLM #54744).
+				withRule(RequestFilterStagePostLimits, ModelScopedParameterHandler{
+					Models:  []string{glm53FlashModelID},
+					Handler: DocumentValidatorHandler{Validator: paramvalidators.AlwaysOnThinkingValidator{}},
 				}),
 			newParameter("thinking_token_budget").
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{

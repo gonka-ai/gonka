@@ -498,7 +498,7 @@ func TestParseSSE_RealisticLogprobChunkStaysWellUnderTheCap(t *testing.T) {
 		strings.Repeat("a", 29), strings.Join(top, ","))
 
 	require.Less(t, len(chunk), DefaultMaxSSEEventBytes/4,
-		"a real widest-shape chunk must sit far below the 1 MiB event cap")
+		"a real widest-shape chunk must sit far below the event cap")
 
 	client := &HTTPClient{config: DefaultClientConfig()}
 	var forwarded []string
@@ -513,6 +513,27 @@ func TestParseSSE_RealisticLogprobChunkStaysWellUnderTheCap(t *testing.T) {
 	require.NotNil(t, result.Receipt)
 	require.Len(t, forwarded, 1)
 	require.Contains(t, forwarded[0], "top_logprobs")
+}
+
+// A host that does not stream writes its whole response as one data line, and the gateway always asks for logprobs, so a few thousand tokens already pass 1 MiB.
+func TestParseSSE_WholeResponseWithLogprobsParsesAsOneEvent(t *testing.T) {
+	const entry = `{"token":"tok","logprob":-0.1234567890123,"bytes":[116,111,107],"top_logprobs":[{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]}]}`
+	logprobEntries := strings.TrimSuffix(strings.Repeat(entry+",", 4096), ",")
+	response := `{"id":"chatcmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"answer"},"logprobs":{"content":[` + logprobEntries + `]},"finish_reason":"stop"}]}`
+	require.Greater(t, len(response), 1<<20, "the response must be larger than the old 1 MiB cap")
+	client := &HTTPClient{config: DefaultClientConfig()}
+	var forwarded []string
+	sink := lineCollector(func(line string) {
+		forwarded = append(forwarded, line)
+	})
+
+	result, err := client.parseSSEResponse(context.Background(),
+		strings.NewReader("data: "+response+"\n\n"+receiptOnlySSE), sink, nil)
+
+	require.NoError(t, err, "a whole response with forced logprobs was rejected as an oversize event")
+	require.NotNil(t, result.Receipt)
+	require.Len(t, forwarded, 1)
+	require.Contains(t, forwarded[0], `"finish_reason":"stop"`, "the response line was not forwarded whole")
 }
 
 func TestReadBoundedResponseBody_RejectsOversizeInsteadOfTruncating(t *testing.T) {

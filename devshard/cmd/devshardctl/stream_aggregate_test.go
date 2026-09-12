@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/transport"
 )
 
 func sseData(payloads ...string) []byte {
@@ -648,9 +650,9 @@ func TestAggregateSSEStreamReader_ReadErrorWithoutFoldIsDistinguishable(t *testi
 }
 
 func TestAggregateSSEStreamReader_OversizeLineIsReadFailure(t *testing.T) {
-	// Shared scanner cap is aggregateMaxSSEEventBytes+64; an oversize data line
+	// Shared scanner cap is transport.DefaultMaxSSEEventBytes+64; an oversize data line
 	// must not silently produce a success body (R5 line-cap equivalence).
-	maxLine := aggregateMaxSSEEventBytes + 64
+	maxLine := transport.DefaultMaxSSEEventBytes + 64
 	huge := bytes.Repeat([]byte("a"), maxLine+1)
 	raw := append([]byte("data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\""), huge...)
 	raw = append(raw, []byte("\"},\"finish_reason\":\"stop\"}]}\n\n")...)
@@ -659,6 +661,21 @@ func TestAggregateSSEStreamReader_OversizeLineIsReadFailure(t *testing.T) {
 	fromBytes := aggregateSSEStream(raw, clientResponseIntent{})
 	require.JSONEq(t, aggregateStreamReadFailedJSON, string(fromReader))
 	require.JSONEq(t, string(fromReader), string(fromBytes))
+}
+
+// A host that does not stream sends the whole response, forced logprobs included, as one line; a client that asked for no logprobs must still get its answer.
+func TestAggregateSSEStreamReader_FoldsAWholeResponseLineAboveOneMiB(t *testing.T) {
+	const entry = `{"token":"tok","logprob":-0.1234567890123,"bytes":[116,111,107],"top_logprobs":[{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]}]}`
+	logprobEntries := strings.TrimSuffix(strings.Repeat(entry+",", 4096), ",")
+	response := `{"id":"chatcmpl-1","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"answer"},"logprobs":{"content":[` + logprobEntries + `]},"finish_reason":"stop"}]}`
+	require.Greater(t, len(response), 1<<20, "the response must be larger than the old 1 MiB line cap")
+
+	got := aggregateSSEStreamReader(bytes.NewReader(sseData(response)), clientResponseIntent{})
+
+	var folded map[string]any
+	require.NoError(t, json.Unmarshal(got, &folded), "got %.200s", got)
+	require.NotContains(t, folded, "error", "a whole response line above 1 MiB failed to fold")
+	require.Equal(t, "answer", folded["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)["content"])
 }
 
 func TestAggregateSSEStream_FoldRAMBudgetRejectsHugeLogprobs(t *testing.T) {
