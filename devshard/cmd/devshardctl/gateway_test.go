@@ -523,7 +523,7 @@ func TestGatewayModelAccessAdminOnlyAllowsAdminAuthenticatedInference(t *testing
 
 	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"Kimi/Test","messages":[{"role":"user","content":"hello"}]}`))
-	req.Header.Set("Authorization", "Bearer admin-key")
+	req.Header.Set("Authorization", "bearer admin-key")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusNoContent, rec.Code)
@@ -640,6 +640,16 @@ func TestGatewayAPIKeyLogFieldsUsesLastEightCharacters(t *testing.T) {
 	}))
 	req.Header.Set("Authorization", "Bearer admin-key-abcdefgh")
 	handler.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestBearerTokenAcceptsCaseInsensitiveScheme(t *testing.T) {
+	for _, header := range []string{"Bearer client-key", "bearer client-key", "BEARER client-key"} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("Authorization", header)
+		key, ok := bearerToken(req)
+		require.True(t, ok, header)
+		require.Equal(t, "client-key", key, header)
+	}
 }
 
 func TestGatewayModelAccessDefaultsToAdminOnly(t *testing.T) {
