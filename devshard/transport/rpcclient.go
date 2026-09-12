@@ -28,7 +28,7 @@ type RPCClient struct {
 	session   rpcpbconnect.SessionServiceClient
 	gossip    rpcpbconnect.GossipServiceClient
 	// closeOnce is a pointer so WithoutAdmission can copy RPCClient without
-	// copying a sync.Once (finding 20 / go vet copylocks).
+	// copying a sync.Once (go vet copylocks).
 	closeOnce *sync.Once
 	// ownsConn is true only on the SelectTransport / NewRPCClient value that
 	// holds the registry ref. Finalize clones must not Release.
@@ -51,13 +51,16 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		c.session = rpcpbconnect.NewSessionServiceClient(conn.http, base, opts...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
 		// Chat and validation GetPayload must use DefaultMaxBodySize (10 MiB),
-		// not DefaultRPCReadMaxBytes (finding 27).
+		// not DefaultRPCReadMaxBytes.
 	}
 	return c
 }
 
+// Uses is whether this client sends `name` over Connect. Opt-in
+// (EndpointSet.Has) is not enough: gossip, repair, chat, and other names
+// stay HTTP until they are on attachRPCEndpoints.
 func (c *RPCClient) Uses(name string) bool {
-	return c != nil && c.endpoints.Has(name)
+	return c != nil && c.endpoints.Has(name) && isAttachRPCEndpoint(name)
 }
 
 func (c *RPCClient) Close() {
@@ -135,7 +138,7 @@ const maxUnauthenticatedRPCRetries = 1
 
 // isRetryableRPC is the Connect retry policy. Unavailable / ResourceExhausted
 // use the shared 5 s budget. Unauthenticated is one extra attempt for a token
-// rotation race (finding 10); a stable unauthenticated session fails fast.
+// rotation race; a stable unauthenticated session fails fast.
 func isRetryableRPC(err error, unauthRetries *int) bool {
 	if IsRetryableNonInference(err) {
 		return true
@@ -186,14 +189,14 @@ func (c *RPCClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff
 	if !c.Uses(EndpointDiffs) {
 		return c.HTTPClient.GetDiffs(ctx, from, to)
 	}
-	return nil, fmt.Errorf("get diffs: rpc endpoint not served until phase 3")
+	return nil, fmt.Errorf("get diffs: rpc endpoint not served over Connect")
 }
 
 func (c *RPCClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error) {
 	if !c.Uses(EndpointMempool) {
 		return c.HTTPClient.GetMempool(ctx)
 	}
-	return nil, fmt.Errorf("get mempool: rpc endpoint not served until phase 3")
+	return nil, fmt.Errorf("get mempool: rpc endpoint not served over Connect")
 }
 
 func (c *RPCClient) GossipNonce(ctx context.Context, nonce uint64, stateHash, stateSig []byte, slotID uint32) error {
@@ -260,42 +263,42 @@ func (c *RPCClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 	if !c.Uses(EndpointSeed) {
 		return c.HTTPClient.SeedHeightSync(ctx)
 	}
-	return false, fmt.Errorf("seed height-sync: rpc endpoint not served until phase 3")
+	return false, fmt.Errorf("seed height-sync: rpc endpoint not served over Connect")
 }
 
 func (c *RPCClient) HeightSyncRepair(ctx context.Context, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
 	if !c.Uses(EndpointRepair) {
 		return c.HTTPClient.HeightSyncRepair(ctx, req)
 	}
-	return nil, fmt.Errorf("height-sync repair: rpc endpoint not served until phase 3")
+	return nil, fmt.Errorf("height-sync repair: rpc endpoint not served over Connect")
 }
 
 func (c *RPCClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutRequest) (*VerifyTimeoutResponse, error) {
 	if !c.Uses(EndpointVerifyTimeout) {
 		return c.HTTPClient.SendVerifyTimeout(ctx, req)
 	}
-	return nil, fmt.Errorf("verify-timeout: rpc endpoint not served until phase 3")
+	return nil, fmt.Errorf("verify-timeout: rpc endpoint not served over Connect")
 }
 
 func (c *RPCClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMissRequest) (*VerifyErrorMissResponse, error) {
 	if !c.Uses(EndpointVerifyErrorMiss) {
 		return c.HTTPClient.SendVerifyErrorMiss(ctx, req)
 	}
-	return nil, fmt.Errorf("verify-error-miss: rpc endpoint not served until phase 3")
+	return nil, fmt.Errorf("verify-error-miss: rpc endpoint not served over Connect")
 }
 
 func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	if !c.Uses(EndpointChallengeReceipt) {
 		return c.HTTPClient.ChallengeReceipt(ctx, inferenceID, payload, diffs)
 	}
-	return nil, nil, fmt.Errorf("challenge-receipt: rpc endpoint not served until phase 3")
+	return nil, nil, fmt.Errorf("challenge-receipt: rpc endpoint not served over Connect")
 }
 
-// cloneWithSigner keeps the PeerConn and endpoint set so a later opted-in
-// method (repair, verify) does not silently fall back to JSON (finding 7).
+// cloneWithSigner keeps the PeerConn and endpoint set. Uses() still
+// requires the name on attachRPCEndpoints, so unwired methods stay HTTP.
 // ownsConn is false: same as WithoutAdmission. Repair does not Close the
-// clone; bumping refs would leak. SetPeerClients is still map[int]*HTTPClient
-// until Phase 3 stores SelectTransport results.
+// clone; bumping refs would leak. SetPeerClients is still
+// map[int]*HTTPClient until callers store SelectTransport results.
 func (c *RPCClient) cloneWithSigner(signer signing.Signer, timeout time.Duration) *RPCClient {
 	if c == nil {
 		return nil

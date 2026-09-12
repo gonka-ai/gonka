@@ -479,14 +479,14 @@ func IncReconcileFastForward() {
 	reconcileFastForwardTotal.Inc()
 }
 
-// SetPeerRPCSessionCounts records host-level Attach map sizes (finding 24).
+// SetPeerRPCSessionCounts records host-level Attach map sizes.
 func SetPeerRPCSessionCounts(sessions, peers int) {
 	ensureMetrics()
 	peerRPCSessions.Set(float64(sessions))
 	peerRPCPeers.Set(float64(peers))
 }
 
-// SetPeerRPCEnabled records whether the Connect mux is mounted (finding 25).
+// SetPeerRPCEnabled records whether the Connect mux is mounted.
 func SetPeerRPCEnabled(enabled bool) {
 	ensureMetrics()
 	if enabled {
@@ -497,14 +497,14 @@ func SetPeerRPCEnabled(enabled bool) {
 }
 
 // IncPeerRPCAttach counts one Attach outcome. result is a Connect code
-// string or "ok". No peer address label (finding 23).
+// string or "ok". No peer address label.
 func IncPeerRPCAttach(result string) {
 	ensureMetrics()
 	peerRPCAttachTotal.WithLabelValues(result).Inc()
 }
 
 // IncPeerRPCGate counts one handshake-gate outcome. reason is admitted,
-// missing, forged, expired, or oversized (finding 23).
+// missing, forged, expired, or oversized.
 func IncPeerRPCGate(reason string) {
 	ensureMetrics()
 	peerRPCGateTotal.WithLabelValues(reason).Inc()

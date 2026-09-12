@@ -37,7 +37,7 @@ func TestAllProcedurePathsMatchesProtos(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
-func TestImplementedRPC_Phase1Subset(t *testing.T) {
+func TestImplementedRPC_AttachWatchSignatures(t *testing.T) {
 	known := make(map[string]struct{})
 	for _, proc := range AllProcedurePaths() {
 		known[proc] = struct{}{}

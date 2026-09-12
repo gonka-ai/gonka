@@ -14,7 +14,7 @@ const maxRecvBytes = 16 << 10
 // construction so Attach cannot run on a nil receiver. Unimplemented
 // services still occupy their Connect paths so the public URL shape is
 // stable; handshakeGate answers those as unimplemented before Connect reads
-// the body (finding 58). Every RPC except Attach is dropped unless
+// the body. Every RPC except Attach is dropped unless
 // X-Devshard-Session names a live host-level handshake. The outer
 // handshakeGate runs before Connect reads the body.
 func NewMux(auth *PeerAuthHandler, session *SessionHandler) http.Handler {

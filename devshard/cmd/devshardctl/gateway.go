@@ -101,7 +101,7 @@ type devshardRuntime struct {
 	participantSlotCounts map[string]int
 
 	// routePrefix is the versioned HTTP mount this escrow talks to
-	// (/devshard/v5). Adoption peer ids are addr@version (finding 21).
+	// (/devshard/v5). Adoption peer ids are addr@version.
 	routePrefix string
 
 	// stopped closes when this escrow's runtime does, so work that belongs to one escrow -- and only that
@@ -616,7 +616,7 @@ func (rt *devshardRuntime) close() error {
 		rt.stopOnce.Do(func() { close(rt.stopped) })
 	}
 	if rt.session != nil {
-		// Session.Close Releases PeerConn refs (finding 1).
+		// Session.Close Releases PeerConn refs.
 		rt.session.Close()
 	}
 	return nil
@@ -4197,7 +4197,7 @@ func (g *Gateway) attachMetrics(rt *devshardRuntime) {
 	if g.metrics != nil {
 		rt.proxy.redundancy.metrics = g.metrics
 		// Use the runtime snapshot, not session.ParticipantKeys(): admin-add
-		// and settings-reload call this under g.mu (finding 52).
+		// and settings-reload call this under g.mu.
 		g.metrics.PeerRPCAdoption().BindEscrowHosts(rt.id, runtimeAdoptionPeers(rt))
 	}
 	rt.proxy.redundancy.devshardID = rt.id

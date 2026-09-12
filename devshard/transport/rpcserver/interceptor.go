@@ -32,8 +32,7 @@ func withPeer(ctx context.Context, addr string) context.Context {
 }
 
 // TokenFromContext is the Attach token the interceptor admitted. Watch uses
-// this instead of WatchRequest.session_token. Unary RPCs do not stash it
-// (finding 51).
+// this instead of WatchRequest.session_token. Unary RPCs do not stash it.
 func TokenFromContext(ctx context.Context) []byte {
 	v, _ := ctx.Value(tokenKey{}).([]byte)
 	return v
@@ -85,7 +84,7 @@ func isImplementedRPC(path string) bool {
 // reads the body. Unary interceptors run after protobuf decode; this wrapper
 // does not. The ResponseWriter and session token are stashed only on Watch.
 // Known but unimplemented procedures are answered here so Connect never reads
-// the body (finding 58).
+// the body.
 func handshakeGate(auth *PeerAuthHandler, next http.Handler) http.Handler {
 	ew := connect.NewErrorWriter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +195,7 @@ func admitSession(auth *PeerAuthHandler, ctx context.Context, header http.Header
 	observability.IncPeerRPCGate(gateReasonAdmitted)
 	ctx = withPeer(ctx, peer)
 	if stashToken {
-		// Watch is the only reader of TokenFromContext (finding 51).
+		// Watch is the only reader of TokenFromContext.
 		ctx = withToken(ctx, append([]byte(nil), raw...))
 	}
 	return ctx, nil
@@ -214,7 +213,7 @@ var errInvalidSessionToken = errors.New("invalid session token")
 
 func observeGateForged(ctx context.Context, err error) {
 	observability.IncPeerRPCGate(gateReasonForged)
-	// Debug, not warn: this path needs no credentials (finding 45).
+	// Debug, not warn: this path needs no credentials.
 	// gate_total{reason="forged"} is the operator signal.
 	observability.Log(ctx, observability.LevelDebug, "peer RPC handshake forged",
 		observability.StageRequest, observability.WherePeerRPCGate, EscrowIDFromContext(ctx), observability.ReasonInvalidSignature, err)

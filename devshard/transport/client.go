@@ -379,7 +379,7 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 }
 
 // noFollowRedirects stops Go from forwarding Authorization / session headers
-// to a different host (finding 15).
+// to a different host.
 func noFollowRedirects(*http.Request, []*http.Request) error {
 	return http.ErrUseLastResponse
 }

@@ -272,8 +272,14 @@ The nginx per-IP ceiling disappears for this path. Replace it on the published l
 
 - **TCP / HTTP/2 connection rate per IP** (phase 6, stick-table on `src`) — nginx
   `limit_conn` analogue. Handshake and Attach do not bound socket opens.
+- **Path zones** (phase 6) on **versiond-router** (HA) or **versiond** (non-HA):
+  Attach / Chat / diffs / gossip as separate `src` budgets. The Connect method is in
+  the URL; no protobuf parse. Inner versiond on HA must not re-key on `RemoteAddr`
+  (the router). The child must not apply Echo IP zones on `/rpc/` (loopback).
 - **Attach-per-IP before ECDSA** (phase 4) — one connection can still flood handshake RPCs
-  on streams.
+  on streams. Process-wide Attach/sec floor stays in the child.
+- **Per-peer channel limits** (phase 4) in the **child** interceptor: token-bucket plus
+  per-method weights keyed on the session peer, not on IP.
 - HAProxy `maxconn`, Go's stream cap, and the per-peer channel limits.
 
 Phase 1 is not the place for the IP limiter: the child does not see client IPs on

@@ -171,7 +171,7 @@ type recoveryGate struct {
 }
 
 // maxRequestedRecoveryEscrows bounds the demand set. Past the cap the oldest
-// demand is dropped so a later genuine request still enters (finding 57).
+// demand is dropped so a later genuine request still enters.
 const maxRequestedRecoveryEscrows = 4096
 
 // condLocked lazily builds the cond so a zero-value HostManager still works.
@@ -499,7 +499,7 @@ func (m *HostManager) SessionServerExisting(escrowID string) (*transport.Server,
 		return nil, err
 	}
 	// Peek the store before occupying the recovery gate. A miss must not
-	// fill the demand set or park cold recovery (finding 57).
+	// fill the demand set or park cold recovery.
 	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
 		return nil, err
 	}
@@ -705,7 +705,7 @@ func (m *HostManager) cachedResolutionFailure(escrowID string, now time.Time) er
 
 // cachedCreateBlockingFailure is the tombstone getOrCreate honors.
 // SessionServerExisting caches a miss so GET /signatures and allowRPCPeer
-// do not recover on every request (finding 46). BindOwnerChat calls Existing
+// do not recover on every request. BindOwnerChat calls Existing
 // first, then getOrCreate; that miss must not block CreateSession.
 func (m *HostManager) cachedCreateBlockingFailure(escrowID string, now time.Time) error {
 	err := m.cachedResolutionFailure(escrowID, now)

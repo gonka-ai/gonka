@@ -10,7 +10,7 @@ import (
 	"devshard/logging"
 )
 
-// DEVSHARD_RPC_ENDPOINTS names, matching the phase-2 flag (e.g. "gossip,diffs").
+// DEVSHARD_RPC_ENDPOINTS names (e.g. "gossip,diffs").
 const (
 	EndpointChat             = "chat"
 	EndpointGossip           = "gossip"
@@ -31,7 +31,7 @@ const DefaultRPCMaxConnsPerPeer = 16
 
 // HostRPCEscrowID is the URL escrow for Watch and live-session Attach
 // renewals. It is not a real escrow: the path keeps /sessions/:id/rpc/ so
-// versiond still matches the Phase 1–5 route shape. First Attach uses the
+// versiond still matches the existing route shape. First Attach uses the
 // door escrow (AllowsSender). After that the token is the session.
 const HostRPCEscrowID = "_"
 
@@ -58,11 +58,11 @@ func (s EndpointSet) Has(name string) bool {
 
 // attachRPCEndpoints are names whose client path currently sends
 // X-Devshard-Session. SelectTransport starts PeerConn only if the opt-in set
-// intersects this list (finding 5).
+// intersects this list. RPCClient.Uses is the same gate: an opted-in name
+// that is not on this list stays HTTP.
 //
-// Phase 3: add gossip and the other migrated unaries when those methods
-// call Connect. Phase 5: add EndpointChat when Send leaves HTTP — revisit
-// this list then; chat must start Attach once it uses the host token.
+// Add a name here when that method actually calls Connect. Chat must start
+// Attach once Send uses the host token.
 var attachRPCEndpoints = []string{EndpointSignatures}
 
 var knownRPCEndpoints = map[string]struct{}{
@@ -123,7 +123,7 @@ func isAttachRPCEndpoint(name string) bool {
 }
 
 // classifyUnwiredRPCEndpoints splits opt-in names that are not yet on
-// Connect (known Phase 3/5 names) from typos (finding 29).
+// Connect (known names not in attachRPCEndpoints) from typos.
 func classifyUnwiredRPCEndpoints(s EndpointSet) (unwired, unknown []string) {
 	for name := range s {
 		if isAttachRPCEndpoint(name) {
@@ -173,8 +173,8 @@ func RPCMaxConnsPerPeerFromEnv() int {
 }
 
 // SelectTransport returns http unchanged when no opted-in name needs a
-// host session token (empty set, chat-only, typos, Phase 3 names not yet
-// wired) or when hostAddress is empty (finding 6: never share "@version").
+// host session token (empty set, chat-only, typos, known names not yet
+// wired) or when hostAddress is empty (never share "@version").
 // Otherwise it returns an *RPCClient and starts the PeerConn attach loop.
 func SelectTransport(httpClient *HTTPClient, hostAddress string, endpoints EndpointSet, extra *ClientConfig) any {
 	warnUnwiredRPCEndpoints(endpoints)

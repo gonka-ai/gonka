@@ -28,14 +28,14 @@ const (
 	// keys (raw bytes as string); they are not payloads.
 	maxAttachNonceBytes = 32
 
-	// Advertised AttachResponse.limits. Not enforced until Phase 4; zeros
-	// would look like "refuse all" to a client that honours the field.
+	// Advertised AttachResponse.limits. Not enforced yet; zeros would
+	// look like "refuse all" to a client that honours the field.
 	defaultMessagesPerMin uint32 = 6000
 	defaultMaxStreams     uint32 = 256
 	defaultAttachPerMin   uint32 = 10
 	defaultMaxSessions           = 10_000
-	// defaultAttachFloorPerMin is the process-wide Attach cap (finding 42).
-	// Advertised attach_per_min stays 10 (the Phase 4 per-peer number). The
+	// defaultAttachFloorPerMin is the process-wide Attach cap.
+	// Advertised attach_per_min stays 10 (the advertised per-peer number). The
 	// floor is one first-Attach per current peer per minute so a full map
 	// re-attaching after a Watch mass-break still fits; known-peer renewals
 	// are refunded and do not occupy extra slots.
@@ -44,12 +44,12 @@ const (
 	// Matches transport.nonInferenceRetryBudget: one Attach RTT plus retry.
 	defaultTokenGrace = 5 * time.Second
 	// maxAttachRecvBytes is the HTTP body cap on Attach only. The Connect
-	// mux allows 16 KiB on authenticated Phase 1 RPCs (finding 58); this
+	// mux allows 16 KiB on authenticated RPCs; this
 	// path is unauthenticated and must not buy that read before ECDSA.
 	maxAttachRecvBytes = 4 << 10
 	// retiredNonceTTL is how long a dropped attach_nonce stays unrebindable.
 	// Anchored to max(drop time, attach timestamp) so a future-skewed
-	// signature cannot outlive its retirement (finding 55).
+	// signature cannot outlive its retirement.
 	retiredNonceTTL = time.Duration(transport.MaxTimestampDrift) * time.Second
 	// sweepBatchSize is how many expired session / retired-nonce keys SweepOnce
 	// deletes per write-lock hold. Attach's in-lock sweep at the cap is
@@ -80,7 +80,7 @@ type PeerAuthConfig struct {
 	// AttachFloorPerMin is the process-wide Attach cap, enforced before ECDSA.
 	// Zero means defaultAttachFloorPerMin. Not keyed on peer_address: that is
 	// attacker-chosen; recovered address is after ECDSA. Child is on loopback,
-	// so this is the process floor, not a client-IP limiter (Phase 4).
+	// so this is the process floor, not a client-IP limiter.
 	AttachFloorPerMin int
 	// Allow is the URL-escrow roster check at Attach. Nil skips (tests).
 	Allow AllowPeer
@@ -254,12 +254,12 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	if recovered != msg.PeerAddress {
 		return nil, connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("recovered address %s does not match peer_address", recovered))
 	}
-	// Refund only after a successful bind (finding 54). A live peer whose
+	// Refund only after a successful bind. A live peer whose
 	// Attach then fails (nonce reuse, roster, cap) must keep the charge.
 	wasLive := h.peerSessionLive(recovered)
 	if !wasLive {
 		// Door check is first Attach only. Watch and live renewals are
-		// host-scoped (finding 3): the URL escrow may already be gone.
+		// host-scoped: the URL escrow may already be gone.
 		if err := h.checkAllow(ctx, recovered); err != nil {
 			return nil, err
 		}
@@ -398,10 +398,10 @@ func (h *PeerAuthHandler) beginWatch(token []byte) (uint64, <-chan struct{}, err
 }
 
 // endWatch clears this Watch. It does not drop the host session: a stream
-// break must not force a fresh Attach for every escrow this child serves
-// (finding 48). A later Watch on the same token is allowed. Re-Attach, TTL
+// break must not force a fresh Attach for every escrow this child serves.
+// A later Watch on the same token is allowed. Re-Attach, TTL
 // sweep, eviction, and Close still drop. A grace token's Watch is a no-op
-// here if watchID no longer matches (finding 14).
+// here if watchID no longer matches.
 func (h *PeerAuthHandler) endWatch(token []byte, watchID uint64) {
 	if len(token) == 0 || len(token) > maxAttachNonceBytes || watchID == 0 {
 		return
@@ -524,7 +524,7 @@ func (h *PeerAuthHandler) evictOldestIdleLocked() bool {
 // chargeAttach is the process-wide Attach throttle, before ECDSA. Sliding
 // one-minute window. Child sees versiond as src, so this is not per client IP.
 // A later refundAttach drops this charge if the Attach succeeds for a peer that
-// already held a live or grace session (finding 42 / 54).
+// already held a live or grace session.
 func (h *PeerAuthHandler) chargeAttach() (time.Time, error) {
 	limit := h.cfg.AttachFloorPerMin
 	now := h.now()
@@ -669,8 +669,8 @@ func (h *PeerAuthHandler) StartSweeper() {
 
 // Close stops the sweeper, ends every Watch, drops sessions, and refuses new
 // Attach and handshake-gated RPCs. Safe without StartSweeper. http.Server.Shutdown
-// can then drain the Watch handlers. Closed is FailedPrecondition so Phase 2
-// does not retry it as Unavailable.
+// can then drain the Watch handlers. Closed is FailedPrecondition so the
+// client does not retry it as Unavailable.
 func (h *PeerAuthHandler) Close() {
 	h.closeOnce.Do(func() {
 		h.closed.Store(true)

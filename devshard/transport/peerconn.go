@@ -34,12 +34,13 @@ const (
 	reattachReasonTTL       = "ttl"
 	defaultAttachTTL        = 5 * time.Minute
 	maxAttachTTL            = time.Hour
+	minAttachTTL            = 30 * time.Second
 )
 
 // DefaultAttachTimeout bounds one Attach (first handshake or TTL refresh).
 // Same hang cap as DefaultHeightSeedTimeout; a distinct name so a hung
-// refresh is not confused with a hung seed (finding 12). Finding 4 keeps
-// Watch A while this timeout fires.
+// refresh is not confused with a hung seed. A failed refresh keeps Watch
+// and the live token while this timeout fires.
 const DefaultAttachTimeout = 5 * time.Second
 
 // ErrPeerNotReady is returned when an RPC is issued before Attach has
@@ -77,9 +78,13 @@ type PeerConnConfig struct {
 	Sleep      func(context.Context, time.Duration) error
 	Jitter     func(time.Duration) time.Duration
 	// ReadMaxBytes overrides DefaultRPCReadMaxBytes for handshake and
-	// ordinary unary Connect clients (finding 27). Zero uses 16 KiB.
+	// ordinary unary Connect clients. Zero uses 16 KiB.
 	// Chat and validation GetPayload use DefaultMaxBodySize (10 MiB).
 	ReadMaxBytes int
+	// MinTTL is the floor for AttachResponse.expires_at remaining time.
+	// Zero uses minAttachTTL (30s). Tests that must use a SessionTTL
+	// below that floor (unix-second TTL refresh) set this explicitly.
+	MinTTL time.Duration
 }
 
 func (c PeerConnConfig) version() string {
@@ -99,7 +104,7 @@ func (c PeerConnConfig) childID() string {
 
 // PeerChildID is the adoption / Prometheus identity for a host child
 // (addr@version). BindEscrowHosts and SetPeerConnReady must use the same
-// string (finding 21).
+// string.
 func PeerChildID(hostAddress, routePrefix string) string {
 	hostAddress = strings.TrimSpace(hostAddress)
 	if hostAddress == "" {
@@ -115,9 +120,9 @@ func (c PeerConnConfig) signerAddress() string {
 	return c.Signer.Address()
 }
 
-// registryKey is the PeerConn map identity: host child + dial URL + signer
-// (findings 18, 19). Two escrows with different keys or InferenceUrls must not
-// share a token. Prometheus still uses childID (finding 8).
+// registryKey is the PeerConn map identity: host child + dial URL + signer.
+// Two escrows with different keys or InferenceUrls must not share a token.
+// Prometheus still uses childID.
 func (c PeerConnConfig) registryKey() string {
 	base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
 	return c.childID() + "|" + base + "|" + c.signerAddress()
@@ -274,7 +279,7 @@ func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 	if pc := peerConnRegistry[key]; pc != nil {
 		pc.refs.Add(1)
 		peerConnMu.Unlock()
-		// Never Start'ed. Close cancels the unused context (finding 2).
+		// Never Start'ed. Close cancels the unused context.
 		fresh.Close()
 		return pc
 	}
@@ -357,8 +362,8 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 				newTok, newExp, err := p.attach()
 				p.incAttach(err)
 				if err != nil {
-					// Finding 4: Watch A and token A stay. Retry refresh;
-					// do not drop to unauthenticated.
+					// Watch and token stay. Retry refresh; do not drop to
+					// unauthenticated.
 					refreshBackoff = nextAttachBackoff(refreshBackoff, p.cfg.BackoffMin, p.cfg.BackoffMax)
 					continue
 				}
@@ -374,18 +379,23 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 }
 
 func (p *PeerConn) nextRefreshWait(exp time.Time, refreshBackoff time.Duration) time.Duration {
-	if refreshBackoff > 0 {
-		return p.cfg.jitter(refreshBackoff)
-	}
-	d := p.refreshDelay(exp)
 	min := p.cfg.BackoffMin
 	if min <= 0 {
 		min = defaultAttachBackoffMin
 	}
+	if refreshBackoff > 0 {
+		// The first failed-refresh step is BackoffMin. Do not jitter it
+		// to BackoffMin/2. Larger backoffs still jitter so a shared
+		// timeout does not resynchronize a reconnect storm.
+		if refreshBackoff <= min {
+			return refreshBackoff
+		}
+		return p.cfg.jitter(refreshBackoff)
+	}
+	d := p.refreshDelay(exp)
 	// refreshDelay floors expired / sub-min TTL to BackoffMin so Attach
 	// cannot tight-loop and drop the TokenGrace predecessor. Do not jitter
-	// that floor down to BackoffMin/2 (finding 23). Failed-refresh backoff
-	// above still jitters.
+	// that floor down to BackoffMin/2.
 	if d <= min {
 		return d
 	}
@@ -431,8 +441,8 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 	client := p.authDoor
 	if p.liveSession() {
 		// Live renewal: Watch already proved this peer. Do not pin the
-		// door escrow (finding 3). Ready() also gates expiry (finding 22);
-		// a locally expired token must still refresh on the host path.
+		// door escrow. Ready() also gates expiry; a locally expired
+		// token must still refresh on the host path.
 		client = p.authHost
 	}
 	resp, err := client.Attach(ctx, connect.NewRequest(&rpcpb.AttachRequest{
@@ -453,16 +463,24 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 	return resp.Msg.GetSessionToken(), expires, nil
 }
 
-// attachExpiry accepts expires_at in (now, now+maxAttachTTL]. Zero means
-// the server omitted it and we use defaultAttachTTL. Anything else is a
-// protocol error so a host cannot drive Attach in a tight loop (finding 24).
+func (p *PeerConn) minTTL() time.Duration {
+	if p.cfg.MinTTL > 0 {
+		return p.cfg.MinTTL
+	}
+	return minAttachTTL
+}
+
+// attachExpiry accepts expires_at remaining in [minTTL, maxAttachTTL].
+// Zero means the server omitted it and we use defaultAttachTTL. Anything
+// else is a protocol error so a host cannot drive Attach in a tight loop.
 func (p *PeerConn) attachExpiry(expiresAt int64) (time.Time, error) {
 	now := p.cfg.now()
 	if expiresAt == 0 {
 		return now.Add(defaultAttachTTL), nil
 	}
 	exp := time.Unix(expiresAt, 0)
-	if !exp.After(now) || exp.After(now.Add(maxAttachTTL)) {
+	ttl := exp.Sub(now)
+	if ttl < p.minTTL() || ttl > maxAttachTTL {
 		return time.Time{}, errAttachTTL
 	}
 	return exp, nil
@@ -574,7 +592,7 @@ func (p *PeerConn) tokenUnexpired() bool {
 
 // liveSession is a published token in state ready, ignoring local expiry.
 // Attach renewals use this so a clock-expired token still refreshes on the
-// host path (finding 3).
+// host path.
 func (p *PeerConn) liveSession() bool {
 	return p != nil && p.state.Load() == stateReady && p.tokenPresent()
 }
@@ -583,7 +601,7 @@ func (p *PeerConn) Ready() bool {
 	return p.liveSession() && p.tokenUnexpired()
 }
 
-// metricPeer is the Prometheus / adoption identity: addr@version (finding 8).
+// metricPeer is the Prometheus / adoption identity: addr@version.
 // Distinct from registryKey, which also includes BaseURL and signer.
 func (p *PeerConn) metricPeer() string {
 	if p == nil {
@@ -592,14 +610,79 @@ func (p *PeerConn) metricPeer() string {
 	return p.cfg.childID()
 }
 
+func (p *PeerConn) connID() string {
+	// Instance identity, not registryKey: acquire's unused NewPeerConn
+	// shares the registry key with the winner and Close must not drop
+	// the winner's series.
+	return fmt.Sprintf("%p", p)
+}
+
 func (p *PeerConn) setState(s int32) {
-	p.state.Store(s)
-	name := stateName(s)
-	peer := p.metricPeer()
-	observability.SetPeerSessionState(peer, name)
-	if p.cfg.Adoption != nil {
-		p.cfg.Adoption.SetPeerConnReady(peer, s == stateReady)
+	prev := p.state.Swap(s)
+	p.publishChildState(s)
+	if p.cfg.Adoption == nil {
+		return
 	}
+	wasReady := prev == stateReady
+	nowReady := s == stateReady
+	if wasReady == nowReady {
+		return
+	}
+	p.cfg.Adoption.setConnReady(p.metricPeer(), p.connID(), nowReady)
+}
+
+var (
+	childMetricMu     sync.Mutex
+	childMetricStates = map[string]map[string]int32{} // childID -> connID -> state
+)
+
+func bestChildState(conns map[string]int32) int32 {
+	best := stateUnauthenticated
+	for _, s := range conns {
+		if s == stateReady {
+			return stateReady
+		}
+		if s == stateAttaching {
+			best = stateAttaching
+		}
+	}
+	return best
+}
+
+func (p *PeerConn) publishChildState(s int32) {
+	peer := p.metricPeer()
+	if peer == "" {
+		return
+	}
+	id := p.connID()
+	childMetricMu.Lock()
+	defer childMetricMu.Unlock()
+	conns := childMetricStates[peer]
+	if conns == nil {
+		conns = map[string]int32{}
+		childMetricStates[peer] = conns
+	}
+	conns[id] = s
+	observability.SetPeerSessionState(peer, stateName(bestChildState(conns)))
+}
+
+func (p *PeerConn) dropChildState() {
+	peer := p.metricPeer()
+	id := p.connID()
+	childMetricMu.Lock()
+	defer childMetricMu.Unlock()
+	conns := childMetricStates[peer]
+	if conns == nil {
+		observability.ClearPeerSessionState(peer)
+		return
+	}
+	delete(conns, id)
+	if len(conns) == 0 {
+		delete(childMetricStates, peer)
+		observability.ClearPeerSessionState(peer)
+		return
+	}
+	observability.SetPeerSessionState(peer, stateName(bestChildState(conns)))
 }
 
 func (p *PeerConn) incAttach(err error) {
@@ -633,16 +716,12 @@ func (p *PeerConn) Close() {
 		}
 		p.setState(stateUnauthenticated)
 		p.clearToken()
-		peer := p.metricPeer()
-		observability.ClearPeerSessionState(peer)
-		if p.cfg.Adoption != nil {
-			p.cfg.Adoption.SetPeerConnReady(peer, false)
-		}
+		p.dropChildState()
 	})
 }
 
 // PeerConnRegistered is whether any registry-backed PeerConn is still live
-// for this host+version (any signer / BaseURL). Tests for finding 1.
+// for this host+version (any signer / BaseURL).
 func PeerConnRegistered(hostAddress, version string) bool {
 	if hostAddress == "" {
 		return false
@@ -663,7 +742,7 @@ func PeerConnRegistered(hostAddress, version string) bool {
 
 // Release drops a registry reference and Closes when the last user leaves.
 // Map delete and the last ref drop run under peerConnMu so acquire cannot
-// bump a dying conn (finding 2).
+// bump a dying conn.
 func (p *PeerConn) Release() {
 	if p == nil {
 		return
@@ -709,7 +788,7 @@ func (t *poolWatchRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 		return resp, err
 	}
 	// Connect server-streams typically return after headers. Count Watch
-	// (and any other body) until Close, not RoundTrip return (finding 11).
+	// (and any other body) until Close, not RoundTrip return.
 	if resp.Body == nil || resp.Body == http.NoBody {
 		t.inflight.Add(-1)
 		return resp, nil

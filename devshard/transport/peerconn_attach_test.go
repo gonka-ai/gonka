@@ -124,12 +124,17 @@ func TestPeerConn_TokenRefresh(t *testing.T) {
 	// TTL to 0 on the client and re-attaches immediately, which drops the
 	// grace token on the second replace. Keep TTL in whole seconds so 75%
 	// refresh happens while the predecessor is still inside TokenGrace.
+	// MinTTL is lowered so this 4s session is not rejected by the 30s
+	// production floor; refresh still uses a real timer.
 	srv, auth := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{
 		Heartbeat:  50 * time.Millisecond,
 		SessionTTL: 4 * time.Second,
 		TokenGrace: 5 * time.Second,
 	}, nil)
-	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{WatchStale: time.Minute})
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{
+		WatchStale: time.Minute,
+		MinTTL:     time.Second,
+	})
 	pc.Start()
 	first := append([]byte(nil), waitPeerReady(t, pc)...)
 
@@ -185,6 +190,7 @@ func TestPeerConn_RefreshAttachFailureKeepsWatch(t *testing.T) {
 	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{
 		WatchStale: time.Minute,
 		BackoffMin: 50 * time.Millisecond,
+		MinTTL:     time.Second,
 	})
 	pc.Start()
 	first := append([]byte(nil), waitPeerReady(t, pc)...)

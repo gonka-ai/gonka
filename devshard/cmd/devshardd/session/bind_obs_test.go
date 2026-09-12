@@ -316,7 +316,7 @@ func TestSessionServerExisting_MissDoesNotOccupyRecoveryGate(t *testing.T) {
 
 	mgr.recoveryGate.mu.Lock()
 	defer mgr.recoveryGate.mu.Unlock()
-	require.Empty(t, mgr.recoveryGate.requested, "a miss must not occupy the demand set (finding 57)")
+	require.Empty(t, mgr.recoveryGate.requested, "a miss must not occupy the demand set")
 	require.Zero(t, mgr.recoveryGate.inFlight)
 }
 

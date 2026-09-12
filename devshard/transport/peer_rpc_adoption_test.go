@@ -179,3 +179,29 @@ func TestPeerRPCAdoption_BindThenReadyOneSeries(t *testing.T) {
 		t.Fatal("losing the conn must clear h2 on the same peer id")
 	}
 }
+
+func TestPeerRPCAdoption_TwoConnsSameChildStayH2(t *testing.T) {
+	sink := newAdoptionSink()
+	a := NewPeerRPCAdoption(sink)
+	const peer = "gonka1host@v5"
+
+	a.setConnReady(peer, "conn-a", true)
+	a.BindEscrow("escrow-a", peer)
+	a.setConnReady(peer, "conn-b", true)
+	a.setConnReady(peer, "conn-a", false)
+
+	if !sink.host[peer][PeerRPCPathH2] {
+		t.Fatal("sibling conn must keep h2")
+	}
+	if sink.host[peer][PeerRPCPathJSON] {
+		t.Fatal("json must stay off while any conn is ready")
+	}
+
+	a.setConnReady(peer, "conn-b", false)
+	if !sink.host[peer][PeerRPCPathJSON] {
+		t.Fatal("last conn down with a live bind must flip json")
+	}
+	if sink.host[peer][PeerRPCPathH2] {
+		t.Fatal("last conn down must clear h2")
+	}
+}

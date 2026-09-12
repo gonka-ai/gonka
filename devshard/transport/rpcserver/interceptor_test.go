@@ -140,7 +140,7 @@ func TestHandshakeGate_UnimplementedRejectsBeforeBody(t *testing.T) {
 	}
 	require.Equal(t, http.StatusNotImplemented, post(nil))
 	require.Equal(t, http.StatusNotImplemented, post(bytes.Repeat([]byte{0}, maxRecvBytes+1)),
-		"unimplemented must not reach the Connect read cap (finding 58)")
+		"unimplemented must not reach the Connect read cap")
 }
 
 func TestSessionInterceptor_BindsPeerAndToken(t *testing.T) {
@@ -159,7 +159,7 @@ func TestSessionInterceptor_BindsPeerAndToken(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, signer.Address(), PeerFromContext(ctx))
-	require.Empty(t, TokenFromContext(ctx), "unary RPCs must not stash the token (finding 51)")
+	require.Empty(t, TokenFromContext(ctx), "unary RPCs must not stash the token")
 
 	ctx, err = (&sessionInterceptor{auth: auth}).admit(
 		context.Background(),

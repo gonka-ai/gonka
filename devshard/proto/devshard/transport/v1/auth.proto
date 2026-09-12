@@ -31,7 +31,7 @@ message AttachRequest {
 }
 
 message AttachResponse {
-  // HTTP/2 rides InferenceUrl (phase 6), so there is no endpoint to advertise.
+  // RPC uses InferenceUrl; there is no separate h2 endpoint to advertise.
   reserved 4;
   reserved "h2_endpoint";
 

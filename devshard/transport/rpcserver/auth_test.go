@@ -377,7 +377,7 @@ func TestPeerAuth_RetiredNonceCoversFutureSkew(t *testing.T) {
 	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(req))
 	require.Error(t, err)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err),
-		"a future-skewed Attach must stay retired while its signature still verifies (finding 55)")
+		"a future-skewed Attach must stay retired while its signature still verifies")
 	require.Contains(t, err.Error(), "attach_nonce already in use")
 	_, ok := auth.LookupToken(nonce)
 	require.False(t, ok)
@@ -1273,7 +1273,7 @@ func TestPeerAuth_FailedKnownPeerAttachConsumesFloor(t *testing.T) {
 	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("failed-known-attach-nonce-bb"))
 	require.Error(t, err)
 	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err),
-		"a failed Attach from a live peer must keep its floor charge (finding 54)")
+		"a failed Attach from a live peer must keep its floor charge")
 	requireRetryAfter(t, err)
 	require.Greater(t, spy.n.Load(), int32(0))
 }

@@ -14,7 +14,7 @@ import (
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
-// SessionCore is the transport-neutral surface SessionService needs in phase 1.
+// SessionCore is the transport-neutral surface SessionService needs.
 // *transport.Server implements it.
 type SessionCore interface {
 	ServeGetSignatures(nonce uint64) (map[uint32][]byte, error)
@@ -47,7 +47,7 @@ func (f lookupAdapter) SessionServerExisting(id string) (SessionCore, error) {
 	return srv, nil
 }
 
-// SessionHandler implements SessionService. Phase 1 only implements GetSignatures.
+// SessionHandler implements SessionService. Only GetSignatures is implemented.
 type SessionHandler struct {
 	rpcpbconnect.UnimplementedSessionServiceHandler
 	lookup SessionLookup
@@ -92,7 +92,7 @@ func (h *SessionHandler) GetSignatures(ctx context.Context, req *connect.Request
 }
 
 // mapAllowError is JSON sessionHTTPError on the Connect path. Wire strings are
-// stable (finding 4); codes match the HTTP status class (finding 44).
+// stable; codes match the HTTP status class.
 func mapAllowError(err error) error {
 	if isTransientSessionError(err) {
 		return withDevshardError(hostInitializing(), transport.DevshardErrorInitializing)

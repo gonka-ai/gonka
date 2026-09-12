@@ -17,7 +17,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"common/httpguard"
-	"devshard/heightsync"
 	devtest "devshard/internal/testutil"
 	"devshard/logging"
 	"devshard/observability"
@@ -65,7 +64,10 @@ func TestPeerConn_NextRefreshWaitJitters(t *testing.T) {
 	base := pc.refreshDelay(now.Add(4 * time.Second))
 	require.Equal(t, 3*time.Second, base)
 	require.Equal(t, base/2, pc.nextRefreshWait(now.Add(4*time.Second), 0))
-	require.Equal(t, 25*time.Millisecond, pc.nextRefreshWait(now.Add(4*time.Second), 50*time.Millisecond))
+	require.Equal(t, 50*time.Millisecond, pc.nextRefreshWait(now.Add(4*time.Second), 50*time.Millisecond),
+		"failed-refresh floor must not jitter")
+	require.Equal(t, 50*time.Millisecond, pc.nextRefreshWait(now.Add(4*time.Second), 100*time.Millisecond),
+		"above-floor failed-refresh still jitters")
 	require.Equal(t, 50*time.Millisecond, pc.nextRefreshWait(now, 0), "expired-token floor must not jitter")
 	require.Equal(t, 50*time.Millisecond, pc.nextRefreshWait(now.Add(40*time.Millisecond), 0))
 
@@ -111,6 +113,70 @@ func TestPeerConn_MetricsAreVersioned(t *testing.T) {
 	v5.Close()
 	require.Equal(t, 1.0, testutil.ToFloat64(observability.PeerSessionStateGauge(host+"@v6", observability.PeerSessionUnauthenticated)),
 		"closing one child must not ClearPeerSessionState the other")
+}
+
+func TestPeerConn_TwoSignersSameChildKeepReadyMetric(t *testing.T) {
+	host := "gonka1metricshare"
+	a := NewPeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: host,
+		Signer:      devtest.MustGenerateKey(t),
+		DirectMux:   true,
+	})
+	b := NewPeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: host,
+		Signer:      devtest.MustGenerateKey(t),
+		DirectMux:   true,
+	})
+	t.Cleanup(a.Close)
+	t.Cleanup(b.Close)
+
+	child := host + "@direct"
+	a.setState(stateReady)
+	b.setState(stateReady)
+	require.Equal(t, 1.0, testutil.ToFloat64(observability.PeerSessionStateGauge(child, observability.PeerSessionReady)))
+
+	a.setState(stateAttaching)
+	require.Equal(t, 1.0, testutil.ToFloat64(observability.PeerSessionStateGauge(child, observability.PeerSessionReady)),
+		"sibling ready conn must keep the child gauge ready")
+	require.Equal(t, 0.0, testutil.ToFloat64(observability.PeerSessionStateGauge(child, observability.PeerSessionAttaching)))
+
+	a.Close()
+	require.Equal(t, 1.0, testutil.ToFloat64(observability.PeerSessionStateGauge(child, observability.PeerSessionReady)),
+		"closing one signer must not ClearPeerSessionState the other")
+}
+
+func TestPeerConn_TwoSignersAdoptionStaysH2(t *testing.T) {
+	sink := newAdoptionSink()
+	adoption := NewPeerRPCAdoption(sink)
+	host := "gonka1adoptsiblings"
+	child := host + "@direct"
+	a := NewPeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: host,
+		Signer:      devtest.MustGenerateKey(t),
+		DirectMux:   true,
+		Adoption:    adoption,
+	})
+	b := NewPeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: host,
+		Signer:      devtest.MustGenerateKey(t),
+		DirectMux:   true,
+		Adoption:    adoption,
+	})
+	t.Cleanup(a.Close)
+	t.Cleanup(b.Close)
+
+	a.setState(stateReady)
+	b.setState(stateReady)
+	require.True(t, sink.host[child][PeerRPCPathH2])
+
+	a.Close()
+	require.True(t, sink.host[child][PeerRPCPathH2],
+		"closing one signer must not drop the sibling h2 bit")
+	require.False(t, sink.host[child][PeerRPCPathJSON])
 }
 
 func TestPeerChildID(t *testing.T) {
@@ -177,18 +243,32 @@ func TestPeerConn_AttachExpiry(t *testing.T) {
 	require.Equal(t, now.Add(defaultAttachTTL), got)
 
 	_, err = pc.attachExpiry(now.Unix())
-	require.ErrorIs(t, err, errAttachTTL, "expires_at == now is not in (now, now+max]")
+	require.ErrorIs(t, err, errAttachTTL, "expires_at == now is not in [now+min, now+max]")
 	_, err = pc.attachExpiry(now.Unix() - 1)
 	require.ErrorIs(t, err, errAttachTTL)
+	_, err = pc.attachExpiry(now.Unix() + 1)
+	require.ErrorIs(t, err, errAttachTTL, "TTL below MinTTL")
 	_, err = pc.attachExpiry(now.Add(maxAttachTTL + time.Second).Unix())
 	require.ErrorIs(t, err, errAttachTTL)
 
-	got, err = pc.attachExpiry(now.Unix() + 1)
+	got, err = pc.attachExpiry(now.Add(minAttachTTL).Unix())
 	require.NoError(t, err)
-	require.Equal(t, time.Unix(now.Unix()+1, 0), got)
+	require.Equal(t, now.Add(minAttachTTL), got)
 	got, err = pc.attachExpiry(now.Add(maxAttachTTL).Unix())
 	require.NoError(t, err)
 	require.Equal(t, now.Add(maxAttachTTL), got)
+
+	short := NewPeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: "gonka1ttlshort",
+		DirectMux:   true,
+		Now:         func() time.Time { return now },
+		MinTTL:      time.Second,
+	})
+	t.Cleanup(short.Close)
+	got, err = short.attachExpiry(now.Unix() + 1)
+	require.NoError(t, err)
+	require.Equal(t, time.Unix(now.Unix()+1, 0), got)
 }
 
 func TestPeerConn_BackoffShape(t *testing.T) {
@@ -290,9 +370,24 @@ func TestSelectTransport_ChatWithSignaturesStillRPC(t *testing.T) {
 	require.True(t, ok)
 	t.Cleanup(rpc.Close)
 	require.True(t, rpc.Uses(EndpointSignatures))
-	require.True(t, rpc.Uses(EndpointChat), "unknown-to-Connect names stay in the set")
+	require.True(t, rpc.endpoints.Has(EndpointChat), "unknown-to-Connect names stay in the set")
+	require.False(t, rpc.Uses(EndpointChat), "chat is opted in but not on Connect")
 	require.True(t, ParseRPCEndpoints(EndpointChat).Has(EndpointChat))
 	require.False(t, ParseRPCEndpoints(EndpointChat).NeedsAttach())
+}
+
+func TestRPCClient_UsesOnlyWiredMethods(t *testing.T) {
+	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", devtest.MustGenerateKey(t))
+	rpc := SelectTransport(httpClient, "gonka1uses", ParseRPCEndpoints(
+		EndpointSignatures+","+EndpointGossip+","+EndpointRepair+","+EndpointChat,
+	), nil).(*RPCClient)
+	t.Cleanup(rpc.Close)
+	require.True(t, rpc.Uses(EndpointSignatures))
+	require.True(t, rpc.endpoints.Has(EndpointGossip))
+	require.False(t, rpc.Uses(EndpointGossip))
+	require.True(t, rpc.endpoints.Has(EndpointRepair))
+	require.False(t, rpc.Uses(EndpointRepair))
+	require.False(t, rpc.Uses(EndpointChat))
 }
 
 func TestSelectTransport_EmptyHostAddressKeepsHTTP(t *testing.T) {
@@ -504,12 +599,11 @@ func TestRPCClient_CloneWithSignerKeepsConn(t *testing.T) {
 	require.Same(t, rpc.conn, clone.conn)
 	require.False(t, clone.ownsConn)
 	require.True(t, clone.Uses(EndpointSignatures))
-	require.True(t, clone.Uses(EndpointRepair))
+	require.True(t, clone.endpoints.Has(EndpointRepair))
+	require.False(t, clone.Uses(EndpointRepair), "repair is opted in but not on Connect")
 	clone.Close()
 	require.True(t, PeerConnRegistered(host, peerConnConfigFromClient(httpClient, host, nil).version()),
 		"signer clone Close must not Release the parent's PeerConn")
-	_, err := clone.HeightSyncRepair(context.Background(), &heightsync.RepairRequest{})
-	require.ErrorContains(t, err, "not served until phase 3")
 }
 
 func TestSelectTransport_DifferentSignersDoNotSharePeerConn(t *testing.T) {

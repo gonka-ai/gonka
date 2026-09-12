@@ -82,9 +82,9 @@ func isContextFinished(err error) bool {
 // IsRetryableNonInference reports a 429/503, Connect Unavailable /
 // ResourceExhausted, or transient dial that the non-inference retry loop
 // (and the height-sync seed) should retry. Connect Unauthenticated is not
-// retryable here (finding 10: rpcRetry allows one extra attempt). Context
-// cancellation and deadline expiry are not retryable. Catalog 503s are
-// retryable because they are 503s, not because of their body.
+// retryable here; rpcRetry allows one extra attempt. Context cancellation
+// and deadline expiry are not retryable. Catalog 503s are retryable
+// because they are 503s, not because of their body.
 func IsRetryableNonInference(err error) bool {
 	if err == nil {
 		return false

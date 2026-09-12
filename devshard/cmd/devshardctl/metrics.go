@@ -71,7 +71,7 @@ type DevshardMetrics struct {
 	hostPingTicksSkipped    prometheus.Counter
 	hostPingParticipantInfo *prometheus.GaugeVec
 
-	// Finding 26: escrow work on h2 vs JSON, and which hosts have a PeerConn.
+	// Escrow work on h2 vs JSON, and which hosts have a PeerConn.
 	gatewayEscrowSessions *prometheus.CounterVec
 	gatewayHostRPC        *prometheus.GaugeVec
 	peerRPCAdoption       *transport.PeerRPCAdoption
@@ -910,7 +910,7 @@ func (m *DevshardMetrics) IncHostPingTicksSkipped() {
 	m.hostPingTicksSkipped.Inc()
 }
 
-// IncEscrowSession is the finding-26 escrow-work counter (path=h2|json).
+// IncEscrowSession counts escrow work on h2 vs JSON.
 func (m *DevshardMetrics) IncEscrowSession(path string) {
 	if m == nil || m.gatewayEscrowSessions == nil {
 		return
@@ -923,7 +923,7 @@ func (m *DevshardMetrics) IncEscrowSession(path string) {
 	m.gatewayEscrowSessions.WithLabelValues(path).Inc()
 }
 
-// SetHostRPC is the finding-26 host-slot gauge (mode=h2|json).
+// SetHostRPC records whether this host is reached over h2 or JSON.
 func (m *DevshardMetrics) SetHostRPC(peer, mode string, on bool) {
 	if m == nil || m.gatewayHostRPC == nil || peer == "" {
 		return
@@ -941,7 +941,7 @@ func (m *DevshardMetrics) SetHostRPC(peer, mode string, on bool) {
 }
 
 // DeleteHostRPC drops a host_rpc series so retired peers do not occupy
-// cardinality after the last escrow bind (finding 49).
+// cardinality after the last escrow bind.
 func (m *DevshardMetrics) DeleteHostRPC(peer, mode string) {
 	if m == nil || m.gatewayHostRPC == nil || peer == "" {
 		return
@@ -954,7 +954,7 @@ func (m *DevshardMetrics) DeleteHostRPC(peer, mode string) {
 	m.gatewayHostRPC.DeleteLabelValues(peer, mode)
 }
 
-// PeerRPCAdoption is the gateway-side tracker Phase 2 PeerConn should call.
+// PeerRPCAdoption is the gateway-side tracker PeerConn should call.
 func (m *DevshardMetrics) PeerRPCAdoption() *transport.PeerRPCAdoption {
 	if m == nil {
 		return nil
