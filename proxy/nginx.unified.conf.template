@@ -7,6 +7,7 @@ http {
     ${LIMIT_REQ_ZONE_EXEMPT}
     ${LIMIT_REQ_ZONE_GONKA_API}
     ${LIMIT_REQ_ZONE_DEVSHARD_OBS}
+    ${LIMIT_REQ_ZONE_TRAINSHARD}
     ${LIMIT_REQ_ZONE_METRICS}
     ${LIMIT_REQ_ZONE_CHAIN_RPC}
     ${LIMIT_REQ_ZONE_CHAIN_API}
@@ -17,6 +18,7 @@ http {
     ${LIMIT_CONN_ZONE_GONKA_API}
     ${LIMIT_CONN_ZONE_METRICS}
     ${LIMIT_CONN_ZONE_EXEMPT}
+    ${LIMIT_CONN_ZONE_TRAINSHARD}
     ${LIMIT_CONN_ZONE_CHAIN_RPC}
     ${LIMIT_CONN_ZONE_CHAIN_API}
     ${LIMIT_CONN_ZONE_CHAIN_GRPC}
@@ -103,6 +105,9 @@ http {
 
     ${EDGE_API_UPSTREAM}
 
+    # Trainshard host upstream - only included if TRAINSHARD_SERVICE_NAME is set
+    ${TRAINSHARD_UPSTREAM}
+
     # Versiond upstream - only included if VERSIOND_SERVICE_NAME is set.
     # Routes /devshard/<version>/* to versiond which forwards to the matching
     # devshard binary. Observability paths under /devshard/<version>/… are
@@ -161,6 +166,9 @@ http {
 
         # Versioned devshard binaries (only when VERSIOND_SERVICE_NAME is set)
         ${DEVSHARD_VERSIOND_LOCATION}
+
+        # Training host API (only when TRAINSHARD_SERVICE_NAME is set)
+        ${TRAINSHARD_LOCATION}
 
         # Jaeger UI (only when JAEGER_ENABLED is set)
         ${JAEGER_LOCATION}

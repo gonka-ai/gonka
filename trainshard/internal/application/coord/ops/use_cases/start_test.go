@@ -1,0 +1,256 @@
+package usecases_test
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	usecases "trainshard/internal/application/coord/ops/use_cases"
+	"trainshard/internal/domain/run"
+	"trainshard/internal/domain/shard"
+	"trainshard/internal/domain/shared/vo"
+)
+
+const shardID = vo.ShardID(7)
+
+var (
+	hostA     = vo.Participant("gonka1hosta")
+	hostB     = vo.Participant("gonka1hostb")
+	nodeA     = vo.NodeRef{Participant: hostA, NodeID: "node-a"}
+	nodeB     = vo.NodeRef{Participant: hostB, NodeID: "node-b"}
+	runImage  = vo.ImageDigest("run@sha256:" + strings.Repeat("a", 64))
+	otherRun  = vo.ImageDigest("other@sha256:" + strings.Repeat("b", 64))
+	baseImage = vo.ImageDigest("base@sha256:" + strings.Repeat("c", 64))
+)
+
+type chainStub struct{ settled bool }
+
+func (chainStub) Height(context.Context) (vo.Height, error) { return 500, nil }
+
+func (c chainStub) Shard(_ context.Context, id vo.ShardID) (shard.Shard, bool, error) {
+	status := shard.StatusActive
+	if c.settled {
+		status = shard.StatusSettled
+	}
+	return shard.Shard{
+		ID:              id,
+		Status:          status,
+		BaseImage:       baseImage,
+		ExpiresAtHeight: 1000,
+		Nodes:           []shard.ReservedNode{{Ref: nodeA}, {Ref: nodeB}},
+	}, true, nil
+}
+
+func (chainStub) Reservation(context.Context, vo.NodeRef) (vo.ShardID, bool, error) {
+	return shardID, true, nil
+}
+
+func (chainStub) Hardware(context.Context, vo.NodeRef) (vo.GPUInventory, error) {
+	return vo.GPUInventory{}, nil
+}
+
+func (chainStub) ActiveShards(context.Context) ([]shard.Shard, error) { return nil, nil }
+
+type hostsStub struct {
+	mu         sync.Mutex
+	images     map[vo.NodeRef]vo.ImageDigest
+	finished   map[vo.NodeRef]bool
+	unprepared map[vo.NodeRef]bool
+	offMesh    map[vo.NodeRef]bool
+	silent     map[vo.Participant]bool
+	started    []vo.NodeRef
+}
+
+func (h *hostsStub) Deploy(context.Context, vo.Participant, run.DeployCall) ([]run.NodeResult, error) {
+	return nil, nil
+}
+
+func (h *hostsStub) Stop(context.Context, vo.Participant, run.StopCall) ([]run.NodeResult, error) {
+	return nil, nil
+}
+
+func (h *hostsStub) Status(_ context.Context, participant vo.Participant, call run.HostCommand) ([]run.NodeStatus, error) {
+	if h.silent[participant] {
+		return nil, errors.New("host did not answer")
+	}
+	statuses := make([]run.NodeStatus, 0, len(call.Nodes))
+	for _, node := range call.Nodes {
+		held, found := h.images[node]
+		state := vo.ContainerAbsent
+		switch {
+		case h.finished[node]:
+			state = vo.ContainerExited
+		case found:
+			state = vo.ContainerCreated
+		}
+		statuses = append(statuses, run.NodeStatus{
+			NodeResult: run.NodeResult{Node: node, State: state, Image: held},
+			Prepared:   !h.unprepared[node],
+			MeshUp:     !h.offMesh[node],
+		})
+	}
+	return statuses, nil
+}
+
+func (h *hostsStub) Start(_ context.Context, _ vo.Participant, call run.HostCommand) ([]run.NodeResult, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	results := make([]run.NodeResult, 0, len(call.Nodes))
+	for _, node := range call.Nodes {
+		h.started = append(h.started, node)
+		results = append(results, run.NodeResult{Node: node, State: vo.ContainerRunning, Image: h.images[node]})
+	}
+	return results, nil
+}
+
+func runCommand() usecases.RunCommand {
+	return usecases.RunCommand{Shard: shardID, RequestID: "req-1", Deadline: time.Now().Add(time.Minute)}
+}
+
+func TestStartRefusesTheWholeRunWhenHostsHoldDifferentImages(t *testing.T) {
+
+	hosts := &hostsStub{images: map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: otherRun}}
+
+	_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
+
+	if !errors.Is(err, run.ErrImagesDiffer) {
+		t.Fatalf("got %v, want %v", err, run.ErrImagesDiffer)
+	}
+	if len(hosts.started) != 0 {
+		t.Fatalf("a refused run must start nothing, got %v", hosts.started)
+	}
+}
+
+func TestStartAcceptsARunWhoseHostsAgreeOnTheImage(t *testing.T) {
+
+	hosts := &hostsStub{images: map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage}}
+
+	results, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
+
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if len(results) != 2 || len(hosts.started) != 2 {
+		t.Fatalf("got %+v started %v, want both nodes started", results, hosts.started)
+	}
+}
+
+func TestStartRefusesTheWholeRunWhenAHostDoesNotSayWhatItHolds(t *testing.T) {
+
+	hosts := &hostsStub{
+		images: map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage},
+		silent: map[vo.Participant]bool{hostB: true},
+	}
+
+	_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
+
+	if !errors.Is(err, run.ErrStatusUnknown) {
+		t.Fatalf("got %v, want the run refused rather than started on an unchecked image", err)
+	}
+	if len(hosts.started) != 0 {
+		t.Fatalf("a refused run must start nothing, got %v", hosts.started)
+	}
+}
+
+func TestOpsRefuseAShardTheChainHasAlreadyClosed(t *testing.T) {
+	chain, hosts := chainStub{settled: true}, &hostsStub{images: map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage}}
+	cases := map[string]func() ([]run.NodeResult, error){
+		"deploy": func() ([]run.NodeResult, error) {
+			cmd := usecases.DeployCommand{RunCommand: runCommand()}
+			return usecases.NewDeployUseCase(chain, hosts).Execute(context.Background(), cmd)
+		},
+		"start": func() ([]run.NodeResult, error) {
+			return usecases.NewStartUseCase(chain, hosts).Execute(context.Background(), runCommand())
+		},
+		"stop": func() ([]run.NodeResult, error) {
+			cmd := usecases.StopCommand{RunCommand: runCommand()}
+			return usecases.NewStopUseCase(chain, hosts).Execute(context.Background(), cmd)
+		},
+	}
+
+	for name, act := range cases {
+		t.Run(name, func(t *testing.T) {
+
+			_, err := act()
+
+			if !errors.Is(err, shard.ErrShardClosed) {
+				t.Fatalf("got %v, want %v", err, shard.ErrShardClosed)
+			}
+		})
+	}
+}
+
+func TestStartRefusesARunWhoseMeshIsNotUpEverywhere(t *testing.T) {
+	images := map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage}
+	cases := map[string]struct {
+		hosts *hostsStub
+		want  error
+	}{
+		"a node that lost its tunnel": {
+			hosts: &hostsStub{images: images, offMesh: map[vo.NodeRef]bool{nodeB: true}},
+			want:  run.ErrMeshDown,
+		},
+		"a node that is no longer prepared": {
+			hosts: &hostsStub{images: images, unprepared: map[vo.NodeRef]bool{nodeB: true}},
+			want:  run.ErrNodeNotPrepared,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+
+			_, err := usecases.NewStartUseCase(chainStub{}, tc.hosts).Execute(context.Background(), runCommand())
+
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("got %v, want the run refused rather than started off the mesh", err)
+			}
+			if len(tc.hosts.started) != 0 {
+				t.Fatalf("a refused run must start nothing, got %v", tc.hosts.started)
+			}
+		})
+	}
+}
+
+func TestStartRefusesARunWhoseContainerHasAlreadyRun(t *testing.T) {
+
+	hosts := &hostsStub{
+		images:   map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage},
+		finished: map[vo.NodeRef]bool{nodeB: true},
+	}
+
+	_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
+
+	if !errors.Is(err, run.ErrContainerFinished) {
+		t.Fatalf("got %v, want a run that cannot come up whole refused before anything starts", err)
+	}
+	if len(hosts.started) != 0 {
+		t.Fatalf("a refused run must start nothing, got %v", hosts.started)
+	}
+}
+
+func TestStartRefusesTheWholeRunRatherThanLeaveHalfOfItWaiting(t *testing.T) {
+	cases := map[string]map[vo.NodeRef]vo.ImageDigest{
+		"a node that was never deployed": {nodeA: runImage},
+		"a run with no containers":       {},
+	}
+
+	for name, images := range cases {
+		t.Run(name, func(t *testing.T) {
+
+			hosts := &hostsStub{images: images}
+
+			_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
+
+			if err == nil {
+				t.Fatal("a run cannot start on some of its nodes and wait for the rest")
+			}
+			if len(hosts.started) != 0 {
+				t.Fatalf("a refused run must start nothing, got %v", hosts.started)
+			}
+		})
+	}
+}
