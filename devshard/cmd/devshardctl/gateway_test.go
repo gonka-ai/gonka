@@ -238,7 +238,9 @@ func TestEnqueueSettlementWaitsForActiveRequests(t *testing.T) {
 	// One request in flight → settlement must NOT fire yet, but escrow is
 	// deactivated and marked pending (in-memory + persisted).
 	g.reserveRuntime(rt, 1)
-	g.deactivateAndSettleDevshardByID("12", "low_balance")
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "low_balance", g.settings)
+	require.NoError(t, err)
+	require.True(t, isTakenOutOfService, "an active escrow was not reported as taken out of service")
 
 	require.False(t, rt.active.Load())
 	require.True(t, rt.settlementPending.Load())
@@ -265,7 +267,9 @@ func TestEnqueueSettlementSettlesImmediatelyWhenDrained(t *testing.T) {
 	g, _, settled := gatewayTestDepletionGateway(t, rt)
 
 	// No active requests → settle right away.
-	g.deactivateAndSettleDevshardByID("12", "low_balance")
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "low_balance", g.settings)
+	require.NoError(t, err)
+	require.True(t, isTakenOutOfService, "an active escrow was not reported as taken out of service")
 
 	require.Eventually(t, func() bool {
 		return settled.Load() == 1 && !rt.active.Load()
