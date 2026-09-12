@@ -16,6 +16,7 @@
           "--tool-call-parser", "kimi_k2",
           "--reasoning-parser", "kimi_k2",
           "--attention-backend", "FLASHMLA",
+          "--kv-cache-dtype", "fp8",
           "--gpu-memory-utilization", "0.90",
           "--max-model-len", "240000"
         ]
