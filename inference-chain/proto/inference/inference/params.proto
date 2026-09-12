@@ -4,6 +4,7 @@ package inference.inference;
 import "amino/amino.proto";
 import "gogoproto/gogo.proto";
 import "cosmos_proto/cosmos.proto";
+import "inference/inference/trainshard.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -33,6 +34,7 @@ message Params {
   // params under field 16.
   DelegationParams delegation_params = 16;
   MaintenanceParams maintenance_params = 17;
+  TrainingParams training_params = 18;
 }
 
 // MaintenanceParams defines the governance-controlled parameters for participant maintenance windows.

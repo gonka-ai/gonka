@@ -434,11 +434,20 @@ func (am AppModule) evaluateConfirmation(
 	preserved := preservedWeightByParticipant(activeParticipants, &preservedSnapshot, presentScales)
 	totalExpected := weightByParticipant(activeParticipants, presentScales)
 
-	// Maintenance-covered participants are expected to be offline: skip both the
-	// ConfirmationWeight haircut and the CPoC ratio write so absence is not
-	// punished via rewards or INACTIVE status.
-	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
+	// remove reserved nodes' expected confirmation weight so they do not drag down the host ratio
+	coefficients := types.ConfirmationWeightCoefficients(presentScales)
+	for host, nodes := range am.keeper.CollectEpochReservedNodeWeightsAtHeight(ctx, event.EpochIndex, event.TriggerHeight, keeper.ReservationScopeShield) {
+		modelNodes := make(map[string][]*types.MLNodeInfo)
+		for _, n := range nodes {
+			modelNodes[n.ModelId] = append(modelNodes[n.ModelId], &types.MLNodeInfo{NodeId: n.NodeId, PocWeight: n.PocWeight})
+		}
+		reservedExpected := types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
+		if totalExpected[host] -= reservedExpected; totalExpected[host] < 0 {
+			totalExpected[host] = 0
+		}
+	}
 
+	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
 	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, maintenanceAddrs)
 	if updated {
 		am.LogInfo("evaluateConfirmation: confirmation weights lowered", types.PoC,
@@ -446,10 +455,25 @@ func (am AppModule) evaluateConfirmation(
 			"triggerHeight", event.TriggerHeight)
 	}
 
+	// Skip CPoC ratio assignment for maintenance-covered participants — they
+	// are expected to be offline and must not be marked INACTIVE due to
+	// maintenance-covered absence from CPoC duties.
+	reservedView := am.keeper.BuildEpochReservationView(ctx, event.EpochIndex)
+
 	for _, vw := range epochGroupData.ValidationWeights {
 		addr := vw.MemberAddress
 		ratio, ok := ratios[addr]
 		if !ok {
+			continue
+		}
+		if _, inMaint := maintenanceAddrs[addr]; inMaint {
+			am.LogDebug("Skipping CPoC ratio for maintenance-covered participant", types.PoC,
+				"address", addr)
+			continue
+		}
+		if reservedView.FullyReservedAt(addr, event.TriggerHeight) {
+			am.LogDebug("Skipping CPoC ratio for host fully reserved at trigger height", types.PoC,
+				"address", addr, "triggerHeight", event.TriggerHeight)
 			continue
 		}
 		participant, found := am.keeper.GetParticipant(ctx, addr)

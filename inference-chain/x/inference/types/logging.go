@@ -29,6 +29,7 @@ const (
 	Allocation
 	PayloadStorage
 	Maintenance
+	Training
 	Testing = 255
 )
 
@@ -88,6 +89,8 @@ func (s SubSystem) String() string {
 		return "PayloadStorage"
 	case Maintenance:
 		return "Maintenance"
+	case Training:
+		return "Training"
 	default:
 		return "Unknown"
 	}

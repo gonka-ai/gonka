@@ -27,6 +27,10 @@ type (
 		checker types.MaintenanceChecker
 	}
 
+	trainReservationCheckerRef struct {
+		checker types.TrainReservationChecker
+	}
+
 	// UnbondingIndexes groups the secondary indexes for the UnbondingCollateral map
 	UnbondingIndexes struct {
 		// ByParticipant indexes primary keys by participant address, to allow queries by participant
@@ -46,6 +50,7 @@ type (
 		bookkeepingBankKeeper types.BookkeepingBankKeeper
 		collateralProviderRef *collateralProviderRef
 		maintenanceRef        *maintenanceCheckerRef
+		trainReservationRef   *trainReservationCheckerRef
 		params                collections.Item[types.Params]
 		CollateralMap         collections.Map[sdk.AccAddress, sdk.Coin]
 		Schema                collections.Schema
@@ -94,6 +99,7 @@ func NewKeeper(
 		bookkeepingBankKeeper: bookkeepingBankKeeper,
 		collateralProviderRef: &collateralProviderRef{},
 		maintenanceRef:        &maintenanceCheckerRef{},
+		trainReservationRef:   &trainReservationCheckerRef{},
 		params:                collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		CollateralMap:         collections.NewMap(sb, types.CollateralKey, "collateral", sdk.AccAddressKey, codec.CollValue[sdk.Coin](cdc)),
 		CurrentEpoch:          collections.NewItem(sb, types.CurrentEpochKey, "current_epoch", collections.Uint64Value),
@@ -145,6 +151,17 @@ func (k Keeper) IsParticipantInActiveMaintenance(ctx context.Context, participan
 		return false
 	}
 	return k.maintenanceRef.checker.IsParticipantInActiveMaintenance(ctx, participant)
+}
+
+func (k *Keeper) SetTrainReservationChecker(checker types.TrainReservationChecker) {
+	k.trainReservationRef.checker = checker
+}
+
+func (k Keeper) HasActiveTrainReservation(ctx context.Context, participant string) bool {
+	if k.trainReservationRef.checker == nil {
+		return false
+	}
+	return k.trainReservationRef.checker.HasActiveTrainReservation(ctx, participant)
 }
 
 // GetAuthority returns the module's authority.
@@ -326,6 +343,20 @@ func (k Keeper) ProcessUnbondingQueue(ctx sdk.Context, completionEpoch uint64) e
 			k.Logger().Error("failed to parse participant address during unbonding processing",
 				"participant", entry.Participant, "error", err)
 			continue // Skip this entry
+		}
+
+		// defer release while a training reservation is active
+		if k.HasActiveTrainReservation(ctx, entry.Participant) {
+			if err := k.AddUnbondingCollateral(ctx, participantAddr, completionEpoch+1, entry.Amount); err != nil {
+				return err
+			}
+			ctx.EventManager().EmitEvent(sdk.NewEvent(
+				types.EventTypeDeferWithdrawal,
+				sdk.NewAttribute(types.AttributeKeyParticipant, entry.Participant),
+				sdk.NewAttribute(types.AttributeKeyAmount, entry.Amount.String()),
+				sdk.NewAttribute(types.AttributeKeyCompletionEpoch, strconv.FormatUint(completionEpoch+1, 10)),
+			))
+			continue
 		}
 
 		// Send funds from the module account back to the participant
