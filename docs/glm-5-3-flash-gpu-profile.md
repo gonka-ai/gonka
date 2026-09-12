@@ -159,13 +159,17 @@ measured; the inference gate is the corroborating signal.
 
 ```
 ghcr.io/gonka-ai/mlnode:3.0.17-vllm-0.28.0
-ghcr.io/gonka-ai/mlnode@sha256:d39b7f2da3242239d5e2fb7e9a1533c4d5e025b919803f4bcd09ef78d6865d86
+ghcr.io/gonka-ai/mlnode@sha256:6772abdf736bbe8cad27d8c305e1fa32b54c82f783286d405fc5171d06419081
 ```
 
 Built on the vLLM base `ghcr.io/gonka-ai/vllm:v0.28.0-glm53-poc-cu13-hopper-blackwell`, which
 is itself an overlay on `vllm/vllm-openai:glm53-flash`. The image carries vLLM
 `0.28.0.dev0+glm53.gonka.sampler1`, gonka-poc `0.1.4`, FlashInfer `0.6.18` with the `+cu130`
 JIT cache, and torch `2.13.0+cu130`.
+
+`Glm5NextProcessor.from_pretrained` read `processor_config.json` with a bare `open()`, so a
+launch with the Hugging Face id — the path MLNode takes — failed before the engine started.
+Fixed in gonka-ai/vllm#108 and included in the image above.
 
 **Pin the upstream base by digest.** `vllm/vllm-openai:glm53-flash` is a mutable tag and moved
 from `0.1.dev20051+g487ecf187` to `0.28.1rc1.dev580+g385dce36b` within two days, breaking the
