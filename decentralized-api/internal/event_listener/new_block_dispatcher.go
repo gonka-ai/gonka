@@ -31,6 +31,7 @@ import (
 type ChainStateClient interface {
 	EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error)
 	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
+	DevshardApprovedVersions(ctx context.Context, req *types.QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*types.QueryDevshardApprovedVersionsResponse, error)
 	ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeedsRequest, opts ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error)
 }
 
@@ -88,6 +89,8 @@ type OnNewBlockDispatcher struct {
 	seedAttemptHeight  int64
 	seedConfirmedEpoch uint64
 	seedEnsureInFlight atomic.Bool
+
+	applyFeeTree func(*types.FeeParams)
 }
 
 const seedRetryCooldownBlocks int64 = 2
@@ -174,6 +177,9 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 		configManager,
 	)
 	dispatcher.epochGroupDataCache = epochGroupDataCache
+	if a, ok := cosmosClient.(interface{ ApplyFeeTree(*types.FeeParams) }); ok {
+		dispatcher.applyFeeTree = a.ApplyFeeTree
+	}
 	return dispatcher
 }
 
@@ -257,11 +263,24 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 				_ = d.configManager.SetPoCParams(apiconfig.NewPoCParamsCache(params.Params.PocParams.GetModelConfigs()))
 			}
 
-			// Update devshard versions cache from chain params
 			if params.Params.DevshardEscrowParams != nil {
-				d.configManager.SetDevshardVersions(
-					apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams),
-				)
+				cache := apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams, nil)
+				devshardVersions, verr := d.queryClient.DevshardApprovedVersions(ctx, &types.QueryDevshardApprovedVersionsRequest{})
+				if verr != nil || devshardVersions == nil {
+					logging.Error("Failed to get approved devshard versions, keeping last known list", types.Config, "error", verr)
+					cache.Versions = d.configManager.GetDevshardVersions().Versions
+				} else {
+					cache = apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams, devshardVersions.Versions)
+				}
+				d.configManager.SetDevshardVersions(cache)
+			}
+
+			// Reuse this Params response for the fee-tree cache. Do not issue a
+			// second RPC (and never context.Background()): a failed query leaves
+			// the last known-good cache in place. A successful response with
+			// nil FeeParams must still apply so Load(nil) clears stale pricing.
+			if d.applyFeeTree != nil {
+				d.applyFeeTree(params.Params.FeeParams)
 			}
 		}
 	}
@@ -799,10 +818,33 @@ func parseNewBlockInfo(event *chainevents.JSONRPCResponse) (*chainphase.BlockInf
 		return nil, err
 	}
 
-	return &chainphase.BlockInfo{
+	info := &chainphase.BlockInfo{
 		Height: blockHeight,
 		Hash:   blockHash,
-	}, nil
+	}
+	if block, ok := event.Result.Data.Value["block"].(map[string]interface{}); ok {
+		if header, ok := block["header"].(map[string]interface{}); ok {
+			if chainID, ok := header["chain_id"].(string); ok {
+				info.ChainID = chainID
+			}
+			info.Time = parseBlockHeaderTime(header["time"])
+		}
+	}
+	return info, nil
+}
+
+func parseBlockHeaderTime(v interface{}) time.Time {
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return time.Time{}
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return ts
+	}
+	if ts, err := time.Parse(time.RFC3339, s); err == nil {
+		return ts
+	}
+	return time.Time{}
 }
 
 // Helper functions moved from event_listener.go for parsing block data

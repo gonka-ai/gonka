@@ -22,12 +22,22 @@ class MultiModelPoCTests : TestermintTest() {
                         PoCModelConfig(
                             modelId = defaultModel,
                             seqLen = 256L,
-                            weightScaleFactor = Decimal.fromDouble(coeffA),
+                            dynamicCoefficient = DynamicCoefficientModelConfig(
+                                coeffMin = Decimal.fromDouble(coeffA),
+                                coeffMax = Decimal.fromDouble(coeffA),
+                                relativeDifficulty = Decimal.fromDouble(1.0),
+                                targetShareBps = 5000,
+                            ),
                         ),
                         PoCModelConfig(
                             modelId = secondModel,
                             seqLen = 256L,
-                            weightScaleFactor = Decimal.fromDouble(coeffB),
+                            dynamicCoefficient = DynamicCoefficientModelConfig(
+                                coeffMin = Decimal.fromDouble(coeffB),
+                                coeffMax = Decimal.fromDouble(coeffB),
+                                relativeDifficulty = Decimal.fromDouble(1.0),
+                                targetShareBps = 5000,
+                            ),
                         ),
                     )
                     this[PocParams::pocV2Enabled] = true

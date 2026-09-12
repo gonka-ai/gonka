@@ -209,3 +209,31 @@ func TestV2ValidatedCallbackUsesPathModelID(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	mockRecorder.AssertExpectations(t)
 }
+
+func TestGetVersions_OracleJSONContract(t *testing.T) {
+	cm := &apiconfig.ConfigManager{}
+	cm.SetDevshardVersions(apiconfig.DevshardVersionsCache{
+		Versions: []apiconfig.DevshardVersion{
+			{Name: "v1", Binary: "https://example/v1.zip", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+		},
+	})
+	server := NewServer(nil, nil, WithConfigManager(cm))
+
+	req := httptest.NewRequest(http.MethodGet, "/versions", nil)
+	rec := httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Versions []struct {
+			Name   string `json:"name"`
+			Binary string `json:"binary"`
+			SHA256 string `json:"sha256"`
+		} `json:"versions"`
+	}
+	assert.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Len(t, body.Versions, 1)
+	assert.Equal(t, "v1", body.Versions[0].Name)
+	assert.Equal(t, "https://example/v1.zip", body.Versions[0].Binary)
+	assert.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", body.Versions[0].SHA256)
+}

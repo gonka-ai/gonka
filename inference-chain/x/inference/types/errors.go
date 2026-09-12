@@ -97,4 +97,6 @@ var (
 	ErrBridgeValidatorNotInActiveGroup       = sdkerrors.Register(ModuleName, 1195, "validator not in active participants")
 	ErrBridgeContentMismatch                 = sdkerrors.Register(ModuleName, 1196, "validator posted a transaction with content mismatch")
 	ErrInvalidDecimalExponent                = sdkerrors.Register(ModuleName, 1197, "decimal exponent must be between -18 and 18")
+	ErrApprovedVersionNotFound               = sdkerrors.Register(ModuleName, 1198, "approved devshard version not found")
+	ErrApprovedVersionsLimit                 = sdkerrors.Register(ModuleName, 1199, "approved devshard versions limit reached")
 )

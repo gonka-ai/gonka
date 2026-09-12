@@ -27,3 +27,4 @@ jobs:
         with:
           version: v2.6
           working-directory: inference-chain
+          args: --timeout=15m
