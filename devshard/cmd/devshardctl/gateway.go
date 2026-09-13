@@ -35,6 +35,10 @@ import (
 	"devshard/user"
 )
 
+const (
+	modelUnavailableRetryAfterSeconds = "10"
+)
+
 type RuntimeConfig struct {
 	ID              string `json:"id"`
 	PrivateKeyHex   string `json:"private_key,omitempty"`
@@ -946,6 +950,11 @@ func (g *Gateway) modelLimitSettings(model string) (GatewayModelLimitSettings, b
 	return GatewayModelLimitSettings{}, false
 }
 
+// isModelListedInLimits reports whether the operator lists the model in model_limits, so the gateway still offers it while no runtime serves it.
+func isModelListedInLimits(limits []GatewayModelLimitSettings, model string) bool {
+	return slices.ContainsFunc(limits, func(entry GatewayModelLimitSettings) bool { return strings.TrimSpace(entry.ModelID) == model })
+}
+
 func (g *Gateway) modelAccessError(r *http.Request, model string) error {
 	if requestHasAdminAuth(r) {
 		return nil
@@ -1462,7 +1471,13 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 
 	rt, err := g.reserveRuntimeForModel(model, inputTokens)
 	if err != nil {
-		logRequestStage(ctx, "gateway_runtime_select_failed", "error", err)
+		var unavailableModelErr *ModelTemporarilyUnavailableError
+		if errors.As(err, &unavailableModelErr) {
+			logRequestStage(ctx, "gateway_model_unavailable_retry_later", "model", unavailableModelErr.Model, "retry_after_seconds", modelUnavailableRetryAfterSeconds, "error", err)
+			w.Header().Set("Retry-After", modelUnavailableRetryAfterSeconds)
+		} else {
+			logRequestStage(ctx, "gateway_runtime_select_failed", "error", err)
+		}
 		if isParticipantRateLimitError(err) {
 			g.metrics.RecordParticipantLimitRejection("all", normalizeModelID(model), "pooled_route")
 		}
@@ -1488,8 +1503,9 @@ func (g *Gateway) validatePooledRequestedModel(requestModel string) error {
 	}
 	g.mu.Lock()
 	runtimes := append([]*devshardRuntime(nil), g.runtimeOrder...)
+	listed := isModelListedInLimits(g.settings.ModelLimits, requestModel)
 	g.mu.Unlock()
-	if len(runtimes) == 0 {
+	if len(runtimes) == 0 || listed {
 		return nil
 	}
 	for _, rt := range runtimes {
@@ -1876,6 +1892,9 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 			}
 		}
 		if len(matching) == 0 {
+			if isModelListedInLimits(g.settings.ModelLimits, requestModel) {
+				return nil, &ModelTemporarilyUnavailableError{Model: requestModel}
+			}
 			return nil, &UnsupportedModelError{Model: requestModel, Supported: supportedModels(candidates)}
 		}
 		candidates = matching

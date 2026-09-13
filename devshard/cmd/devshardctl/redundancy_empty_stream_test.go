@@ -420,14 +420,26 @@ func TestRaceWriter_CapabilityErrorsDoNotSelectWinner(t *testing.T) {
 	require.False(t, rg.hasDecided(), "capability miss should let redundancy try another host")
 }
 
-func TestRaceWriter_ContextLengthRejectionMarksTheWholeRaceBeforeTheAttemptEnds(t *testing.T) {
-	race, writer := newSingleAttemptRaceWriter(false)
+func TestRaceWriter_ATrustedDeterministicRejectionMarksTheWholeRaceBeforeTheAttemptEnds(t *testing.T) {
+	cases := []struct {
+		name       string
+		errorEvent string
+	}{
+		{name: "context length rejection", errorEvent: contextLengthErrorEvent},
+		{name: "context length rejection without a status code", errorEvent: contextLengthWithoutStatusErrorEvent},
+		{name: "malformed request", errorEvent: malformedJSONErrorEvent},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			race, writer := newSingleAttemptRaceWriter(false)
 
-	_, err := writer.Write([]byte(contextLengthErrorEvent))
+			_, err := writer.Write([]byte(testCase.errorEvent))
 
-	require.NoError(t, err)
-	require.True(t, race.isContextLengthRejected(), "the rejection must stop new attempts before this attempt finishes")
-	require.False(t, race.hasDecided(), "a rejection is not an answer")
+			require.NoError(t, err)
+			require.True(t, race.isDeterministicallyRejected(), "the rejection must stop new attempts before this attempt finishes")
+			require.False(t, race.hasDecided(), "a rejection is not an answer")
+		})
+	}
 }
 
 func TestRaceWriter_ASuspiciousHostsContextLengthRejectionLeavesTheRaceOpen(t *testing.T) {
@@ -436,7 +448,7 @@ func TestRaceWriter_ASuspiciousHostsContextLengthRejectionLeavesTheRaceOpen(t *t
 	_, err := writer.Write([]byte(contextLengthErrorEvent))
 
 	require.NoError(t, err)
-	require.False(t, race.isContextLengthRejected(), "a quarantined host's rejection must not stop other hosts from serving the request")
+	require.False(t, race.isDeterministicallyRejected(), "a quarantined host's rejection must not stop other hosts from serving the request")
 }
 
 func TestRaceWriter_AContextLengthEventAfterAnotherErrorLeavesTheRaceOpen(t *testing.T) {
@@ -447,7 +459,7 @@ func TestRaceWriter_AContextLengthEventAfterAnotherErrorLeavesTheRaceOpen(t *tes
 
 	require.NoError(t, firstWriteErr)
 	require.NoError(t, secondWriteErr)
-	require.False(t, race.isContextLengthRejected(), "the race may stop only on the error the attempt reports to the caller")
+	require.False(t, race.isDeterministicallyRejected(), "the race may stop only on the error the attempt reports to the caller")
 }
 
 func TestHostApplicationErrorFromAttempts_PicksTheErrorTheCallerShouldSee(t *testing.T) {
@@ -457,11 +469,12 @@ func TestHostApplicationErrorFromAttempts_PicksTheErrorTheCallerShouldSee(t *tes
 		winnerNonce uint64
 		wantStatus  int
 	}{
-		{name: "the winner's error comes first", attempts: []*inflight{contextLengthRejectedAttempt(1), missingModelAttempt(2)}, winnerNonce: 2, wantStatus: http.StatusNotFound},
-		{name: "a context-length rejection beats an earlier error", attempts: []*inflight{missingModelAttempt(1), contextLengthRejectedAttempt(2)}, winnerNonce: 0, wantStatus: http.StatusBadRequest},
-		{name: "a winner without an error gives way to a context-length rejection", attempts: []*inflight{contextLengthRejectedAttempt(1), {nonce: 2}}, winnerNonce: 2, wantStatus: http.StatusBadRequest},
-		{name: "a suspicious host's rejection gets no preference over a trusted error before it", attempts: []*inflight{missingModelAttempt(1), markedSuspicious(contextLengthRejectedAttempt(2))}, winnerNonce: 0, wantStatus: http.StatusNotFound},
-		{name: "without a rejection the first error is kept", attempts: []*inflight{missingModelAttempt(1), toolChoiceRejectedAttempt(2)}, winnerNonce: 0, wantStatus: http.StatusNotFound},
+		{name: "the winner's error comes first", attempts: []*inflight{contextLengthRejectedAttempt(t, 1), missingModelAttempt(t, 2)}, winnerNonce: 2, wantStatus: http.StatusNotFound},
+		{name: "a context-length rejection beats an earlier error", attempts: []*inflight{missingModelAttempt(t, 1), contextLengthRejectedAttempt(t, 2)}, winnerNonce: 0, wantStatus: http.StatusBadRequest},
+		{name: "a malformed request rejection beats an earlier error", attempts: []*inflight{missingModelAttempt(t, 1), malformedJSONRejectedAttempt(t, 2)}, winnerNonce: 0, wantStatus: http.StatusBadRequest},
+		{name: "a winner without an error gives way to a context-length rejection", attempts: []*inflight{contextLengthRejectedAttempt(t, 1), {nonce: 2}}, winnerNonce: 2, wantStatus: http.StatusBadRequest},
+		{name: "a suspicious host's rejection gets no preference over a trusted error before it", attempts: []*inflight{missingModelAttempt(t, 1), markedSuspicious(contextLengthRejectedAttempt(t, 2))}, winnerNonce: 0, wantStatus: http.StatusNotFound},
+		{name: "without a rejection the first error is kept", attempts: []*inflight{missingModelAttempt(t, 1), toolChoiceRejectedAttempt(t, 2)}, winnerNonce: 0, wantStatus: http.StatusNotFound},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -473,16 +486,31 @@ func TestHostApplicationErrorFromAttempts_PicksTheErrorTheCallerShouldSee(t *tes
 	}
 }
 
-func contextLengthRejectedAttempt(nonce uint64) *inflight {
-	return &inflight{nonce: nonce, errorSource: "error.BadRequestError", errorMessage: "This model's maximum context length is 180000 tokens.", errorBodySample: []byte(contextLengthErrorEvent)}
+// attemptFromErrorEvent returns the attempt a trusted host leaves after streaming errorEvent through the race writer.
+func attemptFromErrorEvent(t *testing.T, nonce uint64, errorEvent string) *inflight {
+	t.Helper()
+	_, writer := newSingleAttemptRaceWriter(false)
+	_, err := writer.Write([]byte(errorEvent))
+	require.NoError(t, err)
+	require.True(t, isErrorStreamAttempt(writer.inf), "the fixture must stream a parseable error event")
+	writer.inf.nonce = nonce
+	return writer.inf
 }
 
-func missingModelAttempt(nonce uint64) *inflight {
-	return &inflight{nonce: nonce, errorSource: "error.NotFoundError", errorMessage: "The model does not exist.", errorBodySample: []byte(modelNotFoundErrorEvent)}
+func contextLengthRejectedAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, contextLengthErrorEvent)
 }
 
-func toolChoiceRejectedAttempt(nonce uint64) *inflight {
-	return &inflight{nonce: nonce, errorSource: "error.BadRequestError", errorMessage: toolChoiceUnsupportedMessage, errorBodySample: []byte(toolChoiceErrorEvent)}
+func malformedJSONRejectedAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, malformedJSONErrorEvent)
+}
+
+func missingModelAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, modelNotFoundErrorEvent)
+}
+
+func toolChoiceRejectedAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, toolChoiceErrorEvent)
 }
 
 func markedSuspicious(attempt *inflight) *inflight {

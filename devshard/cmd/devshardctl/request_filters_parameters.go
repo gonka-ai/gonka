@@ -671,6 +671,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			"stream",
 		}),
 		// The remaining boolean flags are pass-through fields, so validate their type here.
+		// Without tools, the earlier ToolsValidator has already dropped parallel_tool_calls.
 		newParameters([]string{"skip_special_tokens", "detokenize", "parallel_tool_calls"},
 			ParameterRule{Stage: RequestFilterStagePreValidation, Handler: mustBeBool},
 		),

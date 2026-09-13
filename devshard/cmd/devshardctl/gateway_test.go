@@ -1650,7 +1650,6 @@ func TestGatewayHandlePooledChatRejectsUnsupportedModel(t *testing.T) {
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.settings.ModelLimits = []GatewayModelLimitSettings{
 		{ModelID: "Qwen/Test", AccessMode: string(gatewayAccessModeOpen)},
-		{ModelID: "Nope/Unsupported", AccessMode: string(gatewayAccessModeOpen)},
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",

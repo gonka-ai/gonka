@@ -25,6 +25,7 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[OpenAI-4]** [Reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) — `reasoning_effort` concept and wire enum values.
 - **[OpenAI-5]** [openai-python README — undocumented request params](https://github.com/openai/openai-python/blob/main/README.md#undocumented-request-params) — SDK convention for `extra_body`/`extra_headers`/`extra_query`; clarifies client-side flatten semantics.
 - **[OpenAI-6]** [Safety identifier help-center article](https://help.openai.com/en/articles/5428082-how-to-incorporate-a-safety-identifier) — `safety_identifier` field guidance; recommends short hashed identifiers for end-user attribution.
+- **[OpenAI-7]** [openai-python `tool_choice` parameter docstring](https://github.com/openai/openai-python/blob/f348ec87b934c98889102668913e0a3ae7fc303d/src/openai/types/chat/completion_create_params.py#L326-L337) — "`none` is the default when no tools are present. `auto` is the default if tools are present."
 
 ## Anthropic
 
@@ -78,6 +79,9 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[vLLM-43]** [GLM-5.3-Flash recipe](https://github.com/vllm-project/recipes/blob/main/models/zai-org/GLM-5.3-Flash.yaml) — `min_vllm_version: 0.29.0` with `nightly_required: true` and a dedicated `vllm/vllm-openai:glm53-flash` image; `--tool-call-parser glm47 --enable-auto-tool-choice` and `--reasoning-parser glm45`; 1M-token context; native FP8 weights.
 - **[vLLM-44]** [parser/glm47_moe.py in the gonka-ai fork, release/v0.25.1](https://github.com/gonka-ai/vllm/blob/release/v0.25.1/vllm/parser/glm47_moe.py#L185-L191) — the same `thinking`/`enable_thinking` gate as [vLLM-41].
 - **[vLLM-45]** [parser/glm47_moe.py in the gonka-ai fork, release/v0.28.0-glm53](https://github.com/gonka-ai/vllm/blob/release/v0.28.0-glm53/vllm/parser/glm47_moe.py#L185-L191) — the same gate on the fork's GLM-5.3 branch.
+- **[vLLM-46]** [chat_completion/protocol.py in the gonka-ai fork, release/v0.25.1](https://github.com/gonka-ai/vllm/blob/release/v0.25.1/vllm/entrypoints/openai/chat_completion/protocol.py#L830-L859) — `check_tool_usage` rejects `tools: []`, lets `tool_choice: "none"` through, and rejects any other `tool_choice` sent without `tools` with a 400 reading "When using tool_choice, tools must be set."; `parallel_tool_calls` (L244) is a plain field defaulting to `true` that nothing checks against `tools`.
+- **[vLLM-47]** [tool_parsers/utils.py in the gonka-ai fork, release/v0.25.1](https://github.com/gonka-ai/vllm/blob/release/v0.25.1/vllm/tool_parsers/utils.py#L380-L420) — `get_json_schema_from_tools` returns a schema to enforce only for a named `tool_choice` or `"required"`; `"auto"` and `"none"` return nothing.
+- **[vLLM-48]** [tool_parsers/abstract_tool_parser.py in the gonka-ai fork, release/v0.25.1](https://github.com/gonka-ai/vllm/blob/release/v0.25.1/vllm/tool_parsers/abstract_tool_parser.py#L137-L148) — only a schema returned by `get_json_schema_from_tools` becomes `structured_outputs.json`, the grammar the engine enforces.
 
 ## Moonshot
 

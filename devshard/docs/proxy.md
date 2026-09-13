@@ -184,6 +184,8 @@ controls per-model inference access with `access_mode`: `open`, `api_key`, or
 `admin_only`. If a model has no `access_mode` configured, it defaults to
 `admin_only`.
 
+A model listed in `model_limits` stays offered while none of its runtimes can take a request, for example after its escrows ran out of balance: pooled chat answers `503` with `Retry-After: 10` instead of `400 unsupported model`. Remove the model from `model_limits` to retire it.
+
 ```bash
 curl -X POST http://localhost:8080/v1/admin/settings \
   -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
@@ -421,7 +423,7 @@ Non-streaming (`"stream": false` or omitted): the proxy buffers all SSE chunks f
 
 Streaming (`"stream": true`): the proxy relays SSE `data:` lines in real time. The stream ends with `data: [DONE]`. Devshard protocol events (receipts, metadata) are filtered out -- only inference data reaches the client.
 
-If the client disconnects before the host finishes, the proxy keeps draining the host SSE stream in the background for up to `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` (default 30s) so protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) can still run. Further writes to the disconnected client are swallowed.
+If the client disconnects before the host finishes, the proxy keeps draining the host SSE stream in the background for up to `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` (default 30s) so protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) can still run. Further writes to the disconnected client are swallowed, and the request starts no further attempt: no hedge, no escalation after a failed or silent attempt, and no retry after a phase transition, since another nonce would only buy an answer nobody reads.
 
 ## Speculative execution
 

@@ -31,9 +31,13 @@ import (
 )
 
 const (
-	modelNotFoundErrorEvent = `data: {"error":{"code":404,"message":"The model does not exist.","type":"NotFoundError"}}` + "\n\n"
-	contextLengthErrorEvent = `data: {"error":{"code":400,"message":"This model's maximum context length is 180000 tokens. However, you requested 4096 output tokens and your prompt contains at least 175905 input tokens, for a total of at least 180001 tokens.","type":"BadRequestError"}}` + "\n\n"
-	toolChoiceErrorEvent    = `data: {"error":{"code":400,"message":"` + toolChoiceUnsupportedMessage + `","type":"BadRequestError"}}` + "\n\n"
+	modelNotFoundErrorEvent              = `data: {"error":{"code":404,"message":"The model does not exist.","type":"NotFoundError"}}` + "\n\n"
+	contextLengthErrorEvent              = `data: {"error":{"code":400,"message":"This model's maximum context length is 180000 tokens. However, you requested 4096 output tokens and your prompt contains at least 175905 input tokens, for a total of at least 180001 tokens.","type":"BadRequestError"}}` + "\n\n"
+	contextLengthWithoutStatusErrorEvent = `data: {"error":{"message":"This model's maximum context length is 180000 tokens. However, you requested 4096 output tokens and your prompt contains at least 175905 input tokens, for a total of at least 180001 tokens.","type":"Error"}}` + "\n\n"
+	toolChoiceErrorEvent                 = `data: {"error":{"code":400,"message":"` + toolChoiceUnsupportedMessage + `","type":"BadRequestError"}}` + "\n\n"
+	malformedJSONErrorEvent              = `data: {"error":{"code":400,"message":"Unterminated string starting at: line 1 column 30 (char 29)","type":"BadRequestError"}}` + "\n\n"
+	unservedModelBadRequestErrorEvent    = `data: {"error":{"code":400,"message":"The model x does not exist.","type":"BadRequestError"}}` + "\n\n"
+	serverErrorEvent                     = `data: {"error":{"code":500,"message":"CUDA error: an illegal memory access was encountered","type":"APIError"}}` + "\n\n"
 
 	testWaitLimit = 10 * time.Second
 )
@@ -803,6 +807,73 @@ func TestRunInference_HappyPath(t *testing.T) {
 	require.True(t, ok, "inference 1 should exist")
 }
 
+func TestRunInference_NoNewAttemptStartsOnceTheClientHasLeft(t *testing.T) {
+	zeroReceiptTimeout(t)
+	env := setupTestProxy(t, 2, nil, true)
+	// Unresponsive history on every host makes the gateway start a second host at once.
+	for hostIndex := range env.killables {
+		env.proxy.redundancy.perf.Record(RequestSample{HostIdx: hostIndex, Responsive: false})
+	}
+	clientGone := newCancelFlag()
+	clientGone.Trigger()
+
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, clientGone)
+
+	require.NoError(t, err)
+	require.Len(t, env.sm.SnapshotState().Inferences, 1, "a client that already left must not make the gateway spend a nonce on another host")
+}
+
+type leavesThenFailsClient struct {
+	clientGone    *cancelFlag
+	beforeLeaving func()
+	calls         atomic.Int32
+}
+
+func (c *leavesThenFailsClient) Send(_ context.Context, _ host.HostRequest, _ io.Writer, _ func(*host.HostResponse)) (*host.HostResponse, error) {
+	c.calls.Add(1)
+	if c.beforeLeaving != nil {
+		c.beforeLeaving()
+	}
+	c.clientGone.Trigger()
+	return nil, errSimulatedHedgeTransport
+}
+
+func TestRunInference_NoEscalationStartsOnceTheClientHasLeft(t *testing.T) {
+	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+	shortRefusalWindow(t)
+	clientGone := newCancelFlag()
+	failingHost := &leavesThenFailsClient{clientGone: clientGone}
+	env := setupTestProxyWithClients(t, []user.HostClient{failingHost, failingHost, failingHost})
+	cleanupFinished := raceCleanupFinished(env.proxy.redundancy)
+
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, clientGone)
+
+	require.Error(t, err)
+	require.Equal(t, int32(1), failingHost.calls.Load(), "a failed attempt must not escalate to another host once the client has left")
+	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
+}
+
+func TestRunInference_NoPhaseTransitionRetryStartsOnceTheClientHasLeft(t *testing.T) {
+	setPoCModeForTest(t, pocRequestModeRelaxed)
+	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+	shortRefusalWindow(t)
+	clientGone := newCancelFlag()
+	abortedHost := &leavesThenFailsClient{clientGone: clientGone, beforeLeaving: func() {
+		setPoCPhaseStateFromSnapshot(ChainPhaseSnapshot{EpochPhase: epochPhaseInference, ConfirmationPoCPhase: confirmationPoCGeneration, BlockReason: "confirmation_poc"})
+	}}
+	env := setupTestProxyWithClients(t, []user.HostClient{abortedHost, abortedHost, abortedHost})
+	cleanupFinished := raceCleanupFinished(env.proxy.redundancy)
+
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, clientGone)
+
+	require.Error(t, err)
+	require.Equal(t, int32(1), abortedHost.calls.Load(), "an attempt a phase transition aborted must not be retried once the client has left")
+	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
+}
+
 // errSimulatedWinnerTransport is returned by streamContentThenErrClient after
 // it streams a content-bearing SSE chunk so the race crowns a winner.
 var errSimulatedWinnerTransport = errors.New("simulated winner transport failure")
@@ -1549,7 +1620,7 @@ func TestRunInference_ErrorStreamRetriesInsteadOfWinning(t *testing.T) {
 	require.True(t, env.session.IsNonceFinished(2))
 }
 
-func TestRunInference_OnlyAContextLengthRejectionStaysOnOneHost(t *testing.T) {
+func TestRunInference_OnlyADeterministicRejectionStaysOnOneHost(t *testing.T) {
 	cases := []struct {
 		name            string
 		errorEvent      string
@@ -1558,6 +1629,9 @@ func TestRunInference_OnlyAContextLengthRejectionStaysOnOneHost(t *testing.T) {
 		wantNoncesSpent int
 	}{
 		{name: "context length rejection stays on one host", errorEvent: contextLengthErrorEvent, wantStatus: http.StatusBadRequest, wantHostCalls: 1, wantNoncesSpent: 1},
+		{name: "malformed request stays on one host", errorEvent: malformedJSONErrorEvent, wantStatus: http.StatusBadRequest, wantHostCalls: 1, wantNoncesSpent: 1},
+		{name: "bad request naming a model the host lacks moves to every host", errorEvent: unservedModelBadRequestErrorEvent, wantStatus: http.StatusBadRequest, wantHostCalls: 3, wantNoncesSpent: 3},
+		{name: "server error moves to every host", errorEvent: serverErrorEvent, wantStatus: http.StatusInternalServerError, wantHostCalls: 3, wantNoncesSpent: 3},
 		{name: "tool choice rejection moves to every host", errorEvent: toolChoiceErrorEvent, wantStatus: http.StatusBadRequest, wantHostCalls: 3, wantNoncesSpent: 3},
 		{name: "missing model moves to every host", errorEvent: modelNotFoundErrorEvent, wantStatus: http.StatusNotFound, wantHostCalls: 3, wantNoncesSpent: 3},
 	}

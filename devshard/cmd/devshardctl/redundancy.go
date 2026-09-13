@@ -97,6 +97,18 @@ type sseErrorDetails struct {
 	Message string
 }
 
+// statusCode maps an upstream error's code, or failing that its type, to the HTTP status the caller sees.
+func (details sseErrorDetails) statusCode() int {
+	status, err := strconv.Atoi(details.Code)
+	if err == nil && status >= 400 && status <= 599 {
+		return status
+	}
+	if strings.Contains(strings.ToLower(details.Type), "badrequest") {
+		return http.StatusBadRequest
+	}
+	return http.StatusBadGateway
+}
+
 type hostApplicationError struct {
 	details sseErrorDetails
 	payload []byte
@@ -119,14 +131,7 @@ func (e *hostApplicationError) statusCode() int {
 	if e == nil {
 		return http.StatusBadGateway
 	}
-	status, err := strconv.Atoi(e.details.Code)
-	if err == nil && status >= 400 && status <= 599 {
-		return status
-	}
-	if strings.Contains(strings.ToLower(e.details.Type), "badrequest") {
-		return http.StatusBadRequest
-	}
-	return http.StatusBadGateway
+	return e.details.statusCode()
 }
 
 func (e *hostApplicationError) jsonPayload() []byte {
@@ -878,6 +883,10 @@ type inflight struct {
 	cancel context.CancelFunc
 }
 
+func (inf *inflight) errorDetails() sseErrorDetails {
+	return sseErrorDetails{Code: inf.errorCode, Type: inf.errorType, Message: inf.errorMessage}
+}
+
 func (inf *inflight) receiptAt() time.Time {
 	if n := inf.receiptTimeNano.Load(); n != 0 {
 		return time.Unix(0, n)
@@ -1085,7 +1094,7 @@ type raceGroup struct {
 	writeCtx       context.Context
 	escrow         string
 
-	contextLengthRejected atomic.Bool
+	deterministicallyRejected atomic.Bool
 }
 
 func newRaceGroup(logCtx, writeCtx context.Context, escrow string, w io.Writer) *raceGroup {
@@ -1213,14 +1222,14 @@ func (rg *raceGroup) hasDecided() bool {
 	return rg.decided.Load()
 }
 
-func (rg *raceGroup) markContextLengthRejected() {
+func (rg *raceGroup) markDeterministicallyRejected() {
 	if rg != nil {
-		rg.contextLengthRejected.Store(true)
+		rg.deterministicallyRejected.Store(true)
 	}
 }
 
-func (rg *raceGroup) isContextLengthRejected() bool {
-	return rg != nil && rg.contextLengthRejected.Load()
+func (rg *raceGroup) isDeterministicallyRejected() bool {
+	return rg != nil && rg.deterministicallyRejected.Load()
 }
 
 func (rg *raceGroup) winnerNonce() uint64 {
@@ -1323,7 +1332,7 @@ func (rw *raceWriter) takeParseable(p []byte) []byte {
 	return parseable
 }
 
-// classifyParseable records the attempt's first content or error, marks the race on a trusted context-length rejection, and reports whether the buffer carried content or a non-retriable error.
+// classifyParseable records the attempt's first content or error, marks the race on a trusted deterministic rejection, and reports whether the buffer carried content or a non-retriable error.
 func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError bool) {
 	if len(parseable) == 0 {
 		return false, false
@@ -1351,8 +1360,8 @@ func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError 
 			rw.inf.errorType = details.Type
 			rw.inf.errorMessage = details.Message
 			rw.inf.errorBodySample = append(rw.inf.errorBodySample, parseable...)
-			if isTrustedContextLengthRejection(rw.inf) {
-				rw.group.markContextLengthRejected()
+			if isTrustedDeterministicRejection(rw.inf) {
+				rw.group.markDeterministicallyRejected()
 			}
 		}
 	}
@@ -2000,7 +2009,7 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 	if streamCtx.Err() != nil {
 		return nil
 	}
-	if race.hasDecided() || race.isContextLengthRejected() {
+	if race.hasDecided() || race.isDeterministicallyRejected() || clientFlag.Gone() {
 		return nil
 	}
 	fields := []any{"host", trigger.hostID}
@@ -3192,9 +3201,14 @@ func isErrorStreamAttempt(inf *inflight) bool {
 	return inf != nil && inf.errorSource != ""
 }
 
-// isTrustedContextLengthRejection reports whether the attempt's first error is a context-length rejection from a host that is not suspicious.
-func isTrustedContextLengthRejection(inf *inflight) bool {
-	return isErrorStreamAttempt(inf) && !inf.suspicious && parseContextLengthLimit(inf.errorMessage) > 0
+// isTrustedDeterministicRejection reports whether a non-suspicious host answered an error any host would repeat: a context-length rejection or a 400 the response cache would replay.
+func isTrustedDeterministicRejection(inf *inflight) bool {
+	if !isErrorStreamAttempt(inf) || inf.suspicious {
+		return false
+	}
+	details := inf.errorDetails()
+	return parseContextLengthLimit(details.Message) > 0 ||
+		details.statusCode() == http.StatusBadRequest && isCacheableOpenAIErrorDetails(details)
 }
 
 func hostApplicationErrorFromInflight(inf *inflight) *hostApplicationError {
@@ -3203,11 +3217,7 @@ func hostApplicationErrorFromInflight(inf *inflight) *hostApplicationError {
 	}
 	details, payload, ok := sseChunkErrorPayload(inf.errorBodySample)
 	if !ok {
-		details = sseErrorDetails{
-			Code:    inf.errorCode,
-			Type:    inf.errorType,
-			Message: inf.errorMessage,
-		}
+		details = inf.errorDetails()
 	}
 	return &hostApplicationError{details: details, payload: payload}
 }
@@ -3219,7 +3229,7 @@ func hostApplicationErrorFromAttempts(attempts []*inflight, winnerNonce uint64) 
 		}
 	}
 	for _, attempt := range attempts {
-		if isErrorStreamAttempt(attempt) && !attempt.suspicious && parseContextLengthLimit(attempt.errorMessage) > 0 {
+		if isTrustedDeterministicRejection(attempt) {
 			return hostApplicationErrorFromInflight(attempt)
 		}
 	}
