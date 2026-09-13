@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+meta=$script_dir/devshard-release-meta.sh
+chmod +x "$meta"
+
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+fail() {
+	printf 'devshard-release-meta_test: %s\n' "$*" >&2
+	exit 1
+}
+
+field() {
+	local key=$1 blob=$2
+	printf '%s\n' "$blob" | sed -n "s/^${key}=//p" | head -n 1
+}
+
+assert_eq() {
+	local got=$1 want=$2 msg=$3
+	[[ $got == "$want" ]] || fail "$msg: got '$got' want '$want'"
+}
+
+assert_fail() {
+	local msg=$1
+	shift
+	local rc=0
+	"$meta" "$@" >"$tmpdir/out" 2>"$tmpdir/err" || rc=$?
+	[[ $rc -ne 0 ]] || fail "$msg: expected failure, stdout=$(cat "$tmpdir/out")"
+}
+
+got=""
+run_ok() {
+	got=$("$meta" "$@") || fail "expected success for: $*"
+}
+
+run_ok tag --ref-name release/v0.2.14
+assert_eq "$(field mode "$got")" chain "release/v0.2.14 mode"
+assert_eq "$(field build_inference_chain "$got")" true "v0.2.14 inference-chain"
+assert_eq "$(field build_dapi "$got")" true "v0.2.14 dapi"
+assert_eq "$(field build_edge_api "$got")" true "v0.2.14 edge-api"
+assert_eq "$(field build_devshardd "$got")" false "v0.2.14 host"
+assert_eq "$(field chain_version "$got")" v0.2.14 "v0.2.14 VERSION"
+assert_eq "$(field race_releases_tag "$got")" release/v0.2.14 "v0.2.14 race tag"
+
+run_ok tag --ref-name release/v0.2.14-rc1
+assert_eq "$(field mode "$got")" chain "rc1 mode"
+assert_eq "$(field chain_version "$got")" v0.2.14-rc1 "rc1 VERSION"
+assert_eq "$(field build_devshardd "$got")" false "rc1 host"
+
+run_ok tag --ref-name release/v0.2.14-devshard-v4.0.0 --github-sha abc
+assert_eq "$(field mode "$got")" host "v4.0.0 mode"
+assert_eq "$(field build_inference_chain "$got")" false "v4.0.0 chain"
+assert_eq "$(field build_devshardd "$got")" true "v4.0.0 host"
+assert_eq "$(field make_devshard_version "$got")" v4 "v4.0.0 make slot"
+assert_eq "$(field devshard_protocol_version "$got")" v4 "v4.0.0 protocol"
+assert_eq "$(field devshard_version "$got")" v4 "v4.0.0 stripped"
+assert_eq "$(field devshard_binary_version "$got")" v4.0.0 "v4.0.0 binary"
+assert_eq "$(field release_name "$got")" "Devshard Release v4.0.0" "v4.0.0 name"
+assert_eq "$(field release_tag "$got")" "devshard/v4.0.0" "v4.0.0 tag"
+assert_eq "$(field release_body_line "$got")" "devshardd v4 protocol v4 binary stamp v4.0.0" "v4.0.0 body"
+[[ $(field source_line "$got") == *abc* ]] || fail "source line missing sha"
+
+name_a=$(field release_name "$got")
+tag_a=$(field release_tag "$got")
+run_ok tag --ref-name release/v0.2.15-devshard-v4.0.0
+assert_eq "$(field release_name "$got")" "$name_a" "same leftover same name"
+assert_eq "$(field release_tag "$got")" "$tag_a" "same leftover same tag"
+
+run_ok tag --ref-name release/devshard/v4.1.0
+assert_eq "$(field mode "$got")" host "v4.1.0 mode"
+assert_eq "$(field make_devshard_version "$got")" v4 "v4.1.0 make slot"
+assert_eq "$(field devshard_version "$got")" v4.1 "v4.1.0 stripped"
+assert_eq "$(field devshard_binary_version "$got")" v4.1.0 "v4.1.0 binary"
+assert_eq "$(field release_body_line "$got")" "devshardd v4.1 protocol v4 binary stamp v4.1.0" "v4.1.0 body"
+assert_eq "$(field release_name "$got")" "Devshard Release v4.1.0" "v4.1.0 name"
+assert_eq "$(field release_tag "$got")" "devshard/v4.1.0" "v4.1.0 tag"
+
+run_ok tag --ref-name release/devshard/v4.1.1
+assert_eq "$(field devshard_version "$got")" v4.1.1 "v4.1.1 stripped"
+assert_eq "$(field release_body_line "$got")" "devshardd v4.1.1 protocol v4 binary stamp v4.1.1" "v4.1.1 body"
+
+assert_fail "v4.1 leftover" tag --ref-name release/devshard/v4.1
+assert_fail "rc leftover" tag --ref-name release/devshard/v4.1.0-rc1
+assert_fail "short leftover on chain-shaped tag" tag --ref-name release/v0.2.14-devshard-v4
+assert_fail "junk after leftover" tag --ref-name release/v0.2.14-devshard-v4.0.0-extra
+
+assert_fail "no boxes" dispatch \
+	--build-inference-chain false --build-dapi false --build-edge-api false --build-devshardd false
+
+assert_fail "host missing binary" dispatch \
+	--build-inference-chain false --build-dapi false --build-edge-api false --build-devshardd true \
+	--devshard-version v4.1 --devshard-protocol-version v4
+
+assert_fail "host missing version" dispatch \
+	--build-inference-chain false --build-dapi false --build-edge-api false --build-devshardd true \
+	--devshard-protocol-version v4 --devshard-binary-version v4.1.0
+
+assert_fail "host missing protocol" dispatch \
+	--build-inference-chain false --build-dapi false --build-edge-api false --build-devshardd true \
+	--devshard-version v4.1 --devshard-binary-version v4.1.0
+
+assert_fail "binary not three-part" dispatch \
+	--build-inference-chain false --build-dapi false --build-edge-api false --build-devshardd true \
+	--devshard-version v4.1 --devshard-protocol-version v4 --devshard-binary-version v4.1
+
+assert_fail "chain missing version" dispatch \
+	--build-inference-chain true --build-dapi false --build-edge-api false --build-devshardd false
+
+run_ok dispatch \
+	--build-inference-chain false --build-dapi false --build-edge-api false --build-devshardd true \
+	--devshard-version v4.1 --devshard-protocol-version v4 --devshard-binary-version v4.1.0
+assert_eq "$(field mode "$got")" host "dispatch host mode"
+assert_eq "$(field make_devshard_version "$got")" v4 "dispatch make slot uses protocol"
+assert_eq "$(field release_name "$got")" "Devshard Release v4.1.0" "dispatch same name as tag leftover"
+assert_eq "$(field release_tag "$got")" "devshard/v4.1.0" "dispatch same tag as leftover"
+assert_eq "$(field release_body_line "$got")" "devshardd v4.1 protocol v4 binary stamp v4.1.0" "dispatch body"
+
+run_ok dispatch \
+	--build-inference-chain true --build-dapi true --build-edge-api false --build-devshardd false \
+	--chain-version v0.2.14
+assert_eq "$(field mode "$got")" chain "dispatch chain mode"
+assert_eq "$(field build_edge_api "$got")" false "dispatch subset edge-api"
+assert_eq "$(field race_releases_tag "$got")" release/v0.2.14 "dispatch default race tag"
+assert_eq "$(field build_devshardd "$got")" false "dispatch chain-only host"
+
+run_ok dispatch \
+	--build-inference-chain true --build-dapi false --build-edge-api false --build-devshardd true \
+	--chain-version v0.2.14 \
+	--devshard-version v4.1 --devshard-protocol-version v4 --devshard-binary-version v4.1.0
+assert_eq "$(field mode "$got")" both "dispatch both"
+
+cat >"$tmpdir/fake-devshardd" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+--print-protocol-version) printf 'v4\n' ;;
+--print-binary-version) printf 'v4.1.0\n' ;;
+*) exit 2 ;;
+esac
+EOF
+chmod +x "$tmpdir/fake-devshardd"
+"$meta" check-stamps --binary "$tmpdir/fake-devshardd" --protocol v4 --binary-version v4.1.0 \
+	|| fail "matching stamps should pass"
+if "$meta" check-stamps --binary "$tmpdir/fake-devshardd" --protocol v5 --binary-version v4.1.0 \
+	>"$tmpdir/out" 2>"$tmpdir/err"; then
+	fail "mismatched protocol should fail"
+fi
+if "$meta" check-stamps --binary "$tmpdir/fake-devshardd" --protocol v4 --binary-version v4.0.0 \
+	>"$tmpdir/out" 2>"$tmpdir/err"; then
+	fail "mismatched binary stamp should fail"
+fi
+
+tiny=$tmpdir/tiny-repo
+mkdir -p "$tiny/devshard" "$tmpdir/empty-git-template"
+printf 'root-make\n' >"$tiny/Makefile"
+printf 'host-docker\n' >"$tiny/devshard/Dockerfile"
+git -C "$tiny" init -q --template="$tmpdir/empty-git-template"
+git -C "$tiny" config user.email test@example.com
+git -C "$tiny" config user.name test
+git -C "$tiny" add Makefile devshard/Dockerfile
+git -C "$tiny" -c commit.gpgsign=false commit -q -m init
+archive_dir=$tmpdir/archive
+git -C "$tiny" rev-parse --show-toplevel >/dev/null
+( cd "$tiny" && "$meta" archive --output-dir "$archive_dir" ) || fail "archive failed"
+[[ -f $archive_dir/Source\ code.zip ]] || fail "missing Source code.zip"
+[[ -f $archive_dir/Source\ code.tar.gz ]] || fail "missing Source code.tar.gz"
+python3 - "$archive_dir/Source code.zip" "$tmpdir/zip.names" <<'PY'
+import sys, zipfile
+zpath, out = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(zpath) as z, open(out, "w") as f:
+    f.write("\n".join(z.namelist()) + "\n")
+PY
+grep -qx 'gonka/Makefile' "$tmpdir/zip.names" || fail "zip missing gonka/Makefile"
+grep -qx 'gonka/devshard/Dockerfile' "$tmpdir/zip.names" || fail "zip missing Dockerfile"
+if grep -q 'gonka/.git/' "$tmpdir/zip.names"; then
+	fail "zip must not contain .git"
+fi
+tar -tzf "$archive_dir/Source code.tar.gz" >"$tmpdir/tar.names"
+grep -qx 'gonka/Makefile' "$tmpdir/tar.names" || fail "tar missing gonka/Makefile"
+
+printf 'devshard-release-meta_test: ok\n'
