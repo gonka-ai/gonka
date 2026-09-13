@@ -116,8 +116,19 @@ type MockDapiCfg struct {
 
 // MockOpenAICfg is the listen addresses of cmd/mockopenai.
 type MockOpenAICfg struct {
-	HTTPPort int    `yaml:"http_port"`
-	Host     string `yaml:"host"`
+	HTTPPort int                 `yaml:"http_port"`
+	Host     string              `yaml:"host"`
+	Nodes    []MockOpenAINodeCfg `yaml:"nodes"`
+}
+
+// MockOpenAINodeCfg configures one independently-behaving Mock ML container.
+// An empty Nodes slice preserves the historical single mock-openai service.
+type MockOpenAINodeCfg struct {
+	Name          string `yaml:"name"`
+	TTFT          string `yaml:"ttft,omitempty"`
+	TokenInterval string `yaml:"token_interval,omitempty"`
+	Workers       int    `yaml:"workers,omitempty"`
+	Queue         int    `yaml:"queue,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
@@ -588,6 +599,19 @@ func (c *File) Validate() error {
 	}
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")
+	}
+	seenMLNodes := make(map[string]struct{}, len(c.MockOpenAI.Nodes))
+	for i, node := range c.MockOpenAI.Nodes {
+		if strings.TrimSpace(node.Name) == "" {
+			return fmt.Errorf("mock_openai.nodes[%d].name must not be empty", i)
+		}
+		if _, exists := seenMLNodes[node.Name]; exists {
+			return fmt.Errorf("mock_openai.nodes contains duplicate name %q", node.Name)
+		}
+		if node.Workers < 0 || node.Queue < 0 {
+			return fmt.Errorf("mock_openai.nodes[%d] workers and queue must be non-negative", i)
+		}
+		seenMLNodes[node.Name] = struct{}{}
 	}
 	return nil
 }

@@ -1,0 +1,8 @@
+schema_version: v1
+profile: fast
+
+ttft: 10ms
+token_interval: 2ms
+workers: 100
+queue: 500
+failures: []

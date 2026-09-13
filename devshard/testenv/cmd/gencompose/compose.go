@@ -68,6 +68,7 @@ services:
       MOCK_CHAIN_RPC_ADDR: "http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}"
       MOCK_CHAIN_TESTENV_URL: "http://{{ .MockChain.Host }}:{{ .MockChain.TestenvPort }}"
       MOCK_ML_ENDPOINT: "http://{{ .MockOpenAI.Host }}:{{ .MockOpenAI.HTTPPort }}"
+      MOCK_ML_NODES: "{{ mockMLNodesEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
     volumes:
@@ -80,22 +81,34 @@ services:
         ipv4_address: {{ .Network.BaseIP }}.3
     depends_on:
       - mock-chain
-      - mock-openai
+{{ range mockMLNodes . }}
+      - {{ .Name }}
+{{ end }}
     restart: unless-stopped
 
-  mock-openai:
+{{ range mockMLNodes . }}
+  {{ .Name }}:
     build:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mockopenai
     image: devshard-mock-openai:latest
     environment:
-      MOCK_OPENAI_ADDR: ":{{ .MockOpenAI.HTTPPort }}"
+      MOCK_OPENAI_ADDR: ":{{ $.MockOpenAI.HTTPPort }}"
+      MOCK_OPENAI_TTFT: "{{ .TTFT }}"
+      MOCK_OPENAI_TOKEN_INTERVAL: "{{ .TokenInterval }}"
+      MOCK_OPENAI_WORKERS: "{{ .Workers }}"
+      MOCK_OPENAI_QUEUE: "{{ .Queue }}"
+{{ if eq (len (mockMLNodes $)) 1 }}
     ports:
-      - "{{ .MockOpenAI.HTTPPort }}:{{ .MockOpenAI.HTTPPort }}"
+      - "{{ $.MockOpenAI.HTTPPort }}:{{ $.MockOpenAI.HTTPPort }}"
+{{ end }}
     networks:
       testenv:
-        ipv4_address: {{ .Network.BaseIP }}.4
+{{ if eq (len (mockMLNodes $)) 1 }}
+        ipv4_address: {{ $.Network.BaseIP }}.4
+{{ end }}
     restart: unless-stopped
+{{ end }}
 {{ if .Postgres.Enabled }}
 
   devshard-postgres:
@@ -185,8 +198,10 @@ services:
         condition: service_healthy
       mock-dapi:
         condition: service_started
-      mock-openai:
+{{ range mockMLNodes $ }}
+      {{ .Name }}:
         condition: service_started
+{{ end }}
 {{ if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
@@ -198,7 +213,9 @@ services:
 {{ else }}
       - mock-chain
       - mock-dapi
-      - mock-openai
+{{ range mockMLNodes $ }}
+      - {{ .Name }}
+{{ end }}
 {{ end }}
     stop_grace_period: 30m
     restart: unless-stopped
@@ -310,6 +327,8 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"legacyVersiondHost":        legacyVersiondHost,
 		"primaryEscrowID":           primaryEscrowID,
 		"primaryModelID":            primaryModelID,
+		"mockMLNodes":               mockMLNodes,
+		"mockMLNodesEnv":            mockMLNodesEnv,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -327,6 +346,25 @@ func writeCompose(cfg *config.File, outPath string) error {
 		return fmt.Errorf("execute template: %w", err)
 	}
 	return nil
+}
+
+func mockMLNodes(cfg *config.File) []config.MockOpenAINodeCfg {
+	if cfg != nil && len(cfg.MockOpenAI.Nodes) > 0 {
+		return cfg.MockOpenAI.Nodes
+	}
+	return []config.MockOpenAINodeCfg{{Name: "mock-openai"}}
+}
+
+func mockMLNodesEnv(cfg *config.File) string {
+	if cfg == nil {
+		return ""
+	}
+	nodes := mockMLNodes(cfg)
+	entries := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		entries = append(entries, fmt.Sprintf("%s=http://%s:%d", node.Name, node.Name, cfg.MockOpenAI.HTTPPort))
+	}
+	return strings.Join(entries, ",")
 }
 
 func writeEnvFile(cfg *config.File, outPath string) error {

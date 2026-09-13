@@ -11,8 +11,10 @@ import (
 
 // Config wires the mock OpenAI HTTP server.
 type Config struct {
-	Addr   string
-	Faults FaultConfig
+	Addr    string
+	Faults  FaultConfig
+	Workers int
+	Queue   int
 }
 
 // DefaultConfig returns local dev defaults.

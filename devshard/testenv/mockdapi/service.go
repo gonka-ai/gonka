@@ -46,8 +46,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.ChainGRPCAddr == "" {
 		return nil, errors.New("mockdapi: ChainGRPCAddr is required")
 	}
-	if cfg.MLEndpoint == "" {
-		return nil, errors.New("mockdapi: MLEndpoint is required")
+	if cfg.MLEndpoint == "" && len(cfg.MLNodes) == 0 {
+		return nil, errors.New("mockdapi: an ML endpoint is required")
 	}
 	if cfg.ChainPollInterval <= 0 {
 		cfg.ChainPollInterval = time.Second
@@ -78,9 +78,14 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		return nil, fmt.Errorf("mockdapi: cached source: %w", err)
 	}
 
+	mlNodes := make([]params.MLNode, 0, len(cfg.MLNodes))
+	for _, node := range cfg.MLNodes {
+		mlNodes = append(mlNodes, params.MLNode{ID: node.ID, Endpoint: node.Endpoint})
+	}
 	paramsSrv, err := params.NewServer(params.Config{
 		Source:     src,
 		MLEndpoint: cfg.MLEndpoint,
+		MLNodes:    mlNodes,
 		MaxWaitCap: func() time.Duration { return commonruntimeconfig.DefaultMaxWaitCap },
 		Log:        slog.Default(),
 	})
@@ -212,6 +217,9 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 		Blocks:          s.blockMock,
 		OmitBlocks:      s.cfg.OmitBlockRoutes,
 		VersionProvider: s.versions,
+	})
+	e.GET("/testenv/ml-allocations", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, s.paramsSrv.AllocationCounts())
 	})
 	if s.cfg.BinaryDir != "" {
 		mountBinaryFiles(e.Group(""), s.cfg.BinaryDir)
