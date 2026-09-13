@@ -11,7 +11,9 @@ Usage:
       --build-edge-api BOOL --build-devshardd BOOL [--chain-version VER]
       [--race-releases-tag TAG] [--devshard-version V] [--devshard-protocol-version V]
       [--devshard-binary-version V] [--github-sha SHA]
+  devshard-release-meta.sh leftover-from-ref --ref-name REF
   devshard-release-meta.sh check-stamps --binary PATH --protocol V --binary-version V
+      [--docker-image IMAGE]
   devshard-release-meta.sh archive --output-dir DIR
 EOF
 	exit 2
@@ -100,6 +102,44 @@ emit_host_false() {
 	emit source_line ""
 }
 
+# Prints leftover vX.Y.Z with no trailing newline. Returns 1 if REF is not a host tag.
+leftover_from_ref() {
+	local ref_name=$1 leftover=""
+	if [[ $ref_name =~ ^release/devshard/(.*)$ ]]; then
+		leftover=${BASH_REMATCH[1]}
+		is_three_part "$leftover" || return 1
+		printf '%s' "$leftover"
+		return 0
+	fi
+	if [[ $ref_name == *-devshard-* ]]; then
+		if [[ $ref_name =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+(.*)-devshard-(v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+			printf '%s' "${BASH_REMATCH[2]}"
+			return 0
+		fi
+		return 1
+	fi
+	return 1
+}
+
+leftover_from_ref_cmd() {
+	local ref_name=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--ref-name)
+			ref_name=${2:-}
+			shift 2
+			;;
+		*)
+			die "unknown leftover-from-ref argument: $1"
+			;;
+		esac
+	done
+	[[ -n "$ref_name" ]] || die "--ref-name is required"
+	local leftover=""
+	leftover=$(leftover_from_ref "$ref_name") || die "not a host leftover tag: $ref_name"
+	printf '%s\n' "$leftover"
+}
+
 classify_tag() {
 	local ref_name="" github_sha=""
 	while [[ $# -gt 0 ]]; do
@@ -120,22 +160,13 @@ classify_tag() {
 	[[ -n "$ref_name" ]] || die "--ref-name is required"
 
 	local leftover=""
-	if [[ $ref_name =~ ^release/devshard/(.*)$ ]]; then
-		leftover=${BASH_REMATCH[1]}
-		is_three_part "$leftover" || die "host leftover must be vX.Y.Z, got $leftover (from $ref_name)"
+	if leftover=$(leftover_from_ref "$ref_name"); then
 		emit mode host
 		emit_chain_false
 		emit_host_fields "$leftover" "$github_sha"
 		return
 	fi
-	if [[ $ref_name == *-devshard-* ]]; then
-		if [[ $ref_name =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+(.*)-devshard-(v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-			leftover=${BASH_REMATCH[2]}
-			emit mode host
-			emit_chain_false
-			emit_host_fields "$leftover" "$github_sha"
-			return
-		fi
+	if [[ $ref_name =~ ^release/devshard/ ]] || [[ $ref_name == *-devshard-* ]]; then
 		die "host leftover must be vX.Y.Z, got invalid tag $ref_name"
 	fi
 	if [[ $ref_name =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
@@ -263,8 +294,19 @@ classify_dispatch() {
 	fi
 }
 
+print_stamp() {
+	local binary=$1 docker_image=$2 flag=$3
+	if [[ -n $docker_image ]]; then
+		local abs
+		abs=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$binary")
+		docker run --rm --entrypoint /devshardd -v "${abs}:/devshardd:ro" "$docker_image" "$flag"
+	else
+		"$binary" "$flag"
+	fi
+}
+
 check_stamps() {
-	local binary="" protocol="" binary_version=""
+	local binary="" protocol="" binary_version="" docker_image=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--binary)
@@ -279,6 +321,10 @@ check_stamps() {
 			binary_version=${2:-}
 			shift 2
 			;;
+		--docker-image)
+			docker_image=${2:-}
+			shift 2
+			;;
 		*)
 			die "unknown check-stamps argument: $1"
 			;;
@@ -286,9 +332,12 @@ check_stamps() {
 	done
 	[[ -n "$binary" && -n "$protocol" && -n "$binary_version" ]] || die "check-stamps requires --binary --protocol --binary-version"
 	[[ -x "$binary" ]] || die "binary is not executable: $binary"
+	if [[ -n $docker_image ]]; then
+		command -v docker >/dev/null || die "docker not found (needed for --docker-image)"
+	fi
 	local got_protocol got_binary
-	got_protocol=$("$binary" --print-protocol-version | tr -d '\r\n')
-	got_binary=$("$binary" --print-binary-version | tr -d '\r\n')
+	got_protocol=$(print_stamp "$binary" "$docker_image" --print-protocol-version | tr -d '\r\n')
+	got_binary=$(print_stamp "$binary" "$docker_image" --print-binary-version | tr -d '\r\n')
 	[[ $got_protocol == "$protocol" ]] || die "protocol stamp '$got_protocol' != expected '$protocol'"
 	[[ $got_binary == "$binary_version" ]] || die "binary stamp '$got_binary' != expected '$binary_version'"
 }
@@ -320,6 +369,7 @@ shift || true
 case "$cmd" in
 tag) classify_tag "$@" ;;
 dispatch) classify_dispatch "$@" ;;
+leftover-from-ref) leftover_from_ref_cmd "$@" ;;
 check-stamps) check_stamps "$@" ;;
 archive) archive_source "$@" ;;
 -h | --help) usage ;;

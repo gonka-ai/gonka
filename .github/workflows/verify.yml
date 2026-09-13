@@ -38,13 +38,18 @@ jobs:
           chmod +x .github/scripts/devshard-release-meta.sh \
             .github/scripts/devshard-release-meta_test.sh \
             .github/scripts/devshard-release-publish.sh \
-            .github/scripts/devshard-release-publish_test.sh
+            .github/scripts/devshard-release-publish_test.sh \
+            .github/scripts/devshard-release-skip-duplicate.sh \
+            .github/scripts/devshard-release-skip-duplicate_test.sh
           shellcheck -x .github/scripts/devshard-release-meta.sh \
             .github/scripts/devshard-release-meta_test.sh \
             .github/scripts/devshard-release-publish.sh \
-            .github/scripts/devshard-release-publish_test.sh
+            .github/scripts/devshard-release-publish_test.sh \
+            .github/scripts/devshard-release-skip-duplicate.sh \
+            .github/scripts/devshard-release-skip-duplicate_test.sh
           .github/scripts/devshard-release-meta_test.sh
           .github/scripts/devshard-release-publish_test.sh
+          .github/scripts/devshard-release-skip-duplicate_test.sh
 
   build-and-test:
     runs-on: ubuntu-latest

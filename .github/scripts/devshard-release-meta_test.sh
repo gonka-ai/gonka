@@ -82,6 +82,13 @@ run_ok tag --ref-name release/devshard/v4.1.1
 assert_eq "$(field devshard_version "$got")" v4.1.1 "v4.1.1 stripped"
 assert_eq "$(field release_body_line "$got")" "devshardd v4.1.1 protocol v4 binary stamp v4.1.1" "v4.1.1 body"
 
+run_ok leftover-from-ref --ref-name release/devshard/v4.1.0
+assert_eq "${got//$'\n'/}" v4.1.0 "leftover-from-ref short host tag"
+run_ok leftover-from-ref --ref-name release/v0.2.15-devshard-v5.0.0
+assert_eq "${got//$'\n'/}" v5.0.0 "leftover-from-ref chain-shaped host tag"
+assert_fail "chain tag is not leftover" leftover-from-ref --ref-name release/v0.2.15
+assert_fail "short leftover-from-ref" leftover-from-ref --ref-name release/devshard/v4.1
+
 assert_fail "v4.1 leftover" tag --ref-name release/devshard/v4.1
 assert_fail "rc leftover" tag --ref-name release/devshard/v4.1.0-rc1
 assert_fail "short leftover on chain-shaped tag" tag --ref-name release/v0.2.14-devshard-v4
@@ -151,6 +158,49 @@ if "$meta" check-stamps --binary "$tmpdir/fake-devshardd" --protocol v4 --binary
 	>"$tmpdir/out" 2>"$tmpdir/err"; then
 	fail "mismatched binary stamp should fail"
 fi
+
+mkdir -p "$tmpdir/bin"
+cat >"$tmpdir/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${FAKE_DOCKER_LOG:?}"
+flag=""
+mounted=""
+image=""
+prev=""
+for arg in "$@"; do
+	case "$prev" in
+	-v)
+		mounted=$arg
+		;;
+	esac
+	case "$arg" in
+	--print-protocol-version | --print-binary-version)
+		flag=$arg
+		;;
+	alpine:3.23)
+		image=$arg
+		;;
+	esac
+	prev=$arg
+done
+[[ $image == alpine:3.23 ]] || exit 3
+[[ $mounted == *:/devshardd:ro ]] || exit 4
+case "$flag" in
+--print-protocol-version) printf 'v4\n' ;;
+--print-binary-version) printf 'v4.1.0\n' ;;
+*) exit 2 ;;
+esac
+EOF
+chmod +x "$tmpdir/bin/docker"
+export FAKE_DOCKER_LOG=$tmpdir/docker.argv
+: >"$FAKE_DOCKER_LOG"
+PATH="$tmpdir/bin:$PATH" "$meta" check-stamps \
+	--binary "$tmpdir/fake-devshardd" --protocol v4 --binary-version v4.1.0 \
+	--docker-image alpine:3.23 || fail "docker check-stamps should pass"
+grep -q -- '--entrypoint /devshardd' "$FAKE_DOCKER_LOG" || fail "docker should override entrypoint"
+grep -q -- '--print-protocol-version' "$FAKE_DOCKER_LOG" || fail "docker should print protocol"
+grep -q -- '--print-binary-version' "$FAKE_DOCKER_LOG" || fail "docker should print binary"
 
 tiny=$tmpdir/tiny-repo
 mkdir -p "$tiny/devshard" "$tmpdir/empty-git-template"

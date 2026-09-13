@@ -106,14 +106,39 @@ jobs:
             printf '%s\n' "$line" >> "$GITHUB_OUTPUT"
           done < "$RUNNER_TEMP/release-meta.txt"
 
+      # GitHub has no "skip if another run is already busy". First-wins on the
+      # same github.sha or leftover release tag; only host-only runs skip.
+      - name: Skip duplicate host publish
+        id: skip
+        if: steps.meta.outputs.mode == 'host'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/devshard-release-skip-duplicate.sh \
+            .github/scripts/devshard-release-meta.sh
+          .github/scripts/devshard-release-skip-duplicate.sh \
+            --repo "${{ github.repository }}" \
+            --workflow publish_upgrade_binaries.yml \
+            --run-id "${{ github.run_id }}" \
+            --sha "${{ github.sha }}" \
+            --release-tag "${{ steps.meta.outputs.release_tag }}" \
+            | tee -a "$GITHUB_OUTPUT"
+
+      - name: Duplicate host publish already running
+        if: steps.skip.outputs.skip == 'true'
+        env:
+          SKIP_REASON: ${{ steps.skip.outputs.reason }}
+        run: printf '%s\n' "${SKIP_REASON:-duplicate host publish already in progress}"
+
       - name: Set up Go
-        if: steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true'
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
         uses: actions/setup-go@v5
         with:
           go-version: '1.24.2'
 
       - name: Build chain upgrade zips
-        if: steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true'
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
         env:
           VERSION: ${{ steps.meta.outputs.chain_version }}
           BUILD_INFERENCE_CHAIN: ${{ steps.meta.outputs.build_inference_chain }}
@@ -133,7 +158,7 @@ jobs:
           fi
 
       - name: Build devshardd release zip
-        if: steps.meta.outputs.build_devshardd == 'true'
+        if: steps.skip.outputs.skip != 'true' && steps.meta.outputs.build_devshardd == 'true'
         env:
           DEVSHARD_VERSION: ${{ steps.meta.outputs.make_devshard_version }}
           DEVSHARD_BINARY_VERSION: ${{ steps.meta.outputs.devshard_binary_version }}
@@ -145,11 +170,12 @@ jobs:
           .github/scripts/devshard-release-meta.sh check-stamps \
             --binary ./build/devshardd \
             --protocol "$DEVSHARD_VERSION" \
-            --binary-version "$DEVSHARD_BINARY_VERSION"
+            --binary-version "$DEVSHARD_BINARY_VERSION" \
+            --docker-image alpine:3.23
           .github/scripts/devshard-release-meta.sh archive --output-dir build/devshardd-release
 
       - name: Generate GitHub App Installation Token for release
-        if: steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true' || steps.meta.outputs.build_devshardd == 'true'
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true' || steps.meta.outputs.build_devshardd == 'true')
         id: get_release_token
         uses: actions/create-github-app-token@v2
         with:
@@ -160,7 +186,7 @@ jobs:
 
       - name: Collect chain zip paths
         id: chain_files
-        if: steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true'
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
         run: |
           set -euo pipefail
           {
@@ -171,7 +197,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Create chain release in race-releases
-        if: steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true'
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
         uses: softprops/action-gh-release@v2
         with:
           token: ${{ steps.get_release_token.outputs.token }}
@@ -186,18 +212,18 @@ jobs:
           files: ${{ steps.chain_files.outputs.files }}
 
       - name: Create tag artifact
-        if: steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true'
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
         run: echo "${{ steps.meta.outputs.race_releases_tag }}" > release_tag.txt
 
       - name: Upload tag artifact
-        if: steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true'
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: release-tag-artifact
           path: release_tag.txt
 
       - name: Publish devshardd release
-        if: steps.meta.outputs.build_devshardd == 'true'
+        if: steps.skip.outputs.skip != 'true' && steps.meta.outputs.build_devshardd == 'true'
         env:
           GH_TOKEN: ${{ steps.get_release_token.outputs.token }}
           RELEASE_NAME: ${{ steps.meta.outputs.release_name }}
