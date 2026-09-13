@@ -105,9 +105,10 @@ print(tag)
 if [[ -n "$existing_tag" ]]; then
 	[[ $existing_tag == "$tag" ]] || die "release '$name' exists with tag '$existing_tag', expected '$tag'"
 	printf 'devshard-release-publish: reusing existing release %s (tag %s)\n' "$name" "$tag" >&2
+	"$gh_bin" release edit "$tag" --repo "$repo" --prerelease >/dev/null
 else
 	create_err=$(mktemp)
-	create_args=("$tag" --repo "$repo" --title "$name" --notes "$notes")
+	create_args=("$tag" --repo "$repo" --title "$name" --notes "$notes" --prerelease)
 	if [[ -n "$target" ]]; then
 		create_args+=(--target "$target")
 	fi
@@ -117,6 +118,7 @@ else
 		rm -f "$create_err"
 		if [[ $err == *"already exists"* ]]; then
 			printf 'devshard-release-publish: tag %s already existed; reusing\n' "$tag" >&2
+			"$gh_bin" release edit "$tag" --repo "$repo" --prerelease >/dev/null
 		else
 			printf '%s\n' "$err" >&2
 			die "failed to create release $tag"

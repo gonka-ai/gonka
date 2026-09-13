@@ -12,6 +12,7 @@ Usage:
       [--race-releases-tag TAG] [--devshard-version V] [--devshard-protocol-version V]
       [--devshard-binary-version V] [--github-sha SHA]
   devshard-release-meta.sh leftover-from-ref --ref-name REF
+  devshard-release-meta.sh docker-tag --ref-name REF --owner OWNER [--registry ghcr.io]
   devshard-release-meta.sh check-stamps --binary PATH --protocol V --binary-version V
       [--docker-image IMAGE]   # workflow: devshardd-builder:latest (same as make)
 EOF
@@ -131,6 +132,52 @@ leftover_from_ref_cmd() {
 	local leftover=""
 	leftover=$(leftover_from_ref "$ref_name") || die "not a host leftover tag: $ref_name"
 	printf '%s\n' "$leftover"
+}
+
+docker_tag_cmd() {
+	local ref_name="" owner="" registry="ghcr.io"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--ref-name)
+			ref_name=${2:-}
+			shift 2
+			;;
+		--owner)
+			owner=${2:-}
+			shift 2
+			;;
+		--registry)
+			registry=${2:-}
+			shift 2
+			;;
+		*)
+			die "unknown docker-tag argument: $1"
+			;;
+		esac
+	done
+	[[ -n "$ref_name" ]] || die "--ref-name is required"
+	[[ -n "$owner" ]] || die "--owner is required"
+	local leftover="" prefix chain leftover_major image_tag version protocol
+	leftover=$(leftover_from_ref "$ref_name") || die "docker-tag requires a chain-shaped host tag, got $ref_name"
+	prefix=${ref_name#release/}
+	local suffix="-devshard-${leftover}"
+	[[ $prefix == *"$suffix" ]] || die "docker-tag requires release/vX.Y.Z-devshard-vA.B.C, got $ref_name"
+	chain=${prefix%"$suffix"}
+	[[ $chain == v* ]] || die "docker-tag chain version must start with v, got $chain from $ref_name"
+	[[ $chain != "$prefix" ]] || die "docker-tag requires release/vX.Y.Z-devshard-vA.B.C, got $ref_name"
+	leftover_major=$(major_version "$leftover")
+	image_tag=${chain#v}-devshard-${leftover_major}
+	version=$(strip_trailing_zeros "$leftover")
+	protocol=$(major_version "$leftover")
+	emit leftover "$leftover"
+	emit leftover_major "$leftover_major"
+	emit chain_version "$chain"
+	emit image_tag "$image_tag"
+	emit release_name "Devshard Release $leftover"
+	emit release_tag "devshard/$leftover"
+	emit release_body_line "devshardd $version protocol $protocol binary stamp $leftover"
+	emit image_versiond "${registry}/${owner}/versiond:${image_tag}"
+	emit image_versiond_router "${registry}/${owner}/versiond-router:${image_tag}"
 }
 
 classify_tag() {
@@ -342,6 +389,7 @@ case "$cmd" in
 tag) classify_tag "$@" ;;
 dispatch) classify_dispatch "$@" ;;
 leftover-from-ref) leftover_from_ref_cmd "$@" ;;
+docker-tag) docker_tag_cmd "$@" ;;
 check-stamps) check_stamps "$@" ;;
 -h | --help) usage ;;
 *)

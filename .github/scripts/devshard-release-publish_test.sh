@@ -53,6 +53,9 @@ release)
 				target=$2
 				shift 2
 				;;
+			--prerelease)
+				shift
+				;;
 			-*)
 				shift
 				[[ $# -gt 0 ]] && shift
@@ -78,6 +81,12 @@ with open(path, "w") as f:
     json.dump(releases, f)
 PY
 		printf 'created %s\n' "$tag"
+		;;
+	edit)
+		# --prerelease on reuse; no fixture mutation needed beyond argv.log
+		while [[ $# -gt 0 ]]; do
+			shift
+		done
 		;;
 	upload)
 		tag=""
@@ -168,6 +177,7 @@ else
 	fail "expected gh release create on first publish"
 fi
 grep -q -- '--target abcdef' "$state/argv.log" || fail "create should pass --target"
+grep -q -- '--prerelease' "$state/argv.log" || fail "create should mark pre-release"
 
 : >"$state/argv.log"
 printf 'zip-v2' >"$zip1"
@@ -182,6 +192,7 @@ printf 'zip-v2' >"$zip1"
 if grep -q 'release create' "$state/argv.log"; then
 	fail "must not create when the name already exists"
 fi
+grep -q -- '--prerelease' "$state/argv.log" || fail "reuse should keep pre-release"
 python3 - "$state/releases.json" <<'PY' || fail "reuse must not add a second release"
 import json, sys
 with open(sys.argv[1]) as f:

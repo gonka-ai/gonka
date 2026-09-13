@@ -88,6 +88,27 @@ assert_eq "${got//$'\n'/}" v5.0.0 "leftover-from-ref chain-shaped host tag"
 assert_fail "chain tag is not leftover" leftover-from-ref --ref-name release/v0.2.15
 assert_fail "short leftover-from-ref" leftover-from-ref --ref-name release/devshard/v4.1
 
+run_ok docker-tag --ref-name release/v0.2.15-devshard-v5.0.0 --owner gonka-ai
+assert_eq "$(field leftover "$got")" v5.0.0 "docker leftover"
+assert_eq "$(field leftover_major "$got")" v5 "docker leftover major"
+assert_eq "$(field chain_version "$got")" v0.2.15 "docker chain"
+assert_eq "$(field image_tag "$got")" 0.2.15-devshard-v5 "docker image tag strips leftover to major"
+assert_eq "$(field release_name "$got")" "Devshard Release v5.0.0" "docker release name matches host zip"
+assert_eq "$(field release_tag "$got")" "devshard/v5.0.0" "docker release tag matches host zip"
+assert_eq "$(field release_body_line "$got")" "devshardd v5 protocol v5 binary stamp v5.0.0" "docker body line"
+assert_eq "$(field image_versiond "$got")" "ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5" "docker versiond image"
+assert_eq "$(field image_versiond_router "$got")" "ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5" "docker router image"
+
+run_ok docker-tag --ref-name release/v0.2.15-devshard-v5.1.0 --owner gonka-ai
+assert_eq "$(field image_tag "$got")" 0.2.15-devshard-v5 "v5.1.0 still majors to v5"
+assert_eq "$(field release_name "$got")" "Devshard Release v5.1.0" "release name keeps full leftover"
+
+run_ok docker-tag --ref-name release/v0.2.15-rc1-devshard-v5.0.0 --owner gonka-ai --registry ghcr.io
+assert_eq "$(field image_tag "$got")" 0.2.15-rc1-devshard-v5 "rc stays in chain slice"
+
+assert_fail "short host tag has no chain version" docker-tag --ref-name release/devshard/v5.0.0 --owner gonka-ai
+assert_fail "chain tag is not docker-tag" docker-tag --ref-name release/v0.2.15 --owner gonka-ai
+
 assert_fail "v4.1 leftover" tag --ref-name release/devshard/v4.1
 assert_fail "rc leftover" tag --ref-name release/devshard/v4.1.0-rc1
 assert_fail "short leftover on chain-shaped tag" tag --ref-name release/v0.2.14-devshard-v4
