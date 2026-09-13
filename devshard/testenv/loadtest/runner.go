@@ -150,10 +150,17 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, err
 	}
 	result.Allocations = allocations
-	if err := assertRun(ctx, scenario, summary, allocations, result.GatewayURL, apiKey); err != nil {
-		_ = writeGatewayInferences(ctx, result.GatewayURL, apiKey, opts.OutputDir)
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
+	if err := writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath); err != nil {
 		return RunResult{}, err
+	}
+	ghostIDs, err := readGhostInferenceIDs(filepath.Join(opts.OutputDir, "compose.log"))
+	if err != nil {
+		return RunResult{}, err
+	}
+	assertionErr := assertRun(ctx, scenario, summary, allocations, result.GatewayURL, apiKey, ghostIDs)
+	_ = writeGatewayInferences(ctx, result.GatewayURL, apiKey, opts.OutputDir)
+	if assertionErr != nil {
+		return RunResult{}, assertionErr
 	}
 	if err := writeAssertions(opts.OutputDir, nil); err != nil {
 		return RunResult{}, err
@@ -168,6 +175,7 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 	}
 	cfg.Versiond.Mode = scenario.Topology.VersiondMode
 	cfg.Postgres.PerParticipant = scenario.Topology.Storage == "per_participant"
+	configureParticipants(cfg, scenario.Topology.Participants)
 	cfg.Params.MaxNonce = scenario.Topology.Chain.MaxNonce
 	for i := range cfg.Escrows {
 		cfg.Escrows[i].Amount = scenario.Topology.Chain.EscrowAmount
@@ -187,6 +195,30 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 		return err
 	}
 	return cfg.Save(filepath.Join(workDir, "config.yaml"))
+}
+
+// configureParticipants keeps the default HA pair as one participant and
+// adds independent solo hosts for every additional participant requested by a
+// scenario. One escrow slot per identity makes the local roster explicit.
+func configureParticipants(cfg *config.File, participants int) {
+	if cfg == nil || participants == 0 {
+		return
+	}
+
+	hostCount := participants + 1 // versiond-0 and versiond-1 form the HA pair.
+	if len(cfg.Hosts) > hostCount {
+		cfg.Hosts = cfg.Hosts[:hostCount]
+	}
+	for len(cfg.Hosts) < hostCount {
+		index := len(cfg.Hosts)
+		cfg.Hosts = append(cfg.Hosts, config.HostCfg{ID: fmt.Sprintf("versiond-%d", index)})
+	}
+
+	for index := range cfg.Hosts {
+		cfg.Hosts[index].KeyName = fmt.Sprintf("versiond-%d", index)
+	}
+	cfg.Hosts[1].KeyName = cfg.Hosts[0].KeyName
+	cfg.Escrow.Slots = participants
 }
 
 func randomizeTestenv(cfg *config.File) error {
@@ -322,7 +354,7 @@ func fetchAllocations(ctx context.Context, dapiPort int) (map[string]uint64, err
 	return allocations, nil
 }
 
-func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocations map[string]uint64, gatewayURL, apiKey string) error {
+func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocations map[string]uint64, gatewayURL, apiKey string, ghostIDs map[string]struct{}) error {
 	if summary.Requests == 0 {
 		return fmt.Errorf("load generator produced no requests")
 	}
@@ -337,18 +369,20 @@ func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocati
 		}
 	}
 	if scenario.Assertions.Devshard.RequireDrain || scenario.Assertions.Devshard.NoOrphanedWork {
-		return waitForFinishedInferences(ctx, gatewayURL, apiKey, summary.Completed, scenario.DrainDuration())
+		return waitForFinishedInferences(ctx, gatewayURL, apiKey, summary.Completed, scenario.Assertions.Devshard.MaxGhostRate, ghostIDs, scenario.DrainDuration())
 	}
 	return nil
 }
 
-func waitForFinishedInferences(ctx context.Context, gatewayURL, apiKey string, expected int, timeout time.Duration) error {
+func waitForFinishedInferences(ctx context.Context, gatewayURL, apiKey string, expected int, maxGhostRate float64, ghostIDs map[string]struct{}, timeout time.Duration) error {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	client := &http.Client{Timeout: 5 * time.Second}
 	lastStatuses := map[string]int(nil)
+	lastGhosts := 0
+	lastTotal := 0
 	for {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/v1/debug/inferences", nil)
 		if err != nil {
@@ -368,17 +402,31 @@ func waitForFinishedInferences(ctx context.Context, gatewayURL, apiKey string, e
 			_ = response.Body.Close()
 			if err == nil {
 				finished := 0
-				allFinished := true
+				allNonGhostFinished := true
 				lastStatuses = make(map[string]int)
-				for _, inference := range body.Inferences {
+				lastGhosts = 0
+				lastTotal = len(body.Inferences)
+				for id, inference := range body.Inferences {
+					if _, ghost := ghostIDs[id]; ghost {
+						lastGhosts++
+						continue
+					}
 					lastStatuses[inference.Status]++
 					if inference.Status == "finished" {
 						finished++
 					} else {
-						allFinished = false
+						allNonGhostFinished = false
 					}
 				}
-				if finished >= expected && allFinished {
+				ghostRate := 0.0
+				if lastTotal > 0 {
+					ghostRate = float64(lastGhosts) / float64(lastTotal)
+				}
+				if finished >= expected && allNonGhostFinished {
+					if ghostRate > maxGhostRate {
+						return fmt.Errorf("ghost inference rate %.4f exceeds max_ghost_rate %.4f (ghost=%d total=%d)", ghostRate, maxGhostRate, lastGhosts, lastTotal)
+					}
+					log.Printf("loadtest: terminal state finished=%d ghost=%d total=%d ghost_rate=%.4f", finished, lastGhosts, lastTotal, ghostRate)
 					return nil
 				}
 			}
@@ -389,10 +437,41 @@ func waitForFinishedInferences(ctx context.Context, gatewayURL, apiKey string, e
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("Devshard did not drain %d successful inferences within %s (last statuses: %s)", expected, timeout, formatStatusCounts(lastStatuses))
+			ghostRate := 0.0
+			if lastTotal > 0 {
+				ghostRate = float64(lastGhosts) / float64(lastTotal)
+			}
+			return fmt.Errorf("Devshard did not drain %d successful inferences within %s (last non-ghost statuses: %s; ghost=%d total=%d ghost_rate=%.4f max_ghost_rate=%.4f)", expected, timeout, formatStatusCounts(lastStatuses), lastGhosts, lastTotal, ghostRate, maxGhostRate)
 		case <-ticker.C:
 		}
 	}
+}
+
+// readGhostInferenceIDs derives deliberate no-send slots from the gateway
+// trace, leaving production accounting and debug endpoints untouched.
+func readGhostInferenceIDs(path string) (map[string]struct{}, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read gateway trace %s: %w", path, err)
+	}
+	ghosts := make(map[string]struct{})
+	for _, line := range strings.Split(string(body), "\n") {
+		if !strings.Contains(line, "stage=ghost_probe_skipped") {
+			continue
+		}
+		for _, field := range strings.Fields(line) {
+			if !strings.HasPrefix(field, "nonce=") {
+				continue
+			}
+			nonce := strings.Trim(strings.TrimPrefix(field, "nonce="), `"`)
+			if _, err := strconv.ParseUint(nonce, 10, 64); err != nil {
+				return nil, fmt.Errorf("parse ghost nonce %q in %s: %w", nonce, path, err)
+			}
+			ghosts[nonce] = struct{}{}
+			break
+		}
+	}
+	return ghosts, nil
 }
 
 func formatStatusCounts(counts map[string]int) string {

@@ -5,6 +5,7 @@ seed: 42
 topology:
   versiond_mode: multi
   storage: per_participant
+  participants: 3
   chain:
     escrow_amount: 1000000000
     max_nonce: 100000
@@ -38,7 +39,8 @@ assertions:
   devshard:
     no_orphaned_work: true
     require_drain: true
+    max_ghost_rate: 0.02
   mock_ml:
     require_each_node_used: true
 
-drain_timeout: 3m
+drain_timeout: 30s
