@@ -4,6 +4,7 @@ seed: 42
 
 topology:
   versiond_mode: multi
+  storage: per_host
   chain:
     escrow_amount: 1000000000
     max_nonce: 100000

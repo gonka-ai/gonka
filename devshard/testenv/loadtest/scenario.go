@@ -24,6 +24,7 @@ type Scenario struct {
 
 type Topology struct {
 	VersiondMode string         `yaml:"versiond_mode"`
+	Storage      string         `yaml:"storage"`
 	Chain        ChainTopology  `yaml:"chain"`
 	MockML       MockMLTopology `yaml:"mock_ml"`
 }
@@ -130,6 +131,9 @@ func (s Scenario) Validate() error {
 	}
 	if s.Topology.VersiondMode != "multi" {
 		return fmt.Errorf("only versiond_mode multi is supported")
+	}
+	if s.Topology.Storage != "per_host" {
+		return fmt.Errorf("only topology.storage per_host is supported")
 	}
 	if s.Topology.Chain.EscrowAmount == 0 || s.Topology.Chain.MaxNonce == 0 {
 		return fmt.Errorf("topology.chain requires positive escrow_amount and max_nonce")

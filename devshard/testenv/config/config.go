@@ -157,9 +157,12 @@ type DevshardctlCfg struct {
 	IP   string `yaml:"ip"`
 }
 
-// PostgresCfg is optional shared storage for devshardd children.
+// PostgresCfg configures storage for devshardd children. PerHost creates an
+// isolated Postgres service for each versiond container; the default is the
+// existing shared service used by HA-specific testenv scenarios.
 type PostgresCfg struct {
 	Enabled  bool   `yaml:"enabled"`
+	PerHost  bool   `yaml:"per_host"`
 	Host     string `yaml:"host"`
 	Port     int    `yaml:"port"`
 	Database string `yaml:"database"`
@@ -595,7 +598,7 @@ func (c *File) Validate() error {
 		return errors.New("user key and address must be set (run gencompose)")
 	}
 	if c.Versiond.Mode == VersiondModeMulti && !c.Postgres.Enabled {
-		return errors.New("versiond.mode multi requires postgres.enabled: true (shared payload/session store for multiple versiond hosts)")
+		return errors.New("versiond.mode multi requires postgres.enabled: true")
 	}
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")

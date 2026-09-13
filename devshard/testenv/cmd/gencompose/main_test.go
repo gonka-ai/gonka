@@ -448,6 +448,26 @@ func TestWriteCompose_MultipleMockMLNodes(t *testing.T) {
 	require.Contains(t, text, `MOCK_OPENAI_QUEUE: "8"`)
 }
 
+func TestWriteCompose_PerHostPostgres(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	cfg.Postgres.PerHost = true
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	text := string(body)
+	for _, host := range cfg.Hosts {
+		require.Contains(t, text, "devshard-postgres-"+host.ID+":")
+		require.Contains(t, text, "PGHOST: devshard-postgres-"+host.ID)
+	}
+	require.Equal(t, len(cfg.Hosts), strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
+	require.NotContains(t, text, "# HA pair shares Postgres")
+}
+
 func TestWriteCompose_SingleMode_FilePayloadFallback(t *testing.T) {
 	dir := t.TempDir()
 	cfg := defaultConfig()
