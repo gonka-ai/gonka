@@ -5,10 +5,12 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	cosrv "devshard/chainoracle/server"
+	"devshard/internal/boolvalue"
 	"devshard/testenv/mockdapi"
 )
 
@@ -20,6 +22,9 @@ func main() {
 	cfg.ChainRPCAddr = envOr("MOCK_CHAIN_RPC_ADDR", "http://mock-chain:26657")
 	cfg.ChainTestenvURL = os.Getenv("MOCK_CHAIN_TESTENV_URL")
 	cfg.MLEndpoint = envOr("MOCK_ML_ENDPOINT", "http://mock-openai:8088")
+	if nodes := parseMLNodes(os.Getenv("MOCK_ML_NODES")); len(nodes) > 0 {
+		cfg.MLNodes = nodes
+	}
 	cfg.ChainID = envOr("CHAIN_ID", cfg.ChainID)
 	cfg.BinaryDir = os.Getenv("MOCK_DAPI_BINARY_DIR")
 	if v := versionFromEnv(); v.Name != "" {
@@ -35,6 +40,7 @@ func main() {
 			cfg.BlockInterval = d
 		}
 	}
+	cfg.OmitBlockRoutes = envTruthy("MOCK_DAPI_OMIT_BLOCK_ROUTES")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -56,6 +62,23 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envTruthy(key string) bool {
+	enabled, err := boolvalue.Parse(os.Getenv(key))
+	return err == nil && enabled
+}
+
+func parseMLNodes(raw string) []mockdapi.MLNode {
+	var nodes []mockdapi.MLNode
+	for _, item := range strings.Split(raw, ",") {
+		id, endpoint, ok := strings.Cut(strings.TrimSpace(item), "=")
+		if !ok || id == "" || endpoint == "" {
+			continue
+		}
+		nodes = append(nodes, mockdapi.MLNode{ID: id, Endpoint: endpoint})
+	}
+	return nodes
 }
 
 func versionFromEnv() cosrv.Version {
