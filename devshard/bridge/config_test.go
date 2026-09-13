@@ -20,9 +20,11 @@ func TestSessionConfigAtBind_EscrowLaneA(t *testing.T) {
 		VoteThresholdFactor:       50,
 		RefusalTimeout:            5,
 		ExecutionTimeout:          17,
+		MaxModelLen:               180_000,
 	}
 
 	cfg := SessionConfigAtBind(groupSize, escrow)
+	assert.Equal(t, uint64(180_000), cfg.MaxModelLen)
 	require.Equal(t, uint32(55), cfg.InferenceSealGraceNonces)
 	require.Equal(t, uint32(77), cfg.InferenceSealGraceSeconds)
 	require.Equal(t, uint32(16), cfg.AutoSealEveryNNonces)

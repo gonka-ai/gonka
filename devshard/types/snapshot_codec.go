@@ -57,6 +57,7 @@ func EscrowStateToProto(state *EscrowState) *EscrowStateProto {
 			InferenceSealGraceNonces:  cfg.InferenceSealGraceNonces,
 			InferenceSealGraceSeconds: cfg.InferenceSealGraceSeconds,
 			AutoSealEveryNNonces:      cfg.AutoSealEveryNNonces,
+			MaxModelLen:               cfg.MaxModelLen,
 		},
 		Group:                         group,
 		Balance:                       state.Balance,
@@ -133,6 +134,7 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 			InferenceSealGraceNonces:  p.InferenceSealGraceNonces,
 			InferenceSealGraceSeconds: p.InferenceSealGraceSeconds,
 			AutoSealEveryNNonces:      p.AutoSealEveryNNonces,
+			MaxModelLen:               p.MaxModelLen,
 		}
 	}
 

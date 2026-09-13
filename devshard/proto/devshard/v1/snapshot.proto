@@ -16,6 +16,7 @@ message SessionConfigProto {
   uint32 inference_seal_grace_nonces = 8;
   uint32 inference_seal_grace_seconds = 9;
   uint32 auto_seal_every_n_nonces = 10;
+  uint64 max_model_len = 11;
 }
 
 message SlotAssignmentProto {

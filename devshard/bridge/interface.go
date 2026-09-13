@@ -37,6 +37,7 @@ type EscrowInfo struct {
 	VoteThresholdFactor       uint32
 	RefusalTimeout            int64
 	ExecutionTimeout          int64
+	MaxModelLen               uint64
 	// EpochID is the chain epoch_index recorded on the on-chain DevshardEscrow.
 	// Storage uses it as the partition/pruning key.
 	EpochID uint64

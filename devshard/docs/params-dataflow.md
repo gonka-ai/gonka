@@ -12,7 +12,7 @@ See also: [session-config-flow-plan.md](./session-config-flow-plan.md) (implemen
 
 | In message | On chain after create |
 |------------|------------------------|
-| `creator`, `amount`, `model_id` | `id`, `slots`, `epoch_index`, `app_hash`, `token_price`, **`create_devshard_fee`**, **`fee_per_nonce`**, **`validation_rate`**, **`vote_threshold_factor`**, seal-grace snapshots, `settled`, … |
+| `creator`, `amount`, `model_id` | `id`, `slots`, `epoch_index`, `app_hash`, `token_price`, **`create_devshard_fee`**, **`fee_per_nonce`**, **`validation_rate`**, **`vote_threshold_factor`**, **`max_model_len`**, seal-grace snapshots, `settled`, … |
 
 Governance defaults for fees, consensus params, and seal grace (`DevshardEscrowParams`) are **copied onto the escrow row** at create. Zero on the row means “use compiled default” when building `SessionConfig` (except `vote_threshold_factor == 0`, which keeps legacy `groupSize/2` at bind).
 
@@ -32,6 +32,7 @@ HTTP/storage key is the id. First bind calls **`GetEscrow(escrowID)`** once per 
 | **`inference_seal_grace_nonces`**, **`inference_seal_grace_seconds`** | Snapshotted at escrow create from governance defaults (default grace seconds: **3600** / 1 hour); hashed into state root / auto-seal |
 | **`validation_rate`** | Consensus-sensitive; snapshotted at escrow create (default **5000** bps when unset) |
 | **`vote_threshold_factor`** → `VoteThreshold` | Snapshotted at escrow create; derived at bind: `floor(groupSize * factor / 100)`; `factor == 0` → `groupSize / 2` |
+| **`max_model_len`** → `MaxModelLen` | Parsed at escrow create from `--max-model-len` in the epoch group's `model_snapshot.model_args`; `ReservedCost` becomes `min(input_length + max_tokens, max_model_len) × token_price`, which vLLM never lets a served request exceed; `0` (flag absent or not a plain number) leaves the reservation uncapped |
 | `settled`, `model_id`, `amount` | Operational / display; gateway wires `model_id` into runtime routing at bind |
 
 The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does **not** call `QueryParams` or attach governance defaults to `EscrowInfo`. `bridge.SessionConfigAtBind` maps the escrow row into `SessionConfig`.

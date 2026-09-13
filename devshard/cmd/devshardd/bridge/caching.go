@@ -122,6 +122,7 @@ func EscrowCacheFromInfo(e *bridge.EscrowInfo) storage.EscrowCacheInfo {
 		ValidationRate:            e.ValidationRate,
 		VoteThresholdFactor:       e.VoteThresholdFactor,
 		EpochID:                   e.EpochID,
+		MaxModelLen:               e.MaxModelLen,
 	}
 }
 
@@ -142,5 +143,6 @@ func EscrowInfoFromCache(c *storage.EscrowCacheInfo) *bridge.EscrowInfo {
 		ValidationRate:            c.ValidationRate,
 		VoteThresholdFactor:       c.VoteThresholdFactor,
 		EpochID:                   c.EpochID,
+		MaxModelLen:               c.MaxModelLen,
 	}
 }

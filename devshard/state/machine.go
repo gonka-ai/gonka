@@ -50,6 +50,21 @@ func tokenCost(a, b, price uint64) (uint64, error) {
 	return cost, nil
 }
 
+func reservedCost(inputLength, maxTokens, maxModelLen, price uint64) (uint64, error) {
+	tokens, ok := safeAdd(inputLength, maxTokens)
+	if !ok {
+		return 0, types.ErrCostOverflow
+	}
+	if maxModelLen > 0 && tokens > maxModelLen {
+		tokens = maxModelLen
+	}
+	cost, ok := safeMul(tokens, price)
+	if !ok {
+		return 0, types.ErrCostOverflow
+	}
+	return cost, nil
+}
+
 func copyInferenceRecord(v *types.InferenceRecord) *types.InferenceRecord {
 	if v == nil {
 		return nil
@@ -1165,15 +1180,15 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	executorSlot := sm.state.Group[msg.InferenceId%uint64(len(sm.state.Group))].SlotID
 
 	// Reserve cost: (input_length + max_tokens) * token_price
-	reservedCost, err := tokenCost(msg.InputLength, msg.MaxTokens, sm.state.Config.TokenPrice)
+	reserved, err := reservedCost(msg.InputLength, msg.MaxTokens, sm.state.Config.MaxModelLen, sm.state.Config.TokenPrice)
 	if err != nil {
 		return err
 	}
-	if sm.state.Balance < reservedCost {
+	if sm.state.Balance < reserved {
 		return types.ErrInsufficientBalance
 	}
 
-	sm.state.Balance -= reservedCost
+	sm.state.Balance -= reserved
 
 	rec := &types.InferenceRecord{
 		Status:       types.StatusPending,
@@ -1182,7 +1197,7 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 		PromptHash:   msg.PromptHash,
 		InputLength:  msg.InputLength,
 		MaxTokens:    msg.MaxTokens,
-		ReservedCost: reservedCost,
+		ReservedCost: reserved,
 		StartedAt:    msg.StartedAt,
 	}
 	if heightsync.StampPresent(msg.ObservedBlockHash) {

@@ -119,13 +119,14 @@ type SessionConfig struct {
 	// VoteThreshold is frozen in state.Config at session creation (from escrow lane A).
 	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
-	VoteThreshold             uint32
-	ValidationRate            uint32 // basis points (10000 = 100%, 1000 = 10%)
-	InferenceSealGraceNonces  uint32
+	VoteThreshold            uint32
+	ValidationRate           uint32 // basis points (10000 = 100%, 1000 = 10%)
+	InferenceSealGraceNonces uint32
 	// InferenceSealGraceSeconds is extra state-clock time after ExecutionTimeout
 	// before a still-Finished inference may auto-seal.
 	InferenceSealGraceSeconds uint32
 	AutoSealEveryNNonces      uint32
+	MaxModelLen               uint64
 }
 
 // EscrowState is the full state of a devshard session.
