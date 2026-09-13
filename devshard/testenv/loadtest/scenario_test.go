@@ -14,16 +14,10 @@ func TestLoadScenario_NormalLoad(t *testing.T) {
 	require.Len(t, scenario.Topology.MockML.Nodes, 2)
 	require.Equal(t, uint64(1_000_000_000), scenario.Topology.Chain.EscrowAmount)
 	require.Equal(t, uint32(100_000), scenario.Topology.Chain.MaxNonce)
+	require.Equal(t, 3, scenario.Topology.Participants)
+	require.Equal(t, 0.02, scenario.Assertions.Devshard.MaxGhostRate)
 	require.Equal(t, "30s", scenario.Workload.Duration)
-	require.Equal(t, "3m", scenario.DrainTimeout)
-}
-
-func TestLoadScenario_ExtendedDrain(t *testing.T) {
-	scenario, err := LoadScenario(filepath.Join("scenarios", "extended-drain.yaml"))
-	require.NoError(t, err)
-	require.Equal(t, "extended-drain", scenario.Scenario)
-	require.Equal(t, "30s", scenario.Workload.Duration)
-	require.Equal(t, "11m", scenario.DrainTimeout)
+	require.Equal(t, "30s", scenario.DrainTimeout)
 }
 
 func TestLoadProfile_Fast(t *testing.T) {
