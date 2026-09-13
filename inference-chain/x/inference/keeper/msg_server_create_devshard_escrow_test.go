@@ -117,6 +117,34 @@ func TestCreateDevshardEscrow_HappyPath(t *testing.T) {
 	require.Equal(t, uint64(1), count)
 }
 
+func TestCreateDevshardEscrow_FreezesTheModelContextLength(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	rootAddrs := makeDevshardAddrs(1, 20)
+	setupEpochGroupForDevshard(ctx, k, 5, "", rootAddrs)
+	setupEpochGroupForDevshard(ctx, k, 5, testDevshardModelID, rootAddrs[:3])
+	groupKey := collections.Join(uint64(5), testDevshardModelID)
+	groupData, err := k.EpochGroupDataMap.Get(ctx, groupKey)
+	require.NoError(t, err)
+	groupData.ModelSnapshot = &types.Model{Id: testDevshardModelID, ModelArgs: []string{"--max-model-len", "240000"}}
+	require.NoError(t, k.EpochGroupDataMap.Set(ctx, groupKey, groupData))
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0xFF
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromAccountToModule(gomock.Any(), creator, types.ModuleName, gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	resp, err := ms.CreateDevshardEscrow(ctx, &types.MsgCreateDevshardEscrow{
+		Creator: creator.String(),
+		Amount:  7_000_000_000,
+		ModelId: testDevshardModelID,
+	})
+
+	require.NoError(t, err)
+	escrow, found := k.GetDevshardEscrow(ctx, resp.EscrowId)
+	require.True(t, found)
+	require.Equal(t, uint64(240_000), escrow.MaxModelLen, "the escrow must freeze the --max-model-len the epoch's model snapshot runs with")
+}
+
 func TestCreateDevshardEscrow_AmountBelowMin(t *testing.T) {
 	k, ms, ctx, _ := setupDevshardEscrowTest(t)
 

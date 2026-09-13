@@ -108,6 +108,7 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		ValidationRate:            types.DevshardValidationRateForCreate(ep),
 		RefusalTimeout:            types.DevshardRefusalTimeoutForCreate(ep),
 		ExecutionTimeout:          types.DevshardExecutionTimeoutForCreate(ep),
+		MaxModelLen:               types.DevshardMaxModelLenForCreate(epochGroup.GroupData.ModelSnapshot),
 	}
 
 	id, err := k.StoreDevshardEscrow(goCtx, escrow, nextID)

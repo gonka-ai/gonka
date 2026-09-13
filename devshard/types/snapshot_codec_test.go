@@ -20,6 +20,7 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 			ValidationRate:            5000,
 			InferenceSealGraceNonces:  20,
 			InferenceSealGraceSeconds: 120,
+			MaxModelLen:               180_000,
 		},
 		Group: []SlotAssignment{
 			{SlotID: 0, ValidatorAddress: "host-0"},

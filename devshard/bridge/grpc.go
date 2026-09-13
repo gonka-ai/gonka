@@ -100,6 +100,7 @@ func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 		VoteThresholdFactor:       e.VoteThresholdFactor,
 		RefusalTimeout:            e.RefusalTimeout,
 		ExecutionTimeout:          e.ExecutionTimeout,
+		MaxModelLen:               e.MaxModelLen,
 		EpochID:                   e.EpochIndex,
 		Settled:                   e.Settled,
 	}, nil

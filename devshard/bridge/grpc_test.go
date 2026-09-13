@@ -59,6 +59,7 @@ func TestGRPCBridge_GetEscrow_MapsSessionConfigFields(t *testing.T) {
 	escrow.VoteThresholdFactor = 67
 	escrow.RefusalTimeout = 5
 	escrow.ExecutionTimeout = 17
+	escrow.MaxModelLen = 240_000
 	st.PutEscrow(escrow)
 
 	info, err := startGRPCBridgeWithStore(t, st).GetEscrow("1")
@@ -73,6 +74,7 @@ func TestGRPCBridge_GetEscrow_MapsSessionConfigFields(t *testing.T) {
 	require.Equal(t, uint32(67), info.VoteThresholdFactor)
 	require.Equal(t, int64(5), info.RefusalTimeout)
 	require.Equal(t, int64(17), info.ExecutionTimeout)
+	require.Equal(t, uint64(240_000), info.MaxModelLen)
 }
 
 func TestGRPCBridge_GetEscrow_RejectsNonCanonicalID(t *testing.T) {

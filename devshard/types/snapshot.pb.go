@@ -34,6 +34,7 @@ type SessionConfigProto struct {
 	InferenceSealGraceNonces  uint32                 `protobuf:"varint,8,opt,name=inference_seal_grace_nonces,json=inferenceSealGraceNonces,proto3" json:"inference_seal_grace_nonces,omitempty"`
 	InferenceSealGraceSeconds uint32                 `protobuf:"varint,9,opt,name=inference_seal_grace_seconds,json=inferenceSealGraceSeconds,proto3" json:"inference_seal_grace_seconds,omitempty"`
 	AutoSealEveryNNonces      uint32                 `protobuf:"varint,10,opt,name=auto_seal_every_n_nonces,json=autoSealEveryNNonces,proto3" json:"auto_seal_every_n_nonces,omitempty"`
+	MaxModelLen               uint64                 `protobuf:"varint,11,opt,name=max_model_len,json=maxModelLen,proto3" json:"max_model_len,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -134,6 +135,13 @@ func (x *SessionConfigProto) GetInferenceSealGraceSeconds() uint32 {
 func (x *SessionConfigProto) GetAutoSealEveryNNonces() uint32 {
 	if x != nil {
 		return x.AutoSealEveryNNonces
+	}
+	return 0
+}
+
+func (x *SessionConfigProto) GetMaxModelLen() uint64 {
+	if x != nil {
+		return x.MaxModelLen
 	}
 	return 0
 }
@@ -598,7 +606,7 @@ var File_devshard_v1_snapshot_proto protoreflect.FileDescriptor
 
 const file_devshard_v1_snapshot_proto_rawDesc = "" +
 	"\n" +
-	"\x1adevshard/v1/snapshot.proto\x12\vdevshard.v1\x1a\x17devshard/v1/state.proto\"\xe7\x03\n" +
+	"\x1adevshard/v1/snapshot.proto\x12\vdevshard.v1\x1a\x17devshard/v1/state.proto\"\x8b\x04\n" +
 	"\x12SessionConfigProto\x12'\n" +
 	"\x0frefusal_timeout\x18\x01 \x01(\x03R\x0erefusalTimeout\x12+\n" +
 	"\x11execution_timeout\x18\x02 \x01(\x03R\x10executionTimeout\x12\x1f\n" +
@@ -611,7 +619,8 @@ const file_devshard_v1_snapshot_proto_rawDesc = "" +
 	"\x1binference_seal_grace_nonces\x18\b \x01(\rR\x18inferenceSealGraceNonces\x12?\n" +
 	"\x1cinference_seal_grace_seconds\x18\t \x01(\rR\x19inferenceSealGraceSeconds\x126\n" +
 	"\x18auto_seal_every_n_nonces\x18\n" +
-	" \x01(\rR\x14autoSealEveryNNonces\"[\n" +
+	" \x01(\rR\x14autoSealEveryNNonces\x12\"\n" +
+	"\rmax_model_len\x18\v \x01(\x04R\vmaxModelLen\"[\n" +
 	"\x13SlotAssignmentProto\x12\x17\n" +
 	"\aslot_id\x18\x01 \x01(\rR\x06slotId\x12+\n" +
 	"\x11validator_address\x18\x02 \x01(\tR\x10validatorAddress\"\xf9\t\n" +

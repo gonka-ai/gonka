@@ -17,9 +17,13 @@ import (
 
 func newTestSM(t *testing.T, hosts []*signing.Secp256k1Signer, balance uint64) (*StateMachine, *signing.Secp256k1Signer) {
 	t.Helper()
+	return newTestSMWithConfig(t, hosts, testutil.DefaultConfig(len(hosts)), balance)
+}
+
+func newTestSMWithConfig(t *testing.T, hosts []*signing.Secp256k1Signer, config types.SessionConfig, balance uint64) (*StateMachine, *signing.Secp256k1Signer) {
+	t.Helper()
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
-	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
 	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balance)
 	sm, err := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, store)
@@ -185,6 +189,28 @@ func TestApplyDiff_StartInference(t *testing.T) {
 	require.Equal(t, uint64(10000-164), state.Balance)
 	// Executor slot: 1 % 3 = 1
 	require.Equal(t, uint32(1), rec.ExecutorSlot)
+}
+
+// vLLM serves at most max_model_len input and output tokens together, so a reservation above that is never earned.
+func TestApplyDiff_StartInference_ReservationStopsAtTheModelContextLength(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	config := testutil.DefaultConfig(len(hosts))
+	config.MaxModelLen = 150
+	sm, user := newTestSMWithConfig(t, hosts, config, 10000)
+
+	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  []byte("prompt"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   testutil.TestMaxTokens,
+		StartedAt:   1000,
+	})}))
+
+	require.NoError(t, err)
+	state := sm.SnapshotState()
+	require.Equal(t, uint64(150), state.Inferences[1].ReservedCost, "(100+64)*1 must stop at the 150-token context")
+	require.Equal(t, uint64(10000-150), state.Balance)
 }
 
 func TestApplyDiff_ConfirmStart(t *testing.T) {

@@ -709,6 +709,7 @@ func (sm *StateMachine) RebuildSealedInferenceIndexFromDiffs(store storage.Stora
 	escrowID := sm.state.EscrowID
 	group := append([]types.SlotAssignment(nil), sm.state.Group...)
 	price := sm.state.Config.TokenPrice
+	maxModelLen := sm.state.Config.MaxModelLen
 	threshold := sm.state.Config.VoteThreshold
 	sealedNonces := maps.Clone(sm.sealedNonces)
 	live := make(map[uint64]*types.InferenceRecord, len(sm.state.Inferences))
@@ -722,7 +723,7 @@ func (sm *StateMachine) RebuildSealedInferenceIndexFromDiffs(store storage.Stora
 	// of an already-published session for the length of the replay. The fold
 	// needs only the group and config captured above plus the slot lookup maps,
 	// which are immutable after construction.
-	folded := sm.foldInferenceRecordsFromDiffs(group, price, threshold, records)
+	folded := sm.foldInferenceRecordsFromDiffs(group, price, maxModelLen, threshold, records)
 
 	if err := store.DeleteSealedInferences(escrowID); err != nil {
 		return err
@@ -762,7 +763,7 @@ func (sm *StateMachine) RebuildSealedInferenceIndexFromDiffs(store storage.Stora
 // foldInferenceRecordsFromDiffs replays the journal into inference records.
 // group, price and threshold are passed in so the caller can release sm.mu
 // before the walk; everything else it reads is immutable after construction.
-func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignment, price uint64, threshold uint32, records []types.DiffRecord) map[uint64]*types.InferenceRecord {
+func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignment, price, maxModelLen uint64, threshold uint32, records []types.DiffRecord) map[uint64]*types.InferenceRecord {
 	out := make(map[uint64]*types.InferenceRecord)
 	if len(group) == 0 {
 		return out
@@ -779,7 +780,7 @@ func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignme
 				if _, exists := out[msg.InferenceId]; exists {
 					continue
 				}
-				reserved, err := tokenCost(msg.InputLength, msg.MaxTokens, price)
+				reserved, err := reservedCost(msg.InputLength, msg.MaxTokens, maxModelLen, price)
 				if err != nil {
 					continue
 				}

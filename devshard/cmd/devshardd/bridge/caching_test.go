@@ -110,7 +110,7 @@ func TestCachingEscrowBridge_PassesThroughSettledFromChain(t *testing.T) {
 func TestEscrowCacheRoundTrip(t *testing.T) {
 	in := &bridge.EscrowInfo{
 		EscrowID: "2", Amount: 1, CreatorAddress: "c", Slots: []string{"a", "b"},
-		TokenPrice: 3, ValidationRate: 4, VoteThresholdFactor: 5, EpochID: 6,
+		TokenPrice: 3, ValidationRate: 4, VoteThresholdFactor: 5, EpochID: 6, MaxModelLen: 7,
 	}
 	cache := EscrowCacheFromInfo(in)
 	require.Equal(t, uint32(5), cache.VoteThresholdFactor)
@@ -120,4 +120,5 @@ func TestEscrowCacheRoundTrip(t *testing.T) {
 	require.Equal(t, in.Slots, out.Slots)
 	require.Equal(t, in.VoteThresholdFactor, out.VoteThresholdFactor)
 	require.Equal(t, in.EpochID, out.EpochID)
+	require.Equal(t, in.MaxModelLen, out.MaxModelLen)
 }

@@ -87,6 +87,14 @@ func TestSessionConfigFromEscrow_PerFieldOverride(t *testing.T) {
 		require.Equal(t, base.CreateDevshardFee, got.CreateDevshardFee)
 	})
 
+	t.Run("max model len only", func(t *testing.T) {
+		base := DefaultSessionConfig(groupSize)
+		got := SessionConfigFromEscrow(groupSize, EscrowSessionFields{MaxModelLen: 180_000})
+
+		require.Equal(t, uint64(180_000), got.MaxModelLen)
+		require.Equal(t, base.TokenPrice, got.TokenPrice)
+	})
+
 	t.Run("all three", func(t *testing.T) {
 		got := SessionConfigFromEscrow(groupSize, EscrowSessionFields{
 			TokenPrice:        7,
