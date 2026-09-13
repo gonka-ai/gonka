@@ -85,6 +85,29 @@ router-fleet changes above, it changes the **recovery / readiness contract**:
 
 ---
 
+## Development Testenv
+
+The local testenv includes an opt-in `normal-load` scenario for validating a
+candidate Devshard build under concurrent load before TestNet deployment. It
+starts an isolated Compose project with two independent Mock ML nodes, a
+deterministic Mock DAPI allocator, and the existing mock chain, versiond,
+router, gateway, and storage stack.
+
+Run it from the repository checkout:
+
+```bash
+make -C devshard/testenv loadtest-normal
+```
+
+The scenario runner writes `run.yaml`, request outcomes, a summary, assertion
+result, failure bundles, and Compose logs below `devshard/testenv/loadtest/results/`.
+This is a developer-operated test, not a CI gate and not a production-capacity
+benchmark. Its first scenario exercises non-streaming JSON requests only; SSE,
+cancellation, and fault scenarios are follow-up work. See
+[the load-testing proposal](./proposals/load-testing-devshards.md).
+
+---
+
 ## Breaking / operator-facing changes
 
 ### `/ready` status vs body

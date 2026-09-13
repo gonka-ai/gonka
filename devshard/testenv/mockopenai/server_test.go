@@ -3,6 +3,7 @@ package mockopenai_test
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -141,6 +142,74 @@ func TestChatCompletions_EmitsLogprobsWhenRequested(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, validation.HasNonNumericTokens(enforced),
 		"validators reject decoded-text logprobs before ML replay: %+v", enforced)
+}
+
+func TestChatCompletions_HonestReplayPassesValidation(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	prompt := []byte(`{"model":"test-model","stream":false,"max_tokens":16,"messages":[{"role":"user","content":"replay me"}]}`)
+	executorRequest, err := completionapi.ModifyRequestBody(prompt, 1)
+	require.NoError(t, err)
+	executorResponse, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(executorRequest.NewBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, executorResponse.StatusCode)
+	storedResponse, err := io.ReadAll(executorResponse.Body)
+	require.NoError(t, err)
+	_ = executorResponse.Body.Close()
+
+	completion, err := completionapi.NewCompletionResponseFromBytes(storedResponse)
+	require.NoError(t, err)
+	usage, err := completion.GetUsage()
+	require.NoError(t, err)
+
+	result, err := validation.ExecuteValidation(
+		context.Background(),
+		"1",
+		prompt,
+		storedResponse,
+		func(_ context.Context, body []byte) (*http.Response, error) {
+			return http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+		},
+		usage.PromptTokens,
+		usage.CompletionTokens,
+		"",
+	)
+	require.NoError(t, err)
+	require.True(t, result.IsSuccessful(), "honest mock replay must validate successfully: %#v", result)
+}
+
+func TestChatCompletions_HonestStreamedReplayPassesValidation(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	prompt := []byte(`{"model":"test-model","stream":true,"stream_options":{"include_usage":true},"max_tokens":16,"messages":[{"role":"user","content":"streamed replay me"}]}`)
+	executorRequest, err := completionapi.ModifyRequestBody(prompt, 1)
+	require.NoError(t, err)
+	executorResponse, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(executorRequest.NewBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, executorResponse.StatusCode)
+	processor := completionapi.NewExecutorResponseProcessor("inference-1", true)
+	require.NoError(t, completionapi.ProcessHTTPResponse(executorResponse, processor))
+	storedResponse, err := processor.GetResponseBytes()
+	require.NoError(t, err)
+	usage, err := processor.GetUsage()
+	require.NoError(t, err)
+
+	result, err := validation.ExecuteValidation(
+		context.Background(),
+		"1",
+		prompt,
+		storedResponse,
+		func(_ context.Context, body []byte) (*http.Response, error) {
+			return http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+		},
+		usage.PromptTokens,
+		usage.CompletionTokens,
+		"",
+	)
+	require.NoError(t, err)
+	require.True(t, result.IsSuccessful(), "honest streamed mock replay must validate successfully: %#v", result)
 }
 
 func TestChatCompletions_StreamLogprobTokensAreNumericIDs(t *testing.T) {
