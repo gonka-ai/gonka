@@ -178,13 +178,13 @@ for arg in "$@"; do
 	--print-protocol-version | --print-binary-version)
 		flag=$arg
 		;;
-	alpine:3.23)
+	devshardd-builder:latest)
 		image=$arg
 		;;
 	esac
 	prev=$arg
 done
-[[ $image == alpine:3.23 ]] || exit 3
+[[ $image == devshardd-builder:latest ]] || exit 3
 [[ $mounted == *:/devshardd:ro ]] || exit 4
 case "$flag" in
 --print-protocol-version) printf 'v4\n' ;;
@@ -197,7 +197,7 @@ export FAKE_DOCKER_LOG=$tmpdir/docker.argv
 : >"$FAKE_DOCKER_LOG"
 PATH="$tmpdir/bin:$PATH" "$meta" check-stamps \
 	--binary "$tmpdir/fake-devshardd" --protocol v4 --binary-version v4.1.0 \
-	--docker-image alpine:3.23 || fail "docker check-stamps should pass"
+	--docker-image devshardd-builder:latest || fail "docker check-stamps should pass"
 grep -q -- '--entrypoint /devshardd' "$FAKE_DOCKER_LOG" || fail "docker should override entrypoint"
 grep -q -- '--print-protocol-version' "$FAKE_DOCKER_LOG" || fail "docker should print protocol"
 grep -q -- '--print-binary-version' "$FAKE_DOCKER_LOG" || fail "docker should print binary"

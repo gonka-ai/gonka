@@ -13,7 +13,7 @@ Usage:
       [--devshard-binary-version V] [--github-sha SHA]
   devshard-release-meta.sh leftover-from-ref --ref-name REF
   devshard-release-meta.sh check-stamps --binary PATH --protocol V --binary-version V
-      [--docker-image IMAGE]
+      [--docker-image IMAGE]   # workflow: devshardd-builder:latest (same as make)
   devshard-release-meta.sh archive --output-dir DIR
 EOF
 	exit 2
@@ -294,6 +294,9 @@ classify_dispatch() {
 	fi
 }
 
+# When --docker-image is set, exec the copied binary inside that image.
+# make devshardd-release tags the CGO builder as devshardd-builder:latest
+# (golang alpine + gcc). Bare alpine:3.23 has no libgcc_s.so.1.
 print_stamp() {
 	local binary=$1 docker_image=$2 flag=$3
 	if [[ -n $docker_image ]]; then

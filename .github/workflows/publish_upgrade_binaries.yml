@@ -171,7 +171,7 @@ jobs:
             --binary ./build/devshardd \
             --protocol "$DEVSHARD_VERSION" \
             --binary-version "$DEVSHARD_BINARY_VERSION" \
-            --docker-image alpine:3.23
+            --docker-image devshardd-builder:latest
           .github/scripts/devshard-release-meta.sh archive --output-dir build/devshardd-release
 
       - name: Generate GitHub App Installation Token for release
