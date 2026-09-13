@@ -30,6 +30,13 @@ type OwnerChatBinder interface {
 	BindOwnerChat(c echo.Context) (*transport.Server, error)
 }
 
+// GroupPeerBinder authenticates a creator or slot member and may bind a new
+// session. Host-to-host POSTs use this so challenge/gossip can create a
+// session the owner never reached. Observability GETs must not.
+type GroupPeerBinder interface {
+	BindGroupPeer(c echo.Context) (*transport.Server, error)
+}
+
 // PayloadHandler serves GET /sessions/:id/payloads for a resolved session.
 type PayloadHandler interface {
 	HandlePayloads(c echo.Context, srv *transport.Server) error
@@ -61,10 +68,11 @@ func WithPeerRPC(auth *rpcserver.PeerAuthHandler, session *rpcserver.SessionHand
 }
 
 // RegisterLazySessionRoutes mounts the standard devshard HTTP surface on g.
-// Observability and most host protocol routes resolve existing sessions only.
-// Owner chat and the height-sync seed RPC may bind a new session (via
-// OwnerChatBinder): seed runs at session-open, before any inference, so it
-// cannot wait for chat to create the host session.
+// Observability GETs resolve existing sessions only (no CreateSession).
+// Owner chat and the height-sync seed RPC bind as the creator.
+// Host-to-host POSTs (gossip, challenge, verify, height-sync repair) bind
+// as any on-chain participant so a host that missed owner traffic still
+// has a local session when another host retries.
 func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler, opts ...RouteOption) {
 	var cfg routeOptions
 	for _, opt := range opts {
@@ -83,17 +91,17 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }), transport.ResponseCompressionMiddleware)
 	g.POST("/sessions/:id/height-sync", withOwnerChat(binder, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSync }))
-	g.POST("/sessions/:id/heightsync/repair", withSessionAuth(resolver, false,
+	g.POST("/sessions/:id/heightsync/repair", withSessionAuth(resolver, binder, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSyncRepair }))
-	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver, false,
+	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver, binder, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyTimeout }))
-	g.POST("/sessions/:id/verify-error-miss", withSessionAuth(resolver, false,
+	g.POST("/sessions/:id/verify-error-miss", withSessionAuth(resolver, binder, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyErrorMiss }))
-	g.POST("/sessions/:id/challenge-receipt", withSessionAuth(resolver, false,
+	g.POST("/sessions/:id/challenge-receipt", withSessionAuth(resolver, binder, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleChallengeReceipt }))
-	g.POST("/sessions/:id/gossip/nonce", withSessionAuth(resolver, false,
+	g.POST("/sessions/:id/gossip/nonce", withSessionAuth(resolver, binder, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGossipNonce }))
-	g.POST("/sessions/:id/gossip/txs", withSessionAuth(resolver, false,
+	g.POST("/sessions/:id/gossip/txs", withSessionAuth(resolver, binder, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGossipTxs }))
 
 	g.GET("/sessions/:id/diffs", withSession(resolver,
@@ -161,9 +169,13 @@ func withSession(
 
 func withSessionAuth(
 	resolver SessionResolver,
+	binder OwnerChatBinder,
 	recordChatTerminal bool,
 	pick func(*transport.Server) echo.HandlerFunc,
 ) echo.HandlerFunc {
+	if gb, ok := binder.(GroupPeerBinder); ok {
+		return withGroupPeer(gb, recordChatTerminal, pick)
+	}
 	return func(c echo.Context) error {
 		srv, err := resolver.SessionServerExisting(c.Param("id"))
 		if err != nil {
@@ -176,6 +188,25 @@ func withSessionAuth(
 		return retryIfStale(c, resolver, srv, srv.AuthMiddleware(wrapped)(c), func(next *transport.Server) error {
 			h := pick(next)
 			return next.AuthMiddleware(next.RateLimitMiddleware(recordChatTerminal)(h))(c)
+		})
+	}
+}
+
+func withGroupPeer(
+	binder GroupPeerBinder,
+	recordChatTerminal bool,
+	pick func(*transport.Server) echo.HandlerFunc,
+) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		srv, err := binder.BindGroupPeer(c)
+		if err != nil {
+			recordSessionResolution(c, err, recordChatTerminal)
+			return sessionHTTPError(c, err)
+		}
+		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
+		handler := pick(srv)
+		return retryIfStale(c, binder, srv, srv.RateLimitMiddleware(recordChatTerminal)(handler)(c), func(next *transport.Server) error {
+			return next.RateLimitMiddleware(recordChatTerminal)(pick(next))(c)
 		})
 	}
 }

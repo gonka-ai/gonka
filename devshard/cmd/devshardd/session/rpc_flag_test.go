@@ -116,9 +116,9 @@ func TestAllowRPCPeer_OwnerBindsSession(t *testing.T) {
 	require.Equal(t, user.Address(), meta.CreatorAddr)
 }
 
-func TestAllowRPCPeer_GroupMemberDoesNotBind(t *testing.T) {
+func TestAllowRPCPeer_GroupMemberBindsSession(t *testing.T) {
 	const escrowID = "9802"
-	mgr, store, _, host0 := setupBindTestManager(t, escrowID)
+	mgr, store, user, host0 := setupBindTestManager(t, escrowID)
 	slots := mgr.bridge.(*mockBridge).escrow.Slots
 	require.GreaterOrEqual(t, len(slots), 2)
 	member := slots[1]
@@ -128,8 +128,9 @@ func TestAllowRPCPeer_GroupMemberDoesNotBind(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	_, err = store.GetSessionMeta(escrowID)
-	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "a slot member must CreateSession so challenge/gossip can land")
+	require.Equal(t, user.Address(), meta.CreatorAddr)
 }
 
 func TestAllowRPCPeer_StrangerDoesNotBind(t *testing.T) {
@@ -167,13 +168,14 @@ func TestAllowRPCPeer_MemberThenOwnerBinds(t *testing.T) {
 	ok, err := mgr.allowRPCPeer(ctx, member)
 	require.NoError(t, err)
 	require.True(t, ok)
-	_, err = store.GetSessionMeta(escrowID)
-	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "member Attach must bind before owner retry")
+	require.Equal(t, user.Address(), meta.CreatorAddr)
 
 	ok, err = mgr.allowRPCPeer(ctx, user.Address())
 	require.NoError(t, err)
 	require.True(t, ok)
-	meta, err := store.GetSessionMeta(escrowID)
+	meta, err = store.GetSessionMeta(escrowID)
 	require.NoError(t, err)
 	require.Equal(t, user.Address(), meta.CreatorAddr)
 }

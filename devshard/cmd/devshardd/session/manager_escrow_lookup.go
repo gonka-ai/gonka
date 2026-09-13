@@ -31,16 +31,16 @@ type escrowLookupEntry struct {
 }
 
 // fetchEscrowForBind is the chain lookup used when owner chat finds no local
-// session, and when Attach has no fresh escrow_cache row. Eligibility (owner /
-// group slot) is on the escrow record, so the query has to run before we know
-// whether the peer belongs. Unique unknown or ineligible ids are charged
-// against a per-peer (2/min) and process-wide budget before that query. A
-// successful load that shows the peer is the creator or a slot member is
-// refunded so first bind of a real escrow does not consume the unknown-id
-// budget. Per origin IP is not keyed here: mixed fleets and hop-stamped
-// X-Real-IP would collapse every client onto one 2/min slot. versiond
-// applies that cap on inbound X-Real-IP after it sees a bind miss
-// (X-Devshard-Error escrow_not_found / escrow_lookup_limited).
+// session, and when Attach / BindGroupPeer has no fresh escrow_cache row.
+// Eligibility (owner / group slot) is on the escrow record, so the query has
+// to run before we know whether the peer belongs. Unique unknown or
+// ineligible ids are charged against a per-peer (2/min) and process-wide
+// budget before that query. A successful load that shows the peer is the
+// creator or a slot member is refunded so first bind of a real escrow does
+// not consume the unknown-id budget. Per origin IP is not keyed here: mixed
+// fleets and hop-stamped X-Real-IP would collapse every client onto one
+// 2/min slot. versiond applies that cap on inbound X-Real-IP after it sees
+// a bind miss (X-Devshard-Error escrow_not_found / escrow_lookup_limited).
 // Attach of a warmed id uses warmedEscrow instead (no query, no charge).
 // RecoverSessions and create() with a prefetched escrow do not use this.
 func (m *HostManager) fetchEscrowForBind(escrowID, peer string) (*bridge.EscrowInfo, error) {

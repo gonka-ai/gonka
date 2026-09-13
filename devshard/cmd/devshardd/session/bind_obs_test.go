@@ -3,6 +3,7 @@ package session
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -19,15 +20,29 @@ import (
 	"devshard/storage"
 	"devshard/stub"
 	"devshard/transport"
+	"devshard/types"
 )
 
 func setupBindTestManager(t *testing.T, escrowID string) (*HostManager, *storage.SQLite, *signing.Secp256k1Signer, *signing.Secp256k1Signer) {
+	t.Helper()
+	mgr, store, user, hosts := setupBindTestGroup(t, escrowID)
+	return mgr, store, user, hosts[0]
+}
+
+func setupBindTestGroup(t *testing.T, escrowID string) (*HostManager, *storage.SQLite, *signing.Secp256k1Signer, []*signing.Secp256k1Signer) {
+	t.Helper()
+	return setupBindTestGroupSignedBy(t, escrowID, 0)
+}
+
+func setupBindTestGroupSignedBy(t *testing.T, escrowID string, localSlot int) (*HostManager, *storage.SQLite, *signing.Secp256k1Signer, []*signing.Secp256k1Signer) {
 	t.Helper()
 	store := newManagerTestStore(t)
 	hosts := make([]*signing.Secp256k1Signer, 3)
 	for i := range hosts {
 		hosts[i] = mustGenerateKey(t)
 	}
+	require.GreaterOrEqual(t, localSlot, 0)
+	require.Less(t, localSlot, len(hosts))
 	user := mustGenerateKey(t)
 	addresses := make([]string, len(hosts))
 	for i, h := range hosts {
@@ -43,8 +58,8 @@ func setupBindTestManager(t *testing.T, escrowID string) (*HostManager, *storage
 			TokenPrice:     1,
 		},
 	}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
-	return mgr, store, user, hosts[0]
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[localSlot], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	return mgr, store, user, hosts
 }
 
 func signedPOST(t *testing.T, e *echo.Echo, signer *signing.Secp256k1Signer, path, escrowID string, body []byte) *httptest.ResponseRecorder {
@@ -101,17 +116,102 @@ func TestObsMempoolSignatures_DoNotBindSession(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 }
 
-func TestGossipUnbound_DoesNotBindSession(t *testing.T) {
+func TestGossipUnbound_BindsSession(t *testing.T) {
 	const escrowID = "9703"
-	mgr, store, _, hostSigner := setupBindTestManager(t, escrowID)
+	mgr, store, user, hostSigner := setupBindTestManager(t, escrowID)
 	e := echo.New()
 	mgr.Register(e.Group(""))
 
 	body := []byte(`{"nonce":1}`)
-	rec := signedPOST(t, e, hostSigner, "/sessions/"+escrowID+"/gossip/nonce", escrowID, body)
-	require.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
+	_ = signedPOST(t, e, hostSigner, "/sessions/"+escrowID+"/gossip/nonce", escrowID, body)
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "group-peer gossip must CreateSession so a missed owner chat can still be challenged")
+	require.Equal(t, user.Address(), meta.CreatorAddr)
+}
+
+func TestGossipUnbound_StrangerDoesNotBindSession(t *testing.T) {
+	const escrowID = "9712"
+	mgr, store, _, _ := setupBindTestManager(t, escrowID)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	stranger := mustGenerateKey(t)
+	body := []byte(`{"nonce":1}`)
+	rec := signedPOST(t, e, stranger, "/sessions/"+escrowID+"/gossip/nonce", escrowID, body)
+	require.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
 
 	_, err := store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestChallengeReceiptUnbound_BindsAndAppliesStart(t *testing.T) {
+	const escrowID = "9713"
+	// This process is slot 1 so inference 1 (nonce 1) assigns it as executor.
+	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	const inferenceID uint64 = 1
+	diff := testutil.SignDiff(t, user, escrowID, inferenceID, []*types.DevshardTx{testutil.StartTx(inferenceID)})
+	dj, err := transport.DiffToJSON(diff)
+	require.NoError(t, err)
+	body, err := json.Marshal(transport.ChallengeReceiptRequest{
+		InferenceID: inferenceID,
+		Payload: &transport.PayloadJSON{
+			Prompt:      testutil.TestPrompt,
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   testutil.TestMaxTokens,
+			StartedAt:   1000,
+		},
+		Diffs: []transport.DiffJSON{dj},
+	})
+	require.NoError(t, err)
+
+	challenger := hosts[2]
+	require.NotEqual(t, hosts[1].Address(), challenger.Address())
+	rec := signedPOST(t, e, challenger, "/sessions/"+escrowID+"/challenge-receipt", escrowID, body)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "challenge-receipt on a cold host must CreateSession")
+	require.Equal(t, user.Address(), meta.CreatorAddr)
+
+	var resp transport.ChallengeReceiptResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.Receipt, "executor must sign a receipt after applying the missed StartInference")
+
+	txs, err := transport.DevshardTxsFromBytes(resp.Mempool)
+	require.NoError(t, err)
+	found := false
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "recovery mempool must include MsgConfirmStart for the challenged inference")
+}
+
+func TestChallengeReceiptUnbound_StrangerDoesNotBind(t *testing.T) {
+	const escrowID = "9714"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	diff := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTx(3)})
+	dj, err := transport.DiffToJSON(diff)
+	require.NoError(t, err)
+	body, err := json.Marshal(transport.ChallengeReceiptRequest{
+		InferenceID: 3,
+		Payload:     &transport.PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
+		Diffs:       []transport.DiffJSON{dj},
+	})
+	require.NoError(t, err)
+
+	rec := signedPOST(t, e, mustGenerateKey(t), "/sessions/"+escrowID+"/challenge-receipt", escrowID, body)
+	require.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
+	_, err = store.GetSessionMeta(escrowID)
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 }
 
