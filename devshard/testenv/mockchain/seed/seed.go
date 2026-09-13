@@ -74,8 +74,8 @@ func Defaults() *store.Store {
 		ModelSnapshot: &inferencetypes.Model{
 			Id: "test-model",
 			ValidationThreshold: &inferencetypes.Decimal{
-				Value:    50,
-				Exponent: 0,
+				Value:    95,
+				Exponent: -2,
 			},
 		},
 	}

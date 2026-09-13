@@ -377,7 +377,8 @@ func syncChainSeed(cfg *config.File) {
 		cfg.EpochGroups = []config.EpochGroupBinding{{
 			EpochIndex:          cfg.Epoch.Index,
 			ModelID:             config.DefaultModelID,
-			ValidationThreshold: 50,
+			ValidationThreshold: 95,
+			ValidationExponent:  -2,
 		}}
 	}
 }
