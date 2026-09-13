@@ -17,6 +17,8 @@ func main() {
 	cfg := mockopenai.DefaultConfig()
 	cfg.Addr = envOr("MOCK_OPENAI_ADDR", ":8088")
 	cfg.Faults = faultsFromEnv()
+	cfg.Workers = intFromEnv("MOCK_OPENAI_WORKERS")
+	cfg.Queue = intFromEnv("MOCK_OPENAI_QUEUE")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -37,6 +39,11 @@ func envOr(key, def string) string {
 
 func faultsFromEnv() mockopenai.FaultConfig {
 	f := mockopenai.DefaultConfig().Faults
+	if v := os.Getenv("MOCK_OPENAI_TTFT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			f.Latency = d
+		}
+	}
 	if v := os.Getenv("MOCK_OPENAI_LATENCY_MS"); v != "" {
 		if ms, err := strconv.Atoi(v); err == nil {
 			f.Latency = time.Duration(ms) * time.Millisecond
@@ -58,7 +65,20 @@ func faultsFromEnv() mockopenai.FaultConfig {
 			f.StreamChunkDelay = time.Duration(ms) * time.Millisecond
 		}
 	}
+	if v := os.Getenv("MOCK_OPENAI_TOKEN_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			f.StreamChunkDelay = d
+		}
+	}
 	return f
+}
+
+func intFromEnv(key string) int {
+	v, err := strconv.Atoi(os.Getenv(key))
+	if err != nil || v < 0 {
+		return 0
+	}
+	return v
 }
 
 func envTruthy(key string) bool {

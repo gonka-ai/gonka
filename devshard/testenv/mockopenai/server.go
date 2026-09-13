@@ -19,11 +19,17 @@ type Server struct {
 	mu         sync.RWMutex
 	fault      FaultConfig
 	streamGate chan struct{}
+	capacity   chan struct{}
+	workers    chan struct{}
 }
 
 // NewServer builds the HTTP server.
 func NewServer(cfg Config) *Server {
 	s := &Server{fault: cfg.Faults}
+	if cfg.Workers > 0 {
+		s.capacity = make(chan struct{}, cfg.Workers+cfg.Queue)
+		s.workers = make(chan struct{}, cfg.Workers)
+	}
 	if s.fault.PauseStream {
 		s.streamGate = make(chan struct{})
 	}
@@ -89,6 +95,11 @@ func (s *Server) handleFaultPatch(c echo.Context) error {
 }
 
 func (s *Server) handleChatCompletions(c echo.Context) error {
+	if !s.acquire(c.Request().Context()) {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "mock-openai capacity exhausted"})
+	}
+	defer s.release()
+
 	f, streamGate := s.streamFaults()
 	if f.StreamErrorEnvelope {
 		return s.streamErrorEnvelope(c)
@@ -122,6 +133,34 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		return s.streamCompletion(c, req, text, body, f, streamGate)
 	}
 	return s.jsonCompletion(c, req, text, body)
+}
+
+func (s *Server) acquire(ctx context.Context) bool {
+	if s.capacity == nil {
+		return true
+	}
+	select {
+	case s.capacity <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	default:
+		return false
+	}
+	select {
+	case s.workers <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		<-s.capacity
+		return false
+	}
+}
+
+func (s *Server) release() {
+	if s.capacity == nil {
+		return
+	}
+	<-s.workers
+	<-s.capacity
 }
 
 func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, body []byte) error {
