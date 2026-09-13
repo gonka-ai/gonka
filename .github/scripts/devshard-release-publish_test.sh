@@ -37,6 +37,7 @@ release)
 		tag=""
 		title=""
 		notes=""
+		target=""
 		while [[ $# -gt 0 ]]; do
 			case "$1" in
 			--repo) shift 2 ;;
@@ -46,6 +47,10 @@ release)
 				;;
 			--notes)
 				notes=$2
+				shift 2
+				;;
+			--target)
+				target=$2
 				shift 2
 				;;
 			-*)
@@ -60,12 +65,15 @@ release)
 				;;
 			esac
 		done
-		python3 - "$FAKE_GH_STATE/releases.json" "$title" "$tag" <<'PY'
+		python3 - "$FAKE_GH_STATE/releases.json" "$title" "$tag" "$target" <<'PY'
 import json, sys
-path, title, tag = sys.argv[1], sys.argv[2], sys.argv[3]
+path, title, tag, target = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with open(path) as f:
     releases = json.load(f)
-releases.append({"name": title, "tag_name": tag})
+row = {"name": title, "tag_name": tag}
+if target:
+    row["target"] = target
+releases.append(row)
 with open(path, "w") as f:
     json.dump(releases, f)
 PY
@@ -126,21 +134,18 @@ export GH_PATH=$state/bin/gh
 
 zip1=$tmpdir/a/devshardd.zip
 sha1=$tmpdir/a/devshardd.zip.sha256
-src_zip=$tmpdir/a/Source\ code.zip
-src_tar=$tmpdir/a/Source\ code.tar.gz
 mkdir -p "$tmpdir/a"
 printf 'zip-v1' >"$zip1"
 printf 'sha-v1' >"$sha1"
-printf 'src-zip-v1' >"$src_zip"
-printf 'src-tar-v1' >"$src_tar"
 
 "$publish" \
-	--repo product-science/race-releases \
+	--repo gonka-ai/gonka \
 	--name "Devshard Release v4.1.0" \
 	--tag devshard/v4.1.0 \
+	--target abcdef \
 	--notes "devshardd v4.1 protocol v4 binary stamp v4.1.0" \
 	-- \
-	"$zip1" "$sha1" "$src_zip" "$src_tar" || fail "create+upload failed"
+	"$zip1" "$sha1" || fail "create+upload failed"
 
 python3 - "$state/releases.json" <<'PY' || fail "expected one release after create"
 import json, sys
@@ -149,28 +154,30 @@ with open(sys.argv[1]) as f:
 assert len(releases) == 1, releases
 assert releases[0]["name"] == "Devshard Release v4.1.0"
 assert releases[0]["tag_name"] == "devshard/v4.1.0"
+assert releases[0]["target"] == "abcdef"
 PY
 
 asset_dir=$state/assets/devshard/v4.1.0
 [[ $(cat "$asset_dir/devshardd.zip") == zip-v1 ]] || fail "uploaded zip mismatch"
-[[ -f $asset_dir/Source\ code.zip ]] || fail "Source code.zip not uploaded as a single argv (spaces)"
-[[ $(cat "$asset_dir/Source code.zip") == src-zip-v1 ]] || fail "source zip contents"
+[[ $(cat "$asset_dir/devshardd.zip.sha256") == sha-v1 ]] || fail "uploaded sha mismatch"
+[[ ! -e $asset_dir/Source\ code.zip ]] || fail "must not upload GitHub source archives"
 
 if grep -q 'release create' "$state/argv.log"; then
 	:
 else
 	fail "expected gh release create on first publish"
 fi
+grep -q -- '--target abcdef' "$state/argv.log" || fail "create should pass --target"
 
 : >"$state/argv.log"
 printf 'zip-v2' >"$zip1"
 "$publish" \
-	--repo product-science/race-releases \
+	--repo gonka-ai/gonka \
 	--name "Devshard Release v4.1.0" \
 	--tag devshard/v4.1.0 \
 	--notes "should not rewrite" \
 	-- \
-	"$zip1" "$sha1" "$src_zip" "$src_tar" || fail "reuse+clobber failed"
+	"$zip1" "$sha1" || fail "reuse+clobber failed"
 
 if grep -q 'release create' "$state/argv.log"; then
 	fail "must not create when the name already exists"
@@ -191,12 +198,12 @@ p.write_text(json.dumps([{"name": "Devshard Release v4.1.0", "tag_name": "other/
 '
 
 if "$publish" \
-	--repo product-science/race-releases \
+	--repo gonka-ai/gonka \
 	--name "Devshard Release v4.1.0" \
 	--tag devshard/v4.1.0 \
 	--notes "nope" \
 	-- \
-	"$zip1" "$sha1" "$src_zip" "$src_tar"; then
+	"$zip1" "$sha1"; then
 	fail "mismatched tag_name should fail"
 fi
 

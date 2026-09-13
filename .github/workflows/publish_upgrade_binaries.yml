@@ -1,5 +1,5 @@
-# Build chain upgrade zips and/or a devshardd host zip and publish them to
-# product-science/race-releases.
+# Build chain upgrade zips to product-science/race-releases and/or a
+# devshardd host zip as a GitHub Release on this repo (gonka-ai/gonka).
 #
 # Tag push uses the workflow file on the tagged commit (not main).
 # Host tags (release/devshard/vX.Y.Z or release/vA.B.C-devshard-vX.Y.Z) publish
@@ -57,7 +57,7 @@ on:
         default: ''
 
 permissions:
-  contents: read
+  contents: write
   actions: write
 
 jobs:
@@ -172,10 +172,9 @@ jobs:
             --protocol "$DEVSHARD_VERSION" \
             --binary-version "$DEVSHARD_BINARY_VERSION" \
             --docker-image devshardd-builder:latest
-          .github/scripts/devshard-release-meta.sh archive --output-dir build/devshardd-release
 
       - name: Generate GitHub App Installation Token for release
-        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true' || steps.meta.outputs.build_devshardd == 'true')
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
         id: get_release_token
         uses: actions/create-github-app-token@v2
         with:
@@ -225,23 +224,19 @@ jobs:
       - name: Publish devshardd release
         if: steps.skip.outputs.skip != 'true' && steps.meta.outputs.build_devshardd == 'true'
         env:
-          GH_TOKEN: ${{ steps.get_release_token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_NAME: ${{ steps.meta.outputs.release_name }}
           RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
           RELEASE_BODY_LINE: ${{ steps.meta.outputs.release_body_line }}
-          SOURCE_LINE: ${{ steps.meta.outputs.source_line }}
         run: |
           set -euo pipefail
           chmod +x .github/scripts/devshard-release-publish.sh
-          notes=$RUNNER_TEMP/devshard-release-notes.txt
-          printf '%s\n%s\n' "$RELEASE_BODY_LINE" "$SOURCE_LINE" > "$notes"
           .github/scripts/devshard-release-publish.sh \
-            --repo product-science/race-releases \
+            --repo "${{ github.repository }}" \
             --name "$RELEASE_NAME" \
             --tag "$RELEASE_TAG" \
-            --notes-file "$notes" \
+            --target "${{ github.sha }}" \
+            --notes "$RELEASE_BODY_LINE" \
             -- \
             build/devshardd-release/devshardd.zip \
-            build/devshardd-release/devshardd.zip.sha256 \
-            "build/devshardd-release/Source code.zip" \
-            "build/devshardd-release/Source code.tar.gz"
+            build/devshardd-release/devshardd.zip.sha256

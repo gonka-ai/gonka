@@ -7,7 +7,7 @@ usage() {
 	cat >&2 <<'EOF'
 Usage:
   devshard-release-publish.sh --repo OWNER/NAME --name TITLE --tag TAG
-      [--notes TEXT | --notes-file PATH] [--] ASSET [ASSET ...]
+      [--target SHA] [--notes TEXT | --notes-file PATH] [--] ASSET [ASSET ...]
 EOF
 	exit 2
 }
@@ -20,6 +20,7 @@ die() {
 repo=""
 name=""
 tag=""
+target=""
 notes=""
 notes_file=""
 assets=()
@@ -36,6 +37,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--tag)
 		tag=${2:-}
+		shift 2
+		;;
+	--target)
+		target=${2:-}
 		shift 2
 		;;
 	--notes)
@@ -102,10 +107,11 @@ if [[ -n "$existing_tag" ]]; then
 	printf 'devshard-release-publish: reusing existing release %s (tag %s)\n' "$name" "$tag" >&2
 else
 	create_err=$(mktemp)
-	if ! "$gh_bin" release create "$tag" \
-		--repo "$repo" \
-		--title "$name" \
-		--notes "$notes" \
+	create_args=("$tag" --repo "$repo" --title "$name" --notes "$notes")
+	if [[ -n "$target" ]]; then
+		create_args+=(--target "$target")
+	fi
+	if ! "$gh_bin" release create "${create_args[@]}" \
 		>/dev/null 2>"$create_err"; then
 		err=$(cat "$create_err")
 		rm -f "$create_err"

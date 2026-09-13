@@ -61,7 +61,6 @@ assert_eq "$(field devshard_binary_version "$got")" v4.0.0 "v4.0.0 binary"
 assert_eq "$(field release_name "$got")" "Devshard Release v4.0.0" "v4.0.0 name"
 assert_eq "$(field release_tag "$got")" "devshard/v4.0.0" "v4.0.0 tag"
 assert_eq "$(field release_body_line "$got")" "devshardd v4 protocol v4 binary stamp v4.0.0" "v4.0.0 body"
-[[ $(field source_line "$got") == *abc* ]] || fail "source line missing sha"
 
 name_a=$(field release_name "$got")
 tag_a=$(field release_tag "$got")
@@ -201,33 +200,5 @@ PATH="$tmpdir/bin:$PATH" "$meta" check-stamps \
 grep -q -- '--entrypoint /devshardd' "$FAKE_DOCKER_LOG" || fail "docker should override entrypoint"
 grep -q -- '--print-protocol-version' "$FAKE_DOCKER_LOG" || fail "docker should print protocol"
 grep -q -- '--print-binary-version' "$FAKE_DOCKER_LOG" || fail "docker should print binary"
-
-tiny=$tmpdir/tiny-repo
-mkdir -p "$tiny/devshard" "$tmpdir/empty-git-template"
-printf 'root-make\n' >"$tiny/Makefile"
-printf 'host-docker\n' >"$tiny/devshard/Dockerfile"
-git -C "$tiny" init -q --template="$tmpdir/empty-git-template"
-git -C "$tiny" config user.email test@example.com
-git -C "$tiny" config user.name test
-git -C "$tiny" add Makefile devshard/Dockerfile
-git -C "$tiny" -c commit.gpgsign=false commit -q -m init
-archive_dir=$tmpdir/archive
-git -C "$tiny" rev-parse --show-toplevel >/dev/null
-( cd "$tiny" && "$meta" archive --output-dir "$archive_dir" ) || fail "archive failed"
-[[ -f $archive_dir/Source\ code.zip ]] || fail "missing Source code.zip"
-[[ -f $archive_dir/Source\ code.tar.gz ]] || fail "missing Source code.tar.gz"
-python3 - "$archive_dir/Source code.zip" "$tmpdir/zip.names" <<'PY'
-import sys, zipfile
-zpath, out = sys.argv[1], sys.argv[2]
-with zipfile.ZipFile(zpath) as z, open(out, "w") as f:
-    f.write("\n".join(z.namelist()) + "\n")
-PY
-grep -qx 'gonka/Makefile' "$tmpdir/zip.names" || fail "zip missing gonka/Makefile"
-grep -qx 'gonka/devshard/Dockerfile' "$tmpdir/zip.names" || fail "zip missing Dockerfile"
-if grep -q 'gonka/.git/' "$tmpdir/zip.names"; then
-	fail "zip must not contain .git"
-fi
-tar -tzf "$archive_dir/Source code.tar.gz" >"$tmpdir/tar.names"
-grep -qx 'gonka/Makefile' "$tmpdir/tar.names" || fail "tar missing gonka/Makefile"
 
 printf 'devshard-release-meta_test: ok\n'
