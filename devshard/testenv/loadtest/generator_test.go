@@ -57,7 +57,7 @@ func testScenario() Scenario {
 		Seed:          42,
 		Topology: Topology{
 			VersiondMode: "multi",
-			Storage:      "per_host",
+			Storage:      "per_participant",
 			Chain:        ChainTopology{EscrowAmount: 1_000_000_000, MaxNonce: 100_000},
 			MockML: MockMLTopology{Allocator: "round_robin", Nodes: []MockMLNode{
 				{Name: "mock-openai-0", Profile: "fast"},
