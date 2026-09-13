@@ -1441,15 +1441,16 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 	}
 
 	totalChunks := (len(catchUp) + catchUpChunkSize - 1) / catchUpChunkSize
+	hostLabel := s.HostLabel(hostIdx)
 	logging.Info("sendCatchUp starting", "subsystem", "finalize", "escrow", s.escrowID,
-		"nonce", nonce, "host", hostIdx,
+		"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 		"total_diffs", len(catchUp), "chunks", totalChunks)
 
 	chunkIdx := 0
 	for chunkIdx < len(catchUp) {
 		if err := ctx.Err(); err != nil {
 			logging.Warn("sendCatchUp context cancelled", "subsystem", "finalize", "escrow", s.escrowID,
-				"nonce", nonce, "host", hostIdx,
+				"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 				"chunk", chunkIdx/catchUpChunkSize+1, "error", err)
 			return nil
 		}
@@ -1463,7 +1464,7 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 		chunkNum := chunkIdx/catchUpChunkSize + 1
 
 		logging.Info("sendCatchUp chunk", "subsystem", "finalize", "escrow", s.escrowID,
-			"nonce", nonce, "host", hostIdx,
+			"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 			"chunk", chunkNum, "of", totalChunks,
 			"diffs_in_chunk", len(chunk),
 			"chunk_first_nonce", chunk[0].Nonce,
@@ -1474,13 +1475,13 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 		cancel()
 		if err != nil {
 			logging.Warn("sendCatchUp chunk failed", "subsystem", "finalize", "escrow", s.escrowID,
-				"nonce", nonce, "host", hostIdx,
+				"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 				"chunk", chunkNum, "error", err)
-			return fmt.Errorf("catch-up chunk %d to host %d: %w", chunkNum, hostIdx, err)
+			return fmt.Errorf("catch-up chunk %d to host %s: %w", chunkNum, hostLabel, err)
 		}
 
 		logging.Info("sendCatchUp chunk response", "subsystem", "finalize", "escrow", s.escrowID,
-			"nonce", nonce, "host", hostIdx,
+			"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 			"chunk", chunkNum,
 			"resp_nonce", resp.Nonce, "has_sig", resp.StateSig != nil)
 
@@ -1510,7 +1511,7 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 			if skipTo > nextChunkIdx {
 				skippedChunks := (skipTo - nextChunkIdx) / catchUpChunkSize
 				logging.Info("sendCatchUp skip-forward", "subsystem", "finalize", "escrow", s.escrowID,
-					"nonce", nonce, "host", hostIdx,
+					"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 					"resp_nonce", resp.Nonce,
 					"skipping_from_idx", nextChunkIdx, "to_idx", skipTo,
 					"skipped_chunks", skippedChunks)
@@ -1559,7 +1560,7 @@ func (s *Session) CatchUpAllHosts(ctx context.Context) error {
 	for i, target := range hosts {
 		wg.Go(func() {
 			if err := s.sendCatchUpWith(ctx, target.idx, finalizeClients[target.idx]); err != nil {
-				perHost[i] = fmt.Errorf("host %d: %w", target.idx, err)
+				perHost[i] = fmt.Errorf("host %s: %w", s.HostLabel(target.idx), err)
 			}
 		})
 	}
@@ -1590,7 +1591,7 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 	for cycle := 0; cycle < syncCycles; cycle++ {
 		for _, h := range hosts {
 			if err := s.sendCatchUp(ctx, h.idx); err != nil {
-				failures = append(failures, fmt.Errorf("cycle %d host %d: %w", cycle+1, h.idx, err))
+				failures = append(failures, fmt.Errorf("cycle %d host %s: %w", cycle+1, s.HostLabel(h.idx), err))
 			}
 		}
 		for i := 0; i < len(s.group); i++ {
@@ -1608,7 +1609,7 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 
 	for _, h := range hosts {
 		if err := s.sendCatchUp(ctx, h.idx); err != nil {
-			failures = append(failures, fmt.Errorf("final host %d: %w", h.idx, err))
+			failures = append(failures, fmt.Errorf("final host %s: %w", s.HostLabel(h.idx), err))
 		}
 	}
 
