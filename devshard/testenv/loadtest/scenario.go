@@ -25,6 +25,7 @@ type Scenario struct {
 type Topology struct {
 	VersiondMode string         `yaml:"versiond_mode"`
 	Storage      string         `yaml:"storage"`
+	Participants int            `yaml:"participants"`
 	Chain        ChainTopology  `yaml:"chain"`
 	MockML       MockMLTopology `yaml:"mock_ml"`
 }
@@ -75,8 +76,9 @@ type Assertions struct {
 		TerminalOutcome string `yaml:"terminal_outcome"`
 	} `yaml:"requests"`
 	Devshard struct {
-		NoOrphanedWork bool `yaml:"no_orphaned_work"`
-		RequireDrain   bool `yaml:"require_drain"`
+		NoOrphanedWork bool    `yaml:"no_orphaned_work"`
+		RequireDrain   bool    `yaml:"require_drain"`
+		MaxGhostRate   float64 `yaml:"max_ghost_rate"`
 	} `yaml:"devshard"`
 	MockML struct {
 		RequireEachNodeUsed bool `yaml:"require_each_node_used"`
@@ -135,6 +137,9 @@ func (s Scenario) Validate() error {
 	if s.Topology.Storage != "per_participant" {
 		return fmt.Errorf("only topology.storage per_participant is supported")
 	}
+	if s.Topology.Participants != 0 && s.Topology.Participants < 2 {
+		return fmt.Errorf("topology.participants must be at least 2 when set")
+	}
 	if s.Topology.Chain.EscrowAmount == 0 || s.Topology.Chain.MaxNonce == 0 {
 		return fmt.Errorf("topology.chain requires positive escrow_amount and max_nonce")
 	}
@@ -171,6 +176,9 @@ func (s Scenario) Validate() error {
 	}
 	if s.Assertions.Requests.HTTPStatus == 0 || s.Assertions.Requests.TerminalOutcome == "" {
 		return fmt.Errorf("request assertions require http_status and terminal_outcome")
+	}
+	if s.Assertions.Devshard.MaxGhostRate < 0 || s.Assertions.Devshard.MaxGhostRate > 1 {
+		return fmt.Errorf("devshard max_ghost_rate must be between 0 and 1")
 	}
 	if _, err := time.ParseDuration(s.DrainTimeout); err != nil {
 		return fmt.Errorf("drain_timeout: %w", err)
