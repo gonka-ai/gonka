@@ -1,5 +1,5 @@
 schema_version: v1
-scenario: normal-load
+scenario: extended-drain
 seed: 42
 
 topology:
@@ -26,7 +26,7 @@ workload:
     max_tokens: 64
     messages:
       - role: user
-        content: "normal-load request"
+        content: "extended-drain request"
 
 thresholds:
   error_rate: 0
@@ -41,4 +41,4 @@ assertions:
   mock_ml:
     require_each_node_used: true
 
-drain_timeout: 3m
+drain_timeout: 11m
