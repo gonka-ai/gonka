@@ -157,18 +157,19 @@ type DevshardctlCfg struct {
 	IP   string `yaml:"ip"`
 }
 
-// PostgresCfg configures storage for devshardd children. PerHost creates an
-// isolated Postgres service for each versiond container; the default is the
-// existing shared service used by HA-specific testenv scenarios.
+// PostgresCfg configures storage for devshardd children. PerParticipant creates
+// one isolated Postgres service per on-chain participant while replicas of that
+// participant share its service. The default is the existing shared service
+// used by HA-specific testenv scenarios.
 type PostgresCfg struct {
-	Enabled  bool   `yaml:"enabled"`
-	PerHost  bool   `yaml:"per_host"`
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Database string `yaml:"database"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	IP       string `yaml:"ip"`
+	Enabled        bool   `yaml:"enabled"`
+	PerParticipant bool   `yaml:"per_participant"`
+	Host           string `yaml:"host"`
+	Port           int    `yaml:"port"`
+	Database       string `yaml:"database"`
+	User           string `yaml:"user"`
+	Password       string `yaml:"password"`
+	IP             string `yaml:"ip"`
 }
 
 // EscrowMeta describes slot layout gencompose owns (distinct from escrows[] seed).

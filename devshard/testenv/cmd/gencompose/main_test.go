@@ -448,10 +448,10 @@ func TestWriteCompose_MultipleMockMLNodes(t *testing.T) {
 	require.Contains(t, text, `MOCK_OPENAI_QUEUE: "8"`)
 }
 
-func TestWriteCompose_PerHostPostgres(t *testing.T) {
+func TestWriteCompose_PerParticipantPostgres(t *testing.T) {
 	dir := t.TempDir()
 	cfg := defaultConfig()
-	cfg.Postgres.PerHost = true
+	cfg.Postgres.PerParticipant = true
 	require.NoError(t, fillConfig(cfg))
 
 	outPath := filepath.Join(dir, "docker-compose.yml")
@@ -460,10 +460,11 @@ func TestWriteCompose_PerHostPostgres(t *testing.T) {
 	body, err := os.ReadFile(outPath)
 	require.NoError(t, err)
 	text := string(body)
-	for _, host := range cfg.Hosts {
-		require.Contains(t, text, "devshard-postgres-"+host.ID+":")
-		require.Contains(t, text, "PGHOST: devshard-postgres-"+host.ID)
-	}
+	require.Contains(t, text, "devshard-postgres-versiond-0:")
+	require.Contains(t, text, "devshard-postgres-versiond-2:")
+	require.NotContains(t, text, "devshard-postgres-versiond-1:")
+	require.Equal(t, 2, strings.Count(text, "PGHOST: devshard-postgres-versiond-0"))
+	require.Equal(t, 1, strings.Count(text, "PGHOST: devshard-postgres-versiond-2"))
 	require.Equal(t, len(cfg.Hosts), strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
 	require.NotContains(t, text, "# HA pair shares Postgres")
 }

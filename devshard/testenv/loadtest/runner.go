@@ -167,7 +167,7 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 		return err
 	}
 	cfg.Versiond.Mode = scenario.Topology.VersiondMode
-	cfg.Postgres.PerHost = scenario.Topology.Storage == "per_host"
+	cfg.Postgres.PerParticipant = scenario.Topology.Storage == "per_participant"
 	cfg.Params.MaxNonce = scenario.Topology.Chain.MaxNonce
 	for i := range cfg.Escrows {
 		cfg.Escrows[i].Amount = scenario.Topology.Chain.EscrowAmount
