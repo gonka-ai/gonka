@@ -110,6 +110,25 @@ services:
     restart: unless-stopped
 {{ end }}
 {{ if .Postgres.Enabled }}
+{{ if .Postgres.PerHost }}
+{{ range .Hosts }}
+
+  devshard-postgres-{{ .ID }}:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: {{ $.Postgres.Database }}
+      POSTGRES_USER: {{ $.Postgres.User }}
+      POSTGRES_PASSWORD: {{ $.Postgres.Password }}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ $.Postgres.User }} -d {{ $.Postgres.Database }}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      testenv: {}
+    restart: unless-stopped
+{{ end }}
+{{ else }}
 
   devshard-postgres:
     image: postgres:16-alpine
@@ -126,6 +145,7 @@ services:
       testenv:
         ipv4_address: {{ .Postgres.IP }}
     restart: unless-stopped
+{{ end }}
 {{ end }}
 {{ range .Hosts }}
 
@@ -167,7 +187,15 @@ services:
       # GONKA_HA is intentionally omitted from versiond in this fixture. The
       # SQLite-to-HA scenario first boots children before enabling HA at the
       # router, where Devshard-Ha exercises the request-time storage guard.
-{{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
+{{ if and (eq $.Versiond.Mode "multi") $.Postgres.PerHost }}
+      # Load-test topology: every DevShard instance owns its database.
+      DEVSHARD_STORAGE_MODE: postgres
+      PGHOST: devshard-postgres-{{ .ID }}
+      PGPORT: "{{ $.Postgres.Port }}"
+      PGDATABASE: {{ $.Postgres.Database }}
+      PGUSER: {{ $.Postgres.User }}
+      PGPASSWORD: {{ $.Postgres.Password }}
+{{ else if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
       PGHOST: {{ $.Postgres.Host }}
@@ -202,7 +230,10 @@ services:
       {{ .Name }}:
         condition: service_started
 {{ end }}
-{{ if isHAReplica $ . }}
+{{ if $.Postgres.PerHost }}
+      devshard-postgres-{{ .ID }}:
+        condition: service_healthy
+{{ else if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
 {{ end }}
