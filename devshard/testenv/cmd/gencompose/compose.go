@@ -110,8 +110,8 @@ services:
     restart: unless-stopped
 {{ end }}
 {{ if .Postgres.Enabled }}
-{{ if .Postgres.PerHost }}
-{{ range .Hosts }}
+{{ if .Postgres.PerParticipant }}
+{{ range participantHosts . }}
 
   devshard-postgres-{{ .ID }}:
     image: postgres:16-alpine
@@ -187,10 +187,10 @@ services:
       # GONKA_HA is intentionally omitted from versiond in this fixture. The
       # SQLite-to-HA scenario first boots children before enabling HA at the
       # router, where Devshard-Ha exercises the request-time storage guard.
-{{ if and (eq $.Versiond.Mode "multi") $.Postgres.PerHost }}
-      # Load-test topology: every DevShard instance owns its database.
+{{ if and (eq $.Versiond.Mode "multi") $.Postgres.PerParticipant }}
+      # Load-test topology: replicas share their participant's database.
       DEVSHARD_STORAGE_MODE: postgres
-      PGHOST: devshard-postgres-{{ .ID }}
+      PGHOST: {{ participantPostgresHost $ . }}
       PGPORT: "{{ $.Postgres.Port }}"
       PGDATABASE: {{ $.Postgres.Database }}
       PGUSER: {{ $.Postgres.User }}
@@ -230,8 +230,8 @@ services:
       {{ .Name }}:
         condition: service_started
 {{ end }}
-{{ if $.Postgres.PerHost }}
-      devshard-postgres-{{ .ID }}:
+{{ if $.Postgres.PerParticipant }}
+      {{ participantPostgresHost $ . }}:
         condition: service_healthy
 {{ else if isHAReplica $ . }}
       devshard-postgres:
@@ -355,6 +355,8 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"routingActivationMinReady": routingActivationMinReady,
 		"versiondKeyName":           versiondKeyName,
 		"isHAReplica":               isHAReplica,
+		"participantHosts":          participantHosts,
+		"participantPostgresHost":   participantPostgresHost,
 		"legacyVersiondHost":        legacyVersiondHost,
 		"primaryEscrowID":           primaryEscrowID,
 		"primaryModelID":            primaryModelID,
@@ -468,6 +470,20 @@ func isHAReplica(cfg *config.File, h config.HostCfg) bool {
 		return false
 	}
 	return config.KeyNameReplicaCount(cfg, h) > 1
+}
+
+func participantHosts(cfg *config.File) []config.HostCfg {
+	return config.OnChainIdentityHosts(cfg)
+}
+
+func participantPostgresHost(cfg *config.File, h config.HostCfg) string {
+	keyName := config.VersiondKeyName(cfg, h)
+	for _, participant := range config.OnChainIdentityHosts(cfg) {
+		if config.VersiondKeyName(cfg, participant) == keyName {
+			return "devshard-postgres-" + participant.ID
+		}
+	}
+	return "devshard-postgres-" + h.ID
 }
 
 // legacyVersiondHost is the versiond instance that owns pre-HA SQLite data dirs.
