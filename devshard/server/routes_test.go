@@ -100,11 +100,33 @@ func TestSessionHTTPErrorChainUnavailable(t *testing.T) {
 	require.Equal(t, transport.DevshardErrorChainUnavailable, rec.Header().Get(transport.HeaderDevshardError))
 }
 
+func TestSessionHTTPErrorEscrowLookupLimited(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/x/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowLookupLimited))
+	require.Error(t, err)
+	e.HTTPErrorHandler(err, c)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Equal(t, transport.DevshardErrorEscrowLookupLimited, rec.Header().Get(transport.HeaderDevshardError))
+	status, reason := sessionResolutionStatus(fmt.Errorf("get escrow: %w", bridge.ErrEscrowLookupLimited))
+	require.Equal(t, observability.ReasonRateLimited, reason)
+	_ = status
+}
+
 func TestSessionHTTPErrorEscrowNotFoundStill500(t *testing.T) {
-	c := testEchoContext(t)
-	httpErr, ok := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowNotFound)).(*echo.HTTPError)
-	require.True(t, ok)
-	require.Equal(t, http.StatusInternalServerError, httpErr.Code)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/x/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowNotFound))
+	require.Error(t, err)
+	e.HTTPErrorHandler(err, c)
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Equal(t, transport.DevshardErrorEscrowNotFound, rec.Header().Get(transport.HeaderDevshardError))
 }
 
 func TestSessionHTTPErrorDefault(t *testing.T) {

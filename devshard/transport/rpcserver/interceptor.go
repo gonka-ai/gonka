@@ -69,15 +69,9 @@ func isWatchPath(path string) bool {
 	return path == rpcpbconnect.PeerAuthServiceWatchProcedure
 }
 
-func isImplementedRPC(path string) bool {
-	switch path {
-	case rpcpbconnect.PeerAuthServiceAttachProcedure,
-		rpcpbconnect.PeerAuthServiceWatchProcedure,
-		rpcpbconnect.SessionServiceGetSignaturesProcedure:
-		return true
-	default:
-		return false
-	}
+func isImplementedRPC(implemented map[string]struct{}, path string) bool {
+	_, ok := implemented[path]
+	return ok
 }
 
 // handshakeGate admits non-Attach RPCs from the session header before Connect
@@ -85,7 +79,7 @@ func isImplementedRPC(path string) bool {
 // does not. The ResponseWriter and session token are stashed only on Watch.
 // Known but unimplemented procedures are answered here so Connect never reads
 // the body.
-func handshakeGate(auth *PeerAuthHandler, next http.Handler) http.Handler {
+func handshakeGate(auth *PeerAuthHandler, next http.Handler, implemented map[string]struct{}) http.Handler {
 	ew := connect.NewErrorWriter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isAttachPath(r.URL.Path) {
@@ -108,7 +102,7 @@ func handshakeGate(auth *PeerAuthHandler, next http.Handler) http.Handler {
 			_ = ew.Write(w, r, err)
 			return
 		}
-		if !isImplementedRPC(r.URL.Path) {
+		if !isImplementedRPC(implemented, r.URL.Path) {
 			r.Body = http.MaxBytesReader(w, r.Body, 0)
 			_ = ew.Write(w, r, connect.NewError(connect.CodeUnimplemented, errors.New("method is not implemented")))
 			return

@@ -79,7 +79,11 @@ type PeerConnConfig struct {
 	Jitter     func(time.Duration) time.Duration
 	// ReadMaxBytes overrides DefaultRPCReadMaxBytes for handshake and
 	// ordinary unary Connect clients. Zero uses 16 KiB.
-	// Chat and validation GetPayload use DefaultMaxBodySize (10 MiB).
+	// GetDiffs and GetMempool responses use DefaultRPCQueryReadMaxBytes (10 MiB).
+	// VerifyTimeout / VerifyErrorMiss / ChallengeReceipt use
+	// DefaultRPCLargeReadMaxBytes (10 MiB). GetPayload client reads use
+	// DefaultRPCPayloadMaxBytes (64 MiB) unless the caller passes a
+	// per-inference PayloadReadLimit. Chat stays DefaultMaxBodySize.
 	ReadMaxBytes int
 	// MinTTL is the floor for AttachResponse.expires_at remaining time.
 	// Zero uses minAttachTTL (30s). Tests that must use a SessionTTL

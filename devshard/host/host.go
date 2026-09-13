@@ -17,7 +17,6 @@ import (
 
 	"common/chainoracle/blocks"
 	"devshard"
-	"devshard/gossip"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/observability"
@@ -143,7 +142,7 @@ type Host struct {
 	mempool            *Mempool
 	checker            AcceptanceChecker
 	store              storage.Storage // optional, nil = no persistence
-	gsp                *gossip.Gossip  // optional, nil = no gossip pruning
+	gsp                gossipRelay     // optional, nil = no gossip pruning
 	availability       devshard.AvailabilityProvider
 
 	snapshotInFlight      atomic.Bool  // prevents overlapping async snapshot writes
@@ -352,8 +351,14 @@ func WithVerifier(v signing.Verifier) HostOption {
 	return func(h *Host) { h.verifier = v }
 }
 
+// gossipRelay is the host-side gossip surface. *gossip.Gossip implements it.
+type gossipRelay interface {
+	BroadcastTxs(ctx context.Context, txs []*types.DevshardTx)
+	PruneBelow(nonce uint64)
+}
+
 // WithGossip sets the gossip instance for pruning on finalization.
-func WithGossip(g *gossip.Gossip) HostOption {
+func WithGossip(g gossipRelay) HostOption {
 	return func(h *Host) { h.gsp = g }
 }
 
@@ -1655,11 +1660,11 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 
 // ApplyRecoveredDiffs applies diffs fetched during gossip recovery.
 // Returns GossipSig for each successfully applied nonce.
-func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]gossip.GossipSig, error) {
+func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]types.GossipSig, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	var sigs []gossip.GossipSig
+	var sigs []types.GossipSig
 
 	for _, diff := range diffs {
 		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
@@ -1674,7 +1679,7 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]g
 
 		if stateSig != nil && h.store != nil {
 			for slotID := range h.slotIDs {
-				sigs = append(sigs, gossip.GossipSig{
+				sigs = append(sigs, types.GossipSig{
 					Nonce:     nonce,
 					StateHash: root,
 					Sig:       stateSig,

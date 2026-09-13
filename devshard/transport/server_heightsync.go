@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -456,9 +457,6 @@ type heightSyncSeedResponse struct {
 // HandleHeightSync emits one host Anchor (ForceAnchor) for courier cache seeding.
 // Requires WithHeightSync (seed RPC defaults on); escrow owner only.
 func (s *Server) HandleHeightSync(c echo.Context) error {
-	if s.heightSync == nil || !s.heightSyncSeedRPC {
-		return echo.NewHTTPError(http.StatusNotFound, "height-sync seed RPC disabled")
-	}
 	sender, err := getSender(c)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "missing sender")
@@ -471,12 +469,29 @@ func (s *Server) HandleHeightSync(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "session not found")
 	}
 
+	sec, err := s.ServeSeedHeightSync(c.Request().Context())
+	if err != nil {
+		if errors.Is(err, ErrHeightSyncSeedDisabled) {
+			return echo.NewHTTPError(http.StatusNotFound, err.Error())
+		}
+		return err
+	}
+	return writeJSON(c, http.StatusOK, heightSyncSeedResponse{HeightSync: sec})
+}
+
+// ServeSeedHeightSync is the transport-neutral core behind POST .../height-sync
+// and SessionService.SeedHeightSync. Callers enforce owner-only.
+func (s *Server) ServeSeedHeightSync(ctx context.Context) (*heightsync.HeightSyncSection, error) {
+	if s.heightSync == nil || !s.heightSyncSeedRPC {
+		return nil, ErrHeightSyncSeedDisabled
+	}
+
 	h := heightsync.DecideHints{
-		Nonce:              0, // seed consumes no session nonce
+		Nonce:              0,
 		ForceAnchor:        true,
 		OriginatorSenderID: s.host.Signer().Address(),
 	}
-	sec, dErr, oracleMiss := s.heightSync.Decide(c.Request().Context(), h)
+	sec, dErr, oracleMiss := s.heightSync.Decide(ctx, h)
 	if oracleMiss {
 		heightsync.IncOracleFailure(s.host.Signer().Address())
 	}
@@ -489,12 +504,12 @@ func (s *Server) HandleHeightSync(c echo.Context) error {
 		sec.Direction = "response"
 		if !s.attachResponseOriginSignature(sec, h.Nonce) {
 			s.logOutboundHeightSync(nil, h.Nonce)
-			return writeJSON(c, http.StatusOK, heightSyncSeedResponse{})
+			return nil, nil
 		}
 		s.logOutboundHeightSync(sec, h.Nonce)
-		s.recordOutboundAnchorIfAnchor(sec, c.Request().Method+" "+c.Path())
+		s.recordOutboundAnchorIfAnchor(sec, "POST /height-sync")
 	}
-	return writeJSON(c, http.StatusOK, heightSyncSeedResponse{HeightSync: sec})
+	return sec, nil
 }
 
 // SetHeightSyncOriginSigner overrides the signer used for outbound response

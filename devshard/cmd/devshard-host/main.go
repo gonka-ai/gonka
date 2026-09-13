@@ -329,26 +329,30 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 		return nil, nil, err
 	}
 
-	userPeers := make(map[int]*transport.HTTPClient, len(cfg.peerURLs))
+	hostPeers := make(map[int]transport.HostPeerClient, len(cfg.peerURLs))
 	var gossipPeers []gossip.PeerClient
 	endpoints := transport.RPCEndpointsFromEnv()
 	for i, peerURL := range cfg.peerURLs {
-		userPeers[i] = transport.NewHTTPClient(peerURL, cfg.escrowID, cfg.userSigner)
+		hostAddr := ""
+		if i < len(cfg.group) {
+			hostAddr = cfg.group[i].ValidatorAddress
+		}
+		hostHTTP := transport.NewHTTPClient(peerURL, cfg.escrowID, cfg.signer)
+		selected := transport.SelectTransport(hostHTTP, hostAddr, endpoints, nil)
+		pc, ok := selected.(transport.HostPeerClient)
+		if !ok {
+			return nil, nil, fmt.Errorf("peer %d: SelectTransport returned %T", i, selected)
+		}
+		hostPeers[i] = pc
 		if i != cfg.hostIndex {
-			hostAddr := ""
-			if i < len(cfg.group) {
-				hostAddr = cfg.group[i].ValidatorAddress
-			}
-			gossipHTTP := transport.NewHTTPClient(peerURL, cfg.escrowID, cfg.signer)
-			selected := transport.SelectTransport(gossipHTTP, hostAddr, endpoints, nil)
-			pc, ok := selected.(gossip.PeerClient)
+			gp, ok := selected.(gossip.PeerClient)
 			if !ok {
 				return nil, nil, fmt.Errorf("peer %d: SelectTransport returned %T", i, selected)
 			}
-			gossipPeers = append(gossipPeers, pc)
+			gossipPeers = append(gossipPeers, gp)
 		}
 	}
-	srv.SetPeerClients(userPeers)
+	srv.SetPeerClients(hostPeers)
 	gsp := gossip.NewGossip(cfg.escrowID, uint32(cfg.hostIndex), gossipPeers, h.HostMempool(), gossip.WithSigAccumulator(h))
 	srv.SetGossip(gsp)
 

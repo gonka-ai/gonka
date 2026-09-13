@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +35,10 @@ type LeaseRow struct {
 	ClaimedAt       string
 }
 
+// leaseSnapshotExecTimeout bounds each psql so the under-load poller can
+// observe the ~500ms D7-off pending window instead of blocking on a 2m exec.
+const leaseSnapshotExecTimeout = 5 * time.Second
+
 // PostgresLeaseSnapshot queries shared Postgres for lease exclusivity evidence.
 func (s *Stack) PostgresLeaseSnapshot(t *testing.T, cfg *config.File) LeaseSnapshot {
 	t.Helper()
@@ -45,7 +50,7 @@ func (s *Stack) PostgresLeaseSnapshot(t *testing.T, cfg *config.File) LeaseSnaps
 // TryPostgresLeaseSnapshot is safe to call from worker goroutines (no testing.T).
 func (s *Stack) TryPostgresLeaseSnapshot(cfg *config.File) (LeaseSnapshot, error) {
 	user, db, pass := postgresCreds(cfg)
-	dupRaw, err := s.ComposeExecOutput("devshard-postgres",
+	dupRaw, err := s.ComposeExecOutputTimeout(leaseSnapshotExecTimeout, "devshard-postgres",
 		"env", "PGPASSWORD="+pass,
 		"psql", "-U", user, "-d", db, "-At",
 		"-c", `SELECT COUNT(*) FROM (
@@ -62,7 +67,7 @@ func (s *Stack) TryPostgresLeaseSnapshot(cfg *config.File) (LeaseSnapshot, error
 		return LeaseSnapshot{}, fmt.Errorf("parse duplicate_groups %q: %w", dupRaw, err)
 	}
 
-	countsRaw, err := s.ComposeExecOutput("devshard-postgres",
+	countsRaw, err := s.ComposeExecOutputTimeout(leaseSnapshotExecTimeout, "devshard-postgres",
 		"env", "PGPASSWORD="+pass,
 		"psql", "-U", user, "-d", db, "-At", "-F", ",",
 		"-c", `SELECT
@@ -83,7 +88,7 @@ func (s *Stack) TryPostgresLeaseSnapshot(cfg *config.File) (LeaseSnapshot, error
 	submitted, _ := strconv.Atoi(parts[2])
 	skipped, _ := strconv.Atoi(parts[3])
 
-	rowsRaw, err := s.ComposeExecOutput("devshard-postgres",
+	rowsRaw, err := s.ComposeExecOutputTimeout(leaseSnapshotExecTimeout, "devshard-postgres",
 		"env", "PGPASSWORD="+pass,
 		"psql", "-U", user, "-d", db, "-At", "-F", "|",
 		"-c", `SELECT inference_id, instance_address, status, claimed_at
@@ -352,6 +357,69 @@ func WaitLeasePending(t *testing.T, stack *Stack, cfg *config.File, minPending i
 	}
 	t.Fatalf("citest: pending leases=%d < %d after %s (total=%d)", last.Pending, minPending, timeout, last.Total)
 	return last
+}
+
+// WaitLeasePendingUnderLoad is WaitLeasePending for work that holds the row
+// only while traffic is in flight. D7-off payload 500 acquires then DELETE's
+// after the fetch retry (~500ms); polling after chats return misses that
+// window. load must return when stop is closed (finish the in-flight call).
+func WaitLeasePendingUnderLoad(t *testing.T, stack *Stack, cfg *config.File, minPending int, timeout time.Duration, load func(stop <-chan struct{})) LeaseSnapshot {
+	t.Helper()
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+	stopLoad := func() { stopOnce.Do(func() { close(stop) }) }
+	t.Cleanup(stopLoad)
+
+	var mu sync.Mutex
+	var last, hit LeaseSnapshot
+	var found bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer stopLoad()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			snap, err := stack.TryPostgresLeaseSnapshot(cfg)
+			if err != nil {
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
+			mu.Lock()
+			last = snap
+			if snap.Pending >= minPending {
+				hit = snap
+				found = true
+				mu.Unlock()
+				return
+			}
+			mu.Unlock()
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
+	loadDone := make(chan struct{})
+	go func() {
+		defer close(loadDone)
+		load(stop)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(timeout + 15*time.Second):
+		stopLoad()
+	}
+	select {
+	case <-loadDone:
+	case <-time.After(5 * time.Second):
+		t.Logf("citest: load still running after stop")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !found {
+		t.Fatalf("citest: pending leases=%d < %d after %s under load (total=%d)", last.Pending, minPending, timeout, last.Total)
+	}
+	return hit
 }
 
 // WaitLeasePendingZero polls until pending==0 (released rows are deleted).

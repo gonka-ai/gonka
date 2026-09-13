@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"connectrpc.com/connect"
 	"github.com/labstack/echo/v4"
 
 	"common/logging"
@@ -31,6 +32,7 @@ import (
 	"common/chainoracle/blocks"
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/gossip"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/observability"
@@ -40,6 +42,7 @@ import (
 	"devshard/state"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/transport/rpcpb"
 	"devshard/transport/rpcserver"
 	"devshard/types"
 )
@@ -49,6 +52,10 @@ type HostManager struct {
 	sessionsMutex      sync.RWMutex
 	sessions           map[string]*transport.Server
 	resolutionFailures map[string]resolutionFailure
+	escrowLookupMu     sync.Mutex
+	escrowLookups      map[string]escrowLookupEntry
+	escrowLookupPeer   map[string][]time.Time
+	escrowLookupFloor  []time.Time
 	sf                 singleflight.Group
 
 	store              storage.Storage
@@ -351,6 +358,8 @@ func NewHostManager(
 	return &HostManager{
 		sessions:           make(map[string]*transport.Server),
 		resolutionFailures: make(map[string]resolutionFailure),
+		escrowLookups:      make(map[string]escrowLookupEntry),
+		escrowLookupPeer:   make(map[string][]time.Time),
 		store:              gate,
 		obsGate:            gate,
 		signer:             signer,
@@ -394,13 +403,53 @@ func (m *HostManager) hostRPCAddress() string {
 func (m *HostManager) allowRPCPeer(ctx context.Context, addr string) (bool, error) {
 	escrowID := rpcserver.EscrowIDFromContext(ctx)
 	srv, err := m.SessionServerExisting(escrowID)
-	if err != nil {
+	if err == nil {
+		if srv == nil {
+			return false, storage.ErrSessionNotFound
+		}
+		return srv.AllowsSender(addr), nil
+	}
+	if !errors.Is(err, storage.ErrSessionNotFound) {
 		return false, fmt.Errorf("escrow %s is not open on this host: %w", escrowID, err)
 	}
-	if srv == nil {
-		return false, storage.ErrSessionNotFound
+
+	// First Attach: the protocol session may not exist yet. Owner bind
+	// matches BindOwnerChat (HTTP seed/chat). Other roster members are
+	// admitted against chain slots and must not CreateSession.
+	if m.bridge == nil {
+		return false, fmt.Errorf("escrow %s is not open on this host: %w", escrowID, err)
 	}
-	return srv.AllowsSender(addr), nil
+	escrow := m.warmedEscrow(escrowID)
+	var gerr error
+	if escrow == nil {
+		escrow, gerr = m.fetchEscrowForBind(escrowID, addr)
+	}
+	if gerr != nil {
+		return false, fmt.Errorf("get escrow: %w", gerr)
+	}
+	if escrow == nil {
+		return false, fmt.Errorf("escrow %s is not open on this host: %w", escrowID, err)
+	}
+	if escrow.Settled {
+		m.rememberResolutionFailure(escrowID, bridge.ErrEscrowSettled, time.Now())
+		return false, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
+	}
+	if escrow.CreatorAddress != "" && addr == escrow.CreatorAddress {
+		srv, cerr := m.getOrCreate(escrowID, escrow)
+		if cerr != nil {
+			return false, cerr
+		}
+		if srv == nil {
+			return false, storage.ErrSessionNotFound
+		}
+		return srv.AllowsSender(addr), nil
+	}
+	for _, slot := range escrow.Slots {
+		if slot == addr {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // StorageReady reports whether the backing storage is ready to serve. When the
@@ -468,7 +517,7 @@ func (m *HostManager) CloseHosts() {
 		if srv == nil {
 			continue
 		}
-		srv.Host().Close()
+		closeTransportServer(srv)
 		observability.DeleteEscrowMetrics(escrowID)
 	}
 }
@@ -555,7 +604,7 @@ func (m *HostManager) evictSession(escrowID string, stale *transport.Server) {
 	}
 	delete(m.sessions, escrowID)
 	m.sessionsMutex.Unlock()
-	current.Host().Close()
+	closeTransportServer(current)
 	observability.DeleteEscrowMetrics(escrowID)
 }
 
@@ -584,7 +633,7 @@ func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
 		return nil, err
 	}
 
-	escrow, err := m.bridge.GetEscrow(escrowID)
+	escrow, err := m.fetchEscrowForBind(escrowID, addr)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
 	}
@@ -616,7 +665,7 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 	delete(m.sessions, escrowID)
 	m.sessionsMutex.Unlock()
 	if hadSession {
-		srv.Host().Close()
+		closeTransportServer(srv)
 		observability.DeleteEscrowMetrics(escrowID)
 	}
 
@@ -634,8 +683,8 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 }
 
 // getOrCreate returns a live session, recovering from store or creating.
-// When escrow is non-nil (BindOwnerChat first-bind path), create reuses it and
-// skips a second bridge.GetEscrow.
+// When escrow is non-nil (BindOwnerChat / owner Attach first-bind), create
+// reuses it and skips a second bridge.GetEscrow.
 func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*transport.Server, error) {
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
@@ -704,9 +753,9 @@ func (m *HostManager) cachedResolutionFailure(escrowID string, now time.Time) er
 }
 
 // cachedCreateBlockingFailure is the tombstone getOrCreate honors.
-// SessionServerExisting caches a miss so GET /signatures and allowRPCPeer
-// do not recover on every request. BindOwnerChat calls Existing
-// first, then getOrCreate; that miss must not block CreateSession.
+// SessionServerExisting caches a miss so GET /signatures does not recover
+// on every request. BindOwnerChat and owner Attach (allowRPCPeer) call
+// Existing first, then getOrCreate; that miss must not block CreateSession.
 func (m *HostManager) cachedCreateBlockingFailure(escrowID string, now time.Time) error {
 	err := m.cachedResolutionFailure(escrowID, now)
 	if errors.Is(err, storage.ErrSessionNotFound) {
@@ -782,7 +831,7 @@ func isPermanentResolutionFailure(err error) bool {
 func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Server) (*transport.Server, error) {
 	installed, settled := m.installSession(escrowID, srv, time.Now())
 	if settled {
-		srv.Host().Close()
+		closeTransportServer(srv)
 		if err := m.store.MarkSettled(escrowID); err != nil && !errors.Is(err, storage.ErrSessionNotFound) {
 			logging.Error("failed to mark racing session settled", inferenceTypes.System,
 				"escrow_id", escrowID, "error", err)
@@ -790,7 +839,7 @@ func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Serve
 		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
 	}
 	if installed != srv {
-		srv.Host().Close()
+		closeTransportServer(srv)
 	}
 	return installed, nil
 }
@@ -841,7 +890,7 @@ func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
 	m.sessionsMutex.Unlock()
 
 	for escrowID, srv := range evicted {
-		srv.Host().Close()
+		closeTransportServer(srv)
 		observability.DeleteEscrowMetrics(escrowID)
 	}
 	return len(evicted)
@@ -902,6 +951,10 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 	if err != nil {
 		h.Close()
 		return nil, fmt.Errorf("create server: %w", err)
+	}
+	if err := m.wireHostToHost(srv, escrowID, group); err != nil {
+		closeTransportServer(srv)
+		return nil, err
 	}
 
 	return srv, nil
@@ -1320,6 +1373,10 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 		h.Close()
 		return nil, nil, fmt.Errorf("create server: %w", err)
 	}
+	if err := m.wireHostToHost(srv, escrowID, meta.Group); err != nil {
+		closeTransportServer(srv)
+		return nil, nil, err
+	}
 
 	return srv, obsRepair, nil
 }
@@ -1336,9 +1393,12 @@ func (m *HostManager) Register(g *echo.Group) {
 			panic("devshard: DEVSHARD_RPC_SERVER_ENABLED requires a host address (signer or recorder)")
 		}
 		if auth := m.peerAuthHandler(); auth != nil {
+			lookup := rpcserver.AdaptLookup(m.SessionServerExisting)
 			opts = append(opts, devshardserver.WithPeerRPC(
 				auth,
-				rpcserver.NewSessionHandler(rpcserver.AdaptLookup(m.SessionServerExisting)),
+				rpcserver.NewSessionHandler(lookup),
+				rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
+				rpcserver.WithPayloadService(rpcserver.NewPayloadHandler(lookup, m.ServeRPCGetPayload)),
 			))
 		}
 	}
@@ -1374,72 +1434,198 @@ func (m *HostManager) ClosePeerRPC() {
 	observability.SetPeerRPCEnabled(false)
 }
 
+// PayloadAuthInput is the validator-auth material from HTTP headers or GetPayloadRequest.
+type PayloadAuthInput struct {
+	InferenceID      string
+	ValidatorAddress string
+	Timestamp        int64
+	EpochID          uint64
+	Signature        string
+}
+
 // HandlePayloads serves payloads to validators for devshard validation.
 // Authenticates that the requester is a member of the session group (or a warm key
 // for a group member), then returns signed payloads.
 func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) error {
 	escrowID := srv.Host().EscrowID()
 	ctx := c.Request().Context()
-	inferenceID := c.QueryParam("inference_id")
-	validatorAddress := c.Request().Header.Get(utils.XValidatorAddressHeader)
-
+	in, parseErr := payloadAuthFromEcho(c)
 	emit := func(level observability.Level, msg string, status observability.MetricStatus, reason observability.Reason, err error, fields ...any) {
-		base := []any{"inference_id", inferenceID, "validator_address", validatorAddress}
+		base := []any{"inference_id", c.QueryParam("inference_id"), "validator_address", c.Request().Header.Get(utils.XValidatorAddressHeader)}
+		observability.LogPayloadRequest(ctx, level, escrowID, status, reason, msg, err, append(base, fields...)...)
+	}
+	if parseErr != nil {
+		reason := payloadParseReason(parseErr)
+		if reason == observability.ReasonMissingInferenceID {
+			emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, reason, nil)
+		} else {
+			emit(observability.LevelWarn, "payload request auth failed", observability.MetricStatusError, reason, parseErr)
+		}
+		return parseErr
+	}
+	resp, err := m.ServeGetPayload(ctx, srv, in)
+	if err != nil {
+		return err
+	}
+	if err := c.JSON(http.StatusOK, resp); err != nil {
+		observability.LogPayloadRequest(ctx, observability.LevelWarn, escrowID, observability.MetricStatusError, observability.ReasonPayloadWriteErr, "payload request failed", err,
+			"inference_id", in.InferenceID, "validator_address", in.ValidatorAddress)
+		return err
+	}
+	return nil
+}
+
+// ServeGetPayload is the transport-neutral core behind GET .../payloads and
+// PayloadService.GetPayload.
+func (m *HostManager) ServeGetPayload(ctx context.Context, srv *transport.Server, in PayloadAuthInput) (*validationpkg.PayloadResponse, error) {
+	escrowID := srv.Host().EscrowID()
+	emit := func(level observability.Level, msg string, status observability.MetricStatus, reason observability.Reason, err error, fields ...any) {
+		base := []any{"inference_id", in.InferenceID, "validator_address", in.ValidatorAddress}
 		observability.LogPayloadRequest(ctx, level, escrowID, status, reason, msg, err, append(base, fields...)...)
 	}
 
-	if inferenceID == "" {
+	if in.InferenceID == "" {
 		emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonMissingInferenceID, nil)
-		return echo.NewHTTPError(http.StatusBadRequest, "inference_id required")
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "inference_id required")
 	}
 
-	if payloadFaultMatches(m.payloadFaultStatus, m.payloadFaultAddr, validatorAddress) {
+	if payloadFaultMatches(m.payloadFaultStatus, m.payloadFaultAddr, in.ValidatorAddress) {
 		emit(observability.LevelWarn, "testenv payload fault", observability.MetricStatusError, observability.ReasonPayloadRetrieveErr, nil,
 			"http_status", m.payloadFaultStatus)
-		return echo.NewHTTPError(m.payloadFaultStatus, "testenv payload fault")
+		return nil, echo.NewHTTPError(m.payloadFaultStatus, "testenv payload fault")
 	}
 
-	epochID, authReason, authErr := m.authenticatePayloadRequest(c, srv.Host().Group())
+	epochID, authReason, authErr := m.authenticatePayloadAuth(ctx, srv.Host().Group(), in)
 	if authErr != nil {
 		emit(observability.LevelWarn, "payload request auth failed", observability.MetricStatusError, authReason, authErr)
-		return authErr
+		return nil, authErr
 	}
 
-	// Retrieve payloads with adjacent epoch fallback
-	promptPayload, responsePayload, servedEpoch, err := m.retrievePayloadsWithAdjacentEpochs(ctx, escrowID, inferenceID, epochID)
+	promptPayload, responsePayload, servedEpoch, err := m.retrievePayloadsWithAdjacentEpochs(ctx, escrowID, in.InferenceID, epochID)
 	if err != nil {
 		if errors.Is(err, payloads.ErrNotFound) {
 			emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadNotFound, nil, "requested_epoch", epochID)
-			return echo.NewHTTPError(http.StatusNotFound, "payload not found")
+			return nil, echo.NewHTTPError(http.StatusNotFound, "payload not found")
 		}
 		emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadRetrieveErr, err, "requested_epoch", epochID)
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	// Sign response using same scheme as public endpoint
-	executorSignature, err := m.signPayloadResponse(inferenceID, promptPayload, responsePayload)
+	executorSignature, err := m.signPayloadResponse(in.InferenceID, promptPayload, responsePayload)
 	if err != nil {
 		emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadResponseSignErr, err,
 			"requested_epoch", epochID,
 			"served_epoch", servedEpoch)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to sign response")
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "failed to sign response")
 	}
 
-	if err := c.JSON(http.StatusOK, validationpkg.PayloadResponse{
-		InferenceId:       inferenceID,
-		PromptPayload:     promptPayload,
-		ResponsePayload:   responsePayload,
-		ExecutorSignature: executorSignature,
-	}); err != nil {
-		emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadWriteErr, err,
-			"requested_epoch", epochID,
-			"served_epoch", servedEpoch)
-		return err
-	}
 	emit(observability.LevelInfo, "payload served", observability.MetricStatusOK, observability.ReasonOK, nil,
 		"requested_epoch", epochID,
 		"served_epoch", servedEpoch)
-	return nil
+	return &validationpkg.PayloadResponse{
+		InferenceId:       in.InferenceID,
+		PromptPayload:     promptPayload,
+		ResponsePayload:   responsePayload,
+		ExecutorSignature: executorSignature,
+	}, nil
+}
+
+// ServeRPCGetPayload is the Connect adapter for PayloadService.GetPayload.
+// PayloadHandler already resolved srv and checked group membership.
+func (m *HostManager) ServeRPCGetPayload(ctx context.Context, core rpcserver.SessionCore, _ string, req *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+	srv, ok := core.(*transport.Server)
+	if !ok {
+		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("method is not implemented"))
+	}
+	in := PayloadAuthInput{
+		InferenceID:      req.GetInferenceId(),
+		ValidatorAddress: req.GetValidatorAddress(),
+		Timestamp:        req.GetTimestamp(),
+		EpochID:          req.GetEpochId(),
+		Signature:        string(req.GetSignature()), // HTTP Authorization text (base64), not raw ECDSA
+	}
+	resp, err := m.ServeGetPayload(ctx, srv, in)
+	if err != nil {
+		return nil, connectFromEcho(err)
+	}
+	return &rpcpb.GetPayloadResponse{
+		InferenceId:       resp.InferenceId,
+		PromptPayload:     resp.PromptPayload,
+		ResponsePayload:   resp.ResponsePayload,
+		ExecutorSignature: resp.ExecutorSignature,
+	}, nil
+}
+
+func connectFromEcho(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		return ce
+	}
+	var he *echo.HTTPError
+	if errors.As(err, &he) {
+		msg := fmt.Sprint(he.Message)
+		switch he.Code {
+		case http.StatusBadRequest:
+			return connect.NewError(connect.CodeInvalidArgument, errors.New(msg))
+		case http.StatusUnauthorized:
+			return connect.NewError(connect.CodeUnauthenticated, errors.New(msg))
+		case http.StatusForbidden:
+			return connect.NewError(connect.CodePermissionDenied, errors.New(msg))
+		case http.StatusNotFound:
+			return connect.NewError(connect.CodeNotFound, errors.New(msg))
+		case http.StatusTooManyRequests:
+			return connect.NewError(connect.CodeResourceExhausted, errors.New(msg))
+		case http.StatusServiceUnavailable:
+			return connect.NewError(connect.CodeUnavailable, errors.New(msg))
+		default:
+			if he.Code >= 500 {
+				return connect.NewError(connect.CodeInternal, errors.New(msg))
+			}
+			return connect.NewError(connect.CodeInvalidArgument, errors.New(msg))
+		}
+	}
+	return connect.NewError(connect.CodeInternal, err)
+}
+
+func payloadAuthFromEcho(c echo.Context) (PayloadAuthInput, error) {
+	inferenceID := c.QueryParam("inference_id")
+	if inferenceID == "" {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "inference_id required")
+	}
+	validatorAddress := c.Request().Header.Get(utils.XValidatorAddressHeader)
+	timestampStr := c.Request().Header.Get(utils.XTimestampHeader)
+	epochIDStr := c.Request().Header.Get(utils.XEpochIdHeader)
+	signature := c.Request().Header.Get(utils.AuthorizationHeader)
+	if validatorAddress == "" {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "X-Validator-Address header required")
+	}
+	if timestampStr == "" {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "X-Timestamp header required")
+	}
+	if epochIDStr == "" {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "X-Epoch-Id header required")
+	}
+	if signature == "" {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusUnauthorized, "Authorization header required")
+	}
+	timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
+	if err != nil {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "invalid timestamp format")
+	}
+	epochID, err := strconv.ParseUint(epochIDStr, 10, 64)
+	if err != nil {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "invalid epoch_id format")
+	}
+	return PayloadAuthInput{
+		InferenceID:      inferenceID,
+		ValidatorAddress: validatorAddress,
+		Timestamp:        timestamp,
+		EpochID:          epochID,
+		Signature:        signature,
+	}, nil
 }
 
 // authenticatePayloadRequest validates headers, timestamp, group membership,
@@ -1447,40 +1633,44 @@ func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) erro
 // the observability reason for the failure (or ReasonOK), and the *echo.HTTPError
 // suitable to return directly to the client.
 func (m *HostManager) authenticatePayloadRequest(c echo.Context, group []types.SlotAssignment) (uint64, observability.Reason, error) {
-	validatorAddress := c.Request().Header.Get(utils.XValidatorAddressHeader)
-	timestampStr := c.Request().Header.Get(utils.XTimestampHeader)
-	epochIDStr := c.Request().Header.Get(utils.XEpochIdHeader)
-	signature := c.Request().Header.Get(utils.AuthorizationHeader)
-	inferenceID := c.QueryParam("inference_id")
-
-	if validatorAddress == "" {
-		return 0, observability.ReasonMissingValidatorHeader, echo.NewHTTPError(http.StatusBadRequest, "X-Validator-Address header required")
-	}
-	if timestampStr == "" {
-		return 0, observability.ReasonMissingTimestampHeader, echo.NewHTTPError(http.StatusBadRequest, "X-Timestamp header required")
-	}
-	if epochIDStr == "" {
-		return 0, observability.ReasonMissingEpochHeader, echo.NewHTTPError(http.StatusBadRequest, "X-Epoch-Id header required")
-	}
-	if signature == "" {
-		return 0, observability.ReasonMissingSignatureHeader, echo.NewHTTPError(http.StatusUnauthorized, "Authorization header required")
-	}
-
-	timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
+	in, err := payloadAuthFromEcho(c)
 	if err != nil {
-		return 0, observability.ReasonInvalidTimestamp, echo.NewHTTPError(http.StatusBadRequest, "invalid timestamp format")
+		return 0, payloadParseReason(err), err
 	}
+	return m.authenticatePayloadAuth(c.Request().Context(), group, in)
+}
 
-	epochID, err := strconv.ParseUint(epochIDStr, 10, 64)
-	if err != nil {
-		return 0, observability.ReasonInvalidEpoch, echo.NewHTTPError(http.StatusBadRequest, "invalid epoch_id format")
+func payloadParseReason(err error) observability.Reason {
+	var he *echo.HTTPError
+	if !errors.As(err, &he) {
+		return observability.ReasonInvalidSignature
 	}
+	msg := fmt.Sprint(he.Message)
+	switch {
+	case msg == "inference_id required":
+		return observability.ReasonMissingInferenceID
+	case msg == "X-Validator-Address header required":
+		return observability.ReasonMissingValidatorHeader
+	case msg == "X-Timestamp header required":
+		return observability.ReasonMissingTimestampHeader
+	case msg == "X-Epoch-Id header required":
+		return observability.ReasonMissingEpochHeader
+	case msg == "Authorization header required":
+		return observability.ReasonMissingSignatureHeader
+	case msg == "invalid timestamp format":
+		return observability.ReasonInvalidTimestamp
+	case msg == "invalid epoch_id format":
+		return observability.ReasonInvalidEpoch
+	default:
+		return observability.ReasonInvalidSignature
+	}
+}
 
-	// Validate timestamp within 60s window
+func (m *HostManager) authenticatePayloadAuth(ctx context.Context, group []types.SlotAssignment, in PayloadAuthInput) (uint64, observability.Reason, error) {
 	now := time.Now().UnixNano()
 	maxAge := int64(60 * time.Second)
 	maxFuture := int64(10 * time.Second)
-	requestAge := now - timestamp
+	requestAge := now - in.Timestamp
 	if requestAge > maxAge {
 		return 0, observability.ReasonTimestampTooOld, echo.NewHTTPError(http.StatusBadRequest, "request timestamp too old")
 	}
@@ -1488,30 +1678,28 @@ func (m *HostManager) authenticatePayloadRequest(c echo.Context, group []types.S
 		return 0, observability.ReasonTimestampInFuture, echo.NewHTTPError(http.StatusBadRequest, "request timestamp in the future")
 	}
 
-	granterAddress, err := m.findGranterInGroup(validatorAddress, group)
+	granterAddress, err := m.findGranterInGroup(in.ValidatorAddress, group)
 	if err != nil {
 		return 0, observability.ReasonNotGroupMember, echo.NewHTTPError(http.StatusUnauthorized, "not a group member")
 	}
 
-	// Collect requester's pubkeys for signature verification
-	pubkeys, err := m.getValidatorPubKeys(c.Request().Context(), validatorAddress, granterAddress)
+	pubkeys, err := m.getValidatorPubKeys(ctx, in.ValidatorAddress, granterAddress)
 	if err != nil {
 		return 0, observability.ReasonPubkeyResolutionErr, echo.NewHTTPError(http.StatusUnauthorized, "failed to resolve validator pubkeys")
 	}
 
-	// Verify signature
 	components := calculations.SignatureComponents{
-		Payload:         inferenceID,
-		EpochId:         epochID,
-		Timestamp:       timestamp,
-		TransferAddress: validatorAddress,
+		Payload:         in.InferenceID,
+		EpochId:         in.EpochID,
+		Timestamp:       in.Timestamp,
+		TransferAddress: in.ValidatorAddress,
 		ExecutorAddress: "",
 	}
-	if err := calculations.ValidateSignatureWithGrantees(components, calculations.Developer, pubkeys, signature); err != nil {
+	if err := calculations.ValidateSignatureWithGrantees(components, calculations.Developer, pubkeys, in.Signature); err != nil {
 		return 0, observability.ReasonInvalidSignature, echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")
 	}
 
-	return epochID, observability.ReasonOK, nil
+	return in.EpochID, observability.ReasonOK, nil
 }
 
 // findGranterInGroup returns the group member address that the validator
@@ -1795,4 +1983,97 @@ func (m *HostManager) sessionSMOpts(extra ...state.SMOption) []state.SMOption {
 		extra = append(extra, state.WithHeartbeatConfig(m.params.SessionParams().Heartbeat))
 	}
 	return extra
+}
+
+func closeTransportServer(srv *transport.Server) {
+	if srv == nil {
+		return
+	}
+	srv.CloseOutbound()
+	if h := srv.Host(); h != nil {
+		h.Close()
+	}
+}
+
+// wireHostToHost stores host-signed SelectTransport clients so gossip, repair
+// probes, and timeout verify (ChallengeReceipt / GetMempool) exist on a
+// production child. Same shape as cmd/devshard-host: Attach identity is
+// m.signer, matching finding 7. HTTP when DEVSHARD_RPC_ENDPOINTS is empty.
+func (m *HostManager) wireHostToHost(srv *transport.Server, escrowID string, group []types.SlotAssignment) error {
+	if srv == nil || m.signer == nil || m.bridge == nil {
+		return nil
+	}
+	h := srv.Host()
+	if h == nil {
+		return nil
+	}
+	routePrefix := devshardpkg.DefaultRoutePrefix()
+	if v := strings.TrimSpace(m.boundVersion); v != "" {
+		routePrefix = devshardpkg.VersionedRoutePrefix(v)
+	}
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = routePrefix
+	endpoints := transport.RPCEndpointsFromEnv()
+	owned := h.SlotIDs()
+	hostPeers := make(map[int]transport.HostPeerClient, len(group))
+	gossipPeers := make([]gossip.PeerClient, 0, len(group))
+	var fetcher gossip.DiffFetcher
+	var created []transport.HostPeerClient
+	var err error
+	defer func() {
+		if err != nil {
+			for _, pc := range created {
+				pc.Close()
+			}
+		}
+	}()
+	for i, slot := range group {
+		url := m.cachedSlotURL(escrowID, slot.ValidatorAddress)
+		if url == "" {
+			info, infoErr := m.bridge.GetHostInfo(slot.ValidatorAddress)
+			if infoErr != nil {
+				err = fmt.Errorf("get host info for slot %d %s: %w", i, slot.ValidatorAddress, infoErr)
+				return err
+			}
+			if info != nil {
+				url = strings.TrimSpace(info.URL)
+			}
+		}
+		if url == "" {
+			err = fmt.Errorf("get host info for slot %d %s: empty url", i, slot.ValidatorAddress)
+			return err
+		}
+		hostHTTP := transport.NewHTTPClient(url, escrowID, m.signer, cfg)
+		selected := transport.SelectTransport(hostHTTP, slot.ValidatorAddress, endpoints, nil)
+		pc, ok := selected.(transport.HostPeerClient)
+		if !ok {
+			err = fmt.Errorf("peer slot %d: SelectTransport returned %T", i, selected)
+			return err
+		}
+		created = append(created, pc)
+		hostPeers[int(slot.SlotID)] = pc
+		if owned[slot.SlotID] {
+			continue
+		}
+		gp, ok := selected.(gossip.PeerClient)
+		if !ok {
+			err = fmt.Errorf("peer slot %d: SelectTransport returned %T", i, selected)
+			return err
+		}
+		gossipPeers = append(gossipPeers, gp)
+		if fetcher == nil {
+			if f, ok := selected.(gossip.DiffFetcher); ok {
+				fetcher = f
+			}
+		}
+	}
+	srv.SetPeerClients(hostPeers)
+	opts := []gossip.GossipOption{gossip.WithSigAccumulator(h)}
+	if fetcher != nil {
+		opts = append(opts, gossip.WithRecovery(fetcher, h))
+	}
+	gsp := gossip.NewGossip(escrowID, h.PrimarySlot(), gossipPeers, h.HostMempool(), opts...)
+	srv.SetGossip(gsp)
+	created = nil
+	return nil
 }

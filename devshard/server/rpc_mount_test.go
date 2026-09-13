@@ -58,27 +58,91 @@ func TestRPCMount_AttachWatch(t *testing.T) {
 
 	httpSrv := httptest.NewServer(e)
 	t.Cleanup(httpSrv.Close)
+	nonce := []byte("echo-attach-nonce-0123456789ab")
+	token := echoAttach(t, httpSrv, httpSrv.URL+"/sessions/1/rpc", host, signer, nonce)
+	require.Equal(t, nonce, token)
+	require.Equal(t, 1.0, rpcEnabledGauge(t))
 	client := rpcpbconnect.NewPeerAuthServiceClient(httpSrv.Client(), httpSrv.URL+"/sessions/1/rpc")
+	watchOnEcho(t, client, token)
+}
 
-	attachNonce := []byte("echo-attach-nonce-0123456789ab")
+func TestRPCMount_WatchOnHostEscrow(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	const host = "host-under-test"
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), host, rpcserver.PeerAuthConfig{})
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: new(int)}, nil,
+		WithPeerRPC(auth, rpcserver.NewSessionHandler(nil)))
+
+	httpSrv := httptest.NewServer(e)
+	t.Cleanup(httpSrv.Close)
+
+	token := echoAttach(t, httpSrv, httpSrv.URL+"/sessions/1/rpc", host, signer, []byte("host-path-attach-nonce-012345"))
+	hostClient := rpcpbconnect.NewPeerAuthServiceClient(httpSrv.Client(), httpSrv.URL+"/sessions/"+transport.HostRPCEscrowID+"/rpc")
+	watchOnEcho(t, hostClient, token)
+}
+
+func TestRPCMount_WatchOnHostEscrowPrefixed(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	const host = "host-under-test"
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), host, rpcserver.PeerAuthConfig{})
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group("/devshard/v2"), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: new(int)}, nil,
+		WithPeerRPC(auth, rpcserver.NewSessionHandler(nil)))
+
+	httpSrv := httptest.NewServer(e)
+	t.Cleanup(httpSrv.Close)
+	token := echoAttach(t, httpSrv, httpSrv.URL+"/devshard/v2/sessions/1/rpc", host, signer, []byte("prefixed-host-attach-nonce-01"))
+	hostClient := rpcpbconnect.NewPeerAuthServiceClient(httpSrv.Client(), httpSrv.URL+"/devshard/v2/sessions/"+transport.HostRPCEscrowID+"/rpc")
+	watchOnEcho(t, hostClient, token)
+}
+
+func TestCanonicalEscrowID_RejectsHostIDOnJSON(t *testing.T) {
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: new(int)}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/sessions/"+transport.HostRPCEscrowID+"/signatures", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestRPCMount_RejectsNonCanonicalDoorEscrow(t *testing.T) {
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: new(int)}, nil,
+		WithPeerRPC(rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), "host-under-test", rpcserver.PeerAuthConfig{}),
+			rpcserver.NewSessionHandler(nil)))
+
+	req := httptest.NewRequest(http.MethodPost, "/sessions/abc/rpc"+rpcpbconnect.PeerAuthServiceAttachProcedure, nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func echoAttach(t *testing.T, httpSrv *httptest.Server, rpcBase, host string, signer signing.Signer, nonce []byte) []byte {
+	t.Helper()
+	client := rpcpbconnect.NewPeerAuthServiceClient(httpSrv.Client(), rpcBase)
 	ts := time.Now().Unix()
-	sig, err := transport.SignAttach(signer, host, ts, signer.Address(), attachNonce, transport.AttachProtocolVersion, nil)
+	sig, err := transport.SignAttach(signer, host, ts, signer.Address(), nonce, transport.AttachProtocolVersion, nil)
 	require.NoError(t, err)
 	attached, err := client.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{
 		PeerAddress:     signer.Address(),
-		AttachNonce:     attachNonce,
+		AttachNonce:     nonce,
 		ProtocolVersion: transport.AttachProtocolVersion,
 		HostAddress:     host,
 		Timestamp:       ts,
 		Signature:       sig,
 	}))
 	require.NoError(t, err)
-	require.Equal(t, attachNonce, attached.Msg.SessionToken)
-	require.Equal(t, 1.0, rpcEnabledGauge(t))
+	return attached.Msg.SessionToken
+}
 
+func watchOnEcho(t *testing.T, client rpcpbconnect.PeerAuthServiceClient, token []byte) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	watchReq := connect.NewRequest(&rpcpb.WatchRequest{SessionToken: attached.Msg.SessionToken})
-	rpcserver.SetSessionHeader(watchReq.Header(), attached.Msg.SessionToken)
+	t.Cleanup(cancel)
+	watchReq := connect.NewRequest(&rpcpb.WatchRequest{SessionToken: token})
+	rpcserver.SetSessionHeader(watchReq.Header(), token)
 	stream, err := client.Watch(ctx, watchReq)
 	require.NoError(t, err)
 	require.True(t, stream.Receive(), stream.Err())

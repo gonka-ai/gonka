@@ -163,7 +163,7 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		for j, c := range clients {
 			peers[j] = c
 		}
-		srv.SetPeerClients(peers)
+		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
 	// Wire gossip instances with host-authenticated peers and sig accumulation.
@@ -694,7 +694,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 			peers[i] = c
 		}
 		peers[executorIdx] = slowClient
-		srv.SetPeerClients(peers)
+		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
 	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
@@ -715,7 +715,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 		for i, c := range env.clients {
 			peers[i] = c
 		}
-		srv.SetPeerClients(peers)
+		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
 	votes, recovery, _, err = env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())

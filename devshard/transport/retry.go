@@ -85,6 +85,10 @@ func isContextFinished(err error) bool {
 // retryable here; rpcRetry allows one extra attempt. Context cancellation
 // and deadline expiry are not retryable. Catalog 503s are retryable
 // because they are 503s, not because of their body.
+//
+// ResourceExhausted from a message-size cap is not retryable: connect-go
+// uses that code for WithReadMaxBytes / WithSendMaxBytes, the same code
+// Phase 4 uses for real rate limits. See isConnectMessageTooLarge.
 func IsRetryableNonInference(err error) bool {
 	if err == nil {
 		return false
@@ -98,10 +102,36 @@ func IsRetryableNonInference(err error) bool {
 			status.StatusCode == http.StatusServiceUnavailable
 	}
 	switch connect.CodeOf(err) {
-	case connect.CodeResourceExhausted, connect.CodeUnavailable:
+	case connect.CodeResourceExhausted:
+		return !isConnectMessageTooLarge(err)
+	case connect.CodeUnavailable:
 		return true
 	}
 	return IsTransientWriteError(err)
+}
+
+// isConnectMessageTooLarge reports a ResourceExhausted that is a configured
+// size cap, not a quota. connect-go has no distinct code for oversize
+// (always CodeResourceExhausted: "message size %d is larger than configured
+// max", "exceeds sendMaxBytes", MaxBytesReader). Remapping those to
+// InvalidArgument would lie to callers and metrics: the RPC was well-formed,
+// just too big, and gRPC maps 413 the same way. Rate-limit ResourceExhausted
+// ("too many sessions", "too many attach attempts", HTTP 429) stays retryable.
+func isConnectMessageTooLarge(err error) bool {
+	if connect.CodeOf(err) != connect.CodeResourceExhausted {
+		return false
+	}
+	msg := err.Error()
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		msg = ce.Message()
+	}
+	return strings.Contains(msg, "larger than configured max") ||
+		strings.Contains(msg, "exceeds sendMaxBytes") ||
+		strings.Contains(msg, "exceeds getURLMaxBytes") ||
+		strings.Contains(msg, "http.MaxBytesReader") ||
+		strings.Contains(msg, "bandwidth exhausted") ||
+		strings.Contains(msg, "attach request too large")
 }
 
 // IsHeightSyncSeedPath reports POST /sessions/:id/height-sync (the cold-start

@@ -56,6 +56,17 @@ func (b *mockBridge) SubmitDisputeState(_ string, _ []byte, _ uint64, _ map[uint
 
 var _ bridge.MainnetBridge = (*mockBridge)(nil)
 
+type hostInfoErrBridge struct {
+	mockBridge
+	err error
+}
+
+func (b *hostInfoErrBridge) GetHostInfo(string) (*bridge.HostInfo, error) {
+	return nil, b.err
+}
+
+var _ bridge.MainnetBridge = (*hostInfoErrBridge)(nil)
+
 // blockingBridge models a chain node that accepts the query and never answers.
 type blockingBridge struct {
 	mockBridge
@@ -290,6 +301,73 @@ func TestRecoverSessions_HappyPath(t *testing.T) {
 	require.True(t, ok, "session should exist after recovery")
 	require.NotNil(t, srv)
 	require.NotNil(t, srv.Host())
+	require.Len(t, srv.PeerClients(), 3, "every group slot including self")
+	require.NotNil(t, srv.Gossip())
+	require.Equal(t, 2, srv.Gossip().PeerCount(), "gossip excludes this host")
+}
+
+func TestHostManager_WireHostToHostGetHostInfoError(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	addresses := make([]string, len(hosts))
+	for i, h := range hosts {
+		addresses[i] = h.Address()
+	}
+	br := &hostInfoErrBridge{
+		mockBridge: mockBridge{escrow: &bridge.EscrowInfo{
+			EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses,
+		}},
+		err: fmt.Errorf("host info down"),
+	}
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	_, err := mgr.getOrCreate("1", nil)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "host info")
+}
+
+func TestHostManager_WireHostToHostUsesCachedSlotURLs(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	addresses := make([]string, len(hosts))
+	urls := make(map[string]string, len(hosts))
+	for i, h := range hosts {
+		addresses[i] = h.Address()
+		urls[h.Address()] = "http://peer-" + strconv.Itoa(i)
+	}
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "1",
+		EpochID:        7,
+		Version:        testutil.RuntimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         defaultConfig(3),
+		Group:          makeGroup(hosts),
+		InitialBalance: 100000,
+	}))
+	require.NoError(t, store.PutEscrowCache(storage.EscrowCacheInfo{
+		EscrowID: "1", EpochID: 7, Amount: 100000, CreatorAddress: user.Address(),
+		Slots: addresses, SlotURLs: urls,
+	}))
+	br := &hostInfoErrBridge{
+		mockBridge: mockBridge{escrow: &bridge.EscrowInfo{
+			EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses,
+		}},
+		err: fmt.Errorf("host info must not be queried"),
+	}
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	require.NoError(t, mgr.RecoverSessions())
+	mgr.sessionsMutex.RLock()
+	srv := mgr.sessions["1"]
+	mgr.sessionsMutex.RUnlock()
+	require.NotNil(t, srv)
+	require.Len(t, srv.PeerClients(), 3)
 }
 
 func TestRecoverSessions_Nonce0(t *testing.T) {

@@ -11,8 +11,12 @@ import (
 )
 
 // peerRPCRoute is the Echo route pattern the Connect mux is served on. Kept as
-// a constant because skipPeerRPC matches on it.
+// a constant because skipPeerRPC and canonicalEscrowIDMiddleware match on it.
 const peerRPCRoute = "/sessions/:id/rpc/*"
+
+func isPeerRPCPath(c echo.Context) bool {
+	return strings.HasSuffix(c.Path(), peerRPCRoute)
+}
 
 // skipPeerRPC disables mw on the Connect mount. Connect negotiates its own
 // request compression and enforces WithReadMaxBytes while inflating; an Echo
@@ -21,7 +25,7 @@ func skipPeerRPC(mw echo.MiddlewareFunc) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		wrapped := mw(next)
 		return func(c echo.Context) error {
-			if strings.HasSuffix(c.Path(), peerRPCRoute) {
+			if isPeerRPCPath(c) {
 				return next(c)
 			}
 			return wrapped(c)

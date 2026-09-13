@@ -17,6 +17,7 @@ import (
 	commrc "common/runtimeconfig"
 	"common/storage/payloads"
 	devshardpkg "devshard"
+	shardbridge "devshard/bridge"
 	devshardbridge "devshard/cmd/devshardd/bridge"
 	"devshard/cmd/devshardd/events"
 	"devshard/cmd/devshardd/inference"
@@ -26,6 +27,7 @@ import (
 	"devshard/runtimeparams"
 	"devshard/signing"
 	devshardstorage "devshard/storage"
+	"devshard/transport"
 
 	"github.com/labstack/echo/v4"
 )
@@ -248,9 +250,10 @@ func buildHostManager(
 
 	instanceAddr := chainRuntime.identity.GetSignerAddress()
 
+	hostInfoCached := shardbridge.NewCachingHostInfo(chainBridge)
 	thresholds := inference.NewValidationThresholdResolver(paramsSetup.Provider, chainBridge)
 	validator := inference.NewValidator(
-		chainBridge,
+		hostInfoCached,
 		chainRuntime.identity,
 		eng,
 		phase,
@@ -259,6 +262,8 @@ func buildHostManager(
 		thresholds,
 		cfg.VoteFalseOnFetchFailure,
 	)
+	validator.SetPayloadRPC(chainRuntime.signer, transport.RPCEndpointsFromEnv())
+	closers.Add(validator.ClosePayloadClients)
 
 	innerStore, err := devshardstorage.NewStorage(ctx, cfg.DataDir)
 	if err != nil {
@@ -271,9 +276,10 @@ func buildHostManager(
 
 	// warmBridge lets lazy bind fall back to escrow_cache (populated by the
 	// host-events long-poll warm) when the live chain escrow query is
-	// unavailable. Only the session/bind read path is cache-aware; validation
-	// and settlement keep using the live chainBridge.
-	warmBridge := devshardbridge.NewCachingEscrowBridge(chainBridge, store, slog.Default())
+	// unavailable. Only the session/bind read path is cache-aware for GetEscrow;
+	// settlement keep using the live chainBridge. GetHostInfo is a 1-minute
+	// Participant URL cache shared with validation.
+	warmBridge := devshardbridge.NewCachingEscrowBridge(hostInfoCached, store, slog.Default())
 
 	manager := session.NewHostManager(
 		store,
@@ -345,7 +351,7 @@ func buildHostManager(
 		store.Start()
 	}
 
-	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
+	startHostEventsWarm(ctx, cfg, chainBridge, hostInfoCached, mlClient, store, manager.HandleSettlementFinalized, instanceAddr, closers)
 
 	// Recovery used to run inline here, so a host with a large backlog kept the
 	// listener closed and answered 502 until every session was rebuilt. Run it
@@ -378,24 +384,33 @@ func buildHostManager(
 	return manager, nil
 }
 
-// startHostEventsWarm launches the DAPI GetHostEvents long-poll consumer that
-// prefetches escrow metadata into escrow_cache (PR #1443). It is a no-op when
-// disabled, and the loop also stops cleanly against an old dapi that returns
-// Unimplemented, leaving lazy escrow create as the fallback.
+// startHostEventsWarm registers directory warm on chain escrow-created
+// (the websocket already fetched the escrow) and, when enabled, the DAPI
+// GetHostEvents long-poll. Neither path starts a host or stamps a runtime
+// version. Disabled long-poll is a no-op against an old dapi that returns
+// Unimplemented; lazy escrow create remains the fallback for never-warmed ids.
 func startHostEventsWarm(
 	ctx context.Context,
 	cfg runtimeConfig,
 	chainBridge *devshardbridge.ChainBridge,
+	queryBridge shardbridge.MainnetBridge,
 	mlClient *mlnodeclient.Client,
 	store devshardstorage.Storage,
 	onSettled func(escrowID string) error,
+	localAddr string,
 	closers *closeStack,
 ) {
+	if queryBridge == nil {
+		queryBridge = chainBridge
+	}
+	sink := newEscrowWarmSink(queryBridge, store, slog.Default(), onSettled, localAddr)
+	chainBridge.OnEscrowCreatedHandler(func(info shardbridge.EscrowInfo) error {
+		return sink.WarmFromInfo(&info)
+	})
 	if !cfg.HostEventsEnabled {
-		slog.Info("hostevents: escrow long-poll warm disabled (DEVSHARD_HOST_EVENTS_ENABLED=false)")
+		slog.Info("hostevents: escrow long-poll warm disabled (DEVSHARD_HOST_EVENTS_ENABLED=false); chain create events still warm escrow_cache")
 		return
 	}
-	sink := newEscrowWarmSink(chainBridge, store, slog.Default(), onSettled)
 	hostCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	closers.Add(func() {

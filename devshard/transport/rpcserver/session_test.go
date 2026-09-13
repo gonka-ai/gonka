@@ -11,20 +11,27 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"devshard/bridge"
 	"devshard/internal/testutil"
+	"devshard/signing"
 	"devshard/storage"
 	"devshard/transport"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
+	"devshard/types"
 )
 
 type stubCore struct {
 	sigs     map[uint32][]byte
+	diffs    []types.DiffRecord
+	mempool  []*types.DevshardTx
 	err      error
 	deny     bool
 	sawAllow *string
+	owner    bool
+	member   bool
 }
 
 func (s stubCore) ServeGetSignatures(uint64) (map[uint32][]byte, error) {
@@ -36,6 +43,21 @@ func (s stubCore) AllowsSender(addr string) bool {
 		*s.sawAllow = addr
 	}
 	return !s.deny
+}
+
+func (s stubCore) IsOwner(string) bool       { return s.owner }
+func (s stubCore) IsGroupMember(string) bool { return s.member }
+
+func (s stubCore) ServeGetDiffs(uint64, uint64) ([]types.DiffRecord, error) {
+	return s.diffs, s.err
+}
+
+func (s stubCore) ServeGetMempool(context.Context) ([]*types.DevshardTx, error) {
+	return s.mempool, s.err
+}
+
+func (s stubCore) ServeChallengeReceipt(context.Context, transport.ChallengeReceiptRequest) (*transport.ChallengeReceiptResponse, error) {
+	return &transport.ChallengeReceiptResponse{}, s.err
 }
 
 type stubLookup struct {
@@ -68,18 +90,35 @@ func withEscrow(h http.Handler, escrowID string) http.Handler {
 
 type sessionEnv struct {
 	session rpcpbconnect.SessionServiceClient
+	gossip  rpcpbconnect.GossipServiceClient
+	payload rpcpbconnect.PayloadServiceClient
 	token   []byte
 	peer    string
+	signer  signing.Signer
 }
 
 func newSessionEnv(t *testing.T, lookup SessionLookup, escrowID string) sessionEnv {
+	return newSessionEnvWith(t, lookup, escrowID, nil)
+}
+
+func newSessionEnvMux(t *testing.T, lookup SessionLookup, escrowID string, withGossip bool) sessionEnv {
+	var opts []MuxOption
+	if withGossip {
+		opts = append(opts, WithGossipService(NewGossipHandler(lookup)))
+	}
+	return newSessionEnvWith(t, lookup, escrowID, nil, opts...)
+}
+
+func newSessionEnvWith(t *testing.T, lookup SessionLookup, escrowID string, signer *signing.Secp256k1Signer, opts ...MuxOption) sessionEnv {
 	t.Helper()
 	auth := newTestAuth(PeerAuthConfig{})
-	mux := NewMux(auth, NewSessionHandler(lookup))
+	mux := NewMux(auth, NewSessionHandler(lookup), opts...)
 	srv := httptest.NewServer(withEscrow(mux, escrowID))
 	t.Cleanup(srv.Close)
 
-	signer := testutil.MustGenerateKey(t)
+	if signer == nil {
+		signer = testutil.MustGenerateKey(t)
+	}
 	authClient := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
 	nonce := []byte("session-handler-attach-012345")
 	ts := time.Now().Unix()
@@ -96,9 +135,25 @@ func newSessionEnv(t *testing.T, lookup SessionLookup, escrowID string) sessionE
 	require.NoError(t, err)
 	return sessionEnv{
 		session: rpcpbconnect.NewSessionServiceClient(srv.Client(), srv.URL),
+		gossip:  rpcpbconnect.NewGossipServiceClient(srv.Client(), srv.URL),
+		payload: rpcpbconnect.NewPayloadServiceClient(srv.Client(), srv.URL),
 		token:   attached.Msg.SessionToken,
 		peer:    signer.Address(),
+		signer:  signer,
 	}
+}
+
+func (e sessionEnv) signedEnvelope(t *testing.T, escrowID string, inner proto.Message) *rpcpb.SignedEnvelope {
+	t.Helper()
+	var payload []byte
+	if inner != nil {
+		var err error
+		payload, err = proto.Marshal(inner)
+		require.NoError(t, err)
+	}
+	env, err := transport.SignEnvelope(e.signer, escrowID, payload, time.Now().Unix())
+	require.NoError(t, err)
+	return env
 }
 
 func (e sessionEnv) getSignatures(nonce uint64) (*connect.Response[rpcpb.GetSignaturesResponse], error) {
@@ -139,6 +194,20 @@ func TestMapAllowError(t *testing.T) {
 			code:   connect.CodeUnavailable,
 			msg:    "chain unavailable",
 			header: transport.DevshardErrorChainUnavailable,
+		},
+		{
+			name:   "escrow lookup limited",
+			err:    fmt.Errorf("get escrow: %w", bridge.ErrEscrowLookupLimited),
+			code:   connect.CodeResourceExhausted,
+			msg:    "too many escrow lookups",
+			header: transport.DevshardErrorEscrowLookupLimited,
+		},
+		{
+			name:   "escrow not found",
+			err:    fmt.Errorf("get escrow: %w", bridge.ErrEscrowNotFound),
+			code:   connect.CodeFailedPrecondition,
+			msg:    "escrow is not open on this host",
+			header: transport.DevshardErrorEscrowNotFound,
 		},
 		{
 			name: "session not found",
@@ -389,4 +458,79 @@ func TestSessionHandler_GetSignaturesMissingEscrow(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	require.Contains(t, err.Error(), "missing escrow id")
+}
+
+func TestSessionHandler_GetDiffsAndMempool(t *testing.T) {
+	core := stubCore{
+		diffs:   []types.DiffRecord{{Diff: types.Diff{Nonce: 2, Txs: nil, UserSig: []byte{1}}}},
+		mempool: []*types.DevshardTx{{}},
+	}
+	env := newSessionEnv(t, stubLookup{core: core}, "escrow-1")
+	diffs, err := env.session.GetDiffs(context.Background(), withSession(
+		connect.NewRequest(&rpcpb.GetDiffsRequest{From: 1, To: 2}), env.token))
+	require.NoError(t, err)
+	require.Len(t, diffs.Msg.GetRecords(), 1)
+	require.Equal(t, uint64(2), diffs.Msg.GetRecords()[0].GetDiff().GetNonce())
+
+	mp, err := env.session.GetMempool(context.Background(), withSession(
+		connect.NewRequest(&rpcpb.GetMempoolRequest{}), env.token))
+	require.NoError(t, err)
+	require.Len(t, mp.Msg.GetTxs(), 1)
+}
+
+func TestSessionHandler_EscrowMismatch(t *testing.T) {
+	core := stubCore{owner: true, member: true}
+	env := newSessionEnv(t, stubLookup{core: core}, "escrow-1")
+	bad, err := transport.SignEnvelope(env.signer, "other-escrow", nil, time.Now().Unix())
+	require.NoError(t, err)
+	_, err = env.session.SeedHeightSync(context.Background(), withSession(connect.NewRequest(bad), env.token))
+	require.Error(t, err)
+	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Contains(t, err.Error(), "escrow mismatch")
+}
+
+func TestSessionHandler_OwnerVsGroup(t *testing.T) {
+	t.Run("group member cannot seed", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
+		_, err := env.session.SeedHeightSync(context.Background(), withSession(connect.NewRequest(env.signedEnvelope(t, "escrow-1", nil)), env.token))
+		require.Error(t, err)
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "restricted to escrow owner")
+	})
+	t.Run("group member cannot verify timeout", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
+		_, err := env.session.VerifyTimeout(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyTimeoutRequest{})), env.token))
+		require.Error(t, err)
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "restricted to escrow owner")
+	})
+	t.Run("group member can challenge receipt", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
+		_, err := env.session.ChallengeReceipt(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.ChallengeReceiptRequest{InferenceId: 999})), env.token))
+		require.NoError(t, err)
+	})
+	t.Run("owner can challenge receipt", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{owner: true}}, "escrow-1")
+		_, err := env.session.ChallengeReceipt(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.ChallengeReceiptRequest{InferenceId: 999})), env.token))
+		require.NoError(t, err)
+	})
+	t.Run("outsider cannot challenge receipt", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{}}, "escrow-1")
+		_, err := env.session.ChallengeReceipt(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.ChallengeReceiptRequest{})), env.token))
+		require.Error(t, err)
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "restricted to escrow owner or group member")
+	})
+	t.Run("owner cannot gossip", func(t *testing.T) {
+		env := newSessionEnvMux(t, stubLookup{core: stubCore{owner: true}}, "escrow-1", true)
+		_, err := env.gossip.Nonce(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.GossipNonceRequest{Nonce: 1, StateSig: []byte{1}})), env.token))
+		require.Error(t, err)
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "restricted to group members")
+	})
 }

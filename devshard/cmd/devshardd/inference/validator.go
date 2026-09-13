@@ -10,12 +10,15 @@ import (
 	"devshard/bridge"
 	"devshard/logging"
 	"devshard/observability"
+	"devshard/signing"
 	"devshard/storage"
+	"devshard/transport"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +51,10 @@ type Validator struct {
 	thresholds              ValidationThresholdResolver
 	voteFalseOnFetchFailure bool
 	payloadHTTPClient       *http.Client
+	payloadSigner           signing.Signer
+	rpcEndpoints            transport.EndpointSet
+	payloadRPCMu            sync.Mutex
+	payloadRPCs             map[string]*transport.RPCClient
 	fetchPayloads           payloadFetchFunc
 	executeML               mlExecuteFunc
 }
@@ -151,7 +158,63 @@ func (v *Validator) fetchPayloadsFor(ctx context.Context, req devshardpkg.Valida
 		ctx, v.bridge, v.recorder, req, inferenceID, epochID,
 		devshardpkg.VersionedSessionPayloadPath(v.boundVersion, req.EscrowID),
 		v.payloadHTTPClient,
+		v.payloadRPC,
 	)
+}
+
+// SetPayloadRPC enables Connect GetPayload when DEVSHARD_RPC_ENDPOINTS
+// includes "payload". signer is the host identity used for Attach.
+func (v *Validator) SetPayloadRPC(signer signing.Signer, endpoints transport.EndpointSet) {
+	if v == nil {
+		return
+	}
+	v.payloadSigner = signer
+	v.rpcEndpoints = endpoints
+}
+
+// ClosePayloadClients releases cached executor PeerConns. Safe if unused.
+func (v *Validator) ClosePayloadClients() {
+	if v == nil {
+		return
+	}
+	v.payloadRPCMu.Lock()
+	defer v.payloadRPCMu.Unlock()
+	for k, c := range v.payloadRPCs {
+		c.Close()
+		delete(v.payloadRPCs, k)
+	}
+}
+
+func (v *Validator) payloadRPC(executorURL, executorAddr, escrowID string) *transport.RPCClient {
+	if v == nil || v.payloadSigner == nil || !v.rpcEndpoints.Has(transport.EndpointPayload) {
+		return nil
+	}
+	executorURL = strings.TrimSpace(executorURL)
+	executorAddr = strings.TrimSpace(executorAddr)
+	escrowID = strings.TrimSpace(escrowID)
+	if executorURL == "" || executorAddr == "" || escrowID == "" {
+		return nil
+	}
+	key := executorAddr + "\x00" + executorURL + "\x00" + escrowID
+	v.payloadRPCMu.Lock()
+	defer v.payloadRPCMu.Unlock()
+	if c := v.payloadRPCs[key]; c != nil {
+		return c
+	}
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = devshardpkg.VersionedRoutePrefix(v.boundVersion)
+	cfg.QueryTimeout = payloadFetchTimeout
+	httpClient := transport.NewHTTPClient(executorURL, escrowID, v.payloadSigner, cfg)
+	selected := transport.SelectTransport(httpClient, executorAddr, v.rpcEndpoints, nil)
+	rpc, ok := selected.(*transport.RPCClient)
+	if !ok || rpc == nil || !rpc.Uses(transport.EndpointPayload) {
+		return nil
+	}
+	if v.payloadRPCs == nil {
+		v.payloadRPCs = make(map[string]*transport.RPCClient)
+	}
+	v.payloadRPCs[key] = rpc
+	return rpc
 }
 
 const executorPayloadUnavailableReason = "executor_payload_unavailable"

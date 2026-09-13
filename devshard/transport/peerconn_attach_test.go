@@ -15,6 +15,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 
+	commonvalidation "common/validation"
+	"devshard/heightsync"
+	"devshard/host"
 	devtest "devshard/internal/testutil"
 	"devshard/observability"
 	"devshard/signing"
@@ -22,12 +25,13 @@ import (
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 	"devshard/transport/rpcserver"
+	"devshard/types"
 )
 
-func startPeerRPCServer(t *testing.T, hostAddr string, authCfg rpcserver.PeerAuthConfig, lookup rpcserver.SessionLookup) (*httptest.Server, *rpcserver.PeerAuthHandler) {
+func startPeerRPCServer(t *testing.T, hostAddr string, authCfg rpcserver.PeerAuthConfig, lookup rpcserver.SessionLookup, opts ...rpcserver.MuxOption) (*httptest.Server, *rpcserver.PeerAuthHandler) {
 	t.Helper()
 	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, authCfg)
-	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(lookup))
+	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(lookup), opts...)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mux.ServeHTTP(w, r.WithContext(rpcserver.WithEscrowID(r.Context(), "escrow-1")))
 	}))
@@ -364,12 +368,12 @@ func TestRPCClient_GetSignaturesReadMaxBytes(t *testing.T) {
 	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{})
 	pc.Start()
 	waitPeerReady(t, pc)
-	cfg := transport.DefaultClientConfig()
-	cfg.QueryTimeout = 300 * time.Millisecond
-	rpc := transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-1", peer, cfg), pc, transport.ParseRPCEndpoints(transport.EndpointSignatures))
+	rpc := transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-1", peer), pc, transport.ParseRPCEndpoints(transport.EndpointSignatures))
+	start := time.Now()
 	_, err := rpc.GetSignatures(context.Background(), 1)
 	require.Error(t, err)
 	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Less(t, time.Since(start), time.Second, "oversize must not spend the 5s non-inference budget")
 }
 
 type sigLookup struct {
@@ -386,3 +390,405 @@ type sigCore struct {
 
 func (s sigCore) ServeGetSignatures(uint64) (map[uint32][]byte, error) { return s.sigs, nil }
 func (s sigCore) AllowsSender(string) bool                             { return true }
+
+func TestRPCClient_GetDiffsReadMaxBytes(t *testing.T) {
+	t.Run("above 16KiB succeeds", func(t *testing.T) {
+		n := transport.DefaultRPCReadMaxBytes + 1
+		rpc := newQueryRPCClient(t, queryLookup{diffs: []types.DiffRecord{{
+			Diff: types.Diff{Nonce: 1, UserSig: make([]byte, n)},
+		}}}, transport.EndpointDiffs, 0)
+		diffs, err := rpc.GetDiffs(context.Background(), 1, 1)
+		require.NoError(t, err)
+		require.Len(t, diffs, 1)
+		require.Len(t, diffs[0].UserSig, n)
+	})
+	t.Run("above 1MiB succeeds", func(t *testing.T) {
+		n := 1<<20 + 1
+		rpc := newQueryRPCClient(t, queryLookup{diffs: []types.DiffRecord{{
+			Diff: types.Diff{Nonce: 1, UserSig: make([]byte, n)},
+		}}}, transport.EndpointDiffs, 0)
+		diffs, err := rpc.GetDiffs(context.Background(), 1, 1)
+		require.NoError(t, err)
+		require.Len(t, diffs, 1)
+		require.Len(t, diffs[0].UserSig, n)
+	})
+	t.Run("above 10MiB is ResourceExhausted", func(t *testing.T) {
+		rpc := newQueryRPCClient(t, queryLookup{diffs: []types.DiffRecord{{
+			Diff: types.Diff{Nonce: 1, UserSig: make([]byte, transport.DefaultRPCQueryReadMaxBytes+1)},
+		}}}, transport.EndpointDiffs, 0)
+		_, err := rpc.GetDiffs(context.Background(), 1, 1)
+		require.Error(t, err)
+		require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	})
+}
+
+func TestRPCClient_GetMempoolReadMaxBytes(t *testing.T) {
+	t.Run("above 16KiB succeeds", func(t *testing.T) {
+		n := transport.DefaultRPCReadMaxBytes + 1
+		rpc := newQueryRPCClient(t, queryLookup{mempool: largeHeartbeat(n)}, transport.EndpointMempool, 0)
+		txs, err := rpc.GetMempool(context.Background())
+		require.NoError(t, err)
+		require.Len(t, txs, 1)
+		require.Len(t, txs[0].GetHeartbeat().GetObservedBlockHash(), n)
+	})
+	t.Run("above 1MiB succeeds", func(t *testing.T) {
+		n := 1<<20 + 1
+		rpc := newQueryRPCClient(t, queryLookup{mempool: largeHeartbeat(n)}, transport.EndpointMempool, 0)
+		txs, err := rpc.GetMempool(context.Background())
+		require.NoError(t, err)
+		require.Len(t, txs, 1)
+		require.Len(t, txs[0].GetHeartbeat().GetObservedBlockHash(), n)
+	})
+	t.Run("above 10MiB is ResourceExhausted", func(t *testing.T) {
+		rpc := newQueryRPCClient(t, queryLookup{mempool: largeHeartbeat(transport.DefaultRPCQueryReadMaxBytes + 1)},
+			transport.EndpointMempool, 0)
+		_, err := rpc.GetMempool(context.Background())
+		require.Error(t, err)
+		require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	})
+}
+
+func newQueryRPCClient(t *testing.T, lookup queryLookup, endpoints string, queryTimeout time.Duration) *transport.RPCClient {
+	t.Helper()
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	srv, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, lookup)
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{})
+	pc.Start()
+	waitPeerReady(t, pc)
+	cfg := transport.DefaultClientConfig()
+	if queryTimeout > 0 {
+		cfg.QueryTimeout = queryTimeout
+	}
+	return transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-1", peer, cfg), pc, transport.ParseRPCEndpoints(endpoints))
+}
+
+func largeHeartbeat(n int) []*types.DevshardTx {
+	return []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{
+			Heartbeat: &types.MsgHeartbeat{ObservedBlockHash: make([]byte, n)},
+		},
+	}}
+}
+
+type queryLookup struct {
+	diffs   []types.DiffRecord
+	mempool []*types.DevshardTx
+}
+
+func (q queryLookup) SessionServerExisting(string) (rpcserver.SessionCore, error) {
+	return queryCore(q), nil
+}
+
+type queryCore struct {
+	diffs   []types.DiffRecord
+	mempool []*types.DevshardTx
+}
+
+func (q queryCore) ServeGetSignatures(uint64) (map[uint32][]byte, error) {
+	return map[uint32][]byte{}, nil
+}
+func (q queryCore) AllowsSender(string) bool { return true }
+func (q queryCore) ServeGetDiffs(uint64, uint64) ([]types.DiffRecord, error) {
+	return q.diffs, nil
+}
+func (q queryCore) ServeGetMempool(context.Context) ([]*types.DevshardTx, error) {
+	return q.mempool, nil
+}
+
+func TestRPCClient_VerifyTimeoutReadMaxBytes(t *testing.T) {
+	t.Run("prompt above 16KiB succeeds", func(t *testing.T) {
+		var ran atomic.Bool
+		rpc := newLargeRPCClient(t, largeRPCLookup{core: largeRPCCore{verifyRan: &ran}},
+			transport.EndpointVerifyTimeout, transport.DefaultClientConfig())
+		n := transport.DefaultRPCReadMaxBytes + 1
+		resp, err := rpc.SendVerifyTimeout(context.Background(), transport.VerifyTimeoutRequest{
+			InferenceID: 1,
+			Reason:      "refused",
+			Payload:     &transport.PayloadJSON{Prompt: make([]byte, n)},
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.True(t, ran.Load(), "16KiB+1 prompt must reach ServeVerifyTimeout")
+	})
+	t.Run("request over 10MiB is ResourceExhausted and does not reach ServeX", func(t *testing.T) {
+		var ran atomic.Bool
+		rpc := newLargeRPCClient(t, largeRPCLookup{core: largeRPCCore{verifyRan: &ran}},
+			transport.EndpointVerifyTimeout, transport.DefaultClientConfig())
+		start := time.Now()
+		_, err := rpc.SendVerifyTimeout(context.Background(), transport.VerifyTimeoutRequest{
+			InferenceID: 1,
+			Reason:      "refused",
+			Payload:     &transport.PayloadJSON{Prompt: make([]byte, transport.DefaultRPCLargeReadMaxBytes+1)},
+		})
+		require.Error(t, err)
+		require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+		require.False(t, ran.Load(), "oversize VerifyTimeout must not reach ServeVerifyTimeout")
+		require.Less(t, time.Since(start), time.Second, "oversize must not spend the 5s non-inference budget")
+	})
+	t.Run("recovery mempool response over 16KiB succeeds", func(t *testing.T) {
+		n := transport.DefaultRPCReadMaxBytes + 1
+		raw, err := transport.DevshardTxsToBytes(largeHeartbeat(n))
+		require.NoError(t, err)
+		rpc := newLargeRPCClient(t, largeRPCLookup{core: largeRPCCore{
+			verifyResp: &transport.VerifyTimeoutResponse{Mempool: raw},
+		}}, transport.EndpointVerifyTimeout, transport.DefaultClientConfig())
+		resp, err := rpc.SendVerifyTimeout(context.Background(), transport.VerifyTimeoutRequest{
+			InferenceID: 1,
+			Reason:      "refused",
+		})
+		require.NoError(t, err)
+		require.Len(t, resp.Mempool, 1)
+		require.Greater(t, len(resp.Mempool[0]), n)
+	})
+}
+
+func TestRPCClient_ChallengeReceiptReadMaxBytes(t *testing.T) {
+	t.Run("prompt above 16KiB succeeds", func(t *testing.T) {
+		var ran atomic.Bool
+		rpc := newLargeRPCClient(t, largeRPCLookup{core: largeRPCCore{challengeRan: &ran}},
+			transport.EndpointChallengeReceipt, transport.DefaultClientConfig())
+		n := transport.DefaultRPCReadMaxBytes + 1
+		_, _, err := rpc.ChallengeReceipt(context.Background(), 1, &host.InferencePayload{Prompt: make([]byte, n)}, nil)
+		require.NoError(t, err)
+		require.True(t, ran.Load(), "16KiB+1 prompt must reach ServeChallengeReceipt")
+	})
+	t.Run("request over 10MiB is ResourceExhausted and does not reach ServeX", func(t *testing.T) {
+		var ran atomic.Bool
+		rpc := newLargeRPCClient(t, largeRPCLookup{core: largeRPCCore{challengeRan: &ran}},
+			transport.EndpointChallengeReceipt, transport.DefaultClientConfig())
+		start := time.Now()
+		_, _, err := rpc.ChallengeReceipt(context.Background(), 1,
+			&host.InferencePayload{Prompt: make([]byte, transport.DefaultRPCLargeReadMaxBytes+1)}, nil)
+		require.Error(t, err)
+		require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+		require.False(t, ran.Load(), "oversize ChallengeReceipt must not reach ServeChallengeReceipt")
+		require.Less(t, time.Since(start), time.Second, "oversize must not spend the 5s non-inference budget")
+	})
+}
+
+func TestRPCClient_GossipTxsReadMaxBytes(t *testing.T) {
+	t.Run("batch above 16KiB succeeds", func(t *testing.T) {
+		var ran atomic.Bool
+		lookup := largeRPCLookup{core: largeRPCCore{gossipTxsRan: &ran}}
+		rpc := newLargeRPCClient(t, lookup, transport.EndpointGossip, transport.DefaultClientConfig(),
+			rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)))
+		err := rpc.GossipTxs(context.Background(), largeHeartbeat(transport.DefaultRPCReadMaxBytes+1))
+		require.NoError(t, err)
+		require.True(t, ran.Load(), "16KiB+1 Gossip Txs must reach ServeGossipTxs")
+	})
+	t.Run("batch over 10MiB is ResourceExhausted and does not reach ServeX", func(t *testing.T) {
+		var ran atomic.Bool
+		lookup := largeRPCLookup{core: largeRPCCore{gossipTxsRan: &ran}}
+		rpc := newLargeRPCClient(t, lookup, transport.EndpointGossip, transport.DefaultClientConfig(),
+			rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)))
+		start := time.Now()
+		err := rpc.GossipTxs(context.Background(), largeHeartbeat(transport.DefaultRPCLargeReadMaxBytes+1))
+		require.Error(t, err)
+		require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+		require.False(t, ran.Load(), "oversize Gossip Txs must not reach ServeGossipTxs")
+		require.Less(t, time.Since(start), time.Second, "oversize must not spend the 5s non-inference budget")
+	})
+}
+
+func TestRPCClient_GetPayloadRoundTrip(t *testing.T) {
+	const authz = "dGVzdC1zaWduYXR1cmU=" // base64 header text, not raw ECDSA
+	var sawSig atomic.Value
+	lookup := largeRPCLookup{core: largeRPCCore{}}
+	h := rpcserver.NewPayloadHandler(lookup, func(_ context.Context, _ rpcserver.SessionCore, _ string, req *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+		sawSig.Store(string(req.GetSignature()))
+		return &rpcpb.GetPayloadResponse{
+			InferenceId:       req.GetInferenceId(),
+			PromptPayload:     []byte("prompt"),
+			ResponsePayload:   []byte("response"),
+			ExecutorSignature: "executor-sig",
+		}, nil
+	})
+	rpc := newLargeRPCClient(t, lookup, transport.EndpointPayload,
+		transport.DefaultClientConfig(), rpcserver.WithPayloadService(h))
+	resp, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{
+		InferenceId:      "42",
+		ValidatorAddress: "gonka1validator",
+		Timestamp:        1,
+		EpochId:          7,
+		Signature:        []byte(authz),
+	}, 0)
+	require.NoError(t, err)
+	require.Equal(t, "42", resp.GetInferenceId())
+	require.Equal(t, []byte("prompt"), resp.GetPromptPayload())
+	require.Equal(t, []byte("response"), resp.GetResponsePayload())
+	require.Equal(t, "executor-sig", resp.GetExecutorSignature())
+	require.Equal(t, authz, sawSig.Load())
+}
+
+func TestRPCPayloadMaxBytesMatchesHTTPGet(t *testing.T) {
+	require.Equal(t, int(commonvalidation.MaxPayloadResponseBytes), transport.DefaultRPCPayloadMaxBytes)
+	require.Equal(t, int(commonvalidation.MaxPayloadResponseBytesHard), transport.DefaultRPCPayloadSendMaxBytes)
+}
+
+func TestRPCQueryReadMaxBytesMatchesMaxBodySize(t *testing.T) {
+	require.Equal(t, int(transport.DefaultMaxBodySize), transport.DefaultRPCQueryReadMaxBytes)
+	require.Equal(t, transport.DefaultRPCLargeReadMaxBytes, transport.DefaultRPCQueryReadMaxBytes)
+}
+
+func TestRPCClient_GetPayloadResponseCap(t *testing.T) {
+	t.Run("10MiB+1 response succeeds", func(t *testing.T) {
+		body := make([]byte, int(transport.DefaultMaxBodySize)+1)
+		lookup := largeRPCLookup{core: largeRPCCore{}}
+		h := rpcserver.NewPayloadHandler(lookup, func(context.Context, rpcserver.SessionCore, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+			return &rpcpb.GetPayloadResponse{ResponsePayload: body}, nil
+		})
+		rpc := newLargeRPCClient(t, lookup, transport.EndpointPayload,
+			transport.DefaultClientConfig(), rpcserver.WithPayloadService(h))
+		resp, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{InferenceId: "1"}, 0)
+		require.NoError(t, err)
+		require.Equal(t, len(body), len(resp.GetResponsePayload()))
+	})
+	t.Run("over 64MiB default is ResourceExhausted", func(t *testing.T) {
+		var n atomic.Int32
+		body := make([]byte, transport.DefaultRPCPayloadMaxBytes+1)
+		lookup := largeRPCLookup{core: largeRPCCore{}}
+		h := rpcserver.NewPayloadHandler(lookup, func(context.Context, rpcserver.SessionCore, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+			n.Add(1)
+			return &rpcpb.GetPayloadResponse{ResponsePayload: body}, nil
+		})
+		rpc := newLargeRPCClient(t, lookup, transport.EndpointPayload,
+			transport.DefaultClientConfig(), rpcserver.WithPayloadService(h))
+		_, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{InferenceId: "1"}, 0)
+		require.Error(t, err)
+		require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+		require.Equal(t, int32(1), n.Load(), "oversize GetPayload must not retry")
+	})
+	t.Run("per-inference cap smaller than body is ResourceExhausted", func(t *testing.T) {
+		var n atomic.Int32
+		body := make([]byte, 2048)
+		lookup := largeRPCLookup{core: largeRPCCore{}}
+		h := rpcserver.NewPayloadHandler(lookup, func(context.Context, rpcserver.SessionCore, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+			n.Add(1)
+			return &rpcpb.GetPayloadResponse{ResponsePayload: body}, nil
+		})
+		rpc := newLargeRPCClient(t, lookup, transport.EndpointPayload,
+			transport.DefaultClientConfig(), rpcserver.WithPayloadService(h))
+		_, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{InferenceId: "1"}, 512)
+		require.Error(t, err)
+		require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+		require.Equal(t, int32(1), n.Load(), "per-inference oversize must not retry")
+	})
+	t.Run("cap above 64MiB allows 64MiB+1", func(t *testing.T) {
+		body := make([]byte, transport.DefaultRPCPayloadMaxBytes+1)
+		lookup := largeRPCLookup{core: largeRPCCore{}}
+		h := rpcserver.NewPayloadHandler(lookup, func(context.Context, rpcserver.SessionCore, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+			return &rpcpb.GetPayloadResponse{ResponsePayload: body}, nil
+		})
+		rpc := newLargeRPCClient(t, lookup, transport.EndpointPayload,
+			transport.DefaultClientConfig(), rpcserver.WithPayloadService(h))
+		resp, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{InferenceId: "1"},
+			int64(commonvalidation.MaxPayloadResponseBytesHard))
+		require.NoError(t, err)
+		require.Equal(t, len(body), len(resp.GetResponsePayload()))
+	})
+}
+
+func TestRPCClient_CloneWithSignerRepairEnvelope(t *testing.T) {
+	req := &heightsync.RepairRequest{RequesterSlot: 0, RequesterSig: []byte{1}}
+	t.Run("same signer reaches ServeHeightSyncRepair", func(t *testing.T) {
+		var ran atomic.Bool
+		rpc, peer := newRepairRPCClient(t, largeRPCLookup{core: largeRPCCore{repairRan: &ran}})
+		clone := rpc.CloneWithSigner(peer, time.Second)
+		t.Cleanup(clone.Close)
+		_, err := clone.HeightSyncRepair(context.Background(), req)
+		require.NoError(t, err)
+		require.True(t, ran.Load(), "same-signer clone must keep the Attach identity")
+	})
+	t.Run("different signer is envelope mismatch", func(t *testing.T) {
+		var ran atomic.Bool
+		rpc, _ := newRepairRPCClient(t, largeRPCLookup{core: largeRPCCore{repairRan: &ran}})
+		clone := rpc.CloneWithSigner(devtest.MustGenerateKey(t), time.Second)
+		t.Cleanup(clone.Close)
+		_, err := clone.HeightSyncRepair(context.Background(), req)
+		require.Error(t, err)
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "envelope signer does not match handshake")
+		require.False(t, ran.Load(), "mismatch must not reach ServeHeightSyncRepair")
+	})
+}
+
+func newRepairRPCClient(t *testing.T, lookup rpcserver.SessionLookup) (*transport.RPCClient, *signing.Secp256k1Signer) {
+	t.Helper()
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	srv, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, lookup)
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{})
+	pc.Start()
+	waitPeerReady(t, pc)
+	rpc := transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-1", peer, transport.DefaultClientConfig()), pc, transport.ParseRPCEndpoints(transport.EndpointRepair))
+	return rpc, peer
+}
+
+func newLargeRPCClient(t *testing.T, lookup rpcserver.SessionLookup, endpoints string, cfg transport.ClientConfig, muxOpts ...rpcserver.MuxOption) *transport.RPCClient {
+	t.Helper()
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	srv, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, lookup, muxOpts...)
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{})
+	pc.Start()
+	waitPeerReady(t, pc)
+	return transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-1", peer, cfg), pc, transport.ParseRPCEndpoints(endpoints))
+}
+
+type largeRPCLookup struct {
+	core largeRPCCore
+}
+
+func (l largeRPCLookup) SessionServerExisting(string) (rpcserver.SessionCore, error) {
+	return l.core, nil
+}
+
+type largeRPCCore struct {
+	verifyRan     *atomic.Bool
+	challengeRan  *atomic.Bool
+	gossipTxsRan  *atomic.Bool
+	repairRan     *atomic.Bool
+	verifyResp    *transport.VerifyTimeoutResponse
+	challengeResp *transport.ChallengeReceiptResponse
+}
+
+func (c largeRPCCore) ServeGetSignatures(uint64) (map[uint32][]byte, error) {
+	return map[uint32][]byte{}, nil
+}
+func (c largeRPCCore) AllowsSender(string) bool  { return true }
+func (c largeRPCCore) IsOwner(string) bool       { return true }
+func (c largeRPCCore) IsGroupMember(string) bool { return true }
+
+func (c largeRPCCore) ServeVerifyTimeout(context.Context, transport.VerifyTimeoutRequest) (*transport.VerifyTimeoutResponse, error) {
+	if c.verifyRan != nil {
+		c.verifyRan.Store(true)
+	}
+	if c.verifyResp != nil {
+		return c.verifyResp, nil
+	}
+	return &transport.VerifyTimeoutResponse{}, nil
+}
+
+func (c largeRPCCore) ServeChallengeReceipt(context.Context, transport.ChallengeReceiptRequest) (*transport.ChallengeReceiptResponse, error) {
+	if c.challengeRan != nil {
+		c.challengeRan.Store(true)
+	}
+	if c.challengeResp != nil {
+		return c.challengeResp, nil
+	}
+	return &transport.ChallengeReceiptResponse{}, nil
+}
+
+func (c largeRPCCore) ServeGossipTxs([]*types.DevshardTx) {
+	if c.gossipTxsRan != nil {
+		c.gossipTxsRan.Store(true)
+	}
+}
+
+func (c largeRPCCore) ServeHeightSyncRepair(context.Context, string, *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
+	if c.repairRan != nil {
+		c.repairRan.Store(true)
+	}
+	return &heightsync.RepairResponse{}, nil
+}

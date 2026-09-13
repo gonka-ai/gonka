@@ -407,6 +407,10 @@ func (c *HTTPClient) cloneSharing() *HTTPClient {
 	return cp
 }
 
+// Close is a no-op. HTTPClient does not own a PeerConn; *RPCClient.Close
+// releases the handshake. HostPeerClient.Close is this method or the RPC override.
+func (c *HTTPClient) Close() {}
+
 // BaseURL returns the dial base URL for this host (no route prefix).
 func (c *HTTPClient) BaseURL() string {
 	if c == nil {
@@ -460,6 +464,8 @@ func (c *HTTPClient) timestampHeader() string {
 	return HeaderTimestamp
 }
 
+// cloneWithSigner is a new HTTP client with signer. There is no Attach
+// identity, so a different key just re-signs JSON POSTs.
 func (c *HTTPClient) cloneWithSigner(signer signing.Signer, timeout time.Duration) *HTTPClient {
 	cfg := c.config
 	cfg.Admission = nil

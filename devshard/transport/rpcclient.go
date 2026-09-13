@@ -3,12 +3,14 @@ package transport
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
+	"common/validation"
 	"devshard/gossip"
 	"devshard/heightsync"
 	"devshard/host"
@@ -26,7 +28,19 @@ type RPCClient struct {
 	conn      *PeerConn
 	endpoints EndpointSet
 	session   rpcpbconnect.SessionServiceClient
-	gossip    rpcpbconnect.GossipServiceClient
+	// sessionQuery is a second SessionServiceClient with the 10 MiB catch-up
+	// read cap (DefaultMaxBodySize). Connect applies WithReadMaxBytes per
+	// client, not per RPC, so GetDiffs / GetMempool cannot share the 16 KiB
+	// session client.
+	sessionQuery rpcpbconnect.SessionServiceClient
+	// sessionLarge is a third SessionServiceClient with the 10 MiB dispute
+	// read cap (VerifyTimeout, VerifyErrorMiss, ChallengeReceipt responses).
+	sessionLarge rpcpbconnect.SessionServiceClient
+	gossip       rpcpbconnect.GossipServiceClient
+	// payload uses DefaultRPCPayloadMaxBytes (64 MiB) when the caller
+	// did not pass a per-inference limit. GetPayload builds a tighter or
+	// larger client from PayloadReadLimit.
+	payload rpcpbconnect.PayloadServiceClient
 	// closeOnce is a pointer so WithoutAdmission can copy RPCClient without
 	// copying a sync.Once (go vet copylocks).
 	closeOnce *sync.Once
@@ -49,9 +63,10 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		base := conn.cfg.connectBase(httpClient.escrowID)
 		opts := connectClientOptions(conn.cfg.ReadMaxBytes)
 		c.session = rpcpbconnect.NewSessionServiceClient(conn.http, base, opts...)
+		c.sessionQuery = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCQueryReadMaxBytes)...)
+		c.sessionLarge = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCLargeReadMaxBytes)...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
-		// Chat and validation GetPayload must use DefaultMaxBodySize (10 MiB),
-		// not DefaultRPCReadMaxBytes.
+		c.payload = rpcpbconnect.NewPayloadServiceClient(conn.http, base, connectClientOptions(DefaultRPCPayloadMaxBytes)...)
 	}
 	return c
 }
@@ -61,6 +76,33 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 // stay HTTP until they are on attachRPCEndpoints.
 func (c *RPCClient) Uses(name string) bool {
 	return c != nil && c.endpoints.Has(name) && isAttachRPCEndpoint(name)
+}
+
+// WaitReady blocks until Attach has published a live token or ctx is done.
+// ErrPeerNotReady is not retryable; callers that issue an RPC before the
+// first handshake must wait here instead of treating the error as a miss.
+func (c *RPCClient) WaitReady(ctx context.Context) error {
+	if c == nil || c.conn == nil {
+		return ErrPeerNotReady
+	}
+	if c.conn.Ready() {
+		return nil
+	}
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if c.conn.Ready() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			if c.conn.Ready() {
+				return nil
+			}
+			return fmt.Errorf("%w: %v", ErrPeerNotReady, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func (c *RPCClient) Close() {
@@ -136,9 +178,10 @@ func rpcRetry(ctx context.Context, fn func() error) error {
 
 const maxUnauthenticatedRPCRetries = 1
 
-// isRetryableRPC is the Connect retry policy. Unavailable / ResourceExhausted
-// use the shared 5 s budget. Unauthenticated is one extra attempt for a token
-// rotation race; a stable unauthenticated session fails fast.
+// isRetryableRPC is the Connect retry policy. Unavailable and 429-style
+// ResourceExhausted use the shared 5 s budget. Message-size ResourceExhausted
+// fails fast (IsRetryableNonInference). Unauthenticated is one extra attempt
+// for a token rotation race; a stable unauthenticated session fails fast.
 func isRetryableRPC(err error, unauthRetries *int) bool {
 	if IsRetryableNonInference(err) {
 		return true
@@ -154,7 +197,10 @@ func connectClientOptions(maxBytes int) []connect.ClientOption {
 	if maxBytes <= 0 {
 		maxBytes = DefaultRPCReadMaxBytes
 	}
-	return []connect.ClientOption{connect.WithReadMaxBytes(maxBytes)}
+	return []connect.ClientOption{
+		connect.WithReadMaxBytes(maxBytes),
+		connect.WithSendGzip(),
+	}
 }
 
 func (c *RPCClient) GetSignatures(ctx context.Context, nonce uint64) (map[uint32][]byte, error) {
@@ -189,14 +235,62 @@ func (c *RPCClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff
 	if !c.Uses(EndpointDiffs) {
 		return c.HTTPClient.GetDiffs(ctx, from, to)
 	}
-	return nil, fmt.Errorf("get diffs: rpc endpoint not served over Connect")
+	ctx, cancel := context.WithTimeout(ctx, c.config.QueryTimeout)
+	defer cancel()
+	var diffs []types.Diff
+	err := rpcRetry(ctx, func() error {
+		req, err := tokenRequest(c, &rpcpb.GetDiffsRequest{From: from, To: to})
+		if err != nil {
+			return err
+		}
+		resp, err := c.sessionQuery.GetDiffs(ctx, req)
+		if err != nil {
+			return err
+		}
+		records := resp.Msg.GetRecords()
+		diffs = make([]types.Diff, len(records))
+		for i, rec := range records {
+			d, dErr := DiffFromJSON(DiffJSONFromProto(rec.GetDiff()))
+			if dErr != nil {
+				return fmt.Errorf("decode diff %d: %w", i, dErr)
+			}
+			diffs[i] = d
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get diffs: %w", err)
+	}
+	return diffs, nil
 }
 
 func (c *RPCClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error) {
 	if !c.Uses(EndpointMempool) {
 		return c.HTTPClient.GetMempool(ctx)
 	}
-	return nil, fmt.Errorf("get mempool: rpc endpoint not served over Connect")
+	ctx, cancel := context.WithTimeout(ctx, c.config.QueryTimeout)
+	defer cancel()
+	var txs []*types.DevshardTx
+	err := rpcRetry(ctx, func() error {
+		req, err := tokenRequest(c, &rpcpb.GetMempoolRequest{})
+		if err != nil {
+			return err
+		}
+		resp, err := c.sessionQuery.GetMempool(ctx, req)
+		if err != nil {
+			return err
+		}
+		decoded, dErr := DevshardTxsFromBytes(resp.Msg.GetTxs())
+		if dErr != nil {
+			return dErr
+		}
+		txs = decoded
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get mempool: %w", err)
+	}
+	return txs, nil
 }
 
 func (c *RPCClient) GossipNonce(ctx context.Context, nonce uint64, stateHash, stateSig []byte, slotID uint32) error {
@@ -263,42 +357,313 @@ func (c *RPCClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 	if !c.Uses(EndpointSeed) {
 		return c.HTTPClient.SeedHeightSync(ctx)
 	}
-	return false, fmt.Errorf("seed height-sync: rpc endpoint not served over Connect")
+	if c == nil || c.heightSyncPeerTips == nil {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.heightSeedTimeout())
+	defer cancel()
+	env, err := c.signEnvelope(nil)
+	if err != nil {
+		return false, err
+	}
+	req, err := tokenRequest(c, env)
+	if err != nil {
+		return false, err
+	}
+	resp, err := c.session.SeedHeightSync(ctx, req)
+	if err != nil {
+		return false, err
+	}
+	sec := HeightSyncSectionFromProto(resp.Msg.GetHeightSync())
+	if sec == nil || !heightsync.IsAnchorSection(sec) {
+		return false, nil
+	}
+	sec.Direction = "response"
+	c.ingestResponseHeightSync(sec, 0, "RPC SeedHeightSync")
+	_, _, ok = c.heightSyncPeerTips.OriginSignedBlobFor(
+		strings.TrimSpace(sec.OriginatorSenderID),
+		sec.MainnetHeight,
+	)
+	return ok, nil
 }
 
 func (c *RPCClient) HeightSyncRepair(ctx context.Context, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
 	if !c.Uses(EndpointRepair) {
 		return c.HTTPClient.HeightSyncRepair(ctx, req)
 	}
-	return nil, fmt.Errorf("height-sync repair: rpc endpoint not served over Connect")
+	timeout := c.config.QueryTimeout
+	if timeout <= 0 || timeout > DefaultRepairTimeout {
+		timeout = DefaultRepairTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	payload, err := proto.Marshal(RepairRequestToProto(req))
+	if err != nil {
+		return nil, err
+	}
+	var out *heightsync.RepairResponse
+	err = rpcRetry(ctx, func() error {
+		env, err := c.signEnvelope(payload)
+		if err != nil {
+			return err
+		}
+		creq, err := tokenRequest(c, env)
+		if err != nil {
+			return err
+		}
+		resp, err := c.session.RepairHeightSync(ctx, creq)
+		if err != nil {
+			return err
+		}
+		out = RepairResponseFromProto(resp.Msg)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("height-sync repair: %w", err)
+	}
+	return out, nil
 }
 
 func (c *RPCClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutRequest) (*VerifyTimeoutResponse, error) {
 	if !c.Uses(EndpointVerifyTimeout) {
 		return c.HTTPClient.SendVerifyTimeout(ctx, req)
 	}
-	return nil, fmt.Errorf("verify-timeout: rpc endpoint not served over Connect")
+	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
+	defer cancel()
+	payload, err := proto.Marshal(VerifyTimeoutRequestToProto(req))
+	if err != nil {
+		return nil, err
+	}
+	var out *VerifyTimeoutResponse
+	err = rpcRetry(ctx, func() error {
+		env, err := c.signEnvelope(payload)
+		if err != nil {
+			return err
+		}
+		creq, err := tokenRequest(c, env)
+		if err != nil {
+			return err
+		}
+		resp, err := c.sessionLarge.VerifyTimeout(ctx, creq)
+		if err != nil {
+			return err
+		}
+		out = VerifyTimeoutResponseFromProto(resp.Msg)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("verify-timeout: %w", err)
+	}
+	return out, nil
 }
 
 func (c *RPCClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMissRequest) (*VerifyErrorMissResponse, error) {
 	if !c.Uses(EndpointVerifyErrorMiss) {
 		return c.HTTPClient.SendVerifyErrorMiss(ctx, req)
 	}
-	return nil, fmt.Errorf("verify-error-miss: rpc endpoint not served over Connect")
+	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
+	defer cancel()
+	payload, err := proto.Marshal(VerifyErrorMissRequestToProto(req))
+	if err != nil {
+		return nil, err
+	}
+	var out *VerifyErrorMissResponse
+	err = rpcRetry(ctx, func() error {
+		env, err := c.signEnvelope(payload)
+		if err != nil {
+			return err
+		}
+		creq, err := tokenRequest(c, env)
+		if err != nil {
+			return err
+		}
+		resp, err := c.sessionLarge.VerifyErrorMiss(ctx, creq)
+		if err != nil {
+			return err
+		}
+		out = VerifyErrorMissResponseFromProto(resp.Msg)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("verify-error-miss: %w", err)
+	}
+	return out, nil
 }
 
 func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	if !c.Uses(EndpointChallengeReceipt) {
 		return c.HTTPClient.ChallengeReceipt(ctx, inferenceID, payload, diffs)
 	}
-	return nil, nil, fmt.Errorf("challenge-receipt: rpc endpoint not served over Connect")
+	djList := make([]DiffJSON, len(diffs))
+	for i, d := range diffs {
+		dj, err := DiffToJSON(d)
+		if err != nil {
+			return nil, nil, fmt.Errorf("encode diff %d: %w", i, err)
+		}
+		djList[i] = dj
+	}
+	inner := ChallengeReceiptRequestToProto(ChallengeReceiptRequest{
+		InferenceID: inferenceID,
+		Payload:     PayloadToJSON(payload),
+		Diffs:       djList,
+	})
+	raw, err := proto.Marshal(inner)
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
+	defer cancel()
+	var receipt []byte
+	var mempool []*types.DevshardTx
+	err = rpcRetry(ctx, func() error {
+		env, err := c.signEnvelope(raw)
+		if err != nil {
+			return err
+		}
+		creq, err := tokenRequest(c, env)
+		if err != nil {
+			return err
+		}
+		resp, err := c.sessionLarge.ChallengeReceipt(ctx, creq)
+		if err != nil {
+			return err
+		}
+		decoded, dErr := DevshardTxsFromBytes(resp.Msg.GetMempool())
+		if dErr != nil {
+			return dErr
+		}
+		receipt = resp.Msg.GetReceipt()
+		mempool = decoded
+		return nil
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("challenge-receipt: %w", err)
+	}
+	return receipt, mempool, nil
 }
 
-// cloneWithSigner keeps the PeerConn and endpoint set. Uses() still
-// requires the name on attachRPCEndpoints, so unwired methods stay HTTP.
-// ownsConn is false: same as WithoutAdmission. Repair does not Close the
-// clone; bumping refs would leak. SetPeerClients is still
-// map[int]*HTTPClient until callers store SelectTransport results.
+// VerifyTimeout must be on *RPCClient: the HTTP wrapper calls SendVerifyTimeout
+// on its own receiver, which would skip Connect.
+func (c *RPCClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	_ = artifacts
+	var djList []DiffJSON
+	if len(diffs) > 0 {
+		djList = make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			dj, err := DiffToJSON(d)
+			if err != nil {
+				return false, nil, 0, nil, "", fmt.Errorf("encode diff %d: %w", i, err)
+			}
+			djList[i] = dj
+		}
+	}
+	resp, err := c.SendVerifyTimeout(ctx, VerifyTimeoutRequest{
+		InferenceID: inferenceID,
+		Reason:      TimeoutReasonToString(reason),
+		Payload:     PayloadToJSON(payload),
+		Diffs:       djList,
+	})
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return false, nil, 0, nil, "", fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
+}
+
+func (c *RPCClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	var djList []DiffJSON
+	if len(diffs) > 0 {
+		djList = make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			dj, err := DiffToJSON(d)
+			if err != nil {
+				return false, nil, 0, nil, "", fmt.Errorf("encode diff %d: %w", i, err)
+			}
+			djList[i] = dj
+		}
+	}
+	resp, err := c.SendVerifyErrorMiss(ctx, VerifyErrorMissRequest{
+		InferenceID:     inferenceID,
+		Diffs:           djList,
+		FinishTx:        artifacts.FinishTx,
+		ResponsePayload: artifacts.ResponsePayload,
+	})
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return false, nil, 0, nil, "", fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
+}
+
+// payloadClient is the Connect GetPayload client for this call's read cap.
+// Connect applies WithReadMaxBytes per client, not per RPC, so a
+// per-inference limit that is not the 64 MiB default needs its own client.
+// PayloadReadLimit is always positive, so connectClientOptions will not
+// fall back to the 16 KiB handshake cap.
+func (c *RPCClient) payloadClient(maxBytes int64) (rpcpbconnect.PayloadServiceClient, error) {
+	limit := int(validation.PayloadReadLimit(maxBytes))
+	if limit == DefaultRPCPayloadMaxBytes && c.payload != nil {
+		return c.payload, nil
+	}
+	if c.conn == nil || c.HTTPClient == nil {
+		return nil, fmt.Errorf("no peer connection")
+	}
+	base := c.conn.cfg.connectBase(c.HTTPClient.escrowID)
+	return rpcpbconnect.NewPayloadServiceClient(c.conn.http, base, connectClientOptions(limit)...), nil
+}
+
+// GetPayload fetches inference payloads over Connect. maxBytes is the
+// per-inference read cap (PayloadResponseByteLimit); <=0 uses
+// DefaultRPCPayloadMaxBytes (64 MiB), matching HTTP GET. The cap is
+// Connect WithReadMaxBytes(PayloadReadLimit(maxBytes)).
+func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest, maxBytes int64) (*rpcpb.GetPayloadResponse, error) {
+	if !c.Uses(EndpointPayload) {
+		return nil, fmt.Errorf("get payload: rpc endpoint not opted in")
+	}
+	// Signature must be the HTTP Authorization header value (base64 text)
+	// as UTF-8 bytes, not raw ECDSA. The server adapter does
+	// string(req.GetSignature()) then base64-decodes that string.
+	if err := c.WaitReady(ctx); err != nil {
+		return nil, fmt.Errorf("get payload: %w", err)
+	}
+	client, err := c.payloadClient(maxBytes)
+	if err != nil {
+		return nil, fmt.Errorf("get payload: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.config.QueryTimeout)
+	defer cancel()
+	var out *rpcpb.GetPayloadResponse
+	err = rpcRetry(ctx, func() error {
+		creq, err := tokenRequest(c, req)
+		if err != nil {
+			return err
+		}
+		resp, err := client.GetPayload(ctx, creq)
+		if err != nil {
+			return err
+		}
+		out = resp.Msg
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get payload: %w", err)
+	}
+	return out, nil
+}
+
+// cloneWithSigner keeps the PeerConn, Attach token, and endpoint set, and
+// replaces HTTPClient.signer. signEnvelope uses the new key, so openSigned
+// rejects a different address (PermissionDenied "envelope signer does not
+// match handshake"). RepairProbe clones to s.host.Signer(); that works
+// only when peerClients were stored host-signed (SetPeerClients). Do not
+// Attach as the clone's signer here — a second PeerConn is a product
+// feature no caller needs. ownsConn is false.
 func (c *RPCClient) cloneWithSigner(signer signing.Signer, timeout time.Duration) *RPCClient {
 	if c == nil {
 		return nil

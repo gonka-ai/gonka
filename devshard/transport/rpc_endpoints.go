@@ -22,6 +22,7 @@ const (
 	EndpointVerifyTimeout    = "verify-timeout"
 	EndpointVerifyErrorMiss  = "verify-error-miss"
 	EndpointChallengeReceipt = "challenge-receipt"
+	EndpointPayload          = "payload"
 )
 
 // DefaultRPCMaxConnsPerPeer is MaxIdleConnsPerHost / MaxConnsPerHost on a
@@ -63,7 +64,18 @@ func (s EndpointSet) Has(name string) bool {
 //
 // Add a name here when that method actually calls Connect. Chat must start
 // Attach once Send uses the host token.
-var attachRPCEndpoints = []string{EndpointSignatures}
+var attachRPCEndpoints = []string{
+	EndpointSignatures,
+	EndpointMempool,
+	EndpointDiffs,
+	EndpointGossip,
+	EndpointRepair,
+	EndpointSeed,
+	EndpointVerifyTimeout,
+	EndpointVerifyErrorMiss,
+	EndpointChallengeReceipt,
+	EndpointPayload,
+}
 
 var knownRPCEndpoints = map[string]struct{}{
 	EndpointChat:             {},
@@ -76,6 +88,7 @@ var knownRPCEndpoints = map[string]struct{}{
 	EndpointVerifyTimeout:    {},
 	EndpointVerifyErrorMiss:  {},
 	EndpointChallengeReceipt: {},
+	EndpointPayload:          {},
 }
 
 var unwiredRPCWarnOnce sync.Once

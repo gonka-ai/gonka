@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"devshard/bridge"
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport/rpcserver"
@@ -99,5 +100,93 @@ func TestAllowRPCPeer_NilServer(t *testing.T) {
 
 	ok, err := mgr.allowRPCPeer(rpcserver.WithEscrowID(context.Background(), "1"), "gonka1peer")
 	require.False(t, ok)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestAllowRPCPeer_OwnerBindsSession(t *testing.T) {
+	const escrowID = "9801"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+
+	ok, err := mgr.allowRPCPeer(rpcserver.WithEscrowID(context.Background(), escrowID), user.Address())
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err)
+	require.Equal(t, user.Address(), meta.CreatorAddr)
+}
+
+func TestAllowRPCPeer_GroupMemberDoesNotBind(t *testing.T) {
+	const escrowID = "9802"
+	mgr, store, _, host0 := setupBindTestManager(t, escrowID)
+	slots := mgr.bridge.(*mockBridge).escrow.Slots
+	require.GreaterOrEqual(t, len(slots), 2)
+	member := slots[1]
+	require.NotEqual(t, host0.Address(), member)
+
+	ok, err := mgr.allowRPCPeer(rpcserver.WithEscrowID(context.Background(), escrowID), member)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestAllowRPCPeer_StrangerDoesNotBind(t *testing.T) {
+	const escrowID = "9803"
+	mgr, store, _, _ := setupBindTestManager(t, escrowID)
+	stranger := mustGenerateKey(t)
+
+	ok, err := mgr.allowRPCPeer(rpcserver.WithEscrowID(context.Background(), escrowID), stranger.Address())
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestAllowRPCPeer_SettledEscrowDoesNotBind(t *testing.T) {
+	const escrowID = "9804"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	mgr.bridge.(*mockBridge).escrow.Settled = true
+
+	ok, err := mgr.allowRPCPeer(rpcserver.WithEscrowID(context.Background(), escrowID), user.Address())
+	require.False(t, ok)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestAllowRPCPeer_MemberThenOwnerBinds(t *testing.T) {
+	const escrowID = "9805"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	member := mgr.bridge.(*mockBridge).escrow.Slots[1]
+	ctx := rpcserver.WithEscrowID(context.Background(), escrowID)
+
+	ok, err := mgr.allowRPCPeer(ctx, member)
+	require.NoError(t, err)
+	require.True(t, ok)
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+
+	ok, err = mgr.allowRPCPeer(ctx, user.Address())
+	require.NoError(t, err)
+	require.True(t, ok)
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err)
+	require.Equal(t, user.Address(), meta.CreatorAddr)
+}
+
+func TestAllowRPCPeer_ChainUnavailable(t *testing.T) {
+	const escrowID = "9806"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	mgr.bridge.(*mockBridge).getEscrowErr = bridge.ErrChainUnavailable
+
+	ok, err := mgr.allowRPCPeer(rpcserver.WithEscrowID(context.Background(), escrowID), user.Address())
+	require.False(t, ok)
+	require.ErrorIs(t, err, bridge.ErrChainUnavailable)
+
+	_, err = store.GetSessionMeta(escrowID)
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 }

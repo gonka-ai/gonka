@@ -54,6 +54,7 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	originLookups := newOriginLookupLimiter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		path = strings.TrimPrefix(path, "devshard/")
@@ -81,7 +82,7 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 		}
 		defer target.release()
 
-		reverseProxy(target.Address(), rest).ServeHTTP(w, r)
+		serveChild(w, r, target.Address(), rest, originLookups)
 	})
 }
 
@@ -165,7 +166,7 @@ func serveAcquired(w http.ResponseWriter, r *http.Request, routes routeTableLoad
 		return
 	}
 	defer target.release()
-	reverseProxy(target.Address(), rest).ServeHTTP(w, r)
+	reverseProxy(target.Address(), rest, nil).ServeHTTP(w, r)
 }
 
 func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routes routeTableLoader, versions []string, rest string) {
@@ -178,7 +179,7 @@ func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routes routeT
 			continue
 		}
 		rec := httptest.NewRecorder()
-		reverseProxy(target.Address(), rest).ServeHTTP(rec, r.Clone(r.Context()))
+		reverseProxy(target.Address(), rest, nil).ServeHTTP(rec, r.Clone(r.Context()))
 		target.release()
 		switch {
 		case rec.Code == http.StatusNotFound:
@@ -218,7 +219,16 @@ func escrowIDFromObsPath(rest string) (string, bool) {
 	return "", false
 }
 
-func reverseProxy(target, rest string) *httputil.ReverseProxy {
+func serveChild(w http.ResponseWriter, r *http.Request, target, rest string, lim *originLookupLimiter) {
+	if lim.blocked(r, rest) {
+		w.Header().Set(headerDevshardError, errorEscrowLookupLimited)
+		http.Error(w, "too many escrow lookups", http.StatusTooManyRequests)
+		return
+	}
+	reverseProxy(target, rest, lim).ServeHTTP(w, r)
+}
+
+func reverseProxy(target, rest string, lim *originLookupLimiter) *httputil.ReverseProxy {
 	targetURL, err := url.Parse("http://" + target)
 	if err != nil {
 		return &httputil.ReverseProxy{
@@ -231,9 +241,15 @@ func reverseProxy(target, rest string) *httputil.ReverseProxy {
 			},
 		}
 	}
-	return &httputil.ReverseProxy{
+	rp := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetXForwarded()
+			// SetXForwarded rewrites X-Forwarded-*. Keep X-Real-IP from the
+			// trusted ingress (nginx / versiond-router). versiond keys the
+			// unknown-escrow IP cap on the inbound header; the child does not.
+			if ip := pr.In.Header.Get(originIPHeader); ip != "" {
+				pr.Out.Header.Set(originIPHeader, ip)
+			}
 			pr.Out.URL.Scheme = targetURL.Scheme
 			pr.Out.URL.Host = targetURL.Host
 			pr.Out.Host = targetURL.Host
@@ -242,6 +258,15 @@ func reverseProxy(target, rest string) *httputil.ReverseProxy {
 		},
 		FlushInterval: -1, // flush immediately for SSE
 	}
+	if lim != nil {
+		rp.ModifyResponse = func(resp *http.Response) error {
+			if resp != nil && resp.Request != nil {
+				lim.observe(resp.Request, rest, resp)
+			}
+			return nil
+		}
+	}
+	return rp
 }
 
 func writeRecorder(w http.ResponseWriter, rec *httptest.ResponseRecorder) {

@@ -22,6 +22,8 @@ const (
 	DevshardErrorNotImplemented       = "not_implemented"
 	DevshardErrorChainUnavailable     = "chain_unavailable"
 	DevshardErrorEscrowSettled        = "escrow_settled"
+	DevshardErrorEscrowNotFound       = "escrow_not_found"
+	DevshardErrorEscrowLookupLimited  = "escrow_lookup_limited"
 	DevshardErrorUndeclaredVersion    = "undeclared_version"
 	DevshardErrorHeightSeedIncomplete = "height_seed_incomplete"
 	DevshardErrorCatalogPending       = "catalog_pending"

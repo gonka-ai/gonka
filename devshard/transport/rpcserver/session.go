@@ -6,16 +6,20 @@ import (
 
 	"connectrpc.com/connect"
 
+	"devshard"
 	"devshard/bridge"
+	"devshard/heightsync"
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
+	"devshard/types"
 )
 
-// SessionCore is the transport-neutral surface SessionService needs.
-// *transport.Server implements it.
+// SessionCore is the transport-neutral surface SessionService needs for
+// handshake roster checks and GetSignatures. Extra ServeX methods are
+// type-asserted so test stubs stay small.
 type SessionCore interface {
 	ServeGetSignatures(nonce uint64) (map[uint32][]byte, error)
 	AllowsSender(address string) bool
@@ -47,39 +51,24 @@ func (f lookupAdapter) SessionServerExisting(id string) (SessionCore, error) {
 	return srv, nil
 }
 
-// SessionHandler implements SessionService. Only GetSignatures is implemented.
+// SessionHandler implements SessionService. Chat stays on the unimplemented
+// embed until Phase 5.
 type SessionHandler struct {
 	rpcpbconnect.UnimplementedSessionServiceHandler
-	lookup SessionLookup
+	sessionResolver
 }
 
 func NewSessionHandler(lookup SessionLookup) *SessionHandler {
-	return &SessionHandler{lookup: lookup}
+	return &SessionHandler{sessionResolver: newSessionResolver(lookup)}
 }
 
 func (h *SessionHandler) GetSignatures(ctx context.Context, req *connect.Request[rpcpb.GetSignaturesRequest]) (*connect.Response[rpcpb.GetSignaturesResponse], error) {
-	if h.lookup == nil {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("session lookup not configured"))
-	}
 	if req == nil || req.Msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	peer, escrowID, err := requirePeer(ctx)
+	_, _, srv, err := h.resolve(ctx, "rpc_get_signatures")
 	if err != nil {
 		return nil, err
-	}
-	srv, err := h.lookup.SessionServerExisting(escrowID)
-	if err != nil {
-		recordRPCSessionResolution(ctx, escrowID, err)
-		return nil, mapAllowError(err)
-	}
-	if srv == nil {
-		recordRPCSessionResolution(ctx, escrowID, storage.ErrSessionNotFound)
-		return nil, mapAllowError(storage.ErrSessionNotFound)
-	}
-	recordRPCSessionResolution(ctx, escrowID, nil)
-	if !srv.AllowsSender(peer) {
-		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
 	}
 	sigs, err := srv.ServeGetSignatures(req.Msg.GetNonce())
 	if err != nil {
@@ -91,8 +80,247 @@ func (h *SessionHandler) GetSignatures(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&rpcpb.GetSignaturesResponse{Signatures: sigs}), nil
 }
 
-// mapAllowError is JSON sessionHTTPError on the Connect path. Wire strings are
-// stable; codes match the HTTP status class.
+func (h *SessionHandler) GetDiffs(ctx context.Context, req *connect.Request[rpcpb.GetDiffsRequest]) (*connect.Response[rpcpb.GetDiffsResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	_, _, srv, err := h.resolve(ctx, "rpc_get_diffs")
+	if err != nil {
+		return nil, err
+	}
+	type diffsCore interface {
+		ServeGetDiffs(from, to uint64) ([]types.DiffRecord, error)
+	}
+	core, ok := srv.(diffsCore)
+	if !ok {
+		return nil, unimplementedCore()
+	}
+	records, err := core.ServeGetDiffs(req.Msg.GetFrom(), req.Msg.GetTo())
+	if err != nil {
+		return nil, mapCoreError(err)
+	}
+	out := make([]*rpcpb.DiffRecord, len(records))
+	for i, rec := range records {
+		dj, jErr := transport.DiffToJSON(rec.Diff)
+		if jErr != nil {
+			return nil, connect.NewError(connect.CodeInternal, errors.New("encode diff failed"))
+		}
+		out[i] = &rpcpb.DiffRecord{Diff: transport.DiffJSONToProto(dj), StateHash: rec.StateHash}
+	}
+	return connect.NewResponse(&rpcpb.GetDiffsResponse{Records: out}), nil
+}
+
+func (h *SessionHandler) GetMempool(ctx context.Context, req *connect.Request[rpcpb.GetMempoolRequest]) (*connect.Response[rpcpb.GetMempoolResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	_, _, srv, err := h.resolve(ctx, "rpc_get_mempool")
+	if err != nil {
+		return nil, err
+	}
+	type mempoolCore interface {
+		ServeGetMempool(context.Context) ([]*types.DevshardTx, error)
+	}
+	core, ok := srv.(mempoolCore)
+	if !ok {
+		return nil, unimplementedCore()
+	}
+	txs, err := core.ServeGetMempool(ctx)
+	if err != nil {
+		return nil, mapCoreError(err)
+	}
+	raw, err := transport.DevshardTxsToBytes(txs)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.New("encode mempool failed"))
+	}
+	return connect.NewResponse(&rpcpb.GetMempoolResponse{Txs: raw}), nil
+}
+
+func (h *SessionHandler) SeedHeightSync(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.SeedHeightSyncResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	peer, srv, _, err := h.openSigned(ctx, req.Msg, "rpc_seed_height_sync")
+	if err != nil {
+		return nil, err
+	}
+	if err := requireOwner(srv, peer); err != nil {
+		return nil, err
+	}
+	type seedCore interface {
+		ServeSeedHeightSync(context.Context) (*heightsync.HeightSyncSection, error)
+	}
+	core, ok := srv.(seedCore)
+	if !ok {
+		return nil, unimplementedCore()
+	}
+	sec, err := core.ServeSeedHeightSync(ctx)
+	if err != nil {
+		return nil, mapCoreError(err)
+	}
+	return connect.NewResponse(&rpcpb.SeedHeightSyncResponse{HeightSync: transport.HeightSyncSectionToProto(sec)}), nil
+}
+
+func (h *SessionHandler) RepairHeightSync(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.RepairResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	peer, srv, payload, err := h.openSigned(ctx, req.Msg, "rpc_repair_height_sync")
+	if err != nil {
+		return nil, err
+	}
+	if err := requireGroupMember(srv, peer); err != nil {
+		return nil, err
+	}
+	var inner rpcpb.RepairRequest
+	if err := unmarshalPayload(payload, &inner); err != nil {
+		return nil, err
+	}
+	type repairCore interface {
+		ServeHeightSyncRepair(context.Context, string, *heightsync.RepairRequest) (*heightsync.RepairResponse, error)
+	}
+	core, ok := srv.(repairCore)
+	if !ok {
+		return nil, unimplementedCore()
+	}
+	resp, err := core.ServeHeightSyncRepair(ctx, peer, transport.RepairRequestFromProto(&inner))
+	if err != nil {
+		return nil, mapCoreError(err)
+	}
+	return connect.NewResponse(transport.RepairResponseToProto(resp)), nil
+}
+
+func (h *SessionHandler) VerifyTimeout(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyTimeoutResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	peer, srv, payload, err := h.openSigned(ctx, req.Msg, "rpc_verify_timeout")
+	if err != nil {
+		return nil, err
+	}
+	if err := requireOwner(srv, peer); err != nil {
+		return nil, err
+	}
+	var inner rpcpb.VerifyTimeoutRequest
+	if err := unmarshalPayload(payload, &inner); err != nil {
+		return nil, err
+	}
+	type verifyCore interface {
+		ServeVerifyTimeout(context.Context, transport.VerifyTimeoutRequest) (*transport.VerifyTimeoutResponse, error)
+	}
+	core, ok := srv.(verifyCore)
+	if !ok {
+		return nil, unimplementedCore()
+	}
+	resp, err := core.ServeVerifyTimeout(ctx, transport.VerifyTimeoutRequestFromProto(&inner))
+	if err != nil {
+		return nil, mapCoreError(err)
+	}
+	return connect.NewResponse(transport.VerifyTimeoutResponseToProto(resp)), nil
+}
+
+func (h *SessionHandler) VerifyErrorMiss(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyErrorMissResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	peer, srv, payload, err := h.openSigned(ctx, req.Msg, "rpc_verify_error_miss")
+	if err != nil {
+		return nil, err
+	}
+	if err := requireOwner(srv, peer); err != nil {
+		return nil, err
+	}
+	var inner rpcpb.VerifyErrorMissRequest
+	if err := unmarshalPayload(payload, &inner); err != nil {
+		return nil, err
+	}
+	type missCore interface {
+		ServeVerifyErrorMiss(context.Context, transport.VerifyErrorMissRequest) (*transport.VerifyErrorMissResponse, error)
+	}
+	core, ok := srv.(missCore)
+	if !ok {
+		return nil, unimplementedCore()
+	}
+	resp, err := core.ServeVerifyErrorMiss(ctx, transport.VerifyErrorMissRequestFromProto(&inner))
+	if err != nil {
+		return nil, mapCoreError(err)
+	}
+	return connect.NewResponse(transport.VerifyErrorMissResponseToProto(resp)), nil
+}
+
+func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.ChallengeReceiptResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	peer, srv, payload, err := h.openSigned(ctx, req.Msg, "rpc_challenge_receipt")
+	if err != nil {
+		return nil, err
+	}
+	if err := requireOwnerOrGroup(srv, peer); err != nil {
+		return nil, err
+	}
+	var inner rpcpb.ChallengeReceiptRequest
+	if err := unmarshalPayload(payload, &inner); err != nil {
+		return nil, err
+	}
+	type challengeCore interface {
+		ServeChallengeReceipt(context.Context, transport.ChallengeReceiptRequest) (*transport.ChallengeReceiptResponse, error)
+	}
+	core, ok := srv.(challengeCore)
+	if !ok {
+		return nil, unimplementedCore()
+	}
+	resp, err := core.ServeChallengeReceipt(ctx, transport.ChallengeReceiptRequestFromProto(&inner))
+	if err != nil {
+		return nil, mapCoreError(err)
+	}
+	return connect.NewResponse(transport.ChallengeReceiptResponseToProto(resp)), nil
+}
+
+func mapCoreError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, devshard.ErrRequestsDisabled) {
+		return withDevshardError(
+			connect.NewError(connect.CodeUnavailable, errors.New(devshard.ErrRequestsDisabled.Error())),
+			transport.DevshardErrorRequestsDisabled,
+		)
+	}
+	if errors.Is(err, transport.ErrNoStorage) || errors.Is(err, transport.ErrHeightSyncSeedDisabled) {
+		return connect.NewError(connect.CodeNotFound, err)
+	}
+	if errors.Is(err, transport.ErrInvalidRequesterSlot) ||
+		errors.Is(err, transport.ErrGossipMissingStateSig) ||
+		errors.Is(err, transport.ErrGossipInvalidSlot) ||
+		errors.Is(err, transport.ErrGossipInvalidStateSig) {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	if errors.Is(err, transport.ErrRequesterSlotMismatch) {
+		return connect.NewError(connect.CodePermissionDenied, err)
+	}
+	if errors.Is(err, heightsync.ErrRepairUnknownTurn) {
+		return connect.NewError(connect.CodeNotFound, errors.New("unknown turn"))
+	}
+	if errors.Is(err, heightsync.ErrRepairResponderBudget) {
+		return connect.NewError(connect.CodeResourceExhausted, errors.New("repair budget exhausted"))
+	}
+	if errors.Is(err, heightsync.ErrRepairVerify) ||
+		errors.Is(err, heightsync.ErrRepairNoSig) ||
+		errors.Is(err, heightsync.ErrRepairEmpty) {
+		return connect.NewError(connect.CodePermissionDenied, err)
+	}
+	if transport.IsClientRequest(err) {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	return connect.NewError(connect.CodeInternal, err)
+}
+
+// MapSessionError is JSON sessionHTTPError on the Connect path.
+func MapSessionError(err error) error {
+	return mapAllowError(err)
+}
+
 func mapAllowError(err error) error {
 	if isTransientSessionError(err) {
 		return withDevshardError(hostInitializing(), transport.DevshardErrorInitializing)
@@ -101,6 +329,18 @@ func mapAllowError(err error) error {
 		return withDevshardError(
 			connect.NewError(connect.CodeUnavailable, errors.New("chain unavailable")),
 			transport.DevshardErrorChainUnavailable,
+		)
+	}
+	if errors.Is(err, bridge.ErrEscrowLookupLimited) {
+		return withDevshardError(
+			connect.NewError(connect.CodeResourceExhausted, errors.New("too many escrow lookups")),
+			transport.DevshardErrorEscrowLookupLimited,
+		)
+	}
+	if errors.Is(err, bridge.ErrEscrowNotFound) {
+		return withDevshardError(
+			connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow is not open on this host")),
+			transport.DevshardErrorEscrowNotFound,
 		)
 	}
 	if errors.Is(err, storage.ErrSessionNotFound) {
@@ -143,9 +383,9 @@ func isTransientSessionError(err error) bool {
 
 const rpcGetSignaturesRoute = "rpc_get_signatures"
 
-func recordRPCSessionResolution(ctx context.Context, escrowID string, err error) {
+func recordRPCSessionResolution(ctx context.Context, route, escrowID string, err error) {
 	status, reason := rpcResolutionStatus(err)
-	observability.IncSessionResolution(rpcGetSignaturesRoute, status, reason)
+	observability.IncSessionResolution(route, status, reason)
 	if err != nil {
 		observability.Log(ctx, observability.LevelWarn, "devshard session resolution failed",
 			observability.StageSessionResolved, observability.WhereRoutesSessionResolve, escrowID, reason, err)
@@ -161,6 +401,9 @@ func rpcResolutionStatus(err error) (observability.MetricStatus, observability.R
 	}
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return observability.MetricStatusError, observability.ReasonGetEscrowErr
+	}
+	if errors.Is(err, bridge.ErrEscrowLookupLimited) {
+		return observability.MetricStatusError, observability.ReasonRateLimited
 	}
 	if errors.Is(err, storage.ErrSessionNotFound) {
 		return observability.MetricStatusError, observability.ReasonSessionResolveErr

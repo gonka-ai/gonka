@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -344,7 +345,7 @@ func TestSelectTransport_EmptyIsHTTPClient(t *testing.T) {
 
 func TestSelectTransport_UnwiredKeepsHTTPClient(t *testing.T) {
 	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", devtest.MustGenerateKey(t))
-	for _, raw := range []string{EndpointChat, EndpointGossip, "typo", "chat,diffs"} {
+	for _, raw := range []string{EndpointChat, "typo", "chat,unknown"} {
 		t.Run(raw, func(t *testing.T) {
 			got := SelectTransport(httpClient, "gonka1unwired", ParseRPCEndpoints(raw), nil)
 			require.Equal(t, httpClient, got, "unwired names must not start Attach")
@@ -384,9 +385,9 @@ func TestRPCClient_UsesOnlyWiredMethods(t *testing.T) {
 	t.Cleanup(rpc.Close)
 	require.True(t, rpc.Uses(EndpointSignatures))
 	require.True(t, rpc.endpoints.Has(EndpointGossip))
-	require.False(t, rpc.Uses(EndpointGossip))
+	require.True(t, rpc.Uses(EndpointGossip))
 	require.True(t, rpc.endpoints.Has(EndpointRepair))
-	require.False(t, rpc.Uses(EndpointRepair))
+	require.True(t, rpc.Uses(EndpointRepair))
 	require.False(t, rpc.Uses(EndpointChat))
 }
 
@@ -476,7 +477,7 @@ func TestClassifyUnwiredRPCEndpoints(t *testing.T) {
 	require.Empty(t, unknown)
 
 	unwired, unknown = classifyUnwiredRPCEndpoints(ParseRPCEndpoints("gossip,typo,chat"))
-	require.Equal(t, []string{EndpointChat, EndpointGossip}, unwired)
+	require.Equal(t, []string{EndpointChat}, unwired)
 	require.Equal(t, []string{"typo"}, unknown)
 }
 
@@ -487,10 +488,10 @@ func TestSelectTransport_UnwiredNamesWarnOnce(t *testing.T) {
 	t.Cleanup(func() { logging.SetLogger(discardRestLogger{}) })
 
 	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", devtest.MustGenerateKey(t))
-	got := SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints("gossip,typo"), nil)
+	got := SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints("chat,typo"), nil)
 	require.Same(t, httpClient, got)
 	require.Len(t, capLog.warns, 1)
-	require.Contains(t, capLog.warns[0], EndpointGossip)
+	require.Contains(t, capLog.warns[0], EndpointChat)
 	require.Contains(t, capLog.warns[0], "typo")
 
 	_ = SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints(EndpointChat), nil)
@@ -504,10 +505,37 @@ func TestSelectTransport_UnwiredNamesWarnOnce(t *testing.T) {
 func TestIsRetryableNonInference_ConnectCodes(t *testing.T) {
 	require.False(t, IsRetryableNonInference(connect.NewError(connect.CodeUnauthenticated, errors.New("handshake required"))))
 	require.True(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted, errors.New("busy"))))
+	require.True(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted, errors.New("too many sessions"))))
+	require.True(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted, errors.New("too many attach attempts"))))
 	require.True(t, IsRetryableNonInference(connect.NewError(connect.CodeUnavailable, errors.New("host initializing"))))
 	require.False(t, IsRetryableNonInference(context.Canceled))
 	require.False(t, IsRetryableNonInference(ErrPeerNotReady))
 	require.False(t, IsRetryableNonInference(connect.NewError(connect.CodeInvalidArgument, errors.New("bad"))))
+	require.False(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted,
+		fmt.Errorf("message size %d is larger than configured max %d", 17, 16))))
+	require.False(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted,
+		fmt.Errorf("compressed message size %d exceeds sendMaxBytes %d", 17, 16))))
+	require.False(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted,
+		fmt.Errorf("connect: exceeded %d byte http.MaxBytesReader limit", 16))))
+	require.False(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted,
+		errors.New("attach request too large"))))
+	require.False(t, IsRetryableNonInference(fmt.Errorf("get signatures: %w",
+		connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("message size %d is larger than configured max %d", 17, 16)))),
+		"rpcRetry wrappers must still fail fast")
+}
+
+func TestRPCRetry_MessageTooLargeFailsFast(t *testing.T) {
+	var n atomic.Int32
+	start := time.Now()
+	err := rpcRetry(context.Background(), func() error {
+		n.Add(1)
+		return connect.NewError(connect.CodeResourceExhausted,
+			fmt.Errorf("message size %d is larger than configured max %d", 17, 16))
+	})
+	require.Error(t, err)
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Equal(t, int32(1), n.Load(), "oversize ResourceExhausted must not retry")
+	require.Less(t, time.Since(start), time.Second, "must not spend the 5s non-inference budget")
 }
 
 func TestRPCRetry_UnauthenticatedOnce(t *testing.T) {
@@ -589,6 +617,8 @@ func TestRPCClient_WithoutAdmissionCloseDoesNotRelease(t *testing.T) {
 	require.False(t, PeerConnRegistered(host, peerConnConfigFromClient(httpClient, host, nil).version()))
 }
 
+// CloneWithSigner must not open a second PeerConn. RepairProbe clones to
+// the host key on the stored Attach; a new handshake would be a product change.
 func TestRPCClient_CloneWithSignerKeepsConn(t *testing.T) {
 	peer := devtest.MustGenerateKey(t)
 	host := "gonka1clonesigner"
@@ -600,7 +630,7 @@ func TestRPCClient_CloneWithSignerKeepsConn(t *testing.T) {
 	require.False(t, clone.ownsConn)
 	require.True(t, clone.Uses(EndpointSignatures))
 	require.True(t, clone.endpoints.Has(EndpointRepair))
-	require.False(t, clone.Uses(EndpointRepair), "repair is opted in but not on Connect")
+	require.True(t, clone.Uses(EndpointRepair))
 	clone.Close()
 	require.True(t, PeerConnRegistered(host, peerConnConfigFromClient(httpClient, host, nil).version()),
 		"signer clone Close must not Release the parent's PeerConn")

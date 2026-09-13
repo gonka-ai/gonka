@@ -723,7 +723,7 @@ func (st *repairTimingStack) wireRepairPeersFrom(prober int) {
 			RoutePrefix:  hsE2ERoutePrefix,
 		})
 	}
-	st.servers[prober].SetPeerClients(peers)
+	st.servers[prober].SetPeerClients(transport.HTTPPeerClients(peers))
 }
 
 func (st *repairTimingStack) applyDiffsToHosts(t *testing.T, diffs ...types.Diff) {

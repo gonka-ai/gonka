@@ -15,6 +15,7 @@ import (
 
 	commonvalidation "common/validation"
 
+	"connectrpc.com/connect"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -23,6 +24,8 @@ import (
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/observability"
+	"devshard/transport"
+	"devshard/transport/rpcpb"
 )
 
 // errExecutorPayloadFault tags failures that are the executor's responsibility
@@ -103,6 +106,7 @@ func fetchPayloadsFromExecutor(
 	epochID uint64,
 	requestPath string,
 	client *http.Client,
+	rpcFor func(executorURL, executorAddr, escrowID string) *transport.RPCClient,
 ) ([]byte, []byte, error) {
 	executorInfo, err := br.GetHostInfo(req.ExecutorAddress)
 	if err != nil {
@@ -112,11 +116,6 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, fmt.Errorf("executor has no URL")
 	}
 
-	requestURL, err := commonvalidation.BuildPayloadRequestURL(executorInfo.URL, requestPath, inferenceID)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	timestamp := time.Now().UnixNano()
 	validatorAddress := recorder.GetAccountAddress()
 	signature, err := signPayloadRequest(recorder, inferenceID, timestamp, validatorAddress, epochID)
@@ -124,8 +123,13 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, fmt.Errorf("sign request: %w", err)
 	}
 
-	payloadResp, err := fetchPayloadsHTTPWithRetry(
-		ctx, client, requestURL, validatorAddress, timestamp, epochID, signature,
+	var rpc *transport.RPCClient
+	if rpcFor != nil {
+		rpc = rpcFor(executorInfo.URL, req.ExecutorAddress, req.EscrowID)
+	}
+	payloadResp, err := fetchSignedPayloads(
+		ctx, client, rpc, executorInfo.URL, requestPath,
+		inferenceID, validatorAddress, timestamp, epochID, signature,
 		commonvalidation.PayloadResponseByteLimit(req.OutputTokens),
 	)
 	if err != nil {
@@ -233,6 +237,62 @@ func (t ttfbRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	observability.ObservePayloadFetchTTFB(time.Since(start))
 	return resp, nil
+}
+
+func fetchSignedPayloads(
+	ctx context.Context,
+	client *http.Client,
+	rpc *transport.RPCClient,
+	executorURL, requestPath, inferenceID, validatorAddress string,
+	timestamp int64,
+	epochID uint64,
+	signature string,
+	maxBytes int64,
+) (*commonvalidation.PayloadResponse, error) {
+	if rpc != nil && rpc.Uses(transport.EndpointPayload) {
+		waitCtx, cancel := context.WithTimeout(ctx, payloadFetchHeaderTimeout)
+		defer cancel()
+		if err := rpc.WaitReady(waitCtx); err != nil {
+			return nil, err
+		}
+		resp, err := rpc.GetPayload(ctx, &rpcpb.GetPayloadRequest{
+			InferenceId:      inferenceID,
+			ValidatorAddress: validatorAddress,
+			Timestamp:        timestamp,
+			EpochId:          epochID,
+			Signature:        []byte(signature), // HTTP Authorization header text
+		}, maxBytes)
+		return payloadResponseFromRPC(resp, err)
+	}
+	requestURL, err := commonvalidation.BuildPayloadRequestURL(executorURL, requestPath, inferenceID)
+	if err != nil {
+		return nil, err
+	}
+	return fetchPayloadsHTTPWithRetry(
+		ctx, client, requestURL, validatorAddress, timestamp, epochID, signature, maxBytes,
+	)
+}
+
+func payloadResponseFromRPC(resp *rpcpb.GetPayloadResponse, err error) (*commonvalidation.PayloadResponse, error) {
+	if err != nil {
+		switch connect.CodeOf(err) {
+		case connect.CodeNotFound:
+			return nil, fmt.Errorf("payload not found on executor: %w", commonvalidation.ErrPayloadGone)
+		case connect.CodeResourceExhausted:
+			return nil, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)
+		default:
+			return nil, err
+		}
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("get payload: empty response")
+	}
+	return &commonvalidation.PayloadResponse{
+		InferenceId:       resp.GetInferenceId(),
+		PromptPayload:     resp.GetPromptPayload(),
+		ResponsePayload:   resp.GetResponsePayload(),
+		ExecutorSignature: resp.GetExecutorSignature(),
+	}, nil
 }
 
 func fetchPayloadsHTTPWithRetry(

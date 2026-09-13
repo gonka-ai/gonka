@@ -2,6 +2,7 @@ package storage
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -13,6 +14,7 @@ func TestMemory_EscrowCache_RoundTrip(t *testing.T) {
 		Amount:         42,
 		CreatorAddress: "creator",
 		Slots:          []string{"a", "b", "c"},
+		SlotURLs:       map[string]string{"a": "http://a", "b": "http://b"},
 		TokenPrice:     7,
 		EpochID:        9,
 		AppHash:        []byte{1, 2, 3},
@@ -24,6 +26,7 @@ func TestMemory_EscrowCache_RoundTrip(t *testing.T) {
 	require.Equal(t, info.EscrowID, got.EscrowID)
 	require.Equal(t, info.Amount, got.Amount)
 	require.Equal(t, info.Slots, got.Slots)
+	require.Equal(t, info.SlotURLs, got.SlotURLs)
 	require.Equal(t, info.EpochID, got.EpochID)
 	require.Equal(t, info.AppHash, got.AppHash)
 	require.NotZero(t, got.CachedAt, "the store stamps the write time so readers can age the row")
@@ -56,6 +59,7 @@ func TestSQLite_EscrowCache_RoundTrip(t *testing.T) {
 		Amount:         99,
 		CreatorAddress: "creator",
 		Slots:          []string{"x", "y", "z"},
+		SlotURLs:       map[string]string{"x": "http://x"},
 		EpochID:        3,
 	}
 	require.NoError(t, store.PutEscrowCache(info))
@@ -72,4 +76,13 @@ func TestSQLite_EscrowCache_RoundTrip(t *testing.T) {
 	require.NoError(t, store.PruneEpoch(3))
 	_, err = store.GetEscrowCache("escrow-sql")
 	require.ErrorIs(t, err, ErrEscrowCacheNotFound)
+}
+
+func TestEscrowCacheFresh(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	require.False(t, EscrowCacheFresh(nil, now))
+	require.False(t, EscrowCacheFresh(&EscrowCacheInfo{CachedAt: 0}, now))
+	require.True(t, EscrowCacheFresh(&EscrowCacheInfo{CachedAt: now.Unix()}, now))
+	require.True(t, EscrowCacheFresh(&EscrowCacheInfo{CachedAt: now.Add(-EscrowCacheMaxAge).Unix()}, now))
+	require.False(t, EscrowCacheFresh(&EscrowCacheInfo{CachedAt: now.Add(-EscrowCacheMaxAge - time.Second).Unix()}, now))
 }

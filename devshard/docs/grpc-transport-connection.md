@@ -205,6 +205,107 @@ phases 1–5 on this path. Phase 6 removes it by carrying HTTP/2 on a listen tha
 
 ---
 
+## Rate limits
+
+Admission (Attach + roster) is not a budget. A live token, or a first-bind that
+must ask chain, can still cost CPU, ECDSA, and `GetEscrow`. Do not key the
+child's buckets on `RemoteAddr` (always versiond) or on claimed `peer_address`.
+Unknown-id fan-out is the special case: **per peer in the child**, **per origin
+IP on versiond**.
+
+| Layer | Key | Default | When it fires |
+|---|---|---|---|
+| JSON POSTs after auth (`RateLimitMiddleware`) | recovered sender | 100 rps, burst 200 | Existing session on InferenceUrl. Chat still records `no_receipt_interrupted`. |
+| Attach process floor (`chargeAttach`) | this child | 10_000/min (`MaxSessions`) | **Before ECDSA.** Known-peer renewals are refunded. |
+| Unknown-escrow first bind (child) | recovered gonka address | **2 unique ids/min**, process floor **300/min** | Cold `GetEscrow` on Attach / owner chat / height-sync seed |
+| Unknown-escrow first bind (versiond) | inbound **`X-Real-IP`** | **2 misses/min** | Same bind paths, after the child names a miss — next try never reaches the child |
+| `AttachResponse.limits` | advertised only | 6000 msg/min, 256 streams, 10 attach/min | Phase 4 will enforce these in a Connect interceptor. Zeros would look like "refuse all". |
+
+Nginx `limit_req` / `limit_conn` still cover InferenceUrl until phase 6. They are
+not the unknown-id budget and they do not key on gonka address.
+
+### Per-peer (child)
+
+After handshake, JSON POSTs spend a **per-sender** token bucket. Two peers do not
+share it. The RPC interceptor does not yet have the phase-4 messages/minute or
+per-method weights; those stay advertised on Attach so a client can self-throttle.
+
+The **unknown-escrow** budget is separate and stricter. `fetchEscrowForBind`
+runs when owner chat or first Attach finds no local session and no fresh
+`escrow_cache` row. Eligibility (owner / group slot) lives on the escrow record,
+so the query has to run **before** the host knows the peer belongs. Unique unknown
+or ineligible ids are charged **before** that query:
+
+1. Process floor: 300 cold lookups/min across all peers.
+2. Per peer: 2 distinct ids/min.
+3. Same id is cached **1 min** (`escrow_not_found` / settled / success). A
+   retry of that id does not re-query or re-charge.
+4. A successful load that shows the peer is the **creator or a slot member**
+   is **refunded**, so first bind of a real escrow does not consume the miss
+   budget. A stranger probing a real id keeps the charge.
+5. Warmed cache (this host already in `Slots`, or any host that saw create)
+   skips `GetEscrow` entirely — no charge.
+6. `ErrChainUnavailable` is not cached. The attempt still charges; a retry can
+   query again.
+
+Over budget returns `ErrEscrowLookupLimited`. JSON maps that to HTTP 429 +
+`X-Devshard-Error: escrow_lookup_limited`. Attach maps it to Connect
+`resource_exhausted` with the same header. `escrow_not_found` is the miss
+that **did** query (or hit the 1 min cache).
+
+The child **must not** key this on origin IP. Mixed fleets and hop-stamped
+`X-Real-IP` would collapse every client onto one 2/min slot.
+
+### Wrong escrow id by origin IP (versiond)
+
+The IP cap lives in **versiond**, on the hop that already sees the client.
+`SetXForwarded` rewrites `X-Forwarded-*`; versiond **keeps inbound `X-Real-IP`**
+from nginx / versiond-router and forwards it to the child. The child still
+does not key on it.
+
+Only first-bind POSTs count:
+
+- `/sessions/{id}/chat/completions`
+- `/sessions/{id}/height-sync`
+- `/sessions/{id}/rpc/…/PeerAuthService/Attach`
+
+`Watch`, `GetDiffs`, gossip, and other RPCs are not this limiter. `X-Forwarded-For`
+is ignored (caller-controlled). A missing or garbage `X-Real-IP` **skips** the
+bucket so an old hop that does not stamp the client cannot collapse the host onto
+loopback.
+
+The bucket fills **after** a child miss, not before ECDSA:
+
+```
+POST bind path
+    │
+    ├─ versiond: this origin IP already has 2 misses in the last minute?
+    │     yes → 429, X-Devshard-Error: escrow_lookup_limited, do not proxy
+    │
+    └─ proxy to child
+           Attach: process floor → ECDSA → fetchEscrowForBind (per peer)
+           JSON chat / height-sync: ECDSA → fetchEscrowForBind
+                │
+                └─ response X-Devshard-Error in
+                   {escrow_not_found, escrow_lookup_limited}
+                      → versiond records one miss for that X-Real-IP
+```
+
+Two distinct fake ids from `203.0.113.9` still hit the child (and spend the
+peer's 2/min if the recovered key is the same). The third is stopped at
+versiond even if the attacker rotates gonka keys. A second origin IP is
+unaffected. A well-formed bind that returns 2xx or a 403 (wrong owner on a
+real escrow) does **not** fill the IP bucket.
+
+Together: rotate keys → child per-peer + process floor; rotate IPs → versiond
+per origin; rotate both → still 300 chain lookups/min on that child.
+
+Phase 4's Attach-per-IP-before-ECDSA and phase 6 stick-table `conn_rate` are
+still the nginx replacements for **handshake flood** and TCP opens. This IP
+limiter only stops **unknown escrow-id** fan-out on the three bind paths.
+
+---
+
 ## HTTP/2, nginx skipped (phase 6)
 
 Same Connect handlers. Same protos. Same `/devshard/{version}/sessions/{id}/rpc/…` path
@@ -284,11 +385,14 @@ The nginx per-IP ceiling disappears for this path. Replace it on the published l
 - **Attach-per-IP before ECDSA** (phase 4) — one connection can still flood handshake RPCs
   on streams. Process-wide Attach/sec floor stays in the child.
 - **Per-peer channel limits** (phase 4) in the **child** interceptor: token-bucket plus
-  per-method weights keyed on the session peer, not on IP.
+  per-method weights keyed on the session peer, not on IP. Dedicated per-session
+  caps: `GetDiffs` 100/min, `GetMempool` 1000/min, `GetPayload` 1000/min.
 - HAProxy `maxconn`, Go's stream cap, and the per-peer channel limits.
 
-Phase 1 is not the place for the IP limiter: the child does not see client IPs on
-InferenceUrl, and nginx still covers that path.
+Unknown-escrow first-bind is already split (see **Rate limits** above): per gonka
+peer in the child, per `X-Real-IP` on versiond after `escrow_not_found` /
+`escrow_lookup_limited`. That is not Attach-flood control and not an allowlist.
+The child still must not key any limiter on `RemoteAddr`.
 
 The listen is **not** an admin port and **not** an IP allowlist. It is the same
 participant set as InferenceUrl: Attach (ECDSA bound to this host's gonka address,

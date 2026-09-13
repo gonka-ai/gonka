@@ -149,6 +149,8 @@ services:
       # Peers/executors here are compose service names resolving to private IPs,
       # so the dial-time SSRF guard must be off. Production leaves this unset.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
+      DEVSHARD_RPC_SERVER_ENABLED: ${DEVSHARD_RPC_SERVER_ENABLED:-false}
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
       # GONKA_HA is intentionally omitted from versiond in this fixture. The
@@ -269,6 +271,7 @@ services:
       DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
       # Hosts are compose service names resolving to private IPs; see versiond.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-}
       GATEWAY_MAX_TOKENS_CAP: "4096"
       # Host ping (gateway → used hosts). On by default; observability only.
       DEVSHARD_GATEWAY_HOST_PING_DISABLED: "false"

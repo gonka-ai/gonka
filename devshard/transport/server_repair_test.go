@@ -142,7 +142,7 @@ func (p *repairPair) wirePeersFrom(prober int) {
 			RoutePrefix:  testRoutePrefix,
 		})
 	}
-	p.servers[prober].SetPeerClients(peers)
+	p.servers[prober].SetPeerClients(HTTPPeerClients(peers))
 }
 
 func assertNoRepairBlame(t *testing.T, h *host.Host, srv *Server) {

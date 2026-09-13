@@ -255,6 +255,41 @@ func TestOwnerChat_FirstBindSingleGetEscrow(t *testing.T) {
 	require.Equal(t, 1, br.calls, "first-bind path must GetEscrow once (reuse for BuildGroup + CreateSession)")
 }
 
+func TestOwnerChat_WarmedCacheStillGetEscrow(t *testing.T) {
+	const escrowID = "9711"
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	addresses := make([]string, len(hosts))
+	urls := make(map[string]string, len(hosts))
+	for i, h := range hosts {
+		addresses[i] = h.Address()
+		urls[h.Address()] = "http://localhost"
+	}
+	require.NoError(t, store.PutEscrowCache(storage.EscrowCacheInfo{
+		EscrowID: escrowID, EpochID: 7, Amount: 100000, CreatorAddress: user.Address(),
+		Slots: addresses, TokenPrice: 1, SlotURLs: urls,
+	}))
+	inner := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID: escrowID, EpochID: 7, Amount: 100000,
+			CreatorAddress: user.Address(), Slots: addresses, TokenPrice: 1,
+		},
+	}
+	br := &countingGetEscrowBridge{MainnetBridge: inner}
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+
+	e := echo.New()
+	mgr.Register(e.Group(""))
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	_ = signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
+
+	require.Equal(t, 1, br.calls, "owner first chat still GetEscrow live even when escrow_cache is warm")
+}
+
 func TestNonOwnerChat_DoesNotBindSession(t *testing.T) {
 	const escrowID = "9706"
 	mgr, store, _, hostSigner := setupBindTestManager(t, escrowID)

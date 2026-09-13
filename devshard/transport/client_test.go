@@ -66,7 +66,7 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 	// client as that peer so /verify-timeout can challenge-receipt itself
 	// (owner is allowed on challenge-receipt). Without this, executorClient
 	// is nil and a refused timeout is accepted.
-	srv.SetPeerClients(map[int]*HTTPClient{0: client})
+	srv.SetPeerClients(map[int]HostPeerClient{0: client})
 	return client, ts, userSigner, group, h
 }
 

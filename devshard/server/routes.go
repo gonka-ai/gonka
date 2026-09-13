@@ -45,16 +45,18 @@ type StaleSessionReloader interface {
 type routeOptions struct {
 	rpcAuth    *rpcserver.PeerAuthHandler
 	rpcSession *rpcserver.SessionHandler
+	rpcMuxOpts []rpcserver.MuxOption
 }
 
 // RouteOption configures RegisterLazySessionRoutes.
 type RouteOption func(*routeOptions)
 
 // WithPeerRPC mounts Connect handlers under /sessions/:id/rpc/*.
-func WithPeerRPC(auth *rpcserver.PeerAuthHandler, session *rpcserver.SessionHandler) RouteOption {
+func WithPeerRPC(auth *rpcserver.PeerAuthHandler, session *rpcserver.SessionHandler, muxOpts ...rpcserver.MuxOption) RouteOption {
 	return func(o *routeOptions) {
 		o.rpcAuth = auth
 		o.rpcSession = session
+		o.rpcMuxOpts = muxOpts
 	}
 }
 
@@ -114,7 +116,7 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 	}
 
 	if cfg.rpcAuth != nil {
-		mountPeerRPC(g, rpcserver.NewMux(cfg.rpcAuth, cfg.rpcSession))
+		mountPeerRPC(g, rpcserver.NewMux(cfg.rpcAuth, cfg.rpcSession, cfg.rpcMuxOpts...))
 	}
 }
 
@@ -122,6 +124,12 @@ func canonicalEscrowIDMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		escrowID := c.Param("id")
 		if escrowID == "" {
+			return next(c)
+		}
+		// Watch and live Attach renewals use HostRPCEscrowID so the URL
+		// still matches /sessions/:id/rpc/. It is not a real escrow; JSON
+		// session routes must keep rejecting it.
+		if escrowID == transport.HostRPCEscrowID && isPeerRPCPath(c) {
 			return next(c)
 		}
 		if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
@@ -216,6 +224,9 @@ func sessionResolutionStatus(err error) (observability.MetricStatus, observabili
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return observability.MetricStatusError, observability.ReasonGetEscrowErr
 	}
+	if errors.Is(err, bridge.ErrEscrowLookupLimited) {
+		return observability.MetricStatusError, observability.ReasonRateLimited
+	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) {
 		return observability.MetricStatusError, observability.ReasonVersionConflict
 	}
@@ -280,6 +291,12 @@ func sessionHTTPError(c echo.Context, err error) error {
 	}
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return transport.HTTPError(c, http.StatusServiceUnavailable, transport.DevshardErrorChainUnavailable, err.Error())
+	}
+	if errors.Is(err, bridge.ErrEscrowLookupLimited) {
+		return transport.HTTPError(c, http.StatusTooManyRequests, transport.DevshardErrorEscrowLookupLimited, "too many escrow lookups")
+	}
+	if errors.Is(err, bridge.ErrEscrowNotFound) {
+		return transport.HTTPError(c, http.StatusInternalServerError, transport.DevshardErrorEscrowNotFound, err.Error())
 	}
 	if errors.Is(err, bridge.ErrEscrowSettled) || errors.Is(err, storage.ErrSessionNotActive) {
 		return transport.HTTPError(c, http.StatusConflict, transport.DevshardErrorEscrowSettled, err.Error())

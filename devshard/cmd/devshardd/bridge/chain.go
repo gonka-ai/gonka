@@ -58,6 +58,8 @@ func NewChainBridge(client *chain.Client, submitter Submitter) *ChainBridge {
 
 func (b *ChainBridge) Subscribe(l *events.Listener) {
 	l.OnDevshardEscrowCreated(func(_ context.Context, e events.DevshardEscrowCreatedEvent) {
+		// The websocket event is id-only. Fetch once and hand the escrow to
+		// OnEscrowCreatedHandler (directory warm). Do not CreateSession here.
 		info, err := b.GetEscrow(e.EscrowID)
 		if err != nil {
 			slog.Warn("chain events: failed to fetch escrow", "escrow_id", e.EscrowID, "error", err)

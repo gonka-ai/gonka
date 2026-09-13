@@ -142,6 +142,10 @@ type EscrowCacheInfo struct {
 	ValidationRate            uint32   `json:"validation_rate"`
 	VoteThresholdFactor       uint32   `json:"vote_threshold_factor"`
 	EpochID                   uint64   `json:"epoch_id"`
+	// SlotURLs is {validator address → InferenceUrl} captured at warm time
+	// when this host is in Slots. Local directory metadata, not the state
+	// root. Empty when this process is not a group member.
+	SlotURLs map[string]string `json:"slot_urls,omitempty"`
 	// CachedAt is the unix time the row was written, stamped by the store.
 	// Readers use it to refuse a row that is too old to stand in for the chain;
 	// rows written before this field existed read as 0 and count as stale.

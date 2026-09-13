@@ -20,6 +20,11 @@ import (
 const (
 	defaultStackTimeout       = 12 * time.Minute
 	composeCleanupStopTimeout = 5 * time.Second
+	// versiond hosts declare stop_grace_period: 30m so operator evacuation can
+	// drain. Fault-injection StopService must not inherit that: without
+	// --timeout, compose waits the full grace, the 2m CommandContext SIGKILLs
+	// the CLI, and the container is still running (H27/H40).
+	composeFaultStopTimeout = 10 * time.Second
 	// gatewayComposeService is the citest gateway. Heartbeat/seed and escrow
 	// warmup wait for catalog admission inside the process, but client chat
 	// does not. Start the process after the router has admitted the version
@@ -235,6 +240,15 @@ func withoutComposeService(names []string, skip string) []string {
 	return out
 }
 
+func composeStopArgs(fileArgs []string, service string, timeout time.Duration) []string {
+	seconds := int((timeout + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	args := append([]string{"compose"}, fileArgs...)
+	return append(args, "stop", "--timeout", strconv.Itoa(seconds), service)
+}
+
 func (s *Stack) composeFileArgs() []string {
 	args := []string{"-f", s.ComposePath}
 	if s.Observability {
@@ -309,12 +323,19 @@ func (s *Stack) StopService(t *testing.T, service string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "stop", service)...)
+	cmd := exec.CommandContext(ctx, "docker", composeStopArgs(s.composeFileArgs(), service, composeFaultStopTimeout)...)
 	cmd.Dir = s.WorkDir
 	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose stop %s: %v\n%s", service, err, out)
+	}
+	running, err := s.ServiceRunning(service)
+	if err != nil {
+		t.Fatalf("inspect stopped %s: %v", service, err)
+	}
+	if running {
+		t.Fatalf("docker compose stop %s: container still running", service)
 	}
 }
 
@@ -334,12 +355,9 @@ func (s *Stack) StopServiceGracefully(service string, grace time.Duration) (Serv
 	if err != nil {
 		return ServiceStopResult{}, err
 	}
-	graceSeconds := int((grace + time.Second - 1) / time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), grace+30*time.Second)
 	defer cancel()
-	args := append([]string{"compose"}, s.composeFileArgs()...)
-	args = append(args, "stop", "--timeout", strconv.Itoa(graceSeconds), service)
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", composeStopArgs(s.composeFileArgs(), service, grace)...)
 	cmd.Dir = s.WorkDir
 	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()

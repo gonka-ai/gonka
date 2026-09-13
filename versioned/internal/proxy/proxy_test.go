@@ -158,6 +158,34 @@ func TestProxy_RouteSwapKeepsAcquiredRequestOnRetiredTarget(t *testing.T) {
 	}
 }
 
+func TestProxy_PreservesXRealIP(t *testing.T) {
+	var got string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Real-IP")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	addr := strings.TrimPrefix(backend.URL, "http://")
+	handler := Handler(newRoutes(map[string]string{"v1": addr}))
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/v1/sessions/1/rpc/connectrpc.health.v1.Health/Check", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Real-IP", "203.0.113.9")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got != "203.0.113.9" {
+		t.Fatalf("child X-Real-IP = %q, want the ingress origin", got)
+	}
+}
+
 func TestProxy_BasicForwarding(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "path=%s", r.URL.Path)
