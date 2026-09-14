@@ -104,7 +104,7 @@ do not (`vllm/entrypoints/openai/chat_completion/serving.py`). What decides is
 | 2× B300 | 2 | 0.90 | 65536 | 32 | 2030 |
 | 4× B200 | 4 | 0.90 | 65536 | 32 | 2727 |
 | 4× H200 | 4 | 0.90 | 16384 | 16 | 1439 |
-| 8× H100 | 8 | 0.95 | 65536 | 16 | 1612 (Kaitaku; not reproduced on this image, see below) |
+| 8× H100 | 8 | 0.95 | 16384 | 8 | 448 (PCIe, this image); 1612 (Kaitaku, SXM, batch 16 — see below) |
 
 The matching files are `deploy/join/node-config-glm53flash-*.json`. All of them pin the model
 revision above, set FP8 KV cache, `--block-size 2304` and `--max-num-seqs 256`, and disable
@@ -126,14 +126,18 @@ two MLNodes at TP=4 rather than one at TP=8.
   therefore reports `poc_validation_inference: false` for `model_type glm5_next` and never
   attempts a lease there: GLM nodes abort live inference during validation, and the gateway
   routes accordingly. Other models are unchanged.
-* **8×H100 TP=8 could not be reproduced on this image.** On the 8×H100 VM available for this
-  release, GLM faults in the FlashInfer sparse-MLA sm90 kernel (`BatchMLAPagedAttentionSM90Run`,
-  XID 31 on all eight GPUs) on the first heavy forward — plain inference with sixteen 1.1k-token
-  prompts as much as PoC — with the shipped profile and with every variation tried: driver
-  580.173 and 595.71, `--disable-custom-all-reduce`, fp8 and bf16 KV, a fresh FlashInfer JIT
-  cache, and Kaitaku's own `mlnode-h100-glm-5-3-flash:…-test-k3` image. Shards were verified by
-  sha256. The 1612 nonce/min figure is Kaitaku's measurement on their host; treat the H100
-  profile as unverified until it runs on another 8×H100.
+* **8×H100 TP=8: batch 8 and `--max-num-batched-tokens 16384`, not 16 / 65536.** At TP=8 a
+  16 384-token forward faults in the FlashInfer sparse-MLA sm90 kernel
+  (`BatchMLAPagedAttentionSM90Run`, XID 31 on every GPU) — PoC at batch 16 and, on the SXM
+  host, plain inference with sixteen 1.1k-token prompts alike; an 8 192-token forward does not.
+  Reproduced on an 8×H100 SXM VM (drivers 580.173 and 595.71, fp8 and bf16 KV, custom
+  all-reduce on and off, a fresh FlashInfer JIT cache, Kaitaku's own image) and on 8×H100 PCIe
+  (driver 595.84). The profile therefore runs PoC at batch 8 and caps prefill steps at 16 384
+  tokens: on 8×H100 PCIe with this image that gives 448 nonce/min, two PoC start/stop cycles
+  with a correct control prompt after each, and sixteen concurrent 1.1k-token prompts served
+  without a fault. Kaitaku's 1612 nonce/min at batch 16 on their SXM host is not reproduced
+  here; the difference is still open. PCIe all-reduce is the throughput bottleneck at TP=8, so
+  an SXM host with the same settings should land well above 448.
 * **NVSwitch hosts inside VMs need `NCCL_NVLS_ENABLE=0`.** On the 8×H200 VM the engine failed
   to start with `NCCL error: unhandled cuda error` — NVLS multicast allocation returned CUDA
   401 after `NV_ERR_FABRIC_STATE_OUT_OF_SYNC` in `dmesg`. `NCCL_NVLS_ENABLE=0` (with
@@ -192,7 +196,13 @@ pushed honest GLM nodes to ≈15 %.
 
 The golden reference artifact
 (`mlnode/packages/benchmarks/scripts/poc_validation/artifacts/zai-org-glm-5.3-flash.json`) is
-re-baked with 0.1.5 on 4×H200 TP=4, same seed and public key. Against the previous 8×H100
+re-baked with 0.1.5 on 4×H200 TP=4 at batch 16, same seed and public key; an 8×H100 TP=8
+variant baked at batch 8 sits beside it as `…-h100-tp8.json`. A reference is tied to the
+topology and batch it was baked with: on the same topology at the node's default batch it
+reproduces bit-exactly (0/200 on 8×H100 PCIe against the H100 variant), on another topology it
+shows the honest floor (5.5 %, p = 0.99, against the H200 reference on the same host).
+`make_artifact.py` and `validate.py` therefore leave the batch unset so the node's
+`POC_BATCH_SIZE_DEFAULT` is used, and the bake batch is recorded in the artifact. Against the previous 8×H100
 0.1.4 set: the 63 first-in-batch positions differ 100 % (median L2 1.15 — the garbage), the
 other 937 differ 5.7 % (median 0.24 — the honest cross-topology floor); the previously
 documented "11.7 % honest cross-generation floor" was 6.3 points of that garbage plus 5.4

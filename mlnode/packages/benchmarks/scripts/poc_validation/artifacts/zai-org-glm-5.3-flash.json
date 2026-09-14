@@ -8,6 +8,7 @@
   "node_id": 0,
   "node_count": 1,
   "dist_threshold": 0.44,
+  "collection_batch_size": 16,
   "stat_test": {
     "dist_threshold": 0.44,
     "p_mismatch": 0.1,
