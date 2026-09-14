@@ -428,6 +428,13 @@ message DevshardEscrowParams {
   uint32 validation_rate = 16;
   uint32 vote_threshold_factor = 17; // percent, e.g. 50 == 50%
   uint32 default_auto_seal_every_n_nonces = 18;
+  repeated DevshardVersionPolicy version_policies = 19;
+}
+
+message DevshardVersionPolicy {
+  option (gogoproto.equal) = true;
+  string name = 1;
+  bool reports_validated = 2;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

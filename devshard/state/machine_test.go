@@ -1657,32 +1657,32 @@ func TestApplyDiff_Validation_DuplicateAddress(t *testing.T) {
 }
 
 func TestApplyDiff_ValidationVote_MultiSlotWeight(t *testing.T) {
-	// 3 signers: signer[0] owns 2 slots (0,1), signer[1] owns 1 slot (2), signer[2] owns 1 slot (3).
+	// 3 signers: signer[0] owns 1 slot (0), signer[1] owns 1 slot (1), signer[2] owns 2 slots (2,3).
 	// Total 4 slots. VoteThreshold = 4/2 = 2. Need >2 weighted votes to resolve.
 	signers := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
 	user := testutil.MustGenerateKey(t)
-	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1})
+	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 2})
 	config := testutil.DefaultConfig(len(group)) // VoteThreshold = 4/2 = 2
 	verifier := signing.NewSecp256k1Verifier()
 	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
-	// Inference 1: executor = group[1%4].SlotID = 1 (owned by signer[0]).
+	// Inference 1: executor = group[1%4].SlotID = 1 (owned by signer[1]).
 	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
 
 	// Challenge.
-	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 2, Valid: false, EscrowId: "escrow-1"}
-	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[1], valMsg)
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[0], valMsg)
 	nonce := sm.SnapshotState().LatestNonce + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	// Signer[0] votes invalid from slot 0. Weight = 2 (owns slots 0 and 1).
-	voteMsg := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 0, VoteValid: false, EscrowId: "escrow-1"}
-	voteMsg.ProposerSig = testutil.SignProposerTx(t, signers[0], voteMsg)
+	// Signer[2] votes invalid from slot 2. Weight = 2 (owns slots 2 and 3).
+	voteMsg := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 2, VoteValid: false, EscrowId: "escrow-1"}
+	voteMsg.ProposerSig = testutil.SignProposerTx(t, signers[2], voteMsg)
 	nonce = sm.SnapshotState().LatestNonce + 1
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txVote(voteMsg)})
 	_, err = sm.ApplyDiff(diff)
@@ -1699,37 +1699,37 @@ func TestApplyDiff_ValidationVote_MultiSlotDedup(t *testing.T) {
 	// 4 signers: signer[0] owns 2 slots (0,1), others own 1 each (2,3,4).
 	// Total 5 slots. VoteThreshold = 5/2 = 2. Need >2 weighted votes.
 	// Signer[0] weight=2, so one vote reaches threshold -- use more signers.
-	// 5 signers: signer[0] owns 2 slots (0,1), others own 1 each (2,3,4,5).
-	// Total 6 slots. VoteThreshold = 6/2 = 3. Signer[0] weight=2, won't resolve alone.
+	// 5 signers: signer[2] owns 2 slots (2,3), others own 1 each (0,1,4,5).
+	// Total 6 slots. VoteThreshold = 6/2 = 3. Signer[2] weight=2, won't resolve alone.
 	signers := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
 	user := testutil.MustGenerateKey(t)
-	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1, 1, 1})
+	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 2, 1, 1})
 	config := testutil.DefaultConfig(len(group)) // VoteThreshold = 6/2 = 3
 	verifier := signing.NewSecp256k1Verifier()
 	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
-	// Inference 1: executor = group[1%6].SlotID = 1 (owned by signer[0]).
+	// Inference 1: executor = group[1%6].SlotID = 1 (owned by signer[1]).
 	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
 
-	// Challenge from signer[1] (slot 2).
-	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 2, Valid: false, EscrowId: "escrow-1"}
-	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[1], valMsg)
+	// Challenge from signer[0] (slot 0).
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[0], valMsg)
 	nonce := sm.SnapshotState().LatestNonce + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	// Signer[0] votes from slot 0 (weight=2). VotesInvalid = 1+2 = 3, not > 3. Still Challenged.
-	vote1 := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 0, VoteValid: false, EscrowId: "escrow-1"}
-	vote1.ProposerSig = testutil.SignProposerTx(t, signers[0], vote1)
+	// Signer[2] votes from slot 2 (weight=2). VotesInvalid = 1+2 = 3, not > 3. Still Challenged.
+	vote1 := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 2, VoteValid: false, EscrowId: "escrow-1"}
+	vote1.ProposerSig = testutil.SignProposerTx(t, signers[2], vote1)
 
-	// Signer[0] votes again from slot 1 (other owned slot) -> must be rejected.
-	vote2 := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 1, VoteValid: false, EscrowId: "escrow-1"}
-	vote2.ProposerSig = testutil.SignProposerTx(t, signers[0], vote2)
+	// Signer[2] votes again from slot 3 (other owned slot) -> must be rejected.
+	vote2 := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 3, VoteValid: false, EscrowId: "escrow-1"}
+	vote2.ProposerSig = testutil.SignProposerTx(t, signers[2], vote2)
 
 	nonce = sm.SnapshotState().LatestNonce + 1
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txVote(vote1), txVote(vote2)})
@@ -3708,4 +3708,90 @@ func TestHostStats_Validated_CountsSampledPassesOnly(t *testing.T) {
 	require.Equal(t, uint32(0), validated(e), "a pass credited before invalidation must not survive it")
 	require.Equal(t, uint32(1), invalid(e))
 	require.Equal(t, uint32(1), finished(e), "invalidation does not undo the finish count")
+}
+
+func TestHostStats_Validated_ChallengeSubtractsOnlyThatInference(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 100000)
+	apply := func(txs ...*types.DevshardTx) {
+		nonce := sm.SnapshotState().LatestNonce + 1
+		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, txs))
+		require.NoError(t, err)
+	}
+	validation := func(id uint64, slot uint32, valid bool) *types.DevshardTx {
+		msg := &types.MsgValidation{InferenceId: id, ValidatorSlot: slot, Valid: valid, EscrowId: "escrow-1"}
+		msg.ProposerSig = testutil.SignProposerTx(t, hosts[slot], msg)
+		return txValidation(msg)
+	}
+
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+	for sm.SnapshotState().LatestNonce < 5 {
+		apply()
+	}
+	applyStartConfirmFinish(t, sm, user, hosts, 6)
+	require.Equal(t, uint32(1), sm.SnapshotState().Inferences[6].ExecutorSlot)
+
+	apply(validation(1, 2, true), validation(1, 3, true))
+	apply(validation(6, 2, true))
+	require.Equal(t, uint32(3), sm.SnapshotState().HostStats[1].Validated)
+
+	apply(validation(6, 4, false))
+	require.Equal(t, types.StatusChallenged, sm.SnapshotState().Inferences[6].Status)
+	require.Equal(t, uint32(2), sm.SnapshotState().HostStats[1].Validated, "only the challenged inference's pass is withdrawn")
+}
+
+func TestHostStats_Validated_MultiSlotValidatorCountsOnce(t *testing.T) {
+	signers := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 2})
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+
+	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 2, Valid: true, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[2], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)}))
+	require.NoError(t, err)
+
+	st := sm.SnapshotState()
+	require.Equal(t, uint32(2), st.Inferences[1].VotesValid, "vote weight follows slot count")
+	require.Equal(t, uint32(1), st.HostStats[1].Validated, "a pass is one replay, not one per slot")
+}
+
+func TestApplyDiff_ValidationVote_ExecutorAddressCannotVote(t *testing.T) {
+	signers := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1})
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+
+	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 2, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[1], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)}))
+	require.NoError(t, err)
+
+	for _, slot := range []uint32{0, 1} {
+		vote := &types.MsgValidationVote{InferenceId: 1, VoterSlot: slot, VoteValid: true, EscrowId: "escrow-1"}
+		vote.ProposerSig = testutil.SignProposerTx(t, signers[0], vote)
+		nonce = sm.SnapshotState().LatestNonce + 1
+		_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txVote(vote)}))
+		require.ErrorIs(t, err, types.ErrSelfValidation)
+	}
+	st := sm.SnapshotState()
+	require.Equal(t, types.StatusChallenged, st.Inferences[1].Status)
+	require.Equal(t, uint32(0), st.HostStats[1].Validated)
 }

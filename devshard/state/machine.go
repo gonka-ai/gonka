@@ -1420,6 +1420,9 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	if _, ok := sm.slotToAddress[msg.VoterSlot]; !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.VoterSlot)
 	}
+	if sm.slotToAddress[msg.VoterSlot] == sm.slotToAddress[rec.ExecutorSlot] {
+		return types.ErrSelfValidation
+	}
 
 	// Skip already-resolved challenge votes (allows safe vote batching).
 	if rec.Status == types.StatusValidated || rec.Status == types.StatusInvalidated {
@@ -1646,6 +1649,14 @@ func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
 		hs.Cost = 0
 	} else {
 		hs.Cost -= rec.ActualCost
+	}
+	if hs.Finished > 0 {
+		hs.Finished--
+	}
+	if passes := rec.ValidatedBy.Count(); hs.Validated < passes {
+		hs.Validated = 0
+	} else {
+		hs.Validated -= passes
 	}
 
 	logging.Debug("inference -> timed_out", "subsystem", "state",

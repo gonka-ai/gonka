@@ -178,7 +178,7 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 		return fmt.Errorf("no slots in escrow")
 	}
 	seenStatSlots := make(map[uint32]bool, len(msg.HostStats))
-	passPolicy := DevshardPassPolicyFor(params.ApprovedVersions, msg.StateRootAndProtocolVersion, escrow.ValidationRate)
+	passPolicy := DevshardPassPolicyFor(params, msg.StateRootAndProtocolVersion, escrow.ValidationRate)
 	var totalCost uint64
 	for _, hs := range msg.HostStats {
 		if seenStatSlots[hs.SlotId] {

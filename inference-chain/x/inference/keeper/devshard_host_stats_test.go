@@ -10,15 +10,22 @@ import (
 )
 
 func TestDevshardPassPolicyFor(t *testing.T) {
-	approved := []*types.DevshardApprovedVersion{
-		{Name: "v6", Binary: "b6", Sha256: "s6"},
-		{Name: "v7", Binary: "b7", Sha256: "s7", ReportsValidated: true},
+	params := &types.DevshardEscrowParams{
+		ApprovedVersions: []*types.DevshardApprovedVersion{
+			{Name: "v6", Binary: "b6", Sha256: "s6"},
+			{Name: "v7", Binary: "b7", Sha256: "s7", ReportsValidated: true},
+		},
 	}
+	require.NoError(t, types.ApplyDevshardVersionPolicies(nil, params))
 
-	require.Equal(t, keeper.DevshardPassPolicy{ValidationRateBps: 1000}, keeper.DevshardPassPolicyFor(nil, "anything", 1000))
-	require.Equal(t, keeper.DevshardPassPolicy{LegacyValidated: true, ValidationRateBps: 1000}, keeper.DevshardPassPolicyFor(approved, "v6", 1000))
-	require.Equal(t, keeper.DevshardPassPolicy{ValidationRateBps: 1000}, keeper.DevshardPassPolicyFor(approved, "v7", 1000))
-	require.Equal(t, keeper.DevshardPassPolicy{LegacyValidated: true, ValidationRateBps: 1000}, keeper.DevshardPassPolicyFor(approved, "v8", 1000))
+	require.Equal(t, keeper.DevshardPassPolicy{LegacyValidated: true, ValidationRateBps: 1000}, keeper.DevshardPassPolicyFor(nil, "anything", 1000))
+	require.Equal(t, keeper.DevshardPassPolicy{LegacyValidated: true, ValidationRateBps: 1000}, keeper.DevshardPassPolicyFor(&types.DevshardEscrowParams{}, "v7", 1000))
+	require.Equal(t, keeper.DevshardPassPolicy{LegacyValidated: true, ValidationRateBps: 1000}, keeper.DevshardPassPolicyFor(params, "v6", 1000))
+	require.Equal(t, keeper.DevshardPassPolicy{ValidationRateBps: 1000}, keeper.DevshardPassPolicyFor(params, "v7", 1000))
+	require.Equal(t, keeper.DevshardPassPolicy{LegacyValidated: true, ValidationRateBps: 1000}, keeper.DevshardPassPolicyFor(params, "v8", 1000))
+
+	params.ApprovedVersions = params.ApprovedVersions[:1]
+	require.Equal(t, keeper.DevshardPassPolicy{ValidationRateBps: 1000}, keeper.DevshardPassPolicyFor(params, "v7", 1000))
 }
 
 func TestDevshardSprtPassCap(t *testing.T) {
@@ -61,4 +68,66 @@ func TestAggregateDevshardHostStats_PassPolicy(t *testing.T) {
 	require.NoError(t, keeper.AggregateDevshardHostStatsIntoCurrentEpochStats(p, reported, assigned, slots,
 		keeper.DevshardPassPolicy{ValidationRateBps: 1000}))
 	require.Equal(t, uint64(0), p.CurrentEpochStats.ValidatedInferences, "a validated-aware version reporting no passes gets none")
+}
+
+func TestApplyDevshardVersionPolicies(t *testing.T) {
+	current := &types.DevshardEscrowParams{ApprovedVersions: []*types.DevshardApprovedVersion{
+		{Name: "v6", Binary: "b", Sha256: "s"},
+		{Name: "v7", Binary: "b", Sha256: "s", ReportsValidated: true},
+	}}
+	require.NoError(t, types.ApplyDevshardVersionPolicies(nil, current))
+	require.Equal(t, []*types.DevshardVersionPolicy{
+		{Name: "v6"}, {Name: "v7", ReportsValidated: true},
+	}, current.VersionPolicies)
+	require.NoError(t, types.ApplyDevshardVersionPolicies(current, nil))
+
+	next := &types.DevshardEscrowParams{ApprovedVersions: []*types.DevshardApprovedVersion{
+		{Name: "v6", Binary: "b2", Sha256: "s2"},
+		{Name: "v7", Binary: "b", Sha256: "s", ReportsValidated: true},
+		{Name: "v8", Binary: "b", Sha256: "s", ReportsValidated: true},
+	}}
+	require.NoError(t, types.ApplyDevshardVersionPolicies(current, next))
+	require.Equal(t, []*types.DevshardVersionPolicy{
+		{Name: "v6"}, {Name: "v7", ReportsValidated: true}, {Name: "v8", ReportsValidated: true},
+	}, next.VersionPolicies)
+
+	require.ErrorContains(t, types.ApplyDevshardVersionPolicies(current, &types.DevshardEscrowParams{ApprovedVersions: []*types.DevshardApprovedVersion{
+		{Name: "v6", Binary: "b", Sha256: "s", ReportsValidated: true},
+	}}), "reports_validated cannot change")
+	require.ErrorContains(t, types.ApplyDevshardVersionPolicies(current, &types.DevshardEscrowParams{ApprovedVersions: []*types.DevshardApprovedVersion{
+		{Name: "v7", Binary: "b", Sha256: "s"},
+	}}), "reports_validated cannot change")
+
+	removed := &types.DevshardEscrowParams{ApprovedVersions: []*types.DevshardApprovedVersion{
+		{Name: "v6", Binary: "b", Sha256: "s"},
+	}}
+	require.NoError(t, types.ApplyDevshardVersionPolicies(current, removed))
+	require.Equal(t, current.VersionPolicies, removed.VersionPolicies)
+	require.ErrorContains(t, types.ApplyDevshardVersionPolicies(removed, &types.DevshardEscrowParams{ApprovedVersions: []*types.DevshardApprovedVersion{
+		{Name: "v6", Binary: "b", Sha256: "s"},
+		{Name: "v7", Binary: "b", Sha256: "s"},
+	}}), "reports_validated cannot change")
+
+	require.ErrorContains(t, types.ApplyDevshardVersionPolicies(current, &types.DevshardEscrowParams{
+		VersionPolicies: []*types.DevshardVersionPolicy{{Name: "v7"}},
+	}), "reports_validated cannot change")
+	dropped := &types.DevshardEscrowParams{VersionPolicies: []*types.DevshardVersionPolicy{{Name: "v6"}}}
+	require.NoError(t, types.ApplyDevshardVersionPolicies(current, dropped))
+	require.Equal(t, current.VersionPolicies, dropped.VersionPolicies, "recorded policies are carried even when omitted")
+}
+
+func TestApplyDevshardVersionPolicies_RecordsPreexistingApprovals(t *testing.T) {
+	current := &types.DevshardEscrowParams{ApprovedVersions: []*types.DevshardApprovedVersion{
+		{Name: "v6", Binary: "b", Sha256: "s"},
+	}}
+	next := &types.DevshardEscrowParams{ApprovedVersions: []*types.DevshardApprovedVersion{
+		{Name: "v6", Binary: "b", Sha256: "s", ReportsValidated: true},
+	}}
+	require.ErrorContains(t, types.ApplyDevshardVersionPolicies(current, next), "reports_validated cannot change")
+
+	next = &types.DevshardEscrowParams{ApprovedVersions: []*types.DevshardApprovedVersion{
+		{Name: "v7", Binary: "b", Sha256: "s", ReportsValidated: true},
+	}}
+	require.NoError(t, types.ApplyDevshardVersionPolicies(current, next))
+	require.Equal(t, []*types.DevshardVersionPolicy{{Name: "v6"}, {Name: "v7", ReportsValidated: true}}, next.VersionPolicies)
 }

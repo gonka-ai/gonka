@@ -654,6 +654,7 @@ func (e *escrowState) mergeHostStats(nonce uint64, slot uint32, stats types.Host
 	e.HostStatsNonce[slot] = nonce
 	merged := maxHostStats(e.HostStats[slot], stats)
 	merged.Validated = stats.Validated
+	merged.Finished = stats.Finished
 	e.HostStats[slot] = merged
 }
 

@@ -24,6 +24,20 @@ func setParticipantForDevshardTest(t *testing.T, k keeper.Keeper, ctx sdk.Contex
 	require.NoError(t, err)
 }
 
+func setReportingVersionForDevshardTest(t *testing.T, k keeper.Keeper, ctx sdk.Context, reportsValidated bool) {
+	t.Helper()
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	if params.DevshardEscrowParams == nil {
+		params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
+	}
+	params.DevshardEscrowParams.ApprovedVersions = []*types.DevshardApprovedVersion{
+		{Name: settlementVersion, Binary: "b", Sha256: "s", ReportsValidated: reportsValidated},
+	}
+	require.NoError(t, types.ApplyDevshardVersionPolicies(nil, params.DevshardEscrowParams))
+	require.NoError(t, k.SetParams(ctx, params))
+}
+
 func setActiveParticipantsForDevshardTest(t *testing.T, k keeper.Keeper, ctx sdk.Context, epoch uint64, addrs ...string) {
 	t.Helper()
 	participants := make([]*types.ActiveParticipant, 0, len(addrs))
@@ -287,6 +301,7 @@ func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 	setParticipantForDevshardTest(t, k, ctx, addrH2)
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
 	setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
+	setReportingVersionForDevshardTest(t, k, ctx, true)
 
 	creator := sdk.AccAddress(make([]byte, 20))
 	creator[0] = 0x21
@@ -360,6 +375,7 @@ func TestSettleDevshardEscrow_AggregatesParticipantStatsWithRemainderSlots(t *te
 	setParticipantForDevshardTest(t, k, ctx, addrH2)
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
 	setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
+	setReportingVersionForDevshardTest(t, k, ctx, true)
 
 	creator := sdk.AccAddress(make([]byte, 20))
 	creator[0] = 0x22
@@ -704,4 +720,147 @@ func TestSettleDevshardEscrow_AllowlistBlocks(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "address is not allowed to create devshard escrows")
+}
+
+func settleStatsFixture(t *testing.T, reportsValidated bool, validationRate uint32, nonce uint64, hostStats []*types.DevshardSettlementHostStats) (types.Participant, types.Participant) {
+	t.Helper()
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keyH1, err := dcrdsecp.GeneratePrivateKey()
+	require.NoError(t, err)
+	keyH2, err := dcrdsecp.GeneratePrivateKey()
+	require.NoError(t, err)
+	addrH1 := cosmosAddressFromDcrdKey(keyH1).String()
+	addrH2 := cosmosAddressFromDcrdKey(keyH2).String()
+	setParticipantForDevshardTest(t, k, ctx, addrH1)
+	setParticipantForDevshardTest(t, k, ctx, addrH2)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+	setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
+	setReportingVersionForDevshardTest(t, k, ctx, reportsValidated)
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0x23
+	escrow := types.DevshardEscrow{
+		Id:             1,
+		Creator:        creator.String(),
+		Amount:         5_000,
+		Slots:          []string{addrH1, addrH1, addrH2, addrH2},
+		EpochIndex:     5,
+		ValidationRate: validationRate,
+	}
+	_, err = k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+
+	msg := buildSettlementTestDataWithNonce(t, escrow, []*dcrdsecp.PrivateKey{keyH1, keyH1, keyH2, keyH2}, hostStats, 0, nonce)
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil).AnyTimes()
+	mocks.BankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes()
+	_, err = ms.SettleDevshardEscrow(ctx, msg)
+	require.NoError(t, err)
+
+	h1, found := k.GetParticipant(ctx, addrH1)
+	require.True(t, found)
+	h2, found := k.GetParticipant(ctx, addrH2)
+	require.True(t, found)
+	return h1, h2
+}
+
+func TestSettleDevshardEscrow_LegacyVersionKeepsDerivedPasses(t *testing.T) {
+	h1, h2 := settleStatsFixture(t, false, 1000, 400, []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Missed: 2, Invalid: 3, Cost: 10},
+		{SlotId: 1, Missed: 0, Invalid: 0, Cost: 10},
+		{SlotId: 2, Missed: 1, Invalid: 1, Cost: 10},
+		{SlotId: 3, Missed: 0, Invalid: 0, Cost: 10},
+	})
+	require.Equal(t, uint64(3), h1.CurrentEpochStats.InvalidatedInferences)
+	require.Equal(t, uint64(195), h1.CurrentEpochStats.ValidatedInferences, "(100-2-3)+(100-0-0)")
+	require.Equal(t, uint64(1), h2.CurrentEpochStats.InvalidatedInferences)
+	require.Equal(t, uint64(198), h2.CurrentEpochStats.ValidatedInferences, "(100-1-1)+(100-0-0)")
+}
+
+func TestSettleDevshardEscrow_ReportingVersionCapsPasses(t *testing.T) {
+	h1, h2 := settleStatsFixture(t, true, 1000, 400, []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Missed: 2, Invalid: 3, Cost: 10, Finished: 20, Validated: 20},
+		{SlotId: 1, Missed: 0, Invalid: 0, Cost: 10, Finished: 0, Validated: 0},
+		{SlotId: 2, Missed: 1, Invalid: 1, Cost: 10, Finished: 90, Validated: 9},
+		{SlotId: 3, Missed: 0, Invalid: 0, Cost: 10, Finished: 100, Validated: 12},
+	})
+	require.Equal(t, uint64(3), h1.CurrentEpochStats.InvalidatedInferences)
+	require.Equal(t, uint64(6), h1.CurrentEpochStats.ValidatedInferences, "capped by finished work, not by nonce padding")
+	require.Equal(t, uint64(1), h2.CurrentEpochStats.InvalidatedInferences)
+	require.Equal(t, uint64(21), h2.CurrentEpochStats.ValidatedInferences, "9 + 12, both inside the cap")
+}
+
+func TestSettleDevshardEscrow_PolicySurvivesRemovalAndReapproval(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keyH1, err := dcrdsecp.GeneratePrivateKey()
+	require.NoError(t, err)
+	keyH2, err := dcrdsecp.GeneratePrivateKey()
+	require.NoError(t, err)
+	addrH1 := cosmosAddressFromDcrdKey(keyH1).String()
+	addrH2 := cosmosAddressFromDcrdKey(keyH2).String()
+	setParticipantForDevshardTest(t, k, ctx, addrH1)
+	setParticipantForDevshardTest(t, k, ctx, addrH2)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+	setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
+
+	updateParams := func(versions ...*types.DevshardApprovedVersion) error {
+		params, err := k.GetParams(ctx)
+		require.NoError(t, err)
+		next := *params.DevshardEscrowParams
+		next.ApprovedVersions = versions
+		params.DevshardEscrowParams = &next
+		_, err = ms.UpdateParams(ctx, &types.MsgUpdateParams{Authority: k.GetAuthority(), Params: params})
+		return err
+	}
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	legacy := &types.DevshardApprovedVersion{Name: "legacy", Binary: "https://example.com/legacy.zip", Sha256: sha}
+	reporting := &types.DevshardApprovedVersion{Name: settlementVersion, Binary: "https://example.com/dev.zip", Sha256: sha, ReportsValidated: true}
+	require.NoError(t, updateParams(legacy, reporting))
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0x24
+	escrow := types.DevshardEscrow{
+		Id:             1,
+		Creator:        creator.String(),
+		Amount:         5_000,
+		Slots:          []string{addrH1, addrH1, addrH2, addrH2},
+		EpochIndex:     5,
+		ValidationRate: 1000,
+	}
+	_, err = k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+
+	require.NoError(t, updateParams(legacy))
+	flipped := *reporting
+	flipped.ReportsValidated = false
+	require.ErrorContains(t, updateParams(legacy, &flipped), "reports_validated cannot change")
+	require.NoError(t, updateParams(legacy, reporting))
+
+	hostStats := []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Missed: 2, Invalid: 3, Cost: 10, Finished: 20, Validated: 20},
+		{SlotId: 1, Missed: 0, Invalid: 0, Cost: 10},
+		{SlotId: 2, Missed: 1, Invalid: 1, Cost: 10, Finished: 90, Validated: 9},
+		{SlotId: 3, Missed: 0, Invalid: 0, Cost: 10, Finished: 100, Validated: 12},
+	}
+	msg := buildSettlementTestDataWithNonce(t, escrow, []*dcrdsecp.PrivateKey{keyH1, keyH1, keyH2, keyH2}, hostStats, 0, 400)
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil).AnyTimes()
+	mocks.BankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes()
+	_, err = ms.SettleDevshardEscrow(ctx, msg)
+	require.NoError(t, err)
+
+	h1, found := k.GetParticipant(ctx, addrH1)
+	require.True(t, found)
+	require.Equal(t, uint64(6), h1.CurrentEpochStats.ValidatedInferences, "scored under the policy recorded at first approval")
+	require.Equal(t, uint64(3), h1.CurrentEpochStats.InvalidatedInferences)
 }

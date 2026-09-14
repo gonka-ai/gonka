@@ -87,20 +87,12 @@ type DevshardPassPolicy struct {
 	ValidationRateBps uint32
 }
 
-// DevshardPassPolicyFor resolves the policy from the approved-versions list.
-func DevshardPassPolicyFor(approved []*types.DevshardApprovedVersion, version string, validationRateBps uint32) DevshardPassPolicy {
-	policy := DevshardPassPolicy{ValidationRateBps: validationRateBps}
-	if len(approved) == 0 {
-		return policy
+// DevshardPassPolicyFor resolves the policy from the recorded version policies.
+func DevshardPassPolicyFor(params *types.DevshardEscrowParams, version string, validationRateBps uint32) DevshardPassPolicy {
+	return DevshardPassPolicy{
+		LegacyValidated:   !params.DevshardVersionReportsValidated(version),
+		ValidationRateBps: validationRateBps,
 	}
-	for _, v := range approved {
-		if v != nil && v.Name == version {
-			policy.LegacyValidated = !v.ReportsValidated
-			return policy
-		}
-	}
-	policy.LegacyValidated = true
-	return policy
 }
 
 // DevshardSprtPassCap bounds credited passes by the escrow's sampling rate.

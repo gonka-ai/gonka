@@ -86,7 +86,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	touchedParticipants := make(map[string]bool)
 
 	totalSlots := uint64(len(escrow.Slots))
-	passPolicy := DevshardPassPolicyFor(devshardParams.ApprovedVersions, msg.StateRootAndProtocolVersion, escrow.ValidationRate)
+	passPolicy := DevshardPassPolicyFor(devshardParams, msg.StateRootAndProtocolVersion, escrow.ValidationRate)
 	// How much of the total fees will be assigned to each slot
 	feePerSlot := msg.Fees / totalSlots
 	// Leftover fees; will be distributed 1 per slot

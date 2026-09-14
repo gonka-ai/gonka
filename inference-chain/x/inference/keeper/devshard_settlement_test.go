@@ -31,6 +31,19 @@ func testDevshardEscrowParams() *types.DevshardEscrowParams {
 	return &types.DevshardEscrowParams{MaxNonce: types.DefaultDevshardMaxNonce}
 }
 
+func testDevshardEscrowParamsReporting() *types.DevshardEscrowParams {
+	params := &types.DevshardEscrowParams{
+		MaxNonce: types.DefaultDevshardMaxNonce,
+		ApprovedVersions: []*types.DevshardApprovedVersion{
+			{Name: settlementVersion, Binary: "b", Sha256: "s", ReportsValidated: true},
+		},
+	}
+	if err := types.ApplyDevshardVersionPolicies(nil, params); err != nil {
+		panic(err)
+	}
+	return params
+}
+
 // cosmosAddressFromDcrdKey derives the Cosmos bech32 address from a dcrd private key.
 func cosmosAddressFromDcrdKey(key *dcrdsecp.PrivateKey) sdk.AccAddress {
 	cosmosPubKey := &secp256k1.PubKey{Key: key.PubKey().SerializeCompressed()}
@@ -371,30 +384,31 @@ func TestVerifyDevshardSettlement_InvalidExceedsCompletedPerSlot(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid count")
 }
 
-func TestVerifyDevshardSettlement_ValidatedExceedsCompletedTimesSlots(t *testing.T) {
+func TestVerifyDevshardSettlement_ReportingVersionBounds(t *testing.T) {
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
 		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
 	}
+	params := testDevshardEscrowParamsReporting()
 	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
 	hostStats[0].Missed = 1
 	hostStats[0].Finished = 1
 	hostStats[0].Validated = keeper.DevshardGroupSize + 1
 	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
 
-	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, params, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "validated count")
 
 	hostStats[0].Validated = keeper.DevshardGroupSize
 	msg = buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
-	require.NoError(t, keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil))
+	require.NoError(t, keeper.VerifyDevshardSettlement(escrow, msg, params, nil))
 
 	hostStats[0].Finished = 2
 	msg = buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
-	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil)
+	err = keeper.VerifyDevshardSettlement(escrow, msg, params, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "finished count")
 
@@ -402,9 +416,37 @@ func TestVerifyDevshardSettlement_ValidatedExceedsCompletedTimesSlots(t *testing
 	hostStats[0].Validated = 0
 	hostStats[0].Invalid = 2
 	msg = buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
-	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil)
+	err = keeper.VerifyDevshardSettlement(escrow, msg, params, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid count")
+}
+
+func TestVerifyDevshardSettlement_LegacyVersionBounds(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots,
+	}
+	for _, params := range []*types.DevshardEscrowParams{
+		testDevshardEscrowParams(),
+		{MaxNonce: types.DefaultDevshardMaxNonce, ApprovedVersions: []*types.DevshardApprovedVersion{{Name: settlementVersion, Binary: "b", Sha256: "s"}}, VersionPolicies: []*types.DevshardVersionPolicy{{Name: settlementVersion}}},
+	} {
+		hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+		for _, hs := range hostStats {
+			hs.Finished = 0
+		}
+		hostStats[0].Missed = 1
+		hostStats[0].Invalid = 1
+		msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
+		require.NoError(t, keeper.VerifyDevshardSettlement(escrow, msg, params, nil))
+
+		hostStats[0].Invalid = 2
+		msg = buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 32)
+		err := keeper.VerifyDevshardSettlement(escrow, msg, params, nil)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid count")
+	}
 }
 
 func TestVerifyDevshardSettlement_RemainderSlotMissedAllowed(t *testing.T) {
