@@ -7,6 +7,9 @@ services:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache
     environment:
       - HF_HOME=/root/.cache
+      # PoC batch (set in .env): GLM-5.3-Flash needs 8 on 8xH100, 16 on H200, 32 on B200/B300.
+      # It is the batch both mining and validation use; larger than the profile allows is an
+      # OOM or a kernel fault, not a slowdown.
       - POC_BATCH_SIZE_DEFAULT=${POC_BATCH_SIZE_DEFAULT:-32}
     deploy:
       resources:

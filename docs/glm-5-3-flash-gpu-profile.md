@@ -106,7 +106,10 @@ do not (`vllm/entrypoints/openai/chat_completion/serving.py`). What decides is
 | 4× H200 | 4 | 0.90 | 16384 | 16 | 1439 |
 | 8× H100 | 8 | 0.95 | 16384 | 8 | 448 (PCIe, this image); 1612 (Kaitaku, SXM, batch 16 — see below) |
 
-The matching files are `deploy/join/node-config-glm53flash-*.json`. All of them pin the model
+The matching files are `deploy/join/node-config-glm53flash-*.json`. The PoC batch is not in
+those files — it is the MLNode environment variable `POC_BATCH_SIZE_DEFAULT`, set in the join
+`.env`: **8 on 8×H100, 16 on H200 (both profiles), 32 on B200 and B300.** Mining and
+validation both use it. All of them pin the model
 revision above, set FP8 KV cache, `--block-size 2304` and `--max-num-seqs 256`, and disable
 FlashInfer autotune. MLNode injects the PoC worker extension into every vLLM launch.
 
