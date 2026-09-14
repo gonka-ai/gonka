@@ -104,7 +104,7 @@ do not (`vllm/entrypoints/openai/chat_completion/serving.py`). What decides is
 | 2× B300 | 2 | 0.90 | 65536 | 32 | 2030 |
 | 4× B200 | 4 | 0.90 | 65536 | 32 | 2727 |
 | 4× H200 | 4 | 0.90 | 16384 | 16 | 1439 |
-| 8× H100 | 8 | 0.95 | 65536 | 16 | 1612 |
+| 8× H100 | 8 | 0.95 | 65536 | 16 | 1612 (Kaitaku; not reproduced on this image, see below) |
 
 The matching files are `deploy/join/node-config-glm53flash-*.json`. All of them pin the model
 revision above, set FP8 KV cache, `--block-size 2304` and `--max-num-seqs 256`, and disable
@@ -112,6 +112,31 @@ FlashInfer autotune. MLNode injects the PoC worker extension into every vLLM lau
 
 `node-config-glm53flash-8xH200.json` is the two-container layout for a single 8×GPU H200 host:
 two MLNodes at TP=4 rather than one at TP=8.
+
+### Two limits found while verifying 3.1.0
+
+* **Do not run GLM with a PoC batch below ~12.** The validation KV lease is sized as
+  `nonces × max over cache groups of ceil(seq_len / block_size)`, and GLM's sparse-MLA indexer
+  group (`KpoolTailSpec`) has a 4-token block, so a lease needs 256 pool blocks per nonce. At
+  batch 16 or 32 that exceeds every pool measured and validation falls back to the in-place
+  path, which is fine. At batch 8 on 4×H200 the lease succeeds, the borrowed layout is wrong
+  for that group, and every GPU faults with XID 31. The H200 and H100 profiles use 16; keep
+  `POC_BATCH_SIZE_DEFAULT` there. The lease sizing and the borrowed layout for small-block
+  groups are open plugin bugs, separate from #10; `poc_validation_inference` is advertised
+  `true` on GLM nodes but inference is aborted during validation until they are fixed.
+* **8×H100 TP=8 could not be reproduced on this image.** On the 8×H100 VM available for this
+  release, GLM faults in the FlashInfer sparse-MLA sm90 kernel (`BatchMLAPagedAttentionSM90Run`,
+  XID 31 on all eight GPUs) on the first heavy forward — plain inference with sixteen 1.1k-token
+  prompts as much as PoC — with the shipped profile and with every variation tried: driver
+  580.173 and 595.71, `--disable-custom-all-reduce`, fp8 and bf16 KV, a fresh FlashInfer JIT
+  cache, and Kaitaku's own `mlnode-h100-glm-5-3-flash:…-test-k3` image. Shards were verified by
+  sha256. The 1612 nonce/min figure is Kaitaku's measurement on their host; treat the H100
+  profile as unverified until it runs on another 8×H100.
+* **NVSwitch hosts inside VMs need `NCCL_NVLS_ENABLE=0`.** On the 8×H200 VM the engine failed
+  to start with `NCCL error: unhandled cuda error` — NVLS multicast allocation returned CUDA
+  401 after `NV_ERR_FABRIC_STATE_OUT_OF_SYNC` in `dmesg`. `NCCL_NVLS_ENABLE=0` (with
+  `NCCL_CUMEM_ENABLE=0`) in the MLNode environment fixes it; Kaitaku record the same for
+  4×B200 in a container.
 
 ### The batched-tokens constraint is load-bearing
 
@@ -131,17 +156,45 @@ nonces, and on some arms it takes the engine with it:
 * 8×H100 needs `--gpu-memory-utilization 0.95` to start at all, and batch 32 there is an OOM,
   not a kernel fault.
 
-### First-in-batch instability
+### First-in-batch instability — found and fixed in gonka-poc 0.1.5
 
-On 4×H200 and 4×B200, two honest runs of the same seed differ in 63 of 1000 nonces — exactly
-the positions where `index % 16 == 0`, the first sequence of each collection batch. On 8×H100
-at TP=8 the same comparison differs in 1 of 1000, at nonce 0 only.
+On 4×H200 and 4×B200, two honest runs of the same seed differed in 63 of 1000 nonces — exactly
+the positions where `index % 16 == 0`, the first sequence of each collection batch — and in the
+chain data every validator disagreed with every miner on 100 % of those positions, at L2 1.0–1.9.
 
-This is why the golden reference artifact
+The cause is in the plugin, not the model. The legacy in-place layout put the first PoC
+sequence of every batch on KV block 0, which vLLM reserves as the null block
+(`BlockPool.null_block`, `NULL_BLOCK_ID == 0`) and hands out as padding. The `causal_conv1d`
+kernel in front of every KDA layer treats state index 0 as padding and returns without computing
+that sequence, so it went through the linear-attention layers with whatever the output buffer
+held: NaN on some hosts (dropped silently by the NaN filter — 120 of 128 nonces came back per
+run on 4×H200), garbage on others. Leased validation never receives block 0, so the miner's
+artifact never reproduced. DeepSeek-V4-Flash has no conv state and shows none of this.
+
+gonka-poc 0.1.5 (gonka-ai/gonka-vllm-plugins#10) starts the in-place layout at block 1 and
+also drops the KV-scratch input buffer that aliased PoC inputs onto KV-cache memory on
+bf16-KV nodes. Measured on 4×H200 TP=4 with the H200 profile, 128 nonces at batch 16:
+
+| run | 0.1.4 | 0.1.5 |
+|---|---:|---:|
+| nonces returned | 120 / 128, `NaN in 1/16 hidden states` every batch | 128 / 128 |
+| repeat, same batches | — | 0 of 128 differ (bit-exact) |
+| same nonces, batches shifted by 1 / 5 / 9 | — | 2.4 % / 4.9 % / 3.4 % past the 0.44 gate, no position special |
+
+What remains is batch-composition dependence: the same nonce computed in a different batch
+differs by a median L2 of 0.23 at every position (MoE and KDA kernels tile by batch), which is
+the flat 5–7 % floor seen between honest nodes in the chain data. Under the chain's random
+200-nonce sample that gives k ≈ 14 against a conviction line of 28, so the parameters above
+stay as proposed. Before the fix the first-in-batch garbage added 1/16 of positions on top and
+pushed honest GLM nodes to ≈15 %.
+
+The golden reference artifact
 (`mlnode/packages/benchmarks/scripts/poc_validation/artifacts/zai-org-glm-5.3-flash.json`) is
-baked from the 8×H100 TP=8 arm: it is the only measured topology where the reference set is
-effectively reproducible. Validating a different GPU generation against it reproduces the
-honest cross-generation floor documented above, not a clean 0 %.
+re-baked with 0.1.5 on 4×H200 TP=4, same seed and public key. Against the previous 8×H100
+0.1.4 set: the 63 first-in-batch positions differ 100 % (median L2 1.15 — the garbage), the
+other 937 differ 5.7 % (median 0.24 — the honest cross-topology floor); the previously
+documented "11.7 % honest cross-generation floor" was 6.3 points of that garbage plus 5.4
+points of real drift.
 
 ## Fraud arms and what the gates do to them
 
@@ -158,14 +211,22 @@ measured; the inference gate is the corroborating signal.
 ## MLNode image
 
 ```
-ghcr.io/gonka-ai/mlnode:3.0.17-vllm-0.28.0
-ghcr.io/gonka-ai/mlnode@sha256:6772abdf736bbe8cad27d8c305e1fa32b54c82f783286d405fc5171d06419081
+ghcr.io/gonka-ai/mlnode:3.1.0-vllm-0.28.0
+ghcr.io/gonka-ai/mlnode@sha256:698bdacb99c991cd4dd4a58aac428d5d74ae33092102fee712a2d420d78a41ce
 ```
 
-Built on the vLLM base `ghcr.io/gonka-ai/vllm:v0.28.0-glm53-poc-cu13-hopper-blackwell`, which
-is itself an overlay on `vllm/vllm-openai:glm53-flash`. The image carries vLLM
-`0.28.0.dev0+glm53.gonka.sampler1`, gonka-poc `0.1.4`, FlashInfer `0.6.18` with the `+cu130`
-JIT cache, and torch `2.13.0+cu130`.
+3.1.0 is 3.0.17 with gonka-poc `0.1.5` (gonka-ai/gonka-vllm-plugins#10): the same layers with
+one added on top, so every layer of 3.0.17 is reused verbatim. Its vLLM base is likewise
+`ghcr.io/gonka-ai/vllm:v0.28.0-glm53-poc-v2-cu13-hopper-blackwell`
+(`sha256:dcf8df3f491258addba23ed0b0f12dc6042d5204c7889a66f13d68f54fe2b4a5`) — the
+`v0.28.0-glm53-poc-cu13-hopper-blackwell` base plus the 0.1.5 plugin layer; gonka-ai/vllm#109
+pins that version in `docker/Dockerfile.gonka-poc` so a from-scratch build produces the same
+tree. Building `mlnode/packages/api/Dockerfile` against the v2 base with
+`MLNODE_RELEASE_VERSION=3.1.0` and `EXPECTED_VLLM_VERSION=0.28.0` is equivalent. The image
+carries vLLM `0.28.0.dev0+glm53.gonka.sampler1`, gonka-poc `0.1.5`, FlashInfer `0.6.18` and
+torch `2.13.0+cu130`. The previous image, `3.0.17-vllm-0.28.0`
+(`sha256:6772abdf736bbe8cad27d8c305e1fa32b54c82f783286d405fc5171d06419081`), differs only by
+the plugin and must not be used for GLM: its first-in-batch artifacts never validate.
 
 `Glm5NextProcessor.from_pretrained` read `processor_config.json` with a bare `open()`, so a
 launch with the Hugging Face id — the path MLNode takes — failed before the engine started.
@@ -207,7 +268,14 @@ the first almost exactly, so stopping PoC leaves no state that slows the next st
 
 Startup through the stock `entrypoint.sh` was checked separately, since that is the path the
 join compose uses and the one that failed before #1751: the container reaches
-`/api/v1/state`, which reports `"version":"3.0.17"`, with no `useradd` in the logs.
+`/api/v1/state`, which reports the release version, with no `useradd` in the logs.
+
+The table above was recorded on 3.0.17; 3.1.0 changes only the PoC plugin. On 3.1.0 the plugin
+suite passes inside the image (`pytest tests/unit tests/contract`: 141 passed, 1 skipped), and
+GLM-5.3-Flash on 4×H200 TP=4 with the H200 profile returns 128/128 nonces at batch 16,
+reproduces a repeated run bit-exactly and shows no batch-position artifact under shifted
+batches — the numbers in *First-in-batch instability* above. `/api/v1/state` reports
+`"version":"3.1.0"`.
 
 ### MiniMax reasoning parser
 
