@@ -1305,6 +1305,7 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 
 	// Update host stats.
 	sm.state.HostStats[rec.ExecutorSlot].Cost += actualCost
+	sm.state.HostStats[rec.ExecutorSlot].Finished++
 
 	logging.Debug("inference started -> finished", "subsystem", "state",
 		"inference_id", msg.InferenceId,
@@ -1329,7 +1330,7 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	if _, ok := sm.slotToAddress[msg.ValidatorSlot]; !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ValidatorSlot)
 	}
-	if msg.ValidatorSlot == rec.ExecutorSlot {
+	if msg.ValidatorSlot == rec.ExecutorSlot || sm.slotToAddress[msg.ValidatorSlot] == sm.slotToAddress[rec.ExecutorSlot] {
 		return types.ErrSelfValidation
 	}
 
@@ -1372,9 +1373,17 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		weight := sm.addressToSlotCount[validatorAddr]
 		if msg.Valid {
 			rec.VotesValid += weight
+			sm.state.HostStats[rec.ExecutorSlot].Validated++
 		} else {
 			rec.VotesInvalid += weight
 			rec.Status = types.StatusChallenged
+			suspended := rec.ValidatedBy.Count() - 1
+			hs := sm.state.HostStats[rec.ExecutorSlot]
+			if hs.Validated < suspended {
+				hs.Validated = 0
+			} else {
+				hs.Validated -= suspended
+			}
 			// Obs row is not part of post_state_root; a storage blip must not fail
 			// the tx (ApplyLocalBestEffort would drop it but keep the mutation).
 			// Recovery rebuilds obs from the diff journal; see autoSealLocked.
@@ -1410,6 +1419,9 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	}
 	if _, ok := sm.slotToAddress[msg.VoterSlot]; !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.VoterSlot)
+	}
+	if sm.slotToAddress[msg.VoterSlot] == sm.slotToAddress[rec.ExecutorSlot] {
+		return types.ErrSelfValidation
 	}
 
 	// Skip already-resolved challenge votes (allows safe vote batching).
@@ -1471,6 +1483,7 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 		)
 	} else if rec.VotesValid > threshold {
 		rec.Status = types.StatusValidated
+		sm.state.HostStats[rec.ExecutorSlot].Validated++
 		logging.Debug("inference challenged -> validated", "subsystem", "state",
 			"inference_id", msg.InferenceId,
 			"votes_valid", rec.VotesValid,
@@ -1636,6 +1649,14 @@ func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
 		hs.Cost = 0
 	} else {
 		hs.Cost -= rec.ActualCost
+	}
+	if hs.Finished > 0 {
+		hs.Finished--
+	}
+	if passes := rec.ValidatedBy.Count(); hs.Validated < passes {
+		hs.Validated = 0
+	} else {
+		hs.Validated -= passes
 	}
 
 	logging.Debug("inference -> timed_out", "subsystem", "state",

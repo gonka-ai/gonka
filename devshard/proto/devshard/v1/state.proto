@@ -15,6 +15,8 @@ message HostStatsProto {
   uint64 cost = 4;
   uint32 required_validations = 5;
   uint32 completed_validations = 6;
+  uint32 validated = 7;
+  uint32 finished = 8;
 }
 
 message HostStatsMapProto {
