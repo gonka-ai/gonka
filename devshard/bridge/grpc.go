@@ -68,7 +68,7 @@ func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 	resp, err := b.client.InferenceQueryClient().DevshardEscrow(context.Background(),
 		&inferencetypes.QueryGetDevshardEscrowRequest{Id: id})
 	if err != nil {
-		return nil, fmt.Errorf("DevshardEscrow %s: %w", escrowID, err)
+		return nil, ClassifyQueryError(fmt.Errorf("DevshardEscrow %s: %w", escrowID, err))
 	}
 	if resp == nil || !resp.Found || resp.Escrow == nil {
 		return nil, ErrEscrowNotFound
@@ -112,7 +112,7 @@ func (b *GRPCBridge) GetHostInfo(address string) (*HostInfo, error) {
 	resp, err := b.client.InferenceQueryClient().Participant(context.Background(),
 		&inferencetypes.QueryGetParticipantRequest{Index: address})
 	if err != nil {
-		return nil, fmt.Errorf("Participant %s: %w", address, err)
+		return nil, ClassifyQueryError(fmt.Errorf("Participant %s: %w", address, err))
 	}
 	if resp == nil || resp.Participant.Address == "" {
 		return nil, ErrParticipantNotFound

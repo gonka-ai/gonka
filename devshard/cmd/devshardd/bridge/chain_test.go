@@ -12,6 +12,9 @@ import (
 	"common/chain"
 	shardbridge "devshard/bridge"
 	"devshard/cmd/devshardd/bridge"
+	"devshard/testenv/mockchain/grpcface"
+	"devshard/testenv/mockchain/seed"
+	"devshard/testenv/mockchain/store"
 )
 
 func newTestBridge(t *testing.T, submitter bridge.Submitter) *bridge.ChainBridge {
@@ -23,6 +26,29 @@ func newTestBridge(t *testing.T, submitter bridge.Submitter) *bridge.ChainBridge
 	client := chain.NewFromConn(conn)
 
 	return bridge.NewChainBridge(client, submitter)
+}
+
+func newTestBridgeWithStore(t *testing.T, st *store.Store, submitter bridge.Submitter) *bridge.ChainBridge {
+	t.Helper()
+	srv, lis, err := grpcface.NewInProcessServer(grpcface.Deps{Store: st})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		srv.Stop()
+		_ = lis.Close()
+	})
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+
+	return bridge.NewChainBridge(chain.NewFromConn(conn), submitter)
+}
+
+func TestBridge_GetEscrow_TransientQueryError(t *testing.T) {
+	st := seed.Defaults()
+	st.SetEscrowQueryFault(true)
+
+	_, err := newTestBridgeWithStore(t, st, nil).GetEscrow("1")
+	require.ErrorIs(t, err, shardbridge.ErrChainUnavailable)
 }
 
 func TestBridge_NotificationsNoop(t *testing.T) {
