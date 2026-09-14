@@ -725,44 +725,49 @@ After verifying migration, recreate PostgreSQL once without the recovery overlay
 
 #### 3. Run the updater with the complete deployment configuration
 
-After a local database copy, restart the retained old member containers with `docker start` and verify their v4 readiness before running the updater (use `/v4/healthz` when an old supervisor returns 404 from `/readyz`). Keep their catalog limited to v4 for this cutover example (using the optional filter if needed), and public traffic closed during the cutover. Fleet admission needs these serving children before it replaces supervisors. For already-migrated PostgreSQL whose members provide v5 storage proofs, keep ready survivors running. Pre-v5 supervisors lack host evacuation: finish their accepted work in the maintenance window before replacement.
+1. **Prepare for the cutover.** Work in `deploy/join` with the complete `COMPOSE_FILE` from the start of §2.6. Close public traffic and let accepted work finish; replacing the public proxy can interrupt connections. Keep the catalog limited to v4 until the retained v4 escrow passes the checks below. Leave `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled.
 
-```bash
-./versiond-router-fleet.sh prepare-networks
-# Only when using the optional filter:
-docker compose up -d --no-deps oracle-filter
+   **External PostgreSQL with pre-v5 supervisors:** stop all database writers, including remote members, and independently verify the target database. Start the v5 supervisors with the complete Compose model and check every member with `--check-storage` as in §2.3 before running the updater. Do not use the legacy-container restart below for this case.
 
-# Include every retained local member stopped for the database copy; start remote ones on their machines.
-# Skip this line if they are already running.
-docker start versiond versiond2
+2. **Prepare the network and running members.**
 
-# Verify the retained v4 children are serving before continuing.
-./update-devshard.sh --check
-./update-devshard.sh --dry-run
-./update-devshard.sh
-./versiond-router-fleet.sh verify-admission
-./versiond-router-fleet.sh wait-version v4
-```
+   ```bash
+   ./versiond-router-fleet.sh prepare-networks
+   # Only when using the optional filter:
+   docker compose up -d --no-deps oracle-filter
 
-The updater reads `config.env` and the complete Compose model, validates shared writable PostgreSQL and its connection budget, updates local PostgreSQL if used, prepares the router fleet and attaches existing local replicas to its back network. It starts the public proxy, brings up policy workers one at a time, verifies router admission, removes the old singleton router, then replaces local `versiond` replicas one at a time with `VERSIOND_LEGACY_HOST` last (default `versiond`). It does not start custom services such as `oracle-filter`, so start the filter explicitly as above if you use it. Remote replicas are updated on their own machines using §2.5.
+   # Only after a local database copy: restart the retained old containers.
+   # Include every stopped local member; start remote members on their hosts.
+   docker start versiond versiond2
+   ```
 
-The host updater supports bundled PostgreSQL or an external writable endpoint without custom TLS configuration. PostgreSQL TLS setup is outside this procedure: the updater rejects explicit `PGSSL*` settings except `PGSSLMODE=disable`. Leave them unset for the stock deployment.
+   Keep already-running members running. For each retained pre-v5 member, verify v4 route health before proceeding:
 
-`--check` does not replace services, but takes the deployment lock and writes PostgreSQL challenges; `--dry-run` also runs preflight. Keep `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled. Legacy members returning 404 are accepted only for the verified bundled PostgreSQL migration; confirm their database and recorded session separately. With an external database, upgrade legacy members during maintenance with all writers stopped and the target database independently verified. Start the v5 supervisors using the complete Compose model, check them with `--check-storage` (§2.3), then run the host updater. A legacy 404 cannot establish continuity with an external target. The new routers accept a pre-v5 supervisor's `/readyz` **404** only together with successful route health; a v5 **503** is never a legacy fallback.
+   ```bash
+   # Include every local member; repeat on remote hosts.
+   (
+     for replica in versiond versiond2; do
+       docker exec "$replica" wget -qO- http://127.0.0.1:8080/v4/healthz || exit 1
+     done
+   )
+   ```
 
-Schedule the first public nginx-to-HAProxy replacement and local PostgreSQL copy as maintenance. Once the retained v4 escrow works through the fleet, extend the optional filter to `VERSIOND_VERSIONS="v4 v5"` as in §2.5, or confirm that the direct catalog exposes both compatible versions, wait for v5 and verify a new v5 escrow. Check per-version readiness on every member and admission through both routing tiers; a healthy public proxy alone is insufficient.
+   Require a successful response from every member. For v5 supervisors, also require HTTP 200 from `/readyz?version=v4`; do not ignore a 503. After a local database copy, confirm the recorded database identity and retained session as described above. Keep a ready survivor for every served HA version.
 
-If a versiond replacement or public admission fails, the updater restores the saved container configuration and stops. It restores proxy and policy workers together, including the old nginx on the first cutover. An interrupted replacement is recovered on the next normal run; `--check` reports pending recovery. Keep the same persistent `UPDATE_STATE_DIR` if you override its default under `~/.local/state/gonka/updater/`. Inspect logs, fix the cause and rerun with the same complete file list. Unchanged services and previous-release records are retained. Saved configurations preserve mount sources; keep previous join files because rollback does not undo host-file edits or database writes. The updater does not guarantee uninterrupted policy-worker replacement; validate accepted SSE with the test plan before relying on that behavior.
+3. **Check and update this host.** Continue only if each command succeeds.
 
-The updater refuses an unexpected change to the bundled PostgreSQL data directory. Before replacing PostgreSQL, it saves a control value in the database and a recovery record with the chosen image, data directory and retained source volume. After startup it checks that value before proceeding. If interrupted, rerun with the same persistent updater state directory: recovery uses the saved database target before starting a new preflight. A failed history check stops PostgreSQL and retains the record; investigate the selected data directory before retrying.
+   ```bash
+   ./update-devshard.sh --check
+   ./update-devshard.sh
+   ./versiond-router-fleet.sh verify-admission
+   ./versiond-router-fleet.sh wait-version v4
+   ```
 
-Keep the saved v4 volume unchanged after copying. The entrypoint verifies it against the migration record; restarting that old copy as a writer creates a separate history and blocks subsequent starts while the volume is attached. Do not replace the migration marker to bypass this check.
+   The updater checks PostgreSQL, updates routing and replaces local replicas one at a time. `--check` writes database probes but does not replace services. Optionally run `--dry-run` before updating to inspect the plan. Update remote members separately using §2.5.
 
-Each HA versiond replacement requires a surviving member for every currently served HA version. The candidate must then pass per-version readiness and admission in every router before the updater proceeds to the next member. Pinned versions are checked on their designated owner before its replacement is confirmed. General container health alone does not complete the step.
+4. **Verify v4, then enable v5.** Run inference with the retained v4 escrow through the public fleet route. Once it works, set `VERSIOND_VERSIONS="v4 v5"` and refresh the optional filter as in §2.5, or verify that the direct catalog exposes both approved, compatible versions. Run `./versiond-router-fleet.sh wait-version v5`, then verify a new v5 escrow and complete Step 4's checks for every served version before reopening traffic.
 
-Replacing the single public proxy can interrupt existing connections, including on later v5 image or configuration updates. Schedule those replacements during maintenance and let accepted work finish first.
-
-The upgrade is complete after the readiness, router admission and inference checks above pass for every version you intend to serve.
+5. **If the update fails, fix the reported cause before retrying.** Inspect logs and rerun normally with the same complete Compose configuration and persistent `UPDATE_STATE_DIR` (default under `~/.local/state/gonka/updater/`). The updater attempts to restore failed replacements; a normal rerun recovers interrupted replacements. Keep previous join files and backups: rollback does not undo file edits or database writes. Keep the saved v4 volume unchanged and do not bypass migration-marker checks. For a database-history error, verify the selected data directory before retrying.
 
 #### Reference: state migration and rollback
 
