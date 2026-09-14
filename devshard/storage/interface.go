@@ -141,7 +141,12 @@ type EscrowCacheInfo struct {
 	AutoSealEveryNNonces      uint32   `json:"auto_seal_every_n_nonces"`
 	ValidationRate            uint32   `json:"validation_rate"`
 	VoteThresholdFactor       uint32   `json:"vote_threshold_factor"`
-	EpochID                   uint64   `json:"epoch_id"`
+	// RefusalTimeout / ExecutionTimeout feed SessionConfig at bind (auto-seal
+	// clock gate, timeout votes). Rows written before they existed read as 0,
+	// which SessionConfigFromEscrow treats as "use the compiled default".
+	RefusalTimeout   int64  `json:"refusal_timeout"`
+	ExecutionTimeout int64  `json:"execution_timeout"`
+	EpochID          uint64 `json:"epoch_id"`
 	// CachedAt is the unix time the row was written, stamped by the store.
 	// Readers use it to refuse a row that is too old to stand in for the chain;
 	// rows written before this field existed read as 0 and count as stale.

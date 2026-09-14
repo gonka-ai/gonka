@@ -12,6 +12,9 @@ import (
 	"common/chain"
 	shardbridge "devshard/bridge"
 	"devshard/cmd/devshardd/bridge"
+	"devshard/testenv/mockchain/grpcface"
+	"devshard/testenv/mockchain/seed"
+	"devshard/testenv/mockchain/store"
 )
 
 func newTestBridge(t *testing.T, submitter bridge.Submitter) *bridge.ChainBridge {
@@ -23,6 +26,50 @@ func newTestBridge(t *testing.T, submitter bridge.Submitter) *bridge.ChainBridge
 	client := chain.NewFromConn(conn)
 
 	return bridge.NewChainBridge(client, submitter)
+}
+
+// startBridgesWithStore serves st over an in-process mockchain and returns the
+// host bridge (ChainBridge) and the gateway bridge (GRPCBridge) on the same conn.
+func startBridgesWithStore(t *testing.T, st *store.Store) (*bridge.ChainBridge, *shardbridge.GRPCBridge) {
+	t.Helper()
+	srv, lis, err := grpcface.NewInProcessServer(grpcface.Deps{Store: st})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		srv.Stop()
+		_ = lis.Close()
+	})
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	client := chain.NewFromConn(conn)
+	return bridge.NewChainBridge(client, nil), shardbridge.NewGRPCBridge(client)
+}
+
+// Host and gateway build SessionConfig from the same escrow row through the
+// same mapper, so a field that only one bridge copies desynchronises the
+// auto-seal clock gate and timeout votes between them (issue #1762).
+func TestChainBridge_GetEscrow_MatchesGatewayBridge(t *testing.T) {
+	st := seed.Defaults()
+	escrow := st.GetEscrow(1)
+	require.NotNil(t, escrow)
+	escrow.RefusalTimeout = 90
+	escrow.ExecutionTimeout = 1300
+	st.PutEscrow(escrow)
+
+	host, gateway := startBridgesWithStore(t, st)
+	hostInfo, err := host.GetEscrow("1")
+	require.NoError(t, err)
+	gatewayInfo, err := gateway.GetEscrow("1")
+	require.NoError(t, err)
+
+	require.Equal(t, int64(90), hostInfo.RefusalTimeout)
+	require.Equal(t, int64(1300), hostInfo.ExecutionTimeout)
+	require.Equal(t, gatewayInfo, hostInfo, "host and gateway bridges must map the escrow row identically")
+
+	groupSize := len(hostInfo.Slots)
+	require.Equal(t,
+		shardbridge.SessionConfigAtBind(groupSize, gatewayInfo),
+		shardbridge.SessionConfigAtBind(groupSize, hostInfo))
 }
 
 func TestBridge_NotificationsNoop(t *testing.T) {

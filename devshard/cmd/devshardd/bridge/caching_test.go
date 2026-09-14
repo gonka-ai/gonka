@@ -121,3 +121,36 @@ func TestEscrowCacheRoundTrip(t *testing.T) {
 	require.Equal(t, in.VoteThresholdFactor, out.VoteThresholdFactor)
 	require.Equal(t, in.EpochID, out.EpochID)
 }
+
+// A bind served from the warm cache goes through the same SessionConfig mapper
+// as a live fetch, so every consensus-relevant escrow field must survive the
+// cache row round trip. ModelID and Settled are deliberately not cached: hosts
+// ignore ModelID at bind and settlement deletes the row.
+func TestEscrowCache_RoundTripKeepsSessionConfigFields(t *testing.T) {
+	src := &bridge.EscrowInfo{
+		EscrowID:                  "1",
+		Amount:                    500,
+		CreatorAddress:            "gonka1owner",
+		AppHash:                   []byte{0xab, 0xcd},
+		Slots:                     []string{"hostA", "hostB"},
+		TokenPrice:                7,
+		CreateDevshardFee:         12_345,
+		FeePerNonce:               19,
+		InferenceSealGraceNonces:  9,
+		InferenceSealGraceSeconds: 3600,
+		AutoSealEveryNNonces:      21,
+		ValidationRate:            7_777,
+		VoteThresholdFactor:       67,
+		RefusalTimeout:            90,
+		ExecutionTimeout:          1200,
+		EpochID:                   9,
+	}
+
+	row := EscrowCacheFromInfo(src)
+	got := EscrowInfoFromCache(&row)
+
+	require.Equal(t, src, got)
+	require.Equal(t,
+		bridge.SessionConfigAtBind(len(src.Slots), src),
+		bridge.SessionConfigAtBind(len(src.Slots), got))
+}
