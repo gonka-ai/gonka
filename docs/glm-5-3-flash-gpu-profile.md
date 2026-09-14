@@ -122,8 +122,10 @@ two MLNodes at TP=4 rather than one at TP=8.
   path, which is fine. At batch 8 on 4×H200 the lease succeeds, the borrowed layout is wrong
   for that group, and every GPU faults with XID 31. The H200 and H100 profiles use 16; keep
   `POC_BATCH_SIZE_DEFAULT` there. The lease sizing and the borrowed layout for small-block
-  groups are open plugin bugs, separate from #10; `poc_validation_inference` is advertised
-  `true` on GLM nodes but inference is aborted during validation until they are fixed.
+  groups are open plugin bugs, separate from #10. gonka-poc 0.1.6 (gonka-ai/gonka-vllm-plugins#11)
+  therefore reports `poc_validation_inference: false` for `model_type glm5_next` and never
+  attempts a lease there: GLM nodes abort live inference during validation, and the gateway
+  routes accordingly. Other models are unchanged.
 * **8×H100 TP=8 could not be reproduced on this image.** On the 8×H100 VM available for this
   release, GLM faults in the FlashInfer sparse-MLA sm90 kernel (`BatchMLAPagedAttentionSM90Run`,
   XID 31 on all eight GPUs) on the first heavy forward — plain inference with sixteen 1.1k-token
@@ -212,18 +214,18 @@ measured; the inference gate is the corroborating signal.
 
 ```
 ghcr.io/gonka-ai/mlnode:3.1.0-vllm-0.28.0
-ghcr.io/gonka-ai/mlnode@sha256:698bdacb99c991cd4dd4a58aac428d5d74ae33092102fee712a2d420d78a41ce
+ghcr.io/gonka-ai/mlnode@sha256:702d932957944b6a77b6fbb73b1cc00e5d437023500d1182d66ac4a233fc949e
 ```
 
-3.1.0 is 3.0.17 with gonka-poc `0.1.5` (gonka-ai/gonka-vllm-plugins#10): the same layers with
+3.1.0 is 3.0.17 with gonka-poc `0.1.6` (gonka-ai/gonka-vllm-plugins#10 and #11): the same layers with
 one added on top, so every layer of 3.0.17 is reused verbatim. Its vLLM base is likewise
 `ghcr.io/gonka-ai/vllm:v0.28.0-glm53-poc-v2-cu13-hopper-blackwell`
-(`sha256:dcf8df3f491258addba23ed0b0f12dc6042d5204c7889a66f13d68f54fe2b4a5`) — the
-`v0.28.0-glm53-poc-cu13-hopper-blackwell` base plus the 0.1.5 plugin layer; gonka-ai/vllm#109
+(`sha256:e2cd12021cfcac12b0b9db4c18914d80dd34794289b4729e75e00847f3c20830`) — the
+`v0.28.0-glm53-poc-cu13-hopper-blackwell` base plus the 0.1.6 plugin layer; gonka-ai/vllm#109
 pins that version in `docker/Dockerfile.gonka-poc` so a from-scratch build produces the same
 tree. Building `mlnode/packages/api/Dockerfile` against the v2 base with
 `MLNODE_RELEASE_VERSION=3.1.0` and `EXPECTED_VLLM_VERSION=0.28.0` is equivalent. The image
-carries vLLM `0.28.0.dev0+glm53.gonka.sampler1`, gonka-poc `0.1.5`, FlashInfer `0.6.18` and
+carries vLLM `0.28.0.dev0+glm53.gonka.sampler1`, gonka-poc `0.1.6`, FlashInfer `0.6.18` and
 torch `2.13.0+cu130`. The previous image, `3.0.17-vllm-0.28.0`
 (`sha256:6772abdf736bbe8cad27d8c305e1fa32b54c82f783286d405fc5171d06419081`), differs only by
 the plugin and must not be used for GLM: its first-in-batch artifacts never validate.
