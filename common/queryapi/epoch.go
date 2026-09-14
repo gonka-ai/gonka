@@ -189,12 +189,19 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 	}
 
 	// Validators at the creation height.
-	valsResp, err := h.chain.CometServiceClient().GetValidatorSetByHeight(ctx, &cmtservice.GetValidatorSetByHeightRequest{
-		Height: activeParticipants.CreatedAtBlockHeight,
-	})
-	if err != nil {
-		logging.Error("Failed to get validators", inferencetypes.Participants, "error", err)
-		return nil, err
+	var valsResp *cmtservice.GetValidatorSetByHeightResponse
+	if activeParticipants.CreatedAtBlockHeight <= 0 {
+		// Non-fatal: CometBFT rejects height <= 0, so skip the call rather than fail the request.
+		logging.Warn("Skipping validator set lookup for zero/negative height", inferencetypes.Participants,
+			"height", activeParticipants.CreatedAtBlockHeight)
+	} else {
+		valsResp, err = h.chain.CometServiceClient().GetValidatorSetByHeight(ctx, &cmtservice.GetValidatorSetByHeightRequest{
+			Height: activeParticipants.CreatedAtBlockHeight,
+		})
+		if err != nil {
+			logging.Error("Failed to get validators", inferencetypes.Participants, "error", err)
+			return nil, err
+		}
 	}
 
 	// Derive participant addresses from validator keys.
@@ -214,7 +221,11 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		return nil, err
 	}
 
-	validators, err := validatorsToRawJSON(valsResp.Validators)
+	var vals []*cmtservice.Validator
+	if valsResp != nil {
+		vals = valsResp.Validators
+	}
+	validators, err := validatorsToRawJSON(vals)
 	if err != nil {
 		logging.Error("Failed to encode validators", inferencetypes.Participants, "error", err)
 		return nil, err
