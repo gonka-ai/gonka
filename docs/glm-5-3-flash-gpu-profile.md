@@ -199,11 +199,11 @@ pushed honest GLM nodes to ≈15 %.
 
 The golden reference artifact
 (`mlnode/packages/benchmarks/scripts/poc_validation/artifacts/zai-org-glm-5.3-flash.json`) is
-re-baked with 0.1.5 on 4×H200 TP=4 at batch 16, same seed and public key; an 8×H100 TP=8
-variant baked at batch 8 sits beside it as `…-h100-tp8.json`. A reference is tied to the
-topology and batch it was baked with: on the same topology at the node's default batch it
-reproduces bit-exactly (0/200 on 8×H100 PCIe against the H100 variant), on another topology it
-shows the honest floor (5.5 %, p = 0.99, against the H200 reference on the same host).
+re-baked with 0.1.5 on 4×H200 TP=4 at batch 16, same seed and public key. A reference is tied
+to the topology and batch it was baked with: on the same topology at the node's default batch
+it reproduces bit-exactly (0/200 on 8×H100 PCIe against a batch-8 bake on the same host), on
+another topology it shows the honest floor (5.5 %, p = 0.99, 8×H100 PCIe against the H200
+reference).
 `make_artifact.py` and `validate.py` therefore leave the batch unset so the node's
 `POC_BATCH_SIZE_DEFAULT` is used, and the bake batch is recorded in the artifact. Against the previous 8×H100
 0.1.4 set: the 63 first-in-batch positions differ 100 % (median L2 1.15 — the garbage), the
