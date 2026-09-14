@@ -133,9 +133,8 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 
 	configGasPrice := nodeConfig.GetMinGasPriceNgonka()
 	if configGasPrice != 0 {
-		log.Printf("Ignoring configured DAPI_CHAIN_NODE__MIN_GAS_PRICE_NGONKA=%d; fees are disabled for this rollout, using 0", configGasPrice)
+		log.Printf("Ignoring configured DAPI_CHAIN_NODE__MIN_GAS_PRICE_NGONKA=%d; group fees are attached per tx", configGasPrice)
 	}
-	// Note: temporary due to issue in gas estimations.
 	effectiveGasPrice := int64(0)
 
 	log.Printf("Initializing cosmos Client."+
@@ -155,33 +154,6 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		return nil, err
 	}
 
-	// Use the chain value only if governance enables a non-zero gas price.
-	chainGasPrice, queryErr := queryChainMinGasPrice(ctx, &cosmoclient)
-	if queryErr != nil {
-		return nil, fmt.Errorf("failed to query chain for FeeParams.MinGasPriceNgonka at startup "+
-			"(required for automatic DAPI gas price configuration): %w", queryErr)
-	}
-	if chainGasPrice > 0 {
-		effectiveGasPrice = chainGasPrice
-		log.Printf("Using on-chain FeeParams.MinGasPriceNgonka = %d", effectiveGasPrice)
-		// Re-create the cosmoclient with the correct gas price for the
-		// TxFactory to produce valid transactions.
-		cosmoclient, err = cosmosclient.New(
-			ctx,
-			cosmosclient.WithAddressPrefix(addressPrefix),
-			cosmosclient.WithKeyringServiceName("inferenced"),
-			cosmosclient.WithNodeAddress(nodeConfig.Url),
-			cosmosclient.WithKeyringDir(keyringDir),
-			cosmosclient.WithGasPrices(fmt.Sprintf("%dngonka", effectiveGasPrice)),
-			cosmosclient.WithGas("auto"),
-			cosmosclient.WithGasAdjustment(5),
-		)
-		if err != nil {
-			return nil, fmt.Errorf("error recreating cosmos client with chain gas price: %w", err)
-		}
-	} else {
-		log.Printf("Chain FeeParams.MinGasPriceNgonka is 0 or unset; DAPI will send zero-fee transactions.")
-	}
 	err = updateKeyringIfNeeded(&cosmoclient, keyringDir, config)
 	if err != nil {
 		log.Printf("Error updating keyring: %s", err)
@@ -214,7 +186,9 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		}
 	}()
 
-	mn, err := tx_manager.StartTxManager(ctx, &cosmoclient, apiAccount, time.Second*60, natsConn, accAddress, effectiveGasPrice, config.GetHeight)
+	txGasMultiplier := nodeConfig.GetTxGasMultiplier()
+	log.Printf("Tx gas multiplier: %g (override with DAPI_CHAIN_NODE__TX_GAS_MULTIPLIER)", txGasMultiplier)
+	mn, err := tx_manager.StartTxManager(ctx, &cosmoclient, apiAccount, time.Second*60, natsConn, accAddress, int64(0), txGasMultiplier, config.GetHeight)
 	if err != nil {
 		return nil, err
 	}
@@ -249,6 +223,9 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 	}
 
 	success = true
+	if err := client.RefreshFeeTree(ctx); err != nil {
+		log.Printf("Warning: failed to seed fee-tree cache at startup (will retry at PoC start): %s", err)
+	}
 	return client, nil
 }
 
@@ -269,8 +246,8 @@ type CosmosMessageClient interface {
 	NewInferenceQueryClient() inferencetypes.QueryClient
 	NewCometQueryClient() cmtservice.ServiceClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
-	SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error)
-	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
+	SendTransactionAsyncWithRetry(rawTx sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error)
+	SendTransactionAsyncNoRetry(rawTx sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error)
 	SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error
 	Status(ctx context.Context) (*ctypes.ResultStatus, error)
 	GetContext() context.Context
@@ -363,13 +340,17 @@ func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
 
 func (icc *InferenceCosmosClient) DecryptBytes(ciphertext []byte) ([]byte, error) {
 	name := icc.apiAccount.SignerAccount.Name
-	// Use the new keyring Decrypt method
 	kr := *icc.GetKeyring()
-	bytes, err := kr.Decrypt(name, ciphertext, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	return bytes, nil
+	return decryptKeyring(kr, name, ciphertext)
+}
+
+func decryptKeyring(kr keyring.Keyring, name string, ciphertext []byte) (plaintext []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("ecies decrypt panic: %v", r)
+		}
+	}()
+	return kr.Decrypt(name, ciphertext, nil, nil)
 }
 
 func (icc *InferenceCosmosClient) EncryptBytes(plaintext []byte) ([]byte, error) {
@@ -410,9 +391,76 @@ func (icc *InferenceCosmosClient) SubmitPocValidationsV2(transaction *inferencet
 }
 
 func (icc *InferenceCosmosClient) SubmitPoCV2StoreCommit(transaction *inferencetypes.MsgPoCV2StoreCommit) error {
+	return icc.SubmitPoCV2StoreCommitWithTimeout(transaction, 0)
+}
+
+func (icc *InferenceCosmosClient) SubmitPoCV2StoreCommitWithTimeout(transaction *inferencetypes.MsgPoCV2StoreCommit, timeoutHeight uint64) error {
 	transaction.Creator = icc.Address
-	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
+	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction, tx_manager.TxSendOptions{TimeoutHeight: timeoutHeight})
 	return err
+}
+
+func (icc *InferenceCosmosClient) RefreshFeeTree(ctx context.Context) error {
+	qc := icc.NewInferenceQueryClient()
+	resp, err := qc.Params(ctx, &inferencetypes.QueryParamsRequest{})
+	if err != nil {
+		return fmt.Errorf("refresh fee tree: %w", err)
+	}
+	var fp *inferencetypes.FeeParams
+	if resp != nil {
+		fp = resp.Params.FeeParams
+	}
+	icc.ApplyFeeTree(fp)
+	return nil
+}
+
+func (icc *InferenceCosmosClient) ApplyFeeTree(fp *inferencetypes.FeeParams) {
+	if icc == nil || icc.manager == nil {
+		return
+	}
+	icc.manager.RefreshFeeTree(fp)
+}
+
+func (icc *InferenceCosmosClient) SetStoreCommitPrev(prev map[string]uint32) {
+	icc.manager.SetStoreCommitPrev(prev)
+}
+
+func (icc *InferenceCosmosClient) SimulatePoCV2StoreCommit(msg *inferencetypes.MsgPoCV2StoreCommit) (uint64, error) {
+	if icc == nil || icc.manager == nil {
+		return 0, fmt.Errorf("cosmos client is not initialized")
+	}
+	if msg != nil {
+		msg.Creator = icc.Address
+	}
+	return icc.manager.SimulateMsgs([]sdk.Msg{msg})
+}
+
+func (icc *InferenceCosmosClient) SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint) {
+	if icc == nil || icc.manager == nil {
+		return
+	}
+	icc.manager.SetStoreCommitIntrinsic(gas, calibratedEntries)
+}
+
+func (icc *InferenceCosmosClient) ClearStoreCommitIntrinsic() {
+	if icc == nil || icc.manager == nil {
+		return
+	}
+	icc.manager.ClearStoreCommitIntrinsic()
+}
+
+func (icc *InferenceCosmosClient) StoreCommitRawLeaf() (rate, base uint64, loaded bool) {
+	if icc == nil || icc.manager == nil {
+		return 0, 0, false
+	}
+	return icc.manager.StoreCommitRawLeaf()
+}
+
+func (icc *InferenceCosmosClient) SetHardwarePrev(nodes []*inferencetypes.HardwareNode) {
+	if icc == nil || icc.manager == nil {
+		return
+	}
+	icc.manager.SetHardwarePrev(nodes)
 }
 
 func (icc *InferenceCosmosClient) SubmitMLNodeWeightDistribution(transaction *inferencetypes.MsgMLNodeWeightDistribution) error {
@@ -474,12 +522,25 @@ func (icc *InferenceCosmosClient) BridgeTransactionsByReceipt(ctx context.Contex
 	return resp.BridgeTransactions, nil
 }
 
-func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error) {
-	return icc.manager.SendTransactionAsyncWithRetry(msg, deadlineBlock...)
+func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error) {
+	return icc.manager.SendTransactionAsyncWithRetry(msg, opts...)
 }
 
-func (icc *InferenceCosmosClient) SendTransactionAsyncNoRetry(msg sdk.Msg) (*sdk.TxResponse, error) {
-	return icc.manager.SendTransactionAsyncNoRetry(msg)
+func (icc *InferenceCosmosClient) SendTransactionAsyncNoRetry(msg sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error) {
+	return icc.manager.SendTransactionAsyncNoRetry(msg, opts...)
+}
+
+// IsPermanentBroadcastError is true when CheckTx rejected the tx with a
+// non-retryable code. StoreCommit should not resend the same count.
+func IsPermanentBroadcastError(err error) bool {
+	return tx_manager.IsPermanentCheckTxError(err)
+}
+
+// IsInsufficientFeeBroadcastError is true when CheckTx rejected the tx
+// because attached fees were too low. The same payload should be retried
+// after a fee-tree refresh.
+func IsInsufficientFeeBroadcastError(err error) bool {
+	return tx_manager.IsInsufficientFeeCheckTxError(err)
 }
 
 func (icc *InferenceCosmosClient) GetUpgradePlan() (*upgradetypes.QueryCurrentPlanResponse, error) {

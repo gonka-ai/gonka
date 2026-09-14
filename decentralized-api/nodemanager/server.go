@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"time"
 
-	"decentralized-api/apiconfig"
-	"decentralized-api/broker"
-	"decentralized-api/chainphase"
+	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/nmrpc"
 	"common/logging"
 	"common/nodemanager/gen"
 	"common/runtimeconfig"
+	"decentralized-api/apiconfig"
+	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
@@ -36,6 +38,7 @@ type Server struct {
 	runtimeConfig *runtimeconfig.Server
 	hostEvents    *apiconfig.HostEventRing
 	escrowLoad    *broker.EscrowLoadTracker
+	blockOracle   blocks.BlockOracle
 }
 
 // ServerOption configures optional Server dependencies.
@@ -50,6 +53,12 @@ func WithHostEventRing(ring *apiconfig.HostEventRing) ServerOption {
 // populate GetHostEventsResponse.escrow_load.
 func WithEscrowLoadTracker(t *broker.EscrowLoadTracker) ServerOption {
 	return func(s *Server) { s.escrowLoad = t }
+}
+
+// WithBlockOracle serves GetBlockHeader / ProveBlockPath from the same
+// BlockOracle as HTTP GET /block/:height. Nil (omitted) → FailedPrecondition.
+func WithBlockOracle(o blocks.BlockOracle) ServerOption {
+	return func(s *Server) { s.blockOracle = o }
 }
 
 // NewServer creates a NodeManager gRPC server. configManager and phaseTracker are
@@ -148,6 +157,14 @@ func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfig
 		return nil, status.Error(codes.FailedPrecondition, "runtime config: config manager not configured")
 	}
 	return s.runtimeConfig.Handle(ctx, req)
+}
+
+func (s *Server) GetBlockHeader(ctx context.Context, req *gen.GetBlockHeaderRequest) (*gen.GetBlockHeaderResponse, error) {
+	return nmrpc.GetBlockHeader(ctx, s.blockOracle, req)
+}
+
+func (s *Server) ProveBlockPath(ctx context.Context, req *gen.ProveBlockPathRequest) (*gen.ProveBlockPathResponse, error) {
+	return nmrpc.ProveBlockPath(ctx, s.blockOracle, req)
 }
 
 func currentEpochID(pt *chainphase.ChainPhaseTracker) uint64 {

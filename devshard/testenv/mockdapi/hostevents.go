@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/nmrpc"
 	"common/nodemanager/gen"
 	"devshard/chainoracle/params"
 
@@ -96,11 +98,20 @@ func (r *hostEventRing) since(cursor, clientGen uint64, want map[gen.HostEventKi
 // long-poll warm scenario. Other RPCs are inherited from the embedded params server.
 type nodeManagerServer struct {
 	*params.Server
-	ring *hostEventRing
+	ring   *hostEventRing
+	oracle blocks.BlockOracle
 }
 
-func newNodeManagerServer(paramsSrv *params.Server, ring *hostEventRing) *nodeManagerServer {
-	return &nodeManagerServer{Server: paramsSrv, ring: ring}
+func newNodeManagerServer(paramsSrv *params.Server, ring *hostEventRing, oracle blocks.BlockOracle) *nodeManagerServer {
+	return &nodeManagerServer{Server: paramsSrv, ring: ring, oracle: oracle}
+}
+
+func (s *nodeManagerServer) GetBlockHeader(ctx context.Context, req *gen.GetBlockHeaderRequest) (*gen.GetBlockHeaderResponse, error) {
+	return nmrpc.GetBlockHeader(ctx, s.oracle, req)
+}
+
+func (s *nodeManagerServer) ProveBlockPath(ctx context.Context, req *gen.ProveBlockPathRequest) (*gen.ProveBlockPathResponse, error) {
+	return nmrpc.ProveBlockPath(ctx, s.oracle, req)
 }
 
 // GetHostEvents implements the NodeManager long-poll over the mock ring.

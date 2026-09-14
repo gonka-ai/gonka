@@ -398,6 +398,7 @@ fun GsonBuilder.registerCosmosTypes(): GsonBuilder {
         .registerTypeAdapter(java.lang.Long::class.java, LongDeserializer())
         .registerTypeAdapter(java.lang.Double::class.java, DoubleSerializer())
         .registerTypeAdapter(java.lang.Float::class.java, FloatSerializer())
+        .registerTypeAdapter(FeeParamsData::class.java, FeeParamsDataSerializer())
         .registerTypeAdapter(ConfirmationPoCPhase::class.java, ConfirmationPoCPhaseDeserializer())
         .registerTypeAdapter(InferenceStatus::class.java, InferenceStatusDeserializer())
         .registerTypeAdapter(DevshardInferenceStatus::class.java, DevshardInferenceStatusDeserializer())
@@ -501,7 +502,20 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                     PoCModelConfig(
                         modelId = defaultModel,
                         seqLen = 256L,
+                        dynamicCoefficient = DynamicCoefficientModelConfig(
+                            coeffMin = Decimal.fromDouble(1.0),
+                            coeffMax = Decimal.fromDouble(1.0),
+                            relativeDifficulty = Decimal.fromDouble(1.0),
+                            targetShareBps = 10000,
+                        ),
                     )
+                )
+                this[PocParams::dynamicCoefficientParams] = DynamicCoefficientParams(
+                    targetZoneBps = 500,
+                    stepMin = Decimal.fromDouble(0.005),
+                    stepMax = Decimal.fromDouble(0.05),
+                    bootstrapStepMax = Decimal.fromDouble(0.25),
+                    bootstrapShareBps = 100,
                 )
                 this[PocParams::pocV2Enabled] = true
                 this[PocParams::validationSlots] = 2L
@@ -808,4 +822,3 @@ val defaultInferenceResponse = """
 """.trimIndent()
 
 val defaultInferenceResponseObject = cosmosJson.fromJson(defaultInferenceResponse, OpenAIResponse::class.java)
-

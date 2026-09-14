@@ -57,6 +57,8 @@ const (
 	Msg_SetPoCDelegation_FullMethodName                 = "/inference.inference.Msg/SetPoCDelegation"
 	Msg_RefusePoCDelegation_FullMethodName              = "/inference.inference.Msg/RefusePoCDelegation"
 	Msg_DeclarePoCIntent_FullMethodName                 = "/inference.inference.Msg/DeclarePoCIntent"
+	Msg_PutDevshardApprovedVersion_FullMethodName       = "/inference.inference.Msg/PutDevshardApprovedVersion"
+	Msg_DeleteDevshardApprovedVersion_FullMethodName    = "/inference.inference.Msg/DeleteDevshardApprovedVersion"
 )
 
 // MsgClient is the client API for Msg service.
@@ -105,6 +107,8 @@ type MsgClient interface {
 	SetPoCDelegation(ctx context.Context, in *MsgSetPoCDelegation, opts ...grpc.CallOption) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(ctx context.Context, in *MsgRefusePoCDelegation, opts ...grpc.CallOption) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCIntent, opts ...grpc.CallOption) (*MsgDeclarePoCIntentResponse, error)
+	PutDevshardApprovedVersion(ctx context.Context, in *MsgPutDevshardApprovedVersion, opts ...grpc.CallOption) (*MsgPutDevshardApprovedVersionResponse, error)
+	DeleteDevshardApprovedVersion(ctx context.Context, in *MsgDeleteDevshardApprovedVersion, opts ...grpc.CallOption) (*MsgDeleteDevshardApprovedVersionResponse, error)
 }
 
 type msgClient struct {
@@ -457,6 +461,24 @@ func (c *msgClient) DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCInten
 	return out, nil
 }
 
+func (c *msgClient) PutDevshardApprovedVersion(ctx context.Context, in *MsgPutDevshardApprovedVersion, opts ...grpc.CallOption) (*MsgPutDevshardApprovedVersionResponse, error) {
+	out := new(MsgPutDevshardApprovedVersionResponse)
+	err := c.cc.Invoke(ctx, Msg_PutDevshardApprovedVersion_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) DeleteDevshardApprovedVersion(ctx context.Context, in *MsgDeleteDevshardApprovedVersion, opts ...grpc.CallOption) (*MsgDeleteDevshardApprovedVersionResponse, error) {
+	out := new(MsgDeleteDevshardApprovedVersionResponse)
+	err := c.cc.Invoke(ctx, Msg_DeleteDevshardApprovedVersion_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -503,6 +525,8 @@ type MsgServer interface {
 	SetPoCDelegation(context.Context, *MsgSetPoCDelegation) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(context.Context, *MsgRefusePoCDelegation) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error)
+	PutDevshardApprovedVersion(context.Context, *MsgPutDevshardApprovedVersion) (*MsgPutDevshardApprovedVersionResponse, error)
+	DeleteDevshardApprovedVersion(context.Context, *MsgDeleteDevshardApprovedVersion) (*MsgDeleteDevshardApprovedVersionResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -623,6 +647,12 @@ func (UnimplementedMsgServer) RefusePoCDelegation(context.Context, *MsgRefusePoC
 }
 func (UnimplementedMsgServer) DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeclarePoCIntent not implemented")
+}
+func (UnimplementedMsgServer) PutDevshardApprovedVersion(context.Context, *MsgPutDevshardApprovedVersion) (*MsgPutDevshardApprovedVersionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PutDevshardApprovedVersion not implemented")
+}
+func (UnimplementedMsgServer) DeleteDevshardApprovedVersion(context.Context, *MsgDeleteDevshardApprovedVersion) (*MsgDeleteDevshardApprovedVersionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeleteDevshardApprovedVersion not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1321,6 +1351,42 @@ func _Msg_DeclarePoCIntent_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_PutDevshardApprovedVersion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgPutDevshardApprovedVersion)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).PutDevshardApprovedVersion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_PutDevshardApprovedVersion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).PutDevshardApprovedVersion(ctx, req.(*MsgPutDevshardApprovedVersion))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_DeleteDevshardApprovedVersion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgDeleteDevshardApprovedVersion)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).DeleteDevshardApprovedVersion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_DeleteDevshardApprovedVersion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).DeleteDevshardApprovedVersion(ctx, req.(*MsgDeleteDevshardApprovedVersion))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1479,6 +1545,14 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeclarePoCIntent",
 			Handler:    _Msg_DeclarePoCIntent_Handler,
+		},
+		{
+			MethodName: "PutDevshardApprovedVersion",
+			Handler:    _Msg_PutDevshardApprovedVersion_Handler,
+		},
+		{
+			MethodName: "DeleteDevshardApprovedVersion",
+			Handler:    _Msg_DeleteDevshardApprovedVersion_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

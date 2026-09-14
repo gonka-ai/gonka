@@ -4,19 +4,20 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// DevshardVersionsCacheFromParams maps chain DevshardEscrowParams into the dapi cache.
-func DevshardVersionsCacheFromParams(dep *types.DevshardEscrowParams) DevshardVersionsCache {
+// DevshardVersionsCacheFromParams maps escrow scalars from params and the
+// dedicated approved-versions query into the dapi cache.
+func DevshardVersionsCacheFromParams(dep *types.DevshardEscrowParams, approved []*types.DevshardApprovedVersion) DevshardVersionsCache {
 	if dep == nil {
 		return DevshardVersionsCache{}
 	}
-	versions := make([]DevshardVersion, len(dep.ApprovedVersions))
-	for i, v := range dep.ApprovedVersions {
+	versions := make([]DevshardVersion, 0, len(approved))
+	for _, v := range approved {
 		if v == nil {
 			continue
 		}
-		versions[i] = DevshardVersion{
+		versions = append(versions, DevshardVersion{
 			Name: v.Name, Binary: v.Binary, SHA256: v.Sha256,
-		}
+		})
 	}
 	return DevshardVersionsCache{
 		Versions:                versions,

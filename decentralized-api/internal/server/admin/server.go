@@ -91,6 +91,8 @@ func NewServer(
 	// EXPERIMENTAL: Setup and health report endpoint for participant onboarding
 	g.GET("setup/report", s.getSetupReport)
 
+	g.GET("epoch-fee-budget", s.getEpochFeeBudget)
+
 	// Bridge
 	g.POST("bridge/block", s.postBridgeBlock)
 
