@@ -214,7 +214,7 @@ measured; the inference gate is the corroborating signal.
 
 ```
 ghcr.io/gonka-ai/mlnode:3.1.0-vllm-0.28.0
-ghcr.io/gonka-ai/mlnode@sha256:702d932957944b6a77b6fbb73b1cc00e5d437023500d1182d66ac4a233fc949e
+ghcr.io/gonka-ai/mlnode@sha256:25cccf7d9954678550e47a1f09f12d3db140803e9cd6c289f3af25d34ceabda0
 ```
 
 3.1.0 is 3.0.17 with gonka-poc `0.1.6` (gonka-ai/gonka-vllm-plugins#10 and #11): the same layers with
@@ -224,7 +224,9 @@ one added on top, so every layer of 3.0.17 is reused verbatim. Its vLLM base is 
 `v0.28.0-glm53-poc-cu13-hopper-blackwell` base plus the 0.1.6 plugin layer; gonka-ai/vllm#109
 pins that version in `docker/Dockerfile.gonka-poc` so a from-scratch build produces the same
 tree. Building `mlnode/packages/api/Dockerfile` against the v2 base with
-`MLNODE_RELEASE_VERSION=3.1.0` and `EXPECTED_VLLM_VERSION=0.28.0` is equivalent. The image
+`MLNODE_RELEASE_VERSION=3.1.0` and `EXPECTED_VLLM_VERSION=0.28.0` is equivalent; the one MLNode
+API change in this PR (the `/versions` capability cache is keyed by loaded model, since
+gonka-poc 0.1.6 reports it per model) is carried as a layer on top. The image
 carries vLLM `0.28.0.dev0+glm53.gonka.sampler1`, gonka-poc `0.1.6`, FlashInfer `0.6.18` and
 torch `2.13.0+cu130`. The previous image, `3.0.17-vllm-0.28.0`
 (`sha256:6772abdf736bbe8cad27d8c305e1fa32b54c82f783286d405fc5171d06419081`), differs only by
@@ -272,12 +274,23 @@ Startup through the stock `entrypoint.sh` was checked separately, since that is 
 join compose uses and the one that failed before #1751: the container reaches
 `/api/v1/state`, which reports the release version, with no `useradd` in the logs.
 
-The table above was recorded on 3.0.17; 3.1.0 changes only the PoC plugin. On 3.1.0 the plugin
-suite passes inside the image (`pytest tests/unit tests/contract`: 141 passed, 1 skipped), and
-GLM-5.3-Flash on 4×H200 TP=4 with the H200 profile returns 128/128 nonces at batch 16,
-reproduces a repeated run bit-exactly and shows no batch-position artifact under shifted
-batches — the numbers in *First-in-batch instability* above. `/api/v1/state` reports
-`"version":"3.1.0"`.
+The table above was recorded on 3.0.17. On 3.1.0 the same cycle — PoC start, 45–90 s warm-up,
+120 s measured, PoC stop, control prompt, twice — was run on one 8×H200 host with each model's
+H200 profile (MLNode fans out to 8/TP instances):
+
+| Model | TP × inst. | cycle 1 / 2, nonce/min per instance | prompt after each stop |
+|---|---:|---:|---|
+| DeepSeek-V4-Flash-0731 | 2 × 4 | 1038 / 1042 | correct, reasoning separated |
+| MiniMax-M2.7 | 2 × 4 | 1106 / 1478 | correct, reasoning separated |
+| GLM-5.3-Flash | 4 × 2 | 1524 / 1528 | correct, reasoning separated |
+
+First-cycle figures below the second are cold JIT after model load. Every stop returned the
+backends to `IDLE`, chat during PoC was refused with 503, and no XID or NaN was logged. GLM
+additionally returns 128/128 nonces at batch 16, reproduces a repeated run bit-exactly and
+shows no batch-position artifact under shifted batches — the numbers in *First-in-batch
+instability* above — and reports `poc_validation_inference: false`. The plugin suite passes
+inside the image (`pytest tests/unit tests/contract`: 141 passed, 1 skipped). `/api/v1/state`
+reports `"version":"3.1.0"`.
 
 ### MiniMax reasoning parser
 
