@@ -23,10 +23,6 @@ func (k Keeper) SendCoinsFromModuleToAccount(ctx context.Context, module string,
 	return k.BankKeeper.SendCoinsFromModuleToAccount(ctx, module, recipient, amt, memo)
 }
 
-func (k Keeper) SendCoinsFromModuleToModule(ctx context.Context, sender, recipient string, amt sdk.Coins, memo string) error {
-	return k.BankKeeper.SendCoinsFromModuleToModule(ctx, sender, recipient, amt, memo)
-}
-
 func (k Keeper) IsChallengeGenerating(ctx context.Context, addr string) bool {
 	return k.PoCChallenge.IsChallengeGenerating(ctx, addr)
 }
@@ -47,7 +43,8 @@ func (k Keeper) IsMissedRequestWaived(ctx context.Context, addr string, height i
 	return pocchallenge.IsMissedRequestWaived(ctx, k.PoCChallenge, addr, height)
 }
 
-func (k Keeper) EligibleChallengeVoter(ctx context.Context, epochIndex uint64, modelID, voter string) bool {
+func (k Keeper) ChallengeVoterEligibility(ctx context.Context, voter string) (pocchallenge.ChallengeVoterEligibility, error) {
+	out := pocchallenge.ChallengeVoterEligibility{Models: make(map[string]struct{})}
 	var snapHeight int64
 	if ev, ok, err := k.GetActiveConfirmationPoCEvent(ctx); err == nil && ok && ev != nil {
 		snapHeight = ev.TriggerHeight
@@ -55,19 +52,23 @@ func (k Keeper) EligibleChallengeVoter(ctx context.Context, epochIndex uint64, m
 		snapHeight = up.PocStartBlockHeight
 	}
 	if snapHeight == 0 {
-		return false
+		return out, nil
 	}
 	snap, found, err := k.GetPoCValidationSnapshot(ctx, snapHeight)
-	if err != nil || !found {
-		return false
+	if err != nil {
+		return out, err
+	}
+	if !found {
+		return out, nil
 	}
 	for _, mvw := range snap.ModelVotingPowers {
-		if mvw == nil || mvw.ModelId != modelID {
+		if mvw == nil {
 			continue
 		}
 		for _, e := range mvw.VotingPowers {
 			if e != nil && e.Address == voter {
-				return true
+				out.Models[mvw.ModelId] = struct{}{}
+				break
 			}
 		}
 	}
@@ -75,9 +76,10 @@ func (k Keeper) EligibleChallengeVoter(ctx context.Context, epochIndex uint64, m
 		for _, addr := range k.GetGenesisGuardianAddresses(ctx) {
 			acc, err := utils.OperatorAddressToAccAddress(addr)
 			if err == nil && acc == voter {
-				return true
+				out.Guardian = true
+				break
 			}
 		}
 	}
-	return false
+	return out, nil
 }

@@ -20,9 +20,11 @@ type fakeChain struct {
 	haveSnap        bool
 	guardianEnabled bool
 	guardians       []string
-	summaries       map[string]types.EpochPerformanceSummary
 	blocked         map[string]bool
 	sends           []string
+	sendErr         error
+	payErr          error
+	eligLoads       int
 	maintState      map[string]types.MaintenanceState
 	reservations    map[uint64]types.MaintenanceReservation
 }
@@ -41,32 +43,32 @@ func (f *fakeChain) GetEffectiveEpoch(ctx context.Context) (*types.Epoch, bool) 
 func (f *fakeChain) GetActiveConfirmationPoCEvent(ctx context.Context) (*types.ConfirmationPoCEvent, bool, error) {
 	return f.event, f.eventActive, nil
 }
-func (f *fakeChain) GetEpochPerformanceSummary(ctx context.Context, epochIndex uint64, participantId string) (types.EpochPerformanceSummary, bool) {
-	s, ok := f.summaries[participantId]
-	return s, ok
-}
-func (f *fakeChain) EligibleChallengeVoter(ctx context.Context, epochIndex uint64, modelID, voter string) bool {
+func (f *fakeChain) ChallengeVoterEligibility(ctx context.Context, voter string) (ChallengeVoterEligibility, error) {
+	f.eligLoads++
+	out := ChallengeVoterEligibility{Models: make(map[string]struct{})}
 	if !f.haveSnap {
-		return false
+		return out, nil
 	}
 	for _, mvw := range f.snapshot.ModelVotingPowers {
-		if mvw == nil || mvw.ModelId != modelID {
+		if mvw == nil {
 			continue
 		}
 		for _, e := range mvw.VotingPowers {
 			if e != nil && e.Address == voter {
-				return true
+				out.Models[mvw.ModelId] = struct{}{}
+				break
 			}
 		}
 	}
 	if f.guardianEnabled {
 		for _, g := range f.guardians {
 			if g == voter {
-				return true
+				out.Guardian = true
+				break
 			}
 		}
 	}
-	return false
+	return out, nil
 }
 func (f *fakeChain) GetMaintenanceState(ctx context.Context, participant sdk.AccAddress) (types.MaintenanceState, bool) {
 	s, ok := f.maintState[participant.String()]
@@ -90,14 +92,16 @@ func (f *fakeChain) SendCoinsFromAccountToModule(ctx context.Context, sender sdk
 	return nil
 }
 func (f *fakeChain) SendCoinsFromModuleToAccount(ctx context.Context, module string, recipient sdk.AccAddress, amt sdk.Coins, memo string) error {
+	if f.sendErr != nil {
+		return f.sendErr
+	}
 	f.sends = append(f.sends, "refund:"+memo)
 	return nil
 }
-func (f *fakeChain) SendCoinsFromModuleToModule(ctx context.Context, sender, recipient string, amt sdk.Coins, memo string) error {
-	f.sends = append(f.sends, "comp:"+memo)
-	return nil
-}
 func (f *fakeChain) PayParticipantFromModule(ctx context.Context, address string, amount int64, moduleName string, memo string, vestingPeriods *uint64) error {
+	if f.payErr != nil {
+		return f.payErr
+	}
 	f.sends = append(f.sends, "pay:"+memo)
 	return nil
 }

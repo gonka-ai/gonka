@@ -8,6 +8,14 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+type validationTarget struct {
+	ch       types.PoCChallenge
+	found    bool
+	seg      *types.PoCChallengeSegment
+	assigned []string
+	ready    bool
+}
+
 func SubmitValidations(ctx context.Context, chain Chain, store *Store, msg *types.MsgSubmitPoCChallengeValidations) (*types.MsgSubmitPoCChallengeValidationsResponse, error) {
 	if chain.IsPoCParticipantBlocked(ctx, msg.Creator) {
 		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, msg.Creator)
@@ -23,7 +31,13 @@ func SubmitValidations(ctx context.Context, chain Chain, store *Store, msg *type
 	if !live[msg.Creator] {
 		return nil, sdkerrors.Wrap(types.ErrIllegalState, "voter is not a live epoch member")
 	}
+	elig, err := chain.ChallengeVoterEligibility(ctx, msg.Creator)
+	if err != nil {
+		return nil, err
+	}
 	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
+	targets := make(map[string]*validationTarget)
+	written := make(map[string]struct{})
 	stored := 0
 	for _, entry := range msg.Validations {
 		if entry == nil || entry.ModelId == "" || entry.ParticipantAddress == "" {
@@ -32,32 +46,29 @@ func SubmitValidations(ctx context.Context, chain Chain, store *Store, msg *type
 		if msg.Creator == entry.ParticipantAddress {
 			continue
 		}
-		ch, found, err := store.Get(ctx, entry.ParticipantAddress)
+		tc, err := loadValidationTarget(ctx, chain, store, targets, entry.ParticipantAddress, msg.PocStageStartBlockHeight, params)
 		if err != nil {
 			return nil, err
 		}
-		if !found || ch.FailReason != types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET {
+		if !tc.found || tc.ch.FailReason != types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET {
 			continue
 		}
-		seg := store.SegmentByStart(ch, msg.PocStageStartBlockHeight)
-		if seg == nil || seg.SealHeight == 0 ||
-			seg.Outcome != types.PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PENDING {
+		if tc.seg == nil || tc.seg.SealHeight == 0 ||
+			tc.seg.Outcome != types.PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PENDING {
 			continue
 		}
-		assigned := AssignedConfirmationModels(ctx, chain, ch.EpochIndex, ch.Target)
-		if !containsString(assigned, entry.ModelId) {
+		if !containsString(tc.assigned, entry.ModelId) {
 			continue
 		}
-		if !chain.EligibleChallengeVoter(ctx, ch.EpochIndex, entry.ModelId, msg.Creator) {
+		if !elig.Allows(entry.ModelId) {
 			continue
 		}
-		counted := CountedSlices(seg.PocStageStartBlockHeight, seg.SealHeight, SliceBlocks(params))
-		ready, err := HasRequiredCommits(ctx, store, ch.Target, seg.PocStageStartBlockHeight, counted, assigned)
-		if err != nil {
-			return nil, err
-		}
-		if !ready {
+		if !tc.ready {
 			return nil, sdkerrors.Wrap(types.ErrIllegalState, "counted slice commits are incomplete")
+		}
+		dupKey := entry.ParticipantAddress + "/" + entry.ModelId
+		if _, ok := written[dupKey]; ok {
+			continue
 		}
 		exists, err := store.HasValidation(ctx, entry.ParticipantAddress, msg.PocStageStartBlockHeight, entry.ModelId, msg.Creator)
 		if err != nil {
@@ -75,10 +86,11 @@ func SubmitValidations(ctx context.Context, chain Chain, store *Store, msg *type
 		}); err != nil {
 			return nil, err
 		}
-		if seg.FirstVoteHeight == 0 {
-			seg.FirstVoteHeight = height
-			store.ReplaceSegment(&ch, *seg)
-			if err := store.Set(ctx, ch); err != nil {
+		written[dupKey] = struct{}{}
+		if tc.seg.FirstVoteHeight == 0 {
+			tc.seg.FirstVoteHeight = height
+			store.ReplaceSegment(&tc.ch, *tc.seg)
+			if err := store.Set(ctx, tc.ch); err != nil {
 				return nil, err
 			}
 		}
@@ -89,6 +101,40 @@ func SubmitValidations(ctx context.Context, chain Chain, store *Store, msg *type
 		"start", msg.PocStageStartBlockHeight,
 		"stored", stored)
 	return &types.MsgSubmitPoCChallengeValidationsResponse{}, nil
+}
+
+func loadValidationTarget(
+	ctx context.Context,
+	chain Chain,
+	store *Store,
+	cache map[string]*validationTarget,
+	target string,
+	start int64,
+	params types.Params,
+) (*validationTarget, error) {
+	if tc, ok := cache[target]; ok {
+		return tc, nil
+	}
+	ch, found, err := store.Get(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	tc := &validationTarget{ch: ch, found: found}
+	if found && ch.FailReason == types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET {
+		tc.seg = store.SegmentByStart(ch, start)
+		if tc.seg != nil && tc.seg.SealHeight != 0 &&
+			tc.seg.Outcome == types.PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PENDING {
+			tc.assigned = AssignedConfirmationModels(ctx, chain, ch.EpochIndex, ch.Target)
+			counted := CountedSlices(tc.seg.PocStageStartBlockHeight, tc.seg.SealHeight, SliceBlocks(params))
+			ready, err := HasRequiredCommits(ctx, store, ch.Target, tc.seg.PocStageStartBlockHeight, counted, tc.assigned)
+			if err != nil {
+				return nil, err
+			}
+			tc.ready = ready
+		}
+	}
+	cache[target] = tc
+	return tc, nil
 }
 
 func ConfirmationWeightNodes(ctx context.Context, chain Chain, epochIndex uint64, target string) map[string][]*types.MLNodeInfo {

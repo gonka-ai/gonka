@@ -10,9 +10,6 @@ import (
 )
 
 func StoreCommit(ctx context.Context, chain Chain, store *Store, msg *types.MsgPoCChallengeStoreCommit) (*types.MsgPoCChallengeStoreCommitResponse, error) {
-	if chain.IsPoCParticipantBlocked(ctx, msg.Creator) {
-		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, msg.Creator)
-	}
 	if len(msg.Entries) == 0 {
 		return nil, sdkerrors.Wrap(types.ErrIllegalState, "entries must not be empty")
 	}

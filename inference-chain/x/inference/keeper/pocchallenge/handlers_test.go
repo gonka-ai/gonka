@@ -1,6 +1,7 @@
 package pocchallenge
 
 import (
+	"errors"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -9,8 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var errPayout = errors.New("payout failed")
+
 func challengeAddrs() (challenger, target string) {
 	return testutil.Creator, testutil.Executor
+}
+
+func unpaidShare(share uint64) map[string]TargetSettle {
+	return map[string]TargetSettle{testutil.Executor: {GrossShare: share}}
 }
 
 func baseParams(challenger string) types.Params {
@@ -214,6 +221,29 @@ func TestStoreCommit_CurrentSliceOnly(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestStoreCommit_AllowsBlockedTarget(t *testing.T) {
+	chain, ctx, store := baseChain(t, 100)
+	chain.blocked = map[string]bool{testutil.Executor: true}
+	ctx = ctx.WithBlockHeight(100)
+	_, err := Create(ctx, chain, store, &types.MsgCreatePoCChallenge{
+		Creator: testutil.Creator,
+		Target:  testutil.Executor,
+	})
+	require.NoError(t, err)
+	ctx = ctx.WithBlockHeight(101)
+	_, err = StoreCommit(ctx, chain, store, &types.MsgPoCChallengeStoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 101,
+		SliceIndex:               0,
+		Entries: []*types.PoCV2CommitEntry{{
+			ModelId:  "m1",
+			Count:    10,
+			RootHash: make([]byte, 32),
+		}},
+	})
+	require.NoError(t, err)
+}
+
 func TestStoreCommit_AfterSealLastSliceUntilVote(t *testing.T) {
 	chain, ctx, store := baseChain(t, 100)
 	ctx = ctx.WithBlockHeight(100)
@@ -332,10 +362,9 @@ func TestPay_PassVestsLockedPayment(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, SealOpenSegment(ctx, store, testutil.Executor, 200, 500))
 	require.NoError(t, LeaveGenerating(ctx, store, testutil.Executor, 1950))
-	chain.summaries = map[string]types.EpochPerformanceSummary{
-		testutil.Executor: {EpochIndex: 2, ParticipantId: testutil.Executor, RewardedCoins: 0},
-	}
-	require.NoError(t, SettleChallengePayments(ctx, chain, store, 2))
+	withheld, err := SettleInCache(ctx, chain, store, 2, unpaidShare(200))
+	require.NoError(t, err)
+	require.Zero(t, withheld)
 	require.Contains(t, chain.sends, "pay:poc_challenge_pass")
 	_, found, err := store.Get(ctx, testutil.Executor)
 	require.NoError(t, err)
@@ -343,6 +372,31 @@ func TestPay_PassVestsLockedPayment(t *testing.T) {
 }
 
 func TestPay_FailRefundsAndCompensation(t *testing.T) {
+	for _, reason := range []types.PoCChallengeFailReason{
+		types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED,
+		types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT,
+		types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT,
+	} {
+		t.Run(reason.String(), func(t *testing.T) {
+			chain, ctx, store := baseChain(t, 100)
+			ctx = ctx.WithBlockHeight(100)
+			_, err := Create(ctx, chain, store, &types.MsgCreatePoCChallenge{
+				Creator: testutil.Creator,
+				Target:  testutil.Executor,
+			})
+			require.NoError(t, err)
+			require.NoError(t, FailChallenge(ctx, store, testutil.Executor, reason, 500))
+			withheld, err := SettleInCache(ctx, chain, store, 2, unpaidShare(200))
+			require.NoError(t, err)
+			require.Equal(t, uint64(200), withheld)
+			require.Contains(t, chain.sends, "refund:poc_challenge_refund")
+			require.Contains(t, chain.sends, "pay:poc_challenge_compensation")
+			require.NotContains(t, chain.sends, "comp:poc_challenge_compensation")
+		})
+	}
+}
+
+func TestPay_CompensationCappedByExpected(t *testing.T) {
 	chain, ctx, store := baseChain(t, 100)
 	ctx = ctx.WithBlockHeight(100)
 	_, err := Create(ctx, chain, store, &types.MsgCreatePoCChallenge{
@@ -350,22 +404,16 @@ func TestPay_FailRefundsAndCompensation(t *testing.T) {
 		Target:  testutil.Executor,
 	})
 	require.NoError(t, err)
-	require.NoError(t, FailChallenge(ctx, store, testutil.Executor, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT, 500))
-	chain.summaries = map[string]types.EpochPerformanceSummary{
-		testutil.Executor: {EpochIndex: 2, ParticipantId: testutil.Executor, RewardedCoins: 10},
-	}
+	require.NoError(t, FailChallenge(ctx, store, testutil.Executor, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED, 500))
 	ch, found, err := store.Get(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	ch.UnpaidRewardShare = 200
-	require.NoError(t, store.Set(ctx, ch))
-	require.NoError(t, SettleChallengePayments(ctx, chain, store, 2))
-	require.Contains(t, chain.sends, "refund:poc_challenge_refund")
-	require.Contains(t, chain.sends, "comp:poc_challenge_compensation")
-	require.Contains(t, chain.sends, "pay:poc_challenge_compensation")
+	withheld, err := SettleInCache(ctx, chain, store, 2, unpaidShare(ch.ExpectedReward+1000))
+	require.NoError(t, err)
+	require.Equal(t, ch.ExpectedReward, withheld)
 }
 
-func TestPay_SkipsWhenSettleSummaryMissing(t *testing.T) {
+func TestPay_SkipsWhenNotReady(t *testing.T) {
 	chain, ctx, store := baseChain(t, 100)
 	ctx = ctx.WithBlockHeight(100)
 	_, err := Create(ctx, chain, store, &types.MsgCreatePoCChallenge{
@@ -373,9 +421,9 @@ func TestPay_SkipsWhenSettleSummaryMissing(t *testing.T) {
 		Target:  testutil.Executor,
 	})
 	require.NoError(t, err)
-	require.NoError(t, SealOpenSegment(ctx, store, testutil.Executor, 200, 500))
-	require.NoError(t, LeaveGenerating(ctx, store, testutil.Executor, 1950))
-	require.NoError(t, SettleChallengePayments(ctx, chain, store, 2))
+	withheld, err := SettleInCache(ctx, chain, store, 2, unpaidShare(200))
+	require.NoError(t, err)
+	require.Zero(t, withheld)
 	_, found, err := store.Get(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
@@ -480,8 +528,7 @@ func TestFailReasonNotOverwritten(t *testing.T) {
 		Target:              testutil.Executor,
 		FailReason:          types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_NO_VOTE,
 		GenerationEndHeight: 50,
-		ExpectedReward:      100,
-		UnpaidRewardShare:   200,
+		ExpectedReward: 100,
 	}))
 	require.NoError(t, FailChallenge(ctx, store, testutil.Executor, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT, 80))
 	ch, found, err := store.Get(ctx, testutil.Executor)
@@ -500,17 +547,26 @@ func TestPay_NoCompensationForUnrelatedRemoval(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, FailChallenge(ctx, store, testutil.Executor, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNRELATED_REMOVAL, 200))
-	chain.summaries = map[string]types.EpochPerformanceSummary{
-		testutil.Executor: {EpochIndex: 2, ParticipantId: testutil.Executor, RewardedCoins: 10},
-	}
-	ch, found, err := store.Get(ctx, testutil.Executor)
+	withheld, err := SettleInCache(ctx, chain, store, 2, unpaidShare(200))
 	require.NoError(t, err)
-	require.True(t, found)
-	ch.UnpaidRewardShare = 200
-	require.NoError(t, store.Set(ctx, ch))
-	require.NoError(t, SettleChallengePayments(ctx, chain, store, 2))
+	require.Zero(t, withheld)
 	require.Contains(t, chain.sends, "refund:poc_challenge_refund")
-	require.NotContains(t, chain.sends, "comp:poc_challenge_compensation")
+	require.NotContains(t, chain.sends, "pay:poc_challenge_compensation")
+}
+
+func TestPay_NoVoteRefundsOnly(t *testing.T) {
+	chain, ctx, store := baseChain(t, 100)
+	ctx = ctx.WithBlockHeight(100)
+	_, err := Create(ctx, chain, store, &types.MsgCreatePoCChallenge{
+		Creator: testutil.Creator,
+		Target:  testutil.Executor,
+	})
+	require.NoError(t, err)
+	require.NoError(t, FailChallenge(ctx, store, testutil.Executor, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_NO_VOTE, 200))
+	withheld, err := SettleInCache(ctx, chain, store, 2, unpaidShare(200))
+	require.NoError(t, err)
+	require.Zero(t, withheld)
+	require.Contains(t, chain.sends, "refund:poc_challenge_refund")
 	require.NotContains(t, chain.sends, "pay:poc_challenge_compensation")
 }
 
@@ -536,7 +592,7 @@ func TestStoreCommit_RejectsUnassignedModel(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestPay_SettlesEarlierEpoch(t *testing.T) {
+func TestPay_LeavesEarlierEpochUnpaid(t *testing.T) {
 	chain, ctx, store := baseChain(t, 100)
 	ctx = ctx.WithBlockHeight(100)
 	_, err := Create(ctx, chain, store, &types.MsgCreatePoCChallenge{
@@ -545,14 +601,62 @@ func TestPay_SettlesEarlierEpoch(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, FailChallenge(ctx, store, testutil.Executor, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT, 500))
-	chain.summaries = map[string]types.EpochPerformanceSummary{
-		testutil.Executor: {EpochIndex: 2, ParticipantId: testutil.Executor, RewardedCoins: 0},
-	}
-	require.NoError(t, SettleChallengePayments(ctx, chain, store, 3))
+	chain.sends = nil
+	withheld, err := SettleInCache(ctx, chain, store, 3, unpaidShare(200))
+	require.NoError(t, err)
+	require.Zero(t, withheld)
+	require.Empty(t, chain.sends)
+	_, found, err := store.Get(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+}
+
+func TestPay_SkipsCompensationWhenTargetSettled(t *testing.T) {
+	chain, ctx, store := baseChain(t, 100)
+	ctx = ctx.WithBlockHeight(100)
+	_, err := Create(ctx, chain, store, &types.MsgCreatePoCChallenge{
+		Creator: testutil.Creator,
+		Target:  testutil.Executor,
+	})
+	require.NoError(t, err)
+	require.NoError(t, FailChallenge(ctx, store, testutil.Executor, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT, 500))
+	withheld, err := SettleInCache(ctx, chain, store, 2, map[string]TargetSettle{
+		testutil.Executor: {GrossShare: 200, RewardCoins: 50},
+	})
+	require.NoError(t, err)
+	require.Zero(t, withheld)
 	require.Contains(t, chain.sends, "refund:poc_challenge_refund")
+	require.NotContains(t, chain.sends, "pay:poc_challenge_compensation")
 	_, found, err := store.Get(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.False(t, found)
+}
+
+func TestPay_PayoutErrorKeepsChallenge(t *testing.T) {
+	chain, ctx, store := baseChain(t, 100)
+	ctx = ctx.WithBlockHeight(100)
+	_, err := Create(ctx, chain, store, &types.MsgCreatePoCChallenge{
+		Creator: testutil.Creator,
+		Target:  testutil.Executor,
+	})
+	require.NoError(t, err)
+	require.NoError(t, FailChallenge(ctx, store, testutil.Executor, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED, 500))
+	chain.sendErr = errPayout
+	_, err = SettleInCache(ctx, chain, store, 2, unpaidShare(200))
+	require.ErrorIs(t, err, errPayout)
+	_, found, getErr := store.Get(ctx, testutil.Executor)
+	require.NoError(t, getErr)
+	require.True(t, found)
+}
+
+func TestGrossShareUsesBigInt(t *testing.T) {
+	amount := int64(20_000_000)
+	weight := uint64(1) << 40
+	total := uint64(1) << 10
+	wrapped := uint64(amount) * weight / total
+	got := GrossShare(amount, weight, total)
+	require.NotEqual(t, wrapped, got)
+	require.Equal(t, uint64(amount)<<30, got)
 }
 
 func TestHandleEndBlock_SealsAfterSafetyHeight(t *testing.T) {
@@ -645,6 +749,73 @@ func TestSubmitValidations_SkipsIneligibleLiveVoter(t *testing.T) {
 	has, err := store.HasValidation(ctx, testutil.Executor, 101, "m1", testutil.Validator2)
 	require.NoError(t, err)
 	require.False(t, has)
+}
+
+func TestSubmitValidations_LoadsEligibilityOnce(t *testing.T) {
+	chain, ctx, store := baseChain(t, 100)
+	chain.groups = append(chain.groups, types.EpochGroupData{
+		EpochIndex: 2,
+		ModelId:    "m2",
+		ValidationWeights: []*types.ValidationWeight{{
+			MemberAddress: testutil.Executor,
+			Weight:        100,
+			MlNodes:       []*types.MLNodeInfo{{NodeId: "n2", PocWeight: 10}},
+		}},
+	})
+	chain.snapshot.ModelVotingPowers = append(chain.snapshot.ModelVotingPowers, &types.ModelVotingPowers{
+		ModelId: "m2",
+		VotingPowers: []*types.VotingPowerEntry{{
+			Address:     testutil.Validator,
+			VotingPower: 900,
+		}},
+	})
+	ctx = ctx.WithBlockHeight(100)
+	_, err := Create(ctx, chain, store, &types.MsgCreatePoCChallenge{
+		Creator: testutil.Creator,
+		Target:  testutil.Executor,
+	})
+	require.NoError(t, err)
+	root := make([]byte, 32)
+	ctx = ctx.WithBlockHeight(101)
+	_, err = StoreCommit(ctx, chain, store, &types.MsgPoCChallengeStoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 101,
+		SliceIndex:               0,
+		Entries: []*types.PoCV2CommitEntry{
+			{ModelId: "m1", Count: 10, RootHash: root},
+			{ModelId: "m2", Count: 10, RootHash: root},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, SealOpenSegment(ctx, store, testutil.Executor, 901, 500))
+	ctx = ctx.WithBlockHeight(902)
+	_, err = StoreCommit(ctx, chain, store, &types.MsgPoCChallengeStoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 101,
+		SliceIndex:               1,
+		Entries: []*types.PoCV2CommitEntry{
+			{ModelId: "m1", Count: 10, RootHash: root},
+			{ModelId: "m2", Count: 10, RootHash: root},
+		},
+	})
+	require.NoError(t, err)
+	chain.eligLoads = 0
+	_, err = SubmitValidations(ctx, chain, store, &types.MsgSubmitPoCChallengeValidations{
+		Creator:                  testutil.Validator,
+		PocStageStartBlockHeight: 101,
+		Validations: []*types.PoCValidationEntryV2{
+			{ParticipantAddress: testutil.Executor, ModelId: "m1", ValidatedWeight: 10},
+			{ParticipantAddress: testutil.Executor, ModelId: "m2", ValidatedWeight: 10},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, chain.eligLoads)
+	has1, err := store.HasValidation(ctx, testutil.Executor, 101, "m1", testutil.Validator)
+	require.NoError(t, err)
+	require.True(t, has1)
+	has2, err := store.HasValidation(ctx, testutil.Executor, 101, "m2", testutil.Validator)
+	require.NoError(t, err)
+	require.True(t, has2)
 }
 
 func TestSubmitValidations_GuardianSkippedWithoutSnapshot(t *testing.T) {

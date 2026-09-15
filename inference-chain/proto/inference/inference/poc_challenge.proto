@@ -38,7 +38,6 @@ message PoCChallenge {
   PoCChallengeFailReason fail_reason = 8;
   // Open segment plus sealed rows. Readers filter Outcome == PENDING.
   repeated PoCChallengeSegment segments = 9;
-  uint64 unpaid_reward_share = 10;
 }
 
 message PoCChallengeCommit {

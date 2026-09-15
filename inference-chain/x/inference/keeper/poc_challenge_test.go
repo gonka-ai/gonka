@@ -101,17 +101,3 @@ func TestHandleEndBlockFillsSeedAndSealsAtSafetyWindow(t *testing.T) {
 	require.False(t, k.IsChallengeGenerating(ctx, testutil.Executor))
 }
 
-func TestFreezeChallengeUnpaidRewardShares_NoOpWithoutCompensation(t *testing.T) {
-	k, ctx := keepertest.InferenceKeeper(t)
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		EpochIndex:        2,
-		Target:            testutil.Executor,
-		FailReason:        types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_NO_VOTE,
-		UnpaidRewardShare: 100,
-	}))
-	require.NoError(t, k.FreezeChallengeUnpaidRewardShares(ctx, 2))
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, uint64(100), ch.UnpaidRewardShare)
-}

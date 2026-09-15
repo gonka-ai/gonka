@@ -786,12 +786,9 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	if err := am.FinalizeOpenChallenges(ctx, effectiveEpoch.Index); err != nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to finalize PoC challenges", types.PoC, "error", err.Error())
 	}
-	freezeErr := am.keeper.FreezeChallengeUnpaidRewardShares(ctx, effectiveEpoch.Index)
-	if freezeErr != nil {
-		am.LogError("onEndOfPoCValidationStage: Unable to freeze challenge unpaid shares", types.PoC, "error", freezeErr.Error())
-	}
 
 	// Settle before collateral AdvanceEpoch so slashing can reach maturing unbonding entries.
+	// Challenge P and min(E, gross_share) pay inside this cache; a payout error rolls back settlement.
 	failedMissRate, err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
 	if err != nil {
 		failedMissRate = nil
@@ -803,10 +800,6 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
 			sdk.NewAttribute("error_category", "settlement"),
 		))
-	} else if freezeErr == nil {
-		if payErr := pocchallenge.SettleChallengePayments(ctx, &am.keeper, am.keeper.PoCChallenge, effectiveEpoch.Index); payErr != nil {
-			am.LogError("onEndOfPoCValidationStage: Unable to settle PoC challenge payments", types.PoC, "error", payErr.Error())
-		}
 	}
 
 	// Signal to the collateral module that the epoch has advanced.

@@ -686,7 +686,6 @@ var (
 	fd_PoCChallenge_generation_end_height  protoreflect.FieldDescriptor
 	fd_PoCChallenge_fail_reason            protoreflect.FieldDescriptor
 	fd_PoCChallenge_segments               protoreflect.FieldDescriptor
-	fd_PoCChallenge_unpaid_reward_share    protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -701,7 +700,6 @@ func init() {
 	fd_PoCChallenge_generation_end_height = md_PoCChallenge.Fields().ByName("generation_end_height")
 	fd_PoCChallenge_fail_reason = md_PoCChallenge.Fields().ByName("fail_reason")
 	fd_PoCChallenge_segments = md_PoCChallenge.Fields().ByName("segments")
-	fd_PoCChallenge_unpaid_reward_share = md_PoCChallenge.Fields().ByName("unpaid_reward_share")
 }
 
 var _ protoreflect.Message = (*fastReflection_PoCChallenge)(nil)
@@ -823,12 +821,6 @@ func (x *fastReflection_PoCChallenge) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
-	if x.UnpaidRewardShare != uint64(0) {
-		value := protoreflect.ValueOfUint64(x.UnpaidRewardShare)
-		if !f(fd_PoCChallenge_unpaid_reward_share, value) {
-			return
-		}
-	}
 }
 
 // Has reports whether a field is populated.
@@ -862,8 +854,6 @@ func (x *fastReflection_PoCChallenge) Has(fd protoreflect.FieldDescriptor) bool 
 		return x.FailReason != 0
 	case "inference.inference.PoCChallenge.segments":
 		return len(x.Segments) != 0
-	case "inference.inference.PoCChallenge.unpaid_reward_share":
-		return x.UnpaidRewardShare != uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -898,8 +888,6 @@ func (x *fastReflection_PoCChallenge) Clear(fd protoreflect.FieldDescriptor) {
 		x.FailReason = 0
 	case "inference.inference.PoCChallenge.segments":
 		x.Segments = nil
-	case "inference.inference.PoCChallenge.unpaid_reward_share":
-		x.UnpaidRewardShare = uint64(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -946,9 +934,6 @@ func (x *fastReflection_PoCChallenge) Get(descriptor protoreflect.FieldDescripto
 		}
 		listValue := &_PoCChallenge_9_list{list: &x.Segments}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.PoCChallenge.unpaid_reward_share":
-		value := x.UnpaidRewardShare
-		return protoreflect.ValueOfUint64(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -989,8 +974,6 @@ func (x *fastReflection_PoCChallenge) Set(fd protoreflect.FieldDescriptor, value
 		lv := value.List()
 		clv := lv.(*_PoCChallenge_9_list)
 		x.Segments = *clv.list
-	case "inference.inference.PoCChallenge.unpaid_reward_share":
-		x.UnpaidRewardShare = value.Uint()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -1033,8 +1016,6 @@ func (x *fastReflection_PoCChallenge) Mutable(fd protoreflect.FieldDescriptor) p
 		panic(fmt.Errorf("field generation_end_height of message inference.inference.PoCChallenge is not mutable"))
 	case "inference.inference.PoCChallenge.fail_reason":
 		panic(fmt.Errorf("field fail_reason of message inference.inference.PoCChallenge is not mutable"))
-	case "inference.inference.PoCChallenge.unpaid_reward_share":
-		panic(fmt.Errorf("field unpaid_reward_share of message inference.inference.PoCChallenge is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -1067,8 +1048,6 @@ func (x *fastReflection_PoCChallenge) NewField(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.PoCChallenge.segments":
 		list := []*PoCChallengeSegment{}
 		return protoreflect.ValueOfList(&_PoCChallenge_9_list{list: &list})
-	case "inference.inference.PoCChallenge.unpaid_reward_share":
-		return protoreflect.ValueOfUint64(uint64(0))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -1170,9 +1149,6 @@ func (x *fastReflection_PoCChallenge) ProtoMethods() *protoiface.Methods {
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
 		}
-		if x.UnpaidRewardShare != 0 {
-			n += 1 + runtime.Sov(uint64(x.UnpaidRewardShare))
-		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1201,11 +1177,6 @@ func (x *fastReflection_PoCChallenge) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
-		}
-		if x.UnpaidRewardShare != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.UnpaidRewardShare))
-			i--
-			dAtA[i] = 0x50
 		}
 		if len(x.Segments) > 0 {
 			for iNdEx := len(x.Segments) - 1; iNdEx >= 0; iNdEx-- {
@@ -1528,25 +1499,6 @@ func (x *fastReflection_PoCChallenge) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
-			case 10:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field UnpaidRewardShare", wireType)
-				}
-				x.UnpaidRewardShare = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.UnpaidRewardShare |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -4375,8 +4327,7 @@ type PoCChallenge struct {
 	GenerationEndHeight  int64                  `protobuf:"varint,7,opt,name=generation_end_height,json=generationEndHeight,proto3" json:"generation_end_height,omitempty"` // 0 while still generating
 	FailReason           PoCChallengeFailReason `protobuf:"varint,8,opt,name=fail_reason,json=failReason,proto3,enum=inference.inference.PoCChallengeFailReason" json:"fail_reason,omitempty"`
 	// Open segment plus sealed rows. Readers filter Outcome == PENDING.
-	Segments          []*PoCChallengeSegment `protobuf:"bytes,9,rep,name=segments,proto3" json:"segments,omitempty"`
-	UnpaidRewardShare uint64                 `protobuf:"varint,10,opt,name=unpaid_reward_share,json=unpaidRewardShare,proto3" json:"unpaid_reward_share,omitempty"`
+	Segments []*PoCChallengeSegment `protobuf:"bytes,9,rep,name=segments,proto3" json:"segments,omitempty"`
 }
 
 func (x *PoCChallenge) Reset() {
@@ -4460,13 +4411,6 @@ func (x *PoCChallenge) GetSegments() []*PoCChallengeSegment {
 		return x.Segments
 	}
 	return nil
-}
-
-func (x *PoCChallenge) GetUnpaidRewardShare() uint64 {
-	if x != nil {
-		return x.UnpaidRewardShare
-	}
-	return 0
 }
 
 type PoCChallengeCommit struct {
@@ -4752,7 +4696,7 @@ var file_inference_inference_poc_challenge_proto_rawDesc = []byte{
 	0x0e, 0x32, 0x2f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c,
 	0x65, 0x6e, 0x67, 0x65, 0x53, 0x65, 0x67, 0x6d, 0x65, 0x6e, 0x74, 0x4f, 0x75, 0x74, 0x63, 0x6f,
-	0x6d, 0x65, 0x52, 0x07, 0x6f, 0x75, 0x74, 0x63, 0x6f, 0x6d, 0x65, 0x22, 0xe5, 0x03, 0x0a, 0x0c,
+	0x6d, 0x65, 0x52, 0x07, 0x6f, 0x75, 0x74, 0x63, 0x6f, 0x6d, 0x65, 0x22, 0xb5, 0x03, 0x0a, 0x0c,
 	0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x12, 0x1f, 0x0a, 0x0b,
 	0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28,
 	0x04, 0x52, 0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x1e, 0x0a,
@@ -4780,10 +4724,7 @@ var file_inference_inference_poc_challenge_proto_rawDesc = []byte{
 	0x28, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e,
 	0x67, 0x65, 0x53, 0x65, 0x67, 0x6d, 0x65, 0x6e, 0x74, 0x52, 0x08, 0x73, 0x65, 0x67, 0x6d, 0x65,
-	0x6e, 0x74, 0x73, 0x12, 0x2e, 0x0a, 0x13, 0x75, 0x6e, 0x70, 0x61, 0x69, 0x64, 0x5f, 0x72, 0x65,
-	0x77, 0x61, 0x72, 0x64, 0x5f, 0x73, 0x68, 0x61, 0x72, 0x65, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x04,
-	0x52, 0x11, 0x75, 0x6e, 0x70, 0x61, 0x69, 0x64, 0x52, 0x65, 0x77, 0x61, 0x72, 0x64, 0x53, 0x68,
-	0x61, 0x72, 0x65, 0x22, 0x8b, 0x02, 0x0a, 0x12, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c,
+	0x6e, 0x74, 0x73, 0x22, 0x8b, 0x02, 0x0a, 0x12, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c,
 	0x65, 0x6e, 0x67, 0x65, 0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x12, 0x16, 0x0a, 0x06, 0x74, 0x61,
 	0x72, 0x67, 0x65, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x74, 0x61, 0x72, 0x67,
 	0x65, 0x74, 0x12, 0x3e, 0x0a, 0x1c, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61, 0x67, 0x65, 0x5f,

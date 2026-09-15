@@ -90,24 +90,34 @@ A failure in any segment immediately terminates the challenge. Upon failure, gen
 
 ## Pay
 
-`SettleAccounts` runs first on current statuses, the same as today. Challenge payment runs after it. The locked `P` is still in the inference module account.
+Create freezes `E` and `P`. `SettleAccounts` runs the Bitcoin calculation once and pays the challenge in the same pass. A payout error rolls back settlement and keeps the challenge.
+
+Failed targets settle as INACTIVE: zero work coins, zero rewarded coins. Their unpaid share of the minted epoch reward is:
+
+```
+gross_share = ParticipantFullWeight / TotalRewardWeight * minted amount
+```
+
+The bounty is `min(E, gross_share)`. `E` is the create-time cap. `gross_share` is the settle-time availability.
 
 Pass:
 
-- target already received its normal epoch settlement, including work coins earned before the challenge
-- `P` is paid to the target with the normal reward vesting period
+- ordinary target settlement, including work coins earned before the challenge
+- vest `P` to the target
 
 A pass can still lower ConfirmationWeight from passing segments, as Confirmation PoC already does.
 
-Fail:
+Target-caused fail (rejected, underweight, or missing commit):
 
-- `SettleAccounts` already applied INACTIVE: zero bitcoin reward and zero work coins, leftover to governance
-- `P` is returned to the challenger
-- `F` is this target's unpaid share of the fixed epoch reward after that settlement
-- `min(E, F)` is paid to the challenger with the normal reward vesting period, taken from that unpaid share now in governance
-- the challenger receives `min(E, F)` only if a punishable segment is rejected or underweight
+- refund `P`
+- vest `min(E, gross_share)` to the challenger from that unpaid share, before leftover goes to governance
 
-`P` is the challenger's coins. `min(E, F)` is coins this target already lost from the fixed epoch reward.
+No-vote and unrelated leave:
+
+- refund `P` only
+- leftover follows the ordinary governance path
+
+`P` is the challenger's coins. `min(E, gross_share)` is coins this target already lost from the minted epoch reward.
 
 ## Timeline
 
@@ -119,7 +129,7 @@ PoCChallenge:
                    [create][segment ........][stop+val][segment ...][stop at safety][join PoC N+1]
                              vote with cPoC              last segment vote during
                                                          PoC N+1 validation
-                                                         SettleAccounts then Pay
+                                                         SettleAccounts pays the challenge
 ```
 
 Confirmation PoC is the existing chain trigger. The target generates the open segment through Confirmation PoC generation, then stops with everyone else and validates. A segment is sealed when Confirmation PoC generation ends, or when the safety window starts.
@@ -140,13 +150,13 @@ Whitelist sender
         |
         +--> segment fail
         |      --> write ConfirmationWeight / ConfirmationPoCRatio; INACTIVE; existing locks
-        |      --> after SettleAccounts: refund P; vest min(E, F) unless the fail was no vote or unrelated leave
+        |      --> inside SettleAccounts: refund P; vest min(E, gross_share) unless the fail was no vote or unrelated leave
         |
         +--> pass, more inference remains before the safety window
         |      --> next segment: new start_height after Confirmation PoC
         |
         +--> pass, last segment sealed at the safety window
-               --> after SettleAccounts: vest P to the target
+               --> inside SettleAccounts: vest P to the target
 ```
 
 ## State
