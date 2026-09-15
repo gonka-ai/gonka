@@ -32,6 +32,7 @@ func DiffHasActiveCompletionWork(diff Diff) bool {
 	for _, tx := range diff.Txs {
 		if tx.GetStartInference() != nil ||
 			tx.GetTimeoutInference() != nil ||
+			tx.GetErrorMiss() != nil ||
 			tx.GetValidation() != nil ||
 			tx.GetValidationVote() != nil {
 			return true

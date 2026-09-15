@@ -34,14 +34,14 @@ type Gossip struct {
 
 	highestSeen uint64 // tracked O(1)
 
-	mempool          MempoolSink    // receives forwarded txs
-	sigAccumulator   SigAccumulator // receives sigs for applied nonces
-	diffFetcher      DiffFetcher    // fetches diffs from peers for recovery
-	stateUpdater     StateUpdater   // applies recovered diffs
-	RecoveryDelay    time.Duration  // delay before recovery triggers (default 60s)
-	RecoveryTick     time.Duration  // recovery loop interval (default 60s)
-	lastAfterReq     time.Time      // last time AfterRequest was called
-	lastAfterReqNonce uint64        // nonce from the most recent AfterRequest call
+	mempool           MempoolSink    // receives forwarded txs
+	sigAccumulator    SigAccumulator // receives sigs for applied nonces
+	diffFetcher       DiffFetcher    // fetches diffs from peers for recovery
+	stateUpdater      StateUpdater   // applies recovered diffs
+	RecoveryDelay     time.Duration  // delay before recovery triggers (default 60s)
+	RecoveryTick      time.Duration  // recovery loop interval (default 60s)
+	lastAfterReq      time.Time      // last time AfterRequest was called
+	lastAfterReqNonce uint64         // nonce from the most recent AfterRequest call
 
 	broadcastedTxs map[uint64]bool // hash of proto bytes -> already sent
 
@@ -49,6 +49,14 @@ type Gossip struct {
 	stopped   chan struct{}
 	closeOnce sync.Once
 	started   atomic.Bool
+}
+
+// NonceStatus is the local gossip record for a nonce. It is intended for
+// diagnostics; callers receive copies of the signature material.
+type NonceStatus struct {
+	StateHash []byte
+	StateSig  []byte
+	SlotID    uint32
 }
 
 func NewGossip(escrowID string, slotID uint32, peers []PeerClient, mempool MempoolSink, opts ...GossipOption) *Gossip {
@@ -160,6 +168,22 @@ func (g *Gossip) OnNonceReceived(nonce uint64, stateHash, stateSig []byte, sende
 	go g.sendNonceToPeers(context.Background(), peers, nonce, stateHash, stateSig, senderSlot)
 
 	return nil
+}
+
+// NonceStatus returns the local record for a gossiped nonce.
+func (g *Gossip) NonceStatus(nonce uint64) (NonceStatus, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	record, ok := g.seen[nonce]
+	if !ok {
+		return NonceStatus{}, false
+	}
+	return NonceStatus{
+		StateHash: bytes.Clone(record.stateHash),
+		StateSig:  bytes.Clone(record.stateSig),
+		SlotID:    record.slotID,
+	}, true
 }
 
 // OnTxsReceived handles incoming transactions from peers.

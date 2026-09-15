@@ -2,10 +2,19 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/bridge"
+	"devshard/storage"
 )
 
 // newRetireTestGateway builds a minimal Gateway holding a single active runtime
@@ -22,6 +31,110 @@ func newRetireTestGateway(id string) (*Gateway, *devshardRuntime) {
 	return g, rt
 }
 
+func TestRetentionCutoffMatchesHostPruneHorizon(t *testing.T) {
+	require.Equal(t, uint64(0), storage.RetentionCutoff(1, storage.DefaultEpochRetain))
+	require.Equal(t, uint64(0), storage.RetentionCutoff(2, storage.DefaultEpochRetain))
+	require.Equal(t, uint64(1), storage.RetentionCutoff(3, storage.DefaultEpochRetain))
+	require.Equal(t, uint64(8), storage.RetentionCutoff(10, storage.DefaultEpochRetain))
+}
+
+func TestRetireExpiredEpochEscrowsDropsPastHostCutoff(t *testing.T) {
+	stale := &devshardRuntime{id: "stale", creationEpoch: 7}
+	stale.active.Store(true)
+	kept := &devshardRuntime{id: "kept", creationEpoch: 8}
+	kept.active.Store(true)
+	unspecified := &devshardRuntime{id: "unspecified", creationEpoch: 0}
+	unspecified.active.Store(true)
+
+	g := &Gateway{
+		runtimes: map[string]*devshardRuntime{
+			stale.id:       stale,
+			kept.id:        kept,
+			unspecified.id: unspecified,
+		},
+		runtimeOrder:     []*devshardRuntime{stale, kept, unspecified},
+		rotationBreakers: make(map[string]*rotationBreaker),
+		phaseGate:        &ChainPhaseGate{},
+	}
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 10})
+
+	g.retireExpiredEpochEscrows()
+
+	_, staleRegistered := g.runtimes[stale.id]
+	require.False(t, staleRegistered, "epoch 7 is below cutoff 8 when current=10 retain=3")
+	require.False(t, stale.active.Load())
+	_, keptRegistered := g.runtimes[kept.id]
+	require.True(t, keptRegistered, "epoch 8 is the first retained epoch")
+	require.True(t, kept.active.Load())
+	_, unspecifiedRegistered := g.runtimes[unspecified.id]
+	require.True(t, unspecifiedRegistered, "creationEpoch 0 is unknown; do not invent a prune")
+}
+
+func TestRetireExpiredEpochEscrowsNoopsBeforeHorizon(t *testing.T) {
+	rt := &devshardRuntime{id: "12", creationEpoch: 1}
+	rt.active.Store(true)
+	g := &Gateway{
+		runtimes:         map[string]*devshardRuntime{rt.id: rt},
+		runtimeOrder:     []*devshardRuntime{rt},
+		rotationBreakers: make(map[string]*rotationBreaker),
+		phaseGate:        &ChainPhaseGate{},
+	}
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 2})
+
+	g.retireExpiredEpochEscrows()
+
+	_, still := g.runtimes[rt.id]
+	require.True(t, still)
+	require.True(t, rt.active.Load())
+}
+
+func TestRetireExpiredEpochEscrowsDefersWhileBusy(t *testing.T) {
+	rt := &devshardRuntime{id: "12", creationEpoch: 1}
+	rt.active.Store(true)
+	rt.activeUserRequests.Store(1)
+	g := &Gateway{
+		runtimes:         map[string]*devshardRuntime{rt.id: rt},
+		runtimeOrder:     []*devshardRuntime{rt},
+		rotationBreakers: make(map[string]*rotationBreaker),
+		phaseGate:        &ChainPhaseGate{},
+	}
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 10})
+
+	g.retireExpiredEpochEscrows()
+
+	_, still := g.runtimes[rt.id]
+	require.True(t, still, "busy runtime must stay registered until drain")
+	require.False(t, rt.active.Load(), "admission must close immediately")
+	require.True(t, rt.retirePending.Load())
+
+	// Later ticks must not re-walk a runtime whose retirement is already
+	// queued; runtimeDrained owns it from here.
+	g.retireExpiredEpochEscrows()
+	_, stillAfterSecondTick := g.runtimes[rt.id]
+	require.True(t, stillAfterSecondTick)
+	require.True(t, rt.retirePending.Load())
+}
+
+// A settle in flight reads the runtime's store; retiring closes it. The
+// settlement paths retire on their own, so epoch retention must stand aside.
+func TestRetireExpiredEpochEscrowsSkipsSettlementPending(t *testing.T) {
+	rt := &devshardRuntime{id: "12", creationEpoch: 1}
+	rt.settlementPending.Store(true)
+	g := &Gateway{
+		runtimes:         map[string]*devshardRuntime{rt.id: rt},
+		runtimeOrder:     []*devshardRuntime{rt},
+		rotationBreakers: make(map[string]*rotationBreaker),
+		phaseGate:        &ChainPhaseGate{},
+	}
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 10})
+
+	g.retireExpiredEpochEscrows()
+
+	_, still := g.runtimes[rt.id]
+	require.True(t, still, "settlement owns the retire for a pending escrow")
+	require.False(t, rt.retirePending.Load())
+}
+
 // TestRetireRuntimeRemovesRuntimeFromRegistry pins the core leak fix: retiring a
 // runtime must drop it from both g.runtimes and g.runtimeOrder so its
 // user.Session (and the per-runtime SQLite handles it owns) can be released.
@@ -36,6 +149,29 @@ func TestRetireRuntimeRemovesRuntimeFromRegistry(t *testing.T) {
 
 	// Idempotent: retiring an already-gone runtime is a no-op, not a panic.
 	require.False(t, g.retireRuntime("12", "test"))
+}
+
+func TestPooledStatusAfterLastRuntimeRetiredIsNotFound(t *testing.T) {
+	rt := &devshardRuntime{id: "12"}
+	rt.active.Store(true)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
+	require.True(t, g.retireRuntime("12", "escrow confirmed settled on chain"))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec := httptest.NewRecorder()
+	g.handlePooledStatus(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "gateway", body["mode"])
+	require.Equal(t, float64(0), body["runtimes"])
+	require.Equal(t, "not_found", body["phase"])
+	require.NotContains(t, body, "escrow_id")
+	errObj, ok := body["error"].(map[string]any)
+	require.True(t, ok, "retired status must include error: %v", body)
+	require.Equal(t, "not_found", errObj["type"])
+	require.Equal(t, "no active escrow", errObj["message"])
 }
 
 // TestRetireRuntimeDefersWhileRequestsInFlight guards against closing a SQLite
@@ -124,6 +260,24 @@ func TestRetireRotatedDevshardRetiresWithoutSettlement(t *testing.T) {
 	require.False(t, stillRegistered, "no-settle rotation must retire the runtime")
 }
 
+func TestRetireRotatedDevshardRetiresWhenAlreadySettled(t *testing.T) {
+	g, _ := newRetireTestGateway("12")
+	settings := GatewaySettings{EscrowRotation: EscrowRotationSettings{SettlementEnabled: true}}
+
+	oldSettle := gatewaySettleDevshardOnChain
+	gatewaySettleDevshardOnChain = func(_ *Gateway, _ context.Context, id string, _ adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+		return nil, fmt.Errorf("rehydrate devshard %s for settlement: runtime %s: %w", id, id, bridge.ErrEscrowSettled)
+	}
+	t.Cleanup(func() { gatewaySettleDevshardOnChain = oldSettle })
+
+	settled, err := g.retireRotatedDevshard(context.Background(), "12", "rotated", settings)
+	require.NoError(t, err)
+	require.True(t, settled)
+
+	_, stillRegistered := g.runtimes["12"]
+	require.False(t, stillRegistered, "already-settled rotation must retire the runtime")
+}
+
 // TestRetireRotatedDevshardRetiresAfterSettlement covers the settle terminal
 // path: the runtime stays alive through settlement (which reads its session)
 // and is retired only once settlement succeeds.
@@ -146,4 +300,93 @@ func TestRetireRotatedDevshardRetiresAfterSettlement(t *testing.T) {
 
 	_, stillRegistered := g.runtimes["12"]
 	require.False(t, stillRegistered, "settled rotation must retire the runtime")
+}
+
+type settleCheckBridge struct {
+	bridge.MainnetBridge
+	info *bridge.EscrowInfo
+	err  error
+}
+
+func (b *settleCheckBridge) GetEscrow(string) (*bridge.EscrowInfo, error) {
+	if b.err != nil {
+		return nil, b.err
+	}
+	return b.info, nil
+}
+
+func stubChainBridge(t *testing.T, br bridge.MainnetBridge) {
+	t.Helper()
+	old := gatewayChainBridge
+	gatewayChainBridge = func(*Gateway) bridge.MainnetBridge { return br }
+	t.Cleanup(func() { gatewayChainBridge = old })
+}
+
+// A resident runtime never goes through the rehydrate path, so an escrow the
+// chain already settled surfaces only as the chain's untyped "already settled"
+// rejection. Without reclassifying it the auto-settle loop burns all 30
+// attempts against a tx that can never succeed.
+func TestSettleTerminalErrClassifiesAlreadySettled(t *testing.T) {
+	g, _ := newRetireTestGateway("12")
+	stubChainBridge(t, &settleCheckBridge{info: &bridge.EscrowInfo{EscrowID: "12", Settled: true}})
+
+	cause := fmt.Errorf("tx failed: escrow 12 already settled")
+	err := g.settleTerminalErr("12", cause)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+	require.Contains(t, err.Error(), "already settled")
+}
+
+func TestSettleTerminalErrKeepsRetryableCause(t *testing.T) {
+	g, _ := newRetireTestGateway("12")
+	stubChainBridge(t, &settleCheckBridge{info: &bridge.EscrowInfo{EscrowID: "12"}})
+
+	cause := errors.New("broadcast timeout")
+	err := g.settleTerminalErr("12", cause)
+	require.ErrorIs(t, err, cause)
+	require.NotErrorIs(t, err, bridge.ErrEscrowSettled, "an open escrow must stay retryable")
+}
+
+// When the chain cannot answer we must not invent a terminal state: the
+// original error stays, so the caller keeps retrying.
+func TestSettleTerminalErrKeepsCauseWhenChainUnreachable(t *testing.T) {
+	g, _ := newRetireTestGateway("12")
+	stubChainBridge(t, &settleCheckBridge{err: errors.New("chain down")})
+
+	cause := errors.New("broadcast timeout")
+	require.ErrorIs(t, g.settleTerminalErr("12", cause), cause)
+}
+
+// The auto-settle terminal branch must persist the deactivation, otherwise the
+// stored row stays Active for an escrow the chain considers finished.
+func TestScheduleAutoSettlementPersistsDeactivationWhenAlreadySettled(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:    "http://node:1317",
+		PublicAPI:    "http://api:9000",
+		DefaultModel: "Qwen/Test",
+	}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret"}, Active: true},
+	}))
+
+	g, _ := newRetireTestGateway("12")
+	g.store = store
+
+	oldSettle := gatewaySettleDevshardOnChain
+	gatewaySettleDevshardOnChain = func(_ *Gateway, _ context.Context, id string, _ adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+		return nil, fmt.Errorf("settle %s: %w", id, bridge.ErrEscrowSettled)
+	}
+	t.Cleanup(func() { gatewaySettleDevshardOnChain = oldSettle })
+
+	g.scheduleAutoSettlement("12", "test")
+
+	require.Eventually(t, func() bool {
+		state, ok, err := store.LoadState()
+		if err != nil || !ok || len(state.Devshards) == 0 {
+			return false
+		}
+		return !state.Devshards[0].Active
+	}, 5*time.Second, 20*time.Millisecond, "already-settled escrow must be persisted inactive")
 }

@@ -26,6 +26,7 @@ func TestMemory_EscrowCache_RoundTrip(t *testing.T) {
 	require.Equal(t, info.Slots, got.Slots)
 	require.Equal(t, info.EpochID, got.EpochID)
 	require.Equal(t, info.AppHash, got.AppHash)
+	require.NotZero(t, got.CachedAt, "the store stamps the write time so readers can age the row")
 
 	active, err := store.ListActiveSessions()
 	require.NoError(t, err)
@@ -60,6 +61,8 @@ func TestSQLite_EscrowCache_RoundTrip(t *testing.T) {
 	require.NoError(t, store.PutEscrowCache(info))
 	got, err := store.GetEscrowCache("escrow-sql")
 	require.NoError(t, err)
+	require.NotZero(t, got.CachedAt, "the store stamps the write time so readers can age the row")
+	info.CachedAt = got.CachedAt
 	require.Equal(t, info, *got)
 
 	active, err := store.ListActiveSessions()

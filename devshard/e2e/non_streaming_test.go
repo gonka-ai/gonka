@@ -146,13 +146,18 @@ func TestE2E_NonStreamingRejectsInvalidRequest(t *testing.T) {
 
 func startNonStreamingEnv(t *testing.T) (*e2eEnv, *http.Client) {
 	t.Helper()
+	return startNonStreamingEnvWithOptions(t, e2eEnvOptions{})
+}
+
+func startNonStreamingEnvWithOptions(t *testing.T, opts e2eEnvOptions) (*e2eEnv, *http.Client) {
+	t.Helper()
 	requireE2EEnabled(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
 
 	images := requiredImages(t)
-	env := startHappyPathEnv(ctx, t, images)
+	env := startE2EEnv(ctx, t, images, opts)
 	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
 	return env, client
 }

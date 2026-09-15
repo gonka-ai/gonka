@@ -56,7 +56,6 @@ func TestCaptureAllAttemptsFailedRequestWritesSeparateFile(t *testing.T) {
 		InputLength: 81,
 		MaxTokens:   256,
 		StartedAt:   time.Now().Unix(),
-		Stream:      true,
 	}, errTestAllAttemptsFailed{})
 
 	record := requireSingleCapturedRequest(t, captureDir, "all_attempts_failed")
@@ -64,7 +63,6 @@ func TestCaptureAllAttemptsFailedRequestWritesSeparateFile(t *testing.T) {
 	require.Equal(t, "all_attempts_failed", record.Kind)
 	require.Equal(t, "Qwen/Test", record.Model)
 	require.Equal(t, "escrow-7", record.Escrow)
-	require.True(t, record.Stream)
 	require.Contains(t, record.Error, "all attempts failed")
 	require.Contains(t, string(record.Body), `"stream": true`)
 }
@@ -104,7 +102,6 @@ func TestCaptureEmptyStreamAttemptRequestWritesSeparateFileWithAttempts(t *testi
 	captureEmptyStreamAttemptRequest(ctx, "escrow-7", user.InferenceParams{
 		Model:  "Qwen/Test",
 		Prompt: []byte(`{"model":"Qwen/Test","stream":true,"messages":[{"role":"user","content":"hello"}]}`),
-		Stream: true,
 	}, attempts, 12)
 
 	record := requireSingleCapturedRequest(t, captureDir, "empty_stream_attempt")
@@ -112,7 +109,6 @@ func TestCaptureEmptyStreamAttemptRequestWritesSeparateFileWithAttempts(t *testi
 	require.Equal(t, "empty_stream_attempt", record.Kind)
 	require.Equal(t, "Qwen/Test", record.Model)
 	require.Equal(t, "escrow-7", record.Escrow)
-	require.True(t, record.Stream)
 	require.Contains(t, string(record.Body), `"stream": true`)
 	require.NotEmpty(t, record.RequestFlags)
 	require.Len(t, record.Attempts, 2)
@@ -168,7 +164,6 @@ func TestCaptureShortContentAttemptRequestWritesResponseBodyForShortAttempt(t *t
 	captureShortContentAttemptRequest(ctx, "escrow-7", user.InferenceParams{
 		Model:  "Qwen/Test",
 		Prompt: []byte(`{"model":"Qwen/Test","stream":true,"messages":[{"role":"user","content":"hello"}]}`),
-		Stream: true,
 	}, attempts, 12)
 
 	record := requireSingleCapturedRequest(t, captureDir, "short_content_attempt")

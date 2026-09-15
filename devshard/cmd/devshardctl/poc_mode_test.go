@@ -60,9 +60,6 @@ func captureRedundancyTimingSettings() RedundancySettings {
 		PerInputTokenFirstTokenLagMS:  int64(PerInputTokenFirstTokenLag / time.Millisecond),
 		InterChunkStallTimeoutMS:      int64(InterChunkStallTimeout / time.Millisecond),
 		StreamingAttemptHardTimeoutMS: int64(StreamingAttemptHardTimeout / time.Millisecond),
-		NonStreamResponseFloorMS:      int64(NonStreamResponseFloor / time.Millisecond),
-		NonStreamNoContentTimeoutMS:   int64(nonStreamingNoContentTimeout / time.Millisecond),
-		NonStreamMaxAttemptWaitMS:     int64(nonStreamingMaxAttemptWait / time.Millisecond),
 		PerInputTokenResponseLagMS:    int64(PerInputTokenResponseLag / time.Millisecond),
 		SecondaryWaitAfterWinnerMS:    int64(SecondaryWaitAfterWinner / time.Millisecond),
 	}
