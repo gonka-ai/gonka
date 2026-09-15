@@ -439,6 +439,66 @@ func TestDecideCurrentChallengeSegment_MultiModelPartialAcceptance(t *testing.T)
 	require.Equal(t, int64(80), group.ValidationWeights[0].ConfirmationWeight)
 }
 
+func TestDecideCurrentChallengeSegments_RefundDoesNotRollBackSibling(t *testing.T) {
+	am, k, ctx := challengeApp(t)
+	seedChallengeParticipant(t, k, ctx)
+	require.NoError(t, k.SetParticipant(ctx, types.Participant{
+		Index:             testutil.Executor2,
+		Address:           testutil.Executor2,
+		Status:            types.ParticipantStatus_INACTIVE,
+		CurrentEpochStats: types.NewCurrentEpochStats(),
+	}))
+	group, found := k.GetEpochGroupData(ctx, 2, "")
+	require.True(t, found)
+	group.ValidationWeights = append(group.ValidationWeights, &types.ValidationWeight{
+		MemberAddress:      testutil.Executor2,
+		Weight:             100,
+		ConfirmationWeight: 100,
+	})
+	k.SetEpochGroupData(ctx, group)
+	participants, found := k.GetActiveParticipants(ctx, 2)
+	require.True(t, found)
+	participants.Participants = append(participants.Participants, &types.ActiveParticipant{
+		Index:  testutil.Executor2,
+		Models: []string{"m1"},
+		MlNodes: []*types.ModelMLNodes{{
+			MlNodes: []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 100}},
+		}},
+	})
+	require.NoError(t, k.SetActiveParticipants(ctx, participants))
+	require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
+		PocStageStartHeight: 180,
+		ModelVotingPowers: []*types.ModelVotingPowers{{
+			ModelId: "m1",
+			VotingPowers: []*types.VotingPowerEntry{{
+				Address:     testutil.Validator,
+				VotingPower: 100,
+			}},
+		}},
+	}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Creator,
+		StartHeight: 100,
+	}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor2,
+		StartHeight: 100,
+	}))
+
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+
+	refunded, found, err := k.GetPoCChallenge(ctx, testutil.Creator)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY, refunded.FailureKind)
+	failed, found, err := k.GetPoCChallenge(ctx, testutil.Executor2)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED, failed.FailureKind)
+}
+
 func TestDecideCurrentChallengeSegments_SkipsOtherEpoch(t *testing.T) {
 	am, k, ctx := challengeApp(t)
 	seedChallengeParticipant(t, k, ctx)

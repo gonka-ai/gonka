@@ -41,7 +41,6 @@ func (am AppModule) decideCurrentChallengeSegments(ctx context.Context, epochInd
 		return err
 	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	cacheCtx, writeFn := sdkCtx.CacheContext()
 	for _, ch := range list {
 		if ch.EpochIndex != epochIndex {
 			continue
@@ -49,11 +48,16 @@ func (am AppModule) decideCurrentChallengeSegments(ctx context.Context, epochInd
 		if ch.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
 			continue
 		}
+		cacheCtx, writeFn := sdkCtx.CacheContext()
 		if err := am.decideCurrentChallengeSegment(cacheCtx, ch, finish, snapshotHeight, rotate); err != nil {
-			return err
+			if refundErr := am.failChallengeEvaluation(ctx, ch, err.Error()); refundErr != nil {
+				am.LogError("decideCurrentChallengeSegments: failed to mark refund-only", types.PoC,
+					"target", ch.Target, "error", refundErr)
+			}
+			continue
 		}
+		writeFn()
 	}
-	writeFn()
 	return nil
 }
 
@@ -73,9 +77,6 @@ func (am AppModule) decideCurrentChallengeSegment(
 	}
 
 	if err := am.evaluatePunishableChallengeSegment(ctx, ch, finish, snapshotHeight); err != nil {
-		if errors.Is(err, errChallengeEvaluation) {
-			return am.failChallengeEvaluation(ctx, ch, err.Error())
-		}
 		return err
 	}
 	updated, found, err := am.keeper.GetPoCChallenge(ctx, ch.Target)
