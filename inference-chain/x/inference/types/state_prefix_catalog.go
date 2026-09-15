@@ -12,7 +12,7 @@ import (
 // it.
 //
 // Legacy marks prefixes whose data is no longer read by live code and is only
-// kept around for upgrade-time cleanup (see app/upgrades/v0_2_14). These are
+// kept around for upgrade-time cleanup (see app/upgrades/v0_2_16). These are
 // the prime candidates when answering "what can we remove to shrink state".
 type StatePrefix struct {
 	Name   string
@@ -95,6 +95,16 @@ func StatePrefixCatalog() []StatePrefix {
 		{Name: "BridgeWithdrawalTokenRefs", Bytes: []byte(BridgeWithdrawalTokenRefsPrefix)},
 		{Name: "BridgeTransactionValidators", Bytes: []byte(BridgeTransactionValidatorsPrefix)},
 		{Name: "PreservedNodesSnapshot", Bytes: []byte(PreservedNodesSnapshotPrefix)},
+		{Name: "MaintenanceReservations", Bytes: []byte(MaintenanceReservationsPrefix)},
+		{Name: "MaintenanceReservationCounter", Bytes: []byte(MaintenanceReservationCounterPrefix)},
+		{Name: "MaintenanceStates", Bytes: []byte(MaintenanceStatesPrefix)},
+		{Name: "MaintenanceTransitions", Bytes: []byte(MaintenanceTransitionsPrefix)},
+		{Name: "MaintenanceActiveIndex", Bytes: []byte(MaintenanceActiveIndexPrefix)},
+		{Name: "MaintenanceScheduledIndex", Bytes: []byte(MaintenanceScheduledIndexPrefix)},
+		{Name: "ClaimRecipients", Bytes: []byte(ClaimRecipientsPrefix)},
+		{Name: "ClaimRecipientsByEpoch", Bytes: []byte(ClaimRecipientsByEpochPrefix)},
+		{Name: "DelegationRewardTransferSnapshot", Bytes: []byte(DelegationRewardTransferSnapshotPrefix)},
+		{Name: "DevshardApprovedVersions", Bytes: []byte(DevshardApprovedVersionsPrefix)},
 
 		// Params and other raw string-key state.
 		{Name: "Params", Bytes: ParamsKey},
