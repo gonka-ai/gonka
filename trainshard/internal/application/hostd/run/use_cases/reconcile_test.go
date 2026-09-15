@@ -1,0 +1,515 @@
+package usecases_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+	"slices"
+	"testing"
+	"time"
+
+	"trainshard/internal/domain/mesh"
+	"trainshard/internal/domain/run"
+	"trainshard/internal/domain/shared/vo"
+)
+
+func TestReconcilePullsTheBaseImageWhileTheNodeDrains(t *testing.T) {
+
+	f := newFixture()
+	uc := f.reconcile()
+
+	for range 3 {
+		if err := uc.Execute(context.Background(), nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+
+	// the reservation, the node being marked unready, and the mark cleared once it is ready
+	want := []string{"runs.update", "runs.update", "images.pull", "control.drain",
+		"mesh.identity", "mesh_store.save_identity", "runs.update"}
+	if !reflect.DeepEqual(f.rec.sequence(), want) {
+		t.Fatalf("got %v, want %v", f.rec.sequence(), want)
+	}
+	if f.runs.states[nodeA].Shard != shardID {
+		t.Fatalf("the shard must be recorded before the machine is touched, got %v", f.runs.states[nodeA].Shard)
+	}
+}
+
+func TestReconcileSignsTheMeshMemberItPublishes(t *testing.T) {
+
+	f := newFixture()
+	f.control.drained = true
+	f.images.present[baseImage] = true
+
+	if err := f.reconcile().Execute(context.Background(), nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	identity := f.store.identities[nodeA]
+	if len(f.attestor.payloads) != 1 {
+		t.Fatalf("the member must be signed exactly once, got %d signatures", len(f.attestor.payloads))
+	}
+	if !reflect.DeepEqual(f.attestor.payloads[0], mesh.IdentityPayload(shardID, identity.Member)) {
+		t.Fatal("the signature must cover the member the peers will use")
+	}
+}
+
+func TestReconcileDoesNothingWhenTheRunAlreadyMatches(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Start: true}
+	f.images.present[runImage] = true
+	for range 2 {
+		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+	f.rec.reset()
+
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if calls := f.rec.sequence(); len(calls) != 0 {
+		t.Fatalf("a settled run must not touch the machine, got %v", calls)
+	}
+}
+
+func TestReconcileCreatesNoContainerBehindANetworkItCouldNotClose(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
+	f.egress.err = errors.New("nft is not there")
+
+	err := f.reconcile().Execute(ctx, nodeA)
+
+	if err == nil {
+		t.Fatal("a run whose box cannot be closed must not come up")
+	}
+	if slices.Contains(f.rec.sequence(), "containers.create") {
+		t.Fatalf("got %v, want no container created while the network is still open", f.rec.sequence())
+	}
+	if fault := f.runs.states[nodeA].Fault; fault == nil {
+		t.Fatal("the node must carry the reason it did not come up")
+	}
+}
+
+func TestReconcileKeepsTheOldContainerWhenTheNewOneCannotBeBuilt(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
+	f.containers.infos[nodeA] = run.ContainerInfo{State: vo.ContainerExited, Image: baseImage}
+	f.egress.err = errors.New("nft is not there")
+
+	err := f.reconcile().Execute(ctx, nodeA)
+
+	if err == nil {
+		t.Fatal("a run whose box cannot be closed must not come up")
+	}
+	if slices.Contains(f.rec.sequence(), "containers.remove") {
+		t.Fatalf("got %v, want the old container left alone until the new one can be built", f.rec.sequence())
+	}
+	if held := f.containers.infos[nodeA].Image; held != baseImage {
+		t.Fatalf("got %v, want the node still on the image it already had", held)
+	}
+}
+
+func TestReconcileBringsUpTheRunInOrder(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, ReservedAt: now, Spec: runSpec(), Start: true}
+
+	for range 3 {
+		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+
+	want := []string{"images.pull", "volumes.ensure", "egress.allow", "containers.create", "runs.update", "containers.start"}
+	if !reflect.DeepEqual(f.rec.sequence(), want) {
+		t.Fatalf("got %v, want %v", f.rec.sequence(), want)
+	}
+	if images := f.runs.states[nodeA].Images; len(images) != 1 || images[0].Image != runImage || !images[0].At.Equal(now) {
+		t.Fatalf("every image the run held must be recorded with its time, got %v", images)
+	}
+}
+
+func TestReconcileGivesTheContainerTheRankTheMeshDecided(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	spec := runSpec()
+	spec.Env = map[string]string{"NODE_RANK": "9", "DATA": "s3://bucket"}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: spec}
+	f.images.present[runImage] = true
+
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	env := f.containers.created.Run.Env
+	if env["NODE_RANK"] != "0" || env["NNODES"] != "1" {
+		t.Fatalf("got %v, want the rank the peer list gave the node, not the one the run asked for", env)
+	}
+	if env["MASTER_ADDR"] != "10.7.0.1" || env["MASTER_PORT"] != "29500" {
+		t.Fatalf("got %v, want the rendezvous of rank 0 on the mesh", env)
+	}
+	if env["DATA"] != "s3://bucket" {
+		t.Fatalf("got %v, want the run's own values kept", env)
+	}
+	if f.runs.states[nodeA].Spec.Env["NODE_RANK"] != "9" {
+		t.Fatal("the placement belongs to the container, not to the run the node was asked to hold")
+	}
+}
+
+func TestReconcileRefusesAnImageNotBuiltOnTheBase(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
+	f.images.present[runImage] = true
+	f.images.layers[runImage] = vo.ImageLayers{"someone-elses-layer"}
+
+	err := f.reconcile().Execute(ctx, nodeA)
+
+	if !errors.Is(err, run.ErrImageNotDerived) {
+		t.Fatalf("got %v, want %v", err, run.ErrImageNotDerived)
+	}
+	fault := f.runs.states[nodeA].Fault
+	if fault == nil || fault.Code != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("the reason must be readable from status, got %v", fault)
+	}
+}
+
+func TestReconcileClearsTheReasonOnceTheRunRecovers(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Fault: &oldFault}
+	f.images.present[runImage] = true
+
+	for range 2 {
+		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+
+	if fault := f.runs.states[nodeA].Fault; fault != nil {
+		t.Fatalf("a recovered run must stop reporting a fault, got %v", fault)
+	}
+}
+
+func TestReconcileWipesTheRunWhenTheReservationIsGone(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Start: true}
+	f.images.present[runImage] = true
+	for range 2 {
+		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+	f.gpu.leftovers = true
+	delete(f.chain.reservations, nodeA)
+	f.rec.reset()
+
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+
+	want := []string{
+		"containers.stop",
+		"gpu.kill_training",
+		"containers.remove",
+		"mesh.remove",
+		"mesh_store.forget",
+		"volumes.wipe",
+	}
+	if !reflect.DeepEqual(f.rec.sequence(), want) {
+		t.Fatalf("got %v, want %v", f.rec.sequence(), want)
+	}
+}
+
+func TestReconcileReturnsTheNodeOnlyAfterCleanupIsDone(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	delete(f.chain.reservations, nodeA)
+
+	first := f.reconcile().Execute(ctx, nodeA)
+	returnedEarly := f.control.drained == false
+	second := f.reconcile().Execute(ctx, nodeA)
+
+	if first != nil || second != nil {
+		t.Fatalf("cleanup must not fail: %v then %v", first, second)
+	}
+	if returnedEarly {
+		t.Fatal("the node was handed back before its mesh key was removed")
+	}
+	if f.control.drained {
+		t.Fatal("a cleaned node must be handed back to inference")
+	}
+	if _, found := f.runs.states[nodeA]; found {
+		t.Fatal("a returned node must leave no run state behind")
+	}
+}
+
+func TestReconcileWipesWhatAForgottenShardLeftBeforeHandingTheNodeBack(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	f.control.drained = true
+	f.volumes.present[shardID+1] = true
+	delete(f.chain.reservations, nodeA)
+
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	calls := f.rec.sequence()
+	wiped, handed := slices.Index(calls, "volumes.wipe"), slices.Index(calls, "control.return")
+	if wiped < 0 {
+		t.Fatalf("got %v, want the leftovers of a shard local state forgot wiped", calls)
+	}
+	if handed >= 0 && handed < wiped {
+		t.Fatalf("got %v, want the node handed back only once nothing of any run is left", calls)
+	}
+}
+
+func TestReconcileWipesAShardKnownOnlyByItsMeshKey(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	f.control.drained = true
+	f.network.keys[shardID+1] = true
+	delete(f.chain.reservations, nodeA)
+
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if !slices.Contains(f.rec.sequence(), "mesh.remove") {
+		t.Fatalf("got %v, want the key of a shard local state forgot removed", f.rec.sequence())
+	}
+}
+
+func TestReconcileLeavesTheShardItIsServingToItsOwnPlan(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Start: true}
+	f.images.present[runImage] = true
+	for range 2 {
+		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+	f.containers.leftover = []vo.ShardID{shardID}
+	f.rec.reset()
+
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if calls := f.rec.sequence(); len(calls) != 0 {
+		t.Fatalf("got %v, want the running shard's own labels left alone", calls)
+	}
+}
+
+func TestReconcileHandsBackANodeThatNeverGetsReady(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	f.control.stuck = true
+
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	f.clock.Advance(f.patience)
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	want := fmt.Sprintf("%s:%s:%s", shardID, nodeA.NodeID, vo.ReleaseFailedPrepare)
+	if len(f.chain.releases) != 1 || string(f.chain.releases[0]) != want {
+		t.Fatalf("got %v, want the reservation released as %s", f.chain.releases, want)
+	}
+}
+
+func TestReconcileGivesANodeThatSlipsMidRunTheSameWaitAsAFreshOne(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	f.control.drained = true
+	f.images.present[baseImage] = true
+
+	// the first pass creates the mesh key, the second observes it: only then is the node ready
+	for range 2 {
+		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+	f.clock.Advance(10 * f.patience)
+	f.gpu.foreign = true
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(f.chain.releases) != 0 {
+		t.Fatalf("got %v, want a node hours into a run given its wait rather than handed back at once", f.chain.releases)
+	}
+
+	f.clock.Advance(f.patience)
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	want := fmt.Sprintf("%s:%s:%s", shardID, nodeA.NodeID, vo.ReleaseFailedPrepare)
+	if len(f.chain.releases) != 1 || string(f.chain.releases[0]) != want {
+		t.Fatalf("got %v, want the reservation released as %s once the wait ran out", f.chain.releases, want)
+	}
+}
+
+func TestReconcileLetsGoOfAnOldShardThatLeftNothingBehind(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	f.runs.states[nodeA] = run.RunState{Shard: shardID + 1}
+
+	for range 2 {
+		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+
+	if state := f.runs.states[nodeA]; state.Shard != shardID || state.ReservedAt.IsZero() {
+		t.Fatalf("got %+v, want the node serving the shard the chain reserved it for", state)
+	}
+}
+
+func TestReconcileHandsBackANodeWhoseDeployRecordedTheShardFirst(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	f.control.stuck = true
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
+
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	f.clock.Advance(f.patience)
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(f.chain.releases) != 1 {
+		t.Fatalf("got %v, want the node handed back even though deploy recorded the shard before the first pass", f.chain.releases)
+	}
+}
+
+func TestReconcileKeepsANodeThatIsStillWithinThePrepareDeadline(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	f.control.stuck = true
+
+	for range 3 {
+		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		f.clock.Advance(f.patience / 4)
+	}
+
+	if len(f.chain.releases) != 0 {
+		t.Fatalf("got %v, want a draining node left alone until its deadline", f.chain.releases)
+	}
+}
+
+func TestReconcileCleansTheOldShardBeforeServingANewReservation(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	next := activeShard()
+	next.ID = shardID + 1
+	f.chain.shards[next.ID] = next
+	f.chain.reservations[nodeA] = next.ID
+
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if calls := f.rec.sequence(); !reflect.DeepEqual(calls, []string{"mesh.remove", "mesh_store.forget"}) {
+		t.Fatalf("the previous shard must be cleaned up first, got %v", calls)
+	}
+}
+
+func TestReconcileHoldsTheNodeWhileACommandWritesDownWhatItShouldHold(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	writing, release, recorded := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		recorded <- f.converger.Record(ctx, nodeA, func(context.Context) error {
+			close(writing)
+			<-release
+			return nil
+		})
+	}()
+	<-writing
+
+	ticked := make(chan error, 1)
+	go func() { ticked <- f.reconcile().Execute(ctx, nodeA) }()
+
+	select {
+	case <-ticked:
+		t.Fatal("the ticker applied the node while a command was still writing down what it should hold")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+
+	if err := <-recorded; err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if err := <-ticked; err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+}
