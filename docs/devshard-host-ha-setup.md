@@ -24,10 +24,11 @@ Keep enough ready replicas for every served protocol and the traffic. A request 
 
 ## Prerequisites
 
-1. A working join deployment with `node`, `api` and `proxy`.
+1. Working `node` + `api` (dapi) + `proxy` on the host (standard join deployment).
 2. Join files and compatible host/gateway images for the [release covered here](#release-reference).
-3. Docker Compose **2.24.4+**, Bash, Python 3, `curl`, `jq`, `flock`, `sha256sum` and `timeout`.
-4. The same participant identity on every replica, separate replica data directories, and one shared writable PostgreSQL database. Run only one dapi with those keys.
+3. Same participant identity on **every** HA `versiond` replica: same `KEY_NAME`, keyring and `ACCOUNT_PUBKEY`.
+4. Separate data directories for each replica and one shared PostgreSQL database. Run only one dapi with the participant keys.
+5. Docker Compose **2.24.4+**, Bash, Python 3, `curl`, `jq`, `flock`, `sha256sum` and `timeout`.
 
 Use the supplied protocol list for a new host. When updating, retain your current list; follow [Add a protocol](#add-a-protocol) to enable another protocol after its release activation.
 
@@ -48,28 +49,43 @@ During [Upgrade](#upgrade-an-existing-host), review any saved `VERSIOND_IMAGE`, 
 
 <a id="3-select-postgresql"></a>
 
-## Step 1 - Choose PostgreSQL
+<a id="step-1---choose-postgresql"></a>
 
-Use **one writable PostgreSQL database** for all HA replicas. Do not share SQLite files between replicas. Prefer managed or replicated PostgreSQL.
+## Step 1 - Install PostgreSQL (preferably HA itself)
 
-| Option | What to prepare |
-| --- | --- |
-| **Local Compose PostgreSQL** | The release's HA overlay creates the database on the join host. |
-| **Managed or self-managed PostgreSQL** | Create a database and user, allow access from every replica, and note the writable endpoint. Use §2.2 to configure it. |
+HA `versiond` removes dependence on one **app** server, but if PostgreSQL runs on a single VM, **PostgreSQL becomes your new SPOF**. Prefer a **managed / replicated** database.
+
+Connect all `versiond` instances to the same PostgreSQL database.
+
+### Choose a database
+
+**Option A — Managed PostgreSQL (recommended).** Create a database and user through your provider. Select an HA configuration and connect it using [§2.2](#22-using-external--managed-postgres-with-the-same-overlay).
+
+**Option B — Self-managed PostgreSQL.** Install PostgreSQL on a dedicated host or cluster. Create the role/database and configure replication and failover for database HA. Connect it using [§2.2](#22-using-external--managed-postgres-with-the-same-overlay).
+
+For either external option, note the primary endpoint: host, port (usually `5432`), database, user and password. Ensure **all** `versiond` instances can reach it through your firewall or private network.
+
+**Option C — Local Compose PostgreSQL.** `docker-compose.versiond.yml` starts `devshard-postgres` on the join host. If that machine goes down, the database goes down with it.
 
 For an external database, connect directly or through a pooler in **session mode**. Transaction pooling is unsupported. Leave explicit `PGSSL*` settings unset (`PGSSLMODE=disable` is allowed). If your provider requires explicit TLS settings, use a procedure that supports them; do not disable required TLS.
 
-Add the database credentials to your existing `deploy/join/config.env`:
+### Where to put PostgreSQL settings
+
+Edit `deploy/join/config.env` and add the database password:
 
 ```bash
 export DEVSHARD_POSTGRES_PASSWORD='<strong-password>'
 ```
 
-The database and user default to `devshardd`. For an external database with different names, also set `DEVSHARD_POSTGRES_DB` and `DEVSHARD_POSTGRES_USER`. Local data is stored at `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}/data`.
+The database and user default to `devshardd`. Set `DEVSHARD_POSTGRES_DB` and `DEVSHARD_POSTGRES_USER` only if your database uses different names.
+
+For local PostgreSQL, leave `PGHOST` and `DEVSHARD_STORAGE_MODE` out of `config.env`; the HA overlay sets them on the replicas. Data is stored at `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}/data`. For external PostgreSQL, add the override in §2.2.
 
 <a id="step-2---configure-the-deployment"></a>
 
-## Step 2 - Configure replicas and routing
+<a id="step-2---configure-replicas-and-routing"></a>
+
+## Step 2 - Run multiple `versiond` instances + the router fleet
 
 Keep all deployment files in `deploy/join`:
 
@@ -84,7 +100,7 @@ Keep all deployment files in `deploy/join`:
 
 ### 2.1 Same machine, two replicas
 
-On the join host, configure two `versiond` replicas as follows. For machine-level redundancy, also add a replica on [another machine](#add-a-remote-replica).
+On the join host:
 
 <a id="1-set-the-deployment-configuration"></a>
 
@@ -107,9 +123,7 @@ Keep `VERSIOND_NON_HA_VERSIONS` empty. List every active override in `COMPOSE_FI
 
 <a id="2-create-the-ha-override"></a>
 
-**2. Create the HA override.**
-
-Run the following in `deploy/join` to create `docker-compose.devshard-v5.override.yml`:
+**2. Create `docker-compose.devshard-v5.override.yml` in `deploy/join`.**
 
 ```bash
 cat > docker-compose.devshard-v5.override.yml <<'EOF'
@@ -193,7 +207,9 @@ Keep `oracle-filter` running. Use its catalog for every replica and router.
 
 ### 2.2 External or managed PostgreSQL
 
-Use this section for a database outside the join host. Complete §2.1 first.
+Use this when the database runs outside the join host (Options A and B). Complete §2.1 first.
+
+`config.env` alone is **not enough**: `docker-compose.versiond.yml` sets `PGHOST=devshard-postgres`. Add the override below to point every replica at the external database.
 
 Create the database and role through your provider, or run this SQL on your PostgreSQL server after replacing the password:
 
@@ -237,16 +253,17 @@ export COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compos
 
 ### 2.3 Multiple machines
 
-Run the additional `versiond` on machine B. Keep the join stack on A. A's public proxy, node and api remain single-instance; shared PostgreSQL is still required.
+Use a **private network** between machines. Run the additional `versiond` on B and keep the join stack on A. A's public proxy, node and api remain single-instance.
 
 For a new deployment, finish [Step 3](#4-start-the-deployment) and [Step 4](#verify-the-deployment) on A first, then return here.
 
 | Machine | Runs |
 | --- | --- |
-| A | Existing join stack, local replicas and router fleet |
-| B | One additional `versiond`, using A's filtered catalog and the same PostgreSQL |
+| A | Local `versiond` replicas + node/api/proxy + router fleet |
+| B | `versiond` only — no second dapi with the same keys |
+| Shared | PostgreSQL reachable from every `versiond` instance |
 
-Run only one dapi with the participant keys. Keep B out of the router pool until its checks pass.
+Keep B out of the router pool until its checks pass.
 
 #### 1. Prepare machine A
 
@@ -293,6 +310,8 @@ Do not restart the whole live stack just to add a member.
 
 #### 2. Configure and start machine B
 
+B does not run `api` or `node`. It uses A's filtered catalog, node-manager and chain endpoints, and the shared PostgreSQL database.
+
 For a new B, use the same release's `deploy/join` files. For an existing B, use [Replace a member](#replace-a-member) and retain its current data mounts.
 
 Copy these settings from A into B's `config.env`:
@@ -302,7 +321,7 @@ Copy these settings from A into B's `config.env`:
 - Protocols: `VERSIOND_VERSIONS` and the empty `VERSIOND_NON_HA_VERSIONS`.
 - `VERSIOND_IMAGE`, only if A uses a custom image.
 
-On A, run `docker cp versiond:/root/.inference/keyring-file .` and transfer `keyring-file/` into B's `.inference/`. Use B's own data directories; do not copy A's replica data.
+On A, run `docker cp versiond:/root/.inference/keyring-file .` and transfer `keyring-file/` into B's `.inference/`. Keep the supplied read-only keyring mount. Use B's own data directory; do not share A's replica data directories.
 
 Add these settings to B's `config.env`, replacing the private addresses:
 
@@ -397,9 +416,10 @@ Finally, test a real session served by B: identify it using `X-Upstream-Addr`, s
 
 After completing [startup and verification](#4-start-the-deployment):
 
-1. For the third replica, add the supplied `docker-compose.versiond3.yml` to the complete `COMPOSE_FILE`. For each further replica, copy it with unique container names and data paths. Keep its PostgreSQL mount for the `.pg-bound` check.
-2. Extend the HA and external-PostgreSQL overrides for the new service, including its filtered catalog, database endpoint and dependencies. Settings added to another replica by an override are not inherited automatically. Retain the supplied identity/image settings, stop timings and `versiond-pool` alias.
-3. Start the member, require readiness for every selected protocol and verify inference. DNS discovery needs no router recreation; use [membership maintenance](#3-add-b-to-the-router-pool) for explicit endpoint lists.
+1. Add `docker-compose.versiond3.yml` to `COMPOSE_FILE`. For further replicas, copy it with a new container name and data directory.
+2. Give the new service the same filter and database overrides as `versiond` and `versiond2`. Keep the supplied identity/image settings, shutdown timings, `versiond-pool` alias and PostgreSQL mount for `.pg-bound`.
+3. Start the replica and check every selected protocol and inference.
+4. For explicit endpoint lists, add the replica using [membership maintenance](#3-add-b-to-the-router-pool). With pool DNS, no router recreation is needed.
 
 <a id="step-3---start-the-configured-deployment"></a>
 <a id="3-bring-up-the-main-stack-and-router-fleet"></a>
@@ -458,7 +478,14 @@ source ./config.env
 )
 ```
 
-Require `Preflight passed`, successful admission checks and HTTP 200 for every readiness and public-route check. Preflight writes database probes; it does not replace services.
+Healthy signs:
+
+- Preflight reports `Preflight passed`.
+- `verify-admission` and `wait-version` finish successfully.
+- Every replica passes readiness for every selected protocol.
+- The public `/devshard/<version>/healthz` route returns HTTP 200.
+
+Preflight writes database probes; it does not replace services.
 
 For a new or replaced remote member, also pass the [database check](#check-the-remote-database) before adding it to the pool.
 
