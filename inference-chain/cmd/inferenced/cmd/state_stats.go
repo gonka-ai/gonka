@@ -44,14 +44,14 @@ func (s prefixStat) total() int64 { return s.keyBytes + s.valBytes }
 // Use it to answer "why is the state so big, and what can we safely remove":
 // the inference breakdown labels every prefix (see types.StatePrefixCatalog)
 // and flags the ones marked legacy, which are the cleanup candidates handled by
-// the v0.2.14 upgrade.
+// the v0.2.16 upgrade.
 func StateStatsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "state-stats",
 		Short: "Report per-store and per-prefix committed state size (offline analysis)",
 		Long: `Report per-store and per-prefix committed state size.
 
-Opens the node's application database read-only, loads the latest committed
+	Opens the node's application database directly, loads the latest committed
 height (or --height), and iterates every module KV store reporting key count
 and byte size. For the inference module it additionally attributes each key to
 a named prefix and flags legacy prefixes that are cleanup candidates.
@@ -66,9 +66,15 @@ against a stopped node's home directory or a restored snapshot.`,
 			if err != nil {
 				return err
 			}
+			if height < 0 {
+				return fmt.Errorf("height must not be negative")
+			}
 			top, err := cmd.Flags().GetInt(flagStateStatsTop)
 			if err != nil {
 				return err
+			}
+			if top < 0 {
+				return fmt.Errorf("top must not be negative")
 			}
 			legacyOnly, err := cmd.Flags().GetBool(flagStateStatsLegacyOnly)
 			if err != nil {

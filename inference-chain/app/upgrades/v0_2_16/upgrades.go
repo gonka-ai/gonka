@@ -97,8 +97,8 @@ func CreateUpgradeHandler(
 // mainnet by `inferenced state-stats --legacy-only`, so this stays cheap enough
 // for an upgrade handler. The large prefixes (InferenceValidationDetails,
 // developer-stats) are deliberately not touched here: deletion is expensive in
-// Cosmos SDK 0.53.3, so they are bled off gradually by the per-block pruner
-// instead (#1499).
+// Cosmos SDK 0.53.3. InferenceValidationDetails is tracked for gradual per-block
+// pruning in #1499; developer-stats needs a separate retention decision.
 func cleanupLeftoverState(ctx context.Context, k keeper.Keeper) error {
 	k.LogInfo("cleaning up leftover state", types.Upgrades, "version", UpgradeName)
 

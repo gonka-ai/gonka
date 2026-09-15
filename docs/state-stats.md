@@ -50,9 +50,9 @@ Two tables:
 A non-empty `<unmatched:0xNN>` row means a key prefix is not yet in the
 catalog; add it to `StatePrefixCatalog` so the attribution stays complete.
 
-## Relationship to the v0.2.14 cleanup
+## Relationship to the v0.2.16 cleanup
 
-The v0.2.14 upgrade handler already removes the known legacy prefixes
+The v0.2.16 upgrade handler removes the known legacy prefixes
 (`EpochGroupValidations` aggregate map, `TopMiner`, training state, legacy PoC
 v2 prefixes). Run `state-stats --legacy-only` before and after the upgrade on a
 snapshot to confirm those prefixes drop to zero, and use the full breakdown to

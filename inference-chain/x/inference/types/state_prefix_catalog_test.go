@@ -33,6 +33,30 @@ func TestStatePrefixCatalogSortedLongestFirst(t *testing.T) {
 	}
 }
 
+func TestStatePrefixCatalogIncludesLatestCollectionPrefixes(t *testing.T) {
+	catalog := StatePrefixCatalog()
+	byName := make(map[string][]byte, len(catalog))
+	for _, entry := range catalog {
+		byName[entry.Name] = entry.Bytes
+	}
+
+	expected := map[string][]byte{
+		"MaintenanceReservations":          []byte(MaintenanceReservationsPrefix),
+		"MaintenanceReservationCounter":    []byte(MaintenanceReservationCounterPrefix),
+		"MaintenanceStates":                []byte(MaintenanceStatesPrefix),
+		"MaintenanceTransitions":           []byte(MaintenanceTransitionsPrefix),
+		"MaintenanceActiveIndex":           []byte(MaintenanceActiveIndexPrefix),
+		"MaintenanceScheduledIndex":        []byte(MaintenanceScheduledIndexPrefix),
+		"ClaimRecipients":                  []byte(ClaimRecipientsPrefix),
+		"ClaimRecipientsByEpoch":           []byte(ClaimRecipientsByEpochPrefix),
+		"DelegationRewardTransferSnapshot": []byte(DelegationRewardTransferSnapshotPrefix),
+		"DevshardApprovedVersions":         []byte(DevshardApprovedVersionsPrefix),
+	}
+	for name, prefix := range expected {
+		require.Equalf(t, prefix, byName[name], "catalog entry %q is missing or incorrect", name)
+	}
+}
+
 func TestMatchStatePrefixLongestWins(t *testing.T) {
 	catalog := StatePrefixCatalog()
 
