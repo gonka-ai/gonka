@@ -7,6 +7,7 @@ import (
 
 	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
@@ -195,26 +196,12 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 	if ratio, ok := ratios[ch.Target]; ok {
 		participant.CurrentEpochStats.ConfirmationPoCRatio = ratio
 	}
-	if confirmationPoCFailed(participant.CurrentEpochStats, params.ConfirmationPocParams) {
+	if calculations.ConfirmationPoCStatus(participant.CurrentEpochStats, params.ConfirmationPocParams) == calculations.Fail {
 		if err := am.keeper.MarkChallengeFailed(ctx, ch.Target); err != nil {
 			return err
 		}
 	}
 	return am.keeper.SetParticipant(ctx, participant)
-}
-
-func confirmationPoCFailed(stats *types.CurrentEpochStats, parameters *types.ConfirmationPoCParams) bool {
-	if parameters == nil || parameters.AlphaThreshold == nil {
-		return false
-	}
-	alpha := parameters.AlphaThreshold.ToDecimal()
-	if alpha.IsZero() {
-		return false
-	}
-	if stats == nil || stats.ConfirmationPoCRatio == nil {
-		return false
-	}
-	return stats.ConfirmationPoCRatio.ToDecimal().LessThan(alpha)
 }
 
 func (am AppModule) challengeCalculatorResult(
