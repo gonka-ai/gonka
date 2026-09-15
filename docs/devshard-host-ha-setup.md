@@ -4,7 +4,7 @@ Set up multiple `versiond` replicas with shared PostgreSQL to serve inference th
 
 ## Why this matters
 
-With multiple replicas, you can maintain one instance while the others continue serving inference. The routers send requests to ready replicas, which share session state in PostgreSQL.
+If one `versiond` replica fails, the routers direct requests to the remaining ready replicas. Shared PostgreSQL keeps committed session state available to those replicas. The same setup lets you maintain one instance while the others continue serving inference.
 
 ```text
 Public proxy (/devshard/...)
