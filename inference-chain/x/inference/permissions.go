@@ -35,6 +35,7 @@ var InferenceOperationKeyPerms = []sdk.Msg{
 	&types.MsgBridgeExchange{},
 	&types.MsgSubmitNewUnfundedParticipant{},
 	&types.MsgSubmitHardwareDiff{},
+	&types.MsgDeclarePoCIntent{}, // bootstrap-model intent; miners submit via warm key
 	&blstypes.MsgSubmitDealerPart{},
 	&blstypes.MsgSubmitVerificationVector{},
 	&blstypes.MsgRespondDealerComplaints{},
