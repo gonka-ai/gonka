@@ -502,3 +502,131 @@ func TestDevshardPruningPostPruneHook(t *testing.T) {
 	iter.Close()
 	require.False(t, statsFound, "DevshardHostEpochStats should be cleared")
 }
+
+// TestPrunerMultiEpochBacklogBudget tests that prunedCount accumulates across epochs
+// and respects the per-block PruningMax budget, based on bonujel's 2026-07-30 reproduction case.
+//
+// Scenario: 6 eligible epochs with varying counts, PruningMax=1000.
+// Expected behavior:
+//   - Each EndBlock call deletes at most 1000 items total across all epochs
+//   - Eventually all epochs are completely cleared (no items orphaned)
+//   - Marker advances only after an epoch is fully cleared
+func TestPrunerMultiEpochBacklogBudget(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	err := k.PruningState.Set(ctx, types.PruningState{})
+	require.NoError(t, err)
+
+	// Setup: 6 epochs with counts [5000, 300, 4000, 200, 3000, 100]
+	// Total: 12,600 items
+	epochCounts := []struct {
+		epoch int64
+		count int
+	}{
+		{1, 5000},
+		{2, 300},
+		{3, 4000},
+		{4, 200},
+		{5, 3000},
+		{6, 100},
+	}
+
+	inferenceIndex := 0
+	for _, ec := range epochCounts {
+		for i := 0; i < ec.count; i++ {
+			inf := types.Inference{
+				Index:   fmt.Sprintf("inf-epoch%d-%d", ec.epoch, i),
+				EpochId: uint64(ec.epoch),
+				Status:  types.InferenceStatus_FINISHED,
+			}
+			k.SetInference(ctx, inf)
+			inferenceIndex++
+		}
+	}
+
+	// Configure pruning: threshold=2 (keep latest 2 epochs), max=1000
+	setPruningConfig(ctx, k, PruningSettings{
+		InferenceThreshold: 2,
+		InferenceMaxPrune:  1000,
+	})
+
+	// Current epoch = 8, so eligible epochs are 1-6
+	currentEpoch := int64(8)
+
+	// Track deletions per block
+	type blockDeletion struct {
+		blockNum int
+		deleted  int
+	}
+	var deletions []blockDeletion
+	blockNum := 0
+
+	// Run pruning until all eligible epochs are cleared
+	maxIterations := 20 // Safety limit
+	allCleared := false
+	for iter := 0; iter < maxIterations; iter++ {
+		blockNum++
+
+		// Count items before pruning
+		countBefore := 0
+		for _, ec := range epochCounts {
+			for i := 0; i < ec.count; i++ {
+				if _, found := k.GetInference(ctx, fmt.Sprintf("inf-epoch%d-%d", ec.epoch, i)); found {
+					countBefore++
+				}
+			}
+		}
+
+		if countBefore == 0 && allCleared {
+			// All cleared and marker advanced
+			break
+		}
+
+		if countBefore == 0 {
+			allCleared = true
+		}
+
+		err = k.Prune(ctx, currentEpoch)
+		require.NoError(t, err)
+
+		// Count items after pruning
+		countAfter := 0
+		for _, ec := range epochCounts {
+			for i := 0; i < ec.count; i++ {
+				if _, found := k.GetInference(ctx, fmt.Sprintf("inf-epoch%d-%d", ec.epoch, i)); found {
+					countAfter++
+				}
+			}
+		}
+
+		deleted := countBefore - countAfter
+		if deleted > 0 {
+			deletions = append(deletions, blockDeletion{blockNum, deleted})
+		}
+
+		// Assertion (a): Each block deletes at most PruningMax items
+		require.LessOrEqual(t, deleted, 1000,
+			"Block %d deleted %d items, exceeding PruningMax=1000", blockNum, deleted)
+	}
+
+	// Assertion (b): All items eventually deleted (no orphaned data)
+	finalCount := 0
+	for _, ec := range epochCounts {
+		for i := 0; i < ec.count; i++ {
+			if _, found := k.GetInference(ctx, fmt.Sprintf("inf-epoch%d-%d", ec.epoch, i)); found {
+				finalCount++
+			}
+		}
+	}
+	require.Equal(t, 0, finalCount,
+		"Expected all items to be pruned, but %d items remain. Deletions per block: %+v",
+		finalCount, deletions)
+
+	// Verify marker advanced to epoch 6
+	pruningState, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(6), pruningState.InferencePrunedEpoch,
+		"Expected marker to advance to epoch 6 after all epochs cleared")
+
+	t.Logf("Successfully pruned 12,600 items across 6 epochs in %d blocks. Deletions: %+v",
+		blockNum, deletions)
+}
