@@ -738,6 +738,12 @@ func (p *EpochParams) Validate() error {
 	if p.InferencePruningEpochThreshold < 1 {
 		return fmt.Errorf("inference pruning epoch threshold must be at least 1")
 	}
+	if p.InferencePruningMax <= 0 {
+		return fmt.Errorf("inference pruning max must be positive")
+	}
+	if p.PocPruningMax <= 0 {
+		return fmt.Errorf("poc pruning max must be positive")
+	}
 	if p.ConfirmationPocSafetyWindow < 0 {
 		return fmt.Errorf("safety window cannot be negative")
 	}

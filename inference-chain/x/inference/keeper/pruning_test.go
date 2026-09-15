@@ -3,6 +3,7 @@ package keeper_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -141,6 +142,8 @@ func TestPruningEpochThreshold(t *testing.T) {
 func TestPruningStatusPreservation(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	err := k.PruningState.Set(ctx, types.PruningState{})
+	require.NoError(t, err)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 4))
 
 	// Create inferences with different statuses
 	inferences := []types.Inference{
@@ -163,7 +166,7 @@ func TestPruningStatusPreservation(t *testing.T) {
 
 	// Add inferences to the store
 	for _, inf := range inferences {
-		k.SetInference(ctx, inf)
+		require.NoError(t, k.SetInference(ctx, inf))
 	}
 
 	// Run pruning with threshold that should prune old inferences
@@ -181,6 +184,114 @@ func TestPruningStatusPreservation(t *testing.T) {
 	// Verify FINISHED inference was pruned
 	_, found = k.GetInference(ctx, "inference-finished")
 	require.False(t, found, "Inference with FINISHED status should be pruned")
+
+	// Active records are moved to the current epoch rather than dropped from
+	// the index, so they can be reconsidered after their status changes.
+	for _, id := range []string{"inference-voting", "inference-started"} {
+		hasOriginal, err := k.InferencesToPrune.Has(ctx, collections.Join(int64(1), id))
+		require.NoError(t, err)
+		require.False(t, hasOriginal)
+		hasRetry, err := k.InferencesToPrune.Has(ctx, collections.Join(int64(4), id))
+		require.NoError(t, err)
+		require.True(t, hasRetry)
+	}
+
+	// A normal status update may recreate the original-epoch index. The later
+	// retry must remove both indexes and the now-terminal inference.
+	for _, inf := range inferences[:2] {
+		inf.Status = types.InferenceStatus_FINISHED
+		require.NoError(t, k.SetInference(ctx, inf))
+	}
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 7))
+	require.NoError(t, k.Prune(ctx, 7))
+
+	for _, id := range []string{"inference-voting", "inference-started"} {
+		_, found := k.GetInference(ctx, id)
+		require.False(t, found, "terminal inference %q should be pruned on retry", id)
+		for _, epoch := range []int64{1, 4} {
+			hasIndex, err := k.InferencesToPrune.Has(ctx, collections.Join(epoch, id))
+			require.NoError(t, err)
+			require.False(t, hasIndex, "stale pruning index for %q at epoch %d", id, epoch)
+		}
+	}
+}
+
+func TestPruningNonPositiveLimitDoesNotMutateState(t *testing.T) {
+	for _, limit := range []int64{0, -1} {
+		t.Run(fmt.Sprintf("limit_%d", limit), func(t *testing.T) {
+			k, ctx := keepertest.InferenceKeeper(t)
+			require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+			inference := types.Inference{
+				Index:   "inference-finished",
+				EpochId: 1,
+				Status:  types.InferenceStatus_FINISHED,
+			}
+			require.NoError(t, k.SetInference(ctx, inference))
+
+			params, err := k.GetParams(ctx)
+			require.NoError(t, err)
+			params.EpochParams.InferencePruningMax = limit
+			require.NoError(t, k.GetInferencePruner(params).Prune(ctx, k, 4))
+
+			_, found := k.GetInference(ctx, inference.Index)
+			require.True(t, found)
+			hasIndex, err := k.InferencesToPrune.Has(ctx, collections.Join(int64(inference.EpochId), inference.Index))
+			require.NoError(t, err)
+			require.True(t, hasIndex)
+		})
+	}
+}
+
+func TestPrunerStopsAfterPartialFailure(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	for _, key := range []collections.Pair[int64, string]{
+		collections.Join(int64(1), "a"),
+		collections.Join(int64(1), "b"),
+		collections.Join(int64(1), "c"),
+		collections.Join(int64(2), "later-epoch"),
+	} {
+		require.NoError(t, k.InferencesToPrune.Set(ctx, key, collections.NoValue{}))
+	}
+
+	errInjected := errors.New("injected removal failure")
+	removeCalls := 0
+	pruner := keeper.Pruner[collections.Pair[int64, string], collections.NoValue]{
+		Threshold:  1,
+		PruningMax: 3,
+		List:       k.InferencesToPrune,
+		Ranger: func(_ context.Context, epoch int64) collections.Ranger[collections.Pair[int64, string]] {
+			return collections.NewPrefixedPairRange[int64, string](epoch)
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.InferencePrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.InferencePrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Pair[int64, string]) error {
+			removeCalls++
+			if removeCalls == 3 {
+				return errInjected
+			}
+			return k.InferencesToPrune.Remove(ctx, key)
+		},
+		Logger: k,
+	}
+
+	err := pruner.Prune(ctx, k, 3)
+	require.ErrorIs(t, err, errInjected)
+	require.Equal(t, 3, removeCalls)
+
+	// The failed epoch is not marked complete and no later epoch is touched.
+	state, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), state.InferencePrunedEpoch)
+	hasLater, err := k.InferencesToPrune.Has(ctx, collections.Join(int64(2), "later-epoch"))
+	require.NoError(t, err)
+	require.True(t, hasLater)
 }
 
 func TestPruningMultipleEpochs(t *testing.T) {
