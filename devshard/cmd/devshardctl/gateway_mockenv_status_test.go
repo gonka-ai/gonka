@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -69,4 +70,28 @@ func TestGatewayMockEnvMultiRuntimeStatusIsAggregate(t *testing.T) {
 	requireMockenvJSONField(t, rec.Body, "runtimes", float64(2))
 	require.EqualValues(t, 0, alpha.calls.Load())
 	require.EqualValues(t, 0, beta.calls.Load())
+}
+
+// Steps:
+// - Build a gateway with no resident runtimes (post-retire / pre-create).
+// - Request pooled /v1/status.
+// - Assert HTTP 200 with phase=not_found and no escrow_id (absence is named,
+//   not an empty object that looks like a parse miss).
+func TestGatewayMockEnvZeroRuntimeStatusIsNotFound(t *testing.T) {
+	env := newGatewayMockEnv(t, nil)
+
+	rec := env.get("/v1/status")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	requireMockenvJSONField(t, rec.Body, "mode", "gateway")
+	requireMockenvJSONField(t, rec.Body, "runtimes", float64(0))
+	requireMockenvJSONField(t, rec.Body, "phase", "not_found")
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.NotContains(t, body, "escrow_id")
+	errObj, ok := body["error"].(map[string]any)
+	require.True(t, ok, "zero-runtime status must include error: %v", body)
+	require.Equal(t, "not_found", errObj["type"])
+	require.Equal(t, "no active escrow", errObj["message"])
 }

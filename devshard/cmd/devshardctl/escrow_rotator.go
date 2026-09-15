@@ -12,6 +12,7 @@ import (
 
 	"common/chain"
 	devshardpkg "devshard"
+	"devshard/bridge"
 	"devshard/types"
 )
 
@@ -39,6 +40,7 @@ var (
 	gatewayCreateEscrowOnChain        = (*Gateway).createEscrowOnChain
 	gatewayCreateDepletionEscrow      func(*Gateway, context.Context, GatewaySettings, EscrowRotationModelSettings, string, uint64) (*CreateDevshardEscrowResult, error)
 	gatewaySettleDevshardOnChain      = (*Gateway).settleDevshardOnChain
+	gatewayChainBridge                = (*Gateway).chainBridge
 	gatewayQueryTxEscrowID            = defaultQueryTxEscrowID
 )
 
@@ -370,24 +372,29 @@ func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySett
 	return result, nil
 }
 
-// escrowProtocolVersionFor maps /devshard/<slot> to the rotation stamp.
+// escrowProtocolVersionFor derives the protocol version from the route prefix the escrow is pinned to,
+// so the stamp and the wire can never name different versions. A leading "v" is stripped (v4 -> "4"); a major.minor
+// slot such as v4.1 or v5.1 is kept, while a longer or suffixed version maps by major (v2.1.0 -> "2", v4.1r5 -> "4").
+// Named runtimes such as mainnet-canary are stamped as-is. An unresolvable prefix falls back to DefaultProtocolVersion.
 func escrowProtocolVersionFor(routePrefix string) string {
 	_, version, err := devshardpkg.ResolveRoutePrefix(routePrefix)
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q reason=version_segment_unresolved error=%v", routePrefix, err)
 		return string(types.DefaultProtocolVersion)
 	}
-	normalized := strings.TrimSpace(version)
-	if pv, err := types.ParseProtocolVersion(normalized); err == nil {
-		return string(pv)
+	protocolVersion, err := types.ParseProtocolVersion(version)
+	if err != nil {
+		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q version=%q reason=unparseable_protocol error=%v", routePrefix, version, err)
+		return string(types.DefaultProtocolVersion)
 	}
-	if i := strings.IndexByte(normalized, '.'); i > 0 {
-		if pv, err := types.ParseProtocolVersion(normalized[:i]); err == nil {
-			return string(pv)
-		}
+	major, minor, hasMinor := strings.Cut(string(protocolVersion), ".")
+	_, majorErr := strconv.ParseUint(major, 10, 64)
+	_, minorErr := strconv.ParseUint(minor, 10, 64)
+	isMajorMinorSlot := majorErr == nil && minorErr == nil
+	if hasMinor && major != "" && !isMajorMinorSlot {
+		return major
 	}
-	log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q version=%q reason=unparseable_protocol", routePrefix, version)
-	return string(types.DefaultProtocolVersion)
+	return string(protocolVersion)
 }
 
 func normalizedEscrowRotationModels(settings GatewaySettings) []EscrowRotationModelSettings {
@@ -627,6 +634,25 @@ func defaultQueryTxEscrowID(ctx context.Context, client *chain.Client, settings 
 	return txMgr.GetTxEscrowID(ctx, txHash)
 }
 
+// settleTerminalErr reclassifies a settlement failure as bridge.ErrEscrowSettled
+// when the chain reports the escrow already settled. The chain rejects a
+// duplicate settle with an untyped string, and finalize against a settled escrow
+// fails the same way (every host answers 409), so without asking the chain the
+// retry loops cannot tell "try again later" from "nothing left to broadcast".
+// This also catches the case where our own settle landed but confirmation timed
+// out. Only reached on the failure path, so it costs one extra query.
+func (g *Gateway) settleTerminalErr(id string, cause error) error {
+	br := gatewayChainBridge(g)
+	if br == nil {
+		return cause
+	}
+	info, err := br.GetEscrow(id)
+	if err != nil || info == nil || !info.Settled {
+		return cause
+	}
+	return fmt.Errorf("%w: escrow %s: %v", bridge.ErrEscrowSettled, id, cause)
+}
+
 func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
 	log.Printf("devshard_settle_start escrow=%s", id)
 	g.mu.Lock()
@@ -714,7 +740,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		if err := rt.session.Finalize(ctx); err != nil {
 			g.finalizeMu.Unlock()
 			log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, err.Error())
-			return nil, err
+			return nil, g.settleTerminalErr(id, err)
 		}
 		g.finalizeMu.Unlock()
 		log.Printf("devshard_settle_finalize_completed escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
@@ -745,7 +771,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	result, err := txMgr.SettleDevshardEscrow(ctx, signer, params)
 	if err != nil {
 		log.Printf("devshard_settle_failed escrow=%s stage=broadcast_or_confirm error=%q", id, err.Error())
-		return nil, err
+		return nil, g.settleTerminalErr(id, err)
 	}
 	log.Printf("devshard_settle_confirmed escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
 	g.accounting.Settled(id)

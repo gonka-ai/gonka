@@ -40,19 +40,20 @@ func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	require.Contains(t, string(body), `"max_tokens":3072`)
 	require.NotContains(t, string(body), `"max_completion_tokens"`)
 
-	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`))
+	floor := completionapi.MinTokensFloor
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, floor)))
 	require.NoError(t, err)
-	require.EqualValues(t, 64, req.MaxTokens)
+	require.EqualValues(t, floor, req.MaxTokens)
 	require.Zero(t, req.MaxCompletionTokens)
-	require.Contains(t, string(body), `"max_tokens":64`)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
 	require.NotContains(t, string(body), `"max_completion_tokens"`)
 
-	body, req, err = normalizeChatRequest([]byte(`{"max_completion_tokens":64,"messages":[{"role":"user","content":"hello"}]}`))
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_completion_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, floor)))
 	require.NoError(t, err)
-	require.EqualValues(t, 64, req.MaxTokens)
-	require.EqualValues(t, 64, req.MaxCompletionTokens)
-	require.Contains(t, string(body), `"max_tokens":64`)
-	require.Contains(t, string(body), `"max_completion_tokens":64`)
+	require.EqualValues(t, floor, req.MaxTokens)
+	require.EqualValues(t, floor, req.MaxCompletionTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
+	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, floor))
 
 	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":10001,"max_completion_tokens":20000,"messages":[{"role":"user","content":"hello"}]}`))
 	require.NoError(t, err)
@@ -61,12 +62,12 @@ func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	require.Contains(t, string(body), `"max_tokens":4096`)
 	require.Contains(t, string(body), `"max_completion_tokens":4096`)
 
-	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":64,"max_completion_tokens":10000,"messages":[{"role":"user","content":"hello"}]}`))
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"max_completion_tokens":10000,"messages":[{"role":"user","content":"hello"}]}`, floor)))
 	require.NoError(t, err)
-	require.EqualValues(t, 64, req.MaxTokens)
-	require.EqualValues(t, 64, req.MaxCompletionTokens)
-	require.Contains(t, string(body), `"max_tokens":64`)
-	require.Contains(t, string(body), `"max_completion_tokens":64`)
+	require.EqualValues(t, floor, req.MaxTokens)
+	require.EqualValues(t, floor, req.MaxCompletionTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
+	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, floor))
 }
 
 func TestNormalizeChatRequestUsesProvidedOutputTokenLimits(t *testing.T) {
@@ -514,42 +515,78 @@ func TestNormalizeForKimiDoesNotAddPenaltiesWhenAbsent(t *testing.T) {
 	require.NotContains(t, raw, "presence_penalty")
 }
 
-func TestNormalizeChatRequestForcesValidationLogprobs(t *testing.T) {
-	body, _, err := normalizeChatRequest([]byte(`{
-		"messages": [{"role": "user", "content": "hi"}],
-		"logprobs": false,
-		"top_logprobs": 20
-	}`))
-	require.NoError(t, err)
+// Neither field is filled in here; a width above the protocol constant is still capped.
+func TestNormalizeChatRequestForwardsTheLogprobsAskAsWritten(t *testing.T) {
+	cases := []struct {
+		name            string
+		body            string
+		wantLogprobs    any
+		wantTopLogprobs any
+	}{
+		{name: "neither field", body: `{"messages":[{"role":"user","content":"hi"}]}`},
+		{name: "explicitly off", body: `{"messages":[{"role":"user","content":"hi"}],"logprobs":false}`, wantLogprobs: false},
+		{
+			name:            "a width with no flag to go with it",
+			body:            `{"messages":[{"role":"user","content":"hi"}],"top_logprobs":3}`,
+			wantTopLogprobs: float64(3),
+		},
+		{
+			name:            "both fields ask",
+			body:            `{"messages":[{"role":"user","content":"hi"}],"logprobs":true,"top_logprobs":5}`,
+			wantLogprobs:    true,
+			wantTopLogprobs: float64(completionapi.ForcedTopLogprobs),
+		},
+		{
+			name:            "a narrower width is kept",
+			body:            `{"messages":[{"role":"user","content":"hi"}],"logprobs":true,"top_logprobs":1}`,
+			wantLogprobs:    true,
+			wantTopLogprobs: float64(1),
+		},
+		{
+			name:            "a wider width is capped",
+			body:            `{"messages":[{"role":"user","content":"hi"}],"logprobs":true,"top_logprobs":20}`,
+			wantLogprobs:    true,
+			wantTopLogprobs: float64(completionapi.ForcedTopLogprobs),
+		},
+		{
+			name:            "a width of zero stays off",
+			body:            `{"messages":[{"role":"user","content":"hi"}],"logprobs":true,"top_logprobs":0}`,
+			wantLogprobs:    true,
+			wantTopLogprobs: float64(0),
+		},
+	}
 
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(body, &raw))
-	require.Equal(t, true, raw["logprobs"])
-	require.EqualValues(t, 5, raw["top_logprobs"])
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			body, _, err := normalizeChatRequest([]byte(testCase.body))
+			require.NoError(t, err)
+
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal(body, &raw))
+			require.Equal(t, testCase.wantLogprobs, raw["logprobs"])
+			require.Equal(t, testCase.wantTopLogprobs, raw["top_logprobs"])
+		})
+	}
 }
 
-func TestNormalizeChatRequestForcesLogprobsTrue(t *testing.T) {
-	body, _, err := normalizeChatRequest([]byte(`{
-		"messages": [{"role": "user", "content": "hi"}],
-		"logprobs": false
-	}`))
-	require.NoError(t, err)
-
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(body, &raw))
-	require.Equal(t, true, raw["logprobs"])
-}
-
-func TestNormalizeChatRequestForcesTopLogprobsFive(t *testing.T) {
-	body, _, err := normalizeChatRequest([]byte(`{
-		"messages": [{"role": "user", "content": "hi"}],
-		"top_logprobs": 1
-	}`))
-	require.NoError(t, err)
-
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(body, &raw))
-	require.EqualValues(t, 5, raw["top_logprobs"])
+// The gateway no longer overwrites either field, so an unreadable shape has to be refused here.
+func TestNormalizeChatRequestRejectsMalformedLogprobsAsks(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		body      string
+		wantError string
+	}{
+		{name: "logprobs as a number", body: `{"messages":[{"role":"user","content":"hi"}],"logprobs":2}`, wantError: "logprobs: must be a boolean"},
+		{name: "logprobs as a string", body: `{"messages":[{"role":"user","content":"hi"}],"logprobs":"true"}`, wantError: "logprobs: must be a boolean"},
+		{name: "a negative width", body: `{"messages":[{"role":"user","content":"hi"}],"logprobs":true,"top_logprobs":-1}`, wantError: "top_logprobs: must be a non-negative integer"},
+		{name: "a width as a string", body: `{"messages":[{"role":"user","content":"hi"}],"logprobs":true,"top_logprobs":"3"}`, wantError: "top_logprobs: must be a non-negative integer"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, _, err := normalizeChatRequest([]byte(testCase.body))
+			require.Error(t, err)
+			require.Contains(t, err.Error(), testCase.wantError)
+		})
+	}
 }
 
 func TestNormalizeChatRequestRejectsPromptLogprobs(t *testing.T) {
@@ -2420,13 +2457,15 @@ func TestNormalizeChatRequestThinkingTokenBudgetStrippedForOtherModelsEvenIfClie
 	require.NotContains(t, string(body), `thinking_token_budget`)
 }
 
-// The universal MinTokensFloor (64) dominates the Kimi max_tokens min (16): any value below the
-// floor is bumped to 64, so the Kimi-specific clamp is no longer separately observable here.
+// The universal MinTokensFloor dominates the Kimi max_tokens min (16): any value below the
+// floor is bumped to MinTokensFloor, so the Kimi-specific clamp is no longer separately observable here.
 func TestNormalizeChatRequestKimiMaxTokensClampedBelow(t *testing.T) {
+	floor := uint64(completionapi.MinTokensFloor)
+	above := floor + 36
 	for _, c := range []struct {
 		in, want uint64
 	}{
-		{1, 64}, {8, 64}, {16, 64}, {100, 100},
+		{1, floor}, {8, floor}, {16, floor}, {above, above},
 	} {
 		body := fmt.Sprintf(`{"messages":[{"role":"user","content":"x"}],"max_tokens":%d,"thinking_token_budget":0}`, c.in)
 		out, req, err := normalizeChatRequestForModel([]byte(body), kimiK26ModelID)
@@ -2443,8 +2482,8 @@ func TestNormalizeChatRequestKimiMaxCompletionTokensClampedBelow(t *testing.T) {
 		kimiK26ModelID,
 	)
 	require.NoError(t, err)
-	require.Contains(t, string(body), `"max_completion_tokens":64`)
-	require.EqualValues(t, 64, req.MaxTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, completionapi.MinTokensFloor))
+	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
 }
 
 func TestNormalizeChatRequestMaxTokensFlooredForOtherModels(t *testing.T) {
@@ -2453,8 +2492,8 @@ func TestNormalizeChatRequestMaxTokensFlooredForOtherModels(t *testing.T) {
 		"some/other-model",
 	)
 	require.NoError(t, err)
-	require.Contains(t, string(body), `"max_tokens":64`)
-	require.EqualValues(t, 64, req.MaxTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, completionapi.MinTokensFloor))
+	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
 }
 
 // safety_identifier is forwarded to Kimi K2.6 (Moonshot consumes it for abuse tracking)

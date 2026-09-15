@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/host"
+	"devshard/internal/testutil"
 )
 
 // prepareNonce consumes one nonce so the session tracks an outcome for it, which is what
@@ -17,7 +18,7 @@ func prepareNonce(t *testing.T, session *Session) uint64 {
 		Prompt:      []byte(`{"messages":[{"role":"user","content":"x"}]}`),
 		Model:       "llama",
 		InputLength: 1,
-		MaxTokens:   64,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   time.Now().Unix(),
 	})
 	require.NoError(t, err)

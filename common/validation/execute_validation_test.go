@@ -129,7 +129,7 @@ func TestExecuteValidation_AllowsFullLengthNaturalStop(t *testing.T) {
 // stop-string. A short output with stop_reason set is therefore still a floor violation.
 func TestExecuteValidation_RejectsShortOutputEvenWithStopReason(t *testing.T) {
 	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`)
-	stored := responsePayloadTokens(10, "stop", "\n\n") // stop-string set, but 10 < 64 floor
+	stored := responsePayloadTokens(10, "stop", "\n\n") // stop-string set, but 10 < MinTokensFloor
 
 	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(stored))}, nil
@@ -358,15 +358,16 @@ func TestExecuteValidation_EmptySentinel_DropsEnforcedTokens(t *testing.T) {
 }
 
 func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) {
+	n := int(completionapi.MinTokensFloor)
 	var capturedBody []byte
 	exec := func(_ context.Context, body []byte) (*http.Response, error) {
 		capturedBody = body
-		return fakeHTTPResponse(http.StatusOK, responsePayloadTokens(64, "stop", "")), nil
+		return fakeHTTPResponse(http.StatusOK, responsePayloadTokens(n, "stop", "")), nil
 	}
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,
-		responsePayloadTokens(64, "stop", ""),
+		responsePayloadTokens(n, "stop", ""),
 		exec,
 		0, 0, "processed_logprobs",
 	)
@@ -387,7 +388,7 @@ func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) 
 }
 
 func TestExecuteValidation_MatchingLogits_PassesSimilarityThreshold(t *testing.T) {
-	payload := responsePayloadTokens(64, "stop", "")
+	payload := responsePayloadTokens(int(completionapi.MinTokensFloor), "stop", "")
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,
@@ -459,9 +460,10 @@ func TestExecuteValidation_BothEmptyLogits_StaysValid(t *testing.T) {
 
 func TestExecuteValidation_TokenInflationWithinTolerance_Passes(t *testing.T) {
 	// Claimed output is 3 tokens above validation replay — within ±3 tolerance.
-	// 64-token responses keep the original above the min_tokens floor.
-	validatorResponse := responsePayloadTokensWithUsage(64, 100, 100)
-	original := responsePayloadTokens(64, "stop", "")
+	// Floor-length responses keep the original at the min_tokens floor.
+	n := int(completionapi.MinTokensFloor)
+	validatorResponse := responsePayloadTokensWithUsage(n, 100, 100)
+	original := responsePayloadTokens(n, "stop", "")
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,

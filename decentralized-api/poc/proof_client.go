@@ -15,8 +15,8 @@ import (
 	"net/url"
 	"time"
 
+	"common/httpguard"
 	"common/logging"
-	"common/utils"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/poc/artifacts"
 
@@ -96,9 +96,16 @@ func DefaultProofClientConfig() ProofClientConfig {
 }
 
 // NewProofClient creates a new proof client.
+//
+// The proof URL is built from the validatee's on-chain InferenceUrl, which that
+// participant controls, so this client carries the dial-time SSRF guard and
+// refuses redirects. Registration-time validation cannot resolve DNS, so a
+// hostname that resolves (or later rebinds) to loopback/RFC1918/cloud-metadata
+// passes registration and every assigned validator would otherwise dial it
+// during PoC proof retrieval. See common/httpguard.
 func NewProofClient(recorder cosmosclient.CosmosMessageClient, config ProofClientConfig) *ProofClient {
 	return &ProofClient{
-		httpClient: utils.NewHttpClient(config.Timeout),
+		httpClient: httpguard.NewNoRedirectClient(config.Timeout),
 		recorder:   recorder,
 	}
 }

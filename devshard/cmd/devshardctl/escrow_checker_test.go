@@ -126,7 +126,7 @@ func TestEscrowCheckerDeduplicates(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			checker.TriggerCheck("42", func() {
+			checker.TriggerCheck("42", func(string) {
 				deactivated.Add(1)
 			})
 		}()
@@ -146,7 +146,7 @@ func TestEscrowCheckerKeepsActiveWhenFound(t *testing.T) {
 	checker := NewEscrowChecker(func() bridge.MainnetBridge { return stub })
 	var deactivated atomic.Int64
 
-	checker.TriggerCheck("42", func() {
+	checker.TriggerCheck("42", func(string) {
 		deactivated.Add(1)
 	})
 
@@ -162,7 +162,7 @@ func TestEscrowCheckerKeepsActiveOnChainError(t *testing.T) {
 	checker := NewEscrowChecker(func() bridge.MainnetBridge { return stub })
 	var deactivated atomic.Int64
 
-	checker.TriggerCheck("42", func() {
+	checker.TriggerCheck("42", func(string) {
 		deactivated.Add(1)
 	})
 
@@ -200,6 +200,78 @@ func TestRedundancyCallsEscrowMissing(t *testing.T) {
 	ctx := mustRequestLogContext()
 	r.checkEscrowMissing(ctx, attempts)
 	require.Equal(t, int64(1), called.Load())
+}
+
+func TestRedundancyCallsEscrowMissingOnSettled(t *testing.T) {
+	var called atomic.Int64
+	r := &Redundancy{
+		devshardID: "test-escrow",
+		onEscrowMissing: func() {
+			called.Add(1)
+		},
+	}
+
+	attempts := []*inflight{
+		{
+			hostID: "host-a",
+			nonce:  1,
+			err: &transport.UpstreamStatusError{
+				Path:       "/sessions/test-escrow/chat/completions",
+				StatusCode: http.StatusConflict,
+				Body:       `{"message":"escrow already settled: escrow test-escrow"}`,
+			},
+			done: closedChan(),
+		},
+	}
+
+	ctx := mustRequestLogContext()
+	r.checkEscrowMissing(ctx, attempts)
+	require.Equal(t, int64(1), called.Load())
+}
+
+func TestEscrowCheckerDeactivatesOnSettled(t *testing.T) {
+	stub := &stubMainnetBridge{
+		getEscrow: func(escrowID string) (*bridge.EscrowInfo, error) {
+			return &bridge.EscrowInfo{EscrowID: escrowID, Settled: true}, nil
+		},
+	}
+	checker := NewEscrowChecker(func() bridge.MainnetBridge { return stub })
+	var reason string
+	var deactivated atomic.Int64
+
+	checker.TriggerCheck("42", func(r string) {
+		reason = r
+		deactivated.Add(1)
+	})
+
+	assert.Equal(t, int64(1), deactivated.Load(), "settled escrow must deactivate the devshard")
+	assert.Contains(t, reason, "settled")
+}
+
+func TestIsUpstreamEscrowSettled(t *testing.T) {
+	settled := &transport.UpstreamStatusError{
+		Path:       "/sessions/1/chat/completions",
+		StatusCode: http.StatusConflict,
+		Body:       `{"message":"escrow already settled: escrow 1"}`,
+	}
+	assert.True(t, transport.IsUpstreamEscrowSettled(settled))
+	assert.True(t, transport.IsUpstreamEscrowSettled(fmt.Errorf("send to host: %w", settled)))
+	assert.False(t, transport.IsUpstreamEscrowNotFound(settled))
+
+	versionConflict := &transport.UpstreamStatusError{
+		Path:       "/sessions/1/chat/completions",
+		StatusCode: http.StatusConflict,
+		Body:       `{"message":"session version conflict: stored v1, host v2"}`,
+	}
+	assert.False(t, transport.IsUpstreamEscrowSettled(versionConflict))
+
+	headerOnly := &transport.UpstreamStatusError{
+		Path:          "/sessions/1/chat/completions",
+		StatusCode:    http.StatusConflict,
+		Body:          `{"error":"conflict"}`,
+		DevshardError: transport.DevshardErrorEscrowSettled,
+	}
+	assert.True(t, transport.IsUpstreamEscrowSettled(headerOnly))
 }
 
 func TestRedundancyNoCallbackWithoutEscrowError(t *testing.T) {

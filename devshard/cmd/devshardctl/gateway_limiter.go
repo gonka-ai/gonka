@@ -10,6 +10,7 @@ import (
 const (
 	LimitedByConcurrentRequests = "max_concurrent_requests"
 	LimitedByInputTokens        = "max_input_tokens_in_flight"
+	LimitedByZeroLiveWeight     = "zero_live_weight"
 )
 
 // LimiterRejection carries what was already in flight and the cap it met, so a rejection says how
@@ -24,6 +25,9 @@ type LimiterRejection struct {
 func (e *LimiterRejection) Error() string {
 	if e.Kind == LimitedByInputTokens {
 		return fmt.Sprintf("rate limit exceeded: too many input tokens in flight (%d/%d)", e.InFlight, e.Limit)
+	}
+	if e.Kind == LimitedByZeroLiveWeight {
+		return "no live host capacity"
 	}
 	return fmt.Sprintf("rate limit exceeded: too many concurrent requests (%d/%d)", e.InFlight, e.Limit)
 }
@@ -298,6 +302,14 @@ func (l *GatewayLimiter) acquireLocked(model string, inputTokens int64, capacity
 	effectiveMaxConcurrent, _ := l.concurrentLimitsForCapacityLocked(model, limits, capacity)
 	effectiveMaxInputTokens := scaleClampLimit(limits.maxInputTokens, capacity.ScaleFactor)
 	concurrentLimited := limits.maxConcurrent > 0 || dynamicConcurrencyEnabled(capacity)
+	if concurrentLimited && effectiveMaxConcurrent <= 0 {
+		return &LimiterRejection{
+			Model:    model,
+			Kind:     LimitedByZeroLiveWeight,
+			InFlight: counter.inFlightRequests,
+			Limit:    0,
+		}
+	}
 	if concurrentLimited && counter.inFlightRequests+1 > effectiveMaxConcurrent {
 		return &LimiterRejection{
 			Model:    model,

@@ -36,8 +36,12 @@ func (c *holdingClient) Send(_ context.Context, _ host.HostRequest, _ io.Writer,
 	return response, nil
 }
 
-func (c *holdingClient) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff) (bool, []byte, uint32, error) {
-	return false, nil, 0, nil
+func (c *holdingClient) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
+}
+
+func (c *holdingClient) VerifyErrorMiss(context.Context, uint64, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
 }
 
 func (c *holdingClient) ChallengeReceipt(context.Context, uint64, *host.InferencePayload, []types.Diff) ([]byte, error) {
@@ -163,7 +167,7 @@ func TestTheTimeoutDiffBypassesTheParticipantBudget(t *testing.T) {
 	refusing := &admissionRefusingClient{InProcessClient: *session.clients[1].(*InProcessClient)}
 	session.clients[1] = refusing
 
-	_, err := session.sendPendingDiff(context.Background())
+	_, err := session.sendPendingDiff(context.Background(), nil, nil)
 
 	require.NoError(t, err, "the vote was already cast; the participant budget must not be able to refuse its diff")
 	require.Zero(t, refusing.refusals, "the admission-gated client must not be the one that carries it")
@@ -173,7 +177,7 @@ func TestTheTimeoutDiffBypassesTheParticipantBudget(t *testing.T) {
 func TestTheCatchUpBypassesTheParticipantBudget(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	// An empty catch-up returns before any client, so the refusal needs a diff to be reachable.
-	_, err := session.sendPendingDiff(context.Background())
+	_, err := session.sendPendingDiff(context.Background(), nil, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, session.Diffs(), "the catch-up needs a diff to carry")
 
@@ -235,8 +239,12 @@ func TestAnOrdinaryVoteFailureLeavesTheCursorAlone(t *testing.T) {
 
 type lostSessionVerifier struct{}
 
-func (lostSessionVerifier) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff) (bool, []byte, uint32, error) {
-	return false, nil, 0, sessionNotFound()
+func (lostSessionVerifier) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", sessionNotFound()
+}
+
+func (lostSessionVerifier) VerifyErrorMiss(context.Context, uint64, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", sessionNotFound()
 }
 
 func TestAVerifierThatLostTheEscrowRewindsItsCursorDuringCollection(t *testing.T) {
@@ -245,7 +253,7 @@ func TestAVerifierThatLostTheEscrowRewindsItsCursorDuringCollection(t *testing.T
 	session.hostSyncNonce[2] = 40
 	session.mu.Unlock()
 
-	_, err := session.CollectTimeoutVotes(context.Background(), 1,
+	_, _, _, err := session.CollectTimeoutVotes(context.Background(), 1,
 		types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",

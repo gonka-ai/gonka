@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"devshard/transport"
 )
 
 const (
@@ -172,11 +174,11 @@ func (a modelScopedParticipantAdmission) ObserveResult(participantKey, path stri
 	a.limiter.ObserveResultForModel(participantKey, a.modelID, path, statusCode)
 }
 
-func (a modelScopedParticipantAdmission) ObserveResultWithBody(participantKey, path string, statusCode int, body string) {
+func (a modelScopedParticipantAdmission) ObserveResultWithBody(participantKey, path string, statusCode int, body, devshardError, routerError string) {
 	if a.limiter == nil {
 		return
 	}
-	a.limiter.ObserveResultWithBodyForModel(participantKey, a.modelID, path, statusCode, body)
+	a.limiter.ObserveResultWithBodyForModel(participantKey, a.modelID, path, statusCode, body, devshardError, routerError)
 }
 
 func (a modelScopedParticipantAdmission) ObserveTransportFailure(participantKey, path string, err error) {
@@ -216,11 +218,12 @@ func (e *ParticipantRateLimitError) Error() string {
 // for many reasons (raw capacity 0, PoC exclusion, reactive throttle,
 // share rounding) and pinning the blame on the throttled subset would
 // mislead operators about the actual cause. The picker logs per-escrow
-// W(e) at the call site for diagnostics.
+// W(e) at the call site for diagnostics. Callers must not treat this as
+// HTTP 429 occupancy: live weight is already 0.
 type EscrowParticipantRateLimitError struct{}
 
 func (e *EscrowParticipantRateLimitError) Error() string {
-	return "no available escrows: participant request budget exhausted"
+	return "no live host capacity"
 }
 
 // ParticipantThrottleStore is the persistence interface for reactive throttle state.
@@ -523,23 +526,31 @@ func (l *ParticipantRequestLimiter) CanAcceptEscrow(participantKeys []string) er
 }
 
 func (l *ParticipantRequestLimiter) ObserveResult(participantKey, path string, statusCode int) {
-	l.ObserveResultWithBodyForModel(participantKey, "", path, statusCode, "")
+	l.ObserveResultWithBodyForModel(participantKey, "", path, statusCode, "", "", "")
 }
 
 func (l *ParticipantRequestLimiter) ObserveResultWithBody(participantKey, path string, statusCode int, body string) {
-	l.ObserveResultWithBodyForModel(participantKey, "", path, statusCode, body)
+	l.ObserveResultWithBodyForModel(participantKey, "", path, statusCode, body, "", "")
 }
 
 func (l *ParticipantRequestLimiter) ObserveResultForModel(participantKey, modelID, path string, statusCode int) {
-	l.ObserveResultWithBodyForModel(participantKey, modelID, path, statusCode, "")
+	l.ObserveResultWithBodyForModel(participantKey, modelID, path, statusCode, "", "", "")
 }
 
-func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey, modelID, path string, statusCode int, body string) {
+func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey, modelID, path string, statusCode int, body, devshardError, routerError string) {
 	if participantKey == "" || statusCode <= 0 {
+		return
+	}
+	if transport.IsHeightSyncSeedPath(path) {
 		return
 	}
 	if l.metrics != nil && statusCode >= http.StatusBadRequest {
 		l.metrics.RecordParticipantTransportError(participantKey, normalizeModelID(modelID), participantPathKind(path), statusCode)
+	}
+	if transport.SkipCatalogQuarantine(path, statusCode, routerError) {
+		log.Printf("participant_limit_ignored participant_key=%s status=%d path_kind=%s reason=undeclared_version_catalog",
+			participantKey, statusCode, participantPathKind(path))
+		return
 	}
 	quarantineFor := l.participantHTTPQuarantine(path, statusCode, body)
 	if quarantineFor == 0 {
@@ -1303,7 +1314,7 @@ func participantPathKind(path string) string {
 	switch {
 	case strings.Contains(path, "/chat/completions"):
 		return "inference"
-	case strings.Contains(path, "/verify-timeout"):
+	case strings.Contains(path, "/verify-timeout"), strings.Contains(path, "/verify-error-miss"):
 		return "verify_timeout"
 	case strings.Contains(path, "/challenge-receipt"):
 		return "challenge_receipt"

@@ -20,13 +20,8 @@ type chatRequest struct {
 	MaxTokens           uint64 `json:"max_tokens"`
 	MaxCompletionTokens uint64 `json:"max_completion_tokens"`
 	N                   uint64 `json:"n"`
-	// Logprobs and TopLogprobs capture the client's ORIGINAL logprobs intent,
-	// read by DecodeRequest before the PostLimits stage force-enables logprobs
-	// upstream for validation (see the logprobs/top_logprobs ForceLiteral rules
-	// in request_filters_parameters.go, which force logprobs=true and clamp
-	// top_logprobs to completionapi.ForcedTopLogprobs on the wire). These hold what the
-	// client asked for, not the forced values, and drive conditional response
-	// stripping so clients who explicitly asked for logprobs get them back. Cf.
+	// Logprobs and TopLogprobs are what the client asked for. Nothing in the gateway fills them in;
+	// they drive conditional response stripping so a client that asked gets them back. Cf.
 	// clientResponseIntent.
 	Logprobs     bool   `json:"logprobs"`
 	TopLogprobs  uint64 `json:"top_logprobs"`

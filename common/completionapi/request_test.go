@@ -319,26 +319,29 @@ func TestEffectiveMaxTokens(t *testing.T) {
 }
 
 func TestEnforceTokenBudgetFloor(t *testing.T) {
+	floor := MinTokensFloor
+	above := floor + 16
+	capMax := floor + 36
 	tests := []struct {
 		name        string
 		requestMap  map[string]interface{}
 		expectedMin int
 		expectedMax int
 	}{
-		{"AbsentMinDefaultsToFloor", map[string]interface{}{"max_tokens": float64(100)}, 64, 100},
-		{"BelowFloorRaisedToFloor", map[string]interface{}{"min_tokens": float64(1), "max_tokens": float64(100)}, 64, 100},
-		{"AtFloorKept", map[string]interface{}{"min_tokens": float64(64), "max_tokens": float64(100)}, 64, 100},
-		{"AboveFloorKept", map[string]interface{}{"min_tokens": float64(80), "max_tokens": float64(100)}, 80, 100},
-		{"AboveMaxClampedToMax", map[string]interface{}{"min_tokens": float64(128), "max_tokens": float64(100)}, 100, 100},
-		{"SmallMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(100), "max_tokens": float64(50)}, 64, 64},
-		{"AbsentMaxUsesDefault", map[string]interface{}{}, 64, calculations.DefaultMaxTokens},
-		{"MaxCompletionTokensOnlyBelowFloor", map[string]interface{}{"max_completion_tokens": float64(50)}, 64, 64},
-		{"NegativeMinRaisedToFloor", map[string]interface{}{"min_tokens": float64(-5), "max_tokens": float64(100)}, 64, 100},
-		{"ZeroMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(10), "max_tokens": float64(0)}, 64, 64},
-		{"IntMinBelowFloor", map[string]interface{}{"min_tokens": 10, "max_tokens": float64(100)}, 64, 100},
-		{"UnusableMinTypeDefaultsToFloor", map[string]interface{}{"min_tokens": "oops", "max_tokens": float64(100)}, 64, 100},
-		{"IntMaxTokens", map[string]interface{}{"max_tokens": 200}, 64, 200},
-		{"IntMaxCompletionTokens", map[string]interface{}{"max_completion_tokens": 200}, 64, 200},
+		{"AbsentMinDefaultsToFloor", map[string]interface{}{"max_tokens": float64(capMax)}, floor, capMax},
+		{"BelowFloorRaisedToFloor", map[string]interface{}{"min_tokens": float64(1), "max_tokens": float64(capMax)}, floor, capMax},
+		{"AtFloorKept", map[string]interface{}{"min_tokens": float64(floor), "max_tokens": float64(capMax)}, floor, capMax},
+		{"AboveFloorKept", map[string]interface{}{"min_tokens": float64(above), "max_tokens": float64(capMax)}, above, capMax},
+		{"AboveMaxClampedToMax", map[string]interface{}{"min_tokens": float64(capMax + 28), "max_tokens": float64(capMax)}, capMax, capMax},
+		{"SmallMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(capMax), "max_tokens": float64(1)}, floor, floor},
+		{"AbsentMaxUsesDefault", map[string]interface{}{}, floor, calculations.DefaultMaxTokens},
+		{"MaxCompletionTokensOnlyBelowFloor", map[string]interface{}{"max_completion_tokens": float64(1)}, floor, floor},
+		{"NegativeMinRaisedToFloor", map[string]interface{}{"min_tokens": float64(-5), "max_tokens": float64(capMax)}, floor, capMax},
+		{"ZeroMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(10), "max_tokens": float64(0)}, floor, floor},
+		{"IntMinBelowFloor", map[string]interface{}{"min_tokens": 10, "max_tokens": float64(capMax)}, floor, capMax},
+		{"UnusableMinTypeDefaultsToFloor", map[string]interface{}{"min_tokens": "oops", "max_tokens": float64(capMax)}, floor, capMax},
+		{"IntMaxTokens", map[string]interface{}{"max_tokens": capMax + 100}, floor, capMax + 100},
+		{"IntMaxCompletionTokens", map[string]interface{}{"max_completion_tokens": capMax + 100}, floor, capMax + 100},
 	}
 
 	for _, tt := range tests {
@@ -359,9 +362,9 @@ func TestModifyRequestBody_FloorsMinTokensAndStripsStopTokenIds(t *testing.T) {
 
 	var raw map[string]interface{}
 	require.NoError(t, json.Unmarshal(r.NewBody, &raw))
-	require.EqualValues(t, 64, raw["min_tokens"])
-	require.EqualValues(t, 64, raw["max_tokens"])
-	require.EqualValues(t, 64, raw["max_completion_tokens"])
+	require.EqualValues(t, MinTokensFloor, raw["min_tokens"])
+	require.EqualValues(t, MinTokensFloor, raw["max_tokens"])
+	require.EqualValues(t, MinTokensFloor, raw["max_completion_tokens"])
 	require.NotContains(t, raw, "stop_token_ids")
 }
 
@@ -498,7 +501,8 @@ func TestModifyRequestBodyWithLogprobsMode_TestermintInferenceRequestPromptHash(
 
 // Cross-language vector: testermint reimplements ModifyRequestBody in Kotlin and both must emit
 // a byte-identical body, or the prompt hash a node computes and the one testermint expects drift
-// apart. Keep this input and hash in sync with testermint PromptHashingTests.kt.
+// apart. Keep this input and hash in sync with testermint PromptHashingTests.kt. A non-boolean logprobs is
+// outside the shared contract: Go pins it to true, Kotlin keeps what arrived.
 func TestModifyRequestBodyWithLogprobsMode_KotlinCrossLanguageVector(t *testing.T) {
 	body := []byte(`{"model":"Qwen/Qwen2.5-7B-Instruct","temperature":0.8,"messages":[{"role":"system","content":"Regardless of the language of the question, answer in english"},{"role":"user","content":"When did Hawaii become a state"}]}`)
 
@@ -527,6 +531,59 @@ func TestModifyRequestBody_PinsTopLogprobs(t *testing.T) {
 			var raw map[string]any
 			require.NoError(t, json.Unmarshal(r.NewBody, &raw))
 			require.EqualValues(t, ForcedTopLogprobs, raw["top_logprobs"])
+		})
+	}
+}
+
+// The executor does not trust the broker that sent the request. A reservation budgets one max_tokens
+// output and validation compares only the first choice, so n>1 is generation nobody checks and nobody
+// is charged for: the broker would buy one completion and be served several.
+func TestModifyRequestBodyForcesASingleCompletion(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"n":5}`)
+
+	r, err := ModifyRequestBodyWithLogprobsMode(body, 7, "")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	require.Equal(t, float64(1), m["n"], "a broker asking for five completions must be served one")
+}
+
+// A request that never asked for several is left as it was, so the executed body keeps carrying only
+// what the caller actually sent.
+func TestModifyRequestBodyLeavesAnUnaskedCompletionCountAlone(t *testing.T) {
+	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	_, present := m["n"]
+	require.False(t, present, "n was added to a request that never carried it")
+}
+
+// The executor always runs with logprobs; this is the bit that decides whether the caller sees them.
+func TestModifyRequestBodyReportsWhetherTheCallerAskedForLogprobs(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "both fields ask", body: `{"messages":[],"logprobs":true,"top_logprobs":5}`, want: true},
+		{name: "a narrower width still asks", body: `{"messages":[],"logprobs":true,"top_logprobs":1}`, want: true},
+		{name: "no logprobs at all", body: `{"messages":[]}`},
+		{name: "logprobs off", body: `{"messages":[],"logprobs":false,"top_logprobs":5}`},
+		{name: "width switched off", body: `{"messages":[],"logprobs":true,"top_logprobs":0}`},
+		{name: "no width named", body: `{"messages":[],"logprobs":true}`},
+		{name: "width without the flag", body: `{"messages":[],"top_logprobs":5}`},
+		{name: "both fields null", body: `{"messages":[],"logprobs":null,"top_logprobs":null}`},
+		{name: "a flag that is not a boolean", body: `{"messages":[],"logprobs":"yes","top_logprobs":5}`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			modified, err := ModifyRequestBody([]byte(testCase.body), 1)
+			require.NoError(t, err)
+			require.Equal(t, testCase.want, modified.AsksForLogprobs)
+			require.Contains(t, string(modified.NewBody), `"logprobs":true`,
+				"the executor runs with logprobs whatever the caller asked")
 		})
 	}
 }

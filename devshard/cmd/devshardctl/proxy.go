@@ -19,6 +19,7 @@ import (
 	"devshard/accounting"
 	"devshard/logging"
 	"devshard/state"
+	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
 )
@@ -246,6 +247,12 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	r = r.WithContext(withClientResponseIntent(r.Context(), resolveClientResponseIntent(r.Context(), req)))
 
+	if err := p.waitHeightSeed(r.Context()); err != nil {
+		logRequestStage(ctx, "proxy_height_seed_blocked", "escrow", p.escrowID, "error", err)
+		writeHeightSeedError(w, err)
+		return
+	}
+
 	if req.Stream {
 		p.handleStreaming(w, r, params)
 	} else {
@@ -414,7 +421,6 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 			return
 		}
 		logRequestStage(r.Context(), "proxy_stream_failed", "escrow", p.escrowID, "error", err)
-		statusCode := gatewayStatusCodeForError(err)
 		var hostErr *hostApplicationError
 		if errors.As(err, &hostErr) {
 			if !dw.started {
@@ -441,7 +447,7 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 			return
 		}
 		if !dw.started {
-			writeGatewayJSONError(w, statusCode, err.Error())
+			writeGatewayError(w, err)
 			return
 		}
 		if dw.sawDone {
@@ -473,6 +479,26 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 
 // werrOrNil normalizes an error so the varargs passthrough below stays tidy.
 func werrOrNil(err error) error { return err }
+
+func (p *Proxy) waitHeightSeed(ctx context.Context) error {
+	if p == nil || p.session == nil {
+		return nil
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, user.WaitHeightSeedChatBudget)
+	defer cancel()
+	return p.session.WaitHeightSeed(waitCtx)
+}
+
+func writeHeightSeedError(w http.ResponseWriter, err error) {
+	var se *user.HeightSeedError
+	if errors.As(err, &se) {
+		w.Header().Set("Retry-After", "5")
+		w.Header().Set(transport.HeaderDevshardError, se.Code)
+		writeGatewayJSONError(w, http.StatusServiceUnavailable, se.Error())
+		return
+	}
+	writeGatewayJSONError(w, http.StatusServiceUnavailable, err.Error())
+}
 
 func writeGatewayJSONError(w http.ResponseWriter, statusCode int, message string) {
 	writeJSONPayload(w, statusCode, []byte(fmt.Sprintf(`{"error":{"message":%q}}`, message)))
@@ -574,7 +600,7 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 			writeJSONPayload(w, hostErr.statusCode(), hostErr.jsonPayload())
 			return
 		}
-		writeGatewayJSONError(w, gatewayStatusCodeForError(err), err.Error())
+		writeGatewayError(w, err)
 		return
 	}
 
@@ -660,15 +686,16 @@ func (p *Proxy) handleGetFinalize(w http.ResponseWriter, r *http.Request) {
 }
 
 type statusResponse struct {
-	EscrowID             string              `json:"escrow_id"`
-	Nonce                uint64              `json:"nonce"`
-	Phase                string              `json:"phase"`
-	Balance              uint64              `json:"balance"`
-	ChainPhase           string              `json:"chain_phase,omitempty"`
-	ConfirmationPoCPhase string              `json:"confirmation_poc_phase,omitempty"`
-	RequestsBlocked      bool                `json:"requests_blocked"`
-	BlockReason          string              `json:"block_reason,omitempty"`
-	Config               statusSessionConfig `json:"config"`
+	EscrowID             string                `json:"escrow_id"`
+	Nonce                uint64                `json:"nonce"`
+	Phase                string                `json:"phase"`
+	Balance              uint64                `json:"balance"`
+	ChainPhase           string                `json:"chain_phase,omitempty"`
+	ConfirmationPoCPhase string                `json:"confirmation_poc_phase,omitempty"`
+	RequestsBlocked      bool                  `json:"requests_blocked"`
+	BlockReason          string                `json:"block_reason,omitempty"`
+	HeightSeed           user.HeightSeedStatus `json:"height_seed,omitempty"`
+	Config               statusSessionConfig   `json:"config"`
 }
 
 // statusSessionConfig is the JSON representation of session config values
@@ -848,6 +875,9 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status.ConfirmationPoCPhase = snapshot.ConfirmationPoCPhase
 		status.RequestsBlocked = snapshot.RequestsBlocked
 		status.BlockReason = snapshot.BlockReason
+	}
+	if p.session != nil {
+		status.HeightSeed = p.session.HeightSeedStatus()
 	}
 	writeJSON(w, status)
 }

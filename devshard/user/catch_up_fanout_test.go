@@ -44,7 +44,7 @@ func (c *barrierClient) Send(ctx context.Context, req host.HostRequest, stream i
 
 func TestTheCatchUpReachesEveryHostAtOnce(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
-	_, err := session.sendPendingDiff(context.Background())
+	_, err := session.sendPendingDiff(context.Background(), nil, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, session.Diffs(), "the catch-up needs a diff to carry")
 

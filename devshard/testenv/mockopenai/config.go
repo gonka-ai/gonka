@@ -28,19 +28,26 @@ func DefaultConfig() Config {
 // FaultConfig holds runtime fault-injection knobs (env or POST /testenv/fault).
 type FaultConfig struct {
 	Latency          time.Duration
-	HTTPStatus       int  // 0 = OK
+	HTTPStatus       int // 0 = OK
 	DropFirstChunk   bool
 	PartialStream    bool // omit final chunk + [DONE]
 	StreamChunkDelay time.Duration
+	PauseStream      bool // pause after first content chunk until testenv release
+	// StreamErrorEnvelope returns HTTP 200 text/event-stream with an OpenAI
+	// error envelope and [DONE], matching vLLM EngineCore failures. Distinct
+	// from HTTPStatus >= 400, which is a JSON 5xx with no Finish.
+	StreamErrorEnvelope bool
 }
 
 // FaultPatch is the JSON body for POST /testenv/fault.
 type FaultPatch struct {
-	LatencyMs        *int  `json:"latency_ms,omitempty"`
-	HTTPStatus       *int  `json:"http_status,omitempty"`
-	DropFirstChunk   *bool `json:"drop_first_chunk,omitempty"`
-	PartialStream    *bool `json:"partial_stream,omitempty"`
-	StreamChunkDelay *int  `json:"stream_chunk_delay_ms,omitempty"`
+	LatencyMs           *int  `json:"latency_ms,omitempty"`
+	HTTPStatus          *int  `json:"http_status,omitempty"`
+	DropFirstChunk      *bool `json:"drop_first_chunk,omitempty"`
+	PartialStream       *bool `json:"partial_stream,omitempty"`
+	StreamChunkDelay    *int  `json:"stream_chunk_delay_ms,omitempty"`
+	PauseStream         *bool `json:"pause_stream,omitempty"`
+	StreamErrorEnvelope *bool `json:"stream_error_envelope,omitempty"`
 }
 
 func (p FaultPatch) apply(dst *FaultConfig) {
@@ -58,6 +65,12 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	}
 	if p.StreamChunkDelay != nil {
 		dst.StreamChunkDelay = time.Duration(*p.StreamChunkDelay) * time.Millisecond
+	}
+	if p.PauseStream != nil {
+		dst.PauseStream = *p.PauseStream
+	}
+	if p.StreamErrorEnvelope != nil {
+		dst.StreamErrorEnvelope = *p.StreamErrorEnvelope
 	}
 }
 
@@ -123,7 +136,7 @@ func promptTokenEstimate(body []byte) int {
 }
 
 // buildLogprobContent returns OpenAI-shaped logprobs.content entries for text.
-// topN mirrors the request's top_logprobs (gateway forces 5 upstream).
+// topN mirrors the request's top_logprobs (the host pins 5 upstream).
 //
 // "token" is a numeric token ID (decimal string), matching vLLM after
 // gm/enforced-str. The decoded text lives in "bytes" (UTF-8 code units as

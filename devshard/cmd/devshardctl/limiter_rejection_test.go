@@ -21,6 +21,17 @@ func TestLimiterRejection_CarriesTheOccupancyThatCausedIt(t *testing.T) {
 	require.Equal(t, []any{"reason", LimitedByConcurrentRequests, "in_flight", int64(2), "limit", int64(2)}, limiterRejectionLogFields(err))
 }
 
+func TestLimiterRejection_ZeroLiveWeightIsNotOccupancy(t *testing.T) {
+	limiter := NewGatewayLimiter(4, 0)
+	limiter.ApplyScaleFactor(0)
+	err := limiter.Acquire(1)
+
+	require.Error(t, err)
+	require.Equal(t, LimitedByZeroLiveWeight, limiterReasonLabel(err))
+	require.Equal(t, "no live host capacity", err.Error())
+	require.Equal(t, []any{"reason", LimitedByZeroLiveWeight, "in_flight", int64(0), "limit", int64(0)}, limiterRejectionLogFields(err))
+}
+
 func TestLimiterRejection_NamesTheInputTokenCap(t *testing.T) {
 	limiter := NewGatewayLimiter(0, 100)
 

@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +68,36 @@ func PatchGatewayForceUpstreamStreaming(t *testing.T, client *http.Client, gatew
 		"force_upstream_streaming not applied: %s", string(raw))
 }
 
+// PatchGatewayRedundancySpeedPolicy sets redundancy.speed_policy (legacy / hybrid / pairwise).
+func PatchGatewayRedundancySpeedPolicy(t *testing.T, client *http.Client, gatewayURL, policy string) {
+	t.Helper()
+	if client == nil {
+		client = GatewayChatClient()
+	}
+	body := map[string]any{
+		"redundancy": map[string]any{
+			"speed_policy": policy,
+		},
+	}
+	data, err := json.Marshal(body)
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/admin/settings", bytes.NewReader(data))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+TestenvAdminAPIKey)
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "POST /v1/admin/settings: %s", string(raw))
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(raw, &got))
+	red, _ := got["redundancy"].(map[string]any)
+	require.NotNil(t, red, "admin settings response missing redundancy")
+	require.Equal(t, policy, red["speed_policy"], "speed_policy not applied: %s", string(raw))
+}
+
 // PatchComposeAggregateByteLimits inserts GATEWAY_AGGREGATE_* byte caps on
 // devshardctl. Caller must RecreateServices(t, "devshardctl") for them to take effect.
 func PatchComposeAggregateByteLimits(t *testing.T, composePath string, maxMemoryBytes, maxResponseBytes int64) {
@@ -96,21 +125,21 @@ func RequireAggregateSpilledInGatewayLogs(t *testing.T, s *Stack) {
 		"expected aggregate spill in gateway logs")
 }
 
-// RequireAggregateSpoolDirEmpty asserts the bind-mounted aggregate spool has no
-// leftover named files (unlinked-at-create + Close).
+// RequireAggregateSpoolDirEmpty asserts the aggregate spool has no leftover
+// named files (unlinked-at-create + Close).
+//
+// List from inside the gateway container: spool.Open creates the dir as 0o700,
+// so a host os.ReadDir on the bind mount fails with EACCES on Linux CI.
 func RequireAggregateSpoolDirEmpty(t *testing.T, s *Stack) {
 	t.Helper()
-	dir := filepath.Join(s.WorkDir, "data", "devshardctl", "aggregate-spool")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return
-		}
-		require.NoError(t, err)
-	}
+	const dir = "/var/lib/devshardctl/aggregate-spool"
+	out := s.ComposeExec(t, "devshardctl", "sh", "-c",
+		`if [ ! -e '`+dir+`' ]; then exit 0; fi; ls -A -1 '`+dir+`'`)
 	var names []string
-	for _, e := range entries {
-		names = append(names, e.Name())
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line != "" {
+			names = append(names, line)
+		}
 	}
 	require.Empty(t, names, "aggregate spool should be empty after request close; got %v", names)
 }
@@ -188,6 +217,18 @@ func LogprobContentEntryCount(payload map[string]any) int {
 	}
 	content, _ := lp["content"].([]any)
 	return len(content)
+}
+
+// AnyChoiceCarriesLogprobs reports whether a choice holds a logprobs object; the fold path writes null when none arrived.
+func AnyChoiceCarriesLogprobs(payload map[string]any) bool {
+	choices, _ := payload["choices"].([]any)
+	for _, raw := range choices {
+		choice, _ := raw.(map[string]any)
+		if logprobs, carried := choice["logprobs"].(map[string]any); carried && logprobs != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // MaxTopLogprobsWidth returns the widest top_logprobs array under logprobs.content.

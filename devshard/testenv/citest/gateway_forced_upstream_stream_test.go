@@ -194,11 +194,8 @@ func usageNumber(v any) float64 {
 	}
 }
 
-// TestGatewayForcedStreamLogprobStrip checks that clients who did not ask for
-// logprobs never see them (gateway forces logprobs upstream regardless of the
-// force-upstream flag), and clients who did get logprobs.content capped to their
-// top_logprobs ask.
-func TestGatewayForcedStreamLogprobStrip(t *testing.T) {
+// Logprobs come back only for a client that asked with both fields, whichever way the upstream stream was driven.
+func TestGatewayLogprobsOnlyWhenBothFieldsAsk(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
@@ -228,6 +225,11 @@ func TestGatewayForcedStreamLogprobStrip(t *testing.T) {
 			require.Equal(t, 200, noLP.Status, "body=%s", noLP.Body)
 			require.False(t, harness.BodyMentionsForbiddenLogprobKeys(noLP.Body),
 				"logprob fields leaked into aggregate: %s", noLP.Body)
+			var noLPPayload map[string]any
+			require.NoError(t, json.Unmarshal(noLP.Body, &noLPPayload))
+			require.NotEmpty(t, noLPPayload["choices"], "the answer itself must still arrive: %s", noLP.Body)
+			require.False(t, harness.AnyChoiceCarriesLogprobs(noLPPayload),
+				"a client that asked for nothing gets no logprobs: %s", noLP.Body)
 
 			harness.Step(t, "client without logprobs (stream=true)")
 			noLPStream := harness.PostGatewayChatHTTP(t, client, eps.GatewayHTTP, admin, harness.ChatCompletionRequest{
@@ -241,6 +243,13 @@ func TestGatewayForcedStreamLogprobStrip(t *testing.T) {
 			require.Equal(t, 200, noLPStream.Status, "body=%s", noLPStream.Body)
 			require.False(t, harness.BodyMentionsForbiddenLogprobKeys(noLPStream.Body),
 				"logprob fields leaked into stream: %s", noLPStream.Body)
+			noLPChunks, sawDone := harness.ParseSSEDataChunks(noLPStream.Body)
+			require.True(t, sawDone, "stream missing data: [DONE]")
+			harness.RequireMockOpenAIContent(t, harness.AssembleSSEContent(noLPChunks))
+			for _, chunk := range noLPChunks {
+				require.False(t, harness.AnyChoiceCarriesLogprobs(chunk),
+					"a chunk carried logprobs the client never asked for: %s", noLPStream.Body)
+			}
 
 			harness.Step(t, "client with logprobs but without top_logprobs")
 			lpNoTop := harness.PostGatewayChatHTTP(t, client, eps.GatewayHTTP, admin, harness.ChatCompletionRequest{
@@ -249,15 +258,48 @@ func TestGatewayForcedStreamLogprobStrip(t *testing.T) {
 					{Role: "user", Content: prompt + " lp-no-top"},
 				},
 				MaxTokens: 24,
-				Logprobs:  true,
+				Logprobs:  harness.LogprobsAsk(true),
 			})
 			require.Equal(t, 200, lpNoTop.Status, "body=%s", lpNoTop.Body)
 			var noTopPayload map[string]any
 			require.NoError(t, json.Unmarshal(lpNoTop.Body, &noTopPayload))
-			require.Greater(t, harness.LogprobContentEntryCount(noTopPayload), 0,
-				"expected logprobs.content when client asked: %s", lpNoTop.Body)
-			require.Equal(t, 0, harness.MaxTopLogprobsWidth(noTopPayload),
-				"top_logprobs must be emptied when client did not ask: %s", lpNoTop.Body)
+			require.NotEmpty(t, noTopPayload["choices"], "the answer itself must still arrive: %s", lpNoTop.Body)
+			require.False(t, harness.AnyChoiceCarriesLogprobs(noTopPayload),
+				"both fields have to ask, so logprobs alone buys nothing: %s", lpNoTop.Body)
+
+			harness.Step(t, "client with logprobs and a width of zero")
+			lpZeroTop := harness.PostGatewayChatHTTP(t, client, eps.GatewayHTTP, admin, harness.ChatCompletionRequest{
+				Model: model,
+				Messages: []harness.ChatMessage{
+					{Role: "user", Content: prompt + " lp-zero-top"},
+				},
+				MaxTokens:   24,
+				Logprobs:    harness.LogprobsAsk(true),
+				TopLogprobs: harness.TopLogprobsWidth(0),
+			})
+			require.Equal(t, 200, lpZeroTop.Status, "body=%s", lpZeroTop.Body)
+			var zeroTopPayload map[string]any
+			require.NoError(t, json.Unmarshal(lpZeroTop.Body, &zeroTopPayload))
+			require.NotEmpty(t, zeroTopPayload["choices"], "the answer itself must still arrive: %s", lpZeroTop.Body)
+			require.False(t, harness.AnyChoiceCarriesLogprobs(zeroTopPayload),
+				"a width of zero switches logprobs off: %s", lpZeroTop.Body)
+
+			harness.Step(t, "client that switched logprobs off but named a width")
+			lpOff := harness.PostGatewayChatHTTP(t, client, eps.GatewayHTTP, admin, harness.ChatCompletionRequest{
+				Model: model,
+				Messages: []harness.ChatMessage{
+					{Role: "user", Content: prompt + " lp-off"},
+				},
+				MaxTokens:   24,
+				Logprobs:    harness.LogprobsAsk(false),
+				TopLogprobs: harness.TopLogprobsWidth(5),
+			})
+			require.Equal(t, 200, lpOff.Status, "body=%s", lpOff.Body)
+			var offPayload map[string]any
+			require.NoError(t, json.Unmarshal(lpOff.Body, &offPayload))
+			require.NotEmpty(t, offPayload["choices"], "the answer itself must still arrive: %s", lpOff.Body)
+			require.False(t, harness.AnyChoiceCarriesLogprobs(offPayload),
+				"logprobs off means none come back whatever the width says: %s", lpOff.Body)
 
 			harness.Step(t, "client with logprobs + top_logprobs")
 			withLP := harness.PostGatewayChatHTTP(t, client, eps.GatewayHTTP, admin, harness.ChatCompletionRequest{
@@ -266,8 +308,8 @@ func TestGatewayForcedStreamLogprobStrip(t *testing.T) {
 					{Role: "user", Content: prompt + " with-lp"},
 				},
 				MaxTokens:   24,
-				Logprobs:    true,
-				TopLogprobs: 2,
+				Logprobs:    harness.LogprobsAsk(true),
+				TopLogprobs: harness.TopLogprobsWidth(2),
 			})
 			require.Equal(t, 200, withLP.Status, "body=%s", withLP.Body)
 			var payload map[string]any
@@ -278,6 +320,30 @@ func TestGatewayForcedStreamLogprobStrip(t *testing.T) {
 			// we do not truncate to the client's numeric ask.
 			require.Equal(t, 5, harness.MaxTopLogprobsWidth(payload),
 				"expected forced top_logprobs width when client asked: %s", withLP.Body)
+
+			harness.Step(t, "client with logprobs + top_logprobs (stream=true)")
+			withLPStream := harness.PostGatewayChatHTTP(t, client, eps.GatewayHTTP, admin, harness.ChatCompletionRequest{
+				Model: model,
+				Messages: []harness.ChatMessage{
+					{Role: "user", Content: prompt + " with-lp-sse"},
+				},
+				MaxTokens:   24,
+				Stream:      true,
+				Logprobs:    harness.LogprobsAsk(true),
+				TopLogprobs: harness.TopLogprobsWidth(2),
+			})
+			require.Equal(t, 200, withLPStream.Status, "body=%s", withLPStream.Body)
+			streamChunks, sawStreamDone := harness.ParseSSEDataChunks(withLPStream.Body)
+			require.True(t, sawStreamDone, "stream missing data: [DONE]")
+			harness.RequireMockOpenAIContent(t, harness.AssembleSSEContent(streamChunks))
+			chunksWithLogprobs := 0
+			for _, chunk := range streamChunks {
+				if harness.AnyChoiceCarriesLogprobs(chunk) {
+					chunksWithLogprobs++
+				}
+			}
+			require.Greater(t, chunksWithLogprobs, 0,
+				"a streaming client that asked must be fed logprobs: %s", withLPStream.Body)
 		})
 	}
 }
@@ -321,7 +387,7 @@ func TestGatewayForcedStreamAggregateMatchesUnforced(t *testing.T) {
 	require.Equal(t, a.Object, b.Object)
 	// completion_tokens track the same assistant text. prompt_tokens may differ
 	// under mock-openai (it estimates from the wire body, which grows when the
-	// gateway force-enables stream/logprobs/stream_options upstream).
+	// gateway force-enables stream/stream_options upstream and the host adds logprobs).
 	require.Equal(t, usageNumber(a.Usage["completion_tokens"]), usageNumber(b.Usage["completion_tokens"]))
 	require.Greater(t, usageNumber(a.Usage["prompt_tokens"]), 0.0)
 	require.Greater(t, usageNumber(b.Usage["prompt_tokens"]), 0.0)

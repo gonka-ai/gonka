@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -74,7 +75,7 @@ func TestGoTrackedRaceCleanupStartsBarrierSynchronously(t *testing.T) {
 		onRaceCleanupDone:  func() { done.Add(1) },
 	}
 
-	redundancy.goTrackedRaceCleanup(func() { <-release })
+	redundancy.goTrackedRaceCleanup(context.Background(), func(context.Context) { <-release })
 
 	require.Equal(t, int64(1), started.Load(), "start hook must fire before goTrackedRaceCleanup returns")
 	require.Equal(t, int64(0), done.Load(), "done hook must not fire while the cleanup runs")

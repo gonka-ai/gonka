@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"devshard/testenv/config"
 	"devshard/testenv/mockchain/seed"
 
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,6 +31,8 @@ epoch:
 params:
   logprobs_mode: off
   devshard_requests_enabled: true
+  refusal_timeout: 5
+  execution_timeout: 17
   validation_rate: 7000
 participants:
   - address: gonka1abc
@@ -57,6 +61,28 @@ epoch_groups:
 	require.Equal(t, "custom-chain", st.GetChainID())
 	require.Equal(t, int64(200), st.GetBlockHeight())
 	require.Equal(t, uint64(3), st.GetEpoch().Index)
-	require.NotNil(t, st.GetEscrow(42))
+	escrow := st.GetEscrow(42)
+	require.NotNil(t, escrow)
+	require.Equal(t, int64(5), escrow.RefusalTimeout)
+	require.Equal(t, int64(17), escrow.ExecutionTimeout)
+	require.Equal(t, int64(5), st.GetParams().DevshardEscrowParams.RefusalTimeout)
+	require.Equal(t, int64(17), st.GetParams().DevshardEscrowParams.ExecutionTimeout)
 	require.Equal(t, "gonka1abc", st.GetParticipant("gonka1abc").Address)
+}
+
+func TestFromFile_OmittedTimeoutsUseDefaults(t *testing.T) {
+	st, err := seed.FromFile(&config.File{
+		Participants: []config.Participant{{Address: "gonka1abc"}},
+		Escrows:      []config.Escrow{{ID: 42}},
+	})
+	require.NoError(t, err)
+
+	params := st.GetParams().DevshardEscrowParams
+	require.Equal(t, inferencetypes.DefaultDevshardRefusalTimeout, params.RefusalTimeout)
+	require.Equal(t, inferencetypes.DefaultDevshardExecutionTimeout, params.ExecutionTimeout)
+
+	escrow := st.GetEscrow(42)
+	require.NotNil(t, escrow)
+	require.Equal(t, params.RefusalTimeout, escrow.RefusalTimeout)
+	require.Equal(t, params.ExecutionTimeout, escrow.ExecutionTimeout)
 }

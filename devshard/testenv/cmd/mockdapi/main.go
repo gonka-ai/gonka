@@ -9,6 +9,7 @@ import (
 	"time"
 
 	cosrv "devshard/chainoracle/server"
+	"devshard/internal/boolvalue"
 	"devshard/testenv/mockdapi"
 )
 
@@ -35,6 +36,7 @@ func main() {
 			cfg.BlockInterval = d
 		}
 	}
+	cfg.OmitBlockRoutes = envTruthy("MOCK_DAPI_OMIT_BLOCK_ROUTES")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -56,6 +58,11 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envTruthy(key string) bool {
+	enabled, err := boolvalue.Parse(os.Getenv(key))
+	return err == nil && enabled
 }
 
 func versionFromEnv() cosrv.Version {

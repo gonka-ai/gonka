@@ -5,10 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"common/completionapi"
 )
 
-// clientResponseIntent is what the client ORIGINALLY asked for in fields the gateway force-enables
-// upstream for its own purposes, so the response strip can hand back only those. Zero keeps nothing.
+// clientResponseIntent is what the client asked for in fields a host answers with regardless; zero keeps nothing.
 type clientResponseIntent struct {
 	keepLogprobs    bool
 	keepTopLogprobs bool
@@ -16,9 +17,11 @@ type clientResponseIntent struct {
 }
 
 func clientResponseIntentFromRequest(req chatRequest) clientResponseIntent {
+	// The host forwards by this same predicate, so neither side can start showing what the other hides.
+	askedForLogprobs := completionapi.LogprobsAsked(req.Logprobs, float64(req.TopLogprobs))
 	return clientResponseIntent{
-		keepLogprobs:    req.Logprobs,
-		keepTopLogprobs: req.Logprobs && req.TopLogprobs > 0,
+		keepLogprobs:    askedForLogprobs,
+		keepTopLogprobs: askedForLogprobs,
 		keepUsage:       req.IncludeUsage,
 	}
 }
@@ -34,7 +37,7 @@ func clientResponseIntentFromContext(ctx context.Context) (clientResponseIntent,
 	return intent, recorded
 }
 
-// A forwarded request carries a normalized body, whose forced logprobs say nothing about the client.
+// A forwarded request carries a normalized body, whose capped width says less than the client wrote.
 func resolveClientResponseIntent(ctx context.Context, req chatRequest) clientResponseIntent {
 	if intent, recorded := clientResponseIntentFromContext(ctx); recorded {
 		return intent
@@ -272,12 +275,7 @@ var internalStrippedFields = []string{
 	"prompt_logprobs",
 }
 
-// strippedFields returns the response fields to remove for this client. The
-// internal fields above are always stripped; the logprob/logprobs payloads are
-// stripped only when the client did not request logprobs -- the gateway force-
-// enables logprobs upstream for validation regardless of what the client asked.
-// top_logprobs is handled separately (emptied, not removed) by emptyTopLogprobs
-// so the response keeps OpenAI's logprobs-without-top_logprobs shape.
+// strippedFields returns what to remove for this client: the internal fields always, the logprobs unless it asked.
 func (intent clientResponseIntent) strippedFields() []string {
 	fields := append([]string(nil), internalStrippedFields...)
 	if !intent.keepLogprobs {
@@ -286,13 +284,7 @@ func (intent clientResponseIntent) strippedFields() []string {
 	return fields
 }
 
-// emptyTopLogprobs replaces every top_logprobs array in the response with an
-// empty array. The gateway forces top_logprobs upstream for validation, so a
-// client who asked for logprobs but not top_logprobs would otherwise receive the
-// forced alternatives. OpenAI returns top_logprobs as a present-but-empty array
-// in this case, which this mirrors (matching the streaming-rewrite path's
-// reconstructChunkLogprobs). top_logprobs only appears under logprobs.content[]
-// in a chat completion, so emptying every occurrence is safe.
+// emptyTopLogprobs blanks every top_logprobs array, OpenAI's shape for logprobs without alternatives.
 func emptyTopLogprobs(v any) bool {
 	switch typed := v.(type) {
 	case map[string]any:

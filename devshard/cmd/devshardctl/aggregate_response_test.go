@@ -39,7 +39,7 @@ func TestAggregateResponseBuffer_MemoryOnlyCap(t *testing.T) {
 
 	buf := newAggregateResponseBuffer()
 	defer func() { _ = buf.Close() }()
-	require.Equal(t, int64(64), buf.maxBytes, "without spool, ceiling is memory limit")
+	require.Equal(t, int64(64), buf.maxBytes(), "without spool, ceiling is memory limit")
 
 	_, err := buf.Write(bytes.Repeat([]byte("a"), 64))
 	require.NoError(t, err)
@@ -140,13 +140,13 @@ func TestAggregateResponseBuffer_SpillFailureDegradesToRAM(t *testing.T) {
 	before := aggregateSpillDegradeTotal.Load()
 	buf := newAggregateResponseBuffer()
 	defer func() { _ = buf.Close() }()
-	require.Equal(t, int64(1024), buf.maxBytes)
+	require.Equal(t, int64(1024), buf.maxBytes())
 
 	// Crossing mem limit degrades to RAM up to maxBytes instead of hard-failing.
 	_, err := buf.Write(bytes.Repeat([]byte("d"), 20))
 	require.NoError(t, err)
 	require.False(t, buf.Spilled())
-	require.True(t, buf.spillDisabled)
+	require.True(t, buf.spillDisabled())
 	require.Equal(t, before+1, aggregateSpillDegradeTotal.Load())
 
 	_, err = buf.Write(bytes.Repeat([]byte("e"), 1000))
@@ -175,7 +175,7 @@ func TestAggregateResponseBuffer_SpoolConcurrencyCapDegrades(t *testing.T) {
 	_, err = second.Write(bytes.Repeat([]byte("b"), 32))
 	require.NoError(t, err)
 	require.False(t, second.Spilled(), "at concurrency cap, degrade to RAM")
-	require.True(t, second.spillDisabled)
+	require.True(t, second.spillDisabled())
 	require.Equal(t, before+1, aggregateSpoolCapDegradeTotal.Load())
 
 	got, err := second.Bytes()
@@ -196,9 +196,9 @@ func TestAggregateResponseBuffer_DegradedRAMBudgetIsBounded(t *testing.T) {
 	defer func() { _ = first.Close() }()
 	_, err := first.Write(bytes.Repeat([]byte("a"), 512))
 	require.NoError(t, err)
-	require.True(t, first.spillDisabled)
-	require.True(t, first.holdsDegradedSlot, "first degrade claims the budget")
-	require.Equal(t, int64(1024), first.maxBytes)
+	require.True(t, first.spillDisabled())
+	require.True(t, first.holdsDegradedSlot(), "first degrade claims the budget")
+	require.Equal(t, int64(1024), first.maxBytes())
 
 	before := aggregateDegradedRefusedTotal.Load()
 	second := newAggregateResponseBuffer()
@@ -206,8 +206,8 @@ func TestAggregateResponseBuffer_DegradedRAMBudgetIsBounded(t *testing.T) {
 	_, err = second.Write(bytes.Repeat([]byte("b"), 512))
 	require.ErrorIs(t, err, ErrAggregateResponseTooLarge,
 		"budget is spent, so this request keeps the 16 byte memory ceiling")
-	require.False(t, second.holdsDegradedSlot)
-	require.Equal(t, int64(16), second.maxBytes)
+	require.False(t, second.holdsDegradedSlot())
+	require.Equal(t, int64(16), second.maxBytes())
 	require.Equal(t, before+1, aggregateDegradedRefusedTotal.Load())
 }
 
@@ -221,14 +221,14 @@ func TestAggregateResponseBuffer_DegradedSlotReleasedOnClose(t *testing.T) {
 	first := newAggregateResponseBuffer()
 	_, err := first.Write(bytes.Repeat([]byte("a"), 512))
 	require.NoError(t, err)
-	require.True(t, first.holdsDegradedSlot)
+	require.True(t, first.holdsDegradedSlot())
 	require.NoError(t, first.Close())
 
 	second := newAggregateResponseBuffer()
 	defer func() { _ = second.Close() }()
 	_, err = second.Write(bytes.Repeat([]byte("b"), 512))
 	require.NoError(t, err, "closing the first buffer must return its share")
-	require.True(t, second.holdsDegradedSlot)
+	require.True(t, second.holdsDegradedSlot())
 }
 
 // A buffer that rejected a write holds a prefix of the response, so it must

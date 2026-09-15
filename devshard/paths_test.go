@@ -190,4 +190,13 @@ func TestVersionlessObservabilityPaths(t *testing.T) {
 	if got := VersionlessHealthzPath(); got != "/devshard/healthz" {
 		t.Fatalf("healthz = %q", got)
 	}
+	if got := RouterCatalogHealthzPath("v2"); got != "/v2/healthz" {
+		t.Fatalf("catalog healthz = %q", got)
+	}
+	if got := RouterCatalogHealthzPath("/v2/"); got != "/v2/healthz" {
+		t.Fatalf("catalog healthz trimmed = %q", got)
+	}
+	if got := RouterCatalogHealthzPath(""); got != "" {
+		t.Fatalf("empty version catalog healthz = %q", got)
+	}
 }
