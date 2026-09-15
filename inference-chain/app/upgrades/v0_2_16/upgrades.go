@@ -64,6 +64,9 @@ func CreateUpgradeHandler(
 		if err := migrateCurrentEffectiveCoefficients(ctx, k); err != nil {
 			return fromVM, err
 		}
+		if err := migratePoCChallengeParams(ctx, k); err != nil {
+			return fromVM, err
+		}
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
@@ -78,6 +81,18 @@ func CreateUpgradeHandler(
 		k.LogInfo("successfully upgraded", types.Upgrades, "version", UpgradeName)
 		return toVM, nil
 	}
+}
+
+func migratePoCChallengeParams(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.PocChallengeParams != nil {
+		return nil
+	}
+	params.PocChallengeParams = types.DefaultPoCChallengeParams()
+	return k.SetParams(ctx, params)
 }
 
 func migrateDynamicCoefficientParams(ctx context.Context, k keeper.Keeper) error {

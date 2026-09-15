@@ -106,7 +106,6 @@ const (
 	Query_MaintenanceSchedulability_FullMethodName                 = "/inference.inference.Query/MaintenanceSchedulability"
 	Query_ListClaimRecipients_FullMethodName                       = "/inference.inference.Query/ListClaimRecipients"
 	Query_DevshardApprovedVersions_FullMethodName                  = "/inference.inference.Query/DevshardApprovedVersions"
-	Query_ChallengeGenerationState_FullMethodName                  = "/inference.inference.Query/ChallengeGenerationState"
 	Query_OpenPoCChallenges_FullMethodName                         = "/inference.inference.Query/OpenPoCChallenges"
 )
 
@@ -261,7 +260,6 @@ type QueryClient interface {
 	// Lists the scheduled per-epoch claim recipient overrides for a participant.
 	ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error)
 	DevshardApprovedVersions(ctx context.Context, in *QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*QueryDevshardApprovedVersionsResponse, error)
-	ChallengeGenerationState(ctx context.Context, in *QueryChallengeGenerationStateRequest, opts ...grpc.CallOption) (*QueryChallengeGenerationStateResponse, error)
 	OpenPoCChallenges(ctx context.Context, in *QueryOpenPoCChallengesRequest, opts ...grpc.CallOption) (*QueryOpenPoCChallengesResponse, error)
 }
 
@@ -1056,15 +1054,6 @@ func (c *queryClient) DevshardApprovedVersions(ctx context.Context, in *QueryDev
 	return out, nil
 }
 
-func (c *queryClient) ChallengeGenerationState(ctx context.Context, in *QueryChallengeGenerationStateRequest, opts ...grpc.CallOption) (*QueryChallengeGenerationStateResponse, error) {
-	out := new(QueryChallengeGenerationStateResponse)
-	err := c.cc.Invoke(ctx, Query_ChallengeGenerationState_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *queryClient) OpenPoCChallenges(ctx context.Context, in *QueryOpenPoCChallengesRequest, opts ...grpc.CallOption) (*QueryOpenPoCChallengesResponse, error) {
 	out := new(QueryOpenPoCChallengesResponse)
 	err := c.cc.Invoke(ctx, Query_OpenPoCChallenges_FullMethodName, in, out, opts...)
@@ -1225,7 +1214,6 @@ type QueryServer interface {
 	// Lists the scheduled per-epoch claim recipient overrides for a participant.
 	ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error)
 	DevshardApprovedVersions(context.Context, *QueryDevshardApprovedVersionsRequest) (*QueryDevshardApprovedVersionsResponse, error)
-	ChallengeGenerationState(context.Context, *QueryChallengeGenerationStateRequest) (*QueryChallengeGenerationStateResponse, error)
 	OpenPoCChallenges(context.Context, *QueryOpenPoCChallengesRequest) (*QueryOpenPoCChallengesResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
@@ -1494,9 +1482,6 @@ func (UnimplementedQueryServer) ListClaimRecipients(context.Context, *QueryListC
 }
 func (UnimplementedQueryServer) DevshardApprovedVersions(context.Context, *QueryDevshardApprovedVersionsRequest) (*QueryDevshardApprovedVersionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DevshardApprovedVersions not implemented")
-}
-func (UnimplementedQueryServer) ChallengeGenerationState(context.Context, *QueryChallengeGenerationStateRequest) (*QueryChallengeGenerationStateResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ChallengeGenerationState not implemented")
 }
 func (UnimplementedQueryServer) OpenPoCChallenges(context.Context, *QueryOpenPoCChallengesRequest) (*QueryOpenPoCChallengesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OpenPoCChallenges not implemented")
@@ -3080,24 +3065,6 @@ func _Query_DevshardApprovedVersions_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Query_ChallengeGenerationState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(QueryChallengeGenerationStateRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(QueryServer).ChallengeGenerationState(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Query_ChallengeGenerationState_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(QueryServer).ChallengeGenerationState(ctx, req.(*QueryChallengeGenerationStateRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Query_OpenPoCChallenges_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryOpenPoCChallengesRequest)
 	if err := dec(in); err != nil {
@@ -3470,10 +3437,6 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DevshardApprovedVersions",
 			Handler:    _Query_DevshardApprovedVersions_Handler,
-		},
-		{
-			MethodName: "ChallengeGenerationState",
-			Handler:    _Query_ChallengeGenerationState_Handler,
 		},
 		{
 			MethodName: "OpenPoCChallenges",

@@ -9,7 +9,6 @@ import (
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -144,7 +143,9 @@ type (
 		// Secondary index for pruning stale recipient overrides by epoch.
 		// Must be updated atomically with ClaimRecipients.
 		ClaimRecipientsByEpoch collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
-		PoCChallenge           *pocchallenge.Store
+		PoCChallenges          collections.Map[sdk.AccAddress, types.PoCChallenge]
+		PoCChallengeCommits    collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
+		PoCChallengeValidations collections.Map[collections.Triple[sdk.AccAddress, string, sdk.AccAddress], types.PoCValidationV2]
 	}
 )
 
@@ -686,8 +687,28 @@ func NewKeeper(
 			"claim_recipients_by_epoch",
 			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
 		),
+		PoCChallenges: collections.NewMap(
+			sb,
+			types.PoCChallengePrefix,
+			"poc_challenge",
+			sdk.AccAddressKey,
+			codec.CollValue[types.PoCChallenge](cdc),
+		),
+		PoCChallengeCommits: collections.NewMap(
+			sb,
+			types.PoCChallengeCommitPrefix,
+			"poc_challenge_commit",
+			collections.PairKeyCodec(sdk.AccAddressKey, collections.StringKey),
+			codec.CollValue[types.PoCV2StoreCommit](cdc),
+		),
+		PoCChallengeValidations: collections.NewMap(
+			sb,
+			types.PoCChallengeValidationPrefix,
+			"poc_challenge_validation",
+			collections.TripleKeyCodec(sdk.AccAddressKey, collections.StringKey, sdk.AccAddressKey),
+			codec.CollValue[types.PoCValidationV2](cdc),
+		),
 	}
-	k.PoCChallenge = pocchallenge.NewStore(sb, cdc)
 
 	// Build the collections schema
 	schema, err := sb.Build()

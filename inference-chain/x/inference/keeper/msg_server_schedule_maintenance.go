@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -43,7 +44,7 @@ func (k msgServer) ScheduleMaintenance(goCtx context.Context, msg *types.MsgSche
 	}
 
 	if k.IsChallengeGenerating(goCtx, msg.Participant) {
-		return nil, types.ErrPoCChallengeGenerating
+		return nil, sdkerrors.Wrap(types.ErrIllegalState, "participant is generating a PoC challenge")
 	}
 
 	// Validate duration is positive and within limits

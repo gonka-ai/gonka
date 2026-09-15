@@ -13,679 +13,15 @@ import (
 )
 
 var (
-	md_PoCChallengeSegment                              protoreflect.MessageDescriptor
-	fd_PoCChallengeSegment_poc_stage_start_block_height protoreflect.FieldDescriptor
-	fd_PoCChallengeSegment_seed_hash                    protoreflect.FieldDescriptor
-	fd_PoCChallengeSegment_seal_height                  protoreflect.FieldDescriptor
-	fd_PoCChallengeSegment_first_vote_height            protoreflect.FieldDescriptor
-	fd_PoCChallengeSegment_outcome                      protoreflect.FieldDescriptor
-)
-
-func init() {
-	file_inference_inference_poc_challenge_proto_init()
-	md_PoCChallengeSegment = File_inference_inference_poc_challenge_proto.Messages().ByName("PoCChallengeSegment")
-	fd_PoCChallengeSegment_poc_stage_start_block_height = md_PoCChallengeSegment.Fields().ByName("poc_stage_start_block_height")
-	fd_PoCChallengeSegment_seed_hash = md_PoCChallengeSegment.Fields().ByName("seed_hash")
-	fd_PoCChallengeSegment_seal_height = md_PoCChallengeSegment.Fields().ByName("seal_height")
-	fd_PoCChallengeSegment_first_vote_height = md_PoCChallengeSegment.Fields().ByName("first_vote_height")
-	fd_PoCChallengeSegment_outcome = md_PoCChallengeSegment.Fields().ByName("outcome")
-}
-
-var _ protoreflect.Message = (*fastReflection_PoCChallengeSegment)(nil)
-
-type fastReflection_PoCChallengeSegment PoCChallengeSegment
-
-func (x *PoCChallengeSegment) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_PoCChallengeSegment)(x)
-}
-
-func (x *PoCChallengeSegment) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_poc_challenge_proto_msgTypes[0]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-var _fastReflection_PoCChallengeSegment_messageType fastReflection_PoCChallengeSegment_messageType
-var _ protoreflect.MessageType = fastReflection_PoCChallengeSegment_messageType{}
-
-type fastReflection_PoCChallengeSegment_messageType struct{}
-
-func (x fastReflection_PoCChallengeSegment_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_PoCChallengeSegment)(nil)
-}
-func (x fastReflection_PoCChallengeSegment_messageType) New() protoreflect.Message {
-	return new(fastReflection_PoCChallengeSegment)
-}
-func (x fastReflection_PoCChallengeSegment_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_PoCChallengeSegment
-}
-
-// Descriptor returns message descriptor, which contains only the protobuf
-// type information for the message.
-func (x *fastReflection_PoCChallengeSegment) Descriptor() protoreflect.MessageDescriptor {
-	return md_PoCChallengeSegment
-}
-
-// Type returns the message type, which encapsulates both Go and protobuf
-// type information. If the Go type information is not needed,
-// it is recommended that the message descriptor be used instead.
-func (x *fastReflection_PoCChallengeSegment) Type() protoreflect.MessageType {
-	return _fastReflection_PoCChallengeSegment_messageType
-}
-
-// New returns a newly allocated and mutable empty message.
-func (x *fastReflection_PoCChallengeSegment) New() protoreflect.Message {
-	return new(fastReflection_PoCChallengeSegment)
-}
-
-// Interface unwraps the message reflection interface and
-// returns the underlying ProtoMessage interface.
-func (x *fastReflection_PoCChallengeSegment) Interface() protoreflect.ProtoMessage {
-	return (*PoCChallengeSegment)(x)
-}
-
-// Range iterates over every populated field in an undefined order,
-// calling f for each field descriptor and value encountered.
-// Range returns immediately if f returns false.
-// While iterating, mutating operations may only be performed
-// on the current field descriptor.
-func (x *fastReflection_PoCChallengeSegment) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.PocStageStartBlockHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.PocStageStartBlockHeight)
-		if !f(fd_PoCChallengeSegment_poc_stage_start_block_height, value) {
-			return
-		}
-	}
-	if x.SeedHash != "" {
-		value := protoreflect.ValueOfString(x.SeedHash)
-		if !f(fd_PoCChallengeSegment_seed_hash, value) {
-			return
-		}
-	}
-	if x.SealHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.SealHeight)
-		if !f(fd_PoCChallengeSegment_seal_height, value) {
-			return
-		}
-	}
-	if x.FirstVoteHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.FirstVoteHeight)
-		if !f(fd_PoCChallengeSegment_first_vote_height, value) {
-			return
-		}
-	}
-	if x.Outcome != 0 {
-		value := protoreflect.ValueOfEnum((protoreflect.EnumNumber)(x.Outcome))
-		if !f(fd_PoCChallengeSegment_outcome, value) {
-			return
-		}
-	}
-}
-
-// Has reports whether a field is populated.
-//
-// Some fields have the property of nullability where it is possible to
-// distinguish between the default value of a field and whether the field
-// was explicitly populated with the default value. Singular message fields,
-// member fields of a oneof, and proto2 scalar fields are nullable. Such
-// fields are populated only if explicitly set.
-//
-// In other cases (aside from the nullable cases above),
-// a proto3 scalar field is populated if it contains a non-zero value, and
-// a repeated field is populated if it is non-empty.
-func (x *fastReflection_PoCChallengeSegment) Has(fd protoreflect.FieldDescriptor) bool {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeSegment.poc_stage_start_block_height":
-		return x.PocStageStartBlockHeight != int64(0)
-	case "inference.inference.PoCChallengeSegment.seed_hash":
-		return x.SeedHash != ""
-	case "inference.inference.PoCChallengeSegment.seal_height":
-		return x.SealHeight != int64(0)
-	case "inference.inference.PoCChallengeSegment.first_vote_height":
-		return x.FirstVoteHeight != int64(0)
-	case "inference.inference.PoCChallengeSegment.outcome":
-		return x.Outcome != 0
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeSegment"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeSegment does not contain field %s", fd.FullName()))
-	}
-}
-
-// Clear clears the field such that a subsequent Has call reports false.
-//
-// Clearing an extension field clears both the extension type and value
-// associated with the given field number.
-//
-// Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeSegment) Clear(fd protoreflect.FieldDescriptor) {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeSegment.poc_stage_start_block_height":
-		x.PocStageStartBlockHeight = int64(0)
-	case "inference.inference.PoCChallengeSegment.seed_hash":
-		x.SeedHash = ""
-	case "inference.inference.PoCChallengeSegment.seal_height":
-		x.SealHeight = int64(0)
-	case "inference.inference.PoCChallengeSegment.first_vote_height":
-		x.FirstVoteHeight = int64(0)
-	case "inference.inference.PoCChallengeSegment.outcome":
-		x.Outcome = 0
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeSegment"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeSegment does not contain field %s", fd.FullName()))
-	}
-}
-
-// Get retrieves the value for a field.
-//
-// For unpopulated scalars, it returns the default value, where
-// the default value of a bytes scalar is guaranteed to be a copy.
-// For unpopulated composite types, it returns an empty, read-only view
-// of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_PoCChallengeSegment) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
-	switch descriptor.FullName() {
-	case "inference.inference.PoCChallengeSegment.poc_stage_start_block_height":
-		value := x.PocStageStartBlockHeight
-		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.PoCChallengeSegment.seed_hash":
-		value := x.SeedHash
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.PoCChallengeSegment.seal_height":
-		value := x.SealHeight
-		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.PoCChallengeSegment.first_vote_height":
-		value := x.FirstVoteHeight
-		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.PoCChallengeSegment.outcome":
-		value := x.Outcome
-		return protoreflect.ValueOfEnum((protoreflect.EnumNumber)(value))
-	default:
-		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeSegment"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeSegment does not contain field %s", descriptor.FullName()))
-	}
-}
-
-// Set stores the value for a field.
-//
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType.
-// When setting a composite type, it is unspecified whether the stored value
-// aliases the source's memory in any way. If the composite value is an
-// empty, read-only value, then it panics.
-//
-// Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeSegment) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeSegment.poc_stage_start_block_height":
-		x.PocStageStartBlockHeight = value.Int()
-	case "inference.inference.PoCChallengeSegment.seed_hash":
-		x.SeedHash = value.Interface().(string)
-	case "inference.inference.PoCChallengeSegment.seal_height":
-		x.SealHeight = value.Int()
-	case "inference.inference.PoCChallengeSegment.first_vote_height":
-		x.FirstVoteHeight = value.Int()
-	case "inference.inference.PoCChallengeSegment.outcome":
-		x.Outcome = (PoCChallengeSegmentOutcome)(value.Enum())
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeSegment"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeSegment does not contain field %s", fd.FullName()))
-	}
-}
-
-// Mutable returns a mutable reference to a composite type.
-//
-// If the field is unpopulated, it may allocate a composite value.
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType
-// if not already stored.
-// It panics if the field does not contain a composite type.
-//
-// Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeSegment) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeSegment.poc_stage_start_block_height":
-		panic(fmt.Errorf("field poc_stage_start_block_height of message inference.inference.PoCChallengeSegment is not mutable"))
-	case "inference.inference.PoCChallengeSegment.seed_hash":
-		panic(fmt.Errorf("field seed_hash of message inference.inference.PoCChallengeSegment is not mutable"))
-	case "inference.inference.PoCChallengeSegment.seal_height":
-		panic(fmt.Errorf("field seal_height of message inference.inference.PoCChallengeSegment is not mutable"))
-	case "inference.inference.PoCChallengeSegment.first_vote_height":
-		panic(fmt.Errorf("field first_vote_height of message inference.inference.PoCChallengeSegment is not mutable"))
-	case "inference.inference.PoCChallengeSegment.outcome":
-		panic(fmt.Errorf("field outcome of message inference.inference.PoCChallengeSegment is not mutable"))
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeSegment"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeSegment does not contain field %s", fd.FullName()))
-	}
-}
-
-// NewField returns a new value that is assignable to the field
-// for the given descriptor. For scalars, this returns the default value.
-// For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_PoCChallengeSegment) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeSegment.poc_stage_start_block_height":
-		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.PoCChallengeSegment.seed_hash":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.PoCChallengeSegment.seal_height":
-		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.PoCChallengeSegment.first_vote_height":
-		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.PoCChallengeSegment.outcome":
-		return protoreflect.ValueOfEnum(0)
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeSegment"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeSegment does not contain field %s", fd.FullName()))
-	}
-}
-
-// WhichOneof reports which field within the oneof is populated,
-// returning nil if none are populated.
-// It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_PoCChallengeSegment) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
-	switch d.FullName() {
-	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.PoCChallengeSegment", d.FullName()))
-	}
-	panic("unreachable")
-}
-
-// GetUnknown retrieves the entire list of unknown fields.
-// The caller may only mutate the contents of the RawFields
-// if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_PoCChallengeSegment) GetUnknown() protoreflect.RawFields {
-	return x.unknownFields
-}
-
-// SetUnknown stores an entire list of unknown fields.
-// The raw fields must be syntactically valid according to the wire format.
-// An implementation may panic if this is not the case.
-// Once stored, the caller must not mutate the content of the RawFields.
-// An empty RawFields may be passed to clear the fields.
-//
-// SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeSegment) SetUnknown(fields protoreflect.RawFields) {
-	x.unknownFields = fields
-}
-
-// IsValid reports whether the message is valid.
-//
-// An invalid message is an empty, read-only value.
-//
-// An invalid message often corresponds to a nil pointer of the concrete
-// message type, but the details are implementation dependent.
-// Validity is not part of the protobuf data model, and may not
-// be preserved in marshaling or other operations.
-func (x *fastReflection_PoCChallengeSegment) IsValid() bool {
-	return x != nil
-}
-
-// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
-// This method may return nil.
-//
-// The returned methods type is identical to
-// "google.golang.org/protobuf/runtime/protoiface".Methods.
-// Consult the protoiface package documentation for details.
-func (x *fastReflection_PoCChallengeSegment) ProtoMethods() *protoiface.Methods {
-	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*PoCChallengeSegment)
-		if x == nil {
-			return protoiface.SizeOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Size:              0,
-			}
-		}
-		options := runtime.SizeInputToOptions(input)
-		_ = options
-		var n int
-		var l int
-		_ = l
-		if x.PocStageStartBlockHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.PocStageStartBlockHeight))
-		}
-		l = len(x.SeedHash)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.SealHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.SealHeight))
-		}
-		if x.FirstVoteHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.FirstVoteHeight))
-		}
-		if x.Outcome != 0 {
-			n += 1 + runtime.Sov(uint64(x.Outcome))
-		}
-		if x.unknownFields != nil {
-			n += len(x.unknownFields)
-		}
-		return protoiface.SizeOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Size:              n,
-		}
-	}
-
-	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*PoCChallengeSegment)
-		if x == nil {
-			return protoiface.MarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Buf:               input.Buf,
-			}, nil
-		}
-		options := runtime.MarshalInputToOptions(input)
-		_ = options
-		size := options.Size(x)
-		dAtA := make([]byte, size)
-		i := len(dAtA)
-		_ = i
-		var l int
-		_ = l
-		if x.unknownFields != nil {
-			i -= len(x.unknownFields)
-			copy(dAtA[i:], x.unknownFields)
-		}
-		if x.Outcome != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.Outcome))
-			i--
-			dAtA[i] = 0x28
-		}
-		if x.FirstVoteHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.FirstVoteHeight))
-			i--
-			dAtA[i] = 0x20
-		}
-		if x.SealHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.SealHeight))
-			i--
-			dAtA[i] = 0x18
-		}
-		if len(x.SeedHash) > 0 {
-			i -= len(x.SeedHash)
-			copy(dAtA[i:], x.SeedHash)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.SeedHash)))
-			i--
-			dAtA[i] = 0x12
-		}
-		if x.PocStageStartBlockHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocStageStartBlockHeight))
-			i--
-			dAtA[i] = 0x8
-		}
-		if input.Buf != nil {
-			input.Buf = append(input.Buf, dAtA...)
-		} else {
-			input.Buf = dAtA
-		}
-		return protoiface.MarshalOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Buf:               input.Buf,
-		}, nil
-	}
-	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*PoCChallengeSegment)
-		if x == nil {
-			return protoiface.UnmarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Flags:             input.Flags,
-			}, nil
-		}
-		options := runtime.UnmarshalInputToOptions(input)
-		_ = options
-		dAtA := input.Buf
-		l := len(dAtA)
-		iNdEx := 0
-		for iNdEx < l {
-			preIndex := iNdEx
-			var wire uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				wire |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			fieldNum := int32(wire >> 3)
-			wireType := int(wire & 0x7)
-			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: PoCChallengeSegment: wiretype end group for non-group")
-			}
-			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: PoCChallengeSegment: illegal tag %d (wire type %d)", fieldNum, wire)
-			}
-			switch fieldNum {
-			case 1:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocStageStartBlockHeight", wireType)
-				}
-				x.PocStageStartBlockHeight = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.PocStageStartBlockHeight |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 2:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SeedHash", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.SeedHash = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
-			case 3:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SealHeight", wireType)
-				}
-				x.SealHeight = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.SealHeight |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 4:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FirstVoteHeight", wireType)
-				}
-				x.FirstVoteHeight = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.FirstVoteHeight |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 5:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Outcome", wireType)
-				}
-				x.Outcome = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.Outcome |= PoCChallengeSegmentOutcome(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			default:
-				iNdEx = preIndex
-				skippy, err := runtime.Skip(dAtA[iNdEx:])
-				if err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				if (skippy < 0) || (iNdEx+skippy) < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if (iNdEx + skippy) > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				if !options.DiscardUnknown {
-					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
-				}
-				iNdEx += skippy
-			}
-		}
-
-		if iNdEx > l {
-			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-		}
-		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
-	}
-	return &protoiface.Methods{
-		NoUnkeyedLiterals: struct{}{},
-		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
-		Size:              size,
-		Marshal:           marshal,
-		Unmarshal:         unmarshal,
-		Merge:             nil,
-		CheckInitialized:  nil,
-	}
-}
-
-var _ protoreflect.List = (*_PoCChallenge_9_list)(nil)
-
-type _PoCChallenge_9_list struct {
-	list *[]*PoCChallengeSegment
-}
-
-func (x *_PoCChallenge_9_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_PoCChallenge_9_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_PoCChallenge_9_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*PoCChallengeSegment)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_PoCChallenge_9_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*PoCChallengeSegment)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_PoCChallenge_9_list) AppendMutable() protoreflect.Value {
-	v := new(PoCChallengeSegment)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_PoCChallenge_9_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_PoCChallenge_9_list) NewElement() protoreflect.Value {
-	v := new(PoCChallengeSegment)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_PoCChallenge_9_list) IsValid() bool {
-	return x.list != nil
-}
-
-var (
-	md_PoCChallenge                        protoreflect.MessageDescriptor
-	fd_PoCChallenge_epoch_index            protoreflect.FieldDescriptor
-	fd_PoCChallenge_challenger             protoreflect.FieldDescriptor
-	fd_PoCChallenge_target                 protoreflect.FieldDescriptor
-	fd_PoCChallenge_challenge_start_height protoreflect.FieldDescriptor
-	fd_PoCChallenge_expected_reward        protoreflect.FieldDescriptor
-	fd_PoCChallenge_locked_payment         protoreflect.FieldDescriptor
-	fd_PoCChallenge_generation_end_height  protoreflect.FieldDescriptor
-	fd_PoCChallenge_fail_reason            protoreflect.FieldDescriptor
-	fd_PoCChallenge_segments               protoreflect.FieldDescriptor
+	md_PoCChallenge                 protoreflect.MessageDescriptor
+	fd_PoCChallenge_epoch_index     protoreflect.FieldDescriptor
+	fd_PoCChallenge_challenger      protoreflect.FieldDescriptor
+	fd_PoCChallenge_target          protoreflect.FieldDescriptor
+	fd_PoCChallenge_expected_reward protoreflect.FieldDescriptor
+	fd_PoCChallenge_locked_payment  protoreflect.FieldDescriptor
+	fd_PoCChallenge_start_height    protoreflect.FieldDescriptor
+	fd_PoCChallenge_seed            protoreflect.FieldDescriptor
+	fd_PoCChallenge_failure_kind    protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -694,12 +30,11 @@ func init() {
 	fd_PoCChallenge_epoch_index = md_PoCChallenge.Fields().ByName("epoch_index")
 	fd_PoCChallenge_challenger = md_PoCChallenge.Fields().ByName("challenger")
 	fd_PoCChallenge_target = md_PoCChallenge.Fields().ByName("target")
-	fd_PoCChallenge_challenge_start_height = md_PoCChallenge.Fields().ByName("challenge_start_height")
 	fd_PoCChallenge_expected_reward = md_PoCChallenge.Fields().ByName("expected_reward")
 	fd_PoCChallenge_locked_payment = md_PoCChallenge.Fields().ByName("locked_payment")
-	fd_PoCChallenge_generation_end_height = md_PoCChallenge.Fields().ByName("generation_end_height")
-	fd_PoCChallenge_fail_reason = md_PoCChallenge.Fields().ByName("fail_reason")
-	fd_PoCChallenge_segments = md_PoCChallenge.Fields().ByName("segments")
+	fd_PoCChallenge_start_height = md_PoCChallenge.Fields().ByName("start_height")
+	fd_PoCChallenge_seed = md_PoCChallenge.Fields().ByName("seed")
+	fd_PoCChallenge_failure_kind = md_PoCChallenge.Fields().ByName("failure_kind")
 }
 
 var _ protoreflect.Message = (*fastReflection_PoCChallenge)(nil)
@@ -711,7 +46,7 @@ func (x *PoCChallenge) ProtoReflect() protoreflect.Message {
 }
 
 func (x *PoCChallenge) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_poc_challenge_proto_msgTypes[1]
+	mi := &file_inference_inference_poc_challenge_proto_msgTypes[0]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -785,12 +120,6 @@ func (x *fastReflection_PoCChallenge) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
-	if x.ChallengeStartHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.ChallengeStartHeight)
-		if !f(fd_PoCChallenge_challenge_start_height, value) {
-			return
-		}
-	}
 	if x.ExpectedReward != uint64(0) {
 		value := protoreflect.ValueOfUint64(x.ExpectedReward)
 		if !f(fd_PoCChallenge_expected_reward, value) {
@@ -803,21 +132,21 @@ func (x *fastReflection_PoCChallenge) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
-	if x.GenerationEndHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.GenerationEndHeight)
-		if !f(fd_PoCChallenge_generation_end_height, value) {
+	if x.StartHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.StartHeight)
+		if !f(fd_PoCChallenge_start_height, value) {
 			return
 		}
 	}
-	if x.FailReason != 0 {
-		value := protoreflect.ValueOfEnum((protoreflect.EnumNumber)(x.FailReason))
-		if !f(fd_PoCChallenge_fail_reason, value) {
+	if len(x.Seed) != 0 {
+		value := protoreflect.ValueOfBytes(x.Seed)
+		if !f(fd_PoCChallenge_seed, value) {
 			return
 		}
 	}
-	if len(x.Segments) != 0 {
-		value := protoreflect.ValueOfList(&_PoCChallenge_9_list{list: &x.Segments})
-		if !f(fd_PoCChallenge_segments, value) {
+	if x.FailureKind != 0 {
+		value := protoreflect.ValueOfEnum((protoreflect.EnumNumber)(x.FailureKind))
+		if !f(fd_PoCChallenge_failure_kind, value) {
 			return
 		}
 	}
@@ -842,18 +171,16 @@ func (x *fastReflection_PoCChallenge) Has(fd protoreflect.FieldDescriptor) bool 
 		return x.Challenger != ""
 	case "inference.inference.PoCChallenge.target":
 		return x.Target != ""
-	case "inference.inference.PoCChallenge.challenge_start_height":
-		return x.ChallengeStartHeight != int64(0)
 	case "inference.inference.PoCChallenge.expected_reward":
 		return x.ExpectedReward != uint64(0)
 	case "inference.inference.PoCChallenge.locked_payment":
 		return x.LockedPayment != uint64(0)
-	case "inference.inference.PoCChallenge.generation_end_height":
-		return x.GenerationEndHeight != int64(0)
-	case "inference.inference.PoCChallenge.fail_reason":
-		return x.FailReason != 0
-	case "inference.inference.PoCChallenge.segments":
-		return len(x.Segments) != 0
+	case "inference.inference.PoCChallenge.start_height":
+		return x.StartHeight != int64(0)
+	case "inference.inference.PoCChallenge.seed":
+		return len(x.Seed) != 0
+	case "inference.inference.PoCChallenge.failure_kind":
+		return x.FailureKind != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -876,18 +203,16 @@ func (x *fastReflection_PoCChallenge) Clear(fd protoreflect.FieldDescriptor) {
 		x.Challenger = ""
 	case "inference.inference.PoCChallenge.target":
 		x.Target = ""
-	case "inference.inference.PoCChallenge.challenge_start_height":
-		x.ChallengeStartHeight = int64(0)
 	case "inference.inference.PoCChallenge.expected_reward":
 		x.ExpectedReward = uint64(0)
 	case "inference.inference.PoCChallenge.locked_payment":
 		x.LockedPayment = uint64(0)
-	case "inference.inference.PoCChallenge.generation_end_height":
-		x.GenerationEndHeight = int64(0)
-	case "inference.inference.PoCChallenge.fail_reason":
-		x.FailReason = 0
-	case "inference.inference.PoCChallenge.segments":
-		x.Segments = nil
+	case "inference.inference.PoCChallenge.start_height":
+		x.StartHeight = int64(0)
+	case "inference.inference.PoCChallenge.seed":
+		x.Seed = nil
+	case "inference.inference.PoCChallenge.failure_kind":
+		x.FailureKind = 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -913,27 +238,21 @@ func (x *fastReflection_PoCChallenge) Get(descriptor protoreflect.FieldDescripto
 	case "inference.inference.PoCChallenge.target":
 		value := x.Target
 		return protoreflect.ValueOfString(value)
-	case "inference.inference.PoCChallenge.challenge_start_height":
-		value := x.ChallengeStartHeight
-		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.PoCChallenge.expected_reward":
 		value := x.ExpectedReward
 		return protoreflect.ValueOfUint64(value)
 	case "inference.inference.PoCChallenge.locked_payment":
 		value := x.LockedPayment
 		return protoreflect.ValueOfUint64(value)
-	case "inference.inference.PoCChallenge.generation_end_height":
-		value := x.GenerationEndHeight
+	case "inference.inference.PoCChallenge.start_height":
+		value := x.StartHeight
 		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.PoCChallenge.fail_reason":
-		value := x.FailReason
+	case "inference.inference.PoCChallenge.seed":
+		value := x.Seed
+		return protoreflect.ValueOfBytes(value)
+	case "inference.inference.PoCChallenge.failure_kind":
+		value := x.FailureKind
 		return protoreflect.ValueOfEnum((protoreflect.EnumNumber)(value))
-	case "inference.inference.PoCChallenge.segments":
-		if len(x.Segments) == 0 {
-			return protoreflect.ValueOfList(&_PoCChallenge_9_list{})
-		}
-		listValue := &_PoCChallenge_9_list{list: &x.Segments}
-		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -960,20 +279,16 @@ func (x *fastReflection_PoCChallenge) Set(fd protoreflect.FieldDescriptor, value
 		x.Challenger = value.Interface().(string)
 	case "inference.inference.PoCChallenge.target":
 		x.Target = value.Interface().(string)
-	case "inference.inference.PoCChallenge.challenge_start_height":
-		x.ChallengeStartHeight = value.Int()
 	case "inference.inference.PoCChallenge.expected_reward":
 		x.ExpectedReward = value.Uint()
 	case "inference.inference.PoCChallenge.locked_payment":
 		x.LockedPayment = value.Uint()
-	case "inference.inference.PoCChallenge.generation_end_height":
-		x.GenerationEndHeight = value.Int()
-	case "inference.inference.PoCChallenge.fail_reason":
-		x.FailReason = (PoCChallengeFailReason)(value.Enum())
-	case "inference.inference.PoCChallenge.segments":
-		lv := value.List()
-		clv := lv.(*_PoCChallenge_9_list)
-		x.Segments = *clv.list
+	case "inference.inference.PoCChallenge.start_height":
+		x.StartHeight = value.Int()
+	case "inference.inference.PoCChallenge.seed":
+		x.Seed = value.Bytes()
+	case "inference.inference.PoCChallenge.failure_kind":
+		x.FailureKind = (PoCChallengeFailureKind)(value.Enum())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -994,28 +309,22 @@ func (x *fastReflection_PoCChallenge) Set(fd protoreflect.FieldDescriptor, value
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_PoCChallenge) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.PoCChallenge.segments":
-		if x.Segments == nil {
-			x.Segments = []*PoCChallengeSegment{}
-		}
-		value := &_PoCChallenge_9_list{list: &x.Segments}
-		return protoreflect.ValueOfList(value)
 	case "inference.inference.PoCChallenge.epoch_index":
 		panic(fmt.Errorf("field epoch_index of message inference.inference.PoCChallenge is not mutable"))
 	case "inference.inference.PoCChallenge.challenger":
 		panic(fmt.Errorf("field challenger of message inference.inference.PoCChallenge is not mutable"))
 	case "inference.inference.PoCChallenge.target":
 		panic(fmt.Errorf("field target of message inference.inference.PoCChallenge is not mutable"))
-	case "inference.inference.PoCChallenge.challenge_start_height":
-		panic(fmt.Errorf("field challenge_start_height of message inference.inference.PoCChallenge is not mutable"))
 	case "inference.inference.PoCChallenge.expected_reward":
 		panic(fmt.Errorf("field expected_reward of message inference.inference.PoCChallenge is not mutable"))
 	case "inference.inference.PoCChallenge.locked_payment":
 		panic(fmt.Errorf("field locked_payment of message inference.inference.PoCChallenge is not mutable"))
-	case "inference.inference.PoCChallenge.generation_end_height":
-		panic(fmt.Errorf("field generation_end_height of message inference.inference.PoCChallenge is not mutable"))
-	case "inference.inference.PoCChallenge.fail_reason":
-		panic(fmt.Errorf("field fail_reason of message inference.inference.PoCChallenge is not mutable"))
+	case "inference.inference.PoCChallenge.start_height":
+		panic(fmt.Errorf("field start_height of message inference.inference.PoCChallenge is not mutable"))
+	case "inference.inference.PoCChallenge.seed":
+		panic(fmt.Errorf("field seed of message inference.inference.PoCChallenge is not mutable"))
+	case "inference.inference.PoCChallenge.failure_kind":
+		panic(fmt.Errorf("field failure_kind of message inference.inference.PoCChallenge is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -1035,19 +344,16 @@ func (x *fastReflection_PoCChallenge) NewField(fd protoreflect.FieldDescriptor) 
 		return protoreflect.ValueOfString("")
 	case "inference.inference.PoCChallenge.target":
 		return protoreflect.ValueOfString("")
-	case "inference.inference.PoCChallenge.challenge_start_height":
-		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.PoCChallenge.expected_reward":
 		return protoreflect.ValueOfUint64(uint64(0))
 	case "inference.inference.PoCChallenge.locked_payment":
 		return protoreflect.ValueOfUint64(uint64(0))
-	case "inference.inference.PoCChallenge.generation_end_height":
+	case "inference.inference.PoCChallenge.start_height":
 		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.PoCChallenge.fail_reason":
+	case "inference.inference.PoCChallenge.seed":
+		return protoreflect.ValueOfBytes(nil)
+	case "inference.inference.PoCChallenge.failure_kind":
 		return protoreflect.ValueOfEnum(0)
-	case "inference.inference.PoCChallenge.segments":
-		list := []*PoCChallengeSegment{}
-		return protoreflect.ValueOfList(&_PoCChallenge_9_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallenge"))
@@ -1128,26 +434,21 @@ func (x *fastReflection_PoCChallenge) ProtoMethods() *protoiface.Methods {
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if x.ChallengeStartHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.ChallengeStartHeight))
-		}
 		if x.ExpectedReward != 0 {
 			n += 1 + runtime.Sov(uint64(x.ExpectedReward))
 		}
 		if x.LockedPayment != 0 {
 			n += 1 + runtime.Sov(uint64(x.LockedPayment))
 		}
-		if x.GenerationEndHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.GenerationEndHeight))
+		if x.StartHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.StartHeight))
 		}
-		if x.FailReason != 0 {
-			n += 1 + runtime.Sov(uint64(x.FailReason))
+		l = len(x.Seed)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if len(x.Segments) > 0 {
-			for _, e := range x.Segments {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
+		if x.FailureKind != 0 {
+			n += 1 + runtime.Sov(uint64(x.FailureKind))
 		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
@@ -1178,44 +479,30 @@ func (x *fastReflection_PoCChallenge) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if len(x.Segments) > 0 {
-			for iNdEx := len(x.Segments) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.Segments[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x4a
-			}
-		}
-		if x.FailReason != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.FailReason))
+		if x.FailureKind != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.FailureKind))
 			i--
 			dAtA[i] = 0x40
 		}
-		if x.GenerationEndHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.GenerationEndHeight))
+		if len(x.Seed) > 0 {
+			i -= len(x.Seed)
+			copy(dAtA[i:], x.Seed)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Seed)))
 			i--
-			dAtA[i] = 0x38
+			dAtA[i] = 0x3a
+		}
+		if x.StartHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.StartHeight))
+			i--
+			dAtA[i] = 0x30
 		}
 		if x.LockedPayment != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.LockedPayment))
 			i--
-			dAtA[i] = 0x30
+			dAtA[i] = 0x28
 		}
 		if x.ExpectedReward != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.ExpectedReward))
-			i--
-			dAtA[i] = 0x28
-		}
-		if x.ChallengeStartHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.ChallengeStartHeight))
 			i--
 			dAtA[i] = 0x20
 		}
@@ -1372,25 +659,6 @@ func (x *fastReflection_PoCChallenge) ProtoMethods() *protoiface.Methods {
 				iNdEx = postIndex
 			case 4:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ChallengeStartHeight", wireType)
-				}
-				x.ChallengeStartHeight = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.ChallengeStartHeight |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 5:
-				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ExpectedReward", wireType)
 				}
 				x.ExpectedReward = 0
@@ -1408,7 +676,7 @@ func (x *fastReflection_PoCChallenge) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
-			case 6:
+			case 5:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field LockedPayment", wireType)
 				}
@@ -1427,11 +695,11 @@ func (x *fastReflection_PoCChallenge) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
-			case 7:
+			case 6:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field GenerationEndHeight", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field StartHeight", wireType)
 				}
-				x.GenerationEndHeight = 0
+				x.StartHeight = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -1441,16 +709,50 @@ func (x *fastReflection_PoCChallenge) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.GenerationEndHeight |= int64(b&0x7F) << shift
+					x.StartHeight |= int64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
+			case 7:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Seed", wireType)
+				}
+				var byteLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					byteLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if byteLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + byteLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Seed = append(x.Seed[:0], dAtA[iNdEx:postIndex]...)
+				if x.Seed == nil {
+					x.Seed = []byte{}
+				}
+				iNdEx = postIndex
 			case 8:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FailReason", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FailureKind", wireType)
 				}
-				x.FailReason = 0
+				x.FailureKind = 0
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -1460,783 +762,7 @@ func (x *fastReflection_PoCChallenge) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					x.FailReason |= PoCChallengeFailReason(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 9:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Segments", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.Segments = append(x.Segments, &PoCChallengeSegment{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.Segments[len(x.Segments)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			default:
-				iNdEx = preIndex
-				skippy, err := runtime.Skip(dAtA[iNdEx:])
-				if err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				if (skippy < 0) || (iNdEx+skippy) < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if (iNdEx + skippy) > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				if !options.DiscardUnknown {
-					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
-				}
-				iNdEx += skippy
-			}
-		}
-
-		if iNdEx > l {
-			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-		}
-		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
-	}
-	return &protoiface.Methods{
-		NoUnkeyedLiterals: struct{}{},
-		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
-		Size:              size,
-		Marshal:           marshal,
-		Unmarshal:         unmarshal,
-		Merge:             nil,
-		CheckInitialized:  nil,
-	}
-}
-
-var (
-	md_PoCChallengeCommit                              protoreflect.MessageDescriptor
-	fd_PoCChallengeCommit_target                       protoreflect.FieldDescriptor
-	fd_PoCChallengeCommit_poc_stage_start_block_height protoreflect.FieldDescriptor
-	fd_PoCChallengeCommit_model_id                     protoreflect.FieldDescriptor
-	fd_PoCChallengeCommit_slice_index                  protoreflect.FieldDescriptor
-	fd_PoCChallengeCommit_count                        protoreflect.FieldDescriptor
-	fd_PoCChallengeCommit_root_hash                    protoreflect.FieldDescriptor
-	fd_PoCChallengeCommit_commit_block_height          protoreflect.FieldDescriptor
-)
-
-func init() {
-	file_inference_inference_poc_challenge_proto_init()
-	md_PoCChallengeCommit = File_inference_inference_poc_challenge_proto.Messages().ByName("PoCChallengeCommit")
-	fd_PoCChallengeCommit_target = md_PoCChallengeCommit.Fields().ByName("target")
-	fd_PoCChallengeCommit_poc_stage_start_block_height = md_PoCChallengeCommit.Fields().ByName("poc_stage_start_block_height")
-	fd_PoCChallengeCommit_model_id = md_PoCChallengeCommit.Fields().ByName("model_id")
-	fd_PoCChallengeCommit_slice_index = md_PoCChallengeCommit.Fields().ByName("slice_index")
-	fd_PoCChallengeCommit_count = md_PoCChallengeCommit.Fields().ByName("count")
-	fd_PoCChallengeCommit_root_hash = md_PoCChallengeCommit.Fields().ByName("root_hash")
-	fd_PoCChallengeCommit_commit_block_height = md_PoCChallengeCommit.Fields().ByName("commit_block_height")
-}
-
-var _ protoreflect.Message = (*fastReflection_PoCChallengeCommit)(nil)
-
-type fastReflection_PoCChallengeCommit PoCChallengeCommit
-
-func (x *PoCChallengeCommit) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_PoCChallengeCommit)(x)
-}
-
-func (x *PoCChallengeCommit) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_poc_challenge_proto_msgTypes[2]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-var _fastReflection_PoCChallengeCommit_messageType fastReflection_PoCChallengeCommit_messageType
-var _ protoreflect.MessageType = fastReflection_PoCChallengeCommit_messageType{}
-
-type fastReflection_PoCChallengeCommit_messageType struct{}
-
-func (x fastReflection_PoCChallengeCommit_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_PoCChallengeCommit)(nil)
-}
-func (x fastReflection_PoCChallengeCommit_messageType) New() protoreflect.Message {
-	return new(fastReflection_PoCChallengeCommit)
-}
-func (x fastReflection_PoCChallengeCommit_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_PoCChallengeCommit
-}
-
-// Descriptor returns message descriptor, which contains only the protobuf
-// type information for the message.
-func (x *fastReflection_PoCChallengeCommit) Descriptor() protoreflect.MessageDescriptor {
-	return md_PoCChallengeCommit
-}
-
-// Type returns the message type, which encapsulates both Go and protobuf
-// type information. If the Go type information is not needed,
-// it is recommended that the message descriptor be used instead.
-func (x *fastReflection_PoCChallengeCommit) Type() protoreflect.MessageType {
-	return _fastReflection_PoCChallengeCommit_messageType
-}
-
-// New returns a newly allocated and mutable empty message.
-func (x *fastReflection_PoCChallengeCommit) New() protoreflect.Message {
-	return new(fastReflection_PoCChallengeCommit)
-}
-
-// Interface unwraps the message reflection interface and
-// returns the underlying ProtoMessage interface.
-func (x *fastReflection_PoCChallengeCommit) Interface() protoreflect.ProtoMessage {
-	return (*PoCChallengeCommit)(x)
-}
-
-// Range iterates over every populated field in an undefined order,
-// calling f for each field descriptor and value encountered.
-// Range returns immediately if f returns false.
-// While iterating, mutating operations may only be performed
-// on the current field descriptor.
-func (x *fastReflection_PoCChallengeCommit) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.Target != "" {
-		value := protoreflect.ValueOfString(x.Target)
-		if !f(fd_PoCChallengeCommit_target, value) {
-			return
-		}
-	}
-	if x.PocStageStartBlockHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.PocStageStartBlockHeight)
-		if !f(fd_PoCChallengeCommit_poc_stage_start_block_height, value) {
-			return
-		}
-	}
-	if x.ModelId != "" {
-		value := protoreflect.ValueOfString(x.ModelId)
-		if !f(fd_PoCChallengeCommit_model_id, value) {
-			return
-		}
-	}
-	if x.SliceIndex != uint32(0) {
-		value := protoreflect.ValueOfUint32(x.SliceIndex)
-		if !f(fd_PoCChallengeCommit_slice_index, value) {
-			return
-		}
-	}
-	if x.Count != uint32(0) {
-		value := protoreflect.ValueOfUint32(x.Count)
-		if !f(fd_PoCChallengeCommit_count, value) {
-			return
-		}
-	}
-	if len(x.RootHash) != 0 {
-		value := protoreflect.ValueOfBytes(x.RootHash)
-		if !f(fd_PoCChallengeCommit_root_hash, value) {
-			return
-		}
-	}
-	if x.CommitBlockHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.CommitBlockHeight)
-		if !f(fd_PoCChallengeCommit_commit_block_height, value) {
-			return
-		}
-	}
-}
-
-// Has reports whether a field is populated.
-//
-// Some fields have the property of nullability where it is possible to
-// distinguish between the default value of a field and whether the field
-// was explicitly populated with the default value. Singular message fields,
-// member fields of a oneof, and proto2 scalar fields are nullable. Such
-// fields are populated only if explicitly set.
-//
-// In other cases (aside from the nullable cases above),
-// a proto3 scalar field is populated if it contains a non-zero value, and
-// a repeated field is populated if it is non-empty.
-func (x *fastReflection_PoCChallengeCommit) Has(fd protoreflect.FieldDescriptor) bool {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeCommit.target":
-		return x.Target != ""
-	case "inference.inference.PoCChallengeCommit.poc_stage_start_block_height":
-		return x.PocStageStartBlockHeight != int64(0)
-	case "inference.inference.PoCChallengeCommit.model_id":
-		return x.ModelId != ""
-	case "inference.inference.PoCChallengeCommit.slice_index":
-		return x.SliceIndex != uint32(0)
-	case "inference.inference.PoCChallengeCommit.count":
-		return x.Count != uint32(0)
-	case "inference.inference.PoCChallengeCommit.root_hash":
-		return len(x.RootHash) != 0
-	case "inference.inference.PoCChallengeCommit.commit_block_height":
-		return x.CommitBlockHeight != int64(0)
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeCommit does not contain field %s", fd.FullName()))
-	}
-}
-
-// Clear clears the field such that a subsequent Has call reports false.
-//
-// Clearing an extension field clears both the extension type and value
-// associated with the given field number.
-//
-// Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeCommit) Clear(fd protoreflect.FieldDescriptor) {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeCommit.target":
-		x.Target = ""
-	case "inference.inference.PoCChallengeCommit.poc_stage_start_block_height":
-		x.PocStageStartBlockHeight = int64(0)
-	case "inference.inference.PoCChallengeCommit.model_id":
-		x.ModelId = ""
-	case "inference.inference.PoCChallengeCommit.slice_index":
-		x.SliceIndex = uint32(0)
-	case "inference.inference.PoCChallengeCommit.count":
-		x.Count = uint32(0)
-	case "inference.inference.PoCChallengeCommit.root_hash":
-		x.RootHash = nil
-	case "inference.inference.PoCChallengeCommit.commit_block_height":
-		x.CommitBlockHeight = int64(0)
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeCommit does not contain field %s", fd.FullName()))
-	}
-}
-
-// Get retrieves the value for a field.
-//
-// For unpopulated scalars, it returns the default value, where
-// the default value of a bytes scalar is guaranteed to be a copy.
-// For unpopulated composite types, it returns an empty, read-only view
-// of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_PoCChallengeCommit) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
-	switch descriptor.FullName() {
-	case "inference.inference.PoCChallengeCommit.target":
-		value := x.Target
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.PoCChallengeCommit.poc_stage_start_block_height":
-		value := x.PocStageStartBlockHeight
-		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.PoCChallengeCommit.model_id":
-		value := x.ModelId
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.PoCChallengeCommit.slice_index":
-		value := x.SliceIndex
-		return protoreflect.ValueOfUint32(value)
-	case "inference.inference.PoCChallengeCommit.count":
-		value := x.Count
-		return protoreflect.ValueOfUint32(value)
-	case "inference.inference.PoCChallengeCommit.root_hash":
-		value := x.RootHash
-		return protoreflect.ValueOfBytes(value)
-	case "inference.inference.PoCChallengeCommit.commit_block_height":
-		value := x.CommitBlockHeight
-		return protoreflect.ValueOfInt64(value)
-	default:
-		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeCommit does not contain field %s", descriptor.FullName()))
-	}
-}
-
-// Set stores the value for a field.
-//
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType.
-// When setting a composite type, it is unspecified whether the stored value
-// aliases the source's memory in any way. If the composite value is an
-// empty, read-only value, then it panics.
-//
-// Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeCommit) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeCommit.target":
-		x.Target = value.Interface().(string)
-	case "inference.inference.PoCChallengeCommit.poc_stage_start_block_height":
-		x.PocStageStartBlockHeight = value.Int()
-	case "inference.inference.PoCChallengeCommit.model_id":
-		x.ModelId = value.Interface().(string)
-	case "inference.inference.PoCChallengeCommit.slice_index":
-		x.SliceIndex = uint32(value.Uint())
-	case "inference.inference.PoCChallengeCommit.count":
-		x.Count = uint32(value.Uint())
-	case "inference.inference.PoCChallengeCommit.root_hash":
-		x.RootHash = value.Bytes()
-	case "inference.inference.PoCChallengeCommit.commit_block_height":
-		x.CommitBlockHeight = value.Int()
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeCommit does not contain field %s", fd.FullName()))
-	}
-}
-
-// Mutable returns a mutable reference to a composite type.
-//
-// If the field is unpopulated, it may allocate a composite value.
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType
-// if not already stored.
-// It panics if the field does not contain a composite type.
-//
-// Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeCommit) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeCommit.target":
-		panic(fmt.Errorf("field target of message inference.inference.PoCChallengeCommit is not mutable"))
-	case "inference.inference.PoCChallengeCommit.poc_stage_start_block_height":
-		panic(fmt.Errorf("field poc_stage_start_block_height of message inference.inference.PoCChallengeCommit is not mutable"))
-	case "inference.inference.PoCChallengeCommit.model_id":
-		panic(fmt.Errorf("field model_id of message inference.inference.PoCChallengeCommit is not mutable"))
-	case "inference.inference.PoCChallengeCommit.slice_index":
-		panic(fmt.Errorf("field slice_index of message inference.inference.PoCChallengeCommit is not mutable"))
-	case "inference.inference.PoCChallengeCommit.count":
-		panic(fmt.Errorf("field count of message inference.inference.PoCChallengeCommit is not mutable"))
-	case "inference.inference.PoCChallengeCommit.root_hash":
-		panic(fmt.Errorf("field root_hash of message inference.inference.PoCChallengeCommit is not mutable"))
-	case "inference.inference.PoCChallengeCommit.commit_block_height":
-		panic(fmt.Errorf("field commit_block_height of message inference.inference.PoCChallengeCommit is not mutable"))
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeCommit does not contain field %s", fd.FullName()))
-	}
-}
-
-// NewField returns a new value that is assignable to the field
-// for the given descriptor. For scalars, this returns the default value.
-// For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_PoCChallengeCommit) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeCommit.target":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.PoCChallengeCommit.poc_stage_start_block_height":
-		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.PoCChallengeCommit.model_id":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.PoCChallengeCommit.slice_index":
-		return protoreflect.ValueOfUint32(uint32(0))
-	case "inference.inference.PoCChallengeCommit.count":
-		return protoreflect.ValueOfUint32(uint32(0))
-	case "inference.inference.PoCChallengeCommit.root_hash":
-		return protoreflect.ValueOfBytes(nil)
-	case "inference.inference.PoCChallengeCommit.commit_block_height":
-		return protoreflect.ValueOfInt64(int64(0))
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeCommit does not contain field %s", fd.FullName()))
-	}
-}
-
-// WhichOneof reports which field within the oneof is populated,
-// returning nil if none are populated.
-// It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_PoCChallengeCommit) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
-	switch d.FullName() {
-	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.PoCChallengeCommit", d.FullName()))
-	}
-	panic("unreachable")
-}
-
-// GetUnknown retrieves the entire list of unknown fields.
-// The caller may only mutate the contents of the RawFields
-// if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_PoCChallengeCommit) GetUnknown() protoreflect.RawFields {
-	return x.unknownFields
-}
-
-// SetUnknown stores an entire list of unknown fields.
-// The raw fields must be syntactically valid according to the wire format.
-// An implementation may panic if this is not the case.
-// Once stored, the caller must not mutate the content of the RawFields.
-// An empty RawFields may be passed to clear the fields.
-//
-// SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeCommit) SetUnknown(fields protoreflect.RawFields) {
-	x.unknownFields = fields
-}
-
-// IsValid reports whether the message is valid.
-//
-// An invalid message is an empty, read-only value.
-//
-// An invalid message often corresponds to a nil pointer of the concrete
-// message type, but the details are implementation dependent.
-// Validity is not part of the protobuf data model, and may not
-// be preserved in marshaling or other operations.
-func (x *fastReflection_PoCChallengeCommit) IsValid() bool {
-	return x != nil
-}
-
-// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
-// This method may return nil.
-//
-// The returned methods type is identical to
-// "google.golang.org/protobuf/runtime/protoiface".Methods.
-// Consult the protoiface package documentation for details.
-func (x *fastReflection_PoCChallengeCommit) ProtoMethods() *protoiface.Methods {
-	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*PoCChallengeCommit)
-		if x == nil {
-			return protoiface.SizeOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Size:              0,
-			}
-		}
-		options := runtime.SizeInputToOptions(input)
-		_ = options
-		var n int
-		var l int
-		_ = l
-		l = len(x.Target)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.PocStageStartBlockHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.PocStageStartBlockHeight))
-		}
-		l = len(x.ModelId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.SliceIndex != 0 {
-			n += 1 + runtime.Sov(uint64(x.SliceIndex))
-		}
-		if x.Count != 0 {
-			n += 1 + runtime.Sov(uint64(x.Count))
-		}
-		l = len(x.RootHash)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.CommitBlockHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.CommitBlockHeight))
-		}
-		if x.unknownFields != nil {
-			n += len(x.unknownFields)
-		}
-		return protoiface.SizeOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Size:              n,
-		}
-	}
-
-	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*PoCChallengeCommit)
-		if x == nil {
-			return protoiface.MarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Buf:               input.Buf,
-			}, nil
-		}
-		options := runtime.MarshalInputToOptions(input)
-		_ = options
-		size := options.Size(x)
-		dAtA := make([]byte, size)
-		i := len(dAtA)
-		_ = i
-		var l int
-		_ = l
-		if x.unknownFields != nil {
-			i -= len(x.unknownFields)
-			copy(dAtA[i:], x.unknownFields)
-		}
-		if x.CommitBlockHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.CommitBlockHeight))
-			i--
-			dAtA[i] = 0x38
-		}
-		if len(x.RootHash) > 0 {
-			i -= len(x.RootHash)
-			copy(dAtA[i:], x.RootHash)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RootHash)))
-			i--
-			dAtA[i] = 0x32
-		}
-		if x.Count != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.Count))
-			i--
-			dAtA[i] = 0x28
-		}
-		if x.SliceIndex != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.SliceIndex))
-			i--
-			dAtA[i] = 0x20
-		}
-		if len(x.ModelId) > 0 {
-			i -= len(x.ModelId)
-			copy(dAtA[i:], x.ModelId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ModelId)))
-			i--
-			dAtA[i] = 0x1a
-		}
-		if x.PocStageStartBlockHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocStageStartBlockHeight))
-			i--
-			dAtA[i] = 0x10
-		}
-		if len(x.Target) > 0 {
-			i -= len(x.Target)
-			copy(dAtA[i:], x.Target)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Target)))
-			i--
-			dAtA[i] = 0xa
-		}
-		if input.Buf != nil {
-			input.Buf = append(input.Buf, dAtA...)
-		} else {
-			input.Buf = dAtA
-		}
-		return protoiface.MarshalOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Buf:               input.Buf,
-		}, nil
-	}
-	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*PoCChallengeCommit)
-		if x == nil {
-			return protoiface.UnmarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Flags:             input.Flags,
-			}, nil
-		}
-		options := runtime.UnmarshalInputToOptions(input)
-		_ = options
-		dAtA := input.Buf
-		l := len(dAtA)
-		iNdEx := 0
-		for iNdEx < l {
-			preIndex := iNdEx
-			var wire uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				wire |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			fieldNum := int32(wire >> 3)
-			wireType := int(wire & 0x7)
-			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: PoCChallengeCommit: wiretype end group for non-group")
-			}
-			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: PoCChallengeCommit: illegal tag %d (wire type %d)", fieldNum, wire)
-			}
-			switch fieldNum {
-			case 1:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Target", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.Target = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
-			case 2:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocStageStartBlockHeight", wireType)
-				}
-				x.PocStageStartBlockHeight = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.PocStageStartBlockHeight |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 3:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ModelId", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.ModelId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
-			case 4:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SliceIndex", wireType)
-				}
-				x.SliceIndex = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.SliceIndex |= uint32(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 5:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Count", wireType)
-				}
-				x.Count = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.Count |= uint32(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 6:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RootHash", wireType)
-				}
-				var byteLen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					byteLen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if byteLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + byteLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.RootHash = append(x.RootHash[:0], dAtA[iNdEx:postIndex]...)
-				if x.RootHash == nil {
-					x.RootHash = []byte{}
-				}
-				iNdEx = postIndex
-			case 7:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CommitBlockHeight", wireType)
-				}
-				x.CommitBlockHeight = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.CommitBlockHeight |= int64(b&0x7F) << shift
+					x.FailureKind |= PoCChallengeFailureKind(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -2276,1342 +802,76 @@ func (x *fastReflection_PoCChallengeCommit) ProtoMethods() *protoiface.Methods {
 	}
 }
 
-var (
-	md_PoCChallengeValidation                              protoreflect.MessageDescriptor
-	fd_PoCChallengeValidation_target                       protoreflect.FieldDescriptor
-	fd_PoCChallengeValidation_poc_stage_start_block_height protoreflect.FieldDescriptor
-	fd_PoCChallengeValidation_model_id                     protoreflect.FieldDescriptor
-	fd_PoCChallengeValidation_validator                    protoreflect.FieldDescriptor
-	fd_PoCChallengeValidation_validated_weight             protoreflect.FieldDescriptor
-)
+var _ protoreflect.List = (*_OpenPoCChallenge_6_list)(nil)
 
-func init() {
-	file_inference_inference_poc_challenge_proto_init()
-	md_PoCChallengeValidation = File_inference_inference_poc_challenge_proto.Messages().ByName("PoCChallengeValidation")
-	fd_PoCChallengeValidation_target = md_PoCChallengeValidation.Fields().ByName("target")
-	fd_PoCChallengeValidation_poc_stage_start_block_height = md_PoCChallengeValidation.Fields().ByName("poc_stage_start_block_height")
-	fd_PoCChallengeValidation_model_id = md_PoCChallengeValidation.Fields().ByName("model_id")
-	fd_PoCChallengeValidation_validator = md_PoCChallengeValidation.Fields().ByName("validator")
-	fd_PoCChallengeValidation_validated_weight = md_PoCChallengeValidation.Fields().ByName("validated_weight")
+type _OpenPoCChallenge_6_list struct {
+	list *[]*PoCV2StoreCommit
 }
 
-var _ protoreflect.Message = (*fastReflection_PoCChallengeValidation)(nil)
-
-type fastReflection_PoCChallengeValidation PoCChallengeValidation
-
-func (x *PoCChallengeValidation) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_PoCChallengeValidation)(x)
-}
-
-func (x *PoCChallengeValidation) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_poc_challenge_proto_msgTypes[3]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-var _fastReflection_PoCChallengeValidation_messageType fastReflection_PoCChallengeValidation_messageType
-var _ protoreflect.MessageType = fastReflection_PoCChallengeValidation_messageType{}
-
-type fastReflection_PoCChallengeValidation_messageType struct{}
-
-func (x fastReflection_PoCChallengeValidation_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_PoCChallengeValidation)(nil)
-}
-func (x fastReflection_PoCChallengeValidation_messageType) New() protoreflect.Message {
-	return new(fastReflection_PoCChallengeValidation)
-}
-func (x fastReflection_PoCChallengeValidation_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_PoCChallengeValidation
-}
-
-// Descriptor returns message descriptor, which contains only the protobuf
-// type information for the message.
-func (x *fastReflection_PoCChallengeValidation) Descriptor() protoreflect.MessageDescriptor {
-	return md_PoCChallengeValidation
-}
-
-// Type returns the message type, which encapsulates both Go and protobuf
-// type information. If the Go type information is not needed,
-// it is recommended that the message descriptor be used instead.
-func (x *fastReflection_PoCChallengeValidation) Type() protoreflect.MessageType {
-	return _fastReflection_PoCChallengeValidation_messageType
-}
-
-// New returns a newly allocated and mutable empty message.
-func (x *fastReflection_PoCChallengeValidation) New() protoreflect.Message {
-	return new(fastReflection_PoCChallengeValidation)
-}
-
-// Interface unwraps the message reflection interface and
-// returns the underlying ProtoMessage interface.
-func (x *fastReflection_PoCChallengeValidation) Interface() protoreflect.ProtoMessage {
-	return (*PoCChallengeValidation)(x)
-}
-
-// Range iterates over every populated field in an undefined order,
-// calling f for each field descriptor and value encountered.
-// Range returns immediately if f returns false.
-// While iterating, mutating operations may only be performed
-// on the current field descriptor.
-func (x *fastReflection_PoCChallengeValidation) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.Target != "" {
-		value := protoreflect.ValueOfString(x.Target)
-		if !f(fd_PoCChallengeValidation_target, value) {
-			return
-		}
-	}
-	if x.PocStageStartBlockHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.PocStageStartBlockHeight)
-		if !f(fd_PoCChallengeValidation_poc_stage_start_block_height, value) {
-			return
-		}
-	}
-	if x.ModelId != "" {
-		value := protoreflect.ValueOfString(x.ModelId)
-		if !f(fd_PoCChallengeValidation_model_id, value) {
-			return
-		}
-	}
-	if x.Validator != "" {
-		value := protoreflect.ValueOfString(x.Validator)
-		if !f(fd_PoCChallengeValidation_validator, value) {
-			return
-		}
-	}
-	if x.ValidatedWeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.ValidatedWeight)
-		if !f(fd_PoCChallengeValidation_validated_weight, value) {
-			return
-		}
-	}
-}
-
-// Has reports whether a field is populated.
-//
-// Some fields have the property of nullability where it is possible to
-// distinguish between the default value of a field and whether the field
-// was explicitly populated with the default value. Singular message fields,
-// member fields of a oneof, and proto2 scalar fields are nullable. Such
-// fields are populated only if explicitly set.
-//
-// In other cases (aside from the nullable cases above),
-// a proto3 scalar field is populated if it contains a non-zero value, and
-// a repeated field is populated if it is non-empty.
-func (x *fastReflection_PoCChallengeValidation) Has(fd protoreflect.FieldDescriptor) bool {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeValidation.target":
-		return x.Target != ""
-	case "inference.inference.PoCChallengeValidation.poc_stage_start_block_height":
-		return x.PocStageStartBlockHeight != int64(0)
-	case "inference.inference.PoCChallengeValidation.model_id":
-		return x.ModelId != ""
-	case "inference.inference.PoCChallengeValidation.validator":
-		return x.Validator != ""
-	case "inference.inference.PoCChallengeValidation.validated_weight":
-		return x.ValidatedWeight != int64(0)
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeValidation"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeValidation does not contain field %s", fd.FullName()))
-	}
-}
-
-// Clear clears the field such that a subsequent Has call reports false.
-//
-// Clearing an extension field clears both the extension type and value
-// associated with the given field number.
-//
-// Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeValidation) Clear(fd protoreflect.FieldDescriptor) {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeValidation.target":
-		x.Target = ""
-	case "inference.inference.PoCChallengeValidation.poc_stage_start_block_height":
-		x.PocStageStartBlockHeight = int64(0)
-	case "inference.inference.PoCChallengeValidation.model_id":
-		x.ModelId = ""
-	case "inference.inference.PoCChallengeValidation.validator":
-		x.Validator = ""
-	case "inference.inference.PoCChallengeValidation.validated_weight":
-		x.ValidatedWeight = int64(0)
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeValidation"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeValidation does not contain field %s", fd.FullName()))
-	}
-}
-
-// Get retrieves the value for a field.
-//
-// For unpopulated scalars, it returns the default value, where
-// the default value of a bytes scalar is guaranteed to be a copy.
-// For unpopulated composite types, it returns an empty, read-only view
-// of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_PoCChallengeValidation) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
-	switch descriptor.FullName() {
-	case "inference.inference.PoCChallengeValidation.target":
-		value := x.Target
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.PoCChallengeValidation.poc_stage_start_block_height":
-		value := x.PocStageStartBlockHeight
-		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.PoCChallengeValidation.model_id":
-		value := x.ModelId
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.PoCChallengeValidation.validator":
-		value := x.Validator
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.PoCChallengeValidation.validated_weight":
-		value := x.ValidatedWeight
-		return protoreflect.ValueOfInt64(value)
-	default:
-		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeValidation"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeValidation does not contain field %s", descriptor.FullName()))
-	}
-}
-
-// Set stores the value for a field.
-//
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType.
-// When setting a composite type, it is unspecified whether the stored value
-// aliases the source's memory in any way. If the composite value is an
-// empty, read-only value, then it panics.
-//
-// Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeValidation) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeValidation.target":
-		x.Target = value.Interface().(string)
-	case "inference.inference.PoCChallengeValidation.poc_stage_start_block_height":
-		x.PocStageStartBlockHeight = value.Int()
-	case "inference.inference.PoCChallengeValidation.model_id":
-		x.ModelId = value.Interface().(string)
-	case "inference.inference.PoCChallengeValidation.validator":
-		x.Validator = value.Interface().(string)
-	case "inference.inference.PoCChallengeValidation.validated_weight":
-		x.ValidatedWeight = value.Int()
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeValidation"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeValidation does not contain field %s", fd.FullName()))
-	}
-}
-
-// Mutable returns a mutable reference to a composite type.
-//
-// If the field is unpopulated, it may allocate a composite value.
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType
-// if not already stored.
-// It panics if the field does not contain a composite type.
-//
-// Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeValidation) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeValidation.target":
-		panic(fmt.Errorf("field target of message inference.inference.PoCChallengeValidation is not mutable"))
-	case "inference.inference.PoCChallengeValidation.poc_stage_start_block_height":
-		panic(fmt.Errorf("field poc_stage_start_block_height of message inference.inference.PoCChallengeValidation is not mutable"))
-	case "inference.inference.PoCChallengeValidation.model_id":
-		panic(fmt.Errorf("field model_id of message inference.inference.PoCChallengeValidation is not mutable"))
-	case "inference.inference.PoCChallengeValidation.validator":
-		panic(fmt.Errorf("field validator of message inference.inference.PoCChallengeValidation is not mutable"))
-	case "inference.inference.PoCChallengeValidation.validated_weight":
-		panic(fmt.Errorf("field validated_weight of message inference.inference.PoCChallengeValidation is not mutable"))
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeValidation"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeValidation does not contain field %s", fd.FullName()))
-	}
-}
-
-// NewField returns a new value that is assignable to the field
-// for the given descriptor. For scalars, this returns the default value.
-// For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_PoCChallengeValidation) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.PoCChallengeValidation.target":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.PoCChallengeValidation.poc_stage_start_block_height":
-		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.PoCChallengeValidation.model_id":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.PoCChallengeValidation.validator":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.PoCChallengeValidation.validated_weight":
-		return protoreflect.ValueOfInt64(int64(0))
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.PoCChallengeValidation"))
-		}
-		panic(fmt.Errorf("message inference.inference.PoCChallengeValidation does not contain field %s", fd.FullName()))
-	}
-}
-
-// WhichOneof reports which field within the oneof is populated,
-// returning nil if none are populated.
-// It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_PoCChallengeValidation) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
-	switch d.FullName() {
-	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.PoCChallengeValidation", d.FullName()))
-	}
-	panic("unreachable")
-}
-
-// GetUnknown retrieves the entire list of unknown fields.
-// The caller may only mutate the contents of the RawFields
-// if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_PoCChallengeValidation) GetUnknown() protoreflect.RawFields {
-	return x.unknownFields
-}
-
-// SetUnknown stores an entire list of unknown fields.
-// The raw fields must be syntactically valid according to the wire format.
-// An implementation may panic if this is not the case.
-// Once stored, the caller must not mutate the content of the RawFields.
-// An empty RawFields may be passed to clear the fields.
-//
-// SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_PoCChallengeValidation) SetUnknown(fields protoreflect.RawFields) {
-	x.unknownFields = fields
-}
-
-// IsValid reports whether the message is valid.
-//
-// An invalid message is an empty, read-only value.
-//
-// An invalid message often corresponds to a nil pointer of the concrete
-// message type, but the details are implementation dependent.
-// Validity is not part of the protobuf data model, and may not
-// be preserved in marshaling or other operations.
-func (x *fastReflection_PoCChallengeValidation) IsValid() bool {
-	return x != nil
-}
-
-// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
-// This method may return nil.
-//
-// The returned methods type is identical to
-// "google.golang.org/protobuf/runtime/protoiface".Methods.
-// Consult the protoiface package documentation for details.
-func (x *fastReflection_PoCChallengeValidation) ProtoMethods() *protoiface.Methods {
-	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*PoCChallengeValidation)
-		if x == nil {
-			return protoiface.SizeOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Size:              0,
-			}
-		}
-		options := runtime.SizeInputToOptions(input)
-		_ = options
-		var n int
-		var l int
-		_ = l
-		l = len(x.Target)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.PocStageStartBlockHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.PocStageStartBlockHeight))
-		}
-		l = len(x.ModelId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		l = len(x.Validator)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.ValidatedWeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.ValidatedWeight))
-		}
-		if x.unknownFields != nil {
-			n += len(x.unknownFields)
-		}
-		return protoiface.SizeOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Size:              n,
-		}
-	}
-
-	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*PoCChallengeValidation)
-		if x == nil {
-			return protoiface.MarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Buf:               input.Buf,
-			}, nil
-		}
-		options := runtime.MarshalInputToOptions(input)
-		_ = options
-		size := options.Size(x)
-		dAtA := make([]byte, size)
-		i := len(dAtA)
-		_ = i
-		var l int
-		_ = l
-		if x.unknownFields != nil {
-			i -= len(x.unknownFields)
-			copy(dAtA[i:], x.unknownFields)
-		}
-		if x.ValidatedWeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.ValidatedWeight))
-			i--
-			dAtA[i] = 0x28
-		}
-		if len(x.Validator) > 0 {
-			i -= len(x.Validator)
-			copy(dAtA[i:], x.Validator)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Validator)))
-			i--
-			dAtA[i] = 0x22
-		}
-		if len(x.ModelId) > 0 {
-			i -= len(x.ModelId)
-			copy(dAtA[i:], x.ModelId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ModelId)))
-			i--
-			dAtA[i] = 0x1a
-		}
-		if x.PocStageStartBlockHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocStageStartBlockHeight))
-			i--
-			dAtA[i] = 0x10
-		}
-		if len(x.Target) > 0 {
-			i -= len(x.Target)
-			copy(dAtA[i:], x.Target)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Target)))
-			i--
-			dAtA[i] = 0xa
-		}
-		if input.Buf != nil {
-			input.Buf = append(input.Buf, dAtA...)
-		} else {
-			input.Buf = dAtA
-		}
-		return protoiface.MarshalOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Buf:               input.Buf,
-		}, nil
-	}
-	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*PoCChallengeValidation)
-		if x == nil {
-			return protoiface.UnmarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Flags:             input.Flags,
-			}, nil
-		}
-		options := runtime.UnmarshalInputToOptions(input)
-		_ = options
-		dAtA := input.Buf
-		l := len(dAtA)
-		iNdEx := 0
-		for iNdEx < l {
-			preIndex := iNdEx
-			var wire uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				wire |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			fieldNum := int32(wire >> 3)
-			wireType := int(wire & 0x7)
-			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: PoCChallengeValidation: wiretype end group for non-group")
-			}
-			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: PoCChallengeValidation: illegal tag %d (wire type %d)", fieldNum, wire)
-			}
-			switch fieldNum {
-			case 1:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Target", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.Target = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
-			case 2:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocStageStartBlockHeight", wireType)
-				}
-				x.PocStageStartBlockHeight = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.PocStageStartBlockHeight |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 3:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ModelId", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.ModelId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
-			case 4:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Validator", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.Validator = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
-			case 5:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ValidatedWeight", wireType)
-				}
-				x.ValidatedWeight = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.ValidatedWeight |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			default:
-				iNdEx = preIndex
-				skippy, err := runtime.Skip(dAtA[iNdEx:])
-				if err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				if (skippy < 0) || (iNdEx+skippy) < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if (iNdEx + skippy) > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				if !options.DiscardUnknown {
-					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
-				}
-				iNdEx += skippy
-			}
-		}
-
-		if iNdEx > l {
-			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-		}
-		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
-	}
-	return &protoiface.Methods{
-		NoUnkeyedLiterals: struct{}{},
-		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
-		Size:              size,
-		Marshal:           marshal,
-		Unmarshal:         unmarshal,
-		Merge:             nil,
-		CheckInitialized:  nil,
-	}
-}
-
-var (
-	md_CountedSliceCommit                              protoreflect.MessageDescriptor
-	fd_CountedSliceCommit_poc_stage_start_block_height protoreflect.FieldDescriptor
-	fd_CountedSliceCommit_slice_index                  protoreflect.FieldDescriptor
-	fd_CountedSliceCommit_model_id                     protoreflect.FieldDescriptor
-	fd_CountedSliceCommit_count                        protoreflect.FieldDescriptor
-	fd_CountedSliceCommit_root_hash                    protoreflect.FieldDescriptor
-)
-
-func init() {
-	file_inference_inference_poc_challenge_proto_init()
-	md_CountedSliceCommit = File_inference_inference_poc_challenge_proto.Messages().ByName("CountedSliceCommit")
-	fd_CountedSliceCommit_poc_stage_start_block_height = md_CountedSliceCommit.Fields().ByName("poc_stage_start_block_height")
-	fd_CountedSliceCommit_slice_index = md_CountedSliceCommit.Fields().ByName("slice_index")
-	fd_CountedSliceCommit_model_id = md_CountedSliceCommit.Fields().ByName("model_id")
-	fd_CountedSliceCommit_count = md_CountedSliceCommit.Fields().ByName("count")
-	fd_CountedSliceCommit_root_hash = md_CountedSliceCommit.Fields().ByName("root_hash")
-}
-
-var _ protoreflect.Message = (*fastReflection_CountedSliceCommit)(nil)
-
-type fastReflection_CountedSliceCommit CountedSliceCommit
-
-func (x *CountedSliceCommit) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_CountedSliceCommit)(x)
-}
-
-func (x *CountedSliceCommit) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_poc_challenge_proto_msgTypes[4]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-var _fastReflection_CountedSliceCommit_messageType fastReflection_CountedSliceCommit_messageType
-var _ protoreflect.MessageType = fastReflection_CountedSliceCommit_messageType{}
-
-type fastReflection_CountedSliceCommit_messageType struct{}
-
-func (x fastReflection_CountedSliceCommit_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_CountedSliceCommit)(nil)
-}
-func (x fastReflection_CountedSliceCommit_messageType) New() protoreflect.Message {
-	return new(fastReflection_CountedSliceCommit)
-}
-func (x fastReflection_CountedSliceCommit_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_CountedSliceCommit
-}
-
-// Descriptor returns message descriptor, which contains only the protobuf
-// type information for the message.
-func (x *fastReflection_CountedSliceCommit) Descriptor() protoreflect.MessageDescriptor {
-	return md_CountedSliceCommit
-}
-
-// Type returns the message type, which encapsulates both Go and protobuf
-// type information. If the Go type information is not needed,
-// it is recommended that the message descriptor be used instead.
-func (x *fastReflection_CountedSliceCommit) Type() protoreflect.MessageType {
-	return _fastReflection_CountedSliceCommit_messageType
-}
-
-// New returns a newly allocated and mutable empty message.
-func (x *fastReflection_CountedSliceCommit) New() protoreflect.Message {
-	return new(fastReflection_CountedSliceCommit)
-}
-
-// Interface unwraps the message reflection interface and
-// returns the underlying ProtoMessage interface.
-func (x *fastReflection_CountedSliceCommit) Interface() protoreflect.ProtoMessage {
-	return (*CountedSliceCommit)(x)
-}
-
-// Range iterates over every populated field in an undefined order,
-// calling f for each field descriptor and value encountered.
-// Range returns immediately if f returns false.
-// While iterating, mutating operations may only be performed
-// on the current field descriptor.
-func (x *fastReflection_CountedSliceCommit) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.PocStageStartBlockHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.PocStageStartBlockHeight)
-		if !f(fd_CountedSliceCommit_poc_stage_start_block_height, value) {
-			return
-		}
-	}
-	if x.SliceIndex != uint32(0) {
-		value := protoreflect.ValueOfUint32(x.SliceIndex)
-		if !f(fd_CountedSliceCommit_slice_index, value) {
-			return
-		}
-	}
-	if x.ModelId != "" {
-		value := protoreflect.ValueOfString(x.ModelId)
-		if !f(fd_CountedSliceCommit_model_id, value) {
-			return
-		}
-	}
-	if x.Count != uint32(0) {
-		value := protoreflect.ValueOfUint32(x.Count)
-		if !f(fd_CountedSliceCommit_count, value) {
-			return
-		}
-	}
-	if len(x.RootHash) != 0 {
-		value := protoreflect.ValueOfBytes(x.RootHash)
-		if !f(fd_CountedSliceCommit_root_hash, value) {
-			return
-		}
-	}
-}
-
-// Has reports whether a field is populated.
-//
-// Some fields have the property of nullability where it is possible to
-// distinguish between the default value of a field and whether the field
-// was explicitly populated with the default value. Singular message fields,
-// member fields of a oneof, and proto2 scalar fields are nullable. Such
-// fields are populated only if explicitly set.
-//
-// In other cases (aside from the nullable cases above),
-// a proto3 scalar field is populated if it contains a non-zero value, and
-// a repeated field is populated if it is non-empty.
-func (x *fastReflection_CountedSliceCommit) Has(fd protoreflect.FieldDescriptor) bool {
-	switch fd.FullName() {
-	case "inference.inference.CountedSliceCommit.poc_stage_start_block_height":
-		return x.PocStageStartBlockHeight != int64(0)
-	case "inference.inference.CountedSliceCommit.slice_index":
-		return x.SliceIndex != uint32(0)
-	case "inference.inference.CountedSliceCommit.model_id":
-		return x.ModelId != ""
-	case "inference.inference.CountedSliceCommit.count":
-		return x.Count != uint32(0)
-	case "inference.inference.CountedSliceCommit.root_hash":
-		return len(x.RootHash) != 0
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CountedSliceCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.CountedSliceCommit does not contain field %s", fd.FullName()))
-	}
-}
-
-// Clear clears the field such that a subsequent Has call reports false.
-//
-// Clearing an extension field clears both the extension type and value
-// associated with the given field number.
-//
-// Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_CountedSliceCommit) Clear(fd protoreflect.FieldDescriptor) {
-	switch fd.FullName() {
-	case "inference.inference.CountedSliceCommit.poc_stage_start_block_height":
-		x.PocStageStartBlockHeight = int64(0)
-	case "inference.inference.CountedSliceCommit.slice_index":
-		x.SliceIndex = uint32(0)
-	case "inference.inference.CountedSliceCommit.model_id":
-		x.ModelId = ""
-	case "inference.inference.CountedSliceCommit.count":
-		x.Count = uint32(0)
-	case "inference.inference.CountedSliceCommit.root_hash":
-		x.RootHash = nil
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CountedSliceCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.CountedSliceCommit does not contain field %s", fd.FullName()))
-	}
-}
-
-// Get retrieves the value for a field.
-//
-// For unpopulated scalars, it returns the default value, where
-// the default value of a bytes scalar is guaranteed to be a copy.
-// For unpopulated composite types, it returns an empty, read-only view
-// of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_CountedSliceCommit) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
-	switch descriptor.FullName() {
-	case "inference.inference.CountedSliceCommit.poc_stage_start_block_height":
-		value := x.PocStageStartBlockHeight
-		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.CountedSliceCommit.slice_index":
-		value := x.SliceIndex
-		return protoreflect.ValueOfUint32(value)
-	case "inference.inference.CountedSliceCommit.model_id":
-		value := x.ModelId
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.CountedSliceCommit.count":
-		value := x.Count
-		return protoreflect.ValueOfUint32(value)
-	case "inference.inference.CountedSliceCommit.root_hash":
-		value := x.RootHash
-		return protoreflect.ValueOfBytes(value)
-	default:
-		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CountedSliceCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.CountedSliceCommit does not contain field %s", descriptor.FullName()))
-	}
-}
-
-// Set stores the value for a field.
-//
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType.
-// When setting a composite type, it is unspecified whether the stored value
-// aliases the source's memory in any way. If the composite value is an
-// empty, read-only value, then it panics.
-//
-// Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_CountedSliceCommit) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
-	switch fd.FullName() {
-	case "inference.inference.CountedSliceCommit.poc_stage_start_block_height":
-		x.PocStageStartBlockHeight = value.Int()
-	case "inference.inference.CountedSliceCommit.slice_index":
-		x.SliceIndex = uint32(value.Uint())
-	case "inference.inference.CountedSliceCommit.model_id":
-		x.ModelId = value.Interface().(string)
-	case "inference.inference.CountedSliceCommit.count":
-		x.Count = uint32(value.Uint())
-	case "inference.inference.CountedSliceCommit.root_hash":
-		x.RootHash = value.Bytes()
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CountedSliceCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.CountedSliceCommit does not contain field %s", fd.FullName()))
-	}
-}
-
-// Mutable returns a mutable reference to a composite type.
-//
-// If the field is unpopulated, it may allocate a composite value.
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType
-// if not already stored.
-// It panics if the field does not contain a composite type.
-//
-// Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_CountedSliceCommit) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.CountedSliceCommit.poc_stage_start_block_height":
-		panic(fmt.Errorf("field poc_stage_start_block_height of message inference.inference.CountedSliceCommit is not mutable"))
-	case "inference.inference.CountedSliceCommit.slice_index":
-		panic(fmt.Errorf("field slice_index of message inference.inference.CountedSliceCommit is not mutable"))
-	case "inference.inference.CountedSliceCommit.model_id":
-		panic(fmt.Errorf("field model_id of message inference.inference.CountedSliceCommit is not mutable"))
-	case "inference.inference.CountedSliceCommit.count":
-		panic(fmt.Errorf("field count of message inference.inference.CountedSliceCommit is not mutable"))
-	case "inference.inference.CountedSliceCommit.root_hash":
-		panic(fmt.Errorf("field root_hash of message inference.inference.CountedSliceCommit is not mutable"))
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CountedSliceCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.CountedSliceCommit does not contain field %s", fd.FullName()))
-	}
-}
-
-// NewField returns a new value that is assignable to the field
-// for the given descriptor. For scalars, this returns the default value.
-// For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_CountedSliceCommit) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.CountedSliceCommit.poc_stage_start_block_height":
-		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.CountedSliceCommit.slice_index":
-		return protoreflect.ValueOfUint32(uint32(0))
-	case "inference.inference.CountedSliceCommit.model_id":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.CountedSliceCommit.count":
-		return protoreflect.ValueOfUint32(uint32(0))
-	case "inference.inference.CountedSliceCommit.root_hash":
-		return protoreflect.ValueOfBytes(nil)
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.CountedSliceCommit"))
-		}
-		panic(fmt.Errorf("message inference.inference.CountedSliceCommit does not contain field %s", fd.FullName()))
-	}
-}
-
-// WhichOneof reports which field within the oneof is populated,
-// returning nil if none are populated.
-// It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_CountedSliceCommit) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
-	switch d.FullName() {
-	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.CountedSliceCommit", d.FullName()))
-	}
-	panic("unreachable")
-}
-
-// GetUnknown retrieves the entire list of unknown fields.
-// The caller may only mutate the contents of the RawFields
-// if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_CountedSliceCommit) GetUnknown() protoreflect.RawFields {
-	return x.unknownFields
-}
-
-// SetUnknown stores an entire list of unknown fields.
-// The raw fields must be syntactically valid according to the wire format.
-// An implementation may panic if this is not the case.
-// Once stored, the caller must not mutate the content of the RawFields.
-// An empty RawFields may be passed to clear the fields.
-//
-// SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_CountedSliceCommit) SetUnknown(fields protoreflect.RawFields) {
-	x.unknownFields = fields
-}
-
-// IsValid reports whether the message is valid.
-//
-// An invalid message is an empty, read-only value.
-//
-// An invalid message often corresponds to a nil pointer of the concrete
-// message type, but the details are implementation dependent.
-// Validity is not part of the protobuf data model, and may not
-// be preserved in marshaling or other operations.
-func (x *fastReflection_CountedSliceCommit) IsValid() bool {
-	return x != nil
-}
-
-// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
-// This method may return nil.
-//
-// The returned methods type is identical to
-// "google.golang.org/protobuf/runtime/protoiface".Methods.
-// Consult the protoiface package documentation for details.
-func (x *fastReflection_CountedSliceCommit) ProtoMethods() *protoiface.Methods {
-	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*CountedSliceCommit)
-		if x == nil {
-			return protoiface.SizeOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Size:              0,
-			}
-		}
-		options := runtime.SizeInputToOptions(input)
-		_ = options
-		var n int
-		var l int
-		_ = l
-		if x.PocStageStartBlockHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.PocStageStartBlockHeight))
-		}
-		if x.SliceIndex != 0 {
-			n += 1 + runtime.Sov(uint64(x.SliceIndex))
-		}
-		l = len(x.ModelId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.Count != 0 {
-			n += 1 + runtime.Sov(uint64(x.Count))
-		}
-		l = len(x.RootHash)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.unknownFields != nil {
-			n += len(x.unknownFields)
-		}
-		return protoiface.SizeOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Size:              n,
-		}
-	}
-
-	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*CountedSliceCommit)
-		if x == nil {
-			return protoiface.MarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Buf:               input.Buf,
-			}, nil
-		}
-		options := runtime.MarshalInputToOptions(input)
-		_ = options
-		size := options.Size(x)
-		dAtA := make([]byte, size)
-		i := len(dAtA)
-		_ = i
-		var l int
-		_ = l
-		if x.unknownFields != nil {
-			i -= len(x.unknownFields)
-			copy(dAtA[i:], x.unknownFields)
-		}
-		if len(x.RootHash) > 0 {
-			i -= len(x.RootHash)
-			copy(dAtA[i:], x.RootHash)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.RootHash)))
-			i--
-			dAtA[i] = 0x2a
-		}
-		if x.Count != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.Count))
-			i--
-			dAtA[i] = 0x20
-		}
-		if len(x.ModelId) > 0 {
-			i -= len(x.ModelId)
-			copy(dAtA[i:], x.ModelId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ModelId)))
-			i--
-			dAtA[i] = 0x1a
-		}
-		if x.SliceIndex != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.SliceIndex))
-			i--
-			dAtA[i] = 0x10
-		}
-		if x.PocStageStartBlockHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.PocStageStartBlockHeight))
-			i--
-			dAtA[i] = 0x8
-		}
-		if input.Buf != nil {
-			input.Buf = append(input.Buf, dAtA...)
-		} else {
-			input.Buf = dAtA
-		}
-		return protoiface.MarshalOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Buf:               input.Buf,
-		}, nil
-	}
-	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*CountedSliceCommit)
-		if x == nil {
-			return protoiface.UnmarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Flags:             input.Flags,
-			}, nil
-		}
-		options := runtime.UnmarshalInputToOptions(input)
-		_ = options
-		dAtA := input.Buf
-		l := len(dAtA)
-		iNdEx := 0
-		for iNdEx < l {
-			preIndex := iNdEx
-			var wire uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				wire |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			fieldNum := int32(wire >> 3)
-			wireType := int(wire & 0x7)
-			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: CountedSliceCommit: wiretype end group for non-group")
-			}
-			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: CountedSliceCommit: illegal tag %d (wire type %d)", fieldNum, wire)
-			}
-			switch fieldNum {
-			case 1:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PocStageStartBlockHeight", wireType)
-				}
-				x.PocStageStartBlockHeight = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.PocStageStartBlockHeight |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 2:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SliceIndex", wireType)
-				}
-				x.SliceIndex = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.SliceIndex |= uint32(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 3:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ModelId", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.ModelId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
-			case 4:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Count", wireType)
-				}
-				x.Count = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.Count |= uint32(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 5:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field RootHash", wireType)
-				}
-				var byteLen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					byteLen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if byteLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + byteLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.RootHash = append(x.RootHash[:0], dAtA[iNdEx:postIndex]...)
-				if x.RootHash == nil {
-					x.RootHash = []byte{}
-				}
-				iNdEx = postIndex
-			default:
-				iNdEx = preIndex
-				skippy, err := runtime.Skip(dAtA[iNdEx:])
-				if err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				if (skippy < 0) || (iNdEx+skippy) < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if (iNdEx + skippy) > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				if !options.DiscardUnknown {
-					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
-				}
-				iNdEx += skippy
-			}
-		}
-
-		if iNdEx > l {
-			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-		}
-		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
-	}
-	return &protoiface.Methods{
-		NoUnkeyedLiterals: struct{}{},
-		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
-		Size:              size,
-		Marshal:           marshal,
-		Unmarshal:         unmarshal,
-		Merge:             nil,
-		CheckInitialized:  nil,
-	}
-}
-
-var _ protoreflect.List = (*_OpenPoCChallenge_2_list)(nil)
-
-type _OpenPoCChallenge_2_list struct {
-	list *[]*CountedSliceCommit
-}
-
-func (x *_OpenPoCChallenge_2_list) Len() int {
+func (x *_OpenPoCChallenge_6_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_OpenPoCChallenge_2_list) Get(i int) protoreflect.Value {
+func (x *_OpenPoCChallenge_6_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
 }
 
-func (x *_OpenPoCChallenge_2_list) Set(i int, value protoreflect.Value) {
+func (x *_OpenPoCChallenge_6_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*CountedSliceCommit)
+	concreteValue := valueUnwrapped.Interface().(*PoCV2StoreCommit)
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_OpenPoCChallenge_2_list) Append(value protoreflect.Value) {
+func (x *_OpenPoCChallenge_6_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*CountedSliceCommit)
+	concreteValue := valueUnwrapped.Interface().(*PoCV2StoreCommit)
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_OpenPoCChallenge_2_list) AppendMutable() protoreflect.Value {
-	v := new(CountedSliceCommit)
+func (x *_OpenPoCChallenge_6_list) AppendMutable() protoreflect.Value {
+	v := new(PoCV2StoreCommit)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_OpenPoCChallenge_2_list) Truncate(n int) {
+func (x *_OpenPoCChallenge_6_list) Truncate(n int) {
 	for i := n; i < len(*x.list); i++ {
 		(*x.list)[i] = nil
 	}
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_OpenPoCChallenge_2_list) NewElement() protoreflect.Value {
-	v := new(CountedSliceCommit)
+func (x *_OpenPoCChallenge_6_list) NewElement() protoreflect.Value {
+	v := new(PoCV2StoreCommit)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_OpenPoCChallenge_2_list) IsValid() bool {
+func (x *_OpenPoCChallenge_6_list) IsValid() bool {
 	return x.list != nil
 }
 
 var (
-	md_OpenPoCChallenge                 protoreflect.MessageDescriptor
-	fd_OpenPoCChallenge_challenge       protoreflect.FieldDescriptor
-	fd_OpenPoCChallenge_counted_commits protoreflect.FieldDescriptor
+	md_OpenPoCChallenge              protoreflect.MessageDescriptor
+	fd_OpenPoCChallenge_target       protoreflect.FieldDescriptor
+	fd_OpenPoCChallenge_start_height protoreflect.FieldDescriptor
+	fd_OpenPoCChallenge_seed         protoreflect.FieldDescriptor
+	fd_OpenPoCChallenge_finish       protoreflect.FieldDescriptor
+	fd_OpenPoCChallenge_generating   protoreflect.FieldDescriptor
+	fd_OpenPoCChallenge_commits      protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_poc_challenge_proto_init()
 	md_OpenPoCChallenge = File_inference_inference_poc_challenge_proto.Messages().ByName("OpenPoCChallenge")
-	fd_OpenPoCChallenge_challenge = md_OpenPoCChallenge.Fields().ByName("challenge")
-	fd_OpenPoCChallenge_counted_commits = md_OpenPoCChallenge.Fields().ByName("counted_commits")
+	fd_OpenPoCChallenge_target = md_OpenPoCChallenge.Fields().ByName("target")
+	fd_OpenPoCChallenge_start_height = md_OpenPoCChallenge.Fields().ByName("start_height")
+	fd_OpenPoCChallenge_seed = md_OpenPoCChallenge.Fields().ByName("seed")
+	fd_OpenPoCChallenge_finish = md_OpenPoCChallenge.Fields().ByName("finish")
+	fd_OpenPoCChallenge_generating = md_OpenPoCChallenge.Fields().ByName("generating")
+	fd_OpenPoCChallenge_commits = md_OpenPoCChallenge.Fields().ByName("commits")
 }
 
 var _ protoreflect.Message = (*fastReflection_OpenPoCChallenge)(nil)
@@ -3623,7 +883,7 @@ func (x *OpenPoCChallenge) ProtoReflect() protoreflect.Message {
 }
 
 func (x *OpenPoCChallenge) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_poc_challenge_proto_msgTypes[5]
+	mi := &file_inference_inference_poc_challenge_proto_msgTypes[1]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3679,15 +939,39 @@ func (x *fastReflection_OpenPoCChallenge) Interface() protoreflect.ProtoMessage 
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_OpenPoCChallenge) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.Challenge != nil {
-		value := protoreflect.ValueOfMessage(x.Challenge.ProtoReflect())
-		if !f(fd_OpenPoCChallenge_challenge, value) {
+	if x.Target != "" {
+		value := protoreflect.ValueOfString(x.Target)
+		if !f(fd_OpenPoCChallenge_target, value) {
 			return
 		}
 	}
-	if len(x.CountedCommits) != 0 {
-		value := protoreflect.ValueOfList(&_OpenPoCChallenge_2_list{list: &x.CountedCommits})
-		if !f(fd_OpenPoCChallenge_counted_commits, value) {
+	if x.StartHeight != int64(0) {
+		value := protoreflect.ValueOfInt64(x.StartHeight)
+		if !f(fd_OpenPoCChallenge_start_height, value) {
+			return
+		}
+	}
+	if len(x.Seed) != 0 {
+		value := protoreflect.ValueOfBytes(x.Seed)
+		if !f(fd_OpenPoCChallenge_seed, value) {
+			return
+		}
+	}
+	if x.Finish != int64(0) {
+		value := protoreflect.ValueOfInt64(x.Finish)
+		if !f(fd_OpenPoCChallenge_finish, value) {
+			return
+		}
+	}
+	if x.Generating != false {
+		value := protoreflect.ValueOfBool(x.Generating)
+		if !f(fd_OpenPoCChallenge_generating, value) {
+			return
+		}
+	}
+	if len(x.Commits) != 0 {
+		value := protoreflect.ValueOfList(&_OpenPoCChallenge_6_list{list: &x.Commits})
+		if !f(fd_OpenPoCChallenge_commits, value) {
 			return
 		}
 	}
@@ -3706,10 +990,18 @@ func (x *fastReflection_OpenPoCChallenge) Range(f func(protoreflect.FieldDescrip
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_OpenPoCChallenge) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.OpenPoCChallenge.challenge":
-		return x.Challenge != nil
-	case "inference.inference.OpenPoCChallenge.counted_commits":
-		return len(x.CountedCommits) != 0
+	case "inference.inference.OpenPoCChallenge.target":
+		return x.Target != ""
+	case "inference.inference.OpenPoCChallenge.start_height":
+		return x.StartHeight != int64(0)
+	case "inference.inference.OpenPoCChallenge.seed":
+		return len(x.Seed) != 0
+	case "inference.inference.OpenPoCChallenge.finish":
+		return x.Finish != int64(0)
+	case "inference.inference.OpenPoCChallenge.generating":
+		return x.Generating != false
+	case "inference.inference.OpenPoCChallenge.commits":
+		return len(x.Commits) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.OpenPoCChallenge"))
@@ -3726,10 +1018,18 @@ func (x *fastReflection_OpenPoCChallenge) Has(fd protoreflect.FieldDescriptor) b
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_OpenPoCChallenge) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.OpenPoCChallenge.challenge":
-		x.Challenge = nil
-	case "inference.inference.OpenPoCChallenge.counted_commits":
-		x.CountedCommits = nil
+	case "inference.inference.OpenPoCChallenge.target":
+		x.Target = ""
+	case "inference.inference.OpenPoCChallenge.start_height":
+		x.StartHeight = int64(0)
+	case "inference.inference.OpenPoCChallenge.seed":
+		x.Seed = nil
+	case "inference.inference.OpenPoCChallenge.finish":
+		x.Finish = int64(0)
+	case "inference.inference.OpenPoCChallenge.generating":
+		x.Generating = false
+	case "inference.inference.OpenPoCChallenge.commits":
+		x.Commits = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.OpenPoCChallenge"))
@@ -3746,14 +1046,26 @@ func (x *fastReflection_OpenPoCChallenge) Clear(fd protoreflect.FieldDescriptor)
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_OpenPoCChallenge) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.OpenPoCChallenge.challenge":
-		value := x.Challenge
-		return protoreflect.ValueOfMessage(value.ProtoReflect())
-	case "inference.inference.OpenPoCChallenge.counted_commits":
-		if len(x.CountedCommits) == 0 {
-			return protoreflect.ValueOfList(&_OpenPoCChallenge_2_list{})
+	case "inference.inference.OpenPoCChallenge.target":
+		value := x.Target
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.OpenPoCChallenge.start_height":
+		value := x.StartHeight
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.OpenPoCChallenge.seed":
+		value := x.Seed
+		return protoreflect.ValueOfBytes(value)
+	case "inference.inference.OpenPoCChallenge.finish":
+		value := x.Finish
+		return protoreflect.ValueOfInt64(value)
+	case "inference.inference.OpenPoCChallenge.generating":
+		value := x.Generating
+		return protoreflect.ValueOfBool(value)
+	case "inference.inference.OpenPoCChallenge.commits":
+		if len(x.Commits) == 0 {
+			return protoreflect.ValueOfList(&_OpenPoCChallenge_6_list{})
 		}
-		listValue := &_OpenPoCChallenge_2_list{list: &x.CountedCommits}
+		listValue := &_OpenPoCChallenge_6_list{list: &x.Commits}
 		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
@@ -3775,12 +1087,20 @@ func (x *fastReflection_OpenPoCChallenge) Get(descriptor protoreflect.FieldDescr
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_OpenPoCChallenge) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.OpenPoCChallenge.challenge":
-		x.Challenge = value.Message().Interface().(*PoCChallenge)
-	case "inference.inference.OpenPoCChallenge.counted_commits":
+	case "inference.inference.OpenPoCChallenge.target":
+		x.Target = value.Interface().(string)
+	case "inference.inference.OpenPoCChallenge.start_height":
+		x.StartHeight = value.Int()
+	case "inference.inference.OpenPoCChallenge.seed":
+		x.Seed = value.Bytes()
+	case "inference.inference.OpenPoCChallenge.finish":
+		x.Finish = value.Int()
+	case "inference.inference.OpenPoCChallenge.generating":
+		x.Generating = value.Bool()
+	case "inference.inference.OpenPoCChallenge.commits":
 		lv := value.List()
-		clv := lv.(*_OpenPoCChallenge_2_list)
-		x.CountedCommits = *clv.list
+		clv := lv.(*_OpenPoCChallenge_6_list)
+		x.Commits = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.OpenPoCChallenge"))
@@ -3801,17 +1121,22 @@ func (x *fastReflection_OpenPoCChallenge) Set(fd protoreflect.FieldDescriptor, v
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_OpenPoCChallenge) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.OpenPoCChallenge.challenge":
-		if x.Challenge == nil {
-			x.Challenge = new(PoCChallenge)
+	case "inference.inference.OpenPoCChallenge.commits":
+		if x.Commits == nil {
+			x.Commits = []*PoCV2StoreCommit{}
 		}
-		return protoreflect.ValueOfMessage(x.Challenge.ProtoReflect())
-	case "inference.inference.OpenPoCChallenge.counted_commits":
-		if x.CountedCommits == nil {
-			x.CountedCommits = []*CountedSliceCommit{}
-		}
-		value := &_OpenPoCChallenge_2_list{list: &x.CountedCommits}
+		value := &_OpenPoCChallenge_6_list{list: &x.Commits}
 		return protoreflect.ValueOfList(value)
+	case "inference.inference.OpenPoCChallenge.target":
+		panic(fmt.Errorf("field target of message inference.inference.OpenPoCChallenge is not mutable"))
+	case "inference.inference.OpenPoCChallenge.start_height":
+		panic(fmt.Errorf("field start_height of message inference.inference.OpenPoCChallenge is not mutable"))
+	case "inference.inference.OpenPoCChallenge.seed":
+		panic(fmt.Errorf("field seed of message inference.inference.OpenPoCChallenge is not mutable"))
+	case "inference.inference.OpenPoCChallenge.finish":
+		panic(fmt.Errorf("field finish of message inference.inference.OpenPoCChallenge is not mutable"))
+	case "inference.inference.OpenPoCChallenge.generating":
+		panic(fmt.Errorf("field generating of message inference.inference.OpenPoCChallenge is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.OpenPoCChallenge"))
@@ -3825,12 +1150,19 @@ func (x *fastReflection_OpenPoCChallenge) Mutable(fd protoreflect.FieldDescripto
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_OpenPoCChallenge) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.OpenPoCChallenge.challenge":
-		m := new(PoCChallenge)
-		return protoreflect.ValueOfMessage(m.ProtoReflect())
-	case "inference.inference.OpenPoCChallenge.counted_commits":
-		list := []*CountedSliceCommit{}
-		return protoreflect.ValueOfList(&_OpenPoCChallenge_2_list{list: &list})
+	case "inference.inference.OpenPoCChallenge.target":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.OpenPoCChallenge.start_height":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.OpenPoCChallenge.seed":
+		return protoreflect.ValueOfBytes(nil)
+	case "inference.inference.OpenPoCChallenge.finish":
+		return protoreflect.ValueOfInt64(int64(0))
+	case "inference.inference.OpenPoCChallenge.generating":
+		return protoreflect.ValueOfBool(false)
+	case "inference.inference.OpenPoCChallenge.commits":
+		list := []*PoCV2StoreCommit{}
+		return protoreflect.ValueOfList(&_OpenPoCChallenge_6_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.OpenPoCChallenge"))
@@ -3900,12 +1232,25 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 		var n int
 		var l int
 		_ = l
-		if x.Challenge != nil {
-			l = options.Size(x.Challenge)
+		l = len(x.Target)
+		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
-		if len(x.CountedCommits) > 0 {
-			for _, e := range x.CountedCommits {
+		if x.StartHeight != 0 {
+			n += 1 + runtime.Sov(uint64(x.StartHeight))
+		}
+		l = len(x.Seed)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.Finish != 0 {
+			n += 1 + runtime.Sov(uint64(x.Finish))
+		}
+		if x.Generating {
+			n += 2
+		}
+		if len(x.Commits) > 0 {
+			for _, e := range x.Commits {
 				l = options.Size(e)
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
@@ -3939,9 +1284,9 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if len(x.CountedCommits) > 0 {
-			for iNdEx := len(x.CountedCommits) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.CountedCommits[iNdEx])
+		if len(x.Commits) > 0 {
+			for iNdEx := len(x.Commits) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.Commits[iNdEx])
 				if err != nil {
 					return protoiface.MarshalOutput{
 						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -3952,20 +1297,40 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 				copy(dAtA[i:], encoded)
 				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 				i--
-				dAtA[i] = 0x12
+				dAtA[i] = 0x32
 			}
 		}
-		if x.Challenge != nil {
-			encoded, err := options.Marshal(x.Challenge)
-			if err != nil {
-				return protoiface.MarshalOutput{
-					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-					Buf:               input.Buf,
-				}, err
+		if x.Generating {
+			i--
+			if x.Generating {
+				dAtA[i] = 1
+			} else {
+				dAtA[i] = 0
 			}
-			i -= len(encoded)
-			copy(dAtA[i:], encoded)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x28
+		}
+		if x.Finish != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Finish))
+			i--
+			dAtA[i] = 0x20
+		}
+		if len(x.Seed) > 0 {
+			i -= len(x.Seed)
+			copy(dAtA[i:], x.Seed)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Seed)))
+			i--
+			dAtA[i] = 0x1a
+		}
+		if x.StartHeight != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.StartHeight))
+			i--
+			dAtA[i] = 0x10
+		}
+		if len(x.Target) > 0 {
+			i -= len(x.Target)
+			copy(dAtA[i:], x.Target)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Target)))
 			i--
 			dAtA[i] = 0xa
 		}
@@ -4020,9 +1385,9 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 			switch fieldNum {
 			case 1:
 				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Challenge", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Target", wireType)
 				}
-				var msglen int
+				var stringLen uint64
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -4032,31 +1397,119 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					msglen |= int(b&0x7F) << shift
+					stringLen |= uint64(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				if msglen < 0 {
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
-				postIndex := iNdEx + msglen
+				postIndex := iNdEx + intStringLen
 				if postIndex < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				if x.Challenge == nil {
-					x.Challenge = &PoCChallenge{}
-				}
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.Challenge); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
+				x.Target = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
 			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field StartHeight", wireType)
+				}
+				x.StartHeight = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.StartHeight |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
 				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CountedCommits", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Seed", wireType)
+				}
+				var byteLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					byteLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if byteLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + byteLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Seed = append(x.Seed[:0], dAtA[iNdEx:postIndex]...)
+				if x.Seed == nil {
+					x.Seed = []byte{}
+				}
+				iNdEx = postIndex
+			case 4:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Finish", wireType)
+				}
+				x.Finish = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Finish |= int64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 5:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Generating", wireType)
+				}
+				var v int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				x.Generating = bool(v != 0)
+			case 6:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Commits", wireType)
 				}
 				var msglen int
 				for shift := uint(0); ; shift += 7 {
@@ -4083,8 +1536,8 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.CountedCommits = append(x.CountedCommits, &CountedSliceCommit{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.CountedCommits[len(x.CountedCommits)-1]); err != nil {
+				x.Commits = append(x.Commits, &PoCV2StoreCommit{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.Commits[len(x.Commits)-1]); err != nil {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
@@ -4136,181 +1589,53 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type PoCChallengeSegmentOutcome int32
+type PoCChallengeFailureKind int32
 
 const (
-	PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PENDING     PoCChallengeSegmentOutcome = 0
-	PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PASSED      PoCChallengeSegmentOutcome = 1
-	PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_FAILED      PoCChallengeSegmentOutcome = 2
-	PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_AUTO_PASSED PoCChallengeSegmentOutcome = 3
+	PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET            PoCChallengeFailureKind = 0
+	PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED PoCChallengeFailureKind = 1
+	PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY      PoCChallengeFailureKind = 2
 )
 
-// Enum value maps for PoCChallengeSegmentOutcome.
+// Enum value maps for PoCChallengeFailureKind.
 var (
-	PoCChallengeSegmentOutcome_name = map[int32]string{
-		0: "POC_CHALLENGE_SEGMENT_OUTCOME_PENDING",
-		1: "POC_CHALLENGE_SEGMENT_OUTCOME_PASSED",
-		2: "POC_CHALLENGE_SEGMENT_OUTCOME_FAILED",
-		3: "POC_CHALLENGE_SEGMENT_OUTCOME_AUTO_PASSED",
+	PoCChallengeFailureKind_name = map[int32]string{
+		0: "POC_CHALLENGE_FAILURE_KIND_UNSET",
+		1: "POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED",
+		2: "POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY",
 	}
-	PoCChallengeSegmentOutcome_value = map[string]int32{
-		"POC_CHALLENGE_SEGMENT_OUTCOME_PENDING":     0,
-		"POC_CHALLENGE_SEGMENT_OUTCOME_PASSED":      1,
-		"POC_CHALLENGE_SEGMENT_OUTCOME_FAILED":      2,
-		"POC_CHALLENGE_SEGMENT_OUTCOME_AUTO_PASSED": 3,
+	PoCChallengeFailureKind_value = map[string]int32{
+		"POC_CHALLENGE_FAILURE_KIND_UNSET":            0,
+		"POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED": 1,
+		"POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY":      2,
 	}
 )
 
-func (x PoCChallengeSegmentOutcome) Enum() *PoCChallengeSegmentOutcome {
-	p := new(PoCChallengeSegmentOutcome)
+func (x PoCChallengeFailureKind) Enum() *PoCChallengeFailureKind {
+	p := new(PoCChallengeFailureKind)
 	*p = x
 	return p
 }
 
-func (x PoCChallengeSegmentOutcome) String() string {
+func (x PoCChallengeFailureKind) String() string {
 	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
 }
 
-func (PoCChallengeSegmentOutcome) Descriptor() protoreflect.EnumDescriptor {
+func (PoCChallengeFailureKind) Descriptor() protoreflect.EnumDescriptor {
 	return file_inference_inference_poc_challenge_proto_enumTypes[0].Descriptor()
 }
 
-func (PoCChallengeSegmentOutcome) Type() protoreflect.EnumType {
+func (PoCChallengeFailureKind) Type() protoreflect.EnumType {
 	return &file_inference_inference_poc_challenge_proto_enumTypes[0]
 }
 
-func (x PoCChallengeSegmentOutcome) Number() protoreflect.EnumNumber {
+func (x PoCChallengeFailureKind) Number() protoreflect.EnumNumber {
 	return protoreflect.EnumNumber(x)
 }
 
-// Deprecated: Use PoCChallengeSegmentOutcome.Descriptor instead.
-func (PoCChallengeSegmentOutcome) EnumDescriptor() ([]byte, []int) {
+// Deprecated: Use PoCChallengeFailureKind.Descriptor instead.
+func (PoCChallengeFailureKind) EnumDescriptor() ([]byte, []int) {
 	return file_inference_inference_poc_challenge_proto_rawDescGZIP(), []int{0}
-}
-
-type PoCChallengeFailReason int32
-
-const (
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET               PoCChallengeFailReason = 0
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED    PoCChallengeFailReason = 1
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT PoCChallengeFailReason = 2
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT      PoCChallengeFailReason = 3
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_NO_VOTE             PoCChallengeFailReason = 4
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNRELATED_REMOVAL   PoCChallengeFailReason = 5
-)
-
-// Enum value maps for PoCChallengeFailReason.
-var (
-	PoCChallengeFailReason_name = map[int32]string{
-		0: "POC_CHALLENGE_FAIL_REASON_UNSET",
-		1: "POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED",
-		2: "POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT",
-		3: "POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT",
-		4: "POC_CHALLENGE_FAIL_REASON_NO_VOTE",
-		5: "POC_CHALLENGE_FAIL_REASON_UNRELATED_REMOVAL",
-	}
-	PoCChallengeFailReason_value = map[string]int32{
-		"POC_CHALLENGE_FAIL_REASON_UNSET":               0,
-		"POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED":    1,
-		"POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT": 2,
-		"POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT":      3,
-		"POC_CHALLENGE_FAIL_REASON_NO_VOTE":             4,
-		"POC_CHALLENGE_FAIL_REASON_UNRELATED_REMOVAL":   5,
-	}
-)
-
-func (x PoCChallengeFailReason) Enum() *PoCChallengeFailReason {
-	p := new(PoCChallengeFailReason)
-	*p = x
-	return p
-}
-
-func (x PoCChallengeFailReason) String() string {
-	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
-}
-
-func (PoCChallengeFailReason) Descriptor() protoreflect.EnumDescriptor {
-	return file_inference_inference_poc_challenge_proto_enumTypes[1].Descriptor()
-}
-
-func (PoCChallengeFailReason) Type() protoreflect.EnumType {
-	return &file_inference_inference_poc_challenge_proto_enumTypes[1]
-}
-
-func (x PoCChallengeFailReason) Number() protoreflect.EnumNumber {
-	return protoreflect.EnumNumber(x)
-}
-
-// Deprecated: Use PoCChallengeFailReason.Descriptor instead.
-func (PoCChallengeFailReason) EnumDescriptor() ([]byte, []int) {
-	return file_inference_inference_poc_challenge_proto_rawDescGZIP(), []int{1}
-}
-
-type PoCChallengeSegment struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	PocStageStartBlockHeight int64                      `protobuf:"varint,1,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
-	SeedHash                 string                     `protobuf:"bytes,2,opt,name=seed_hash,json=seedHash,proto3" json:"seed_hash,omitempty"`
-	SealHeight               int64                      `protobuf:"varint,3,opt,name=seal_height,json=sealHeight,proto3" json:"seal_height,omitempty"`                  // 0 if open
-	FirstVoteHeight          int64                      `protobuf:"varint,4,opt,name=first_vote_height,json=firstVoteHeight,proto3" json:"first_vote_height,omitempty"` // 0 if none
-	Outcome                  PoCChallengeSegmentOutcome `protobuf:"varint,5,opt,name=outcome,proto3,enum=inference.inference.PoCChallengeSegmentOutcome" json:"outcome,omitempty"`
-}
-
-func (x *PoCChallengeSegment) Reset() {
-	*x = PoCChallengeSegment{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_poc_challenge_proto_msgTypes[0]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *PoCChallengeSegment) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PoCChallengeSegment) ProtoMessage() {}
-
-// Deprecated: Use PoCChallengeSegment.ProtoReflect.Descriptor instead.
-func (*PoCChallengeSegment) Descriptor() ([]byte, []int) {
-	return file_inference_inference_poc_challenge_proto_rawDescGZIP(), []int{0}
-}
-
-func (x *PoCChallengeSegment) GetPocStageStartBlockHeight() int64 {
-	if x != nil {
-		return x.PocStageStartBlockHeight
-	}
-	return 0
-}
-
-func (x *PoCChallengeSegment) GetSeedHash() string {
-	if x != nil {
-		return x.SeedHash
-	}
-	return ""
-}
-
-func (x *PoCChallengeSegment) GetSealHeight() int64 {
-	if x != nil {
-		return x.SealHeight
-	}
-	return 0
-}
-
-func (x *PoCChallengeSegment) GetFirstVoteHeight() int64 {
-	if x != nil {
-		return x.FirstVoteHeight
-	}
-	return 0
-}
-
-func (x *PoCChallengeSegment) GetOutcome() PoCChallengeSegmentOutcome {
-	if x != nil {
-		return x.Outcome
-	}
-	return PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PENDING
 }
 
 type PoCChallenge struct {
@@ -4318,22 +1643,20 @@ type PoCChallenge struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	EpochIndex           uint64                 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
-	Challenger           string                 `protobuf:"bytes,2,opt,name=challenger,proto3" json:"challenger,omitempty"`
-	Target               string                 `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
-	ChallengeStartHeight int64                  `protobuf:"varint,4,opt,name=challenge_start_height,json=challengeStartHeight,proto3" json:"challenge_start_height,omitempty"`
-	ExpectedReward       uint64                 `protobuf:"varint,5,opt,name=expected_reward,json=expectedReward,proto3" json:"expected_reward,omitempty"`
-	LockedPayment        uint64                 `protobuf:"varint,6,opt,name=locked_payment,json=lockedPayment,proto3" json:"locked_payment,omitempty"`
-	GenerationEndHeight  int64                  `protobuf:"varint,7,opt,name=generation_end_height,json=generationEndHeight,proto3" json:"generation_end_height,omitempty"` // 0 while still generating
-	FailReason           PoCChallengeFailReason `protobuf:"varint,8,opt,name=fail_reason,json=failReason,proto3,enum=inference.inference.PoCChallengeFailReason" json:"fail_reason,omitempty"`
-	// Open segment plus sealed rows. Readers filter Outcome == PENDING.
-	Segments []*PoCChallengeSegment `protobuf:"bytes,9,rep,name=segments,proto3" json:"segments,omitempty"`
+	EpochIndex     uint64                  `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
+	Challenger     string                  `protobuf:"bytes,2,opt,name=challenger,proto3" json:"challenger,omitempty"`
+	Target         string                  `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
+	ExpectedReward uint64                  `protobuf:"varint,4,opt,name=expected_reward,json=expectedReward,proto3" json:"expected_reward,omitempty"`
+	LockedPayment  uint64                  `protobuf:"varint,5,opt,name=locked_payment,json=lockedPayment,proto3" json:"locked_payment,omitempty"`
+	StartHeight    int64                   `protobuf:"varint,6,opt,name=start_height,json=startHeight,proto3" json:"start_height,omitempty"`
+	Seed           []byte                  `protobuf:"bytes,7,opt,name=seed,proto3" json:"seed,omitempty"`
+	FailureKind    PoCChallengeFailureKind `protobuf:"varint,8,opt,name=failure_kind,json=failureKind,proto3,enum=inference.inference.PoCChallengeFailureKind" json:"failure_kind,omitempty"`
 }
 
 func (x *PoCChallenge) Reset() {
 	*x = PoCChallenge{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_poc_challenge_proto_msgTypes[1]
+		mi := &file_inference_inference_poc_challenge_proto_msgTypes[0]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4347,7 +1670,7 @@ func (*PoCChallenge) ProtoMessage() {}
 
 // Deprecated: Use PoCChallenge.ProtoReflect.Descriptor instead.
 func (*PoCChallenge) Descriptor() ([]byte, []int) {
-	return file_inference_inference_poc_challenge_proto_rawDescGZIP(), []int{1}
+	return file_inference_inference_poc_challenge_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *PoCChallenge) GetEpochIndex() uint64 {
@@ -4371,13 +1694,6 @@ func (x *PoCChallenge) GetTarget() string {
 	return ""
 }
 
-func (x *PoCChallenge) GetChallengeStartHeight() int64 {
-	if x != nil {
-		return x.ChallengeStartHeight
-	}
-	return 0
-}
-
 func (x *PoCChallenge) GetExpectedReward() uint64 {
 	if x != nil {
 		return x.ExpectedReward
@@ -4392,242 +1708,25 @@ func (x *PoCChallenge) GetLockedPayment() uint64 {
 	return 0
 }
 
-func (x *PoCChallenge) GetGenerationEndHeight() int64 {
+func (x *PoCChallenge) GetStartHeight() int64 {
 	if x != nil {
-		return x.GenerationEndHeight
+		return x.StartHeight
 	}
 	return 0
 }
 
-func (x *PoCChallenge) GetFailReason() PoCChallengeFailReason {
+func (x *PoCChallenge) GetSeed() []byte {
 	if x != nil {
-		return x.FailReason
-	}
-	return PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET
-}
-
-func (x *PoCChallenge) GetSegments() []*PoCChallengeSegment {
-	if x != nil {
-		return x.Segments
+		return x.Seed
 	}
 	return nil
 }
 
-type PoCChallengeCommit struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Target                   string `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
-	PocStageStartBlockHeight int64  `protobuf:"varint,2,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
-	ModelId                  string `protobuf:"bytes,3,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
-	SliceIndex               uint32 `protobuf:"varint,4,opt,name=slice_index,json=sliceIndex,proto3" json:"slice_index,omitempty"`
-	Count                    uint32 `protobuf:"varint,5,opt,name=count,proto3" json:"count,omitempty"`
-	RootHash                 []byte `protobuf:"bytes,6,opt,name=root_hash,json=rootHash,proto3" json:"root_hash,omitempty"`
-	CommitBlockHeight        int64  `protobuf:"varint,7,opt,name=commit_block_height,json=commitBlockHeight,proto3" json:"commit_block_height,omitempty"`
-}
-
-func (x *PoCChallengeCommit) Reset() {
-	*x = PoCChallengeCommit{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_poc_challenge_proto_msgTypes[2]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *PoCChallengeCommit) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PoCChallengeCommit) ProtoMessage() {}
-
-// Deprecated: Use PoCChallengeCommit.ProtoReflect.Descriptor instead.
-func (*PoCChallengeCommit) Descriptor() ([]byte, []int) {
-	return file_inference_inference_poc_challenge_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *PoCChallengeCommit) GetTarget() string {
+func (x *PoCChallenge) GetFailureKind() PoCChallengeFailureKind {
 	if x != nil {
-		return x.Target
+		return x.FailureKind
 	}
-	return ""
-}
-
-func (x *PoCChallengeCommit) GetPocStageStartBlockHeight() int64 {
-	if x != nil {
-		return x.PocStageStartBlockHeight
-	}
-	return 0
-}
-
-func (x *PoCChallengeCommit) GetModelId() string {
-	if x != nil {
-		return x.ModelId
-	}
-	return ""
-}
-
-func (x *PoCChallengeCommit) GetSliceIndex() uint32 {
-	if x != nil {
-		return x.SliceIndex
-	}
-	return 0
-}
-
-func (x *PoCChallengeCommit) GetCount() uint32 {
-	if x != nil {
-		return x.Count
-	}
-	return 0
-}
-
-func (x *PoCChallengeCommit) GetRootHash() []byte {
-	if x != nil {
-		return x.RootHash
-	}
-	return nil
-}
-
-func (x *PoCChallengeCommit) GetCommitBlockHeight() int64 {
-	if x != nil {
-		return x.CommitBlockHeight
-	}
-	return 0
-}
-
-type PoCChallengeValidation struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Target                   string `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
-	PocStageStartBlockHeight int64  `protobuf:"varint,2,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
-	ModelId                  string `protobuf:"bytes,3,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
-	Validator                string `protobuf:"bytes,4,opt,name=validator,proto3" json:"validator,omitempty"`
-	ValidatedWeight          int64  `protobuf:"varint,5,opt,name=validated_weight,json=validatedWeight,proto3" json:"validated_weight,omitempty"`
-}
-
-func (x *PoCChallengeValidation) Reset() {
-	*x = PoCChallengeValidation{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_poc_challenge_proto_msgTypes[3]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *PoCChallengeValidation) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PoCChallengeValidation) ProtoMessage() {}
-
-// Deprecated: Use PoCChallengeValidation.ProtoReflect.Descriptor instead.
-func (*PoCChallengeValidation) Descriptor() ([]byte, []int) {
-	return file_inference_inference_poc_challenge_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *PoCChallengeValidation) GetTarget() string {
-	if x != nil {
-		return x.Target
-	}
-	return ""
-}
-
-func (x *PoCChallengeValidation) GetPocStageStartBlockHeight() int64 {
-	if x != nil {
-		return x.PocStageStartBlockHeight
-	}
-	return 0
-}
-
-func (x *PoCChallengeValidation) GetModelId() string {
-	if x != nil {
-		return x.ModelId
-	}
-	return ""
-}
-
-func (x *PoCChallengeValidation) GetValidator() string {
-	if x != nil {
-		return x.Validator
-	}
-	return ""
-}
-
-func (x *PoCChallengeValidation) GetValidatedWeight() int64 {
-	if x != nil {
-		return x.ValidatedWeight
-	}
-	return 0
-}
-
-type CountedSliceCommit struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	PocStageStartBlockHeight int64  `protobuf:"varint,1,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
-	SliceIndex               uint32 `protobuf:"varint,2,opt,name=slice_index,json=sliceIndex,proto3" json:"slice_index,omitempty"`
-	ModelId                  string `protobuf:"bytes,3,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
-	Count                    uint32 `protobuf:"varint,4,opt,name=count,proto3" json:"count,omitempty"`
-	RootHash                 []byte `protobuf:"bytes,5,opt,name=root_hash,json=rootHash,proto3" json:"root_hash,omitempty"`
-}
-
-func (x *CountedSliceCommit) Reset() {
-	*x = CountedSliceCommit{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_poc_challenge_proto_msgTypes[4]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *CountedSliceCommit) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CountedSliceCommit) ProtoMessage() {}
-
-// Deprecated: Use CountedSliceCommit.ProtoReflect.Descriptor instead.
-func (*CountedSliceCommit) Descriptor() ([]byte, []int) {
-	return file_inference_inference_poc_challenge_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *CountedSliceCommit) GetPocStageStartBlockHeight() int64 {
-	if x != nil {
-		return x.PocStageStartBlockHeight
-	}
-	return 0
-}
-
-func (x *CountedSliceCommit) GetSliceIndex() uint32 {
-	if x != nil {
-		return x.SliceIndex
-	}
-	return 0
-}
-
-func (x *CountedSliceCommit) GetModelId() string {
-	if x != nil {
-		return x.ModelId
-	}
-	return ""
-}
-
-func (x *CountedSliceCommit) GetCount() uint32 {
-	if x != nil {
-		return x.Count
-	}
-	return 0
-}
-
-func (x *CountedSliceCommit) GetRootHash() []byte {
-	if x != nil {
-		return x.RootHash
-	}
-	return nil
+	return PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET
 }
 
 type OpenPoCChallenge struct {
@@ -4635,14 +1734,18 @@ type OpenPoCChallenge struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Challenge      *PoCChallenge         `protobuf:"bytes,1,opt,name=challenge,proto3" json:"challenge,omitempty"`
-	CountedCommits []*CountedSliceCommit `protobuf:"bytes,2,rep,name=counted_commits,json=countedCommits,proto3" json:"counted_commits,omitempty"`
+	Target      string              `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
+	StartHeight int64               `protobuf:"varint,2,opt,name=start_height,json=startHeight,proto3" json:"start_height,omitempty"`
+	Seed        []byte              `protobuf:"bytes,3,opt,name=seed,proto3" json:"seed,omitempty"`
+	Finish      int64               `protobuf:"varint,4,opt,name=finish,proto3" json:"finish,omitempty"`
+	Generating  bool                `protobuf:"varint,5,opt,name=generating,proto3" json:"generating,omitempty"`
+	Commits     []*PoCV2StoreCommit `protobuf:"bytes,6,rep,name=commits,proto3" json:"commits,omitempty"`
 }
 
 func (x *OpenPoCChallenge) Reset() {
 	*x = OpenPoCChallenge{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_poc_challenge_proto_msgTypes[5]
+		mi := &file_inference_inference_poc_challenge_proto_msgTypes[1]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -4656,19 +1759,47 @@ func (*OpenPoCChallenge) ProtoMessage() {}
 
 // Deprecated: Use OpenPoCChallenge.ProtoReflect.Descriptor instead.
 func (*OpenPoCChallenge) Descriptor() ([]byte, []int) {
-	return file_inference_inference_poc_challenge_proto_rawDescGZIP(), []int{5}
+	return file_inference_inference_poc_challenge_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *OpenPoCChallenge) GetChallenge() *PoCChallenge {
+func (x *OpenPoCChallenge) GetTarget() string {
 	if x != nil {
-		return x.Challenge
+		return x.Target
+	}
+	return ""
+}
+
+func (x *OpenPoCChallenge) GetStartHeight() int64 {
+	if x != nil {
+		return x.StartHeight
+	}
+	return 0
+}
+
+func (x *OpenPoCChallenge) GetSeed() []byte {
+	if x != nil {
+		return x.Seed
 	}
 	return nil
 }
 
-func (x *OpenPoCChallenge) GetCountedCommits() []*CountedSliceCommit {
+func (x *OpenPoCChallenge) GetFinish() int64 {
 	if x != nil {
-		return x.CountedCommits
+		return x.Finish
+	}
+	return 0
+}
+
+func (x *OpenPoCChallenge) GetGenerating() bool {
+	if x != nil {
+		return x.Generating
+	}
+	return false
+}
+
+func (x *OpenPoCChallenge) GetCommits() []*PoCV2StoreCommit {
+	if x != nil {
+		return x.Commits
 	}
 	return nil
 }
@@ -4679,149 +1810,66 @@ var file_inference_inference_poc_challenge_proto_rawDesc = []byte{
 	0x0a, 0x27, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x6f, 0x63, 0x5f, 0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65,
 	0x6e, 0x67, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x22, 0x8a,
-	0x02, 0x0a, 0x13, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x53,
-	0x65, 0x67, 0x6d, 0x65, 0x6e, 0x74, 0x12, 0x3e, 0x0a, 0x1c, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74,
-	0x61, 0x67, 0x65, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f,
-	0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x18, 0x70, 0x6f,
-	0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b,
-	0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x1b, 0x0a, 0x09, 0x73, 0x65, 0x65, 0x64, 0x5f, 0x68,
-	0x61, 0x73, 0x68, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x08, 0x73, 0x65, 0x65, 0x64, 0x48,
-	0x61, 0x73, 0x68, 0x12, 0x1f, 0x0a, 0x0b, 0x73, 0x65, 0x61, 0x6c, 0x5f, 0x68, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0a, 0x73, 0x65, 0x61, 0x6c, 0x48, 0x65,
-	0x69, 0x67, 0x68, 0x74, 0x12, 0x2a, 0x0a, 0x11, 0x66, 0x69, 0x72, 0x73, 0x74, 0x5f, 0x76, 0x6f,
-	0x74, 0x65, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52,
-	0x0f, 0x66, 0x69, 0x72, 0x73, 0x74, 0x56, 0x6f, 0x74, 0x65, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74,
-	0x12, 0x49, 0x0a, 0x07, 0x6f, 0x75, 0x74, 0x63, 0x6f, 0x6d, 0x65, 0x18, 0x05, 0x20, 0x01, 0x28,
-	0x0e, 0x32, 0x2f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c,
-	0x65, 0x6e, 0x67, 0x65, 0x53, 0x65, 0x67, 0x6d, 0x65, 0x6e, 0x74, 0x4f, 0x75, 0x74, 0x63, 0x6f,
-	0x6d, 0x65, 0x52, 0x07, 0x6f, 0x75, 0x74, 0x63, 0x6f, 0x6d, 0x65, 0x22, 0xb5, 0x03, 0x0a, 0x0c,
-	0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x12, 0x1f, 0x0a, 0x0b,
-	0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x01, 0x20, 0x01, 0x28,
-	0x04, 0x52, 0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x1e, 0x0a,
-	0x0a, 0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28,
-	0x09, 0x52, 0x0a, 0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x72, 0x12, 0x16, 0x0a,
-	0x06, 0x74, 0x61, 0x72, 0x67, 0x65, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x74,
-	0x61, 0x72, 0x67, 0x65, 0x74, 0x12, 0x34, 0x0a, 0x16, 0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e,
-	0x67, 0x65, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
-	0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x14, 0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65,
-	0x53, 0x74, 0x61, 0x72, 0x74, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x27, 0x0a, 0x0f, 0x65,
-	0x78, 0x70, 0x65, 0x63, 0x74, 0x65, 0x64, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x18, 0x05,
-	0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x65, 0x78, 0x70, 0x65, 0x63, 0x74, 0x65, 0x64, 0x52, 0x65,
-	0x77, 0x61, 0x72, 0x64, 0x12, 0x25, 0x0a, 0x0e, 0x6c, 0x6f, 0x63, 0x6b, 0x65, 0x64, 0x5f, 0x70,
-	0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x18, 0x06, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0d, 0x6c, 0x6f,
-	0x63, 0x6b, 0x65, 0x64, 0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x12, 0x32, 0x0a, 0x15, 0x67,
-	0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x65, 0x6e, 0x64, 0x5f, 0x68, 0x65,
-	0x69, 0x67, 0x68, 0x74, 0x18, 0x07, 0x20, 0x01, 0x28, 0x03, 0x52, 0x13, 0x67, 0x65, 0x6e, 0x65,
-	0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x45, 0x6e, 0x64, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12,
-	0x4c, 0x0a, 0x0b, 0x66, 0x61, 0x69, 0x6c, 0x5f, 0x72, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x18, 0x08,
-	0x20, 0x01, 0x28, 0x0e, 0x32, 0x2b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f, 0x43, 0x43, 0x68,
-	0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x46, 0x61, 0x69, 0x6c, 0x52, 0x65, 0x61, 0x73, 0x6f,
-	0x6e, 0x52, 0x0a, 0x66, 0x61, 0x69, 0x6c, 0x52, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x12, 0x44, 0x0a,
-	0x08, 0x73, 0x65, 0x67, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x18, 0x09, 0x20, 0x03, 0x28, 0x0b, 0x32,
-	0x28, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e,
-	0x67, 0x65, 0x53, 0x65, 0x67, 0x6d, 0x65, 0x6e, 0x74, 0x52, 0x08, 0x73, 0x65, 0x67, 0x6d, 0x65,
-	0x6e, 0x74, 0x73, 0x22, 0x8b, 0x02, 0x0a, 0x12, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c,
-	0x65, 0x6e, 0x67, 0x65, 0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x12, 0x16, 0x0a, 0x06, 0x74, 0x61,
-	0x72, 0x67, 0x65, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x74, 0x61, 0x72, 0x67,
-	0x65, 0x74, 0x12, 0x3e, 0x0a, 0x1c, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61, 0x67, 0x65, 0x5f,
-	0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61,
-	0x67, 0x65, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x12, 0x19, 0x0a, 0x08, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x69, 0x64, 0x18, 0x03,
-	0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x49, 0x64, 0x12, 0x1f, 0x0a,
-	0x0b, 0x73, 0x6c, 0x69, 0x63, 0x65, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x04, 0x20, 0x01,
-	0x28, 0x0d, 0x52, 0x0a, 0x73, 0x6c, 0x69, 0x63, 0x65, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x14,
-	0x0a, 0x05, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x05, 0x63,
-	0x6f, 0x75, 0x6e, 0x74, 0x12, 0x1b, 0x0a, 0x09, 0x72, 0x6f, 0x6f, 0x74, 0x5f, 0x68, 0x61, 0x73,
-	0x68, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x08, 0x72, 0x6f, 0x6f, 0x74, 0x48, 0x61, 0x73,
-	0x68, 0x12, 0x2e, 0x0a, 0x13, 0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63,
-	0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x07, 0x20, 0x01, 0x28, 0x03, 0x52, 0x11,
-	0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68,
-	0x74, 0x22, 0xd4, 0x01, 0x0a, 0x16, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e,
-	0x67, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x16, 0x0a, 0x06,
-	0x74, 0x61, 0x72, 0x67, 0x65, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x74, 0x61,
-	0x72, 0x67, 0x65, 0x74, 0x12, 0x3e, 0x0a, 0x1c, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61, 0x67,
-	0x65, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65,
-	0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x18, 0x70, 0x6f, 0x63, 0x53,
-	0x74, 0x61, 0x67, 0x65, 0x53, 0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65,
-	0x69, 0x67, 0x68, 0x74, 0x12, 0x19, 0x0a, 0x08, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x69, 0x64,
-	0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x49, 0x64, 0x12,
-	0x1c, 0x0a, 0x09, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x04, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x09, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x6f, 0x72, 0x12, 0x29, 0x0a,
-	0x10, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68,
-	0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
-	0x65, 0x64, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x22, 0xc3, 0x01, 0x0a, 0x12, 0x43, 0x6f, 0x75,
-	0x6e, 0x74, 0x65, 0x64, 0x53, 0x6c, 0x69, 0x63, 0x65, 0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x12,
-	0x3e, 0x0a, 0x1c, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61, 0x67, 0x65, 0x5f, 0x73, 0x74, 0x61,
-	0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63, 0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x03, 0x52, 0x18, 0x70, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x53,
-	0x74, 0x61, 0x72, 0x74, 0x42, 0x6c, 0x6f, 0x63, 0x6b, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12,
-	0x1f, 0x0a, 0x0b, 0x73, 0x6c, 0x69, 0x63, 0x65, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x02,
-	0x20, 0x01, 0x28, 0x0d, 0x52, 0x0a, 0x73, 0x6c, 0x69, 0x63, 0x65, 0x49, 0x6e, 0x64, 0x65, 0x78,
-	0x12, 0x19, 0x0a, 0x08, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x07, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x49, 0x64, 0x12, 0x14, 0x0a, 0x05, 0x63,
-	0x6f, 0x75, 0x6e, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x05, 0x63, 0x6f, 0x75, 0x6e,
-	0x74, 0x12, 0x1b, 0x0a, 0x09, 0x72, 0x6f, 0x6f, 0x74, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x05,
-	0x20, 0x01, 0x28, 0x0c, 0x52, 0x08, 0x72, 0x6f, 0x6f, 0x74, 0x48, 0x61, 0x73, 0x68, 0x22, 0xa5,
-	0x01, 0x0a, 0x10, 0x4f, 0x70, 0x65, 0x6e, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65,
-	0x6e, 0x67, 0x65, 0x12, 0x3f, 0x0a, 0x09, 0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65,
-	0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x21, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f, 0x43,
-	0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x09, 0x63, 0x68, 0x61, 0x6c, 0x6c,
-	0x65, 0x6e, 0x67, 0x65, 0x12, 0x50, 0x0a, 0x0f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x65, 0x64, 0x5f,
-	0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x73, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x27, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x65, 0x64, 0x53, 0x6c, 0x69, 0x63, 0x65,
-	0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x52, 0x0e, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x65, 0x64, 0x43,
-	0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x73, 0x2a, 0xca, 0x01, 0x0a, 0x1a, 0x50, 0x6f, 0x43, 0x43, 0x68,
-	0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x53, 0x65, 0x67, 0x6d, 0x65, 0x6e, 0x74, 0x4f, 0x75,
-	0x74, 0x63, 0x6f, 0x6d, 0x65, 0x12, 0x29, 0x0a, 0x25, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41,
-	0x4c, 0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x53, 0x45, 0x47, 0x4d, 0x45, 0x4e, 0x54, 0x5f, 0x4f,
-	0x55, 0x54, 0x43, 0x4f, 0x4d, 0x45, 0x5f, 0x50, 0x45, 0x4e, 0x44, 0x49, 0x4e, 0x47, 0x10, 0x00,
-	0x12, 0x28, 0x0a, 0x24, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e, 0x47,
-	0x45, 0x5f, 0x53, 0x45, 0x47, 0x4d, 0x45, 0x4e, 0x54, 0x5f, 0x4f, 0x55, 0x54, 0x43, 0x4f, 0x4d,
-	0x45, 0x5f, 0x50, 0x41, 0x53, 0x53, 0x45, 0x44, 0x10, 0x01, 0x12, 0x28, 0x0a, 0x24, 0x50, 0x4f,
-	0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x53, 0x45, 0x47, 0x4d,
-	0x45, 0x4e, 0x54, 0x5f, 0x4f, 0x55, 0x54, 0x43, 0x4f, 0x4d, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c,
-	0x45, 0x44, 0x10, 0x02, 0x12, 0x2d, 0x0a, 0x29, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c,
-	0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x53, 0x45, 0x47, 0x4d, 0x45, 0x4e, 0x54, 0x5f, 0x4f, 0x55,
-	0x54, 0x43, 0x4f, 0x4d, 0x45, 0x5f, 0x41, 0x55, 0x54, 0x4f, 0x5f, 0x50, 0x41, 0x53, 0x53, 0x45,
-	0x44, 0x10, 0x03, 0x2a, 0xa6, 0x02, 0x0a, 0x16, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c,
-	0x65, 0x6e, 0x67, 0x65, 0x46, 0x61, 0x69, 0x6c, 0x52, 0x65, 0x61, 0x73, 0x6f, 0x6e, 0x12, 0x23,
-	0x0a, 0x1f, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f,
-	0x46, 0x41, 0x49, 0x4c, 0x5f, 0x52, 0x45, 0x41, 0x53, 0x4f, 0x4e, 0x5f, 0x55, 0x4e, 0x53, 0x45,
-	0x54, 0x10, 0x00, 0x12, 0x2e, 0x0a, 0x2a, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c,
-	0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x5f, 0x52, 0x45, 0x41, 0x53, 0x4f, 0x4e,
-	0x5f, 0x53, 0x45, 0x47, 0x4d, 0x45, 0x4e, 0x54, 0x5f, 0x52, 0x45, 0x4a, 0x45, 0x43, 0x54, 0x45,
-	0x44, 0x10, 0x01, 0x12, 0x31, 0x0a, 0x2d, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c,
-	0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x5f, 0x52, 0x45, 0x41, 0x53, 0x4f, 0x4e,
-	0x5f, 0x53, 0x45, 0x47, 0x4d, 0x45, 0x4e, 0x54, 0x5f, 0x55, 0x4e, 0x44, 0x45, 0x52, 0x57, 0x45,
-	0x49, 0x47, 0x48, 0x54, 0x10, 0x02, 0x12, 0x2c, 0x0a, 0x28, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48,
-	0x41, 0x4c, 0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x5f, 0x52, 0x45, 0x41,
-	0x53, 0x4f, 0x4e, 0x5f, 0x4d, 0x49, 0x53, 0x53, 0x49, 0x4e, 0x47, 0x5f, 0x43, 0x4f, 0x4d, 0x4d,
-	0x49, 0x54, 0x10, 0x03, 0x12, 0x25, 0x0a, 0x21, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c,
-	0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x5f, 0x52, 0x45, 0x41, 0x53, 0x4f,
-	0x4e, 0x5f, 0x4e, 0x4f, 0x5f, 0x56, 0x4f, 0x54, 0x45, 0x10, 0x04, 0x12, 0x2f, 0x0a, 0x2b, 0x50,
-	0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49,
-	0x4c, 0x5f, 0x52, 0x45, 0x41, 0x53, 0x4f, 0x4e, 0x5f, 0x55, 0x4e, 0x52, 0x45, 0x4c, 0x41, 0x54,
-	0x45, 0x44, 0x5f, 0x52, 0x45, 0x4d, 0x4f, 0x56, 0x41, 0x4c, 0x10, 0x05, 0x42, 0xbf, 0x01, 0x0a,
-	0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x11, 0x50, 0x6f, 0x63, 0x43, 0x68, 0x61,
-	0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63,
-	0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x1a, 0x20,
 	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca,
-	0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d,
-	0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06,
-	0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x6e, 0x63, 0x65, 0x2f, 0x70, 0x6f, 0x63, 0x5f, 0x76, 0x32, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f,
+	0x22, 0xbf, 0x02, 0x0a, 0x0c, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67,
+	0x65, 0x12, 0x1f, 0x0a, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e, 0x64,
+	0x65, 0x78, 0x12, 0x1e, 0x0a, 0x0a, 0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x72,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x63, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67,
+	0x65, 0x72, 0x12, 0x16, 0x0a, 0x06, 0x74, 0x61, 0x72, 0x67, 0x65, 0x74, 0x18, 0x03, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x06, 0x74, 0x61, 0x72, 0x67, 0x65, 0x74, 0x12, 0x27, 0x0a, 0x0f, 0x65, 0x78,
+	0x70, 0x65, 0x63, 0x74, 0x65, 0x64, 0x5f, 0x72, 0x65, 0x77, 0x61, 0x72, 0x64, 0x18, 0x04, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x0e, 0x65, 0x78, 0x70, 0x65, 0x63, 0x74, 0x65, 0x64, 0x52, 0x65, 0x77,
+	0x61, 0x72, 0x64, 0x12, 0x25, 0x0a, 0x0e, 0x6c, 0x6f, 0x63, 0x6b, 0x65, 0x64, 0x5f, 0x70, 0x61,
+	0x79, 0x6d, 0x65, 0x6e, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0d, 0x6c, 0x6f, 0x63,
+	0x6b, 0x65, 0x64, 0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x12, 0x21, 0x0a, 0x0c, 0x73, 0x74,
+	0x61, 0x72, 0x74, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03,
+	0x52, 0x0b, 0x73, 0x74, 0x61, 0x72, 0x74, 0x48, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x12, 0x0a,
+	0x04, 0x73, 0x65, 0x65, 0x64, 0x18, 0x07, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x04, 0x73, 0x65, 0x65,
+	0x64, 0x12, 0x4f, 0x0a, 0x0c, 0x66, 0x61, 0x69, 0x6c, 0x75, 0x72, 0x65, 0x5f, 0x6b, 0x69, 0x6e,
+	0x64, 0x18, 0x08, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x2c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f,
+	0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x46, 0x61, 0x69, 0x6c, 0x75, 0x72,
+	0x65, 0x4b, 0x69, 0x6e, 0x64, 0x52, 0x0b, 0x66, 0x61, 0x69, 0x6c, 0x75, 0x72, 0x65, 0x4b, 0x69,
+	0x6e, 0x64, 0x22, 0xda, 0x01, 0x0a, 0x10, 0x4f, 0x70, 0x65, 0x6e, 0x50, 0x6f, 0x43, 0x43, 0x68,
+	0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x74, 0x61, 0x72, 0x67, 0x65,
+	0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x74, 0x61, 0x72, 0x67, 0x65, 0x74, 0x12,
+	0x21, 0x0a, 0x0c, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
+	0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x73, 0x74, 0x61, 0x72, 0x74, 0x48, 0x65, 0x69, 0x67,
+	0x68, 0x74, 0x12, 0x12, 0x0a, 0x04, 0x73, 0x65, 0x65, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c,
+	0x52, 0x04, 0x73, 0x65, 0x65, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68,
+	0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x12, 0x1e,
+	0x0a, 0x0a, 0x67, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6e, 0x67, 0x18, 0x05, 0x20, 0x01,
+	0x28, 0x08, 0x52, 0x0a, 0x67, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6e, 0x67, 0x12, 0x3f,
+	0x0a, 0x07, 0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x73, 0x18, 0x06, 0x20, 0x03, 0x28, 0x0b, 0x32,
+	0x25, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f, 0x43, 0x56, 0x32, 0x53, 0x74, 0x6f, 0x72, 0x65,
+	0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x52, 0x07, 0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x73, 0x2a,
+	0x9c, 0x01, 0x0a, 0x17, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65,
+	0x46, 0x61, 0x69, 0x6c, 0x75, 0x72, 0x65, 0x4b, 0x69, 0x6e, 0x64, 0x12, 0x24, 0x0a, 0x20, 0x50,
+	0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49,
+	0x4c, 0x55, 0x52, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x55, 0x4e, 0x53, 0x45, 0x54, 0x10,
+	0x00, 0x12, 0x2f, 0x0a, 0x2b, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e,
+	0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x55, 0x52, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f,
+	0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x45, 0x44,
+	0x10, 0x01, 0x12, 0x2a, 0x0a, 0x26, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45,
+	0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x55, 0x52, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44,
+	0x5f, 0x52, 0x45, 0x46, 0x55, 0x4e, 0x44, 0x5f, 0x4f, 0x4e, 0x4c, 0x59, 0x10, 0x02, 0x42, 0xbf,
+	0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x11, 0x50, 0x6f, 0x63, 0x43,
+	0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a,
+	0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70,
+	0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50,
+	0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -4836,29 +1884,22 @@ func file_inference_inference_poc_challenge_proto_rawDescGZIP() []byte {
 	return file_inference_inference_poc_challenge_proto_rawDescData
 }
 
-var file_inference_inference_poc_challenge_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_inference_inference_poc_challenge_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_inference_inference_poc_challenge_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_inference_inference_poc_challenge_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_inference_inference_poc_challenge_proto_goTypes = []interface{}{
-	(PoCChallengeSegmentOutcome)(0), // 0: inference.inference.PoCChallengeSegmentOutcome
-	(PoCChallengeFailReason)(0),     // 1: inference.inference.PoCChallengeFailReason
-	(*PoCChallengeSegment)(nil),     // 2: inference.inference.PoCChallengeSegment
-	(*PoCChallenge)(nil),            // 3: inference.inference.PoCChallenge
-	(*PoCChallengeCommit)(nil),      // 4: inference.inference.PoCChallengeCommit
-	(*PoCChallengeValidation)(nil),  // 5: inference.inference.PoCChallengeValidation
-	(*CountedSliceCommit)(nil),      // 6: inference.inference.CountedSliceCommit
-	(*OpenPoCChallenge)(nil),        // 7: inference.inference.OpenPoCChallenge
+	(PoCChallengeFailureKind)(0), // 0: inference.inference.PoCChallengeFailureKind
+	(*PoCChallenge)(nil),         // 1: inference.inference.PoCChallenge
+	(*OpenPoCChallenge)(nil),     // 2: inference.inference.OpenPoCChallenge
+	(*PoCV2StoreCommit)(nil),     // 3: inference.inference.PoCV2StoreCommit
 }
 var file_inference_inference_poc_challenge_proto_depIdxs = []int32{
-	0, // 0: inference.inference.PoCChallengeSegment.outcome:type_name -> inference.inference.PoCChallengeSegmentOutcome
-	1, // 1: inference.inference.PoCChallenge.fail_reason:type_name -> inference.inference.PoCChallengeFailReason
-	2, // 2: inference.inference.PoCChallenge.segments:type_name -> inference.inference.PoCChallengeSegment
-	3, // 3: inference.inference.OpenPoCChallenge.challenge:type_name -> inference.inference.PoCChallenge
-	6, // 4: inference.inference.OpenPoCChallenge.counted_commits:type_name -> inference.inference.CountedSliceCommit
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	0, // 0: inference.inference.PoCChallenge.failure_kind:type_name -> inference.inference.PoCChallengeFailureKind
+	3, // 1: inference.inference.OpenPoCChallenge.commits:type_name -> inference.inference.PoCV2StoreCommit
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_poc_challenge_proto_init() }
@@ -4866,20 +1907,9 @@ func file_inference_inference_poc_challenge_proto_init() {
 	if File_inference_inference_poc_challenge_proto != nil {
 		return
 	}
+	file_inference_inference_poc_v2_proto_init()
 	if !protoimpl.UnsafeEnabled {
 		file_inference_inference_poc_challenge_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PoCChallengeSegment); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_inference_inference_poc_challenge_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*PoCChallenge); i {
 			case 0:
 				return &v.state
@@ -4891,43 +1921,7 @@ func file_inference_inference_poc_challenge_proto_init() {
 				return nil
 			}
 		}
-		file_inference_inference_poc_challenge_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PoCChallengeCommit); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_inference_inference_poc_challenge_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PoCChallengeValidation); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_inference_inference_poc_challenge_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*CountedSliceCommit); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_inference_inference_poc_challenge_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
+		file_inference_inference_poc_challenge_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*OpenPoCChallenge); i {
 			case 0:
 				return &v.state
@@ -4945,8 +1939,8 @@ func file_inference_inference_poc_challenge_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_poc_challenge_proto_rawDesc,
-			NumEnums:      2,
-			NumMessages:   6,
+			NumEnums:      1,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

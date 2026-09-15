@@ -22,168 +22,50 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
-type PoCChallengeSegmentOutcome int32
+type PoCChallengeFailureKind int32
 
 const (
-	PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PENDING     PoCChallengeSegmentOutcome = 0
-	PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PASSED      PoCChallengeSegmentOutcome = 1
-	PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_FAILED      PoCChallengeSegmentOutcome = 2
-	PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_AUTO_PASSED PoCChallengeSegmentOutcome = 3
+	PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET            PoCChallengeFailureKind = 0
+	PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED PoCChallengeFailureKind = 1
+	PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY      PoCChallengeFailureKind = 2
 )
 
-var PoCChallengeSegmentOutcome_name = map[int32]string{
-	0: "POC_CHALLENGE_SEGMENT_OUTCOME_PENDING",
-	1: "POC_CHALLENGE_SEGMENT_OUTCOME_PASSED",
-	2: "POC_CHALLENGE_SEGMENT_OUTCOME_FAILED",
-	3: "POC_CHALLENGE_SEGMENT_OUTCOME_AUTO_PASSED",
+var PoCChallengeFailureKind_name = map[int32]string{
+	0: "POC_CHALLENGE_FAILURE_KIND_UNSET",
+	1: "POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED",
+	2: "POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY",
 }
 
-var PoCChallengeSegmentOutcome_value = map[string]int32{
-	"POC_CHALLENGE_SEGMENT_OUTCOME_PENDING":     0,
-	"POC_CHALLENGE_SEGMENT_OUTCOME_PASSED":      1,
-	"POC_CHALLENGE_SEGMENT_OUTCOME_FAILED":      2,
-	"POC_CHALLENGE_SEGMENT_OUTCOME_AUTO_PASSED": 3,
+var PoCChallengeFailureKind_value = map[string]int32{
+	"POC_CHALLENGE_FAILURE_KIND_UNSET":            0,
+	"POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED": 1,
+	"POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY":      2,
 }
 
-func (x PoCChallengeSegmentOutcome) String() string {
-	return proto.EnumName(PoCChallengeSegmentOutcome_name, int32(x))
+func (x PoCChallengeFailureKind) String() string {
+	return proto.EnumName(PoCChallengeFailureKind_name, int32(x))
 }
 
-func (PoCChallengeSegmentOutcome) EnumDescriptor() ([]byte, []int) {
+func (PoCChallengeFailureKind) EnumDescriptor() ([]byte, []int) {
 	return fileDescriptor_042759f68223e2c7, []int{0}
-}
-
-type PoCChallengeFailReason int32
-
-const (
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET               PoCChallengeFailReason = 0
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED    PoCChallengeFailReason = 1
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT PoCChallengeFailReason = 2
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT      PoCChallengeFailReason = 3
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_NO_VOTE             PoCChallengeFailReason = 4
-	PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNRELATED_REMOVAL   PoCChallengeFailReason = 5
-)
-
-var PoCChallengeFailReason_name = map[int32]string{
-	0: "POC_CHALLENGE_FAIL_REASON_UNSET",
-	1: "POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED",
-	2: "POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT",
-	3: "POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT",
-	4: "POC_CHALLENGE_FAIL_REASON_NO_VOTE",
-	5: "POC_CHALLENGE_FAIL_REASON_UNRELATED_REMOVAL",
-}
-
-var PoCChallengeFailReason_value = map[string]int32{
-	"POC_CHALLENGE_FAIL_REASON_UNSET":               0,
-	"POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED":    1,
-	"POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT": 2,
-	"POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT":      3,
-	"POC_CHALLENGE_FAIL_REASON_NO_VOTE":             4,
-	"POC_CHALLENGE_FAIL_REASON_UNRELATED_REMOVAL":   5,
-}
-
-func (x PoCChallengeFailReason) String() string {
-	return proto.EnumName(PoCChallengeFailReason_name, int32(x))
-}
-
-func (PoCChallengeFailReason) EnumDescriptor() ([]byte, []int) {
-	return fileDescriptor_042759f68223e2c7, []int{1}
-}
-
-type PoCChallengeSegment struct {
-	PocStageStartBlockHeight int64                      `protobuf:"varint,1,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
-	SeedHash                 string                     `protobuf:"bytes,2,opt,name=seed_hash,json=seedHash,proto3" json:"seed_hash,omitempty"`
-	SealHeight               int64                      `protobuf:"varint,3,opt,name=seal_height,json=sealHeight,proto3" json:"seal_height,omitempty"`
-	FirstVoteHeight          int64                      `protobuf:"varint,4,opt,name=first_vote_height,json=firstVoteHeight,proto3" json:"first_vote_height,omitempty"`
-	Outcome                  PoCChallengeSegmentOutcome `protobuf:"varint,5,opt,name=outcome,proto3,enum=inference.inference.PoCChallengeSegmentOutcome" json:"outcome,omitempty"`
-}
-
-func (m *PoCChallengeSegment) Reset()         { *m = PoCChallengeSegment{} }
-func (m *PoCChallengeSegment) String() string { return proto.CompactTextString(m) }
-func (*PoCChallengeSegment) ProtoMessage()    {}
-func (*PoCChallengeSegment) Descriptor() ([]byte, []int) {
-	return fileDescriptor_042759f68223e2c7, []int{0}
-}
-func (m *PoCChallengeSegment) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *PoCChallengeSegment) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_PoCChallengeSegment.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *PoCChallengeSegment) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_PoCChallengeSegment.Merge(m, src)
-}
-func (m *PoCChallengeSegment) XXX_Size() int {
-	return m.Size()
-}
-func (m *PoCChallengeSegment) XXX_DiscardUnknown() {
-	xxx_messageInfo_PoCChallengeSegment.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_PoCChallengeSegment proto.InternalMessageInfo
-
-func (m *PoCChallengeSegment) GetPocStageStartBlockHeight() int64 {
-	if m != nil {
-		return m.PocStageStartBlockHeight
-	}
-	return 0
-}
-
-func (m *PoCChallengeSegment) GetSeedHash() string {
-	if m != nil {
-		return m.SeedHash
-	}
-	return ""
-}
-
-func (m *PoCChallengeSegment) GetSealHeight() int64 {
-	if m != nil {
-		return m.SealHeight
-	}
-	return 0
-}
-
-func (m *PoCChallengeSegment) GetFirstVoteHeight() int64 {
-	if m != nil {
-		return m.FirstVoteHeight
-	}
-	return 0
-}
-
-func (m *PoCChallengeSegment) GetOutcome() PoCChallengeSegmentOutcome {
-	if m != nil {
-		return m.Outcome
-	}
-	return PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PENDING
 }
 
 type PoCChallenge struct {
-	EpochIndex           uint64                 `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
-	Challenger           string                 `protobuf:"bytes,2,opt,name=challenger,proto3" json:"challenger,omitempty"`
-	Target               string                 `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
-	ChallengeStartHeight int64                  `protobuf:"varint,4,opt,name=challenge_start_height,json=challengeStartHeight,proto3" json:"challenge_start_height,omitempty"`
-	ExpectedReward       uint64                 `protobuf:"varint,5,opt,name=expected_reward,json=expectedReward,proto3" json:"expected_reward,omitempty"`
-	LockedPayment        uint64                 `protobuf:"varint,6,opt,name=locked_payment,json=lockedPayment,proto3" json:"locked_payment,omitempty"`
-	GenerationEndHeight  int64                  `protobuf:"varint,7,opt,name=generation_end_height,json=generationEndHeight,proto3" json:"generation_end_height,omitempty"`
-	FailReason           PoCChallengeFailReason `protobuf:"varint,8,opt,name=fail_reason,json=failReason,proto3,enum=inference.inference.PoCChallengeFailReason" json:"fail_reason,omitempty"`
-	// Open segment plus sealed rows. Readers filter Outcome == PENDING.
-	Segments []*PoCChallengeSegment `protobuf:"bytes,9,rep,name=segments,proto3" json:"segments,omitempty"`
+	EpochIndex     uint64                  `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
+	Challenger     string                  `protobuf:"bytes,2,opt,name=challenger,proto3" json:"challenger,omitempty"`
+	Target         string                  `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
+	ExpectedReward uint64                  `protobuf:"varint,4,opt,name=expected_reward,json=expectedReward,proto3" json:"expected_reward,omitempty"`
+	LockedPayment  uint64                  `protobuf:"varint,5,opt,name=locked_payment,json=lockedPayment,proto3" json:"locked_payment,omitempty"`
+	StartHeight    int64                   `protobuf:"varint,6,opt,name=start_height,json=startHeight,proto3" json:"start_height,omitempty"`
+	Seed           []byte                  `protobuf:"bytes,7,opt,name=seed,proto3" json:"seed,omitempty"`
+	FailureKind    PoCChallengeFailureKind `protobuf:"varint,8,opt,name=failure_kind,json=failureKind,proto3,enum=inference.inference.PoCChallengeFailureKind" json:"failure_kind,omitempty"`
 }
 
 func (m *PoCChallenge) Reset()         { *m = PoCChallenge{} }
 func (m *PoCChallenge) String() string { return proto.CompactTextString(m) }
 func (*PoCChallenge) ProtoMessage()    {}
 func (*PoCChallenge) Descriptor() ([]byte, []int) {
-	return fileDescriptor_042759f68223e2c7, []int{1}
+	return fileDescriptor_042759f68223e2c7, []int{0}
 }
 func (m *PoCChallenge) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -233,13 +115,6 @@ func (m *PoCChallenge) GetTarget() string {
 	return ""
 }
 
-func (m *PoCChallenge) GetChallengeStartHeight() int64 {
-	if m != nil {
-		return m.ChallengeStartHeight
-	}
-	return 0
-}
-
 func (m *PoCChallenge) GetExpectedReward() uint64 {
 	if m != nil {
 		return m.ExpectedReward
@@ -254,281 +129,41 @@ func (m *PoCChallenge) GetLockedPayment() uint64 {
 	return 0
 }
 
-func (m *PoCChallenge) GetGenerationEndHeight() int64 {
+func (m *PoCChallenge) GetStartHeight() int64 {
 	if m != nil {
-		return m.GenerationEndHeight
+		return m.StartHeight
 	}
 	return 0
 }
 
-func (m *PoCChallenge) GetFailReason() PoCChallengeFailReason {
+func (m *PoCChallenge) GetSeed() []byte {
 	if m != nil {
-		return m.FailReason
-	}
-	return PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET
-}
-
-func (m *PoCChallenge) GetSegments() []*PoCChallengeSegment {
-	if m != nil {
-		return m.Segments
+		return m.Seed
 	}
 	return nil
 }
 
-type PoCChallengeCommit struct {
-	Target                   string `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
-	PocStageStartBlockHeight int64  `protobuf:"varint,2,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
-	ModelId                  string `protobuf:"bytes,3,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
-	SliceIndex               uint32 `protobuf:"varint,4,opt,name=slice_index,json=sliceIndex,proto3" json:"slice_index,omitempty"`
-	Count                    uint32 `protobuf:"varint,5,opt,name=count,proto3" json:"count,omitempty"`
-	RootHash                 []byte `protobuf:"bytes,6,opt,name=root_hash,json=rootHash,proto3" json:"root_hash,omitempty"`
-	CommitBlockHeight        int64  `protobuf:"varint,7,opt,name=commit_block_height,json=commitBlockHeight,proto3" json:"commit_block_height,omitempty"`
-}
-
-func (m *PoCChallengeCommit) Reset()         { *m = PoCChallengeCommit{} }
-func (m *PoCChallengeCommit) String() string { return proto.CompactTextString(m) }
-func (*PoCChallengeCommit) ProtoMessage()    {}
-func (*PoCChallengeCommit) Descriptor() ([]byte, []int) {
-	return fileDescriptor_042759f68223e2c7, []int{2}
-}
-func (m *PoCChallengeCommit) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *PoCChallengeCommit) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_PoCChallengeCommit.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *PoCChallengeCommit) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_PoCChallengeCommit.Merge(m, src)
-}
-func (m *PoCChallengeCommit) XXX_Size() int {
-	return m.Size()
-}
-func (m *PoCChallengeCommit) XXX_DiscardUnknown() {
-	xxx_messageInfo_PoCChallengeCommit.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_PoCChallengeCommit proto.InternalMessageInfo
-
-func (m *PoCChallengeCommit) GetTarget() string {
+func (m *PoCChallenge) GetFailureKind() PoCChallengeFailureKind {
 	if m != nil {
-		return m.Target
+		return m.FailureKind
 	}
-	return ""
-}
-
-func (m *PoCChallengeCommit) GetPocStageStartBlockHeight() int64 {
-	if m != nil {
-		return m.PocStageStartBlockHeight
-	}
-	return 0
-}
-
-func (m *PoCChallengeCommit) GetModelId() string {
-	if m != nil {
-		return m.ModelId
-	}
-	return ""
-}
-
-func (m *PoCChallengeCommit) GetSliceIndex() uint32 {
-	if m != nil {
-		return m.SliceIndex
-	}
-	return 0
-}
-
-func (m *PoCChallengeCommit) GetCount() uint32 {
-	if m != nil {
-		return m.Count
-	}
-	return 0
-}
-
-func (m *PoCChallengeCommit) GetRootHash() []byte {
-	if m != nil {
-		return m.RootHash
-	}
-	return nil
-}
-
-func (m *PoCChallengeCommit) GetCommitBlockHeight() int64 {
-	if m != nil {
-		return m.CommitBlockHeight
-	}
-	return 0
-}
-
-type PoCChallengeValidation struct {
-	Target                   string `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
-	PocStageStartBlockHeight int64  `protobuf:"varint,2,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
-	ModelId                  string `protobuf:"bytes,3,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
-	Validator                string `protobuf:"bytes,4,opt,name=validator,proto3" json:"validator,omitempty"`
-	ValidatedWeight          int64  `protobuf:"varint,5,opt,name=validated_weight,json=validatedWeight,proto3" json:"validated_weight,omitempty"`
-}
-
-func (m *PoCChallengeValidation) Reset()         { *m = PoCChallengeValidation{} }
-func (m *PoCChallengeValidation) String() string { return proto.CompactTextString(m) }
-func (*PoCChallengeValidation) ProtoMessage()    {}
-func (*PoCChallengeValidation) Descriptor() ([]byte, []int) {
-	return fileDescriptor_042759f68223e2c7, []int{3}
-}
-func (m *PoCChallengeValidation) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *PoCChallengeValidation) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_PoCChallengeValidation.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *PoCChallengeValidation) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_PoCChallengeValidation.Merge(m, src)
-}
-func (m *PoCChallengeValidation) XXX_Size() int {
-	return m.Size()
-}
-func (m *PoCChallengeValidation) XXX_DiscardUnknown() {
-	xxx_messageInfo_PoCChallengeValidation.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_PoCChallengeValidation proto.InternalMessageInfo
-
-func (m *PoCChallengeValidation) GetTarget() string {
-	if m != nil {
-		return m.Target
-	}
-	return ""
-}
-
-func (m *PoCChallengeValidation) GetPocStageStartBlockHeight() int64 {
-	if m != nil {
-		return m.PocStageStartBlockHeight
-	}
-	return 0
-}
-
-func (m *PoCChallengeValidation) GetModelId() string {
-	if m != nil {
-		return m.ModelId
-	}
-	return ""
-}
-
-func (m *PoCChallengeValidation) GetValidator() string {
-	if m != nil {
-		return m.Validator
-	}
-	return ""
-}
-
-func (m *PoCChallengeValidation) GetValidatedWeight() int64 {
-	if m != nil {
-		return m.ValidatedWeight
-	}
-	return 0
-}
-
-type CountedSliceCommit struct {
-	PocStageStartBlockHeight int64  `protobuf:"varint,1,opt,name=poc_stage_start_block_height,json=pocStageStartBlockHeight,proto3" json:"poc_stage_start_block_height,omitempty"`
-	SliceIndex               uint32 `protobuf:"varint,2,opt,name=slice_index,json=sliceIndex,proto3" json:"slice_index,omitempty"`
-	ModelId                  string `protobuf:"bytes,3,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
-	Count                    uint32 `protobuf:"varint,4,opt,name=count,proto3" json:"count,omitempty"`
-	RootHash                 []byte `protobuf:"bytes,5,opt,name=root_hash,json=rootHash,proto3" json:"root_hash,omitempty"`
-}
-
-func (m *CountedSliceCommit) Reset()         { *m = CountedSliceCommit{} }
-func (m *CountedSliceCommit) String() string { return proto.CompactTextString(m) }
-func (*CountedSliceCommit) ProtoMessage()    {}
-func (*CountedSliceCommit) Descriptor() ([]byte, []int) {
-	return fileDescriptor_042759f68223e2c7, []int{4}
-}
-func (m *CountedSliceCommit) XXX_Unmarshal(b []byte) error {
-	return m.Unmarshal(b)
-}
-func (m *CountedSliceCommit) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
-	if deterministic {
-		return xxx_messageInfo_CountedSliceCommit.Marshal(b, m, deterministic)
-	} else {
-		b = b[:cap(b)]
-		n, err := m.MarshalToSizedBuffer(b)
-		if err != nil {
-			return nil, err
-		}
-		return b[:n], nil
-	}
-}
-func (m *CountedSliceCommit) XXX_Merge(src proto.Message) {
-	xxx_messageInfo_CountedSliceCommit.Merge(m, src)
-}
-func (m *CountedSliceCommit) XXX_Size() int {
-	return m.Size()
-}
-func (m *CountedSliceCommit) XXX_DiscardUnknown() {
-	xxx_messageInfo_CountedSliceCommit.DiscardUnknown(m)
-}
-
-var xxx_messageInfo_CountedSliceCommit proto.InternalMessageInfo
-
-func (m *CountedSliceCommit) GetPocStageStartBlockHeight() int64 {
-	if m != nil {
-		return m.PocStageStartBlockHeight
-	}
-	return 0
-}
-
-func (m *CountedSliceCommit) GetSliceIndex() uint32 {
-	if m != nil {
-		return m.SliceIndex
-	}
-	return 0
-}
-
-func (m *CountedSliceCommit) GetModelId() string {
-	if m != nil {
-		return m.ModelId
-	}
-	return ""
-}
-
-func (m *CountedSliceCommit) GetCount() uint32 {
-	if m != nil {
-		return m.Count
-	}
-	return 0
-}
-
-func (m *CountedSliceCommit) GetRootHash() []byte {
-	if m != nil {
-		return m.RootHash
-	}
-	return nil
+	return PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET
 }
 
 type OpenPoCChallenge struct {
-	Challenge      *PoCChallenge         `protobuf:"bytes,1,opt,name=challenge,proto3" json:"challenge,omitempty"`
-	CountedCommits []*CountedSliceCommit `protobuf:"bytes,2,rep,name=counted_commits,json=countedCommits,proto3" json:"counted_commits,omitempty"`
+	Target      string              `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
+	StartHeight int64               `protobuf:"varint,2,opt,name=start_height,json=startHeight,proto3" json:"start_height,omitempty"`
+	Seed        []byte              `protobuf:"bytes,3,opt,name=seed,proto3" json:"seed,omitempty"`
+	Finish      int64               `protobuf:"varint,4,opt,name=finish,proto3" json:"finish,omitempty"`
+	Generating  bool                `protobuf:"varint,5,opt,name=generating,proto3" json:"generating,omitempty"`
+	Commits     []*PoCV2StoreCommit `protobuf:"bytes,6,rep,name=commits,proto3" json:"commits,omitempty"`
 }
 
 func (m *OpenPoCChallenge) Reset()         { *m = OpenPoCChallenge{} }
 func (m *OpenPoCChallenge) String() string { return proto.CompactTextString(m) }
 func (*OpenPoCChallenge) ProtoMessage()    {}
 func (*OpenPoCChallenge) Descriptor() ([]byte, []int) {
-	return fileDescriptor_042759f68223e2c7, []int{5}
+	return fileDescriptor_042759f68223e2c7, []int{1}
 }
 func (m *OpenPoCChallenge) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -557,28 +192,51 @@ func (m *OpenPoCChallenge) XXX_DiscardUnknown() {
 
 var xxx_messageInfo_OpenPoCChallenge proto.InternalMessageInfo
 
-func (m *OpenPoCChallenge) GetChallenge() *PoCChallenge {
+func (m *OpenPoCChallenge) GetTarget() string {
 	if m != nil {
-		return m.Challenge
+		return m.Target
+	}
+	return ""
+}
+
+func (m *OpenPoCChallenge) GetStartHeight() int64 {
+	if m != nil {
+		return m.StartHeight
+	}
+	return 0
+}
+
+func (m *OpenPoCChallenge) GetSeed() []byte {
+	if m != nil {
+		return m.Seed
 	}
 	return nil
 }
 
-func (m *OpenPoCChallenge) GetCountedCommits() []*CountedSliceCommit {
+func (m *OpenPoCChallenge) GetFinish() int64 {
 	if m != nil {
-		return m.CountedCommits
+		return m.Finish
+	}
+	return 0
+}
+
+func (m *OpenPoCChallenge) GetGenerating() bool {
+	if m != nil {
+		return m.Generating
+	}
+	return false
+}
+
+func (m *OpenPoCChallenge) GetCommits() []*PoCV2StoreCommit {
+	if m != nil {
+		return m.Commits
 	}
 	return nil
 }
 
 func init() {
-	proto.RegisterEnum("inference.inference.PoCChallengeSegmentOutcome", PoCChallengeSegmentOutcome_name, PoCChallengeSegmentOutcome_value)
-	proto.RegisterEnum("inference.inference.PoCChallengeFailReason", PoCChallengeFailReason_name, PoCChallengeFailReason_value)
-	proto.RegisterType((*PoCChallengeSegment)(nil), "inference.inference.PoCChallengeSegment")
+	proto.RegisterEnum("inference.inference.PoCChallengeFailureKind", PoCChallengeFailureKind_name, PoCChallengeFailureKind_value)
 	proto.RegisterType((*PoCChallenge)(nil), "inference.inference.PoCChallenge")
-	proto.RegisterType((*PoCChallengeCommit)(nil), "inference.inference.PoCChallengeCommit")
-	proto.RegisterType((*PoCChallengeValidation)(nil), "inference.inference.PoCChallengeValidation")
-	proto.RegisterType((*CountedSliceCommit)(nil), "inference.inference.CountedSliceCommit")
 	proto.RegisterType((*OpenPoCChallenge)(nil), "inference.inference.OpenPoCChallenge")
 }
 
@@ -587,115 +245,39 @@ func init() {
 }
 
 var fileDescriptor_042759f68223e2c7 = []byte{
-	// 918 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xc4, 0x56, 0xcd, 0x6e, 0xdb, 0x46,
-	0x10, 0x16, 0xf5, 0x13, 0x4b, 0xe3, 0xd8, 0x66, 0xd6, 0xa9, 0xa1, 0xb6, 0x81, 0xe2, 0xa8, 0x35,
-	0x2c, 0x3b, 0x8d, 0x8c, 0xba, 0xed, 0xb5, 0x85, 0x22, 0x6d, 0x64, 0x15, 0x92, 0x28, 0x2c, 0x65,
-	0x07, 0xe8, 0x65, 0x41, 0x93, 0x6b, 0x89, 0x28, 0xc5, 0x25, 0xc8, 0x75, 0xe2, 0xbc, 0x42, 0x7b,
-	0xe9, 0x4b, 0xb4, 0x6f, 0xd0, 0x27, 0xe8, 0xa5, 0xe8, 0x29, 0x87, 0x1e, 0x7a, 0x2c, 0xec, 0x17,
-	0x29, 0x76, 0x49, 0x51, 0x52, 0x62, 0x59, 0x05, 0x7a, 0xe8, 0x45, 0xd8, 0x9d, 0xfd, 0x66, 0x39,
-	0xdf, 0xf7, 0xcd, 0x2c, 0x04, 0xfb, 0xae, 0x7f, 0xc1, 0x42, 0xe6, 0xdb, 0xec, 0x68, 0xb6, 0x0a,
-	0xb8, 0x4d, 0xed, 0xb1, 0xe5, 0x79, 0xcc, 0x1f, 0xb1, 0x7a, 0x10, 0x72, 0xc1, 0xd1, 0x76, 0x7a,
-	0x5c, 0x4f, 0x57, 0xd5, 0x1f, 0xb2, 0xb0, 0x3d, 0xe0, 0xcd, 0xe6, 0x14, 0x6b, 0xb2, 0xd1, 0x84,
-	0xf9, 0x02, 0x7d, 0x0d, 0x8f, 0xe4, 0x1d, 0x91, 0xb0, 0x46, 0x4c, 0xfe, 0x86, 0x82, 0x9e, 0x7b,
-	0xdc, 0xfe, 0x9e, 0x8e, 0x99, 0x3b, 0x1a, 0x8b, 0xb2, 0xb6, 0xab, 0xd5, 0x72, 0xa4, 0x1c, 0x70,
-	0xdb, 0x94, 0x10, 0x53, 0x22, 0x9e, 0x4b, 0xc0, 0x89, 0x3a, 0x47, 0x1f, 0x43, 0x29, 0x62, 0xcc,
-	0xa1, 0x63, 0x2b, 0x1a, 0x97, 0xb3, 0xbb, 0x5a, 0xad, 0x44, 0x8a, 0x32, 0x70, 0x62, 0x45, 0x63,
-	0xf4, 0x18, 0xd6, 0x23, 0x66, 0x79, 0xd3, 0xbb, 0x72, 0xea, 0x2e, 0x90, 0xa1, 0x24, 0xfb, 0x10,
-	0x1e, 0x5c, 0xb8, 0x61, 0x24, 0xe8, 0x2b, 0x2e, 0xd8, 0x14, 0x96, 0x57, 0xb0, 0x2d, 0x75, 0x70,
-	0xc6, 0x05, 0x4b, 0xb0, 0x1d, 0x58, 0xe3, 0x97, 0xc2, 0xe6, 0x13, 0x56, 0x2e, 0xec, 0x6a, 0xb5,
-	0xcd, 0xe3, 0xa3, 0xfa, 0x2d, 0x44, 0xeb, 0xb7, 0x90, 0x34, 0xe2, 0x34, 0x32, 0xcd, 0xaf, 0xfe,
-	0x9a, 0x83, 0xfb, 0xf3, 0x38, 0x59, 0x28, 0x0b, 0xb8, 0x3d, 0xa6, 0xae, 0xef, 0xb0, 0x2b, 0x45,
-	0x3a, 0x4f, 0x40, 0x85, 0x3a, 0x32, 0x82, 0x2a, 0x00, 0xa9, 0xcc, 0x61, 0xc2, 0x73, 0x2e, 0x82,
-	0x76, 0xe0, 0x9e, 0xb0, 0xc2, 0x11, 0x8b, 0x49, 0x96, 0x48, 0xb2, 0x43, 0x5f, 0xc2, 0x4e, 0x8a,
-	0x4a, 0xe4, 0x5d, 0x60, 0xf9, 0x30, 0x3d, 0x55, 0xca, 0x26, 0x54, 0xf7, 0x61, 0x8b, 0x5d, 0x05,
-	0xcc, 0x16, 0xcc, 0xa1, 0x21, 0x7b, 0x6d, 0x85, 0x8e, 0xa2, 0x9c, 0x27, 0x9b, 0xd3, 0x30, 0x51,
-	0x51, 0xb4, 0x07, 0x9b, 0xd2, 0x0b, 0xe6, 0xd0, 0xc0, 0x7a, 0x23, 0xa9, 0x96, 0xef, 0x29, 0xdc,
-	0x46, 0x1c, 0x1d, 0xc4, 0x41, 0x74, 0x0c, 0x1f, 0x8c, 0x98, 0xcf, 0x42, 0x4b, 0xb8, 0xdc, 0xa7,
-	0xcc, 0x77, 0xa6, 0x45, 0xac, 0xa9, 0x22, 0xb6, 0x67, 0x87, 0xd8, 0x77, 0x92, 0x1a, 0xba, 0xb0,
-	0x7e, 0x61, 0xb9, 0x1e, 0x0d, 0x99, 0x15, 0x71, 0xbf, 0x5c, 0x54, 0x92, 0x3f, 0x5d, 0x29, 0xf9,
-	0x0b, 0xcb, 0xf5, 0x88, 0x4a, 0x21, 0x70, 0x91, 0xae, 0x51, 0x0b, 0x8a, 0x51, 0x6c, 0x46, 0x54,
-	0x2e, 0xed, 0xe6, 0x6a, 0xeb, 0xc7, 0xb5, 0x7f, 0xeb, 0x1e, 0x49, 0x33, 0xab, 0x3f, 0x66, 0x01,
-	0xcd, 0x23, 0x9a, 0x7c, 0x32, 0x71, 0xc5, 0x9c, 0xf8, 0xda, 0x82, 0xf8, 0xab, 0x7a, 0x3b, 0xbb,
-	0xa2, 0xb7, 0x3f, 0x84, 0xe2, 0x84, 0x3b, 0xcc, 0xa3, 0xae, 0x93, 0xd8, 0xba, 0xa6, 0xf6, 0x1d,
-	0x47, 0x75, 0xb6, 0xe7, 0xda, 0x2c, 0x69, 0x18, 0x69, 0xe6, 0x06, 0x01, 0x15, 0x8a, 0x1b, 0xe6,
-	0x21, 0x14, 0x6c, 0x7e, 0xe9, 0x0b, 0x65, 0xdc, 0x06, 0x89, 0x37, 0x72, 0x5a, 0x42, 0xce, 0x45,
-	0x3c, 0x2d, 0xd2, 0xaa, 0xfb, 0xa4, 0x28, 0x03, 0x6a, 0x5a, 0xea, 0xb0, 0x6d, 0x2b, 0x42, 0x8b,
-	0x55, 0xc6, 0x1e, 0x3d, 0x88, 0x8f, 0xe6, 0xca, 0xab, 0xfe, 0xa9, 0xc1, 0xce, 0xbc, 0x1a, 0x67,
-	0x96, 0xe7, 0x3a, 0xca, 0xc5, 0xff, 0x43, 0x91, 0x47, 0x50, 0x7a, 0x15, 0x17, 0xc0, 0x43, 0xa5,
-	0x47, 0x89, 0xcc, 0x02, 0xe8, 0x00, 0xf4, 0x64, 0xc3, 0x1c, 0xfa, 0x3a, 0xfe, 0x58, 0x21, 0x9e,
-	0xf3, 0x34, 0xfe, 0x32, 0xa6, 0xf5, 0x9b, 0x06, 0xa8, 0x29, 0xd5, 0x62, 0x8e, 0x29, 0xf5, 0x4c,
-	0x4c, 0xfe, 0xaf, 0x0f, 0xd5, 0x3b, 0x8e, 0x65, 0xdf, 0x73, 0xec, 0x0e, 0x6e, 0xa9, 0x99, 0xf9,
-	0xa5, 0x66, 0x16, 0x16, 0xcd, 0xac, 0xfe, 0xac, 0x81, 0x6e, 0x04, 0xcc, 0x5f, 0x78, 0x66, 0xbe,
-	0x81, 0x52, 0x3a, 0xef, 0xaa, 0xe0, 0xf5, 0xe3, 0x27, 0x2b, 0xc7, 0x80, 0xcc, 0x72, 0xd0, 0x00,
-	0xb6, 0xec, 0x58, 0x1a, 0x1a, 0xf7, 0x43, 0x54, 0xce, 0xaa, 0x69, 0xda, 0xbf, 0xf5, 0x9a, 0xf7,
-	0x65, 0x24, 0x9b, 0x49, 0x7e, 0xbc, 0x8d, 0x0e, 0xff, 0xd0, 0xe0, 0xa3, 0xe5, 0x4f, 0x26, 0x3a,
-	0x80, 0xbd, 0x81, 0xd1, 0xa4, 0xcd, 0x93, 0x46, 0xb7, 0x8b, 0xfb, 0x6d, 0x4c, 0x4d, 0xdc, 0xee,
-	0xe1, 0xfe, 0x90, 0x1a, 0xa7, 0xc3, 0xa6, 0xd1, 0xc3, 0x74, 0x80, 0xfb, 0xad, 0x4e, 0xbf, 0xad,
-	0x67, 0x50, 0x0d, 0x3e, 0x5d, 0x01, 0x6d, 0x98, 0x26, 0x6e, 0xe9, 0xda, 0x6a, 0xe4, 0x8b, 0x46,
-	0xa7, 0x8b, 0x5b, 0x7a, 0x16, 0x3d, 0x83, 0x83, 0xbb, 0x91, 0x8d, 0xd3, 0xa1, 0x31, 0xbd, 0x38,
-	0x77, 0xf8, 0x4b, 0x76, 0x71, 0x22, 0x66, 0x8f, 0x11, 0xfa, 0x04, 0x1e, 0x2f, 0xde, 0x24, 0xbf,
-	0x41, 0x09, 0x6e, 0x98, 0x46, 0x9f, 0x9e, 0xf6, 0x4d, 0x3c, 0xd4, 0x33, 0xa8, 0x0e, 0x87, 0xcb,
-	0x41, 0xd3, 0x4f, 0x13, 0xfc, 0x2d, 0x6e, 0x0e, 0x15, 0x91, 0xcf, 0xe1, 0xd9, 0x6a, 0xfc, 0x69,
-	0xbf, 0x85, 0xc9, 0x4b, 0xdc, 0x69, 0x9f, 0x0c, 0xf5, 0x2c, 0xfa, 0x0c, 0x6a, 0xcb, 0x53, 0x7a,
-	0x1d, 0xd3, 0xec, 0xf4, 0xdb, 0xb4, 0x69, 0xf4, 0x7a, 0x9d, 0xa1, 0x9e, 0x43, 0x7b, 0xf0, 0x64,
-	0x39, 0xba, 0x6f, 0xd0, 0x33, 0x63, 0x88, 0xf5, 0x3c, 0x3a, 0x82, 0xa7, 0x77, 0x91, 0x23, 0xb8,
-	0xdb, 0x18, 0xe2, 0x16, 0x25, 0xb8, 0x67, 0x9c, 0x35, 0xba, 0x7a, 0xe1, 0xb9, 0xf1, 0xfb, 0x75,
-	0x45, 0x7b, 0x7b, 0x5d, 0xd1, 0xfe, 0xbe, 0xae, 0x68, 0x3f, 0xdd, 0x54, 0x32, 0x6f, 0x6f, 0x2a,
-	0x99, 0xbf, 0x6e, 0x2a, 0x99, 0xef, 0xbe, 0x1a, 0xb9, 0x62, 0x7c, 0x79, 0x5e, 0xb7, 0xf9, 0xe4,
-	0x28, 0x08, 0xb9, 0x73, 0x69, 0x8b, 0xc8, 0x76, 0xdf, 0xf9, 0xd7, 0x71, 0x35, 0xb7, 0x16, 0x6f,
-	0x02, 0x16, 0x9d, 0xdf, 0x53, 0x7f, 0x3d, 0xbe, 0xf8, 0x27, 0x00, 0x00, 0xff, 0xff, 0xaa, 0x7d,
-	0x26, 0x62, 0xa5, 0x08, 0x00, 0x00,
-}
-
-func (m *PoCChallengeSegment) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *PoCChallengeSegment) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *PoCChallengeSegment) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.Outcome != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.Outcome))
-		i--
-		dAtA[i] = 0x28
-	}
-	if m.FirstVoteHeight != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.FirstVoteHeight))
-		i--
-		dAtA[i] = 0x20
-	}
-	if m.SealHeight != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.SealHeight))
-		i--
-		dAtA[i] = 0x18
-	}
-	if len(m.SeedHash) > 0 {
-		i -= len(m.SeedHash)
-		copy(dAtA[i:], m.SeedHash)
-		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.SeedHash)))
-		i--
-		dAtA[i] = 0x12
-	}
-	if m.PocStageStartBlockHeight != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.PocStageStartBlockHeight))
-		i--
-		dAtA[i] = 0x8
-	}
-	return len(dAtA) - i, nil
+	// 499 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x7c, 0x93, 0x41, 0x6f, 0x12, 0x41,
+	0x14, 0xc7, 0x19, 0x40, 0x5a, 0x07, 0x44, 0x32, 0x26, 0x75, 0xe3, 0x61, 0x5d, 0x1b, 0x6b, 0x37,
+	0xd5, 0x40, 0x82, 0xf1, 0x6c, 0x2a, 0x2c, 0x96, 0x94, 0x00, 0x99, 0x8a, 0x89, 0x5e, 0x26, 0xdb,
+	0xdd, 0xc7, 0xee, 0xa4, 0x30, 0xbb, 0x99, 0x1d, 0x94, 0x7e, 0x0b, 0x3f, 0x80, 0xdf, 0xc5, 0xab,
+	0xc7, 0x1e, 0x8d, 0x27, 0x03, 0x5f, 0xc4, 0x74, 0x28, 0xb0, 0x34, 0xa5, 0xb7, 0xff, 0xfb, 0xcd,
+	0xfb, 0xcf, 0xbe, 0xfd, 0x4f, 0x1e, 0x3e, 0xe4, 0x62, 0x08, 0x12, 0x84, 0x07, 0xb5, 0xb5, 0x8a,
+	0x23, 0x8f, 0x79, 0xa1, 0x3b, 0x1a, 0x81, 0x08, 0xa0, 0x1a, 0xcb, 0x48, 0x45, 0xe4, 0xc9, 0xea,
+	0xb8, 0xba, 0x52, 0xcf, 0xac, 0x6d, 0xee, 0x6f, 0xf5, 0x85, 0x6d, 0xff, 0x57, 0x16, 0x97, 0xfa,
+	0x51, 0xa3, 0xb1, 0xbc, 0x8d, 0x3c, 0xc7, 0x45, 0x88, 0x23, 0x2f, 0x64, 0x5c, 0xf8, 0x30, 0x35,
+	0x90, 0x85, 0xec, 0x3c, 0xc5, 0x1a, 0xb5, 0xaf, 0x09, 0x31, 0x31, 0x5e, 0x7d, 0x5b, 0x1a, 0x59,
+	0x0b, 0xd9, 0x0f, 0x69, 0x8a, 0x90, 0x3d, 0x5c, 0x50, 0xae, 0x0c, 0x40, 0x19, 0x39, 0x7d, 0x76,
+	0x53, 0x91, 0x43, 0xfc, 0x18, 0xa6, 0x31, 0x78, 0x0a, 0x7c, 0x26, 0xe1, 0xbb, 0x2b, 0x7d, 0x23,
+	0xaf, 0x2f, 0x2f, 0x2f, 0x31, 0xd5, 0x94, 0x1c, 0xe0, 0xf2, 0x28, 0xf2, 0x2e, 0xc0, 0x67, 0xb1,
+	0x7b, 0x39, 0x06, 0xa1, 0x8c, 0x07, 0xba, 0xef, 0xd1, 0x82, 0xf6, 0x17, 0x90, 0xbc, 0xc0, 0xa5,
+	0x44, 0xb9, 0x52, 0xb1, 0x10, 0x78, 0x10, 0x2a, 0xa3, 0x60, 0x21, 0x3b, 0x47, 0x8b, 0x9a, 0x9d,
+	0x68, 0x44, 0x08, 0xce, 0x27, 0x00, 0xbe, 0xb1, 0x63, 0x21, 0xbb, 0x44, 0xb5, 0x26, 0x3d, 0x5c,
+	0x1a, 0xba, 0x7c, 0x34, 0x91, 0xc0, 0x2e, 0xb8, 0xf0, 0x8d, 0x5d, 0x0b, 0xd9, 0xe5, 0xfa, 0x9b,
+	0xea, 0x1d, 0xf1, 0x55, 0xd3, 0xc1, 0xb4, 0x16, 0xa6, 0x53, 0x2e, 0x7c, 0x5a, 0x1c, 0xae, 0x8b,
+	0xfd, 0xbf, 0x08, 0x57, 0x7a, 0x31, 0x88, 0x8d, 0x14, 0xd7, 0x21, 0xa0, 0x8d, 0x10, 0x6e, 0x0f,
+	0x9d, 0xdd, 0x3e, 0x74, 0x2e, 0x35, 0xf4, 0x1e, 0x2e, 0x0c, 0xb9, 0xe0, 0x49, 0xa8, 0x23, 0xcb,
+	0xd1, 0x9b, 0xea, 0xfa, 0x2d, 0x02, 0x10, 0x20, 0x5d, 0xc5, 0x45, 0xa0, 0x63, 0xda, 0xa5, 0x29,
+	0x42, 0xde, 0xe3, 0x1d, 0x2f, 0x1a, 0x8f, 0xb9, 0x4a, 0x8c, 0x82, 0x95, 0xb3, 0x8b, 0xf5, 0x83,
+	0x6d, 0xff, 0xf9, 0xb9, 0x7e, 0xa6, 0x22, 0x09, 0x0d, 0xdd, 0x4d, 0x97, 0xae, 0xa3, 0x9f, 0x08,
+	0x3f, 0xdd, 0x92, 0x02, 0x79, 0x89, 0xad, 0x7e, 0xaf, 0xc1, 0x1a, 0x27, 0xc7, 0x9d, 0x8e, 0xd3,
+	0xfd, 0xe8, 0xb0, 0xd6, 0x71, 0xbb, 0x33, 0xa0, 0x0e, 0x3b, 0x6d, 0x77, 0x9b, 0x6c, 0xd0, 0x3d,
+	0x73, 0x3e, 0x55, 0x32, 0xa4, 0x86, 0x5f, 0xdf, 0xd3, 0xb5, 0x89, 0x9d, 0x66, 0x05, 0x91, 0x23,
+	0xfc, 0xea, 0x1e, 0x03, 0x75, 0x5a, 0x83, 0x6e, 0x93, 0xf5, 0xba, 0x9d, 0x2f, 0x95, 0xec, 0x87,
+	0xde, 0xef, 0x99, 0x89, 0xae, 0x66, 0x26, 0xfa, 0x37, 0x33, 0xd1, 0x8f, 0xb9, 0x99, 0xb9, 0x9a,
+	0x9b, 0x99, 0x3f, 0x73, 0x33, 0xf3, 0xf5, 0x5d, 0xc0, 0x55, 0x38, 0x39, 0xaf, 0x7a, 0xd1, 0xb8,
+	0x16, 0xcb, 0xc8, 0x9f, 0x78, 0x2a, 0xf1, 0xf8, 0xad, 0x4d, 0x98, 0xa6, 0xb4, 0xba, 0x8c, 0x21,
+	0x39, 0x2f, 0xe8, 0xad, 0x78, 0xfb, 0x3f, 0x00, 0x00, 0xff, 0xff, 0xaa, 0xec, 0x60, 0xcd, 0x77,
+	0x03, 0x00, 0x00,
 }
 
 func (m *PoCChallenge) Marshal() (dAtA []byte, err error) {
@@ -718,42 +300,30 @@ func (m *PoCChallenge) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if len(m.Segments) > 0 {
-		for iNdEx := len(m.Segments) - 1; iNdEx >= 0; iNdEx-- {
-			{
-				size, err := m.Segments[iNdEx].MarshalToSizedBuffer(dAtA[:i])
-				if err != nil {
-					return 0, err
-				}
-				i -= size
-				i = encodeVarintPocChallenge(dAtA, i, uint64(size))
-			}
-			i--
-			dAtA[i] = 0x4a
-		}
-	}
-	if m.FailReason != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.FailReason))
+	if m.FailureKind != 0 {
+		i = encodeVarintPocChallenge(dAtA, i, uint64(m.FailureKind))
 		i--
 		dAtA[i] = 0x40
 	}
-	if m.GenerationEndHeight != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.GenerationEndHeight))
+	if len(m.Seed) > 0 {
+		i -= len(m.Seed)
+		copy(dAtA[i:], m.Seed)
+		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.Seed)))
 		i--
-		dAtA[i] = 0x38
+		dAtA[i] = 0x3a
+	}
+	if m.StartHeight != 0 {
+		i = encodeVarintPocChallenge(dAtA, i, uint64(m.StartHeight))
+		i--
+		dAtA[i] = 0x30
 	}
 	if m.LockedPayment != 0 {
 		i = encodeVarintPocChallenge(dAtA, i, uint64(m.LockedPayment))
 		i--
-		dAtA[i] = 0x30
+		dAtA[i] = 0x28
 	}
 	if m.ExpectedReward != 0 {
 		i = encodeVarintPocChallenge(dAtA, i, uint64(m.ExpectedReward))
-		i--
-		dAtA[i] = 0x28
-	}
-	if m.ChallengeStartHeight != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.ChallengeStartHeight))
 		i--
 		dAtA[i] = 0x20
 	}
@@ -773,176 +343,6 @@ func (m *PoCChallenge) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	}
 	if m.EpochIndex != 0 {
 		i = encodeVarintPocChallenge(dAtA, i, uint64(m.EpochIndex))
-		i--
-		dAtA[i] = 0x8
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *PoCChallengeCommit) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *PoCChallengeCommit) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *PoCChallengeCommit) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.CommitBlockHeight != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.CommitBlockHeight))
-		i--
-		dAtA[i] = 0x38
-	}
-	if len(m.RootHash) > 0 {
-		i -= len(m.RootHash)
-		copy(dAtA[i:], m.RootHash)
-		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.RootHash)))
-		i--
-		dAtA[i] = 0x32
-	}
-	if m.Count != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.Count))
-		i--
-		dAtA[i] = 0x28
-	}
-	if m.SliceIndex != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.SliceIndex))
-		i--
-		dAtA[i] = 0x20
-	}
-	if len(m.ModelId) > 0 {
-		i -= len(m.ModelId)
-		copy(dAtA[i:], m.ModelId)
-		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.ModelId)))
-		i--
-		dAtA[i] = 0x1a
-	}
-	if m.PocStageStartBlockHeight != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.PocStageStartBlockHeight))
-		i--
-		dAtA[i] = 0x10
-	}
-	if len(m.Target) > 0 {
-		i -= len(m.Target)
-		copy(dAtA[i:], m.Target)
-		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.Target)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *PoCChallengeValidation) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *PoCChallengeValidation) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *PoCChallengeValidation) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if m.ValidatedWeight != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.ValidatedWeight))
-		i--
-		dAtA[i] = 0x28
-	}
-	if len(m.Validator) > 0 {
-		i -= len(m.Validator)
-		copy(dAtA[i:], m.Validator)
-		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.Validator)))
-		i--
-		dAtA[i] = 0x22
-	}
-	if len(m.ModelId) > 0 {
-		i -= len(m.ModelId)
-		copy(dAtA[i:], m.ModelId)
-		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.ModelId)))
-		i--
-		dAtA[i] = 0x1a
-	}
-	if m.PocStageStartBlockHeight != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.PocStageStartBlockHeight))
-		i--
-		dAtA[i] = 0x10
-	}
-	if len(m.Target) > 0 {
-		i -= len(m.Target)
-		copy(dAtA[i:], m.Target)
-		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.Target)))
-		i--
-		dAtA[i] = 0xa
-	}
-	return len(dAtA) - i, nil
-}
-
-func (m *CountedSliceCommit) Marshal() (dAtA []byte, err error) {
-	size := m.Size()
-	dAtA = make([]byte, size)
-	n, err := m.MarshalToSizedBuffer(dAtA[:size])
-	if err != nil {
-		return nil, err
-	}
-	return dAtA[:n], nil
-}
-
-func (m *CountedSliceCommit) MarshalTo(dAtA []byte) (int, error) {
-	size := m.Size()
-	return m.MarshalToSizedBuffer(dAtA[:size])
-}
-
-func (m *CountedSliceCommit) MarshalToSizedBuffer(dAtA []byte) (int, error) {
-	i := len(dAtA)
-	_ = i
-	var l int
-	_ = l
-	if len(m.RootHash) > 0 {
-		i -= len(m.RootHash)
-		copy(dAtA[i:], m.RootHash)
-		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.RootHash)))
-		i--
-		dAtA[i] = 0x2a
-	}
-	if m.Count != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.Count))
-		i--
-		dAtA[i] = 0x20
-	}
-	if len(m.ModelId) > 0 {
-		i -= len(m.ModelId)
-		copy(dAtA[i:], m.ModelId)
-		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.ModelId)))
-		i--
-		dAtA[i] = 0x1a
-	}
-	if m.SliceIndex != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.SliceIndex))
-		i--
-		dAtA[i] = 0x10
-	}
-	if m.PocStageStartBlockHeight != 0 {
-		i = encodeVarintPocChallenge(dAtA, i, uint64(m.PocStageStartBlockHeight))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -969,10 +369,10 @@ func (m *OpenPoCChallenge) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if len(m.CountedCommits) > 0 {
-		for iNdEx := len(m.CountedCommits) - 1; iNdEx >= 0; iNdEx-- {
+	if len(m.Commits) > 0 {
+		for iNdEx := len(m.Commits) - 1; iNdEx >= 0; iNdEx-- {
 			{
-				size, err := m.CountedCommits[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				size, err := m.Commits[iNdEx].MarshalToSizedBuffer(dAtA[:i])
 				if err != nil {
 					return 0, err
 				}
@@ -980,18 +380,40 @@ func (m *OpenPoCChallenge) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 				i = encodeVarintPocChallenge(dAtA, i, uint64(size))
 			}
 			i--
-			dAtA[i] = 0x12
+			dAtA[i] = 0x32
 		}
 	}
-	if m.Challenge != nil {
-		{
-			size, err := m.Challenge.MarshalToSizedBuffer(dAtA[:i])
-			if err != nil {
-				return 0, err
-			}
-			i -= size
-			i = encodeVarintPocChallenge(dAtA, i, uint64(size))
+	if m.Generating {
+		i--
+		if m.Generating {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
 		}
+		i--
+		dAtA[i] = 0x28
+	}
+	if m.Finish != 0 {
+		i = encodeVarintPocChallenge(dAtA, i, uint64(m.Finish))
+		i--
+		dAtA[i] = 0x20
+	}
+	if len(m.Seed) > 0 {
+		i -= len(m.Seed)
+		copy(dAtA[i:], m.Seed)
+		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.Seed)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if m.StartHeight != 0 {
+		i = encodeVarintPocChallenge(dAtA, i, uint64(m.StartHeight))
+		i--
+		dAtA[i] = 0x10
+	}
+	if len(m.Target) > 0 {
+		i -= len(m.Target)
+		copy(dAtA[i:], m.Target)
+		i = encodeVarintPocChallenge(dAtA, i, uint64(len(m.Target)))
 		i--
 		dAtA[i] = 0xa
 	}
@@ -1009,31 +431,6 @@ func encodeVarintPocChallenge(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
-func (m *PoCChallengeSegment) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.PocStageStartBlockHeight != 0 {
-		n += 1 + sovPocChallenge(uint64(m.PocStageStartBlockHeight))
-	}
-	l = len(m.SeedHash)
-	if l > 0 {
-		n += 1 + l + sovPocChallenge(uint64(l))
-	}
-	if m.SealHeight != 0 {
-		n += 1 + sovPocChallenge(uint64(m.SealHeight))
-	}
-	if m.FirstVoteHeight != 0 {
-		n += 1 + sovPocChallenge(uint64(m.FirstVoteHeight))
-	}
-	if m.Outcome != 0 {
-		n += 1 + sovPocChallenge(uint64(m.Outcome))
-	}
-	return n
-}
-
 func (m *PoCChallenge) Size() (n int) {
 	if m == nil {
 		return 0
@@ -1051,112 +448,21 @@ func (m *PoCChallenge) Size() (n int) {
 	if l > 0 {
 		n += 1 + l + sovPocChallenge(uint64(l))
 	}
-	if m.ChallengeStartHeight != 0 {
-		n += 1 + sovPocChallenge(uint64(m.ChallengeStartHeight))
-	}
 	if m.ExpectedReward != 0 {
 		n += 1 + sovPocChallenge(uint64(m.ExpectedReward))
 	}
 	if m.LockedPayment != 0 {
 		n += 1 + sovPocChallenge(uint64(m.LockedPayment))
 	}
-	if m.GenerationEndHeight != 0 {
-		n += 1 + sovPocChallenge(uint64(m.GenerationEndHeight))
+	if m.StartHeight != 0 {
+		n += 1 + sovPocChallenge(uint64(m.StartHeight))
 	}
-	if m.FailReason != 0 {
-		n += 1 + sovPocChallenge(uint64(m.FailReason))
-	}
-	if len(m.Segments) > 0 {
-		for _, e := range m.Segments {
-			l = e.Size()
-			n += 1 + l + sovPocChallenge(uint64(l))
-		}
-	}
-	return n
-}
-
-func (m *PoCChallengeCommit) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = len(m.Target)
+	l = len(m.Seed)
 	if l > 0 {
 		n += 1 + l + sovPocChallenge(uint64(l))
 	}
-	if m.PocStageStartBlockHeight != 0 {
-		n += 1 + sovPocChallenge(uint64(m.PocStageStartBlockHeight))
-	}
-	l = len(m.ModelId)
-	if l > 0 {
-		n += 1 + l + sovPocChallenge(uint64(l))
-	}
-	if m.SliceIndex != 0 {
-		n += 1 + sovPocChallenge(uint64(m.SliceIndex))
-	}
-	if m.Count != 0 {
-		n += 1 + sovPocChallenge(uint64(m.Count))
-	}
-	l = len(m.RootHash)
-	if l > 0 {
-		n += 1 + l + sovPocChallenge(uint64(l))
-	}
-	if m.CommitBlockHeight != 0 {
-		n += 1 + sovPocChallenge(uint64(m.CommitBlockHeight))
-	}
-	return n
-}
-
-func (m *PoCChallengeValidation) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	l = len(m.Target)
-	if l > 0 {
-		n += 1 + l + sovPocChallenge(uint64(l))
-	}
-	if m.PocStageStartBlockHeight != 0 {
-		n += 1 + sovPocChallenge(uint64(m.PocStageStartBlockHeight))
-	}
-	l = len(m.ModelId)
-	if l > 0 {
-		n += 1 + l + sovPocChallenge(uint64(l))
-	}
-	l = len(m.Validator)
-	if l > 0 {
-		n += 1 + l + sovPocChallenge(uint64(l))
-	}
-	if m.ValidatedWeight != 0 {
-		n += 1 + sovPocChallenge(uint64(m.ValidatedWeight))
-	}
-	return n
-}
-
-func (m *CountedSliceCommit) Size() (n int) {
-	if m == nil {
-		return 0
-	}
-	var l int
-	_ = l
-	if m.PocStageStartBlockHeight != 0 {
-		n += 1 + sovPocChallenge(uint64(m.PocStageStartBlockHeight))
-	}
-	if m.SliceIndex != 0 {
-		n += 1 + sovPocChallenge(uint64(m.SliceIndex))
-	}
-	l = len(m.ModelId)
-	if l > 0 {
-		n += 1 + l + sovPocChallenge(uint64(l))
-	}
-	if m.Count != 0 {
-		n += 1 + sovPocChallenge(uint64(m.Count))
-	}
-	l = len(m.RootHash)
-	if l > 0 {
-		n += 1 + l + sovPocChallenge(uint64(l))
+	if m.FailureKind != 0 {
+		n += 1 + sovPocChallenge(uint64(m.FailureKind))
 	}
 	return n
 }
@@ -1167,12 +473,25 @@ func (m *OpenPoCChallenge) Size() (n int) {
 	}
 	var l int
 	_ = l
-	if m.Challenge != nil {
-		l = m.Challenge.Size()
+	l = len(m.Target)
+	if l > 0 {
 		n += 1 + l + sovPocChallenge(uint64(l))
 	}
-	if len(m.CountedCommits) > 0 {
-		for _, e := range m.CountedCommits {
+	if m.StartHeight != 0 {
+		n += 1 + sovPocChallenge(uint64(m.StartHeight))
+	}
+	l = len(m.Seed)
+	if l > 0 {
+		n += 1 + l + sovPocChallenge(uint64(l))
+	}
+	if m.Finish != 0 {
+		n += 1 + sovPocChallenge(uint64(m.Finish))
+	}
+	if m.Generating {
+		n += 2
+	}
+	if len(m.Commits) > 0 {
+		for _, e := range m.Commits {
 			l = e.Size()
 			n += 1 + l + sovPocChallenge(uint64(l))
 		}
@@ -1185,164 +504,6 @@ func sovPocChallenge(x uint64) (n int) {
 }
 func sozPocChallenge(x uint64) (n int) {
 	return sovPocChallenge(uint64((x << 1) ^ uint64((int64(x) >> 63))))
-}
-func (m *PoCChallengeSegment) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowPocChallenge
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: PoCChallengeSegment: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: PoCChallengeSegment: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field PocStageStartBlockHeight", wireType)
-			}
-			m.PocStageStartBlockHeight = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.PocStageStartBlockHeight |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 2:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field SeedHash", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.SeedHash = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 3:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field SealHeight", wireType)
-			}
-			m.SealHeight = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.SealHeight |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field FirstVoteHeight", wireType)
-			}
-			m.FirstVoteHeight = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.FirstVoteHeight |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 5:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Outcome", wireType)
-			}
-			m.Outcome = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Outcome |= PoCChallengeSegmentOutcome(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipPocChallenge(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
 }
 func (m *PoCChallenge) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)
@@ -1458,25 +619,6 @@ func (m *PoCChallenge) Unmarshal(dAtA []byte) error {
 			iNdEx = postIndex
 		case 4:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ChallengeStartHeight", wireType)
-			}
-			m.ChallengeStartHeight = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.ChallengeStartHeight |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 5:
-			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field ExpectedReward", wireType)
 			}
 			m.ExpectedReward = 0
@@ -1494,7 +636,7 @@ func (m *PoCChallenge) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 6:
+		case 5:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field LockedPayment", wireType)
 			}
@@ -1513,11 +655,11 @@ func (m *PoCChallenge) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-		case 7:
+		case 6:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field GenerationEndHeight", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field StartHeight", wireType)
 			}
-			m.GenerationEndHeight = 0
+			m.StartHeight = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowPocChallenge
@@ -1527,16 +669,50 @@ func (m *PoCChallenge) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.GenerationEndHeight |= int64(b&0x7F) << shift
+				m.StartHeight |= int64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Seed", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocChallenge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthPocChallenge
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocChallenge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Seed = append(m.Seed[:0], dAtA[iNdEx:postIndex]...)
+			if m.Seed == nil {
+				m.Seed = []byte{}
+			}
+			iNdEx = postIndex
 		case 8:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field FailReason", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field FailureKind", wireType)
 			}
-			m.FailReason = 0
+			m.FailureKind = 0
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowPocChallenge
@@ -1546,626 +722,11 @@ func (m *PoCChallenge) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				m.FailReason |= PoCChallengeFailReason(b&0x7F) << shift
+				m.FailureKind |= PoCChallengeFailureKind(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-		case 9:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Segments", wireType)
-			}
-			var msglen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				msglen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if msglen < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			postIndex := iNdEx + msglen
-			if postIndex < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Segments = append(m.Segments, &PoCChallengeSegment{})
-			if err := m.Segments[len(m.Segments)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
-			iNdEx = postIndex
-		default:
-			iNdEx = preIndex
-			skippy, err := skipPocChallenge(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *PoCChallengeCommit) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowPocChallenge
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: PoCChallengeCommit: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: PoCChallengeCommit: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Target", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Target = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field PocStageStartBlockHeight", wireType)
-			}
-			m.PocStageStartBlockHeight = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.PocStageStartBlockHeight |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ModelId", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ModelId = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field SliceIndex", wireType)
-			}
-			m.SliceIndex = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.SliceIndex |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 5:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Count", wireType)
-			}
-			m.Count = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Count |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 6:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field RootHash", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.RootHash = append(m.RootHash[:0], dAtA[iNdEx:postIndex]...)
-			if m.RootHash == nil {
-				m.RootHash = []byte{}
-			}
-			iNdEx = postIndex
-		case 7:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CommitBlockHeight", wireType)
-			}
-			m.CommitBlockHeight = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.CommitBlockHeight |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipPocChallenge(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *PoCChallengeValidation) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowPocChallenge
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: PoCChallengeValidation: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: PoCChallengeValidation: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Target", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Target = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field PocStageStartBlockHeight", wireType)
-			}
-			m.PocStageStartBlockHeight = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.PocStageStartBlockHeight |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ModelId", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ModelId = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Validator", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Validator = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 5:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ValidatedWeight", wireType)
-			}
-			m.ValidatedWeight = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.ValidatedWeight |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		default:
-			iNdEx = preIndex
-			skippy, err := skipPocChallenge(dAtA[iNdEx:])
-			if err != nil {
-				return err
-			}
-			if (skippy < 0) || (iNdEx+skippy) < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if (iNdEx + skippy) > l {
-				return io.ErrUnexpectedEOF
-			}
-			iNdEx += skippy
-		}
-	}
-
-	if iNdEx > l {
-		return io.ErrUnexpectedEOF
-	}
-	return nil
-}
-func (m *CountedSliceCommit) Unmarshal(dAtA []byte) error {
-	l := len(dAtA)
-	iNdEx := 0
-	for iNdEx < l {
-		preIndex := iNdEx
-		var wire uint64
-		for shift := uint(0); ; shift += 7 {
-			if shift >= 64 {
-				return ErrIntOverflowPocChallenge
-			}
-			if iNdEx >= l {
-				return io.ErrUnexpectedEOF
-			}
-			b := dAtA[iNdEx]
-			iNdEx++
-			wire |= uint64(b&0x7F) << shift
-			if b < 0x80 {
-				break
-			}
-		}
-		fieldNum := int32(wire >> 3)
-		wireType := int(wire & 0x7)
-		if wireType == 4 {
-			return fmt.Errorf("proto: CountedSliceCommit: wiretype end group for non-group")
-		}
-		if fieldNum <= 0 {
-			return fmt.Errorf("proto: CountedSliceCommit: illegal tag %d (wire type %d)", fieldNum, wire)
-		}
-		switch fieldNum {
-		case 1:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field PocStageStartBlockHeight", wireType)
-			}
-			m.PocStageStartBlockHeight = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.PocStageStartBlockHeight |= int64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 2:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field SliceIndex", wireType)
-			}
-			m.SliceIndex = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.SliceIndex |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 3:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ModelId", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.ModelId = string(dAtA[iNdEx:postIndex])
-			iNdEx = postIndex
-		case 4:
-			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Count", wireType)
-			}
-			m.Count = 0
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				m.Count |= uint32(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-		case 5:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field RootHash", wireType)
-			}
-			var byteLen int
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowPocChallenge
-				}
-				if iNdEx >= l {
-					return io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				byteLen |= int(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			if byteLen < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			postIndex := iNdEx + byteLen
-			if postIndex < 0 {
-				return ErrInvalidLengthPocChallenge
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.RootHash = append(m.RootHash[:0], dAtA[iNdEx:postIndex]...)
-			if m.RootHash == nil {
-				m.RootHash = []byte{}
-			}
-			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipPocChallenge(dAtA[iNdEx:])
@@ -2218,9 +779,9 @@ func (m *OpenPoCChallenge) Unmarshal(dAtA []byte) error {
 		switch fieldNum {
 		case 1:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Challenge", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Target", wireType)
 			}
-			var msglen int
+			var stringLen uint64
 			for shift := uint(0); ; shift += 7 {
 				if shift >= 64 {
 					return ErrIntOverflowPocChallenge
@@ -2230,31 +791,119 @@ func (m *OpenPoCChallenge) Unmarshal(dAtA []byte) error {
 				}
 				b := dAtA[iNdEx]
 				iNdEx++
-				msglen |= int(b&0x7F) << shift
+				stringLen |= uint64(b&0x7F) << shift
 				if b < 0x80 {
 					break
 				}
 			}
-			if msglen < 0 {
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
 				return ErrInvalidLengthPocChallenge
 			}
-			postIndex := iNdEx + msglen
+			postIndex := iNdEx + intStringLen
 			if postIndex < 0 {
 				return ErrInvalidLengthPocChallenge
 			}
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			if m.Challenge == nil {
-				m.Challenge = &PoCChallenge{}
-			}
-			if err := m.Challenge.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
-				return err
-			}
+			m.Target = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field StartHeight", wireType)
+			}
+			m.StartHeight = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocChallenge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.StartHeight |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 3:
 			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field CountedCommits", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field Seed", wireType)
+			}
+			var byteLen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocChallenge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				byteLen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if byteLen < 0 {
+				return ErrInvalidLengthPocChallenge
+			}
+			postIndex := iNdEx + byteLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocChallenge
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Seed = append(m.Seed[:0], dAtA[iNdEx:postIndex]...)
+			if m.Seed == nil {
+				m.Seed = []byte{}
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Finish", wireType)
+			}
+			m.Finish = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocChallenge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Finish |= int64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Generating", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocChallenge
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.Generating = bool(v != 0)
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Commits", wireType)
 			}
 			var msglen int
 			for shift := uint(0); ; shift += 7 {
@@ -2281,8 +930,8 @@ func (m *OpenPoCChallenge) Unmarshal(dAtA []byte) error {
 			if postIndex > l {
 				return io.ErrUnexpectedEOF
 			}
-			m.CountedCommits = append(m.CountedCommits, &CountedSliceCommit{})
-			if err := m.CountedCommits[len(m.CountedCommits)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+			m.Commits = append(m.Commits, &PoCV2StoreCommit{})
+			if err := m.Commits[len(m.Commits)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

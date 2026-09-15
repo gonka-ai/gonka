@@ -117,8 +117,7 @@ const (
 	DefaultMaintenanceCreditCapBlocks          uint64 = 400
 	DefaultMaintenanceCreditEarnPerEpochBlocks uint64 = 20
 
-	DefaultPoCChallengeSliceBlocks         int64  = 500
-	DefaultPoCChallengeMaxActiveChallenges uint32 = 10
+	DefaultPoCChallengeMaxActiveChallenges uint32 = 4
 )
 
 // DefaultSealGraceMultiplier is the multiplier used to compute the default seal grace nonces.
@@ -412,7 +411,6 @@ func DefaultPoCChallengeParams() *PoCChallengeParams {
 	return &PoCChallengeParams{
 		AllowedChallengers:  nil,
 		PaymentRatio:        DecimalFromFloat(0.1),
-		SliceBlocks:         DefaultPoCChallengeSliceBlocks,
 		MaxActiveChallenges: DefaultPoCChallengeMaxActiveChallenges,
 	}
 }
@@ -423,9 +421,6 @@ func (p *PoCChallengeParams) Validate() error {
 	}
 	if err := validateDecimalFraction(p.PaymentRatio, "poc_challenge_params.payment_ratio"); err != nil {
 		return err
-	}
-	if p.SliceBlocks <= 0 {
-		return fmt.Errorf("poc_challenge_params.slice_blocks must be greater than 0")
 	}
 	if p.MaxActiveChallenges == 0 {
 		return fmt.Errorf("poc_challenge_params.max_active_challenges must be greater than 0")

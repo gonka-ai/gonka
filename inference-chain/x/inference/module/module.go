@@ -44,7 +44,6 @@ import (
 	modulev1 "github.com/productscience/inference/api/inference/inference/module"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
-	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -377,8 +376,7 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 
 	inference = am.expireInferenceAndIssueRefund(ctx, inference)
 
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	if am.keeper.IsMissedRequestWaived(ctx, inference.AssignedTo, sdkCtx.BlockHeight()) {
+	if am.keeper.IsChallengeGenerating(ctx, inference.AssignedTo) {
 		return
 	}
 
@@ -417,10 +415,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Failed to handle confirmation PoC", types.PoC, "error", err)
 		// Don't return error - allow block processing to continue
 	}
-	if err := pocchallenge.HandleEndBlock(ctx, &am.keeper, am.keeper.PoCChallenge); err != nil {
-		am.LogError("Failed to handle PoC challenge end block", types.PoC, "error", err)
-	}
-
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		am.LogError("Unable to get parameters", types.Settle, "error", err.Error())
@@ -509,6 +503,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		if err := am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch)); err != nil {
 			return err
 		}
+		am.keeper.PayAndDeleteOldChallenges(ctx, getNextEpochIndex(*currentEpoch))
 		am.LogInfo("Epoch index flipped; new validator set activates at H+2",
 			types.Stages,
 			"blockHeight", blockHeight,
@@ -783,12 +778,11 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		previousEpochIndex = previousEpoch.Index
 	}
 
-	if err := am.FinalizeOpenChallenges(ctx, effectiveEpoch.Index); err != nil {
-		am.LogError("onEndOfPoCValidationStage: Unable to finalize PoC challenges", types.PoC, "error", err.Error())
+	if err := am.decideLastChallengeSegments(ctx, *effectiveEpoch); err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to decide last PoC challenges", types.PoC, "error", err.Error())
 	}
 
 	// Settle before collateral AdvanceEpoch so slashing can reach maturing unbonding entries.
-	// Challenge P and min(E, gross_share) pay inside this cache; a payout error rolls back settlement.
 	failedMissRate, err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
 	if err != nil {
 		failedMissRate = nil

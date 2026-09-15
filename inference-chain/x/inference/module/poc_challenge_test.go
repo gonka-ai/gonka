@@ -3,516 +3,470 @@ package inference
 import (
 	"testing"
 
+	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/keeper"
-	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
 )
 
-func keepertestInference(t *testing.T) (keeper.Keeper, sdk.Context) {
+func challengeApp(t *testing.T) (AppModule, keeper.Keeper, sdk.Context) {
 	t.Helper()
 	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
-	return k, ctx
-}
-
-func TestEvaluateSealedSegment_SkipsWhenCommitsExistButNoVotes(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 2,
-		ModelId:    "m1",
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress: testutil.Executor,
-			Weight:        100,
-			MlNodes:       []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 10}},
-		}},
-	})
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		EpochIndex:           2,
-		Target:               testutil.Executor,
-		ChallengeStartHeight: 100,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 100,
-			SealHeight:               800,
-		}},
-	}))
-	require.NoError(t, k.PoCChallenge.SetCommit(ctx, types.PoCChallengeCommit{
-		Target:                   testutil.Executor,
-		PocStageStartBlockHeight: 100,
-		ModelId:                  "m1",
-		SliceIndex:               0,
-		Count:                    10,
-		RootHash:                 make([]byte, 32),
-	}))
-	require.NoError(t, am.EvaluateSealedSegment(ctx, testutil.Executor, 100, types.PoCValidationSnapshot{}))
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET, ch.FailReason)
-	require.Equal(t, types.PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PENDING, ch.Segments[0].Outcome)
-}
-
-func TestEvaluateSealedSegment_MissingCommitZeroReading(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 2,
-		ModelId:    "m1",
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress: testutil.Executor,
-			Weight:        100,
-			MlNodes:       []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 10}},
-		}},
-	})
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 2,
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress:      testutil.Executor,
-			ConfirmationWeight: 100,
-		}},
-	})
-	require.NoError(t, k.SetParticipant(ctx, types.Participant{
-		Index:             testutil.Executor,
-		Address:           testutil.Executor,
-		Status:            types.ParticipantStatus_ACTIVE,
-		CurrentEpochStats: types.NewCurrentEpochStats(),
-	}))
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		EpochIndex:           2,
-		Target:               testutil.Executor,
-		ChallengeStartHeight: 100,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 100,
-			SealHeight:               800,
-			FirstVoteHeight:          801,
-		}},
-	}))
-	require.NoError(t, am.EvaluateSealedSegment(ctx, testutil.Executor, 100, types.PoCValidationSnapshot{}))
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT, ch.FailReason)
-	root, ok := k.GetEpochGroupData(ctx, 2, "")
-	require.True(t, ok)
-	require.Equal(t, int64(0), root.ValidationWeights[0].ConfirmationWeight)
-}
-
-func TestEvaluateSealedSegment_DoesNotOverwriteFailReason(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		EpochIndex:          2,
-		Target:              testutil.Executor,
-		FailReason:          types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNRELATED_REMOVAL,
-		GenerationEndHeight: 50,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 100,
-			SealHeight:               800,
-			FirstVoteHeight:          801,
-		}},
-	}))
-	require.NoError(t, am.EvaluateSealedSegment(ctx, testutil.Executor, 100, types.PoCValidationSnapshot{}))
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNRELATED_REMOVAL, ch.FailReason)
-}
-
-func TestFinalizeOpenChallenges_FailsMissingVoteAfterCommits(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	ctx = ctx.WithBlockHeight(900)
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 2,
-		ModelId:    "m1",
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress: testutil.Executor,
-			Weight:        100,
-			MlNodes:       []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 10}},
-		}},
-	})
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		EpochIndex:           2,
-		Target:               testutil.Executor,
-		ChallengeStartHeight: 100,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 100,
-			SealHeight:               800,
-		}},
-	}))
-	require.NoError(t, k.PoCChallenge.SetCommit(ctx, types.PoCChallengeCommit{
-		Target:                   testutil.Executor,
-		PocStageStartBlockHeight: 100,
-		ModelId:                  "m1",
-		SliceIndex:               0,
-		Count:                    10,
-		RootHash:                 make([]byte, 32),
-	}))
-	require.NoError(t, am.FinalizeOpenChallenges(ctx, 2))
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_NO_VOTE, ch.FailReason)
-}
-
-func TestFinalizeOpenChallenges_MissingCommitWhenDark(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 2,
-		ModelId:    "m1",
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress: testutil.Executor,
-			Weight:        100,
-			MlNodes:       []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 10}},
-		}},
-	})
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 2,
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress:      testutil.Executor,
-			ConfirmationWeight: 100,
-		}},
-	})
-	require.NoError(t, k.SetParticipant(ctx, types.Participant{
-		Index:             testutil.Executor,
-		Address:           testutil.Executor,
-		Status:            types.ParticipantStatus_ACTIVE,
-		CurrentEpochStats: types.NewCurrentEpochStats(),
-	}))
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		EpochIndex: 2,
-		Target:     testutil.Executor,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 100,
-			SealHeight:               800,
-		}},
-	}))
-	require.NoError(t, am.FinalizeOpenChallenges(ctx, 2))
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT, ch.FailReason)
-	root, ok := k.GetEpochGroupData(ctx, 2, "")
-	require.True(t, ok)
-	require.Equal(t, int64(0), root.ValidationWeights[0].ConfirmationWeight)
-}
-
-func TestFinalizeOpenChallenges_FailsWhenVoteWithoutSnapshot(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 2,
-		ModelId:    "m1",
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress: testutil.Executor,
-			Weight:        100,
-			MlNodes:       []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 10}},
-		}},
-	})
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		EpochIndex: 2,
-		Target:     testutil.Executor,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 100,
-			SealHeight:               800,
-			FirstVoteHeight:          801,
-		}},
-	}))
-	require.NoError(t, k.PoCChallenge.SetCommit(ctx, types.PoCChallengeCommit{
-		Target:                   testutil.Executor,
-		PocStageStartBlockHeight: 100,
-		ModelId:                  "m1",
-		SliceIndex:               0,
-		Count:                    10,
-		RootHash:                 make([]byte, 32),
-	}))
-	require.NoError(t, am.FinalizeOpenChallenges(ctx, 2))
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_NO_VOTE, ch.FailReason)
-}
-
-func TestSealOpenSegment_AutoPassesShortSegment(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		Target: testutil.Executor,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 100,
-		}},
-	}))
-	require.NoError(t, pocchallenge.SealOpenSegment(ctx, k.PoCChallenge, testutil.Executor, 250, 500))
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_AUTO_PASSED, ch.Segments[0].Outcome)
-	require.Equal(t, int64(250), ch.Segments[0].SealHeight)
-}
-
-func TestSliceFailsAlphaUsesConfirmationPoC(t *testing.T) {
-	params := types.DefaultConfirmationPoCParams()
-	params.AlphaThreshold = types.DecimalFromFloat(0.5)
-	require.True(t, sliceFailsAlpha(1, 100, params))
-	require.False(t, sliceFailsAlpha(100, 100, params))
-}
-
-func TestAccumulateSegmentReading_UnderweightUsesFullExpected(t *testing.T) {
-	params := types.DefaultConfirmationPoCParams()
-	params.AlphaThreshold = types.DecimalFromFloat(0.5)
-	counted := []pocchallenge.SliceRange{{Index: 0, Length: 500}, {Index: 1, Length: 300}}
-	validated, expected, reason := accumulateSegmentReading(counted, 1, 1, params, func(sl pocchallenge.SliceRange) (bool, int64, bool) {
-		if sl.Index == 0 {
-			return true, 1, false
-		}
-		return true, sl.Length, false
-	})
-	require.Equal(t, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT, reason)
-	require.Equal(t, int64(800), expected)
-	require.Equal(t, int64(301), validated)
-}
-
-func TestEvaluateSealedSegment_MissingAssignedModelCommit(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 2,
-		ModelId:    "m1",
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress: testutil.Executor,
-			Weight:        100,
-			MlNodes:       []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 10}},
-		}},
-	})
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 2,
-		ModelId:    "m2",
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress: testutil.Executor,
-			Weight:        100,
-			MlNodes:       []*types.MLNodeInfo{{NodeId: "n2", PocWeight: 10}},
-		}},
-	})
-	require.NoError(t, k.SetParticipant(ctx, types.Participant{
-		Index:             testutil.Executor,
-		Address:           testutil.Executor,
-		Status:            types.ParticipantStatus_ACTIVE,
-		CurrentEpochStats: types.NewCurrentEpochStats(),
-	}))
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		EpochIndex:           2,
-		Target:               testutil.Executor,
-		ChallengeStartHeight: 100,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 100,
-			SealHeight:               800,
-			FirstVoteHeight:          801,
-		}},
-	}))
-	require.NoError(t, k.PoCChallenge.SetCommit(ctx, types.PoCChallengeCommit{
-		Target:                   testutil.Executor,
-		PocStageStartBlockHeight: 100,
-		ModelId:                  "m1",
-		SliceIndex:               0,
-		Count:                    10,
-		RootHash:                 make([]byte, 32),
-	}))
-	require.NoError(t, am.EvaluateSealedSegment(ctx, testutil.Executor, 100, types.PoCValidationSnapshot{}))
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT, ch.FailReason)
-}
-
-func TestDecideVotedUsesLiveTriggerSnapshot(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 2,
-		ModelId:    "m1",
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress: testutil.Executor,
-			Weight:        100,
-			MlNodes:       []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 10}},
-		}},
-	})
-	require.NoError(t, k.SetParticipant(ctx, types.Participant{
-		Index:             testutil.Executor,
-		Address:           testutil.Executor,
-		Status:            types.ParticipantStatus_ACTIVE,
-		CurrentEpochStats: types.NewCurrentEpochStats(),
-	}))
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		EpochIndex:           2,
-		Target:               testutil.Executor,
-		ChallengeStartHeight: 100,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 100,
-			SealHeight:               800,
-			FirstVoteHeight:          801,
-		}},
-	}))
-	require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
-		PocStageStartHeight: 2000,
-		TotalNetworkWeight:  100,
-	}))
-	am.decideVotedChallengeSegments(ctx, 2000)
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT, ch.FailReason)
-}
-
-func TestCatchUpSealUsesGenerationEndPlusOne(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	params, err := k.GetParams(ctx)
-	require.NoError(t, err)
-	require.NoError(t, k.SetActiveConfirmationPoCEvent(ctx, types.ConfirmationPoCEvent{
-		EpochIndex:            2,
-		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
-		GenerationStartHeight: 80,
-		TriggerHeight:         70,
-	}))
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		Target: testutil.Executor,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 50,
-		}},
-	}))
-	height := int64(91)
-	ec := &types.EpochContext{EpochIndex: 2, PocStartBlockHeight: 0, EpochParams: *params.EpochParams}
-	require.NoError(t, am.handleConfirmationPoCPhaseTransitions(ctx, height, ec, params))
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	event := types.ConfirmationPoCEvent{GenerationStartHeight: 80}
-	want := event.GetGenerationEnd(params.EpochParams) + 1
-	require.Equal(t, want, ch.Segments[0].SealHeight)
-	require.NotEqual(t, height, ch.Segments[0].SealHeight)
-}
-
-func TestChallengeVotingPowerKeepsSoleHostAndUsesRootWeight(t *testing.T) {
-	target := testutil.Executor
-	other := testutil.Validator
-	vp, total := challengeVotingPower(target, types.PoCValidationSnapshot{
-		TotalNetworkWeight: 150,
-		ModelVotingPowers: []*types.ModelVotingPowers{
-			{ModelId: "m1", VotingPowers: []*types.VotingPowerEntry{
-				{Address: target, VotingPower: 40},
-			}},
-			{ModelId: "m2", VotingPowers: []*types.VotingPowerEntry{
-				{Address: target, VotingPower: 10},
-				{Address: other, VotingPower: 90},
-			}},
-		},
-	}, 100)
-	require.Equal(t, int64(50), total)
-	require.Equal(t, int64(40), vp["m1"][target])
-	_, ok := vp["m2"][target]
-	require.False(t, ok)
-	require.Equal(t, int64(90), vp["m2"][other])
-}
-
-func TestTargetTrustWeightPrefersCapAppliedWeight(t *testing.T) {
-	target := testutil.Executor
-	root := []*types.ValidationWeight{{MemberAddress: target, Weight: 100}}
-	require.Equal(t, int64(40), targetTrustWeight(target, root, []*types.ActiveParticipant{{
-		Index:     target,
-		Weight:    100,
-		CapWeight: 40,
-	}}, true))
-	require.Equal(t, int64(100), targetTrustWeight(target, root, nil, false))
-}
-
-func TestFinalizeOpenChallenges_DecidesOlderEpochPending(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 1,
-		ModelId:    "m1",
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress: testutil.Executor,
-			Weight:        100,
-			MlNodes:       []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 10}},
-		}},
-	})
-	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex: 1,
-		ValidationWeights: []*types.ValidationWeight{{
-			MemberAddress:      testutil.Executor,
-			ConfirmationWeight: 100,
-		}},
-	})
-	require.NoError(t, k.SetParticipant(ctx, types.Participant{
-		Index:             testutil.Executor,
-		Address:           testutil.Executor,
-		Status:            types.ParticipantStatus_ACTIVE,
-		CurrentEpochStats: types.NewCurrentEpochStats(),
-	}))
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		EpochIndex: 1,
-		Target:     testutil.Executor,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 100,
-			SealHeight:               800,
-		}},
-	}))
-	require.NoError(t, am.FinalizeOpenChallenges(ctx, 2))
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT, ch.FailReason)
-}
-
-func TestLateCompletedUsesBlockHeightAsNextSegmentStart(t *testing.T) {
-	k, ctx := keepertestInference(t)
-	am := NewAppModule(nil, k, nil, nil, nil, nil)
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	params.EpochParams.EpochLength = 2000
 	params.EpochParams.ConfirmationPocSafetyWindow = 50
+	params.ConfirmationPocParams.AlphaThreshold = types.DecimalFromFloat(0.7)
+	params.PocParams.PocV2Enabled = true
 	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.PrecomputeSPRTValues(ctx))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 2))
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 2, PocStartBlockHeight: 0}))
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 3, PocStartBlockHeight: 2000}))
+	return NewAppModule(nil, k, nil, nil, nil, nil), k, ctx
+}
 
-	event := types.ConfirmationPoCEvent{
-		EpochIndex:            2,
-		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
-		GenerationStartHeight: 80,
-		TriggerHeight:         70,
-	}
-	require.NoError(t, k.SetActiveConfirmationPoCEvent(ctx, event))
-	require.NoError(t, k.PoCChallenge.Set(ctx, types.PoCChallenge{
-		EpochIndex:           2,
-		Target:               testutil.Executor,
-		ChallengeStartHeight: 50,
-		Segments: []*types.PoCChallengeSegment{{
-			PocStageStartBlockHeight: 50,
-			SealHeight:               89,
-			Outcome:                  types.PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PASSED,
+func seedChallengeParticipant(t *testing.T, k keeper.Keeper, ctx sdk.Context) {
+	t.Helper()
+	require.NoError(t, k.SetParticipant(ctx, types.Participant{
+		Index:             testutil.Executor,
+		Address:           testutil.Executor,
+		Status:            types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: types.NewCurrentEpochStats(),
+	}))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: 2,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "m1", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{{
+			MemberAddress:      testutil.Executor,
+			Weight:             100,
+			ConfirmationWeight: 100,
+		}},
+	})
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 2,
+		Participants: []*types.ActiveParticipant{{
+			Index:  testutil.Executor,
+			Models: []string{"m1"},
+			MlNodes: []*types.ModelMLNodes{{
+				MlNodes: []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 100}},
+			}},
 		}},
 	}))
+}
 
-	vePlusOne := event.GetValidationEnd(params.EpochParams) + 1
-	height := vePlusOne + 20
-	require.Greater(t, height, vePlusOne)
-
-	ec := &types.EpochContext{EpochIndex: 2, PocStartBlockHeight: 0, EpochParams: *params.EpochParams}
-	require.NoError(t, am.handleConfirmationPoCPhaseTransitions(ctx, height, ec, params))
-
-	ch, found, err := k.PoCChallenge.Get(ctx, testutil.Executor)
+func TestDecideCurrentChallengeSegment_RefundOnlyOnMissingSnapshot(t *testing.T) {
+	am, k, ctx := challengeApp(t)
+	seedChallengeParticipant(t, k, ctx)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 100,
+	}))
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	seg := k.PoCChallenge.SegmentByStart(ch, height)
-	require.NotNil(t, seg)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY, ch.FailureKind)
+	require.Equal(t, int64(100), ch.StartHeight)
+}
 
-	ctx = ctx.WithBlockHeight(height)
-	require.NoError(t, pocchallenge.HandleEndBlock(ctx, &k, k.PoCChallenge))
-	ch, found, err = k.PoCChallenge.Get(ctx, testutil.Executor)
+func TestDecideCurrentChallengeSegment_ZeroCommitFails(t *testing.T) {
+	am, k, ctx := challengeApp(t)
+	seedChallengeParticipant(t, k, ctx)
+	require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
+		PocStageStartHeight: 180,
+		ModelVotingPowers: []*types.ModelVotingPowers{{
+			ModelId: "m1",
+			VotingPowers: []*types.VotingPowerEntry{{
+				Address:     testutil.Validator,
+				VotingPower: 100,
+			}},
+		}},
+	}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 100,
+	}))
+	p, ok := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, ok)
+	p.Status = types.ParticipantStatus_INACTIVE
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(testutil.Executor), p))
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	seg = k.PoCChallenge.SegmentByStart(ch, height)
-	require.NotNil(t, seg)
-	require.NotEmpty(t, seg.SeedHash)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED, ch.FailureKind)
+	p, ok = k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, ok)
+	require.NotNil(t, p.CurrentEpochStats.ConfirmationPoCRatio)
+}
+
+func TestDecideCurrentChallengeSegment_ShortSegmentRotates(t *testing.T) {
+	am, k, ctx := challengeApp(t)
+	ctx = ctx.WithBlockHeight(400)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 350,
+		Seed:        []byte{1},
+	}))
+	require.NoError(t, k.PoCChallengeCommits.Set(ctx, collections.Join(sdk.MustAccAddressFromBech32(testutil.Executor), "m1"), types.PoCV2StoreCommit{
+		ParticipantAddress: testutil.Executor,
+		ModelId:            "m1",
+		Count:              3,
+	}))
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 400, 180, true))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, int64(400), ch.StartHeight)
+	require.Equal(t, ctx.HeaderInfo().Hash, ch.Seed)
+	commits, err := k.ListChallengeCommits(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.Empty(t, commits)
+}
+
+func TestDecideCurrentChallengeSegment_ReplayAfterRotateDoesNotRefund(t *testing.T) {
+	am, k, ctx := challengeApp(t)
+	ctx = ctx.WithBlockHeight(400)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 350,
+		Seed:        []byte{1},
+	}))
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 400, 180, true))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, int64(400), ch.StartHeight)
+
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 400, 180, true))
+	ch, found, err = k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, int64(400), ch.StartHeight)
+}
+
+func TestDecideCurrentChallengeSegment_NoRotateClosesBeforeLastSegment(t *testing.T) {
+	am, k, ctx := challengeApp(t)
+	ctx = ctx.WithBlockHeight(1960)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 100,
+		Seed:        []byte{1},
+	}))
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 200, 180, true))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, int64(1950), ch.StartHeight)
+
+	require.NoError(t, am.decideLastChallengeSegments(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 0}))
+	ch, found, err = k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, int64(1950), ch.StartHeight)
+}
+
+func TestDecideCurrentChallengeSegment_MissingTargetDoesNotWriteWeight(t *testing.T) {
+	am, k, ctx := challengeApp(t)
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: 2,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "m1", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{{
+			MemberAddress:      testutil.Executor,
+			Weight:             100,
+			ConfirmationWeight: 100,
+		}},
+	})
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 2,
+		Participants: []*types.ActiveParticipant{{
+			Index:  testutil.Executor,
+			Models: []string{"m1"},
+			MlNodes: []*types.ModelMLNodes{{
+				MlNodes: []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 100}},
+			}},
+		}},
+	}))
+	require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
+		PocStageStartHeight: 180,
+		ModelVotingPowers: []*types.ModelVotingPowers{{
+			ModelId: "m1",
+			VotingPowers: []*types.VotingPowerEntry{{
+				Address:     testutil.Validator,
+				VotingPower: 100,
+			}},
+		}},
+	}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 100,
+	}))
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY, ch.FailureKind)
+	group, found := k.GetEpochGroupData(ctx, 2, "")
+	require.True(t, found)
+	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
+}
+
+func TestDecideCurrentChallengeSegment_FinalShortSegmentStaysUnset(t *testing.T) {
+	am, k, ctx := challengeApp(t)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 1900,
+		Seed:        []byte{1},
+	}))
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 1950, 2000, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, int64(1900), ch.StartHeight)
+}
+
+func TestStripChallengeSkipFromPreserved(t *testing.T) {
+	snapshot := types.PreservedNodesSnapshot{
+		ModelPreservedNodes: []*types.ModelPreservedNodes{{
+			ModelId: "m1",
+			Participants: []*types.ParticipantPreservedNodes{
+				{ParticipantId: testutil.Executor},
+				{ParticipantId: testutil.Validator},
+			},
+		}},
+	}
+	got := stripChallengeSkipFromPreserved(snapshot, map[string]struct{}{testutil.Executor: {}})
+	require.Len(t, got.ModelPreservedNodes[0].Participants, 1)
+	require.Equal(t, testutil.Validator, got.ModelPreservedNodes[0].Participants[0].ParticipantId)
+}
+
+func TestSameEpochTargetsSkipInferenceMiss(t *testing.T) {
+	_, k, ctx := challengeApp(t)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 100,
+	}))
+	require.True(t, k.IsChallengeGenerating(ctx, testutil.Executor))
+	ctx = ctx.WithBlockHeight(1960)
+	require.False(t, k.IsChallengeGenerating(ctx, testutil.Executor))
+}
+
+type challengeEvalModel struct {
+	id     string
+	weight int64
+	count  uint32
+	accept bool
+}
+
+func prepareChallengeEval(t *testing.T, stage, exchange int64, models []challengeEvalModel) (AppModule, keeper.Keeper, sdk.Context) {
+	t.Helper()
+	am, k, ctx := challengeApp(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.EpochParams.PocStageDuration = stage
+	params.EpochParams.PocExchangeDuration = exchange
+	params.PocParams.ValidationSlots = 0
+	require.NoError(t, k.SetParams(ctx, params))
+
+	modelIDs := make([]string, 0, len(models))
+	scales := make([]*types.ConfirmationWeightScale, 0, len(models))
+	mlNodes := make([]*types.ModelMLNodes, 0, len(models))
+	modelVPs := make([]*types.ModelVotingPowers, 0, len(models))
+	expected := int64(0)
+	for _, m := range models {
+		modelIDs = append(modelIDs, m.id)
+		scales = append(scales, &types.ConfirmationWeightScale{
+			ModelId:              m.id,
+			EffectiveCoefficient: types.DecimalFromFloat(1),
+		})
+		mlNodes = append(mlNodes, &types.ModelMLNodes{
+			MlNodes: []*types.MLNodeInfo{{NodeId: m.id + "-n", PocWeight: m.weight}},
+		})
+		modelVPs = append(modelVPs, &types.ModelVotingPowers{
+			ModelId: m.id,
+			VotingPowers: []*types.VotingPowerEntry{{
+				Address:     testutil.Validator,
+				VotingPower: 100,
+			}},
+		})
+		expected += m.weight
+	}
+
+	require.NoError(t, k.SetParticipant(ctx, types.Participant{
+		Index:             testutil.Executor,
+		Address:           testutil.Executor,
+		Status:            types.ParticipantStatus_ACTIVE,
+		ValidatorKey:      "vk",
+		CurrentEpochStats: types.NewCurrentEpochStats(),
+	}))
+	require.NoError(t, k.SetRandomSeed(ctx, types.RandomSeed{
+		Participant: testutil.Executor,
+		EpochIndex:  2,
+		Signature:   "seed",
+	}))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:               2,
+		ConfirmationWeightScales: scales,
+		ValidationWeights: []*types.ValidationWeight{{
+			MemberAddress:      testutil.Executor,
+			Weight:             expected,
+			ConfirmationWeight: expected,
+		}},
+	})
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 2,
+		Participants: []*types.ActiveParticipant{{
+			Index:   testutil.Executor,
+			Models:  modelIDs,
+			MlNodes: mlNodes,
+		}},
+	}))
+	require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
+		PocStageStartHeight: 180,
+		TotalNetworkWeight:  100,
+		ModelVotingPowers:   modelVPs,
+	}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 100,
+	}))
+
+	target := sdk.MustAccAddressFromBech32(testutil.Executor)
+	validator := sdk.MustAccAddressFromBech32(testutil.Validator)
+	for _, m := range models {
+		if m.count == 0 {
+			continue
+		}
+		require.NoError(t, k.PoCChallengeCommits.Set(ctx, collections.Join(target, m.id), types.PoCV2StoreCommit{
+			ParticipantAddress: testutil.Executor,
+			ModelId:            m.id,
+			Count:              m.count,
+		}))
+		voteWeight := int64(m.count)
+		if !m.accept {
+			voteWeight = 0
+		}
+		require.NoError(t, k.PoCChallengeValidations.Set(ctx, collections.Join3(target, m.id, validator), types.PoCValidationV2{
+			ParticipantAddress:          testutil.Executor,
+			ValidatorParticipantAddress: testutil.Validator,
+			ValidatedWeight:             voteWeight,
+			ModelId:                     m.id,
+		}))
+	}
+	return am, k, ctx
+}
+
+func TestDecideCurrentChallengeSegment_NormalizationScalesShortSegment(t *testing.T) {
+	am, k, ctx := prepareChallengeEval(t, 800, 0, []challengeEvalModel{
+		{id: "m1", weight: 100, count: 50, accept: true},
+	})
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	group, found := k.GetEpochGroupData(ctx, 2, "")
+	require.True(t, found)
+	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
+}
+
+func TestDecideCurrentChallengeSegment_PartialRatioHaircut(t *testing.T) {
+	am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
+		{id: "m1", weight: 100, count: 80, accept: true},
+	})
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	group, found := k.GetEpochGroupData(ctx, 2, "")
+	require.True(t, found)
+	require.Equal(t, int64(80), group.ValidationWeights[0].ConfirmationWeight)
+	p, ok := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, ok)
+	require.NotNil(t, p.CurrentEpochStats.ConfirmationPoCRatio)
+	got := p.CurrentEpochStats.ConfirmationPoCRatio.ToDecimal()
+	require.True(t, got.GreaterThan(decimal.NewFromFloat(0.7)))
+	require.True(t, got.LessThan(decimal.NewFromInt(1)))
+}
+
+func TestDecideCurrentChallengeSegment_PartialRatioFail(t *testing.T) {
+	am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
+		{id: "m1", weight: 100, count: 50, accept: true},
+	})
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED, ch.FailureKind)
+}
+
+func TestDecideCurrentChallengeSegment_MultiModelPartialAcceptance(t *testing.T) {
+	am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
+		{id: "m1", weight: 80, count: 80, accept: true},
+		{id: "m2", weight: 20, count: 20, accept: false},
+	})
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	group, found := k.GetEpochGroupData(ctx, 2, "")
+	require.True(t, found)
+	require.Equal(t, int64(80), group.ValidationWeights[0].ConfirmationWeight)
+}
+
+func TestDecideCurrentChallengeSegments_SkipsOtherEpoch(t *testing.T) {
+	am, k, ctx := challengeApp(t)
+	seedChallengeParticipant(t, k, ctx)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  1,
+		Target:      testutil.Executor,
+		StartHeight: 100,
+	}))
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, uint64(1), ch.EpochIndex)
+}
+
+func TestDecideLastChallengeSegments_PropagatesWhenUpcomingMissing(t *testing.T) {
+	am, k, ctx := challengeApp(t)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 100,
+	}))
+	require.NoError(t, k.Epochs.Remove(ctx, 3))
+	err := am.decideLastChallengeSegments(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 0})
+	require.Error(t, err)
+	ch, found, getErr := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, getErr)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
 }

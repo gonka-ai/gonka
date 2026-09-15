@@ -43,8 +43,7 @@ message PoCChallengeParams {
 
   repeated string allowed_challengers = 1;
   Decimal payment_ratio = 2;
-  int64 slice_blocks = 3;
-  uint32 max_active_challenges = 4;
+  uint32 max_active_challenges = 3;
 }
 
 // MaintenanceParams defines the governance-controlled parameters for participant maintenance windows.

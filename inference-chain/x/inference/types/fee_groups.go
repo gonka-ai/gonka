@@ -47,6 +47,7 @@ var MessageFeeGroups = map[reflect.Type]string{
 	reflect.TypeOf((*MsgPoCV2StoreCommit)(nil)):                   FeeGroupEpoch,
 	reflect.TypeOf((*MsgCreatePoCChallenge)(nil)):                 FeeGroupEpoch,
 	reflect.TypeOf((*MsgPoCChallengeStoreCommit)(nil)):            FeeGroupEpoch,
+	reflect.TypeOf((*MsgSubmitPoCChallengeValidations)(nil)):      FeeGroupEpoch,
 	reflect.TypeOf((*MsgMLNodeWeightDistribution)(nil)):           FeeGroupEpoch,
 	reflect.TypeOf((*MsgSubmitPocValidationsV2)(nil)):             FeeGroupEpoch,
 	reflect.TypeOf((*MsgClaimRewards)(nil)):                       FeeGroupEpoch,

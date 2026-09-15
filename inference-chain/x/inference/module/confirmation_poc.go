@@ -10,7 +10,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/keeper"
-	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 	"github.com/shopspring/decimal"
@@ -57,7 +56,7 @@ func (am AppModule) handleConfirmationPoC(ctx context.Context, blockHeight int64
 	}
 
 	// Handle phase transitions for active event
-	err = am.handleConfirmationPoCPhaseTransitions(ctx, blockHeight, epochContext, params)
+	err = am.handleConfirmationPoCPhaseTransitions(ctx, blockHeight, epochContext, epochParams)
 	if err != nil {
 		am.LogError("Error handling confirmation PoC phase transitions", types.PoC, "error", err)
 		// Continue to check for new triggers
@@ -228,12 +227,8 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	ctx context.Context,
 	blockHeight int64,
 	epochContext *types.EpochContext,
-	params types.Params,
+	epochParams *types.EpochParams,
 ) error {
-	epochParams := params.EpochParams
-	if epochParams == nil {
-		return fmt.Errorf("epoch params not found")
-	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
 	if epochContext.EpochIndex <= 1 {
@@ -265,10 +260,10 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		transitionCount++
 		transitions = append(transitions, "GRACE_PERIOD->GENERATION")
 
-		skipSet, err := am.keeper.PoCChallenge.SnapshotSkip(ctx, event.TriggerHeight)
+		skipSet, err := am.keeper.SameEpochChallengeTargets(ctx, event.EpochIndex)
 		if err != nil {
-			am.LogError("Confirmation PoC: failed to snapshot challenge skip set", types.PoC,
-				"triggerHeight", event.TriggerHeight, "error", err)
+			am.LogError("Confirmation PoC: failed to load challenge skip set", types.PoC,
+				"epochIndex", event.EpochIndex, "error", err)
 			skipSet = nil
 		}
 
@@ -291,16 +286,6 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 			"blockHeight", blockHeight,
 			"generationStartHeight", event.GenerationStartHeight,
 			"pocSeedBlockHash", event.PocSeedBlockHash[:16]+"...")
-	}
-
-	if event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION {
-		sealHeight := event.GetGenerationEnd(epochParams) + 1
-		if blockHeight >= sealHeight {
-			if err := pocchallenge.SealAllOpen(ctx, am.keeper.PoCChallenge, sealHeight, pocchallenge.SliceBlocks(params)); err != nil {
-				am.LogError("Confirmation PoC: failed to seal challenge segments at generation end", types.PoC,
-					"triggerHeight", event.TriggerHeight, "error", err)
-			}
-		}
 	}
 
 	// GENERATION -> VALIDATION transition
@@ -333,12 +318,12 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 				"eventSequence", event.EventSequence,
 				"error", err)
 		}
-		am.decideVotedChallengeSegments(ctx, event.TriggerHeight)
-		nextStart := event.GetValidationEnd(epochParams) + 1
-		if blockHeight > nextStart {
-			nextStart = blockHeight
+		if err := am.decideCurrentChallengeSegments(ctx, event.EpochIndex, event.GetExchangeEnd(epochParams)+1, event.TriggerHeight, true); err != nil {
+			am.LogError("Confirmation PoC: Failed to decide challenge segments", types.PoC,
+				"epochIndex", event.EpochIndex,
+				"eventSequence", event.EventSequence,
+				"error", err)
 		}
-		am.startNextChallengeSegments(ctx, nextStart, pocchallenge.SafetyWindowHeight(epochContext.NextPoCStart(), epochParams.ConfirmationPocSafetyWindow))
 
 		am.LogInfo("Confirmation PoC: VALIDATION -> COMPLETED", types.PoC,
 			"epochIndex", event.EpochIndex,
@@ -353,10 +338,6 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
 			// Clean up validation snapshot
 			am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight)
-			if err := am.keeper.PoCChallenge.DeleteSkipSet(ctx, event.TriggerHeight); err != nil {
-				am.LogError("Confirmation PoC: failed to delete challenge skip set", types.PoC,
-					"triggerHeight", event.TriggerHeight, "error", err)
-			}
 
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)
 			if err != nil {
@@ -477,8 +458,13 @@ func (am AppModule) evaluateConfirmation(
 	if skipAddrs == nil {
 		skipAddrs = make(map[string]struct{})
 	}
-	for addr := range am.keeper.ConfirmationEvaluationSkipSet(ctx, event.TriggerHeight) {
-		skipAddrs[addr] = struct{}{}
+	if skip, err := am.keeper.SameEpochChallengeTargets(ctx, event.EpochIndex); err != nil {
+		am.LogError("evaluateConfirmation: failed to load challenge skip set", types.PoC,
+			"epochIndex", event.EpochIndex, "error", err)
+	} else {
+		for addr := range skip {
+			skipAddrs[addr] = struct{}{}
+		}
 	}
 
 	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, skipAddrs)

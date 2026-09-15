@@ -215,6 +215,18 @@ func TestApplyFeeGroupUpgradeInfo_RejectsInvalid(t *testing.T) {
 	require.Error(t, applyFeeGroupUpgradeInfo(ctx, k, `{not json`))
 }
 
+func TestMigratePoCChallengeParams(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocChallengeParams = nil
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, migratePoCChallengeParams(ctx, k))
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, inferencetypes.DefaultPoCChallengeParams(), got.PocChallengeParams)
+}
+
 func TestMigrateDevshardApprovedVersions(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	params, err := k.GetParams(ctx)

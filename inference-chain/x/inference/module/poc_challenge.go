@@ -2,156 +2,269 @@ package inference
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/x/inference/calculations"
-	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 )
 
-func (am AppModule) EvaluateSealedSegment(ctx context.Context, target string, startHeight int64, snapshot types.PoCValidationSnapshot) error {
-	store := am.keeper.PoCChallenge
-	ch, found, err := store.Get(ctx, target)
-	if err != nil || !found {
-		return err
-	}
-	if ch.FailReason != types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET {
-		return nil
-	}
-	seg := store.SegmentByStart(ch, startHeight)
-	if seg == nil || seg.SealHeight == 0 ||
-		seg.Outcome != types.PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PENDING {
-		return nil
-	}
+var errChallengeEvaluation = errors.New("poc challenge evaluation")
 
+func evaluationError(cause string) error {
+	return fmt.Errorf("%w: %s", errChallengeEvaluation, cause)
+}
+
+func (am AppModule) decideLastChallengeSegments(ctx context.Context, epoch types.Epoch) error {
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		return err
 	}
-	sliceBlocks := pocchallenge.SliceBlocks(params)
-	counted := pocchallenge.CountedSlices(seg.PocStageStartBlockHeight, seg.SealHeight, sliceBlocks)
-	nodes := pocchallenge.ConfirmationWeightNodes(ctx, &am.keeper, ch.EpochIndex, target)
-	assigned := make([]string, 0, len(nodes))
-	for id := range nodes {
-		assigned = append(assigned, id)
+	if params.EpochParams == nil {
+		return fmt.Errorf("epoch params not set")
 	}
-	ready, err := pocchallenge.HasRequiredCommits(ctx, store, target, startHeight, counted, assigned)
-	if err != nil {
-		return err
+	epochContext := types.NewEpochContext(epoch, *params.EpochParams)
+	finish := keeper.SafetyWindowHeight(epochContext.NextPoCStart(), params.EpochParams.ConfirmationPocSafetyWindow)
+	upcoming, found := am.keeper.GetUpcomingEpoch(ctx)
+	if !found || upcoming == nil {
+		return fmt.Errorf("upcoming epoch not found")
 	}
-	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
-	if !ready {
-		return am.failSealedSegment(ctx, store, ch, seg, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_MISSING_COMMIT, height, 0, 1)
-	}
-	if seg.FirstVoteHeight == 0 {
-		return nil
-	}
-	if snapshot.PocStageStartHeight == 0 {
-		return nil
-	}
-
-	commits, err := store.ListCommitsForSegment(ctx, target, startHeight)
-	if err != nil {
-		return err
-	}
-	commitByModelSlice := make(map[string]map[uint32]types.PoCChallengeCommit)
-	for _, c := range commits {
-		if commitByModelSlice[c.ModelId] == nil {
-			commitByModelSlice[c.ModelId] = make(map[uint32]types.PoCChallengeCommit)
-		}
-		commitByModelSlice[c.ModelId][c.SliceIndex] = c
-	}
-	votes, err := store.ListValidationsForSegment(ctx, target, startHeight)
-	if err != nil {
-		return err
-	}
-	inputs := am.challengeCalcInputs(ctx, ch, snapshot, params)
-
-	pocWeight := pocchallenge.ConfirmationPocWeight(nodes)
-	denom := pocDurationDenom(params.EpochParams)
-	validatedSum, expectedSum, failReason := accumulateSegmentReading(counted, pocWeight, denom, params.ConfirmationPocParams, func(sl pocchallenge.SliceRange) (bool, int64, bool) {
-		return am.evaluateCountedSlice(ch, sl, commitByModelSlice, votes, nodes, assigned, params, inputs)
-	})
-
-	if failReason != types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET {
-		reading := validatedSum
-		if failReason == types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED {
-			reading = 0
-		}
-		return am.failSealedSegment(ctx, store, ch, seg, failReason, height, reading, expectedSum)
-	}
-
-	return am.passSealedSegment(ctx, store, ch, seg, validatedSum, expectedSum)
+	return am.decideCurrentChallengeSegments(ctx, epoch.Index, finish, upcoming.PocStartBlockHeight, false)
 }
 
-type challengeCalcInputs struct {
-	modelVP         map[string]map[string]int64
-	totalWeight     int64
-	participant     types.Participant
-	seeds           map[string]types.RandomSeed
-	guardianEnabled bool
-	guardianSet     map[string]bool
-	appHash         string
-	slots           int
-}
-
-func challengeVotingPower(target string, snapshot types.PoCValidationSnapshot, rootWeight int64) (map[string]map[string]int64, int64) {
-	modelVP := make(map[string]map[string]int64)
-	for _, mvw := range snapshot.ModelVotingPowers {
-		if mvw == nil {
+func (am AppModule) decideCurrentChallengeSegments(ctx context.Context, epochIndex uint64, finish int64, snapshotHeight int64, rotate bool) error {
+	list, err := am.keeper.ListPoCChallenges(ctx)
+	if err != nil {
+		return err
+	}
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	cacheCtx, writeFn := sdkCtx.CacheContext()
+	for _, ch := range list {
+		if ch.EpochIndex != epochIndex {
 			continue
 		}
-		vp := types.VotingPowerSliceToMap(mvw.VotingPowers)
-		if _, ok := vp[target]; ok && len(vp) > 1 {
-			delete(vp, target)
+		if ch.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+			continue
 		}
-		modelVP[mvw.ModelId] = vp
-	}
-	totalWeight := snapshot.TotalNetworkWeight - rootWeight
-	if totalWeight < 0 {
-		totalWeight = 0
-	}
-	return modelVP, totalWeight
-}
-
-func rootConsensusWeight(weights []*types.ValidationWeight, target string) int64 {
-	for _, vw := range weights {
-		if vw != nil && vw.MemberAddress == target {
-			return vw.Weight
+		if err := am.decideCurrentChallengeSegment(cacheCtx, ch, finish, snapshotHeight, rotate); err != nil {
+			return err
 		}
 	}
-	return 0
+	writeFn()
+	return nil
 }
 
-func targetTrustWeight(target string, rootWeights []*types.ValidationWeight, participants []*types.ActiveParticipant, capApplied bool) int64 {
-	fallback := rootConsensusWeight(rootWeights, target)
-	if w, ok := resolveTrustWeights(participants, capApplied)[target]; ok {
-		return w
-	}
-	return fallback
-}
-
-func (am AppModule) challengeCalcInputs(
+func (am AppModule) decideCurrentChallengeSegment(
 	ctx context.Context,
 	ch types.PoCChallenge,
+	finish int64,
+	snapshotHeight int64,
+	rotate bool,
+) error {
+	if finish <= ch.StartHeight {
+		return nil
+	}
+	duration := finish - ch.StartHeight
+	if duration < keeper.MinPunishableSegmentBlocks {
+		return am.advanceAfterDecision(ctx, ch, rotate)
+	}
+
+	if err := am.evaluatePunishableChallengeSegment(ctx, ch, finish, snapshotHeight); err != nil {
+		if errors.Is(err, errChallengeEvaluation) {
+			return am.failChallengeEvaluation(ctx, ch, err.Error())
+		}
+		return err
+	}
+	updated, found, err := am.keeper.GetPoCChallenge(ctx, ch.Target)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if updated.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+		return am.keeper.DeleteChallengeSegmentData(ctx, ch.Target)
+	}
+	return am.advanceAfterDecision(ctx, updated, rotate)
+}
+
+func (am AppModule) canRotateChallenge(ctx context.Context, ch types.PoCChallenge) bool {
+	safety, err := am.keeper.ChallengeSafetyFinish(ctx, ch)
+	if err != nil {
+		return false
+	}
+	return sdk.UnwrapSDKContext(ctx).BlockHeight() < safety
+}
+
+func (am AppModule) advanceAfterDecision(ctx context.Context, ch types.PoCChallenge, rotate bool) error {
+	if err := am.keeper.DeleteChallengeSegmentData(ctx, ch.Target); err != nil {
+		return err
+	}
+	if !rotate {
+		return nil
+	}
+	if am.canRotateChallenge(ctx, ch) {
+		return am.writeNextChallengeSegment(ctx, ch)
+	}
+	safety, err := am.keeper.ChallengeSafetyFinish(ctx, ch)
+	if err != nil {
+		return err
+	}
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	return am.keeper.RotateChallengeSegment(ctx, ch.Target, safety, sdkCtx.HeaderInfo().Hash)
+}
+
+func (am AppModule) writeNextChallengeSegment(ctx context.Context, ch types.PoCChallenge) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	return am.keeper.RotateChallengeSegment(ctx, ch.Target, sdkCtx.BlockHeight(), sdkCtx.HeaderInfo().Hash)
+}
+
+func (am AppModule) failChallengeEvaluation(ctx context.Context, ch types.PoCChallenge, cause string) error {
+	if err := am.keeper.MarkChallengeRefundOnly(ctx, ch.Target, cause); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (am AppModule) evaluatePunishableChallengeSegment(
+	ctx context.Context,
+	ch types.PoCChallenge,
+	finish int64,
+	snapshotHeight int64,
+) error {
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.EpochParams == nil || params.PocParams == nil {
+		return evaluationError("missing epoch or poc params")
+	}
+	epochGroupData, found := am.keeper.GetEpochGroupData(ctx, ch.EpochIndex, "")
+	if !found {
+		return evaluationError(fmt.Sprintf("epoch group data not found for epoch %d", ch.EpochIndex))
+	}
+	scales := epochGroupData.GetConfirmationWeightScales()
+	if len(scales) == 0 {
+		return evaluationError("no confirmation weight scales")
+	}
+	snapshot, found, err := am.keeper.GetPoCValidationSnapshot(ctx, snapshotHeight)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return evaluationError(fmt.Sprintf("validation snapshot missing at %d", snapshotHeight))
+	}
+	presentScales := confirmationScalesInSnapshot(scales, snapshot.ModelVotingPowers)
+	if len(presentScales) == 0 {
+		return evaluationError("validation snapshot has no confirmation models")
+	}
+
+	participants, found := am.keeper.GetActiveParticipants(ctx, ch.EpochIndex)
+	if !found {
+		return evaluationError(fmt.Sprintf("active participants not found for epoch %d", ch.EpochIndex))
+	}
+	participant, found := am.keeper.GetParticipant(ctx, ch.Target)
+	if !found {
+		return evaluationError("target participant not found")
+	}
+
+	measured := map[string]int64{ch.Target: 0}
+	calculatorResult, calcErr := am.challengeCalculatorResult(ctx, ch, finish, snapshot, params)
+	if calcErr != nil {
+		return calcErr
+	}
+	if len(calculatorResult) > 0 {
+		fullMeasured := weightByParticipant(calculatorResult, presentScales)
+		measured[ch.Target] = fullMeasured[ch.Target]
+	}
+	fullExpected := weightByParticipant(participants.Participants, presentScales)
+	totalExpected := map[string]int64{ch.Target: fullExpected[ch.Target]}
+
+	updated, ratios := foldEventReadings(&epochGroupData, measured, map[string]int64{}, totalExpected, nil)
+	if updated {
+		am.keeper.SetEpochGroupData(ctx, epochGroupData)
+	}
+
+	if participant.CurrentEpochStats == nil {
+		participant.CurrentEpochStats = types.NewCurrentEpochStats()
+	}
+	if ratio, ok := ratios[ch.Target]; ok {
+		participant.CurrentEpochStats.ConfirmationPoCRatio = ratio
+	}
+	if confirmationPoCFailed(participant.CurrentEpochStats, params.ConfirmationPocParams) {
+		if err := am.keeper.MarkChallengeFailed(ctx, ch.Target); err != nil {
+			return err
+		}
+	}
+	return am.keeper.SetParticipant(ctx, participant)
+}
+
+func confirmationPoCFailed(stats *types.CurrentEpochStats, parameters *types.ConfirmationPoCParams) bool {
+	if parameters == nil || parameters.AlphaThreshold == nil {
+		return false
+	}
+	alpha := parameters.AlphaThreshold.ToDecimal()
+	if alpha.IsZero() {
+		return false
+	}
+	if stats == nil || stats.ConfirmationPoCRatio == nil {
+		return false
+	}
+	return stats.ConfirmationPoCRatio.ToDecimal().LessThan(alpha)
+}
+
+func (am AppModule) challengeCalculatorResult(
+	ctx context.Context,
+	ch types.PoCChallenge,
+	finish int64,
 	snapshot types.PoCValidationSnapshot,
 	params types.Params,
-) challengeCalcInputs {
-	root, _ := am.keeper.GetEpochGroupData(ctx, ch.EpochIndex, "")
-	var participants []*types.ActiveParticipant
-	var capApplied bool
-	if aps, found := am.keeper.GetActiveParticipants(ctx, ch.EpochIndex); found {
-		participants = aps.Participants
-		capApplied = aps.CapWeightApplied
+) ([]*types.ActiveParticipant, error) {
+	commits, err := am.keeper.ListChallengeCommits(ctx, ch.Target)
+	if err != nil {
+		return nil, err
 	}
-	modelVP, totalWeight := challengeVotingPower(ch.Target, snapshot, targetTrustWeight(ch.Target, root.ValidationWeights, participants, capApplied))
+	validations, err := am.keeper.ListChallengeValidations(ctx, ch.Target)
+	if err != nil {
+		return nil, err
+	}
 
-	participant, _ := am.keeper.GetParticipant(ctx, ch.Target)
-	seed, seedFound := am.keeper.GetRandomSeed(ctx, ch.EpochIndex, ch.Target)
-	seeds := map[string]types.RandomSeed{}
-	if seedFound {
+	storeCommits := make(map[types.PoCParticipantModelKey]types.PoCV2StoreCommit)
+	distributions := make(map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution)
+	for _, commit := range commits {
+		key := types.PoCParticipantModelKey{ParticipantAddress: ch.Target, ModelID: commit.ModelId}
+		storeCommits[key] = commit
+		distributions[key] = types.MLNodeWeightDistribution{
+			ParticipantAddress:       ch.Target,
+			PocStageStartBlockHeight: ch.StartHeight,
+			ModelId:                  commit.ModelId,
+			Weights: []*types.MLNodeWeight{{
+				NodeId: "challenge",
+				Weight: commit.Count,
+			}},
+		}
+	}
+
+	validationsV2 := make(map[types.PoCParticipantModelKey][]types.PoCValidationV2)
+	for _, vote := range validations {
+		key := types.PoCParticipantModelKey{ParticipantAddress: ch.Target, ModelID: vote.ModelId}
+		validationsV2[key] = append(validationsV2[key], vote)
+	}
+
+	if len(storeCommits) == 0 && len(validationsV2) == 0 {
+		return nil, nil
+	}
+
+	participant, found := am.keeper.GetParticipant(ctx, ch.Target)
+	if !found {
+		return nil, evaluationError("target participant not found")
+	}
+	participants := map[string]types.Participant{ch.Target: participant}
+	seeds := make(map[string]types.RandomSeed)
+	if seed, found := am.keeper.GetRandomSeed(ctx, ch.EpochIndex, ch.Target); found {
 		seeds[ch.Target] = seed
 	}
 
@@ -163,376 +276,45 @@ func (am AppModule) challengeCalcInputs(
 		if err != nil {
 			continue
 		}
-		if accAddr == ch.Target {
-			continue
-		}
 		guardianSet[accAddr] = true
 	}
 
 	var appHash string
-	var slots int
-	if params.PocParams != nil && params.PocParams.ValidationSlots > 0 {
+	var validationSlots int
+	if params.PocParams.ValidationSlots > 0 {
 		appHash = snapshot.AppHash
-		slots = int(params.PocParams.ValidationSlots)
+		validationSlots = int(params.PocParams.ValidationSlots)
 	}
-	return challengeCalcInputs{
-		modelVP:         modelVP,
-		totalWeight:     totalWeight,
-		participant:     participant,
-		seeds:           seeds,
-		guardianEnabled: guardianEnabled,
-		guardianSet:     guardianSet,
-		appHash:         appHash,
-		slots:           slots,
-	}
-}
+	duration := finish - ch.StartHeight
+	stageBlocks := params.EpochParams.PocStageDuration + params.EpochParams.PocExchangeDuration
+	factor := mathsdk.LegacyNewDec(stageBlocks).Quo(mathsdk.LegacyNewDec(duration))
 
-func sliceFailsAlpha(validated, expected int64, params *types.ConfirmationPoCParams) bool {
-	ratio := computeRatio(validated, expected)
-	return calculations.ConfirmationPoCStatus(&types.CurrentEpochStats{ConfirmationPoCRatio: ratio}, params) == calculations.Fail
-}
-
-func accumulateSegmentReading(
-	counted []pocchallenge.SliceRange,
-	pocWeight, denom int64,
-	alpha *types.ConfirmationPoCParams,
-	eval func(sl pocchallenge.SliceRange) (ok bool, validated int64, rejected bool),
-) (validatedSum, expectedSum int64, failReason types.PoCChallengeFailReason) {
-	for _, sl := range counted {
-		expected := sliceExpected(pocWeight, denom, sl.Length)
-		expectedSum += expected
-		if failReason == types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED {
+	modelVotingPowers := make(map[string]map[string]int64)
+	for _, mvw := range snapshot.ModelVotingPowers {
+		if mvw == nil {
 			continue
 		}
-		ok, validated, rejected := eval(sl)
-		if rejected {
-			failReason = types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_REJECTED
-			validatedSum = 0
-			continue
-		}
-		if ok {
-			validatedSum += validated
-		}
-		if failReason == types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET &&
-			sliceFailsAlpha(validated, expected, alpha) {
-			failReason = types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_SEGMENT_UNDERWEIGHT
-		}
-	}
-	return
-}
-
-func (am AppModule) evaluateCountedSlice(
-	ch types.PoCChallenge,
-	sl pocchallenge.SliceRange,
-	commits map[string]map[uint32]types.PoCChallengeCommit,
-	votes []types.PoCChallengeValidation,
-	nodes map[string][]*types.MLNodeInfo,
-	assigned []string,
-	params types.Params,
-	inputs challengeCalcInputs,
-) (ok bool, validated int64, rejected bool) {
-	storeCommits := make(map[types.PoCParticipantModelKey]types.PoCV2StoreCommit)
-	dists := make(map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution)
-	validations := make(map[types.PoCParticipantModelKey][]types.PoCValidationV2)
-	for _, modelID := range assigned {
-		c, found := commits[modelID][sl.Index]
-		if !found {
-			return false, 0, false
-		}
-		key := types.PoCParticipantModelKey{ParticipantAddress: ch.Target, ModelID: modelID}
-		storeCommits[key] = types.PoCV2StoreCommit{
-			ParticipantAddress:       ch.Target,
-			PocStageStartBlockHeight: sl.Start,
-			Count:                    c.Count,
-			RootHash:                 c.RootHash,
-			ModelId:                  modelID,
-		}
-		dists[key] = syntheticDistribution(ch.Target, modelID, sl.Start, c.Count, nodes[modelID])
-	}
-	if len(storeCommits) == 0 {
-		return false, 0, false
-	}
-	for _, v := range votes {
-		if v.Validator == ch.Target {
-			continue
-		}
-		key := types.PoCParticipantModelKey{ParticipantAddress: ch.Target, ModelID: v.ModelId}
-		validations[key] = append(validations[key], types.PoCValidationV2{
-			ParticipantAddress:          ch.Target,
-			ValidatorParticipantAddress: v.Validator,
-			PocStageStartBlockHeight:    sl.Start,
-			ValidatedWeight:             v.ValidatedWeight,
-			ModelId:                     v.ModelId,
-		})
-	}
-	if inputs.participant.Address == "" && inputs.participant.Index == "" {
-		return false, 0, true
+		modelVotingPowers[mvw.ModelId] = types.VotingPowerSliceToMap(mvw.VotingPowers)
 	}
 
-	calc := NewPoCWeightCalculator(
-		inputs.modelVP,
-		inputs.totalWeight,
+	calculator := NewPoCWeightCalculator(
+		modelVotingPowers,
+		snapshot.TotalNetworkWeight,
 		storeCommits,
-		dists,
-		validations,
+		distributions,
+		validationsV2,
 		params.PocParams,
-		map[string]types.Participant{ch.Target: inputs.participant},
-		inputs.seeds,
-		sl.Start,
+		participants,
+		seeds,
+		ch.StartHeight,
 		am,
-		mathsdk.LegacyOneDec(),
-		inputs.guardianEnabled,
-		inputs.guardianSet,
-		inputs.appHash,
-		inputs.slots,
+		factor,
+		guardianEnabled,
+		guardianSet,
+		appHash,
+		validationSlots,
 	)
-	result := calc.Calculate()
-	if len(result) == 0 {
-		return false, 0, true
-	}
-	return true, result[0].Weight, false
-}
-
-func syntheticDistribution(target, modelID string, start int64, count uint32, nodes []*types.MLNodeInfo) types.MLNodeWeightDistribution {
-	weights := make([]*types.MLNodeWeight, 0, len(nodes))
-	var sumPoc int64
-	for _, n := range nodes {
-		if n != nil {
-			sumPoc += n.PocWeight
-		}
-	}
-	var assigned uint32
-	for i, n := range nodes {
-		if n == nil {
-			continue
-		}
-		var w uint32
-		if i == len(nodes)-1 {
-			w = count - assigned
-		} else if sumPoc > 0 {
-			w = uint32(int64(count) * n.PocWeight / sumPoc)
-			assigned += w
-		}
-		weights = append(weights, &types.MLNodeWeight{NodeId: n.NodeId, Weight: w})
-	}
-	if len(weights) == 0 {
-		weights = []*types.MLNodeWeight{{NodeId: "challenge", Weight: count}}
-	}
-	return types.MLNodeWeightDistribution{
-		ParticipantAddress:       target,
-		PocStageStartBlockHeight: start,
-		Weights:                  weights,
-		ModelId:                  modelID,
-	}
-}
-
-func pocDurationDenom(epochParams *types.EpochParams) int64 {
-	if epochParams == nil {
-		return 1
-	}
-	denom := epochParams.PocStageDuration + epochParams.PocExchangeDuration
-	if denom <= 0 {
-		return 1
-	}
-	return denom
-}
-
-func sliceExpected(pocWeight, denom, length int64) int64 {
-	if denom <= 0 {
-		denom = 1
-	}
-	expected := pocWeight * length / denom
-	if expected < 1 {
-		return 1
-	}
-	return expected
-}
-
-func (am AppModule) failSealedSegment(
-	ctx context.Context,
-	store *pocchallenge.Store,
-	ch types.PoCChallenge,
-	seg *types.PoCChallengeSegment,
-	reason types.PoCChallengeFailReason,
-	height int64,
-	validated, expected int64,
-) error {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	cache, write := sdkCtx.CacheContext()
-	seg.Outcome = types.PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_FAILED
-	store.ReplaceSegment(&ch, *seg)
-	if err := store.Set(cache, ch); err != nil {
-		return err
-	}
-	if err := pocchallenge.FailChallenge(cache, store, ch.Target, reason, height); err != nil {
-		return err
-	}
-	if err := am.applyChallengeReading(cache, ch.Target, ch.EpochIndex, validated, expected); err != nil {
-		return err
-	}
-	write()
-	return nil
-}
-
-func (am AppModule) passSealedSegment(
-	ctx context.Context,
-	store *pocchallenge.Store,
-	ch types.PoCChallenge,
-	seg *types.PoCChallengeSegment,
-	validated, expected int64,
-) error {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	cache, write := sdkCtx.CacheContext()
-	seg.Outcome = types.PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PASSED
-	store.ReplaceSegment(&ch, *seg)
-	if err := store.Set(cache, ch); err != nil {
-		return err
-	}
-	if err := am.applyChallengeReading(cache, ch.Target, ch.EpochIndex, validated, expected); err != nil {
-		return err
-	}
-	write()
-	return nil
-}
-
-func (am AppModule) applyChallengeReading(ctx context.Context, target string, epochIndex uint64, validated, expected int64) error {
-	data, found := am.keeper.GetEpochGroupData(ctx, epochIndex, "")
-	if !found {
-		return nil
-	}
-	updated := false
-	for i, vw := range data.ValidationWeights {
-		if vw == nil || vw.MemberAddress != target {
-			continue
-		}
-		reading := int64(0)
-		if expected > 0 {
-			reading = vw.ConfirmationWeight * validated / expected
-		}
-		if reading < vw.ConfirmationWeight {
-			data.ValidationWeights[i].ConfirmationWeight = reading
-			updated = true
-		}
-	}
-	if updated {
-		am.keeper.SetEpochGroupData(ctx, data)
-	}
-	participant, found := am.keeper.GetParticipant(ctx, target)
-	if !found {
-		return nil
-	}
-	if participant.CurrentEpochStats == nil {
-		participant.CurrentEpochStats = &types.CurrentEpochStats{}
-	}
-	participant.CurrentEpochStats.ConfirmationPoCRatio = computeRatio(validated, expected)
-	return am.keeper.SetParticipant(ctx, participant)
-}
-
-func (am AppModule) FinalizeOpenChallenges(ctx context.Context, epochIndex uint64) error {
-	store := am.keeper.PoCChallenge
-	list, err := store.ListOpen(ctx)
-	if err != nil {
-		return err
-	}
-	upcoming, hasUpcoming := am.keeper.GetUpcomingEpoch(ctx)
-	var snapshot types.PoCValidationSnapshot
-	var haveSnap bool
-	if hasUpcoming && upcoming != nil {
-		if snap, found, err := am.keeper.GetPoCValidationSnapshot(ctx, upcoming.PocStartBlockHeight); err == nil && found {
-			snapshot = snap
-			haveSnap = true
-		}
-	}
-	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
-
-	for _, ch := range list {
-		if ch.EpochIndex > epochIndex {
-			continue
-		}
-		if ch.FailReason != types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET {
-			continue
-		}
-		for _, seg := range append([]*types.PoCChallengeSegment(nil), ch.Segments...) {
-			if seg == nil || seg.SealHeight == 0 ||
-				seg.Outcome != types.PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PENDING {
-				continue
-			}
-			if err := am.EvaluateSealedSegment(ctx, ch.Target, seg.PocStageStartBlockHeight, snapshot); err != nil {
-				return err
-			}
-			updated, found, err := store.Get(ctx, ch.Target)
-			if err != nil || !found {
-				return err
-			}
-			ch = updated
-			if ch.FailReason != types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET {
-				break
-			}
-			seg = store.SegmentByStart(ch, seg.PocStageStartBlockHeight)
-			if seg != nil && seg.FirstVoteHeight == 0 {
-				if err := pocchallenge.FailChallenge(ctx, store, ch.Target, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_NO_VOTE, height); err != nil {
-					return err
-				}
-				break
-			}
-			if !haveSnap {
-				if err := pocchallenge.FailChallenge(ctx, store, ch.Target, types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_NO_VOTE, height); err != nil {
-					return err
-				}
-				break
-			}
-		}
-	}
-	return nil
-}
-
-func (am AppModule) decideVotedChallengeSegments(ctx context.Context, triggerHeight int64) {
-	store := am.keeper.PoCChallenge
-	list, err := store.ListOpen(ctx)
-	if err != nil {
-		am.LogError("decideVotedChallengeSegments: list open failed", types.PoC, "error", err)
-		return
-	}
-	snap, found, err := am.keeper.GetPoCValidationSnapshot(ctx, triggerHeight)
-	if err != nil || !found {
-		return
-	}
-	for _, ch := range list {
-		if ch.FailReason != types.PoCChallengeFailReason_POC_CHALLENGE_FAIL_REASON_UNSET {
-			continue
-		}
-		for _, seg := range append([]*types.PoCChallengeSegment(nil), ch.Segments...) {
-			if seg == nil || seg.SealHeight == 0 ||
-				seg.Outcome != types.PoCChallengeSegmentOutcome_POC_CHALLENGE_SEGMENT_OUTCOME_PENDING {
-				continue
-			}
-			if err := am.EvaluateSealedSegment(ctx, ch.Target, seg.PocStageStartBlockHeight, snap); err != nil {
-				am.LogError("decideVotedChallengeSegments: evaluate failed", types.PoC,
-					"target", ch.Target, "start", seg.PocStageStartBlockHeight, "error", err)
-			}
-		}
-	}
-}
-
-func (am AppModule) startNextChallengeSegments(ctx context.Context, nextStart, safetyHeight int64) {
-	store := am.keeper.PoCChallenge
-	if nextStart <= 0 || nextStart >= safetyHeight {
-		return
-	}
-	list, err := store.ListOpen(ctx)
-	if err != nil {
-		am.LogError("startNextChallengeSegments: list open failed", types.PoC, "error", err)
-		return
-	}
-	for _, ch := range list {
-		if !store.IsChallengeGenerating(ctx, ch.Target) {
-			continue
-		}
-		if err := pocchallenge.AppendNextSegment(ctx, store, ch.Target, nextStart); err != nil {
-			am.LogError("startNextChallengeSegments: append failed", types.PoC,
-				"target", ch.Target, "start", nextStart, "error", err)
-		}
-	}
+	return calculator.Calculate(), nil
 }
 
 func stripChallengeSkipFromPreserved(snapshot types.PreservedNodesSnapshot, skip map[string]struct{}) types.PreservedNodesSnapshot {

@@ -9,7 +9,6 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -212,7 +211,17 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		}
 		_, seen := seenValidators[addr]
 		firstForValidator := !seen
-		if err := k.UpdateDevshardHostEpochStats(goCtx, escrow.EpochIndex, participantAddr, *hs, firstForValidator); err != nil {
+		adjusted := *hs
+		assignedToSlot := uint64(0)
+		if treatAsCurrentEpochSettle[addr] {
+			var err error
+			assignedToSlot, err = devshardAssignedUpperBoundForSlot(msg.Nonce, totalSlots, hs.SlotId)
+			if err != nil {
+				return nil, fmt.Errorf("failed to derive assigned upper bound for slot %d: %w", hs.SlotId, err)
+			}
+		}
+		adjusted, assignedToSlot = k.WaiveDevshardMissesForActiveChallenge(goCtx, addr, adjusted, assignedToSlot)
+		if err := k.UpdateDevshardHostEpochStats(goCtx, escrow.EpochIndex, participantAddr, adjusted, firstForValidator); err != nil {
 			return nil, fmt.Errorf("failed to aggregate host stats: %w", err)
 		}
 		if treatAsCurrentEpochSettle[addr] {
@@ -220,15 +229,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			if !found {
 				return nil, fmt.Errorf("participant %s not found", addr)
 			}
-			assignedToSlot, err := devshardAssignedUpperBoundForSlot(msg.Nonce, totalSlots, hs.SlotId)
-			if err != nil {
-				return nil, fmt.Errorf("failed to derive assigned upper bound for slot %d: %w", hs.SlotId, err)
-			}
-			adjusted, waivedAssigned := pocchallenge.WaiveDevshardMissesWhileGenerating(
-				k.PoCChallenge, goCtx, escrow, *hs, assignedToSlot, sdk.UnwrapSDKContext(goCtx).BlockHeight(), addr)
-			*hs = adjusted
-			assignedToSlot = waivedAssigned
-			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(participant, *hs, assignedToSlot); err != nil {
+			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(participant, adjusted, assignedToSlot); err != nil {
 				return nil, fmt.Errorf("failed to aggregate host stats into participant epoch stats: %w", err)
 			}
 			touchedParticipants[addr] = true

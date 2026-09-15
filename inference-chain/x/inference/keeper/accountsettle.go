@@ -9,7 +9,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/productscience/inference/x/inference/calculations"
-	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
 	"github.com/productscience/inference/x/inference/types"
 
 	"github.com/shopspring/decimal"
@@ -252,6 +251,21 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		return nil, err
 	}
 
+	// In Bitcoin reward system, any undistributed rewards (e.g. downtime punishments or rounding)
+	// are transferred to governance instead of being redistributed to other participants.
+	if params.BitcoinRewardParams.UseBitcoinRewards && governanceRewardAmount > 0 {
+		coins, err := types.GetCoins(governanceRewardAmount)
+		if err != nil {
+			return nil, err
+		}
+		memo := fmt.Sprintf("bitcoin_reward_to_governance:epoch=%d", currentEpochIndex)
+		if err := k.BankKeeper.SendCoinsFromModuleToModule(cacheCtx, types.ModuleName, govtypes.ModuleName, coins, memo); err != nil {
+			k.LogError("Error transferring undistributed bitcoin rewards to governance", types.Settle, "error", err, "amount", governanceRewardAmount)
+			return nil, err
+		}
+		k.LogInfo("Transferred undistributed bitcoin rewards to governance", types.Settle, "amount", governanceRewardAmount)
+	}
+
 	k.LogInfo("Checking downtime for participants", types.Settle, "participants", len(allParticipants))
 
 	for i, participant := range allParticipants {
@@ -311,55 +325,6 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			k.LogError("Error writing settle amount", types.Settle, "error", err, "participant", amount.Settle.Participant)
 			return nil, err
 		}
-	}
-
-	settled := make(map[string]pocchallenge.TargetSettle, len(amounts))
-	for _, amount := range amounts {
-		if amount == nil || amount.Settle == nil {
-			continue
-		}
-		row := pocchallenge.TargetSettle{
-			WorkCoins:   amount.Settle.WorkCoins,
-			RewardCoins: amount.Settle.RewardCoins,
-		}
-		if amount.TotalRewardWeight > 0 && bitcoinResult.Amount > 0 {
-			row.GrossShare = pocchallenge.GrossShare(
-				bitcoinResult.Amount,
-				amount.ParticipantFullWeight,
-				amount.TotalRewardWeight,
-			)
-		}
-		settled[amount.Settle.Participant] = row
-	}
-	withheld, err := pocchallenge.SettleInCache(cacheCtx, k, k.PoCChallenge, currentEpochIndex, settled)
-	if err != nil {
-		k.LogError("Error settling PoC challenge payments", types.Settle, "error", err)
-		return nil, err
-	}
-	if withheld > 0 {
-		if uint64(governanceRewardAmount) <= withheld {
-			governanceRewardAmount = 0
-		} else {
-			governanceRewardAmount -= int64(withheld)
-		}
-		k.LogInfo("Withheld challenge compensation from governance leftover", types.Settle,
-			"withheld", withheld, "remaining", governanceRewardAmount)
-	}
-
-	// In Bitcoin reward system, any undistributed rewards (e.g. downtime punishments or rounding)
-	// are transferred to governance instead of being redistributed to other participants.
-	// Challenge compensation is taken from the target's unpaid gross share first.
-	if params.BitcoinRewardParams.UseBitcoinRewards && governanceRewardAmount > 0 {
-		coins, err := types.GetCoins(governanceRewardAmount)
-		if err != nil {
-			return nil, err
-		}
-		memo := fmt.Sprintf("bitcoin_reward_to_governance:epoch=%d", currentEpochIndex)
-		if err := k.BankKeeper.SendCoinsFromModuleToModule(cacheCtx, types.ModuleName, govtypes.ModuleName, coins, memo); err != nil {
-			k.LogError("Error transferring undistributed bitcoin rewards to governance", types.Settle, "error", err, "amount", governanceRewardAmount)
-			return nil, err
-		}
-		k.LogInfo("Transferred undistributed bitcoin rewards to governance", types.Settle, "amount", governanceRewardAmount)
 	}
 
 	// All current-epoch mutations succeeded — commit atomically.

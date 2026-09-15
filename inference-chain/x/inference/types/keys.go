@@ -129,12 +129,9 @@ var (
 	// Prefix 109 was reserved for an unused period-base KeySet and is left
 	// unused so it is not silently reused.
 	DevshardApprovedVersionsPrefix = collections.NewPrefix(110)
-	// Prefix 114 was reserved for a copied challenge validation snapshot
-	// and is left unused so it is not silently reused.
-	PoCChallengePrefix               = collections.NewPrefix(115)
-	PoCChallengeCommitPrefix         = collections.NewPrefix(116)
-	PoCChallengeValidationPrefix     = collections.NewPrefix(117)
-	ConfirmationEvaluationSkipPrefix = collections.NewPrefix(118)
+	PoCChallengePrefix             = collections.NewPrefix(111)
+	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
+	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
 	ParamsKey                      = []byte("p_inference")
 )
 

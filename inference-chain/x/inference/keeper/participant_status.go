@@ -6,7 +6,6 @@ import (
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
-	"github.com/productscience/inference/x/inference/keeper/pocchallenge"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 )
@@ -126,9 +125,7 @@ func multiply(completed uint32, preserve *types.Decimal) uint32 {
 
 func (k Keeper) removeFromEpochGroups(ctx context.Context, participant *types.Participant, reason calculations.ParticipantStatusReason) error {
 	if participant != nil {
-		height := sdk.UnwrapSDKContext(ctx).BlockHeight()
-		epochIndex, haveEpoch := k.GetEffectiveEpochIndex(ctx)
-		if err := pocchallenge.FailUnrelatedLeave(ctx, k.PoCChallenge, participant.Address, height, epochIndex, haveEpoch); err != nil {
+		if err := k.MarkChallengeRefundOnly(ctx, participant.Address, "unrelated_leave"); err != nil {
 			k.LogError("Failed to mark PoC challenge unrelated leave", types.Validation, "error", err, "address", participant.Address)
 		}
 	}
