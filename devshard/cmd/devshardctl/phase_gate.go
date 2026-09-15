@@ -86,6 +86,11 @@ type ChainPhaseGate struct {
 	// versions polls each candidate miner's /v1/versions endpoint
 	versions *VersionsCache
 
+	// inferenceURLs is the last successful participant→InferenceUrl map
+	// (unique chain dials). The RPC-stats poller scrapes these, not the
+	// escrow-scoped host-ping set.
+	inferenceURLs map[string]string
+
 	stopCh chan struct{}
 	doneCh chan struct{}
 }
@@ -436,6 +441,7 @@ func (g *ChainPhaseGate) refresh() {
 			g.recordError(perr)
 			g.logPreservedParticipantFetchFailure(snapshot, perr)
 		} else {
+			g.storeInferenceURLs(state.inferenceURLs)
 			// Keep the versions poller pointed at the current candidate set.
 			if g.versions != nil {
 				g.versions.SetCandidates(state.inferenceURLs)
@@ -934,6 +940,25 @@ func (g *ChainPhaseGate) storeSnapshot(snapshot ChainPhaseSnapshot) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.snapshot = snapshot
+}
+
+func (g *ChainPhaseGate) storeInferenceURLs(urls map[string]string) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.inferenceURLs = maps.Clone(urls)
+}
+
+// InferenceURLs is a copy of the last successful participant→InferenceUrl map.
+func (g *ChainPhaseGate) InferenceURLs() map[string]string {
+	if g == nil {
+		return nil
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return maps.Clone(g.inferenceURLs)
 }
 
 func (g *ChainPhaseGate) logPreservedParticipantFetchFailure(snapshot ChainPhaseSnapshot, err error) {

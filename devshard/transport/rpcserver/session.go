@@ -3,8 +3,11 @@ package rpcserver
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 
 	"connectrpc.com/connect"
+	"github.com/labstack/echo/v4"
 
 	"devshard"
 	"devshard/bridge"
@@ -25,12 +28,18 @@ type SessionCore interface {
 	AllowsSender(address string) bool
 }
 
-// SessionLookup resolves a per-escrow session. HostManager is adapted via AdaptLookup.
+// SessionLookup resolves a per-escrow session.
+// SessionServerExisting must not CreateSession (observability GETs).
+// SessionForParticipant CreateSession when addr is the creator or a slot member.
 type SessionLookup interface {
 	SessionServerExisting(escrowID string) (SessionCore, error)
+	// SessionForParticipant returns a live session, creating one when addr is
+	// the escrow creator or a slot member. Strangers return (nil, nil).
+	SessionForParticipant(escrowID, addr string) (SessionCore, error)
 }
 
 // AdaptLookup wraps a *transport.Server finder (HostManager.SessionServerExisting).
+// SessionForParticipant falls back to Existing (tests and obs-only lookups).
 func AdaptLookup(fn func(escrowID string) (*transport.Server, error)) SessionLookup {
 	return lookupAdapter(fn)
 }
@@ -51,8 +60,12 @@ func (f lookupAdapter) SessionServerExisting(id string) (SessionCore, error) {
 	return srv, nil
 }
 
-// SessionHandler implements SessionService. Chat stays on the unimplemented
-// embed until Phase 5.
+func (f lookupAdapter) SessionForParticipant(id, addr string) (SessionCore, error) {
+	_ = addr
+	return f.SessionServerExisting(id)
+}
+
+// SessionHandler implements SessionService.
 type SessionHandler struct {
 	rpcpbconnect.UnimplementedSessionServiceHandler
 	sessionResolver
@@ -60,6 +73,51 @@ type SessionHandler struct {
 
 func NewSessionHandler(lookup SessionLookup) *SessionHandler {
 	return &SessionHandler{sessionResolver: newSessionResolver(lookup)}
+}
+
+func (h *SessionHandler) Chat(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope], stream *connect.ServerStream[rpcpb.ChatFrame]) (err error) {
+	if req == nil || req.Msg == nil {
+		return connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	peer, srv, payload, err := h.openSigned(ctx, req.Msg, "rpc_chat")
+	if err != nil {
+		return err
+	}
+	type inferenceCore interface {
+		ServeInference(context.Context, transport.InferenceCall) error
+	}
+	core, ok := srv.(inferenceCore)
+	if !ok {
+		return unimplementedCore()
+	}
+	escrow := EscrowIDFromContext(ctx)
+	ctx, op := observability.Request.StartInference(ctx, escrow, "")
+	defer op.FinishErr(&err)
+	observability.Request.SetEscrowID(op, escrow)
+	observability.Request.SetSender(op, peer)
+	observability.Request.SetInferenceBodyBytes(op, len(payload))
+
+	sink := transport.NewChatFrameSink(func(chunk []byte) error {
+		return stream.Send(&rpcpb.ChatFrame{Chunk: chunk})
+	})
+	err = mapInferenceError(core.ServeInference(ctx, transport.InferenceCall{
+		SessionID: escrow,
+		Sender:    peer,
+		Body:      payload,
+		Source:    "RPC Chat",
+		Evidence: &heightsync.RequestLegEvidence{
+			Body:      payload,
+			Sig:       req.Msg.GetSignature(),
+			Timestamp: req.Msg.GetTimestamp(),
+			EscrowID:  escrow,
+		},
+		Sink: sink,
+		Op:   op,
+	}))
+	if closeErr := sink.Close(); err == nil && closeErr != nil {
+		err = mapInferenceError(closeErr)
+	}
+	return err
 }
 
 func (h *SessionHandler) GetSignatures(ctx context.Context, req *connect.Request[rpcpb.GetSignaturesRequest]) (*connect.Response[rpcpb.GetSignaturesResponse], error) {
@@ -275,6 +333,34 @@ func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Requ
 		return nil, mapCoreError(err)
 	}
 	return connect.NewResponse(transport.ChallengeReceiptResponseToProto(resp)), nil
+}
+
+func mapInferenceError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var he *echo.HTTPError
+	if errors.As(err, &he) {
+		inner := errors.New(fmt.Sprint(he.Message))
+		switch he.Code {
+		case http.StatusBadRequest:
+			return connect.NewError(connect.CodeInvalidArgument, inner)
+		case http.StatusUnauthorized:
+			return connect.NewError(connect.CodeUnauthenticated, inner)
+		case http.StatusForbidden:
+			return connect.NewError(connect.CodePermissionDenied, inner)
+		case http.StatusRequestEntityTooLarge, http.StatusTooManyRequests:
+			return connect.NewError(connect.CodeResourceExhausted, inner)
+		case http.StatusServiceUnavailable:
+			return withDevshardError(
+				connect.NewError(connect.CodeUnavailable, inner),
+				transport.DevshardErrorRequestsDisabled,
+			)
+		default:
+			return connect.NewError(connect.CodeInternal, inner)
+		}
+	}
+	return mapCoreError(err)
 }
 
 func mapCoreError(err error) error {

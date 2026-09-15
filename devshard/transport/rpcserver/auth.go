@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"sync"
@@ -28,18 +29,15 @@ const (
 	// keys (raw bytes as string); they are not payloads.
 	maxAttachNonceBytes = 32
 
-	// Advertised AttachResponse.limits. Not enforced yet; zeros would
-	// look like "refuse all" to a client that honours the field.
-	defaultMessagesPerMin uint32 = 6000
-	defaultMaxStreams     uint32 = 256
-	defaultAttachPerMin   uint32 = 10
-	defaultMaxSessions           = 10_000
+	defaultMessagesPerMin = transport.DefaultRPCMessagesPerMin
+	defaultMaxStreams     = transport.DefaultRPCMaxStreams
+	defaultMaxSessions    = 10_000
 	// defaultAttachFloorPerMin is the process-wide Attach cap.
-	// Advertised attach_per_min stays 10 (the advertised per-peer number). The
-	// floor is one first-Attach per current peer per minute so a full map
+	// Per-IP Attach bounds live on versiond / Phase 6 proxy, not this child.
+	// The floor is one first-Attach per current peer per minute so a full map
 	// re-attaching after a Watch mass-break still fits; known-peer renewals
 	// are refunded and do not occupy extra slots.
-	defaultAttachFloorPerMin = defaultMaxSessions
+	defaultAttachFloorPerMin = transport.DefaultRPCAttachFloorPerMin
 	// defaultTokenGrace is how long a replaced token still admits RPCs.
 	// Matches transport.nonInferenceRetryBudget: one Attach RTT plus retry.
 	defaultTokenGrace = 5 * time.Second
@@ -78,10 +76,13 @@ type PeerAuthConfig struct {
 	// new HTTP requests, not a connection established at Attach.
 	TokenGrace time.Duration
 	// AttachFloorPerMin is the process-wide Attach cap, enforced before ECDSA.
-	// Zero means defaultAttachFloorPerMin. Not keyed on peer_address: that is
-	// attacker-chosen; recovered address is after ECDSA. Child is on loopback,
-	// so this is the process floor, not a client-IP limiter.
+	// Zero means Limits.AttachFloorPerMin or defaultAttachFloorPerMin. Not keyed
+	// on peer_address: that is attacker-chosen; recovered address is after ECDSA.
+	// Child is on loopback, so this is the process floor, not a client-IP limiter.
 	AttachFloorPerMin int
+	// Limits is advertised on Attach and enforced by the channel interceptor.
+	// Nil uses defaults (not process env — production passes LoadChannelLimitConfig).
+	Limits *transport.ChannelLimitConfig
 	// Allow is the URL-escrow roster check at Attach. Nil skips (tests).
 	Allow AllowPeer
 	// SweepInterval is the expired-session ticker. Zero means SessionTTL/2
@@ -113,6 +114,9 @@ type PeerAuthHandler struct {
 
 	attachMu    sync.Mutex
 	attachTimes []time.Time
+
+	limiter *channelLimiter
+	traffic *transport.RPCTraffic
 }
 
 type peerSession struct {
@@ -160,8 +164,17 @@ func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerA
 	if cfg.TokenGrace <= 0 {
 		cfg.TokenGrace = defaultTokenGrace
 	}
-	if cfg.AttachFloorPerMin <= 0 {
-		cfg.AttachFloorPerMin = defaultAttachFloorPerMin
+	limits := transport.ChannelLimitConfig{}.WithDefaults()
+	if cfg.Limits != nil {
+		limits = cfg.Limits.WithDefaults()
+	}
+	if limits.Disabled {
+		cfg.AttachFloorPerMin = math.MaxInt
+	} else if cfg.AttachFloorPerMin <= 0 {
+		cfg.AttachFloorPerMin = limits.AttachFloorPerMin
+		if cfg.AttachFloorPerMin <= 0 {
+			cfg.AttachFloorPerMin = defaultAttachFloorPerMin
+		}
 	}
 	return &PeerAuthHandler{
 		verifier:    verifier,
@@ -172,10 +185,20 @@ func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerA
 		prevByPeer:  make(map[string]string),
 		retired:     make(map[string]time.Time),
 		closeCh:     make(chan struct{}),
+		limiter:     newChannelLimiter(limits, cfg.Now),
+		traffic:     transport.NewRPCTraffic(cfg.Now),
 	}
 }
 
 func (h *PeerAuthHandler) now() time.Time { return h.cfg.Now() }
+
+// Traffic is the inbound minute-bucket recorder for GET /stats/rpc.
+func (h *PeerAuthHandler) Traffic() *transport.RPCTraffic {
+	if h == nil {
+		return nil
+	}
+	return h.traffic
+}
 
 func (h *PeerAuthHandler) checkAllow(ctx context.Context, addr string) error {
 	if h.cfg.Allow == nil {
@@ -194,16 +217,16 @@ func (h *PeerAuthHandler) checkAllow(ctx context.Context, addr string) error {
 	return nil
 }
 
-func advertisedRateLimits() *rpcpb.RateLimits {
-	return &rpcpb.RateLimits{
-		MessagesPerMin: defaultMessagesPerMin,
-		MaxStreams:     defaultMaxStreams,
-		AttachPerMin:   defaultAttachPerMin,
+func (h *PeerAuthHandler) advertisedRateLimits() *rpcpb.RateLimits {
+	if h == nil || h.limiter == nil {
+		return advertisedRateLimits(transport.ChannelLimitConfig{}.WithDefaults())
 	}
+	return h.limiter.advertised()
 }
 
 func (h *PeerAuthHandler) Attach(ctx context.Context, req *connect.Request[rpcpb.AttachRequest]) (*connect.Response[rpcpb.AttachResponse], error) {
 	resp, err := h.attach(ctx, req)
+	h.observeAttach(ctx, err)
 	if err != nil {
 		observability.IncPeerRPCAttach(connect.CodeOf(err).String())
 		return nil, err
@@ -242,7 +265,7 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("unsupported protocol_version"))
 	}
 
-	chargedAt, err := h.chargeAttach()
+	chargedAt, err := h.chargeAttach(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -315,7 +338,7 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	return connect.NewResponse(&rpcpb.AttachResponse{
 		SessionToken: token,
 		ExpiresAt:    expires.Unix(),
-		Limits:       advertisedRateLimits(),
+		Limits:       h.advertisedRateLimits(),
 	}), nil
 }
 
@@ -521,16 +544,20 @@ func (h *PeerAuthHandler) evictOldestIdleLocked() bool {
 	return true
 }
 
-// chargeAttach is the process-wide Attach throttle, before ECDSA. Sliding
-// one-minute window. Child sees versiond as src, so this is not per client IP.
-// A later refundAttach drops this charge if the Attach succeeds for a peer that
+// chargeAttach is the process-wide Attach throttle. Sliding one-minute
+// window. Child sees versiond as src, so this is not per client IP.
+// handshakeGate charges it on oversized Content-Length (before decode).
+// The handler charges it after decode and before ECDSA. A later
+// refundAttach drops this charge if the Attach succeeds for a peer that
 // already held a live or grace session.
-func (h *PeerAuthHandler) chargeAttach() (time.Time, error) {
+func (h *PeerAuthHandler) chargeAttach(ctx context.Context) (time.Time, error) {
 	limit := h.cfg.AttachFloorPerMin
+	if limit <= 0 || limit == math.MaxInt {
+		return time.Time{}, nil
+	}
 	now := h.now()
 	cutoff := now.Add(-time.Minute)
 	h.attachMu.Lock()
-	defer h.attachMu.Unlock()
 	kept := h.attachTimes[:0]
 	for _, ts := range h.attachTimes {
 		if ts.After(cutoff) {
@@ -543,9 +570,14 @@ func (h *PeerAuthHandler) chargeAttach() (time.Time, error) {
 		if len(h.attachTimes) > 0 {
 			retry = h.attachTimes[0].Add(time.Minute).Sub(now)
 		}
+		h.attachMu.Unlock()
+		if h.limiter != nil {
+			h.limiter.warnBanned(ctx, rpcpbconnect.PeerAuthServiceAttachProcedure, zoneAttachFloor, "process")
+		}
 		return time.Time{}, attachFloorExhausted(retryAfterSeconds(retry))
 	}
 	h.attachTimes = append(h.attachTimes, now)
+	h.attachMu.Unlock()
 	return now, nil
 }
 

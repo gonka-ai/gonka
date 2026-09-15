@@ -37,8 +37,7 @@ func WithPayloadService(h *PayloadHandler) MuxOption {
 // services still occupy their Connect paths so the public URL shape is
 // stable; handshakeGate answers those as unimplemented before Connect reads
 // the body. Every RPC except Attach is dropped unless
-// X-Devshard-Session names a live host-level handshake. Chat stays
-// unimplemented until Phase 5.
+// X-Devshard-Session names a live host-level handshake.
 func NewMux(auth *PeerAuthHandler, session *SessionHandler, opts ...MuxOption) http.Handler {
 	if auth == nil {
 		panic("rpcserver.NewMux: PeerAuthHandler is required")
@@ -51,16 +50,23 @@ func NewMux(auth *PeerAuthHandler, session *SessionHandler, opts ...MuxOption) h
 	}
 	unaryOpts := []connect.HandlerOption{
 		connect.WithReadMaxBytes(maxRecvBytes),
-		connect.WithInterceptors(&sessionInterceptor{auth: auth}),
+		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
 	}
 	largeOpts := []connect.HandlerOption{
 		connect.WithReadMaxBytes(transport.DefaultRPCLargeReadMaxBytes),
-		connect.WithInterceptors(&sessionInterceptor{auth: auth}),
+		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
 	}
 	payloadOpts := []connect.HandlerOption{
 		connect.WithReadMaxBytes(int(transport.DefaultMaxBodySize)),
 		connect.WithSendMaxBytes(transport.DefaultRPCPayloadSendMaxBytes),
-		connect.WithInterceptors(&sessionInterceptor{auth: auth}),
+		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
+	}
+	// Chat is 10 MiB (prompt + catch-up) and must not use per-frame gzip:
+	// chunks are already one application gzip stream (plan §8.2).
+	chatOpts := []connect.HandlerOption{
+		connect.WithReadMaxBytes(int(transport.DefaultMaxBodySize)),
+		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
+		connect.WithCompression("gzip", nil, nil),
 	}
 	implemented := map[string]struct{}{
 		rpcpbconnect.PeerAuthServiceAttachProcedure: {},
@@ -69,10 +75,11 @@ func NewMux(auth *PeerAuthHandler, session *SessionHandler, opts ...MuxOption) h
 	mux := http.NewServeMux()
 	mux.Handle(rpcpbconnect.NewPeerAuthServiceHandler(auth, unaryOpts...))
 	if session != nil {
-		mux.Handle(splitSessionService(session, unaryOpts, largeOpts))
+		mux.Handle(splitSessionService(session, unaryOpts, largeOpts, chatOpts))
 		for _, proc := range sessionUnaryProcedures() {
 			implemented[proc] = struct{}{}
 		}
+		implemented[rpcpbconnect.SessionServiceChatProcedure] = struct{}{}
 	} else {
 		mux.Handle(rpcpbconnect.NewSessionServiceHandler(&rpcpbconnect.UnimplementedSessionServiceHandler{}, unaryOpts...))
 	}
@@ -97,10 +104,25 @@ func NewMux(auth *PeerAuthHandler, session *SessionHandler, opts ...MuxOption) h
 // dispute unaries (prompt + catch-up diffs) cannot share the 16 KiB cap of
 // GetSignatures / seed / repair. GetDiffs and GetMempool requests stay 16 KiB
 // (tiny); their responses use DefaultRPCQueryReadMaxBytes (10 MiB) on the client.
-func splitSessionService(session *SessionHandler, unaryOpts, largeOpts []connect.HandlerOption) (string, http.Handler) {
+func splitSessionService(session *SessionHandler, unaryOpts, largeOpts, chatOpts []connect.HandlerOption) (string, http.Handler) {
 	pattern, small := rpcpbconnect.NewSessionServiceHandler(session, unaryOpts...)
 	_, large := rpcpbconnect.NewSessionServiceHandler(session, largeOpts...)
-	return splitByProcedure(pattern, small, large, sessionLargeProcedures()...)
+	_, chat := rpcpbconnect.NewSessionServiceHandler(session, chatOpts...)
+	largeSet := make(map[string]struct{}, len(sessionLargeProcedures()))
+	for _, p := range sessionLargeProcedures() {
+		largeSet[p] = struct{}{}
+	}
+	return pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == rpcpbconnect.SessionServiceChatProcedure {
+			chat.ServeHTTP(w, r)
+			return
+		}
+		if _, ok := largeSet[r.URL.Path]; ok {
+			large.ServeHTTP(w, r)
+			return
+		}
+		small.ServeHTTP(w, r)
+	})
 }
 
 func splitGossipService(gossip *GossipHandler, unaryOpts, largeOpts []connect.HandlerOption) (string, http.Handler) {

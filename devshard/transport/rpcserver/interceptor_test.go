@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/internal/testutil"
+	"devshard/signing"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
@@ -50,6 +52,12 @@ func TestSessionInterceptor_DropsEveryRPCExceptAttach(t *testing.T) {
 	payload := rpcpbconnect.NewPayloadServiceClient(srv.Client(), srv.URL)
 	_, err = payload.GetPayload(context.Background(), connect.NewRequest(&rpcpb.GetPayloadRequest{}))
 	requireHandshakeRequired(t, err)
+
+	chat := rpcpbconnect.NewSessionServiceClient(srv.Client(), srv.URL)
+	chatStream, err := chat.Chat(context.Background(), connect.NewRequest(&rpcpb.SignedEnvelope{}))
+	require.NoError(t, err)
+	require.False(t, chatStream.Receive())
+	requireHandshakeRequired(t, chatStream.Err())
 }
 
 func TestHandshakeGate_RejectsBeforeBody(t *testing.T) {
@@ -118,6 +126,12 @@ func TestSessionInterceptor_HandshakeAdmitsThenUnimplemented(t *testing.T) {
 	_, err := gossip.Nonce(context.Background(), withSession(connect.NewRequest(&rpcpb.SignedEnvelope{}), attached.SessionToken))
 	require.Error(t, err)
 	require.Equal(t, connect.CodeUnimplemented, connect.CodeOf(err))
+
+	chat := rpcpbconnect.NewSessionServiceClient(srv.Client(), srv.URL)
+	stream, err := chat.Chat(context.Background(), withSession(connect.NewRequest(&rpcpb.SignedEnvelope{}), attached.SessionToken))
+	require.NoError(t, err)
+	require.False(t, stream.Receive())
+	require.Equal(t, connect.CodeUnimplemented, connect.CodeOf(stream.Err()))
 }
 
 func TestHandshakeGate_UnimplementedRejectsBeforeBody(t *testing.T) {
@@ -195,8 +209,9 @@ func TestAdmitSession_LookupUsesRawToken(t *testing.T) {
 }
 
 // handshakeGate admits before Connect reads the body; the interceptor must not
-// repeat that work. LookupToken calls now() exactly once on a hit and nothing
-// else on a GetSignatures request calls it, so the clock counts admissions.
+// repeat that work. LookupToken calls now() once on a hit; the channel limiter
+// also reads Now for the token bucket; minute-bucket recording reads it once
+// more. Nothing else on GetSignatures should.
 func TestSessionInterceptor_AdmitsOncePerRPC(t *testing.T) {
 	var nowCalls atomic.Int64
 	auth := newTestAuth(PeerAuthConfig{Now: func() time.Time {
@@ -213,7 +228,7 @@ func TestSessionInterceptor_AdmitsOncePerRPC(t *testing.T) {
 	_, err := client.GetSignatures(context.Background(), withSession(
 		connect.NewRequest(&rpcpb.GetSignaturesRequest{Nonce: 1}), attached.SessionToken))
 	require.NoError(t, err)
-	require.EqualValues(t, 1, nowCalls.Load(), "the gate and the interceptor must not both look the token up")
+	require.EqualValues(t, 3, nowCalls.Load(), "handshakeGate admits once, limiter + traffic share Now; the interceptor must not look the token up again")
 }
 
 // The interceptor stays a complete gate on a mux built without handshakeGate.
@@ -241,20 +256,33 @@ func TestSessionInterceptor_AdmitsWithoutGate(t *testing.T) {
 	requireHandshakeRequired(t, err)
 }
 
+func oversizedAttachRequest(t *testing.T, url string) *http.Request {
+	t.Helper()
+	body := bytes.Repeat([]byte("x"), maxAttachRecvBytes+1)
+	req, err := http.NewRequest(http.MethodPost, url+rpcpbconnect.PeerAuthServiceAttachProcedure, bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/proto")
+	req.ContentLength = int64(len(body))
+	return req
+}
+
+func requireHTTPMessage(t *testing.T, resp *http.Response, status int, msg string) {
+	t.Helper()
+	require.Equal(t, status, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), msg)
+}
+
 func TestHandshakeGate_RejectsOversizedAttachBeforeDecode(t *testing.T) {
 	auth := newTestAuth(PeerAuthConfig{})
 	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
 	t.Cleanup(srv.Close)
 
-	body := bytes.Repeat([]byte("x"), maxAttachRecvBytes+1)
-	req, err := http.NewRequest(http.MethodPost, srv.URL+rpcpbconnect.PeerAuthServiceAttachProcedure, bytes.NewReader(body))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/proto")
-	req.ContentLength = int64(len(body))
-	resp, err := srv.Client().Do(req)
+	resp, err := srv.Client().Do(oversizedAttachRequest(t, srv.URL))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = resp.Body.Close() })
-	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
+	requireHTTPMessage(t, resp, http.StatusTooManyRequests, "attach request too large")
 }
 
 func TestIsAttachPath_Exact(t *testing.T) {
@@ -355,14 +383,29 @@ func TestHandshakeGate_OversizedAttachCountsResourceExhausted(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	before := metricCounter(t, "devshard_peer_rpc_attach_total", map[string]string{"result": "resource_exhausted"})
-	body := bytes.Repeat([]byte("x"), maxAttachRecvBytes+1)
-	req, err := http.NewRequest(http.MethodPost, srv.URL+rpcpbconnect.PeerAuthServiceAttachProcedure, bytes.NewReader(body))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/proto")
-	req.ContentLength = int64(len(body))
-	resp, err := srv.Client().Do(req)
+	resp, err := srv.Client().Do(oversizedAttachRequest(t, srv.URL))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	require.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 	require.Equal(t, before+1, metricCounter(t, "devshard_peer_rpc_attach_total", map[string]string{"result": "resource_exhausted"}))
+}
+
+func TestHandshakeGate_OversizedAttachConsumesFloor(t *testing.T) {
+	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
+	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{AttachFloorPerMin: 1})
+	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
+	t.Cleanup(srv.Close)
+
+	resp, err := srv.Client().Do(oversizedAttachRequest(t, srv.URL))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	requireHTTPMessage(t, resp, http.StatusTooManyRequests, "attach request too large")
+	require.Equal(t, int32(0), spy.n.Load())
+
+	client := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
+	req, err := signedAttach(testutil.MustGenerateKey(t), []byte("oversized-floor-nonce-aaaa"), time.Now().Unix())
+	require.NoError(t, err)
+	_, err = client.Attach(context.Background(), connect.NewRequest(req))
+	requireResourceExhausted(t, err, "too many attach attempts")
+	require.Equal(t, int32(0), spy.n.Load(), "floor charged on oversized must fire before ECDSA")
 }

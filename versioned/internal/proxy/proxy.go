@@ -126,10 +126,16 @@ func serveVersionlessObs(w http.ResponseWriter, r *http.Request, routes routeTab
 		return
 	}
 
+	if isRPCStatsPath(rest) {
+		serveRPCStatsMerge(w, r, routes)
+		return
+	}
+
 	// Process-level obs (/metrics, /stats/shards list): pin to primary.
 	// Multi-version aggregation of /stats/shards is deferred; primary is the
 	// newest approved version by numeric/dotted comparison (not lexicographic).
 	// /healthz is owned by versiond's mux (not this handler).
+	// GET /stats/rpc is the exception: merge every running child (Phase 4 step 8).
 	escrowID, scoped := escrowIDFromObsPath(rest)
 	if !scoped {
 		serveAcquired(w, r, routes, primaryVersion(versions), rest)

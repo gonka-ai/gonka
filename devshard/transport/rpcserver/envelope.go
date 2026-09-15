@@ -29,6 +29,14 @@ func newSessionResolver(lookup SessionLookup) sessionResolver {
 }
 
 func (r sessionResolver) resolve(ctx context.Context, route string) (peer, escrow string, srv SessionCore, err error) {
+	return r.resolveSession(ctx, route, false)
+}
+
+func (r sessionResolver) resolveParticipant(ctx context.Context, route string) (peer, escrow string, srv SessionCore, err error) {
+	return r.resolveSession(ctx, route, true)
+}
+
+func (r sessionResolver) resolveSession(ctx context.Context, route string, bindParticipant bool) (peer, escrow string, srv SessionCore, err error) {
 	peer, escrow, err = requirePeer(ctx)
 	if err != nil {
 		return "", "", nil, err
@@ -36,12 +44,20 @@ func (r sessionResolver) resolve(ctx context.Context, route string) (peer, escro
 	if r.lookup == nil {
 		return "", "", nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("session lookup not configured"))
 	}
-	srv, err = r.lookup.SessionServerExisting(escrow)
+	if bindParticipant {
+		srv, err = r.lookup.SessionForParticipant(escrow, peer)
+	} else {
+		srv, err = r.lookup.SessionServerExisting(escrow)
+	}
 	if err != nil {
 		recordRPCSessionResolution(ctx, route, escrow, err)
 		return "", "", nil, mapAllowError(err)
 	}
 	if srv == nil {
+		if bindParticipant {
+			recordRPCSessionResolution(ctx, route, escrow, storage.ErrSessionNotFound)
+			return "", "", nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
+		}
 		recordRPCSessionResolution(ctx, route, escrow, storage.ErrSessionNotFound)
 		return "", "", nil, mapAllowError(storage.ErrSessionNotFound)
 	}
@@ -53,7 +69,7 @@ func (r sessionResolver) resolve(ctx context.Context, route string) (peer, escro
 }
 
 func (r sessionResolver) openSigned(ctx context.Context, env *rpcpb.SignedEnvelope, route string) (peer string, srv SessionCore, payload []byte, err error) {
-	peer, escrow, srv, err := r.resolve(ctx, route)
+	peer, escrow, srv, err := r.resolveParticipant(ctx, route)
 	if err != nil {
 		return "", nil, nil, err
 	}

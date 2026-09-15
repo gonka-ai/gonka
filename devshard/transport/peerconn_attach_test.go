@@ -384,6 +384,11 @@ func (s sigLookup) SessionServerExisting(string) (rpcserver.SessionCore, error) 
 	return sigCore{sigs: s.sigs}, nil
 }
 
+func (s sigLookup) SessionForParticipant(id, addr string) (rpcserver.SessionCore, error) {
+	_ = addr
+	return s.SessionServerExisting(id)
+}
+
 type sigCore struct {
 	sigs map[uint32][]byte
 }
@@ -450,9 +455,17 @@ func TestRPCClient_GetMempoolReadMaxBytes(t *testing.T) {
 
 func newQueryRPCClient(t *testing.T, lookup queryLookup, endpoints string, queryTimeout time.Duration) *transport.RPCClient {
 	t.Helper()
+	return newQueryRPCClientAuth(t, lookup, endpoints, queryTimeout, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
+}
+
+func newQueryRPCClientAuth(t *testing.T, lookup queryLookup, endpoints string, queryTimeout time.Duration, authCfg rpcserver.PeerAuthConfig) *transport.RPCClient {
+	t.Helper()
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
-	srv, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, lookup)
+	if authCfg.Heartbeat <= 0 {
+		authCfg.Heartbeat = 50 * time.Millisecond
+	}
+	srv, _ := startPeerRPCServer(t, hostAddr, authCfg, lookup)
 	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{})
 	pc.Start()
 	waitPeerReady(t, pc)
@@ -461,6 +474,57 @@ func newQueryRPCClient(t *testing.T, lookup queryLookup, endpoints string, query
 		cfg.QueryTimeout = queryTimeout
 	}
 	return transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-1", peer, cfg), pc, transport.ParseRPCEndpoints(endpoints))
+}
+
+func TestRPCClient_IgnoresPacingWhenWaitExceedsDeadline(t *testing.T) {
+	var nDiffs atomic.Int32
+	rpc := newQueryRPCClientAuth(t, queryLookup{nDiffs: &nDiffs}, transport.EndpointDiffs, 200*time.Millisecond,
+		rpcserver.PeerAuthConfig{
+			Heartbeat: 50 * time.Millisecond,
+			Limits: &transport.ChannelLimitConfig{
+				MessagesPerMin: 60,
+				MessagesBurst:  60,
+			},
+		})
+	_, err := rpc.GetDiffs(context.Background(), 0, 1)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), nDiffs.Load())
+
+	_, err = rpc.GetDiffs(context.Background(), 0, 1)
+	require.Error(t, err)
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err),
+		"wait of 1 min exceeds 200ms deadline; pacing is skipped so the RPC hits the interceptor")
+	require.NotErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, int32(1), nDiffs.Load())
+}
+
+func TestRPCClient_ClonesSharePeerBudget(t *testing.T) {
+	var nSigs atomic.Int32
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	srv, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{
+		Heartbeat: 50 * time.Millisecond,
+		Limits: &transport.ChannelLimitConfig{
+			MessagesPerMin: 60,
+			MessagesBurst:  1,
+		},
+	}, queryLookup{nSigs: &nSigs})
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{})
+	pc.Start()
+	waitPeerReady(t, pc)
+	cfg := transport.DefaultClientConfig()
+	cfg.QueryTimeout = 200 * time.Millisecond
+	set := transport.ParseRPCEndpoints(transport.EndpointSignatures)
+	rpc1 := transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-1", peer, cfg), pc, set)
+	rpc2 := transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-2", peer, cfg), pc, set)
+	_, err := rpc1.GetSignatures(context.Background(), 1)
+	require.NoError(t, err)
+	require.Equal(t, int32(1), nSigs.Load())
+	_, err = rpc2.GetSignatures(context.Background(), 1)
+	require.Error(t, err)
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err),
+		"client wait (1s) exceeds QueryTimeout so pacing is skipped; the interceptor still has one burst token")
+	require.Equal(t, int32(1), nSigs.Load(), "clones must share the PeerConn session (server burst)")
 }
 
 func largeHeartbeat(n int) []*types.DevshardTx {
@@ -474,22 +538,37 @@ func largeHeartbeat(n int) []*types.DevshardTx {
 type queryLookup struct {
 	diffs   []types.DiffRecord
 	mempool []*types.DevshardTx
+	nDiffs  *atomic.Int32
+	nSigs   *atomic.Int32
 }
 
 func (q queryLookup) SessionServerExisting(string) (rpcserver.SessionCore, error) {
 	return queryCore(q), nil
 }
 
+func (q queryLookup) SessionForParticipant(id, addr string) (rpcserver.SessionCore, error) {
+	_ = addr
+	return q.SessionServerExisting(id)
+}
+
 type queryCore struct {
 	diffs   []types.DiffRecord
 	mempool []*types.DevshardTx
+	nDiffs  *atomic.Int32
+	nSigs   *atomic.Int32
 }
 
 func (q queryCore) ServeGetSignatures(uint64) (map[uint32][]byte, error) {
+	if q.nSigs != nil {
+		q.nSigs.Add(1)
+	}
 	return map[uint32][]byte{}, nil
 }
 func (q queryCore) AllowsSender(string) bool { return true }
 func (q queryCore) ServeGetDiffs(uint64, uint64) ([]types.DiffRecord, error) {
+	if q.nDiffs != nil {
+		q.nDiffs.Add(1)
+	}
 	return q.diffs, nil
 }
 func (q queryCore) ServeGetMempool(context.Context) ([]*types.DevshardTx, error) {
@@ -742,6 +821,11 @@ type largeRPCLookup struct {
 
 func (l largeRPCLookup) SessionServerExisting(string) (rpcserver.SessionCore, error) {
 	return l.core, nil
+}
+
+func (l largeRPCLookup) SessionForParticipant(id, addr string) (rpcserver.SessionCore, error) {
+	_ = addr
+	return l.SessionServerExisting(id)
 }
 
 type largeRPCCore struct {

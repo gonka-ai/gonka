@@ -36,6 +36,8 @@ type RPCClient struct {
 	// sessionLarge is a third SessionServiceClient with the 10 MiB dispute
 	// read cap (VerifyTimeout, VerifyErrorMiss, ChallengeReceipt responses).
 	sessionLarge rpcpbconnect.SessionServiceClient
+	// sessionChat is SessionService.Chat: 10 MiB envelope, no per-frame gzip.
+	sessionChat rpcpbconnect.SessionServiceClient
 	gossip       rpcpbconnect.GossipServiceClient
 	// payload uses DefaultRPCPayloadMaxBytes (64 MiB) when the caller
 	// did not pass a per-inference limit. GetPayload builds a tighter or
@@ -65,6 +67,7 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		c.session = rpcpbconnect.NewSessionServiceClient(conn.http, base, opts...)
 		c.sessionQuery = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCQueryReadMaxBytes)...)
 		c.sessionLarge = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCLargeReadMaxBytes)...)
+		c.sessionChat = rpcpbconnect.NewSessionServiceClient(conn.http, base, chatClientOptions()...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
 		c.payload = rpcpbconnect.NewPayloadServiceClient(conn.http, base, connectClientOptions(DefaultRPCPayloadMaxBytes)...)
 	}
@@ -72,8 +75,8 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 }
 
 // Uses is whether this client sends `name` over Connect. Opt-in
-// (EndpointSet.Has) is not enough: gossip, repair, chat, and other names
-// stay HTTP until they are on attachRPCEndpoints.
+// (EndpointSet.Has) is not enough: a name stays HTTP until it is on
+// attachRPCEndpoints.
 func (c *RPCClient) Uses(name string) bool {
 	return c != nil && c.endpoints.Has(name) && isAttachRPCEndpoint(name)
 }
@@ -164,7 +167,12 @@ func rpcRetry(ctx context.Context, fn func() error) error {
 			return err
 		}
 		sleep := delay
-		if sleep > remaining {
+		if ra := connectRetryAfter(err); ra > 0 {
+			if ra > remaining {
+				return err
+			}
+			sleep = ra
+		} else if sleep > remaining {
 			sleep = remaining
 		}
 		if err := sleepContext(ctx, sleep); err != nil {
@@ -174,6 +182,25 @@ func rpcRetry(ctx context.Context, fn func() error) error {
 			delay *= 2
 		}
 	}
+}
+
+func (c *RPCClient) withPeerBudget(ctx context.Context, procedure string, fn func() error) error {
+	if c != nil && c.conn != nil {
+		if err := c.conn.takePeerBudget(ctx, procedure); err != nil {
+			return err
+		}
+	}
+	err := fn()
+	if isQuotaResourceExhausted(err) && c != nil && c.conn != nil {
+		c.conn.refundPeerBudget(procedure)
+	}
+	return err
+}
+
+func (c *RPCClient) rpcAttempt(ctx context.Context, procedure string, fn func() error) error {
+	return rpcRetry(ctx, func() error {
+		return c.withPeerBudget(ctx, procedure, fn)
+	})
 }
 
 const maxUnauthenticatedRPCRetries = 1
@@ -203,6 +230,13 @@ func connectClientOptions(maxBytes int) []connect.ClientOption {
 	}
 }
 
+func chatClientOptions() []connect.ClientOption {
+	return []connect.ClientOption{
+		connect.WithReadMaxBytes(int(DefaultMaxBodySize)),
+		connect.WithAcceptCompression("gzip", nil, nil),
+	}
+}
+
 func (c *RPCClient) GetSignatures(ctx context.Context, nonce uint64) (map[uint32][]byte, error) {
 	if !c.Uses(EndpointSignatures) {
 		return c.HTTPClient.GetSignatures(ctx, nonce)
@@ -210,7 +244,7 @@ func (c *RPCClient) GetSignatures(ctx context.Context, nonce uint64) (map[uint32
 	ctx, cancel := context.WithTimeout(ctx, c.config.QueryTimeout)
 	defer cancel()
 	var out map[uint32][]byte
-	err := rpcRetry(ctx, func() error {
+	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetSignaturesProcedure, func() error {
 		req, err := tokenRequest(c, &rpcpb.GetSignaturesRequest{Nonce: nonce})
 		if err != nil {
 			return err
@@ -238,7 +272,7 @@ func (c *RPCClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff
 	ctx, cancel := context.WithTimeout(ctx, c.config.QueryTimeout)
 	defer cancel()
 	var diffs []types.Diff
-	err := rpcRetry(ctx, func() error {
+	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetDiffsProcedure, func() error {
 		req, err := tokenRequest(c, &rpcpb.GetDiffsRequest{From: from, To: to})
 		if err != nil {
 			return err
@@ -271,7 +305,7 @@ func (c *RPCClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error)
 	ctx, cancel := context.WithTimeout(ctx, c.config.QueryTimeout)
 	defer cancel()
 	var txs []*types.DevshardTx
-	err := rpcRetry(ctx, func() error {
+	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetMempoolProcedure, func() error {
 		req, err := tokenRequest(c, &rpcpb.GetMempoolRequest{})
 		if err != nil {
 			return err
@@ -306,7 +340,7 @@ func (c *RPCClient) GossipNonce(ctx context.Context, nonce uint64, stateHash, st
 	if err != nil {
 		return err
 	}
-	return c.gossipSigned(ctx, c.config.GossipTimeout, payload, func(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) error {
+	return c.gossipSigned(ctx, c.config.GossipTimeout, rpcpbconnect.GossipServiceNonceProcedure, payload, func(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) error {
 		_, err := c.gossip.Nonce(ctx, req)
 		return err
 	})
@@ -324,16 +358,16 @@ func (c *RPCClient) GossipTxs(ctx context.Context, txs []*types.DevshardTx) erro
 	if err != nil {
 		return err
 	}
-	return c.gossipSigned(ctx, c.config.GossipTimeout, payload, func(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) error {
+	return c.gossipSigned(ctx, c.config.GossipTimeout, rpcpbconnect.GossipServiceTxsProcedure, payload, func(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) error {
 		_, err := c.gossip.Txs(ctx, req)
 		return err
 	})
 }
 
-func (c *RPCClient) gossipSigned(ctx context.Context, timeout time.Duration, payload []byte, call func(context.Context, *connect.Request[rpcpb.SignedEnvelope]) error) error {
+func (c *RPCClient) gossipSigned(ctx context.Context, timeout time.Duration, procedure string, payload []byte, call func(context.Context, *connect.Request[rpcpb.SignedEnvelope]) error) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return rpcRetry(ctx, func() error {
+	return c.rpcAttempt(ctx, procedure, func() error {
 		env, err := c.signEnvelope(payload)
 		if err != nil {
 			return err
@@ -362,29 +396,32 @@ func (c *RPCClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.heightSeedTimeout())
 	defer cancel()
-	env, err := c.signEnvelope(nil)
-	if err != nil {
-		return false, err
-	}
-	req, err := tokenRequest(c, env)
-	if err != nil {
-		return false, err
-	}
-	resp, err := c.session.SeedHeightSync(ctx, req)
-	if err != nil {
-		return false, err
-	}
-	sec := HeightSyncSectionFromProto(resp.Msg.GetHeightSync())
-	if sec == nil || !heightsync.IsAnchorSection(sec) {
-		return false, nil
-	}
-	sec.Direction = "response"
-	c.ingestResponseHeightSync(sec, 0, "RPC SeedHeightSync")
-	_, _, ok = c.heightSyncPeerTips.OriginSignedBlobFor(
-		strings.TrimSpace(sec.OriginatorSenderID),
-		sec.MainnetHeight,
-	)
-	return ok, nil
+	err = c.withPeerBudget(ctx, rpcpbconnect.SessionServiceSeedHeightSyncProcedure, func() error {
+		env, err := c.signEnvelope(nil)
+		if err != nil {
+			return err
+		}
+		req, err := tokenRequest(c, env)
+		if err != nil {
+			return err
+		}
+		resp, err := c.session.SeedHeightSync(ctx, req)
+		if err != nil {
+			return err
+		}
+		sec := HeightSyncSectionFromProto(resp.Msg.GetHeightSync())
+		if sec == nil || !heightsync.IsAnchorSection(sec) {
+			return nil
+		}
+		sec.Direction = "response"
+		c.ingestResponseHeightSync(sec, 0, "RPC SeedHeightSync")
+		_, _, ok = c.heightSyncPeerTips.OriginSignedBlobFor(
+			strings.TrimSpace(sec.OriginatorSenderID),
+			sec.MainnetHeight,
+		)
+		return nil
+	})
+	return ok, err
 }
 
 func (c *RPCClient) HeightSyncRepair(ctx context.Context, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
@@ -402,7 +439,7 @@ func (c *RPCClient) HeightSyncRepair(ctx context.Context, req *heightsync.Repair
 		return nil, err
 	}
 	var out *heightsync.RepairResponse
-	err = rpcRetry(ctx, func() error {
+	err = c.rpcAttempt(ctx, rpcpbconnect.SessionServiceRepairHeightSyncProcedure, func() error {
 		env, err := c.signEnvelope(payload)
 		if err != nil {
 			return err
@@ -435,7 +472,7 @@ func (c *RPCClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutRequ
 		return nil, err
 	}
 	var out *VerifyTimeoutResponse
-	err = rpcRetry(ctx, func() error {
+	err = c.rpcAttempt(ctx, rpcpbconnect.SessionServiceVerifyTimeoutProcedure, func() error {
 		env, err := c.signEnvelope(payload)
 		if err != nil {
 			return err
@@ -468,7 +505,7 @@ func (c *RPCClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMiss
 		return nil, err
 	}
 	var out *VerifyErrorMissResponse
-	err = rpcRetry(ctx, func() error {
+	err = c.rpcAttempt(ctx, rpcpbconnect.SessionServiceVerifyErrorMissProcedure, func() error {
 		env, err := c.signEnvelope(payload)
 		if err != nil {
 			return err
@@ -515,7 +552,7 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 	defer cancel()
 	var receipt []byte
 	var mempool []*types.DevshardTx
-	err = rpcRetry(ctx, func() error {
+	err = c.rpcAttempt(ctx, rpcpbconnect.SessionServiceChallengeReceiptProcedure, func() error {
 		env, err := c.signEnvelope(raw)
 		if err != nil {
 			return err
@@ -639,7 +676,7 @@ func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest
 	ctx, cancel := context.WithTimeout(ctx, c.config.QueryTimeout)
 	defer cancel()
 	var out *rpcpb.GetPayloadResponse
-	err = rpcRetry(ctx, func() error {
+	err = c.rpcAttempt(ctx, rpcpbconnect.PayloadServiceGetPayloadProcedure, func() error {
 		creq, err := tokenRequest(c, req)
 		if err != nil {
 			return err

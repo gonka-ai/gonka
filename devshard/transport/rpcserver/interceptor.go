@@ -77,15 +77,26 @@ func isImplementedRPC(implemented map[string]struct{}, path string) bool {
 // handshakeGate admits non-Attach RPCs from the session header before Connect
 // reads the body. Unary interceptors run after protobuf decode; this wrapper
 // does not. The ResponseWriter and session token are stashed only on Watch.
-// Known but unimplemented procedures are answered here so Connect never reads
-// the body.
+// Unimplemented procedures (unmounted Gossip/Payload, junk paths) are
+// answered here before the peer budget is charged, so Connect never reads
+// the body. Chat is implemented; it is charged after the stream slot is
+// acquired. Attach is bounded by the process floor (ECDSA) and a 4 KiB
+// body cap, not by origin IP.
 func handshakeGate(auth *PeerAuthHandler, next http.Handler, implemented map[string]struct{}) http.Handler {
 	ew := connect.NewErrorWriter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isAttachPath(r.URL.Path) {
 			if r.ContentLength > maxAttachRecvBytes {
+				if _, err := auth.chargeAttach(r.Context()); err != nil {
+					observability.IncPeerRPCAttach(connect.CodeOf(err).String())
+					auth.observeAttach(r.Context(), err)
+					_ = ew.Write(w, r, err)
+					return
+				}
 				observability.IncPeerRPCAttach(connect.CodeResourceExhausted.String())
-				_ = ew.Write(w, r, connect.NewError(connect.CodeResourceExhausted, errors.New("attach request too large")))
+				sizeErr := connect.NewError(connect.CodeResourceExhausted, errors.New("attach request too large"))
+				auth.observeAttach(r.Context(), sizeErr)
+				_ = ew.Write(w, r, sizeErr)
 				return
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, maxAttachRecvBytes)
@@ -102,10 +113,22 @@ func handshakeGate(auth *PeerAuthHandler, next http.Handler, implemented map[str
 			_ = ew.Write(w, r, err)
 			return
 		}
+		ctx = withClientIP(ctx, r.Header.Get("X-Real-IP"))
 		if !isImplementedRPC(implemented, r.URL.Path) {
 			r.Body = http.MaxBytesReader(w, r.Body, 0)
 			_ = ew.Write(w, r, connect.NewError(connect.CodeUnimplemented, errors.New("method is not implemented")))
 			return
+		}
+		// Chat is charged after acquireStream (finding 6). Watch is
+		// weight 0 so charging here is a no-op.
+		if !isChatPath(r.URL.Path) && !isWatchPath(r.URL.Path) {
+			if err := auth.limiter.charge(ctx, PeerFromContext(ctx), r.URL.Path); err != nil {
+				auth.observeRPC(ctx, r.URL.Path, PeerFromContext(ctx), true, false, false, false)
+				_ = ew.Write(w, r, err)
+				return
+			}
+			ctx = withRateLimitCharged(ctx)
+			auth.observeRPC(ctx, r.URL.Path, PeerFromContext(ctx), false, false, false, false)
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -153,6 +176,58 @@ func (s *sessionInterceptor) admit(ctx context.Context, procedure string, header
 		return ctx, nil
 	}
 	return admitSession(s.auth, ctx, header, isWatchPath(procedure))
+}
+
+type rateLimitInterceptor struct {
+	auth *PeerAuthHandler
+}
+
+func (s *rateLimitInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		ctx, err := s.charge(ctx, req.Spec().Procedure)
+		if err != nil {
+			return nil, err
+		}
+		return next(ctx, req)
+	}
+}
+
+func (s *rateLimitInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return next
+}
+
+func (s *rateLimitInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
+		procedure := conn.Spec().Procedure
+		peer := PeerFromContext(ctx)
+		if isStreamPath(procedure) {
+			if err := s.auth.limiter.acquireStream(ctx, peer, procedure); err != nil {
+				s.auth.observeRPC(ctx, procedure, peer, true, true, false, false)
+				return err
+			}
+			defer s.auth.limiter.releaseStream(peer)
+		}
+		if !rateLimitCharged(ctx) && !isAttachPath(procedure) {
+			if err := s.auth.limiter.charge(ctx, PeerFromContext(ctx), procedure); err != nil {
+				s.auth.observeRPC(ctx, procedure, peer, true, false, false, false)
+				return err
+			}
+		}
+		if isStreamPath(procedure) {
+			s.auth.observeRPC(ctx, procedure, peer, false, false, false, false)
+		}
+		return next(ctx, conn)
+	}
+}
+
+func (s *rateLimitInterceptor) charge(ctx context.Context, procedure string) (context.Context, error) {
+	if isAttachPath(procedure) || rateLimitCharged(ctx) {
+		return ctx, nil
+	}
+	if err := s.auth.limiter.charge(ctx, PeerFromContext(ctx), procedure); err != nil {
+		return ctx, err
+	}
+	return withRateLimitCharged(ctx), nil
 }
 
 func admitSession(auth *PeerAuthHandler, ctx context.Context, header http.Header, stashToken bool) (context.Context, error) {

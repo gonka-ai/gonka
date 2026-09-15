@@ -1001,6 +1001,7 @@ type gatewayMetricsCollector struct {
 	hostStateDesc                  *prometheus.Desc
 
 	heightSync heightSyncDescs
+	rpcStats   rpcStatsDescs
 	peerMatrix bool
 }
 
@@ -1143,6 +1144,7 @@ func newGatewayMetricsCollectorWithHostConnections(gateway *Gateway, hostConnect
 			nil,
 		),
 		heightSync: newHeightSyncDescs(),
+		rpcStats:   newRPCStatsDescs(),
 		peerMatrix: heightSyncPeerMatrixEnabled(),
 	}
 }
@@ -1170,6 +1172,7 @@ func (c *gatewayMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.hostOpenDesc
 	ch <- c.hostStateDesc
 	c.heightSync.describe(ch)
+	c.rpcStats.describe(ch)
 }
 
 func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
@@ -1258,6 +1261,9 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	c.collectHeightSync(ch, runtimes)
+	if c.gateway.rpcStats != nil {
+		c.rpcStats.emit(ch, c.gateway.rpcStats.hosts())
+	}
 
 	if c.hostConnections == nil {
 		return

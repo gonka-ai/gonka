@@ -83,6 +83,7 @@ type Gateway struct {
 	suspiciousHosts map[string]struct{}
 
 	hostPing *hostPingJob
+	rpcStats *rpcStatsPoller
 }
 
 type devshardRuntime struct {
@@ -839,6 +840,8 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	g.startEscrowRotatorIfEnabled()
 	g.hostPing = newHostPingJob(g.metrics, loadHostPingConfig())
 	g.hostPing.start()
+	g.rpcStats = newRPCStatsPoller(g, loadRPCStatsConfig())
+	g.rpcStats.start()
 	go g.balanceCheckLoop()
 	return g
 }
@@ -1332,6 +1335,9 @@ func (g *Gateway) Close() error {
 	if g.hostPing != nil {
 		g.hostPing.stop()
 	}
+	if g.rpcStats != nil {
+		g.rpcStats.stop()
+	}
 	for _, rt := range g.runtimeOrder {
 		if err := rt.close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -1367,6 +1373,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/debug/rotation", g.handleDebugRotation)
 	mux.HandleFunc("/v1/debug/memstats", g.handleDebugMemStats)
 	mux.HandleFunc("/v1/debug/heightsync", g.handleDebugHeightSync)
+	mux.HandleFunc("/v1/debug/rpc-traffic", g.handleDebugRPCTraffic)
 	// Runtime profiling, admin-gated (see isAdminPath). Mounted at the
 	// canonical /debug/pprof/ path so pprof.Index's sub-profile links resolve.
 	mux.HandleFunc("/debug/pprof/", pprof.Index)

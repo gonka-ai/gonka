@@ -23,6 +23,9 @@ func TestHostManager_RPCRoutesGatedByFlag(t *testing.T) {
 	eOff := echo.New()
 	mgr.Register(eOff.Group(""))
 	for _, r := range eOff.Routes() {
+		if r.Path == "/stats/rpc" {
+			continue
+		}
 		require.NotContains(t, r.Path, "/rpc", r.Method+" "+r.Path)
 	}
 
@@ -31,7 +34,7 @@ func TestHostManager_RPCRoutesGatedByFlag(t *testing.T) {
 	mgr.Register(eOn.Group(""))
 	found := false
 	for _, r := range eOn.Routes() {
-		if strings.Contains(r.Path, "/rpc") {
+		if strings.Contains(r.Path, "/sessions/:id/rpc") {
 			found = true
 			break
 		}

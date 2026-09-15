@@ -113,16 +113,28 @@ of that child.
 The token is keyed to **peer identity**, not to a TCP socket — HTTP/1.1 may open
 several pooled connections and they all carry the same token.
 
+Two objects share that token:
+
+- **`PeerConn`** — one Attach/Watch per (host, version, URL, signer). Shared
+  across every escrow that child serves. Live renewals and Watch use
+  `/sessions/_/rpc`.
+- **`transport.Server` / DB session** — one per escrow. JSON `BindGroupPeer`
+  and bind-group RPCs (`ChallengeReceipt`, gossip, seed, repair, verify-*)
+  call `SessionForParticipant` so a host that never saw owner chat still
+  CreateSession when a group member shows up. Observability GETs
+  (`GetDiffs`, `GetMempool`, `GetSignatures`, `GetPayload`) stay Existing-only.
+
+A live handshake on escrow A is not a session for escrow B. Challenge on B
+with the host-wide token CreateSession for B; GetDiffs on B does not.
+
 ### Membership and renewal
 
-In production, Attach only succeeds if the recovered key is already a participant of
+In production, Attach only succeeds if the recovered key is a participant of
 the escrow in that URL (`AllowsSender`). Outsiders never get a token.
 
-The URL escrow must already be open on this host so that check can run. If it is not,
-Attach fails the same way a data RPC would (`unavailable` while the host is initializing,
-otherwise `failed_precondition`). A peer not on that escrow's roster fails with
-`permission_denied`. Signature, host address, timestamp, and nonce checks still run
-first.
+If that door escrow is not open locally, a creator or slot member still
+CreateSession so the door check can run. A stranger probing a cold id does not.
+Signature, host address, timestamp, and nonce checks still run first.
 
 Renewal is a new Attach with a **new** `attach_nonce`, not a TTL refresh of the old
 one:
@@ -133,9 +145,10 @@ one:
 - That second Attach runs `AllowsSender` again. If they were dropped from the roster,
   they cannot renew.
 
-The token itself is still host-wide: Attach via one open escrow you belong to, then
+The token itself is still host-wide: Attach via one escrow you belong to, then
 use it on every escrow path this child serves. Later RPCs are admitted by session id
-(`x-devshard-session`); they do not repeat the Attach door. `GetSignatures` still
+(`x-devshard-session`); they do not repeat the Attach door. Bind-group RPCs still
+CreateSession for a cold escrow; observability GETs do not. Every data RPC still
 checks roster for **that** request's escrow.
 
 ```
@@ -217,18 +230,55 @@ IP on versiond**.
 |---|---|---|---|
 | JSON POSTs after auth (`RateLimitMiddleware`) | recovered sender | 100 rps, burst 200 | Existing session on InferenceUrl. Chat still records `no_receipt_interrupted`. |
 | Attach process floor (`chargeAttach`) | this child | 10_000/min (`MaxSessions`) | **Before ECDSA.** Known-peer renewals are refunded. |
+| RPC peer weight | session address after Attach | **6000/min**, burst 10% (600) | Authenticated RPCs. Watch is a stream cap, not this bucket. |
 | Unknown-escrow first bind (child) | recovered gonka address | **2 unique ids/min**, process floor **300/min** | Cold `GetEscrow` on Attach / owner chat / height-sync seed |
 | Unknown-escrow first bind (versiond) | inbound **`X-Real-IP`** | **2 misses/min** | Same bind paths, after the child names a miss — next try never reaches the child |
-| `AttachResponse.limits` | advertised only | 6000 msg/min, 256 streams, 10 attach/min | Phase 4 will enforce these in a Connect interceptor. Zeros would look like "refuse all". |
+| `AttachResponse.limits` | advertised + enforced | `messages_per_min`, `messages_burst`, `max_streams`; `ip_weight_per_min` / `ip_burst` = unlimited | Peer numbers match the interceptor. IP fields are unlimited: the child does not key Attach on origin IP. Zeros would look like "refuse all". `PeerConn` paces opted-in RPCs (including Chat) to in-range `messages_per_min` / `messages_burst` × `RPCProcedureWeight`; out-of-range or a wait that cannot fit in 5 s / the RPC deadline is skipped. Watch and Chat also take an advertised `max_streams` slot. |
 
 Nginx `limit_req` / `limit_conn` still cover InferenceUrl until phase 6. They are
 not the unknown-id budget and they do not key on gonka address.
 
+### RPC channel weights
+
+One token bucket after handshake. Watch/Chat stay a **concurrent slot cap** (`max_streams`,
+default 256). Weights are protocol constants (not env). Effective max if that
+event is the only traffic is `floor(budget / weight)`.
+
+| Bucket | Key | Default | Env |
+|---|---|---|---|
+| **Peer** | session address after Attach | 6000/min, burst 10% (600) | `DEVSHARD_RPC_MSGS_PER_MIN`, `DEVSHARD_RPC_MSGS_BURST` |
+
+Process-wide Attach before ECDSA stays 10_000 (`DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL`).
+Per-IP Attach is not a child limiter: `RemoteAddr` is versiond, and an empty
+`X-Real-IP` is not a key. TCP / path rate belongs on versiond / Phase 6 `proxy`
+(`src`). `DEVSHARD_RPC_LIMITS=off` disables the interceptor buckets and the Attach floor.
+`DEVSHARD_RPC_MAX_STREAMS_PER_PEER` is the stream cap. Unset env is the default
+with no log; malformed, `0`, and `4294967295` warn and use the default (`-1`
+is unlimited).
+
+| Event | Weight | Implied max |
+|---|---|---|
+| GetSignatures, Gossip Nonce | 1 | 6000/min |
+| Gossip Txs, seed / repair / verify-* | 2 | 3000/min |
+| Chat | 10 | 600/min |
+| GetMempool, GetPayload | 6 | 1000/min |
+| GetDiffs | 60 | 100/min |
+| Attach / Watch | 0 | floor / stream cap, not this bucket |
+
+The handshake gate charges the process floor on a `Content-Length` larger
+than 4 KiB, then rejects with no decode. A token issued for a real door
+refunds the floor slot for a live/grace peer.
+
+GetDiffs shares the peer pie: 100 diffs at weight 60 is the whole 6000 for
+that minute. There are no dedicated GET buckets and no `attach_per_min` count
+of attaches. A single RPC heavier than `messages_burst` (GetDiffs 60 vs a
+10-token pulse) still runs when the bucket is full, then overdrafts; cheap
+RPCs stay capped at the advertised burst.
+
 ### Per-peer (child)
 
 After handshake, JSON POSTs spend a **per-sender** token bucket. Two peers do not
-share it. The RPC interceptor does not yet have the phase-4 messages/minute or
-per-method weights; those stay advertised on Attach so a client can self-throttle.
+share it. Authenticated RPCs spend the **peer weight** budget above (`RPCProcedureWeight`).
 
 The **unknown-escrow** budget is separate and stricter. `fetchEscrowForBind`
 runs when owner chat or first Attach finds no local session and no fresh
@@ -261,7 +311,9 @@ The child **must not** key this on origin IP. Mixed fleets and hop-stamped
 The IP cap lives in **versiond**, on the hop that already sees the client.
 `SetXForwarded` rewrites `X-Forwarded-*`; versiond **keeps inbound `X-Real-IP`**
 from nginx / versiond-router and forwards it to the child. The child still
-does not key on it.
+does not key unknown-escrow misses on it. Phase 6’s h2 listen: **`proxy`**
+overwrites `X-Real-IP` from `src` (nginx’s `$remote_addr` job); versiond still
+copies, it does not re-derive from `RemoteAddr`.
 
 Only first-bind POSTs count:
 
@@ -300,7 +352,7 @@ real escrow) does **not** fill the IP bucket.
 Together: rotate keys → child per-peer + process floor; rotate IPs → versiond
 per origin; rotate both → still 300 chain lookups/min on that child.
 
-Phase 4's Attach-per-IP-before-ECDSA and phase 6 stick-table `conn_rate` are
+Phase 4's process Attach floor and phase 6 stick-table `conn_rate` are
 still the nginx replacements for **handshake flood** and TCP opens. This IP
 limiter only stops **unknown escrow-id** fan-out on the three bind paths.
 
@@ -344,7 +396,7 @@ client → nginx (InferenceUrl) → …   # unchanged
 | Hop | Change |
 |---|---|
 | nginx / proxy-policy | **Not on `/rpc/`.** Keep InferenceUrl for JSON and the public API. No `grpc_pass`. local-test-net's nginx container is also named `proxy` (`proxy/` image) — that is this row, not the h2 bind. |
-| **proxy (proxy-router)** | Public `{DEVSHARD_RPC_H2_PORT}` bind. Skip `proxy-policy`. `proto h2` to versiond-router (HA) or `versiond:8080` (non-HA). Stick-table `conn_rate` / `sess_rate` and path zones on `src`. HTTPS: mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`) and `bind ssl crt … proto h2`. Keep the same version + escrow hash as `versiond_router_in`. `:80/:443` stay TCP-to-nginx. |
+| **proxy (proxy-router)** | Public `{DEVSHARD_RPC_H2_PORT}` bind. Skip `proxy-policy`. `proto h2` to versiond-router (HA) or `versiond:8080` (non-HA). Stick-table `conn_rate` / `sess_rate` and path zones on `src`. **Overwrite `X-Real-IP` from `src`** (do not forward the caller’s header). HTTPS: mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`) and `bind ssl crt … proto h2`. Keep the same version + escrow hash as `versiond_router_in`. `:80/:443` stay TCP-to-nginx. |
 | versiond-router (HA) | Inner hop. `proto h2` on the frontend from `proxy` **and** on every backend to versiond (h2c). Keep version + escrow hash on `:path`. Do not re-key per-IP zones (`RemoteAddr` is `proxy`). |
 | versiond (both) | `h2c.NewHandler` on the listen that serves `/rpc/`; reverse-proxy with an **HTTP/2** transport to the child (not the default HTTP/1.1 `ReverseProxy`); still accept HTTP/1.1 from nginx for JSON |
 | `devshardd` | Wrap the existing loopback `http.Server` with `h2c.NewHandler`. Same Connect mux, no extra bind |
@@ -382,8 +434,9 @@ The nginx per-IP ceiling disappears for this path. Replace it on the published l
   `src` budgets. The Connect method is in the URL; no protobuf parse. versiond-router
   and inner versiond on HA must not re-key on `RemoteAddr` (`proxy`). The child must not
   apply Echo IP zones on `/rpc/` (loopback).
-- **Attach-per-IP before ECDSA** (phase 4) — one connection can still flood handshake RPCs
-  on streams. Process-wide Attach/sec floor stays in the child.
+- **Process-wide Attach floor before ECDSA** (phase 4) in the child. Per-IP
+  handshake rate is not keyed here (`RemoteAddr` is versiond). Phase 6 `proxy`
+  path zones + TCP `conn_rate` on `src` replace nginx `limit_req` on handshake.
 - **Per-peer channel limits** (phase 4) in the **child** interceptor: token-bucket plus
   per-method weights keyed on the session peer, not on IP. Dedicated per-session
   caps: `GetDiffs` 100/min, `GetMempool` 1000/min, `GetPayload` 1000/min.
@@ -398,8 +451,8 @@ The listen is **not** an admin port and **not** an IP allowlist. It is the same
 participant set as InferenceUrl: Attach (ECDSA bound to this host's gonka address,
 then `AllowsSender` on the URL escrow) is the gate; anything without a completed
 handshake is dropped. Later data RPCs still check roster for **that** escrow. Attach
-is the one unauthenticated RPC on this listen — throttle it before ECDSA (phase 4)
-before the port is public.
+is the one unauthenticated RPC on this listen — throttle it with the process floor
+before ECDSA (phase 4) before the port is public. Per-IP TCP / path rate is phase 6.
 
 Phase 6 **reuses nginx's TLS cert** on the published listen: mount `SSL_CERT_SOURCE` on
 `proxy` and `bind ssl crt … proto h2`. That is the same host TLS nginx already

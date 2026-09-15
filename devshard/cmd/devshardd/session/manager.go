@@ -82,11 +82,14 @@ type HostManager struct {
 	obsGate     *storage.ObsRepairGate
 	obsRepairWG sync.WaitGroup
 
-	statsMu            sync.Mutex
-	statsShardsCache   *statsShardsResponse
-	statsShardsCached  time.Time
-	statsDetailsCache  map[string]statsShardDetailCache
-	statsNegativeCache map[string]statsNegativeCacheEntry
+	statsMu              sync.Mutex
+	statsShardsCache     *statsShardsResponse
+	statsShardsCached    time.Time
+	statsDetailsCache    map[string]statsShardDetailCache
+	statsNegativeCache   map[string]statsNegativeCacheEntry
+	statsRPCCache        []byte
+	statsRPCCached       time.Time
+	statsRPCCachedMinute int64
 
 	binaryVersion string
 
@@ -1421,19 +1424,48 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 	return srv, obsRepair, nil
 }
 
+// hostRPCLookup is the Connect session resolver. Observability GETs use
+// Existing (no CreateSession). Challenge, gossip, seed, repair, and verify
+// bind a participant so a live host handshake on another escrow still
+// CreateSession for this one.
+type hostRPCLookup struct{ m *HostManager }
+
+func (l hostRPCLookup) SessionServerExisting(id string) (rpcserver.SessionCore, error) {
+	srv, err := l.m.SessionServerExisting(id)
+	if err != nil {
+		return nil, err
+	}
+	if srv == nil {
+		return nil, nil
+	}
+	return srv, nil
+}
+
+func (l hostRPCLookup) SessionForParticipant(id, addr string) (rpcserver.SessionCore, error) {
+	srv, err := l.m.sessionForParticipant(id, addr)
+	if err != nil {
+		return nil, err
+	}
+	if srv == nil {
+		return nil, nil
+	}
+	return srv, nil
+}
+
 // Register mounts devshard session routes on the given echo group.
 // Stats routes are registered before lazy session routes so they are not
 // wrapped by the session EchoMiddleware applied inside RegisterLazySessionRoutes.
 func (m *HostManager) Register(g *echo.Group) {
 	g.GET("/stats/shards", m.handleStatsShards)
 	g.GET("/stats/shards/:escrow_id", m.handleStatsShard)
+	g.GET("/stats/rpc", m.handleStatsRPC)
 	var opts []devshardserver.RouteOption
 	if m.rpcServerEnabled {
 		if m.hostRPCAddress() == "" {
 			panic("devshard: DEVSHARD_RPC_SERVER_ENABLED requires a host address (signer or recorder)")
 		}
 		if auth := m.peerAuthHandler(); auth != nil {
-			lookup := rpcserver.AdaptLookup(m.SessionServerExisting)
+			lookup := hostRPCLookup{m: m}
 			opts = append(opts, devshardserver.WithPeerRPC(
 				auth,
 				rpcserver.NewSessionHandler(lookup),
@@ -1455,8 +1487,10 @@ func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
 			slog.Error("devshardd: peer RPC host address is empty; refusing to construct handler")
 			return
 		}
+		limits := transport.LoadChannelLimitConfig()
 		h := rpcserver.NewPeerAuthHandler(m.verifier, hostAddr, rpcserver.PeerAuthConfig{
-			Allow: m.allowRPCPeer,
+			Allow:  m.allowRPCPeer,
+			Limits: &limits,
 		})
 		h.StartSweeper()
 		m.rpcAuth.Store(h)

@@ -86,7 +86,7 @@ const DefaultHeightSeedTimeout = 5 * time.Second
 
 // ClientConfig holds per-endpoint timeout settings.
 type ClientConfig struct {
-	InferenceTimeout time.Duration // /chat/completions, default 20m
+	InferenceTimeout time.Duration // /chat/completions, default 30m
 	GossipTimeout    time.Duration // gossip/nonce, gossip/txs, default 10s
 	VerifyTimeout    time.Duration // verify-timeout, default 3m
 	QueryTimeout     time.Duration // diffs, mempool GETs, default 30s
@@ -129,9 +129,9 @@ type ClientConfig struct {
 	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
 
 	// RPCEndpoints names to send over Connect. Attach starts only if the
-	// set intersects a wired method (signatures today). Empty, chat, or a
-	// typo keeps HTTP. DEVSHARD_RPC_ENDPOINTS is read when this is nil at
-	// SelectTransport time — set it on ExtraClientConfig to override.
+	// set intersects a wired method (chat and the Phase 3 unaries).
+	// Empty or a typo keeps HTTP. DEVSHARD_RPC_ENDPOINTS is read when this
+	// is nil at SelectTransport time — set it on ExtraClientConfig to override.
 	RPCEndpoints EndpointSet
 	// RPCMaxConnsPerPeer is MaxConnsPerHost on the PeerConn pool. Zero uses
 	// DEVSHARD_RPC_MAX_CONNS_PER_PEER or DefaultRPCMaxConnsPerPeer.

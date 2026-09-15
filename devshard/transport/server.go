@@ -444,201 +444,23 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	}
 	observability.Request.SetInferenceBodyBytes(op, len(body))
 
-	unwrapped, err := UnwrapInferenceRequestBody(body)
-	if err != nil {
-		return observability.FailNoReceipt(ctx, s.host.EscrowID(),
-			observability.ReasonParseErr, observability.WhereTransportHandleInference,
-			"HandleInference: decode body", echo.NewHTTPError(http.StatusBadRequest, "decode body: "+err.Error()))
-	}
-
-	req, err := HostRequestFromJSON(unwrapped.Request)
-	if err != nil {
-		return observability.FailNoReceipt(ctx, s.host.EscrowID(),
-			observability.ReasonDecodeErr, observability.WhereTransportHandleInference,
-			"HandleInference: decode request", echo.NewHTTPError(http.StatusBadRequest, "decode request: "+err.Error()))
-	}
-	if req.Payload != nil {
-		observability.Request.SetModel(op, req.Payload.Model)
-	}
-	observability.Request.SetNonce(op, req.Nonce)
-
-	oracleHdr := s.latestOracleHeader(c.Request().Context())
-	if s.pendingUntrustedBySession != nil {
-		s.reconcilePendingUntrusted(sessionID, oracleHdr)
-	}
-	inboundVal := s.classifyInboundHeightSync(req.Nonce, unwrapped.HeightSync, oracleHdr)
-	if inboundVal.Result == heightsync.ResultInvalidStaleOrigin {
-		heightsync.IncStaleOriginRejected()
-		logging.Warn("heightsync: invalid inbound anchor",
-			heightsync.LogFieldSubsystem, "heightsync",
-			heightsync.LogFieldDirection, "request",
-			heightsync.LogFieldNonce, req.Nonce,
-			heightsync.LogFieldPeerID, sender,
-			heightsync.LogFieldReason, inboundVal.Reason,
-			heightsync.LogFieldClassification, string(inboundVal.Result),
-		)
-	}
-	s.logInboundHeightSync(sender, sessionID, req.Nonce, unwrapped.HeightSync, oracleHdr, inboundVal)
-	s.recordInboundAnchorIfAnchor(sender, unwrapped.HeightSync, c.Request().Method+" "+c.Path(), inboundVal)
-	if inboundVal.Result == heightsync.ResultValidAnchor || inboundVal.Result == heightsync.ResultValidLazyAnchor {
-		s.notePendingUntrustedInbound(sessionID, sender, unwrapped.HeightSync, oracleHdr)
-	}
-	s.recordEnvelopeBindingRequest(c, req, unwrapped.HeightSync, oracleHdr)
-
-	resp, err := s.host.HandleRequest(ctx, req)
-	if err != nil {
-		reason, where := observability.ErrorReason(err, observability.ReasonHandleRequestErr, observability.WhereTransportHandleInference)
-		if errors.Is(err, devshard.ErrRequestsDisabled) {
-			logging.Debug("HandleInference: devshard_requests_enabled=false", "subsystem", "server")
-			c.Response().Header().Set(HeaderDevshardError, DevshardErrorRequestsDisabled)
-			return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
-				"HandleInference: requests disabled", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()))
-		}
-		return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
-			"HandleInference: handle request", echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err))
-	}
-	s.recordForceRequestAnchorMissingIfApplicable(sender, req.Nonce, unwrapped.HeightSync, c.Request().Method+" "+c.Path())
-	observability.Request.SetInferenceID(op, resp.InferenceID)
-	observability.Request.SetInferenceResponse(op, resp.Nonce, resp.ExecutionExpected, resp.CachedResponseBody != nil)
-
-	if err := s.waitInferenceResponseHold(ctx, req.Nonce); err != nil {
-		logging.Debug("HandleInference: response hold ended without SSE",
-			"subsystem", "transport", "nonce", req.Nonce, "error", err.Error())
-		return err
-	}
-
-	// Always SSE response.
-	w := c.Response()
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-	w.Flush()
-
-	// Event 1: receipt + protocol metadata.
-	receiptEvent := DevshardReceiptEvent{
-		StateSig:          resp.StateSig,
-		StateHash:         resp.StateHash,
-		Nonce:             resp.Nonce,
-		Receipt:           resp.Receipt,
-		ConfirmedAt:       resp.ConfirmedAt,
-		ObservedHeight:    resp.ObservedHeight,
-		ObservedBlockHash: resp.ObservedBlockHash,
-	}
-	if s.receiptDelay > 0 {
-		timer := time.NewTimer(s.receiptDelay)
-		select {
-		case <-c.Request().Context().Done():
-			timer.Stop()
-			if resp.ExecutionJob != nil {
-				s.host.ReleaseExecution(resp.InferenceID)
-			}
-			return nil
-		case <-timer.C:
-		}
-	}
-	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
-	if s.heightSync != nil {
-		schedK := s.heightSync.K()
-		schedSlots := s.heightSync.SlotsNum()
-		escrowH := s.host.HeightSyncEscrowHints(schedK, schedSlots)
-		h := heightsync.DecideHints{
-			Nonce:              req.Nonce,
-			SessionStart:       req.Nonce == 1,
-			ForceAnchor:        req.ForceHeightSyncAnchor && escrowH == nil,
-			Escrow:             escrowH,
-			OriginatorSenderID: s.host.Signer().Address(),
-			Direction:          "response",
-		}
-		sec, dErr, oracleMiss := s.heightSync.Decide(c.Request().Context(), h)
-		if oracleMiss {
-			heightsync.IncOracleFailure(s.host.Signer().Address())
-		}
-		if dErr != nil {
-			logging.Debug("heightsync: outbound anchor error",
-				heightsync.LogFieldSubsystem, "heightsync",
-				heightsync.LogFieldNonce, req.Nonce,
-				"error", dErr.Error())
-			s.logOutboundHeightSync(nil, req.Nonce)
-		} else if sec != nil {
-			sec.Direction = "response"
-			if s.attachResponseOriginSignature(sec, req.Nonce) {
-				s.recordEnvelopeBindingResponse(req.Nonce, sec)
-				receiptWrapper["height_sync"] = sec
-				s.logOutboundHeightSync(sec, req.Nonce)
-				s.recordOutboundAnchorIfAnchor(sec, c.Request().Method+" "+c.Path())
-			} else {
-				s.logOutboundHeightSync(nil, req.Nonce)
-			}
-		} else {
-			s.logOutboundHeightSync(nil, req.Nonce)
-		}
-	}
-	if werr := writeSSEEvent(w, receiptWrapper); werr != nil {
-		observability.RecordReceiptWriteFailure(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonReceiptWriteErr, observability.WhereTransportWriteReceiptSSE)
-		if resp.ExecutionJob != nil {
-			s.host.ReleaseExecution(resp.InferenceID)
-		}
-		return nil
-	}
-
-	finishReason := observability.ReasonOK
-	var finishFailureWhere observability.Where
-
-	// Event 2+: inference result.
-	// If reconnecting to a completed inference, replay cached response.
-	// Otherwise run deferred execution with live streaming.
-	if resp.CachedResponseBody != nil && resp.ExecutionJob == nil {
-		if werr := replaySSEBody(w, resp.CachedResponseBody); werr != nil {
-			observability.RecordReceiptNoExecutionInterrupted(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonCachedReplayErr, observability.WhereRuntimeWriteClientResponse)
-			return nil
-		}
-	} else if resp.ExecutionJob != nil {
-		resp.ExecutionJob.ResponseWriter = w
-		execResult, execErr := s.host.RunExecution(ctx, resp.ExecutionJob)
-		if execErr != nil {
-			reason, where := observability.ErrorReason(execErr, observability.ReasonExecuteErr, observability.WhereHostExecute)
-			if errors.Is(ctx.Err(), context.Canceled) {
-				observability.RecordClientCancelledAfterReceipt(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, where)
-				return nil
-			}
-			observability.RecordExecutionNoFinish(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, reason, where)
-			logging.Error("deferred execution failed", "subsystem", "server", "error", execErr)
-			return nil
-		}
-		if execResult != nil && execResult.PartialResponse {
-			finishReason = observability.Reason(execResult.PartialResponseReason)
-			if finishReason == "" {
-				finishReason = observability.ReasonPartialResponseInterrupted
-			}
-			finishFailureWhere = observability.Where(execResult.PartialResponseWhere)
-		}
-	}
-
-	// Final event: devshard_meta with updated mempool.
-	mempoolTxs := s.host.MempoolTxs()
-	mempoolBytes, _ := DevshardTxsToBytes(mempoolTxs)
-	metaWrapper := map[string]interface{}{"devshard_meta": DevshardMetaEvent{Mempool: mempoolBytes}}
-	_ = writeSSEEvent(w, metaWrapper)
-
-	// Fire gossip in background.
-	if s.gossip != nil && resp.StateSig != nil {
-		go s.gossip.AfterRequest(context.Background(), resp.Nonce, resp.StateHash, resp.StateSig)
-	}
-	if s.gossip != nil && resp.StateSig == nil && len(resp.Mempool) > 0 {
-		go s.gossip.BroadcastTxs(context.Background(), resp.Mempool)
-	}
-
-	switch {
-	case resp.ExecutionExpected && resp.ExecutionJob != nil:
-		observability.RecordFinishPublished(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, finishReason, finishFailureWhere)
-	case resp.Receipt != nil:
-		observability.RecordReceiptNoExecutionExpected(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, resp.ReceiptReason, observability.WhereHostSignReceipt)
-	default:
-		observability.RecordNoReceiptExpected(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, resp.ReceiptReason, observability.WhereHostSignReceipt)
-	}
-
-	return nil
+	return s.ServeInference(ctx, InferenceCall{
+		SessionID: sessionID,
+		Sender:    sender,
+		Body:      body,
+		Source:    c.Request().Method + " " + c.Path(),
+		Evidence:  requestLegEvidenceFromContext(c, s.host.EscrowID()),
+		Sink:      c.Response(),
+		Op:        op,
+		OnStreamStart: func() {
+			w := c.Response()
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			w.WriteHeader(http.StatusOK)
+			w.Flush()
+		},
+	})
 }
 
 // replaySSEBody writes cached ML response bytes as SSE data lines.

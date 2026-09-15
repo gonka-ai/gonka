@@ -16,6 +16,9 @@ import (
 const (
 	gzipEncoding           = "gzip"
 	minCompressedBodyBytes = 1 << 10
+	// MinGzipBodyBytes is the 1 KiB floor for optional gzip (plan §8.1 /
+	// Phase 4 /stats/rpc). Smaller bodies stay identity.
+	MinGzipBodyBytes = minCompressedBodyBytes
 )
 
 // Pooled here because echo would build a new pool on every request.
@@ -59,6 +62,37 @@ func RequestDecompressionMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		c.Request().Body = reader
 		return next(c)
 	}
+}
+
+// AcceptsGzip reports whether the caller asked for gzip (Accept-Encoding).
+func AcceptsGzip(h http.Header) bool {
+	if h == nil {
+		return false
+	}
+	for _, part := range strings.Split(h.Get("Accept-Encoding"), ",") {
+		encoding := strings.TrimSpace(strings.Split(part, ";")[0])
+		if strings.EqualFold(encoding, gzipEncoding) {
+			return true
+		}
+	}
+	return false
+}
+
+// GzipBestSpeed compresses src at BestSpeed. Caller sets Content-Encoding.
+func GzipBestSpeed(src []byte) ([]byte, error) {
+	var compressed bytes.Buffer
+	writer, err := gzip.NewWriterLevel(&compressed, gzip.BestSpeed)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := writer.Write(src); err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return compressed.Bytes(), nil
 }
 
 // encodeRequestBody gzips a body worth compressing and names the encoding.

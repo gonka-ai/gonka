@@ -345,7 +345,7 @@ func TestSelectTransport_EmptyIsHTTPClient(t *testing.T) {
 
 func TestSelectTransport_UnwiredKeepsHTTPClient(t *testing.T) {
 	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", devtest.MustGenerateKey(t))
-	for _, raw := range []string{EndpointChat, "typo", "chat,unknown"} {
+	for _, raw := range []string{"typo", "unknown"} {
 		t.Run(raw, func(t *testing.T) {
 			got := SelectTransport(httpClient, "gonka1unwired", ParseRPCEndpoints(raw), nil)
 			require.Equal(t, httpClient, got, "unwired names must not start Attach")
@@ -364,6 +364,16 @@ func TestSelectTransport_NamedEndpointUsesRPCClient(t *testing.T) {
 	require.False(t, rpc.Uses(EndpointGossip))
 }
 
+func TestSelectTransport_ChatStartsAttach(t *testing.T) {
+	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", devtest.MustGenerateKey(t))
+	got := SelectTransport(httpClient, "gonka1hostchat", ParseRPCEndpoints(EndpointChat), nil)
+	rpc, ok := got.(*RPCClient)
+	require.True(t, ok)
+	t.Cleanup(rpc.Close)
+	require.True(t, rpc.Uses(EndpointChat))
+	require.True(t, ParseRPCEndpoints(EndpointChat).NeedsAttach())
+}
+
 func TestSelectTransport_ChatWithSignaturesStillRPC(t *testing.T) {
 	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", devtest.MustGenerateKey(t))
 	got := SelectTransport(httpClient, "gonka1hostchat", ParseRPCEndpoints(EndpointChat+","+EndpointSignatures), nil)
@@ -371,10 +381,7 @@ func TestSelectTransport_ChatWithSignaturesStillRPC(t *testing.T) {
 	require.True(t, ok)
 	t.Cleanup(rpc.Close)
 	require.True(t, rpc.Uses(EndpointSignatures))
-	require.True(t, rpc.endpoints.Has(EndpointChat), "unknown-to-Connect names stay in the set")
-	require.False(t, rpc.Uses(EndpointChat), "chat is opted in but not on Connect")
-	require.True(t, ParseRPCEndpoints(EndpointChat).Has(EndpointChat))
-	require.False(t, ParseRPCEndpoints(EndpointChat).NeedsAttach())
+	require.True(t, rpc.Uses(EndpointChat))
 }
 
 func TestRPCClient_UsesOnlyWiredMethods(t *testing.T) {
@@ -388,7 +395,7 @@ func TestRPCClient_UsesOnlyWiredMethods(t *testing.T) {
 	require.True(t, rpc.Uses(EndpointGossip))
 	require.True(t, rpc.endpoints.Has(EndpointRepair))
 	require.True(t, rpc.Uses(EndpointRepair))
-	require.False(t, rpc.Uses(EndpointChat))
+	require.True(t, rpc.Uses(EndpointChat))
 }
 
 func TestSelectTransport_EmptyHostAddressKeepsHTTP(t *testing.T) {
@@ -477,7 +484,7 @@ func TestClassifyUnwiredRPCEndpoints(t *testing.T) {
 	require.Empty(t, unknown)
 
 	unwired, unknown = classifyUnwiredRPCEndpoints(ParseRPCEndpoints("gossip,typo,chat"))
-	require.Equal(t, []string{EndpointChat}, unwired)
+	require.Empty(t, unwired)
 	require.Equal(t, []string{"typo"}, unknown)
 }
 
@@ -488,13 +495,12 @@ func TestSelectTransport_UnwiredNamesWarnOnce(t *testing.T) {
 	t.Cleanup(func() { logging.SetLogger(discardRestLogger{}) })
 
 	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", devtest.MustGenerateKey(t))
-	got := SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints("chat,typo"), nil)
+	got := SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints("typo"), nil)
 	require.Same(t, httpClient, got)
 	require.Len(t, capLog.warns, 1)
-	require.Contains(t, capLog.warns[0], EndpointChat)
 	require.Contains(t, capLog.warns[0], "typo")
 
-	_ = SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints(EndpointChat), nil)
+	_ = SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints("typo"), nil)
 	require.Len(t, capLog.warns, 1, "unwired-name warn is one-shot")
 
 	resetUnwiredRPCWarnForTest()
@@ -506,6 +512,8 @@ func TestIsRetryableNonInference_ConnectCodes(t *testing.T) {
 	require.False(t, IsRetryableNonInference(connect.NewError(connect.CodeUnauthenticated, errors.New("handshake required"))))
 	require.True(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted, errors.New("busy"))))
 	require.True(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted, errors.New("too many sessions"))))
+	require.True(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted, errors.New("rate limit exceeded"))))
+	require.True(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted, errors.New("too many diffs requests"))))
 	require.True(t, IsRetryableNonInference(connect.NewError(connect.CodeResourceExhausted, errors.New("too many attach attempts"))))
 	require.True(t, IsRetryableNonInference(connect.NewError(connect.CodeUnavailable, errors.New("host initializing"))))
 	require.False(t, IsRetryableNonInference(context.Canceled))
@@ -522,6 +530,64 @@ func TestIsRetryableNonInference_ConnectCodes(t *testing.T) {
 	require.False(t, IsRetryableNonInference(fmt.Errorf("get signatures: %w",
 		connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("message size %d is larger than configured max %d", 17, 16)))),
 		"rpcRetry wrappers must still fail fast")
+}
+
+func TestRPCRetry_RateLimitRetriesThenGivesUp(t *testing.T) {
+	var n atomic.Int32
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := rpcRetry(ctx, func() error {
+		n.Add(1)
+		return connect.NewError(connect.CodeResourceExhausted, errors.New("rate limit exceeded"))
+	})
+	require.Error(t, err)
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Greater(t, n.Load(), int32(1), "resource_exhausted rate limits must retry")
+	require.Less(t, time.Since(start), time.Second)
+}
+
+func TestRPCRetry_RetryAfterLongerThanBudgetFailsFast(t *testing.T) {
+	var n atomic.Int32
+	start := time.Now()
+	err := rpcRetry(context.Background(), func() error {
+		n.Add(1)
+		ce := connect.NewError(connect.CodeResourceExhausted, errors.New("rate limit exceeded"))
+		ce.Meta().Set("Retry-After", "60")
+		return ce
+	})
+	require.Error(t, err)
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Equal(t, int32(1), n.Load(), "Retry-After longer than the 5s budget must not hammer")
+	require.Less(t, time.Since(start), time.Second)
+}
+
+func TestRPCRetry_RetryAfterFitsBudget(t *testing.T) {
+	var n atomic.Int32
+	start := time.Now()
+	err := rpcRetry(context.Background(), func() error {
+		if n.Add(1) == 1 {
+			ce := connect.NewError(connect.CodeResourceExhausted, errors.New("rate limit exceeded"))
+			ce.Meta().Set("Retry-After", "1")
+			return ce
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(2), n.Load())
+	require.GreaterOrEqual(t, time.Since(start), time.Second)
+}
+
+func TestConnectRetryAfter(t *testing.T) {
+	require.Zero(t, connectRetryAfter(errors.New("plain")))
+	ce := connect.NewError(connect.CodeResourceExhausted, errors.New("rate limit exceeded"))
+	require.Zero(t, connectRetryAfter(ce))
+	ce.Meta().Set("Retry-After", "7")
+	require.Equal(t, 7*time.Second, connectRetryAfter(ce))
+	when := time.Now().UTC().Add(30 * time.Second)
+	ce.Meta().Set("Retry-After", when.Format(http.TimeFormat))
+	got := connectRetryAfter(ce)
+	require.InDelta(t, float64(30*time.Second), float64(got), float64(2*time.Second))
 }
 
 func TestRPCRetry_MessageTooLargeFailsFast(t *testing.T) {

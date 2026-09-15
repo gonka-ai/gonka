@@ -94,11 +94,15 @@ func (x *SignedEnvelope) GetEscrowId() string {
 
 type RateLimits struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	MessagesPerMin uint32                 `protobuf:"varint,1,opt,name=messages_per_min,json=messagesPerMin,proto3" json:"messages_per_min,omitempty"`
+	MessagesPerMin uint32                 `protobuf:"varint,1,opt,name=messages_per_min,json=messagesPerMin,proto3" json:"messages_per_min,omitempty"` // peer weight budget
 	MaxStreams     uint32                 `protobuf:"varint,2,opt,name=max_streams,json=maxStreams,proto3" json:"max_streams,omitempty"`
-	AttachPerMin   uint32                 `protobuf:"varint,3,opt,name=attach_per_min,json=attachPerMin,proto3" json:"attach_per_min,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	IpWeightPerMin uint32                 `protobuf:"varint,3,opt,name=ip_weight_per_min,json=ipWeightPerMin,proto3" json:"ip_weight_per_min,omitempty"` // Attach / connection-attempt budget
+	// Instantaneous peer-bucket tokens. Default is 10% of messages_per_min
+	// (600 at 6000). IP burst defaults to ip_weight_per_min (a full-minute pulse).
+	MessagesBurst uint32 `protobuf:"varint,7,opt,name=messages_burst,json=messagesBurst,proto3" json:"messages_burst,omitempty"`
+	IpBurst       uint32 `protobuf:"varint,8,opt,name=ip_burst,json=ipBurst,proto3" json:"ip_burst,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RateLimits) Reset() {
@@ -145,9 +149,23 @@ func (x *RateLimits) GetMaxStreams() uint32 {
 	return 0
 }
 
-func (x *RateLimits) GetAttachPerMin() uint32 {
+func (x *RateLimits) GetIpWeightPerMin() uint32 {
 	if x != nil {
-		return x.AttachPerMin
+		return x.IpWeightPerMin
+	}
+	return 0
+}
+
+func (x *RateLimits) GetMessagesBurst() uint32 {
+	if x != nil {
+		return x.MessagesBurst
+	}
+	return 0
+}
+
+func (x *RateLimits) GetIpBurst() uint32 {
+	if x != nil {
+		return x.IpBurst
 	}
 	return 0
 }
@@ -469,13 +487,15 @@ const file_devshard_transport_v1_auth_proto_rawDesc = "" +
 	"\apayload\x18\x01 \x01(\fR\apayload\x12\x1c\n" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\x12\x1c\n" +
 	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp\x12\x1b\n" +
-	"\tescrow_id\x18\x04 \x01(\tR\bescrowId\"}\n" +
+	"\tescrow_id\x18\x04 \x01(\tR\bescrowId\"\x87\x02\n" +
 	"\n" +
 	"RateLimits\x12(\n" +
 	"\x10messages_per_min\x18\x01 \x01(\rR\x0emessagesPerMin\x12\x1f\n" +
 	"\vmax_streams\x18\x02 \x01(\rR\n" +
-	"maxStreams\x12$\n" +
-	"\x0eattach_per_min\x18\x03 \x01(\rR\fattachPerMin\"\x88\x02\n" +
+	"maxStreams\x12)\n" +
+	"\x11ip_weight_per_min\x18\x03 \x01(\rR\x0eipWeightPerMin\x12%\n" +
+	"\x0emessages_burst\x18\a \x01(\rR\rmessagesBurst\x12\x19\n" +
+	"\bip_burst\x18\b \x01(\rR\aipBurstJ\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\x06\x10\aR\rdiffs_per_minR\x0fmempool_per_minR\x0fpayload_per_min\"\x88\x02\n" +
 	"\rAttachRequest\x12!\n" +
 	"\fpeer_address\x18\x01 \x01(\tR\vpeerAddress\x12!\n" +
 	"\fattach_nonce\x18\x02 \x01(\fR\vattachNonce\x12)\n" +

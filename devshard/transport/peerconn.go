@@ -194,6 +194,13 @@ type PeerConn struct {
 	done      chan struct{}
 	startOnce sync.Once
 	stopOnce  sync.Once
+
+	// budget is the advertised peer-weight bucket (messages_per_min /
+	// messages_burst × RPCProcedureWeight). Shared by every RPCClient on
+	// this connection. IP Attach is not paced: success refunds.
+	budget  peerRPCBudget
+	streams peerStreamBudget
+	firstOK atomic.Bool
 }
 
 const (
@@ -322,6 +329,9 @@ func (p *PeerConn) loop() {
 		p.publishToken(tok, exp)
 		p.setState(stateReady)
 		backoff = 0
+		if p.firstOK.CompareAndSwap(false, true) {
+			RecordPeerReconnect(p.metricPeer(), ReconnectFirstAttach)
+		}
 		if err := p.serveWatch(tok, exp); err != nil {
 			if p.ctx.Err() != nil {
 				return
@@ -464,7 +474,37 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	p.budget.apply(resp.Msg.GetLimits(), p.cfg.now())
+	p.streams.apply(resp.Msg.GetLimits())
 	return resp.Msg.GetSessionToken(), expires, nil
+}
+
+func (p *PeerConn) takePeerBudget(ctx context.Context, procedure string) error {
+	if p == nil {
+		return nil
+	}
+	return p.budget.take(ctx, procedure, p.cfg.now, p.cfg.sleep)
+}
+
+func (p *PeerConn) refundPeerBudget(procedure string) {
+	if p == nil {
+		return
+	}
+	p.budget.refund(p.cfg.now(), procedure)
+}
+
+func (p *PeerConn) acquireStream() bool {
+	if p == nil {
+		return true
+	}
+	return p.streams.acquire()
+}
+
+func (p *PeerConn) releaseStream() {
+	if p == nil {
+		return
+	}
+	p.streams.release()
 }
 
 func (p *PeerConn) minTTL() time.Duration {
@@ -491,6 +531,10 @@ func (p *PeerConn) attachExpiry(expiresAt int64) (time.Time, error) {
 }
 
 func (p *PeerConn) watch(ctx context.Context, token []byte) error {
+	if !p.acquireStream() {
+		return connect.NewError(connect.CodeResourceExhausted, errors.New("too many concurrent streams"))
+	}
+	defer p.releaseStream()
 	req := connect.NewRequest(&rpcpb.WatchRequest{SessionToken: token})
 	SetSessionHeader(req.Header(), token)
 	stream, err := p.authHost.Watch(ctx, req)
@@ -703,6 +747,7 @@ func (p *PeerConn) incAttach(err error) {
 
 func (p *PeerConn) incReattach(reason string) {
 	observability.IncPeerReattach(p.metricPeer(), reason)
+	RecordPeerReconnect(p.metricPeer(), reason)
 }
 
 // Close stops the attach loop. Tests that called NewPeerConn+Start must

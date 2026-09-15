@@ -544,6 +544,10 @@ func (s *Server) attachResponseOriginSignature(sec *heightsync.HeightSyncSection
 }
 
 func (s *Server) recordEnvelopeBindingRequest(c echo.Context, req host.HostRequest, sec *heightsync.HeightSyncSection, oracleHdr *blocks.Header) {
+	s.recordEnvelopeBinding(req, sec, oracleHdr, requestLegEvidenceFromContext(c, s.host.EscrowID()))
+}
+
+func (s *Server) recordEnvelopeBinding(req host.HostRequest, sec *heightsync.HeightSyncSection, oracleHdr *blocks.Header, evidence *heightsync.RequestLegEvidence) {
 	if s == nil || s.heightSyncMarks == nil || sec == nil {
 		return
 	}
@@ -560,7 +564,7 @@ func (s *Server) recordEnvelopeBindingRequest(c echo.Context, req host.HostReque
 		Txs:          txs,
 		Sec:          sec,
 		LocalAligned: local,
-		RequestLeg:   requestLegEvidenceFromContext(c, s.host.EscrowID()),
+		RequestLeg:   evidence,
 	}, heightsync.DefaultHeartbeatConfig())
 	s.heightSyncMarks.AppendAll(marks)
 }

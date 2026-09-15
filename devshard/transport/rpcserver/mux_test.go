@@ -74,7 +74,7 @@ func TestImplementedRPC_AttachWatchSignatures(t *testing.T) {
 		return resp.StatusCode
 	}
 	require.NotEqual(t, http.StatusNotImplemented, code(rpcpbconnect.SessionServiceGetSignaturesProcedure))
-	require.Equal(t, http.StatusNotImplemented, code(rpcpbconnect.SessionServiceChatProcedure))
+	require.NotEqual(t, http.StatusNotImplemented, code(rpcpbconnect.SessionServiceChatProcedure))
 	require.Equal(t, http.StatusNotImplemented, code(rpcpbconnect.GossipServiceNonceProcedure))
 	require.Equal(t, http.StatusNotImplemented, code(rpcpbconnect.PayloadServiceGetPayloadProcedure))
 }

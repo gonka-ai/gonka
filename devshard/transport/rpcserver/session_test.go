@@ -72,6 +72,11 @@ func (s stubLookup) SessionServerExisting(string) (SessionCore, error) {
 	return s.core, nil
 }
 
+func (s stubLookup) SessionForParticipant(id, addr string) (SessionCore, error) {
+	_ = addr
+	return s.SessionServerExisting(id)
+}
+
 type countingLookup struct {
 	core SessionCore
 	n    *int
@@ -79,6 +84,26 @@ type countingLookup struct {
 
 func (s countingLookup) SessionServerExisting(string) (SessionCore, error) {
 	*s.n++
+	return s.core, nil
+}
+
+func (s countingLookup) SessionForParticipant(id, addr string) (SessionCore, error) {
+	_ = addr
+	return s.SessionServerExisting(id)
+}
+
+type countingBindLookup struct {
+	core           SessionCore
+	existing, bind int
+}
+
+func (s *countingBindLookup) SessionServerExisting(string) (SessionCore, error) {
+	s.existing++
+	return s.core, nil
+}
+
+func (s *countingBindLookup) SessionForParticipant(string, string) (SessionCore, error) {
+	s.bind++
 	return s.core, nil
 }
 
@@ -533,4 +558,24 @@ func TestSessionHandler_OwnerVsGroup(t *testing.T) {
 		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 		require.Contains(t, err.Error(), "restricted to group members")
 	})
+}
+
+func TestSessionHandler_ParticipantBindVsExisting(t *testing.T) {
+	lookup := &countingBindLookup{core: stubCore{member: true, owner: true}}
+	env := newSessionEnvMux(t, lookup, "escrow-1", true)
+
+	_, err := env.session.GetDiffs(context.Background(), withSession(
+		connect.NewRequest(&rpcpb.GetDiffsRequest{}), env.token))
+	require.NoError(t, err)
+	_, err = env.session.GetMempool(context.Background(), withSession(
+		connect.NewRequest(&rpcpb.GetMempoolRequest{}), env.token))
+	require.NoError(t, err)
+	require.Equal(t, 2, lookup.existing, "GetDiffs/GetMempool must not CreateSession")
+	require.Equal(t, 0, lookup.bind)
+
+	_, err = env.session.ChallengeReceipt(context.Background(), withSession(
+		connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.ChallengeReceiptRequest{InferenceId: 1})), env.token))
+	require.NoError(t, err)
+	require.Equal(t, 1, lookup.bind, "ChallengeReceipt must bind a participant session")
+	require.Equal(t, 2, lookup.existing)
 }

@@ -139,6 +139,37 @@ func TestHADiffPersistMetricsIncrement(t *testing.T) {
 		t.Fatalf("peer_rpc_enabled after clear = %v, want 0", got)
 	}
 
+	beforeWait := testutil.ToFloat64(PeerRPCBudgetWaitCounter("GetDiffs"))
+	beforeWaitSec := testutil.ToFloat64(PeerRPCBudgetWaitSecondsCounter("GetDiffs"))
+	ObservePeerRPCBudgetWait("GetDiffs", 250*time.Millisecond)
+	if testutil.ToFloat64(PeerRPCBudgetWaitCounter("GetDiffs"))-beforeWait != 1 {
+		t.Fatalf("peer_rpc_budget_wait delta want 1")
+	}
+	if delta := testutil.ToFloat64(PeerRPCBudgetWaitSecondsCounter("GetDiffs")) - beforeWaitSec; delta < 0.249 || delta > 0.251 {
+		t.Fatalf("peer_rpc_budget_wait_seconds delta = %v, want ~0.25", delta)
+	}
+	beforeSkip := testutil.ToFloat64(PeerRPCBudgetWaitSkippedCounter("GetDiffs"))
+	IncPeerRPCBudgetWaitSkipped("GetDiffs")
+	if testutil.ToFloat64(PeerRPCBudgetWaitSkippedCounter("GetDiffs"))-beforeSkip != 1 {
+		t.Fatalf("peer_rpc_budget_wait_skipped delta want 1")
+	}
+
+	beforeReq := testutil.ToFloat64(peerRPCRequestsTotal.WithLabelValues("GetDiffs", "ok"))
+	IncPeerRPCRequests("GetDiffs", "ok")
+	if testutil.ToFloat64(peerRPCRequestsTotal.WithLabelValues("GetDiffs", "ok"))-beforeReq != 1 {
+		t.Fatalf("peer_rpc_requests ok delta want 1")
+	}
+	beforeBanned := testutil.ToFloat64(peerRPCBannedTotal.WithLabelValues("GetDiffs", "shared"))
+	IncPeerRPCBanned("GetDiffs", "shared")
+	if testutil.ToFloat64(peerRPCBannedTotal.WithLabelValues("GetDiffs", "shared"))-beforeBanned != 1 {
+		t.Fatalf("peer_rpc_banned delta want 1")
+	}
+	beforeAttachBan := testutil.ToFloat64(peerRPCAttachBannedTotal.WithLabelValues("floor"))
+	IncPeerRPCAttachBanned("floor")
+	if testutil.ToFloat64(peerRPCAttachBannedTotal.WithLabelValues("floor"))-beforeAttachBan != 1 {
+		t.Fatalf("peer_rpc_attach_banned floor delta want 1")
+	}
+
 	beforePeerAttach := testutil.ToFloat64(PeerAttachCounter("gonka1peer", "ok"))
 	IncPeerAttach("gonka1peer", "ok")
 	if testutil.ToFloat64(PeerAttachCounter("gonka1peer", "ok"))-beforePeerAttach != 1 {

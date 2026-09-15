@@ -13,9 +13,15 @@ message SignedEnvelope {
 }
 
 message RateLimits {
-  uint32 messages_per_min = 1;
+  uint32 messages_per_min = 1; // peer weight budget
   uint32 max_streams       = 2;
-  uint32 attach_per_min   = 3;
+  uint32 ip_weight_per_min = 3; // Attach / connection-attempt budget
+  reserved 4, 5, 6;
+  reserved "diffs_per_min", "mempool_per_min", "payload_per_min";
+  // Instantaneous peer-bucket tokens. Default is 10% of messages_per_min
+  // (600 at 6000). IP burst defaults to ip_weight_per_min (a full-minute pulse).
+  uint32 messages_burst = 7;
+  uint32 ip_burst        = 8;
 }
 
 message AttachRequest {
@@ -23,7 +29,7 @@ message AttachRequest {
   // Client-chosen RPC attachment id (random UUID). This is not an inference or
   // tx nonce; it identifies this Attach session and is covered by signature.
   bytes  attach_nonce     = 2;
-	string protocol_version = 3;
+  string protocol_version = 3;
   bytes  channel_binding  = 4; // unused: HTTP/1.1 has no TLS layer; must be empty
   bytes  signature        = 5; // ECDSA over AttachSignatureMessage (host_address, timestamp, peer_address, attach_nonce, protocol_version, channel_binding)
   string host_address     = 6; // gonka address of the host being attached to

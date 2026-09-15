@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -149,6 +150,38 @@ func shouldObserveUpstreamStatus(path string, statusCode int, _, _, routerError 
 		return false
 	}
 	return statusCode > 0
+}
+
+// connectRetryAfter is the wait advertised on a Connect error (delta-seconds
+// or HTTP-date). Zero means the meta was missing or unparsable.
+func connectRetryAfter(err error) time.Duration {
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return 0
+	}
+	raw := strings.TrimSpace(ce.Meta().Get("Retry-After"))
+	if raw == "" {
+		return 0
+	}
+	if n, convErr := strconv.Atoi(raw); convErr == nil {
+		if n <= 0 {
+			return 0
+		}
+		return time.Duration(n) * time.Second
+	}
+	when, parseErr := http.ParseTime(raw)
+	if parseErr != nil {
+		return 0
+	}
+	d := time.Until(when)
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+func isQuotaResourceExhausted(err error) bool {
+	return connect.CodeOf(err) == connect.CodeResourceExhausted && !isConnectMessageTooLarge(err)
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {
