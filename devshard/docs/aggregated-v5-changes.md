@@ -1,6 +1,6 @@
 # Aggregated v5: Height-sync protocol + general devshard fixes
 
-This is the updated [#1584](https://github.com/gonka-ai/gonka/pull/1584) body: original height-sync write-up, plus the feature-block index of everything else that has merged onto `devshard-0.2.15-v5`.
+Height-sync write-up, plus the feature-block index of everything else that has merged onto `devshard-0.2.15-v5`.
 
 ## Main features
 
