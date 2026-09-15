@@ -1,10 +1,12 @@
 # High-availability devshard host setup
 
-Set up multiple `versiond` replicas with shared PostgreSQL to serve inference through a single endpoint.
+Devshard inference that stays available, backed by multiple `versiond` instances.
 
 ## Why this matters
 
-If one `versiond` replica fails, the routers direct requests to the remaining ready replicas. Shared PostgreSQL keeps committed session state available to those replicas. The same setup lets you maintain one instance while the others continue serving inference.
+A single `versiond` process is a single point of failure (SPOF): if that machine or container dies, gateways cannot reach your host for that protocol version.
+
+This HA layout runs multiple `versiond` replicas behind routers, so another ready replica can serve requests when one fails or is stopped for maintenance. The replicas share committed session state in PostgreSQL.
 
 ```text
 Public proxy (/devshard/...)
@@ -16,7 +18,7 @@ Public proxy (/devshard/...)
         └── versiond2 ──► devshardd ──┴── shared PostgreSQL
 ```
 
-Keep enough ready replicas for the traffic while servicing a member. For replicas on different machines, use replicated or managed PostgreSQL.
+Keep enough ready replicas for every served protocol and the traffic. A request already in progress on a failed replica can still be interrupted.
 
 <a id="before-you-start"></a>
 
@@ -48,7 +50,9 @@ If you previously set `VERSIOND_IMAGE`, `VERSIOND_ROUTER_IMAGE`, `PROXY_ROUTER_I
 
 ## Step 1 - Choose PostgreSQL
 
-Use PostgreSQL for this HA setup. Every replica must connect to the **same writable database**; do not share SQLite files between replicas.
+Another replica needs the session's saved state to continue serving it. Connect every replica to the **same writable PostgreSQL database**; do not share SQLite files between replicas.
+
+The database must also remain available. Local PostgreSQL is a simple starting point; use replicated or managed HA PostgreSQL to avoid depending on one database machine.
 
 | Option | What to prepare |
 | --- | --- |
@@ -81,6 +85,8 @@ Keep all deployment files in `deploy/join`:
 <a id="21-common-configuration-local-replicas"></a>
 
 ### 2.1 Same machine, two replicas
+
+Two replicas let inference continue when one process stops. Both still depend on this machine; add a replica on [another machine](#add-a-remote-replica) to keep a replica available when it goes offline.
 
 <a id="1-set-the-deployment-configuration"></a>
 
@@ -181,7 +187,7 @@ services:
 EOF
 ```
 
-This configures a catalog filter for the protocols in `VERSIOND_VERSIONS`. Keep it running and use the same filtered catalog for all replicas and routers.
+The filter keeps replicas and routers on the same protocol list from `VERSIOND_VERSIONS`. Keep it running and use its catalog throughout this deployment.
 
 **Local PostgreSQL:** continue to [Step 3](#4-start-the-deployment). **External PostgreSQL:** complete §2.2 first. Add more replicas after startup and verification.
 
@@ -232,6 +238,8 @@ export COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compos
 <a id="add-a-remote-replica"></a>
 
 ### 2.3 Multiple machines
+
+Replicas on different machines let the pool retain a serving replica when one machine goes offline. This does not duplicate the whole join stack: the layout below still depends on A's public proxy, node and api, and on the shared PostgreSQL database.
 
 For a new deployment, finish [Step 3](#4-start-the-deployment) and [Step 4](#verify-the-deployment) on A first, then return here.
 
@@ -322,7 +330,7 @@ Continue when the container is healthy and every check returns HTTP 200.
 
 #### Check the remote database
 
-Install `psql` on the host being checked and run:
+Before B receives requests, verify that it uses the pool's existing database so it can continue the same sessions. Install `psql` on B and run:
 
 ```bash
 cd /path/to/gonka/deploy/join
@@ -410,7 +418,7 @@ The commands start the configured stack and router fleet. Complete [Verify the d
 
 ### 4.1 Check the running services
 
-Run on the join host after installation or an update. Add any extra local replicas to `replicas`; repeat the replica checks on remote hosts.
+These checks confirm that the replicas can access the shared database and serve each selected protocol through the public route. Run on the join host after installation or an update. Add any extra local replicas to `replicas`; repeat the replica checks on remote hosts.
 
 ```bash
 cd /path/to/gonka/deploy/join
@@ -443,7 +451,7 @@ For a new or replaced remote member, also pass the [database check](#check-the-r
 
 ### 4.2 Check service continuity
 
-After installation or a change to the replica pool, test a funded escrow for **each served protocol**. Keep enough other ready replicas for every served protocol and the load.
+Readiness alone does not prove that another replica can continue an existing session. After installation or a change to the replica pool, test a funded escrow for **each served protocol**. Keep enough other ready replicas for every served protocol and the load.
 
 1. Send an inference request and record the session's committed nonce and cost. Identify its serving replica from `X-Upstream-Addr` and the container's address.
 2. Stop that replica on its host with `docker stop -t 1800 <serving-container>`.
@@ -491,7 +499,7 @@ For whole-machine maintenance, drain the fleet before stopping the main stack:
 
 ### Restart a member
 
-Keep enough ready survivors for every served protocol and the load. Run with every active override in `COMPOSE_FILE`:
+Restart one member at a time so the others can keep serving requests. Keep enough ready replicas for every served protocol and the load. Run with every active override in `COMPOSE_FILE`:
 
 ```bash
 cd /path/to/gonka/deploy/join
@@ -677,7 +685,9 @@ After checking the migrated database, keep writers stopped and recreate PostgreS
 
 ### 3. Run the updater
 
-Close public traffic and let accepted work finish before cutover. Keep it closed until the retained-session tests pass. For a routine update, leave PostgreSQL, the filter, replicas and router fleet running. Leave `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled.
+The updater also replaces the single public proxy, which can interrupt connections even while replicas are ready. Schedule maintenance: close public traffic and let accepted work finish before cutover. Keep traffic closed until the retained-session tests pass.
+
+For a routine update, leave PostgreSQL, the filter, replicas and router fleet running. Leave `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled.
 
 <details>
 <summary><strong>First transition: prepare the filter and recover stopped members</strong></summary>
