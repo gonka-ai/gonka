@@ -1,6 +1,6 @@
 # High-availability devshard host setup
 
-Run multiple `versiond` replicas against shared PostgreSQL so one replica can fail while another continues serving inference.
+Set up multiple `versiond` replicas with shared PostgreSQL to serve inference through a single endpoint.
 
 | Task | Start here |
 | --- | --- |
