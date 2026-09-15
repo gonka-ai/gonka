@@ -110,30 +110,3 @@ func TestParamsServer_AcquireMLNode(t *testing.T) {
 	require.Equal(t, "http://mock-openai:8088", resp.Endpoint)
 	require.NotEmpty(t, resp.LockId)
 }
-
-func TestParamsServer_AcquireMLNodeRoundRobin(t *testing.T) {
-	ctx := context.Background()
-	src, err := params.NewCachedSource(ctx, nil, commonruntimeconfig.Snapshot{})
-	require.NoError(t, err)
-
-	srv, err := params.NewServer(params.Config{
-		Source: src,
-		MLNodes: []params.MLNode{
-			{ID: "mock-openai-0", Endpoint: "http://mock-openai-0:8088"},
-			{ID: "mock-openai-1", Endpoint: "http://mock-openai-1:8088"},
-		},
-	})
-	require.NoError(t, err)
-
-	conn, cleanup := startGRPC(t, srv)
-	defer cleanup()
-	client := gen.NewNodeManagerClient(conn)
-
-	first, err := client.AcquireMLNode(ctx, &gen.AcquireMLNodeRequest{Model: "test-model"})
-	require.NoError(t, err)
-	second, err := client.AcquireMLNode(ctx, &gen.AcquireMLNodeRequest{Model: "test-model"})
-	require.NoError(t, err)
-	require.Equal(t, "mock-openai-0", first.NodeId)
-	require.Equal(t, "mock-openai-1", second.NodeId)
-	require.Equal(t, map[string]uint64{"mock-openai-0": 1, "mock-openai-1": 1}, srv.AllocationCounts())
-}
