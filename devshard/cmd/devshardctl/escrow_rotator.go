@@ -373,25 +373,28 @@ func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySett
 }
 
 // escrowProtocolVersionFor derives the protocol version from the route prefix the escrow is pinned to,
-// so the stamp and the wire can never name different versions. Semver-like route versions map by major
-// (v2.1.0 -> v2, v4.1r5 -> v4); a leading "v" is then stripped (v4 -> "4"). Named runtimes such as
-// mainnet-canary are stamped as-is. An unresolvable prefix falls back to DefaultProtocolVersion.
+// so the stamp and the wire can never name different versions. A leading "v" is stripped (v4 -> "4"); a major.minor
+// slot such as v4.1 or v5.1 is kept, while a longer or suffixed version maps by major (v2.1.0 -> "2", v4.1r5 -> "4").
+// Named runtimes such as mainnet-canary are stamped as-is. An unresolvable prefix falls back to DefaultProtocolVersion.
 func escrowProtocolVersionFor(routePrefix string) string {
 	_, version, err := devshardpkg.ResolveRoutePrefix(routePrefix)
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q reason=version_segment_unresolved error=%v", routePrefix, err)
 		return string(types.DefaultProtocolVersion)
 	}
-	normalized := strings.TrimSpace(version)
-	if i := strings.IndexByte(normalized, '.'); i > 0 {
-		normalized = normalized[:i] // e.g. v2.1.0 -> v2
-	}
-	pv, err := types.ParseProtocolVersion(normalized)
+	protocolVersion, err := types.ParseProtocolVersion(version)
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q version=%q reason=unparseable_protocol error=%v", routePrefix, version, err)
 		return string(types.DefaultProtocolVersion)
 	}
-	return string(pv)
+	major, minor, hasMinor := strings.Cut(string(protocolVersion), ".")
+	_, majorErr := strconv.ParseUint(major, 10, 64)
+	_, minorErr := strconv.ParseUint(minor, 10, 64)
+	isMajorMinorSlot := majorErr == nil && minorErr == nil
+	if hasMinor && major != "" && !isMajorMinorSlot {
+		return major
+	}
+	return string(protocolVersion)
 }
 
 func normalizedEscrowRotationModels(settings GatewaySettings) []EscrowRotationModelSettings {

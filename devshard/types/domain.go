@@ -84,6 +84,7 @@ const (
 	ProtocolV2             ProtocolVersion = "2"
 	ProtocolV3             ProtocolVersion = "3"
 	ProtocolV4             ProtocolVersion = "4"
+	ProtocolV41            ProtocolVersion = "4.1"
 	ProtocolV5             ProtocolVersion = "5"
 	DefaultProtocolVersion                 = ProtocolV5
 )
