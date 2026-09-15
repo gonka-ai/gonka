@@ -2,7 +2,10 @@ package mockdapi
 
 import (
 	"context"
+	"errors"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"common/nodemanager/gen"
@@ -91,16 +94,73 @@ func (r *hostEventRing) since(cursor, clientGen uint64, want map[gen.HostEventKi
 	return evs, head, generation, false
 }
 
-// nodeManagerServer augments the chainoracle params NodeManager (GetRuntimeConfig
-// + AcquireMLNode + …) with a mock GetHostEvents producer for the escrow
-// long-poll warm scenario. Other RPCs are inherited from the embedded params server.
+// nodeManagerServer augments the standard params NodeManager with testenv-only
+// host events and optional multi-node ML allocation.
 type nodeManagerServer struct {
 	*params.Server
-	ring *hostEventRing
+	ring         *hostEventRing
+	mlNodes      []MLNode
+	nextNode     atomic.Uint64
+	lockSeq      atomic.Uint64
+	allocationMu sync.Mutex
+	allocations  map[string]uint64
 }
 
-func newNodeManagerServer(paramsSrv *params.Server, ring *hostEventRing) *nodeManagerServer {
-	return &nodeManagerServer{Server: paramsSrv, ring: ring}
+func newNodeManagerServer(paramsSrv *params.Server, ring *hostEventRing, nodes []MLNode) (*nodeManagerServer, error) {
+	mlNodes := append([]MLNode(nil), nodes...)
+	for _, node := range mlNodes {
+		if node.ID == "" || node.Endpoint == "" {
+			return nil, errors.New("mockdapi: ML nodes require id and endpoint")
+		}
+	}
+	return &nodeManagerServer{
+		Server:      paramsSrv,
+		ring:        ring,
+		mlNodes:     mlNodes,
+		allocations: make(map[string]uint64, len(mlNodes)),
+	}, nil
+}
+
+// AcquireMLNode uses the configured test-only pool when present. The embedded
+// params server remains the historical single-endpoint implementation.
+func (s *nodeManagerServer) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
+	if len(s.mlNodes) == 0 {
+		return s.Server.AcquireMLNode(ctx, req)
+	}
+	excluded := make(map[string]struct{}, len(req.GetExcludedNodes()))
+	for _, id := range req.GetExcludedNodes() {
+		excluded[id] = struct{}{}
+	}
+	available := make([]MLNode, 0, len(s.mlNodes))
+	for _, node := range s.mlNodes {
+		if _, skip := excluded[node.ID]; !skip {
+			available = append(available, node)
+		}
+	}
+	if len(available) == 0 {
+		return nil, errors.New("no ML nodes available")
+	}
+	node := available[(s.nextNode.Add(1)-1)%uint64(len(available))]
+	id := s.lockSeq.Add(1)
+	s.allocationMu.Lock()
+	s.allocations[node.ID]++
+	s.allocationMu.Unlock()
+	return &gen.AcquireMLNodeResponse{
+		LockId:   "mock-" + node.ID + "-" + req.GetModel() + "-" + strconv.FormatUint(id, 10),
+		Endpoint: node.Endpoint,
+		NodeId:   node.ID,
+	}, nil
+}
+
+// AllocationCounts returns a copy of successful test-pool acquisitions by node.
+func (s *nodeManagerServer) AllocationCounts() map[string]uint64 {
+	s.allocationMu.Lock()
+	defer s.allocationMu.Unlock()
+	counts := make(map[string]uint64, len(s.allocations))
+	for id, count := range s.allocations {
+		counts[id] = count
+	}
+	return counts
 }
 
 // GetHostEvents implements the NodeManager long-poll over the mock ring.

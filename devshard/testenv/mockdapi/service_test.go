@@ -29,7 +29,7 @@ type testBed struct {
 	cleanup  func()
 }
 
-func startBed(t *testing.T) testBed {
+func startBed(t *testing.T, options ...func(*mockdapi.Config)) testBed {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	st := seed.Defaults()
@@ -46,6 +46,9 @@ func startBed(t *testing.T) testBed {
 	// Disable background poll; tests drive RefreshRuntimeConfig explicitly via /testenv/*.
 	cfg.ChainPollInterval = time.Hour
 	cfg.BlockInterval = 50 * time.Millisecond
+	for _, option := range options {
+		option(&cfg)
+	}
 
 	svc, err := mockdapi.New(ctx, cfg)
 	require.NoError(t, err)
@@ -290,4 +293,39 @@ func TestMockDAPI_AcquireMLNode(t *testing.T) {
 	resp, err := gen.NewNodeManagerClient(conn).AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "test-model"})
 	require.NoError(t, err)
 	require.Equal(t, "http://mock-openai:8088", resp.Endpoint)
+}
+
+func TestMockDAPI_AcquireMLNodePool(t *testing.T) {
+	bed := startBed(t, func(cfg *mockdapi.Config) {
+		cfg.MLNodes = []mockdapi.MLNode{
+			{ID: "mock-openai-0", Endpoint: "http://mock-openai-0:8088"},
+			{ID: "mock-openai-1", Endpoint: "http://mock-openai-1:8088"},
+		}
+	})
+	t.Cleanup(bed.cleanup)
+
+	conn, err := grpc.NewClient(bed.grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	client := gen.NewNodeManagerClient(conn)
+
+	first, err := client.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "test-model"})
+	require.NoError(t, err)
+	second, err := client.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "test-model"})
+	require.NoError(t, err)
+	third, err := client.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{
+		Model: "test-model", ExcludedNodes: []string{"mock-openai-0"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "mock-openai-0", first.NodeId)
+	require.Equal(t, "mock-openai-1", second.NodeId)
+	require.Equal(t, "mock-openai-1", third.NodeId)
+
+	response, err := http.Get(bed.httpURL + "/testenv/ml-allocations")
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	var allocations map[string]uint64
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&allocations))
+	require.Equal(t, map[string]uint64{"mock-openai-0": 1, "mock-openai-1": 2}, allocations)
 }

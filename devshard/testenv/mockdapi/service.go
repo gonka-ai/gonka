@@ -32,6 +32,7 @@ type Service struct {
 	cfg            Config
 	paramsSrc      *params.CachedSource
 	paramsSrv      *params.Server
+	nodeManager    *nodeManagerServer
 	runtimeFetcher fetcher.SnapshotFetcher
 	blockMock      *observer.Mock
 	admin          *adminface.Client
@@ -46,8 +47,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.ChainGRPCAddr == "" {
 		return nil, errors.New("mockdapi: ChainGRPCAddr is required")
 	}
-	if cfg.MLEndpoint == "" {
-		return nil, errors.New("mockdapi: MLEndpoint is required")
+	if cfg.MLEndpoint == "" && len(cfg.MLNodes) == 0 {
+		return nil, errors.New("mockdapi: an ML endpoint is required")
 	}
 	if cfg.ChainPollInterval <= 0 {
 		cfg.ChainPollInterval = time.Second
@@ -88,6 +89,11 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		_ = conn.Close()
 		return nil, err
 	}
+	nodeManager, err := newNodeManagerServer(paramsSrv, newHostEventRing(), cfg.MLNodes)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 
 	blockMock, err := newBlockMock(cfg)
 	if err != nil {
@@ -99,11 +105,12 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		cfg:            cfg,
 		paramsSrc:      src,
 		paramsSrv:      paramsSrv,
+		nodeManager:    nodeManager,
 		runtimeFetcher: runtimeFetcher,
 		blockMock:      blockMock,
 		admin:          adminClient,
 		versions:       newVersionStore(cfg.Versions),
-		hostEvents:     newHostEventRing(),
+		hostEvents:     nodeManager.ring,
 	}
 	return s, nil
 }
@@ -195,7 +202,7 @@ func (s *Service) runChainPoll(ctx context.Context) error {
 
 func (s *Service) serveGRPCOn(ctx context.Context, lis net.Listener) error {
 	gs := grpc.NewServer()
-	gen.RegisterNodeManagerServer(gs, newNodeManagerServer(s.paramsSrv, s.hostEvents))
+	gen.RegisterNodeManagerServer(gs, s.nodeManager)
 	s.grpcServer = gs
 	go func() {
 		<-ctx.Done()
@@ -212,6 +219,9 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 		Blocks:          s.blockMock,
 		OmitBlocks:      s.cfg.OmitBlockRoutes,
 		VersionProvider: s.versions,
+	})
+	e.GET("/testenv/ml-allocations", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, s.nodeManager.AllocationCounts())
 	})
 	if s.cfg.BinaryDir != "" {
 		mountBinaryFiles(e.Group(""), s.cfg.BinaryDir)

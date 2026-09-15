@@ -14,6 +14,7 @@ type Config struct {
 	ChainRPCAddr      string
 	ChainTestenvURL   string
 	MLEndpoint        string
+	MLNodes           []MLNode
 	ChainPollInterval time.Duration
 	BlockInterval     time.Duration
 	ChainID           string
@@ -27,6 +28,12 @@ type Config struct {
 	// OmitBlockRoutes skips /block/* (0.2.15 / pre-mount dapi). /healthz and
 	// /versions remain so versiond still boots.
 	OmitBlockRoutes bool
+}
+
+// MLNode is one Mock ML endpoint exposed through AcquireMLNode.
+type MLNode struct {
+	ID       string
+	Endpoint string
 }
 
 // DefaultConfig returns listen defaults for local dev.

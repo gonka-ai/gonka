@@ -68,6 +68,7 @@ services:
       MOCK_CHAIN_RPC_ADDR: "http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}"
       MOCK_CHAIN_TESTENV_URL: "http://{{ .MockChain.Host }}:{{ .MockChain.TestenvPort }}"
       MOCK_ML_ENDPOINT: "http://{{ .MockOpenAI.Host }}:{{ .MockOpenAI.HTTPPort }}"
+      MOCK_ML_NODES: "{{ mockMLNodesEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
     volumes:
@@ -80,23 +81,54 @@ services:
         ipv4_address: {{ .Network.BaseIP }}.3
     depends_on:
       - mock-chain
-      - mock-openai
+{{ range mockMLNodes . }}
+      - {{ .Name }}
+{{ end }}
     restart: unless-stopped
 
-  mock-openai:
+{{ range mockMLNodes . }}
+  {{ .Name }}:
     build:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mockopenai
     image: devshard-mock-openai:latest
     environment:
-      MOCK_OPENAI_ADDR: ":{{ .MockOpenAI.HTTPPort }}"
+      MOCK_OPENAI_ADDR: ":{{ $.MockOpenAI.HTTPPort }}"
+      MOCK_OPENAI_TTFT: "{{ .TTFT }}"
+      MOCK_OPENAI_TOKEN_INTERVAL: "{{ .TokenInterval }}"
+      MOCK_OPENAI_WORKERS: "{{ .Workers }}"
+      MOCK_OPENAI_QUEUE: "{{ .Queue }}"
+{{ if eq (len (mockMLNodes $)) 1 }}
     ports:
-      - "{{ .MockOpenAI.HTTPPort }}:{{ .MockOpenAI.HTTPPort }}"
+      - "{{ $.MockOpenAI.HTTPPort }}:{{ $.MockOpenAI.HTTPPort }}"
+{{ end }}
     networks:
       testenv:
-        ipv4_address: {{ .Network.BaseIP }}.4
+{{ if eq (len (mockMLNodes $)) 1 }}
+        ipv4_address: {{ $.Network.BaseIP }}.4
+{{ end }}
     restart: unless-stopped
+{{ end }}
 {{ if .Postgres.Enabled }}
+{{ if .Postgres.PerParticipant }}
+{{ range participantHosts . }}
+
+  devshard-postgres-{{ .ID }}:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: {{ $.Postgres.Database }}
+      POSTGRES_USER: {{ $.Postgres.User }}
+      POSTGRES_PASSWORD: {{ $.Postgres.Password }}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ $.Postgres.User }} -d {{ $.Postgres.Database }}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      testenv: {}
+    restart: unless-stopped
+{{ end }}
+{{ else }}
 
   devshard-postgres:
     image: postgres:16-alpine
@@ -113,6 +145,7 @@ services:
       testenv:
         ipv4_address: {{ .Postgres.IP }}
     restart: unless-stopped
+{{ end }}
 {{ end }}
 {{ range .Hosts }}
 
@@ -154,7 +187,15 @@ services:
       # GONKA_HA is intentionally omitted from versiond in this fixture. The
       # SQLite-to-HA scenario first boots children before enabling HA at the
       # router, where Devshard-Ha exercises the request-time storage guard.
-{{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
+{{ if and (eq $.Versiond.Mode "multi") $.Postgres.PerParticipant }}
+      # Load-test topology: replicas share their participant's database.
+      DEVSHARD_STORAGE_MODE: postgres
+      PGHOST: {{ participantPostgresHost $ . }}
+      PGPORT: "{{ $.Postgres.Port }}"
+      PGDATABASE: {{ $.Postgres.Database }}
+      PGUSER: {{ $.Postgres.User }}
+      PGPASSWORD: {{ $.Postgres.Password }}
+{{ else if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
       PGHOST: {{ $.Postgres.Host }}
@@ -185,9 +226,14 @@ services:
         condition: service_healthy
       mock-dapi:
         condition: service_started
-      mock-openai:
+{{ range mockMLNodes $ }}
+      {{ .Name }}:
         condition: service_started
-{{ if isHAReplica $ . }}
+{{ end }}
+{{ if $.Postgres.PerParticipant }}
+      {{ participantPostgresHost $ . }}:
+        condition: service_healthy
+{{ else if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
 {{ end }}
@@ -198,7 +244,9 @@ services:
 {{ else }}
       - mock-chain
       - mock-dapi
-      - mock-openai
+{{ range mockMLNodes $ }}
+      - {{ .Name }}
+{{ end }}
 {{ end }}
     stop_grace_period: 30m
     restart: unless-stopped
@@ -307,9 +355,13 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"routingActivationMinReady": routingActivationMinReady,
 		"versiondKeyName":           versiondKeyName,
 		"isHAReplica":               isHAReplica,
+		"participantHosts":          participantHosts,
+		"participantPostgresHost":   participantPostgresHost,
 		"legacyVersiondHost":        legacyVersiondHost,
 		"primaryEscrowID":           primaryEscrowID,
 		"primaryModelID":            primaryModelID,
+		"mockMLNodes":               mockMLNodes,
+		"mockMLNodesEnv":            mockMLNodesEnv,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -327,6 +379,25 @@ func writeCompose(cfg *config.File, outPath string) error {
 		return fmt.Errorf("execute template: %w", err)
 	}
 	return nil
+}
+
+func mockMLNodes(cfg *config.File) []config.MockOpenAINodeCfg {
+	if cfg != nil && len(cfg.MockOpenAI.Nodes) > 0 {
+		return cfg.MockOpenAI.Nodes
+	}
+	return []config.MockOpenAINodeCfg{{Name: "mock-openai"}}
+}
+
+func mockMLNodesEnv(cfg *config.File) string {
+	if cfg == nil {
+		return ""
+	}
+	nodes := mockMLNodes(cfg)
+	entries := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		entries = append(entries, fmt.Sprintf("%s=http://%s:%d", node.Name, node.Name, cfg.MockOpenAI.HTTPPort))
+	}
+	return strings.Join(entries, ",")
 }
 
 func writeEnvFile(cfg *config.File, outPath string) error {
@@ -399,6 +470,20 @@ func isHAReplica(cfg *config.File, h config.HostCfg) bool {
 		return false
 	}
 	return config.KeyNameReplicaCount(cfg, h) > 1
+}
+
+func participantHosts(cfg *config.File) []config.HostCfg {
+	return config.OnChainIdentityHosts(cfg)
+}
+
+func participantPostgresHost(cfg *config.File, h config.HostCfg) string {
+	keyName := config.VersiondKeyName(cfg, h)
+	for _, participant := range config.OnChainIdentityHosts(cfg) {
+		if config.VersiondKeyName(cfg, participant) == keyName {
+			return "devshard-postgres-" + participant.ID
+		}
+	}
+	return "devshard-postgres-" + h.ID
 }
 
 // legacyVersiondHost is the versiond instance that owns pre-HA SQLite data dirs.

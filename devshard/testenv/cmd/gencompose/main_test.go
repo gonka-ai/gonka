@@ -427,6 +427,48 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "/v1/status")
 }
 
+func TestWriteCompose_MultipleMockMLNodes(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{
+		{Name: "mock-openai-0", TTFT: "10ms", TokenInterval: "2ms", Workers: 8, Queue: 16},
+		{Name: "mock-openai-1", TTFT: "20ms", TokenInterval: "3ms", Workers: 4, Queue: 8},
+	}
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "mock-openai-0:")
+	require.Contains(t, text, "mock-openai-1:")
+	require.Contains(t, text, `MOCK_ML_NODES: "mock-openai-0=http://mock-openai-0:8088,mock-openai-1=http://mock-openai-1:8088"`)
+	require.Contains(t, text, `MOCK_OPENAI_WORKERS: "8"`)
+	require.Contains(t, text, `MOCK_OPENAI_QUEUE: "8"`)
+}
+
+func TestWriteCompose_PerParticipantPostgres(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	cfg.Postgres.PerParticipant = true
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "devshard-postgres-versiond-0:")
+	require.Contains(t, text, "devshard-postgres-versiond-2:")
+	require.NotContains(t, text, "devshard-postgres-versiond-1:")
+	require.Equal(t, 2, strings.Count(text, "PGHOST: devshard-postgres-versiond-0"))
+	require.Equal(t, 1, strings.Count(text, "PGHOST: devshard-postgres-versiond-2"))
+	require.Equal(t, len(cfg.Hosts), strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
+	require.NotContains(t, text, "# HA pair shares Postgres")
+}
+
 func TestWriteCompose_SingleMode_FilePayloadFallback(t *testing.T) {
 	dir := t.TempDir()
 	cfg := defaultConfig()
