@@ -83,9 +83,16 @@ type channelLimiter struct {
 	sharedMu sync.Mutex
 	shared   map[string]*tokenBucket
 	streamMu sync.Mutex
-	streams  map[string]int
+	streams  map[string]peerStreamCount
 
 	warnMinute atomic.Int64
+}
+
+// peerStreamCount is Watch+Chat occupancy. Chat uses at most max-1 when
+// max>1 so Watch can still acquire (finding 3). max==1 is Chat-or-Watch.
+type peerStreamCount struct {
+	total int
+	chat  int
 }
 
 func newChannelLimiter(cfg transport.ChannelLimitConfig, now func() time.Time) *channelLimiter {
@@ -96,7 +103,7 @@ func newChannelLimiter(cfg transport.ChannelLimitConfig, now func() time.Time) *
 		now:     now,
 		cfg:     cfg.WithDefaults(),
 		shared:  make(map[string]*tokenBucket),
-		streams: make(map[string]int),
+		streams: make(map[string]peerStreamCount),
 	}
 }
 
@@ -121,7 +128,7 @@ func advertisedRateLimits(cfg transport.ChannelLimitConfig) *rpcpb.RateLimits {
 	return &rpcpb.RateLimits{
 		MessagesPerMin: cfg.MessagesPerMin,
 		MessagesBurst:  cfg.MessagesBurst,
-		MaxStreams:     cfg.MaxStreams,
+		MaxStreams:     cfg.EffectiveMaxStreams(),
 		// Child does not key Attach on IP. Per-IP bounds live on versiond /
 		// Phase 6 proxy. Advertise unlimited so mixed-fleet clients do not
 		// self-throttle to a bucket this process never enforces.
@@ -157,9 +164,10 @@ func (l *channelLimiter) charge(ctx context.Context, peer, procedure string) err
 }
 
 func (l *channelLimiter) acquireStream(ctx context.Context, peer, procedure string) error {
-	if l == nil || l.cfg.Disabled || peer == "" || transport.IsUnlimitedRPCLimit(l.cfg.MaxStreams) {
+	if l == nil || l.cfg.Disabled || peer == "" || transport.IsUnlimitedRPCLimit(l.cfg.EffectiveMaxStreams()) {
 		return nil
 	}
+	chat := isChatPath(procedure)
 	l.streamMu.Lock()
 	n, exists := l.streams[peer]
 	if !exists && len(l.streams) >= l.cfg.MaxEntries {
@@ -167,28 +175,43 @@ func (l *channelLimiter) acquireStream(ctx context.Context, peer, procedure stri
 		l.warnBanned(ctx, procedure, zoneStreams, peer)
 		return rateLimitExhausted("too many concurrent streams", time.Second)
 	}
-	if n >= int(l.cfg.MaxStreams) {
+	max := int(l.cfg.EffectiveMaxStreams())
+	if chat && max > 1 && n.chat >= max-1 {
 		l.streamMu.Unlock()
 		l.warnBanned(ctx, procedure, zoneStreams, peer)
 		return rateLimitExhausted("too many concurrent streams", time.Second)
 	}
-	l.streams[peer] = n + 1
+	if n.total >= max {
+		l.streamMu.Unlock()
+		l.warnBanned(ctx, procedure, zoneStreams, peer)
+		return rateLimitExhausted("too many concurrent streams", time.Second)
+	}
+	if chat {
+		n.chat++
+	}
+	n.total++
+	l.streams[peer] = n
 	l.streamMu.Unlock()
 	return nil
 }
 
-func (l *channelLimiter) releaseStream(peer string) {
+func (l *channelLimiter) releaseStream(peer, procedure string) {
 	if l == nil || peer == "" {
 		return
 	}
+	chat := isChatPath(procedure)
 	l.streamMu.Lock()
 	defer l.streamMu.Unlock()
 	n := l.streams[peer]
-	if n <= 1 {
+	if chat && n.chat > 0 {
+		n.chat--
+	}
+	if n.total <= 1 {
 		delete(l.streams, peer)
 		return
 	}
-	l.streams[peer] = n - 1
+	n.total--
+	l.streams[peer] = n
 }
 
 // take looks up or creates a bucket under the map lock, then charges under

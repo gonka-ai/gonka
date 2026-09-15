@@ -230,10 +230,14 @@ func connectClientOptions(maxBytes int) []connect.ClientOption {
 	}
 }
 
+// chatClientOptions gzips the request envelope (prompt + catch-up diffs) like
+// the unary clients and HTTP Send. gzip must stay registered for WithSendGzip
+// to resolve; the handler never compresses ChatFrames, so response chunks are
+// still one application gzip stream and are not compressed twice.
 func chatClientOptions() []connect.ClientOption {
 	return []connect.ClientOption{
 		connect.WithReadMaxBytes(int(DefaultMaxBodySize)),
-		connect.WithAcceptCompression("gzip", nil, nil),
+		connect.WithSendGzip(),
 	}
 }
 

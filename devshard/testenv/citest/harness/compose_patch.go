@@ -1,13 +1,88 @@
 package harness
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+const (
+	// EnvVersiondImage pins compose versiond services to a prebuilt image
+	// (Phase 6 baseline: devshard-versiond:0.2.15-v5). Empty uses :latest from this tree.
+	EnvVersiondImage = "TESTENV_VERSIOND_IMAGE"
+	// EnvVersiondRouterImage pins versiond-router. Set together with EnvVersiondImage.
+	EnvVersiondRouterImage = "TESTENV_VERSIOND_ROUTER_IMAGE"
+
+	composeVersiondImageLatest       = "devshard-versiond:latest"
+	composeVersiondRouterImageLatest = "devshard-versiond-router:latest"
+)
+
+// PinVersiondImagesFromEnv rewrites generated compose to use prebuilt versiond
+// and versiond-router images and drops their build: blocks so compose cannot
+// overwrite the pin with this tree. No-op when both env vars are empty.
+func PinVersiondImagesFromEnv(t *testing.T, composePath string) {
+	t.Helper()
+	versiond := strings.TrimSpace(os.Getenv(EnvVersiondImage))
+	router := strings.TrimSpace(os.Getenv(EnvVersiondRouterImage))
+	if versiond == "" && router == "" {
+		return
+	}
+	if versiond == "" || router == "" {
+		t.Fatalf("set both %s and %s to pin baseline infra (got versiond=%q router=%q)",
+			EnvVersiondImage, EnvVersiondRouterImage, versiond, router)
+	}
+	requireDockerImage(t, versiond)
+	requireDockerImage(t, router)
+
+	body, err := os.ReadFile(composePath)
+	require.NoError(t, err)
+	updated, err := pinVersiondCompose(string(body), versiond, router)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(composePath, []byte(updated), 0o644))
+}
+
+func requireDockerImage(t *testing.T, image string) {
+	t.Helper()
+	cmd := exec.Command("docker", "image", "inspect", "-f", "{{.Id}}", image)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker image %s missing (%v)\nrebuild: make -C testenv build-baseline-infra\n%s", image, err, out)
+	}
+}
+
+func pinVersiondCompose(text, versiondImage, routerImage string) (string, error) {
+	if !strings.Contains(text, "image: "+composeVersiondImageLatest) {
+		return "", fmt.Errorf("compose: missing image: %s", composeVersiondImageLatest)
+	}
+	if !strings.Contains(text, "image: "+composeVersiondRouterImageLatest) {
+		return "", fmt.Errorf("compose: missing image: %s", composeVersiondRouterImageLatest)
+	}
+	text, err := dropComposeBuildBeforeImage(text, composeVersiondImageLatest)
+	if err != nil {
+		return "", err
+	}
+	text, err = dropComposeBuildBeforeImage(text, composeVersiondRouterImageLatest)
+	if err != nil {
+		return "", err
+	}
+	text = strings.ReplaceAll(text, "image: "+composeVersiondImageLatest, "image: "+versiondImage)
+	text = strings.ReplaceAll(text, "image: "+composeVersiondRouterImageLatest, "image: "+routerImage)
+	return text, nil
+}
+
+func dropComposeBuildBeforeImage(text, image string) (string, error) {
+	re := regexp.MustCompile(`(?m)^    build:\n(?:      [^\n]+\n)+    image: ` + regexp.QuoteMeta(image) + `\n`)
+	updated := re.ReplaceAllString(text, "    image: "+image+"\n")
+	if updated == text {
+		return "", fmt.Errorf("compose: no build+image %q block to drop", image)
+	}
+	return updated, nil
+}
 
 // PatchComposeEnvKey replaces every `KEY: ...` environment line in a compose file.
 func PatchComposeEnvKey(t *testing.T, composePath, key, value string) {

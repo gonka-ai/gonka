@@ -85,13 +85,41 @@ func TestChatFrameSink_SendErrorStopsLaterWrites(t *testing.T) {
 	})
 	_, err := sink.Write([]byte("data: a\n\n"))
 	require.NoError(t, err)
-	sink.Flush()
+	require.NoError(t, sink.FlushErr())
 	_, err = sink.Write([]byte("data: b\n\n"))
 	require.NoError(t, err)
-	sink.Flush()
+	require.Error(t, sink.FlushErr())
 	_, err = sink.Write([]byte("data: c\n\n"))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "peer gone")
+}
+
+func TestChatFrameSink_FlushErrSurfacesSendError(t *testing.T) {
+	sink := NewChatFrameSink(func([]byte) error {
+		return errors.New("peer gone")
+	})
+	_, err := sink.Write([]byte("data: a\n\n"))
+	require.NoError(t, err)
+	require.ErrorContains(t, sink.FlushErr(), "peer gone")
+	_, err = sink.Write([]byte("data: b\n\n"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "peer gone")
+}
+
+func TestWriteSSEEvent_ChatFlushFailure(t *testing.T) {
+	sink := NewChatFrameSink(func([]byte) error {
+		return errors.New("peer gone")
+	})
+	err := writeSSEEvent(sink, map[string]string{"devshard_receipt": "{}"})
+	require.ErrorContains(t, err, "peer gone")
+}
+
+func TestReplaySSEBody_ChatFlushFailure(t *testing.T) {
+	sink := NewChatFrameSink(func([]byte) error {
+		return errors.New("peer gone")
+	})
+	err := replaySSEBody(sink, []byte(`{"ok":true}`))
+	require.ErrorContains(t, err, "peer gone")
 }
 
 func gzipConcat(t *testing.T, chunks [][]byte) string {

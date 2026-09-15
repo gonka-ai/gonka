@@ -17,6 +17,7 @@ func TestLoadChannelLimitConfig_Defaults(t *testing.T) {
 	t.Setenv(envRPCMsgsPerMin, "")
 	t.Setenv(envRPCMsgsBurst, "")
 	t.Setenv(envRPCMaxStreams, "")
+	t.Setenv(envRPCMaxConnsPerPeer, "")
 	t.Setenv(envRPCAttachPerMinTotal, "")
 
 	cfg := LoadChannelLimitConfig()
@@ -24,6 +25,8 @@ func TestLoadChannelLimitConfig_Defaults(t *testing.T) {
 	require.Equal(t, DefaultRPCMessagesPerMin, cfg.MessagesPerMin)
 	require.Equal(t, DefaultRPCMessagesBurst, cfg.MessagesBurst)
 	require.Equal(t, DefaultRPCMaxStreams, cfg.MaxStreams)
+	require.Equal(t, DefaultRPCMaxConnsPerPeer, cfg.MaxConns)
+	require.Equal(t, int(DefaultRPCMaxStreams), DefaultRPCMaxConnsPerPeer)
 	require.Equal(t, DefaultRPCAttachFloorPerMin, cfg.AttachFloorPerMin)
 	require.Equal(t, DefaultRPCLimiterMaxEntries, cfg.MaxEntries)
 }
@@ -32,11 +35,14 @@ func TestLoadChannelLimitConfig_EnvAndOff(t *testing.T) {
 	t.Setenv(envRPCMsgsPerMin, "120")
 	t.Setenv(envRPCMsgsBurst, "20")
 	t.Setenv(envRPCMaxStreams, "8")
+	t.Setenv(envRPCMaxConnsPerPeer, "16")
 	t.Setenv(envRPCAttachPerMinTotal, "50")
 	cfg := LoadChannelLimitConfig()
 	require.Equal(t, uint32(120), cfg.MessagesPerMin)
 	require.Equal(t, uint32(20), cfg.MessagesBurst)
 	require.Equal(t, uint32(8), cfg.MaxStreams)
+	require.Equal(t, 16, cfg.MaxConns)
+	require.Equal(t, uint32(8), cfg.EffectiveMaxStreams())
 	require.Equal(t, 50, cfg.AttachFloorPerMin)
 
 	t.Setenv(envRPCMsgsBurst, "-1")
@@ -61,6 +67,14 @@ func TestChannelLimitConfig_ZeroMeansDefault(t *testing.T) {
 	require.Equal(t, DefaultRPCMessagesPerMin, cfg.MessagesPerMin)
 	require.Equal(t, DefaultRPCMessagesBurst, cfg.MessagesBurst)
 	require.Equal(t, DefaultRPCLimiterMaxEntries, cfg.MaxEntries)
+	require.Equal(t, DefaultRPCMaxConnsPerPeer, cfg.MaxConns)
+}
+
+func TestEffectiveMaxStreams_MinOfStreamsAndPool(t *testing.T) {
+	require.Equal(t, uint32(16), ChannelLimitConfig{MaxStreams: 256, MaxConns: 16}.EffectiveMaxStreams())
+	require.Equal(t, uint32(8), ChannelLimitConfig{MaxStreams: 8, MaxConns: 256}.EffectiveMaxStreams())
+	require.Equal(t, DefaultRPCMaxStreams, ChannelLimitConfig{}.EffectiveMaxStreams())
+	require.True(t, IsUnlimitedRPCLimit(ChannelLimitConfig{MaxStreams: UnlimitedRPCLimit, MaxConns: 16}.EffectiveMaxStreams()))
 }
 
 func TestChannelLimitConfig_UnlimitedMessagesForcesUnlimitedBurst(t *testing.T) {

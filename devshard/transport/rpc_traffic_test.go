@@ -218,6 +218,49 @@ func TestRPCTraffic_NextMinuteIsNewBucket(t *testing.T) {
 	require.Equal(t, uint64(1), snap.Host.Requests)
 }
 
+func TestRPCStatsJoin(t *testing.T) {
+	require.Equal(t, "gonka1a/1710000000", RPCStatsJoin("gonka1a", 1_710_000_000))
+	require.Equal(t, "unknown/60", RPCStatsJoin("  ", 60))
+	kv := AppendRPCStatsLogTag(nil, "gonka1a", 1_710_000_000)
+	require.Equal(t, []any{"tag", RPCStatsLogTag, "rpc_stats_join", "gonka1a/1710000000"}, kv)
+}
+
+func TestAppendBannedIdentityLog(t *testing.T) {
+	host := RPCStatsHost{
+		Peers: []RPCStatsPeer{
+			{Peer: "quiet", Requests: 9, Banned: 0},
+			{Peer: "gonka1b", Requests: 4, Banned: 1},
+			{Peer: "gonka1a", Requests: 8, Banned: 5},
+		},
+		IPs: []RPCStatsIP{
+			{IP: "203.0.113.9", Requests: 8, Banned: 5},
+			{IP: "198.51.100.1", Requests: 3, Banned: 0},
+		},
+	}
+	kv := AppendBannedIdentityLog(nil, host)
+	got := map[string]any{}
+	for i := 0; i+1 < len(kv); i += 2 {
+		got[kv[i].(string)] = kv[i+1]
+	}
+	require.Equal(t, "gonka1a=5,gonka1b=1", got["banned_peers"])
+	require.Equal(t, 2, got["banned_peer_rows"])
+	require.Equal(t, 0, got["banned_peer_omitted"])
+	require.Equal(t, "203.0.113.9=5", got["banned_ips"])
+	require.Equal(t, 1, got["banned_ip_rows"])
+	require.Equal(t, 0, got["banned_ip_omitted"])
+}
+
+func TestTopBannedPeersOmitsPastCap(t *testing.T) {
+	rows := make([]RPCStatsPeer, 0, RPCStatsBannedIdentityLogCap+3)
+	for i := 0; i < RPCStatsBannedIdentityLogCap+3; i++ {
+		rows = append(rows, RPCStatsPeer{Peer: "p" + strconv.Itoa(i), Banned: 1})
+	}
+	got, n, omit := topBannedPeers(rows, RPCStatsBannedIdentityLogCap)
+	require.Equal(t, RPCStatsBannedIdentityLogCap+3, n)
+	require.Equal(t, 3, omit)
+	require.Len(t, got, RPCStatsBannedIdentityLogCap)
+}
+
 func TestSnapshotPeerReconnects(t *testing.T) {
 	t.Cleanup(ResetPeerReconnectsForTest)
 	ResetPeerReconnectsForTest()

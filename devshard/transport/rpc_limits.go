@@ -15,7 +15,8 @@ const (
 	DefaultRPCMessagesPerMin uint32 = 6000
 	// DefaultRPCMessagesBurst is the peer-bucket pulse (10% of the minute).
 	DefaultRPCMessagesBurst = DefaultRPCMessagesPerMin / 10
-	// DefaultRPCMaxStreams is the per-peer concurrent Watch/Chat cap.
+	// DefaultRPCMaxStreams is the per-peer concurrent Watch+Chat cap.
+	// Chat uses at most max-1 when max>1 so Watch always has a slot.
 	DefaultRPCMaxStreams uint32 = 256
 	// DefaultRPCAttachFloorPerMin is the process-wide Attach floor (before ECDSA).
 	DefaultRPCAttachFloorPerMin = 10_000
@@ -45,7 +46,13 @@ type ChannelLimitConfig struct {
 	MessagesPerMin uint32
 	// MessagesBurst is tokens available at rest. Zero means 10% of MessagesPerMin.
 	MessagesBurst uint32
-	MaxStreams    uint32
+	// MaxStreams is the configured Watch+Chat cap before min(MaxStreams, MaxConns).
+	MaxStreams uint32
+	// MaxConns is this process's HTTP/1.1 PeerConn pool
+	// (MaxIdleConnsPerHost / MaxConnsPerHost). Zero means
+	// DefaultRPCMaxConnsPerPeer / DEVSHARD_RPC_MAX_CONNS_PER_PEER.
+	// Advertised and enforced max_streams is min(MaxStreams, MaxConns).
+	MaxConns int
 	// AttachFloorPerMin is process-wide. Zero means DefaultRPCAttachFloorPerMin.
 	AttachFloorPerMin int
 	// MaxEntries caps distinct keys per limiter map. Zero means
@@ -66,6 +73,7 @@ func LoadChannelLimitConfig() ChannelLimitConfig {
 		MessagesPerMin:    parseRPCLimit(envRPCMsgsPerMin, DefaultRPCMessagesPerMin),
 		MessagesBurst:     parseRPCLimit(envRPCMsgsBurst, 0),
 		MaxStreams:        parseRPCLimit(envRPCMaxStreams, DefaultRPCMaxStreams),
+		MaxConns:          RPCMaxConnsPerPeerFromEnv(),
 		AttachFloorPerMin: parseRPCLimitInt(envRPCAttachPerMinTotal, DefaultRPCAttachFloorPerMin),
 	}
 	return cfg.WithDefaults()
@@ -91,6 +99,9 @@ func (c ChannelLimitConfig) WithDefaults() ChannelLimitConfig {
 	}
 	if c.MaxStreams == 0 {
 		c.MaxStreams = DefaultRPCMaxStreams
+	}
+	if c.MaxConns <= 0 {
+		c.MaxConns = DefaultRPCMaxConnsPerPeer
 	}
 	if c.AttachFloorPerMin <= 0 {
 		c.AttachFloorPerMin = DefaultRPCAttachFloorPerMin
@@ -128,6 +139,29 @@ func parseRPCLimit(env string, def uint32) uint32 {
 		return def
 	}
 	return uint32(n)
+}
+
+// EffectiveMaxStreams is the Watch+Chat cap this process advertises and
+// enforces: min(MaxStreams, MaxConns) so Attach max_streams is not above
+// the HTTP/1.1 PeerConn pool. Unlimited MaxStreams is unchanged. Disabled
+// configs keep MaxStreams as WithDefaults left it (advertise path uses
+// UnlimitedRPCLimit).
+func (c ChannelLimitConfig) EffectiveMaxStreams() uint32 {
+	c = c.WithDefaults()
+	if c.Disabled || IsUnlimitedRPCLimit(c.MaxStreams) {
+		return c.MaxStreams
+	}
+	return minUint32Cap(c.MaxStreams, c.MaxConns)
+}
+
+func minUint32Cap(streams uint32, maxConns int) uint32 {
+	if maxConns <= 0 {
+		return streams
+	}
+	if uint64(maxConns) >= uint64(streams) {
+		return streams
+	}
+	return uint32(maxConns)
 }
 
 func parseRPCLimitInt(env string, def int) int {

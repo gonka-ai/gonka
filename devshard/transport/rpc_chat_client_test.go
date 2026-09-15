@@ -16,6 +16,7 @@ import (
 	"devshard/storage"
 	"devshard/stub"
 	"devshard/transport"
+	"devshard/transport/rpcpb/rpcpbconnect"
 	"devshard/transport/rpcserver"
 	"devshard/types"
 )
@@ -28,6 +29,8 @@ func (silentChatCore) ServeGetSignatures(uint64) (map[uint32][]byte, error) {
 
 func (silentChatCore) AllowsSender(string) bool { return true }
 
+func (silentChatCore) IsOwner(string) bool { return true }
+
 func (silentChatCore) ServeInference(context.Context, transport.InferenceCall) error {
 	return nil
 }
@@ -39,6 +42,10 @@ func (c chatLookup) SessionServerExisting(string) (rpcserver.SessionCore, error)
 }
 
 func (c chatLookup) SessionForParticipant(string, string) (rpcserver.SessionCore, error) {
+	return c.SessionServerExisting("")
+}
+
+func (c chatLookup) SessionForOwner(string, string) (rpcserver.SessionCore, error) {
 	return c.SessionServerExisting("")
 }
 
@@ -69,6 +76,19 @@ func startLiveChatRPC(t *testing.T, opts ...transport.ServerOption) (*transport.
 
 func startLiveChatRPCCfg(t *testing.T, cfg transport.ClientConfig, opts ...transport.ServerOption) (*transport.RPCClient, *signing.Secp256k1Signer) {
 	t.Helper()
+	rpc, user, pc := startLiveChatRPCParts(t, cfg, opts...)
+	pc.Start()
+	waitPeerReady(t, pc)
+	return rpc, user
+}
+
+func startLiveChatRPCParts(t *testing.T, cfg transport.ClientConfig, opts ...transport.ServerOption) (*transport.RPCClient, *signing.Secp256k1Signer, *transport.PeerConn) {
+	t.Helper()
+	return startLiveChatRPCPartsObserved(t, cfg, nil, opts...)
+}
+
+func startLiveChatRPCPartsObserved(t *testing.T, cfg transport.ClientConfig, obs *wireObserver, opts ...transport.ServerOption) (*transport.RPCClient, *signing.Secp256k1Signer, *transport.PeerConn) {
+	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
@@ -91,12 +111,10 @@ func startLiveChatRPCCfg(t *testing.T, cfg transport.ClientConfig, opts ...trans
 	tsrv, err := transport.NewServer(h, store, verifier, userSigner.Address(), opts...)
 	require.NoError(t, err)
 	lookup := rpcserver.AdaptLookup(func(string) (*transport.Server, error) { return tsrv, nil })
-	httpSrv, _ := startPeerRPCServer(t, hostSigner.Address(), rpcserver.PeerAuthConfig{Heartbeat: time.Hour}, lookup)
+	httpSrv, _ := startPeerRPCServerObserved(t, hostSigner.Address(), rpcserver.PeerAuthConfig{Heartbeat: time.Hour}, lookup, obs)
 	pc := newTestPeerConn(t, httpSrv, hostSigner.Address(), userSigner, transport.PeerConnConfig{})
-	pc.Start()
-	waitPeerReady(t, pc)
 	rpc := transport.NewRPCClient(transport.NewHTTPClient(httpSrv.URL, "escrow-1", userSigner, cfg), pc, transport.ParseRPCEndpoints(transport.EndpointChat))
-	return rpc, userSigner
+	return rpc, userSigner, pc
 }
 
 func chatHostRequest(t *testing.T, user *signing.Secp256k1Signer) host.HostRequest {
@@ -115,6 +133,27 @@ func chatHostRequest(t *testing.T, user *signing.Secp256k1Signer) host.HostReque
 	}
 }
 
+func TestRPCClient_SendWaitsForAttach(t *testing.T) {
+	rpc, user, pc := startLiveChatRPCParts(t, transport.DefaultClientConfig())
+	done := make(chan error, 1)
+	go func() {
+		_, err := rpc.Send(context.Background(), chatHostRequest(t, user), nil, nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("Send returned before Attach: %v", err)
+	case <-time.After(80 * time.Millisecond):
+	}
+	pc.Start()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Send did not finish after Attach")
+	}
+}
+
 func TestRPCClient_SendRoundTrip(t *testing.T) {
 	rpc, user := startLiveChatRPC(t)
 	var stream bytes.Buffer
@@ -127,6 +166,24 @@ func TestRPCClient_SendRoundTrip(t *testing.T) {
 	require.Contains(t, out, "stub")
 	require.True(t, strings.Contains(out, "[DONE]") || strings.Contains(out, "stub"),
 		"token stream should carry the stub completion")
+}
+
+func TestRPCClient_SendGzipsRequestAndKeepsFramesSingleGzip(t *testing.T) {
+	obs := newWireObserver()
+	rpc, user, pc := startLiveChatRPCPartsObserved(t, transport.DefaultClientConfig(), obs)
+	pc.Start()
+	waitPeerReady(t, pc)
+
+	var stream bytes.Buffer
+	resp, err := rpc.Send(context.Background(), chatHostRequest(t, user), &stream, nil)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Receipt)
+	require.Contains(t, stream.String(), "stub")
+
+	chat := rpcpbconnect.SessionServiceChatProcedure
+	require.Equal(t, "gzip", obs.requestEncoding(chat), "the prompt envelope must be gzipped on the wire")
+	require.Equal(t, "gzip", obs.responseEncoding(chat),
+		"negotiation still names gzip; ChatFrames carry the application gzip stream")
 }
 
 func TestRPCClient_SendHonorsInferenceTimeout(t *testing.T) {

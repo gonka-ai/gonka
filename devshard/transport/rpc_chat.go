@@ -28,6 +28,12 @@ func (c *RPCClient) Send(ctx context.Context, req host.HostRequest, stream io.Wr
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	// Attach is async with SelectTransport / Start. GetPayload already waits;
+	// Chat must not take budget or a stream slot on a token miss.
+	if err := c.WaitReady(ctx); err != nil {
+		return nil, err
+	}
+
 	ir, err := HostRequestToJSON(req)
 	if err != nil {
 		return nil, fmt.Errorf("encode request: %w", err)
@@ -43,11 +49,11 @@ func (c *RPCClient) Send(ctx context.Context, req host.HostRequest, stream io.Wr
 	if err := c.conn.takePeerBudget(ctx, rpcpbconnect.SessionServiceChatProcedure); err != nil {
 		return nil, err
 	}
-	if !c.conn.acquireStream() {
+	if !c.conn.acquireChatStream() {
 		c.conn.refundPeerBudget(rpcpbconnect.SessionServiceChatProcedure)
 		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("too many concurrent streams"))
 	}
-	defer c.conn.releaseStream()
+	defer c.conn.releaseChatStream()
 
 	creq, err := tokenRequest(c, env)
 	if err != nil {

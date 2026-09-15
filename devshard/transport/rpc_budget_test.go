@@ -232,6 +232,47 @@ func TestAdvertisedMaxStreams_Range(t *testing.T) {
 	require.True(t, b.acquire(), "not advertised is unlimited on the client")
 }
 
+func TestPeerStreamBudget_ApplyPoolCapsAdvertised(t *testing.T) {
+	var b peerStreamBudget
+	b.applyPool(&rpcpb.RateLimits{MaxStreams: 256}, 4)
+	for i := 0; i < 4; i++ {
+		require.True(t, b.acquire())
+	}
+	require.False(t, b.acquire())
+	b.release()
+	require.True(t, b.acquire())
+
+	var chats peerStreamBudget
+	chats.applyPool(&rpcpb.RateLimits{MaxStreams: 256}, 4)
+	require.True(t, chats.acquireChat())
+	require.True(t, chats.acquireChat())
+	require.True(t, chats.acquireChat())
+	require.False(t, chats.acquireChat(), "Chat cap is min(advertised, MaxConns)-1")
+	require.True(t, chats.acquire(), "Watch still connects")
+}
+
+func TestPeerStreamBudget_ChatReservesWatchSlot(t *testing.T) {
+	var b peerStreamBudget
+	b.apply(&rpcpb.RateLimits{MaxStreams: 2})
+	require.True(t, b.acquireChat())
+	require.False(t, b.acquireChat(), "Chat cap is max-1")
+	require.True(t, b.acquire(), "Watch still connects at Chat cap")
+	require.Equal(t, 2, b.inUse)
+	require.Equal(t, 1, b.chats)
+
+	b.release()
+	require.True(t, b.acquire(), "Watch reconnect after Chat-full")
+	b.release()
+	b.releaseChat()
+
+	var w peerStreamBudget
+	w.apply(&rpcpb.RateLimits{MaxStreams: 2})
+	require.True(t, w.acquire())
+	require.True(t, w.acquireChat(), "Watch first still leaves a Chat slot")
+	require.False(t, w.acquireChat())
+	require.Equal(t, 2, w.inUse)
+}
+
 func TestRPCBudgetEndpoint(t *testing.T) {
 	require.Equal(t, "GetDiffs", rpcBudgetEndpoint(rpcpbconnect.SessionServiceGetDiffsProcedure))
 	require.Equal(t, "GetSignatures", rpcBudgetEndpoint(rpcpbconnect.SessionServiceGetSignaturesProcedure))

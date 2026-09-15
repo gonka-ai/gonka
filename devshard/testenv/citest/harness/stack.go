@@ -40,6 +40,9 @@ type Stack struct {
 	ComposePath   string
 	Timeout       time.Duration
 	Observability bool
+	// ProxyOverlay appends docker-compose.proxy.yml. Default citest must
+	// leave this false so existing suites stay on versiond-router:8080.
+	ProxyOverlay bool
 	// ComposeProject is the docker compose project label. Empty uses the
 	// workdir basename (Compose default). Observability citest sets this so
 	// Promtail only ships this stack's containers.
@@ -110,6 +113,7 @@ func (s *Stack) RunGencompose(t *testing.T) {
 		t.Fatalf("gencompose: %v\n%s", err, out)
 	}
 	fixComposePaths(t, s.ComposePath, s.TestenvDir)
+	PinVersiondImagesFromEnv(t, s.ComposePath)
 	PatchComposeUseRandomHostPorts(t, s.ComposePath)
 }
 
@@ -251,6 +255,9 @@ func composeStopArgs(fileArgs []string, service string, timeout time.Duration) [
 
 func (s *Stack) composeFileArgs() []string {
 	args := []string{"-f", s.ComposePath}
+	if s.ProxyOverlay {
+		args = append(args, "-f", proxyOverlayPath(s))
+	}
 	if s.Observability {
 		overlay := filepath.Join(s.WorkDir, "docker-compose.observability.yml")
 		if _, err := os.Stat(overlay); err != nil {

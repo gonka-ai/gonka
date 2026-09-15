@@ -121,11 +121,15 @@ Two objects share that token:
 - **`transport.Server` / DB session** — one per escrow. JSON `BindGroupPeer`
   and bind-group RPCs (`ChallengeReceipt`, gossip, seed, repair, verify-*)
   call `SessionForParticipant` so a host that never saw owner chat still
-  CreateSession when a group member shows up. Observability GETs
+  CreateSession when a group member shows up. JSON `BindOwnerChat` and RPC
+  `Chat` call `SessionForOwner`: Existing + owner, or CreateSession only
+  when the handshake peer is the escrow creator. A slot member Chat is
+  PermissionDenied and does not bind. Observability GETs
   (`GetDiffs`, `GetMempool`, `GetSignatures`, `GetPayload`) stay Existing-only.
 
 A live handshake on escrow A is not a session for escrow B. Challenge on B
-with the host-wide token CreateSession for B; GetDiffs on B does not.
+with the host-wide token CreateSession for B; GetDiffs on B does not. Slot-member
+Chat on B does not bind; owner Chat on B does.
 
 ### Membership and renewal
 
@@ -406,7 +410,9 @@ scheme (HTTPS → TLS + ALPN `h2`, same hostname for SNI/verify; HTTP → h2c). 
 the network-wide gRPC port — same number on every participant, not a per-peer address and
 not an on-chain field. Unset (or `DEVSHARD_RPC_H2_UPGRADE` off): stay on Connect over
 HTTP/1.1 at InferenceUrl. Do not probe any other port. There is no `h2_endpoint` field
-(proto field 4 is reserved).
+(proto field 4 is reserved). `DEVSHARD_RPC_H2_HOST` (testenv overlay `proxy`) is the TCP
+dial name only; SNI and certificate verify still use InferenceUrl’s hostname (the nginx
+SAN). Do not put `proxy` in SNI.
 
 Join's public `:80/:443` stay TCP-to-nginx; they do not carry `/rpc/`. Do not put
 HAProxy inside the versiond image. The cert lives on `proxy`, not on versiond-router.

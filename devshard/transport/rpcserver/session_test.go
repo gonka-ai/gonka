@@ -77,6 +77,11 @@ func (s stubLookup) SessionForParticipant(id, addr string) (SessionCore, error) 
 	return s.SessionServerExisting(id)
 }
 
+func (s stubLookup) SessionForOwner(id, addr string) (SessionCore, error) {
+	_ = addr
+	return s.SessionServerExisting(id)
+}
+
 type countingLookup struct {
 	core SessionCore
 	n    *int
@@ -92,9 +97,14 @@ func (s countingLookup) SessionForParticipant(id, addr string) (SessionCore, err
 	return s.SessionServerExisting(id)
 }
 
+func (s countingLookup) SessionForOwner(id, addr string) (SessionCore, error) {
+	_ = addr
+	return s.SessionServerExisting(id)
+}
+
 type countingBindLookup struct {
-	core           SessionCore
-	existing, bind int
+	core                  SessionCore
+	existing, bind, owner int
 }
 
 func (s *countingBindLookup) SessionServerExisting(string) (SessionCore, error) {
@@ -104,6 +114,11 @@ func (s *countingBindLookup) SessionServerExisting(string) (SessionCore, error) 
 
 func (s *countingBindLookup) SessionForParticipant(string, string) (SessionCore, error) {
 	s.bind++
+	return s.core, nil
+}
+
+func (s *countingBindLookup) SessionForOwner(string, string) (SessionCore, error) {
+	s.owner++
 	return s.core, nil
 }
 
@@ -558,6 +573,16 @@ func TestSessionHandler_OwnerVsGroup(t *testing.T) {
 		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 		require.Contains(t, err.Error(), "restricted to group members")
 	})
+	t.Run("group member cannot chat", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
+		stream, err := env.session.Chat(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", nil)), env.token))
+		require.NoError(t, err)
+		require.False(t, stream.Receive())
+		require.Error(t, stream.Err())
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(stream.Err()))
+		require.Contains(t, stream.Err().Error(), "restricted to escrow owner")
+	})
 }
 
 func TestSessionHandler_ParticipantBindVsExisting(t *testing.T) {
@@ -577,5 +602,16 @@ func TestSessionHandler_ParticipantBindVsExisting(t *testing.T) {
 		connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.ChallengeReceiptRequest{InferenceId: 1})), env.token))
 	require.NoError(t, err)
 	require.Equal(t, 1, lookup.bind, "ChallengeReceipt must bind a participant session")
+	require.Equal(t, 2, lookup.existing)
+	require.Equal(t, 0, lookup.owner)
+
+	stream, err := env.session.Chat(context.Background(), withSession(
+		connect.NewRequest(env.signedEnvelope(t, "escrow-1", nil)), env.token))
+	require.NoError(t, err)
+	require.False(t, stream.Receive())
+	require.Error(t, stream.Err())
+	require.Equal(t, connect.CodeUnimplemented, connect.CodeOf(stream.Err()))
+	require.Equal(t, 1, lookup.owner, "Chat must bind an owner session")
+	require.Equal(t, 1, lookup.bind, "Chat must not use SessionForParticipant")
 	require.Equal(t, 2, lookup.existing)
 }

@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard/internal/testutil"
+	"devshard/signing"
 	"devshard/storage"
 	"devshard/transport"
 	"devshard/transport/rpcpb"
@@ -87,4 +88,81 @@ func TestRPCChallenge_BindsColdEscrowOnLiveHandshake(t *testing.T) {
 	meta, err := store.GetSessionMeta(escrowB)
 	require.NoError(t, err)
 	require.Equal(t, user.Address(), meta.CreatorAddr)
+}
+
+func TestRPCChat_SlotMemberDoesNotBindColdEscrow(t *testing.T) {
+	const escrowA = "9722"
+	const escrowB = "9723"
+	mgr, store, _, hosts := setupBindTestGroupSignedBy(t, escrowA, 1)
+	mgr.SetRPCServerEnabled(true)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+	ts := httptest.NewServer(e)
+	t.Cleanup(ts.Close)
+
+	member := hosts[2]
+	require.NotEqual(t, hosts[1].Address(), member.Address())
+	token := attachRPCOnEscrow(t, ts, escrowA, hosts[1].Address(), member, []byte("rpc-chat-member-attach-aaaa"))
+	_, err := store.GetSessionMeta(escrowA)
+	require.NoError(t, err, "first Attach on escrow A still CreateSession for the door")
+
+	err = rpcChat(t, ts, escrowB, token, member, nil)
+	require.Error(t, err)
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.Contains(t, err.Error(), "restricted to escrow owner")
+	_, err = store.GetSessionMeta(escrowB)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestRPCChat_OwnerBindsColdEscrowOnLiveHandshake(t *testing.T) {
+	const escrowA = "9724"
+	const escrowB = "9725"
+	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowA, 1)
+	mgr.SetRPCServerEnabled(true)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+	ts := httptest.NewServer(e)
+	t.Cleanup(ts.Close)
+
+	token := attachRPCOnEscrow(t, ts, escrowA, hosts[1].Address(), user, []byte("rpc-chat-owner-attach-aaaa"))
+	_, err := store.GetSessionMeta(escrowA)
+	require.NoError(t, err, "first Attach on escrow A still CreateSession for the door")
+
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	_ = rpcChat(t, ts, escrowB, token, user, body)
+	meta, err := store.GetSessionMeta(escrowB)
+	require.NoError(t, err, "owner Chat on a live host handshake must CreateSession for a cold escrow")
+	require.Equal(t, user.Address(), meta.CreatorAddr)
+}
+
+func attachRPCOnEscrow(t *testing.T, ts *httptest.Server, escrowID, hostAddr string, peer *signing.Secp256k1Signer, nonce []byte) []byte {
+	t.Helper()
+	auth := rpcpbconnect.NewPeerAuthServiceClient(ts.Client(), ts.URL+"/sessions/"+escrowID+"/rpc")
+	now := time.Now().Unix()
+	sig, err := transport.SignAttach(peer, hostAddr, now, peer.Address(), nonce, transport.AttachProtocolVersion, nil)
+	require.NoError(t, err)
+	attached, err := auth.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{
+		PeerAddress:     peer.Address(),
+		AttachNonce:     nonce,
+		ProtocolVersion: transport.AttachProtocolVersion,
+		HostAddress:     hostAddr,
+		Timestamp:       now,
+		Signature:       sig,
+	}))
+	require.NoError(t, err)
+	return attached.Msg.SessionToken
+}
+
+func rpcChat(t *testing.T, ts *httptest.Server, escrowID string, token []byte, signer *signing.Secp256k1Signer, payload []byte) error {
+	t.Helper()
+	session := rpcpbconnect.NewSessionServiceClient(ts.Client(), ts.URL+"/sessions/"+escrowID+"/rpc")
+	env, err := transport.SignEnvelope(signer, escrowID, payload, time.Now().Unix())
+	require.NoError(t, err)
+	req := connect.NewRequest(env)
+	transport.SetSessionHeader(req.Header(), token)
+	stream, err := session.Chat(context.Background(), req)
+	require.NoError(t, err)
+	for stream.Receive() {
+	}
+	return stream.Err()
 }

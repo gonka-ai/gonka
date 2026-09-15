@@ -3,6 +3,7 @@ package transport_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,14 +31,91 @@ import (
 
 func startPeerRPCServer(t *testing.T, hostAddr string, authCfg rpcserver.PeerAuthConfig, lookup rpcserver.SessionLookup, opts ...rpcserver.MuxOption) (*httptest.Server, *rpcserver.PeerAuthHandler) {
 	t.Helper()
+	return startPeerRPCServerObserved(t, hostAddr, authCfg, lookup, nil, opts...)
+}
+
+// startPeerRPCServerObserved records per-procedure wire encodings and the
+// compressed request size in obs when it is non-nil.
+func startPeerRPCServerObserved(t *testing.T, hostAddr string, authCfg rpcserver.PeerAuthConfig, lookup rpcserver.SessionLookup, obs *wireObserver, opts ...rpcserver.MuxOption) (*httptest.Server, *rpcserver.PeerAuthHandler) {
+	t.Helper()
 	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, authCfg)
 	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(lookup), opts...)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mux.ServeHTTP(w, r.WithContext(rpcserver.WithEscrowID(r.Context(), "escrow-1")))
+		r = r.WithContext(rpcserver.WithEscrowID(r.Context(), "escrow-1"))
+		if obs == nil {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		counted := &countingBody{ReadCloser: r.Body}
+		r.Body = counted
+		mux.ServeHTTP(w, r)
+		obs.record(r.URL.Path, r.Header, w.Header(), counted.n)
 	}))
 	t.Cleanup(srv.Close)
 	t.Cleanup(auth.Close)
 	return srv, auth
+}
+
+type countingBody struct {
+	io.ReadCloser
+	n int
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.n += n
+	return n, err
+}
+
+// wireObserver is what actually crossed the wire, per procedure.
+type wireObserver struct {
+	mu      sync.Mutex
+	reqEnc  map[string]string
+	respEnc map[string]string
+	wire    map[string]int
+}
+
+func newWireObserver() *wireObserver {
+	return &wireObserver{
+		reqEnc:  map[string]string{},
+		respEnc: map[string]string{},
+		wire:    map[string]int{},
+	}
+}
+
+func (o *wireObserver) record(procedure string, req, resp http.Header, wireBytes int) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.reqEnc[procedure] = headerEncoding(req)
+	o.respEnc[procedure] = headerEncoding(resp)
+	o.wire[procedure] = wireBytes
+}
+
+func (o *wireObserver) requestEncoding(procedure string) string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.reqEnc[procedure]
+}
+
+func (o *wireObserver) responseEncoding(procedure string) string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.respEnc[procedure]
+}
+
+func (o *wireObserver) requestBytes(procedure string) int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.wire[procedure]
+}
+
+// headerEncoding is unary Content-Encoding or the Connect streaming
+// equivalent, whichever the protocol used.
+func headerEncoding(h http.Header) string {
+	if enc := h.Get("Content-Encoding"); enc != "" {
+		return enc
+	}
+	return h.Get("Connect-Content-Encoding")
 }
 
 func newTestPeerConn(t *testing.T, srv *httptest.Server, hostAddr string, signer signing.Signer, cfg transport.PeerConnConfig) *transport.PeerConn {
@@ -101,6 +179,7 @@ func TestPeerConn_AttachLoopHappyPath(t *testing.T) {
 	require.Equal(t, observability.PeerSessionReady, pc.State())
 	require.Equal(t, 1.0, testutil.ToFloat64(observability.PeerAttachCounter(directMuxPeer(hostAddr), "ok"))-before)
 	require.Equal(t, 1.0, testutil.ToFloat64(observability.PeerSessionStateGauge(directMuxPeer(hostAddr), observability.PeerSessionReady)))
+	require.False(t, pc.UsingH2(), "unset h2 port stays HTTP/1.1")
 }
 
 func TestPeerConn_ReconnectOnWatchClose(t *testing.T) {
@@ -389,6 +468,11 @@ func (s sigLookup) SessionForParticipant(id, addr string) (rpcserver.SessionCore
 	return s.SessionServerExisting(id)
 }
 
+func (s sigLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, error) {
+	_ = addr
+	return s.SessionServerExisting(id)
+}
+
 type sigCore struct {
 	sigs map[uint32][]byte
 }
@@ -453,6 +537,31 @@ func TestRPCClient_GetMempoolReadMaxBytes(t *testing.T) {
 	})
 }
 
+func TestRPCClient_QueriesGzipRequestAndResponse(t *testing.T) {
+	obs := newWireObserver()
+	lookup := queryLookup{
+		diffs:   []types.DiffRecord{{Diff: types.Diff{Nonce: 1, UserSig: make([]byte, 8<<10)}}},
+		mempool: largeHeartbeat(8 << 10),
+	}
+	rpc := newQueryRPCClientObserved(t, lookup, transport.EndpointDiffs+","+transport.EndpointMempool,
+		0, rpcserver.PeerAuthConfig{}, obs)
+
+	diffs, err := rpc.GetDiffs(context.Background(), 1, 1)
+	require.NoError(t, err)
+	require.Len(t, diffs, 1)
+	txs, err := rpc.GetMempool(context.Background())
+	require.NoError(t, err)
+	require.Len(t, txs, 1)
+
+	for _, procedure := range []string{
+		rpcpbconnect.SessionServiceGetDiffsProcedure,
+		rpcpbconnect.SessionServiceGetMempoolProcedure,
+	} {
+		require.Equal(t, "gzip", obs.requestEncoding(procedure), procedure)
+		require.Equal(t, "gzip", obs.responseEncoding(procedure), procedure)
+	}
+}
+
 func newQueryRPCClient(t *testing.T, lookup queryLookup, endpoints string, queryTimeout time.Duration) *transport.RPCClient {
 	t.Helper()
 	return newQueryRPCClientAuth(t, lookup, endpoints, queryTimeout, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
@@ -460,12 +569,17 @@ func newQueryRPCClient(t *testing.T, lookup queryLookup, endpoints string, query
 
 func newQueryRPCClientAuth(t *testing.T, lookup queryLookup, endpoints string, queryTimeout time.Duration, authCfg rpcserver.PeerAuthConfig) *transport.RPCClient {
 	t.Helper()
+	return newQueryRPCClientObserved(t, lookup, endpoints, queryTimeout, authCfg, nil)
+}
+
+func newQueryRPCClientObserved(t *testing.T, lookup queryLookup, endpoints string, queryTimeout time.Duration, authCfg rpcserver.PeerAuthConfig, obs *wireObserver) *transport.RPCClient {
+	t.Helper()
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
 	if authCfg.Heartbeat <= 0 {
 		authCfg.Heartbeat = 50 * time.Millisecond
 	}
-	srv, _ := startPeerRPCServer(t, hostAddr, authCfg, lookup)
+	srv, _ := startPeerRPCServerObserved(t, hostAddr, authCfg, lookup, obs)
 	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{})
 	pc.Start()
 	waitPeerReady(t, pc)
@@ -547,6 +661,11 @@ func (q queryLookup) SessionServerExisting(string) (rpcserver.SessionCore, error
 }
 
 func (q queryLookup) SessionForParticipant(id, addr string) (rpcserver.SessionCore, error) {
+	_ = addr
+	return q.SessionServerExisting(id)
+}
+
+func (q queryLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, error) {
 	_ = addr
 	return q.SessionServerExisting(id)
 }
@@ -824,6 +943,11 @@ func (l largeRPCLookup) SessionServerExisting(string) (rpcserver.SessionCore, er
 }
 
 func (l largeRPCLookup) SessionForParticipant(id, addr string) (rpcserver.SessionCore, error) {
+	_ = addr
+	return l.SessionServerExisting(id)
+}
+
+func (l largeRPCLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, error) {
 	_ = addr
 	return l.SessionServerExisting(id)
 }

@@ -2079,11 +2079,11 @@ func TestStopStartWithdrawsRouteAndWaitsForProxyLease(t *testing.T) {
 	releaseRequest := make(chan struct{})
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseRequest) }) }
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	backend := httptest.NewServer(proxy.H2CHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		close(requestStarted)
 		<-releaseRequest
 		w.WriteHeader(http.StatusNoContent)
-	}))
+	})))
 	t.Cleanup(func() {
 		release()
 		backend.Close()

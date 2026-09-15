@@ -31,15 +31,20 @@ type SessionCore interface {
 // SessionLookup resolves a per-escrow session.
 // SessionServerExisting must not CreateSession (observability GETs).
 // SessionForParticipant CreateSession when addr is the creator or a slot member.
+// SessionForOwner CreateSession only when addr is the escrow creator (Chat).
 type SessionLookup interface {
 	SessionServerExisting(escrowID string) (SessionCore, error)
 	// SessionForParticipant returns a live session, creating one when addr is
 	// the escrow creator or a slot member. Strangers return (nil, nil).
 	SessionForParticipant(escrowID, addr string) (SessionCore, error)
+	// SessionForOwner is BindOwnerChat: Existing + owner, or CreateSession
+	// only for the escrow creator. Slot members return (nil, nil).
+	SessionForOwner(escrowID, addr string) (SessionCore, error)
 }
 
 // AdaptLookup wraps a *transport.Server finder (HostManager.SessionServerExisting).
-// SessionForParticipant falls back to Existing (tests and obs-only lookups).
+// SessionForParticipant and SessionForOwner fall back to Existing (tests and
+// obs-only lookups). Slot-member Chat then 403s in requireOwner without CreateSession.
 func AdaptLookup(fn func(escrowID string) (*transport.Server, error)) SessionLookup {
 	return lookupAdapter(fn)
 }
@@ -65,6 +70,11 @@ func (f lookupAdapter) SessionForParticipant(id, addr string) (SessionCore, erro
 	return f.SessionServerExisting(id)
 }
 
+func (f lookupAdapter) SessionForOwner(id, addr string) (SessionCore, error) {
+	_ = addr
+	return f.SessionServerExisting(id)
+}
+
 // SessionHandler implements SessionService.
 type SessionHandler struct {
 	rpcpbconnect.UnimplementedSessionServiceHandler
@@ -79,7 +89,7 @@ func (h *SessionHandler) Chat(ctx context.Context, req *connect.Request[rpcpb.Si
 	if req == nil || req.Msg == nil {
 		return connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	peer, srv, payload, err := h.openSigned(ctx, req.Msg, "rpc_chat")
+	peer, srv, payload, err := h.openSignedOwner(ctx, req.Msg, "rpc_chat")
 	if err != nil {
 		return err
 	}

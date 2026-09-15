@@ -28,15 +28,19 @@ func newSessionResolver(lookup SessionLookup) sessionResolver {
 	}
 }
 
+type sessionBind int
+
+const (
+	bindExisting sessionBind = iota
+	bindParticipant
+	bindOwner
+)
+
 func (r sessionResolver) resolve(ctx context.Context, route string) (peer, escrow string, srv SessionCore, err error) {
-	return r.resolveSession(ctx, route, false)
+	return r.resolveSession(ctx, route, bindExisting)
 }
 
-func (r sessionResolver) resolveParticipant(ctx context.Context, route string) (peer, escrow string, srv SessionCore, err error) {
-	return r.resolveSession(ctx, route, true)
-}
-
-func (r sessionResolver) resolveSession(ctx context.Context, route string, bindParticipant bool) (peer, escrow string, srv SessionCore, err error) {
+func (r sessionResolver) resolveSession(ctx context.Context, route string, bind sessionBind) (peer, escrow string, srv SessionCore, err error) {
 	peer, escrow, err = requirePeer(ctx)
 	if err != nil {
 		return "", "", nil, err
@@ -44,9 +48,12 @@ func (r sessionResolver) resolveSession(ctx context.Context, route string, bindP
 	if r.lookup == nil {
 		return "", "", nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("session lookup not configured"))
 	}
-	if bindParticipant {
+	switch bind {
+	case bindParticipant:
 		srv, err = r.lookup.SessionForParticipant(escrow, peer)
-	} else {
+	case bindOwner:
+		srv, err = r.lookup.SessionForOwner(escrow, peer)
+	default:
 		srv, err = r.lookup.SessionServerExisting(escrow)
 	}
 	if err != nil {
@@ -54,22 +61,37 @@ func (r sessionResolver) resolveSession(ctx context.Context, route string, bindP
 		return "", "", nil, mapAllowError(err)
 	}
 	if srv == nil {
-		if bindParticipant {
-			recordRPCSessionResolution(ctx, route, escrow, storage.ErrSessionNotFound)
+		recordRPCSessionResolution(ctx, route, escrow, storage.ErrSessionNotFound)
+		if bind == bindParticipant {
 			return "", "", nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
 		}
-		recordRPCSessionResolution(ctx, route, escrow, storage.ErrSessionNotFound)
+		if bind == bindOwner {
+			return "", "", nil, permissionDenied("restricted to escrow owner")
+		}
 		return "", "", nil, mapAllowError(storage.ErrSessionNotFound)
 	}
 	recordRPCSessionResolution(ctx, route, escrow, nil)
 	if !srv.AllowsSender(peer) {
 		return "", "", nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
 	}
+	if bind == bindOwner {
+		if err := requireOwner(srv, peer); err != nil {
+			return "", "", nil, err
+		}
+	}
 	return peer, escrow, srv, nil
 }
 
 func (r sessionResolver) openSigned(ctx context.Context, env *rpcpb.SignedEnvelope, route string) (peer string, srv SessionCore, payload []byte, err error) {
-	peer, escrow, srv, err := r.resolveParticipant(ctx, route)
+	return r.openSignedBound(ctx, env, route, bindParticipant)
+}
+
+func (r sessionResolver) openSignedOwner(ctx context.Context, env *rpcpb.SignedEnvelope, route string) (peer string, srv SessionCore, payload []byte, err error) {
+	return r.openSignedBound(ctx, env, route, bindOwner)
+}
+
+func (r sessionResolver) openSignedBound(ctx context.Context, env *rpcpb.SignedEnvelope, route string, bind sessionBind) (peer string, srv SessionCore, payload []byte, err error) {
+	peer, escrow, srv, err := r.resolveSession(ctx, route, bind)
 	if err != nil {
 		return "", nil, nil, err
 	}

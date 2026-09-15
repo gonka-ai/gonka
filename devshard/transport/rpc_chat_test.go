@@ -5,11 +5,13 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,9 +21,11 @@ import (
 
 	"connectrpc.com/connect"
 
+	"devshard"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/stub"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 	"devshard/types"
@@ -196,6 +200,65 @@ func TestServeInference_CancelDuringReceiptDelay(t *testing.T) {
 	require.Less(t, time.Since(start), 500*time.Millisecond)
 }
 
+type countingInferenceEngine struct {
+	inner *stub.InferenceEngine
+	n     atomic.Int32
+}
+
+func (e *countingInferenceEngine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
+	e.n.Add(1)
+	return e.inner.Execute(ctx, req)
+}
+
+func mempoolHasFinish(txs []*types.DevshardTx) bool {
+	for _, tx := range txs {
+		if tx.GetFinishInference() != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func TestServeInference_ReceiptFlushFailureDoesNotRunExecution(t *testing.T) {
+	engine := &countingInferenceEngine{inner: stub.NewInferenceEngine()}
+	env := setupServerEnvEngine(t, engine, nil)
+	sink := NewChatFrameSink(func([]byte) error {
+		return errors.New("peer gone")
+	})
+	err := env.server.ServeInference(context.Background(), InferenceCall{
+		SessionID: "escrow-1",
+		Sender:    env.userSigner.Address(),
+		Body:      chatTestInferenceJSON(t, env),
+		Source:    "test",
+		Sink:      sink,
+	})
+	require.ErrorContains(t, err, "peer gone")
+	require.Zero(t, engine.n.Load(), "receipt Flush failure must not start ML")
+	require.False(t, mempoolHasFinish(env.server.Host().MempoolTxs()))
+}
+
+func TestServeInference_TokenFlushFailureAfterReceiptStillFinishes(t *testing.T) {
+	engine := &countingInferenceEngine{inner: stub.NewInferenceEngine()}
+	env := setupServerEnvEngine(t, engine, nil)
+	var n atomic.Int32
+	sink := NewChatFrameSink(func([]byte) error {
+		if n.Add(1) == 1 {
+			return nil
+		}
+		return errors.New("peer gone")
+	})
+	err := env.server.ServeInference(context.Background(), InferenceCall{
+		SessionID: "escrow-1",
+		Sender:    env.userSigner.Address(),
+		Body:      chatTestInferenceJSON(t, env),
+		Source:    "test",
+		Sink:      sink,
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(1), engine.n.Load(), "token-stream death after a sent receipt still executes")
+	require.True(t, mempoolHasFinish(env.server.Host().MempoolTxs()))
+}
+
 func TestDefaultClientConfig_InferenceTimeout(t *testing.T) {
 	cfg := DefaultClientConfig()
 	require.Equal(t, 30*time.Minute, cfg.InferenceTimeout)
@@ -217,6 +280,8 @@ func TestRPCClient_SendStreamCapDoesNotSpendBudget(t *testing.T) {
 	t.Cleanup(pc.Close)
 	pc.streams.apply(&rpcpb.RateLimits{MaxStreams: 1})
 	pc.budget.apply(&rpcpb.RateLimits{MessagesPerMin: 6000, MessagesBurst: 10}, time.Now())
+	pc.setState(stateReady)
+	pc.publishToken([]byte("tok-chat-cap"), time.Now().Add(time.Hour))
 	require.True(t, pc.acquireStream(), "Watch holds the only advertised slot")
 
 	rpc := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer), pc, ParseRPCEndpoints(EndpointChat))
@@ -232,6 +297,75 @@ func TestRPCClient_SendStreamCapDoesNotSpendBudget(t *testing.T) {
 	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
 	require.Contains(t, err.Error(), "too many concurrent streams")
 	require.NoError(t, pc.takePeerBudget(context.Background(), rpcpbconnect.SessionServiceGetSignaturesProcedure))
+}
+
+func TestRPCClient_SendChatCapLeavesWatchSlot(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: "gonka1chatwatch",
+		Signer:      signer,
+		DirectMux:   true,
+		Sleep: func(context.Context, time.Duration) error {
+			t.Fatal("stream-cap Chat must not wait on the peer budget")
+			return nil
+		},
+	})
+	t.Cleanup(pc.Close)
+	pc.streams.apply(&rpcpb.RateLimits{MaxStreams: 2})
+	pc.budget.apply(&rpcpb.RateLimits{MessagesPerMin: 6000, MessagesBurst: 10}, time.Now())
+	pc.setState(stateReady)
+	pc.publishToken([]byte("tok-chat-watch"), time.Now().Add(time.Hour))
+	require.True(t, pc.acquireStream(), "Watch holds one slot")
+	require.True(t, pc.acquireChatStream(), "one Chat fits under max-1")
+
+	rpc := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer), pc, ParseRPCEndpoints(EndpointChat))
+	_, err := rpc.Send(context.Background(), host.HostRequest{
+		Nonce: 1,
+		Payload: &host.InferencePayload{
+			Prompt:    []byte("x"),
+			Model:     "llama",
+			MaxTokens: 1,
+			StartedAt: 1,
+		},
+	}, nil, nil)
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Contains(t, err.Error(), "too many concurrent streams")
+	require.NoError(t, pc.takePeerBudget(context.Background(), rpcpbconnect.SessionServiceGetSignaturesProcedure))
+}
+
+func TestRPCClient_SendWaitReadyDoesNotTakeBudget(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: "gonka1chatwait",
+		Signer:      signer,
+		DirectMux:   true,
+		Sleep: func(context.Context, time.Duration) error {
+			t.Fatal("WaitReady miss must not wait on the peer budget")
+			return nil
+		},
+	})
+	t.Cleanup(pc.Close)
+	pc.budget.apply(&rpcpb.RateLimits{MessagesPerMin: 6000, MessagesBurst: 10}, time.Now())
+
+	cfg := DefaultClientConfig()
+	cfg.InferenceTimeout = 80 * time.Millisecond
+	rpc := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer, cfg), pc, ParseRPCEndpoints(EndpointChat))
+	start := time.Now()
+	_, err := rpc.Send(context.Background(), host.HostRequest{
+		Nonce: 1,
+		Payload: &host.InferencePayload{
+			Prompt:    []byte("x"),
+			Model:     "llama",
+			MaxTokens: 1,
+			StartedAt: 1,
+		},
+	}, nil, nil)
+	require.ErrorIs(t, err, ErrPeerNotReady)
+	require.Less(t, time.Since(start), time.Second)
+	require.NoError(t, pc.takePeerBudget(context.Background(), rpcpbconnect.SessionServiceChatProcedure),
+		"WaitReady miss must not spend Chat weight 10")
 }
 
 func TestParseChatStream_ZeroFramesTruncated(t *testing.T) {

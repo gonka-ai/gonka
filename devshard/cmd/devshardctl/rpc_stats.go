@@ -28,8 +28,14 @@ const (
 	rpcStatsEnvDisabled    = "DEVSHARD_GATEWAY_RPC_STATS_DISABLED"
 
 	defaultRPCStatsInterval    = 15 * time.Second
-	defaultRPCStatsTimeout     = 2 * time.Second
+	// Heavier than host ping (2s /clock): WAN RTT + versiond merge + child fetches.
+	defaultRPCStatsTimeout     = 4 * time.Second
 	defaultRPCStatsConcurrency = 8
+
+	// One idle keep-alive per unique InferenceUrl. This client never has
+	// concurrent GETs to the same host (fan-out is across hosts).
+	rpcStatsMaxIdleConns        = 512
+	rpcStatsMaxIdleConnsPerHost = 1
 
 	rpcStatsMaxBodyBytes  = 8 << 20
 	rpcStatsProcessEscrow = "_"
@@ -83,7 +89,7 @@ type rpcStatsHostState struct {
 	Snap        transport.RPCStatsSnapshot
 }
 
-type rpcStatsWarnFunc func(minute int64, hosts int, banned uint64, sample, zone, endpoint string)
+type rpcStatsWarnFunc func(minute int64, hosts []rpcStatsHostState)
 
 type rpcStatsPoller struct {
 	gateway *Gateway
@@ -119,8 +125,8 @@ func newRPCStatsPoller(gateway *Gateway, cfg rpcStatsConfig) *rpcStatsPoller {
 	}
 	tr := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		MaxIdleConns:          64,
-		MaxIdleConnsPerHost:   2,
+		MaxIdleConns:          rpcStatsMaxIdleConns,
+		MaxIdleConnsPerHost:   rpcStatsMaxIdleConnsPerHost,
 		IdleConnTimeout:       idle,
 		ResponseHeaderTimeout: cfg.Timeout,
 		DisableCompression:    true,
@@ -363,14 +369,8 @@ func (p *rpcStatsPoller) maybeWarn(results []rpcStatsHostState) {
 	if p == nil {
 		return
 	}
-	var (
-		bannedHosts int
-		totalBanned uint64
-		sample      string
-		minute      int64
-	)
-	zoneCounts := map[string]uint64{}
-	epCounts := map[string]uint64{}
+	banned := make([]rpcStatsHostState, 0)
+	var minute int64
 	for _, st := range results {
 		if !st.Up || !st.HasSnap {
 			continue
@@ -378,37 +378,20 @@ func (p *rpcStatsPoller) maybeWarn(results []rpcStatsHostState) {
 		if st.Snap.Host.Banned == 0 && st.Snap.Host.Attach.Banned == 0 {
 			continue
 		}
-		bannedHosts++
-		totalBanned += st.Snap.Host.Banned
-		if st.Snap.Host.Banned == 0 {
-			totalBanned += st.Snap.Host.Attach.Banned
-		}
-		if sample == "" {
-			sample = strings.TrimSpace(st.Snap.HostAddress)
-			if sample == "" {
-				sample = st.Participant
-			}
-		}
+		banned = append(banned, st)
 		if st.Snap.MinuteUnix > minute {
 			minute = st.Snap.MinuteUnix
 		}
-		for _, z := range st.Snap.Host.Zones {
-			if z.Banned > 0 {
-				zoneCounts[z.Zone] += z.Banned
-			}
-		}
-		for _, e := range st.Snap.Host.Endpoints {
-			if e.Banned > 0 {
-				epCounts[e.Endpoint] += e.Banned
-			}
-		}
 	}
-	if bannedHosts == 0 {
+	if len(banned) == 0 {
 		return
 	}
 	if minute == 0 && p.now != nil {
 		minute = (p.now().Unix()/60 - 1) * 60
 	}
+	sort.Slice(banned, func(i, j int) bool {
+		return banned[i].Participant < banned[j].Participant
+	})
 	for {
 		prev := p.warnedMinute.Load()
 		if prev == minute {
@@ -419,7 +402,7 @@ func (p *rpcStatsPoller) maybeWarn(results []rpcStatsHostState) {
 		}
 	}
 	if p.warn != nil {
-		p.warn(minute, bannedHosts, totalBanned, sample, topKey(zoneCounts), topKey(epCounts))
+		p.warn(minute, banned)
 	}
 }
 
@@ -437,16 +420,50 @@ func topKey(counts map[string]uint64) string {
 	return best
 }
 
-func defaultRPCStatsWarn(minute int64, hosts int, banned uint64, sample, zone, endpoint string) {
-	observability.Log(context.Background(), observability.LevelWarn, "rpc rate limit gateway closed minute",
-		observability.StageReceived, observability.WhereGatewayRPCStats, "", observability.ReasonRateLimited, nil,
-		"minute_unix", minute,
-		"hosts", hosts,
-		"banned", banned,
-		"host_address", sample,
-		"zone", zone,
-		"endpoint", endpoint,
-	)
+func defaultRPCStatsWarn(minute int64, hosts []rpcStatsHostState) {
+	n := len(hosts)
+	var total uint64
+	for _, st := range hosts {
+		total += st.Snap.Host.Banned
+		if st.Snap.Host.Banned == 0 {
+			total += st.Snap.Host.Attach.Banned
+		}
+	}
+	for _, st := range hosts {
+		hostAddr := strings.TrimSpace(st.Snap.HostAddress)
+		if hostAddr == "" {
+			hostAddr = st.Participant
+		}
+		host := metricLabel(st.Participant, "unknown")
+		zoneCounts := map[string]uint64{}
+		epCounts := map[string]uint64{}
+		for _, z := range st.Snap.Host.Zones {
+			if z.Banned > 0 {
+				zoneCounts[z.Zone] += z.Banned
+			}
+		}
+		for _, e := range st.Snap.Host.Endpoints {
+			if e.Banned > 0 {
+				epCounts[e.Endpoint] += e.Banned
+			}
+		}
+		kv := []any{
+			"minute_unix", minute,
+			"hosts", n,
+			"banned", st.Snap.Host.Banned,
+			"banned_hosts_total", total,
+			"host", host,
+			"host_address", hostAddr,
+			"zone", topKey(zoneCounts),
+			"endpoint", topKey(epCounts),
+		}
+		kv = transport.AppendRPCStatsLogTag(kv, host, minute)
+		kv = transport.AppendBannedIdentityLog(kv, st.Snap.Host)
+		observability.Log(context.Background(), observability.LevelWarn, "rpc rate limit gateway closed minute",
+			observability.StageReceived, observability.WhereGatewayRPCStats, "", observability.ReasonRateLimited, nil,
+			kv...,
+		)
+	}
 }
 
 func (g *Gateway) handleDebugRPCTraffic(w http.ResponseWriter, r *http.Request) {

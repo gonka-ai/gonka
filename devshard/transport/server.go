@@ -463,22 +463,35 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	})
 }
 
+// sseErrorFlusher is implemented by ChatFrameSink. http.Flusher.Flush is void,
+// so RPC gzip-buffered Send errors are only visible here.
+type sseErrorFlusher interface {
+	FlushErr() error
+}
+
+func flushSSE(w http.ResponseWriter) error {
+	if f, ok := w.(sseErrorFlusher); ok {
+		return f.FlushErr()
+	}
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	return nil
+}
+
 // replaySSEBody writes cached ML response bytes as SSE data lines.
 // The cached bytes are the raw response body (JSON). Wrap as a single SSE data event.
 func replaySSEBody(w http.ResponseWriter, body []byte) error {
 	if _, err := fmt.Fprintf(w, "data: %s\n\n", body); err != nil {
 		return err
 	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	if err := flushSSE(w); err != nil {
+		return err
 	}
 	if _, err := fmt.Fprintf(w, "data: [DONE]\n\n"); err != nil {
 		return err
 	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-	return nil
+	return flushSSE(w)
 }
 
 // writeSSEEvent writes a single SSE data line with JSON payload.
@@ -490,10 +503,7 @@ func writeSSEEvent(w http.ResponseWriter, data interface{}) error {
 	if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
 		return err
 	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-	return nil
+	return flushSSE(w)
 }
 
 // RateLimitMiddleware returns per-sender rate limiting for authenticated POST

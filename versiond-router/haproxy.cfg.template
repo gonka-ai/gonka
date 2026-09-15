@@ -78,6 +78,7 @@ resolvers docker
 
 frontend versiond_in
     bind ${FRONT_BIND_ADDRESS}:8080
+    bind ${FRONT_BIND_ADDRESS}:${H2_PORT} proto h2
     maxconn ${MAX_CONNECTIONS}
 
     # This is a trusted router-to-devshardd signal, never client input. Backends
@@ -101,6 +102,10 @@ frontend versiond_in
     # non-session traffic still spreads. Derived here and never taken from a
     # client header: it selects the upstream, so an attacker could otherwise
     # pin themselves to a chosen host.
+    #
+    # ^/[^/]+/sessions/[^/]+ also matches /{version}/sessions/{escrow}/rpc/…
+    # (Connect). Do not add a second regex for /rpc/; field 4 is still the
+    # escrow. Per-IP zones stay on the published hop (proxy), not here.
     http-request set-var(txn.hashkey) var(txn.canonpath)
     http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
     http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }

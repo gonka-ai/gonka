@@ -126,6 +126,19 @@ func TestChannelLimit_AdvertisedMatchesConfig(t *testing.T) {
 	require.Equal(t, transport.UnlimitedRPCLimit, attached.Limits.GetIpBurst())
 }
 
+func TestChannelLimit_AdvertisedMaxStreamsCappedByMaxConns(t *testing.T) {
+	limits := transport.ChannelLimitConfig{
+		MaxStreams: 256,
+		MaxConns:   16,
+	}
+	auth := newTestAuth(PeerAuthConfig{Limits: &limits})
+	srv := httptest.NewServer(withTestEscrow(NewMux(auth, NewSessionHandler(stubLookup{core: stubCore{}}))))
+	t.Cleanup(srv.Close)
+	client := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
+	attached := attach(t, client, devtest.MustGenerateKey(t), []byte("advertise-pool-cap-nonce-aaaa"))
+	require.Equal(t, uint32(16), attached.Limits.GetMaxStreams())
+}
+
 func TestChannelLimit_DisabledAdvertisesUnlimited(t *testing.T) {
 	auth := newTestAuth(PeerAuthConfig{Limits: &transport.ChannelLimitConfig{Disabled: true}})
 	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
@@ -368,6 +381,102 @@ func TestChannelLimit_ChatStreamCapDoesNotChargeWeight(t *testing.T) {
 	require.NoError(t, e.getSigs(), "stream-cap Chat must not spend weight 10")
 }
 
+type blockingChatCore struct {
+	stubCore
+}
+
+func (c blockingChatCore) ServeInference(ctx context.Context, call transport.InferenceCall) error {
+	if call.Sink != nil {
+		_, _ = call.Sink.Write([]byte("x"))
+		call.Sink.Flush()
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestChannelLimit_ChatReservesWatchSlot(t *testing.T) {
+	e := startLimitEnv(t, PeerAuthConfig{
+		Heartbeat: time.Hour,
+		Limits: &transport.ChannelLimitConfig{
+			MaxStreams:     2,
+			MessagesPerMin: transport.UnlimitedRPCLimit,
+		},
+	}, stubLookup{core: blockingChatCore{stubCore: stubCore{owner: true}}})
+
+	env, err := transport.SignEnvelope(e.signer, testEscrowID, nil, time.Now().Unix())
+	require.NoError(t, err)
+
+	chatCtx, cancelChat := context.WithCancel(context.Background())
+	t.Cleanup(cancelChat)
+	chat, err := e.session.Chat(chatCtx, withSession(connect.NewRequest(env), e.token))
+	require.NoError(t, err)
+	require.True(t, chat.Receive(), chat.Err())
+
+	watchCtx, cancelWatch := context.WithCancel(context.Background())
+	t.Cleanup(cancelWatch)
+	watch, err := e.authc.Watch(watchCtx, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), e.token))
+	require.NoError(t, err)
+	require.True(t, watch.Receive(), watch.Err())
+
+	second, err := e.session.Chat(context.Background(), withSession(connect.NewRequest(env), e.token))
+	require.NoError(t, err)
+	require.False(t, second.Receive())
+	requireResourceExhausted(t, second.Err(), "too many concurrent streams")
+	_ = second.Close()
+
+	cancelWatch()
+	_ = watch.Close()
+	cancelChat()
+	_ = chat.Close()
+}
+
+func TestChannelLimit_ChatReservesWatchSlotLimiter(t *testing.T) {
+	l := newChannelLimiter(transport.ChannelLimitConfig{
+		MaxStreams:     2,
+		MessagesPerMin: 10,
+		MessagesBurst:  10,
+	}, time.Now)
+	ctx := context.Background()
+	chat := rpcpbconnect.SessionServiceChatProcedure
+	watch := rpcpbconnect.PeerAuthServiceWatchProcedure
+
+	require.NoError(t, l.acquireStream(ctx, "p", chat))
+	requireResourceExhausted(t, l.acquireStream(ctx, "p", chat), "too many concurrent streams")
+	require.NoError(t, l.acquireStream(ctx, "p", watch), "Watch still connects at Chat cap max-1")
+	require.Equal(t, 2, l.streams["p"].total)
+	require.Equal(t, 1, l.streams["p"].chat)
+
+	l.releaseStream("p", watch)
+	require.NoError(t, l.acquireStream(ctx, "p", watch), "Watch reconnect after Chat-full")
+
+	l2 := newChannelLimiter(transport.ChannelLimitConfig{
+		MaxStreams:     2,
+		MessagesPerMin: 10,
+		MessagesBurst:  10,
+	}, time.Now)
+	require.NoError(t, l2.acquireStream(ctx, "p", watch))
+	require.NoError(t, l2.acquireStream(ctx, "p", chat), "Watch first still leaves a Chat slot")
+	requireResourceExhausted(t, l2.acquireStream(ctx, "p", chat), "too many concurrent streams")
+	require.Equal(t, 2, l2.streams["p"].total)
+}
+
+func TestChannelLimit_MaxConnsCapsStreamAcquire(t *testing.T) {
+	l := newChannelLimiter(transport.ChannelLimitConfig{
+		MaxStreams:     256,
+		MaxConns:       2,
+		MessagesPerMin: 10,
+		MessagesBurst:  10,
+	}, time.Now)
+	ctx := context.Background()
+	chat := rpcpbconnect.SessionServiceChatProcedure
+	watch := rpcpbconnect.PeerAuthServiceWatchProcedure
+	require.NoError(t, l.acquireStream(ctx, "p", chat))
+	requireResourceExhausted(t, l.acquireStream(ctx, "p", chat), "too many concurrent streams")
+	require.NoError(t, l.acquireStream(ctx, "p", watch), "Watch still connects at the pool min")
+	require.Equal(t, 2, l.streams["p"].total)
+	require.Equal(t, uint32(2), l.advertised().GetMaxStreams())
+}
+
 func TestChannelLimit_ChatRateLimitRecordsNoReceipt(t *testing.T) {
 	e := startLimitEnv(t, PeerAuthConfig{
 		Limits: &transport.ChannelLimitConfig{
@@ -580,12 +689,12 @@ func TestChannelLimit_OverflowRefusesNewStreamPeers(t *testing.T) {
 	require.NoError(t, l.acquireStream(ctx, "a", proc), "an existing stream peer is not reset")
 	requireResourceExhausted(t, l.acquireStream(ctx, "a", proc), "too many concurrent streams")
 	require.Equal(t, 1, len(l.streams))
-	require.Equal(t, 2, l.streams["a"])
+	require.Equal(t, 2, l.streams["a"].total)
 
-	l.releaseStream("a")
-	l.releaseStream("a")
+	l.releaseStream("a", proc)
+	l.releaseStream("a", proc)
 	require.NoError(t, l.acquireStream(ctx, "b", proc))
-	require.Equal(t, 1, l.streams["b"])
+	require.Equal(t, 1, l.streams["b"].total)
 	require.NotContains(t, l.streams, "a")
 }
 

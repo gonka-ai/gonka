@@ -1,6 +1,7 @@
 package rpcserver
 
 import (
+	"math"
 	"net/http"
 
 	"connectrpc.com/connect"
@@ -61,12 +62,15 @@ func NewMux(auth *PeerAuthHandler, session *SessionHandler, opts ...MuxOption) h
 		connect.WithSendMaxBytes(transport.DefaultRPCPayloadSendMaxBytes),
 		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
 	}
-	// Chat is 10 MiB (prompt + catch-up) and must not use per-frame gzip:
-	// chunks are already one application gzip stream (plan §8.2).
+	// Chat is 10 MiB (prompt + catch-up). The request envelope is gzipped like
+	// every other RPC, bounded by WithReadMaxBytes while inflating. Responses
+	// must not use per-frame gzip: chunks are already one application gzip
+	// stream (plan §8.2), so the floor keeps the decompressor registered while
+	// no ChatFrame is ever compressed a second time.
 	chatOpts := []connect.HandlerOption{
 		connect.WithReadMaxBytes(int(transport.DefaultMaxBodySize)),
 		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
-		connect.WithCompression("gzip", nil, nil),
+		connect.WithCompressMinBytes(math.MaxInt),
 	}
 	implemented := map[string]struct{}{
 		rpcpbconnect.PeerAuthServiceAttachProcedure: {},

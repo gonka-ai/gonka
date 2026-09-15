@@ -9,6 +9,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestPinVersiondCompose(t *testing.T) {
+	src := `
+services:
+  versiond-0:
+    build:
+      context: /repo/versioned
+      dockerfile: Dockerfile
+    image: devshard-versiond:latest
+    environment:
+      KEY: a
+  versiond-1:
+    build:
+      context: /repo/versioned
+      dockerfile: Dockerfile
+    image: devshard-versiond:latest
+  versiond-router:
+    build:
+      context: /repo
+      dockerfile: versiond-router/Dockerfile
+    image: devshard-versiond-router:latest
+  devshardctl:
+    build:
+      context: /repo
+      dockerfile: devshard/Dockerfile
+      target: devshardctl-runtime
+    image: devshard-runtime:latest
+`
+	got, err := pinVersiondCompose(src, "devshard-versiond:0.2.15-v5", "devshard-versiond-router:0.2.15-v5")
+	require.NoError(t, err)
+	require.NotContains(t, got, "image: devshard-versiond:latest")
+	require.NotContains(t, got, "image: devshard-versiond-router:latest")
+	require.Equal(t, 2, strings.Count(got, "image: devshard-versiond:0.2.15-v5"))
+	require.Contains(t, got, "image: devshard-versiond-router:0.2.15-v5")
+	require.NotContains(t, got, "dockerfile: Dockerfile\n")
+	require.NotContains(t, got, "versiond-router/Dockerfile")
+	require.Contains(t, got, "dockerfile: devshard/Dockerfile")
+	require.Contains(t, got, "image: devshard-runtime:latest")
+}
+
+func TestPinVersiondImagesFromEnvNoop(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	original := "image: devshard-versiond:latest\n"
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+	t.Setenv(EnvVersiondImage, "")
+	t.Setenv(EnvVersiondRouterImage, "")
+	PinVersiondImagesFromEnv(t, path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, original, string(body))
+}
+
 func TestPatchComposeEnvKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "docker-compose.yml")

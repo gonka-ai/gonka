@@ -16,6 +16,7 @@ import (
 	"connectrpc.com/connect"
 
 	devshardpkg "devshard"
+	"devshard/logging"
 	"devshard/observability"
 	"devshard/signing"
 	"devshard/transport/rpcpb"
@@ -89,6 +90,18 @@ type PeerConnConfig struct {
 	// Zero uses minAttachTTL (30s). Tests that must use a SessionTTL
 	// below that floor (unix-second TTL refresh) set this explicitly.
 	MinTTL time.Duration
+	// DialSet is the optional h2 origin. Empty H2URL means HTTP/1.1 on
+	// BaseURL only. Production fills this from DEVSHARD_RPC_H2_*.
+	// H2URL is the TCP target; TLS SNI/verify use InferenceURL's hostname.
+	DialSet PeerRPCDialSet
+	// H2ProbeTimeout bounds the h2 Attach probe. Zero uses
+	// DefaultRPCH2ProbeTimeout (1s).
+	H2ProbeTimeout time.Duration
+	// H2ReadIdleTimeout PINGs a quiet h2 mux. Zero uses
+	// DefaultRPCH2ReadIdleTimeout (15s).
+	H2ReadIdleTimeout time.Duration
+	// H2PingTimeout bounds that PING. Zero uses DefaultRPCH2PingTimeout (5s).
+	H2PingTimeout time.Duration
 }
 
 func (c PeerConnConfig) version() string {
@@ -176,8 +189,9 @@ func (c PeerConnConfig) jitter(d time.Duration) time.Duration {
 
 // PeerConn is one Attach → Watch session per (host, version, BaseURL, signer).
 type PeerConn struct {
-	cfg  PeerConnConfig
-	http *http.Client
+	cfg    PeerConnConfig
+	http   *http.Client
+	origin *originSwitchTransport
 	// authDoor is first Attach (URL escrow is the AllowsSender door).
 	authDoor rpcpbconnect.PeerAuthServiceClient
 	// authHost is Watch and live renewals: /sessions/_/rpc, no door.
@@ -234,20 +248,7 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 		cfg.WatchStale = defaultWatchStale
 	}
 	maxConns := cfg.MaxConns
-	dialer := httpguard.NewDialer()
-	fallback := transportAddress(cfg.BaseURL)
-	tr := &http.Transport{
-		MaxIdleConnsPerHost: maxConns,
-		MaxConnsPerHost:     maxConns,
-		IdleConnTimeout:     120 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		DialContext:         DefaultHostConnectionTracker().TrackDialContext(dialer.DialContext, fallback),
-	}
-	rt := DefaultHostConnectionTracker().WrapRoundTripper(&poolWatchRoundTripper{
-		base: tr,
-		peer: cfg.childID(),
-		max:  maxConns,
-	})
+	origin, rt := newPeerConnTransports(cfg, maxConns)
 	httpClient := &http.Client{
 		Transport:     rt,
 		CheckRedirect: noFollowRedirects,
@@ -264,6 +265,7 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 	p := &PeerConn{
 		cfg:      cfg,
 		http:     httpClient,
+		origin:   origin,
 		authDoor: authDoor,
 		authHost: authHost,
 		key:      cfg.registryKey(),
@@ -273,6 +275,34 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 	}
 	p.setState(stateUnauthenticated)
 	return p
+}
+
+func newPeerConnTransports(cfg PeerConnConfig, maxConns int) (*originSwitchTransport, http.RoundTripper) {
+	dialer := httpguard.NewDialer()
+	h1 := &http.Transport{
+		MaxIdleConnsPerHost: maxConns,
+		MaxConnsPerHost:     maxConns,
+		IdleConnTimeout:     120 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		DialContext:         DefaultHostConnectionTracker().TrackDialContext(dialer.DialContext, transportAddress(cfg.BaseURL)),
+	}
+	h2URL := parseH2Origin(cfg.DialSet.H2URL)
+	var h2 http.RoundTripper
+	if h2URL != nil {
+		h2Dial := DefaultHostConnectionTracker().TrackDialContext(dialer.DialContext, transportAddress(cfg.DialSet.H2URL))
+		serverName := rpcH2ServerName(cfg.DialSet.InferenceURL)
+		if serverName == "" {
+			serverName = rpcH2ServerName(cfg.BaseURL)
+		}
+		h2 = rpch2Clients.get(h2URL, serverName, h2Dial, cfg.H2ReadIdleTimeout, cfg.H2PingTimeout)
+	}
+	origin := newOriginSwitchTransport(h1, h2, h2URL)
+	rt := DefaultHostConnectionTracker().WrapRoundTripper(&poolWatchRoundTripper{
+		base: origin,
+		peer: cfg.childID(),
+		max:  maxConns,
+	})
+	return origin, rt
 }
 
 func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
@@ -376,6 +406,15 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 				newTok, newExp, err := p.attach()
 				p.incAttach(err)
 				if err != nil {
+					if isRPCH2Miss(err) {
+						// Origin is gone (listen/RST/ALPN/half-open). End
+						// Watch; do not flip setH2(false) until the stream
+						// has returned. Outer loop probes then HTTP/1.1.
+						cancelWatch()
+						<-watchErr
+						p.incReattach(reattachReasonWatch)
+						return err
+					}
 					// Watch and token stay. Retry refresh; do not drop to
 					// unauthenticated.
 					refreshBackoff = nextAttachBackoff(refreshBackoff, p.cfg.BackoffMin, p.cfg.BackoffMax)
@@ -440,18 +479,6 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 	if p.cfg.Signer == nil {
 		return nil, time.Time{}, fmt.Errorf("peer conn: signer is required")
 	}
-	nonce := make([]byte, attachNonceBytes)
-	if _, err := crand.Read(nonce); err != nil {
-		return nil, time.Time{}, fmt.Errorf("attach nonce: %w", err)
-	}
-	ts := p.cfg.now().Unix()
-	peer := p.cfg.Signer.Address()
-	sig, err := SignAttach(p.cfg.Signer, p.cfg.HostAddress, ts, peer, nonce, AttachProtocolVersion, nil)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	ctx, cancel := context.WithTimeout(p.ctx, DefaultAttachTimeout)
-	defer cancel()
 	client := p.authDoor
 	if p.liveSession() {
 		// Live renewal: Watch already proved this peer. Do not pin the
@@ -459,14 +486,68 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 		// token must still refresh on the host path.
 		client = p.authHost
 	}
-	resp, err := client.Attach(ctx, connect.NewRequest(&rpcpb.AttachRequest{
+	msg, err := p.newAttachRequest()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	// Probe + HTTP/1.1 share one DefaultAttachTimeout. h2 is capped at
+	// h2ProbeTimeout; 1.1 gets the remainder (≈5s if the probe returns
+	// immediately, ≈4s after a 1s blackhole).
+	overall, cancel := context.WithTimeout(p.ctx, DefaultAttachTimeout)
+	defer cancel()
+	if !p.liveSession() && p.shouldProbeH2() {
+		p.origin.setH2(true)
+		h2ctx, h2cancel := context.WithTimeout(overall, p.h2ProbeTimeout())
+		tok, exp, err := p.attachOnce(h2ctx, client, msg)
+		h2cancel()
+		if err == nil {
+			return tok, exp, nil
+		}
+		if p.ctx.Err() != nil {
+			return nil, time.Time{}, err
+		}
+		if !isRPCH2Miss(err) {
+			return nil, time.Time{}, err
+		}
+		rememberRPCH2Miss(p.cfg.BaseURL)
+		p.origin.setH2(false)
+		logging.Warn("peer rpc h2 origin missed; using HTTP/1.1",
+			"subsystem", "transport",
+			"host", inferenceHostKey(p.cfg.BaseURL),
+			"h2_url", p.cfg.DialSet.H2URL,
+			"error", err,
+		)
+		msg, err = p.newAttachRequest()
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	return p.attachOnce(overall, client, msg)
+}
+
+func (p *PeerConn) newAttachRequest() (*rpcpb.AttachRequest, error) {
+	nonce := make([]byte, attachNonceBytes)
+	if _, err := crand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("attach nonce: %w", err)
+	}
+	ts := p.cfg.now().Unix()
+	peer := p.cfg.Signer.Address()
+	sig, err := SignAttach(p.cfg.Signer, p.cfg.HostAddress, ts, peer, nonce, AttachProtocolVersion, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &rpcpb.AttachRequest{
 		PeerAddress:     peer,
 		AttachNonce:     nonce,
 		ProtocolVersion: AttachProtocolVersion,
 		HostAddress:     p.cfg.HostAddress,
 		Timestamp:       ts,
 		Signature:       sig,
-	}))
+	}, nil
+}
+
+func (p *PeerConn) attachOnce(ctx context.Context, client rpcpbconnect.PeerAuthServiceClient, msg *rpcpb.AttachRequest) ([]byte, time.Time, error) {
+	resp, err := client.Attach(ctx, connect.NewRequest(msg))
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -475,8 +556,28 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 		return nil, time.Time{}, err
 	}
 	p.budget.apply(resp.Msg.GetLimits(), p.cfg.now())
-	p.streams.apply(resp.Msg.GetLimits())
+	p.streams.applyPool(resp.Msg.GetLimits(), p.cfg.MaxConns)
 	return resp.Msg.GetSessionToken(), expires, nil
+}
+
+func (p *PeerConn) shouldProbeH2() bool {
+	if p == nil || p.cfg.DialSet.H2URL == "" {
+		return false
+	}
+	return !skipRPCH2(p.cfg.BaseURL)
+}
+
+func (p *PeerConn) h2ProbeTimeout() time.Duration {
+	if p.cfg.H2ProbeTimeout > 0 {
+		return p.cfg.H2ProbeTimeout
+	}
+	return DefaultRPCH2ProbeTimeout
+}
+
+// UsingH2 is whether the live origin is the published hop (prior-knowledge
+// HTTP/2), not InferenceUrl HTTP/1.1.
+func (p *PeerConn) UsingH2() bool {
+	return p != nil && p.origin.usingH2()
 }
 
 func (p *PeerConn) takePeerBudget(ctx context.Context, procedure string) error {
@@ -500,11 +601,25 @@ func (p *PeerConn) acquireStream() bool {
 	return p.streams.acquire()
 }
 
+func (p *PeerConn) acquireChatStream() bool {
+	if p == nil {
+		return true
+	}
+	return p.streams.acquireChat()
+}
+
 func (p *PeerConn) releaseStream() {
 	if p == nil {
 		return
 	}
 	p.streams.release()
+}
+
+func (p *PeerConn) releaseChatStream() {
+	if p == nil {
+		return
+	}
+	p.streams.releaseChat()
 }
 
 func (p *PeerConn) minTTL() time.Duration {
@@ -763,6 +878,9 @@ func (p *PeerConn) Close() {
 		if p.http != nil {
 			p.http.CloseIdleConnections()
 		}
+		if p.origin != nil {
+			p.origin.CloseIdleConnections()
+		}
 		p.setState(stateUnauthenticated)
 		p.clearToken()
 		p.dropChildState()
@@ -824,6 +942,13 @@ type poolWatchRoundTripper struct {
 	peer     string
 	max      int
 	inflight atomic.Int32
+}
+
+func (t *poolWatchRoundTripper) CloseIdleConnections() {
+	if t == nil {
+		return
+	}
+	closeIdleConnections(t.base)
 }
 
 func (t *poolWatchRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {

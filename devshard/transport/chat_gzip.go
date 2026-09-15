@@ -107,12 +107,27 @@ func (s *ChatFrameSink) Write(p []byte) (int, error) {
 }
 
 func (s *ChatFrameSink) Flush() {
+	_ = s.FlushErr()
+}
+
+// FlushErr flushes the gzip window and the current ChatFrame. http.Flusher.Flush
+// cannot return stream.Send errors; writeSSEEvent uses this so a failed receipt
+// frame fails ServeInference before RunExecution.
+func (s *ChatFrameSink) FlushErr() error {
+	if s == nil {
+		return io.ErrClosedPipe
+	}
 	if s.sendErr != nil {
-		return
+		return s.sendErr
+	}
+	if s.gzip == nil {
+		return io.ErrClosedPipe
 	}
 	if err := s.gzip.Flush(); err != nil {
 		s.sendErr = err
+		return err
 	}
+	return nil
 }
 
 func (s *ChatFrameSink) Close() error {

@@ -13,14 +13,12 @@ type rpcStatsDescs struct {
 	endpointBanned   *prometheus.Desc
 	zoneRequests     *prometheus.Desc
 	zoneBanned       *prometheus.Desc
-	peerRequests     *prometheus.Desc
-	peerBanned       *prometheus.Desc
-	ipRequests       *prometheus.Desc
-	ipBanned         *prometheus.Desc
 	attachAttempts   *prometheus.Desc
 	attachBanned     *prometheus.Desc
 	reconnects       *prometheus.Desc
 	statsUp          *prometheus.Desc
+	minuteUnix       *prometheus.Desc
+	partial          *prometheus.Desc
 }
 
 func newRPCStatsDescs() rpcStatsDescs {
@@ -55,26 +53,6 @@ func newRPCStatsDescs() rpcStatsDescs {
 			"Banned RPCs in the last closed minute by rate-limit zone.",
 			[]string{"host", "zone"}, nil,
 		),
-		peerRequests: prometheus.NewDesc(
-			"devshard_gateway_rpc_peer_requests_last_minute",
-			"Inbound RPCs in the last closed minute by authenticated peer.",
-			[]string{"host", "escrow", "peer"}, nil,
-		),
-		peerBanned: prometheus.NewDesc(
-			"devshard_gateway_rpc_peer_banned_last_minute",
-			"Banned RPCs in the last closed minute by authenticated peer.",
-			[]string{"host", "escrow", "peer"}, nil,
-		),
-		ipRequests: prometheus.NewDesc(
-			"devshard_gateway_rpc_ip_requests_last_minute",
-			"Inbound RPCs in the last closed minute by trusted client IP.",
-			[]string{"host", "ip"}, nil,
-		),
-		ipBanned: prometheus.NewDesc(
-			"devshard_gateway_rpc_ip_banned_last_minute",
-			"Banned RPCs in the last closed minute by trusted client IP.",
-			[]string{"host", "ip"}, nil,
-		),
 		attachAttempts: prometheus.NewDesc(
 			"devshard_gateway_rpc_attach_attempts_last_minute",
 			"Attach attempts in the last closed minute.",
@@ -95,6 +73,16 @@ func newRPCStatsDescs() rpcStatsDescs {
 			"1 if the last scrape of this host's /devshard/stats/rpc succeeded.",
 			[]string{"host"}, nil,
 		),
+		minuteUnix: prometheus.NewDesc(
+			"devshard_gateway_rpc_minute_unix",
+			"Unix timestamp of the last closed minute in the cached snapshot. Join logs with tag=rpc_stats and rpc_stats_join=host/minute_unix.",
+			[]string{"host"}, nil,
+		),
+		partial: prometheus.NewDesc(
+			"devshard_gateway_rpc_stats_partial",
+			"1 if the last snapshot was a partial versiond merge.",
+			[]string{"host"}, nil,
+		),
 	}
 }
 
@@ -108,14 +96,12 @@ func (d rpcStatsDescs) describe(ch chan<- *prometheus.Desc) {
 	ch <- d.endpointBanned
 	ch <- d.zoneRequests
 	ch <- d.zoneBanned
-	ch <- d.peerRequests
-	ch <- d.peerBanned
-	ch <- d.ipRequests
-	ch <- d.ipBanned
 	ch <- d.attachAttempts
 	ch <- d.attachBanned
 	ch <- d.reconnects
 	ch <- d.statsUp
+	ch <- d.minuteUnix
+	ch <- d.partial
 }
 
 func (d rpcStatsDescs) emit(ch chan<- prometheus.Metric, hosts []rpcStatsHostState) {
@@ -143,15 +129,12 @@ func (d rpcStatsDescs) emit(ch chan<- prometheus.Metric, hosts []rpcStatsHostSta
 			ch <- prometheus.MustNewConstMetric(d.zoneRequests, prometheus.GaugeValue, float64(z.Requests), host, zone)
 			ch <- prometheus.MustNewConstMetric(d.zoneBanned, prometheus.GaugeValue, float64(z.Banned), host, zone)
 		}
-		for peer, c := range foldPeerCounts(snap.Host.Peers) {
-			ch <- prometheus.MustNewConstMetric(d.peerRequests, prometheus.GaugeValue, float64(c.requests), host, rpcStatsProcessEscrow, peer)
-			ch <- prometheus.MustNewConstMetric(d.peerBanned, prometheus.GaugeValue, float64(c.banned), host, rpcStatsProcessEscrow, peer)
+		ch <- prometheus.MustNewConstMetric(d.minuteUnix, prometheus.GaugeValue, float64(snap.MinuteUnix), host)
+		partial := 0.0
+		if snap.Partial {
+			partial = 1
 		}
-		for _, ip := range snap.Host.IPs {
-			ipLabel := ip.IP
-			ch <- prometheus.MustNewConstMetric(d.ipRequests, prometheus.GaugeValue, float64(ip.Requests), host, ipLabel)
-			ch <- prometheus.MustNewConstMetric(d.ipBanned, prometheus.GaugeValue, float64(ip.Banned), host, ipLabel)
-		}
+		ch <- prometheus.MustNewConstMetric(d.partial, prometheus.GaugeValue, partial, host)
 		ch <- prometheus.MustNewConstMetric(d.attachAttempts, prometheus.GaugeValue, float64(snap.Host.Attach.Attempts), host)
 		ch <- prometheus.MustNewConstMetric(d.attachBanned, prometheus.GaugeValue, float64(snap.Host.Attach.BannedFloor), host, rpcStatsAttachFloor)
 		if other := attachOtherBanned(snap.Host.Attach); other > 0 {
@@ -166,10 +149,6 @@ func (d rpcStatsDescs) emit(ch chan<- prometheus.Metric, hosts []rpcStatsHostSta
 				ch <- prometheus.MustNewConstMetric(d.endpointRequests, prometheus.GaugeValue, float64(c.requests), host, escrow, ep)
 				ch <- prometheus.MustNewConstMetric(d.endpointBanned, prometheus.GaugeValue, float64(c.banned), host, escrow, ep)
 			}
-			for peer, c := range sh.peers {
-				ch <- prometheus.MustNewConstMetric(d.peerRequests, prometheus.GaugeValue, float64(c.requests), host, escrow, peer)
-				ch <- prometheus.MustNewConstMetric(d.peerBanned, prometheus.GaugeValue, float64(c.banned), host, escrow, peer)
-			}
 		}
 	}
 }
@@ -183,7 +162,6 @@ type foldedShard struct {
 	requests  uint64
 	banned    uint64
 	endpoints map[string]rpcCount
-	peers     map[string]rpcCount
 }
 
 func emitReqBan(ch chan<- prometheus.Metric, reqDesc, banDesc *prometheus.Desc, host, escrow string, requests, banned uint64) {
@@ -209,17 +187,6 @@ func foldEndpointCounts(rows []transport.RPCStatsEndpoint) map[string]rpcCount {
 	return out
 }
 
-func foldPeerCounts(rows []transport.RPCStatsPeer) map[string]rpcCount {
-	out := make(map[string]rpcCount, len(rows))
-	for _, p := range rows {
-		cur := out[p.Peer]
-		cur.requests += p.Requests
-		cur.banned += p.Banned
-		out[p.Peer] = cur
-	}
-	return out
-}
-
 func foldShards(shards []transport.RPCStatsShard) map[string]*foldedShard {
 	out := make(map[string]*foldedShard, len(shards))
 	for _, sh := range shards {
@@ -227,7 +194,6 @@ func foldShards(shards []transport.RPCStatsShard) map[string]*foldedShard {
 		if cur == nil {
 			cur = &foldedShard{
 				endpoints: make(map[string]rpcCount),
-				peers:     make(map[string]rpcCount),
 			}
 			out[sh.EscrowID] = cur
 		}
@@ -238,12 +204,6 @@ func foldShards(shards []transport.RPCStatsShard) map[string]*foldedShard {
 			x.requests += c.requests
 			x.banned += c.banned
 			cur.endpoints[ep] = x
-		}
-		for peer, c := range foldPeerCounts(sh.Peers) {
-			x := cur.peers[peer]
-			x.requests += c.requests
-			x.banned += c.banned
-			cur.peers[peer] = x
 		}
 	}
 	return out

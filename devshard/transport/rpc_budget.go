@@ -223,10 +223,13 @@ const (
 )
 
 // peerStreamBudget is the client's advertised max_streams cap (Watch + Chat).
+// Chat uses at most max-1 when max>1 so Watch can still acquire (finding 3).
+// max==1 stays Chat-or-Watch.
 type peerStreamBudget struct {
 	mu    sync.Mutex
 	max   uint32 // 0 = not advertised
 	inUse int
+	chats int
 }
 
 func advertisedMaxStreams(limits *rpcpb.RateLimits) (max uint32, advertised bool) {
@@ -244,6 +247,10 @@ func advertisedMaxStreams(limits *rpcpb.RateLimits) (max uint32, advertised bool
 }
 
 func (b *peerStreamBudget) apply(limits *rpcpb.RateLimits) {
+	b.applyPool(limits, 0)
+}
+
+func (b *peerStreamBudget) applyPool(limits *rpcpb.RateLimits, maxConns int) {
 	max, advertised := advertisedMaxStreams(limits)
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -251,25 +258,50 @@ func (b *peerStreamBudget) apply(limits *rpcpb.RateLimits) {
 		b.max = 0
 		return
 	}
-	b.max = max
+	b.max = minUint32Cap(max, maxConns)
 }
 
 func (b *peerStreamBudget) acquire() bool {
+	return b.acquireKind(false)
+}
+
+func (b *peerStreamBudget) acquireChat() bool {
+	return b.acquireKind(true)
+}
+
+func (b *peerStreamBudget) acquireKind(chat bool) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.max == 0 {
 		return true
 	}
+	if chat && b.max > 1 && b.chats >= int(b.max)-1 {
+		return false
+	}
 	if b.inUse >= int(b.max) {
 		return false
+	}
+	if chat {
+		b.chats++
 	}
 	b.inUse++
 	return true
 }
 
 func (b *peerStreamBudget) release() {
+	b.releaseKind(false)
+}
+
+func (b *peerStreamBudget) releaseChat() {
+	b.releaseKind(true)
+}
+
+func (b *peerStreamBudget) releaseKind(chat bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if chat && b.chats > 0 {
+		b.chats--
+	}
 	if b.inUse > 0 {
 		b.inUse--
 	}

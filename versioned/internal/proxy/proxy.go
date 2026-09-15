@@ -248,6 +248,7 @@ func reverseProxy(target, rest string, lim *originLookupLimiter) *httputil.Rever
 		}
 	}
 	rp := &httputil.ReverseProxy{
+		Transport: childTransport, // HTTP/2 (h2c) to the child; not DefaultTransport
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetXForwarded()
 			// SetXForwarded rewrites X-Forwarded-*. Keep X-Real-IP from the

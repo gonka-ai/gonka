@@ -1,0 +1,23 @@
+# Optional RPC/HTTP/2 overlay for Phase 6 (topology B).
+# Usage (from devshard/testenv/, after gen-compose):
+#   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
+#
+# Do not merge this file into COMPOSE_BASE. citest-images / citest-stack stay
+# no-proxy: JSON/catalog and Connect/HTTP/1.1 stay on versiond-router:8080.
+#
+# In-network hop:
+#   proxy:{DEVSHARD_RPC_H2_PORT=8443} proto h2 → versiond-router:8081 proto h2
+# Against 0.2.15-v5 that backend hop cannot complete HTTP/2 (fail closed).
+
+services:
+  proxy:
+    image: haproxy:3.2-alpine
+    volumes:
+      - ./proxy/haproxy-rpc.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "127.0.0.1:8443:8443"
+    depends_on:
+      - versiond-router
+    networks:
+      - testenv
+    restart: unless-stopped

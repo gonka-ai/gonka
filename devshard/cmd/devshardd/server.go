@@ -14,6 +14,7 @@ import (
 	"devshard/cmd/devshardd/session"
 	"devshard/heightsync"
 	"devshard/observability"
+	devshardserver "devshard/server"
 	"devshard/storage"
 )
 
@@ -37,6 +38,7 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	// strips the version segment. Do not mount this on versiond's mux.
 	e.GET("/clock", echo.WrapHandler(wrapClockHandler(probe.Handler(nil), clockFaultActive)))
 
+	devshardserver.EnableH2C(e)
 	return e
 }
 

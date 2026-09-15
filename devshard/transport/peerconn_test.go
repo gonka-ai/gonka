@@ -416,6 +416,25 @@ func TestSelectTransport_EmptyHostAddressKeepsHTTP(t *testing.T) {
 	require.False(t, collapsed, "empty HostAddress must not share a PeerConn")
 }
 
+func TestPeerConnConfigFromClient_H2Env(t *testing.T) {
+	t.Setenv(envRPCH2Upgrade, "1")
+	t.Setenv(envRPCH2Port, "8443")
+	t.Setenv(envRPCH2Host, "proxy")
+	httpClient := NewHTTPClient("http://versiond-router:8080", "escrow-1", devtest.MustGenerateKey(t))
+	cfg := peerConnConfigFromClient(httpClient, "gonka1host", nil)
+	require.Equal(t, "http://versiond-router:8080", cfg.DialSet.InferenceURL)
+	require.Equal(t, "http://proxy:8443", cfg.DialSet.H2URL)
+}
+
+func TestPeerConnConfigFromClient_UnsetPortNoH2(t *testing.T) {
+	t.Setenv(envRPCH2Upgrade, "1")
+	t.Setenv(envRPCH2Port, "")
+	t.Setenv(envRPCH2Host, "proxy")
+	httpClient := NewHTTPClient("http://versiond-router:8080", "escrow-1", devtest.MustGenerateKey(t))
+	cfg := peerConnConfigFromClient(httpClient, "gonka1host", nil)
+	require.Empty(t, cfg.DialSet.H2URL)
+}
+
 func TestPoolWatchRoundTripper_IncrementsExhausted(t *testing.T) {
 	peer := "gonka1pool"
 	before := testutil.ToFloat64(observability.PeerPoolExhaustedCounter(peer))
@@ -431,6 +450,39 @@ func TestPoolWatchRoundTripper_IncrementsExhausted(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Equal(t, int32(1), rt.inflight.Load(), "NoBody is not a live stream")
+	require.Equal(t, 1.0, testutil.ToFloat64(observability.PeerPoolExhaustedCounter(peer))-before)
+}
+
+func TestPoolWatchRoundTripper_FitsMaxConnsThenExhausts(t *testing.T) {
+	peer := "gonka1poolcap"
+	max := 4
+	before := testutil.ToFloat64(observability.PeerPoolExhaustedCounter(peer))
+	var bodies []io.Closer
+	t.Cleanup(func() {
+		for _, b := range bodies {
+			if b != nil {
+				_ = b.Close()
+			}
+		}
+	})
+	rt := &poolWatchRoundTripper{
+		base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+		}),
+		peer: peer,
+		max:  max,
+	}
+	for i := 0; i < max; i++ {
+		resp, err := rt.RoundTrip(httptest.NewRequest(http.MethodGet, "http://example.invalid/", nil))
+		require.NoError(t, err)
+		bodies = append(bodies, resp.Body)
+	}
+	require.Equal(t, int32(max), rt.inflight.Load())
+	require.Equal(t, 0.0, testutil.ToFloat64(observability.PeerPoolExhaustedCounter(peer))-before,
+		"MaxConns inflight (Watch + chats) must not increment exhausted")
+	resp, err := rt.RoundTrip(httptest.NewRequest(http.MethodGet, "http://example.invalid/", nil))
+	require.NoError(t, err)
+	bodies = append(bodies, resp.Body)
 	require.Equal(t, 1.0, testutil.ToFloat64(observability.PeerPoolExhaustedCounter(peer))-before)
 }
 
@@ -460,6 +512,24 @@ func TestPoolWatchRoundTripper_ErrorDropsInflight(t *testing.T) {
 	_, err := rt.RoundTrip(httptest.NewRequest(http.MethodGet, "http://example.invalid/", nil))
 	require.Error(t, err)
 	require.Equal(t, int32(0), rt.inflight.Load())
+}
+
+func TestPeerConnWrappersForwardCloseIdleConnections(t *testing.T) {
+	inner := &closeIdleRT{}
+	rt := DefaultHostConnectionTracker().WrapRoundTripper(&poolWatchRoundTripper{base: inner, max: 4})
+	c, ok := rt.(interface{ CloseIdleConnections() })
+	require.True(t, ok)
+	c.CloseIdleConnections()
+	require.Equal(t, int32(1), inner.n.Load())
+}
+
+type closeIdleRT struct {
+	n atomic.Int32
+	roundTripFunc
+}
+
+func (c *closeIdleRT) CloseIdleConnections() {
+	c.n.Add(1)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

@@ -205,7 +205,7 @@ func (s *rateLimitInterceptor) WrapStreamingHandler(next connect.StreamingHandle
 				s.auth.observeRPC(ctx, procedure, peer, true, true, false, false)
 				return err
 			}
-			defer s.auth.limiter.releaseStream(peer)
+			defer s.auth.limiter.releaseStream(peer, procedure)
 		}
 		if !rateLimitCharged(ctx) && !isAttachPath(procedure) {
 			if err := s.auth.limiter.charge(ctx, PeerFromContext(ctx), procedure); err != nil {

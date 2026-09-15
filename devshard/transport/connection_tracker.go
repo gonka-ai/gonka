@@ -82,6 +82,12 @@ func DefaultHostConnectionTracker() *HostConnectionTracker {
 	return defaultHostConnectionTracker
 }
 
+func closeIdleConnections(rt http.RoundTripper) {
+	if c, ok := rt.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
+}
+
 func (t *HostConnectionTracker) WrapRoundTripper(base http.RoundTripper) http.RoundTripper {
 	if t == nil || base == nil {
 		return base
@@ -137,6 +143,13 @@ func (t *HostConnectionTracker) Snapshots() []HostConnectionSnapshot {
 		})
 	}
 	return snapshots
+}
+
+func (rt *instrumentedRoundTripper) CloseIdleConnections() {
+	if rt == nil {
+		return
+	}
+	closeIdleConnections(rt.base)
 }
 
 func (rt *instrumentedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {

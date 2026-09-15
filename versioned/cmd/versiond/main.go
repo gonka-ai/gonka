@@ -74,7 +74,7 @@ func run(ctx context.Context) error {
 	listenAddr := config.ListenAddr()
 	srv := &http.Server{
 		Addr:    listenAddr,
-		Handler: publicHandler(mgr, hostLifecycle, mgr, proxyOpts...),
+		Handler: proxy.H2CHandler(publicHandler(mgr, hostLifecycle, mgr, proxyOpts...)),
 	}
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {

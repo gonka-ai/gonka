@@ -627,6 +627,44 @@ func (m *HostManager) evictSession(escrowID string, stale *transport.Server) {
 	observability.DeleteEscrowMetrics(escrowID)
 }
 
+// sessionForOwner is BindOwnerChat without POST auth: Existing + IsOwner,
+// or CreateSession only when addr is the escrow creator. Slot members
+// get (nil, nil). Challenge / gossip / seed / repair / verify must not call this.
+func (m *HostManager) sessionForOwner(escrowID, addr string) (*transport.Server, error) {
+	srv, err := m.SessionServerExisting(escrowID)
+	if err == nil {
+		if !srv.IsOwner(addr) {
+			return nil, nil
+		}
+		return srv, nil
+	}
+	if !errors.Is(err, storage.ErrSessionNotFound) {
+		return nil, err
+	}
+
+	escrow, err := m.fetchEscrowForBind(escrowID, addr)
+	if err != nil {
+		return nil, fmt.Errorf("get escrow: %w", err)
+	}
+	if escrow == nil || escrow.CreatorAddress == "" || addr != escrow.CreatorAddress {
+		return nil, nil
+	}
+	if escrow.Settled {
+		m.rememberResolutionFailure(escrowID, bridge.ErrEscrowSettled, time.Now())
+		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
+	}
+
+	// Pass the already-fetched escrow so create() does not GetEscrow again.
+	srv, err = m.getOrCreate(escrowID, escrow)
+	if err != nil {
+		return nil, err
+	}
+	if !srv.IsOwner(addr) {
+		return nil, nil
+	}
+	return srv, nil
+}
+
 // BindOwnerChat verifies the request as the escrow owner, then returns an
 // existing session or binds a new one with this process's boundVersion.
 // Auth context (sender + body) is injected for HandleInference.
@@ -640,36 +678,11 @@ func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
 		return nil, err
 	}
 
-	srv, err := m.SessionServerExisting(escrowID)
-	if err == nil {
-		if !srv.IsOwner(addr) {
-			return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
-		}
-		transport.InjectAuthContext(c, addr, body)
-		return srv, nil
-	}
-	if !errors.Is(err, storage.ErrSessionNotFound) {
-		return nil, err
-	}
-
-	escrow, err := m.fetchEscrowForBind(escrowID, addr)
-	if err != nil {
-		return nil, fmt.Errorf("get escrow: %w", err)
-	}
-	if escrow == nil || escrow.CreatorAddress == "" || addr != escrow.CreatorAddress {
-		return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
-	}
-	if escrow.Settled {
-		m.rememberResolutionFailure(escrowID, bridge.ErrEscrowSettled, time.Now())
-		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
-	}
-
-	// Pass the already-fetched escrow so create() does not GetEscrow again.
-	srv, err = m.getOrCreate(escrowID, escrow)
+	srv, err := m.sessionForOwner(escrowID, addr)
 	if err != nil {
 		return nil, err
 	}
-	if !srv.IsOwner(addr) {
+	if srv == nil {
 		return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
 	}
 	transport.InjectAuthContext(c, addr, body)
@@ -1427,7 +1440,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 // hostRPCLookup is the Connect session resolver. Observability GETs use
 // Existing (no CreateSession). Challenge, gossip, seed, repair, and verify
 // bind a participant so a live host handshake on another escrow still
-// CreateSession for this one.
+// CreateSession for this one. Chat uses SessionForOwner (creator only).
 type hostRPCLookup struct{ m *HostManager }
 
 func (l hostRPCLookup) SessionServerExisting(id string) (rpcserver.SessionCore, error) {
@@ -1443,6 +1456,17 @@ func (l hostRPCLookup) SessionServerExisting(id string) (rpcserver.SessionCore, 
 
 func (l hostRPCLookup) SessionForParticipant(id, addr string) (rpcserver.SessionCore, error) {
 	srv, err := l.m.sessionForParticipant(id, addr)
+	if err != nil {
+		return nil, err
+	}
+	if srv == nil {
+		return nil, nil
+	}
+	return srv, nil
+}
+
+func (l hostRPCLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, error) {
+	srv, err := l.m.sessionForOwner(id, addr)
 	if err != nil {
 		return nil, err
 	}

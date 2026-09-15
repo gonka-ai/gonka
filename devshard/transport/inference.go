@@ -180,7 +180,7 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 		if resp.ExecutionJob != nil {
 			s.host.ReleaseExecution(resp.InferenceID)
 		}
-		return nil
+		return werr
 	}
 
 	finishReason := observability.ReasonOK
@@ -189,7 +189,7 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	if resp.CachedResponseBody != nil && resp.ExecutionJob == nil {
 		if werr := replaySSEBody(w, resp.CachedResponseBody); werr != nil {
 			observability.RecordReceiptNoExecutionInterrupted(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonCachedReplayErr, observability.WhereRuntimeWriteClientResponse)
-			return nil
+			return werr
 		}
 	} else if resp.ExecutionJob != nil {
 		resp.ExecutionJob.ResponseWriter = w

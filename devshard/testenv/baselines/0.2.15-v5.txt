@@ -1,0 +1,10 @@
+# Source pin for Phase 6 HTTP/1.1 citest.
+# Rebuild: make -C devshard/testenv build-baseline-infra
+branch: devshard-0.2.15-v5
+sha: be2b7c08f53a51a1b57b3ba0a3f45e7885a1455c
+platform: linux/arm64
+versiond_image: devshard-versiond:0.2.15-v5
+versiond_router_image: devshard-versiond-router:0.2.15-v5
+versiond_id: sha256:7ad3e28bcfa2afc0c6f32b28b0b18b80207e4f6f20688b98c12dbd66666198ac
+versiond_router_id: sha256:58371e4160749e91acb178f4d048ef8be8fbfc989488ead065c5cce408c1e65c
+built_utc: 2026-09-15T05:15:00Z

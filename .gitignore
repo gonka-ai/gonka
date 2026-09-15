@@ -54,6 +54,9 @@ run-parallel-tests/
 **/node_modules/
 **/target/
 /tmp
+devshard/testenv/baselines/checkout/
+.worklog
+.worklog
 .worklog
 .metals
 actionlint

@@ -169,6 +169,11 @@ func (payloadGroupLookup) SessionForParticipant(id, addr string) (rpcserver.Sess
 	return payloadGroupLookup{}.SessionServerExisting(id)
 }
 
+func (payloadGroupLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, error) {
+	_ = addr
+	return payloadGroupLookup{}.SessionServerExisting(id)
+}
+
 type payloadGroupCore struct{}
 
 func (payloadGroupCore) ServeGetSignatures(uint64) (map[uint32][]byte, error) { return nil, nil }

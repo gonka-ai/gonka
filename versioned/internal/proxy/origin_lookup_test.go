@@ -50,7 +50,7 @@ func TestParseOriginIP(t *testing.T) {
 
 func TestProxy_UnknownEscrowPerOriginIP(t *testing.T) {
 	var forwarded atomic.Int32
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
 		w.Header().Set(headerDevshardError, errorEscrowNotFound)
 		http.Error(w, "get escrow: escrow not found", http.StatusInternalServerError)
@@ -101,7 +101,7 @@ func TestProxy_UnknownEscrowPerOriginIP(t *testing.T) {
 
 func TestProxy_UnknownEscrowMissingOriginIPSkipped(t *testing.T) {
 	var forwarded atomic.Int32
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
 		w.Header().Set(headerDevshardError, errorEscrowNotFound)
 		http.Error(w, "get escrow: escrow not found", http.StatusInternalServerError)
@@ -134,7 +134,7 @@ func TestProxy_UnknownEscrowMissingOriginIPSkipped(t *testing.T) {
 
 func TestProxy_UnknownEscrowIgnoresSuccessAndUnrelated404(t *testing.T) {
 	var forwarded atomic.Int32
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/chat/completions"):
@@ -180,7 +180,7 @@ func TestProxy_UnknownEscrowIgnoresSuccessAndUnrelated404(t *testing.T) {
 
 func TestProxy_UnknownEscrowIgnoresXForwardedFor(t *testing.T) {
 	var forwarded atomic.Int32
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		forwarded.Add(1)
 		w.Header().Set(headerDevshardError, errorEscrowNotFound)
 		http.Error(w, "get escrow: escrow not found", http.StatusInternalServerError)

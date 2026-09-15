@@ -18,6 +18,15 @@ import (
 	"devshard/transport"
 )
 
+func TestRPCStatsPollerIdlePool(t *testing.T) {
+	p := newRPCStatsPoller(nil, rpcStatsConfig{Timeout: 2 * time.Second, Concurrency: 8, Interval: 15 * time.Second})
+	tr, ok := p.client.Transport.(*http.Transport)
+	require.True(t, ok)
+	require.Equal(t, 512, tr.MaxIdleConns)
+	require.Equal(t, 1, tr.MaxIdleConnsPerHost)
+	require.Equal(t, 45*time.Second, tr.IdleConnTimeout)
+}
+
 func testRPCSnap(peer string, req, banned uint64) transport.RPCStatsSnapshot {
 	attach := transport.RPCStatsAttach{Attempts: 4}
 	if banned > 0 {
@@ -60,7 +69,7 @@ func gatherRPCStats(t *testing.T, g *Gateway) []*dto.MetricFamily {
 	return families
 }
 
-func TestGatewayRPCStatsCollectorSeriesAndStalePeer(t *testing.T) {
+func TestGatewayRPCStatsCollectorAggregatesNoPeerSeries(t *testing.T) {
 	p := &rpcStatsPoller{byHost: map[string]*rpcStatsHostState{
 		"gonka1a": {
 			Participant: "gonka1a",
@@ -83,11 +92,23 @@ func TestGatewayRPCStatsCollectorSeriesAndStalePeer(t *testing.T) {
 	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_endpoint_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "_", "endpoint": "GetDiffs"}, 10)
 	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_endpoint_banned_last_minute", map[string]string{"host": "gonka1a", "escrow": "_", "endpoint": "GetDiffs"}, 2)
 	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_zone_banned_last_minute", map[string]string{"host": "gonka1a", "zone": "shared"}, 2)
-	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_peer_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "_", "peer": "gonka1peer"}, 10)
 	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_attach_attempts_last_minute", map[string]string{"host": "gonka1a"}, 4)
 	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_attach_banned_last_minute", map[string]string{"host": "gonka1a", "reason": "floor"}, 1)
 	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_stats_up", map[string]string{"host": "gonka1a"}, 1)
 	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_stats_up", map[string]string{"host": "gonka1b"}, 1)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_minute_unix", map[string]string{"host": "gonka1a"}, 1_710_000_000)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_stats_partial", map[string]string{"host": "gonka1a"}, 0)
+	partial := testRPCSnap("gonka1peer", 10, 2)
+	partial.Partial = true
+	p.byHost["gonka1a"] = &rpcStatsHostState{
+		Participant: "gonka1a",
+		Up:          true,
+		HasSnap:     true,
+		Snap:        partial,
+	}
+	families = gatherRPCStats(t, g)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_stats_partial", map[string]string{"host": "gonka1a"}, 1)
+	requireNoMetricFamily(t, families, "devshard_gateway_rpc_peer_requests_last_minute")
 
 	p.byHost["gonka1a"] = &rpcStatsHostState{
 		Participant: "gonka1a",
@@ -96,8 +117,8 @@ func TestGatewayRPCStatsCollectorSeriesAndStalePeer(t *testing.T) {
 		Snap:        testRPCSnap("gonka1kept", 3, 0),
 	}
 	families = gatherRPCStats(t, g)
-	requireNoMetricWithLabels(t, families, "devshard_gateway_rpc_peer_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "_", "peer": "gonka1peer"})
-	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_peer_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "_", "peer": "gonka1kept"}, 3)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "_"}, 3)
+	requireNoMetricFamily(t, families, "devshard_gateway_rpc_peer_requests_last_minute")
 }
 
 func TestGatewayRPCStatsUpZeroKeepsLastGood(t *testing.T) {
@@ -117,14 +138,14 @@ func TestGatewayRPCStatsUpZeroKeepsLastGood(t *testing.T) {
 func TestGatewayRPCStatsWarnDebounce(t *testing.T) {
 	var n atomic.Int32
 	var lastMinute atomic.Int64
-	p := &rpcStatsPoller{warn: func(minute int64, hosts int, banned uint64, sample, zone, endpoint string) {
+	p := &rpcStatsPoller{warn: func(minute int64, hosts []rpcStatsHostState) {
 		n.Add(1)
 		lastMinute.Store(minute)
-		require.Equal(t, 1, hosts)
-		require.Equal(t, uint64(2), banned)
-		require.Equal(t, "gonka1host", sample)
-		require.Equal(t, "shared", zone)
-		require.Equal(t, "GetDiffs", endpoint)
+		require.Len(t, hosts, 1)
+		require.Equal(t, uint64(2), hosts[0].Snap.Host.Banned)
+		require.Equal(t, "gonka1host", hosts[0].Snap.HostAddress)
+		require.Equal(t, "gonka1peer", hosts[0].Snap.Host.Peers[0].Peer)
+		require.Equal(t, uint64(2), hosts[0].Snap.Host.Peers[0].Banned)
 	}}
 	banned := []rpcStatsHostState{{
 		Participant: "gonka1outsider",
@@ -149,6 +170,28 @@ func TestGatewayRPCStatsWarnDebounce(t *testing.T) {
 	clean.MinuteUnix = 1_710_000_120
 	p.maybeWarn([]rpcStatsHostState{{Participant: "gonka1outsider", Up: true, HasSnap: true, Snap: clean}})
 	require.Equal(t, int32(2), n.Load())
+}
+
+func TestGatewayRPCStatsWarnOneLinePerBannedHost(t *testing.T) {
+	var n atomic.Int32
+	p := &rpcStatsPoller{warn: func(_ int64, hosts []rpcStatsHostState) {
+		n.Add(1)
+		require.Len(t, hosts, 2)
+		require.Equal(t, "gonka1a", hosts[0].Participant)
+		require.Equal(t, "gonka1b", hosts[1].Participant)
+	}}
+	a := testRPCSnap("gonka1peer", 10, 2)
+	b := testRPCSnap("gonka1other", 4, 1)
+	b.HostAddress = "gonka1host-b"
+	p.maybeWarn([]rpcStatsHostState{
+		{Participant: "gonka1b", Up: true, HasSnap: true, Snap: b},
+		{Participant: "gonka1a", Up: true, HasSnap: true, Snap: a},
+	})
+	require.Equal(t, int32(1), n.Load())
+	p.maybeWarn([]rpcStatsHostState{
+		{Participant: "gonka1a", Up: true, HasSnap: true, Snap: a},
+	})
+	require.Equal(t, int32(1), n.Load())
 }
 
 func TestGatewayRPCStatsPollerGzipAndUniqueDials(t *testing.T) {
@@ -204,6 +247,16 @@ func TestLoadRPCStatsConfigZeroIntervalDisables(t *testing.T) {
 	cfg = loadRPCStatsConfig()
 	require.False(t, cfg.Disabled)
 	require.Equal(t, 30*time.Second, cfg.Interval)
+}
+
+func TestLoadRPCStatsConfigDefaultTimeout(t *testing.T) {
+	t.Setenv(rpcStatsEnvTimeout, "")
+	cfg := loadRPCStatsConfig()
+	require.Equal(t, 4*time.Second, cfg.Timeout)
+
+	t.Setenv(rpcStatsEnvTimeout, "6s")
+	cfg = loadRPCStatsConfig()
+	require.Equal(t, 6*time.Second, cfg.Timeout)
 }
 
 func TestRPCStatsPollerDisabledDoesNotPoll(t *testing.T) {

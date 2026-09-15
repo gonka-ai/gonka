@@ -26,9 +26,10 @@ const (
 )
 
 // DefaultRPCMaxConnsPerPeer is MaxIdleConnsPerHost / MaxConnsPerHost on a
-// PeerConn. Raised from HTTPClient's 4 so Watch + queries are not serialized
-// behind a long Chat.
-const DefaultRPCMaxConnsPerPeer = 16
+// PeerConn. Matches DefaultRPCMaxStreams so Watch + concurrent Chats are
+// not queued behind the HTTP/1.1 pool (finding 5). Advertised max_streams
+// is still min(MaxStreams, MaxConns) if either env is lowered.
+const DefaultRPCMaxConnsPerPeer = 256
 
 // HostRPCEscrowID is the URL escrow for Watch and live-session Attach
 // renewals. It is not a real escrow: the path keeps /sessions/:id/rpc/ so
@@ -213,13 +214,23 @@ func peerConnConfigFromClient(httpClient *HTTPClient, hostAddress string, extra 
 		}
 		adoption = extra.RPCAdoption
 	}
+	base := httpClient.BaseURL()
+	dial, err := PeerRPCDialSetFromEnv(base)
+	if err != nil {
+		logging.Warn("DEVSHARD_RPC_H2_* ignored; HTTP/1.1 on InferenceUrl",
+			"subsystem", "transport",
+			"error", err,
+		)
+		dial = PeerRPCDialSet{InferenceURL: base}
+	}
 	return PeerConnConfig{
-		BaseURL:      httpClient.BaseURL(),
+		BaseURL:      base,
 		RoutePrefix:  httpClient.RoutePrefix(),
 		DoorEscrowID: httpClient.escrowID,
 		HostAddress:  strings.TrimSpace(hostAddress),
 		Signer:       httpClient.signer,
 		MaxConns:     maxConns,
 		Adoption:     adoption,
+		DialSet:      dial,
 	}
 }

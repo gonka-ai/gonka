@@ -1,8 +1,11 @@
 # devshard testenv Makefile — Phase 4
 
 SHELL := /bin/bash
+# Default citest compose. Never add docker-compose.proxy.yml here (Phase 6 B).
 COMPOSE_BASE := -f docker-compose.yml
 DEV_OVERLAY  := -f docker-compose.yml -f docker-compose.dev.yml
+# Opt-in RPC/h2 hop. citest-images / citest-stack stay COMPOSE_BASE only.
+PROXY_OVERLAY := $(COMPOSE_BASE) -f docker-compose.proxy.yml
 
 .PHONY: help
 help: ## Show this help.
@@ -74,6 +77,7 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
 .PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-peerrpc-unary test-gateway-smoke
+.PHONY: build-baseline-infra
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites, so they are excluded from the auto-discovered CI matrix.
@@ -84,12 +88,32 @@ list-citest-targets: ## Print runnable citest suite targets (one per line) for t
 		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
-CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl versiond-router versiond-0
+# Pin previous participant images with TESTENV_VERSIOND_IMAGE +
+# TESTENV_VERSIOND_ROUTER_IMAGE (see docs/grpc-transport-phase6-plan.md).
+CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl
+CITEST_BUILD_INFRA := versiond-router versiond-0
 STACK_CITEST_PATTERN := ^Test(StackSmoke|RouterStickiness|ParamsLongPoll|EpochSwitch|GatewayChat|Versiond.*|DynamicCatalogRemovalAndReadmission|HAStaleStandbyCatchupIdempotent|LegacyVersionPinnedToSingleHost|SQLiteToPostgresHAMigration|ValidationLeaseRace.*)$$
 
-citest-images: gen-compose ## Pull hub images and build all compose images required for citest.
+BASELINE_VERSIOND_IMAGE ?= devshard-versiond:0.2.15-v5
+BASELINE_VERSIOND_ROUTER_IMAGE ?= devshard-versiond-router:0.2.15-v5
+
+build-baseline-infra: ## Build versiond + versiond-router from branch devshard-0.2.15-v5.
+	./scripts/build-baseline-infra.sh
+
+citest-images: gen-compose ## Pull hub images and build compose images required for citest.
 	docker compose $(COMPOSE_BASE) pull devshard-postgres
 	docker compose $(COMPOSE_BASE) build $(CITEST_BUILD_SERVICES)
+ifeq ($(strip $(TESTENV_VERSIOND_IMAGE)$(TESTENV_VERSIOND_ROUTER_IMAGE)),)
+	docker compose $(COMPOSE_BASE) build $(CITEST_BUILD_INFRA)
+else
+	@test -n "$(TESTENV_VERSIOND_IMAGE)" && test -n "$(TESTENV_VERSIOND_ROUTER_IMAGE)" \
+		|| { echo "citest-images: set both TESTENV_VERSIOND_IMAGE and TESTENV_VERSIOND_ROUTER_IMAGE" >&2; exit 1; }
+	@docker image inspect "$(TESTENV_VERSIOND_IMAGE)" >/dev/null \
+		|| { echo "citest-images: missing $(TESTENV_VERSIOND_IMAGE); run: make build-baseline-infra" >&2; exit 1; }
+	@docker image inspect "$(TESTENV_VERSIOND_ROUTER_IMAGE)" >/dev/null \
+		|| { echo "citest-images: missing $(TESTENV_VERSIOND_ROUTER_IMAGE); run: make build-baseline-infra" >&2; exit 1; }
+	@echo "citest-images: pinning versiond=$(TESTENV_VERSIOND_IMAGE) router=$(TESTENV_VERSIOND_ROUTER_IMAGE)"
+endif
 
 citest-stack: citest-images ## Full stack behavior citests (needs Docker + build-devshardd).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '$(STACK_CITEST_PATTERN)' -count=1 -v -timeout 90m

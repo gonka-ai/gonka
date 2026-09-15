@@ -3,6 +3,8 @@ package transport
 import (
 	"context"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +25,14 @@ const (
 	rpcTrafficIPCap         = 1000
 	rpcTrafficOtherKey      = "other"
 	rpcTrafficUnknownIP     = "unknown"
+
+	// RPCStatsBannedIdentityLogCap is how many banned peer/IP names fit in
+	// one closed-minute warn. Overflow is counted in banned_*_omitted.
+	RPCStatsBannedIdentityLogCap = 32
+
+	// RPCStatsLogTag is the closed-minute warn filter tag (Loki/journal).
+	// Join Prometheus with rpc_stats_join = host + "/" + minute_unix.
+	RPCStatsLogTag = "rpc_stats"
 
 	// ReconnectFirstAttach is the first successful Attach of a PeerConn.
 	ReconnectFirstAttach = "first-attach"
@@ -201,6 +211,7 @@ func (t *RPCTraffic) SetWarn(fn func(ctx context.Context, minute int64, host RPC
 
 func (t *RPCTraffic) defaultWarn(ctx context.Context, minute int64, host RPCStatsHost) {
 	kv := []any{"minute_unix", minute, "banned", host.Banned, "banned_floor", host.Attach.BannedFloor}
+	kv = AppendRPCStatsLogTag(kv, "", minute)
 	for _, z := range host.Zones {
 		if z.Banned > 0 {
 			kv = append(kv, "zone_"+z.Zone, z.Banned)
@@ -211,9 +222,114 @@ func (t *RPCTraffic) defaultWarn(ctx context.Context, minute int64, host RPCStat
 			kv = append(kv, "endpoint_"+e.Endpoint, e.Banned)
 		}
 	}
+	kv = AppendBannedIdentityLog(kv, host)
 	observability.Log(ctx, observability.LevelWarn, "rpc rate limit closed minute",
 		observability.StageReceived, observability.WhereTransportRateLimit,
 		"", observability.ReasonRateLimited, nil, kv...)
+}
+
+// RPCStatsJoin is host/minute_unix. Same host as Prometheus {host=...}.
+func RPCStatsJoin(host string, minuteUnix int64) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "unknown"
+	}
+	return host + "/" + strconv.FormatInt(minuteUnix, 10)
+}
+
+// AppendRPCStatsLogTag adds tag=rpc_stats and rpc_stats_join for log search.
+func AppendRPCStatsLogTag(kv []any, host string, minuteUnix int64) []any {
+	return append(kv,
+		"tag", RPCStatsLogTag,
+		"rpc_stats_join", RPCStatsJoin(host, minuteUnix),
+	)
+}
+
+// AppendBannedIdentityLog adds compact peer/IP fields for rows with banned>0.
+// Join Prometheus to this line with minute_unix + host_address (not a unique log_id label).
+func AppendBannedIdentityLog(kv []any, host RPCStatsHost) []any {
+	peers, peerRows, peerOmit := topBannedPeers(host.Peers, RPCStatsBannedIdentityLogCap)
+	ips, ipRows, ipOmit := topBannedIPs(host.IPs, RPCStatsBannedIdentityLogCap)
+	return append(kv,
+		"banned_peers", joinBannedPeers(peers),
+		"banned_peer_rows", peerRows,
+		"banned_peer_omitted", peerOmit,
+		"banned_ips", joinBannedIPs(ips),
+		"banned_ip_rows", ipRows,
+		"banned_ip_omitted", ipOmit,
+	)
+}
+
+func topBannedPeers(rows []RPCStatsPeer, capN int) (out []RPCStatsPeer, rowsN, omitted int) {
+	var hit []RPCStatsPeer
+	for _, p := range rows {
+		if p.Banned == 0 {
+			continue
+		}
+		hit = append(hit, p)
+	}
+	sort.Slice(hit, func(i, j int) bool {
+		if hit[i].Banned != hit[j].Banned {
+			return hit[i].Banned > hit[j].Banned
+		}
+		return hit[i].Peer < hit[j].Peer
+	})
+	return clipBanned(hit, capN)
+}
+
+func topBannedIPs(rows []RPCStatsIP, capN int) (out []RPCStatsIP, rowsN, omitted int) {
+	var hit []RPCStatsIP
+	for _, p := range rows {
+		if p.Banned == 0 {
+			continue
+		}
+		hit = append(hit, p)
+	}
+	sort.Slice(hit, func(i, j int) bool {
+		if hit[i].Banned != hit[j].Banned {
+			return hit[i].Banned > hit[j].Banned
+		}
+		return hit[i].IP < hit[j].IP
+	})
+	return clipBanned(hit, capN)
+}
+
+func clipBanned[T any](hit []T, capN int) (out []T, rowsN, omitted int) {
+	rowsN = len(hit)
+	if capN < 0 {
+		capN = 0
+	}
+	if len(hit) > capN {
+		omitted = len(hit) - capN
+		hit = hit[:capN]
+	}
+	return hit, rowsN, omitted
+}
+
+func joinBannedPeers(rows []RPCStatsPeer) string {
+	var b strings.Builder
+	for i, p := range rows {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(p.Peer)
+		b.WriteByte('=')
+		b.WriteString(strconv.FormatUint(p.Banned, 10))
+	}
+	return b.String()
+}
+
+func joinBannedIPs(rows []RPCStatsIP) string {
+	var b strings.Builder
+	for i, p := range rows {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(p.IP)
+		b.WriteByte('=')
+		b.WriteString(strconv.FormatUint(p.Banned, 10))
+	}
+	return b.String()
 }
 
 func newMinuteBucket() *minuteBucket {
