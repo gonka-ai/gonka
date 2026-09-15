@@ -16,9 +16,9 @@ Use the join files and component images for the [release covered by this guide](
 - Have a working join deployment (`node`, `api`, `proxy`) and the selected release's join files and compatible published images.
 - Install Docker Compose **2.24.4+**, Bash, Python 3, `curl` **7.71+**, `jq`, `flock`, `sha256sum` and `timeout`.
 - Use the same participant identity on every replica, with separate data directories and one shared writable PostgreSQL database. Run only one dapi with those keys.
-- Check the API catalog for each required protocol's approved name, download URL and SHA256. Its artifact must report `postgres` from `--print-storage-mode` in the HA environment and the matching name from `--print-protocol-version`. Use compatible host/gateway artifacts.
+- Use the host and gateway components specified for this release.
 
-**Protocol selection:** save the approved, compatible names in `VERSIOND_VERSIONS`, separated by spaces. Retain every protocol needed by existing sessions. Use this saved list for all checks; add a new protocol separately after the component update succeeds.
+**Protocol configuration:** for a new host, use the `VERSIOND_VERSIONS` value in the [installation configuration](#1-set-the-deployment-configuration). When updating, keep your existing value. Add protocols separately using their release instructions and [Add a protocol](#add-a-protocol).
 
 **Deployment scope:** run this HA host through the catalog filter below to serve the selected HA protocols. Pre-HA protocols such as `v3` are outside this setup. If you need their existing sessions or any pre-HA process uses this database, complete a separately verified transition before following this procedure.
 
@@ -61,8 +61,9 @@ export DEVSHARD_POSTGRES_DB=devshardd
 export DEVSHARD_POSTGRES_USER=devshardd
 export DEVSHARD_POSTGRES_PASSWORD='...'
 
+# Protocol list for a new host on this release; keep the existing list when updating.
+export VERSIOND_VERSIONS="v4 v4.1"
 # Deployment settings (retain these across component updates)
-export VERSIOND_VERSIONS='<space-separated-approved-HA-protocols>'
 export VERSIOND_NON_HA_VERSIONS=""
 # Use the same filtered catalog for replicas and both routing tiers.
 export VERSIOND_ROUTING_CATALOG_URL=http://oracle-filter:9100/versions
@@ -272,7 +273,7 @@ source ./config.env
   docker inspect proxy --format '{{range .Config.Env}}{{println .}}{{end}}' | grep VERSIOND_
   # Expect pool=versiond-router-fleet, an empty NON_HA list and the filtered catalog URL.
   docker exec oracle-filter wget -qO- http://127.0.0.1:9100/versions
-  # Require every selected protocol with its approved binary URL and SHA256.
+  # Confirm every configured protocol is listed with a binary URL and SHA256.
 
   ./versiond-router-fleet.sh status
   ./versiond-router-fleet.sh verify-admission
@@ -344,13 +345,42 @@ Complete the [drain, crash and restart checks](../devshard/docs/devshard-host-ha
 
 ### 1. Prepare the release
 
-1. Confirm the host meets the [deployment requirements](#before-you-start). Back up PostgreSQL and save `config.env`, all Compose/endpoint files, current image references and approved artifact URLs/SHA256. Record mounts and a working escrow for every retained protocol.
+1. Confirm the host meets the [deployment requirements](#before-you-start). Back up PostgreSQL and save `config.env`, all Compose/endpoint files, current image references and the artifact URLs/SHA256 currently used by the host. Record mounts and a working escrow for every retained protocol.
 2. Obtain the target release's join files in the **same deployment directory and Compose project**. Keep your configuration and overrides; review changes against the saved files before applying them. Preserve `.inference`, `devshards*/data`, `.pg-bound`, binary caches, router catalog volumes and `UPDATE_STATE_DIR`.
 3. Edit the four [release image entries](#select-the-release-images). Preserve identity, database credentials/endpoint, per-replica mounts, fleet slots/networks/membership, `VERSIOND_VERSIONS` and the full ordered `COMPOSE_FILE`. Keep any custom `COMPOSE_PROJECT_NAME` in `config.env`. Do not copy the new-installation configuration over your existing files.
-4. For local PostgreSQL, retain its current compatible image explicitly in `DEVSHARD_POSTGRES_IMAGE`; do not adopt a changed Compose default. A database move, PostgreSQL major upgrade or fleet reconfiguration requires a separate procedure.
-5. Verify every retained artifact as described in [Before you start](#before-you-start). Keep the currently serving protocol set throughout the update; add new protocols only after retained inference passes.
+4. For local PostgreSQL, pin its current compatible image by digest in `DEVSHARD_POSTGRES_IMAGE` using the command below. Use a different release digest only as a planned PostgreSQL update with confirmed cluster compatibility. A database move, PostgreSQL major upgrade or fleet reconfiguration requires a separate procedure.
+5. Keep the currently serving protocol set throughout the update. Complete the readiness, storage and retained-session checks below before adding protocols.
 
 If introducing this HA layout for the first time, merge the required [installation settings](#install-a-new-host) into your existing files without running its startup commands. Keep the filter enabled and `VERSIOND_NON_HA_VERSIONS` empty.
+
+<details>
+<summary><strong>Find the current PostgreSQL image digest</strong></summary>
+
+Run on the host with local PostgreSQL:
+
+```bash
+docker image inspect \
+  "$(docker inspect devshard-postgres --format '{{.Image}}')" \
+  --format '{{range .RepoDigests}}{{println .}}{{end}}'
+```
+
+Save one printed digest as `DEVSHARD_POSTGRES_IMAGE` in `config.env`. If none is printed, obtain a published digest for the current compatible image before continuing.
+
+</details>
+
+<details>
+<summary><strong>If the old config.env has no VERSIOND_VERSIONS</strong></summary>
+
+Read the saved protocol list from the existing filter before changing or recreating it:
+
+```bash
+docker inspect oracle-filter --format '{{json .Config.Env}}' |
+  jq -er '.[] | select(startswith("ORACLE_ALLOW=")) | ltrimstr("ORACLE_ALLOW=") | gsub(","; " ") | select(length > 0)'
+```
+
+Save the printed list as the quoted value of `VERSIOND_VERSIONS` in `config.env`. If the container or value is unavailable, recover the list from the previous configuration backup before continuing. Preserve all existing names; do not substitute the new-installation value.
+
+</details>
 
 After editing, reload the configuration and validate it in the existing join checkout:
 
@@ -379,7 +409,7 @@ Keep the source cluster's PostgreSQL major version and Alpine/musl image family.
 
 Before copying, confirm the retained containers already use the selected filtered catalog and unchanged database. `docker start` reuses their saved configuration; it does not apply edited overrides. If they need those changes, plan an offline supervisor transition before proceeding with this copy-and-restart procedure.
 
-Before stopping or recreating PostgreSQL, run the following and record the source volume and system identifier:
+Complete [directory preparation](#prepare-the-postgresql-directory), then run the following before stopping or recreating PostgreSQL. Record the source volume and system identifier:
 
 ```bash
 # Run in deploy/join, before removing/recreating the old container.
@@ -387,14 +417,6 @@ docker inspect devshard-postgres --format '{{json .Mounts}}'
 docker exec devshard-postgres sh -c \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"'
 # Record the system identifier, source volume at /var/lib/postgresql/data, and backup.
-pg_dir="${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
-[[ "$pg_dir" = /* ]] || pg_dir="$PWD/$pg_dir"
-# Create the target directory so preflight's space check works under a root-owned parent.
-docker run --rm --network none --read-only \
-  --security-opt label=disable \
-  --volume "$pg_dir:/target:ro" \
-  --entrypoint /bin/true \
-  "${POSTGRES_MIGRATION_HELPER_IMAGE:-${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}}" &&
 bash ./devshard-postgres-migration-preflight.sh \
   --source-container devshard-postgres \
   --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
@@ -419,7 +441,7 @@ Wait for PostgreSQL health. Repeat the system-identifier query and verify both t
 <details>
 <summary><strong>If the old volume was already detached</strong></summary>
 
-Use its recorded exact name with the complete Compose configuration:
+Complete [directory preparation](#prepare-the-postgresql-directory) if needed, then use the recorded exact volume name with the complete Compose configuration:
 
 ```bash
 export DEVSHARD_POSTGRES_LEGACY_VOLUME='<recorded-old-volume-name>'
@@ -427,14 +449,6 @@ export DEVSHARD_POSTGRES_LEGACY_VOLUME='<recorded-old-volume-name>'
 files=()
 IFS=':' read -ra parts <<<"$COMPOSE_FILE"
 for f in "${parts[@]}"; do files+=(-f "$f"); done
-pg_dir="${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
-[[ "$pg_dir" = /* ]] || pg_dir="$PWD/$pg_dir"
-# Create the target directory so preflight's space check works under a root-owned parent.
-docker run --rm --network none --read-only \
-  --security-opt label=disable \
-  --volume "$pg_dir:/target:ro" \
-  --entrypoint /bin/true \
-  "${POSTGRES_MIGRATION_HELPER_IMAGE:-${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}}" &&
 bash ./devshard-postgres-migration-preflight.sh \
   --source-volume "$DEVSHARD_POSTGRES_LEGACY_VOLUME" \
   --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}" &&
@@ -476,7 +490,7 @@ A timeout, HTTP 503 or invalid storage proof is a failure to resolve, not an uns
 
 </details>
 
-Check every retained protocol on every member before continuing. Only for an installed supervisor known to lack readiness (HTTP 404), use `/$version/healthz` instead of `/readyz?version=$version` in this pre-update check; HTTP 503 is a failure. After replacement, all readiness and storage checks in [Verify](#verify-the-deployment) are required.
+Run this check for every retained protocol on every member. Before the update, it accepts the older per-protocol health endpoint only when readiness returns HTTP 404. HTTP 503 and connection errors stop the check. After replacement, complete all readiness and storage checks in [Verify](#verify-the-deployment).
 
 ```bash
 # Include every local member; repeat on remote hosts.
@@ -485,7 +499,16 @@ Check every retained protocol on every member before continuing. Only for an ins
   : "${VERSIOND_VERSIONS:?set the approved HA protocol list}"
   for replica in versiond versiond2; do
     for version in $VERSIOND_VERSIONS; do
-      docker exec "$replica" wget -qO- "http://127.0.0.1:8080/readyz?version=$version"
+      if output=$(docker exec "$replica" /bin/busybox wget -S -O /dev/null -T 5 \
+        "http://127.0.0.1:8080/readyz?version=$version" 2>&1); then
+        continue
+      fi
+      case "$output" in
+        *"HTTP/"*" 404 "*)
+          docker exec "$replica" /bin/busybox wget -qO- -T 5 \
+            "http://127.0.0.1:8080/$version/healthz" ;;
+        *) printf '%s/%s: %s\n' "$replica" "$version" "$output" >&2; exit 1 ;;
+      esac
     done
   done
 )
@@ -503,7 +526,7 @@ Run the preflight checks. They write database probes without replacing services:
 )
 ```
 
-Review the proposed changes. If either check fails, resolve the cause before continuing; do not reset fleet state or add bypass flags. After both succeed, run the update and admission checks:
+Review the proposed changes. If preflight cannot create the PostgreSQL target directory, complete [directory preparation](#prepare-the-postgresql-directory) and repeat the checks. Resolve any other failure before continuing; do not reset fleet state or add bypass flags. After both succeed, run the update and admission checks:
 
 ```bash
 (
@@ -691,8 +714,8 @@ Finally, test a real session served by B: identify it using `X-Upstream-Addr`, s
 
 ### Add a local replica
 
-1. Copy the supplied `docker-compose.versiond3.yml` with unique container names and data paths. Keep its PostgreSQL mount so the lost-database guard can inspect `.pg-bound`; add the file to the complete `COMPOSE_FILE`.
-2. Extend the HA and external-PostgreSQL overrides for this service: use the same image, filtered catalog, identity, HA/database environment and stop timings. Add alias `versiond-pool` on the router back network.
+1. For the third replica, add the supplied `docker-compose.versiond3.yml` to the complete `COMPOSE_FILE`. For each further replica, copy it with unique container names and data paths. Keep its PostgreSQL mount for the `.pg-bound` check.
+2. Extend the HA and external-PostgreSQL overrides for the new service, including its filtered catalog, database endpoint and dependencies. Settings added to another replica by an override are not inherited automatically. Retain the supplied identity/image settings, stop timings and `versiond-pool` alias.
 3. Start the member, require readiness for every selected protocol and verify inference. DNS discovery needs no router recreation; use [membership maintenance](#3-add-b-to-the-router-pool) for explicit endpoint lists.
 
 <a id="25-operating-versiond-members"></a>
@@ -737,9 +760,11 @@ Stop and drain it, remove its service or set replicas to zero (`VERSIOND2_REPLIC
 
 ### Add a protocol
 
-1. Verify approval, artifact compatibility and matching gateway support as in [Before you start](#before-you-start). Add the protocol to `VERSIOND_VERSIONS` in `config.env` on every host; keep existing names needed by retained sessions.
+1. Follow the new protocol's release instructions for its name and required host/gateway versions. After the activation specified there, add the name to `VERSIOND_VERSIONS` in `config.env` on every host; keep existing names needed by retained sessions.
 2. On A, run `source ./config.env`, then `docker compose up -d --no-deps oracle-filter` using the complete `COMPOSE_FILE`.
-3. Run `./versiond-router-fleet.sh wait-version <new-protocol>`, then complete [Verify](#verify-the-deployment) with the updated list and a new escrow. Router replacement is unnecessary.
+3. Run `./versiond-router-fleet.sh wait-version <new-protocol>`, then complete [Verify](#verify-the-deployment) with the updated list and a new escrow.
+
+No router restart is needed to activate the protocol. Schedule the next host update as maintenance: it also applies the saved protocol configuration to the router fleet and public proxy.
 
 Preserve `proxy-router-state` and each slot's `router-state`. Remove protocols only during maintenance after their sessions are no longer needed: changing the filter can stop children, while previously accepted router routes are retained by default.
 
@@ -786,6 +811,23 @@ For database-history errors, verify the selected data directory before retrying.
 
 Restore the recorded database rather than initializing an empty replacement. `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true` is only for confirmed first-time HA enablement: use it once, then unset it. If `.pg-bound` exists, restore the database; the flag is not a recovery procedure.
 
+### Prepare the PostgreSQL directory
+
+For local PostgreSQL, run in `deploy/join` to create the target directory through Docker before migration or when preflight cannot create it:
+
+```bash
+source ./config.env
+pg_dir="${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
+[[ "$pg_dir" = /* ]] || pg_dir="$PWD/$pg_dir"
+docker run --rm --network none --read-only \
+  --security-opt label=disable \
+  --volume "$pg_dir:/target:ro" \
+  --entrypoint /bin/true \
+  "${POSTGRES_MIGRATION_HELPER_IMAGE:-${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}}"
+```
+
+Continue only after the command succeeds. If access still fails, check the parent directory permissions; leave database ownership unchanged.
+
 ### Resolve an unready member
 
 Check the selected catalog, binary URL/SHA256, child logs and database access. Require every selected protocol to pass its readiness check. Do not substitute a single-protocol Docker healthcheck for `/readyz`, or enable updater bypass flags to hide a failure.
@@ -794,11 +836,11 @@ Check the selected catalog, binary URL/SHA256, child logs and database access. R
 
 ### Release reference
 
-**Release:** `devshard-0.2.15-v5`. Core checked at `39240311fb` with gateway and storage fixes from [PR #1730](https://github.com/gonka-ai/gonka/pull/1730) through `bf4de2d21`; versiond fleet and updater checked in the integration from [PR #1611](https://github.com/gonka-ai/gonka/pull/1611) through `ab2bb5171` on 2026-09-09.
+**Release:** `devshard-0.2.15-v5`.
 
 Use join files, updater/fleet scripts and published component images from a compatible release set. For a later release, use its version of this guide and review its upgrade requirements before changing images. Keep site settings and the retained protocol list across releases.
 
-The guide is a draft for host operators. Approval and image availability must be checked for the chosen release; green infrastructure tests do not establish a successful migration of your real sessions. Test the upgrade on a copy of the actual state before production, using the [acceptance plan](../devshard/docs/ha-host-updater-acceptance.md).
+Test the upgrade on a copy of the actual state before production, using the [acceptance plan](../devshard/docs/ha-host-updater-acceptance.md).
 
 <details>
 <summary>Deployment layout</summary>
