@@ -32,6 +32,7 @@ type Service struct {
 	cfg            Config
 	paramsSrc      *params.CachedSource
 	paramsSrv      *params.Server
+	nodeManager    *nodeManagerServer
 	runtimeFetcher fetcher.SnapshotFetcher
 	blockMock      *observer.Mock
 	admin          *adminface.Client
@@ -78,14 +79,9 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		return nil, fmt.Errorf("mockdapi: cached source: %w", err)
 	}
 
-	mlNodes := make([]params.MLNode, 0, len(cfg.MLNodes))
-	for _, node := range cfg.MLNodes {
-		mlNodes = append(mlNodes, params.MLNode{ID: node.ID, Endpoint: node.Endpoint})
-	}
 	paramsSrv, err := params.NewServer(params.Config{
 		Source:     src,
 		MLEndpoint: cfg.MLEndpoint,
-		MLNodes:    mlNodes,
 		MaxWaitCap: func() time.Duration { return commonruntimeconfig.DefaultMaxWaitCap },
 		Log:        slog.Default(),
 	})
@@ -99,16 +95,19 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		_ = conn.Close()
 		return nil, err
 	}
+	hostEvents := newHostEventRing()
+	nodeManager := newNodeManagerServer(paramsSrv, hostEvents, cfg.MLNodes)
 
 	s := &Service{
 		cfg:            cfg,
 		paramsSrc:      src,
 		paramsSrv:      paramsSrv,
+		nodeManager:    nodeManager,
 		runtimeFetcher: runtimeFetcher,
 		blockMock:      blockMock,
 		admin:          adminClient,
 		versions:       newVersionStore(cfg.Versions),
-		hostEvents:     newHostEventRing(),
+		hostEvents:     hostEvents,
 	}
 	return s, nil
 }
@@ -200,7 +199,7 @@ func (s *Service) runChainPoll(ctx context.Context) error {
 
 func (s *Service) serveGRPCOn(ctx context.Context, lis net.Listener) error {
 	gs := grpc.NewServer()
-	gen.RegisterNodeManagerServer(gs, newNodeManagerServer(s.paramsSrv, s.hostEvents))
+	gen.RegisterNodeManagerServer(gs, s.nodeManager)
 	s.grpcServer = gs
 	go func() {
 		<-ctx.Done()
@@ -218,7 +217,7 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 		VersionProvider: s.versions,
 	})
 	e.GET("/testenv/ml-allocations", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, s.paramsSrv.AllocationCounts())
+		return c.JSON(http.StatusOK, s.nodeManager.AllocationCounts())
 	})
 	if s.cfg.BinaryDir != "" {
 		mountBinaryFiles(e.Group(""), s.cfg.BinaryDir)
