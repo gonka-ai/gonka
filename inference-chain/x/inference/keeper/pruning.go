@@ -202,6 +202,16 @@ func (k Keeper) GetInferencePruner(params types.Params) Pruner[collections.Pair[
 			state.InferencePrunedEpoch = epoch
 		},
 		Remover: func(ctx context.Context, key collections.Pair[int64, string]) error {
+			// Check inference status before removing
+			inference, found := k.GetInference(ctx, key.K2())
+			if found {
+				// Do not prune inferences that are VOTING or STARTED
+				if inference.Status == types.InferenceStatus_VOTING || inference.Status == types.InferenceStatus_STARTED {
+					// Remove from pruning list but keep the inference itself
+					return k.InferencesToPrune.Remove(ctx, key)
+				}
+			}
+			// Prune the inference
 			err := k.Inferences.Remove(ctx, key.K2())
 			if err != nil {
 				return err
@@ -354,6 +364,7 @@ type Pruner[K any, V any] struct {
 }
 
 func (p Pruner[K, V]) PruneEpoch(ctx context.Context, currentEpochIndex int64, prunesLeft int64) (int64, error) {
+	p.Logger.LogInfo("PruneEpoch called", types.Pruning, "epoch", currentEpochIndex, "prunesLeft", prunesLeft, "list", p.List.GetName())
 	prunedCount := int64(0)
 	iter, err := p.List.Iterate(ctx, p.Ranger(ctx, currentEpochIndex))
 	if err != nil {
@@ -408,6 +419,15 @@ func (p Pruner[K, V]) Prune(ctx context.Context, k Keeper, currentEpochIndex int
 				"error", err,
 			)
 			continue
+		}
+		prunedCount += prunedForEpoch
+		if prunedCount >= p.PruningMax {
+			p.Logger.LogInfo("Reached per-block pruning limit", types.Pruning,
+				"pruned", prunedCount,
+				"max", p.PruningMax,
+				"list", p.List.GetName(),
+			)
+			return nil
 		}
 		if prunedForEpoch == 0 {
 			p.Logger.LogInfo("Pruning epoch complete", types.Pruning, "epoch", epoch, "list", p.List.GetName())

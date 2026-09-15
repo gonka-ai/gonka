@@ -223,7 +223,9 @@ func DefaultEpochParams() *EpochParams {
 		PocValidationDuration:          6,
 		SetNewValidatorsDelay:          1,
 		InferenceValidationCutoff:      0,
-		InferencePruningEpochThreshold: 2, // Number of epochs after which inferences can be pruned
+		InferencePruningEpochThreshold: 2,    // Number of epochs after which inferences can be pruned
+		InferencePruningMax:            1000, // Maximum number of inferences to prune per block
+		PocPruningMax:                  1000, // Maximum number of PoC items to prune per block
 		ConfirmationPocSafetyWindow:    50,
 		PocSlotAllocation: &Decimal{ // Default 0.5 (50%) fraction of nodes allocated to PoC slots
 			Value:    5,
