@@ -69,7 +69,7 @@ list_args=()
 if [[ -n $repo ]]; then
 	list_args+=(--repo "$repo")
 fi
-list_args+=(--workflow "$workflow" --limit 50 --json databaseId,headSha,headBranch)
+list_args+=(--workflow "$workflow" --limit 50 --json "databaseId,headSha,headBranch")
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
