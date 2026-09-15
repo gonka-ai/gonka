@@ -72,7 +72,8 @@ func TestMockChainGRPC_Phase3aQueries(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, egdResp.EpochGroupData.ModelSnapshot.ValidationThreshold)
-	require.Equal(t, int64(50), egdResp.EpochGroupData.ModelSnapshot.ValidationThreshold.Value)
+	require.Equal(t, int64(95), egdResp.EpochGroupData.ModelSnapshot.ValidationThreshold.Value)
+	require.Equal(t, int32(-2), egdResp.EpochGroupData.ModelSnapshot.ValidationThreshold.Exponent)
 
 	grantResp, err := client.InferenceQueryClient().GranteesByMessageType(ctx, &inferencetypes.QueryGranteesByMessageTypeRequest{
 		GranterAddress: host,
