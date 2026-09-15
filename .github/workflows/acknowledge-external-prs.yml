@@ -36,8 +36,13 @@ jobs:
               const association = context.payload.pull_request.author_association;
               const prNumber = context.payload.pull_request.number;
 
+              if (context.payload.pull_request.draft) {
+                core.info(`Skipping acknowledgment for draft PR #${prNumber}.`);
+                return;
+              }
+              
               // Only external contributors; skip bots and internal people.
-              const INTERNAL = new Set(['OWNER', 'MEMBER']);
+              const INTERNAL = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
               if (context.payload.pull_request.user.type === 'Bot' || INTERNAL.has(association)) {
                 core.info(`Skipping acknowledgment for ${author} (${association}).`);
                 return;
