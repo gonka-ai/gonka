@@ -3,8 +3,6 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/store/prefix"
-	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -22,30 +20,25 @@ func (k Keeper) TransferStatus(goCtx context.Context, req *types.QueryTransferSt
 		return nil, status.Error(codes.InvalidArgument, "genesis address cannot be empty")
 	}
 
-	// Try to get the transfer record for this address
-	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(goCtx))
-	transferRecordStore := prefix.NewStore(store, types.KeyPrefix(types.TransferRecordKeyPrefix))
+	genesisAddr, err := sdk.AccAddressFromBech32(req.GenesisAddress)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid genesis address format")
+	}
 
-	key := []byte(req.GenesisAddress)
-	bz := transferRecordStore.Get(key)
-
-	if bz == nil {
-		// No transfer record found
+	transferRecord, found, err := k.GetTransferRecord(goCtx, genesisAddr)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "failed to unmarshal transfer record")
+	}
+	if !found {
 		return &types.QueryTransferStatusResponse{
 			IsTransferred:  false,
 			TransferRecord: nil,
 		}, nil
 	}
 
-	// Unmarshal the transfer record
-	var transferRecord types.TransferRecord
-	if err := k.cdc.Unmarshal(bz, &transferRecord); err != nil {
-		return nil, status.Error(codes.Internal, "failed to unmarshal transfer record")
-	}
-
 	return &types.QueryTransferStatusResponse{
 		IsTransferred:  transferRecord.Completed,
-		TransferRecord: &transferRecord,
+		TransferRecord: transferRecord,
 	}, nil
 }
 
