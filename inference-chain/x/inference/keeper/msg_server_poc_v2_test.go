@@ -345,9 +345,10 @@ func makePoCV2CommitEntry(modelID string, count uint32, rootByte byte) *types.Po
 		rootHash[i] = rootByte
 	}
 	return &types.PoCV2CommitEntry{
-		ModelId:  modelID,
-		Count:    count,
-		RootHash: rootHash,
+		ModelId:   modelID,
+		Count:     count,
+		RootHash:  rootHash,
+		TreeDepth: 24,
 	}
 }
 
@@ -563,4 +564,62 @@ func TestPoCV2StoreCommit_InvalidEntriesFailBeforeWrites(t *testing.T) {
 			require.Empty(t, commits)
 		})
 	}
+}
+
+func TestPoCV2StoreCommit_TreeDepthBoundAndFrozen(t *testing.T) {
+	k, sdkCtx, msgServer := setupPoCV2StoreCommitTest(t, 110, nil, testPoCModelID)
+
+	zero := makePoCV2CommitEntry(testPoCModelID, 10, 1)
+	zero.TreeDepth = 0
+	_, err := msgServer.PoCV2StoreCommit(sdkCtx, &types.MsgPoCV2StoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 100,
+		Entries:                  []*types.PoCV2CommitEntry{zero},
+	})
+	require.ErrorContains(t, err, "tree_depth must be in 1..32")
+
+	tooHigh := makePoCV2CommitEntry(testPoCModelID, 10, 1)
+	tooHigh.TreeDepth = 33
+	_, err = msgServer.PoCV2StoreCommit(sdkCtx, &types.MsgPoCV2StoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 100,
+		Entries:                  []*types.PoCV2CommitEntry{tooHigh},
+	})
+	require.ErrorContains(t, err, "tree_depth must be in 1..32")
+
+	first := makePoCV2CommitEntry(testPoCModelID, 10, 1)
+	_, err = msgServer.PoCV2StoreCommit(sdkCtx, &types.MsgPoCV2StoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 100,
+		Entries:                  []*types.PoCV2CommitEntry{first},
+	})
+	require.NoError(t, err)
+
+	stored, err := k.GetAllPoCV2StoreCommitsForStage(sdkCtx, 100)
+	require.NoError(t, err)
+	require.Equal(t, uint32(24), stored[commitKey(testutil.Executor, testPoCModelID)].TreeDepth)
+
+	query, err := k.PoCV2StoreCommit(sdkCtx, &types.QueryPoCV2StoreCommitRequest{
+		PocStageStartBlockHeight: 100,
+		ParticipantAddress:       testutil.Executor,
+		ModelId:                  testPoCModelID,
+	})
+	require.NoError(t, err)
+	require.True(t, query.Found)
+	require.Equal(t, uint32(24), query.TreeDepth)
+
+	changed := makePoCV2CommitEntry(testPoCModelID, 12, 2)
+	changed.TreeDepth = 25
+	nextCtx := sdkCtx.WithBlockHeight(111).WithGasMeter(storetypes.NewGasMeter(1_000_000_000))
+	_, err = msgServer.PoCV2StoreCommit(nextCtx, &types.MsgPoCV2StoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 100,
+		Entries:                  []*types.PoCV2CommitEntry{changed},
+	})
+	require.ErrorContains(t, err, "tree_depth must stay 24")
+
+	stored, err = k.GetAllPoCV2StoreCommitsForStage(nextCtx, 100)
+	require.NoError(t, err)
+	require.Equal(t, uint32(10), stored[commitKey(testutil.Executor, testPoCModelID)].Count)
+	require.Equal(t, uint32(24), stored[commitKey(testutil.Executor, testPoCModelID)].TreeDepth)
 }

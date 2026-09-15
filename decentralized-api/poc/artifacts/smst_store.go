@@ -67,6 +67,7 @@ type SMSTArtifactStore struct {
 	flushedLeafCount  uint32
 	flushedDataOffset uint64
 	flushedRoots      map[uint32][]byte
+	flushedDepth      uint32
 
 	// retained holds snapshots at committed counts so historical proofs are
 	// O(depth) instead of an O(N) rebuild. With COW: O(1) shared roots from
@@ -235,6 +236,9 @@ func (s *SMSTArtifactStore) recover() error {
 
 	s.flushedLeafCount = s.smst.Count()
 	s.flushedDataOffset = offset
+	if s.flushedLeafCount > 0 {
+		s.flushedDepth = uint32(s.smst.Depth())
+	}
 
 	rootHash, _ := s.smst.GetRoot()
 	s.flushedRoots[s.flushedLeafCount] = rootHash
@@ -451,6 +455,9 @@ func (s *SMSTArtifactStore) flushLocked() error {
 	s.flushedLeafCount = s.smst.Count()
 	s.flushedDataOffset = offset
 	s.buffer = s.buffer[:0]
+	if s.flushedLeafCount > 0 {
+		s.flushedDepth = uint32(s.smst.Depth())
+	}
 
 	rootHash, _ := s.smst.GetRoot()
 	s.flushedRoots[s.flushedLeafCount] = rootHash
@@ -596,6 +603,12 @@ func (s *SMSTArtifactStore) GetRootAt(snapshotCount uint32) ([]byte, error) {
 	defer unlock()
 	root, _ := tree.GetRoot()
 	return root, nil
+}
+
+func (s *SMSTArtifactStore) FlushedDepth() uint32 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.flushedDepth
 }
 
 func (s *SMSTArtifactStore) GetFlushedRoot() (count uint32, root []byte) {
