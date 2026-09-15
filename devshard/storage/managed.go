@@ -219,12 +219,24 @@ func (m *ManagedStorage) InsertSealedInference(escrowID string, row InferenceRow
 	return m.inner.InsertSealedInference(escrowID, row)
 }
 
+func (m *ManagedStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.inner.InsertSealedInferences(escrowID, rows)
+}
+
+func (m *ManagedStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.inner.BulkInsertSealedInferences(escrowID, rows)
+}
+
 func (m *ManagedStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	return m.inner.GetSealedInference(escrowID, inferenceID)
 }
 
 func (m *ManagedStorage) DeleteSealedInferences(escrowID string) error {
 	return m.inner.DeleteSealedInferences(escrowID)
+}
+
+func (m *ManagedStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	return m.inner.SealedInferenceIDs(escrowID)
 }
 
 func (m *ManagedStorage) ClearValidationObs(escrowID string) error {
@@ -237,6 +249,10 @@ func (m *ManagedStorage) RecordValidationsAppliedOnce(escrowID string, entries [
 
 func (m *ManagedStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
 	return m.inner.DrainInferenceValidationObs(escrowID, inferenceID)
+}
+
+func (m *ManagedStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	return m.inner.DrainInferenceValidationObsBatch(escrowID, inferenceIDs)
 }
 
 func (m *ManagedStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {

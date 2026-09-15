@@ -335,7 +335,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 				"HandleInference: requests disabled", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()))
 		}
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
-			"HandleInference: handle request", echo.NewHTTPError(http.StatusInternalServerError, err.Error()))
+			"HandleInference: handle request", echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err))
 	}
 	observability.Request.SetInferenceID(op, resp.InferenceID)
 	observability.Request.SetInferenceResponse(op, resp.Nonce, resp.ExecutionExpected, resp.CachedResponseBody != nil)
@@ -624,7 +624,7 @@ func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {
 
 	receipt, _, err := s.host.ChallengeReceipt(c.Request().Context(), req.InferenceID, PayloadFromJSON(req.Payload), diffs)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err)
 	}
 
 	return writeJSON(c, http.StatusOK, ChallengeReceiptResponse{Receipt: receipt})
