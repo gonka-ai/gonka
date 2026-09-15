@@ -223,6 +223,7 @@ func peerConnConfigFromClient(httpClient *HTTPClient, hostAddress string, extra 
 		)
 		dial = PeerRPCDialSet{InferenceURL: base}
 	}
+	grpc := RPCH2GRPCEnabled(os.Getenv(envRPCH2GRPC)) && dial.H2URL != ""
 	return PeerConnConfig{
 		BaseURL:      base,
 		RoutePrefix:  httpClient.RoutePrefix(),
@@ -232,5 +233,6 @@ func peerConnConfigFromClient(httpClient *HTTPClient, hostAddress string, extra 
 		MaxConns:     maxConns,
 		Adoption:     adoption,
 		DialSet:      dial,
+		GRPC:         grpc,
 	}
 }

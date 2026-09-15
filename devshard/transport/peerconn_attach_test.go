@@ -15,6 +15,8 @@ import (
 	"connectrpc.com/connect"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 
 	commonvalidation "common/validation"
 	"devshard/heightsync"
@@ -38,9 +40,19 @@ func startPeerRPCServer(t *testing.T, hostAddr string, authCfg rpcserver.PeerAut
 // compressed request size in obs when it is non-nil.
 func startPeerRPCServerObserved(t *testing.T, hostAddr string, authCfg rpcserver.PeerAuthConfig, lookup rpcserver.SessionLookup, obs *wireObserver, opts ...rpcserver.MuxOption) (*httptest.Server, *rpcserver.PeerAuthHandler) {
 	t.Helper()
+	return startPeerRPCServerMaybeH2C(t, hostAddr, authCfg, lookup, obs, false, opts...)
+}
+
+func startPeerRPCServerH2CObserved(t *testing.T, hostAddr string, authCfg rpcserver.PeerAuthConfig, lookup rpcserver.SessionLookup, obs *wireObserver, opts ...rpcserver.MuxOption) (*httptest.Server, *rpcserver.PeerAuthHandler) {
+	t.Helper()
+	return startPeerRPCServerMaybeH2C(t, hostAddr, authCfg, lookup, obs, true, opts...)
+}
+
+func startPeerRPCServerMaybeH2C(t *testing.T, hostAddr string, authCfg rpcserver.PeerAuthConfig, lookup rpcserver.SessionLookup, obs *wireObserver, h2cMode bool, opts ...rpcserver.MuxOption) (*httptest.Server, *rpcserver.PeerAuthHandler) {
+	t.Helper()
 	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, authCfg)
 	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(lookup), opts...)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(rpcserver.WithEscrowID(r.Context(), "escrow-1"))
 		if obs == nil {
 			mux.ServeHTTP(w, r)
@@ -50,7 +62,13 @@ func startPeerRPCServerObserved(t *testing.T, hostAddr string, authCfg rpcserver
 		r.Body = counted
 		mux.ServeHTTP(w, r)
 		obs.record(r.URL.Path, r.Header, w.Header(), counted.n)
-	}))
+	})
+	var srv *httptest.Server
+	if h2cMode {
+		srv = httptest.NewServer(h2c.NewHandler(h, &http2.Server{}))
+	} else {
+		srv = httptest.NewServer(h)
+	}
 	t.Cleanup(srv.Close)
 	t.Cleanup(auth.Close)
 	return srv, auth
@@ -72,6 +90,7 @@ type wireObserver struct {
 	mu      sync.Mutex
 	reqEnc  map[string]string
 	respEnc map[string]string
+	reqCT   map[string]string
 	wire    map[string]int
 }
 
@@ -79,6 +98,7 @@ func newWireObserver() *wireObserver {
 	return &wireObserver{
 		reqEnc:  map[string]string{},
 		respEnc: map[string]string{},
+		reqCT:   map[string]string{},
 		wire:    map[string]int{},
 	}
 }
@@ -88,6 +108,7 @@ func (o *wireObserver) record(procedure string, req, resp http.Header, wireBytes
 	defer o.mu.Unlock()
 	o.reqEnc[procedure] = headerEncoding(req)
 	o.respEnc[procedure] = headerEncoding(resp)
+	o.reqCT[procedure] = req.Get("Content-Type")
 	o.wire[procedure] = wireBytes
 }
 
@@ -95,6 +116,12 @@ func (o *wireObserver) requestEncoding(procedure string) string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.reqEnc[procedure]
+}
+
+func (o *wireObserver) requestContentType(procedure string) string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.reqCT[procedure]
 }
 
 func (o *wireObserver) responseEncoding(procedure string) string {
@@ -115,7 +142,24 @@ func headerEncoding(h http.Header) string {
 	if enc := h.Get("Content-Encoding"); enc != "" {
 		return enc
 	}
+	if enc := h.Get("Grpc-Encoding"); enc != "" {
+		return enc
+	}
 	return h.Get("Connect-Content-Encoding")
+}
+
+func requireGRPCContentType(t *testing.T, ct string) {
+	t.Helper()
+	require.Contains(t, ct, "application/grpc", "native gRPC Content-Type")
+	require.NotContains(t, ct, "connect")
+}
+
+func requireConnectContentType(t *testing.T, ct string) {
+	t.Helper()
+	lower := strings.ToLower(ct)
+	require.NotContains(t, lower, "application/grpc", "HTTP/1.1 must not speak native gRPC, got %q", ct)
+	require.True(t, strings.Contains(lower, "connect") || strings.Contains(lower, "application/proto"),
+		"Connect Content-Type, got %q", ct)
 }
 
 func newTestPeerConn(t *testing.T, srv *httptest.Server, hostAddr string, signer signing.Signer, cfg transport.PeerConnConfig) *transport.PeerConn {

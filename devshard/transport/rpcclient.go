@@ -38,11 +38,17 @@ type RPCClient struct {
 	sessionLarge rpcpbconnect.SessionServiceClient
 	// sessionChat is SessionService.Chat: 10 MiB envelope, no per-frame gzip.
 	sessionChat rpcpbconnect.SessionServiceClient
-	gossip       rpcpbconnect.GossipServiceClient
+	gossip      rpcpbconnect.GossipServiceClient
 	// payload uses DefaultRPCPayloadMaxBytes (64 MiB) when the caller
 	// did not pass a per-inference limit. GetPayload builds a tighter or
 	// larger client from PayloadReadLimit.
-	payload rpcpbconnect.PayloadServiceClient
+	payload          rpcpbconnect.PayloadServiceClient
+	sessionGRPC      rpcpbconnect.SessionServiceClient
+	sessionQueryGRPC rpcpbconnect.SessionServiceClient
+	sessionLargeGRPC rpcpbconnect.SessionServiceClient
+	sessionChatGRPC  rpcpbconnect.SessionServiceClient
+	gossipGRPC       rpcpbconnect.GossipServiceClient
+	payloadGRPC      rpcpbconnect.PayloadServiceClient
 	// closeOnce is a pointer so WithoutAdmission can copy RPCClient without
 	// copying a sync.Once (go vet copylocks).
 	closeOnce *sync.Once
@@ -70,6 +76,14 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		c.sessionChat = rpcpbconnect.NewSessionServiceClient(conn.http, base, chatClientOptions()...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
 		c.payload = rpcpbconnect.NewPayloadServiceClient(conn.http, base, connectClientOptions(DefaultRPCPayloadMaxBytes)...)
+		if conn.cfg.GRPC {
+			c.sessionGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(opts, true)...)
+			c.sessionQueryGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCQueryReadMaxBytes), true)...)
+			c.sessionLargeGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true)...)
+			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(chatClientOptions(), true)...)
+			c.gossipGRPC = rpcpbconnect.NewGossipServiceClient(conn.http, base, maybeGRPC(opts, true)...)
+			c.payloadGRPC = rpcpbconnect.NewPayloadServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCPayloadMaxBytes), true)...)
+		}
 	}
 	return c
 }
@@ -230,6 +244,54 @@ func connectClientOptions(maxBytes int) []connect.ClientOption {
 	}
 }
 
+func maybeGRPC(opts []connect.ClientOption, on bool) []connect.ClientOption {
+	if !on {
+		return opts
+	}
+	out := make([]connect.ClientOption, 0, len(opts)+1)
+	out = append(out, opts...)
+	return append(out, connect.WithGRPC())
+}
+
+func (c *RPCClient) grpcOn() bool {
+	return c != nil && c.conn != nil && c.conn.useGRPC()
+}
+
+func (c *RPCClient) sessionClient() rpcpbconnect.SessionServiceClient {
+	if c.grpcOn() && c.sessionGRPC != nil {
+		return c.sessionGRPC
+	}
+	return c.session
+}
+
+func (c *RPCClient) sessionQueryClient() rpcpbconnect.SessionServiceClient {
+	if c.grpcOn() && c.sessionQueryGRPC != nil {
+		return c.sessionQueryGRPC
+	}
+	return c.sessionQuery
+}
+
+func (c *RPCClient) sessionLargeClient() rpcpbconnect.SessionServiceClient {
+	if c.grpcOn() && c.sessionLargeGRPC != nil {
+		return c.sessionLargeGRPC
+	}
+	return c.sessionLarge
+}
+
+func (c *RPCClient) sessionChatClient() rpcpbconnect.SessionServiceClient {
+	if c.grpcOn() && c.sessionChatGRPC != nil {
+		return c.sessionChatGRPC
+	}
+	return c.sessionChat
+}
+
+func (c *RPCClient) gossipClient() rpcpbconnect.GossipServiceClient {
+	if c.grpcOn() && c.gossipGRPC != nil {
+		return c.gossipGRPC
+	}
+	return c.gossip
+}
+
 // chatClientOptions gzips the request envelope (prompt + catch-up diffs) like
 // the unary clients and HTTP Send. gzip must stay registered for WithSendGzip
 // to resolve; the handler never compresses ChatFrames, so response chunks are
@@ -253,7 +315,7 @@ func (c *RPCClient) GetSignatures(ctx context.Context, nonce uint64) (map[uint32
 		if err != nil {
 			return err
 		}
-		resp, err := c.session.GetSignatures(ctx, req)
+		resp, err := c.sessionClient().GetSignatures(ctx, req)
 		if err != nil {
 			return err
 		}
@@ -281,7 +343,7 @@ func (c *RPCClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff
 		if err != nil {
 			return err
 		}
-		resp, err := c.sessionQuery.GetDiffs(ctx, req)
+		resp, err := c.sessionQueryClient().GetDiffs(ctx, req)
 		if err != nil {
 			return err
 		}
@@ -314,7 +376,7 @@ func (c *RPCClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error)
 		if err != nil {
 			return err
 		}
-		resp, err := c.sessionQuery.GetMempool(ctx, req)
+		resp, err := c.sessionQueryClient().GetMempool(ctx, req)
 		if err != nil {
 			return err
 		}
@@ -345,7 +407,7 @@ func (c *RPCClient) GossipNonce(ctx context.Context, nonce uint64, stateHash, st
 		return err
 	}
 	return c.gossipSigned(ctx, c.config.GossipTimeout, rpcpbconnect.GossipServiceNonceProcedure, payload, func(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) error {
-		_, err := c.gossip.Nonce(ctx, req)
+		_, err := c.gossipClient().Nonce(ctx, req)
 		return err
 	})
 }
@@ -363,7 +425,7 @@ func (c *RPCClient) GossipTxs(ctx context.Context, txs []*types.DevshardTx) erro
 		return err
 	}
 	return c.gossipSigned(ctx, c.config.GossipTimeout, rpcpbconnect.GossipServiceTxsProcedure, payload, func(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) error {
-		_, err := c.gossip.Txs(ctx, req)
+		_, err := c.gossipClient().Txs(ctx, req)
 		return err
 	})
 }
@@ -409,7 +471,7 @@ func (c *RPCClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 		if err != nil {
 			return err
 		}
-		resp, err := c.session.SeedHeightSync(ctx, req)
+		resp, err := c.sessionClient().SeedHeightSync(ctx, req)
 		if err != nil {
 			return err
 		}
@@ -452,7 +514,7 @@ func (c *RPCClient) HeightSyncRepair(ctx context.Context, req *heightsync.Repair
 		if err != nil {
 			return err
 		}
-		resp, err := c.session.RepairHeightSync(ctx, creq)
+		resp, err := c.sessionClient().RepairHeightSync(ctx, creq)
 		if err != nil {
 			return err
 		}
@@ -485,7 +547,7 @@ func (c *RPCClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutRequ
 		if err != nil {
 			return err
 		}
-		resp, err := c.sessionLarge.VerifyTimeout(ctx, creq)
+		resp, err := c.sessionLargeClient().VerifyTimeout(ctx, creq)
 		if err != nil {
 			return err
 		}
@@ -518,7 +580,7 @@ func (c *RPCClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMiss
 		if err != nil {
 			return err
 		}
-		resp, err := c.sessionLarge.VerifyErrorMiss(ctx, creq)
+		resp, err := c.sessionLargeClient().VerifyErrorMiss(ctx, creq)
 		if err != nil {
 			return err
 		}
@@ -565,7 +627,7 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 		if err != nil {
 			return err
 		}
-		resp, err := c.sessionLarge.ChallengeReceipt(ctx, creq)
+		resp, err := c.sessionLargeClient().ChallengeReceipt(ctx, creq)
 		if err != nil {
 			return err
 		}
@@ -649,14 +711,19 @@ func (c *RPCClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, dif
 // fall back to the 16 KiB handshake cap.
 func (c *RPCClient) payloadClient(maxBytes int64) (rpcpbconnect.PayloadServiceClient, error) {
 	limit := int(validation.PayloadReadLimit(maxBytes))
-	if limit == DefaultRPCPayloadMaxBytes && c.payload != nil {
-		return c.payload, nil
+	if limit == DefaultRPCPayloadMaxBytes {
+		if c.grpcOn() && c.payloadGRPC != nil {
+			return c.payloadGRPC, nil
+		}
+		if c.payload != nil {
+			return c.payload, nil
+		}
 	}
 	if c.conn == nil || c.HTTPClient == nil {
 		return nil, fmt.Errorf("no peer connection")
 	}
 	base := c.conn.cfg.connectBase(c.HTTPClient.escrowID)
-	return rpcpbconnect.NewPayloadServiceClient(c.conn.http, base, connectClientOptions(limit)...), nil
+	return rpcpbconnect.NewPayloadServiceClient(c.conn.http, base, maybeGRPC(connectClientOptions(limit), c.grpcOn())...), nil
 }
 
 // GetPayload fetches inference payloads over Connect. maxBytes is the

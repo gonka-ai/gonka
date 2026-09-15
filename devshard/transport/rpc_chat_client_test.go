@@ -3,6 +3,8 @@ package transport_test
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -89,6 +91,11 @@ func startLiveChatRPCParts(t *testing.T, cfg transport.ClientConfig, opts ...tra
 
 func startLiveChatRPCPartsObserved(t *testing.T, cfg transport.ClientConfig, obs *wireObserver, opts ...transport.ServerOption) (*transport.RPCClient, *signing.Secp256k1Signer, *transport.PeerConn) {
 	t.Helper()
+	return startLiveChatRPCPartsObservedCfg(t, cfg, obs, transport.PeerConnConfig{}, false, opts...)
+}
+
+func startLiveChatRPCPartsObservedCfg(t *testing.T, cfg transport.ClientConfig, obs *wireObserver, connCfg transport.PeerConnConfig, h2c bool, opts ...transport.ServerOption) (*transport.RPCClient, *signing.Secp256k1Signer, *transport.PeerConn) {
+	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
@@ -111,9 +118,33 @@ func startLiveChatRPCPartsObserved(t *testing.T, cfg transport.ClientConfig, obs
 	tsrv, err := transport.NewServer(h, store, verifier, userSigner.Address(), opts...)
 	require.NoError(t, err)
 	lookup := rpcserver.AdaptLookup(func(string) (*transport.Server, error) { return tsrv, nil })
-	httpSrv, _ := startPeerRPCServerObserved(t, hostSigner.Address(), rpcserver.PeerAuthConfig{Heartbeat: time.Hour}, lookup, obs)
-	pc := newTestPeerConn(t, httpSrv, hostSigner.Address(), userSigner, transport.PeerConnConfig{})
-	rpc := transport.NewRPCClient(transport.NewHTTPClient(httpSrv.URL, "escrow-1", userSigner, cfg), pc, transport.ParseRPCEndpoints(transport.EndpointChat))
+	var mux *httptest.Server
+	if h2c {
+		httpSrv, _ := startPeerRPCServerH2CObserved(t, hostSigner.Address(), rpcserver.PeerAuthConfig{Heartbeat: time.Hour}, lookup, obs)
+		mux = httpSrv
+	} else {
+		httpSrv, _ := startPeerRPCServerObserved(t, hostSigner.Address(), rpcserver.PeerAuthConfig{Heartbeat: time.Hour}, lookup, obs)
+		mux = httpSrv
+	}
+	inf := mux
+	if h2c {
+		inf = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "must not use HTTP/1.1 when h2 works", http.StatusTeapot)
+		}))
+		t.Cleanup(inf.Close)
+		connCfg.DialSet.H2URL = mux.URL
+		if connCfg.H2ProbeTimeout == 0 {
+			connCfg.H2ProbeTimeout = 200 * time.Millisecond
+		}
+	}
+	if connCfg.DialSet.H2URL != "" {
+		transport.ResetRPCH2MissCacheForTest()
+		transport.ResetRPCH2ClientPoolForTest()
+		t.Cleanup(transport.ResetRPCH2MissCacheForTest)
+		t.Cleanup(transport.ResetRPCH2ClientPoolForTest)
+	}
+	pc := newTestPeerConn(t, inf, hostSigner.Address(), userSigner, connCfg)
+	rpc := transport.NewRPCClient(transport.NewHTTPClient(inf.URL, "escrow-1", userSigner, cfg), pc, transport.ParseRPCEndpoints(transport.EndpointChat))
 	return rpc, userSigner, pc
 }
 
@@ -166,6 +197,50 @@ func TestRPCClient_SendRoundTrip(t *testing.T) {
 	require.Contains(t, out, "stub")
 	require.True(t, strings.Contains(out, "[DONE]") || strings.Contains(out, "stub"),
 		"token stream should carry the stub completion")
+}
+
+func TestRPCClient_SendRoundTripGRPCOnH2(t *testing.T) {
+	obs := newWireObserver()
+	rpc, user, pc := startLiveChatRPCPartsObservedCfg(t, transport.DefaultClientConfig(), obs, transport.PeerConnConfig{GRPC: true}, true)
+	pc.Start()
+	waitPeerReady(t, pc)
+	require.True(t, pc.UsingH2())
+	require.True(t, pc.UsingGRPC())
+
+	var stream bytes.Buffer
+	resp, err := rpc.Send(context.Background(), chatHostRequest(t, user), &stream, nil)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), resp.Nonce)
+	require.NotNil(t, resp.Receipt)
+	require.Contains(t, stream.String(), "stub")
+
+	chat := rpcpbconnect.SessionServiceChatProcedure
+	requireGRPCContentType(t, obs.requestContentType(rpcpbconnect.PeerAuthServiceAttachProcedure))
+	requireGRPCContentType(t, obs.requestContentType(chat))
+	require.Equal(t, "gzip", obs.requestEncoding(chat), "gRPC Chat envelope must still be gzipped")
+}
+
+func TestRPCClient_SendGRPCFallsBackToConnect(t *testing.T) {
+	obs := newWireObserver()
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	dead.Close()
+	rpc, user, pc := startLiveChatRPCPartsObservedCfg(t, transport.DefaultClientConfig(), obs, transport.PeerConnConfig{
+		DialSet:        transport.PeerRPCDialSet{H2URL: dead.URL},
+		GRPC:           true,
+		H2ProbeTimeout: 200 * time.Millisecond,
+	}, false)
+	pc.Start()
+	waitPeerReady(t, pc)
+	require.False(t, pc.UsingH2())
+	require.False(t, pc.UsingGRPC())
+
+	var stream bytes.Buffer
+	resp, err := rpc.Send(context.Background(), chatHostRequest(t, user), &stream, nil)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Receipt)
+	require.Contains(t, stream.String(), "stub")
+	requireConnectContentType(t, obs.requestContentType(rpcpbconnect.PeerAuthServiceAttachProcedure))
+	requireConnectContentType(t, obs.requestContentType(rpcpbconnect.SessionServiceChatProcedure))
 }
 
 func TestRPCClient_SendGzipsRequestAndKeepsFramesSingleGzip(t *testing.T) {

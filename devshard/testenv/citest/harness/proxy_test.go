@@ -31,8 +31,29 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	text := string(cfg)
 	require.Contains(t, text, "bind *:8443 proto h2")
 	require.Contains(t, text, "versiond-router:8081 proto h2")
+	require.Contains(t, text, "http-request del-header X-Real-IP")
 	require.Contains(t, text, "X-Real-IP %[src]")
+	require.Contains(t, text, "store conn_rate(1s),sess_rate(1s)")
+	require.Contains(t, text, "tcp-request connection track-sc0 src")
+	require.Contains(t, text, "path_end /devshard.transport.v1.PeerAuthService/Attach")
+	require.Contains(t, text, "path_end /devshard.transport.v1.SessionService/Chat")
+	require.Contains(t, text, "path_end /devshard.transport.v1.SessionService/GetDiffs")
+	require.Contains(t, text, "track-sc1 src table st_rpc_attach")
+	require.Contains(t, text, "track-sc1 src table st_rpc_chat")
+	require.Contains(t, text, "track-sc1 src table st_rpc_diffs")
 	require.NotContains(t, text, "bind *:8080")
+}
+
+func TestVersiondRouterHasNoPerIPZones(t *testing.T) {
+	router, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "versiond-router", "haproxy.cfg.template"))
+	require.NoError(t, err)
+	pool, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "versiond-router", "pool-backend.cfg.template"))
+	require.NoError(t, err)
+	require.NotContains(t, string(router), "conn_rate")
+	require.NotContains(t, string(router), "sess_rate")
+	require.NotContains(t, string(pool), "conn_rate")
+	require.NotContains(t, string(pool), "sess_rate")
+	require.Contains(t, string(router), "Per-IP zones stay on the published hop (proxy), not here.")
 }
 
 func TestComposeFileArgsDefaultOmitsProxy(t *testing.T) {
@@ -71,5 +92,7 @@ func TestMakefileCitestUsesNoProxyCompose(t *testing.T) {
 	require.Contains(t, text, "PROXY_OVERLAY := $(COMPOSE_BASE) -f docker-compose.proxy.yml")
 	require.Contains(t, text, "docker compose $(COMPOSE_BASE) pull")
 	require.Contains(t, text, "docker compose $(COMPOSE_BASE) build")
+	require.Contains(t, text, `docker image inspect "$(TESTENV_VERSIOND_IMAGE)"`)
+	require.Contains(t, text, `docker image inspect "$(TESTENV_VERSIOND_ROUTER_IMAGE)"`)
 	require.NotContains(t, text, "docker compose $(PROXY_OVERLAY)")
 }

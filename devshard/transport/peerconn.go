@@ -102,6 +102,9 @@ type PeerConnConfig struct {
 	H2ReadIdleTimeout time.Duration
 	// H2PingTimeout bounds that PING. Zero uses DefaultRPCH2PingTimeout (5s).
 	H2PingTimeout time.Duration
+	// GRPC uses connect.WithGRPC on the h2 origin only. HTTP/1.1 fallback
+	// stays Connect. Ignored when H2URL is empty.
+	GRPC bool
 }
 
 func (c PeerConnConfig) version() string {
@@ -196,9 +199,13 @@ type PeerConn struct {
 	authDoor rpcpbconnect.PeerAuthServiceClient
 	// authHost is Watch and live renewals: /sessions/_/rpc, no door.
 	authHost rpcpbconnect.PeerAuthServiceClient
-	key      string
-	refs     atomic.Int32
-	state    atomic.Int32 // 0 unauthenticated, 1 attaching, 2 ready
+	// authDoorGRPC / authHostGRPC are native gRPC (connect.WithGRPC). Used
+	// only while usingH2(); HTTP/1.1 fallback keeps authDoor / authHost.
+	authDoorGRPC rpcpbconnect.PeerAuthServiceClient
+	authHostGRPC rpcpbconnect.PeerAuthServiceClient
+	key          string
+	refs         atomic.Int32
+	state        atomic.Int32 // 0 unauthenticated, 1 attaching, 2 ready
 
 	token   atomic.Pointer[[]byte]
 	expires atomic.Int64 // unix seconds
@@ -254,6 +261,7 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 		CheckRedirect: noFollowRedirects,
 	}
 	opts := connectClientOptions(cfg.ReadMaxBytes)
+	grpcOpts := maybeGRPC(opts, cfg.GRPC)
 	doorBase := cfg.connectBase(cfg.DoorEscrowID)
 	hostBase := cfg.connectBase(HostRPCEscrowID)
 	authDoor := rpcpbconnect.NewPeerAuthServiceClient(httpClient, doorBase, opts...)
@@ -261,17 +269,27 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 	if hostBase != doorBase {
 		authHost = rpcpbconnect.NewPeerAuthServiceClient(httpClient, hostBase, opts...)
 	}
+	var authDoorGRPC, authHostGRPC rpcpbconnect.PeerAuthServiceClient
+	if cfg.GRPC {
+		authDoorGRPC = rpcpbconnect.NewPeerAuthServiceClient(httpClient, doorBase, grpcOpts...)
+		authHostGRPC = authDoorGRPC
+		if hostBase != doorBase {
+			authHostGRPC = rpcpbconnect.NewPeerAuthServiceClient(httpClient, hostBase, grpcOpts...)
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &PeerConn{
-		cfg:      cfg,
-		http:     httpClient,
-		origin:   origin,
-		authDoor: authDoor,
-		authHost: authHost,
-		key:      cfg.registryKey(),
-		ctx:      ctx,
-		cancel:   cancel,
-		done:     make(chan struct{}),
+		cfg:          cfg,
+		http:         httpClient,
+		origin:       origin,
+		authDoor:     authDoor,
+		authHost:     authHost,
+		authDoorGRPC: authDoorGRPC,
+		authHostGRPC: authHostGRPC,
+		key:          cfg.registryKey(),
+		ctx:          ctx,
+		cancel:       cancel,
+		done:         make(chan struct{}),
 	}
 	p.setState(stateUnauthenticated)
 	return p
@@ -479,13 +497,6 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 	if p.cfg.Signer == nil {
 		return nil, time.Time{}, fmt.Errorf("peer conn: signer is required")
 	}
-	client := p.authDoor
-	if p.liveSession() {
-		// Live renewal: Watch already proved this peer. Do not pin the
-		// door escrow. Ready() also gates expiry; a locally expired
-		// token must still refresh on the host path.
-		client = p.authHost
-	}
 	msg, err := p.newAttachRequest()
 	if err != nil {
 		return nil, time.Time{}, err
@@ -498,7 +509,7 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 	if !p.liveSession() && p.shouldProbeH2() {
 		p.origin.setH2(true)
 		h2ctx, h2cancel := context.WithTimeout(overall, p.h2ProbeTimeout())
-		tok, exp, err := p.attachOnce(h2ctx, client, msg)
+		tok, exp, err := p.attachOnce(h2ctx, p.peerAuthClient(false), msg)
 		h2cancel()
 		if err == nil {
 			return tok, exp, nil
@@ -522,7 +533,7 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 			return nil, time.Time{}, err
 		}
 	}
-	return p.attachOnce(overall, client, msg)
+	return p.attachOnce(overall, p.peerAuthClient(p.liveSession()), msg)
 }
 
 func (p *PeerConn) newAttachRequest() (*rpcpb.AttachRequest, error) {
@@ -567,6 +578,28 @@ func (p *PeerConn) shouldProbeH2() bool {
 	return !skipRPCH2(p.cfg.BaseURL)
 }
 
+func (p *PeerConn) useGRPC() bool {
+	return p != nil && p.cfg.GRPC && p.origin.usingH2()
+}
+
+// peerAuthClient is the door (first Attach) or host (Watch / live renew)
+// client. Native gRPC is only selected while the live origin is h2.
+func (p *PeerConn) peerAuthClient(host bool) rpcpbconnect.PeerAuthServiceClient {
+	if p.useGRPC() {
+		if host {
+			if p.authHostGRPC != nil {
+				return p.authHostGRPC
+			}
+		} else if p.authDoorGRPC != nil {
+			return p.authDoorGRPC
+		}
+	}
+	if host {
+		return p.authHost
+	}
+	return p.authDoor
+}
+
 func (p *PeerConn) h2ProbeTimeout() time.Duration {
 	if p.cfg.H2ProbeTimeout > 0 {
 		return p.cfg.H2ProbeTimeout
@@ -578,6 +611,11 @@ func (p *PeerConn) h2ProbeTimeout() time.Duration {
 // HTTP/2), not InferenceUrl HTTP/1.1.
 func (p *PeerConn) UsingH2() bool {
 	return p != nil && p.origin.usingH2()
+}
+
+// UsingGRPC is whether live RPCs use connect.WithGRPC. False on HTTP/1.1.
+func (p *PeerConn) UsingGRPC() bool {
+	return p.useGRPC()
 }
 
 func (p *PeerConn) takePeerBudget(ctx context.Context, procedure string) error {
@@ -652,7 +690,7 @@ func (p *PeerConn) watch(ctx context.Context, token []byte) error {
 	defer p.releaseStream()
 	req := connect.NewRequest(&rpcpb.WatchRequest{SessionToken: token})
 	SetSessionHeader(req.Header(), token)
-	stream, err := p.authHost.Watch(ctx, req)
+	stream, err := p.peerAuthClient(true).Watch(ctx, req)
 	if err != nil {
 		return err
 	}

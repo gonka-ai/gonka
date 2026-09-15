@@ -45,7 +45,9 @@ func h2PeerConn(t *testing.T, inf *httptest.Server, hostAddr string, peer signin
 	t.Helper()
 	httpguard.SetAllowPrivate(true)
 	transport.ResetRPCH2MissCacheForTest()
+	transport.ResetRPCH2ClientPoolForTest()
 	t.Cleanup(transport.ResetRPCH2MissCacheForTest)
+	t.Cleanup(transport.ResetRPCH2ClientPoolForTest)
 	return newTestPeerConn(t, inf, hostAddr, peer, transport.PeerConnConfig{
 		DialSet:        transport.PeerRPCDialSet{H2URL: h2URL},
 		H2ProbeTimeout: 200 * time.Millisecond,
@@ -128,7 +130,7 @@ func TestPeerConn_H2CloseFINsMux(t *testing.T) {
 	require.Equal(t, int32(1), live.Load())
 
 	pc.Close()
-	require.Eventually(t, func() bool { return live.Load() == 0 }, 2*time.Second, 10*time.Millisecond,
+	require.Eventually(t, func() bool { return live.Load() == 0 }, 5*time.Second, 10*time.Millisecond,
 		"PeerConn.Close must FIN the idle h2 mux")
 	require.Zero(t, infHits.Load())
 }

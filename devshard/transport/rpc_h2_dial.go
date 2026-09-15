@@ -23,6 +23,7 @@ const (
 	// hostname, never this value.
 	envRPCH2Host    = "DEVSHARD_RPC_H2_HOST"
 	envRPCH2Upgrade = "DEVSHARD_RPC_H2_UPGRADE"
+	envRPCH2GRPC    = "DEVSHARD_RPC_GRPC"
 
 	// DefaultRPCH2Port is the in-network overlay / join RPC HTTP/2 listen.
 	// JSON and catalog stay on InferenceUrl (testenv :8080). Unset env still
@@ -84,6 +85,12 @@ func RPCH2UpgradeEnabled(raw string) bool {
 	default:
 		return false
 	}
+}
+
+// RPCH2GRPCEnabled reports whether native gRPC (connect.WithGRPC) is on.
+// Empty / unset stays Connect. HTTP/1.1 fallback never uses gRPC.
+func RPCH2GRPCEnabled(raw string) bool {
+	return RPCH2UpgradeEnabled(raw)
 }
 
 // PeerRPCDialSetFromEnv reads InferenceURL plus optional H2 host/port/upgrade.

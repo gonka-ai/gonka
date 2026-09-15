@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -302,6 +303,70 @@ func TestChannelLimit_AttachFloorBeforeVerify(t *testing.T) {
 	_, err = client.Attach(context.Background(), connect.NewRequest(req))
 	requireResourceExhausted(t, err, "too many attach attempts")
 	require.Equal(t, calls, spy.n.Load(), "floor must fire before ECDSA")
+}
+
+func TestChannelLimit_AttachFloorIgnoresXRealIP(t *testing.T) {
+	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
+	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{
+		AttachFloorPerMin: 1,
+	})
+	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
+	t.Cleanup(srv.Close)
+	client := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
+	_ = attach(t, client, devtest.MustGenerateKey(t), []byte("attach-xreal-nonce-aaaaaaaa"))
+	calls := spy.n.Load()
+
+	req, err := signedAttach(devtest.MustGenerateKey(t), []byte("attach-xreal-nonce-bbbbbbbb"), time.Now().Unix())
+	require.NoError(t, err)
+	creq := connect.NewRequest(req)
+	creq.Header().Set("X-Real-IP", "198.51.100.7")
+	_, err = client.Attach(context.Background(), creq)
+	requireResourceExhausted(t, err, "too many attach attempts")
+	require.Equal(t, calls, spy.n.Load(), "floor must be process-wide, not keyed on X-Real-IP")
+}
+
+func TestChannelLimit_AttachFloorOnHTTP1(t *testing.T) {
+	var proto atomic.Int32
+	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
+	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{
+		AttachFloorPerMin: 1,
+	})
+	mux := withTestEscrow(NewMux(auth, nil))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isAttachPath(r.URL.Path) {
+			proto.Store(int32(r.ProtoMajor))
+		}
+		mux.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	client := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
+	_ = attach(t, client, devtest.MustGenerateKey(t), []byte("attach-http1-nonce-aaaaaaaa"))
+	require.Equal(t, int32(1), proto.Load(), "no-proxy / B1 Attach is HTTP/1.1; proxy zones are absent")
+	calls := spy.n.Load()
+	req, err := signedAttach(devtest.MustGenerateKey(t), []byte("attach-http1-nonce-bbbbbbbb"), time.Now().Unix())
+	require.NoError(t, err)
+	_, err = client.Attach(context.Background(), connect.NewRequest(req))
+	requireResourceExhausted(t, err, "too many attach attempts")
+	require.Equal(t, calls, spy.n.Load(), "HTTP/1.1 child floor still fires without proxy zones")
+}
+
+func TestChannelLimit_GetDiffsFloodStarvesChatOnSharedPie(t *testing.T) {
+	e := startLimitEnv(t, PeerAuthConfig{
+		Heartbeat: time.Hour,
+		Limits: &transport.ChannelLimitConfig{
+			MaxStreams:     8,
+			MessagesPerMin: uint32(transport.RPCWeightGetDiffs),
+			MessagesBurst:  uint32(transport.RPCWeightGetDiffs),
+		},
+	}, stubLookup{core: stubCore{member: true, owner: true}})
+
+	require.NoError(t, e.getDiffs())
+	chat, err := e.session.Chat(context.Background(), withSession(
+		connect.NewRequest(&rpcpb.SignedEnvelope{EscrowId: "1"}), e.token))
+	require.NoError(t, err)
+	require.False(t, chat.Receive())
+	requireResourceExhausted(t, chat.Err(), "rate limit exceeded")
+	_ = chat.Close()
 }
 
 func TestChannelLimit_KeyIntegrity(t *testing.T) {

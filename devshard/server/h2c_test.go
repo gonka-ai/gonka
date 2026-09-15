@@ -198,6 +198,55 @@ func TestH2C_AttachChat(t *testing.T) {
 	require.NotEmpty(t, chunks)
 }
 
+func TestH2C_NativeGRPCAttachChatAndGetSignatures(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	const host = "host-under-test"
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), host, rpcserver.PeerAuthConfig{})
+	t.Cleanup(auth.Close)
+	e := echo.New()
+	e.HideBanner = true
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: new(int)}, nil,
+		WithPeerRPC(auth, rpcserver.NewSessionHandler(staticH2CLookup{core: h2cChatCore{}})))
+	EnableH2C(e)
+	srv := httptest.NewServer(e.Server.Handler)
+	t.Cleanup(srv.Close)
+
+	h2 := newH2CClient(t, nil)
+	rpcBase := srv.URL + "/sessions/1/rpc"
+	authClient := rpcpbconnect.NewPeerAuthServiceClient(h2, rpcBase, connect.WithGRPC())
+	nonce := []byte("h2c-grpc-attach-nonce-012345")
+	ts := time.Now().Unix()
+	sig, err := transport.SignAttach(signer, host, ts, signer.Address(), nonce, transport.AttachProtocolVersion, nil)
+	require.NoError(t, err)
+	attached, err := authClient.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{
+		PeerAddress:     signer.Address(),
+		AttachNonce:     nonce,
+		ProtocolVersion: transport.AttachProtocolVersion,
+		HostAddress:     host,
+		Timestamp:       ts,
+		Signature:       sig,
+	}))
+	require.NoError(t, err)
+	require.Equal(t, nonce, attached.Msg.SessionToken)
+
+	session := rpcpbconnect.NewSessionServiceClient(h2, rpcBase, connect.WithGRPC())
+	sigs, err := session.GetSignatures(context.Background(), withH2CSession(
+		connect.NewRequest(&rpcpb.GetSignaturesRequest{Nonce: 1}), attached.Msg.SessionToken))
+	require.NoError(t, err)
+	require.Empty(t, sigs.Msg.GetSignatures())
+
+	env, err := transport.SignEnvelope(signer, "1", []byte(`{"nonce":1}`), time.Now().Unix())
+	require.NoError(t, err)
+	stream, err := session.Chat(context.Background(), withH2CSession(connect.NewRequest(env), attached.Msg.SessionToken))
+	require.NoError(t, err)
+	var chunks [][]byte
+	for stream.Receive() {
+		chunks = append(chunks, append([]byte(nil), stream.Msg().GetChunk()...))
+	}
+	require.NoError(t, stream.Err())
+	require.NotEmpty(t, chunks)
+}
+
 type errStatus int
 
 func (e errStatus) Error() string { return http.StatusText(int(e)) }

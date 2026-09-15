@@ -77,6 +77,16 @@ func TestPeerRPCDialSetUpgradeWithoutPort(t *testing.T) {
 	require.Empty(t, got.H2URL, "unset DEVSHARD_RPC_H2_PORT must not prefer h2")
 }
 
+func TestRPCH2GRPCEnabled(t *testing.T) {
+	require.False(t, RPCH2GRPCEnabled(""))
+	require.False(t, RPCH2GRPCEnabled("0"))
+	require.False(t, RPCH2GRPCEnabled("false"))
+	require.True(t, RPCH2GRPCEnabled("1"))
+	require.True(t, RPCH2GRPCEnabled("true"))
+	require.True(t, RPCH2GRPCEnabled("yes"))
+	require.True(t, RPCH2GRPCEnabled("on"))
+}
+
 func TestPeerRPCDialSetFromEnvDefaultOff(t *testing.T) {
 	t.Setenv(envRPCH2Upgrade, "")
 	t.Setenv(envRPCH2Host, "proxy")

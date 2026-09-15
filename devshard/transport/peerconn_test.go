@@ -435,6 +435,26 @@ func TestPeerConnConfigFromClient_UnsetPortNoH2(t *testing.T) {
 	require.Empty(t, cfg.DialSet.H2URL)
 }
 
+func TestPeerConnConfigFromClient_GRPCRequiresH2(t *testing.T) {
+	httpClient := NewHTTPClient("http://versiond-router:8080", "escrow-1", devtest.MustGenerateKey(t))
+
+	t.Setenv(envRPCH2GRPC, "1")
+	t.Setenv(envRPCH2Upgrade, "")
+	t.Setenv(envRPCH2Port, "8443")
+	t.Setenv(envRPCH2Host, "proxy")
+	cfg := peerConnConfigFromClient(httpClient, "gonka1host", nil)
+	require.False(t, cfg.GRPC, "gRPC must stay off when H2URL is empty")
+
+	t.Setenv(envRPCH2Upgrade, "1")
+	cfg = peerConnConfigFromClient(httpClient, "gonka1host", nil)
+	require.NotEmpty(t, cfg.DialSet.H2URL)
+	require.True(t, cfg.GRPC)
+
+	t.Setenv(envRPCH2GRPC, "")
+	cfg = peerConnConfigFromClient(httpClient, "gonka1host", nil)
+	require.False(t, cfg.GRPC, "unset DEVSHARD_RPC_GRPC stays Connect on h2")
+}
+
 func TestPoolWatchRoundTripper_IncrementsExhausted(t *testing.T) {
 	peer := "gonka1pool"
 	before := testutil.ToFloat64(observability.PeerPoolExhaustedCounter(peer))

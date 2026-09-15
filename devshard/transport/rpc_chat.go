@@ -18,7 +18,7 @@ import (
 // Send implements user.HostClient. Opted-in Chat uses Connect frames that
 // concatenate into one gzip stream, then the existing SSE parser.
 func (c *RPCClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
-	if !c.Uses(EndpointChat) || c.sessionChat == nil {
+	if !c.Uses(EndpointChat) || c.sessionChatClient() == nil {
 		return c.HTTPClient.Send(ctx, req, stream, receiptHandler)
 	}
 	timeout := c.config.InferenceTimeout
@@ -60,7 +60,7 @@ func (c *RPCClient) Send(ctx context.Context, req host.HostRequest, stream io.Wr
 		c.conn.refundPeerBudget(rpcpbconnect.SessionServiceChatProcedure)
 		return nil, err
 	}
-	cs, err := c.sessionChat.Chat(ctx, creq)
+	cs, err := c.sessionChatClient().Chat(ctx, creq)
 	if err != nil {
 		if isQuotaResourceExhausted(err) {
 			c.conn.refundPeerBudget(rpcpbconnect.SessionServiceChatProcedure)
