@@ -42,7 +42,7 @@ jobs:
               }
               
               // Only external contributors; skip bots and internal people.
-              const INTERNAL = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+              const INTERNAL = new Set(['OWNER', 'MEMBER']);
               if (context.payload.pull_request.user.type === 'Bot' || INTERNAL.has(association)) {
                 core.info(`Skipping acknowledgment for ${author} (${association}).`);
                 return;
