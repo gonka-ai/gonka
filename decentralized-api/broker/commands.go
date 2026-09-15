@@ -24,9 +24,10 @@ func (g LockAvailableNode) GetResponseChannelCapacity() int {
 }
 
 type ReleaseNode struct {
-	NodeId   string
-	Outcome  InferenceResult
-	Response chan bool
+	NodeId          string
+	RegistrationSeq uint64
+	Outcome         InferenceResult
+	Response        chan bool
 }
 
 func (r ReleaseNode) GetResponseChannelCapacity() int {
@@ -87,6 +88,8 @@ func (c GetNodesCommand) Execute(b *Broker) {
 			reconcileInfoCopy := *nodeWithState.State.ReconcileInfo
 			stateCopy.ReconcileInfo = &reconcileInfoCopy
 		}
+
+		nodeCopy.RegistrationSeq = nodeWithState.State.RegistrationSeq
 
 		nodeResponses = append(nodeResponses, NodeResponse{
 			Node:  nodeCopy,
@@ -161,6 +164,7 @@ type NodeResult struct {
 	DeploymentModelID      string
 	DeploymentUsesOverride bool
 	DeploymentGeneration   uint64
+	RegistrationSeq        uint64
 }
 
 type UpdateNodeResultCommand struct {
@@ -202,6 +206,16 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 	}
 
 	// Critical safety check
+	if node.State.RegistrationSeq != c.Result.RegistrationSeq {
+		logging.Info("Ignoring stale result for node. registration seq mismatch", types.Nodes,
+			"node_id", c.NodeId,
+			"result_registration_seq", c.Result.RegistrationSeq,
+			"current_registration_seq", node.State.RegistrationSeq,
+			"blockHeight", blockHeight)
+		c.Response <- false
+		return
+	}
+
 	if node.State.ReconcileInfo == nil {
 		logging.Info("Ignoring stale result for node. node.State.ReconcileInfo is already nil", types.Nodes,
 			"node_id", c.NodeId,

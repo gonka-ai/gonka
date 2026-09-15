@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"cosmossdk.io/collections"
@@ -31,6 +32,170 @@ import (
 // state is copied) and the result flows through the exact same epoch-formation
 // pipeline (model assignment, delegation weights, collateral adjustment, power
 // capping, epoch group membership) as a normal PoC outcome.
+
+// seatedRawWeight sums the positive PocWeight actually seated for a participant
+// after model assignment.
+func seatedRawWeight(p *types.ActiveParticipant) int64 {
+	var total int64
+	for _, modelNodes := range p.MlNodes {
+		if modelNodes == nil {
+			continue
+		}
+		for _, node := range modelNodes.MlNodes {
+			if node != nil && node.PocWeight > 0 {
+				total += node.PocWeight
+			}
+		}
+	}
+	return total
+}
+
+// participantsWithSeatedWeight keeps only participants that still hold positive
+// seated raw weight after the hardware filter. A participant whose every node
+// was filtered out must not reach epoch membership, consensus weights, or BLS.
+func participantsWithSeatedWeight(participants []*types.ActiveParticipant) []*types.ActiveParticipant {
+	kept := make([]*types.ActiveParticipant, 0, len(participants))
+	for _, p := range participants {
+		if p != nil && len(p.Models) > 0 && seatedRawWeight(p) > 0 {
+			kept = append(kept, p)
+		}
+	}
+	return kept
+}
+
+func hasFreshSeatedNode(participants []*types.ActiveParticipant, freshNodeIDs map[string]map[string]struct{}) bool {
+	for _, participant := range participants {
+		if participant == nil {
+			continue
+		}
+		participantFreshNodes := freshNodeIDs[participant.Index]
+		if len(participantFreshNodes) == 0 {
+			continue
+		}
+		for _, modelNodes := range participant.MlNodes {
+			if modelNodes == nil {
+				continue
+			}
+			for _, node := range modelNodes.MlNodes {
+				if node != nil {
+					if _, ok := participantFreshNodes[node.NodeId]; ok {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// seatAndGuardParticipants runs model seating over the computed participant set
+// and enforces the post-seating invariant: only participants with positive
+// fresh PoC weight survive. If no fresh PoC node survives (ComputeNewWeights
+// returned only preserved nodes, or the hardware filter removed every fresh
+// assignment), it retries once with the current-epoch fallback carry-over --
+// seated and guarded the same way.
+// Returns an empty slice only when no current-epoch validator can be carried
+// at all (first epoch, no seeds, everyone excluded). The caller then aborts
+// formation. If the hardware filter would also wipe the carry, the carry is
+// kept as-is so the epoch index can still advance with the old team.
+// The bool reports whether the returned set was rebuilt from the current epoch.
+func (am AppModule) seatAndGuardParticipants(
+	ctx context.Context,
+	upcomingEpoch types.Epoch,
+	fresh []*types.ActiveParticipant,
+	freshNodeIDs map[string]map[string]struct{},
+) ([]*types.ActiveParticipant, bool) {
+	assigner := NewModelAssigner(am.keeper, am.keeper)
+	seat := func(participants []*types.ActiveParticipant) []*types.ActiveParticipant {
+		if len(participants) == 0 {
+			return nil
+		}
+		assigner.setModelsForParticipants(ctx, participants, upcomingEpoch)
+		return participantsWithSeatedWeight(participants)
+	}
+
+	seated := seat(fresh)
+	if len(seated) > 0 && hasFreshSeatedNode(seated, freshNodeIDs) {
+		if len(seated) < len(fresh) {
+			am.LogWarn("seatAndGuardParticipants: removed participants without seated weight", types.PoC,
+				"upcomingEpoch.Index", upcomingEpoch.Index,
+				"before", len(fresh), "after", len(seated))
+		}
+		return seated, false
+	}
+
+	// Rebuild from the current epoch when no fresh node survives or when the
+	// final weight check requests fallback.
+	am.LogError("seatAndGuardParticipants: rebuilding participants from current epoch", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"computed", len(fresh),
+		"seated", len(seated))
+	seated = seat(am.fallbackActiveParticipantsFromCurrentEpoch(ctx, upcomingEpoch))
+	if len(seated) > 0 {
+		return seated, true
+	}
+
+	// seat() mutates its input; rebuild the carry. If hardware would wipe it
+	// too, keep it anyway so the epoch clock still advances with the old team.
+	unfiltered := am.fallbackActiveParticipantsFromCurrentEpoch(ctx, upcomingEpoch)
+	if len(unfiltered) == 0 {
+		am.LogError("seatAndGuardParticipants: fallback produced no seated participants; aborting epoch formation", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index)
+		return nil, true
+	}
+	for _, p := range unfiltered {
+		_ = validatedModelNodes(p)
+	}
+	am.LogError("seatAndGuardParticipants: hardware filter zeroed fallback carry; keeping current-epoch assignments so the epoch can advance", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index, "participants", len(unfiltered))
+	return unfiltered, true
+}
+
+// applyZeroTrustFallback prevents a positive-real-weight epoch from persisting
+// with no validation, governance, or BLS trust. It is an explicit fail-open
+// fallback: every trust consumer sees the same persisted CapWeight values.
+func (am AppModule) applyZeroTrustFallback(
+	ctx context.Context,
+	epochIndex uint64,
+	participants []*types.ActiveParticipant,
+) bool {
+	hasRealWeight := false
+	for _, participant := range participants {
+		if participant == nil {
+			continue
+		}
+		if participant.CapWeight > 0 {
+			return false
+		}
+		if participant.Weight > 0 {
+			hasRealWeight = true
+		}
+	}
+	if !hasRealWeight {
+		return false
+	}
+
+	for _, participant := range participants {
+		if participant == nil {
+			continue
+		}
+		if participant.Weight > 0 {
+			participant.CapWeight = participant.Weight
+		} else {
+			participant.CapWeight = 0
+		}
+	}
+
+	am.LogError("applyZeroTrustFallback: restoring real weight because every trust weight is zero", types.PoC,
+		"epochIndex", epochIndex,
+		"participants", len(participants))
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		"zero_trust_fallback_applied",
+		sdk.NewAttribute("epoch", fmt.Sprintf("%d", epochIndex)),
+		sdk.NewAttribute("participants", fmt.Sprintf("%d", len(participants))),
+	))
+	return true
+}
 
 // fallbackActiveParticipantsFromCurrentEpoch rebuilds the active participant
 // list for upcomingEpoch from the current (about-to-end) epoch group.
