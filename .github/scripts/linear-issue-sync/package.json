@@ -1,0 +1,14 @@
+{
+  "name": "linear-issue-sync",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Syncs GitHub issues into Linear (a lighter mirror of the PR sync).",
+  "main": "issue-sync.mjs",
+  "scripts": {
+    "start": "node issue-sync.mjs"
+  },
+  "dependencies": {
+    "@linear/sdk": "^88.0.0"
+  }
+}
