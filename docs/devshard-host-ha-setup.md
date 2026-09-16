@@ -4,9 +4,9 @@ Devshard inference that stays available, backed by multiple `versiond` instances
 
 ## Why this matters
 
-With a single `versiond`, a failure or maintenance stop makes its protocols unavailable on your host.
+A single `versiond` process is a single point of failure (SPOF): if that machine or container dies, gateways cannot reach your host for that protocol version.
 
-HA lets you run multiple `versiond` instances so inference stays available if one instance fails. Routers direct requests to ready instances, which share committed session state in PostgreSQL. You can also restart or replace one instance while the others continue serving.
+Run multiple `versiond` instances behind the router fleet, with shared PostgreSQL. If one instance fails, the routers send requests to the remaining instances.
 
 ```text
 Public proxy (/devshard/...)
@@ -20,13 +20,15 @@ Public proxy (/devshard/...)
 
 ## Prerequisites
 
-1. Working `node`, `api` (dapi) and `proxy`: the standard join deployment.
-2. Files from `deploy/join` and host/gateway images for the [release covered here](#release-reference).
-3. Same participant identity on every HA replica: `KEY_NAME`, keyring, `ACCOUNT_PUBKEY`.
-4. One data directory per replica, one shared PostgreSQL database, one dapi per participant key.
+1. Working `node` + `api` (dapi) + `proxy` on the host (standard join deployment).
+2. Join files and host/gateway images from the [same release](#release-reference).
+3. Same participant identity on every HA `versiond` replica:
+   - Same `KEY_NAME` and keyring.
+   - Same `ACCOUNT_PUBKEY`.
+4. Shared PostgreSQL; a separate data directory for each replica. Do not start a second dapi with the same keys.
 5. Docker Compose **2.24.4+**, Bash, Python 3, `curl`, `jq`, `flock`, `sha256sum`, `timeout`.
 
-This setup supports HA protocols only. It does not cover migrating pre-HA deployments such as `v3`.
+Only put PostgreSQL-capable versions (v4+) into the HA pool. Migration from pre-HA deployments such as `v3` is not covered here.
 
 ## Contents
 
@@ -41,21 +43,21 @@ This setup supports HA protocols only. It does not cover migrating pre-HA deploy
 
 ### Step 1 - Install PostgreSQL (preferably HA itself)
 
-HA `versiond` removes dependence on one app server, but if PostgreSQL is a single VM, PostgreSQL becomes your new SPOF. Prefer a managed or replicated database.
+HA `versiond` removes dependence on one **app** server, but if PostgreSQL is a single VM, **PostgreSQL becomes your new SPOF**. Prefer a managed or replicated database.
 
 All `versiond` instances connect to one PostgreSQL database.
 
 #### Choose a database
 
-**A — Managed PostgreSQL (recommended).** Select an HA configuration. Create the database and user. Configure the connection in [§2.2](#22-external-or-managed-postgresql).
+**Option A — Managed PostgreSQL (recommended).** Select an HA configuration and create a database and user.
 
-**B — Self-managed PostgreSQL.** Install on a dedicated host or cluster. Create the database and role. Configure replication and failover for database HA. Configure the connection in [§2.2](#22-external-or-managed-postgresql).
+**Option B — Self-managed PostgreSQL.** Install PostgreSQL on a dedicated host or cluster, create the role/database, and configure replication and failover for database HA.
 
-A and B: record the primary host, port (usually `5432`), database, user and password. Allow access from every `versiond` instance.
+A and B: note the primary endpoint, port (usually `5432`), database, user and password. Ensure all `versiond` instances can reach it (firewall / VPC / security groups). Configure the connection in [§2.2](#22-external-or-managed-postgresql).
 
-**C — Local Compose PostgreSQL.** `docker-compose.versiond.yml` starts `devshard-postgres` on the join host. Host failure also takes the database offline.
+**Option C — Local Compose PostgreSQL.** `docker-compose.versiond.yml` starts `devshard-postgres` on the join host. If the machine dies, the database dies with it.
 
-External PostgreSQL requires a direct connection or session-mode pooling. Transaction pooling is unsupported. Explicit `PGSSL*` settings are unsupported; `PGSSLMODE=disable` is allowed. A provider that requires explicit TLS settings needs a separate procedure; never disable required TLS.
+External PostgreSQL: use a direct connection or session-mode pooling. Transaction pooling and explicit `PGSSL*` settings (except `PGSSLMODE=disable`) are unsupported. Providers requiring explicit TLS settings are outside this procedure; do not disable required TLS.
 
 #### Where to put PostgreSQL settings
 
@@ -67,7 +69,7 @@ export DEVSHARD_POSTGRES_PASSWORD='<strong-password>'
 
 Database and user default to `devshardd`; override with `DEVSHARD_POSTGRES_DB` and `DEVSHARD_POSTGRES_USER`.
 
-Local PostgreSQL: the HA overlay sets `PGHOST` and `DEVSHARD_STORAGE_MODE`; leave them out of `config.env`. Data path: `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}/data`. External PostgreSQL: the §2.2 override is required.
+Local PostgreSQL: `PGHOST` and `DEVSHARD_STORAGE_MODE` are already set by `docker-compose.versiond.yml`; you do not edit these by hand. Data path: `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}/data`. External PostgreSQL: add the override in §2.2.
 
 #### Prepare the PostgreSQL directory
 
@@ -84,7 +86,7 @@ docker run --rm --network none --read-only \
   "${POSTGRES_MIGRATION_HELPER_IMAGE:-${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}}"
 ```
 
-The command must succeed. If access errors persist, check parent-directory permissions. Do not change database ownership.
+On permission errors, check the parent directory. Do not change database ownership.
 
 ### Step 2 - Run multiple `versiond` instances + the router fleet
 
@@ -124,7 +126,7 @@ export COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compos
 # Append every additional override used by this deployment, in the same order.
 ```
 
-`VERSIOND_NON_HA_VERSIONS` stays empty. `COMPOSE_FILE` lists every active override. Preserve override filenames and order across updates.
+Keep `VERSIOND_NON_HA_VERSIONS` empty. Include every override in `COMPOSE_FILE`, in the same order on every run.
 
 **2. Create `docker-compose.devshard-v5.override.yml` in `deploy/join`.**
 
@@ -202,7 +204,7 @@ services:
 EOF
 ```
 
-`oracle-filter` must stay running; every replica and router reads its catalog.
+Keep `oracle-filter` running.
 
 **Local PostgreSQL:** go to [Step 3](#step-3---start-the-deployment). **External PostgreSQL:** complete §2.2 first. Add replicas only after startup and verification.
 
@@ -210,7 +212,7 @@ EOF
 
 Applies to options A and B. Complete §2.1 first.
 
-`docker-compose.versiond.yml` sets `PGHOST=devshard-postgres`; override it per replica. `config.env` alone does not change the container endpoint.
+`config.env` alone is not enough: `docker-compose.versiond.yml` sets `PGHOST=devshard-postgres`. Add a Compose override for every replica.
 
 Create the database and role through the provider, or run:
 
@@ -293,7 +295,7 @@ source ./config.env
 )
 ```
 
-Required results:
+Healthy signs:
 
 - `verify-admission` and `wait-version` succeed.
 - Every replica passes readiness for every selected protocol.
@@ -303,7 +305,7 @@ New or replaced remote member: pass the [database check](#check-the-remote-datab
 
 #### 4.2 Check routing failover
 
-Run after installation or a pool change. Repeat for each protocol in `VERSIOND_VERSIONS`. Keep enough ready replicas for every protocol and the load.
+Run after installation or a pool change, for each protocol in `VERSIOND_VERSIONS`. The remaining replicas must be able to handle the load.
 
 1. On A, request the protocol's health endpoint:
 
@@ -333,7 +335,7 @@ Run after installation or a pool change. Repeat for each protocol in `VERSIOND_V
    curl -sS -D - -o /dev/null "$url"
    ```
 
-   Expect HTTP 200 and a different `X-Upstream-Addr`.
+   Expect HTTP 200 and a different `X-Upstream-Addr`. Stopping an unused replica does not prove failover.
 
 4. Restore the stopped replica on its host, even if the check failed:
 
@@ -343,7 +345,7 @@ Run after installation or a pool change. Repeat for each protocol in `VERSIOND_V
 
    Pass the [service checks](#41-check-the-running-services) before stopping another replica.
 
-This checks routing failover. Routine updates require only the service checks in §4.1.
+For routine updates, run only the service checks in §4.1.
 
 ## Upgrade an existing host
 
@@ -351,8 +353,8 @@ This checks routing failover. Routine updates require only the service checks in
 
 1. Confirm the [prerequisites](#prerequisites). Back up PostgreSQL.
 2. Save `config.env`, Compose files, endpoint files, current image references and database mounts.
-3. Put the new release's join files in the **same deployment directory and Compose project**. Review changes before applying; keep your configuration and overrides.
-4. Review image overrides (`VERSIOND_IMAGE`, `VERSIOND_ROUTER_IMAGE`, `PROXY_ROUTER_IMAGE`, `PROXY_POLICY_IMAGE`) in `config.env` and Compose files; they take precedence over release defaults. Remove obsolete values and legacy local `image: ${VERSIOND_IMAGE:?...}` entries. Keep intentional release-compatible custom images, the catalog filter and site settings.
+3. Put the new release's join files in the **same deployment directory and Compose project**. Keep your configuration and overrides.
+4. Remove obsolete image overrides (`VERSIOND_IMAGE`, `VERSIOND_ROUTER_IMAGE`, `PROXY_ROUTER_IMAGE`, `PROXY_POLICY_IMAGE`) from `config.env` and Compose files, including old `image: ${VERSIOND_IMAGE:?...}` entries. Keep custom images only if compatible with the release.
 5. Local PostgreSQL: save its current image digest in `DEVSHARD_POSTGRES_IMAGE` (command below).
 
 Preserve during routine updates:
@@ -364,9 +366,9 @@ Preserve during routine updates:
 | Routing configuration | Fleet slots, networks, membership and router catalog volumes |
 | Saved deployment settings | `VERSIOND_VERSIONS`, the ordered `COMPOSE_FILE`, any `COMPOSE_PROJECT_NAME`, and `UPDATE_STATE_DIR` |
 
-Do not replace `config.env` with the new-installation example. Add protocols only after the update is verified. Database moves, PostgreSQL major upgrades and fleet reconfiguration are separate procedures; change the PostgreSQL digest only after confirming cluster compatibility.
+Do not replace `config.env` with the new-installation example. Update first; add protocols afterwards. Do not combine this update with a database move, PostgreSQL major upgrade or fleet reconfiguration.
 
-First-time HA layout: merge the required [installation settings](#install-a-new-host) into the existing files without running the startup commands. Keep the filter enabled and `VERSIOND_NON_HA_VERSIONS` empty.
+First HA setup: add the [installation settings](#install-a-new-host) to your existing files, but skip the startup commands. Keep the filter enabled and `VERSIOND_NON_HA_VERSIONS` empty.
 
 <details>
 <summary><strong>Find the current PostgreSQL image digest</strong></summary>
@@ -426,7 +428,7 @@ An existing persistent path `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}
 
 For one join host with all writers listed in `replicas`. Use the source image saved in `DEVSHARD_POSTGRES_IMAGE`; preserve its PostgreSQL major version and Alpine/musl family. Complete [directory preparation](#prepare-the-postgresql-directory) first.
 
-Run in `deploy/join`. The block stops replicas, backs up PostgreSQL, copies the cluster and checks its system identifier. It leaves replicas stopped:
+Run in `deploy/join` to stop replicas, back up and copy PostgreSQL, and check the copied cluster. Replicas remain stopped:
 
 ```bash
 (
@@ -485,7 +487,7 @@ Then repeat the identifier check using the backup directory printed above:
 )
 ```
 
-After success, continue with [Update with downtime](#update-with-downtime). Do not `docker start` the old replicas; Compose will recreate them with the filtered catalog.
+After success, continue with [Update with downtime](#update-with-downtime). Leave the old replicas stopped.
 
 <details>
 <summary><strong>If the old volume was already detached</strong></summary>
@@ -527,9 +529,9 @@ For published `v4`/`v4.1` binaries, use the downtime procedure below. Rolling up
 
 #### Update with downtime
 
-Use for **one join host** with unchanged external PostgreSQL or local PostgreSQL already on the persistent path. Complete the [local volume copy](#2-check-the-database-layout) first if required. Keep connection settings, identity, replica data mounts and protocols unchanged. Other database moves and multi-host updates are outside this procedure.
+For **one join host**, using the same external database or local PostgreSQL on the persistent path. Copy the [old local volume](#2-check-the-database-layout) first if needed. Keep database settings, participant identity, replica data mounts and protocols unchanged. This procedure does not cover database moves or multi-host updates.
 
-Run this block in `deploy/join`. Include every local replica in `replicas`. It stops on the first error. External PostgreSQL stays running; local PostgreSQL is updated only after all replicas stop. The backup directory contains credentials—keep it private.
+Run in `deploy/join`; include every local replica in `replicas`. The commands stop replicas, back up the database and update the deployment. Keep the backup directory private: it contains credentials.
 
 ```bash
 (
@@ -606,9 +608,9 @@ PYTHON
 )
 ```
 
-Preflight runs with all replicas stopped. It checks database access and capacity; it does not prove database continuity. `pg_restore --list` checks the archive structure, not a full restore.
+Preflight checks database access and capacity, not database identity. The backup check validates the archive, not a full restore.
 
-Complete the [service checks](#41-check-the-running-services). Use this procedure for subsequent updates while retaining `v4`/`v4.1`; do not continue to the rolling updater below.
+Run the [service checks](#41-check-the-running-services), then stop here. Use this procedure for later updates while serving `v4`/`v4.1`.
 
 #### Rolling update
 
@@ -622,9 +624,9 @@ source ./config.env
 docker compose up -d --no-deps oracle-filter
 ```
 
-If storage proof is unavailable, use [Update with downtime](#update-with-downtime) within its deployment scope. Do not reinterpret timeouts, HTTP 503 or invalid proofs as an unsupported API.
+If a protocol lacks storage-proof support, use [Update with downtime](#update-with-downtime). Stop on timeouts, HTTP 503 or invalid proofs.
 
-Check every retained protocol on every member before updating. The command falls back to the older health endpoint only on HTTP 404; HTTP 503 and connection errors must be fixed first. After replacement, complete [Verify](#step-4---verify-it-works).
+Check every protocol on every replica. The commands also support the older health endpoint:
 
 ```bash
 # Include every local member; repeat on remote hosts.
@@ -648,7 +650,7 @@ Check every retained protocol on every member before updating. The command falls
 )
 ```
 
-Continue only when every check returns HTTP 200. During each replica replacement, at least one other replica must stay ready for every retained protocol.
+Expect HTTP 200 from every check. Update one replica at a time; another replica must serve each protocol throughout the update.
 
 Run preflight and preview the replacements. Preflight writes database probes; it does not replace services:
 
@@ -656,7 +658,7 @@ Run preflight and preview the replacements. Preflight writes database probes; it
 ./update-devshard.sh --dry-run
 ```
 
-Review the proposed images and changes. On a target-directory creation error, complete [directory preparation](#prepare-the-postgresql-directory) and retry. Fix every other error first; do not reset fleet state or enable bypass flags. Then run:
+Review the proposed images and changes. On a directory creation error, run [directory preparation](#prepare-the-postgresql-directory) and retry. Do not proceed while preflight fails. Then run:
 
 ```bash
 ./update-devshard.sh
@@ -664,13 +666,13 @@ Review the proposed images and changes. On a target-directory creation error, co
 
 The updater replaces local services and routing. [Replace remote members](#replace-a-member) one at a time before final verification.
 
-Run the [service checks](#41-check-the-running-services) after the update. Add new protocols through [Add a protocol](#add-a-protocol). Do not rename existing binaries or escrows.
+Run the [service checks](#41-check-the-running-services). To enable a new protocol, follow [Add a protocol](#add-a-protocol).
 
 ## Add a remote replica
 
 Requires storage-proof support from every retained protocol. Published `v4`/`v4.1` binaries do not support this admission procedure.
 
-Use a private network between machines. B runs the extra `versiond`; A keeps the join stack. A's public proxy, node and api stay single-instance.
+Use a private network between machines. Machine A runs the join stack and router fleet; machine B runs `versiond` only. Do not start a second dapi with the same keys. A's public proxy and node remain single-instance.
 
 New deployment: finish [startup](#step-3---start-the-deployment) and [verification](#step-4---verify-it-works) on A first.
 
@@ -684,14 +686,14 @@ Keep B out of the router pool until its checks pass.
 
 ### 1. Prepare machine A
 
-Open these ports on A to B over the private network:
+On machine A, publish these ports for B on the private network:
 
 - PostgreSQL `5432`, or the external database port.
 - Node-manager `9400`.
 - Chain RPC/gRPC `26657`, `9090`.
 - Filtered catalog `19100`.
 
-Database and keyring credentials must match the running local replicas.
+Confirm `PGPASSWORD` and `KEYRING_PASSWORD` match the running local `versiond` containers.
 
 Set `export GONKA_PRIVATE_BIND_IP=<A-private-ip>` in A's `config.env`. Run in `deploy/join`:
 
@@ -727,7 +729,7 @@ Do not restart the whole live stack to add a member.
 
 ### 2. Configure and start machine B
 
-B runs no `api` or `node`. It uses A's filtered catalog, node-manager and chain endpoints, and the shared database.
+B does not run `api` or `node`. It runs a single `versiond` using A's filtered catalog, node-manager and chain endpoints, and the shared PostgreSQL database.
 
 New B: use the same release's `deploy/join` files. Existing B: follow [Replace a member](#replace-a-member) and keep its data mounts.
 
@@ -738,7 +740,7 @@ Copy from A into B's `config.env`:
 - Protocols: `VERSIOND_VERSIONS` and the empty `VERSIOND_NON_HA_VERSIONS`.
 - `VERSIOND_IMAGE`, only if A uses a custom image.
 
-On A: `docker cp versiond:/root/.inference/keyring-file .`; copy `keyring-file/` into B's `.inference/`. Keep the supplied read-only keyring mount. B uses its own data directory; never share A's replica data directories.
+On A: `docker cp versiond:/root/.inference/keyring-file .`; copy `keyring-file/` into B's `.inference/`. Keep the read-only keyring mount. Use B's own data directory; do not share A's `devshards*/data`.
 
 Add to B's `config.env`, with the real private addresses:
 
@@ -779,7 +781,7 @@ Continue when the container is healthy and every check returns HTTP 200.
 
 ### Check the remote database
 
-Verify B's database before pool admission. Install `psql` on B and run:
+Check B's database before adding B to the router pool. Install `psql` on B and run:
 
 ```bash
 cd /path/to/gonka/deploy/join
@@ -787,17 +789,17 @@ cp pool-postgres.env.template pool-postgres.env
 chmod 600 pool-postgres.env
 ```
 
-Fill `pool-postgres.env` with the working pool's endpoint and credentials, taken from A or the database administrator **independently of the candidate replica**. Run with the target image active:
+Put the existing database's endpoint and credentials in `pool-postgres.env`. Take them from A or the database administrator, not from B. Run with the new `versiond` image:
 
 ```bash
 ./update-devshard.sh --check-storage --reference-env ./pool-postgres.env
 ```
 
-Admission requires `Storage check passed` and exit code 0. The check writes database probes. Run one check at a time, with no concurrent updater runs. For other containers, repeat `--container NAME`.
+Expect `Storage check passed` and exit code 0. The check writes test data to the database; run it separately from other checks and updates. For additional containers, repeat `--container NAME`.
 
 ### 3. Add B to the router pool
 
-On A, list every member in `versiond-endpoints.json`. Every address must be reachable from every router slot:
+On machine A, list every replica in `versiond-endpoints.json`. All routers must be able to connect to these addresses:
 
 ```json
 [
@@ -816,8 +818,6 @@ VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
 ```
 
 The rollout interrupts new requests. Keep member IDs when replacing a host at the same endpoint. Endpoint-file edits take effect only through the rollout.
-
-DNS pool: set `VERSIOND_POOL_HOST` to private DNS that resolves all members; every router must resolve pool and internal names. Member changes are automatic; pool-name or resolver changes need the maintenance rollout. Mixed ports need explicit endpoints.
 
 Run the [service checks](#41-check-the-running-services) and [routing failover check](#42-check-routing-failover) after adding B.
 
@@ -864,7 +864,7 @@ After [startup and verification](#step-3---start-the-deployment), add `versiond3
    docker compose up -d --no-deps --wait --wait-timeout 2100 versiond3
    ```
 
-5. Explicit endpoint lists: add it through [membership maintenance](#3-add-b-to-the-router-pool). Pool DNS discovers it automatically. Run the [service checks](#41-check-the-running-services), including `versiond3`.
+5. If using `versiond-endpoints.json`, add `versiond3` and [apply the updated list](#3-add-b-to-the-router-pool). Default Docker discovery finds it automatically. Run the [service checks](#41-check-the-running-services), including `versiond3`.
 
 For a fourth replica, copy `docker-compose.versiond3.yml`, replacing `3` with `4`; repeat the overrides above. Keep the supplied shutdown timings, identity/image settings, pool alias and PostgreSQL marker mount.
 
@@ -872,7 +872,7 @@ For a fourth replica, copy `docker-compose.versiond3.yml`, replacing `3` with `4
 
 ### Manage router slots
 
-Router slots belong to the fleet script; the main project's `docker compose down` does not stop them. Allow up to `VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS` (default 1800 seconds) per replaced slot.
+Use the fleet script to manage routers. `docker compose down` in the join directory does not stop them. The shutdown timeout is 30 minutes per router by default (`VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS`).
 
 The fleet script loads `config.env`.
 
@@ -899,7 +899,7 @@ Whole-machine maintenance: drain the fleet before stopping the main stack:
 
 ### Restart a member
 
-Restart one member at a time. Keep enough ready replicas for every served protocol and the load. `COMPOSE_FILE` must include every active override:
+Restart one replica at a time. The remaining replicas must serve all protocols and handle the load. Include every active override in `COMPOSE_FILE`:
 
 ```bash
 cd /path/to/gonka/deploy/join
@@ -922,11 +922,11 @@ dc=(docker compose)
 )
 ```
 
-Keep the supplied shutdown timings. The restarted member must pass its checks before restarting another member.
+Wait for shutdown to finish. Check the restarted replica before restarting the next one.
 
 ### Replace a member
 
-Preserve the member's database, identity, protocol list and mounts. Keep at least one other replica ready for each required protocol; Compose does not enforce this.
+Keep the same database, participant identity, protocol list and data mounts. Replace one replica at a time; another replica must serve each protocol.
 
 1. Use the target release's files. Review image overrides as in [Prepare the release](#1-prepare-the-release), then run `unset VERSIOND_IMAGE` and `source ./config.env`.
 2. Stop and drain the member. For a remote member, remove its explicit endpoint through [membership maintenance](#3-add-b-to-the-router-pool) or from pool DNS before starting the replacement.
@@ -935,11 +935,11 @@ Preserve the member's database, identity, protocol list and mounts. Keep at leas
 
 ### Remove a member
 
-Stop and drain it. Remove its service or set replicas to zero (`VERSIOND2_REPLICAS=0` for `versiond2`). Remove its DNS or explicit membership; explicit lists need membership maintenance. Run the [service checks](#41-check-the-running-services) for the remaining replicas. Keep data and cache directories until recovery is confirmed.
+Stop the replica and wait for shutdown to finish. Remove its service or set `VERSIOND2_REPLICAS=0` for `versiond2`. Remove its address from DNS or `versiond-endpoints.json`; [apply endpoint-file changes](#3-add-b-to-the-router-pool). Run the [service checks](#41-check-the-running-services) on the remaining replicas. Keep its data and cache directories for recovery.
 
 ### Add a protocol
 
-1. Take the protocol name and required host/gateway versions from its release instructions. Confirm the name appears in your node's [approved protocol list](#21-same-machine-two-replicas), then add it to `VERSIOND_VERSIONS` in `config.env` on every host; keep names needed by retained sessions.
+1. Check the protocol's release instructions for the name and required host/gateway versions. Once it appears in the node's [approved protocol list](#21-same-machine-two-replicas), add it to `VERSIOND_VERSIONS` in `config.env` on every host. Keep existing protocols.
 2. On A: `source ./config.env`, then `docker compose up -d --no-deps oracle-filter` with the complete `COMPOSE_FILE`.
 3. `./versiond-router-fleet.sh wait-version <new-protocol>`, then run the [service checks](#41-check-the-running-services) with the updated list.
 
@@ -951,7 +951,7 @@ Keep `proxy-router-state` and each slot's `router-state`. Remove a protocol only
 
 ### Resume an interrupted rolling update
 
-If the updater reports pending recovery, rerun it from `deploy/join` with the same release, configuration and `UPDATE_STATE_DIR`. Keep the state directory intact. The command restores pending replacements, then continues the update; `--check` and `--dry-run` cannot perform recovery.
+If the updater reports pending recovery, rerun it in `deploy/join`. Use the same release, configuration and `UPDATE_STATE_DIR`; do not delete the state directory. Run without `--check` or `--dry-run` to recover and continue the update:
 
 ```bash
 source ./config.env
@@ -972,7 +972,7 @@ Check the selected catalog, binary URL/SHA256, child logs and database access. E
 
 **Release:** `devshard-0.2.15-v5`.
 
-Use join files, updater/fleet scripts and published images from one release set. Later releases: follow their guide and upgrade requirements. Keep site settings and retained protocols.
+Use join files, scripts and images from the same release. For later releases, follow their upgrade instructions.
 
 Validate nonstandard deployments and database changes on a data copy first. Extended checks: [acceptance plan](../devshard/docs/ha-host-updater-acceptance.md), [lifecycle test plan](../devshard/docs/devshard-host-ha-test-plan.md).
 
