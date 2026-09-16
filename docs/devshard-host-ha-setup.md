@@ -264,7 +264,6 @@ source ./config.env
   : "${VERSIOND_VERSIONS:?set the approved HA protocol list}"
   replicas=(versiond versiond2)
 
-  ./update-devshard.sh --check
   ./versiond-router-fleet.sh verify-admission
   for replica in "${replicas[@]}"; do
     docker exec "$replica" wget -qO- http://127.0.0.1:8080/readyz
@@ -281,12 +280,9 @@ source ./config.env
 
 Required results:
 
-- Preflight reports `Preflight passed`.
 - `verify-admission` and `wait-version` succeed.
 - Every replica passes readiness for every selected protocol.
 - Public `/devshard/<version>/healthz` returns HTTP 200.
-
-Preflight writes database probes; it does not replace services.
 
 New or replaced remote member: pass the [database check](#check-the-remote-database) before pool admission.
 
@@ -401,7 +397,7 @@ dc=(docker compose)
 
 ### 2. Check the database layout
 
-Inspect the running database's data directory and mounts. **Skip the copy** for unchanged external PostgreSQL or an existing persistent path `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}/data`: leave PostgreSQL running and go to [Run the updater](#3-run-the-updater).
+Inspect the running database's data directory and mounts. **Skip the copy** for unchanged external PostgreSQL or an existing persistent path `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}/data`: leave PostgreSQL running and go to [Update the deployment](#3-update-the-deployment).
 
 The procedure below moves a local cluster from the old Docker volume at `/var/lib/postgresql/data` to the persistent bind at `/var/lib/postgresql/gonka/data`.
 
@@ -473,11 +469,89 @@ After verification, keep writers stopped and recreate PostgreSQL without the rec
 
 </details>
 
-### 3. Run the updater
+### 3. Update the deployment
 
 Schedule maintenance: replacing the public proxy can interrupt connections.
 
-Routine update: leave PostgreSQL, the filter, replicas and router fleet running. Leave `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled.
+For published `v4`/`v4.1` binaries, use the downtime procedure below. Rolling updates require storage-proof support from every retained protocol. Leave `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled.
+
+#### Update with downtime
+
+Use for **one join host with unchanged external PostgreSQL**. Keep the database, connection settings, identity, data mounts and protocol list unchanged. Database migration and multi-host updates are outside this procedure.
+
+Run this block in `deploy/join`. Include every local replica in `replicas`. It stops on the first error; PostgreSQL stays running. The backup directory contains credentials—keep it private.
+
+```bash
+(
+  set -euo pipefail
+  umask 077
+  source ./config.env
+  : "${COMPOSE_FILE:?set the complete Compose file list}"
+  replicas=(versiond versiond2)
+  mkdir -p backups
+  backup_dir=$(mktemp -d "$PWD/backups/ha-update.XXXXXXXX")
+  echo "Backup directory: $backup_dir"
+
+  # Save the old settings and reject changes to PostgreSQL connections.
+  docker inspect "${replicas[@]}" > "$backup_dir/containers.json"
+  docker compose config --format json > "$backup_dir/compose.json"
+  python3 - "$backup_dir" <<'PYTHON'
+import json, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+model = json.loads((path / "compose.json").read_text())
+reference = None
+for container in json.loads((path / "containers.json").read_text()):
+    service = container["Config"]["Labels"]["com.docker.compose.service"]
+    old = dict(item.split("=", 1) for item in container["Config"]["Env"])
+    new = model["services"][service]["environment"]
+    old = {key: value for key, value in old.items() if key.startswith("PG") and key != "PG_POOL_MAX_CONNS"}
+    new = {key: value for key, value in new.items() if key.startswith("PG") and key != "PG_POOL_MAX_CONNS"}
+    old.setdefault("PGPORT", "5432")
+    new.setdefault("PGPORT", "5432")
+    if old != new or (reference is not None and old != reference):
+        sys.exit(f"{service}: PostgreSQL settings differ; keep the existing connection")
+    if model["networks"]["default"]["name"] not in container["NetworkSettings"]["Networks"]:
+        sys.exit(f"{service}: deployment network changed; stop")
+    reference = old
+if not reference or any("\n" in value or "\r" in value for value in reference.values()):
+    sys.exit("Cannot export PostgreSQL settings to a Docker env file")
+(path / "postgres.env").write_text("".join(f"{key}={value}\n" for key, value in reference.items()))
+PYTHON
+  pg_network=$(jq -er '.networks.default.name' "$backup_dir/compose.json")
+  pg_args=(--rm --network "$pg_network" --env-file "$backup_dir/postgres.env")
+
+  # Select pg_dump for the running server's major version; pull before downtime.
+  docker pull postgres:16-alpine
+  pg_major=$(docker run "${pg_args[@]}" postgres:16-alpine \
+    psql -XAtw -v ON_ERROR_STOP=1 -c "SELECT current_setting('server_version_num')::int / 10000")
+  [[ "$pg_major" =~ ^[1-9][0-9]*$ ]]
+  pg_client="postgres:$pg_major-alpine"
+  docker pull "$pg_client"
+  docker compose pull "${replicas[@]}" proxy proxy-policy proxy-policy2
+
+  ./versiond-router-fleet.sh stop-all --maintenance
+  docker compose stop "${replicas[@]}"
+  docker run "${pg_args[@]}" "$pg_client" pg_dump -w -Fc > "$backup_dir/database.dump"
+  docker run -i --rm "$pg_client" pg_restore --list < "$backup_dir/database.dump" >/dev/null
+  ./update-devshard.sh --check
+
+  ./versiond-router-fleet.sh prepare-networks
+  docker compose up -d --no-deps oracle-filter
+  docker compose up -d --no-deps --wait --wait-timeout 2100 "${replicas[@]}"
+  docker compose up -d --no-deps proxy
+  docker compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2 proxy-policy proxy
+  ./versiond-router-fleet.sh apply
+)
+```
+
+Preflight runs with all replicas stopped. It checks database access and capacity; it does not prove database continuity. `pg_restore --list` checks the archive structure, not a full restore.
+
+Complete the [service checks](#41-check-the-running-services). Use this procedure for subsequent updates while retaining `v4`/`v4.1`; do not continue to the rolling updater below.
+
+#### Rolling update
+
+Leave PostgreSQL, the filter, replicas and router fleet running.
 
 <details>
 <summary><strong>First transition: prepare the filter and recover stopped members</strong></summary>
@@ -495,7 +569,7 @@ docker compose up -d --no-deps oracle-filter
 docker start versiond versiond2
 ```
 
-**External PostgreSQL without storage proof:** an installed supervisor that returns HTTP 404 from `/internal/storage-identity` cannot prove its database. Stop all writers; verify the database endpoint, identity and data independently. Start the target supervisors with the complete Compose configuration; pass the [independent database check](#check-the-remote-database) on every member (repeat `--container NAME` for local members) before running the updater. Do not restart the old containers.
+External PostgreSQL without storage proof: use [Update with downtime](#update-with-downtime) within its deployment scope.
 
 Treat timeouts, HTTP 503 and invalid storage proofs as errors to fix, not as unsupported APIs.
 
@@ -721,7 +795,7 @@ The fleet script loads `config.env`.
 | Verify routing after a change | `./versiond-router-fleet.sh verify-admission` |
 | Apply the release's router image | `./versiond-router-fleet.sh apply` |
 
-Full release update: use the [updater](#3-run-the-updater).
+Full release update: follow [Update the deployment](#3-update-the-deployment).
 
 Keep previous stopped containers and catalog volumes until recovery completes. Rerun interrupted operations with the same image and configuration. Pool, resolver or legacy-routing changes: [membership maintenance](#3-add-b-to-the-router-pool).
 
