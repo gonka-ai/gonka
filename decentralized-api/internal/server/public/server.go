@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	blockserver "common/chainoracle/blocks/server"
 
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
 
@@ -61,6 +62,16 @@ func WithArtifactStore(store *artifacts.ManagedArtifactStore) ServerOption {
 func WithStatsStorage(store statsstorage.StatsStorage) ServerOption {
 	return func(s *Server) {
 		s.statsStorage = store
+	}
+}
+
+// WithBlockOracle mounts GET /block/:height (and /healthz) on the public mux.
+func WithBlockOracle(oracle blocks.BlockOracle) ServerOption {
+	return func(s *Server) {
+		if s == nil || s.e == nil || oracle == nil {
+			return
+		}
+		blockserver.Mount(s.e.Group(""), oracle)
 	}
 }
 

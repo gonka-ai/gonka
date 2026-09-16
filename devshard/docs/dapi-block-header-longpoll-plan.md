@@ -2,7 +2,7 @@
 
 **Design:** [`proposals/dapi-block-header-longpoll.md`](./proposals/dapi-block-header-longpoll.md)  
 **Spec constants:** `HistoryWindow = 100_000`, `MaxHeadersPerPoll = 1_000`, exclusive `from_height`  
-**Status:** not started
+**Status:** Phase A in progress — **A1–A5** done; Phase B not started
 
 Height-sync keeps calling `blocks.BlockOracle` (`Latest` / `At` / `Subscribe` / `Stale`). This plan adds the **wire** catch-up+live path on dapi (Phase A) and then a **composite producer** that hides three backends from the protocol (Phase B).
 
@@ -57,24 +57,24 @@ heightsync / host.latestHeader
 
 **Exit criterion:** mock-dapi and (when mounted) production dapi serve `GetBlockHeaders` + shared-cache `GET /block/:height` / `GetBlockHeader`. `devshardd` / `devshardctl` **do not** call the new RPC. `SetHeightSyncFromEnv` and `ObserveChainHeader` stay as they are.
 
-### A1 — Cache window 100k ⏳
+### A1 — Cache window 100k ✅
 
 **Summary:** Raise `tipcache` retention from 100 to **100_000** heights. `oldest = max(1, tip − HistoryWindow)`. `Observe` / `Remember` evict below that floor. Dummy headers are never stored.
 
-**Code:** `devshard/chainoracle/blocks/tipcache`
+**Code:** `common/chainoracle/blocks` (`HistoryWindow`, `OldestHeight`, `MaxHeadersPerPoll`); `devshard/chainoracle/blocks/tipcache`
 
 **Test plan** (`tipcache`):
 
-| ID | Scenario |
-| -- | -------- |
-| **LP-A1a** | After `Observe(H)`, `At(H-100_000)` hits and `At(H-100_001)` misses |
-| **LP-A1b** | Advancing tip evicts the old floor; `At` of the evicted height misses |
-| **LP-A1c** | `Remember` of a height inside the window does not move `Latest()` or freshness |
-| **LP-A1d** | Dummy headers are not stored |
+| ID | Scenario | Status |
+| -- | -------- | ------ |
+| **LP-A1a** | After `Observe(H)`, `At(H-100_000)` hits and `At(H-100_001)` misses | ✅ |
+| **LP-A1b** | Advancing tip evicts the old floor; `At` of the evicted height misses | ✅ |
+| **LP-A1c** | `Remember` of a height inside the window does not move `Latest()` or freshness | ✅ |
+| **LP-A1d** | Dummy headers are not stored | ✅ |
 
-**Done when:** `GOMODCACHE=… GOCACHE=… go test ./chainoracle/blocks/tipcache/`
+**Done when:** `GOMODCACHE=… GOCACHE=… go test ./chainoracle/blocks/tipcache/` — **done** (`devshard/`)
 
-### A2 — Wire: proto + `nmrpc.GetBlockHeaders` ⏳
+### A2 — Wire: proto + `nmrpc.GetBlockHeaders` ✅
 
 **Summary:** Add unary `GetBlockHeaders`. Handler clamps the exclusive cursor, returns at most 1000 headers via `At` catch-up, long-polls via `Subscribe`, and maps with `HeaderToProto`. `from_height < 0` → `InvalidArgument`. Nil oracle → `FailedPrecondition`. Existing NodeManager field numbers stay unchanged.
 
@@ -87,81 +87,83 @@ Cursor math (exclusive `from_height`):
 
 **Code:** `common/nodemanager/nodemanager.proto`, `common/chainoracle/blocks/nmrpc`
 
+Wired in A4 (mock-dapi) and A5 (production dapi). `recordingClient` forwards it so `NodeManagerClient` still compiles.
+
 **Test plan** (`nmrpc`):
 
-| ID | Scenario |
-| -- | -------- |
-| **LP-A2a** | `from=H-2000` → 1000 headers ending at `H-1000` |
-| **LP-A2b** | Follow-up `from=H-1000` continues contiguously (no gap, no overlap) |
-| **LP-A2c** | `from=H-100_001` starts at `oldest` |
-| **LP-A2d** | `from=0` starts at `oldest` (not height 1 unless the window includes it) |
-| **LP-A2e** | `max_headers=0` and `>1000` both clamp to 1000 |
-| **LP-A2f** | Caught up + `max_wait=0` → immediate `unchanged` |
-| **LP-A2g** | Long-poll wakes on `Observe(tip+1)` before `max_wait` |
-| **LP-A2h** | Timeout → `unchanged`, cursor unchanged |
-| **LP-A2i** | Subscribe-before-read: `Observe` between register and `At` is not lost |
-| **LP-A2j** | Hole in `At` range: batch stops before the hole; `next_from_height` is last contiguous |
-| **LP-A2k** | Field numbers of existing NodeManager messages unchanged (wire) |
+| ID | Scenario | Status |
+| -- | -------- | ------ |
+| **LP-A2a** | `from=H-2000` → 1000 headers ending at `H-1000` | ✅ |
+| **LP-A2b** | Follow-up `from=H-1000` continues contiguously (no gap, no overlap) | ✅ |
+| **LP-A2c** | `from=H-100_001` starts at `oldest` | ✅ |
+| **LP-A2d** | `from=0` starts at `oldest` (not height 1 unless the window includes it) | ✅ |
+| **LP-A2e** | `max_headers=0` and `>1000` both clamp to 1000 | ✅ |
+| **LP-A2f** | Caught up + `max_wait=0` → immediate `unchanged` | ✅ |
+| **LP-A2g** | Long-poll wakes on `Observe(tip+1)` before `max_wait` | ✅ |
+| **LP-A2h** | Timeout → `unchanged`, cursor unchanged | ✅ |
+| **LP-A2i** | Subscribe-before-read: `Observe` between register and `At` is not lost | ✅ |
+| **LP-A2j** | Hole in `At` range: batch stops before the hole; `next_from_height` is last contiguous | ✅ |
+| **LP-A2k** | Field numbers of existing NodeManager messages unchanged (wire) | ✅ |
 
-**Done when:** proto regenerated; `go test ./common/chainoracle/blocks/nmrpc/`
+**Done when:** proto regenerated; `go test ./common/chainoracle/blocks/nmrpc/` — **done** (`common/`)
 
-### A3 — Mock observer matches the window ⏳
+### A3 — Mock observer matches the window ✅
 
-**Summary:** `observer.Mock` evicts history below `oldest` like tipcache. In-process `Subscribe` replays only heights still in the window (not unbounded). `At` below `oldest` errors the same way.
+**Summary:** `observer.Mock` evicts history below `oldest` like tipcache. In-process `Subscribe` replays only heights still in the window (not unbounded). `At` below `oldest` errors the same way. `AdvanceTo` jumps the tip without filling the gap so tests can hit the 100k floor without signing 100k blocks.
 
 **Code:** `devshard/chainoracle/blocks/observer.Mock`
 
 **Test plan** (`observer`):
 
-| ID | Scenario |
-| -- | -------- |
-| **LP-A3a** | Advance past 100k+N; `At(oldest-1)` fails; `Subscribe(oldest)` replays the window then live |
-| **LP-A3b** | `Subscribe(1)` after eviction does not emit evicted heights |
-| **LP-A3c** | Existing fan-out / slow-consumer drop tests still pass |
+| ID | Scenario | Status |
+| -- | -------- | ------ |
+| **LP-A3a** | Advance past 100k+N; `At(oldest-1)` fails; `Subscribe(oldest)` replays the window then live | ✅ |
+| **LP-A3b** | `Subscribe(1)` after eviction does not emit evicted heights | ✅ |
+| **LP-A3c** | Existing fan-out / slow-consumer drop tests still pass | ✅ |
 
-**Done when:** `go test ./chainoracle/blocks/observer/`
+**Done when:** `go test ./chainoracle/blocks/observer/` — **done** (`devshard/`)
 
-### A4 — Mock-dapi serves the RPC; host unused ⏳
+### A4 — Mock-dapi serves the RPC; host unused ✅
 
-**Summary:** Mock NodeManager `GetBlockHeaders` calls `nmrpc` against the same `blockMock` as `GetBlockHeader` and HTTP `GET /block/:height`. `OmitBlockRoutes` / missing oracle is `Unimplemented` or `FailedPrecondition` (lock one; Phase B treats both as “no dapi feed”). **devshardd does not call the new RPC.**
+**Summary:** Mock NodeManager `GetBlockHeaders` calls `nmrpc` against the same `blockMock` as `GetBlockHeader` and HTTP `GET /block/:height`. `OmitBlockRoutes` is **Unimplemented** (old-dapi stand-in; not an empty success). Nil oracle remains `FailedPrecondition` from nmrpc. **devshardd does not call the new RPC.**
 
 **Code:** `devshard/testenv/mockdapi`
 
 **Test plan:**
 
-| ID | Scenario | Where |
-| -- | -------- | ----- |
-| **LP-A4a** | Live mock-dapi: catch-up `H-2000` and clamp `H-100_001` | `mockdapi` |
-| **LP-A4b** | HTTP `GET /block/:h` hash equals `GetBlockHeader` and the long-poll header for that `h` | `mockdapi` |
-| **LP-A4c** | Mock `AdvanceOne` (NewBlock) appears on the next long-poll | `mockdapi` |
-| **LP-A4d** | `OmitBlockRoutes`: not a silent empty success | `mockdapi` |
-| **LP-A4e** | Host without the RPC still enables height-sync via Comet | `session/heightsync_test.go` |
+| ID | Scenario | Where | Status |
+| -- | -------- | ----- | ------ |
+| **LP-A4a** | Live mock-dapi: catch-up `H-2000` and clamp `H-100_001` | `mockdapi` | ✅ |
+| **LP-A4b** | HTTP `GET /block/:h` hash equals `GetBlockHeader` and the long-poll header for that `h` | `mockdapi` | ✅ |
+| **LP-A4c** | Mock `AdvanceOne` (NewBlock) appears on the next long-poll | `mockdapi` | ✅ |
+| **LP-A4d** | `OmitBlockRoutes`: not a silent empty success | `mockdapi` | ✅ |
+| **LP-A4e** | Host without the RPC still enables height-sync via Comet | `session/heightsync_test.go` | ✅ |
 
-**Done when:** `go test ./testenv/mockdapi/ ./cmd/devshardd/session/ -run HeightSync`
+**Done when:** `go test ./testenv/mockdapi/ ./cmd/devshardd/session/ -run HeightSync` — **done** (`devshard/`)
 
-### A5 — Production dapi: EventListener → cache → all three surfaces ⏳
+### A5 — Production dapi: EventListener → cache → all three surfaces ✅
 
-**Summary:** One 100k `tipcache` is the NodeManager `BlockOracle`. After `parseNewBlockInfo`, fill `Time` + `ChainID` and `Observe` **every** NewBlock, including params-unchanged blocks that do not notify `GetRuntimeConfig`. `GetBlockHeader`, `GET /block/:height`, and `GetBlockHeaders` share that pointer (no second map). Do not append headers to `HostEventRing`. Do not change `devshardd` env or `SetHeightSyncFromEnv`.
+**Summary:** One 100k `tipcache` (in `common/chainoracle/blocks/tipcache`) is the NodeManager `BlockOracle`. After parse, `Observe` **every** NewBlock in `processEvent` (catch-up and params-unchanged included). `GetBlockHeader`, `GET /block/:height`, and `GetBlockHeaders` share that pointer (no second map). Do not append headers to `HostEventRing`. Do not change `devshardd` env or `SetHeightSyncFromEnv`. `DAPI_API__CHAINORACLE_DISABLED=true` skips the cache and both mounts.
 
-**Code:** `decentralized-api` (this repo; separate from host binary)
+**Code:** `decentralized-api` EventListener / nodemanager / public server / `main.go`; cache lives in `common` so dapi does not import `devshard`.
 
 **Test plan:**
 
-| ID | Scenario | Where |
-| -- | -------- | ----- |
-| **LP-A5a** | `parseNewBlockInfo` (or helper) returns height, hash, time, chain id | `event_listener` |
-| **LP-A5b** | Listener `Observe`s; `GetBlockHeader(0)` matches | dapi `nodemanager` + listener |
-| **LP-A5c** | Params-unchanged NewBlock still `Observe`s (runtime-config `unchanged`, cache tip moves) | dapi unit |
-| **LP-A5d** | `GetBlockHeaders` long-poll against a fake EventListener advance | dapi `nodemanager` |
-| **LP-A5e** | `DAPI_CHAINORACLE_DISABLED` (or empty RPC): RPCs `FailedPrecondition` / mount skipped; existing dapi routes unchanged | dapi |
+| ID | Scenario | Where | Status |
+| -- | -------- | ----- | ------ |
+| **LP-A5a** | Parse helper returns height, hash, time, chain id | `event_listener` | ✅ |
+| **LP-A5b** | Listener `Observe`s; `GetBlockHeader(0)` and HTTP `GET /block/:h` match | dapi `nodemanager` + listener + public | ✅ |
+| **LP-A5c** | Params-unchanged NewBlock still `Observe`s (runtime-config `unchanged`, cache tip moves) | dapi unit | ✅ |
+| **LP-A5d** | `GetBlockHeaders` long-poll wakes on EventListener `Observe` | dapi `nodemanager` + listener | ✅ |
+| **LP-A5e** | `DAPI_API__CHAINORACLE_DISABLED` / nil oracle: RPCs `FailedPrecondition`; `/block` not mounted; `/v1/versions` unchanged | dapi | ✅ |
 
-**Done when:** `go test` under `decentralized-api/nodemanager` and `internal/event_listener`. Testermint optional smoke: `GET /block/<h>` on a live node after A5 lands.
+**Done when:** `go test` under `decentralized-api/nodemanager`, `internal/event_listener`, `internal/server/public`, `apiconfig` — **done**. Testermint optional smoke: `GET /block/<h>` on a live node after A5 lands.
 
 ### Phase A freeze
 
-- [ ] All **LP-A1**–**LP-A5** green
-- [ ] `devshardd` still tips from Comet only (`ObserveChainHeader`)
-- [ ] `rg GetBlockHeaders devshard/cmd/devshardd` is empty (except comments / tests that assert absence)
+- [x] All **LP-A1**–**LP-A5** green
+- [x] `devshardd` still tips from Comet only (`ObserveChainHeader`)
+- [x] `rg GetBlockHeaders devshard/cmd/devshardd` is empty (except comments / tests that assert absence)
 
 ---
 

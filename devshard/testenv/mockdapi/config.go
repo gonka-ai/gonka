@@ -21,6 +21,9 @@ type Config struct {
 	BinaryDir         string
 	// BlockSeed seeds the mock block observer (deterministic headers).
 	BlockSeed int64
+	// OmitBlockRoutes makes GetBlockHeader / GetBlockHeaders / Prove Unimplemented
+	// (old-dapi stand-in). HTTP /block is still served by the chainoracle mount.
+	OmitBlockRoutes bool
 	// GatewayBlockHeight / GatewayEpochIndex feed devshardctl public-API stubs.
 	GatewayBlockHeight int64
 	GatewayEpochIndex  uint64

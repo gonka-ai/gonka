@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"common/chain"
+	cblocks "common/chainoracle/blocks"
 	"common/nodemanager/gen"
 	commonruntimeconfig "common/runtimeconfig"
 	"devshard/chainoracle/blocks"
@@ -195,7 +196,11 @@ func (s *Service) runChainPoll(ctx context.Context) error {
 
 func (s *Service) serveGRPCOn(ctx context.Context, lis net.Listener) error {
 	gs := grpc.NewServer()
-	gen.RegisterNodeManagerServer(gs, newNodeManagerServer(s.paramsSrv, s.hostEvents, commonBlockOracle{inner: s.blockMock}))
+	var oracle cblocks.BlockOracle = commonBlockOracle{inner: s.blockMock}
+	if s.cfg.OmitBlockRoutes {
+		oracle = nil
+	}
+	gen.RegisterNodeManagerServer(gs, newNodeManagerServer(s.paramsSrv, s.hostEvents, oracle, s.cfg.OmitBlockRoutes))
 	s.grpcServer = gs
 	go func() {
 		<-ctx.Done()

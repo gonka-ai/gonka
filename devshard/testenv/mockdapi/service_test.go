@@ -27,10 +27,16 @@ type testBed struct {
 	adminURL string
 	grpcAddr string
 	httpURL  string
+	svc      *mockdapi.Service
 	cleanup  func()
 }
 
 func startBed(t *testing.T) testBed {
+	t.Helper()
+	return startBedWith(t, nil)
+}
+
+func startBedWith(t *testing.T, tweak func(*mockdapi.Config)) testBed {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	st := seed.Defaults()
@@ -47,6 +53,9 @@ func startBed(t *testing.T) testBed {
 	// Disable background poll; tests drive RefreshRuntimeConfig explicitly via /testenv/*.
 	cfg.ChainPollInterval = time.Hour
 	cfg.BlockInterval = 50 * time.Millisecond
+	if tweak != nil {
+		tweak(&cfg)
+	}
 
 	svc, err := mockdapi.New(ctx, cfg)
 	require.NoError(t, err)
@@ -77,6 +86,7 @@ func startBed(t *testing.T) testBed {
 		adminURL: adminHTTP.URL,
 		grpcAddr: grpcL.Addr().String(),
 		httpURL:  "http://" + httpL.Addr().String(),
+		svc:      svc,
 		cleanup: func() {
 			cancel()
 			adminHTTP.Close()
@@ -148,6 +158,28 @@ func TestMockDAPI_GatewayPhaseEpochLatest(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
 	require.Equal(t, "Inference", body["phase"])
+}
+
+func TestMockDAPI_OmitBlockRoutes_LooksLikeOldDapi(t *testing.T) {
+	bed := startBedOmitBlocks(t)
+	t.Cleanup(bed.cleanup)
+
+	health, err := http.Get(bed.httpURL + "/healthz")
+	require.NoError(t, err)
+	_ = health.Body.Close()
+	require.Equal(t, http.StatusOK, health.StatusCode)
+
+	vers, err := http.Get(bed.httpURL + "/versions")
+	require.NoError(t, err)
+	_ = vers.Body.Close()
+	require.Equal(t, http.StatusOK, vers.StatusCode)
+}
+
+func startBedOmitBlocks(t *testing.T) testBed {
+	t.Helper()
+	return startBedWith(t, func(cfg *mockdapi.Config) {
+		cfg.OmitBlockRoutes = true
+	})
 }
 
 func TestMockDAPI_VersionsJSON(t *testing.T) {

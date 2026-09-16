@@ -362,19 +362,22 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 			el.onNewBlockHeader(*blockInfo)
 		}
 
-		// Update BlockObserver with latest height and sync status
-		el.blockObserver.updateStatus(blockInfo.Height, el.isNodeSynced())
-
-		// Process using the new dispatcher
-		ctx := context.Background() // We could pass this from caller if needed
-		err = el.dispatcher.ProcessNewBlock(ctx, *blockInfo)
-		if err != nil {
-			logging.Error("Failed to process new block", types.EventProcessing, "error", err, "worker", workerName)
+		if el.blockObserver != nil {
+			el.blockObserver.updateStatus(blockInfo.Height, el.isNodeSynced())
 		}
 
-		// Still handle upgrade processing separately
-		upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
-		if el.isNodeSynced() {
+		ctx := context.Background()
+		if el.dispatcher != nil {
+			err = el.dispatcher.ProcessNewBlock(ctx, *blockInfo)
+			if err != nil {
+				logging.Error("Failed to process new block", types.EventProcessing, "error", err, "worker", workerName)
+			}
+		}
+
+		if el.configManager != nil && el.transactionRecorder.Address != "" {
+			upgrade.ProcessNewBlockEvent(event, el.transactionRecorder, el.configManager)
+		}
+		if el.isNodeSynced() && el.rewardRecoveryChecker != nil {
 			el.rewardRecoveryChecker.RecoverIfNeeded(blockInfo.Height)
 		}
 

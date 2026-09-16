@@ -20,6 +20,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+var _ gen.NodeManagerServer = (*Server)(nil)
+
 // brokerAcquirer is the subset of broker.Broker used by this server.
 // broker.Broker satisfies this interface directly.
 type brokerAcquirer interface {
@@ -55,8 +57,8 @@ func WithEscrowLoadTracker(t *broker.EscrowLoadTracker) ServerOption {
 	return func(s *Server) { s.escrowLoad = t }
 }
 
-// WithBlockOracle serves GetBlockHeader / ProveBlockPath from the same
-// BlockOracle as HTTP GET /block/:height. Nil (omitted) → FailedPrecondition.
+// WithBlockOracle serves GetBlockHeader / GetBlockHeaders / ProveBlockPath
+// from the same BlockOracle as HTTP GET /block/:height. Nil (omitted) → FailedPrecondition.
 func WithBlockOracle(o blocks.BlockOracle) ServerOption {
 	return func(s *Server) { s.blockOracle = o }
 }
@@ -167,6 +169,9 @@ func (s *Server) ProveBlockPath(ctx context.Context, req *gen.ProveBlockPathRequ
 	return nmrpc.ProveBlockPath(ctx, s.blockOracle, req)
 }
 
+func (s *Server) GetBlockHeaders(ctx context.Context, req *gen.GetBlockHeadersRequest) (*gen.GetBlockHeadersResponse, error) {
+	return nmrpc.GetBlockHeaders(ctx, s.blockOracle, req)
+}
 func currentEpochID(pt *chainphase.ChainPhaseTracker) uint64 {
 	if pt == nil {
 		return 0

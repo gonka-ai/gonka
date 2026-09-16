@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	cblocks "common/chainoracle/blocks"
 	"devshard/chainoracle/blocks"
 	"devshard/signing"
 )
@@ -43,9 +44,9 @@ type MockConfig struct {
 	// BlockIntervalDelta adds symmetric jitter around BlockInterval.
 	// Example: 1s ± 250ms => [750ms, 1250ms]. ≤0 disables jitter.
 	BlockIntervalDelta time.Duration
-	Seed          int64
-	Start         time.Time
-	InitialHeight int64 // default 1
+	Seed               int64
+	Start              time.Time
+	InitialHeight      int64 // default 1
 }
 
 // Mock is a testenv-only observer that fabricates signed block headers on
@@ -190,15 +191,47 @@ func (m *Mock) AdvanceOne() (*blocks.Header, error) {
 
 func (m *Mock) advanceLocked() (*blocks.Header, error) {
 	var height int64
-	var t time.Time
 	if m.latest == nil {
 		height = m.cfg.InitialHeight
-		t = m.cfg.Start
 	} else {
 		height = m.latest.Height + 1
-		t = m.latest.Time.Add(m.intervalForHeight(height))
 	}
+	return m.produceLocked(height)
+}
 
+// AdvanceTo fabricates the header at height without filling the gap from
+// the current tip. Tests use it to reach the 100k eviction floor without
+// signing 100k blocks. Heights below oldest are dropped like AdvanceOne.
+func (m *Mock) AdvanceTo(height int64) (*blocks.Header, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, errors.New("mock observer: closed")
+	}
+	if height <= 0 {
+		return nil, fmt.Errorf("mock observer: invalid height %d", height)
+	}
+	if m.latest != nil && height <= m.latest.Height {
+		return nil, fmt.Errorf("mock observer: AdvanceTo %d at or below tip %d", height, m.latest.Height)
+	}
+	return m.produceLocked(height)
+}
+
+// AdvanceN calls AdvanceOne n times and returns the last header.
+func (m *Mock) AdvanceN(n int) (*blocks.Header, error) {
+	var h *blocks.Header
+	var err error
+	for i := 0; i < n; i++ {
+		h, err = m.AdvanceOne()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return h, err
+}
+
+func (m *Mock) produceLocked(height int64) (*blocks.Header, error) {
+	t := m.timeForHeightLocked(height)
 	h := &blocks.Header{
 		Height:             height,
 		Time:               t,
@@ -221,8 +254,46 @@ func (m *Mock) advanceLocked() (*blocks.Header, error) {
 
 	m.latest = h
 	m.history[height] = h
+	m.evictLocked()
 	m.fanoutLocked(h)
 	return h, nil
+}
+
+func (m *Mock) timeForHeightLocked(height int64) time.Time {
+	if m.latest != nil {
+		t := m.latest.Time
+		for h := m.latest.Height + 1; h <= height; h++ {
+			t = t.Add(m.intervalForHeight(h))
+		}
+		return t
+	}
+	t := m.cfg.Start
+	if height <= m.cfg.InitialHeight {
+		return t
+	}
+	for h := m.cfg.InitialHeight + 1; h <= height; h++ {
+		t = t.Add(m.intervalForHeight(h))
+	}
+	return t
+}
+
+func (m *Mock) oldestLocked() int64 {
+	if m.latest == nil {
+		return m.cfg.InitialHeight
+	}
+	return cblocks.OldestHeight(m.latest.Height)
+}
+
+func (m *Mock) evictLocked() {
+	if m.latest == nil {
+		return
+	}
+	floor := m.oldestLocked()
+	for height := range m.history {
+		if height < floor {
+			delete(m.history, height)
+		}
+	}
 }
 
 func (m *Mock) intervalForHeight(height int64) time.Duration {
@@ -391,9 +462,12 @@ func (m *Mock) Latest(_ context.Context) (*blocks.Header, error) {
 func (m *Mock) At(_ context.Context, height int64) (*blocks.Header, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	if m.latest != nil && height < m.oldestLocked() {
+		return nil, fmt.Errorf("mock observer: no header at height %d: %w", height, blocks.ErrHeaderNotFound)
+	}
 	h, ok := m.history[height]
 	if !ok {
-		return nil, fmt.Errorf("mock observer: no header at height %d", height)
+		return nil, fmt.Errorf("mock observer: no header at height %d: %w", height, blocks.ErrHeaderNotFound)
 	}
 	return cloneHeader(h), nil
 }
@@ -407,7 +481,7 @@ func (m *Mock) Prove(_ context.Context, path string, height int64) (*blocks.Proo
 	defer m.mu.RUnlock()
 	h, ok := m.history[height]
 	if !ok {
-		return nil, fmt.Errorf("mock observer: no header at height %d for proof", height)
+		return nil, fmt.Errorf("mock observer: no header at height %d for proof: %w", height, blocks.ErrHeaderNotFound)
 	}
 	var hb [8]byte
 	binary.BigEndian.PutUint64(hb[:], uint64(height))
@@ -470,6 +544,10 @@ func (m *Mock) snapshotFromLocked(fromHeight int64) []*blocks.Header {
 		return replay
 	}
 	lo := fromHeight
+	oldest := m.oldestLocked()
+	if lo < oldest {
+		lo = oldest
+	}
 	if lo < m.cfg.InitialHeight {
 		lo = m.cfg.InitialHeight
 	}
@@ -527,6 +605,10 @@ func (m *Mock) headersAfterLocked(after, from int64) []*blocks.Header {
 	lo := after + 1
 	if lo < from {
 		lo = from
+	}
+	oldest := m.oldestLocked()
+	if lo < oldest {
+		lo = oldest
 	}
 	if lo < m.cfg.InitialHeight {
 		lo = m.cfg.InitialHeight

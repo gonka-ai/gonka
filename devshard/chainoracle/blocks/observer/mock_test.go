@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	cblocks "common/chainoracle/blocks"
 	"devshard/chainoracle/blocks"
 	"devshard/chainoracle/blocks/observer"
 	"devshard/chainoracle/blocks/verifier"
@@ -463,4 +464,83 @@ func TestMockObserver_SingleValidator_FullSign(t *testing.T) {
 			require.NoError(t, v.Verify(h, h.Height-1))
 		}
 	}
+}
+
+func newLightMock(t *testing.T) *observer.Mock {
+	t.Helper()
+	mocks, _ := genValidators(t, 1)
+	m, err := observer.NewMock(observer.MockConfig{
+		ChainID:       "gonka-test",
+		Validators:    mocks,
+		BlockInterval: time.Second,
+		Seed:          1,
+		Start:         time.Unix(1_700_000_000, 0).UTC(),
+		InitialHeight: 1,
+	})
+	require.NoError(t, err)
+	return m
+}
+
+func drainHeader(t *testing.T, ch <-chan *blocks.Header) *blocks.Header {
+	t.Helper()
+	select {
+	case h, ok := <-ch:
+		require.True(t, ok, "subscribe channel closed")
+		return h
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for header")
+	}
+	return nil
+}
+
+func TestMockObserver_LPA3a_WindowFloorAndSubscribeOldest(t *testing.T) {
+	m := newLightMock(t)
+	_, err := m.AdvanceOne()
+	require.NoError(t, err)
+
+	tip := int64(cblocks.HistoryWindow + 10)
+	_, err = m.AdvanceTo(tip)
+	require.NoError(t, err)
+
+	oldest := cblocks.OldestHeight(tip)
+	_, err = m.At(context.Background(), oldest-1)
+	require.Error(t, err)
+	require.ErrorIs(t, err, blocks.ErrHeaderNotFound)
+	got, err := m.At(context.Background(), tip)
+	require.NoError(t, err)
+	require.Equal(t, tip, got.Height)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, err := m.Subscribe(ctx, oldest)
+	require.NoError(t, err)
+
+	replayed := drainHeader(t, ch)
+	require.GreaterOrEqual(t, replayed.Height, oldest)
+	require.Equal(t, tip, replayed.Height)
+	time.Sleep(20 * time.Millisecond)
+
+	live, err := m.AdvanceOne()
+	require.NoError(t, err)
+	got = drainHeader(t, ch)
+	require.Equal(t, live.Height, got.Height)
+}
+
+func TestMockObserver_LPA3b_SubscribeBelowOldestSkipsEvicted(t *testing.T) {
+	m := newLightMock(t)
+	_, err := m.AdvanceOne()
+	require.NoError(t, err)
+	tip := int64(cblocks.HistoryWindow + 10)
+	_, err = m.AdvanceTo(tip)
+	require.NoError(t, err)
+	oldest := cblocks.OldestHeight(tip)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ch, err := m.Subscribe(ctx, 1)
+	require.NoError(t, err)
+
+	h := drainHeader(t, ch)
+	require.GreaterOrEqual(t, h.Height, oldest)
+	require.NotEqual(t, int64(1), h.Height)
 }

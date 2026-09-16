@@ -311,7 +311,6 @@ func main() {
 	}
 	// Negative ports explicitly disable the NodeManager gRPC server.
 	if nmGrpcPort > 0 {
-		nmGrpcServer := grpc.NewServer()
 		nmOpts := []nodemanager.ServerOption{
 			nodemanager.WithHostEventRing(hostEventRing),
 			nodemanager.WithEscrowLoadTracker(escrowLoadTracker),
@@ -322,6 +321,7 @@ func main() {
 		if chainOracle != nil {
 			nmOpts = append(nmOpts, nodemanager.WithBlockOracle(chainOracle))
 		}
+		nmGrpcServer := grpc.NewServer()
 		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker, nmOpts...))
 		reflection.Register(nmGrpcServer)
 		nodeManagerAddr := fmt.Sprintf(":%v", nmGrpcPort)
