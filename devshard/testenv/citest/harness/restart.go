@@ -274,6 +274,31 @@ func WaitVersiondSessionHealthy(t *testing.T, stack *Stack, cfg *config.File, ep
 	WaitGETOK(t, client, eps.GatewayHTTP+"/v1/status", 3*time.Minute, "gateway /v1/status", stack)
 }
 
+// WaitGatewaySessionSettled waits until no inferences are live and the
+// gateway-visible balance is unchanged across two polls. After a versiond
+// restart, timeout-refunds of reserved tokens can still be landing; taking
+// the "before" snapshot for RequireGatewaySessionAdvanced too early makes a
+// later chat look like it increased the balance.
+func WaitGatewaySessionSettled(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string) GatewaySessionSnapshot {
+	t.Helper()
+	const wait = 30 * time.Second
+	const tick = 200 * time.Millisecond
+	var prev *GatewaySessionSnapshot
+	ok := AssertEventually(t, wait, tick, func() bool {
+		snap := GetGatewaySessionSnapshot(t, client, gatewayURL, adminAPIKey)
+		settled := snap.LiveInferences == 0 && prev != nil && snap.Balance == prev.Balance
+		cur := snap
+		prev = &cur
+		return settled
+	})
+	snap := GetGatewaySessionSnapshot(t, client, gatewayURL, adminAPIKey)
+	if !ok {
+		t.Fatalf("session did not settle in %s: live=%d nonce=%d latest=%d balance=%d",
+			wait, snap.LiveInferences, snap.SessionNonce, snap.LatestNonce, snap.Balance)
+	}
+	return snap
+}
+
 // RequireGatewaySessionAdvanced asserts a successful chat advanced session nonce/state.
 func RequireGatewaySessionAdvanced(t *testing.T, before, after GatewaySessionSnapshot) {
 	t.Helper()
