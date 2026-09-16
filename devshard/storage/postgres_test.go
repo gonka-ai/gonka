@@ -11,21 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
+	"devshard/storage/pgtest"
 )
-
-func postgresContainerWaitStrategy() wait.Strategy {
-	return wait.ForAll(
-		wait.ForLog("database system is ready to accept connections").
-			WithOccurrence(2),
-		wait.ForListeningPort("5432/tcp"),
-	).WithStartupTimeout(60 * time.Second)
-}
 
 // setupPostgresContainer spins a fresh PG container per test and points the
 // pgx env vars at it. Mirrors the pattern from
@@ -33,19 +26,18 @@ func postgresContainerWaitStrategy() wait.Strategy {
 // regressions and devshard-side regressions are caught the same way.
 func setupPostgresContainer(t *testing.T) func() {
 	t.Helper()
+	container := startPostgresContainer(t)
+	return func() { _ = container.Terminate(context.Background()) }
+}
+
+func startPostgresContainer(t *testing.T) testcontainers.Container {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping postgres testcontainers tests in -short mode (requires Docker)")
 	}
 
 	ctx := context.Background()
-	container, err := postgres.Run(ctx,
-		"postgres:18.1-bookworm",
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("testuser"),
-		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(postgresContainerWaitStrategy()),
-	)
-	require.NoError(t, err)
+	container := pgtest.MustStart(t, ctx)
 
 	host, err := container.Host(ctx)
 	require.NoError(t, err)
@@ -58,7 +50,7 @@ func setupPostgresContainer(t *testing.T) func() {
 	t.Setenv("PGUSER", "testuser")
 	t.Setenv("PGPASSWORD", "testpass")
 
-	return func() { _ = container.Terminate(ctx) }
+	return container
 }
 
 func newTestPostgres(t *testing.T) *Postgres {
@@ -91,6 +83,36 @@ func captureStorageLogs(t *testing.T) *bytes.Buffer {
 	t.Cleanup(func() { slog.SetDefault(currentLogger) })
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	return &buf
+}
+
+func TestConfigurePostgresPool(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    int32
+		wantErr bool
+	}{
+		{name: "default", want: defaultPostgresPoolMaxConns},
+		{name: "explicit", value: "12", want: 12},
+		{name: "trimmed", value: " 8 ", want: 8},
+		{name: "zero", value: "0", wantErr: true},
+		{name: "negative", value: "-1", wantErr: true},
+		{name: "not an integer", value: "many", wantErr: true},
+		{name: "overflow", value: "2147483648", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("PG_POOL_MAX_CONNS", tt.value)
+			cfg := &pgxpool.Config{}
+			err := configurePostgresPool(cfg)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, cfg.MaxConns)
+		})
+	}
 }
 
 func readStorageLogEntries(t *testing.T, buf *bytes.Buffer) []map[string]any {
@@ -151,6 +173,15 @@ func TestPostgres_SaveLoadSnapshot(t *testing.T) {
 }
 func TestPostgres_SealedInferenceLifecycle(t *testing.T) {
 	runSealedInferenceLifecycle(t, newTestPostgres(t))
+}
+func TestPostgres_SealedInferenceBatchInsert(t *testing.T) {
+	runSealedInferenceBatchInsert(t, newTestPostgres(t))
+}
+func TestPostgres_SealedInferenceBulkInsert(t *testing.T) {
+	runSealedInferenceBulkInsert(t, newTestPostgres(t))
+}
+func TestPostgres_ValidationObsBatchDrain(t *testing.T) {
+	runValidationObsBatchDrain(t, newTestPostgres(t))
 }
 func TestPostgres_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestPostgres(t))
@@ -431,6 +462,232 @@ func TestPostgres_WaitReady_BlocksUntilIndex(t *testing.T) {
 	require.NoError(t, <-waitErr)
 	require.True(t, pg.Ready())
 	require.NoError(t, pg.CreateSession(paramsForEpoch("after-ready", 1)))
+}
+
+func TestPostgresReadyUsesHealthHysteresis(t *testing.T) {
+	pg := &Postgres{healthReady: true}
+
+	previous, current := pg.recordHealthProbe(postgresHealthProbeDatabaseError, true)
+	require.Equal(t, postgresHealthState{ready: true}, previous)
+	require.Equal(t, postgresHealthState{ready: true, saturated: true}, current)
+	previous, current = pg.recordHealthProbe(postgresHealthProbeDatabaseError, true)
+	require.Equal(t, postgresHealthState{ready: true, saturated: true}, previous)
+	require.Equal(t, postgresHealthState{saturated: true}, current)
+
+	previous, current = pg.recordHealthProbe(postgresHealthProbeSuccess, true)
+	require.Equal(t, postgresHealthState{saturated: true}, previous)
+	require.Equal(t, postgresHealthState{saturated: true}, current)
+	previous, current = pg.recordHealthProbe(postgresHealthProbeSuccess, true)
+	require.Equal(t, postgresHealthState{saturated: true}, previous)
+	require.Equal(t, postgresHealthState{ready: true, saturated: true}, current)
+
+	previous, current = pg.recordHealthProbe(postgresHealthProbeSuccess, false)
+	require.Equal(t, postgresHealthState{ready: true, saturated: true}, previous)
+	require.Equal(t, postgresHealthState{ready: true}, current)
+}
+
+func TestPostgresHealthProbeIsIndependentOfApplicationPool(t *testing.T) {
+	container := startPostgresContainer(t)
+	defer func() { _ = container.Terminate(context.Background()) }()
+
+	cfg, err := pgxpool.ParseConfig("")
+	require.NoError(t, err)
+	cfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	defer pool.Close()
+	require.NoError(t, pool.Ping(context.Background()))
+
+	conn, err := pool.Acquire(context.Background())
+	require.NoError(t, err)
+	defer conn.Release()
+	require.True(t, postgresPoolIsSaturated(pool))
+
+	probe := newPostgresHealthProbe(cfg.ConnConfig)
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := probe.close(closeCtx); err != nil {
+			t.Errorf("close postgres health probe: %v", err)
+		}
+	}()
+	pg := &Postgres{pool: pool, healthReady: true}
+
+	probeCtx, cancel := context.WithTimeout(context.Background(), postgresHealthTimeout)
+	probeErr := probe.check(probeCtx)
+	cancel()
+	require.NoError(t, probeErr)
+	_, current := pg.recordHealthProbe(postgresHealthProbeSuccess, postgresPoolIsSaturated(pool))
+	require.Equal(t, postgresHealthState{ready: true, saturated: true}, current)
+
+	closeCtx, closeCancel := context.WithTimeout(context.Background(), time.Second)
+	require.NoError(t, probe.conn.Close(closeCtx))
+	closeCancel()
+	probeCtx, cancel = context.WithTimeout(context.Background(), postgresHealthTimeout)
+	probeErr = probe.check(probeCtx)
+	cancel()
+	require.NoError(t, probeErr)
+
+	require.NoError(t, container.Stop(context.Background(), nil))
+	probeCtx, cancel = context.WithTimeout(context.Background(), postgresHealthTimeout)
+	probeErr = probe.check(probeCtx)
+	cancel()
+	require.Error(t, probeErr)
+	_, current = pg.recordHealthProbe(postgresHealthProbeDatabaseError, postgresPoolIsSaturated(pool))
+	require.Equal(t, postgresHealthState{ready: true, saturated: true}, current)
+	_, current = pg.recordHealthProbe(postgresHealthProbeDatabaseError, postgresPoolIsSaturated(pool))
+	require.Equal(t, postgresHealthState{saturated: true}, current)
+}
+
+func TestPostgresHealthProbePingAfterReconnectWithdraws(t *testing.T) {
+	container := startPostgresContainer(t)
+	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
+
+	admin, err := pgx.Connect(context.Background(), "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close(context.Background()) })
+
+	cfg, err := pgxpool.ParseConfig("")
+	require.NoError(t, err)
+	cfg.ConnConfig.AfterConnect = func(ctx context.Context, conn *pgconn.PgConn) error {
+		_, err := admin.Exec(ctx, "SELECT pg_terminate_backend($1)", conn.PID())
+		return err
+	}
+
+	probe := newPostgresHealthProbe(cfg.ConnConfig)
+	t.Cleanup(func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = probe.close(closeCtx)
+	})
+	pg := &Postgres{healthReady: true}
+
+	for i := 0; i < postgresHealthQuorum; i++ {
+		probeCtx, cancel := context.WithTimeout(context.Background(), postgresHealthTimeout)
+		probeErr := probe.check(probeCtx)
+		cancel()
+		require.Error(t, probeErr, "probe %d: handshake-then-kill must fail Ping, not count as a healthy reconnect", i+1)
+		require.ErrorContains(t, probeErr, "ping postgres health probe connection",
+			"probe %d: connect must succeed so the failure is the skipped Ping, not handshake", i+1)
+
+		result := postgresHealthProbeDatabaseError
+		_, current := pg.recordHealthProbe(result, false)
+		if i+1 < postgresHealthQuorum {
+			require.Equal(t, postgresHealthState{ready: true}, current)
+			continue
+		}
+		require.Equal(t, postgresHealthState{}, current)
+	}
+}
+
+func TestPostgresHealthProbeBudgetCoversConnectionSetup(t *testing.T) {
+	require.GreaterOrEqual(t, postgresHealthTimeout, postgresConnectTimeout)
+}
+
+func TestPostgresFenceCheckHasIndependentBudget(t *testing.T) {
+	require.Greater(t, postgresFenceCheckTimeout, postgresHealthTimeout)
+	require.Equal(t, 30*time.Second, postgresFenceCheckTimeout)
+}
+
+func TestPostgresReadinessDoesNotWaitForFenceCheck(t *testing.T) {
+	healthChecks := make(chan struct{}, postgresHealthQuorum)
+	fenceStarted := make(chan struct{}, 1)
+	pg := &Postgres{
+		healthReady: true,
+		healthDone:  make(chan struct{}),
+		fatalErrors: make(chan error, 1),
+	}
+	pg.startPostgresMonitors(postgresMonitorConfig{
+		interval:      time.Millisecond,
+		healthTimeout: 10 * time.Millisecond,
+		fenceTimeout:  time.Second,
+		healthCheck: func(context.Context) error {
+			select {
+			case healthChecks <- struct{}{}:
+			default:
+			}
+			return errors.New("database unavailable")
+		},
+		healthClose: func(context.Context) error { return nil },
+		fenceCheck: func(ctx context.Context) error {
+			fenceStarted <- struct{}{}
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		poolSaturated: func() bool { return false },
+	})
+	t.Cleanup(func() {
+		pg.mu.Lock()
+		cancel := pg.healthStop
+		pg.mu.Unlock()
+		cancel()
+		<-pg.healthDone
+	})
+
+	select {
+	case <-fenceStarted:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("fence monitor did not start")
+	}
+	for range postgresHealthQuorum {
+		select {
+		case <-healthChecks:
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("readiness probe was blocked by the in-flight fence check")
+		}
+	}
+	require.Eventually(t, func() bool {
+		pg.mu.RLock()
+		defer pg.mu.RUnlock()
+		return !pg.healthReady
+	}, 100*time.Millisecond, time.Millisecond)
+	select {
+	case err := <-pg.fatalErrors:
+		t.Fatalf("blocked fence check became terminal before its deadline: %v", err)
+	default:
+	}
+}
+
+func TestPostgresReadyTracksLiveDatabaseLoss(t *testing.T) {
+	container := startPostgresContainer(t)
+	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
+
+	pg, err := NewPostgres(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pg.Close() })
+	require.NoError(t, pg.WaitReady(context.Background()))
+	require.True(t, pg.Ready())
+
+	require.NoError(t, container.Stop(context.Background(), nil))
+	require.Eventually(t, func() bool { return !pg.Ready() },
+		30*time.Second, 100*time.Millisecond)
+}
+
+func TestPostgresFenceSessionLossIsTerminal(t *testing.T) {
+	container := startPostgresContainer(t)
+	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
+
+	pg, err := NewPostgres(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pg.Close() })
+	require.NoError(t, pg.WaitReady(context.Background()))
+
+	admin, err := pgx.Connect(context.Background(), "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close(context.Background()) })
+	pid := pg.connectionGuard.fenceConn.PgConn().PID()
+	var terminated bool
+	require.NoError(t, admin.QueryRow(context.Background(),
+		"SELECT pg_terminate_backend($1)", pid).Scan(&terminated))
+	require.True(t, terminated)
+
+	select {
+	case fatalErr := <-pg.FatalErrors():
+		require.ErrorContains(t, fatalErr, "postgres fence session lost")
+	case <-time.After(2*postgresHealthInterval + postgresHealthTimeout):
+		t.Fatal("postgres fence loss did not terminate the storage lifecycle")
+	}
+	require.False(t, pg.Ready())
 }
 
 func TestPostgres_NewPostgres_ConnectBudgetDoesNotIncludeIndex(t *testing.T) {

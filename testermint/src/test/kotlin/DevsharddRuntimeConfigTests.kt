@@ -19,6 +19,8 @@ import com.productscience.initCluster
 import com.productscience.inferenceConfig
 import com.productscience.logSection
 import com.productscience.nodemanager.NodeManagerProto
+import io.grpc.Status
+import io.grpc.StatusRuntimeException
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
@@ -65,9 +67,6 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
      * [LocalInferencePair.waitForNextInferenceWindow] near epoch end (~45s).
      */
     private val governanceReEnableSlaMs = 120_000L
-
-    /** After dapi container restart, allow NodeManager + versiond proxy to recover. */
-    private val postRestartWarmupDelay = Duration.ofSeconds(10)
 
     private val runtimeConfigSpec = createSpec(epochLength = 15L).merge(
         spec<AppState> {
@@ -120,17 +119,66 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
 
     private fun waitForSyncedRuntimeConfig(client: NodeManagerClient): NodeManagerProto.RuntimeConfig {
         var clientHeight = 0L
+        var lastTransportError: StatusRuntimeException? = null
         repeat(60) {
-            val resp = client.getRuntimeConfig(clientParamsBlockHeight = clientHeight, maxWaitSeconds = 0)
-            if (!resp.unchanged && resp.hasConfig()) {
-                clientHeight = resp.config.paramsBlockHeight
-                if (clientHeight > 0) {
-                    return resp.config
+            try {
+                val resp = client.getRuntimeConfig(clientParamsBlockHeight = clientHeight, maxWaitSeconds = 0)
+                lastTransportError = null
+                if (!resp.unchanged && resp.hasConfig()) {
+                    clientHeight = resp.config.paramsBlockHeight
+                    if (clientHeight > 0) {
+                        return resp.config
+                    }
                 }
+            } catch (e: StatusRuntimeException) {
+                if (!isTransientNodeManagerUnavailable(e)) {
+                    throw e
+                }
+                lastTransportError = e
             }
             Thread.sleep(5_000)
         }
-        error("dapi runtime config never synced after 5m")
+        throw lastTransportError ?: error("dapi runtime config never synced after 5m")
+    }
+
+    /** Host-side NodeManager is up: GetRuntimeConfig answered (config may still be unsynced). */
+    private fun waitForNodeManagerReady(
+        pair: LocalInferencePair,
+        timeoutMs: Long = 300_000L,
+    ) {
+        val port = pair.nodeManagerGrpcHostPort
+            ?: error("NodeManager gRPC port not available for ${pair.name}")
+        logSection("Waiting for NodeManager gRPC on localhost:$port")
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var lastError: StatusRuntimeException? = null
+        nodeManagerClient(pair).use { client ->
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    client.getRuntimeConfig(clientParamsBlockHeight = 0, maxWaitSeconds = 0)
+                    return
+                } catch (e: StatusRuntimeException) {
+                    if (!isTransientNodeManagerUnavailable(e)) {
+                        throw e
+                    }
+                    lastError = e
+                }
+                Thread.sleep(1_000)
+            }
+        }
+        error("NodeManager gRPC not ready on localhost:$port after ${timeoutMs}ms: ${lastError?.message}")
+    }
+
+    private fun isTransientNodeManagerUnavailable(e: StatusRuntimeException): Boolean {
+        when (e.status.code) {
+            Status.Code.UNAVAILABLE, Status.Code.DEADLINE_EXCEEDED -> return true
+            else -> {}
+        }
+        val text = listOfNotNull(e.status.description, e.cause?.message, e.message)
+            .joinToString(" ")
+            .lowercase()
+        return text.contains("connection reset") ||
+            text.contains("connection refused") ||
+            text.contains("io exception")
     }
 
     private fun waitForRuntimeEpochAtLeast(
@@ -216,16 +264,19 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
     private fun restartApiContainer(pair: LocalInferencePair) {
         val cleanName = pair.name.trimStart('/')
         val targetContainerName = "/${cleanName}-api"
-        val dockerClient = DockerClientBuilder.getInstance().build()
-        val container = dockerClient.listContainersCmd().withShowAll(true).exec().firstOrNull { c ->
-            c.names.any { it == targetContainerName }
-        } ?: error("API container not found for $cleanName")
+        DockerClientBuilder.getInstance().build().use { dockerClient ->
+            val container = dockerClient.listContainersCmd().withShowAll(true).exec().firstOrNull { c ->
+                c.names.any { it == targetContainerName }
+            } ?: error("API container not found for $cleanName")
 
-        if (container.state == "running") {
-            dockerClient.stopContainerCmd(container.id).exec()
+            if (container.state == "running") {
+                dockerClient.stopContainerCmd(container.id).exec()
+            }
+            dockerClient.startContainerCmd(container.id).exec()
         }
-        dockerClient.startContainerCmd(container.id).exec()
-        pair.waitForFirstBlock()
+        // Chain params stay cached across a DAPI-only restart; waitForFirstBlock()
+        // returns immediately and does not mean NodeManager :9400 is listening.
+        waitForNodeManagerReady(pair)
     }
 
     @Test
@@ -250,7 +301,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
         )
         try {
             genesis.waitForMidEpochWindow()
-            genesis.waitForDevshardProxyWarmup()
+            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
             val okBefore = genesis.sendChatCompletionWithStatus(handle.proxyUrl, devshardEscrowModel, "before gov")
             assertThat(okBefore.httpCode).isBetween(200, 299)
 
@@ -370,7 +421,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
                 keyName = user.keyName,
                 routePrefix = overrideRoutePrefix,
             )
-            genesis.waitForDevshardProxyWarmup(postRestartWarmupDelay)
+            genesis.waitForDevshardProxyWarmup(proxyAfterRestart.proxyUrl)
             nodeManagerClient(genesis).use { waitForSyncedRuntimeConfig(it) }
             genesis.waitForNextInferenceWindow()
 

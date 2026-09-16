@@ -571,8 +571,8 @@ func TestNoLogprobsAnswer(t *testing.T) {
 		t.Fatalf("Expected nil logprobs, got %v", r.Choices[0].Logprobs.Content)
 	}
 
-	if r.Choices[0].StopReason != "" {
-		t.Fatalf("Expected stop reason to be nil got %s", r.Choices[0].StopReason)
+	if r.Choices[0].StopReason != nil {
+		t.Fatalf("Expected stop reason to be nil got %v", r.Choices[0].StopReason)
 	}
 }
 
@@ -662,4 +662,36 @@ func TestStreamedResponseSerialization(t *testing.T) {
 
 	require.Equal(t, len(resp.(*StreamedCompletionResponse).Lines), len(resp2.(*StreamedCompletionResponse).Lines))
 	require.Equal(t, len(resp.(*StreamedCompletionResponse).Resp.Data), len(resp2.(*StreamedCompletionResponse).Resp.Data))
+}
+
+// vLLM sends the stop token's id, not its text: `int | str | None`.
+func TestNumericStopReasonAnswer(t *testing.T) {
+	response := `{
+		"id": "devshard-402-1",
+		"object": "chat.completion",
+		"created": 1778003290,
+		"model": "moonshotai/Kimi-K2.6",
+		"choices": [
+			{
+				"index": 0,
+				"message": {"role": "assistant", "content": " ok"},
+				"logprobs": null,
+				"finish_reason": "stop",
+				"stop_reason": 163586
+			}
+		],
+		"usage": {"prompt_tokens": 14, "completion_tokens": 2}
+	}`
+
+	var r Response
+	require.NoError(t, json.Unmarshal([]byte(response), &r))
+	require.Equal(t, float64(163586), r.Choices[0].StopReason)
+}
+
+func TestNumericStopReasonStreamedEvent(t *testing.T) {
+	line := `data: {"choices":[{"delta":{},"finish_reason":"stop","index":0,"stop_reason":163586,"token_ids":[163586]}],"created":1788420678,"id":"devshard-69861-1021","model":"moonshotai/Kimi-K2.6","object":"chat.completion.chunk"}`
+
+	response, err := NewCompletionResponseFromLines([]string{line})
+	require.NoError(t, err)
+	require.Equal(t, float64(163586), response.(*StreamedCompletionResponse).Resp.Data[0].Choices[0].StopReason)
 }

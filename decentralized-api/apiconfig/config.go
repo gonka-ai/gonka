@@ -77,6 +77,9 @@ type ApiConfig struct {
 	// federation endpoint (env: DAPI_API__MLNODE_METRICS_DISABLED=true).
 	// Default (zero value) keeps it enabled.
 	MLNodeMetricsDisabled bool `koanf:"mlnode_metrics_disabled" json:"mlnode_metrics_disabled"`
+	// MLNodePingDisabled turns off the background ML node ping job
+	// (env: DAPI_API__MLNODE_PING_DISABLED=true). Default keeps it enabled.
+	MLNodePingDisabled bool `koanf:"mlnode_ping_disabled" json:"mlnode_ping_disabled"`
 }
 
 type ChainNodeConfig struct {

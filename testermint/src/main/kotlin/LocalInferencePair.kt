@@ -320,6 +320,26 @@ private fun LocalInferencePair.ensureDevshardctlInstalled() {
         if (containersWithDevshardctl.contains(containerId)) {
             return
         }
+        val hostBinary = Path.of(getRepoRoot(), "build", "devshardctl")
+        if (Files.isRegularFile(hostBinary)) {
+            val cp = ProcessBuilder(
+                "docker",
+                "cp",
+                hostBinary.toAbsolutePath().toString(),
+                "$containerId:/usr/local/bin/devshardctl",
+            )
+                .redirectErrorStream(true)
+                .start()
+            val cpOut = cp.inputStream.bufferedReader().use { it.readText() }
+            check(cp.waitFor() == 0) {
+                "docker cp build/devshardctl into $containerId failed: $cpOut"
+            }
+            api.executor.exec(listOf("chmod", "+x", "/usr/local/bin/devshardctl"), null)
+            containersWithDevshardctl.add(containerId)
+            Logger.info("Installed host build/devshardctl into api container {}", containerId)
+            return
+        }
+
         val alreadyPresent = try {
             api.executor.exec(
                 listOf("sh", "-c", "command -v devshardctl >/dev/null 2>&1 && echo OK"),
@@ -328,32 +348,11 @@ private fun LocalInferencePair.ensureDevshardctlInstalled() {
         } catch (_: Exception) {
             false
         }
-        if (alreadyPresent) {
-            containersWithDevshardctl.add(containerId)
-            return
-        }
-
-        val hostBinary = Path.of(getRepoRoot(), "build", "devshardctl")
-        check(Files.isRegularFile(hostBinary)) {
+        check(alreadyPresent) {
             "devshardctl is not in the api container and missing at $hostBinary. " +
                 "Run: make devshardctl-build (produces a Linux binary for docker exec)"
         }
-
-        val cp = ProcessBuilder(
-            "docker",
-            "cp",
-            hostBinary.toAbsolutePath().toString(),
-            "$containerId:/usr/local/bin/devshardctl",
-        )
-            .redirectErrorStream(true)
-            .start()
-        val cpOut = cp.inputStream.bufferedReader().use { it.readText() }
-        check(cp.waitFor() == 0) {
-            "docker cp build/devshardctl into $containerId failed: $cpOut"
-        }
-        api.executor.exec(listOf("chmod", "+x", "/usr/local/bin/devshardctl"), null)
         containersWithDevshardctl.add(containerId)
-        Logger.info("Installed host build/devshardctl into api container {}", containerId)
     }
 }
 
@@ -1109,7 +1108,12 @@ data class LocalInferencePair(
             // same-package top-level helper in DevshardVersiondTestConfig.kt.
             val effectiveRoutePrefix = routePrefix ?: com.productscience.defaultDevshardRoutePrefix()
             val routePrefixEnv = " DEVSHARD_ROUTE_PREFIX='$effectiveRoutePrefix'"
-            val logLevelEnv = if (debugLogging) " DEVSHARD_LOG_LEVEL=debug" else ""
+            val logLevelFromEnv = System.getenv("DEVSHARD_LOG_LEVEL")?.trim().orEmpty()
+            val logLevelEnv = when {
+                debugLogging -> " DEVSHARD_LOG_LEVEL=debug"
+                logLevelFromEnv.isNotEmpty() -> " DEVSHARD_LOG_LEVEL='$logLevelFromEnv'"
+                else -> ""
+            }
             val startCommand = listOf(
                 "sh", "-c",
                 "DEVSHARD_PRIVATE_KEY='$privateKey'" +
@@ -1117,6 +1121,8 @@ data class LocalInferencePair(
                     " DEVSHARD_MODEL='$model'" +
                     " DEVSHARD_ADMIN_API_KEY='$devshardAdminApiKey'" +
                     " DEVSHARD_CHAIN_GRPC=\$NODE_HOST:9090" +
+                    " NODE_RPC_URL=http://\$NODE_HOST:26657" +
+                    " NODE_MANAGER_ADDR=localhost:9400" +
                     " DEVSHARD_PORT=$port" +
                     // Lift gateway rate limits for tests. The dynamic cap is
                     // floor(weight * per10000 / 10000); tiny test PoC weight rounds it to 0.
@@ -1131,6 +1137,10 @@ data class LocalInferencePair(
                     // exists in the base dir; a shared base dir makes a second escrow's
                     // proxy load the first escrow's persisted state instead.
                     " DEVSHARD_STORAGE_DIR=/tmp/devshardctl-proxy-${escrowId}" +
+                    // e2e hosts register docker-internal hostnames that resolve to
+                    // private IPs, so the dial-time SSRF guard must be off here.
+                    // Production leaves this unset (default: private targets blocked).
+                    " DEVSHARD_ALLOW_PRIVATE_ADDRESSES=true" +
                     routePrefixEnv +
                     logLevelEnv +
                     " nohup devshardctl >$stderrFile 2>&1 &" +
@@ -1254,16 +1264,28 @@ data class LocalInferencePair(
     }
 
     fun finalizeDevshardProxy(proxyUrl: String): DevshardctlResult {
+        val bodyFile = "/tmp/devshard-finalize-${System.nanoTime()}.out"
         val raw = api.executor.exec(listOf(
             "sh", "-c",
-            "curl -sf -X POST $proxyUrl/v1/finalize -H 'Authorization: Bearer $devshardAdminApiKey'"
-        ), null).joinToString("")
-        val start = raw.indexOf('{')
-        val end = raw.lastIndexOf('}')
-        if (start < 0 || end < 0) {
-            error("finalize returned no JSON object. raw:\n$raw")
+            "curl --silent --show-error --connect-timeout 5 --max-time 120 " +
+                "-o $bodyFile -w '%{http_code}' " +
+                "-X POST $proxyUrl/v1/finalize " +
+                "-H 'Authorization: Bearer $devshardAdminApiKey'"
+        ), null).joinToString("").trim()
+        val httpCode = raw.toIntOrNull()
+            ?: error("finalize curl did not return an HTTP status code (got ${raw.take(80)})")
+        val body = runCatching {
+            api.executor.exec(listOf("cat", bodyFile), null).joinToString("")
+        }.getOrDefault("")
+        if (httpCode !in 200..299) {
+            error("finalize failed with HTTP $httpCode: $body")
         }
-        val json = raw.substring(start, end + 1)
+        val start = body.indexOf('{')
+        val end = body.lastIndexOf('}')
+        if (start < 0 || end < 0) {
+            error("finalize returned no JSON object. raw:\n$body")
+        }
+        val json = body.substring(start, end + 1)
         val parsed = Gson().fromJson(json, DevshardSettlementData::class.java)
         return DevshardctlResult(parsed = parsed, rawJson = json, stderr = "")
     }

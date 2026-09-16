@@ -101,7 +101,7 @@ const (
 	DefaultDevshardMaxEscrowsPerEpoch  uint32 = 100
 	DefaultDevshardGroupSize           uint32 = 16
 	DefaultDevshardTokenPrice          uint64 = 1
-	DefaultDevshardMaxNonce            uint32 = 20_000
+	DefaultDevshardMaxNonce            uint32 = 1_000_000
 	DefaultDevshardRequestsEnabled     bool   = true
 	DefaultDevshardCreateDevshardFee   uint64 = 10_000
 	DefaultDevshardFeePerNonce         uint64 = 1_000

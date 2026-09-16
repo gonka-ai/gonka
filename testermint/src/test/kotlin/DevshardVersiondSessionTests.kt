@@ -62,7 +62,7 @@ class DevshardVersiondSessionTests : DevshardVersiondTestBase() {
         )
 
         try {
-            genesis.waitForDevshardProxyWarmup()
+            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
             logSection("Sending chat completions via proxy")
             for (i in 0 until 20) {
                 val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i")
@@ -109,7 +109,7 @@ class DevshardVersiondSessionTests : DevshardVersiondTestBase() {
         )
 
         try {
-            genesis.waitForDevshardProxyWarmup()
+            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
             logSection("Sending streaming chat completions via proxy")
             val numInferences = 20L
             for (i in 0 until numInferences) {
