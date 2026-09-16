@@ -1786,11 +1786,7 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 		ExecutorSlot: 1,
 		EscrowId:     "escrow-1",
 	}
-	finishData, err := proto.Marshal(finishMsg)
-	require.NoError(t, err)
-	finishSig, err := hosts[1].Sign(finishData)
-	require.NoError(t, err)
-	finishMsg.ProposerSig = finishSig
+	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
 	finishTx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: finishMsg}}
 	diff3 := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{finishTx})
 
