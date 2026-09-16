@@ -19,7 +19,7 @@ import (
 
 // Mount registers the blockoracle endpoints on g:
 //
-//	GET /block/:height
+//	GET /block/:height          (height 0 is Latest, matching GetBlockHeader)
 //	GET /block/:height/prove?path=
 //	GET /healthz
 func Mount(g *echo.Group, oracle blocks.BlockOracle) {
@@ -44,12 +44,20 @@ func handleAt(oracle blocks.BlockOracle) echo.HandlerFunc {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
-		h, err := oracle.At(c.Request().Context(), height)
+		var h *blocks.Header
+		if height == 0 {
+			h, err = oracle.Latest(c.Request().Context())
+		} else {
+			h, err = oracle.At(c.Request().Context(), height)
+		}
 		if err != nil {
 			if errors.Is(err, blocks.ErrHeaderNotFound) {
 				return echo.NewHTTPError(http.StatusNotFound, err.Error())
 			}
 			return echo.NewHTTPError(http.StatusBadGateway, err.Error())
+		}
+		if h == nil {
+			return echo.NewHTTPError(http.StatusNotFound, blocks.ErrHeaderNotFound.Error())
 		}
 		return writeJSON(c, h)
 	}

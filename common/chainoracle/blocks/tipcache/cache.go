@@ -4,6 +4,7 @@
 package tipcache
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -26,11 +27,12 @@ var errNoHeader = errors.New("blockoracle/tipcache: no header yet")
 type Cache struct {
 	staleAfter time.Duration
 
-	mu       sync.RWMutex
-	latest   *blocks.Header
-	byHeight map[int64]*blocks.Header
-	subs     map[int]*subscription
-	nextID   int
+	mu        sync.RWMutex
+	latest    *blocks.Header
+	byHeight  map[int64]*blocks.Header
+	minHeight int64
+	subs      map[int]*subscription
+	nextID    int
 
 	lastRecvUnix atomic.Int64
 }
@@ -62,27 +64,30 @@ func (c *Cache) Observe(h *blocks.Header) {
 	}
 	cp := cloneHeader(h)
 	c.mu.Lock()
-	advance := c.latest == nil || cp.Height >= c.latest.Height
+	old := c.latest
+	replaced := old != nil && cp.Height == old.Height && !bytes.Equal(cp.BlockHash, old.BlockHash)
+	advance := old == nil || cp.Height >= old.Height
 	if advance {
 		c.latest = cp
 		c.lastRecvUnix.Store(time.Now().UnixNano())
 	}
 	c.storeLocked(cp)
-	var live []*subscription
+	if old != nil && cp.Height > old.Height {
+		c.evictRangeLocked(blocks.OldestHeight(old.Height), blocks.OldestHeight(cp.Height))
+	}
+	// Send under the lock so Subscribe cannot close sub.ch while we send.
 	if advance {
 		for _, sub := range c.subs {
-			if cp.Height >= sub.from {
-				live = append(live, sub)
+			if !wakeSubscriber(sub.from, cp.Height, replaced) {
+				continue
+			}
+			select {
+			case sub.ch <- cloneHeader(cp):
+			default:
 			}
 		}
 	}
 	c.mu.Unlock()
-	for _, sub := range live {
-		select {
-		case sub.ch <- cloneHeader(cp):
-		default:
-		}
-	}
 }
 
 // Remember stores a non-dummy header in the last HistoryWindow for At().
@@ -121,6 +126,17 @@ func (c *Cache) At(_ context.Context, height int64) (*blocks.Header, error) {
 		return nil, errNoHeader
 	}
 	return cloneHeader(h), nil
+}
+
+// StoredOldest is the lowest height actually in the map. After restart or a
+// sparse Observe, that is the tip, not tip − HistoryWindow.
+func (c *Cache) StoredOldest() int64 {
+	if c == nil {
+		return 0
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.minHeight
 }
 
 func (c *Cache) Prove(context.Context, string, int64) (*blocks.Proof, error) {
@@ -188,30 +204,48 @@ func (c *Cache) storeLocked(h *blocks.Header) {
 		}
 	}
 	c.byHeight[h.Height] = h
-	c.evictLocked()
+	if c.minHeight == 0 || h.Height < c.minHeight {
+		c.minHeight = h.Height
+	}
 }
 
-func (c *Cache) evictLocked() {
-	if c.latest != nil {
-		floor := blocks.OldestHeight(c.latest.Height)
-		for height := range c.byHeight {
-			if height < floor {
-				delete(c.byHeight, height)
-			}
-		}
+// evictRangeLocked drops [oldFloor, newFloor). Sequential Observe(+1) is one delete.
+func (c *Cache) evictRangeLocked(oldFloor, newFloor int64) {
+	if newFloor <= oldFloor {
 		return
 	}
-	for len(c.byHeight) > HistoryWindow {
-		var min int64
-		first := true
-		for height := range c.byHeight {
-			if first || height < min {
-				min = height
-				first = false
-			}
-		}
-		delete(c.byHeight, min)
+	for height := oldFloor; height < newFloor; height++ {
+		delete(c.byHeight, height)
 	}
+	c.refreshMinLocked(newFloor)
+}
+
+func (c *Cache) refreshMinLocked(from int64) {
+	if c.minHeight != 0 {
+		if _, ok := c.byHeight[c.minHeight]; ok && c.minHeight >= from {
+			return
+		}
+	}
+	c.minHeight = 0
+	if c.latest == nil {
+		return
+	}
+	if from < 1 {
+		from = 1
+	}
+	for h := from; h <= c.latest.Height; h++ {
+		if _, ok := c.byHeight[h]; ok {
+			c.minHeight = h
+			return
+		}
+	}
+}
+
+func wakeSubscriber(from, height int64, replaced bool) bool {
+	if height >= from {
+		return true
+	}
+	return replaced && from == height+1
 }
 
 func cloneHeader(h *blocks.Header) *blocks.Header {

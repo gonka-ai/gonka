@@ -42,7 +42,7 @@ func GetBlockHeaders(ctx context.Context, oracle blocks.BlockOracle, req *gen.Ge
 	}
 
 	tip := latest.Height
-	oldest := blocks.OldestHeight(tip)
+	oldest := advertisedOldest(oracle, tip)
 	effective := clampFromHeight(from, oldest)
 	limit := clampMaxHeaders(maxHeaders)
 	maxWait := runtimeconfig.ClampMaxWait(maxWaitSec, 0)
@@ -73,7 +73,7 @@ func GetBlockHeaders(ctx context.Context, oracle blocks.BlockOracle, req *gen.Ge
 		return nil, status.Error(codes.NotFound, blocks.ErrHeaderNotFound.Error())
 	}
 	tip = latest.Height
-	oldest = blocks.OldestHeight(tip)
+	oldest = advertisedOldest(oracle, tip)
 
 	headers, last, err := catchUp(ctx, oracle, effective, tip, limit)
 	if err != nil {
@@ -97,7 +97,7 @@ func GetBlockHeaders(ctx context.Context, oracle blocks.BlockOracle, req *gen.Ge
 		}
 		if latest != nil && !blocks.IsDummyHeader(latest) {
 			tip = latest.Height
-			oldest = blocks.OldestHeight(tip)
+			oldest = advertisedOldest(oracle, tip)
 		}
 		return unchangedResponse(effective, oldest, tip), nil
 	}
@@ -110,7 +110,7 @@ func GetBlockHeaders(ctx context.Context, oracle blocks.BlockOracle, req *gen.Ge
 		return unchangedResponse(effective, oldest, tip), nil
 	}
 	tip = latest.Height
-	oldest = blocks.OldestHeight(tip)
+	oldest = advertisedOldest(oracle, tip)
 	headers, last, err = catchUp(ctx, oracle, effective, tip, limit)
 	if err != nil {
 		return nil, err
@@ -118,7 +118,50 @@ func GetBlockHeaders(ctx context.Context, oracle blocks.BlockOracle, req *gen.Ge
 	if len(headers) > 0 {
 		return headersResponse(headers, last, oldest, tip), nil
 	}
+	replaced, err := replacementAtCursor(ctx, oracle, effective, latest)
+	if err != nil {
+		return nil, err
+	}
+	if replaced != nil {
+		return headersResponse([]*gen.BlockHeader{HeaderToProto(replaced)}, effective, oldest, tip), nil
+	}
 	return unchangedResponse(effective, oldest, tip), nil
+}
+
+// advertisedOldest is max(theoretical floor, lowest stored height) so a
+// sparse/restart cache does not advertise a window At() cannot serve.
+func advertisedOldest(oracle blocks.BlockOracle, tip int64) int64 {
+	oldest := blocks.OldestHeight(tip)
+	type storedOldest interface {
+		StoredOldest() int64
+	}
+	s, ok := oracle.(storedOldest)
+	if !ok {
+		return oldest
+	}
+	if n := s.StoredOldest(); n > oldest {
+		return n
+	}
+	return oldest
+}
+
+// replacementAtCursor returns the header at from_height when a waiter at
+// tip was woken by a same-height hash change (catch-up of tip+1 is empty).
+func replacementAtCursor(ctx context.Context, oracle blocks.BlockOracle, from int64, latest *blocks.Header) (*blocks.Header, error) {
+	if latest == nil || latest.Height != from {
+		return nil, nil
+	}
+	h, err := oracle.At(ctx, from)
+	if err != nil {
+		if errors.Is(err, blocks.ErrHeaderNotFound) {
+			return nil, nil
+		}
+		return nil, statusFromOracleErr(err)
+	}
+	if h == nil || blocks.IsDummyHeader(h) {
+		return nil, nil
+	}
+	return h, nil
 }
 
 func clampFromHeight(from, oldest int64) int64 {

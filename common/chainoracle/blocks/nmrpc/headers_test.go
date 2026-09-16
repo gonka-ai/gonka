@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/tipcache"
 	"common/nodemanager/gen"
 
 	"github.com/stretchr/testify/require"
@@ -219,6 +220,46 @@ func TestGetBlockHeaders_LPA2k_ExistingFieldNumbersUnchanged(t *testing.T) {
 	assertFieldNum(t, (&gen.GetBlockHeadersResponse{}).ProtoReflect().Descriptor(), "next_from_height", 3)
 	assertFieldNum(t, (&gen.GetBlockHeadersResponse{}).ProtoReflect().Descriptor(), "oldest_height", 4)
 	assertFieldNum(t, (&gen.GetBlockHeadersResponse{}).ProtoReflect().Descriptor(), "tip_height", 5)
+}
+
+func TestGetBlockHeaders_SparseCacheFromZeroStartsAtStoredOldest(t *testing.T) {
+	c := tipcache.New(time.Hour)
+	c.Observe(hdr(testTip))
+	resp, err := GetBlockHeaders(context.Background(), c, &gen.GetBlockHeadersRequest{FromHeight: 0})
+	require.NoError(t, err)
+	require.False(t, resp.Unchanged)
+	require.Len(t, resp.Headers, 1)
+	require.Equal(t, testTip, resp.Headers[0].Height)
+	require.Equal(t, testTip, resp.OldestHeight)
+	require.Equal(t, testTip, resp.NextFromHeight)
+}
+
+func TestGetBlockHeaders_SameHeightHashChangeWakes(t *testing.T) {
+	c := tipcache.New(time.Hour)
+	c.Observe(hdr(10))
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan *gen.GetBlockHeadersResponse, 1)
+	go func() {
+		resp, err := GetBlockHeaders(ctx, c, &gen.GetBlockHeadersRequest{
+			FromHeight:     10,
+			MaxWaitSeconds: 5,
+		})
+		require.NoError(t, err)
+		done <- resp
+	}()
+	time.Sleep(50 * time.Millisecond)
+	c.Observe(blocks.HashOnlyHeader(10, time.Unix(10, 0).UTC(), "gonka", []byte{0xff}))
+	select {
+	case resp := <-done:
+		require.False(t, resp.Unchanged)
+		require.Len(t, resp.Headers, 1)
+		require.Equal(t, int64(10), resp.Headers[0].Height)
+		require.Equal(t, []byte{0xff}, resp.Headers[0].BlockHash)
+		require.Equal(t, int64(10), resp.NextFromHeight)
+	case <-ctx.Done():
+		t.Fatal("same-height hash change did not wake long-poll")
+	}
 }
 
 func TestGetBlockHeaders_StatusCodes(t *testing.T) {

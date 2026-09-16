@@ -526,6 +526,16 @@ func TestMockObserver_LPA3a_WindowFloorAndSubscribeOldest(t *testing.T) {
 	require.Equal(t, live.Height, got.Height)
 }
 
+func TestMockObserver_StoredOldestSparseAdvanceTo(t *testing.T) {
+	m := newLightMock(t)
+	_, err := m.AdvanceOne()
+	require.NoError(t, err)
+	tip := int64(blocks.HistoryWindow + 10)
+	_, err = m.AdvanceTo(tip)
+	require.NoError(t, err)
+	require.Equal(t, tip, m.StoredOldest())
+}
+
 func TestMockObserver_LPA3b_SubscribeBelowOldestSkipsEvicted(t *testing.T) {
 	m := newLightMock(t)
 	_, err := m.AdvanceOne()

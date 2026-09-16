@@ -472,6 +472,20 @@ func (m *Mock) At(_ context.Context, height int64) (*blocks.Header, error) {
 	return cloneHeader(h), nil
 }
 
+// StoredOldest is the lowest height actually in history. After AdvanceTo
+// without filling the gap, that is the tip, not tip − HistoryWindow.
+func (m *Mock) StoredOldest() int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var min int64
+	for h := range m.history {
+		if min == 0 || h < min {
+			min = h
+		}
+	}
+	return min
+}
+
 // Prove returns a minimal, deterministic proof for testenv scenarios.
 // The proof is not an IAVL proof; it binds (path, height) to the
 // header's AppHash so consumers can exercise the wire format without
@@ -646,7 +660,10 @@ func (m *Mock) finishSub(id int, sub *subscription) {
 
 func (m *Mock) fanoutLocked(h *blocks.Header) {
 	for id, sub := range m.subs {
-		if !sub.live || h.Height < sub.from {
+		if !sub.live {
+			continue
+		}
+		if h.Height < sub.from && sub.from != h.Height+1 {
 			continue
 		}
 		cp := cloneHeader(h)

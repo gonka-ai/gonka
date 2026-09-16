@@ -38,6 +38,16 @@ func (o commonBlockOracle) Prove(ctx context.Context, path string, height int64)
 	return toCommonProof(p), nil
 }
 
+func (o commonBlockOracle) StoredOldest() int64 {
+	type storedOldest interface {
+		StoredOldest() int64
+	}
+	if s, ok := o.inner.(storedOldest); ok {
+		return s.StoredOldest()
+	}
+	return 0
+}
+
 func (o commonBlockOracle) Subscribe(ctx context.Context, fromHeight int64) (<-chan *cblocks.Header, error) {
 	ch, err := o.inner.Subscribe(ctx, fromHeight)
 	if err != nil {

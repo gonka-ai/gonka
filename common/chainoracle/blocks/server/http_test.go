@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/server"
+	"common/chainoracle/blocks/tipcache"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
@@ -63,8 +65,8 @@ func TestServer_NoLiveTipRoutes(t *testing.T) {
 	ts := httptest.NewServer(e)
 	t.Cleanup(ts.Close)
 
-	// Both paths hit GET /block/:height and fail parseHeight — they are
-	// not live-tip aliases.
+	// These paths hit GET /block/:height and fail parseHeight — they are
+	// not live-tip aliases. Height 0 is Latest (see TestServer_BlockZeroIsLatest).
 	for _, path := range []string{"/block/latest", "/block/stream"} {
 		resp, err := http.Get(ts.URL + path)
 		require.NoError(t, err)
@@ -113,4 +115,24 @@ func TestServer_AtNotFoundVsBadGateway(t *testing.T) {
 		resp.Body.Close()
 		require.Equal(t, http.StatusBadGateway, resp.StatusCode)
 	})
+}
+
+func TestServer_BlockZeroIsLatest(t *testing.T) {
+	c := tipcache.New(time.Hour)
+	want := blocks.HashOnlyHeader(55, time.Unix(1, 0).UTC(), "gonka", []byte{0xab})
+	c.Observe(want)
+
+	e := echo.New()
+	server.Mount(e.Group(""), c)
+	ts := httptest.NewServer(e)
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/block/0")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var got blocks.Header
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	require.Equal(t, want.Height, got.Height)
+	require.Equal(t, want.BlockHash, got.BlockHash)
 }

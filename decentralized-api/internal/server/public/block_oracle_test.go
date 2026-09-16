@@ -29,6 +29,15 @@ func TestServer_LPA5b_HTTPMatchesObservedHeader(t *testing.T) {
 	require.Equal(t, want.Height, got.Height)
 	require.Equal(t, want.BlockHash, got.BlockHash)
 	require.Equal(t, want.ChainID, got.ChainID)
+
+	req = httptest.NewRequest(http.MethodGet, "/block/0", nil)
+	rec = httptest.NewRecorder()
+	s.e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var latest blocks.Header
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &latest))
+	require.Equal(t, want.Height, latest.Height)
+	require.Equal(t, want.BlockHash, latest.BlockHash)
 }
 
 func TestServer_LPA5e_DisabledSkipsMountKeepsVersions(t *testing.T) {

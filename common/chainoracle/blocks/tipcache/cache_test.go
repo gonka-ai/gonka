@@ -2,6 +2,7 @@ package tipcache
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -115,6 +116,100 @@ func TestCache_LPA1c_RememberDoesNotAdvanceTip(t *testing.T) {
 	got, err = c.At(context.Background(), 90)
 	require.NoError(t, err)
 	require.Equal(t, int64(90), got.Height)
+}
+
+func TestCache_RememberOutsideWindowDropped(t *testing.T) {
+	c := New(time.Hour)
+	tip := int64(HistoryWindow + 50)
+	c.Observe(hdr(tip, 1))
+	c.Remember(hdr(1, 1))
+	_, err := c.At(context.Background(), 1)
+	require.Error(t, err)
+}
+
+func TestCache_NonAdvancingObserveKeepsWindow(t *testing.T) {
+	c := New(time.Hour)
+	c.Observe(hdr(100, 100))
+	c.Remember(hdr(90, 90))
+	c.Observe(hdr(99, 99))
+	got, err := c.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(100), got.Height)
+	got, err = c.At(context.Background(), 90)
+	require.NoError(t, err)
+	require.Equal(t, int64(90), got.Height)
+}
+
+func TestCache_TipJumpEvictsBelowNewFloor(t *testing.T) {
+	c := New(time.Hour)
+	c.Observe(hdr(50, 50))
+	c.Observe(hdr(200_000, 1))
+	_, err := c.At(context.Background(), 50)
+	require.Error(t, err)
+	got, err := c.At(context.Background(), 200_000)
+	require.NoError(t, err)
+	require.Equal(t, int64(200_000), got.Height)
+}
+
+func TestCache_StoredOldestSparseTip(t *testing.T) {
+	c := New(time.Hour)
+	require.Equal(t, int64(0), c.StoredOldest())
+	c.Observe(hdr(200_000, 1))
+	require.Equal(t, int64(200_000), c.StoredOldest())
+	c.Remember(hdr(150_000, 2))
+	require.Equal(t, int64(150_000), c.StoredOldest())
+}
+
+func TestCache_StoredOldestAfterTipJump(t *testing.T) {
+	c := New(time.Hour)
+	c.Observe(hdr(50, 50))
+	c.Observe(hdr(200_000, 1))
+	require.Equal(t, int64(200_000), c.StoredOldest())
+}
+
+func TestCache_SameHeightHashChangeWakesCaughtUpWaiter(t *testing.T) {
+	c := New(time.Hour)
+	c.Observe(hdr(10, 10))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ch, err := c.Subscribe(ctx, 11)
+	require.NoError(t, err)
+
+	c.Observe(hdr(10, 10))
+	select {
+	case <-ch:
+		t.Fatal("duplicate Observe must not wake a from=tip+1 waiter")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	c.Observe(blocks.HashOnlyHeader(10, time.Unix(10, 0).UTC(), "gonka", []byte{0xff}))
+	select {
+	case h := <-ch:
+		require.Equal(t, int64(10), h.Height)
+		require.Equal(t, []byte{0xff}, h.BlockHash)
+	case <-ctx.Done():
+		t.Fatal("same-height hash change did not wake from=tip+1 waiter")
+	}
+}
+
+func TestCache_ObserveDuringUnsubscribeNoPanic(t *testing.T) {
+	c := New(time.Hour)
+	c.Observe(hdr(1, 1))
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithCancel(context.Background())
+			ch, err := c.Subscribe(ctx, 1)
+			require.NoError(t, err)
+			cancel()
+			for range ch {
+			}
+		}()
+		c.Observe(hdr(int64(i+2), byte(i+2)))
+	}
+	wg.Wait()
 }
 
 func TestCache_LPA1d_DummyNotStored(t *testing.T) {
