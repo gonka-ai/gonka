@@ -23,6 +23,8 @@ linters:
       - "^testutil/"
       - "^tests?/"   # matches test/ or tests/
       - "^cmd/"
+      # standalone simulation binaries (package main, not linked into the chain)
+      - "^x/inference/coefficients/sim/"
 
 issues:
   max-issues-per-linter: 0
