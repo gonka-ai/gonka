@@ -227,13 +227,13 @@ measured; the inference gate is the corroborating signal.
 
 ```
 ghcr.io/gonka-ai/mlnode:3.1.0-vllm-0.28.0
-ghcr.io/gonka-ai/mlnode@sha256:25cccf7d9954678550e47a1f09f12d3db140803e9cd6c289f3af25d34ceabda0
+ghcr.io/gonka-ai/mlnode@sha256:de9150fcee0ad77199ca8a48ecae993b2cac0b92a7b05284d1575657d04522fa
 ```
 
 3.1.0 is 3.0.17 with gonka-poc `0.1.6` (gonka-ai/gonka-vllm-plugins#10 and #11): the same layers with
 one added on top, so every layer of 3.0.17 is reused verbatim. Its vLLM base is likewise
 `ghcr.io/gonka-ai/vllm:v0.28.0-glm53-poc-v2-cu13-hopper-blackwell`
-(`sha256:e2cd12021cfcac12b0b9db4c18914d80dd34794289b4729e75e00847f3c20830`) — the
+(`sha256:8d079de6f6397481e8f6e575b0b270c8d53257555b20c08934d8cd93734b426b`) — the
 `v0.28.0-glm53-poc-cu13-hopper-blackwell` base plus the 0.1.6 plugin layer; gonka-ai/vllm#109
 pins that version in `docker/Dockerfile.gonka-poc` so a from-scratch build produces the same
 tree. Building `mlnode/packages/api/Dockerfile` against the v2 base with
@@ -248,6 +248,16 @@ the plugin and must not be used for GLM: its first-in-batch artifacts never vali
 `Glm5NextProcessor.from_pretrained` read `processor_config.json` with a bare `open()`, so a
 launch with the Hugging Face id — the path MLNode takes — failed before the engine started.
 Fixed in gonka-ai/vllm#108 and included in the image above.
+
+A validation replay could hang the node. The 0.28 branch pinned a replay's `max_tokens` to
+the recorded length after `SamplingParams` had been validated (gonka-ai/vllm a340110499,
+not present in 3.0.14 / 3.0.16); a request that carried `min_tokens` above that length
+reached the engine core as `min_tokens > max_tokens`, the re-validation on deserialization
+raised inside `process_input_sockets`, and the engine stopped reading its input socket —
+`/health` stayed green, every request got headers and no tokens, and a PoC `/init/generate`
+hung on `collective_rpc` with the gate left on (503 on inference until vLLM restarted). Seen
+twice on a GLM node on 2026-09-16. The pin is removed in gonka-ai/vllm#111; the replay block
+is the one shipped in 3.0.16 again. Both images above carry it.
 
 **Pin the upstream base by digest.** `vllm/vllm-openai:glm53-flash` is a mutable tag and moved
 from `0.1.dev20051+g487ecf187` to `0.28.1rc1.dev580+g385dce36b` within two days, breaking the
