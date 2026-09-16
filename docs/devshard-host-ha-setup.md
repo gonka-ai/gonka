@@ -4,9 +4,9 @@ Devshard inference that stays available, backed by multiple `versiond` instances
 
 ## Why this matters
 
-**Problem:** a single `versiond` is a single point of failure (SPOF). When its machine or container dies, or when it is stopped for maintenance, gateways cannot reach your host for the protocols it serves until it returns.
+With a single `versiond`, a failure or maintenance stop makes its protocols unavailable on your host.
 
-**Solution:** run several `versiond` replicas behind the router fleet. Routers send requests only to ready replicas, so a failed or stopped replica is bypassed. Replicas share committed session state in PostgreSQL, so an existing session continues on another replica.
+HA lets you run multiple `versiond` instances so inference stays available if one instance fails. Routers direct requests to ready instances, which share committed session state in PostgreSQL. You can also restart or replace one instance while the others continue serving.
 
 ```text
 Public proxy (/devshard/...)
