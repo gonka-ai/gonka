@@ -5,7 +5,7 @@ package tipcache
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,10 +15,11 @@ import (
 
 const subBufSize = 16
 
-// HistoryWindow is how many recent heights Observe/Remember retain for At().
-const HistoryWindow = 100
+// HistoryWindow is how far below the tip Observe/Remember retain for At().
+// oldest = max(1, tip − HistoryWindow).
+const HistoryWindow = blocks.HistoryWindow
 
-var errNoHeader = errors.New("blockoracle/tipcache: no header yet")
+var errNoHeader = fmt.Errorf("blockoracle/tipcache: no header yet: %w", blocks.ErrHeaderNotFound)
 
 // Cache holds the latest observed header, the last HistoryWindow heights,
 // and fans new tips out to subscribers.
@@ -117,7 +118,7 @@ func (c *Cache) At(_ context.Context, height int64) (*blocks.Header, error) {
 	h := c.byHeight[height]
 	c.mu.RUnlock()
 	if h == nil {
-		return nil, errNoHeader
+		return nil, fmt.Errorf("blockoracle/tipcache: no header at %d: %w", height, blocks.ErrHeaderNotFound)
 	}
 	return cloneHeader(h), nil
 }
@@ -190,7 +191,7 @@ func (c *Cache) storeLocked(h *blocks.Header) {
 		c.byHeight = make(map[int64]*blocks.Header)
 	}
 	if c.latest != nil {
-		floor := c.latest.Height - (HistoryWindow - 1)
+		floor := blocks.OldestHeight(c.latest.Height)
 		if h.Height < floor {
 			return
 		}
@@ -201,7 +202,7 @@ func (c *Cache) storeLocked(h *blocks.Header) {
 
 func (c *Cache) evictLocked() {
 	if c.latest != nil {
-		floor := c.latest.Height - (HistoryWindow - 1)
+		floor := blocks.OldestHeight(c.latest.Height)
 		for height := range c.byHeight {
 			if height < floor {
 				delete(c.byHeight, height)

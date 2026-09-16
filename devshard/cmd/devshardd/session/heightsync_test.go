@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -142,6 +143,11 @@ func TestSetHeightSyncFromEnv_WiresGetBlockHeader(t *testing.T) {
 	at, err := mgr.chainOracle.At(context.Background(), 7)
 	require.NoError(t, err)
 	require.Equal(t, int64(7), at.Height, "Observe still fills the At window")
+
+	mgr.SetCometConnected(false)
+	hdr, err = mgr.chainOracle.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(12), hdr.Height, "disconnected Comet must fall through to GetBlockHeader")
 	mgr.CloseHeightSync()
 	require.Nil(t, mgr.heightSync)
 }
@@ -175,4 +181,59 @@ func TestSetHeightSyncFromEnv_NodeManagerWires(t *testing.T) {
 	require.NotNil(t, mgr.heightSync)
 	require.NotNil(t, mgr.chainOracle)
 	mgr.CloseHeightSync()
+	require.Nil(t, mgr.heightSync)
+	require.NotNil(t, mgr.chainOracle, "CloseHeightSync keeps the oracle for in-flight Observe")
+}
+
+func TestObserveChainHeader_AfterCloseStillRecordsTip(t *testing.T) {
+	unsetHeightSyncSources(t)
+	nmHdr := blocks.HashOnlyHeader(12, time.Unix(1_700_000_000, 0).UTC(), "gonka-test", []byte{9, 9, 9, 9})
+	nm := dialNM(t, &heightSyncNMServer{oracle: staticHeaderOracle{hdr: nmHdr}})
+	mgr := newHeightSyncMgr(t)
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nm))
+
+	mgr.CloseHeightSync()
+	require.Nil(t, mgr.heightSync)
+	require.NotNil(t, mgr.chainOracle)
+
+	mgr.ObserveChainHeader(blocks.HashOnlyHeader(7, time.Unix(1_700_000_001, 0).UTC(), "gonka-test", []byte{1, 2, 3, 4}))
+	hdr, err := mgr.chainOracle.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(7), hdr.Height, "Observe after CloseHeightSync still fills the Comet tip")
+
+	mgr.SetCometConnected(false)
+	hdr, err = mgr.chainOracle.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(12), hdr.Height)
+}
+
+func TestObserveChainHeader_ConcurrentCloseHeightSync(t *testing.T) {
+	unsetHeightSyncSources(t)
+	nmHdr := blocks.HashOnlyHeader(12, time.Unix(1_700_000_000, 0).UTC(), "gonka-test", []byte{9, 9, 9, 9})
+	nm := dialNM(t, &heightSyncNMServer{oracle: staticHeaderOracle{hdr: nmHdr}})
+	mgr := newHeightSyncMgr(t)
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nm))
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		h := blocks.HashOnlyHeader(7, time.Unix(1_700_000_001, 0).UTC(), "gonka-test", []byte{1, 2, 3, 4})
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				mgr.ObserveChainHeader(h)
+				mgr.SetCometConnected(false)
+				mgr.SetCometConnected(true)
+			}
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		mgr.CloseHeightSync()
+	}
+	close(stop)
+	wg.Wait()
 }

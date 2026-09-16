@@ -91,6 +91,9 @@ type HostManager struct {
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
 	heightSyncTip    interface{ Observe(h *blocks.Header) }
+	// cometLiveness is captured at wiring so CloseHeightSync can drop the
+	// scheduler without racing the chain-events goroutine.
+	cometLiveness func(bool)
 }
 
 const (

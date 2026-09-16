@@ -34,11 +34,13 @@ const (
 // Call before RecoverSessions so recovered sessions pick up WithHeightSync
 // / WithChainOracle.
 //
-// Latest is the Comet NewBlock cache, then NodeManager GetBlockHeader
-// (height 0), then chain GetLatestBlock. HTTP GET /block is not used.
-// Old dapi (Unimplemented) falls through to the cache then chain; At()
-// still uses chain GetBlockByHeight after the cached window. A missing
-// At route returns a dummy header so L6 does not mark.
+// Latest is a live Comet NewBlock cache (WS up and Observe younger than
+// CometMaxAge), then NodeManager GetBlockHeader (height 0) unless that
+// RPC is Unimplemented (retried every 15m) or in 1m/5m/15m backoff, then chain GetLatestBlock
+// at most once per ChainRefresh. HTTP GET /block is not used. At() uses
+// the cached window, then GetBlockHeader / GetBlockByHeight for heights
+// inside AtLookback of the known tip (same nm skip as Latest). A miss
+// returns a dummy header so L6 does not mark.
 func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *chain.Client, nm gen.NodeManagerClient) error {
 	if m == nil {
 		return nil
@@ -72,7 +74,7 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 		return nil
 	}
 
-	cache := tipcache.New(0)
+	cache := tipcache.New(failover.CometMaxAge)
 	var oracle blocks.BlockOracle = failover.New(cache, nmOracle, chainOracle)
 	if d, fab := testenvOracleFromEnv(); d != 0 || fab {
 		oracle = wrapTestenvOracleOverlay(oracle, d, fab)
@@ -90,6 +92,11 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 	m.chainOracle = oracle
 	m.heightSync = sched
 	m.heightSyncTip = cache
+	m.cometLiveness = func(ok bool) {
+		if s, has := oracle.(interface{ SetCometConnected(bool) }); has {
+			s.SetCometConnected(ok)
+		}
+	}
 	logging.Info("height sync enabled", inferenceTypes.System,
 		"node_manager", nmOracle != nil,
 		"k", sched.K(),
@@ -101,7 +108,11 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 
 // ObserveChainHeader records a Comet NewBlock on the height-sync tip cache.
 func (m *HostManager) ObserveChainHeader(h *blocks.Header) {
-	if m == nil || m.heightSyncTip == nil {
+	if m == nil {
+		return
+	}
+	tip := m.heightSyncTip
+	if tip == nil {
 		logging.Debug("heightsync: comet observe skipped", inferenceTypes.System, "reason", "no cache")
 		return
 	}
@@ -118,11 +129,27 @@ func (m *HostManager) ObserveChainHeader(h *blocks.Header) {
 	}
 	logging.Debug("heightsync: comet observe", inferenceTypes.System,
 		"height", h.Height, "hash_len", len(h.BlockHash), "chain_id", h.ChainID)
-	m.heightSyncTip.Observe(h)
+	tip.Observe(h)
+	m.SetCometConnected(true)
 }
 
-// CloseHeightSync clears the height-sync scheduler. Idempotent. The
-// NodeManager client is owned by the process ML client, not here.
+// SetCometConnected marks the Comet NewBlock subscription up or down so
+// Latest() does not serve a frozen tip after the WS drops.
+func (m *HostManager) SetCometConnected(ok bool) {
+	if m == nil {
+		return
+	}
+	fn := m.cometLiveness
+	if fn != nil {
+		fn(ok)
+	}
+}
+
+// CloseHeightSync stops the height-sync scheduler. Idempotent. The tip
+// cache, failover oracle, and Comet liveness callback stay so in-flight
+// ObserveChainHeader / SetCometConnected from chain events cannot race a
+// nil pointer. The NodeManager client is owned by the process ML client,
+// not here.
 func (m *HostManager) CloseHeightSync() {
 	if m == nil {
 		return
@@ -131,9 +158,7 @@ func (m *HostManager) CloseHeightSync() {
 		m.heightSyncCloser()
 		m.heightSyncCloser = nil
 	}
-	m.chainOracle = nil
 	m.heightSync = nil
-	m.heightSyncTip = nil
 }
 
 func parseDurationEnv(name string) (time.Duration, error) {

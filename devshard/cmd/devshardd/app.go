@@ -122,7 +122,10 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryProgressSnapshot)
 	}
 	manager.Register(e.Group(""))
-	chainRuntime.chainEvents.OnReady(lifecycle.SetReady)
+	chainRuntime.chainEvents.OnReady(func(ready bool) {
+		lifecycle.SetReady(ready)
+		manager.SetCometConnected(ready)
+	})
 	var adminServer appHTTPServer
 	if admin != nil {
 		adminServer = admin

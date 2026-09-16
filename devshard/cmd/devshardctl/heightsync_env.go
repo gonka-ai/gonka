@@ -140,10 +140,14 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*he
 			return
 		}
 
-		cache := tipcache.New(0)
+		cache := tipcache.New(failover.CometMaxAge)
+		fo := failover.New(cache, nmOracle, chainOracle)
 		feedCtx, cancelFeed := context.WithCancel(context.Background())
 		if rpc != "" {
-			if err := tipcache.StartComet(feedCtx, rpc, cache); err != nil {
+			if err := tipcache.StartCometWithHooks(feedCtx, rpc, cache, tipcache.CometHooks{
+				OnConnected:    func() { fo.SetCometConnected(true) },
+				OnDisconnected: func() { fo.SetCometConnected(false) },
+			}); err != nil {
 				slog.Warn("height-sync comet feed", "err", err, "rpc", rpc)
 			}
 		}
@@ -153,8 +157,7 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*he
 				nmClose()
 			}
 		}
-		oracle := failover.New(cache, nmOracle, chainOracle)
-		hsSt = &heightSyncProcessState{oracle: oracle, closer: closer}
+		hsSt = &heightSyncProcessState{oracle: fo, closer: closer}
 		slog.Info("height sync chain follower enabled",
 			"node_manager", nmOracle != nil, "direct_chain", chainOracle != nil, "comet_rpc", rpc)
 	})
