@@ -789,6 +789,12 @@ func (sm *StateMachine) LatestNonce() uint64 {
 	return sm.state.LatestNonce
 }
 
+func (sm *StateMachine) FinalizeNonce() uint64 {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state.FinalizeNonce
+}
+
 // Phase returns the current session phase.
 func (sm *StateMachine) Phase() types.SessionPhase {
 	sm.mu.RLock()
