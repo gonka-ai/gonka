@@ -41,6 +41,11 @@ val devshardAlwaysValidateSpec = spec<AppState> {
 const val devshardAutoSealGroupSize = 16L
 const val devshardAutoSealInferenceSealGraceNonces = 1L
 const val devshardAutoSealInferenceSealGraceSeconds = 10L
+/**
+ * Finished clock gate is grace_seconds + execution_timeout. Keep this small so
+ * the testermint sleep can actually clear the Finished gate (default is 1920s).
+ */
+const val devshardAutoSealExecutionTimeout = 2L
 /** Must match devshardShortSealGraceSpec default_auto_seal_every_n_nonces. */
 const val devshardAutoSealEveryNNonces = 1L
 
@@ -51,6 +56,7 @@ val devshardShortSealGraceSpec = spec<AppState> {
                 this[DevshardEscrowParams::defaultInferenceSealGraceNonces] = devshardAutoSealInferenceSealGraceNonces
                 this[DevshardEscrowParams::defaultInferenceSealGraceSeconds] = devshardAutoSealInferenceSealGraceSeconds
                 this[DevshardEscrowParams::defaultAutoSealEveryNNonces] = devshardAutoSealEveryNNonces
+                this[DevshardEscrowParams::executionTimeout] = devshardAutoSealExecutionTimeout
                 // Do not set validationRate=0: chain treats 0 as unset and snapshots
                 // DefaultDevshardValidationRate (1000 = 10%).
             }
@@ -599,6 +605,8 @@ fun LocalInferencePair.waitForFinishedDevshardInferences(
             "(got ${inferences.values.count { it.status == DevshardInferenceStatus.FINISHED }})",
     )
 }
+
+fun DevshardProxyDebugState.liveStatus(name: String): Int = liveStatusCounts?.get(name) ?: 0
 
 /**
  * Drive chat completions until [targetNonce] is reached and at least [minSealed]

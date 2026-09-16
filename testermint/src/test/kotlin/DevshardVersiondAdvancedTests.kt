@@ -48,6 +48,7 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
             assertThat(status.config.inferenceSealGraceNonces).isEqualTo(devshardAutoSealInferenceSealGraceNonces.toInt())
             assertThat(status.config.inferenceSealGraceSeconds)
                 .isEqualTo(devshardAutoSealInferenceSealGraceSeconds.toInt())
+            assertThat(status.config.executionTimeout).isEqualTo(devshardAutoSealExecutionTimeout)
             // Governance/create treats validation_rate=0 as unset → default 1000 (10%).
             assertThat(status.config.validationRate).isEqualTo(1_000)
 
@@ -59,16 +60,23 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
             genesis.waitForFinishedDevshardInferences(handle.proxyUrl, firstBatch)
 
             val debugBeforeGrace = genesis.getDevshardProxyDebugState(handle.proxyUrl)
+            val liveFinishedBefore = debugBeforeGrace.liveStatus("finished")
             logSection(
                 "Before grace wait: live=${debugBeforeGrace.liveInferences} " +
                     "sealed=${debugBeforeGrace.sealedInferences} nonce=${debugBeforeGrace.nonce} " +
                     "live_status=${debugBeforeGrace.liveStatusCounts}",
             )
             assertThat(debugBeforeGrace.liveInferences).isGreaterThanOrEqualTo(firstBatch)
-            assertThat(debugBeforeGrace.sealedInferences).isEqualTo(0)
+            // Finished still needs the clock gate (grace + execution_timeout).
+            // Validated/Invalidated/TimedOut skip that gate and may already be sealed.
+            assertThat(liveFinishedBefore)
+                .describedAs("Finished inferences must still be live before the clock gate clears")
+                .isGreaterThanOrEqualTo(firstBatch)
 
-            logSection("Waiting ${devshardAutoSealInferenceSealGraceSeconds}s inference seal grace")
-            Thread.sleep((devshardAutoSealInferenceSealGraceSeconds + 2) * 1_000L)
+            val finishedClockSeconds =
+                devshardAutoSealInferenceSealGraceSeconds + devshardAutoSealExecutionTimeout
+            logSection("Waiting ${finishedClockSeconds}s Finished clock gate (grace + execution timeout)")
+            Thread.sleep((finishedClockSeconds + 2) * 1_000L)
 
             logSection(
                 "Driving nonce to auto-seal boundary ($devshardAutoSealEveryNNonces) " +
