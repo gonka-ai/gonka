@@ -185,6 +185,12 @@ func (c *snapshotCache) removeEntryLocked(entry *snapshotCacheEntry) {
 }
 
 func (s *SMSTArtifactStore) buildSnapshotTree(count uint32) (*SMST, error) {
+	s.mu.RLock()
+	spilled := s.spilled
+	s.mu.RUnlock()
+	if spilled {
+		return s.buildPagedUpperAt(count)
+	}
 	offsets, buffered, err := s.snapshotRebuildInputs(count)
 	if err != nil {
 		return nil, err

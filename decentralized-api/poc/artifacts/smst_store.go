@@ -27,6 +27,7 @@ var (
 	ErrNonceNotFound       = errors.New("nonce not found")
 	ErrStoreClosed         = errors.New("store is closed")
 	ErrCapacityExceeded    = errors.New("store capacity exceeded")
+	errSealedCut           = errors.New("smst sealed suffix cut")
 )
 
 type bufferedArtifact struct {
@@ -92,6 +93,13 @@ type SMSTArtifactStore struct {
 	// lock (upgrade-v0.2.14 style). Default true (SMST_SNAPSHOT_IN_MEMORY_CLONE
 	// unset).
 	snapshotInMemoryClone bool
+
+	ramLeafLimit    uint32
+	spilled         bool
+	pagedRecordSize int
+	bitmap          nonceBitmap
+	suffixes        map[uint32]*suffixMeta
+	hot             []*hotSuffix
 }
 
 var _ ArtifactStore = (*SMSTArtifactStore)(nil)
@@ -141,6 +149,8 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 		// Defaults when env unset: COW on, deferred hashing on, tip clone on.
 		cowEnabled:            smstCOWEnabledFromEnv(),
 		snapshotInMemoryClone: smstSnapshotInMemoryCloneFromEnv(),
+		ramLeafLimit:          smstRAMLeafLimitFromEnv(),
+		suffixes:              make(map[uint32]*suffixMeta),
 	}
 	s.smst.deferredHash = smstDeferredHashFromEnv()
 	s.smst.parallelHash = smstParallelHashFromEnv()
@@ -159,6 +169,10 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 }
 
 func (s *SMSTArtifactStore) recover() error {
+	if _, err := os.Stat(s.suffixMarkerPath()); err == nil {
+		return s.recoverPaged()
+	}
+
 	info, err := s.dataFile.Stat()
 	if err != nil {
 		return fmt.Errorf("stat data file: %w", err)
@@ -244,6 +258,12 @@ func (s *SMSTArtifactStore) recover() error {
 	// (upgrade path), so a later dist-only loss cannot drop those counts.
 	if err := s.backfillFlushedRootsLocked(); err != nil {
 		log.Printf("warning: failed to backfill flushed roots: %v", err)
+	}
+
+	if s.smst.Count() >= s.ramLeafLimit {
+		if err := s.spillLocked(); err != nil {
+			return fmt.Errorf("spill after recover: %w", err)
+		}
 	}
 
 	return nil
@@ -427,12 +447,19 @@ func (s *SMSTArtifactStore) flushLocked() error {
 	offset := s.flushedDataOffset
 
 	for _, art := range s.buffer {
-		s.offsets = append(s.offsets, offset)
-		s.nonceToOffset[art.nonce] = offset
-
 		n, err := writeArtifact(w, art.nonce, art.vector)
 		if err != nil {
 			return fmt.Errorf("write artifact: %w", err)
+		}
+		if s.spilled {
+			if s.pagedRecordSize == 0 {
+				s.pagedRecordSize = n
+			} else if n != s.pagedRecordSize {
+				return fmt.Errorf("paged store requires fixed-size records, got %d then %d", s.pagedRecordSize, n)
+			}
+		} else {
+			s.offsets = append(s.offsets, offset)
+			s.nonceToOffset[art.nonce] = offset
 		}
 		offset += uint64(n)
 	}
@@ -451,6 +478,19 @@ func (s *SMSTArtifactStore) flushLocked() error {
 	s.flushedLeafCount = s.smst.Count()
 	s.flushedDataOffset = offset
 	s.buffer = s.buffer[:0]
+
+	if s.spilled {
+		if err := s.writeSuffixDirtyLocked(); err != nil {
+			return fmt.Errorf("persist suffix logs: %w", err)
+		}
+		for _, h := range s.hot {
+			s.persistHotSeal(h)
+		}
+	} else if s.smst.Count() >= s.ramLeafLimit {
+		if err := s.spillLocked(); err != nil {
+			return fmt.Errorf("spill: %w", err)
+		}
+	}
 
 	rootHash, _ := s.smst.GetRoot()
 	s.flushedRoots[s.flushedLeafCount] = rootHash
@@ -709,6 +749,10 @@ func (s *SMSTArtifactStore) simulateDistribution(targetCount uint32) map[string]
 }
 
 func (s *SMSTArtifactStore) getArtifactByNonce(targetNonce int32) (int32, []byte, error) {
+	if s.spilled {
+		return s.getArtifactPaged(targetNonce)
+	}
+
 	// Check flushed artifacts first (via index)
 	if offset, ok := s.nonceToOffset[targetNonce]; ok {
 		nonce, vector, _, err := readArtifactAt(s.dataFile, int64(offset))
@@ -756,6 +800,13 @@ func (s *SMSTArtifactStore) GetArtifactsAndProofs(denseIndices []uint32, snapsho
 		}
 	}
 
+	s.mu.RLock()
+	spilled := s.spilled
+	s.mu.RUnlock()
+	if spilled {
+		return s.pagedGetArtifactsAndProofs(denseIndices, snapshotCount)
+	}
+
 	tree, unlock, err := s.acquireSnapshotTree(snapshotCount)
 	if err != nil {
 		return nil, err
@@ -795,6 +846,13 @@ func (s *SMSTArtifactStore) GetArtifactAndProofByNonce(targetNonce int32, snapsh
 func (s *SMSTArtifactStore) GetArtifactsAndProofsByNonce(nonces []int32, snapshotCount uint32) ([]ProofEntry, error) {
 	if len(nonces) == 0 || snapshotCount == 0 {
 		return nil, nil
+	}
+
+	s.mu.RLock()
+	spilled := s.spilled
+	s.mu.RUnlock()
+	if spilled {
+		return s.pagedGetArtifactsAndProofsByNonce(nonces, snapshotCount)
 	}
 
 	tree, unlock, err := s.acquireSnapshotTree(snapshotCount)
@@ -880,6 +938,26 @@ func (s *SMSTArtifactStore) acquireSnapshotTree(snapshotCount uint32) (*SMST, fu
 		return view, s.mu.RUnlock, nil
 	}
 	_, committed := s.flushedRoots[snapshotCount]
+	if s.spilled {
+		if !committed {
+			s.mu.Unlock()
+			return nil, nil, fmt.Errorf("snapshot count %d is not a committed count", snapshotCount)
+		}
+		hist, err := s.buildPagedUpperAt(snapshotCount)
+		if err != nil {
+			s.mu.Unlock()
+			return nil, nil, err
+		}
+		s.retained[snapshotCount] = hist.snapshot()
+		view := s.smst.snapshotView(s.retained[snapshotCount])
+		s.mu.Unlock()
+		s.mu.RLock()
+		if s.closed {
+			s.mu.RUnlock()
+			return nil, nil, ErrStoreClosed
+		}
+		return view, s.mu.RUnlock, nil
+	}
 	s.mu.Unlock()
 
 	if !committed {
@@ -916,6 +994,12 @@ func (s *SMSTArtifactStore) liveRootHashed() bool {
 // Deprecated: the SMST_COW=0 in-place branch is a profiling baseline only.
 // Production must keep copy-on-write enabled.
 func (s *SMSTArtifactStore) insertLeaf(nonce int32, leafHash []byte) (uint32, error) {
+	if s.spilled {
+		if err := s.insertPaged(nonce, leafHash); err != nil {
+			return 0, err
+		}
+		return s.smst.Count(), nil
+	}
 	if s.cowEnabled {
 		return s.smst.insertCOW(nonce, leafHash)
 	}
@@ -973,7 +1057,7 @@ func (s *SMSTArtifactStore) buildProofWithCounts(tree *SMST, nonce int32) []smst
 
 	var collectWithCounts func(node *smstNode, level int)
 	collectWithCounts = func(node *smstNode, level int) {
-		if level == tree.depth || node == nil {
+		if level == tree.depth || node == nil || tree.isSealed(node, level) {
 			return
 		}
 
@@ -1099,6 +1183,27 @@ func (s *SMSTArtifactStore) PrebuildSnapshot(count uint32) error {
 		return ErrStoreClosed
 	}
 	if _, ok := s.retained[count]; ok {
+		s.mu.Unlock()
+		return nil
+	}
+	if s.spilled {
+		if count == s.smst.Count() {
+			s.smst.ensureHashed()
+			s.retained[count] = s.smst.snapshot()
+			s.mu.Unlock()
+			return nil
+		}
+		_, committed := s.flushedRoots[count]
+		if !committed {
+			s.mu.Unlock()
+			return fmt.Errorf("snapshot count %d is not a committed count", count)
+		}
+		hist, err := s.buildPagedUpperAt(count)
+		if err != nil {
+			s.mu.Unlock()
+			return err
+		}
+		s.retained[count] = hist.snapshot()
 		s.mu.Unlock()
 		return nil
 	}

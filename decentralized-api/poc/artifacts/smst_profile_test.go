@@ -1,10 +1,14 @@
 package artifacts
 
 import (
+	"bufio"
+	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -167,4 +171,204 @@ func TestSMSTStoreFlush30Profile(t *testing.T) {
 		proofElapsed.Round(time.Microsecond),
 		float64(ingestElapsed.Nanoseconds())/float64(n),
 		retainedHit, cacheHit, len(store.retained), runtime.GOMAXPROCS(0))
+}
+
+// TestSMSTStoreScaleMeasure measures disk, RSS, recover, and batched proofs
+// for a production-shaped SMST store (24-byte k_dim=12 fp16 vectors, sequential
+// nonces, COW+deferred+parallel defaults). Env:
+//
+//	SMST_PROF_N=1000000 SMST_PROF_DIR=/tmp/smst-scale \
+//	  go test ./poc/artifacts/ -run TestSMSTStoreScaleMeasure -v -timeout 2h -count=1
+//
+// SMST_PROF_FLUSH (default 100000) is the ingest flush period.
+// SMST_PROF_SKIP_INGEST=1 reopens an existing dir (load+proof only).
+func TestSMSTStoreScaleMeasure(t *testing.T) {
+	v := os.Getenv("SMST_PROF_N")
+	if v == "" {
+		t.Skip("set SMST_PROF_N to run the scale measure")
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		t.Fatalf("invalid SMST_PROF_N=%q", v)
+	}
+	flushEvery := 100_000
+	if s := os.Getenv("SMST_PROF_FLUSH"); s != "" {
+		flushEvery, err = strconv.Atoi(s)
+		if err != nil || flushEvery <= 0 {
+			t.Fatalf("invalid SMST_PROF_FLUSH=%q", s)
+		}
+	}
+	dir := os.Getenv("SMST_PROF_DIR")
+	if dir == "" {
+		dir = t.TempDir()
+	} else if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	skipIngest := os.Getenv("SMST_PROF_SKIP_INGEST") == "1"
+	skipLoad := os.Getenv("SMST_PROF_SKIP_LOAD") == "1"
+
+	vec := make([]byte, 24)
+	rss0 := procRSS()
+
+	if !skipIngest {
+		for _, name := range []string{"artifacts.data", "distributions.jsonl", "flushed_roots.jsonl"} {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+		_ = os.RemoveAll(filepath.Join(dir, suffixDirName))
+		store, err := OpenSMST(dir)
+		if err != nil {
+			t.Fatalf("OpenSMST ingest: %v", err)
+		}
+		tIngest := time.Now()
+		for i := 0; i < n; i++ {
+			binary.LittleEndian.PutUint64(vec[0:8], uint64(i))
+			binary.LittleEndian.PutUint64(vec[8:16], uint64(i)*2654435761)
+			copied := append([]byte(nil), vec...)
+			if err := store.AddWithNode(int32(i), copied, "n"); err != nil {
+				t.Fatalf("add %d: %v", i, err)
+			}
+			if (i+1)%flushEvery == 0 {
+				if err := store.Flush(); err != nil {
+					t.Fatalf("flush at %d: %v", i+1, err)
+				}
+			}
+		}
+		if err := store.Flush(); err != nil {
+			t.Fatalf("final flush: %v", err)
+		}
+		ingestElapsed := time.Since(tIngest)
+		runtime.GC()
+		rssLive := procRSS()
+		t.Logf("INGEST N=%d flush_every=%d elapsed=%s ns/leaf=%.0f rss0=%s rss_live=%s delta=%s disk=%s",
+			n, flushEvery, ingestElapsed.Round(time.Millisecond),
+			float64(ingestElapsed.Nanoseconds())/float64(n),
+			fmtBytes(rss0), fmtBytes(rssLive), fmtBytes(rssLive-rss0), fmtBytes(dirSize(dir)))
+		if err := store.Close(); err != nil {
+			t.Fatalf("close after ingest: %v", err)
+		}
+		store = nil
+		runtime.GC()
+	}
+	if skipLoad {
+		return
+	}
+
+	disk := dirSize(dir)
+	runtime.GC()
+	rssBeforeLoad := procRSS()
+	tLoad := time.Now()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST recover: %v", err)
+	}
+	loadElapsed := time.Since(tLoad)
+	runtime.GC()
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	runtime.KeepAlive(store)
+	rssAfterLoad := procRSS()
+	count := store.Count()
+	if int(count) != n {
+		t.Fatalf("recovered count %d want %d", count, n)
+	}
+	t.Logf("LOAD N=%d elapsed=%s rate=%.0f/s rss_before=%s rss_after=%s delta=%s heap_inuse=%s heap_alloc=%s sys=%s disk=%s depth=%d retained=%d spilled=%v ram_limit=%d record_size=%d suffixes=%d",
+		n, loadElapsed.Round(time.Millisecond), float64(n)/loadElapsed.Seconds(),
+		fmtBytes(rssBeforeLoad), fmtBytes(rssAfterLoad), fmtBytes(rssAfterLoad-rssBeforeLoad),
+		fmtBytes(int64(ms.HeapInuse)), fmtBytes(int64(ms.HeapAlloc)), fmtBytes(int64(ms.Sys)),
+		fmtBytes(disk), store.smst.Depth(), len(store.retained),
+		store.spilled, store.ramLeafLimit, store.pagedRecordSize, len(store.suffixes))
+
+	for _, k := range []int{100, 1000, 100_000} {
+		if k > n {
+			t.Logf("PROOF k=%d skipped (N=%d)", k, n)
+			continue
+		}
+		idx := make([]uint32, k)
+		step := uint32(n / k)
+		if step == 0 {
+			step = 1
+		}
+		for i := 0; i < k; i++ {
+			idx[i] = uint32(i) * step
+			if idx[i] >= uint32(n) {
+				idx[i] = uint32(n - 1)
+			}
+		}
+		tProof := time.Now()
+		entries, err := store.GetArtifactsAndProofs(idx, uint32(n))
+		proofElapsed := time.Since(tProof)
+		if err != nil {
+			t.Fatalf("proof k=%d: %v", k, err)
+		}
+		if len(entries) != k {
+			t.Fatalf("proof k=%d got %d entries", k, len(entries))
+		}
+		proofBytes := 0
+		for _, e := range entries {
+			for _, p := range e.Proof {
+				proofBytes += len(p)
+			}
+		}
+		prefixes := make(map[uint32]struct{}, k)
+		for _, e := range entries {
+			prefixes[suffixPrefix(e.Nonce)] = struct{}{}
+		}
+		rssProof := procRSS()
+		t.Logf("PROOF k=%-6d elapsed=%s  %.1f us/proof  %.0f proofs/s  avg_proof_bytes=%.0f  prefixes=%d  rss=%s",
+			k, proofElapsed, float64(proofElapsed.Microseconds())/float64(k),
+			float64(k)/proofElapsed.Seconds(), float64(proofBytes)/float64(k), len(prefixes),
+			fmtBytes(rssProof))
+	}
+
+	if err := store.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+}
+
+func procRSS() int64 {
+	f, err := os.Open("/proc/self/status")
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "VmRSS:") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				return 0
+			}
+			kb, _ := strconv.ParseInt(fields[1], 10, 64)
+			return kb * 1024
+		}
+	}
+	return 0
+}
+
+func dirSize(dir string) int64 {
+	var total int64
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && !info.IsDir() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+func fmtBytes(n int64) string {
+	if n < 0 {
+		return "-" + fmtBytes(-n)
+	}
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.2f GiB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
