@@ -98,7 +98,8 @@ func (sm *StateMachine) applyForceHeightSyncTurn(msg *types.MsgForceHeightSyncTu
 	return nil
 }
 
-// applyHeartbeat accepts MsgHeartbeat into Diff. L0–L7 run in applyCore via CheckDiffLogPlane.
+// applyHeartbeat accepts MsgHeartbeat into Diff while Active. L0–L7 run in
+// applyCore via CheckDiffLogPlane. Compose skips these once Finalizing.
 func (sm *StateMachine) applyHeartbeat(msg *types.MsgHeartbeat) error {
 	if msg == nil {
 		return types.ErrEmptyTx
@@ -109,7 +110,8 @@ func (sm *StateMachine) applyHeartbeat(msg *types.MsgHeartbeat) error {
 	return nil
 }
 
-// applyHeightAck accepts MsgHeightAck into Diff. Signature/causality checks run in applyCore.
+// applyHeightAck accepts MsgHeightAck into Diff while Active. Signature/causality
+// checks run in applyCore. Compose skips these once Finalizing.
 func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 	if msg == nil {
 		return types.ErrEmptyTx
@@ -163,6 +165,7 @@ func (sm *StateMachine) logPlaneStateLocked() heightsync.LogPlaneState {
 	return heightsync.LogPlaneState{
 		SlotsNum: uint64(len(sm.state.Group)),
 		SlotKeys: sm.slotToAddress,
+		WarmKeys: sm.state.WarmKeys,
 		Verifier: sm.verifier,
 		Tracker:  sm.turnTracker,
 		Floor:    sm.heightSyncFloor,

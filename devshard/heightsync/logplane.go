@@ -56,6 +56,10 @@ type LogPlaneInput struct {
 type LogPlaneState struct {
 	SlotsNum uint64
 	SlotKeys map[uint32]string
+	// WarmKeys are bound acting keys per slot (same map as escrow state).
+	// Hosts sign height acks with the warm key after cutover; L2 accepts
+	// either the cold slot key or this binding. Nil or missing slots are fine.
+	WarmKeys map[uint32]string
 	Verifier signing.Verifier
 	Tracker  *TurnTracker
 	// Floor answers F(m) for L0. Nil disables the check.
@@ -237,6 +241,10 @@ func PeerSeenByteLenValid(bits []byte, slotsNum uint32) bool {
 	return 8*n >= int(slotsNum) && n <= peerSeenMaxBytes(uint64(slotsNum))
 }
 
+// checkL2 verifies host_sig against the cold slot key, then the bound warm
+// key. Hosts sign acks with the acting (warm) key after cutover; finishes
+// and votes already accept that binding. An unbound or mismatched signer is
+// still INVALID so a user cannot fabricate an ack.
 func checkL2(acks []ackRef, st LogPlaneState) error {
 	if st.Verifier == nil {
 		if len(acks) == 0 {
@@ -249,9 +257,16 @@ func checkL2(acks []ackRef, st LogPlaneState) error {
 		if !ok || key == "" {
 			return fmt.Errorf("%w: no key for slot %d", ErrAckSigInvalid, ref.ack.SlotId)
 		}
-		if err := VerifyAck(st.Verifier, ref.ack, key); err != nil {
-			return fmt.Errorf("%w: %v", ErrAckSigInvalid, err)
+		err := VerifyAck(st.Verifier, ref.ack, key)
+		if err == nil {
+			continue
 		}
+		if warm := st.WarmKeys[ref.ack.SlotId]; warm != "" && warm != key {
+			if err2 := VerifyAck(st.Verifier, ref.ack, warm); err2 == nil {
+				continue
+			}
+		}
+		return fmt.Errorf("%w: %v", ErrAckSigInvalid, err)
 	}
 	return nil
 }

@@ -1264,16 +1264,28 @@ data class LocalInferencePair(
     }
 
     fun finalizeDevshardProxy(proxyUrl: String): DevshardctlResult {
+        val bodyFile = "/tmp/devshard-finalize-${System.nanoTime()}.out"
         val raw = api.executor.exec(listOf(
             "sh", "-c",
-            "curl -sf -X POST $proxyUrl/v1/finalize -H 'Authorization: Bearer $devshardAdminApiKey'"
-        ), null).joinToString("")
-        val start = raw.indexOf('{')
-        val end = raw.lastIndexOf('}')
-        if (start < 0 || end < 0) {
-            error("finalize returned no JSON object. raw:\n$raw")
+            "curl --silent --show-error --connect-timeout 5 --max-time 120 " +
+                "-o $bodyFile -w '%{http_code}' " +
+                "-X POST $proxyUrl/v1/finalize " +
+                "-H 'Authorization: Bearer $devshardAdminApiKey'"
+        ), null).joinToString("").trim()
+        val httpCode = raw.toIntOrNull()
+            ?: error("finalize curl did not return an HTTP status code (got ${raw.take(80)})")
+        val body = runCatching {
+            api.executor.exec(listOf("cat", bodyFile), null).joinToString("")
+        }.getOrDefault("")
+        if (httpCode !in 200..299) {
+            error("finalize failed with HTTP $httpCode: $body")
         }
-        val json = raw.substring(start, end + 1)
+        val start = body.indexOf('{')
+        val end = body.lastIndexOf('}')
+        if (start < 0 || end < 0) {
+            error("finalize returned no JSON object. raw:\n$body")
+        }
+        val json = body.substring(start, end + 1)
         val parsed = Gson().fromJson(json, DevshardSettlementData::class.java)
         return DevshardctlResult(parsed = parsed, rawJson = json, stderr = "")
     }

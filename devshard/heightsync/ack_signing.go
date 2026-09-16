@@ -53,7 +53,7 @@ func SignAck(signer signing.Signer, ack *types.MsgHeightAck) error {
 	return nil
 }
 
-// VerifyAck checks host_sig against slotKey (the registered host address).
+// VerifyAck checks host_sig against slotKey (cold slot address or bound warm key).
 func VerifyAck(verifier signing.Verifier, ack *types.MsgHeightAck, slotKey string) error {
 	if verifier == nil {
 		return errors.New("heightsync: nil verifier")

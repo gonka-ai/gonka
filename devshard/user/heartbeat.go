@@ -22,7 +22,8 @@ type composedDiff struct {
 // diffs for an already-open turn. StartHeartbeatLoop calls it on a timer;
 // tests and the outbound path may call it directly. Span dispatch does not
 // wait for one host before addressing the next (§10.6) and does not abort
-// remaining slots on a single send failure.
+// remaining slots on a single send failure. After MsgFinalizeRound the
+// session is no longer Active, so this is a no-op.
 func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 	if s.sm != nil && s.sm.Phase() != types.PhaseActive {
 		return nil

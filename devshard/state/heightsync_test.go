@@ -182,6 +182,92 @@ func TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce(t *testing.T) {
 	})
 }
 
+func TestApplyLocalBestEffort_WarmKeyAckApplies(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	warm := testutil.MustGenerateKey(t)
+	sm, _ := newTestSM(t, hosts, 100000)
+	sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
+	hash := []byte{0xaa}
+
+	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+		}},
+	}})
+	require.NoError(t, err)
+
+	ack := &types.MsgHeightAck{
+		RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(warm, ack))
+	_, applied, err := sm.ApplyLocalBestEffort(2, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	})
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+	require.Equal(t, uint64(2), sm.LatestNonce())
+}
+
+func TestApplyLocalBestEffort_FinalizingDropsHeartbeatAndAck(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	hash := []byte{0xaa}
+	hb := func() *types.DevshardTx {
+		return &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+		}}}
+	}
+	ackTx := func(t *testing.T, signer *signing.Secp256k1Signer, ref uint64) *types.DevshardTx {
+		t.Helper()
+		ack := &types.MsgHeightAck{
+			RefNonce: ref, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+		}
+		require.NoError(t, heightsync.SignAck(signer, ack))
+		return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}
+	}
+
+	t.Run("after_finalize_round", func(t *testing.T) {
+		sm, _ := newTestSM(t, hosts, 100000)
+		_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{hb()})
+		require.NoError(t, err)
+		_, _, err = sm.ApplyLocalBestEffort(2, []*types.DevshardTx{txFinalize()})
+		require.NoError(t, err)
+		require.Equal(t, types.PhaseFinalizing, sm.Phase())
+
+		poisoned := ackTx(t, hosts[0], 1)
+		poisoned.GetHeightAck().HostSig[0] ^= 0xff
+		_, applied, err := sm.ApplyLocalBestEffort(3, []*types.DevshardTx{poisoned, hb()})
+		require.NoError(t, err)
+		require.Empty(t, applied)
+		require.Equal(t, uint64(3), sm.LatestNonce())
+	})
+
+	t.Run("same_nonce_keeps_ack_before_finalize", func(t *testing.T) {
+		sm, _ := newTestSM(t, hosts, 100000)
+		_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{hb()})
+		require.NoError(t, err)
+
+		before := ackTx(t, hosts[0], 1)
+		after := ackTx(t, hosts[0], 1)
+		_, applied, err := sm.ApplyLocalBestEffort(2, []*types.DevshardTx{before, txFinalize(), after})
+		require.NoError(t, err)
+		require.Len(t, applied, 2)
+		require.NotNil(t, applied[0].GetHeightAck())
+		require.NotNil(t, applied[1].GetFinalizeRound())
+		require.Equal(t, types.PhaseFinalizing, sm.Phase())
+		require.Equal(t, uint64(2), sm.LatestNonce())
+	})
+}
+
 func TestApplyLocalBestEffort_LogPlaneInvalidAckDroppedKeepsHeartbeat(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),

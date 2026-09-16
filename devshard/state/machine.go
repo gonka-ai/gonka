@@ -465,6 +465,10 @@ func logDroppedTx(nonce uint64, tx *types.DevshardTx, err error) {
 	logging.Debug("dropped tx", "subsystem", "state", "nonce", nonce, "error", err)
 }
 
+func heightSyncTraffic(tx *types.DevshardTx) bool {
+	return tx != nil && (tx.GetHeartbeat() != nil || tx.GetHeightAck() != nil)
+}
+
 // localBestEffortLocked implements ApplyLocalBestEffort and the trial-apply core
 // of PreviewLocalBestEffort. It applies txs one by one (skipping non-mandatory
 // failures and log-plane-invalid height-sync txs) and, on success, leaves the
@@ -515,9 +519,17 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 	// a nonce every host will INVALID. Invalid txs are dropped from mixed
 	// sets so a poisoned mempool ack cannot stall a heartbeat; if nothing
 	// valid remains, fail without consuming the nonce.
+	//
+	// Once MsgFinalizeRound has flipped the phase, heartbeats and height acks
+	// are over: skip them before the log plane so a leftover mempool ack
+	// cannot abort the N+1 finalize rounds.
 	var applied []*types.DevshardTx
 	var logPlaneReject error
 	for _, tx := range txs {
+		if sm.state.Phase == types.PhaseFinalizing && heightSyncTraffic(tx) {
+			logDroppedTx(nonce, tx, types.ErrSessionFinalizing)
+			continue
+		}
 		trial := make([]*types.DevshardTx, 0, len(applied)+1)
 		trial = append(trial, applied...)
 		trial = append(trial, tx)

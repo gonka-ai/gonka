@@ -110,6 +110,31 @@ func TestHost_HeartbeatAck_OwnSlotIntoMempool(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestHost_NoHeightAckOnceFinalizing(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setHeight(100)
+	or.setHash([]byte{0xaa})
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or))
+
+	const slots = uint64(3)
+	d1 := heartbeatDiff(t, user, 1, 1, 100, slots)
+	d2 := heartbeatDiff(t, user, 2, 1, 100, slots)
+	d3 := heartbeatDiff(t, user, 3, 1, 100, slots)
+	d4 := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}},
+	})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3, d4}})
+	require.NoError(t, err)
+	require.Empty(t, mempoolHeightAcks(resp.Mempool))
+	require.True(t, h.SnapshotState().Phase >= types.PhaseFinalizing)
+}
+
 func TestHost_PeerSeenMarksAcksNotHeartbeats(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
