@@ -103,12 +103,10 @@ On the join host:
 
 **1. Save the HA settings in `config.env`.**
 
-List approved protocol names from your node. Run in `deploy/join`:
+List approved protocol names on the node:
 
 ```bash
-source ./config.env
-curl -fsS "http://127.0.0.1:${API_PORT:-8000}/chain-api/productscience/inference/inference/params" |
-  jq -er '.params.devshard_escrow_params.approved_versions[].name'
+curl -fsS http://127.0.0.1:9100/versions | jq -er '.versions[].name'
 ```
 
 For this release, use the listed names `v4`, `v4.1` and, once available, `v5` in `VERSIOND_VERSIONS`. Exclude pre-HA versions such as `v3`. When updating, keep the existing list; use [Add a protocol](#add-a-protocol) for additions.
@@ -466,6 +464,27 @@ Run in `deploy/join`. The block stops replicas, backs up PostgreSQL, copies the 
 
 On failure, leave replicas stopped and inspect `docker compose logs --tail=100 devshard-postgres`. Preserve the source volume and backup: no `down -v`, `rm -v`, pruning or `--renew-anon-volumes`.
 
+If Compose stops waiting while the copy continues, leave PostgreSQL running. Wait until this command reports `healthy`:
+
+```bash
+docker inspect --format '{{.State.Health.Status}}' devshard-postgres
+```
+
+Then repeat the identifier check using the backup directory printed above:
+
+```bash
+(
+  set -euo pipefail
+  backup_dir='<printed-backup-directory>'
+  [[ $(docker inspect --format '{{.State.Health.Status}}' devshard-postgres) == healthy ]]
+  source_id=$(cat "$backup_dir/system-identifier")
+  target_id=$(docker exec devshard-postgres sh -c \
+    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"')
+  [[ -n "$source_id" && "$target_id" == "$source_id" ]]
+  echo 'System identifiers match.'
+)
+```
+
 After success, continue with [Update with downtime](#update-with-downtime). Do not `docker start` the old replicas; Compose will recreate them with the filtered catalog.
 
 <details>
@@ -576,6 +595,14 @@ PYTHON
   docker compose up -d --no-deps proxy
   docker compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2 proxy-policy proxy
   ./versiond-router-fleet.sh apply
+  ./versiond-router-fleet.sh verify-admission
+  project=$(jq -er '.name | select(length > 0)' "$backup_dir/compose.json")
+  if legacy_project=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' \
+      versiond-router 2>/dev/null); then
+    if [[ "$legacy_project" == "$project" ]]; then
+      docker rm -f versiond-router
+    fi
+  fi
 )
 ```
 
@@ -921,6 +948,15 @@ No router restart is needed. The next host update applies the saved protocol lis
 Keep `proxy-router-state` and each slot's `router-state`. Remove a protocol only during maintenance, after its sessions are no longer needed: a filter change can stop children, while accepted router routes persist by default.
 
 ## Troubleshooting
+
+### Resume an interrupted rolling update
+
+If the updater reports pending recovery, rerun it from `deploy/join` with the same release, configuration and `UPDATE_STATE_DIR`. Keep the state directory intact. The command restores pending replacements, then continues the update; `--check` and `--dry-run` cannot perform recovery.
+
+```bash
+source ./config.env
+./update-devshard.sh
+```
 
 ### Resolve a missing database
 
