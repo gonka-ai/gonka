@@ -53,24 +53,33 @@ func SignAck(signer signing.Signer, ack *types.MsgHeightAck) error {
 	return nil
 }
 
-// VerifyAck checks host_sig against slotKey (cold slot address or bound warm key).
-func VerifyAck(verifier signing.Verifier, ack *types.MsgHeightAck, slotKey string) error {
+// RecoverAckSigner returns the address that produced host_sig over fields 1–7.
+func RecoverAckSigner(verifier signing.Verifier, ack *types.MsgHeightAck) (string, error) {
 	if verifier == nil {
-		return errors.New("heightsync: nil verifier")
+		return "", errors.New("heightsync: nil verifier")
 	}
 	if ack == nil {
-		return ErrAckEmpty
+		return "", ErrAckEmpty
 	}
 	if len(ack.HostSig) == 0 {
-		return ErrAckNoSig
+		return "", ErrAckNoSig
 	}
 	blob, err := CanonicalAckBytes(ack)
 	if err != nil {
-		return err
+		return "", err
 	}
 	recovered, err := verifier.RecoverAddress(blob, ack.HostSig)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAckVerify, err)
+		return "", fmt.Errorf("%w: %v", ErrAckVerify, err)
+	}
+	return recovered, nil
+}
+
+// VerifyAck checks host_sig against slotKey (cold slot address or bound warm key).
+func VerifyAck(verifier signing.Verifier, ack *types.MsgHeightAck, slotKey string) error {
+	recovered, err := RecoverAckSigner(verifier, ack)
+	if err != nil {
+		return err
 	}
 	if recovered != slotKey {
 		return fmt.Errorf("%w: signer %q != slot key %q", ErrAckVerify, recovered, slotKey)

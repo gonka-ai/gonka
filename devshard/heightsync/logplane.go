@@ -58,10 +58,17 @@ type LogPlaneState struct {
 	SlotKeys map[uint32]string
 	// WarmKeys are bound acting keys per slot (same map as escrow state).
 	// Hosts sign height acks with the warm key after cutover; L2 accepts
-	// either the cold slot key or this binding. Nil or missing slots are fine.
+	// the cold slot key, this slot's binding, or a sibling slot's binding
+	// for the same validator. Nil or missing slots are fine.
 	WarmKeys map[uint32]string
-	Verifier signing.Verifier
-	Tracker  *TurnTracker
+	// AcceptWarm is the non-mutating counterpart of finish/vote warm-key
+	// resolution (authz / CheckWarmKey). Live apply and compose both see it,
+	// so a first-time warm ack does not pass sequencer best-effort and then
+	// fail host applyCore. Nil means cache-only (replay, tests). Must not
+	// write WarmKeys: dropped trial txs must not bind a key.
+	AcceptWarm func(slotID uint32, recovered, expected string) bool
+	Verifier   signing.Verifier
+	Tracker    *TurnTracker
 	// Floor answers F(m) for L0. Nil disables the check.
 	Floor    *FloorIndex
 	Cfg      HeartbeatConfig
@@ -245,6 +252,14 @@ func PeerSeenByteLenValid(bits []byte, slotsNum uint32) bool {
 // key. Hosts sign acks with the acting (warm) key after cutover; finishes
 // and votes already accept that binding. An unbound or mismatched signer is
 // still INVALID so a user cannot fabricate an ack.
+//
+// WarmKeys is per-slot and filled lazily on the first confirm/finish/vote for
+// that slot. A heartbeat ack can name any slot the host owns, including one
+// that has never executed, so L2 also accepts:
+//   - a warm key already bound on a sibling slot of the same validator
+//   - AcceptWarm, the same authz check finishes use, so applyCore (which
+//     L2-checks the signed set before applyTx) agrees with compose (which
+//     may bind WarmKeys mid-nonce via an earlier confirm)
 func checkL2(acks []ackRef, st LogPlaneState) error {
 	if st.Verifier == nil {
 		if len(acks) == 0 {
@@ -257,18 +272,36 @@ func checkL2(acks []ackRef, st LogPlaneState) error {
 		if !ok || key == "" {
 			return fmt.Errorf("%w: no key for slot %d", ErrAckSigInvalid, ref.ack.SlotId)
 		}
-		err := VerifyAck(st.Verifier, ref.ack, key)
-		if err == nil {
-			continue
+		recovered, err := RecoverAckSigner(st.Verifier, ref.ack)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrAckSigInvalid, err)
 		}
-		if warm := st.WarmKeys[ref.ack.SlotId]; warm != "" && warm != key {
-			if err2 := VerifyAck(st.Verifier, ref.ack, warm); err2 == nil {
-				continue
-			}
+		if !ackSignerAllowed(recovered, key, ref.ack.SlotId, st) {
+			return fmt.Errorf("%w: signer %q != slot key %q", ErrAckSigInvalid, recovered, key)
 		}
-		return fmt.Errorf("%w: %v", ErrAckSigInvalid, err)
 	}
 	return nil
+}
+
+func ackSignerAllowed(recovered, slotKey string, slotID uint32, st LogPlaneState) bool {
+	if recovered == slotKey {
+		return true
+	}
+	if warm := st.WarmKeys[slotID]; warm != "" && recovered == warm {
+		return true
+	}
+	for other, warm := range st.WarmKeys {
+		if other == slotID || warm == "" || recovered != warm {
+			continue
+		}
+		if st.SlotKeys[other] == slotKey {
+			return true
+		}
+	}
+	if st.AcceptWarm != nil && st.AcceptWarm(slotID, recovered, slotKey) {
+		return true
+	}
+	return false
 }
 
 // checkL3 is ack causality: ref_nonce must name a heartbeat, in this diff or

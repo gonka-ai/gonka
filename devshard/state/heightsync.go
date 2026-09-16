@@ -112,12 +112,28 @@ func (sm *StateMachine) applyHeartbeat(msg *types.MsgHeartbeat) error {
 
 // applyHeightAck accepts MsgHeightAck into Diff while Active. Signature/causality
 // checks run in applyCore. Compose skips these once Finalizing.
+//
+// A first-time warm ack is admitted by L2 via AcceptWarm (CheckWarmKey) before
+// this runs. Cache the binding here so WarmKeyDelta captures it for replay,
+// matching ResolveWarmKey on confirm/finish/vote. Failure to cache is not an
+// apply error: L2 already accepted the signer (sibling binding or live authz).
 func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 	if msg == nil {
 		return types.ErrEmptyTx
 	}
 	if sm.state.Phase != types.PhaseActive {
 		return types.ErrSessionFinalizing
+	}
+	expected, ok := sm.slotToAddress[msg.SlotId]
+	if !ok {
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.SlotId)
+	}
+	recovered, err := heightsync.RecoverAckSigner(sm.verifier, msg)
+	if err != nil {
+		return err
+	}
+	if recovered != expected {
+		sm.ResolveWarmKey(msg.SlotId, recovered, expected)
 	}
 	return nil
 }
@@ -166,6 +182,10 @@ func (sm *StateMachine) logPlaneStateLocked() heightsync.LogPlaneState {
 		SlotsNum: uint64(len(sm.state.Group)),
 		SlotKeys: sm.slotToAddress,
 		WarmKeys: sm.state.WarmKeys,
+		AcceptWarm: func(slotID uint32, recovered, expected string) bool {
+			_ = slotID
+			return sm.CheckWarmKey(recovered, expected)
+		},
 		Verifier: sm.verifier,
 		Tracker:  sm.turnTracker,
 		Floor:    sm.heightSyncFloor,

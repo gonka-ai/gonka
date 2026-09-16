@@ -188,6 +188,58 @@ func TestLogPlane_UnboundWarmAckRejected(t *testing.T) {
 	require.Equal(t, "ack_sig_invalid", res.Reason)
 }
 
+func TestLogPlane_SiblingWarmBoundAckAccepted(t *testing.T) {
+	st, signers := baseState(t, 2)
+	warm := testutil.MustGenerateKey(t)
+	st.SlotKeys[1] = signers[0].Address()
+	st.WarmKeys = map[uint32]string{0: warm.Address()}
+	hash := []byte{0xaa}
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 2, hash, nil)}, 50)
+
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{signedAckTx(signedAck(t, warm, 1, 1, 50, hash, types.SyncState_SYNCED))},
+	}, st)
+	require.NoError(t, res.Err, "warm key bound on a sibling slot of the same validator must verify")
+}
+
+func TestLogPlane_SiblingWarmDifferentValidatorRejected(t *testing.T) {
+	st, _ := baseState(t, 2)
+	warm := testutil.MustGenerateKey(t)
+	st.WarmKeys = map[uint32]string{0: warm.Address()}
+	hash := []byte{0xaa}
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 2, hash, nil)}, 50)
+
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{signedAckTx(signedAck(t, warm, 1, 1, 50, hash, types.SyncState_SYNCED))},
+	}, st)
+	require.ErrorIs(t, res.Err, heightsync.ErrAckSigInvalid, "a warm key bound for a different validator must not verify")
+}
+
+func TestLogPlane_AcceptWarmAllowsUnboundAck(t *testing.T) {
+	st, signers := baseState(t, 2)
+	warm := testutil.MustGenerateKey(t)
+	st.AcceptWarm = func(slotID uint32, recovered, expected string) bool {
+		return slotID == 0 && recovered == warm.Address() && expected == signers[0].Address()
+	}
+	hash := []byte{0xaa}
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 2, hash, nil)}, 50)
+
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{signedAckTx(signedAck(t, warm, 1, 0, 50, hash, types.SyncState_SYNCED))},
+	}, st)
+	require.NoError(t, res.Err)
+
+	st.AcceptWarm = func(uint32, string, string) bool { return false }
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{signedAckTx(signedAck(t, warm, 1, 0, 50, hash, types.SyncState_SYNCED))},
+	}, st)
+	require.ErrorIs(t, res.Err, heightsync.ErrAckSigInvalid)
+}
+
 func TestLogPlane_AckCausalityRejected(t *testing.T) {
 	st, signers := baseState(t, 3)
 	hash := []byte{0xaa}
