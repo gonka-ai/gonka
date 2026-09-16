@@ -36,6 +36,7 @@ var (
 )
 
 const DefaultKDim = 12
+const expectedSMSTProofLength = 24
 
 // ProofClient fetches and verifies SMST proofs from participant APIs.
 type ProofClient struct {
@@ -182,6 +183,9 @@ func (c *ProofClient) FetchAndVerifyProofs(
 	if err := validateLeafCoverage(req.LeafIndices, proofResp.Proofs); err != nil {
 		return nil, err
 	}
+	if err := checkBatchProofLengths(proofResp.Proofs, req.ParticipantAddress); err != nil {
+		return nil, err
+	}
 
 	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
 	for _, item := range proofResp.Proofs {
@@ -274,6 +278,9 @@ func (c *ProofClient) FetchAndVerifyProofsByNonce(
 	if err := validateNonceCoverage(req.Nonces, proofResp.Proofs); err != nil {
 		return nil, err
 	}
+	if err := checkBatchProofLengths(proofResp.Proofs, req.ParticipantAddress); err != nil {
+		return nil, err
+	}
 
 	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
 	for _, item := range proofResp.Proofs {
@@ -288,6 +295,23 @@ func (c *ProofClient) FetchAndVerifyProofsByNonce(
 		"participant", req.ParticipantAddress, "count", len(verified))
 
 	return verified, nil
+}
+
+func checkBatchProofLengths(proofs []ProofItem, participant string) error {
+	if len(proofs) == 0 {
+		return nil
+	}
+	n := len(proofs[0].Proof)
+	for _, p := range proofs[1:] {
+		if len(p.Proof) != n {
+			return fmt.Errorf("%w: mixed proof lengths", ErrProofVerificationFailed)
+		}
+	}
+	if n != expectedSMSTProofLength {
+		logging.Warn("SMST proof length is not 24", types.PoC,
+			"participant", participant, "proofLength", n, "batchSize", len(proofs))
+	}
+	return nil
 }
 
 // CheckDuplicateNonces checks if any artifacts have duplicate nonces.
