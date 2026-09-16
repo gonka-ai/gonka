@@ -1,6 +1,9 @@
 # Devshard HA lifecycle test plan
 
 Prepare the deployment using the [HA setup guide](../../docs/devshard-host-ha-setup.md).
+Record whether it uses the optional `oracle-filter` or direct API catalog access.
+Filter-specific steps below apply only to the filtered example; with direct access,
+verify the same protocol availability in the API catalog.
 Operator commands for adding, stopping, replacing and removing versiond are in
 [section 2.5](../../docs/devshard-host-ha-setup.md#25-operating-versiond-members).
 
