@@ -28,11 +28,14 @@ func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 		return nil
 	}
 	span, err := s.composeHeartbeatSpan()
+	// Persist-first: any prefix already in the store must go out even when
+	// a later heartbeat fails L0. Catch-up on the next send is not enough
+	// if this tick is the one that lands the drain.
+	s.dispatchHeartbeatSpan(ctx, span)
 	if err != nil {
 		s.publishHeightSyncView()
 		return err
 	}
-	s.dispatchHeartbeatSpan(ctx, span)
 	err = s.flushHeartbeatAckRounds(ctx)
 	s.publishHeightSyncView()
 	return err
@@ -169,10 +172,6 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	defer s.mu.Unlock()
 
 	now := s.nowLocked()
-	// The span's heartbeats land at consecutive nonces starting here, and they
-	// all carry the same height, so one floor read at the first nonce satisfies
-	// L0 for the whole span: each later heartbeat clears a floor its own
-	// predecessor set, with equality.
 	hNow, hash, ok := s.referenceStampLocked(s.nonce + 1)
 	if !ok || hNow == 0 {
 		s.heartbeat.Due(now, 0) // increments skippedNoHeight
@@ -203,6 +202,20 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 		return nil, nil
 	}
 
+	// Host-signed pending (confirm/finish/ack) can raise F. Sequencer
+	// heartbeats may only copy F, so those raises must land on their own
+	// nonces before the span snapshots the floor. Mixing them into heartbeat
+	// 1 and freezing H at the old F makes later slots L0-invalid.
+	drain, err := s.drainUnpinnedPendingLocked()
+	if err != nil {
+		return drain, err
+	}
+
+	hNow, hash, ok = s.referenceStampLocked(s.nonce + 1)
+	if !ok || hNow == 0 {
+		return drain, nil
+	}
+
 	slots := uint64(len(s.group))
 	// The turn's identity is the nonce its first heartbeat lands at, so the
 	// producer reports it rather than choosing it. There is no counter to keep in
@@ -217,10 +230,10 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	vector := heightsync.ComposeSyncVector(uint32(slots), prev)
 	spanTxs := s.heartbeat.SpanTxs(hNow, hash, slots, reason, vector)
 	if len(spanTxs) == 0 {
-		return nil, nil
+		return drain, nil
 	}
 
-	out := make([]composedDiff, 0, len(spanTxs))
+	out := drain
 	for i, hbTx := range spanTxs {
 		extra := []*types.DevshardTx{hbTx}
 		if i == 0 {
@@ -231,7 +244,7 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 		}
 		diff, hostIdx, err := s.composeDiffLocked(extra)
 		if err != nil {
-			return nil, err
+			return out, err
 		}
 		out = append(out, composedDiff{diff: diff, hostIdx: hostIdx})
 	}
@@ -251,7 +264,7 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 		Event:     heightsync.CadenceHeartbeatOpened,
 		TurnStart: spanStart,
 		HRef:      hNow,
-		Span:      len(out),
+		Span:      len(spanTxs),
 		Reason:    string(reason),
 	})
 	if s.anchors != nil {
@@ -260,7 +273,27 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	}
 	logging.Info("heartbeat span dispatched", "subsystem", "heightsync",
 		"escrow", s.escrowID, "turn_start", spanStart,
-		"height", hNow, "span", len(out), "reason", string(reason))
+		"height", hNow, "span", len(spanTxs), "drain", len(drain), "reason", string(reason))
+	return out, nil
+}
+
+// drainUnpinnedPendingLocked persists unpinned pending txs on their own
+// nonces so a later heartbeat span can stamp the post-raise floor. Pinned
+// finishes stay queued. Caller holds s.mu.
+func (s *Session) drainUnpinnedPendingLocked() ([]composedDiff, error) {
+	var out []composedDiff
+	limit := len(s.pendingTxs) + 1
+	for i := 0; i < limit; i++ {
+		candidates, _ := s.splitPendingForComposeLocked(nil)
+		if len(candidates) == 0 {
+			return out, nil
+		}
+		diff, hostIdx, err := s.composeDiffLocked(nil)
+		if err != nil {
+			return out, err
+		}
+		out = append(out, composedDiff{diff: diff, hostIdx: hostIdx})
+	}
 	return out, nil
 }
 
