@@ -36,6 +36,24 @@ func TestRawRoundTrip(t *testing.T) {
 		PocStartBlockHeight: 50,
 		EpochIndex:          1,
 		ModelId:             "",
+		DynamicCoefficientParams: &types.DynamicCoefficientParams{
+			TargetZoneBps:    500,
+			StepMin:          &types.Decimal{Value: 5, Exponent: -3},
+			StepMax:          &types.Decimal{Value: 5, Exponent: -2},
+			BootstrapStepMax: &types.Decimal{Value: 25, Exponent: -2},
+		},
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{{
+			ModelId: "model-a",
+			Config: &types.DynamicCoefficientModelConfig{
+				CoeffMin:           &types.Decimal{Value: 1, Exponent: 0},
+				CoeffMax:           &types.Decimal{Value: 2, Exponent: 0},
+				RelativeDifficulty: &types.Decimal{Value: 1, Exponent: 0},
+				TargetShareBps:     10000,
+			},
+			BaseCoefficient: &types.Decimal{Value: 12, Exponent: -1},
+			AdaptiveStep:    &types.Decimal{Value: 5, Exponent: -2},
+			PrevSign:        1,
+		}},
 	}
 	bytes := cdc.MustMarshal(&epochGroupData)
 	roundTripped := types.EpochGroupData{}
@@ -60,6 +78,14 @@ func TestEpochGroupDataGet(t *testing.T) {
 		)
 	}
 }
+
+func TestEpochGroupDataGetWithErrorDistinguishesMissing(t *testing.T) {
+	keeper, ctx := keepertest.InferenceKeeper(t)
+	_, found, err := keeper.GetEpochGroupDataWithError(ctx, 999, "missing")
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
 func TestEpochGroupDataRemove(t *testing.T) {
 	keeper, ctx := keepertest.InferenceKeeper(t)
 	items := createNEpochGroupData(keeper, ctx, 10)

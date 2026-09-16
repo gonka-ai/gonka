@@ -161,7 +161,7 @@ func TestSMSTAttackerScenarios(t *testing.T) {
 		targetIndex := realIndex + 1 // Claim it's at the next slot
 		proofSlice := encodeTestProofForTransport(elements)
 
-		if VerifySMSTProofWithDenseIndex(rootHash, count, targetIndex, nonce, leafData, proofSlice) {
+		if VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proofSlice)), targetIndex, nonce, leafData, proofSlice) {
 			t.Errorf("Security Breach: Proof for index %d accepted for index %d!", realIndex, targetIndex)
 		} else {
 			t.Logf("Success: Index spoofing rejected (calculated index %d != claimed %d)", realIndex, targetIndex)

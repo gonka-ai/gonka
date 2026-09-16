@@ -116,8 +116,8 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
         val servedSha256 = waitForDevsharddArtifactSha(genesis)
         assertThat(servedSha256).isEqualTo(preparedArtifact.approvedVersion.sha256)
 
-        logSection("Verifying chain params contain ${preparedArtifact.approvedVersion.name} at startup")
-        val approvedVersions = genesis.getParams().devshardEscrowParams?.approvedVersions ?: emptyList()
+        logSection("Verifying chain store contains ${preparedArtifact.approvedVersion.name} at startup")
+        val approvedVersions = genesis.getDevshardApprovedVersions()
         val approvedVersion = approvedVersions.single { it.name == preparedArtifact.approvedVersion.name }
         assertThat(approvedVersion.binary).isEqualTo(preparedArtifact.approvedVersion.binary)
         assertThat(approvedVersion.sha256).isEqualTo(preparedArtifact.approvedVersion.sha256)

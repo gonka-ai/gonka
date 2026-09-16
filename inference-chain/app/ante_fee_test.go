@@ -5,7 +5,9 @@ import (
 
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
+	storetypes "cosmossdk.io/store/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
@@ -14,6 +16,8 @@ import (
 	protov2 "google.golang.org/protobuf/proto"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+
+	keepertest "github.com/productscience/inference/testutil/keeper"
 
 	blstypes "github.com/productscience/inference/x/bls/types"
 )
@@ -46,7 +50,6 @@ func TestNetworkDutyBypass_AllExemptMessages(t *testing.T) {
 		"MsgSubmitSeed":                        &inferencetypes.MsgSubmitSeed{},
 		"MsgMLNodeWeightDistribution":          &inferencetypes.MsgMLNodeWeightDistribution{},
 		"MsgSubmitPocValidationsV2":            &inferencetypes.MsgSubmitPocValidationsV2{},
-		"MsgSubmitHardwareDiff":                &inferencetypes.MsgSubmitHardwareDiff{},
 		"MsgClaimRewards":                      &inferencetypes.MsgClaimRewards{},
 		"MsgSettleDevshardEscrow":              &inferencetypes.MsgSettleDevshardEscrow{},
 		"MsgSubmitDealerPart":                  &blstypes.MsgSubmitDealerPart{},
@@ -93,6 +96,7 @@ func TestNetworkDutyBypass_NonExemptMessages(t *testing.T) {
 		// count-proportional sybil-defense fee defined in FeeParams. See
 		// chargePoCV2StoreCommitGas in msg_server_poc_v2_commit.go.
 		&inferencetypes.MsgPoCV2StoreCommit{},
+		&inferencetypes.MsgSubmitHardwareDiff{},
 		&inferencetypes.MsgSubmitNewParticipant{},
 	}
 
@@ -160,30 +164,30 @@ func TestNetworkDutyBypass_GasCapEnforced(t *testing.T) {
 	require.Contains(t, err.Error(), "exceeds cap")
 }
 
-// --- isExemptMessageType tests ---
+// --- inferencetypes.IsNetworkDuty tests ---
 
 func TestIsExemptMessageType(t *testing.T) {
 	// Exempt
-	require.True(t, isExemptMessageType(&inferencetypes.MsgSubmitPocBatch{}))
-	require.True(t, isExemptMessageType(&inferencetypes.MsgSubmitSeed{}))
-	require.True(t, isExemptMessageType(&inferencetypes.MsgSubmitPocValidationsV2{}))
-	require.True(t, isExemptMessageType(&inferencetypes.MsgMLNodeWeightDistribution{}))
-	require.True(t, isExemptMessageType(&blstypes.MsgSubmitDealerPart{}))
-	require.True(t, isExemptMessageType(&blstypes.MsgSubmitVerificationVector{}))
-	require.True(t, isExemptMessageType(&blstypes.MsgSubmitGroupKeyValidationSignature{}))
-	require.True(t, isExemptMessageType(&blstypes.MsgSubmitPartialSignature{}))
-	require.True(t, isExemptMessageType(&blstypes.MsgRespondDealerComplaints{}))
-	require.True(t, isExemptMessageType(&inferencetypes.MsgSubmitHardwareDiff{}))
-	require.True(t, isExemptMessageType(&inferencetypes.MsgClaimRewards{}))
-	require.True(t, isExemptMessageType(&inferencetypes.MsgSettleDevshardEscrow{}))
+	require.True(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgSubmitPocBatch{}))
+	require.True(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgSubmitSeed{}))
+	require.True(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgSubmitPocValidationsV2{}))
+	require.True(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgMLNodeWeightDistribution{}))
+	require.True(t, inferencetypes.IsNetworkDuty(&blstypes.MsgSubmitDealerPart{}))
+	require.True(t, inferencetypes.IsNetworkDuty(&blstypes.MsgSubmitVerificationVector{}))
+	require.True(t, inferencetypes.IsNetworkDuty(&blstypes.MsgSubmitGroupKeyValidationSignature{}))
+	require.True(t, inferencetypes.IsNetworkDuty(&blstypes.MsgSubmitPartialSignature{}))
+	require.True(t, inferencetypes.IsNetworkDuty(&blstypes.MsgRespondDealerComplaints{}))
+	require.True(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgClaimRewards{}))
+	require.True(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgSettleDevshardEscrow{}))
 
 	// Not exempt
-	require.False(t, isExemptMessageType(&blstypes.MsgRequestThresholdSignature{}))  // open to anyone, no rate limit
-	require.False(t, isExemptMessageType(&inferencetypes.MsgPoCV2StoreCommit{}))     // intentional sybil-defense fee via chargePoCV2StoreCommitGas
-	require.False(t, isExemptMessageType(&inferencetypes.MsgCreateDevshardEscrow{})) // user-driven, paid
-	require.False(t, isExemptMessageType(&inferencetypes.MsgSubmitNewParticipant{}))
-	require.False(t, isExemptMessageType(&banktypes.MsgSend{}))
-	require.False(t, isExemptMessageType(&stakingtypes.MsgDelegate{}))
+	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgSubmitHardwareDiff{}))
+	require.False(t, inferencetypes.IsNetworkDuty(&blstypes.MsgRequestThresholdSignature{}))  // open to anyone, no rate limit
+	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgPoCV2StoreCommit{}))     // intentional sybil-defense fee via chargePoCV2StoreCommitGas
+	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgCreateDevshardEscrow{})) // user-driven, paid
+	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgSubmitNewParticipant{}))
+	require.False(t, inferencetypes.IsNetworkDuty(&banktypes.MsgSend{}))
+	require.False(t, inferencetypes.IsNetworkDuty(&stakingtypes.MsgDelegate{}))
 }
 
 // --- MsgExec recursive unwrapping tests ---
@@ -222,6 +226,64 @@ func TestIsNetworkDuty_MsgExec_FailsClosed(t *testing.T) {
 	// nil keeper: fail closed
 	require.False(t, isNetworkDuty(execMsg, nil),
 		"MsgExec should fail closed with nil keeper")
+}
+
+func TestIsNetworkDuty_EmptyMsgExec_NotDuty(t *testing.T) {
+	k, _ := keepertest.InferenceKeeper(t)
+	ir := k.Codec().(codec.ProtoCodecMarshaler).InterfaceRegistry()
+	authztypes.RegisterInterfaces(ir)
+
+	empty := &authztypes.MsgExec{Grantee: "cosmos1test"}
+	require.False(t, isNetworkDuty(empty, &k),
+		"empty MsgExec must not be treated as an all-exempt network duty")
+
+	decorator := NetworkDutyFeeBypassDecorator{
+		InferenceKeeper: &k,
+		GasCap:          10_000_000,
+		Priority:        10_000_000,
+	}
+	tx := testFeeTx{msgs: []sdk.Msg{empty}, gas: 100_000}
+	ctx := newTestContext().WithMinGasPrices(sdk.DecCoins{sdk.NewDecCoin("ngonka", math.NewInt(10))})
+	_, err := decorator.AnteHandle(ctx, tx, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		require.False(t, IsNetworkDutyBypassed(ctx), "empty MsgExec must not get the duty bypass")
+		require.NotEmpty(t, ctx.MinGasPrices())
+		return ctx, nil
+	})
+	require.NoError(t, err)
+}
+
+func TestUnwrapFeeMsgs_EmptyMsgExecRejected(t *testing.T) {
+	k, _ := keepertest.InferenceKeeper(t)
+	ir := k.Codec().(codec.ProtoCodecMarshaler).InterfaceRegistry()
+	authztypes.RegisterInterfaces(ir)
+	inferencetypes.RegisterInterfaces(ir)
+
+	_, err := unwrapFeeMsgs([]sdk.Msg{&authztypes.MsgExec{Grantee: "cosmos1test"}}, &k)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "empty MsgExec")
+
+	grantee := sdk.AccAddress("granteeaddr________")
+	innerEmpty := authztypes.NewMsgExec(grantee, []sdk.Msg{})
+	outer := authztypes.NewMsgExec(grantee, []sdk.Msg{&innerEmpty})
+	_, err = unwrapFeeMsgs([]sdk.Msg{&outer}, &k)
+	require.Error(t, err, "nested empty MsgExec must be rejected at every depth")
+}
+
+func TestIsNetworkDuty_MsgExec_OneLevelDuty(t *testing.T) {
+	k, _ := keepertest.InferenceKeeper(t)
+	ir := k.Codec().(codec.ProtoCodecMarshaler).InterfaceRegistry()
+	authztypes.RegisterInterfaces(ir)
+	inferencetypes.RegisterInterfaces(ir)
+
+	grantee := sdk.AccAddress("granteeaddr________")
+	exec := authztypes.NewMsgExec(grantee, []sdk.Msg{&inferencetypes.MsgClaimRewards{}})
+	require.True(t, isNetworkDuty(&exec, &k), "one-level DAPI MsgExec of a duty must still classify as duty")
+
+	mixed := authztypes.NewMsgExec(grantee, []sdk.Msg{
+		&inferencetypes.MsgClaimRewards{},
+		&inferencetypes.MsgPoCV2StoreCommit{},
+	})
+	require.False(t, isNetworkDuty(&mixed, &k), "mixed duty+paying MsgExec must not bypass")
 }
 
 func TestIsNetworkDuty_NonExecNonExempt(t *testing.T) {
@@ -308,9 +370,12 @@ func TestGonkaFeeChecker_Priority(t *testing.T) {
 
 func TestDefaultFeeParams(t *testing.T) {
 	fp := inferencetypes.DefaultFeeParams()
-	require.Equal(t, uint64(10), fp.MinGasPriceNgonka)
+	require.Equal(t, uint64(0), fp.MinGasPriceNgonka)
 	require.Equal(t, uint64(500_000), fp.BaseValidationGas)
 	require.Equal(t, uint64(100), fp.GasPerPocCount)
+	require.Empty(t, fp.EnabledFeeGroups)
+	require.NoError(t, fp.Validate())
+	require.NotNil(t, fp.GroupByName(inferencetypes.FeeGroupEpoch))
 }
 
 func TestFeeParamsMarshalRoundtrip(t *testing.T) {
@@ -326,4 +391,223 @@ func TestFeeParamsMarshalRoundtrip(t *testing.T) {
 	fp2 := &inferencetypes.FeeParams{}
 	require.NoError(t, fp2.Unmarshal(bz))
 	require.Equal(t, fp, fp2)
+}
+
+func TestGonkaFeeChecker_GroupPolarity(t *testing.T) {
+	exempt := inferencetypes.IsNetworkDuty
+	fp := inferencetypes.DefaultFeeParams()
+	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}, exempt))
+	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitHardwareDiff{}}, exempt))
+
+	epoch := fp.GroupByName(inferencetypes.FeeGroupEpoch)
+	require.NotNil(t, epoch)
+	epoch.MinGasPrice = 10
+	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupEpoch}
+
+	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}, exempt))
+	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitHardwareDiff{}}, exempt))
+	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitSeed{}}, exempt), "seed stays ante-exempt")
+	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&banktypes.MsgSend{}}, exempt), "cosmos off")
+	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{
+		&inferencetypes.MsgSubmitSeed{},
+		&inferencetypes.MsgPoCV2StoreCommit{},
+	}, exempt), "mixed fail-closed")
+
+	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupCosmos}
+	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}, exempt))
+	cosmos := &inferencetypes.FeeGroup{Name: inferencetypes.FeeGroupCosmos, MinGasPrice: 7}
+	fp.Groups = append(fp.Groups, cosmos)
+	require.Equal(t, uint64(7), fp.EnabledPayingPrice([]sdk.Msg{&banktypes.MsgSend{}}, exempt))
+
+	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupBLS}
+	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&blstypes.MsgSubmitDealerPart{}}, exempt), "bls duties still exempt")
+}
+
+func TestGonkaFeeChecker_MsgExecWithoutCodecRejected(t *testing.T) {
+	checker := GonkaFeeChecker(nil)
+	tx := testFeeTx{
+		msgs: []sdk.Msg{&authztypes.MsgExec{Grantee: "cosmos1test"}},
+		fee:  sdk.Coins{},
+		gas:  100_000,
+	}
+	_, _, err := checker(newTestContext(), tx)
+	require.Error(t, err, "unclassifiable MsgExec must not be treated as fee-less")
+}
+
+func TestGonkaFeeChecker_NestedMsgExecPaysInner(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	ir := k.Codec().(codec.ProtoCodecMarshaler).InterfaceRegistry()
+	authztypes.RegisterInterfaces(ir)
+	inferencetypes.RegisterInterfaces(ir)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	fp := inferencetypes.DefaultFeeParams()
+	epoch := fp.GroupByName(inferencetypes.FeeGroupEpoch)
+	require.NotNil(t, epoch)
+	epoch.MinGasPrice = 10
+	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupEpoch}
+	params.FeeParams = fp
+	require.NoError(t, k.SetParams(ctx, params))
+
+	grantee := sdk.AccAddress("granteeaddr________")
+	inner := authztypes.NewMsgExec(grantee, []sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}})
+	outer := authztypes.NewMsgExec(grantee, []sdk.Msg{&inner})
+
+	checker := GonkaFeeChecker(&k)
+	tx := testFeeTx{
+		msgs: []sdk.Msg{&outer},
+		fee:  sdk.Coins{},
+		gas:  100_000,
+	}
+	_, _, err = checker(ctx, tx)
+	require.Error(t, err, "nested MsgExec of StoreCommit must require epoch fees")
+
+	tx.fee = sdk.NewCoins(sdk.NewCoin("ngonka", math.NewInt(1_000_000)))
+	_, _, err = checker(ctx, tx)
+	require.NoError(t, err)
+}
+
+func TestGonkaFeeChecker_EmptyMsgExecRejected(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	ir := k.Codec().(codec.ProtoCodecMarshaler).InterfaceRegistry()
+	authztypes.RegisterInterfaces(ir)
+
+	checker := GonkaFeeChecker(&k)
+	tx := testFeeTx{
+		msgs: []sdk.Msg{&authztypes.MsgExec{Grantee: "cosmos1test"}},
+		fee:  sdk.Coins{},
+		gas:  100_000,
+	}
+	_, _, err := checker(ctx, tx)
+	require.Error(t, err, "empty MsgExec must not be treated as fee-less")
+}
+
+func TestGonkaFeeChecker_OneLevelMsgExecPaysInner(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	ir := k.Codec().(codec.ProtoCodecMarshaler).InterfaceRegistry()
+	authztypes.RegisterInterfaces(ir)
+	inferencetypes.RegisterInterfaces(ir)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	fp := inferencetypes.DefaultFeeParams()
+	epoch := fp.GroupByName(inferencetypes.FeeGroupEpoch)
+	require.NotNil(t, epoch)
+	epoch.MinGasPrice = 10
+	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupEpoch}
+	params.FeeParams = fp
+	require.NoError(t, k.SetParams(ctx, params))
+
+	grantee := sdk.AccAddress("granteeaddr________")
+	exec := authztypes.NewMsgExec(grantee, []sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}})
+	checker := GonkaFeeChecker(&k)
+	tx := testFeeTx{
+		msgs: []sdk.Msg{&exec},
+		fee:  sdk.Coins{},
+		gas:  100_000,
+	}
+	_, _, err = checker(ctx, tx)
+	require.Error(t, err, "one-level MsgExec of StoreCommit must require epoch fees")
+
+	tx.fee = sdk.NewCoins(sdk.NewCoin("ngonka", math.NewInt(1_000_000)))
+	_, _, err = checker(ctx, tx)
+	require.NoError(t, err)
+
+	mixed := authztypes.NewMsgExec(grantee, []sdk.Msg{
+		&inferencetypes.MsgClaimRewards{},
+		&inferencetypes.MsgPoCV2StoreCommit{},
+	})
+	tx.msgs = []sdk.Msg{&mixed}
+	tx.fee = sdk.Coins{}
+	_, _, err = checker(ctx, tx)
+	require.Error(t, err, "mixed duty+paying MsgExec must use the paying inner's price")
+
+	tx.fee = sdk.NewCoins(sdk.NewCoin("ngonka", math.NewInt(1_000_000)))
+	_, _, err = checker(ctx, tx)
+	require.NoError(t, err)
+}
+
+type extraGasRecorder struct {
+	storetypes.GasMeter
+	extra storetypes.Gas
+}
+
+func newExtraGasRecorder() *extraGasRecorder {
+	return &extraGasRecorder{GasMeter: storetypes.NewInfiniteGasMeter()}
+}
+
+func (r *extraGasRecorder) ConsumeGas(amount storetypes.Gas, descriptor string) {
+	if descriptor == "fee_group_period_base" || descriptor == "fee_group_extra" {
+		r.extra += amount
+	}
+	r.GasMeter.ConsumeGas(amount, descriptor)
+}
+
+func TestFeeGroupRepeatedLenDecorator_ChargesWithoutHandler(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	fp := inferencetypes.DefaultFeeParams()
+	epoch := fp.GroupByName(inferencetypes.FeeGroupEpoch)
+	require.NotNil(t, epoch)
+	epoch.Msgs = append(epoch.Msgs, &inferencetypes.MsgGasRule{
+		TypeUrl: sdk.MsgTypeURL(&inferencetypes.MsgSubmitPocValidationsV2{}),
+		Func: &inferencetypes.MsgGasRule_RepeatedLen{
+			RepeatedLen: &inferencetypes.RepeatedLenParams{GasPerUnit: 10, Field: "validations"},
+		},
+	})
+	require.NoError(t, fp.Validate())
+	params.FeeParams = fp
+	require.NoError(t, k.SetParams(ctx, params))
+
+	rec := newExtraGasRecorder()
+	ctx = ctx.WithGasMeter(rec)
+	decorator := FeeGroupRepeatedLenDecorator{InferenceKeeper: &k}
+	tx := testFeeTx{
+		msgs: []sdk.Msg{&inferencetypes.MsgSubmitPocValidationsV2{
+			Validations: []*inferencetypes.PoCValidationEntryV2{{}, {}, {}},
+		}},
+	}
+	nextCalled := false
+	_, err = decorator.AnteHandle(ctx, tx, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		nextCalled = true
+		return ctx, nil
+	})
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+	require.Equal(t, storetypes.Gas(30), rec.extra, "repeated_len must charge from FeeParams without a handler call")
+}
+
+func TestFeeGroupRepeatedLenDecorator_SkipsStoreCommit(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	fp := inferencetypes.DefaultFeeParams()
+	epoch := fp.GroupByName(inferencetypes.FeeGroupEpoch)
+	require.NotNil(t, epoch)
+	for _, rule := range epoch.Msgs {
+		if d := rule.GetStoredDelta(); d != nil {
+			d.GasPerUnit = 100
+			if rule.Base != nil {
+				rule.Base.Gas = 500_000
+			}
+		}
+	}
+	params.FeeParams = fp
+	require.NoError(t, k.SetParams(ctx, params))
+
+	rec := newExtraGasRecorder()
+	decorator := FeeGroupRepeatedLenDecorator{InferenceKeeper: &k}
+	tx := testFeeTx{
+		msgs: []sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{
+			PocStageStartBlockHeight: 100,
+			Entries:                  []*inferencetypes.PoCV2CommitEntry{{ModelId: "m", Count: 8}},
+		}},
+	}
+	_, err = decorator.AnteHandle(ctx.WithGasMeter(rec), tx, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		return ctx, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, storetypes.Gas(0), rec.extra, "stored_delta still belongs to the StoreCommit handler")
 }

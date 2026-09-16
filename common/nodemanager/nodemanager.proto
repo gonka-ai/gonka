@@ -10,6 +10,10 @@ service NodeManager {
   rpc GetRuntimeConfig(GetRuntimeConfigRequest) returns (GetRuntimeConfigResponse);
   rpc GetHostEvents(GetHostEventsRequest) returns (GetHostEventsResponse);
   rpc ListNodeCapacity(ListNodeCapacityRequest) returns (ListNodeCapacityResponse);
+  // Unary twins of HTTP GET /block/:height and GET /block/:height/prove.
+  // Live tip remains Comet NewBlock, not a gRPC stream.
+  rpc GetBlockHeader(GetBlockHeaderRequest) returns (GetBlockHeaderResponse);
+  rpc ProveBlockPath(ProveBlockPathRequest) returns (ProveBlockPathResponse);
 }
 
 message AcquireMLNodeRequest {
@@ -173,4 +177,55 @@ message NodeCapacityEntry {
 message ListNodeCapacityResponse {
   repeated NodeCapacityEntry nodes = 1;
   int64 served_at_unix = 2;
+}
+
+// GetBlockHeaderRequest looks up a committed header. Height 0 means Latest().
+message GetBlockHeaderRequest {
+  int64 height = 1;
+}
+
+message GetBlockHeaderResponse {
+  BlockHeader header = 1;
+}
+
+// ProveBlockPathRequest is GET /block/:height/prove?path=. Hash-only
+// producers return Unimplemented (HTTP 501).
+message ProveBlockPathRequest {
+  int64 height = 1;
+  string path = 2;
+}
+
+message ProveBlockPathResponse {
+  BlockProof proof = 1;
+}
+
+// BlockHeader is the gRPC shape of chainoracle/blocks.Header.
+message BlockHeader {
+  int64 height = 1;
+  int64 time_unix_nano = 2;
+  string chain_id = 3;
+  bytes block_hash = 4;
+  bytes app_hash = 5;
+  bytes validators_hash = 6;
+  bytes next_validators_hash = 7;
+  BlockCommit commit = 8;
+}
+
+message BlockCommit {
+  int64 height = 1;
+  int32 round = 2;
+  bytes block_id = 3;
+  repeated BlockCommitSig signatures = 4;
+}
+
+message BlockCommitSig {
+  bytes validator_address = 1;
+  int64 timestamp_unix_nano = 2;
+  bytes signature = 3;
+}
+
+message BlockProof {
+  string path = 1;
+  bytes value = 2;
+  repeated bytes ops = 3;
 }

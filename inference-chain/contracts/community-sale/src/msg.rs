@@ -1,5 +1,5 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Binary, Coin, Uint128};
+use cosmwasm_std::{Binary, Coin, Uint256};
 
 #[cw_serde]
 pub struct InstantiateMsg {
@@ -14,7 +14,7 @@ pub struct InstantiateMsg {
     /// Accepted IBC denom (e.g. "ibc/A1B2...")
     pub accepted_ibc_denom: String,
     /// Fixed price per 1 GNK in micro-USD (6 decimals, e.g., 25000 = $0.025/GNK)
-    pub price_usd: Uint128,
+    pub price_usd: Uint256,
     /// Optional native token denomination (defaults to "ngonka" if not provided)
     pub native_denom: Option<String>,
     /// Whether to allow any approved token for trading or just the specifically accepted one
@@ -34,15 +34,23 @@ pub enum ExecuteMsg {
     /// Admin: Update buyer address
     UpdateBuyer { buyer: String },
     /// Admin: Update fixed price
-    UpdatePrice { price_usd: Uint128 },
+    UpdatePrice { price_usd: Uint256 },
     /// Admin: Update allow_all_trade_tokens flag
     UpdateAllowAllTradeTokens { allow: bool },
     /// Admin: Withdraw native tokens from contract
-    WithdrawNative { amount: Uint128, recipient: String },
+    WithdrawNative { amount: Uint256, recipient: String },
     /// Admin: Withdraw CW20 tokens from contract
-    WithdrawCw20 { contract_addr: String, amount: Uint128, recipient: String },
+    WithdrawCw20 {
+        contract_addr: String,
+        amount: Uint256,
+        recipient: String,
+    },
     /// Admin: Withdraw IBC tokens from contract
-    WithdrawIbc { denom: String, amount: Uint128, recipient: String },
+    WithdrawIbc {
+        denom: String,
+        amount: Uint256,
+        recipient: String,
+    },
     /// Admin: Emergency withdraw all funds
     EmergencyWithdraw { recipient: String },
 }
@@ -50,7 +58,7 @@ pub enum ExecuteMsg {
 #[cw_serde]
 pub struct Cw20ReceiveMsg {
     pub sender: String,
-    pub amount: Uint128,
+    pub amount: Uint256,
     pub msg: Binary,
 }
 
@@ -68,7 +76,7 @@ pub enum QueryMsg {
     NativeBalance {},
     /// Calculate how many tokens can be bought with given USD amount
     #[returns(TokenCalculationResponse)]
-    CalculateTokens { usd_amount: Uint128 },
+    CalculateTokens { usd_amount: Uint256 },
     /// Test bridge validation with a provided CW20 contract address
     #[returns(TestBridgeValidationResponse)]
     TestBridgeValidation { cw20_contract: String },
@@ -87,10 +95,10 @@ pub struct ConfigResponse {
     pub accepted_chain_id: String,
     pub accepted_eth_contract: String,
     pub accepted_ibc_denom: String,
-    pub price_usd: Uint128,
+    pub price_usd: Uint256,
     pub native_denom: String,
     pub is_paused: bool,
-    pub total_tokens_sold: Uint128,
+    pub total_tokens_sold: Uint256,
     pub allow_all_trade_tokens: bool,
 }
 
@@ -101,8 +109,8 @@ pub struct NativeBalanceResponse {
 
 #[cw_serde]
 pub struct TokenCalculationResponse {
-    pub tokens: Uint128,
-    pub price_usd: Uint128,
+    pub tokens: Uint256,
+    pub price_usd: Uint256,
 }
 
 #[cw_serde]

@@ -9,6 +9,12 @@ func (msg *MsgRegisterModel) GetSignersStrings() []string { return []string{msg.
 func (msg *MsgDeleteGovernanceModel) GetSignersStrings() []string {
 	return []string{msg.Authority}
 }
+func (msg *MsgPutDevshardApprovedVersion) GetSignersStrings() []string {
+	return []string{msg.Authority}
+}
+func (msg *MsgDeleteDevshardApprovedVersion) GetSignersStrings() []string {
+	return []string{msg.Authority}
+}
 func (msg *MsgApproveBridgeTokenForTrading) GetSignersStrings() []string {
 	return []string{msg.Authority}
 }
