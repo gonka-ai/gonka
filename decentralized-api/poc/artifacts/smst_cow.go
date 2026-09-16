@@ -177,22 +177,35 @@ func (s *SMST) attachSealedCOW(nonce int32, sealed *smstNode) {
 	if sealed == nil {
 		return
 	}
+	s.attachCutCOW(nonce, &smstNode{hash: appendHash(sealed.hash), count: sealed.count})
+}
+
+func (s *SMST) attachCutCOW(nonce int32, cutNode *smstNode) {
+	if cutNode == nil {
+		return
+	}
 	requiredDepth := s.requiredDepth(nonce)
 	if requiredDepth > s.depth {
 		s.expandDepth(requiredDepth)
 	}
 	path := s.noncePath(nonce)
-	s.root = s.attachSealedAt(s.root, path, 0, sealed)
+	s.root = s.attachSealedAt(s.root, path, 0, cutNode)
+}
+
+func appendHash(h []byte) []byte {
+	if h == nil {
+		return nil
+	}
+	return append([]byte(nil), h...)
 }
 
 func (s *SMST) attachSealedAt(node *smstNode, path []bool, level int, sealed *smstNode) *smstNode {
 	cut := s.cutLevel()
 	if cut >= 0 && level == cut {
-		h := sealed.hash
-		if h != nil {
-			h = append([]byte(nil), h...)
+		if sealed.left == nil && sealed.right == nil {
+			return &smstNode{hash: appendHash(sealed.hash), count: sealed.count}
 		}
-		return &smstNode{hash: h, count: sealed.count}
+		return sealed
 	}
 	newNode := &smstNode{}
 	if node != nil {

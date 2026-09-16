@@ -54,6 +54,14 @@ type SMST struct {
 	// cutHeight is the paged suffix height. 0 means a full in-RAM tree.
 	// After spill, nodes at depth-cutHeight are sealed (hash+count, no children).
 	cutHeight int
+
+	// cutExists is consulted at a sealed suffix cut. The live spilled tree
+	// and snapshot views set this so HasNonce is not a false miss at the cut.
+	cutExists func(nonce int32) bool
+
+	// cutDenseIndex returns the suffix-local dense index at a sealed cut so
+	// denseIndexForNonce does not walk nil children.
+	cutDenseIndex func(nonce int32) (uint32, error)
 }
 
 // NewSMST creates a new sparse merkle sum tree.
@@ -67,11 +75,11 @@ func NewSMST(depth int) *SMST {
 	}
 
 	s := &SMST{
-		depth:         depth,
-		emptyHash:     make([][]byte, depth+1),
-		hasNonce:      make(map[int32]bool),
-		deferredHash:  true,
-		parallelHash:  true,
+		depth:        depth,
+		emptyHash:    make([][]byte, depth+1),
+		hasNonce:     make(map[int32]bool),
+		deferredHash: true,
+		parallelHash: true,
 	}
 
 	s.emptyHash[0] = smstHashEmpty()
@@ -325,7 +333,10 @@ func (s *SMST) hasNonceInTree(nonce int32) bool {
 			return false
 		}
 		if s.isSealed(node, level) {
-			return true
+			if s.cutExists != nil {
+				return s.cutExists(nonce)
+			}
+			return false
 		}
 		if goRight {
 			node = node.right
@@ -345,9 +356,20 @@ func (s *SMST) denseIndexForNonce(nonce int32) (uint32, error) {
 	path := s.noncePath(nonce)
 	node := s.root
 	var denseIndex uint32
+	level := 0
 	for _, goRight := range path {
 		if node == nil {
 			return 0, ErrNonceNotFound
+		}
+		if s.isSealed(node, level) {
+			if s.cutDenseIndex == nil {
+				return 0, ErrNonceNotFound
+			}
+			local, err := s.cutDenseIndex(nonce)
+			if err != nil {
+				return 0, err
+			}
+			return denseIndex + local, nil
 		}
 		if goRight {
 			denseIndex += s.nodeCount(node.left)
@@ -355,6 +377,7 @@ func (s *SMST) denseIndexForNonce(nonce int32) (uint32, error) {
 		} else {
 			node = node.left
 		}
+		level++
 	}
 	if node == nil {
 		return 0, ErrNonceNotFound

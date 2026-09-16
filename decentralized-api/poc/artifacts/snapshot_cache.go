@@ -189,7 +189,11 @@ func (s *SMSTArtifactStore) buildSnapshotTree(count uint32) (*SMST, error) {
 	spilled := s.spilled
 	s.mu.RUnlock()
 	if spilled {
-		return s.buildPagedUpperAt(count)
+		s.mu.RLock()
+		metas := s.copySuffixMeta()
+		fileThrough := s.flushedLeafCount
+		s.mu.RUnlock()
+		return s.buildPagedUpperAtUnlocked(count, metas, fileThrough)
 	}
 	offsets, buffered, err := s.snapshotRebuildInputs(count)
 	if err != nil {
