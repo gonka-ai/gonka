@@ -30,7 +30,14 @@ Public proxy (/devshard/...)
 
 This setup supports HA protocols only. It does not cover migrating pre-HA deployments such as `v3`.
 
-**Install:** Steps 1–4. **Upgrade:** [Existing host](#upgrade-an-existing-host). **Extend:** [Remote replica](#add-a-remote-replica) or [local replica](#add-a-local-replica).
+## Contents
+
+- [Install a new host](#install-a-new-host)
+- [Upgrade an existing host](#upgrade-an-existing-host)
+- [Add a remote replica](#add-a-remote-replica)
+- [Add a local replica](#add-a-local-replica)
+- [Operate the deployment](#operate-the-deployment)
+- [Troubleshooting](#troubleshooting)
 
 <a id="install-a-new-host"></a>
 <a id="step-1---install-postgres-preferably-ha-itself"></a>
