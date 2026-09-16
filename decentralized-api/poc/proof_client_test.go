@@ -126,6 +126,32 @@ func TestValidateNonceCoverage_DuplicateNonce(t *testing.T) {
 	assert.Contains(t, err.Error(), "duplicate nonce")
 }
 
+func itemsWithProofLens(lens ...int) []ProofItem {
+	out := make([]ProofItem, len(lens))
+	for i, n := range lens {
+		out[i].Proof = make([]string, n)
+	}
+	return out
+}
+
+func TestCheckBatchProofLengths_All24(t *testing.T) {
+	assert.NoError(t, checkBatchProofLengths(itemsWithProofLens(24, 24, 24), "p"))
+}
+
+func TestCheckBatchProofLengths_All25(t *testing.T) {
+	assert.NoError(t, checkBatchProofLengths(itemsWithProofLens(25, 25), "p"))
+}
+
+func TestCheckBatchProofLengths_Mixed(t *testing.T) {
+	err := checkBatchProofLengths(itemsWithProofLens(24, 25), "p")
+	assert.True(t, errors.Is(err, ErrProofVerificationFailed))
+}
+
+func TestCheckBatchProofLengths_Empty(t *testing.T) {
+	assert.NoError(t, checkBatchProofLengths(nil, "p"))
+	assert.NoError(t, checkBatchProofLengths([]ProofItem{}, "p"))
+}
+
 func TestCheckDuplicateNonces_NoDuplicates(t *testing.T) {
 	artifacts := []VerifiedArtifact{
 		{Nonce: 1},
