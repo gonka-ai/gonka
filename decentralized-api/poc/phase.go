@@ -12,6 +12,9 @@ func ShouldAcceptGeneratedArtifacts(epochState *chainphase.EpochState) bool {
 	if epochState.IsNilOrNotSynced() {
 		return false
 	}
+	if ch := OwnChallengeGenerate(epochState); ch != nil {
+		return epochState.CurrentBlock.Height < ch.Finish
+	}
 	if epochState.CurrentPhase == types.PoCGeneratePhase {
 		return true
 	}
@@ -54,6 +57,14 @@ func ShouldAcceptValidatedArtifacts(epochState *chainphase.EpochState) bool {
 func GetCurrentPocStageHeight(epochState *chainphase.EpochState) int64 {
 	if epochState.IsNilOrNotSynced() {
 		return 0
+	}
+
+	if !InVoteWindow(epochState) {
+		if ch := OpenChallenges.SelfGenerating(); ch != nil && ch.StartHeight > 0 {
+			if ch.Finish > 0 && epochState.CurrentBlock.Height < ch.Finish {
+				return ch.StartHeight
+			}
+		}
 	}
 
 	// Confirmation PoC uses event's trigger height

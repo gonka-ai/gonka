@@ -51,6 +51,10 @@ func (m *mockParamsQueryClient) DevshardApprovedVersions(ctx context.Context, re
 	return args.Get(0).(*types.QueryDevshardApprovedVersionsResponse), args.Error(1)
 }
 
+func (m *mockParamsQueryClient) OpenPoCChallenges(ctx context.Context, req *types.QueryOpenPoCChallengesRequest, opts ...grpc.CallOption) (*types.QueryOpenPoCChallengesResponse, error) {
+	return &types.QueryOpenPoCChallengesResponse{}, nil
+}
+
 func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*OnNewBlockDispatcher, *apiconfig.ConfigManager) {
 	t.Helper()
 

@@ -33,8 +33,12 @@ func (c StartPocCommand) Execute(b *Broker) {
 		return
 	}
 
-	// Check if we should run PoC (regular OR confirmation)
+	// Check if we should run PoC (regular OR confirmation OR own challenge generate)
 	shouldRunPoC := epochState.CurrentPhase == types.PoCGeneratePhase
+	ignorePocSlot := overlayIgnorePocSlotOnStart(epochState)
+	if ignorePocSlot {
+		shouldRunPoC = true
+	}
 
 	// Confirmation PoC during inference phase
 	if epochState.CurrentPhase == types.InferencePhase && epochState.ActiveConfirmationPoCEvent != nil {
@@ -76,7 +80,7 @@ func (c StartPocCommand) Execute(b *Broker) {
 				"current_epoch", epochState,
 				"current_phase", epochState.CurrentPhase)
 			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
-		} else if node.State.ShouldContinueInference() {
+		} else if !ignorePocSlot && node.State.ShouldContinueInference() {
 			// Node should continue inference service based on POC_SLOT allocation
 			// TODO: change logs to debug
 			logging.Info("Keeping node in inference service mode due to POC_SLOT allocation", types.PoC,
@@ -106,7 +110,7 @@ func (c StartPocCommand) shouldMutateState(b *Broker, epochState *chainphase.Epo
 		}
 
 		// Check if node should continue inference based on POC_SLOT
-		if node.State.ShouldContinueInference() {
+		if !overlayIgnorePocSlotOnStart(epochState) && node.State.ShouldContinueInference() {
 			logging.Info("[StartPocCommand] Node should continue inference", types.PoC, "node_id", node.Node.Id)
 			if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
 				return true
@@ -152,6 +156,7 @@ func (c InitValidateCommand) Execute(b *Broker) {
 		epochParams := &epochState.LatestEpoch.EpochParams
 		shouldValidate = event.IsInValidationWindow(epochState.CurrentBlock.Height, epochParams)
 	}
+	ignorePocSlot := overlayIgnorePocSlotOnValidate(epochState)
 
 	if !shouldValidate {
 		logging.Warn("InitValidateCommand: skipping outdated command execution. current phase isn't PoCValidatePhase and no active confirmation PoC", types.PoC,
@@ -183,7 +188,7 @@ func (c InitValidateCommand) Execute(b *Broker) {
 				"current_epoch", epochState,
 				"current_phase", epochState.CurrentPhase)
 			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
-		} else if node.State.ShouldContinueInference() {
+		} else if !ignorePocSlot && node.State.ShouldContinueInference() {
 			// Node should continue inference service based on POC_SLOT allocation
 			logging.Info("Keeping node in inference service mode due to POC_SLOT allocation", types.PoC,
 				"node_id", node.Node.Id,
@@ -211,7 +216,7 @@ func (c InitValidateCommand) shouldMutateState(b *Broker, epochState *chainphase
 		}
 
 		// Check if node should continue inference based on POC_SLOT
-		if node.State.ShouldContinueInference() {
+		if !overlayIgnorePocSlotOnValidate(epochState) && node.State.ShouldContinueInference() {
 			logging.Info("[InitValidateCommand] Node should continue inference", types.PoC, "node_id", node.Node.Id)
 			if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
 				return true
@@ -245,6 +250,12 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 	epochState := b.phaseTracker.GetCurrentEpochState()
 	if epochState.IsNilOrNotSynced() {
 		logging.Warn("InferenceUpAllCommand: skipping outdated command execution. epoch state is nil or not synced", types.Nodes)
+		return
+	}
+
+	if overlayOwnChallengeGenerate(epochState) != nil {
+		logging.Info("InferenceUpAllCommand: no-op while own challenge is generating", types.PoC,
+			"current_block_height", epochState.CurrentBlock.Height)
 		return
 	}
 

@@ -34,6 +34,7 @@ type ManagedArtifactStore struct {
 	mu          sync.RWMutex
 	baseDir     string
 	stores      map[storeKey]ArtifactStore
+	serving     map[storeKey]ArtifactStore
 	retainCount int
 	// activeStage is the only stage height allowed in RAM. 0 means inactive:
 	// no store may be opened until ActivateStage.
@@ -147,6 +148,7 @@ func (m *ManagedArtifactStore) ActivateStage(stage int64) {
 		m.activeStage = stage
 	})
 	m.unloadRAMExcept(stage)
+	m.closeServingForStage(stage)
 	if prev != stage {
 		logging.Info("Activated PoC artifact stage", types.PoC, "stage", stage, "previous", prev)
 	}
@@ -271,6 +273,13 @@ func (m *ManagedArtifactStore) drainStores() []struct {
 			}{key: key, store: store})
 		}
 		m.stores = make(map[storeKey]ArtifactStore)
+		for key, store := range m.serving {
+			stores = append(stores, struct {
+				key   storeKey
+				store ArtifactStore
+			}{key: key, store: store})
+		}
+		m.serving = make(map[storeKey]ArtifactStore)
 	})
 	return stores
 }
@@ -282,6 +291,7 @@ func NewManagedArtifactStore(baseDir string, retainCount int) *ManagedArtifactSt
 	m := &ManagedArtifactStore{
 		baseDir:     baseDir,
 		stores:      make(map[storeKey]ArtifactStore),
+		serving:     make(map[storeKey]ArtifactStore),
 		retainCount: retainCount,
 		cancel:      cancel,
 	}
@@ -391,6 +401,124 @@ func (m *ManagedArtifactStore) GetStore(pocStageStartHeight int64, modelID strin
 	return existing, nil
 }
 
+// GetStoreForServing opens a store from disk without changing activeStage and
+// without requireActiveStage. Used to serve frozen challenge proofs while a
+// later PoC generate stage holds the RAM pin.
+func (m *ManagedArtifactStore) GetStoreForServing(pocStageStartHeight int64, modelID string) (ArtifactStore, error) {
+	key, err := m.storeKey(pocStageStartHeight, modelID)
+	if err != nil {
+		return nil, err
+	}
+	if store, ok := m.getCachedStore(key); ok {
+		return store, nil
+	}
+	if store, err := m.GetStore(pocStageStartHeight, modelID); err == nil {
+		return store, nil
+	}
+	if store, ok := m.getServingStore(key); ok {
+		return store, nil
+	}
+
+	storeDir := m.modelDir(pocStageStartHeight, modelID)
+	if _, err := os.Stat(storeDir); os.IsNotExist(err) {
+		return nil, fmt.Errorf("store for stage %d model %q not found", pocStageStartHeight, modelID)
+	}
+
+	store, err := OpenSMST(storeDir)
+	if err != nil {
+		return nil, fmt.Errorf("open serving store for stage %d model %q: %w", pocStageStartHeight, modelID, err)
+	}
+
+	existing, loaded, err := m.putServingIfAbsent(key, store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	if loaded {
+		_ = store.Close()
+		return existing, nil
+	}
+	return existing, nil
+}
+
+func (m *ManagedArtifactStore) getServingStore(key storeKey) (ArtifactStore, bool) {
+	var (
+		store ArtifactStore
+		ok    bool
+	)
+	m.withReadLock(func() {
+		if m.serving == nil {
+			return
+		}
+		store, ok = m.serving[key]
+	})
+	return store, ok
+}
+
+func (m *ManagedArtifactStore) putServingIfAbsent(key storeKey, store ArtifactStore) (ArtifactStore, bool, error) {
+	var (
+		existing ArtifactStore
+		loaded   bool
+	)
+	m.withWriteLock(func() {
+		if m.serving == nil {
+			m.serving = make(map[storeKey]ArtifactStore)
+		}
+		if cached, ok := m.stores[key]; ok {
+			existing = cached
+			loaded = true
+			return
+		}
+		existing, loaded = m.serving[key]
+		if !loaded {
+			m.serving[key] = store
+			existing = store
+		}
+	})
+	return existing, loaded, nil
+}
+
+func (m *ManagedArtifactStore) closeServingForStage(stage int64) {
+	var toClose []ArtifactStore
+	m.withWriteLock(func() {
+		for key, store := range m.serving {
+			if key.stage != stage {
+				continue
+			}
+			toClose = append(toClose, store)
+			delete(m.serving, key)
+		}
+	})
+	for _, store := range toClose {
+		if store == nil {
+			continue
+		}
+		if err := store.Close(); err != nil {
+			logging.Warn("Failed to close serving artifact store", types.PoC, "error", err)
+		}
+	}
+}
+
+func (m *ManagedArtifactStore) GetStoresForServing(pocStageStartHeight int64) ([]StageModelStore, error) {
+	modelIDs, err := m.listModelIDsForStage(pocStageStartHeight)
+	if err != nil {
+		return nil, err
+	}
+
+	stores := make([]StageModelStore, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		store, err := m.GetStoreForServing(pocStageStartHeight, modelID)
+		if err != nil {
+			return nil, err
+		}
+		stores = append(stores, StageModelStore{
+			ModelID: modelID,
+			Store:   store,
+		})
+	}
+	return stores, nil
+}
+
 func (m *ManagedArtifactStore) GetStoresForStage(pocStageStartHeight int64) ([]StageModelStore, error) {
 	modelIDs, err := m.listModelIDsForStage(pocStageStartHeight)
 	if err != nil {
@@ -445,6 +573,7 @@ func (m *ManagedArtifactStore) listModelIDsForStage(pocStageStartHeight int64) (
 // PruneStore removes the store directory and closes any open store.
 func (m *ManagedArtifactStore) PruneStore(pocStageStartHeight int64) error {
 	stores := m.removeStageStores(pocStageStartHeight)
+	m.closeServingForStage(pocStageStartHeight)
 
 	var errs []error
 	for _, store := range stores {

@@ -28,9 +28,11 @@ var DefaultMLOpsFeeAllowance = sdk.NewCoins(sdk.NewCoin("ngonka", sdkmath.NewInt
 var InferenceOperationKeyPerms = []sdk.Msg{
 	&types.MsgClaimRewards{},
 	&types.MsgSubmitPocBatch{},
-	&types.MsgSubmitPocValidationsV2{},   // PoC v2 validations
-	&types.MsgPoCV2StoreCommit{},         // PoC v2 off-chain store commits
-	&types.MsgMLNodeWeightDistribution{}, // PoC v2 ML node weight distribution
+	&types.MsgSubmitPocValidationsV2{},        // PoC v2 validations
+	&types.MsgPoCV2StoreCommit{},              // PoC v2 off-chain store commits
+	&types.MsgSubmitPoCChallengeValidations{}, // PoC challenge validations
+	&types.MsgPoCChallengeStoreCommit{},       // PoC challenge store commits
+	&types.MsgMLNodeWeightDistribution{},      // PoC v2 ML node weight distribution
 	&types.MsgSubmitSeed{},
 	&types.MsgBridgeExchange{},
 	&types.MsgSubmitNewUnfundedParticipant{},

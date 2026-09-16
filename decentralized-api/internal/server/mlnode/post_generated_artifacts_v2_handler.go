@@ -175,6 +175,26 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 		"fraudDetected", body.FraudDetected)
 
 	// Use batch submission (even for single validation - no single-validation RPC exists)
+	if ch := poc.OpenChallenges.ByStartHeight(body.BlockHeight); ch != nil {
+		msg := &types.MsgSubmitPoCChallengeValidations{
+			PocStageStartBlockHeight: body.BlockHeight,
+			Validations: []*types.PoCValidationEntryV2{
+				{
+					ParticipantAddress: address,
+					ModelId:            modelID,
+					ValidatedWeight:    validatedWeight,
+				},
+			},
+		}
+		if err := s.recorder.SubmitPoCChallengeValidations(msg); err != nil {
+			logging.Error("ValidatedArtifactsV2-callback. Failed to submit MsgSubmitPoCChallengeValidations", types.PoC,
+				"participant", address,
+				"error", err)
+			return err
+		}
+		return ctx.NoContent(http.StatusOK)
+	}
+
 	msg := &types.MsgSubmitPocValidationsV2{
 		PocStageStartBlockHeight: body.BlockHeight,
 		Validations: []*types.PoCValidationEntryV2{

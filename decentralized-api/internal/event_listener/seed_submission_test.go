@@ -38,6 +38,10 @@ func (q *seedQueryClient) DevshardApprovedVersions(context.Context, *types.Query
 	return &types.QueryDevshardApprovedVersionsResponse{}, nil
 }
 
+func (q *seedQueryClient) OpenPoCChallenges(context.Context, *types.QueryOpenPoCChallengesRequest, ...grpc.CallOption) (*types.QueryOpenPoCChallengesResponse, error) {
+	return &types.QueryOpenPoCChallengesResponse{}, nil
+}
+
 func (q *seedQueryClient) ListRandomSeeds(context.Context, *types.QueryRandomSeedsRequest, ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()

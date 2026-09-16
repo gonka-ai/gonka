@@ -235,7 +235,9 @@ type CosmosMessageClient interface {
 	EncryptBytes(plaintext []byte) ([]byte, error)
 	SubmitNewUnfundedParticipant(transaction *inferenceapi.MsgSubmitNewUnfundedParticipant) error
 	SubmitPocValidationsV2(transaction *inferencetypes.MsgSubmitPocValidationsV2) error
+	SubmitPoCChallengeValidations(transaction *inferencetypes.MsgSubmitPoCChallengeValidations) error
 	SubmitPoCV2StoreCommit(transaction *inferencetypes.MsgPoCV2StoreCommit) error
+	SubmitPoCChallengeStoreCommitWithTimeout(transaction *inferencetypes.MsgPoCChallengeStoreCommit, timeoutHeight uint64) error
 	SubmitMLNodeWeightDistribution(transaction *inferencetypes.MsgMLNodeWeightDistribution) error
 	SubmitSeed(transaction *inferenceapi.MsgSubmitSeed) error
 	ClaimRewards(transaction *inferenceapi.MsgClaimRewards) error
@@ -390,11 +392,23 @@ func (icc *InferenceCosmosClient) SubmitPocValidationsV2(transaction *inferencet
 	return err
 }
 
+func (icc *InferenceCosmosClient) SubmitPoCChallengeValidations(transaction *inferencetypes.MsgSubmitPoCChallengeValidations) error {
+	transaction.Creator = icc.Address
+	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
+	return err
+}
+
 func (icc *InferenceCosmosClient) SubmitPoCV2StoreCommit(transaction *inferencetypes.MsgPoCV2StoreCommit) error {
 	return icc.SubmitPoCV2StoreCommitWithTimeout(transaction, 0)
 }
 
 func (icc *InferenceCosmosClient) SubmitPoCV2StoreCommitWithTimeout(transaction *inferencetypes.MsgPoCV2StoreCommit, timeoutHeight uint64) error {
+	transaction.Creator = icc.Address
+	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction, tx_manager.TxSendOptions{TimeoutHeight: timeoutHeight})
+	return err
+}
+
+func (icc *InferenceCosmosClient) SubmitPoCChallengeStoreCommitWithTimeout(transaction *inferencetypes.MsgPoCChallengeStoreCommit, timeoutHeight uint64) error {
 	transaction.Creator = icc.Address
 	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction, tx_manager.TxSendOptions{TimeoutHeight: timeoutHeight})
 	return err

@@ -19,6 +19,7 @@ import (
 	"decentralized-api/internal"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/seed"
+	"decentralized-api/poc"
 
 	"common/logging"
 
@@ -33,6 +34,7 @@ type ChainStateClient interface {
 	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
 	DevshardApprovedVersions(ctx context.Context, req *types.QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*types.QueryDevshardApprovedVersionsResponse, error)
 	ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeedsRequest, opts ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error)
+	OpenPoCChallenges(ctx context.Context, req *types.QueryOpenPoCChallengesRequest, opts ...grpc.CallOption) (*types.QueryOpenPoCChallengesResponse, error)
 }
 
 // StatusFunc defines the function signature for getting node sync status
@@ -41,7 +43,9 @@ type StatusFunc func() (*coretypes.ResultStatus, error)
 type SetHeightFunc func(blockHeight int64) error
 
 type pocValidator interface {
+	PrepareValidationNodes()
 	ValidateAll(pocStageStartBlockHeight int64, pocStartBlockHash string)
+	ValidateOpenChallenges()
 	// MaybeCaptureEarlyShare is invoked once per synced block to let the
 	// early-share guard capture the early on-chain commitment near the
 	// first-fraction boundary of the active PoC/CPoC generation window.
@@ -319,6 +323,8 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		return nil
 	}
 
+	d.refreshOpenChallenges(ctx, epochState)
+
 	// Pin/unpin the PoC artifact stage before any generate/validate work on
 	// this block so proof serving cannot race an unloaded store.
 	d.offChainValidator.SyncArtifactStoreStage(*epochState)
@@ -477,13 +483,17 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(ctx context.Context, epoch
 		logging.Info("DapiStage:IsStartOfPoCValidationStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash, "pocStartBlockHeight", epochContext.PocStartBlockHeight)
 		pocStartBlockHeight := epochContext.PocStartBlockHeight
 		go func() {
-			pocStartBlockHash, err := d.nodeBroker.GetChainBridge().GetBlockHash(pocStartBlockHeight)
-			if err != nil {
-				logging.Error("Failed to get PoC start block hash", types.PoC,
-					"pocStartBlockHeight", pocStartBlockHeight, "error", err)
-				return
-			}
-			d.offChainValidator.ValidateAll(pocStartBlockHeight, pocStartBlockHash)
+			d.offChainValidator.PrepareValidationNodes()
+			go func() {
+				pocStartBlockHash, err := d.nodeBroker.GetChainBridge().GetBlockHash(pocStartBlockHeight)
+				if err != nil {
+					logging.Error("Failed to get PoC start block hash", types.PoC,
+						"pocStartBlockHeight", pocStartBlockHeight, "error", err)
+					return
+				}
+				d.offChainValidator.ValidateAll(pocStartBlockHeight, pocStartBlockHash)
+			}()
+			go d.offChainValidator.ValidateOpenChallenges()
 		}()
 	}
 
@@ -581,7 +591,9 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(ctx context.Context, epoch
 				"poc_seed_block_hash", event.PocSeedBlockHash)
 
 			go func() {
-				d.offChainValidator.ValidateAll(event.TriggerHeight, event.PocSeedBlockHash)
+				d.offChainValidator.PrepareValidationNodes()
+				go d.offChainValidator.ValidateAll(event.TriggerHeight, event.PocSeedBlockHash)
+				go d.offChainValidator.ValidateOpenChallenges()
 			}()
 		}
 
@@ -714,6 +726,12 @@ func (d *OnNewBlockDispatcher) confirmSeedLocally(
 
 // shouldTriggerReconciliation determines if reconciliation should be triggered
 func (d *OnNewBlockDispatcher) shouldTriggerReconciliation(epochState chainphase.EpochState) bool {
+	// Challenge generate is overlayed onto inference (and cPoC generate). Use
+	// the PoC cadence so StartPocCommand -> StartPoCNodeCommandV2 keeps
+	// driving MLNodes, including the finish-k StopPowV2 wind-down.
+	if poc.OwnChallengeGenerate(&epochState) != nil {
+		return shouldTriggerReconciliation(epochState.CurrentBlock.Height, &d.reconciliationConfig, d.reconciliationConfig.PoC)
+	}
 	switch epochState.CurrentPhase {
 	case types.PoCGeneratePhase, types.PoCValidatePhase:
 		return shouldTriggerReconciliation(epochState.CurrentBlock.Height, &d.reconciliationConfig, d.reconciliationConfig.PoC)
@@ -773,7 +791,32 @@ func (d *OnNewBlockDispatcher) triggerReconciliation(epochState chainphase.Epoch
 	// Wait for a response or not?
 }
 
+func (d *OnNewBlockDispatcher) refreshOpenChallenges(ctx context.Context, epochState *chainphase.EpochState) {
+	if d.queryClient == nil {
+		return
+	}
+	self := ""
+	if d.nodeBroker != nil {
+		self = d.nodeBroker.GetParticipantAddress()
+	}
+	resp, err := d.queryClient.OpenPoCChallenges(ctx, &types.QueryOpenPoCChallengesRequest{})
+	if err != nil {
+		logging.Warn("Failed to query OpenPoCChallenges; keeping last cache", types.PoC, "error", err)
+		return
+	}
+	var list []*types.OpenPoCChallenge
+	if resp != nil {
+		list = resp.Challenges
+	}
+	poc.OpenChallenges.Replace(self, list)
+}
+
 func getCommandForPhase(phaseInfo chainphase.EpochState) (broker.Command, *chan bool) {
+	if poc.OwnChallengeGenerate(&phaseInfo) != nil {
+		cmd := broker.NewStartPocCommand()
+		return cmd, &cmd.Response
+	}
+
 	// Handle confirmation PoC during inference phase
 	if phaseInfo.CurrentPhase == types.InferencePhase && phaseInfo.ActiveConfirmationPoCEvent != nil {
 		event := phaseInfo.ActiveConfirmationPoCEvent

@@ -39,6 +39,7 @@ type MockClient struct {
 	DeleteModelError      error
 	ListModelsError       error
 	GetDiskSpaceError     error
+	GetPowStatusV2Error   error
 
 	// Call tracking
 	StopCalled             int
@@ -460,6 +461,9 @@ func (m *MockClient) GetPowStatusV2(ctx context.Context) (*PoCStatusResponseV2, 
 	defer m.Mu.Unlock()
 
 	m.GetPowStatusV2Called++
+	if m.GetPowStatusV2Error != nil {
+		return nil, m.GetPowStatusV2Error
+	}
 
 	// Use configured status or default to IDLE
 	status := m.PowStatusV2

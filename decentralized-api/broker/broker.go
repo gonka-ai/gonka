@@ -8,6 +8,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -161,6 +162,32 @@ func (b *Broker) GetParticipantAddress() string {
 
 const PoCBatchesBasePathV2 = "/v2/poc-batches"
 
+func hexEncodeSeed(seed []byte) string {
+	if len(seed) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(seed)
+}
+
+func challengeGenerateNeedsDispatch(node *NodeWithState, epochState chainphase.EpochState) bool {
+	if node == nil {
+		return false
+	}
+	if node.State.IntendedStatus != types.HardwareNodeStatus_POC ||
+		node.State.PocIntendedStatus != PocStatusGenerating {
+		return false
+	}
+	ch := overlayOwnChallengeGenerate(&epochState)
+	if ch == nil {
+		return false
+	}
+	if node.State.LastPocV2BlockHeight != ch.StartHeight ||
+		node.State.LastPocV2BlockHash != hexEncodeSeed(ch.Seed) {
+		return true
+	}
+	return overlayInCommitLead(&epochState)
+}
+
 func GetPoCCallbackBaseURLV2(callbackUrl string) string {
 	return fmt.Sprintf("%s%s", callbackUrl, PoCBatchesBasePathV2)
 }
@@ -249,6 +276,11 @@ type NodeState struct {
 	EpochModels     map[string]types.Model      `json:"epoch_models"`
 	EpochMLNodes    map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
 	PreservedModels map[string]bool             `json:"preserved_models"`
+
+	// Last dispatched PoC v2 generate params. StartPoCNodeCommandV2 skips
+	// InitGenerateV2 only when the node is already GENERATING with these values.
+	LastPocV2BlockHeight int64  `json:"last_poc_v2_block_height,omitempty"`
+	LastPocV2BlockHash   string `json:"last_poc_v2_block_hash,omitempty"`
 }
 
 func (s NodeState) MarshalJSON() ([]byte, error) {
@@ -1074,7 +1106,8 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		// Condition: The primary or PoC intended state does not match the current state.
 		if node.State.IntendedStatus != node.State.CurrentStatus ||
 			node.State.PocIntendedStatus != node.State.PocCurrentStatus ||
-			deploymentUpdateReady(node, now) {
+			deploymentUpdateReady(node, now) ||
+			challengeGenerateNeedsDispatch(node, epochState) {
 			nodeCopy := *node
 			nodesToDispatch[id] = &nodeCopy
 		}
@@ -1096,7 +1129,8 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 			!sameRegistration(currentNode, capturedSeq) ||
 			(currentNode.State.IntendedStatus == currentNode.State.CurrentStatus &&
 				(currentNode.State.CurrentStatus != types.HardwareNodeStatus_POC || currentNode.State.PocIntendedStatus == currentNode.State.PocCurrentStatus) &&
-				!deploymentUpdateReady(currentNode, time.Now())) ||
+				!deploymentUpdateReady(currentNode, time.Now()) &&
+				!challengeGenerateNeedsDispatch(currentNode, epochState)) ||
 			currentNode.State.ReconcileInfo != nil {
 			b.mu.Unlock()
 			continue
@@ -1185,6 +1219,15 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 	}
 
 	if needsPocParams {
+		if ch := overlayOwnChallengeGenerate(&epochState); ch != nil {
+			params := &pocParams{
+				startPoCBlockHeight: ch.StartHeight,
+				startPoCBlockHash:   hexEncodeSeed(ch.Seed),
+			}
+			b.loadPoCModels(params)
+			return params, nil
+		}
+
 		// CONFIRMATION PoC - use hash from event (populated by chain at generation_start_height)
 		if epochState.CurrentPhase == types.InferencePhase && epochState.ActiveConfirmationPoCEvent != nil {
 			event := epochState.ActiveConfirmationPoCEvent
@@ -1343,15 +1386,22 @@ func (b *Broker) getCommandForState(
 					logging.Warn("Skipping PoC scheduling without resolvable model", types.PoC, "node_id", nodeId)
 					return nil
 				}
+				windDown := false
+				if b.phaseTracker != nil {
+					windDown = overlayInCommitLead(b.phaseTracker.GetCurrentEpochState())
+				}
 				return StartPoCNodeCommandV2{
-					BlockHeight:    pocGenParams.startPoCBlockHeight,
-					BlockHash:      pocGenParams.startPoCBlockHash,
-					PubKey:         b.participantInfo.GetPubKey(),
-					CallbackUrl:    GetPoCCallbackBaseURLV2(b.callbackUrl),
-					TotalNodes:     totalNodes,
-					Model:          modelConfig.ModelId,
-					SeqLen:         modelConfig.SeqLen,
-					PocStrongerRng: pocGenParams.pocStrongerRng,
+					BlockHeight:          pocGenParams.startPoCBlockHeight,
+					BlockHash:            pocGenParams.startPoCBlockHash,
+					PubKey:               b.participantInfo.GetPubKey(),
+					CallbackUrl:          GetPoCCallbackBaseURLV2(b.callbackUrl),
+					TotalNodes:           totalNodes,
+					Model:                modelConfig.ModelId,
+					SeqLen:               modelConfig.SeqLen,
+					PocStrongerRng:       pocGenParams.pocStrongerRng,
+					WindDown:             windDown,
+					LastPocV2BlockHeight: nodeState.LastPocV2BlockHeight,
+					LastPocV2BlockHash:   nodeState.LastPocV2BlockHash,
 				}
 			}
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)

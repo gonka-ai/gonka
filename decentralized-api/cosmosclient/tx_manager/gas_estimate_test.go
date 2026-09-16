@@ -30,6 +30,7 @@ func TestEstimateMsgGas_KnownTypes(t *testing.T) {
 		// PoC duty.
 		{"MsgSubmitPocBatch", &inferencetypes.MsgSubmitPocBatch{}, gasSubmitPocBatch},
 		{"MsgSubmitPocValidationsV2", &inferencetypes.MsgSubmitPocValidationsV2{}, gasSubmitPocValidationsV2},
+		{"MsgSubmitPoCChallengeValidations", &inferencetypes.MsgSubmitPoCChallengeValidations{}, gasSubmitPocValidationsV2},
 
 		// Routine host duties (now bypass-exempt).
 		{"MsgSubmitHardwareDiff", &inferencetypes.MsgSubmitHardwareDiff{}, gasSubmitHardwareDiff},
