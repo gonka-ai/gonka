@@ -4,8 +4,9 @@ Prepare the deployment using the [HA setup guide](../../docs/devshard-host-ha-se
 Record whether it uses the optional `oracle-filter` or direct API catalog access.
 Filter-specific steps below apply only to the filtered example; with direct access,
 verify the same protocol availability in the API catalog.
-Operator commands for adding, stopping, replacing and removing versiond are in
-[section 2.5](../../docs/devshard-host-ha-setup.md#25-operating-versiond-members).
+Operator commands: [add a local replica](../../docs/devshard-host-ha-setup.md#add-a-local-replica),
+[add a remote replica](../../docs/devshard-host-ha-setup.md#add-a-remote-replica),
+and [operate the deployment](../../docs/devshard-host-ha-setup.md#operate-the-deployment).
 
 ## Scope and preparation
 
