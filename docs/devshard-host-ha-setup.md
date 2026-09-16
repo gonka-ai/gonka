@@ -18,31 +18,19 @@ Public proxy (/devshard/...)
         └── versiond2 ──► devshardd ──┴── shared PostgreSQL
 ```
 
-Keep ready capacity for every served protocol. A replica failure can interrupt in-flight requests.
-
 <a id="before-you-start"></a>
 
 ## Prerequisites
 
 1. Working `node`, `api` (dapi) and `proxy`: the standard join deployment.
-2. Join files and compatible host/gateway images for the [release covered here](#release-reference).
+2. Files from `deploy/join` and host/gateway images for the [release covered here](#release-reference).
 3. Same participant identity on every HA replica: `KEY_NAME`, keyring, `ACCOUNT_PUBKEY`.
 4. One data directory per replica, one shared PostgreSQL database, one dapi per participant key.
 5. Docker Compose **2.24.4+**, Bash, Python 3, `curl`, `jq`, `flock`, `sha256sum`, `timeout`.
 
-Protocol list: new hosts use the supplied list; updates keep the existing list; new protocols go through [Add a protocol](#add-a-protocol) after release activation.
-
-HA protocols are served through the catalog filter below. Pre-HA protocols such as `v3` belong in a separate deployment. Retained pre-HA sessions, or pre-HA processes on this database, need a separately verified transition first.
+This setup supports HA protocols only. It does not cover migrating pre-HA deployments such as `v3`.
 
 **Install:** Steps 1–4. **Upgrade:** [Existing host](#upgrade-an-existing-host). **Extend:** [Remote replica](#add-a-remote-replica) or [local replica](#add-a-local-replica).
-
-<a id="select-the-release-images"></a>
-
-### Release images
-
-Use the default images from the release's Compose files and fleet script. Additional machines use files from the same release as the existing deployment.
-
-Saved `VERSIOND_IMAGE`, `VERSIOND_ROUTER_IMAGE`, `PROXY_ROUTER_IMAGE` and `PROXY_POLICY_IMAGE` overrides take precedence over release defaults. Review them during [Upgrade](#upgrade-an-existing-host).
 
 <a id="install-a-new-host"></a>
 <a id="step-1---install-postgres-preferably-ha-itself"></a>
@@ -601,7 +589,7 @@ Keep the supplied shutdown timings. The restarted member must pass its checks be
 
 Preserve the member's database, identity, protocol list and mounts. Keep at least one other replica ready for each required protocol; Compose does not enforce this.
 
-1. Use the target release's files. Review [image overrides](#release-images), then run `unset VERSIOND_IMAGE` and `source ./config.env`.
+1. Use the target release's files. Review image overrides as in [Prepare the release](#1-prepare-the-release), then run `unset VERSIOND_IMAGE` and `source ./config.env`.
 2. Stop and drain the member. For a remote member, remove its explicit endpoint through [membership maintenance](#3-add-b-to-the-router-pool) or from pool DNS before starting the replacement.
 3. Run `docker compose pull <service>`, then `docker compose up -d --no-deps --wait --wait-timeout 2100 <service>`. For a remote member, pass the [database check](#check-the-remote-database) before restoring membership.
 4. Pass the [service checks](#41-check-the-running-services) before replacing the next member. On failure, restore the previous image and configuration and verify against the current database.
@@ -624,12 +612,15 @@ Keep `proxy-router-state` and each slot's `router-state`. Remove a protocol only
 
 ## Upgrade an existing host
 
+<a id="select-the-release-images"></a>
+<a id="release-images"></a>
+
 ### 1. Prepare the release
 
 1. Confirm the [prerequisites](#before-you-start). Back up PostgreSQL.
 2. Save `config.env`, Compose files, endpoint files, current image references and database mounts.
 3. Put the new release's join files in the **same deployment directory and Compose project**. Review changes before applying; keep your configuration and overrides.
-4. Review [image overrides](#release-images) in `config.env` and Compose files. Remove obsolete values and legacy local `image: ${VERSIOND_IMAGE:?...}` entries. Keep intentional release-compatible custom images, the catalog filter and site settings.
+4. Review image overrides (`VERSIOND_IMAGE`, `VERSIOND_ROUTER_IMAGE`, `PROXY_ROUTER_IMAGE`, `PROXY_POLICY_IMAGE`) in `config.env` and Compose files; they take precedence over release defaults. Remove obsolete values and legacy local `image: ${VERSIOND_IMAGE:?...}` entries. Keep intentional release-compatible custom images, the catalog filter and site settings.
 5. Local PostgreSQL: save its current image digest in `DEVSHARD_POSTGRES_IMAGE` (command below).
 
 Preserve during routine updates:
