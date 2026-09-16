@@ -325,6 +325,129 @@ func TestSMSTStoreScaleMeasure(t *testing.T) {
 	}
 }
 
+// TestSMSTPagedWriteScale measures paged ingest rate and on-disk growth.
+//
+//	SMST_PAGED_WRITE_N=4000000 SMST_PAGED_WRITE_STREAMS=64 \
+//	SMST_PAGED_WRITE_BATCH=4000 SMST_PAGED_WRITE_FLUSH=100000 \
+//	SMST_RAM_LEAVES=200000 \
+//	  go test ./poc/artifacts/ -run '^TestSMSTPagedWriteScale$' -v -timeout 30m
+//
+// STREAMS=0 (default) is sequential nonces 0..N-1. STREAMS>0 uses the MLNode
+// interleave nonce = stream + x*streams, arriving in per-stream batches.
+func TestSMSTPagedWriteScale(t *testing.T) {
+	v := os.Getenv("SMST_PAGED_WRITE_N")
+	if v == "" {
+		t.Skip("set SMST_PAGED_WRITE_N to run the paged write scale")
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		t.Fatalf("invalid SMST_PAGED_WRITE_N=%q", v)
+	}
+	streams := envInt("SMST_PAGED_WRITE_STREAMS", 0)
+	batch := envInt("SMST_PAGED_WRITE_BATCH", 4000)
+	flushEvery := envInt("SMST_PAGED_WRITE_FLUSH", 100000)
+	if os.Getenv(envSMSTRAMLeaves) == "" {
+		t.Setenv(envSMSTRAMLeaves, "200000")
+	}
+
+	dir := os.Getenv("SMST_PROF_DIR")
+	if dir == "" {
+		dir = t.TempDir()
+	} else if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"artifacts.data", "distributions.jsonl", "flushed_roots.jsonl"} {
+		_ = os.Remove(filepath.Join(dir, name))
+	}
+	_ = os.RemoveAll(filepath.Join(dir, suffixDirName))
+
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+	defer store.Close()
+
+	vec := make([]byte, 24)
+	add := func(nonce int32, i int) {
+		binary.LittleEndian.PutUint64(vec[0:8], uint64(i))
+		binary.LittleEndian.PutUint64(vec[8:16], uint64(nonce)*2654435761)
+		copied := append([]byte(nil), vec...)
+		if err := store.AddWithNode(nonce, copied, "n"); err != nil {
+			t.Fatalf("add nonce=%d i=%d: %v", nonce, i, err)
+		}
+		if (i+1)%flushEvery == 0 {
+			if err := store.Flush(); err != nil {
+				t.Fatalf("flush at %d: %v", i+1, err)
+			}
+		}
+	}
+
+	rss0 := procRSS()
+	tIngest := time.Now()
+	if streams <= 0 {
+		for i := 0; i < n; i++ {
+			add(int32(i), i)
+		}
+	} else {
+		if batch <= 0 {
+			batch = 4000
+		}
+		next := make([]int, streams)
+		added := 0
+		for added < n {
+			for s := 0; s < streams && added < n; s++ {
+				for b := 0; b < batch && added < n; b++ {
+					nonce := int32(s + next[s]*streams)
+					next[s]++
+					add(nonce, added)
+					added++
+				}
+			}
+		}
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("final flush: %v", err)
+	}
+	elapsed := time.Since(tIngest)
+	rssLive := procRSS()
+	disk := dirSize(dir)
+	dataSz := fileSize(filepath.Join(dir, "artifacts.data"))
+	suffixSz := dirSize(filepath.Join(dir, suffixDirName))
+	span := 0
+	if streams > 0 && batch > 0 {
+		span = batch * streams / smstSuffixSlots
+	}
+	t.Logf("WRITE N=%d streams=%d batch=%d span_prefixes~%d flush_every=%d spilled=%v suffixes=%d elapsed=%s rate=%.0f/s ns/leaf=%.0f rss0=%s rss_live=%s disk=%s data=%s suffix=%s B/leaf=%.1f",
+		n, streams, batch, span, flushEvery, store.spilled, len(store.suffixes),
+		elapsed.Round(time.Millisecond), float64(n)/elapsed.Seconds(),
+		float64(elapsed.Nanoseconds())/float64(n),
+		fmtBytes(rss0), fmtBytes(rssLive), fmtBytes(disk), fmtBytes(dataSz), fmtBytes(suffixSz),
+		float64(disk)/float64(n))
+	if int(store.Count()) != n {
+		t.Fatalf("count %d want %d", store.Count(), n)
+	}
+}
+
+func envInt(name string, def int) int {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+func fileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
 func procRSS() int64 {
 	f, err := os.Open("/proc/self/status")
 	if err != nil {

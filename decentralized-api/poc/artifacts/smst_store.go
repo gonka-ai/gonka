@@ -100,7 +100,7 @@ type SMSTArtifactStore struct {
 	pagedRecordSize int
 	bitmap          nonceBitmap
 	suffixes        map[uint32]*suffixMeta
-	hot             []*hotSuffix
+	hot             map[uint32]*hotSuffix
 }
 
 var _ ArtifactStore = (*SMSTArtifactStore)(nil)

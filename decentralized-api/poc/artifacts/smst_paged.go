@@ -21,7 +21,8 @@ const (
 	smstSuffixMask       = (1 << smstSuffixHeight) - 1
 	defaultSMSTRAMLeaves = 8_000_000
 	envSMSTRAMLeaves     = "SMST_RAM_LEAVES"
-	smstHotSuffixCap     = 32
+	smstSuffixSlots      = 1 << smstSuffixHeight
+	smstHotSuffixSoftCap = smstSuffixSlots
 	suffixDirName        = "suffix"
 	suffixMarkerName     = "SPILLED"
 	suffixHistoryName    = "history.jsonl"
@@ -150,12 +151,7 @@ func (s *SMSTArtifactStore) suffixTreePath(prefix uint32) string {
 }
 
 func (s *SMSTArtifactStore) findHot(prefix uint32) *hotSuffix {
-	for _, h := range s.hot {
-		if h != nil && h.prefix == prefix {
-			return h
-		}
-	}
-	return nil
+	return s.hot[prefix]
 }
 
 func (s *SMSTArtifactStore) insertPaged(nonce int32, leafHash []byte) error {
@@ -186,6 +182,7 @@ func (s *SMSTArtifactStore) insertPaged(nonce int32, leafHash []byte) error {
 	meta.lastSeq = seq
 	meta.count++
 	meta.dirty = append(meta.dirty, suffixRec{nonce: nonce, seq: seq})
+	s.sealHotIfFull(hot)
 	return nil
 }
 
@@ -234,28 +231,25 @@ func (s *SMSTArtifactStore) ensureHotSuffix(prefix uint32) (*hotSuffix, error) {
 	if h := s.findHot(prefix); h != nil {
 		return h, nil
 	}
-	if err := s.evictHotIfNeeded(); err != nil {
-		return nil, err
+	if s.hot == nil {
+		s.hot = make(map[uint32]*hotSuffix)
 	}
-	s.hot = append(s.hot, loaded)
+	s.hot[prefix] = loaded
 	return loaded, nil
 }
 
-func (s *SMSTArtifactStore) evictHotIfNeeded() error {
-	if len(s.hot) < smstHotSuffixCap {
-		return nil
+// sealHotIfFull hashes a packed suffix once, attaches it as a sealed cut, and
+// drops the in-RAM tree. Incomplete prefixes stay hot until Flush.
+func (s *SMSTArtifactStore) sealHotIfFull(h *hotSuffix) {
+	if h == nil || h.tree == nil || h.tree.Count() < smstSuffixSlots {
+		return
 	}
-	evict := s.hot[0]
-	s.hot = s.hot[1:]
-	if evict == nil || evict.tree == nil {
-		return nil
-	}
-	root, count := evict.tree.GetRoot()
-	meta := s.ensureSuffixMeta(evict.prefix)
+	root, count := h.tree.GetRoot()
+	meta := s.ensureSuffixMeta(h.prefix)
 	meta.hash = append([]byte(nil), root...)
 	meta.count = count
-	s.smst.attachSealedCOW(fullNonce(evict.prefix, 0), &smstNode{hash: root, count: count})
-	return nil
+	s.smst.attachSealedCOW(fullNonce(h.prefix, 0), &smstNode{hash: root, count: count})
+	delete(s.hot, h.prefix)
 }
 
 func (s *SMSTArtifactStore) loadHotSuffix(prefix uint32, dirty []suffixRec, buffer []bufferedArtifact) (*hotSuffix, error) {
@@ -478,6 +472,10 @@ func (s *SMSTArtifactStore) hashHotSuffixes() {
 	}
 }
 
+func (s *SMSTArtifactStore) dropHotSuffixes() {
+	s.hot = nil
+}
+
 func (s *SMSTArtifactStore) flushPagedSuffixes() error {
 	s.hashHotSuffixes()
 	deltas := s.collectDirtyDeltas()
@@ -488,6 +486,9 @@ func (s *SMSTArtifactStore) flushPagedSuffixes() error {
 		return err
 	}
 	s.clearDirtySuffixes()
+	if len(s.hot) > smstHotSuffixSoftCap {
+		s.dropHotSuffixes()
+	}
 	return nil
 }
 
@@ -643,7 +644,7 @@ func (s *SMSTArtifactStore) spillLocked() error {
 	s.enableSpilledExistence()
 	s.offsets = nil
 	s.nonceToOffset = nil
-	s.hot = nil
+	s.dropHotSuffixes()
 	globalSnapshotCache.purgeStore(s)
 	s.retained = make(map[uint32]smstSnapshot)
 	s.smst.ensureHashed()
@@ -960,9 +961,15 @@ func (s *SMSTArtifactStore) replaySealJournal() error {
 				}
 				tree.leafCount = entry.Count
 				tree.ensureHashed()
-				if tree.root != nil && tree.root.count == entry.Count {
-					s.retained[entry.Count] = tree.snapshot()
+				if tree.root == nil || tree.root.count != entry.Count {
+					continue
 				}
+				if expected, ok := s.flushedRoots[entry.Count]; ok && expected != nil && !bytes.Equal(tree.root.hash, expected) {
+					log.Printf("warning: seal journal root mismatch at count %d; ignoring journal", entry.Count)
+					s.retained = make(map[uint32]smstSnapshot)
+					return nil
+				}
+				s.retained[entry.Count] = tree.snapshot()
 			}
 		}
 		if err == io.EOF {
@@ -1009,6 +1016,12 @@ func (s *SMSTArtifactStore) recaptureCommittedUppers() error {
 			if err := s.updatePagedUpper(tree, prev, c); err != nil {
 				return err
 			}
+		}
+		if tree.root == nil || tree.root.count != c {
+			return fmt.Errorf("paged SMST recapture empty tree at count %d", c)
+		}
+		if expected, ok := s.flushedRoots[c]; ok && expected != nil && !bytes.Equal(tree.root.hash, expected) {
+			return fmt.Errorf("paged SMST recapture root mismatch at count %d", c)
 		}
 		s.retained[c] = tree.snapshot()
 		prev = c
@@ -1254,11 +1267,9 @@ func (s *SMSTArtifactStore) getArtifactPaged(nonce int32) (int32, []byte, error)
 
 func (s *SMSTArtifactStore) seqForNonce(nonce int32) (uint32, bool) {
 	prefix := suffixPrefix(nonce)
-	for _, h := range s.hot {
-		if h != nil && h.prefix == prefix {
-			if seq, ok := h.nonceSeq[nonce]; ok {
-				return seq, true
-			}
+	if h := s.findHot(prefix); h != nil {
+		if seq, ok := h.nonceSeq[nonce]; ok {
+			return seq, true
 		}
 	}
 	var dirty []suffixRec

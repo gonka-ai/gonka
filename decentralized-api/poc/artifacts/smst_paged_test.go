@@ -769,27 +769,79 @@ func TestSMSTPagedHotMissReloadsSuffix(t *testing.T) {
 	paged := openSMSTWithRAMLimit(t, t.TempDir(), 8)
 	defer paged.Close()
 
-	nonces := make([]int32, 0, 16)
-	for i := 0; i < 8; i++ {
-		nonces = append(nonces, int32(i))
-	}
-	for i := 1; i <= 5; i++ {
-		nonces = append(nonces, int32(i<<smstSuffixHeight))
-	}
-	nonces = append(nonces, 8, 9)
-	for i, nonce := range nonces {
+	// Fill prefix 0 past the RAM cap so the store spills, then Flush drops the
+	// hot suffix. The next inserts into prefix 0 must reload from the log.
+	for i := 0; i < 16; i++ {
+		nonce := int32(i)
 		if err := ram.AddWithNode(nonce, pagedTestVector(int(nonce)), "n"); err != nil {
 			t.Fatal(err)
 		}
 		if err := paged.AddWithNode(nonce, pagedTestVector(int(nonce)), "n"); err != nil {
 			t.Fatal(err)
 		}
-		if i == 7 {
-			if err := ram.Flush(); err != nil {
+	}
+	if err := ram.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := paged.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if !paged.spilled {
+		t.Fatal("expected spill")
+	}
+	for i := 16; i < 24; i++ {
+		nonce := int32(i)
+		if err := ram.AddWithNode(nonce, pagedTestVector(int(nonce)), "n"); err != nil {
+			t.Fatal(err)
+		}
+		if err := paged.AddWithNode(nonce, pagedTestVector(int(nonce)), "n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ram.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := paged.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(ram.GetRoot(), paged.GetRoot()) {
+		t.Fatal("root mismatch after hot reload")
+	}
+	compareProofsByNonce(t, ram, paged, 24, []int32{0, 8, 16, 23})
+}
+
+// TestSMSTPagedInterleavedIngest walks 40 suffixes round-robin, which is more
+// than the old FIFO cap of 32. Roots must stay identical to the RAM store.
+func TestSMSTPagedInterleavedIngest(t *testing.T) {
+	const (
+		prefixes   = 40
+		rounds     = 80
+		limit      = 64
+		flushEvery = 200
+	)
+	ram := openSMSTWithRAMLimit(t, t.TempDir(), 1_000_000_000)
+	defer ram.Close()
+	paged := openSMSTWithRAMLimit(t, t.TempDir(), limit)
+	defer paged.Close()
+
+	n := 0
+	for round := 0; round < rounds; round++ {
+		for p := 0; p < prefixes; p++ {
+			nonce := int32(p<<smstSuffixHeight) + int32(round)
+			if err := ram.AddWithNode(nonce, pagedTestVector(int(nonce)), "n"); err != nil {
 				t.Fatal(err)
 			}
-			if err := paged.Flush(); err != nil {
+			if err := paged.AddWithNode(nonce, pagedTestVector(int(nonce)), "n"); err != nil {
 				t.Fatal(err)
+			}
+			n++
+			if n%flushEvery == 0 {
+				if err := ram.Flush(); err != nil {
+					t.Fatal(err)
+				}
+				if err := paged.Flush(); err != nil {
+					t.Fatal(err)
+				}
 			}
 		}
 	}
@@ -803,9 +855,9 @@ func TestSMSTPagedHotMissReloadsSuffix(t *testing.T) {
 		t.Fatal("expected spill")
 	}
 	if !bytes.Equal(ram.GetRoot(), paged.GetRoot()) {
-		t.Fatal("root mismatch after hot-miss reload")
+		t.Fatal("root mismatch after interleaved ingest")
 	}
-	compareProofsByNonce(t, ram, paged, len(nonces), []int32{0, 1, 2, 4096})
+	compareProofs(t, ram, paged, n, []uint32{0, 1, uint32(n / 2), uint32(n - 1)})
 }
 
 func TestSMSTPagedReopenProofsFromLog(t *testing.T) {
@@ -1016,6 +1068,86 @@ func TestSMSTPagedJournalGapRecover(t *testing.T) {
 	}
 	if !bytes.Equal(earlyRoot, gotEarly) {
 		t.Fatal("early root mismatch after journal-gap recover")
+	}
+	compareProofsAt(t, ram, reopened, early, earlyRoot, []uint32{0, early - 1})
+	compareProofsAt(t, ram, reopened, tip, tipRoot, []uint32{0, tip - 1})
+}
+
+func flipJournalHashNibble(t *testing.T, dir string) {
+	t.Helper()
+	path := filepath.Join(dir, suffixDirName, suffixHistoryName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := bytes.Index(data, []byte(`"h":"`))
+	if idx < 0 {
+		t.Fatal("journal has no hash field")
+	}
+	pos := idx + len(`"h":"`)
+	if pos >= len(data) {
+		t.Fatal("journal hash field is empty")
+	}
+	if data[pos] == '0' {
+		data[pos] = '1'
+	} else {
+		data[pos] = '0'
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSMSTPagedJournalRootMismatchRecover(t *testing.T) {
+	const (
+		limit    = 8
+		prefixes = 4
+	)
+	ram := openSMSTWithRAMLimit(t, t.TempDir(), 1_000_000_000)
+	defer ram.Close()
+	pagedDir := t.TempDir()
+	paged := openSMSTWithRAMLimit(t, pagedDir, limit)
+
+	addPrefixed(t, ram, prefixes, 1, 0)
+	addPrefixed(t, paged, prefixes, 1, 0)
+	if err := ram.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := paged.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	early := paged.Count()
+	earlyRoot := append([]byte(nil), paged.GetRoot()...)
+
+	addPrefixed(t, ram, prefixes, 1, 1)
+	addPrefixed(t, paged, prefixes, 1, 1)
+	if err := ram.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := paged.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if !paged.spilled {
+		t.Fatal("expected spill")
+	}
+	tip := paged.Count()
+	tipRoot := append([]byte(nil), paged.GetRoot()...)
+	if err := paged.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	flipJournalHashNibble(t, pagedDir)
+	reopened := openSMSTWithRAMLimit(t, pagedDir, limit)
+	defer reopened.Close()
+	if !bytes.Equal(tipRoot, reopened.GetRoot()) {
+		t.Fatal("tip root mismatch after journal hash flip")
+	}
+	gotEarly, err := reopened.GetRootAt(early)
+	if err != nil {
+		t.Fatalf("GetRootAt(%d): %v", early, err)
+	}
+	if !bytes.Equal(earlyRoot, gotEarly) {
+		t.Fatal("early root mismatch after journal hash flip")
 	}
 	compareProofsAt(t, ram, reopened, early, earlyRoot, []uint32{0, early - 1})
 	compareProofsAt(t, ram, reopened, tip, tipRoot, []uint32{0, tip - 1})
