@@ -21,6 +21,7 @@ import (
 	"decentralized-api/statsstorage"
 	"net"
 
+	"common/chainoracle/blocks/observer"
 	nmgen "common/nodemanager/gen"
 	"decentralized-api/nodemanager"
 
@@ -216,9 +217,14 @@ func main() {
 	}
 	hostEventRing := apiconfig.NewHostEventRing(0, uint64(time.Now().UnixNano()))
 	escrowLoadTracker := broker.NewEscrowLoadTracker(0)
-	chainOracle, err := pserver.NewChainOracle(configManager.GetChainNodeConfig().Url)
-	if err != nil {
-		logging.Error("Failed to create chainoracle", types.Server, "error", err)
+	var chainOracle *observer.Oracle
+	if configManager.GetApiConfig().ChainOracleDisabled {
+		logging.Info("chainoracle skipped (api.chainoracle_disabled)", types.Server)
+	} else {
+		chainOracle, err = pserver.NewChainOracle(configManager.GetChainNodeConfig().Url)
+		if err != nil {
+			logging.Error("Failed to create chainoracle", types.Server, "error", err)
+		}
 	}
 	listenerOpts := []event_listener.EventListenerOption{
 		event_listener.WithStatsStorage(statsStore),
@@ -229,7 +235,7 @@ func main() {
 		o := chainOracle
 		listenerOpts = append(listenerOpts, event_listener.WithOnNewBlockHeader(func(info chainphase.BlockInfo) {
 			if err := o.ObserveHex(info.Height, info.Hash, info.Time, info.ChainID); err != nil {
-				logging.Warn("chainoracle observe", types.EventProcessing, "error", err, "height", info.Height)
+				logging.Warn("chainoracle observe", types.EventProcessing, "error", err, "height", info.Height, "hash", info.Hash)
 			}
 		}))
 	}

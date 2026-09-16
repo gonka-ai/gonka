@@ -297,6 +297,24 @@ func TestTxGasMultiplier(t *testing.T) {
 	})
 }
 
+func TestConfigLoadChainOracleDisabled(t *testing.T) {
+	t.Setenv("DAPI_API__CHAINORACLE_DISABLED", "true")
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider: rawbytes.Provider([]byte(testYaml)),
+	}
+	require.NoError(t, testManager.Load())
+	require.True(t, testManager.GetApiConfig().ChainOracleDisabled)
+}
+
+func TestConfigLoadMLNodePingDisabled(t *testing.T) {
+	t.Setenv("DAPI_API__MLNODE_PING_DISABLED", "true")
+	testManager := &apiconfig.ConfigManager{
+		KoanProvider: rawbytes.Provider([]byte(testYaml)),
+	}
+	require.NoError(t, testManager.Load())
+	require.True(t, testManager.GetApiConfig().MLNodePingDisabled)
+}
+
 type CaptureWriterProvider struct {
 	CapturedData string
 }

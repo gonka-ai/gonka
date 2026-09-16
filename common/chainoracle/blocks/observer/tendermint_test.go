@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -87,4 +88,12 @@ func TestOracle_ObserveHex(t *testing.T) {
 	h, err := o.At(context.Background(), 5)
 	require.NoError(t, err)
 	require.Equal(t, []byte{0x0a, 0x0b}, h.BlockHash)
+}
+
+func TestOracle_ObserveHex_RejectsOversized(t *testing.T) {
+	o := newOracle(&stubHeaderRPC{err: errors.New("rpc must not be called")})
+	err := o.ObserveHex(5, strings.Repeat("aa", maxBlockHashBytes+1), time.Unix(2, 0).UTC(), "gonka-test")
+	require.Error(t, err)
+	_, err = o.Latest(context.Background())
+	require.Error(t, err)
 }

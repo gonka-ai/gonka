@@ -55,6 +55,12 @@ func TestGetBlockHeader_NilOracleFailedPrecondition(t *testing.T) {
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
+func TestGetBlockHeaders_NilOracleFailedPrecondition(t *testing.T) {
+	srv := NewServer(nil, nil, nil)
+	_, err := srv.GetBlockHeaders(context.Background(), &gen.GetBlockHeadersRequest{})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
+}
+
 func TestProveBlockPath_UnimplementedOnHashOnly(t *testing.T) {
 	hdr := blocks.HashOnlyHeader(1, time.Unix(1, 0).UTC(), "gonka-test", []byte{1})
 	srv := NewServer(nil, nil, nil, WithBlockOracle(blockStub{hdr: hdr, prove: blocks.ErrProveNotImplemented}))

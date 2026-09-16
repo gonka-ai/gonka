@@ -132,6 +132,10 @@ func (o *Oracle) Subscribe(ctx context.Context, fromHeight int64) (<-chan *block
 	return o.cache.Subscribe(ctx, fromHeight)
 }
 
+// maxBlockHashBytes is Comet tmhash length. Reject before DecodeString so a
+// huge NewBlock JSON hash cannot allocate into the tipcache.
+const maxBlockHashBytes = 32
+
 func decodeBlockHash(raw string) ([]byte, error) {
 	s := strings.TrimSpace(raw)
 	s = strings.TrimPrefix(s, "0x")
@@ -139,9 +143,18 @@ func decodeBlockHash(raw string) ([]byte, error) {
 	if s == "" {
 		return nil, fmt.Errorf("observer: empty block hash")
 	}
+	if len(s) > maxBlockHashBytes*2 {
+		return nil, fmt.Errorf("observer: block hash too long")
+	}
 	b, err := hex.DecodeString(s)
 	if err != nil {
 		return nil, fmt.Errorf("observer: block hash: %w", err)
+	}
+	if len(b) == 0 {
+		return nil, fmt.Errorf("observer: empty block hash")
+	}
+	if len(b) > maxBlockHashBytes {
+		return nil, fmt.Errorf("observer: block hash too long")
 	}
 	return b, nil
 }

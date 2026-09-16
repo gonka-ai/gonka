@@ -42,13 +42,17 @@ func WithChainOracle(o blocks.BlockOracle) ServerOption {
 // (height, hash, block time, chain id; empty Commit). Prove is 501.
 // Live tip is Comet NewBlock, not /block/latest or /block/stream.
 // Public /api/block/:height is intentional (proxy GNKAPI rate limit).
-// Disabled with DAPI_CHAINORACLE_DISABLED.
+// Disabled with DAPI_CHAINORACLE_DISABLED or api.chainoracle_disabled.
 func (s *Server) mountChainOracle() {
 	if s == nil || s.e == nil {
 		return
 	}
 	if chainOracleDisabled() {
 		logging.Info("chainoracle mount skipped (DAPI_CHAINORACLE_DISABLED)", types.Server)
+		return
+	}
+	if s.configManager != nil && s.configManager.GetApiConfig().ChainOracleDisabled {
+		logging.Info("chainoracle mount skipped (api.chainoracle_disabled)", types.Server)
 		return
 	}
 	o := s.chainOracle

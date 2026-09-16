@@ -11,11 +11,13 @@ import (
 	"decentralized-api/internal/startup"
 	"decentralized-api/statsstorage"
 	"decentralized-api/upgrade"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -93,7 +95,8 @@ func WithParticipantAddress(addr string) EventListenerOption {
 
 // WithOnNewBlockHeader is called for every committed NewBlock after the
 // height/hash are parsed. Used to feed the chainoracle tipcache. Failures
-// in ProcessNewBlock do not skip this callback.
+// in ProcessNewBlock do not skip this callback. Invalid hashes (empty,
+// non-hex, longer than tmhash) skip the callback and log a warning.
 func WithOnNewBlockHeader(fn func(chainphase.BlockInfo)) EventListenerOption {
 	return func(el *EventListener) {
 		el.onNewBlockHeader = fn
@@ -359,7 +362,11 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		}
 
 		if el.onNewBlockHeader != nil {
-			el.onNewBlockHeader(*blockInfo)
+			if _, herr := decodeObserveHash(blockInfo.Hash); herr != nil {
+				logging.Warn("chainoracle observe: skip", types.EventProcessing, "error", herr, "height", blockInfo.Height, "hash", blockInfo.Hash, "worker", workerName)
+			} else {
+				el.onNewBlockHeader(*blockInfo)
+			}
 		}
 
 		if el.blockObserver != nil {
@@ -737,4 +744,30 @@ func waitForEventHeight(event *chainevents.JSONRPCResponse, currentConfig *apico
 		time.Sleep(100 * time.Millisecond)
 	}
 	return false
+}
+
+// maxBlockHashBytes is Comet tmhash length. Reject before DecodeString so a
+// huge NewBlock JSON hash cannot allocate into the tipcache.
+const maxBlockHashBytes = 32
+
+func decodeObserveHash(raw string) ([]byte, error) {
+	s := strings.TrimPrefix(strings.TrimSpace(raw), "0x")
+	s = strings.TrimPrefix(s, "0X")
+	if s == "" {
+		return nil, errors.New("empty block hash")
+	}
+	if len(s) > maxBlockHashBytes*2 {
+		return nil, errors.New("block hash too long")
+	}
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return nil, err
+	}
+	if len(b) == 0 {
+		return nil, errors.New("empty block hash")
+	}
+	if len(b) > maxBlockHashBytes {
+		return nil, errors.New("block hash too long")
+	}
+	return b, nil
 }

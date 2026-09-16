@@ -463,11 +463,11 @@ func (m *Mock) At(_ context.Context, height int64) (*blocks.Header, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.latest != nil && height < m.oldestLocked() {
-		return nil, fmt.Errorf("mock observer: no header at height %d: %w", height, blocks.ErrHeaderNotFound)
+		return nil, fmt.Errorf("mock observer: no header at height %d: %w", height, cblocks.ErrHeaderNotFound)
 	}
 	h, ok := m.history[height]
 	if !ok {
-		return nil, fmt.Errorf("mock observer: no header at height %d: %w", height, blocks.ErrHeaderNotFound)
+		return nil, fmt.Errorf("mock observer: no header at height %d: %w", height, cblocks.ErrHeaderNotFound)
 	}
 	return cloneHeader(h), nil
 }
@@ -495,7 +495,7 @@ func (m *Mock) Prove(_ context.Context, path string, height int64) (*blocks.Proo
 	defer m.mu.RUnlock()
 	h, ok := m.history[height]
 	if !ok {
-		return nil, fmt.Errorf("mock observer: no header at height %d for proof: %w", height, blocks.ErrHeaderNotFound)
+		return nil, fmt.Errorf("mock observer: no header at height %d for proof: %w", height, cblocks.ErrHeaderNotFound)
 	}
 	var hb [8]byte
 	binary.BigEndian.PutUint64(hb[:], uint64(height))
