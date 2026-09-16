@@ -69,9 +69,26 @@ Database and user default to `devshardd`; override with `DEVSHARD_POSTGRES_DB` a
 
 Local PostgreSQL: the HA overlay sets `PGHOST` and `DEVSHARD_STORAGE_MODE`; leave them out of `config.env`. Data path: `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}/data`. External PostgreSQL: the §2.2 override is required.
 
+#### Prepare the PostgreSQL directory
+
+Local Compose PostgreSQL only. Run in `deploy/join` before first startup or migration:
+
+```bash
+source ./config.env
+pg_dir="${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
+[[ "$pg_dir" = /* ]] || pg_dir="$PWD/$pg_dir"
+docker run --rm --network none --read-only \
+  --security-opt label=disable \
+  --volume "$pg_dir:/target:ro" \
+  --entrypoint /bin/true \
+  "${POSTGRES_MIGRATION_HELPER_IMAGE:-${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}}"
+```
+
+The command must succeed. If access errors persist, check parent-directory permissions. Do not change database ownership.
+
 ### Step 2 - Run multiple `versiond` instances + the router fleet
 
-All deployment files live in `deploy/join`:
+Base installation files in `deploy/join`:
 
 | File | Purpose |
 | --- | --- |
@@ -391,66 +408,73 @@ source ./config.env
 # Keep every active override in the ordered COMPOSE_FILE saved in config.env.
 : "${COMPOSE_FILE:?set the complete Compose file list in config.env}"
 : "${VERSIOND_VERSIONS:?retain the approved HA protocol list in config.env}"
-dc=(docker compose)
-"${dc[@]}" config --quiet
+docker compose config --quiet
 ```
 
 ### 2. Check the database layout
 
-Inspect the running database's data directory and mounts. **Skip the copy** for unchanged external PostgreSQL or an existing persistent path `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}/data`: leave PostgreSQL running and go to [Update the deployment](#3-update-the-deployment).
+External PostgreSQL: leave it running and go to [Update the deployment](#3-update-the-deployment). For local PostgreSQL, inspect the data directory and mounts:
 
-The procedure below moves a local cluster from the old Docker volume at `/var/lib/postgresql/data` to the persistent bind at `/var/lib/postgresql/gonka/data`.
+```bash
+docker inspect devshard-postgres --format '{{json .Mounts}}'
+docker inspect devshard-postgres --format '{{json .Config.Env}}' |
+  jq -r '.[] | select(startswith("PGDATA="))'
+```
+
+An existing persistent path `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}/data` needs no copy. A Docker volume at `/var/lib/postgresql/data` requires the procedure below.
 
 <details>
 <summary><strong>One-time copy from the old PostgreSQL volume</strong></summary>
 
-Keep the source cluster's PostgreSQL major version and Alpine/musl image family. Use the image saved in `DEVSHARD_POSTGRES_IMAGE`; the copy does not upgrade PostgreSQL.
+For one join host with all writers listed in `replicas`. Use the source image saved in `DEVSHARD_POSTGRES_IMAGE`; preserve its PostgreSQL major version and Alpine/musl family. Complete [directory preparation](#prepare-the-postgresql-directory) first.
 
-Retained containers must already use the filtered catalog and the unchanged database: `docker start` does not apply edited overrides. Containers that need configuration changes require an offline supervisor transition first.
-
-Complete [directory preparation](#prepare-the-postgresql-directory). Before stopping or recreating PostgreSQL, record the source volume and system identifier and run preflight:
+Run in `deploy/join`. The block stops replicas, backs up PostgreSQL, copies the cluster and checks its system identifier. It leaves replicas stopped:
 
 ```bash
-# Run in deploy/join, before removing/recreating the old container.
-docker inspect devshard-postgres --format '{{json .Mounts}}'
-docker exec devshard-postgres sh -c \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"'
-# Record the system identifier, source volume at /var/lib/postgresql/data, and backup.
-bash ./devshard-postgres-migration-preflight.sh \
-  --source-container devshard-postgres \
-  --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
+(
+  set -euo pipefail
+  umask 077
+  source ./config.env
+  : "${COMPOSE_FILE:?set the complete Compose file list}"
+  : "${DEVSHARD_POSTGRES_IMAGE:?retain the source PostgreSQL image}"
+  replicas=(versiond versiond2)
+  mkdir -p backups
+  backup_dir=$(mktemp -d "$PWD/backups/postgres-copy.XXXXXXXX")
+  echo "Backup directory: $backup_dir"
+  docker inspect devshard-postgres > "$backup_dir/postgres.json"
+  source_id=$(docker exec devshard-postgres sh -c \
+    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"')
+  printf '%s\n' "$source_id" > "$backup_dir/system-identifier"
+  bash ./devshard-postgres-migration-preflight.sh \
+    --source-container devshard-postgres \
+    --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
+
+  ./versiond-router-fleet.sh stop-all --maintenance
+  docker stop --time 1800 "${replicas[@]}"
+  docker exec devshard-postgres sh -c \
+    'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$backup_dir/database.dump"
+  docker exec -i devshard-postgres pg_restore --list < "$backup_dir/database.dump" >/dev/null
+  docker stop --time 300 devshard-postgres
+  ./versiond-router-fleet.sh prepare-networks
+  # The PostgreSQL entrypoint copies the old volume into the persistent directory.
+  docker compose up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
+  target_id=$(docker exec devshard-postgres sh -c \
+    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"')
+  [[ -n "$source_id" && "$target_id" == "$source_id" ]]
+)
 ```
 
-Preflight must pass; free space must be at least the source size plus 10%. Preserve the source: no `down`, `down -v`, `rm -v`, pruning or `--renew-anon-volumes` before migration.
+On failure, leave replicas stopped and inspect `docker compose logs --tail=100 devshard-postgres`. Preserve the source volume and backup: no `down -v`, `rm -v`, pruning or `--renew-anon-volumes`.
 
-Stop **all writers**: every local member below, remote members on their hosts. Wait for all shutdown commands to finish, then refresh the backup before stopping PostgreSQL:
-
-```bash
-# Include every local member; stop remote members on their own machines too.
-docker stop --time 1800 versiond versiond2
-# Refresh the database backup now that application writes have stopped.
-docker stop --time 300 devshard-postgres
-./versiond-router-fleet.sh prepare-networks
-# Starting PostgreSQL copies the old volume into the persistent data directory.
-"${dc[@]}" up -d --no-deps devshard-postgres
-"${dc[@]}" logs --tail=100 devshard-postgres
-```
-
-Wait for PostgreSQL health. **Before restarting writers**, compare the cluster identifier with the value recorded before the copy:
-
-```bash
-docker exec devshard-postgres sh -c \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"'
-```
-
-The identifiers must match. On copy failure, keep writers stopped and preserve the source. Inspect the PostgreSQL logs before retrying.
+After success, continue with [Update with downtime](#update-with-downtime). Do not `docker start` the old replicas; Compose will recreate them with the filtered catalog.
 
 <details>
 <summary><strong>If the old volume was already detached</strong></summary>
 
-Complete [directory preparation](#prepare-the-postgresql-directory) if needed. Use the recorded exact volume name with the complete Compose configuration:
+Keep all replicas stopped. Complete [directory preparation](#prepare-the-postgresql-directory) if needed. Use the recorded exact volume name with the complete Compose configuration:
 
 ```bash
+source ./config.env
 export DEVSHARD_POSTGRES_LEGACY_VOLUME='<recorded-old-volume-name>'
 # Command-line -f replaces COMPOSE_FILE, so pass the complete list explicitly.
 files=()
@@ -460,10 +484,17 @@ bash ./devshard-postgres-migration-preflight.sh \
   --source-volume "$DEVSHARD_POSTGRES_LEGACY_VOLUME" \
   --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}" &&
 docker compose "${files[@]}" -f docker-compose.versiond-postgres-recovery.yml \
-  up -d --no-deps devshard-postgres
+  up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
 ```
 
-After verification, keep writers stopped and recreate PostgreSQL without the recovery overlay. Use the same image and configuration for the updater. Keep the source volume and backup. Do not use `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT` for recovery.
+Compare the system identifier with the recorded value before proceeding:
+
+```bash
+docker exec devshard-postgres sh -c \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"'
+```
+
+If it matches, continue with [Update with downtime](#update-with-downtime), using the normal `COMPOSE_FILE` without the recovery overlay. Replicas stay stopped until that procedure recreates them. Keep the source volume and backup; do not use `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT` for recovery.
 
 </details>
 
@@ -477,9 +508,9 @@ For published `v4`/`v4.1` binaries, use the downtime procedure below. Rolling up
 
 #### Update with downtime
 
-Use for **one join host with unchanged external PostgreSQL**. Keep the database, connection settings, identity, data mounts and protocol list unchanged. Database migration and multi-host updates are outside this procedure.
+Use for **one join host** with unchanged external PostgreSQL or local PostgreSQL already on the persistent path. Complete the [local volume copy](#2-check-the-database-layout) first if required. Keep connection settings, identity, replica data mounts and protocols unchanged. Other database moves and multi-host updates are outside this procedure.
 
-Run this block in `deploy/join`. Include every local replica in `replicas`. It stops on the first error; PostgreSQL stays running. The backup directory contains credentials—keep it private.
+Run this block in `deploy/join`. Include every local replica in `replicas`. It stops on the first error. External PostgreSQL stays running; local PostgreSQL is updated only after all replicas stop. The backup directory contains credentials—keep it private.
 
 ```bash
 (
@@ -537,6 +568,9 @@ PYTHON
   ./update-devshard.sh --check
 
   ./versiond-router-fleet.sh prepare-networks
+  if [[ $(jq -r '.services.versiond.environment.PGHOST' "$backup_dir/compose.json") == devshard-postgres ]]; then
+    docker compose up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
+  fi
   docker compose up -d --no-deps oracle-filter
   docker compose up -d --no-deps --wait --wait-timeout 2100 "${replicas[@]}"
   docker compose up -d --no-deps proxy
@@ -553,27 +587,15 @@ Complete the [service checks](#41-check-the-running-services). Use this procedur
 
 Leave PostgreSQL, the filter, replicas and router fleet running.
 
-<details>
-<summary><strong>First transition: prepare the filter and recover stopped members</strong></summary>
-
-Use this block only for a first-time transition or post-copy recovery. Keep the retained protocol list and run:
+Prepare the filter before a first rolling update:
 
 ```bash
+source ./config.env
 ./versiond-router-fleet.sh prepare-networks
 docker compose up -d --no-deps oracle-filter
 ```
 
-**After [copying the local database](#2-check-the-database-layout):** verify the copied database and the retained containers' catalog and database settings, then restart writers. Include every stopped local member; start remote members on their hosts:
-
-```bash
-docker start versiond versiond2
-```
-
-External PostgreSQL without storage proof: use [Update with downtime](#update-with-downtime) within its deployment scope.
-
-Treat timeouts, HTTP 503 and invalid storage proofs as errors to fix, not as unsupported APIs.
-
-</details>
+If storage proof is unavailable, use [Update with downtime](#update-with-downtime) within its deployment scope. Do not reinterpret timeouts, HTTP 503 or invalid proofs as an unsupported API.
 
 Check every retained protocol on every member before updating. The command falls back to the older health endpoint only on HTTP 404; HTTP 503 and connection errors must be fixed first. After replacement, complete [Verify](#step-4---verify-it-works).
 
@@ -618,6 +640,8 @@ The updater replaces local services and routing. [Replace remote members](#repla
 Run the [service checks](#41-check-the-running-services) after the update. Add new protocols through [Add a protocol](#add-a-protocol). Do not rename existing binaries or escrows.
 
 ## Add a remote replica
+
+Requires storage-proof support from every retained protocol. Published `v4`/`v4.1` binaries do not support this admission procedure.
 
 Use a private network between machines. B runs the extra `versiond`; A keeps the join stack. A's public proxy, node and api stay single-instance.
 
@@ -772,12 +796,50 @@ Run the [service checks](#41-check-the-running-services) and [routing failover c
 
 ## Add a local replica
 
-After [startup and verification](#step-3---start-the-deployment):
+After [startup and verification](#step-3---start-the-deployment), add `versiond3`:
 
-1. Add `docker-compose.versiond3.yml` to `COMPOSE_FILE`. Further replicas: copy it with a new container name and data directory.
-2. Give the new service the same filter and database overrides as `versiond` and `versiond2`. Keep the supplied identity/image settings, shutdown timings, `versiond-pool` alias and the PostgreSQL mount for `.pg-bound`.
-3. Start it; run the [service checks](#41-check-the-running-services), including the new replica.
-4. Explicit endpoint lists: add it through [membership maintenance](#3-add-b-to-the-router-pool). With pool DNS, no router recreation is needed.
+1. In `config.env`, insert `docker-compose.versiond3.yml` immediately after `docker-compose.versiond.yml` in `COMPOSE_FILE`. Keep the filter, database and site overrides after it:
+
+   ```bash
+   export COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compose.versiond3.yml:docker-compose.devshard-v5.override.yml
+   # External PostgreSQL: append :docker-compose.devshard-pg-external.override.yml
+   # Retain every other site override after these files.
+   ```
+
+2. Add under `services` in `docker-compose.devshard-v5.override.yml`:
+
+   ```yaml
+   versiond3:
+     environment:
+       VERSIOND_ORACLE_URL: http://oracle-filter:9100/versions
+       VERSIOND_NON_HA_VERSIONS: ${VERSIOND_NON_HA_VERSIONS-}
+     depends_on:
+       oracle-filter:
+         condition: service_started
+       devshard-postgres:
+         condition: service_healthy
+   ```
+
+   External PostgreSQL: also add under `services` in `docker-compose.devshard-pg-external.override.yml`, below the existing anchor:
+
+   ```yaml
+   versiond3:
+     <<: *external-postgres
+   ```
+
+3. Local PostgreSQL: run [Update with downtime](#update-with-downtime) for the existing replicas first. This applies the added PostgreSQL mount for `devshards3/data/.pg-bound` while writers are stopped. External PostgreSQL needs no database restart.
+4. Start the new replica:
+
+   ```bash
+   source ./config.env
+   docker compose config --quiet
+   docker compose pull versiond3
+   docker compose up -d --no-deps --wait --wait-timeout 2100 versiond3
+   ```
+
+5. Explicit endpoint lists: add it through [membership maintenance](#3-add-b-to-the-router-pool). Pool DNS discovers it automatically. Run the [service checks](#41-check-the-running-services), including `versiond3`.
+
+For a fourth replica, copy `docker-compose.versiond3.yml`, replacing `3` with `4`; repeat the overrides above. Keep the supplied shutdown timings, identity/image settings, pool alias and PostgreSQL marker mount.
 
 ## Operate the deployment
 
@@ -863,23 +925,6 @@ Keep `proxy-router-state` and each slot's `router-state`. Remove a protocol only
 ### Resolve a missing database
 
 Restore the recorded database; do not initialize an empty replacement. `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true` is for confirmed first-time HA enablement only; unset it afterwards. If `.pg-bound` exists, restore the database.
-
-### Prepare the PostgreSQL directory
-
-For local PostgreSQL, run in `deploy/join` before migration or after a preflight directory-creation error:
-
-```bash
-source ./config.env
-pg_dir="${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
-[[ "$pg_dir" = /* ]] || pg_dir="$PWD/$pg_dir"
-docker run --rm --network none --read-only \
-  --security-opt label=disable \
-  --volume "$pg_dir:/target:ro" \
-  --entrypoint /bin/true \
-  "${POSTGRES_MIGRATION_HELPER_IMAGE:-${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}}"
-```
-
-The command must succeed. If access errors persist, check parent-directory permissions. Do not change database ownership.
 
 ### Resolve an unready member
 
