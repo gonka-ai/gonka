@@ -15,8 +15,9 @@ import (
 
 const subBufSize = 16
 
-// HistoryWindow is how many recent heights Observe/Remember retain for At().
-const HistoryWindow = 100
+// HistoryWindow is how far below the tip Observe/Remember retain for At().
+// oldest = max(1, tip − HistoryWindow).
+const HistoryWindow = blocks.HistoryWindow
 
 var errNoHeader = errors.New("blockoracle/tipcache: no header yet")
 
@@ -181,7 +182,7 @@ func (c *Cache) storeLocked(h *blocks.Header) {
 		c.byHeight = make(map[int64]*blocks.Header)
 	}
 	if c.latest != nil {
-		floor := c.latest.Height - (HistoryWindow - 1)
+		floor := blocks.OldestHeight(c.latest.Height)
 		if h.Height < floor {
 			return
 		}
@@ -192,7 +193,7 @@ func (c *Cache) storeLocked(h *blocks.Header) {
 
 func (c *Cache) evictLocked() {
 	if c.latest != nil {
-		floor := c.latest.Height - (HistoryWindow - 1)
+		floor := blocks.OldestHeight(c.latest.Height)
 		for height := range c.byHeight {
 			if height < floor {
 				delete(c.byHeight, height)

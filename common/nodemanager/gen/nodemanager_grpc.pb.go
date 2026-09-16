@@ -26,6 +26,7 @@ const (
 	NodeManager_ListNodeCapacity_FullMethodName = "/nodemanager.NodeManager/ListNodeCapacity"
 	NodeManager_GetBlockHeader_FullMethodName   = "/nodemanager.NodeManager/GetBlockHeader"
 	NodeManager_ProveBlockPath_FullMethodName   = "/nodemanager.NodeManager/ProveBlockPath"
+	NodeManager_GetBlockHeaders_FullMethodName  = "/nodemanager.NodeManager/GetBlockHeaders"
 )
 
 // NodeManagerClient is the client API for NodeManager service.
@@ -41,6 +42,7 @@ type NodeManagerClient interface {
 	// Live tip remains Comet NewBlock, not a gRPC stream.
 	GetBlockHeader(ctx context.Context, in *GetBlockHeaderRequest, opts ...grpc.CallOption) (*GetBlockHeaderResponse, error)
 	ProveBlockPath(ctx context.Context, in *ProveBlockPathRequest, opts ...grpc.CallOption) (*ProveBlockPathResponse, error)
+	GetBlockHeaders(ctx context.Context, in *GetBlockHeadersRequest, opts ...grpc.CallOption) (*GetBlockHeadersResponse, error)
 }
 
 type nodeManagerClient struct {
@@ -114,6 +116,15 @@ func (c *nodeManagerClient) ProveBlockPath(ctx context.Context, in *ProveBlockPa
 	return out, nil
 }
 
+func (c *nodeManagerClient) GetBlockHeaders(ctx context.Context, in *GetBlockHeadersRequest, opts ...grpc.CallOption) (*GetBlockHeadersResponse, error) {
+	out := new(GetBlockHeadersResponse)
+	err := c.cc.Invoke(ctx, NodeManager_GetBlockHeaders_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeManagerServer is the server API for NodeManager service.
 // All implementations must embed UnimplementedNodeManagerServer
 // for forward compatibility
@@ -127,6 +138,7 @@ type NodeManagerServer interface {
 	// Live tip remains Comet NewBlock, not a gRPC stream.
 	GetBlockHeader(context.Context, *GetBlockHeaderRequest) (*GetBlockHeaderResponse, error)
 	ProveBlockPath(context.Context, *ProveBlockPathRequest) (*ProveBlockPathResponse, error)
+	GetBlockHeaders(context.Context, *GetBlockHeadersRequest) (*GetBlockHeadersResponse, error)
 	mustEmbedUnimplementedNodeManagerServer()
 }
 
@@ -154,6 +166,9 @@ func (UnimplementedNodeManagerServer) GetBlockHeader(context.Context, *GetBlockH
 }
 func (UnimplementedNodeManagerServer) ProveBlockPath(context.Context, *ProveBlockPathRequest) (*ProveBlockPathResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ProveBlockPath not implemented")
+}
+func (UnimplementedNodeManagerServer) GetBlockHeaders(context.Context, *GetBlockHeadersRequest) (*GetBlockHeadersResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetBlockHeaders not implemented")
 }
 func (UnimplementedNodeManagerServer) mustEmbedUnimplementedNodeManagerServer() {}
 
@@ -294,6 +309,24 @@ func _NodeManager_ProveBlockPath_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeManager_GetBlockHeaders_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBlockHeadersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeManagerServer).GetBlockHeaders(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeManager_GetBlockHeaders_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeManagerServer).GetBlockHeaders(ctx, req.(*GetBlockHeadersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeManager_ServiceDesc is the grpc.ServiceDesc for NodeManager service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -328,6 +361,10 @@ var NodeManager_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ProveBlockPath",
 			Handler:    _NodeManager_ProveBlockPath_Handler,
+		},
+		{
+			MethodName: "GetBlockHeaders",
+			Handler:    _NodeManager_GetBlockHeaders_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

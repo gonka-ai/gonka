@@ -262,6 +262,10 @@ func (r *recordingClient) ProveBlockPath(ctx context.Context, in *gen.ProveBlock
 	return r.inner.ProveBlockPath(ctx, in, opts...)
 }
 
+func (r *recordingClient) GetBlockHeaders(ctx context.Context, in *gen.GetBlockHeadersRequest, opts ...grpc.CallOption) (*gen.GetBlockHeadersResponse, error) {
+	return r.inner.GetBlockHeaders(ctx, in, opts...)
+}
+
 var _ gen.NodeManagerClient = (*recordingClient)(nil)
 
 func TestGRPCProvider_LongPoll_ServerTimeoutDoesNotApply(t *testing.T) {

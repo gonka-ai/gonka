@@ -14,6 +14,7 @@ service NodeManager {
   // Live tip remains Comet NewBlock, not a gRPC stream.
   rpc GetBlockHeader(GetBlockHeaderRequest) returns (GetBlockHeaderResponse);
   rpc ProveBlockPath(ProveBlockPathRequest) returns (ProveBlockPathResponse);
+  rpc GetBlockHeaders(GetBlockHeadersRequest) returns (GetBlockHeadersResponse);
 }
 
 message AcquireMLNodeRequest {
@@ -186,6 +187,30 @@ message GetBlockHeaderRequest {
 
 message GetBlockHeaderResponse {
   BlockHeader header = 1;
+}
+
+// GetBlockHeadersRequest is the unary long-poll for a height range.
+// from_height is exclusive: return heights > from_height.
+message GetBlockHeadersRequest {
+  // Exclusive cursor. 0 = start at oldest retained (or height 1 if the
+  // window includes genesis).
+  int64 from_height = 1;
+  // Same contract as GetRuntimeConfig / GetHostEvents:
+  //   0  = immediate (catch-up only, no hold)
+  //   >0 = long-poll up to N seconds (server-capped)
+  //   <0 = reserved; treat as immediate
+  int32 max_wait_seconds = 2;
+  // Optional; 0 = MaxHeadersPerPoll (1000). Server clamps to 1000.
+  uint32 max_headers = 3;
+}
+
+message GetBlockHeadersResponse {
+  bool unchanged = 1;
+  repeated BlockHeader headers = 2;
+  // Last returned height; = from_height if unchanged.
+  int64 next_from_height = 3;
+  int64 oldest_height = 4;
+  int64 tip_height = 5;
 }
 
 // ProveBlockPathRequest is GET /block/:height/prove?path=. Hash-only

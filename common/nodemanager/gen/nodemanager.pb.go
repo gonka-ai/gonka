@@ -1445,6 +1445,153 @@ func (x *GetBlockHeaderResponse) GetHeader() *BlockHeader {
 	return nil
 }
 
+// GetBlockHeadersRequest is the unary long-poll for a height range.
+// from_height is exclusive: return heights > from_height.
+type GetBlockHeadersRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Exclusive cursor. 0 = start at oldest retained (or height 1 if the
+	// window includes genesis).
+	FromHeight int64 `protobuf:"varint,1,opt,name=from_height,json=fromHeight,proto3" json:"from_height,omitempty"`
+	// Same contract as GetRuntimeConfig / GetHostEvents:
+	//
+	//	0  = immediate (catch-up only, no hold)
+	//	>0 = long-poll up to N seconds (server-capped)
+	//	<0 = reserved; treat as immediate
+	MaxWaitSeconds int32 `protobuf:"varint,2,opt,name=max_wait_seconds,json=maxWaitSeconds,proto3" json:"max_wait_seconds,omitempty"`
+	// Optional; 0 = MaxHeadersPerPoll (1000). Server clamps to 1000.
+	MaxHeaders    uint32 `protobuf:"varint,3,opt,name=max_headers,json=maxHeaders,proto3" json:"max_headers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBlockHeadersRequest) Reset() {
+	*x = GetBlockHeadersRequest{}
+	mi := &file_nodemanager_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBlockHeadersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBlockHeadersRequest) ProtoMessage() {}
+
+func (x *GetBlockHeadersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBlockHeadersRequest.ProtoReflect.Descriptor instead.
+func (*GetBlockHeadersRequest) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *GetBlockHeadersRequest) GetFromHeight() int64 {
+	if x != nil {
+		return x.FromHeight
+	}
+	return 0
+}
+
+func (x *GetBlockHeadersRequest) GetMaxWaitSeconds() int32 {
+	if x != nil {
+		return x.MaxWaitSeconds
+	}
+	return 0
+}
+
+func (x *GetBlockHeadersRequest) GetMaxHeaders() uint32 {
+	if x != nil {
+		return x.MaxHeaders
+	}
+	return 0
+}
+
+type GetBlockHeadersResponse struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Unchanged bool                   `protobuf:"varint,1,opt,name=unchanged,proto3" json:"unchanged,omitempty"`
+	Headers   []*BlockHeader         `protobuf:"bytes,2,rep,name=headers,proto3" json:"headers,omitempty"`
+	// Last returned height; = from_height if unchanged.
+	NextFromHeight int64 `protobuf:"varint,3,opt,name=next_from_height,json=nextFromHeight,proto3" json:"next_from_height,omitempty"`
+	OldestHeight   int64 `protobuf:"varint,4,opt,name=oldest_height,json=oldestHeight,proto3" json:"oldest_height,omitempty"`
+	TipHeight      int64 `protobuf:"varint,5,opt,name=tip_height,json=tipHeight,proto3" json:"tip_height,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *GetBlockHeadersResponse) Reset() {
+	*x = GetBlockHeadersResponse{}
+	mi := &file_nodemanager_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBlockHeadersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBlockHeadersResponse) ProtoMessage() {}
+
+func (x *GetBlockHeadersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBlockHeadersResponse.ProtoReflect.Descriptor instead.
+func (*GetBlockHeadersResponse) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *GetBlockHeadersResponse) GetUnchanged() bool {
+	if x != nil {
+		return x.Unchanged
+	}
+	return false
+}
+
+func (x *GetBlockHeadersResponse) GetHeaders() []*BlockHeader {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+func (x *GetBlockHeadersResponse) GetNextFromHeight() int64 {
+	if x != nil {
+		return x.NextFromHeight
+	}
+	return 0
+}
+
+func (x *GetBlockHeadersResponse) GetOldestHeight() int64 {
+	if x != nil {
+		return x.OldestHeight
+	}
+	return 0
+}
+
+func (x *GetBlockHeadersResponse) GetTipHeight() int64 {
+	if x != nil {
+		return x.TipHeight
+	}
+	return 0
+}
+
 // ProveBlockPathRequest is GET /block/:height/prove?path=. Hash-only
 // producers return Unimplemented (HTTP 501).
 type ProveBlockPathRequest struct {
@@ -1457,7 +1604,7 @@ type ProveBlockPathRequest struct {
 
 func (x *ProveBlockPathRequest) Reset() {
 	*x = ProveBlockPathRequest{}
-	mi := &file_nodemanager_proto_msgTypes[20]
+	mi := &file_nodemanager_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1469,7 +1616,7 @@ func (x *ProveBlockPathRequest) String() string {
 func (*ProveBlockPathRequest) ProtoMessage() {}
 
 func (x *ProveBlockPathRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_nodemanager_proto_msgTypes[20]
+	mi := &file_nodemanager_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1482,7 +1629,7 @@ func (x *ProveBlockPathRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProveBlockPathRequest.ProtoReflect.Descriptor instead.
 func (*ProveBlockPathRequest) Descriptor() ([]byte, []int) {
-	return file_nodemanager_proto_rawDescGZIP(), []int{20}
+	return file_nodemanager_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ProveBlockPathRequest) GetHeight() int64 {
@@ -1508,7 +1655,7 @@ type ProveBlockPathResponse struct {
 
 func (x *ProveBlockPathResponse) Reset() {
 	*x = ProveBlockPathResponse{}
-	mi := &file_nodemanager_proto_msgTypes[21]
+	mi := &file_nodemanager_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1520,7 +1667,7 @@ func (x *ProveBlockPathResponse) String() string {
 func (*ProveBlockPathResponse) ProtoMessage() {}
 
 func (x *ProveBlockPathResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_nodemanager_proto_msgTypes[21]
+	mi := &file_nodemanager_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1533,7 +1680,7 @@ func (x *ProveBlockPathResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProveBlockPathResponse.ProtoReflect.Descriptor instead.
 func (*ProveBlockPathResponse) Descriptor() ([]byte, []int) {
-	return file_nodemanager_proto_rawDescGZIP(), []int{21}
+	return file_nodemanager_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ProveBlockPathResponse) GetProof() *BlockProof {
@@ -1560,7 +1707,7 @@ type BlockHeader struct {
 
 func (x *BlockHeader) Reset() {
 	*x = BlockHeader{}
-	mi := &file_nodemanager_proto_msgTypes[22]
+	mi := &file_nodemanager_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1572,7 +1719,7 @@ func (x *BlockHeader) String() string {
 func (*BlockHeader) ProtoMessage() {}
 
 func (x *BlockHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_nodemanager_proto_msgTypes[22]
+	mi := &file_nodemanager_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1585,7 +1732,7 @@ func (x *BlockHeader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockHeader.ProtoReflect.Descriptor instead.
 func (*BlockHeader) Descriptor() ([]byte, []int) {
-	return file_nodemanager_proto_rawDescGZIP(), []int{22}
+	return file_nodemanager_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *BlockHeader) GetHeight() int64 {
@@ -1656,7 +1803,7 @@ type BlockCommit struct {
 
 func (x *BlockCommit) Reset() {
 	*x = BlockCommit{}
-	mi := &file_nodemanager_proto_msgTypes[23]
+	mi := &file_nodemanager_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1668,7 +1815,7 @@ func (x *BlockCommit) String() string {
 func (*BlockCommit) ProtoMessage() {}
 
 func (x *BlockCommit) ProtoReflect() protoreflect.Message {
-	mi := &file_nodemanager_proto_msgTypes[23]
+	mi := &file_nodemanager_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1681,7 +1828,7 @@ func (x *BlockCommit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockCommit.ProtoReflect.Descriptor instead.
 func (*BlockCommit) Descriptor() ([]byte, []int) {
-	return file_nodemanager_proto_rawDescGZIP(), []int{23}
+	return file_nodemanager_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *BlockCommit) GetHeight() int64 {
@@ -1723,7 +1870,7 @@ type BlockCommitSig struct {
 
 func (x *BlockCommitSig) Reset() {
 	*x = BlockCommitSig{}
-	mi := &file_nodemanager_proto_msgTypes[24]
+	mi := &file_nodemanager_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1735,7 +1882,7 @@ func (x *BlockCommitSig) String() string {
 func (*BlockCommitSig) ProtoMessage() {}
 
 func (x *BlockCommitSig) ProtoReflect() protoreflect.Message {
-	mi := &file_nodemanager_proto_msgTypes[24]
+	mi := &file_nodemanager_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1748,7 +1895,7 @@ func (x *BlockCommitSig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockCommitSig.ProtoReflect.Descriptor instead.
 func (*BlockCommitSig) Descriptor() ([]byte, []int) {
-	return file_nodemanager_proto_rawDescGZIP(), []int{24}
+	return file_nodemanager_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *BlockCommitSig) GetValidatorAddress() []byte {
@@ -1783,7 +1930,7 @@ type BlockProof struct {
 
 func (x *BlockProof) Reset() {
 	*x = BlockProof{}
-	mi := &file_nodemanager_proto_msgTypes[25]
+	mi := &file_nodemanager_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1795,7 +1942,7 @@ func (x *BlockProof) String() string {
 func (*BlockProof) ProtoMessage() {}
 
 func (x *BlockProof) ProtoReflect() protoreflect.Message {
-	mi := &file_nodemanager_proto_msgTypes[25]
+	mi := &file_nodemanager_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1808,7 +1955,7 @@ func (x *BlockProof) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockProof.ProtoReflect.Descriptor instead.
 func (*BlockProof) Descriptor() ([]byte, []int) {
-	return file_nodemanager_proto_rawDescGZIP(), []int{25}
+	return file_nodemanager_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *BlockProof) GetPath() string {
@@ -1938,7 +2085,20 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\x15GetBlockHeaderRequest\x12\x16\n" +
 	"\x06height\x18\x01 \x01(\x03R\x06height\"J\n" +
 	"\x16GetBlockHeaderResponse\x120\n" +
-	"\x06header\x18\x01 \x01(\v2\x18.nodemanager.BlockHeaderR\x06header\"C\n" +
+	"\x06header\x18\x01 \x01(\v2\x18.nodemanager.BlockHeaderR\x06header\"\x84\x01\n" +
+	"\x16GetBlockHeadersRequest\x12\x1f\n" +
+	"\vfrom_height\x18\x01 \x01(\x03R\n" +
+	"fromHeight\x12(\n" +
+	"\x10max_wait_seconds\x18\x02 \x01(\x05R\x0emaxWaitSeconds\x12\x1f\n" +
+	"\vmax_headers\x18\x03 \x01(\rR\n" +
+	"maxHeaders\"\xd9\x01\n" +
+	"\x17GetBlockHeadersResponse\x12\x1c\n" +
+	"\tunchanged\x18\x01 \x01(\bR\tunchanged\x122\n" +
+	"\aheaders\x18\x02 \x03(\v2\x18.nodemanager.BlockHeaderR\aheaders\x12(\n" +
+	"\x10next_from_height\x18\x03 \x01(\x03R\x0enextFromHeight\x12#\n" +
+	"\roldest_height\x18\x04 \x01(\x03R\foldestHeight\x12\x1d\n" +
+	"\n" +
+	"tip_height\x18\x05 \x01(\x03R\ttipHeight\"C\n" +
 	"\x15ProveBlockPathRequest\x12\x16\n" +
 	"\x06height\x18\x01 \x01(\x03R\x06height\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\"G\n" +
@@ -1980,7 +2140,7 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\x1eHOST_EVENT_KIND_ESCROW_CREATED\x10\x03\x12\"\n" +
 	"\x1eHOST_EVENT_KIND_ESCROW_SETTLED\x10\x04\x12)\n" +
 	"%HOST_EVENT_KIND_MAINTENANCE_SCHEDULED\x10\x05\x12(\n" +
-	"$HOST_EVENT_KIND_MAINTENANCE_CANCELED\x10\x062\x8d\x05\n" +
+	"$HOST_EVENT_KIND_MAINTENANCE_CANCELED\x10\x062\xeb\x05\n" +
 	"\vNodeManager\x12V\n" +
 	"\rAcquireMLNode\x12!.nodemanager.AcquireMLNodeRequest\x1a\".nodemanager.AcquireMLNodeResponse\x12V\n" +
 	"\rReleaseMLNode\x12!.nodemanager.ReleaseMLNodeRequest\x1a\".nodemanager.ReleaseMLNodeResponse\x12_\n" +
@@ -1988,7 +2148,8 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\rGetHostEvents\x12!.nodemanager.GetHostEventsRequest\x1a\".nodemanager.GetHostEventsResponse\x12_\n" +
 	"\x10ListNodeCapacity\x12$.nodemanager.ListNodeCapacityRequest\x1a%.nodemanager.ListNodeCapacityResponse\x12Y\n" +
 	"\x0eGetBlockHeader\x12\".nodemanager.GetBlockHeaderRequest\x1a#.nodemanager.GetBlockHeaderResponse\x12Y\n" +
-	"\x0eProveBlockPath\x12\".nodemanager.ProveBlockPathRequest\x1a#.nodemanager.ProveBlockPathResponseB\x18Z\x16common/nodemanager/genb\x06proto3"
+	"\x0eProveBlockPath\x12\".nodemanager.ProveBlockPathRequest\x1a#.nodemanager.ProveBlockPathResponse\x12\\\n" +
+	"\x0fGetBlockHeaders\x12#.nodemanager.GetBlockHeadersRequest\x1a$.nodemanager.GetBlockHeadersResponseB\x18Z\x16common/nodemanager/genb\x06proto3"
 
 var (
 	file_nodemanager_proto_rawDescOnce sync.Once
@@ -2003,7 +2164,7 @@ func file_nodemanager_proto_rawDescGZIP() []byte {
 }
 
 var file_nodemanager_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_nodemanager_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_nodemanager_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_nodemanager_proto_goTypes = []any{
 	(ReleaseOutcome)(0),              // 0: nodemanager.ReleaseOutcome
 	(HostEventKind)(0),               // 1: nodemanager.HostEventKind
@@ -2027,12 +2188,14 @@ var file_nodemanager_proto_goTypes = []any{
 	(*ListNodeCapacityResponse)(nil), // 19: nodemanager.ListNodeCapacityResponse
 	(*GetBlockHeaderRequest)(nil),    // 20: nodemanager.GetBlockHeaderRequest
 	(*GetBlockHeaderResponse)(nil),   // 21: nodemanager.GetBlockHeaderResponse
-	(*ProveBlockPathRequest)(nil),    // 22: nodemanager.ProveBlockPathRequest
-	(*ProveBlockPathResponse)(nil),   // 23: nodemanager.ProveBlockPathResponse
-	(*BlockHeader)(nil),              // 24: nodemanager.BlockHeader
-	(*BlockCommit)(nil),              // 25: nodemanager.BlockCommit
-	(*BlockCommitSig)(nil),           // 26: nodemanager.BlockCommitSig
-	(*BlockProof)(nil),               // 27: nodemanager.BlockProof
+	(*GetBlockHeadersRequest)(nil),   // 22: nodemanager.GetBlockHeadersRequest
+	(*GetBlockHeadersResponse)(nil),  // 23: nodemanager.GetBlockHeadersResponse
+	(*ProveBlockPathRequest)(nil),    // 24: nodemanager.ProveBlockPathRequest
+	(*ProveBlockPathResponse)(nil),   // 25: nodemanager.ProveBlockPathResponse
+	(*BlockHeader)(nil),              // 26: nodemanager.BlockHeader
+	(*BlockCommit)(nil),              // 27: nodemanager.BlockCommit
+	(*BlockCommitSig)(nil),           // 28: nodemanager.BlockCommitSig
+	(*BlockProof)(nil),               // 29: nodemanager.BlockProof
 }
 var file_nodemanager_proto_depIdxs = []int32{
 	0,  // 0: nodemanager.ReleaseMLNodeRequest.outcome:type_name -> nodemanager.ReleaseOutcome
@@ -2046,29 +2209,32 @@ var file_nodemanager_proto_depIdxs = []int32{
 	12, // 8: nodemanager.GetHostEventsResponse.events:type_name -> nodemanager.HostEvent
 	16, // 9: nodemanager.GetHostEventsResponse.escrow_load:type_name -> nodemanager.EscrowLoad
 	18, // 10: nodemanager.ListNodeCapacityResponse.nodes:type_name -> nodemanager.NodeCapacityEntry
-	24, // 11: nodemanager.GetBlockHeaderResponse.header:type_name -> nodemanager.BlockHeader
-	27, // 12: nodemanager.ProveBlockPathResponse.proof:type_name -> nodemanager.BlockProof
-	25, // 13: nodemanager.BlockHeader.commit:type_name -> nodemanager.BlockCommit
-	26, // 14: nodemanager.BlockCommit.signatures:type_name -> nodemanager.BlockCommitSig
-	2,  // 15: nodemanager.NodeManager.AcquireMLNode:input_type -> nodemanager.AcquireMLNodeRequest
-	4,  // 16: nodemanager.NodeManager.ReleaseMLNode:input_type -> nodemanager.ReleaseMLNodeRequest
-	6,  // 17: nodemanager.NodeManager.GetRuntimeConfig:input_type -> nodemanager.GetRuntimeConfigRequest
-	11, // 18: nodemanager.NodeManager.GetHostEvents:input_type -> nodemanager.GetHostEventsRequest
-	17, // 19: nodemanager.NodeManager.ListNodeCapacity:input_type -> nodemanager.ListNodeCapacityRequest
-	20, // 20: nodemanager.NodeManager.GetBlockHeader:input_type -> nodemanager.GetBlockHeaderRequest
-	22, // 21: nodemanager.NodeManager.ProveBlockPath:input_type -> nodemanager.ProveBlockPathRequest
-	3,  // 22: nodemanager.NodeManager.AcquireMLNode:output_type -> nodemanager.AcquireMLNodeResponse
-	5,  // 23: nodemanager.NodeManager.ReleaseMLNode:output_type -> nodemanager.ReleaseMLNodeResponse
-	7,  // 24: nodemanager.NodeManager.GetRuntimeConfig:output_type -> nodemanager.GetRuntimeConfigResponse
-	15, // 25: nodemanager.NodeManager.GetHostEvents:output_type -> nodemanager.GetHostEventsResponse
-	19, // 26: nodemanager.NodeManager.ListNodeCapacity:output_type -> nodemanager.ListNodeCapacityResponse
-	21, // 27: nodemanager.NodeManager.GetBlockHeader:output_type -> nodemanager.GetBlockHeaderResponse
-	23, // 28: nodemanager.NodeManager.ProveBlockPath:output_type -> nodemanager.ProveBlockPathResponse
-	22, // [22:29] is the sub-list for method output_type
-	15, // [15:22] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	26, // 11: nodemanager.GetBlockHeaderResponse.header:type_name -> nodemanager.BlockHeader
+	26, // 12: nodemanager.GetBlockHeadersResponse.headers:type_name -> nodemanager.BlockHeader
+	29, // 13: nodemanager.ProveBlockPathResponse.proof:type_name -> nodemanager.BlockProof
+	27, // 14: nodemanager.BlockHeader.commit:type_name -> nodemanager.BlockCommit
+	28, // 15: nodemanager.BlockCommit.signatures:type_name -> nodemanager.BlockCommitSig
+	2,  // 16: nodemanager.NodeManager.AcquireMLNode:input_type -> nodemanager.AcquireMLNodeRequest
+	4,  // 17: nodemanager.NodeManager.ReleaseMLNode:input_type -> nodemanager.ReleaseMLNodeRequest
+	6,  // 18: nodemanager.NodeManager.GetRuntimeConfig:input_type -> nodemanager.GetRuntimeConfigRequest
+	11, // 19: nodemanager.NodeManager.GetHostEvents:input_type -> nodemanager.GetHostEventsRequest
+	17, // 20: nodemanager.NodeManager.ListNodeCapacity:input_type -> nodemanager.ListNodeCapacityRequest
+	20, // 21: nodemanager.NodeManager.GetBlockHeader:input_type -> nodemanager.GetBlockHeaderRequest
+	24, // 22: nodemanager.NodeManager.ProveBlockPath:input_type -> nodemanager.ProveBlockPathRequest
+	22, // 23: nodemanager.NodeManager.GetBlockHeaders:input_type -> nodemanager.GetBlockHeadersRequest
+	3,  // 24: nodemanager.NodeManager.AcquireMLNode:output_type -> nodemanager.AcquireMLNodeResponse
+	5,  // 25: nodemanager.NodeManager.ReleaseMLNode:output_type -> nodemanager.ReleaseMLNodeResponse
+	7,  // 26: nodemanager.NodeManager.GetRuntimeConfig:output_type -> nodemanager.GetRuntimeConfigResponse
+	15, // 27: nodemanager.NodeManager.GetHostEvents:output_type -> nodemanager.GetHostEventsResponse
+	19, // 28: nodemanager.NodeManager.ListNodeCapacity:output_type -> nodemanager.ListNodeCapacityResponse
+	21, // 29: nodemanager.NodeManager.GetBlockHeader:output_type -> nodemanager.GetBlockHeaderResponse
+	25, // 30: nodemanager.NodeManager.ProveBlockPath:output_type -> nodemanager.ProveBlockPathResponse
+	23, // 31: nodemanager.NodeManager.GetBlockHeaders:output_type -> nodemanager.GetBlockHeadersResponse
+	24, // [24:32] is the sub-list for method output_type
+	16, // [16:24] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_nodemanager_proto_init() }
@@ -2082,7 +2248,7 @@ func file_nodemanager_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nodemanager_proto_rawDesc), len(file_nodemanager_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   26,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

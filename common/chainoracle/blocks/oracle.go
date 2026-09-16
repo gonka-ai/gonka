@@ -6,6 +6,26 @@ import (
 	"time"
 )
 
+// HistoryWindow is how far below the tip a producer retains for At().
+// oldest = max(1, tip − HistoryWindow); the closed interval [oldest, tip]
+// is HistoryWindow+1 heights when tip > HistoryWindow.
+const HistoryWindow = 100_000
+
+// MaxHeadersPerPoll is the server clamp for GetBlockHeaders.
+const MaxHeadersPerPoll = 1000
+
+// OldestHeight is the lowest height still in a HistoryWindow cache at tip.
+func OldestHeight(tip int64) int64 {
+	if tip <= 0 {
+		return 1
+	}
+	oldest := tip - HistoryWindow
+	if oldest < 1 {
+		return 1
+	}
+	return oldest
+}
+
 // ErrProveNotImplemented is returned by hash-only producers (height + hash,
 // no LightBlock). HTTP mounts map it to 501; Anchor and heartbeat must not
 // depend on Prove.
