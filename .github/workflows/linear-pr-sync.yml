@@ -1,0 +1,109 @@
+name: Linear PR Sync
+
+# Mirrors every incoming pull request (including from external forks) into Linear.
+#
+# Why pull_request_target: PRs from forks do NOT get access to repository secrets
+# when using the plain `pull_request` trigger, so LINEAR_API_KEY would be empty and
+# the sync would silently fail for external contributors (the main use case here).
+# `pull_request_target` runs in the context of the BASE repo and has access to secrets.
+#
+# Security note: we intentionally do NOT check out or execute any code from the PR head.
+# The default checkout ref for pull_request_target is the base branch, and we only read
+# PR metadata (from the event payload) and call the Linear API. Do not add a step that
+# checks out `github.event.pull_request.head.ref` here.
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - closed
+      - milestoned
+      - demilestoned
+
+  # Reviews (approvals). This event runs in the base-repo context and has secrets,
+  # even for fork PRs, so no *_target variant is needed.
+  pull_request_review:
+    types:
+      - submitted
+
+  # Manual re-run helper: pass a PR number to re-sync a single PR.
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to re-sync (uses current 'opened' logic)"
+        required: true
+        type: string
+
+concurrency:
+  # Serialize events per PR so parallel webhooks don't race on the same Linear issue.
+  group: linear-pr-sync-${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Needed to auto-request reviewers on the PR. Works for fork PRs because
+  # pull_request_target runs with the base repo's token.
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base repo (scripts only)
+        uses: actions/checkout@v4
+        # Default ref = base branch. Never checkout PR head code with pull_request_target.
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: .github/scripts/linear-pr-sync
+        run: npm install --no-audit --no-fund
+
+      - name: Sync PR to Linear
+        working-directory: .github/scripts/linear-pr-sync
+        env:
+          # --- Required secret ---
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+
+          # --- Required config (set as repository Variables) ---
+          LINEAR_TEAM_KEY: ${{ vars.LINEAR_TEAM_KEY }}
+          # JSON array: [{"github":"login","email":"user@linear","name":"Full Name"}, ...]
+          REVIEWERS: ${{ vars.LINEAR_REVIEWERS }}
+
+          # --- Optional config (sensible defaults in the script) ---
+          # Leave CORE_PROJECT_NAME empty: the "Gonka core" folder is the GON team itself,
+          # so un-milestoned PRs stay in the team's Triage with no project.
+          CORE_PROJECT_NAME: ${{ vars.LINEAR_CORE_PROJECT_NAME }}
+          # GitHub milestone "v0.2.15" -> Linear project "Upgrade v0.2.15".
+          MILESTONE_PROJECT_PREFIX: ${{ vars.LINEAR_MILESTONE_PROJECT_PREFIX }}
+          # Bucket for PRs merged/approved without a milestone.
+          UNSORTED_PROJECT_NAME: ${{ vars.LINEAR_UNSORTED_PROJECT_NAME }}
+          FIRST_CONTRIBUTOR_LABEL: ${{ vars.LINEAR_FIRST_CONTRIBUTOR_LABEL }}
+          BACKLOG_STATE_NAME: ${{ vars.LINEAR_BACKLOG_STATE_NAME }}
+          DONE_STATE_NAME: ${{ vars.LINEAR_DONE_STATE_NAME }}
+          CANCELLED_STATE_NAME: ${{ vars.LINEAR_CANCELLED_STATE_NAME }}
+          NOT_DONE_STATE_NAME: ${{ vars.LINEAR_NOT_DONE_STATE_NAME }}
+          RELEASE_START_STATE_NAME: ${{ vars.LINEAR_RELEASE_START_STATE_NAME }}
+          MERGED_STATE_NAME: ${{ vars.LINEAR_MERGED_STATE_NAME }}
+
+          # --- Q&A testing hand-off (on merge of a milestoned PR) ---
+          QA_TEAM_KEY: ${{ vars.LINEAR_QA_TEAM_KEY }}
+          QA_TODO_STATE_NAME: ${{ vars.LINEAR_QA_TODO_STATE_NAME }}
+          TESTING_SUFFIX: ${{ vars.LINEAR_TESTING_SUFFIX }}
+          QA_ASSIGNEE_EMAIL: ${{ vars.LINEAR_QA_ASSIGNEE_EMAIL }}
+          QA_SUBSCRIBER_EMAILS: ${{ vars.LINEAR_QA_SUBSCRIBER_EMAILS }}
+
+          # --- GitHub reviewer auto-request ---
+          REQUEST_GITHUB_REVIEWERS: ${{ vars.LINEAR_REQUEST_GITHUB_REVIEWERS }}
+
+          # --- GitHub context ---
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_ACTION: ${{ github.event.action }}
+          MANUAL_PR_NUMBER: ${{ github.event.inputs.pr_number }}
+          MANUAL_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: node sync.mjs
