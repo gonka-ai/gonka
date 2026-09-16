@@ -10,8 +10,9 @@ import (
 
 	"common/chain"
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/nmclient"
 	"common/logging"
-	blockclient "devshard/chainoracle/blocks/client"
+	"common/nodemanager/gen"
 	"devshard/chainoracle/blocks/direct"
 	"devshard/chainoracle/blocks/failover"
 	"devshard/chainoracle/blocks/tipcache"
@@ -23,26 +24,25 @@ import (
 )
 
 const (
-	envChainOracleURL  = "DEVSHARD_CHAINORACLE_URL"
 	envHeightSyncK     = "DEVSHARD_HEIGHTSYNC_K"
 	envHeightSyncSlots = "DEVSHARD_HEIGHTSYNC_SLOTS"
 	envHeightSyncProbe = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
 )
 
-// SetHeightSyncFromEnv wires the height-sync oracle when a dapi URL or a
-// chain RPC/client is available. No-op only when neither exists. Call before
-// RecoverSessions so recovered sessions pick up WithHeightSync / WithChainOracle.
+// SetHeightSyncFromEnv wires the height-sync oracle when a NodeManager
+// client or a chain client is available. No-op only when neither exists.
+// Call before RecoverSessions so recovered sessions pick up WithHeightSync
+// / WithChainOracle.
 //
-// Tip (Latest/Subscribe) is the Comet NewBlock cache. Direct chain is
-// used only when that cache is empty (listener not yet connected, or
-// down). DEVSHARD_CHAINORACLE_URL is unary GET /block/:height and /prove;
-// a down dapi falls back to chain At, a missing route returns a dummy
-// header. No /block/latest or /block/stream.
-func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *chain.Client) error {
+// Latest is the Comet NewBlock cache, then NodeManager GetBlockHeader
+// (height 0), then chain GetLatestBlock. HTTP GET /block is not used.
+// Old dapi (Unimplemented) falls through to the cache then chain; At()
+// still uses chain GetBlockByHeight after the cached window. A missing
+// At route returns a dummy header so L6 does not mark.
+func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *chain.Client, nm gen.NodeManagerClient) error {
 	if m == nil {
 		return nil
 	}
-	url := strings.TrimSpace(os.Getenv(envChainOracleURL))
 	k, err := parseUintEnv(envHeightSyncK)
 	if err != nil {
 		return err
@@ -55,29 +55,25 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 		return err
 	}
 
-	var lookup *blockclient.Lookup
-	if url != "" {
-		cli, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: url})
+	var nmOracle blocks.BlockOracle
+	if nm != nil {
+		cli, err := nmclient.New(nm)
 		if err != nil {
-			return fmt.Errorf("chainoracle lookup client: %w", err)
+			return fmt.Errorf("chainoracle node-manager client: %w", err)
 		}
-		lookup = cli
+		nmOracle = cli
 	}
 
 	var chainOracle blocks.BlockOracle
-	if chainClient != nil || chainRPCFromEnv() != "" {
-		chainOracle = direct.NewFromChain(chainClient, chainRPCFromEnv())
+	if chainClient != nil {
+		chainOracle = direct.NewFromChain(chainClient)
 	}
-	if lookup == nil && chainOracle == nil {
+	if nmOracle == nil && chainOracle == nil {
 		return nil
 	}
 
 	cache := tipcache.New(0)
-	var hist failover.History
-	if lookup != nil {
-		hist = lookup
-	}
-	var oracle blocks.BlockOracle = failover.New(cache, hist, chainOracle)
+	var oracle blocks.BlockOracle = failover.New(cache, nmOracle, chainOracle)
 	if d, fab := testenvOracleFromEnv(); d != 0 || fab {
 		oracle = wrapTestenvOracleOverlay(oracle, d, fab)
 		logging.Info("height sync testenv oracle overlay", inferenceTypes.System,
@@ -88,20 +84,14 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 
 	sched, err := heightsync.NewAnchorSchedulerFromOracle(k, slots, oracle)
 	if err != nil {
-		if lookup != nil {
-			lookup.Close()
-		}
 		return fmt.Errorf("height-sync scheduler: %w", err)
 	}
 
 	m.chainOracle = oracle
 	m.heightSync = sched
 	m.heightSyncTip = cache
-	if lookup != nil {
-		m.heightSyncCloser = lookup.Close
-	}
 	logging.Info("height sync enabled", inferenceTypes.System,
-		"oracle_url", url,
+		"node_manager", nmOracle != nil,
 		"k", sched.K(),
 		"slots", sched.SlotsNum(),
 		"direct_chain", chainOracle != nil,
@@ -112,12 +102,27 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 // ObserveChainHeader records a Comet NewBlock on the height-sync tip cache.
 func (m *HostManager) ObserveChainHeader(h *blocks.Header) {
 	if m == nil || m.heightSyncTip == nil {
+		logging.Debug("heightsync: comet observe skipped", inferenceTypes.System, "reason", "no cache")
 		return
 	}
+	if h == nil || h.Height <= 0 || blocks.IsDummyHeader(h) {
+		height := int64(0)
+		hashLen := 0
+		if h != nil {
+			height = h.Height
+			hashLen = len(h.BlockHash)
+		}
+		logging.Debug("heightsync: comet observe skipped", inferenceTypes.System,
+			"reason", "unusable", "height", height, "hash_len", hashLen)
+		return
+	}
+	logging.Debug("heightsync: comet observe", inferenceTypes.System,
+		"height", h.Height, "hash_len", len(h.BlockHash), "chain_id", h.ChainID)
 	m.heightSyncTip.Observe(h)
 }
 
-// CloseHeightSync stops the optional chainoracle HTTP client. Idempotent.
+// CloseHeightSync clears the height-sync scheduler. Idempotent. The
+// NodeManager client is owned by the process ML client, not here.
 func (m *HostManager) CloseHeightSync() {
 	if m == nil {
 		return
@@ -129,15 +134,6 @@ func (m *HostManager) CloseHeightSync() {
 	m.chainOracle = nil
 	m.heightSync = nil
 	m.heightSyncTip = nil
-}
-
-func chainRPCFromEnv() string {
-	for _, name := range []string{"DEVSHARD_CHAIN_RPC", "NODE_RPC_URL", "DEVSHARD_COMET_RPC"} {
-		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func parseDurationEnv(name string) (time.Duration, error) {

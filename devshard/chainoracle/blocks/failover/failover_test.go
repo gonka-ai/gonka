@@ -2,28 +2,17 @@ package failover_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"common/chainoracle/blocks"
-	"common/httpguard"
-	blockclient "devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/failover"
 	"devshard/chainoracle/blocks/tipcache"
 
 	"github.com/stretchr/testify/require"
 )
-
-func TestMain(m *testing.M) {
-	httpguard.SetAllowPrivate(true)
-	os.Exit(m.Run())
-}
 
 type recOracle struct {
 	hdr   *blocks.Header
@@ -59,64 +48,65 @@ func chainHdr() *blocks.Header {
 	return blocks.HashOnlyHeader(99, time.Unix(1_700_000_100, 0).UTC(), "gonka-test", []byte{9, 9, 9, 9})
 }
 
-func dapiHdr() *blocks.Header {
+func nmHdr() *blocks.Header {
 	return blocks.HashOnlyHeader(7, time.Unix(1_700_000_000, 0).UTC(), "gonka-test", []byte{1, 2, 3, 4})
 }
 
-func TestOracle_LatestUsesTipNotHTTP(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("tip must not hit HTTP: %s", r.URL.Path)
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(ts.Close)
-	lookup, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: ts.URL})
-	require.NoError(t, err)
+func TestOracle_LatestPrefersCometCache(t *testing.T) {
 	chain := &recOracle{hdr: chainHdr()}
-	o := failover.New(&recOracle{hdr: dapiHdr()}, lookup, chain)
+	nm := &recOracle{hdr: nmHdr()}
+	tip := &recOracle{hdr: chainHdr()}
+	o := failover.New(tip, nm, chain)
 
 	h, err := o.Latest(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, int64(7), h.Height)
+	require.Equal(t, int64(99), h.Height)
+	require.Equal(t, []byte{9, 9, 9, 9}, h.BlockHash)
+	require.Equal(t, int64(0), nm.calls.Load())
 	require.Equal(t, int64(0), chain.calls.Load())
 }
 
-func TestOracle_AtMissingRouteReturnsDummy(t *testing.T) {
-	ts := httptest.NewServer(http.NotFoundHandler())
-	t.Cleanup(ts.Close)
-	lookup, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: ts.URL})
+func TestOracle_LatestFallsBackToGetBlockHeaderWhenCacheEmpty(t *testing.T) {
+	chain := &recOracle{hdr: chainHdr()}
+	nm := &recOracle{hdr: nmHdr()}
+	o := failover.New(tipcache.New(time.Hour), nm, chain)
+	h, err := o.Latest(context.Background())
 	require.NoError(t, err)
-	o := failover.New(&recOracle{hdr: chainHdr()}, lookup, nil)
+	require.Equal(t, int64(7), h.Height)
+	require.Equal(t, []byte{1, 2, 3, 4}, h.BlockHash)
+	require.Equal(t, int64(0), chain.calls.Load(), "GetLatestBlock is not tried when GetBlockHeader succeeds")
+}
 
+func TestOracle_LatestFallsBackToGetLatestBlockWhenHeaderMisses(t *testing.T) {
+	chain := &recOracle{hdr: chainHdr()}
+	o := failover.New(tipcache.New(time.Hour), &recOracle{err: blocks.ErrHeaderNotFound}, chain)
+	h, err := o.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(99), h.Height)
+	require.Equal(t, []byte{9, 9, 9, 9}, h.BlockHash)
+	require.Greater(t, chain.calls.Load(), int64(0))
+}
+
+func TestOracle_AtMissingRouteReturnsDummy(t *testing.T) {
+	o := failover.New(nil, &recOracle{err: blocks.ErrHeaderNotFound}, nil)
 	h, err := o.At(context.Background(), 42)
 	require.NoError(t, err)
 	require.True(t, blocks.IsDummyHeader(h))
 	require.Equal(t, int64(42), h.Height)
 }
 
-func TestOracle_At404DoesNotUseChain(t *testing.T) {
-	ts := httptest.NewServer(http.NotFoundHandler())
-	t.Cleanup(ts.Close)
-	lookup, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: ts.URL})
-	require.NoError(t, err)
+func TestOracle_AtNMMissFallsBackToChain(t *testing.T) {
 	chain := &recOracle{hdr: chainHdr()}
-	o := failover.New(&recOracle{hdr: dapiHdr()}, lookup, chain)
+	o := failover.New(nil, &recOracle{err: blocks.ErrHeaderNotFound}, chain)
 	h, err := o.At(context.Background(), 42)
 	require.NoError(t, err)
-	require.True(t, blocks.IsDummyHeader(h), "old dapi 404 is dummy, not chain At")
-	require.Equal(t, int64(0), chain.calls.Load())
+	require.False(t, blocks.IsDummyHeader(h))
+	require.Equal(t, int64(99), h.Height)
+	require.Greater(t, chain.calls.Load(), int64(0))
 }
 
-func TestOracle_AtHitsBlockHeight(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/block/7", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(dapiHdr())
-	}))
-	t.Cleanup(ts.Close)
-	lookup, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: ts.URL})
-	require.NoError(t, err)
-	o := failover.New(&recOracle{hdr: chainHdr()}, lookup, nil)
-
+func TestOracle_AtUsesNodeManager(t *testing.T) {
+	o := failover.New(nil, &recOracle{hdr: nmHdr()}, nil)
 	h, err := o.At(context.Background(), 7)
 	require.NoError(t, err)
 	require.False(t, blocks.IsDummyHeader(h))
@@ -139,77 +129,35 @@ func TestOracle_TipDownIsStale(t *testing.T) {
 }
 
 func TestOracle_ProveAbsent(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/block/7/prove" {
-			http.Error(w, "not implemented", http.StatusNotImplemented)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(ts.Close)
-	lookup, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: ts.URL})
-	require.NoError(t, err)
-	o := failover.New(&recOracle{hdr: chainHdr()}, lookup, nil)
-	_, err = o.Prove(context.Background(), "/escrow/1", 7)
+	o := failover.New(nil, &recOracle{hdr: nmHdr()}, nil)
+	_, err := o.Prove(context.Background(), "/escrow/1", 7)
 	require.ErrorIs(t, err, blocks.ErrProveNotImplemented)
 }
 
-func TestOracle_LatestFallsBackToChainWhenTipEmpty(t *testing.T) {
-	chain := &recOracle{hdr: chainHdr()}
-	o := failover.New(&recOracle{err: errors.New("no comet yet")}, nil, chain)
-	h, err := o.Latest(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, int64(99), h.Height)
-	require.Greater(t, chain.calls.Load(), int64(0))
-}
-
-func TestOracle_AtDapiDownFallsBackToChain(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "down", http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(ts.Close)
-	lookup, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: ts.URL})
-	require.NoError(t, err)
-	chain := &recOracle{hdr: chainHdr()}
-	o := failover.New(&recOracle{hdr: dapiHdr()}, lookup, chain)
+func TestOracle_AtChainDownAfterNMMissIsDummy(t *testing.T) {
+	chain := &recOracle{err: errors.New("down")}
+	o := failover.New(nil, &recOracle{err: blocks.ErrHeaderNotFound}, chain)
 	h, err := o.At(context.Background(), 99)
 	require.NoError(t, err)
-	require.Equal(t, int64(99), h.Height)
-	require.Equal(t, []byte{9, 9, 9, 9}, h.BlockHash)
-	require.Greater(t, chain.calls.Load(), int64(0))
+	require.True(t, blocks.IsDummyHeader(h))
 }
 
 func TestOracle_AtUsesCachedWindow(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("cached At must not hit HTTP: %s", r.URL.Path)
-		http.NotFound(w, r)
-	}))
-	t.Cleanup(ts.Close)
-	lookup, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: ts.URL})
-	require.NoError(t, err)
+	nm := &recOracle{hdr: nmHdr()}
 	cache := tipcache.New(time.Hour)
-	cache.Observe(dapiHdr())
-	o := failover.New(cache, lookup, nil)
+	cache.Observe(nmHdr())
+	o := failover.New(cache, nm, nil)
 
 	h, err := o.At(context.Background(), 7)
 	require.NoError(t, err)
 	require.Equal(t, int64(7), h.Height)
-	require.Equal(t, []byte{1, 2, 3, 4}, h.BlockHash)
+	require.Equal(t, int64(0), nm.calls.Load(), "cached At must not hit NodeManager")
 }
 
-func TestOracle_AtRemembersHTTP(t *testing.T) {
-	var hits atomic.Int64
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		require.Equal(t, "/block/7", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(dapiHdr())
-	}))
-	t.Cleanup(ts.Close)
-	lookup, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: ts.URL})
-	require.NoError(t, err)
+func TestOracle_AtRemembersNodeManager(t *testing.T) {
+	nm := &recOracle{hdr: nmHdr()}
 	cache := tipcache.New(time.Hour)
-	o := failover.New(cache, lookup, nil)
+	o := failover.New(cache, nm, nil)
 
 	h, err := o.At(context.Background(), 7)
 	require.NoError(t, err)
@@ -217,7 +165,7 @@ func TestOracle_AtRemembersHTTP(t *testing.T) {
 	h, err = o.At(context.Background(), 7)
 	require.NoError(t, err)
 	require.Equal(t, int64(7), h.Height)
-	require.Equal(t, int64(1), hits.Load())
+	require.Equal(t, int64(1), nm.calls.Load())
 	_, err = cache.Latest(context.Background())
-	require.Error(t, err, "HTTP At must not become the Comet tip")
+	require.Error(t, err, "At must not become the Comet tip")
 }

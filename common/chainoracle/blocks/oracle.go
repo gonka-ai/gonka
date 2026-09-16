@@ -11,6 +11,10 @@ import (
 // depend on Prove.
 var ErrProveNotImplemented = errors.New("blockoracle: prove not implemented")
 
+// ErrHeaderNotFound is a missing height (pruned, unknown, or empty Comet
+// response), a dapi without GetBlockHeader, or a dapi with no oracle configured.
+var ErrHeaderNotFound = errors.New("blockoracle: header not found")
+
 // BlockOracle is the stable contract between producers (observers, the
 // standalone binary, the in-process dapi mount) and consumers (devshardd
 // hosts, real dapi internals).

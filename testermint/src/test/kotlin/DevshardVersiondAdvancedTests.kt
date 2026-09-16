@@ -42,7 +42,7 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
         )
 
         try {
-            genesis.waitForDevshardProxyWarmup()
+            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
 
             val status = genesis.getDevshardProxyStatus(handle.proxyUrl)
             assertThat(status.config.inferenceSealGraceNonces).isEqualTo(devshardAutoSealInferenceSealGraceNonces.toInt())
@@ -231,7 +231,7 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
         }
 
         try {
-            genesis.waitForDevshardProxyWarmup()
+            handles.forEach { genesis.waitForDevshardProxyWarmup(it.proxyUrl) }
             logSection("Running $sessionCount proxy sessions in parallel")
             val dispatcher = Executors.newFixedThreadPool(sessionCount).asCoroutineDispatcher()
             runBlocking(dispatcher) {
@@ -344,7 +344,7 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
         )
 
         try {
-            genesis.waitForDevshardProxyWarmup()
+            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
             logSection("Sending chat completions via proxy")
             val numInferences = 20L
             for (i in 0 until numInferences) {

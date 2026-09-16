@@ -1,9 +1,11 @@
-// Package failover is the host/gateway BlockOracle: Latest/Subscribe come from
-// the Comet NewBlock cache, falling back to direct chain when that cache is
-// empty (WS not yet connected, or down). At prefers the last 100 cached
-// heights, then dapi GET /block/:height, then chain At when dapi is down.
-// Old dapi (404) yields a dummy header so L6 does not mark. Dummy headers
-// are not cached.
+// Package failover is the host/gateway BlockOracle. Latest is the Comet
+// NewBlock cache, then NodeManager GetBlockHeader, then chain
+// GetLatestBlock. Those are the same committed tip over three pipes:
+// Comet WS, dapi unary gRPC, and chain gRPC. At prefers the last 100
+// cached heights, then GetBlockHeader, then chain At (GetBlockByHeight).
+// Old dapi (Unimplemented) falls through; a remaining At miss yields a
+// dummy header so L6 does not mark. Dummy headers are not cached.
+// HTTP GET /block is not used.
 package failover
 
 import (
@@ -12,20 +14,15 @@ import (
 	"sync"
 
 	"common/chainoracle/blocks"
-	blockclient "devshard/chainoracle/blocks/client"
+	"common/logging"
 )
 
-// History is unary height lookup (L6) and prove (Strong). Optional.
-type History interface {
-	At(ctx context.Context, height int64) (*blocks.Header, error)
-	Prove(ctx context.Context, path string, height int64) (*blocks.Proof, error)
-}
-
-// Oracle prefers the Comet tip for Latest/Subscribe. HTTP is never used
-// for tip motion. chain is the GetLatestBlock / GetBlockByHeight fallback.
+// Oracle: tip is the Comet NewBlock cache (Latest primary and At window).
+// nm is GetBlockHeader. chain is GetLatestBlock for Latest() and
+// GetBlockByHeight for At outside the window. HTTP is never used.
 type Oracle struct {
 	tip   blocks.BlockOracle
-	hist  History
+	nm    blocks.BlockOracle
 	chain blocks.BlockOracle
 
 	mu      sync.Mutex
@@ -33,10 +30,14 @@ type Oracle struct {
 	fetched bool
 }
 
-// New wraps tip (Comet cache), optional hist (dapi At/Prove), and optional
-// chain (direct fallback when Comet or dapi is down).
-func New(tip blocks.BlockOracle, hist History, chain blocks.BlockOracle) *Oracle {
-	return &Oracle{tip: tip, hist: hist, chain: chain}
+// New wraps tip (Comet cache), optional nm (GetBlockHeader), and optional
+// chain (GetLatestBlock / GetBlockByHeight).
+func New(tip blocks.BlockOracle, nm blocks.BlockOracle, chain blocks.BlockOracle) *Oracle {
+	return &Oracle{tip: tip, nm: nm, chain: chain}
+}
+
+func usable(h *blocks.Header) bool {
+	return h != nil && !blocks.IsDummyHeader(h)
 }
 
 func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
@@ -45,24 +46,68 @@ func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	}
 	if o.tip != nil {
 		h, err := o.tip.Latest(ctx)
-		if err == nil && h != nil {
+		logLatestTry("comet_cache", h, err)
+		if err == nil && usable(h) {
 			o.note(true)
 			return h, nil
 		}
+	} else {
+		logLatestTry("comet_cache", nil, errors.New("not wired"))
 	}
+	var nmErr error
+	if o.nm != nil {
+		h, err := o.nm.Latest(ctx)
+		logLatestTry("get_block_header", h, err)
+		if err == nil && usable(h) {
+			o.note(true)
+			return h, nil
+		}
+		nmErr = err
+	} else {
+		logLatestTry("get_block_header", nil, errors.New("not wired"))
+	}
+	var chainErr error
 	if o.chain != nil {
 		h, err := o.chain.Latest(ctx)
-		if err == nil && h != nil {
+		logLatestTry("get_latest_block", h, err)
+		if err == nil && usable(h) {
 			o.note(true)
 			return h, nil
 		}
-		o.note(false)
-		if err != nil {
-			return nil, err
-		}
+		chainErr = err
+	} else {
+		logLatestTry("get_latest_block", nil, errors.New("not wired"))
 	}
 	o.note(false)
+	if chainErr != nil {
+		return nil, chainErr
+	}
+	if nmErr != nil {
+		return nil, nmErr
+	}
 	return nil, errors.New("blockoracle/failover: no tip")
+}
+
+func logLatestTry(source string, h *blocks.Header, err error) {
+	if err == nil && usable(h) {
+		logging.Debug("heightsync: latest try", "heightsync",
+			"source", source,
+			"ok", true,
+			"height", h.Height,
+			"hash_len", len(h.BlockHash),
+			"chain_id", h.ChainID)
+		return
+	}
+	kvs := []any{"source", source, "ok", false}
+	switch {
+	case err != nil:
+		kvs = append(kvs, "error", err.Error())
+	case h == nil:
+		kvs = append(kvs, "error", "nil header")
+	default:
+		kvs = append(kvs, "error", "unusable header", "height", h.Height, "hash_len", len(h.BlockHash))
+	}
+	logging.Debug("heightsync: latest try", "heightsync", kvs...)
 }
 
 func (o *Oracle) At(ctx context.Context, height int64) (*blocks.Header, error) {
@@ -72,29 +117,20 @@ func (o *Oracle) At(ctx context.Context, height int64) (*blocks.Header, error) {
 	if h := o.fromWindow(ctx, height); h != nil {
 		return h, nil
 	}
-	if o.hist != nil {
-		h, err := o.hist.At(ctx, height)
-		if err == nil && h != nil {
+	if o.nm != nil {
+		h, err := o.nm.At(ctx, height)
+		if err == nil && usable(h) {
 			o.remember(h)
 			return h, nil
-		}
-		if err != nil && blockclient.IsCapabilityMiss(err) {
-			return blocks.DummyHeader(height), nil
-		}
-		if o.chain == nil {
-			if err != nil {
-				return nil, err
-			}
-			return blocks.DummyHeader(height), nil
 		}
 	}
-	if o.chain != nil && o.hist != nil {
+	if o.chain != nil {
 		h, err := o.chain.At(ctx, height)
-		if err == nil && h != nil {
+		if err == nil && usable(h) {
 			o.remember(h)
 			return h, nil
 		}
-		if err != nil {
+		if err != nil && o.nm == nil {
 			return nil, err
 		}
 	}
@@ -106,14 +142,14 @@ func (o *Oracle) fromWindow(ctx context.Context, height int64) *blocks.Header {
 		return nil
 	}
 	h, err := o.tip.At(ctx, height)
-	if err != nil || h == nil || h.Height != height || blocks.IsDummyHeader(h) {
+	if err != nil || !usable(h) || h.Height != height {
 		return nil
 	}
 	return h
 }
 
 func (o *Oracle) remember(h *blocks.Header) {
-	if h == nil || blocks.IsDummyHeader(h) {
+	if !usable(h) {
 		return
 	}
 	if r, ok := o.tip.(interface{ Remember(*blocks.Header) }); ok {
@@ -122,12 +158,12 @@ func (o *Oracle) remember(h *blocks.Header) {
 }
 
 func (o *Oracle) Prove(ctx context.Context, path string, height int64) (*blocks.Proof, error) {
-	if o == nil || o.hist == nil {
+	if o == nil || o.nm == nil {
 		return nil, blocks.ErrProveNotImplemented
 	}
-	p, err := o.hist.Prove(ctx, path, height)
+	p, err := o.nm.Prove(ctx, path, height)
 	if err != nil {
-		if errors.Is(err, blocks.ErrProveNotImplemented) || blockclient.IsCapabilityMiss(err) {
+		if errors.Is(err, blocks.ErrProveNotImplemented) || errors.Is(err, blocks.ErrHeaderNotFound) {
 			return nil, blocks.ErrProveNotImplemented
 		}
 		return nil, err
@@ -154,7 +190,8 @@ func (o *Oracle) note(ok bool) {
 	o.mu.Unlock()
 }
 
-// Stale is true when Latest() has been attempted and both Comet and chain failed.
+// Stale is true when Latest() has been attempted and the Comet cache,
+// GetBlockHeader, and GetLatestBlock all failed.
 func (o *Oracle) Stale() bool {
 	if o == nil {
 		return true
@@ -172,7 +209,7 @@ func (o *Oracle) Stale() bool {
 }
 
 // Legacy is kept for tests that distinguished old dapi. Tip no longer
-// depends on dapi, so this is always false.
+// depends on dapi HTTP, so this is always false.
 func (o *Oracle) Legacy() bool {
 	return false
 }

@@ -66,9 +66,6 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
      */
     private val governanceReEnableSlaMs = 120_000L
 
-    /** After dapi container restart, allow NodeManager + versiond proxy to recover. */
-    private val postRestartWarmupDelay = Duration.ofSeconds(10)
-
     private val runtimeConfigSpec = createSpec(epochLength = 15L).merge(
         spec<AppState> {
             this[AppState::gov] = spec<GovState> {
@@ -250,7 +247,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
         )
         try {
             genesis.waitForMidEpochWindow()
-            genesis.waitForDevshardProxyWarmup()
+            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
             val okBefore = genesis.sendChatCompletionWithStatus(handle.proxyUrl, devshardEscrowModel, "before gov")
             assertThat(okBefore.httpCode).isBetween(200, 299)
 
@@ -370,7 +367,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
                 keyName = user.keyName,
                 routePrefix = overrideRoutePrefix,
             )
-            genesis.waitForDevshardProxyWarmup(postRestartWarmupDelay)
+            genesis.waitForDevshardProxyWarmup(proxyAfterRestart.proxyUrl)
             nodeManagerClient(genesis).use { waitForSyncedRuntimeConfig(it) }
             genesis.waitForNextInferenceWindow()
 

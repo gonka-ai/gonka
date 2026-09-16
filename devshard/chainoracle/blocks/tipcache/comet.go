@@ -9,7 +9,6 @@ import (
 	"common/chainoracle/blocks/observer"
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
-	cmttypes "github.com/cometbft/cometbft/types"
 )
 
 const (
@@ -74,8 +73,10 @@ func consumeComet(ctx context.Context, rpcURL string, c *Cache) error {
 			if !ok {
 				return fmt.Errorf("subscription closed")
 			}
-			data, ok := result.Data.(cmttypes.EventDataNewBlock)
+			data, ok := observer.AsEventDataNewBlock(result.Data)
 			if !ok {
+				slog.Warn("height-sync comet: unexpected NewBlock data type",
+					"query", result.Query, "got", fmt.Sprintf("%T", result.Data))
 				continue
 			}
 			hdr, ok := observer.HeaderFromNewBlock(data)
