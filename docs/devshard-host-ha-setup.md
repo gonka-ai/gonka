@@ -86,6 +86,16 @@ On the join host:
 
 **1. Save the HA settings in `config.env`.**
 
+List approved protocol names from your node. Run in `deploy/join`:
+
+```bash
+source ./config.env
+curl -fsS "http://127.0.0.1:${API_PORT:-8000}/chain-api/productscience/inference/inference/params" |
+  jq -er '.params.devshard_escrow_params.approved_versions[].name'
+```
+
+For this release, use the listed names `v4`, `v4.1` and, once available, `v5` in `VERSIOND_VERSIONS`. Exclude pre-HA versions such as `v3`. When updating, keep the existing list; use [Add a protocol](#add-a-protocol) for additions.
+
 Keep the existing join identity and PostgreSQL settings. Add:
 
 ```bash
@@ -238,7 +248,7 @@ docker compose up -d --wait --wait-timeout 2100
 ./versiond-router-fleet.sh apply
 ```
 
-Complete [Verify the deployment](#step-4---verify-it-works) before accepting traffic.
+Complete [Verify the deployment](#step-4---verify-it-works) after startup.
 
 ### Step 4 - Verify it works
 
@@ -417,7 +427,7 @@ bash ./devshard-postgres-migration-preflight.sh \
 
 Preflight must pass; free space must be at least the source size plus 10%. Preserve the source: no `down`, `down -v`, `rm -v`, pruning or `--renew-anon-volumes` before migration.
 
-Close new traffic; wait for accepted work to finish. Stop **all writers**: every local member below, remote members on their hosts. Refresh the backup after writes stop:
+Stop **all writers**: every local member below, remote members on their hosts. Wait for all shutdown commands to finish, then refresh the backup before stopping PostgreSQL:
 
 ```bash
 # Include every local member; stop remote members on their own machines too.
@@ -464,7 +474,7 @@ After verification, keep writers stopped and recreate PostgreSQL without the rec
 
 ### 3. Run the updater
 
-Schedule maintenance: replacing the public proxy can interrupt connections. Close public traffic; let accepted work finish. Reopen only after the service checks pass.
+Schedule maintenance: replacing the public proxy can interrupt connections.
 
 Routine update: leave PostgreSQL, the filter, replicas and router fleet running. Leave `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled.
 
@@ -530,7 +540,7 @@ Review the proposed images and changes. On a target-directory creation error, co
 
 The updater replaces local services and routing. [Replace remote members](#replace-a-member) one at a time before final verification.
 
-Pass the [service checks](#41-check-the-running-services) before reopening traffic. Add new protocols through [Add a protocol](#add-a-protocol). Do not rename existing binaries or escrows.
+Run the [service checks](#41-check-the-running-services) after the update. Add new protocols through [Add a protocol](#add-a-protocol). Do not rename existing binaries or escrows.
 
 ## Add a remote replica
 
@@ -582,10 +592,10 @@ External PostgreSQL: drop the `devshard-postgres` entry; B uses the real endpoin
 
 Fresh host: include the override before [startup](#step-3---start-the-deployment). Existing host:
 
-1. Close public traffic; let accepted work finish.
-2. Stop all local and remote writers before recreating local PostgreSQL.
+1. Schedule maintenance for the port changes.
+2. Stop all local and remote writers before recreating local PostgreSQL; wait for their shutdown commands to finish.
 3. Apply the complete Compose configuration.
-4. Check readiness and run `./update-devshard.sh --check` before reopening traffic.
+4. Check readiness and run `./update-devshard.sh --check`.
 
 Do not restart the whole live stack to add a member.
 
@@ -765,7 +775,7 @@ Stop and drain it. Remove its service or set replicas to zero (`VERSIOND2_REPLIC
 
 ### Add a protocol
 
-1. Take the protocol name and required host/gateway versions from its release instructions. After the activation specified there, add the name to `VERSIOND_VERSIONS` in `config.env` on every host; keep names needed by retained sessions.
+1. Take the protocol name and required host/gateway versions from its release instructions. Confirm the name appears in your node's [approved protocol list](#21-same-machine-two-replicas), then add it to `VERSIOND_VERSIONS` in `config.env` on every host; keep names needed by retained sessions.
 2. On A: `source ./config.env`, then `docker compose up -d --no-deps oracle-filter` with the complete `COMPOSE_FILE`.
 3. `./versiond-router-fleet.sh wait-version <new-protocol>`, then run the [service checks](#41-check-the-running-services) with the updated list.
 
