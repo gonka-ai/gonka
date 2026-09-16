@@ -435,6 +435,7 @@ docker stop --time 1800 versiond versiond2
 # Refresh the database backup now that application writes have stopped.
 docker stop --time 300 devshard-postgres
 ./versiond-router-fleet.sh prepare-networks
+# Starting PostgreSQL copies the old volume into the persistent data directory.
 "${dc[@]}" up -d --no-deps devshard-postgres
 "${dc[@]}" logs --tail=100 devshard-postgres
 ```
@@ -488,7 +489,7 @@ Use this block only for a first-time transition or post-copy recovery. Keep the 
 docker compose up -d --no-deps oracle-filter
 ```
 
-**After a local database copy:** verify the copied database and the retained containers' catalog and database settings, then restart writers. Include every stopped local member; start remote members on their hosts:
+**After [copying the local database](#2-check-the-database-layout):** verify the copied database and the retained containers' catalog and database settings, then restart writers. Include every stopped local member; start remote members on their hosts:
 
 ```bash
 docker start versiond versiond2
