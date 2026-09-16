@@ -90,6 +90,46 @@ func TestSMSTPagedRootAndProofIdentity(t *testing.T) {
 	compareProofsByNonce(t, ram, paged, n, []int32{0, 100, 4095, 4096, 4999})
 }
 
+func TestSMSTPagedNegativeNonceIdentity(t *testing.T) {
+	nonces := []int32{-1, -2, -1000000, 1 << 25, (1 << 25) + 1, 1 << 28}
+	for i := 0; i < 40; i++ {
+		nonces = append(nonces, int32(i))
+	}
+	ram := openSMSTWithRAMLimit(t, t.TempDir(), 1_000_000_000)
+	defer ram.Close()
+	paged := openSMSTWithRAMLimit(t, t.TempDir(), 16)
+	defer paged.Close()
+	for i, nonce := range nonces {
+		if err := ram.AddWithNode(nonce, pagedTestVector(int(nonce)), "n"); err != nil {
+			t.Fatalf("ram add %d: %v", nonce, err)
+		}
+		if err := paged.AddWithNode(nonce, pagedTestVector(int(nonce)), "n"); err != nil {
+			t.Fatalf("paged add %d: %v", nonce, err)
+		}
+		if (i+1)%16 == 0 {
+			if err := ram.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			if err := paged.Flush(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := ram.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := paged.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if !paged.spilled {
+		t.Fatal("expected spill")
+	}
+	if !bytes.Equal(ram.GetRoot(), paged.GetRoot()) {
+		t.Fatal("root mismatch with negative/expanded nonces")
+	}
+	compareProofsByNonce(t, ram, paged, len(nonces), []int32{-1, -2, 1 << 25, 0, 39})
+}
+
 func TestSMSTPagedRecoverIdentity(t *testing.T) {
 	const n = 5000
 	const limit = 2000
@@ -723,7 +763,7 @@ func TestSMSTPagedHasNonceConsultsSuffix(t *testing.T) {
 	store.mu.RUnlock()
 }
 
-func TestSMSTPagedHotMissReloadsTreeBlob(t *testing.T) {
+func TestSMSTPagedHotMissReloadsSuffix(t *testing.T) {
 	ram := openSMSTWithRAMLimit(t, t.TempDir(), 1_000_000_000)
 	defer ram.Close()
 	paged := openSMSTWithRAMLimit(t, t.TempDir(), 8)
@@ -765,13 +805,10 @@ func TestSMSTPagedHotMissReloadsTreeBlob(t *testing.T) {
 	if !bytes.Equal(ram.GetRoot(), paged.GetRoot()) {
 		t.Fatal("root mismatch after hot-miss reload")
 	}
-	if _, err := os.Stat(paged.suffixTreePath(0)); err != nil {
-		t.Fatalf("prefix 0 should have a .tree after evict: %v", err)
-	}
 	compareProofsByNonce(t, ram, paged, len(nonces), []int32{0, 1, 2, 4096})
 }
 
-func TestSMSTPagedSuffixTreeBlob(t *testing.T) {
+func TestSMSTPagedReopenProofsFromLog(t *testing.T) {
 	dir := t.TempDir()
 	store := openSMSTWithRAMLimit(t, dir, 32)
 	fillStore(t, store, 64, 32)
@@ -780,28 +817,14 @@ func TestSMSTPagedSuffixTreeBlob(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := os.ReadDir(filepath.Join(dir, suffixDirName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	trees := 0
-	for _, e := range entries {
-		if filepath.Ext(e.Name()) == ".tree" {
-			trees++
-		}
-	}
-	if trees == 0 {
-		t.Fatal("expected suffix .tree blobs after spill")
-	}
-
 	reopened := openSMSTWithRAMLimit(t, dir, 32)
 	defer reopened.Close()
 	if !bytes.Equal(root, reopened.GetRoot()) {
-		t.Fatal("root mismatch after reopen with tree blobs")
+		t.Fatal("root mismatch after reopen without tree blobs")
 	}
 	entries2, err := reopened.GetArtifactsAndProofs([]uint32{0, 32, 63}, 64)
 	if err != nil {
-		t.Fatalf("cold proofs from tree blob: %v", err)
+		t.Fatalf("cold proofs from suffix log: %v", err)
 	}
 	for _, e := range entries2 {
 		if !VerifySMSTProofSlice(root, 64, e.Nonce, encodeLeaf(e.Nonce, e.Vector), e.Proof) {
@@ -1023,13 +1046,9 @@ func TestSMSTPagedFlushPersistRetry(t *testing.T) {
 	if err := ram.Flush(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(filepath.Join(pagedDir, suffixDirName), 0555); err != nil {
-		t.Fatal(err)
-	}
+	blocked := blockSuffixSeals(t, pagedDir)
 	err := paged.Flush()
-	if err := os.Chmod(filepath.Join(pagedDir, suffixDirName), 0755); err != nil {
-		t.Fatal(err)
-	}
+	unblockSuffixSeals(t, blocked)
 	if err == nil {
 		t.Fatal("expected suffix persist error")
 	}
@@ -1320,62 +1339,6 @@ func TestSMSTPagedEvictedPrefixLiveTip(t *testing.T) {
 	e := entries[0]
 	if !VerifySMSTProofSlice(tipRoot, tip, e.Nonce, encodeLeaf(e.Nonce, e.Vector), e.Proof) {
 		t.Fatalf("live-tip proof failed nonce %d", e.Nonce)
-	}
-}
-
-func TestSMSTPagedBadTreeBlobHash(t *testing.T) {
-	dir := t.TempDir()
-	store := openSMSTWithRAMLimit(t, dir, 32)
-	fillStore(t, store, 64, 32)
-	root := append([]byte(nil), store.GetRoot()...)
-	count := store.Count()
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	suffixDir := filepath.Join(dir, suffixDirName)
-	entries, err := os.ReadDir(suffixDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	corrupted := false
-	for _, e := range entries {
-		if filepath.Ext(e.Name()) != ".tree" {
-			continue
-		}
-		path := filepath.Join(suffixDir, e.Name())
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		off := len(suffixTreeMagic) + 1 + 1
-		if len(data) <= off {
-			t.Fatalf("tree blob too short: %s", e.Name())
-		}
-		data[off] ^= 0xff
-		if err := os.WriteFile(path, data, 0644); err != nil {
-			t.Fatal(err)
-		}
-		corrupted = true
-		break
-	}
-	if !corrupted {
-		t.Fatal("expected a suffix .tree blob to corrupt")
-	}
-
-	reopened := openSMSTWithRAMLimit(t, dir, 32)
-	defer reopened.Close()
-	if !bytes.Equal(root, reopened.GetRoot()) {
-		t.Fatal("root mismatch after bad tree blob")
-	}
-	proofs, err := reopened.GetArtifactsAndProofs([]uint32{0, 32, 63}, count)
-	if err != nil {
-		t.Fatalf("proofs with bad tree blob: %v", err)
-	}
-	for _, e := range proofs {
-		if !VerifySMSTProofSlice(root, count, e.Nonce, encodeLeaf(e.Nonce, e.Vector), e.Proof) {
-			t.Fatalf("proof failed nonce %d after bad tree blob", e.Nonce)
-		}
 	}
 }
 

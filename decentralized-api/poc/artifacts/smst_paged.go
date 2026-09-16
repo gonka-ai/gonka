@@ -21,7 +21,7 @@ const (
 	smstSuffixMask       = (1 << smstSuffixHeight) - 1
 	defaultSMSTRAMLeaves = 8_000_000
 	envSMSTRAMLeaves     = "SMST_RAM_LEAVES"
-	smstHotSuffixCap     = 4
+	smstHotSuffixCap     = 32
 	suffixDirName        = "suffix"
 	suffixMarkerName     = "SPILLED"
 	suffixHistoryName    = "history.jsonl"
@@ -57,11 +57,6 @@ type hotSuffix struct {
 	prefix   uint32
 	tree     *SMST
 	nonceSeq map[int32]uint32
-}
-
-type suffixTreeJob struct {
-	prefix uint32
-	tree   *SMST
 }
 
 type nonceBitmap struct {
@@ -212,9 +207,7 @@ func (s *SMSTArtifactStore) ensureHotSuffix(prefix uint32) (*hotSuffix, error) {
 	}
 	var dirty []suffixRec
 	var bufCopy []bufferedArtifact
-	var expected uint32
 	if meta := s.suffixes[prefix]; meta != nil {
-		expected = meta.count
 		if len(meta.dirty) > 0 {
 			dirty = append([]suffixRec(nil), meta.dirty...)
 			needBuf := false
@@ -230,7 +223,7 @@ func (s *SMSTArtifactStore) ensureHotSuffix(prefix uint32) (*hotSuffix, error) {
 		}
 	}
 	s.mu.Unlock()
-	loaded, err := s.loadHotSuffix(prefix, dirty, bufCopy, expected)
+	loaded, err := s.loadHotSuffix(prefix, dirty, bufCopy)
 	s.mu.Lock()
 	if err != nil {
 		return nil, err
@@ -262,15 +255,10 @@ func (s *SMSTArtifactStore) evictHotIfNeeded() error {
 	meta.hash = append([]byte(nil), root...)
 	meta.count = count
 	s.smst.attachSealedCOW(fullNonce(evict.prefix, 0), &smstNode{hash: root, count: count})
-	tree := evict.tree
-	prefix := evict.prefix
-	s.mu.Unlock()
-	err := s.writeSuffixTreeBlob(prefix, tree)
-	s.mu.Lock()
-	return err
+	return nil
 }
 
-func (s *SMSTArtifactStore) loadHotSuffix(prefix uint32, dirty []suffixRec, buffer []bufferedArtifact, expected uint32) (*hotSuffix, error) {
+func (s *SMSTArtifactStore) loadHotSuffix(prefix uint32, dirty []suffixRec, buffer []bufferedArtifact) (*hotSuffix, error) {
 	h := &hotSuffix{
 		prefix:   prefix,
 		nonceSeq: make(map[int32]uint32),
@@ -278,25 +266,6 @@ func (s *SMSTArtifactStore) loadHotSuffix(prefix uint32, dirty []suffixRec, buff
 	recs, err := s.readSuffixLog(prefix, ^uint32(0), dirty)
 	if err != nil {
 		return nil, err
-	}
-	if expected > 0 {
-		var wantHash []byte
-		if meta := s.suffixes[prefix]; meta != nil {
-			wantHash = meta.hash
-		}
-		if tree, err := s.loadSuffixTreeBlob(prefix); err == nil && suffixBlobMatches(tree, expected, wantHash) {
-			h.tree = tree
-			h.tree.deferredHash = s.smst.deferredHash
-			h.tree.parallelHash = s.smst.parallelHash
-			if h.tree.hasNonce == nil {
-				h.tree.hasNonce = make(map[int32]bool, len(recs))
-			}
-			for _, rec := range recs {
-				h.nonceSeq[rec.nonce] = rec.seq
-				h.tree.hasNonce[suffixLocal(rec.nonce)] = true
-			}
-			return h, nil
-		}
 	}
 	h.tree = NewSMST(smstSuffixHeight)
 	h.tree.deferredHash = s.smst.deferredHash
@@ -325,9 +294,10 @@ func (s *SMSTArtifactStore) readSuffixLog(prefix uint32, maxSeq uint32, dirty []
 	defer f.Close()
 	var out []suffixRec
 	seen := make(map[uint32]struct{})
+	r := bufio.NewReaderSize(f, 64*1024)
 	var buf [8]byte
 	for {
-		if _, err := io.ReadFull(f, buf[:]); err != nil {
+		if _, err := io.ReadFull(r, buf[:]); err != nil {
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				break
 			}
@@ -366,10 +336,6 @@ func appendDirtyRecs(out []suffixRec, dirty []suffixRec, maxSeq uint32) []suffix
 	return out
 }
 
-func (s *SMSTArtifactStore) writeSuffixDirtyLocked() error {
-	return s.writeSuffixLogs(false)
-}
-
 func (s *SMSTArtifactStore) writeSuffixLogs(truncate bool) error {
 	if err := os.MkdirAll(s.suffixDir(), 0755); err != nil {
 		return err
@@ -377,6 +343,19 @@ func (s *SMSTArtifactStore) writeSuffixLogs(truncate bool) error {
 	flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
 	if truncate {
 		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	type started struct {
+		path string
+		size int64
+	}
+	var written []started
+	rollback := func() {
+		if truncate {
+			return
+		}
+		for _, st := range written {
+			_ = os.Truncate(st.path, st.size)
+		}
 	}
 	for prefix, meta := range s.suffixes {
 		if meta == nil || len(meta.dirty) == 0 {
@@ -391,6 +370,7 @@ func (s *SMSTArtifactStore) writeSuffixLogs(truncate bool) error {
 		}
 		f, err := os.OpenFile(logPath, flags, 0644)
 		if err != nil {
+			rollback()
 			return err
 		}
 		var buf [8]byte
@@ -399,6 +379,7 @@ func (s *SMSTArtifactStore) writeSuffixLogs(truncate bool) error {
 			binary.LittleEndian.PutUint32(buf[4:8], rec.seq)
 			if _, err := f.Write(buf[:]); err != nil {
 				f.Close()
+				rollback()
 				if !truncate {
 					_ = os.Truncate(logPath, startSize)
 				}
@@ -407,12 +388,14 @@ func (s *SMSTArtifactStore) writeSuffixLogs(truncate bool) error {
 		}
 		if err := f.Sync(); err != nil {
 			f.Close()
+			rollback()
 			if !truncate {
 				_ = os.Truncate(logPath, startSize)
 			}
 			return err
 		}
 		if err := f.Close(); err != nil {
+			rollback()
 			if !truncate {
 				_ = os.Truncate(logPath, startSize)
 			}
@@ -420,15 +403,24 @@ func (s *SMSTArtifactStore) writeSuffixLogs(truncate bool) error {
 		}
 		if meta.hash != nil {
 			if err := s.writeSeal(prefix, meta.hash, meta.count); err != nil {
+				rollback()
 				if !truncate {
 					_ = os.Truncate(logPath, startSize)
 				}
 				return err
 			}
 		}
-		meta.dirty = meta.dirty[:0]
+		written = append(written, started{path: logPath, size: startSize})
 	}
 	return nil
+}
+
+func (s *SMSTArtifactStore) clearDirtySuffixes() {
+	for _, meta := range s.suffixes {
+		if meta != nil {
+			meta.dirty = meta.dirty[:0]
+		}
+	}
 }
 
 func (s *SMSTArtifactStore) collectDirtyDeltas() []sealDelta {
@@ -473,7 +465,7 @@ func (s *SMSTArtifactStore) appendSealJournal(count uint32, seals []sealDelta) e
 	return f.Close()
 }
 
-func (s *SMSTArtifactStore) hashHotSuffixes() error {
+func (s *SMSTArtifactStore) hashHotSuffixes() {
 	for _, h := range s.hot {
 		if h == nil || h.tree == nil {
 			continue
@@ -484,23 +476,10 @@ func (s *SMSTArtifactStore) hashHotSuffixes() error {
 		meta.count = count
 		s.smst.attachSealedCOW(fullNonce(h.prefix, 0), &smstNode{hash: root, count: count})
 	}
-	return nil
 }
 
 func (s *SMSTArtifactStore) flushPagedSuffixes() error {
-	if err := s.hashHotSuffixes(); err != nil {
-		return err
-	}
-	dirtyPrefixes := s.dirtyPrefixList()
-	var jobs []suffixTreeJob
-	var rebuild []uint32
-	for _, prefix := range dirtyPrefixes {
-		if h := s.findHot(prefix); h != nil && h.tree != nil {
-			jobs = append(jobs, suffixTreeJob{prefix: prefix, tree: h.tree})
-		} else {
-			rebuild = append(rebuild, prefix)
-		}
-	}
+	s.hashHotSuffixes()
 	deltas := s.collectDirtyDeltas()
 	if err := s.writeSuffixLogs(false); err != nil {
 		return err
@@ -508,31 +487,7 @@ func (s *SMSTArtifactStore) flushPagedSuffixes() error {
 	if err := s.appendSealJournal(s.smst.Count(), deltas); err != nil {
 		return err
 	}
-	fileThrough := s.flushedLeafCount
-	s.mu.Unlock()
-	err := s.writeSuffixTreeJobs(jobs, rebuild, fileThrough)
-	s.mu.Lock()
-	return err
-}
-
-func (s *SMSTArtifactStore) writeSuffixTreeJobs(jobs []suffixTreeJob, rebuild []uint32, fileThrough uint32) error {
-	for _, j := range jobs {
-		if err := s.writeSuffixTreeBlob(j.prefix, j.tree); err != nil {
-			return err
-		}
-	}
-	for _, prefix := range rebuild {
-		tree, err := s.rebuildSuffixTree(prefix, ^uint32(0), nil, fileThrough)
-		if err != nil {
-			return err
-		}
-		if tree.Count() == 0 {
-			continue
-		}
-		if err := s.writeSuffixTreeBlob(prefix, tree); err != nil {
-			return err
-		}
-	}
+	s.clearDirtySuffixes()
 	return nil
 }
 
@@ -543,16 +498,6 @@ func (s *SMSTArtifactStore) hasDirtySuffixes() bool {
 		}
 	}
 	return false
-}
-
-func (s *SMSTArtifactStore) dirtyPrefixList() []uint32 {
-	var out []uint32
-	for prefix, meta := range s.suffixes {
-		if meta != nil && len(meta.dirty) > 0 {
-			out = append(out, prefix)
-		}
-	}
-	return out
 }
 
 func (s *SMSTArtifactStore) writeSeal(prefix uint32, hash []byte, count uint32) error {
@@ -670,13 +615,8 @@ func (s *SMSTArtifactStore) spillLocked() error {
 	if err := s.writeSuffixLogs(true); err != nil {
 		return err
 	}
+	s.clearDirtySuffixes()
 	s.smst.ensureHashed()
-	s.mu.Unlock()
-	persistErr := s.persistLiveSuffixTrees()
-	s.mu.Lock()
-	if persistErr != nil {
-		return persistErr
-	}
 	if err := s.persistSealedCuts(); err != nil {
 		return err
 	}
@@ -793,171 +733,6 @@ func (s *SMSTArtifactStore) suffixLocalDenseIndex(nonce int32, snapshotCount uin
 	return suf.denseIndexForNonce(suffixLocal(nonce))
 }
 
-func (s *SMSTArtifactStore) persistLiveSuffixTrees() error {
-	height := smstSuffixHeight
-	if s.smst.root == nil || s.smst.depth <= height {
-		return nil
-	}
-	cut := s.smst.depth - height
-	var walkErr error
-	var walk func(node *smstNode, level int, prefix uint32)
-	walk = func(node *smstNode, level int, prefix uint32) {
-		if node == nil || walkErr != nil {
-			return
-		}
-		if level == cut {
-			if node.left == nil && node.right == nil {
-				return
-			}
-			if err := s.writeSuffixTreeNode(prefix, node, height); err != nil {
-				walkErr = err
-			}
-			return
-		}
-		walk(node.left, level+1, prefix<<1)
-		walk(node.right, level+1, prefix<<1|1)
-	}
-	walk(s.smst.root, 0, 0)
-	return walkErr
-}
-
-const suffixTreeMagic = "SMSTSFT1"
-
-func (s *SMSTArtifactStore) writeSuffixTreeBlob(prefix uint32, tree *SMST) error {
-	if tree == nil || tree.root == nil {
-		return nil
-	}
-	tree.ensureHashed()
-	return s.writeSuffixTreeNode(prefix, tree.root, tree.depth)
-}
-
-func (s *SMSTArtifactStore) writeSuffixTreeNode(prefix uint32, root *smstNode, height int) error {
-	if root == nil || height <= 0 {
-		return nil
-	}
-	if err := os.MkdirAll(s.suffixDir(), 0755); err != nil {
-		return err
-	}
-	var buf bytes.Buffer
-	buf.WriteString(suffixTreeMagic)
-	buf.WriteByte(byte(height))
-	encodeSuffixNode(&buf, root, 0, height)
-	tmp := s.suffixTreePath(prefix) + ".tmp"
-	if err := os.WriteFile(tmp, buf.Bytes(), 0644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.suffixTreePath(prefix))
-}
-
-func encodeSuffixNode(buf *bytes.Buffer, node *smstNode, level, height int) {
-	if node == nil {
-		buf.WriteByte(0)
-		return
-	}
-	buf.WriteByte(1)
-	var hash [32]byte
-	if len(node.hash) > 0 {
-		copy(hash[:], node.hash)
-	}
-	buf.Write(hash[:])
-	var count [4]byte
-	binary.LittleEndian.PutUint32(count[:], node.count)
-	buf.Write(count[:])
-	if level < height {
-		encodeSuffixNode(buf, node.left, level+1, height)
-		encodeSuffixNode(buf, node.right, level+1, height)
-	}
-}
-
-func (s *SMSTArtifactStore) loadSuffixTreeBlob(prefix uint32) (*SMST, error) {
-	path := s.suffixTreePath(prefix)
-	f, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	info, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
-	data := make([]byte, info.Size())
-	_, err = f.ReadAt(data, 0)
-	f.Close()
-	if err != nil && err != io.EOF {
-		return nil, err
-	}
-	if len(data) < len(suffixTreeMagic)+1 || string(data[:len(suffixTreeMagic)]) != suffixTreeMagic {
-		return nil, nil
-	}
-	height := int(data[len(suffixTreeMagic)])
-	if height <= 0 || height > smstMaxDepth {
-		return nil, nil
-	}
-	r := bytes.NewReader(data[len(suffixTreeMagic)+1:])
-	root, err := decodeSuffixNode(r, 0, height)
-	if err != nil || root == nil {
-		return nil, err
-	}
-	tree := NewSMST(height)
-	tree.deferredHash = s.smst.deferredHash
-	tree.parallelHash = false
-	tree.navExistence = true
-	tree.root = root
-	tree.leafCount = root.count
-	return tree, nil
-}
-
-func suffixBlobMatches(tree *SMST, count uint32, hash []byte) bool {
-	if tree == nil || tree.Count() != count {
-		return false
-	}
-	if len(hash) == 0 {
-		return true
-	}
-	if tree.root == nil {
-		return false
-	}
-	return bytes.Equal(tree.root.hash, hash)
-}
-
-func decodeSuffixNode(r *bytes.Reader, level, height int) (*smstNode, error) {
-	flag, err := r.ReadByte()
-	if err != nil {
-		return nil, err
-	}
-	if flag == 0 {
-		return nil, nil
-	}
-	var hash [32]byte
-	if _, err := io.ReadFull(r, hash[:]); err != nil {
-		return nil, err
-	}
-	var countBuf [4]byte
-	if _, err := io.ReadFull(r, countBuf[:]); err != nil {
-		return nil, err
-	}
-	node := &smstNode{
-		hash:  append([]byte(nil), hash[:]...),
-		count: binary.LittleEndian.Uint32(countBuf[:]),
-	}
-	if level < height {
-		left, err := decodeSuffixNode(r, level+1, height)
-		if err != nil {
-			return nil, err
-		}
-		right, err := decodeSuffixNode(r, level+1, height)
-		if err != nil {
-			return nil, err
-		}
-		node.left = left
-		node.right = right
-	}
-	return node, nil
-}
-
 func (s *SMSTArtifactStore) recoverPaged() error {
 	if err := s.recoverFlushedRoots(); err != nil {
 		return err
@@ -1013,9 +788,6 @@ func (s *SMSTArtifactStore) recoverPaged() error {
 			if err := s.writeSeal(prefix, hash, count); err != nil {
 				return err
 			}
-			if err := s.writeSuffixTreeBlob(prefix, tree); err != nil {
-				return err
-			}
 		} else {
 			meta.hash = hash
 		}
@@ -1047,7 +819,9 @@ func (s *SMSTArtifactStore) reconcileSuffixLogs(n uint32) error {
 	if err != nil {
 		return err
 	}
-	seen := make(map[uint32]struct{}, n)
+	words := (uint64(n) + 63) / 64
+	seen := make([]uint64, words)
+	var seenN uint32
 	dup := false
 	for _, e := range entries {
 		name := e.Name()
@@ -1072,14 +846,21 @@ func (s *SMSTArtifactStore) reconcileSuffixLogs(n uint32) error {
 		meta.firstSeq = recs[0].seq
 		meta.lastSeq = recs[len(recs)-1].seq
 		for _, rec := range recs {
-			if _, ok := seen[rec.seq]; ok {
-				dup = true
+			if rec.seq >= n {
+				continue
 			}
-			seen[rec.seq] = struct{}{}
+			i := rec.seq / 64
+			bit := uint64(1) << (rec.seq % 64)
+			if seen[i]&bit != 0 {
+				dup = true
+			} else {
+				seen[i] |= bit
+				seenN++
+			}
 			s.bitmap.set(rec.nonce)
 		}
 	}
-	if !dup && uint32(len(seen)) == n {
+	if !dup && seenN == n {
 		return nil
 	}
 	return s.rebuildSuffixLogsFromData(n)
@@ -1109,6 +890,7 @@ func (s *SMSTArtifactStore) rebuildSuffixLogsFromData(n uint32) error {
 	if err := s.writeSuffixLogs(true); err != nil {
 		return err
 	}
+	s.clearDirtySuffixes()
 	return s.removeOrphanSuffixFiles()
 }
 
@@ -1495,15 +1277,6 @@ func (s *SMSTArtifactStore) seqForNonce(nonce int32) (uint32, bool) {
 	return 0, false
 }
 
-func (s *SMSTArtifactStore) pagedGetArtifactsAndProofs(denseIndices []uint32, snapshotCount uint32) ([]ProofEntry, error) {
-	tree, unlock, err := s.acquireSnapshotTree(snapshotCount)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	return s.pagedProofsFromTree(tree, denseIndices, snapshotCount)
-}
-
 func (s *SMSTArtifactStore) pagedProofsFromTree(tree *SMST, denseIndices []uint32, snapshotCount uint32) ([]ProofEntry, error) {
 	type item struct {
 		idx        int
@@ -1550,15 +1323,6 @@ func (s *SMSTArtifactStore) pagedProofsFromTree(tree *SMST, denseIndices []uint3
 		}
 	}
 	return entries, nil
-}
-
-func (s *SMSTArtifactStore) pagedGetArtifactsAndProofsByNonce(nonces []int32, snapshotCount uint32) ([]ProofEntry, error) {
-	tree, unlock, err := s.acquireSnapshotTree(snapshotCount)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	return s.pagedProofsByNonceFromTree(tree, nonces, snapshotCount)
 }
 
 func (s *SMSTArtifactStore) pagedProofsByNonceFromTree(tree *SMST, nonces []int32, snapshotCount uint32) ([]ProofEntry, error) {
@@ -1619,43 +1383,10 @@ func (s *SMSTArtifactStore) suffixStateForProof(prefix uint32, snapshotCount uin
 		}
 	}
 	var dirty []suffixRec
-	var lastSeq, suffixCount uint32
-	var haveMeta bool
 	if meta := s.suffixes[prefix]; meta != nil {
 		dirty = meta.dirty
-		lastSeq = meta.lastSeq
-		suffixCount = meta.count
-		haveMeta = true
-	}
-	straddle := haveMeta && lastSeq >= snapshotCount
-	if !straddle {
-		if tree, err := s.loadSuffixTreeBlob(prefix); err == nil && tree != nil {
-			var wantHash []byte
-			if haveMeta {
-				wantHash = s.suffixes[prefix].hash
-			}
-			if !haveMeta || suffixBlobMatches(tree, suffixCount, wantHash) {
-				seqs, err := s.suffixSeqs(prefix, snapshotCount, dirty)
-				if err != nil {
-					return nil, nil, err
-				}
-				return tree, seqs, nil
-			}
-		}
 	}
 	return s.rebuildSuffixState(prefix, snapshotCount, dirty, s.flushedLeafCount)
-}
-
-func (s *SMSTArtifactStore) suffixSeqs(prefix uint32, maxSeq uint32, dirty []suffixRec) (map[int32]uint32, error) {
-	recs, err := s.readSuffixLog(prefix, maxSeq, dirty)
-	if err != nil {
-		return nil, err
-	}
-	seqs := make(map[int32]uint32, len(recs))
-	for _, rec := range recs {
-		seqs[rec.nonce] = rec.seq
-	}
-	return seqs, nil
 }
 
 func (s *SMSTArtifactStore) bufferHasNonce(nonce int32) bool {
