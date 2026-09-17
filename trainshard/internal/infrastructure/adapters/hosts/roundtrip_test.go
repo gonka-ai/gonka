@@ -17,6 +17,7 @@ import (
 	"trainshard/internal/application/hostd/session"
 	"trainshard/internal/domain/mesh"
 	"trainshard/internal/domain/run"
+	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 	chainfake "trainshard/internal/infrastructure/adapters/chain/fake"
 	"trainshard/internal/infrastructure/adapters/clock"
@@ -122,7 +123,7 @@ func newHost(t *testing.T) *hosts.Client {
 		Clock: clock,
 		Log:   log,
 	})
-	streams := session.New(session.Config{Participant: host}, session.Deps{
+	streams := session.New(session.Config{Participant: host, Nodes: []vo.NodeRef{node}}, session.Deps{
 		Chain:    chain,
 		Streams:  machine,
 		Sessions: state.Sessions(),
@@ -327,15 +328,9 @@ func TestLogsAndRefusalsCrossTheWireAsThemselves(t *testing.T) {
 		t.Fatalf("got %q, want what the machine had to say", out.String())
 	}
 
-	results, err := client.Start(ctx, host, command(vo.NodeRef{Participant: host, NodeID: "node-x"}))
+	_, err = client.Start(ctx, host, command(vo.NodeRef{Participant: host, NodeID: "node-x"}))
 
-	if err != nil {
-		t.Fatalf("start: %v", err)
-	}
-	if len(results) != 1 || results[0].OK() {
-		t.Fatalf("got %+v, want the node reported as failed", results)
-	}
-	if results[0].Fault.Code != "NODE_NOT_RESERVED" || results[0].Node.NodeID != "node-x" {
-		t.Fatalf("got %+v, want the host's own reason against the right node", results[0].Fault)
+	if shared.CodeOf(err) != "NODE_NOT_SERVED" {
+		t.Fatalf("got %v, want the host's own refusal of a node it does not serve", err)
 	}
 }

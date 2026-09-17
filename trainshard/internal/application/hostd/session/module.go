@@ -8,6 +8,7 @@ import (
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/ports"
+	"trainshard/internal/domain/shared/vo"
 	"trainshard/internal/utils/signedhttp"
 )
 
@@ -25,7 +26,7 @@ type Module struct {
 
 func New(cfg Config, deps Deps) *Module {
 	return &Module{
-		endpoints: api.NewEndpoints(cfg.Participant, api.UseCases{
+		endpoints: api.NewEndpoints(vo.Host{Participant: cfg.Participant, Nodes: cfg.Nodes}, api.UseCases{
 			Logs:  usecases.NewStreamLogsUseCase(deps.Chain, deps.Streams),
 			Shell: usecases.NewOpenShellUseCase(deps.Chain, deps.Streams, deps.Sessions, deps.Clock),
 		}, signedhttp.NewOnce(deps.Served)),

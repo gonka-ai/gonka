@@ -3,6 +3,7 @@ package netns
 import (
 	"context"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -137,6 +138,34 @@ func TestPeerConfig(t *testing.T) {
 	}
 	if peer.PersistentKeepaliveInterval == nil || *peer.PersistentKeepaliveInterval != 25*time.Second {
 		t.Fatalf("keepalive = %v", peer.PersistentKeepaliveInterval)
+	}
+}
+
+func TestWantedPeersNeedNoLookup(t *testing.T) {
+	// arrange
+	key, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	peers := []mesh.Peer{{
+		Rank:      1,
+		Node:      ref("b"),
+		Address:   "peer.invalid:51821",
+		PublicKey: key.PublicKey().String(),
+	}}
+
+	// act
+	cfg, err := wanted(shard, peers)
+
+	// assert
+	if err != nil {
+		t.Fatalf("a name that does not resolve must not fail the comparison: %v", err)
+	}
+	if len(cfg.Peers) != 1 || cfg.Peers[0].PublicKey != key.PublicKey() || cfg.Peers[0].Endpoint != nil {
+		t.Fatalf("peers = %+v, want the key without an endpoint", cfg.Peers)
+	}
+	if len(cfg.Peers[0].AllowedIPs) != 1 || cfg.Peers[0].AllowedIPs[0].String() != "10.42.0.2/32" {
+		t.Fatalf("allowed ips = %v", cfg.Peers[0].AllowedIPs)
 	}
 }
 
@@ -277,7 +306,7 @@ func TestIdentityRefusesAnUnusableHost(t *testing.T) {
 func TestShardsFromKeysOnDisk(t *testing.T) {
 	// arrange
 	n := network(t, Config{Nodes: []vo.NodeRef{ref("a")}})
-	for _, name := range []string{"7_a.key", "9_a.key", "11_b.key", "notashard_a.key"} {
+	for _, name := range []string{"7_a.key", "9_a.key", "11_b.key", "13_b_a.key", "notashard_a.key"} {
 		if err := os.WriteFile(filepath.Join(n.cfg.KeyDir, name), []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -343,4 +372,67 @@ func TestConfigDefaults(t *testing.T) {
 	if !slices.Contains(cfg.DeniedCIDRs, "10.0.0.0/8") || !slices.Contains(cfg.DeniedCIDRs, "169.254.0.0/16") {
 		t.Fatalf("denied cidrs = %v, want the private ranges and link-local", cfg.DeniedCIDRs)
 	}
+}
+
+func TestSamePeers(t *testing.T) {
+	// arrange
+	keyA, keyB := mustKey(t), mustKey(t)
+	have := []wgtypes.Peer{
+		{PublicKey: keyA, AllowedIPs: []net.IPNet{cidr("10.42.0.2/32")}},
+		{PublicKey: keyB, AllowedIPs: []net.IPNet{cidr("10.42.0.3/32")}},
+	}
+	cases := []struct {
+		name string
+		want []wgtypes.PeerConfig
+		same bool
+	}{
+		{
+			name: "same keys and addresses in another order",
+			want: []wgtypes.PeerConfig{
+				{PublicKey: keyB, AllowedIPs: []net.IPNet{cidr("10.42.0.3/32")}},
+				{PublicKey: keyA, AllowedIPs: []net.IPNet{cidr("10.42.0.2/32")}},
+			},
+			same: true,
+		},
+		{
+			name: "a peer was dropped",
+			want: []wgtypes.PeerConfig{{PublicKey: keyA, AllowedIPs: []net.IPNet{cidr("10.42.0.2/32")}}},
+		},
+		{
+			name: "a peer moved to another rank",
+			want: []wgtypes.PeerConfig{
+				{PublicKey: keyA, AllowedIPs: []net.IPNet{cidr("10.42.0.2/32")}},
+				{PublicKey: keyB, AllowedIPs: []net.IPNet{cidr("10.42.0.4/32")}},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// act
+			got := samePeers(have, tc.want)
+
+			// assert
+			if got != tc.same {
+				t.Fatalf("got %v, want %v", got, tc.same)
+			}
+		})
+	}
+}
+
+func mustKey(t *testing.T) wgtypes.Key {
+	t.Helper()
+	key, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key.PublicKey()
+}
+
+func cidr(s string) net.IPNet {
+	_, network, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return *network
 }

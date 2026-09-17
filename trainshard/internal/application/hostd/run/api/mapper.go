@@ -21,7 +21,7 @@ var (
 	errGrace         = shared.New("BAD_GRACE", shared.ErrValidation, "grace period cannot be negative")
 )
 
-func toNodesCommand(participant vo.Participant, actor shard.Actor, path string, dto contract.Command) (usecases.NodesCommand, error) {
+func toNodesCommand(host vo.Host, actor shard.Actor, path string, dto contract.Command) (usecases.NodesCommand, error) {
 	shardID, err := vo.ParseShardID(path)
 	if err != nil {
 		return usecases.NodesCommand{}, err
@@ -30,7 +30,7 @@ func toNodesCommand(participant vo.Participant, actor shard.Actor, path string, 
 		return usecases.NodesCommand{}, errShardMismatch
 	}
 
-	nodes, err := toNodeRefs(participant, dto.NodeIDs)
+	nodes, err := toNodeRefs(host, dto.NodeIDs)
 	if err != nil {
 		return usecases.NodesCommand{}, err
 	}
@@ -52,8 +52,8 @@ func toNodesCommand(participant vo.Participant, actor shard.Actor, path string, 
 	}, nil
 }
 
-func toDeployCommand(participant vo.Participant, actor shard.Actor, path string, dto contract.DeployRequest) (usecases.DeployCommand, error) {
-	base, err := toNodesCommand(participant, actor, path, dto.Command)
+func toDeployCommand(host vo.Host, actor shard.Actor, path string, dto contract.DeployRequest) (usecases.DeployCommand, error) {
+	base, err := toNodesCommand(host, actor, path, dto.Command)
 	if err != nil {
 		return usecases.DeployCommand{}, err
 	}
@@ -95,8 +95,8 @@ func toSources(declared []string) ([]vo.Source, error) {
 	return sources, nil
 }
 
-func toStopCommand(participant vo.Participant, actor shard.Actor, path string, dto contract.StopRequest) (usecases.StopCommand, error) {
-	base, err := toNodesCommand(participant, actor, path, dto.Command)
+func toStopCommand(host vo.Host, actor shard.Actor, path string, dto contract.StopRequest) (usecases.StopCommand, error) {
+	base, err := toNodesCommand(host, actor, path, dto.Command)
 	if err != nil {
 		return usecases.StopCommand{}, err
 	}
@@ -106,8 +106,8 @@ func toStopCommand(participant vo.Participant, actor shard.Actor, path string, d
 	return usecases.StopCommand{NodesCommand: base, Grace: time.Duration(dto.GraceSeconds) * time.Second}, nil
 }
 
-func toMeshCommand(participant vo.Participant, actor shard.Actor, path string, dto contract.MeshRequest) (usecases.MeshCommand, error) {
-	base, err := toNodesCommand(participant, actor, path, dto.Command)
+func toMeshCommand(host vo.Host, actor shard.Actor, path string, dto contract.MeshRequest) (usecases.MeshCommand, error) {
+	base, err := toNodesCommand(host, actor, path, dto.Command)
 	if err != nil {
 		return usecases.MeshCommand{}, err
 	}
@@ -145,11 +145,11 @@ func sameRanks(config mesh.Config, peers []contract.Peer) error {
 	return nil
 }
 
-func toNodeRefs(participant vo.Participant, ids []string) ([]vo.NodeRef, error) {
+func toNodeRefs(host vo.Host, ids []string) ([]vo.NodeRef, error) {
 	seen := make(map[vo.NodeRef]struct{}, len(ids))
 	nodes := make([]vo.NodeRef, 0, len(ids))
 	for _, id := range ids {
-		ref, err := vo.ParseNodeRef(string(participant), id)
+		ref, err := host.Node(id)
 		if err != nil {
 			return nil, err
 		}
@@ -165,12 +165,12 @@ func toNodeRefs(participant vo.Participant, ids []string) ([]vo.NodeRef, error) 
 	return nodes, nil
 }
 
-func toNodePath(participant vo.Participant, path, nodeID string) (vo.ShardID, vo.NodeRef, error) {
+func toNodePath(host vo.Host, path, nodeID string) (vo.ShardID, vo.NodeRef, error) {
 	shardID, err := vo.ParseShardID(path)
 	if err != nil {
 		return 0, vo.NodeRef{}, err
 	}
-	node, err := vo.ParseNodeRef(string(participant), nodeID)
+	node, err := host.Node(nodeID)
 	if err != nil {
 		return 0, vo.NodeRef{}, err
 	}

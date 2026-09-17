@@ -12,8 +12,10 @@ type Network interface {
 	Identity(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (Member, error)
 	// Apply brings the interface up with the peer list
 	Apply(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, peers []Peer) error
-	// Present returns whether key and interface exist
-	Present(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (key bool, up bool, err error)
+	// Present returns whether the key exists and whether the interface is up holding exactly
+	// these peers and this node's own address; with no peers given, whether it exists at all.
+	// Absent is false, not an error
+	Present(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, peers []Peer) (key bool, up bool, err error)
 	// Reach returns whether this node can see the peer
 	Reach(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, peer Peer) (bool, error)
 	// Remove drops key, interface, peer list; ok if already gone

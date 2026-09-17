@@ -24,7 +24,8 @@ type Machine struct {
 	containers map[vo.NodeRef]run.ContainerInfo
 	volumes    map[vo.NodeRef]int64
 	keys       map[vo.NodeRef]mesh.Member
-	up         map[vo.NodeRef]struct{}
+	up         map[vo.NodeRef]string
+	fenced     map[vo.NodeRef]struct{}
 }
 
 func New(log *slog.Logger, inventory vo.GPUInventory) *Machine {
@@ -35,7 +36,8 @@ func New(log *slog.Logger, inventory vo.GPUInventory) *Machine {
 		containers: map[vo.NodeRef]run.ContainerInfo{},
 		volumes:    map[vo.NodeRef]int64{},
 		keys:       map[vo.NodeRef]mesh.Member{},
-		up:         map[vo.NodeRef]struct{}{},
+		up:         map[vo.NodeRef]string{},
+		fenced:     map[vo.NodeRef]struct{}{},
 	}
 }
 
@@ -129,12 +131,24 @@ func (m *Machine) Shell(context.Context, run.ExecRequest, io.ReadWriter) error {
 	return shared.New("NO_SHELL", shared.ErrUnavailable, "an in-memory machine has no shell")
 }
 
-func (m *Machine) Allow(_ context.Context, _ vo.ShardID, _ vo.NodeRef, sources []vo.Source) ([]run.PinnedHost, error) {
+func (m *Machine) Allow(_ context.Context, _ vo.ShardID, node vo.NodeRef, sources []vo.Source) ([]run.PinnedHost, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.fenced[node] = struct{}{}
 	pinned := make([]run.PinnedHost, 0, len(sources))
 	for _, source := range sources {
 		pinned = append(pinned, run.PinnedHost{Name: source.Host, IP: "127.0.0.1"})
 	}
 	return pinned, nil
+}
+
+func (m *Machine) Fenced(_ context.Context, _ vo.ShardID, node vo.NodeRef) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	_, fenced := m.fenced[node]
+	return fenced, nil
 }
 
 func (m *Machine) Ensure(_ context.Context, _ vo.ShardID, node vo.NodeRef, quotaBytes int64) error {
@@ -218,18 +232,21 @@ func (n network) Apply(_ context.Context, _ vo.ShardID, node vo.NodeRef, peers [
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.up[node] = struct{}{}
+	m.up[node] = fmt.Sprint(peers)
 	m.log.Info("applied mesh config", "node_id", node.NodeID, "peers", len(peers))
 	return nil
 }
 
-func (n network) Present(_ context.Context, _ vo.ShardID, node vo.NodeRef) (bool, bool, error) {
+func (n network) Present(_ context.Context, _ vo.ShardID, node vo.NodeRef, peers []mesh.Peer) (bool, bool, error) {
 	m := n.machine
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	_, key := m.keys[node]
-	_, up := m.up[node]
+	applied, up := m.up[node]
+	if peers != nil {
+		up = up && applied == fmt.Sprint(peers)
+	}
 	return key, up, nil
 }
 
@@ -249,6 +266,7 @@ func (n network) Remove(_ context.Context, _ vo.ShardID, node vo.NodeRef) error 
 
 	delete(m.keys, node)
 	delete(m.up, node)
+	delete(m.fenced, node)
 	m.log.Info("removed mesh", "node_id", node.NodeID)
 	return nil
 }

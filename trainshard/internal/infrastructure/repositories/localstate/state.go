@@ -14,6 +14,7 @@ type nodeFile struct {
 	ReservedAt   time.Time `json:"reserved_at,omitzero"`
 	FaultAt      time.Time `json:"fault_at,omitzero"`
 	UnpreparedAt time.Time `json:"unprepared_at,omitzero"`
+	ReleasedAt   time.Time `json:"released_at,omitzero"`
 
 	Image     string     `json:"image_digest,omitempty"`
 	Command   []string   `json:"command,omitempty"`
@@ -79,6 +80,7 @@ func toRunState(file nodeFile) (run.RunState, error) {
 		ReservedAt:   file.ReservedAt,
 		FaultAt:      file.FaultAt,
 		UnpreparedAt: file.UnpreparedAt,
+		ReleasedAt:   file.ReleasedAt,
 		Spec: run.RunSpec{
 			Image:     vo.ImageDigest(file.Image),
 			Command:   file.Command,
@@ -117,6 +119,7 @@ func fromRunState(state run.RunState, keep *meshState) nodeFile {
 		ReservedAt:   state.ReservedAt,
 		FaultAt:      state.FaultAt,
 		UnpreparedAt: state.UnpreparedAt,
+		ReleasedAt:   state.ReleasedAt,
 
 		Image:     state.Spec.Image.String(),
 		Command:   state.Spec.Command,

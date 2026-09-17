@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,8 @@ import (
 	"trainshard/internal/domain/shared/ports"
 	"trainshard/internal/domain/shared/vo"
 )
+
+var errForeignLink = errors.New("link on the host is not this daemon's")
 
 type Config struct {
 	Nodes []vo.NodeRef
@@ -124,7 +127,7 @@ func (n *Network) Apply(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 	if err != nil {
 		return err
 	}
-	if err := inNetns(pid, func(wg *wgctrl.Client) error {
+	if err := withWG(pid, func(wg *wgctrl.Client) error {
 		return wg.ConfigureDevice(device, config)
 	}); err != nil {
 		return err
@@ -142,7 +145,7 @@ func (n *Network) Apply(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 	return nil
 }
 
-func (n *Network) Present(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (bool, bool, error) {
+func (n *Network) Present(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, peers []mesh.Peer) (bool, bool, error) {
 	slot, err := n.slot(node)
 	if err != nil {
 		return false, false, err
@@ -159,8 +162,25 @@ func (n *Network) Present(ctx context.Context, shardID vo.ShardID, node vo.NodeR
 	if err != nil || !running {
 		return key, false, err
 	}
+	device := iface(slot)
+	if peers == nil {
+		up, err := present(pid, device)
+		return key, up, err
+	}
 
-	up, err := present(pid, iface(slot))
+	self, others, err := split(node, peers)
+	if err != nil {
+		return key, false, err
+	}
+	own, err := mesh.Address(shardID, self.Rank)
+	if err != nil {
+		return key, false, err
+	}
+	want, err := wanted(shardID, others)
+	if err != nil {
+		return key, false, err
+	}
+	up, err := holds(pid, device, own, want)
 	return key, up, err
 }
 
@@ -207,8 +227,9 @@ func (n *Network) Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 			return err
 		}
 	}
-	// A sandbox that is gone took its link with it, but one stranded on the host outlives it
-	if err := discard(iface(slot)); err != nil {
+	// a sandbox that is gone took its link with it, but one stranded on the host outlives it;
+	// one that is not ours has nothing of this run in it and is left to the operator
+	if err := discard(iface(slot)); err != nil && !errors.Is(err, errForeignLink) {
 		return err
 	}
 
@@ -246,6 +267,14 @@ func (n *Network) Allow(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 
 	n.log.Info("egress fixed", "node_id", node.NodeID, "sources", len(sources), "allowed", len(allowed))
 	return pinned, nil
+}
+
+func (n *Network) Fenced(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (bool, error) {
+	pid, running, err := n.sandbox.SandboxPID(ctx, shardID, node)
+	if err != nil || !running {
+		return false, err
+	}
+	return fenced(pid)
 }
 
 type allowance struct {
@@ -301,8 +330,6 @@ func (n *Network) dialable(ctx context.Context) error {
 }
 
 func (n *Network) bindable(ctx context.Context) error {
-	var open net.ListenConfig
-
 	for slot, node := range n.cfg.Nodes {
 		held, err := n.Shards(ctx, node)
 		if err != nil {
@@ -311,14 +338,8 @@ func (n *Network) bindable(ctx context.Context) error {
 		if len(held) > 0 {
 			continue
 		}
-
-		port := n.cfg.PortBase + slot
-		socket, err := open.ListenPacket(ctx, "udp", net.JoinHostPort("", strconv.Itoa(port)))
-		if err != nil {
-			return fmt.Errorf("mesh port %d is taken: %w", port, err)
-		}
-		if err := socket.Close(); err != nil {
-			return err
+		if err := listen(ctx, n.cfg.PortBase+slot); err != nil {
+			return fmt.Errorf("mesh port %d is taken: %w", n.cfg.PortBase+slot, err)
 		}
 	}
 	return nil
@@ -339,7 +360,7 @@ func (n *Network) handshake(pid int, device, peer string) (bool, error) {
 	}
 
 	var last time.Time
-	if err := inNetns(pid, func(wg *wgctrl.Client) error {
+	if err := withWG(pid, func(wg *wgctrl.Client) error {
 		found, err := wg.Device(device)
 		if err != nil {
 			return err
@@ -391,14 +412,20 @@ func (n *Network) key(shardID vo.ShardID, node vo.NodeRef) (wgtypes.Key, error) 
 }
 
 func (n *Network) Shards(_ context.Context, node vo.NodeRef) ([]vo.ShardID, error) {
-	matches, err := filepath.Glob(filepath.Join(n.cfg.KeyDir, "*_"+string(node.NodeID)+".key"))
+	entries, err := os.ReadDir(n.cfg.KeyDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	held := make([]vo.ShardID, 0, len(matches))
-	for _, path := range matches {
-		name, _, _ := strings.Cut(filepath.Base(path), "_")
+	held := make([]vo.ShardID, 0, len(entries))
+	for _, entry := range entries {
+		name, rest, cut := strings.Cut(entry.Name(), "_")
+		if !cut || rest != string(node.NodeID)+".key" {
+			continue
+		}
 		shardID, err := vo.ParseShardID(name)
 		if err != nil {
 			continue
@@ -433,16 +460,28 @@ func (n *Network) slot(node vo.NodeRef) (int, error) {
 // stops being a peer of the nodes that stayed
 func peerConfig(shardID vo.ShardID, peers []mesh.Peer) (wgtypes.Config, error) {
 	keepalive := 25 * time.Second
-	configured := make([]wgtypes.PeerConfig, 0, len(peers))
+	config, err := wanted(shardID, peers)
+	if err != nil {
+		return wgtypes.Config{}, err
+	}
+	for index, peer := range peers {
+		endpoint, err := net.ResolveUDPAddr("udp", peer.Address)
+		if err != nil {
+			return wgtypes.Config{}, fmt.Errorf("peer address %q: %w", peer.Address, err)
+		}
+		config.Peers[index].Endpoint = endpoint
+		config.Peers[index].PersistentKeepaliveInterval = &keepalive
+	}
+	return config, nil
+}
 
+// wanted is keys and mesh addresses only, so a check every tick does not hang on dns
+func wanted(shardID vo.ShardID, peers []mesh.Peer) (wgtypes.Config, error) {
+	configured := make([]wgtypes.PeerConfig, 0, len(peers))
 	for _, peer := range peers {
 		key, err := wgtypes.ParseKey(peer.PublicKey)
 		if err != nil {
 			return wgtypes.Config{}, fmt.Errorf("peer key %q: %w", peer.PublicKey, err)
-		}
-		endpoint, err := net.ResolveUDPAddr("udp", peer.Address)
-		if err != nil {
-			return wgtypes.Config{}, fmt.Errorf("peer address %q: %w", peer.Address, err)
 		}
 		own, err := mesh.Address(shardID, peer.Rank)
 		if err != nil {
@@ -452,16 +491,40 @@ func peerConfig(shardID vo.ShardID, peers []mesh.Peer) (wgtypes.Config, error) {
 		if err != nil {
 			return wgtypes.Config{}, err
 		}
-
 		configured = append(configured, wgtypes.PeerConfig{
-			PublicKey:                   key,
-			Endpoint:                    endpoint,
-			AllowedIPs:                  []net.IPNet{*allowed},
-			PersistentKeepaliveInterval: &keepalive,
-			ReplaceAllowedIPs:           true,
+			PublicKey:         key,
+			AllowedIPs:        []net.IPNet{*allowed},
+			ReplaceAllowedIPs: true,
 		})
 	}
 	return wgtypes.Config{ReplacePeers: true, Peers: configured}, nil
+}
+
+// samePeers leaves the endpoints out on purpose: wireguard moves a peer's endpoint to wherever its
+// packets last came from, so a live one need not read as the one configured
+func samePeers(have []wgtypes.Peer, want []wgtypes.PeerConfig) bool {
+	if len(have) != len(want) {
+		return false
+	}
+	allowed := make(map[wgtypes.Key]string, len(have))
+	for _, peer := range have {
+		allowed[peer.PublicKey] = cidrs(peer.AllowedIPs)
+	}
+	for _, peer := range want {
+		if allowed[peer.PublicKey] != cidrs(peer.AllowedIPs) {
+			return false
+		}
+	}
+	return true
+}
+
+func cidrs(networks []net.IPNet) string {
+	names := make([]string, 0, len(networks))
+	for _, network := range networks {
+		names = append(names, network.String())
+	}
+	slices.Sort(names)
+	return strings.Join(names, ",")
 }
 
 func iface(slot int) string {

@@ -40,6 +40,16 @@ func RecordDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, shardID v
 	})
 }
 
+// RecordRebuild counts a container that has to be built again with what it already runs: its
+// place on the mesh is baked in at create, so a new place is a new container
+func RecordRebuild(ctx context.Context, runs RunStore, node vo.NodeRef) error {
+	return runs.Update(ctx, node, func(state *RunState) { state.Revision++ })
+}
+
+func RecordRelease(ctx context.Context, runs RunStore, node vo.NodeRef, at time.Time) error {
+	return runs.Update(ctx, node, func(state *RunState) { state.ReleasedAt = at })
+}
+
 func RecordStart(ctx context.Context, runs RunStore, node vo.NodeRef) error {
 	return runs.Update(ctx, node, func(state *RunState) { state.Start = true })
 }

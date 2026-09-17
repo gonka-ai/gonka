@@ -105,10 +105,17 @@ func (v *Volumes) Usage(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 }
 
 func (v *Volumes) Wipe(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error {
-	if err := os.RemoveAll(v.path(shardID, node)); err != nil {
+	// the limit goes before the directory: once the directory is gone a failed clear would stay
+	// on the project
+	if err := v.quota(ctx, fmt.Sprintf("limit -p bhard=0k %d", projectID(shardID, node))); err != nil {
 		return err
 	}
-	if err := v.quota(ctx, fmt.Sprintf("limit -p bhard=0k %d", projectID(shardID, node))); err != nil {
+	path := v.path(shardID, node)
+	if err := os.RemoveAll(path); err != nil {
+		return err
+	}
+	// the shard's directory goes with its last volume; one another node still uses stays
+	if err := os.Remove(filepath.Dir(path)); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {
 		return err
 	}
 

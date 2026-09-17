@@ -6,4 +6,5 @@ import (
 
 type Config struct {
 	Participant vo.Participant
+	Nodes       []vo.NodeRef
 }

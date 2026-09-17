@@ -135,7 +135,11 @@ func (r runs) Update(_ context.Context, node vo.NodeRef, change func(*run.RunSta
 		return err
 	}
 	change(&state)
-	return r.store.write(node, fromRunState(state, file.Mesh))
+	keep := file.Mesh
+	if vo.ShardID(file.ShardID) != state.Shard {
+		keep = nil
+	}
+	return r.store.write(node, fromRunState(state, keep))
 }
 
 func (r runs) Forget(_ context.Context, node vo.NodeRef) error {

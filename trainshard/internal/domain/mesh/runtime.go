@@ -25,6 +25,11 @@ func (r Runtime) Create(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 	return r.Store.SaveIdentity(ctx, shardID, node, Identity{Member: member, Signature: signature})
 }
 
+func (r Runtime) Identified(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (bool, error) {
+	_, found, err := r.Store.Identity(ctx, shardID, node)
+	return found, err
+}
+
 func (r Runtime) Configured(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (bool, error) {
 	_, found, err := r.Store.Config(ctx, shardID, node)
 	return found, err
@@ -47,7 +52,14 @@ func (r Runtime) Placement(ctx context.Context, shardID vo.ShardID, node vo.Node
 }
 
 func (r Runtime) Present(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (bool, bool, error) {
-	return r.Network.Present(ctx, shardID, node)
+	config, found, err := r.Store.Config(ctx, shardID, node)
+	if err != nil {
+		return false, false, err
+	}
+	if !found {
+		return r.Network.Present(ctx, shardID, node, nil)
+	}
+	return r.Network.Present(ctx, shardID, node, config.Peers)
 }
 
 func (r Runtime) Apply(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error {

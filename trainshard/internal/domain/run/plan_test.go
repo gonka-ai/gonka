@@ -14,7 +14,9 @@ func preparedObserved() run.Observed {
 		Images:         []vo.ImageDigest{baseImage},
 		Container:      vo.ContainerAbsent,
 		MeshKey:        true,
+		MeshIdentity:   true,
 		MeshUp:         true,
+		Fenced:         true,
 		VolumesPresent: true,
 	}
 }
@@ -71,12 +73,12 @@ func TestPlan(t *testing.T) {
 			want:    []run.Action{{Kind: run.ActionDrainNode}},
 		},
 		{
-			name:    "base image is pulled while the node is still draining",
+			name:    "drain is asked for before the base image is pulled, and both go on at once",
 			desired: reservedDesired,
 			observe: func(o *run.Observed) { o.Drained, o.Images = false, nil },
 			want: []run.Action{
-				{Kind: run.ActionPullImage, Image: baseImage},
 				{Kind: run.ActionDrainNode},
+				{Kind: run.ActionPullImage, Image: baseImage},
 			},
 		},
 		{
@@ -98,7 +100,17 @@ func TestPlan(t *testing.T) {
 				d.MeshConfigured = false
 				return d
 			},
-			observe: func(o *run.Observed) { o.MeshKey, o.MeshUp = false, false },
+			observe: func(o *run.Observed) { o.MeshKey, o.MeshIdentity, o.MeshUp = false, false, false },
+			want:    []run.Action{{Kind: run.ActionCreateMeshIdentity}},
+		},
+		{
+			name: "a key whose signed member was never stored is finished, not left as done",
+			desired: func() run.Desired {
+				d := reservedDesired()
+				d.MeshConfigured = false
+				return d
+			},
+			observe: func(o *run.Observed) { o.MeshIdentity, o.MeshUp = false, false },
 			want:    []run.Action{{Kind: run.ActionCreateMeshIdentity}},
 		},
 		{
@@ -223,6 +235,36 @@ func TestPlan(t *testing.T) {
 			want: []run.Action{{Kind: run.ActionStartContainer}},
 		},
 		{
+			name: "a container waiting to start in a box rebuilt under it is built again first",
+			desired: func() run.Desired {
+				d := reservedDesired()
+				d.Run, d.Start = runSpec(), true
+				return d
+			},
+			observe: func(o *run.Observed) {
+				o.Images = append(o.Images, runImage)
+				o.Container = vo.ContainerCreated
+				o.ContainerImage = runImage
+				o.Fenced = false
+			},
+			want: []run.Action{{Kind: run.ActionReplaceContainer, Image: runImage}, {Kind: run.ActionStartContainer}},
+		},
+		{
+			name: "a running container is left alone when the box under it was rebuilt",
+			desired: func() run.Desired {
+				d := reservedDesired()
+				d.Run, d.Start = runSpec(), true
+				return d
+			},
+			observe: func(o *run.Observed) {
+				o.Images = append(o.Images, runImage)
+				o.Container = vo.ContainerRunning
+				o.ContainerImage = runImage
+				o.Fenced = false
+			},
+			want: []run.Action{},
+		},
+		{
 			name: "exited container is reported and not restarted",
 			desired: func() run.Desired {
 				d := reservedDesired()
@@ -235,6 +277,36 @@ func TestPlan(t *testing.T) {
 				o.ContainerImage = runImage
 			},
 			want: []run.Action{},
+		},
+		{
+			name: "exited container whose place on the mesh moved is not rebuilt and rerun",
+			desired: func() run.Desired {
+				d := reservedDesired()
+				d.Run, d.Start, d.Revision = runSpec(), true, 2
+				return d
+			},
+			observe: func(o *run.Observed) {
+				o.Images = append(o.Images, runImage)
+				o.Container = vo.ContainerExited
+				o.ContainerImage = runImage
+				o.ContainerRevision = 1
+			},
+			want: []run.Action{},
+		},
+		{
+			name: "exited container is rebuilt once stop cleared the start",
+			desired: func() run.Desired {
+				d := reservedDesired()
+				d.Run, d.Revision = runSpec(), 2
+				return d
+			},
+			observe: func(o *run.Observed) {
+				o.Images = append(o.Images, runImage)
+				o.Container = vo.ContainerExited
+				o.ContainerImage = runImage
+				o.ContainerRevision = 1
+			},
+			want: []run.Action{{Kind: run.ActionReplaceContainer, Image: runImage}},
 		},
 		{
 			name: "stop is applied to a running container",
@@ -309,6 +381,7 @@ func TestPrepared(t *testing.T) {
 		{name: "gpus still carry other work", observe: func(o *run.Observed) { o.ForeignGPUWork = true }},
 		{name: "base image missing", observe: func(o *run.Observed) { o.Images = nil }},
 		{name: "no mesh key", observe: func(o *run.Observed) { o.MeshKey = false }},
+		{name: "key made but member not stored", observe: func(o *run.Observed) { o.MeshIdentity = false }},
 	}
 
 	for _, tc := range cases {

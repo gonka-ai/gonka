@@ -29,7 +29,7 @@ func TestReconcilePullsTheBaseImageWhileTheNodeDrains(t *testing.T) {
 	}
 
 	// the reservation, the node being marked unready, and the mark cleared once it is ready
-	want := []string{"runs.update", "runs.update", "images.pull", "control.drain",
+	want := []string{"runs.update", "runs.update", "control.drain", "images.pull",
 		"mesh.identity", "mesh_store.save_identity", "runs.update"}
 	if !reflect.DeepEqual(f.rec.sequence(), want) {
 		t.Fatalf("got %v, want %v", f.rec.sequence(), want)
@@ -419,6 +419,36 @@ func TestReconcileHandsBackANodeThatNeverGetsReady(t *testing.T) {
 	want := fmt.Sprintf("%s:%s:%s", shardID, nodeA.NodeID, vo.ReleaseFailedPrepare)
 	if len(f.chain.releases) != 1 || string(f.chain.releases[0]) != want {
 		t.Fatalf("got %v, want the reservation released as %s", f.chain.releases, want)
+	}
+}
+
+func TestReconcileAsksForTheHandbackOnceWhileTheChainCatchesUp(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	f.control.stuck = true
+	f.chain.lagging = true
+	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	f.clock.Advance(f.patience)
+
+	for range 3 {
+		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+		f.clock.Advance(time.Minute)
+	}
+
+	if len(f.chain.releases) != 1 {
+		t.Fatalf("got %v, want one handback while the chain has not shown it yet", f.chain.releases)
+	}
+	f.clock.Advance(f.patience)
+	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(f.chain.releases) != 2 {
+		t.Fatalf("got %v, want the handback asked for again once it had its wait to land", f.chain.releases)
 	}
 }
 

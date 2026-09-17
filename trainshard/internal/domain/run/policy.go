@@ -8,9 +8,13 @@ import (
 
 // Autokick returns why a reserved node has to be handed back, or false while it still has time.
 // The wait for readiness counts from when it was lost, not from the reservation: counted from
-// the reservation, a node an hour into a run would be handed back on the first busy card.
+// the reservation, a node an hour into a run would be handed back on the first busy card. A
+// handback already asked for is given the same wait to land before it is asked for again.
 func Autokick(d Desired, o Observed, state RunState, now time.Time, patience time.Duration) (vo.ReleaseReason, bool) {
 	if !d.Reserved || state.ReservedAt.IsZero() {
+		return "", false
+	}
+	if !state.ReleasedAt.IsZero() && now.Sub(state.ReleasedAt) < patience {
 		return "", false
 	}
 	if !Prepared(d, o) {
@@ -32,6 +36,9 @@ func CanDeploy(spec RunSpec, lim Limits, container vo.ContainerState) error {
 	}
 	if spec.Image.IsZero() {
 		return ErrImageMissing
+	}
+	if spec.NamesHostEnv() {
+		return ErrEnvReserved
 	}
 	return lim.Allow(spec)
 }

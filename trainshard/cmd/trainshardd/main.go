@@ -137,7 +137,7 @@ func serve() error {
 		Log:       log,
 	})
 
-	sessions := session.New(session.Config{Participant: cfg.participant}, session.Deps{
+	sessions := session.New(session.Config{Participant: cfg.participant, Nodes: cfg.nodes}, session.Deps{
 		Chain:    outside.chain,
 		Streams:  parts.streams,
 		Sessions: state.Sessions(),

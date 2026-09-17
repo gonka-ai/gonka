@@ -426,7 +426,8 @@ func (c SetNodeAdminStateCommand) modifyNodeAdminState(b *Broker, currentEpoch u
 	return nil
 }
 
-// SetNodeStoppedCommand holds a node's mlnode stopped, or lifts that hold
+// SetNodeStoppedCommand holds a node's mlnode stopped, or lifts that hold. Lifting it sends the
+// node to inference at once: the phase commands only run at a phase boundary, up to an epoch away
 type SetNodeStoppedCommand struct {
 	NodeId   string
 	Stopped  bool
@@ -445,9 +446,14 @@ func (c SetNodeStoppedCommand) Execute(b *Broker) {
 		c.Response <- fmt.Errorf("node not found: %s", c.NodeId)
 		return
 	}
+	lifted := node.State.AdminState.Stopped && !c.Stopped
 	node.State.AdminState.Stopped = c.Stopped
-	if c.Stopped {
+	switch {
+	case c.Stopped:
 		node.State.pinStopped()
+	case lifted:
+		node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+		node.State.PocIntendedStatus = PocStatusIdle
 	}
 	b.mu.Unlock()
 

@@ -208,4 +208,5 @@ type RunState struct {
 	Fault        *shared.Fault
 	FaultAt      time.Time
 	UnpreparedAt time.Time
+	ReleasedAt   time.Time
 }

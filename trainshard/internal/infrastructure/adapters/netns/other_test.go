@@ -3,6 +3,7 @@
 package netns
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -21,7 +22,10 @@ func TestUnsupportedPlatformRefuses(t *testing.T) {
 	calls["raise"] = raise(1, "ts0", "10.42.0.1")
 	calls["build"] = build("ts0", wgtypes.Config{}, 1)
 	calls["discard"] = discard("ts0")
-	calls["inNetns"] = inNetns(1, func(*wgctrl.Client) error { return nil })
+	_, calls["holds"] = holds(1, "ts0", "10.42.0.1", wgtypes.Config{})
+	calls["withWG"] = withWG(1, func(*wgctrl.Client) error { return nil })
+	calls["listen"] = listen(context.Background(), 51820)
+	_, calls["fenced"] = fenced(1)
 	calls["fence"] = fence(1, "ts0", nil, nil)
 
 	// assert
