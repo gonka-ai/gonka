@@ -1193,7 +1193,7 @@ func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint6
 		Reason:      reason,
 		Accept:      true,
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}
@@ -1230,7 +1230,7 @@ func (m *mockTimeoutVerifier) VerifyErrorMiss(_ context.Context, inferenceID uin
 		Accept:       true,
 		ResponseHash: hash,
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}
@@ -1293,7 +1293,7 @@ func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID
 		Reason:      reason,
 		Accept:      true,
 	}
-	data, err := proto.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}

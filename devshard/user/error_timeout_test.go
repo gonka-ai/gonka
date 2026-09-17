@@ -90,7 +90,7 @@ func (c *applyingErrorMissClient) VerifyErrorMiss(_ context.Context, inferenceID
 		Accept:       true,
 		ResponseHash: responseHash,
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}

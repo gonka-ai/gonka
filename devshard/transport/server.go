@@ -720,7 +720,7 @@ func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutRe
 		Reason:      reason,
 		Accept:      true,
 	}
-	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
+	voteData, err := types.CanonicalSignedBytes(voteContent)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal vote: %w", err)
 	}
@@ -738,7 +738,7 @@ func signErrorMissVote(escrowID string, inferenceID uint64, signer signing.Signe
 		Accept:       true,
 		ResponseHash: responseHash,
 	}
-	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
+	voteData, err := types.CanonicalSignedBytes(voteContent)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal vote: %w", err)
 	}

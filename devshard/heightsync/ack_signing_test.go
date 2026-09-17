@@ -21,6 +21,12 @@ func testAck() *types.MsgHeightAck {
 	}
 }
 
+func TestDomainTagsMatchTypesRegistry(t *testing.T) {
+	require.Equal(t, "heightsync.ack.v1", DomainHeightAck)
+	require.Equal(t, "heightsync.origin.v1", OriginSignDomain)
+	require.Equal(t, "heightsync.repair.v1", DomainRepair)
+}
+
 func TestSignAck_RoundTrip(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	ack := testAck()

@@ -1541,7 +1541,7 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 			Reason:      msg.Reason,
 			Accept:      vote.Accept,
 		}
-		voteData, err := deterministicMarshal.Marshal(voteContent)
+		voteData, err := types.CanonicalSignedBytes(voteContent)
 		if err != nil {
 			return fmt.Errorf("marshal timeout vote: %w", err)
 		}
@@ -1609,7 +1609,7 @@ func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
 			Accept:       vote.Accept,
 			ResponseHash: rec.ResponseHash,
 		}
-		voteData, err := deterministicMarshal.Marshal(voteContent)
+		voteData, err := types.CanonicalSignedBytes(voteContent)
 		if err != nil {
 			return fmt.Errorf("marshal error-miss vote: %w", err)
 		}
@@ -1777,7 +1777,7 @@ func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) 
 	}
 	cloned := proto.Clone(msg).(*types.MsgFinishInference)
 	cloned.ProposerSig = nil
-	data, err := deterministicMarshal.Marshal(cloned)
+	data, err := types.CanonicalSignedBytes(cloned)
 	if err != nil {
 		return "", fmt.Errorf("marshal for proposer sig: %w", err)
 	}
@@ -1806,7 +1806,7 @@ func (sm *StateMachine) verifyFinishProposerSigLocked(msg *types.MsgFinishInfere
 // actor for slotID. expectedAddress must be slotToAddress[slotID]; it is
 // carried only so the error names the slot's cold key.
 func (sm *StateMachine) verifyProposerSig(msgWithoutSig proto.Message, sig []byte, expectedAddress string, slotID uint32) error {
-	data, err := deterministicMarshal.Marshal(msgWithoutSig)
+	data, err := types.CanonicalSignedBytes(msgWithoutSig)
 	if err != nil {
 		return fmt.Errorf("marshal for proposer sig: %w", err)
 	}

@@ -2123,7 +2123,7 @@ func (s *Session) verifyStateSignature(nonce uint64, postRoot, signature []byte,
 }
 
 func (s *Session) verifyTimeoutVote(inferenceID uint64, reason types.TimeoutReason, vote *types.TimeoutVote, expectedAddr string) error {
-	voteData, err := proto.Marshal(&types.TimeoutVoteContent{
+	voteData, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
 		EscrowId:    s.escrowID,
 		InferenceId: inferenceID,
 		Reason:      reason,

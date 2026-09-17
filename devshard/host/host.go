@@ -1878,7 +1878,7 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, error) {
 
 // signProposer marshals msg and signs it, returning the proposer signature.
 func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
-	data, err := proto.Marshal(msg)
+	data, err := types.CanonicalSignedBytes(msg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal proposer msg: %w", err)
 	}

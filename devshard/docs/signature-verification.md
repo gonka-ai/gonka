@@ -41,17 +41,29 @@ Canonical bytes are built by these helpers, one per message family:
 | `MsgHeightAck` | `heightsync.CanonicalAckBytes` | `heightsync.ack.v1` |
 | Anchor origin section | `heightsync.CanonicalOriginBytes` | `heightsync.origin.v1` |
 | Repair request / response | `heightsync.CanonicalRepairRequestBytes` / `...ResponseBytes` | `heightsync.repair.v1` |
-| Proposer sigs (confirm, finish, votes) | `state.deterministicMarshal` over the message with its `proposer_sig` field zeroed | (none; the message type is the separator) |
-| State / gossip / settlement sigs | `deterministicMarshal` over `types.StateSignatureContent` | (none) |
+| `MsgValidation` | `types.CanonicalSignedBytes` | `devshard.validation.v1` |
+| `MsgValidationVote` | `types.CanonicalSignedBytes` | `devshard.validationvote.v1` |
+| Timeout / error-miss votes | `types.CanonicalSignedBytes` | `devshard.timeoutvote.v1` / `devshard.errormissvote.v1` |
+| Finish proposer sig | `types.CanonicalSignedBytes` (no prefix) | (none; layout is unique among unprefixed signed protos) |
+| Executor receipt | deterministic proto of `ExecutorReceiptContent` | (none) |
+| State / gossip / settlement | deterministic proto of `StateSignatureContent` | (none) |
+| User diffs | deterministic proto of `DiffContent` | (none) |
+
+Protobuf does not encode the message type name. Two messages with the same field numbers and wire types marshal to identical bytes, so a signature over one verifies as the other. `types.CanonicalSignedBytes` prefixes a unique domain tag for families that share a layout (`MsgValidation` / `MsgValidationVote`) or a proto3-omissible prefix (`TimeoutVoteContent` / `ErrorMissVoteContent`). Height-sync messages already had tags.
+
+CI enforces this: `TestSignedProtoPreimagesAreNotInterchangeable` walks every `proto/devshard/v1` message, requires it to be classified as signed or not, and fails if two signed preimages in the same domain have equal or subset field layouts. `make test` runs it; the unit-test workflow also has a named step so a collision shows up as its own check.
 
 Two rules apply to all of them:
 
 - **Domain separation.** A blob signed for one purpose must not verify for
-  another. The heightsync messages prefix a version-tagged domain string.
+  another. Height-sync messages and overlapping vote/validation protos prefix a
+  version-tagged domain string. Unprefixed signed protos must keep disjoint
+  field layouts (enforced by the unit test above).
 - **Deterministic marshal.** Every proto preimage uses
-  `proto.MarshalOptions{Deterministic: true}`. For messages that are all scalars
-  today this happens to match the default encoding, but relying on that is a
-  trap: adding a single map field to the proto would silently make the preimage
+  `proto.MarshalOptions{Deterministic: true}` (via `types.CanonicalSignedBytes`
+  or the heightsync helpers). For messages that are all scalars today this
+  happens to match the default encoding, but relying on that is a trap: adding
+  a single map field to the proto would silently make the preimage
   non-reproducible and split verification across nodes. Use the option
   unconditionally.
 
@@ -139,9 +151,13 @@ on a struct.
 Do these in order. Steps 2 and 4 are where people go wrong.
 
 1. **Add one canonical-bytes helper** for the new message, alongside the
-   existing ones. Prefix a new versioned domain tag if the message is not
-   already distinguished by its proto type. Marshal with
-   `proto.MarshalOptions{Deterministic: true}`.
+   existing ones. Prefer `types.CanonicalSignedBytes`, which applies
+   deterministic marshal and, when needed, a unique domain tag. If the new
+   proto's field numbers and wire types overlap an existing signed message,
+   it **must** get a unique domain — protobuf does not encode the type name.
+   Classify the message in `signed_preimage_test.go` (signed vs unsigned);
+   `TestSignedProtoPreimagesAreNotInterchangeable` will fail the unit-test
+   workflow until the layout or domain is unique.
 
 2. **Sign and verify through that same helper.** Never rebuild the preimage at
    the verification site. If signing zeroes a signature field before marshaling,
@@ -285,3 +301,7 @@ pre-existing behavior, not a consequence of the unification; see
 - `ecrecover` dominates the cost of any verification by roughly three orders of
   magnitude over the identity check. Optimise the number of *bridge* calls, not
   the number of string comparisons.
+- Protobuf does not encode the message type. A new signed proto with the same
+  field numbers and wire types as an existing one is a signature-replay bug.
+  Give it a unique domain tag in `CanonicalSignedBytes` (or disjoint fields)
+  and classify it in `signed_preimage_test.go`.

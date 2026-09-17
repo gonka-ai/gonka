@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard"
 	"devshard/host"
@@ -543,7 +542,7 @@ func (c *verifierClient) VerifyTimeout(_ context.Context, inferenceID uint64, re
 		Reason:      reason,
 		Accept:      true,
 	}
-	data, err := proto.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}
@@ -570,7 +569,7 @@ func (c *verifierClient) VerifyErrorMiss(_ context.Context, inferenceID uint64, 
 		Accept:       true,
 		ResponseHash: hash,
 	}
-	data, err := proto.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}
