@@ -1167,7 +1167,7 @@ Keep the same database, participant identity, protocol list and data mounts. Rep
    ```
 
    For a remote member, pass the [database check](#check-the-remote-database) before restoring its entry in A's endpoint file and applying membership maintenance.
-4. Pass the [service checks](#41-check-the-running-services) before replacing the next member. On failure, restore the previous image and configuration and verify against the current database.
+4. Pass the [service checks](#41-check-the-running-services) before replacing the next member. On failure, restore the previous image and configuration only if that version is compatible with the current database, then rerun the service checks. Reverting the image does not revert database changes.
 
 ### Remove a member
 
@@ -1261,14 +1261,3 @@ Check the selected catalog, binary URL/SHA256, child logs and database access. E
 Use join files, scripts and images from the same release. For later releases, follow their upgrade instructions.
 
 Validate nonstandard deployments and database changes on a data copy first. Extended checks: [acceptance plan](../devshard/docs/ha-host-updater-acceptance.md), [lifecycle test plan](../devshard/docs/devshard-host-ha-test-plan.md).
-
-<details>
-<summary>Database capacity and rollback limits</summary>
-
-Preflight checks PostgreSQL connection capacity for configured members. Budget extra connections for custom DNS membership and other clients. Each child defaults to four pool connections plus two health/fence connections; old and new generations can overlap.
-
-Keep the existing HA PostgreSQL database; new binaries may apply forward schema migrations. Legacy SQLite conversion is a separate verified procedure.
-
-Image rollback does not reverse schema migrations or committed writes. Automatic schema and PostgreSQL-to-SQLite downgrades are unsupported. Keep `.pg-bound`; use a binary compatible with the current state, or do a coordinated restore during maintenance. The preserved source cluster holds data only up to the copy time. Validate restart and rollback on a copy of the current state.
-
-</details>
