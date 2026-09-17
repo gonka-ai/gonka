@@ -141,6 +141,8 @@ type EscrowCacheInfo struct {
 	AutoSealEveryNNonces      uint32   `json:"auto_seal_every_n_nonces"`
 	ValidationRate            uint32   `json:"validation_rate"`
 	VoteThresholdFactor       uint32   `json:"vote_threshold_factor"`
+	RefusalTimeout            int64    `json:"refusal_timeout,omitempty"`
+	ExecutionTimeout          int64    `json:"execution_timeout,omitempty"`
 	EpochID                   uint64   `json:"epoch_id"`
 	// SlotURLs is {validator address → InferenceUrl} captured at warm time
 	// when this host is in Slots. Local directory metadata, not the state

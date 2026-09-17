@@ -29,6 +29,9 @@ func TestSignAck_RoundTrip(t *testing.T) {
 
 	verifier := signing.NewSecp256k1Verifier()
 	require.NoError(t, VerifyAck(verifier, ack, signer.Address()))
+	recovered, err := RecoverAckSigner(verifier, ack)
+	require.NoError(t, err)
+	require.Equal(t, signer.Address(), recovered)
 }
 
 func TestVerifyAck_RejectsTamperedHeight(t *testing.T) {

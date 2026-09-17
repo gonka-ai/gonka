@@ -326,6 +326,11 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if extraClient == nil {
 		extraClient = &transport.ClientConfig{}
 	}
+	if extraClient.HeightSyncPeerTips == nil {
+		log.Printf("heightsync courier not wired escrow=%s (need NODE_MANAGER_ADDR, NODE_RPC_URL, or DEVSHARD_CHAIN_GRPC)", cfg.ID)
+	} else {
+		log.Printf("heightsync courier wired escrow=%s peer_tips=true", cfg.ID)
+	}
 	if deps.metrics != nil {
 		extraClient.RPCAdoption = deps.metrics.PeerRPCAdoption()
 	}

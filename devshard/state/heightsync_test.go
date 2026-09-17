@@ -182,6 +182,351 @@ func TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce(t *testing.T) {
 	})
 }
 
+func TestApplyLocalBestEffort_WarmKeyAckApplies(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	warm := testutil.MustGenerateKey(t)
+	sm, _ := newTestSM(t, hosts, 100000)
+	sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
+	hash := []byte{0xaa}
+
+	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+		}},
+	}})
+	require.NoError(t, err)
+
+	ack := &types.MsgHeightAck{
+		RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(warm, ack))
+	_, applied, err := sm.ApplyLocalBestEffort(2, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	})
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+	require.Equal(t, uint64(2), sm.LatestNonce())
+}
+
+func TestApplyLocalBestEffort_UnboundWarmAckDropped(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	warm := testutil.MustGenerateKey(t)
+	sm, _ := newTestSM(t, hosts, 100000)
+	hash := []byte{0xaa}
+
+	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+		}},
+	}})
+	require.NoError(t, err)
+
+	ack := &types.MsgHeightAck{
+		RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(warm, ack))
+	_, applied, err := sm.ApplyLocalBestEffort(2, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	})
+	require.ErrorIs(t, err, heightsync.ErrAckSigInvalid)
+	require.Empty(t, applied)
+	require.Equal(t, uint64(1), sm.LatestNonce())
+}
+
+func TestApplyLocalBestEffort_SiblingWarmAckApplies(t *testing.T) {
+	cold := testutil.MustGenerateKey(t)
+	other := testutil.MustGenerateKey(t)
+	warm := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup([]*signing.Secp256k1Signer{cold, other}, []int{2, 1})
+	require.Len(t, group, 3)
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+	sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
+	hash := []byte{0xaa}
+
+	_, _, err = sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+		}},
+	}})
+	require.NoError(t, err)
+
+	ack := &types.MsgHeightAck{
+		RefNonce: 1, SlotId: 1, ObservedHeight: 50, ObservedBlockHash: hash,
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(warm, ack))
+	_, applied, err := sm.ApplyLocalBestEffort(2, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	})
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+}
+
+func TestValidateDiff_WarmAckWithoutCachedBinding(t *testing.T) {
+	// Testermint streaming hang: host applyCore L2-checked the signed set
+	// against pre-nonce WarmKeys, so a warm ack that compose admitted via
+	// ResolveWarmKey (or would admit via AcceptWarm) was INVALID on every host.
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	warm := testutil.MustGenerateKey(t)
+	resolver := func(warmAddr, coldAddr string) (bool, error) {
+		return warmAddr == warm.Address() && coldAddr == hosts[0].Address(), nil
+	}
+	composer, hostSM, user := dualWarmSMs(t, hosts, resolver)
+	hash := []byte{0xaa}
+	hb := []*types.DevshardTx{{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+		ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+	}}}}
+	d1 := testutil.SignDiff(t, user, "escrow-1", 1, hb)
+	_, err := composer.ApplyDiff(d1)
+	require.NoError(t, err)
+	_, err = hostSM.ApplyDiff(d1)
+	require.NoError(t, err)
+
+	ack := &types.MsgHeightAck{
+		RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(warm, ack))
+	ackTx := &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}
+	_, applied, err := composer.ApplyLocalBestEffort(2, []*types.DevshardTx{ackTx})
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+	require.Equal(t, warm.Address(), composer.WarmKeys()[0], "applyHeightAck must cache the live binding")
+
+	d2 := testutil.SignDiff(t, user, "escrow-1", 2, applied)
+	vd, err := hostSM.ValidateDiff(d2)
+	require.NoError(t, err, "host applyCore must accept a warm ack the sequencer just composed")
+	require.Equal(t, warm.Address(), vd.WarmAfter[0], "WarmKeyDelta must capture the ack binding for replay")
+	require.True(t, hostSM.CommitValidated(vd))
+	require.Equal(t, uint64(2), hostSM.LatestNonce())
+	require.Equal(t, warm.Address(), hostSM.WarmKeys()[0])
+}
+
+func TestValidateDiff_SameNonceConfirmThenWarmAck(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	warm := testutil.MustGenerateKey(t)
+	resolver := func(warmAddr, coldAddr string) (bool, error) {
+		return warmAddr == warm.Address() && coldAddr == hosts[2].Address(), nil
+	}
+	composer, hostSM, user := dualWarmSMs(t, hosts, resolver)
+	hash := []byte{0xaa}
+	d1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+		}},
+	}})
+	_, err := composer.ApplyDiff(d1)
+	require.NoError(t, err)
+	_, err = hostSM.ApplyDiff(d1)
+	require.NoError(t, err)
+
+	// inference 2 % 3 = 2, matching hosts[2]. Confirm before ack, as compose sorts.
+	execSig := testutil.SignExecutorReceipt(t, warm, "escrow-1", 2, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000,
+		testutil.ReceiptStamp{Height: 50, Hash: hash})
+	ack := &types.MsgHeightAck{
+		RefNonce: 1, SlotId: 2, ObservedHeight: 50, ObservedBlockHash: hash,
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(warm, ack))
+	candidates := []*types.DevshardTx{
+		txStart(&types.MsgStartInference{
+			InferenceId: 2, PromptHash: []byte("prompt"), Model: "llama",
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			ObservedHeight: 50, ObservedBlockHash: hash,
+		}),
+		txConfirm(&types.MsgConfirmStart{InferenceId: 2, ExecutorSig: execSig, ConfirmedAt: 1000, ObservedHeight: 50, ObservedBlockHash: hash}),
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	}
+	_, applied, err := composer.ApplyLocalBestEffort(2, candidates)
+	require.NoError(t, err)
+	require.Len(t, applied, 3)
+
+	d2 := testutil.SignDiff(t, user, "escrow-1", 2, applied)
+	vd, err := hostSM.ValidateDiff(d2)
+	require.NoError(t, err, "same-nonce confirm must not be required before L2 sees the ack")
+	require.Equal(t, warm.Address(), vd.WarmAfter[2])
+	require.True(t, hostSM.CommitValidated(vd))
+	require.Equal(t, uint64(2), hostSM.LatestNonce())
+	require.Equal(t, warm.Address(), hostSM.WarmKeys()[2])
+}
+
+func TestValidateDiff_UnauthorizedWarmAckRejected(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	warm := testutil.MustGenerateKey(t)
+	other := testutil.MustGenerateKey(t)
+	resolver := func(warmAddr, coldAddr string) (bool, error) {
+		return warmAddr == warm.Address() && coldAddr == hosts[0].Address(), nil
+	}
+	composer, hostSM, user := dualWarmSMs(t, hosts, resolver)
+	hash := []byte{0xaa}
+	d1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+		}},
+	}})
+	_, err := composer.ApplyDiff(d1)
+	require.NoError(t, err)
+	_, err = hostSM.ApplyDiff(d1)
+	require.NoError(t, err)
+
+	ack := &types.MsgHeightAck{
+		RefNonce: 1, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(other, ack))
+	ackTx := &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}
+	_, applied, err := composer.ApplyLocalBestEffort(2, []*types.DevshardTx{ackTx})
+	require.ErrorIs(t, err, heightsync.ErrAckSigInvalid)
+	require.Empty(t, applied)
+
+	d2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{ackTx})
+	_, err = hostSM.ValidateDiff(d2)
+	require.ErrorIs(t, err, heightsync.ErrAckSigInvalid)
+}
+
+func TestValidateDiff_SiblingWarmAckFromCachedSiblingSlot(t *testing.T) {
+	cold := testutil.MustGenerateKey(t)
+	other := testutil.MustGenerateKey(t)
+	warm := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup([]*signing.Secp256k1Signer{cold, other}, []int{2, 1})
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	newSM := func() *StateMachine {
+		t.Helper()
+		sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
+			testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000))
+		require.NoError(t, err)
+		sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
+		return sm
+	}
+	composer, hostSM := newSM(), newSM()
+	hash := []byte{0xaa}
+	d1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+		}},
+	}})
+	_, err := composer.ApplyDiff(d1)
+	require.NoError(t, err)
+	_, err = hostSM.ApplyDiff(d1)
+	require.NoError(t, err)
+
+	ack := &types.MsgHeightAck{
+		RefNonce: 1, SlotId: 1, ObservedHeight: 50, ObservedBlockHash: hash,
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(warm, ack))
+	_, applied, err := composer.ApplyLocalBestEffort(2, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	})
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+
+	d2 := testutil.SignDiff(t, user, "escrow-1", 2, applied)
+	_, err = hostSM.ValidateDiff(d2)
+	require.NoError(t, err, "L2 must accept a warm key already bound on a sibling slot")
+}
+
+func dualWarmSMs(t *testing.T, hosts []*signing.Secp256k1Signer, resolver WarmKeyResolver) (composer, hostSM *StateMachine, user *signing.Secp256k1Signer) {
+	t.Helper()
+	user = testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	newSM := func() *StateMachine {
+		t.Helper()
+		sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
+			testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000),
+			WithWarmKeyResolver(resolver))
+		require.NoError(t, err)
+		return sm
+	}
+	return newSM(), newSM(), user
+}
+
+func TestApplyLocalBestEffort_FinalizingDropsHeartbeatAndAck(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	hash := []byte{0xaa}
+	hb := func() *types.DevshardTx {
+		return &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+		}}}
+	}
+	ackTx := func(t *testing.T, signer *signing.Secp256k1Signer, ref uint64) *types.DevshardTx {
+		t.Helper()
+		ack := &types.MsgHeightAck{
+			RefNonce: ref, SlotId: 0, ObservedHeight: 50, ObservedBlockHash: hash,
+			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+		}
+		require.NoError(t, heightsync.SignAck(signer, ack))
+		return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}
+	}
+
+	t.Run("after_finalize_round", func(t *testing.T) {
+		sm, _ := newTestSM(t, hosts, 100000)
+		_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{hb()})
+		require.NoError(t, err)
+		_, _, err = sm.ApplyLocalBestEffort(2, []*types.DevshardTx{txFinalize()})
+		require.NoError(t, err)
+		require.Equal(t, types.PhaseFinalizing, sm.Phase())
+
+		poisoned := ackTx(t, hosts[0], 1)
+		poisoned.GetHeightAck().HostSig[0] ^= 0xff
+		_, applied, err := sm.ApplyLocalBestEffort(3, []*types.DevshardTx{poisoned, hb()})
+		require.NoError(t, err)
+		require.Empty(t, applied)
+		require.Equal(t, uint64(3), sm.LatestNonce())
+	})
+
+	t.Run("same_nonce_keeps_ack_before_finalize", func(t *testing.T) {
+		sm, _ := newTestSM(t, hosts, 100000)
+		_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{hb()})
+		require.NoError(t, err)
+
+		before := ackTx(t, hosts[0], 1)
+		after := ackTx(t, hosts[0], 1)
+		_, applied, err := sm.ApplyLocalBestEffort(2, []*types.DevshardTx{before, txFinalize(), after})
+		require.NoError(t, err)
+		require.Len(t, applied, 2)
+		require.NotNil(t, applied[0].GetHeightAck())
+		require.NotNil(t, applied[1].GetFinalizeRound())
+		require.Equal(t, types.PhaseFinalizing, sm.Phase())
+		require.Equal(t, uint64(2), sm.LatestNonce())
+	})
+}
+
 func TestApplyLocalBestEffort_LogPlaneInvalidAckDroppedKeepsHeartbeat(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),

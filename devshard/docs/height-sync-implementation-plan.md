@@ -369,18 +369,29 @@ Do not invent a new dapi HTTP path that old binaries would not serve.
 **Host oracle is a failover wrapper**, not a one-shot startup probe. Same shape as `fallbackConn` in `common/chain/fallback.go`:
 
 ```
-Latest() / At():
-  1. If dapi /block/* last succeeded → blocks/client (CHAINORACLE_URL or dapi HTTP base)
-  2. On 404 / 501 / Unimplemented → mark capability=legacy; stay on direct chain until process restart
-     (old dapi will not grow the route without a deploy)
-  3. On transport failure (connection refused, timeout, reset) → direct chain for this call;
-     probe dapi again after DefaultRPCProbeInterval (30m, same constant) so a recovered dapi
-     becomes primary without restarting the host
-  4. Direct chain itself is chain.NewWithQueryFallback: gRPC first, Comet RPC second
-  5. Both missing → oracle error; scheduler Omit; local oracle stale for consumers
+Latest():
+  1. Comet NewBlock tipcache — only if the WS is connected and the last Observe
+     is younger than CometMaxAge (20s). Disconnected or stale → skip, do not
+     serve a frozen tip.
+  2. NodeManager GetBlockHeader(0) — skip immediately while a non-success
+     backoff is running (dummy, not found, or transient: 1m, then 5m, then
+     every 15m). Unimplemented (old dapi) re-probes every 15m so an upgrade
+     is picked up without a process restart. At() honors the same skip
+     (not a per-height miss).
+  3. Chain gRPC GetLatestBlock — at most once per ChainRefresh (10s); within
+     that window reuse the last chain header. Do not Observe chain/dapi results
+     into the Comet tip.
+  4. All missing → oracle error; scheduler Omit; local oracle stale
+
+At():
+  cached Comet window. Dummy (no RPC) if the height is above the known tip
+  or more than AtLookback (100) below it — L6 treats dummy as still pending.
+  Else GetBlockHeader(height) unless nm is Unimplemented or in backoff, then
+  GetBlockByHeight. Misses are dummy and negative-cached for AtNegativeTTL
+  (5s). Concurrent At of the same height share one RPC.
 ```
 
-Height-sync never sees steps 2–4. It only calls `oracle.Latest()`. CometBFT types stay inside the adapter.
+Height-sync calls `oracle.Latest()` for anchors and `oracle.At()` for L6 / claim reconciliation. CometBFT types stay inside the adapter.
 
 **What works on old dapi (and on dapi-down)**
 
