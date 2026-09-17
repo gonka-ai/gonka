@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -12,6 +13,12 @@ const (
 	LookbackMultiplier               = int64(5)
 	ClaimRecipientPruningThreshold   = uint64(5)
 	ClaimRecipientPruningMaxPerBlock = int64(1000)
+	// InferenceValidationDetails are only read for the claim window (ClaimRewards
+	// rejects anything but the previous epoch, and the validation-params query
+	// only reads current/previous epoch), so epochs older than this threshold are
+	// safe to drop. Bled off gradually to avoid expensive bulk deletes.
+	InferenceValidationDetailsPruningThreshold   = uint64(5)
+	InferenceValidationDetailsPruningMaxPerBlock = int64(1000)
 )
 
 func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
@@ -56,6 +63,10 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 		return err
 	}
 	err = k.GetClaimRecipientPruner(params).Prune(ctx, k, currentEpochIndex)
+	if err != nil {
+		return err
+	}
+	err = k.GetInferenceValidationDetailsPruner(params).Prune(ctx, k, currentEpochIndex)
 	if err != nil {
 		return err
 	}
@@ -202,9 +213,33 @@ func (k Keeper) GetInferencePruner(params types.Params) Pruner[collections.Pair[
 			state.InferencePrunedEpoch = epoch
 		},
 		Remover: func(ctx context.Context, key collections.Pair[int64, string]) error {
-			err := k.Inferences.Remove(ctx, key.K2())
-			if err != nil {
+			inference, found := k.GetInference(ctx, key.K2())
+			if found && (inference.Status == types.InferenceStatus_VOTING || inference.Status == types.InferenceStatus_STARTED) {
+				retryEpoch, retryFound := k.GetEffectiveEpochIndex(ctx)
+				if !retryFound {
+					return fmt.Errorf("cannot defer pruning inference %q: effective epoch not found", key.K2())
+				}
+				if int64(retryEpoch) <= key.K1() {
+					return fmt.Errorf("cannot defer pruning inference %q from epoch %d to epoch %d", key.K2(), key.K1(), retryEpoch)
+				}
+
+				// Move active inferences forward so the completed epoch can advance
+				// while the inference remains discoverable by a later pruning pass.
+				if err := k.InferencesToPrune.Set(ctx, collections.Join(int64(retryEpoch), key.K2()), collections.NoValue{}); err != nil {
+					return err
+				}
+				return k.InferencesToPrune.Remove(ctx, key)
+			}
+
+			if err := k.Inferences.Remove(ctx, key.K2()); err != nil {
 				return err
+			}
+			// A status update can re-add the inference under its original epoch
+			// after an active record was deferred. Remove that stale index too.
+			if found && int64(inference.EpochId) != key.K1() {
+				if err := k.InferencesToPrune.Remove(ctx, collections.Join(int64(inference.EpochId), key.K2())); err != nil {
+					return err
+				}
 			}
 			return k.InferencesToPrune.Remove(ctx, key)
 		},
@@ -314,6 +349,31 @@ func (k Keeper) GetClaimRecipientPruner(params types.Params) Pruner[collections.
 	}
 }
 
+// GetInferenceValidationDetailsPruner prunes InferenceValidationDetails for epochs
+// older than the threshold. The map is keyed by (epochId, inferenceId), so it ranges
+// by the leading epoch prefix just like the InferencePruner. Only the claim window
+// reads these entries, so older epochs are safe to remove.
+func (k Keeper) GetInferenceValidationDetailsPruner(params types.Params) Pruner[collections.Pair[uint64, string], types.InferenceValidationDetails] {
+	return Pruner[collections.Pair[uint64, string], types.InferenceValidationDetails]{
+		Threshold:  InferenceValidationDetailsPruningThreshold,
+		PruningMax: InferenceValidationDetailsPruningMaxPerBlock,
+		List:       k.InferenceValidationDetailsMap,
+		Ranger: func(ctx context.Context, epoch int64) collections.Ranger[collections.Pair[uint64, string]] {
+			return collections.NewPrefixedPairRange[uint64, string](uint64(epoch))
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.InferenceValidationDetailsPrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.InferenceValidationDetailsPrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Pair[uint64, string]) error {
+			return k.InferenceValidationDetailsMap.Remove(ctx, key)
+		},
+		Logger: k,
+	}
+}
+
 func (k Keeper) GetPoCValidationsPruner(params types.Params) Pruner[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation] {
 	return Pruner[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]{
 		Threshold:  params.PocParams.PocDataPruningEpochThreshold,
@@ -354,10 +414,15 @@ type Pruner[K any, V any] struct {
 }
 
 func (p Pruner[K, V]) PruneEpoch(ctx context.Context, currentEpochIndex int64, prunesLeft int64) (int64, error) {
+	if prunesLeft <= 0 {
+		return 0, nil
+	}
+	p.Logger.LogDebug("PruneEpoch called", types.Pruning, "epoch", currentEpochIndex, "prunesLeft", prunesLeft, "list", p.List.GetName())
 	prunedCount := int64(0)
 	iter, err := p.List.Iterate(ctx, p.Ranger(ctx, currentEpochIndex))
 	if err != nil {
 		p.Logger.LogError("Failed to iterate over list to prune", types.Pruning, "error", err, "list", p.List.GetName())
+		return 0, err
 	}
 	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
@@ -380,6 +445,14 @@ func (p Pruner[K, V]) PruneEpoch(ctx context.Context, currentEpochIndex int64, p
 }
 
 func (p Pruner[K, V]) Prune(ctx context.Context, k Keeper, currentEpochIndex int64) error {
+	if p.PruningMax <= 0 {
+		p.Logger.LogError("Skipping pruning with non-positive limit", types.Pruning,
+			"max", p.PruningMax,
+			"list", p.List.GetName(),
+		)
+		return nil
+	}
+
 	pruningState, err := k.PruningState.Get(ctx)
 	if err != nil {
 		p.Logger.LogError("Failed to get pruning state", types.Pruning,
@@ -402,12 +475,21 @@ func (p Pruner[K, V]) Prune(ctx context.Context, k Keeper, currentEpochIndex int
 	for epoch := startEpoch; epoch <= endEpoch; epoch++ {
 		prunesLeft := p.PruningMax - prunedCount
 		prunedForEpoch, err := p.PruneEpoch(ctx, epoch, prunesLeft)
+		prunedCount += prunedForEpoch
 		if err != nil {
 			p.Logger.LogError("Failed to prune epoch", types.Pruning,
 				"epoch", epoch,
 				"error", err,
 			)
-			continue
+			return err
+		}
+		if prunedCount >= p.PruningMax {
+			p.Logger.LogInfo("Reached per-block pruning limit", types.Pruning,
+				"pruned", prunedCount,
+				"max", p.PruningMax,
+				"list", p.List.GetName(),
+			)
+			return nil
 		}
 		if prunedForEpoch == 0 {
 			p.Logger.LogInfo("Pruning epoch complete", types.Pruning, "epoch", epoch, "list", p.List.GetName())
