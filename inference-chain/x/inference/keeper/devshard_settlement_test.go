@@ -79,6 +79,8 @@ func buildSettlementTestDataWithNonce(
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated,
+			Finished:             hs.Finished,
 		}
 	}
 	slices.SortFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
@@ -122,15 +124,15 @@ func buildSettlementTestDataWithNonce(
 	}
 
 	return &types.MsgSettleDevshardEscrow{
-		Settler:    escrow.Creator,
-		EscrowId:   escrow.Id,
+		Settler:                     escrow.Creator,
+		EscrowId:                    escrow.Id,
 		StateRootAndProtocolVersion: settlementVersion,
-		StateRoot:  stateRoot[:],
-		Nonce:      nonce,
-		Fees:       fees,
-		RestHash:   restHash[:],
-		HostStats:  hostStats,
-		Signatures: sigs,
+		StateRoot:                   stateRoot[:],
+		Nonce:                       nonce,
+		Fees:                        fees,
+		RestHash:                    restHash[:],
+		HostStats:                   hostStats,
+		Signatures:                  sigs,
 	}
 }
 
@@ -156,6 +158,8 @@ func buildSettlementTestDataWithVersion(
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated,
+			Finished:             hs.Finished,
 		}
 	}
 	slices.SortFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
@@ -199,15 +203,15 @@ func buildSettlementTestDataWithVersion(
 	}
 
 	return &types.MsgSettleDevshardEscrow{
-		Settler:    escrow.Creator,
-		EscrowId:   escrow.Id,
+		Settler:                     escrow.Creator,
+		EscrowId:                    escrow.Id,
 		StateRootAndProtocolVersion: version,
-		StateRoot:  stateRoot[:],
-		Nonce:      nonce,
-		Fees:       fees,
-		RestHash:   restHash[:],
-		HostStats:  hostStats,
-		Signatures: sigs,
+		StateRoot:                   stateRoot[:],
+		Nonce:                       nonce,
+		Fees:                        fees,
+		RestHash:                    restHash[:],
+		HostStats:                   hostStats,
+		Signatures:                  sigs,
 	}
 }
 
@@ -521,6 +525,8 @@ func TestComputeDevshardHostStatsHash_Deterministic(t *testing.T) {
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated,
+			Finished:             hs.Finished,
 		}
 	}
 	mapProto := &types.DevshardHostStatsMapProto{Entries: entries}
@@ -844,4 +850,45 @@ func TestSignatureFormatConversion(t *testing.T) {
 	s := new(big.Int).SetBytes(goEthSig[32:64])
 	require.True(t, r.Sign() > 0)
 	require.True(t, s.Sign() > 0)
+}
+
+func TestComputeDevshardHostStatsHash_ValidatedFinishedChangeHash(t *testing.T) {
+	base := []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Missed: 1, Invalid: 0, Cost: 100, RequiredValidations: 10, CompletedValidations: 9},
+	}
+	withCounts := []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Missed: 1, Invalid: 0, Cost: 100, RequiredValidations: 10, CompletedValidations: 9, Validated: 4, Finished: 5},
+	}
+	zeroHash, err := keeper.ComputeDevshardHostStatsHash(base)
+	require.NoError(t, err)
+	countedHash, err := keeper.ComputeDevshardHostStatsHash(withCounts)
+	require.NoError(t, err)
+	require.NotEqual(t, hex.EncodeToString(zeroHash), hex.EncodeToString(countedHash))
+}
+
+func TestVerifyDevshardSettlement_SampledRejectsInvalidWithoutFinished(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots, ValidationRate: 1000,
+	}
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	hostStats[0].Invalid = 1
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+
+	approved := []*types.DevshardApprovedVersion{{
+		Name:      settlementVersion,
+		Binary:    "https://example.com/dev.zip",
+		Sha256:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED,
+	}}
+	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), approved, nil)
+	require.ErrorContains(t, err, "invalid count")
+
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil)
+	require.NoError(t, err, "empty allowlist with no stored policy keeps derived scoring")
+
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED)
+	require.ErrorContains(t, err, "invalid count", "empty allowlist still uses a stored SAMPLED policy")
 }

@@ -413,6 +413,17 @@ message DelegationParams {
   Decimal max_model_voting_power_percentage = 9;
 }
 
+// DevshardPassCount selects how settlement host stats become SPRT passes.
+// Proto3 omitempty: omitted JSON is UNSPECIFIED (0).
+enum DevshardPassCount {
+  // Omitted JSON. Keep the stored policy; DERIVED if the name is new.
+  DEVSHARD_PASS_COUNT_UNSPECIFIED = 0;
+  // HostStats.validated, capped by finished * rate.
+  DEVSHARD_PASS_COUNT_SAMPLED = 1;
+  // Legacy scoring: assigned - missed - invalid.
+  DEVSHARD_PASS_COUNT_DERIVED = 2;
+}
+
 // DevshardApprovedVersion describes a single approved devshard binary.
 message DevshardApprovedVersion {
   option (gogoproto.equal) = true;
@@ -422,6 +433,21 @@ message DevshardApprovedVersion {
   string binary = 2;
   // Hash of binary to check if update is already installed
   string sha256 = 3;
+  // How settlement host stats become SPRT passes. Omitted JSON is UNSPECIFIED:
+  // keep the stored policy, or DERIVED for a new name. An explicit value
+  // overwrites the stored policy.
+  DevshardPassCount pass_count = 4;
+}
+
+// DevshardVersionPolicy is the recorded pass_count for a version name.
+// Survives MsgDeleteDevshardApprovedVersion so a later re-approval with
+// omitted pass_count keeps the same scoring. An explicit pass_count on
+// Put / genesis JSON overwrites it.
+message DevshardVersionPolicy {
+  option (gogoproto.equal) = true;
+  string name = 1;
+  // Recorded pass_count for this version name. Must be SAMPLED or DERIVED.
+  DevshardPassCount pass_count = 2;
 }
 
 // DevshardEscrowParams defines governance-controlled parameters for devshard escrow creation and settlement.

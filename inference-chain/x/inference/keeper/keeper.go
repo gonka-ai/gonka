@@ -108,12 +108,13 @@ type (
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
 		// Devshard escrow collections
-		DevshardEscrows           collections.Map[uint64, types.DevshardEscrow]
-		DevshardEscrowCounter     collections.Item[uint64]
-		DevshardEscrowEpochCount  collections.Map[uint64, uint64]
-		DevshardHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
-		DevshardEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		DevshardEscrows             collections.Map[uint64, types.DevshardEscrow]
+		DevshardEscrowCounter       collections.Item[uint64]
+		DevshardEscrowEpochCount    collections.Map[uint64, uint64]
+		DevshardHostEpochStatsMap   collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
+		DevshardEscrowsByEpoch      collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
 		DevshardApprovedVersionsMap collections.Map[string, types.DevshardApprovedVersion]
+		DevshardVersionPoliciesMap  collections.Map[string, types.DevshardVersionPolicy]
 		// Maintenance window collections
 		MaintenanceReservations       collections.Map[uint64, types.MaintenanceReservation]
 		MaintenanceReservationCounter collections.Item[uint64]
@@ -592,6 +593,13 @@ func NewKeeper(
 			"devshard_approved_versions",
 			collections.StringKey,
 			codec.CollValue[types.DevshardApprovedVersion](cdc),
+		),
+		DevshardVersionPoliciesMap: collections.NewMap(
+			sb,
+			types.DevshardVersionPoliciesPrefix,
+			"devshard_version_policies",
+			collections.StringKey,
+			codec.CollValue[types.DevshardVersionPolicy](cdc),
 		),
 		// Maintenance window collections
 		MaintenanceReservations: collections.NewMap(

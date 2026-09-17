@@ -240,10 +240,33 @@ func TestMigrateDevshardApprovedVersions(t *testing.T) {
 	require.Len(t, got, 2)
 	require.Equal(t, "v1", got[0].Name)
 	require.Equal(t, "v2", got[1].Name)
+	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got[0].PassCount)
+	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got[1].PassCount)
+	pol, found := k.GetVersionPolicy(ctx, "v1")
+	require.True(t, found)
+	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
 
 	after, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.Empty(t, after.DevshardEscrowParams.ApprovedVersions)
+}
+
+func TestMigrateDevshardApprovedVersions_StampsExistingStore(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	require.NoError(t, k.SetApprovedVersion(ctx, inferencetypes.DevshardApprovedVersion{
+		Name:   "v-store",
+		Binary: "https://example.com/store.zip",
+		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}))
+
+	require.NoError(t, migrateDevshardApprovedVersions(ctx, k))
+
+	got, found := k.GetApprovedVersion(ctx, "v-store")
+	require.True(t, found)
+	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount)
+	pol, found := k.GetVersionPolicy(ctx, "v-store")
+	require.True(t, found)
+	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
 }
 
 func TestLeftoverApprovedVersionsDoNotBlockCoefficientMigrate(t *testing.T) {

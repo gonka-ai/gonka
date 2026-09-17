@@ -324,16 +324,21 @@ func migrateDevshardApprovedVersions(ctx context.Context, k keeper.Keeper) error
 		return err
 	}
 	if params.DevshardEscrowParams == nil {
-		return nil
+		return stampUnpoliciedApprovedVersionsDerived(ctx, k)
 	}
 	for i, v := range params.DevshardEscrowParams.ApprovedVersions {
 		if v == nil {
 			return fmt.Errorf("approved_versions[%d] cannot be null", i)
 		}
-		if err := v.Validate(); err != nil {
+		copied := *v
+		copied.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
+		if err := copied.Validate(); err != nil {
 			return fmt.Errorf("approved_versions[%d]: %w", i, err)
 		}
-		if err := k.SetApprovedVersion(ctx, *v); err != nil {
+		if err := k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{Name: copied.Name, PassCount: copied.PassCount}); err != nil {
+			return err
+		}
+		if err := k.SetApprovedVersion(ctx, copied); err != nil {
 			return err
 		}
 	}
@@ -342,6 +347,29 @@ func migrateDevshardApprovedVersions(ctx context.Context, k keeper.Keeper) error
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
+	if err := stampUnpoliciedApprovedVersionsDerived(ctx, k); err != nil {
+		return err
+	}
 	k.LogInfo("migrated approved devshard versions out of params", types.Upgrades, "count", n)
+	return nil
+}
+
+func stampUnpoliciedApprovedVersionsDerived(ctx context.Context, k keeper.Keeper) error {
+	versions, err := k.GetApprovedVersions(ctx)
+	if err != nil {
+		return err
+	}
+	for _, v := range versions {
+		if _, ok := k.GetVersionPolicy(ctx, v.Name); ok {
+			continue
+		}
+		v.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
+		if err := k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{Name: v.Name, PassCount: v.PassCount}); err != nil {
+			return err
+		}
+		if err := k.SetApprovedVersion(ctx, v); err != nil {
+			return err
+		}
+	}
 	return nil
 }

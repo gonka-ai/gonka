@@ -65,3 +65,27 @@ func TestGenesisStateValidateRejectsExtremeDecimalExponents(t *testing.T) {
 		require.ErrorIs(t, state.Validate(), types.ErrInvalidDecimalExponent)
 	})
 }
+
+func TestGenesisStateValidate_PolicyUnspecifiedRejected(t *testing.T) {
+	state := types.DefaultGenesis()
+	state.DevshardVersionPolicies = []*types.DevshardVersionPolicy{{
+		Name:      "v1",
+		PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED,
+	}}
+	require.ErrorContains(t, state.Validate(), "invalid stored pass_count")
+}
+
+func TestGenesisStateValidate_ExplicitPassCountMayDifferFromPolicy(t *testing.T) {
+	state := types.DefaultGenesis()
+	state.DevshardApprovedVersions = []*types.DevshardApprovedVersion{{
+		Name:      "v1",
+		Binary:    "https://example.com/v1.zip",
+		Sha256:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED,
+	}}
+	state.DevshardVersionPolicies = []*types.DevshardVersionPolicy{{
+		Name:      "v1",
+		PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED,
+	}}
+	require.NoError(t, state.Validate())
+}

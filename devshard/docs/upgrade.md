@@ -33,12 +33,15 @@ The first temporary release now implements the `approved_versions -> /versions
 -> versiond download` path. The remaining WARN blocks below call out the parts
 that are still future work beyond that first release.
 
-`DevshardEscrowParams.approved_versions` is the governance-controlled list of
-allowed binaries. Each entry carries:
+`DevshardEscrowParams.approved_versions` is deprecated. The live allowlist is
+the dedicated store updated by `MsgPutDevshardApprovedVersion` /
+`MsgDeleteDevshardApprovedVersion`. Each entry carries:
 
 - version name
 - download URL
 - sha256
+- `pass_count` (how that protocol name is scored at settlement; see
+  [Settlement pass_count](#settlement-pass_count))
 
 sha256 is the real identity. The URL is only a download hint. If two proposals
 point at different mirrors but the same hash, operators do not restart
@@ -108,6 +111,37 @@ state commitment. Mainnet recomputes the root with
 `version_hash = sha256(tag_utf8)`. The tag equals the session bind version:
 `approved_versions.name` for `/devshard/<name>/*`, or `v1` for the legacy
 `/v1/devshard/*` path. See [Version naming](#version-naming) below.
+
+## Settlement pass_count
+
+The same protocol name also selects how settlement `host_stats` become SPRT
+passes (`CurrentEpochStats.ValidatedInferences`). That choice is a per-name
+**version policy**, not a global chain param.
+
+| `pass_count` | Passes credited | When to use |
+|--------------|-----------------|-------------|
+| `DEVSHARD_PASS_COUNT_DERIVED` | `assigned - missed - invalid` (legacy) | Binaries that do not report `validated` / `finished` |
+| `DEVSHARD_PASS_COUNT_SAMPLED` | `HostStats.validated`, capped by `2 * finished * validation_rate_bps / 10000 + 2` | Binaries that emit those fields so unsampled work is not counted as a pass |
+
+Settlement verification and scoring both read the **policy store** for
+`state_root_and_protocol_version`. An empty allowlist is still permissive for
+which names may settle, but an existing policy for that name is used; a name
+that has never been recorded scores as `DERIVED`.
+
+Governance is `MsgPutDevshardApprovedVersion` (authority). Proto3 omits zero,
+so `pass_count` uses `UNSPECIFIED = 0`:
+
+- omitted on a **new** name → record `DERIVED`
+- omitted when a policy **already exists** (including after
+  `MsgDeleteDevshardApprovedVersion`) → keep the stored value
+- explicit `SAMPLED` or `DERIVED` → overwrite the stored policy
+
+The policy row is keyed by name and survives delete, so a later re-approval
+with omitted `pass_count` cannot silently flip scoring. Chain upgrades stamp
+every pre-existing approved name as `DERIVED`. Do not set `SAMPLED` until that
+protocol binary actually reports `validated` / `finished`; otherwise slots
+with invalidations fail verification (`invalid` must be ≤ `finished`) and
+clean slots only receive the cap slack of 2.
 
 ## Version naming
 
