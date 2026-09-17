@@ -43,16 +43,18 @@ func (k Keeper) PruneDeveloperStats(ctx context.Context) (int64, error) {
 		limit := min(remaining, target.maxPerBlock)
 		targetStore := prefix.NewStore(store, types.KeyPrefix(target.prefix))
 		iter := targetStore.Iterator(nil, nil)
-		prunedFromTarget := int64(0)
-		for ; iter.Valid() && prunedFromTarget < limit; iter.Next() {
-			key := append([]byte(nil), iter.Key()...)
-			targetStore.Delete(key)
-			prunedFromTarget++
+		keysToDelete := make([][]byte, 0, limit)
+		for ; iter.Valid() && int64(len(keysToDelete)) < limit; iter.Next() {
+			keysToDelete = append(keysToDelete, append([]byte(nil), iter.Key()...))
 		}
 		if err := iter.Close(); err != nil {
 			return pruned, err
 		}
+		for _, key := range keysToDelete {
+			targetStore.Delete(key)
+		}
 
+		prunedFromTarget := int64(len(keysToDelete))
 		pruned += prunedFromTarget
 		if prunedFromTarget == target.maxPerBlock {
 			break
