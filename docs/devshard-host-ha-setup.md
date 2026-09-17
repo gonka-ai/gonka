@@ -29,9 +29,9 @@ Public proxy (/devshard/...)
 | Public `proxy` (HAProxy) | `ghcr.io/gonka-ai/proxy-router:0.2.15-devshard-v5` |
 | `proxy-policy`, `proxy-policy2` (nginx) | `ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5` |
 | Catalog filter | `python:3.12-alpine` |
-| Local PostgreSQL, new installation | PostgreSQL 16 Alpine |
+| Local PostgreSQL | `postgres:16-alpine` |
 
-When directed by the installation or upgrade steps, set these variables in `deploy/join/config.env`. Replace existing assignments; add missing ones:
+Edit `deploy/join/config.env`. Set the variables below to the shown values.
 
 ```bash
 export VERSIOND_IMAGE=ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5
