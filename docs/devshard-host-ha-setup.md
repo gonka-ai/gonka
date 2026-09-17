@@ -8,7 +8,7 @@ Devshard inference that stays available, backed by multiple `versiond` instances
 - [Release and images](#release-and-images)
 - [Prerequisites](#prerequisites)
 - [Install a new host](#install-a-new-host)
-- [Upgrade an existing host](#upgrade-an-existing-host) — use downtime while serving v4/v4.1
+- [Upgrade an existing host](#upgrade-an-existing-host)
 - [Add a remote replica](#add-a-remote-replica) — requires storage-proof support; unavailable with published v4/v4.1
 - [Add a local replica](#add-a-local-replica)
 - [Operate the deployment](#operate-the-deployment)
@@ -380,6 +380,8 @@ Run after installation or a pool change, for each protocol in `VERSIOND_VERSIONS
 For routine updates, run only the service checks in §4.1.
 
 ## Upgrade an existing host
+
+Upgrading a host serving v4/v4.1 requires downtime.
 
 This procedure requires a PostgreSQL-backed host serving only v4 and later protocols, with site settings in `config.env` and separate Compose overrides in a Git checkout. Hosts running v3 require a separate migration procedure.
 
