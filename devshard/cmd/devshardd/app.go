@@ -122,7 +122,10 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryProgressSnapshot)
 	}
 	manager.Register(e.Group(""))
-	chainRuntime.chainEvents.OnReady(lifecycle.SetReady)
+	chainRuntime.chainEvents.OnReady(func(ready bool) {
+		lifecycle.SetReady(ready)
+		manager.SetCometConnected(ready)
+	})
 	var adminServer appHTTPServer
 	if admin != nil {
 		adminServer = admin
@@ -290,7 +293,7 @@ func buildHostManager(
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
 	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
-	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client); err != nil {
+	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client, mlClient.NodeManagerClient()); err != nil {
 		return nil, fmt.Errorf("height sync oracle: %w", err)
 	}
 	closers.Add(manager.CloseHeightSync)
@@ -370,6 +373,10 @@ func buildHostManager(
 
 	// Height-sync still needs Comet headers. Prune/evict stay on OnEpochChange.
 	chainRuntime.chainEvents.OnNewBlock(func(_ context.Context, e events.NewBlockEvent) {
+		slog.Debug("chain events: new block",
+			"height", e.BlockHeight,
+			"hash_len", len(e.BlockHash),
+			"chain_id", e.ChainID)
 		manager.ObserveChainHeader(blocks.HashOnlyHeader(e.BlockHeight, e.Time, e.ChainID, e.BlockHash))
 	})
 

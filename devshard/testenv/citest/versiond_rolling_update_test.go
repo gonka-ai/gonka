@@ -282,9 +282,15 @@ func requireVersiondFallbackWithoutOverlap(t *testing.T, stack *harness.Stack, h
 				allNewRunning = false
 				continue
 			}
-			require.False(t, harness.HasVersiondHealthEntry(entries, versionName, "draining", oldSHA),
-				"hybrid fallback unexpectedly drained old sha %s on host %s", oldSHA, host)
-			if !harness.HasVersiondHealthEntry(entries, versionName, "running", newSHA) {
+			newRunning := harness.HasVersiondHealthEntry(entries, versionName, "running", newSHA)
+			oldDraining := harness.HasVersiondHealthEntry(entries, versionName, "draining", oldSHA)
+			// Exclusive stop/start reports the old child as draining while it
+			// exits. That is not overlap; overlap is new running *and* old draining.
+			if newRunning && oldDraining {
+				t.Fatalf("hybrid fallback overlapped: running new sha %s and draining old sha %s on host %s",
+					newSHA, oldSHA, host)
+			}
+			if !newRunning {
 				allNewRunning = false
 			}
 		}

@@ -318,6 +318,11 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: height sync: %w", cfg.ID, err)
 	}
+	if extraClient == nil || extraClient.HeightSyncPeerTips == nil {
+		log.Printf("heightsync courier not wired escrow=%s (need NODE_MANAGER_ADDR, NODE_RPC_URL, or DEVSHARD_CHAIN_GRPC)", cfg.ID)
+	} else {
+		log.Printf("heightsync courier wired escrow=%s peer_tips=true", cfg.ID)
+	}
 	compressRequestBodies, err := compressRequestBodiesFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, err)

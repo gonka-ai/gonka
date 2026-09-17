@@ -372,21 +372,17 @@ func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySett
 	return result, nil
 }
 
-// escrowProtocolVersionFor derives the protocol version from the route prefix the escrow is pinned to,
-// so the stamp and the wire can never name different versions. Semver-like route versions map by major
-// (v2.1.0 -> v2, v4.1r5 -> v4); a leading "v" is then stripped (v4 -> "4"). Named runtimes such as
-// mainnet-canary are stamped as-is. An unresolvable prefix falls back to DefaultProtocolVersion.
+// escrowProtocolVersionFor maps /devshard/<slot> to the gateway-DB rotation stamp.
+// Numeric route versions stamp as N or N.x (v4.1 / v4.1r5 -> 4.1, v4.2 -> 4.2,
+// v2.1.0 -> 2.1). Named runtimes such as mainnet-canary are stamped as-is.
+// An unresolvable prefix falls back to DefaultProtocolVersion.
 func escrowProtocolVersionFor(routePrefix string) string {
 	_, version, err := devshardpkg.ResolveRoutePrefix(routePrefix)
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q reason=version_segment_unresolved error=%v", routePrefix, err)
 		return string(types.DefaultProtocolVersion)
 	}
-	normalized := strings.TrimSpace(version)
-	if i := strings.IndexByte(normalized, '.'); i > 0 {
-		normalized = normalized[:i] // e.g. v2.1.0 -> v2
-	}
-	pv, err := types.ParseProtocolVersion(normalized)
+	pv, err := types.ParseProtocolVersion(strings.TrimSpace(version))
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q version=%q reason=unparseable_protocol error=%v", routePrefix, version, err)
 		return string(types.DefaultProtocolVersion)
