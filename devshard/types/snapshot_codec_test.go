@@ -87,3 +87,34 @@ func TestMarshalStateSnapshotProtoRoundTrip(t *testing.T) {
 	require.Equal(t, committed, roundTripCommitted)
 	require.Equal(t, sealed, roundTripSealed)
 }
+
+func TestEscrowStateProto_LogprobsModeRoundTrip(t *testing.T) {
+	state := &EscrowState{
+		EscrowID:                    "escrow-lp",
+		StateRootAndProtocolVersion: DevshardStateRootAndProtocolVersion,
+		Config: SessionConfig{
+			VoteThreshold: 1,
+			LogprobsMode:  LogprobsModeRaw,
+		},
+		Inferences: map[uint64]*InferenceRecord{},
+		HostStats:  map[uint32]*HostStats{},
+	}
+
+	out := EscrowStateFromProto(EscrowStateToProto(state))
+	require.Equal(t, LogprobsModeRaw, out.Config.LogprobsMode)
+}
+
+func TestEscrowStateProto_LegacySnapshotNormalizesLogprobsMode(t *testing.T) {
+	p := EscrowStateToProto(&EscrowState{
+		EscrowID:                    "escrow-legacy",
+		StateRootAndProtocolVersion: DevshardStateRootAndProtocolVersion,
+		Config:                      SessionConfig{VoteThreshold: 1},
+		Inferences:                  map[uint64]*InferenceRecord{},
+		HostStats:                   map[uint32]*HostStats{},
+	})
+	p.Config.LogprobsMode = ""
+
+	out := EscrowStateFromProto(p)
+	require.Equal(t, "", out.Config.LogprobsMode)
+	require.Equal(t, DefaultLogprobsMode, NormalizeSessionConfig(out.Config, 1).LogprobsMode)
+}

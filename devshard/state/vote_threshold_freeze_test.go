@@ -167,3 +167,33 @@ func repoRoot(t *testing.T) string {
 	// devshard/state/vote_threshold_freeze_test.go -> repo root (gonka module).
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
+
+func TestNewStateMachine_FreezesLogprobsMode(t *testing.T) {
+	const groupSize = 4
+	hosts := make([]*signing.Secp256k1Signer, groupSize)
+	for i := range hosts {
+		hosts[i] = testutil.MustGenerateKey(t)
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	verifier := signing.NewSecp256k1Verifier()
+
+	newSM := func(t *testing.T, cfg types.SessionConfig) *StateMachine {
+		t.Helper()
+		sm, err := NewStateMachine("escrow-lp", cfg, group, 10_000, user.Address(), verifier,
+			testutil.MustMemoryStore(t, "escrow-lp", user.Address(), cfg, group, 10_000))
+		require.NoError(t, err)
+		return sm
+	}
+
+	t.Run("escrow value is frozen on the session", func(t *testing.T) {
+		cfg := types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
+			LogprobsMode: types.LogprobsModeRaw,
+		})
+		require.Equal(t, types.LogprobsModeRaw, newSM(t, cfg).Config().LogprobsMode)
+	})
+
+	t.Run("legacy config without a mode normalizes to the default", func(t *testing.T) {
+		require.Equal(t, types.DefaultLogprobsMode, newSM(t, types.SessionConfig{}).Config().LogprobsMode)
+	})
+}

@@ -273,7 +273,7 @@ func (c *File) ApplyDefaults() {
 		c.Epoch.PocStartBlockHeight = c.BlockHeight - 50
 	}
 	if c.Params.LogprobsMode == "" {
-		c.Params.LogprobsMode = "raw"
+		c.Params.LogprobsMode = "raw_logprobs"
 	}
 	if c.Params.MaxNonce == 0 {
 		c.Params.MaxNonce = 500

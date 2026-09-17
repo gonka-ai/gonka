@@ -43,7 +43,6 @@ type Validator struct {
 	engine       *Engine
 	phase        *chain.Phase
 	boundVersion string
-	chainParams  ChainParamsProvider
 	thresholds   ValidationThresholdResolver
 }
 
@@ -56,7 +55,6 @@ func NewValidator(
 	engine *Engine,
 	phase *chain.Phase,
 	boundVersion string,
-	chainParams ChainParamsProvider,
 	thresholds ValidationThresholdResolver,
 ) *Validator {
 	return &Validator{
@@ -65,7 +63,6 @@ func NewValidator(
 		engine:       engine,
 		phase:        phase,
 		boundVersion: boundVersion,
-		chainParams:  chainParams,
 		thresholds:   thresholds,
 	}
 }
@@ -93,7 +90,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeValidate, fmt.Errorf("fetch payloads from executor: %w", err))
 	}
 
-	if _, err := completionapi.ModifyRequestBodyWithLogprobsMode(promptPayload, int32(req.InferenceID), v.chainParams.LogprobsMode()); err != nil {
+	if _, err := completionapi.ModifyRequestBodyWithLogprobsMode(promptPayload, int32(req.InferenceID), req.LogprobsMode); err != nil {
 		return nil, observability.Classify(observability.ReasonValidationBuildErr, observability.WhereRuntimeValidate, fmt.Errorf("modify request body for validation: %w", err))
 	}
 	if _, err := commonvalidation.UnmarshalResponsePayload(responsePayload); err != nil {
@@ -109,7 +106,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 			return v.executeMLRequest(ctx, req.Model, req.EscrowID, body)
 		},
 		req.InputTokens, req.OutputTokens,
-		v.chainParams.LogprobsMode(),
+		req.LogprobsMode,
 	)
 	if err != nil {
 		return nil, classifyExecuteValidationErr(err)

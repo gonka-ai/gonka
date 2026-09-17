@@ -10,8 +10,9 @@ type ExecuteRequest struct {
 	PromptHash  []byte
 	InputLength uint64
 	MaxTokens   uint64
-	EscrowID    string // Session escrow ID for namespaced payload storage
-	EpochID     uint64 // Epoch when the escrow was pinned on mainnet
+	EscrowID     string // Session escrow ID for namespaced payload storage
+	EpochID      uint64 // Epoch when the escrow was pinned on mainnet
+	LogprobsMode string
 
 	// ResponseWriter, if set, receives the raw ML node response as it streams.
 	// The engine should write inference output here for real-time forwarding.
@@ -42,6 +43,7 @@ type ValidateRequest struct {
 	EscrowID        string // Session escrow ID for building the payload URL path
 	EpochID         uint64 // Epoch when the executor stored the payload
 	ExecutorAddress string // Executor's validator address for signature verification
+	LogprobsMode    string
 }
 
 // ValidateResult contains the outcome of a validation.

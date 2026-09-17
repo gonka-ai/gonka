@@ -16,6 +16,7 @@ message SessionConfigProto {
   uint32 inference_seal_grace_nonces = 8;
   uint32 inference_seal_grace_seconds = 9;
   uint32 auto_seal_every_n_nonces = 10;
+  string logprobs_mode = 11;
 }
 
 message SlotAssignmentProto {

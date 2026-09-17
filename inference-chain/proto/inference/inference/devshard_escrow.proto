@@ -21,6 +21,7 @@ message DevshardEscrow {
   uint32 auto_seal_every_n_nonces = 14;
   uint32 validation_rate = 15;
   uint32 vote_threshold_factor = 16;
+  string logprobs_mode = 17;
 }
 
 message DevshardHostEpochStats {
