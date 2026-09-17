@@ -18,10 +18,40 @@ Public proxy (/devshard/...)
         └── versiond2 ──► devshardd ──┴── shared PostgreSQL
 ```
 
+## Release and images
+
+[Devshard v5.0.1](https://github.com/gonka-ai/gonka/releases/tag/devshard%2Fv5.0.1) — tag `devshard/v5.0.1`. Use join files, scripts and images from this release.
+
+| Component | Image |
+| --- | --- |
+| `versiond`, `versiond2` and additional replicas | `ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5` |
+| Router fleet | `ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5` |
+| Public `proxy` (HAProxy) | `ghcr.io/product-science/proxy-router:0.2.15-devshard-v5` |
+| `proxy-policy`, `proxy-policy2` (nginx) | `ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5` |
+| Catalog filter | `python:3.12-alpine` |
+| Local PostgreSQL, new installation | `postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777` |
+
+When directed by the installation or upgrade steps, run in `deploy/join` to append the image settings to `config.env`:
+
+```bash
+cat >> config.env <<'EOF'
+export VERSIOND_IMAGE=ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5
+export VERSIOND_ROUTER_IMAGE=ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5
+export PROXY_ROUTER_IMAGE=ghcr.io/product-science/proxy-router:0.2.15-devshard-v5
+export PROXY_POLICY_IMAGE=ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5
+export ORACLE_FILTER_IMAGE=python:3.12-alpine
+EOF
+source ./config.env
+```
+
+New local databases use the PostgreSQL image supplied by Compose. For upgrades, [retain the current database image](#1-prepare-the-release). Keep the existing standard join configuration.
+
+Test custom deployments and database changes on a data copy first: [acceptance plan](../devshard/docs/ha-host-updater-acceptance.md), [lifecycle test plan](../devshard/docs/devshard-host-ha-test-plan.md).
+
 ## Prerequisites
 
 1. Working `node` + `api` (dapi) + `proxy` on the host (standard join deployment).
-2. Join files and host/gateway images from the [same release](#release-reference).
+2. Join files and host/gateway images from the [same release](#release-and-images).
 3. Same participant identity on every HA `versiond` replica:
    - Same `KEY_NAME` and keyring.
    - Same `ACCOUNT_PUBKEY`.
@@ -32,6 +62,7 @@ Only put PostgreSQL-capable versions (v4+) into the HA pool. Migration from pre-
 
 ## Contents
 
+- [Release and images](#release-and-images)
 - [Install a new host](#install-a-new-host)
 - [Upgrade an existing host](#upgrade-an-existing-host)
 - [Add a remote replica](#add-a-remote-replica)
@@ -115,6 +146,8 @@ On the join host:
 
 **1. Save the HA settings in `config.env`.**
 
+Apply [Release and images](#release-and-images) first.
+
 List approved protocol names on the node:
 
 ```bash
@@ -146,7 +179,7 @@ services:
   # Shared catalog of selected HA protocols for replicas and routers.
   oracle-filter:
     container_name: oracle-filter
-    image: python:3.12-alpine
+    image: ${ORACLE_FILTER_IMAGE:?set the component images in config.env}
     environment:
       - ORACLE_UPSTREAM=http://api:9100/versions
       - ORACLE_ALLOW=${VERSIOND_VERSIONS:?set the approved HA protocol list}
@@ -463,41 +496,26 @@ PYTHON
 
 A nonempty `git diff` stops this procedure without changing files or containers. This automatic path does not merge edits to tracked release files. Keep the saved diff and use a deployment-specific merge before retrying; do not run `git reset --hard`.
 
-Use the release's application images without editing your existing overrides. This creates a final image-only override for the configured replicas and proxies and appends it to `COMPOSE_FILE`. PostgreSQL, the filter and site settings are unchanged:
+Apply [Release and images](#release-and-images). If an earlier setup generated `docker-compose.devshard-release-images.override.yml`, remove it from `COMPOSE_FILE` so it cannot override these settings:
 
 ```bash
 (
   set -euo pipefail
   source ./config.env
   python3 <<'PYTHON'
-import json, os, pathlib, re, shlex, subprocess
-
-def model(args, env):
-    return json.loads(subprocess.check_output(["docker", "compose", *args,
-                                              "config", "--format", "json"], env=env))
-current = model([], os.environ)
-release_env = dict(os.environ)
-for name in ("VERSIOND_IMAGE", "VERSIOND_ROUTER_IMAGE", "PROXY_ROUTER_IMAGE", "PROXY_POLICY_IMAGE"):
-    release_env.pop(name, None)
-release = model(["--env-file", "/dev/null", "-f", "docker-compose.yml", "-f", "docker-compose.versiond.yml"], release_env)
-services = {}
-for name in current["services"]:
-    if re.fullmatch(r"versiond[0-9]*", name):
-        services[name] = {"image": release["services"]["versiond"]["image"]}
-    elif name in ("proxy", "proxy-policy", "proxy-policy2"):
-        services[name] = {"image": release["services"][name]["image"]}
-filename = "docker-compose.devshard-release-images.override.yml"
-pathlib.Path(filename).write_text(json.dumps({"services": services}, indent=2) + "\n")
-files = [f for f in os.environ["COMPOSE_FILE"].split(":") if f != filename]
-files.append(filename)
-with pathlib.Path("config.env").open("a") as config:
-    config.write("\nexport COMPOSE_FILE=" + shlex.quote(":".join(files)) + "\n")
-    config.write("export VERSIOND_ROUTER_IMAGE=" + shlex.quote(release_env.get("VERSIOND_ROUTER_IMAGE", "")) + "\n")
+import os, pathlib, shlex
+name = "docker-compose.devshard-release-images.override.yml"
+files = os.environ.get("COMPOSE_FILE", "").split(":")
+filtered = [f for f in files if pathlib.Path(f).name != name]
+if filtered != files:
+    with pathlib.Path("config.env").open("a") as config:
+        config.write("\nexport COMPOSE_FILE=" + shlex.quote(":".join(filtered)) + "\n")
 PYTHON
 )
+source ./config.env
 ```
 
-Keep the generated override last in `COMPOSE_FILE`. Do not edit it; rerun this step for the next release. The fleet uses its supplied default router image when `VERSIOND_ROUTER_IMAGE` is empty. Deployments requiring custom application images need their own release-specific image selection.
+Site overrides must use these image variables rather than hard-coded application images.
 
 Local PostgreSQL: save its current image digest in `DEVSHARD_POSTGRES_IMAGE` using the command below.
 
@@ -550,11 +568,10 @@ Stop if a protocol is not running or the list includes pre-HA versions. This pro
 
 </details>
 
-Clear previously loaded image values, reload and validate:
+Reload and validate:
 
 ```bash
 cd /path/to/gonka/deploy/join
-unset VERSIOND_IMAGE VERSIOND_ROUTER_IMAGE PROXY_ROUTER_IMAGE PROXY_POLICY_IMAGE
 source ./config.env
 # Keep every active override in the ordered COMPOSE_FILE saved in config.env.
 : "${COMPOSE_FILE:?set the complete Compose file list in config.env}"
@@ -1149,7 +1166,7 @@ Wait for shutdown to finish. Check the restarted replica before restarting the n
 
 Keep the same database, participant identity, protocol list and data mounts. Replace one replica at a time; another replica must serve each protocol.
 
-1. Use the target release's files. Review image overrides as in [Prepare the release](#1-prepare-the-release), then run `unset VERSIOND_IMAGE` and `source ./config.env`.
+1. Use the target release's files. Apply the image settings from [Prepare the release](#1-prepare-the-release).
 2. For a remote member, remove its entry from `versiond-endpoints.json` on A and run [membership maintenance](#3-add-b-to-the-router-pool). On the member's machine, list services and select the replica to replace:
 
    ```bash
@@ -1251,13 +1268,3 @@ If the old Docker volume was detached, use the recovery block in [Check the data
 ### Resolve an unready member
 
 Check the selected catalog, binary URL/SHA256, child logs and database access. Every selected protocol must pass its readiness check. Do not replace `/readyz` with a single-protocol Docker healthcheck. Do not enable updater bypass flags to hide a failure.
-
-## Reference
-
-### Release reference
-
-**Release:** [Devshard v5.0.1](https://github.com/gonka-ai/gonka/releases/tag/devshard%2Fv5.0.1), tag `devshard/v5.0.1`.
-
-Use join files, scripts and images from the same release. For later releases, follow their upgrade instructions.
-
-Validate nonstandard deployments and database changes on a data copy first. Extended checks: [acceptance plan](../devshard/docs/ha-host-updater-acceptance.md), [lifecycle test plan](../devshard/docs/devshard-host-ha-test-plan.md).
