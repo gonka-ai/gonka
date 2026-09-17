@@ -45,6 +45,18 @@ docker logs --tail 20 trainshardd
 inferenced query txs --query "message.action='/inference.inference.MsgRefreshTrainingNodeOptIn'" -o json | jq -r '.txs[-1].height'
 ```
 
+Once a node is reserved the same log says what it is still waiting on, one
+line per change, and `node prepared` when it is ready:
+
+```
+INFO node not prepared node_id=node1 waiting_for="node not drained from inference, base image not pulled"
+INFO node not prepared node_id=node1 waiting_for="no mesh identity"
+INFO node prepared node_id=node1
+```
+
+A node that waits on the same thing for longer than the daemon's patience
+(`TRAINSHARD_PREPARE_DEADLINE`, default 30m) is handed back to the chain.
+
 ## On the coordinator
 
 1. Take the GPU profile string from the hardware the hosts report, it is
@@ -127,6 +139,7 @@ export TRAINSHARD_KEYRING_BACKEND=test      # default: file
 ```
 shard=$(trainshardctl assemble <trainshard-proposal-id>)
 trainshardctl prepare $shard --wait 5m        # default: 30m
+trainshardctl status $shard                   # PREPARED true; REASON says what a false one waits on
 ```
 
 2. Place and start the run:

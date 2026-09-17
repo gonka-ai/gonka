@@ -118,6 +118,7 @@ func byParticipant(nodes []vo.NodeRef) ([]vo.Participant, map[vo.Participant][]v
 type NodeStatus struct {
 	NodeResult
 	Prepared       bool
+	Waiting        string
 	MeshUp         bool
 	GPUsInUse      int
 	DiskBytes      int64
@@ -162,6 +163,7 @@ func StatusOf(node vo.NodeRef, desired Desired, observed Observed, fault *shared
 			Fault:    fault,
 		},
 		Prepared:       Prepared(desired, observed),
+		Waiting:        Unprepared(desired, observed),
 		MeshUp:         observed.MeshUp,
 		GPUsInUse:      observed.GPUsInUse,
 		DiskBytes:      observed.DiskUsedBytes,

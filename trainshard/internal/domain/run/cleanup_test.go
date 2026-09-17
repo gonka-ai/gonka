@@ -35,7 +35,7 @@ func TestCleanupPlanKeepsTheSameOrder(t *testing.T) {
 	}
 }
 
-func TestCleanupPlanLetsGoOfTheShardOnlyWhenNothingIsLeft(t *testing.T) {
+func TestCleanupPlanHandsTheNodeBackOnlyWhenNothingIsLeft(t *testing.T) {
 	cases := []struct {
 		name     string
 		desired  run.Desired
@@ -67,15 +67,21 @@ func TestCleanupPlanLetsGoOfTheShardOnlyWhenNothingIsLeft(t *testing.T) {
 			want:     []run.Action{{Kind: run.ActionKillGPUProcesses}, {Kind: run.ActionRemoveContainer}},
 		},
 		{
-			name:     "never drained, so only the shard is let go of",
+			name:     "not drained, handed back all the same so a half return is finished",
 			desired:  cleaning,
 			observed: run.Observed{},
-			want:     []run.Action{{Kind: run.ActionForgetRun}},
+			want:     []run.Action{{Kind: run.ActionReturnNode}},
 		},
 		{
 			name:     "no shard to let go of",
 			desired:  run.Desired{},
 			observed: run.Observed{},
+			want:     nil,
+		},
+		{
+			name:     "drained by the operator, no run behind it, so left alone",
+			desired:  run.Desired{},
+			observed: run.Observed{Drained: true},
 			want:     nil,
 		},
 	}

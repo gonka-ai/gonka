@@ -16,6 +16,7 @@ type Reconciler struct {
 	watcher   shard.ChainWatcher
 	interval  time.Duration
 	log       *slog.Logger
+	notices   *Notices
 }
 
 func NewReconciler(
@@ -25,7 +26,7 @@ func NewReconciler(
 	interval time.Duration,
 	log *slog.Logger,
 ) *Reconciler {
-	return &Reconciler{nodes: nodes, reconcile: reconcile, watcher: watcher, interval: interval, log: log}
+	return &Reconciler{nodes: nodes, reconcile: reconcile, watcher: watcher, interval: interval, log: log, notices: NewNotices(log)}
 }
 
 func (r *Reconciler) Run(ctx context.Context) {
@@ -50,9 +51,14 @@ func (r *Reconciler) Run(ctx context.Context) {
 
 func (r *Reconciler) tick(ctx context.Context) {
 	for _, node := range r.nodes {
-		if err := r.reconcile.Execute(ctx, node); err != nil && ctx.Err() == nil {
-			r.log.ErrorContext(ctx, "reconcile failed", "node_id", node.NodeID, "error", err)
+		found, err := r.reconcile.Execute(ctx, node)
+		if err != nil {
+			if ctx.Err() == nil {
+				r.log.ErrorContext(ctx, "reconcile failed", "node_id", node.NodeID, "error", err)
+			}
+			continue
 		}
+		r.notices.Note(node, found)
 	}
 }
 

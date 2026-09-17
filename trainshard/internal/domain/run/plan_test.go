@@ -325,3 +325,30 @@ func TestPrepared(t *testing.T) {
 		})
 	}
 }
+
+func TestUnprepared(t *testing.T) {
+	cases := []struct {
+		name string
+		d    run.Desired
+		o    run.Observed
+		want string
+	}{
+		{"prepared says nothing", reservedDesired(), preparedObserved(), ""},
+		{"not reserved", run.Desired{}, preparedObserved(), "not reserved"},
+		{"waiting on the dapi", reservedDesired(), func() run.Observed { o := preparedObserved(); o.Drained = false; return o }(), "node not drained from inference"},
+		{"cards still busy", reservedDesired(), func() run.Observed { o := preparedObserved(); o.ForeignGPUWork = true; return o }(), "foreign work on the gpus"},
+		{"everything at once", reservedDesired(), run.Observed{ForeignGPUWork: true},
+			"node not drained from inference, foreign work on the gpus, base image not pulled, no mesh identity"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// act
+			got := run.Unprepared(tc.d, tc.o)
+
+			// assert
+			if got != tc.want {
+				t.Fatalf("Unprepared = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

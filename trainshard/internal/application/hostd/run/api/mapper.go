@@ -212,6 +212,7 @@ func toStatusOutput(statuses []run.NodeStatus) contract.StatusResult {
 		items = append(items, contract.NodeStatus{
 			NodeResult:     toNodeResult(status.NodeResult),
 			Prepared:       status.Prepared,
+			Waiting:        status.Waiting,
 			MeshUp:         status.MeshUp,
 			GPUsInUse:      status.GPUsInUse,
 			DiskBytes:      status.DiskBytes,

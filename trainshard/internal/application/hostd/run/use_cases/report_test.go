@@ -18,7 +18,7 @@ func TestReportTellsEveryImageTheNodeRan(t *testing.T) {
 		t.Fatalf("deploy: %v", err)
 	}
 	for range 2 {
-		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
 	}

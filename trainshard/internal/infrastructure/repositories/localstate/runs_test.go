@@ -83,3 +83,32 @@ func TestTheClocksAHostHandsANodeBackByOutliveARestart(t *testing.T) {
 		t.Fatalf("got reserved %v unready %v, want %v and %v", reopened.ReservedAt, reopened.UnpreparedAt, reservedAt, slipped)
 	}
 }
+
+func TestADeployForAnotherShardStartsFromNothing(t *testing.T) {
+
+	dir, ctx := t.TempDir(), context.Background()
+	reservedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	spec := run.RunSpec{Image: vo.ImageDigest("run@sha256:" + strings.Repeat("b", 64))}
+	if err := run.RecordReservation(ctx, openRuns(t, dir), node, 7, reservedAt); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	state, _, err := openRuns(t, dir).Load(ctx, node)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := run.TrackPreparedness(ctx, openRuns(t, dir), node, &state, run.Desired{Reserved: true}, run.Observed{}, reservedAt.Add(time.Hour)); err != nil {
+		t.Fatalf("track: %v", err)
+	}
+
+	if err := run.RecordDeploy(ctx, openRuns(t, dir), node, 8, spec); err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+
+	reopened, _, err := openRuns(t, dir).Load(ctx, node)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if reopened.Shard != 8 || !reopened.ReservedAt.IsZero() || !reopened.UnpreparedAt.IsZero() {
+		t.Fatalf("got %+v, want the clocks of shard 7 gone with it", reopened)
+	}
+}

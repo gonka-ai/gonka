@@ -426,6 +426,36 @@ func (c SetNodeAdminStateCommand) modifyNodeAdminState(b *Broker, currentEpoch u
 	return nil
 }
 
+// SetNodeStoppedCommand holds a node's mlnode stopped, or lifts that hold
+type SetNodeStoppedCommand struct {
+	NodeId   string
+	Stopped  bool
+	Response chan error
+}
+
+func (c SetNodeStoppedCommand) GetResponseChannelCapacity() int {
+	return cap(c.Response)
+}
+
+func (c SetNodeStoppedCommand) Execute(b *Broker) {
+	b.mu.Lock()
+	node, exists := b.nodes[c.NodeId]
+	if !exists {
+		b.mu.Unlock()
+		c.Response <- fmt.Errorf("node not found: %s", c.NodeId)
+		return
+	}
+	node.State.AdminState.Stopped = c.Stopped
+	if c.Stopped {
+		node.State.pinStopped()
+	}
+	b.mu.Unlock()
+
+	logging.Info("Updated node stopped state", types.Nodes, "node_id", c.NodeId, "stopped", c.Stopped)
+	b.TriggerReconciliation()
+	c.Response <- nil
+}
+
 // UpdateNodeHardwareCommand updates the Hardware field for a specific node
 type UpdateNodeHardwareCommand struct {
 	NodeId   string

@@ -1,6 +1,10 @@
 package run
 
-import "trainshard/internal/domain/shared/vo"
+import (
+	"strings"
+
+	"trainshard/internal/domain/shared/vo"
+)
 
 func Plan(d Desired, o Observed) []Action {
 	if !d.Reserved || !d.Active {
@@ -58,4 +62,24 @@ func Plan(d Desired, o Observed) []Action {
 
 func Prepared(d Desired, o Observed) bool {
 	return d.Reserved && o.Drained && !o.ForeignGPUWork && o.HasImage(d.BaseImage) && o.MeshKey
+}
+
+func Unprepared(d Desired, o Observed) string {
+	if !d.Reserved {
+		return "not reserved"
+	}
+	waiting := make([]string, 0, 4)
+	if !o.Drained {
+		waiting = append(waiting, "node not drained from inference")
+	}
+	if o.ForeignGPUWork {
+		waiting = append(waiting, "foreign work on the gpus")
+	}
+	if !o.HasImage(d.BaseImage) {
+		waiting = append(waiting, "base image not pulled")
+	}
+	if !o.MeshKey {
+		waiting = append(waiting, "no mesh identity")
+	}
+	return strings.Join(waiting, ", ")
 }
