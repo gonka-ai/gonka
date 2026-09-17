@@ -29,7 +29,7 @@ Public proxy (/devshard/...)
 | Public `proxy` (HAProxy) | `ghcr.io/product-science/proxy-router:0.2.15-devshard-v5` |
 | `proxy-policy`, `proxy-policy2` (nginx) | `ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5` |
 | Catalog filter | `python:3.12-alpine` |
-| Local PostgreSQL, new installation | `postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777` |
+| Local PostgreSQL, new installation | PostgreSQL 16 Alpine |
 
 When directed by the installation or upgrade steps, run in `deploy/join` to append the image settings to `config.env`:
 
