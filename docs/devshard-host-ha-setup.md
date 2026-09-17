@@ -23,16 +23,7 @@ Public proxy (/devshard/...)
 
 ## Release and images
 
-[Devshard v5.0.1](https://github.com/gonka-ai/gonka/releases/tag/devshard%2Fv5.0.1) — tag `devshard/v5.0.1`. Use join files, scripts and images from this release.
-
-| Component | Image |
-| --- | --- |
-| `versiond`, `versiond2` and additional replicas | `ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5` |
-| Router fleet | `ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5` |
-| Public `proxy` (HAProxy) | `ghcr.io/gonka-ai/proxy-router:0.2.15-devshard-v5` |
-| `proxy-policy`, `proxy-policy2` (nginx) | `ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5` |
-| Catalog filter | `python:3.12-alpine` |
-| Local PostgreSQL | `postgres:16-alpine` |
+This guide covers [Devshard v5.0.1](https://github.com/gonka-ai/gonka/releases/tag/devshard%2Fv5.0.1).
 
 Edit `deploy/join/config.env`. Set the variables below to the shown values.
 
@@ -43,8 +34,6 @@ export PROXY_ROUTER_IMAGE=ghcr.io/gonka-ai/proxy-router:0.2.15-devshard-v5
 export PROXY_POLICY_IMAGE=ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5
 export ORACLE_FILTER_IMAGE=python:3.12-alpine
 ```
-
-Local PostgreSQL uses the image pinned in `docker-compose.versiond.yml`.
 
 ## Prerequisites
 
