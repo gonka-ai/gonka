@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	corestore "cosmossdk.io/core/store"
@@ -666,6 +667,67 @@ func TestProcessCompletedPostProcessRetries_RemovesMissingRequestQueueEntry(t *t
 	queueValue, err = kvStore.Get(types.CompletedPostProcessRetryKey(requestID))
 	require.NoError(t, err)
 	require.Nil(t, queueValue)
+}
+
+func TestProcessCompletedPostProcessRetries_AbandonsAfterMaxAttempts(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+
+	prevMax := maxCompletedPostProcessRetryAttempts
+	maxCompletedPostProcessRetryAttempts = 3
+	defer func() { maxCompletedPostProcessRetryAttempts = prevMax }()
+
+	hook := &retryTestBlsHook{
+		completedErr: errors.New("persistent failure"),
+	}
+	require.NoError(t, k.SetHooks(hook))
+
+	requestID := bytes.Repeat([]byte{0x8C}, 32)
+	request := &types.ThresholdSigningRequest{
+		RequestId:      requestID,
+		CurrentEpochId: 888,
+		Status:         types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED,
+	}
+	require.NoError(t, k.storeThresholdSigningRequest(ctx, request))
+
+	kvStore := k.storeService.OpenKVStore(ctx)
+	k.enqueueCompletedPostProcessRetry(ctx, requestID)
+
+	// The first maxAttempts-1 passes keep retrying and increment the counter
+	// without abandoning the entry.
+	for attempt := uint32(1); attempt < maxCompletedPostProcessRetryAttempts; attempt++ {
+		require.NoError(t, k.ProcessCompletedPostProcessRetries(ctx))
+
+		queueValue, err := kvStore.Get(types.CompletedPostProcessRetryKey(requestID))
+		require.NoError(t, err)
+		require.NotNil(t, queueValue, "entry should remain queued before reaching the cap")
+		require.Equal(t, attempt, completedPostProcessRetryAttempts(queueValue))
+	}
+
+	// The final pass exhausts the budget: the entry is removed and an
+	// abandonment event is emitted.
+	abandonCtx := ctx.WithEventManager(sdk.NewEventManager())
+	require.NoError(t, k.ProcessCompletedPostProcessRetries(abandonCtx))
+
+	queueValue, err := kvStore.Get(types.CompletedPostProcessRetryKey(requestID))
+	require.NoError(t, err)
+	require.Nil(t, queueValue, "entry should be abandoned once attempts reach the cap")
+
+	var abandonEvent *sdk.Event
+	for i := range abandonCtx.EventManager().Events() {
+		if abandonCtx.EventManager().Events()[i].Type == eventTypeCompletedPostProcessRetryAbandoned {
+			abandonEvent = &abandonCtx.EventManager().Events()[i]
+			break
+		}
+	}
+	require.NotNil(t, abandonEvent, "expected an abandonment event")
+
+	attrs := map[string]string{}
+	for _, attr := range abandonEvent.Attributes {
+		attrs[attr.Key] = attr.Value
+	}
+	require.Equal(t, fmt.Sprintf("%x", requestID), attrs[attrKeyAbandonedRequestID])
+	require.Equal(t, "888", attrs[attrKeyAbandonedEpochID])
+	require.Equal(t, fmt.Sprintf("%d", maxCompletedPostProcessRetryAttempts), attrs[attrKeyAbandonedAttempts])
 }
 
 type retryTestBlsHook struct {
