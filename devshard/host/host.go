@@ -477,20 +477,31 @@ func (h *Host) IsWarmKeyAddress(addr string) bool {
 	return h.sm.IsWarmKeyAddress(addr)
 }
 
-// IsWarmKeyForSlot returns true if addr is an authorized warm key for the
-// given slot, either via existing state bindings or via the bridge resolver.
-func (h *Host) IsWarmKeyForSlot(addr string, slotID uint32) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	warmKeys := h.sm.WarmKeys()
-	if warmKeys[slotID] == addr {
-		return true
-	}
-	expected, ok := h.slotToAddr[slotID]
-	return ok && h.sm.CheckWarmKey(addr, expected)
-}
-
 func (h *Host) Signer() signing.Signer { return h.signer }
+
+// SlotActors is the host-signature identity set for this escrow (cold keys,
+// bound warm keys, live authz). Same rule as HeightAck L2 and confirm/finish.
+//
+// The returned value memoises its authz lookups, so a caller that checks two
+// identities for one request -- the repair handler checks the signer and the
+// HTTP sender -- should reuse one value rather than call this twice. The memo
+// is not synchronised; treat the value as request-scoped.
+func (h *Host) SlotActors() signing.SlotActors {
+	authz := make(map[[2]string]bool, 2)
+	return signing.SlotActors{
+		SlotKeys: h.slotToAddr,
+		WarmKeys: h.sm.WarmKeys(),
+		AcceptWarm: func(_ uint32, recovered, expected string) bool {
+			pair := [2]string{recovered, expected}
+			ok, seen := authz[pair]
+			if !seen {
+				ok = h.sm.CheckWarmKey(recovered, expected)
+				authz[pair] = ok
+			}
+			return ok
+		},
+	}
+}
 
 // HeightSyncEscrowHints returns escrow-derived height-sync cadence hints after applied diffs.
 func (h *Host) HeightSyncEscrowHints(defaultK, defaultSlots uint64) *heightsync.EscrowHeightSyncHints {
@@ -1623,11 +1634,8 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 	if err != nil {
 		return fmt.Errorf("recover address: %w", err)
 	}
-	if addr != expected {
-		warmKeys := h.sm.WarmKeys()
-		if warmKeys[senderSlot] != addr && !h.sm.CheckWarmKey(addr, expected) {
-			return fmt.Errorf("sig from slot %d: expected %s, got %s", senderSlot, expected, addr)
-		}
+	if !h.SlotActors().Allows(senderSlot, addr) {
+		return fmt.Errorf("sig from slot %d: expected %s, got %s", senderSlot, expected, addr)
 	}
 
 	// Verify stateHash matches stored record.

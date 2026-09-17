@@ -50,6 +50,30 @@ func TestVerifyAck_RejectsWrongSlotKey(t *testing.T) {
 	require.Error(t, VerifyAck(signing.NewSecp256k1Verifier(), ack, other.Address()))
 }
 
+func TestVerifyAckAllowed_ColdWarmSibling(t *testing.T) {
+	cold := testutil.MustGenerateKey(t)
+	other := testutil.MustGenerateKey(t)
+	warm := testutil.MustGenerateKey(t)
+	ack := testAck()
+	ack.SlotId = 1
+	require.NoError(t, SignAck(warm, ack))
+
+	v := signing.NewSecp256k1Verifier()
+	require.Error(t, VerifyAck(v, ack, cold.Address()), "exact match against cold must fail")
+
+	actors := signing.SlotActors{
+		SlotKeys: map[uint32]string{0: cold.Address(), 1: cold.Address(), 2: other.Address()},
+		WarmKeys: map[uint32]string{0: warm.Address()},
+	}
+	require.NoError(t, VerifyAckAllowed(v, ack, actors), "sibling bound warm key")
+
+	actors.WarmKeys = nil
+	actors.AcceptWarm = func(slotID uint32, recovered, expected string) bool {
+		return slotID == 1 && recovered == warm.Address() && expected == cold.Address()
+	}
+	require.NoError(t, VerifyAckAllowed(v, ack, actors), "AcceptWarm")
+}
+
 func TestCanonicalAckBytes_DomainSeparated(t *testing.T) {
 	ack := testAck()
 	b1, err := CanonicalAckBytes(ack)

@@ -182,8 +182,9 @@ func (sm *StateMachine) logPlaneStateLocked() heightsync.LogPlaneState {
 		SlotsNum: uint64(len(sm.state.Group)),
 		SlotKeys: sm.slotToAddress,
 		WarmKeys: sm.state.WarmKeys,
-		AcceptWarm: func(slotID uint32, recovered, expected string) bool {
-			_ = slotID
+		// Non-binding: L2 only admits the signer. applyHeightAck is what
+		// caches the binding into state.
+		AcceptWarm: func(_ uint32, recovered, expected string) bool {
 			return sm.CheckWarmKey(recovered, expected)
 		},
 		Verifier: sm.verifier,

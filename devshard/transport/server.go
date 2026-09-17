@@ -896,10 +896,8 @@ func (s *Server) HandleGossipNonce(c echo.Context) (err error) {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid slot id")
 	}
 
-	// Verify stateSig recovers to the claimed slot's address.
+	// Verify stateSig recovers to an actor for the claimed slot.
 	// SlotIDs are compact 0..len(group)-1 so direct index is safe after bounds check above.
-	expectedAddr := s.host.Group()[req.SlotID].ValidatorAddress
-
 	sigContent := &types.StateSignatureContent{
 		StateRoot: req.StateHash,
 		EscrowId:  s.host.EscrowID(),
@@ -909,14 +907,10 @@ func (s *Server) HandleGossipNonce(c echo.Context) (err error) {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "marshal sig content")
 	}
-	addr, err := s.verifier.RecoverAddress(sigData, req.StateSig)
-	if err != nil {
+	if addr, err := s.verifier.RecoverAddress(sigData, req.StateSig); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid gossip state signature")
-	}
-	if addr != expectedAddr {
-		if !s.host.IsWarmKeyForSlot(addr, req.SlotID) {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid gossip state signature")
-		}
+	} else if !s.host.SlotActors().Allows(req.SlotID, addr) {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid gossip state signature")
 	}
 
 	if s.gossip != nil {
