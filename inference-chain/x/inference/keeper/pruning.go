@@ -50,6 +50,7 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 		k.GetClaimRecipientPruner(params),
 		k.GetEpochZeroInferencePruner(params),
 		k.GetInferenceValidationDetailsPruner(params),
+		developerStatsPruner{},
 	}
 	budget := PruneWorkPerBlock
 	first := int(uint64(sdk.UnwrapSDKContext(ctx).BlockHeight()) % uint64(len(pruners)))
