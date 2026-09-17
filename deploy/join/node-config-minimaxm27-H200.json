@@ -8,6 +8,8 @@
     "models": {
       "MiniMaxAI/MiniMax-M2.7": {
         "args": [
+          "--max-num-batched-tokens",
+          "32768",
           "--revision", "d494266a4affc0d2995ba1fa35c8481cbd84294b",
           "--tensor-parallel-size", "2",
           "--gpu-memory-utilization", "0.92",

@@ -8,6 +8,8 @@
     "models": {
       "moonshotai/Kimi-K2.6": {
         "args": [
+          "--max-num-batched-tokens",
+          "32768",
           "--tensor-parallel-size", "4",
           "--enable-expert-parallel",
           "--trust-remote-code",
