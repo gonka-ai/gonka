@@ -15,7 +15,8 @@ Public proxy (/devshard/...)
  versiond-router fleet
         │
         ├── versiond  ──► devshardd ──┐
-        └── versiond2 ──► devshardd ──┴── shared PostgreSQL
+        ├── versiond2 ──► devshardd ──┼── shared PostgreSQL
+        └── versiond3 ──► devshardd ──┘
 ```
 
 ## Release and images
