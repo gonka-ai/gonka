@@ -275,9 +275,10 @@ The host updater supports the bundled PostgreSQL and an external writable
 PostgreSQL endpoint reachable from the deployment network without custom TLS
 configuration. PostgreSQL TLS deployment and certificate management are outside
 this updater's scope. It rejects explicitly configured `PGSSL*` options,
-except `PGSSLMODE=disable`; leave them unset for the stock deployment. This
-restriction applies to host updates, not the separate `--check-storage` command
-whose reference connection uses a local PostgreSQL client.
+except `PGSSLMODE=disable`; leave them unset for the stock deployment. The
+separate `--check-storage` command now runs its PostgreSQL client in Docker
+and has the same restriction. It no longer uses host TLS certificate files.
+Do not disable TLS required by a provider to use these commands.
 
 The write probe opens PostgreSQL with the model's credentials from a temporary
 helper container. It creates and drops a temporary table, so a read-only
@@ -528,15 +529,29 @@ On each **remote machine**:
 2. Copy `.inference/keyring-file` from the network node into `./.inference`;
    the same `KEY_NAME` and `KEYRING_PASSWORD` apply.
 3. `docker compose -f docker-compose.versiond-remote.yml up -d --wait`.
-4. Install `psql` (the PostgreSQL client) and `jq` on this host. Copy
+4. Install `jq` on this host. The PostgreSQL client (`psql`) runs in Docker. Copy
    `pool-postgres.env.template` to `pool-postgres.env`, set its permissions
    to `600`, and fill it with the existing pool's known working PostgreSQL
    connection settings. Obtain these independently of the replica being
-   checked; certificate paths refer to files on this host. Then run:
+   checked. For password authentication, set `PGPASSWORD` in this file;
+   the host's `.pgpass` is not read. Then run:
 
    ```bash
    ./update-devshard.sh --check-storage --reference-env ./pool-postgres.env
    ```
+
+   The client image defaults to `postgres:16-alpine`. To select another image,
+   set `VERSIOND_STORAGE_CHECK_IMAGE` in `pool-postgres.env` or export it in
+   the shell; this mode does not read `config.env`. This setting does not
+   change the PostgreSQL server image. Preload the image with `docker pull`
+   for offline operation; otherwise the checker downloads it with a
+   five-minute timeout before acquiring the deployment lock.
+
+   Use Linux Docker Engine with host networking. `PGHOST` must be a TCP
+   endpoint reachable from the client container. Host Unix sockets and TLS
+   certificate files are not mounted. Rootless Docker before Engine 29.5
+   isolates the container's host network; Docker Desktop needs host networking
+   enabled. In those environments, host loopback reachability alone is insufficient.
 
    Continue only when it prints `Storage check passed` and exits with code 0.
    It checks the running `versiond` container without requiring the network
