@@ -26,7 +26,7 @@ Public proxy (/devshard/...)
    - Same `KEY_NAME` and keyring.
    - Same `ACCOUNT_PUBKEY`.
 4. Shared PostgreSQL; a separate data directory for each replica. Do not start a second dapi with the same keys.
-5. Docker Compose **2.24.4+**, Bash, Python 3, `curl`, `jq`, `flock`, `sha256sum`, `timeout`.
+5. Docker Compose **2.24.4+**, Bash, Python 3, Git, `tar`, `curl`, `jq`, `flock`, `sha256sum`, `timeout`, `xargs`. Remote hosts also need `ssh`, `psql` and SSH access between A and B.
 
 Only put PostgreSQL-capable versions (v4+) into the HA pool. Migration from pre-HA deployments such as `v3` is not covered here.
 
@@ -61,10 +61,14 @@ External PostgreSQL: use a direct connection or session-mode pooling. Transactio
 
 #### Where to put PostgreSQL settings
 
-Add the database password to `deploy/join/config.env`:
+Run in `deploy/join`. For a new local database, choose a new password. For an existing database, use its current password from your database administrator:
 
 ```bash
-export DEVSHARD_POSTGRES_PASSWORD='<strong-password>'
+umask 077
+read -r -s -p 'PostgreSQL password: ' DEVSHARD_POSTGRES_PASSWORD
+printf '\n'
+[[ -n "$DEVSHARD_POSTGRES_PASSWORD" ]] || exit 1
+printf '\nexport DEVSHARD_POSTGRES_PASSWORD=%q\n' "$DEVSHARD_POSTGRES_PASSWORD" >> config.env
 ```
 
 Database and user default to `devshardd`; override with `DEVSHARD_POSTGRES_DB` and `DEVSHARD_POSTGRES_USER`.
@@ -86,7 +90,13 @@ docker run --rm --network none --read-only \
   "${POSTGRES_MIGRATION_HELPER_IMAGE:-${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}}"
 ```
 
-On permission errors, check the parent directory. Do not change database ownership.
+If the command fails, stop and inspect the directory permissions:
+
+```bash
+ls -ld -- "$(dirname "$pg_dir")" "$pg_dir"
+```
+
+Do not change database ownership. Permission repair depends on the host's storage configuration and is outside this procedure.
 
 ### Step 2 - Run multiple `versiond` instances + the router fleet
 
@@ -349,13 +359,147 @@ For routine updates, run only the service checks in §4.1.
 
 ## Upgrade an existing host
 
+This procedure requires a Git checkout with site settings in `config.env` and separate Compose overrides.
+
+### Back up PostgreSQL and deployment files
+
+Run on the existing join host, from its `deploy/join` directory, before replacing release files. Keep this shell open for the release preparation steps. The running `versiond` supplies the database connection and active Compose file list.
+
+```bash
+source ./config.env || exit 1
+umask 077
+mkdir -p backups || exit 1
+BACKUP_DIR=$(mktemp -d "$PWD/backups/pre-update.XXXXXXXX") || exit 1
+export BACKUP_DIR
+printf 'Backup directory: %s\n' "$BACKUP_DIR"
+(
+  set -euo pipefail
+  git rev-parse HEAD > "$BACKUP_DIR/previous-commit"
+  docker inspect versiond > "$BACKUP_DIR/versiond.json"
+  python3 - "$BACKUP_DIR" <<'PYTHON'
+import json, os, pathlib, shutil, subprocess, sys
+backup = pathlib.Path(sys.argv[1])
+container = json.loads((backup / "versiond.json").read_text())[0]
+labels = container["Config"]["Labels"]
+files = [pathlib.Path("config.env").resolve()]
+files += [pathlib.Path(p) for p in labels["com.docker.compose.project.config_files"].split(",")]
+if os.environ.get("VERSIOND_POOL_ENDPOINTS_FILE"):
+    files.append(pathlib.Path(os.environ["VERSIOND_POOL_ENDPOINTS_FILE"]).resolve())
+manifest, local_files = [], []
+for src in dict.fromkeys(files):
+    if not src.is_file():
+        sys.exit(f"Missing deployment file: {src}")
+    dst = backup / "files" / str(src).lstrip("/")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    manifest.append(str(src))
+    tracked = subprocess.run(["git", "ls-files", "--error-unmatch", str(src)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    if not tracked or src.name == "config.env" or str(src) == str(pathlib.Path(os.environ.get("VERSIOND_POOL_ENDPOINTS_FILE", "")).resolve()):
+        local_files.append(str(src))
+(backup / "files.json").write_text(json.dumps(manifest, indent=2))
+(backup / "local-files.json").write_text(json.dumps(local_files, indent=2))
+env = dict(item.split("=", 1) for item in container["Config"]["Env"])
+pg = {k: v for k, v in env.items() if k.startswith("PG") and k != "PG_POOL_MAX_CONNS"}
+if not pg.get("PGHOST") or any("\n" in v or "\r" in v for v in pg.values()):
+    sys.exit("Expected an existing PostgreSQL-backed versiond")
+(backup / "postgres.env").write_text("".join(f"{k}={v}\n" for k, v in pg.items()))
+(backup / "project").write_text(labels["com.docker.compose.project"])
+PYTHON
+  project=$(cat "$BACKUP_DIR/project")
+  docker ps -aq --filter "label=com.docker.compose.project=$project" |
+    xargs -r docker inspect > "$BACKUP_DIR/containers.json"
+  if docker inspect devshard-postgres > "$BACKUP_DIR/postgres.json" 2>/dev/null; then
+    [[ $(docker inspect devshard-postgres --format '{{index .Config.Labels "com.docker.compose.project"}}') == "$project" ]]
+    docker exec devshard-postgres sh -c \
+      'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"' \
+      > "$BACKUP_DIR/postgres-system-identifier"
+  fi
+  docker pull postgres:16-alpine
+  pg_args=(--rm --network container:versiond --env-file "$BACKUP_DIR/postgres.env")
+  pg_major=$(docker run "${pg_args[@]}" postgres:16-alpine \
+    psql -XAtw -v ON_ERROR_STOP=1 -c "SELECT current_setting('server_version_num')::int / 10000")
+  [[ "$pg_major" =~ ^[1-9][0-9]*$ ]]
+  pg_client="postgres:$pg_major-alpine"
+  docker pull "$pg_client"
+  docker run "${pg_args[@]}" "$pg_client" pg_dump -w -Fc > "$BACKUP_DIR/database.dump"
+  docker run -i --rm "$pg_client" pg_restore --list < "$BACKUP_DIR/database.dump" \
+    > "$BACKUP_DIR/database.contents"
+  test -s "$BACKUP_DIR/database.contents"
+  printf '%s\n' "$pg_client" > "$BACKUP_DIR/pg-client"
+  echo 'Backup complete.'
+)
+```
+
+Continue only after `Backup complete.`. The backup contains passwords; keep it private. This checks the dump's structure, not a full restore. The downtime update takes another dump after stopping replicas.
+
 ### 1. Prepare the release
 
-1. Confirm the [prerequisites](#prerequisites). Back up PostgreSQL.
-2. Save `config.env`, Compose files, endpoint files, current image references and database mounts.
-3. Put the new release's join files in the **same deployment directory and Compose project**. Keep your configuration and overrides.
-4. Remove obsolete image overrides (`VERSIOND_IMAGE`, `VERSIOND_ROUTER_IMAGE`, `PROXY_ROUTER_IMAGE`, `PROXY_POLICY_IMAGE`) from `config.env` and Compose files, including old `image: ${VERSIOND_IMAGE:?...}` entries. Keep custom images only if compatible with the release.
-5. Local PostgreSQL: save its current image digest in `DEVSHARD_POSTGRES_IMAGE` (command below).
+Complete the [backup](#back-up-postgresql-and-deployment-files). Run in the same shell, from `deploy/join`. This procedure uses a Git checkout; local settings must be in `config.env` and separate, untracked Compose overrides. It stops before changing files if tracked files have local edits.
+
+```bash
+(
+  set -euo pipefail
+  : "${BACKUP_DIR:?complete the backup first}"
+  test -s "$BACKUP_DIR/database.contents"
+  test -s "$BACKUP_DIR/previous-commit"
+  git diff --binary > "$BACKUP_DIR/tracked.patch"
+  git diff --cached --binary > "$BACKUP_DIR/staged.patch"
+  git diff --exit-code
+  git diff --cached --exit-code
+  git fetch https://github.com/gonka-ai/gonka.git refs/tags/devshard/v5.0.1
+  git switch --detach FETCH_HEAD
+  # Confirm that config.env and the separate site overrides survived unchanged.
+  python3 - "$BACKUP_DIR" <<'PYTHON'
+import json, pathlib, sys
+backup = pathlib.Path(sys.argv[1])
+for name in json.loads((backup / "local-files.json").read_text()):
+    path = pathlib.Path(name)
+    if not path.is_file() or path.read_bytes() != (backup / "files" / name.lstrip("/")).read_bytes():
+        sys.exit(f"Local configuration changed: {path}; stop before updating containers")
+PYTHON
+)
+```
+
+A nonempty `git diff` stops this procedure without changing files or containers. This automatic path does not merge edits to tracked release files. Keep the saved diff and use a deployment-specific merge before retrying; do not run `git reset --hard`.
+
+Use the release's application images without editing your existing overrides. This creates a final image-only override for the configured replicas and proxies and appends it to `COMPOSE_FILE`. PostgreSQL, the filter and site settings are unchanged:
+
+```bash
+(
+  set -euo pipefail
+  source ./config.env
+  python3 <<'PYTHON'
+import json, os, pathlib, re, shlex, subprocess
+
+def model(args, env):
+    return json.loads(subprocess.check_output(["docker", "compose", *args,
+                                              "config", "--format", "json"], env=env))
+current = model([], os.environ)
+release_env = dict(os.environ)
+for name in ("VERSIOND_IMAGE", "VERSIOND_ROUTER_IMAGE", "PROXY_ROUTER_IMAGE", "PROXY_POLICY_IMAGE"):
+    release_env.pop(name, None)
+release = model(["--env-file", "/dev/null", "-f", "docker-compose.yml", "-f", "docker-compose.versiond.yml"], release_env)
+services = {}
+for name in current["services"]:
+    if re.fullmatch(r"versiond[0-9]*", name):
+        services[name] = {"image": release["services"]["versiond"]["image"]}
+    elif name in ("proxy", "proxy-policy", "proxy-policy2"):
+        services[name] = {"image": release["services"][name]["image"]}
+filename = "docker-compose.devshard-release-images.override.yml"
+pathlib.Path(filename).write_text(json.dumps({"services": services}, indent=2) + "\n")
+files = [f for f in os.environ["COMPOSE_FILE"].split(":") if f != filename]
+files.append(filename)
+with pathlib.Path("config.env").open("a") as config:
+    config.write("\nexport COMPOSE_FILE=" + shlex.quote(":".join(files)) + "\n")
+    config.write("export VERSIOND_ROUTER_IMAGE=" + shlex.quote(release_env.get("VERSIOND_ROUTER_IMAGE", "")) + "\n")
+PYTHON
+)
+```
+
+Keep the generated override last in `COMPOSE_FILE`. Do not edit it; rerun this step for the next release. The fleet uses its supplied default router image when `VERSIOND_ROUTER_IMAGE` is empty. Deployments requiring custom application images need their own release-specific image selection.
+
+Local PostgreSQL: save its current image digest in `DEVSHARD_POSTGRES_IMAGE` using the command below.
 
 Preserve during routine updates:
 
@@ -373,29 +517,36 @@ First HA setup: add the [installation settings](#install-a-new-host) to your exi
 <details>
 <summary><strong>Find the current PostgreSQL image digest</strong></summary>
 
-Run on the host with local PostgreSQL:
+Run in `deploy/join` on the host with local PostgreSQL. This saves a published digest for the running image:
 
 ```bash
-docker image inspect \
-  "$(docker inspect devshard-postgres --format '{{.Image}}')" \
-  --format '{{range .RepoDigests}}{{println .}}{{end}}'
+(
+  set -euo pipefail
+  image_id=$(docker inspect devshard-postgres --format '{{.Image}}')
+  digest=$(docker image inspect "$image_id" --format '{{json .RepoDigests}}' | jq -er '.[0]')
+  printf '\nexport DEVSHARD_POSTGRES_IMAGE=%q\n' "$digest" >> config.env
+)
 ```
 
-Save one printed digest as `DEVSHARD_POSTGRES_IMAGE` in `config.env`. If nothing is printed, obtain a published digest for the current compatible image first.
+If the image has no published digest, stop here. This upgrade procedure does not cover locally built PostgreSQL images.
 
 </details>
 
 <details>
 <summary><strong>If the old config.env has no VERSIOND_VERSIONS</strong></summary>
 
-Read the list from the running filter before changing or recreating it:
+Read the protocols running on the existing `versiond`; do not substitute the new-installation example:
 
 ```bash
-docker inspect oracle-filter --format '{{json .Config.Env}}' |
-  jq -er '.[] | select(startswith("ORACLE_ALLOW=")) | ltrimstr("ORACLE_ALLOW=") | gsub(","; " ") | select(length > 0)'
+(
+  set -euo pipefail
+  versions=$(docker exec versiond /bin/busybox wget -qO- http://127.0.0.1:8080/healthz |
+    jq -er 'if length > 0 and all(.[]; .status == "running" and (.name == "v4" or .name == "v4.1" or .name == "v5")) then map(.name) | join(" ") else error("Expected running HA protocols only; stop") end')
+  printf '\nexport VERSIOND_VERSIONS=%q\n' "$versions" >> config.env
+)
 ```
 
-Save the complete output as a quoted `VERSIOND_VERSIONS` value in `config.env`. If unavailable, recover it from the configuration backup. Never substitute the new-installation list.
+Stop if a protocol is not running or the list includes pre-HA versions. This procedure does not migrate those deployments.
 
 </details>
 
@@ -492,11 +643,14 @@ After success, continue with [Update with downtime](#update-with-downtime). Leav
 <details>
 <summary><strong>If the old volume was already detached</strong></summary>
 
-Keep all replicas stopped. Complete [directory preparation](#prepare-the-postgresql-directory) if needed. Use the recorded exact volume name with the complete Compose configuration:
+Keep all replicas stopped. Complete [directory preparation](#prepare-the-postgresql-directory). Use the pre-update backup to retrieve the old volume name; do not choose a volume by its creation date or a similar name:
 
 ```bash
-source ./config.env
-export DEVSHARD_POSTGRES_LEGACY_VOLUME='<recorded-old-volume-name>'
+source ./config.env || exit 1
+read -r -p 'Pre-update backup directory: ' BACKUP_DIR
+export DEVSHARD_POSTGRES_LEGACY_VOLUME=$(jq -er '[.[0].Mounts[] | select(.Type == "volume" and .Destination == "/var/lib/postgresql/data") | .Name] | if length == 1 then .[0] else error("Expected one old PostgreSQL volume") end' "$BACKUP_DIR/postgres.json")
+[[ -n "$DEVSHARD_POSTGRES_LEGACY_VOLUME" ]] || exit 1
+test -s "$BACKUP_DIR/postgres-system-identifier" || exit 1
 # Command-line -f replaces COMPOSE_FILE, so pass the complete list explicitly.
 files=()
 IFS=':' read -ra parts <<<"$COMPOSE_FILE"
@@ -508,11 +662,17 @@ docker compose "${files[@]}" -f docker-compose.versiond-postgres-recovery.yml \
   up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
 ```
 
-Compare the system identifier with the recorded value before proceeding:
+Compare the system identifier with the backup before proceeding:
 
 ```bash
-docker exec devshard-postgres sh -c \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"'
+(
+  set -euo pipefail
+  source_id=$(cat "$BACKUP_DIR/postgres-system-identifier")
+  target_id=$(docker exec devshard-postgres sh -c \
+    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"')
+  [[ -n "$source_id" && "$target_id" == "$source_id" ]]
+  echo 'System identifiers match.'
+)
 ```
 
 If it matches, continue with [Update with downtime](#update-with-downtime), using the normal `COMPOSE_FILE` without the recovery overlay. Replicas stay stopped until that procedure recreates them. Keep the source volume and backup; do not use `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT` for recovery.
@@ -582,6 +742,7 @@ PYTHON
   docker pull "$pg_client"
   docker compose pull "${replicas[@]}" proxy proxy-policy proxy-policy2
 
+  echo "Starting maintenance"
   ./versiond-router-fleet.sh stop-all --maintenance
   docker compose stop "${replicas[@]}"
   docker run "${pg_args[@]}" "$pg_client" pg_dump -w -Fc > "$backup_dir/database.dump"
@@ -608,7 +769,7 @@ PYTHON
 )
 ```
 
-Preflight checks database access and capacity, not database identity. The backup check validates the archive, not a full restore.
+Preflight checks database access and capacity, not database identity. The backup check validates the archive, not a full restore. If an image download fails before `Starting maintenance`, [cancel the preparation](#cancel-before-maintenance).
 
 Run the [service checks](#41-check-the-running-services), then stop here. Use this procedure for later updates while serving `v4`/`v4.1`.
 
@@ -720,27 +881,82 @@ External PostgreSQL: drop the `devshard-postgres` entry; B uses the real endpoin
 
 Fresh host: include the override before [startup](#step-3---start-the-deployment). Existing host:
 
-1. Schedule maintenance for the port changes.
-2. Stop all local and remote writers before recreating local PostgreSQL; wait for their shutdown commands to finish.
-3. Apply the complete Compose configuration.
-4. Check readiness and run `./update-devshard.sh --check`.
+Schedule maintenance for the port changes. On A and each existing replica host, run in `deploy/join` to stop the replicas:
 
-Do not restart the whole live stack to add a member.
+```bash
+source ./config.env || exit 1
+mapfile -t replicas < <(docker compose ps --services | grep -E '^versiond[0-9]*$')
+((${#replicas[@]} > 0)) || exit 1
+docker compose stop "${replicas[@]}"
+```
+
+On A, apply the port changes. Skip `devshard-postgres` for an external database:
+
+```bash
+(
+  set -e
+  ./versiond-router-fleet.sh stop-all --maintenance
+  if docker compose config --services | grep -qx devshard-postgres; then
+    docker compose up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
+  fi
+  docker compose up -d --no-deps --wait --wait-timeout 2100 node api oracle-filter
+)
+```
+
+On each host, restart the replicas in the same shell used to stop them:
+
+```bash
+docker compose up -d --no-deps --wait --wait-timeout 2100 "${replicas[@]}"
+```
+
+On A, restore the fleet and run the [service checks](#41-check-the-running-services):
+
+```bash
+./versiond-router-fleet.sh apply && ./update-devshard.sh --check
+```
 
 ### 2. Configure and start machine B
 
 B does not run `api` or `node`. It runs a single `versiond` using A's filtered catalog, node-manager and chain endpoints, and the shared PostgreSQL database.
 
-New B: use the same release's `deploy/join` files. Existing B: follow [Replace a member](#replace-a-member) and keep its data mounts.
+For a new B, run the following on A in `deploy/join`. `B_SSH` is the `user@host` you use to log in to B. The commands clone the release under `~/gonka` on B, select A's commit, write a restricted `config.env`, and copy the keyring from the running container. B needs SSH access, Docker, Compose, Bash and Python 3 from the prerequisites.
 
-Copy from A into B's `config.env`:
+```bash
+(
+  set -euo pipefail
+  umask 077
+  source ./config.env
+  read -r -p 'SSH login for machine B (user@host): ' B_SSH
+  [[ "${KEYRING_BACKEND:-file}" == file ]] || { echo "This copy procedure requires a file keyring"; exit 1; }
+  ssh "$B_SSH" 'test ! -e "$HOME/gonka"'
+  ssh "$B_SSH" 'git clone --no-checkout https://github.com/gonka-ai/gonka.git "$HOME/gonka"'
+  release_commit=$(git rev-parse HEAD)
+  ssh "$B_SSH" "git -C \"\$HOME/gonka\" checkout --detach $release_commit"
+  remote_env=$(mktemp)
+  trap 'rm -f "$remote_env"' EXIT
+  python3 > "$remote_env" <<'PYTHON'
+import os, shlex
+names = ["KEY_NAME", "ACCOUNT_PUBKEY", "KEYRING_PASSWORD", "VERSIOND_VERSIONS",
+         "DEVSHARD_POSTGRES_PASSWORD"]
+for name in names:
+    value = os.environ[name]
+    if not value:
+        raise SystemExit(f"Missing {name}")
+    print(f"export {name}={shlex.quote(value)}")
+for name, default in [("KEYRING_BACKEND", "file"), ("DEVSHARD_POSTGRES_DB", "devshardd"),
+                      ("DEVSHARD_POSTGRES_USER", "devshardd")]:
+    print(f"export {name}={shlex.quote(os.environ.get(name, default))}")
+print('export VERSIOND_NON_HA_VERSIONS=""')
+if os.environ.get("VERSIOND_IMAGE"):
+    print("export VERSIOND_IMAGE=" + shlex.quote(os.environ["VERSIOND_IMAGE"]))
+PYTHON
+  ssh "$B_SSH" 'umask 077; cat > "$HOME/gonka/deploy/join/config.env"' < "$remote_env"
+  docker exec versiond /bin/busybox tar -C /root/.inference -cf - keyring-file |
+    ssh "$B_SSH" 'mkdir -p "$HOME/gonka/deploy/join/.inference"; tar --no-same-owner -xf - -C "$HOME/gonka/deploy/join/.inference"'
+)
+```
 
-- Identity: `KEY_NAME`, `ACCOUNT_PUBKEY`, `KEYRING_BACKEND`, `KEYRING_PASSWORD`.
-- Database credentials: `DEVSHARD_POSTGRES_*`.
-- Protocols: `VERSIOND_VERSIONS` and the empty `VERSIOND_NON_HA_VERSIONS`.
-- `VERSIOND_IMAGE`, only if A uses a custom image.
-
-On A: `docker cp versiond:/root/.inference/keyring-file .`; copy `keyring-file/` into B's `.inference/`. Keep the read-only keyring mount. Use B's own data directory; do not share A's `devshards*/data`.
+On B, run `cd ~/gonka/deploy/join`. Keep its own data directory and the supplied read-only keyring mount. For an existing B, use [Replace a member](#replace-a-member), not this copy procedure.
 
 Add to B's `config.env`, with the real private addresses:
 
@@ -781,10 +997,12 @@ Continue when the container is healthy and every check returns HTTP 200.
 
 ### Check the remote database
 
-Check B's database before adding B to the router pool. Install `psql` on B and run:
+Check B's database before adding B to the router pool. On B, run:
 
 ```bash
 cd /path/to/gonka/deploy/join
+command -v psql
+test ! -e pool-postgres.env || exit 1
 cp pool-postgres.env.template pool-postgres.env
 chmod 600 pool-postgres.env
 ```
@@ -892,7 +1110,10 @@ Whole-machine maintenance: drain the fleet before stopping the main stack:
 
 ```bash
 ./versiond-router-fleet.sh stop-all --maintenance
-# Stop the main stack using its complete Compose file list.
+# Stop the main stack after the fleet has drained.
+source ./config.env || exit 1
+: "${COMPOSE_FILE:?set the complete Compose file list}"
+docker compose stop
 # Only when decommissioning, after the main stack is down:
 # ./versiond-router-fleet.sh down --maintenance
 ```
@@ -929,17 +1150,48 @@ Wait for shutdown to finish. Check the restarted replica before restarting the n
 Keep the same database, participant identity, protocol list and data mounts. Replace one replica at a time; another replica must serve each protocol.
 
 1. Use the target release's files. Review image overrides as in [Prepare the release](#1-prepare-the-release), then run `unset VERSIOND_IMAGE` and `source ./config.env`.
-2. Stop and drain the member. For a remote member, remove its explicit endpoint through [membership maintenance](#3-add-b-to-the-router-pool) or from pool DNS before starting the replacement.
-3. Run `docker compose pull <service>`, then `docker compose up -d --no-deps --wait --wait-timeout 2100 <service>`. For a remote member, pass the [database check](#check-the-remote-database) before restoring membership.
+2. For a remote member, remove its entry from `versiond-endpoints.json` on A and run [membership maintenance](#3-add-b-to-the-router-pool). On the member's machine, list services and select the replica to replace:
+
+   ```bash
+   source ./config.env
+   docker compose ps --services
+   read -r -p 'Replica service from the list (for example versiond2): ' service
+   [[ "$service" =~ ^versiond[0-9]*$ ]] || exit 1
+   docker compose stop "$service"
+   ```
+3. Replace the stopped replica:
+
+   ```bash
+   docker compose pull "$service" &&
+     docker compose up -d --no-deps --wait --wait-timeout 2100 "$service"
+   ```
+
+   For a remote member, pass the [database check](#check-the-remote-database) before restoring its entry in A's endpoint file and applying membership maintenance.
 4. Pass the [service checks](#41-check-the-running-services) before replacing the next member. On failure, restore the previous image and configuration and verify against the current database.
 
 ### Remove a member
 
-Stop the replica and wait for shutdown to finish. Remove its service or set `VERSIOND2_REPLICAS=0` for `versiond2`. Remove its address from DNS or `versiond-endpoints.json`; [apply endpoint-file changes](#3-add-b-to-the-router-pool). Run the [service checks](#41-check-the-running-services) on the remaining replicas. Keep its data and cache directories for recovery.
+On the replica's host, run in `deploy/join`:
+
+```bash
+source ./config.env
+docker compose ps --services
+read -r -p 'Replica service to remove (for example versiond2): ' service
+[[ "$service" =~ ^versiond[0-9]*$ ]] || exit 1
+docker compose stop "$service" && docker compose rm -f "$service"
+```
+
+For `versiond2`, disable it in `config.env`:
+
+```bash
+printf '\nexport VERSIOND2_REPLICAS=0\n' >> config.env
+```
+
+For an extra replica, remove its Compose filename from `COMPOSE_FILE` and its service block from the filter/database overrides. Keep its data directories. On A, remove its entry from `versiond-endpoints.json`, run [membership maintenance](#3-add-b-to-the-router-pool), then the [service checks](#41-check-the-running-services).
 
 ### Add a protocol
 
-1. Check the protocol's release instructions for the name and required host/gateway versions. Once it appears in the node's [approved protocol list](#21-same-machine-two-replicas), add it to `VERSIOND_VERSIONS` in `config.env` on every host. Keep existing protocols.
+1. Check the [release's binary compatibility requirements](../devshard/docs/release-0.2.15-v5.md#binary-upgrade-compatibility) for the host/gateway versions. Once it appears in the node's [approved protocol list](#21-same-machine-two-replicas), add it to `VERSIOND_VERSIONS` in `config.env` on every host. Keep existing protocols.
 2. On A: `source ./config.env`, then `docker compose up -d --no-deps oracle-filter` with the complete `COMPOSE_FILE`.
 3. `./versiond-router-fleet.sh wait-version <new-protocol>`, then run the [service checks](#41-check-the-running-services) with the updated list.
 
@@ -948,6 +1200,33 @@ No router restart is needed. The next host update applies the saved protocol lis
 Keep `proxy-router-state` and each slot's `router-state`. Remove a protocol only during maintenance, after its sessions are no longer needed: a filter change can stop children, while accepted router routes persist by default.
 
 ## Troubleshooting
+
+### Cancel before maintenance
+
+Use this only if release preparation or image download failed **before** `Starting maintenance` appeared. It restores files; it does not roll back replaced containers or a migrated database. Run in `deploy/join`; use the `Backup directory` printed by the pre-update backup:
+
+```bash
+read -r -p 'Pre-update backup directory: ' BACKUP_DIR
+export BACKUP_DIR
+(
+  set -euo pipefail
+  test -s "$BACKUP_DIR/previous-commit"
+  git switch --detach "$(cat "$BACKUP_DIR/previous-commit")"
+  python3 - "$BACKUP_DIR" <<'PYTHON'
+import json, pathlib, shutil, sys
+backup = pathlib.Path(sys.argv[1])
+for name in json.loads((backup / "files.json").read_text()):
+    target = pathlib.Path(name)
+    source = backup / "files" / name.lstrip("/")
+    if not source.is_file():
+        sys.exit(f"Missing backup file: {source}")
+    shutil.copy2(source, target)
+PYTHON
+)
+```
+
+After a successful restore, run `source ./config.env`. Keep the backup. For `denied` or `manifest unknown` during image download, wait for access to the release images; do not substitute another tag.
+
 
 ### Resume an interrupted rolling update
 
@@ -960,7 +1239,14 @@ source ./config.env
 
 ### Resolve a missing database
 
-Restore the recorded database; do not initialize an empty replacement. `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true` is for confirmed first-time HA enablement only; unset it afterwards. If `.pg-bound` exists, restore the database.
+Stop before starting replicas against an empty database. For a local database, inspect the container and its mounts:
+
+```bash
+docker compose logs --tail=100 devshard-postgres
+docker inspect devshard-postgres --format '{{json .Mounts}}' | jq .
+```
+
+If the old Docker volume was detached, use the recovery block in [Check the database layout](#2-check-the-database-layout) with the pre-update backup. Missing storage without a preserved source volume, and external database disaster recovery, are outside this guide. Do not use `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT` to bypass recovery.
 
 ### Resolve an unready member
 
@@ -970,7 +1256,7 @@ Check the selected catalog, binary URL/SHA256, child logs and database access. E
 
 ### Release reference
 
-**Release:** `devshard-0.2.15-v5`.
+**Release:** [Devshard v5.0.1](https://github.com/gonka-ai/gonka/releases/tag/devshard%2Fv5.0.1), tag `devshard/v5.0.1`.
 
 Use join files, scripts and images from the same release. For later releases, follow their upgrade instructions.
 
