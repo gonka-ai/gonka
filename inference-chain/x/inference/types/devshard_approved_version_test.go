@@ -40,6 +40,10 @@ func TestDevshardApprovedVersion_Validate(t *testing.T) {
 	badHex := ok
 	badHex.Sha256 = strings.Repeat("g", 64)
 	require.ErrorContains(t, badHex.Validate(), "not valid hex")
+
+	badCount := ok
+	badCount.PassCount = types.DevshardPassCount(99)
+	require.ErrorContains(t, badCount.Validate(), "invalid pass_count")
 }
 
 func TestDevshardEscrowParams_Validate_RejectsDeprecatedApprovedVersions(t *testing.T) {

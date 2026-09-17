@@ -1378,6 +1378,8 @@ var (
 	fd_DevshardHostEpochStats_required_validations  protoreflect.FieldDescriptor
 	fd_DevshardHostEpochStats_completed_validations protoreflect.FieldDescriptor
 	fd_DevshardHostEpochStats_escrow_count          protoreflect.FieldDescriptor
+	fd_DevshardHostEpochStats_validated             protoreflect.FieldDescriptor
+	fd_DevshardHostEpochStats_finished              protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -1391,6 +1393,8 @@ func init() {
 	fd_DevshardHostEpochStats_required_validations = md_DevshardHostEpochStats.Fields().ByName("required_validations")
 	fd_DevshardHostEpochStats_completed_validations = md_DevshardHostEpochStats.Fields().ByName("completed_validations")
 	fd_DevshardHostEpochStats_escrow_count = md_DevshardHostEpochStats.Fields().ByName("escrow_count")
+	fd_DevshardHostEpochStats_validated = md_DevshardHostEpochStats.Fields().ByName("validated")
+	fd_DevshardHostEpochStats_finished = md_DevshardHostEpochStats.Fields().ByName("finished")
 }
 
 var _ protoreflect.Message = (*fastReflection_DevshardHostEpochStats)(nil)
@@ -1506,6 +1510,18 @@ func (x *fastReflection_DevshardHostEpochStats) Range(f func(protoreflect.FieldD
 			return
 		}
 	}
+	if x.Validated != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.Validated)
+		if !f(fd_DevshardHostEpochStats_validated, value) {
+			return
+		}
+	}
+	if x.Finished != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.Finished)
+		if !f(fd_DevshardHostEpochStats_finished, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -1537,6 +1553,10 @@ func (x *fastReflection_DevshardHostEpochStats) Has(fd protoreflect.FieldDescrip
 		return x.CompletedValidations != uint32(0)
 	case "inference.inference.DevshardHostEpochStats.escrow_count":
 		return x.EscrowCount != uint32(0)
+	case "inference.inference.DevshardHostEpochStats.validated":
+		return x.Validated != uint32(0)
+	case "inference.inference.DevshardHostEpochStats.finished":
+		return x.Finished != uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostEpochStats"))
@@ -1569,6 +1589,10 @@ func (x *fastReflection_DevshardHostEpochStats) Clear(fd protoreflect.FieldDescr
 		x.CompletedValidations = uint32(0)
 	case "inference.inference.DevshardHostEpochStats.escrow_count":
 		x.EscrowCount = uint32(0)
+	case "inference.inference.DevshardHostEpochStats.validated":
+		x.Validated = uint32(0)
+	case "inference.inference.DevshardHostEpochStats.finished":
+		x.Finished = uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostEpochStats"))
@@ -1609,6 +1633,12 @@ func (x *fastReflection_DevshardHostEpochStats) Get(descriptor protoreflect.Fiel
 	case "inference.inference.DevshardHostEpochStats.escrow_count":
 		value := x.EscrowCount
 		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.DevshardHostEpochStats.validated":
+		value := x.Validated
+		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.DevshardHostEpochStats.finished":
+		value := x.Finished
+		return protoreflect.ValueOfUint32(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostEpochStats"))
@@ -1645,6 +1675,10 @@ func (x *fastReflection_DevshardHostEpochStats) Set(fd protoreflect.FieldDescrip
 		x.CompletedValidations = uint32(value.Uint())
 	case "inference.inference.DevshardHostEpochStats.escrow_count":
 		x.EscrowCount = uint32(value.Uint())
+	case "inference.inference.DevshardHostEpochStats.validated":
+		x.Validated = uint32(value.Uint())
+	case "inference.inference.DevshardHostEpochStats.finished":
+		x.Finished = uint32(value.Uint())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostEpochStats"))
@@ -1681,6 +1715,10 @@ func (x *fastReflection_DevshardHostEpochStats) Mutable(fd protoreflect.FieldDes
 		panic(fmt.Errorf("field completed_validations of message inference.inference.DevshardHostEpochStats is not mutable"))
 	case "inference.inference.DevshardHostEpochStats.escrow_count":
 		panic(fmt.Errorf("field escrow_count of message inference.inference.DevshardHostEpochStats is not mutable"))
+	case "inference.inference.DevshardHostEpochStats.validated":
+		panic(fmt.Errorf("field validated of message inference.inference.DevshardHostEpochStats is not mutable"))
+	case "inference.inference.DevshardHostEpochStats.finished":
+		panic(fmt.Errorf("field finished of message inference.inference.DevshardHostEpochStats is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardHostEpochStats"))
@@ -1709,6 +1747,10 @@ func (x *fastReflection_DevshardHostEpochStats) NewField(fd protoreflect.FieldDe
 	case "inference.inference.DevshardHostEpochStats.completed_validations":
 		return protoreflect.ValueOfUint32(uint32(0))
 	case "inference.inference.DevshardHostEpochStats.escrow_count":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.DevshardHostEpochStats.validated":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.DevshardHostEpochStats.finished":
 		return protoreflect.ValueOfUint32(uint32(0))
 	default:
 		if fd.IsExtension() {
@@ -1804,6 +1846,12 @@ func (x *fastReflection_DevshardHostEpochStats) ProtoMethods() *protoiface.Metho
 		if x.EscrowCount != 0 {
 			n += 1 + runtime.Sov(uint64(x.EscrowCount))
 		}
+		if x.Validated != 0 {
+			n += 1 + runtime.Sov(uint64(x.Validated))
+		}
+		if x.Finished != 0 {
+			n += 1 + runtime.Sov(uint64(x.Finished))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1832,6 +1880,16 @@ func (x *fastReflection_DevshardHostEpochStats) ProtoMethods() *protoiface.Metho
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.Finished != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Finished))
+			i--
+			dAtA[i] = 0x50
+		}
+		if x.Validated != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Validated))
+			i--
+			dAtA[i] = 0x48
 		}
 		if x.EscrowCount != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.EscrowCount))
@@ -2089,6 +2147,44 @@ func (x *fastReflection_DevshardHostEpochStats) ProtoMethods() *protoiface.Metho
 						break
 					}
 				}
+			case 9:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Validated", wireType)
+				}
+				x.Validated = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Validated |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 10:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Finished", wireType)
+				}
+				x.Finished = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Finished |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -2132,6 +2228,8 @@ var (
 	fd_DevshardSettlementHostStats_cost                  protoreflect.FieldDescriptor
 	fd_DevshardSettlementHostStats_required_validations  protoreflect.FieldDescriptor
 	fd_DevshardSettlementHostStats_completed_validations protoreflect.FieldDescriptor
+	fd_DevshardSettlementHostStats_validated             protoreflect.FieldDescriptor
+	fd_DevshardSettlementHostStats_finished              protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -2143,6 +2241,8 @@ func init() {
 	fd_DevshardSettlementHostStats_cost = md_DevshardSettlementHostStats.Fields().ByName("cost")
 	fd_DevshardSettlementHostStats_required_validations = md_DevshardSettlementHostStats.Fields().ByName("required_validations")
 	fd_DevshardSettlementHostStats_completed_validations = md_DevshardSettlementHostStats.Fields().ByName("completed_validations")
+	fd_DevshardSettlementHostStats_validated = md_DevshardSettlementHostStats.Fields().ByName("validated")
+	fd_DevshardSettlementHostStats_finished = md_DevshardSettlementHostStats.Fields().ByName("finished")
 }
 
 var _ protoreflect.Message = (*fastReflection_DevshardSettlementHostStats)(nil)
@@ -2246,6 +2346,18 @@ func (x *fastReflection_DevshardSettlementHostStats) Range(f func(protoreflect.F
 			return
 		}
 	}
+	if x.Validated != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.Validated)
+		if !f(fd_DevshardSettlementHostStats_validated, value) {
+			return
+		}
+	}
+	if x.Finished != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.Finished)
+		if !f(fd_DevshardSettlementHostStats_finished, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -2273,6 +2385,10 @@ func (x *fastReflection_DevshardSettlementHostStats) Has(fd protoreflect.FieldDe
 		return x.RequiredValidations != uint32(0)
 	case "inference.inference.DevshardSettlementHostStats.completed_validations":
 		return x.CompletedValidations != uint32(0)
+	case "inference.inference.DevshardSettlementHostStats.validated":
+		return x.Validated != uint32(0)
+	case "inference.inference.DevshardSettlementHostStats.finished":
+		return x.Finished != uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardSettlementHostStats"))
@@ -2301,6 +2417,10 @@ func (x *fastReflection_DevshardSettlementHostStats) Clear(fd protoreflect.Field
 		x.RequiredValidations = uint32(0)
 	case "inference.inference.DevshardSettlementHostStats.completed_validations":
 		x.CompletedValidations = uint32(0)
+	case "inference.inference.DevshardSettlementHostStats.validated":
+		x.Validated = uint32(0)
+	case "inference.inference.DevshardSettlementHostStats.finished":
+		x.Finished = uint32(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardSettlementHostStats"))
@@ -2335,6 +2455,12 @@ func (x *fastReflection_DevshardSettlementHostStats) Get(descriptor protoreflect
 	case "inference.inference.DevshardSettlementHostStats.completed_validations":
 		value := x.CompletedValidations
 		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.DevshardSettlementHostStats.validated":
+		value := x.Validated
+		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.DevshardSettlementHostStats.finished":
+		value := x.Finished
+		return protoreflect.ValueOfUint32(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardSettlementHostStats"))
@@ -2367,6 +2493,10 @@ func (x *fastReflection_DevshardSettlementHostStats) Set(fd protoreflect.FieldDe
 		x.RequiredValidations = uint32(value.Uint())
 	case "inference.inference.DevshardSettlementHostStats.completed_validations":
 		x.CompletedValidations = uint32(value.Uint())
+	case "inference.inference.DevshardSettlementHostStats.validated":
+		x.Validated = uint32(value.Uint())
+	case "inference.inference.DevshardSettlementHostStats.finished":
+		x.Finished = uint32(value.Uint())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardSettlementHostStats"))
@@ -2399,6 +2529,10 @@ func (x *fastReflection_DevshardSettlementHostStats) Mutable(fd protoreflect.Fie
 		panic(fmt.Errorf("field required_validations of message inference.inference.DevshardSettlementHostStats is not mutable"))
 	case "inference.inference.DevshardSettlementHostStats.completed_validations":
 		panic(fmt.Errorf("field completed_validations of message inference.inference.DevshardSettlementHostStats is not mutable"))
+	case "inference.inference.DevshardSettlementHostStats.validated":
+		panic(fmt.Errorf("field validated of message inference.inference.DevshardSettlementHostStats is not mutable"))
+	case "inference.inference.DevshardSettlementHostStats.finished":
+		panic(fmt.Errorf("field finished of message inference.inference.DevshardSettlementHostStats is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardSettlementHostStats"))
@@ -2423,6 +2557,10 @@ func (x *fastReflection_DevshardSettlementHostStats) NewField(fd protoreflect.Fi
 	case "inference.inference.DevshardSettlementHostStats.required_validations":
 		return protoreflect.ValueOfUint32(uint32(0))
 	case "inference.inference.DevshardSettlementHostStats.completed_validations":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.DevshardSettlementHostStats.validated":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.DevshardSettlementHostStats.finished":
 		return protoreflect.ValueOfUint32(uint32(0))
 	default:
 		if fd.IsExtension() {
@@ -2511,6 +2649,12 @@ func (x *fastReflection_DevshardSettlementHostStats) ProtoMethods() *protoiface.
 		if x.CompletedValidations != 0 {
 			n += 1 + runtime.Sov(uint64(x.CompletedValidations))
 		}
+		if x.Validated != 0 {
+			n += 1 + runtime.Sov(uint64(x.Validated))
+		}
+		if x.Finished != 0 {
+			n += 1 + runtime.Sov(uint64(x.Finished))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -2539,6 +2683,16 @@ func (x *fastReflection_DevshardSettlementHostStats) ProtoMethods() *protoiface.
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.Finished != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Finished))
+			i--
+			dAtA[i] = 0x40
+		}
+		if x.Validated != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.Validated))
+			i--
+			dAtA[i] = 0x38
 		}
 		if x.CompletedValidations != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.CompletedValidations))
@@ -2729,6 +2883,44 @@ func (x *fastReflection_DevshardSettlementHostStats) ProtoMethods() *protoiface.
 					b := dAtA[iNdEx]
 					iNdEx++
 					x.CompletedValidations |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 7:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Validated", wireType)
+				}
+				x.Validated = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Validated |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Finished", wireType)
+				}
+				x.Finished = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.Finished |= uint32(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
@@ -3435,6 +3627,8 @@ type DevshardHostEpochStats struct {
 	RequiredValidations  uint32 `protobuf:"varint,6,opt,name=required_validations,json=requiredValidations,proto3" json:"required_validations,omitempty"`
 	CompletedValidations uint32 `protobuf:"varint,7,opt,name=completed_validations,json=completedValidations,proto3" json:"completed_validations,omitempty"`
 	EscrowCount          uint32 `protobuf:"varint,8,opt,name=escrow_count,json=escrowCount,proto3" json:"escrow_count,omitempty"`
+	Validated            uint32 `protobuf:"varint,9,opt,name=validated,proto3" json:"validated,omitempty"`
+	Finished             uint32 `protobuf:"varint,10,opt,name=finished,proto3" json:"finished,omitempty"`
 }
 
 func (x *DevshardHostEpochStats) Reset() {
@@ -3513,6 +3707,20 @@ func (x *DevshardHostEpochStats) GetEscrowCount() uint32 {
 	return 0
 }
 
+func (x *DevshardHostEpochStats) GetValidated() uint32 {
+	if x != nil {
+		return x.Validated
+	}
+	return 0
+}
+
+func (x *DevshardHostEpochStats) GetFinished() uint32 {
+	if x != nil {
+		return x.Finished
+	}
+	return 0
+}
+
 type DevshardSettlementHostStats struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -3524,6 +3732,8 @@ type DevshardSettlementHostStats struct {
 	Cost                 uint64 `protobuf:"varint,4,opt,name=cost,proto3" json:"cost,omitempty"`
 	RequiredValidations  uint32 `protobuf:"varint,5,opt,name=required_validations,json=requiredValidations,proto3" json:"required_validations,omitempty"`
 	CompletedValidations uint32 `protobuf:"varint,6,opt,name=completed_validations,json=completedValidations,proto3" json:"completed_validations,omitempty"`
+	Validated            uint32 `protobuf:"varint,7,opt,name=validated,proto3" json:"validated,omitempty"`
+	Finished             uint32 `protobuf:"varint,8,opt,name=finished,proto3" json:"finished,omitempty"`
 }
 
 func (x *DevshardSettlementHostStats) Reset() {
@@ -3584,6 +3794,20 @@ func (x *DevshardSettlementHostStats) GetRequiredValidations() uint32 {
 func (x *DevshardSettlementHostStats) GetCompletedValidations() uint32 {
 	if x != nil {
 		return x.CompletedValidations
+	}
+	return 0
+}
+
+func (x *DevshardSettlementHostStats) GetValidated() uint32 {
+	if x != nil {
+		return x.Validated
+	}
+	return 0
+}
+
+func (x *DevshardSettlementHostStats) GetFinished() uint32 {
+	if x != nil {
+		return x.Finished
 	}
 	return 0
 }
@@ -3681,7 +3905,7 @@ var file_inference_inference_devshard_escrow_proto_rawDesc = []byte{
 	0x0e, 0x72, 0x65, 0x66, 0x75, 0x73, 0x61, 0x6c, 0x54, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x12,
 	0x2b, 0x0a, 0x11, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x69, 0x6d,
 	0x65, 0x6f, 0x75, 0x74, 0x18, 0x12, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x65, 0x78, 0x65, 0x63,
-	0x75, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x22, 0xac, 0x02, 0x0a,
+	0x75, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x22, 0xe6, 0x02, 0x0a,
 	0x16, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x48, 0x6f, 0x73, 0x74, 0x45, 0x70, 0x6f,
 	0x63, 0x68, 0x53, 0x74, 0x61, 0x74, 0x73, 0x12, 0x20, 0x0a, 0x0b, 0x70, 0x61, 0x72, 0x74, 0x69,
 	0x63, 0x69, 0x70, 0x61, 0x6e, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0b, 0x70, 0x61,
@@ -3700,39 +3924,47 @@ var file_inference_inference_devshard_escrow_proto_rawDesc = []byte{
 	0x28, 0x0d, 0x52, 0x14, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65, 0x64, 0x56, 0x61, 0x6c,
 	0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x12, 0x21, 0x0a, 0x0c, 0x65, 0x73, 0x63, 0x72,
 	0x6f, 0x77, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x08, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0b,
-	0x65, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x22, 0xe4, 0x01, 0x0a, 0x1b,
-	0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x53, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x6d, 0x65,
-	0x6e, 0x74, 0x48, 0x6f, 0x73, 0x74, 0x53, 0x74, 0x61, 0x74, 0x73, 0x12, 0x17, 0x0a, 0x07, 0x73,
-	0x6c, 0x6f, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x06, 0x73, 0x6c,
-	0x6f, 0x74, 0x49, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x18, 0x02,
-	0x20, 0x01, 0x28, 0x0d, 0x52, 0x06, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x12, 0x18, 0x0a, 0x07,
-	0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x07, 0x69,
-	0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x12, 0x12, 0x0a, 0x04, 0x63, 0x6f, 0x73, 0x74, 0x18, 0x04,
-	0x20, 0x01, 0x28, 0x04, 0x52, 0x04, 0x63, 0x6f, 0x73, 0x74, 0x12, 0x31, 0x0a, 0x14, 0x72, 0x65,
-	0x71, 0x75, 0x69, 0x72, 0x65, 0x64, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f,
-	0x6e, 0x73, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x13, 0x72, 0x65, 0x71, 0x75, 0x69, 0x72,
-	0x65, 0x64, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x12, 0x33, 0x0a,
-	0x15, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65, 0x64, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x14, 0x63, 0x6f,
-	0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65, 0x64, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f,
-	0x6e, 0x73, 0x22, 0x4e, 0x0a, 0x15, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x53, 0x6c,
-	0x6f, 0x74, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x12, 0x17, 0x0a, 0x07, 0x73,
-	0x6c, 0x6f, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x06, 0x73, 0x6c,
-	0x6f, 0x74, 0x49, 0x64, 0x12, 0x1c, 0x0a, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72,
-	0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75,
-	0x72, 0x65, 0x42, 0xc1, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x13,
-	0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x45, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x50, 0x72,
-	0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b,
-	0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49,
-	0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea,
-	0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x65, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x1c, 0x0a, 0x09, 0x76,
+	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x18, 0x09, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x09,
+	0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x12, 0x1a, 0x0a, 0x08, 0x66, 0x69, 0x6e,
+	0x69, 0x73, 0x68, 0x65, 0x64, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x08, 0x66, 0x69, 0x6e,
+	0x69, 0x73, 0x68, 0x65, 0x64, 0x22, 0x9e, 0x02, 0x0a, 0x1b, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61,
+	0x72, 0x64, 0x53, 0x65, 0x74, 0x74, 0x6c, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x48, 0x6f, 0x73, 0x74,
+	0x53, 0x74, 0x61, 0x74, 0x73, 0x12, 0x17, 0x0a, 0x07, 0x73, 0x6c, 0x6f, 0x74, 0x5f, 0x69, 0x64,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x06, 0x73, 0x6c, 0x6f, 0x74, 0x49, 0x64, 0x12, 0x16,
+	0x0a, 0x06, 0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x06,
+	0x6d, 0x69, 0x73, 0x73, 0x65, 0x64, 0x12, 0x18, 0x0a, 0x07, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69,
+	0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x07, 0x69, 0x6e, 0x76, 0x61, 0x6c, 0x69, 0x64,
+	0x12, 0x12, 0x0a, 0x04, 0x63, 0x6f, 0x73, 0x74, 0x18, 0x04, 0x20, 0x01, 0x28, 0x04, 0x52, 0x04,
+	0x63, 0x6f, 0x73, 0x74, 0x12, 0x31, 0x0a, 0x14, 0x72, 0x65, 0x71, 0x75, 0x69, 0x72, 0x65, 0x64,
+	0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x18, 0x05, 0x20, 0x01,
+	0x28, 0x0d, 0x52, 0x13, 0x72, 0x65, 0x71, 0x75, 0x69, 0x72, 0x65, 0x64, 0x56, 0x61, 0x6c, 0x69,
+	0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x12, 0x33, 0x0a, 0x15, 0x63, 0x6f, 0x6d, 0x70, 0x6c,
+	0x65, 0x74, 0x65, 0x64, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73,
+	0x18, 0x06, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x14, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65,
+	0x64, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x12, 0x1c, 0x0a, 0x09,
+	0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x18, 0x07, 0x20, 0x01, 0x28, 0x0d, 0x52,
+	0x09, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x65, 0x64, 0x12, 0x1a, 0x0a, 0x08, 0x66, 0x69,
+	0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x18, 0x08, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x08, 0x66, 0x69,
+	0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x22, 0x4e, 0x0a, 0x15, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61,
+	0x72, 0x64, 0x53, 0x6c, 0x6f, 0x74, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x12,
+	0x17, 0x0a, 0x07, 0x73, 0x6c, 0x6f, 0x74, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0d,
+	0x52, 0x06, 0x73, 0x6c, 0x6f, 0x74, 0x49, 0x64, 0x12, 0x1c, 0x0a, 0x09, 0x73, 0x69, 0x67, 0x6e,
+	0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x09, 0x73, 0x69, 0x67,
+	0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x42, 0xc1, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x42, 0x13, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x45, 0x73, 0x63, 0x72,
+	0x6f, 0x77, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f,
+	0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2,
+	0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64,
+	0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a,
+	0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74,
+	0x6f, 0x33,
 }
 
 var (

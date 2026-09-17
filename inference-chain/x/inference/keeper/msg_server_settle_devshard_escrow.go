@@ -43,7 +43,11 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	for i := range stored {
 		approved[i] = &stored[i]
 	}
-	if err := VerifyDevshardSettlement(escrow, msg, devshardParams, approved, warmKeyChecker); err != nil {
+	// Policy store is the only source: empty allowlist is still permissive for
+	// which versions may settle, but scoring uses the recorded policy (DERIVED
+	// only when the name has never been seen).
+	passCount := k.PassCountFor(goCtx, msg.StateRootAndProtocolVersion)
+	if err := VerifyDevshardSettlement(escrow, msg, devshardParams, approved, warmKeyChecker, passCount); err != nil {
 		return nil, err
 	}
 
@@ -98,6 +102,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	touchedParticipants := make(map[string]bool)
 
 	totalSlots := uint64(len(escrow.Slots))
+	passPolicy := DevshardPassPolicyFor(passCount, escrow.ValidationRate)
 	// How much of the total fees will be assigned to each slot
 	feePerSlot := msg.Fees / totalSlots
 	// Leftover fees; will be distributed 1 per slot
@@ -234,7 +239,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			if !found {
 				return nil, fmt.Errorf("participant %s not found", addr)
 			}
-			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(participant, adjusted, assignedToSlot); err != nil {
+			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(participant, adjusted, assignedToSlot, totalSlots, passPolicy); err != nil {
 				return nil, fmt.Errorf("failed to aggregate host stats into participant epoch stats: %w", err)
 			}
 			touchedParticipants[addr] = true

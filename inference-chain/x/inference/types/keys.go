@@ -132,7 +132,11 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
-	ParamsKey                      = []byte("p_inference")
+	// Append-only pass_count records keyed by version name. Survives delete of
+	// the matching approved-version row so a later re-approval cannot flip SPRT
+	// scoring.
+	DevshardVersionPoliciesPrefix = collections.NewPrefix(114)
+	ParamsKey                     = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

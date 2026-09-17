@@ -51,3 +51,64 @@ func (k Keeper) GetApprovedVersions(ctx context.Context) ([]types.DevshardApprov
 	})
 	return vals, nil
 }
+
+func (k Keeper) SetVersionPolicy(ctx context.Context, p types.DevshardVersionPolicy) error {
+	return k.DevshardVersionPoliciesMap.Set(ctx, p.Name, p)
+}
+
+func (k Keeper) GetVersionPolicy(ctx context.Context, name string) (types.DevshardVersionPolicy, bool) {
+	p, err := k.DevshardVersionPoliciesMap.Get(ctx, name)
+	if err != nil {
+		return types.DevshardVersionPolicy{}, false
+	}
+	return p, true
+}
+
+func (k Keeper) GetVersionPolicies(ctx context.Context) ([]types.DevshardVersionPolicy, error) {
+	iter, err := k.DevshardVersionPoliciesMap.Iterate(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	vals, err := iter.Values()
+	if err != nil {
+		return nil, err
+	}
+	sort.SliceStable(vals, func(i, j int) bool {
+		return vals[i].Name < vals[j].Name
+	})
+	return vals, nil
+}
+
+// PassCountFor returns the recorded policy for version. Unknown names, including
+// the empty allowlist used in tests/dev, score as DERIVED so preexisting
+// settlements keep assigned-missed-invalid semantics.
+func (k Keeper) PassCountFor(ctx context.Context, version string) types.DevshardPassCount {
+	if p, ok := k.GetVersionPolicy(ctx, version); ok {
+		return p.PassCount
+	}
+	return types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
+}
+
+// RecordVersionPassCount applies ResolvePassCount and writes the result.
+// Omitted pass_count keeps a stored policy; a new name becomes DERIVED; an
+// explicit SAMPLED or DERIVED overwrites. Returns the value to stamp on the
+// approved-version row so it never disagrees with the policy store.
+func (k Keeper) RecordVersionPassCount(ctx context.Context, name string, requested types.DevshardPassCount) (types.DevshardPassCount, error) {
+	var existing *types.DevshardPassCount
+	if p, ok := k.GetVersionPolicy(ctx, name); ok {
+		c := p.PassCount
+		existing = &c
+	}
+	resolved, err := types.ResolvePassCount(existing, requested)
+	if err != nil {
+		return 0, err
+	}
+	if existing != nil && *existing == resolved {
+		return resolved, nil
+	}
+	if err := k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{Name: name, PassCount: resolved}); err != nil {
+		return 0, err
+	}
+	return resolved, nil
+}
