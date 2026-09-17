@@ -31,20 +31,17 @@ Public proxy (/devshard/...)
 | Catalog filter | `python:3.12-alpine` |
 | Local PostgreSQL, new installation | PostgreSQL 16 Alpine |
 
-When directed by the installation or upgrade steps, run in `deploy/join` to append the image settings to `config.env`:
+When directed by the installation or upgrade steps, set these variables in `deploy/join/config.env`. Replace existing assignments; add missing ones:
 
 ```bash
-cat >> config.env <<'EOF'
 export VERSIOND_IMAGE=ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5
 export VERSIOND_ROUTER_IMAGE=ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5
 export PROXY_ROUTER_IMAGE=ghcr.io/product-science/proxy-router:0.2.15-devshard-v5
 export PROXY_POLICY_IMAGE=ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5
 export ORACLE_FILTER_IMAGE=python:3.12-alpine
-EOF
-source ./config.env
 ```
 
-New local databases use the PostgreSQL image supplied by Compose. For upgrades, [retain the current database image](#1-prepare-the-release). Keep the existing standard join configuration.
+Local PostgreSQL uses the image pinned in `docker-compose.versiond.yml`.
 
 Test custom deployments and database changes on a data copy first: [acceptance plan](../devshard/docs/ha-host-updater-acceptance.md), [lifecycle test plan](../devshard/docs/devshard-host-ha-test-plan.md).
 
@@ -99,7 +96,15 @@ umask 077
 read -r -s -p 'PostgreSQL password: ' DEVSHARD_POSTGRES_PASSWORD
 printf '\n'
 [[ -n "$DEVSHARD_POSTGRES_PASSWORD" ]] || exit 1
-printf '\nexport DEVSHARD_POSTGRES_PASSWORD=%q\n' "$DEVSHARD_POSTGRES_PASSWORD" >> config.env
+DEVSHARD_POSTGRES_PASSWORD="$DEVSHARD_POSTGRES_PASSWORD" python3 <<'PYTHON'
+import os, pathlib, re, shlex
+path = pathlib.Path("config.env")
+name = "DEVSHARD_POSTGRES_PASSWORD"
+lines = path.read_text().splitlines()
+lines = [line for line in lines if not re.match(r"^\s*(?:export\s+)?" + name + r"\s*=", line)]
+lines.append("export " + name + "=" + shlex.quote(os.environ[name]))
+path.write_text("\n".join(lines) + "\n")
+PYTHON
 ```
 
 Database and user default to `devshardd`; override with `DEVSHARD_POSTGRES_DB` and `DEVSHARD_POSTGRES_USER`.
@@ -496,28 +501,7 @@ PYTHON
 
 A nonempty `git diff` stops this procedure without changing files or containers. This automatic path does not merge edits to tracked release files. Keep the saved diff and use a deployment-specific merge before retrying; do not run `git reset --hard`.
 
-Apply [Release and images](#release-and-images). If an earlier setup generated `docker-compose.devshard-release-images.override.yml`, remove it from `COMPOSE_FILE` so it cannot override these settings:
-
-```bash
-(
-  set -euo pipefail
-  source ./config.env
-  python3 <<'PYTHON'
-import os, pathlib, shlex
-name = "docker-compose.devshard-release-images.override.yml"
-files = os.environ.get("COMPOSE_FILE", "").split(":")
-filtered = [f for f in files if pathlib.Path(f).name != name]
-if filtered != files:
-    with pathlib.Path("config.env").open("a") as config:
-        config.write("\nexport COMPOSE_FILE=" + shlex.quote(":".join(filtered)) + "\n")
-PYTHON
-)
-source ./config.env
-```
-
-Site overrides must use these image variables rather than hard-coded application images.
-
-Local PostgreSQL: save its current image digest in `DEVSHARD_POSTGRES_IMAGE` using the command below.
+Apply [Release and images](#release-and-images). Site overrides must use those image variables rather than hard-coded application images.
 
 Preserve during routine updates:
 
@@ -533,24 +517,6 @@ Do not replace `config.env` with the new-installation example. Update first; add
 First HA setup: add the [installation settings](#install-a-new-host) to your existing files, but skip the startup commands. Keep the filter enabled and `VERSIOND_NON_HA_VERSIONS` empty.
 
 <details>
-<summary><strong>Find the current PostgreSQL image digest</strong></summary>
-
-Run in `deploy/join` on the host with local PostgreSQL. This saves a published digest for the running image:
-
-```bash
-(
-  set -euo pipefail
-  image_id=$(docker inspect devshard-postgres --format '{{.Image}}')
-  digest=$(docker image inspect "$image_id" --format '{{json .RepoDigests}}' | jq -er '.[0]')
-  printf '\nexport DEVSHARD_POSTGRES_IMAGE=%q\n' "$digest" >> config.env
-)
-```
-
-If the image has no published digest, stop here. This upgrade procedure does not cover locally built PostgreSQL images.
-
-</details>
-
-<details>
 <summary><strong>If the old config.env has no VERSIOND_VERSIONS</strong></summary>
 
 Read the protocols running on the existing `versiond`; do not substitute the new-installation example:
@@ -560,7 +526,15 @@ Read the protocols running on the existing `versiond`; do not substitute the new
   set -euo pipefail
   versions=$(docker exec versiond /bin/busybox wget -qO- http://127.0.0.1:8080/healthz |
     jq -er 'if length > 0 and all(.[]; .status == "running" and (.name == "v4" or .name == "v4.1" or .name == "v5")) then map(.name) | join(" ") else error("Expected running HA protocols only; stop") end')
-  printf '\nexport VERSIOND_VERSIONS=%q\n' "$versions" >> config.env
+  VERSIOND_VERSIONS="$versions" python3 <<'PYTHON'
+import os, pathlib, re, shlex
+path = pathlib.Path("config.env")
+name = "VERSIOND_VERSIONS"
+lines = path.read_text().splitlines()
+lines = [line for line in lines if not re.match(r"^\s*(?:export\s+)?" + name + r"\s*=", line)]
+lines.append("export " + name + "=" + shlex.quote(os.environ[name]))
+path.write_text("\n".join(lines) + "\n")
+PYTHON
 )
 ```
 
@@ -594,7 +568,7 @@ An existing persistent path `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}
 <details>
 <summary><strong>One-time copy from the old PostgreSQL volume</strong></summary>
 
-For one join host with all writers listed in `replicas`. Use the source image saved in `DEVSHARD_POSTGRES_IMAGE`; preserve its PostgreSQL major version and Alpine/musl family. Complete [directory preparation](#prepare-the-postgresql-directory) first.
+For one join host with all writers listed in `replicas`. Use the PostgreSQL image supplied by the release for the existing PostgreSQL 16 Alpine cluster. Complete [directory preparation](#prepare-the-postgresql-directory) first.
 
 Run in `deploy/join` to stop replicas, back up and copy PostgreSQL, and check the copied cluster. Replicas remain stopped:
 
@@ -604,7 +578,6 @@ Run in `deploy/join` to stop replicas, back up and copy PostgreSQL, and check th
   umask 077
   source ./config.env
   : "${COMPOSE_FILE:?set the complete Compose file list}"
-  : "${DEVSHARD_POSTGRES_IMAGE:?retain the source PostgreSQL image}"
   replicas=(versiond versiond2)
   mkdir -p backups
   backup_dir=$(mktemp -d "$PWD/backups/postgres-copy.XXXXXXXX")
@@ -1198,10 +1171,10 @@ read -r -p 'Replica service to remove (for example versiond2): ' service
 docker compose stop "$service" && docker compose rm -f "$service"
 ```
 
-For `versiond2`, disable it in `config.env`:
+For `versiond2`, set this value in `config.env`. Replace the existing assignment or add it if absent:
 
 ```bash
-printf '\nexport VERSIOND2_REPLICAS=0\n' >> config.env
+export VERSIOND2_REPLICAS=0
 ```
 
 For an extra replica, remove its Compose filename from `COMPOSE_FILE` and its service block from the filter/database overrides. Keep its data directories. On A, remove its entry from `versiond-endpoints.json`, run [membership maintenance](#3-add-b-to-the-router-pool), then the [service checks](#41-check-the-running-services).
