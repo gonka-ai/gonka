@@ -2,6 +2,18 @@
 
 Devshard inference that stays available, backed by multiple `versiond` instances.
 
+## Contents
+
+- [Why this matters](#why-this-matters)
+- [Release and images](#release-and-images)
+- [Prerequisites](#prerequisites)
+- [Install a new host](#install-a-new-host)
+- [Upgrade an existing host](#upgrade-an-existing-host) — use downtime while serving v4/v4.1
+- [Add a remote replica](#add-a-remote-replica) — requires storage-proof support; unavailable with published v4/v4.1
+- [Add a local replica](#add-a-local-replica)
+- [Operate the deployment](#operate-the-deployment)
+- [Troubleshooting](#troubleshooting)
+
 ## Why this matters
 
 A single `versiond` process is a single point of failure (SPOF): if that machine or container dies, gateways cannot reach your host for that protocol version.
@@ -46,16 +58,6 @@ export ORACLE_FILTER_IMAGE=python:3.12-alpine
 5. Docker Compose **2.24.4+**, Bash, Python 3, Git, `tar`, `curl`, `jq`, `flock`, `sha256sum`, `timeout`, `xargs`. Remote hosts also need `ssh`, `psql` and SSH access between A and B.
 
 Only put PostgreSQL-capable versions (v4+) into the HA pool. Migration from pre-HA deployments such as `v3` is not covered here.
-
-## Contents
-
-- [Release and images](#release-and-images)
-- [Install a new host](#install-a-new-host)
-- [Upgrade an existing host](#upgrade-an-existing-host) — use downtime while serving v4/v4.1
-- [Add a remote replica](#add-a-remote-replica) — requires storage-proof support; unavailable with published v4/v4.1
-- [Add a local replica](#add-a-local-replica)
-- [Operate the deployment](#operate-the-deployment)
-- [Troubleshooting](#troubleshooting)
 
 ## Install a new host
 
