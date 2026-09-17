@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/types"
@@ -108,6 +109,35 @@ func TestApplyConfirmStart_ColdKeyActsForBoundSlot(t *testing.T) {
 	}})
 	require.NoError(t, err)
 	require.Zero(t, *calls)
+}
+
+// HeightAck uses the same apply-path identity as confirm: a sibling binding
+// already on state answers the check, so apply must not hit the bridge or
+// write a second WarmKeys entry.
+func TestApplyHeightAck_SiblingWarmKeyNeedsNoBridgeCall(t *testing.T) {
+	sm, _, warm, calls := siblingSM(t)
+	sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
+	hash := []byte{0xaa}
+
+	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+		}},
+	}})
+	require.NoError(t, err)
+
+	ack := &types.MsgHeightAck{
+		RefNonce: 1, SlotId: 1, ObservedHeight: 50, ObservedBlockHash: hash,
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(warm, ack))
+	_, applied, err := sm.ApplyLocalBestEffort(2, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	})
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+	require.Zero(t, *calls, "sibling binding is already in state; apply must not hit the bridge")
+	require.NotContains(t, sm.WarmKeys(), uint32(1), "sibling acceptance must not write a new binding")
 }
 
 // HostSignerAllowedAddr answers from state when it can, and otherwise makes

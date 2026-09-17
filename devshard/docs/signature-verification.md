@@ -125,7 +125,9 @@ state:
 | State machine, apply path | `sm.hostSignerAllowedLocked(slot, recovered)` | `ResolveWarmKey` — resolves **and caches** the binding into state |
 | State machine, read-only verification | `sm.hostSignerCachedLocked(slot, recovered)` | nil — state only, never calls out, never mutates |
 | Host and transport (RPC handlers) | `host.SlotActors()` | `CheckWarmKey` — resolves without caching |
-| Log-plane L2 | `LogPlaneState.actors()` | `CheckWarmKey` |
+| Log-plane L2 | `LogPlaneState.actors()` | `CheckWarmKey` — admits without caching |
+
+`MsgHeightAck` is not a second identity rule. L2 still uses `CheckWarmKey` because compose trials it on prefixes that can be dropped, and a dropped ack must not write `WarmKeys`. Once the tx is actually applied, `applyHeightAck` uses `hostSignerAllowedLocked`, the same call confirm, finish, and votes make. A sibling binding is decided from state in `SlotActors.Allows` and never reaches the resolver.
 
 Only the apply path binds. Everything else is either pure state or a
 non-caching lookup, because a handler or a verifier goroutine that wrote

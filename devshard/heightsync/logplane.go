@@ -253,9 +253,10 @@ func PeerSeenByteLenValid(bits []byte, slotsNum uint32) bool {
 // (warm) key after cutover; an unbound or mismatched signer is still INVALID
 // so a user cannot fabricate an ack.
 //
-// WarmKeys is per-slot and filled lazily on the first confirm/finish/vote for
-// that slot. A heartbeat ack can name any slot the host owns, including one
-// that has never executed, so L2 also accepts:
+// WarmKeys is per-slot and filled lazily on the first applied host-signed
+// message for that slot (confirm/finish/vote/ack). A heartbeat ack can name
+// any slot the host owns, including one that has never executed, so L2 also
+// accepts:
 //   - a warm key already bound on a sibling slot of the same validator
 //   - AcceptWarm, the same authz check finishes use, so applyCore (which
 //     L2-checks the signed set before applyTx) agrees with compose (which
