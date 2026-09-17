@@ -39,6 +39,7 @@ services:
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
+      - SYS_PTRACE
     pid: host
     deploy:
       resources:

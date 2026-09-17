@@ -27,10 +27,13 @@ func RecordReservation(ctx context.Context, runs RunStore, node vo.NodeRef, shar
 }
 
 // RecordDeploy counts the deploy in: the container carries the revision it was built for, so
-// the same image with new parameters, or a rerun of one that already finished, is still a new
-// container rather than a command that quietly changes nothing
+// a rerun is still a new container. A deploy for another shard starts from nothing, so the
+// clocks and images of the one before do not carry over
 func RecordDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, shardID vo.ShardID, spec RunSpec) error {
 	return runs.Update(ctx, node, func(state *RunState) {
+		if state.Shard != shardID {
+			*state = RunState{}
+		}
 		state.Shard, state.Spec, state.Start = shardID, spec, false
 		state.Revision++
 		state.Fault, state.FaultAt = nil, time.Time{}

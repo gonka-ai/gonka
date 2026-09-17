@@ -108,10 +108,12 @@ type GPU interface {
 
 // NodeControl drain out of inference and hand back
 type NodeControl interface {
-	// Drained returns whether already out of inference/PoC
+	// Drained returns whether the node is disabled, stopped with nothing loaded, and holding no work
 	Drained(ctx context.Context, node vo.NodeRef) (bool, error)
-	// Drain stops new inference; returns whether empty yet
+	// Drain disables the node and stops its mlnode so the cards are freed; returns whether that
+	// has happened yet. Idempotent
 	Drain(ctx context.Context, node vo.NodeRef) (drained bool, err error)
-	// Return hands the node back; the chain's return buffer covers the model loading, so we do not wait
+	// Return starts and enables the node if needed, including one the operator had stopped.
+	// Idempotent; the chain's return buffer covers model loading, so we do not wait
 	Return(ctx context.Context, node vo.NodeRef) error
 }

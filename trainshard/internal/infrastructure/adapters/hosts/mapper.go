@@ -71,6 +71,7 @@ func toNodeStatuses(participant vo.Participant, items []contract.NodeStatus) []r
 		statuses = append(statuses, run.NodeStatus{
 			NodeResult:     toNodeResult(participant, item.NodeResult),
 			Prepared:       item.Prepared,
+			Waiting:        item.Waiting,
 			MeshUp:         item.MeshUp,
 			GPUsInUse:      item.GPUsInUse,
 			DiskBytes:      item.DiskBytes,

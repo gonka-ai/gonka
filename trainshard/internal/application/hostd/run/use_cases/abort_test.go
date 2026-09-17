@@ -29,7 +29,7 @@ func TestAbortGivesTheReservationBackAndLeavesCleanupToTheLoop(t *testing.T) {
 		t.Fatalf("got %v, want an abort to touch nothing on the machine itself", f.rec.calls)
 	}
 
-	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 

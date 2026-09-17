@@ -336,6 +336,61 @@ func TestResolveSupportedNodeModelID_NoRegressionWhenAllModelsSupported(t *testi
 	assert.Equal(t, "model-a", modelID)
 }
 
+func TestGetCommandForState_StopWaitsForInFlightInference(t *testing.T) {
+	broker := NewTestBroker()
+	held := AdminState{Stopped: true}
+	busy := &NodeState{IntendedStatus: types.HardwareNodeStatus_STOPPED, LockCount: 1, AdminState: held}
+	idle := &NodeState{IntendedStatus: types.HardwareNodeStatus_STOPPED, LockCount: 0, AdminState: held}
+	started := &NodeState{IntendedStatus: types.HardwareNodeStatus_STOPPED, LockCount: 0}
+
+	assert.Nil(t, broker.getCommandForState("node-1", busy, nil, nil, nil, 1, nil))
+	_, ok := broker.getCommandForState("node-1", idle, nil, nil, nil, 1, nil).(StopNodeCommand)
+	assert.True(t, ok)
+	assert.Nil(t, broker.getCommandForState("node-1", started, nil, nil, nil, 1, nil),
+		"a STOPPED intent left behind by a start is stale and must not stop the node")
+}
+
+func TestReleaseNode_WakesTheReconcilerWhenAStopWasWaitingOnIt(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.pinStopped()
+	node.State.AdminState.Stopped = true
+	node.State.LockCount = 1
+	broker := &Broker{
+		nodes:            map[string]*NodeWithState{"node-1": node},
+		reconcileTrigger: make(chan struct{}, 1),
+	}
+
+	response := make(chan bool, 1)
+	broker.releaseNode(ReleaseNode{NodeId: "node-1", Outcome: InferenceSuccess{}, Response: response})
+
+	require.True(t, <-response)
+	select {
+	case <-broker.reconcileTrigger:
+	default:
+		t.Fatal("the last release must wake the reconciler so the deferred stop is not left to the ticker")
+	}
+}
+
+func TestReleaseNode_LeavesTheReconcilerAloneWhenTheStopWasLifted(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.pinStopped()
+	node.State.LockCount = 1
+	broker := &Broker{
+		nodes:            map[string]*NodeWithState{"node-1": node},
+		reconcileTrigger: make(chan struct{}, 1),
+	}
+
+	response := make(chan bool, 1)
+	broker.releaseNode(ReleaseNode{NodeId: "node-1", Outcome: InferenceSuccess{}, Response: response})
+
+	require.True(t, <-response)
+	select {
+	case <-broker.reconcileTrigger:
+		t.Fatal("a start before the last release lifts the hold; nothing is left to wake the reconciler for")
+	default:
+	}
+}
+
 func TestGetCommandForState_UsesConfiguredFallbackForGeneration(t *testing.T) {
 	broker := NewTestBroker()
 	nodeState := &NodeState{

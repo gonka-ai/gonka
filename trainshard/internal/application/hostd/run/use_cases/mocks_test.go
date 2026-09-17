@@ -455,6 +455,7 @@ type controlStub struct {
 	rec     *recorder
 	drained bool
 	stuck   bool
+	refuse  error
 }
 
 func (c *controlStub) Drained(context.Context, vo.NodeRef) (bool, error) { return c.drained, nil }
@@ -467,6 +468,9 @@ func (c *controlStub) Drain(context.Context, vo.NodeRef) (bool, error) {
 
 func (c *controlStub) Return(context.Context, vo.NodeRef) error {
 	c.rec.record("control.return")
+	if c.refuse != nil {
+		return c.refuse
+	}
 	c.drained = false
 	return nil
 }
@@ -570,7 +574,7 @@ func (f *fixture) applyMesh() *usecases.ApplyMeshUseCase {
 
 func (f *fixture) prepared(ctx context.Context) error {
 	for range 3 {
-		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 			return err
 		}
 	}
@@ -591,7 +595,7 @@ func (f *fixture) meshed(ctx context.Context) error {
 	if err := f.store.SaveConfig(ctx, shardID, nodeA, config); err != nil {
 		return err
 	}
-	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		return err
 	}
 	f.rec.reset()
