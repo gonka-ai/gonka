@@ -450,6 +450,7 @@ func (g *EarlyShareGuard) checkInclusion(
 		ModelId:                  work.modelId,
 		RootHash:                 dec.earlyRoot,
 		Count:                    dec.earlyCount,
+		TreeDepth:                work.treeDepth,
 		LeafIndices:              leafIndices,
 		ParticipantAddress:       work.address,
 	})
@@ -479,6 +480,7 @@ func (g *EarlyShareGuard) checkInclusion(
 		ModelId:                  work.modelId,
 		RootHash:                 work.rootHash,
 		Count:                    work.count,
+		TreeDepth:                work.treeDepth,
 		Nonces:                   nonces,
 		ParticipantAddress:       work.address,
 	})

@@ -258,9 +258,10 @@ func (w *CommitWorker) maybeCalibrateStoreCommitGas(pocHeight int64) {
 	entries := make([]*types.PoCV2CommitEntry, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
 		entries = append(entries, &types.PoCV2CommitEntry{
-			ModelId:  modelID,
-			Count:    1,
-			RootHash: dummyHash,
+			ModelId:   modelID,
+			Count:     1,
+			RootHash:  dummyHash,
+			TreeDepth: 24,
 		})
 	}
 	msg := &types.MsgPoCV2StoreCommit{
@@ -329,6 +330,10 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, timeoutHeight uint64) 
 		if count == 0 || rootHash == nil {
 			continue
 		}
+		treeDepth := stageStore.Store.FlushedDepth()
+		if treeDepth == 0 {
+			continue
+		}
 
 		key := commitKey{stage: pocHeight, modelID: stageStore.ModelID}
 		last, hasLast := w.lastCommitted[key]
@@ -373,9 +378,10 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, timeoutHeight uint64) 
 		}
 
 		entries = append(entries, &types.PoCV2CommitEntry{
-			ModelId:  stageStore.ModelID,
-			Count:    count,
-			RootHash: rootHash,
+			ModelId:   stageStore.ModelID,
+			Count:     count,
+			RootHash:  rootHash,
+			TreeDepth: treeDepth,
 		})
 		submittedStates[key] = commitState{
 			count:    count,

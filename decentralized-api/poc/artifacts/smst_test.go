@@ -1614,13 +1614,13 @@ func TestSMSTIndexBindingVerification(t *testing.T) {
 		leafData := encodeLeaf(nonce, vector)
 
 		// Correct index should verify
-		if !VerifySMSTProofWithDenseIndex(rootHash, count, expectedIndex, nonce, leafData, proof) {
+		if !VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof)), expectedIndex, nonce, leafData, proof) {
 			t.Errorf("Valid proof at index %d should verify", expectedIndex)
 		}
 
 		// Wrong index should NOT verify
 		wrongIndex := (expectedIndex + 1) % count
-		if VerifySMSTProofWithDenseIndex(rootHash, count, wrongIndex, nonce, leafData, proof) {
+		if VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof)), wrongIndex, nonce, leafData, proof) {
 			t.Errorf("Proof at index %d should NOT verify when claimed at index %d", expectedIndex, wrongIndex)
 		}
 	}
@@ -1629,7 +1629,7 @@ func TestSMSTIndexBindingVerification(t *testing.T) {
 	nonce0, vector0, proof0, _ := store.GetArtifactAndProof(0, count)
 	leafData0 := encodeLeaf(nonce0, vector0)
 
-	if VerifySMSTProofWithDenseIndex(rootHash, count, 2, nonce0, leafData0, proof0) {
+	if VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof0)), 2, nonce0, leafData0, proof0) {
 		t.Error("Proof for index 0 should NOT verify when claimed at index 2")
 	}
 }
@@ -1732,7 +1732,7 @@ func TestSMSTCountInflationAttackFails(t *testing.T) {
 	}
 
 	// Also verify with dense index check
-	if VerifySMSTProofWithDenseIndex(rootHash, inflatedCount, 0, nonce, leafData, proof) {
+	if VerifySMSTProofWithDenseIndex(rootHash, inflatedCount, uint32(len(proof)), 0, nonce, leafData, proof) {
 		t.Error("SECURITY FAILURE: VerifySMSTProofWithDenseIndex passed with inflated count!")
 	}
 
@@ -1817,7 +1817,7 @@ func TestSMSTNonceHasUniqueDenseIndex(t *testing.T) {
 		leafData := encodeLeaf(nonce, vector)
 
 		// Correct index passes
-		if !VerifySMSTProofWithDenseIndex(rootHash, count, expectedIdx, nonce, leafData, proof) {
+		if !VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof)), expectedIdx, nonce, leafData, proof) {
 			t.Errorf("Nonce %d should verify at its correct index %d", nonce, expectedIdx)
 		}
 
@@ -1826,7 +1826,7 @@ func TestSMSTNonceHasUniqueDenseIndex(t *testing.T) {
 			if wrongIdx == expectedIdx {
 				continue
 			}
-			if VerifySMSTProofWithDenseIndex(rootHash, count, wrongIdx, nonce, leafData, proof) {
+			if VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof)), wrongIdx, nonce, leafData, proof) {
 				t.Errorf("SECURITY FAILURE: Nonce %d verified at wrong index %d (should only be %d)",
 					nonce, wrongIdx, expectedIdx)
 			}
@@ -1875,7 +1875,7 @@ func TestSMSTNegativeNonces(t *testing.T) {
 		}
 
 		leafData := encodeLeaf(nonce, vector)
-		if !VerifySMSTProofWithDenseIndex(rootHash, count, i, nonce, leafData, proof) {
+		if !VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof)), i, nonce, leafData, proof) {
 			t.Errorf("Proof failed for nonce %d at index %d", nonce, i)
 		}
 	}
@@ -1914,12 +1914,12 @@ func TestSMSTCountBoundaries(t *testing.T) {
 		leafData := encodeLeaf(nonce, vector)
 
 		// denseIndex = count should fail (valid range is [0, count))
-		if VerifySMSTProofWithDenseIndex(rootHash, count, count, nonce, leafData, proof) {
+		if VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof)), count, nonce, leafData, proof) {
 			t.Error("denseIndex == count should fail")
 		}
 
 		// denseIndex > count should fail
-		if VerifySMSTProofWithDenseIndex(rootHash, count, count+100, nonce, leafData, proof) {
+		if VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof)), count+100, nonce, leafData, proof) {
 			t.Error("denseIndex > count should fail")
 		}
 	})
@@ -1938,12 +1938,12 @@ func TestSMSTCountBoundaries(t *testing.T) {
 		leafData := encodeLeaf(nonce, vector)
 
 		// Single leaf at index 0 should verify
-		if !VerifySMSTProofWithDenseIndex(rootHash, count, 0, nonce, leafData, proof) {
+		if !VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof)), 0, nonce, leafData, proof) {
 			t.Error("Single leaf tree proof should verify")
 		}
 
 		// Index 1 should fail (out of range)
-		if VerifySMSTProofWithDenseIndex(rootHash, count, 1, nonce, leafData, proof) {
+		if VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof)), 1, nonce, leafData, proof) {
 			t.Error("Index 1 in single-leaf tree should fail")
 		}
 	})
@@ -2001,7 +2001,7 @@ func TestSMSTSnapshotConsistency(t *testing.T) {
 		leafData := encodeLeaf(nonce, vector)
 
 		// This MUST verify successfully - if it doesn't, we have snapshot inconsistency
-		if !VerifySMSTProofWithDenseIndex(snapshotRoot, snapshotCount, i, nonce, leafData, proof) {
+		if !VerifySMSTProofWithDenseIndex(snapshotRoot, snapshotCount, uint32(len(proof)), i, nonce, leafData, proof) {
 			t.Errorf("Snapshot consistency FAILED for index %d: proof does not verify", i)
 			t.Logf("  nonce=%d, snapshotCount=%d, currentCount=%d", nonce, snapshotCount, currentCount)
 		}
@@ -2043,7 +2043,7 @@ func TestSMSTGetArtifactAndProofByNonce(t *testing.T) {
 		if !bytes.Equal(byNonceVector, vector) {
 			t.Fatalf("nonce %d: vector mismatch", nonce)
 		}
-		if !VerifySMSTProofWithDenseIndex(rootHash, count, denseIndex, nonce, encodeLeaf(nonce, byNonceVector), proof) {
+		if !VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof)), denseIndex, nonce, encodeLeaf(nonce, byNonceVector), proof) {
 			t.Fatalf("nonce %d: proof failed verification at dense index %d", nonce, denseIndex)
 		}
 	}
@@ -2084,7 +2084,7 @@ func TestSMSTGetArtifactAndProofByNonceSnapshotSemantics(t *testing.T) {
 	if denseIndex != 1 {
 		t.Fatalf("expected nonce 50 at snapshot dense index 1, got %d", denseIndex)
 	}
-	if !VerifySMSTProofWithDenseIndex(snapshotRoot, snapshotCount, denseIndex, 50, encodeLeaf(50, vector), proof) {
+	if !VerifySMSTProofWithDenseIndex(snapshotRoot, snapshotCount, uint32(len(proof)), denseIndex, 50, encodeLeaf(50, vector), proof) {
 		t.Fatal("snapshot proof failed verification")
 	}
 }
@@ -2148,7 +2148,7 @@ func TestSMSTBatchProofsMatchSingleCalls(t *testing.T) {
 		if entry.DenseIndex != indices[i] || entry.Nonce != nonce || !bytes.Equal(entry.Vector, vector) || len(entry.Proof) != len(proof) {
 			t.Fatalf("batch entry %d does not match single call", i)
 		}
-		if !VerifySMSTProofWithDenseIndex(rootHash, count, entry.DenseIndex, entry.Nonce, encodeLeaf(entry.Nonce, entry.Vector), entry.Proof) {
+		if !VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(entry.Proof)), entry.DenseIndex, entry.Nonce, encodeLeaf(entry.Nonce, entry.Vector), entry.Proof) {
 			t.Fatalf("batch proof %d failed verification", i)
 		}
 	}
@@ -2161,7 +2161,7 @@ func TestSMSTBatchProofsMatchSingleCalls(t *testing.T) {
 		t.Fatalf("nonce entries = %d, want 2", len(nonceEntries))
 	}
 	for _, entry := range nonceEntries {
-		if !VerifySMSTProofWithDenseIndex(rootHash, count, entry.DenseIndex, entry.Nonce, encodeLeaf(entry.Nonce, entry.Vector), entry.Proof) {
+		if !VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(entry.Proof)), entry.DenseIndex, entry.Nonce, encodeLeaf(entry.Nonce, entry.Vector), entry.Proof) {
 			t.Fatalf("by-nonce proof for nonce %d failed verification", entry.Nonce)
 		}
 	}
@@ -2188,22 +2188,22 @@ func TestSMSTVerifierOverflowProtection(t *testing.T) {
 	leafData := encodeLeaf(nonce, vector)
 
 	// Valid proof should work
-	if !VerifySMSTProofWithDenseIndex(rootHash, count, 0, nonce, leafData, proof) {
+	if !VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len(proof)), 0, nonce, leafData, proof) {
 		t.Fatal("Valid proof should verify")
 	}
 
 	// Test with count=0 (should fail early)
-	if VerifySMSTProofWithDenseIndex(rootHash, 0, 0, nonce, leafData, proof) {
+	if VerifySMSTProofWithDenseIndex(rootHash, 0, uint32(len(proof)), 0, nonce, leafData, proof) {
 		t.Error("count=0 should fail verification")
 	}
 
 	// Test with empty proof (should fail early)
-	if VerifySMSTProofWithDenseIndex(rootHash, count, 0, nonce, leafData, [][]byte{}) {
+	if VerifySMSTProofWithDenseIndex(rootHash, count, uint32(len([][]byte{})), 0, nonce, leafData, [][]byte{}) {
 		t.Error("Empty proof should fail verification")
 	}
 
 	// Test with nil proof (should fail early)
-	if VerifySMSTProofWithDenseIndex(rootHash, count, 0, nonce, leafData, nil) {
+	if VerifySMSTProofWithDenseIndex(rootHash, count, 0, 0, nonce, leafData, nil) {
 		t.Error("Nil proof should fail verification")
 	}
 }
@@ -2666,5 +2666,47 @@ func TestDistributionLostAfterRestart_ScannerLimit(t *testing.T) {
 
 	if got != want {
 		t.Fatalf("distribution lost after restart: recovered %d nodes, want %d", got, want)
+	}
+}
+
+func TestPinnedDepthRejectsVariableDepthReuse(t *testing.T) {
+	const nonce int32 = 1 << 23
+	leafData := make([]byte, 5)
+	binary.LittleEndian.PutUint32(leafData, uint32(nonce))
+	leafData[4] = 0x42
+
+	empty := make([][]byte, 24)
+	empty[0] = smstHashEmpty()
+	branch := smstHashLeaf(leafData)
+	for height := 1; height < 24; height++ {
+		branch = smstHashNode(branch, empty[height-1], 1)
+		empty[height] = smstHashNode(empty[height-1], empty[height-1], 0)
+	}
+	t1 := smstHashNode(empty[23], branch, 1)
+	root := smstHashNode(t1, branch, 2)
+
+	proofElem := func(hash []byte, count uint32) []byte {
+		element := make([]byte, 36)
+		copy(element, hash)
+		binary.LittleEndian.PutUint32(element[32:], count)
+		return element
+	}
+	tail := make([][]byte, 0, 23)
+	for height := 22; height >= 0; height-- {
+		tail = append(tail, proofElem(empty[height], 0))
+	}
+	proof25 := append([][]byte{proofElem(branch, 1), proofElem(empty[23], 0)}, tail...)
+	proof24 := append([][]byte{proofElem(t1, 1)}, tail...)
+
+	if VerifySMSTProofWithDenseIndex(root, 2, 25, 1, nonce, leafData, proof24) {
+		t.Fatal("pinned depth 25 accepted a length-24 opening")
+	}
+	if VerifySMSTProofWithDenseIndex(root, 2, 24, 0, nonce, leafData, proof25) ||
+		VerifySMSTProofWithDenseIndex(root, 2, 24, 1, nonce, leafData, proof25) {
+		t.Fatal("pinned depth 24 accepted a length-25 opening")
+	}
+	if VerifySMSTProofWithDenseIndex(root, 2, 25, 0, nonce, leafData, proof25) &&
+		VerifySMSTProofWithDenseIndex(root, 2, 25, 1, nonce, leafData, proof25) {
+		t.Fatal("same nonce verified at two dense indices under one depth")
 	}
 }

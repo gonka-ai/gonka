@@ -27,6 +27,10 @@ type ArtifactStore interface {
 	// Safe to report externally - survives process crashes.
 	GetFlushedRoot() (count uint32, root []byte)
 
+	// FlushedDepth is the SMST depth that produced the flushed root.
+	// 0 if nothing has been flushed.
+	FlushedDepth() uint32
+
 	// GetNodeDistributionAt returns node distribution at a specific count.
 	// Returns exact=true if found in history, exact=false if simulated.
 	// Simulated distribution is scaled proportionally and sums to count.
