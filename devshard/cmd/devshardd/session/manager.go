@@ -408,36 +408,18 @@ func (m *HostManager) hostRPCAddress() string {
 
 func (m *HostManager) allowRPCPeer(ctx context.Context, addr string) (bool, error) {
 	escrowID := rpcserver.EscrowIDFromContext(ctx)
-	srv, err := m.sessionForParticipant(escrowID, addr)
-	if err != nil {
-		return false, err
-	}
-	if srv == nil {
-		return false, nil
-	}
-	return srv.AllowsSender(addr), nil
-}
-
-// sessionForParticipant returns a live session when addr is the escrow
-// creator or a slot member. A missing local row is created so a host that
-// never saw owner chat can still accept challenge/gossip from the group.
-// Strangers get (nil, nil). Observability GETs must not call this.
-func (m *HostManager) sessionForParticipant(escrowID, addr string) (*transport.Server, error) {
 	srv, err := m.SessionServerExisting(escrowID)
 	if err == nil {
 		if srv == nil {
-			return nil, storage.ErrSessionNotFound
+			return false, storage.ErrSessionNotFound
 		}
-		if !srv.AllowsSender(addr) {
-			return nil, nil
-		}
-		return srv, nil
+		return srv.AllowsSender(addr), nil
 	}
 	if !errors.Is(err, storage.ErrSessionNotFound) {
-		return escrowNotOpen(escrowID, err)
+		return false, err
 	}
 	if m.bridge == nil {
-		return escrowNotOpen(escrowID, err)
+		return false, err
 	}
 	escrow := m.warmedEscrow(escrowID)
 	var gerr error
@@ -445,29 +427,16 @@ func (m *HostManager) sessionForParticipant(escrowID, addr string) (*transport.S
 		escrow, gerr = m.fetchEscrowForBind(escrowID, addr)
 	}
 	if gerr != nil {
-		return nil, fmt.Errorf("get escrow: %w", gerr)
+		return false, fmt.Errorf("get escrow: %w", gerr)
 	}
 	if escrow == nil {
-		return escrowNotOpen(escrowID, err)
+		return false, err
 	}
 	if escrow.Settled {
 		m.rememberResolutionFailure(escrowID, bridge.ErrEscrowSettled, time.Now())
-		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
+		return false, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
 	}
-	if !escrowLookupEligible(escrow, nil, addr) {
-		return nil, nil
-	}
-	srv, cerr := m.getOrCreate(escrowID, escrow)
-	if cerr != nil {
-		return nil, cerr
-	}
-	if srv == nil {
-		return nil, storage.ErrSessionNotFound
-	}
-	if !srv.AllowsSender(addr) {
-		return nil, nil
-	}
-	return srv, nil
+	return escrowLookupEligible(escrow, nil, addr), nil
 }
 
 func escrowNotOpen(escrowID string, err error) (*transport.Server, error) {
@@ -632,7 +601,8 @@ func (m *HostManager) evictSession(escrowID string, stale *transport.Server) {
 
 // sessionForOwner is BindOwnerChat without POST auth: Existing + IsOwner,
 // or CreateSession only when addr is the escrow creator. Slot members
-// get (nil, nil). Challenge / gossip / seed / repair / verify must not call this.
+// get (nil, nil). Chat, height-sync seed, and owner-only verify use this.
+// ChallengeReceipt must use sessionForStartProof so a peer cannot pick the version.
 func (m *HostManager) sessionForOwner(escrowID, addr string) (*transport.Server, error) {
 	srv, err := m.SessionServerExisting(escrowID)
 	if err == nil {
@@ -668,9 +638,9 @@ func (m *HostManager) sessionForOwner(escrowID, addr string) (*transport.Server,
 	return srv, nil
 }
 
-// BindOwnerChat verifies the request as the escrow owner, then returns an
-// existing session or binds a new one with this process's boundVersion.
-// Auth context (sender + body) is injected for HandleInference.
+// BindOwnerChat verifies the request as the escrow owner (gateway), then
+// returns an existing session or binds a new one with this process's
+// boundVersion. Auth context (sender + body) is injected for HandleInference.
 func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
 	escrowID := c.Param("id")
 	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
@@ -692,10 +662,10 @@ func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
 	return srv, nil
 }
 
-// BindGroupPeer authenticates a creator or slot member and returns an existing
-// session or binds a new one. Host-to-host gossip, challenge, and verify
-// use this so a participant that never saw owner chat still has a local
-// session when another host retries StartInference / ChallengeReceipt.
+// BindGroupPeer authenticates a creator or slot member. Gossip / repair use an
+// existing session only. Challenge / verify may CreateSession when the body
+// carries a gateway-signed MsgStartInference whose protocol_version matches
+// this child's boundVersion.
 func (m *HostManager) BindGroupPeer(c echo.Context) (*transport.Server, error) {
 	escrowID := c.Param("id")
 	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
@@ -705,7 +675,7 @@ func (m *HostManager) BindGroupPeer(c echo.Context) (*transport.Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	srv, err := m.sessionForParticipant(escrowID, addr)
+	srv, err := m.bindGroupPeerFromBody(escrowID, addr, body)
 	if err != nil {
 		return nil, err
 	}
@@ -742,8 +712,8 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 }
 
 // getOrCreate returns a live session, recovering from store or creating.
-// When escrow is non-nil (BindOwnerChat / BindGroupPeer / participant
-// Attach), create reuses it and skips a second bridge.GetEscrow.
+// When escrow is non-nil (BindOwnerChat / start-proof bind),
+// create reuses it and skips a second bridge.GetEscrow.
 func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*transport.Server, error) {
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
@@ -813,7 +783,7 @@ func (m *HostManager) cachedResolutionFailure(escrowID string, now time.Time) er
 
 // cachedCreateBlockingFailure is the tombstone getOrCreate honors.
 // SessionServerExisting caches a miss so GET /signatures does not recover
-// on every request. BindOwnerChat, BindGroupPeer, and participant Attach
+// on every request. BindOwnerChat and ChallengeReceipt start-proof bind
 // call Existing first, then getOrCreate; that miss must not block CreateSession.
 func (m *HostManager) cachedCreateBlockingFailure(escrowID string, now time.Time) error {
 	err := m.cachedResolutionFailure(escrowID, now)
@@ -1440,10 +1410,10 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 	return srv, obsRepair, nil
 }
 
-// hostRPCLookup is the Connect session resolver. Observability GETs use
-// Existing (no CreateSession). Challenge, gossip, seed, repair, and verify
-// bind a participant so a live host handshake on another escrow still
-// CreateSession for this one. Chat uses SessionForOwner (creator only).
+// hostRPCLookup is the Connect session resolver. Observability GETs and
+// gossip/repair use Existing (no CreateSession). ChallengeReceipt binds via
+// SessionForStartProof (gateway-signed start + version). Chat, seed, and
+// owner-only verify use SessionForOwner (creator only).
 type hostRPCLookup struct{ m *HostManager }
 
 func (l hostRPCLookup) SessionServerExisting(id string) (rpcserver.SessionCore, error) {
@@ -1470,6 +1440,17 @@ func (l hostRPCLookup) SessionForParticipant(id, addr string) (rpcserver.Session
 
 func (l hostRPCLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, error) {
 	srv, err := l.m.sessionForOwner(id, addr)
+	if err != nil {
+		return nil, err
+	}
+	if srv == nil {
+		return nil, nil
+	}
+	return srv, nil
+}
+
+func (l hostRPCLookup) SessionForStartProof(id, addr string, diffs []types.Diff, claimedVersion string) (rpcserver.SessionCore, error) {
+	srv, err := l.m.sessionForStartProof(id, addr, diffs, claimedVersion)
 	if err != nil {
 		return nil, err
 	}

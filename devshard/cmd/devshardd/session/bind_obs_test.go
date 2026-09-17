@@ -116,17 +116,18 @@ func TestObsMempoolSignatures_DoNotBindSession(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 }
 
-func TestGossipUnbound_BindsSession(t *testing.T) {
+func TestGossipUnbound_DoesNotBindSession(t *testing.T) {
 	const escrowID = "9703"
-	mgr, store, user, hostSigner := setupBindTestManager(t, escrowID)
+	mgr, store, _, hostSigner := setupBindTestManager(t, escrowID)
 	e := echo.New()
 	mgr.Register(e.Group(""))
 
 	body := []byte(`{"nonce":1}`)
-	_ = signedPOST(t, e, hostSigner, "/sessions/"+escrowID+"/gossip/nonce", escrowID, body)
-	meta, err := store.GetSessionMeta(escrowID)
-	require.NoError(t, err, "group-peer gossip must CreateSession so a missed owner chat can still be challenged")
-	require.Equal(t, user.Address(), meta.CreatorAddr)
+	rec := signedPOST(t, e, hostSigner, "/sessions/"+escrowID+"/gossip/nonce", escrowID, body)
+	require.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
+
+	_, err := store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound, "gossip must not CreateSession; only gateway or start proof may bind")
 }
 
 func TestGossipUnbound_StrangerDoesNotBindSession(t *testing.T) {
@@ -152,11 +153,12 @@ func TestChallengeReceiptUnbound_BindsAndAppliesStart(t *testing.T) {
 	mgr.Register(e.Group(""))
 
 	const inferenceID uint64 = 1
-	diff := testutil.SignDiff(t, user, escrowID, inferenceID, []*types.DevshardTx{testutil.StartTx(inferenceID)})
+	diff := testutil.SignDiff(t, user, escrowID, inferenceID, []*types.DevshardTx{testutil.StartTxVersioned(inferenceID, testutil.RuntimeTestVersion)})
 	dj, err := transport.DiffToJSON(diff)
 	require.NoError(t, err)
 	body, err := json.Marshal(transport.ChallengeReceiptRequest{
-		InferenceID: inferenceID,
+		InferenceID:     inferenceID,
+		ProtocolVersion: testutil.RuntimeTestVersion,
 		Payload: &transport.PayloadJSON{
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
@@ -191,6 +193,76 @@ func TestChallengeReceiptUnbound_BindsAndAppliesStart(t *testing.T) {
 		}
 	}
 	require.True(t, found, "recovery mempool must include MsgConfirmStart for the challenged inference")
+}
+
+func TestChallengeReceiptUnbound_WrongVersionDoesNotBind(t *testing.T) {
+	const escrowID = "9715"
+	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	start := testutil.StartTx(1)
+	start.GetStartInference().ProtocolVersion = "other-version"
+	diff := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{start})
+	dj, err := transport.DiffToJSON(diff)
+	require.NoError(t, err)
+	body, err := json.Marshal(transport.ChallengeReceiptRequest{
+		InferenceID:     1,
+		ProtocolVersion: "other-version",
+		Payload:         &transport.PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
+		Diffs:           []transport.DiffJSON{dj},
+	})
+	require.NoError(t, err)
+
+	rec := signedPOST(t, e, hosts[2], "/sessions/"+escrowID+"/challenge-receipt", escrowID, body)
+	require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestChallengeReceiptUnbound_MissingVersionDoesNotBind(t *testing.T) {
+	const escrowID = "9716"
+	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	diff := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTx(1)})
+	dj, err := transport.DiffToJSON(diff)
+	require.NoError(t, err)
+	body, err := json.Marshal(transport.ChallengeReceiptRequest{
+		InferenceID: 1,
+		Payload:     &transport.PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
+		Diffs:       []transport.DiffJSON{dj},
+	})
+	require.NoError(t, err)
+
+	rec := signedPOST(t, e, hosts[2], "/sessions/"+escrowID+"/challenge-receipt", escrowID, body)
+	require.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestChallengeReceiptUnbound_ClaimedVersionMismatchDoesNotBind(t *testing.T) {
+	const escrowID = "9717"
+	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	diff := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTxVersioned(1, testutil.RuntimeTestVersion)})
+	dj, err := transport.DiffToJSON(diff)
+	require.NoError(t, err)
+	body, err := json.Marshal(transport.ChallengeReceiptRequest{
+		InferenceID:     1,
+		ProtocolVersion: "other-version",
+		Payload:         &transport.PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
+		Diffs:           []transport.DiffJSON{dj},
+	})
+	require.NoError(t, err)
+
+	rec := signedPOST(t, e, hosts[2], "/sessions/"+escrowID+"/challenge-receipt", escrowID, body)
+	require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 }
 
 func TestChallengeReceiptUnbound_StrangerDoesNotBind(t *testing.T) {

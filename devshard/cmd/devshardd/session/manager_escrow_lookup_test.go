@@ -226,7 +226,6 @@ func TestAllowRPCPeer_WarmedEscrowSkipsGetEscrow(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, int32(0), inner.calls.Load(), "a warmed escrow must not look like a cold GetEscrow miss")
-	meta, err := store.GetSessionMeta("9987")
-	require.NoError(t, err)
-	require.Equal(t, "gonka1owner", meta.CreatorAddr)
+	_, err = store.GetSessionMeta("9987")
+	require.ErrorIs(t, err, storage.ErrSessionNotFound, "Attach door must not CreateSession")
 }

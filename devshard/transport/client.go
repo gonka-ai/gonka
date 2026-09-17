@@ -925,9 +925,10 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	}
 
 	req := ChallengeReceiptRequest{
-		InferenceID: inferenceID,
-		Payload:     PayloadToJSON(payload),
-		Diffs:       djList,
+		InferenceID:     inferenceID,
+		Payload:         PayloadToJSON(payload),
+		Diffs:           djList,
+		ProtocolVersion: types.StartProtocolVersion(diffs),
 	}
 	body, err := json.Marshal(req)
 	if err != nil {

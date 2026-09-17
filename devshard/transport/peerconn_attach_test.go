@@ -517,6 +517,10 @@ func (s sigLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, erro
 	return s.SessionServerExisting(id)
 }
 
+func (s sigLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+	return s.SessionForParticipant(id, addr)
+}
+
 type sigCore struct {
 	sigs map[uint32][]byte
 }
@@ -712,6 +716,10 @@ func (q queryLookup) SessionForParticipant(id, addr string) (rpcserver.SessionCo
 func (q queryLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, error) {
 	_ = addr
 	return q.SessionServerExisting(id)
+}
+
+func (q queryLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+	return q.SessionForParticipant(id, addr)
 }
 
 type queryCore struct {
@@ -994,6 +1002,10 @@ func (l largeRPCLookup) SessionForParticipant(id, addr string) (rpcserver.Sessio
 func (l largeRPCLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, error) {
 	_ = addr
 	return l.SessionServerExisting(id)
+}
+
+func (l largeRPCLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+	return l.SessionForParticipant(id, addr)
 }
 
 type largeRPCCore struct {

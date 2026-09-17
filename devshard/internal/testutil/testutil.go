@@ -236,6 +236,13 @@ func StartTx(inferenceID uint64) *types.DevshardTx {
 	}}}
 }
 
+// StartTxVersioned is StartTx with protocol_version set (gateway start proof).
+func StartTxVersioned(inferenceID uint64, version string) *types.DevshardTx {
+	tx := StartTx(inferenceID)
+	tx.GetStartInference().ProtocolVersion = version
+	return tx
+}
+
 // MustGzip compresses body the way a sender puts it on the wire.
 func MustGzip(t *testing.T, body []byte) []byte {
 	t.Helper()

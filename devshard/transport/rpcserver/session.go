@@ -30,21 +30,28 @@ type SessionCore interface {
 
 // SessionLookup resolves a per-escrow session.
 // SessionServerExisting must not CreateSession (observability GETs).
-// SessionForParticipant CreateSession when addr is the creator or a slot member.
-// SessionForOwner CreateSession only when addr is the escrow creator (Chat).
+// SessionForParticipant never CreateSession (gossip / repair on a live row).
+// SessionForOwner CreateSession only when addr is the escrow creator (Chat, seed).
+// SessionForStartProof CreateSession when diffs carry a creator-signed
+// MsgStartInference whose protocol_version matches this child.
 type SessionLookup interface {
 	SessionServerExisting(escrowID string) (SessionCore, error)
-	// SessionForParticipant returns a live session, creating one when addr is
-	// the escrow creator or a slot member. Strangers return (nil, nil).
+	// SessionForParticipant returns a live session when addr is allowed.
+	// It does not bind a new version. Strangers return (nil, nil).
 	SessionForParticipant(escrowID, addr string) (SessionCore, error)
 	// SessionForOwner is BindOwnerChat: Existing + owner, or CreateSession
 	// only for the escrow creator. Slot members return (nil, nil).
 	SessionForOwner(escrowID, addr string) (SessionCore, error)
+	// SessionForStartProof is ChallengeReceipt bind: Existing, or CreateSession
+	// when diffs prove the gateway start and version. claimedVersion, when set,
+	// must match MsgStartInference.protocol_version.
+	SessionForStartProof(escrowID, addr string, diffs []types.Diff, claimedVersion string) (SessionCore, error)
 }
 
 // AdaptLookup wraps a *transport.Server finder (HostManager.SessionServerExisting).
-// SessionForParticipant and SessionForOwner fall back to Existing (tests and
-// obs-only lookups). Slot-member Chat then 403s in requireOwner without CreateSession.
+// SessionForParticipant, SessionForOwner, and SessionForStartProof fall back
+// to Existing (tests and obs-only lookups). Slot-member Chat then 403s in
+// requireOwner without CreateSession.
 func AdaptLookup(fn func(escrowID string) (*transport.Server, error)) SessionLookup {
 	return lookupAdapter(fn)
 }
@@ -72,6 +79,13 @@ func (f lookupAdapter) SessionForParticipant(id, addr string) (SessionCore, erro
 
 func (f lookupAdapter) SessionForOwner(id, addr string) (SessionCore, error) {
 	_ = addr
+	return f.SessionServerExisting(id)
+}
+
+func (f lookupAdapter) SessionForStartProof(id, addr string, diffs []types.Diff, claimedVersion string) (SessionCore, error) {
+	_ = addr
+	_ = diffs
+	_ = claimedVersion
 	return f.SessionServerExisting(id)
 }
 
@@ -208,7 +222,7 @@ func (h *SessionHandler) SeedHeightSync(ctx context.Context, req *connect.Reques
 	if req == nil || req.Msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	peer, srv, _, err := h.openSigned(ctx, req.Msg, "rpc_seed_height_sync")
+	peer, srv, _, err := h.openSignedOwner(ctx, req.Msg, "rpc_seed_height_sync")
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +276,7 @@ func (h *SessionHandler) VerifyTimeout(ctx context.Context, req *connect.Request
 	if req == nil || req.Msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	peer, srv, payload, err := h.openSigned(ctx, req.Msg, "rpc_verify_timeout")
+	peer, srv, payload, err := h.openSignedOwner(ctx, req.Msg, "rpc_verify_timeout")
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +305,7 @@ func (h *SessionHandler) VerifyErrorMiss(ctx context.Context, req *connect.Reque
 	if req == nil || req.Msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	peer, srv, payload, err := h.openSigned(ctx, req.Msg, "rpc_verify_error_miss")
+	peer, srv, payload, err := h.openSignedOwner(ctx, req.Msg, "rpc_verify_error_miss")
 	if err != nil {
 		return nil, err
 	}
@@ -320,15 +334,47 @@ func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Requ
 	if req == nil || req.Msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	peer, srv, payload, err := h.openSigned(ctx, req.Msg, "rpc_challenge_receipt")
+	peer, escrow, err := requirePeer(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := requireOwnerOrGroup(srv, peer); err != nil {
-		return nil, err
+	if h.lookup == nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("session lookup not configured"))
+	}
+	env := req.Msg
+	if env.GetEscrowId() != escrow {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("escrow mismatch"))
+	}
+	addr, vErr := transport.VerifyEnvelope(h.verifier, env, h.now())
+	if vErr != nil {
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid envelope signature"))
+	}
+	if addr != peer {
+		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("envelope signer does not match handshake"))
 	}
 	var inner rpcpb.ChallengeReceiptRequest
-	if err := unmarshalPayload(payload, &inner); err != nil {
+	if err := unmarshalPayload(env.GetPayload(), &inner); err != nil {
+		return nil, err
+	}
+	jsonReq := transport.ChallengeReceiptRequestFromProto(&inner)
+	diffs, err := transport.DiffsFromJSON(jsonReq.Diffs)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	srv, err := h.lookup.SessionForStartProof(escrow, peer, diffs, jsonReq.ProtocolVersion)
+	if err != nil {
+		recordRPCSessionResolution(ctx, "rpc_challenge_receipt", escrow, err)
+		return nil, mapAllowError(err)
+	}
+	if srv == nil {
+		recordRPCSessionResolution(ctx, "rpc_challenge_receipt", escrow, storage.ErrSessionNotFound)
+		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
+	}
+	recordRPCSessionResolution(ctx, "rpc_challenge_receipt", escrow, nil)
+	if !srv.AllowsSender(peer) {
+		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
+	}
+	if err := requireOwnerOrGroup(srv, peer); err != nil {
 		return nil, err
 	}
 	type challengeCore interface {
@@ -338,7 +384,7 @@ func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Requ
 	if !ok {
 		return nil, unimplementedCore()
 	}
-	resp, err := core.ServeChallengeReceipt(ctx, transport.ChallengeReceiptRequestFromProto(&inner))
+	resp, err := core.ServeChallengeReceipt(ctx, jsonReq)
 	if err != nil {
 		return nil, mapCoreError(err)
 	}
@@ -450,6 +496,15 @@ func mapAllowError(err error) error {
 	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) {
 		return connect.NewError(connect.CodeFailedPrecondition, errors.New("session version conflict"))
+	}
+	if errors.Is(err, types.ErrProtocolVersionMismatch) {
+		return connect.NewError(connect.CodeFailedPrecondition, errors.New("protocol version mismatch"))
+	}
+	if errors.Is(err, types.ErrStartProofMissing) {
+		return connect.NewError(connect.CodeFailedPrecondition, errors.New("gateway start proof required to open session"))
+	}
+	if errors.Is(err, types.ErrInvalidUserSig) {
+		return connect.NewError(connect.CodePermissionDenied, errors.New("invalid user signature"))
 	}
 	if errors.Is(err, storage.ErrSessionEpochConflict) {
 		return connect.NewError(connect.CodeFailedPrecondition, errors.New("session epoch conflict"))

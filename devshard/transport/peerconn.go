@@ -690,29 +690,44 @@ func (p *PeerConn) watch(ctx context.Context, token []byte) error {
 	defer p.releaseStream()
 	req := connect.NewRequest(&rpcpb.WatchRequest{SessionToken: token})
 	SetSessionHeader(req.Header(), token)
-	stream, err := p.peerAuthClient(true).Watch(ctx, req)
+	// Watch's HTTP request must not use ctx. PeerConn.Close cancels ctx
+	// first; x/net Body.Close then returns on cs.ctx.Done without waiting
+	// for forgetStreamID, so CloseIdleConnections leaves the mux up until
+	// IdleConnTimeout. An independent reqCtx keeps Close blocking until
+	// the stream is gone.
+	reqCtx, reqCancel := context.WithCancel(context.Background())
+	defer reqCancel()
+	stream, err := p.peerAuthClient(true).Watch(reqCtx, req)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = stream.Close() }()
 
 	type recvResult struct {
 		ok  bool
 		err error
 	}
 	recv := make(chan recvResult, 1)
+	recvDone := make(chan struct{})
+	shutdown := make(chan struct{})
 	go func() {
+		defer close(recvDone)
 		for stream.Receive() {
 			select {
 			case recv <- recvResult{ok: true}:
 			case <-ctx.Done():
+			case <-shutdown:
 				return
 			}
 		}
 		select {
 		case recv <- recvResult{err: stream.Err()}:
-		case <-ctx.Done():
+		default:
 		}
+	}()
+	defer func() {
+		_ = stream.Close()
+		close(shutdown)
+		<-recvDone
 	}()
 
 	timer := time.NewTimer(p.cfg.WatchStale)
@@ -913,6 +928,8 @@ func (p *PeerConn) Close() {
 		p.cancel()
 		p.startOnce.Do(func() { close(p.done) })
 		<-p.done
+		// watch() has already Close'd the Watch stream (or never started).
+		// Idle muxes can FIN; a shared origin with sibling streams stays up.
 		if p.http != nil {
 			p.http.CloseIdleConnections()
 		}

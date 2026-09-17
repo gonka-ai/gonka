@@ -21,6 +21,7 @@ import (
 	"devshard/transport"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcserver"
+	"devshard/types"
 )
 
 func TestFetchSignedPayloads_RPCWhenOptedIn(t *testing.T) {
@@ -172,6 +173,10 @@ func (payloadGroupLookup) SessionForParticipant(id, addr string) (rpcserver.Sess
 func (payloadGroupLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, error) {
 	_ = addr
 	return payloadGroupLookup{}.SessionServerExisting(id)
+}
+
+func (payloadGroupLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+	return payloadGroupLookup{}.SessionForParticipant(id, addr)
 }
 
 type payloadGroupCore struct{}

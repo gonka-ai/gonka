@@ -49,7 +49,7 @@ func TestRPCChallenge_BindsColdEscrowOnLiveHandshake(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	_, err = store.GetSessionMeta(escrowA)
-	require.NoError(t, err, "first Attach on escrow A still CreateSession for the door")
+	require.ErrorIs(t, err, storage.ErrSessionNotFound, "first Attach must not CreateSession")
 
 	sessionB := rpcpbconnect.NewSessionServiceClient(ts.Client(), ts.URL+"/sessions/"+escrowB+"/rpc")
 	diffsReq := connect.NewRequest(&rpcpb.GetDiffsRequest{})
@@ -61,11 +61,12 @@ func TestRPCChallenge_BindsColdEscrowOnLiveHandshake(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 
 	const inferenceID uint64 = 1
-	diff := testutil.SignDiff(t, user, escrowB, inferenceID, []*types.DevshardTx{testutil.StartTx(inferenceID)})
+	diff := testutil.SignDiff(t, user, escrowB, inferenceID, []*types.DevshardTx{testutil.StartTxVersioned(inferenceID, testutil.RuntimeTestVersion)})
 	dj, err := transport.DiffToJSON(diff)
 	require.NoError(t, err)
 	inner := transport.ChallengeReceiptRequestToProto(transport.ChallengeReceiptRequest{
-		InferenceID: inferenceID,
+		InferenceID:     inferenceID,
+		ProtocolVersion: testutil.RuntimeTestVersion,
 		Payload: &transport.PayloadJSON{
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
@@ -104,7 +105,7 @@ func TestRPCChat_SlotMemberDoesNotBindColdEscrow(t *testing.T) {
 	require.NotEqual(t, hosts[1].Address(), member.Address())
 	token := attachRPCOnEscrow(t, ts, escrowA, hosts[1].Address(), member, []byte("rpc-chat-member-attach-aaaa"))
 	_, err := store.GetSessionMeta(escrowA)
-	require.NoError(t, err, "first Attach on escrow A still CreateSession for the door")
+	require.ErrorIs(t, err, storage.ErrSessionNotFound, "first Attach must not CreateSession")
 
 	err = rpcChat(t, ts, escrowB, token, member, nil)
 	require.Error(t, err)
@@ -126,7 +127,7 @@ func TestRPCChat_OwnerBindsColdEscrowOnLiveHandshake(t *testing.T) {
 
 	token := attachRPCOnEscrow(t, ts, escrowA, hosts[1].Address(), user, []byte("rpc-chat-owner-attach-aaaa"))
 	_, err := store.GetSessionMeta(escrowA)
-	require.NoError(t, err, "first Attach on escrow A still CreateSession for the door")
+	require.ErrorIs(t, err, storage.ErrSessionNotFound, "first Attach must not CreateSession")
 
 	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
 	_ = rpcChat(t, ts, escrowB, token, user, body)

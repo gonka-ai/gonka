@@ -118,26 +118,29 @@ Two objects share that token:
 - **`PeerConn`** — one Attach/Watch per (host, version, URL, signer). Shared
   across every escrow that child serves. Live renewals and Watch use
   `/sessions/_/rpc`.
-- **`transport.Server` / DB session** — one per escrow. JSON `BindGroupPeer`
-  and bind-group RPCs (`ChallengeReceipt`, gossip, seed, repair, verify-*)
-  call `SessionForParticipant` so a host that never saw owner chat still
-  CreateSession when a group member shows up. JSON `BindOwnerChat` and RPC
-  `Chat` call `SessionForOwner`: Existing + owner, or CreateSession only
-  when the handshake peer is the escrow creator. A slot member Chat is
-  PermissionDenied and does not bind. Observability GETs
-  (`GetDiffs`, `GetMempool`, `GetSignatures`, `GetPayload`) stay Existing-only.
+- **`transport.Server` / DB session** — one per escrow. JSON `BindOwnerChat`
+  and RPC `Chat` / `SeedHeightSync` call `SessionForOwner`: Existing + owner,
+  or CreateSession only when the handshake peer is the escrow creator (the
+  gateway). Version is this child's `boundVersion` (the URL the gateway
+  chose). Slot-member Chat is PermissionDenied and does not bind.
+  `ChallengeReceipt` (JSON `BindGroupPeer` or RPC `SessionForStartProof`) may
+  CreateSession when the body carries a **creator-signed** `MsgStartInference`
+  whose `protocol_version` matches this child — so a host that never saw
+  owner chat can still be challenged without letting a peer pick the version.
+  Gossip, repair, and observability GETs stay Existing-only.
 
 A live handshake on escrow A is not a session for escrow B. Challenge on B
-with the host-wide token CreateSession for B; GetDiffs on B does not. Slot-member
-Chat on B does not bind; owner Chat on B does.
+with the host-wide token CreateSession for B only with that start proof;
+GetDiffs on B does not. Slot-member Chat on B does not bind; owner Chat on B does.
 
 ### Membership and renewal
 
 In production, Attach only succeeds if the recovered key is a participant of
 the escrow in that URL (`AllowsSender`). Outsiders never get a token.
 
-If that door escrow is not open locally, a creator or slot member still
-CreateSession so the door check can run. A stranger probing a cold id does not.
+If that door escrow is not open locally, Attach still admits a creator or slot
+member after a chain roster check — it does **not** CreateSession / bind a
+version. A stranger probing a cold id does not get a token.
 Signature, host address, timestamp, and nonce checks still run first.
 
 Renewal is a new Attach with a **new** `attach_nonce`, not a TTL refresh of the old
@@ -151,9 +154,10 @@ one:
 
 The token itself is still host-wide: Attach via one escrow you belong to, then
 use it on every escrow path this child serves. Later RPCs are admitted by session id
-(`x-devshard-session`); they do not repeat the Attach door. Bind-group RPCs still
-CreateSession for a cold escrow; observability GETs do not. Every data RPC still
-checks roster for **that** request's escrow.
+(`x-devshard-session`); they do not repeat the Attach door. ChallengeReceipt may
+CreateSession for a cold escrow with a gateway start proof; gossip, repair, and
+observability GETs do not. Every data RPC still checks roster for **that**
+request's escrow.
 
 ```
   unauthenticated

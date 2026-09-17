@@ -82,6 +82,10 @@ func (s stubLookup) SessionForOwner(id, addr string) (SessionCore, error) {
 	return s.SessionServerExisting(id)
 }
 
+func (s stubLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (SessionCore, error) {
+	return s.SessionForParticipant(id, addr)
+}
+
 type countingLookup struct {
 	core SessionCore
 	n    *int
@@ -102,6 +106,10 @@ func (s countingLookup) SessionForOwner(id, addr string) (SessionCore, error) {
 	return s.SessionServerExisting(id)
 }
 
+func (s countingLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (SessionCore, error) {
+	return s.SessionForParticipant(id, addr)
+}
+
 type countingBindLookup struct {
 	core                  SessionCore
 	existing, bind, owner int
@@ -119,6 +127,11 @@ func (s *countingBindLookup) SessionForParticipant(string, string) (SessionCore,
 
 func (s *countingBindLookup) SessionForOwner(string, string) (SessionCore, error) {
 	s.owner++
+	return s.core, nil
+}
+
+func (s *countingBindLookup) SessionForStartProof(string, string, []types.Diff, string) (SessionCore, error) {
+	s.bind++
 	return s.core, nil
 }
 
@@ -601,7 +614,7 @@ func TestSessionHandler_ParticipantBindVsExisting(t *testing.T) {
 	_, err = env.session.ChallengeReceipt(context.Background(), withSession(
 		connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.ChallengeReceiptRequest{InferenceId: 1})), env.token))
 	require.NoError(t, err)
-	require.Equal(t, 1, lookup.bind, "ChallengeReceipt must bind a participant session")
+	require.Equal(t, 1, lookup.bind, "ChallengeReceipt must bind via start proof")
 	require.Equal(t, 2, lookup.existing)
 	require.Equal(t, 0, lookup.owner)
 

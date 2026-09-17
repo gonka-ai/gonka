@@ -903,12 +903,15 @@ func (x *VerifyErrorMissResponse) GetRejectCause() string {
 }
 
 type ChallengeReceiptRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	InferenceId   uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	Payload       *Payload               `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
-	Diffs         []*Diff                `protobuf:"bytes,3,rep,name=diffs,proto3" json:"diffs,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	InferenceId uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	Payload     *Payload               `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	Diffs       []*Diff                `protobuf:"bytes,3,rep,name=diffs,proto3" json:"diffs,omitempty"`
+	// protocol_version must match MsgStartInference.protocol_version in diffs
+	// (the gateway-signed start). Required to CreateSession on a cold host.
+	ProtocolVersion string `protobuf:"bytes,4,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ChallengeReceiptRequest) Reset() {
@@ -960,6 +963,13 @@ func (x *ChallengeReceiptRequest) GetDiffs() []*Diff {
 		return x.Diffs
 	}
 	return nil
+}
+
+func (x *ChallengeReceiptRequest) GetProtocolVersion() string {
+	if x != nil {
+		return x.ProtocolVersion
+	}
+	return ""
 }
 
 type ChallengeReceiptResponse struct {
@@ -1411,11 +1421,12 @@ const file_devshard_transport_v1_session_proto_rawDesc = "" +
 	"\n" +
 	"voter_slot\x18\x03 \x01(\rR\tvoterSlot\x12\x18\n" +
 	"\amempool\x18\x04 \x03(\fR\amempool\x12!\n" +
-	"\freject_cause\x18\x05 \x01(\tR\vrejectCause\"\xa9\x01\n" +
+	"\freject_cause\x18\x05 \x01(\tR\vrejectCause\"\xd4\x01\n" +
 	"\x17ChallengeReceiptRequest\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x128\n" +
 	"\apayload\x18\x02 \x01(\v2\x1e.devshard.transport.v1.PayloadR\apayload\x121\n" +
-	"\x05diffs\x18\x03 \x03(\v2\x1b.devshard.transport.v1.DiffR\x05diffs\"N\n" +
+	"\x05diffs\x18\x03 \x03(\v2\x1b.devshard.transport.v1.DiffR\x05diffs\x12)\n" +
+	"\x10protocol_version\x18\x04 \x01(\tR\x0fprotocolVersion\"N\n" +
 	"\x18ChallengeReceiptResponse\x12\x18\n" +
 	"\areceipt\x18\x01 \x01(\fR\areceipt\x12\x18\n" +
 	"\amempool\x18\x02 \x03(\fR\amempool\"5\n" +

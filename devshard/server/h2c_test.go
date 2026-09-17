@@ -23,6 +23,7 @@ import (
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 	"devshard/transport/rpcserver"
+	"devshard/types"
 )
 
 func TestH2CServerAdvertisesStreamCap(t *testing.T) {
@@ -305,5 +306,9 @@ func (s staticH2CLookup) SessionForParticipant(string, string) (rpcserver.Sessio
 }
 
 func (s staticH2CLookup) SessionForOwner(string, string) (rpcserver.SessionCore, error) {
+	return s.core, nil
+}
+
+func (s staticH2CLookup) SessionForStartProof(string, string, []types.Diff, string) (rpcserver.SessionCore, error) {
 	return s.core, nil
 }

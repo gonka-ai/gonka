@@ -1194,12 +1194,13 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		return nil, fmt.Errorf("canonical prompt hash: %w", err)
 	}
 	start := &types.MsgStartInference{
-		InferenceId: nonce,
-		Model:       params.Model,
-		PromptHash:  promptHash,
-		InputLength: params.InputLength,
-		MaxTokens:   params.MaxTokens,
-		StartedAt:   params.StartedAt,
+		InferenceId:     nonce,
+		Model:           params.Model,
+		PromptHash:      promptHash,
+		InputLength:     params.InputLength,
+		MaxTokens:       params.MaxTokens,
+		StartedAt:       params.StartedAt,
+		ProtocolVersion: s.sm.ProtocolVersion(),
 	}
 	if h, hash, ok := s.referenceStampLocked(nonce); ok {
 		start.ObservedHeight = h

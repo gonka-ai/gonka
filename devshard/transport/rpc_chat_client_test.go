@@ -51,6 +51,10 @@ func (c chatLookup) SessionForOwner(string, string) (rpcserver.SessionCore, erro
 	return c.SessionServerExisting("")
 }
 
+func (c chatLookup) SessionForStartProof(string, string, []types.Diff, string) (rpcserver.SessionCore, error) {
+	return c.SessionServerExisting("")
+}
+
 func TestRPCClient_SendTruncatedZeroFrames(t *testing.T) {
 	hostAddr := testutil.MustGenerateKey(t).Address()
 	peer := testutil.MustGenerateKey(t)

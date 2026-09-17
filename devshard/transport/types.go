@@ -83,9 +83,10 @@ type VerifyTimeoutResponse struct {
 
 // ChallengeReceiptRequest is the JSON body for POST /sessions/:id/challenge-receipt.
 type ChallengeReceiptRequest struct {
-	InferenceID uint64       `json:"inference_id"`
-	Payload     *PayloadJSON `json:"payload"`
-	Diffs       []DiffJSON   `json:"diffs"`
+	InferenceID     uint64       `json:"inference_id"`
+	Payload         *PayloadJSON `json:"payload"`
+	Diffs           []DiffJSON   `json:"diffs"`
+	ProtocolVersion string       `json:"protocol_version,omitempty"`
 }
 
 // ChallengeReceiptResponse is returned by the challenge-receipt endpoint.
@@ -141,6 +142,22 @@ func DiffFromJSON(dj DiffJSON) (types.Diff, error) {
 		UserSig:       dj.UserSig,
 		PostStateRoot: dj.PostStateRoot,
 	}, nil
+}
+
+// DiffsFromJSON decodes a challenge / verify diffs list.
+func DiffsFromJSON(djs []DiffJSON) ([]types.Diff, error) {
+	if len(djs) == 0 {
+		return nil, nil
+	}
+	diffs := make([]types.Diff, 0, len(djs))
+	for i, dj := range djs {
+		d, err := DiffFromJSON(dj)
+		if err != nil {
+			return nil, fmt.Errorf("decode diff %d: %w", i, err)
+		}
+		diffs = append(diffs, d)
+	}
+	return diffs, nil
 }
 
 // HostRequestToJSON converts a HostRequest to InferenceRequest.

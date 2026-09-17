@@ -100,9 +100,12 @@ message VerifyErrorMissResponse {
 }
 
 message ChallengeReceiptRequest {
-  uint64        inference_id = 1;
-  Payload       payload      = 2;
-  repeated Diff diffs        = 3;
+  uint64        inference_id     = 1;
+  Payload       payload          = 2;
+  repeated Diff diffs            = 3;
+  // protocol_version must match MsgStartInference.protocol_version in diffs
+  // (the gateway-signed start). Required to CreateSession on a cold host.
+  string        protocol_version = 4;
 }
 
 message ChallengeReceiptResponse {

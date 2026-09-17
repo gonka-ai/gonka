@@ -30,9 +30,9 @@ type OwnerChatBinder interface {
 	BindOwnerChat(c echo.Context) (*transport.Server, error)
 }
 
-// GroupPeerBinder authenticates a creator or slot member and may bind a new
-// session. Host-to-host POSTs use this so challenge/gossip can create a
-// session the owner never reached. Observability GETs must not.
+// GroupPeerBinder authenticates a creator or slot member. Challenge / verify
+// may bind a new session when the body carries a gateway-signed start proof.
+// Gossip and repair must not CreateSession. Observability GETs must not.
 type GroupPeerBinder interface {
 	BindGroupPeer(c echo.Context) (*transport.Server, error)
 }
@@ -70,9 +70,9 @@ func WithPeerRPC(auth *rpcserver.PeerAuthHandler, session *rpcserver.SessionHand
 // RegisterLazySessionRoutes mounts the standard devshard HTTP surface on g.
 // Observability GETs resolve existing sessions only (no CreateSession).
 // Owner chat and the height-sync seed RPC bind as the creator.
-// Host-to-host POSTs (gossip, challenge, verify, height-sync repair) bind
-// as any on-chain participant so a host that missed owner traffic still
-// has a local session when another host retries.
+// Host-to-host POSTs (gossip, repair) require an existing session.
+// Challenge / verify may CreateSession when the body carries a gateway-signed
+// MsgStartInference whose protocol_version matches this child.
 func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler, opts ...RouteOption) {
 	var cfg routeOptions
 	for _, opt := range opts {
@@ -332,8 +332,14 @@ func sessionHTTPError(c echo.Context, err error) error {
 	if errors.Is(err, bridge.ErrEscrowSettled) || errors.Is(err, storage.ErrSessionNotActive) {
 		return transport.HTTPError(c, http.StatusConflict, transport.DevshardErrorEscrowSettled, err.Error())
 	}
-	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) {
+	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) || errors.Is(err, types.ErrProtocolVersionMismatch) {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())
+	}
+	if errors.Is(err, types.ErrStartProofMissing) {
+		return echo.NewHTTPError(http.StatusNotFound, err.Error())
+	}
+	if errors.Is(err, types.ErrInvalidUserSig) {
+		return echo.NewHTTPError(http.StatusForbidden, err.Error())
 	}
 	return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 }

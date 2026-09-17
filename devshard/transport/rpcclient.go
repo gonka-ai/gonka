@@ -606,9 +606,10 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 		djList[i] = dj
 	}
 	inner := ChallengeReceiptRequestToProto(ChallengeReceiptRequest{
-		InferenceID: inferenceID,
-		Payload:     PayloadToJSON(payload),
-		Diffs:       djList,
+		InferenceID:     inferenceID,
+		Payload:         PayloadToJSON(payload),
+		Diffs:           djList,
+		ProtocolVersion: types.StartProtocolVersion(diffs),
 	})
 	raw, err := proto.Marshal(inner)
 	if err != nil {

@@ -281,9 +281,10 @@ func VerifyErrorMissResponseFromProto(r *rpcpb.VerifyErrorMissResponse) *VerifyE
 // ChallengeReceiptRequestToProto is the Connect inner payload for ChallengeReceipt.
 func ChallengeReceiptRequestToProto(r ChallengeReceiptRequest) *rpcpb.ChallengeReceiptRequest {
 	return &rpcpb.ChallengeReceiptRequest{
-		InferenceId: r.InferenceID,
-		Payload:     PayloadJSONToProto(r.Payload),
-		Diffs:       diffsJSONToProto(r.Diffs),
+		InferenceId:     r.InferenceID,
+		Payload:         PayloadJSONToProto(r.Payload),
+		Diffs:           diffsJSONToProto(r.Diffs),
+		ProtocolVersion: r.ProtocolVersion,
 	}
 }
 
@@ -293,9 +294,10 @@ func ChallengeReceiptRequestFromProto(r *rpcpb.ChallengeReceiptRequest) Challeng
 		return ChallengeReceiptRequest{}
 	}
 	return ChallengeReceiptRequest{
-		InferenceID: r.GetInferenceId(),
-		Payload:     PayloadJSONFromProto(r.GetPayload()),
-		Diffs:       diffsJSONFromProto(r.GetDiffs()),
+		InferenceID:     r.GetInferenceId(),
+		Payload:         PayloadJSONFromProto(r.GetPayload()),
+		Diffs:           diffsJSONFromProto(r.GetDiffs()),
+		ProtocolVersion: r.GetProtocolVersion(),
 	}
 }
 
