@@ -78,6 +78,9 @@ type Streams interface {
 type Egress interface {
 	// Allow opens the declared sources, closes the rest, and returns the names it pinned to an address
 	Allow(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, sources []vo.Source) ([]PinnedHost, error)
+	// Fenced returns whether the run's network still holds a ruleset; false once the box was
+	// rebuilt or is gone
+	Fenced(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (bool, error)
 }
 
 // Volumes run disk, quota held by the kernel

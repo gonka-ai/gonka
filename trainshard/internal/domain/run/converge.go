@@ -83,9 +83,12 @@ func (c *Converger) converge(ctx context.Context, node vo.NodeRef) (Outcome, err
 		return found, err
 	}
 
-	// 6. Hand back a node that is out of time; cleanup runs on the next pass
+	// 6. Hand back a node that is out of time, once; cleanup runs when the chain shows it
 	if reason, kick := Autokick(desired, observed, state, now, c.patience); kick {
-		return found, c.chain.Release(ctx, desired.Shard, node, reason)
+		if err := c.chain.Release(ctx, desired.Shard, node, reason); err != nil {
+			return found, err
+		}
+		return found, RecordRelease(ctx, c.runs, node, now)
 	}
 
 	// 7. Wipe what a shard this node no longer serves left behind, before it can be handed back

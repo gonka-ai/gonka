@@ -16,7 +16,7 @@ export TRAINSHARD_SERVICE_NAME=trainshardd
 export TRAINSHARD_PARTICIPANT=gonka1...          # your address
 export TRAINSHARD_NODES=node1                    # nodes to lease, comma separated
 export TRAINSHARD_MESH_ENDPOINT=203.0.113.10     # address peers reach you at
-export TRAINSHARD_MESH_PORTS=51820-51827         # one per leased node
+export TRAINSHARD_MESH_PORTS=51820-51827         # one per leased node, udp, open on the host
 export TRAINSHARD_STATE_DIR=/mnt/xfs/trainshardd # xfs with prjquota
 export TRAINSHARD_CONTAINER_MEMORY_BYTES=137438953472
 export TRAINSHARD_CONTAINER_NANO_CPUS=8000000000
@@ -118,11 +118,12 @@ inferenced tx gov vote $(inferenced query gov proposals -o json | jq -r '.propos
   --from <key> --gas auto --gas-adjustment 1.5 --yes
 ```
 
-4. Point trainshardctl at the hosts and the chain:
+4. Point trainshardctl at the hosts and the chain. A host is reached through the
+   participant's proxy, the same address and port the api is served on:
 
 ```
-echo '{"gonka1host1...":"http://host1.example.com:9700",
-       "gonka1host2...":"http://host2.example.com:9700"}' > hosts.json
+echo '{"gonka1host1...":"http://host1.example.com:8000",
+       "gonka1host2...":"http://host2.example.com:8000"}' > hosts.json
 
 export TRAINSHARD_HOSTS=$PWD/hosts.json
 export TRAINSHARD_CHAIN_GRPC=chain-host:9090
@@ -146,7 +147,7 @@ trainshardctl status $shard                   # PREPARED true; REASON says what 
 
 ```
 trainshardctl deploy $shard --image myrepo/trainer@sha256:... --gpus 1 --disk-bytes 2147483648 \
-  --env STEPS=60 --env NCCL_SOCKET_IFNAME=ts0
+  --env STEPS=60
 trainshardctl start $shard
 trainshardctl status $shard                   # every node running, MESH true
 ```

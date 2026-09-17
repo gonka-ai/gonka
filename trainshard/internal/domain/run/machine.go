@@ -54,6 +54,14 @@ func (m Machine) Observe(ctx context.Context, node vo.NodeRef, desired Desired) 
 	if err != nil {
 		return Observed{}, err
 	}
+	identity, err := m.Mesh.Identified(ctx, shardID, node)
+	if err != nil {
+		return Observed{}, err
+	}
+	fenced, err := m.Egress.Fenced(ctx, shardID, node)
+	if err != nil {
+		return Observed{}, err
+	}
 	used, quota, volumes, err := m.Volumes.Usage(ctx, shardID, node)
 	if err != nil {
 		return Observed{}, err
@@ -69,7 +77,9 @@ func (m Machine) Observe(ctx context.Context, node vo.NodeRef, desired Desired) 
 		ContainerRevision: container.Revision,
 		ExitCode:          container.ExitCode,
 		MeshKey:           key,
+		MeshIdentity:      identity,
 		MeshUp:            up,
+		Fenced:            fenced,
 		VolumesPresent:    volumes,
 		DiskUsedBytes:     used,
 		DiskQuotaBytes:    quota,

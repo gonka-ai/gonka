@@ -12,20 +12,20 @@ import (
 
 var errSince = shared.New("VALIDATION_ERROR", shared.ErrValidation, "since is not a timestamp")
 
-func toSessionCommand(participant vo.Participant, actor shard.Actor, path, nodeID string) (usecases.SessionCommand, error) {
+func toSessionCommand(host vo.Host, actor shard.Actor, path, nodeID string) (usecases.SessionCommand, error) {
 	shardID, err := vo.ParseShardID(path)
 	if err != nil {
 		return usecases.SessionCommand{}, err
 	}
-	node, err := vo.ParseNodeRef(string(participant), nodeID)
+	node, err := host.Node(nodeID)
 	if err != nil {
 		return usecases.SessionCommand{}, err
 	}
 	return usecases.SessionCommand{Shard: shardID, Node: node, Actor: actor}, nil
 }
 
-func toLogsCommand(participant vo.Participant, actor shard.Actor, path, nodeID string, dto contract.LogsRequest) (usecases.LogsCommand, error) {
-	base, err := toSessionCommand(participant, actor, path, nodeID)
+func toLogsCommand(host vo.Host, actor shard.Actor, path, nodeID string, dto contract.LogsRequest) (usecases.LogsCommand, error) {
+	base, err := toSessionCommand(host, actor, path, nodeID)
 	if err != nil {
 		return usecases.LogsCommand{}, err
 	}

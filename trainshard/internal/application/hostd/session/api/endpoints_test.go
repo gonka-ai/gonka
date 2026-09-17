@@ -115,7 +115,7 @@ func newServer(t *testing.T, chain *chainStub, streams *streamsStub) *httptest.S
 	t.Helper()
 
 	mux := http.NewServeMux()
-	module := session.New(session.Config{Participant: participant}, session.Deps{
+	module := session.New(session.Config{Participant: participant, Nodes: []vo.NodeRef{nodeA}}, session.Deps{
 		Chain:    chain,
 		Streams:  streams,
 		Sessions: sessionLogStub{},
@@ -223,6 +223,30 @@ func TestARefusedStreamAnswersWithAnErrorAndNoOutput(t *testing.T) {
 	}
 	if envelope.OK || envelope.Error.Code != "SHARD_CLOSED" {
 		t.Fatalf("got %+v, want the reason the stream was refused", envelope.Error)
+	}
+}
+
+func TestAStreamForANodeThisHostDoesNotServeIsRefused(t *testing.T) {
+	// arrange
+	server := newServer(t, newChainStub(), &streamsStub{output: "secret"})
+	path := "/trainshard/v0/shards/7/nodes/node-elsewhere/logs"
+	request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
+	request.Header = sign(t, "gonka1creator")
+
+	// act
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer response.Body.Close()
+
+	// assert
+	var envelope contract.Envelope
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.OK || envelope.Error.Code != "NODE_NOT_SERVED" {
+		t.Fatalf("got %+v, want the node refused as not this host's", envelope.Error)
 	}
 }
 

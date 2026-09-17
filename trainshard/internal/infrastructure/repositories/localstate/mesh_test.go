@@ -154,3 +154,25 @@ func TestForgettingTheShardThisNodeServesClearsIt(t *testing.T) {
 		t.Fatalf("found = %v, err = %v, want the peer list gone", found, err)
 	}
 }
+
+func TestAPeerListDoesNotFollowTheNodeIntoItsNextShard(t *testing.T) {
+	// arrange
+	ctx := context.Background()
+	store := reserved(t, held)
+	if err := store.Mesh().SaveConfig(ctx, held, node, peers(held)); err != nil {
+		t.Fatal(err)
+	}
+
+	// act
+	if err := run.RecordReservation(ctx, store.Runs(), node, held+1, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.RecordReservation(ctx, store.Runs(), node, held, now); err != nil {
+		t.Fatal(err)
+	}
+
+	// assert
+	if _, found, err := store.Mesh().Config(ctx, held, node); err != nil || found {
+		t.Fatalf("found = %v, err = %v, want the old shard's peer list gone once the node moved on", found, err)
+	}
+}

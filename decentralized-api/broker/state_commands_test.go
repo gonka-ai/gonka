@@ -437,9 +437,23 @@ func TestSetNodeStoppedCommand(t *testing.T) {
 	start.Execute(broker)
 	require.NoError(t, <-start.Response)
 	assert.False(t, node.State.AdminState.Stopped)
-	assert.Equal(t, types.HardwareNodeStatus_STOPPED, node.State.IntendedStatus, "start lifts the hold and leaves the phase command to place the node")
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.IntendedStatus, "lifting the hold sends the node back to inference without waiting for a phase boundary")
+	assert.Equal(t, PocStatusIdle, node.State.PocIntendedStatus)
 
 	missing := SetNodeStoppedCommand{NodeId: "nope", Stopped: true, Response: make(chan error, 1)}
 	missing.Execute(broker)
 	assert.Error(t, <-missing.Response)
+}
+
+func TestSetNodeStoppedCommand_StartOnANodeNotHeldLeavesItsPlaceAlone(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_POC)
+	node.State.PocIntendedStatus = PocStatusValidating
+	broker := &Broker{nodes: map[string]*NodeWithState{"node-1": node}}
+
+	start := SetNodeStoppedCommand{NodeId: "node-1", Stopped: false, Response: make(chan error, 1)}
+	start.Execute(broker)
+
+	require.NoError(t, <-start.Response)
+	assert.Equal(t, types.HardwareNodeStatus_POC, node.State.IntendedStatus)
+	assert.Equal(t, PocStatusValidating, node.State.PocIntendedStatus)
 }

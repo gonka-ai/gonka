@@ -21,13 +21,13 @@ type UseCases struct {
 }
 
 type Endpoints struct {
-	participant vo.Participant
-	uc          UseCases
-	once        *signedhttp.Once
+	host vo.Host
+	uc   UseCases
+	once *signedhttp.Once
 }
 
-func NewEndpoints(participant vo.Participant, uc UseCases, once *signedhttp.Once) *Endpoints {
-	return &Endpoints{participant: participant, uc: uc, once: once}
+func NewEndpoints(host vo.Host, uc UseCases, once *signedhttp.Once) *Endpoints {
+	return &Endpoints{host: host, uc: uc, once: once}
 }
 
 // Mount serves each session request once: a stream cannot be recorded and replayed the way a
@@ -46,7 +46,7 @@ func (e *Endpoints) streamLogs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, requestID, err)
 		return
 	}
-	cmd, err := toLogsCommand(e.participant, actorFrom(r.Context()), r.PathValue("shard_id"), r.PathValue("node_id"), dto)
+	cmd, err := toLogsCommand(e.host, actorFrom(r.Context()), r.PathValue("shard_id"), r.PathValue("node_id"), dto)
 	if err != nil {
 		httpx.WriteError(w, requestID, err)
 		return
@@ -61,7 +61,7 @@ func (e *Endpoints) streamLogs(w http.ResponseWriter, r *http.Request) {
 func (e *Endpoints) openShell(w http.ResponseWriter, r *http.Request) {
 	requestID := requestIDFrom(r.Context())
 
-	cmd, err := toSessionCommand(e.participant, actorFrom(r.Context()), r.PathValue("shard_id"), r.PathValue("node_id"))
+	cmd, err := toSessionCommand(e.host, actorFrom(r.Context()), r.PathValue("shard_id"), r.PathValue("node_id"))
 	if err != nil {
 		httpx.WriteError(w, requestID, err)
 		return

@@ -3,6 +3,7 @@
 package netns
 
 import (
+	"context"
 	"errors"
 
 	"golang.zx2c4.com/wireguard/wgctrl"
@@ -15,6 +16,8 @@ var errPlatform = errors.New("mesh networking needs linux")
 
 func present(int, string) (bool, error) { return false, errPlatform }
 
+func holds(int, string, string, wgtypes.Config) (bool, error) { return false, errPlatform }
+
 func remove(int, string) error { return errPlatform }
 
 func raise(int, string, string) error { return errPlatform }
@@ -23,6 +26,10 @@ func build(string, wgtypes.Config, int) error { return errPlatform }
 
 func discard(string) error { return errPlatform }
 
-func inNetns(int, func(*wgctrl.Client) error) error { return errPlatform }
+func withWG(int, func(*wgctrl.Client) error) error { return errPlatform }
+
+func listen(context.Context, int) error { return errPlatform }
+
+func fenced(int) (bool, error) { return false, errPlatform }
 
 func fence(int, string, []string, []allowance) error { return errPlatform }

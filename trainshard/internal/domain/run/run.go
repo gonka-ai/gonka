@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"strconv"
+	"strings"
 
 	"trainshard/internal/domain/shared/vo"
 )
@@ -26,6 +27,18 @@ type RunSpec struct {
 }
 
 func (r RunSpec) IsZero() bool { return r.Image.IsZero() }
+
+// NamesHostEnv reports whether the run sets a variable the host owns: its place on the mesh, or
+// the NVIDIA_ ones the runtime reads to decide which cards the container sees
+func (r RunSpec) NamesHostEnv() bool {
+	placement := PlacementEnv(vo.Placement{Interface: "any"})
+	for name := range r.Env {
+		if _, owned := placement[name]; owned || strings.HasPrefix(name, "NVIDIA_") {
+			return true
+		}
+	}
+	return false
+}
 
 // WithEnv lays values over the spec's own, so a run cannot hand itself a placement the host
 // did not give it

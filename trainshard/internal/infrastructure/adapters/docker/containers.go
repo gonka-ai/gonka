@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -95,7 +96,7 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 		Config:     config,
 		HostConfig: host,
 	}); err != nil {
-		return err
+		return errors.Join(err, os.RemoveAll(c.mountsPath(spec.Shard, spec.Node)))
 	}
 	c.log.Info("created container", "node_id", spec.Node.NodeID, "image_digest", spec.Run.Image.Short(), "network", mode)
 	return nil

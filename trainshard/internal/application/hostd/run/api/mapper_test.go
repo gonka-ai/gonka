@@ -21,6 +21,10 @@ const (
 )
 
 var (
+	host = vo.Host{
+		Participant: participant,
+		Nodes:       []vo.NodeRef{{Participant: participant, NodeID: "node-a"}, {Participant: participant, NodeID: "node-b"}},
+	}
 	actor    = shard.Actor{Address: "gonka1creator"}
 	deadline = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	digest   = "ghcr.io/gonka/train@sha256:" + strings.Repeat("a", 64)
@@ -49,6 +53,7 @@ func TestToNodesCommand(t *testing.T) {
 		{name: "shard id zero", path: "0", mutate: func(*contract.Command) {}},
 		{name: "no node ids", path: "7", mutate: func(c *contract.Command) { c.NodeIDs = nil }},
 		{name: "empty node id", path: "7", mutate: func(c *contract.Command) { c.NodeIDs = []string{""} }},
+		{name: "node the participant keeps on another machine", path: "7", mutate: func(c *contract.Command) { c.NodeIDs = []string{"node-c"} }},
 		{name: "no request id", path: "7", mutate: func(c *contract.Command) { c.RequestID = "" }},
 		{name: "deadline is not a timestamp", path: "7", mutate: func(c *contract.Command) { c.Deadline = "tomorrow" }},
 	}
@@ -59,7 +64,7 @@ func TestToNodesCommand(t *testing.T) {
 			dto := command()
 			tc.mutate(&dto)
 
-			cmd, err := api.ToNodesCommand(participant, actor, tc.path, dto)
+			cmd, err := api.ToNodesCommand(host, actor, tc.path, dto)
 
 			if tc.valid {
 				if err != nil {
@@ -82,7 +87,7 @@ func TestToNodesCommandNamesNodesUnderTheHostItRunsOn(t *testing.T) {
 	dto := command()
 	dto.NodeIDs = []string{"node-a", "node-a", "node-b"}
 
-	cmd, err := api.ToNodesCommand(participant, actor, "7", dto)
+	cmd, err := api.ToNodesCommand(host, actor, "7", dto)
 
 	if err != nil {
 		t.Fatalf("map: %v", err)
@@ -109,7 +114,7 @@ func TestToDeployCommandNeedsADigest(t *testing.T) {
 
 			dto := contract.DeployRequest{Command: command(), ImageDigest: tc.image, GPUs: 8, DiskBytes: 1 << 30}
 
-			cmd, err := api.ToDeployCommand(participant, actor, "7", dto)
+			cmd, err := api.ToDeployCommand(host, actor, "7", dto)
 
 			if tc.valid {
 				if err != nil || cmd.Run.Image.String() != tc.image {
@@ -143,7 +148,7 @@ func TestToDeployCommandParsesTheSourcesTheRunDeclares(t *testing.T) {
 
 			dto := contract.DeployRequest{Command: command(), ImageDigest: digest, Sources: tc.sources, GPUs: 8, DiskBytes: 1 << 30}
 
-			cmd, err := api.ToDeployCommand(participant, actor, "7", dto)
+			cmd, err := api.ToDeployCommand(host, actor, "7", dto)
 
 			if tc.valid {
 				if err != nil || len(cmd.Run.Sources) != tc.want {
@@ -172,7 +177,7 @@ func TestToMeshCommandRebuildsTheOrderingItWasHanded(t *testing.T) {
 
 	dto := meshRequest()
 
-	cmd, err := api.ToMeshCommand(participant, actor, "7", dto)
+	cmd, err := api.ToMeshCommand(host, actor, "7", dto)
 
 	if err != nil {
 		t.Fatalf("map: %v", err)
@@ -215,7 +220,7 @@ func TestToMeshCommandRefusesRanksItCannotDeriveItself(t *testing.T) {
 			dto := meshRequest()
 			tc.mutate(&dto)
 
-			_, err := api.ToMeshCommand(participant, actor, "7", dto)
+			_, err := api.ToMeshCommand(host, actor, "7", dto)
 
 			if !errors.Is(err, shared.ErrValidation) {
 				t.Fatalf("got %v, want a validation error", err)
