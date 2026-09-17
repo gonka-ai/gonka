@@ -1,0 +1,800 @@
+{
+  "contract_version": "1.0.0",
+  "decimal": {
+    "prec": 10,
+    "rounding": "ROUND_HALF_EVEN"
+  },
+  "weight_scale": 65536,
+  "rng_reference": {
+    "seed": "reference_seed_v1",
+    "first_u64": [
+      4286832458236889005,
+      12281003819428572724,
+      12352776571910749143,
+      12178488218135958089,
+      6205195570139478562
+    ]
+  },
+  "float_to_string": [
+    {
+      "description": "plain -0.05 as float64",
+      "repr": "-0.05"
+    },
+    {
+      "description": "-0.05 as float32 widened to float64",
+      "repr": "-0.05000000074505806"
+    },
+    {
+      "description": "0.1 as float32 widened to float64",
+      "repr": "0.10000000149011612"
+    }
+  ],
+  "cases": [
+    {
+      "name": "single_token",
+      "logprobs": {
+        "791": "-0.05"
+      },
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "791": 65536
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "three_token_plain",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1"
+      },
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "1": 2397,
+        "5": 7201,
+        "791": 55938
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "two_token_near_tie",
+      "logprobs": {
+        "5": "-0.6931471805599453",
+        "7": "-0.6931471805599453"
+      },
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "5": 32768,
+        "7": 32768
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "7"
+    },
+    {
+      "name": "top_k_truncation",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1",
+        "9": "-1.0"
+      },
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": 2,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "791": 47259,
+        "9": 18277
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "top_p_nucleus",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1",
+        "9": "-1.0"
+      },
+      "temperature": "1.0",
+      "top_p": "0.9",
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "5": 5567,
+        "791": 43245,
+        "9": 16724
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "min_p_filter",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1",
+        "9": "-1.0"
+      },
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": null,
+      "min_p": "0.05",
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "5": 5567,
+        "791": 43245,
+        "9": 16724
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "temperature_small",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1"
+      },
+      "temperature": "0.1",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "1": 0,
+        "5": 0,
+        "791": 65536
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "temperature_large",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1"
+      },
+      "temperature": "2.0",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "1": 8664,
+        "5": 15017,
+        "791": 41855
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "float32_widened_logprob",
+      "logprobs": {
+        "791": "-0.05000000074505806",
+        "1": "-3.0"
+      },
+      "temperature": "0.7",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "1": 955,
+        "791": 64581
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "ten_tokens",
+      "logprobs": {
+        "3": "-0.1",
+        "10": "-0.2",
+        "42": "-0.30000000000000004",
+        "100": "-0.4",
+        "256": "-0.5",
+        "512": "-0.6000000000000001",
+        "777": "-0.7000000000000001",
+        "1024": "-0.8",
+        "2048": "-0.9",
+        "4096": "-1.0"
+      },
+      "temperature": "0.8",
+      "top_p": "0.95",
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "10": 9525,
+        "100": 7418,
+        "1024": 4499,
+        "2048": 3970,
+        "256": 6546,
+        "3": 10793,
+        "4096": 3504,
+        "42": 8406,
+        "512": 5777,
+        "777": 5098
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "3"
+    }
+  ],
+  "uint64_below": {
+    "seed": "reference_seed_v1",
+    "count": 8,
+    "cases": [
+      {
+        "n": 3,
+        "draws": [
+          1,
+          1,
+          0,
+          2,
+          1,
+          0,
+          0,
+          2
+        ]
+      },
+      {
+        "n": 10,
+        "draws": [
+          5,
+          4,
+          3,
+          9,
+          2,
+          9,
+          1,
+          0
+        ]
+      },
+      {
+        "n": 1000,
+        "draws": [
+          5,
+          724,
+          143,
+          89,
+          562,
+          449,
+          921,
+          110
+        ]
+      },
+      {
+        "n": 65537,
+        "draws": [
+          12997,
+          43373,
+          2752,
+          34948,
+          5254,
+          28917,
+          42537,
+          24722
+        ]
+      },
+      {
+        "n": 999983,
+        "draws": [
+          594664,
+          773438,
+          484737,
+          309324,
+          502931,
+          719637,
+          764984,
+          890163
+        ]
+      }
+    ]
+  },
+  "seed_derivation": {
+    "domain_tag": "gonka-deterministic-sampling-v1",
+    "accept": [
+      {
+        "user_seed": 7,
+        "inference_id": "chain-abc",
+        "expected_seed": "910b688db5b2061e66385acf0ee665682d5e01bab5d1d8d2cdde9a2612a6e6c2"
+      },
+      {
+        "user_seed": 7,
+        "inference_id": "chain-xyz",
+        "expected_seed": "10668913c3b68c1da4d32a882523ee44cd37af73d4d4361dd0dd8d71f1fbee4b"
+      },
+      {
+        "user_seed": 42,
+        "inference_id": "devshard-escrow1-100",
+        "expected_seed": "c12c2cbf4165c5b1a4240bc69c4c527ada1b8c65c51b35de017d15be22c7b3d9"
+      },
+      {
+        "user_seed": -1,
+        "inference_id": "chain-abc",
+        "expected_seed": "3d06091b4635031cf457f333dd2d3c64de7eaf56dfa4ae4e6bcc37d81c90c515"
+      },
+      {
+        "user_seed": 9223372036854775807,
+        "inference_id": "x",
+        "expected_seed": "934d232ad3fca38d5cde7e9c8dd8132155ab91e8674977973ea64e431abd72c6"
+      }
+    ],
+    "reject_inference_id": [
+      {
+        "inference_id": "",
+        "reason": "empty"
+      },
+      {
+        "inference_id": " chain-abc ",
+        "reason": "whitespace (space is 0x20, below 0x21)"
+      },
+      {
+        "inference_id": "chain\tabc",
+        "reason": "control char (tab)"
+      },
+      {
+        "inference_id": "chain-é",
+        "reason": "non-ASCII"
+      },
+      {
+        "inference_id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "reason": "too long (>256)"
+      }
+    ]
+  },
+  "sequence_cases": [
+    {
+      "name": "honest_top_k",
+      "base_seed": "42|[1,2,3]",
+      "contract_version": "1.0.0",
+      "seed_domain": "gonka-deterministic-sampling-v1",
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": 20,
+      "min_p": null,
+      "greedy": false,
+      "positions": [
+        {
+          "logprobs": {
+            "5": "-0.5",
+            "10": "-1.2",
+            "2": "-2.5",
+            "100": "-3.9",
+            "7": "-4.1"
+          },
+          "reported_token": "5"
+        },
+        {
+          "logprobs": {
+            "3": "-0.3",
+            "42": "-1.1",
+            "9": "-2.2",
+            "11": "-3.0",
+            "1": "-4.5"
+          },
+          "reported_token": "1"
+        },
+        {
+          "logprobs": {
+            "8": "-0.7",
+            "6": "-1.5",
+            "4": "-2.0",
+            "20": "-2.9",
+            "15": "-3.3"
+          },
+          "reported_token": "6"
+        }
+      ],
+      "expected": {
+        "verdict": "honest",
+        "fraud_position": -1,
+        "n_honest": 3,
+        "n_inconclusive": 0
+      }
+    },
+    {
+      "name": "honest_min_p",
+      "base_seed": "42|[1,2,3]",
+      "contract_version": "1.0.0",
+      "seed_domain": "gonka-deterministic-sampling-v1",
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": null,
+      "min_p": "0.02",
+      "greedy": false,
+      "positions": [
+        {
+          "logprobs": {
+            "5": "-0.5",
+            "10": "-1.2",
+            "2": "-2.5",
+            "100": "-3.9",
+            "7": "-4.1"
+          },
+          "reported_token": "5"
+        },
+        {
+          "logprobs": {
+            "3": "-0.3",
+            "42": "-1.1",
+            "9": "-2.2",
+            "11": "-3.0",
+            "1": "-4.5"
+          },
+          "reported_token": "11"
+        },
+        {
+          "logprobs": {
+            "8": "-0.7",
+            "6": "-1.5",
+            "4": "-2.0",
+            "20": "-2.9",
+            "15": "-3.3"
+          },
+          "reported_token": "6"
+        }
+      ],
+      "expected": {
+        "verdict": "honest",
+        "fraud_position": -1,
+        "n_honest": 3,
+        "n_inconclusive": 0
+      }
+    },
+    {
+      "name": "fraud_at_pos_1",
+      "base_seed": "42|[1,2,3]",
+      "contract_version": "1.0.0",
+      "seed_domain": "gonka-deterministic-sampling-v1",
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": 20,
+      "min_p": null,
+      "greedy": false,
+      "positions": [
+        {
+          "logprobs": {
+            "5": "-0.5",
+            "10": "-1.2",
+            "2": "-2.5",
+            "100": "-3.9",
+            "7": "-4.1"
+          },
+          "reported_token": "5"
+        },
+        {
+          "logprobs": {
+            "3": "-0.3",
+            "42": "-1.1",
+            "9": "-2.2",
+            "11": "-3.0",
+            "1": "-4.5"
+          },
+          "reported_token": "999999"
+        },
+        {
+          "logprobs": {
+            "8": "-0.7",
+            "6": "-1.5",
+            "4": "-2.0",
+            "20": "-2.9",
+            "15": "-3.3"
+          },
+          "reported_token": "6"
+        }
+      ],
+      "expected": {
+        "verdict": "fraud",
+        "fraud_position": 1,
+        "n_honest": 1,
+        "n_inconclusive": 0
+      }
+    },
+    {
+      "name": "honest_with_missing_position",
+      "base_seed": "42|[1,2,3]",
+      "contract_version": "1.0.0",
+      "seed_domain": "gonka-deterministic-sampling-v1",
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": 20,
+      "min_p": null,
+      "greedy": false,
+      "positions": [
+        {
+          "logprobs": {
+            "5": "-0.5",
+            "10": "-1.2",
+            "2": "-2.5",
+            "100": "-3.9",
+            "7": "-4.1"
+          },
+          "reported_token": "5"
+        },
+        {
+          "logprobs": null,
+          "reported_token": ""
+        },
+        {
+          "logprobs": {
+            "8": "-0.7",
+            "6": "-1.5",
+            "4": "-2.0",
+            "20": "-2.9",
+            "15": "-3.3"
+          },
+          "reported_token": "6"
+        }
+      ],
+      "expected": {
+        "verdict": "honest",
+        "fraud_position": -1,
+        "n_honest": 2,
+        "n_inconclusive": 1
+      }
+    },
+    {
+      "name": "inconclusive_unbounded_top_p",
+      "base_seed": "42|[1,2,3]",
+      "contract_version": "1.0.0",
+      "seed_domain": "gonka-deterministic-sampling-v1",
+      "temperature": "1.0",
+      "top_p": "0.9",
+      "top_k": null,
+      "min_p": null,
+      "greedy": false,
+      "positions": [
+        {
+          "logprobs": {
+            "5": "-0.5",
+            "10": "-1.2",
+            "2": "-2.5",
+            "100": "-3.9",
+            "7": "-4.1"
+          },
+          "reported_token": "5"
+        },
+        {
+          "logprobs": {
+            "3": "-0.3",
+            "42": "-1.1",
+            "9": "-2.2",
+            "11": "-3.0",
+            "1": "-4.5"
+          },
+          "reported_token": "3"
+        },
+        {
+          "logprobs": {
+            "8": "-0.7",
+            "6": "-1.5",
+            "4": "-2.0",
+            "20": "-2.9",
+            "15": "-3.3"
+          },
+          "reported_token": "8"
+        }
+      ],
+      "expected": {
+        "verdict": "inconclusive",
+        "fraud_position": -1,
+        "n_honest": 0,
+        "n_inconclusive": 0
+      }
+    },
+    {
+      "name": "inconclusive_greedy",
+      "base_seed": "42|[1,2,3]",
+      "contract_version": "1.0.0",
+      "seed_domain": "gonka-deterministic-sampling-v1",
+      "temperature": "0",
+      "top_p": null,
+      "top_k": 20,
+      "min_p": null,
+      "greedy": true,
+      "positions": [
+        {
+          "logprobs": {
+            "5": "-0.5",
+            "10": "-1.2",
+            "2": "-2.5",
+            "100": "-3.9",
+            "7": "-4.1"
+          },
+          "reported_token": "5"
+        },
+        {
+          "logprobs": {
+            "3": "-0.3",
+            "42": "-1.1",
+            "9": "-2.2",
+            "11": "-3.0",
+            "1": "-4.5"
+          },
+          "reported_token": "3"
+        },
+        {
+          "logprobs": {
+            "8": "-0.7",
+            "6": "-1.5",
+            "4": "-2.0",
+            "20": "-2.9",
+            "15": "-3.3"
+          },
+          "reported_token": "8"
+        }
+      ],
+      "expected": {
+        "verdict": "inconclusive",
+        "fraud_position": -1,
+        "n_honest": 0,
+        "n_inconclusive": 0
+      }
+    },
+    {
+      "name": "inconclusive_bad_version",
+      "base_seed": "42|[1,2,3]",
+      "contract_version": "9.9.9",
+      "seed_domain": "gonka-deterministic-sampling-v1",
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": 20,
+      "min_p": null,
+      "greedy": false,
+      "positions": [
+        {
+          "logprobs": {
+            "5": "-0.5",
+            "10": "-1.2",
+            "2": "-2.5",
+            "100": "-3.9",
+            "7": "-4.1"
+          },
+          "reported_token": "5"
+        },
+        {
+          "logprobs": {
+            "3": "-0.3",
+            "42": "-1.1",
+            "9": "-2.2",
+            "11": "-3.0",
+            "1": "-4.5"
+          },
+          "reported_token": "3"
+        },
+        {
+          "logprobs": {
+            "8": "-0.7",
+            "6": "-1.5",
+            "4": "-2.0",
+            "20": "-2.9",
+            "15": "-3.3"
+          },
+          "reported_token": "8"
+        }
+      ],
+      "expected": {
+        "verdict": "inconclusive",
+        "fraud_position": -1,
+        "n_honest": 0,
+        "n_inconclusive": 0
+      }
+    }
+  ],
+  "distance_cases": [
+    {
+      "name": "identical",
+      "executor": [
+        {
+          "5": -0.5,
+          "10": -1.2,
+          "2": -2.5,
+          "100": -3.9,
+          "7": -4.1
+        }
+      ],
+      "validator": [
+        {
+          "5": -0.5,
+          "10": -1.2,
+          "2": -2.5,
+          "100": -3.9,
+          "7": -4.1
+        }
+      ],
+      "expected_mae": 0.0
+    },
+    {
+      "name": "uniform_shift",
+      "executor": [
+        {
+          "5": -0.5,
+          "10": -1.2,
+          "2": -2.5,
+          "100": -3.9,
+          "7": -4.1
+        }
+      ],
+      "validator": [
+        {
+          "5": -1.0,
+          "10": -1.7,
+          "2": -3.0,
+          "100": -4.4,
+          "7": -4.6
+        }
+      ],
+      "expected_mae": 0.5000000000000001
+    },
+    {
+      "name": "length_mismatch",
+      "executor": [
+        {
+          "5": -0.5,
+          "10": -1.2,
+          "2": -2.5,
+          "100": -3.9,
+          "7": -4.1
+        },
+        {
+          "3": -0.3,
+          "42": -1.1,
+          "9": -2.2,
+          "11": -3.0,
+          "1": -4.5
+        }
+      ],
+      "validator": [
+        {
+          "5": -0.5,
+          "10": -1.2,
+          "2": -2.5,
+          "100": -3.9,
+          "7": -4.1
+        }
+      ],
+      "expected_mae": 10.0
+    },
+    {
+      "name": "missing_token",
+      "executor": [
+        {
+          "5": -0.5,
+          "10": -1.2,
+          "2": -2.5,
+          "100": -3.9,
+          "7": -4.1
+        }
+      ],
+      "validator": [
+        {
+          "5": -0.5,
+          "10": -1.2,
+          "2": -2.5,
+          "100": -3.9
+        }
+      ],
+      "expected_mae": 2.0
+    }
+  ]
+}
