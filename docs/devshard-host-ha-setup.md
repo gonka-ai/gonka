@@ -92,7 +92,6 @@ External PostgreSQL: use a direct connection or session-mode pooling. Transactio
 Run in `deploy/join`. For a new local database, choose a new password. For an existing database, use its current password from your database administrator:
 
 ```bash
-umask 077
 read -r -s -p 'PostgreSQL password: ' DEVSHARD_POSTGRES_PASSWORD
 printf '\n'
 [[ -n "$DEVSHARD_POSTGRES_PASSWORD" ]] || exit 1
@@ -103,6 +102,7 @@ name = "DEVSHARD_POSTGRES_PASSWORD"
 lines = path.read_text().splitlines()
 lines = [line for line in lines if not re.match(r"^\s*(?:export\s+)?" + name + r"\s*=", line)]
 lines.append("export " + name + "=" + shlex.quote(os.environ[name]))
+path.chmod(0o600)
 path.write_text("\n".join(lines) + "\n")
 PYTHON
 ```
@@ -405,7 +405,6 @@ Run on the existing join host, from its `deploy/join` directory, before replacin
 
 ```bash
 source ./config.env || exit 1
-umask 077
 mkdir -p backups || exit 1
 BACKUP_DIR=$(mktemp -d "$PWD/backups/pre-update.XXXXXXXX") || exit 1
 export BACKUP_DIR
@@ -533,6 +532,7 @@ name = "VERSIOND_VERSIONS"
 lines = path.read_text().splitlines()
 lines = [line for line in lines if not re.match(r"^\s*(?:export\s+)?" + name + r"\s*=", line)]
 lines.append("export " + name + "=" + shlex.quote(os.environ[name]))
+path.chmod(0o600)
 path.write_text("\n".join(lines) + "\n")
 PYTHON
 )
@@ -575,7 +575,6 @@ Run in `deploy/join` to stop replicas, back up and copy PostgreSQL, and check th
 ```bash
 (
   set -euo pipefail
-  umask 077
   source ./config.env
   : "${COMPOSE_FILE:?set the complete Compose file list}"
   replicas=(versiond versiond2)
@@ -686,7 +685,6 @@ Run in `deploy/join`; include every local replica in `replicas`. The commands st
 ```bash
 (
   set -euo pipefail
-  umask 077
   source ./config.env
   : "${COMPOSE_FILE:?set the complete Compose file list}"
   replicas=(versiond versiond2)
@@ -914,7 +912,6 @@ For a new B, run the following on A in `deploy/join`. `B_SSH` is the `user@host`
 ```bash
 (
   set -euo pipefail
-  umask 077
   source ./config.env
   read -r -p 'SSH login for machine B (user@host): ' B_SSH
   [[ "${KEYRING_BACKEND:-file}" == file ]] || { echo "This copy procedure requires a file keyring"; exit 1; }
@@ -940,7 +937,7 @@ print('export VERSIOND_NON_HA_VERSIONS=""')
 if os.environ.get("VERSIOND_IMAGE"):
     print("export VERSIOND_IMAGE=" + shlex.quote(os.environ["VERSIOND_IMAGE"]))
 PYTHON
-  ssh "$B_SSH" 'umask 077; cat > "$HOME/gonka/deploy/join/config.env"' < "$remote_env"
+  ssh "$B_SSH" 'touch "$HOME/gonka/deploy/join/config.env" && chmod 600 "$HOME/gonka/deploy/join/config.env" && cat > "$HOME/gonka/deploy/join/config.env"' < "$remote_env"
   docker exec versiond /bin/busybox tar -C /root/.inference -cf - keyring-file |
     ssh "$B_SSH" 'mkdir -p "$HOME/gonka/deploy/join/.inference"; tar --no-same-owner -xf - -C "$HOME/gonka/deploy/join/.inference"'
 )
