@@ -70,6 +70,10 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 	if err != nil {
 		return err
 	}
+	_, err = k.PruneDeveloperStats(ctx)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
