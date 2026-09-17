@@ -26,7 +26,7 @@ Public proxy (/devshard/...)
 | --- | --- |
 | `versiond`, `versiond2` and additional replicas | `ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5` |
 | Router fleet | `ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5` |
-| Public `proxy` (HAProxy) | `ghcr.io/product-science/proxy-router:0.2.15-devshard-v5` |
+| Public `proxy` (HAProxy) | `ghcr.io/gonka-ai/proxy-router:0.2.15-devshard-v5` |
 | `proxy-policy`, `proxy-policy2` (nginx) | `ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5` |
 | Catalog filter | `python:3.12-alpine` |
 | Local PostgreSQL, new installation | PostgreSQL 16 Alpine |
@@ -36,7 +36,7 @@ When directed by the installation or upgrade steps, set these variables in `depl
 ```bash
 export VERSIOND_IMAGE=ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5
 export VERSIOND_ROUTER_IMAGE=ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5
-export PROXY_ROUTER_IMAGE=ghcr.io/product-science/proxy-router:0.2.15-devshard-v5
+export PROXY_ROUTER_IMAGE=ghcr.io/gonka-ai/proxy-router:0.2.15-devshard-v5
 export PROXY_POLICY_IMAGE=ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5
 export ORACLE_FILTER_IMAGE=python:3.12-alpine
 ```
