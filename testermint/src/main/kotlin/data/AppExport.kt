@@ -30,6 +30,8 @@ data class InferenceState(
     val modelList: List<ModelListItem>,
     /** Optional; testermint genesis overrides can seed WGNK unwrap bridge contracts. */
     val bridge: BridgeState? = null,
+    @SerializedName("devshard_approved_versions")
+    val devshardApprovedVersions: List<DevshardApprovedVersion>? = emptyList(),
 )
 
 /**
@@ -104,6 +106,10 @@ data class FeeParamsData(
     val baseValidationGas: Long = 0,
     @SerializedName("gas_per_poc_count")
     val gasPerPocCount: Long = 0,
+    @SerializedName("enabled_fee_groups")
+    val enabledFeeGroups: List<String> = emptyList(),
+    @SerializedName("groups")
+    val groups: com.google.gson.JsonArray? = null,
 )
 
 data class DelegationParams(
@@ -304,6 +310,10 @@ data class DevshardApprovedVersion(
     val sha256: String,
 )
 
+data class DevshardApprovedVersionsWrapper(
+    val versions: List<DevshardApprovedVersion>? = emptyList(),
+)
+
 data class DevshardEscrowParams(
     @SerializedName("min_amount")
     val minAmount: Long,
@@ -370,6 +380,8 @@ data class PocParams(
     val validationVoteThresholdBps: Long = 5000,
     @SerializedName("poc_normalization_enabled")
     val pocNormalizationEnabled: Boolean = false,  // Disabled by default in tests
+    @SerializedName("dynamic_coefficient_params")
+    val dynamicCoefficientParams: DynamicCoefficientParams? = null,
 ) {
     fun primaryModelConfig(): PoCModelConfig? {
         return models.firstOrNull()
@@ -393,6 +405,32 @@ data class PoCModelConfig(
     val weightScaleFactor: Decimal? = null,
     @SerializedName("penalty_start_epoch")
     val penaltyStartEpoch: Long = 0,
+    @SerializedName("dynamic_coefficient")
+    val dynamicCoefficient: DynamicCoefficientModelConfig? = null,
+)
+
+data class DynamicCoefficientModelConfig(
+    @SerializedName("coeff_min")
+    val coeffMin: Decimal? = null,
+    @SerializedName("coeff_max")
+    val coeffMax: Decimal? = null,
+    @SerializedName("relative_difficulty")
+    val relativeDifficulty: Decimal? = null,
+    @SerializedName("target_share_bps")
+    val targetShareBps: Long = 0,
+)
+
+data class DynamicCoefficientParams(
+    @SerializedName("target_zone_bps")
+    val targetZoneBps: Long = 0,
+    @SerializedName("step_min")
+    val stepMin: Decimal? = null,
+    @SerializedName("step_max")
+    val stepMax: Decimal? = null,
+    @SerializedName("bootstrap_step_max")
+    val bootstrapStepMax: Decimal? = null,
+    @SerializedName("bootstrap_share_bps")
+    val bootstrapShareBps: Long = 0,
 )
 
 data class PoCStatTestParams(

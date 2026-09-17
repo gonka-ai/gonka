@@ -1,6 +1,7 @@
 package inference
 
 import (
+	"fmt"
 	"log"
 	"strings"
 
@@ -64,8 +65,8 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	}
 
 	// this line is used by starport scaffolding # genesis/module/init
-	// Note: FeeParams are NOT set at genesis. Fee enforcement is enabled via
-	// the v0.2.12 upgrade handler on existing chains.
+	// FeeParams ship with an empty enabled_fee_groups list (no group charges).
+	importDevshardApprovedVersions(ctx, k, &genState)
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		//nolint:forbidigo // genesis code
 		panic(err)
@@ -308,6 +309,13 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 		genesis.MlnodeVersion = &mlnodeVersion
 	}
 	genesis.ModelList = getModels(&ctx, &k)
+	genesis.DevshardApprovedVersions = getApprovedVersions(&ctx, &k)
+	if genesis.Params.DevshardEscrowParams != nil {
+		if len(genesis.DevshardApprovedVersions) == 0 {
+			genesis.DevshardApprovedVersions = genesis.Params.DevshardEscrowParams.ApprovedVersions
+		}
+		genesis.Params.DevshardEscrowParams.ApprovedVersions = nil
+	}
 	// Export participants
 	participants := k.GetAllParticipant(ctx)
 	genesis.ParticipantList = participants
@@ -353,6 +361,48 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	// this line is used by starport scaffolding # genesis/module/export
 
 	return genesis
+}
+
+func importDevshardApprovedVersions(ctx sdk.Context, k keeper.Keeper, genState *types.GenesisState) {
+	versions := genState.DevshardApprovedVersions
+	if len(versions) == 0 && genState.Params.DevshardEscrowParams != nil {
+		versions = genState.Params.DevshardEscrowParams.ApprovedVersions
+	}
+	if len(versions) > types.MaxDevshardApprovedVersions {
+		//nolint:forbidigo // genesis code
+		panic(fmt.Sprintf("devshard_approved_versions exceeds maximum of %d", types.MaxDevshardApprovedVersions))
+	}
+	if genState.Params.DevshardEscrowParams != nil {
+		genState.Params.DevshardEscrowParams.ApprovedVersions = nil
+	}
+	for i, v := range versions {
+		if v == nil {
+			//nolint:forbidigo // genesis code
+			panic(fmt.Sprintf("devshard_approved_versions[%d] cannot be null", i))
+		}
+		if err := v.Validate(); err != nil {
+			//nolint:forbidigo // genesis code
+			panic(err)
+		}
+		if err := k.SetApprovedVersion(ctx, *v); err != nil {
+			//nolint:forbidigo // genesis code
+			panic(err)
+		}
+	}
+}
+
+func getApprovedVersions(ctx *sdk.Context, k *keeper.Keeper) []*types.DevshardApprovedVersion {
+	versions, err := k.GetApprovedVersions(ctx)
+	if err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
+	out := make([]*types.DevshardApprovedVersion, 0, len(versions))
+	for i := range versions {
+		v := versions[i]
+		out = append(out, &v)
+	}
+	return out
 }
 
 func getModels(ctx *sdk.Context, k *keeper.Keeper) []types.Model {

@@ -219,9 +219,8 @@ func TestMsgServer_SubmitHardwareDiff_RemoveAll(t *testing.T) {
 }
 
 // TestHardwareNodesUnchanged is a focused unit test for the helper that
-// gates the SubmitHardwareDiff no-op skip. Compares operational fields
-// only — see hardwareNodeOperationalEqual — so flapping informational
-// fields like Version don't trigger spurious writes.
+// gates the SubmitHardwareDiff no-op skip. Compares local_id, status, models,
+// hardware, host, port, and version.
 func TestHardwareNodesUnchanged(t *testing.T) {
 	n1 := &types.HardwareNode{LocalId: "n1", Status: types.HardwareNodeStatus_INFERENCE}
 	n2 := &types.HardwareNode{LocalId: "n2", Status: types.HardwareNodeStatus_POC,
@@ -259,18 +258,25 @@ func TestHardwareNodesUnchanged(t *testing.T) {
 	require.False(t, keeper.HardwareNodesUnchanged(
 		[]*types.HardwareNode{n1, n2DiffHW}, []*types.HardwareNode{n1, n2}))
 
-	// Version differs but everything else identical: NOT detected (the
-	// version field is informational only — flipping it shouldn't defeat
-	// the no-op check).
+	// Version differs: detected (must persist so DAPI and chain agree).
 	n2VerA := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
 		Models: n2.Models, Host: n2.Host, Port: n2.Port, Hardware: n2.Hardware,
 		Version: "v1"}
 	n2VerB := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
 		Models: n2.Models, Host: n2.Host, Port: n2.Port, Hardware: n2.Hardware,
 		Version: "v2"}
-	require.True(t, keeper.HardwareNodesUnchanged(
+	require.False(t, keeper.HardwareNodesUnchanged(
 		[]*types.HardwareNode{n1, n2VerA}, []*types.HardwareNode{n1, n2VerB}),
-		"flapping the informational Version field should NOT count as a change")
+		"version-only change must count as a change")
+
+	n2DiffHost := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: n2.Models, Host: "other", Port: n2.Port, Hardware: n2.Hardware}
+	require.False(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2DiffHost}, []*types.HardwareNode{n1, n2}))
+	n2DiffPort := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: n2.Models, Host: n2.Host, Port: "9999", Hardware: n2.Hardware}
+	require.False(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2DiffPort}, []*types.HardwareNode{n1, n2}))
 }
 
 // TestMsgServer_SubmitHardwareDiff_IdempotentOnNoChange exercises the

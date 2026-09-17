@@ -42,12 +42,14 @@ message PoCV2StoreCommit {
   bytes root_hash = 4;
   int64 commit_block_height = 5; // block when this commit was recorded
   string model_id = 6;
+  uint32 tree_depth = 7;
 }
 
 message PoCV2CommitEntry {
   string model_id = 1;
   uint32 count = 2;
   bytes root_hash = 3;
+  uint32 tree_depth = 4;
 }
 
 // MLNodeWeightDistribution stores per-node weight distribution.

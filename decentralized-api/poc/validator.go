@@ -115,7 +115,8 @@ type participantWork struct {
 	pubKey     string
 	count      uint32
 	rootHash   []byte
-	decodeMax  int64     // decode_max_tokens of the model config; 0 = prefill scheme
+	decodeMax  int64 // decode_max_tokens of the model config; 0 = prefill scheme
+	treeDepth  uint32
 	attempt    int       // current attempt number (0-based)
 	retryAfter time.Time // don't process before this time
 
@@ -441,12 +442,13 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		}
 
 		work := participantWork{
-			address:  commit.ParticipantAddress,
-			modelId:  commit.ModelId,
-			url:      participantResp.Participant.InferenceUrl,
-			pubKey:   commit.HexPubKey,
-			count:    commit.Count,
-			rootHash: commit.RootHash,
+			address:   commit.ParticipantAddress,
+			modelId:   commit.ModelId,
+			url:       participantResp.Participant.InferenceUrl,
+			pubKey:    commit.HexPubKey,
+			count:     commit.Count,
+			rootHash:  commit.RootHash,
+			treeDepth: commit.TreeDepth,
 		}
 		if mc, ok := pocParams.GetModelConfig(commit.ModelId); ok {
 			work.decodeMax = mc.DecodeMaxTokens
@@ -805,6 +807,7 @@ func (v *OffChainValidator) checkValidateeProofs(
 		ModelId:                  work.modelId,
 		RootHash:                 work.rootHash,
 		Count:                    work.count,
+		TreeDepth:                work.treeDepth,
 		LeafIndices:              leafIndices,
 		ParticipantAddress:       work.address,
 		DecodeMaxTokens:          work.decodeMax,

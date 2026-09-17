@@ -11,10 +11,11 @@ import (
 func TestFeeParams_NilAtGenesis(t *testing.T) {
 	k, ctx := testkeeper.InferenceKeeper(t)
 
-	// FeeParams are not set at genesis (enabled via upgrade handler).
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Nil(t, params.FeeParams)
+	require.NotNil(t, params.FeeParams)
+	require.Empty(t, params.FeeParams.EnabledFeeGroups)
+	require.Equal(t, uint64(0), params.FeeParams.MinGasPriceNgonka)
 }
 
 func TestFeeParams_SetAndGet(t *testing.T) {
@@ -49,7 +50,7 @@ func TestFeeParams_ZeroDisablesFees(t *testing.T) {
 
 	updated, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Equal(t, uint64(10), updated.FeeParams.MinGasPriceNgonka)
+	require.Equal(t, uint64(0), updated.FeeParams.MinGasPriceNgonka)
 
 	// Disable by setting to zero
 	params.FeeParams = &types.FeeParams{}

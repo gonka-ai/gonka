@@ -187,6 +187,38 @@ func TestMockDAPI_VersionsJSON(t *testing.T) {
 	require.Equal(t, updated, cfg)
 }
 
+func TestMockDAPI_GetBlockHeaderMatchesHTTP(t *testing.T) {
+	bed := startBed(t)
+	t.Cleanup(bed.cleanup)
+
+	httpResp, err := http.Get(bed.httpURL + "/block/1")
+	require.NoError(t, err)
+	defer httpResp.Body.Close()
+	require.Equal(t, http.StatusOK, httpResp.StatusCode)
+	var httpHdr struct {
+		Height    int64  `json:"Height"`
+		ChainID   string `json:"ChainID"`
+		BlockHash []byte `json:"BlockHash"`
+	}
+	require.NoError(t, json.NewDecoder(httpResp.Body).Decode(&httpHdr))
+
+	conn, err := grpc.NewClient(bed.grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	client := gen.NewNodeManagerClient(conn)
+
+	grpcResp, err := client.GetBlockHeader(context.Background(), &gen.GetBlockHeaderRequest{Height: 1})
+	require.NoError(t, err)
+	require.Equal(t, httpHdr.Height, grpcResp.Header.Height)
+	require.Equal(t, httpHdr.ChainID, grpcResp.Header.ChainId)
+	require.Equal(t, httpHdr.BlockHash, grpcResp.Header.BlockHash)
+
+	proof, err := client.ProveBlockPath(context.Background(), &gen.ProveBlockPathRequest{Height: 1, Path: "/escrow/1"})
+	require.NoError(t, err)
+	require.Equal(t, "/escrow/1", proof.Proof.Path)
+	require.NotEmpty(t, proof.Proof.Value)
+}
+
 func TestMockDAPI_BlockStreamMonotonic(t *testing.T) {
 	bed := startBed(t)
 	t.Cleanup(bed.cleanup)

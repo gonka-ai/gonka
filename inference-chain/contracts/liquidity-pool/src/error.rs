@@ -13,7 +13,10 @@ pub enum ContractError {
     ContractPaused {},
 
     #[error("Daily limit exceeded. Available: {available}, Requested: {requested}")]
-    DailyLimitExceeded { available: u128, requested: u128 },
+    DailyLimitExceeded {
+        available: String,
+        requested: String,
+    },
 
     #[error("Invalid token: {token}")]
     InvalidToken { token: String },
@@ -25,10 +28,10 @@ pub enum ContractError {
     ZeroAmount {},
 
     #[error("Insufficient contract balance: {available}, needed: {needed}")]
-    InsufficientBalance { available: u128, needed: u128 },
+    InsufficientBalance { available: String, needed: String },
 
     #[error("Invalid basis points: {value}. Must be between 0 and 10000")]
-    InvalidBasisPoints { value: cosmwasm_std::Uint128 },
+    InvalidBasisPoints { value: cosmwasm_std::Uint256 },
 
     #[error("Token not accepted: {token}")]
     TokenNotAccepted { token: String },
@@ -38,4 +41,4 @@ pub enum ContractError {
 
     #[error("Funds missing: expected exactly one coin in funds")]
     FundsMissing {},
-} 
+}

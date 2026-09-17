@@ -362,11 +362,23 @@ func TestResolveBootstrapPenaltyModes_PreEligibleFalse(t *testing.T) {
 		"bootstrap-model": {"direct": true},
 	}
 
-	modes := ResolveBootstrapPenaltyModes(participants, reportByModel, delegations, intents, directCommitters)
-	require.Equal(t, BootstrapPenaltyDirect, modes["bootstrap-model"]["direct"])
-	require.Equal(t, BootstrapPenaltyDelegate, modes["bootstrap-model"]["delegator"])
-	require.Equal(t, BootstrapPenaltyIntentOK, modes["bootstrap-model"]["intender"])
-	require.Equal(t, BootstrapPenaltyNone, modes["bootstrap-model"]["none"])
+	modes := ResolveBootstrapPenaltyModes(
+		participants,
+		map[string]bool{"direct": true, "delegator": true, "intender": true, "none": true},
+		reportByModel,
+		delegations,
+		intents,
+		directCommitters,
+	)
+	require.Empty(t, modes)
+}
+
+func TestPreviousRootMembers_IncludesZeroWeightMember(t *testing.T) {
+	members := previousRootMembers(&previousConfirmedWeights{
+		weights: map[string]int64{"zero-weight": 0},
+	})
+
+	require.True(t, members["zero-weight"])
 }
 
 func TestResolveBootstrapPenaltyModes_PreEligibleTrue(t *testing.T) {
@@ -389,11 +401,52 @@ func TestResolveBootstrapPenaltyModes_PreEligibleTrue(t *testing.T) {
 		"bootstrap-model": {"direct": true},
 	}
 
-	modes := ResolveBootstrapPenaltyModes(participants, reportByModel, delegations, intents, directCommitters)
+	modes := ResolveBootstrapPenaltyModes(
+		participants,
+		map[string]bool{"direct": true, "delegator": true, "intender": true, "none": true},
+		reportByModel,
+		delegations,
+		intents,
+		directCommitters,
+	)
 	require.Equal(t, BootstrapPenaltyDirect, modes["bootstrap-model"]["direct"])
 	require.Equal(t, BootstrapPenaltyDelegate, modes["bootstrap-model"]["delegator"])
 	require.Equal(t, BootstrapPenaltyIntentMissed, modes["bootstrap-model"]["intender"])
 	require.Equal(t, BootstrapPenaltyNone, modes["bootstrap-model"]["none"])
+}
+
+func TestResolveBootstrapPenaltyModes_SkipsParticipantOutsidePreviousRoot(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "existing", Weight: 100},
+		{Index: "upcoming-only", Weight: 100},
+	}
+	reportByModel := map[string]*types.BootstrapModelPreEligibility{
+		"bootstrap-model": {ModelId: "bootstrap-model", PreEligible: true},
+	}
+
+	modes := ResolveBootstrapPenaltyModes(
+		participants,
+		map[string]bool{"existing": true},
+		reportByModel,
+		nil,
+		nil,
+		nil,
+	)
+
+	require.Equal(t, BootstrapPenaltyNone, modes["bootstrap-model"]["existing"])
+	require.NotContains(t, modes["bootstrap-model"], "upcoming-only")
+
+	params := DelegationAdjustmentParams{
+		RefusalPenalty:         mathsdk.LegacyZeroDec(),
+		NoParticipationPenalty: mathsdk.LegacyMustNewDecFromStr("0.15"),
+		DelegationShare:        mathsdk.LegacyZeroDec(),
+	}
+	acc := NewPenaltyAccumulator(participants)
+	AccumulateBootstrapPenalties(acc, modes, nil, params, 1, nil)
+
+	penalties := acc.RewardPenalties()
+	require.Len(t, penalties, 1)
+	requirePenalty(t, penalties[0], "existing", mathsdk.LegacyMustNewDecFromStr("0.15"))
 }
 
 func TestAccumulateBootstrapPenalties_MapsIntentMissedAndNone(t *testing.T) {
@@ -430,7 +483,7 @@ func TestAccumulateBootstrapPenalties_MapsIntentMissedAndNone(t *testing.T) {
 	requirePenalty(t, penalties[1], "none", mathsdk.LegacyMustNewDecFromStr("0.5"))
 }
 
-func TestAccumulateBootstrapPenalties_DirectCommitterOnNonPreEligibleNotPenalized(t *testing.T) {
+func TestAccumulateBootstrapPenalties_NonPreEligibleModelNotPenalized(t *testing.T) {
 	participants := []*types.ActiveParticipant{
 		{Index: "direct", Weight: 100},
 		{Index: "none", Weight: 100},
@@ -442,9 +495,15 @@ func TestAccumulateBootstrapPenalties_DirectCommitterOnNonPreEligibleNotPenalize
 		"bootstrap-model": {"direct": true},
 	}
 
-	modes := ResolveBootstrapPenaltyModes(participants, reportByModel, nil, nil, directCommitters)
-	require.Equal(t, BootstrapPenaltyDirect, modes["bootstrap-model"]["direct"])
-	require.Equal(t, BootstrapPenaltyNone, modes["bootstrap-model"]["none"])
+	modes := ResolveBootstrapPenaltyModes(
+		participants,
+		map[string]bool{"direct": true, "none": true},
+		reportByModel,
+		nil,
+		nil,
+		directCommitters,
+	)
+	require.Empty(t, modes)
 
 	params := DelegationAdjustmentParams{
 		RefusalPenalty:         mathsdk.LegacyZeroDec(),
@@ -456,9 +515,8 @@ func TestAccumulateBootstrapPenalties_DirectCommitterOnNonPreEligibleNotPenalize
 	penalties := acc.RewardPenalties()
 
 	require.Equal(t, int64(100), participants[0].Weight) // Direct: untouched
-	require.Equal(t, int64(100), participants[1].Weight) // None: reward-only penalty
-	require.Len(t, penalties, 1)
-	requirePenalty(t, penalties[0], "none", mathsdk.LegacyMustNewDecFromStr("0.5"))
+	require.Equal(t, int64(100), participants[1].Weight) // Non-pre-eligible model: untouched
+	require.Empty(t, penalties)
 }
 
 func TestAccumulateDelegationPenalties_MixedModesAcrossModels(t *testing.T) {

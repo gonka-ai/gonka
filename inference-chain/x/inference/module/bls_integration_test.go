@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
@@ -146,9 +147,9 @@ func TestBLSKeyGenerationIntegration(t *testing.T) {
 	}
 
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 50},
-		{Index: bobAccAddrStr, Weight: 30},
-		{Index: charlieAccAddrStr, Weight: 20},
+		{Index: aliceAccAddrStr, Weight: 50, CapWeight: 50},
+		{Index: bobAccAddrStr, Weight: 30, CapWeight: 30},
+		{Index: charlieAccAddrStr, Weight: 20, CapWeight: 20},
 	}
 
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
@@ -162,6 +163,70 @@ func TestBLSKeyGenerationIntegration(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, expectedBytes, p.Secp256K1PublicKey)
 	}
+}
+
+func TestBLSKeyGenerationUsesCapWeightForSlots(t *testing.T) {
+	setupTestAddresses(t)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
+
+	participantDetails := map[string]string{
+		aliceAccAddrStr:   aliceSecp256k1PubHex,
+		bobAccAddrStr:     bobSecp256k1PubHex,
+		charlieAccAddrStr: charlieSecp256k1PubHex,
+	}
+	setupMockAccountExpectations(t, mockAccountKeeper, participantDetails)
+
+	registry := codectypes.NewInterfaceRegistry()
+	cdc := codec.NewProtoCodec(registry)
+
+	for _, p := range []*types.Participant{
+		{Index: aliceAccAddrStr, Address: aliceAccAddrStr, Weight: 50, Status: types.ParticipantStatus_ACTIVE},
+		{Index: bobAccAddrStr, Address: bobAccAddrStr, Weight: 30, Status: types.ParticipantStatus_ACTIVE},
+		{Index: charlieAccAddrStr, Address: charlieAccAddrStr, Weight: 100, Status: types.ParticipantStatus_ACTIVE},
+	} {
+		k.SetParticipant(ctx, *p)
+	}
+
+	// Alice/Bob have proven trust weight; Charlie is new (CapWeight 0) despite
+	// a large real Weight. Slot assignment must follow CapWeight, not Weight.
+	activeParticipants := []*types.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 50, CapWeight: 40},
+		{Index: bobAccAddrStr, Weight: 30, CapWeight: 30},
+		{Index: charlieAccAddrStr, Weight: 100, CapWeight: 0},
+	}
+
+	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
+	epochID := uint64(21)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+
+	epochBLSData, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+
+	byAddr := map[string]blstypes.BLSParticipantInfo{}
+	for _, p := range epochBLSData.Participants {
+		byAddr[p.Address] = p
+	}
+	_, charliePresent := byAddr[charlieAccAddrStr]
+	require.False(t, charliePresent, "zero-cap participant must receive no BLS slots")
+
+	alice, ok := byAddr[aliceAccAddrStr]
+	require.True(t, ok)
+	bob, ok := byAddr[bobAccAddrStr]
+	require.True(t, ok)
+
+	totalCap := math.LegacyNewDec(70)
+	require.True(t, alice.PercentageWeight.Equal(math.LegacyNewDec(40).Quo(totalCap).Mul(math.LegacyNewDec(100))))
+	require.True(t, bob.PercentageWeight.Equal(math.LegacyNewDec(30).Quo(totalCap).Mul(math.LegacyNewDec(100))))
+
+	aliceSlots := alice.SlotEndIndex - alice.SlotStartIndex + 1
+	bobSlots := bob.SlotEndIndex - bob.SlotStartIndex + 1
+	require.Equal(t, epochBLSData.ITotalSlots, aliceSlots+bobSlots)
+	require.Greater(t, aliceSlots, bobSlots)
 }
 
 func TestBLSKeyGenerationWithEmptyParticipants(t *testing.T) {
@@ -217,9 +282,9 @@ func TestBLSKeyGenerationWithAccountKeyIssues(t *testing.T) {
 	}
 
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 30},
-		{Index: bobAccAddrStr, Weight: 30},
-		{Index: charlieAccAddrStr, Weight: 40},
+		{Index: aliceAccAddrStr, Weight: 30, CapWeight: 30},
+		{Index: bobAccAddrStr, Weight: 30, CapWeight: 30},
+		{Index: charlieAccAddrStr, Weight: 40, CapWeight: 40},
 	}
 
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
@@ -231,6 +296,72 @@ func TestBLSKeyGenerationWithAccountKeyIssues(t *testing.T) {
 	require.Len(t, epochBLSData.Participants, 1, "Only Charlie should be included")
 	require.Equal(t, charlieAccAddrStr, epochBLSData.Participants[0].Address)
 	require.Equal(t, expectedPubKeysMap[charlieAccAddrStr], epochBLSData.Participants[0].Secp256K1PublicKey)
+	require.True(t, epochBLSData.Participants[0].PercentageWeight.Equal(math.LegacyNewDec(40)),
+		"without guardian reservation, preserve the pre-filter percentage")
+}
+
+func TestBLSGuardianEnhancementRunsAfterParticipantFiltering(t *testing.T) {
+	setupTestAddresses(t)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
+
+	setupMockAccountExpectations(t, mockAccountKeeper, map[string]string{
+		aliceAccAddrStr:   aliceSecp256k1PubHex,
+		bobAccAddrStr:     "nil",
+		charlieAccAddrStr: charlieSecp256k1PubHex,
+	})
+
+	aliceAccount, err := sdk.AccAddressFromBech32(aliceAccAddrStr)
+	require.NoError(t, err)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{sdk.ValAddress(aliceAccount).String()},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetGenesisOnlyParams(ctx, &types.GenesisOnlyParams{
+		TotalSupply:               1_000_000_000,
+		OriginatorSupply:          160_000_000,
+		PreProgrammedSaleAmount:   120_000_000,
+		SupplyDenom:               "gonka",
+		GenesisGuardianMultiplier: types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:    true,
+	}))
+
+	activeParticipants := []*types.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 10, CapWeight: 10},
+		{Index: bobAccAddrStr, Weight: 100, CapWeight: 100},
+		{Index: charlieAccAddrStr, Weight: 100, CapWeight: 100},
+	}
+
+	appModule := inference.NewAppModule(codec.NewProtoCodec(codectypes.NewInterfaceRegistry()), k, mockAccountKeeper, nil, nil, nil)
+	const epochID = uint64(22)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+
+	epochBLSData, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Len(t, epochBLSData.Participants, 2)
+
+	byAddress := make(map[string]blstypes.BLSParticipantInfo, len(epochBLSData.Participants))
+	for _, participant := range epochBLSData.Participants {
+		byAddress[participant.Address] = participant
+	}
+	_, bobIncluded := byAddress[bobAccAddrStr]
+	require.False(t, bobIncluded)
+
+	guardian, guardianIncluded := byAddress[aliceAccAddrStr]
+	require.True(t, guardianIncluded)
+	guardianSlots := guardian.SlotEndIndex - guardian.SlotStartIndex + 1
+	require.Greater(t, guardianSlots*100, epochBLSData.ITotalSlots*30,
+		"guardian enhancement must remain active after filtering")
+	require.Less(t, guardianSlots*100, epochBLSData.ITotalSlots*40,
+		"guardian reservation must be recomputed from the surviving trust vector")
 }
 
 func TestBLSKeyGenerationUsesAccountPubKeyOverWorkerOrValidatorKey(t *testing.T) {
@@ -264,7 +395,7 @@ func TestBLSKeyGenerationUsesAccountPubKeyOverWorkerOrValidatorKey(t *testing.T)
 	k.SetParticipant(ctx, storedParticipant)
 
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 100},
+		{Index: aliceAccAddrStr, Weight: 100, CapWeight: 100},
 	}
 
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
@@ -305,7 +436,7 @@ func TestBLSKeyGenerationWithMissingParticipantsInStore(t *testing.T) {
 
 	// ActiveParticipant is listed, but NO corresponding entry via k.SetParticipant()
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: missingAddr, Weight: 100},
+		{Index: missingAddr, Weight: 100, CapWeight: 100},
 	}
 
 	epochID := uint64(5)
@@ -349,7 +480,7 @@ func TestBLSKeyGenerationWithInvalidStoredWorkerKeyAndNoAccountKey(t *testing.T)
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
 
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: problemAddr, Weight: 100},
+		{Index: problemAddr, Weight: 100, CapWeight: 100},
 	}
 
 	epochID := uint64(6)
@@ -393,14 +524,14 @@ func TestBLSIntegrationAllowsConcurrentDKG(t *testing.T) {
 
 	// Set up active participants for epoch 1
 	epoch1Participants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 50},
-		{Index: bobAccAddrStr, Weight: 50},
+		{Index: aliceAccAddrStr, Weight: 50, CapWeight: 50},
+		{Index: bobAccAddrStr, Weight: 50, CapWeight: 50},
 	}
 
 	// Set up active participants for epoch 2
 	epoch2Participants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 60},
-		{Index: bobAccAddrStr, Weight: 40},
+		{Index: aliceAccAddrStr, Weight: 60, CapWeight: 60},
+		{Index: bobAccAddrStr, Weight: 40, CapWeight: 40},
 	}
 
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
@@ -476,8 +607,8 @@ func TestBLSKeyGenerationPrunesExcessWarmKeys(t *testing.T) {
 		authAny, err := codectypes.NewAnyWithValue(authztypes.NewGenericAuthorization("/inference.bls.MsgSubmitDealerPart"))
 		require.NoError(t, err)
 		grants[i] = &authztypes.GrantAuthorization{
-			Granter: aliceAccAddrStr,
-			Grantee: granteeAddr.String(),
+			Granter:       aliceAccAddrStr,
+			Grantee:       granteeAddr.String(),
 			Authorization: authAny,
 		}
 		baseAcc := authtypes.NewBaseAccount(granteeAddr, warmKey.PubKey(), 0, 0)
@@ -496,15 +627,15 @@ func TestBLSKeyGenerationPrunesExcessWarmKeys(t *testing.T) {
 
 	// Setup participant
 	storedParticipant := types.Participant{
-		Index:           aliceAccAddrStr,
-		Address:         aliceAccAddrStr,
-		Weight:          100,
-		Status:          types.ParticipantStatus_ACTIVE,
+		Index:   aliceAccAddrStr,
+		Address: aliceAccAddrStr,
+		Weight:  100,
+		Status:  types.ParticipantStatus_ACTIVE,
 	}
 	k.SetParticipant(ctx, storedParticipant)
 
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 100},
+		{Index: aliceAccAddrStr, Weight: 100, CapWeight: 100},
 	}
 
 	appModule := inference.NewAppModule(cdc, k, mocks.AccountKeeper, nil, nil, nil)

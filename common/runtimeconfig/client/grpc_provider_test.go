@@ -254,6 +254,16 @@ func (r *recordingClient) ListNodeCapacity(ctx context.Context, in *gen.ListNode
 	return r.inner.ListNodeCapacity(ctx, in, opts...)
 }
 
+func (r *recordingClient) GetBlockHeader(ctx context.Context, in *gen.GetBlockHeaderRequest, opts ...grpc.CallOption) (*gen.GetBlockHeaderResponse, error) {
+	return r.inner.GetBlockHeader(ctx, in, opts...)
+}
+
+func (r *recordingClient) ProveBlockPath(ctx context.Context, in *gen.ProveBlockPathRequest, opts ...grpc.CallOption) (*gen.ProveBlockPathResponse, error) {
+	return r.inner.ProveBlockPath(ctx, in, opts...)
+}
+
+var _ gen.NodeManagerClient = (*recordingClient)(nil)
+
 func TestGRPCProvider_LongPoll_ServerTimeoutDoesNotApply(t *testing.T) {
 	srv := testserver.New()
 	handlers := []testserver.Handler{testserver.FullConfig(TestRuntimeConfigProto(100, 1, "raw"))}

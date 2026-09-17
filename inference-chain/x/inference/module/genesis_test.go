@@ -100,3 +100,69 @@ func TestGenesis_BridgePendingRefundsRoundTrip(t *testing.T) {
 	require.Equal(t, "ethereum", pendingWithdrawal.ChainId)
 	require.Equal(t, "0xtoken", pendingWithdrawal.ContractAddress)
 }
+
+func TestGenesis_ApprovedVersionsRoundTrip(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	mocks.StubForInitGenesis(ctx)
+
+	v1 := &types.DevshardApprovedVersion{
+		Name:   "v1",
+		Binary: "https://example.com/v1.zip",
+		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	v2 := &types.DevshardApprovedVersion{
+		Name:   "v2",
+		Binary: "https://example.com/v2.zip",
+		Sha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+	}
+	genesisState := mocks.StubGenesisState()
+	genesisState.DevshardApprovedVersions = []*types.DevshardApprovedVersion{v2, v1}
+
+	inference.InitGenesis(ctx, k, genesisState)
+	got := inference.ExportGenesis(ctx, k)
+	require.Len(t, got.DevshardApprovedVersions, 2)
+	require.Equal(t, "v1", got.DevshardApprovedVersions[0].Name)
+	require.Equal(t, "v2", got.DevshardApprovedVersions[1].Name)
+	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
+}
+
+func TestGenesis_LegacyParamsApprovedVersionsMigrated(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	mocks.StubForInitGenesis(ctx)
+
+	legacy := &types.DevshardApprovedVersion{
+		Name:   "v-legacy",
+		Binary: "https://example.com/legacy.zip",
+		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	genesisState := mocks.StubGenesisState()
+	genesisState.DevshardApprovedVersions = nil
+	genesisState.Params.DevshardEscrowParams.ApprovedVersions = []*types.DevshardApprovedVersion{legacy}
+
+	inference.InitGenesis(ctx, k, genesisState)
+	got := inference.ExportGenesis(ctx, k)
+	require.Len(t, got.DevshardApprovedVersions, 1)
+	require.Equal(t, "v-legacy", got.DevshardApprovedVersions[0].Name)
+	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
+}
+
+func TestGenesis_ExportPromotesLeftoverParamsApprovedVersions(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	mocks.StubForInitGenesis(ctx)
+	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
+
+	legacy := &types.DevshardApprovedVersion{
+		Name:   "v-legacy",
+		Binary: "https://example.com/legacy.zip",
+		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams.ApprovedVersions = []*types.DevshardApprovedVersion{legacy}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	got := inference.ExportGenesis(ctx, k)
+	require.Len(t, got.DevshardApprovedVersions, 1)
+	require.Equal(t, "v-legacy", got.DevshardApprovedVersions[0].Name)
+	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
+}

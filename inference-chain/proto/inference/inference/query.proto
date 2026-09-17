@@ -178,6 +178,11 @@ service Query {
 
   }
 
+  // Queries computed dynamic coefficients for an epoch. Epoch 0 means current.
+  rpc DynamicCoefficients (QueryDynamicCoefficientsRequest) returns (QueryDynamicCoefficientsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/dynamic_coefficients/{epoch_index}";
+  }
+
   // Queries a list of ModelsAll items.
   rpc ModelsAll (QueryModelsAllRequest) returns (QueryModelsAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/models_all";
@@ -489,6 +494,10 @@ service Query {
   rpc ListClaimRecipients (QueryListClaimRecipientsRequest) returns (QueryListClaimRecipientsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/list_claim_recipients/{participant}";
   }
+
+  rpc DevshardApprovedVersions (QueryDevshardApprovedVersionsRequest) returns (QueryDevshardApprovedVersionsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/devshard_approved_versions";
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -673,6 +682,7 @@ message QueryPoCV2StoreCommitResponse {
   uint32 count = 1;
   bytes  root_hash = 2;
   bool   found = 3;
+  uint32 tree_depth = 4;
 }
 
 message QueryMLNodeWeightDistributionRequest {
@@ -700,6 +710,7 @@ message PoCV2StoreCommitWithAddress {
   bytes root_hash = 3;
   string hex_pub_key = 4;
   string model_id = 5;
+  uint32 tree_depth = 6;
 }
 
 message QueryAllMLNodeWeightDistributionsForStageRequest {
@@ -741,6 +752,16 @@ message QueryCurrentEpochGroupDataRequest {}
 
 message QueryCurrentEpochGroupDataResponse {
   EpochGroupData epoch_group_data = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryDynamicCoefficientsRequest {
+  uint64 epoch_index = 1;
+}
+
+message QueryDynamicCoefficientsResponse {
+  uint64 epoch_index = 1;
+  DynamicCoefficientParams params = 2;
+  repeated ConfirmationWeightScale coefficients = 3;
 }
 
 message QueryPreviousEpochGroupDataRequest {}
@@ -1312,4 +1333,10 @@ message QueryListClaimRecipientsRequest {
 
 message QueryListClaimRecipientsResponse {
   repeated ClaimRecipientEntry entries = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryDevshardApprovedVersionsRequest {}
+
+message QueryDevshardApprovedVersionsResponse {
+  repeated DevshardApprovedVersion versions = 1;
 }
