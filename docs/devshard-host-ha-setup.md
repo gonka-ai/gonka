@@ -61,8 +61,8 @@ Only put PostgreSQL-capable versions (v4+) into the HA pool. Migration from pre-
 
 - [Release and images](#release-and-images)
 - [Install a new host](#install-a-new-host)
-- [Upgrade an existing host](#upgrade-an-existing-host)
-- [Add a remote replica](#add-a-remote-replica)
+- [Upgrade an existing host](#upgrade-an-existing-host) — use downtime while serving v4/v4.1
+- [Add a remote replica](#add-a-remote-replica) — requires storage-proof support; unavailable with published v4/v4.1
 - [Add a local replica](#add-a-local-replica)
 - [Operate the deployment](#operate-the-deployment)
 - [Troubleshooting](#troubleshooting)
@@ -92,10 +92,12 @@ External PostgreSQL: use a direct connection or session-mode pooling. Transactio
 Run in `deploy/join`. For a new local database, choose a new password. For an existing database, use its current password from your database administrator:
 
 ```bash
-read -r -s -p 'PostgreSQL password: ' DEVSHARD_POSTGRES_PASSWORD
-printf '\n'
-[[ -n "$DEVSHARD_POSTGRES_PASSWORD" ]] || exit 1
-DEVSHARD_POSTGRES_PASSWORD="$DEVSHARD_POSTGRES_PASSWORD" python3 <<'PYTHON'
+(
+  set -euo pipefail
+  read -r -s -p 'PostgreSQL password: ' DEVSHARD_POSTGRES_PASSWORD
+  printf '\n'
+  [[ -n "$DEVSHARD_POSTGRES_PASSWORD" ]] || exit 1
+  DEVSHARD_POSTGRES_PASSWORD="$DEVSHARD_POSTGRES_PASSWORD" python3 <<'PYTHON'
 import os, pathlib, re, shlex
 path = pathlib.Path("config.env")
 name = "DEVSHARD_POSTGRES_PASSWORD"
@@ -105,6 +107,7 @@ lines.append("export " + name + "=" + shlex.quote(os.environ[name]))
 path.chmod(0o600)
 path.write_text("\n".join(lines) + "\n")
 PYTHON
+)
 ```
 
 Database and user default to `devshardd`; override with `DEVSHARD_POSTGRES_DB` and `DEVSHARD_POSTGRES_USER`.
@@ -161,7 +164,7 @@ curl -fsS http://127.0.0.1:9100/versions | jq -er '.versions[].name'
 
 For this release, use the listed names `v4`, `v4.1` and, once available, `v5` in `VERSIOND_VERSIONS`. Exclude pre-HA versions such as `v3`. When updating, keep the existing list; use [Add a protocol](#add-a-protocol) for additions.
 
-Keep the existing join identity and PostgreSQL settings. Add:
+Keep the existing join identity and PostgreSQL settings. Set these variables in `config.env`: replace existing assignments and add missing ones.
 
 ```bash
 # Protocol list for a new host on this release; keep the existing list when updating.
@@ -269,7 +272,7 @@ CREATE USER devshardd WITH PASSWORD '...';
 CREATE DATABASE devshardd OWNER devshardd;
 ```
 
-Allow access from every replica. Save the credentials in `config.env`. Create `docker-compose.devshard-pg-external.override.yml` with the database host and port:
+Allow access from every replica. Save the credentials as described in [Where to put PostgreSQL settings](#where-to-put-postgresql-settings). Create `docker-compose.devshard-pg-external.override.yml` with the database host and port:
 
 ```yaml
 services:
@@ -303,14 +306,17 @@ export COMPOSE_FILE=docker-compose.yml:docker-compose.versiond.yml:docker-compos
 Run on the join host. Stop at the first failure:
 
 ```bash
-cd /path/to/gonka/deploy/join
-source ./config.env
-: "${COMPOSE_FILE:?set the complete Compose file list in config.env}"
-./versiond-router-fleet.sh prepare-networks
+(
+  set -euo pipefail
+  cd /path/to/gonka/deploy/join
+  source ./config.env
+  : "${COMPOSE_FILE:?set the complete Compose file list in config.env}"
+  ./versiond-router-fleet.sh prepare-networks
 
-docker compose up -d --wait --wait-timeout 2100
+  docker compose up -d --wait --wait-timeout 2100
 
-./versiond-router-fleet.sh apply
+  ./versiond-router-fleet.sh apply
+)
 ```
 
 Complete [Verify the deployment](#step-4---verify-it-works) after startup.
@@ -397,20 +403,19 @@ For routine updates, run only the service checks in §4.1.
 
 ## Upgrade an existing host
 
-This procedure requires a Git checkout with site settings in `config.env` and separate Compose overrides.
+This procedure requires a PostgreSQL-backed host serving only v4 and later protocols, with site settings in `config.env` and separate Compose overrides in a Git checkout. Hosts running v3 require a separate migration procedure.
 
 ### Back up PostgreSQL and deployment files
 
-Run on the existing join host, from its `deploy/join` directory, before replacing release files. Keep this shell open for the release preparation steps. The running `versiond` supplies the database connection and active Compose file list.
+Run on the existing join host, from its `deploy/join` directory, before replacing release files. Save the printed backup directory for the release preparation steps. The running `versiond` supplies the database connection and active Compose file list.
 
 ```bash
-source ./config.env || exit 1
-mkdir -p backups || exit 1
-BACKUP_DIR=$(mktemp -d "$PWD/backups/pre-update.XXXXXXXX") || exit 1
-export BACKUP_DIR
-printf 'Backup directory: %s\n' "$BACKUP_DIR"
 (
   set -euo pipefail
+  source ./config.env
+  mkdir -p backups
+  BACKUP_DIR=$(mktemp -d "$PWD/backups/pre-update.XXXXXXXX")
+  printf 'Backup directory: %s\n' "$BACKUP_DIR"
   git rev-parse HEAD > "$BACKUP_DIR/previous-commit"
   docker inspect versiond > "$BACKUP_DIR/versiond.json"
   python3 - "$BACKUP_DIR" <<'PYTHON'
@@ -472,12 +477,13 @@ Continue only after `Backup complete.`. The backup contains passwords; keep it p
 
 ### 1. Prepare the release
 
-Complete the [backup](#back-up-postgresql-and-deployment-files). Run in the same shell, from `deploy/join`. This procedure uses a Git checkout; local settings must be in `config.env` and separate, untracked Compose overrides. It stops before changing files if tracked files have local edits.
+Complete the [backup](#back-up-postgresql-and-deployment-files). Run from `deploy/join`; enter the backup directory printed above. This procedure uses a Git checkout; local settings must be in `config.env` and separate, untracked Compose overrides. It stops before changing files if tracked files have local edits.
 
 ```bash
 (
   set -euo pipefail
-  : "${BACKUP_DIR:?complete the backup first}"
+  read -r -p 'Pre-update backup directory: ' BACKUP_DIR
+  test -d "$BACKUP_DIR"
   test -s "$BACKUP_DIR/database.contents"
   test -s "$BACKUP_DIR/previous-commit"
   git diff --binary > "$BACKUP_DIR/tracked.patch"
@@ -502,18 +508,7 @@ A nonempty `git diff` stops this procedure without changing files or containers.
 
 Apply [Release and images](#release-and-images). Site overrides must use those image variables rather than hard-coded application images.
 
-Preserve during routine updates:
-
-| Keep | Includes |
-| --- | --- |
-| Identity and replica data | `.inference`, `devshards*/data`, `.pg-bound`, binary caches and per-replica mounts |
-| Database connection | Credentials, endpoint and the existing data directory |
-| Routing configuration | Fleet slots, networks, membership and router catalog volumes |
-| Saved deployment settings | `VERSIOND_VERSIONS`, the ordered `COMPOSE_FILE`, any `COMPOSE_PROJECT_NAME`, and `UPDATE_STATE_DIR` |
-
 Do not replace `config.env` with the new-installation example. Update first; add protocols afterwards. Do not combine this update with a database move, PostgreSQL major upgrade or fleet reconfiguration.
-
-First HA setup: add the [installation settings](#install-a-new-host) to your existing files, but skip the startup commands. Keep the filter enabled and `VERSIOND_NON_HA_VERSIONS` empty.
 
 <details>
 <summary><strong>If the old config.env has no VERSIOND_VERSIONS</strong></summary>
@@ -542,15 +537,20 @@ Stop if a protocol is not running or the list includes pre-HA versions. This pro
 
 </details>
 
+First HA setup: complete [§2.1](#21-same-machine-two-replicas) to set the HA variables and create the filter override; retain the current protocol list. For an external database, also complete [§2.2](#22-external-or-managed-postgresql) using the existing database. Then continue below; do not run installation Steps 3–4.
+
 Reload and validate:
 
 ```bash
-cd /path/to/gonka/deploy/join
-source ./config.env
-# Keep every active override in the ordered COMPOSE_FILE saved in config.env.
-: "${COMPOSE_FILE:?set the complete Compose file list in config.env}"
-: "${VERSIOND_VERSIONS:?retain the approved HA protocol list in config.env}"
-docker compose config --quiet
+(
+  set -euo pipefail
+  cd /path/to/gonka/deploy/join
+  source ./config.env
+  # Keep every active override in the ordered COMPOSE_FILE saved in config.env.
+  : "${COMPOSE_FILE:?set the complete Compose file list in config.env}"
+  : "${VERSIOND_VERSIONS:?retain the approved HA protocol list in config.env}"
+  docker compose config --quiet
+)
 ```
 
 ### 2. Check the database layout
@@ -635,27 +635,25 @@ After success, continue with [Update with downtime](#update-with-downtime). Leav
 Keep all replicas stopped. Complete [directory preparation](#prepare-the-postgresql-directory). Use the pre-update backup to retrieve the old volume name; do not choose a volume by its creation date or a similar name:
 
 ```bash
-source ./config.env || exit 1
-read -r -p 'Pre-update backup directory: ' BACKUP_DIR
-export DEVSHARD_POSTGRES_LEGACY_VOLUME=$(jq -er '[.[0].Mounts[] | select(.Type == "volume" and .Destination == "/var/lib/postgresql/data") | .Name] | if length == 1 then .[0] else error("Expected one old PostgreSQL volume") end' "$BACKUP_DIR/postgres.json")
-[[ -n "$DEVSHARD_POSTGRES_LEGACY_VOLUME" ]] || exit 1
-test -s "$BACKUP_DIR/postgres-system-identifier" || exit 1
-# Command-line -f replaces COMPOSE_FILE, so pass the complete list explicitly.
-files=()
-IFS=':' read -ra parts <<<"$COMPOSE_FILE"
-for f in "${parts[@]}"; do files+=(-f "$f"); done
-bash ./devshard-postgres-migration-preflight.sh \
-  --source-volume "$DEVSHARD_POSTGRES_LEGACY_VOLUME" \
-  --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}" &&
-docker compose "${files[@]}" -f docker-compose.versiond-postgres-recovery.yml \
-  up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
-```
-
-Compare the system identifier with the backup before proceeding:
-
-```bash
 (
   set -euo pipefail
+  source ./config.env || exit 1
+  read -r -p 'Pre-update backup directory: ' BACKUP_DIR
+  DEVSHARD_POSTGRES_LEGACY_VOLUME=$(jq -er '[.[0].Mounts[] | select(.Type == "volume" and .Destination == "/var/lib/postgresql/data") | .Name] | if length == 1 then .[0] else error("Expected one old PostgreSQL volume") end' "$BACKUP_DIR/postgres.json")
+  export DEVSHARD_POSTGRES_LEGACY_VOLUME
+  [[ -n "$DEVSHARD_POSTGRES_LEGACY_VOLUME" ]] || exit 1
+  test -s "$BACKUP_DIR/postgres-system-identifier" || exit 1
+  # Command-line -f replaces COMPOSE_FILE, so pass the complete list explicitly.
+  files=()
+  IFS=':' read -ra parts <<<"$COMPOSE_FILE"
+  for f in "${parts[@]}"; do files+=(-f "$f"); done
+  bash ./devshard-postgres-migration-preflight.sh \
+  --source-volume "$DEVSHARD_POSTGRES_LEGACY_VOLUME" \
+  --target-dir "${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}"
+  docker compose "${files[@]}" -f docker-compose.versiond-postgres-recovery.yml \
+  up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
+
+  # Compare the system identifier with the backup before proceeding.
   source_id=$(cat "$BACKUP_DIR/postgres-system-identifier")
   target_id=$(docker exec devshard-postgres sh -c \
     'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atc "SELECT system_identifier FROM pg_control_system();"')
@@ -778,8 +776,10 @@ If a protocol lacks storage-proof support, use [Update with downtime](#update-wi
 Check every protocol on every replica. The commands also support the older health endpoint:
 
 ```bash
-# Include every local member; repeat on remote hosts.
 (
+  set -euo pipefail
+  # Include every local member; repeat on remote hosts.
+  (
   set -e
   : "${VERSIOND_VERSIONS:?set the approved HA protocol list}"
   for replica in versiond versiond2; do
@@ -796,6 +796,7 @@ Check every protocol on every replica. The commands also support the older healt
       esac
     done
   done
+  )
 )
 ```
 
@@ -872,9 +873,9 @@ Fresh host: include the override before [startup](#step-3---start-the-deployment
 Schedule maintenance for the port changes. On A and each existing replica host, run in `deploy/join` to stop the replicas:
 
 ```bash
-source ./config.env || exit 1
-mapfile -t replicas < <(docker compose ps --services | grep -E '^versiond[0-9]*$')
-((${#replicas[@]} > 0)) || exit 1
+source ./config.env &&
+mapfile -t replicas < <(docker compose ps --services | grep -E '^versiond[0-9]*$') &&
+((${#replicas[@]} > 0)) &&
 docker compose stop "${replicas[@]}"
 ```
 
@@ -883,6 +884,7 @@ On A, apply the port changes. Skip `devshard-postgres` for an external database:
 ```bash
 (
   set -e
+  source ./config.env
   ./versiond-router-fleet.sh stop-all --maintenance
   if docker compose config --services | grep -qx devshard-postgres; then
     docker compose up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
@@ -987,14 +989,17 @@ Continue when the container is healthy and every check returns HTTP 200.
 Check B's database before adding B to the router pool. On B, run:
 
 ```bash
-cd /path/to/gonka/deploy/join
-command -v psql
-test ! -e pool-postgres.env || exit 1
-cp pool-postgres.env.template pool-postgres.env
-chmod 600 pool-postgres.env
+(
+  set -euo pipefail
+  cd /path/to/gonka/deploy/join
+  command -v psql
+  test ! -e pool-postgres.env || exit 1
+  cp pool-postgres.env.template pool-postgres.env
+  chmod 600 pool-postgres.env
+)
 ```
 
-Put the existing database's endpoint and credentials in `pool-postgres.env`. Take them from A or the database administrator, not from B. Run with the new `versiond` image:
+Fill in `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD` in `pool-postgres.env`. Take them from A or the database administrator, not from B. Run with the new `versiond` image:
 
 ```bash
 ./update-devshard.sh --check-storage --reference-env ./pool-postgres.env
@@ -1004,14 +1009,16 @@ Expect `Storage check passed` and exit code 0. The check writes test data to the
 
 ### 3. Add B to the router pool
 
-On machine A, list every replica in `versiond-endpoints.json`. All routers must be able to connect to these addresses:
+On machine A, create `versiond-endpoints.json` in `deploy/join`. Replace `10.0.0.12` with B's private IP and include every replica. All routers must be able to connect to these addresses:
 
-```json
+```bash
+cat > versiond-endpoints.json <<'EOF'
 [
   {"id": "local-a", "host": "versiond", "port": 8080},
   {"id": "local-a-2", "host": "versiond2", "port": 8080},
   {"id": "remote-b", "host": "10.0.0.12", "port": 8080}
 ]
+EOF
 ```
 
 Set `export VERSIOND_POOL_ENDPOINTS_FILE=./versiond-endpoints.json` in A's `config.env`; `source ./config.env`. Fresh fleet: run `./versiond-router-fleet.sh apply`. Existing fleet: run during maintenance:
@@ -1096,13 +1103,16 @@ Keep previous stopped containers and catalog volumes until recovery completes. R
 Whole-machine maintenance: drain the fleet before stopping the main stack:
 
 ```bash
-./versiond-router-fleet.sh stop-all --maintenance
-# Stop the main stack after the fleet has drained.
-source ./config.env || exit 1
-: "${COMPOSE_FILE:?set the complete Compose file list}"
-docker compose stop
-# Only when decommissioning, after the main stack is down:
-# ./versiond-router-fleet.sh down --maintenance
+(
+  set -euo pipefail
+  ./versiond-router-fleet.sh stop-all --maintenance
+  # Stop the main stack after the fleet has drained.
+  source ./config.env || exit 1
+  : "${COMPOSE_FILE:?set the complete Compose file list}"
+  docker compose stop
+  # Only when decommissioning, after the main stack is down:
+  # ./versiond-router-fleet.sh down --maintenance
+)
 ```
 
 ### Restart a member
@@ -1110,23 +1120,26 @@ docker compose stop
 Restart one replica at a time. The remaining replicas must serve all protocols and handle the load. Include every active override in `COMPOSE_FILE`:
 
 ```bash
-cd /path/to/gonka/deploy/join
-source ./config.env
-# COMPOSE_FILE must include every active override, including external PG,
-# private ports and additional replicas; keep this list in config.env.
-: "${COMPOSE_FILE:?set the complete Compose file list in config.env}"
-dc=(docker compose)
-
-# Stop only one member, keeping enough other replicas ready to handle the load.
-"${dc[@]}" stop versiond2
-# Restart the same member with its existing data:
-"${dc[@]}" up -d --no-deps --wait --wait-timeout 2100 versiond2
 (
+  set -euo pipefail
+  cd /path/to/gonka/deploy/join
+  source ./config.env
+  # COMPOSE_FILE must include every active override, including external PG,
+  # private ports and additional replicas; keep this list in config.env.
+  : "${COMPOSE_FILE:?set the complete Compose file list in config.env}"
+  dc=(docker compose)
+
+  # Stop only one member, keeping enough other replicas ready to handle the load.
+  "${dc[@]}" stop versiond2
+  # Restart the same member with its existing data:
+  "${dc[@]}" up -d --no-deps --wait --wait-timeout 2100 versiond2
+  (
   set -e
   : "${VERSIOND_VERSIONS:?set the approved HA protocol list}"
   for version in $VERSIOND_VERSIONS; do
     docker exec versiond2 wget -qO- "http://127.0.0.1:8080/readyz?version=$version"
   done
+  )
 )
 ```
 
@@ -1136,36 +1149,38 @@ Wait for shutdown to finish. Check the restarted replica before restarting the n
 
 Keep the same database, participant identity, protocol list and data mounts. Replace one replica at a time; another replica must serve each protocol.
 
-1. Use the target release's files. Apply the image settings from [Prepare the release](#1-prepare-the-release).
-2. For a remote member, remove its entry from `versiond-endpoints.json` on A and run [membership maintenance](#3-add-b-to-the-router-pool). On the member's machine, list services and select the replica to replace:
+1. Use the target release's files. Apply the variables in [Release and images](#release-and-images).
+2. For a remote member, remove its entry from `versiond-endpoints.json` on A and run [membership maintenance](#3-add-b-to-the-router-pool). On the member's machine, run in `deploy/join` to select and replace the replica:
 
    ```bash
-   source ./config.env
-   docker compose ps --services
-   read -r -p 'Replica service from the list (for example versiond2): ' service
-   [[ "$service" =~ ^versiond[0-9]*$ ]] || exit 1
-   docker compose stop "$service"
-   ```
-3. Replace the stopped replica:
-
-   ```bash
-   docker compose pull "$service" &&
+   (
+     set -euo pipefail
+     source ./config.env
+     docker compose ps --services
+     read -r -p 'Replica service from the list (for example versiond2): ' service
+     [[ "$service" =~ ^versiond[0-9]*$ ]] || exit 1
+     docker compose stop "$service"
+     docker compose pull "$service" &&
      docker compose up -d --no-deps --wait --wait-timeout 2100 "$service"
+   )
    ```
 
    For a remote member, pass the [database check](#check-the-remote-database) before restoring its entry in A's endpoint file and applying membership maintenance.
-4. Pass the [service checks](#41-check-the-running-services) before replacing the next member. On failure, restore the previous image and configuration only if that version is compatible with the current database, then rerun the service checks. Reverting the image does not revert database changes.
+3. Pass the [service checks](#41-check-the-running-services) before replacing the next member. On failure, restore the previous image and configuration only if that version is compatible with the current database, then rerun the service checks. Reverting the image does not revert database changes.
 
 ### Remove a member
 
 On the replica's host, run in `deploy/join`:
 
 ```bash
-source ./config.env
-docker compose ps --services
-read -r -p 'Replica service to remove (for example versiond2): ' service
-[[ "$service" =~ ^versiond[0-9]*$ ]] || exit 1
-docker compose stop "$service" && docker compose rm -f "$service"
+(
+  set -euo pipefail
+  source ./config.env
+  docker compose ps --services
+  read -r -p 'Replica service to remove (for example versiond2): ' service
+  [[ "$service" =~ ^versiond[0-9]*$ ]] || exit 1
+  docker compose stop "$service" && docker compose rm -f "$service"
+)
 ```
 
 For `versiond2`, set this value in `config.env`. Replace the existing assignment or add it if absent:
@@ -1174,7 +1189,7 @@ For `versiond2`, set this value in `config.env`. Replace the existing assignment
 export VERSIOND2_REPLICAS=0
 ```
 
-For an extra replica, remove its Compose filename from `COMPOSE_FILE` and its service block from the filter/database overrides. Keep its data directories. On A, remove its entry from `versiond-endpoints.json`, run [membership maintenance](#3-add-b-to-the-router-pool), then the [service checks](#41-check-the-running-services).
+For an extra replica, remove its Compose filename from `COMPOSE_FILE` and its service block from the filter/database overrides. Keep its data directories. If using `versiond-endpoints.json`, remove its entry on A and run [membership maintenance](#3-add-b-to-the-router-pool). Run the [service checks](#41-check-the-running-services) for the remaining replicas.
 
 ### Add a protocol
 
@@ -1217,7 +1232,7 @@ After a successful restore, run `source ./config.env`. Keep the backup. For `den
 
 ### Resume an interrupted rolling update
 
-If the updater reports pending recovery, rerun it in `deploy/join`. Use the same release, configuration and `UPDATE_STATE_DIR`; do not delete the state directory. Run without `--check` or `--dry-run` to recover and continue the update:
+If the updater reports pending recovery, rerun it in `deploy/join`. Use the same OS user, release and configuration, including any `UPDATE_STATE_DIR` or `XDG_STATE_HOME` setting. Do not switch between sudo and non-sudo runs. Keep the recovery directory printed by the updater. Run without `--check` or `--dry-run` to recover and continue the update:
 
 ```bash
 source ./config.env
