@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"golang.org/x/exp/slices"
@@ -68,7 +67,7 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 
 	for _, nodeToRemove := range msg.Removed {
 		delete(nodeMap, nodeToRemove.LocalId)
-		if err := k.TrainingNodeOptIns.Remove(goCtx, collections.Join(msg.Creator, nodeToRemove.LocalId)); err != nil {
+		if err := k.clearTrainingOptIn(goCtx, msg.Creator, nodeToRemove.LocalId); err != nil {
 			return nil, err
 		}
 	}

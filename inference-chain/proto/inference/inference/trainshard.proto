@@ -44,6 +44,9 @@ message TrainshardReservedNode {
   // reserved_until_height freezes the release buffer end at release time so
   // epoch-level reads never depend on the current release_buffer_blocks value
   int64 reserved_until_height = 8;
+  // endpoint is copied from the node's opt-in at assemble, so the shard record
+  // alone tells a coordinator where to reach the node
+  string endpoint = 9;
 }
 
 message Trainshard {

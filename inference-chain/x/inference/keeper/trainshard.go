@@ -127,6 +127,7 @@ type trainingEpochNode struct {
 	participant string
 	nodeId      string
 	profileId   string
+	endpoint    string
 	entries     []*types.TrainshardReservedNode
 }
 
@@ -304,6 +305,15 @@ func (k Keeper) selectTrainshardNodes(
 		if !opted {
 			continue
 		}
+		// a node no address reaches cannot be driven, so it is not offered: the shard record is
+		// the only place a coordinator takes an address from
+		node.endpoint, err = k.trainingEndpoint(ctx, node.participant, node.nodeId)
+		if err != nil {
+			return nil, err
+		}
+		if node.endpoint == "" {
+			continue
+		}
 		if k.IsNodeReserved(ctx, node.participant, node.nodeId) {
 			continue
 		}
@@ -367,6 +377,7 @@ func (k Keeper) selectTrainshardNodes(
 		for _, e := range node.entries {
 			takenModel[e.ModelId]++
 			e.Status = types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE
+			e.Endpoint = node.endpoint
 			picked = append(picked, e)
 		}
 		takenProfile++
@@ -397,6 +408,34 @@ func (k Keeper) hasLiveTrainingOptIn(ctx context.Context, participant, nodeId st
 func (k Keeper) setTrainingOptIn(ctx context.Context, participant, nodeId string, height int64) (int64, error) {
 	expiresAt := height + k.GetTrainingParams(ctx).OptInTtlBlocks
 	return expiresAt, k.TrainingNodeOptIns.Set(ctx, collections.Join(participant, nodeId), expiresAt)
+}
+
+// setTrainingEndpoint publishes where the daemon serving the node answers; an empty endpoint
+// withdraws it, and a shard assembled after that carries no address for the node
+func (k Keeper) setTrainingEndpoint(ctx context.Context, participant, nodeId, endpoint string) error {
+	key := collections.Join(participant, nodeId)
+	if endpoint == "" {
+		return k.TrainingNodeEndpoints.Remove(ctx, key)
+	}
+	return k.TrainingNodeEndpoints.Set(ctx, key, endpoint)
+}
+
+func (k Keeper) trainingEndpoint(ctx context.Context, participant, nodeId string) (string, error) {
+	endpoint, err := k.TrainingNodeEndpoints.Get(ctx, collections.Join(participant, nodeId))
+	if errors.Is(err, collections.ErrNotFound) {
+		return "", nil
+	}
+	return endpoint, err
+}
+
+// clearTrainingOptIn drops everything the host published for the node: the opt-in and the
+// endpoint go together, so a node taken out of training leaves no stale address behind
+func (k Keeper) clearTrainingOptIn(ctx context.Context, participant, nodeId string) error {
+	key := collections.Join(participant, nodeId)
+	if err := k.TrainingNodeOptIns.Remove(ctx, key); err != nil {
+		return err
+	}
+	return k.TrainingNodeEndpoints.Remove(ctx, key)
 }
 
 func (k Keeper) reserveTrainshardNodes(ctx context.Context, shard *types.Trainshard) error {

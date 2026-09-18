@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -30,7 +29,7 @@ func (k msgServer) SetTrainingNodeOptIn(goCtx context.Context, msg *types.MsgSet
 	if k.IsNodeActivelyReserved(goCtx, msg.Creator, msg.NodeId) {
 		return nil, types.ErrTrainshardNodeReserved
 	}
-	if err := k.TrainingNodeOptIns.Remove(goCtx, collections.Join(msg.Creator, msg.NodeId)); err != nil {
+	if err := k.clearTrainingOptIn(goCtx, msg.Creator, msg.NodeId); err != nil {
 		return nil, err
 	}
 	return &types.MsgSetTrainingNodeOptInResponse{}, nil

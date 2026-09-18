@@ -20,6 +20,14 @@ func (k msgServer) RefreshTrainingNodeOptIn(goCtx context.Context, msg *types.Ms
 		return nil, types.ErrTrainshardNodeNotOwned.Wrapf("no hardware nodes for %s", msg.Creator)
 	}
 
+	// the endpoint is state a coordinator parses strictly, so the handler holds it to the
+	// grammar itself rather than trusting that every path here ran ValidateBasic
+	if msg.Endpoint != "" {
+		if err := types.ValidateTrainingEndpoint(msg.Endpoint); err != nil {
+			return nil, err
+		}
+	}
+
 	height := sdk.UnwrapSDKContext(goCtx).BlockHeight()
 	var expiresAt int64
 	for _, nodeId := range msg.NodeIds {
@@ -28,6 +36,9 @@ func (k msgServer) RefreshTrainingNodeOptIn(goCtx context.Context, msg *types.Ms
 		}
 		var err error
 		if expiresAt, err = k.setTrainingOptIn(goCtx, msg.Creator, nodeId, height); err != nil {
+			return nil, err
+		}
+		if err := k.setTrainingEndpoint(goCtx, msg.Creator, nodeId, msg.Endpoint); err != nil {
 			return nil, err
 		}
 	}
