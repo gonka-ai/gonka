@@ -751,7 +751,7 @@ source ./config.env
 docker compose up -d --no-deps oracle-filter
 ```
 
-If a protocol lacks storage-proof support, use [Update with downtime](#update-with-downtime). Stop on timeouts, HTTP 503 or invalid proofs.
+If the host serves v4/v4.1, use [Update with downtime](#update-with-downtime). Rolling updates require all served protocols to be v5 or later. Do not proceed if a check times out, returns HTTP 503 or fails to confirm that the replicas use the same database.
 
 Check every protocol on every replica:
 
