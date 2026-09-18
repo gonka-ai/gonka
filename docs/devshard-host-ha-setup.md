@@ -55,7 +55,7 @@ export ORACLE_FILTER_IMAGE=python:3.12-alpine
    - Same `KEY_NAME` and keyring.
    - Same `ACCOUNT_PUBKEY`.
 4. Shared PostgreSQL; a separate data directory for each replica. Do not start a second dapi with the same keys.
-5. Docker Compose **2.24.4+**, Bash, Python 3, Git, `tar`, `curl`, `jq`, `flock`, `sha256sum`, `timeout`, `xargs`. Remote hosts also need `ssh`, `psql` and SSH access from the primary host to the replica host.
+5. Docker Compose **2.24.4+**, Bash, Python 3, Git, `tar`, `curl`, `jq`, `flock`, `sha256sum`, `timeout`, `xargs`. Remote hosts also need `ssh`, `psql` and SSH access from the **primary host** to the **replica host**.
 
 Local HA requires protocol v4 or later. Rolling updates and remote replicas require v5 or later for every served protocol. Migration from protocols earlier than v4 is not covered here.
 
@@ -802,21 +802,21 @@ Run the [service checks](#41-check-the-running-services). To enable a new protoc
 
 This procedure requires every `devshardd` process on the host to run protocol v5 or later. Earlier protocols do not support the shared-database check required by this procedure.
 
-Use a private network between machines. Do not start a second dapi with the same keys. Adding a replica host does not replicate the public proxy or blockchain node.
+Use a private network between machines. Do not start a second dapi with the same keys.
 
-New deployment: finish [startup](#step-3---start-the-deployment) and [verification](#step-4---verify-it-works) on the primary host first.
+New deployment: finish [startup](#step-3---start-the-deployment) and [verification](#step-4---verify-it-works) on the **primary host** first.
 
 | Machine | Runs |
 | --- | --- |
-| Primary host | Local `versiond` replicas + node/api/proxy + router fleet |
-| Replica host | `versiond` only |
+| **Primary host** | Local `versiond` replicas + node/api/proxy + router fleet |
+| **Replica host** | `versiond` only |
 | Shared | PostgreSQL reachable from every `versiond` instance |
 
 Keep the new replica out of the router pool until its checks pass.
 
 ### 1. Prepare the primary host
 
-On the primary host, publish these ports for the replica host on the private network:
+On the **primary host**, publish these ports for the **replica host** on the private network:
 
 - PostgreSQL `5432`, or the external database port.
 - Node-manager `9400`.
@@ -825,7 +825,7 @@ On the primary host, publish these ports for the replica host on the private net
 
 Confirm `PGPASSWORD` and `KEYRING_PASSWORD` match the running local `versiond` containers.
 
-Set `export GONKA_PRIVATE_BIND_IP=<primary-host-private-ip>` in the primary host's `config.env`. Run in `deploy/join`:
+Set `export GONKA_PRIVATE_BIND_IP=<primary-host-private-ip>` in the **primary host**'s `config.env`. Run in `deploy/join`:
 
 ```bash
 cat > docker-compose.devshard-private.override.yml <<'EOF'
@@ -846,11 +846,11 @@ services:
 EOF
 ```
 
-External PostgreSQL: drop the `devshard-postgres` entry; the replica host uses the real endpoint. Append this override to the primary host's `COMPOSE_FILE`.
+External PostgreSQL: drop the `devshard-postgres` entry; the **replica host** uses the real endpoint. Append this override to the **primary host**'s `COMPOSE_FILE`.
 
 Fresh host: include the override before [startup](#step-3---start-the-deployment). Existing host:
 
-Schedule maintenance for the port changes. On the primary host and each existing replica host, run in `deploy/join` to stop the replicas:
+Schedule maintenance for the port changes. On the **primary host** and each existing **replica host**, run in `deploy/join` to stop the replicas:
 
 ```bash
 source ./config.env &&
@@ -859,7 +859,7 @@ mapfile -t replicas < <(docker compose ps --services | grep -E '^versiond[0-9]*$
 docker compose stop "${replicas[@]}"
 ```
 
-On the primary host, apply the port changes:
+On the **primary host**, apply the port changes:
 
 ```bash
 (
@@ -879,7 +879,7 @@ On each host, restart the replicas in the same shell used to stop them:
 docker compose up -d --no-deps --wait --wait-timeout 2100 "${replicas[@]}"
 ```
 
-On the primary host, restore the fleet and run the [service checks](#41-check-the-running-services):
+On the **primary host**, restore the fleet and run the [service checks](#41-check-the-running-services):
 
 ```bash
 ./versiond-router-fleet.sh apply && ./update-devshard.sh --check
@@ -887,7 +887,7 @@ On the primary host, restore the fleet and run the [service checks](#41-check-th
 
 ### 2. Configure and start the replica host
 
-For a new replica host, run on the primary host in `deploy/join`. Enter the replica host's SSH login as `user@host`. The checkout on the replica host will be created at `~/gonka`, using the primary host's commit.
+For a new **replica host**, run on the **primary host** in `deploy/join`. Enter the **replica host**'s SSH login as `user@host`. The checkout on the **replica host** will be created at `~/gonka`, using the **primary host**'s commit.
 
 ```bash
 (
@@ -923,9 +923,9 @@ PYTHON
 )
 ```
 
-On the replica host, run `cd ~/gonka/deploy/join`. For an existing replica host, use [Replace a member](#replace-a-member).
+On the **replica host**, run `cd ~/gonka/deploy/join`. For an existing **replica host**, use [Replace a member](#replace-a-member).
 
-Add to the replica host's `config.env`, with the real private addresses:
+Add to the **replica host**'s `config.env`, with the real private addresses:
 
 ```bash
 export NETWORK_NODE_PRIVATE_IP='<primary-host-private-ip>'
@@ -933,9 +933,9 @@ export VERSIOND_BIND_IP='<replica-host-private-ip>'
 export COMPOSE_FILE=docker-compose.versiond-remote.yml:docker-compose.versiond-remote-filter.yml
 ```
 
-External PostgreSQL: also set `DEVSHARD_POSTGRES_HOST` and `DEVSHARD_POSTGRES_PORT`. Restrict the replica host's port 8080 to the routers.
+External PostgreSQL: also set `DEVSHARD_POSTGRES_HOST` and `DEVSHARD_POSTGRES_PORT`. Restrict the **replica host**'s port 8080 to the routers.
 
-Create the filter override in the replica host's `deploy/join`:
+Create the filter override in the **replica host**'s `deploy/join`:
 
 ```bash
 cat > docker-compose.versiond-remote-filter.yml <<'EOF'
@@ -964,7 +964,7 @@ Continue when the container is healthy and every check returns HTTP 200.
 
 ### Check the remote database
 
-Check the replica host's database before adding the replica to the router pool. On the replica host, run:
+Check the **replica host**'s database before adding the replica to the router pool. On the **replica host**, run:
 
 ```bash
 (
@@ -977,7 +977,7 @@ Check the replica host's database before adding the replica to the router pool. 
 )
 ```
 
-Fill in `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD` in `pool-postgres.env` using the primary host's database settings or values from the database administrator. Run:
+Fill in `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD` in `pool-postgres.env` using the **primary host**'s database settings or values from the database administrator. Run:
 
 ```bash
 ./update-devshard.sh --check-storage --reference-env ./pool-postgres.env
@@ -987,7 +987,7 @@ Expect `Storage check passed` and exit code 0. The check writes test data to the
 
 ### 3. Add the replica to the router pool
 
-On the primary host, create `versiond-endpoints.json` in `deploy/join`. Replace `10.0.0.12` with the replica host's private IP and include every replica. All routers must be able to connect to these addresses:
+On the **primary host**, create `versiond-endpoints.json` in `deploy/join`. Replace `10.0.0.12` with the **replica host**'s private IP and include every replica. All routers must be able to connect to these addresses:
 
 ```bash
 cat > versiond-endpoints.json <<'EOF'
@@ -999,7 +999,7 @@ cat > versiond-endpoints.json <<'EOF'
 EOF
 ```
 
-Set `export VERSIOND_POOL_ENDPOINTS_FILE=./versiond-endpoints.json` in the primary host's `config.env`; `source ./config.env`. Fresh fleet: run `./versiond-router-fleet.sh apply`. Existing fleet: run during maintenance:
+Set `export VERSIOND_POOL_ENDPOINTS_FILE=./versiond-endpoints.json` in the **primary host**'s `config.env`; `source ./config.env`. Fresh fleet: run `./versiond-router-fleet.sh apply`. Existing fleet: run during maintenance:
 
 ```bash
 VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
@@ -1132,7 +1132,7 @@ Run the readiness checks above before restarting another replica.
 Keep the same database, participant identity, protocol list and data mounts. Replace one replica at a time; another replica must serve each protocol.
 
 1. Use the target release's files. Apply the variables in [Release and images](#release-and-images).
-2. For a remote member, remove its entry from `versiond-endpoints.json` on the primary host and run [membership maintenance](#3-add-the-replica-to-the-router-pool). On the member's machine, run in `deploy/join` to select and replace the replica:
+2. For a remote member, remove its entry from `versiond-endpoints.json` on the **primary host** and run [membership maintenance](#3-add-the-replica-to-the-router-pool). On the member's machine, run in `deploy/join` to select and replace the replica:
 
    ```bash
    (
@@ -1147,7 +1147,7 @@ Keep the same database, participant identity, protocol list and data mounts. Rep
    )
    ```
 
-   For a remote member, pass the [database check](#check-the-remote-database) before restoring its entry in the primary host's endpoint file and applying membership maintenance.
+   For a remote member, pass the [database check](#check-the-remote-database) before restoring its entry in the **primary host**'s endpoint file and applying membership maintenance.
 3. Pass the [service checks](#41-check-the-running-services) before replacing the next member. If checks fail, stop before replacing another member. Reverting an image does not revert database changes; any rollback version must support the current database.
 
 ### Remove a member
@@ -1171,12 +1171,12 @@ Edit `config.env`. To disable `versiond2`, set:
 export VERSIOND2_REPLICAS=0
 ```
 
-For an extra replica, remove its Compose filename from `COMPOSE_FILE` and its service block from the filter/database overrides. Keep its data directories. If using `versiond-endpoints.json`, remove its entry on the primary host and run [membership maintenance](#3-add-the-replica-to-the-router-pool). Run the [service checks](#41-check-the-running-services) for the remaining replicas.
+For an extra replica, remove its Compose filename from `COMPOSE_FILE` and its service block from the filter/database overrides. Keep its data directories. If using `versiond-endpoints.json`, remove its entry on the **primary host** and run [membership maintenance](#3-add-the-replica-to-the-router-pool). Run the [service checks](#41-check-the-running-services) for the remaining replicas.
 
 ### Add a protocol
 
 1. Check the [release's binary compatibility requirements](../devshard/docs/release-0.2.15-v5.md#binary-upgrade-compatibility) for the host/gateway versions. Once it appears in the node's [approved protocol list](#21-same-machine-two-replicas), add it to `VERSIOND_VERSIONS` in `config.env` on every host. Keep existing protocols.
-2. On the primary host: `source ./config.env`, then `docker compose up -d --no-deps oracle-filter` with the complete `COMPOSE_FILE`.
+2. On the **primary host**: `source ./config.env`, then `docker compose up -d --no-deps oracle-filter` with the complete `COMPOSE_FILE`.
 3. `./versiond-router-fleet.sh wait-version <new-protocol>`, then run the [service checks](#41-check-the-running-services) with the updated list.
 
 No router restart is needed. The next host update applies the saved protocol list to the router fleet and public proxy; schedule it as maintenance.
