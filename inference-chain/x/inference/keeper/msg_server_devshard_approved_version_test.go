@@ -203,6 +203,17 @@ func TestPutDevshardApprovedVersion_PassCountKeepAndOverwrite(t *testing.T) {
 	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
 	require.Equal(t, keep.Sha256, got.Sha256)
 
+	typo := validApprovedVersion("v-policy")
+	typo.PassCount = types.DevshardPassCount(99)
+	_, err = ms.PutDevshardApprovedVersion(wctx, &types.MsgPutDevshardApprovedVersion{
+		Authority: k.GetAuthority(),
+		Version:   typo,
+	})
+	require.NoError(t, err)
+	got, found = k.GetApprovedVersion(wctx, "v-policy")
+	require.True(t, found)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount, "mistype on an existing name keeps the stored policy")
+
 	// Policy survives delete; re-approval with omitted pass_count keeps SAMPLED.
 	_, err = ms.DeleteDevshardApprovedVersion(wctx, &types.MsgDeleteDevshardApprovedVersion{
 		Authority: k.GetAuthority(),
@@ -217,9 +228,20 @@ func TestPutDevshardApprovedVersion_PassCountKeepAndOverwrite(t *testing.T) {
 	got, found = k.GetApprovedVersion(wctx, "v-policy")
 	require.True(t, found)
 	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
+
+	mistyped := validApprovedVersion("v-new-typo")
+	mistyped.PassCount = types.DevshardPassCount(99)
+	_, err = ms.PutDevshardApprovedVersion(wctx, &types.MsgPutDevshardApprovedVersion{
+		Authority: k.GetAuthority(),
+		Version:   mistyped,
+	})
+	require.NoError(t, err)
+	got, found = k.GetApprovedVersion(wctx, "v-new-typo")
+	require.True(t, found)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount, "mistyped pass_count on a new name is DERIVED")
 }
 
-func TestPassCountFor_MissingIsDerived(t *testing.T) {
+func TestPassCountFor_MissingIsSampled(t *testing.T) {
 	k, _, ctx := setupMsgServer(t)
 	wctx := sdk.UnwrapSDKContext(ctx)
 
@@ -228,5 +250,5 @@ func TestPassCountFor_MissingIsDerived(t *testing.T) {
 	require.False(t, found)
 	got, err := k.PassCountFor(wctx, "never-seen")
 	require.NoError(t, err)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got)
 }

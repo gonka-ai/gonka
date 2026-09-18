@@ -137,9 +137,9 @@ func TestGenesis_ApprovedVersionsRoundTrip(t *testing.T) {
 }
 
 // A genesis exported before pass_count existed has approved versions but no
-// policies, and omitted pass_count decodes as SAMPLED. Those versions predate
-// sampled reporting, so import must treat them the same way the upgrade does.
-func TestGenesis_ApprovedVersionsWithoutPoliciesAreDerived(t *testing.T) {
+// policies, and omitted pass_count is UNSPECIFIED. Import records SAMPLED,
+// the chain default, so already-working settlements keep settling.
+func TestGenesis_ApprovedVersionsWithoutPoliciesAreSampled(t *testing.T) {
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 	mocks.StubForInitGenesis(ctx)
 
@@ -153,9 +153,9 @@ func TestGenesis_ApprovedVersionsWithoutPoliciesAreDerived(t *testing.T) {
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)
 	require.Len(t, got.DevshardApprovedVersions, 1)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardApprovedVersions[0].PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.DevshardApprovedVersions[0].PassCount)
 	require.Len(t, got.DevshardVersionPolicies, 1)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardVersionPolicies[0].PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.DevshardVersionPolicies[0].PassCount)
 }
 
 func TestGenesis_LegacyParamsApprovedVersionsMigrated(t *testing.T) {
@@ -175,10 +175,10 @@ func TestGenesis_LegacyParamsApprovedVersionsMigrated(t *testing.T) {
 	got := inference.ExportGenesis(ctx, k)
 	require.Len(t, got.DevshardApprovedVersions, 1)
 	require.Equal(t, "v-legacy", got.DevshardApprovedVersions[0].Name)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardApprovedVersions[0].PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.DevshardApprovedVersions[0].PassCount)
 	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
 	require.Len(t, got.DevshardVersionPolicies, 1)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardVersionPolicies[0].PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.DevshardVersionPolicies[0].PassCount)
 }
 
 func TestGenesis_ExportPromotesLeftoverParamsApprovedVersions(t *testing.T) {
@@ -199,9 +199,9 @@ func TestGenesis_ExportPromotesLeftoverParamsApprovedVersions(t *testing.T) {
 	got := inference.ExportGenesis(ctx, k)
 	require.Len(t, got.DevshardApprovedVersions, 1)
 	require.Equal(t, "v-legacy", got.DevshardApprovedVersions[0].Name)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardApprovedVersions[0].PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.DevshardApprovedVersions[0].PassCount)
 	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardVersionPolicies[0].PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.DevshardVersionPolicies[0].PassCount)
 }
 
 func TestGenesis_ExplicitPassCountOverwritesPolicy(t *testing.T) {
