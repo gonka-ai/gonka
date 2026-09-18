@@ -78,7 +78,7 @@ func TestSession_ComposeDiff_PersistRetryThenSuccess(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	beforeRetry := promtestutil.ToFloat64(observability.DiffPersistRetryForTest("success"))
 	prepared, err := session.PrepareInference(params)
@@ -101,7 +101,7 @@ func TestSession_ComposeDiff_PersistFirst_FailureLeavesSequencerUnchanged(t *tes
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	beforeExhausted := promtestutil.ToFloat64(observability.DiffPersistRetryForTest("exhausted"))
 	_, err := session.PrepareInference(params)

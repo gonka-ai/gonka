@@ -97,10 +97,30 @@ func fillConfig(cfg *config.File) error {
 	if err := generateWarmGrantee(cfg); err != nil {
 		return fmt.Errorf("warm_grantee: %w", err)
 	}
+	stampKeyNames(cfg)
 	assignSlots(cfg)
 	fillNetworkDefaults(cfg)
 	syncChainSeed(cfg)
 	return nil
+}
+
+// stampKeyNames writes the resolved KEY_NAME onto every host so the generated
+// config states its identity groupings instead of leaving them implied by
+// roster position. Names are resolved before any assignment: hosts[1] must
+// still see the pre-stamp roster to inherit hosts[0]'s key.
+func stampKeyNames(cfg *config.File) {
+	if cfg == nil {
+		return
+	}
+	names := make([]string, len(cfg.Hosts))
+	for i, h := range cfg.Hosts {
+		names[i] = config.VersiondKeyName(cfg, h)
+	}
+	for i := range cfg.Hosts {
+		if names[i] != "" {
+			cfg.Hosts[i].KeyName = names[i]
+		}
+	}
 }
 
 func generateHosts(cfg *config.File) error {
@@ -179,20 +199,26 @@ func assignSlots(cfg *config.File) {
 		return
 	}
 	if cfg.Versiond.Mode == config.VersiondModeMulti {
-		// HA-only (2 hosts): one participant owns every slot — chat works, but
-		// the executor never validates its own work (no lease races).
-		if n <= 2 {
-			for slot := 0; slot < cfg.Escrow.Slots; slot++ {
-				cfg.Hosts[0].SlotIDs = append(cfg.Hosts[0].SlotIDs, slot)
+		// Round-robin slots across distinct KEY_NAME identities (replicas of
+		// one identity own no slots of their own) so solos execute and the
+		// replicated participant validates — lease exclusivity needs this.
+		// A single identity owns every slot: chat works, but the executor
+		// never validates its own work (no lease races).
+		var identities []int
+		seen := make(map[string]struct{}, n)
+		for i, h := range cfg.Hosts {
+			key := config.VersiondKeyName(cfg, h)
+			if key == "" {
+				continue
 			}
-			return
-		}
-		// HA pair (hosts[0], hosts[1]) + solo participants (hosts[2+]):
-		// round-robin slots across distinct identities so solos execute and
-		// the HA participant validates (lease exclusivity needs this).
-		identities := []int{0}
-		for i := 2; i < n; i++ {
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
 			identities = append(identities, i)
+		}
+		if len(identities) == 0 {
+			return
 		}
 		for slot := 0; slot < cfg.Escrow.Slots; slot++ {
 			idx := identities[slot%len(identities)]
@@ -267,32 +293,34 @@ func syncChainSeed(cfg *config.File) {
 			}
 		}
 	}
-	// Fill any gaps (should not happen after assignSlots).
+	// Fill any gaps (should not happen after assignSlots). Multi mode must
+	// land on an on-chain identity, never on a replica that owns no key.
 	n := len(cfg.Hosts)
+	identities := config.OnChainIdentityHosts(cfg)
 	for i := range slots {
 		if slots[i] != "" || n == 0 {
 			continue
 		}
 		if cfg.Versiond.Mode == config.VersiondModeMulti {
-			slots[i] = cfg.Hosts[0].Address
+			if len(identities) == 0 {
+				continue
+			}
+			slots[i] = identities[i%len(identities)].Address
 			continue
 		}
 		slots[i] = cfg.Hosts[i%n].Address
 	}
 
-	// Distinct on-chain participants. hosts[1] is the HA replica of hosts[0]
-	// (same KEY_NAME) — skip its generated address. Solo hosts (index ≥ 2)
-	// use a direct InferenceURL so gateway/gossip bypass the HA sticky pool.
+	// Distinct on-chain participants: one per KEY_NAME. Hosts sharing a
+	// KEY_NAME are replicas, not extra identities. Solos keep their own key
+	// and a direct InferenceURL so gateway/gossip bypass the sticky pool.
 	participants := make([]config.Participant, 0, len(cfg.Hosts))
-	for i, h := range cfg.Hosts {
+	for _, h := range config.OnChainIdentityHosts(cfg) {
 		if h.Address == "" {
 			continue
 		}
-		if cfg.Versiond.Mode == config.VersiondModeMulti && i == 1 {
-			continue
-		}
 		url := routerURL
-		if cfg.Versiond.Mode == config.VersiondModeMulti && i >= 2 {
+		if cfg.Versiond.Mode == config.VersiondModeMulti && !config.IsRouterPooledHost(cfg, h) {
 			url = fmt.Sprintf("http://%s:%d", h.ID, config.DefaultHostPort)
 		}
 		participants = append(participants, config.Participant{

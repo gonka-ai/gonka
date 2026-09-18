@@ -26,6 +26,8 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.11.3
+    # Citest bind-mounts ./data/prometheus as the runner user; nobody cannot write it.
+    user: "0:0"
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -42,6 +44,9 @@ services:
 
   loki:
     image: grafana/loki:3.6.10
+    # Same as jaeger: image uid 10001 cannot write a host-owned ./data/loki bind
+    # mount on Linux CI, so compose port 3100 has nothing to publish.
+    user: "0:0"
     command:
       - -config.file=/etc/loki/config.yaml
     volumes:
@@ -70,6 +75,8 @@ services:
 
   grafana:
     image: grafana/grafana:13.0.1
+    # Citest bind-mounts ./data/grafana as the runner user; grafana (472) cannot write it.
+    user: "0:0"
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}

@@ -102,7 +102,7 @@ class UpgradeRehearsalTests : TestermintTest() {
             routePrefix = devshardVersionedRoutePrefix(),
         )
         try {
-            genesis.waitForDevshardProxyWarmup()
+            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
             makeInferenceRequestWhenRoutable(genesis, inferenceRequest)
             repeat(5) { index ->
                 val responseText = genesis.sendChatCompletion(

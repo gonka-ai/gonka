@@ -50,7 +50,7 @@ func signerFromRequestKey(privateKey, privateKeyEnv string) (*signing.Secp256k1S
 }
 
 func encodeMsgSettleDevshardEscrow(settler string, settlement SettlementJSON) ([]byte, error) {
-	escrowID, err := strconv.ParseUint(strings.TrimSpace(settlement.EscrowID), 10, 64)
+	escrowID, err := parseEscrowIDString(settlement.EscrowID)
 	if err != nil {
 		return nil, fmt.Errorf("parse escrow_id: %w", err)
 	}
