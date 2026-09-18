@@ -652,7 +652,7 @@ After `System identifiers match.`, continue with [Update with downtime](#update-
 
 Schedule maintenance: replacing the public proxy can interrupt connections.
 
-For published `v4`/`v4.1` binaries, use the downtime procedure below. Rolling updates require storage-proof support from every retained protocol. Leave `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled.
+Rolling updates require all served protocols to be v5 or later. If the host serves v4/v4.1, use the downtime procedure below. Leave `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled.
 
 #### Update with downtime
 
