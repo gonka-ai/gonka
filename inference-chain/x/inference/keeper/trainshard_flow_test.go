@@ -53,6 +53,8 @@ func setupTrainshardFlow(t *testing.T, maxNodes uint32) (keeper.Keeper, types.Ms
 	}))
 	require.NoError(t, k.TrainingNodeOptIns.Set(ctx, collections.Join(creator, "node-a"), trainshardOptInExpiry))
 	require.NoError(t, k.TrainingNodeOptIns.Set(ctx, collections.Join(creator, "node-b"), trainshardOptInExpiry))
+	require.NoError(t, k.TrainingNodeEndpoints.Set(ctx, collections.Join(creator, "node-a"), "https://a.example.com"))
+	require.NoError(t, k.TrainingNodeEndpoints.Set(ctx, collections.Join(creator, "node-b"), "https://b.example.com"))
 	require.NoError(t, k.TrainshardProposals.Set(ctx, 1, types.TrainshardProposal{
 		Creator:           creator,
 		GpuProfileId:      trainshardTestProfile,
@@ -349,6 +351,7 @@ func TestTrainshardFullReservation_ShieldsPocAndUnfreezes(t *testing.T) {
 	require.NoError(t, k.SetHardwareNodes(ctx, hw(hostA, "node-a")))
 	require.NoError(t, k.SetHardwareNodes(ctx, hw(hostB, "node-b")))
 	require.NoError(t, k.TrainingNodeOptIns.Set(ctx, collections.Join(hostA, "node-a"), trainshardOptInExpiry))
+	require.NoError(t, k.TrainingNodeEndpoints.Set(ctx, collections.Join(hostA, "node-a"), "https://a.example.com"))
 	require.NoError(t, k.TrainshardProposals.Set(ctx, 1, types.TrainshardProposal{
 		Creator: hostA, GpuProfileId: trainshardTestProfile, MaxNodes: 1, MaxDurationBlocks: 100, Id: 1,
 		Status: types.TrainshardProposalStatus_TRAINSHARD_PROPOSAL_STATUS_OPEN,
