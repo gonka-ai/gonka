@@ -1520,6 +1520,35 @@ func TestRunInference_CancelStillSettlesStartedAttempt(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestProxyHandleChatCompletionsRejectsOversizedBodyWithoutBurningANonce(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	oversized := strings.Repeat("a", MaxChatRequestBodySize)
+	body := `{"messages":[{"role":"user","content":"` + oversized + `"}]}`
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	env.proxy.handleChatCompletions(rec, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	require.EqualValues(t, 0, env.proxy.session.Nonce(), "an oversized body must be refused before any nonce is composed")
+}
+
+func TestProxyHandleChatCompletionsRejectsBodyThatInflatesPastTheHostBudgetWithoutBurningANonce(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	angleBrackets := strings.Repeat("<", 1536*1024)
+	body := `{"messages":[{"role":"user","content":"` + angleBrackets + `"}]}`
+	require.Less(t, len(body), MaxChatRequestBodySize)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	env.proxy.handleChatCompletions(rec, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	require.EqualValues(t, 0, env.proxy.session.Nonce(), "a body that outgrows the host budget must be refused before any nonce is composed")
+}
+
 func TestProxyHandleChatCompletionsRejectsWhenConfirmationPoCActive(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.phaseGate = &ChainPhaseGate{}

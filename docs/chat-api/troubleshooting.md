@@ -7,6 +7,7 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 | HTTP / behavior | Common cause | Anchor |
 |-----------------|--------------|--------|
 | 400 `"<param>" is currently rejected by the Gonka network` | non-allowlist parameter | [#reject-unknown-param](#reject-unknown-param) |
+| 413 `request body too large` / `request body too large after normalization` | body over 7 MiB, before or after normalization | [#reject-oversize-body](#reject-oversize-body) |
 | 400 `...name must be a non-empty string` on a whitespace-only name | names are trimmed before the non-empty check | [#reject-whitespace-names](#reject-whitespace-names) |
 | 400 `messages[N].tool_calls[M].id is duplicated` | Kimi-K2.6 model-side bug | [#reject-duplicate-tool-call-id](#reject-duplicate-tool-call-id) |
 | 400 on `tags` | undocumented field | [#reject-tags](#reject-tags) |
@@ -279,6 +280,18 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: n/a — unwrap is the canonical SDK-compat behavior; no restore path needed.
 
 **Fix (client-side)**: pre-flatten in your client (correct OpenAI SDK usage); or trust the unwrap.
+
+## Payload size rejects (HTTP 413)
+
+### #reject-oversize-body
+
+**What**: HTTP 413. Either `request body too large` (the body you sent exceeded 7 MiB) or `request body too large after normalization` (it fit on arrival, but no longer fits once the gateway has normalized it).
+
+**Why**: the gateway does not run the model — it forwards your prompt to a devshard host, and the host caps its inbound body. The prompt travels inside that request as a JSON `[]byte`, which Go encodes as base64: four bytes on the wire for every three you sent. The 7 MiB gateway cap (`MaxChatRequestBodySize`) is set below `transport.MaxPromptBytes` so that a body which passes here still fits the host after that expansion, with headroom left for the catch-up diffs that ride alongside the prompt. Accepting more would mean sending hosts a request they are guaranteed to reject, which wastes their capacity and makes a deterministic size problem look like a host failure. The second message exists because normalization can grow a body: the gateway re-serializes your request with Go's `encoding/json`, which escapes `<`, `>` and `&` as `\u003c`, `\u003e` and `\u0026` — one byte becomes six. A prompt full of HTML, XML, JSX or `&&` can therefore more than double after it arrived within the limit; measured, a 1 MiB body of `<div>&nbsp;</div>` normalizes to 2.4 MiB. Normalization also writes back `max_tokens` and `min_tokens`, so a body sitting exactly on the cap is rejected by a few dozen bytes.
+
+**When to restore**: n/a — the cap follows the host transport budget.
+
+**Fix (client-side)**: split the request, or trim the prompt. If your body is markup-heavy and comfortably under 7 MiB, the escaping above is the likely cause — measure the size after JSON-escaping `<`, `>` and `&`, not the raw size.
 
 ## Hard rejects (HTTP 400)
 

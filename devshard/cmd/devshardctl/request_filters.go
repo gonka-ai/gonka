@@ -59,6 +59,13 @@ func chatRequestErrorStatus(err error, fallback int) int {
 	return fallback
 }
 
+func tooLargeChatRequest(format string, args ...any) error {
+	return &chatRequestFilterError{
+		status:  http.StatusRequestEntityTooLarge,
+		message: fmt.Sprintf(format, args...),
+	}
+}
+
 func badChatRequest(format string, args ...any) error {
 	return &chatRequestFilterError{
 		status:  http.StatusBadRequest,
@@ -217,9 +224,23 @@ func readLimitedChatRequestBody(r *http.Request) ([]byte, error) {
 	}
 	if len(body) > MaxChatRequestBodySize {
 		logRequestStage(r.Context(), "chat_request_body_too_large", "body_bytes", len(body), "limit_bytes", MaxChatRequestBodySize)
-		return nil, &chatRequestFilterError{status: http.StatusRequestEntityTooLarge, message: "request body too large"}
+		return nil, tooLargeChatRequest("request body too large")
 	}
 	return body, nil
+}
+
+func jsonEncodedStringBytes(value string) int {
+	return len(value)*maxJSONEscapeExpansion + 2
+}
+
+func ensureNormalizedBodyFitsHostTransport(ctx context.Context, body []byte, model string) error {
+	modelBytes := jsonEncodedStringBytes(model)
+	if int64(len(body)+modelBytes) <= MaxChatRequestBodySize {
+		return nil
+	}
+	logRequestStage(ctx, "chat_request_normalized_body_too_large",
+		"body_bytes", len(body), "model_bytes", modelBytes, "limit_bytes", MaxChatRequestBodySize)
+	return tooLargeChatRequest("request body too large after normalization")
 }
 
 func prepareChatRequestBody(r *http.Request) ([]byte, chatRequest, error) {
@@ -236,6 +257,9 @@ func prepareChatRequestBodyWithTokenLimits(r *http.Request, limits outputTokenLi
 	updatedBody, req, err := upstreamChatRequestPipeline().Normalize(body, requestHasAdminAuth(r), limits, routedModel)
 	if err != nil {
 		captureFilterRejectedRequest(r, originalBody, err, chatRequestModel(body), "")
+		return nil, chatRequest{}, err
+	}
+	if err := ensureNormalizedBodyFitsHostTransport(r.Context(), updatedBody, firstNonEmpty(req.Model, routedModel)); err != nil {
 		return nil, chatRequest{}, err
 	}
 	return updatedBody, req, nil

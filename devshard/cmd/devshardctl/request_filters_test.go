@@ -15,6 +15,7 @@ import (
 
 	"common/completionapi"
 	"devshard/cmd/devshardctl/paramvalidators"
+	"devshard/transport"
 
 	"github.com/stretchr/testify/require"
 )
@@ -2021,23 +2022,162 @@ func TestPrepareChatRequestBodyAllowsExtraFieldsOnTextContentParts(t *testing.T)
 	require.Equal(t, "hello", message["content"])
 }
 
-func TestPrepareChatRequestBodyRejectsBodiesLargerThanTenMiB(t *testing.T) {
+func TestPrepareChatRequestBodyRejectsBodiesOverTheCap(t *testing.T) {
 	tooLarge := bytes.Repeat([]byte("a"), MaxChatRequestBodySize+1)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(tooLarge))
 
 	_, _, err := prepareChatRequestBody(req)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "request body too large")
+	require.Equal(t, "request body too large", err.Error())
 	require.Equal(t, http.StatusRequestEntityTooLarge, chatRequestErrorStatus(err, http.StatusBadRequest))
 }
 
-func TestPrepareChatRequestBodyAcceptsTenMiBBody(t *testing.T) {
-	paddingSize := MaxChatRequestBodySize - len(`{"messages":[{"role":"user","content":""}]}`)
+// normalizationHeadroomBytes covers the fields normalization always writes back.
+const normalizationHeadroomBytes = 1024
+
+func TestPrepareChatRequestBodyAcceptsBodyThatNormalizesWithinTheCap(t *testing.T) {
+	paddingSize := MaxChatRequestBodySize - len(`{"messages":[{"role":"user","content":""}]}`) - normalizationHeadroomBytes
 	body := `{"messages":[{"role":"user","content":"` + strings.Repeat("a", paddingSize) + `"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
 
-	_, _, err := prepareChatRequestBody(req)
+	normalized, _, err := prepareChatRequestBody(req)
+
 	require.NoError(t, err)
+	require.Contains(t, string(normalized), `"max_tokens"`, "normalization writes fields back, which is why the body needs headroom")
+}
+
+func TestPrepareChatRequestBodyRejectsBodyThatNormalizationPushesOverTheCap(t *testing.T) {
+	paddingSize := MaxChatRequestBodySize - len(`{"messages":[{"role":"user","content":""}]}`)
+	body := `{"messages":[{"role":"user","content":"` + strings.Repeat("a", paddingSize) + `"}]}`
+	require.Len(t, body, MaxChatRequestBodySize, "the raw body must sit exactly on the cap")
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+
+	_, _, err := prepareChatRequestBody(req)
+
+	require.Error(t, err, "normalization always adds max_tokens and min_tokens, so a body exactly on the cap outgrows it")
+	require.Contains(t, err.Error(), "after normalization", "the two 413 reasons are documented separately and must stay distinguishable")
+	require.Equal(t, http.StatusRequestEntityTooLarge, chatRequestErrorStatus(err, http.StatusBadRequest))
+}
+
+func TestPrepareChatRequestBodyRejectsBodiesThatInflatePastTheHostBudget(t *testing.T) {
+	angleBrackets := strings.Repeat("<", 1536*1024)
+	body := `{"model":"m","messages":[{"role":"user","content":"` + angleBrackets + `"}]}`
+	require.Less(t, len(body), MaxChatRequestBodySize, "the body must pass the raw read cap so the test exercises inflation, not the cap")
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+
+	_, _, err := prepareChatRequestBody(req)
+
+	require.Error(t, err, "normalization escapes every < to \\u003c, so this body reaches a host six times larger than it arrived")
+	require.Equal(t, http.StatusRequestEntityTooLarge, chatRequestErrorStatus(err, http.StatusBadRequest))
+}
+
+func TestPrepareChatRequestBodyCountsTheModelAgainstTheHostBudget(t *testing.T) {
+	longModel := strings.Repeat("m", 4*1024*1024)
+	body := `{"model":"` + longModel + `","messages":[{"role":"user","content":"hello"}]}`
+	require.Less(t, len(body), MaxChatRequestBodySize)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+
+	_, _, err := prepareChatRequestBody(req)
+
+	require.Error(t, err, "model rides the wire a second time as PayloadJSON.Model, so it must be charged to the budget")
+	require.Equal(t, http.StatusRequestEntityTooLarge, chatRequestErrorStatus(err, http.StatusBadRequest))
+}
+
+func TestEnsureNormalizedBodyFitsHostTransportAtTheCapBoundary(t *testing.T) {
+	emptyModelBytes := jsonEncodedStringBytes("")
+
+	for _, testCase := range []struct {
+		name       string
+		bodyBytes  int
+		wantReject bool
+	}{
+		{"one byte under the cap", MaxChatRequestBodySize - emptyModelBytes - 1, false},
+		{"exactly on the cap", MaxChatRequestBodySize - emptyModelBytes, false},
+		{"one byte over the cap", MaxChatRequestBodySize - emptyModelBytes + 1, true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := ensureNormalizedBodyFitsHostTransport(context.Background(), make([]byte, testCase.bodyBytes), "")
+
+			if testCase.wantReject {
+				require.Error(t, err)
+				require.Equal(t, http.StatusRequestEntityTooLarge, chatRequestErrorStatus(err, http.StatusBadRequest))
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestEnsureNormalizedBodyFitsHostTransportChargesTheRoutedModelFallback(t *testing.T) {
+	routedModel := strings.Repeat("m", 512)
+	bodyBytes := MaxChatRequestBodySize - jsonEncodedStringBytes(routedModel)
+
+	require.NoError(t, ensureNormalizedBodyFitsHostTransport(context.Background(), make([]byte, bodyBytes), routedModel))
+	require.Error(t, ensureNormalizedBodyFitsHostTransport(context.Background(), make([]byte, bodyBytes+1), routedModel),
+		"the model the host actually receives must be charged even when the client omitted it")
+}
+
+func TestPrepareChatRequestBodyChargesTheRoutedModelWhenTheClientOmitsIt(t *testing.T) {
+	routedModel := strings.Repeat("m", MaxChatRequestBodySize+1)
+	body := `{"messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+
+	_, _, err := prepareChatRequestBodyWithTokenLimits(req, defaultOutputTokenLimits(), routedModel)
+
+	require.Error(t, err, "a body with no model rides the wire with the routed model, so that name must be charged")
+	require.Equal(t, http.StatusRequestEntityTooLarge, chatRequestErrorStatus(err, http.StatusBadRequest))
+}
+
+func TestNormalizationDoesNotGrowAnAlreadyNormalizedBody(t *testing.T) {
+	angleBrackets := strings.Repeat("<", 64*1024)
+	body := `{"model":"m","messages":[{"role":"user","content":"` + angleBrackets + `"}]}`
+
+	firstPass, _, err := prepareChatRequestBody(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body)))
+	require.NoError(t, err)
+	secondPass, _, err := prepareChatRequestBody(httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(firstPass)))
+	require.NoError(t, err)
+
+	require.Len(t, secondPass, len(firstPass),
+		"the gateway forwards its normalized body to an inner hop that normalizes again; escaping must not compound")
+}
+
+func TestJSONEncodedStringBytesNeverUnderCountsTheRealEncoding(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		value string
+	}{
+		{"plain", "Qwen/Qwen3-235B"},
+		{"empty", ""},
+		{"html escaped", "<&>"},
+		{"quotes and backslash", `a"b\c`},
+		{"control characters", "\x00\x01\x1f"},
+		{"multi byte", "модель–ok"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			encoded, err := json.Marshal(testCase.value)
+			require.NoError(t, err)
+
+			require.GreaterOrEqual(t, jsonEncodedStringBytes(testCase.value), len(encoded),
+				"the budget charge must never be smaller than what the wire encoder produces")
+		})
+	}
+}
+
+func TestPrepareChatRequestBodyChargesTheClientModelOverTheRoutedFallback(t *testing.T) {
+	clientModel := strings.Repeat("m", 2*1024*1024)
+	body := `{"model":"` + clientModel + `","messages":[{"role":"user","content":"hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+
+	_, _, err := prepareChatRequestBodyWithTokenLimits(req, defaultOutputTokenLimits(), "Qwen/Test")
+
+	require.Error(t, err, "with both set, the host receives the client model, so that is the one to charge")
+	require.Equal(t, http.StatusRequestEntityTooLarge, chatRequestErrorStatus(err, http.StatusBadRequest))
+}
+
+func TestChatRequestBodyCapFitsHostTransportCap(t *testing.T) {
+	require.LessOrEqual(t, int64(MaxChatRequestBodySize), transport.MaxRawPromptBytes,
+		"a body the gateway reads must still fit the host wire budget when normalization does not grow it")
 }
 
 func TestEnsureRequestNestingDepth(t *testing.T) {
