@@ -38,13 +38,12 @@ func (k Keeper) OpenPoCChallenges(ctx context.Context, req *types.QueryOpenPoCCh
 		if err != nil {
 			return nil, err
 		}
+		stored := ch
 		item := &types.OpenPoCChallenge{
-			Target:      ch.Target,
-			StartHeight: ch.StartHeight,
-			Seed:        ch.Seed,
-			Finish:      finish,
-			Generating:  k.IsChallengeGenerating(ctx, ch.Target),
-			Commits:     make([]*types.PoCV2StoreCommit, 0, len(commits)),
+			Challenge:  &stored,
+			Finish:     finish,
+			Generating: k.IsChallengeGenerating(ctx, ch.Target),
+			Commits:    make([]*types.PoCV2StoreCommit, 0, len(commits)),
 		}
 		for i := range commits {
 			commit := commits[i]

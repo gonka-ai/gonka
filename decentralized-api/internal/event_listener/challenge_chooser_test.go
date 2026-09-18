@@ -37,12 +37,14 @@ func TestGetCommandForPhase_ChallengeGenerating(t *testing.T) {
 	t.Cleanup(poc.OpenChallenges.Reset)
 	self := "gonka1target"
 	poc.OpenChallenges.Replace(self, []*types.OpenPoCChallenge{{
-		Target:      self,
-		StartHeight: 500,
-		Seed:        []byte{1, 2, 3},
-		Finish:      900,
-		Generating:  true,
-	}})
+		Challenge: &types.PoCChallenge{
+			Target:      self,
+			StartHeight: 500,
+			Seed:        []byte{1, 2, 3},
+		},
+		Finish:     900,
+		Generating: true,
+	}}, 0)
 
 	t.Run("inference returns StartPoc", func(t *testing.T) {
 		cmd, _ := getCommandForPhase(challengeChooserEpoch(types.InferencePhase, 600, nil))
@@ -91,12 +93,14 @@ func TestGetCommandForPhase_AfterFinishReturnsInference(t *testing.T) {
 	t.Cleanup(poc.OpenChallenges.Reset)
 	self := "gonka1target"
 	poc.OpenChallenges.Replace(self, []*types.OpenPoCChallenge{{
-		Target:      self,
-		StartHeight: 500,
-		Seed:        []byte{1},
-		Finish:      600,
-		Generating:  true,
-	}})
+		Challenge: &types.PoCChallenge{
+			Target:      self,
+			StartHeight: 500,
+			Seed:        []byte{1},
+		},
+		Finish:     600,
+		Generating: true,
+	}}, 0)
 	cmd, _ := getCommandForPhase(challengeChooserEpoch(types.InferencePhase, 600, nil))
 	_, ok := cmd.(broker.InferenceUpAllCommand)
 	require.True(t, ok)
@@ -106,11 +110,13 @@ func TestGetCommandForPhase_AfterGeneratingFalse(t *testing.T) {
 	t.Cleanup(poc.OpenChallenges.Reset)
 	self := "gonka1target"
 	poc.OpenChallenges.Replace(self, []*types.OpenPoCChallenge{{
-		Target:      self,
-		StartHeight: 500,
-		Finish:      900,
-		Generating:  false,
-	}})
+		Challenge: &types.PoCChallenge{
+			Target:      self,
+			StartHeight: 500,
+		},
+		Finish:     900,
+		Generating: false,
+	}}, 0)
 
 	cmd, _ := getCommandForPhase(challengeChooserEpoch(types.InferencePhase, 600, nil))
 	_, ok := cmd.(broker.InferenceUpAllCommand)

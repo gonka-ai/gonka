@@ -33,7 +33,7 @@ func overlayOwnChallengeGenerate(epochState *chainphase.EpochState) *types.OpenP
 		return nil
 	}
 	ch := overlayGenerating()
-	if ch == nil || ch.StartHeight <= 0 {
+	if ch == nil || ch.StartHeight() <= 0 {
 		return nil
 	}
 	if ch.Finish <= 0 || epochState.CurrentBlock.Height >= ch.Finish {

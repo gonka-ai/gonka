@@ -120,6 +120,10 @@ const (
 	DefaultPoCChallengeMaxActiveChallenges uint32 = 4
 )
 
+// DefaultMinPunishableSegmentBlocks is the mainnet floor for a voted challenge segment.
+// PoCChallengeParams.MinPunishableSegmentBlocks <= 0 means this value.
+const DefaultMinPunishableSegmentBlocks int64 = 300
+
 // DefaultSealGraceMultiplier is the multiplier used to compute the default seal grace nonces.
 const DefaultSealGraceMultiplier uint32 = 10
 
@@ -409,10 +413,21 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 
 func DefaultPoCChallengeParams() *PoCChallengeParams {
 	return &PoCChallengeParams{
-		AllowedChallengers:  nil,
-		PaymentRatio:        DecimalFromFloat(0.1),
-		MaxActiveChallenges: DefaultPoCChallengeMaxActiveChallenges,
+		AllowedChallengers:          nil,
+		PaymentRatio:                DecimalFromFloat(0.1),
+		MaxActiveChallenges:         DefaultPoCChallengeMaxActiveChallenges,
+		MinPunishableSegmentBlocks: DefaultMinPunishableSegmentBlocks,
 	}
+}
+
+// EffectiveMinPunishableSegmentBlocks returns the voted-segment floor.
+// Zero or missing params mean DefaultMinPunishableSegmentBlocks so unsaved
+// genesis/upgrade state stays mainnet-safe.
+func EffectiveMinPunishableSegmentBlocks(p *PoCChallengeParams) int64 {
+	if p == nil || p.GetMinPunishableSegmentBlocks() <= 0 {
+		return DefaultMinPunishableSegmentBlocks
+	}
+	return p.GetMinPunishableSegmentBlocks()
 }
 
 func (p *PoCChallengeParams) Validate() error {

@@ -60,9 +60,9 @@ func GetCurrentPocStageHeight(epochState *chainphase.EpochState) int64 {
 	}
 
 	if !InVoteWindow(epochState) {
-		if ch := OpenChallenges.SelfGenerating(); ch != nil && ch.StartHeight > 0 {
+		if ch := OpenChallenges.SelfGenerating(); ch != nil && ch.StartHeight() > 0 {
 			if ch.Finish > 0 && epochState.CurrentBlock.Height < ch.Finish {
-				return ch.StartHeight
+				return ch.StartHeight()
 			}
 		}
 	}

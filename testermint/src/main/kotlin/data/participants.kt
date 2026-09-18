@@ -123,9 +123,17 @@ data class RawParticipant(
     val inferenceUrl: String,
     val status: String,
     val epochsCompleted: Long,
+    val currentEpochStats: CurrentEpochStats? = null,
 ) : ParticipantInfo {
     override fun getParticipantAddress(): String = index
 }
+
+data class CurrentEpochStats(
+    val inferenceCount: Long = 0,
+    val missedRequests: Long = 0,
+    @com.google.gson.annotations.SerializedName("confirmationPoCRatio")
+    val confirmationPoCRatio: Decimal? = null,
+)
 
 data class RawParticipantWrapper(
     val participant: List<RawParticipant>

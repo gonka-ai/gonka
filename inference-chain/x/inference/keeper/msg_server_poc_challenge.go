@@ -177,7 +177,7 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 		if err != nil {
 			return nil, err
 		}
-		if finish-ch.StartHeight < MinPunishableSegmentBlocks {
+		if finish-ch.StartHeight < types.EffectiveMinPunishableSegmentBlocks(params.PocChallengeParams) {
 			continue
 		}
 

@@ -44,6 +44,9 @@ message PoCChallengeParams {
   repeated string allowed_challengers = 1;
   Decimal payment_ratio = 2;
   uint32 max_active_challenges = 3;
+  // min_punishable_segment_blocks is the shortest segment that is voted.
+  // Zero means the default of 300 so unsaved genesis/upgrade state stays mainnet-safe.
+  int64 min_punishable_segment_blocks = 4;
 }
 
 // MaintenanceParams defines the governance-controlled parameters for participant maintenance windows.

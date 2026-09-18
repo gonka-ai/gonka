@@ -473,16 +473,16 @@ func challengeCommitTimeoutHeight(height, finish int64) uint64 {
 
 func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochState) {
 	ch := OpenChallenges.Own(w.participantAddress)
-	if ch == nil || ch.StartHeight <= 0 {
+	if ch == nil || ch.StartHeight() <= 0 {
 		w.challengePending = make(map[commitKey]pendingCommit)
 		w.challengeLastCommitted = make(map[commitKey]commitState)
 		w.challengeStage = 0
 		return
 	}
-	if w.challengeStage != ch.StartHeight {
+	if w.challengeStage != ch.StartHeight() {
 		w.challengePending = make(map[commitKey]pendingCommit)
 		w.challengeLastCommitted = make(map[commitKey]commitState)
-		w.challengeStage = ch.StartHeight
+		w.challengeStage = ch.StartHeight()
 	}
 	if w.challengePending == nil {
 		w.challengePending = make(map[commitKey]pendingCommit)
@@ -498,7 +498,7 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 		return
 	}
 
-	pocHeight := ch.StartHeight
+	pocHeight := ch.StartHeight()
 	stageStores, err := w.store.GetStoresForServing(pocHeight)
 	if err != nil || len(stageStores) == 0 {
 		return
@@ -589,7 +589,7 @@ func (w *CommitWorker) reconcileChallengePending(ch *types.OpenPoCChallenge) {
 		onChain[commit.ModelId] = commitState{count: commit.Count, rootHash: bytes.Clone(commit.RootHash)}
 	}
 	for key, pending := range w.challengePending {
-		if key.stage != ch.StartHeight {
+		if key.stage != ch.StartHeight() {
 			delete(w.challengePending, key)
 			continue
 		}

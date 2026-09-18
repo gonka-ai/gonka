@@ -18,17 +18,29 @@ type stubChallengeOverlay struct {
 func (s stubChallengeOverlay) Self() string { return s.self }
 
 func (s stubChallengeOverlay) Own(addr string) *types.OpenPoCChallenge {
-	if s.ch != nil && s.ch.Target == addr {
+	if s.ch != nil && s.ch.Target() == addr {
 		return s.ch
 	}
 	return nil
 }
 
 func (s stubChallengeOverlay) SelfGenerating() *types.OpenPoCChallenge {
-	if s.ch != nil && s.ch.Generating && s.ch.Target == s.self {
+	if s.ch != nil && s.ch.Generating && s.ch.Target() == s.self {
 		return s.ch
 	}
 	return nil
+}
+
+func testOpenCh(target string, start, finish int64, generating bool, seed ...byte) *types.OpenPoCChallenge {
+	return &types.OpenPoCChallenge{
+		Challenge: &types.PoCChallenge{
+			Target:      target,
+			StartHeight: start,
+			Seed:        seed,
+		},
+		Finish:     finish,
+		Generating: generating,
+	}
 }
 
 func withOverlay(t *testing.T, o challengeOverlay) {
@@ -46,13 +58,7 @@ func TestStartPocCommand_OwnGeneratingIgnoresPocSlotDuringInference(t *testing.T
 	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: &types.OpenPoCChallenge{
-			Target:      "me",
-			StartHeight: 500,
-			Seed:        []byte{1},
-			Finish:      900,
-			Generating:  true,
-		},
+		ch: testOpenCh("me", 500, 900, true, 1),
 	})
 
 	b := &Broker{
@@ -74,12 +80,7 @@ func TestInitValidateCommand_VoteWindowKeepsPocSlot(t *testing.T) {
 	tracker := newPhaseTrackerWithPhase(t, types.PoCValidatePhase)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: &types.OpenPoCChallenge{
-			Target:      "me",
-			StartHeight: 500,
-			Finish:      900,
-			Generating:  true,
-		},
+		ch: testOpenCh("me", 500, 900, true),
 	})
 
 	b := &Broker{
@@ -99,12 +100,7 @@ func TestInferenceUpAllCommand_NoopWhileOwnGenerating(t *testing.T) {
 	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: &types.OpenPoCChallenge{
-			Target:      "me",
-			StartHeight: 500,
-			Finish:      900,
-			Generating:  true,
-		},
+		ch: testOpenCh("me", 500, 900, true),
 	})
 
 	b := &Broker{
@@ -120,13 +116,7 @@ func TestPrefetchPocParams_UsesChallengeSeedOutsideVoteWindow(t *testing.T) {
 	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: &types.OpenPoCChallenge{
-			Target:      "me",
-			StartHeight: 777,
-			Seed:        []byte{0xab, 0xcd},
-			Finish:      2000,
-			Generating:  true,
-		},
+		ch: testOpenCh("me", 777, 2000, true, 0xab, 0xcd),
 	})
 
 	bridge := &MockBrokerChainBridge{}
@@ -147,13 +137,7 @@ func TestPrefetchPocParams_VoteWindowKeepsRegularParams(t *testing.T) {
 	tracker := newPhaseTrackerWithPhase(t, types.PoCValidatePhase)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: &types.OpenPoCChallenge{
-			Target:      "me",
-			StartHeight: 777,
-			Seed:        []byte{0xab, 0xcd},
-			Finish:      2000,
-			Generating:  true,
-		},
+		ch: testOpenCh("me", 777, 2000, true, 0xab, 0xcd),
 	})
 
 	bridge := &MockBrokerChainBridge{}
@@ -176,13 +160,7 @@ func TestChallengeGenerateNeedsDispatch(t *testing.T) {
 	epoch := *tracker.GetCurrentEpochState()
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: &types.OpenPoCChallenge{
-			Target:      "me",
-			StartHeight: 500,
-			Seed:        []byte{0xab, 0xcd},
-			Finish:      900,
-			Generating:  true,
-		},
+		ch: testOpenCh("me", 500, 900, true, 0xab, 0xcd),
 	})
 
 	node := createTestNode("n1")
@@ -213,13 +191,7 @@ func TestChallengeGenerateNeedsDispatch_FinishLead(t *testing.T) {
 	tracker.Update(chainphase.BlockInfo{Height: 897, Hash: "h"}, epoch, params, true, nil)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: &types.OpenPoCChallenge{
-			Target:      "me",
-			StartHeight: 500,
-			Seed:        []byte{1},
-			Finish:      900,
-			Generating:  true,
-		},
+		ch: testOpenCh("me", 500, 900, true, 1),
 	})
 	node := createTestNode("n1")
 	node.State.IntendedStatus = types.HardwareNodeStatus_POC
@@ -243,13 +215,7 @@ func TestGetCommandForState_SetsWindDownAndLastPocV2(t *testing.T) {
 	tracker.Update(chainphase.BlockInfo{Height: 897, Hash: "h"}, epoch, params, true, nil)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: &types.OpenPoCChallenge{
-			Target:      "me",
-			StartHeight: 500,
-			Seed:        []byte{1},
-			Finish:      900,
-			Generating:  true,
-		},
+		ch: testOpenCh("me", 500, 900, true, 1),
 	})
 	b := NewTestBroker()
 	b.phaseTracker = tracker

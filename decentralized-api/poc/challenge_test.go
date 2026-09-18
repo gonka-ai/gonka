@@ -12,11 +12,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func openCh(target string, start, finish int64, generating bool, seed ...byte) *types.OpenPoCChallenge {
+	return &types.OpenPoCChallenge{
+		Challenge: &types.PoCChallenge{
+			Target:      target,
+			StartHeight: start,
+			Seed:        seed,
+		},
+		Finish:     finish,
+		Generating: generating,
+	}
+}
+
 func TestShouldValidateChallenge(t *testing.T) {
-	short := &types.OpenPoCChallenge{StartHeight: 100, Finish: 200, Target: "me"}
+	short := openCh("me", 100, 200, false)
 	require.False(t, ShouldValidateChallenge(short, 500))
 
-	unfrozen := &types.OpenPoCChallenge{StartHeight: 100, Finish: 500, Target: "me"}
+	unfrozen := openCh("me", 100, 500, false)
 	require.False(t, ShouldValidateChallenge(unfrozen, 400))
 	require.True(t, ShouldValidateChallenge(unfrozen, 500))
 	require.True(t, ShouldValidateChallenge(unfrozen, 501))
@@ -26,24 +38,31 @@ func TestPunishableIncludesSelf(t *testing.T) {
 	t.Cleanup(OpenChallenges.Reset)
 	self := "gonka1self"
 	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{
-		{Target: self, StartHeight: 10, Finish: 400, Generating: false},
-		{Target: "other", StartHeight: 20, Finish: 50, Generating: false},
-	})
+		openCh(self, 10, 400, false),
+		openCh("other", 20, 50, false),
+	}, 0)
 	got := OpenChallenges.Punishable()
 	require.Len(t, got, 1)
-	require.Equal(t, self, got[0].Target)
+	require.Equal(t, self, got[0].Target())
+}
+
+func TestPunishableUsesCachedMin(t *testing.T) {
+	t.Cleanup(OpenChallenges.Reset)
+	self := "gonka1self"
+	ch := []*types.OpenPoCChallenge{openCh(self, 10, 18, false)}
+	OpenChallenges.Replace(self, ch, 0)
+	require.Empty(t, OpenChallenges.Punishable())
+	require.False(t, ShouldValidateChallenge(ch[0], 18))
+
+	OpenChallenges.Replace(self, ch, 8)
+	require.Len(t, OpenChallenges.Punishable(), 1)
+	require.True(t, ShouldValidateChallenge(ch[0], 18))
 }
 
 func TestGetCurrentPocStageHeight_ChallengeOnlyOutsideVoteWindow(t *testing.T) {
 	t.Cleanup(OpenChallenges.Reset)
 	self := "gonka1self"
-	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{{
-		Target:      self,
-		StartHeight: 777,
-		Seed:        []byte{9},
-		Finish:      2000,
-		Generating:  true,
-	}})
+	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 777, 2000, true, 9)}, 0)
 
 	inference := createTestEpochState(types.InferencePhase, 800, 100)
 	require.Equal(t, int64(777), GetCurrentPocStageHeight(inference))
@@ -87,12 +106,7 @@ func TestAccountPubKeyToHex(t *testing.T) {
 func TestOwnChallengeGenerate(t *testing.T) {
 	t.Cleanup(OpenChallenges.Reset)
 	self := "gonka1self"
-	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{{
-		Target:      self,
-		StartHeight: 777,
-		Finish:      900,
-		Generating:  true,
-	}})
+	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 777, 900, true)}, 0)
 
 	inference := createTestEpochState(types.InferencePhase, 800, 100)
 	require.NotNil(t, OwnChallengeGenerate(inference))
@@ -100,19 +114,9 @@ func TestOwnChallengeGenerate(t *testing.T) {
 	afterFinish := createTestEpochState(types.InferencePhase, 900, 100)
 	require.Nil(t, OwnChallengeGenerate(afterFinish))
 
-	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{{
-		Target:      self,
-		StartHeight: 777,
-		Finish:      0,
-		Generating:  true,
-	}})
+	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 777, 0, true)}, 0)
 	require.Nil(t, OwnChallengeGenerate(inference))
-	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{{
-		Target:      self,
-		StartHeight: 777,
-		Finish:      900,
-		Generating:  true,
-	}})
+	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 777, 900, true)}, 0)
 
 	validate := createTestEpochState(types.PoCValidatePhase, 220, 100)
 	require.Nil(t, OwnChallengeGenerate(validate))
@@ -121,12 +125,7 @@ func TestOwnChallengeGenerate(t *testing.T) {
 func TestGetCurrentPocStageHeight_AfterFinishUsesRegular(t *testing.T) {
 	t.Cleanup(OpenChallenges.Reset)
 	self := "gonka1self"
-	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{{
-		Target:      self,
-		StartHeight: 777,
-		Finish:      800,
-		Generating:  true,
-	}})
+	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 777, 800, true)}, 0)
 	inference := createTestEpochState(types.InferencePhase, 800, 100)
 	require.Equal(t, int64(100), GetCurrentPocStageHeight(inference))
 }
@@ -139,12 +138,7 @@ func TestSeedHex(t *testing.T) {
 func TestFilterNodesForValidationIncludesPocSlotWhenChallenged(t *testing.T) {
 	t.Cleanup(OpenChallenges.Reset)
 	self := "gonka1self"
-	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{{
-		Target:      self,
-		StartHeight: 10,
-		Finish:      400,
-		Generating:  true,
-	}})
+	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 10, 400, true)}, 0)
 
 	nodes := []broker.NodeResponse{{
 		Node: broker.Node{Id: "n1"},

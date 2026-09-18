@@ -17,13 +17,7 @@ import (
 func TestCommitWorker_ChallengeStoreCommitWhileUnfrozen(t *testing.T) {
 	t.Cleanup(OpenChallenges.Reset)
 	addr := "participant_addr"
-	OpenChallenges.Replace(addr, []*types.OpenPoCChallenge{{
-		Target:      addr,
-		StartHeight: 500,
-		Seed:        []byte{1},
-		Finish:      2000,
-		Generating:  true,
-	}})
+	OpenChallenges.Replace(addr, []*types.OpenPoCChallenge{openCh(addr, 500, 2000, true, 1)}, 0)
 
 	tmpDir, err := os.MkdirTemp("", "challenge_commit")
 	require.NoError(t, err)
@@ -72,12 +66,7 @@ func TestCommitWorker_ChallengeStoreCommitWhileUnfrozen(t *testing.T) {
 func TestCommitWorker_ChallengeStoreCommitStopsAfterFinish(t *testing.T) {
 	t.Cleanup(OpenChallenges.Reset)
 	addr := "participant_addr"
-	OpenChallenges.Replace(addr, []*types.OpenPoCChallenge{{
-		Target:      addr,
-		StartHeight: 500,
-		Finish:      800,
-		Generating:  true,
-	}})
+	OpenChallenges.Replace(addr, []*types.OpenPoCChallenge{openCh(addr, 500, 800, true)}, 0)
 
 	tmpDir, err := os.MkdirTemp("", "challenge_commit_done")
 	require.NoError(t, err)
@@ -116,14 +105,8 @@ func TestCommitWorker_ChallengeStoreCommitStopsAfterFinish(t *testing.T) {
 func TestCommitWorker_ChallengeCommitPendingUntilConfirmed(t *testing.T) {
 	t.Cleanup(OpenChallenges.Reset)
 	addr := "participant_addr"
-	ch := &types.OpenPoCChallenge{
-		Target:      addr,
-		StartHeight: 500,
-		Seed:        []byte{1},
-		Finish:      2000,
-		Generating:  true,
-	}
-	OpenChallenges.Replace(addr, []*types.OpenPoCChallenge{ch})
+	ch := openCh(addr, 500, 2000, true, 1)
+	OpenChallenges.Replace(addr, []*types.OpenPoCChallenge{ch}, 0)
 
 	tmpDir, err := os.MkdirTemp("", "challenge_commit_pending")
 	require.NoError(t, err)
@@ -179,7 +162,7 @@ func TestCommitWorker_ChallengeCommitPendingUntilConfirmed(t *testing.T) {
 		Count:              count,
 		RootHash:           root,
 	}}
-	OpenChallenges.Replace(addr, []*types.OpenPoCChallenge{ch})
+	OpenChallenges.Replace(addr, []*types.OpenPoCChallenge{ch}, 0)
 	tracker.Update(
 		chainphase.BlockInfo{Height: 802, Hash: "h3"},
 		&types.Epoch{Index: 1, PocStartBlockHeight: 100},

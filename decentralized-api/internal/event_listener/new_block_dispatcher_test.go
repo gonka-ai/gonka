@@ -120,11 +120,13 @@ func TestShouldTriggerReconciliation_ChallengeGenerateUsesPoCInterval(t *testing
 		"inference cadence is 5 blocks; 1 block later should not reconcile")
 
 	poc.OpenChallenges.Replace("me", []*types.OpenPoCChallenge{{
-		Target:      "me",
-		StartHeight: 10,
-		Finish:      100,
-		Generating:  true,
-	}})
+		Challenge: &types.PoCChallenge{
+			Target:      "me",
+			StartHeight: 10,
+		},
+		Finish:     100,
+		Generating: true,
+	}}, 0)
 	require.True(t, dispatcher.shouldTriggerReconciliation(epoch),
 		"own challenge generate should reconcile on the PoC cadence so StartPocCommand can wind down")
 }

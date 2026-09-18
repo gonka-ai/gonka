@@ -201,12 +201,14 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		return err // Skip processing this block
 	}
 
+	minPunishable := int64(0)
 	// Fetch validation parameters - skip in tests
 	if d.configManager != nil && !strings.HasPrefix(blockInfo.Hash, "hash-") { // Skip in tests where hash has format "hash-N"
 		params, err := d.queryClient.Params(ctx, &types.QueryParamsRequest{})
 		if err != nil {
 			logging.Error("Failed to get params", types.Validation, "error", err)
 		} else {
+			minPunishable = types.EffectiveMinPunishableSegmentBlocks(params.Params.PocChallengeParams)
 			// Update validation parameters in config
 			validationParams := apiconfig.ValidationParamsCache{
 				TimestampExpiration: params.Params.ValidationParams.TimestampExpiration,
@@ -323,7 +325,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		return nil
 	}
 
-	d.refreshOpenChallenges(ctx, epochState)
+	d.refreshOpenChallenges(ctx, minPunishable)
 
 	// Pin/unpin the PoC artifact stage before any generate/validate work on
 	// this block so proof serving cannot race an unloaded store.
@@ -791,7 +793,7 @@ func (d *OnNewBlockDispatcher) triggerReconciliation(epochState chainphase.Epoch
 	// Wait for a response or not?
 }
 
-func (d *OnNewBlockDispatcher) refreshOpenChallenges(ctx context.Context, epochState *chainphase.EpochState) {
+func (d *OnNewBlockDispatcher) refreshOpenChallenges(ctx context.Context, minPunishable int64) {
 	if d.queryClient == nil {
 		return
 	}
@@ -808,7 +810,7 @@ func (d *OnNewBlockDispatcher) refreshOpenChallenges(ctx context.Context, epochS
 	if resp != nil {
 		list = resp.Challenges
 	}
-	poc.OpenChallenges.Replace(self, list)
+	poc.OpenChallenges.Replace(self, list, minPunishable)
 }
 
 func getCommandForPhase(phaseInfo chainphase.EpochState) (broker.Command, *chan bool) {

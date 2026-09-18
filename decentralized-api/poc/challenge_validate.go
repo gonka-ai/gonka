@@ -53,21 +53,21 @@ func (v *OffChainValidator) ValidateOpenChallenges() {
 		if !ShouldValidateChallenge(ch, height) {
 			continue
 		}
-		seedHex := SeedHex(ch.Seed)
+		seedHex := SeedHex(ch.Seed())
 		if seedHex == "" {
 			logging.Warn("OffChainValidator: skipping challenge with empty seed", types.PoC,
-				"target", ch.Target, "start_height", ch.StartHeight)
+				"target", ch.Target(), "start_height", ch.StartHeight())
 			continue
 		}
 		workItems := v.challengeWorkItems(queryClient, ch)
 		if len(workItems) == 0 {
 			logging.Info("OffChainValidator: no challenge work items", types.PoC,
-				"target", ch.Target, "start_height", ch.StartHeight)
+				"target", ch.Target(), "start_height", ch.StartHeight())
 			continue
 		}
 		logging.Info("OffChainValidator: validating open PoC challenge", types.PoC,
-			"target", ch.Target, "start_height", ch.StartHeight, "work_items", len(workItems))
-		v.executeValidation(ch.StartHeight, samplingBlockHash, seedHex, pocParams, sampleSize, nodes, workItems, nil, true)
+			"target", ch.Target(), "start_height", ch.StartHeight(), "work_items", len(workItems))
+		v.executeValidation(ch.StartHeight(), samplingBlockHash, seedHex, pocParams, sampleSize, nodes, workItems, nil, true)
 	}
 }
 

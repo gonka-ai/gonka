@@ -97,6 +97,8 @@ data class InferenceParams(
     val maintenanceParams: MaintenanceParams? = null,
     @SerializedName("delegation_params")
     val delegationParams: DelegationParams? = null,
+    @SerializedName("poc_challenge_params")
+    val pocChallengeParams: PocChallengeParams? = null,
 )
 
 data class FeeParamsData(
@@ -286,6 +288,73 @@ data class BandwidthLimitsParams(
     val minimumConcurrentInvalidations: Long,
     @SerializedName("max_inferences_per_block")
     val maxInferencesPerBlock: Long? = null,
+)
+
+data class PocChallengeParams(
+    @SerializedName("allowed_challengers")
+    val allowedChallengers: List<String> = emptyList(),
+    @SerializedName("payment_ratio")
+    val paymentRatio: Decimal? = Decimal.fromDouble(0.1),
+    @SerializedName("max_active_challenges")
+    val maxActiveChallenges: Long = 4,
+    @SerializedName("min_punishable_segment_blocks")
+    val minPunishableSegmentBlocks: Long = 300,
+)
+
+data class OpenPoCChallengesResponse(
+    val challenges: List<OpenPoCChallenge> = emptyList(),
+)
+
+data class StoredPoCChallenge(
+    val target: String = "",
+    @SerializedName("start_height")
+    val startHeight: Long = 0,
+    val seed: String? = null,
+    val challenger: String = "",
+    @SerializedName("epoch_index")
+    val epochIndex: Long = 0,
+    @SerializedName("locked_payment")
+    val lockedPayment: Long = 0,
+    @SerializedName("failure_kind")
+    val failureKind: String? = null,
+    @SerializedName("expected_reward")
+    val expectedReward: Long = 0,
+)
+
+data class OpenPoCChallenge(
+    val challenge: StoredPoCChallenge? = null,
+    val finish: Long = 0,
+    val generating: Boolean = false,
+    val commits: List<OpenPoCChallengeCommit> = emptyList(),
+) {
+    val target: String get() = challenge?.target.orEmpty()
+    val startHeight: Long get() = challenge?.startHeight ?: 0
+    val seed: String? get() = challenge?.seed
+    val challenger: String get() = challenge?.challenger.orEmpty()
+    val epochIndex: Long get() = challenge?.epochIndex ?: 0
+    val lockedPayment: Long get() = challenge?.lockedPayment ?: 0
+    val failureKind: String? get() = challenge?.failureKind
+
+    fun isUnsetFailure(): Boolean {
+        val kind = failureKind.orEmpty()
+        return kind.isEmpty() ||
+            kind == "POC_CHALLENGE_FAILURE_KIND_UNSET" ||
+            kind == "UNSET" ||
+            kind == "0"
+    }
+
+    fun isChallengeFailed(): Boolean {
+        val kind = failureKind.orEmpty()
+        return kind.contains("CHALLENGE_FAILED") || kind == "1"
+    }
+}
+
+data class OpenPoCChallengeCommit(
+    val count: Long = 0,
+    @SerializedName("model_id")
+    val modelId: String = "",
+    @SerializedName("poc_stage_start_block_height")
+    val pocStageStartBlockHeight: Long = 0,
 )
 
 data class ConfirmationPoCParams(

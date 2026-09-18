@@ -73,7 +73,11 @@ func (am AppModule) decideCurrentChallengeSegment(
 		return nil
 	}
 	duration := finish - ch.StartHeight
-	if duration < keeper.MinPunishableSegmentBlocks {
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if duration < types.EffectiveMinPunishableSegmentBlocks(params.PocChallengeParams) {
 		return am.advanceAfterDecision(ctx, ch, rotate)
 	}
 

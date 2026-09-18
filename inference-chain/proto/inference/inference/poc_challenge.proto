@@ -23,10 +23,8 @@ message PoCChallenge {
 }
 
 message OpenPoCChallenge {
-  string target = 1;
-  int64 start_height = 2;
-  bytes seed = 3;
-  int64 finish = 4;
-  bool generating = 5;
-  repeated PoCV2StoreCommit commits = 6;
+  PoCChallenge challenge = 1;
+  int64 finish = 2;
+  bool generating = 3;
+  repeated PoCV2StoreCommit commits = 4;
 }

@@ -16,9 +16,6 @@ import (
 // the target.
 const ChallengeCommitLeadBlocks int64 = 4
 
-// MinPunishableSegmentBlocks matches keeper.MinPunishableSegmentBlocks.
-const MinPunishableSegmentBlocks int64 = 300
-
 // OpenChallenges is the process-wide view of Query/OpenPoCChallenges.
 // The dispatcher replaces it every synced block. Nothing is persisted.
 var OpenChallenges = NewChallengeCache()
@@ -29,9 +26,10 @@ func init() {
 }
 
 type ChallengeCache struct {
-	mu   sync.RWMutex
-	self string
-	list []*types.OpenPoCChallenge
+	mu            sync.RWMutex
+	self          string
+	list          []*types.OpenPoCChallenge
+	minPunishable int64
 }
 
 func NewChallengeCache() *ChallengeCache {
@@ -43,8 +41,12 @@ func cloneChallenge(ch *types.OpenPoCChallenge) *types.OpenPoCChallenge {
 		return nil
 	}
 	clone := *ch
-	if len(ch.Seed) > 0 {
-		clone.Seed = append([]byte(nil), ch.Seed...)
+	if ch.Challenge != nil {
+		stored := *ch.Challenge
+		if len(stored.Seed) > 0 {
+			stored.Seed = append([]byte(nil), stored.Seed...)
+		}
+		clone.Challenge = &stored
 	}
 	if len(ch.Commits) > 0 {
 		clone.Commits = make([]*types.PoCV2StoreCommit, len(ch.Commits))
@@ -53,7 +55,7 @@ func cloneChallenge(ch *types.OpenPoCChallenge) *types.OpenPoCChallenge {
 	return &clone
 }
 
-func (c *ChallengeCache) Replace(self string, list []*types.OpenPoCChallenge) {
+func (c *ChallengeCache) Replace(self string, list []*types.OpenPoCChallenge, minPunishable int64) {
 	copied := make([]*types.OpenPoCChallenge, 0, len(list))
 	for _, ch := range list {
 		if ch == nil {
@@ -64,11 +66,21 @@ func (c *ChallengeCache) Replace(self string, list []*types.OpenPoCChallenge) {
 	c.mu.Lock()
 	c.self = self
 	c.list = copied
+	c.minPunishable = minPunishable
 	c.mu.Unlock()
 }
 
 func (c *ChallengeCache) Reset() {
-	c.Replace("", nil)
+	c.Replace("", nil, 0)
+}
+
+func (c *ChallengeCache) MinPunishable() int64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.minPunishable <= 0 {
+		return types.DefaultMinPunishableSegmentBlocks
+	}
+	return c.minPunishable
 }
 
 func (c *ChallengeCache) Self() string {
@@ -94,7 +106,7 @@ func (c *ChallengeCache) Own(addr string) *types.OpenPoCChallenge {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	for _, ch := range c.list {
-		if ch != nil && ch.Target == addr {
+		if ch != nil && ch.Target() == addr {
 			return cloneChallenge(ch)
 		}
 	}
@@ -120,7 +132,7 @@ func (c *ChallengeCache) ByStartHeight(startHeight int64) *types.OpenPoCChalleng
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	for _, ch := range c.list {
-		if ch != nil && ch.StartHeight == startHeight {
+		if ch != nil && ch.StartHeight() == startHeight {
 			return cloneChallenge(ch)
 		}
 	}
@@ -135,7 +147,7 @@ func (c *ChallengeCache) Punishable() []*types.OpenPoCChallenge {
 		if ch == nil {
 			continue
 		}
-		if ch.Finish-ch.StartHeight < MinPunishableSegmentBlocks {
+		if ch.Finish-ch.StartHeight() < c.minOrDefaultLocked() {
 			continue
 		}
 		out = append(out, cloneChallenge(ch))
@@ -174,7 +186,7 @@ func OwnChallengeGenerate(epochState *chainphase.EpochState) *types.OpenPoCChall
 		return nil
 	}
 	ch := OpenChallenges.SelfGenerating()
-	if ch == nil || ch.StartHeight <= 0 {
+	if ch == nil || ch.StartHeight() <= 0 {
 		return nil
 	}
 	if ch.Finish <= 0 || epochState.CurrentBlock.Height >= ch.Finish {
@@ -187,11 +199,18 @@ func ShouldUseChallengeStage(epochState *chainphase.EpochState) bool {
 	return OwnChallengeGenerate(epochState) != nil
 }
 
+func (c *ChallengeCache) minOrDefaultLocked() int64 {
+	if c.minPunishable <= 0 {
+		return types.DefaultMinPunishableSegmentBlocks
+	}
+	return c.minPunishable
+}
+
 func ShouldValidateChallenge(ch *types.OpenPoCChallenge, height int64) bool {
 	if ch == nil {
 		return false
 	}
-	if ch.Finish-ch.StartHeight < MinPunishableSegmentBlocks {
+	if ch.Finish-ch.StartHeight() < OpenChallenges.MinPunishable() {
 		return false
 	}
 	return height >= ch.Finish

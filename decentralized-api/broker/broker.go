@@ -181,8 +181,8 @@ func challengeGenerateNeedsDispatch(node *NodeWithState, epochState chainphase.E
 	if ch == nil {
 		return false
 	}
-	if node.State.LastPocV2BlockHeight != ch.StartHeight ||
-		node.State.LastPocV2BlockHash != hexEncodeSeed(ch.Seed) {
+	if node.State.LastPocV2BlockHeight != ch.StartHeight() ||
+		node.State.LastPocV2BlockHash != hexEncodeSeed(ch.Seed()) {
 		return true
 	}
 	return overlayInCommitLead(&epochState)
@@ -1221,8 +1221,8 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 	if needsPocParams {
 		if ch := overlayOwnChallengeGenerate(&epochState); ch != nil {
 			params := &pocParams{
-				startPoCBlockHeight: ch.StartHeight,
-				startPoCBlockHash:   hexEncodeSeed(ch.Seed),
+				startPoCBlockHeight: ch.StartHeight(),
+				startPoCBlockHash:   hexEncodeSeed(ch.Seed()),
 			}
 			b.loadPoCModels(params)
 			return params, nil

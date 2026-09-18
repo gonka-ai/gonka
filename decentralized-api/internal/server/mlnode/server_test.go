@@ -215,11 +215,13 @@ func TestV2ValidatedCallbackSubmitsChallengeMsg(t *testing.T) {
 	poc.OpenChallenges.Reset()
 	t.Cleanup(poc.OpenChallenges.Reset)
 	poc.OpenChallenges.Replace("me", []*types.OpenPoCChallenge{{
-		Target:      "other",
-		StartHeight: 500,
-		Finish:      900,
-		Generating:  false,
-	}})
+		Challenge: &types.PoCChallenge{
+			Target:      "other",
+			StartHeight: 500,
+		},
+		Finish:     900,
+		Generating: false,
+	}}, 0)
 
 	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
 	mockRecorder.

@@ -802,73 +802,69 @@ func (x *fastReflection_PoCChallenge) ProtoMethods() *protoiface.Methods {
 	}
 }
 
-var _ protoreflect.List = (*_OpenPoCChallenge_6_list)(nil)
+var _ protoreflect.List = (*_OpenPoCChallenge_4_list)(nil)
 
-type _OpenPoCChallenge_6_list struct {
+type _OpenPoCChallenge_4_list struct {
 	list *[]*PoCV2StoreCommit
 }
 
-func (x *_OpenPoCChallenge_6_list) Len() int {
+func (x *_OpenPoCChallenge_4_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_OpenPoCChallenge_6_list) Get(i int) protoreflect.Value {
+func (x *_OpenPoCChallenge_4_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
 }
 
-func (x *_OpenPoCChallenge_6_list) Set(i int, value protoreflect.Value) {
+func (x *_OpenPoCChallenge_4_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*PoCV2StoreCommit)
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_OpenPoCChallenge_6_list) Append(value protoreflect.Value) {
+func (x *_OpenPoCChallenge_4_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Message()
 	concreteValue := valueUnwrapped.Interface().(*PoCV2StoreCommit)
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_OpenPoCChallenge_6_list) AppendMutable() protoreflect.Value {
+func (x *_OpenPoCChallenge_4_list) AppendMutable() protoreflect.Value {
 	v := new(PoCV2StoreCommit)
 	*x.list = append(*x.list, v)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_OpenPoCChallenge_6_list) Truncate(n int) {
+func (x *_OpenPoCChallenge_4_list) Truncate(n int) {
 	for i := n; i < len(*x.list); i++ {
 		(*x.list)[i] = nil
 	}
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_OpenPoCChallenge_6_list) NewElement() protoreflect.Value {
+func (x *_OpenPoCChallenge_4_list) NewElement() protoreflect.Value {
 	v := new(PoCV2StoreCommit)
 	return protoreflect.ValueOfMessage(v.ProtoReflect())
 }
 
-func (x *_OpenPoCChallenge_6_list) IsValid() bool {
+func (x *_OpenPoCChallenge_4_list) IsValid() bool {
 	return x.list != nil
 }
 
 var (
-	md_OpenPoCChallenge              protoreflect.MessageDescriptor
-	fd_OpenPoCChallenge_target       protoreflect.FieldDescriptor
-	fd_OpenPoCChallenge_start_height protoreflect.FieldDescriptor
-	fd_OpenPoCChallenge_seed         protoreflect.FieldDescriptor
-	fd_OpenPoCChallenge_finish       protoreflect.FieldDescriptor
-	fd_OpenPoCChallenge_generating   protoreflect.FieldDescriptor
-	fd_OpenPoCChallenge_commits      protoreflect.FieldDescriptor
+	md_OpenPoCChallenge            protoreflect.MessageDescriptor
+	fd_OpenPoCChallenge_challenge  protoreflect.FieldDescriptor
+	fd_OpenPoCChallenge_finish     protoreflect.FieldDescriptor
+	fd_OpenPoCChallenge_generating protoreflect.FieldDescriptor
+	fd_OpenPoCChallenge_commits    protoreflect.FieldDescriptor
 )
 
 func init() {
 	file_inference_inference_poc_challenge_proto_init()
 	md_OpenPoCChallenge = File_inference_inference_poc_challenge_proto.Messages().ByName("OpenPoCChallenge")
-	fd_OpenPoCChallenge_target = md_OpenPoCChallenge.Fields().ByName("target")
-	fd_OpenPoCChallenge_start_height = md_OpenPoCChallenge.Fields().ByName("start_height")
-	fd_OpenPoCChallenge_seed = md_OpenPoCChallenge.Fields().ByName("seed")
+	fd_OpenPoCChallenge_challenge = md_OpenPoCChallenge.Fields().ByName("challenge")
 	fd_OpenPoCChallenge_finish = md_OpenPoCChallenge.Fields().ByName("finish")
 	fd_OpenPoCChallenge_generating = md_OpenPoCChallenge.Fields().ByName("generating")
 	fd_OpenPoCChallenge_commits = md_OpenPoCChallenge.Fields().ByName("commits")
@@ -939,21 +935,9 @@ func (x *fastReflection_OpenPoCChallenge) Interface() protoreflect.ProtoMessage 
 // While iterating, mutating operations may only be performed
 // on the current field descriptor.
 func (x *fastReflection_OpenPoCChallenge) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.Target != "" {
-		value := protoreflect.ValueOfString(x.Target)
-		if !f(fd_OpenPoCChallenge_target, value) {
-			return
-		}
-	}
-	if x.StartHeight != int64(0) {
-		value := protoreflect.ValueOfInt64(x.StartHeight)
-		if !f(fd_OpenPoCChallenge_start_height, value) {
-			return
-		}
-	}
-	if len(x.Seed) != 0 {
-		value := protoreflect.ValueOfBytes(x.Seed)
-		if !f(fd_OpenPoCChallenge_seed, value) {
+	if x.Challenge != nil {
+		value := protoreflect.ValueOfMessage(x.Challenge.ProtoReflect())
+		if !f(fd_OpenPoCChallenge_challenge, value) {
 			return
 		}
 	}
@@ -970,7 +954,7 @@ func (x *fastReflection_OpenPoCChallenge) Range(f func(protoreflect.FieldDescrip
 		}
 	}
 	if len(x.Commits) != 0 {
-		value := protoreflect.ValueOfList(&_OpenPoCChallenge_6_list{list: &x.Commits})
+		value := protoreflect.ValueOfList(&_OpenPoCChallenge_4_list{list: &x.Commits})
 		if !f(fd_OpenPoCChallenge_commits, value) {
 			return
 		}
@@ -990,12 +974,8 @@ func (x *fastReflection_OpenPoCChallenge) Range(f func(protoreflect.FieldDescrip
 // a repeated field is populated if it is non-empty.
 func (x *fastReflection_OpenPoCChallenge) Has(fd protoreflect.FieldDescriptor) bool {
 	switch fd.FullName() {
-	case "inference.inference.OpenPoCChallenge.target":
-		return x.Target != ""
-	case "inference.inference.OpenPoCChallenge.start_height":
-		return x.StartHeight != int64(0)
-	case "inference.inference.OpenPoCChallenge.seed":
-		return len(x.Seed) != 0
+	case "inference.inference.OpenPoCChallenge.challenge":
+		return x.Challenge != nil
 	case "inference.inference.OpenPoCChallenge.finish":
 		return x.Finish != int64(0)
 	case "inference.inference.OpenPoCChallenge.generating":
@@ -1018,12 +998,8 @@ func (x *fastReflection_OpenPoCChallenge) Has(fd protoreflect.FieldDescriptor) b
 // Clear is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_OpenPoCChallenge) Clear(fd protoreflect.FieldDescriptor) {
 	switch fd.FullName() {
-	case "inference.inference.OpenPoCChallenge.target":
-		x.Target = ""
-	case "inference.inference.OpenPoCChallenge.start_height":
-		x.StartHeight = int64(0)
-	case "inference.inference.OpenPoCChallenge.seed":
-		x.Seed = nil
+	case "inference.inference.OpenPoCChallenge.challenge":
+		x.Challenge = nil
 	case "inference.inference.OpenPoCChallenge.finish":
 		x.Finish = int64(0)
 	case "inference.inference.OpenPoCChallenge.generating":
@@ -1046,15 +1022,9 @@ func (x *fastReflection_OpenPoCChallenge) Clear(fd protoreflect.FieldDescriptor)
 // of the value; to obtain a mutable reference, use Mutable.
 func (x *fastReflection_OpenPoCChallenge) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
 	switch descriptor.FullName() {
-	case "inference.inference.OpenPoCChallenge.target":
-		value := x.Target
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.OpenPoCChallenge.start_height":
-		value := x.StartHeight
-		return protoreflect.ValueOfInt64(value)
-	case "inference.inference.OpenPoCChallenge.seed":
-		value := x.Seed
-		return protoreflect.ValueOfBytes(value)
+	case "inference.inference.OpenPoCChallenge.challenge":
+		value := x.Challenge
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	case "inference.inference.OpenPoCChallenge.finish":
 		value := x.Finish
 		return protoreflect.ValueOfInt64(value)
@@ -1063,9 +1033,9 @@ func (x *fastReflection_OpenPoCChallenge) Get(descriptor protoreflect.FieldDescr
 		return protoreflect.ValueOfBool(value)
 	case "inference.inference.OpenPoCChallenge.commits":
 		if len(x.Commits) == 0 {
-			return protoreflect.ValueOfList(&_OpenPoCChallenge_6_list{})
+			return protoreflect.ValueOfList(&_OpenPoCChallenge_4_list{})
 		}
-		listValue := &_OpenPoCChallenge_6_list{list: &x.Commits}
+		listValue := &_OpenPoCChallenge_4_list{list: &x.Commits}
 		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
@@ -1087,19 +1057,15 @@ func (x *fastReflection_OpenPoCChallenge) Get(descriptor protoreflect.FieldDescr
 // Set is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_OpenPoCChallenge) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
 	switch fd.FullName() {
-	case "inference.inference.OpenPoCChallenge.target":
-		x.Target = value.Interface().(string)
-	case "inference.inference.OpenPoCChallenge.start_height":
-		x.StartHeight = value.Int()
-	case "inference.inference.OpenPoCChallenge.seed":
-		x.Seed = value.Bytes()
+	case "inference.inference.OpenPoCChallenge.challenge":
+		x.Challenge = value.Message().Interface().(*PoCChallenge)
 	case "inference.inference.OpenPoCChallenge.finish":
 		x.Finish = value.Int()
 	case "inference.inference.OpenPoCChallenge.generating":
 		x.Generating = value.Bool()
 	case "inference.inference.OpenPoCChallenge.commits":
 		lv := value.List()
-		clv := lv.(*_OpenPoCChallenge_6_list)
+		clv := lv.(*_OpenPoCChallenge_4_list)
 		x.Commits = *clv.list
 	default:
 		if fd.IsExtension() {
@@ -1121,18 +1087,17 @@ func (x *fastReflection_OpenPoCChallenge) Set(fd protoreflect.FieldDescriptor, v
 // Mutable is a mutating operation and unsafe for concurrent use.
 func (x *fastReflection_OpenPoCChallenge) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
+	case "inference.inference.OpenPoCChallenge.challenge":
+		if x.Challenge == nil {
+			x.Challenge = new(PoCChallenge)
+		}
+		return protoreflect.ValueOfMessage(x.Challenge.ProtoReflect())
 	case "inference.inference.OpenPoCChallenge.commits":
 		if x.Commits == nil {
 			x.Commits = []*PoCV2StoreCommit{}
 		}
-		value := &_OpenPoCChallenge_6_list{list: &x.Commits}
+		value := &_OpenPoCChallenge_4_list{list: &x.Commits}
 		return protoreflect.ValueOfList(value)
-	case "inference.inference.OpenPoCChallenge.target":
-		panic(fmt.Errorf("field target of message inference.inference.OpenPoCChallenge is not mutable"))
-	case "inference.inference.OpenPoCChallenge.start_height":
-		panic(fmt.Errorf("field start_height of message inference.inference.OpenPoCChallenge is not mutable"))
-	case "inference.inference.OpenPoCChallenge.seed":
-		panic(fmt.Errorf("field seed of message inference.inference.OpenPoCChallenge is not mutable"))
 	case "inference.inference.OpenPoCChallenge.finish":
 		panic(fmt.Errorf("field finish of message inference.inference.OpenPoCChallenge is not mutable"))
 	case "inference.inference.OpenPoCChallenge.generating":
@@ -1150,19 +1115,16 @@ func (x *fastReflection_OpenPoCChallenge) Mutable(fd protoreflect.FieldDescripto
 // For lists, maps, and messages, this returns a new, empty, mutable value.
 func (x *fastReflection_OpenPoCChallenge) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
 	switch fd.FullName() {
-	case "inference.inference.OpenPoCChallenge.target":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.OpenPoCChallenge.start_height":
-		return protoreflect.ValueOfInt64(int64(0))
-	case "inference.inference.OpenPoCChallenge.seed":
-		return protoreflect.ValueOfBytes(nil)
+	case "inference.inference.OpenPoCChallenge.challenge":
+		m := new(PoCChallenge)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	case "inference.inference.OpenPoCChallenge.finish":
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.OpenPoCChallenge.generating":
 		return protoreflect.ValueOfBool(false)
 	case "inference.inference.OpenPoCChallenge.commits":
 		list := []*PoCV2StoreCommit{}
-		return protoreflect.ValueOfList(&_OpenPoCChallenge_6_list{list: &list})
+		return protoreflect.ValueOfList(&_OpenPoCChallenge_4_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.OpenPoCChallenge"))
@@ -1232,15 +1194,8 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 		var n int
 		var l int
 		_ = l
-		l = len(x.Target)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.StartHeight != 0 {
-			n += 1 + runtime.Sov(uint64(x.StartHeight))
-		}
-		l = len(x.Seed)
-		if l > 0 {
+		if x.Challenge != nil {
+			l = options.Size(x.Challenge)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
 		if x.Finish != 0 {
@@ -1297,7 +1252,7 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 				copy(dAtA[i:], encoded)
 				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 				i--
-				dAtA[i] = 0x32
+				dAtA[i] = 0x22
 			}
 		}
 		if x.Generating {
@@ -1308,29 +1263,24 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 				dAtA[i] = 0
 			}
 			i--
-			dAtA[i] = 0x28
+			dAtA[i] = 0x18
 		}
 		if x.Finish != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.Finish))
 			i--
-			dAtA[i] = 0x20
-		}
-		if len(x.Seed) > 0 {
-			i -= len(x.Seed)
-			copy(dAtA[i:], x.Seed)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Seed)))
-			i--
-			dAtA[i] = 0x1a
-		}
-		if x.StartHeight != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64(x.StartHeight))
-			i--
 			dAtA[i] = 0x10
 		}
-		if len(x.Target) > 0 {
-			i -= len(x.Target)
-			copy(dAtA[i:], x.Target)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Target)))
+		if x.Challenge != nil {
+			encoded, err := options.Marshal(x.Challenge)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
 			i--
 			dAtA[i] = 0xa
 		}
@@ -1385,9 +1335,9 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 			switch fieldNum {
 			case 1:
 				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Target", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Challenge", wireType)
 				}
-				var stringLen uint64
+				var msglen int
 				for shift := uint(0); ; shift += 7 {
 					if shift >= 64 {
 						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
@@ -1397,78 +1347,29 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 					}
 					b := dAtA[iNdEx]
 					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
+					msglen |= int(b&0x7F) << shift
 					if b < 0x80 {
 						break
 					}
 				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
+				if msglen < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
-				postIndex := iNdEx + intStringLen
+				postIndex := iNdEx + msglen
 				if postIndex < 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
 				}
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				x.Target = string(dAtA[iNdEx:postIndex])
+				if x.Challenge == nil {
+					x.Challenge = &PoCChallenge{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.Challenge); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
 				iNdEx = postIndex
 			case 2:
-				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field StartHeight", wireType)
-				}
-				x.StartHeight = 0
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					x.StartHeight |= int64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-			case 3:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Seed", wireType)
-				}
-				var byteLen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					byteLen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if byteLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + byteLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.Seed = append(x.Seed[:0], dAtA[iNdEx:postIndex]...)
-				if x.Seed == nil {
-					x.Seed = []byte{}
-				}
-				iNdEx = postIndex
-			case 4:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Finish", wireType)
 				}
@@ -1487,7 +1388,7 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
-			case 5:
+			case 3:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Generating", wireType)
 				}
@@ -1507,7 +1408,7 @@ func (x *fastReflection_OpenPoCChallenge) ProtoMethods() *protoiface.Methods {
 					}
 				}
 				x.Generating = bool(v != 0)
-			case 6:
+			case 4:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Commits", wireType)
 				}
@@ -1734,12 +1635,10 @@ type OpenPoCChallenge struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	Target      string              `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
-	StartHeight int64               `protobuf:"varint,2,opt,name=start_height,json=startHeight,proto3" json:"start_height,omitempty"`
-	Seed        []byte              `protobuf:"bytes,3,opt,name=seed,proto3" json:"seed,omitempty"`
-	Finish      int64               `protobuf:"varint,4,opt,name=finish,proto3" json:"finish,omitempty"`
-	Generating  bool                `protobuf:"varint,5,opt,name=generating,proto3" json:"generating,omitempty"`
-	Commits     []*PoCV2StoreCommit `protobuf:"bytes,6,rep,name=commits,proto3" json:"commits,omitempty"`
+	Challenge  *PoCChallenge       `protobuf:"bytes,1,opt,name=challenge,proto3" json:"challenge,omitempty"`
+	Finish     int64               `protobuf:"varint,2,opt,name=finish,proto3" json:"finish,omitempty"`
+	Generating bool                `protobuf:"varint,3,opt,name=generating,proto3" json:"generating,omitempty"`
+	Commits    []*PoCV2StoreCommit `protobuf:"bytes,4,rep,name=commits,proto3" json:"commits,omitempty"`
 }
 
 func (x *OpenPoCChallenge) Reset() {
@@ -1762,23 +1661,9 @@ func (*OpenPoCChallenge) Descriptor() ([]byte, []int) {
 	return file_inference_inference_poc_challenge_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *OpenPoCChallenge) GetTarget() string {
+func (x *OpenPoCChallenge) GetChallenge() *PoCChallenge {
 	if x != nil {
-		return x.Target
-	}
-	return ""
-}
-
-func (x *OpenPoCChallenge) GetStartHeight() int64 {
-	if x != nil {
-		return x.StartHeight
-	}
-	return 0
-}
-
-func (x *OpenPoCChallenge) GetSeed() []byte {
-	if x != nil {
-		return x.Seed
+		return x.Challenge
 	}
 	return nil
 }
@@ -1833,43 +1718,42 @@ var file_inference_inference_poc_challenge_proto_rawDesc = []byte{
 	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f,
 	0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x46, 0x61, 0x69, 0x6c, 0x75, 0x72,
 	0x65, 0x4b, 0x69, 0x6e, 0x64, 0x52, 0x0b, 0x66, 0x61, 0x69, 0x6c, 0x75, 0x72, 0x65, 0x4b, 0x69,
-	0x6e, 0x64, 0x22, 0xda, 0x01, 0x0a, 0x10, 0x4f, 0x70, 0x65, 0x6e, 0x50, 0x6f, 0x43, 0x43, 0x68,
-	0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x74, 0x61, 0x72, 0x67, 0x65,
-	0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x74, 0x61, 0x72, 0x67, 0x65, 0x74, 0x12,
-	0x21, 0x0a, 0x0c, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18,
-	0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x73, 0x74, 0x61, 0x72, 0x74, 0x48, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x12, 0x12, 0x0a, 0x04, 0x73, 0x65, 0x65, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0c,
-	0x52, 0x04, 0x73, 0x65, 0x65, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68,
-	0x18, 0x04, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x12, 0x1e,
-	0x0a, 0x0a, 0x67, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6e, 0x67, 0x18, 0x05, 0x20, 0x01,
-	0x28, 0x08, 0x52, 0x0a, 0x67, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6e, 0x67, 0x12, 0x3f,
-	0x0a, 0x07, 0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x73, 0x18, 0x06, 0x20, 0x03, 0x28, 0x0b, 0x32,
-	0x25, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f, 0x43, 0x56, 0x32, 0x53, 0x74, 0x6f, 0x72, 0x65,
-	0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x52, 0x07, 0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x73, 0x2a,
-	0x9c, 0x01, 0x0a, 0x17, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65,
-	0x46, 0x61, 0x69, 0x6c, 0x75, 0x72, 0x65, 0x4b, 0x69, 0x6e, 0x64, 0x12, 0x24, 0x0a, 0x20, 0x50,
-	0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49,
-	0x4c, 0x55, 0x52, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x55, 0x4e, 0x53, 0x45, 0x54, 0x10,
-	0x00, 0x12, 0x2f, 0x0a, 0x2b, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e,
-	0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x55, 0x52, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f,
-	0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x45, 0x44,
-	0x10, 0x01, 0x12, 0x2a, 0x0a, 0x26, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45,
-	0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x55, 0x52, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44,
-	0x5f, 0x52, 0x45, 0x46, 0x55, 0x4e, 0x44, 0x5f, 0x4f, 0x4e, 0x4c, 0x59, 0x10, 0x02, 0x42, 0xbf,
-	0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x11, 0x50, 0x6f, 0x63, 0x43,
-	0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a,
-	0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70,
-	0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50,
-	0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x6e, 0x64, 0x22, 0xcc, 0x01, 0x0a, 0x10, 0x4f, 0x70, 0x65, 0x6e, 0x50, 0x6f, 0x43, 0x43, 0x68,
+	0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x12, 0x3f, 0x0a, 0x09, 0x63, 0x68, 0x61, 0x6c, 0x6c,
+	0x65, 0x6e, 0x67, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x21, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x52, 0x09, 0x63,
+	0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x66, 0x69, 0x6e, 0x69,
+	0x73, 0x68, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68,
+	0x12, 0x1e, 0x0a, 0x0a, 0x67, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6e, 0x67, 0x18, 0x03,
+	0x20, 0x01, 0x28, 0x08, 0x52, 0x0a, 0x67, 0x65, 0x6e, 0x65, 0x72, 0x61, 0x74, 0x69, 0x6e, 0x67,
+	0x12, 0x3f, 0x0a, 0x07, 0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28,
+	0x0b, 0x32, 0x25, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x6f, 0x43, 0x56, 0x32, 0x53, 0x74, 0x6f,
+	0x72, 0x65, 0x43, 0x6f, 0x6d, 0x6d, 0x69, 0x74, 0x52, 0x07, 0x63, 0x6f, 0x6d, 0x6d, 0x69, 0x74,
+	0x73, 0x2a, 0x9c, 0x01, 0x0a, 0x17, 0x50, 0x6f, 0x43, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e,
+	0x67, 0x65, 0x46, 0x61, 0x69, 0x6c, 0x75, 0x72, 0x65, 0x4b, 0x69, 0x6e, 0x64, 0x12, 0x24, 0x0a,
+	0x20, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46,
+	0x41, 0x49, 0x4c, 0x55, 0x52, 0x45, 0x5f, 0x4b, 0x49, 0x4e, 0x44, 0x5f, 0x55, 0x4e, 0x53, 0x45,
+	0x54, 0x10, 0x00, 0x12, 0x2f, 0x0a, 0x2b, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c,
+	0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x55, 0x52, 0x45, 0x5f, 0x4b, 0x49, 0x4e,
+	0x44, 0x5f, 0x43, 0x48, 0x41, 0x4c, 0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c,
+	0x45, 0x44, 0x10, 0x01, 0x12, 0x2a, 0x0a, 0x26, 0x50, 0x4f, 0x43, 0x5f, 0x43, 0x48, 0x41, 0x4c,
+	0x4c, 0x45, 0x4e, 0x47, 0x45, 0x5f, 0x46, 0x41, 0x49, 0x4c, 0x55, 0x52, 0x45, 0x5f, 0x4b, 0x49,
+	0x4e, 0x44, 0x5f, 0x52, 0x45, 0x46, 0x55, 0x4e, 0x44, 0x5f, 0x4f, 0x4e, 0x4c, 0x59, 0x10, 0x02,
+	0x42, 0xbf, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x11, 0x50, 0x6f,
+	0x63, 0x43, 0x68, 0x61, 0x6c, 0x6c, 0x65, 0x6e, 0x67, 0x65, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50,
+	0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f,
+	0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -1894,12 +1778,13 @@ var file_inference_inference_poc_challenge_proto_goTypes = []interface{}{
 }
 var file_inference_inference_poc_challenge_proto_depIdxs = []int32{
 	0, // 0: inference.inference.PoCChallenge.failure_kind:type_name -> inference.inference.PoCChallengeFailureKind
-	3, // 1: inference.inference.OpenPoCChallenge.commits:type_name -> inference.inference.PoCV2StoreCommit
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	1, // 1: inference.inference.OpenPoCChallenge.challenge:type_name -> inference.inference.PoCChallenge
+	3, // 2: inference.inference.OpenPoCChallenge.commits:type_name -> inference.inference.PoCV2StoreCommit
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_poc_challenge_proto_init() }

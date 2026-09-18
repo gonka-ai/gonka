@@ -174,12 +174,7 @@ func TestStartPoCNodeCommandV2_ChallengeWindDownStopsPow(t *testing.T) {
 	tracker.Update(chainphase.BlockInfo{Height: 897, Hash: "h"}, epoch, params, true, nil)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: &types.OpenPoCChallenge{
-			Target:      "me",
-			StartHeight: 500,
-			Finish:      900,
-			Generating:  true,
-		},
+		ch: testOpenCh("me", 500, 900, true),
 	})
 
 	b := NewTestBroker2(1)

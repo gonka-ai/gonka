@@ -12,8 +12,6 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-const MinPunishableSegmentBlocks int64 = 300
-
 func (k Keeper) GetPoCChallenge(ctx context.Context, target string) (types.PoCChallenge, bool, error) {
 	addr, err := sdk.AccAddressFromBech32(target)
 	if err != nil {
@@ -371,8 +369,9 @@ func (k Keeper) CreatePoCChallenge(ctx context.Context, msg *types.MsgCreatePoCC
 		return nil, sdkerrors.Wrap(types.ErrPoCChallengeWindow, "safety window")
 	}
 	startHeight := height + 1
-	if safetyHeight-startHeight < MinPunishableSegmentBlocks {
-		return nil, sdkerrors.Wrap(types.ErrPoCChallengeWindow, "remaining segment shorter than 300 blocks")
+	minPunishable := types.EffectiveMinPunishableSegmentBlocks(cp)
+	if safetyHeight-startHeight < minPunishable {
+		return nil, sdkerrors.Wrapf(types.ErrPoCChallengeWindow, "remaining segment shorter than %d blocks", minPunishable)
 	}
 
 	nextEpoch := epochContext.NextEpochContext()
