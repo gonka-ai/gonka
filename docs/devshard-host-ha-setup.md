@@ -67,13 +67,13 @@ HA `versiond` removes dependence on one **app** server, but if PostgreSQL is a s
 
 #### Choose a database
 
-**Option A — Managed PostgreSQL (recommended).** Select an HA configuration and create a database and user.
+**Managed PostgreSQL (recommended).** Select an HA configuration and create a database and user.
 
-**Option B — Self-managed PostgreSQL.** Install PostgreSQL on a dedicated host or cluster, create the role/database, and configure replication and failover for database HA.
+**Self-managed PostgreSQL.** Install PostgreSQL on a dedicated host or cluster, create the role/database, and configure replication and failover for database HA.
 
-For A or B, obtain the primary endpoint, port, database, user and password. Allow connections from every replica and configure [§2.2](#22-external-or-managed-postgresql).
+For managed or self-managed PostgreSQL, obtain the primary endpoint, port, database, user and password. Allow connections from every replica and configure [§2.2](#22-external-or-managed-postgresql).
 
-**Option C — Local Compose PostgreSQL.** `docker-compose.versiond.yml` starts `devshard-postgres` on the join host. If the machine dies, the database dies with it.
+**Local Compose PostgreSQL.** `docker-compose.versiond.yml` starts `devshard-postgres` on the join host. If the machine dies, the database dies with it.
 
 External PostgreSQL: use a direct connection or session-mode pooling. Transaction pooling and explicit `PGSSL*` settings (except `PGSSLMODE=disable`) are unsupported. Providers requiring explicit TLS settings are outside this procedure; do not disable required TLS.
 
@@ -247,7 +247,7 @@ EOF
 
 #### 2.2 External or managed PostgreSQL
 
-Applies to options A and B. Complete §2.1 first.
+For managed or self-managed PostgreSQL on a separate host or cluster. Complete §2.1 first.
 
 Create the database and role through the provider, or run:
 
