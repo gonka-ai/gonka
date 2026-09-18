@@ -441,6 +441,9 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 			return
 		}
 		if !dw.started {
+			if p.handBackToGateway(r.Context(), err) {
+				return
+			}
 			writeGatewayJSONError(w, statusCode, err.Error())
 			return
 		}
@@ -574,6 +577,9 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 			writeJSONPayload(w, hostErr.statusCode(), hostErr.jsonPayload())
 			return
 		}
+		if buf.Len() == 0 && p.handBackToGateway(r.Context(), err) {
+			return
+		}
 		writeGatewayJSONError(w, gatewayStatusCodeForError(err), err.Error())
 		return
 	}
@@ -606,6 +612,18 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	writeJSONPayload(w, http.StatusOK, assembled)
 	logRequestStage(r.Context(), "proxy_request_completed", "escrow", p.escrowID,
 		"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
+}
+
+// handBackToGateway asks the pooled route to take this request to another escrow when this one
+// cannot pay for it. The caller must have written nothing to the client yet.
+func (p *Proxy) handBackToGateway(ctx context.Context, err error) bool {
+	verdict, recorded := escrowFundingVerdictFromContext(ctx)
+	if !recorded || !errors.Is(err, types.ErrInsufficientBalance) {
+		return false
+	}
+	verdict.refused = true
+	logRequestStage(ctx, "proxy_escrow_refused_funding", "escrow", p.escrowID, "error", err)
+	return true
 }
 
 func (p *Proxy) settlementJSON() (SettlementJSON, error) {

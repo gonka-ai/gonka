@@ -1,6 +1,9 @@
 package types
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 var (
 	ErrInvalidNonce          = errors.New("invalid nonce: must be sequential")
@@ -8,6 +11,7 @@ var (
 	ErrInvalidProposerSig    = errors.New("invalid proposer signature: not a group member")
 	ErrInvalidExecutorSig    = errors.New("invalid executor signature")
 	ErrInsufficientBalance   = errors.New("insufficient escrow balance")
+	ErrRequestExceedsBalance = fmt.Errorf("reserved cost exceeds escrow balance: %w", ErrInsufficientBalance)
 	ErrMultipleStartMsgs     = errors.New("at most one MsgStartInference per diff")
 	ErrSessionFinalizing     = errors.New("session is finalizing: no new inferences")
 	ErrInferenceNotFound     = errors.New("inference not found")
