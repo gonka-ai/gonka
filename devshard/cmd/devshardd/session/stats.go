@@ -73,6 +73,8 @@ type statsHostStats struct {
 	Cost                 uint64 `json:"cost"`
 	RequiredValidations  uint32 `json:"required_validations"`
 	CompletedValidations uint32 `json:"completed_validations"`
+	Validated            uint32 `json:"validated"`
+	Finished             uint32 `json:"finished"`
 }
 
 // statsValidationTotals aggregates per-slot observability rows; uint64 avoids wrap
@@ -368,6 +370,8 @@ func statsHostStatsFromState(src map[uint32]*types.HostStats) map[uint32]statsHo
 			Cost:                 stats.Cost,
 			RequiredValidations:  stats.RequiredValidations,
 			CompletedValidations: stats.CompletedValidations,
+			Validated:            stats.Validated,
+			Finished:             stats.Finished,
 		}
 	}
 	return dst
