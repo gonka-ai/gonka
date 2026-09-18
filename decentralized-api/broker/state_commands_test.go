@@ -324,3 +324,136 @@ func TestInitValidateCommand_InferencePhase_NoConfirmationEvent(t *testing.T) {
 	// Node status should remain unchanged (UNKNOWN = 0)
 	assert.Equal(t, types.HardwareNodeStatus_UNKNOWN, node1.State.IntendedStatus)
 }
+
+func TestEpochCommands_StoppedNodeStaysStopped(t *testing.T) {
+	cases := []struct {
+		name      string
+		phase     types.EpochPhase
+		run       func(b *Broker) chan bool
+		wantOther types.HardwareNodeStatus
+		wantPoc   PocStatus
+	}{
+		{
+			"StartPoc", types.PoCGeneratePhase,
+			func(b *Broker) chan bool {
+				cmd := StartPocCommand{Response: make(chan bool, 1)}
+				cmd.Execute(b)
+				return cmd.Response
+			},
+			types.HardwareNodeStatus_POC, PocStatusGenerating,
+		},
+		{
+			"InitValidate", types.PoCGenerateWindDownPhase,
+			func(b *Broker) chan bool {
+				cmd := InitValidateCommand{Response: make(chan bool, 1)}
+				cmd.Execute(b)
+				return cmd.Response
+			},
+			types.HardwareNodeStatus_POC, PocStatusValidating,
+		},
+		{
+			"InferenceUpAll", types.InferencePhase,
+			func(b *Broker) chan bool {
+				cmd := InferenceUpAllCommand{Response: make(chan bool, 1)}
+				cmd.Execute(b)
+				return cmd.Response
+			},
+			types.HardwareNodeStatus_INFERENCE, PocStatusIdle,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stopped := createTestNodeWithStatus("stopped", types.HardwareNodeStatus_STOPPED)
+			stopped.State.AdminState.Stopped = true
+			stopped.State.AdminState.Enabled = false
+			stopped.State.PocIntendedStatus = PocStatusIdle
+			other := createTestNode("other")
+
+			broker := &Broker{
+				nodes:        map[string]*NodeWithState{"stopped": stopped, "other": other},
+				phaseTracker: newPhaseTrackerWithPhase(t, tc.phase),
+			}
+
+			response := tc.run(broker)
+
+			assert.True(t, <-response, "the command must run to completion in this phase")
+			assert.Equal(t, types.HardwareNodeStatus_STOPPED, stopped.State.IntendedStatus)
+			assert.Equal(t, PocStatusIdle, stopped.State.PocIntendedStatus)
+			assert.Equal(t, tc.wantOther, other.State.IntendedStatus)
+			if tc.wantOther == types.HardwareNodeStatus_POC {
+				assert.Equal(t, tc.wantPoc, other.State.PocIntendedStatus)
+			}
+		})
+	}
+}
+
+func TestEpochCommands_PickUpAStartedNode(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_STOPPED)
+	node.State.PocIntendedStatus = PocStatusIdle
+	broker := &Broker{
+		nodes:        map[string]*NodeWithState{"node-1": node},
+		phaseTracker: newPhaseTrackerWithPhase(t, types.InferencePhase),
+	}
+
+	cmd := InferenceUpAllCommand{Response: make(chan bool, 1)}
+	cmd.Execute(broker)
+
+	assert.True(t, <-cmd.Response)
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.IntendedStatus)
+}
+
+func TestEpochCommands_StoppedNodeIsPulledBackIfSomethingMovedIt(t *testing.T) {
+	stopped := createTestNodeWithStatus("stopped", types.HardwareNodeStatus_STOPPED)
+	stopped.State.AdminState.Stopped = true
+	stopped.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	stopped.State.PocIntendedStatus = PocStatusGenerating
+
+	broker := &Broker{
+		nodes:        map[string]*NodeWithState{"stopped": stopped},
+		phaseTracker: newPhaseTrackerWithPhase(t, types.InferencePhase),
+	}
+
+	cmd := InferenceUpAllCommand{Response: make(chan bool, 1)}
+	cmd.Execute(broker)
+
+	assert.True(t, <-cmd.Response)
+	assert.Equal(t, types.HardwareNodeStatus_STOPPED, stopped.State.IntendedStatus)
+	assert.Equal(t, PocStatusIdle, stopped.State.PocIntendedStatus)
+}
+
+func TestSetNodeStoppedCommand(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.PocIntendedStatus = PocStatusGenerating
+	broker := &Broker{nodes: map[string]*NodeWithState{"node-1": node}}
+
+	stop := SetNodeStoppedCommand{NodeId: "node-1", Stopped: true, Response: make(chan error, 1)}
+	stop.Execute(broker)
+	require.NoError(t, <-stop.Response)
+	assert.True(t, node.State.AdminState.Stopped)
+	assert.Equal(t, types.HardwareNodeStatus_STOPPED, node.State.IntendedStatus)
+	assert.Equal(t, PocStatusIdle, node.State.PocIntendedStatus)
+
+	start := SetNodeStoppedCommand{NodeId: "node-1", Stopped: false, Response: make(chan error, 1)}
+	start.Execute(broker)
+	require.NoError(t, <-start.Response)
+	assert.False(t, node.State.AdminState.Stopped)
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.IntendedStatus, "lifting the hold sends the node back to inference without waiting for a phase boundary")
+	assert.Equal(t, PocStatusIdle, node.State.PocIntendedStatus)
+
+	missing := SetNodeStoppedCommand{NodeId: "nope", Stopped: true, Response: make(chan error, 1)}
+	missing.Execute(broker)
+	assert.Error(t, <-missing.Response)
+}
+
+func TestSetNodeStoppedCommand_StartOnANodeNotHeldLeavesItsPlaceAlone(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_POC)
+	node.State.PocIntendedStatus = PocStatusValidating
+	broker := &Broker{nodes: map[string]*NodeWithState{"node-1": node}}
+
+	start := SetNodeStoppedCommand{NodeId: "node-1", Stopped: false, Response: make(chan error, 1)}
+	start.Execute(broker)
+
+	require.NoError(t, <-start.Response)
+	assert.Equal(t, types.HardwareNodeStatus_POC, node.State.IntendedStatus)
+	assert.Equal(t, PocStatusValidating, node.State.PocIntendedStatus)
+}

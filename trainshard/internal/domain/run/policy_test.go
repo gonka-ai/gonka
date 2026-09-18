@@ -82,6 +82,18 @@ func TestCanDeploy(t *testing.T) {
 			mutate:    func(s *run.RunSpec) { s.Sources = nil },
 			container: vo.ContainerCreated,
 		},
+		{
+			name:      "environment ranks the run itself",
+			mutate:    func(s *run.RunSpec) { s.Env["NODE_RANK"] = "0" },
+			container: vo.ContainerCreated,
+			wantErr:   run.ErrEnvReserved,
+		},
+		{
+			name:      "environment picks the cards itself",
+			mutate:    func(s *run.RunSpec) { s.Env["NVIDIA_VISIBLE_DEVICES"] = "all" },
+			container: vo.ContainerCreated,
+			wantErr:   run.ErrEnvReserved,
+		},
 	}
 
 	for _, tc := range cases {
@@ -173,7 +185,7 @@ func TestSameImage(t *testing.T) {
 
 func TestAutokick(t *testing.T) {
 	reserved := run.Desired{Reservation: run.Reservation{BaseImage: baseImage}, Reserved: true}
-	ready := run.Observed{Drained: true, Images: []vo.ImageDigest{baseImage}, MeshKey: true}
+	ready := run.Observed{Drained: true, Images: []vo.ImageDigest{baseImage}, MeshKey: true, MeshIdentity: true}
 	patience := time.Hour
 
 	cases := []struct {
@@ -220,15 +232,29 @@ func TestAutokick(t *testing.T) {
 		},
 		{
 			name:     "was ready for hours and a card went busy a moment ago",
-			observed: run.Observed{Drained: true, Images: []vo.ImageDigest{baseImage}, MeshKey: true, ForeignGPUWork: true},
+			observed: run.Observed{Drained: true, Images: []vo.ImageDigest{baseImage}, MeshKey: true, MeshIdentity: true, ForeignGPUWork: true},
 			state:    run.RunState{UnpreparedAt: time.Date(2026, 8, 18, 21, 59, 0, 0, time.UTC)},
 			waited:   10 * time.Hour,
 		},
 		{
 			name:       "has been unready longer than the host waits",
-			observed:   run.Observed{Drained: true, Images: []vo.ImageDigest{baseImage}, MeshKey: true, ForeignGPUWork: true},
+			observed:   run.Observed{Drained: true, Images: []vo.ImageDigest{baseImage}, MeshKey: true, MeshIdentity: true, ForeignGPUWork: true},
 			state:      run.RunState{UnpreparedAt: time.Date(2026, 8, 18, 20, 0, 0, 0, time.UTC)},
 			waited:     10 * time.Hour,
+			wantReason: vo.ReleaseFailedPrepare,
+			wantKick:   true,
+		},
+		{
+			name:     "already handed back a moment ago, the chain has not shown it yet",
+			observed: run.Observed{},
+			state:    run.RunState{ReleasedAt: time.Date(2026, 8, 18, 13, 59, 0, 0, time.UTC)},
+			waited:   2 * time.Hour,
+		},
+		{
+			name:       "handed back long ago and still held, so it is asked for again",
+			observed:   run.Observed{},
+			state:      run.RunState{ReleasedAt: time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC)},
+			waited:     2 * time.Hour,
 			wantReason: vo.ReleaseFailedPrepare,
 			wantKick:   true,
 		},

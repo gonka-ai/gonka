@@ -12,7 +12,9 @@ type Observed struct {
 	ContainerRevision int
 	ExitCode          *int
 	MeshKey           bool
+	MeshIdentity      bool
 	MeshUp            bool
+	Fenced            bool
 	VolumesPresent    bool
 	DiskUsedBytes     int64
 	DiskQuotaBytes    int64

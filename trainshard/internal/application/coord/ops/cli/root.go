@@ -132,11 +132,13 @@ func (c *Commands) Status(ctx context.Context, args []string) error {
 	fmt.Fprintln(out, "NODE\tSTATE\tPREPARED\tMESH\tGPUS\tDISK\tQUOTA\tREASON")
 	silent := 0
 	for _, node := range statuses {
+		why := node.Waiting
 		if node.Fault != nil {
 			silent++
+			why = reason(node.Fault)
 		}
 		fmt.Fprintf(out, "%s\t%s\t%t\t%t\t%d\t%d\t%d\t%s\n",
-			node.Node, node.State, node.Prepared, node.MeshUp, node.GPUsInUse, node.DiskBytes, node.DiskQuotaBytes, reason(node.Fault))
+			node.Node, node.State, node.Prepared, node.MeshUp, node.GPUsInUse, node.DiskBytes, node.DiskQuotaBytes, why)
 	}
 	if err := out.Flush(); err != nil {
 		return err

@@ -75,6 +75,17 @@ func (c Config) Placement(node vo.NodeRef) (vo.Placement, error) {
 	return vo.Placement{}, ErrNodeNotInMesh
 }
 
+// Rebuilds reports whether a node's place on the mesh differs between two peer lists. A
+// container is built with its rank, so a new place is a new container
+func Rebuilds(previous, next Config, node vo.NodeRef) bool {
+	before, err := previous.Placement(node)
+	if err != nil {
+		return true
+	}
+	after, err := next.Placement(node)
+	return err != nil || before != after
+}
+
 func (c Config) Refs() []vo.NodeRef {
 	refs := make([]vo.NodeRef, 0, len(c.Peers))
 	for _, p := range c.Peers {

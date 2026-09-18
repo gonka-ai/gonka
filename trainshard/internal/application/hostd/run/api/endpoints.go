@@ -25,12 +25,12 @@ type UseCases struct {
 }
 
 type Endpoints struct {
-	participant vo.Participant
-	uc          UseCases
+	host vo.Host
+	uc   UseCases
 }
 
-func NewEndpoints(participant vo.Participant, uc UseCases) *Endpoints {
-	return &Endpoints{participant: participant, uc: uc}
+func NewEndpoints(host vo.Host, uc UseCases) *Endpoints {
+	return &Endpoints{host: host, uc: uc}
 }
 
 func (e *Endpoints) Mount(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
@@ -52,7 +52,7 @@ func (e *Endpoints) Mount(mux *http.ServeMux, guard func(http.Handler) http.Hand
 func (e *Endpoints) probeMesh(w http.ResponseWriter, r *http.Request) {
 	requestID := requestIDFrom(r.Context())
 
-	shardID, node, err := toNodePath(e.participant, r.PathValue("shard_id"), r.PathValue("node_id"))
+	shardID, node, err := toNodePath(e.host, r.PathValue("shard_id"), r.PathValue("node_id"))
 	if err != nil {
 		httpx.WriteError(w, requestID, err)
 		return
@@ -84,7 +84,7 @@ func (e *Endpoints) meshIdentities(w http.ResponseWriter, r *http.Request) {
 
 func (e *Endpoints) deployRun(w http.ResponseWriter, r *http.Request) {
 	serve(w, r, func(dto contract.DeployRequest) (contract.NodesResult, error) {
-		cmd, err := toDeployCommand(e.participant, actorFrom(r.Context()), r.PathValue("shard_id"), dto)
+		cmd, err := toDeployCommand(e.host, actorFrom(r.Context()), r.PathValue("shard_id"), dto)
 		if err != nil {
 			return contract.NodesResult{}, err
 		}
@@ -98,7 +98,7 @@ func (e *Endpoints) deployRun(w http.ResponseWriter, r *http.Request) {
 
 func (e *Endpoints) startRun(w http.ResponseWriter, r *http.Request) {
 	serve(w, r, func(dto contract.StartRequest) (contract.NodesResult, error) {
-		cmd, err := toNodesCommand(e.participant, actorFrom(r.Context()), r.PathValue("shard_id"), dto.Command)
+		cmd, err := toNodesCommand(e.host, actorFrom(r.Context()), r.PathValue("shard_id"), dto.Command)
 		if err != nil {
 			return contract.NodesResult{}, err
 		}
@@ -112,7 +112,7 @@ func (e *Endpoints) startRun(w http.ResponseWriter, r *http.Request) {
 
 func (e *Endpoints) stopRun(w http.ResponseWriter, r *http.Request) {
 	serve(w, r, func(dto contract.StopRequest) (contract.NodesResult, error) {
-		cmd, err := toStopCommand(e.participant, actorFrom(r.Context()), r.PathValue("shard_id"), dto)
+		cmd, err := toStopCommand(e.host, actorFrom(r.Context()), r.PathValue("shard_id"), dto)
 		if err != nil {
 			return contract.NodesResult{}, err
 		}
@@ -126,7 +126,7 @@ func (e *Endpoints) stopRun(w http.ResponseWriter, r *http.Request) {
 
 func (e *Endpoints) runStatus(w http.ResponseWriter, r *http.Request) {
 	serve(w, r, func(dto contract.StatusRequest) (contract.StatusResult, error) {
-		cmd, err := toNodesCommand(e.participant, actorFrom(r.Context()), r.PathValue("shard_id"), dto.Command)
+		cmd, err := toNodesCommand(e.host, actorFrom(r.Context()), r.PathValue("shard_id"), dto.Command)
 		if err != nil {
 			return contract.StatusResult{}, err
 		}
@@ -140,7 +140,7 @@ func (e *Endpoints) runStatus(w http.ResponseWriter, r *http.Request) {
 
 func (e *Endpoints) runReport(w http.ResponseWriter, r *http.Request) {
 	serve(w, r, func(dto contract.ReportRequest) (contract.ReportResult, error) {
-		cmd, err := toNodesCommand(e.participant, actorFrom(r.Context()), r.PathValue("shard_id"), dto.Command)
+		cmd, err := toNodesCommand(e.host, actorFrom(r.Context()), r.PathValue("shard_id"), dto.Command)
 		if err != nil {
 			return contract.ReportResult{}, err
 		}
@@ -154,7 +154,7 @@ func (e *Endpoints) runReport(w http.ResponseWriter, r *http.Request) {
 
 func (e *Endpoints) applyMesh(w http.ResponseWriter, r *http.Request) {
 	serve(w, r, func(dto contract.MeshRequest) (contract.NodesResult, error) {
-		cmd, err := toMeshCommand(e.participant, actorFrom(r.Context()), r.PathValue("shard_id"), dto)
+		cmd, err := toMeshCommand(e.host, actorFrom(r.Context()), r.PathValue("shard_id"), dto)
 		if err != nil {
 			return contract.NodesResult{}, err
 		}

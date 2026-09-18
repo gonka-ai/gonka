@@ -1,6 +1,10 @@
 package run
 
-import "trainshard/internal/domain/shared/vo"
+import (
+	"strings"
+
+	"trainshard/internal/domain/shared/vo"
+)
 
 func Plan(d Desired, o Observed) []Action {
 	if !d.Reserved || !d.Active {
@@ -8,13 +12,17 @@ func Plan(d Desired, o Observed) []Action {
 	}
 
 	actions := make([]Action, 0, 6)
+	if !o.Drained || o.ForeignGPUWork {
+		actions = append(actions, Action{Kind: ActionDrainNode})
+	}
 	if !o.HasImage(d.BaseImage) {
 		actions = append(actions, Action{Kind: ActionPullImage, Image: d.BaseImage})
 	}
 	if !o.Drained || o.ForeignGPUWork {
-		return append(actions, Action{Kind: ActionDrainNode})
+		return actions
 	}
-	if !o.MeshKey {
+	// the key is made before the signed member is stored, so a key alone is a step to finish
+	if !o.MeshKey || !o.MeshIdentity {
 		actions = append(actions, Action{Kind: ActionCreateMeshIdentity})
 	}
 	if d.MeshConfigured && !o.MeshUp {
@@ -31,12 +39,20 @@ func Plan(d Desired, o Observed) []Action {
 		return actions
 	}
 
+	// a container is boxed when it is created; a box rebuilt under one that has not started is
+	// open, so the container is built again
 	container := o.Container
-	if o.ContainerImage != d.Run.Image || o.ContainerRevision != d.Revision {
+	unboxed := container == vo.ContainerCreated && !o.Fenced
+	if o.ContainerImage != d.Run.Image || o.ContainerRevision != d.Revision || unboxed {
 		if container.Running() {
 			if !d.Start {
 				actions = append(actions, Action{Kind: ActionStopContainer})
 			}
+			return actions
+		}
+		// a finished job is not run again on a new place: only a deploy, which clears start, hands
+		// out the next container
+		if container == vo.ContainerExited && d.Start {
 			return actions
 		}
 		kind := ActionCreateContainer
@@ -57,5 +73,25 @@ func Plan(d Desired, o Observed) []Action {
 }
 
 func Prepared(d Desired, o Observed) bool {
-	return d.Reserved && o.Drained && !o.ForeignGPUWork && o.HasImage(d.BaseImage) && o.MeshKey
+	return d.Reserved && o.Drained && !o.ForeignGPUWork && o.HasImage(d.BaseImage) && o.MeshKey && o.MeshIdentity
+}
+
+func Unprepared(d Desired, o Observed) string {
+	if !d.Reserved {
+		return "not reserved"
+	}
+	waiting := make([]string, 0, 4)
+	if !o.Drained {
+		waiting = append(waiting, "node not drained from inference")
+	}
+	if o.ForeignGPUWork {
+		waiting = append(waiting, "foreign work on the gpus")
+	}
+	if !o.HasImage(d.BaseImage) {
+		waiting = append(waiting, "base image not pulled")
+	}
+	if !o.MeshKey || !o.MeshIdentity {
+		waiting = append(waiting, "no mesh identity")
+	}
+	return strings.Join(waiting, ", ")
 }

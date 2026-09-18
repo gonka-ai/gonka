@@ -11,6 +11,7 @@ var (
 	ErrGPUsExceeded      = shared.New("GPUS_EXCEEDED", shared.ErrValidation, "requested gpus exceed the host limit")
 	ErrDiskExceeded      = shared.New("DISK_EXCEEDED", shared.ErrValidation, "requested disk exceeds the host limit")
 	ErrSourcesExceeded   = shared.New("SOURCES_EXCEEDED", shared.ErrValidation, "requested outside sources exceed the host limit")
+	ErrEnvReserved       = shared.New("ENV_RESERVED", shared.ErrValidation, "environment names a variable the host sets itself: the placement, or an NVIDIA_ one")
 	ErrImagesDiffer      = shared.New("IMAGES_DIFFER", shared.ErrConflict, "nodes hold different images")
 	ErrNoNodes           = shared.New("NO_NODES", shared.ErrValidation, "no nodes in the run")
 	ErrStatusUnknown     = shared.New("STATUS_UNKNOWN", shared.ErrUnavailable, "a node did not report the image it holds")

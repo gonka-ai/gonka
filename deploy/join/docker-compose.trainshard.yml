@@ -34,11 +34,12 @@ services:
       - .inference:/root/.inference:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - ${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}:${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}
-    ports:
-      - "${TRAINSHARD_MESH_PORTS:-51820-51827}:${TRAINSHARD_MESH_PORTS:-51820-51827}/udp"
+    # the mesh ports are not published: the daemon opens them in the host namespace (pid: host),
+    # so a mesh outlives a restart and a docker-proxy on the same ports would take them away
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
+      - SYS_PTRACE
     pid: host
     deploy:
       resources:

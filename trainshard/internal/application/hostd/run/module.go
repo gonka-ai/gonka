@@ -12,6 +12,7 @@ import (
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/ports"
+	"trainshard/internal/domain/shared/vo"
 )
 
 type Deps struct {
@@ -36,16 +37,17 @@ type Module struct {
 
 func New(cfg Config, deps Deps) *Module {
 	converge := run.NewConverger(deps.Reservations, deps.Runs, deps.Machine, deps.Clock, cfg.Patience)
+	once := run.NewOnce(deps.Requests)
 
 	return &Module{
 		admin: api.NewAdmin(cfg.Participant, usecases.NewAbortUseCase(deps.Chain, deps.Submitter)),
-		endpoints: api.NewEndpoints(cfg.Participant, api.UseCases{
-			Deploy:     usecases.NewDeployUseCase(deps.Chain, deps.Runs, deps.Requests, deps.Machine.Containers, converge, deps.Clock, cfg.Limits),
-			Start:      usecases.NewStartUseCase(deps.Chain, deps.Runs, deps.Requests, deps.Machine.Containers, converge, deps.Clock),
-			Stop:       usecases.NewStopUseCase(deps.Chain, deps.Runs, deps.Requests, deps.Machine.Containers, converge, deps.Clock),
+		endpoints: api.NewEndpoints(vo.Host{Participant: cfg.Participant, Nodes: cfg.Nodes}, api.UseCases{
+			Deploy:     usecases.NewDeployUseCase(deps.Chain, deps.Runs, once, deps.Machine.Containers, converge, deps.Clock, cfg.Limits),
+			Start:      usecases.NewStartUseCase(deps.Chain, deps.Runs, once, deps.Machine.Containers, converge, deps.Clock),
+			Stop:       usecases.NewStopUseCase(deps.Chain, deps.Runs, once, deps.Machine.Containers, converge, deps.Clock),
 			Status:     usecases.NewStatusUseCase(deps.Chain, deps.Runs, deps.Machine, deps.Clock),
 			Report:     usecases.NewReportUseCase(deps.Chain, deps.Runs, deps.Machine),
-			Mesh:       usecases.NewApplyMeshUseCase(deps.Chain, deps.Requests, deps.Store, deps.Machine.Control, converge, deps.Clock),
+			Mesh:       usecases.NewApplyMeshUseCase(deps.Chain, once, deps.Store, deps.Runs, deps.Machine.Control, converge, deps.Clock),
 			Identities: usecases.NewCollectIdentitiesUseCase(deps.Chain, deps.Store, cfg.Nodes),
 			Probe:      usecases.NewProbeMeshUseCase(deps.Chain, deps.Store, deps.Network),
 		}),

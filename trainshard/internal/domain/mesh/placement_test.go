@@ -101,3 +101,29 @@ func TestConfigPlacement(t *testing.T) {
 		}
 	})
 }
+
+func TestRebuilds(t *testing.T) {
+	// arrange
+	before := configOf(nodeA, nodeB, nodeC)
+	cases := []struct {
+		name string
+		next mesh.Config
+		want bool
+	}{
+		{name: "the same list again", next: configOf(nodeA, nodeB, nodeC), want: false},
+		{name: "a peer left and the mesh shrank", next: configOf(nodeA, nodeB), want: true},
+		{name: "the node itself was dropped", next: configOf(nodeA, nodeC), want: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// act
+			got := mesh.Rebuilds(before, tc.next, nodeB)
+
+			// assert
+			if got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

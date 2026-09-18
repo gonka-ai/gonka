@@ -9,6 +9,11 @@ import (
 	"trainshard/internal/utils/syncx"
 )
 
+type Outcome struct {
+	Reserved bool
+	Waiting  string
+}
+
 // Converger is the only writer of a node's machine: the loop and every host command go through
 // it, under one lock per node
 type Converger struct {
@@ -24,7 +29,7 @@ func NewConverger(chain Reservations, runs RunStore, machine Machine, clock port
 	return &Converger{chain: chain, runs: runs, machine: machine, clock: clock, patience: patience}
 }
 
-func (c *Converger) Converge(ctx context.Context, node vo.NodeRef) error {
+func (c *Converger) Converge(ctx context.Context, node vo.NodeRef) (Outcome, error) {
 	defer c.applying.Lock(node)()
 
 	return c.converge(ctx, node)
@@ -38,62 +43,72 @@ func (c *Converger) Record(ctx context.Context, node vo.NodeRef, write func(cont
 	if err := write(ctx); err != nil {
 		return err
 	}
-	return c.converge(ctx, node)
+	_, err := c.converge(ctx, node)
+	return err
 }
 
-func (c *Converger) converge(ctx context.Context, node vo.NodeRef) error {
+func (c *Converger) converge(ctx context.Context, node vo.NodeRef) (Outcome, error) {
 	// 1. Load what the machine was last told to hold
 	state, _, err := c.runs.Load(ctx, node)
 	if err != nil {
-		return err
+		return Outcome{}, err
 	}
 
 	// 2. Ask the chain and the mesh what this node owes now
 	desired, err := ReadDesired(ctx, c.chain, c.machine.Mesh, node, state)
 	if err != nil {
-		return err
+		return Outcome{}, err
 	}
 
 	// 3. Record the shard before touching the machine
 	now := c.clock.Now()
 	if desired.Reserved && state.Reserve(desired.Shard, now) {
 		if err := RecordReservation(ctx, c.runs, node, desired.Shard, now); err != nil {
-			return err
+			return Outcome{}, err
 		}
 	}
 
 	// 4. Observe the machine
 	observed, err := c.machine.Observe(ctx, node, desired)
 	if err != nil {
-		return err
+		return Outcome{}, err
+	}
+	found := Outcome{Reserved: desired.Reserved}
+	if desired.Reserved {
+		found.Waiting = Unprepared(desired, observed)
 	}
 
-	// 5. Note whether the node is ready, so a node that slips mid-run is given the same wait a
-	// fresh one gets rather than none at all
+	// 5. Note whether the node is ready; a node that slips mid-run gets the same wait a fresh one gets
 	if err := TrackPreparedness(ctx, c.runs, node, &state, desired, observed, now); err != nil {
-		return err
+		return found, err
 	}
 
-	// 6. Hand back a node that is out of time; cleanup runs on the next pass
+	// 6. Hand back a node that is out of time, once; cleanup runs when the chain shows it
 	if reason, kick := Autokick(desired, observed, state, now, c.patience); kick {
-		return c.chain.Release(ctx, desired.Shard, node, reason)
+		if err := c.chain.Release(ctx, desired.Shard, node, reason); err != nil {
+			return found, err
+		}
+		return found, RecordRelease(ctx, c.runs, node, now)
 	}
 
 	// 7. Wipe what a shard this node no longer serves left behind, before it can be handed back
 	if err := c.machine.Sweep(ctx, node, desired.Shard); err != nil {
-		return err
+		return found, err
 	}
 
-	// 8. Apply the plan, stop on first error
+	// 8. Apply the plan, stop on first error; a handback forgets the run, so nothing is left to clear
 	for _, action := range Plan(desired, observed) {
 		if err := c.machine.Apply(ctx, node, desired, action); err != nil {
-			return RecordFault(ctx, c.runs, node, action, err, now)
+			return found, RecordFault(ctx, c.runs, node, action, err, now)
+		}
+		if action.Kind == ActionReturnNode {
+			return found, nil
 		}
 	}
 
 	// 9. Clear a fault the plan already solved
 	if state.Fault != nil {
-		return ClearFault(ctx, c.runs, node)
+		return found, ClearFault(ctx, c.runs, node)
 	}
-	return nil
+	return found, nil
 }

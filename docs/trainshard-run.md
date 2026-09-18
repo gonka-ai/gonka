@@ -16,7 +16,7 @@ export TRAINSHARD_SERVICE_NAME=trainshardd
 export TRAINSHARD_PARTICIPANT=gonka1...          # your address
 export TRAINSHARD_NODES=node1                    # nodes to lease, comma separated
 export TRAINSHARD_MESH_ENDPOINT=203.0.113.10     # address peers reach you at
-export TRAINSHARD_MESH_PORTS=51820-51827         # one per leased node
+export TRAINSHARD_MESH_PORTS=51820-51827         # one per leased node, udp, open on the host
 export TRAINSHARD_STATE_DIR=/mnt/xfs/trainshardd # xfs with prjquota
 export TRAINSHARD_CONTAINER_MEMORY_BYTES=137438953472
 export TRAINSHARD_CONTAINER_NANO_CPUS=8000000000
@@ -44,6 +44,18 @@ docker compose -f docker-compose.yml -f docker-compose.trainshard.yml up -d
 docker logs --tail 20 trainshardd
 inferenced query txs --query "message.action='/inference.inference.MsgRefreshTrainingNodeOptIn'" -o json | jq -r '.txs[-1].height'
 ```
+
+Once a node is reserved the same log says what it is still waiting on, one
+line per change, and `node prepared` when it is ready:
+
+```
+INFO node not prepared node_id=node1 waiting_for="node not drained from inference, base image not pulled"
+INFO node not prepared node_id=node1 waiting_for="no mesh identity"
+INFO node prepared node_id=node1
+```
+
+A node that waits on the same thing for longer than the daemon's patience
+(`TRAINSHARD_PREPARE_DEADLINE`, default 30m) is handed back to the chain.
 
 ## On the coordinator
 
@@ -106,11 +118,12 @@ inferenced tx gov vote $(inferenced query gov proposals -o json | jq -r '.propos
   --from <key> --gas auto --gas-adjustment 1.5 --yes
 ```
 
-4. Point trainshardctl at the hosts and the chain:
+4. Point trainshardctl at the hosts and the chain. A host is reached through the
+   participant's proxy, the same address and port the api is served on:
 
 ```
-echo '{"gonka1host1...":"http://host1.example.com:9700",
-       "gonka1host2...":"http://host2.example.com:9700"}' > hosts.json
+echo '{"gonka1host1...":"http://host1.example.com:8000",
+       "gonka1host2...":"http://host2.example.com:8000"}' > hosts.json
 
 export TRAINSHARD_HOSTS=$PWD/hosts.json
 export TRAINSHARD_CHAIN_GRPC=chain-host:9090
@@ -127,13 +140,14 @@ export TRAINSHARD_KEYRING_BACKEND=test      # default: file
 ```
 shard=$(trainshardctl assemble <trainshard-proposal-id>)
 trainshardctl prepare $shard --wait 5m        # default: 30m
+trainshardctl status $shard                   # PREPARED true; REASON says what a false one waits on
 ```
 
 2. Place and start the run:
 
 ```
 trainshardctl deploy $shard --image myrepo/trainer@sha256:... --gpus 1 --disk-bytes 2147483648 \
-  --env STEPS=60 --env NCCL_SOCKET_IFNAME=ts0
+  --env STEPS=60
 trainshardctl start $shard
 trainshardctl status $shard                   # every node running, MESH true
 ```

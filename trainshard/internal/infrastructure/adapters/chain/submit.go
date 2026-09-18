@@ -89,7 +89,7 @@ func (s *Signer) Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 		Participant:  string(node.Participant),
 		NodeId:       string(node.NodeID),
 		Reason:       string(reason),
-		RequestId:    fmt.Sprintf("release/%s/%s/%s", shardID, node.NodeID, reason),
+		RequestId:    fmt.Sprintf("release/%s/%s/%s/%s", shardID, node.Participant, node.NodeID, reason),
 	})
 }
 

@@ -3,6 +3,7 @@ package usecases_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	usecases "trainshard/internal/application/hostd/run/use_cases"
@@ -93,5 +94,63 @@ func TestApplyMeshBringsTheInterfaceUpBeforeItAnswers(t *testing.T) {
 	}
 	if !f.network.up {
 		t.Fatal("the peer list must be applied within the request, not left to the next tick")
+	}
+}
+
+func TestApplyMeshRebuildsAContainerWhosePlaceOnTheMeshMoved(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	record := activeShard()
+	record.Nodes = append(record.Nodes, shard.ReservedNode{Ref: nodeB, ModelID: "model-1"})
+	f.chain.shards[shardID] = record
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if _, err := f.applyMesh().Execute(ctx, meshCommand(t, nodeA, nodeB)); err != nil {
+		t.Fatalf("apply mesh: %v", err)
+	}
+	revision := f.runs.states[nodeA].Revision
+	f.rec.reset()
+
+	smaller := meshCommand(t, nodeA)
+	smaller.RequestID = "req-2"
+	results, err := f.applyMesh().Execute(ctx, smaller)
+
+	if err != nil || len(results) != 1 || !results[0].OK() {
+		t.Fatalf("got %+v %v, want the smaller list accepted", results, err)
+	}
+	if f.runs.states[nodeA].Revision != revision+1 {
+		t.Fatalf("got revision %d, want %d: the container carries its place on the mesh", f.runs.states[nodeA].Revision, revision+1)
+	}
+	if !slices.Contains(f.rec.sequence(), "mesh.apply") || len(f.network.applied) != 1 {
+		t.Fatalf("got %v with peers %v, want the interface brought to the new list", f.rec.sequence(), f.network.applied)
+	}
+}
+
+func TestApplyMeshLeavesTheContainerAloneWhenTheListIsTheSame(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if _, err := f.applyMesh().Execute(ctx, meshCommand(t, nodeA)); err != nil {
+		t.Fatalf("apply mesh: %v", err)
+	}
+	revision := f.runs.states[nodeA].Revision
+	f.rec.reset()
+
+	again := meshCommand(t, nodeA)
+	again.RequestID = "req-2"
+	if _, err := f.applyMesh().Execute(ctx, again); err != nil {
+		t.Fatalf("apply mesh: %v", err)
+	}
+
+	if f.runs.states[nodeA].Revision != revision {
+		t.Fatalf("got revision %d, want %d unchanged", f.runs.states[nodeA].Revision, revision)
+	}
+	if slices.Contains(f.rec.sequence(), "mesh.apply") {
+		t.Fatalf("got %v, want an interface already holding the list left as it is", f.rec.sequence())
 	}
 }

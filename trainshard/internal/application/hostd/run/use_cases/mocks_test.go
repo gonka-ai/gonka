@@ -100,6 +100,7 @@ type chainStub struct {
 	reservations map[vo.NodeRef]vo.ShardID
 	hardware     vo.GPUInventory
 	releases     []vo.ReleaseReason
+	lagging      bool
 	err          error
 }
 
@@ -147,7 +148,9 @@ func (c *chainStub) Release(_ context.Context, shardID vo.ShardID, node vo.NodeR
 		return c.err
 	}
 	c.releases = append(c.releases, vo.ReleaseReason(fmt.Sprintf("%s:%s:%s", shardID, node.NodeID, reason)))
-	delete(c.reservations, node)
+	if !c.lagging {
+		delete(c.reservations, node)
+	}
 	return nil
 }
 
@@ -323,6 +326,7 @@ func (v *volumesStub) Wipe(_ context.Context, shardID vo.ShardID, _ vo.NodeRef) 
 type egressStub struct {
 	rec     *recorder
 	sources []vo.Source
+	fenced  bool
 	err     error
 }
 
@@ -332,7 +336,12 @@ func (e *egressStub) Allow(_ context.Context, _ vo.ShardID, _ vo.NodeRef, source
 		return nil, e.err
 	}
 	e.sources = sources
+	e.fenced = true
 	return nil, nil
+}
+
+func (e *egressStub) Fenced(context.Context, vo.ShardID, vo.NodeRef) (bool, error) {
+	return e.fenced, nil
 }
 
 type gpuStub struct {
@@ -363,9 +372,10 @@ func (g *gpuStub) KillTraining(context.Context, vo.ShardID, vo.NodeRef) error {
 }
 
 type meshNetworkStub struct {
-	rec  *recorder
-	keys map[vo.ShardID]bool
-	up   bool
+	rec     *recorder
+	keys    map[vo.ShardID]bool
+	up      bool
+	applied []mesh.Peer
 }
 
 func (m *meshNetworkStub) Shards(context.Context, vo.NodeRef) ([]vo.ShardID, error) {
@@ -384,14 +394,18 @@ func (m *meshNetworkStub) Identity(_ context.Context, shardID vo.ShardID, node v
 	return mesh.Member{Node: node, Address: "10.0.0.1", PublicKey: "public-key"}, nil
 }
 
-func (m *meshNetworkStub) Apply(context.Context, vo.ShardID, vo.NodeRef, []mesh.Peer) error {
+func (m *meshNetworkStub) Apply(_ context.Context, _ vo.ShardID, _ vo.NodeRef, peers []mesh.Peer) error {
 	m.rec.record("mesh.apply")
-	m.up = true
+	m.up, m.applied = true, peers
 	return nil
 }
 
-func (m *meshNetworkStub) Present(_ context.Context, shardID vo.ShardID, _ vo.NodeRef) (bool, bool, error) {
-	return m.keys[shardID], m.up, nil
+func (m *meshNetworkStub) Present(_ context.Context, shardID vo.ShardID, _ vo.NodeRef, peers []mesh.Peer) (bool, bool, error) {
+	up := m.up
+	if peers != nil {
+		up = up && fmt.Sprint(m.applied) == fmt.Sprint(peers)
+	}
+	return m.keys[shardID], up, nil
 }
 
 func (m *meshNetworkStub) Reach(context.Context, vo.ShardID, vo.NodeRef, mesh.Peer) (bool, error) {
@@ -403,7 +417,7 @@ func (m *meshNetworkStub) Interface(vo.NodeRef) (string, error) { return "ts0", 
 func (m *meshNetworkStub) Remove(_ context.Context, shardID vo.ShardID, _ vo.NodeRef) error {
 	m.rec.record("mesh.remove")
 	delete(m.keys, shardID)
-	m.up = false
+	m.up, m.applied = false, nil
 	return nil
 }
 
@@ -455,6 +469,7 @@ type controlStub struct {
 	rec     *recorder
 	drained bool
 	stuck   bool
+	refuse  error
 }
 
 func (c *controlStub) Drained(context.Context, vo.NodeRef) (bool, error) { return c.drained, nil }
@@ -467,6 +482,9 @@ func (c *controlStub) Drain(context.Context, vo.NodeRef) (bool, error) {
 
 func (c *controlStub) Return(context.Context, vo.NodeRef) error {
 	c.rec.record("control.return")
+	if c.refuse != nil {
+		return c.refuse
+	}
 	c.drained = false
 	return nil
 }
@@ -478,6 +496,7 @@ type fixture struct {
 	chain      *chainStub
 	runs       *runStoreStub
 	log        *requestLogStub
+	once       *run.Once
 	images     *imagesStub
 	containers *containersStub
 	volumes    *volumesStub
@@ -517,6 +536,7 @@ func newFixture() *fixture {
 		patience:   time.Hour,
 	}
 	f.converger = run.NewConverger(f.chain, f.runs, f.machine(), f.clock, f.patience)
+	f.once = run.NewOnce(f.log)
 	f.reconciler = usecases.NewReconcileUseCase(f.converger)
 	return f
 }
@@ -541,15 +561,15 @@ func (f *fixture) reconcile() *usecases.ReconcileUseCase {
 }
 
 func (f *fixture) deploy() *usecases.DeployUseCase {
-	return usecases.NewDeployUseCase(f.chain, f.runs, f.log, f.containers, f.converger, f.clock, f.limits)
+	return usecases.NewDeployUseCase(f.chain, f.runs, f.once, f.containers, f.converger, f.clock, f.limits)
 }
 
 func (f *fixture) start() *usecases.StartUseCase {
-	return usecases.NewStartUseCase(f.chain, f.runs, f.log, f.containers, f.converger, f.clock)
+	return usecases.NewStartUseCase(f.chain, f.runs, f.once, f.containers, f.converger, f.clock)
 }
 
 func (f *fixture) stop() *usecases.StopUseCase {
-	return usecases.NewStopUseCase(f.chain, f.runs, f.log, f.containers, f.converger, f.clock)
+	return usecases.NewStopUseCase(f.chain, f.runs, f.once, f.containers, f.converger, f.clock)
 }
 
 func (f *fixture) status() *usecases.StatusUseCase {
@@ -565,12 +585,12 @@ func (f *fixture) report() *usecases.ReportUseCase {
 }
 
 func (f *fixture) applyMesh() *usecases.ApplyMeshUseCase {
-	return usecases.NewApplyMeshUseCase(f.chain, f.log, f.store, f.control, f.converger, f.clock)
+	return usecases.NewApplyMeshUseCase(f.chain, f.once, f.store, f.runs, f.control, f.converger, f.clock)
 }
 
 func (f *fixture) prepared(ctx context.Context) error {
 	for range 3 {
-		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 			return err
 		}
 	}
@@ -591,7 +611,7 @@ func (f *fixture) meshed(ctx context.Context) error {
 	if err := f.store.SaveConfig(ctx, shardID, nodeA, config); err != nil {
 		return err
 	}
-	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		return err
 	}
 	f.rec.reset()
