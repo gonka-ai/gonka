@@ -20,7 +20,7 @@ Usage:
       --mlnode-url http://127.0.0.1:8080 \\
       --model Qwen/Qwen3-0.6B \\
       --seq-len 1024 --k-dim 12 \\
-      --num-nonces 32 --batch-size 32 \\
+      --num-nonces 32 \\
       --out artifacts/qwen-qwen3-0.6b.json
 """
 
@@ -49,8 +49,12 @@ def main() -> int:
     p.add_argument("--node-id", type=int, default=0)
     p.add_argument("--node-count", type=int, default=1)
     p.add_argument("--num-nonces", type=int, default=32, help="How many leading nonces (0..N-1) to bake")
-    p.add_argument("--batch-size", type=int, default=32,
-                   help="batch_size sent to /pow/generate (default 32)")
+    p.add_argument("--batch-size", type=int, default=None,
+                   help="batch_size sent to /pow/generate. Unset means: do not send batch_size, so the "
+                        "MLNode uses its POC_BATCH_SIZE_DEFAULT — the batch the node mines and validates "
+                        "with. A reference baked at another batch size differs on every nonce (batch "
+                        "composition changes the numerics), so leave this unset unless the node's default "
+                        "is what you pass.")
     p.add_argument("--timeout", type=float, default=900.0,
                    help="HTTP timeout for /pow/generate in seconds")
     p.add_argument("--dist-threshold", type=float, default=0.2,
@@ -83,14 +87,16 @@ def main() -> int:
         "node_count": args.node_count,
         "nonces": nonces,
         "params": {"model": args.model, "seq_len": args.seq_len, "k_dim": args.k_dim},
-        "batch_size": args.batch_size,
         "wait": True,
     }
+    if args.batch_size is not None:
+        payload["batch_size"] = int(args.batch_size)
 
     print(f"MLNode:      {base}")
     print(f"Model:       {args.model}")
     print(f"Nonces:      {len(nonces)} (0..{len(nonces) - 1})")
-    print(f"seq_len:     {args.seq_len}    k_dim: {args.k_dim}    batch_size: {args.batch_size}")
+    print(f"seq_len:     {args.seq_len}    k_dim: {args.k_dim}    batch_size: "
+          f"{args.batch_size if args.batch_size is not None else 'unset (node POC_BATCH_SIZE_DEFAULT)'}")
     print("Sending POST /inference/pow/generate (wait=true, no validation)...")
 
     r = requests.post(f"{base}{API}/inference/pow/generate", json=payload, timeout=args.timeout)
@@ -131,6 +137,7 @@ def main() -> int:
         "node_id": args.node_id,
         "node_count": args.node_count,
         "dist_threshold": args.dist_threshold,
+        "collection_batch_size": args.batch_size,  # None = the node's POC_BATCH_SIZE_DEFAULT at bake time
         "additional_args": additional_args,
         "source": args.source,
         "generated_at": datetime.now().isoformat(),
