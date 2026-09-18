@@ -1060,6 +1060,8 @@ For a fourth replica, copy `docker-compose.versiond3.yml`, replace `3` with `4`,
 
 ## Operate the deployment
 
+Each `versiond` replica is a member of the router pool.
+
 Run the commands below from `deploy/join`. Manage routers on the public proxy host and `versiond` replicas on the host running the replica.
 
 ### Manage routers
@@ -1129,7 +1131,7 @@ Run the readiness checks above before restarting another replica.
 
 ### Replace a member
 
-Each `versiond` replica is a member of the router pool. To update a replica’s image, replace its container using the procedure below.
+To update a replica’s image, replace its container using the procedure below.
 
 Keep the same database, participant identity, protocol list and data mounts. Replace one replica at a time; another replica must serve each protocol.
 
