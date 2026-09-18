@@ -243,11 +243,9 @@ services:
 EOF
 ```
 
-**Local PostgreSQL:** go to [Step 3](#step-3---start-the-deployment). **External PostgreSQL:** complete §2.2 first.
-
 #### 2.2 External or managed PostgreSQL
 
-For managed or self-managed PostgreSQL on a separate host or cluster. Complete §2.1 first.
+Skip this section if you use local Compose PostgreSQL.
 
 Create the database and role through the provider, or run:
 
