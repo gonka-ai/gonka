@@ -50,6 +50,21 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 	for _, vw := range epochGroup.GroupData.ValidationWeights {
 		weights[vw.MemberAddress] = vw.Weight
 	}
+	// reduce sampling weight to free (non-reserved) nodes, dropping fully reserved hosts
+	freeModelWeights := k.collectModelFreeWeights(goCtx, epochIndex, msg.ModelId)
+	for addr, weight := range weights {
+		freeWeight, tracked := freeModelWeights[addr]
+		if !tracked {
+			continue
+		}
+		if freeWeight <= 0 {
+			delete(weights, addr)
+			continue
+		}
+		if freeWeight < weight {
+			weights[addr] = freeWeight
+		}
+	}
 	sortedEntries, totalWeight := calculations.PrepareSortedEntries(weights)
 	if totalWeight <= 0 {
 		return nil, fmt.Errorf("total weight is zero")

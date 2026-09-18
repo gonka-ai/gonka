@@ -1,0 +1,59 @@
+services:
+  trainshardd:
+    image: ghcr.io/gonka-ai/trainshardd:${TRAINSHARD_VERSION:-latest}
+    hostname: trainshardd
+    environment:
+      - TRAINSHARD_PARTICIPANT=${TRAINSHARD_PARTICIPANT}
+      - TRAINSHARD_NODES=${TRAINSHARD_NODES}
+      - TRAINSHARD_MACHINE=docker
+      # the chain says what this host reserves, and the dapi signs for it and owns the node the
+      # training takes out of inference; both are on this machine's compose network unless the
+      # api and the chain node run on another machine of the same participant
+      - TRAINSHARD_CHAIN_GRPC=${TRAINSHARD_CHAIN_GRPC:-node:9090}
+      - TRAINSHARD_DAPI=${TRAINSHARD_DAPI:-http://api:9200}
+      # where a coordinator reaches this daemon, published on chain with the opt-in
+      - TRAINSHARD_ENDPOINT=${TRAINSHARD_ENDPOINT}
+      - TRAINSHARD_KEY_NAME=${KEY_NAME}
+      - TRAINSHARD_KEYRING_DIR=/root/.inference
+      - TRAINSHARD_KEYRING_BACKEND=${KEYRING_BACKEND:-file}
+      - TRAINSHARD_KEYRING_PASSWORD=${KEYRING_PASSWORD}
+      - TRAINSHARD_MESH_ENDPOINT=${TRAINSHARD_MESH_ENDPOINT}
+      - TRAINSHARD_MESH_PORTS=${TRAINSHARD_MESH_PORTS:-51820-51827}
+      - TRAINSHARD_LISTEN=0.0.0.0:9700
+      - TRAINSHARD_ADMIN_LISTEN=127.0.0.1:9701
+      - TRAINSHARD_STATE_DIR=${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}
+      - TRAINSHARD_VOLUME_MOUNT=${TRAINSHARD_VOLUME_MOUNT:-${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}}
+      - TRAINSHARD_MAX_DISK_BYTES=${TRAINSHARD_MAX_DISK_BYTES:-1099511627776}
+      - TRAINSHARD_MIN_FREE_DISK_BYTES=${TRAINSHARD_MIN_FREE_DISK_BYTES:-1099511627776}
+      - TRAINSHARD_CONTAINER_USER=${TRAINSHARD_CONTAINER_USER:-1000:1000}
+      - TRAINSHARD_CONTAINER_MEMORY_BYTES=${TRAINSHARD_CONTAINER_MEMORY_BYTES}
+      - TRAINSHARD_CONTAINER_NANO_CPUS=${TRAINSHARD_CONTAINER_NANO_CPUS}
+      - TRAINSHARD_DENIED_CIDRS=${TRAINSHARD_DENIED_CIDRS:-}
+      - TRAINSHARD_LOG_LEVEL=${TRAINSHARD_LOG_LEVEL:-info}
+      - TRAINSHARD_LOG_FORMAT=${TRAINSHARD_LOG_FORMAT:-text}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=utility
+    volumes:
+      - .inference:/root/.inference:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}:${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}
+    # the proxy on this machine reaches the daemon over the compose network. A GPU machine
+    # behind another machine's proxy sets TRAINSHARD_BIND to the private address that proxy
+    # reaches it at, the way the mlnode publishes its port for the api
+    ports:
+      - "${TRAINSHARD_BIND:-127.0.0.1}:9700:9700"
+    # the mesh ports are not published: the daemon opens them in the host namespace (pid: host),
+    # so a mesh outlives a restart and a docker-proxy on the same ports would take them away
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_PTRACE
+    pid: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [utility]
+    restart: always

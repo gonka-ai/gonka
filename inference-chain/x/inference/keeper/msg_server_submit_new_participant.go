@@ -16,6 +16,12 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 	// Check if participant already exists. If it does, restrict updates to only
 	// ValidatorKey, WorkerKey, and Url as per requirements.
 	if existing, found := k.GetParticipant(ctx, msg.GetCreator()); found {
+		// a host with a reserved node may not rotate its validator or worker key
+		changesValidatorKey := msg.ValidatorKey != "" && msg.ValidatorKey != existing.ValidatorKey
+		changesWorkerKey := msg.WorkerKey != "" && msg.WorkerKey != existing.WorkerPublicKey
+		if (changesValidatorKey || changesWorkerKey) && k.HasActiveTrainReservation(goCtx, msg.GetCreator()) {
+			return nil, types.ErrTrainshardNodeReserved.Wrap("cannot rotate keys while a node is reserved")
+		}
 		// Preserve all existing fields and update only the allowed ones
 		if msg.Url != "" {
 			existing.InferenceUrl = msg.Url

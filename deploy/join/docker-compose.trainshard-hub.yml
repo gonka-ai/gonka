@@ -1,0 +1,13 @@
+# Publishes the api and the chain node to this participant's other GPU machines. The api's
+# admin port signs any message with the api's key for whoever reaches it: bind to a VPN
+# address the GPU machines alone are on, never a shared LAN.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.trainshard-hub.yml up -d
+#   (plus -f docker-compose.trainshard.yml when this machine leases GPUs of its own)
+services:
+  api:
+    ports:
+      - "${TRAINSHARD_HUB_BIND:?the vpn address the gpu machines reach this host at}:9200:9200"
+  node:
+    ports:
+      - "${TRAINSHARD_HUB_BIND:?the vpn address the gpu machines reach this host at}:9090:9090"
