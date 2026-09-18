@@ -57,7 +57,7 @@ export ORACLE_FILTER_IMAGE=python:3.12-alpine
 4. Shared PostgreSQL; a separate data directory for each replica. Do not start a second dapi with the same keys.
 5. Docker Compose **2.24.4+**, Bash, Python 3, Git, `tar`, `curl`, `jq`, `flock`, `sha256sum`, `timeout`, `xargs`. Remote hosts also need `ssh`, `psql` and SSH access between A and B.
 
-Only put PostgreSQL-capable versions (v4+) into the HA pool. Migration from pre-HA deployments such as `v3` is not covered here.
+Local HA requires protocol v4 or later. Rolling updates and remote replicas require v5 or later for every served protocol. Migration from protocols earlier than v4 is not covered here.
 
 ## Install a new host
 
@@ -381,9 +381,9 @@ For routine updates, run only the service checks in §4.1.
 
 ## Upgrade an existing host
 
-Upgrading a host serving v4/v4.1 requires downtime.
+Rolling updates require v5 or later for every served protocol. Hosts serving earlier protocols must use [Update with downtime](#update-with-downtime).
 
-This procedure requires a PostgreSQL-backed host serving only v4 and later protocols, with site settings in `config.env` and separate Compose overrides in a Git checkout. Hosts running v3 require a separate migration procedure.
+This upgrade procedure supports PostgreSQL-backed hosts serving v4 or later, with site settings in `config.env` and separate Compose overrides in a Git checkout. Protocols earlier than v4 require a separate migration procedure.
 
 ### Back up PostgreSQL and deployment files
 
@@ -652,7 +652,7 @@ After `System identifiers match.`, continue with [Update with downtime](#update-
 
 Schedule maintenance: replacing the public proxy can interrupt connections.
 
-Rolling updates require all served protocols to be v5 or later. If the host serves v4/v4.1, use the downtime procedure below. Leave `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled.
+Rolling updates require v5 or later for every served protocol. If any served protocol is earlier than v5, use the downtime procedure below. Leave `UPDATE_SKIP_POSTGRES_PROBE` and `UPDATE_ACCEPT_DATABASE_CHANGE` disabled.
 
 #### Update with downtime
 
@@ -751,7 +751,7 @@ source ./config.env
 docker compose up -d --no-deps oracle-filter
 ```
 
-If the host serves v4/v4.1, use [Update with downtime](#update-with-downtime). Rolling updates require all served protocols to be v5 or later. Do not proceed if a check times out, returns HTTP 503 or fails to confirm that the replicas use the same database.
+Rolling updates require v5 or later for every served protocol. If any served protocol is earlier than v5, use [Update with downtime](#update-with-downtime). Do not proceed if a check times out, returns HTTP 503 or fails to confirm that the replicas use the same database.
 
 Check every protocol on every replica:
 
@@ -800,7 +800,7 @@ Run the [service checks](#41-check-the-running-services). To enable a new protoc
 
 ## Add a remote replica
 
-This procedure requires protocol v5 or later for every protocol served by the host. These versions support the shared-database check required before adding a remote replica.
+Remote replicas require v5 or later for every served protocol. Earlier protocols do not support the shared-database check required by this procedure.
 
 Use a private network between machines. Do not start a second dapi with the same keys. A's public proxy and node remain single-instance.
 
