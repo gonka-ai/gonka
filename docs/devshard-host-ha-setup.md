@@ -45,6 +45,7 @@ export VERSIOND_ROUTER_IMAGE=ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5
 export PROXY_ROUTER_IMAGE=ghcr.io/gonka-ai/proxy-router:0.2.15-devshard-v5
 export PROXY_POLICY_IMAGE=ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5
 export ORACLE_FILTER_IMAGE=python:3.12-alpine
+export DEVSHARD_POSTGRES_IMAGE=postgres:16-alpine
 ```
 
 ## Prerequisites
@@ -114,7 +115,7 @@ docker run --rm --network none --read-only \
   --security-opt label=disable \
   --volume "$pg_dir:/target:ro" \
   --entrypoint /bin/true \
-  "${POSTGRES_MIGRATION_HELPER_IMAGE:-${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}}"
+  "$DEVSHARD_POSTGRES_IMAGE"
 ```
 
 If the command fails, stop and inspect the directory permissions:
