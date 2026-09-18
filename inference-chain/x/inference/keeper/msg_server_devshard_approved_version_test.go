@@ -38,7 +38,8 @@ func TestPutDevshardApprovedVersion(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, "v1", got.Name)
 	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount)
-	pol, found := k.GetVersionPolicy(wctx, "v1")
+	pol, found, err := k.GetVersionPolicy(wctx, "v1")
+	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
 
@@ -82,7 +83,8 @@ func TestDeleteDevshardApprovedVersion(t *testing.T) {
 	require.NoError(t, err)
 	_, found := k.GetApprovedVersion(wctx, "v2")
 	require.False(t, found)
-	pol, found := k.GetVersionPolicy(wctx, "v2")
+	pol, found, err := k.GetVersionPolicy(wctx, "v2")
+	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
 }
@@ -182,7 +184,8 @@ func TestPutDevshardApprovedVersion_PassCountKeepAndOverwrite(t *testing.T) {
 	got, found = k.GetApprovedVersion(wctx, "v-policy")
 	require.True(t, found)
 	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
-	pol, found := k.GetVersionPolicy(wctx, "v-policy")
+	pol, found, err := k.GetVersionPolicy(wctx, "v-policy")
+	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, pol.PassCount)
 
@@ -214,4 +217,16 @@ func TestPutDevshardApprovedVersion_PassCountKeepAndOverwrite(t *testing.T) {
 	got, found = k.GetApprovedVersion(wctx, "v-policy")
 	require.True(t, found)
 	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
+}
+
+func TestPassCountFor_MissingIsDerived(t *testing.T) {
+	k, _, ctx := setupMsgServer(t)
+	wctx := sdk.UnwrapSDKContext(ctx)
+
+	_, found, err := k.GetVersionPolicy(wctx, "never-seen")
+	require.NoError(t, err)
+	require.False(t, found)
+	got, err := k.PassCountFor(wctx, "never-seen")
+	require.NoError(t, err)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got)
 }

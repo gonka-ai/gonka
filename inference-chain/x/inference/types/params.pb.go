@@ -32,7 +32,7 @@ type DevshardPassCount int32
 const (
 	// Omitted JSON. Keep the stored policy; DERIVED if the name is new.
 	DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED DevshardPassCount = 0
-	// HostStats.validated, capped by finished * rate.
+	// HostStats.validated, capped by 2 * finished * validation_rate_bps / 10000 + 2.
 	DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED DevshardPassCount = 1
 	// Legacy scoring: assigned - missed - invalid.
 	DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED DevshardPassCount = 2

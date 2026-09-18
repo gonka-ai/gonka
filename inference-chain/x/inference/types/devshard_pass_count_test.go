@@ -27,8 +27,13 @@ func TestResolvePassCount(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, derived, got)
 
-	_, err = types.ResolvePassCount(nil, types.DevshardPassCount(99))
-	require.Error(t, err)
+	got, err = types.ResolvePassCount(nil, types.DevshardPassCount(99))
+	require.NoError(t, err)
+	require.Equal(t, derived, got, "unknown requested value is omitted → DERIVED for a new name")
+
+	got, err = types.ResolvePassCount(&sampled, types.DevshardPassCount(99))
+	require.NoError(t, err)
+	require.Equal(t, sampled, got, "unknown requested value keeps the stored policy")
 }
 
 func TestDevshardPassCountDerived(t *testing.T) {

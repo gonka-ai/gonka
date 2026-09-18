@@ -46,7 +46,10 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	// Policy store is the only source: empty allowlist is still permissive for
 	// which versions may settle, but scoring uses the recorded policy (DERIVED
 	// only when the name has never been seen).
-	passCount := k.PassCountFor(goCtx, msg.StateRootAndProtocolVersion)
+	passCount, err := k.PassCountFor(goCtx, msg.StateRootAndProtocolVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pass_count for version %q: %w", msg.StateRootAndProtocolVersion, err)
+	}
 	if err := VerifyDevshardSettlement(escrow, msg, devshardParams, approved, warmKeyChecker, passCount); err != nil {
 		return nil, err
 	}
