@@ -389,7 +389,10 @@ After all inferences are done:
 2. The gateway locally deactivates the devshard, runs finalization if needed, collects host signatures, and broadcasts `MsgSettleDevshardEscrow` on-chain.
 
 On-chain scoring of that payload (how `host_stats` become SPRT passes) is
-selected by the settlement protocol version tag, not by the gateway. See
+selected by the settlement protocol version tag, not by the gateway.
+`DevshardEscrowParams.apply_derived_pass_count` is **off** by default and
+ignored for SAMPLED versions; governance can turn it on for DERIVED names
+with `MsgUpdateParams`. See
 [upgrade.md Settlement pass_count](./upgrade.md#settlement-pass_count).
 
 The proxy holds the session open until finalization. Once finalized, the session cannot accept new inferences.

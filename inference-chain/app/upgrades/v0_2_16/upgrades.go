@@ -324,14 +324,19 @@ func migrateDevshardApprovedVersions(ctx context.Context, k keeper.Keeper) error
 		return err
 	}
 	if params.DevshardEscrowParams == nil {
-		return stampUnpoliciedApprovedVersionsDerived(ctx, k)
+		params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
+		params.DevshardEscrowParams.ApplyDerivedPassCount = false
+		if err := k.SetParams(ctx, params); err != nil {
+			return err
+		}
+		return stampUnpoliciedApprovedVersionsSampled(ctx, k)
 	}
 	for i, v := range params.DevshardEscrowParams.ApprovedVersions {
 		if v == nil {
 			return fmt.Errorf("approved_versions[%d] cannot be null", i)
 		}
 		copied := *v
-		copied.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
+		copied.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
 		if err := copied.Validate(); err != nil {
 			return fmt.Errorf("approved_versions[%d]: %w", i, err)
 		}
@@ -344,17 +349,18 @@ func migrateDevshardApprovedVersions(ctx context.Context, k keeper.Keeper) error
 	}
 	n := len(params.DevshardEscrowParams.ApprovedVersions)
 	params.DevshardEscrowParams.ApprovedVersions = nil
+	params.DevshardEscrowParams.ApplyDerivedPassCount = false
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
-	if err := stampUnpoliciedApprovedVersionsDerived(ctx, k); err != nil {
+	if err := stampUnpoliciedApprovedVersionsSampled(ctx, k); err != nil {
 		return err
 	}
 	k.LogInfo("migrated approved devshard versions out of params", types.Upgrades, "count", n)
 	return nil
 }
 
-func stampUnpoliciedApprovedVersionsDerived(ctx context.Context, k keeper.Keeper) error {
+func stampUnpoliciedApprovedVersionsSampled(ctx context.Context, k keeper.Keeper) error {
 	versions, err := k.GetApprovedVersions(ctx)
 	if err != nil {
 		return err
@@ -367,7 +373,7 @@ func stampUnpoliciedApprovedVersionsDerived(ctx context.Context, k keeper.Keeper
 		if ok {
 			continue
 		}
-		v.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
+		v.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
 		if err := k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{Name: v.Name, PassCount: v.PassCount}); err != nil {
 			return err
 		}

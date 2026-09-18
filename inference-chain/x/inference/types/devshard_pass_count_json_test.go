@@ -58,4 +58,10 @@ func TestDevshardPassCountJSONNames(t *testing.T) {
 			require.Equal(t, tc.want, got.PassCount, raw)
 		})
 	}
+
+	t.Run("omitted pass_count field", func(t *testing.T) {
+		var got types.DevshardApprovedVersion
+		require.NoError(t, cdc.UnmarshalJSON([]byte(`{"name":"v4"}`), &got))
+		require.Equal(t, unspecified, got.PassCount)
+	})
 }

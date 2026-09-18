@@ -419,11 +419,16 @@ message DelegationParams {
 // UNSPECIFIED (does not fail the tx).
 enum DevshardPassCount {
   // Omitted JSON, or any value that is not SAMPLED/DERIVED. Keep the stored
-  // policy; DERIVED if the name is new.
+  // policy; DERIVED if the name is new (Put). Unstamped genesis / upgrade
+  // names still record SAMPLED.
   DEVSHARD_PASS_COUNT_UNSPECIFIED = 0;
   // HostStats.validated, capped by 2 * finished * validation_rate_bps / 10000 + 2.
+  // Older payloads that omit validated/finished still settle (0 passes).
+  // Live names without a recorded policy (upgrade stamp, PassCountFor miss)
+  // score as SAMPLED.
   DEVSHARD_PASS_COUNT_SAMPLED = 1;
-  // Legacy scoring: assigned - missed - invalid.
+  // assigned - missed - invalid. Default for a new Put name when pass_count
+  // is omitted or mistyped.
   DEVSHARD_PASS_COUNT_DERIVED = 2;
 }
 
@@ -477,6 +482,13 @@ message DevshardEscrowParams {
   uint32 validation_rate = 16;
   uint32 vote_threshold_factor = 17; // percent, e.g. 50 == 50%
   uint32 default_auto_seal_every_n_nonces = 18;
+  // Chain-wide, DERIVED names only. SAMPLED names always credit capped
+  // HostStats.validated and never compute or log derived. When false
+  // (default), DERIVED names credit sampled and log derived
+  // assigned-missed-invalid (warn if it exceeds the SPRT cap). When true,
+  // DERIVED names apply derived for SPRT. Per-name pass_count still selects
+  // settlement verification.
+  bool apply_derived_pass_count = 19;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

@@ -86,8 +86,8 @@ func (k Keeper) GetVersionPolicies(ctx context.Context) ([]types.DevshardVersion
 }
 
 // PassCountFor returns the recorded policy for version. Unknown names, including
-// the empty allowlist used in tests/dev, score as DERIVED so preexisting
-// settlements keep assigned-missed-invalid semantics. Store or decode failures
+// the empty allowlist used in tests/dev, score as SAMPLED so preexisting
+// settlements keep capped-validated semantics. Store or decode failures
 // are returned; they must not be treated as a missing policy.
 func (k Keeper) PassCountFor(ctx context.Context, version string) (types.DevshardPassCount, error) {
 	p, ok, err := k.GetVersionPolicy(ctx, version)
@@ -97,7 +97,7 @@ func (k Keeper) PassCountFor(ctx context.Context, version string) (types.Devshar
 	if ok {
 		return p.PassCount, nil
 	}
-	return types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, nil
+	return types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, nil
 }
 
 // RecordVersionPassCount applies ResolvePassCount and writes the result.

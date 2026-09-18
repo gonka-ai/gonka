@@ -35,17 +35,21 @@ func ValidateStoredDevshardPassCount(c DevshardPassCount) error {
 }
 
 // Derived reports whether scoring uses assigned-missed-invalid rather than
-// HostStats.validated. Only an explicit SAMPLED value takes the new path;
-// omitted/UNSPECIFIED is treated as DERIVED.
+// HostStats.validated. Only an explicit DERIVED value takes that path;
+// omitted/UNSPECIFIED at settlement is treated as SAMPLED.
 func (c DevshardPassCount) Derived() bool {
-	return c != DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
+	return c == DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
 }
 
-// ResolvePassCount is the write rule for Put / genesis:
+// ResolvePassCount is the write rule for Put:
 //   - omitted (UNSPECIFIED) + existing policy → keep the stored value
 //   - omitted (UNSPECIFIED) + new name → DERIVED
 //   - explicit SAMPLED or DERIVED → overwrite the stored policy
 //   - any other requested value → same as omitted
+//
+// Genesis import of unstamped / params-list names still records SAMPLED
+// (those are pre-pass_count binaries). PassCountFor of a missing name is
+// also SAMPLED so live old settlements keep the old path.
 func ResolvePassCount(existing *DevshardPassCount, requested DevshardPassCount) (DevshardPassCount, error) {
 	requested = normalizeRequestedPassCount(requested)
 	if requested == DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED {

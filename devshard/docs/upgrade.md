@@ -120,13 +120,13 @@ passes (`CurrentEpochStats.ValidatedInferences`). That choice is a per-name
 
 | `pass_count` | Passes credited | When to use |
 |--------------|-----------------|-------------|
-| `DEVSHARD_PASS_COUNT_DERIVED` | `assigned - missed - invalid` (legacy) | Binaries that do not report `validated` / `finished` |
-| `DEVSHARD_PASS_COUNT_SAMPLED` | `HostStats.validated`, capped by `2 * finished * validation_rate_bps / 10000 + 2` | Binaries that emit those fields so unsampled work is not counted as a pass |
+| `DEVSHARD_PASS_COUNT_DERIVED` | `assigned - missed - invalid` (opt-in via `apply_derived_pass_count`) | **Default for a new Put name** when `pass_count` is omitted or mistyped |
+| `DEVSHARD_PASS_COUNT_SAMPLED` | `HostStats.validated`, capped by `2 * finished * validation_rate_bps / 10000 + 2` | Older binaries; v0.2.16 stamps existing names. Older payloads that omit those fields still settle (0 passes) |
 
 Settlement verification and scoring both read the **policy store** for
 `state_root_and_protocol_version`. An empty allowlist is still permissive for
 which names may settle, but an existing policy for that name is used; a name
-that has never been recorded scores as `DERIVED`.
+that has never been recorded scores as `SAMPLED`.
 
 Governance is `MsgPutDevshardApprovedVersion` (authority). Proto3 omits zero,
 so `pass_count` uses `UNSPECIFIED = 0`:
@@ -135,13 +135,42 @@ so `pass_count` uses `UNSPECIFIED = 0`:
 - omitted when a policy **already exists** (including after
   `MsgDeleteDevshardApprovedVersion`) → keep the stored value
 - explicit `SAMPLED` or `DERIVED` → overwrite the stored policy
+- a mistyped value is the same as omitted (does not fail the tx)
+
+Unstamped genesis / leftover params-list names, and the v0.2.16 upgrade of
+already-approved names, still record `SAMPLED`. A name that has never been
+recorded scores as `SAMPLED` at settlement (`PassCountFor`).
+
+### `apply_derived_pass_count` (off by default)
+
+`DevshardEscrowParams.apply_derived_pass_count` is **chain-wide** and **off**.
+Defaults, genesis, and the v0.2.16 upgrade all write `false`. **SAMPLED**
+names ignore it: they always credit capped `HostStats.validated` and never
+compute or log derived. The flag only changes **DERIVED** names:
+
+- flag **off** (current): credit capped `HostStats.validated`; log derived
+  `assigned - missed - invalid` (warn when that count exceeds the SPRT cap)
+- flag **on**: apply the derived count for SPRT
+
+Per-name `pass_count` still selects settlement **verification**.
+
+Governance can turn it **on** with `MsgUpdateParams`. That message replaces
+the full `Params` object, so copy every existing `devshard_escrow_params`
+field from the current chain query. Proto3 omits `false`; an omitted
+`apply_derived_pass_count` stays off.
+
+```json
+"devshard_escrow_params": {
+  "...all existing escrow fields...": "...",
+  "apply_derived_pass_count": true
+}
+```
 
 The policy row is keyed by name and survives delete, so a later re-approval
 with omitted `pass_count` cannot silently flip scoring. Chain upgrades stamp
-every pre-existing approved name as `DERIVED`. Do not set `SAMPLED` until that
-protocol binary actually reports `validated` / `finished`; otherwise slots
-with invalidations fail verification (`invalid` must be ≤ `finished`) and
-clean slots only receive the cap slack of 2.
+every pre-existing approved name as `SAMPLED`. Older payloads that omit
+`validated` / `finished` still settle (0 sampled passes). The
+`invalid ≤ finished` check applies only when those fields are present.
 
 ## Version naming
 

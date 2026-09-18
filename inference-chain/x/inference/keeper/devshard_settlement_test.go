@@ -866,7 +866,7 @@ func TestComputeDevshardHostStatsHash_ValidatedFinishedChangeHash(t *testing.T) 
 	require.NotEqual(t, hex.EncodeToString(zeroHash), hex.EncodeToString(countedHash))
 }
 
-func TestVerifyDevshardSettlement_SampledRejectsInvalidWithoutFinished(t *testing.T) {
+func TestVerifyDevshardSettlement_SampledAcceptsLegacyInvalidWithoutFinished(t *testing.T) {
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
@@ -884,11 +884,41 @@ func TestVerifyDevshardSettlement_SampledRejectsInvalidWithoutFinished(t *testin
 		PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED,
 	}}
 	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), approved, nil)
-	require.ErrorContains(t, err, "invalid count")
+	require.NoError(t, err, "older SAMPLED payloads omit finished and must still settle")
 
 	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil)
-	require.NoError(t, err, "empty allowlist with no stored policy keeps derived scoring")
+	require.NoError(t, err, "empty allowlist defaults to SAMPLED and still accepts omitted finished")
 
 	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED)
-	require.ErrorContains(t, err, "invalid count", "empty allowlist still uses a stored SAMPLED policy")
+	require.NoError(t, err)
+
+	unspecified := []*types.DevshardApprovedVersion{{
+		Name:   settlementVersion,
+		Binary: "https://example.com/dev.zip",
+		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}}
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), unspecified, nil)
+	require.NoError(t, err, "omitted pass_count on the allowlist is SAMPLED")
+}
+
+func TestVerifyDevshardSettlement_DerivedChecksValidated(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots, ValidationRate: 1000,
+	}
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	// nonce 42, 16 slots: slot 0 assigned = 2, so validated may not exceed 2*16.
+	hostStats[0].Validated = 33
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+
+	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED)
+	require.NoError(t, err, "SAMPLED does not extra-check validated")
+
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED)
+	require.NoError(t, err, "UNSPECIFIED is the old sampled path")
+
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED)
+	require.ErrorContains(t, err, "validated count")
 }

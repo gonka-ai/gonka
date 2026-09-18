@@ -313,7 +313,7 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	genesis.DevshardVersionPolicies = getVersionPolicies(&ctx, &k)
 	if genesis.Params.DevshardEscrowParams != nil {
 		if len(genesis.DevshardApprovedVersions) == 0 {
-			genesis.DevshardApprovedVersions = stampLegacyApprovedVersionsDerived(genesis.Params.DevshardEscrowParams.ApprovedVersions)
+			genesis.DevshardApprovedVersions = stampLegacyApprovedVersionsSampled(genesis.Params.DevshardEscrowParams.ApprovedVersions)
 			genesis.DevshardVersionPolicies = mergeLegacyVersionPolicies(genesis.DevshardVersionPolicies, genesis.DevshardApprovedVersions)
 		}
 		genesis.Params.DevshardEscrowParams.ApprovedVersions = nil
@@ -392,7 +392,7 @@ func importDevshardApprovedVersions(ctx sdk.Context, k keeper.Keeper, genState *
 		requested := copied.PassCount
 		if fromParams {
 			// Params-list entries predate pass_count. Omitted → keep a policy
-			// from genesis JSON if one was set, else DERIVED.
+			// from genesis JSON if one was set, else SAMPLED (old binaries).
 			requested = types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED
 		}
 		var existing *types.DevshardPassCount
@@ -405,10 +405,16 @@ func importDevshardApprovedVersions(ctx sdk.Context, k keeper.Keeper, genState *
 			c := pol.PassCount
 			existing = &c
 		}
-		resolved, err := types.ResolvePassCount(existing, requested)
-		if err != nil {
-			//nolint:forbidigo // genesis code
-			panic(err)
+		var resolved types.DevshardPassCount
+		if requested == types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED && existing == nil {
+			// Unstamped genesis / params-list names are pre-pass_count binaries.
+			resolved = types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
+		} else {
+			resolved, err = types.ResolvePassCount(existing, requested)
+			if err != nil {
+				//nolint:forbidigo // genesis code
+				panic(err)
+			}
 		}
 		copied.PassCount = resolved
 		if err := copied.Validate(); err != nil {
@@ -471,14 +477,14 @@ func getVersionPolicies(ctx *sdk.Context, k *keeper.Keeper) []*types.DevshardVer
 	return out
 }
 
-func stampLegacyApprovedVersionsDerived(versions []*types.DevshardApprovedVersion) []*types.DevshardApprovedVersion {
+func stampLegacyApprovedVersionsSampled(versions []*types.DevshardApprovedVersion) []*types.DevshardApprovedVersion {
 	out := make([]*types.DevshardApprovedVersion, 0, len(versions))
 	for _, v := range versions {
 		if v == nil {
 			continue
 		}
 		copied := *v
-		copied.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
+		copied.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
 		out = append(out, &copied)
 	}
 	return out

@@ -43,9 +43,10 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	for i := range stored {
 		approved[i] = &stored[i]
 	}
-	// Policy store is the only source: empty allowlist is still permissive for
-	// which versions may settle, but scoring uses the recorded policy (DERIVED
-	// only when the name has never been seen).
+	// Policy store selects verification. SAMPLED names always credit capped
+	// HostStats.validated and never log derived, even when
+	// apply_derived_pass_count is true. The flag only affects DERIVED names:
+	// false credits sampled and logs derived; true credits assigned-missed-invalid.
 	passCount, err := k.PassCountFor(goCtx, msg.StateRootAndProtocolVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get pass_count for version %q: %w", msg.StateRootAndProtocolVersion, err)
@@ -102,6 +103,8 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 
 	totalSlots := uint64(len(escrow.Slots))
 	passPolicy := DevshardPassPolicyFor(passCount, escrow.ValidationRate)
+	passPolicy.ApplyDerived = devshardParams.GetApplyDerivedPassCount()
+	passPolicy.Logger = k
 	// How much of the total fees will be assigned to each slot
 	feePerSlot := msg.Fees / totalSlots
 	// Leftover fees; will be distributed 1 per slot

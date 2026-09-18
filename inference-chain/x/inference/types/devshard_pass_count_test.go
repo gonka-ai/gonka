@@ -34,10 +34,18 @@ func TestResolvePassCount(t *testing.T) {
 	got, err = types.ResolvePassCount(&sampled, types.DevshardPassCount(99))
 	require.NoError(t, err)
 	require.Equal(t, sampled, got, "unknown requested value keeps the stored policy")
+
+	got, err = types.ResolvePassCount(&derived, types.DevshardPassCount(99))
+	require.NoError(t, err)
+	require.Equal(t, derived, got, "mistype on an existing DERIVED name keeps DERIVED")
+
+	got, err = types.ResolvePassCount(&derived, types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED)
+	require.NoError(t, err)
+	require.Equal(t, derived, got, "omitted on an existing DERIVED name keeps DERIVED")
 }
 
 func TestDevshardPassCountDerived(t *testing.T) {
-	require.True(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED.Derived())
+	require.False(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED.Derived())
 	require.False(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED.Derived())
 	require.True(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED.Derived())
 }
