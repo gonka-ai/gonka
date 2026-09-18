@@ -245,7 +245,7 @@ EOF
 
 #### 2.2 External or managed PostgreSQL
 
-Skip this section if you use local Compose PostgreSQL.
+If you use local Compose PostgreSQL, skip this section and go to [Step 3](#step-3---start-the-deployment).
 
 Create the database and role through the provider, or run:
 
