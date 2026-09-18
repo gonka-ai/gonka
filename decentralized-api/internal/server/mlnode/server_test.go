@@ -65,6 +65,20 @@ func (s stubBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
 	return &types.QueryParamsResponse{}, nil
 }
 
+func (s stubBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
+	return &types.QueryPocStageRecipeResponse{
+		Found: true,
+		Recipe: &types.PocStageRecipe{
+			StageHeight: stageHeight,
+			Scheme:      types.PocScheme_POC_SCHEME_PREFILL,
+			Models: []*types.PoCModelConfig{
+				{ModelId: testModelA, SeqLen: 256},
+				{ModelId: testModelB, SeqLen: 256},
+			},
+		},
+	}, nil
+}
+
 func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...string) *broker.Broker {
 	t.Helper()
 

@@ -3,6 +3,7 @@ package mlnodeclient
 import (
 	"testing"
 
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,13 +51,27 @@ func TestToValidatedWeight_ValidSmall(t *testing.T) {
 
 func TestKStepsBytesRoundTrip(t *testing.T) {
 	steps := []int{0, 15, 7, 255}
-	got := BytesToKSteps(KStepsToBytes(steps))
-	if len(got) != len(steps) {
-		t.Fatalf("len %d != %d", len(got), len(steps))
-	}
-	for i := range steps {
-		if got[i] != steps[i] {
-			t.Fatalf("step %d: %d != %d", i, got[i], steps[i])
-		}
-	}
+	packed, err := KStepsToBytes(steps)
+	require.NoError(t, err)
+	got := BytesToKSteps(packed)
+	require.Equal(t, steps, got)
+}
+
+func TestPoCParamsForScheme_PrefillIgnoresN(t *testing.T) {
+	prefill := PoCParamsForScheme("m", 128, 256, types.PocScheme_POC_SCHEME_PREFILL)
+	require.False(t, prefill.Decode)
+	require.Equal(t, int64(128), prefill.SeqLen)
+	require.Equal(t, int64(0), prefill.MaxTokens)
+
+	decode := PoCParamsForScheme("m", 128, 256, types.PocScheme_POC_SCHEME_DECODE)
+	require.True(t, decode.Decode)
+	require.Equal(t, int64(DecodeSeqLen), decode.SeqLen)
+	require.Equal(t, int64(256), decode.MaxTokens)
+}
+
+func TestKStepsToBytes_RejectsOutOfRange(t *testing.T) {
+	_, err := KStepsToBytes([]int{256})
+	require.Error(t, err)
+	_, err = KStepsToBytes([]int{-1})
+	require.Error(t, err)
 }

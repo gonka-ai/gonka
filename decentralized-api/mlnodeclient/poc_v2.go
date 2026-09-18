@@ -1,5 +1,7 @@
 package mlnodeclient
 
+import "fmt"
+
 // PoC v2 (artifact-based) types for MLNode API callbacks.
 // These match the schemas in mlnode/packages/api/tests/batch_receiver_v2.py.
 
@@ -11,12 +13,15 @@ type ArtifactV2 struct {
 }
 
 // KStepsToBytes packs a decode trajectory into the opaque artifact vector, one byte per step.
-func KStepsToBytes(steps []int) []byte {
+func KStepsToBytes(steps []int) ([]byte, error) {
 	out := make([]byte, len(steps))
 	for i, k := range steps {
+		if k < 0 || k > 255 {
+			return nil, fmt.Errorf("k_points_steps[%d]=%d is outside [0,255]", i, k)
+		}
 		out[i] = byte(k)
 	}
-	return out
+	return out, nil
 }
 
 // BytesToKSteps unpacks it.
