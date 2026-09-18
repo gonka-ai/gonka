@@ -414,11 +414,14 @@ message DelegationParams {
 }
 
 // DevshardPassCount selects how settlement host stats become SPRT passes.
-// Proto3 omitempty: omitted JSON is UNSPECIFIED (0).
+// Proto3 omitempty: omitted JSON is UNSPECIFIED (0). Governance JSON also
+// accepts case-insensitive "derived" / "sampled"; any other value is
+// UNSPECIFIED (does not fail the tx).
 enum DevshardPassCount {
-  // Omitted JSON. Keep the stored policy; DERIVED if the name is new.
+  // Omitted JSON, or any value that is not SAMPLED/DERIVED. Keep the stored
+  // policy; DERIVED if the name is new.
   DEVSHARD_PASS_COUNT_UNSPECIFIED = 0;
-  // HostStats.validated, capped by finished * rate.
+  // HostStats.validated, capped by 2 * finished * validation_rate_bps / 10000 + 2.
   DEVSHARD_PASS_COUNT_SAMPLED = 1;
   // Legacy scoring: assigned - missed - invalid.
   DEVSHARD_PASS_COUNT_DERIVED = 2;

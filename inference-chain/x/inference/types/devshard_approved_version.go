@@ -32,9 +32,6 @@ func (v DevshardApprovedVersion) Validate() error {
 	if _, err := hex.DecodeString(v.Sha256); err != nil {
 		return fmt.Errorf("approved devshard version sha256 is not valid hex: %w", err)
 	}
-	if err := ValidateDevshardPassCount(v.PassCount); err != nil {
-		return err
-	}
 	return nil
 }
 

@@ -360,7 +360,11 @@ func stampUnpoliciedApprovedVersionsDerived(ctx context.Context, k keeper.Keeper
 		return err
 	}
 	for _, v := range versions {
-		if _, ok := k.GetVersionPolicy(ctx, v.Name); ok {
+		_, ok, err := k.GetVersionPolicy(ctx, v.Name)
+		if err != nil {
+			return err
+		}
+		if ok {
 			continue
 		}
 		v.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED

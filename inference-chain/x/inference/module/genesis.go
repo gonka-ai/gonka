@@ -396,7 +396,12 @@ func importDevshardApprovedVersions(ctx sdk.Context, k keeper.Keeper, genState *
 			requested = types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED
 		}
 		var existing *types.DevshardPassCount
-		if pol, ok := k.GetVersionPolicy(ctx, copied.Name); ok {
+		pol, ok, err := k.GetVersionPolicy(ctx, copied.Name)
+		if err != nil {
+			//nolint:forbidigo // genesis code
+			panic(err)
+		}
+		if ok {
 			c := pol.PassCount
 			existing = &c
 		}

@@ -242,7 +242,8 @@ func TestMigrateDevshardApprovedVersions(t *testing.T) {
 	require.Equal(t, "v2", got[1].Name)
 	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got[0].PassCount)
 	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got[1].PassCount)
-	pol, found := k.GetVersionPolicy(ctx, "v1")
+	pol, found, err := k.GetVersionPolicy(ctx, "v1")
+	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
 
@@ -264,7 +265,8 @@ func TestMigrateDevshardApprovedVersions_StampsExistingStore(t *testing.T) {
 	got, found := k.GetApprovedVersion(ctx, "v-store")
 	require.True(t, found)
 	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount)
-	pol, found := k.GetVersionPolicy(ctx, "v-store")
+	pol, found, err := k.GetVersionPolicy(ctx, "v-store")
+	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
 }
