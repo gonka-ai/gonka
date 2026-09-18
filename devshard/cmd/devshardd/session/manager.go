@@ -86,11 +86,14 @@ type HostManager struct {
 	payloadFaultStatus int
 	payloadFaultAddr   string
 
-	// Height-sync scheduler (chain RPC or DEVSHARD_CHAINORACLE_URL). Nil when neither is available.
+	// Height-sync scheduler (NodeManager GetBlockHeader or chain client). Nil when neither is available.
 	chainOracle      blocks.BlockOracle
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
 	heightSyncTip    interface{ Observe(h *blocks.Header) }
+	// cometLiveness is captured at wiring so CloseHeightSync can drop the
+	// scheduler without racing the chain-events goroutine.
+	cometLiveness func(bool)
 }
 
 const (

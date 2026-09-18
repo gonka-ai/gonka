@@ -22,8 +22,12 @@ type heartbeatTarget struct {
 // The oracle is read once for the whole request so ack stamps match the
 // response-leg Anchor of this exchange (honest L4). An ack is required even
 // when Latest() fails (ORACLE_UNAVAILABLE); silence is worse for the roster.
+// After MsgFinalizeRound the host is no longer Active and must not emit acks.
 func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, hdrErr error) {
 	if len(diffs) == 0 {
+		return
+	}
+	if h.sm.Phase() != types.PhaseActive {
 		return
 	}
 	if h.peerSeen == nil {

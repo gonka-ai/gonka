@@ -372,10 +372,8 @@ func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySett
 	return result, nil
 }
 
-// escrowProtocolVersionFor derives the protocol version from the route prefix the escrow is pinned to,
-// so the stamp and the wire can never name different versions. A leading "v" is stripped (v4 -> "4"); a major.minor
-// slot such as v4.1 or v5.1 is kept, while a longer or suffixed version maps by major (v2.1.0 -> "2", v4.1r5 -> "4").
-// Named runtimes such as mainnet-canary are stamped as-is. An unresolvable prefix falls back to DefaultProtocolVersion.
+// escrowProtocolVersionFor derives the gateway-DB rotation stamp from the route prefix the escrow is pinned to, so the stamp and the wire can never name different versions.
+// Numeric route versions stamp as N or N.x (v4.1 and v4.1r5 -> 4.1, v2.1.0 -> 2.1); named runtimes such as mainnet-canary stamp as-is, and an unresolvable prefix falls back to DefaultProtocolVersion.
 func escrowProtocolVersionFor(routePrefix string) string {
 	_, version, err := devshardpkg.ResolveRoutePrefix(routePrefix)
 	if err != nil {
@@ -386,13 +384,6 @@ func escrowProtocolVersionFor(routePrefix string) string {
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q version=%q reason=unparseable_protocol error=%v", routePrefix, version, err)
 		return string(types.DefaultProtocolVersion)
-	}
-	major, minor, hasMinor := strings.Cut(string(protocolVersion), ".")
-	_, majorErr := strconv.ParseUint(major, 10, 64)
-	_, minorErr := strconv.ParseUint(minor, 10, 64)
-	isMajorMinorSlot := majorErr == nil && minorErr == nil
-	if hasMinor && major != "" && !isMajorMinorSlot {
-		return major
 	}
 	return string(protocolVersion)
 }

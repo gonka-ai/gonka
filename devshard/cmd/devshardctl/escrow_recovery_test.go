@@ -181,8 +181,21 @@ func TestCreateRotationEscrowCarriesProtocolVersionFromV4RoutePrefix(t *testing.
 	assert.Equal(t, "4", record.ProtocolVersion, "v4 route prefix stamps protocol 4, not empty")
 }
 
-// Named versiond runtimes stamp as-is; semver-like versions map by major after
-// stripping a leading v (v4.1r5 -> 4). This is the gateway-DB protocol_version,
+func TestCreateRotationEscrowCarriesProtocolVersionFromV41RoutePrefix(t *testing.T) {
+	g, store, settings := newRecoveryGateway(t)
+	stubCreateOnChain(t, "TXPV41", 558)
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4.1")
+	model := normalizedEscrowRotationModels(settings)[0]
+
+	_, err := g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
+	require.NoError(t, err)
+
+	record := devshardIDs(t, store)["558"]
+	assert.Equal(t, "4.1", record.ProtocolVersion, "v4.1 route prefix stamps 4.1, not major 4")
+}
+
+// Named versiond runtimes stamp as-is; numeric versions stamp as N or N.x
+// (v2.1.0 -> 2.1, v4.1r5 -> 4.1). This is the gateway-DB protocol_version,
 // not the settlement StateRootAndProtocolVersion tag.
 func TestEscrowProtocolVersionRouteMapping(t *testing.T) {
 	for _, testCase := range []struct {
@@ -191,16 +204,17 @@ func TestEscrowProtocolVersionRouteMapping(t *testing.T) {
 	}{
 		{"/devshard/mainnet-canary", "mainnet-canary"},
 		{"/devshard/v3", "3"},
-		{"/devshard/v2.1.0", "2"},
+		{"/devshard/v2.1.0", "2.1"},
 		{"/devshard/3", "3"},
 		{"/devshard/v4", "4"},
 		{"/devshard/4", "4"},
 		{"/devshard/v4.1", "4.1"},
 		{"/devshard/4.1", "4.1"},
-		{"/devshard/v5.1", "5.1"},
-		{"/devshard/v4.1r5", "4"},
+		{"/devshard/v4.1r5", "4.1"},
+		{"/devshard/v4.2", "4.2"},
 		{"/devshard/v5", "5"},
 		{"/devshard/5", "5"},
+		{"/devshard/v5.1", "5.1"},
 	} {
 		t.Run(testCase.routePrefix, func(t *testing.T) {
 			assert.Equal(t, testCase.protocolVersion, escrowProtocolVersionFor(testCase.routePrefix))

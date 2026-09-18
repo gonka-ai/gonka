@@ -160,17 +160,26 @@ func (c *Cache) Subscribe(ctx context.Context, fromHeight int64) (<-chan *blocks
 	return sub.ch, nil
 }
 
-// Stale is true when nothing has been observed, or the last Observe is older
-// than staleAfter.
-func (c *Cache) Stale() bool {
+// LastObservedAt is when Observe last advanced the tip. Zero means never.
+func (c *Cache) LastObservedAt() time.Time {
 	if c == nil {
-		return true
+		return time.Time{}
 	}
 	last := c.lastRecvUnix.Load()
 	if last == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, last)
+}
+
+// Stale is true when nothing has been observed, or the last Observe is older
+// than staleAfter. Callers that apply their own budget should use LastObservedAt.
+func (c *Cache) Stale() bool {
+	last := c.LastObservedAt()
+	if last.IsZero() {
 		return true
 	}
-	return time.Since(time.Unix(0, last)) > c.staleAfter
+	return time.Since(last) > c.staleAfter
 }
 
 func (c *Cache) storeLocked(h *blocks.Header) {

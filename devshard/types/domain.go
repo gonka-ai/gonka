@@ -91,10 +91,10 @@ const (
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
 // Empty string defaults to ProtocolV1. A leading "v"/"V" is stripped so
-// route segments like "v5" stamp as "5". Any remaining non-empty token is
-// accepted — this is a local registry stamp, not the session/settlement
-// protocol tag. Callers that want a major-only stamp (v2.1.0 -> 2) truncate
-// before calling.
+// route segments like "v5" stamp as "5". Numeric tokens stamp as N or N.x
+// (v4.1 and v4.1r5 -> 4.1, v4.2 -> 4.2, v2.1.0 -> 2.1). Named runtimes such as
+// mainnet-canary are stamped as-is. This is a local registry stamp, not the
+// session/settlement protocol tag.
 func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 	raw := strings.TrimSpace(s)
 	if raw == "" {
@@ -107,7 +107,30 @@ func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 	if out == "" {
 		return "", fmt.Errorf("unknown protocol version %q", raw)
 	}
+	if slot := numericProtocolSlot(out); slot != "" {
+		return ProtocolVersion(slot), nil
+	}
 	return ProtocolVersion(out), nil
+}
+
+// numericProtocolSlot is N or N.x from a v-stripped token. Patch (.0) and
+// suffixes (r5) are dropped so /devshard/v4.1r5 and /devshard/v2.1.0 keep
+// distinct minor slots instead of collapsing to major 4 / 2.
+func numericProtocolSlot(s string) string {
+	if s == "" || s[0] < '0' || s[0] > '9' {
+		return ""
+	}
+	i := 0
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		i++
+	}
+	if i < len(s) && s[i] == '.' && i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9' {
+		i++
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+	}
+	return s[:i]
 }
 
 // SessionConfig holds session-level parameters.

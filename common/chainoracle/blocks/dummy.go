@@ -1,8 +1,9 @@
 package blocks
 
-// DummyHeader is what At() returns when GET /block/:height is missing
-// (0.2.15 dapi). Height is the requested lookup; Time is the zero value;
-// BlockHash is empty. L6 treats this as "no oracle view" and does not mark.
+// DummyHeader is what At() returns when history lookup is a quiet miss
+// (old dapi without GetBlockHeader). Height is the requested lookup; Time is
+// the zero value; BlockHash is empty. L6 treats this as "no oracle view"
+// and does not mark.
 func DummyHeader(height int64) *Header {
 	return &Header{Height: height}
 }

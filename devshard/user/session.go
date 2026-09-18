@@ -1905,6 +1905,9 @@ func (s *Session) addPendingFromHostLocked(hostIdx int, resp *host.HostResponse,
 			"tx_type", fmt.Sprintf("%T", tx.GetTx()))
 		return
 	}
+	if tx.GetHeightAck() != nil && s.sm != nil && s.sm.Phase() != types.PhaseActive {
+		return
+	}
 	// Settle dedup before verifying: every host gossips the same Finish, and
 	// signature recovery is far more expensive than the map lookup that would
 	// discard the result anyway. The envelope filter below can swap tx for a

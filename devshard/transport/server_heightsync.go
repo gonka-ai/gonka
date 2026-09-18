@@ -485,15 +485,34 @@ func (s *Server) HandleHeightSync(c echo.Context) error {
 			heightsync.LogFieldSubsystem, "heightsync",
 			"error", dErr.Error())
 	}
+	signed := false
 	if sec != nil {
 		sec.Direction = "response"
 		if !s.attachResponseOriginSignature(sec, h.Nonce) {
+			logging.Info("heightsync: seed RPC unsigned omit",
+				heightsync.LogFieldSubsystem, "heightsync",
+				"escrow", sessionID,
+				"oracle_miss", oracleMiss)
 			s.logOutboundHeightSync(nil, h.Nonce)
 			return writeJSON(c, http.StatusOK, heightSyncSeedResponse{})
 		}
+		signed = true
 		s.logOutboundHeightSync(sec, h.Nonce)
 		s.recordOutboundAnchorIfAnchor(sec, c.Request().Method+" "+c.Path())
 	}
+	height := int64(0)
+	hashLen := 0
+	if sec != nil {
+		height = sec.MainnetHeight
+		hashLen = len(strings.TrimSpace(sec.MainnetBlockHashHex))
+	}
+	logging.Info("heightsync: seed RPC",
+		heightsync.LogFieldSubsystem, "heightsync",
+		"escrow", sessionID,
+		"oracle_miss", oracleMiss,
+		"signed", signed,
+		"height", height,
+		"hash_hex_len", hashLen)
 	return writeJSON(c, http.StatusOK, heightSyncSeedResponse{HeightSync: sec})
 }
 
