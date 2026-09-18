@@ -75,9 +75,9 @@ For managed or self-managed PostgreSQL, obtain the primary endpoint, port, datab
 
 **Local Compose PostgreSQL.** `docker-compose.versiond.yml` starts `devshard-postgres` on the join host. If the machine dies, the database dies with it.
 
-#### Where to put PostgreSQL settings
+#### Configure PostgreSQL credentials
 
-Run in `deploy/join`. For a new local database, choose a new password. For an existing database, use its current password from your database administrator:
+Run the following command in `deploy/join` to save the PostgreSQL password in `config.env`. For a new local database, choose a password. For an existing database, enter its current password:
 
 ```bash
 (
@@ -256,7 +256,7 @@ CREATE USER devshardd WITH PASSWORD '...';
 CREATE DATABASE devshardd OWNER devshardd;
 ```
 
-Allow access from every replica. Save the credentials as described in [Where to put PostgreSQL settings](#where-to-put-postgresql-settings). Create `docker-compose.devshard-pg-external.override.yml` with the database host and port:
+Allow access from every replica. Save the credentials as described in [Configure PostgreSQL credentials](#configure-postgresql-credentials). Create `docker-compose.devshard-pg-external.override.yml` with the database host and port:
 
 ```yaml
 services:
