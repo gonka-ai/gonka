@@ -1129,6 +1129,8 @@ Run the readiness checks above before restarting another replica.
 
 ### Replace a member
 
+Each `versiond` replica is a member of the router pool. To update a replica’s image, replace its container using the procedure below.
+
 Keep the same database, participant identity, protocol list and data mounts. Replace one replica at a time; another replica must serve each protocol.
 
 1. Use the target release's files. Apply the variables in [Release and images](#release-and-images).
