@@ -59,6 +59,9 @@ func (s *InferenceServer) AccountByAddress(_ context.Context, req *inferencetype
 }
 
 func (s *InferenceServer) Participant(_ context.Context, req *inferencetypes.QueryGetParticipantRequest) (*inferencetypes.QueryGetParticipantResponse, error) {
+	if s.store.ParticipantQueryFaulted() {
+		return nil, status.Error(codes.Unavailable, "participant query faulted (testenv)")
+	}
 	p := s.store.GetParticipant(req.GetIndex())
 	if p == nil {
 		return &inferencetypes.QueryGetParticipantResponse{}, nil
