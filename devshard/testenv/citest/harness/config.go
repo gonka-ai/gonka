@@ -16,6 +16,7 @@ import (
 type MultiConfigOpts struct {
 	Hosts          int
 	EscrowSlots    int
+	EscrowAmount   uint64
 	ValidationRate uint32 // 0 = default; else params + seed escrow snapshot
 }
 
@@ -61,9 +62,13 @@ func WriteMultiConfig(t *testing.T, dir string, opts MultiConfigOpts) {
 
 	paramsRate := ""
 	escrowRate := ""
+	escrowAmount := ""
 	if opts.ValidationRate > 0 {
 		paramsRate = fmt.Sprintf("\n  validation_rate: %d", opts.ValidationRate)
 		escrowRate = fmt.Sprintf("\n    validation_rate: %d", opts.ValidationRate)
+	}
+	if opts.EscrowAmount > 0 {
+		escrowAmount = fmt.Sprintf("\n    amount: %d", opts.EscrowAmount)
 	}
 
 	var hosts strings.Builder
@@ -110,12 +115,12 @@ warm_grantee:
   private_key_hex: TODO
 escrows:
   - id: 1
-    model_id: test-model%s
+    model_id: test-model%s%s
 grantees:
   - granter_address: ""
     message_type_url: /inference.inference.MsgStartInference
     grantees: [""]
-`, paramsRate, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, routerPort, gatewayPort, opts.EscrowSlots, hosts.String(), escrowRate)
+`, paramsRate, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, routerPort, gatewayPort, opts.EscrowSlots, hosts.String(), escrowAmount, escrowRate)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(skeleton), 0o644))
 }
 

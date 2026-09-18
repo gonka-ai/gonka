@@ -198,6 +198,11 @@ func PostGatewayChatHTTP(t *testing.T, client *http.Client, gatewayURL, adminAPI
 	}
 }
 
+// PostGatewayAdminJSON posts an authenticated JSON request to a gateway admin endpoint.
+func PostGatewayAdminJSON(client *http.Client, url string, payload, dest any) error {
+	return postGatewayJSON(client, url, TestenvAdminAPIKey, payload, dest)
+}
+
 // ParseSSEDataChunks returns JSON payloads from SSE data: lines (excluding [DONE]).
 func ParseSSEDataChunks(body []byte) ([]map[string]any, bool) {
 	var chunks []map[string]any
