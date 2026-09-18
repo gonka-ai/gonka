@@ -25,7 +25,7 @@ func (uc *StopUseCase) Execute(ctx context.Context, cmd StopCommand) ([]run.Node
 	}
 
 	// 2. One call per host; return collected results
-	return run.PerHost(ctx, record.Refs(), run.Failed, func(ctx context.Context, participant vo.Participant, nodes []vo.NodeRef) ([]run.NodeResult, error) {
-		return uc.hosts.Stop(ctx, participant, run.StopCall{HostCommand: cmd.hostCommand(nodes), Grace: cmd.Grace})
+	return run.PerHost(ctx, record.Hosts(), run.Failed, func(ctx context.Context, host vo.Host) ([]run.NodeResult, error) {
+		return uc.hosts.Stop(ctx, host, run.StopCall{HostCommand: cmd.hostCommand(host.Nodes), Grace: cmd.Grace})
 	}), nil
 }

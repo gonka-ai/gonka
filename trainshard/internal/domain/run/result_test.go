@@ -3,7 +3,6 @@ package run_test
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -12,12 +11,14 @@ import (
 )
 
 var (
-	alice   = vo.Participant("gonka1alice")
-	bob     = vo.Participant("gonka1bob")
-	first   = vo.NodeRef{Participant: alice, NodeID: "node-a"}
-	second  = vo.NodeRef{Participant: bob, NodeID: "node-b"}
-	third   = vo.NodeRef{Participant: alice, NodeID: "node-c"}
-	errHost = errors.New("host does not answer")
+	alice     = vo.Participant("gonka1alice")
+	bob       = vo.Participant("gonka1bob")
+	first     = vo.NodeRef{Participant: alice, NodeID: "node-a"}
+	second    = vo.NodeRef{Participant: bob, NodeID: "node-b"}
+	third     = vo.NodeRef{Participant: alice, NodeID: "node-c"}
+	aliceHost = vo.Host{Participant: alice, Nodes: []vo.NodeRef{first, third}}
+	bobHost   = vo.Host{Participant: bob, Nodes: []vo.NodeRef{second}}
+	errHost   = errors.New("host does not answer")
 )
 
 func answered(nodes []vo.NodeRef) []run.NodeResult {
@@ -28,41 +29,14 @@ func answered(nodes []vo.NodeRef) []run.NodeResult {
 	return results
 }
 
-func TestPerHostAsksEachHostOnceForAllOfItsNodes(t *testing.T) {
-
-	var mu sync.Mutex
-	asked := map[vo.Participant][]vo.NodeRef{}
-
-	results := run.PerHost(context.Background(), []vo.NodeRef{first, second, third}, run.Failed,
-		func(_ context.Context, participant vo.Participant, nodes []vo.NodeRef) ([]run.NodeResult, error) {
-			mu.Lock()
-			defer mu.Unlock()
-
-			asked[participant] = append(asked[participant], nodes...)
-			return answered(nodes), nil
-		})
-
-	if len(asked) != 2 {
-		t.Fatalf("got %d hosts asked, want one call per host", len(asked))
-	}
-	if len(asked[alice]) != 2 || asked[alice][0] != first || asked[alice][1] != third {
-		t.Fatalf("got %v, want both of alice's nodes in one call", asked[alice])
-	}
-	if len(results) != 3 {
-		t.Fatalf("got %d results, want one per node", len(results))
-	}
-}
-
 func TestPerHostFailsOnlyTheNodesOfASilentHost(t *testing.T) {
 
-	nodes := []vo.NodeRef{first, second, third}
-
-	results := run.PerHost(context.Background(), nodes, run.Failed,
-		func(_ context.Context, participant vo.Participant, held []vo.NodeRef) ([]run.NodeResult, error) {
-			if participant == alice {
+	results := run.PerHost(context.Background(), []vo.Host{aliceHost, bobHost}, run.Failed,
+		func(_ context.Context, host vo.Host) ([]run.NodeResult, error) {
+			if host.Participant == alice {
 				return nil, errHost
 			}
-			return answered(held), nil
+			return answered(host.Nodes), nil
 		})
 
 	if len(results) != 3 {
@@ -82,9 +56,9 @@ func TestPerHostAnswersForTheNodesItAskedAboutAndNoOthers(t *testing.T) {
 
 	stranger := vo.NodeRef{Participant: bob, NodeID: "node-x"}
 
-	results := run.PerHost(context.Background(), []vo.NodeRef{first, second, third}, run.Failed,
-		func(_ context.Context, _ vo.Participant, held []vo.NodeRef) ([]run.NodeResult, error) {
-			return answered([]vo.NodeRef{held[0], stranger}), nil
+	results := run.PerHost(context.Background(), []vo.Host{aliceHost, bobHost}, run.Failed,
+		func(_ context.Context, host vo.Host) ([]run.NodeResult, error) {
+			return answered([]vo.NodeRef{host.Nodes[0], stranger}), nil
 		})
 
 	if len(results) != 3 {
@@ -102,10 +76,10 @@ func TestPerHostAnswersForTheNodesItAskedAboutAndNoOthers(t *testing.T) {
 
 func TestPerHostFailsANodeItsHostAnsweredForTwice(t *testing.T) {
 
-	results := run.PerHost(context.Background(), []vo.NodeRef{first, second}, run.Failed,
-		func(_ context.Context, participant vo.Participant, held []vo.NodeRef) ([]run.NodeResult, error) {
-			if participant == bob {
-				return answered(held), nil
+	results := run.PerHost(context.Background(), []vo.Host{{Participant: alice, Nodes: []vo.NodeRef{first}}, bobHost}, run.Failed,
+		func(_ context.Context, host vo.Host) ([]run.NodeResult, error) {
+			if host.Participant == bob {
+				return answered(host.Nodes), nil
 			}
 			return answered([]vo.NodeRef{first, first}), nil
 		})
@@ -123,20 +97,20 @@ func TestPerHostFailsANodeItsHostAnsweredForTwice(t *testing.T) {
 	}
 }
 
-func TestPerHostAnswersInTheOrderTheNodesWereNamed(t *testing.T) {
+func TestPerHostAnswersInTheOrderTheHostsWereGiven(t *testing.T) {
 
 	answeredFirst := make(chan struct{})
 
-	results := run.PerHost(context.Background(), []vo.NodeRef{second, first, third}, run.Failed,
-		func(_ context.Context, participant vo.Participant, nodes []vo.NodeRef) ([]run.NodeResult, error) {
-			if participant != bob {
+	results := run.PerHost(context.Background(), []vo.Host{bobHost, aliceHost}, run.Failed,
+		func(_ context.Context, host vo.Host) ([]run.NodeResult, error) {
+			if host.Participant != bob {
 				close(answeredFirst)
-				return answered(nodes), nil
+				return answered(host.Nodes), nil
 			}
 			if !waitFor(answeredFirst) {
 				t.Error("the hosts were asked one after another, so the order proves nothing")
 			}
-			return answered(nodes), nil
+			return answered(host.Nodes), nil
 		})
 
 	want := []vo.NodeRef{second, first, third}
@@ -145,7 +119,7 @@ func TestPerHostAnswersInTheOrderTheNodesWereNamed(t *testing.T) {
 	}
 	for index, result := range results {
 		if result.Node != want[index] {
-			t.Fatalf("got %+v, want the answers in the order the nodes were named: %v", results, want)
+			t.Fatalf("got %+v, want the answers in the order the hosts were given: %v", results, want)
 		}
 	}
 }
@@ -160,13 +134,13 @@ func TestPerHostAsksEveryHostAtTheSameTime(t *testing.T) {
 		close(both)
 	}()
 
-	run.PerHost(context.Background(), []vo.NodeRef{first, second}, run.Failed,
-		func(_ context.Context, participant vo.Participant, nodes []vo.NodeRef) ([]run.NodeResult, error) {
-			arrived <- participant
+	run.PerHost(context.Background(), []vo.Host{aliceHost, bobHost}, run.Failed,
+		func(_ context.Context, host vo.Host) ([]run.NodeResult, error) {
+			arrived <- host.Participant
 			if !waitFor(both) {
 				t.Error("a host waited alone: one slow host still costs the command a round trip each")
 			}
-			return answered(nodes), nil
+			return answered(host.Nodes), nil
 		})
 }
 

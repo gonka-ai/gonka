@@ -25,7 +25,7 @@ func (uc *DeployUseCase) Execute(ctx context.Context, cmd DeployCommand) ([]run.
 	}
 
 	// 2. One call per host; return collected results
-	return run.PerHost(ctx, record.Refs(), run.Failed, func(ctx context.Context, participant vo.Participant, nodes []vo.NodeRef) ([]run.NodeResult, error) {
-		return uc.hosts.Deploy(ctx, participant, run.DeployCall{HostCommand: cmd.hostCommand(nodes), Run: cmd.Run})
+	return run.PerHost(ctx, record.Hosts(), run.Failed, func(ctx context.Context, host vo.Host) ([]run.NodeResult, error) {
+		return uc.hosts.Deploy(ctx, host, run.DeployCall{HostCommand: cmd.hostCommand(host.Nodes), Run: cmd.Run})
 	}), nil
 }

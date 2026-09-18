@@ -84,7 +84,10 @@ func Unprepared(d Desired, o Observed) string {
 	if !o.Drained {
 		waiting = append(waiting, "node not drained from inference")
 	}
-	if o.ForeignGPUWork {
+	switch {
+	case o.ForeignGPUWork && o.Drained:
+		waiting = append(waiting, "the gpus are still held after the dapi stopped the node: a stray process, or the mlnode under this node id runs on another machine")
+	case o.ForeignGPUWork:
 		waiting = append(waiting, "foreign work on the gpus")
 	}
 	if !o.HasImage(d.BaseImage) {

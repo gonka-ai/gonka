@@ -25,7 +25,7 @@ func (uc *CollectReportUseCase) Execute(ctx context.Context, cmd RunCommand) ([]
 	}
 
 	// 2. One call per host; return collected results
-	return run.PerHost(ctx, record.Refs(), run.FailedReport, func(ctx context.Context, participant vo.Participant, nodes []vo.NodeRef) ([]run.NodeReport, error) {
-		return uc.reports.Report(ctx, participant, cmd.Shard, nodes)
+	return run.PerHost(ctx, record.Hosts(), run.FailedReport, func(ctx context.Context, host vo.Host) ([]run.NodeReport, error) {
+		return uc.reports.Report(ctx, host, cmd.Shard, host.Nodes)
 	}), nil
 }

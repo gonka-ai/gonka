@@ -29,7 +29,7 @@ var (
 func shardOf(nodes ...vo.NodeRef) shard.Shard {
 	reserved := make([]shard.ReservedNode, 0, len(nodes))
 	for _, node := range nodes {
-		reserved = append(reserved, shard.ReservedNode{Ref: node})
+		reserved = append(reserved, shard.ReservedNode{Ref: node, Endpoint: vo.Endpoint("https://" + string(node.Participant) + ".example")})
 	}
 	return shard.Shard{
 		ID:              shardID,
@@ -137,14 +137,14 @@ func newHostsStub() *hostsStub {
 	}
 }
 
-func (h *hostsStub) Identities(_ context.Context, _ vo.ShardID, participant vo.Participant) ([]mesh.Identity, error) {
-	if h.silent[participant] {
+func (h *hostsStub) Identities(_ context.Context, _ vo.ShardID, host vo.Host) ([]mesh.Identity, error) {
+	if h.silent[host.Participant] {
 		return nil, errHost
 	}
-	return h.identities[participant], nil
+	return h.identities[host.Participant], nil
 }
 
-func (h *hostsStub) Apply(_ context.Context, _ mesh.Config, node vo.NodeRef) error {
+func (h *hostsStub) Apply(_ context.Context, _ mesh.Config, _ vo.Host, node vo.NodeRef) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -155,7 +155,7 @@ func (h *hostsStub) Apply(_ context.Context, _ mesh.Config, node vo.NodeRef) err
 	return nil
 }
 
-func (h *hostsStub) Probe(_ context.Context, cfg mesh.Config, node vo.NodeRef) ([]mesh.Pair, error) {
+func (h *hostsStub) Probe(_ context.Context, cfg mesh.Config, _ vo.Host, node vo.NodeRef) ([]mesh.Pair, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 

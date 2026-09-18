@@ -22,18 +22,18 @@ type halfCloser interface {
 	CloseWrite() error
 }
 
-func (c *Client) Logs(ctx context.Context, participant vo.Participant, req run.LogRequest, out io.Writer) error {
+func (c *Client) Logs(ctx context.Context, host vo.Host, req run.LogRequest, out io.Writer) error {
 	body := contract.LogsRequest{Tail: req.Tail}
 	if !req.Since.IsZero() {
 		body.Since = req.Since.UTC().Format(time.RFC3339)
 	}
 
 	path := toPath(contract.PathLogs, req.Shard, req.Node.NodeID)
-	return c.stream(ctx, participant, http.MethodPost, path, vo.NewRequestID(), body, out)
+	return c.stream(ctx, host, http.MethodPost, path, vo.NewRequestID(), body, out)
 }
 
-func (c *Client) Shell(ctx context.Context, participant vo.Participant, req run.ExecRequest, session io.ReadWriter) error {
-	base, err := c.directory.baseURL(participant)
+func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, session io.ReadWriter) error {
+	base, err := baseURL(host)
 	if err != nil {
 		return err
 	}
@@ -43,7 +43,7 @@ func (c *Client) Shell(ctx context.Context, participant vo.Participant, req run.
 	}
 
 	path := toPath(contract.PathShell, req.Shard, req.Node.NodeID)
-	request, err := c.request(ctx, participant, http.MethodPost, base, path, vo.NewRequestID(), nil)
+	request, err := c.request(ctx, host.Participant, http.MethodPost, base, path, vo.NewRequestID(), nil)
 	if err != nil {
 		return err
 	}

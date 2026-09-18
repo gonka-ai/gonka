@@ -60,13 +60,24 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			continue
 		}
 
-		// 3. Collect signed members
-		members, missing, err := mesh.Collect(ctx, uc.hosts, uc.verifier, uc.delegation, shardID, record.Participants(), record.Refs())
+		// 3. Drop a node the chain holds no address for at once: unlike a quiet host, it cannot
+		// answer later, the address a shard carries is the one it was assembled with
+		if unaddressed := record.Unaddressed(); len(unaddressed) > 0 {
+			gone, err := kick(ctx, uc.submitter, shardID, unaddressed, vo.ReleaseUnreachable)
+			if err != nil {
+				return PrepareResult{}, err
+			}
+			released, kicked = append(released, gone...), uc.clock.Now()
+			continue
+		}
+
+		// 4. Collect signed members
+		members, missing, err := mesh.Collect(ctx, uc.hosts, uc.verifier, uc.delegation, shardID, record.Hosts(), record.Refs())
 		if err != nil {
 			return PrepareResult{}, err
 		}
 
-		// 4. Give a quiet node until the deadline, then drop it and go on without it
+		// 5. Give a quiet node until the deadline, then drop it and go on without it
 		if len(missing) > 0 {
 			if uc.clock.Now().Before(deadline) {
 				if err := timex.Sleep(ctx, uc.poll); err != nil {
@@ -82,17 +93,21 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			continue
 		}
 
-		// 5. Rank them
+		// 6. Rank them
 		config, err := mesh.Order(shardID, members)
 		if err != nil {
 			return PrepareResult{}, err
 		}
 
-		// 6. Hand out peer lists, every host at once, and drop whoever will not take one
-		nodes := config.Refs()
+		// 7. Hand out peer lists, every host at once, and drop whoever will not take one
+		nodes, machines := config.Refs(), record.Hosts()
 		refused := make([]vo.NodeRef, 0)
 		for index, err := range syncx.Fan(nodes, func(node vo.NodeRef) error {
-			return uc.hosts.Apply(ctx, config, node)
+			host, found := vo.HostOf(machines, node)
+			if !found {
+				return shard.ErrNodeNotReserved
+			}
+			return uc.hosts.Apply(ctx, config, host, node)
 		}) {
 			if err != nil {
 				refused = append(refused, nodes[index])
@@ -116,13 +131,13 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			continue
 		}
 
-		// 7. Return if fully connected
-		failed := mesh.Probe(ctx, uc.hosts, config)
+		// 8. Return if fully connected
+		failed := mesh.Probe(ctx, uc.hosts, config, record.Hosts())
 		if mesh.FullyConnected(nodes, failed) {
 			return PrepareResult{Config: config, Released: released}, nil
 		}
 
-		// 8. Give the tunnels until the deadline: a first handshake is often lost and retried
+		// 9. Give the tunnels until the deadline: a first handshake is often lost and retried
 		if uc.clock.Now().Before(deadline) {
 			if err := timex.Sleep(ctx, uc.poll); err != nil {
 				return PrepareResult{}, err
@@ -130,7 +145,7 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			continue
 		}
 
-		// 9. Kick the worst node and retry
+		// 10. Kick the worst node and retry
 		worst, found := mesh.Worst(nodes, failed)
 		if !found {
 			return PrepareResult{Released: released, Failed: failed}, nil

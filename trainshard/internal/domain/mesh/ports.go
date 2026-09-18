@@ -26,12 +26,12 @@ type Network interface {
 	Interface(node vo.NodeRef) (string, error)
 }
 
-// Hosts coordinator mesh calls to hosts
+// Hosts coordinator mesh calls to the machine that serves a node
 type Hosts interface {
 	// Identities returns signed members; skips nodes with no key
-	Identities(ctx context.Context, shardID vo.ShardID, participant vo.Participant) ([]Identity, error)
+	Identities(ctx context.Context, shardID vo.ShardID, host vo.Host) ([]Identity, error)
 	// Apply hands one node its signed peer list
-	Apply(ctx context.Context, cfg Config, node vo.NodeRef) error
+	Apply(ctx context.Context, cfg Config, host vo.Host, node vo.NodeRef) error
 	// Probe returns pairs this node can't see
-	Probe(ctx context.Context, cfg Config, node vo.NodeRef) ([]Pair, error)
+	Probe(ctx context.Context, cfg Config, host vo.Host, node vo.NodeRef) ([]Pair, error)
 }

@@ -234,7 +234,11 @@ func toShard(held *types.Trainshard) (shard.Shard, error) {
 		if err != nil {
 			return shard.Shard{}, fmt.Errorf("shard %d node: %w", held.TrainshardId, err)
 		}
-		record.Nodes = append(record.Nodes, shard.ReservedNode{Ref: ref, ModelID: reserved.ModelId})
+		endpoint, err := vo.ParseEndpoint(reserved.Endpoint)
+		if err != nil {
+			return shard.Shard{}, fmt.Errorf("shard %d node %s endpoint: %w", held.TrainshardId, reserved.NodeId, err)
+		}
+		record.Nodes = append(record.Nodes, shard.ReservedNode{Ref: ref, ModelID: reserved.ModelId, Endpoint: endpoint})
 	}
 	return record, nil
 }

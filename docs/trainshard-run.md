@@ -14,9 +14,10 @@ is a small GPT trained across the shard, one card to a node, from
 ```
 export TRAINSHARD_SERVICE_NAME=trainshardd
 export TRAINSHARD_PARTICIPANT=gonka1...          # your address
-export TRAINSHARD_NODES=node1                    # nodes to lease, comma separated
-export TRAINSHARD_MESH_ENDPOINT=203.0.113.10     # address peers reach you at
-export TRAINSHARD_MESH_PORTS=51820-51827         # one per leased node, udp, open on the host
+export TRAINSHARD_NODES=node1                    # the node this machine's mlnode is registered as
+export TRAINSHARD_ENDPOINT=http://host1.example.com:8000   # where a coordinator reaches you: the proxy
+export TRAINSHARD_MESH_ENDPOINT=203.0.113.10     # public address peers reach you at, not behind nat
+export TRAINSHARD_MESH_PORTS=51820-51827         # one per leased node, udp, open on the host to the internet
 export TRAINSHARD_STATE_DIR=/mnt/xfs/trainshardd # xfs with prjquota
 export TRAINSHARD_CONTAINER_MEMORY_BYTES=137438953472
 export TRAINSHARD_CONTAINER_NANO_CPUS=8000000000
@@ -56,6 +57,33 @@ INFO node prepared node_id=node1
 
 A node that waits on the same thing for longer than the daemon's patience
 (`TRAINSHARD_PREPARE_DEADLINE`, default 30m) is handed back to the chain.
+
+### More than one GPU machine
+
+One daemon per GPU machine, next to that machine's mlnode. On the machine that
+runs the api and the chain node, publish both to the GPU machines on a private
+address (a VPN one: the api's admin port signs any message with your key for
+whoever reaches it) and route each GPU machine through the proxy under its own
+prefix:
+
+```
+export TRAINSHARD_HUB_BIND=10.0.0.11                                  # private, reachable from the gpu machines only
+export TRAINSHARD_ROUTES="node2=10.0.0.12:9700 node3=10.0.0.13:9700"  # name=daemon address, one per machine
+docker compose -f docker-compose.yml -f docker-compose.trainshard.yml -f docker-compose.trainshard-hub.yml up -d
+```
+
+Leave `docker-compose.trainshard.yml` out when this machine leases no GPUs of
+its own. On each GPU machine, with a warm key of its own in `.inference`:
+
+```
+export TRAINSHARD_NODES=node2
+export TRAINSHARD_ENDPOINT=http://host1.example.com:8000/trainshard-node2   # its own prefix, never the same as another machine's
+export TRAINSHARD_BIND=10.0.0.12                 # where the first machine's proxy reaches this daemon
+export TRAINSHARD_MESH_ENDPOINT=203.0.113.12
+export TRAINSHARD_CHAIN_GRPC=10.0.0.11:9090
+export TRAINSHARD_DAPI=http://10.0.0.11:9200
+docker compose -f docker-compose.mlnode.yml -f docker-compose.trainshard.yml up -d
+```
 
 ## On the coordinator
 
@@ -118,14 +146,9 @@ inferenced tx gov vote $(inferenced query gov proposals -o json | jq -r '.propos
   --from <key> --gas auto --gas-adjustment 1.5 --yes
 ```
 
-4. Point trainshardctl at the hosts and the chain. A host is reached through the
-   participant's proxy, the same address and port the api is served on:
+4. Point trainshardctl at the chain; the hosts' addresses come from the shard record:
 
 ```
-echo '{"gonka1host1...":"http://host1.example.com:8000",
-       "gonka1host2...":"http://host2.example.com:8000"}' > hosts.json
-
-export TRAINSHARD_HOSTS=$PWD/hosts.json
 export TRAINSHARD_CHAIN_GRPC=chain-host:9090
 export TRAINSHARD_CHAIN_ID=gonka-mainnet    # optional, read from the chain and only checked when set
 export TRAINSHARD_KEY_NAME=mykey

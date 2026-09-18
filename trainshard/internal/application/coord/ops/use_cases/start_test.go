@@ -64,16 +64,16 @@ type hostsStub struct {
 	started    []vo.NodeRef
 }
 
-func (h *hostsStub) Deploy(context.Context, vo.Participant, run.DeployCall) ([]run.NodeResult, error) {
+func (h *hostsStub) Deploy(context.Context, vo.Host, run.DeployCall) ([]run.NodeResult, error) {
 	return nil, nil
 }
 
-func (h *hostsStub) Stop(context.Context, vo.Participant, run.StopCall) ([]run.NodeResult, error) {
+func (h *hostsStub) Stop(context.Context, vo.Host, run.StopCall) ([]run.NodeResult, error) {
 	return nil, nil
 }
 
-func (h *hostsStub) Status(_ context.Context, participant vo.Participant, call run.HostCommand) ([]run.NodeStatus, error) {
-	if h.silent[participant] {
+func (h *hostsStub) Status(_ context.Context, host vo.Host, call run.HostCommand) ([]run.NodeStatus, error) {
+	if h.silent[host.Participant] {
 		return nil, errors.New("host did not answer")
 	}
 	statuses := make([]run.NodeStatus, 0, len(call.Nodes))
@@ -95,7 +95,7 @@ func (h *hostsStub) Status(_ context.Context, participant vo.Participant, call r
 	return statuses, nil
 }
 
-func (h *hostsStub) Start(_ context.Context, _ vo.Participant, call run.HostCommand) ([]run.NodeResult, error) {
+func (h *hostsStub) Start(_ context.Context, _ vo.Host, call run.HostCommand) ([]run.NodeResult, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 

@@ -32,9 +32,13 @@ export DISABLE_DEVSHARD_PROXY=${DISABLE_DEVSHARD_PROXY:-false}
 export EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-}
 export EDGE_API_PORT=${EDGE_API_PORT:-18080}
 # Leasing GPUs for training is optional per machine, so /trainshard/ is routed only
-# when the operator says which service answers it.
+# when the operator says which service answers it. A participant with more GPU machines
+# behind this proxy lists them in TRAINSHARD_ROUTES as "name=host:port" entries, one per
+# machine, and each is reached under /trainshard-<name>/; that prefix is what the machine's
+# daemon publishes on chain as its endpoint.
 export TRAINSHARD_SERVICE_NAME=${TRAINSHARD_SERVICE_NAME:-}
 export TRAINSHARD_PORT=${TRAINSHARD_PORT:-9700}
+export TRAINSHARD_ROUTES=${TRAINSHARD_ROUTES:-}
 # Public Tier A read-only routes (always published when EDGE_API_SERVICE_NAME is set).
 EDGE_API_ROUTE_PATHS_DEFAULT='
 /v1/status
@@ -214,6 +218,55 @@ if [ -n "${TRAINSHARD_SERVICE_NAME}" ]; then
 else
     export TRAINSHARD_UPSTREAM="# trainshardd not configured"
 fi
+
+# One upstream per routed GPU machine. The route name is limited to what can appear in an
+# nginx zone name and in a path segment, so a typo cannot rewrite the config.
+route_names=""
+for route in ${TRAINSHARD_ROUTES}; do
+    route_name="${route%%=*}"
+    route_target="${route#*=}"
+    if [ "${route_name}" = "${route}" ] || [ -z "${route_name}" ] || [ -z "${route_target}" ]; then
+        echo "❌ TRAINSHARD_ROUTES entry '${route}' must look like name=host:port"
+        exit 1
+    fi
+    case "${route_name}" in
+        *[!a-zA-Z0-9_-]*)
+            echo "❌ TRAINSHARD_ROUTES name '${route_name}' may only hold letters, digits, '-' and '_'"
+            exit 1
+            ;;
+    esac
+    route_host="${route_target%:*}"
+    route_port="${route_target##*:}"
+    case "${route_target}" in
+        *[!a-zA-Z0-9_.:-]*|*:*:*|*:)
+            echo "❌ TRAINSHARD_ROUTES target '${route_target}' must be host:port"
+            exit 1
+            ;;
+    esac
+    case "${route_port}" in
+        ''|*[!0-9]*|??????*)
+            echo "❌ TRAINSHARD_ROUTES target '${route_target}' must be host:port with a port in 1..65535"
+            exit 1
+            ;;
+    esac
+    if [ -z "${route_host}" ] || [ "${route_host}" = "${route_target}" ] || [ "${route_port}" -lt 1 ] || [ "${route_port}" -gt 65535 ]; then
+        echo "❌ TRAINSHARD_ROUTES target '${route_target}' must be host:port with a port in 1..65535"
+        exit 1
+    fi
+    case " ${route_names} " in
+        *" ${route_name} "*)
+            echo "❌ TRAINSHARD_ROUTES names a route '${route_name}' twice"
+            exit 1
+            ;;
+    esac
+    route_names="${route_names} ${route_name}"
+    echo "   Trainshard Route: /trainshard-${route_name}/ -> ${route_target}"
+    export TRAINSHARD_UPSTREAM="${TRAINSHARD_UPSTREAM}
+    upstream trainshard_${route_name}_backend {
+        zone trainshard_${route_name}_backend 64k;
+        server ${route_target} resolve;
+    }"
+done
 
 is_placeholder_password() {
     case "$1" in
@@ -770,6 +823,30 @@ if [ -n "${TRAINSHARD_SERVICE_NAME}" ]; then
 else
     export TRAINSHARD_LOCATION="# trainshardd not configured"
 fi
+
+# A routed machine is reached under its own prefix, which the trailing slash on proxy_pass
+# strips off: the daemon behind it sees the same /trainshard/v0/... path the coordinator
+# signed, so the signature still holds and the daemon needs to know nothing about the proxy.
+for route in ${TRAINSHARD_ROUTES}; do
+    route_name="${route%%=*}"
+    export TRAINSHARD_LOCATION="${TRAINSHARD_LOCATION}
+        location /trainshard-${route_name}/ {
+            set \$limit_zone_name \"TRAINSHARD\";
+            limit_req zone=trainshard_zone burst=${TRAINSHARD_BURST} nodelay;
+            ${LIMIT_CONN_RULE_TRAINSHARD}
+            proxy_pass http://trainshard_${route_name}_backend/;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+
+            ${STREAMING_CONFIG}
+
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }"
+done
 
 # --------------------------------------------------------------------------------
 # Fail2Ban Configuration (Sidecar)

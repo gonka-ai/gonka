@@ -1,6 +1,36 @@
 package hosts
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"trainshard/internal/domain/shared/vo"
+)
+
+func TestBaseURLIsTheEndpointTheChainNames(t *testing.T) {
+	alice := vo.Participant("gonka1alice")
+
+	cases := []struct {
+		name string
+		host vo.Host
+		want string
+		err  error
+	}{
+		{name: "the endpoint from the chain", host: vo.Host{Participant: alice, Endpoint: "https://gpu2.alice.example/trainshard-node2"}, want: "https://gpu2.alice.example/trainshard-node2"},
+		{name: "no endpoint is an unknown host", host: vo.Host{Participant: alice}, err: errUnknownHost},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := baseURL(tc.host)
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("got err %v, want %v", err, tc.err)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
 
 func TestHostAddressKeepsTheSchemeSoAShellIsNotSentInTheClear(t *testing.T) {
 	cases := []struct {
