@@ -25,8 +25,8 @@ func (uc *StartUseCase) Execute(ctx context.Context, cmd RunCommand) ([]run.Node
 	}
 
 	// 2. Ask every host which image its containers hold
-	statuses := run.PerHost(ctx, record.Refs(), run.FailedStatus, func(ctx context.Context, participant vo.Participant, nodes []vo.NodeRef) ([]run.NodeStatus, error) {
-		return uc.hosts.Status(ctx, participant, cmd.hostCommand(nodes))
+	statuses := run.PerHost(ctx, record.Hosts(), run.FailedStatus, func(ctx context.Context, host vo.Host) ([]run.NodeStatus, error) {
+		return uc.hosts.Status(ctx, host, cmd.hostCommand(host.Nodes))
 	})
 
 	// 3. Refuse the whole run unless every node is ready to take it; only we see every host
@@ -35,7 +35,7 @@ func (uc *StartUseCase) Execute(ctx context.Context, cmd RunCommand) ([]run.Node
 	}
 
 	// 4. One call per host; return collected results
-	return run.PerHost(ctx, record.Refs(), run.Failed, func(ctx context.Context, participant vo.Participant, nodes []vo.NodeRef) ([]run.NodeResult, error) {
-		return uc.hosts.Start(ctx, participant, cmd.hostCommand(nodes))
+	return run.PerHost(ctx, record.Hosts(), run.Failed, func(ctx context.Context, host vo.Host) ([]run.NodeResult, error) {
+		return uc.hosts.Start(ctx, host, cmd.hostCommand(host.Nodes))
 	}), nil
 }

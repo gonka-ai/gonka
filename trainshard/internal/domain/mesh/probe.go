@@ -7,9 +7,15 @@ import (
 	"trainshard/internal/utils/syncx"
 )
 
-func Probe(ctx context.Context, hosts Hosts, cfg Config) []Pair {
+// Probe asks every node which peers it cannot reach; a node no machine serves or whose machine
+// does not answer is taken as cut off from everyone
+func Probe(ctx context.Context, hosts Hosts, cfg Config, machines []vo.Host) []Pair {
 	answers := syncx.Fan(cfg.Refs(), func(node vo.NodeRef) []Pair {
-		pairs, err := hosts.Probe(ctx, cfg, node)
+		host, found := vo.HostOf(machines, node)
+		if !found {
+			return brokenWithEveryone(node, cfg)
+		}
+		pairs, err := hosts.Probe(ctx, cfg, host, node)
 		if err != nil {
 			return brokenWithEveryone(node, cfg)
 		}

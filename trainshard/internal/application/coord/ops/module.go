@@ -30,8 +30,8 @@ func New(cfg Config, deps Deps, out io.Writer, in io.Reader) *Module {
 		Stop:   usecases.NewStopUseCase(deps.Chain, deps.Hosts),
 		Status: usecases.NewStatusUseCase(deps.Chain, deps.Hosts),
 		Report: usecases.NewCollectReportUseCase(deps.Chain, deps.Reports),
-		Logs:   usecases.NewStreamLogsUseCase(deps.Streams),
-		Shell:  usecases.NewOpenShellUseCase(deps.Streams),
+		Logs:   usecases.NewStreamLogsUseCase(deps.Chain, deps.Streams),
+		Shell:  usecases.NewOpenShellUseCase(deps.Chain, deps.Streams),
 	}
 	return &Module{commands: cli.New(uc, deps.Clock, cfg.Timeout, out, in)}
 }

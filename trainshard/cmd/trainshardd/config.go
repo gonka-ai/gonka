@@ -33,6 +33,7 @@ type config struct {
 	gpuKind          string
 	nvidiaSMI        string
 	meshEndpoint     string
+	endpoint         vo.Endpoint
 	meshPortBase     int
 	meshPorts        int
 	meshKeyDir       string
@@ -158,6 +159,10 @@ func load() (config, error) {
 	if err != nil {
 		return config{}, err
 	}
+	cfg.endpoint, err = vo.ParseEndpoint(strings.TrimRight(env("ENDPOINT", ""), "/"))
+	if err != nil {
+		return config{}, fmt.Errorf("TRAINSHARD_ENDPOINT: %w", err)
+	}
 	return cfg, cfg.validate()
 }
 
@@ -191,6 +196,8 @@ func (c config) validate() error {
 
 	case c.machine == "":
 		return fmt.Errorf("TRAINSHARD_MACHINE is required: docker to train on this host's cards, memory to stand in for a host that has none")
+	case c.endpoint.IsZero():
+		return fmt.Errorf("TRAINSHARD_ENDPOINT is required: it is the address a coordinator reaches this daemon at, published on chain with the opt-in, and there is no other place one is taken from")
 	case c.machine == "docker" && c.meshEndpoint == "":
 		return fmt.Errorf("TRAINSHARD_MESH_ENDPOINT is required on a docker machine")
 	case c.machine == "docker" && c.memoryBytes <= 0:

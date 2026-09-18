@@ -20,12 +20,14 @@ const pathSendTx = "/admin/v1/tx/send"
 
 var chainCodec = codec.NewProtoCodec(chainTypes())
 
-// OptIn offers the node for training. How long the offer stands is a chain parameter, not ours, so
-// the ttl we were asked for only decides how soon we say it again
+// OptIn offers the node for training and says where this daemon answers for it. How long the
+// offer stands is a chain parameter, not ours, so the ttl we were asked for only decides how soon
+// we say it again
 func (c *Client) OptIn(ctx context.Context, node vo.NodeRef, _ time.Duration) error {
 	return c.send(ctx, &types.MsgRefreshTrainingNodeOptIn{
-		Creator: string(c.cfg.Participant),
-		NodeIds: []string{string(node.NodeID)},
+		Creator:  string(c.cfg.Participant),
+		NodeIds:  []string{string(node.NodeID)},
+		Endpoint: string(c.cfg.Endpoint),
 	})
 }
 

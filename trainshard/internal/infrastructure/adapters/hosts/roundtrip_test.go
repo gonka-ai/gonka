@@ -46,6 +46,16 @@ var (
 	node    = vo.NodeRef{Participant: host, NodeID: "node-a"}
 )
 
+// routePrefix stands in for the participant's proxy, which reaches one of several GPU machines
+// under its own prefix and strips it before the daemon sees the path: what the coordinator signs
+// is the path behind the prefix, and that is what the daemon has to verify
+const routePrefix = "/trainshard-node-a"
+
+type reached struct {
+	*hosts.Client
+	machine vo.Host
+}
+
 func key(raw string) *cosmos.Key {
 	loaded, err := cosmos.FromHex(raw)
 	if err != nil {
@@ -78,7 +88,7 @@ func seedFile(t *testing.T) string {
 	return path
 }
 
-func newHost(t *testing.T) *hosts.Client {
+func newHost(t *testing.T) reached {
 	t.Helper()
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -136,7 +146,7 @@ func newHost(t *testing.T) *hosts.Client {
 	module.Mount(mux, boundary)
 	streams.Mount(mux, boundary)
 
-	server := httptest.NewServer(mux)
+	server := httptest.NewServer(http.StripPrefix(routePrefix, mux))
 	t.Cleanup(server.Close)
 
 	ctx, stop := context.WithCancel(context.Background())
@@ -144,7 +154,10 @@ func newHost(t *testing.T) *hosts.Client {
 	go func() { defer close(stopped); module.Run(ctx) }()
 	t.Cleanup(func() { stop(); <-stopped })
 
-	return hosts.New(server.Client(), hosts.Directory{host: server.URL}, coordinatorKey, clock, time.Minute)
+	return reached{
+		Client:  hosts.New(server.Client(), coordinatorKey, clock, time.Minute),
+		machine: vo.Host{Participant: host, Endpoint: vo.Endpoint(server.URL + routePrefix), Nodes: []vo.NodeRef{node}},
+	}
 }
 
 func command(nodes ...vo.NodeRef) run.HostCommand {
@@ -156,12 +169,12 @@ func command(nodes ...vo.NodeRef) run.HostCommand {
 	}
 }
 
-func waitFor(t *testing.T, why string, ready func(run.NodeStatus) bool, client *hosts.Client) run.NodeStatus {
+func waitFor(t *testing.T, why string, ready func(run.NodeStatus) bool, client reached) run.NodeStatus {
 	t.Helper()
 
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		statuses, err := client.Status(context.Background(), host, command(node))
+		statuses, err := client.Status(context.Background(), client.machine, command(node))
 		if err != nil {
 			t.Fatalf("status: %v", err)
 		}
@@ -180,11 +193,11 @@ func waitFor(t *testing.T, why string, ready func(run.NodeStatus) bool, client *
 
 // meshed takes the node as far as a coordinator would before it deploys: a container is built
 // with the rank its peer list gives it, so there is no run without one
-func meshed(t *testing.T, client *hosts.Client) {
+func meshed(t *testing.T, client reached) {
 	t.Helper()
 
 	ctx := context.Background()
-	identities, err := client.Identities(ctx, shardID, host)
+	identities, err := client.Identities(ctx, shardID, client.machine)
 	if err != nil {
 		t.Fatalf("identities: %v", err)
 	}
@@ -192,7 +205,7 @@ func meshed(t *testing.T, client *hosts.Client) {
 	if err != nil {
 		t.Fatalf("order: %v", err)
 	}
-	if err := client.Apply(ctx, config, node); err != nil {
+	if err := client.Apply(ctx, config, client.machine, node); err != nil {
 		t.Fatalf("apply mesh: %v", err)
 	}
 	waitFor(t, "the mesh to come up", func(s run.NodeStatus) bool { return s.MeshUp }, client)
@@ -206,7 +219,7 @@ func TestARunIsDrivenOverHTTPFromEndToEnd(t *testing.T) {
 	waitFor(t, "the node to be prepared", func(s run.NodeStatus) bool { return s.Prepared }, client)
 	meshed(t, client)
 
-	deployed, err := client.Deploy(ctx, host, run.DeployCall{
+	deployed, err := client.Deploy(ctx, client.machine, run.DeployCall{
 		HostCommand: command(node),
 		Run: run.RunSpec{
 			Image:     runImage,
@@ -228,7 +241,7 @@ func TestARunIsDrivenOverHTTPFromEndToEnd(t *testing.T) {
 		t.Fatalf("got %q, want the container built from the run image", created.Image)
 	}
 
-	started, err := client.Start(ctx, host, command(node))
+	started, err := client.Start(ctx, client.machine, command(node))
 
 	if err != nil {
 		t.Fatalf("start: %v", err)
@@ -238,7 +251,7 @@ func TestARunIsDrivenOverHTTPFromEndToEnd(t *testing.T) {
 	}
 	waitFor(t, "the container to be running", func(s run.NodeStatus) bool { return s.State.Running() }, client)
 
-	stopped, err := client.Stop(ctx, host, run.StopCall{HostCommand: command(node), Grace: time.Second})
+	stopped, err := client.Stop(ctx, client.machine, run.StopCall{HostCommand: command(node), Grace: time.Second})
 
 	if err != nil {
 		t.Fatalf("stop: %v", err)
@@ -255,7 +268,7 @@ func TestTheResultIsCollectedOverHTTPBeforeTheShardCloses(t *testing.T) {
 	ctx := context.Background()
 	waitFor(t, "the node to be prepared", func(s run.NodeStatus) bool { return s.Prepared }, client)
 	meshed(t, client)
-	if _, err := client.Deploy(ctx, host, run.DeployCall{
+	if _, err := client.Deploy(ctx, client.machine, run.DeployCall{
 		HostCommand: command(node),
 		Run:         run.RunSpec{Image: runImage, Resources: run.Resources{GPUs: 8, DiskBytes: 1 << 30}},
 	}); err != nil {
@@ -263,7 +276,7 @@ func TestTheResultIsCollectedOverHTTPBeforeTheShardCloses(t *testing.T) {
 	}
 	waitFor(t, "the container to be created", func(s run.NodeStatus) bool { return s.State.Exists() }, client)
 
-	reports, err := client.Report(ctx, host, shardID, []vo.NodeRef{node})
+	reports, err := client.Report(ctx, client.machine, shardID, []vo.NodeRef{node})
 
 	if err != nil {
 		t.Fatalf("report: %v", err)
@@ -285,7 +298,7 @@ func TestTheMeshIsBuiltAndProbedOverHTTP(t *testing.T) {
 	ctx := context.Background()
 	waitFor(t, "the node to be prepared", func(s run.NodeStatus) bool { return s.Prepared }, client)
 
-	identities, err := client.Identities(ctx, shardID, host)
+	identities, err := client.Identities(ctx, shardID, client.machine)
 	if err != nil {
 		t.Fatalf("identities: %v", err)
 	}
@@ -293,7 +306,7 @@ func TestTheMeshIsBuiltAndProbedOverHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("order: %v", err)
 	}
-	err = client.Apply(ctx, config, node)
+	err = client.Apply(ctx, config, client.machine, node)
 
 	if len(identities) != 1 || identities[0].Member.Node != node || len(identities[0].Signature) == 0 {
 		t.Fatalf("got %+v, want one signed member", identities)
@@ -303,7 +316,7 @@ func TestTheMeshIsBuiltAndProbedOverHTTP(t *testing.T) {
 	}
 	waitFor(t, "the mesh to come up", func(s run.NodeStatus) bool { return s.MeshUp }, client)
 
-	failed, err := client.Probe(ctx, config, node)
+	failed, err := client.Probe(ctx, config, client.machine, node)
 
 	if err != nil {
 		t.Fatalf("probe: %v", err)
@@ -319,7 +332,7 @@ func TestLogsAndRefusalsCrossTheWireAsThemselves(t *testing.T) {
 	ctx := context.Background()
 	var out strings.Builder
 
-	err := client.Logs(ctx, host, run.LogRequest{Shard: shardID, Node: node, Tail: 10}, &out)
+	err := client.Logs(ctx, client.machine, run.LogRequest{Shard: shardID, Node: node, Tail: 10}, &out)
 
 	if err != nil {
 		t.Fatalf("logs: %v", err)
@@ -328,7 +341,7 @@ func TestLogsAndRefusalsCrossTheWireAsThemselves(t *testing.T) {
 		t.Fatalf("got %q, want what the machine had to say", out.String())
 	}
 
-	_, err = client.Start(ctx, host, command(vo.NodeRef{Participant: host, NodeID: "node-x"}))
+	_, err = client.Start(ctx, client.machine, command(vo.NodeRef{Participant: host, NodeID: "node-x"}))
 
 	if shared.CodeOf(err) != "NODE_NOT_SERVED" {
 		t.Fatalf("got %v, want the host's own refusal of a node it does not serve", err)

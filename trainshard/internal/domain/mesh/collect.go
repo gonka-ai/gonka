@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"context"
+	"slices"
 
 	"trainshard/internal/domain/shared/ports"
 	"trainshard/internal/domain/shared/vo"
@@ -9,25 +10,28 @@ import (
 )
 
 type answer struct {
+	host       vo.Host
 	identities []Identity
 	err        error
 }
 
 // Collect gathers one signed member per reserved node and names those that have not reported yet.
 // A silent host only leaves its nodes missing, unless no host answers at all; an identity that does
-// not verify is a refusal and fails the whole mesh
+// not verify is a refusal and fails the whole mesh. A host speaks for the nodes the chain places on
+// it and no other: an identity it offers for another machine's node, or for one it no longer holds,
+// is not taken
 func Collect(
 	ctx context.Context,
 	hosts Hosts,
 	verifier ports.Verifier,
 	delegation ports.Delegation,
 	shardID vo.ShardID,
-	participants []vo.Participant,
+	machines []vo.Host,
 	reserved []vo.NodeRef,
 ) (members []Member, missing []vo.NodeRef, err error) {
-	answers := syncx.Fan(participants, func(participant vo.Participant) answer {
-		identities, err := hosts.Identities(ctx, shardID, participant)
-		return answer{identities: identities, err: err}
+	answers := syncx.Fan(machines, func(host vo.Host) answer {
+		identities, err := hosts.Identities(ctx, shardID, host)
+		return answer{host: host, identities: identities, err: err}
 	})
 
 	collected := make(map[vo.NodeRef]Member, len(reserved))
@@ -42,6 +46,9 @@ func Collect(
 		answered++
 
 		for _, identity := range reply.identities {
+			if !slices.Contains(reply.host.Nodes, identity.Member.Node) {
+				continue
+			}
 			signer, err := verifier.Recover(IdentityPayload(shardID, identity.Member), identity.Signature)
 			if err != nil {
 				return nil, nil, ErrForeignIdentity

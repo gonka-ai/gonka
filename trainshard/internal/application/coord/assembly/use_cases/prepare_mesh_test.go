@@ -244,6 +244,24 @@ func TestPrepareGoesOnWithoutANodeThatStaysQuietPastTheDeadline(t *testing.T) {
 	}
 }
 
+func TestPrepareDropsANodeTheChainHoldsNoAddressForWithoutWaiting(t *testing.T) {
+
+	chain, hosts := newChainStub(), newHostsStub()
+	chain.record.Nodes[0].Endpoint = ""
+
+	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
+
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if len(chain.releases) != 1 || chain.releases[0].node != nodeA || chain.releases[0].reason != vo.ReleaseUnreachable {
+		t.Fatalf("got %+v, want the unaddressed node released as unreachable before the deadline", chain.releases)
+	}
+	if len(result.Config.Peers) != 2 || result.Config.Contains(nodeA) {
+		t.Fatalf("got %+v, want the mesh built from the nodes that can be reached", result.Config.Peers)
+	}
+}
+
 func TestPrepareKeepsReleasingUntilWhatIsLeftIsConnected(t *testing.T) {
 
 	chain, hosts := newChainStub(), newHostsStub()
