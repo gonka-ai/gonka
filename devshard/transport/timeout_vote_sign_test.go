@@ -26,7 +26,7 @@ func TestSignTimeoutVote_UsesDeterministicMarshal(t *testing.T) {
 		Reason:      types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		Accept:      true,
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	require.NoError(t, err)
 	recovered, err := verifier.RecoverAddress(data, sig)
 	require.NoError(t, err)
@@ -34,7 +34,7 @@ func TestSignTimeoutVote_UsesDeterministicMarshal(t *testing.T) {
 
 	plain, err := proto.Marshal(content)
 	require.NoError(t, err)
-	require.Equal(t, data, plain, "all-scalar REFUSED content must be encoding-stable")
+	require.Equal(t, data[len(types.DomainTimeoutVote):], plain, "domain prefix must wrap the proto encoding")
 }
 
 func TestSignErrorMissVote_BindsResponseHash(t *testing.T) {
@@ -51,7 +51,7 @@ func TestSignErrorMissVote_BindsResponseHash(t *testing.T) {
 		Accept:       true,
 		ResponseHash: hash,
 	}
-	boundBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(bound)
+	boundBytes, err := types.CanonicalSignedBytes(bound)
 	require.NoError(t, err)
 	recovered, err := verifier.RecoverAddress(boundBytes, sig)
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestSignErrorMissVote_BindsResponseHash(t *testing.T) {
 		InferenceId: 9,
 		Accept:      true,
 	}
-	unboundBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(unbound)
+	unboundBytes, err := types.CanonicalSignedBytes(unbound)
 	require.NoError(t, err)
 	unboundAddr, err := verifier.RecoverAddress(unboundBytes, sig)
 	require.NoError(t, err)

@@ -70,6 +70,9 @@ message ErrorMissVote {
 }
 
 message MsgValidation {
+  // Proposer_sig is over CanonicalSignedBytes with domain
+  // "devshard.validation.v1". Field layout matches MsgValidationVote; the
+  // domain tag is what keeps the signatures from being interchangeable.
   uint64 inference_id = 1;
   uint32 validator_slot = 2;
   bool   valid = 3;
@@ -78,6 +81,8 @@ message MsgValidation {
 }
 
 message MsgValidationVote {
+  // Proposer_sig is over CanonicalSignedBytes with domain
+  // "devshard.validationvote.v1". See MsgValidation.
   uint64 inference_id = 1;
   uint32 voter_slot = 2;
   bool   vote_valid = 3;
