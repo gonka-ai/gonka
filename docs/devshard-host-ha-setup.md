@@ -75,8 +75,6 @@ For managed or self-managed PostgreSQL, obtain the primary endpoint, port, datab
 
 **Local Compose PostgreSQL.** `docker-compose.versiond.yml` starts `devshard-postgres` on the join host. If the machine dies, the database dies with it.
 
-External PostgreSQL: use a direct connection or session-mode pooling. Transaction pooling and explicit `PGSSL*` settings (except `PGSSLMODE=disable`) are unsupported. Providers requiring explicit TLS settings are outside this procedure; do not disable required TLS.
-
 #### Where to put PostgreSQL settings
 
 Run in `deploy/join`. For a new local database, choose a new password. For an existing database, use its current password from your database administrator:
@@ -246,6 +244,10 @@ EOF
 #### 2.2 External or managed PostgreSQL
 
 If you use local Compose PostgreSQL, skip this section and go to [Step 3](#step-3---start-the-deployment).
+
+Connect directly to PostgreSQL. If you use a connection pooler such as PgBouncer, configure session pooling; transaction pooling is unsupported.
+
+This deployment does not support PostgreSQL TLS configuration through `PGSSL*` variables; only `PGSSLMODE=disable` is accepted. If your provider requires explicit TLS settings, this procedure does not apply. Do not disable required TLS.
 
 Create the database and role through the provider, or run:
 
