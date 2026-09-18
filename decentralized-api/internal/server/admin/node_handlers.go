@@ -296,6 +296,46 @@ func (s *Server) disableNode(c echo.Context) error {
 	})
 }
 
+// stopNode handles POST /admin/v1/nodes/:id/stop
+func (s *Server) stopNode(c echo.Context) error {
+	return s.setNodeStopped(c, true)
+}
+
+// startNode handles POST /admin/v1/nodes/:id/start
+func (s *Server) startNode(c echo.Context) error {
+	return s.setNodeStopped(c, false)
+}
+
+func (s *Server) setNodeStopped(c echo.Context, stopped bool) error {
+	nodeId := c.Param("id")
+	if nodeId == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "node id is required")
+	}
+
+	response := make(chan error, 2)
+	err := s.nodeBroker.QueueMessage(broker.SetNodeStoppedCommand{
+		NodeId:   nodeId,
+		Stopped:  stopped,
+		Response: response,
+	})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to queue command: "+err.Error())
+	}
+
+	if err := <-response; err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, err.Error())
+	}
+
+	message := "node started successfully"
+	if stopped {
+		message = "node stopped successfully"
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message": message,
+		"node_id": nodeId,
+	})
+}
+
 // exportDb returns a human-readable JSON snapshot of DB-backed dynamic config
 func (s *Server) exportDb(c echo.Context) error {
 	ctx := c.Request().Context()

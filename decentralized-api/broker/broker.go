@@ -215,6 +215,7 @@ type NodeWithState struct {
 type AdminState struct {
 	Enabled bool   `json:"enabled"`
 	Epoch   uint64 `json:"epoch"`
+	Stopped bool   `json:"stopped"`
 }
 
 type NodeState struct {
@@ -293,6 +294,12 @@ func (s *NodeState) UpdateStatusNow(status types.HardwareNodeStatus) {
 func (s *NodeState) Failure(reason string) {
 	s.FailureReason = reason
 	s.UpdateStatusNow(types.HardwareNodeStatus_FAILED)
+}
+
+// pinStopped holds the node at STOPPED and out of PoC through every epoch command
+func (s *NodeState) pinStopped() {
+	s.IntendedStatus = types.HardwareNodeStatus_STOPPED
+	s.PocIntendedStatus = PocStatusIdle
 }
 
 func (s *NodeState) IsOperational() bool {
@@ -445,6 +452,8 @@ func (b *Broker) executeCommand(command Command) {
 		command.Execute(b)
 	case SetNodeAdminStateCommand:
 		command.Execute(b)
+	case SetNodeStoppedCommand:
+		command.Execute(b)
 	case UpdateNodeHardwareCommand:
 		command.Execute(b)
 	case InferenceUpAllCommand:
@@ -484,7 +493,7 @@ func (b *Broker) commandQueue(command Command) (chan Command, error) {
 	}
 
 	switch command.(type) {
-	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand, UpdateNodeResultCommand, SetNodesActualStatusCommand, SetNodeAdminStateCommand, RegisterNode, RemoveNode, SyncNodesCommand:
+	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand, UpdateNodeResultCommand, SetNodesActualStatusCommand, SetNodeAdminStateCommand, SetNodeStoppedCommand, RegisterNode, RemoveNode, SyncNodesCommand:
 		return b.highPriorityCommands, nil
 	default:
 		return b.lowPriorityCommands, nil
@@ -629,11 +638,15 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 			released = true
 		}
 	}
+	stopPending := ok && released && node.State.LockCount == 0 && node.State.AdminState.Stopped
 	b.mu.Unlock()
 
 	if !ok {
 		command.Response <- false
 		return
+	}
+	if stopPending {
+		b.TriggerReconciliation()
 	}
 	if released && !command.Outcome.IsSuccess() {
 		logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
@@ -1362,6 +1375,14 @@ func (b *Broker) getCommandForState(
 			return nil // No action for other phases if status is POC
 		}
 	case types.HardwareNodeStatus_STOPPED:
+		if !nodeState.AdminState.Stopped {
+			return nil
+		}
+		if nodeState.LockCount > 0 {
+			logging.Info("Deferring node stop until in-flight inference finishes", types.Nodes,
+				"node_id", nodeId, "lock_count", nodeState.LockCount)
+			return nil
+		}
 		return StopNodeCommand{}
 	default:
 		logging.Info("Reconciliation for state not yet implemented", types.Nodes,
