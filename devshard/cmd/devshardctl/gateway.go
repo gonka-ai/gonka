@@ -1853,9 +1853,7 @@ func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRunti
 		}
 	}
 	rt.stopRedundancy()
-	if g.metrics != nil {
-		g.metrics.ForgetEscrow(id)
-	}
+	g.forgetRetiredEscrowMetrics(id)
 }
 
 func (g *Gateway) serveChatToRuntime(rt *devshardRuntime, path string, body []byte, w http.ResponseWriter, r *http.Request) *gatewayChatCacheCapture {
@@ -3743,6 +3741,7 @@ func (g *Gateway) handleAdminDeactivateDevshard(w http.ResponseWriter, r *http.R
 		if err := retired.retireClose("deactivated"); err != nil {
 			log.Printf("deactivate_retire_close_error escrow=%s error=%v", id, err)
 		}
+		g.forgetRetiredEscrowMetrics(id)
 	}
 	writeJSON(w, map[string]any{
 		"id":     id,
@@ -3807,6 +3806,16 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 		http.Error(w, `{"error":{"message":"gateway state store unavailable"}}`, http.StatusServiceUnavailable)
 		return
 	}
+	// Both run once g.mu is released: stopping a dispatcher joins its goroutine, and the series must
+	// not be deleted while that goroutine can still record one.
+	var cleanedRuntime *devshardRuntime
+	hasSeriesToForget := false
+	defer func() {
+		cleanedRuntime.stopRedundancy()
+		if hasSeriesToForget {
+			g.forgetRetiredEscrowMetrics(id)
+		}
+	}()
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -3834,12 +3843,14 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if g.dropRegisteredRuntimeLocked(id) != nil {
+			cleanedRuntime = rt
+			hasSeriesToForget = true
 			if err := rt.close(); err != nil {
 				log.Printf("close devshard %s: %v", id, err)
 			}
 		}
-	} else if g.metrics != nil {
-		g.metrics.ForgetEscrow(id)
+	} else {
+		hasSeriesToForget = true
 	}
 	if err := g.store.DeleteDevshard(id); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -4055,13 +4066,14 @@ func (g *Gateway) retireRuntime(id, reason string) bool {
 	if err := rt.retireClose(reason); err != nil {
 		log.Printf("runtime_retire_close_error escrow=%s reason=%q error=%v", id, reason, err)
 	}
+	g.forgetRetiredEscrowMetrics(id)
 	log.Printf("runtime_retired escrow=%s reason=%q", id, reason)
 	return true
 }
 
 // dropRegisteredRuntimeLocked is the single map-removal point for a runtime.
-// Callers must hold g.mu. It forgets escrow-keyed Prometheus children so
-// deactivate/clean/retire cannot leave slot and picker series behind.
+// Callers must hold g.mu, and must call forgetRetiredEscrowMetrics once the
+// runtime's dispatcher has stopped.
 func (g *Gateway) dropRegisteredRuntimeLocked(id string) *devshardRuntime {
 	rt, ok := g.runtimes[id]
 	if !ok {
@@ -4072,10 +4084,17 @@ func (g *Gateway) dropRegisteredRuntimeLocked(id string) *devshardRuntime {
 	if g.capacity != nil {
 		g.capacity.RemoveEscrow(id)
 	}
-	if g.metrics != nil {
-		g.metrics.ForgetEscrow(id)
-	}
 	return rt
+}
+
+// forgetRetiredEscrowMetrics drops the escrow's Prometheus children. Callers run it after the
+// runtime's dispatcher has stopped and outside g.mu, so a late ghost burn cannot recreate a series
+// that was just deleted, and the per-child scan stays off the routing lock.
+func (g *Gateway) forgetRetiredEscrowMetrics(id string) {
+	if g == nil || g.metrics == nil {
+		return
+	}
+	g.metrics.ForgetEscrow(id)
 }
 
 // retireRuntimeLocked removes the runtime from the registry and returns it so
@@ -4324,6 +4343,11 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	if !isTakenOutOfService {
 		return nil
 	}
+	// Before the chain call: a replacement that fails to broadcast must not leave the escrow it
+	// replaces resident, holding its session and its series.
+	if !settings.EscrowRotation.SettlementEnabled {
+		g.retireRuntime(id, reason)
+	}
 
 	var epoch uint64
 	if g.phaseGate != nil {
@@ -4339,9 +4363,6 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	}
 	log.Printf("escrow_depletion_replacement_created old_escrow=%s new_escrow=%d model=%q reason=%q tx_hash=%s",
 		id, result.EscrowID, model.ModelID, reason, result.TxHash)
-	if !settings.EscrowRotation.SettlementEnabled {
-		g.retireRuntime(id, reason)
-	}
 	return nil
 }
 

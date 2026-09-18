@@ -100,6 +100,10 @@ func TestGatewayBalanceExhaustedTakesTheEscrowOutOfServiceWhenItsReplacementFail
 	waitForReplacementIdle(t, gateway, depletedRuntime.id)
 
 	require.False(t, depletedRuntime.active.Load(), "an exhausted escrow kept taking inferences while its replacement failed")
+	gateway.mu.Lock()
+	_, stillRegistered := gateway.runtimes[depletedRuntime.id]
+	gateway.mu.Unlock()
+	require.False(t, stillRegistered, "a failed replacement left the depleted runtime resident with its session and series")
 }
 
 func TestGatewayCheckBalancesSwapsADepletedEscrowForARegularReplacement(t *testing.T) {
