@@ -15,6 +15,10 @@ import (
 // the model config's seq_len belongs to the prefill scheme.
 const DecodeSeqLen = 256
 
+// DecodeSpherePoints is the decode snap codebook size. Packed steps are k ∈ [0, DecodeSpherePoints).
+// Must match the plugin codebook (gonka_poc SPHERE_POINTS). Wire is still one byte.
+const DecodeSpherePoints = 16
+
 // PoCParamsV2 contains model-specific parameters for PoC v2 generation/validation.
 type PoCParamsV2 struct {
 	Model  string `json:"model"`
@@ -25,12 +29,11 @@ type PoCParamsV2 struct {
 	// k_dim is intentionally omitted - MLNode will use its default
 }
 
-// DecodePoCParams returns the params of a request: the model's prefill shape,
-// or the decode scheme's fixed prompt length and its step count when the model
-// config selects decode.
-func DecodePoCParams(model string, seqLen int64, decodeMaxTokens int64) PoCParamsV2 {
+// PoCParamsForScheme is the MLNode params for a frozen stage recipe.
+// decode_max_tokens is N only when scheme is DECODE; PREFILL ignores it.
+func PoCParamsForScheme(model string, seqLen, decodeMaxTokens int64, scheme types.PocScheme) PoCParamsV2 {
 	p := PoCParamsV2{Model: model, SeqLen: seqLen}
-	if decodeMaxTokens > 0 {
+	if scheme == types.PocScheme_POC_SCHEME_DECODE {
 		p.SeqLen, p.Decode, p.MaxTokens = DecodeSeqLen, true, decodeMaxTokens
 	}
 	return p

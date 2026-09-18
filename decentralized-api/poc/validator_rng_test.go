@@ -151,16 +151,21 @@ func TestValidateParticipant_StrongerRngPropagated(t *testing.T) {
 	})
 }
 
-// TestValidateParticipant_DecodeSchemePropagated asserts that a model config with
-// decode_max_tokens switches the GenerateV2 validation request to the decode
-// scheme and unpacks the stored trajectory; without it the request is unchanged.
+// TestValidateParticipant_DecodeSchemePropagated asserts that a frozen DECODE
+// scheme unpacks the stored trajectory; N set under PREFILL does not.
 func TestValidateParticipant_DecodeSchemePropagated(t *testing.T) {
 	packed := base64.StdEncoding.EncodeToString([]byte{1, 2, 3})
 	artifact := VerifiedArtifact{LeafIndex: 0, Nonce: 1, VectorB64: packed}
 
 	t.Run("decode", func(t *testing.T) {
 		params := testModelPocParams()
+		params.PocScheme = types.PocScheme_POC_SCHEME_DECODE
 		params.Models[0].DecodeMaxTokens = 256
+		params.Models[0].DecodeStatTest = &types.PoCStatTestParams{
+			DistThreshold:   types.DecimalFromFloat(0.03),
+			PMismatch:       types.DecimalFromFloat(0.1),
+			PValueThreshold: types.DecimalFromFloat(0.05),
+		}
 		req := runValidateParticipant(t, params, artifact)
 		assert.True(t, req.Params.Decode)
 		assert.Equal(t, int64(256), req.Params.MaxTokens)
@@ -168,6 +173,18 @@ func TestValidateParticipant_DecodeSchemePropagated(t *testing.T) {
 		require.Len(t, req.Validation.Artifacts, 1)
 		assert.Equal(t, []int{1, 2, 3}, req.Validation.Artifacts[0].KPointsSteps)
 		assert.Equal(t, "", req.Validation.Artifacts[0].VectorB64)
+		assert.InDelta(t, 0.03, req.StatTest.DistThreshold, 1e-9)
+	})
+
+	t.Run("prefill with N set is still prefill", func(t *testing.T) {
+		params := testModelPocParams()
+		params.Models[0].DecodeMaxTokens = 256
+		req := runValidateParticipant(t, params, artifact)
+		assert.False(t, req.Params.Decode)
+		assert.Equal(t, int64(0), req.Params.MaxTokens)
+		require.Len(t, req.Validation.Artifacts, 1)
+		assert.Nil(t, req.Validation.Artifacts[0].KPointsSteps)
+		assert.Equal(t, packed, req.Validation.Artifacts[0].VectorB64)
 	})
 
 	t.Run("prefill", func(t *testing.T) {

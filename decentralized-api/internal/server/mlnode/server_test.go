@@ -21,7 +21,9 @@ import (
 )
 
 type stubBrokerChainBridge struct {
-	models []string
+	models    []string
+	scheme    types.PocScheme
+	decodeMax int64
 }
 
 const (
@@ -65,7 +67,37 @@ func (s stubBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
 	return &types.QueryParamsResponse{}, nil
 }
 
+func (s stubBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
+	models := make([]*types.PoCModelConfig, 0, len(s.models))
+	if len(s.models) == 0 {
+		models = []*types.PoCModelConfig{
+			{ModelId: testModelA, SeqLen: 256, DecodeMaxTokens: s.decodeMax},
+			{ModelId: testModelB, SeqLen: 256, DecodeMaxTokens: s.decodeMax},
+		}
+	} else {
+		for _, id := range s.models {
+			models = append(models, &types.PoCModelConfig{
+				ModelId:         id,
+				SeqLen:          256,
+				DecodeMaxTokens: s.decodeMax,
+			})
+		}
+	}
+	return &types.QueryPocStageRecipeResponse{
+		Found: true,
+		Recipe: &types.PocStageRecipe{
+			StageHeight: stageHeight,
+			Scheme:      s.scheme,
+			Models:      models,
+		},
+	}, nil
+}
+
 func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...string) *broker.Broker {
+	return newMLNodeTestBrokerWithRecipe(t, phase, types.PocScheme_POC_SCHEME_PREFILL, 0, modelIDs...)
+}
+
+func newMLNodeTestBrokerWithRecipe(t *testing.T, phase types.EpochPhase, scheme types.PocScheme, decodeMax int64, modelIDs ...string) *broker.Broker {
 	t.Helper()
 
 	tracker := &chainphase.ChainPhaseTracker{}
@@ -84,7 +116,7 @@ func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...strin
 		nil,
 	)
 	testBroker := broker.NewBroker(
-		stubBrokerChainBridge{models: modelIDs},
+		stubBrokerChainBridge{models: modelIDs, scheme: scheme, decodeMax: decodeMax},
 		tracker,
 		nil,
 		"http://callback",
@@ -118,8 +150,8 @@ func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...strin
 		PoCSegment:       "/poc",
 		PoCPort:          8082,
 		Models:           models,
-		Id:            "node-1",
-		MaxConcurrent: 1,
+		Id:               "node-1",
+		MaxConcurrent:    1,
 	})
 	resp := <-loadResp
 	if resp.Error != nil {
@@ -189,15 +221,15 @@ func TestV2ValidatedCallbackUsesPathModelID(t *testing.T) {
 	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA))
 
 	body, err := json.Marshal(map[string]any{
-		"block_hash":       "abc",
-		"block_height":     100,
-		"public_key":       "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
-		"node_id":          1,
-		"n_total":          5,
-		"n_mismatch":       0,
-		"mismatch_nonces":  []int{},
-		"p_value":          1.0,
-		"fraud_detected":   false,
+		"block_hash":      "abc",
+		"block_height":    100,
+		"public_key":      "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
+		"node_id":         1,
+		"n_total":         5,
+		"n_mismatch":      0,
+		"mismatch_nonces": []int{},
+		"p_value":         1.0,
+		"fraud_detected":  false,
 	})
 	assert.NoError(t, err)
 
@@ -208,4 +240,90 @@ func TestV2ValidatedCallbackUsesPathModelID(t *testing.T) {
 	server.e.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
 	mockRecorder.AssertExpectations(t)
+}
+
+func TestV2GeneratedCallback_DecodeRejectsOutOfRangeSteps(t *testing.T) {
+	artifactStore := artifacts.NewManagedArtifactStore(t.TempDir(), 3)
+	defer artifactStore.Close()
+	artifactStore.ActivateStage(100)
+
+	server := NewServer(nil, newMLNodeTestBrokerWithRecipe(t, types.PoCGeneratePhase, types.PocScheme_POC_SCHEME_DECODE, 2, testModelA), WithArtifactStore(artifactStore))
+
+	post := func(steps []int) *httptest.ResponseRecorder {
+		body, err := json.Marshal(map[string]any{
+			"block_hash":   "abc",
+			"block_height": 100,
+			"public_key":   "pub",
+			"node_id":      1,
+			"artifacts": []map[string]any{
+				{"nonce": 1, "k_points_steps": steps},
+			},
+		})
+		assert.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/model-a/generated", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		server.e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	assert.Equal(t, http.StatusOK, post([]int{0, 15, 7}).Code)
+	assert.Equal(t, http.StatusBadRequest, post([]int{-1, 0, 0}).Code)
+	assert.Equal(t, http.StatusBadRequest, post([]int{16, 0, 0}).Code)
+	assert.Equal(t, http.StatusBadRequest, post([]int{255, 0, 0}).Code)
+}
+
+func TestV2ValidatedCallback_AbstainsOnNanSteps(t *testing.T) {
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA))
+
+	body, err := json.Marshal(map[string]any{
+		"block_hash":      "abc",
+		"block_height":    100,
+		"public_key":      "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
+		"node_id":         1,
+		"n_total":         5,
+		"n_mismatch":      0,
+		"n_nan_steps":     2,
+		"mismatch_nonces": []int{},
+		"p_value":         1.0,
+		"fraud_detected":  false,
+	})
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/model-a/validated", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	mockRecorder.AssertNotCalled(t, "SubmitPocValidationsV2", mock.Anything)
+}
+
+func TestV2ValidatedCallback_AbstainsOnExcludedNonces(t *testing.T) {
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA))
+
+	body, err := json.Marshal(map[string]any{
+		"block_hash":      "abc",
+		"block_height":    100,
+		"public_key":      "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
+		"node_id":         1,
+		"n_total":         3,
+		"n_mismatch":      0,
+		"n_excluded":      2,
+		"excluded_nonces": []int{4, 9},
+		"mismatch_nonces": []int{},
+		"p_value":         1.0,
+		"fraud_detected":  false,
+	})
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/model-a/validated", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	mockRecorder.AssertNotCalled(t, "SubmitPocValidationsV2", mock.Anything)
 }

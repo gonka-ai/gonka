@@ -93,6 +93,7 @@ const (
 	Query_ListRandomSeeds_FullMethodName                           = "/inference.inference.Query/ListRandomSeeds"
 	Query_ParticipantsWithBalances_FullMethodName                  = "/inference.inference.Query/ParticipantsWithBalances"
 	Query_PoCValidationSnapshot_FullMethodName                     = "/inference.inference.Query/PoCValidationSnapshot"
+	Query_PocStageRecipe_FullMethodName                            = "/inference.inference.Query/PocStageRecipe"
 	Query_DevshardEscrow_FullMethodName                            = "/inference.inference.Query/DevshardEscrow"
 	Query_PreservedNodesSnapshot_FullMethodName                    = "/inference.inference.Query/PreservedNodesSnapshot"
 	Query_DevshardHostEpochStats_FullMethodName                    = "/inference.inference.Query/DevshardHostEpochStats"
@@ -235,6 +236,9 @@ type QueryClient interface {
 	ParticipantsWithBalances(ctx context.Context, in *QueryParticipantsWithBalancesRequest, opts ...grpc.CallOption) (*QueryParticipantsWithBalancesResponse, error)
 	// Queries PoC validation snapshot for deterministic sampling synchronization.
 	PoCValidationSnapshot(ctx context.Context, in *QueryPoCValidationSnapshotRequest, opts ...grpc.CallOption) (*QueryPoCValidationSnapshotResponse, error)
+	// Frozen generate/validate/evaluate snapshot for a PoC stage height
+	// (regular PocStartBlockHeight or CPoC trigger height).
+	PocStageRecipe(ctx context.Context, in *QueryPocStageRecipeRequest, opts ...grpc.CallOption) (*QueryPocStageRecipeResponse, error)
 	DevshardEscrow(ctx context.Context, in *QueryGetDevshardEscrowRequest, opts ...grpc.CallOption) (*QueryGetDevshardEscrowResponse, error)
 	// Queries preserved nodes snapshot for the active PoC episode.
 	PreservedNodesSnapshot(ctx context.Context, in *QueryPreservedNodesSnapshotRequest, opts ...grpc.CallOption) (*QueryPreservedNodesSnapshotResponse, error)
@@ -930,6 +934,15 @@ func (c *queryClient) PoCValidationSnapshot(ctx context.Context, in *QueryPoCVal
 	return out, nil
 }
 
+func (c *queryClient) PocStageRecipe(ctx context.Context, in *QueryPocStageRecipeRequest, opts ...grpc.CallOption) (*QueryPocStageRecipeResponse, error) {
+	out := new(QueryPocStageRecipeResponse)
+	err := c.cc.Invoke(ctx, Query_PocStageRecipe_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) DevshardEscrow(ctx context.Context, in *QueryGetDevshardEscrowRequest, opts ...grpc.CallOption) (*QueryGetDevshardEscrowResponse, error) {
 	out := new(QueryGetDevshardEscrowResponse)
 	err := c.cc.Invoke(ctx, Query_DevshardEscrow_FullMethodName, in, out, opts...)
@@ -1158,6 +1171,9 @@ type QueryServer interface {
 	ParticipantsWithBalances(context.Context, *QueryParticipantsWithBalancesRequest) (*QueryParticipantsWithBalancesResponse, error)
 	// Queries PoC validation snapshot for deterministic sampling synchronization.
 	PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error)
+	// Frozen generate/validate/evaluate snapshot for a PoC stage height
+	// (regular PocStartBlockHeight or CPoC trigger height).
+	PocStageRecipe(context.Context, *QueryPocStageRecipeRequest) (*QueryPocStageRecipeResponse, error)
 	DevshardEscrow(context.Context, *QueryGetDevshardEscrowRequest) (*QueryGetDevshardEscrowResponse, error)
 	// Queries preserved nodes snapshot for the active PoC episode.
 	PreservedNodesSnapshot(context.Context, *QueryPreservedNodesSnapshotRequest) (*QueryPreservedNodesSnapshotResponse, error)
@@ -1405,6 +1421,9 @@ func (UnimplementedQueryServer) ParticipantsWithBalances(context.Context, *Query
 }
 func (UnimplementedQueryServer) PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PoCValidationSnapshot not implemented")
+}
+func (UnimplementedQueryServer) PocStageRecipe(context.Context, *QueryPocStageRecipeRequest) (*QueryPocStageRecipeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PocStageRecipe not implemented")
 }
 func (UnimplementedQueryServer) DevshardEscrow(context.Context, *QueryGetDevshardEscrowRequest) (*QueryGetDevshardEscrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DevshardEscrow not implemented")
@@ -2784,6 +2803,24 @@ func _Query_PoCValidationSnapshot_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_PocStageRecipe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPocStageRecipeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PocStageRecipe(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PocStageRecipe_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PocStageRecipe(ctx, req.(*QueryPocStageRecipeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_DevshardEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryGetDevshardEscrowRequest)
 	if err := dec(in); err != nil {
@@ -3284,6 +3321,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PoCValidationSnapshot",
 			Handler:    _Query_PoCValidationSnapshot_Handler,
+		},
+		{
+			MethodName: "PocStageRecipe",
+			Handler:    _Query_PocStageRecipe_Handler,
 		},
 		{
 			MethodName: "DevshardEscrow",
