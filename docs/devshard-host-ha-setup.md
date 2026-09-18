@@ -9,7 +9,7 @@ Devshard inference that stays available, backed by multiple `versiond` instances
 - [Prerequisites](#prerequisites)
 - [Install a new host](#install-a-new-host)
 - [Upgrade an existing host](#upgrade-an-existing-host)
-- [Add a remote replica](#add-a-remote-replica) — requires storage-proof support; unavailable with published v4/v4.1
+- [Add a remote replica](#add-a-remote-replica)
 - [Add a local replica](#add-a-local-replica)
 - [Operate the deployment](#operate-the-deployment)
 - [Troubleshooting](#troubleshooting)
@@ -800,7 +800,7 @@ Run the [service checks](#41-check-the-running-services). To enable a new protoc
 
 ## Add a remote replica
 
-Requires storage-proof support from every retained protocol. Published `v4`/`v4.1` binaries do not support this admission procedure.
+This procedure requires protocol v5 or later for every protocol served by the host. These versions support the shared-database check required before adding a remote replica.
 
 Use a private network between machines. Do not start a second dapi with the same keys. A's public proxy and node remain single-instance.
 
