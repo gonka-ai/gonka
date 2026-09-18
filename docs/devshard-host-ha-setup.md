@@ -1060,25 +1060,29 @@ For a fourth replica, copy `docker-compose.versiond3.yml`, replace `3` with `4`,
 
 ## Operate the deployment
 
-### Manage router slots
+Run the commands below from `deploy/join`. Manage routers on the public proxy host and `versiond` replicas on the host running the replica.
 
-Use the fleet script to manage routers. `docker compose down` in the join directory does not stop them. The shutdown timeout is 30 minutes per router by default (`VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS`).
+### Manage routers
 
-The fleet script loads `config.env`.
+Use `versiond-router-fleet.sh` to manage routers. The script reads `config.env` and runs each router in a separate Docker Compose project. Running `docker compose down` for the main join deployment therefore leaves the routers running.
+
+To stop all routers, run `./versiond-router-fleet.sh stop-all --maintenance`. The default shutdown timeout is 30 minutes per router (`VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS`).
+
+Each router instance occupies a numbered **slot**. The slot number stays the same when its container is replaced. Use this number in fleet commands:
 
 | Task | Command |
 | --- | --- |
-| View the fleet | `./versiond-router-fleet.sh status` |
-| Stop slot 0 | `./versiond-router-fleet.sh stop 0` |
-| Restore slot 0 | `./versiond-router-fleet.sh start 0` |
+| View router status and slot numbers | `./versiond-router-fleet.sh status` |
+| Stop the router in slot 0 | `./versiond-router-fleet.sh stop 0` |
+| Start the router in slot 0 | `./versiond-router-fleet.sh start 0` |
 | Verify routing after a change | `./versiond-router-fleet.sh verify-admission` |
-| Apply the release's router image | `./versiond-router-fleet.sh apply` |
+| Apply router image and configuration changes | `./versiond-router-fleet.sh apply` |
 
 Full release update: follow [Update the deployment](#3-update-the-deployment).
 
-Keep previous stopped containers and catalog volumes until recovery completes. Rerun interrupted operations with the same image and configuration. Pool, resolver or legacy-routing changes: [membership maintenance](#3-add-b-to-the-router-pool).
+After an interrupted operation, keep the previous stopped containers and catalog volumes; rerun with the same image and configuration. For pool, resolver or legacy-routing changes, follow [membership maintenance](#3-add-b-to-the-router-pool).
 
-Whole-machine maintenance: drain the fleet before stopping the main stack:
+Before machine maintenance, stop the routers gracefully, then stop the main stack:
 
 ```bash
 (
@@ -1177,7 +1181,7 @@ For an extra replica, remove its Compose filename from `COMPOSE_FILE` and its se
 
 No router restart is needed. The next host update applies the saved protocol list to the router fleet and public proxy; schedule it as maintenance.
 
-Keep `proxy-router-state` and each slot's `router-state`. Remove a protocol only during maintenance, after its sessions are no longer needed: a filter change can stop children, while accepted router routes persist by default.
+Keep `proxy-router-state` and the `router-state` volume for every router slot. Remove a protocol only during maintenance, after its sessions are no longer needed: a filter change can stop children, while accepted router routes persist by default.
 
 ## Troubleshooting
 
