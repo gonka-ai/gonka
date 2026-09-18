@@ -735,7 +735,7 @@ PYTHON
 )
 ```
 
-Preflight checks database access and capacity, not database identity. If an image download fails before `Starting maintenance`, [cancel the preparation](#cancel-before-maintenance).
+Preflight checks database access and capacity, not database identity. If an image download fails, [cancel the preparation](#cancel-before-maintenance) only if no database copy, container stop or replacement has occurred.
 
 Run the [service checks](#41-check-the-running-services), then stop here.
 
@@ -1191,7 +1191,7 @@ Keep `proxy-router-state` and the `router-state` volume for every router slot. R
 
 ### Cancel before maintenance
 
-Use this only if release preparation or image download failed **before** `Starting maintenance` appeared. It restores files; it does not roll back replaced containers or a migrated database. Run in `deploy/join`; use the `Backup directory` printed by the pre-update backup:
+Use this only if preparation failed **before any database copy, container stop or container replacement**. The database-copy procedure runs before `Starting maintenance`, so absence of that message is not enough. This restores files only. Run in `deploy/join`; use the `Backup directory` printed by the pre-update backup:
 
 ```bash
 read -r -p 'Pre-update backup directory: ' BACKUP_DIR
@@ -1213,7 +1213,15 @@ PYTHON
 )
 ```
 
-After a successful restore, run `source ./config.env`. Keep the backup. For `denied` or `manifest unknown` during image download, wait for access to the release images; do not substitute another tag.
+If `git switch` refuses because of local changes, stop and preserve those changes; do not force checkout or run `git reset --hard`.
+
+After a successful restore, open a new terminal or SSH login session, return to `deploy/join`, and run:
+
+```bash
+source ./config.env
+```
+
+Do not reuse the update shell: it may retain exported settings absent from the restored file. Starting another Bash inside that shell also inherits those settings. Keep the backup. For `denied` or `manifest unknown` during image download, wait for access to the release images; do not substitute another tag.
 
 
 ### Resume an interrupted rolling update
@@ -1232,6 +1240,17 @@ Stop before starting replicas against an empty database. For a local database, i
 ```bash
 docker compose logs --tail=100 devshard-postgres
 docker inspect devshard-postgres --format '{{json .Mounts}}' | jq .
+```
+
+If the container has been removed, inspect its saved mounts from the pre-update backup:
+
+```bash
+(
+  set -euo pipefail
+  read -r -p 'Pre-update backup directory: ' backup_dir
+  test -s "$backup_dir/postgres.json"
+  jq -e '.[0].Mounts' "$backup_dir/postgres.json"
+)
 ```
 
 If the old Docker volume was detached, use the recovery block in [Check the database layout](#2-check-the-database-layout) with the pre-update backup. Missing storage without a preserved source volume, and external database disaster recovery, are outside this guide. Do not use `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT` to bypass recovery.
