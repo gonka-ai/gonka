@@ -507,6 +507,7 @@ type Redundancy struct {
 	onBalanceExhausted   func() // called (once) when local state hits insufficient balance
 	balanceExhaustedOnce sync.Once
 	picker               *sessionPicker
+	stopped              atomic.Bool
 	participantLimiter   *ParticipantRequestLimiter
 	stateBlockMu         sync.RWMutex
 	stateBlockedHosts    map[string]string    // escrow-local participant blocks for state divergence that survived a replay
@@ -563,14 +564,17 @@ func NewRedundancyWithThrottle(session *user.Session, perf *PerfTracker, groupSi
 	return e
 }
 
-// Stop terminates the dispatcher goroutine. Production callers do not
-// invoke this (process lifetime). Tests should defer it for clean
-// teardown.
+// Stop terminates the dispatcher goroutine. Production callers invoke this on
+// retire and finalize so ghost probes cannot recreate escrow-labelled series
+// after ForgetEscrow. Tests should defer it for clean teardown.
 func (e *Redundancy) Stop() {
-	if e == nil || e.picker == nil {
+	if e == nil {
 		return
 	}
-	e.picker.stop()
+	e.stopped.Store(true)
+	if e.picker != nil {
+		e.picker.stop()
+	}
 }
 
 func (e *Redundancy) Decide(primaryHostIdx int, inputTokens uint64) Decision {
@@ -3557,7 +3561,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 		}
 		e.perf.Record(sample)
 		if e.metrics != nil {
-			e.metrics.ObserveRequestSample(e.devshardID, sample)
+			e.metrics.ObserveRequestSample(sample)
 		}
 	})
 	// Outside the sample's once: the settle path records the same failing sample without ever telling
@@ -4032,7 +4036,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 		}
 	}
 	if e.metrics != nil {
-		e.metrics.ObserveRequestSample(e.devshardID, sample)
+		e.metrics.ObserveRequestSample(sample)
 		e.metrics.ObserveStreamCadence(participantKey, sample.Model, inf.longestChunkGap(), inf.meanChunkGap())
 	}
 }
@@ -4062,7 +4066,7 @@ func ghostProbeParams(model string) user.InferenceParams {
 // doing PoC, the queue held nothing compatible past pickerStaleThreshold, or the host just refused.
 // Nothing reaches the host here; the MsgStart travels as catch-up on its next real dispatch.
 func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostKind, reason string) {
-	if prepared == nil || e.session == nil {
+	if prepared == nil || e.session == nil || e.stopped.Load() {
 		return
 	}
 	participantKey := e.participantKeyForHost(prepared.HostIdx())
