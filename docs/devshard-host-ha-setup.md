@@ -741,7 +741,7 @@ Run the [service checks](#41-check-the-running-services), then stop here.
 
 #### Rolling update
 
-Leave PostgreSQL, the filter, replicas and router fleet running.
+Requires v5 or later for every served protocol. Leave PostgreSQL, the filter, replicas and router fleet running.
 
 Prepare the filter before a first rolling update:
 
