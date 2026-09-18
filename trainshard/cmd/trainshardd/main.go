@@ -246,6 +246,7 @@ func connect(cfg config) (outside, error) {
 	node := dapi.New(&http.Client{}, dapi.Config{
 		Address:     cfg.dapiAddress,
 		Participant: cfg.participant,
+		Endpoint:    cfg.endpoint,
 		Timeout:     cfg.dapiTimeout,
 	})
 	return outside{

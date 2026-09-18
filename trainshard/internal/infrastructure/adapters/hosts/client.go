@@ -16,36 +16,34 @@ import (
 	"trainshard/internal/domain/shared/vo"
 )
 
-var errUnknownHost = shared.New("HOST_UNKNOWN", shared.ErrNotFound, "no address known for this host")
+var errUnknownHost = shared.New("HOST_UNKNOWN", shared.ErrNotFound, "the chain holds no endpoint for this host: its daemon published none with the opt-in")
 
 type Signer interface {
 	Sign(payload []byte) []byte
 }
 
-type Directory map[vo.Participant]string
-
-func (d Directory) baseURL(participant vo.Participant) (string, error) {
-	url, found := d[participant]
-	if !found {
+// baseURL is the address the host published on chain; there is no other place a coordinator
+// could take one from
+func baseURL(host vo.Host) (string, error) {
+	if host.Endpoint.IsZero() {
 		return "", errUnknownHost
 	}
-	return url, nil
+	return string(host.Endpoint), nil
 }
 
 type Client struct {
-	http      *http.Client
-	directory Directory
-	signer    Signer
-	clock     ports.Clock
-	timeout   time.Duration
+	http    *http.Client
+	signer  Signer
+	clock   ports.Clock
+	timeout time.Duration
 }
 
-func New(client *http.Client, directory Directory, signer Signer, clock ports.Clock, timeout time.Duration) *Client {
-	return &Client{http: client, directory: directory, signer: signer, clock: clock, timeout: timeout}
+func New(client *http.Client, signer Signer, clock ports.Clock, timeout time.Duration) *Client {
+	return &Client{http: client, signer: signer, clock: clock, timeout: timeout}
 }
 
-func (c *Client) call(ctx context.Context, participant vo.Participant, method, path string, requestID vo.RequestID, body, out any) error {
-	base, err := c.directory.baseURL(participant)
+func (c *Client) call(ctx context.Context, host vo.Host, method, path string, requestID vo.RequestID, body, out any) error {
+	base, err := baseURL(host)
 	if err != nil {
 		return err
 	}
@@ -60,7 +58,7 @@ func (c *Client) call(ctx context.Context, participant vo.Participant, method, p
 		}
 	}
 
-	request, err := c.request(ctx, participant, method, base, path, requestID, payload)
+	request, err := c.request(ctx, host.Participant, method, base, path, requestID, payload)
 	if err != nil {
 		return err
 	}
@@ -99,8 +97,8 @@ func (c *Client) request(ctx context.Context, participant vo.Participant, method
 	return request, nil
 }
 
-func (c *Client) stream(ctx context.Context, participant vo.Participant, method, path string, requestID vo.RequestID, body any, out io.Writer) error {
-	base, err := c.directory.baseURL(participant)
+func (c *Client) stream(ctx context.Context, host vo.Host, method, path string, requestID vo.RequestID, body any, out io.Writer) error {
+	base, err := baseURL(host)
 	if err != nil {
 		return err
 	}
@@ -112,7 +110,7 @@ func (c *Client) stream(ctx context.Context, participant vo.Participant, method,
 		}
 	}
 
-	request, err := c.request(ctx, participant, method, base, path, requestID, payload)
+	request, err := c.request(ctx, host.Participant, method, base, path, requestID, payload)
 	if err != nil {
 		return err
 	}

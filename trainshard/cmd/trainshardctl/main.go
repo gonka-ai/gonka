@@ -88,7 +88,11 @@ func drive() error {
 	}
 	defer outside.close()
 
-	hosts := hosts.New(&http.Client{}, cfg.directory, signer, clock, cfg.timeout)
+	// a signed request is for the address the chain names and no other: a host that answers
+	// with a redirect is refused rather than followed to wherever it points
+	hosts := hosts.New(&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}, signer, clock, cfg.timeout)
 
 	assembly.New(assembly.Config{Poll: cfg.pollInterval, Settle: cfg.settleWindow}, assembly.Deps{
 		Chain:      outside.chain,

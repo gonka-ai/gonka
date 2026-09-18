@@ -142,6 +142,7 @@ var (
 	TrainshardCreatorCooldownPrefix = collections.NewPrefix(139)
 	TrainshardReleaseIndexPrefix    = collections.NewPrefix(140)
 	TrainshardAutokickRequestPrefix = collections.NewPrefix(141)
+	TrainingNodeEndpointsPrefix     = collections.NewPrefix(142)
 	ParamsKey                       = []byte("p_inference")
 )
 

@@ -25,7 +25,7 @@ func (uc *StatusUseCase) Execute(ctx context.Context, cmd RunCommand) ([]run.Nod
 	}
 
 	// 2. One call per host; return collected results
-	return run.PerHost(ctx, record.Refs(), run.FailedStatus, func(ctx context.Context, participant vo.Participant, nodes []vo.NodeRef) ([]run.NodeStatus, error) {
-		return uc.hosts.Status(ctx, participant, cmd.hostCommand(nodes))
+	return run.PerHost(ctx, record.Hosts(), run.FailedStatus, func(ctx context.Context, host vo.Host) ([]run.NodeStatus, error) {
+		return uc.hosts.Status(ctx, host, cmd.hostCommand(host.Nodes))
 	}), nil
 }

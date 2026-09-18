@@ -15,7 +15,13 @@ const (
 	hostB   = vo.Participant("gonka1bbb")
 )
 
-var errHost = errors.New("host does not answer")
+var (
+	errHost  = errors.New("host does not answer")
+	machines = []vo.Host{
+		{Participant: hostA, Nodes: []vo.NodeRef{nodeA}},
+		{Participant: hostB, Nodes: []vo.NodeRef{nodeB, nodeC}},
+	}
+)
 
 func identityOf(node vo.NodeRef) mesh.Identity {
 	return mesh.Identity{
@@ -48,16 +54,16 @@ func newHostsStub() *hostsStub {
 	}
 }
 
-func (h *hostsStub) Identities(_ context.Context, _ vo.ShardID, participant vo.Participant) ([]mesh.Identity, error) {
-	if h.silent[participant] {
+func (h *hostsStub) Identities(_ context.Context, _ vo.ShardID, host vo.Host) ([]mesh.Identity, error) {
+	if h.silent[host.Participant] {
 		return nil, errHost
 	}
-	return h.identities[participant], nil
+	return h.identities[host.Participant], nil
 }
 
-func (h *hostsStub) Apply(context.Context, mesh.Config, vo.NodeRef) error { return nil }
+func (h *hostsStub) Apply(context.Context, mesh.Config, vo.Host, vo.NodeRef) error { return nil }
 
-func (h *hostsStub) Probe(_ context.Context, _ mesh.Config, node vo.NodeRef) ([]mesh.Pair, error) {
+func (h *hostsStub) Probe(_ context.Context, _ mesh.Config, _ vo.Host, node vo.NodeRef) ([]mesh.Pair, error) {
 	if h.probeErr[node] {
 		return nil, errHost
 	}

@@ -1,6 +1,8 @@
 package types
 
 import (
+	"net/url"
+	"strconv"
 	"strings"
 
 	errorsmod "cosmossdk.io/errors"
@@ -18,6 +20,7 @@ const (
 	pinnedDigestLen         = 64
 	maxPinnedImageLen       = 512
 	MaxRefreshOptInNodes    = 256
+	maxTrainingEndpointLen  = 256
 	maxAutokickReasonLen    = 256
 	maxAutokickRequestIdLen = 128
 )
@@ -71,5 +74,42 @@ func (msg *MsgRefreshTrainingNodeOptIn) ValidateBasic() error {
 		}
 		seen[nodeId] = true
 	}
+	if msg.Endpoint != "" {
+		return ValidateTrainingEndpoint(msg.Endpoint)
+	}
 	return nil
+}
+
+// ValidateTrainingEndpoint accepts an absolute http(s) base a coordinator can append a path to:
+// a host, optionally a port and a path, and nothing that would survive into a signed request
+// unread, such as a query, a fragment or credentials
+func ValidateTrainingEndpoint(endpoint string) error {
+	if len(endpoint) > maxTrainingEndpointLen {
+		return ErrTrainshardOptInRequest.Wrapf("endpoint longer than %d", maxTrainingEndpointLen)
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return ErrTrainshardOptInRequest.Wrapf("endpoint %q: %v", endpoint, err)
+	}
+	switch {
+	case parsed.Scheme != "http" && parsed.Scheme != "https":
+		return ErrTrainshardOptInRequest.Wrapf("endpoint %q: scheme must be http or https", endpoint)
+	case parsed.Hostname() == "":
+		return ErrTrainshardOptInRequest.Wrapf("endpoint %q: host is empty", endpoint)
+	case parsed.User != nil || parsed.Opaque != "" || strings.ContainsAny(endpoint, "?#"):
+		return ErrTrainshardOptInRequest.Wrapf("endpoint %q: only scheme, host, port and path are allowed", endpoint)
+	case strings.HasSuffix(parsed.Path, "/"):
+		return ErrTrainshardOptInRequest.Wrapf("endpoint %q: no trailing slash", endpoint)
+	case strings.HasSuffix(parsed.Host, ":") || !validPort(parsed.Port()):
+		return ErrTrainshardOptInRequest.Wrapf("endpoint %q: port must be in 1..65535", endpoint)
+	}
+	return nil
+}
+
+func validPort(port string) bool {
+	if port == "" {
+		return true
+	}
+	n, err := strconv.Atoi(port)
+	return err == nil && n >= 1 && n <= 65535
 }

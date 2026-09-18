@@ -49,26 +49,24 @@ func PerNode[T any](nodes []vo.NodeRef, failed func(vo.NodeRef, error) T, run fu
 	return results
 }
 
-// PerHost asks every host at once and answers grouped by host, hosts in the order their
-// first node was named, never in the order the hosts happened to finish; every node asked
-// about gets an answer, so a host cannot drop one and have the silence read as agreement
+// PerHost asks every host at once and answers grouped by host, in the order the hosts were
+// given, never in the order they happened to finish; every node a host serves gets an answer, so a
+// host cannot drop one and have the silence read as agreement
 func PerHost[T Answer](
 	ctx context.Context,
-	nodes []vo.NodeRef,
+	hosts []vo.Host,
 	failed func(vo.NodeRef, error) T,
-	call func(context.Context, vo.Participant, []vo.NodeRef) ([]T, error),
+	call func(context.Context, vo.Host) ([]T, error),
 ) []T {
-	order, held := byParticipant(nodes)
-
-	answers := syncx.Fan(order, func(participant vo.Participant) []T {
-		answered, err := call(ctx, participant, held[participant])
+	answers := syncx.Fan(hosts, func(host vo.Host) []T {
+		answered, err := call(ctx, host)
 		if err != nil {
 			answered = nil
 		}
-		return matched(held[participant], answered, failed, err)
+		return matched(host.Nodes, answered, failed, err)
 	})
 
-	results := make([]T, 0, len(nodes))
+	results := make([]T, 0, len(hosts))
 	for _, answered := range answers {
 		results = append(results, answered...)
 	}
@@ -100,19 +98,6 @@ func matched[T Answer](asked []vo.NodeRef, answered []T, failed func(vo.NodeRef,
 		results = append(results, answer)
 	}
 	return results
-}
-
-func byParticipant(nodes []vo.NodeRef) ([]vo.Participant, map[vo.Participant][]vo.NodeRef) {
-	order := make([]vo.Participant, 0, len(nodes))
-	held := make(map[vo.Participant][]vo.NodeRef, len(nodes))
-
-	for _, node := range nodes {
-		if _, seen := held[node.Participant]; !seen {
-			order = append(order, node.Participant)
-		}
-		held[node.Participant] = append(held[node.Participant], node)
-	}
-	return order, held
 }
 
 type NodeStatus struct {

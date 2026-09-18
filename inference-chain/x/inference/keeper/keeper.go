@@ -146,6 +146,7 @@ type (
 		TrainshardReleaseIndex           collections.KeySet[collections.Triple[int64, string, string]]
 		TrainshardAutokickRequest        collections.Map[collections.Pair[uint64, string], string]
 		TrainingNodeOptIns               collections.Map[collections.Pair[string, string], int64]
+		TrainingNodeEndpoints            collections.Map[collections.Pair[string, string], string]
 		TrainshardProposals              collections.Map[uint64, types.TrainshardProposal]
 		TrainshardProposalCounter        collections.Item[uint64]
 		TrainshardCreatorCooldown        collections.Map[string, int64]
@@ -747,6 +748,13 @@ func NewKeeper(
 			"training_node_opt_ins",
 			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
 			collections.Int64Value,
+		),
+		TrainingNodeEndpoints: collections.NewMap(
+			sb,
+			types.TrainingNodeEndpointsPrefix,
+			"training_node_endpoints",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+			collections.StringValue,
 		),
 		TrainshardProposals: collections.NewMap(
 			sb,

@@ -29,7 +29,8 @@ type ChainWatcher interface {
 
 // ChainSubmitter host txs through the dAPI
 type ChainSubmitter interface {
-	// OptIn offers the node until TTL
+	// OptIn offers the node until TTL and publishes where this daemon answers for it; a repeat
+	// moves the expiry forward and replaces the address
 	OptIn(ctx context.Context, node vo.NodeRef, ttl time.Duration) error
 	// Release gives the reservation back
 	Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, reason vo.ReleaseReason) error

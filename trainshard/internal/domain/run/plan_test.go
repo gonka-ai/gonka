@@ -409,7 +409,10 @@ func TestUnprepared(t *testing.T) {
 		{"prepared says nothing", reservedDesired(), preparedObserved(), ""},
 		{"not reserved", run.Desired{}, preparedObserved(), "not reserved"},
 		{"waiting on the dapi", reservedDesired(), func() run.Observed { o := preparedObserved(); o.Drained = false; return o }(), "node not drained from inference"},
-		{"cards still busy", reservedDesired(), func() run.Observed { o := preparedObserved(); o.ForeignGPUWork = true; return o }(), "foreign work on the gpus"},
+		{"cards still busy after the stop", reservedDesired(), func() run.Observed { o := preparedObserved(); o.ForeignGPUWork = true; return o }(),
+			"the gpus are still held after the dapi stopped the node: a stray process, or the mlnode under this node id runs on another machine"},
+		{"cards busy while the stop is pending", reservedDesired(), func() run.Observed { o := preparedObserved(); o.Drained = false; o.ForeignGPUWork = true; return o }(),
+			"node not drained from inference, foreign work on the gpus"},
 		{"everything at once", reservedDesired(), run.Observed{ForeignGPUWork: true},
 			"node not drained from inference, foreign work on the gpus, base image not pulled, no mesh identity"},
 	}

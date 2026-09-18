@@ -277,6 +277,131 @@ func TestRefreshTrainingNodeOptIn_MovesExpiryForward(t *testing.T) {
 	require.Equal(t, trainshardOptInExpiry, untouched)
 }
 
+func TestRefreshTrainingNodeOptIn_PublishesTheEndpointIntoTheShard(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	published := map[string]string{
+		"node-a": "https://a.example.com/trainshard-node-a",
+		"node-b": "https://a.example.com/trainshard-node-b",
+	}
+	for nodeId, endpoint := range published {
+		_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+			Creator: creator, NodeIds: []string{nodeId}, Endpoint: endpoint,
+		})
+		require.NoError(t, err)
+	}
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+
+	shard, err := k.Trainshards.Get(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, shard.Nodes, 1)
+	require.Equal(t, published[shard.Nodes[0].NodeId], shard.Nodes[0].Endpoint)
+}
+
+func TestAssembleTrainshard_SkipsANodeThatPublishedNoEndpoint(t *testing.T) {
+	// the node the selection would take first, so that dropping its endpoint has to change the pick
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+	shard, err := k.Trainshards.Get(ctx, 1)
+	require.NoError(t, err)
+	first := shard.Nodes[0].NodeId
+	other := map[string]string{"node-a": "node-b", "node-b": "node-a"}[first]
+
+	k, ms, ctx, creator = setupTrainshardFlow(t, 1)
+	require.NoError(t, k.TrainingNodeEndpoints.Remove(ctx, collections.Join(creator, first)))
+
+	_, err = ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+
+	shard, err = k.Trainshards.Get(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, shard.Nodes, 1)
+	require.Equal(t, other, shard.Nodes[0].NodeId)
+	require.NotEmpty(t, shard.Nodes[0].Endpoint)
+}
+
+func TestRefreshTrainingNodeOptIn_EmptyEndpointWithdrawsIt(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{"node-a"}, Endpoint: "https://a.example.com",
+	})
+	require.NoError(t, err)
+
+	_, err = ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{"node-a"},
+	})
+	require.NoError(t, err)
+
+	_, err = k.TrainingNodeEndpoints.Get(ctx, collections.Join(creator, "node-a"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
+func TestSetTrainingNodeOptIn_OptOutClearsTheEndpoint(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{"node-a"}, Endpoint: "https://a.example.com",
+	})
+	require.NoError(t, err)
+
+	_, err = ms.SetTrainingNodeOptIn(ctx, &types.MsgSetTrainingNodeOptIn{Creator: creator, NodeId: "node-a", OptIn: false})
+	require.NoError(t, err)
+
+	_, err = k.TrainingNodeEndpoints.Get(ctx, collections.Join(creator, "node-a"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	_, err = k.TrainingNodeOptIns.Get(ctx, collections.Join(creator, "node-a"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
+func TestRefreshTrainingNodeOptIn_HandlerHoldsTheEndpointToTheGrammar(t *testing.T) {
+	_, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{"node-a"}, Endpoint: "https://a.example.com/",
+	})
+	require.ErrorIs(t, err, types.ErrTrainshardOptInRequest)
+}
+
+func TestRefreshTrainingNodeOptIn_LeavesTheAddressOfAReservedNodeAlone(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+	shard, err := k.Trainshards.Get(ctx, 1)
+	require.NoError(t, err)
+	reserved := shard.Nodes[0]
+
+	_, err = ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{reserved.NodeId}, Endpoint: "https://moved.example.com",
+	})
+	require.NoError(t, err)
+
+	shard, err = k.Trainshards.Get(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, reserved.Endpoint, shard.Nodes[0].Endpoint, "a shard keeps the address it was assembled with")
+	published, err := k.TrainingNodeEndpoints.Get(ctx, collections.Join(creator, reserved.NodeId))
+	require.NoError(t, err)
+	require.Equal(t, "https://moved.example.com", published, "the next shard takes the new one")
+}
+
+func TestSubmitHardwareDiff_RemovingTheNodeClearsTheEndpoint(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{"node-a"}, Endpoint: "https://a.example.com",
+	})
+	require.NoError(t, err)
+
+	_, err = ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{
+		Creator: creator, Removed: []*types.HardwareNode{{LocalId: "node-a"}},
+	})
+	require.NoError(t, err)
+
+	_, err = k.TrainingNodeEndpoints.Get(ctx, collections.Join(creator, "node-a"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	_, err = k.TrainingNodeOptIns.Get(ctx, collections.Join(creator, "node-a"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
 func TestRefreshTrainingNodeOptIn_RejectsForeignNode(t *testing.T) {
 	_, ms, ctx, creator := setupTrainshardFlow(t, 1)
 

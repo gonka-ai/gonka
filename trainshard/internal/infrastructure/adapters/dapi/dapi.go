@@ -18,6 +18,7 @@ import (
 type Config struct {
 	Address     string
 	Participant vo.Participant
+	Endpoint    vo.Endpoint
 	Timeout     time.Duration
 }
 

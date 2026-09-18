@@ -552,6 +552,9 @@ message MsgRefreshTrainingNodeOptIn {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
   repeated string node_ids = 2;
+  // endpoint is where the daemon serving these nodes answers a coordinator;
+  // empty withdraws a published one
+  string endpoint = 3;
 }
 
 message MsgRefreshTrainingNodeOptInResponse {

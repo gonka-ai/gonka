@@ -190,6 +190,11 @@ services:
       - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
       - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-}
       - EDGE_API_PORT=${EDGE_API_PORT:-18080}
+      # Trainshard: the daemon on this machine, and the daemons on this participant's other GPU
+      # machines, each reached under its own prefix (docker-compose.trainshard.yml)
+      - TRAINSHARD_SERVICE_NAME=${TRAINSHARD_SERVICE_NAME:-}
+      - TRAINSHARD_PORT=${TRAINSHARD_PORT:-9700}
+      - TRAINSHARD_ROUTES=${TRAINSHARD_ROUTES:-}
     volumes:
       - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
     depends_on:

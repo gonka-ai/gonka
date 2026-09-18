@@ -15,7 +15,7 @@ func TestCollectTakesOneMemberPerReservedNode(t *testing.T) {
 	hosts := newHostsStub()
 
 	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
-		[]vo.Participant{hostA, hostB}, []vo.NodeRef{nodeA, nodeB, nodeC})
+		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
 	if err != nil {
 		t.Fatalf("collect: %v", err)
@@ -27,6 +27,27 @@ func TestCollectTakesOneMemberPerReservedNode(t *testing.T) {
 		if members[i].Node != node {
 			t.Fatalf("got %s in place %d, want %s", members[i].Node, i, node)
 		}
+	}
+}
+
+func TestCollectTakesAMemberFromTheHostTheChainPlacesItOnOnly(t *testing.T) {
+
+	hosts := newHostsStub()
+	forged := identityOf(nodeA)
+	forged.Member.Address = "10.9.9.9:51820"
+	hosts.identities[hostB] = []mesh.Identity{identityOf(nodeB), identityOf(nodeC), forged}
+
+	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
+		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
+
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if len(members) != 3 || len(missing) != 0 {
+		t.Fatalf("got %d members and %v missing, want one per reserved node", len(members), missing)
+	}
+	if members[0].Node != nodeA || members[0].Address == forged.Member.Address {
+		t.Fatalf("got %+v for %s, want the member its own host offered, not the one another host did", members[0], nodeA)
 	}
 }
 
@@ -81,7 +102,7 @@ func TestCollectRefusesAMemberAHostHasNoRightToOffer(t *testing.T) {
 			tc.arrange(hosts, verifier, delegation)
 
 			_, _, err := mesh.Collect(context.Background(), hosts, verifier, delegation, shardID,
-				[]vo.Participant{hostA, hostB}, []vo.NodeRef{nodeA, nodeB, nodeC})
+				machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("got %v, want %v", err, tc.want)
@@ -99,7 +120,7 @@ func TestCollectTakesAMemberSignedByTheHostsWarmKey(t *testing.T) {
 	delegation := &delegationStub{warm: map[vo.Address]vo.Participant{"gonka1warm": hostA}}
 
 	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, delegation, shardID,
-		[]vo.Participant{hostA, hostB}, []vo.NodeRef{nodeA, nodeB, nodeC})
+		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
 	if err != nil {
 		t.Fatalf("collect: %v", err)
@@ -115,7 +136,7 @@ func TestCollectReportsANodeThatHasNotPreparedYetAsMissing(t *testing.T) {
 	hosts.identities[hostA] = nil
 
 	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
-		[]vo.Participant{hostA, hostB}, []vo.NodeRef{nodeA, nodeB, nodeC})
+		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
 	if err != nil {
 		t.Fatalf("a node that is not ready yet is not a failure: %v", err)
@@ -131,7 +152,7 @@ func TestCollectKeepsGoingWhenOneHostCannotBeAsked(t *testing.T) {
 	hosts.silent[hostB] = true
 
 	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
-		[]vo.Participant{hostA, hostB}, []vo.NodeRef{nodeA, nodeB, nodeC})
+		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
 	if err != nil {
 		t.Fatalf("one silent host must not sink the mesh: %v", err)
@@ -147,7 +168,7 @@ func TestCollectStopsWhenNoHostAnswersAtAll(t *testing.T) {
 	hosts.silent[hostA], hosts.silent[hostB] = true, true
 
 	_, _, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
-		[]vo.Participant{hostA, hostB}, []vo.NodeRef{nodeA, nodeB, nodeC})
+		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
 	if !errors.Is(err, errHost) {
 		t.Fatalf("got %v, want the failure reported as ours rather than every node's", err)
