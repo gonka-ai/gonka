@@ -18,6 +18,7 @@ import (
 	"common/logging"
 	"common/utils"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/mlnodeclient"
 	"decentralized-api/poc/artifacts"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -381,6 +382,8 @@ func verifyProofItem(rootHash []byte, count uint32, participantAddress string, i
 		err = nil
 		if int64(len(vectorBytes)) != decodeMaxTokens+1 {
 			err = fmt.Errorf("invalid trajectory length: got %d bytes, expected %d", len(vectorBytes), decodeMaxTokens+1)
+		} else if packErr := mlnodeclient.ValidatePackedKSteps(vectorBytes); packErr != nil {
+			err = packErr
 		}
 	}
 	if err != nil {

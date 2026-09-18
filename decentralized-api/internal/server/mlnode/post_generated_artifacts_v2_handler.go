@@ -82,11 +82,40 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 		"nodeId", nodeId,
 		"nodeNum", body.NodeId)
 
+	recipe, recipeErr := s.broker.StageRecipe(body.BlockHeight)
+	if recipeErr != nil || recipe == nil {
+		logging.Error("ArtifactBatchV2-callback. Missing PocStageRecipe", types.PoC,
+			"blockHeight", body.BlockHeight, "error", recipeErr)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "missing poc stage recipe")
+	}
+	decode := recipe.Scheme == types.PocScheme_POC_SCHEME_DECODE
+	n := int64(0)
+	if mc, ok := recipe.GetModelConfig(modelID); ok {
+		n = types.DecodeMaxForStage(recipe.Scheme, mc.DecodeMaxTokens)
+	}
+
 	// Convert artifacts from JSON format to proto format for local storage
 	protoArtifacts := make([]*types.PoCArtifactV2, 0, len(body.Artifacts))
 	for _, a := range body.Artifacts {
-		vectorBytes := mlnodeclient.KStepsToBytes(a.KPointsSteps) // decode scheme; empty for prefill
-		if len(vectorBytes) == 0 {
+		var vectorBytes []byte
+		if decode {
+			if len(a.KPointsSteps) == 0 {
+				logging.Error("ArtifactBatchV2-callback. DECODE stage requires k_points_steps", types.PoC,
+					"nonce", a.Nonce)
+				return echo.NewHTTPError(http.StatusBadRequest, "DECODE stage requires k_points_steps")
+			}
+			vectorBytes, err = mlnodeclient.KStepsToBytes(a.KPointsSteps)
+			if err != nil {
+				logging.Error("ArtifactBatchV2-callback. Invalid k_points_steps", types.PoC,
+					"nonce", a.Nonce, "error", err)
+				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+			}
+			if int64(len(vectorBytes)) != n+1 {
+				logging.Error("ArtifactBatchV2-callback. Invalid trajectory length", types.PoC,
+					"nonce", a.Nonce, "got", len(vectorBytes), "want", n+1)
+				return echo.NewHTTPError(http.StatusBadRequest, "invalid trajectory length")
+			}
+		} else {
 			vectorBytes, err = base64.StdEncoding.DecodeString(a.VectorB64)
 			if err != nil {
 				logging.Error("ArtifactBatchV2-callback. Failed to decode artifact vector", types.PoC,
@@ -142,6 +171,9 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 		"blockHeight", body.BlockHeight,
 		"publicKey", body.PublicKey,
 		"nTotal", body.NTotal,
+		"nNanSteps", body.NNanSteps,
+		"nExcluded", body.NExcluded,
+		"nMismatch", body.NMismatch,
 		"fraudDetected", body.FraudDetected)
 
 	modelID, err := decodeCallbackModelID(ctx.Param("model_id"))
@@ -154,6 +186,12 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 		logging.Warn("ValidatedArtifactsV2-callback. Rejected - not in PoC validate phase", types.PoC,
 			"blockHeight", body.BlockHeight)
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "not in PoC validate phase")
+	}
+
+	if body.ShouldAbstain() {
+		logging.Warn("ValidatedArtifactsV2-callback. Abstaining, validator-side incomplete result", types.PoC,
+			"nNanSteps", body.NNanSteps, "nExcluded", body.NExcluded, "nMismatch", body.NMismatch, "nTotal", body.NTotal)
+		return ctx.NoContent(http.StatusOK)
 	}
 
 	// Convert public key to bech32 address
