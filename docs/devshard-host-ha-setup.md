@@ -105,7 +105,7 @@ Local data path: `${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}/data`. For
 
 #### Prepare the PostgreSQL directory
 
-Local Compose PostgreSQL only. Run in `deploy/join` before first startup or migration:
+Local Compose PostgreSQL only. Run in `deploy/join` before first startup or migration to create the data directory through Docker. The PostgreSQL entrypoint sets its ownership at startup:
 
 ```bash
 source ./config.env
@@ -965,7 +965,7 @@ Continue when the container is healthy and every check returns HTTP 200.
 
 ### Check the remote database
 
-Check the **replica host**'s database before adding the replica to the router pool. On the **replica host**, run:
+Check the **replica host**'s database before adding the replica to the router pool. Run both blocks below on the **replica host**; replace `/path/to/gonka` with its checkout directory (`~/gonka` for a host created above):
 
 ```bash
 (
@@ -978,10 +978,14 @@ Check the **replica host**'s database before adding the replica to the router po
 )
 ```
 
-Fill in `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD` in `pool-postgres.env` using the **primary host**'s database settings or values from the database administrator. Run:
+Fill in `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD` in the checkout's `deploy/join/pool-postgres.env` using the **primary host**'s database settings or values from the database administrator. Run:
 
 ```bash
-./update-devshard.sh --check-storage --reference-env ./pool-postgres.env
+(
+  set -euo pipefail
+  cd /path/to/gonka/deploy/join
+  ./update-devshard.sh --check-storage --reference-env ./pool-postgres.env
+)
 ```
 
 Expect `Storage check passed` and exit code 0. The check writes test data to the database; run it separately from other checks and updates. For additional containers, repeat `--container NAME`.
@@ -1136,7 +1140,19 @@ To update a replica’s image, replace its container using the procedure below.
 
 Keep the same database, participant identity, protocol list and data mounts. Replace one replica at a time; another replica must serve each protocol.
 
-1. Use the target release's files. Apply the variables in [Release and images](#release-and-images).
+1. On the host running the replica, run in its existing `deploy/join` directory to fetch and check out the release:
+
+   ```bash
+   (
+     set -euo pipefail
+     git diff --exit-code
+     git diff --cached --exit-code
+     git fetch https://github.com/gonka-ai/gonka.git refs/tags/devshard/v5.0.1
+     git switch --detach FETCH_HEAD
+   )
+   ```
+
+   If Git reports local changes or conflicting files, stop; do not force checkout. Keep `config.env` and site overrides in separate, untracked files. After checkout succeeds, apply the variables in [Release and images](#release-and-images).
 2. For a remote member, remove its entry from `versiond-endpoints.json` on the **primary host** and run [membership maintenance](#3-add-the-replica-to-the-router-pool). On the member's machine, run in `deploy/join` to select and replace the replica:
 
    ```bash
