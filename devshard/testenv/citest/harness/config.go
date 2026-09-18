@@ -16,7 +16,7 @@ import (
 type MultiConfigOpts struct {
 	Hosts          int
 	EscrowSlots    int
-	EscrowAmount   uint64
+	EscrowAmount   uint64 // 0 = default; else the seed escrow's balance (gencompose default: 1_000_000)
 	ValidationRate uint32 // 0 = default; else params + seed escrow snapshot
 }
 
