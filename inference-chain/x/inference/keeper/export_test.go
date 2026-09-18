@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"cosmossdk.io/collections"
+	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -14,6 +15,10 @@ func GetMustBeValidatedInferencesForTesting(ms types.MsgServer, ctx sdk.Context,
 
 func CheckPoCV2StoreCommitRecheckOverlapForTesting(k Keeper, ctx sdk.Context, msg *types.MsgPoCV2StoreCommit) error {
 	return k.checkPoCV2StoreCommitRecheckOverlap(ctx, msg)
+}
+
+func (k *Keeper) SetLoggerForTesting(logger log.Logger) {
+	k.logger = logger
 }
 
 func SetPoCV2StoreCommitRawBytesForTesting(k Keeper, ctx sdk.Context, startHeight int64, addr sdk.AccAddress, modelID string, bz []byte) error {

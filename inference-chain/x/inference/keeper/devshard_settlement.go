@@ -79,8 +79,10 @@ type WarmKeyChecker func(granter, grantee string) bool
 // VerifyDevshardSettlement verifies settlement proof: state root, signatures, quorum, cost.
 // If isWarmKey is non-nil, mismatched signatures are checked against authz grants.
 // params must be non-nil (includes MaxNonce). approved is the store allowlist;
-// empty is permissive (tests / dev).
-func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleDevshardEscrow, params *types.DevshardEscrowParams, approved []*types.DevshardApprovedVersion, isWarmKey WarmKeyChecker) error {
+// empty is permissive (tests / dev). passCount is the scoring policy from the
+// version-policy store; omit it in tests to default via passCountFromApproved
+// (SAMPLED when the allowlist is empty or the name is missing).
+func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleDevshardEscrow, params *types.DevshardEscrowParams, approved []*types.DevshardApprovedVersion, isWarmKey WarmKeyChecker, passCount ...types.DevshardPassCount) error {
 	if params == nil {
 		return fmt.Errorf("devshard escrow params is required")
 	}
@@ -179,6 +181,11 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 		return fmt.Errorf("no slots in escrow")
 	}
 	seenStatSlots := make(map[uint32]bool, len(msg.HostStats))
+	resolvedPassCount := passCountFromApproved(approved, msg.StateRootAndProtocolVersion)
+	if len(passCount) > 0 {
+		resolvedPassCount = passCount[0]
+	}
+	passPolicy := DevshardPassPolicyFor(resolvedPassCount, escrow.ValidationRate)
 	var totalCost uint64
 	for _, hs := range msg.HostStats {
 		if seenStatSlots[hs.SlotId] {
@@ -195,6 +202,9 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 		completed := assignedToSlot - uint64(hs.Missed)
 		if uint64(hs.Invalid) > completed {
 			return fmt.Errorf("slot %d invalid count %d exceeds completed per slot %d", hs.SlotId, hs.Invalid, completed)
+		}
+		if err := passPolicy.checkSlot(hs, completed, slotCount); err != nil {
+			return fmt.Errorf("slot %d: %w", hs.SlotId, err)
 		}
 		nextTotalCost, carry := bits.Add64(totalCost, hs.Cost, 0)
 		if carry != 0 {
@@ -234,6 +244,8 @@ func ComputeDevshardHostStatsHash(hostStats []*types.DevshardSettlementHostStats
 			Cost:                 hs.Cost,
 			RequiredValidations:  hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated,
+			Finished:             hs.Finished,
 		}
 	}
 	slices.SortStableFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
@@ -246,6 +258,15 @@ func ComputeDevshardHostStatsHash(hostStats []*types.DevshardSettlementHostStats
 	}
 	hash := sha256.Sum256(data)
 	return hash[:], nil
+}
+
+func passCountFromApproved(approved []*types.DevshardApprovedVersion, version string) types.DevshardPassCount {
+	for _, v := range approved {
+		if v != nil && v.Name == version {
+			return v.PassCount
+		}
+	}
+	return types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
 }
 
 // recoverCosmosAddress recovers a Cosmos bech32 address from a secp256k1 signature.

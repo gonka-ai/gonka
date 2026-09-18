@@ -52,7 +52,8 @@ func (gs GenesisState) Validate() error {
 		}
 	}
 	versions := gs.DevshardApprovedVersions
-	if len(versions) == 0 && gs.Params.DevshardEscrowParams != nil {
+	fromParams := len(versions) == 0 && gs.Params.DevshardEscrowParams != nil
+	if fromParams {
 		versions = gs.Params.DevshardEscrowParams.ApprovedVersions
 	}
 	if len(versions) > MaxDevshardApprovedVersions {
@@ -70,6 +71,20 @@ func (gs GenesisState) Validate() error {
 			return fmt.Errorf("devshard_approved_versions: duplicate name %q", v.Name)
 		}
 		seenApproved[v.Name] = struct{}{}
+	}
+
+	seenPolicies := make(map[string]DevshardPassCount, len(gs.DevshardVersionPolicies))
+	for i, p := range gs.DevshardVersionPolicies {
+		if p == nil {
+			return fmt.Errorf("devshard_version_policies[%d] cannot be null", i)
+		}
+		if err := p.Validate(); err != nil {
+			return fmt.Errorf("devshard_version_policies[%d]: %w", i, err)
+		}
+		if _, ok := seenPolicies[p.Name]; ok {
+			return fmt.Errorf("devshard_version_policies: duplicate name %q", p.Name)
+		}
+		seenPolicies[p.Name] = p.PassCount
 	}
 
 	for i := range gs.ParticipantList {
