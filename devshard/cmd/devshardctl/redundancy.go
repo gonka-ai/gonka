@@ -1728,7 +1728,7 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	primary, err := e.prepareInflight(ctx, params, triedParticipants)
 	if err != nil {
 		logRequestStage(ctx, "runner_prepare_failed", "escrow", e.devshardID, "error", err)
-		if errors.Is(err, types.ErrInsufficientBalance) {
+		if isEscrowOutOfFunds(err) {
 			e.fireBalanceExhausted()
 		}
 		return err
@@ -4089,6 +4089,11 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 		"reason", reason,
 		"poc_reason", currentPoCPhaseReason(),
 	)
+}
+
+// isEscrowOutOfFunds separates an escrow that can no longer pay for a nonce from one request too costly for what is left. See docs/proxy-architecture.md, "Escrow rotation and chain transactions".
+func isEscrowOutOfFunds(err error) bool {
+	return errors.Is(err, types.ErrInsufficientBalance) && !errors.Is(err, types.ErrRequestExceedsBalance)
 }
 
 // fireBalanceExhausted fires onBalanceExhausted at most once per Redundancy

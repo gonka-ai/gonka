@@ -655,6 +655,11 @@ func setupTestProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngi
 
 func setupTestProxyWithBalance(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, balance uint64) *testProxyEnv {
 	t.Helper()
+	return setupTestProxyWithFeePerNonce(t, numHosts, engines, verifierAccept, balance, 0)
+}
+
+func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, balance, feePerNonce uint64) *testProxyEnv {
+	t.Helper()
 	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hostSigners {
 		hostSigners[i] = testutil.MustGenerateKey(t)
@@ -665,6 +670,7 @@ func setupTestProxyWithBalance(t *testing.T, numHosts int, engines []devshard.In
 		RefusalTimeout:   1,
 		ExecutionTimeout: 1,
 		TokenPrice:       1,
+		FeePerNonce:      feePerNonce,
 		VoteThreshold:    uint32(numHosts) / 2,
 	}
 	verifier := signing.NewSecp256k1Verifier()

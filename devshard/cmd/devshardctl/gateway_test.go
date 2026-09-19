@@ -368,7 +368,7 @@ func TestGatewayChooseRuntimeUsesLowestLoad(t *testing.T) {
 	b.activeUserRequests.Store(1)
 
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", 5, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 	require.EqualValues(t, 2, chosen.activeUserRequests.Load())
@@ -2023,7 +2023,7 @@ func TestGatewayChooseRuntimeSkipsInactiveDevshard(t *testing.T) {
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
 	b.active.Store(false)
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", 5, nil)
 	require.NoError(t, err)
 	require.Equal(t, "6", chosen.id)
 }
@@ -2033,7 +2033,7 @@ func TestGatewayChooseRuntimeSkipsHighNonceBeforeRouting(t *testing.T) {
 	available := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
 	g := NewGateway([]*devshardRuntime{highNonce, available}, NewGatewayLimiter(0, 0), "m")
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", 5, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 	require.True(t, highNonce.active.Load())
@@ -2043,7 +2043,7 @@ func TestGatewayChooseRuntimeFailsWhenAllDevshardsHighNonce(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "6", balanceMinimumThreshold, nonceDeactivationLimit)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
 
-	_, err := g.reserveRuntimeForModel("m", 5)
+	_, err := g.reserveRuntimeForModel("m", 5, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no devshard runtimes available for new inferences")
 	require.Contains(t, err.Error(), "skipped: high_nonce=1")
@@ -2056,7 +2056,7 @@ func TestGatewayChooseRuntimeSkipsNonActivePhaseDevshard(t *testing.T) {
 	active := &devshardRuntime{id: "12", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseActive)}}
 	g := NewGateway([]*devshardRuntime{finalizing, settlement, active}, NewGatewayLimiter(0, 0), "m")
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", 5, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 }
@@ -2066,7 +2066,7 @@ func TestGatewayChooseRuntimeFailsWhenOnlyNonActivePhaseDevshardsRemain(t *testi
 	settlement := &devshardRuntime{id: "12", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseSettlement)}}
 	g := NewGateway([]*devshardRuntime{finalizing, settlement}, NewGatewayLimiter(0, 0), "m")
 
-	_, err := g.reserveRuntimeForModel("m", 5)
+	_, err := g.reserveRuntimeForModel("m", 5, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no devshard runtimes available for new inferences")
 	require.Contains(t, err.Error(), "skipped: finalizing=1, settlement=1")
@@ -2127,7 +2127,7 @@ func TestGatewayChooseRuntimeSkipsParticipantLimitedDevshard(t *testing.T) {
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", 5, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 }
@@ -2155,7 +2155,7 @@ func TestGatewayChooseRuntimePrefersHealthyEscrowWithoutBenchingPartial(t *testi
 
 	counts := map[string]int{}
 	for i := 0; i < 60; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1)
+		rt, err := g.reserveRuntimeForModel("m", 1, nil)
 		require.NoError(t, err)
 		counts[rt.id]++
 	}
@@ -2181,7 +2181,7 @@ func TestGatewayChooseRuntimeFailsWhenAllDevshardsParticipantLimited(t *testing.
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
-	_, err := g.reserveRuntimeForModel("m", 5)
+	_, err := g.reserveRuntimeForModel("m", 5, nil)
 	require.Error(t, err)
 	require.True(t, isParticipantRateLimitError(err))
 }
@@ -2210,7 +2210,7 @@ func TestGatewayChooseRuntimeReactsToRecoveryWithoutPhasePoll(t *testing.T) {
 
 	// Immediately after 503: a is dead (W=0), picks must hit b only.
 	for i := 0; i < 5; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1)
+		rt, err := g.reserveRuntimeForModel("m", 1, nil)
 		require.NoError(t, err)
 		require.Equal(t, "b", rt.id, "iteration %d before recovery", i)
 		g.releaseRuntime(rt, 1)
@@ -2226,7 +2226,7 @@ func TestGatewayChooseRuntimeReactsToRecoveryWithoutPhasePoll(t *testing.T) {
 	// should receive at least one request.
 	counts := map[string]int{}
 	for i := 0; i < 20; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1)
+		rt, err := g.reserveRuntimeForModel("m", 1, nil)
 		require.NoError(t, err)
 		counts[rt.id]++
 		g.releaseRuntime(rt, 1)
