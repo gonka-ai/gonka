@@ -37,11 +37,11 @@ func TestPutDevshardApprovedVersion(t *testing.T) {
 	got, found := k.GetApprovedVersion(wctx, "v1")
 	require.True(t, found)
 	require.Equal(t, "v1", got.Name)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
 	pol, found, err := k.GetVersionPolicy(wctx, "v1")
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, pol.PassCount)
 
 	updated := validApprovedVersion("v1")
 	updated.Binary = "https://example.com/v1-new.zip"
@@ -86,7 +86,7 @@ func TestDeleteDevshardApprovedVersion(t *testing.T) {
 	pol, found, err := k.GetVersionPolicy(wctx, "v2")
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, pol.PassCount)
 }
 
 func TestPutDevshardApprovedVersion_RejectsOversizeAndCap(t *testing.T) {
@@ -163,7 +163,7 @@ func TestPutDevshardApprovedVersion_PassCountKeepAndOverwrite(t *testing.T) {
 	k, ms, ctx := setupMsgServer(t)
 	wctx := sdk.UnwrapSDKContext(ctx)
 
-	// Omitted pass_count on a new name records DERIVED.
+	// Omitted pass_count on a new name records SAMPLED.
 	_, err := ms.PutDevshardApprovedVersion(wctx, &types.MsgPutDevshardApprovedVersion{
 		Authority: k.GetAuthority(),
 		Version:   validApprovedVersion("v-policy"),
@@ -171,25 +171,25 @@ func TestPutDevshardApprovedVersion_PassCountKeepAndOverwrite(t *testing.T) {
 	require.NoError(t, err)
 	got, found := k.GetApprovedVersion(wctx, "v-policy")
 	require.True(t, found)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
 
-	// Explicit SAMPLED overwrites the stored policy.
-	sampled := validApprovedVersion("v-policy")
-	sampled.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
+	// Explicit DERIVED overwrites the stored policy.
+	derived := validApprovedVersion("v-policy")
+	derived.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
 	_, err = ms.PutDevshardApprovedVersion(wctx, &types.MsgPutDevshardApprovedVersion{
 		Authority: k.GetAuthority(),
-		Version:   sampled,
+		Version:   derived,
 	})
 	require.NoError(t, err)
 	got, found = k.GetApprovedVersion(wctx, "v-policy")
 	require.True(t, found)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount)
 	pol, found, err := k.GetVersionPolicy(wctx, "v-policy")
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, pol.PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
 
-	// Omitted pass_count on an update keeps the stored SAMPLED value.
+	// Omitted pass_count on an update keeps the stored DERIVED value.
 	keep := validApprovedVersion("v-policy")
 	keep.Binary = "https://example.com/v-policy-new.zip"
 	keep.Sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
@@ -200,7 +200,7 @@ func TestPutDevshardApprovedVersion_PassCountKeepAndOverwrite(t *testing.T) {
 	require.NoError(t, err)
 	got, found = k.GetApprovedVersion(wctx, "v-policy")
 	require.True(t, found)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount)
 	require.Equal(t, keep.Sha256, got.Sha256)
 
 	typo := validApprovedVersion("v-policy")
@@ -212,9 +212,9 @@ func TestPutDevshardApprovedVersion_PassCountKeepAndOverwrite(t *testing.T) {
 	require.NoError(t, err)
 	got, found = k.GetApprovedVersion(wctx, "v-policy")
 	require.True(t, found)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount, "mistype on an existing name keeps the stored policy")
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount, "mistype on an existing name keeps the stored policy")
 
-	// Policy survives delete; re-approval with omitted pass_count keeps SAMPLED.
+	// Policy survives delete; re-approval with omitted pass_count keeps DERIVED.
 	_, err = ms.DeleteDevshardApprovedVersion(wctx, &types.MsgDeleteDevshardApprovedVersion{
 		Authority: k.GetAuthority(),
 		Name:      "v-policy",
@@ -227,7 +227,7 @@ func TestPutDevshardApprovedVersion_PassCountKeepAndOverwrite(t *testing.T) {
 	require.NoError(t, err)
 	got, found = k.GetApprovedVersion(wctx, "v-policy")
 	require.True(t, found)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount)
 
 	mistyped := validApprovedVersion("v-new-typo")
 	mistyped.PassCount = types.DevshardPassCount(99)
@@ -238,10 +238,10 @@ func TestPutDevshardApprovedVersion_PassCountKeepAndOverwrite(t *testing.T) {
 	require.NoError(t, err)
 	got, found = k.GetApprovedVersion(wctx, "v-new-typo")
 	require.True(t, found)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount, "mistyped pass_count on a new name is DERIVED")
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount, "mistyped pass_count on a new name is SAMPLED")
 }
 
-func TestPassCountFor_MissingIsSampled(t *testing.T) {
+func TestPassCountFor_MissingIsDerived(t *testing.T) {
 	k, _, ctx := setupMsgServer(t)
 	wctx := sdk.UnwrapSDKContext(ctx)
 
@@ -250,5 +250,5 @@ func TestPassCountFor_MissingIsSampled(t *testing.T) {
 	require.False(t, found)
 	got, err := k.PassCountFor(wctx, "never-seen")
 	require.NoError(t, err)
-	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got)
 }

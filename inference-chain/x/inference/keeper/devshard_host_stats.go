@@ -85,13 +85,14 @@ const DevshardSprtPassSlack = 2
 type DevshardPassPolicy struct {
 	PassCount         types.DevshardPassCount
 	ValidationRateBps uint32
-	// ApplyDerived is DevshardEscrowParams.apply_derived_pass_count.
+	// ApplySampled is DevshardEscrowParams.apply_sampled_pass_count.
 	//
-	// SAMPLED (old versions, omitted policy, UNSPECIFIED): ignored. Always
-	// credit capped HostStats.validated and never log derived.
-	// DERIVED + false: credit sampled, log derived (warn if over the SPRT cap).
-	// DERIVED + true: credit assigned-missed-invalid; sampled is not applied.
-	ApplyDerived bool
+	// DERIVED (old versions, omitted policy, UNSPECIFIED): ignored. Always
+	// credit assigned-missed-invalid and never log sampled.
+	// SAMPLED + false: credit assigned-missed-invalid (old SPRT inputs), log
+	// sampled (warn if derived exceeds the SPRT cap).
+	// SAMPLED + true: credit capped HostStats.validated for SPRT.
+	ApplySampled bool
 	Logger       types.InferenceLogger
 }
 
@@ -106,9 +107,9 @@ func DevshardSprtPassCap(finished uint64, validationRateBps uint32) uint64 {
 }
 
 func (p DevshardPassPolicy) checkSlot(hs *types.DevshardSettlementHostStats, completed, slotCount uint64) error {
-	if !p.PassCount.Derived() {
-		// Old SAMPLED verification is missed ≤ assigned and invalid ≤ completed
-		// (already applied). finished/validated are scoring inputs only.
+	if p.PassCount.Derived() {
+		// 0.2.16 verification is missed ≤ assigned and invalid ≤ completed
+		// (already applied).
 		return nil
 	}
 	if uint64(hs.Validated) > completed*slotCount {
@@ -123,21 +124,21 @@ func (p DevshardPassPolicy) passScores(completed, invalid, validated, finished u
 	}
 	cap = DevshardSprtPassCap(finished, p.ValidationRateBps)
 	sampled = min(validated, cap)
-	if !p.PassCount.Derived() {
-		applied = sampled
-		return applied, sampled, 0, cap
-	}
 	derived = completed - invalid
-	if p.ApplyDerived {
+	if p.PassCount.Derived() {
 		applied = derived
 		return applied, sampled, derived, cap
 	}
-	applied = sampled
+	if p.ApplySampled {
+		applied = sampled
+		return applied, sampled, derived, cap
+	}
+	applied = derived
 	return applied, sampled, derived, cap
 }
 
-func (p DevshardPassPolicy) logDerivedPassCount(participant string, slotID uint32, applied, sampled, derived, cap uint64) {
-	if p.Logger == nil || !p.PassCount.Derived() {
+func (p DevshardPassPolicy) logSampledPassCount(participant string, slotID uint32, applied, sampled, derived, cap uint64) {
+	if p.Logger == nil || p.PassCount.Derived() {
 		return
 	}
 	kv := []interface{}{
@@ -147,13 +148,13 @@ func (p DevshardPassPolicy) logDerivedPassCount(participant string, slotID uint3
 		"sampled", sampled,
 		"cap", cap,
 		"applied", applied,
-		"apply_derived", p.ApplyDerived,
+		"apply_sampled", p.ApplySampled,
 	}
 	if derived > cap {
 		p.Logger.LogWarn("devshard derived pass count exceeds SPRT cap", types.Settle, kv...)
 		return
 	}
-	p.Logger.LogInfo("devshard derived pass count", types.Settle, kv...)
+	p.Logger.LogInfo("devshard sampled pass count", types.Settle, kv...)
 }
 
 // AggregateDevshardHostStatsIntoCurrentEpochStats merges one slot's devshard
@@ -189,7 +190,7 @@ func AggregateDevshardHostStatsIntoCurrentEpochStats(
 		return fmt.Errorf("%w for %s", err, participant.Address)
 	}
 	applied, sampled, derived, cap := policy.passScores(completed, invalid, validated, uint64(slotStats.Finished))
-	policy.logDerivedPassCount(participant.Address, slotStats.SlotId, applied, sampled, derived, cap)
+	policy.logSampledPassCount(participant.Address, slotStats.SlotId, applied, sampled, derived, cap)
 	validated = applied
 
 	nextMissed, carry := bits.Add64(participant.CurrentEpochStats.MissedRequests, missed, 0)

@@ -51,11 +51,11 @@ func setActiveParticipantsForDevshardTest(t *testing.T, k keeper.Keeper, ctx sdk
 	}))
 }
 
-func enableApplyDerivedPassCount(t *testing.T, k keeper.Keeper, ctx context.Context) {
+func enableApplySampledPassCount(t *testing.T, k keeper.Keeper, ctx context.Context) {
 	t.Helper()
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	params.DevshardEscrowParams.ApplyDerivedPassCount = true
+	params.DevshardEscrowParams.ApplySampledPassCount = true
 	require.NoError(t, k.SetParams(ctx, params))
 }
 
@@ -301,28 +301,35 @@ func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 	tests := []struct {
 		name             string
 		setDerivedPolicy bool
-		applyDerived     bool
+		setSampledPolicy bool
+		applySampled     bool
 		wantH1Validated  uint64
 		wantH2Validated  uint64
 	}{
 		{
-			name:            "old version stays sampled even if apply_derived is on",
-			applyDerived:    true,
-			wantH1Validated: 0,
-			wantH2Validated: 0,
+			name:            "missing policy is DERIVED and credits assigned-missed-invalid even if flag off",
+			wantH1Validated: 9,
+			wantH2Validated: 7,
 		},
 		{
-			name:             "derived version with flag off credits sampled",
+			name:             "DERIVED version ignores apply_sampled and credits assigned-missed-invalid",
 			setDerivedPolicy: true,
-			wantH1Validated:  0,
-			wantH2Validated:  0,
-		},
-		{
-			name:             "derived version with flag on credits assigned-missed-invalid",
-			setDerivedPolicy: true,
-			applyDerived:     true,
+			applySampled:     true,
 			wantH1Validated:  9,
 			wantH2Validated:  7,
+		},
+		{
+			name:             "SAMPLED version with flag off keeps derived punishment",
+			setSampledPolicy: true,
+			wantH1Validated:  9,
+			wantH2Validated:  7,
+		},
+		{
+			name:             "SAMPLED version with flag on credits sampled (0 on omitted validated)",
+			setSampledPolicy: true,
+			applySampled:     true,
+			wantH1Validated:  0,
+			wantH2Validated:  0,
 		},
 	}
 	for _, tc := range tests {
@@ -341,13 +348,19 @@ func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 			setParticipantForDevshardTest(t, k, ctx, addrH2)
 			require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
 			setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
-			if tc.applyDerived {
-				enableApplyDerivedPassCount(t, k, ctx)
+			if tc.applySampled {
+				enableApplySampledPassCount(t, k, ctx)
 			}
 			if tc.setDerivedPolicy {
 				require.NoError(t, k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{
 					Name:      "dev",
 					PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED,
+				}))
+			}
+			if tc.setSampledPolicy {
+				require.NoError(t, k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{
+					Name:      "dev",
+					PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED,
 				}))
 			}
 
@@ -408,30 +421,35 @@ func TestSettleDevshardEscrow_PassCountWiring(t *testing.T) {
 	const wantSampled, wantDerived = 6, 10
 	tests := []struct {
 		name           string
-		stampSampled   bool
+		stampDerived   bool
 		putOmitted     bool
-		applyDerived   bool
+		applySampled   bool
 		wantValidated  uint64
-		wantDerivedLog bool
+		wantSampledLog bool
 	}{
 		{
-			name:          "upgrade-stamped SAMPLED with flag on credits sampled and does not log derived",
-			stampSampled:  true,
-			applyDerived:  true,
-			wantValidated: wantSampled,
+			name:          "upgrade-stamped DERIVED with flag off credits assigned-missed-invalid and does not log",
+			stampDerived:  true,
+			wantValidated: wantDerived,
 		},
 		{
-			name:           "Put omitted pass_count is DERIVED; flag off credits sampled and logs derived",
-			putOmitted:     true,
-			wantValidated:  wantSampled,
-			wantDerivedLog: true,
+			name:          "upgrade-stamped DERIVED with flag on still credits assigned-missed-invalid and does not log",
+			stampDerived:  true,
+			applySampled:  true,
+			wantValidated: wantDerived,
 		},
 		{
-			name:           "Put omitted pass_count is DERIVED; flag on credits assigned-missed-invalid",
+			name:           "Put omitted pass_count is SAMPLED; flag off keeps derived punishment and logs sampled",
 			putOmitted:     true,
-			applyDerived:   true,
 			wantValidated:  wantDerived,
-			wantDerivedLog: true,
+			wantSampledLog: true,
+		},
+		{
+			name:           "Put omitted pass_count is SAMPLED; flag on applies sampled for punishment",
+			putOmitted:     true,
+			applySampled:   true,
+			wantValidated:  wantSampled,
+			wantSampledLog: true,
 		},
 	}
 	for _, tc := range tests {
@@ -451,15 +469,15 @@ func TestSettleDevshardEscrow_PassCountWiring(t *testing.T) {
 			setParticipantForDevshardTest(t, k, ctx, addrH2)
 			require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
 			setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
-			if tc.applyDerived {
-				enableApplyDerivedPassCount(t, k, ctx)
+			if tc.applySampled {
+				enableApplySampledPassCount(t, k, ctx)
 			}
 
 			version := validApprovedVersion(settlementVersion)
 			switch {
-			case tc.stampSampled:
+			case tc.stampDerived:
 				require.NoError(t, k.SetApprovedVersion(ctx, version))
-				version.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
+				version.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
 				require.NoError(t, k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{
 					Name: version.Name, PassCount: version.PassCount,
 				}))
@@ -473,7 +491,7 @@ func TestSettleDevshardEscrow_PassCountWiring(t *testing.T) {
 				pol, found, err := k.GetVersionPolicy(ctx, settlementVersion)
 				require.NoError(t, err)
 				require.True(t, found)
-				require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
+				require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, pol.PassCount)
 			}
 
 			creator := sdk.AccAddress(make([]byte, 20))
@@ -515,9 +533,9 @@ func TestSettleDevshardEscrow_PassCountWiring(t *testing.T) {
 			require.True(t, found)
 			require.Equal(t, tc.wantValidated, h2.CurrentEpochStats.ValidatedInferences)
 
-			derivedLogged := slices.Contains(warns, "devshard derived pass count exceeds SPRT cap") ||
-				slices.Contains(infos, "devshard derived pass count")
-			require.Equal(t, tc.wantDerivedLog, derivedLogged)
+			sampledLogged := slices.Contains(warns, "devshard derived pass count exceeds SPRT cap") ||
+				slices.Contains(infos, "devshard sampled pass count")
+			require.Equal(t, tc.wantSampledLog, sampledLogged)
 		})
 	}
 }
@@ -537,7 +555,6 @@ func TestSettleDevshardEscrow_AggregatesParticipantStatsWithRemainderSlots(t *te
 	setParticipantForDevshardTest(t, k, ctx, addrH2)
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
 	setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
-	enableApplyDerivedPassCount(t, k, ctx)
 	require.NoError(t, k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{
 		Name:      "dev",
 		PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED,

@@ -887,7 +887,7 @@ func TestVerifyDevshardSettlement_SampledAcceptsLegacyInvalidWithoutFinished(t *
 	require.NoError(t, err, "older SAMPLED payloads omit finished and must still settle")
 
 	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil)
-	require.NoError(t, err, "empty allowlist defaults to SAMPLED and still accepts omitted finished")
+	require.NoError(t, err, "empty allowlist defaults to DERIVED and still accepts omitted finished")
 
 	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED)
 	require.NoError(t, err)
@@ -898,10 +898,10 @@ func TestVerifyDevshardSettlement_SampledAcceptsLegacyInvalidWithoutFinished(t *
 		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}}
 	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), unspecified, nil)
-	require.NoError(t, err, "omitted pass_count on the allowlist is SAMPLED")
+	require.NoError(t, err, "omitted pass_count on the allowlist is DERIVED")
 }
 
-func TestVerifyDevshardSettlement_DerivedChecksValidated(t *testing.T) {
+func TestVerifyDevshardSettlement_SampledChecksValidated(t *testing.T) {
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
@@ -914,11 +914,11 @@ func TestVerifyDevshardSettlement_DerivedChecksValidated(t *testing.T) {
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
 	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED)
-	require.NoError(t, err, "SAMPLED does not extra-check validated")
+	require.ErrorContains(t, err, "validated count", "SAMPLED extra-checks validated")
 
 	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED)
-	require.NoError(t, err, "UNSPECIFIED is the old sampled path")
+	require.NoError(t, err, "UNSPECIFIED is the old derived path")
 
 	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED)
-	require.ErrorContains(t, err, "validated count")
+	require.NoError(t, err, "DERIVED does not extra-check validated")
 }

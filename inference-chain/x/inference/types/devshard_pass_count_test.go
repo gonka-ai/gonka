@@ -13,7 +13,7 @@ func TestResolvePassCount(t *testing.T) {
 
 	got, err := types.ResolvePassCount(nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED)
 	require.NoError(t, err)
-	require.Equal(t, derived, got, "new name with omitted pass_count is DERIVED")
+	require.Equal(t, sampled, got, "new name with omitted pass_count is SAMPLED")
 
 	got, err = types.ResolvePassCount(&sampled, types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED)
 	require.NoError(t, err)
@@ -29,7 +29,7 @@ func TestResolvePassCount(t *testing.T) {
 
 	got, err = types.ResolvePassCount(nil, types.DevshardPassCount(99))
 	require.NoError(t, err)
-	require.Equal(t, derived, got, "unknown requested value is omitted → DERIVED for a new name")
+	require.Equal(t, sampled, got, "unknown requested value is omitted → SAMPLED for a new name")
 
 	got, err = types.ResolvePassCount(&sampled, types.DevshardPassCount(99))
 	require.NoError(t, err)
@@ -45,7 +45,7 @@ func TestResolvePassCount(t *testing.T) {
 }
 
 func TestDevshardPassCountDerived(t *testing.T) {
-	require.False(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED.Derived())
+	require.True(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED.Derived())
 	require.False(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED.Derived())
 	require.True(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED.Derived())
 }
