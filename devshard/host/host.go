@@ -56,7 +56,8 @@ type HostRequest struct {
 	Payload *InferencePayload // nil if no new inference (e.g., Finalize, empty diffs)
 	// ForceHeightSyncAnchor asks transport to emit Anchor even when cadence would Omit
 	// (legacy single-message override when escrow state does not carry a forced turn).
-	ForceHeightSyncAnchor bool
+	ForceHeightSyncAnchor        bool
+	LogprobsOptimizationOverride *bool
 	// HeightSyncEscrow carries MsgForceHeightSyncTurn-derived state (not serialized on HTTP JSON).
 	HeightSyncEscrow *heightsync.EscrowHeightSyncHints
 }
@@ -1048,14 +1049,15 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 	outcome.reason = observability.ReasonOK
 
 	job := &devshard.ExecuteRequest{
-		InferenceID: inferenceID,
-		Model:       rec.Model,
-		Prompt:      req.Payload.Prompt,
-		PromptHash:  rec.PromptHash,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		EscrowID:    h.escrowID,
-		EpochID:     h.epochID,
+		InferenceID:                  inferenceID,
+		Model:                        rec.Model,
+		Prompt:                       req.Payload.Prompt,
+		PromptHash:                   rec.PromptHash,
+		InputLength:                  rec.InputLength,
+		MaxTokens:                    rec.MaxTokens,
+		EscrowID:                     h.escrowID,
+		EpochID:                      h.epochID,
+		LogprobsOptimizationOverride: req.LogprobsOptimizationOverride,
 	}
 	return sig, confirmedAt, job, nil, outcome, nil
 }

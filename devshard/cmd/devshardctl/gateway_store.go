@@ -23,6 +23,7 @@ type GatewaySettings struct {
 	MaxInputTokensInFlight         int64                       `json:"max_input_tokens_in_flight"`
 	ModelLimits                    []GatewayModelLimitSettings `json:"model_limits,omitempty"`
 	TxGasLimit                     uint64                      `json:"tx_gas_limit,omitempty"`
+	LogprobsOptimizationOverride   *bool                       `json:"logprobs_optimization_override,omitempty"`
 	Disabled                       GatewayDisabledSettings     `json:"disabled"`
 	ParticipantThrottle            ParticipantThrottleSettings `json:"participant_throttle"`
 	Redundancy                     RedundancySettings          `json:"redundancy"`
@@ -374,6 +375,7 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			gateway_disabled_enabled INTEGER NOT NULL DEFAULT 0,
 			gateway_disabled_message TEXT NOT NULL DEFAULT '',
 			gateway_disabled_new_url TEXT NOT NULL DEFAULT '',
+			logprobs_optimization_override INTEGER,
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS gateway_devshards (
@@ -569,13 +571,15 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		       perf_sample_size, perf_window_ms,
 		       escrow_rotation_enabled, escrow_rotation_settlement_enabled,
 		       escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
-	       gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url
+	       gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url,
+	       logprobs_optimization_override
 		FROM gateway_settings
 		WHERE id = 1`)
 	var rotationEnabled int
 	var rotationSettlementEnabled int
 	var disabledEnabled int
 	var forceUpstreamStreaming int
+	var logprobsOptimizationOverride sql.NullInt64
 	var rotationModelsJSON string
 	var modelLimitsJSON string
 	var modelAccessJSON string
@@ -626,6 +630,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		&disabledEnabled,
 		&state.Settings.Disabled.Message,
 		&state.Settings.Disabled.NewURL,
+		&logprobsOptimizationOverride,
 	)
 	if err == sql.ErrNoRows {
 		return GatewayState{}, false, nil
@@ -654,6 +659,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 	}
 	state.Settings.Disabled.Enabled = disabledEnabled != 0
 	state.Settings.Redundancy.ForceUpstreamStreaming = boolPtr(forceUpstreamStreaming != 0)
+	state.Settings.LogprobsOptimizationOverride = nullableIntToOptionalBool(logprobsOptimizationOverride)
 	state.Settings = state.Settings.WithTuningDefaults()
 
 	rows, err := s.db.Query(`
@@ -742,8 +748,9 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 			escrow_rotation_enabled, escrow_rotation_settlement_enabled,
 			escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
 			gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url,
+			logprobs_optimization_override,
 			updated_at
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(settings.ChainREST),
 		strings.TrimSpace(settings.PublicAPI),
 		strings.TrimSpace(settings.DefaultModel),
@@ -790,6 +797,7 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 		gatewayBoolToInt(settings.Disabled.Enabled),
 		strings.TrimSpace(settings.Disabled.Message),
 		strings.TrimSpace(settings.Disabled.NewURL),
+		gatewayOptionalBoolToNullableInt(settings.LogprobsOptimizationOverride),
 		now,
 	); err != nil {
 		return fmt.Errorf("insert gateway settings: %w", err)
@@ -853,6 +861,7 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		    gateway_disabled_enabled = ?,
 		    gateway_disabled_message = ?,
 		    gateway_disabled_new_url = ?,
+		    logprobs_optimization_override = ?,
 		    updated_at = ?
 		WHERE id = 1`,
 		strings.TrimSpace(settings.ChainREST),
@@ -901,6 +910,7 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		gatewayBoolToInt(settings.Disabled.Enabled),
 		strings.TrimSpace(settings.Disabled.Message),
 		strings.TrimSpace(settings.Disabled.NewURL),
+		gatewayOptionalBoolToNullableInt(settings.LogprobsOptimizationOverride),
 		time.Now().UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -1468,6 +1478,20 @@ func gatewayBoolToInt(v bool) int {
 	return 0
 }
 
+func gatewayOptionalBoolToNullableInt(v *bool) any {
+	if v == nil {
+		return nil
+	}
+	return gatewayBoolToInt(*v)
+}
+
+func nullableIntToOptionalBool(v sql.NullInt64) *bool {
+	if !v.Valid {
+		return nil
+	}
+	return boolPtr(v.Int64 != 0)
+}
+
 func gatewayOptionalBoolToInt(v *bool, defaultTrue bool) int {
 	if v == nil {
 		if defaultTrue {
@@ -1572,6 +1596,7 @@ func ensureGatewaySettingsDisabledColumns(db *sql.DB) error {
 		{"gateway_disabled_enabled", "INTEGER NOT NULL DEFAULT 0"},
 		{"gateway_disabled_message", "TEXT NOT NULL DEFAULT ''"},
 		{"gateway_disabled_new_url", "TEXT NOT NULL DEFAULT ''"},
+		{"logprobs_optimization_override", "INTEGER"},
 	}
 	for _, column := range columns {
 		if err := ensureGatewaySettingsColumn(db, column.name, column.ddl); err != nil {

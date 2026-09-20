@@ -27,6 +27,7 @@ func executeInference(
 	payloadEpoch uint64,
 	execute mlRequestExecutor,
 	chainParams ChainParamsProvider,
+	logprobsOptimizationEnabled bool,
 ) (*devshardpkg.ExecuteResult, error) {
 	seed := int32(req.InferenceID)
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
@@ -42,7 +43,10 @@ func executeInference(
 	}
 	defer resp.Body.Close()
 
-	processed, err := processExecutionHTTPResponse(req, resp, inferenceID, modified.AsksForLogprobs)
+	processor := completionapi.NewExecutorResponseProcessor(inferenceID, modified.AsksForLogprobs)
+	processor.SetLogprobsOptimization(req.LogprobsOptimizationOverride, logprobsOptimizationEnabled)
+
+	processed, err := processExecutionHTTPResponse(req, resp, inferenceID, processor)
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonProcessResponseErr, observability.WhereRuntimeExecute, err)
 	}
@@ -77,10 +81,8 @@ func processExecutionHTTPResponse(
 	req devshardpkg.ExecuteRequest,
 	resp *http.Response,
 	inferenceID string,
-	forwardLogprobs bool,
+	processor *completionapi.ExecutorResponseProcessor,
 ) (*processedExecutionResponse, error) {
-	processor := completionapi.NewExecutorResponseProcessor(inferenceID, forwardLogprobs)
-
 	isSSE := completionapi.IsEventStream(resp)
 
 	if req.ResponseWriter != nil && isSSE {

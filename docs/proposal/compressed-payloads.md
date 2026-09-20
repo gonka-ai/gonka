@@ -34,7 +34,9 @@ Verified across 100 responses / 409 600 positions: zero exceptions. Every positi
 
 The remaining shape is OpenAI's own, with the same field names, and parses back into the existing `completionapi.Logprob` with no special case.
 
-**2. Stop sending the gateway what it discards.** Four fields — `logprobs`, `token_ids`, `prompt_token_ids`, `prompt_logprobs` — are removed from each chunk the executor forwards. The gateway strips all four on arrival, so carrying them buys nothing. The executor keeps every chunk whole for its own accumulation, so what it stores and hashes is unaffected: the strip applies only to the bytes leaving for the gateway.
+**2. Stop sending the gateway what it discards.** `token_ids`, `prompt_token_ids` and `prompt_logprobs` are the serving engine's own bookkeeping; the gateway strips all three on arrival and no validator opens them, so they are dropped from the chunk before either copy is made — the stored one loses them too.
+
+As shipped, `logprobs` are treated separately from those three: the executor withholds them from the forwarded copy only when the client did not ask for them, and keeps them in the stored copy always. That gating arrived after this proposal and changes both the figure below and what the gateway can prove — see [The gateway is a second reader of those bytes](#the-gateway-is-a-second-reader-of-those-bytes).
 
 **3. Apply zstd at rest and gzip in transit.** Files are written zstd-encoded (`{inferenceId}.json.zst`); both suffixes are read, so files written by earlier versions stay readable. Writing is gated by `DEVSHARD_PAYLOAD_ZSTD_ENABLED`, default off, because a node that writes `.zst` hides those payloads from an older binary reading the same directory. The payload route serves gzip, negotiated by `Accept-Encoding` — the validator's Go client already asks for it and unwraps it, so no fetcher changes.
 
@@ -56,6 +58,8 @@ Measured on a real request/response pair: 533 KB prompt, 1321 KB response, 123 1
 |---|---|---|
 | today | 2313.0 KB | 1.0× |
 | four fields removed | **768.1 KB** | **3.0×** |
+
+**This row is the proposal's figure, not the shipped one.** It assumes `logprobs` leave the wire on every inference. They do not: a client that asks for them gets them, so only the three bookkeeping fields are unconditionally removed. Measured on four captured streamed responses at merge, the shipped saving is 390.8 KB → **379.1 KB, 1.03×**. The disk and validator-fetch figures above are unaffected, since they cover the stored copy.
 
 | Inferences | Before | After | Saved |
 |---|---|---|---|
@@ -122,7 +126,7 @@ Decoding the logprobs into their typed struct instead of a generic map removes a
 | new validator ← old executor (full payload) | works — extra fields are ignored |
 | new binary reads files written before zstd | works — both suffixes are read |
 | fetcher that does not send `Accept-Encoding` | works — gzip is negotiated |
-| gateway receives chunks without the four fields | works — it strips all four on arrival and reads none of them |
+| gateway receives chunks without the four fields | **the error-miss proof breaks** — see below; governed by the two knobs under Configuration |
 | **old binary reads files written after zstd** | **fails** — `.json.zst` is not found, returns `ErrNotFound` |
 
 The last row is a rollback hazard, bounded by the three-epoch retention window: a node downgraded after writing zstd files cannot serve payloads it wrote while upgraded, and fails validations drawn against them.
@@ -130,6 +134,45 @@ The last row is a rollback hazard, bounded by the three-epoch retention window: 
 It is not a concurrency hazard. `versiond` permits two devshardd versions to overlap only when the storage mode is `postgres`, where payloads do not live in files; in `sqlite` and `hybrid` mode overlap is refused. Two versions never read one payload directory at the same time.
 
 If rollback across this boundary must be supported, the standard two-phase rollout applies: ship the read side first, enable writing in a later release.
+
+## The gateway is a second reader of those bytes
+
+The claim that the gateway "reads none of them" holds for the answer it serves a client and fails for one other consumer.
+
+When a host finishes an inference whose body is a terminal error, the gateway claims an **error miss** so the host is not paid. Its proof is the response it saw: it rebuilds the SSE envelope from the bytes on the wire, and every verifier hashes that envelope and compares it to `MsgFinishInference.ResponseHash` — the hash of the bytes the executor *stored* (`host/timeout.go`, `VerifyErrorMiss`). Stored and forwarded must therefore be identical, byte for byte.
+
+Both halves of step 1 and step 2 break that identity:
+
+| Field | Stored | Forwarded |
+|---|---|---|
+| `token_ids`, `prompt_token_ids`, `prompt_logprobs` | dropped | dropped — symmetric, harmless |
+| `logprobs[].bytes`, `logprobs[].logprob` | dropped | kept |
+| the whole `logprobs` key | kept | dropped when the client did not ask for logprobs |
+
+The refusal alone is enough to break it, and it is the shape production refuses with: a serving engine opens a stream with a role chunk carrying `"logprobs": null`, and the third row drops that key from the forwarded copy. The hashes then differ, every verifier answers `hash_mismatch`, the miss does not land, and the host is paid for an error.
+
+The knob restores the identity on the relay path only. When the ML node answers with a plain JSON body and a streaming client is attached, the executor stores that bare object while the gateway rebuilds an SSE envelope from what it received, so the two hashes cannot match in either mode; the same holds for a reconnect replayed from the cached body. This predates the knob and no setting closes it. It is reachable only when the error body carries a `usage` block: without one the executor fails on `GetUsage` before committing a finish, so there is nothing to prove. With one, the finish is committed and the miss stays unprovable — closing that needs the JSON relay to store the envelope it emits, which is not done here.
+
+Validation is not affected: it re-fetches the stored bytes and hashes those, so it never sees the forwarded copy. Neither is the client's answer — whether the client is shown logprobs follows its own request in both modes, because the gateway applies that intent on the way out regardless of what it received.
+
+## Configuration
+
+Both compression steps ship off. The figures above are what an operator gets by opting in, not what a node does out of the box: correctness of the error-miss proof was chosen over the disk saving, and the saving is one environment variable away.
+
+| Knob | Default | Effect |
+|---|---|---|
+| `DEVSHARD_PAYLOAD_ZSTD_ENABLED` | `false` | write payload files zstd-encoded. Reading accepts both suffixes either way, so the gate governs writing alone |
+| `DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED` | `false` | the executor's own default. Off, it forwards exactly the bytes it stored and hashed, so a gateway can prove an error miss; `true` buys the savings above and gives that proof up |
+| `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` | unset | what the gateway asks executors for, per inference. Unset says nothing and leaves every executor its own default |
+
+The gateway's override also moves at runtime, without restarting the gateway or any host:
+
+```
+POST /v1/admin/settings  {"logprobs_optimization": {"enabled": false}}
+POST /v1/admin/settings  {"logprobs_optimization": {}}          # clear, defer to the hosts again
+```
+
+It rides the inference request as `logprobs_optimization_override`, inside the body the gateway signs, so a host can tell who asked. A gateway older than the field sends nothing, and executors keep their own default.
 
 ## Non-goals
 
@@ -146,5 +189,5 @@ If rollback across this boundary must be supported, the standard two-phase rollo
 - End to end: `ExecuteValidation` run against a compressed payload — parse, enforced tokens, replay, compare, threshold — and the enforced tokens the replay is pinned to are the executor's own ids.
 - Redundancy: all 100 responses / 409 600 positions in the reference corpus pass the pre-drop check.
 - Bounds: a payload file that inflates past 256 MiB is refused rather than read, asserted with a real bomb. The bound turns an unbounded decompression into one failed read rather than an OOM; the largest legitimate payload is ~90 MiB, a 10 MiB request at the body cap plus 300k output tokens.
-- Divergence: an inference driven through a streaming stub asserts both outputs at once — the gateway receives no logprobs, and the payload stored from the same stream still replays the executor's token path with its alternatives intact.
+- Divergence: an inference driven through a streaming stub asserts both outputs at once — the gateway receives no logprobs for a client that did not ask for them, and the payload stored from the same stream still replays the executor's token path with its alternatives intact.
 - Mutation testing: 13 mutants, 11 killed. The two survivors both concerned gzip being scoped to one route rather than the whole group, which no test could distinguish at the time. That scoping has since been replaced: the inference route compresses too, and `TestInferenceRouteStreamsEachFrameAsItIsFlushed` distinguishes the mounts.

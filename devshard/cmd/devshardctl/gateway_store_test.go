@@ -1015,3 +1015,42 @@ func gatewayDevshardsByID(devshards []GatewayDevshardState) map[string]GatewayDe
 	}
 	return byID
 }
+
+func TestGatewayStorePersistsLogprobsOptimizationOverride(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	require.NoError(t, store.Initialize(GatewaySettings{
+		DefaultModel:                 "Qwen/Test",
+		LogprobsOptimizationOverride: boolPtr(false),
+	}, nil))
+
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, state.Settings.LogprobsOptimizationOverride, "a bootstrapped override must survive the store")
+	require.False(t, *state.Settings.LogprobsOptimizationOverride)
+
+	for _, testCase := range []struct {
+		name  string
+		write *bool
+	}{
+		{name: "gateway asks to optimize", write: boolPtr(true)},
+		{name: "gateway asks for the stored bytes", write: boolPtr(false)},
+		{name: "gateway clears its choice", write: nil},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			settings := state.Settings
+			settings.LogprobsOptimizationOverride = testCase.write
+			require.NoError(t, store.UpdateSettings(settings))
+
+			reloaded, ok, err := store.LoadState()
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, testCase.write, reloaded.Settings.LogprobsOptimizationOverride)
+		})
+	}
+}

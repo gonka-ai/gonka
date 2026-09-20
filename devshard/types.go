@@ -16,6 +16,8 @@ type ExecuteRequest struct {
 	// ResponseWriter, if set, receives the raw ML node response as it streams.
 	// The engine should write inference output here for real-time forwarding.
 	ResponseWriter http.ResponseWriter
+
+	LogprobsOptimizationOverride *bool
 }
 
 // ExecuteResult contains the outcome of an inference execution.
