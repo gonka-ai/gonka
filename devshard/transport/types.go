@@ -34,7 +34,8 @@ type InferenceRequest struct {
 	Payload *PayloadJSON `json:"payload,omitempty"`
 	Stream  bool         `json:"stream,omitempty"` // hint: stream SSE deltas vs single JSON event
 	// ForceHeightSyncAnchor triggers manual-force Anchor on this message (policy hook).
-	ForceHeightSyncAnchor bool `json:"force_height_sync_anchor,omitempty"`
+	ForceHeightSyncAnchor        bool  `json:"force_height_sync_anchor,omitempty"`
+	LogprobsOptimizationOverride *bool `json:"logprobs_optimization_override,omitempty"`
 }
 
 // InferenceResponse is the JSON body returned by the inference endpoint.
@@ -77,7 +78,7 @@ type VerifyTimeoutResponse struct {
 	Accept      bool     `json:"accept"`
 	Signature   []byte   `json:"signature,omitempty"` // signed TimeoutVoteContent
 	VoterSlot   uint32   `json:"voter_slot"`
-	Mempool     [][]byte `json:"mempool,omitempty"`      // recovery txs on reject; each: proto bytes of DevshardTx
+	Mempool     [][]byte `json:"mempool,omitempty"` // recovery txs on reject; each: proto bytes of DevshardTx
 	RejectCause string   `json:"reject_cause,omitempty"`
 }
 
@@ -155,9 +156,10 @@ func HostRequestToJSON(req host.HostRequest) (InferenceRequest, error) {
 	}
 
 	ir := InferenceRequest{
-		Diffs:                 diffs,
-		Nonce:                 req.Nonce,
-		ForceHeightSyncAnchor: req.ForceHeightSyncAnchor,
+		Diffs:                        diffs,
+		Nonce:                        req.Nonce,
+		ForceHeightSyncAnchor:        req.ForceHeightSyncAnchor,
+		LogprobsOptimizationOverride: req.LogprobsOptimizationOverride,
 	}
 	ir.Payload = PayloadToJSON(req.Payload)
 	return ir, nil
@@ -175,9 +177,10 @@ func HostRequestFromJSON(ir InferenceRequest) (host.HostRequest, error) {
 	}
 
 	req := host.HostRequest{
-		Diffs:                 diffs,
-		Nonce:                 ir.Nonce,
-		ForceHeightSyncAnchor: ir.ForceHeightSyncAnchor,
+		Diffs:                        diffs,
+		Nonce:                        ir.Nonce,
+		ForceHeightSyncAnchor:        ir.ForceHeightSyncAnchor,
+		LogprobsOptimizationOverride: ir.LogprobsOptimizationOverride,
 	}
 	req.Payload = PayloadFromJSON(ir.Payload)
 	return req, nil
