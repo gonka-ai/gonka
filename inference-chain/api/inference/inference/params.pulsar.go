@@ -21144,7 +21144,7 @@ var (
 	fd_DevshardEscrowParams_validation_rate                      protoreflect.FieldDescriptor
 	fd_DevshardEscrowParams_vote_threshold_factor                protoreflect.FieldDescriptor
 	fd_DevshardEscrowParams_default_auto_seal_every_n_nonces     protoreflect.FieldDescriptor
-	fd_DevshardEscrowParams_apply_derived_pass_count             protoreflect.FieldDescriptor
+	fd_DevshardEscrowParams_apply_sampled_pass_count             protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -21168,7 +21168,7 @@ func init() {
 	fd_DevshardEscrowParams_validation_rate = md_DevshardEscrowParams.Fields().ByName("validation_rate")
 	fd_DevshardEscrowParams_vote_threshold_factor = md_DevshardEscrowParams.Fields().ByName("vote_threshold_factor")
 	fd_DevshardEscrowParams_default_auto_seal_every_n_nonces = md_DevshardEscrowParams.Fields().ByName("default_auto_seal_every_n_nonces")
-	fd_DevshardEscrowParams_apply_derived_pass_count = md_DevshardEscrowParams.Fields().ByName("apply_derived_pass_count")
+	fd_DevshardEscrowParams_apply_sampled_pass_count = md_DevshardEscrowParams.Fields().ByName("apply_sampled_pass_count")
 }
 
 var _ protoreflect.Message = (*fastReflection_DevshardEscrowParams)(nil)
@@ -21344,9 +21344,9 @@ func (x *fastReflection_DevshardEscrowParams) Range(f func(protoreflect.FieldDes
 			return
 		}
 	}
-	if x.ApplyDerivedPassCount != false {
-		value := protoreflect.ValueOfBool(x.ApplyDerivedPassCount)
-		if !f(fd_DevshardEscrowParams_apply_derived_pass_count, value) {
+	if x.ApplySampledPassCount != false {
+		value := protoreflect.ValueOfBool(x.ApplySampledPassCount)
+		if !f(fd_DevshardEscrowParams_apply_sampled_pass_count, value) {
 			return
 		}
 	}
@@ -21401,8 +21401,8 @@ func (x *fastReflection_DevshardEscrowParams) Has(fd protoreflect.FieldDescripto
 		return x.VoteThresholdFactor != uint32(0)
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		return x.DefaultAutoSealEveryNNonces != uint32(0)
-	case "inference.inference.DevshardEscrowParams.apply_derived_pass_count":
-		return x.ApplyDerivedPassCount != false
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
+		return x.ApplySampledPassCount != false
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -21455,8 +21455,8 @@ func (x *fastReflection_DevshardEscrowParams) Clear(fd protoreflect.FieldDescrip
 		x.VoteThresholdFactor = uint32(0)
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		x.DefaultAutoSealEveryNNonces = uint32(0)
-	case "inference.inference.DevshardEscrowParams.apply_derived_pass_count":
-		x.ApplyDerivedPassCount = false
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
+		x.ApplySampledPassCount = false
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -21533,8 +21533,8 @@ func (x *fastReflection_DevshardEscrowParams) Get(descriptor protoreflect.FieldD
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		value := x.DefaultAutoSealEveryNNonces
 		return protoreflect.ValueOfUint32(value)
-	case "inference.inference.DevshardEscrowParams.apply_derived_pass_count":
-		value := x.ApplyDerivedPassCount
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
+		value := x.ApplySampledPassCount
 		return protoreflect.ValueOfBool(value)
 	default:
 		if descriptor.IsExtension() {
@@ -21596,8 +21596,8 @@ func (x *fastReflection_DevshardEscrowParams) Set(fd protoreflect.FieldDescripto
 		x.VoteThresholdFactor = uint32(value.Uint())
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		x.DefaultAutoSealEveryNNonces = uint32(value.Uint())
-	case "inference.inference.DevshardEscrowParams.apply_derived_pass_count":
-		x.ApplyDerivedPassCount = value.Bool()
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
+		x.ApplySampledPassCount = value.Bool()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -21662,8 +21662,8 @@ func (x *fastReflection_DevshardEscrowParams) Mutable(fd protoreflect.FieldDescr
 		panic(fmt.Errorf("field vote_threshold_factor of message inference.inference.DevshardEscrowParams is not mutable"))
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		panic(fmt.Errorf("field default_auto_seal_every_n_nonces of message inference.inference.DevshardEscrowParams is not mutable"))
-	case "inference.inference.DevshardEscrowParams.apply_derived_pass_count":
-		panic(fmt.Errorf("field apply_derived_pass_count of message inference.inference.DevshardEscrowParams is not mutable"))
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
+		panic(fmt.Errorf("field apply_sampled_pass_count of message inference.inference.DevshardEscrowParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -21715,7 +21715,7 @@ func (x *fastReflection_DevshardEscrowParams) NewField(fd protoreflect.FieldDesc
 		return protoreflect.ValueOfUint32(uint32(0))
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		return protoreflect.ValueOfUint32(uint32(0))
-	case "inference.inference.DevshardEscrowParams.apply_derived_pass_count":
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
 		return protoreflect.ValueOfBool(false)
 	default:
 		if fd.IsExtension() {
@@ -21846,7 +21846,7 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 		if x.DefaultAutoSealEveryNNonces != 0 {
 			n += 2 + runtime.Sov(uint64(x.DefaultAutoSealEveryNNonces))
 		}
-		if x.ApplyDerivedPassCount {
+		if x.ApplySampledPassCount {
 			n += 3
 		}
 		if x.unknownFields != nil {
@@ -21878,9 +21878,9 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.ApplyDerivedPassCount {
+		if x.ApplySampledPassCount {
 			i--
-			if x.ApplyDerivedPassCount {
+			if x.ApplySampledPassCount {
 				dAtA[i] = 1
 			} else {
 				dAtA[i] = 0
@@ -22428,7 +22428,7 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 				}
 			case 19:
 				if wireType != 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ApplyDerivedPassCount", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ApplySampledPassCount", wireType)
 				}
 				var v int
 				for shift := uint(0); ; shift += 7 {
@@ -22445,7 +22445,7 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 						break
 					}
 				}
-				x.ApplyDerivedPassCount = bool(v != 0)
+				x.ApplySampledPassCount = bool(v != 0)
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -26946,16 +26946,16 @@ type DevshardPassCount int32
 
 const (
 	// Omitted JSON, or any value that is not SAMPLED/DERIVED. Keep the stored
-	// policy; DERIVED if the name is new (Put). Unstamped genesis / upgrade
-	// names still record SAMPLED.
+	// policy; SAMPLED if the name is new (Put). Unstamped genesis / upgrade
+	// names still record DERIVED.
 	DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED DevshardPassCount = 0
 	// HostStats.validated, capped by 2 * finished * validation_rate_bps / 10000 + 2.
+	// Default for a new Put name when pass_count is omitted or mistyped.
 	// Older payloads that omit validated/finished still settle (0 passes).
-	// Live names without a recorded policy (upgrade stamp, PassCountFor miss)
-	// score as SAMPLED.
 	DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED DevshardPassCount = 1
-	// assigned - missed - invalid. Default for a new Put name when pass_count
-	// is omitted or mistyped.
+	// assigned - missed - invalid (the 0.2.16 formula). Older binaries; v0.2.16
+	// stamps existing names. Live names without a recorded policy score as
+	// DERIVED. apply_sampled_pass_count is ignored.
 	DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED DevshardPassCount = 2
 )
 
@@ -29172,7 +29172,7 @@ type DevshardApprovedVersion struct {
 	// Hash of binary to check if update is already installed
 	Sha256 string `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	// How settlement host stats become SPRT passes. Omitted JSON is UNSPECIFIED:
-	// keep the stored policy, or DERIVED for a new name. An explicit value
+	// keep the stored policy, or SAMPLED for a new name. An explicit value
 	// overwrites the stored policy.
 	PassCount DevshardPassCount `protobuf:"varint,4,opt,name=pass_count,json=passCount,proto3,enum=inference.inference.DevshardPassCount" json:"pass_count,omitempty"`
 }
@@ -29302,13 +29302,13 @@ type DevshardEscrowParams struct {
 	ValidationRate                   uint32                     `protobuf:"varint,16,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
 	VoteThresholdFactor              uint32                     `protobuf:"varint,17,opt,name=vote_threshold_factor,json=voteThresholdFactor,proto3" json:"vote_threshold_factor,omitempty"` // percent, e.g. 50 == 50%
 	DefaultAutoSealEveryNNonces      uint32                     `protobuf:"varint,18,opt,name=default_auto_seal_every_n_nonces,json=defaultAutoSealEveryNNonces,proto3" json:"default_auto_seal_every_n_nonces,omitempty"`
-	// Chain-wide, DERIVED names only. SAMPLED names always credit capped
-	// HostStats.validated and never compute or log derived. When false
-	// (default), DERIVED names credit sampled and log derived
-	// assigned-missed-invalid (warn if it exceeds the SPRT cap). When true,
-	// DERIVED names apply derived for SPRT. Per-name pass_count still selects
-	// settlement verification.
-	ApplyDerivedPassCount bool `protobuf:"varint,19,opt,name=apply_derived_pass_count,json=applyDerivedPassCount,proto3" json:"apply_derived_pass_count,omitempty"`
+	// Chain-wide, SAMPLED names only. DERIVED names always credit
+	// assigned-missed-invalid and never log sampled. When false (default),
+	// SAMPLED names keep derived for SPRT punishment and log sampled
+	// (warn if derived exceeds the SPRT cap). When true, SAMPLED names apply
+	// sampled for SPRT. Per-name pass_count still selects settlement
+	// verification.
+	ApplySampledPassCount bool `protobuf:"varint,19,opt,name=apply_sampled_pass_count,json=applySampledPassCount,proto3" json:"apply_sampled_pass_count,omitempty"`
 }
 
 func (x *DevshardEscrowParams) Reset() {
@@ -29458,9 +29458,9 @@ func (x *DevshardEscrowParams) GetDefaultAutoSealEveryNNonces() uint32 {
 	return 0
 }
 
-func (x *DevshardEscrowParams) GetApplyDerivedPassCount() bool {
+func (x *DevshardEscrowParams) GetApplySampledPassCount() bool {
 	if x != nil {
-		return x.ApplyDerivedPassCount
+		return x.ApplySampledPassCount
 	}
 	return false
 }
@@ -30797,9 +30797,9 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x65, 0x76, 0x65, 0x72, 0x79, 0x5f, 0x6e, 0x5f, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x12,
 	0x20, 0x01, 0x28, 0x0d, 0x52, 0x1b, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x41, 0x75, 0x74,
 	0x6f, 0x53, 0x65, 0x61, 0x6c, 0x45, 0x76, 0x65, 0x72, 0x79, 0x4e, 0x4e, 0x6f, 0x6e, 0x63, 0x65,
-	0x73, 0x12, 0x37, 0x0a, 0x18, 0x61, 0x70, 0x70, 0x6c, 0x79, 0x5f, 0x64, 0x65, 0x72, 0x69, 0x76,
+	0x73, 0x12, 0x37, 0x0a, 0x18, 0x61, 0x70, 0x70, 0x6c, 0x79, 0x5f, 0x73, 0x61, 0x6d, 0x70, 0x6c,
 	0x65, 0x64, 0x5f, 0x70, 0x61, 0x73, 0x73, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x13, 0x20,
-	0x01, 0x28, 0x08, 0x52, 0x15, 0x61, 0x70, 0x70, 0x6c, 0x79, 0x44, 0x65, 0x72, 0x69, 0x76, 0x65,
+	0x01, 0x28, 0x08, 0x52, 0x15, 0x61, 0x70, 0x70, 0x6c, 0x79, 0x53, 0x61, 0x6d, 0x70, 0x6c, 0x65,
 	0x64, 0x50, 0x61, 0x73, 0x73, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01,
 	0x22, 0x82, 0x02, 0x0a, 0x09, 0x46, 0x65, 0x65, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x2f,
 	0x0a, 0x14, 0x6d, 0x69, 0x6e, 0x5f, 0x67, 0x61, 0x73, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x5f,

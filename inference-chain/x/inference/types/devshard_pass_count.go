@@ -11,7 +11,7 @@ import (
 
 // normalizeRequestedPassCount maps any non-scoring value to UNSPECIFIED so a
 // typo in governance JSON cannot fail Put: omitted/unknown keeps a stored
-// policy, or DERIVED for a new name.
+// policy, or SAMPLED for a new name.
 func normalizeRequestedPassCount(c DevshardPassCount) DevshardPassCount {
 	switch c {
 	case DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED,
@@ -34,22 +34,22 @@ func ValidateStoredDevshardPassCount(c DevshardPassCount) error {
 	}
 }
 
-// Derived reports whether scoring uses assigned-missed-invalid rather than
-// HostStats.validated. Only an explicit DERIVED value takes that path;
-// omitted/UNSPECIFIED at settlement is treated as SAMPLED.
+// Derived reports whether scoring uses assigned-missed-invalid (the 0.2.16
+// formula). Only an explicit SAMPLED value takes the new capped-validated
+// path; omitted/UNSPECIFIED at settlement is treated as DERIVED.
 func (c DevshardPassCount) Derived() bool {
-	return c == DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
+	return c != DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
 }
 
 // ResolvePassCount is the write rule for Put:
 //   - omitted (UNSPECIFIED) + existing policy → keep the stored value
-//   - omitted (UNSPECIFIED) + new name → DERIVED
+//   - omitted (UNSPECIFIED) + new name → SAMPLED
 //   - explicit SAMPLED or DERIVED → overwrite the stored policy
 //   - any other requested value → same as omitted
 //
-// Genesis import of unstamped / params-list names still records SAMPLED
+// Genesis import of unstamped / params-list names still records DERIVED
 // (those are pre-pass_count binaries). PassCountFor of a missing name is
-// also SAMPLED so live old settlements keep the old path.
+// also DERIVED so live old settlements keep completed-invalid.
 func ResolvePassCount(existing *DevshardPassCount, requested DevshardPassCount) (DevshardPassCount, error) {
 	requested = normalizeRequestedPassCount(requested)
 	if requested == DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED {
@@ -59,7 +59,7 @@ func ResolvePassCount(existing *DevshardPassCount, requested DevshardPassCount) 
 			}
 			return *existing, nil
 		}
-		return DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, nil
+		return DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, nil
 	}
 	return requested, nil
 }

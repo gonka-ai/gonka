@@ -401,7 +401,7 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 		ExecutionTimeout:                 DefaultDevshardExecutionTimeout,
 		ValidationRate:                   DefaultDevshardValidationRate,
 		VoteThresholdFactor:              DefaultDevshardVoteThresholdFactor,
-		ApplyDerivedPassCount:            false,
+		ApplySampledPassCount:            false,
 	}
 }
 

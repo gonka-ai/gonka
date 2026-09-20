@@ -81,7 +81,7 @@ type WarmKeyChecker func(granter, grantee string) bool
 // params must be non-nil (includes MaxNonce). approved is the store allowlist;
 // empty is permissive (tests / dev). passCount is the scoring policy from the
 // version-policy store; omit it in tests to default via passCountFromApproved
-// (SAMPLED when the allowlist is empty or the name is missing).
+// (DERIVED when the allowlist is empty or the name is missing).
 func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleDevshardEscrow, params *types.DevshardEscrowParams, approved []*types.DevshardApprovedVersion, isWarmKey WarmKeyChecker, passCount ...types.DevshardPassCount) error {
 	if params == nil {
 		return fmt.Errorf("devshard escrow params is required")
@@ -266,7 +266,7 @@ func passCountFromApproved(approved []*types.DevshardApprovedVersion, version st
 			return v.PassCount
 		}
 	}
-	return types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
+	return types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
 }
 
 // recoverCosmosAddress recovers a Cosmos bech32 address from a secp256k1 signature.

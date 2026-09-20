@@ -68,16 +68,16 @@ The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does 
 
 ### Chain settlement only (not on `RuntimeConfig`)
 
-`DevshardEscrowParams.apply_derived_pass_count` is consumed at
+`DevshardEscrowParams.apply_sampled_pass_count` is consumed at
 `MsgSettleDevshardEscrow`. It is **off** by default (genesis and v0.2.16 write
-`false`) and ignored for **SAMPLED** names. Devshardd / dapi do not load it.
-Governance can turn it **on** for **DERIVED** names with `MsgUpdateParams`
+`false`) and ignored for **DERIVED** names. Devshardd / dapi do not load it.
+Governance can turn it **on** for **SAMPLED** names with `MsgUpdateParams`
 (full params replace — keep every existing escrow field):
 
 ```json
 "devshard_escrow_params": {
   "...all existing escrow fields...": "...",
-  "apply_derived_pass_count": true
+  "apply_sampled_pass_count": true
 }
 ```
 
@@ -227,7 +227,7 @@ Implementation details: [params-provider-adaptive-plan.md](./params-provider-ada
 | `max_nonce` | **Moved** | `MaxNonceProvider` |
 | `refusal_timeout`, `execution_timeout` | **Moved** | Live proxy + long-poll snapshot |
 | Escrow fees (`create_devshard_fee`, `fee_per_nonce`) | On-chain escrow | Lane A — not on `RuntimeConfig` |
-| `apply_derived_pass_count` | Chain settlement only | **Off** by default. Ignored for SAMPLED names. Enable with `MsgUpdateParams` (`true`) for DERIVED names. See [upgrade.md](./upgrade.md#settlement-pass_count) |
+| `apply_sampled_pass_count` | Chain settlement only | **Off** by default. Ignored for DERIVED names. Off keeps derived SPRT on SAMPLED names and logs sampled; `true` applies sampled. See [upgrade.md](./upgrade.md#settlement-pass_count) |
 
 | Still direct chain | Why |
 |--------------------|-----|

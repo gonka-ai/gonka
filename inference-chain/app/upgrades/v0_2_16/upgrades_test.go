@@ -231,7 +231,7 @@ func TestMigrateDevshardApprovedVersions(t *testing.T) {
 			Sha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
 		},
 	}
-	params.DevshardEscrowParams.ApplyDerivedPassCount = true
+	params.DevshardEscrowParams.ApplySampledPassCount = true
 	require.NoError(t, k.SetParams(ctx, params))
 
 	require.NoError(t, migrateDevshardApprovedVersions(ctx, k))
@@ -241,17 +241,17 @@ func TestMigrateDevshardApprovedVersions(t *testing.T) {
 	require.Len(t, got, 2)
 	require.Equal(t, "v1", got[0].Name)
 	require.Equal(t, "v2", got[1].Name)
-	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got[0].PassCount)
-	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got[1].PassCount)
+	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got[0].PassCount)
+	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got[1].PassCount)
 	pol, found, err := k.GetVersionPolicy(ctx, "v1")
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, pol.PassCount)
+	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
 
 	after, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.Empty(t, after.DevshardEscrowParams.ApprovedVersions)
-	require.False(t, after.DevshardEscrowParams.ApplyDerivedPassCount)
+	require.False(t, after.DevshardEscrowParams.ApplySampledPassCount)
 }
 
 func TestMigrateDevshardApprovedVersions_StampsExistingStore(t *testing.T) {
@@ -266,11 +266,11 @@ func TestMigrateDevshardApprovedVersions_StampsExistingStore(t *testing.T) {
 
 	got, found := k.GetApprovedVersion(ctx, "v-store")
 	require.True(t, found)
-	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
+	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount)
 	pol, found, err := k.GetVersionPolicy(ctx, "v-store")
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, pol.PassCount)
+	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
 }
 
 func TestLeftoverApprovedVersionsDoNotBlockCoefficientMigrate(t *testing.T) {

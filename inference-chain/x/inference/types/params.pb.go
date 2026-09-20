@@ -33,16 +33,16 @@ type DevshardPassCount int32
 
 const (
 	// Omitted JSON, or any value that is not SAMPLED/DERIVED. Keep the stored
-	// policy; DERIVED if the name is new (Put). Unstamped genesis / upgrade
-	// names still record SAMPLED.
+	// policy; SAMPLED if the name is new (Put). Unstamped genesis / upgrade
+	// names still record DERIVED.
 	DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED DevshardPassCount = 0
 	// HostStats.validated, capped by 2 * finished * validation_rate_bps / 10000 + 2.
+	// Default for a new Put name when pass_count is omitted or mistyped.
 	// Older payloads that omit validated/finished still settle (0 passes).
-	// Live names without a recorded policy (upgrade stamp, PassCountFor miss)
-	// score as SAMPLED.
 	DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED DevshardPassCount = 1
-	// assigned - missed - invalid. Default for a new Put name when pass_count
-	// is omitted or mistyped.
+	// assigned - missed - invalid (the 0.2.16 formula). Older binaries; v0.2.16
+	// stamps existing names. Live names without a recorded policy score as
+	// DERIVED. apply_sampled_pass_count is ignored.
 	DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED DevshardPassCount = 2
 )
 
@@ -2434,7 +2434,7 @@ type DevshardApprovedVersion struct {
 	// Hash of binary to check if update is already installed
 	Sha256 string `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	// How settlement host stats become SPRT passes. Omitted JSON is UNSPECIFIED:
-	// keep the stored policy, or DERIVED for a new name. An explicit value
+	// keep the stored policy, or SAMPLED for a new name. An explicit value
 	// overwrites the stored policy.
 	PassCount DevshardPassCount `protobuf:"varint,4,opt,name=pass_count,json=passCount,proto3,enum=inference.inference.DevshardPassCount" json:"pass_count,omitempty"`
 }
@@ -2580,13 +2580,13 @@ type DevshardEscrowParams struct {
 	ValidationRate                   uint32                     `protobuf:"varint,16,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
 	VoteThresholdFactor              uint32                     `protobuf:"varint,17,opt,name=vote_threshold_factor,json=voteThresholdFactor,proto3" json:"vote_threshold_factor,omitempty"`
 	DefaultAutoSealEveryNNonces      uint32                     `protobuf:"varint,18,opt,name=default_auto_seal_every_n_nonces,json=defaultAutoSealEveryNNonces,proto3" json:"default_auto_seal_every_n_nonces,omitempty"`
-	// Chain-wide, DERIVED names only. SAMPLED names always credit capped
-	// HostStats.validated and never compute or log derived. When false
-	// (default), DERIVED names credit sampled and log derived
-	// assigned-missed-invalid (warn if it exceeds the SPRT cap). When true,
-	// DERIVED names apply derived for SPRT. Per-name pass_count still selects
-	// settlement verification.
-	ApplyDerivedPassCount bool `protobuf:"varint,19,opt,name=apply_derived_pass_count,json=applyDerivedPassCount,proto3" json:"apply_derived_pass_count,omitempty"`
+	// Chain-wide, SAMPLED names only. DERIVED names always credit
+	// assigned-missed-invalid and never log sampled. When false (default),
+	// SAMPLED names keep derived for SPRT punishment and log sampled
+	// (warn if derived exceeds the SPRT cap). When true, SAMPLED names apply
+	// sampled for SPRT. Per-name pass_count still selects settlement
+	// verification.
+	ApplySampledPassCount bool `protobuf:"varint,19,opt,name=apply_sampled_pass_count,json=applySampledPassCount,proto3" json:"apply_sampled_pass_count,omitempty"`
 }
 
 func (m *DevshardEscrowParams) Reset()         { *m = DevshardEscrowParams{} }
@@ -2749,9 +2749,9 @@ func (m *DevshardEscrowParams) GetDefaultAutoSealEveryNNonces() uint32 {
 	return 0
 }
 
-func (m *DevshardEscrowParams) GetApplyDerivedPassCount() bool {
+func (m *DevshardEscrowParams) GetApplySampledPassCount() bool {
 	if m != nil {
-		return m.ApplyDerivedPassCount
+		return m.ApplySampledPassCount
 	}
 	return false
 }
@@ -4786,7 +4786,7 @@ func (this *DevshardEscrowParams) Equal(that interface{}) bool {
 	if this.DefaultAutoSealEveryNNonces != that1.DefaultAutoSealEveryNNonces {
 		return false
 	}
-	if this.ApplyDerivedPassCount != that1.ApplyDerivedPassCount {
+	if this.ApplySampledPassCount != that1.ApplySampledPassCount {
 		return false
 	}
 	return true
@@ -7320,9 +7320,9 @@ func (m *DevshardEscrowParams) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
-	if m.ApplyDerivedPassCount {
+	if m.ApplySampledPassCount {
 		i--
-		if m.ApplyDerivedPassCount {
+		if m.ApplySampledPassCount {
 			dAtA[i] = 1
 		} else {
 			dAtA[i] = 0
@@ -8820,7 +8820,7 @@ func (m *DevshardEscrowParams) Size() (n int) {
 	if m.DefaultAutoSealEveryNNonces != 0 {
 		n += 2 + sovParams(uint64(m.DefaultAutoSealEveryNNonces))
 	}
-	if m.ApplyDerivedPassCount {
+	if m.ApplySampledPassCount {
 		n += 3
 	}
 	return n
@@ -15778,7 +15778,7 @@ func (m *DevshardEscrowParams) Unmarshal(dAtA []byte) error {
 			}
 		case 19:
 			if wireType != 0 {
-				return fmt.Errorf("proto: wrong wireType = %d for field ApplyDerivedPassCount", wireType)
+				return fmt.Errorf("proto: wrong wireType = %d for field ApplySampledPassCount", wireType)
 			}
 			var v int
 			for shift := uint(0); ; shift += 7 {
@@ -15795,7 +15795,7 @@ func (m *DevshardEscrowParams) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
-			m.ApplyDerivedPassCount = bool(v != 0)
+			m.ApplySampledPassCount = bool(v != 0)
 		default:
 			iNdEx = preIndex
 			skippy, err := skipParams(dAtA[iNdEx:])
