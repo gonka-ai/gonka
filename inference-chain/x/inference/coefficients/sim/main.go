@@ -113,7 +113,7 @@ func loadConfig(path string) config {
 	var cfg config
 	check(json.Unmarshal(data, &cfg))
 	if cfg.Hosts <= 0 || cfg.Epochs < 0 || cfg.MaxPasses <= 0 {
-		panic("hosts and max_passes must be positive; epochs must be non-negative")
+		check(fmt.Errorf("hosts and max_passes must be positive; epochs must be non-negative"))
 	}
 	return cfg
 }
@@ -159,13 +159,15 @@ func protoDec(value string) *types.Decimal {
 	check(err)
 	coefficient := parsed.Coefficient()
 	if !coefficient.IsInt64() {
-		panic(value + " exceeds Decimal int64 storage")
+		check(fmt.Errorf("%s exceeds Decimal int64 storage", value))
 	}
 	return &types.Decimal{Value: coefficient.Int64(), Exponent: parsed.Exponent()}
 }
 
 func mustDec(value string) mathsdk.LegacyDec {
-	return mathsdk.LegacyMustNewDecFromStr(value)
+	parsed, err := mathsdk.LegacyNewDecFromStr(value)
+	check(err)
+	return parsed
 }
 
 func sortedKeys[V any](values map[string]V) []string {
@@ -179,6 +181,7 @@ func sortedKeys[V any](values map[string]V) []string {
 
 func check(err error) {
 	if err != nil {
-		panic(err)
+		fmt.Fprintf(os.Stderr, "coefficients sim: %v\n", err)
+		os.Exit(1)
 	}
 }
