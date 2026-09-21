@@ -242,7 +242,7 @@ func TestSubmitPoCChallengeValidations_RegularWindow(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestRemoveFromEpochGroupsMarksRefundOnly(t *testing.T) {
+func TestRemoveFromEpochGroupsMarksAborted(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	ctx = ctx.WithBlockHeight(200)
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 2))
@@ -259,7 +259,7 @@ func TestRemoveFromEpochGroupsMarksRefundOnly(t *testing.T) {
 	ch, found, getErr := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, getErr)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED, ch.FailureKind)
 }
 
 func TestRemoveFromEpochGroupsDoesNotOverwriteChallengeFail(t *testing.T) {
@@ -332,7 +332,7 @@ func TestPayAndDeleteOldChallenges_RetriesAfterError(t *testing.T) {
 		Challenger:    testutil.Creator,
 		Target:        testutil.Executor,
 		LockedPayment: 10,
-		FailureKind:   types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY,
+		FailureKind:   types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED,
 	}))
 	mocks.BankKeeper.EXPECT().
 		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).
@@ -372,12 +372,26 @@ func TestSameEpochChallengeTargetsIncludesFailed(t *testing.T) {
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
 		EpochIndex:  2,
 		Target:      testutil.Executor,
-		FailureKind: types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY,
+		FailureKind: types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED,
+	}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor2,
+		FailureKind: types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED,
+	}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  3,
+		Target:      testutil.Creator,
+		FailureKind: types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET,
 	}))
 	set, err := k.SameEpochChallengeTargets(ctx, 2)
 	require.NoError(t, err)
 	_, ok := set[testutil.Executor]
 	require.True(t, ok)
+	_, ok = set[testutil.Executor2]
+	require.True(t, ok)
+	_, ok = set[testutil.Creator]
+	require.False(t, ok)
 }
 
 func TestChallengeFinish_IgnoresOtherEpochEvent(t *testing.T) {

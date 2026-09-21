@@ -120,7 +120,13 @@ const (
 	DefaultPoCChallengeMaxActiveChallenges uint32 = 4
 )
 
-// DefaultMinPunishableSegmentBlocks is the mainnet floor for a voted challenge segment.
+// DefaultMinPunishableSegmentBlocks is the voted-segment floor. A clipped
+// challenge window shorter than this rotates without evaluate.
+// Same-block / minimum clipped duration is max(cutoff,1)+stage+exchange-1.
+// Genesis-era numbers give 144; current upgrade params (cutoff 2, stage 35,
+// exchange 0) give 36. Both are below this floor, so a same-block overlap
+// rotates. A challenge created long enough before the trigger can still be
+// evaluated at cPoC complete. Not enforced in Validate().
 // PoCChallengeParams.MinPunishableSegmentBlocks <= 0 means this value.
 const DefaultMinPunishableSegmentBlocks int64 = 300
 

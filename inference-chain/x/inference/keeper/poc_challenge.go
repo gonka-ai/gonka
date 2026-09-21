@@ -222,7 +222,9 @@ func (k Keeper) DeletePoCChallenge(ctx context.Context, target string) error {
 	return k.PoCChallenges.Remove(ctx, addr)
 }
 
-func (k Keeper) MarkChallengeRefundOnly(ctx context.Context, target, cause string) error {
+// MarkChallengeAborted closes a challenge that ended without a
+// challenge-caused failure.
+func (k Keeper) MarkChallengeAborted(ctx context.Context, target, cause string) error {
 	ch, found, err := k.GetPoCChallenge(ctx, target)
 	if err != nil || !found {
 		return err
@@ -230,12 +232,12 @@ func (k Keeper) MarkChallengeRefundOnly(ctx context.Context, target, cause strin
 	if ch.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
 		return nil
 	}
-	ch.FailureKind = types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY
+	ch.FailureKind = types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED
 	if err := k.SetPoCChallenge(ctx, ch); err != nil {
 		return err
 	}
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
-		"poc_challenge_refund_only",
+		"poc_challenge_aborted",
 		sdk.NewAttribute("target", target),
 		sdk.NewAttribute("challenger", ch.Challenger),
 		sdk.NewAttribute("cause", cause),

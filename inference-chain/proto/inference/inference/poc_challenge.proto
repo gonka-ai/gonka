@@ -8,7 +8,8 @@ option go_package = "github.com/productscience/inference/x/inference/types";
 enum PoCChallengeFailureKind {
   POC_CHALLENGE_FAILURE_KIND_UNSET = 0;
   POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED = 1;
-  POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY = 2;
+  // Challenge ended without a challenge-caused failure.
+  POC_CHALLENGE_FAILURE_KIND_ABORTED = 2;
 }
 
 message PoCChallenge {

@@ -17,6 +17,12 @@ import (
 
 var pocDeviationCoeff = decimal.New(909, -3)
 
+var loadChallengeSkipTargets = defaultLoadChallengeSkipTargets
+
+func defaultLoadChallengeSkipTargets(k keeper.Keeper, ctx context.Context, epochIndex uint64) (map[string]struct{}, error) {
+	return k.SameEpochChallengeTargets(ctx, epochIndex)
+}
+
 // handleConfirmationPoC manages confirmation PoC trigger decisions and phase transitions
 func (am AppModule) handleConfirmationPoC(ctx context.Context, blockHeight int64) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
@@ -260,7 +266,9 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		transitionCount++
 		transitions = append(transitions, "GRACE_PERIOD->GENERATION")
 
-		skipSet, err := am.keeper.SameEpochChallengeTargets(ctx, event.EpochIndex)
+		// Skip-list load failure leaves the sampled snapshot unfiltered and
+		// continues the phase transition. Evaluation loads the skip set again.
+		skipSet, err := loadChallengeSkipTargets(am.keeper, ctx, event.EpochIndex)
 		if err != nil {
 			am.LogError("Confirmation PoC: failed to load challenge skip set", types.PoC,
 				"epochIndex", event.EpochIndex, "error", err)
@@ -429,6 +437,13 @@ func (am AppModule) evaluateConfirmation(
 		return nil
 	}
 
+	skip, err := loadChallengeSkipTargets(am.keeper, ctx, event.EpochIndex)
+	if err != nil {
+		am.LogError("evaluateConfirmation: failed to load challenge skip set", types.PoC,
+			"epochIndex", event.EpochIndex, "error", err)
+		return nil
+	}
+
 	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event, snapshot)
 	measured := weightByParticipant(confirmationParticipants, presentScales)
 
@@ -452,19 +467,14 @@ func (am AppModule) evaluateConfirmation(
 
 	// Maintenance-covered participants are expected to be offline: skip both the
 	// ConfirmationWeight haircut and the CPoC ratio write so absence is not
-	// punished via rewards or INACTIVE status. Challenge targets generating at
-	// this event's trigger are skipped the same way.
+	// punished via rewards or INACTIVE status. Any same-epoch challenge record
+	// is skipped the same way.
 	skipAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
 	if skipAddrs == nil {
 		skipAddrs = make(map[string]struct{})
 	}
-	if skip, err := am.keeper.SameEpochChallengeTargets(ctx, event.EpochIndex); err != nil {
-		am.LogError("evaluateConfirmation: failed to load challenge skip set", types.PoC,
-			"epochIndex", event.EpochIndex, "error", err)
-	} else {
-		for addr := range skip {
-			skipAddrs[addr] = struct{}{}
-		}
+	for addr := range skip {
+		skipAddrs[addr] = struct{}{}
 	}
 
 	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, skipAddrs)

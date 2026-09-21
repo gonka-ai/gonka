@@ -51,9 +51,9 @@ func (am AppModule) decideCurrentChallengeSegments(ctx context.Context, epochInd
 		}
 		cacheCtx, writeFn := sdkCtx.CacheContext()
 		if err := am.decideCurrentChallengeSegment(cacheCtx, ch, finish, snapshotHeight, rotate); err != nil {
-			if refundErr := am.failChallengeEvaluation(ctx, ch, err.Error()); refundErr != nil {
-				am.LogError("decideCurrentChallengeSegments: failed to mark refund-only", types.PoC,
-					"target", ch.Target, "error", refundErr)
+			if abortErr := am.keeper.MarkChallengeAborted(ctx, ch.Target, err.Error()); abortErr != nil {
+				am.LogError("decideCurrentChallengeSegments: failed to mark aborted", types.PoC,
+					"target", ch.Target, "error", abortErr)
 			}
 			continue
 		}
@@ -126,13 +126,6 @@ func (am AppModule) advanceAfterDecision(ctx context.Context, ch types.PoCChalle
 func (am AppModule) writeNextChallengeSegment(ctx context.Context, ch types.PoCChallenge) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	return am.keeper.RotateChallengeSegment(ctx, ch.Target, sdkCtx.BlockHeight(), sdkCtx.HeaderInfo().Hash)
-}
-
-func (am AppModule) failChallengeEvaluation(ctx context.Context, ch types.PoCChallenge, cause string) error {
-	if err := am.keeper.MarkChallengeRefundOnly(ctx, ch.Target, cause); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (am AppModule) evaluatePunishableChallengeSegment(

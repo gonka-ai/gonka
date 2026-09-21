@@ -60,7 +60,7 @@ func seedChallengeParticipant(t *testing.T, k keeper.Keeper, ctx sdk.Context) {
 	}))
 }
 
-func TestDecideCurrentChallengeSegment_RefundOnlyOnMissingSnapshot(t *testing.T) {
+func TestDecideCurrentChallengeSegment_AbortedOnMissingSnapshot(t *testing.T) {
 	am, k, ctx := challengeApp(t)
 	seedChallengeParticipant(t, k, ctx)
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
@@ -72,7 +72,7 @@ func TestDecideCurrentChallengeSegment_RefundOnlyOnMissingSnapshot(t *testing.T)
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED, ch.FailureKind)
 	require.Equal(t, int64(100), ch.StartHeight)
 }
 
@@ -110,6 +110,11 @@ func TestDecideCurrentChallengeSegment_ZeroCommitFails(t *testing.T) {
 
 func TestDecideCurrentChallengeSegment_ShortSegmentRotates(t *testing.T) {
 	am, k, ctx := challengeApp(t)
+	seedChallengeParticipant(t, k, ctx)
+	p, ok := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, ok)
+	p.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromFloat(0.8)
+	require.NoError(t, k.SetParticipant(ctx, p))
 	ctx = ctx.WithBlockHeight(400)
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
 		EpochIndex:  2,
@@ -132,9 +137,16 @@ func TestDecideCurrentChallengeSegment_ShortSegmentRotates(t *testing.T) {
 	commits, err := k.ListChallengeCommits(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.Empty(t, commits)
+	group, found := k.GetEpochGroupData(ctx, 2, "")
+	require.True(t, found)
+	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
+	p, ok = k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, ok)
+	require.NotNil(t, p.CurrentEpochStats.ConfirmationPoCRatio)
+	require.True(t, p.CurrentEpochStats.ConfirmationPoCRatio.ToDecimal().Equal(types.DecimalFromFloat(0.8).ToDecimal()))
 }
 
-func TestDecideCurrentChallengeSegment_ReplayAfterRotateDoesNotRefund(t *testing.T) {
+func TestDecideCurrentChallengeSegment_ReplayAfterRotateDoesNotAbort(t *testing.T) {
 	am, k, ctx := challengeApp(t)
 	ctx = ctx.WithBlockHeight(400)
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
@@ -224,7 +236,7 @@ func TestDecideCurrentChallengeSegment_MissingTargetDoesNotWriteWeight(t *testin
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED, ch.FailureKind)
 	group, found := k.GetEpochGroupData(ctx, 2, "")
 	require.True(t, found)
 	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
@@ -439,7 +451,7 @@ func TestDecideCurrentChallengeSegment_MultiModelPartialAcceptance(t *testing.T)
 	require.Equal(t, int64(80), group.ValidationWeights[0].ConfirmationWeight)
 }
 
-func TestDecideCurrentChallengeSegments_RefundDoesNotRollBackSibling(t *testing.T) {
+func TestDecideCurrentChallengeSegments_AbortDoesNotRollBackSibling(t *testing.T) {
 	am, k, ctx := challengeApp(t)
 	seedChallengeParticipant(t, k, ctx)
 	require.NoError(t, k.SetParticipant(ctx, types.Participant{
@@ -489,10 +501,10 @@ func TestDecideCurrentChallengeSegments_RefundDoesNotRollBackSibling(t *testing.
 
 	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
 
-	refunded, found, err := k.GetPoCChallenge(ctx, testutil.Creator)
+	aborted, found, err := k.GetPoCChallenge(ctx, testutil.Creator)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_REFUND_ONLY, refunded.FailureKind)
+	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED, aborted.FailureKind)
 	failed, found, err := k.GetPoCChallenge(ctx, testutil.Executor2)
 	require.NoError(t, err)
 	require.True(t, found)
