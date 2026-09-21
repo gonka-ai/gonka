@@ -172,6 +172,7 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 		"publicKey", body.PublicKey,
 		"nTotal", body.NTotal,
 		"nNanSteps", body.NNanSteps,
+		"nExcluded", body.NExcluded,
 		"nMismatch", body.NMismatch,
 		"fraudDetected", body.FraudDetected)
 
@@ -189,7 +190,7 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 
 	if body.ShouldAbstain() {
 		logging.Warn("ValidatedArtifactsV2-callback. Abstaining, validator-side incomplete result", types.PoC,
-			"nNanSteps", body.NNanSteps, "nMismatch", body.NMismatch, "nTotal", body.NTotal)
+			"nNanSteps", body.NNanSteps, "nExcluded", body.NExcluded, "nMismatch", body.NMismatch, "nTotal", body.NTotal)
 		return ctx.NoContent(http.StatusOK)
 	}
 

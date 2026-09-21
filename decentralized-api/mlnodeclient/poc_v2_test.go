@@ -93,4 +93,10 @@ func TestShouldAbstain_NanAndComparedNothing(t *testing.T) {
 	honestNan := &ValidatedResultV2{NTotal: 5, NNanSteps: 2, FraudDetected: false}
 	require.True(t, honestNan.ShouldAbstain())
 	require.Equal(t, int64(5), honestNan.ToValidatedWeight(), "abstain must not be encoded as invalid weight")
+	// vllm poc plugin drops the bad nonce and still sends fraud_detected=false.
+	// n_excluded is the signal; a pass over the remainder must not vote.
+	excluded := &ValidatedResultV2{NTotal: 3, NExcluded: 2, FraudDetected: false}
+	require.True(t, excluded.ShouldAbstain())
+	require.Equal(t, int64(3), excluded.ToValidatedWeight(), "abstain must not be encoded as invalid weight")
+	require.False(t, (&ValidatedResultV2{NTotal: 5, NExcluded: 0, FraudDetected: false}).ShouldAbstain())
 }

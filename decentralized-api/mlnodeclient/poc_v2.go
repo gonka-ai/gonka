@@ -63,6 +63,9 @@ type GeneratedArtifactBatchV2 struct {
 }
 
 // ValidatedResultV2 is the V2 validated-artifacts callback payload.
+// NExcluded is the vllm poc plugin signal: nonces dropped before scoring
+// (a non-finite snap, or any other missing artifact). The chain only
+// checks the sign of the vote, so a pass over the remainder is a full yes.
 type ValidatedResultV2 struct {
 	RequestId      string  `json:"request_id,omitempty"`
 	BlockHash      string  `json:"block_hash,omitempty"`
@@ -72,15 +75,17 @@ type ValidatedResultV2 struct {
 	NTotal         int64   `json:"n_total"`
 	NMismatch      int64   `json:"n_mismatch"`
 	NNanSteps      int64   `json:"n_nan_steps,omitempty"`
+	NExcluded      int64   `json:"n_excluded,omitempty"`
 	MismatchNonces []int64 `json:"mismatch_nonces"`
 	PValue         float64 `json:"p_value"`
 	FraudDetected  bool    `json:"fraud_detected"`
 }
 
-// ShouldAbstain is a validator-side failure (NaN / compared-nothing), not generatee fraud.
-// Callers must not SubmitPocValidationsV2 and must not map this to validated_weight=-1.
+// ShouldAbstain is a validator-side failure (NaN / excluded nonce / compared-nothing),
+// not generatee fraud. Callers must not SubmitPocValidationsV2 and must not map
+// this to validated_weight=-1.
 func (v *ValidatedResultV2) ShouldAbstain() bool {
-	return v.NNanSteps > 0 || v.NMismatch < 0
+	return v.NNanSteps > 0 || v.NExcluded > 0 || v.NMismatch < 0
 }
 
 // ToValidatedWeight returns NTotal (sample size) on success, -1 on fraud/failure.
