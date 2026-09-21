@@ -244,5 +244,10 @@ func TestEpochState_IsPoCVoteWindow(t *testing.T) {
 	require.True(t, validate.IsPoCVoteWindow())
 	inference := newPhaseTrackerWithPhase(t, types.InferencePhase).GetCurrentEpochState()
 	require.False(t, inference.IsPoCVoteWindow())
-	_ = chainphase.EpochState{}
+
+	cpocVal := newPhaseTrackerWithPhase(t, types.InferencePhase).GetCurrentEpochState()
+	cpocVal.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
+		Phase: types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
+	}
+	require.True(t, cpocVal.IsPoCVoteWindow())
 }

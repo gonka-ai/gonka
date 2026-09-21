@@ -529,7 +529,7 @@ func (k Keeper) payLockedChallengePayment(ctx context.Context, ch types.PoCChall
 	if ch.FailureKind == types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
 		return k.PayParticipantFromModule(ctx, ch.Target, int64(ch.LockedPayment), types.ModuleName, "poc_challenge_pass", vesting)
 	}
-	// TODO: pay min(E, target forfeited reward) to the challenger on CHALLENGE_FAILED.
+	// TODO: pay min(E, forfeited reward) to the challenger on CHALLENGE_FAILED.
 	challenger, err := sdk.AccAddressFromBech32(ch.Challenger)
 	if err != nil {
 		return err

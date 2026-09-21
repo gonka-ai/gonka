@@ -224,6 +224,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 				return nil, fmt.Errorf("failed to derive assigned upper bound for slot %d: %w", hs.SlotId, err)
 			}
 		}
+		// TODO: waive only challenge-window misses. Host stats are epoch totals, so all misses are waived for now.
 		adjusted, assignedToSlot = k.WaiveDevshardMissesForActiveChallenge(goCtx, addr, adjusted, assignedToSlot)
 		if err := k.UpdateDevshardHostEpochStats(goCtx, escrow.EpochIndex, participantAddr, adjusted, firstForValidator); err != nil {
 			return nil, fmt.Errorf("failed to aggregate host stats: %w", err)

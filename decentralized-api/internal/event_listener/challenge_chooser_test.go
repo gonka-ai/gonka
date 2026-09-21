@@ -121,6 +121,14 @@ func TestGetCommandForPhase_AfterGeneratingFalse(t *testing.T) {
 	cmd, _ := getCommandForPhase(challengeChooserEpoch(types.InferencePhase, 600, nil))
 	_, ok := cmd.(broker.InferenceUpAllCommand)
 	require.True(t, ok)
+
+	cmd, _ = getCommandForPhase(challengeChooserEpoch(types.PoCGeneratePhase, 100, nil))
+	_, ok = cmd.(broker.StartPocCommand)
+	require.True(t, ok)
+
+	cmd, _ = getCommandForPhase(challengeChooserEpoch(types.PoCValidatePhase, 220, nil))
+	_, ok = cmd.(broker.InitValidateCommand)
+	require.True(t, ok)
 }
 
 func TestGetCommandForPhase_NoChallengeUnchanged(t *testing.T) {

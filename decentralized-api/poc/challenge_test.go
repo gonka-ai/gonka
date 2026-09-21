@@ -120,6 +120,13 @@ func TestOwnChallengeGenerate(t *testing.T) {
 
 	validate := createTestEpochState(types.PoCValidatePhase, 220, 100)
 	require.Nil(t, OwnChallengeGenerate(validate))
+
+	cpocVal := createTestEpochState(types.InferencePhase, 800, 100)
+	cpocVal.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
+		Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
+		TriggerHeight: 400,
+	}
+	require.Nil(t, OwnChallengeGenerate(cpocVal))
 }
 
 func TestGetCurrentPocStageHeight_AfterFinishUsesRegular(t *testing.T) {
