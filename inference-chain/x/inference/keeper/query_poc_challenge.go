@@ -18,9 +18,6 @@ func (k Keeper) OpenPoCChallenges(ctx context.Context, req *types.QueryOpenPoCCh
 	}
 	resp := &types.QueryOpenPoCChallengesResponse{}
 	for _, ch := range list {
-		if ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
-			continue
-		}
 		finish, err := k.ChallengeFinish(ctx, ch)
 		if err != nil {
 			return nil, err

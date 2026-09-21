@@ -559,7 +559,7 @@ func TestCountPoCChallenges_CountsOnlyOpen(t *testing.T) {
 	require.Equal(t, 1, n)
 }
 
-func TestOpenPoCChallenges_ReturnsEveryOpenRecord(t *testing.T) {
+func TestOpenPoCChallenges_IgnoresCapAndKeepsDecided(t *testing.T) {
 	k, ctx, _ := setupChallengeCreate(t, 100)
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
@@ -584,17 +584,15 @@ func TestOpenPoCChallenges_ReturnsEveryOpenRecord(t *testing.T) {
 	}))
 	resp, err := k.OpenPoCChallenges(ctx, &types.QueryOpenPoCChallengesRequest{})
 	require.NoError(t, err)
-	require.Len(t, resp.Challenges, 2)
-	got := map[string]struct{}{}
+	require.Len(t, resp.Challenges, 3)
+	got := map[string]types.PoCChallengeState{}
 	for _, ch := range resp.Challenges {
 		require.NotNil(t, ch.Challenge)
-		require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.Challenge.State)
-		got[ch.Challenge.Target] = struct{}{}
+		got[ch.Challenge.Target] = ch.Challenge.State
 	}
-	_, ok := got[testutil.Executor]
-	require.True(t, ok)
-	_, ok = got[testutil.Executor2]
-	require.True(t, ok)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, got[testutil.Executor])
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, got[testutil.Executor2])
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, got[testutil.Creator])
 }
 
 func TestFilterOutChallengeParticipants(t *testing.T) {
