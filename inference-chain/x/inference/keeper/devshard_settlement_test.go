@@ -79,6 +79,8 @@ func buildSettlementTestDataWithNonce(
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated,
+			Finished:             hs.Finished,
 		}
 	}
 	slices.SortFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
@@ -122,15 +124,15 @@ func buildSettlementTestDataWithNonce(
 	}
 
 	return &types.MsgSettleDevshardEscrow{
-		Settler:    escrow.Creator,
-		EscrowId:   escrow.Id,
+		Settler:                     escrow.Creator,
+		EscrowId:                    escrow.Id,
 		StateRootAndProtocolVersion: settlementVersion,
-		StateRoot:  stateRoot[:],
-		Nonce:      nonce,
-		Fees:       fees,
-		RestHash:   restHash[:],
-		HostStats:  hostStats,
-		Signatures: sigs,
+		StateRoot:                   stateRoot[:],
+		Nonce:                       nonce,
+		Fees:                        fees,
+		RestHash:                    restHash[:],
+		HostStats:                   hostStats,
+		Signatures:                  sigs,
 	}
 }
 
@@ -156,6 +158,8 @@ func buildSettlementTestDataWithVersion(
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated,
+			Finished:             hs.Finished,
 		}
 	}
 	slices.SortFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
@@ -199,15 +203,15 @@ func buildSettlementTestDataWithVersion(
 	}
 
 	return &types.MsgSettleDevshardEscrow{
-		Settler:    escrow.Creator,
-		EscrowId:   escrow.Id,
+		Settler:                     escrow.Creator,
+		EscrowId:                    escrow.Id,
 		StateRootAndProtocolVersion: version,
-		StateRoot:  stateRoot[:],
-		Nonce:      nonce,
-		Fees:       fees,
-		RestHash:   restHash[:],
-		HostStats:  hostStats,
-		Signatures: sigs,
+		StateRoot:                   stateRoot[:],
+		Nonce:                       nonce,
+		Fees:                        fees,
+		RestHash:                    restHash[:],
+		HostStats:                   hostStats,
+		Signatures:                  sigs,
 	}
 }
 
@@ -521,6 +525,8 @@ func TestComputeDevshardHostStatsHash_Deterministic(t *testing.T) {
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated,
+			Finished:             hs.Finished,
 		}
 	}
 	mapProto := &types.DevshardHostStatsMapProto{Entries: entries}
@@ -844,4 +850,75 @@ func TestSignatureFormatConversion(t *testing.T) {
 	s := new(big.Int).SetBytes(goEthSig[32:64])
 	require.True(t, r.Sign() > 0)
 	require.True(t, s.Sign() > 0)
+}
+
+func TestComputeDevshardHostStatsHash_ValidatedFinishedChangeHash(t *testing.T) {
+	base := []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Missed: 1, Invalid: 0, Cost: 100, RequiredValidations: 10, CompletedValidations: 9},
+	}
+	withCounts := []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Missed: 1, Invalid: 0, Cost: 100, RequiredValidations: 10, CompletedValidations: 9, Validated: 4, Finished: 5},
+	}
+	zeroHash, err := keeper.ComputeDevshardHostStatsHash(base)
+	require.NoError(t, err)
+	countedHash, err := keeper.ComputeDevshardHostStatsHash(withCounts)
+	require.NoError(t, err)
+	require.NotEqual(t, hex.EncodeToString(zeroHash), hex.EncodeToString(countedHash))
+}
+
+func TestVerifyDevshardSettlement_SampledAcceptsLegacyInvalidWithoutFinished(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots, ValidationRate: 1000,
+	}
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	hostStats[0].Invalid = 1
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+
+	approved := []*types.DevshardApprovedVersion{{
+		Name:      settlementVersion,
+		Binary:    "https://example.com/dev.zip",
+		Sha256:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED,
+	}}
+	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), approved, nil)
+	require.NoError(t, err, "older SAMPLED payloads omit finished and must still settle")
+
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil)
+	require.NoError(t, err, "empty allowlist defaults to DERIVED and still accepts omitted finished")
+
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED)
+	require.NoError(t, err)
+
+	unspecified := []*types.DevshardApprovedVersion{{
+		Name:   settlementVersion,
+		Binary: "https://example.com/dev.zip",
+		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}}
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), unspecified, nil)
+	require.NoError(t, err, "omitted pass_count on the allowlist is DERIVED")
+}
+
+func TestVerifyDevshardSettlement_SampledChecksValidated(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots, ValidationRate: 1000,
+	}
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	// nonce 42, 16 slots: slot 0 assigned = 2, so validated may not exceed 2*16.
+	hostStats[0].Validated = 33
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+
+	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED)
+	require.ErrorContains(t, err, "validated count", "SAMPLED extra-checks validated")
+
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED)
+	require.NoError(t, err, "UNSPECIFIED is the old derived path")
+
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED)
+	require.NoError(t, err, "DERIVED does not extra-check validated")
 }

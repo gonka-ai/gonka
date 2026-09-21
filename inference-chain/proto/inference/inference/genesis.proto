@@ -43,4 +43,5 @@ message GenesisState {
            MLNodeVersion              mlnode_version                 =  6;
            Bridge                     bridge                         =  7;
   repeated DevshardApprovedVersion    devshard_approved_versions     =  8;
+  repeated DevshardVersionPolicy      devshard_version_policies      =  9;
 }

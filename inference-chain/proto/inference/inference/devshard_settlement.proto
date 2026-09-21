@@ -17,6 +17,10 @@ message DevshardHostStatsProto {
   uint64 cost = 4;
   uint32 required_validations = 5;
   uint32 completed_validations = 6;
+  // Fields 7-8 are additive proto3 (zero omitted). Pre-upgrade binaries that
+  // omit them hash-identical with zeros on the chain.
+  uint32 validated = 7;
+  uint32 finished = 8;
 }
 
 message DevshardHostStatsMapProto {

@@ -413,6 +413,25 @@ message DelegationParams {
   Decimal max_model_voting_power_percentage = 9;
 }
 
+// DevshardPassCount selects how settlement host stats become SPRT passes.
+// Proto3 omitempty: omitted JSON is UNSPECIFIED (0). Governance JSON also
+// accepts case-insensitive "derived" / "sampled"; any other value is
+// UNSPECIFIED (does not fail the tx).
+enum DevshardPassCount {
+  // Omitted JSON, or any value that is not SAMPLED/DERIVED. Keep the stored
+  // policy; SAMPLED if the name is new (Put). Unstamped genesis / upgrade
+  // names still record DERIVED.
+  DEVSHARD_PASS_COUNT_UNSPECIFIED = 0;
+  // HostStats.validated, capped by 2 * finished * validation_rate_bps / 10000 + 2.
+  // Default for a new Put name when pass_count is omitted or mistyped.
+  // Older payloads that omit validated/finished still settle (0 passes).
+  DEVSHARD_PASS_COUNT_SAMPLED = 1;
+  // assigned - missed - invalid (the 0.2.16 formula). Older binaries; v0.2.16
+  // stamps existing names. Live names without a recorded policy score as
+  // DERIVED. apply_sampled_pass_count is ignored.
+  DEVSHARD_PASS_COUNT_DERIVED = 2;
+}
+
 // DevshardApprovedVersion describes a single approved devshard binary.
 message DevshardApprovedVersion {
   option (gogoproto.equal) = true;
@@ -422,6 +441,21 @@ message DevshardApprovedVersion {
   string binary = 2;
   // Hash of binary to check if update is already installed
   string sha256 = 3;
+  // How settlement host stats become SPRT passes. Omitted JSON is UNSPECIFIED:
+  // keep the stored policy, or SAMPLED for a new name. An explicit value
+  // overwrites the stored policy.
+  DevshardPassCount pass_count = 4;
+}
+
+// DevshardVersionPolicy is the recorded pass_count for a version name.
+// Survives MsgDeleteDevshardApprovedVersion so a later re-approval with
+// omitted pass_count keeps the same scoring. An explicit pass_count on
+// Put / genesis JSON overwrites it.
+message DevshardVersionPolicy {
+  option (gogoproto.equal) = true;
+  string name = 1;
+  // Recorded pass_count for this version name. Must be SAMPLED or DERIVED.
+  DevshardPassCount pass_count = 2;
 }
 
 // DevshardEscrowParams defines governance-controlled parameters for devshard escrow creation and settlement.
@@ -448,6 +482,13 @@ message DevshardEscrowParams {
   uint32 validation_rate = 16;
   uint32 vote_threshold_factor = 17; // percent, e.g. 50 == 50%
   uint32 default_auto_seal_every_n_nonces = 18;
+  // Chain-wide, SAMPLED names only. DERIVED names always credit
+  // assigned-missed-invalid and never log sampled. When false (default),
+  // SAMPLED names keep derived for SPRT punishment and log sampled
+  // (warn if derived exceeds the SPRT cap). When true, SAMPLED names apply
+  // sampled for SPRT. Per-name pass_count still selects settlement
+  // verification.
+  bool apply_sampled_pass_count = 19;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

@@ -310,9 +310,11 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 	}
 	genesis.ModelList = getModels(&ctx, &k)
 	genesis.DevshardApprovedVersions = getApprovedVersions(&ctx, &k)
+	genesis.DevshardVersionPolicies = getVersionPolicies(&ctx, &k)
 	if genesis.Params.DevshardEscrowParams != nil {
 		if len(genesis.DevshardApprovedVersions) == 0 {
-			genesis.DevshardApprovedVersions = genesis.Params.DevshardEscrowParams.ApprovedVersions
+			genesis.DevshardApprovedVersions = stampLegacyApprovedVersionsDerived(genesis.Params.DevshardEscrowParams.ApprovedVersions)
+			genesis.DevshardVersionPolicies = mergeLegacyVersionPolicies(genesis.DevshardVersionPolicies, genesis.DevshardApprovedVersions)
 		}
 		genesis.Params.DevshardEscrowParams.ApprovedVersions = nil
 	}
@@ -364,8 +366,11 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 }
 
 func importDevshardApprovedVersions(ctx sdk.Context, k keeper.Keeper, genState *types.GenesisState) {
+	fromParams := len(genState.DevshardApprovedVersions) == 0 &&
+		genState.Params.DevshardEscrowParams != nil &&
+		len(genState.Params.DevshardEscrowParams.ApprovedVersions) > 0
 	versions := genState.DevshardApprovedVersions
-	if len(versions) == 0 && genState.Params.DevshardEscrowParams != nil {
+	if fromParams {
 		versions = genState.Params.DevshardEscrowParams.ApprovedVersions
 	}
 	if len(versions) > types.MaxDevshardApprovedVersions {
@@ -375,16 +380,69 @@ func importDevshardApprovedVersions(ctx sdk.Context, k keeper.Keeper, genState *
 	if genState.Params.DevshardEscrowParams != nil {
 		genState.Params.DevshardEscrowParams.ApprovedVersions = nil
 	}
+
+	importDevshardVersionPolicies(ctx, k, genState)
+
 	for i, v := range versions {
 		if v == nil {
 			//nolint:forbidigo // genesis code
 			panic(fmt.Sprintf("devshard_approved_versions[%d] cannot be null", i))
 		}
-		if err := v.Validate(); err != nil {
+		copied := *v
+		requested := copied.PassCount
+		if fromParams {
+			// Params-list entries predate pass_count. Omitted → keep a policy
+			// from genesis JSON if one was set, else DERIVED (old binaries).
+			requested = types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED
+		}
+		var existing *types.DevshardPassCount
+		pol, ok, err := k.GetVersionPolicy(ctx, copied.Name)
+		if err != nil {
 			//nolint:forbidigo // genesis code
 			panic(err)
 		}
-		if err := k.SetApprovedVersion(ctx, *v); err != nil {
+		if ok {
+			c := pol.PassCount
+			existing = &c
+		}
+		var resolved types.DevshardPassCount
+		if requested == types.DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED && existing == nil {
+			// Unstamped genesis / params-list names are pre-pass_count binaries.
+			resolved = types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
+		} else {
+			resolved, err = types.ResolvePassCount(existing, requested)
+			if err != nil {
+				//nolint:forbidigo // genesis code
+				panic(err)
+			}
+		}
+		copied.PassCount = resolved
+		if err := copied.Validate(); err != nil {
+			//nolint:forbidigo // genesis code
+			panic(err)
+		}
+		if err := k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{Name: copied.Name, PassCount: copied.PassCount}); err != nil {
+			//nolint:forbidigo // genesis code
+			panic(err)
+		}
+		if err := k.SetApprovedVersion(ctx, copied); err != nil {
+			//nolint:forbidigo // genesis code
+			panic(err)
+		}
+	}
+}
+
+func importDevshardVersionPolicies(ctx sdk.Context, k keeper.Keeper, genState *types.GenesisState) {
+	for i, p := range genState.DevshardVersionPolicies {
+		if p == nil {
+			//nolint:forbidigo // genesis code
+			panic(fmt.Sprintf("devshard_version_policies[%d] cannot be null", i))
+		}
+		if err := p.Validate(); err != nil {
+			//nolint:forbidigo // genesis code
+			panic(err)
+		}
+		if err := k.SetVersionPolicy(ctx, *p); err != nil {
 			//nolint:forbidigo // genesis code
 			panic(err)
 		}
@@ -401,6 +459,56 @@ func getApprovedVersions(ctx *sdk.Context, k *keeper.Keeper) []*types.DevshardAp
 	for i := range versions {
 		v := versions[i]
 		out = append(out, &v)
+	}
+	return out
+}
+
+func getVersionPolicies(ctx *sdk.Context, k *keeper.Keeper) []*types.DevshardVersionPolicy {
+	policies, err := k.GetVersionPolicies(ctx)
+	if err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
+	out := make([]*types.DevshardVersionPolicy, 0, len(policies))
+	for i := range policies {
+		p := policies[i]
+		out = append(out, &p)
+	}
+	return out
+}
+
+func stampLegacyApprovedVersionsDerived(versions []*types.DevshardApprovedVersion) []*types.DevshardApprovedVersion {
+	out := make([]*types.DevshardApprovedVersion, 0, len(versions))
+	for _, v := range versions {
+		if v == nil {
+			continue
+		}
+		copied := *v
+		copied.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
+		out = append(out, &copied)
+	}
+	return out
+}
+
+func mergeLegacyVersionPolicies(existing []*types.DevshardVersionPolicy, versions []*types.DevshardApprovedVersion) []*types.DevshardVersionPolicy {
+	seen := make(map[string]struct{}, len(existing)+len(versions))
+	out := make([]*types.DevshardVersionPolicy, 0, len(existing)+len(versions))
+	for _, p := range existing {
+		if p == nil {
+			continue
+		}
+		seen[p.Name] = struct{}{}
+		out = append(out, p)
+	}
+	for _, v := range versions {
+		if v == nil {
+			continue
+		}
+		if _, ok := seen[v.Name]; ok {
+			continue
+		}
+		seen[v.Name] = struct{}{}
+		out = append(out, &types.DevshardVersionPolicy{Name: v.Name, PassCount: v.PassCount})
 	}
 	return out
 }
