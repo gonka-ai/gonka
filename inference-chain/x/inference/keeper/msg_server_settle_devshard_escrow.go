@@ -81,6 +81,10 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			treatAsCurrentEpochSettle[addr] = false
 			continue
 		}
+		if _, accountsSettled := k.GetEpochPerformanceSummary(goCtx, currentEpochIndex, addr); accountsSettled {
+			treatAsCurrentEpochSettle[addr] = false
+			continue
+		}
 		participantAddr, err := sdk.AccAddressFromBech32(addr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid participant address %s: %w", addr, err)
@@ -89,7 +93,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		if err != nil {
 			return nil, fmt.Errorf("failed to check active participant set for %s: %w", addr, err)
 		}
-		treatAsCurrentEpochSettle[addr] = active && escrow.EpochIndex == currentEpochIndex
+		treatAsCurrentEpochSettle[addr] = active
 	}
 	touchedParticipants := make(map[string]bool)
 
