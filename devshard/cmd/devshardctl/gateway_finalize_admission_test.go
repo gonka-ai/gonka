@@ -59,10 +59,10 @@ func TestFinalizeInFlightBlocksNewInferences(t *testing.T) {
 	require.False(t, ok, "a runtime with finalize in flight must not accept new inferences")
 	require.Equal(t, "finalize_in_flight", reason)
 
-	_, err := g.reserveRuntimeForModel("Qwen/Test", 1, nil)
+	_, err := g.reserveRuntimeForModel("Qwen/Test", chatRequestCost{promptTokens: 1}, nil)
 	require.Error(t, err, "pooled admission must not pick a runtime whose finalize is in flight")
 
-	admitted, reason := g.reserveRuntimeIfAccepting(rt, 1)
+	admitted, reason := g.reserveRuntimeIfAccepting(rt, chatRequestCost{promptTokens: 1})
 	require.False(t, admitted, "direct devshard admission must not reserve a runtime whose finalize is in flight")
 	require.Equal(t, "finalize_in_flight", reason)
 	require.Zero(t, rt.activeUserRequests.Load(), "no request may be reserved while finalize runs")
@@ -87,7 +87,7 @@ func TestSingleOnlyFinalizeInFlightBlocksNewInferences(t *testing.T) {
 	}()
 	<-entered
 
-	_, err := g.reserveRuntimeForModel("Qwen/Test", 1, nil)
+	_, err := g.reserveRuntimeForModel("Qwen/Test", chatRequestCost{promptTokens: 1}, nil)
 	require.Error(t, err, "single-runtime admission must not pick a runtime whose finalize is in flight")
 	require.Zero(t, rt.activeUserRequests.Load())
 
@@ -226,9 +226,9 @@ func TestFailedFinalizeAllowsRetry(t *testing.T) {
 	g.handleDevshard(rec, httptest.NewRequest(http.MethodPost, "/devshard/12/v1/finalize", nil))
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 
-	admitted, reason := g.reserveRuntimeIfAccepting(rt, 1)
+	admitted, reason := g.reserveRuntimeIfAccepting(rt, chatRequestCost{promptTokens: 1})
 	require.True(t, admitted, "a failed finalize must reopen admission, refused with %q", reason)
-	g.releaseRuntime(rt, 1)
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 1})
 
 	rec = httptest.NewRecorder()
 	g.handleDevshard(rec, httptest.NewRequest(http.MethodPost, "/devshard/12/v1/finalize", nil))

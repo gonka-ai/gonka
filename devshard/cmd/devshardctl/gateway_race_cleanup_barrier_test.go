@@ -28,12 +28,12 @@ func TestReleaseRuntimeDefersSettleWhilePendingRaceCleanup(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
 	g, _, settled := gatewayTestDepletionGateway(t, rt)
 
-	g.reserveRuntime(rt, 1) // the one in-flight foreground request
+	g.reserveRuntime(rt, chatRequestCost{promptTokens: 1}) // the one in-flight foreground request
 	g.startRaceCleanup(rt)  // its background race cleanup, spawned before it returns
 	rt.settlementReason = "low_balance"
 	rt.settlementPending.Store(true)
 
-	g.releaseRuntime(rt, 1) // foreground request returns; cleanup still in flight
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 1}) // foreground request returns; cleanup still in flight
 	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond,
 		"settlement must not fire while a background race cleanup is still refunding/persisting")
 
@@ -47,12 +47,12 @@ func TestReleaseRuntimeDefersSettleWhilePendingRaceCleanup(t *testing.T) {
 // while a race cleanup is still writing loser signatures, and fire once it drains.
 func TestReleaseRuntimeDefersRetireWhilePendingRaceCleanup(t *testing.T) {
 	g, rt := newRetireTestGateway("12")
-	g.reserveRuntime(rt, 0) // the one in-flight foreground request
+	g.reserveRuntime(rt, chatRequestCost{promptTokens: 0}) // the one in-flight foreground request
 	g.startRaceCleanup(rt)  // its background race cleanup
 	rt.retireReason = "balance exhausted"
 	rt.retirePending.Store(true)
 
-	g.releaseRuntime(rt, 0) // foreground request returns; cleanup still in flight
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 0}) // foreground request returns; cleanup still in flight
 	_, stillRegistered := g.runtimes["12"]
 	require.True(t, stillRegistered, "retire must defer while a race cleanup is in flight")
 
@@ -93,7 +93,7 @@ func TestConcurrentDrainSettlesExactlyOnce(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
 	g, _, settled := gatewayTestDepletionGateway(t, rt)
 
-	g.reserveRuntime(rt, 1)
+	g.reserveRuntime(rt, chatRequestCost{promptTokens: 1})
 	g.startRaceCleanup(rt)
 	rt.settlementReason = "low_balance"
 	rt.settlementPending.Store(true)
@@ -101,7 +101,7 @@ func TestConcurrentDrainSettlesExactlyOnce(t *testing.T) {
 	var ready sync.WaitGroup
 	ready.Add(2)
 	start := make(chan struct{})
-	go func() { ready.Done(); <-start; g.releaseRuntime(rt, 1) }()
+	go func() { ready.Done(); <-start; g.releaseRuntime(rt, chatRequestCost{promptTokens: 1}) }()
 	go func() { ready.Done(); <-start; g.releaseRaceCleanup(rt) }()
 	ready.Wait()
 	close(start) // release both drains as simultaneously as the scheduler allows
@@ -140,7 +140,7 @@ func TestAdminCleanDeletesOnceRaceCleanupDrains(t *testing.T) {
 // TestAdminCleanRefusesWhileARequestIsActive pins the foreground half of the same barrier.
 func TestAdminCleanRefusesWhileARequestIsActive(t *testing.T) {
 	gateway, escrowRuntime := newRegisteredInactiveDevshardGateway(t)
-	gateway.reserveRuntime(escrowRuntime, 0)
+	gateway.reserveRuntime(escrowRuntime, chatRequestCost{promptTokens: 0})
 
 	recorder := httptest.NewRecorder()
 	gateway.handleAdminCleanDevshard(recorder, httptest.NewRequest(http.MethodDelete, "/v1/admin/devshards/77", nil), "77")

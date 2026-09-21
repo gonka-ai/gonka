@@ -41,7 +41,7 @@ func TestGatewayChooseRuntimeRoutesPastTheOldDefaultOnceTheChainAllowsIt(t *test
 	gateway := NewGateway([]*devshardRuntime{escrowRuntime}, NewGatewayLimiter(0, 0), "m")
 	gateway.maxNonce = devshardpkg.StaticMaxNonce(1_000_000)
 
-	chosen, err := gateway.reserveRuntimeForModel("m", 5, nil)
+	chosen, err := gateway.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 
 	require.NoError(t, err, "an escrow far below the chain max nonce was skipped as spent")
 	require.Equal(t, "6", chosen.id)
@@ -55,7 +55,7 @@ func TestGatewayChooseRuntimeStopsAnInFlightMarginShortOfTheHostActiveCap(t *tes
 	gateway := NewGateway([]*devshardRuntime{spentRuntime, availableRuntime}, NewGatewayLimiter(0, 0), "m")
 	gateway.maxNonce = devshardpkg.StaticMaxNonce(1_000_000)
 
-	chosen, err := gateway.reserveRuntimeForModel("m", 5, nil)
+	chosen, err := gateway.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 
 	require.NoError(t, err, "an escrow below the host active cap was skipped as spent")
 	require.Equal(t, "12", chosen.id, "an escrow within the in-flight margin of the host active cap still took inferences")
@@ -65,7 +65,7 @@ func TestGatewayChooseRuntimeUsesTheDefaultLimitUntilTheChainMaxNonceIsKnown(t *
 	escrowRuntime := gatewayTestRuntimeForLimits(t, "6", balanceMinimumThreshold, nonceDeactivationLimit)
 	gateway := NewGateway([]*devshardRuntime{escrowRuntime}, NewGatewayLimiter(0, 0), "m")
 
-	_, err := gateway.reserveRuntimeForModel("m", 5, nil)
+	_, err := gateway.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 
 	require.ErrorContains(t, err, "skipped: high_nonce=1", "an escrow at the default limit took inferences before the chain max nonce was known")
 }
@@ -74,7 +74,7 @@ func TestGatewayChooseRuntimeRoutesBelowTheDefaultLimitUntilTheChainMaxNonceIsKn
 	escrowRuntime := gatewayTestRuntimeForLimits(t, "6", balanceMinimumThreshold, nonceDeactivationLimit-1)
 	gateway := NewGateway([]*devshardRuntime{escrowRuntime}, NewGatewayLimiter(0, 0), "m")
 
-	chosen, err := gateway.reserveRuntimeForModel("m", 5, nil)
+	chosen, err := gateway.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 
 	require.NoError(t, err, "an escrow below the default limit was skipped as spent before the chain max nonce was known")
 	require.Equal(t, "6", chosen.id)
@@ -106,7 +106,7 @@ func TestGatewayChooseRuntimeReplacesNothingUntilTheChainMaxNonceIsKnown(t *test
 	escrowRuntime := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit)
 	gateway, created, _ := gatewayTestDepletionGateway(t, escrowRuntime, withoutSettlement)
 
-	_, _ = gateway.reserveRuntimeForModel("m", 5, nil)
+	_, _ = gateway.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 	waitForReplacementIdle(t, gateway, escrowRuntime.id)
 
 	require.EqualValues(t, 0, created.Load(), "routing replaced an escrow for its nonce before the chain max nonce was known")
