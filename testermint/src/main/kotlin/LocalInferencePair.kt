@@ -574,6 +574,16 @@ data class LocalInferencePair(
         }
     }
 
+    fun emitPocV2Batch(node: InferenceNode? = null) {
+        if (node == null) {
+            this.api.getNodes().forEach {
+                this.mock?.emitPocV2Batch(it.node.pocHost)
+            }
+        } else {
+            this.mock?.emitPocV2Batch(node.pocHost)
+        }
+    }
+
     fun createPoCChallenge(target: String, waitForProcessed: Boolean = true): TxResponse {
         return submitTransaction(listOf("inference", "create-poc-challenge", target), waitForProcessed)
     }

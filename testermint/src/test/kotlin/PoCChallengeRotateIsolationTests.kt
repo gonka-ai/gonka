@@ -8,10 +8,10 @@ import org.tinylog.kotlin.Logger
 import java.util.concurrent.TimeUnit
 
 @Timeout(value = 20, unit = TimeUnit.MINUTES)
-class PoCChallengeOverlayTests : TestermintTest() {
+class PoCChallengeRotateIsolationTests : TestermintTest() {
     @Test
-    fun `create first then confirmation PoC rotates and skips target`() {
-        logSection("=== TEST: PoCChallenge overlay create-first ===")
+    fun `create first then cPoC rotate does not leak first-segment artifacts`() {
+        logSection("=== TEST: PoCChallenge create-first rotate isolation ===")
         val env = bootPoCChallengeCluster(
             expectedConfirmationsPerEpoch = 0,
             pocStageDuration = 5,
@@ -36,6 +36,19 @@ class PoCChallengeOverlayTests : TestermintTest() {
 
         val committed = waitForChallengeCommit(genesis, target)
         assertThat(committed.commits.first().count).isEqualTo(10)
+        requireEmitWindow(committed, genesis.getCurrentBlockHeight())
+        logSection("Emitting a second batch on the first segment")
+        join1.emitPocV2Batch()
+        val accumulated = waitForChallengeCommitCount(
+            genesis,
+            target,
+            count = 20,
+            startHeight = created.startHeight,
+            deadline = committed.finish - 1,
+        )
+        assertThat(accumulated.commits.first { it.count >= 20 }.count).isEqualTo(20)
+        Logger.info("First segment accumulated count=20 start=${created.startHeight} finish=${committed.finish}")
+
         val confirmationEvent = waitForConfirmationPoCInEpoch(genesis, created.epochIndex)
         Logger.info("Confirmation PoC triggered at height ${confirmationEvent.triggerHeight}")
 
@@ -54,6 +67,9 @@ class PoCChallengeOverlayTests : TestermintTest() {
         assertThat(genesis.node.getRawParticipants().getParticipant(join1)?.status).isEqualTo("ACTIVE")
 
         val rotated = waitForRotatedCommit(genesis, target, afterCpoc.startHeight)
-        assertThat(rotated.commits.any { it.pocStageStartBlockHeight == afterCpoc.startHeight }).isTrue()
+        val rotatedCount = rotated.commits
+            .filter { it.pocStageStartBlockHeight == afterCpoc.startHeight }
+            .maxOf { it.count }
+        assertThat(rotatedCount).isEqualTo(10)
     }
 }

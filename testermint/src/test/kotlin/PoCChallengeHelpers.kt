@@ -123,10 +123,20 @@ fun waitUntilInference(pair: LocalInferencePair) {
     }
 }
 
+const val ChallengeCommitLeadBlocks = 4L
+const val DoubleWindowDurationMin = 11L
+const val DoubleWindowDurationMax = 14L
+
 fun lastSegmentCreateHeight(pair: LocalInferencePair): Long {
     val epoch = pair.getEpochData()
     val params = pair.getParams().epochParams
     return epoch.epochStages.nextPocStart - params.pocStageDuration - params.pocExchangeDuration - 1
+}
+
+fun doubleWindowCreateHeight(pair: LocalInferencePair): Long {
+    val epoch = pair.getEpochData()
+    val params = pair.getParams().epochParams
+    return epoch.epochStages.nextPocStart - 2 * (params.pocStageDuration + params.pocExchangeDuration) - 1
 }
 
 fun createAtLastSegment(genesis: LocalInferencePair, target: String): TxResponse {
@@ -140,6 +150,35 @@ fun createAtLastSegment(genesis: LocalInferencePair, target: String): TxResponse
     val resp = genesis.createPoCChallenge(target)
     require(resp.code == 0) { "create-poc-challenge failed: ${resp.rawLog}" }
     return resp
+}
+
+fun createAtDoubleWindow(genesis: LocalInferencePair, target: String): OpenPoCChallenge {
+    val height = doubleWindowCreateHeight(genesis)
+    val now = genesis.getCurrentBlockHeight()
+    require(now <= height) { "already past double-window create height $height (now $now)" }
+    genesis.node.waitForMinimumBlock(height, "double-window create")
+    val epoch = genesis.getEpochData()
+    require(epoch.phase == EpochPhase.Inference) { "double-window create is not in inference: ${epoch.phase}" }
+    require(!epoch.isConfirmationPocActive) { "cPoC is active at double-window create" }
+    val resp = genesis.createPoCChallenge(target)
+    require(resp.code == 0) { "create-poc-challenge failed: ${resp.rawLog}" }
+    val open = waitForOpenChallenge(genesis, target)
+    requireLandedDoubleWindow(open)
+    return open
+}
+
+fun requireLandedDoubleWindow(ch: OpenPoCChallenge) {
+    val duration = ch.finish - ch.startHeight
+    require(duration in DoubleWindowDurationMin..DoubleWindowDurationMax) {
+        "landed duration $duration not in $DoubleWindowDurationMin..$DoubleWindowDurationMax start=${ch.startHeight} finish=${ch.finish}"
+    }
+    require(ch.generating) { "challenge not generating after double-window create" }
+}
+
+fun requireEmitWindow(ch: OpenPoCChallenge, now: Long, lead: Long = ChallengeCommitLeadBlocks) {
+    require(now <= ch.finish - lead - 2) {
+        "too late to emit extra batch: now=$now finish=${ch.finish} lead=$lead"
+    }
 }
 
 fun createChallengeFirst(genesis: LocalInferencePair, target: String): TxResponse {
@@ -186,6 +225,35 @@ fun waitForChallengeCommit(pair: LocalInferencePair, target: String, maxBlocks: 
         pair.node.waitForMinimumBlock(pair.getCurrentBlockHeight() + 1, "challenge commit")
     }
     error("no challenge commit for $target")
+}
+
+fun waitForChallengeCommitCount(
+    pair: LocalInferencePair,
+    target: String,
+    count: Long,
+    startHeight: Long,
+    deadline: Long,
+): OpenPoCChallenge {
+    while (true) {
+        val height = pair.getCurrentBlockHeight()
+        val ch = challengeOf(pair, target)
+        val matched = ch != null &&
+            ch.startHeight == startHeight &&
+            ch.commits.any { commit ->
+                commit.count >= count &&
+                    (commit.pocStageStartBlockHeight == 0L || commit.pocStageStartBlockHeight == startHeight)
+            }
+        if (matched) {
+            return ch!!
+        }
+        if (height >= deadline) {
+            error(
+                "no commit count $count for $target start=$startHeight by deadline $deadline " +
+                    "(height=$height last=${ch?.commits})"
+            )
+        }
+        pair.node.waitForMinimumBlock(height + 1, "challenge commit count $count")
+    }
 }
 
 fun waitForRotatedCommit(
@@ -237,6 +305,17 @@ fun expectedScaledWeight(mockWeight: Long, duration: Long, stagePlusExchange: Lo
     if (duration <= 0) return 0
     return floor(mockWeight * stagePlusExchange.toDouble() / duration.toDouble()).toLong()
         .coerceAtMost(mockWeight)
+}
+
+fun expectedNormalizedWeight(
+    count: Long,
+    duration: Long,
+    stagePlusExchange: Long,
+    epochWeight: Long = 10,
+): Long {
+    if (duration <= 0) return 0
+    return floor(count * stagePlusExchange.toDouble() / duration.toDouble()).toLong()
+        .coerceAtMost(epochWeight)
 }
 
 fun stagePlusExchange(pair: LocalInferencePair): Long {
