@@ -50,7 +50,7 @@ func TestToValidatedWeight_ValidSmall(t *testing.T) {
 }
 
 func TestKStepsBytesRoundTrip(t *testing.T) {
-	steps := []int{0, 15, 7, 255}
+	steps := []int{0, 15, 7}
 	packed, err := KStepsToBytes(steps)
 	require.NoError(t, err)
 	got := BytesToKSteps(packed)
@@ -70,8 +70,27 @@ func TestPoCParamsForScheme_PrefillIgnoresN(t *testing.T) {
 }
 
 func TestKStepsToBytes_RejectsOutOfRange(t *testing.T) {
-	_, err := KStepsToBytes([]int{256})
+	_, err := KStepsToBytes([]int{DecodeSpherePoints})
+	require.Error(t, err)
+	_, err = KStepsToBytes([]int{255})
 	require.Error(t, err)
 	_, err = KStepsToBytes([]int{-1})
 	require.Error(t, err)
+	_, err = KStepsToBytes([]int{0, 15})
+	require.NoError(t, err)
+}
+
+func TestValidatePackedKSteps_RejectsHighBytes(t *testing.T) {
+	require.NoError(t, ValidatePackedKSteps([]byte{0, 15}))
+	require.Error(t, ValidatePackedKSteps([]byte{DecodeSpherePoints}))
+	require.Error(t, ValidatePackedKSteps([]byte{255}))
+}
+
+func TestShouldAbstain_NanAndComparedNothing(t *testing.T) {
+	require.False(t, (&ValidatedResultV2{NTotal: 5, FraudDetected: false}).ShouldAbstain())
+	require.True(t, (&ValidatedResultV2{NTotal: 5, NNanSteps: 1}).ShouldAbstain())
+	require.True(t, (&ValidatedResultV2{NTotal: 5, NMismatch: -1}).ShouldAbstain())
+	honestNan := &ValidatedResultV2{NTotal: 5, NNanSteps: 2, FraudDetected: false}
+	require.True(t, honestNan.ShouldAbstain())
+	require.Equal(t, int64(5), honestNan.ToValidatedWeight(), "abstain must not be encoded as invalid weight")
 }

@@ -171,6 +171,8 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 		"blockHeight", body.BlockHeight,
 		"publicKey", body.PublicKey,
 		"nTotal", body.NTotal,
+		"nNanSteps", body.NNanSteps,
+		"nMismatch", body.NMismatch,
 		"fraudDetected", body.FraudDetected)
 
 	modelID, err := decodeCallbackModelID(ctx.Param("model_id"))
@@ -183,6 +185,12 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 		logging.Warn("ValidatedArtifactsV2-callback. Rejected - not in PoC validate phase", types.PoC,
 			"blockHeight", body.BlockHeight)
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "not in PoC validate phase")
+	}
+
+	if body.ShouldAbstain() {
+		logging.Warn("ValidatedArtifactsV2-callback. Abstaining, validator-side incomplete result", types.PoC,
+			"nNanSteps", body.NNanSteps, "nMismatch", body.NMismatch, "nTotal", body.NTotal)
+		return ctx.NoContent(http.StatusOK)
 	}
 
 	// Convert public key to bech32 address

@@ -15,6 +15,10 @@ import (
 // the model config's seq_len belongs to the prefill scheme.
 const DecodeSeqLen = 256
 
+// DecodeSpherePoints is the decode snap codebook size. Packed steps are k ∈ [0, DecodeSpherePoints).
+// Must match the plugin codebook (gonka_poc SPHERE_POINTS). Wire is still one byte.
+const DecodeSpherePoints = 16
+
 // PoCParamsV2 contains model-specific parameters for PoC v2 generation/validation.
 type PoCParamsV2 struct {
 	Model  string `json:"model"`
