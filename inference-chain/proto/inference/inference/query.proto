@@ -687,6 +687,7 @@ message QueryPoCV2StoreCommitResponse {
   uint32 count = 1;
   bytes  root_hash = 2;
   bool   found = 3;
+  uint32 tree_depth = 4;
 }
 
 message QueryMLNodeWeightDistributionRequest {
@@ -714,6 +715,7 @@ message PoCV2StoreCommitWithAddress {
   bytes root_hash = 3;
   string hex_pub_key = 4;
   string model_id = 5;
+  uint32 tree_depth = 6;
 }
 
 message QueryAllMLNodeWeightDistributionsForStageRequest {

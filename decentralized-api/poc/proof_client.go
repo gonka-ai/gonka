@@ -49,6 +49,7 @@ type ProofRequest struct {
 	ModelId                  string
 	RootHash                 []byte
 	Count                    uint32
+	TreeDepth                uint32
 	LeafIndices              []uint32
 	ParticipantAddress       string // participant whose API we're calling
 }
@@ -59,6 +60,7 @@ type ProofByNonceRequest struct {
 	ModelId                  string
 	RootHash                 []byte
 	Count                    uint32
+	TreeDepth                uint32
 	Nonces                   []int32
 	ParticipantAddress       string // participant whose API we're calling
 }
@@ -185,7 +187,7 @@ func (c *ProofClient) FetchAndVerifyProofs(
 
 	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
 	for _, item := range proofResp.Proofs {
-		artifact, err := verifyProofItem(req.RootHash, req.Count, req.ParticipantAddress, item)
+		artifact, err := verifyProofItem(req.RootHash, req.Count, req.TreeDepth, req.ParticipantAddress, item)
 		if err != nil {
 			return nil, err
 		}
@@ -277,7 +279,7 @@ func (c *ProofClient) FetchAndVerifyProofsByNonce(
 
 	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
 	for _, item := range proofResp.Proofs {
-		artifact, err := verifyProofItem(req.RootHash, req.Count, req.ParticipantAddress, item)
+		artifact, err := verifyProofItem(req.RootHash, req.Count, req.TreeDepth, req.ParticipantAddress, item)
 		if err != nil {
 			return nil, err
 		}
@@ -365,7 +367,7 @@ func validateNonceCoverage(requested []int32, proofs []ProofItem) error {
 	return nil
 }
 
-func verifyProofItem(rootHash []byte, count uint32, participantAddress string, item ProofItem) (VerifiedArtifact, error) {
+func verifyProofItem(rootHash []byte, count uint32, treeDepth uint32, participantAddress string, item ProofItem) (VerifiedArtifact, error) {
 	vectorBytes, err := base64.StdEncoding.DecodeString(item.VectorBytes)
 	if err != nil {
 		logging.Warn("Failed to decode vector bytes", types.PoC,
@@ -389,7 +391,7 @@ func verifyProofItem(rootHash []byte, count uint32, participantAddress string, i
 	}
 
 	leafData := buildLeafData(item.NonceValue, vectorBytes)
-	if !artifacts.VerifySMSTProofWithDenseIndex(rootHash, count, item.LeafIndex, item.NonceValue, leafData, proofHashes) {
+	if !artifacts.VerifySMSTProofWithDenseIndex(rootHash, count, treeDepth, item.LeafIndex, item.NonceValue, leafData, proofHashes) {
 		logging.Warn("SMST proof verification failed", types.PoC,
 			"participant", participantAddress, "leafIndex", item.LeafIndex, "nonce", item.NonceValue)
 		return VerifiedArtifact{}, fmt.Errorf("%w: leaf %d", ErrProofVerificationFailed, item.LeafIndex)

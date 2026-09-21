@@ -114,6 +114,7 @@ type participantWork struct {
 	pubKey     string
 	count      uint32
 	rootHash   []byte
+	treeDepth  uint32
 	attempt    int       // current attempt number (0-based)
 	retryAfter time.Time // don't process before this time
 
@@ -439,12 +440,13 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		}
 
 		workItems = append(workItems, participantWork{
-			address:  commit.ParticipantAddress,
-			modelId:  commit.ModelId,
-			url:      participantResp.Participant.InferenceUrl,
-			pubKey:   commit.HexPubKey,
-			count:    commit.Count,
-			rootHash: commit.RootHash,
+			address:   commit.ParticipantAddress,
+			modelId:   commit.ModelId,
+			url:       participantResp.Participant.InferenceUrl,
+			pubKey:    commit.HexPubKey,
+			count:     commit.Count,
+			rootHash:  commit.RootHash,
+			treeDepth: commit.TreeDepth,
 		})
 	}
 
@@ -836,6 +838,7 @@ func (v *OffChainValidator) checkValidateeProofs(
 		ModelId:                  work.modelId,
 		RootHash:                 work.rootHash,
 		Count:                    work.count,
+		TreeDepth:                work.treeDepth,
 		LeafIndices:              leafIndices,
 		ParticipantAddress:       work.address,
 	})

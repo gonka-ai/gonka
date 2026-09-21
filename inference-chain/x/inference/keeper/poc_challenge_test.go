@@ -150,9 +150,10 @@ func TestPoCChallengeStoreCommit_FreezesAtFinish(t *testing.T) {
 		Creator:                  testutil.Executor,
 		PocStageStartBlockHeight: 50,
 		Entries: []*types.PoCV2CommitEntry{{
-			ModelId:  challengeTestModel,
-			Count:    4,
-			RootHash: make([]byte, 32),
+			ModelId:   challengeTestModel,
+			Count:     4,
+			RootHash:  make([]byte, 32),
+			TreeDepth: 24,
 		}},
 	}
 	_, err := ms.PoCChallengeStoreCommit(ctx, msg)
@@ -426,9 +427,10 @@ func TestPoCChallengeStoreCommit_RejectsOldEpoch(t *testing.T) {
 		Creator:                  testutil.Executor,
 		PocStageStartBlockHeight: 50,
 		Entries: []*types.PoCV2CommitEntry{{
-			ModelId:  challengeTestModel,
-			Count:    4,
-			RootHash: make([]byte, 32),
+			ModelId:   challengeTestModel,
+			Count:     4,
+			RootHash:  make([]byte, 32),
+			TreeDepth: 24,
 		}},
 	})
 	require.Error(t, err)
@@ -488,9 +490,10 @@ func TestPayAndDeleteOldChallenges_OldUnsetPassNotReevaluated(t *testing.T) {
 		Creator:                  testutil.Executor,
 		PocStageStartBlockHeight: 50,
 		Entries: []*types.PoCV2CommitEntry{{
-			ModelId:  challengeTestModel,
-			Count:    4,
-			RootHash: make([]byte, 32),
+			ModelId:   challengeTestModel,
+			Count:     4,
+			RootHash:  make([]byte, 32),
+			TreeDepth: 24,
 		}},
 	})
 	require.Error(t, err)
