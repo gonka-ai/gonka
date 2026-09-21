@@ -17,13 +17,16 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 | Silent disappearance of a param | silent-strip allowlist | search by param name under [#silent-strips](#silent-strips) |
 | `thinking.type` value normalized | `adaptive` / `auto` resolved to `enabled` | see [Kimi overrides](kimi-k2.6.md#parameter-overrides) |
 | `tool_choice: "required"` becomes `"auto"` | network policy | [#coerce-tool-choice-required](#coerce-tool-choice-required) |
+| `tool_choice` / `parallel_tool_calls` disappear | the request carries no `tools` (absent or `[]`) | [#strip-tool-controls-without-tools](#strip-tool-controls-without-tools) |
 | `n` becomes 1 | reservation budgets one `MaxTokens` output | [#coerce-n-when-temperature-zero](#coerce-n-when-temperature-zero) |
+| `chat_template_kwargs.enable_thinking` forced to `true` on GLM-5.3-Flash | the template always thinks; a false kwarg would leak reasoning into `content` | [#coerce-enable_thinking-glm53](#coerce-enable_thinking-glm53) |
 | `extra_body` keys appear at top level | OpenAI Python SDK passthrough | [#unwrap-extra_body](#unwrap-extra_body) |
 | `enable_thinking` lifts into `chat_template_kwargs` | Qwen3 canonical placement | [#translate-enable_thinking](#translate-enable_thinking) |
 | `reasoning` object decomposed to top-level `reasoning_effort` | OpenRouter unified-reasoning convention | [#translate-reasoning](#translate-reasoning) |
 | 400 on out-of-range `top_p` / `repetition_penalty` / `top_k` | value outside backend-accepted range | [#reject-out-of-range-sampling](#reject-out-of-range-sampling) |
 | 400 on `max_tokens: 0` (non-Kimi route) | zero output budget | [#reject-nonpositive-max-tokens](#reject-nonpositive-max-tokens) |
 | 400 on wrong-typed param (bool / int / array element) | type mismatch caught at the gateway | [#reject-malformed-param-types](#reject-malformed-param-types) |
+| 400 `tools[N].function.parameters: serialized size exceeded` | one tool's `parameters` schema is over 64 KiB | [#reject-oversized-tool-schema](#reject-oversized-tool-schema) |
 | `thinking_token_budget` forced to `0` on Kimi-K2.6 with small `max_tokens` | content-headroom guard | [#kimi-empty-content-think-burn](#kimi-empty-content-think-burn) |
 | Empty `content` / `finish_reason=length` on Kimi-K2.6 | thinking ate the budget | [#kimi-empty-content-think-burn](#kimi-empty-content-think-burn) |
 
@@ -208,6 +211,18 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ---
 
+### #strip-tool-controls-without-tools
+
+**What**: when a request carries no `tools` — the field is absent or `[]` — `tool_choice` and `parallel_tool_calls` are removed before forwarding, and an empty `tools` array is removed with them. In such a request a malformed `tool_choice` or a non-boolean `parallel_tool_calls` is dropped rather than rejected; the shape and type checks apply whenever `tools` is present.
+
+**Why**: vLLM rejects `tools: []` outright and rejects any `tool_choice` other than `"none"` sent without `tools` with HTTP 400 "When using tool_choice, tools must be set." [[vLLM-46]](references.md#vllm). Forwarding the pair fails the request on every host it reaches: a 2026-09-13 mainnet gateway log shows 636 such rejections across 139 requests, every one carrying `tool_choice: "auto"` and a `response_format` schema with no `tools` (for example `req-1789307195157057679-94804`). Removing the fields changes nothing for the model: OpenAI documents `none` as the default when no tools are present [[OpenAI-7]](references.md#openai), and `parallel_tool_calls` only governs tool use [[OpenAI-1]](references.md#openai).
+
+**When to restore**: if vLLM starts accepting a `tool_choice` sent without `tools` [[vLLM-46]](references.md#vllm); even then the fields carry no meaning without tools.
+
+**Fix (client-side)**: send `tool_choice` and `parallel_tool_calls` only together with a non-empty `tools` array.
+
+---
+
 ## Validates-then-strips
 
 ### #strip-reasoning_effort
@@ -267,6 +282,18 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: when reservation/settlement include `n × max_tokens` and validation supports multi-choice.
 
 **Fix (client-side)**: send one completion (`n` omitted or `n: 1`). Multi-choice is not available.
+
+---
+
+### #coerce-enable_thinking-glm53
+
+**What**: on the `zai-org/GLM-5.3-Flash` route the gateway sets `chat_template_kwargs.enable_thinking` to `true`, whatever the caller sent — including a lifted top-level `enable_thinking`, `reasoning_effort: "none"` and `reasoning: {"enabled": false}`. Other `chat_template_kwargs` keys, `thinking` included, and `reasoning_effort` itself pass through unchanged.
+
+**Why**: the GLM-5.3-Flash template has no thinking switch: the generation prompt always opens `<think>`, and its only knobs are `reasoning_effort` and `clear_thinking` [[Zai-1]](references.md#zai). vLLM's `glm47_moe` parser still turns reasoning extraction off when the `thinking` and `enable_thinking` kwargs it finds are all false [[vLLM-41]](references.md#vllm), and vLLM derives `enable_thinking: false` from `reasoning_effort: "none"` on its own [[vLLM-35]](references.md#vllm). The model then thinks as usual, but the scratchpad and a dangling `</think>` land in `content` instead of `reasoning` [[vLLM-40]](references.md#vllm). Reporting thinking as on leaves the rendered prompt byte-identical, because the template never reads the variable, and restores the split in streaming and non-streaming responses alike. The parser keeps extraction on when either kwarg is true, so a caller's `thinking: false` no longer matters. The override is scoped to the exact model ID: the GLM-5.2-FP8 template does read `enable_thinking` and renders an empty `<think></think>` for false [[Zai-2]](references.md#zai).
+
+**When to restore**: when vLLM stops letting `thinking`/`enable_thinking` disable extraction for templates that never read them [[vLLM-40]](references.md#vllm). The gonka-ai vLLM fork carries the same gating on both `release/v0.25.1` [[vLLM-44]](references.md#vllm) and `release/v0.28.0-glm53` [[vLLM-45]](references.md#vllm), so the 0.28 upgrade alone does not remove the need.
+
+**Fix (client-side)**: nothing to change — thinking cannot be turned off on this model. `reasoning_effort: "low"` is the smallest budget the template renders; any value other than `low` or `high`, `none` included, renders as `max`. See [the thinking contract](glm-5.3-flash.md#the-thinking-contract).
 
 ---
 
@@ -450,11 +477,21 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ### #reject-malformed-param-types
 
-**What**: HTTP 400 when a parameter carries the wrong JSON type: non-boolean `stream` / `skip_special_tokens` / `detokenize` / `parallel_tool_calls`; non-integer `seed` / `min_tokens`; non-string elements in `stop` / `bad_words`. `stop_token_ids` is exempt — it is stripped before any shape check, so a malformed array is dropped rather than rejected.
+**What**: HTTP 400 when a parameter carries the wrong JSON type: non-boolean `stream` / `skip_special_tokens` / `detokenize` / `parallel_tool_calls`; non-integer `seed` / `min_tokens`; non-string elements in `stop` / `bad_words`. `stop_token_ids` is exempt — it is stripped before any shape check, so a malformed array is dropped rather than rejected. So is `parallel_tool_calls` in a request without `tools`: it is stripped together with `tool_choice` ([#strip-tool-controls-without-tools](#strip-tool-controls-without-tools)).
 
 **Why**: vLLM rejects these with type errors at the engine boundary, producing opaque upstream 400s. The gateway type-checks them up front against the OpenAI/vLLM wire schema [[OpenAI-1]](references.md#openai), [[vLLM-1]](references.md#vllm) so the client gets an immediate, field-named error instead of a backend round-trip.
 
 **Fix (client-side)**: send each field with its declared type — booleans for the flags, non-negative integers for `seed` / `min_tokens`, strings for `stop` / `bad_words` elements.
+
+---
+
+### #reject-oversized-tool-schema
+
+**What**: HTTP 400 `tools[N].function.parameters: serialized size exceeded: limit 65536 bytes` when one tool's `parameters` schema serializes to more than 64 KiB. The structural bounds listed for `tools` in the [parameter table](README.md#supported-parameters-universal-behavior) are checked first and apply to a schema of any size.
+
+**Why**: the schema bounds exist because xgrammar compiles these schemas and has crashed on malformed ones [[CVE-2]](references.md#security-advisories). A tool's `parameters` reach the grammar less often than a `response_format` schema, which is always compiled: vLLM builds a grammar from them only for a named `tool_choice` or `"required"` [[vLLM-47]](references.md#vllm), [[vLLM-48]](references.md#vllm), and the gateway turns `"required"` into `"auto"` ([#coerce-tool-choice-required](#coerce-tool-choice-required)). The earlier 16 KiB cap, shared with `response_format`, rejected 149 requests in three hours of a 2026-09-13 mainnet gateway log, every one on `tools[1].function.parameters` (for example `req-1789307301124063400-95626`). So tools get 64 KiB, while `response_format` keeps 16 KiB.
+
+**Fix (client-side)**: keep each tool's `parameters` within 64 KiB, for example by shortening field descriptions or splitting the tool.
 
 ## Per-model behavior
 
@@ -488,3 +525,4 @@ Brief pointers to deeper notes in per-model docs:
 - **Kimi-K2.6**: [Known model-side bugs we work around](kimi-k2.6.md#known-model-side-bugs-we-work-around)
 - **Qwen3-235B-A22B-Instruct-2507**: [Known model-side bugs we work around](qwen3-235b-a22b-instruct-2507.md#known-model-side-bugs-we-work-around)
 - **MiniMaxAI/MiniMax-M2.7**: [Known model-side bugs we work around](minimax-m2.7.md#known-model-side-bugs-we-work-around)
+- **zai-org/GLM-5.3-Flash**: [Known model-side bugs we work around](glm-5.3-flash.md#known-model-side-bugs-we-work-around)

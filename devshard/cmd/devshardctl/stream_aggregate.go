@@ -10,12 +10,9 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
-)
 
-// aggregateMaxSSEEventBytes is the scanner cap for one SSE data line (1 MiB),
-// matching the donor transport.DefaultMaxSSEEventBytes. gateway-v4 does not
-// export that constant; keep the fold self-contained.
-const aggregateMaxSSEEventBytes = 1 << 20
+	"devshard/transport"
+)
 
 // aggregateDroppedTrailingErrorTotal counts error-shaped SSE payloads ignored
 // after a choice already had a terminal finish_reason (defense-in-depth for
@@ -92,7 +89,7 @@ var concatMessageTextKeys = map[string]struct{}{
 //
 // SSE folding is delegated to aggregateSSEStreamReader so the bytes helper and
 // the production reader share one line-scan implementation (including the
-// aggregateMaxSSEEventBytes line cap). Non-SSE shapes — {"events":[…]} envelopes
+// transport.DefaultMaxSSEEventBytes line cap). Non-SSE shapes — {"events":[…]} envelopes
 // and bare chat.completion JSON — remain as a bytes-only fallback for
 // cache/replay and unit tests; handleNonStreaming never produces them.
 func aggregateSSEStream(raw []byte, intent clientResponseIntent) []byte {
@@ -131,8 +128,8 @@ func aggregateSSEStreamReader(r io.Reader, intent clientResponseIntent) []byte {
 		return []byte(noResponseDataJSON)
 	}
 	sc := bufio.NewScanner(r)
-	// Step 12 caps a single SSE event at 1 MiB; allow that plus framing headroom.
-	maxLine := aggregateMaxSSEEventBytes + 64
+	// The transport caps a single SSE event; allow that plus framing headroom.
+	maxLine := transport.DefaultMaxSSEEventBytes + 64
 	sc.Buffer(make([]byte, 64<<10), maxLine)
 
 	folder := newCompletionFolder(intent)

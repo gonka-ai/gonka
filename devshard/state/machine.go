@@ -1182,7 +1182,7 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 		return err
 	}
 	if sm.state.Balance < reservedCost {
-		return types.ErrInsufficientBalance
+		return types.ErrRequestExceedsBalance
 	}
 
 	sm.state.Balance -= reservedCost

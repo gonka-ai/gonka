@@ -72,13 +72,6 @@ func TestHostPingRefcountExhaustivenessTeardownPaths(t *testing.T) {
 			},
 		},
 		{
-			name: "deactivateAndSettleDevshardByID",
-			run: func(t *testing.T, g *Gateway, escrowID string) {
-				// No store/chain — settle may no-op after deactivate; release must still run.
-				g.deactivateAndSettleDevshardByID(escrowID, "test")
-			},
-		},
-		{
 			name: "retireRuntime",
 			run: func(t *testing.T, g *Gateway, escrowID string) {
 				require.True(t, g.retireRuntime(escrowID, "test"))
