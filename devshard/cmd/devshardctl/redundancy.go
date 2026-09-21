@@ -519,6 +519,7 @@ type Redundancy struct {
 	onBalanceExhausted   func() // called (once) when local state hits insufficient balance
 	balanceExhaustedOnce sync.Once
 	picker               *sessionPicker
+	stopped              atomic.Bool
 	participantLimiter   *ParticipantRequestLimiter
 	stateBlockMu         sync.RWMutex
 	stateBlockedHosts    map[string]string    // escrow-local participant blocks for state divergence that survived a replay
@@ -587,14 +588,15 @@ func NewRedundancyWithThrottle(session *user.Session, perf *PerfTracker, groupSi
 	return e
 }
 
-// Stop terminates the dispatcher goroutine and joins any detached race
-// cleanups still settling. Production callers do not invoke this (process
-// lifetime). Tests should defer it for clean teardown: without the join, a
-// cleanup can still be calling into the session after the test returns.
+// Stop terminates the dispatcher goroutine and joins any detached race cleanups still settling.
+// Production callers invoke it on retire and finalize so ghost probes cannot recreate
+// escrow-labelled series after ForgetEscrow; without the join a cleanup can still call into the
+// session after its escrow is gone.
 func (e *Redundancy) Stop() {
 	if e == nil {
 		return
 	}
+	e.stopped.Store(true)
 	if e.picker != nil {
 		e.picker.stop()
 	}
@@ -1910,7 +1912,7 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	primary, err := e.prepareInflight(ctx, params, triedParticipants)
 	if err != nil {
 		logRequestStage(ctx, "runner_prepare_failed", "escrow", e.devshardID, "error", err)
-		if errors.Is(err, types.ErrInsufficientBalance) {
+		if isEscrowOutOfFunds(err) {
 			e.fireBalanceExhausted()
 		}
 		return err
@@ -4003,7 +4005,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 		}
 		e.perf.Record(sample)
 		if e.metrics != nil {
-			e.metrics.ObserveRequestSample(e.devshardID, sample)
+			e.metrics.ObserveRequestSample(sample)
 		}
 	})
 	// Outside the sample's once: the settle path records the same failing sample without ever telling
@@ -4478,7 +4480,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 		e.onHostObserved(inf.hostIdx, participantKey)
 	}
 	if e.metrics != nil {
-		e.metrics.ObserveRequestSample(e.devshardID, sample)
+		e.metrics.ObserveRequestSample(sample)
 		e.metrics.ObserveStreamCadence(participantKey, sample.Model, inf.longestChunkGap(), inf.meanChunkGap())
 	}
 }
@@ -4508,7 +4510,7 @@ func ghostProbeParams(model string) user.InferenceParams {
 // doing PoC, the queue held nothing compatible past pickerStaleThreshold, or the host just refused.
 // Nothing reaches the host here; the MsgStart travels as catch-up on its next real dispatch.
 func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostKind, reason string) {
-	if prepared == nil || e.session == nil {
+	if prepared == nil || e.session == nil || e.stopped.Load() {
 		return
 	}
 	participantKey := e.participantKeyForHost(prepared.HostIdx())
@@ -4531,6 +4533,11 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 		"reason", reason,
 		"poc_reason", currentPoCPhaseReason(),
 	)
+}
+
+// isEscrowOutOfFunds separates an escrow that can no longer pay for a nonce from one request too costly for what is left. See docs/proxy-architecture.md, "Escrow rotation and chain transactions".
+func isEscrowOutOfFunds(err error) bool {
+	return errors.Is(err, types.ErrInsufficientBalance) && !errors.Is(err, types.ErrRequestExceedsBalance)
 }
 
 // fireBalanceExhausted fires onBalanceExhausted at most once per Redundancy

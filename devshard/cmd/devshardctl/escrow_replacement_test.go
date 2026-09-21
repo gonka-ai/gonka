@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"devshard/types"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -98,6 +100,10 @@ func TestGatewayBalanceExhaustedTakesTheEscrowOutOfServiceWhenItsReplacementFail
 	waitForReplacementIdle(t, gateway, depletedRuntime.id)
 
 	require.False(t, depletedRuntime.active.Load(), "an exhausted escrow kept taking inferences while its replacement failed")
+	gateway.mu.Lock()
+	_, stillRegistered := gateway.runtimes[depletedRuntime.id]
+	gateway.mu.Unlock()
+	require.False(t, stillRegistered, "a failed replacement left the depleted runtime resident with its session and series")
 }
 
 func TestGatewayCheckBalancesSwapsADepletedEscrowForARegularReplacement(t *testing.T) {
@@ -130,7 +136,10 @@ func TestGatewayScheduleDepletedEscrowReplacementIgnoresARetiredReplacedEscrow(t
 	broadcasts := stubCreateOnChain(t, "TXCONFIRMED", 99)
 	runBalanceTick(t, gateway, depletedRuntime.id)
 	require.EqualValues(t, 1, broadcasts.Load(), "the depleted escrow was not replaced by the balance tick")
-	require.True(t, gateway.retireRuntime(depletedRuntime.id, "settled"), "the replaced escrow was not retired")
+	gateway.mu.Lock()
+	_, stillRegistered := gateway.runtimes[depletedRuntime.id]
+	gateway.mu.Unlock()
+	require.False(t, stillRegistered, "a no-settle replacement must retire the depleted runtime")
 
 	gateway.scheduleDepletedEscrowReplacement(depletedRuntime.id, depletedRuntime.model, "balance_exhausted")
 	waitForReplacementIdle(t, gateway, depletedRuntime.id)
@@ -149,6 +158,38 @@ func TestGatewayScheduleDepletedEscrowReplacementSettlesADeactivatedEscrowOnce(t
 
 	require.False(t, isSettlementInFlight(gateway, depletedRuntime.id), "a late trigger started settling an escrow that was already settled")
 	require.EqualValues(t, 1, settled.Load(), "a late trigger settled an escrow that was already settled")
+}
+
+func TestIsEscrowOutOfFundsSeparatesAFeeShortfallFromAnOversizedRequest(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		err        error
+		outOfFunds bool
+		complaint  string
+	}{
+		{
+			name:       "fee_per_nonce_shortfall",
+			err:        fmt.Errorf("prepare: %w", types.ErrInsufficientBalance),
+			outOfFunds: true,
+			complaint:  "an escrow that can no longer pay for a nonce was not reported exhausted",
+		},
+		{
+			name:       "request_too_costly",
+			err:        fmt.Errorf("prepare: %w", types.ErrRequestExceedsBalance),
+			outOfFunds: false,
+			complaint:  "one request too costly for what is left retired the escrow it was sent to",
+		},
+		{
+			name:       "failure_unrelated_to_funds",
+			err:        errors.New("prepare: no available host"),
+			outOfFunds: false,
+			complaint:  "a failure that says nothing about funds retired the escrow it was sent to",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.outOfFunds, isEscrowOutOfFunds(testCase.err), testCase.complaint)
+		})
+	}
 }
 
 // newReplacementTestGateway builds a rotating gateway whose escrow "12" sits below the balance threshold, with the real replacement create and a stub runtime builder.

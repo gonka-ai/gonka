@@ -59,7 +59,7 @@ func TestFinalizeInFlightBlocksNewInferences(t *testing.T) {
 	require.False(t, ok, "a runtime with finalize in flight must not accept new inferences")
 	require.Equal(t, "finalize_in_flight", reason)
 
-	_, err := g.reserveRuntimeForModel("Qwen/Test", 1)
+	_, err := g.reserveRuntimeForModel("Qwen/Test", 1, nil)
 	require.Error(t, err, "pooled admission must not pick a runtime whose finalize is in flight")
 
 	admitted, reason := g.reserveRuntimeIfAccepting(rt, 1)
@@ -87,7 +87,7 @@ func TestSingleOnlyFinalizeInFlightBlocksNewInferences(t *testing.T) {
 	}()
 	<-entered
 
-	_, err := g.reserveRuntimeForModel("Qwen/Test", 1)
+	_, err := g.reserveRuntimeForModel("Qwen/Test", 1, nil)
 	require.Error(t, err, "single-runtime admission must not pick a runtime whose finalize is in flight")
 	require.Zero(t, rt.activeUserRequests.Load())
 
