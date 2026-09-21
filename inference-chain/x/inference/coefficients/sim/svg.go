@@ -64,7 +64,10 @@ func writeSVG(path string, cfg config, modelIDs []string, epochs []epoch) error 
 		for _, item := range epochs {
 			shareSeries[modelID] = append(shareSeries[modelID], item.Shares[modelID])
 		}
-		model := configModel(cfg, modelID)
+		model, err := configModel(cfg, modelID)
+		if err != nil {
+			return err
+		}
 		target := float64(model.TargetShareBPS) / 10000
 		zone := float64(cfg.Controller.TargetZoneBPS) / 10000
 		targetBands = append(targetBands, band{
@@ -397,13 +400,13 @@ func seriesColors(names []string) map[string]string {
 	return result
 }
 
-func configModel(cfg config, modelID string) model {
+func configModel(cfg config, modelID string) (model, error) {
 	for _, model := range cfg.Models {
 		if model.ID == modelID {
-			return model
+			return model, nil
 		}
 	}
-	panic("model config not found: " + modelID)
+	return model{}, fmt.Errorf("model config not found for model %q", modelID)
 }
 
 func totalNodes(counts map[string]int) int {
