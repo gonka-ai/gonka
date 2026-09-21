@@ -1159,7 +1159,7 @@ func (v *OffChainValidator) getNodesWithRetryConfig(
 			return nil, errors.New("epoch state is nil during node filtering")
 		}
 
-		nodes = filterNodesForValidation(nodes, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase, OwnChallengeGenerate(epochState) != nil)
+		nodes = filterNodesForValidation(nodes, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase, OpenChallenges.UnderChallenge() != nil)
 		logging.Info("OffChainValidator: filtered nodes for validation", types.PoC,
 			"numNodes", len(nodes),
 			"attempt", attempt)
@@ -1184,10 +1184,8 @@ func (v *OffChainValidator) getNodesWithRetryConfig(
 }
 
 // filterNodesForValidation returns nodes available for PoC validation.
-// - Accept nodes in POC status with any sub-status
-// - Accept nodes in INFERENCE status (unless preserved for inference via POC_SLOT)
-// - Exclude FAILED, nodes that are not operational for the current epoch/phase, or POC_SLOT-preserved nodes
-func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, currentPhase types.EpochPhase, includePocSlot bool) []broker.NodeResponse {
+// Under challenge, nothing is preserved.
+func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, currentPhase types.EpochPhase, underChallenge bool) []broker.NodeResponse {
 	filtered := make([]broker.NodeResponse, 0, len(nodes))
 	for _, node := range nodes {
 		// Exclude failed nodes
@@ -1213,7 +1211,7 @@ func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, c
 		}
 
 		// Exclude nodes preserved for inference (POC_SLOT allocation)
-		if node.State.ShouldContinueInference() && !includePocSlot {
+		if node.State.ShouldContinueInference() && !underChallenge {
 			logging.Debug("filterNodesForValidation: Skipping node preserved for inference", types.PoC, "node_id", node.Node.Id)
 			continue
 		}
@@ -1263,7 +1261,7 @@ func (v *OffChainValidator) reportInvalidParticipant(pocHeight int64, participan
 		ModelId:            modelID,
 		ValidatedWeight:    -1, // Invalid
 	}
-	if OpenChallenges.ByStartHeight(pocHeight) != nil {
+	if OpenChallenges.VoteFor(participantAddress, pocHeight) != nil {
 		msg := &types.MsgSubmitPoCChallengeValidations{
 			PocStageStartBlockHeight: pocHeight,
 			Validations:              []*types.PoCValidationEntryV2{entry},

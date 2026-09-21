@@ -315,8 +315,7 @@ data class StoredPoCChallenge(
     val epochIndex: Long = 0,
     @SerializedName("locked_payment")
     val lockedPayment: Long = 0,
-    @SerializedName("failure_kind")
-    val failureKind: String? = null,
+    val state: String? = null,
     @SerializedName("expected_reward")
     val expectedReward: Long = 0,
 )
@@ -333,19 +332,29 @@ data class OpenPoCChallenge(
     val challenger: String get() = challenge?.challenger.orEmpty()
     val epochIndex: Long get() = challenge?.epochIndex ?: 0
     val lockedPayment: Long get() = challenge?.lockedPayment ?: 0
-    val failureKind: String? get() = challenge?.failureKind
+    val state: String? get() = challenge?.state
 
-    fun isUnsetFailure(): Boolean {
-        val kind = failureKind.orEmpty()
+    fun isOpen(): Boolean {
+        val kind = state.orEmpty()
         return kind.isEmpty() ||
-            kind == "POC_CHALLENGE_FAILURE_KIND_UNSET" ||
-            kind == "UNSET" ||
+            kind == "POC_CHALLENGE_STATE_OPEN" ||
+            kind == "OPEN" ||
             kind == "0"
     }
 
+    fun isPassed(): Boolean {
+        val kind = state.orEmpty()
+        return kind.contains("PASSED") || kind == "3"
+    }
+
     fun isChallengeFailed(): Boolean {
-        val kind = failureKind.orEmpty()
+        val kind = state.orEmpty()
         return kind.contains("CHALLENGE_FAILED") || kind == "1"
+    }
+
+    fun isAborted(): Boolean {
+        val kind = state.orEmpty()
+        return kind.contains("ABORTED") || kind == "2"
     }
 }
 

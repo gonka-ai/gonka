@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"common/utils"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
@@ -19,6 +20,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type stubBrokerChainBridge struct {
@@ -175,6 +177,84 @@ func TestV2GeneratedCallbackRequiresModelScopedRoute(t *testing.T) {
 	assert.Equal(t, uint32(1), otherStore.Count())
 }
 
+func postGeneratedBatch(t *testing.T, server *Server, modelID string, blockHeight int64) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"block_hash":   "abc",
+		"block_height": blockHeight,
+		"public_key":   "pub",
+		"node_id":      1,
+		"artifacts": []map[string]any{
+			{"nonce": 1, "vector_b64": base64.StdEncoding.EncodeToString([]byte{1, 2, 3})},
+		},
+	})
+	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/"+modelID+"/generated", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestV2GeneratedCallbackRejectsWrongStageHeight(t *testing.T) {
+	artifactStore := artifacts.NewManagedArtifactStore(t.TempDir(), 3)
+	defer artifactStore.Close()
+	artifactStore.ActivateStage(100)
+
+	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA), WithArtifactStore(artifactStore))
+	rec := postGeneratedBatch(t, server, testModelA, 999)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	_, err := artifactStore.GetStore(100, testModelA)
+	assert.Error(t, err)
+}
+
+func TestV2GeneratedCallback_ChallengeStageRejectsOldHeight(t *testing.T) {
+	poc.OpenChallenges.Reset()
+	t.Cleanup(poc.OpenChallenges.Reset)
+	poc.OpenChallenges.Replace("me", []*types.OpenPoCChallenge{{
+		Challenge: &types.PoCChallenge{
+			Target:      "me",
+			StartHeight: 777,
+			Seed:        []byte{1},
+		},
+		Finish:     2000,
+		Generating: true,
+	}}, 0)
+
+	testBroker := newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA)
+	testBroker.GetPhaseTracker().Update(
+		chainphase.BlockInfo{Height: 800, Hash: "test-hash"},
+		&types.Epoch{Index: 1, PocStartBlockHeight: 100},
+		&types.EpochParams{
+			EpochLength:           1000,
+			EpochShift:            0,
+			PocStageDuration:      100,
+			PocExchangeDuration:   50,
+			PocValidationDelay:    10,
+			PocValidationDuration: 100,
+		},
+		true,
+		nil,
+	)
+
+	artifactStore := artifacts.NewManagedArtifactStore(t.TempDir(), 3)
+	defer artifactStore.Close()
+	server := NewServer(nil, testBroker, WithArtifactStore(artifactStore))
+
+	old := postGeneratedBatch(t, server, testModelA, 100)
+	assert.Equal(t, http.StatusBadRequest, old.Code)
+
+	ok := postGeneratedBatch(t, server, testModelA, 777)
+	assert.Equal(t, http.StatusOK, ok.Code)
+
+	_, err := artifactStore.GetStore(100, testModelA)
+	assert.Error(t, err)
+	modelStore, err := artifactStore.GetStore(777, testModelA)
+	assert.NoError(t, err)
+	assert.Equal(t, uint32(1), modelStore.Count())
+}
+
 func TestV2ValidatedCallbackUsesPathModelID(t *testing.T) {
 	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
 	mockRecorder.
@@ -212,11 +292,15 @@ func TestV2ValidatedCallbackUsesPathModelID(t *testing.T) {
 }
 
 func TestV2ValidatedCallbackSubmitsChallengeMsg(t *testing.T) {
+	const pubKey = "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540"
+	target, err := utils.PubKeyHexToAddress(pubKey)
+	require.NoError(t, err)
+
 	poc.OpenChallenges.Reset()
 	t.Cleanup(poc.OpenChallenges.Reset)
 	poc.OpenChallenges.Replace("me", []*types.OpenPoCChallenge{{
 		Challenge: &types.PoCChallenge{
-			Target:      "other",
+			Target:      target,
 			StartHeight: 500,
 		},
 		Finish:     900,
@@ -229,7 +313,8 @@ func TestV2ValidatedCallbackSubmitsChallengeMsg(t *testing.T) {
 			return msg != nil &&
 				msg.PocStageStartBlockHeight == 500 &&
 				len(msg.Validations) == 1 &&
-				msg.Validations[0].ModelId == testModelA
+				msg.Validations[0].ModelId == testModelA &&
+				msg.Validations[0].ParticipantAddress == target
 		})).
 		Return(nil).
 		Once()
@@ -239,7 +324,7 @@ func TestV2ValidatedCallbackSubmitsChallengeMsg(t *testing.T) {
 	body, err := json.Marshal(map[string]any{
 		"block_hash":      "abc",
 		"block_height":    500,
-		"public_key":      "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
+		"public_key":      pubKey,
 		"node_id":         1,
 		"n_total":         5,
 		"n_mismatch":      0,
@@ -256,6 +341,49 @@ func TestV2ValidatedCallbackSubmitsChallengeMsg(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	mockRecorder.AssertExpectations(t)
 	mockRecorder.AssertNotCalled(t, "SubmitPocValidationsV2", mock.Anything)
+}
+
+func TestV2ValidatedCallback_HeightCollisionUsesRegularMsg(t *testing.T) {
+	const pubKey = "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540"
+	poc.OpenChallenges.Reset()
+	t.Cleanup(poc.OpenChallenges.Reset)
+	poc.OpenChallenges.Replace("me", []*types.OpenPoCChallenge{{
+		Challenge: &types.PoCChallenge{
+			Target:      "gonka1someoneelse",
+			StartHeight: 500,
+		},
+		Finish:     900,
+		Generating: false,
+	}}, 0)
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.
+		On("SubmitPocValidationsV2", mock.MatchedBy(func(msg *types.MsgSubmitPocValidationsV2) bool {
+			return msg != nil && msg.PocStageStartBlockHeight == 500
+		})).
+		Return(nil).
+		Once()
+
+	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA))
+	body, err := json.Marshal(map[string]any{
+		"block_hash":      "abc",
+		"block_height":    500,
+		"public_key":      pubKey,
+		"node_id":         1,
+		"n_total":         5,
+		"n_mismatch":      0,
+		"mismatch_nonces": []int{},
+		"p_value":         1.0,
+		"fraud_detected":  false,
+	})
+	assert.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/model-a/validated", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	mockRecorder.AssertExpectations(t)
+	mockRecorder.AssertNotCalled(t, "SubmitPoCChallengeValidations", mock.Anything)
 }
 
 func TestGetVersions_OracleJSONContract(t *testing.T) {

@@ -376,7 +376,7 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 
 	inference = am.expireInferenceAndIssueRefund(ctx, inference)
 
-	if am.keeper.IsChallengeGenerating(ctx, inference.AssignedTo) {
+	if am.keeper.IsUnderChallenge(ctx, inference.AssignedTo) {
 		return
 	}
 
@@ -395,8 +395,9 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 //     CreateEpochGroup (line 459), CreateGroup (line 464). These mean the chain cannot
 //     advance to the next epoch and would be in an inconsistent state if we continued.
 //   - RECOVERABLE (log + continue): Inference expiry failures, pruning errors, upgrade
-//     tracking errors, compute result errors, confirmation PoC failures. These affect
-//     individual operations but the chain can safely continue without them.
+//     tracking errors, compute result errors, confirmation PoC failures, PoC challenge
+//     decision and payout. These affect individual operations but the chain can safely
+//     continue without them.
 //   - CROSS-MODULE (log + continue): Collateral AdvanceEpoch, StreamVesting AdvanceEpoch,
 //     BLS key generation. Failures here should not block the inference module's epoch
 //     transition.

@@ -532,6 +532,10 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 		if count == 0 || rootHash == nil {
 			continue
 		}
+		treeDepth := stageStore.Store.FlushedDepth()
+		if treeDepth == 0 {
+			continue
+		}
 		key := commitKey{stage: pocHeight, modelID: stageStore.ModelID}
 		if pending, ok := w.challengePending[key]; ok && !samePayloadRetryable(pending, height) {
 			continue
@@ -552,9 +556,10 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 			}
 		}
 		entries = append(entries, &types.PoCV2CommitEntry{
-			ModelId:  stageStore.ModelID,
-			Count:    count,
-			RootHash: rootHash,
+			ModelId:   stageStore.ModelID,
+			Count:     count,
+			RootHash:  rootHash,
+			TreeDepth: treeDepth,
 		})
 		submittedStates[key] = commitState{
 			count:    count,

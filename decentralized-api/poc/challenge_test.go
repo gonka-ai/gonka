@@ -24,6 +24,30 @@ func openCh(target string, start, finish int64, generating bool, seed ...byte) *
 	}
 }
 
+func TestVoteForRequiresTargetAndStage(t *testing.T) {
+	t.Cleanup(OpenChallenges.Reset)
+	self := "gonka1self"
+	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 777, 2000, true)}, 0)
+	require.NotNil(t, OpenChallenges.VoteFor(self, 777))
+	require.Nil(t, OpenChallenges.VoteFor(self, 100))
+	require.Nil(t, OpenChallenges.VoteFor("gonka1other", 777))
+}
+
+func TestShouldAcceptStoreCommit_ChallengeWorkSkipsRegularCommit(t *testing.T) {
+	t.Cleanup(OpenChallenges.Reset)
+	self := "gonka1self"
+	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 450, 2000, true)}, 0)
+	epochState := createTestEpochState(types.InferencePhase, 500, 100)
+	epochState.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
+		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+		TriggerHeight:         450,
+		GenerationStartHeight: 450,
+	}
+	require.NotNil(t, GeneratingChallengeWork(epochState))
+	require.Equal(t, int64(450), GetCurrentPocStageHeight(epochState))
+	require.False(t, ShouldAcceptStoreCommit(epochState, GetCurrentPocStageHeight(epochState)))
+}
+
 func TestShouldValidateChallenge(t *testing.T) {
 	short := openCh("me", 100, 200, false)
 	require.False(t, ShouldValidateChallenge(short, 500))
@@ -66,18 +90,35 @@ func TestGetCurrentPocStageHeight_ChallengeOnlyOutsideVoteWindow(t *testing.T) {
 
 	inference := createTestEpochState(types.InferencePhase, 800, 100)
 	require.Equal(t, int64(777), GetCurrentPocStageHeight(inference))
-	require.True(t, ShouldAcceptGeneratedArtifacts(inference))
+	require.True(t, ShouldAcceptGeneratedArtifacts(inference),
+		"challenge generate during inference must accept ArtifactBatchV2 callbacks")
+
+	cpocGen := createTestEpochState(types.InferencePhase, 800, 100)
+	cpocGen.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
+		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+		TriggerHeight:         400,
+		GenerationStartHeight: 450,
+	}
+	require.NotNil(t, GeneratingChallengeWork(cpocGen))
+	require.Equal(t, int64(777), GetCurrentPocStageHeight(cpocGen),
+		"under challenge, cPoC generation still uses the challenge stage height")
+	require.True(t, ShouldAcceptGeneratedArtifacts(cpocGen),
+		"challenge generate through cPoC generation must accept ArtifactBatchV2 callbacks")
 
 	validate := createTestEpochState(types.PoCValidatePhase, 220, 100)
 	require.Equal(t, int64(100), GetCurrentPocStageHeight(validate))
-	require.False(t, ShouldAcceptGeneratedArtifacts(validate))
+	require.False(t, ShouldAcceptGeneratedArtifacts(validate),
+		"vote windows reject generate callbacks; leftover batches log not in PoC generate phase")
 
 	cpocVal := createTestEpochState(types.InferencePhase, 800, 100)
 	cpocVal.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
 		Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
 		TriggerHeight: 400,
 	}
+	require.Nil(t, GeneratingChallengeWork(cpocVal))
 	require.Equal(t, int64(400), GetCurrentPocStageHeight(cpocVal))
+	require.False(t, ShouldAcceptGeneratedArtifacts(cpocVal),
+		"cPoC validation seals generate; in-flight ArtifactBatchV2 callbacks are rejected")
 }
 
 func TestShouldStopChallengeValidationIgnoresStageHeight(t *testing.T) {
@@ -103,30 +144,30 @@ func TestAccountPubKeyToHex(t *testing.T) {
 	require.Equal(t, "", AccountPubKeyToHex("not-base64!"))
 }
 
-func TestOwnChallengeGenerate(t *testing.T) {
+func TestGeneratingChallengeWork(t *testing.T) {
 	t.Cleanup(OpenChallenges.Reset)
 	self := "gonka1self"
 	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 777, 900, true)}, 0)
 
 	inference := createTestEpochState(types.InferencePhase, 800, 100)
-	require.NotNil(t, OwnChallengeGenerate(inference))
+	require.NotNil(t, GeneratingChallengeWork(inference))
 
 	afterFinish := createTestEpochState(types.InferencePhase, 900, 100)
-	require.Nil(t, OwnChallengeGenerate(afterFinish))
+	require.Nil(t, GeneratingChallengeWork(afterFinish))
 
 	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 777, 0, true)}, 0)
-	require.Nil(t, OwnChallengeGenerate(inference))
+	require.Nil(t, GeneratingChallengeWork(inference))
 	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 777, 900, true)}, 0)
 
 	validate := createTestEpochState(types.PoCValidatePhase, 220, 100)
-	require.Nil(t, OwnChallengeGenerate(validate))
+	require.Nil(t, GeneratingChallengeWork(validate))
 
 	cpocVal := createTestEpochState(types.InferencePhase, 800, 100)
 	cpocVal.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
 		Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
 		TriggerHeight: 400,
 	}
-	require.Nil(t, OwnChallengeGenerate(cpocVal))
+	require.Nil(t, GeneratingChallengeWork(cpocVal))
 }
 
 func TestGetCurrentPocStageHeight_AfterFinishUsesRegular(t *testing.T) {
@@ -137,12 +178,23 @@ func TestGetCurrentPocStageHeight_AfterFinishUsesRegular(t *testing.T) {
 	require.Equal(t, int64(100), GetCurrentPocStageHeight(inference))
 }
 
+func TestReplaceSkipsTerminalRecords(t *testing.T) {
+	t.Cleanup(OpenChallenges.Reset)
+	self := "gonka1self"
+	passed := openCh(self, 10, 400, false)
+	passed.Challenge.State = types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED
+	open := openCh("other", 20, 400, true)
+	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{passed, open}, 0)
+	require.Nil(t, OpenChallenges.Own(self))
+	require.NotNil(t, OpenChallenges.Own("other"))
+}
+
 func TestSeedHex(t *testing.T) {
 	require.Equal(t, "0102", SeedHex([]byte{1, 2}))
 	require.Equal(t, "", SeedHex(nil))
 }
 
-func TestFilterNodesForValidationIncludesPocSlotWhenChallenged(t *testing.T) {
+func TestFilterNodesForValidation_UnderChallengeNothingPreserved(t *testing.T) {
 	t.Cleanup(OpenChallenges.Reset)
 	self := "gonka1self"
 	OpenChallenges.Replace(self, []*types.OpenPoCChallenge{openCh(self, 10, 400, true)}, 0)
@@ -159,7 +211,7 @@ func TestFilterNodesForValidationIncludesPocSlotWhenChallenged(t *testing.T) {
 	require.Len(t, filtered, 1)
 }
 
-func TestFilterNodesForValidationSkipsPocSlotWhenNotChallenged(t *testing.T) {
+func TestFilterNodesForValidation_NotUnderChallengeKeepsPreserved(t *testing.T) {
 	t.Cleanup(OpenChallenges.Reset)
 	nodes := []broker.NodeResponse{{
 		Node: broker.Node{Id: "n1"},

@@ -46,7 +46,7 @@ func (am AppModule) decideCurrentChallengeSegments(ctx context.Context, epochInd
 		if ch.EpochIndex != epochIndex {
 			continue
 		}
-		if ch.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+		if ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 			continue
 		}
 		cacheCtx, writeFn := sdkCtx.CacheContext()
@@ -56,6 +56,13 @@ func (am AppModule) decideCurrentChallengeSegments(ctx context.Context, epochInd
 					"target", ch.Target, "error", abortErr)
 			}
 			continue
+		}
+		if !rotate {
+			if err := am.keeper.MarkChallengePassed(cacheCtx, ch.Target); err != nil {
+				am.LogError("decideCurrentChallengeSegments: failed to mark passed", types.PoC,
+					"target", ch.Target, "error", err)
+				continue
+			}
 		}
 		writeFn()
 	}
@@ -91,7 +98,7 @@ func (am AppModule) decideCurrentChallengeSegment(
 	if !found {
 		return nil
 	}
-	if updated.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+	if updated.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 		return am.keeper.DeleteChallengeSegmentData(ctx, ch.Target)
 	}
 	return am.advanceAfterDecision(ctx, updated, rotate)

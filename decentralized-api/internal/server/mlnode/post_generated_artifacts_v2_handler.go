@@ -60,16 +60,13 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "not in PoC generate phase")
 	}
 
-	// Pin before ingest so a race with block-dispatcher Sync (or restart before
-	// the first synced block) cannot drop our own artifacts on ErrStageNotActive.
-	if stageHeight := poc.GetCurrentPocStageHeight(epochState); stageHeight > 0 {
-		s.artifactStore.ActivateStage(stageHeight)
-		if body.BlockHeight != stageHeight {
-			logging.Warn("ArtifactBatchV2-callback. Rejected - block height is not the active PoC stage", types.PoC,
-				"blockHeight", body.BlockHeight, "activeStage", stageHeight)
-			return echo.NewHTTPError(http.StatusBadRequest, "block_height is not the active PoC stage")
-		}
+	stageHeight := poc.GetCurrentPocStageHeight(epochState)
+	if stageHeight <= 0 || body.BlockHeight != stageHeight {
+		logging.Warn("ArtifactBatchV2-callback. Rejected - block height is not the active PoC stage", types.PoC,
+			"blockHeight", body.BlockHeight, "activeStage", stageHeight)
+		return echo.NewHTTPError(http.StatusBadRequest, "block_height is not the active PoC stage")
 	}
+	s.artifactStore.ActivateStage(stageHeight)
 
 	// Look up node_id string from node number
 	node, found := s.broker.GetNodeByNodeNum(uint64(body.NodeId))
@@ -105,7 +102,7 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 	// Store artifacts locally for off-chain proofs
 	// Store commits (MsgPoCV2StoreCommit) are submitted by CommitWorker
 	// Weight distributions (MsgMLNodeWeightDistribution) are submitted at end of generation
-	totalCount, nodeDistribution, err := s.addToLocalStorage(body.BlockHeight, modelID, nodeId, protoArtifacts)
+	totalCount, nodeDistribution, err := s.addToLocalStorage(stageHeight, modelID, nodeId, protoArtifacts)
 	if err != nil {
 		logging.Error("ArtifactBatchV2-callback. Failed to store artifacts", types.PoC,
 			"blockHeight", body.BlockHeight,
@@ -115,7 +112,7 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 	}
 
 	logging.Debug("ArtifactBatchV2-callback. Stored locally", types.PoC,
-		"blockHeight", body.BlockHeight,
+		"blockHeight", stageHeight,
 		"modelId", modelID,
 		"nodeId", nodeId,
 		"artifactsCount", len(protoArtifacts),
@@ -175,7 +172,7 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 		"fraudDetected", body.FraudDetected)
 
 	// Use batch submission (even for single validation - no single-validation RPC exists)
-	if ch := poc.OpenChallenges.ByStartHeight(body.BlockHeight); ch != nil {
+	if ch := poc.OpenChallenges.VoteFor(address, body.BlockHeight); ch != nil {
 		msg := &types.MsgSubmitPoCChallengeValidations{
 			PocStageStartBlockHeight: body.BlockHeight,
 			Validations: []*types.PoCValidationEntryV2{

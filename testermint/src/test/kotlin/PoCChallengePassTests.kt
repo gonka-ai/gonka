@@ -55,11 +55,11 @@ class PoCChallengePassTests : TestermintTest() {
         assertThat(shortWindow.code).isNotEqualTo(0)
 
         val snapshot = snapshotChallengeAtEndOfPoCValidation(genesis, target)
-        assertThat(snapshot.challenge.isUnsetFailure()).isTrue()
+        assertThat(snapshot.challenge.isPassed()).isTrue()
         // decide deletes segment commits; SettleAccounts wipes ConfirmationPoCRatio in the same block
         assertThat(snapshot.challenge.commits).isEmpty()
         val join1Cw = confirmationWeight(genesis, snapshot.challenge.epochIndex, target)
-        Logger.info("Snapshot failure=${snapshot.challenge.failureKind} join1 confirmationWeight=$join1Cw")
+        Logger.info("Snapshot state=${snapshot.challenge.state} join1 confirmationWeight=$join1Cw")
         assertThat(join1Cw).isCloseTo(10, Offset.offset(1L))
 
         logSection("Waiting for settlement")

@@ -43,8 +43,8 @@ func (k msgServer) ScheduleMaintenance(goCtx context.Context, msg *types.MsgSche
 		return nil, types.ErrParticipantNotFound
 	}
 
-	if k.IsChallengeGenerating(goCtx, msg.Participant) {
-		return nil, sdkerrors.Wrap(types.ErrIllegalState, "participant is generating a PoC challenge")
+	if k.IsUnderChallenge(goCtx, msg.Participant) {
+		return nil, sdkerrors.Wrap(types.ErrIllegalState, "participant is under PoC challenge")
 	}
 
 	// Validate duration is positive and within limits

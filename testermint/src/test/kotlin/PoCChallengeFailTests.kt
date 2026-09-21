@@ -41,7 +41,7 @@ class PoCChallengeFailTests : TestermintTest() {
         assertThat(committed.commits.first().count).isEqualTo(3)
         val snapshot = snapshotChallengeAtEndOfPoCValidation(genesis, target)
         val join1AtSnap = participantAtHeight(genesis, join1, snapshot.height)
-        Logger.info("Snapshot failure=${snapshot.challenge.failureKind} join1 status=${join1AtSnap?.status}")
+        Logger.info("Snapshot state=${snapshot.challenge.state} join1 status=${join1AtSnap?.status}")
         assertThat(snapshot.challenge.isChallengeFailed()).isTrue()
         assertThat(join1AtSnap?.status).isEqualTo("INACTIVE")
 

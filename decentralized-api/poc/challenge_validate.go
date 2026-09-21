@@ -9,8 +9,7 @@ import (
 )
 
 // ValidateOpenChallenges is the extra voter pass after ordinary ValidateAll.
-// Every participant including the challenged target validates every punishable
-// frozen open challenge. Cap on chain is 4.
+// Every participant, including a challenged target, votes finished punishable open segments.
 func (v *OffChainValidator) ValidateOpenChallenges() {
 	epochState := v.phaseTracker.GetCurrentEpochState()
 	if epochState == nil || !epochState.IsSynced {
@@ -108,12 +107,13 @@ func (v *OffChainValidator) challengeWorkItems(queryClient types.QueryClient, ch
 			continue
 		}
 		workItems = append(workItems, participantWork{
-			address:  commit.ParticipantAddress,
-			modelId:  commit.ModelId,
-			url:      participantResp.Participant.InferenceUrl,
-			pubKey:   pubKey,
-			count:    commit.Count,
-			rootHash: commit.RootHash,
+			address:   commit.ParticipantAddress,
+			modelId:   commit.ModelId,
+			url:       participantResp.Participant.InferenceUrl,
+			pubKey:    pubKey,
+			count:     commit.Count,
+			rootHash:  commit.RootHash,
+			treeDepth: commit.TreeDepth,
 		})
 	}
 	return workItems

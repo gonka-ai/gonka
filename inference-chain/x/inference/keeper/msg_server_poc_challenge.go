@@ -31,7 +31,7 @@ func (k msgServer) PoCChallengeStoreCommit(goCtx context.Context, msg *types.Msg
 	if !found {
 		return nil, sdkerrors.Wrap(types.ErrIllegalState, "no open challenge for signer")
 	}
-	if ch.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+	if ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 		return nil, sdkerrors.Wrap(types.ErrIllegalState, "challenge already decided")
 	}
 	epochIndex, ok := k.GetEffectiveEpochIndex(goCtx)
@@ -111,6 +111,7 @@ func (k msgServer) persistChallengeCommitUpdates(
 			RootHash:                 update.entry.RootHash,
 			CommitBlockHeight:        currentBlockHeight,
 			ModelId:                  update.modelID,
+			TreeDepth:                update.entry.TreeDepth,
 		}
 		if err := k.PoCChallengeCommits.Set(ctx, collections.Join(addr, update.modelID), commit); err != nil {
 			return sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("failed to store commit: %v", err))
@@ -164,7 +165,7 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 		if err != nil {
 			return nil, err
 		}
-		if !found || ch.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+		if !found || ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 			continue
 		}
 		if ch.EpochIndex != epochIndex {

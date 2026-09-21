@@ -96,8 +96,8 @@ func TestCreatePoCChallenge_WritesSeedAndLocksPayment(t *testing.T) {
 	require.Greater(t, ch.ExpectedReward, uint64(0))
 	require.Greater(t, ch.LockedPayment, uint64(0))
 	require.Equal(t, ch.ExpectedReward/10, ch.LockedPayment)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
-	require.True(t, k.IsChallengeGenerating(ctx, testutil.Executor))
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.State)
+	require.True(t, k.IsUnderChallenge(ctx, testutil.Executor))
 }
 
 func TestCreatePoCChallenge_RejectsZeroAlpha(t *testing.T) {
@@ -163,6 +163,7 @@ func TestPoCChallengeStoreCommit_FreezesAtFinish(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, commits, 1)
 	require.Equal(t, uint32(4), commits[0].Count)
+	require.Equal(t, uint32(24), commits[0].TreeDepth)
 
 	finish, err := k.ChallengeFinish(ctx, types.PoCChallenge{EpochIndex: 2, StartHeight: 50})
 	require.NoError(t, err)
@@ -260,7 +261,7 @@ func TestRemoveFromEpochGroupsMarksAborted(t *testing.T) {
 	ch, found, getErr := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, getErr)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED, ch.State)
 }
 
 func TestRemoveFromEpochGroupsDoesNotOverwriteChallengeFail(t *testing.T) {
@@ -270,7 +271,7 @@ func TestRemoveFromEpochGroupsDoesNotOverwriteChallengeFail(t *testing.T) {
 		EpochIndex:  2,
 		Target:      testutil.Executor,
 		StartHeight: 10,
-		FailureKind: types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED,
+		State:       types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED,
 	}))
 	_ = k.RemoveFromEpochGroupsForTesting(ctx, &types.Participant{
 		Index:   testutil.Executor,
@@ -279,21 +280,70 @@ func TestRemoveFromEpochGroupsDoesNotOverwriteChallengeFail(t *testing.T) {
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED, ch.State)
 }
 
-func TestIsChallengeGenerating_FalseInSafetyWindow(t *testing.T) {
+func TestMarkChallengePassed_NoopOnFailed(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 10,
+		State:       types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED,
+	}))
+	require.NoError(t, k.MarkChallengePassed(ctx, testutil.Executor))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED, ch.State)
+}
+
+func TestIsUnderChallenge_FalseInSafetyWindow(t *testing.T) {
 	k, ctx, _ := setupChallengeCreate(t, 1960)
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
 		EpochIndex:  2,
 		Target:      testutil.Executor,
 		StartHeight: 100,
 	}))
-	require.False(t, k.IsChallengeGenerating(ctx, testutil.Executor))
+	require.False(t, k.IsUnderChallenge(ctx, testutil.Executor))
 	require.True(t, k.HasActiveChallengeRecord(ctx, testutil.Executor))
 }
 
 func TestPayAndDeleteOldChallenges_PassAndRefund(t *testing.T) {
+	k, ctx, mocks := setupChallengeCreate(t, 100)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:    2,
+		Challenger:    testutil.Creator,
+		Target:        testutil.Executor,
+		LockedPayment: 10,
+		StartHeight:   50,
+		State:         types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED,
+	}))
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil).Times(1)
+	k.PayAndDeleteOldChallenges(ctx, 3)
+	_, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.False(t, found)
+
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:    2,
+		Challenger:    testutil.Creator,
+		Target:        testutil.Executor,
+		LockedPayment: 10,
+		State:         types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED,
+	}))
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil).Times(1)
+	k.PayAndDeleteOldChallenges(ctx, 3)
+	_, found, err = k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
+func TestPayAndDeleteOldChallenges_OpenRefundsChallenger(t *testing.T) {
 	k, ctx, mocks := setupChallengeCreate(t, 100)
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
 		EpochIndex:    2,
@@ -309,21 +359,6 @@ func TestPayAndDeleteOldChallenges_PassAndRefund(t *testing.T) {
 	_, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.False(t, found)
-
-	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
-		EpochIndex:    2,
-		Challenger:    testutil.Creator,
-		Target:        testutil.Executor,
-		LockedPayment: 10,
-		FailureKind:   types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED,
-	}))
-	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).
-		Return(nil).Times(1)
-	k.PayAndDeleteOldChallenges(ctx, 3)
-	_, found, err = k.GetPoCChallenge(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.False(t, found)
 }
 
 func TestPayAndDeleteOldChallenges_RetriesAfterError(t *testing.T) {
@@ -333,7 +368,7 @@ func TestPayAndDeleteOldChallenges_RetriesAfterError(t *testing.T) {
 		Challenger:    testutil.Creator,
 		Target:        testutil.Executor,
 		LockedPayment: 10,
-		FailureKind:   types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED,
+		State:         types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED,
 	}))
 	mocks.BankKeeper.EXPECT().
 		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).
@@ -371,19 +406,19 @@ func TestWaiveDevshardMissesForActiveChallenge(t *testing.T) {
 func TestSameEpochChallengeTargetsIncludesFailed(t *testing.T) {
 	k, ctx, _ := setupChallengeCreate(t, 100)
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
-		EpochIndex:  2,
-		Target:      testutil.Executor,
-		FailureKind: types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED,
+		EpochIndex: 2,
+		Target:     testutil.Executor,
+		State:      types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED,
 	}))
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
-		EpochIndex:  2,
-		Target:      testutil.Executor2,
-		FailureKind: types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED,
+		EpochIndex: 2,
+		Target:     testutil.Executor2,
+		State:      types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED,
 	}))
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
-		EpochIndex:  3,
-		Target:      testutil.Creator,
-		FailureKind: types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET,
+		EpochIndex: 3,
+		Target:     testutil.Creator,
+		State:      types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
 	}))
 	set, err := k.SameEpochChallengeTargets(ctx, 2)
 	require.NoError(t, err)
@@ -448,7 +483,7 @@ func TestHasActiveChallengeRecord_FalseAfterEpochFlip(t *testing.T) {
 	require.False(t, k.HasActiveChallengeRecord(ctx, testutil.Executor))
 }
 
-func TestPayAndDeleteOldChallenges_OldUnsetPassNotReevaluated(t *testing.T) {
+func TestPayAndDeleteOldChallenges_OpenAbortsThenRefunds(t *testing.T) {
 	k, ctx, mocks := setupChallengeCreate(t, 100)
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
 		EpochIndex:    2,
@@ -464,7 +499,7 @@ func TestPayAndDeleteOldChallenges_OldUnsetPassNotReevaluated(t *testing.T) {
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.State)
 
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 3))
 	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 3, PocStartBlockHeight: 2000}))
@@ -505,4 +540,84 @@ func TestPayAndDeleteOldChallenges_OldUnsetPassNotReevaluated(t *testing.T) {
 	_, found, err = k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.False(t, found)
+}
+
+func TestCountPoCChallenges_CountsOnlyOpen(t *testing.T) {
+	k, ctx, _ := setupChallengeCreate(t, 100)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex: 2,
+		Target:     testutil.Executor,
+		State:      types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
+	}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex: 2,
+		Target:     testutil.Executor2,
+		State:      types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED,
+	}))
+	n, err := k.CountPoCChallenges(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+}
+
+func TestOpenPoCChallenges_ReturnsEveryOpenRecord(t *testing.T) {
+	k, ctx, _ := setupChallengeCreate(t, 100)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocChallengeParams.MaxActiveChallenges = 1
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 10,
+		State:       types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
+	}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor2,
+		StartHeight: 11,
+		State:       types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
+	}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex: 2,
+		Target:     testutil.Creator,
+		State:      types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED,
+	}))
+	resp, err := k.OpenPoCChallenges(ctx, &types.QueryOpenPoCChallengesRequest{})
+	require.NoError(t, err)
+	require.Len(t, resp.Challenges, 2)
+	got := map[string]struct{}{}
+	for _, ch := range resp.Challenges {
+		require.NotNil(t, ch.Challenge)
+		require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.Challenge.State)
+		got[ch.Challenge.Target] = struct{}{}
+	}
+	_, ok := got[testutil.Executor]
+	require.True(t, ok)
+	_, ok = got[testutil.Executor2]
+	require.True(t, ok)
+}
+
+func TestFilterOutChallengeParticipants(t *testing.T) {
+	k, ctx, _ := setupChallengeCreate(t, 100)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 10,
+		State:       types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
+	}))
+	members := []*group.GroupMember{
+		{Member: &group.Member{Address: testutil.Executor}},
+		{Member: &group.Member{Address: testutil.Validator}},
+	}
+	filtered := k.FilterOutChallengeParticipants(ctx, members)
+	require.Len(t, filtered, 1)
+	require.Equal(t, testutil.Validator, filtered[0].Member.Address)
+
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex: 2,
+		Target:     testutil.Executor,
+		State:      types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED,
+	}))
+	filtered = k.FilterOutChallengeParticipants(ctx, members)
+	require.Len(t, filtered, 2)
 }

@@ -5,11 +5,11 @@ import "inference/inference/poc_v2.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
-enum PoCChallengeFailureKind {
-  POC_CHALLENGE_FAILURE_KIND_UNSET = 0;
-  POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED = 1;
-  // Challenge ended without a challenge-caused failure.
-  POC_CHALLENGE_FAILURE_KIND_ABORTED = 2;
+enum PoCChallengeState {
+  POC_CHALLENGE_STATE_OPEN = 0;
+  POC_CHALLENGE_STATE_CHALLENGE_FAILED = 1;
+  POC_CHALLENGE_STATE_ABORTED = 2;
+  POC_CHALLENGE_STATE_PASSED = 3;
 }
 
 message PoCChallenge {
@@ -20,7 +20,7 @@ message PoCChallenge {
   uint64 locked_payment = 5;
   int64 start_height = 6;
   bytes seed = 7;
-  PoCChallengeFailureKind failure_kind = 8;
+  PoCChallengeState state = 8;
 }
 
 message OpenPoCChallenge {

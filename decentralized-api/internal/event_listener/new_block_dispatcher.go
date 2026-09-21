@@ -731,7 +731,7 @@ func (d *OnNewBlockDispatcher) shouldTriggerReconciliation(epochState chainphase
 	// Challenge generate is overlayed onto inference (and cPoC generate). Use
 	// the PoC cadence so StartPocCommand -> StartPoCNodeCommandV2 keeps
 	// driving MLNodes, including the finish-k StopPowV2 wind-down.
-	if poc.OwnChallengeGenerate(&epochState) != nil {
+	if poc.GeneratingChallengeWork(&epochState) != nil {
 		return shouldTriggerReconciliation(epochState.CurrentBlock.Height, &d.reconciliationConfig, d.reconciliationConfig.PoC)
 	}
 	switch epochState.CurrentPhase {
@@ -814,7 +814,7 @@ func (d *OnNewBlockDispatcher) refreshOpenChallenges(ctx context.Context, minPun
 }
 
 func getCommandForPhase(phaseInfo chainphase.EpochState) (broker.Command, *chan bool) {
-	if poc.OwnChallengeGenerate(&phaseInfo) != nil {
+	if poc.GeneratingChallengeWork(&phaseInfo) != nil {
 		cmd := broker.NewStartPocCommand()
 		return cmd, &cmd.Response
 	}

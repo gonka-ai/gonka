@@ -60,10 +60,10 @@ class PoCChallengeAccumulateTests : TestermintTest() {
         assertThat(accumulated.commits.first { it.count >= 20 }.count).isEqualTo(20)
 
         val snapshot = snapshotChallengeAtEndOfPoCValidation(genesis, target)
-        assertThat(snapshot.challenge.isUnsetFailure()).isTrue()
+        assertThat(snapshot.challenge.isPassed()).isTrue()
         assertThat(snapshot.challenge.commits).isEmpty()
         val join1Cw = confirmationWeight(genesis, snapshot.challenge.epochIndex, target)
-        Logger.info("Snapshot failure=${snapshot.challenge.failureKind} join1 confirmationWeight=$join1Cw")
+        Logger.info("Snapshot state=${snapshot.challenge.state} join1 confirmationWeight=$join1Cw")
         assertThat(join1Cw).isCloseTo(expectedCw, Offset.offset(1L))
 
         logSection("Waiting for settlement")

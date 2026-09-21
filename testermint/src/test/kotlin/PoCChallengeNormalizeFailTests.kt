@@ -45,7 +45,7 @@ class PoCChallengeNormalizeFailTests : TestermintTest() {
         val join1AtSnap = participantAtHeight(genesis, join1, snapshot.height)
         val join1Cw = confirmationWeight(genesis, snapshot.challenge.epochIndex, target)
         Logger.info(
-            "Snapshot failure=${snapshot.challenge.failureKind} join1 status=${join1AtSnap?.status} " +
+            "Snapshot state=${snapshot.challenge.state} join1 status=${join1AtSnap?.status} " +
                 "confirmationWeight=$join1Cw"
         )
         assertThat(snapshot.challenge.isChallengeFailed()).isTrue()

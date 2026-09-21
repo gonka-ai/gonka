@@ -11,13 +11,10 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// ChallengeCommitLeadBlocks is how many blocks before finish DAPI stops
-// generation so the last commit can land. Those blocks still count against
-// the target.
+// ChallengeCommitLeadBlocks stops generation before finish so the last commit can land.
 const ChallengeCommitLeadBlocks int64 = 4
 
-// OpenChallenges is the process-wide view of Query/OpenPoCChallenges.
-// The dispatcher replaces it every synced block. Nothing is persisted.
+// OpenChallenges is the transient view of open challenges, replaced every synced block.
 var OpenChallenges = NewChallengeCache()
 
 func init() {
@@ -59,6 +56,9 @@ func (c *ChallengeCache) Replace(self string, list []*types.OpenPoCChallenge, mi
 	copied := make([]*types.OpenPoCChallenge, 0, len(list))
 	for _, ch := range list {
 		if ch == nil {
+			continue
+		}
+		if ch.Challenge != nil && ch.Challenge.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 			continue
 		}
 		copied = append(copied, cloneChallenge(ch))
@@ -113,30 +113,20 @@ func (c *ChallengeCache) Own(addr string) *types.OpenPoCChallenge {
 	return nil
 }
 
-func (c *ChallengeCache) OwnGenerating(addr string) *types.OpenPoCChallenge {
-	ch := c.Own(addr)
+func (c *ChallengeCache) UnderChallenge() *types.OpenPoCChallenge {
+	ch := c.Own(c.Self())
 	if ch == nil || !ch.Generating {
 		return nil
 	}
 	return ch
 }
 
-func (c *ChallengeCache) SelfGenerating() *types.OpenPoCChallenge {
-	return c.OwnGenerating(c.Self())
-}
-
-func (c *ChallengeCache) ByStartHeight(startHeight int64) *types.OpenPoCChallenge {
-	if startHeight <= 0 {
+func (c *ChallengeCache) VoteFor(addr string, stageHeight int64) *types.OpenPoCChallenge {
+	ch := c.Own(addr)
+	if ch == nil || ch.StartHeight() != stageHeight {
 		return nil
 	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	for _, ch := range c.list {
-		if ch != nil && ch.StartHeight() == startHeight {
-			return cloneChallenge(ch)
-		}
-	}
-	return nil
+	return ch
 }
 
 func (c *ChallengeCache) Punishable() []*types.OpenPoCChallenge {
@@ -179,13 +169,13 @@ func InVoteWindow(epochState *chainphase.EpochState) bool {
 	return epochState != nil && epochState.IsPoCVoteWindow()
 }
 
-// OwnChallengeGenerate is the overlay generate predicate: we are the target,
-// the segment is still open, and this is not a regular/cPoC vote window.
-func OwnChallengeGenerate(epochState *chainphase.EpochState) *types.OpenPoCChallenge {
+// GeneratingChallengeWork is this participant's challenge while it should
+// generate challenge PoC. Nil in vote windows.
+func GeneratingChallengeWork(epochState *chainphase.EpochState) *types.OpenPoCChallenge {
 	if epochState == nil || epochState.IsNilOrNotSynced() || InVoteWindow(epochState) {
 		return nil
 	}
-	ch := OpenChallenges.SelfGenerating()
+	ch := OpenChallenges.UnderChallenge()
 	if ch == nil || ch.StartHeight() <= 0 {
 		return nil
 	}
@@ -193,10 +183,6 @@ func OwnChallengeGenerate(epochState *chainphase.EpochState) *types.OpenPoCChall
 		return nil
 	}
 	return ch
-}
-
-func ShouldUseChallengeStage(epochState *chainphase.EpochState) bool {
-	return OwnChallengeGenerate(epochState) != nil
 }
 
 func (c *ChallengeCache) minOrDefaultLocked() int64 {

@@ -59,11 +59,11 @@ class PoCChallengeRotateIsolationTests : TestermintTest() {
         val afterCpoc = waitForOpenChallenge(genesis, target)
         Logger.info(
             "After cPoC start=${afterCpoc.startHeight} generating=${afterCpoc.generating} " +
-                "failure=${afterCpoc.failureKind}"
+                "state=${afterCpoc.state}"
         )
         assertThat(afterCpoc.startHeight).isNotEqualTo(created.startHeight)
         assertThat(afterCpoc.generating).isTrue()
-        assertThat(afterCpoc.isUnsetFailure()).isTrue()
+        assertThat(afterCpoc.isOpen()).isTrue()
         assertThat(genesis.node.getRawParticipants().getParticipant(join1)?.status).isEqualTo("ACTIVE")
 
         val rotated = waitForRotatedCommit(genesis, target, afterCpoc.startHeight)

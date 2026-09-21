@@ -72,7 +72,7 @@ func TestDecideCurrentChallengeSegment_AbortedOnMissingSnapshot(t *testing.T) {
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED, ch.State)
 	require.Equal(t, int64(100), ch.StartHeight)
 }
 
@@ -102,7 +102,7 @@ func TestDecideCurrentChallengeSegment_ZeroCommitFails(t *testing.T) {
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED, ch.State)
 	p, ok = k.GetParticipant(ctx, testutil.Executor)
 	require.True(t, ok)
 	require.NotNil(t, p.CurrentEpochStats.ConfirmationPoCRatio)
@@ -131,7 +131,7 @@ func TestDecideCurrentChallengeSegment_ShortSegmentRotates(t *testing.T) {
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.State)
 	require.Equal(t, int64(400), ch.StartHeight)
 	require.Equal(t, ctx.HeaderInfo().Hash, ch.Seed)
 	commits, err := k.ListChallengeCommits(ctx, testutil.Executor)
@@ -159,14 +159,14 @@ func TestDecideCurrentChallengeSegment_ReplayAfterRotateDoesNotAbort(t *testing.
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.State)
 	require.Equal(t, int64(400), ch.StartHeight)
 
 	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 400, 180, true))
 	ch, found, err = k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.State)
 	require.Equal(t, int64(400), ch.StartHeight)
 }
 
@@ -183,14 +183,14 @@ func TestDecideCurrentChallengeSegment_NoRotateClosesBeforeLastSegment(t *testin
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.State)
 	require.Equal(t, int64(1950), ch.StartHeight)
 
 	require.NoError(t, am.decideLastChallengeSegments(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 0}))
 	ch, found, err = k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State)
 	require.Equal(t, int64(1950), ch.StartHeight)
 }
 
@@ -236,13 +236,13 @@ func TestDecideCurrentChallengeSegment_MissingTargetDoesNotWriteWeight(t *testin
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED, ch.State)
 	group, found := k.GetEpochGroupData(ctx, 2, "")
 	require.True(t, found)
 	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
 }
 
-func TestDecideCurrentChallengeSegment_FinalShortSegmentStaysUnset(t *testing.T) {
+func TestDecideCurrentChallengeSegment_FinalShortSegmentPasses(t *testing.T) {
 	am, k, ctx := challengeApp(t)
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
 		EpochIndex:  2,
@@ -254,7 +254,7 @@ func TestDecideCurrentChallengeSegment_FinalShortSegmentStaysUnset(t *testing.T)
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State)
 	require.Equal(t, int64(1900), ch.StartHeight)
 }
 
@@ -280,9 +280,9 @@ func TestSameEpochTargetsSkipInferenceMiss(t *testing.T) {
 		Target:      testutil.Executor,
 		StartHeight: 100,
 	}))
-	require.True(t, k.IsChallengeGenerating(ctx, testutil.Executor))
+	require.True(t, k.IsUnderChallenge(ctx, testutil.Executor))
 	ctx = ctx.WithBlockHeight(1960)
-	require.False(t, k.IsChallengeGenerating(ctx, testutil.Executor))
+	require.False(t, k.IsUnderChallenge(ctx, testutil.Executor))
 }
 
 type challengeEvalModel struct {
@@ -399,7 +399,7 @@ func TestDecideCurrentChallengeSegment_NormalizationScalesShortSegment(t *testin
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State)
 	group, found := k.GetEpochGroupData(ctx, 2, "")
 	require.True(t, found)
 	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
@@ -413,7 +413,7 @@ func TestDecideCurrentChallengeSegment_PartialRatioHaircut(t *testing.T) {
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State)
 	group, found := k.GetEpochGroupData(ctx, 2, "")
 	require.True(t, found)
 	require.Equal(t, int64(80), group.ValidationWeights[0].ConfirmationWeight)
@@ -433,7 +433,7 @@ func TestDecideCurrentChallengeSegment_PartialRatioFail(t *testing.T) {
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED, ch.State)
 }
 
 func TestDecideCurrentChallengeSegment_MultiModelPartialAcceptance(t *testing.T) {
@@ -445,7 +445,7 @@ func TestDecideCurrentChallengeSegment_MultiModelPartialAcceptance(t *testing.T)
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State)
 	group, found := k.GetEpochGroupData(ctx, 2, "")
 	require.True(t, found)
 	require.Equal(t, int64(80), group.ValidationWeights[0].ConfirmationWeight)
@@ -504,11 +504,11 @@ func TestDecideCurrentChallengeSegments_AbortDoesNotRollBackSibling(t *testing.T
 	aborted, found, err := k.GetPoCChallenge(ctx, testutil.Creator)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED, aborted.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED, aborted.State)
 	failed, found, err := k.GetPoCChallenge(ctx, testutil.Executor2)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED, failed.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED, failed.State)
 }
 
 func TestDecideCurrentChallengeSegments_SkipsOtherEpoch(t *testing.T) {
@@ -523,7 +523,7 @@ func TestDecideCurrentChallengeSegments_SkipsOtherEpoch(t *testing.T) {
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.State)
 	require.Equal(t, uint64(1), ch.EpochIndex)
 }
 
@@ -540,5 +540,5 @@ func TestDecideLastChallengeSegments_PropagatesWhenUpcomingMissing(t *testing.T)
 	ch, found, getErr := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, getErr)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET, ch.FailureKind)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.State)
 }

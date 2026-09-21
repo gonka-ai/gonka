@@ -177,7 +177,7 @@ func challengeGenerateNeedsDispatch(node *NodeWithState, epochState chainphase.E
 		node.State.PocIntendedStatus != PocStatusGenerating {
 		return false
 	}
-	ch := overlayOwnChallengeGenerate(&epochState)
+	ch := overlayGeneratingChallengeWork(&epochState)
 	if ch == nil {
 		return false
 	}
@@ -1219,7 +1219,7 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 	}
 
 	if needsPocParams {
-		if ch := overlayOwnChallengeGenerate(&epochState); ch != nil {
+		if ch := overlayGeneratingChallengeWork(&epochState); ch != nil {
 			params := &pocParams{
 				startPoCBlockHeight: ch.StartHeight(),
 				startPoCBlockHash:   hexEncodeSeed(ch.Seed()),

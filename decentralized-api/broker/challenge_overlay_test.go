@@ -24,7 +24,7 @@ func (s stubChallengeOverlay) Own(addr string) *types.OpenPoCChallenge {
 	return nil
 }
 
-func (s stubChallengeOverlay) SelfGenerating() *types.OpenPoCChallenge {
+func (s stubChallengeOverlay) UnderChallenge() *types.OpenPoCChallenge {
 	if s.ch != nil && s.ch.Generating && s.ch.Target() == s.self {
 		return s.ch
 	}
@@ -50,7 +50,7 @@ func withOverlay(t *testing.T, o challengeOverlay) {
 	t.Cleanup(func() { SetChallengeOverlay(prev) })
 }
 
-func TestStartPocCommand_OwnGeneratingIgnoresPocSlotDuringInference(t *testing.T) {
+func TestStartPocCommand_UnderChallengeNothingPreserved(t *testing.T) {
 	node := createTestNode("node-1")
 	node.State.PreservedModels = map[string]bool{"m": true}
 	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
@@ -58,7 +58,7 @@ func TestStartPocCommand_OwnGeneratingIgnoresPocSlotDuringInference(t *testing.T
 	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: testOpenCh("me", 500, 900, true, 1),
+		ch:   testOpenCh("me", 500, 900, true, 1),
 	})
 
 	b := &Broker{
@@ -72,20 +72,78 @@ func TestStartPocCommand_OwnGeneratingIgnoresPocSlotDuringInference(t *testing.T
 	require.Equal(t, PocStatusGenerating, node.State.PocIntendedStatus)
 }
 
-func TestInitValidateCommand_VoteWindowKeepsPocSlot(t *testing.T) {
+func TestStartPocCommand_VoteWindowDoesNotStartGeneration(t *testing.T) {
 	node := createTestNode("node-1")
 	node.State.PreservedModels = map[string]bool{"m": true}
 	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 
-	tracker := newPhaseTrackerWithPhase(t, types.PoCValidatePhase)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: testOpenCh("me", 500, 900, true),
+		ch:   testOpenCh("me", 500, 900, true),
 	})
 
 	b := &Broker{
 		nodes:        map[string]*NodeWithState{"node-1": node},
-		phaseTracker: tracker,
+		phaseTracker: trackerWithCPoCValidation(t),
+	}
+	cmd := NewStartPocCommand()
+	cmd.Execute(b)
+
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.IntendedStatus)
+}
+
+func trackerWithCPoCValidation(t *testing.T) *chainphase.ChainPhaseTracker {
+	t.Helper()
+	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
+	epoch := tracker.GetCurrentEpochState()
+	params := epoch.LatestEpoch.EpochParams
+	tracker.Update(
+		epoch.CurrentBlock,
+		&types.Epoch{Index: epoch.LatestEpoch.EpochIndex, PocStartBlockHeight: epoch.LatestEpoch.PocStartBlockHeight},
+		&params,
+		true,
+		&types.ConfirmationPoCEvent{
+			Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
+			GenerationStartHeight: 120,
+		},
+	)
+	return tracker
+}
+
+func TestInitValidateCommand_UnderChallengeNothingPreservedInVoteWindow(t *testing.T) {
+	node := createTestNode("node-1")
+	node.State.PreservedModels = map[string]bool{"m": true}
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 500, 900, true),
+	})
+
+	b := &Broker{
+		nodes:        map[string]*NodeWithState{"node-1": node},
+		phaseTracker: trackerWithCPoCValidation(t),
+	}
+	cmd := NewInitValidateCommand()
+	cmd.Execute(b)
+
+	require.Equal(t, types.HardwareNodeStatus_POC, node.State.IntendedStatus)
+	require.Equal(t, PocStatusValidating, node.State.PocIntendedStatus)
+}
+
+func TestInitValidateCommand_AfterSafetyKeepsPreserved(t *testing.T) {
+	node := createTestNode("node-1")
+	node.State.PreservedModels = map[string]bool{"m": true}
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 500, 900, false),
+	})
+
+	b := &Broker{
+		nodes:        map[string]*NodeWithState{"node-1": node},
+		phaseTracker: trackerWithCPoCValidation(t),
 	}
 	cmd := NewInitValidateCommand()
 	cmd.Execute(b)
@@ -93,14 +151,14 @@ func TestInitValidateCommand_VoteWindowKeepsPocSlot(t *testing.T) {
 	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.IntendedStatus)
 }
 
-func TestInferenceUpAllCommand_NoopWhileOwnGenerating(t *testing.T) {
+func TestInferenceUpAllCommand_NoopWhileGeneratingChallengeWork(t *testing.T) {
 	node := createTestNode("node-1")
 	node.State.IntendedStatus = types.HardwareNodeStatus_POC
 
 	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: testOpenCh("me", 500, 900, true),
+		ch:   testOpenCh("me", 500, 900, true),
 	})
 
 	b := &Broker{
@@ -116,7 +174,7 @@ func TestPrefetchPocParams_UsesChallengeSeedOutsideVoteWindow(t *testing.T) {
 	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: testOpenCh("me", 777, 2000, true, 0xab, 0xcd),
+		ch:   testOpenCh("me", 777, 2000, true, 0xab, 0xcd),
 	})
 
 	bridge := &MockBrokerChainBridge{}
@@ -137,7 +195,7 @@ func TestPrefetchPocParams_VoteWindowKeepsRegularParams(t *testing.T) {
 	tracker := newPhaseTrackerWithPhase(t, types.PoCValidatePhase)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: testOpenCh("me", 777, 2000, true, 0xab, 0xcd),
+		ch:   testOpenCh("me", 777, 2000, true, 0xab, 0xcd),
 	})
 
 	bridge := &MockBrokerChainBridge{}
@@ -160,7 +218,7 @@ func TestChallengeGenerateNeedsDispatch(t *testing.T) {
 	epoch := *tracker.GetCurrentEpochState()
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: testOpenCh("me", 500, 900, true, 0xab, 0xcd),
+		ch:   testOpenCh("me", 500, 900, true, 0xab, 0xcd),
 	})
 
 	node := createTestNode("n1")
@@ -191,7 +249,7 @@ func TestChallengeGenerateNeedsDispatch_FinishLead(t *testing.T) {
 	tracker.Update(chainphase.BlockInfo{Height: 897, Hash: "h"}, epoch, params, true, nil)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: testOpenCh("me", 500, 900, true, 1),
+		ch:   testOpenCh("me", 500, 900, true, 1),
 	})
 	node := createTestNode("n1")
 	node.State.IntendedStatus = types.HardwareNodeStatus_POC
@@ -215,7 +273,7 @@ func TestGetCommandForState_SetsWindDownAndLastPocV2(t *testing.T) {
 	tracker.Update(chainphase.BlockInfo{Height: 897, Hash: "h"}, epoch, params, true, nil)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: testOpenCh("me", 500, 900, true, 1),
+		ch:   testOpenCh("me", 500, 900, true, 1),
 	})
 	b := NewTestBroker()
 	b.phaseTracker = tracker

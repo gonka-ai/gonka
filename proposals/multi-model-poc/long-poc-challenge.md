@@ -43,11 +43,11 @@ The target generates from `start_height` on every MLNode that currently contribu
 
 An accepted commit must come from the target and have a count greater than the last accepted count for that model. `PocStageStartBlockHeight` is the current segment `start_height`.
 
-New inference assignments stop at `start_height`. Missed inferences are waived while the challenge is open. Maintenance is disabled for the target during the challenge.
+New inference assignments stop at `start_height`. Missed inferences are waived while the target is under challenge. Maintenance is disabled for the target during the challenge.
 
-DAPI uses the challenge seed while the target's own challenge is generating. The target does not generate Confirmation PoC. It still takes every Confirmation PoC validation window. It votes other participants' Confirmation PoC. Everyone including the target votes open challenges. Chain skip is scoring only. A same-epoch challenge record is not scored in Confirmation PoC (`ConfirmationWeight` / `ConfirmationPoCRatio` / `INACTIVE` from that event).
+While under challenge, nothing is preserved. DAPI uses the challenge seed for generation work outside vote windows. The target does not generate Confirmation PoC. It still takes every Confirmation PoC validation window. It votes other participants' Confirmation PoC. Everyone including the target votes open challenges. Chain skip is scoring only. A same-epoch challenge record is not scored in Confirmation PoC (`ConfirmationWeight` / `ConfirmationPoCRatio` / `INACTIVE` from that event).
 
-At the safety window, `generating` is false. The target joins regular PoC N+1 like everyone else. It generates, validates, and has no challenge overlay. Regular PoC preserved sampling is not stripped. The challenge record is paid later at `SetNewValidators`.
+From the safety window the target is no longer under challenge. It joins regular PoC N+1 with normal preserved sampling. The challenge record is paid later at `SetNewValidators`.
 
 ## Segments
 
@@ -73,13 +73,13 @@ Each punishable segment updates `ConfirmationWeight` and `ConfirmationPoCRatio` 
 
 A failed segment goes through the Confirmation PoC status path and sets `INACTIVE` exactly when a failed Confirmation PoC would. Generation stops.
 
-An evaluation error or unrelated leave marks `ABORTED`. That is not a challenge-caused failure.
+An evaluation error or unrelated leave marks `ABORTED`. That is not a challenge-caused failure. Missing or incomplete votes are ordinary Confirmation PoC abstentions. They can fail or haircut the target. They do not abort.
 
 ## Result
 
 The record stays until `PayAndDeleteOldChallenges` at `SetNewValidators` of the next epoch.
 
-It passes if every voted segment passed. A segment shorter than `min_punishable_segment_blocks` is not voted.
+The record is `OPEN` while the target is under challenge or waiting for a final decision. A successful last-segment decision marks `PASSED`. A short last segment is not voted and still passes.
 
 The challenge fails if a punishable segment fails the weight check. `ABORTED` does not set `INACTIVE`.
 
@@ -89,9 +89,11 @@ A failure in any segment immediately terminates the challenge.
 
 Create freezes `E` and `P`. Payout is `PayAndDeleteOldChallenges` at `SetNewValidators`, after epoch-N `SettleAccounts`. A payout error keeps the record for retry. It does not roll back settlement.
 
-Pass (`UNSET`): vest `P` to the target.
+Pass (`PASSED`): vest `P` to the target.
 
 Fail (`CHALLENGE_FAILED`) and abort (`ABORTED`): refund `P` to the challenger.
+
+An unresolved `OPEN` record at payout is aborted, then refunded. Payout never treats `OPEN` as a pass.
 
 [not implemented] vest `min(E, forfeited reward)` to the challenger on a target-caused fail.
 
@@ -123,12 +125,15 @@ Whitelist sender
         |
         +--> fail --> ConfirmationWeight / ConfirmationPoCRatio; INACTIVE; refund P
         +--> abort --> refund P; no INACTIVE
-        +--> pass --> vest P to the target
+        +--> pass --> PASSED; vest P to the target
+        +--> still OPEN at payout --> abort; refund P
 ```
 
 ## State
 
-One record keyed by target: epoch, challenger, target, `start_height`, seed, `E`, `P`, `failure_kind`.
+One record keyed by target: epoch, challenger, target, `start_height`, seed, `E`, `P`, `state`.
+
+`state` is `OPEN`, `PASSED`, `CHALLENGE_FAILED`, or `ABORTED`.
 
 The chain stores segment commits and validations. They are deleted on rotate, abort, fail, or pay.
 

@@ -36,7 +36,8 @@ func TestCommitWorker_ChallengeStoreCommitWhileUnfrozen(t *testing.T) {
 		return msg != nil &&
 			msg.PocStageStartBlockHeight == 500 &&
 			len(msg.Entries) == 1 &&
-			msg.Entries[0].ModelId == "model-a"
+			msg.Entries[0].ModelId == "model-a" &&
+			msg.Entries[0].TreeDepth > 0
 	}), uint64(803)).Return(nil).Once()
 
 	tracker := &chainphase.ChainPhaseTracker{}

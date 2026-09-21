@@ -8,6 +8,7 @@ import (
 	"cosmossdk.io/collections"
 	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 )
@@ -49,7 +50,13 @@ func (k Keeper) CountPoCChallenges(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return len(list), nil
+	n := 0
+	for _, ch := range list {
+		if ch.State == types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (k Keeper) SameEpochChallengeTargets(ctx context.Context, epochIndex uint64) (map[string]struct{}, error) {
@@ -108,12 +115,13 @@ func (k Keeper) ChallengeFinish(ctx context.Context, ch types.PoCChallenge) (int
 	return safety, nil
 }
 
-func (k Keeper) IsChallengeGenerating(ctx context.Context, addr string) bool {
+// IsUnderChallenge is true while the record is OPEN and height is below the safety window.
+func (k Keeper) IsUnderChallenge(ctx context.Context, addr string) bool {
 	ch, found, err := k.GetPoCChallenge(ctx, addr)
 	if err != nil || !found {
 		return false
 	}
-	if ch.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+	if ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 		return false
 	}
 	safety, err := k.ChallengeSafetyFinish(ctx, ch)
@@ -128,7 +136,7 @@ func (k Keeper) HasActiveChallengeRecord(ctx context.Context, addr string) bool 
 	if err != nil || !found {
 		return false
 	}
-	if ch.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+	if ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 		return false
 	}
 	epoch, ok := k.GetEffectiveEpochIndex(ctx)
@@ -222,17 +230,16 @@ func (k Keeper) DeletePoCChallenge(ctx context.Context, target string) error {
 	return k.PoCChallenges.Remove(ctx, addr)
 }
 
-// MarkChallengeAborted closes a challenge that ended without a
-// challenge-caused failure.
+// MarkChallengeAborted closes a challenge without a failure.
 func (k Keeper) MarkChallengeAborted(ctx context.Context, target, cause string) error {
 	ch, found, err := k.GetPoCChallenge(ctx, target)
 	if err != nil || !found {
 		return err
 	}
-	if ch.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+	if ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 		return nil
 	}
-	ch.FailureKind = types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_ABORTED
+	ch.State = types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED
 	if err := k.SetPoCChallenge(ctx, ch); err != nil {
 		return err
 	}
@@ -250,10 +257,22 @@ func (k Keeper) MarkChallengeFailed(ctx context.Context, target string) error {
 	if err != nil || !found {
 		return err
 	}
-	if ch.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+	if ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 		return nil
 	}
-	ch.FailureKind = types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_CHALLENGE_FAILED
+	ch.State = types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED
+	return k.SetPoCChallenge(ctx, ch)
+}
+
+func (k Keeper) MarkChallengePassed(ctx context.Context, target string) error {
+	ch, found, err := k.GetPoCChallenge(ctx, target)
+	if err != nil || !found {
+		return err
+	}
+	if ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
+		return nil
+	}
+	ch.State = types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED
 	return k.SetPoCChallenge(ctx, ch)
 }
 
@@ -262,7 +281,7 @@ func (k Keeper) RotateChallengeSegment(ctx context.Context, target string, start
 	if err != nil || !found {
 		return err
 	}
-	if ch.FailureKind != types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+	if ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 		return nil
 	}
 	if err := k.DeleteChallengeSegmentData(ctx, target); err != nil {
@@ -494,6 +513,14 @@ func (k Keeper) PayAndDeleteOldChallenges(ctx context.Context, newEffectiveEpoch
 			continue
 		}
 		cacheCtx, writeFn := sdkCtx.CacheContext()
+		if ch.State == types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
+			if err := k.MarkChallengeAborted(cacheCtx, ch.Target, "unresolved_at_settlement"); err != nil {
+				k.LogError("PayAndDeleteOldChallenges: failed to abort unresolved challenge", types.PoC,
+					"target", ch.Target, "error", err)
+				continue
+			}
+			ch.State = types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED
+		}
 		if err := k.payLockedChallengePayment(cacheCtx, ch, vesting); err != nil {
 			k.LogError("PayAndDeleteOldChallenges: payout failed", types.PoC,
 				"target", ch.Target, "challenger", ch.Challenger, "error", err)
@@ -523,22 +550,58 @@ func (k Keeper) PayAndDeleteOldChallenges(ctx context.Context, newEffectiveEpoch
 }
 
 func (k Keeper) payLockedChallengePayment(ctx context.Context, ch types.PoCChallenge, vesting *uint64) error {
-	if ch.LockedPayment == 0 {
-		return nil
-	}
-	if ch.FailureKind == types.PoCChallengeFailureKind_POC_CHALLENGE_FAILURE_KIND_UNSET {
+	switch ch.State {
+	case types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED:
+		if ch.LockedPayment == 0 {
+			return nil
+		}
 		return k.PayParticipantFromModule(ctx, ch.Target, int64(ch.LockedPayment), types.ModuleName, "poc_challenge_pass", vesting)
+	case types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED:
+		if ch.LockedPayment == 0 {
+			return nil
+		}
+		// TODO: pay min(E, forfeited reward) to the challenger on CHALLENGE_FAILED.
+		challenger, err := sdk.AccAddressFromBech32(ch.Challenger)
+		if err != nil {
+			return err
+		}
+		coins, err := types.GetCoins(int64(ch.LockedPayment))
+		if err != nil {
+			return err
+		}
+		return k.BankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, challenger, coins, "poc_challenge_refund")
+	default:
+		return fmt.Errorf("challenge %s is not terminal", ch.Target)
 	}
-	// TODO: pay min(E, forfeited reward) to the challenger on CHALLENGE_FAILED.
-	challenger, err := sdk.AccAddressFromBech32(ch.Challenger)
+}
+
+// filterOutChallengeParticipants removes members currently under challenge.
+// Hardware is on challenge PoC, so they must not receive new inference work.
+func (k Keeper) filterOutChallengeParticipants(ctx context.Context, members []*group.GroupMember) []*group.GroupMember {
+	blocked := make(map[string]struct{})
+	list, err := k.ListPoCChallenges(ctx)
 	if err != nil {
-		return err
+		return members
 	}
-	coins, err := types.GetCoins(int64(ch.LockedPayment))
-	if err != nil {
-		return err
+	for _, ch := range list {
+		if k.IsUnderChallenge(ctx, ch.Target) {
+			blocked[ch.Target] = struct{}{}
+		}
 	}
-	return k.BankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, challenger, coins, "poc_challenge_refund")
+	if len(blocked) == 0 {
+		return members
+	}
+	filtered := make([]*group.GroupMember, 0, len(members))
+	for _, member := range members {
+		if member == nil || member.Member == nil {
+			continue
+		}
+		if _, ok := blocked[member.Member.Address]; ok {
+			continue
+		}
+		filtered = append(filtered, member)
+	}
+	return filtered
 }
 
 func (k Keeper) WaiveDevshardMissesForActiveChallenge(
