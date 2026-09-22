@@ -3,6 +3,7 @@ package mlnodeclient
 import (
 	"testing"
 
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,4 +47,56 @@ func TestToValidatedWeight_ValidSmall(t *testing.T) {
 		FraudDetected: false,
 	}
 	require.Equal(t, int64(1), v.ToValidatedWeight())
+}
+
+func TestKStepsBytesRoundTrip(t *testing.T) {
+	steps := []int{0, 15, 7}
+	packed, err := KStepsToBytes(steps)
+	require.NoError(t, err)
+	got := BytesToKSteps(packed)
+	require.Equal(t, steps, got)
+}
+
+func TestPoCParamsForScheme_PrefillIgnoresN(t *testing.T) {
+	prefill := PoCParamsForScheme("m", 128, 256, types.PocScheme_POC_SCHEME_PREFILL)
+	require.False(t, prefill.Decode)
+	require.Equal(t, int64(128), prefill.SeqLen)
+	require.Equal(t, int64(0), prefill.MaxTokens)
+
+	decode := PoCParamsForScheme("m", 128, 256, types.PocScheme_POC_SCHEME_DECODE)
+	require.True(t, decode.Decode)
+	require.Equal(t, int64(DecodeSeqLen), decode.SeqLen)
+	require.Equal(t, int64(256), decode.MaxTokens)
+}
+
+func TestKStepsToBytes_RejectsOutOfRange(t *testing.T) {
+	_, err := KStepsToBytes([]int{DecodeSpherePoints})
+	require.Error(t, err)
+	_, err = KStepsToBytes([]int{255})
+	require.Error(t, err)
+	_, err = KStepsToBytes([]int{-1})
+	require.Error(t, err)
+	_, err = KStepsToBytes([]int{0, 15})
+	require.NoError(t, err)
+}
+
+func TestValidatePackedKSteps_RejectsHighBytes(t *testing.T) {
+	require.NoError(t, ValidatePackedKSteps([]byte{0, 15}))
+	require.Error(t, ValidatePackedKSteps([]byte{DecodeSpherePoints}))
+	require.Error(t, ValidatePackedKSteps([]byte{255}))
+}
+
+func TestShouldAbstain_NanAndComparedNothing(t *testing.T) {
+	require.False(t, (&ValidatedResultV2{NTotal: 5, FraudDetected: false}).ShouldAbstain())
+	require.True(t, (&ValidatedResultV2{NTotal: 5, NNanSteps: 1}).ShouldAbstain())
+	require.True(t, (&ValidatedResultV2{NTotal: 5, NMismatch: -1}).ShouldAbstain())
+	honestNan := &ValidatedResultV2{NTotal: 5, NNanSteps: 2, FraudDetected: false}
+	require.True(t, honestNan.ShouldAbstain())
+	require.Equal(t, int64(5), honestNan.ToValidatedWeight(), "abstain must not be encoded as invalid weight")
+	// vllm poc plugin drops the bad nonce and still sends fraud_detected=false.
+	// n_excluded is the signal; a pass over the remainder must not vote.
+	excluded := &ValidatedResultV2{NTotal: 3, NExcluded: 2, FraudDetected: false}
+	require.True(t, excluded.ShouldAbstain())
+	require.Equal(t, int64(3), excluded.ToValidatedWeight(), "abstain must not be encoded as invalid weight")
+	require.False(t, (&ValidatedResultV2{NTotal: 5, NExcluded: 0, FraudDetected: false}).ShouldAbstain())
 }

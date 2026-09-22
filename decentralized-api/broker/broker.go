@@ -44,6 +44,7 @@ type BrokerChainBridge interface {
 	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
 	GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error)
 	GetParams() (*types.QueryParamsResponse, error)
+	GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error)
 }
 
 type BrokerChainBridgeImpl struct {
@@ -111,6 +112,11 @@ func (b *BrokerChainBridgeImpl) GetPreservedNodesSnapshot() (*types.QueryPreserv
 func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) {
 	queryClient := b.client.NewInferenceQueryClient()
 	return queryClient.Params(b.client.GetContext(), &types.QueryParamsRequest{})
+}
+
+func (b *BrokerChainBridgeImpl) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	return queryClient.PocStageRecipe(b.client.GetContext(), &types.QueryPocStageRecipeRequest{StageHeight: stageHeight})
 }
 
 type Broker struct {
@@ -364,6 +370,29 @@ func (b *Broker) GetChainBridge() BrokerChainBridge {
 
 func (b *Broker) GetPhaseTracker() *chainphase.ChainPhaseTracker {
 	return b.phaseTracker
+}
+
+func (b *Broker) StageRecipe(stageHeight int64) (*types.PocStageRecipe, error) {
+	var event *types.ConfirmationPoCEvent
+	if b.phaseTracker != nil {
+		if st := b.phaseTracker.GetCurrentEpochState(); st != nil {
+			event = st.ActiveConfirmationPoCEvent
+		}
+	}
+	if event != nil && event.Recipe != nil && event.TriggerHeight == stageHeight {
+		return event.Recipe, nil
+	}
+	if b.chainBridge == nil {
+		return nil, fmt.Errorf("missing PocStageRecipe for height %d", stageHeight)
+	}
+	resp, err := b.chainBridge.GetPocStageRecipe(stageHeight)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil || !resp.Found || resp.Recipe == nil {
+		return nil, fmt.Errorf("missing PocStageRecipe for height %d", stageHeight)
+	}
+	return resp.Recipe, nil
 }
 
 func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan NodeCommandResponse {
@@ -814,6 +843,7 @@ type pocParams struct {
 	startPoCBlockHash   string
 	models              map[string]apiconfig.PoCModelConfigCache
 	pocStrongerRng      bool
+	scheme              types.PocScheme
 }
 
 const reconciliationInterval = 30 * time.Second
@@ -1117,7 +1147,10 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 				startPoCBlockHeight: event.TriggerHeight,
 				startPoCBlockHash:   event.PocSeedBlockHash,
 			}
-			b.loadPoCModels(params)
+			if err := b.applyFrozenRecipe(params, event); err != nil {
+				logging.Error("Failed to load frozen confirmation PoC recipe", types.PoC, "error", err, "height", event.TriggerHeight)
+				return nil, err
+			}
 			return params, nil
 		}
 
@@ -1269,14 +1302,16 @@ func (b *Broker) getCommandForState(
 					return nil
 				}
 				return StartPoCNodeCommandV2{
-					BlockHeight:    pocGenParams.startPoCBlockHeight,
-					BlockHash:      pocGenParams.startPoCBlockHash,
-					PubKey:         b.participantInfo.GetPubKey(),
-					CallbackUrl:    GetPoCCallbackBaseURLV2(b.callbackUrl),
-					TotalNodes:     totalNodes,
-					Model:          modelConfig.ModelId,
-					SeqLen:         modelConfig.SeqLen,
-					PocStrongerRng: pocGenParams.pocStrongerRng,
+					BlockHeight:     pocGenParams.startPoCBlockHeight,
+					BlockHash:       pocGenParams.startPoCBlockHash,
+					PubKey:          b.participantInfo.GetPubKey(),
+					CallbackUrl:     GetPoCCallbackBaseURLV2(b.callbackUrl),
+					TotalNodes:      totalNodes,
+					Model:           modelConfig.ModelId,
+					SeqLen:          modelConfig.SeqLen,
+					PocStrongerRng:  pocGenParams.pocStrongerRng,
+					DecodeMaxTokens: types.DecodeMaxForStage(pocGenParams.scheme, modelConfig.DecodeMaxTokens),
+					Scheme:          pocGenParams.scheme,
 				}
 			}
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
@@ -1306,9 +1341,45 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 		startPoCBlockHeight: epochPoCStartHeight,
 		startPoCBlockHash:   hash,
 	}
-
-	b.loadPoCModels(params)
+	if err := b.applyFrozenRecipe(params, nil); err != nil {
+		return nil, err
+	}
 	return params, nil
+}
+
+func applyStageRecipe(params *pocParams, recipe *types.PocStageRecipe) {
+	params.scheme = recipe.Scheme
+	params.pocStrongerRng = recipe.PocStrongerRngEnabled
+	params.models = make(map[string]apiconfig.PoCModelConfigCache, len(recipe.Models))
+	for _, modelConfig := range recipe.Models {
+		if modelConfig == nil {
+			continue
+		}
+		params.models[modelConfig.ModelId] = apiconfig.PoCModelConfigCache{
+			ModelId:         modelConfig.ModelId,
+			SeqLen:          modelConfig.SeqLen,
+			DecodeMaxTokens: types.DecodeMaxForStage(recipe.Scheme, modelConfig.DecodeMaxTokens),
+		}
+	}
+}
+
+func (b *Broker) applyFrozenRecipe(params *pocParams, event *types.ConfirmationPoCEvent) error {
+	if event != nil && event.Recipe != nil && event.TriggerHeight == params.startPoCBlockHeight {
+		applyStageRecipe(params, event.Recipe)
+		return nil
+	}
+	if b.chainBridge == nil {
+		return fmt.Errorf("missing PocStageRecipe for height %d", params.startPoCBlockHeight)
+	}
+	resp, err := b.chainBridge.GetPocStageRecipe(params.startPoCBlockHeight)
+	if err != nil {
+		return err
+	}
+	if resp == nil || !resp.Found || resp.Recipe == nil {
+		return fmt.Errorf("missing PocStageRecipe for height %d", params.startPoCBlockHeight)
+	}
+	applyStageRecipe(params, resp.Recipe)
+	return nil
 }
 
 func nodeStatusQueryWorker(broker *Broker) {

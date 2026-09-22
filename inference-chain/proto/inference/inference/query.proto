@@ -438,6 +438,12 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/poc_validation_snapshot/{poc_stage_start_height}";
   }
 
+  // Frozen generate/validate/evaluate snapshot for a PoC stage height
+  // (regular PocStartBlockHeight or CPoC trigger height).
+  rpc PocStageRecipe (QueryPocStageRecipeRequest) returns (QueryPocStageRecipeResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/poc_stage_recipe/{stage_height}";
+  }
+
   rpc DevshardEscrow (QueryGetDevshardEscrowRequest) returns (QueryGetDevshardEscrowResponse) {
     option (google.api.http).get = "/productscience/inference/inference/devshard_escrow/{id}";
   }
@@ -1220,6 +1226,15 @@ message QueryPoCValidationSnapshotRequest {
 
 message QueryPoCValidationSnapshotResponse {
   PoCValidationSnapshot snapshot = 1;
+  bool found = 2;
+}
+
+message QueryPocStageRecipeRequest {
+  int64 stage_height = 1;
+}
+
+message QueryPocStageRecipeResponse {
+  PocStageRecipe recipe = 1;
   bool found = 2;
 }
 

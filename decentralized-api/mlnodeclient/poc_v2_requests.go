@@ -11,11 +11,32 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// DecodeSeqLen is the prompt length of the decode scheme, fixed at 256 tokens;
+// the model config's seq_len belongs to the prefill scheme.
+const DecodeSeqLen = 256
+
+// DecodeSpherePoints is the decode snap codebook size. Packed steps are k ∈ [0, DecodeSpherePoints).
+// Must match the plugin codebook (gonka_poc SPHERE_POINTS). Wire is still one byte.
+const DecodeSpherePoints = 16
+
 // PoCParamsV2 contains model-specific parameters for PoC v2 generation/validation.
 type PoCParamsV2 struct {
 	Model  string `json:"model"`
 	SeqLen int64  `json:"seq_len"`
+	// Decode scheme and its step count; absent => prefill scheme, as before.
+	Decode    bool  `json:"decode,omitempty"`
+	MaxTokens int64 `json:"max_tokens,omitempty"`
 	// k_dim is intentionally omitted - MLNode will use its default
+}
+
+// PoCParamsForScheme is the MLNode params for a frozen stage recipe.
+// decode_max_tokens is N only when scheme is DECODE; PREFILL ignores it.
+func PoCParamsForScheme(model string, seqLen, decodeMaxTokens int64, scheme types.PocScheme) PoCParamsV2 {
+	p := PoCParamsV2{Model: model, SeqLen: seqLen}
+	if scheme == types.PocScheme_POC_SCHEME_DECODE {
+		p.SeqLen, p.Decode, p.MaxTokens = DecodeSeqLen, true, decodeMaxTokens
+	}
+	return p
 }
 
 // PoCInitGenerateRequestV2 represents the request body for /api/v1/inference/pow/init/generate.

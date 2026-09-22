@@ -512,6 +512,16 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to set upcoming epoch", types.EpochGroup, "error", err.Error())
 			return err
 		}
+		recipe, freezeErr := am.keeper.FreezePocStageRecipe(ctx, upcomingEpoch.PocStartBlockHeight, nil)
+		if freezeErr != nil {
+			am.LogError("Unable to freeze PoC stage recipe", types.PoC,
+				"pocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", freezeErr.Error())
+			return freezeErr
+		}
+		am.LogInfo("Froze PoC stage recipe", types.PoC,
+			"pocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"scheme", recipe.Scheme.String(),
+			"tracking", recipe.Tracking)
 
 		am.LogInfo("StartStage:PocStart", types.Stages, "blockHeight", blockHeight)
 		// UNRECOVERABLE: CreateEpochGroup failure means the DKG/BLS group for the new

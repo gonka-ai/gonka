@@ -1,6 +1,8 @@
 syntax = "proto3";
 package inference.inference;
 
+import "inference/inference/params.proto";
+
 option go_package = "github.com/productscience/inference/x/inference/types";
 
 // ConfirmationPoCEvent tracks a single confirmation PoC event during the inference phase.
@@ -19,6 +21,10 @@ message ConfirmationPoCEvent {
   // This hash is only set when transitioning to GENERATION phase to prevent
   // precomputation during the grace period.
   string poc_seed_block_hash = 9;
+
+  // Frozen at event create. Generate, validate, and evaluateConfirmation read this,
+  // not live PocParams.
+  PocStageRecipe recipe = 10;
 }
 
 // ConfirmationPoCPhase defines the phases of a confirmation PoC event.

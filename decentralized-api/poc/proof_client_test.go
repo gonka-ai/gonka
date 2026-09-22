@@ -557,3 +557,28 @@ func proofStrings(proof [][]byte) []string {
 	}
 	return out
 }
+
+// A decode leaf is the packed trajectory, decode_max_tokens+1 bytes, not an FP16 vector.
+func TestVerifyProofItem_DecodeTrajectoryShape(t *testing.T) {
+	item := ProofItem{LeafIndex: 0, NonceValue: 1, VectorBytes: base64.StdEncoding.EncodeToString(make([]byte, 33))}
+	_, err := verifyProofItem([]byte{}, 1, "p", item, 0)
+	require.ErrorIs(t, err, ErrInvalidVectorData, "33 bytes are not an FP16 vector under the prefill scheme")
+	_, err = verifyProofItem([]byte{}, 1, "p", item, 32)
+	require.NotErrorIs(t, err, ErrInvalidVectorData, "33 bytes are a valid 32-step trajectory")
+	_, err = verifyProofItem([]byte{}, 1, "p", item, 16)
+	require.ErrorIs(t, err, ErrInvalidVectorData, "trajectory length must match decode_max_tokens+1")
+}
+
+func TestVerifyProofItem_DecodeRejectsOutOfRangeBytes(t *testing.T) {
+	ok := ProofItem{LeafIndex: 0, NonceValue: 1, VectorBytes: base64.StdEncoding.EncodeToString([]byte{0, 15, 7})}
+	_, err := verifyProofItem([]byte{}, 1, "p", ok, 2)
+	require.NotErrorIs(t, err, ErrInvalidVectorData)
+
+	high := ProofItem{LeafIndex: 0, NonceValue: 1, VectorBytes: base64.StdEncoding.EncodeToString([]byte{16, 0, 0})}
+	_, err = verifyProofItem([]byte{}, 1, "p", high, 2)
+	require.ErrorIs(t, err, ErrInvalidVectorData)
+
+	wide := ProofItem{LeafIndex: 0, NonceValue: 1, VectorBytes: base64.StdEncoding.EncodeToString([]byte{255, 0, 0})}
+	_, err = verifyProofItem([]byte{}, 1, "p", wide, 2)
+	require.ErrorIs(t, err, ErrInvalidVectorData)
+}

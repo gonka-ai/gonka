@@ -3,6 +3,7 @@ package poc
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -114,6 +115,7 @@ type participantWork struct {
 	pubKey     string
 	count      uint32
 	rootHash   []byte
+	decodeMax  int64     // decode_max_tokens of the model config; 0 = prefill scheme
 	attempt    int       // current attempt number (0-based)
 	retryAfter time.Time // don't process before this time
 
@@ -304,6 +306,13 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		return
 	}
 	pocParams := paramsResp.Params.PocParams
+	recipe, recipeErr := loadStageRecipe(queryClient, epochState, pocStageStartBlockHeight)
+	if recipeErr != nil || recipe == nil {
+		logging.Error("OffChainValidator: missing PocStageRecipe, fail closed", types.PoC,
+			"pocStageStartBlockHeight", pocStageStartBlockHeight, "error", recipeErr)
+		return
+	}
+	pocParams = types.ApplyStageRecipe(pocParams, recipe)
 	sampleSize := int(pocParams.ValidationSampleSize)
 	if sampleSize == 0 {
 		sampleSize = 200
@@ -438,14 +447,18 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 			continue
 		}
 
-		workItems = append(workItems, participantWork{
+		work := participantWork{
 			address:  commit.ParticipantAddress,
 			modelId:  commit.ModelId,
 			url:      participantResp.Participant.InferenceUrl,
 			pubKey:   commit.HexPubKey,
 			count:    commit.Count,
 			rootHash: commit.RootHash,
-		})
+		}
+		if mc, ok := pocParams.GetModelConfig(commit.ModelId); ok {
+			work.decodeMax = types.DecodeMaxForStage(pocParams.PocScheme, mc.DecodeMaxTokens)
+		}
+		workItems = append(workItems, work)
 	}
 
 	if validationSlots > 0 || snapshotFound {
@@ -801,6 +814,7 @@ func (v *OffChainValidator) checkValidateeProofs(
 		Count:                    work.count,
 		LeafIndices:              leafIndices,
 		ParticipantAddress:       work.address,
+		DecodeMaxTokens:          work.decodeMax,
 	})
 	if err != nil {
 		logging.Warn("OffChainValidator: proof fetch/verify failed", types.PoC,
@@ -910,6 +924,16 @@ func (v *OffChainValidator) dispatchToMLNode(
 		return validateAbstain
 	}
 
+	scheme := pocParams.PocScheme
+	decode := scheme == types.PocScheme_POC_SCHEME_DECODE
+	if decode {
+		for i := range artifacts {
+			raw, _ := base64.StdEncoding.DecodeString(artifacts[i].VectorB64)
+			artifacts[i].VectorB64 = ""
+			artifacts[i].KPointsSteps = mlnodeclient.BytesToKSteps(raw)
+		}
+	}
+
 	// nodes is a snapshot taken once per stage, so retrying cannot make an executor appear.
 	modelNodes := filterValidationNodesForModel(nodes, work.modelId)
 	if len(modelNodes) == 0 {
@@ -924,15 +948,12 @@ func (v *OffChainValidator) dispatchToMLNode(
 		PublicKey:   work.pubKey,
 		NodeCount:   len(modelNodes),
 		Nonces:      nonces,
-		Params: mlnodeclient.PoCParamsV2{
-			Model:  modelConfig.ModelId,
-			SeqLen: modelConfig.SeqLen,
-		},
-		URL: validationCallbackUrl,
+		Params:      mlnodeclient.PoCParamsForScheme(modelConfig.ModelId, modelConfig.SeqLen, types.DecodeMaxForStage(scheme, modelConfig.DecodeMaxTokens), scheme),
+		URL:         validationCallbackUrl,
 		Validation: &mlnodeclient.ValidationV2{
 			Artifacts: artifacts,
 		},
-		StatTest:       mlnodeclient.StatTestParamsFromChain(modelConfig.StatTest),
+		StatTest:       mlnodeclient.StatTestParamsFromChain(types.StatTestForScheme(scheme, modelConfig)),
 		PocStrongerRng: pocParams.PocStrongerRngEnabled,
 	}
 
@@ -1005,6 +1026,29 @@ func sampleLeafIndices(validatorPubKey string, blockHash string, blockHeight int
 	}
 
 	return result
+}
+
+func loadStageRecipe(
+	queryClient types.QueryClient,
+	epochState *chainphase.EpochState,
+	stageHeight int64,
+) (*types.PocStageRecipe, error) {
+	if epochState != nil && epochState.ActiveConfirmationPoCEvent != nil &&
+		epochState.ActiveConfirmationPoCEvent.TriggerHeight == stageHeight &&
+		epochState.ActiveConfirmationPoCEvent.Recipe != nil {
+		return epochState.ActiveConfirmationPoCEvent.Recipe, nil
+	}
+	if queryClient == nil {
+		return nil, fmt.Errorf("no query client")
+	}
+	resp, err := queryClient.PocStageRecipe(context.Background(), &types.QueryPocStageRecipeRequest{StageHeight: stageHeight})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil || !resp.Found || resp.Recipe == nil {
+		return nil, fmt.Errorf("PocStageRecipe not found for height %d", stageHeight)
+	}
+	return resp.Recipe, nil
 }
 
 // getSamplingBlockHash returns the block hash used as sampling randomness.
