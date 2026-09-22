@@ -28,7 +28,10 @@ import (
 
 func TestH2CServerAdvertisesStreamCap(t *testing.T) {
 	s := H2CServer()
-	require.Equal(t, transport.DefaultRPCMaxStreams, s.MaxConcurrentStreams)
+	require.Equal(t, transport.DefaultH2MaxConcurrentStreams, s.MaxConcurrentStreams)
+	require.Equal(t, uint32(4096), s.MaxConcurrentStreams)
+	require.NotEqual(t, transport.DefaultRPCMaxStreams, s.MaxConcurrentStreams,
+		"SETTINGS is per TCP; interceptor DefaultRPCMaxStreams stays per peer")
 	require.NotZero(t, s.MaxConcurrentStreams, "zero would hide SETTINGS_MAX_CONCURRENT_STREAMS")
 }
 
@@ -89,7 +92,17 @@ func TestH2C_WithoutH2CFailsClosed(t *testing.T) {
 }
 
 func TestH2C_MultiplexesConcurrentStreams(t *testing.T) {
-	const n = 8
+	assertH2COverlappingStreamsShareOneTCP(t, 8)
+}
+
+func TestH2C_MoreThan100StreamsShareOneTCP(t *testing.T) {
+	// HAProxy default SETTINGS is 100; golang http2.Transport dials another
+	// TCP past that. 101 overlapping streams must still share one child mux.
+	assertH2COverlappingStreamsShareOneTCP(t, 101)
+}
+
+func assertH2COverlappingStreamsShareOneTCP(t *testing.T, n int) {
+	t.Helper()
 	var sawProto string
 	var protoMu sync.Mutex
 	started := make(chan struct{}, n)
@@ -129,18 +142,20 @@ func TestH2C_MultiplexesConcurrentStreams(t *testing.T) {
 			}
 		}()
 	}
-	for i := 0; i < n; i++ {
-		select {
-		case <-started:
-		case <-time.After(3 * time.Second):
-			t.Fatal("streams did not start; HTTP/2 multiplexing is off")
+	func() {
+		defer close(release)
+		for i := 0; i < n; i++ {
+			select {
+			case <-started:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("%d/%d streams started; HTTP/2 multiplexing is off or SETTINGS too low", i, n)
+			}
 		}
-	}
-	require.Equal(t, int32(1), dials.Load(), "overlapping h2c streams must share one TCP connection")
-	protoMu.Lock()
-	require.Equal(t, "HTTP/2.0", sawProto)
-	protoMu.Unlock()
-	close(release)
+		require.Equal(t, int32(1), dials.Load(), "overlapping h2c streams must share one TCP connection")
+		protoMu.Lock()
+		require.Equal(t, "HTTP/2.0", sawProto)
+		protoMu.Unlock()
+	}()
 	wg.Wait()
 	close(errCh)
 	for err := range errCh {

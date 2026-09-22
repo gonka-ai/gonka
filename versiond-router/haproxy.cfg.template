@@ -32,6 +32,11 @@ global
     # sockets live inside the same unprivileged container.
     stats socket /var/run/haproxy/reconciler.sock mode 600 level admin
     stats timeout 30s
+    # SETTINGS_MAX_CONCURRENT_STREAMS on proto-h2 frontends and backend
+    # proto h2 to versiond. HAProxy default is 100; overlay muxes every
+    # peer Watch onto one TCP. Must match DefaultH2MaxConcurrentStreams
+    # (4096) on versiond and the child. Per-peer interceptor stays 256.
+    tune.h2.max-concurrent-streams 4096
 
 defaults
     log     global

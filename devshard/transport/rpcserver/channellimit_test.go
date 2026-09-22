@@ -744,6 +744,88 @@ func TestChannelLimit_OverflowEvictsIdleNamedKeys(t *testing.T) {
 	require.NoError(t, l.charge(ctx, "a", proc), "an idle peer can re-enter as a named key")
 }
 
+func TestChannelLimit_OverflowEvictsIdlePartial(t *testing.T) {
+	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
+	max := channelLimiterEvictBatch * 2
+	l := overflowTestLimiter(clock.Now, max)
+	ctx := context.Background()
+	proc := rpcpbconnect.SessionServiceGetSignaturesProcedure
+	for i := 0; i < max; i++ {
+		require.NoError(t, l.charge(ctx, fmt.Sprintf("p%d", i), proc))
+	}
+	requireResourceExhausted(t, l.charge(ctx, "new", proc), "too many peers")
+	require.LessOrEqual(t, l.evictVisited, channelLimiterEvictBatch,
+		"at-cap insert must not scan the whole map")
+	require.Equal(t, max, len(l.shared))
+	require.NotContains(t, l.shared, "new")
+
+	clock.Advance(time.Minute)
+	require.NoError(t, l.charge(ctx, "new", proc))
+	require.Contains(t, l.shared, "new")
+	require.Less(t, len(l.shared), max, "a batch of idle keys must make room")
+	require.LessOrEqual(t, l.evictVisited, channelLimiterEvictBatch)
+}
+
+func TestAttachRing_DropExpiredFromHead(t *testing.T) {
+	var r attachRing
+	r.ensure(4)
+	t0 := time.Unix(1_700_000_000, 0)
+	for i := 0; i < 3; i++ {
+		r.push(t0.Add(time.Duration(i) * time.Second))
+	}
+	require.Equal(t, 3, r.n)
+	r.dropExpired(t0.Add(time.Second))
+	ts, ok := r.oldest()
+	require.True(t, ok)
+	require.Equal(t, t0.Add(2*time.Second), ts)
+	require.Equal(t, 1, r.n)
+	r.removeLastEqual(t0.Add(2 * time.Second))
+	require.Equal(t, 0, r.n)
+}
+
+func TestAttachRing_GrowsByDoublingNotLimit(t *testing.T) {
+	var r attachRing
+	r.ensure(transport.DefaultRPCAttachFloorPerMin)
+	require.Equal(t, attachRingMinCap, len(r.buf), "first Attach must not reserve the whole floor")
+	require.Equal(t, 0, r.n)
+
+	t0 := time.Unix(1_700_000_000, 0)
+	for i := 0; i < attachRingMinCap; i++ {
+		r.push(t0.Add(time.Duration(i) * time.Second))
+	}
+	require.Equal(t, attachRingMinCap, r.n)
+	require.Equal(t, attachRingMinCap, len(r.buf))
+
+	r.ensure(transport.DefaultRPCAttachFloorPerMin)
+	require.Equal(t, attachRingMinCap*2, len(r.buf))
+	require.Equal(t, attachRingMinCap, r.n)
+	ts, ok := r.oldest()
+	require.True(t, ok)
+	require.Equal(t, t0, ts)
+}
+
+func TestAttachRing_GrowsUpToLimit(t *testing.T) {
+	const limit = 40
+	var r attachRing
+	t0 := time.Unix(1_700_000_000, 0)
+	for i := 0; i < limit; i++ {
+		r.ensure(limit)
+		r.push(t0.Add(time.Duration(i) * time.Second))
+	}
+	require.Equal(t, limit, r.n)
+	require.Equal(t, limit, len(r.buf))
+	r.ensure(limit)
+	r.push(t0.Add(time.Hour))
+	require.Equal(t, limit, r.n, "push must not grow past the floor")
+}
+
+func TestAttachRing_EnsureDoesNotAllocateHugeLimit(t *testing.T) {
+	var r attachRing
+	r.ensure(50_000_000)
+	require.Equal(t, attachRingMinCap, len(r.buf))
+	require.LessOrEqual(t, len(r.buf), transport.MaxRPCAttachFloorPerMin)
+}
+
 func TestChannelLimit_OverflowRefusesNewStreamPeers(t *testing.T) {
 	l := overflowTestLimiter(time.Now, 1)
 	ctx := context.Background()

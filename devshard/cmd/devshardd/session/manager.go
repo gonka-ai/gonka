@@ -1497,7 +1497,11 @@ func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
 		}
 		limits := transport.LoadChannelLimitConfig()
 		h := rpcserver.NewPeerAuthHandler(m.verifier, hostAddr, rpcserver.PeerAuthConfig{
-			Allow:  m.allowRPCPeer,
+			Allow: m.allowRPCPeer,
+			LiveSession: func(id string) bool {
+				_, ok := m.existingServer(id)
+				return ok
+			},
 			Limits: &limits,
 		})
 		h.StartSweeper()

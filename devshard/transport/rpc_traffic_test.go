@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -76,7 +77,8 @@ func TestRPCTraffic_PeerCapFoldsOther(t *testing.T) {
 	now := time.Unix(1_710_000_000, 0)
 	clock := now
 	tr := NewRPCTraffic(func() time.Time { return clock })
-	for i := 0; i < rpcTrafficPeerCap+1; i++ {
+	n := rpcTrafficShardFoldCap(rpcTrafficPeerCap)*rpcTrafficShards + 1
+	for i := 0; i < n; i++ {
 		tr.Observe(context.Background(), RPCSample{
 			Procedure: rpcpbconnect.SessionServiceGetSignaturesProcedure,
 			Peer:      "peer-" + strconv.Itoa(i),
@@ -85,14 +87,15 @@ func TestRPCTraffic_PeerCapFoldsOther(t *testing.T) {
 	}
 	clock = now.Add(time.Minute)
 	snap := tr.Snapshot(clock)
-	require.Equal(t, uint64(rpcTrafficPeerCap+1), snap.Host.Requests)
+	require.Equal(t, uint64(n), snap.Host.Requests)
 	var other uint64
 	for _, p := range snap.Host.Peers {
 		if p.Peer == rpcTrafficOtherKey {
 			other = p.Requests
 		}
 	}
-	require.Equal(t, uint64(1), other)
+	require.Greater(t, other, uint64(0), "overflow peers must fold into other")
+	require.LessOrEqual(t, len(snap.Host.Peers), rpcTrafficPeerCap+rpcTrafficShards)
 }
 
 func TestRPCTraffic_TwoEscrowsOneSnapshot(t *testing.T) {
@@ -162,11 +165,13 @@ func TestRPCTraffic_ClosedWarnDoesNotHoldMutex(t *testing.T) {
 		tr := NewRPCTraffic(func() time.Time { return clock })
 		var warns atomic.Int64
 		tr.SetWarn(func(context.Context, int64, RPCStatsHost) {
-			if !tr.mu.TryLock() {
-				t.Error("closed-minute warn held RPCTraffic.mu")
-				return
+			for i := range tr.shards {
+				if !tr.shards[i].mu.TryLock() {
+					t.Error("closed-minute warn held a traffic shard mutex")
+					return
+				}
+				tr.shards[i].mu.Unlock()
 			}
-			tr.mu.Unlock()
 			tr.Observe(context.Background(), RPCSample{
 				Procedure: rpcpbconnect.SessionServiceGetSignaturesProcedure,
 				Peer:      "q",
@@ -269,4 +274,39 @@ func TestSnapshotPeerReconnects(t *testing.T) {
 	processReconnects.add(now, "hostB@v5", ReconnectWatch)
 	got := processReconnects.snapshot(now.Add(time.Minute))
 	require.Equal(t, []RPCStatsReconnect{{Peer: "hostB@v5", Reason: ReconnectWatch, Attempts: 2}}, got)
+}
+
+func TestRPCTraffic_ObserveShardsConcurrent(t *testing.T) {
+	now := time.Unix(1_710_000_000, 0)
+	var mu sync.Mutex
+	clock := now
+	tr := NewRPCTraffic(func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return clock
+	})
+	const peers, perPeer = 32, 50
+	var wg sync.WaitGroup
+	for i := 0; i < peers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			peer := "peer-" + strconv.Itoa(i)
+			for j := 0; j < perPeer; j++ {
+				tr.Observe(context.Background(), RPCSample{
+					Procedure: rpcpbconnect.SessionServiceGetSignaturesProcedure,
+					Peer:      peer,
+					Escrow:    "1",
+					IP:        "203.0.113.9",
+				})
+			}
+		}(i)
+	}
+	wg.Wait()
+	mu.Lock()
+	clock = now.Add(time.Minute)
+	mu.Unlock()
+	snap := tr.Snapshot(now.Add(time.Minute))
+	require.Equal(t, uint64(peers*perPeer), snap.Host.Requests)
+	require.Len(t, snap.Shards, 1)
 }

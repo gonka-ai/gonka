@@ -190,7 +190,7 @@ func RPCMaxConnsPerPeerFromEnv() int {
 // host session token (empty set, typos, known names not yet wired) or
 // when hostAddress is empty (never share "@version"). Chat is on
 // attachRPCEndpoints: opt-in `chat` starts Attach. Otherwise it returns
-// an *RPCClient and starts the PeerConn attach loop.
+// an *RPCClient. The shared PeerConn attach loop starts from NewRPCClient.
 func SelectTransport(httpClient *HTTPClient, hostAddress string, endpoints EndpointSet, extra *ClientConfig) any {
 	warnUnwiredRPCEndpoints(endpoints)
 	if httpClient == nil || !endpoints.NeedsAttach() {

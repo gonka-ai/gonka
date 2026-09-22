@@ -25,6 +25,7 @@ const (
 	rpcTrafficIPCap         = 1000
 	rpcTrafficOtherKey      = "other"
 	rpcTrafficUnknownIP     = "unknown"
+	rpcTrafficShards        = 16
 
 	// RPCStatsBannedIdentityLogCap is how many banned peer/IP names fit in
 	// one closed-minute warn. Overflow is counted in banned_*_omitted.
@@ -178,15 +179,20 @@ type reconnectMinute struct {
 	byKey map[string]uint64 // peer\x00reason
 }
 
-// RPCTraffic is the in-memory minute ring for one child mux.
-type RPCTraffic struct {
-	now  func() time.Time
-	warn func(ctx context.Context, minute int64, host RPCStatsHost)
-
+type trafficShard struct {
 	mu      sync.Mutex
 	open    int64
 	current *minuteBucket
 	closed  map[int64]*minuteBucket
+}
+
+// RPCTraffic is the in-memory minute ring for one child mux. Observe shards
+// by peer (or IP) so inbound RPCs do not share one process-wide mutex.
+type RPCTraffic struct {
+	now  func() time.Time
+	warn func(ctx context.Context, minute int64, host RPCStatsHost)
+
+	shards [rpcTrafficShards]trafficShard
 
 	warnedMinute atomic.Int64
 }
@@ -196,7 +202,10 @@ func NewRPCTraffic(now func() time.Time) *RPCTraffic {
 	if now == nil {
 		now = time.Now
 	}
-	t := &RPCTraffic{now: now, closed: make(map[int64]*minuteBucket)}
+	t := &RPCTraffic{now: now}
+	for i := range t.shards {
+		t.shards[i].closed = make(map[int64]*minuteBucket)
+	}
 	t.warn = t.defaultWarn
 	return t
 }
@@ -354,6 +363,103 @@ func addCounts(m map[string]*counts, key string, banned bool) {
 	}
 }
 
+func addCountsN(m map[string]*counts, key string, req, ban uint64) {
+	if req == 0 && ban == 0 {
+		return
+	}
+	c := m[key]
+	if c == nil {
+		c = &counts{}
+		m[key] = c
+	}
+	c.requests += req
+	c.banned += ban
+}
+
+func rpcTrafficShardFoldCap(global int) int {
+	n := (global + rpcTrafficShards - 1) / rpcTrafficShards
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+func trafficShardIndex(s RPCSample) int {
+	key := s.Peer
+	if key == "" {
+		key = s.IP
+	}
+	if key == "" {
+		return 0
+	}
+	var h uint32 = 2166136261
+	for i := 0; i < len(key); i++ {
+		h ^= uint32(key[i])
+		h *= 16777619
+	}
+	return int(h % uint32(rpcTrafficShards))
+}
+
+func mergeMinute(dst, src *minuteBucket) {
+	if dst == nil || src == nil {
+		return
+	}
+	for k, c := range src.endpoints {
+		if c != nil {
+			addCountsN(dst.endpoints, k, c.requests, c.banned)
+		}
+	}
+	for k, c := range src.zones {
+		if c != nil {
+			addCountsN(dst.zones, k, c.requests, c.banned)
+		}
+	}
+	for k, c := range src.peers {
+		if c != nil {
+			addCountsN(dst.peers, k, c.requests, c.banned)
+		}
+	}
+	for k, c := range src.ips {
+		if c != nil {
+			addCountsN(dst.ips, k, c.requests, c.banned)
+		}
+	}
+	dst.attach.Attempts += src.attach.Attempts
+	dst.attach.Banned += src.attach.Banned
+	dst.attach.BannedFloor += src.attach.BannedFloor
+	for id, em := range src.escrows {
+		if em == nil {
+			continue
+		}
+		dm := dst.escrows[id]
+		if dm == nil {
+			dm = &escrowMinute{
+				endpoints: make(map[string]*counts),
+				zones:     make(map[string]*counts),
+				peers:     make(map[string]*counts),
+			}
+			dst.escrows[id] = dm
+		}
+		dm.total.requests += em.total.requests
+		dm.total.banned += em.total.banned
+		for k, c := range em.endpoints {
+			if c != nil {
+				addCountsN(dm.endpoints, k, c.requests, c.banned)
+			}
+		}
+		for k, c := range em.zones {
+			if c != nil {
+				addCountsN(dm.zones, k, c.requests, c.banned)
+			}
+		}
+		for k, c := range em.peers {
+			if c != nil {
+				addCountsN(dm.peers, k, c.requests, c.banned)
+			}
+		}
+	}
+}
+
 func endpointKey(endpoint, zone string) string {
 	return endpoint + "\x00" + zone
 }
@@ -381,7 +487,8 @@ func foldNewKey(m map[string]*counts, key string, capN int) string {
 }
 
 // Observe records one classified inbound RPC. Unimplemented / unauthenticated
-// paths must not call this.
+// paths must not call this. Escrow creates a shard row: observeRPC only
+// passes a live local session id, never a raw URL :id.
 func (t *RPCTraffic) Observe(ctx context.Context, s RPCSample) {
 	if t == nil {
 		return
@@ -398,52 +505,10 @@ func (t *RPCTraffic) Observe(ctx context.Context, s RPCSample) {
 		endpoint = "Attach"
 	}
 
-	t.mu.Lock()
-	warnBucket, warnMinute := t.rollLocked(minute)
-	b := t.current
-	addCounts(b.endpoints, endpointKey(endpoint, zone), s.Banned)
-	addCounts(b.zones, zone, s.Banned)
-	peer := s.Peer
-	if !s.Attach {
-		peer = foldNewKey(b.peers, s.Peer, rpcTrafficPeerCap)
+	rolled := t.shards[trafficShardIndex(s)].observe(minute, endpoint, zone, s)
+	if rolled != 0 {
+		t.emitClosedWarn(ctx, rolled)
 	}
-	addCounts(b.peers, peer, s.Banned)
-	if s.Attach {
-		b.attach.Attempts++
-		if s.Banned {
-			b.attach.Banned++
-		}
-		if s.AttachFloor {
-			b.attach.BannedFloor++
-		}
-	} else {
-		ip := s.IP
-		if ip == "" {
-			ip = rpcTrafficUnknownIP
-		}
-		ip = foldNewKey(b.ips, ip, rpcTrafficIPCap)
-		addCounts(b.ips, ip, s.Banned)
-		if s.Escrow != "" && s.Escrow != HostRPCEscrowID {
-			em := b.escrows[s.Escrow]
-			if em == nil {
-				em = &escrowMinute{
-					endpoints: make(map[string]*counts),
-					zones:     make(map[string]*counts),
-					peers:     make(map[string]*counts),
-				}
-				b.escrows[s.Escrow] = em
-			}
-			em.total.requests++
-			if s.Banned {
-				em.total.banned++
-			}
-			addCounts(em.endpoints, endpointKey(endpoint, zone), s.Banned)
-			addCounts(em.zones, zone, s.Banned)
-			addCounts(em.peers, peer, s.Banned)
-		}
-	}
-	t.mu.Unlock()
-	t.emitClosedWarn(ctx, warnMinute, warnBucket)
 
 	result := "ok"
 	if s.Banned {
@@ -462,26 +527,73 @@ func (t *RPCTraffic) Observe(ctx context.Context, s RPCSample) {
 	}
 }
 
-// rollLocked advances the open minute. Callers must hold t.mu.
-// On a minute change it stores the previous bucket (immutable after this)
-// and returns it when that minute had bans so the caller can warn after unlock.
-func (t *RPCTraffic) rollLocked(minute int64) (closedBucket *minuteBucket, closedMinute int64) {
-	if t.current == nil {
-		t.open = minute
-		t.current = newMinuteBucket()
+func (s *trafficShard) observe(minute int64, endpoint, zone string, sample RPCSample) (rolledMinute int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, rolledMinute = s.rollLocked(minute)
+	b := s.current
+	addCounts(b.endpoints, endpointKey(endpoint, zone), sample.Banned)
+	addCounts(b.zones, zone, sample.Banned)
+	peer := sample.Peer
+	if !sample.Attach {
+		peer = foldNewKey(b.peers, sample.Peer, rpcTrafficShardFoldCap(rpcTrafficPeerCap))
+	}
+	addCounts(b.peers, peer, sample.Banned)
+	if sample.Attach {
+		b.attach.Attempts++
+		if sample.Banned {
+			b.attach.Banned++
+		}
+		if sample.AttachFloor {
+			b.attach.BannedFloor++
+		}
+		return rolledMinute
+	}
+	ip := sample.IP
+	if ip == "" {
+		ip = rpcTrafficUnknownIP
+	}
+	ip = foldNewKey(b.ips, ip, rpcTrafficShardFoldCap(rpcTrafficIPCap))
+	addCounts(b.ips, ip, sample.Banned)
+	if sample.Escrow != "" && sample.Escrow != HostRPCEscrowID {
+		em := b.escrows[sample.Escrow]
+		if em == nil {
+			em = &escrowMinute{
+				endpoints: make(map[string]*counts),
+				zones:     make(map[string]*counts),
+				peers:     make(map[string]*counts),
+			}
+			b.escrows[sample.Escrow] = em
+		}
+		em.total.requests++
+		if sample.Banned {
+			em.total.banned++
+		}
+		addCounts(em.endpoints, endpointKey(endpoint, zone), sample.Banned)
+		addCounts(em.zones, zone, sample.Banned)
+		addCounts(em.peers, peer, sample.Banned)
+	}
+	return rolledMinute
+}
+
+// rollLocked advances the open minute. Callers must hold s.mu.
+func (s *trafficShard) rollLocked(minute int64) (closedBucket *minuteBucket, closedMinute int64) {
+	if s.current == nil {
+		s.open = minute
+		s.current = newMinuteBucket()
 		return nil, 0
 	}
-	if minute == t.open {
+	if minute == s.open {
 		return nil, 0
 	}
-	closedMinute = t.open
-	closedBucket = t.current
-	t.closed[closedMinute] = closedBucket
-	t.current = newMinuteBucket()
-	t.open = minute
-	for m := range t.closed {
+	closedMinute = s.open
+	closedBucket = s.current
+	s.closed[closedMinute] = closedBucket
+	s.current = newMinuteBucket()
+	s.open = minute
+	for m := range s.closed {
 		if m < minute-rpcTrafficClosedMinutes {
-			delete(t.closed, m)
+			delete(s.closed, m)
 		}
 	}
 	if zoneBanned(closedBucket) == 0 {
@@ -503,8 +615,8 @@ func zoneBanned(b *minuteBucket) uint64 {
 	return n
 }
 
-func (t *RPCTraffic) emitClosedWarn(ctx context.Context, minute int64, b *minuteBucket) {
-	if b == nil {
+func (t *RPCTraffic) emitClosedWarn(ctx context.Context, minute int64) {
+	if t == nil || minute == 0 {
 		return
 	}
 	for {
@@ -516,10 +628,27 @@ func (t *RPCTraffic) emitClosedWarn(ctx context.Context, minute int64, b *minute
 			break
 		}
 	}
+	b := t.mergeClosed(minute)
+	if zoneBanned(b) == 0 {
+		return
+	}
 	host := snapshotHost(b)
 	if t.warn != nil {
 		t.warn(ctx, minute*60, host)
 	}
+}
+
+func (t *RPCTraffic) mergeClosed(minute int64) *minuteBucket {
+	nowMinute := t.now().Unix() / 60
+	merged := newMinuteBucket()
+	for i := range t.shards {
+		sh := &t.shards[i]
+		sh.mu.Lock()
+		sh.rollLocked(nowMinute)
+		mergeMinute(merged, sh.closed[minute])
+		sh.mu.Unlock()
+	}
+	return merged
 }
 
 // Snapshot is the last closed minute (now/60 - 1). Empty if nothing recorded.
@@ -528,17 +657,28 @@ func (t *RPCTraffic) Snapshot(now time.Time) RPCStatsSnapshot {
 		return emptySnapshot(now)
 	}
 	closedMinute := now.Unix()/60 - 1
-	t.mu.Lock()
-	warnBucket, warnMinute := t.rollLocked(now.Unix() / 60)
-	b := t.closed[closedMinute]
-	t.mu.Unlock()
-	t.emitClosedWarn(context.Background(), warnMinute, warnBucket)
+	nowMinute := now.Unix() / 60
+	merged := newMinuteBucket()
+	var warnMinute int64
+	for i := range t.shards {
+		sh := &t.shards[i]
+		sh.mu.Lock()
+		_, wm := sh.rollLocked(nowMinute)
+		if wm != 0 {
+			warnMinute = wm
+		}
+		mergeMinute(merged, sh.closed[closedMinute])
+		sh.mu.Unlock()
+	}
+	if warnMinute != 0 {
+		t.emitClosedWarn(context.Background(), warnMinute)
+	}
 	out := emptySnapshot(now)
-	if b == nil {
+	if len(merged.endpoints) == 0 && merged.attach.Attempts == 0 {
 		return out
 	}
-	out.Host = snapshotHost(b)
-	out.Shards = snapshotShards(b)
+	out.Host = snapshotHost(merged)
+	out.Shards = snapshotShards(merged)
 	return out
 }
 

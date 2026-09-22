@@ -17,8 +17,9 @@ pool: [`versiond-host-evacuation.md`](./versiond-host-evacuation.md). Path versi
 is phase 6: deploy publishes `{DEVSHARD_RPC_H2_PORT}` on **`proxy` (proxy-router)** for
 authenticated `/rpc/`, with HTTP/2 through versiond-router (HA) or versiond (non-HA) to
 the child. When InferenceUrl is HTTPS, `proxy` terminates the same nginx cert; nginx
-keeps JSON and the public API. The URL shape and handshake do not change between those
-phases.
+keeps JSON and the public API. The URL shape does not change between those
+phases. First Attach uses a live door id; Watch and TTL refresh use `_`
+([Handshake](#handshake-on-that-path)).
 
 ---
 
@@ -26,7 +27,7 @@ phases.
 
 | Layer | What it proves | Survives a dispute? |
 |---|---|---|
-| **Peer session** (`Attach` → `Watch`) | This key opened a session with this host+version | No. Token is connectivity-only. Attach checks `AllowsSender` on the URL escrow as the door; later RPCs keep that escrow's roster. |
+| **Peer session** (`Attach` → `Watch`) | This key opened a session with this host+version | No. Token is connectivity-only. First Attach (and any later Attach on a real escrow URL) checks `AllowsSender` on that id as the door. Live renewals on `/sessions/_/rpc` skip the door. Later data RPCs still check that request's escrow roster. |
 | **Signed envelope** on each dispute-bearing RPC | This key sent **this** body at **this** timestamp | Yes. Same hash as today's `X-Devshard-Signature`. |
 
 The session exists so later RPCs can skip ECDSA for admission and so GETs can be authorized.
@@ -104,11 +105,17 @@ bind (or a ready PeerConn). Retiring the escrow drops idle `host_rpc` series.
 
 ## Handshake on that path
 
-One `PeerConn` per **(host, devshard version)**, shared across every escrow that child
-serves. Version is in the key because `/devshard/{version}/` selects a child; a v5
-token is not valid on v6. Escrow is **not** in the key: Attach authenticates to the
-host's gonka address, and the same token is sent on every `/sessions/{id}/rpc/` path
-of that child.
+One `PeerConn` per **(host, version, BaseURL, signer)**, shared across every
+escrow that child serves. Version is in the key because `/devshard/{version}/`
+selects a child; a v5 token is not valid on v6. Escrow is **not** in the key:
+Attach authenticates to the host's gonka address, and the same token is sent on
+every `/sessions/{id}/rpc/` path of that child.
+
+The attach loop does not start at registry insert. `SelectTransport` /
+`acquirePeerConn` only takes a ref. `NewRPCClient` registers that client's
+escrow as an **attach door**, then `Start`s so the first Attach already has a
+real id. The last `RPCClient.Close` drops that door and `Release`s the
+`PeerConn`. `_` (`HostRPCEscrowID`) is never a door.
 
 The token is keyed to **peer identity**, not to a TCP socket — HTTP/1.1 may open
 several pooled connections and they all carry the same token.
@@ -116,8 +123,9 @@ several pooled connections and they all carry the same token.
 Two objects share that token:
 
 - **`PeerConn`** — one Attach/Watch per (host, version, URL, signer). Shared
-  across every escrow that child serves. Live renewals and Watch use
-  `/sessions/_/rpc`.
+  across every escrow that child serves. First handshake and post-loss
+  re-Attach use `/sessions/{door}/rpc` for a **currently bound** live
+  `RPCClient` escrow. Live TTL refresh and Watch use `/sessions/_/rpc`.
 - **`transport.Server` / DB session** — one per escrow. JSON `BindOwnerChat`
   and RPC `Chat` / `SeedHeightSync` call `SessionForOwner`: Existing + owner,
   or CreateSession only when the handshake peer is the escrow creator (the
@@ -135,13 +143,21 @@ GetDiffs on B does not. Slot-member Chat on B does not bind; owner Chat on B doe
 
 ### Membership and renewal
 
-In production, Attach only succeeds if the recovered key is a participant of
-the escrow in that URL (`AllowsSender`). Outsiders never get a token.
+First Attach, and any later Attach whose URL is a real escrow id, only succeed
+if the recovered key may use **that** id (`AllowsSender`). `_` is not a roster
+id: a live peer renewing on `/sessions/_/rpc` skips the door so TTL refresh
+still works after the original shard is gone. A Watch drop that re-Attaches on
+a settled real id does **not** skip — the server re-runs `AllowsSender`, the
+client marks that door dead, and it tries another live escrow. Outsiders never
+get a token.
 
 If that door escrow is not open locally, Attach still admits a creator or slot
 member after a chain roster check — it does **not** CreateSession / bind a
 version. A stranger probing a cold id does not get a token.
 Signature, host address, timestamp, and nonce checks still run first.
+`escrow_not_found` / `escrow_settled` (`failed_precondition`) is a **dead
+door**, not a host-down: the client keeps the `PeerConn` and retries another
+bound escrow inside `DefaultAttachTimeout`.
 
 Renewal is a new Attach with a **new** `attach_nonce`, not a TTL refresh of the old
 one:
@@ -149,8 +165,11 @@ one:
 - Same nonce while it is still live → rejected (`attach_nonce already in use`).
 - Same peer, new nonce → new token; the old one stays valid for **5s** so in-flight
   RPCs still admit.
-- That second Attach runs `AllowsSender` again. If they were dropped from the roster,
-  they cannot renew.
+- Live TTL refresh posts that Attach on `_` and does **not** re-run
+  `AllowsSender`. A failed refresh keeps Watch and the live token.
+- Re-Attach after Watch loss posts on a live door and **does** re-run
+  `AllowsSender`. Dropped from that shard's roster, or a settled id, cannot
+  use that URL as a door.
 
 The token itself is still host-wide: Attach via one escrow you belong to, then
 use it on every escrow path this child serves. Later RPCs are admitted by session id
@@ -160,16 +179,31 @@ observability GETs do not. Every data RPC still checks roster for **that**
 request's escrow.
 
 ```
-  unauthenticated
+  SelectTransport → acquirePeerConn (ref only; loop not started)
         |
-        |  Attach  (client UUID in attach_nonce, ECDSA over attach domain)
+        |  NewRPCClient: addDoor(escrow) → Start
+        v
+  unauthenticated
+        |  no usable door → WaitReady / Send fail-fast ("no attach door")
+        |                   attach loop BackoffMin; PeerConn stays until last Close
+        |
+        |  Attach on /sessions/{door}/rpc
+        |    (client UUID in attach_nonce, ECDSA over attach domain,
+        |     AllowsSender on that id)
+        |    settled / not open → killDoor, try next live escrow
         v
       ready  ── session id is the client's UUID (echoed as session_token)
         |
-        |  Watch  (server-stream heartbeats every ~30s)
+        |  Watch on /sessions/_/rpc  (server-stream heartbeats every ~30s)
         |
-        +-- Watch dies / token at ~75% TTL → clear session → Attach again
+        +-- token at ~75% TTL → Attach on /sessions/_/rpc (skip AllowsSender)
+        |                       fail: keep Watch + token, retry refresh
+        +-- Watch dies → clear token → Attach again on a live door
 ```
+
+`WaitReady` (Chat, GetPayload) prefers the waiter's own escrow as the next
+door so a later shard is not stranded behind a settled creator id. Most
+unaries fail fast on `tokenRequest` instead of waiting.
 
 The client opens the Connect channel and picks a random **attachment id** (`attach_nonce`,
 16–32 bytes). This is not an inference or tx nonce; it only names this RPC attach.
@@ -199,8 +233,9 @@ that — multiplexing is not peer mTLS.
 Server checks: recovered address equals `peer_address` → `host_address` equals this
 process's gonka address → timestamp within ±30 s → `protocol_version` is
 `devshard.transport.v1` (empty and unknown rejected) → `attach_nonce` is not already
-live → `AllowsSender` for the escrow in the URL. Then it records one session for that
-client peer on this child. The URL escrow is the door, not the session key.
+live → `AllowsSender` for the URL escrow unless this is a **live** peer on `_`.
+Then it records one session for that client peer on this child. A real URL escrow
+is the door, not the session key; `_` is Watch / live-refresh only.
 
 The attachment id is still on the wire after Attach. `Watch` takes it in the protobuf
 body **and** as `x-devshard-session`; every other RPC sends only the header. Signing it
@@ -216,8 +251,11 @@ expired tokens are dropped with `unauthenticated` (`handshake required`) before 
 handler runs. The same token is valid on escrow A and escrow B of this child. JSON
 `GET .../signatures` stays unauthenticated; the RPC path does not.
 
-While unauthenticated, later RPCs **fail fast**. They do not wait on Attach. Reconnect uses
-jittered backoff (50 ms → 5 s), same idea as the CometBFT WS listener.
+While unauthenticated, later RPCs **fail fast**. They do not wait on Attach.
+When every bound door is dead or dropped, `WaitReady` / `Send` fail immediately
+(`no attach door`) instead of parking on Attach backoff. Reconnect uses
+jittered backoff (50 ms → 5 s), same idea as the CometBFT WS listener, except
+`errNoAttachDoor` stays at `BackoffMin` and does not `Close` the `PeerConn`.
 
 HTTP/1.1 keepalive is a **pool**, not one multiplexed connection. N concurrent RPCs need N
 TCP connections; a 30-minute `Chat` holds one for its whole life. `MaxIdleConnsPerHost`
@@ -459,10 +497,11 @@ The child still must not key any limiter on `RemoteAddr`.
 
 The listen is **not** an admin port and **not** an IP allowlist. It is the same
 participant set as InferenceUrl: Attach (ECDSA bound to this host's gonka address,
-then `AllowsSender` on the URL escrow) is the gate; anything without a completed
-handshake is dropped. Later data RPCs still check roster for **that** escrow. Attach
-is the one unauthenticated RPC on this listen — throttle it with the process floor
-before ECDSA (phase 4) before the port is public. Per-IP TCP / path rate is phase 6.
+then `AllowsSender` on a real URL escrow; live `_` renewals skip the door) is the
+gate; anything without a completed handshake is dropped. Later data RPCs still
+check roster for **that** escrow. Attach is the one unauthenticated RPC on this
+listen — throttle it with the process floor before ECDSA (phase 4) before the
+port is public. Per-IP TCP / path rate is phase 6.
 
 Phase 6 **reuses nginx's TLS cert** on the published listen: mount `SSL_CERT_SOURCE` on
 `proxy` and `bind ssl crt … proto h2`. That is the same host TLS nginx already

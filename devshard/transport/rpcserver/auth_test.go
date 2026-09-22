@@ -643,6 +643,79 @@ func TestPeerAuth_LiveRenewalSkipsDoor(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestPeerAuth_LiveReattachOnSettledEscrowRechecksDoor(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	var doorCalls atomic.Int32
+	auth := newTestAuth(PeerAuthConfig{
+		Allow: func(ctx context.Context, addr string) (bool, error) {
+			doorCalls.Add(1)
+			if EscrowIDFromContext(ctx) == "settled-escrow" {
+				return false, bridge.ErrEscrowSettled
+			}
+			return addr == signer.Address(), nil
+		},
+	})
+	mux := NewMux(auth, nil)
+	open := httptest.NewServer(withTestEscrow(mux))
+	t.Cleanup(open.Close)
+	settled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r.WithContext(WithEscrowID(r.Context(), "settled-escrow")))
+	}))
+	t.Cleanup(settled.Close)
+
+	first := attach(t, rpcpbconnect.NewPeerAuthServiceClient(open.Client(), open.URL), signer,
+		[]byte("live-settled-door-nonce-01234"))
+	require.Equal(t, int32(1), doorCalls.Load())
+
+	ts := time.Now().Unix()
+	nonce := []byte("live-settled-retry-nonce-0123")
+	sig, err := transport.SignAttach(signer, testHostAddress, ts, signer.Address(), nonce, transport.AttachProtocolVersion, nil)
+	require.NoError(t, err)
+	_, err = rpcpbconnect.NewPeerAuthServiceClient(settled.Client(), settled.URL).Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{
+		PeerAddress:     signer.Address(),
+		AttachNonce:     nonce,
+		ProtocolVersion: transport.AttachProtocolVersion,
+		HostAddress:     testHostAddress,
+		Timestamp:       ts,
+		Signature:       sig,
+	}))
+	require.Error(t, err)
+	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Contains(t, err.Error(), "escrow settled")
+	require.Equal(t, int32(2), doorCalls.Load(), "real escrow URL must re-run AllowsSender while the peer is live")
+	_, ok := auth.LookupToken(first.SessionToken)
+	require.True(t, ok, "failed door Attach must not drop the live session")
+}
+
+func TestPeerAuth_LiveReattachOnOpenEscrowRechecksDoor(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	var doorCalls atomic.Int32
+	auth := newTestAuth(PeerAuthConfig{
+		Allow: func(ctx context.Context, addr string) (bool, error) {
+			doorCalls.Add(1)
+			return addr == signer.Address(), nil
+		},
+	})
+	mux := NewMux(auth, nil)
+	a := httptest.NewServer(withTestEscrow(mux))
+	t.Cleanup(a.Close)
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r.WithContext(WithEscrowID(r.Context(), "other-open")))
+	}))
+	t.Cleanup(b.Close)
+
+	first := attach(t, rpcpbconnect.NewPeerAuthServiceClient(a.Client(), a.URL), signer,
+		[]byte("live-open-door-a-nonce-012345"))
+	require.Equal(t, int32(1), doorCalls.Load())
+	second := attach(t, rpcpbconnect.NewPeerAuthServiceClient(b.Client(), b.URL), signer,
+		[]byte("live-open-door-b-nonce-012345"))
+	require.Equal(t, int32(2), doorCalls.Load(), "open real escrow must still run AllowsSender")
+	_, ok := auth.LookupToken(first.SessionToken)
+	require.True(t, ok)
+	_, ok = auth.LookupToken(second.SessionToken)
+	require.True(t, ok)
+}
+
 func TestPeerAuth_WatchOnHostPath(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	auth := newTestAuth(PeerAuthConfig{Heartbeat: 50 * time.Millisecond})

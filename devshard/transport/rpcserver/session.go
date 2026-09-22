@@ -183,11 +183,11 @@ func (h *SessionHandler) GetDiffs(ctx context.Context, req *connect.Request[rpcp
 	}
 	out := make([]*rpcpb.DiffRecord, len(records))
 	for i, rec := range records {
-		dj, jErr := transport.DiffToJSON(rec.Diff)
-		if jErr != nil {
+		pb, encErr := transport.DiffToProto(rec.Diff)
+		if encErr != nil {
 			return nil, connect.NewError(connect.CodeInternal, errors.New("encode diff failed"))
 		}
-		out[i] = &rpcpb.DiffRecord{Diff: transport.DiffJSONToProto(dj), StateHash: rec.StateHash}
+		out[i] = &rpcpb.DiffRecord{Diff: pb, StateHash: rec.StateHash}
 	}
 	return connect.NewResponse(&rpcpb.GetDiffsResponse{Records: out}), nil
 }

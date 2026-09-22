@@ -1,12 +1,14 @@
 package proxy
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestIsUnknownEscrowBindPath(t *testing.T) {
@@ -210,4 +212,90 @@ func TestProxy_UnknownEscrowIgnoresXForwardedFor(t *testing.T) {
 	if forwarded.Load() != 3 {
 		t.Fatalf("forwarded = %d, want 3", forwarded.Load())
 	}
+}
+
+func TestOriginLookupLimiter_CapDoesNotWipeHotIP(t *testing.T) {
+	l := newOriginLookupLimiter()
+	rest := "/sessions/1/chat/completions"
+	miss := unknownEscrowMissResponse()
+
+	for i := 0; i < maxOriginLookupIPs-1; i++ {
+		l.observe(originBindRequest(testOriginIP(i)), rest, miss)
+	}
+	hot := "203.0.113.9"
+	l.observe(originBindRequest(hot), rest, miss)
+	l.observe(originBindRequest(hot), rest, miss)
+	if !l.blocked(originBindRequest(hot), rest) {
+		t.Fatal("hot IP should be at 2/min before the extra IP")
+	}
+
+	newbie := "198.51.100.7"
+	l.observe(originBindRequest(newbie), rest, miss)
+
+	if !l.blocked(originBindRequest(hot), rest) {
+		t.Fatal("filling past 4096 IPs must not wipe the hot IP bucket")
+	}
+	if l.blocked(originBindRequest(newbie), rest) {
+		t.Fatal("new IP after cap has one miss, not 2/min")
+	}
+	l.mu.Lock()
+	n := len(l.byIP)
+	_, hotOK := l.byIP[hot]
+	l.mu.Unlock()
+	if n > maxOriginLookupIPs {
+		t.Fatalf("len(byIP) = %d, want <= %d", n, maxOriginLookupIPs)
+	}
+	if n != maxOriginLookupIPs {
+		t.Fatalf("len(byIP) = %d, want %d (idle-evict + drop oldest, not wipe)", n, maxOriginLookupIPs)
+	}
+	if !hotOK {
+		t.Fatal("hot IP must remain in the table")
+	}
+}
+
+func TestOriginLookupLimiter_IdleIPsEvictedAtCap(t *testing.T) {
+	l := newOriginLookupLimiter()
+	base := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	now := base
+	l.now = func() time.Time { return now }
+	rest := "/sessions/1/chat/completions"
+	miss := unknownEscrowMissResponse()
+
+	for i := 0; i < maxOriginLookupIPs; i++ {
+		l.observe(originBindRequest(testOriginIP(i)), rest, miss)
+	}
+	now = base.Add(time.Minute + time.Second)
+	fresh := "198.51.100.8"
+	l.observe(originBindRequest(fresh), rest, miss)
+
+	l.mu.Lock()
+	n := len(l.byIP)
+	_, freshOK := l.byIP[fresh]
+	_, oldOK := l.byIP[testOriginIP(0)]
+	l.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("after idle eviction len(byIP) = %d, want 1", n)
+	}
+	if !freshOK {
+		t.Fatal("fresh IP should be recorded")
+	}
+	if oldOK {
+		t.Fatal("idle IPs should be gone, not wiped-and-replaced as a blank table mid-window")
+	}
+}
+
+func originBindRequest(ip string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "http://versiond/v1/sessions/1/chat/completions", nil)
+	r.Header.Set(originIPHeader, ip)
+	return r
+}
+
+func unknownEscrowMissResponse() *http.Response {
+	h := make(http.Header)
+	h.Set(headerDevshardError, errorEscrowNotFound)
+	return &http.Response{Header: h}
+}
+
+func testOriginIP(i int) string {
+	return fmt.Sprintf("10.%d.%d.%d", (i>>16)&0xff, (i>>8)&0xff, i&0xff)
 }

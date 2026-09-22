@@ -17,7 +17,10 @@ import (
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
-const channelLimiterIdleFor = time.Minute
+const (
+	channelLimiterIdleFor    = time.Minute
+	channelLimiterEvictBatch = 32
+)
 
 type rateLimitZone string
 
@@ -31,6 +34,7 @@ type tokenBucket struct {
 	mu         sync.Mutex
 	tokens     float64
 	last       time.Time
+	lastNano   atomic.Int64
 	ratePerMin float64
 	burst      float64
 }
@@ -39,7 +43,9 @@ func newTokenBucket(ratePerMin, burst float64, now time.Time) *tokenBucket {
 	if burst < 1 {
 		burst = 1
 	}
-	return &tokenBucket{tokens: burst, last: now, ratePerMin: ratePerMin, burst: burst}
+	b := &tokenBucket{tokens: burst, last: now, ratePerMin: ratePerMin, burst: burst}
+	b.lastNano.Store(now.UnixNano())
+	return b
 }
 
 func (b *tokenBucket) allow(now time.Time, cost float64) (ok bool, retry time.Duration) {
@@ -52,6 +58,7 @@ func (b *tokenBucket) allow(now time.Time, cost float64) (ok bool, retry time.Du
 	if elapsedMin > 0 {
 		b.tokens = math.Min(b.burst, b.tokens+elapsedMin*b.ratePerMin)
 		b.last = now
+		b.lastNano.Store(now.UnixNano())
 	}
 	// Admit when tokens >= min(cost, burst), then subtract cost. cost > burst
 	// overdrafts from a full bucket; refill still caps at burst (finding 12).
@@ -71,9 +78,7 @@ func (b *tokenBucket) idle(now time.Time) bool {
 	if b == nil {
 		return true
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return now.Sub(b.last) >= channelLimiterIdleFor
+	return now.UnixNano()-b.lastNano.Load() >= int64(channelLimiterIdleFor)
 }
 
 type channelLimiter struct {
@@ -84,6 +89,8 @@ type channelLimiter struct {
 	shared   map[string]*tokenBucket
 	streamMu sync.Mutex
 	streams  map[string]peerStreamCount
+	// evictVisited is how many keys the last at-cap idle walk inspected.
+	evictVisited int
 
 	warnMinute atomic.Int64
 }
@@ -216,8 +223,8 @@ func (l *channelLimiter) releaseStream(peer, procedure string) {
 
 // take looks up or creates a bucket under the map lock, then charges under
 // the bucket lock so peers do not serialize on token math. At MaxEntries
-// idle keys are evicted; a new peer is refused so named peers keep the
-// advertised rate (finding 18).
+// idle keys are evicted a batch at a time; a new peer is refused so named
+// peers keep the advertised rate (finding 18).
 func (l *channelLimiter) take(mu *sync.Mutex, buckets map[string]*tokenBucket, key string, rate, burst float64, now time.Time, cost float64, unlimited bool) (bool, time.Duration) {
 	if unlimited {
 		return true, 0
@@ -248,11 +255,15 @@ func (l *channelLimiter) lookupOrCreateLocked(buckets map[string]*tokenBucket, k
 }
 
 func (l *channelLimiter) evictIdleLocked(buckets map[string]*tokenBucket, now time.Time) {
+	n := 0
+	l.evictVisited = 0
 	for k, b := range buckets {
-		if b == nil {
-			continue
+		if n >= channelLimiterEvictBatch {
+			return
 		}
-		if b.idle(now) {
+		n++
+		l.evictVisited++
+		if b == nil || b.idle(now) {
 			delete(buckets, k)
 		}
 	}

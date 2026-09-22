@@ -339,6 +339,83 @@ func TestPeerConn_RefreshAttachFailureKeepsWatch(t *testing.T) {
 	require.Greater(t, testutil.ToFloat64(observability.PeerReattachCounter(directMuxPeer(hostAddr), "ttl")), ttlBefore)
 }
 
+func TestPeerConn_RefreshAttachTimeoutKeepsWatch(t *testing.T) {
+	transport.ResetRPCH2MissCacheForTest()
+	t.Cleanup(transport.ResetRPCH2MissCacheForTest)
+
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{
+		Heartbeat:  50 * time.Millisecond,
+		SessionTTL: 20 * time.Second,
+		TokenGrace: 5 * time.Second,
+	})
+	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(nil))
+	var attachN atomic.Int32
+	released := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(released) }) }
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "PeerAuthService/Attach") {
+			n := attachN.Add(1)
+			if n == 2 {
+				// Exceed DefaultAttachTimeout, then 200 — a slow success,
+				// not a RST, so the client error is DeadlineExceeded.
+				time.Sleep(transport.DefaultAttachTimeout + time.Second)
+				if r.Context().Err() != nil {
+					return
+				}
+			}
+			if n >= 3 {
+				select {
+				case <-released:
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}
+		mux.ServeHTTP(w, r.WithContext(rpcserver.WithEscrowID(r.Context(), "escrow-1")))
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(auth.Close)
+	t.Cleanup(release)
+
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{
+		WatchStale: time.Minute,
+		BackoffMin: 50 * time.Millisecond,
+		MinTTL:     time.Second,
+		Jitter:     func(time.Duration) time.Duration { return 50 * time.Millisecond },
+	})
+	pc.Start()
+	first := append([]byte(nil), waitPeerReady(t, pc)...)
+	watchBefore := testutil.ToFloat64(observability.PeerReattachCounter(directMuxPeer(hostAddr), "watch"))
+	ttlBefore := testutil.ToFloat64(observability.PeerReattachCounter(directMuxPeer(hostAddr), "ttl"))
+
+	require.Eventually(t, func() bool {
+		return attachN.Load() >= 2
+	}, 8*time.Second, 10*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		return attachN.Load() >= 3
+	}, transport.DefaultAttachTimeout+2*time.Second, 20*time.Millisecond)
+
+	require.Equal(t, observability.PeerSessionReady, pc.State(), "refresh DeadlineExceeded must not drop Watch")
+	require.True(t, pc.Ready())
+	require.Equal(t, first, pc.LiveToken(), "token stays until a later refresh succeeds")
+	require.Equal(t, watchBefore, testutil.ToFloat64(observability.PeerReattachCounter(directMuxPeer(hostAddr), "watch")))
+	require.Equal(t, ttlBefore, testutil.ToFloat64(observability.PeerReattachCounter(directMuxPeer(hostAddr), "ttl")))
+	require.False(t, transport.RPCH2MissCachedForTest(srv.URL), "refresh timeout must not pin HTTP/1.1")
+
+	release()
+	require.Eventually(t, func() bool {
+		tok := pc.LiveToken()
+		return pc.Ready() && len(tok) > 0 && string(tok) != string(first)
+	}, 8*time.Second, 20*time.Millisecond)
+	require.False(t, transport.RPCH2MissCachedForTest(srv.URL))
+	require.Greater(t, testutil.ToFloat64(observability.PeerReattachCounter(directMuxPeer(hostAddr), "ttl")), ttlBefore)
+}
+
 func TestPeerConn_PastExpiresAtDoesNotTightLoop(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
@@ -909,7 +986,7 @@ func TestRPCClient_GetPayloadResponseCap(t *testing.T) {
 		require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
 		require.Equal(t, int32(1), n.Load(), "oversize GetPayload must not retry")
 	})
-	t.Run("per-inference cap smaller than body is ResourceExhausted", func(t *testing.T) {
+	t.Run("512-byte pin rejects 2KiB decoded body", func(t *testing.T) {
 		var n atomic.Int32
 		body := make([]byte, 2048)
 		lookup := largeRPCLookup{core: largeRPCCore{}}
@@ -922,7 +999,34 @@ func TestRPCClient_GetPayloadResponseCap(t *testing.T) {
 		_, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{InferenceId: "1"}, 512)
 		require.Error(t, err)
 		require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
-		require.Equal(t, int32(1), n.Load(), "per-inference oversize must not retry")
+		require.Equal(t, int32(1), n.Load(), "decoded pin must not retry")
+	})
+	t.Run("512-byte pin allows 400-byte body", func(t *testing.T) {
+		body := make([]byte, 400)
+		lookup := largeRPCLookup{core: largeRPCCore{}}
+		h := rpcserver.NewPayloadHandler(lookup, func(context.Context, rpcserver.SessionCore, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+			return &rpcpb.GetPayloadResponse{ResponsePayload: body}, nil
+		})
+		rpc := newLargeRPCClient(t, lookup, transport.EndpointPayload,
+			transport.DefaultClientConfig(), rpcserver.WithPayloadService(h))
+		resp, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{InferenceId: "1"}, 512)
+		require.NoError(t, err)
+		require.Equal(t, len(body), len(resp.GetResponsePayload()))
+	})
+	t.Run("over 32MiB with 32MiB bucket is ResourceExhausted", func(t *testing.T) {
+		var n atomic.Int32
+		body := make([]byte, 32<<20+1)
+		lookup := largeRPCLookup{core: largeRPCCore{}}
+		h := rpcserver.NewPayloadHandler(lookup, func(context.Context, rpcserver.SessionCore, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+			n.Add(1)
+			return &rpcpb.GetPayloadResponse{ResponsePayload: body}, nil
+		})
+		rpc := newLargeRPCClient(t, lookup, transport.EndpointPayload,
+			transport.DefaultClientConfig(), rpcserver.WithPayloadService(h))
+		_, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{InferenceId: "1"}, 512)
+		require.Error(t, err)
+		require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+		require.Equal(t, int32(1), n.Load(), "oversize GetPayload must not retry")
 	})
 	t.Run("cap above 64MiB allows 64MiB+1", func(t *testing.T) {
 		body := make([]byte, transport.DefaultRPCPayloadMaxBytes+1)

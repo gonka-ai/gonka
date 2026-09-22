@@ -22,6 +22,7 @@ import (
 
 	"common/httpguard"
 	devtest "devshard/internal/testutil"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/transport"
 	"devshard/transport/rpcserver"
@@ -112,7 +113,7 @@ func TestPeerConn_H2AcceptHoldFallsBackWithinAttachBudget(t *testing.T) {
 	require.True(t, transport.RPCH2MissCachedForTest(inf.URL))
 }
 
-func TestPeerConn_H2CloseFINsMux(t *testing.T) {
+func TestPeerConn_H2CloseDoesNotFINSharedMux(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
 	h2URL, live := startPeerRPCServerH2CLive(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
@@ -130,8 +131,9 @@ func TestPeerConn_H2CloseFINsMux(t *testing.T) {
 	require.Equal(t, int32(1), live.Load())
 
 	pc.Close()
-	require.Eventually(t, func() bool { return live.Load() == 0 }, 5*time.Second, 10*time.Millisecond,
-		"PeerConn.Close must FIN the idle h2 mux")
+	require.Never(t, func() bool { return live.Load() == 0 }, 200*time.Millisecond, 10*time.Millisecond,
+		"PeerConn.Close must not CloseIdle the pooled h2 mux")
+	require.Equal(t, int32(1), live.Load())
 	require.Zero(t, infHits.Load())
 }
 
@@ -351,6 +353,87 @@ func TestPeerConn_H2RefreshTransportMissCancelsWatch(t *testing.T) {
 	}, 8*time.Second, 20*time.Millisecond, "transport miss on TTL refresh must cancel Watch")
 	require.Less(t, time.Since(start), 90*time.Second)
 	require.True(t, transport.RPCH2MissCachedForTest(inf.URL))
+}
+
+func TestPeerConn_RefreshAttachTimeoutDoesNotPinHTTP11(t *testing.T) {
+	httpguard.SetAllowPrivate(true)
+	transport.ResetRPCH2MissCacheForTest()
+	transport.ResetRPCH2ClientPoolForTest()
+	t.Cleanup(transport.ResetRPCH2MissCacheForTest)
+	t.Cleanup(transport.ResetRPCH2ClientPoolForTest)
+
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{
+		Heartbeat:  50 * time.Millisecond,
+		SessionTTL: 20 * time.Second,
+		TokenGrace: 5 * time.Second,
+	})
+	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(nil))
+	var attachN atomic.Int32
+	released := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(released) }) }
+
+	h2 := httptest.NewServer(h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "PeerAuthService/Attach") {
+			n := attachN.Add(1)
+			if n == 2 {
+				time.Sleep(transport.DefaultAttachTimeout + time.Second)
+				if r.Context().Err() != nil {
+					return
+				}
+			}
+			if n >= 3 {
+				select {
+				case <-released:
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}
+		mux.ServeHTTP(w, r.WithContext(rpcserver.WithEscrowID(r.Context(), "escrow-1")))
+	}), &http2.Server{}))
+	t.Cleanup(h2.Close)
+	t.Cleanup(auth.Close)
+	t.Cleanup(release)
+
+	inf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "must not fall back to HTTP/1.1 on refresh timeout", http.StatusTeapot)
+	}))
+	t.Cleanup(inf.Close)
+
+	pc := newTestPeerConn(t, inf, hostAddr, peer, transport.PeerConnConfig{
+		DialSet:        transport.PeerRPCDialSet{H2URL: h2.URL},
+		H2ProbeTimeout: 200 * time.Millisecond,
+		WatchStale:     time.Minute,
+		BackoffMin:     50 * time.Millisecond,
+		MinTTL:         time.Second,
+		Jitter:         func(time.Duration) time.Duration { return 50 * time.Millisecond },
+	})
+	pc.Start()
+	first := append([]byte(nil), waitPeerReady(t, pc)...)
+	require.True(t, pc.UsingH2())
+
+	require.Eventually(t, func() bool {
+		return attachN.Load() >= 2
+	}, 8*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return attachN.Load() >= 3
+	}, transport.DefaultAttachTimeout+2*time.Second, 20*time.Millisecond)
+
+	require.Equal(t, observability.PeerSessionReady, pc.State(), "refresh DeadlineExceeded must not drop Watch")
+	require.True(t, pc.Ready())
+	require.True(t, pc.UsingH2(), "refresh timeout must not flip this PeerConn off h2")
+	require.Equal(t, first, pc.LiveToken(), "token stays until a later refresh succeeds")
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL), "refresh timeout must not pin HTTP/1.1")
+
+	release()
+	require.Eventually(t, func() bool {
+		tok := pc.LiveToken()
+		return pc.Ready() && pc.UsingH2() && len(tok) > 0 && string(tok) != string(first)
+	}, 8*time.Second, 20*time.Millisecond)
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL))
 }
 
 func TestPeerConn_H2HalfOpenFallsBackWithoutWatchStale(t *testing.T) {

@@ -189,3 +189,23 @@ func TestIsRPCH2Miss(t *testing.T) {
 	require.True(t, isRPCH2Miss(http2.StreamError{StreamID: 1, Code: http2.ErrCodeProtocol}))
 	require.True(t, isRPCH2Miss(http2.ConnectionError(http2.ErrCodeProtocol)))
 }
+
+func TestIsRPCH2TransportMissOmitsDeadline(t *testing.T) {
+	require.False(t, isRPCH2TransportMiss(nil))
+	require.False(t, isRPCH2TransportMiss(errAttachTTL))
+	require.False(t, isRPCH2TransportMiss(context.DeadlineExceeded),
+		"live refresh timeout must not look like a dead origin")
+	require.False(t, isRPCH2TransportMiss(context.Canceled))
+	require.False(t, isRPCH2TransportMiss(connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)))
+	require.True(t, isRPCH2Miss(context.DeadlineExceeded), "first-Attach probe still treats deadline as an h2 miss")
+	require.True(t, isRPCH2Miss(connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)))
+
+	op := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}
+	require.True(t, isRPCH2TransportMiss(op))
+	require.True(t, isRPCH2TransportMiss(connect.NewError(connect.CodeUnavailable, op)))
+	require.True(t, isRPCH2TransportMiss(&net.DNSError{Name: "missing.invalid", IsNotFound: true}))
+	require.True(t, isRPCH2TransportMiss(errors.New("http2: client conn could not be established")))
+	require.True(t, isRPCH2TransportMiss(http2.StreamError{StreamID: 1, Code: http2.ErrCodeProtocol}))
+	require.True(t, isRPCH2TransportMiss(http2.ConnectionError(http2.ErrCodeProtocol)))
+	require.False(t, isRPCH2TransportMiss(connect.NewError(connect.CodeUnavailable, errors.New("refresh down"))))
+}

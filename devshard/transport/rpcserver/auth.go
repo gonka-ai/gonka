@@ -53,12 +53,18 @@ const (
 	// deletes per write-lock hold. Attach's in-lock sweep at the cap is
 	// unchanged (already under mu).
 	sweepBatchSize = 256
+	// attachRingMinCap is the first allocation of the Attach window. Doubling
+	// grows it up to AttachFloorPerMin so a quiet child does not reserve the
+	// whole floor.
+	attachRingMinCap = 16
 )
 
 // AllowPeer decides whether a recovered address may use the escrow in
-// ctx (EscrowIDFromContext). Attach uses it as the door (the token is still
-// host-wide). Data RPCs check AllowsSender on the session resolved for that
-// RPC. A non-nil error means the host could not decide; mapAllowError maps it
+// ctx (EscrowIDFromContext). Attach uses it as the door on first handshake
+// and on any later Attach whose URL is not HostRPCEscrowID (the token is
+// still host-wide). Live renewals on `_` skip it while the peer session is
+// live. Data RPCs check AllowsSender on the session resolved for that RPC.
+// A non-nil error means the host could not decide; mapAllowError maps it
 // the same way JSON sessionHTTPError does, never as a rejected peer.
 type AllowPeer func(ctx context.Context, address string) (bool, error)
 
@@ -85,6 +91,12 @@ type PeerAuthConfig struct {
 	Limits *transport.ChannelLimitConfig
 	// Allow is the URL-escrow roster check at Attach. Nil skips (tests).
 	Allow AllowPeer
+	// LiveSession is whether this child already has a local session for
+	// the URL escrow. Shard rows in RPCTraffic are created only when this
+	// is true. It must not CreateSession, recover from store, or GetEscrow
+	// — in-memory lookup only (HostManager.existingServer). Nil means no
+	// shard rows (host / peer / IP still record).
+	LiveSession func(escrowID string) bool
 	// SweepInterval is the expired-session ticker. Zero means SessionTTL/2
 	// when StartSweeper runs. Tests that do not call StartSweeper never start
 	// a goroutine.
@@ -112,8 +124,8 @@ type PeerAuthHandler struct {
 	sweepOnce sync.Once
 	closed    atomic.Bool
 
-	attachMu    sync.Mutex
-	attachTimes []time.Time
+	attachMu   sync.Mutex
+	attachRing attachRing
 
 	limiter *channelLimiter
 	traffic *transport.RPCTraffic
@@ -175,6 +187,9 @@ func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerA
 		if cfg.AttachFloorPerMin <= 0 {
 			cfg.AttachFloorPerMin = defaultAttachFloorPerMin
 		}
+		cfg.AttachFloorPerMin = transport.ClampAttachFloorPerMin(cfg.AttachFloorPerMin)
+	} else {
+		cfg.AttachFloorPerMin = transport.ClampAttachFloorPerMin(cfg.AttachFloorPerMin)
 	}
 	return &PeerAuthHandler{
 		verifier:    verifier,
@@ -215,6 +230,13 @@ func (h *PeerAuthHandler) checkAllow(ctx context.Context, addr string) error {
 		return connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
 	}
 	return nil
+}
+
+// attachDoorRequired is true when Attach's URL is a real escrow. `_` is
+// Watch / live-refresh only and is not a roster id.
+func attachDoorRequired(ctx context.Context) bool {
+	id := EscrowIDFromContext(ctx)
+	return id != "" && id != transport.HostRPCEscrowID
 }
 
 func (h *PeerAuthHandler) advertisedRateLimits() *rpcpb.RateLimits {
@@ -280,9 +302,10 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	// Refund only after a successful bind. A live peer whose
 	// Attach then fails (nonce reuse, roster, cap) must keep the charge.
 	wasLive := h.peerSessionLive(recovered)
-	if !wasLive {
-		// Door check is first Attach only. Watch and live renewals are
-		// host-scoped: the URL escrow may already be gone.
+	// Live renewals on /sessions/_/rpc skip the door: the URL is not a
+	// roster. Any real escrow URL is checked even when the peer already
+	// has a host session, so a Watch drop cannot re-Attach on a settled id.
+	if !wasLive || attachDoorRequired(ctx) {
 		if err := h.checkAllow(ctx, recovered); err != nil {
 			return nil, err
 		}
@@ -545,30 +568,25 @@ func (h *PeerAuthHandler) evictOldestIdleLocked() bool {
 }
 
 // chargeAttach is the process-wide Attach throttle. Sliding one-minute
-// window. Child sees versiond as src, so this is not per client IP.
-// handshakeGate charges it on oversized Content-Length (before decode).
-// The handler charges it after decode and before ECDSA. A later
-// refundAttach drops this charge if the Attach succeeds for a peer that
-// already held a live or grace session.
+// window as a ring (drop expired from the head). Child sees versiond as
+// src, so this is not per client IP. handshakeGate charges it on oversized
+// Content-Length (before decode). The handler charges it after decode and
+// before ECDSA. A later refundAttach drops this charge if the Attach
+// succeeds for a peer that already held a live or grace session.
 func (h *PeerAuthHandler) chargeAttach(ctx context.Context) (time.Time, error) {
-	limit := h.cfg.AttachFloorPerMin
+	limit := transport.ClampAttachFloorPerMin(h.cfg.AttachFloorPerMin)
 	if limit <= 0 || limit == math.MaxInt {
 		return time.Time{}, nil
 	}
 	now := h.now()
 	cutoff := now.Add(-time.Minute)
 	h.attachMu.Lock()
-	kept := h.attachTimes[:0]
-	for _, ts := range h.attachTimes {
-		if ts.After(cutoff) {
-			kept = append(kept, ts)
-		}
-	}
-	h.attachTimes = kept
-	if len(h.attachTimes) >= limit {
+	h.attachRing.ensure(limit)
+	h.attachRing.dropExpired(cutoff)
+	if h.attachRing.n >= limit {
 		retry := time.Minute
-		if len(h.attachTimes) > 0 {
-			retry = h.attachTimes[0].Add(time.Minute).Sub(now)
+		if ts, ok := h.attachRing.oldest(); ok {
+			retry = ts.Add(time.Minute).Sub(now)
 		}
 		h.attachMu.Unlock()
 		if h.limiter != nil {
@@ -576,7 +594,7 @@ func (h *PeerAuthHandler) chargeAttach(ctx context.Context) (time.Time, error) {
 		}
 		return time.Time{}, attachFloorExhausted(retryAfterSeconds(retry))
 	}
-	h.attachTimes = append(h.attachTimes, now)
+	h.attachRing.push(now)
 	h.attachMu.Unlock()
 	return now, nil
 }
@@ -587,11 +605,100 @@ func (h *PeerAuthHandler) refundAttach(at time.Time) {
 	}
 	h.attachMu.Lock()
 	defer h.attachMu.Unlock()
-	for i := len(h.attachTimes) - 1; i >= 0; i-- {
-		if h.attachTimes[i].Equal(at) {
-			h.attachTimes = append(h.attachTimes[:i], h.attachTimes[i+1:]...)
+	h.attachRing.removeLastEqual(at)
+}
+
+// attachRing is a circular one-minute Attach window. dropExpired is O(expired)
+// from the head; charge is O(1) amortized. refund is O(n) and rare. The buffer
+// doubles from attachRingMinCap up to the clamped floor so the first Attach
+// does not allocate the whole policy window.
+type attachRing struct {
+	buf  []time.Time
+	head int
+	n    int
+}
+
+func (r *attachRing) ensure(limit int) {
+	if r == nil || limit <= 0 {
+		return
+	}
+	limit = transport.ClampAttachFloorPerMin(limit)
+	if limit == math.MaxInt {
+		return
+	}
+	if len(r.buf) >= limit {
+		return
+	}
+	if len(r.buf) > 0 && r.n < len(r.buf) {
+		return
+	}
+	newCap := len(r.buf) * 2
+	if newCap == 0 {
+		newCap = attachRingMinCap
+	}
+	if newCap > limit {
+		newCap = limit
+	}
+	if newCap <= len(r.buf) {
+		return
+	}
+	oldLen := len(r.buf)
+	newBuf := make([]time.Time, newCap)
+	for i := 0; i < r.n; i++ {
+		newBuf[i] = r.buf[(r.head+i)%oldLen]
+	}
+	r.buf = newBuf
+	r.head = 0
+}
+
+func (r *attachRing) dropExpired(cutoff time.Time) {
+	if r == nil || len(r.buf) == 0 {
+		return
+	}
+	for r.n > 0 {
+		if r.buf[r.head].After(cutoff) {
 			return
 		}
+		r.head = (r.head + 1) % len(r.buf)
+		r.n--
+	}
+	r.head = 0
+}
+
+func (r *attachRing) oldest() (time.Time, bool) {
+	if r == nil || r.n == 0 || len(r.buf) == 0 {
+		return time.Time{}, false
+	}
+	return r.buf[r.head], true
+}
+
+func (r *attachRing) push(ts time.Time) {
+	if r == nil || len(r.buf) == 0 || r.n >= len(r.buf) {
+		return
+	}
+	r.buf[(r.head+r.n)%len(r.buf)] = ts
+	r.n++
+}
+
+func (r *attachRing) removeLastEqual(at time.Time) {
+	if r == nil || r.n == 0 || len(r.buf) == 0 {
+		return
+	}
+	for i := r.n - 1; i >= 0; i-- {
+		idx := (r.head + i) % len(r.buf)
+		if !r.buf[idx].Equal(at) {
+			continue
+		}
+		for j := i; j < r.n-1; j++ {
+			a := (r.head + j) % len(r.buf)
+			b := (r.head + j + 1) % len(r.buf)
+			r.buf[a] = r.buf[b]
+		}
+		r.n--
+		if r.n == 0 {
+			r.head = 0
+		}
+		return
 	}
 }
 

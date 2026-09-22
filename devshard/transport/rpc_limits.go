@@ -17,9 +17,22 @@ const (
 	DefaultRPCMessagesBurst = DefaultRPCMessagesPerMin / 10
 	// DefaultRPCMaxStreams is the per-peer concurrent Watch+Chat cap.
 	// Chat uses at most max-1 when max>1 so Watch always has a slot.
+	// This is the Connect interceptor, not HTTP/2 SETTINGS (per TCP).
 	DefaultRPCMaxStreams uint32 = 256
+	// DefaultH2MaxConcurrentStreams is SETTINGS_MAX_CONCURRENT_STREAMS on
+	// the child h2c listen. Overlay muxes every peer's Watch onto one
+	// (or a few) versiond→child TCP connections, so this must match
+	// versiond's public listen and HAProxy tune.h2.max-concurrent-streams,
+	// not DefaultRPCMaxStreams. versioned copies the same 4096
+	// (versioned cannot import this module).
+	DefaultH2MaxConcurrentStreams uint32 = 4096
 	// DefaultRPCAttachFloorPerMin is the process-wide Attach floor (before ECDSA).
 	DefaultRPCAttachFloorPerMin = 10_000
+	// MaxRPCAttachFloorPerMin is the highest DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL
+	// we honor (10× default). Above that, parse / WithDefaults warn (env) or
+	// clamp. A full window is ~2.4 MiB of timestamps. -1 stays unlimited
+	// (no ring).
+	MaxRPCAttachFloorPerMin = 100_000
 	// DefaultRPCLimiterMaxEntries is the per-map cap on distinct peer keys.
 	// Idle buckets older than a minute are evicted first. Peer maps then
 	// refuse a new key (finding 18: advertised rate stays the named bucket).
@@ -54,6 +67,7 @@ type ChannelLimitConfig struct {
 	// Advertised and enforced max_streams is min(MaxStreams, MaxConns).
 	MaxConns int
 	// AttachFloorPerMin is process-wide. Zero means DefaultRPCAttachFloorPerMin.
+	// Values above MaxRPCAttachFloorPerMin are clamped. math.MaxInt is unlimited.
 	AttachFloorPerMin int
 	// MaxEntries caps distinct keys per limiter map. Zero means
 	// DefaultRPCLimiterMaxEntries. Tests lower it; production does not
@@ -105,6 +119,8 @@ func (c ChannelLimitConfig) WithDefaults() ChannelLimitConfig {
 	}
 	if c.AttachFloorPerMin <= 0 {
 		c.AttachFloorPerMin = DefaultRPCAttachFloorPerMin
+	} else {
+		c.AttachFloorPerMin = ClampAttachFloorPerMin(c.AttachFloorPerMin)
 	}
 	if c.MaxEntries <= 0 {
 		c.MaxEntries = DefaultRPCLimiterMaxEntries
@@ -184,6 +200,23 @@ func parseRPCLimitInt(env string, def int) int {
 		}
 		warnIgnoredRPCLimit(env, raw, def, reason)
 		return def
+	}
+	if n > MaxRPCAttachFloorPerMin {
+		warnIgnoredRPCLimit(env, raw, MaxRPCAttachFloorPerMin, "too_large")
+		return MaxRPCAttachFloorPerMin
+	}
+	return n
+}
+
+// ClampAttachFloorPerMin caps a configured Attach floor. math.MaxInt
+// (unlimited / Disabled) is unchanged. Zero and negative are left for
+// WithDefaults to replace with DefaultRPCAttachFloorPerMin.
+func ClampAttachFloorPerMin(n int) int {
+	if n <= 0 || n == math.MaxInt {
+		return n
+	}
+	if n > MaxRPCAttachFloorPerMin {
+		return MaxRPCAttachFloorPerMin
 	}
 	return n
 }

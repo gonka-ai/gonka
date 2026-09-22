@@ -10,11 +10,13 @@ import (
 	"devshard/transport"
 )
 
-// H2CServer is the HTTP/2 settings for the child listen. MaxConcurrentStreams
-// matches the Phase 4 per-peer stream cap so SETTINGS does not silently
-// throttle below the interceptor.
+// H2CServer is the HTTP/2 settings for the child listen. SETTINGS is per
+// TCP connection: versiond uses one process-wide http2.Transport, so this
+// is a child-wide cap on that mux, not the per-peer interceptor
+// (DefaultRPCMaxStreams). Keep lockstep with versiond
+// DefaultH2MaxConcurrentStreams and HAProxy tune.h2.max-concurrent-streams.
 func H2CServer() *http2.Server {
-	return &http2.Server{MaxConcurrentStreams: transport.DefaultRPCMaxStreams}
+	return &http2.Server{MaxConcurrentStreams: transport.DefaultH2MaxConcurrentStreams}
 }
 
 // H2CHandler wraps h so one TCP connection can carry HTTP/1.1 and h2c

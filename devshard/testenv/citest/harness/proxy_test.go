@@ -30,6 +30,7 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	require.NoError(t, err)
 	text := string(cfg)
 	require.Contains(t, text, "bind *:8443 proto h2")
+	require.Contains(t, text, "tune.h2.max-concurrent-streams 4096")
 	require.Contains(t, text, "versiond-router:8081 proto h2")
 	require.Contains(t, text, "http-request del-header X-Real-IP")
 	require.Contains(t, text, "X-Real-IP %[src]")
@@ -54,6 +55,8 @@ func TestVersiondRouterHasNoPerIPZones(t *testing.T) {
 	require.NotContains(t, string(pool), "conn_rate")
 	require.NotContains(t, string(pool), "sess_rate")
 	require.Contains(t, string(router), "Per-IP zones stay on the published hop (proxy), not here.")
+	require.Contains(t, string(router), "tune.h2.max-concurrent-streams 4096")
+	require.Contains(t, string(router), "bind ${FRONT_BIND_ADDRESS}:${H2_PORT} proto h2")
 }
 
 func TestComposeFileArgsDefaultOmitsProxy(t *testing.T) {

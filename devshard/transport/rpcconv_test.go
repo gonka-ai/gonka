@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard/heightsync"
+	"devshard/internal/testutil"
 	"devshard/transport/rpcpb"
 	"devshard/types"
 )
@@ -118,6 +119,29 @@ func TestHeightSyncSection_ProtoRoundTrip(t *testing.T) {
 func TestGossipNonce_ProtoRoundTrip(t *testing.T) {
 	in := GossipNonceRequest{Nonce: 5, StateHash: []byte{1}, StateSig: []byte{2}, SlotID: 0}
 	require.Equal(t, in, GossipNonceRequestFromProto(GossipNonceRequestToProto(in)))
+}
+
+func TestDiffToProtoMatchesDiffToJSON(t *testing.T) {
+	user := testutil.MustGenerateKey(t)
+	cases := []types.Diff{
+		{Nonce: 1},
+		testutil.SignDiffWithRoot(t, user, "escrow-1", 7,
+			[]*types.DevshardTx{testutil.StartTxVersioned(1, testutil.RuntimeTestVersion)},
+			[]byte{0x11, 0x22, 0x33}),
+	}
+	for _, d := range cases {
+		dj, err := DiffToJSON(d)
+		require.NoError(t, err)
+		pb, err := DiffToProto(d)
+		require.NoError(t, err)
+		require.True(t, proto.Equal(DiffJSONToProto(dj), pb), "Connect GetDiffs must emit the same fields as DiffToJSON")
+		require.Equal(t, dj, DiffJSONFromProto(pb))
+		round, err := DiffFromJSON(DiffJSONFromProto(pb))
+		require.NoError(t, err)
+		require.Equal(t, d.Nonce, round.Nonce)
+		require.Equal(t, d.UserSig, round.UserSig)
+		require.Equal(t, d.PostStateRoot, round.PostStateRoot)
+	}
 }
 
 func TestDiffJSON_ProtoBytesMatchJSONForm(t *testing.T) {

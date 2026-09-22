@@ -27,6 +27,7 @@ func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
 	require.NoError(t, err)
 	got := rewriteRPCProxyForTest(string(src), "versiond-router:19081", defaultRPCProxyTestLimits())
 	require.Contains(t, got, "bind *:8443 proto h2")
+	require.Contains(t, got, "tune.h2.max-concurrent-streams 4096")
 	require.Contains(t, got, "http-request del-header X-Real-IP")
 	require.Contains(t, got, "X-Real-IP %[src]")
 	require.Contains(t, got, "path_end /devshard.transport.v1.PeerAuthService/Attach")
@@ -115,6 +116,62 @@ func TestProxyHAProxy_SecondSrcNotThrottled(t *testing.T) {
 	require.Contains(t, codeB, "200", "second src must not share the first src's stick-table, got %q", codeB)
 }
 
+func TestProxyHAProxy_MoreThan100StreamsShareOneTCP(t *testing.T) {
+	const n = 101
+	started := make(chan struct{}, n)
+	release := make(chan struct{})
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/rpc/") {
+			started <- struct{}{}
+			<-release
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	fx := startRPCProxyHAProxyHandler(t, defaultRPCProxyTestLimits(), false, nil, h)
+
+	var dials atomic.Int32
+	client := newH2CClientOnDial(t, func() { dials.Add(1) })
+	// golang.org/x/net/http2 uses initialMaxConcurrentStreams=100 until it
+	// sees the server SETTINGS frame. One RPC on this client first so the
+	// 101-stream burst is judged against HAProxy's advertised 4096, not
+	// the library default (which would dial a second TCP at stream 101).
+	require.Equal(t, http.StatusOK, mustProxyRPCStatus(t, client, fx.url, "/devshard.transport.v1.SessionService/Chat"))
+	require.Equal(t, int32(1), dials.Load(), "warmup must open the mux")
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			code, err := proxyRPCStatus(client, fx.url, "/rpc/")
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if code != http.StatusOK {
+				errCh <- fmt.Errorf("status %d", code)
+			}
+		}()
+	}
+	func() {
+		defer close(release)
+		for i := 0; i < n; i++ {
+			select {
+			case <-started:
+			case <-time.After(15 * time.Second):
+				t.Fatalf("%d/%d streams started; HAProxy SETTINGS default 100 would fan out TCP", i, n)
+			}
+		}
+		require.Equal(t, int32(1), dials.Load(), "overlapping h2 streams must share one TCP to proxy")
+	}()
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+}
+
 func TestProxyHAProxy_ProductionCfgSyntax(t *testing.T) {
 	RequireDocker(t)
 	cfg, err := filepath.Abs(filepath.Join("..", "..", "proxy", "haproxy-rpc.cfg"))
@@ -148,10 +205,8 @@ func startRPCProxyHAProxyOnNetwork(t *testing.T, lim rpcProxyTestLimits) *rpcPro
 
 func startRPCProxyHAProxyOpt(t *testing.T, lim rpcProxyTestLimits, userNet bool) *rpcProxyFixture {
 	t.Helper()
-	RequireDocker(t)
-
 	fx := &rpcProxyFixture{}
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return startRPCProxyHAProxyHandler(t, lim, userNet, fx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fx.lastRealIP.Store(r.Header.Get("X-Real-IP"))
 		switch {
 		case strings.HasSuffix(r.URL.Path, "PeerAuthService/Attach"):
@@ -162,7 +217,16 @@ func startRPCProxyHAProxyOpt(t *testing.T, lim rpcProxyTestLimits, userNet bool)
 			fx.chat.Add(1)
 		}
 		w.WriteHeader(http.StatusOK)
-	})
+	}))
+}
+
+func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet bool, fx *rpcProxyFixture, handler http.Handler) *rpcProxyFixture {
+	t.Helper()
+	RequireDocker(t)
+	if fx == nil {
+		fx = &rpcProxyFixture{}
+	}
+
 	backend := httptest.NewUnstartedServer(handler)
 	require.NoError(t, backend.Listener.Close())
 	ln, err := net.Listen("tcp4", "0.0.0.0:0")
@@ -264,15 +328,23 @@ func publishedLocalPort(portOut string) (string, error) {
 
 func newH2CClient(t *testing.T) *http.Client {
 	t.Helper()
+	return newH2CClientOnDial(t, nil)
+}
+
+func newH2CClientOnDial(t *testing.T, onDial func()) *http.Client {
+	t.Helper()
 	tr := &http2.Transport{
 		AllowHTTP: true,
 		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			if onDial != nil {
+				onDial()
+			}
 			var d net.Dialer
 			return d.DialContext(ctx, network, addr)
 		},
 	}
 	t.Cleanup(tr.CloseIdleConnections)
-	return &http.Client{Transport: tr, Timeout: 10 * time.Second}
+	return &http.Client{Transport: tr, Timeout: 30 * time.Second}
 }
 
 func proxyRPCStatus(client *http.Client, base, path string) (int, error) {

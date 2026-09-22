@@ -3,7 +3,24 @@ package transport
 import (
 	"devshard/heightsync"
 	"devshard/transport/rpcpb"
+	"devshard/types"
 )
+
+// DiffToProto is the Connect wire form of a domain Diff. Same field mapping
+// as DiffToJSON (Nonce, marshaled DiffContent Txs, UserSig, PostStateRoot)
+// without an intermediate DiffJSON.
+func DiffToProto(d types.Diff) (*rpcpb.Diff, error) {
+	txsBytes, err := marshalDiffWireTxs(d)
+	if err != nil {
+		return nil, err
+	}
+	return &rpcpb.Diff{
+		Nonce:         d.Nonce,
+		Txs:           txsBytes,
+		UserSig:       d.UserSig,
+		PostStateRoot: d.PostStateRoot,
+	}, nil
+}
 
 // DiffJSONToProto is the Connect wire form of DiffJSON.
 func DiffJSONToProto(d DiffJSON) *rpcpb.Diff {

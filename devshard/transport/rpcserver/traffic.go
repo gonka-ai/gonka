@@ -29,7 +29,10 @@ func (h *PeerAuthHandler) observeRPC(ctx context.Context, procedure, peer string
 	if h == nil || h.traffic == nil {
 		return
 	}
-	escrow := EscrowIDFromContext(ctx)
+	escrow := ""
+	if !attach {
+		escrow = h.observeEscrowID(ctx)
+	}
 	ip := ""
 	if !attach {
 		ip = clientIPFromContext(ctx)
@@ -44,6 +47,18 @@ func (h *PeerAuthHandler) observeRPC(ctx context.Context, procedure, peer string
 		AttachFloor: attachFloor,
 		StreamCap:   streamCap,
 	})
+}
+
+// observeEscrowID is the shard key: a live local session, not the raw URL.
+func (h *PeerAuthHandler) observeEscrowID(ctx context.Context) string {
+	id := EscrowIDFromContext(ctx)
+	if id == "" || id == transport.HostRPCEscrowID {
+		return ""
+	}
+	if h.cfg.LiveSession == nil || !h.cfg.LiveSession(id) {
+		return ""
+	}
+	return id
 }
 
 func (h *PeerAuthHandler) observeAttach(ctx context.Context, err error) {

@@ -280,10 +280,11 @@ func TestPeerConn_BackoffShape(t *testing.T) {
 	t.Cleanup(cancel)
 	var n atomic.Int32
 	pc := NewPeerConn(PeerConnConfig{
-		BaseURL:     "http://127.0.0.1:1",
-		HostAddress: "gonka1backoff",
-		Signer:      peer,
-		DirectMux:   true,
+		BaseURL:      "http://127.0.0.1:1",
+		HostAddress:  "gonka1backoff",
+		DoorEscrowID: "42",
+		Signer:       peer,
+		DirectMux:    true,
 		BackoffMin:  50 * time.Millisecond,
 		BackoffMax:  5 * time.Second,
 		Jitter:      func(d time.Duration) time.Duration { return d },
@@ -325,10 +326,11 @@ func TestPeerConn_SSRF(t *testing.T) {
 
 	peer := devtest.MustGenerateKey(t)
 	pc := NewPeerConn(PeerConnConfig{
-		BaseURL:     "http://127.0.0.1:1",
-		HostAddress: "gonka1ssrf",
-		Signer:      peer,
-		DirectMux:   true,
+		BaseURL:      "http://127.0.0.1:1",
+		HostAddress:  "gonka1ssrf",
+		DoorEscrowID: "42",
+		Signer:       peer,
+		DirectMux:    true,
 		BackoffMax:  50 * time.Millisecond,
 		BackoffMin:  10 * time.Millisecond,
 	})

@@ -44,15 +44,18 @@ const (
 	DefaultRPCH2ProbeTimeout = time.Second
 
 	// DefaultRPCH2IdleConnTimeout matches HTTP/1.1 IdleConnTimeout so a
-	// quiet mux does not last until process exit.
+	// quiet mux does not last until process exit. versiond's child reverse
+	// proxy copies this as DefaultChildH2IdleConnTimeout.
 	DefaultRPCH2IdleConnTimeout = 120 * time.Second
 
 	// DefaultRPCH2ReadIdleTimeout PINGs if no HTTP/2 frame arrives. Under
 	// WatchStale (90s) so a half-open mux does not wait for three missed
-	// heartbeats. Watch beats still reset the idle timer.
+	// heartbeats. Watch beats still reset the idle timer. versiond's child
+	// reverse proxy copies this as DefaultChildH2ReadIdleTimeout.
 	DefaultRPCH2ReadIdleTimeout = 15 * time.Second
 
 	// DefaultRPCH2PingTimeout is how long a health-check PING may wait.
+	// versiond's child reverse proxy copies this as DefaultChildH2PingTimeout.
 	DefaultRPCH2PingTimeout = 5 * time.Second
 )
 
@@ -282,12 +285,28 @@ func RPCH2MissCachedForTest(inferenceURL string) bool {
 // isRPCH2Miss is a failed h2 origin (closed, not h2c, timeout, refuse,
 // preface). Connect status from a working HTTP/2 server — including
 // Unavailable / Unknown after an RPC — must not pin HTTP/1.1.
+// DeadlineExceeded / Canceled are probe misses only (1s blackhole). A
+// live TTL refresh uses isRPCH2TransportMiss so a slow Attach does not
+// drop Watch or rememberRPCH2Miss.
 func isRPCH2Miss(err error) bool {
 	if err == nil || errors.Is(err, errAttachTTL) {
 		return false
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if isContextDone(err) {
 		return true
+	}
+	return isRPCH2TransportMiss(err)
+}
+
+func isContextDone(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
+// isRPCH2TransportMiss is a dead origin (RST, refuse, not h2c, preface).
+// DeadlineExceeded / Canceled are not transport misses.
+func isRPCH2TransportMiss(err error) bool {
+	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) {
+		return false
 	}
 	var op *net.OpError
 	if errors.As(err, &op) {

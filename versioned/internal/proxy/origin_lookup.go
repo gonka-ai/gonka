@@ -23,13 +23,23 @@ const (
 // (owner chat, height-sync seed, Attach). It keys on inbound X-Real-IP from
 // versiond-router, not the child's RemoteAddr. Missing header skips the bucket
 // so an old hop that does not forward the client IP cannot collapse the host.
+// At maxOriginLookupIPs, idle IPs (no miss in the last minute) go first,
+// then the oldest remaining IP — the table is never wiped wholesale.
 type originLookupLimiter struct {
 	mu   sync.Mutex
 	byIP map[string][]time.Time
+	now  func() time.Time
 }
 
 func newOriginLookupLimiter() *originLookupLimiter {
 	return &originLookupLimiter{byIP: make(map[string][]time.Time)}
+}
+
+func (l *originLookupLimiter) clock() time.Time {
+	if l != nil && l.now != nil {
+		return l.now()
+	}
+	return time.Now()
 }
 
 func (l *originLookupLimiter) blocked(r *http.Request, rest string) bool {
@@ -40,7 +50,7 @@ func (l *originLookupLimiter) blocked(r *http.Request, rest string) bool {
 	if ip == "" {
 		return false
 	}
-	now := time.Now()
+	now := l.clock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return countRecent(l.byIP[ip], now) >= defaultUnknownEscrowPerIPPerMin
@@ -57,13 +67,62 @@ func (l *originLookupLimiter) observe(r *http.Request, rest string, resp *http.R
 	if ip == "" {
 		return
 	}
-	now := time.Now()
+	now := l.clock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.byIP == nil || len(l.byIP) > maxOriginLookupIPs {
+	if l.byIP == nil {
 		l.byIP = make(map[string][]time.Time)
 	}
+	if _, ok := l.byIP[ip]; !ok {
+		l.admitNewIPLocked(now)
+	}
 	l.byIP[ip] = appendRecent(l.byIP[ip], now)
+}
+
+func (l *originLookupLimiter) admitNewIPLocked(now time.Time) {
+	if len(l.byIP) < maxOriginLookupIPs {
+		return
+	}
+	l.evictIdleLocked(now)
+	if len(l.byIP) < maxOriginLookupIPs {
+		return
+	}
+	l.evictOldestLocked()
+}
+
+func (l *originLookupLimiter) evictIdleLocked(now time.Time) {
+	cutoff := now.Add(-time.Minute)
+	for ip, times := range l.byIP {
+		keep := false
+		for _, ts := range times {
+			if ts.After(cutoff) {
+				keep = true
+				break
+			}
+		}
+		if !keep {
+			delete(l.byIP, ip)
+		}
+	}
+}
+
+func (l *originLookupLimiter) evictOldestLocked() {
+	var oldest string
+	var oldestLast time.Time
+	found := false
+	for ip, times := range l.byIP {
+		if len(times) == 0 {
+			delete(l.byIP, ip)
+			continue
+		}
+		last := times[len(times)-1]
+		if !found || last.Before(oldestLast) {
+			oldest, oldestLast, found = ip, last, true
+		}
+	}
+	if found {
+		delete(l.byIP, oldest)
+	}
 }
 
 func isUnknownEscrowBindPath(method, rest string) bool {

@@ -63,10 +63,11 @@ const (
 	DefaultRPCLargeReadMaxBytes = 10 << 20
 
 	// DefaultRPCPayloadMaxBytes is the Connect GetPayload **client** read
-	// cap when the caller did not pass a per-inference limit. Matches
-	// validation.MaxPayloadResponseBytes. Live fetches pass
-	// PayloadReadLimit(PayloadResponseByteLimit(outputTokens)). Request
-	// bodies stay DefaultMaxBodySize (10 MiB): GetPayloadRequest is tiny.
+	// cap when the caller did not pass a per-inference limit, and the 64 MiB
+	// reuse bucket. Matches validation.MaxPayloadResponseBytes. Live fetches
+	// pass PayloadReadLimit(PayloadResponseByteLimit(outputTokens)) and
+	// round up to 32 / 64 / 256 / 512 MiB. Request bodies stay
+	// DefaultMaxBodySize (10 MiB): GetPayloadRequest is tiny.
 	DefaultRPCPayloadMaxBytes = 64 << 20
 
 	// DefaultRPCPayloadSendMaxBytes is the PayloadService handler send cap.

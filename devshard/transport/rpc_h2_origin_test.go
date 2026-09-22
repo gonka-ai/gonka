@@ -8,14 +8,21 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"io"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+
+	"common/httpguard"
 )
 
 func TestNewPeerConnTransportsH2ServerName(t *testing.T) {
@@ -91,6 +98,184 @@ func TestPeerConnTransportsShareH2ByH2URL(t *testing.T) {
 		},
 	}, 4)
 	require.NotSame(t, tlsA.h2, tlsB.h2, "HTTPS distinct SNI must not share a TLS client")
+}
+
+func TestOriginSwitch_SetH2FalseDoesNotCloseIdleH2(t *testing.T) {
+	h2URL, err := url.Parse("http://proxy:8443")
+	require.NoError(t, err)
+	h2 := &closeIdleRT{}
+	origin := newOriginSwitchTransport(&closeIdleRT{}, h2, h2URL)
+	origin.setH2(true)
+	require.True(t, origin.usingH2())
+	origin.setH2(false)
+	require.False(t, origin.usingH2())
+	require.Equal(t, int32(0), h2.n.Load(), "setH2(false) must not CloseIdle the pooled h2 client")
+}
+
+func TestOriginSwitch_CloseIdleConnectionsSkipsPooledH2(t *testing.T) {
+	h2URL, err := url.Parse("http://proxy:8443")
+	require.NoError(t, err)
+	h1 := &closeIdleRT{}
+	h2 := &closeIdleRT{}
+	origin := newOriginSwitchTransport(h1, h2, h2URL)
+	origin.CloseIdleConnections()
+	require.Equal(t, int32(1), h1.n.Load(), "CloseIdle must still drain this PeerConn's HTTP/1.1 pool")
+	require.Equal(t, int32(0), h2.n.Load(), "CloseIdle must not drain the process h2 mux")
+}
+
+func TestPeerConn_CloseDoesNotClosePooledH2(t *testing.T) {
+	ResetRPCH2ClientPoolForTest()
+	t.Cleanup(ResetRPCH2ClientPoolForTest)
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL: "http://127.0.0.1:1",
+		DialSet: PeerRPCDialSet{
+			InferenceURL: "http://127.0.0.1:1",
+			H2URL:        "http://proxy:8443",
+		},
+		DoorEscrowID: "1",
+	})
+	require.NotNil(t, pc.origin.h2)
+	spy := &closeIdleRT{}
+	pc.origin.h2 = spy
+	pc.Close()
+	require.Equal(t, int32(0), spy.n.Load(), "PeerConn.Close must not CloseIdle the pooled h2 client")
+}
+
+type h2AcceptCounter struct {
+	net.Listener
+	n *atomic.Int32
+}
+
+func (l *h2AcceptCounter) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	l.n.Add(1)
+	return c, nil
+}
+
+func startCountingH2CServer(t *testing.T) (*httptest.Server, *atomic.Int32) {
+	t.Helper()
+	httpguard.SetAllowPrivate(true)
+	accepts := new(atomic.Int32)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	srv := httptest.NewUnstartedServer(h2c.NewHandler(h, &http2.Server{}))
+	srv.Listener = &h2AcceptCounter{Listener: ln, n: accepts}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return srv, accepts
+}
+
+func h2OriginRoundTrip(t *testing.T, origin *originSwitchTransport, rawURL string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, rawURL+"/", nil)
+	require.NoError(t, err)
+	resp, err := origin.RoundTrip(req)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, resp.Body.Close())
+}
+
+func TestSharedH2IdleMuxSurvivesSetH2FalseAndCloseIdle(t *testing.T) {
+	ResetRPCH2ClientPoolForTest()
+	t.Cleanup(ResetRPCH2ClientPoolForTest)
+	srv, accepts := startCountingH2CServer(t)
+	cfg := PeerConnConfig{
+		BaseURL: srv.URL,
+		DialSet: PeerRPCDialSet{InferenceURL: srv.URL, H2URL: srv.URL},
+	}
+	a, _ := newPeerConnTransports(cfg, 4)
+	b, _ := newPeerConnTransports(cfg, 4)
+	require.Same(t, a.h2, b.h2)
+
+	a.setH2(true)
+	h2OriginRoundTrip(t, a, srv.URL)
+	require.Equal(t, int32(1), accepts.Load())
+
+	b.setH2(true)
+	b.setH2(false)
+	require.False(t, b.usingH2())
+	require.True(t, a.usingH2())
+	h2OriginRoundTrip(t, a, srv.URL)
+	require.Equal(t, int32(1), accepts.Load(), "setH2(false) must not CloseIdle the shared mux")
+
+	a.CloseIdleConnections()
+	h2OriginRoundTrip(t, a, srv.URL)
+	require.Equal(t, int32(1), accepts.Load(), "owned HTTP/1.1 CloseIdle must not drain pooled h2")
+}
+
+func TestPeerConn_CloseDoesNotRedialSharedH2(t *testing.T) {
+	ResetRPCH2ClientPoolForTest()
+	t.Cleanup(ResetRPCH2ClientPoolForTest)
+	srv, accepts := startCountingH2CServer(t)
+	cfg := PeerConnConfig{
+		BaseURL:      srv.URL,
+		DoorEscrowID: "1",
+		DialSet:      PeerRPCDialSet{InferenceURL: srv.URL, H2URL: srv.URL},
+	}
+	keep := NewPeerConn(cfg)
+	drop := NewPeerConn(cfg)
+	t.Cleanup(keep.Close)
+
+	keep.origin.setH2(true)
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	require.NoError(t, err)
+	resp, err := keep.http.Do(req)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, int32(1), accepts.Load())
+
+	drop.Close()
+	req, err = http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	require.NoError(t, err)
+	resp, err = keep.http.Do(req)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, int32(1), accepts.Load(), "PeerConn.Close must not CloseIdle a sibling's h2 mux")
+}
+
+func TestAcquirePeerConn_LoserCloseDoesNotRedialSharedH2(t *testing.T) {
+	ResetRPCH2ClientPoolForTest()
+	t.Cleanup(ResetRPCH2ClientPoolForTest)
+	srv, accepts := startCountingH2CServer(t)
+	cfg := PeerConnConfig{
+		BaseURL:      srv.URL,
+		HostAddress:  "gonka1h2loser",
+		DirectMux:    true,
+		DoorEscrowID: "1",
+		DialSet:      PeerRPCDialSet{InferenceURL: srv.URL, H2URL: srv.URL},
+	}
+	keep := acquirePeerConn(cfg)
+	t.Cleanup(keep.Release)
+
+	keep.origin.setH2(true)
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	require.NoError(t, err)
+	resp, err := keep.http.Do(req)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, int32(1), accepts.Load())
+
+	// Same as acquirePeerConn's discarded NewPeerConn: Close without Start.
+	fresh := NewPeerConn(cfg)
+	fresh.Close()
+
+	req, err = http.NewRequest(http.MethodGet, srv.URL+"/", nil)
+	require.NoError(t, err)
+	resp, err = keep.http.Do(req)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, int32(1), accepts.Load(), "discarded acquire Close must not drain the winner's h2 mux")
 }
 
 func TestRPCH2DialTLSServerNameUsesInferenceHost(t *testing.T) {

@@ -39,16 +39,16 @@ type RPCClient struct {
 	// sessionChat is SessionService.Chat: 10 MiB envelope, no per-frame gzip.
 	sessionChat rpcpbconnect.SessionServiceClient
 	gossip      rpcpbconnect.GossipServiceClient
-	// payload uses DefaultRPCPayloadMaxBytes (64 MiB) when the caller
-	// did not pass a per-inference limit. GetPayload builds a tighter or
-	// larger client from PayloadReadLimit.
-	payload          rpcpbconnect.PayloadServiceClient
+	// payload is GetPayload stubs, one per rpcPayloadReadBuckets entry.
+	// Connect applies WithReadMaxBytes per client, not per RPC, so
+	// payloadClient picks the smallest bucket >= PayloadReadLimit.
+	payload          [rpcPayloadReadBucketCount]rpcpbconnect.PayloadServiceClient
 	sessionGRPC      rpcpbconnect.SessionServiceClient
 	sessionQueryGRPC rpcpbconnect.SessionServiceClient
 	sessionLargeGRPC rpcpbconnect.SessionServiceClient
 	sessionChatGRPC  rpcpbconnect.SessionServiceClient
 	gossipGRPC       rpcpbconnect.GossipServiceClient
-	payloadGRPC      rpcpbconnect.PayloadServiceClient
+	payloadGRPC      [rpcPayloadReadBucketCount]rpcpbconnect.PayloadServiceClient
 	// closeOnce is a pointer so WithoutAdmission can copy RPCClient without
 	// copying a sync.Once (go vet copylocks).
 	closeOnce *sync.Once
@@ -68,6 +68,13 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		ownsConn:   conn != nil,
 	}
 	if conn != nil && httpClient != nil {
+		conn.addDoor(httpClient.escrowID)
+		// Registry-backed conns (refs > 0) start here so the creator door
+		// is registered before the first Attach. NewPeerConn tests (refs 0)
+		// still call Start themselves.
+		if conn.refs.Load() > 0 {
+			conn.Start()
+		}
 		base := conn.cfg.connectBase(httpClient.escrowID)
 		opts := connectClientOptions(conn.cfg.ReadMaxBytes)
 		c.session = rpcpbconnect.NewSessionServiceClient(conn.http, base, opts...)
@@ -75,14 +82,18 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		c.sessionLarge = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCLargeReadMaxBytes)...)
 		c.sessionChat = rpcpbconnect.NewSessionServiceClient(conn.http, base, chatClientOptions()...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
-		c.payload = rpcpbconnect.NewPayloadServiceClient(conn.http, base, connectClientOptions(DefaultRPCPayloadMaxBytes)...)
+		for i, cap := range rpcPayloadReadBuckets {
+			c.payload[i] = rpcpbconnect.NewPayloadServiceClient(conn.http, base, connectClientOptions(cap)...)
+		}
 		if conn.cfg.GRPC {
 			c.sessionGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(opts, true)...)
 			c.sessionQueryGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCQueryReadMaxBytes), true)...)
 			c.sessionLargeGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true)...)
 			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(chatClientOptions(), true)...)
 			c.gossipGRPC = rpcpbconnect.NewGossipServiceClient(conn.http, base, maybeGRPC(opts, true)...)
-			c.payloadGRPC = rpcpbconnect.NewPayloadServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCPayloadMaxBytes), true)...)
+			for i, cap := range rpcPayloadReadBuckets {
+				c.payloadGRPC[i] = rpcpbconnect.NewPayloadServiceClient(conn.http, base, maybeGRPC(connectClientOptions(cap), true)...)
+			}
 		}
 	}
 	return c
@@ -96,20 +107,35 @@ func (c *RPCClient) Uses(name string) bool {
 }
 
 // WaitReady blocks until Attach has published a live token or ctx is done.
-// ErrPeerNotReady is not retryable; callers that issue an RPC before the
-// first handshake must wait here instead of treating the error as a miss.
+// It aims the next first-handshake Attach at this client's escrow. If no
+// live escrow remains as an Attach door (all settled / not found), it
+// returns ErrPeerNotReady immediately so the caller can use JSON.
 func (c *RPCClient) WaitReady(ctx context.Context) error {
 	if c == nil || c.conn == nil {
 		return ErrPeerNotReady
 	}
-	if c.conn.Ready() {
-		return nil
+	if c.HTTPClient != nil {
+		c.conn.preferDoor(c.HTTPClient.escrowID)
 	}
-	ticker := time.NewTicker(20 * time.Millisecond)
-	defer ticker.Stop()
 	for {
 		if c.conn.Ready() {
 			return nil
+		}
+		if !c.conn.hasAttachDoor() {
+			return fmt.Errorf("%w: no attach door", ErrPeerNotReady)
+		}
+		if err := c.conn.ctx.Err(); err != nil {
+			return fmt.Errorf("%w: %v", ErrPeerNotReady, err)
+		}
+		wait := c.conn.waiter()
+		if c.conn.Ready() {
+			return nil
+		}
+		if !c.conn.hasAttachDoor() {
+			return fmt.Errorf("%w: no attach door", ErrPeerNotReady)
+		}
+		if err := c.conn.ctx.Err(); err != nil {
+			return fmt.Errorf("%w: %v", ErrPeerNotReady, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -117,7 +143,12 @@ func (c *RPCClient) WaitReady(ctx context.Context) error {
 				return nil
 			}
 			return fmt.Errorf("%w: %v", ErrPeerNotReady, ctx.Err())
-		case <-ticker.C:
+		case <-c.conn.ctx.Done():
+			if c.conn.Ready() {
+				return nil
+			}
+			return fmt.Errorf("%w: %v", ErrPeerNotReady, c.conn.ctx.Err())
+		case <-wait:
 		}
 	}
 }
@@ -128,6 +159,9 @@ func (c *RPCClient) Close() {
 	}
 	c.closeOnce.Do(func() {
 		if c.ownsConn && c.conn != nil {
+			if c.HTTPClient != nil {
+				c.conn.dropDoor(c.HTTPClient.escrowID)
+			}
 			c.conn.Release()
 		}
 	})
@@ -705,32 +739,82 @@ func (c *RPCClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, dif
 	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
 }
 
-// payloadClient is the Connect GetPayload client for this call's read cap.
-// Connect applies WithReadMaxBytes per client, not per RPC, so a
-// per-inference limit that is not the 64 MiB default needs its own client.
-// PayloadReadLimit is always positive, so connectClientOptions will not
-// fall back to the 16 KiB handshake cap.
+const (
+	rpcPayloadRead32          = 32 << 20
+	rpcPayloadRead256         = 256 << 20
+	rpcPayloadReadBucketCount = 4
+)
+
+// rpcPayloadReadBuckets is WithReadMaxBytes on the cached GetPayload stubs.
+// payloadClient picks the smallest entry >= PayloadReadLimit(maxBytes).
+var rpcPayloadReadBuckets = [rpcPayloadReadBucketCount]int{
+	rpcPayloadRead32,
+	DefaultRPCPayloadMaxBytes,
+	rpcPayloadRead256,
+	DefaultRPCPayloadSendMaxBytes,
+}
+
+func payloadReadBucketIndex(maxBytes int64) int {
+	need := int(validation.PayloadReadLimit(maxBytes))
+	for i, n := range rpcPayloadReadBuckets {
+		if n >= need {
+			return i
+		}
+	}
+	return rpcPayloadReadBucketCount - 1
+}
+
+func payloadReadBucket(maxBytes int64) int {
+	return rpcPayloadReadBuckets[payloadReadBucketIndex(maxBytes)]
+}
+
+// payloadDecodedSize is the per-inference pin: prompt + response bytes after
+// decode. HTTP GET bounds the JSON body with cappedReader; Connect
+// WithReadMaxBytes is the stub bucket (32 / 64 / 256 / 512 MiB), so this
+// is what keeps the two transports on the same limit.
+func payloadDecodedSize(resp *rpcpb.GetPayloadResponse) int64 {
+	if resp == nil {
+		return 0
+	}
+	return int64(len(resp.GetPromptPayload())) + int64(len(resp.GetResponsePayload()))
+}
+
+func errPayloadDecodedTooLarge(n, limit int64) error {
+	// "larger than configured max" is isConnectMessageTooLarge: not retryable.
+	return connect.NewError(connect.CodeResourceExhausted,
+		fmt.Errorf("payload decoded size %d is larger than configured max %d", n, limit))
+}
+
+// payloadClient is the Connect GetPayload stub for this call's read cap.
+// Connect applies WithReadMaxBytes per client, not per RPC. The need is
+// PayloadReadLimit(maxBytes); the stub is the smallest prebuilt bucket
+// that is still >= that need (32 / 64 / 256 / 512 MiB).
 func (c *RPCClient) payloadClient(maxBytes int64) (rpcpbconnect.PayloadServiceClient, error) {
-	limit := int(validation.PayloadReadLimit(maxBytes))
-	if limit == DefaultRPCPayloadMaxBytes {
-		if c.grpcOn() && c.payloadGRPC != nil {
-			return c.payloadGRPC, nil
-		}
-		if c.payload != nil {
-			return c.payload, nil
-		}
+	if c == nil {
+		return nil, fmt.Errorf("no peer connection")
+	}
+	i := payloadReadBucketIndex(maxBytes)
+	if c.grpcOn() && c.payloadGRPC[i] != nil {
+		return c.payloadGRPC[i], nil
+	}
+	if c.payload[i] != nil {
+		return c.payload[i], nil
 	}
 	if c.conn == nil || c.HTTPClient == nil {
 		return nil, fmt.Errorf("no peer connection")
 	}
 	base := c.conn.cfg.connectBase(c.HTTPClient.escrowID)
-	return rpcpbconnect.NewPayloadServiceClient(c.conn.http, base, maybeGRPC(connectClientOptions(limit), c.grpcOn())...), nil
+	return rpcpbconnect.NewPayloadServiceClient(c.conn.http, base, maybeGRPC(connectClientOptions(rpcPayloadReadBuckets[i]), c.grpcOn())...), nil
 }
 
 // GetPayload fetches inference payloads over Connect. maxBytes is the
 // per-inference read cap (PayloadResponseByteLimit); <=0 uses
-// DefaultRPCPayloadMaxBytes (64 MiB), matching HTTP GET. The cap is
-// Connect WithReadMaxBytes(PayloadReadLimit(maxBytes)).
+// DefaultRPCPayloadMaxBytes (64 MiB), matching HTTP GET. The Connect
+// stub is the smallest rpcPayloadReadBuckets entry >=
+// PayloadReadLimit(maxBytes) (32 / 64 / 256 / 512 MiB) — a transport
+// backstop. After decode, prompt+response must still fit
+// PayloadReadLimit(maxBytes) or the call is ResourceExhausted (dropped,
+// not truncated), same as HTTP cappedReader.
 func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest, maxBytes int64) (*rpcpb.GetPayloadResponse, error) {
 	if !c.Uses(EndpointPayload) {
 		return nil, fmt.Errorf("get payload: rpc endpoint not opted in")
@@ -762,6 +846,10 @@ func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest
 	})
 	if err != nil {
 		return nil, fmt.Errorf("get payload: %w", err)
+	}
+	limit := validation.PayloadReadLimit(maxBytes)
+	if n := payloadDecodedSize(out); n > limit {
+		return nil, fmt.Errorf("get payload: %w", errPayloadDecodedTooLarge(n, limit))
 	}
 	return out, nil
 }

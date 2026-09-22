@@ -49,8 +49,9 @@ const DefaultAttachTimeout = 5 * time.Second
 var ErrPeerNotReady = errors.New("peer rpc session not ready")
 
 var (
-	errWatchStale = errors.New("watch heartbeat stale")
-	errAttachTTL  = errors.New("attach expires_at is out of range")
+	errWatchStale   = errors.New("watch heartbeat stale")
+	errAttachTTL    = errors.New("attach expires_at is out of range")
+	errNoAttachDoor = errors.New("peer rpc has no attach door")
 )
 
 var (
@@ -83,8 +84,9 @@ type PeerConnConfig struct {
 	// GetDiffs and GetMempool responses use DefaultRPCQueryReadMaxBytes (10 MiB).
 	// VerifyTimeout / VerifyErrorMiss / ChallengeReceipt use
 	// DefaultRPCLargeReadMaxBytes (10 MiB). GetPayload client reads use
-	// DefaultRPCPayloadMaxBytes (64 MiB) unless the caller passes a
-	// per-inference PayloadReadLimit. Chat stays DefaultMaxBodySize.
+	// GetPayload client reads use the smallest rpcPayloadReadBuckets
+	// entry >= PayloadReadLimit (32 / 64 / 256 / 512 MiB). Chat stays
+	// DefaultMaxBodySize.
 	ReadMaxBytes int
 	// MinTTL is the floor for AttachResponse.expires_at remaining time.
 	// Zero uses minAttachTTL (30s). Tests that must use a SessionTTL
@@ -216,12 +218,26 @@ type PeerConn struct {
 	startOnce sync.Once
 	stopOnce  sync.Once
 
+	// waitMu / waitCh wake WaitReady. close-and-replace is the broadcast:
+	// publishToken, setState(ready), last door gone, Close.
+	waitMu sync.Mutex
+	waitCh chan struct{}
+
 	// budget is the advertised peer-weight bucket (messages_per_min /
 	// messages_burst × RPCProcedureWeight). Shared by every RPCClient on
 	// this connection. IP Attach is not paced: success refunds.
 	budget  peerRPCBudget
 	streams peerStreamBudget
 	firstOK atomic.Bool
+
+	// doors are escrow IDs of live RPCClient refs. First Attach (and
+	// re-Attach after a full session loss) must use one of these, not
+	// HostRPCEscrowID: checkAllow needs a real roster. deadDoors are
+	// settled / not-found ids that must not be retried.
+	doorMu     sync.Mutex
+	doors      map[string]int
+	deadDoors  map[string]struct{}
+	attachDoor string
 }
 
 const (
@@ -290,6 +306,10 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 		ctx:          ctx,
 		cancel:       cancel,
 		done:         make(chan struct{}),
+		waitCh:       make(chan struct{}),
+		doors:        make(map[string]int),
+		deadDoors:    make(map[string]struct{}),
+		attachDoor:   cfg.DoorEscrowID,
 	}
 	p.setState(stateUnauthenticated)
 	return p
@@ -344,13 +364,13 @@ func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 	}
 	fresh.refs.Store(1)
 	peerConnRegistry[key] = fresh
-	fresh.Start()
 	peerConnMu.Unlock()
 	return fresh
 }
 
 // Start runs the Attach/Watch loop. Idempotent. Tests that construct via
-// NewPeerConn must call Start; acquirePeerConn already does.
+// NewPeerConn must call Start. Registry-backed conns start from the first
+// NewRPCClient so addDoor runs before the first Attach.
 func (p *PeerConn) Start() {
 	if p == nil {
 		return
@@ -367,6 +387,12 @@ func (p *PeerConn) loop() {
 		}
 		p.setState(stateAttaching)
 		tok, exp, err := p.attach()
+		if errors.Is(err, errNoAttachDoor) {
+			p.setState(stateUnauthenticated)
+			p.clearToken()
+			backoff = p.cfg.BackoffMin
+			continue
+		}
 		p.incAttach(err)
 		if err != nil {
 			p.setState(stateUnauthenticated)
@@ -424,10 +450,12 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 				newTok, newExp, err := p.attach()
 				p.incAttach(err)
 				if err != nil {
-					if isRPCH2Miss(err) {
+					if isRPCH2TransportMiss(err) {
 						// Origin is gone (listen/RST/ALPN/half-open). End
 						// Watch; do not flip setH2(false) until the stream
 						// has returned. Outer loop probes then HTTP/1.1.
+						// A slow Attach (DeadlineExceeded) is not this:
+						// keep Watch and retry refresh.
 						cancelWatch()
 						<-watchErr
 						p.incReattach(reattachReasonWatch)
@@ -497,43 +525,82 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 	if p.cfg.Signer == nil {
 		return nil, time.Time{}, fmt.Errorf("peer conn: signer is required")
 	}
-	msg, err := p.newAttachRequest()
-	if err != nil {
-		return nil, time.Time{}, err
-	}
 	// Probe + HTTP/1.1 share one DefaultAttachTimeout. h2 is capped at
 	// h2ProbeTimeout; 1.1 gets the remainder (≈5s if the probe returns
 	// immediately, ≈4s after a 1s blackhole).
 	overall, cancel := context.WithTimeout(p.ctx, DefaultAttachTimeout)
 	defer cancel()
-	if !p.liveSession() && p.shouldProbeH2() {
-		p.origin.setH2(true)
-		h2ctx, h2cancel := context.WithTimeout(overall, p.h2ProbeTimeout())
-		tok, exp, err := p.attachOnce(h2ctx, p.peerAuthClient(false), msg)
-		h2cancel()
-		if err == nil {
-			return tok, exp, nil
-		}
-		if p.ctx.Err() != nil {
-			return nil, time.Time{}, err
-		}
-		if !isRPCH2Miss(err) {
-			return nil, time.Time{}, err
-		}
-		rememberRPCH2Miss(p.cfg.BaseURL)
-		p.origin.setH2(false)
-		logging.Warn("peer rpc h2 origin missed; using HTTP/1.1",
-			"subsystem", "transport",
-			"host", inferenceHostKey(p.cfg.BaseURL),
-			"h2_url", p.cfg.DialSet.H2URL,
-			"error", err,
-		)
-		msg, err = p.newAttachRequest()
+	if p.liveSession() {
+		msg, err := p.newAttachRequest()
 		if err != nil {
 			return nil, time.Time{}, err
 		}
+		return p.attachOnce(overall, p.peerAuthClient(true), msg)
 	}
-	return p.attachOnce(overall, p.peerAuthClient(p.liveSession()), msg)
+	h2Tried := false
+	var lastErr error
+	for {
+		if err := overall.Err(); err != nil {
+			if lastErr != nil {
+				return nil, time.Time{}, lastErr
+			}
+			return nil, time.Time{}, err
+		}
+		door := p.pickDoor()
+		if door == "" {
+			if lastErr != nil {
+				return nil, time.Time{}, lastErr
+			}
+			return nil, time.Time{}, errNoAttachDoor
+		}
+		msg, err := p.newAttachRequest()
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		if !h2Tried && p.shouldProbeH2() {
+			p.origin.setH2(true)
+			h2ctx, h2cancel := context.WithTimeout(overall, p.h2ProbeTimeout())
+			tok, exp, err := p.attachOnce(h2ctx, p.doorAuthClient(door), msg)
+			h2cancel()
+			h2Tried = true
+			if err == nil {
+				return tok, exp, nil
+			}
+			lastErr = err
+			if p.ctx.Err() != nil {
+				return nil, time.Time{}, err
+			}
+			if isDeadDoorError(err) {
+				p.killDoor(door)
+				continue
+			}
+			if !isRPCH2Miss(err) {
+				return nil, time.Time{}, err
+			}
+			rememberRPCH2Miss(p.cfg.BaseURL)
+			p.origin.setH2(false)
+			logging.Warn("peer rpc h2 origin missed; using HTTP/1.1",
+				"subsystem", "transport",
+				"host", inferenceHostKey(p.cfg.BaseURL),
+				"h2_url", p.cfg.DialSet.H2URL,
+				"error", err,
+			)
+			msg, err = p.newAttachRequest()
+			if err != nil {
+				return nil, time.Time{}, err
+			}
+		}
+		tok, exp, err := p.attachOnce(overall, p.doorAuthClient(door), msg)
+		if err == nil {
+			return tok, exp, nil
+		}
+		lastErr = err
+		if isDeadDoorError(err) {
+			p.killDoor(door)
+			continue
+		}
+		return nil, time.Time{}, err
+	}
 }
 
 func (p *PeerConn) newAttachRequest() (*rpcpb.AttachRequest, error) {
@@ -560,6 +627,11 @@ func (p *PeerConn) newAttachRequest() (*rpcpb.AttachRequest, error) {
 func (p *PeerConn) attachOnce(ctx context.Context, client rpcpbconnect.PeerAuthServiceClient, msg *rpcpb.AttachRequest) ([]byte, time.Time, error) {
 	resp, err := client.Attach(ctx, connect.NewRequest(msg))
 	if err != nil {
+		// Timeout/cancel of this Attach must win over a racing RST /
+		// INTERNAL_ERROR so a slow live refresh is not an h2 miss.
+		if ctxErr := ctx.Err(); isContextDone(ctxErr) {
+			return nil, time.Time{}, ctxErr
+		}
 		return nil, time.Time{}, err
 	}
 	expires, err := p.attachExpiry(resp.Msg.GetExpiresAt())
@@ -585,19 +657,17 @@ func (p *PeerConn) useGRPC() bool {
 // peerAuthClient is the door (first Attach) or host (Watch / live renew)
 // client. Native gRPC is only selected while the live origin is h2.
 func (p *PeerConn) peerAuthClient(host bool) rpcpbconnect.PeerAuthServiceClient {
-	if p.useGRPC() {
-		if host {
-			if p.authHostGRPC != nil {
-				return p.authHostGRPC
-			}
-		} else if p.authDoorGRPC != nil {
-			return p.authDoorGRPC
-		}
-	}
 	if host {
+		if p.useGRPC() && p.authHostGRPC != nil {
+			return p.authHostGRPC
+		}
 		return p.authHost
 	}
-	return p.authDoor
+	door := p.pickDoor()
+	if door == "" {
+		door = p.cfg.DoorEscrowID
+	}
+	return p.doorAuthClient(door)
 }
 
 func (p *PeerConn) h2ProbeTimeout() time.Duration {
@@ -760,11 +830,34 @@ func (p *PeerConn) publishToken(tok []byte, exp time.Time) {
 	cp := append([]byte(nil), tok...)
 	p.token.Store(&cp)
 	p.expires.Store(exp.Unix())
+	p.wakeWaiters()
 }
 
 func (p *PeerConn) clearToken() {
 	p.token.Store(nil)
 	p.expires.Store(0)
+}
+
+func (p *PeerConn) wakeWaiters() {
+	if p == nil {
+		return
+	}
+	p.waitMu.Lock()
+	old := p.waitCh
+	p.waitCh = make(chan struct{})
+	p.waitMu.Unlock()
+	if old != nil {
+		close(old)
+	}
+}
+
+func (p *PeerConn) waiter() <-chan struct{} {
+	p.waitMu.Lock()
+	defer p.waitMu.Unlock()
+	if p.waitCh == nil {
+		p.waitCh = make(chan struct{})
+	}
+	return p.waitCh
 }
 
 // LiveToken is the current session id, or nil if unauthenticated. Fail-fast:
@@ -836,6 +929,9 @@ func (p *PeerConn) connID() string {
 func (p *PeerConn) setState(s int32) {
 	prev := p.state.Swap(s)
 	p.publishChildState(s)
+	if s == stateReady && prev != stateReady {
+		p.wakeWaiters()
+	}
 	if p.cfg.Adoption == nil {
 		return
 	}
@@ -929,15 +1025,14 @@ func (p *PeerConn) Close() {
 		p.startOnce.Do(func() { close(p.done) })
 		<-p.done
 		// watch() has already Close'd the Watch stream (or never started).
-		// Idle muxes can FIN; a shared origin with sibling streams stays up.
+		// Close idle HTTP/1.1 conns this PeerConn owns. Do not CloseIdle
+		// the pooled h2 transport: overlay muxes every peer onto one TCP.
 		if p.http != nil {
 			p.http.CloseIdleConnections()
 		}
-		if p.origin != nil {
-			p.origin.CloseIdleConnections()
-		}
 		p.setState(stateUnauthenticated)
 		p.clearToken()
+		p.wakeWaiters()
 		p.dropChildState()
 	})
 }

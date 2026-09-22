@@ -523,7 +523,9 @@ func TestSessionHandler_GetDiffsAndMempool(t *testing.T) {
 		connect.NewRequest(&rpcpb.GetDiffsRequest{From: 1, To: 2}), env.token))
 	require.NoError(t, err)
 	require.Len(t, diffs.Msg.GetRecords(), 1)
-	require.Equal(t, uint64(2), diffs.Msg.GetRecords()[0].GetDiff().GetNonce())
+	want, err := transport.DiffToProto(core.diffs[0].Diff)
+	require.NoError(t, err)
+	require.True(t, proto.Equal(want, diffs.Msg.GetRecords()[0].GetDiff()))
 
 	mp, err := env.session.GetMempool(context.Background(), withSession(
 		connect.NewRequest(&rpcpb.GetMempoolRequest{}), env.token))

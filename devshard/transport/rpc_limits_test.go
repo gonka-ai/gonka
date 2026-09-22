@@ -28,7 +28,10 @@ func TestLoadChannelLimitConfig_Defaults(t *testing.T) {
 	require.Equal(t, DefaultRPCMaxConnsPerPeer, cfg.MaxConns)
 	require.Equal(t, int(DefaultRPCMaxStreams), DefaultRPCMaxConnsPerPeer)
 	require.Equal(t, DefaultRPCAttachFloorPerMin, cfg.AttachFloorPerMin)
+	require.Equal(t, 10*DefaultRPCAttachFloorPerMin, MaxRPCAttachFloorPerMin)
 	require.Equal(t, DefaultRPCLimiterMaxEntries, cfg.MaxEntries)
+	require.Equal(t, uint32(4096), DefaultH2MaxConcurrentStreams)
+	require.NotEqual(t, DefaultRPCMaxStreams, DefaultH2MaxConcurrentStreams)
 }
 
 func TestLoadChannelLimitConfig_EnvAndOff(t *testing.T) {
@@ -68,6 +71,15 @@ func TestChannelLimitConfig_ZeroMeansDefault(t *testing.T) {
 	require.Equal(t, DefaultRPCMessagesBurst, cfg.MessagesBurst)
 	require.Equal(t, DefaultRPCLimiterMaxEntries, cfg.MaxEntries)
 	require.Equal(t, DefaultRPCMaxConnsPerPeer, cfg.MaxConns)
+	require.Equal(t, DefaultRPCAttachFloorPerMin, cfg.AttachFloorPerMin)
+}
+
+func TestChannelLimitConfig_AttachFloorClamps(t *testing.T) {
+	cfg := ChannelLimitConfig{AttachFloorPerMin: 50_000_000}.WithDefaults()
+	require.Equal(t, MaxRPCAttachFloorPerMin, cfg.AttachFloorPerMin)
+	require.Equal(t, math.MaxInt, ClampAttachFloorPerMin(math.MaxInt))
+	require.Equal(t, 50, ClampAttachFloorPerMin(50))
+	require.Equal(t, 0, ClampAttachFloorPerMin(0))
 }
 
 func TestEffectiveMaxStreams_MinOfStreamsAndPool(t *testing.T) {
@@ -140,6 +152,15 @@ func TestParseRPCLimit_IgnoredValuesUseDefault(t *testing.T) {
 	cfg = LoadChannelLimitConfig()
 	require.Equal(t, DefaultRPCAttachFloorPerMin, cfg.AttachFloorPerMin)
 	require.True(t, capLog.has(envRPCAttachPerMinTotal, "0", "zero"))
+
+	t.Setenv(envRPCAttachPerMinTotal, "50000000")
+	cfg = LoadChannelLimitConfig()
+	require.Equal(t, MaxRPCAttachFloorPerMin, cfg.AttachFloorPerMin)
+	require.True(t, capLog.has(envRPCAttachPerMinTotal, "50000000", "too_large"))
+
+	t.Setenv(envRPCAttachPerMinTotal, "-1")
+	cfg = LoadChannelLimitConfig()
+	require.Equal(t, math.MaxInt, cfg.AttachFloorPerMin)
 }
 
 type limitWarnLogger struct {

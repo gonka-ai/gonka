@@ -34,15 +34,10 @@ func (t *originSwitchTransport) setH2(on bool) {
 	if t == nil || t.h2 == nil || t.h2URL == nil {
 		return
 	}
-	if !on {
-		if t.h2On.CompareAndSwap(true, false) {
-			if c, ok := t.h2.(interface{ CloseIdleConnections() }); ok {
-				c.CloseIdleConnections()
-			}
-		}
-		return
-	}
-	t.h2On.Store(true)
+	// This PeerConn only. The h2 RoundTripper is process-pooled; closing
+	// idle muxes here would tear down every other peer's connection to the
+	// same origin.
+	t.h2On.Store(on)
 }
 
 func (t *originSwitchTransport) usingH2() bool {
@@ -60,8 +55,8 @@ func (t *originSwitchTransport) CloseIdleConnections() {
 	if t == nil {
 		return
 	}
+	// h1 is owned by this PeerConn. h2 is the process pool (rpch2Clients).
 	closeIdleConnections(t.h1)
-	closeIdleConnections(t.h2)
 }
 
 func rewriteOrigin(req *http.Request, origin *url.URL) *http.Request {
