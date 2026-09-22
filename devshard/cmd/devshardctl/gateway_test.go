@@ -167,6 +167,25 @@ func TestGatewayCheckBalancesReplacesAndDeactivatesLowBalance(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestGatewayCheckBalancesSkipsReplacementWhenModelAlreadyAtTarget(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.Models[0].TargetCount = 1
+	})
+	require.NoError(t, g.store.UpsertDevshard(GatewayDevshardState{
+		RuntimeConfig: RuntimeConfig{ID: "13", PrivateKeyHex: "secret", Model: "m"},
+		Active:        true,
+		RotationRole:  rotationRoleRegular,
+		RotationEpoch: 0, // replaceDepletedEscrow reads g.phaseGate.Snapshot().EpochIndex; this fixture's Gateway has no phaseGate, so epoch is always 0 here.
+	}))
+
+	runBalanceTick(t, g, rt.id)
+
+	require.Eventually(t, func() bool { return settled.Load() == 1 }, time.Second, 10*time.Millisecond, "the depleted escrow must still be settled")
+	require.False(t, rt.active.Load())
+	require.EqualValues(t, 0, created.Load(), "a model already at its rotation target must not mint another replacement")
+}
+
 func TestGatewayCheckBalancesReplacesAndDeactivatesHighNonce(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, 999_796)
 	require.EqualValues(t, 3, rt.proxy.sm.TotalSlots(), "the nonce above assumes a three-slot group: 1_000_000 - (3+1) - 200")

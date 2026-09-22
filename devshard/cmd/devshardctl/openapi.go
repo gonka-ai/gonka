@@ -243,7 +243,8 @@ const openapiSpec = `{
                   "chain_id": { "type": "string", "description": "Optional chain ID override." },
                   "fee_denom": { "type": "string", "description": "Optional fee denomination override." },
                   "fee_amount": { "type": "integer", "description": "Optional fee amount override." },
-                  "gas_limit": { "type": "integer", "description": "Optional gas limit override." }
+                  "gas_limit": { "type": "integer", "description": "Optional gas limit override." },
+                  "force": { "type": "boolean", "description": "Settle without waiting for in-flight requests and background race cleanups to drain. By design, finalization then credits the hosts with the full reserved cost of every inference still pending or started, including on an escrow that is on hold; without force those reservations are refunded by their timeouts first." }
                 }
               }
             }
@@ -271,6 +272,57 @@ const openapiSpec = `{
           "404": { "description": "Devshard not found" },
           "409": { "description": "Devshard has active requests" },
           "502": { "description": "Finalize or settlement broadcast failed" }
+        }
+      }
+    },
+    "/v1/admin/devshards/settle": {
+      "post": {
+        "summary": "Settle many devshard escrows",
+        "description": "Admin endpoint. Settles every listed escrow the same way as /v1/admin/devshards/{id}/settle, running at most batch_size settlements at once, and streams one NDJSON line per escrow as soon as that escrow's settlement finishes, so lines arrive in completion order, not in request order. Duplicate IDs are settled once. One escrow failing does not stop the others. Once streaming starts the status is 200; each line carries its own outcome. A client that disconnects does not cancel settlements already started; each settlement is bounded to 5 minutes on its own.",
+        "security": [{ "AdminBearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["escrow_ids"],
+                "properties": {
+                  "escrow_ids": { "type": "array", "items": { "type": "string" }, "description": "Devshard escrow IDs to settle." },
+                  "batch_size": { "type": "integer", "description": "How many settlements run at once. Defaults to 10, clamped to 1..50." },
+                  "force": { "type": "boolean", "description": "Settle without waiting for in-flight requests and background race cleanups to drain. By design, finalization then credits the hosts with the full reserved cost of every inference still pending or started, including on an escrow that is on hold; without force those reservations are refunded by their timeouts first." },
+                  "private_key": { "type": "string", "description": "Hex-encoded private key used for every listed escrow. Prefer private_key_env for operational use." },
+                  "private_key_env": { "type": "string", "description": "Environment variable containing the private key, for example DEVSHARD_PRIVATE_KEY." },
+                  "chain_id": { "type": "string", "description": "Optional chain ID override." },
+                  "fee_denom": { "type": "string", "description": "Optional fee denomination override." },
+                  "fee_amount": { "type": "integer", "description": "Optional fee amount override." },
+                  "gas_limit": { "type": "integer", "description": "Optional gas limit override." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stream of settlement outcomes, one JSON object per line.",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "escrow_id": { "type": "string" },
+                    "ok": { "type": "boolean" },
+                    "tx_hash": { "type": "string", "description": "Present when ok is true." },
+                    "settler": { "type": "string", "description": "Present when ok is true." },
+                    "error": { "type": "string", "description": "Present when ok is false." },
+                    "reason": { "type": "string", "enum": ["busy", "not_found", "invalid_request", "broadcast_failed"], "description": "Present when ok is false. busy: the escrow still has active requests or background cleanups and force was not set." }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid body or empty escrow_ids" },
+          "503": { "description": "Gateway state store unavailable" }
         }
       }
     },
