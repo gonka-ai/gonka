@@ -419,9 +419,8 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 
 func DefaultPoCChallengeParams() *PoCChallengeParams {
 	return &PoCChallengeParams{
-		AllowedChallengers:          nil,
-		PaymentRatio:                DecimalFromFloat(0.1),
-		MaxActiveChallenges:         DefaultPoCChallengeMaxActiveChallenges,
+		PaymentRatio:               DecimalFromFloat(0.1),
+		MaxActiveChallenges:        DefaultPoCChallengeMaxActiveChallenges,
 		MinPunishableSegmentBlocks: DefaultMinPunishableSegmentBlocks,
 	}
 }

@@ -37,16 +37,15 @@ message Params {
 }
 
 // PoCChallengeParams defines governance-controlled parameters for PoCChallenge.
-// Empty allowed_challengers keeps the feature off.
+// Create uses DevshardEscrowParams.allowed_creator_addresses: empty means anyone.
 message PoCChallengeParams {
   option (gogoproto.equal) = true;
 
-  repeated string allowed_challengers = 1;
-  Decimal payment_ratio = 2;
-  uint32 max_active_challenges = 3;
+  Decimal payment_ratio = 1;
+  uint32 max_active_challenges = 2;
   // min_punishable_segment_blocks is the shortest segment that is voted.
   // Zero means the default of 300 so unsaved genesis/upgrade state stays mainnet-safe.
-  int64 min_punishable_segment_blocks = 4;
+  int64 min_punishable_segment_blocks = 3;
 }
 
 // MaintenanceParams defines the governance-controlled parameters for participant maintenance windows.

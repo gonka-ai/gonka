@@ -44,7 +44,6 @@ func setupChallengeCreate(t *testing.T, height int64) (keeper.Keeper, sdk.Contex
 	params.BitcoinRewardParams.InitialEpochReward = 10000
 	params.BitcoinRewardParams.GenesisEpoch = 2
 	params.PocChallengeParams = types.DefaultPoCChallengeParams()
-	params.PocChallengeParams.AllowedChallengers = []string{testutil.Creator}
 	params.PocChallengeParams.PaymentRatio = types.DecimalFromFloat(0.1)
 	params.PocParams.PocV2Enabled = true
 	require.NoError(t, k.SetParams(ctx, params))
@@ -98,6 +97,20 @@ func TestCreatePoCChallenge_WritesSeedAndLocksPayment(t *testing.T) {
 	require.Equal(t, ch.ExpectedReward/10, ch.LockedPayment)
 	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.State)
 	require.True(t, k.IsUnderChallenge(ctx, testutil.Executor))
+}
+
+func TestCreatePoCChallenge_RejectsWhenNotOnEscrowAllowlist(t *testing.T) {
+	k, ctx, _ := setupChallengeCreate(t, 500)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
+	params.DevshardEscrowParams.AllowedCreatorAddresses = []string{testutil.Validator}
+	require.NoError(t, k.SetParams(ctx, params))
+	_, err = k.CreatePoCChallenge(ctx, &types.MsgCreatePoCChallenge{
+		Creator: testutil.Creator,
+		Target:  testutil.Executor,
+	})
+	require.ErrorIs(t, err, types.ErrPoCChallengeNotAllowed)
 }
 
 func TestCreatePoCChallenge_RejectsZeroAlpha(t *testing.T) {

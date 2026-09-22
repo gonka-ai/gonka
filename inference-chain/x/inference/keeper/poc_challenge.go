@@ -292,18 +292,6 @@ func (k Keeper) RotateChallengeSegment(ctx context.Context, target string, start
 	return k.SetPoCChallenge(ctx, ch)
 }
 
-func allowedChallenger(params *types.PoCChallengeParams, creator string) bool {
-	if params == nil || len(params.AllowedChallengers) == 0 {
-		return false
-	}
-	for _, addr := range params.AllowedChallengers {
-		if addr == creator {
-			return true
-		}
-	}
-	return false
-}
-
 func blockingMaintenance(ctx context.Context, k Keeper, target string, beforeHeight int64) bool {
 	addr, err := sdk.AccAddressFromBech32(target)
 	if err != nil {
@@ -338,7 +326,7 @@ func (k Keeper) CreatePoCChallenge(ctx context.Context, msg *types.MsgCreatePoCC
 	if cp == nil {
 		cp = types.DefaultPoCChallengeParams()
 	}
-	if !allowedChallenger(cp, msg.Creator) {
+	if !k.IsAllowedEscrowCreator(ctx, msg.Creator) {
 		return nil, types.ErrPoCChallengeNotAllowed
 	}
 	if _, found, err := k.GetPoCChallenge(ctx, msg.Target); err != nil {

@@ -291,8 +291,6 @@ data class BandwidthLimitsParams(
 )
 
 data class PocChallengeParams(
-    @SerializedName("allowed_challengers")
-    val allowedChallengers: List<String> = emptyList(),
     @SerializedName("payment_ratio")
     val paymentRatio: Decimal? = Decimal.fromDouble(0.1),
     @SerializedName("max_active_challenges")

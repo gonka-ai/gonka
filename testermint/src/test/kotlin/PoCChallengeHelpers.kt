@@ -88,14 +88,18 @@ fun bootPoCChallengeCluster(
 
 fun allowChallenger(cluster: LocalCluster, genesis: LocalInferencePair) {
     val params = genesis.getParams()
-    val current = params.pocChallengeParams ?: PocChallengeParams()
-    val withChallenger = current.copy(allowedChallengers = listOf(genesis.node.getColdAddress()))
-    val safe = if (withChallenger.maxActiveChallenges <= 0) {
-        withChallenger.copy(maxActiveChallenges = 4L)
-    } else {
-        withChallenger
-    }
-    genesis.runProposal(cluster, UpdateParams(params = params.copy(pocChallengeParams = safe)))
+    val current = params.devshardEscrowParams
+        ?: error("devshard escrow params missing")
+    genesis.runProposal(
+        cluster,
+        UpdateParams(
+            params = params.copy(
+                devshardEscrowParams = current.copy(
+                    allowedCreatorAddresses = listOf(genesis.node.getColdAddress()),
+                ),
+            ),
+        ),
+    )
 }
 
 fun enableConfirmationPoc(

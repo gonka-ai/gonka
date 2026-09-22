@@ -12,7 +12,7 @@ This first version stores one commit stream per segment, not per-slice pages. Th
 
 Governance params (`PoCChallengeParams`):
 
-- `allowed_challengers`: empty keeps create off
+- create uses `DevshardEscrowParams.allowed_creator_addresses`; empty means anyone
 - `payment_ratio` (`k` in `[0, 1]`)
 - `max_active_challenges`
 - `min_punishable_segment_blocks` (0 means 300)
@@ -25,7 +25,7 @@ The create transaction carries only the target address.
 
 The handler:
 
-1. Rejects if the sender is not on the whitelist.
+1. Rejects if the sender is not an allowed escrow creator. An empty allowlist accepts anyone.
 2. The target must be in the current-epoch live set, have status `ACTIVE`, be distinct from the sender, have no live challenge, and have no current or scheduled maintenance before the next epoch switch.
 3. The total active challenges must be less than `max_active_challenges`.
 4. Computes `E_full` = target current-epoch weight / total current-epoch weight * current fixed epoch Bitcoin-style reward. This is the gross share, before downtime and Confirmation PoC reductions.
