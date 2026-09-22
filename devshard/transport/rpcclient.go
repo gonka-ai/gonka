@@ -43,6 +43,7 @@ type RPCClient struct {
 	// Connect applies WithReadMaxBytes per client, not per RPC, so
 	// payloadClient picks the smallest bucket >= PayloadReadLimit.
 	payload          [rpcPayloadReadBucketCount]rpcpbconnect.PayloadServiceClient
+	payloadMu        *sync.Mutex
 	sessionGRPC      rpcpbconnect.SessionServiceClient
 	sessionQueryGRPC rpcpbconnect.SessionServiceClient
 	sessionLargeGRPC rpcpbconnect.SessionServiceClient
@@ -66,6 +67,7 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		endpoints:  endpoints,
 		closeOnce:  new(sync.Once),
 		ownsConn:   conn != nil,
+		payloadMu:  new(sync.Mutex),
 	}
 	if conn != nil && httpClient != nil {
 		conn.addDoor(httpClient.escrowID)
@@ -82,18 +84,12 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		c.sessionLarge = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCLargeReadMaxBytes)...)
 		c.sessionChat = rpcpbconnect.NewSessionServiceClient(conn.http, base, chatClientOptions()...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
-		for i, cap := range rpcPayloadReadBuckets {
-			c.payload[i] = rpcpbconnect.NewPayloadServiceClient(conn.http, base, connectClientOptions(cap)...)
-		}
 		if conn.cfg.GRPC {
 			c.sessionGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(opts, true)...)
 			c.sessionQueryGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCQueryReadMaxBytes), true)...)
 			c.sessionLargeGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true)...)
 			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(chatClientOptions(), true)...)
 			c.gossipGRPC = rpcpbconnect.NewGossipServiceClient(conn.http, base, maybeGRPC(opts, true)...)
-			for i, cap := range rpcPayloadReadBuckets {
-				c.payloadGRPC[i] = rpcpbconnect.NewPayloadServiceClient(conn.http, base, maybeGRPC(connectClientOptions(cap), true)...)
-			}
 		}
 	}
 	return c
@@ -158,10 +154,13 @@ func (c *RPCClient) Close() {
 		return
 	}
 	c.closeOnce.Do(func() {
-		if c.ownsConn && c.conn != nil {
-			if c.HTTPClient != nil {
-				c.conn.dropDoor(c.HTTPClient.escrowID)
-			}
+		if c.conn == nil {
+			return
+		}
+		if c.HTTPClient != nil {
+			c.conn.dropDoor(c.HTTPClient.escrowID)
+		}
+		if c.ownsConn {
 			c.conn.Release()
 		}
 	})
@@ -177,6 +176,7 @@ func (c *RPCClient) WithoutAdmission() any {
 	out.HTTPClient = httpClient
 	out.ownsConn = false
 	out.closeOnce = new(sync.Once)
+	out.retainDoor()
 	return &out
 }
 
@@ -793,18 +793,29 @@ func (c *RPCClient) payloadClient(maxBytes int64) (rpcpbconnect.PayloadServiceCl
 	if c == nil {
 		return nil, fmt.Errorf("no peer connection")
 	}
+	if c.payloadMu != nil {
+		c.payloadMu.Lock()
+		defer c.payloadMu.Unlock()
+	}
 	i := payloadReadBucketIndex(maxBytes)
-	if c.grpcOn() && c.payloadGRPC[i] != nil {
+	grpc := c.grpcOn()
+	if grpc && c.payloadGRPC[i] != nil {
 		return c.payloadGRPC[i], nil
 	}
-	if c.payload[i] != nil {
+	if !grpc && c.payload[i] != nil {
 		return c.payload[i], nil
 	}
 	if c.conn == nil || c.HTTPClient == nil {
 		return nil, fmt.Errorf("no peer connection")
 	}
 	base := c.conn.cfg.connectBase(c.HTTPClient.escrowID)
-	return rpcpbconnect.NewPayloadServiceClient(c.conn.http, base, maybeGRPC(connectClientOptions(rpcPayloadReadBuckets[i]), c.grpcOn())...), nil
+	client := rpcpbconnect.NewPayloadServiceClient(c.conn.http, base, maybeGRPC(connectClientOptions(rpcPayloadReadBuckets[i]), grpc)...)
+	if grpc {
+		c.payloadGRPC[i] = client
+	} else {
+		c.payload[i] = client
+	}
+	return client, nil
 }
 
 // GetPayload fetches inference payloads over Connect. maxBytes is the
@@ -871,7 +882,15 @@ func (c *RPCClient) cloneWithSigner(signer signing.Signer, timeout time.Duration
 	}
 	out.ownsConn = false
 	out.closeOnce = new(sync.Once)
+	out.retainDoor()
 	return &out
+}
+
+func (c *RPCClient) retainDoor() {
+	if c == nil || c.conn == nil || c.HTTPClient == nil {
+		return
+	}
+	c.conn.addDoor(c.HTTPClient.escrowID)
 }
 
 var (

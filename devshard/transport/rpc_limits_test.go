@@ -29,6 +29,14 @@ func TestLoadChannelLimitConfig_Defaults(t *testing.T) {
 	require.Equal(t, int(DefaultRPCMaxStreams), DefaultRPCMaxConnsPerPeer)
 	require.Equal(t, DefaultRPCAttachFloorPerMin, cfg.AttachFloorPerMin)
 	require.Equal(t, 10*DefaultRPCAttachFloorPerMin, MaxRPCAttachFloorPerMin)
+	require.Equal(t, DefaultRPCMaxStreamsTotal, cfg.MaxStreamsTotal)
+	require.Equal(t, DefaultRPCMaxChatsTotal, cfg.MaxChatsTotal)
+	require.Less(t, cfg.MaxChatsTotal, cfg.MaxStreamsTotal)
+	require.Less(t, cfg.MaxStreamsTotal, DefaultH2MaxConcurrentStreams)
+	streams, chats, unlimited := cfg.ProcessStreamCaps()
+	require.False(t, unlimited)
+	require.Equal(t, DefaultRPCMaxStreamsTotal, streams)
+	require.Equal(t, DefaultRPCMaxChatsTotal, chats)
 	require.Equal(t, DefaultRPCLimiterMaxEntries, cfg.MaxEntries)
 	require.Equal(t, uint32(4096), DefaultH2MaxConcurrentStreams)
 	require.NotEqual(t, DefaultRPCMaxStreams, DefaultH2MaxConcurrentStreams)
@@ -161,6 +169,16 @@ func TestParseRPCLimit_IgnoredValuesUseDefault(t *testing.T) {
 	t.Setenv(envRPCAttachPerMinTotal, "-1")
 	cfg = LoadChannelLimitConfig()
 	require.Equal(t, math.MaxInt, cfg.AttachFloorPerMin)
+
+	t.Setenv(envRPCMaxStreamsTotal, "64")
+	cfg = LoadChannelLimitConfig()
+	require.Equal(t, uint32(64), cfg.MaxStreamsTotal)
+	require.Equal(t, uint32(64), cfg.MaxChatsTotal, "Chat ceiling cannot exceed the process stream ceiling")
+
+	t.Setenv(envRPCMaxStreamsTotal, "-1")
+	cfg = LoadChannelLimitConfig()
+	_, _, unlimited := cfg.ProcessStreamCaps()
+	require.True(t, unlimited)
 }
 
 type limitWarnLogger struct {

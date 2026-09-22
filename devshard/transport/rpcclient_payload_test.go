@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"common/validation"
+	devtest "devshard/internal/testutil"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
@@ -24,6 +25,32 @@ func TestPayloadReadBucket(t *testing.T) {
 	require.Equal(t, DefaultRPCPayloadSendMaxBytes, payloadReadBucket(int64(DefaultRPCPayloadSendMaxBytes)))
 	require.Equal(t, DefaultRPCPayloadSendMaxBytes, payloadReadBucket(int64(DefaultRPCPayloadSendMaxBytes)+1))
 	require.Equal(t, DefaultRPCPayloadMaxBytes, payloadReadBucket(validation.PayloadResponseByteLimit(4096)))
+}
+
+func TestNewRPCClientSkipsPayloadStubsWithoutEndpoint(t *testing.T) {
+	signer := devtest.MustGenerateKey(t)
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:      "http://127.0.0.1:1",
+		HostAddress:  "gonka1nopayload",
+		DoorEscrowID: "42",
+		Signer:       signer,
+		DirectMux:    true,
+	})
+	t.Cleanup(pc.Close)
+	c := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "42", signer), pc, ParseRPCEndpoints(EndpointSignatures))
+	t.Cleanup(c.Close)
+	for i := range c.payload {
+		require.Nil(t, c.payload[i])
+		require.Nil(t, c.payloadGRPC[i])
+	}
+	stub, err := c.payloadClient(512)
+	require.NoError(t, err)
+	require.NotNil(t, stub)
+	again, err := c.payloadClient(512)
+	require.NoError(t, err)
+	require.Equal(t, stub, again)
+	require.NotNil(t, c.payload[0])
+	require.Nil(t, c.payload[1])
 }
 
 func TestPayloadClientReusesBucketStub(t *testing.T) {

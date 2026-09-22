@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"container/list"
 	"net"
 	"net/http"
 	"net/netip"
@@ -17,22 +18,35 @@ const (
 	peerAuthAttachSuffix            = "/devshard.transport.v1.PeerAuthService/Attach"
 	defaultUnknownEscrowPerIPPerMin = 2
 	maxOriginLookupIPs              = 4096
+	originLookupEvictBatch          = 32
 )
 
 // originLookupLimiter is the per origin-IP cap for unknown-escrow first bind
 // (owner chat, height-sync seed, Attach). It keys on inbound X-Real-IP from
 // versiond-router, not the child's RemoteAddr. Missing header skips the bucket
 // so an old hop that does not forward the client IP cannot collapse the host.
-// At maxOriginLookupIPs, idle IPs (no miss in the last minute) go first,
-// then the oldest remaining IP — the table is never wiped wholesale.
+// order is last-miss time, front = oldest. At cap, idle IPs (a prefix of
+// that list) go first; the oldest under-budget IP is then O(1). The table
+// is never replaced, and an IP at its 2/min budget is not evicted.
 type originLookupLimiter struct {
-	mu   sync.Mutex
-	byIP map[string][]time.Time
-	now  func() time.Time
+	mu           sync.Mutex
+	byIP         map[string]*originIPNode
+	order        *list.List
+	evictVisited int
+	now          func() time.Time
+}
+
+type originIPNode struct {
+	ip    string
+	times []time.Time
+	el    *list.Element
 }
 
 func newOriginLookupLimiter() *originLookupLimiter {
-	return &originLookupLimiter{byIP: make(map[string][]time.Time)}
+	return &originLookupLimiter{
+		byIP:  make(map[string]*originIPNode),
+		order: list.New(),
+	}
 }
 
 func (l *originLookupLimiter) clock() time.Time {
@@ -53,7 +67,11 @@ func (l *originLookupLimiter) blocked(r *http.Request, rest string) bool {
 	now := l.clock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return countRecent(l.byIP[ip], now) >= defaultUnknownEscrowPerIPPerMin
+	node := l.byIP[ip]
+	if node == nil {
+		return false
+	}
+	return countRecent(node.times, now) >= defaultUnknownEscrowPerIPPerMin
 }
 
 func (l *originLookupLimiter) observe(r *http.Request, rest string, resp *http.Response) {
@@ -71,15 +89,29 @@ func (l *originLookupLimiter) observe(r *http.Request, rest string, resp *http.R
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.byIP == nil {
-		l.byIP = make(map[string][]time.Time)
+		l.byIP = make(map[string]*originIPNode)
 	}
-	if _, ok := l.byIP[ip]; !ok {
+	if l.order == nil {
+		l.order = list.New()
+	}
+	node := l.byIP[ip]
+	if node == nil {
 		l.admitNewIPLocked(now)
+		if len(l.byIP) >= maxOriginLookupIPs {
+			return
+		}
+		node = &originIPNode{ip: ip}
+		node.el = l.order.PushBack(node)
+		l.byIP[ip] = node
 	}
-	l.byIP[ip] = appendRecent(l.byIP[ip], now)
+	node.times = appendRecent(node.times, now)
+	if node.el != nil {
+		l.order.MoveToBack(node.el)
+	}
 }
 
 func (l *originLookupLimiter) admitNewIPLocked(now time.Time) {
+	l.evictVisited = 0
 	if len(l.byIP) < maxOriginLookupIPs {
 		return
 	}
@@ -87,42 +119,60 @@ func (l *originLookupLimiter) admitNewIPLocked(now time.Time) {
 	if len(l.byIP) < maxOriginLookupIPs {
 		return
 	}
-	l.evictOldestLocked()
+	l.evictOldestLocked(now)
 }
 
+// evictIdleLocked drops the idle prefix of the last-miss list. Each batch
+// examines at most originLookupEvictBatch entries. A live IP ends the walk,
+// so a hot table costs one visit. An all-idle table repeats until it is clear.
 func (l *originLookupLimiter) evictIdleLocked(now time.Time) {
-	cutoff := now.Add(-time.Minute)
-	for ip, times := range l.byIP {
-		keep := false
-		for _, ts := range times {
-			if ts.After(cutoff) {
-				keep = true
-				break
+	for {
+		n := 0
+		removed := 0
+		el := l.order.Front()
+		for el != nil && n < originLookupEvictBatch {
+			node := el.Value.(*originIPNode)
+			next := el.Next()
+			n++
+			l.evictVisited++
+			if countRecent(node.times, now) > 0 {
+				return
 			}
+			l.removeLocked(node)
+			removed++
+			el = next
 		}
-		if !keep {
-			delete(l.byIP, ip)
+		if removed == 0 || el == nil {
+			return
 		}
 	}
 }
 
-func (l *originLookupLimiter) evictOldestLocked() {
-	var oldest string
-	var oldestLast time.Time
-	found := false
-	for ip, times := range l.byIP {
-		if len(times) == 0 {
-			delete(l.byIP, ip)
-			continue
+// evictOldestLocked drops the oldest last-miss IP that is under the 2/min
+// budget. Over-budget IPs stay. The walk is capped at one batch.
+func (l *originLookupLimiter) evictOldestLocked(now time.Time) {
+	n := 0
+	for el := l.order.Front(); el != nil && n < originLookupEvictBatch; {
+		node := el.Value.(*originIPNode)
+		next := el.Next()
+		n++
+		l.evictVisited++
+		if len(node.times) == 0 || countRecent(node.times, now) < defaultUnknownEscrowPerIPPerMin {
+			l.removeLocked(node)
+			return
 		}
-		last := times[len(times)-1]
-		if !found || last.Before(oldestLast) {
-			oldest, oldestLast, found = ip, last, true
-		}
+		el = next
 	}
-	if found {
-		delete(l.byIP, oldest)
+}
+
+func (l *originLookupLimiter) removeLocked(node *originIPNode) {
+	if node == nil {
+		return
 	}
+	if node.el != nil {
+		l.order.Remove(node.el)
+	}
+	delete(l.byIP, node.ip)
 }
 
 func isUnknownEscrowBindPath(method, rest string) bool {

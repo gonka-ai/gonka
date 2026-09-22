@@ -39,8 +39,13 @@ func (p *PeerConn) addDoor(id string) {
 		return
 	}
 	p.doorMu.Lock()
-	defer p.doorMu.Unlock()
 	p.doors[id]++
+	p.hadDoor = true
+	wake := p.pickDoorLocked() != ""
+	p.doorMu.Unlock()
+	if wake {
+		p.wakeDoors()
+	}
 }
 
 // preferDoor aims the next !liveSession Attach at id (WaitReady's escrow).
@@ -65,6 +70,7 @@ func (p *PeerConn) dropDoor(id string) {
 	n := p.doors[id] - 1
 	if n <= 0 {
 		delete(p.doors, id)
+		p.forgetAuthClientLocked(id)
 	} else {
 		p.doors[id] = n
 	}
@@ -85,6 +91,7 @@ func (p *PeerConn) killDoor(id string) {
 		return
 	}
 	p.deadDoors[id] = struct{}{}
+	p.forgetAuthClientLocked(id)
 	gone := p.pickDoorLocked() == ""
 	p.doorMu.Unlock()
 	logging.Warn("peer rpc attach door is gone; trying another escrow",
@@ -124,7 +131,7 @@ func (p *PeerConn) pickDoorLocked() string {
 			return id
 		}
 	}
-	if len(p.doors) == 0 && len(p.deadDoors) == 0 && validAttachDoorID(p.cfg.DoorEscrowID) {
+	if !p.hadDoor && len(p.doors) == 0 && len(p.deadDoors) == 0 && validAttachDoorID(p.cfg.DoorEscrowID) {
 		p.attachDoor = p.cfg.DoorEscrowID
 		return p.attachDoor
 	}
@@ -142,15 +149,39 @@ func (p *PeerConn) doorUsableLocked(id string) bool {
 	return p.doors[id] > 0
 }
 
+func (p *PeerConn) forgetAuthClientLocked(id string) {
+	delete(p.authByDoor, id)
+	delete(p.authByDoorGRPC, id)
+}
+
 func (p *PeerConn) doorAuthClient(escrowID string) rpcpbconnect.PeerAuthServiceClient {
-	if p.useGRPC() {
-		if escrowID == p.cfg.DoorEscrowID && p.authDoorGRPC != nil {
-			return p.authDoorGRPC
+	if p == nil {
+		return nil
+	}
+	grpc := p.useGRPC()
+	p.doorMu.Lock()
+	defer p.doorMu.Unlock()
+	cache := p.authByDoor
+	if grpc {
+		cache = p.authByDoorGRPC
+	}
+	if c := cache[escrowID]; c != nil {
+		return c
+	}
+	var c rpcpbconnect.PeerAuthServiceClient
+	if grpc {
+		c = rpcpbconnect.NewPeerAuthServiceClient(p.http, p.cfg.connectBase(escrowID), maybeGRPC(connectClientOptions(p.cfg.ReadMaxBytes), true)...)
+		if p.authByDoorGRPC == nil {
+			p.authByDoorGRPC = make(map[string]rpcpbconnect.PeerAuthServiceClient)
 		}
-		return rpcpbconnect.NewPeerAuthServiceClient(p.http, p.cfg.connectBase(escrowID), maybeGRPC(connectClientOptions(p.cfg.ReadMaxBytes), true)...)
+		p.authByDoorGRPC[escrowID] = c
+	} else {
+		c = rpcpbconnect.NewPeerAuthServiceClient(p.http, p.cfg.connectBase(escrowID), connectClientOptions(p.cfg.ReadMaxBytes)...)
+		if p.authByDoor == nil {
+			p.authByDoor = make(map[string]rpcpbconnect.PeerAuthServiceClient)
+		}
+		p.authByDoor[escrowID] = c
 	}
-	if escrowID == p.cfg.DoorEscrowID && p.authDoor != nil {
-		return p.authDoor
-	}
-	return rpcpbconnect.NewPeerAuthServiceClient(p.http, p.cfg.connectBase(escrowID), connectClientOptions(p.cfg.ReadMaxBytes)...)
+	p.doorClientsBuilt++
+	return c
 }

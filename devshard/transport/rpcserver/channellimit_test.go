@@ -525,6 +525,81 @@ func TestChannelLimit_ChatReservesWatchSlotLimiter(t *testing.T) {
 	require.Equal(t, 2, l2.streams["p"].total)
 }
 
+func TestChannelLimit_ProcessChatCapAcrossPeers(t *testing.T) {
+	l := newChannelLimiter(transport.ChannelLimitConfig{
+		MaxStreams:      256,
+		MaxStreamsTotal: 32,
+		MaxChatsTotal:   2,
+		MessagesPerMin:  6000,
+		MessagesBurst:   600,
+	}, time.Now)
+	ctx := context.Background()
+	chat := rpcpbconnect.SessionServiceChatProcedure
+	watch := rpcpbconnect.PeerAuthServiceWatchProcedure
+
+	require.NoError(t, l.acquireStream(ctx, "a", chat))
+	require.NoError(t, l.acquireStream(ctx, "b", chat))
+	requireResourceExhausted(t, l.acquireStream(ctx, "c", chat), "too many concurrent chats")
+	require.NoError(t, l.acquireStream(ctx, "w", watch), "Watch does not spend the Chat ceiling")
+	require.Equal(t, 2, l.procChats)
+	require.Equal(t, 3, l.procStreams)
+
+	l.releaseStream("a", chat)
+	require.NoError(t, l.acquireStream(ctx, "c", chat))
+	require.Equal(t, 2, l.procChats)
+}
+
+func TestChannelLimit_ProcessStreamCapAcrossPeers(t *testing.T) {
+	l := newChannelLimiter(transport.ChannelLimitConfig{
+		MaxStreams:      256,
+		MaxStreamsTotal: 2,
+		MaxChatsTotal:   2,
+		MessagesPerMin:  6000,
+		MessagesBurst:   600,
+	}, time.Now)
+	ctx := context.Background()
+	watch := rpcpbconnect.PeerAuthServiceWatchProcedure
+
+	require.NoError(t, l.acquireStream(ctx, "a", watch))
+	require.NoError(t, l.acquireStream(ctx, "b", watch))
+	requireResourceExhausted(t, l.acquireStream(ctx, "c", watch), "too many concurrent streams")
+	l.releaseStream("a", watch)
+	require.NoError(t, l.acquireStream(ctx, "c", watch))
+	require.Equal(t, 2, l.procStreams)
+	require.Equal(t, 0, l.procChats)
+}
+
+func TestChannelLimit_ProcessStreamCapRecordsStreamsZone(t *testing.T) {
+	now := time.Unix(1_710_000_000, 0)
+	limits := transport.ChannelLimitConfig{
+		MaxStreams:      256,
+		MaxStreamsTotal: 32,
+		MaxChatsTotal:   1,
+		MessagesPerMin:  6000,
+		MessagesBurst:   600,
+	}
+	auth := newTestAuth(PeerAuthConfig{
+		Now:    func() time.Time { return now },
+		Limits: &limits,
+	})
+	ctx := context.Background()
+	chat := rpcpbconnect.SessionServiceChatProcedure
+	require.NoError(t, auth.limiter.acquireStream(ctx, "a", chat))
+	err := auth.limiter.acquireStream(ctx, "b", chat)
+	requireResourceExhausted(t, err, "too many concurrent chats")
+	// Same observe the streaming interceptor runs on acquireStream failure.
+	auth.observeRPC(ctx, chat, "b", true, true, false, false)
+
+	snap := auth.Traffic().Snapshot(now.Add(time.Minute))
+	var banned uint64
+	for _, z := range snap.Host.Zones {
+		if z.Zone == transport.RPCZoneStreams {
+			banned = z.Banned
+		}
+	}
+	require.Equal(t, uint64(1), banned)
+}
+
 func TestChannelLimit_MaxConnsCapsStreamAcquire(t *testing.T) {
 	l := newChannelLimiter(transport.ChannelLimitConfig{
 		MaxStreams:     256,

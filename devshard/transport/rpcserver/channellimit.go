@@ -89,6 +89,10 @@ type channelLimiter struct {
 	shared   map[string]*tokenBucket
 	streamMu sync.Mutex
 	streams  map[string]peerStreamCount
+	// procStreams / procChats are child-wide. Chat is the MLNode-sized
+	// slice; Watch spends only procStreams. SETTINGS stays 4096.
+	procStreams int
+	procChats   int
 	// evictVisited is how many keys the last at-cap idle walk inspected.
 	evictVisited int
 
@@ -171,27 +175,54 @@ func (l *channelLimiter) charge(ctx context.Context, peer, procedure string) err
 }
 
 func (l *channelLimiter) acquireStream(ctx context.Context, peer, procedure string) error {
-	if l == nil || l.cfg.Disabled || peer == "" || transport.IsUnlimitedRPCLimit(l.cfg.EffectiveMaxStreams()) {
+	if l == nil || l.cfg.Disabled || peer == "" {
+		return nil
+	}
+	perPeerUnlimited := transport.IsUnlimitedRPCLimit(l.cfg.EffectiveMaxStreams())
+	procStreams, procChats, procUnlimited := l.cfg.ProcessStreamCaps()
+	if perPeerUnlimited && procUnlimited {
 		return nil
 	}
 	chat := isChatPath(procedure)
 	l.streamMu.Lock()
 	n, exists := l.streams[peer]
-	if !exists && len(l.streams) >= l.cfg.MaxEntries {
+	if !perPeerUnlimited {
+		if !exists && len(l.streams) >= l.cfg.MaxEntries {
+			l.streamMu.Unlock()
+			l.warnBanned(ctx, procedure, zoneStreams, peer)
+			return rateLimitExhausted("too many concurrent streams", time.Second)
+		}
+		max := int(l.cfg.EffectiveMaxStreams())
+		if chat && max > 1 && n.chat >= max-1 {
+			l.streamMu.Unlock()
+			l.warnBanned(ctx, procedure, zoneStreams, peer)
+			return rateLimitExhausted("too many concurrent streams", time.Second)
+		}
+		if n.total >= max {
+			l.streamMu.Unlock()
+			l.warnBanned(ctx, procedure, zoneStreams, peer)
+			return rateLimitExhausted("too many concurrent streams", time.Second)
+		}
+	} else if !exists && len(l.streams) >= l.cfg.MaxEntries {
 		l.streamMu.Unlock()
 		l.warnBanned(ctx, procedure, zoneStreams, peer)
 		return rateLimitExhausted("too many concurrent streams", time.Second)
 	}
-	max := int(l.cfg.EffectiveMaxStreams())
-	if chat && max > 1 && n.chat >= max-1 {
-		l.streamMu.Unlock()
-		l.warnBanned(ctx, procedure, zoneStreams, peer)
-		return rateLimitExhausted("too many concurrent streams", time.Second)
-	}
-	if n.total >= max {
-		l.streamMu.Unlock()
-		l.warnBanned(ctx, procedure, zoneStreams, peer)
-		return rateLimitExhausted("too many concurrent streams", time.Second)
+	if !procUnlimited {
+		if chat && l.procChats >= int(procChats) {
+			l.streamMu.Unlock()
+			l.warnBanned(ctx, procedure, zoneStreams, "process")
+			return rateLimitExhausted("too many concurrent chats", time.Second)
+		}
+		if l.procStreams >= int(procStreams) {
+			l.streamMu.Unlock()
+			l.warnBanned(ctx, procedure, zoneStreams, "process")
+			return rateLimitExhausted("too many concurrent streams", time.Second)
+		}
+		l.procStreams++
+		if chat {
+			l.procChats++
+		}
 	}
 	if chat {
 		n.chat++
@@ -209,9 +240,18 @@ func (l *channelLimiter) releaseStream(peer, procedure string) {
 	chat := isChatPath(procedure)
 	l.streamMu.Lock()
 	defer l.streamMu.Unlock()
-	n := l.streams[peer]
+	n, ok := l.streams[peer]
+	if !ok || n.total == 0 {
+		return
+	}
 	if chat && n.chat > 0 {
 		n.chat--
+		if l.procChats > 0 {
+			l.procChats--
+		}
+	}
+	if l.procStreams > 0 {
+		l.procStreams--
 	}
 	if n.total <= 1 {
 		delete(l.streams, peer)

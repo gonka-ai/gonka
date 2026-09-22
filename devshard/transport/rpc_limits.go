@@ -19,6 +19,15 @@ const (
 	// Chat uses at most max-1 when max>1 so Watch always has a slot.
 	// This is the Connect interceptor, not HTTP/2 SETTINGS (per TCP).
 	DefaultRPCMaxStreams uint32 = 256
+	// DefaultRPCMaxStreamsTotal is the child-wide Watch+Chat ceiling.
+	// SETTINGS stays DefaultH2MaxConcurrentStreams (4096) so one mux can
+	// carry every peer; this is the interceptor backstop that 256-on-the-
+	// listen used to be. Well under 4096 so a roster of Watches still fits
+	// beside Chat.
+	DefaultRPCMaxStreamsTotal uint32 = 512
+	// DefaultRPCMaxChatsTotal is the child-wide Chat ceiling: one MLNode
+	// max_num_seqs, not the HTTP/2 mux. Watch does not spend this.
+	DefaultRPCMaxChatsTotal uint32 = 128
 	// DefaultH2MaxConcurrentStreams is SETTINGS_MAX_CONCURRENT_STREAMS on
 	// the child h2c listen. Overlay muxes every peer's Watch onto one
 	// (or a few) versiond→child TCP connections, so this must match
@@ -45,6 +54,7 @@ const (
 	envRPCMsgsPerMin        = "DEVSHARD_RPC_MSGS_PER_MIN"
 	envRPCMsgsBurst         = "DEVSHARD_RPC_MSGS_BURST"
 	envRPCMaxStreams        = "DEVSHARD_RPC_MAX_STREAMS_PER_PEER"
+	envRPCMaxStreamsTotal   = "DEVSHARD_RPC_MAX_STREAMS_TOTAL"
 	envRPCAttachPerMinTotal = "DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL"
 )
 
@@ -61,6 +71,13 @@ type ChannelLimitConfig struct {
 	MessagesBurst uint32
 	// MaxStreams is the configured Watch+Chat cap before min(MaxStreams, MaxConns).
 	MaxStreams uint32
+	// MaxStreamsTotal is the child-wide Watch+Chat cap. Zero means
+	// DefaultRPCMaxStreamsTotal. UnlimitedRPCLimit (-1) disables it.
+	// Not advertised: clients still pace max_streams per peer.
+	MaxStreamsTotal uint32
+	// MaxChatsTotal is the child-wide Chat cap. Zero means
+	// min(MaxStreamsTotal, DefaultRPCMaxChatsTotal). Watch does not spend it.
+	MaxChatsTotal uint32
 	// MaxConns is this process's HTTP/1.1 PeerConn pool
 	// (MaxIdleConnsPerHost / MaxConnsPerHost). Zero means
 	// DefaultRPCMaxConnsPerPeer / DEVSHARD_RPC_MAX_CONNS_PER_PEER.
@@ -87,6 +104,7 @@ func LoadChannelLimitConfig() ChannelLimitConfig {
 		MessagesPerMin:    parseRPCLimit(envRPCMsgsPerMin, DefaultRPCMessagesPerMin),
 		MessagesBurst:     parseRPCLimit(envRPCMsgsBurst, 0),
 		MaxStreams:        parseRPCLimit(envRPCMaxStreams, DefaultRPCMaxStreams),
+		MaxStreamsTotal:   parseRPCLimit(envRPCMaxStreamsTotal, DefaultRPCMaxStreamsTotal),
 		MaxConns:          RPCMaxConnsPerPeerFromEnv(),
 		AttachFloorPerMin: parseRPCLimitInt(envRPCAttachPerMinTotal, DefaultRPCAttachFloorPerMin),
 	}
@@ -114,6 +132,15 @@ func (c ChannelLimitConfig) WithDefaults() ChannelLimitConfig {
 	if c.MaxStreams == 0 {
 		c.MaxStreams = DefaultRPCMaxStreams
 	}
+	if c.MaxStreamsTotal == 0 {
+		c.MaxStreamsTotal = DefaultRPCMaxStreamsTotal
+	}
+	if !IsUnlimitedRPCLimit(c.MaxStreamsTotal) && c.MaxChatsTotal == 0 {
+		c.MaxChatsTotal = DefaultRPCMaxChatsTotal
+		if c.MaxChatsTotal > c.MaxStreamsTotal {
+			c.MaxChatsTotal = c.MaxStreamsTotal
+		}
+	}
 	if c.MaxConns <= 0 {
 		c.MaxConns = DefaultRPCMaxConnsPerPeer
 	}
@@ -131,6 +158,26 @@ func (c ChannelLimitConfig) WithDefaults() ChannelLimitConfig {
 // IsUnlimitedRPCLimit reports a cap that the interceptor must not enforce.
 func IsUnlimitedRPCLimit(n uint32) bool {
 	return n == UnlimitedRPCLimit
+}
+
+// ProcessStreamCaps is the child-wide Watch+Chat ceiling and the Chat
+// slice of it (one MLNode). unlimited is true when the process ceiling
+// is off (DEVSHARD_RPC_LIMITS=off or MAX_STREAMS_TOTAL=-1). SETTINGS
+// stays 4096; this is the interceptor, not the mux.
+func (c ChannelLimitConfig) ProcessStreamCaps() (streams, chats uint32, unlimited bool) {
+	if c.Disabled {
+		return UnlimitedRPCLimit, UnlimitedRPCLimit, true
+	}
+	c = c.WithDefaults()
+	if IsUnlimitedRPCLimit(c.MaxStreamsTotal) {
+		return UnlimitedRPCLimit, UnlimitedRPCLimit, true
+	}
+	streams = c.MaxStreamsTotal
+	chats = c.MaxChatsTotal
+	if chats == 0 || chats > streams {
+		chats = streams
+	}
+	return streams, chats, false
 }
 
 func parseRPCLimit(env string, def uint32) uint32 {

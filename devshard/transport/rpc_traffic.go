@@ -181,20 +181,35 @@ type reconnectMinute struct {
 
 type trafficShard struct {
 	mu      sync.Mutex
+	hits    atomic.Uint64
 	open    int64
 	current *minuteBucket
 	closed  map[int64]*minuteBucket
 }
 
+// minuteKeyBudget is the process-wide set of named keys for one dimension
+// (peers or IPs) in one minute. The mutex is taken only when a shard has
+// not seen the key yet. An IP is stored on the peer's shard, so the same
+// address must not consume a slot per shard.
+type minuteKeyBudget struct {
+	mu      sync.Mutex
+	minutes map[int64]map[string]struct{}
+}
+
 // RPCTraffic is the in-memory minute ring for one child mux. Observe shards
 // by peer (or IP) so inbound RPCs do not share one process-wide mutex.
+// Attach has no key, so it round-robins across shards.
 type RPCTraffic struct {
 	now  func() time.Time
 	warn func(ctx context.Context, minute int64, host RPCStatsHost)
 
 	shards [rpcTrafficShards]trafficShard
 
-	warnedMinute atomic.Int64
+	sweepMu    sync.Mutex
+	warned     map[int64]struct{}
+	peerBudget minuteKeyBudget
+	ipBudget   minuteKeyBudget
+	attachSeq  atomic.Uint64
 }
 
 // NewRPCTraffic records inbound classified RPCs. now nil uses time.Now.
@@ -376,15 +391,42 @@ func addCountsN(m map[string]*counts, key string, req, ban uint64) {
 	c.banned += ban
 }
 
-func rpcTrafficShardFoldCap(global int) int {
-	n := (global + rpcTrafficShards - 1) / rpcTrafficShards
-	if n < 1 {
-		return 1
+// allow reports whether key may be stored for minute. A key already named
+// this minute is allowed on every shard. A new key past cap folds into "other".
+func (b *minuteKeyBudget) allow(minute int64, key string, cap int) bool {
+	if b == nil || cap < 1 || key == "" {
+		return true
 	}
-	return n
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.minutes == nil {
+		b.minutes = make(map[int64]map[string]struct{})
+	}
+	names := b.minutes[minute]
+	if names == nil {
+		names = make(map[string]struct{})
+		b.minutes[minute] = names
+		for m := range b.minutes {
+			if m < minute-int64(rpcTrafficClosedMinutes)-1 {
+				delete(b.minutes, m)
+			}
+		}
+	}
+	if _, ok := names[key]; ok {
+		return true
+	}
+	if len(names) >= cap {
+		return false
+	}
+	names[key] = struct{}{}
+	return true
 }
 
-func trafficShardIndex(s RPCSample) int {
+func (t *RPCTraffic) shardIndex(s RPCSample) int {
+	if t != nil && s.Attach {
+		n := t.attachSeq.Add(1)
+		return int((n - 1) % uint64(rpcTrafficShards))
+	}
 	key := s.Peer
 	if key == "" {
 		key = s.IP
@@ -473,14 +515,14 @@ func splitEndpointKey(k string) (endpoint, zone string) {
 	return k, ""
 }
 
-func foldNewKey(m map[string]*counts, key string, capN int) string {
+func foldNewKey(m map[string]*counts, key string, allow func() bool) string {
 	if key == "" {
 		return ""
 	}
 	if _, ok := m[key]; ok {
 		return key
 	}
-	if len(m) >= capN {
+	if allow != nil && !allow() {
 		return rpcTrafficOtherKey
 	}
 	return key
@@ -505,9 +547,9 @@ func (t *RPCTraffic) Observe(ctx context.Context, s RPCSample) {
 		endpoint = "Attach"
 	}
 
-	rolled := t.shards[trafficShardIndex(s)].observe(minute, endpoint, zone, s)
-	if rolled != 0 {
-		t.emitClosedWarn(ctx, rolled)
+	advanced := t.shards[t.shardIndex(s)].observe(minute, endpoint, zone, s, &t.peerBudget, &t.ipBudget)
+	if advanced {
+		t.sweepClosed(ctx, minute)
 	}
 
 	result := "ok"
@@ -527,16 +569,20 @@ func (t *RPCTraffic) Observe(ctx context.Context, s RPCSample) {
 	}
 }
 
-func (s *trafficShard) observe(minute int64, endpoint, zone string, sample RPCSample) (rolledMinute int64) {
+func (s *trafficShard) observe(minute int64, endpoint, zone string, sample RPCSample, peers, ips *minuteKeyBudget) (advanced bool) {
+	s.hits.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, rolledMinute = s.rollLocked(minute)
+	advanced = s.rollLocked(minute)
 	b := s.current
 	addCounts(b.endpoints, endpointKey(endpoint, zone), sample.Banned)
 	addCounts(b.zones, zone, sample.Banned)
 	peer := sample.Peer
+	budgetMinute := s.open
 	if !sample.Attach {
-		peer = foldNewKey(b.peers, sample.Peer, rpcTrafficShardFoldCap(rpcTrafficPeerCap))
+		peer = foldNewKey(b.peers, sample.Peer, func() bool {
+			return peers.allow(budgetMinute, sample.Peer, rpcTrafficPeerCap)
+		})
 	}
 	addCounts(b.peers, peer, sample.Banned)
 	if sample.Attach {
@@ -547,13 +593,15 @@ func (s *trafficShard) observe(minute int64, endpoint, zone string, sample RPCSa
 		if sample.AttachFloor {
 			b.attach.BannedFloor++
 		}
-		return rolledMinute
+		return advanced
 	}
 	ip := sample.IP
 	if ip == "" {
 		ip = rpcTrafficUnknownIP
 	}
-	ip = foldNewKey(b.ips, ip, rpcTrafficShardFoldCap(rpcTrafficIPCap))
+	ip = foldNewKey(b.ips, ip, func() bool {
+		return ips.allow(budgetMinute, ip, rpcTrafficIPCap)
+	})
 	addCounts(b.ips, ip, sample.Banned)
 	if sample.Escrow != "" && sample.Escrow != HostRPCEscrowID {
 		em := b.escrows[sample.Escrow]
@@ -573,33 +621,24 @@ func (s *trafficShard) observe(minute int64, endpoint, zone string, sample RPCSa
 		addCounts(em.zones, zone, sample.Banned)
 		addCounts(em.peers, peer, sample.Banned)
 	}
-	return rolledMinute
+	return advanced
 }
 
-// rollLocked advances the open minute. Callers must hold s.mu.
-func (s *trafficShard) rollLocked(minute int64) (closedBucket *minuteBucket, closedMinute int64) {
+// rollLocked advances the open minute. It does not prune: sweepClosed merges
+// a closed minute before the ring drops it. Callers must hold s.mu.
+func (s *trafficShard) rollLocked(minute int64) (advanced bool) {
 	if s.current == nil {
 		s.open = minute
 		s.current = newMinuteBucket()
-		return nil, 0
+		return false
 	}
-	if minute == s.open {
-		return nil, 0
+	if minute <= s.open {
+		return false
 	}
-	closedMinute = s.open
-	closedBucket = s.current
-	s.closed[closedMinute] = closedBucket
+	s.closed[s.open] = s.current
 	s.current = newMinuteBucket()
 	s.open = minute
-	for m := range s.closed {
-		if m < minute-rpcTrafficClosedMinutes {
-			delete(s.closed, m)
-		}
-	}
-	if zoneBanned(closedBucket) == 0 {
-		return nil, 0
-	}
-	return closedBucket, closedMinute
+	return true
 }
 
 func zoneBanned(b *minuteBucket) uint64 {
@@ -615,36 +654,90 @@ func zoneBanned(b *minuteBucket) uint64 {
 	return n
 }
 
-func (t *RPCTraffic) emitClosedWarn(ctx context.Context, minute int64) {
-	if t == nil || minute == 0 {
+// sweepClosed rolls every shard to nowMinute, warns once per closed minute
+// with the merged ban count, then prunes. The warn runs without shard locks.
+// warned is a set so a late shard cannot consume a newer minute's slot.
+func (t *RPCTraffic) sweepClosed(ctx context.Context, nowMinute int64) {
+	if t == nil {
 		return
 	}
-	for {
-		prev := t.warnedMinute.Load()
-		if prev == minute {
-			return
-		}
-		if t.warnedMinute.CompareAndSwap(prev, minute) {
-			break
-		}
-	}
-	b := t.mergeClosed(minute)
-	if zoneBanned(b) == 0 {
-		return
-	}
-	host := snapshotHost(b)
-	if t.warn != nil {
-		t.warn(ctx, minute*60, host)
-	}
-}
-
-func (t *RPCTraffic) mergeClosed(minute int64) *minuteBucket {
-	nowMinute := t.now().Unix() / 60
-	merged := newMinuteBucket()
+	t.sweepMu.Lock()
 	for i := range t.shards {
 		sh := &t.shards[i]
 		sh.mu.Lock()
 		sh.rollLocked(nowMinute)
+		sh.mu.Unlock()
+	}
+	seen := make(map[int64]struct{})
+	mins := make([]int64, 0, rpcTrafficClosedMinutes+1)
+	for i := range t.shards {
+		sh := &t.shards[i]
+		sh.mu.Lock()
+		for m := range sh.closed {
+			if m >= nowMinute {
+				continue
+			}
+			if _, ok := seen[m]; ok {
+				continue
+			}
+			seen[m] = struct{}{}
+			mins = append(mins, m)
+		}
+		sh.mu.Unlock()
+	}
+	sort.Slice(mins, func(i, j int) bool { return mins[i] < mins[j] })
+
+	type pendingWarn struct {
+		minute int64
+		host   RPCStatsHost
+	}
+	var pending []pendingWarn
+	if t.warned == nil {
+		t.warned = make(map[int64]struct{})
+	}
+	for _, m := range mins {
+		if _, ok := t.warned[m]; ok {
+			continue
+		}
+		t.warned[m] = struct{}{}
+		b := t.mergeClosedMinute(m)
+		if zoneBanned(b) == 0 || t.warn == nil {
+			continue
+		}
+		pending = append(pending, pendingWarn{minute: m, host: snapshotHost(b)})
+	}
+	cutoff := nowMinute - rpcTrafficClosedMinutes
+	for i := range t.shards {
+		sh := &t.shards[i]
+		sh.mu.Lock()
+		for m := range sh.closed {
+			if m < cutoff {
+				delete(sh.closed, m)
+			}
+		}
+		sh.mu.Unlock()
+	}
+	for m := range t.warned {
+		if m < cutoff {
+			delete(t.warned, m)
+		}
+	}
+	warn := t.warn
+	t.sweepMu.Unlock()
+
+	if warn == nil {
+		return
+	}
+	for _, p := range pending {
+		warn(ctx, p.minute*60, p.host)
+	}
+}
+
+func (t *RPCTraffic) mergeClosedMinute(minute int64) *minuteBucket {
+	merged := newMinuteBucket()
+	for i := range t.shards {
+		sh := &t.shards[i]
+		sh.mu.Lock()
 		mergeMinute(merged, sh.closed[minute])
 		sh.mu.Unlock()
 	}
@@ -656,23 +749,10 @@ func (t *RPCTraffic) Snapshot(now time.Time) RPCStatsSnapshot {
 	if t == nil {
 		return emptySnapshot(now)
 	}
-	closedMinute := now.Unix()/60 - 1
 	nowMinute := now.Unix() / 60
-	merged := newMinuteBucket()
-	var warnMinute int64
-	for i := range t.shards {
-		sh := &t.shards[i]
-		sh.mu.Lock()
-		_, wm := sh.rollLocked(nowMinute)
-		if wm != 0 {
-			warnMinute = wm
-		}
-		mergeMinute(merged, sh.closed[closedMinute])
-		sh.mu.Unlock()
-	}
-	if warnMinute != 0 {
-		t.emitClosedWarn(context.Background(), warnMinute)
-	}
+	closedMinute := nowMinute - 1
+	t.sweepClosed(context.Background(), nowMinute)
+	merged := t.mergeClosedMinute(closedMinute)
 	out := emptySnapshot(now)
 	if len(merged.endpoints) == 0 && merged.attach.Attempts == 0 {
 		return out

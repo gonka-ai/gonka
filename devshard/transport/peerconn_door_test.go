@@ -83,7 +83,7 @@ func TestPeerConn_DropDoorRemovesCandidate(t *testing.T) {
 	pc.dropDoor("42")
 	require.Equal(t, "99", pc.pickDoor())
 	pc.dropDoor("99")
-	require.Equal(t, "42", pc.pickDoor(), "no live refs: fall back to DoorEscrowID")
+	require.Empty(t, pc.pickDoor(), "after the first addDoor, an empty door set is no door")
 }
 
 func TestPeerConn_KillConfigDoorDoesNotFallBack(t *testing.T) {
@@ -311,4 +311,82 @@ func TestTokenRequestFailsWithoutReadySession(t *testing.T) {
 	pc.killDoor("42")
 	_, err := tokenRequest(rpc, &rpcpb.GetSignaturesRequest{Nonce: 1})
 	require.ErrorIs(t, err, ErrPeerNotReady)
+}
+
+func TestPeerConn_NoDoorWaitsForAddDoor(t *testing.T) {
+	signer := devtest.MustGenerateKey(t)
+	const backoffMin = 30 * time.Millisecond
+	var attempts atomic.Int32
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:      "http://127.0.0.1:1",
+		HostAddress:  "gonka1nodoorspin",
+		DoorEscrowID: "42",
+		Signer:       signer,
+		DirectMux:    true,
+		BackoffMin:   backoffMin,
+		BackoffMax:   time.Second,
+		Jitter:       func(d time.Duration) time.Duration { return d },
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			attempts.Add(1)
+			return sleepContext(ctx, d)
+		},
+	})
+	t.Cleanup(pc.Close)
+	pc.killDoor("42")
+	pc.Start()
+
+	time.Sleep(8 * backoffMin)
+	require.Zero(t, attempts.Load(), "no door must not retry at BackoffMin")
+	require.Equal(t, int32(stateUnauthenticated), pc.state.Load())
+
+	start := time.Now()
+	pc.addDoor("99")
+	require.Eventually(t, func() bool { return attempts.Load() > 0 }, backoffMin, 5*time.Millisecond)
+	require.Less(t, time.Since(start), backoffMin, "addDoor must wake the attach loop before BackoffMax")
+}
+
+func TestPeerConn_DoorAuthClientCachedPerEscrow(t *testing.T) {
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:      "http://127.0.0.1:1",
+		HostAddress:  "gonka1doorcache",
+		DoorEscrowID: "42",
+		DirectMux:    true,
+	})
+	t.Cleanup(pc.Close)
+	before := pc.doorClientsBuilt
+	_ = pc.doorAuthClient("99")
+	_ = pc.doorAuthClient("99")
+	require.Equal(t, before+1, pc.doorClientsBuilt, "a non-creator door is built once")
+	pc.killDoor("99")
+	_ = pc.doorAuthClient("99")
+	require.Equal(t, before+2, pc.doorClientsBuilt, "killing the door drops its client")
+}
+
+func TestRPCClient_CloneKeepsDoorAfterOriginalClose(t *testing.T) {
+	signer := devtest.MustGenerateKey(t)
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:      "http://127.0.0.1:1",
+		HostAddress:  "gonka1clonedoor",
+		DoorEscrowID: "42",
+		Signer:       signer,
+		DirectMux:    true,
+	})
+	t.Cleanup(pc.Close)
+	rpc := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "42", signer), pc, ParseRPCEndpoints(EndpointChat))
+	clone := rpc.cloneWithSigner(devtest.MustGenerateKey(t), time.Second)
+	other, ok := rpc.WithoutAdmission().(*RPCClient)
+	require.True(t, ok)
+	pc.refs.Store(2)
+
+	rpc.Close()
+	require.Equal(t, "42", pc.pickDoor(), "clones still hold the door")
+	pc.publishToken([]byte("tok"), time.Now().Add(time.Hour))
+	pc.setState(stateReady)
+	require.NoError(t, clone.WaitReady(context.Background()))
+
+	clone.Close()
+	require.Equal(t, "42", pc.pickDoor(), "one clone remains")
+	other.Close()
+	require.Empty(t, pc.pickDoor(), "the last clone releases the door")
+	require.False(t, pc.hasAttachDoor())
 }

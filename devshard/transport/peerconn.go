@@ -223,6 +223,13 @@ type PeerConn struct {
 	waitMu sync.Mutex
 	waitCh chan struct{}
 
+	// doorWaitMu / doorCh wake the attach loop when a door appears.
+	// Separate from waitCh so WaitReady and the no-door wait do not
+	// consume each other's broadcast.
+	doorWaitMu sync.Mutex
+	doorCh     chan struct{}
+	noDoorLog  atomic.Int64 // unix nano of the last "no attach door" log
+
 	// budget is the advertised peer-weight bucket (messages_per_min /
 	// messages_burst × RPCProcedureWeight). Shared by every RPCClient on
 	// this connection. IP Attach is not paced: success refunds.
@@ -237,7 +244,13 @@ type PeerConn struct {
 	doorMu     sync.Mutex
 	doors      map[string]int
 	deadDoors  map[string]struct{}
+	hadDoor    bool // set by the first real addDoor; empty doors then mean none
 	attachDoor string
+	// authByDoor caches PeerAuth clients per escrow. The creator door is
+	// seeded from authDoor; other doors are built once and dropped with the door.
+	authByDoor       map[string]rpcpbconnect.PeerAuthServiceClient
+	authByDoorGRPC   map[string]rpcpbconnect.PeerAuthServiceClient
+	doorClientsBuilt int
 }
 
 const (
@@ -295,23 +308,36 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &PeerConn{
-		cfg:          cfg,
-		http:         httpClient,
-		origin:       origin,
-		authDoor:     authDoor,
-		authHost:     authHost,
-		authDoorGRPC: authDoorGRPC,
-		authHostGRPC: authHostGRPC,
-		key:          cfg.registryKey(),
-		ctx:          ctx,
-		cancel:       cancel,
-		done:         make(chan struct{}),
-		waitCh:       make(chan struct{}),
-		doors:        make(map[string]int),
-		deadDoors:    make(map[string]struct{}),
-		attachDoor:   cfg.DoorEscrowID,
+		cfg:            cfg,
+		http:           httpClient,
+		origin:         origin,
+		authDoor:       authDoor,
+		authHost:       authHost,
+		authDoorGRPC:   authDoorGRPC,
+		authHostGRPC:   authHostGRPC,
+		key:            cfg.registryKey(),
+		ctx:            ctx,
+		cancel:         cancel,
+		done:           make(chan struct{}),
+		waitCh:         make(chan struct{}),
+		doorCh:         make(chan struct{}),
+		doors:          make(map[string]int),
+		deadDoors:      make(map[string]struct{}),
+		attachDoor:     cfg.DoorEscrowID,
+		authByDoor:     make(map[string]rpcpbconnect.PeerAuthServiceClient),
+		authByDoorGRPC: make(map[string]rpcpbconnect.PeerAuthServiceClient),
 	}
-	p.setState(stateUnauthenticated)
+	if validAttachDoorID(cfg.DoorEscrowID) {
+		if authDoor != nil {
+			p.authByDoor[cfg.DoorEscrowID] = authDoor
+		}
+		if authDoorGRPC != nil {
+			p.authByDoorGRPC[cfg.DoorEscrowID] = authDoorGRPC
+		}
+	}
+	// Zero state is already unauthenticated, so setState would no-op and the
+	// gauge would stay unpublished until the first real transition.
+	p.publishChildState(stateUnauthenticated)
 	return p
 }
 
@@ -382,6 +408,15 @@ func (p *PeerConn) loop() {
 	defer close(p.done)
 	backoff := time.Duration(0)
 	for {
+		if !p.liveSession() && !p.hasAttachDoor() {
+			p.clearToken()
+			p.noteNoAttachDoor()
+			if !p.waitForAttachDoor() {
+				return
+			}
+			backoff = 0
+			continue
+		}
 		if err := p.cfg.sleep(p.ctx, p.cfg.jitter(backoff)); err != nil {
 			return
 		}
@@ -390,7 +425,11 @@ func (p *PeerConn) loop() {
 		if errors.Is(err, errNoAttachDoor) {
 			p.setState(stateUnauthenticated)
 			p.clearToken()
-			backoff = p.cfg.BackoffMin
+			p.noteNoAttachDoor()
+			if !p.waitForAttachDoor() {
+				return
+			}
+			backoff = 0
 			continue
 		}
 		p.incAttach(err)
@@ -415,6 +454,74 @@ func (p *PeerConn) loop() {
 			backoff = p.cfg.BackoffMin
 		}
 	}
+}
+
+func (p *PeerConn) waitForAttachDoor() bool {
+	if p.hasAttachDoor() {
+		return true
+	}
+	wait := p.doorWaiter()
+	if p.hasAttachDoor() {
+		return true
+	}
+	ceiling := p.cfg.BackoffMax
+	if ceiling <= 0 {
+		ceiling = defaultAttachBackoffMax
+	}
+	timer := time.NewTimer(ceiling)
+	defer timer.Stop()
+	select {
+	case <-p.ctx.Done():
+		return false
+	case <-wait:
+		return p.ctx.Err() == nil
+	case <-timer.C:
+		return p.ctx.Err() == nil
+	}
+}
+
+func (p *PeerConn) noteNoAttachDoor() {
+	if p == nil {
+		return
+	}
+	now := p.cfg.now().UnixNano()
+	interval := int64(p.cfg.BackoffMax)
+	if interval <= 0 {
+		interval = int64(defaultAttachBackoffMax)
+	}
+	prev := p.noDoorLog.Load()
+	if prev != 0 && now-prev < interval {
+		return
+	}
+	if !p.noDoorLog.CompareAndSwap(prev, now) {
+		return
+	}
+	logging.Warn("peer rpc has no attach door",
+		"subsystem", "transport",
+		"host", p.cfg.HostAddress,
+	)
+}
+
+func (p *PeerConn) wakeDoors() {
+	if p == nil {
+		return
+	}
+	p.doorWaitMu.Lock()
+	old := p.doorCh
+	p.doorCh = make(chan struct{})
+	p.doorWaitMu.Unlock()
+	if old != nil {
+		close(old)
+	}
+}
+
+func (p *PeerConn) doorWaiter() <-chan struct{} {
+	p.doorWaitMu.Lock()
+	defer p.doorWaitMu.Unlock()
+	if p.doorCh == nil {
+		p.doorCh = make(chan struct{})
+	}
+	return p.doorCh
 }
 
 func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
@@ -928,6 +1035,9 @@ func (p *PeerConn) connID() string {
 
 func (p *PeerConn) setState(s int32) {
 	prev := p.state.Swap(s)
+	if prev == s {
+		return
+	}
 	p.publishChildState(s)
 	if s == stateReady && prev != stateReady {
 		p.wakeWaiters()

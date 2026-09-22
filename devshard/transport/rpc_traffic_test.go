@@ -77,8 +77,7 @@ func TestRPCTraffic_PeerCapFoldsOther(t *testing.T) {
 	now := time.Unix(1_710_000_000, 0)
 	clock := now
 	tr := NewRPCTraffic(func() time.Time { return clock })
-	n := rpcTrafficShardFoldCap(rpcTrafficPeerCap)*rpcTrafficShards + 1
-	for i := 0; i < n; i++ {
+	for i := 0; i < rpcTrafficPeerCap+1; i++ {
 		tr.Observe(context.Background(), RPCSample{
 			Procedure: rpcpbconnect.SessionServiceGetSignaturesProcedure,
 			Peer:      "peer-" + strconv.Itoa(i),
@@ -87,15 +86,59 @@ func TestRPCTraffic_PeerCapFoldsOther(t *testing.T) {
 	}
 	clock = now.Add(time.Minute)
 	snap := tr.Snapshot(clock)
-	require.Equal(t, uint64(n), snap.Host.Requests)
-	var other uint64
-	for _, p := range snap.Host.Peers {
-		if p.Peer == rpcTrafficOtherKey {
-			other = p.Requests
+	named, other := namedPeerCounts(snap.Host)
+	require.Equal(t, uint64(rpcTrafficPeerCap+1), snap.Host.Requests)
+	require.Equal(t, rpcTrafficPeerCap, named, "the 1000th distinct peer stays named")
+	require.Equal(t, uint64(1), other, "the 1001st distinct peer folds into other")
+}
+
+func TestRPCTraffic_IPCapFoldsOther(t *testing.T) {
+	now := time.Unix(1_710_000_000, 0)
+	clock := now
+	tr := NewRPCTraffic(func() time.Time { return clock })
+	peers := peersOnDistinctShards(2)
+	require.Len(t, peers, 2)
+	for i := 0; i < rpcTrafficIPCap; i++ {
+		ip := "203.0.113." + strconv.Itoa(i)
+		for _, peer := range peers {
+			tr.Observe(context.Background(), RPCSample{
+				Procedure: rpcpbconnect.SessionServiceGetSignaturesProcedure,
+				Peer:      peer,
+				IP:        ip,
+				Escrow:    "1",
+			})
 		}
 	}
-	require.Greater(t, other, uint64(0), "overflow peers must fold into other")
-	require.LessOrEqual(t, len(snap.Host.Peers), rpcTrafficPeerCap+rpcTrafficShards)
+	tr.Observe(context.Background(), RPCSample{
+		Procedure: rpcpbconnect.SessionServiceGetSignaturesProcedure,
+		Peer:      peers[0],
+		IP:        "198.51.100.1",
+		Escrow:    "1",
+	})
+	clock = now.Add(time.Minute)
+	snap := tr.Snapshot(clock)
+	var named int
+	var other uint64
+	for _, row := range snap.Host.IPs {
+		if row.IP == rpcTrafficOtherKey {
+			other = row.Requests
+			continue
+		}
+		named++
+	}
+	require.Equal(t, rpcTrafficIPCap, named, "the same IP on two shards counts once")
+	require.Equal(t, uint64(1), other)
+}
+
+func namedPeerCounts(h RPCStatsHost) (named int, other uint64) {
+	for _, p := range h.Peers {
+		if p.Peer == rpcTrafficOtherKey {
+			other += p.Requests
+			continue
+		}
+		named++
+	}
+	return named, other
 }
 
 func TestRPCTraffic_TwoEscrowsOneSnapshot(t *testing.T) {
@@ -303,10 +346,139 @@ func TestRPCTraffic_ObserveShardsConcurrent(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+	before := shardHits(tr)
+	const attaches = rpcTrafficShards * 4
+	for i := 0; i < attaches; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tr.Observe(context.Background(), RPCSample{
+				Procedure: rpcpbconnect.PeerAuthServiceAttachProcedure,
+				Attach:    true,
+			})
+		}()
+	}
+	wg.Wait()
+	got := shardHits(tr)
+	var sum, nonzero int
+	for i := range got {
+		d := got[i] - before[i]
+		sum += int(d)
+		if d > 0 {
+			nonzero++
+		}
+		require.Equal(t, uint64(attaches/rpcTrafficShards), d, "attach samples must not pile onto one shard")
+	}
+	require.Equal(t, attaches, sum)
+	require.Equal(t, rpcTrafficShards, nonzero)
+
 	mu.Lock()
 	clock = now.Add(time.Minute)
 	mu.Unlock()
 	snap := tr.Snapshot(now.Add(time.Minute))
-	require.Equal(t, uint64(peers*perPeer), snap.Host.Requests)
+	require.Equal(t, uint64(peers*perPeer+attaches), snap.Host.Requests)
+	require.Equal(t, uint64(attaches), snap.Host.Attach.Attempts)
 	require.Len(t, snap.Shards, 1)
+}
+
+func shardHits(tr *RPCTraffic) [rpcTrafficShards]uint64 {
+	var out [rpcTrafficShards]uint64
+	for i := range tr.shards {
+		out[i] = tr.shards[i].hits.Load()
+	}
+	return out
+}
+
+func peersOnDistinctShards(n int) []string {
+	got := make([]string, 0, n)
+	seen := map[int]struct{}{}
+	var index RPCTraffic
+	for i := 0; len(got) < n && i < 10000; i++ {
+		peer := "shard-peer-" + strconv.Itoa(i)
+		idx := index.shardIndex(RPCSample{Peer: peer})
+		if _, ok := seen[idx]; ok {
+			continue
+		}
+		seen[idx] = struct{}{}
+		got = append(got, peer)
+	}
+	return got
+}
+
+func TestRPCTraffic_ClosedWarnSumsLateShard(t *testing.T) {
+	now := time.Unix(1_710_000_000, 0)
+	clock := now
+	tr := NewRPCTraffic(func() time.Time { return clock })
+	peers := peersOnDistinctShards(2)
+	require.Len(t, peers, 2)
+	var warns atomic.Int64
+	var banned atomic.Uint64
+	tr.SetWarn(func(_ context.Context, _ int64, host RPCStatsHost) {
+		warns.Add(1)
+		banned.Store(host.Banned)
+	})
+	for i := 0; i < 3; i++ {
+		tr.Observe(context.Background(), RPCSample{
+			Procedure: rpcpbconnect.SessionServiceGetDiffsProcedure,
+			Peer:      peers[0],
+			Escrow:    "1",
+			Banned:    true,
+		})
+	}
+	for i := 0; i < 5; i++ {
+		tr.Observe(context.Background(), RPCSample{
+			Procedure: rpcpbconnect.SessionServiceGetDiffsProcedure,
+			Peer:      peers[1],
+			Escrow:    "1",
+			Banned:    true,
+		})
+	}
+	clock = now.Add(time.Minute)
+	tr.Observe(context.Background(), RPCSample{
+		Procedure: rpcpbconnect.SessionServiceGetSignaturesProcedure,
+		Peer:      peers[0],
+		Escrow:    "1",
+	})
+	require.Equal(t, int64(1), warns.Load())
+	require.Equal(t, uint64(8), banned.Load(), "warn must include the shard that has not rolled itself")
+	tr.Observe(context.Background(), RPCSample{
+		Procedure: rpcpbconnect.SessionServiceGetSignaturesProcedure,
+		Peer:      peers[1],
+		Escrow:    "1",
+	})
+	require.Equal(t, int64(1), warns.Load(), "the later shard must not emit a second warn")
+}
+
+func TestRPCTraffic_ClosedWarnSurvivesPruneWindow(t *testing.T) {
+	now := time.Unix(1_710_000_000, 0)
+	clock := now
+	tr := NewRPCTraffic(func() time.Time { return clock })
+	peers := peersOnDistinctShards(2)
+	require.Len(t, peers, 2)
+	var warns atomic.Int64
+	var banned atomic.Uint64
+	tr.SetWarn(func(_ context.Context, _ int64, host RPCStatsHost) {
+		warns.Add(1)
+		banned.Store(host.Banned)
+	})
+	tr.Observe(context.Background(), RPCSample{
+		Procedure: rpcpbconnect.SessionServiceGetDiffsProcedure,
+		Peer:      peers[0],
+		Escrow:    "1",
+		Banned:    true,
+	})
+	tr.Observe(context.Background(), RPCSample{
+		Procedure: rpcpbconnect.SessionServiceGetDiffsProcedure,
+		Peer:      peers[1],
+		Escrow:    "1",
+		Banned:    true,
+	})
+	clock = now.Add(time.Duration(rpcTrafficClosedMinutes+1) * time.Minute)
+	tr.Observe(context.Background(), RPCSample{
+		Procedure: rpcpbconnect.SessionServiceGetSignaturesProcedure,
+		Peer:      peers[0],
+		Escrow:    "1",
+	})
+	require.Equal(t, int64(1), warns.Load())
+	require.Equal(t, uint64(2), banned.Load(), "a minute past the ring window must still warn with both shards")
 }

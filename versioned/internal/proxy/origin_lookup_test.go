@@ -284,6 +284,25 @@ func TestOriginLookupLimiter_IdleIPsEvictedAtCap(t *testing.T) {
 	}
 }
 
+func TestOriginLookupLimiter_AdmitAtCapVisitsBounded(t *testing.T) {
+	l := newOriginLookupLimiter()
+	rest := "/sessions/1/chat/completions"
+	miss := unknownEscrowMissResponse()
+	for i := 0; i < maxOriginLookupIPs; i++ {
+		l.observe(originBindRequest(testOriginIP(i)), rest, miss)
+	}
+	l.observe(originBindRequest("198.51.100.9"), rest, miss)
+	if l.evictVisited > originLookupEvictBatch {
+		t.Fatalf("admit at a hot cap visited %d entries, want <= %d", l.evictVisited, originLookupEvictBatch)
+	}
+	l.mu.Lock()
+	n := len(l.byIP)
+	l.mu.Unlock()
+	if n != maxOriginLookupIPs {
+		t.Fatalf("len(byIP) = %d, want %d", n, maxOriginLookupIPs)
+	}
+}
+
 func originBindRequest(ip string) *http.Request {
 	r := httptest.NewRequest(http.MethodPost, "http://versiond/v1/sessions/1/chat/completions", nil)
 	r.Header.Set(originIPHeader, ip)
