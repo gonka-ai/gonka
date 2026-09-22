@@ -279,3 +279,39 @@ governance defaults only affects newly created sessions.
   version tag that the chain allowlists; v1 and v2 share the same
   opaque-`rest_hash` settlement shape, so chain code does not branch
   on the tag.
+
+## 6. Streamed inference errors become a miss (`MsgErrorMiss`)
+
+A host that returns HTTP 200 `text/event-stream` whose body is an
+OpenAI-style error envelope still signs `MsgFinishInference` (usage
+0, payload hash of the serialized events). Without a follow-up, that
+record stays `StatusFinished`: not served as a success, not charged
+as a miss, and eligible for validation.
+
+`MsgErrorMiss` is the follow-up. Apply order in one diff is
+Finish then ErrorMiss:
+
+```
+StatusStarted
+  → applyFinishInference → StatusFinished (Cost += ActualCost; surplus of ReservedCost returned)
+  → applyErrorMiss       → StatusTimedOut (Cost -= ActualCost; Balance += ActualCost; Missed++)
+```
+
+Net ledger: the client is made whole for the full `ReservedCost`, the
+executor earns nothing and takes one `Missed`. `StatusTimedOut` is
+not sampled for validation (`collectValidationJobs` only considers
+`StatusFinished`) and is already seal-eligible.
+
+Gateway emit is always on for a terminal error stream (`errorTerminal`),
+including when content preceded the error. Apply and verify are
+unconditional. The served client response is still today's
+`hostApplicationError`; only accounting changes.
+
+Observability: stage `error_miss` (`inference_id`/`nonce`, `host`,
+`error_type`, `error_code`, `response_hash`, `votes`, `accepted`)
+and `devshard_inference_timeouts_total{reason="error"}`. Rejected
+verifier votes increment
+`devshard_gateway_error_miss_verify_rejects_total{cause,completeness}`
+(`cause` is `no_finish_tx` / `no_payload` / `sig` / `hash_mismatch` /
+`not_error_body`; `completeness` is `cancelled` / `drift` /
+`truncated`). Alert only on `{cause=hash_mismatch,completeness=drift}`.

@@ -38,6 +38,7 @@ func TestEstimateMsgGas_KnownTypes(t *testing.T) {
 
 		// Other host operations.
 		{"MsgSubmitSeed", &inferencetypes.MsgSubmitSeed{}, gasSubmitSeed},
+		{"MsgDeclarePoCIntent", &inferencetypes.MsgDeclarePoCIntent{}, gasDeclarePoCIntent},
 		{"MsgSubmitNewParticipant", &inferencetypes.MsgSubmitNewParticipant{}, gasSubmitNewParticipant},
 		{"MsgSubmitNewUnfundedParticipant", &inferencetypes.MsgSubmitNewUnfundedParticipant{}, gasSubmitNewUnfundedParticipant},
 		{"MsgBridgeExchange", &inferencetypes.MsgBridgeExchange{}, gasBridgeExchange},

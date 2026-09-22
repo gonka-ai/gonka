@@ -12,6 +12,7 @@ import (
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
+	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
@@ -121,6 +122,32 @@ func TestRPCQueryConn_CometServiceGoesThroughTheABCIRouter(t *testing.T) {
 
 	// Not /status: the request is a store-router query addressed by method name.
 	require.Equal(t, []string{cometNodeInfoMethod}, paths)
+}
+
+func TestRPCQueryConn_BroadcastTxUsesCometRPCSync(t *testing.T) {
+	var method string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		var req rpctypes.RPCRequest
+		require.NoError(t, json.Unmarshal(body, &req))
+		method = req.Method
+		out, err := json.Marshal(rpctypes.NewRPCSuccessResponse(
+			req.ID, &coretypes.ResultBroadcastTx{}))
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(out)
+	}))
+	defer srv.Close()
+
+	conn, err := newRPCQueryConn(srv.URL)
+	require.NoError(t, err)
+	_, err = txtypes.NewServiceClient(conn).BroadcastTx(context.Background(), &txtypes.BroadcastTxRequest{
+		TxBytes: []byte("signed-tx"),
+		Mode:    txtypes.BroadcastMode_BROADCAST_MODE_SYNC,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "broadcast_tx_sync", method)
 }
 
 func TestFallbackConn_ServesQueriesOverRPCAfterGRPCDies(t *testing.T) {

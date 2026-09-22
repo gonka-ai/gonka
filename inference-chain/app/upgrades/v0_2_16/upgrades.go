@@ -18,7 +18,7 @@ import (
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
-	"github.com/cosmos/cosmos-sdk/x/authz"
+	authz "github.com/cosmos/cosmos-sdk/x/authz"
 
 	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -78,6 +78,9 @@ func CreateUpgradeHandler(
 			return fromVM, err
 		}
 		if err := migratePoCChallengeParams(ctx, k); err != nil {
+			return fromVM, err
+		}
+		if err := grantDeclarePoCIntentAuthz(ctx, authzKeeper, k); err != nil {
 			return fromVM, err
 		}
 
@@ -425,5 +428,65 @@ func grantPoCChallengeAuthz(ctx context.Context, authzKeeper AuthzMigrationKeepe
 			}
 		}
 	}
+	return nil
+}
+
+// grantDeclarePoCIntentAuthz backfills MsgDeclarePoCIntent authz grants on
+// every existing cold->warm ML ops pair. Identify pairs by the live warm-key
+// marker (MsgClaimRewards) and reuse its expiration so hosts that already
+// ran grant-ml-ops-permissions can submit bootstrap-model intents without
+// re-granting.
+func grantDeclarePoCIntentAuthz(ctx context.Context, authzKeeper AuthzMigrationKeeper, k keeper.Keeper) error {
+	type grantPair struct {
+		granter    sdk.AccAddress
+		grantee    sdk.AccAddress
+		expiration *time.Time
+	}
+
+	intentMsgType := sdk.MsgTypeURL(&types.MsgDeclarePoCIntent{})
+	seen := make(map[string]bool)
+	var pairs []grantPair
+	authzKeeper.IterateGrants(ctx, func(granter, grantee sdk.AccAddress, grant authz.Grant) bool {
+		if grant.Authorization.GetTypeUrl() != "/cosmos.authz.v1beta1.GenericAuthorization" {
+			return false
+		}
+		var authorization authz.GenericAuthorization
+		if err := k.Codec().Unmarshal(grant.Authorization.Value, &authorization); err != nil {
+			return false
+		}
+		if authorization.Msg != types.WarmKeyGrantMarkerTypeURL {
+			return false
+		}
+		key := granter.String() + "->" + grantee.String()
+		if !seen[key] {
+			seen[key] = true
+			pairs = append(pairs, grantPair{granter: granter, grantee: grantee, expiration: grant.Expiration})
+		}
+		return false
+	})
+
+	k.LogInfo("found cold->warm pairs needing MsgDeclarePoCIntent grant", types.Upgrades, "count", len(pairs))
+
+	created := 0
+	skipped := 0
+	for _, pair := range pairs {
+		existing, _ := authzKeeper.GetAuthorization(ctx, pair.grantee, pair.granter, intentMsgType)
+		if existing != nil {
+			skipped++
+			continue
+		}
+		authorization := authz.NewGenericAuthorization(intentMsgType)
+		if err := authzKeeper.SaveGrant(ctx, pair.grantee, pair.granter, authorization, pair.expiration); err != nil {
+			k.LogError("failed to save MsgDeclarePoCIntent grant", types.Upgrades,
+				"granter", pair.granter.String(),
+				"grantee", pair.grantee.String(),
+				"error", err)
+			continue
+		}
+		created++
+	}
+
+	k.LogInfo("MsgDeclarePoCIntent grant migration complete", types.Upgrades,
+		"created", created, "skipped", skipped)
 	return nil
 }

@@ -300,9 +300,12 @@ type testGrant struct {
 }
 
 type mockAuthzKeeper struct {
-	grants   []testGrant
-	existing map[string]authz.Authorization
-	saved    []authz.Authorization
+	grants       []testGrant
+	existing     map[string]authz.Authorization
+	saved        []authz.Authorization
+	savedExpiry  *time.Time
+	savedGranter sdk.AccAddress
+	savedGrantee sdk.AccAddress
 }
 
 func (m *mockAuthzKeeper) IterateGrants(_ context.Context, handler func(sdk.AccAddress, sdk.AccAddress, authz.Grant) bool) {
@@ -320,12 +323,19 @@ func (m *mockAuthzKeeper) GetAuthorization(_ context.Context, _, _ sdk.AccAddres
 	return m.existing[msgType], nil
 }
 
-func (m *mockAuthzKeeper) SaveGrant(_ context.Context, _, _ sdk.AccAddress, authorization authz.Authorization, _ *time.Time) error {
+func (m *mockAuthzKeeper) SaveGrant(_ context.Context, grantee, granter sdk.AccAddress, authorization authz.Authorization, expiration *time.Time) error {
 	m.saved = append(m.saved, authorization)
+	m.savedExpiry = expiration
+	m.savedGranter = granter
+	m.savedGrantee = grantee
 	return nil
 }
 
 func warmMarkerGrant(t *testing.T, granter, grantee sdk.AccAddress) testGrant {
+	return warmKeyMarkerGrant(t, granter, grantee, nil)
+}
+
+func warmKeyMarkerGrant(t *testing.T, granter, grantee sdk.AccAddress, expiration *time.Time) testGrant {
 	t.Helper()
 	authorization := authz.NewGenericAuthorization(inferencetypes.WarmKeyGrantMarkerTypeURL)
 	authorizationAny, err := codectypes.NewAnyWithValue(authorization)
@@ -333,7 +343,7 @@ func warmMarkerGrant(t *testing.T, granter, grantee sdk.AccAddress) testGrant {
 	return testGrant{
 		granter: granter,
 		grantee: grantee,
-		grant:   authz.Grant{Authorization: authorizationAny},
+		grant:   authz.Grant{Authorization: authorizationAny, Expiration: expiration},
 	}
 }
 
@@ -379,5 +389,38 @@ func TestGrantPoCChallengeAuthzNoPairWithoutMarker(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	authzKeeper := &mockAuthzKeeper{}
 	require.NoError(t, grantPoCChallengeAuthz(ctx, authzKeeper, k))
+	require.Empty(t, authzKeeper.saved)
+}
+
+func TestGrantDeclarePoCIntentAuthzCreatesMissingGrant(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	granter := sdk.AccAddress([]byte("granter_____________"))
+	grantee := sdk.AccAddress([]byte("grantee_____________"))
+	expiration := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
+	authzKeeper := &mockAuthzKeeper{
+		grants: []testGrant{warmKeyMarkerGrant(t, granter, grantee, &expiration)},
+	}
+
+	require.NoError(t, grantDeclarePoCIntentAuthz(ctx, authzKeeper, k))
+	require.Len(t, authzKeeper.saved, 1)
+	require.Equal(t, authz.NewGenericAuthorization(sdk.MsgTypeURL(&inferencetypes.MsgDeclarePoCIntent{})), authzKeeper.saved[0])
+	require.Equal(t, &expiration, authzKeeper.savedExpiry)
+	require.Equal(t, granter, authzKeeper.savedGranter)
+	require.Equal(t, grantee, authzKeeper.savedGrantee)
+}
+
+func TestGrantDeclarePoCIntentAuthzSkipsExistingGrant(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	granter := sdk.AccAddress([]byte("granter_____________"))
+	grantee := sdk.AccAddress([]byte("grantee_____________"))
+	expiration := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
+	authzKeeper := &mockAuthzKeeper{
+		grants: []testGrant{warmKeyMarkerGrant(t, granter, grantee, &expiration)},
+		existing: map[string]authz.Authorization{
+			sdk.MsgTypeURL(&inferencetypes.MsgDeclarePoCIntent{}): authz.NewGenericAuthorization(sdk.MsgTypeURL(&inferencetypes.MsgDeclarePoCIntent{})),
+		},
+	}
+
+	require.NoError(t, grantDeclarePoCIntentAuthz(ctx, authzKeeper, k))
 	require.Empty(t, authzKeeper.saved)
 }

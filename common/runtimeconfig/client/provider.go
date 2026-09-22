@@ -7,6 +7,7 @@ import "common/runtimeconfig/types"
 type Snapshot = types.Snapshot
 type ApprovedVersion = types.ApprovedVersion
 type ModelValidationThreshold = types.ModelValidationThreshold
+type HeightSyncParams = types.HeightSyncParams
 
 // EpochChangeListener fires once per CurrentEpochID transition observed by the
 // provider after the first successful apply.

@@ -10,10 +10,8 @@
 //     net.Listener (e.g. :0 ephemeral) without starting a full process.
 //   - A future prod-side standalone oracle can reuse the exact wiring.
 //
-// The package intentionally depends only on devshard/chainoracle/blocks/* and
-// standard library / echo. It does not import devshard/testenv so
-// production (decentralized-api) could vendor it without pulling in
-// testenv code; see devshard/docs/testenv.md §3.6.
+// The package mounts common/chainoracle/blocks/server with the mock
+// observer. It does not import devshard/testenv.
 package standalone
 
 import (
@@ -26,8 +24,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"common/chainoracle/blocks/server"
 	"devshard/chainoracle/blocks/observer"
-	"devshard/chainoracle/blocks/server"
 	"devshard/signing"
 )
 
@@ -128,13 +126,13 @@ func New(cfg Config) (*Service, error) {
 	}
 
 	mock, err := observer.NewMock(observer.MockConfig{
-		ChainID:       cfg.ChainID,
-		Validators:    obsValidators,
-		BlockInterval: cfg.BlockInterval,
+		ChainID:            cfg.ChainID,
+		Validators:         obsValidators,
+		BlockInterval:      cfg.BlockInterval,
 		BlockIntervalDelta: cfg.BlockIntervalDelta,
-		Seed:          cfg.Seed,
-		Start:         cfg.Start,
-		InitialHeight: cfg.InitialHeight,
+		Seed:               cfg.Seed,
+		Start:              cfg.Start,
+		InitialHeight:      cfg.InitialHeight,
 	})
 	if err != nil {
 		_ = lis.Close()

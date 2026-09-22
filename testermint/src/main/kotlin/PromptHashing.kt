@@ -14,6 +14,9 @@ import java.util.TreeMap
 private const val DEFAULT_MAX_TOKENS = 5000
 private const val DEFAULT_LOGPROBS_MODE = "processed_logprobs"
 
+// Keep in sync with completionapi.MinTokensFloor.
+private const val MIN_TOKENS_FLOOR = 64
+
 data class PromptPayloadHash(
     val canonicalPayload: String,
     val promptHash: String
@@ -56,9 +59,7 @@ object PromptHashing {
             requestMap["top_logprobs"] = 5
         }
 
-        val maxTokens = getMaxTokens(requestMap)
-        requestMap["max_tokens"] = maxTokens
-        requestMap["max_completion_tokens"] = maxTokens
+        enforceTokenBudgetFloor(requestMap)
         requestMap["skip_special_tokens"] = false
         requestMap["return_token_ids"] = true
 
@@ -179,6 +180,21 @@ object PromptHashing {
             else -> null
         }
     }
+
+    // Mirrors completionapi.EnforceTokenBudgetFloor; both sides must emit the same body or the
+    // cross-language prompt hash diverges.
+    private fun enforceTokenBudgetFloor(requestMap: MutableMap<String, Any?>) {
+        val maxTokens = maxOf(getMaxTokens(requestMap), MIN_TOKENS_FLOOR)
+        val minTokens = minOf(maxOf(getMinTokens(requestMap), MIN_TOKENS_FLOOR), maxTokens)
+
+        requestMap["min_tokens"] = minTokens
+        requestMap["max_tokens"] = maxTokens
+        requestMap["max_completion_tokens"] = maxTokens
+
+        requestMap.remove("stop_token_ids")
+    }
+
+    private fun getMinTokens(requestMap: Map<String, Any?>): Int = parseTokenLimit(requestMap["min_tokens"]) ?: 0
 
     private fun getMaxTokens(requestMap: Map<String, Any?>): Int {
         parseTokenLimit(requestMap["max_tokens"])?.let { return it }

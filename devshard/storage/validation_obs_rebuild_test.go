@@ -105,6 +105,23 @@ func TestRebuildValidationObsFromDiffs_ReplacesPriorState(t *testing.T) {
 	require.Equal(t, uint32(1), rows[0].CompletedValidations)
 }
 
+// Recording is only deduped while the live row survives: the drain deletes it,
+// so re-recording an inference that already sealed counts it a second time.
+// This is why the rebuild has to clear first and why recovery must never
+// replay a partial range of diffs on top of stored obs.
+func TestRecordValidationsAppliedOnce_NotDedupedAfterDrain(t *testing.T) {
+	store := setupObsTestStore(t)
+
+	recordOnce(t, store, "escrow-1", 7, 2)
+	require.NoError(t, store.DrainInferenceValidationObs("escrow-1", 7))
+	require.Equal(t, uint32(1), obsForSlot(t, store, 2).CompletedValidations)
+
+	recordOnce(t, store, "escrow-1", 7, 2)
+	require.NoError(t, store.DrainInferenceValidationObs("escrow-1", 7))
+	require.Equal(t, uint32(2), obsForSlot(t, store, 2).CompletedValidations,
+		"the drain removes the dedup row, so a repeated record double counts")
+}
+
 func TestValidationObsEntriesFromTxs_DedupWithinDiff(t *testing.T) {
 	txs := []*types.DevshardTx{validationTx(7, 2), validationTx(7, 2)}
 	entries := ValidationObsEntriesFromTxs(txs)

@@ -74,6 +74,19 @@ message RuntimeConfig {
   uint32 validation_rate = 10;
   uint32 vote_threshold_factor = 11;
   repeated ModelValidationThreshold validation_thresholds = 12;
+  // Height-sync log-plane params. Zero on the wire means "use compiled defaults".
+  // Scheduling knobs are milliseconds: mainnet height is the result of a
+  // height-sync turnover, so nobody can schedule the next one in blocks.
+  uint64 height_sync_interval_ms = 13;          // turnover interval
+  uint64 height_sync_ack_deadline_blocks = 14;  // D_ack (compares logged claims)
+  uint64 height_sync_idle_timeout_ms = 15;      // T_idle
+  uint64 height_sync_probe_stagger_ms = 16;     // δ_probe
+  uint32 height_sync_max_probes_per_window = 17; // R_max
+  uint64 height_sync_turn_timeout_ms = 18;      // producer patience on one open turn
+  // Assumed chain block interval. The log judges an ack's promptness in blocks
+  // because it has no clock, so D_ack is derived from the millisecond schedule
+  // through this rate; set it when your chain is slower than one block a second.
+  uint64 height_sync_block_time_ms = 19;
 }
 
 message ModelValidationThreshold {

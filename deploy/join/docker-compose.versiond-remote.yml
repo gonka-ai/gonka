@@ -1,0 +1,80 @@
+# One versiond host on a machine other than the network node.
+#
+# Use this file alone on the remote machine:
+#
+#   source ./config.env
+#   docker compose -f docker-compose.versiond-remote.yml up -d --wait
+#
+# config.env on the remote machine carries the same KEY_NAME, ACCOUNT_PUBKEY,
+# KEYRING_PASSWORD and DEVSHARD_POSTGRES_* values as the network node, plus:
+#
+#   NETWORK_NODE_PRIVATE_IP   private address of the network node, where
+#                             docker-compose.private-endpoints.yml publishes
+#                             chain gRPC/RPC, the node manager and PostgreSQL
+#   VERSIOND_BIND_IP          private address of this machine on which the
+#                             routers reach versiond (entry in the endpoint
+#                             file of the network node)
+#
+# Copy .inference/keyring-file from the network node into ./.inference on this
+# machine; nothing else from .inference is needed here. Add this host to the
+# endpoint file on the network node and run `./versiond-router-fleet.sh apply`
+# there. Multi-host requires the shared PostgreSQL contract: see
+# devshard/docs/release-0.2.15-v5.md.
+
+services:
+  versiond:
+    container_name: versiond
+    image: ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
+    environment:
+      - VERSIOND_ORACLE_URL=http://${NETWORK_NODE_PRIVATE_IP:?set NETWORK_NODE_PRIVATE_IP in config.env}:9100/versions
+      - VERSIOND_BINARY_NAME=devshardd
+      # Several devshardd instances serve one escrow: fail closed without
+      # shared PostgreSQL storage.
+      - GONKA_HA=true
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
+      - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
+      # Keep serving after /readyz starts failing so the routers on the network
+      # node withdraw this host before it stops accepting.
+      - VERSIOND_DRAIN_ANNOUNCE=${VERSIOND_DRAIN_ANNOUNCE:-5s}
+      - NODE_MANAGER_ADDR=${NETWORK_NODE_PRIVATE_IP}:${NODE_MANAGER_GRPC_PORT:-9400}
+      - NODE_HOST=${NETWORK_NODE_PRIVATE_IP}
+      - KEY_NAME=${KEY_NAME:?set KEY_NAME in config.env}
+      - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY}
+      - KEYRING_BACKEND=${KEYRING_BACKEND:-file}
+      - KEYRING_PASSWORD=${KEYRING_PASSWORD}
+      - KEYRING_DIR=/root/.inference
+      - DEVSHARD_OTEL_ENABLED=${DEVSHARD_OTEL_ENABLED:-false}
+      - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
+      - OTEL_HEADERS=${OTEL_HEADERS:-}
+      - PGHOST=${DEVSHARD_POSTGRES_HOST:-${NETWORK_NODE_PRIVATE_IP}}
+      - PGPORT=${DEVSHARD_POSTGRES_PORT:-5432}
+      - PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}
+      - PGUSER=${DEVSHARD_POSTGRES_USER:-devshardd}
+      - PGPASSWORD=${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
+      - PG_POOL_MAX_CONNS=${DEVSHARD_POSTGRES_POOL_MAX_CONNS:-4}
+      - DEVSHARD_STORAGE_MODE=postgres
+    ports:
+      # Only the routers on the network node need this port. Bind it to the
+      # private interface and firewall it from the public network.
+      - "${VERSIOND_BIND_IP:?set VERSIOND_BIND_IP in config.env}:${VERSIOND_PUBLISHED_PORT:-8080}:8080"
+    volumes:
+      - .inference:/root/.inference:ro
+      - ./devshards/bin:/opt/versiond/bin
+      - ./devshards/data:/opt/versiond/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8080/readyz",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 3
+      start_period: ${VERSIOND_HEALTH_START_PERIOD:-30m}
+    stop_grace_period: ${VERSIOND_STOP_GRACE_PERIOD:-30m}
+    restart: always
