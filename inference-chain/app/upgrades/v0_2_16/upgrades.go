@@ -62,6 +62,9 @@ func CreateUpgradeHandler(
 		}
 
 		// Future v0.2.16 migration steps land below this line.
+		if err := migrateLegacyPruningLimits(ctx, k); err != nil {
+			return fromVM, err
+		}
 		if err := migrateDevshardApprovedVersions(ctx, k); err != nil {
 			return fromVM, err
 		}
@@ -91,6 +94,33 @@ func CreateUpgradeHandler(
 		k.LogInfo("successfully upgraded", types.Upgrades, "version", UpgradeName)
 		return toVM, nil
 	}
+}
+
+func migrateLegacyPruningLimits(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+
+	defaults := types.DefaultEpochParams()
+	if params.EpochParams == nil {
+		params.EpochParams = defaults
+		return k.SetParams(ctx, params)
+	}
+
+	changed := false
+	if params.EpochParams.InferencePruningMax <= 0 {
+		params.EpochParams.InferencePruningMax = defaults.InferencePruningMax
+		changed = true
+	}
+	if params.EpochParams.PocPruningMax <= 0 {
+		params.EpochParams.PocPruningMax = defaults.PocPruningMax
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return k.SetParams(ctx, params)
 }
 
 func migrateDynamicCoefficientParams(ctx context.Context, k keeper.Keeper) error {
