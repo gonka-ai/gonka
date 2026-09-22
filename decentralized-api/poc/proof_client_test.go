@@ -569,3 +569,17 @@ func TestVerifyProofItem_DecodeTrajectoryShape(t *testing.T) {
 	_, err = verifyProofItem([]byte{}, 1, 0, "p", item, 16)
 	require.ErrorIs(t, err, ErrInvalidVectorData, "trajectory length must match decode_max_tokens+1")
 }
+
+func TestVerifyProofItem_DecodeRejectsOutOfRangeBytes(t *testing.T) {
+	ok := ProofItem{LeafIndex: 0, NonceValue: 1, VectorBytes: base64.StdEncoding.EncodeToString([]byte{0, 15, 7})}
+	_, err := verifyProofItem([]byte{}, 1, 0, "p", ok, 2)
+	require.NotErrorIs(t, err, ErrInvalidVectorData)
+
+	high := ProofItem{LeafIndex: 0, NonceValue: 1, VectorBytes: base64.StdEncoding.EncodeToString([]byte{16, 0, 0})}
+	_, err = verifyProofItem([]byte{}, 1, 0, "p", high, 2)
+	require.ErrorIs(t, err, ErrInvalidVectorData)
+
+	wide := ProofItem{LeafIndex: 0, NonceValue: 1, VectorBytes: base64.StdEncoding.EncodeToString([]byte{255, 0, 0})}
+	_, err = verifyProofItem([]byte{}, 1, 0, "p", wide, 2)
+	require.ErrorIs(t, err, ErrInvalidVectorData)
+}

@@ -160,6 +160,14 @@ func (m *MockBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) 
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
 }
 
+func (m *MockBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
+	args := m.Called(stageHeight)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryPocStageRecipeResponse), args.Error(1)
+}
+
 type MockRandomSeedManager struct {
 	mock.Mock
 	onGenerate func(epochIndex uint64)
@@ -350,6 +358,15 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 						SeqLen:  256,
 					},
 				},
+			},
+		},
+	}, nil)
+	mockChainBridge.On("GetPocStageRecipe", mock.Anything).Return(&types.QueryPocStageRecipeResponse{
+		Found: true,
+		Recipe: &types.PocStageRecipe{
+			Scheme: types.PocScheme_POC_SCHEME_PREFILL,
+			Models: []*types.PoCModelConfig{
+				{ModelId: integrationTestModelID, SeqLen: 256},
 			},
 		},
 	}, nil)

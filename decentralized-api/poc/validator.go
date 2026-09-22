@@ -307,6 +307,13 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		return
 	}
 	pocParams := paramsResp.Params.PocParams
+	recipe, recipeErr := loadStageRecipe(queryClient, epochState, pocStageStartBlockHeight)
+	if recipeErr != nil || recipe == nil {
+		logging.Error("OffChainValidator: missing PocStageRecipe, fail closed", types.PoC,
+			"pocStageStartBlockHeight", pocStageStartBlockHeight, "error", recipeErr)
+		return
+	}
+	pocParams = types.ApplyStageRecipe(pocParams, recipe)
 	sampleSize := int(pocParams.ValidationSampleSize)
 	if sampleSize == 0 {
 		sampleSize = 200
@@ -451,7 +458,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 			treeDepth: commit.TreeDepth,
 		}
 		if mc, ok := pocParams.GetModelConfig(commit.ModelId); ok {
-			work.decodeMax = mc.DecodeMaxTokens
+			work.decodeMax = types.DecodeMaxForStage(pocParams.PocScheme, mc.DecodeMaxTokens)
 		}
 		workItems = append(workItems, work)
 	}
@@ -920,8 +927,8 @@ func (v *OffChainValidator) dispatchToMLNode(
 		return validateAbstain
 	}
 
-	// Under the decode scheme the stored vector is the packed trajectory (proof-verified base64).
-	decode := modelConfig.DecodeMaxTokens > 0
+	scheme := pocParams.PocScheme
+	decode := scheme == types.PocScheme_POC_SCHEME_DECODE
 	if decode {
 		for i := range artifacts {
 			raw, _ := base64.StdEncoding.DecodeString(artifacts[i].VectorB64)
@@ -944,12 +951,12 @@ func (v *OffChainValidator) dispatchToMLNode(
 		PublicKey:   work.pubKey,
 		NodeCount:   len(modelNodes),
 		Nonces:      nonces,
-		Params:      mlnodeclient.DecodePoCParams(modelConfig.ModelId, modelConfig.SeqLen, modelConfig.DecodeMaxTokens),
+		Params:      mlnodeclient.PoCParamsForScheme(modelConfig.ModelId, modelConfig.SeqLen, types.DecodeMaxForStage(scheme, modelConfig.DecodeMaxTokens), scheme),
 		URL:         validationCallbackUrl,
 		Validation: &mlnodeclient.ValidationV2{
 			Artifacts: artifacts,
 		},
-		StatTest:       mlnodeclient.StatTestParamsFromChain(modelConfig.StatTest),
+		StatTest:       mlnodeclient.StatTestParamsFromChain(types.StatTestForScheme(scheme, modelConfig)),
 		PocStrongerRng: pocParams.PocStrongerRngEnabled,
 	}
 
@@ -1022,6 +1029,29 @@ func sampleLeafIndices(validatorPubKey string, blockHash string, blockHeight int
 	}
 
 	return result
+}
+
+func loadStageRecipe(
+	queryClient types.QueryClient,
+	epochState *chainphase.EpochState,
+	stageHeight int64,
+) (*types.PocStageRecipe, error) {
+	if epochState != nil && epochState.ActiveConfirmationPoCEvent != nil &&
+		epochState.ActiveConfirmationPoCEvent.TriggerHeight == stageHeight &&
+		epochState.ActiveConfirmationPoCEvent.Recipe != nil {
+		return epochState.ActiveConfirmationPoCEvent.Recipe, nil
+	}
+	if queryClient == nil {
+		return nil, fmt.Errorf("no query client")
+	}
+	resp, err := queryClient.PocStageRecipe(context.Background(), &types.QueryPocStageRecipeRequest{StageHeight: stageHeight})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil || !resp.Found || resp.Recipe == nil {
+		return nil, fmt.Errorf("PocStageRecipe not found for height %d", stageHeight)
+	}
+	return resp.Recipe, nil
 }
 
 // getSamplingBlockHash returns the block hash used as sampling randomness.

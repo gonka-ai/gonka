@@ -71,6 +71,10 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		//nolint:forbidigo // genesis code
 		panic(err)
 	}
+	if _, err := k.FreezePocStageRecipe(ctx, 0, nil); err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
 	for _, elem := range genState.ModelList {
 		if elem.ProposedBy != "genesis" {
 			//nolint:forbidigo // genesis code
