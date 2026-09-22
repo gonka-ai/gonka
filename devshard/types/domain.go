@@ -113,6 +113,7 @@ type SessionConfig struct {
 	InferenceSealGraceNonces   uint32
 	InferenceSealGraceSeconds  uint32
 	AutoSealEveryNNonces       uint32
+	LogprobsMode               string
 }
 
 // EscrowState is the full state of a devshard session.

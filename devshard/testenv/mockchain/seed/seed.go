@@ -27,7 +27,7 @@ func Defaults() *store.Store {
 	s.ParamsBlockHeight = 150
 	s.Params = inferencetypes.Params{
 		EpochParams:      &inferencetypes.EpochParams{EpochLength: defaultTestenvEpochLength},
-		ValidationParams: &inferencetypes.ValidationParams{LogprobsMode: "raw"},
+		ValidationParams: &inferencetypes.ValidationParams{LogprobsMode: "raw_logprobs"},
 		DevshardEscrowParams: &inferencetypes.DevshardEscrowParams{
 			DevshardRequestsEnabled: true,
 			MaxNonce:                500,
