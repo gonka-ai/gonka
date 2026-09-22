@@ -1,0 +1,242 @@
+package accounting
+
+// Thresholds are constants rather than configuration: a per-deployment one would let two gateways
+// report the same host differently. neverCritical is the ceiling of a finding that stops at warning,
+// since no rate exceeds 1.
+const (
+	findingMinimumVolume = 20
+
+	executionTimeoutWarning  = 0.01
+	executionTimeoutCritical = 0.05
+	refusalWarning           = 0.05
+	refusalCritical          = 0.20
+	unusedAnswerWarning      = 0.20
+	protocolMissWarning      = 0.01
+	protocolMissCritical     = 0.05
+	protocolInvalidWarning   = 0.01
+	protocolInvalidCritical  = 0.05
+	gatewayThrottleWarning   = 0.10
+	stateDivergedWarning     = 0.01
+	quarantineWarning        = 0.10
+	unknownReasonWarning     = 0.05
+	slowReceiptWarning       = 0.05
+	slowChunkWarning         = 0.05
+	clockDriftWarning        = 0.01
+	slowDecodeWarning        = 0.10
+	decodedLogprobsWarning   = 0.001
+	decodedLogprobsCritical  = 0.01
+	undecidedTimeoutWarning  = 0.10
+	undecidedTimeoutCritical = 0.50
+	neverCritical            = 2.0
+)
+
+const (
+	FindingExecutionTimeouts   = "execution_timeouts"
+	FindingRefusals            = "refusals"
+	FindingUnusedAnswers       = "answers_unused"
+	FindingProtocolMisses      = "chain_recorded_misses"
+	FindingProtocolInvalid     = "chain_recorded_invalid"
+	FindingUnresolvedChallenge = "challenges_unresolved"
+	FindingUndecidedTimeouts   = "timeouts_undecided"
+	FindingGatewayThrottled    = "throttled_by_gateway"
+	FindingQuarantined         = "quarantined_by_gateway"
+	FindingFailureOrigins      = "failure_origins"
+	FindingChainDisagreement   = "ledger_disagrees_with_chain"
+	FindingLedgerOvercounted   = "ledger_overcounted"
+	FindingUnknownReasons      = "reasons_unknown"
+	FindingDecodedLogprobs     = "logprobs_not_token_ids"
+	FindingSlowReceipts        = "slow_receipts"
+	FindingSlowChunks          = "slow_chunks"
+	FindingClockDrift          = "clock_drift"
+	FindingSlowDecode          = "slow_decode"
+	FindingStateDiverged       = "blocked_by_state_divergence"
+)
+
+type Severity string
+
+const (
+	SeverityWarning  Severity = "warning"
+	SeverityCritical Severity = "critical"
+)
+
+// Finding names a condition and the numbers it was flagged on, nothing more. What each code means and
+// what to check lives in docs/accounting-findings.md, so an explanation is written once instead of
+// crossing the network with every response.
+type Finding struct {
+	Code     string   `json:"code"`
+	Severity Severity `json:"severity"`
+	Part     uint64   `json:"part"`
+	Whole    uint64   `json:"whole,omitempty"` // zero when the finding counts rather than measures a rate
+}
+
+// findingsFor reads only what the record already carries, so a finding and the numbers beside it in
+// the same response can never come from different reads of the ledger.
+func findingsFor(record ParticipantRecord) []Finding {
+	delivered := countersWhere(record, both(wasDelivered, servedAUser))
+	unused := countersWhere(record, both(is(DispositionFinishedUnused), servedAUser))
+	refused := countersWhere(record, both(is(DispositionUnfinishedRefused), both(blamesHost, servedAUser)))
+	unfinished := countersWhere(record, both(is(DispositionUnfinishedExecution), both(blamesHost, servedAUser)))
+	reached := delivered + refused + unfinished
+	// The breakdown below names every failure, excused ones included, so it needs the denominator that
+	// counts them too; the rates above measure only what the host is answerable for.
+	reachedIncludingExcused := delivered +
+		countersWhere(record, both(is(DispositionUnfinishedRefused), servedAUser)) +
+		countersWhere(record, both(is(DispositionUnfinishedExecution), servedAUser))
+
+	findings := make([]Finding, 0, 4)
+	add := func(finding Finding, flagged bool) {
+		if flagged {
+			findings = append(findings, finding)
+		}
+	}
+	add(ratio(unfinished, reached, executionTimeoutWarning, executionTimeoutCritical,
+		FindingExecutionTimeouts))
+	add(ratio(refused, reached, refusalWarning, refusalCritical,
+		FindingRefusals))
+	add(ratio(unused, delivered, unusedAnswerWarning, neverCritical,
+		FindingUnusedAnswers))
+	add(ratio(record.ProtocolMisses, record.AssignedNonces, protocolMissWarning, protocolMissCritical,
+		FindingProtocolMisses))
+	add(ratio(record.ProtocolInvalid, record.AssignedNonces, protocolInvalidWarning, protocolInvalidCritical,
+		FindingProtocolInvalid))
+	add(ratio(record.UnresolvedChallenges, record.AssignedNonces, protocolInvalidWarning, protocolInvalidCritical,
+		FindingUnresolvedChallenge))
+	add(ratio(undecidedTimeouts(record), timeoutRoundsVoted(record), undecidedTimeoutWarning, undecidedTimeoutCritical,
+		FindingUndecidedTimeouts))
+	add(ratio(ghostsBecause(record, NoSendParticipantThrottled), record.AssignedNonces, gatewayThrottleWarning, neverCritical,
+		FindingGatewayThrottled))
+	add(ratio(countersWhere(record, wasQuarantined), record.AssignedNonces, quarantineWarning, neverCritical,
+		FindingQuarantined))
+	add(ratio(ghostsBecause(record, NoSendParticipantStateDiverged)+ghostsBecause(record, NoSendParticipantCapability),
+		record.AssignedNonces, stateDivergedWarning, neverCritical, FindingStateDiverged))
+	add(ratio(record.UnknownReasonTotal, record.AssignedNonces, unknownReasonWarning, neverCritical,
+		FindingUnknownReasons))
+
+	add(ratio(countersWhere(record, receiptWasSlow), delivered+unfinished, slowReceiptWarning, neverCritical,
+		FindingSlowReceipts))
+	add(ratio(countersWhere(record, chunkWasSlow), delivered, slowChunkWarning, neverCritical,
+		FindingSlowChunks))
+	add(ratio(countersWhere(record, clockHasDrifted), delivered+unfinished, clockDriftWarning, neverCritical,
+		FindingClockDrift))
+	add(ratio(countersWhere(record, decodeWasSlow), delivered, slowDecodeWarning, neverCritical,
+		FindingSlowDecode))
+	add(ratio(countersWhere(record, logprobsWereDecoded), delivered, decodedLogprobsWarning, decodedLogprobsCritical,
+		FindingDecodedLogprobs))
+
+	if total := countersWhere(record, failedWithoutAnswer); total > 0 && reachedIncludingExcused >= findingMinimumVolume {
+		findings = append(findings, Finding{
+			Code: FindingFailureOrigins, Severity: SeverityWarning, Part: total, Whole: reachedIncludingExcused,
+		})
+	}
+	if drift := record.CrossChecks.ErrorCount; drift > 0 && record.AssignedNonces >= findingMinimumVolume {
+		findings = append(findings, Finding{
+			Code: FindingChainDisagreement, Severity: SeverityWarning, Part: drift, Whole: record.AssignedNonces,
+		})
+	}
+	if record.Overclassified > 0 {
+		findings = append(findings, Finding{
+			Code: FindingLedgerOvercounted, Severity: SeverityWarning,
+			Part: record.Overclassified, Whole: record.AssignedNonces,
+		})
+	}
+	return findings
+}
+
+// ratio takes the denominator once, so the rate that decides and the numbers reported beside it cannot
+// disagree about what they were measured against.
+func ratio(part, whole uint64, warning, critical float64, code string) (Finding, bool) {
+	severity, flagged := rate(part, whole, warning, critical)
+	if !flagged {
+		return Finding{}, false
+	}
+	return Finding{Code: code, Severity: severity, Part: part, Whole: whole}, true
+}
+
+func rate(part, whole uint64, warning, critical float64) (Severity, bool) {
+	if whole < findingMinimumVolume || part == 0 {
+		return "", false
+	}
+	measured := float64(part) / float64(whole)
+	switch {
+	case measured >= critical:
+		return SeverityCritical, true
+	case measured >= warning:
+		return SeverityWarning, true
+	}
+	return "", false
+}
+
+func undecidedTimeouts(record ParticipantRecord) uint64 {
+	return record.TimeoutOutcomes[TimeoutVoteCollectionFailed] + record.TimeoutOutcomes[TimeoutInsufficientVotes]
+}
+
+func timeoutRoundsVoted(record ParticipantRecord) uint64 {
+	var total uint64
+	for outcome, count := range record.TimeoutOutcomes {
+		if outcome != TimeoutSkipped {
+			total += count
+		}
+	}
+	return total
+}
+
+func failedWithoutAnswer(key CounterKey) bool {
+	return key.Disposition == DispositionUnfinishedRefused || key.Disposition == DispositionUnfinishedExecution
+}
+
+func logprobsWereDecoded(key CounterKey) bool { return key.LogprobsDecoded }
+func receiptWasSlow(key CounterKey) bool      { return key.SlowReceipt }
+func chunkWasSlow(key CounterKey) bool        { return key.SlowChunk }
+func clockHasDrifted(key CounterKey) bool     { return key.ClockDrifted }
+func decodeWasSlow(key CounterKey) bool       { return key.SlowDecode }
+
+func countersWhere(record ParticipantRecord, match func(CounterKey) bool) uint64 {
+	var total uint64
+	for _, counter := range record.Counters {
+		if match(counter.Key) {
+			total += counter.Count
+		}
+	}
+	return total
+}
+
+func both(first, second func(CounterKey) bool) func(CounterKey) bool {
+	return func(key CounterKey) bool { return first(key) && second(key) }
+}
+
+func is(disposition Disposition) func(CounterKey) bool {
+	return func(key CounterKey) bool { return key.Disposition == disposition }
+}
+
+// Findings rate how a host serves users, so the gateway's own probes belong to neither side of a ratio.
+func servedAUser(key CounterKey) bool {
+	return key.DeliveryReason != DeliveryWarmupProbe && key.DeliveryReason != DeliveryThrottleProbe
+}
+
+func wasDelivered(key CounterKey) bool {
+	switch key.Disposition {
+	case DispositionFinishedUsed, DispositionFinishedUnused, DispositionFinishedUsageUnknown:
+		return true
+	}
+	return false
+}
+
+// An origin the ledger could not name still counts against the host: treating "unknown" as excused
+// would let every unclassified failure disappear from the rates.
+func blamesHost(key CounterKey) bool {
+	return key.FailureOrigin != FailureGatewayPolicy && key.FailureOrigin != FailureClient
+}
+
+func wasQuarantined(key CounterKey) bool {
+	return key.QuarantineMode != "" && key.QuarantineMode != QuarantineNone
+}
+
+func ghostsBecause(record ParticipantRecord, reason NoSendReason) uint64 {
+	var total uint64
+	for _, counter := range record.Counters {
+		if counter.Key.Disposition == DispositionGhost && counter.Key.NoSendReason == reason {
+			total += counter.Count
+		}
+	}
+	return total
+}

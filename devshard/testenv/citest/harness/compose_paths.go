@@ -21,7 +21,6 @@ func fixComposePaths(t *testing.T, composePath, testenvDir string) {
 	text := string(body)
 
 	repl := []struct{ old, new string }{
-		{"context: ../../versiond-router", "context: " + filepath.Join(repoRoot, "versiond-router")},
 		{"context: ../../versioned", "context: " + filepath.Join(repoRoot, "versioned")},
 		{"context: ../..", "context: " + repoRoot},
 		{"- ../../build/devshardd:", "- " + filepath.Join(repoRoot, "build", "devshardd") + ":"},

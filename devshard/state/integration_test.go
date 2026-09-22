@@ -62,7 +62,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 		// Include accumulated ConfirmStart txs.
 		for _, pc := range pendingConfirms {
 			execSig := testutil.SignExecutorReceipt(t, hosts[pc.executorIdx], escrowID,
-				pc.inferenceID, []byte("prompt"), "llama", 100, 50, int64(pc.inferenceID)*1000, int64(pc.inferenceID)*1000)
+				pc.inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, int64(pc.inferenceID)*1000, int64(pc.inferenceID)*1000)
 			txs = append(txs, txConfirm(&types.MsgConfirmStart{
 				InferenceId: pc.inferenceID,
 				ExecutorSig: execSig,
@@ -93,7 +93,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 			PromptHash:  []byte("prompt"),
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   int64(infID) * 1000,
 		}))
 
@@ -134,7 +134,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 	var finalTxs []*types.DevshardTx
 	for _, pc := range pendingConfirms {
 		execSig := testutil.SignExecutorReceipt(t, hosts[pc.executorIdx], escrowID,
-			pc.inferenceID, []byte("prompt"), "llama", 100, 50, int64(pc.inferenceID)*1000, int64(pc.inferenceID)*1000)
+			pc.inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, int64(pc.inferenceID)*1000, int64(pc.inferenceID)*1000)
 		finalTxs = append(finalTxs, txConfirm(&types.MsgConfirmStart{
 			InferenceId: pc.inferenceID,
 			ExecutorSig: execSig,
@@ -221,7 +221,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 	hostStatsHash, err := ComputeHostStatsHash(state.HostStats)
 	require.NoError(t, err)
 	acc := sealedAccBytes32(state.SealedAcc)
-	restHash, err := ComputeRestHashV2(state.Balance, acc, state.Inferences, state.WarmKeys)
+	restHash, err := ComputeRestHashV2(state.Balance, acc, state.Inferences, state.WarmKeys, types.HeightSyncEscrowCommitFromState(&state))
 	require.NoError(t, err)
 	recomputedRoot := ComputeStateRootFromRestHash(hostStatsHash, restHash, state.Fees, state.Phase, state.StateRootAndProtocolVersion)
 	require.Equal(t, finalStateRoot, recomputedRoot)
