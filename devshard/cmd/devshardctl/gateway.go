@@ -77,7 +77,8 @@ type Gateway struct {
 	runtimeParamsClose    func()
 	maxNonce              devshardpkg.MaxNonceProvider
 	chainClient           *chain.Client
-	finalizeMu            sync.Mutex
+	finalizeLocksMu       sync.Mutex
+	finalizeLocks         map[string]*sync.Mutex
 	settlementMu          sync.Mutex
 	settlementInFlight    map[string]struct{}
 	replenishmentMu       sync.Mutex
@@ -140,6 +141,22 @@ type devshardRuntime struct {
 // escrowHasBackgroundWork reports whether foreground requests or background race cleanups are in flight; settle and store-close must wait until it is false.
 func (rt *devshardRuntime) escrowHasBackgroundWork() bool {
 	return rt.activeUserRequests.Load() > 0 || rt.pendingRaceCleanup.Load() > 0
+}
+
+// lockFinalize serializes Finalize calls for one escrow without blocking Finalize calls for other escrows. The returned func releases the lock.
+func (g *Gateway) lockFinalize(escrowID string) func() {
+	g.finalizeLocksMu.Lock()
+	if g.finalizeLocks == nil {
+		g.finalizeLocks = make(map[string]*sync.Mutex)
+	}
+	lock, ok := g.finalizeLocks[escrowID]
+	if !ok {
+		lock = &sync.Mutex{}
+		g.finalizeLocks[escrowID] = lock
+	}
+	g.finalizeLocksMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
 }
 
 type runtimeStatus struct {
@@ -1524,8 +1541,8 @@ func (g *Gateway) handleSingleOnly(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 	if len(runtimes) == 1 {
 		if r.URL.Path == "/v1/finalize" && r.Method == http.MethodPost {
-			g.finalizeMu.Lock()
-			defer g.finalizeMu.Unlock()
+			unlockFinalize := g.lockFinalize(runtimes[0].id)
+			defer unlockFinalize()
 			log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", runtimes[0].id, r.URL.Path)
 		}
 		runtimes[0].handler.ServeHTTP(w, r)
@@ -1800,8 +1817,8 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, devshardID), http.StatusConflict)
 			return
 		}
-		g.finalizeMu.Lock()
-		defer g.finalizeMu.Unlock()
+		unlockFinalize := g.lockFinalize(devshardID)
+		defer unlockFinalize()
 		log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", devshardID, r.URL.Path)
 		req := cloneRequestWithBody(r, nil)
 		req.URL.Path = innerPath

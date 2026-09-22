@@ -1486,6 +1486,134 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 	require.False(t, state.Devshards[0].Active)
 }
 
+// blockingFinalizeHandler answers /v1/finalize by reporting entry on
+// entered, then waiting for release before returning.
+func blockingFinalizeHandler(entered chan<- string, release <-chan struct{}, escrowID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entered <- escrowID
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func newFinalizeTestGateway(t *testing.T, runtimes ...*devshardRuntime) *Gateway {
+	t.Helper()
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	devshards := make([]GatewayDevshardState, 0, len(runtimes))
+	for _, rt := range runtimes {
+		devshards = append(devshards, GatewayDevshardState{RuntimeConfig: RuntimeConfig{ID: rt.id, PrivateKeyHex: "secret", Model: rt.model}, Active: true})
+	}
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, devshards))
+	g := NewGateway(runtimes, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+	return g
+}
+
+func finalizeRequest(escrowID string) *http.Request {
+	return httptest.NewRequest(http.MethodPost, "/devshard/"+escrowID+"/v1/finalize", nil)
+}
+
+func waitForDone(t *testing.T, done <-chan struct{}, message string) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal(message)
+	}
+}
+
+func TestGatewayFinalizeDoesNotSerializeAcrossEscrows(t *testing.T) {
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	rtA := &devshardRuntime{id: "A", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "A")}
+	rtB := &devshardRuntime{id: "B", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "B")}
+	g := newFinalizeTestGateway(t, rtA, rtB)
+
+	doneA := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("A"))
+		close(doneA)
+	}()
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "A", escrowID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("escrow A finalize never entered its handler")
+	}
+
+	doneB := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("B"))
+		close(doneB)
+	}()
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "B", escrowID, "escrow B must finalize while escrow A is still finalizing")
+	case <-time.After(2 * time.Second):
+		t.Fatal("escrow B finalize blocked behind escrow A's finalize")
+	}
+
+	close(release)
+	waitForDone(t, doneA, "escrow A finalize never returned")
+	waitForDone(t, doneB, "escrow B finalize never returned")
+}
+
+func TestGatewayFinalizeStillSerializesSameEscrow(t *testing.T) {
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	rt := &devshardRuntime{id: "A", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "A")}
+	g := newFinalizeTestGateway(t, rt)
+
+	doneFirst := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("A"))
+		close(doneFirst)
+	}()
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "A", escrowID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("escrow A finalize never entered its handler")
+	}
+
+	doneSecond := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("A"))
+		close(doneSecond)
+	}()
+
+	select {
+	case <-entered:
+		t.Fatal("a second finalize for the same escrow must wait for the first to finish")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(release)
+	waitForDone(t, doneFirst, "the first finalize for escrow A never returned")
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "A", escrowID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second finalize for escrow A never ran after the first released")
+	}
+	waitForDone(t, doneSecond, "the second finalize for escrow A never returned")
+}
+
 func TestGatewayHandlePooledChatSetsChosenDevshardHeader(t *testing.T) {
 	slow := &devshardRuntime{
 		id:    "6",
