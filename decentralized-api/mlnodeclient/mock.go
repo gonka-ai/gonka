@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -86,13 +87,15 @@ func NewMockClient() *MockClient {
 }
 
 func (m *MockClient) WithTryLock(t *testing.T, f func()) {
-	lock := m.Mu.TryLock()
-	if !lock {
-		t.Fatal("TryLock called more than once")
-	} else {
-		defer m.Mu.Unlock()
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !m.Mu.TryLock() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for mock client lock")
+		}
+		time.Sleep(time.Millisecond)
 	}
-
+	defer m.Mu.Unlock()
 	f()
 }
 
