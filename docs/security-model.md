@@ -1,5 +1,7 @@
 # Security model
 
+The protocol is based on a Proof-of-Work-like consensus that derives each host's weight from its hardware capacity for serving large LLMs, or other compute-demanding architectures. In contrast to classic Proof-of-Work, the protocol assigns this benchmark work, which is not explicitly useful, only for a short period. For most of the epoch, that compute capacity executes useful tasks.
+
 The network approves the list of supported models, with precision and deploy params (e.g. max_context_length, kv cache quantization).
 To join the network, a host must have hardware that can serve one of the approved models at the defined quality, and provide that hardware for at least one full epoch. The protocol pays reward only for whole epochs.
 
