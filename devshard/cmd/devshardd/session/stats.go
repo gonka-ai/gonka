@@ -14,6 +14,7 @@ import (
 	"common/logging"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 
+	devshardpkg "devshard"
 	"devshard/observability"
 	devshardserver "devshard/server"
 	"devshard/storage"
@@ -401,6 +402,9 @@ func validationObservabilityFromStore(store storage.Storage, escrowID string) st
 func statsHTTPError(err error) error {
 	if errors.Is(err, storage.ErrSessionNotFound) {
 		return echo.NewHTTPError(http.StatusNotFound, "shard not found")
+	}
+	if errors.Is(err, devshardpkg.ErrInvalidEscrowID) {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())

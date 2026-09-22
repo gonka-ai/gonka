@@ -1,8 +1,10 @@
 package harness
 
 import (
+	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -24,6 +26,22 @@ func BootStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
+// BootErrorMissStack is HA pair + two solos (4 containers, 3 escrow slots).
+// Three distinct identities are required so two non-executor verifiers can
+// exceed VoteThreshold (need weight > 1). A 3-container stack is only two
+// identities (HA+solo), so the solo cannot vote a miss against the HA.
+func BootErrorMissStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 4, EscrowSlots: 3})
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireFourVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
 // BootStackBuild is like BootStack but rebuilds compose images first (devshardctl gRPC wiring).
 func BootStackBuild(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
@@ -38,6 +56,119 @@ func BootStackBuild(t *testing.T, prefix string) (*Stack, *config.File, Endpoint
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
+// BootHeightSyncStack is BootStack with DEVSHARD_CHAINORACLE_URL pointed at
+// mock-dapi. Default compose is not modified; only this generated file is patched.
+func BootHeightSyncStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	EnableHeightSyncCompose(t, stack.ComposePath)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+// BootHeightSyncHAPlusSoloStack is height-sync with an HA pair plus one solo
+// identity (3 containers, 2 escrow slots). Stopping the solo unreachs a slot;
+// stopping versiond-1 only takes down a replica that owns none.
+func BootHeightSyncHAPlusSoloStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 2})
+	stack.RunGencompose(t)
+	EnableHeightSyncCompose(t, stack.ComposePath)
+	cfg := stack.LoadConfig(t)
+	requireThreeVersiondHosts(t, cfg)
+	require.Len(t, config.OnChainIdentityHosts(cfg), 2, "HA pair + solo is two identities")
+	require.Empty(t, cfg.Hosts[1].SlotIDs, "versiond-1 is the HA replica and must own no slots")
+	require.NotEmpty(t, cfg.Hosts[2].SlotIDs, "the solo must own a slot so stopping it is H43")
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+// BootHeightSyncSoloOracleOverlayStack is height-sync HA pair + solo with a
+// testenv-only Latest() overlay on the solo identity. Delta shifts the solo
+// host's reported tip; fabricate flips the first hash byte. At/Prove/Subscribe
+// stay canonical so L6 reconcile can still see the real header. Production
+// binaries ignore these env vars (build tag devshard_testenv).
+func BootHeightSyncSoloOracleOverlayStack(t *testing.T, prefix string, delta int64, fabricate bool) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	require.True(t, delta != 0 || fabricate, "oracle overlay needs a height delta and/or fabricate_hash")
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 2})
+	stack.RunGencompose(t)
+	EnableHeightSyncCompose(t, stack.ComposePath)
+	cfg := stack.LoadConfig(t)
+	requireThreeVersiondHosts(t, cfg)
+	require.Len(t, config.OnChainIdentityHosts(cfg), 2, "HA pair + solo is two identities")
+	solo := FirstSoloHostID(t, cfg)
+	lines := []string{fmt.Sprintf("DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA: %q", strconv.FormatInt(delta, 10))}
+	if fabricate {
+		lines = append(lines, `DEVSHARD_TESTENV_ORACLE_FABRICATE_HASH: "true"`)
+	}
+	PatchComposeServiceInsertEnv(t, stack.ComposePath, solo, "DEVSHARD_CHAINORACLE_URL", lines...)
+	PatchComposeServiceInsertEnv(t, stack.ComposePath, gatewayComposeService, "DEVSHARD_CHAINORACLE_URL",
+		`DEVSHARD_GATEWAY_CHAIN_ORACLE: "true"`)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+// FirstSoloHostID is the compose service of the first on-chain identity that
+// does not share hosts[0]'s KEY_NAME. On the default 3-host multi roster that
+// is versiond-2.
+func FirstSoloHostID(t *testing.T, cfg *config.File) string {
+	t.Helper()
+	require.NotNil(t, cfg)
+	require.NotEmpty(t, cfg.Hosts)
+	haKey := config.VersiondKeyName(cfg, cfg.Hosts[0])
+	for _, h := range config.OnChainIdentityHosts(cfg) {
+		if config.VersiondKeyName(cfg, h) != haKey {
+			require.NotEmpty(t, h.ID)
+			return h.ID
+		}
+	}
+	t.Fatal("expected a solo identity besides the HA pair")
+	return ""
+}
+
+// BootHeightSyncLegacyDapiStack is BootHeightSyncStack with mock-dapi omitting
+// /block/* (stand-in for ghcr.io/product-science/api:0.2.15 built from this
+// branch). Real dapi cannot replace mock-dapi here: mock-chain is not CometBFT.
+func BootHeightSyncLegacyDapiStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	EnableHeightSyncCompose(t, stack.ComposePath)
+	EnableLegacyDapiCompose(t, stack.ComposePath)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+// BootHeightSyncPeerMatrixStack is BootHeightSyncStack with the opt-in
+// peer_seen matrix series enabled on the gateway.
+func BootHeightSyncPeerMatrixStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	EnableHeightSyncCompose(t, stack.ComposePath)
+	EnableHeightSyncPeerMatrixCompose(t, stack.ComposePath)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
 func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
@@ -46,11 +177,17 @@ func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, 
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
+	started := time.Now()
 	stack.UpWithObservability(t, cfg)
-	return stack, cfg, stack.Endpoints(t, cfg), DefaultObservabilityEndpoints()
+	obs := stack.ObservabilityHostEndpoints(t)
+	obs.StartedAt = started
+	return stack, cfg, stack.Endpoints(t, cfg), obs
 }
 
-// WaitStackHealthy polls the chain, dapi, router, and gateway boundaries.
+// WaitStackHealthy polls the chain, dapi, router catalog, and gateway boundaries.
+// Catalog admission (GET /{version}/healthz) is required before treating the
+// gateway as ready: a process-up router /healthz is not enough, and a gateway
+// that is already heartbeating into an undeclared version quarantines hosts.
 func WaitStackHealthy(t *testing.T, stack *Stack, eps Endpoints) {
 	t.Helper()
 	client := HTTPClient()
@@ -60,6 +197,7 @@ func WaitStackHealthy(t *testing.T, stack *Stack, eps Endpoints) {
 	WaitGETOK(t, client, eps.MockDapiHTTP+"/healthz", poll, "mock-dapi healthz")
 	WaitGETOK(t, client, eps.MockDapiHTTP+"/v1/epochs/latest", 30*time.Second, "mock-dapi epochs/latest", stack)
 	WaitGETOK(t, client, eps.RouterHTTP+"/healthz", poll, "versiond-router healthz", stack)
+	WaitRouterCatalogAdmitted(t, stack, poll)
 	WaitGETOK(t, client, eps.GatewayHTTP+"/v1/status", poll, "gateway /v1/status", stack)
 }
 
@@ -90,6 +228,49 @@ func requireThreeVersiondHosts(t *testing.T, cfg *config.File) {
 	}
 }
 
+// PayloadWithholdingBootOpts patches compose env after gencompose and before Up.
+type PayloadWithholdingBootOpts struct {
+	PayloadHTTPStatus string // e.g. "500"; empty leaves the compose default (off)
+	FaultValidator    string // X-Validator-Address to fail; empty = all callers; "$solo" = hosts[2]
+	VoteFalse         string // "true"/"false"; empty leaves compose default (true)
+}
+
+// BootPayloadWithholdingStack renders HA + two solos (3 identities) so Phase B
+// can still reach VoteThreshold after a fetch-failure challenge.
+func BootPayloadWithholdingStack(t *testing.T, prefix string, opts PayloadWithholdingBootOpts) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WritePayloadWithholdingConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireFourVersiondHosts(t, cfg)
+	if opts.PayloadHTTPStatus != "" {
+		PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS", opts.PayloadHTTPStatus)
+	}
+	if opts.FaultValidator != "" {
+		addr := opts.FaultValidator
+		if addr == "$solo" {
+			require.GreaterOrEqual(t, len(cfg.Hosts), 3)
+			addr = cfg.Hosts[2].Address
+			require.NotEmpty(t, addr)
+		}
+		PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR", addr)
+	}
+	if opts.VoteFalse != "" {
+		PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE", opts.VoteFalse)
+	}
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+func requireFourVersiondHosts(t *testing.T, cfg *config.File) {
+	t.Helper()
+	if len(cfg.Hosts) != 4 {
+		t.Fatalf("expected 4 versiond hosts (HA pair + 2 solos), got %d", len(cfg.Hosts))
+	}
+}
+
 // RouterSessionURL builds the sticky-routed path nginx hashes on the session id segment.
 func RouterSessionURL(routerHTTP, version, sessionID, suffix string) string {
 	return routerHTTP + "/" + version + "/sessions/" + sessionID + suffix
@@ -97,13 +278,30 @@ func RouterSessionURL(routerHTTP, version, sessionID, suffix string) string {
 
 // GetResponseHeader performs GET and returns the named response header (body discarded).
 func GetResponseHeader(client *http.Client, url, header string) (string, error) {
-	resp, err := client.Get(url)
+	value, _, err := getResponseHeader(client, url, header)
+	return value, err
+}
+
+// GetSuccessfulResponseHeader also requires a successful HTTP response.
+func GetSuccessfulResponseHeader(client *http.Client, url, header string) (string, error) {
+	value, status, err := getResponseHeader(client, url, header)
 	if err != nil {
 		return "", err
 	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("GET %s returned status %d", url, status)
+	}
+	return value, nil
+}
+
+func getResponseHeader(client *http.Client, url, header string) (string, int, error) {
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", 0, err
+	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
-	return resp.Header.Get(header), nil
+	return resp.Header.Get(header), resp.StatusCode, nil
 }
 
 // RequireResponseHeader GETs url and requires a non-empty header value.
@@ -112,5 +310,19 @@ func RequireResponseHeader(t *testing.T, client *http.Client, url, header string
 	value, err := GetResponseHeader(client, url, header)
 	require.NoError(t, err)
 	require.NotEmpty(t, value, "missing response header %q from %s (rebuild versiond-router?)", header, url)
+	return value
+}
+
+// RequireSuccessfulResponseHeader requires both 2xx and a non-empty header.
+func RequireSuccessfulResponseHeader(
+	t *testing.T,
+	client *http.Client,
+	url string,
+	header string,
+) string {
+	t.Helper()
+	value, err := GetSuccessfulResponseHeader(client, url, header)
+	require.NoError(t, err)
+	require.NotEmpty(t, value, "missing response header %q from %s", header, url)
 	return value
 }

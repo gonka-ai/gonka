@@ -1,0 +1,12 @@
+# Temporary recovery overlay for a detached v4 PostgreSQL volume.
+# Use only with docker-compose.yml and docker-compose.versiond.yml.
+# Recreate devshard-postgres without this file after migration succeeds.
+services:
+  devshard-postgres:
+    volumes:
+      - devshard-postgres-v4-recovery:/var/lib/postgresql/data
+
+volumes:
+  devshard-postgres-v4-recovery:
+    external: true
+    name: ${DEVSHARD_POSTGRES_LEGACY_VOLUME:?legacy volume is required}

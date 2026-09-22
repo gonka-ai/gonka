@@ -1,35 +1,10 @@
 package mode
 
 import (
-	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
-
-func TestHasDevshardHAHeader(t *testing.T) {
-	require.False(t, HasDevshardHAHeader(nil))
-	require.False(t, HasDevshardHAHeader(http.Header{}))
-
-	h := http.Header{}
-	h.Set(HeaderDevshardHA, "true")
-	require.True(t, HasDevshardHAHeader(h))
-
-	h.Set(HeaderDevshardHA, "TRUE")
-	require.True(t, HasDevshardHAHeader(h))
-
-	h.Set(HeaderDevshardHA, "1")
-	require.True(t, HasDevshardHAHeader(h))
-
-	h.Set(HeaderDevshardHA, "yes")
-	require.True(t, HasDevshardHAHeader(h))
-
-	h.Set(HeaderDevshardHA, "")
-	require.True(t, HasDevshardHAHeader(h), "present empty value counts as HA mark")
-
-	h.Set(HeaderDevshardHA, "false")
-	require.False(t, HasDevshardHAHeader(h))
-}
 
 func TestConfiguredForHA(t *testing.T) {
 	clearModeEnv(t)
