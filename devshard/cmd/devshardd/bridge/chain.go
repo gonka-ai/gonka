@@ -2,10 +2,8 @@ package bridge
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"sync"
 	"time"
 
@@ -108,33 +106,7 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 		return nil, bridge.ErrEscrowNotFound
 	}
 
-	e := resp.Escrow
-	appHash, err := hex.DecodeString(e.AppHash)
-	if err != nil {
-		return nil, fmt.Errorf("decode app_hash: %w", err)
-	}
-
-	slots := make([]string, len(e.Slots))
-	copy(slots, e.Slots)
-
-	return &bridge.EscrowInfo{
-		EscrowID:                  strconv.FormatUint(id, 10),
-		Amount:                    e.Amount,
-		CreatorAddress:            e.Creator,
-		AppHash:                   appHash,
-		Slots:                     slots,
-		ModelID:                   e.ModelId,
-		TokenPrice:                e.TokenPrice,
-		CreateDevshardFee:         e.CreateDevshardFee,
-		FeePerNonce:               e.FeePerNonce,
-		InferenceSealGraceNonces:  e.InferenceSealGraceNonces,
-		InferenceSealGraceSeconds: e.InferenceSealGraceSeconds,
-		AutoSealEveryNNonces:      e.AutoSealEveryNNonces,
-		ValidationRate:            e.ValidationRate,
-		VoteThresholdFactor:       e.VoteThresholdFactor,
-		EpochID:                   e.EpochIndex,
-		Settled:                   e.Settled,
-	}, nil
+	return bridge.EscrowInfoFromQuery(id, resp.Escrow)
 }
 
 func (b *ChainBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {

@@ -1,4 +1,9 @@
-# .github/workflows/build-and-release-to-repo-b.yml (in RepoA)
+# Build chain upgrade zips to product-science/race-releases and/or a
+# devshardd host zip as a GitHub Release on this repo (gonka-ai/gonka).
+#
+# Tag push uses the workflow file on the tagged commit (not main).
+# Host tags (release/devshard/vX.Y.Z or release/vA.B.C-devshard-vX.Y.Z) publish
+# only the host zip. Other matching tags publish inferenced + dapi + edge-api.
 name: Build and Release to race-releases
 
 on:
@@ -6,25 +11,170 @@ on:
     tags:
       - 'release/v[0-9]*.[0-9]*.[0-9]*'
       - 'release/v[0-9]*.[0-9]*.[0-9]*-*'
+      - 'release/devshard/v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      build_inference_chain:
+        description: 'Build inference-chain (inferenced) upgrade zip'
+        type: boolean
+        default: false
+      build_dapi:
+        description: 'Build decentralized-api upgrade zip'
+        type: boolean
+        default: false
+      build_edge_api:
+        description: 'Build edge-api upgrade zip'
+        type: boolean
+        default: false
+      build_devshardd:
+        description: 'Build and publish devshardd.zip'
+        type: boolean
+        default: false
+      chain_version:
+        description: 'VERSION= for chain zips (e.g. v0.2.14). Required if any chain box is set.'
+        type: string
+        required: false
+        default: ''
+      race_releases_tag:
+        description: 'race-releases tag for chain zips. Default release/${chain_version}.'
+        type: string
+        required: false
+        default: ''
+      DEVSHARD_VERSION:
+        description: 'Host release-body version (e.g. v4 or v4.1). Required if build_devshardd.'
+        type: string
+        required: false
+        default: ''
+      DEVSHARD_PROTOCOL_VERSION:
+        description: 'Host protocol slot passed to Make as DEVSHARD_VERSION (e.g. v4). Required if build_devshardd.'
+        type: string
+        required: false
+        default: ''
+      DEVSHARD_BINARY_VERSION:
+        description: 'Host binary stamp vX.Y.Z (e.g. v4.1.0). Required if build_devshardd.'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  actions: write
+
 jobs:
   build_and_release:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Classify release
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          GITHUB_SHA_VALUE: ${{ github.sha }}
+          IN_BUILD_INFERENCE_CHAIN: ${{ github.event.inputs.build_inference_chain }}
+          IN_BUILD_DAPI: ${{ github.event.inputs.build_dapi }}
+          IN_BUILD_EDGE_API: ${{ github.event.inputs.build_edge_api }}
+          IN_BUILD_DEVSHARDD: ${{ github.event.inputs.build_devshardd }}
+          IN_CHAIN_VERSION: ${{ github.event.inputs.chain_version }}
+          IN_RACE_RELEASES_TAG: ${{ github.event.inputs.race_releases_tag }}
+          IN_DEVSHARD_VERSION: ${{ github.event.inputs.DEVSHARD_VERSION }}
+          IN_DEVSHARD_PROTOCOL_VERSION: ${{ github.event.inputs.DEVSHARD_PROTOCOL_VERSION }}
+          IN_DEVSHARD_BINARY_VERSION: ${{ github.event.inputs.DEVSHARD_BINARY_VERSION }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/devshard-release-meta.sh
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            .github/scripts/devshard-release-meta.sh dispatch \
+              --build-inference-chain "${IN_BUILD_INFERENCE_CHAIN:-false}" \
+              --build-dapi "${IN_BUILD_DAPI:-false}" \
+              --build-edge-api "${IN_BUILD_EDGE_API:-false}" \
+              --build-devshardd "${IN_BUILD_DEVSHARDD:-false}" \
+              --chain-version "${IN_CHAIN_VERSION:-}" \
+              --race-releases-tag "${IN_RACE_RELEASES_TAG:-}" \
+              --devshard-version "${IN_DEVSHARD_VERSION:-}" \
+              --devshard-protocol-version "${IN_DEVSHARD_PROTOCOL_VERSION:-}" \
+              --devshard-binary-version "${IN_DEVSHARD_BINARY_VERSION:-}" \
+              --github-sha "$GITHUB_SHA_VALUE"
+          else
+            .github/scripts/devshard-release-meta.sh tag \
+              --ref-name "$REF_NAME" \
+              --github-sha "$GITHUB_SHA_VALUE"
+          fi | tee "$RUNNER_TEMP/release-meta.txt"
+          while IFS= read -r line; do
+            printf '%s\n' "$line" >> "$GITHUB_OUTPUT"
+          done < "$RUNNER_TEMP/release-meta.txt"
+
+      # GitHub has no "skip if another run is already busy". First-wins on the
+      # same github.sha or leftover release tag; only host-only runs skip.
+      - name: Skip duplicate host publish
+        id: skip
+        if: steps.meta.outputs.mode == 'host'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/devshard-release-skip-duplicate.sh \
+            .github/scripts/devshard-release-meta.sh
+          .github/scripts/devshard-release-skip-duplicate.sh \
+            --repo "${{ github.repository }}" \
+            --workflow publish_upgrade_binaries.yml \
+            --run-id "${{ github.run_id }}" \
+            --sha "${{ github.sha }}" \
+            --release-tag "${{ steps.meta.outputs.release_tag }}" \
+            | tee -a "$GITHUB_OUTPUT"
+
+      - name: Duplicate host publish already running
+        if: steps.skip.outputs.skip == 'true'
+        env:
+          SKIP_REASON: ${{ steps.skip.outputs.reason }}
+        run: printf '%s\n' "${SKIP_REASON:-duplicate host publish already in progress}"
+
       - name: Set up Go
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2' # Replace with your Go version
+          go-version: '1.24.2'
 
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - name: Build chain upgrade zips
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
+        env:
+          VERSION: ${{ steps.meta.outputs.chain_version }}
+          BUILD_INFERENCE_CHAIN: ${{ steps.meta.outputs.build_inference_chain }}
+          BUILD_DAPI: ${{ steps.meta.outputs.build_dapi }}
+          BUILD_EDGE_API: ${{ steps.meta.outputs.build_edge_api }}
+        run: |
+          set -euo pipefail
+          mkdir -p public-html/v2/inferenced public-html/v2/dapi public-html/v2/edge-api
+          if [ "$BUILD_INFERENCE_CHAIN" = true ]; then
+            make -C inference-chain build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+          fi
+          if [ "$BUILD_DAPI" = true ]; then
+            make -C decentralized-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+          fi
+          if [ "$BUILD_EDGE_API" = true ]; then
+            make -C edge-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+          fi
 
-      - name: Run Makefile build
-        run: VERSION="${GITHUB_REF_NAME#release/}" make build-for-upgrade
-        # This should produce files in:
-        # ./public/html/v2/inferenced/*
-        # ./public/html/v2/dapi/*
+      - name: Build devshardd release zip
+        if: steps.skip.outputs.skip != 'true' && steps.meta.outputs.build_devshardd == 'true'
+        env:
+          DEVSHARD_VERSION: ${{ steps.meta.outputs.make_devshard_version }}
+          DEVSHARD_BINARY_VERSION: ${{ steps.meta.outputs.devshard_binary_version }}
+          DEVSHARD_BUILD_TAGS: ''
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/devshard-release-meta.sh
+          make devshardd-release
+          .github/scripts/devshard-release-meta.sh check-stamps \
+            --binary ./build/devshardd \
+            --protocol "$DEVSHARD_VERSION" \
+            --binary-version "$DEVSHARD_BINARY_VERSION" \
+            --docker-image devshardd-builder:latest
 
       - name: Generate GitHub App Installation Token for release
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
         id: get_release_token
         uses: actions/create-github-app-token@v2
         with:
@@ -33,34 +183,60 @@ jobs:
           owner: product-science
           repositories: race-releases
 
-      - name: Create Release in race-releases with softprops/action-gh-release
-        uses: softprops/action-gh-release@v2 # Or specific commit hash for stability
+      - name: Collect chain zip paths
+        id: chain_files
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
+        run: |
+          set -euo pipefail
+          {
+            echo 'files<<EOF'
+            find public-html/v2/inferenced public-html/v2/dapi public-html/v2/edge-api \
+              -maxdepth 1 -name '*.zip' -print 2>/dev/null || true
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create chain release in race-releases
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
+        uses: softprops/action-gh-release@v2
         with:
-          # The token generated by create-github-app-token has permissions for RepoB
           token: ${{ steps.get_release_token.outputs.token }}
-          # --- Target Repository ---
           repository: product-science/race-releases
-
-          # --- Release Details ---
-          tag_name: ${{ github.ref_name }} # Use the tag from the push event
-          name: Release ${{ github.ref_name }}   # Use the tag for the release name
+          tag_name: ${{ steps.meta.outputs.race_releases_tag }}
+          name: Release ${{ steps.meta.outputs.race_releases_tag }}
           body: |
-            Automated release created from main source tag ${{ github.ref_name }}.
-            Build artifacts from the `build-for-upgrade` target.
+            Automated release created from ${{ github.ref_name }}.
+            Build artifacts from selected `build-for-upgrade` targets.
           draft: false
-          prerelease: false # Set to true if these are pre-releases
-
-          # --- Files to Upload ---
-          files: |
-            ./public-html/v2/inferenced/*.zip
-            ./public-html/v2/dapi/*.zip
-            ./public-html/v2/edge-api/*.zip
+          prerelease: false
+          files: ${{ steps.chain_files.outputs.files }}
 
       - name: Create tag artifact
-        run: echo "${{ github.ref_name }}" > release_tag.txt
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
+        run: echo "${{ steps.meta.outputs.race_releases_tag }}" > release_tag.txt
 
       - name: Upload tag artifact
-        uses: actions/upload-artifact@v4 # Using v4, v3 also works
+        if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
+        uses: actions/upload-artifact@v4
         with:
-          name: release-tag-artifact # This name will be used to download it later
+          name: release-tag-artifact
           path: release_tag.txt
+
+      - name: Publish devshardd release
+        if: steps.skip.outputs.skip != 'true' && steps.meta.outputs.build_devshardd == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NAME: ${{ steps.meta.outputs.release_name }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+          RELEASE_BODY_LINE: ${{ steps.meta.outputs.release_body_line }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/devshard-release-publish.sh
+          .github/scripts/devshard-release-publish.sh \
+            --repo "${{ github.repository }}" \
+            --name "$RELEASE_NAME" \
+            --tag "$RELEASE_TAG" \
+            --target "${{ github.sha }}" \
+            --notes "$RELEASE_BODY_LINE" \
+            -- \
+            build/devshardd-release/devshardd.zip \
+            build/devshardd-release/devshardd.zip.sha256

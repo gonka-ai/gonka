@@ -107,6 +107,7 @@ func registerLiveness(e *echo.Echo, version string) {
 func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, stubInferenceHTTPStatus int, stubInferenceHTTPMessage string) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
+	g.Use(transport.RequestDecompressionMiddleware)
 
 	withAuth := func(recordChatTerminal bool, handler echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -133,7 +134,7 @@ func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, st
 		}
 	}
 
-	g.POST("/sessions/:id/chat/completions", withAuth(true, inferenceHandler))
+	g.POST("/sessions/:id/chat/completions", withAuth(true, inferenceHandler), transport.ResponseCompressionMiddleware)
 	g.POST("/sessions/:id/height-sync", withAuth(false, srv.HandleHeightSync))
 	g.POST("/sessions/:id/heightsync/repair", withAuth(false, srv.HandleHeightSyncRepair))
 	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))

@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/bridge"
+	"devshard/internal/testutil"
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
@@ -139,21 +140,19 @@ func (h staticPayloadHandler) HandlePayloads(c echo.Context, _ *transport.Server
 	return c.JSONBlob(http.StatusOK, h.body)
 }
 
-// The inference half only says the route passes bytes through: echo leaves a handler-written body
-// uncompressed either way, so it does not prove the middleware is scoped rather than group-wide.
-func TestOnlyThePayloadsRouteCompresses(t *testing.T) {
+func TestPayloadsRouteCompresses(t *testing.T) {
 	body := []byte(`{"inference_id":"1","response_payload":"` + strings.Repeat("A", 8192) + `"}`)
 
 	e := echo.New()
-	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "60453"}, writingBinder{body: body}, staticPayloadHandler{body: body})
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: compressedRequestEscrowID}, writingBinder{body: body}, staticPayloadHandler{body: body})
 
-	request := httptest.NewRequest(http.MethodGet, "/sessions/60453/payloads", nil)
-	request.Header.Set("Accept-Encoding", "gzip")
+	request := httptest.NewRequest(http.MethodGet, "/sessions/"+compressedRequestEscrowID+"/payloads", nil)
+	request.Header.Set("Accept-Encoding", gzipEncodingName)
 	recorder := httptest.NewRecorder()
 	e.ServeHTTP(recorder, request)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Equal(t, "gzip", recorder.Header().Get("Content-Encoding"))
+	require.Equal(t, gzipEncodingName, recorder.Header().Get("Content-Encoding"))
 	require.Less(t, recorder.Body.Len(), len(body)/4, "the compressed body should be a fraction of the payload")
 
 	reader, err := gzip.NewReader(bytes.NewReader(recorder.Body.Bytes()))
@@ -163,20 +162,70 @@ func TestOnlyThePayloadsRouteCompresses(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, string(body), string(decompressed), "the payload must survive the wire unchanged")
 
-	plain := httptest.NewRequest(http.MethodGet, "/sessions/60453/payloads", nil)
+	plain := httptest.NewRequest(http.MethodGet, "/sessions/"+compressedRequestEscrowID+"/payloads", nil)
 	plainRecorder := httptest.NewRecorder()
 	e.ServeHTTP(plainRecorder, plain)
 	require.Equal(t, http.StatusOK, plainRecorder.Code)
 	require.Empty(t, plainRecorder.Header().Get("Content-Encoding"))
 	require.JSONEq(t, string(body), plainRecorder.Body.String())
+}
 
-	streaming := httptest.NewRequest(http.MethodPost, "/sessions/60453/chat/completions", nil)
-	streaming.Header.Set("Accept-Encoding", "gzip")
-	streamingRecorder := httptest.NewRecorder()
-	e.ServeHTTP(streamingRecorder, streaming)
-	require.Equal(t, len(body), streamingRecorder.Body.Len(),
-		"the inference route passes bytes through untouched")
-	require.Empty(t, streamingRecorder.Header().Get("Content-Encoding"))
+// streamingBinder writes one frame per flush, as the handler does.
+type streamingBinder struct{ frames []string }
+
+func (b streamingBinder) BindOwnerChat(c echo.Context) (*transport.Server, error) {
+	for _, frame := range b.frames {
+		if _, err := c.Response().Write([]byte(frame)); err != nil {
+			return nil, err
+		}
+		c.Response().Flush()
+	}
+	return nil, ErrInitializing
+}
+
+// Each frame must reach the caller before the next one is written.
+func TestInferenceRouteStreamsEachFrameAsItIsFlushed(t *testing.T) {
+	first := "data: {\"delta\":\"" + strings.Repeat("alpha ", 200) + "\"}\n\n"
+	second := "data: {\"delta\":\"" + strings.Repeat("bravo ", 200) + "\"}\n\n"
+
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: compressedRequestEscrowID},
+		streamingBinder{frames: []string{first, second}}, nil)
+
+	request := httptest.NewRequest(http.MethodPost, "/sessions/"+compressedRequestEscrowID+"/chat/completions", nil)
+	request.Header.Set("Accept-Encoding", gzipEncodingName)
+	recorder := testutil.NewFlushRecorder()
+	e.ServeHTTP(recorder, request)
+
+	require.Equal(t, gzipEncodingName, recorder.Header().Get("Content-Encoding"))
+	require.GreaterOrEqual(t, len(recorder.Flushes()), 2, "one flush per frame must reach the wire")
+
+	var sawFirstAlone bool
+	for _, snapshot := range recorder.Flushes() {
+		decoded := testutil.GzipDecodeSoFar(t, snapshot)
+		if strings.Contains(decoded, "alpha") && !strings.Contains(decoded, "bravo") {
+			sawFirstAlone = true
+			break
+		}
+	}
+	require.True(t, sawFirstAlone, "the first frame must reach the wire before the second is written")
+
+	require.Less(t, len(recorder.Body()), len(first+second)/4, "the whole stream should still compress")
+}
+
+func TestInferenceRouteLeavesAPlainClientAlone(t *testing.T) {
+	body := []byte("data: " + strings.Repeat("A", 8192) + "\n\n")
+
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: compressedRequestEscrowID}, writingBinder{body: body}, nil)
+
+	request := httptest.NewRequest(http.MethodPost, "/sessions/"+compressedRequestEscrowID+"/chat/completions", nil)
+	recorder := httptest.NewRecorder()
+	e.ServeHTTP(recorder, request)
+
+	require.Empty(t, recorder.Header().Get("Content-Encoding"),
+		"compression is negotiated: a client that does not ask keeps the bytes it expects")
+	require.Equal(t, string(body), recorder.Body.String())
 }
 
 type countingBinder struct{ n *int }

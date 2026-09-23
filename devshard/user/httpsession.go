@@ -31,8 +31,9 @@ type HTTPSessionConfig struct {
 	// returns a host-signed Anchor. Default false in this library; the
 	// gateway sets it from DEVSHARD_REQUIRE_HEIGHT_SEED (default true).
 	RequireHeightSeed bool
-	// ExtraClientConfig is merged into each transport.HTTPClient when non-nil.
-	// Used to attach courier-mode HeightSync (peer-tip cache; no local follower).
+	// CompressRequestBodies gzips a request body on the way to every host.
+	CompressRequestBodies bool
+	// ExtraClientConfig: only its HeightSync fields reach each host client.
 	ExtraClientConfig *transport.ClientConfig
 	// Heartbeat overlays compiled height-sync scheduling knobs. Nil keeps defaults.
 	Heartbeat *heightsync.HeartbeatConfig
@@ -43,6 +44,37 @@ type HTTPSessionConfig struct {
 	// harnesses that need protocol timeouts shorter than production defaults.
 	RefusalTimeoutSeconds   *int64
 	ExecutionTimeoutSeconds *int64
+}
+
+// hostClientConfig is the transport config one host client runs with.
+func hostClientConfig(
+	cfg HTTPSessionConfig,
+	routePrefix, validatorAddress string,
+	sharedPeerTips *transport.HeightSyncPeerTips,
+) transport.ClientConfig {
+	clientConfig := transport.DefaultClientConfig()
+	if cfg.StreamCallback != nil {
+		clientConfig.StreamCallback = cfg.StreamCallback
+	}
+	clientConfig.RoutePrefix = routePrefix
+	clientConfig.CompressRequestBodies = cfg.CompressRequestBodies
+	if cfg.RequestAdmission != nil {
+		clientConfig.ParticipantKey = validatorAddress
+		clientConfig.Admission = cfg.RequestAdmission
+	}
+	if cfg.ExtraClientConfig != nil {
+		if cfg.ExtraClientConfig.HeightSync != nil {
+			clientConfig.HeightSync = cfg.ExtraClientConfig.HeightSync
+			clientConfig.HeightSyncPeerTips = sharedPeerTips
+		}
+		if cfg.ExtraClientConfig.HeightSyncLogOracle != nil {
+			clientConfig.HeightSyncLogOracle = cfg.ExtraClientConfig.HeightSyncLogOracle
+		}
+		if cfg.ExtraClientConfig.HeightSyncRequestMutateHook != nil {
+			clientConfig.HeightSyncRequestMutateHook = cfg.ExtraClientConfig.HeightSyncRequestMutateHook
+		}
+	}
+	return clientConfig
 }
 
 func deferredWarmKeyResolver(resolve state.WarmKeyResolver) (state.WarmKeyResolver, func()) {
@@ -192,32 +224,8 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			sqlStore.Close()
 			return nil, nil, fmt.Errorf("get host info for %s: %w", slot.ValidatorAddress, err)
 		}
-		cc := transport.DefaultClientConfig()
-		if cfg.StreamCallback != nil {
-			cc.StreamCallback = cfg.StreamCallback
-		}
-		cc.RoutePrefix = routePrefix
-		if cfg.RequestAdmission != nil {
-			cc.ParticipantKey = slot.ValidatorAddress
-			cc.Admission = cfg.RequestAdmission
-		}
-		if cfg.ExtraClientConfig != nil {
-			if cfg.ExtraClientConfig.HeightSync != nil {
-				cc.HeightSync = cfg.ExtraClientConfig.HeightSync
-				cc.HeightSyncPeerTips = sharedPeerTips
-			}
-			if cfg.ExtraClientConfig.HeightSyncLogOracle != nil {
-				cc.HeightSyncLogOracle = cfg.ExtraClientConfig.HeightSyncLogOracle
-			}
-			if cfg.ExtraClientConfig.HeightSyncRequestMutateHook != nil {
-				cc.HeightSyncRequestMutateHook = cfg.ExtraClientConfig.HeightSyncRequestMutateHook
-			}
-		}
-		var clientCfgs []transport.ClientConfig
-		if cfg.StreamCallback != nil || routePrefix != "" || cfg.RequestAdmission != nil || cfg.ExtraClientConfig != nil {
-			clientCfgs = append(clientCfgs, cc)
-		}
-		c := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer, clientCfgs...)
+		c := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer,
+			hostClientConfig(cfg, routePrefix, slot.ValidatorAddress, sharedPeerTips))
 		clientCache[slot.ValidatorAddress] = c
 		clients[i] = c
 	}

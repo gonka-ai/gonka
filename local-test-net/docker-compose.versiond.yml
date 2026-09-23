@@ -33,12 +33,14 @@ x-versiond: &versiond
     VERSIOND_OVERRIDE_dev: ${VERSIOND_OVERRIDE_dev:-}
     VERSIOND_OVERRIDE_testapp: ${VERSIOND_OVERRIDE_testapp:-}
     VERSIOND_OVERRIDE_v1: ${VERSIOND_OVERRIDE_v1:-}
+    VERSIOND_OVERRIDE_v2: ${VERSIOND_OVERRIDE_v2:-}
     VERSIOND_OVERRIDE_v0_2_11: ${VERSIOND_OVERRIDE_v0_2_11:-}
     VERSIOND_OVERRIDE_v0_2_13: ${VERSIOND_OVERRIDE_v0_2_13:-}
     NODE_MANAGER_ADDR: ${NODE_MANAGER_ADDR:-${KEY_NAME}-api:9400}
     KEY_NAME: ${VERSIOND_SIGNER_KEY_NAME}
     ACCOUNT_PUBKEY: ${ACCOUNT_PUBKEY:-}
     NODE_HOST: ${KEY_NAME}-node
+    NODE_RPC_URL: http://${KEY_NAME}-node:26657
     KEYRING_BACKEND: ${KEYRING_BACKEND:-file}
     KEYRING_PASSWORD: ${KEYRING_PASSWORD:-}
     KEYRING_DIR: ${KEYRING_DIR:-/root/.inference}
@@ -50,6 +52,8 @@ x-versiond: &versiond
     # guard must be disabled. Production leaves this unset (default false =
     # private targets blocked). Inherited by the devshardd child process.
     DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
+    # Optional; testermint can raise child logs (heightsync: decide / sign).
+    DEVSHARD_LOG_LEVEL: ${DEVSHARD_LOG_LEVEL:-}
     # devshardd child storage (overridden by docker-compose.devshard-postgres.yml).
     PGHOST: ${PGHOST:-}
     PGPORT: ${PGPORT:-5432}

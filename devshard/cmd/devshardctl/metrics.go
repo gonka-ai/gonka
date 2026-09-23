@@ -1283,6 +1283,8 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker, mo
 			return "sse_truncated"
 		case errors.Is(inf.err, transport.ErrSSEEventTooLarge):
 			return "sse_event_too_large"
+		case errors.Is(inf.err, transport.ErrSSEStreamTooLarge):
+			return "sse_stream_too_large"
 		case errors.Is(inf.err, transport.ErrResponseBodyTooLarge):
 			return "response_body_too_large"
 		case errors.Is(inf.err, io.EOF), errors.Is(inf.err, io.ErrUnexpectedEOF), strings.Contains(strings.ToLower(inf.err.Error()), "eof"):

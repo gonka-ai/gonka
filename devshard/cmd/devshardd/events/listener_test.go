@@ -35,3 +35,15 @@ func TestParseNewBlockEvent_NilBlock(t *testing.T) {
 	_, ok := parseNewBlockEvent(ctypes.ResultEvent{Data: cmttypes.EventDataNewBlock{}})
 	require.False(t, ok)
 }
+
+func TestParseNewBlockEvent_PointerData(t *testing.T) {
+	block := cmttypes.MakeBlock(12, nil, nil, nil)
+	block.Header.ChainID = "gonka-test"
+	block.Header.Time = time.Unix(1_700_000_000, 0).UTC()
+	block.Header.ValidatorsHash = bytes.Repeat([]byte{0xab}, 32)
+	data := &cmttypes.EventDataNewBlock{Block: block}
+	ev, ok := parseNewBlockEvent(ctypes.ResultEvent{Data: data})
+	require.True(t, ok)
+	require.Equal(t, int64(12), ev.BlockHeight)
+	require.Equal(t, block.Header.Hash().Bytes(), ev.BlockHash)
+}
