@@ -30,9 +30,11 @@ COPY versiond-router/entrypoint.sh /usr/local/bin/entrypoint.sh
 # Internal diagnostic, deliberately off PATH: it is a formatter over the
 # Runtime API that the citest harness parses, not an operator CLI.
 COPY versiond-router/pool-status /usr/local/lib/versiond-router/pool-status
+COPY versiond-router/publish-members /usr/local/lib/versiond-router/publish-members
 COPY router-runtime/catalog-cache router-runtime/catalog-reconciler router-runtime/catalog-status router-runtime/version-contract /usr/local/lib/router-runtime/
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     /usr/local/lib/versiond-router/pool-status \
+    /usr/local/lib/versiond-router/publish-members \
     /usr/local/lib/router-runtime/catalog-cache \
     /usr/local/lib/router-runtime/catalog-reconciler \
     /usr/local/lib/router-runtime/catalog-status

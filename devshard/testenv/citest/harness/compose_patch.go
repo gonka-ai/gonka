@@ -75,6 +75,46 @@ func pinVersiondCompose(text, versiondImage, routerImage string) (string, error)
 	return text, nil
 }
 
+// PinVersiondServiceImage retags one versiond service and drops its build:
+// block so compose cannot replace the pin with this tree. Other versiond
+// services stay on devshard-versiond:latest. Used by the §8.2 mixed fleet
+// (versiond-0 on 0.2.15-v5, versiond-1 on this tree).
+func PinVersiondServiceImage(t *testing.T, composePath, service, image string) {
+	t.Helper()
+	requireDockerImage(t, image)
+	body, err := os.ReadFile(composePath)
+	require.NoError(t, err)
+	updated, err := pinVersiondServiceImage(string(body), service, image)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(composePath, []byte(updated), 0o644))
+}
+
+func pinVersiondServiceImage(text, service, image string) (string, error) {
+	marker := "\n  " + service + ":\n"
+	start := strings.Index(text, marker)
+	if start < 0 {
+		return "", fmt.Errorf("compose: service %s not found", service)
+	}
+	rest := text[start+len(marker):]
+	next := regexp.MustCompile(`\n  [A-Za-z0-9_-]+:\n`).FindStringIndex(rest)
+	end := len(text)
+	if next != nil {
+		end = start + len(marker) + next[0]
+	}
+	block := text[start:end]
+	buildRe := regexp.MustCompile(`(?m)^    build:\n(?:      [^\n]+\n)+`)
+	updated := buildRe.ReplaceAllString(block, "")
+	if updated == block {
+		return "", fmt.Errorf("compose: service %s has no build: block", service)
+	}
+	const latest = "image: " + composeVersiondImageLatest
+	if !strings.Contains(updated, latest) {
+		return "", fmt.Errorf("compose: service %s missing %s", service, latest)
+	}
+	updated = strings.Replace(updated, latest, "image: "+image, 1)
+	return text[:start] + updated + text[end:], nil
+}
+
 func dropComposeBuildBeforeImage(text, image string) (string, error) {
 	re := regexp.MustCompile(`(?m)^    build:\n(?:      [^\n]+\n)+    image: ` + regexp.QuoteMeta(image) + `\n`)
 	updated := re.ReplaceAllString(text, "    image: "+image+"\n")

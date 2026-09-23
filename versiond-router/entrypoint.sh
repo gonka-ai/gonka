@@ -792,4 +792,12 @@ if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
 fi
 
+# Membership for the peer-session barrier. The control token stays off the
+# public client path; an empty token leaves the publisher stopped, which is
+# what an old router does.
+publish=/usr/local/lib/versiond-router/publish-members
+if [ -n "${VERSIOND_CONTROL_TOKEN:-}" ] && [ -x "$publish" ]; then
+    "$publish" --loop &
+fi
+
 exec "$HAPROXY_BIN" -W -db -f "$OUT"

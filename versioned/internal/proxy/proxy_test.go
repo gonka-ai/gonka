@@ -84,6 +84,61 @@ func TestTargetRetireWaitsForAcquiredRequest(t *testing.T) {
 	}
 }
 
+func TestProxy_PeerAuthWatchDoesNotHoldDrain(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	var releaseOnce sync.Once
+	releaseRequest := func() { releaseOnce.Do(func() { close(release) }) }
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		startedOnce.Do(func() { close(started) })
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	target := NewTarget(strings.TrimPrefix(backend.URL, "http://"))
+	routes := &atomic.Value{}
+	routes.Store(RouteTable{"v1": target})
+	server := httptest.NewServer(Handler(routes))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer releaseRequest()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/sessions/_/rpc/devshard.transport.v1.PeerAuthService/Watch", nil)
+		if err != nil {
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watch did not reach the child")
+	}
+
+	drained := target.Retire()
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("peer watch held the proxy drain")
+	}
+	releaseRequest()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watch request did not finish")
+	}
+}
+
 func TestProxy_RouteSwapKeepsAcquiredRequestOnRetiredTarget(t *testing.T) {
 	oldStarted := make(chan struct{})
 	releaseOld := make(chan struct{})

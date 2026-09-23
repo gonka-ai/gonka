@@ -17,6 +17,7 @@ import (
 
 	"devshard/internal/testutil"
 	"devshard/signing"
+	"devshard/transport"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
@@ -26,6 +27,14 @@ func requireHandshakeRequired(t *testing.T, err error) {
 	require.Error(t, err)
 	require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err))
 	require.Contains(t, err.Error(), "handshake required")
+}
+
+func requireInvalidSessionToken(t *testing.T, err error) {
+	t.Helper()
+	requireHandshakeRequired(t, err)
+	var ce *connect.Error
+	require.ErrorAs(t, err, &ce)
+	require.Equal(t, transport.DevshardErrorInvalidSessionToken, ce.Meta().Get(transport.HeaderDevshardError))
 }
 
 func TestSessionInterceptor_DropsEveryRPCExceptAttach(t *testing.T) {
@@ -314,6 +323,35 @@ func TestHandshakeGate_DecoyAttachPathRequiresHandshake(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode, "a suffixed decoy must not skip the handshake as Attach")
 }
 
+func TestHandshakeGate_InvalidTokenSetsDevshardError(t *testing.T) {
+	auth := newTestAuth(PeerAuthConfig{})
+	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
+	t.Cleanup(srv.Close)
+
+	post := func(token string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, srv.URL+rpcpbconnect.PeerAuthServiceWatchProcedure, nil)
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/proto")
+		if token != "" {
+			req.Header.Set(SessionHeader, token)
+		}
+		resp, err := srv.Client().Do(req)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		return resp
+	}
+
+	forged := post("not-a-token")
+	require.Equal(t, http.StatusUnauthorized, forged.StatusCode)
+	require.Equal(t, transport.DevshardErrorInvalidSessionToken, forged.Header.Get(transport.HeaderDevshardError))
+
+	missing := post("")
+	require.Equal(t, http.StatusUnauthorized, missing.StatusCode)
+	require.Empty(t, missing.Header.Get(transport.HeaderDevshardError),
+		"a missing token must not spend the versiond per-IP budget")
+}
+
 func TestSessionInterceptor_OversizedTokenDropped(t *testing.T) {
 	auth := newTestAuth(PeerAuthConfig{})
 	header := make(http.Header)
@@ -323,7 +361,7 @@ func TestSessionInterceptor_OversizedTokenDropped(t *testing.T) {
 		rpcpbconnect.SessionServiceGetSignaturesProcedure,
 		header,
 	)
-	requireHandshakeRequired(t, err)
+	requireInvalidSessionToken(t, err)
 }
 
 func TestAdmitSession_CountsGateReasons(t *testing.T) {

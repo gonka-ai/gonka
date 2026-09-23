@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"common/logging"
+	"common/storage/mode"
 	"common/storage/payloads"
 	"common/utils"
 	validationpkg "common/validation"
@@ -35,6 +37,7 @@ import (
 	"devshard/gossip"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/internal/boolvalue"
 	"devshard/observability"
 	"devshard/runtimeparams"
 	devshardserver "devshard/server"
@@ -110,6 +113,11 @@ type HostManager struct {
 	rpcAuth          atomic.Pointer[rpcserver.PeerAuthHandler]
 	rpcAuthOnce      sync.Once
 	rpcAuthClosed    atomic.Bool
+
+	peerPushMu   sync.Mutex
+	peerPushSet  bool
+	peerInstance string
+	peerMembers  []string
 }
 
 const (
@@ -1504,10 +1512,71 @@ func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
 			},
 			Limits: &limits,
 		})
+		if pool := storage.PeerRPCPool(m.store); peerRPCSharedEnabled(pool != nil, m.boundVersion) {
+			h.EnableShared(rpcserver.OpenSharedSessions(pool, rpcserver.SharedConfig{
+				HostAddress: hostAddr,
+				Version:     strings.TrimSpace(m.boundVersion),
+			}))
+			slog.Info("devshardd: peer rpc sessions are shared", "version", m.boundVersion)
+		}
 		h.StartSweeper()
 		m.rpcAuth.Store(h)
+		m.applyStoredPeerPush(h)
 	})
 	return m.rpcAuth.Load()
+}
+
+// peerRPCSharedEnabled is the in-memory versus shared switch. One process
+// keeps the memory map. GONKA_HA means another devshardd of this version can
+// receive the next call, so the token has to be in Postgres.
+func peerRPCSharedEnabled(hasPool bool, version string) bool {
+	if !hasPool || strings.TrimSpace(version) == "" {
+		return false
+	}
+	ha, err := boolvalue.Parse(os.Getenv(mode.EnvHADeployment))
+	return err == nil && ha
+}
+
+// SetPeerRPCMembers installs the membership versiond forwarded from the
+// router. A process that never receives a list keeps the member-table barrier.
+func (m *HostManager) SetPeerRPCMembers(instanceID string, ids []string) {
+	if m == nil {
+		return
+	}
+	cp := append([]string(nil), ids...)
+	m.peerPushMu.Lock()
+	m.peerPushSet = true
+	m.peerInstance = instanceID
+	m.peerMembers = cp
+	m.peerPushMu.Unlock()
+	if h := m.rpcAuth.Load(); h != nil {
+		h.SetPublishedBarrier(instanceID, cp)
+	}
+}
+
+func (m *HostManager) applyStoredPeerPush(h *rpcserver.PeerAuthHandler) {
+	if m == nil || h == nil {
+		return
+	}
+	m.peerPushMu.Lock()
+	defer m.peerPushMu.Unlock()
+	if !m.peerPushSet {
+		return
+	}
+	h.SetPublishedBarrier(m.peerInstance, append([]string(nil), m.peerMembers...))
+}
+
+// PeerRPCSessionsReady is true unless this process is still loading the
+// shared peer-session table. SQLite and RPC-off stay ready.
+func (m *HostManager) PeerRPCSessionsReady() bool {
+	if m == nil || !m.rpcServerEnabled {
+		return true
+	}
+	h := m.rpcAuth.Load()
+	if h == nil {
+		return true
+	}
+	return h.SessionsReady()
 }
 
 // ClosePeerRPC stops the host-level session sweeper. Safe if RPC was never mounted.

@@ -10,7 +10,8 @@ Related: [merge-plan.md](./merge-plan.md) (runtime topology),
 [pixelplex-changes.md](./pixelplex-changes.md) (edge-api extraction),
 [storage-design.md](./storage-design.md) (storage-mode selection).
 Authenticated peer RPC hops (Connect over HTTP/1.1 today, HTTP/2 in phase 6):
-[grpc-transport-connection.md](./grpc-transport-connection.md).
+[grpc-transport-connection.md](./grpc-transport-connection.md). The shared
+peer-RPC token is [below](#peer-rpc-sessions-under-ha).
 
 ---
 
@@ -391,6 +392,57 @@ Gateway catch-up and sticky failover remain independent. HAProxy redispatches
 connection failures for every method and permits L7 retries only for
 `GET`/`HEAD`/`OPTIONS`; host reconcile heals RAM from shared Postgres when the
 request reaches another replica.
+
+### Peer RPC sessions under HA
+
+The router hashes every `/{version}/sessions/{escrow}/…` request by that
+escrow segment (`balance hash`, `hash-type consistent`, `hash-key addr`).
+HTTP/2 does not pin a connection: each stream is hashed on its own. One
+peer's calls are different keys:
+
+| Call | Hash key | Lands on |
+|------|----------|----------|
+| First `Attach` | the door escrow | the child that owns that escrow |
+| `Watch` and live token renewal | `_` (`HostRPCEscrowID`) | whichever child `_` hashes to |
+| Later data call | that call's escrow | the child that owns that escrow |
+
+The token is one per peer per host and version, not per escrow. Handshake
+and renewal are in
+[grpc-transport-connection.md](./grpc-transport-connection.md#handshake-on-that-path).
+A map that exists only inside the child that served `Attach` rejects every
+call the hash sends elsewhere. JSON has no such token: one
+`POST /sessions/{id}/height-sync` is handled by the child that owns that
+escrow.
+
+The shared store is on only when `GONKA_HA` is true, the child has a Postgres
+pool, and `boundVersion` is set (`peerRPCSharedEnabled` in
+`devshard/cmd/devshardd/session/manager.go`). versiond copies `GONKA_HA` into
+the child for a version that is not listed in `VERSIOND_NON_HA_VERSIONS`.
+SQLite, and `GONKA_HA` unset or false, keep the in-memory map. Sessions are
+not shared across versions or across participants. The escrow hash is
+unchanged.
+
+| Mechanism | Behaviour |
+|-----------|-----------|
+| **Shared row** | Table `devshard_peer_rpc_sessions`. Primary key `token_hash` is `sha256(attach_nonce)`; the raw token is not stored. Columns: `host_address`, `version`, `peer`, `attached_unix`, `expires_at`, `grace_until`, `state` (`live`, `replaced`, `invalidated`, `evicted`), `seq`, `origin`. One transaction holds `pg_advisory_xact_lock` on `hashtextextended` of host, version, and peer joined by `\x1f` (a NUL in that key is invalid UTF-8). Commit, then `NOTIFY`. A replaced token stays admissible until `grace_until` (`TokenGrace`, 5s). A non-`live` `token_hash` blocks nonce replay. |
+| **Memory admission** | Each child `LISTEN`s on its own connection, loads rows still inside `expires_at` or `grace_until`, then applies notifications in `seq` order. A gap or a dropped listen rereads from the last applied `seq`; a 5s poll is the backstop. `admitSession` hashes `X-Devshard-Session` and looks up memory. An unknown or junk token does not query Postgres. `/healthz` waits until that load finishes while the RPC server is enabled. A child applies only its own `host_address` and `version`. |
+| **Attach barrier** | After commit, `Attach` waits until every barrier member has applied `seq`, capped at 1s. Timeout still returns the token; the row is committed and the late child applies it. Progress is `devshard_peer_rpc_members.applied_seq`, with `heartbeat_at` every 1s and `ready` after the initial load. |
+| **Who is in the barrier** | A current router publishes `{id, addr, ready_versions}` to each versiond (`versiond-router/publish-members`, every change and every 10s). versiond keeps the latest snapshot per router and forwards the union to each child at `PUT /internal/peer-rpc/members` on `DEVSHARD_ADMIN_ADDR`, with `instance_id` of `id@version` (`versioned/internal/peerrpcmembers`). The union can only add waiters. The 0.2.15-v5 router does not publish; the child waits on member-table rows with `ready` and a heartbeat under 3s. A published id with no row is waited for once, then marked absent so a mixed fleet does not add 1s to every later `Attach`. A registered member whose `applied_seq` is behind is waited for on every `Attach`. |
+| **Watch** | Any child can serve `Watch` on `/sessions/_/rpc`, because every child has the row. The child that holds the stream ends it on `session replaced` or `session expired` from that row. Shutdown of one child ends only its streams; it does not invalidate the row, and `/rpc/release` does not delete it. The client reopens `Watch` on shutdown or EOF with the same token. `session replaced`, expiry, and other `Unauthenticated` clear the token and `Attach` again. TTL refresh runs on its own timer, including while `Watch` is down. |
+
+These do not replace the shared row. Attaching once per escrow needs the client
+to know the hash target, and two escrows on one child would replace each
+other's session. Returning a child id from `Attach` fixes `Watch` only.
+A Postgres read on a token miss spends a query per guess. A signed token
+still needs replication for replacement and revocation, and it changes
+`Attach`. The router never takes the hash key from a request header.
+
+A wrong presented token is still a memory miss. This tree's versiond counts
+`X-Devshard-Error: invalid_session_token` in the same per-origin budget as an
+unknown escrow; the pin's versiond does not. See
+[grpc-transport-connection.md](./grpc-transport-connection.md#wrong-escrow-id-by-origin-ip-versiond).
+Citest notes for the store:
+[grpc-session-ha.md](./grpc-session-ha.md).
 
 ---
 

@@ -33,9 +33,15 @@ const (
 	tokenRefreshFraction    = 0.75
 	reattachReasonWatch     = "watch"
 	reattachReasonTTL       = "ttl"
-	defaultAttachTTL        = 5 * time.Minute
-	maxAttachTTL            = time.Hour
-	minAttachTTL            = 30 * time.Second
+	// sessionReplacedReleaseAfter is how many times another generation may
+	// take this host's session before this process stops dialing. The first
+	// loss is retried so an in-flight Attach from the retiring child cannot
+	// stick the new child with the loss. The second loss is the retiring
+	// child; it must not Attach again.
+	sessionReplacedReleaseAfter = 2
+	defaultAttachTTL            = 5 * time.Minute
+	maxAttachTTL                = time.Hour
+	minAttachTTL                = 30 * time.Second
 )
 
 // DefaultAttachTimeout bounds one Attach (first handshake or TTL refresh).
@@ -236,6 +242,10 @@ type PeerConn struct {
 	budget  peerRPCBudget
 	streams peerStreamBudget
 	firstOK atomic.Bool
+	// replaced counts Watch endings caused by another Attach of this same
+	// host key. The second one means a newer generation owns the identity;
+	// re-Attach would cancel its Watch.
+	replaced atomic.Int32
 
 	// doors are escrow IDs of live RPCClient refs. First Attach (and
 	// re-Attach after a full session loss) must use one of these, not
@@ -369,7 +379,39 @@ func newPeerConnTransports(cfg PeerConnConfig, maxConns int) (*originSwitchTrans
 	return origin, rt
 }
 
+// outboundPeerReleased is process-wide. The retiring child sets it so a
+// later RPC cannot open a new PeerConn and take the identity back.
+var outboundPeerReleased atomic.Bool
+
+// ReleaseOutboundPeerConns stops every outbound Attach/Watch in this process
+// and refuses new ones. The admin listener calls it when versiond retires
+// this generation. Safe to call more than once.
+func ReleaseOutboundPeerConns() {
+	outboundPeerReleased.Store(true)
+	peerConnMu.Lock()
+	conns := make([]*PeerConn, 0, len(peerConnRegistry))
+	for key, pc := range peerConnRegistry {
+		delete(peerConnRegistry, key)
+		conns = append(conns, pc)
+	}
+	peerConnMu.Unlock()
+	var wg sync.WaitGroup
+	for _, pc := range conns {
+		wg.Add(1)
+		go func(pc *PeerConn) {
+			defer wg.Done()
+			pc.Close()
+		}(pc)
+	}
+	wg.Wait()
+}
+
 func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
+	if outboundPeerReleased.Load() {
+		pc := NewPeerConn(cfg)
+		pc.Close()
+		return pc
+	}
 	key := cfg.registryKey()
 	peerConnMu.Lock()
 	if pc := peerConnRegistry[key]; pc != nil {
@@ -449,6 +491,18 @@ func (p *PeerConn) loop() {
 			if p.ctx.Err() != nil {
 				return
 			}
+			if peerSessionReplaced(err) && p.replaced.Add(1) >= sessionReplacedReleaseAfter {
+				// The other generation's Attach won twice. Further Attach
+				// from here only cancels its Watch.
+				logging.Warn("peer rpc release: another generation owns this host identity",
+					"subsystem", "transport",
+					"host", p.cfg.HostAddress,
+					"peer", p.metricPeer(),
+				)
+				p.setState(stateUnauthenticated)
+				p.clearToken()
+				return
+			}
 			p.setState(stateUnauthenticated)
 			p.clearToken()
 			backoff = p.cfg.BackoffMin
@@ -525,61 +579,130 @@ func (p *PeerConn) doorWaiter() <-chan struct{} {
 }
 
 func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
-	for {
-		watchCtx, cancelWatch := context.WithCancel(p.ctx)
-		watchErr := make(chan error, 1)
+	// Refresh is scheduled on its own deadline so it still fires while Watch
+	// is down. Shutting down and EOF reopen Watch with the same token.
+	// session replaced, session expired, and any other Unauthenticated end
+	// the loop so the caller clears the token and Attaches again.
+	refreshBackoff := time.Duration(0)
+	refreshDue := time.Now().Add(p.nextRefreshWait(exp, 0))
+	var (
+		cancelWatch context.CancelFunc
+		watchErr    chan error
+	)
+	stopWatch := func() {
+		if cancelWatch == nil {
+			return
+		}
+		cancelWatch()
+		<-watchErr
+		cancelWatch = nil
+		watchErr = nil
+	}
+	startWatch := func(token []byte) {
+		stopWatch()
+		watchCtx, cancel := context.WithCancel(p.ctx)
+		cancelWatch = cancel
+		watchErr = make(chan error, 1)
 		go func(token []byte) {
 			watchErr <- p.watch(watchCtx, token)
-		}(append([]byte(nil), tok...))
+		}(append([]byte(nil), token...))
+	}
+	startWatch(tok)
+	defer stopWatch()
 
-		refreshBackoff := time.Duration(0)
-		for {
-			delay := p.nextRefreshWait(exp, refreshBackoff)
-			timer := time.NewTimer(delay)
-			select {
-			case <-p.ctx.Done():
-				timer.Stop()
+	for {
+		var watchC <-chan error
+		if watchErr != nil {
+			watchC = watchErr
+		}
+		var reopenTimer *time.Timer
+		var reopenC <-chan time.Time
+		if cancelWatch == nil {
+			reopenTimer = time.NewTimer(p.reopenWait())
+			reopenC = reopenTimer.C
+		}
+		refreshWait := time.Until(refreshDue)
+		if refreshWait < 0 {
+			refreshWait = 0
+		}
+		refreshTimer := time.NewTimer(refreshWait)
+		select {
+		case <-p.ctx.Done():
+			stopTimer(refreshTimer)
+			stopTimer(reopenTimer)
+			stopWatch()
+			return p.ctx.Err()
+		case err := <-watchC:
+			stopTimer(refreshTimer)
+			stopTimer(reopenTimer)
+			if cancelWatch != nil {
 				cancelWatch()
-				<-watchErr
-				return p.ctx.Err()
-			case err := <-watchErr:
-				timer.Stop()
-				cancelWatch()
-				if p.ctx.Err() != nil {
-					return p.ctx.Err()
-				}
-				p.incReattach(reattachReasonWatch)
-				if err == nil {
-					err = io.EOF
-				}
-				return err
-			case <-timer.C:
-				newTok, newExp, err := p.attach()
-				p.incAttach(err)
-				if err != nil {
-					if isRPCH2TransportMiss(err) {
-						// Origin is gone (listen/RST/ALPN/half-open). End
-						// Watch; do not flip setH2(false) until the stream
-						// has returned. Outer loop probes then HTTP/1.1.
-						// A slow Attach (DeadlineExceeded) is not this:
-						// keep Watch and retry refresh.
-						cancelWatch()
-						<-watchErr
-						p.incReattach(reattachReasonWatch)
-						return err
-					}
-					// Watch and token stay. Retry refresh; do not drop to
-					// unauthenticated.
-					refreshBackoff = nextAttachBackoff(refreshBackoff, p.cfg.BackoffMin, p.cfg.BackoffMax)
-					continue
-				}
-				p.incReattach(reattachReasonTTL)
-				p.publishToken(newTok, newExp)
-				cancelWatch()
-				<-watchErr
-				tok, exp = newTok, newExp
 			}
-			break
+			cancelWatch = nil
+			watchErr = nil
+			if p.ctx.Err() != nil {
+				return p.ctx.Err()
+			}
+			if err == nil {
+				err = io.EOF
+			}
+			// A dead HTTP/2 origin has to leave this loop so the caller
+			// can probe HTTP/1.1. Shutting down and a clean EOF stay here
+			// and reopen Watch with the same token.
+			if !isRPCH2TransportMiss(err) && watchReopen(err) {
+				continue
+			}
+			p.incReattach(reattachReasonWatch)
+			return err
+		case <-reopenC:
+			stopTimer(refreshTimer)
+			startWatch(tok)
+		case <-refreshTimer.C:
+			stopTimer(reopenTimer)
+			newTok, newExp, err := p.attach()
+			p.incAttach(err)
+			if err != nil {
+				if isRPCH2TransportMiss(err) {
+					// Origin is gone (listen/RST/ALPN/half-open). End
+					// Watch; do not flip setH2(false) until the stream
+					// has returned. Outer loop probes then HTTP/1.1.
+					// A slow Attach (DeadlineExceeded) is not this:
+					// keep Watch and retry refresh.
+					stopWatch()
+					p.incReattach(reattachReasonWatch)
+					return err
+				}
+				// Watch and token stay. Retry refresh; do not drop to
+				// unauthenticated.
+				refreshBackoff = nextAttachBackoff(refreshBackoff, p.cfg.BackoffMin, p.cfg.BackoffMax)
+				refreshDue = time.Now().Add(p.nextRefreshWait(exp, refreshBackoff))
+				continue
+			}
+			p.incReattach(reattachReasonTTL)
+			p.publishToken(newTok, newExp)
+			tok, exp = newTok, newExp
+			refreshBackoff = 0
+			refreshDue = time.Now().Add(p.nextRefreshWait(exp, 0))
+			startWatch(tok)
+		}
+	}
+}
+
+func (p *PeerConn) reopenWait() time.Duration {
+	if p.cfg.BackoffMin > 0 {
+		return p.cfg.BackoffMin
+	}
+	return defaultAttachBackoffMin
+}
+
+func stopTimer(t *time.Timer) {
+	if t == nil {
+		return
+	}
+	if !t.Stop() {
+		select {
+		case <-t.C:
+		default:
 		}
 	}
 }
@@ -1184,6 +1307,26 @@ func (p *PeerConn) Release() {
 	}
 	peerConnMu.Unlock()
 	p.Close()
+}
+
+// watchReopen is a Watch that ended because this child is going away or the
+// stream closed cleanly. The token is still good on the other children, so
+// the client opens Watch again and does not Attach.
+func watchReopen(err error) bool {
+	if err == nil || errors.Is(err, io.EOF) {
+		return true
+	}
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		return false
+	}
+	return strings.Contains(err.Error(), "host shutting down")
+}
+
+func peerSessionReplaced(err error) bool {
+	if err == nil || connect.CodeOf(err) != connect.CodeUnauthenticated {
+		return false
+	}
+	return strings.Contains(err.Error(), "session replaced")
 }
 
 func nextAttachBackoff(prev, min, max time.Duration) time.Duration {

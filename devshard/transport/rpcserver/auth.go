@@ -129,6 +129,12 @@ type PeerAuthHandler struct {
 
 	limiter *channelLimiter
 	traffic *transport.RPCTraffic
+
+	// shared is the Postgres record. Nil keeps sessions/byPeer/prevByPeer/retired
+	// as the only copy. byHash is the admission index for rows that arrived
+	// without the raw nonce (NOTIFY does not carry it).
+	shared *SharedSessions
+	byHash map[string]*peerSession
 }
 
 type peerSession struct {
@@ -139,6 +145,12 @@ type peerSession struct {
 	watching    bool
 	watchID     uint64
 	cancelWatch chan struct{}
+	// rawKey, tokenHash, current, and seq are set when a shared store is on.
+	// The memory store leaves them empty and keeps using sessions/byPeer.
+	rawKey    string
+	tokenHash string
+	current   bool
+	seq       int64
 }
 
 func (s *peerSession) stopWatchLocked() {
@@ -261,6 +273,9 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	if h.Closed() {
 		return nil, hostShuttingDown()
 	}
+	if h.shared != nil && !h.shared.Ready() {
+		return nil, connect.NewError(connect.CodeUnavailable, errors.New("peer rpc sessions loading"))
+	}
 	msg := req.Msg
 	if msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil attach request"))
@@ -301,7 +316,7 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	}
 	// Refund only after a successful bind. A live peer whose
 	// Attach then fails (nonce reuse, roster, cap) must keep the charge.
-	wasLive := h.peerSessionLive(recovered)
+	wasLive := h.peerSessionLive(recovered) || h.sharedPeerLive(recovered)
 	// Live renewals on /sessions/_/rpc skip the door: the URL is not a
 	// roster. Any real escrow URL is checked even when the peer already
 	// has a host session, so a Watch drop cannot re-Attach on a settled id.
@@ -312,6 +327,9 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	}
 
 	token := append([]byte(nil), msg.AttachNonce...)
+	if h.shared != nil {
+		return h.attachShared(ctx, recovered, token, msg.Timestamp, wasLive, chargedAt)
+	}
 	tok := rawTokenKey(token)
 	expires := h.now().Add(h.cfg.SessionTTL)
 
@@ -425,6 +443,17 @@ func (h *PeerAuthHandler) beginWatch(token []byte) (uint64, <-chan struct{}, err
 	}
 	tok := rawTokenKey(token)
 	sess, ok := h.sessions[tok]
+	if !ok && h.byHash != nil {
+		if stub := h.byHash[tokenHashHex(token)]; stub != nil {
+			stub.rawKey = tok
+			h.sessions[tok] = stub
+			if stub.current {
+				h.byPeer[stub.peer] = tok
+			}
+			sess = stub
+			ok = true
+		}
+	}
 	if !ok {
 		return 0, nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or expired session token"))
 	}
@@ -483,6 +512,9 @@ func (h *PeerAuthHandler) inspectToken(token []byte) (peer string, ok, expired b
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	sess, exists := h.sessions[rawTokenKey(token)]
+	if !exists && h.byHash != nil {
+		sess, exists = h.byHash[tokenHashHex(token)]
+	}
 	if !exists {
 		return "", false, false
 	}
@@ -751,6 +783,9 @@ func (h *PeerAuthHandler) dropSessionLocked(tok string, sess *peerSession) {
 		if h.prevByPeer[sess.peer] == tok {
 			delete(h.prevByPeer, sess.peer)
 		}
+		if sess.tokenHash != "" && h.byHash != nil && h.byHash[sess.tokenHash] == sess {
+			delete(h.byHash, sess.tokenHash)
+		}
 	}
 	h.retireNonceLocked(tok, attached)
 }
@@ -814,11 +849,15 @@ func (h *PeerAuthHandler) Close() {
 	h.closeOnce.Do(func() {
 		h.closed.Store(true)
 		close(h.closeCh)
+		if h.shared != nil {
+			h.shared.Close()
+		}
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		for tok, sess := range h.sessions {
 			h.dropSessionLocked(tok, sess)
 		}
+		h.byHash = nil
 		h.observeSizesLocked()
 	})
 }
@@ -841,9 +880,13 @@ func (h *PeerAuthHandler) SweepOnce() {
 	for {
 		expired, retired := h.listExpired(now, sweepBatchSize)
 		if len(expired) == 0 && len(retired) == 0 {
-			return
+			break
 		}
 		h.deleteExpired(now, expired, retired)
+	}
+	h.sweepSharedCache(now)
+	if h.shared != nil {
+		h.shared.SweepExpired(context.Background())
 	}
 }
 

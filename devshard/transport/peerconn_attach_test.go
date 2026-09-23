@@ -1154,6 +1154,27 @@ func (c largeRPCCore) ServeGossipTxs([]*types.DevshardTx) {
 	}
 }
 
+func TestPeerConn_SecondSessionReplacedStopsDialing(t *testing.T) {
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	signer := devtest.MustGenerateKey(t)
+	srv, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: time.Hour}, nil)
+	incumbent := newTestPeerConn(t, srv, hostAddr, signer, transport.PeerConnConfig{})
+	challenger := newTestPeerConn(t, srv, hostAddr, signer, transport.PeerConnConfig{})
+	incumbent.Start()
+	waitPeerReady(t, incumbent)
+	challenger.Start()
+
+	// Two losses are a few Attach round-trips. Wait them out, then the
+	// winner's Watch must stay up and the loser must not resume.
+	time.Sleep(time.Second)
+	incumbentReady := incumbent.Ready()
+	challengerReady := challenger.Ready()
+	require.NotEqual(t, incumbentReady, challengerReady, "both generations still dialing, or both stopped")
+	time.Sleep(400 * time.Millisecond)
+	require.Equal(t, incumbentReady, incumbent.Ready(), "generation changed Attach state after the identity settled")
+	require.Equal(t, challengerReady, challenger.Ready(), "generation changed Attach state after the identity settled")
+}
+
 func (c largeRPCCore) ServeHeightSyncRepair(context.Context, string, *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
 	if c.repairRan != nil {
 		c.repairRan.Store(true)

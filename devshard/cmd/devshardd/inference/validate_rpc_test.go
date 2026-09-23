@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -92,6 +93,53 @@ func TestFetchSignedPayloads_RPCNotFoundIsGone(t *testing.T) {
 	_, err := fetchSignedPayloads(context.Background(), nil, rpc, "http://unused", "path",
 		"42", "val", 1, 10, "sig", 0)
 	require.ErrorIs(t, err, commonvalidation.ErrPayloadGone)
+}
+
+func TestPayloadRPCFetchDone(t *testing.T) {
+	require.True(t, payloadRPCFetchDone(nil))
+	require.True(t, payloadRPCFetchDone(fmt.Errorf("payload not found: %w", commonvalidation.ErrPayloadGone)))
+	require.True(t, payloadRPCFetchDone(fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)))
+	require.True(t, payloadRPCFetchDone(connect.NewError(connect.CodeUnavailable, errors.New("connection refused"))))
+	require.False(t, payloadRPCFetchDone(connect.NewError(connect.CodeInternal, errors.New("testenv payload fault"))))
+}
+
+func TestFetchSignedPayloads_RPCRetriesInternal(t *testing.T) {
+	httpguard.SetAllowPrivate(true)
+	prev := payloadFetchRetryBackoff
+	payloadFetchRetryBackoff = 0
+	t.Cleanup(func() { payloadFetchRetryBackoff = prev })
+
+	t.Run("internal retries twice", func(t *testing.T) {
+		var n atomic.Int32
+		rpc := newPayloadRPCClient(t, func(context.Context, rpcserver.SessionCore, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+			n.Add(1)
+			return nil, connect.NewError(connect.CodeInternal, errors.New("testenv payload fault"))
+		})
+		_, err := fetchSignedPayloads(context.Background(), nil, rpc, "http://unused", "path",
+			"42", "val", 1, 10, "sig", 0)
+		require.Error(t, err)
+		require.False(t, errors.Is(err, commonvalidation.ErrPayloadGone))
+		require.Equal(t, int32(payloadFetchAttempts), n.Load())
+	})
+
+	t.Run("success on second attempt", func(t *testing.T) {
+		var n atomic.Int32
+		rpc := newPayloadRPCClient(t, func(context.Context, rpcserver.SessionCore, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+			if n.Add(1) == 1 {
+				return nil, connect.NewError(connect.CodeInternal, errors.New("testenv payload fault"))
+			}
+			return &rpcpb.GetPayloadResponse{
+				InferenceId:     "42",
+				PromptPayload:   []byte("prompt"),
+				ResponsePayload: []byte("response"),
+			}, nil
+		})
+		resp, err := fetchSignedPayloads(context.Background(), nil, rpc, "http://unused", "path",
+			"42", "val", 1, 10, "sig", 0)
+		require.NoError(t, err)
+		require.Equal(t, []byte("response"), resp.ResponsePayload)
+		require.Equal(t, int32(2), n.Load())
+	})
 }
 
 func TestFetchSignedPayloads_RPCRespectsMaxBytes(t *testing.T) {

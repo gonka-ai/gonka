@@ -2074,6 +2074,29 @@ func TestDrainAfterProxyWaitsBeforeRequestingChildDrain(t *testing.T) {
 	}
 }
 
+func TestRequestPeerReleasePostsToLifecyclePort(t *testing.T) {
+	var hits atomic.Int32
+	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/rpc/release" {
+			hits.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{BasePort: 5000})
+	c := &child{version: oracle.Version{Name: "v1"}, port: 1}
+	setTestAdminPort(c, port)
+	if err := m.requestPeerRelease(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("release hits = %d, want 1", hits.Load())
+	}
+}
+
 func TestStopStartWithdrawsRouteAndWaitsForProxyLease(t *testing.T) {
 	requestStarted := make(chan struct{})
 	releaseRequest := make(chan struct{})

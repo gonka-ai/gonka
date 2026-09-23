@@ -193,6 +193,11 @@ func tokenRequest[T any](c *RPCClient, msg *T) (*connect.Request[T], error) {
 	return req, nil
 }
 
+// unauthenticatedRetryDelay is the single Unauthenticated retry. It sits
+// past a barrier timeout (1s is the server cap; this delay only has to
+// clear the usual apply lag) and inside the 100–250ms window.
+const unauthenticatedRetryDelay = 200 * time.Millisecond
+
 func rpcRetry(ctx context.Context, fn func() error) error {
 	deadline := nonInferenceRetryDeadline(ctx)
 	delay := nonInferenceRetryInitial
@@ -215,13 +220,20 @@ func rpcRetry(ctx context.Context, fn func() error) error {
 			return err
 		}
 		sleep := delay
-		if ra := connectRetryAfter(err); ra > 0 {
+		ra := connectRetryAfter(err)
+		if ra > 0 {
 			if ra > remaining {
 				return err
 			}
 			sleep = ra
 		} else if sleep > remaining {
 			sleep = remaining
+		}
+		if ra == 0 && connect.CodeOf(err) == connect.CodeUnauthenticated {
+			if unauthenticatedRetryDelay > remaining {
+				return err
+			}
+			sleep = unauthenticatedRetryDelay
 		}
 		if err := sleepContext(ctx, sleep); err != nil {
 			return last

@@ -255,14 +255,13 @@ func fetchSignedPayloads(
 		if err := rpc.WaitReady(waitCtx); err != nil {
 			return nil, err
 		}
-		resp, err := rpc.GetPayload(ctx, &rpcpb.GetPayloadRequest{
+		return fetchPayloadsRPCWithRetry(ctx, rpc, &rpcpb.GetPayloadRequest{
 			InferenceId:      inferenceID,
 			ValidatorAddress: validatorAddress,
 			Timestamp:        timestamp,
 			EpochId:          epochID,
 			Signature:        []byte(signature), // HTTP Authorization header text
 		}, maxBytes)
-		return payloadResponseFromRPC(resp, err)
 	}
 	requestURL, err := commonvalidation.BuildPayloadRequestURL(executorURL, requestPath, inferenceID)
 	if err != nil {
@@ -322,20 +321,74 @@ func fetchPayloadsHTTPWithRetry(
 		if attempt == payloadFetchAttempts {
 			break
 		}
-		timer := time.NewTimer(payloadFetchRetryBackoff)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return nil, ctx.Err()
-		case <-timer.C:
+		if err := sleepPayloadFetchRetry(ctx); err != nil {
+			return nil, err
 		}
 	}
 	return nil, lastErr
+}
+
+// fetchPayloadsRPCWithRetry applies the same two-attempt pause as
+// fetchPayloadsHTTPWithRetry to an answered GetPayload failure. GetPayload
+// already retries an unanswered connection inside rpcRetry; those errors
+// return here without starting that budget again.
+func fetchPayloadsRPCWithRetry(
+	ctx context.Context,
+	rpc *transport.RPCClient,
+	req *rpcpb.GetPayloadRequest,
+	maxBytes int64,
+) (*commonvalidation.PayloadResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= payloadFetchAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		resp, err := rpc.GetPayload(ctx, req, maxBytes)
+		payloadResp, err := payloadResponseFromRPC(resp, err)
+		if err == nil {
+			return payloadResp, nil
+		}
+		if payloadRPCFetchDone(err) {
+			return nil, err
+		}
+		lastErr = err
+		if attempt == payloadFetchAttempts {
+			break
+		}
+		if err := sleepPayloadFetchRetry(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// payloadRPCFetchDone reports an error that must not be tried again at this
+// layer: the payload is gone or oversize, or rpcRetry already spent its
+// budget on an unanswered connection.
+func payloadRPCFetchDone(err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
+		return true
+	}
+	return transport.IsRetryableNonInference(err)
+}
+
+func sleepPayloadFetchRetry(ctx context.Context) error {
+	timer := time.NewTimer(payloadFetchRetryBackoff)
+	select {
+	case <-ctx.Done():
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func classifyExecuteValidationErr(err error) error {

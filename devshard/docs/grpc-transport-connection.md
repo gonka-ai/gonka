@@ -7,8 +7,10 @@ stay HTTP/1.1 (children are loopback-only), and how phase 6 carries HTTP/2 **end
 on a published gRPC listen that **skips nginx**.
 
 Join hop inventory (JSON today, `/rpc/` after phase 6):
-[`high-availability-architecture.md`](./high-availability-architecture.md). Child binary
-swap vs host evacuation: [`rolling-update.md`](./rolling-update.md). Host leave the
+[`high-availability-architecture.md`](./high-availability-architecture.md).
+HA children share one peer-RPC token:
+[Peer RPC sessions under HA](./high-availability-architecture.md#peer-rpc-sessions-under-ha).
+Child binary swap vs host evacuation: [`rolling-update.md`](./rolling-update.md). Host leave the
 pool: [`versiond-host-evacuation.md`](./versiond-host-evacuation.md). Path versioning:
 [`upgrade.md`](./upgrade.md).
 
@@ -234,8 +236,11 @@ Server checks: recovered address equals `peer_address` → `host_address` equals
 process's gonka address → timestamp within ±30 s → `protocol_version` is
 `devshard.transport.v1` (empty and unknown rejected) → `attach_nonce` is not already
 live → `AllowsSender` for the URL escrow unless this is a **live** peer on `_`.
-Then it records one session for that client peer on this child. A real URL escrow
-is the door, not the session key; `_` is Watch / live-refresh only.
+Then it records one session for that client peer on this host and version.
+On one process that record is this child's memory map. When `GONKA_HA` is
+set, the same row is shared by every child of this version
+([Peer RPC sessions under HA](./high-availability-architecture.md#peer-rpc-sessions-under-ha)).
+A real URL escrow is the door, not the session key; `_` is Watch / live-refresh only.
 
 The attachment id is still on the wire after Attach. `Watch` takes it in the protobuf
 body **and** as `x-devshard-session`; every other RPC sends only the header. Signing it
@@ -261,6 +266,24 @@ HTTP/1.1 keepalive is a **pool**, not one multiplexed connection. N concurrent R
 TCP connections; a 30-minute `Chat` holds one for its whole life. `MaxIdleConnsPerHost`
 must rise to cover concurrent chats plus gossip, queries, and `Watch`. That is the cost of
 phases 1–5 on this path. Phase 6 removes it by carrying HTTP/2 on a listen that skips nginx.
+
+### HA: one token, several children
+
+The router hashes the escrow segment of every `/{version}/sessions/{escrow}/…`
+request, including each HTTP/2 stream. `Attach` uses the door escrow, `Watch`
+and live renewal use `_`, and a later call uses that call's escrow. Those
+three keys do not select the same child. The token is still one per peer per
+host and version, so the child that did not serve `Attach` must already have
+the row.
+
+`GONKA_HA` is the switch. Set, with Postgres and a version, every such child
+admits the token from memory filled by the shared table. Unset, the map stays
+in this process. Shutdown or EOF on `Watch` reopens the stream with the same
+token; `session replaced`, expiry, and other `Unauthenticated` clear it and
+`Attach` again. Refresh does not wait for `Watch` to be up.
+
+Table, barrier, membership publish, and the old-router fallback:
+[Peer RPC sessions under HA](./high-availability-architecture.md#peer-rpc-sessions-under-ha).
 
 ---
 

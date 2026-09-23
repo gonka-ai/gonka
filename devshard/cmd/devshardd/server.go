@@ -33,7 +33,12 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	// devshardd is the verifier, so it also owns the log-plane instruments.
 	_ = heightsync.RegisterLogPlaneMetrics(observability.Registry())
 	e.GET("/metrics", echo.WrapHandler(observability.MetricsHandler()))
-	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/healthz", func(c echo.Context) error {
+		if !lifecycle.peerSessionsReady() {
+			return c.String(http.StatusServiceUnavailable, "peer rpc sessions loading")
+		}
+		return c.String(http.StatusOK, "ok")
+	})
 	// Child-only clock contract. Gateway probes {RoutePrefix}/clock; versiond
 	// strips the version segment. Do not mount this on versiond's mux.
 	e.GET("/clock", echo.WrapHandler(wrapClockHandler(probe.Handler(nil), clockFaultActive)))
@@ -49,6 +54,7 @@ func buildAdminServer(
 	storageReady func() bool,
 	storageProof storageProofFunc,
 	recovery func() session.RecoveryProgress,
+	releasePeer func(),
 ) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
@@ -76,6 +82,15 @@ func buildAdminServer(
 	e.POST("/drain", func(c echo.Context) error {
 		lifecycle.StartDrain()
 		return c.JSON(http.StatusOK, lifecycle.Status())
+	})
+	// versiond calls this on the generation it just retired. Stop signing
+	// as this host and end inbound Watch. User requests already accepted
+	// keep running; this does not start drain.
+	e.POST("/rpc/release", func(c echo.Context) error {
+		if releasePeer != nil {
+			releasePeer()
+		}
+		return c.NoContent(http.StatusNoContent)
 	})
 	e.GET("/drain/status", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, lifecycle.Status())
@@ -141,4 +156,36 @@ type readyStatus struct {
 
 func readyResponse(status drainStatus, storeReady bool, progress session.RecoveryProgress) readyStatus {
 	return readyStatus{drainStatus: status, StorageReady: storeReady, RecoveryProgress: progress}
+}
+
+// registerPeerRPCMembers accepts the membership versiond forwarded from the
+// router. The admin listener is the private port versiond already uses for
+// /drain. No list leaves the child on the member-table barrier.
+func registerPeerRPCMembers(e *echo.Echo, set func(instanceID string, ids []string)) {
+	if e == nil {
+		return
+	}
+	e.PUT("/internal/peer-rpc/members", func(c echo.Context) error {
+		var body struct {
+			InstanceID string `json:"instance_id"`
+			Members    []struct {
+				ID string `json:"id"`
+			} `json:"members"`
+		}
+		dec := json.NewDecoder(http.MaxBytesReader(c.Response(), c.Request().Body, 64<<10))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&body); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid peer members")
+		}
+		ids := make([]string, 0, len(body.Members))
+		for _, member := range body.Members {
+			if member.ID != "" {
+				ids = append(ids, member.ID)
+			}
+		}
+		if set != nil {
+			set(body.InstanceID, ids)
+		}
+		return c.NoContent(http.StatusNoContent)
+	})
 }

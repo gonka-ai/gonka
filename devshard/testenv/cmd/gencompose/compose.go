@@ -153,10 +153,10 @@ services:
       DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
-      # GONKA_HA is intentionally omitted from versiond in this fixture. The
-      # SQLite-to-HA scenario first boots children before enabling HA at the
-      # router, where Devshard-Ha exercises the request-time storage guard.
 {{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
+      # HA replicas declare GONKA_HA so the child shares peer RPC sessions.
+      # The sqlite migration clears this before booting these hosts on sqlite.
+      GONKA_HA: "{{ haDeployment $ }}"
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
       PGHOST: {{ $.Postgres.Host }}
@@ -165,6 +165,7 @@ services:
       PGUSER: {{ $.Postgres.User }}
       PGPASSWORD: {{ $.Postgres.Password }}
 {{ else if eq $.Versiond.Mode "multi" }}
+      # Solo hosts omit GONKA_HA and keep peer RPC sessions in memory.
       # Solo executor: local sqlite so it does not multi-write shared PG diffs.
       DEVSHARD_STORAGE_MODE: sqlite
 {{ end }}
@@ -226,9 +227,9 @@ services:
       VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
       VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
       VERSIOND_ROUTING_ACTIVATION_MIN_READY: "{{ routingActivationMinReady . }}"
-      # Only the router is told this deployment is HA. The versiond containers
-      # are not, so scenarios that deliberately run the pool on sqlite still
-      # boot and fail at request time on the storage guard instead.
+      # HA replicas set GONKA_HA too, so their children share peer RPC sessions.
+      # Solo sqlite hosts omit it. Scenarios that run the pool on sqlite clear
+      # GONKA_HA before boot and still fail at request time on Devshard-Ha.
       GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"

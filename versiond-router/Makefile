@@ -54,6 +54,11 @@ test-pool-status:
 test-endpoints-render:
 	@HAPROXY_IMAGE=$(HAPROXY_IMAGE) ./endpoints-render_test.sh
 
+# The membership document the router posts to versiond. DNS discovery and an
+# explicit endpoint file must both list exactly the ready members per version.
+test-publish-members:
+	@./publish-members_test.sh
+
 # The join deployment temporarily supports both the pinned pre-/readyz image
 # and the replacement built from this release. A 404 means the endpoint does
 # not exist and may fall back to liveness; a real 503 must remain unready.
@@ -1468,7 +1473,7 @@ test-version-routing:
 		|| fail "catalog reconciliation did not recover after clock rollback"; \
 	echo "test-version-routing: ok"
 
-test-render: test-local-compose test-compose-contract test-join-versiond-healthcheck test-catalog-cache test-pool-status test-endpoints-render test-hash-ring test-version-routing
+test-render: test-local-compose test-compose-contract test-join-versiond-healthcheck test-catalog-cache test-pool-status test-endpoints-render test-publish-members test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \

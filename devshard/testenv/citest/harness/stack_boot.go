@@ -13,6 +13,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// BootMixedVersiondStack is the §8.2 no-proxy mixed fleet: versiond-0 pinned
+// to baselineImage (0.2.15-v5), versiond-1 and versiond-router left on this
+// tree. One shared router, same escrow, HTTP/1.1 on :8080.
+func BootMixedVersiondStack(t *testing.T, prefix, baselineImage string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	PinVersiondServiceImage(t, stack.ComposePath, "versiond-0", baselineImage)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
 // BootStack renders the 2×versiond citest config, starts compose, and returns handles.
 func BootStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()

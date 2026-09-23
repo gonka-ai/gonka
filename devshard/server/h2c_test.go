@@ -42,6 +42,45 @@ func TestEnableH2CWrapsEchoListen(t *testing.T) {
 	require.NotEqual(t, http.Handler(e), e.Server.Handler)
 }
 
+func TestStartH2C_HTTP1AndHTTP2(t *testing.T) {
+	e := echo.New()
+	e.HideBanner = true
+	e.HidePort = true
+	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	errCh := make(chan error, 1)
+	go func() { errCh <- StartH2C(e, "127.0.0.1:0") }()
+
+	var addr string
+	require.Eventually(t, func() bool {
+		if e.Listener == nil || e.Listener.Addr() == nil {
+			return false
+		}
+		addr = e.Listener.Addr().String()
+		return addr != ""
+	}, 2*time.Second, 10*time.Millisecond)
+
+	resp, err := http.Get("http://" + addr + "/healthz")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, 1, resp.ProtoMajor)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/healthz", nil)
+	require.NoError(t, err)
+	h2resp, err := newH2CClient(t, nil).Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = h2resp.Body.Close() })
+	require.Equal(t, 2, h2resp.ProtoMajor)
+	require.Equal(t, http.StatusOK, h2resp.StatusCode)
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer shutdownCancel()
+	require.NoError(t, e.Shutdown(shutdownCtx))
+	require.ErrorIs(t, <-errCh, http.ErrServerClosed)
+}
+
 func TestH2C_HTTP1JSONStillWorks(t *testing.T) {
 	e := echo.New()
 	e.HideBanner = true

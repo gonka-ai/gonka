@@ -75,6 +75,22 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 			rest = "/" + parts[1]
 		}
 
+		// PeerAuth Watch is a keepalive, not a user request. Counting it
+		// would hold the retiring generation until DrainTimeout: the stream
+		// stays open for the session TTL, and stop/start waits for inflight
+		// to hit zero. The child is still the request's backend; Retire just
+		// does not wait for this stream.
+		if peerAuthWatchPath(rest) {
+			table, _ := routes.Load().(RouteTable)
+			target := table[version]
+			if target == nil {
+				http.Error(w, fmt.Sprintf("version %q not found", version), http.StatusNotFound)
+				return
+			}
+			serveChild(w, r, target.Address(), rest, originLookups)
+			return
+		}
+
 		target, ok := acquireTarget(routes, version)
 		if !ok {
 			http.Error(w, fmt.Sprintf("version %q not found", version), http.StatusNotFound)
@@ -84,6 +100,12 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 
 		serveChild(w, r, target.Address(), rest, originLookups)
 	})
+}
+
+func peerAuthWatchPath(rest string) bool {
+	// The procedure is "...v1.PeerAuthService/Watch": the byte before
+	// PeerAuthService is the protobuf package dot, not a slash.
+	return strings.HasSuffix(rest, "PeerAuthService/Watch")
 }
 
 func acquireTarget(routes routeTableLoader, version string) (*Target, bool) {

@@ -501,6 +501,25 @@ func (s *Stack) RequireServicesRunning(t *testing.T, services ...string) {
 	}
 }
 
+// ServiceImage is the image name of the running container (Config.Image).
+func (s *Stack) ServiceImage(t *testing.T, service string) string {
+	t.Helper()
+	cmd := exec.Command("docker", append(append([]string{"compose"}, s.composeFileArgs()...), "ps", "-aq", service)...)
+	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "docker compose ps -q %s\n%s", service, out)
+	id := strings.TrimSpace(string(out))
+	if i := strings.IndexByte(id, '\n'); i >= 0 {
+		id = id[:i]
+	}
+	require.NotEmpty(t, id, "no container for %s", service)
+	inspect := exec.Command("docker", "inspect", "-f", "{{.Config.Image}}", id)
+	img, err := inspect.CombinedOutput()
+	require.NoError(t, err, "docker inspect %s\n%s", id, img)
+	return strings.TrimSpace(string(img))
+}
+
 func (s *Stack) ServiceRunning(service string) (bool, error) {
 	running, err := s.runningServices()
 	if err != nil {

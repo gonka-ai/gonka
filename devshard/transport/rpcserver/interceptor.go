@@ -245,21 +245,21 @@ func admitSession(auth *PeerAuthHandler, ctx context.Context, header http.Header
 	}
 	if len(enc) > maxAttachNonceBytes*2 {
 		observability.IncPeerRPCGate(gateReasonOversized)
-		return ctx, handshakeRequired()
+		return ctx, invalidSessionToken()
 	}
 	raw, err := hex.DecodeString(enc)
 	if err != nil || len(raw) == 0 {
 		observeGateForged(ctx, err)
-		return ctx, handshakeRequired()
+		return ctx, invalidSessionToken()
 	}
 	peer, ok, expired := auth.inspectToken(raw)
 	if expired {
 		observability.IncPeerRPCGate(gateReasonExpired)
-		return ctx, handshakeRequired()
+		return ctx, invalidSessionToken()
 	}
 	if !ok {
 		observeGateForged(ctx, errInvalidSessionToken)
-		return ctx, handshakeRequired()
+		return ctx, invalidSessionToken()
 	}
 	observability.IncPeerRPCGate(gateReasonAdmitted)
 	ctx = withPeer(ctx, peer)
@@ -304,4 +304,11 @@ func requirePeer(ctx context.Context) (peer, escrow string, err error) {
 
 func handshakeRequired() error {
 	return connect.NewError(connect.CodeUnauthenticated, errors.New("handshake required"))
+}
+
+// invalidSessionToken is handshakeRequired plus the header versiond counts.
+// Only a presented token uses it. An empty header stays handshakeRequired so
+// a client that has not attached yet does not spend the per-IP budget.
+func invalidSessionToken() error {
+	return withDevshardError(handshakeRequired(), transport.DevshardErrorInvalidSessionToken)
 }

@@ -15,6 +15,7 @@ const (
 	headerDevshardError             = "X-Devshard-Error"
 	errorEscrowNotFound             = "escrow_not_found"
 	errorEscrowLookupLimited        = "escrow_lookup_limited"
+	errorInvalidSessionToken        = "invalid_session_token"
 	peerAuthAttachSuffix            = "/devshard.transport.v1.PeerAuthService/Attach"
 	defaultUnknownEscrowPerIPPerMin = 2
 	maxOriginLookupIPs              = 4096
@@ -22,9 +23,11 @@ const (
 )
 
 // originLookupLimiter is the per origin-IP cap for unknown-escrow first bind
-// (owner chat, height-sync seed, Attach). It keys on inbound X-Real-IP from
-// versiond-router, not the child's RemoteAddr. Missing header skips the bucket
-// so an old hop that does not forward the client IP cannot collapse the host.
+// (owner chat, height-sync seed, Attach) and for a presented session token
+// the child rejects. Both misses share the 2/min budget. It keys on inbound
+// X-Real-IP from versiond-router, not the child's RemoteAddr. Missing header
+// skips the bucket so an old hop that does not forward the client IP cannot
+// collapse the host.
 // order is last-miss time, front = oldest. At cap, idle IPs (a prefix of
 // that list) go first; the oldest under-budget IP is then O(1). The table
 // is never replaced, and an IP at its 2/min budget is not evicted.
@@ -57,7 +60,7 @@ func (l *originLookupLimiter) clock() time.Time {
 }
 
 func (l *originLookupLimiter) blocked(r *http.Request, rest string) bool {
-	if l == nil || r == nil || !isUnknownEscrowBindPath(r.Method, rest) {
+	if l == nil || r == nil || !isOriginLimitedPath(r.Method, rest) {
 		return false
 	}
 	ip := originIP(r.Header)
@@ -75,10 +78,7 @@ func (l *originLookupLimiter) blocked(r *http.Request, rest string) bool {
 }
 
 func (l *originLookupLimiter) observe(r *http.Request, rest string, resp *http.Response) {
-	if l == nil || r == nil || resp == nil || !isUnknownEscrowBindPath(r.Method, rest) {
-		return
-	}
-	if !isUnknownEscrowMiss(resp.Header) {
+	if l == nil || r == nil || resp == nil || !isOriginLimitedMiss(r.Method, rest, resp.Header) {
 		return
 	}
 	ip := originIP(r.Header)
@@ -173,6 +173,38 @@ func (l *originLookupLimiter) removeLocked(node *originIPNode) {
 		l.order.Remove(node.el)
 	}
 	delete(l.byIP, node.ip)
+}
+
+func isOriginLimitedPath(method, rest string) bool {
+	return isUnknownEscrowBindPath(method, rest) || isSessionTokenPath(method, rest)
+}
+
+func isOriginLimitedMiss(method, rest string, h http.Header) bool {
+	if isUnknownEscrowBindPath(method, rest) && isUnknownEscrowMiss(h) {
+		return true
+	}
+	return isSessionTokenPath(method, rest) && isInvalidSessionToken(h)
+}
+
+// isSessionTokenPath is a peer RPC that presents X-Devshard-Session.
+// Attach is the handshake and stays on the unknown-escrow path.
+func isSessionTokenPath(method, rest string) bool {
+	if !strings.EqualFold(method, http.MethodPost) {
+		return false
+	}
+	path := strings.Trim(rest, "/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 4 || parts[0] != "sessions" || parts[2] != "rpc" {
+		return false
+	}
+	return !strings.HasSuffix(rest, peerAuthAttachSuffix)
+}
+
+func isInvalidSessionToken(h http.Header) bool {
+	if h == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(h.Get(headerDevshardError)), errorInvalidSessionToken)
 }
 
 func isUnknownEscrowBindPath(method, rest string) bool {

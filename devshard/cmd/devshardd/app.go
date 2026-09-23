@@ -25,6 +25,7 @@ import (
 	chaintx "devshard/cmd/devshardd/tx"
 	"devshard/hostevents"
 	"devshard/runtimeparams"
+	devshardserver "devshard/server"
 	"devshard/signing"
 	devshardstorage "devshard/storage"
 	"devshard/transport"
@@ -121,9 +122,14 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	e := buildServer(lifecycle)
 	var admin *echo.Echo
 	if cfg.AdminAddr != "" {
-		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryProgressSnapshot)
+		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryProgressSnapshot, func() {
+			transport.ReleaseOutboundPeerConns()
+			manager.ClosePeerRPC()
+		})
+		registerPeerRPCMembers(admin, manager.SetPeerRPCMembers)
 	}
 	manager.Register(e.Group(""))
+	lifecycle.SetPeerRPCReady(manager.PeerRPCSessionsReady)
 	chainRuntime.chainEvents.OnReady(func(ready bool) {
 		lifecycle.SetReady(ready)
 		manager.SetCometConnected(ready)
@@ -134,7 +140,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	}
 
 	return &devshardApp{
-		server:        e,
+		server:        h2cPublicServer{e},
 		adminServer:   adminServer,
 		adminAddr:     cfg.AdminAddr,
 		chainEvents:   chainRuntime.chainEvents,
@@ -463,6 +469,15 @@ type appHTTPServer interface {
 	Start(string) error
 	Close() error
 	Shutdown(context.Context) error
+}
+
+// h2cPublicServer is the session listen. Echo.Start drops the h2c wrapper
+// (configureServer assigns Handler = Echo), and versiond dials that port
+// with http2.Transport.
+type h2cPublicServer struct{ *echo.Echo }
+
+func (s h2cPublicServer) Start(address string) error {
+	return devshardserver.StartH2C(s.Echo, address)
 }
 
 func (a *devshardApp) Run(ctx context.Context) error {

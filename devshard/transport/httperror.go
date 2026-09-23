@@ -24,6 +24,10 @@ const (
 	DevshardErrorEscrowSettled        = "escrow_settled"
 	DevshardErrorEscrowNotFound       = "escrow_not_found"
 	DevshardErrorEscrowLookupLimited  = "escrow_lookup_limited"
+	// DevshardErrorInvalidSessionToken is a presented X-Devshard-Session the
+	// child rejected. versiond's per-IP cap counts it the same way as an
+	// unknown-escrow Attach. A missing header is not this code.
+	DevshardErrorInvalidSessionToken = "invalid_session_token"
 	DevshardErrorUndeclaredVersion    = "undeclared_version"
 	DevshardErrorHeightSeedIncomplete = "height_seed_incomplete"
 	DevshardErrorCatalogPending       = "catalog_pending"

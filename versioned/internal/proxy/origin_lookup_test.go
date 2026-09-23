@@ -32,6 +32,24 @@ func TestIsUnknownEscrowBindPath(t *testing.T) {
 	}
 }
 
+func TestIsSessionTokenPath(t *testing.T) {
+	tests := []struct {
+		method, rest string
+		want         bool
+	}{
+		{http.MethodPost, "/sessions/1/rpc/devshard.transport.v1.PeerAuthService/Watch", true},
+		{http.MethodPost, "/sessions/1/rpc/devshard.transport.v1.SessionService/GetSignatures", true},
+		{http.MethodPost, "/sessions/1/rpc/devshard.transport.v1.PeerAuthService/Attach", false},
+		{http.MethodGet, "/sessions/1/rpc/devshard.transport.v1.PeerAuthService/Watch", false},
+		{http.MethodPost, "/sessions/1/chat/completions", false},
+	}
+	for _, tt := range tests {
+		if got := isSessionTokenPath(tt.method, tt.rest); got != tt.want {
+			t.Fatalf("isSessionTokenPath(%q, %q) = %v, want %v", tt.method, tt.rest, got, tt.want)
+		}
+	}
+}
+
 func TestParseOriginIP(t *testing.T) {
 	if parseOriginIP("") != "" {
 		t.Fatal("empty should skip")
@@ -98,6 +116,139 @@ func TestProxy_UnknownEscrowPerOriginIP(t *testing.T) {
 	}
 	if forwarded.Load() != 3 {
 		t.Fatalf("other origin forwarded = %d, want 3", forwarded.Load())
+	}
+}
+
+func TestProxy_InvalidSessionTokenPerOriginIP(t *testing.T) {
+	var forwarded atomic.Int32
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		w.Header().Set(headerDevshardError, errorInvalidSessionToken)
+		http.Error(w, "handshake required", http.StatusUnauthorized)
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := Handler(newRoutes(map[string]string{"v1": strings.TrimPrefix(backend.URL, "http://")}))
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	const path = "/v1/sessions/1/rpc/devshard.transport.v1.SessionService/GetSignatures"
+	post := func(ip string) *http.Response {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(originIPHeader, ip)
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp
+	}
+
+	if resp := post("203.0.113.9"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("first miss status = %d", resp.StatusCode)
+	}
+	if resp := post("203.0.113.9"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("second miss status = %d", resp.StatusCode)
+	}
+	resp := post("203.0.113.9")
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("third miss status = %d, want 429", resp.StatusCode)
+	}
+	if resp.Header.Get(headerDevshardError) != errorEscrowLookupLimited {
+		t.Fatalf("limited header = %q", resp.Header.Get(headerDevshardError))
+	}
+	if forwarded.Load() != 2 {
+		t.Fatalf("forwarded = %d, want 2 (third request must not reach the child)", forwarded.Load())
+	}
+	if resp := post("203.0.113.10"); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("other origin should still forward, status = %d", resp.StatusCode)
+	}
+}
+
+func TestProxy_TokenAndEscrowMissesShareOriginBudget(t *testing.T) {
+	var forwarded atomic.Int32
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		if strings.Contains(r.URL.Path, "/rpc/") {
+			w.Header().Set(headerDevshardError, errorInvalidSessionToken)
+			http.Error(w, "handshake required", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set(headerDevshardError, errorEscrowNotFound)
+		http.Error(w, "get escrow: escrow not found", http.StatusInternalServerError)
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := Handler(newRoutes(map[string]string{"v1": strings.TrimPrefix(backend.URL, "http://")}))
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	post := func(path string) int {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(originIPHeader, "203.0.113.9")
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	chat := "/v1/sessions/10/chat/completions"
+	rpc := "/v1/sessions/1/rpc/devshard.transport.v1.SessionService/GetSignatures"
+	if post(chat) != http.StatusInternalServerError {
+		t.Fatal("escrow miss should reach the child")
+	}
+	if post(rpc) != http.StatusUnauthorized {
+		t.Fatal("token miss should reach the child")
+	}
+	if post(chat) != http.StatusTooManyRequests {
+		t.Fatal("third miss of either kind should be limited")
+	}
+	if forwarded.Load() != 2 {
+		t.Fatalf("forwarded = %d, want 2", forwarded.Load())
+	}
+}
+
+func TestProxy_InvalidSessionTokenMissingOriginIPSkipped(t *testing.T) {
+	var forwarded atomic.Int32
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		w.Header().Set(headerDevshardError, errorInvalidSessionToken)
+		http.Error(w, "handshake required", http.StatusUnauthorized)
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := Handler(newRoutes(map[string]string{"v1": strings.TrimPrefix(backend.URL, "http://")}))
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	const path = "/v1/sessions/1/rpc/devshard.transport.v1.SessionService/GetSignatures"
+	for i := 0; i < 5; i++ {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("miss %d status = %d, want 401 (no X-Real-IP must not count)", i, resp.StatusCode)
+		}
+	}
+	if forwarded.Load() != 5 {
+		t.Fatalf("forwarded = %d, want 5", forwarded.Load())
 	}
 }
 

@@ -285,9 +285,9 @@ func TestPeerConn_BackoffShape(t *testing.T) {
 		DoorEscrowID: "42",
 		Signer:       peer,
 		DirectMux:    true,
-		BackoffMin:  50 * time.Millisecond,
-		BackoffMax:  5 * time.Second,
-		Jitter:      func(d time.Duration) time.Duration { return d },
+		BackoffMin:   50 * time.Millisecond,
+		BackoffMax:   5 * time.Second,
+		Jitter:       func(d time.Duration) time.Duration { return d },
 		Sleep: func(_ context.Context, d time.Duration) error {
 			if d == 0 {
 				return ctx.Err()
@@ -331,8 +331,8 @@ func TestPeerConn_SSRF(t *testing.T) {
 		DoorEscrowID: "42",
 		Signer:       peer,
 		DirectMux:    true,
-		BackoffMax:  50 * time.Millisecond,
-		BackoffMin:  10 * time.Millisecond,
+		BackoffMax:   50 * time.Millisecond,
+		BackoffMin:   10 * time.Millisecond,
 	})
 	t.Cleanup(pc.Close)
 	pc.Start()
@@ -706,11 +706,13 @@ func TestRPCRetry_UnauthenticatedOnce(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err))
 	require.Equal(t, int32(2), n.Load(), "one retry for a token race, then fail")
+	require.GreaterOrEqual(t, time.Since(start), 100*time.Millisecond, "the unauthenticated retry waits for the barrier")
 	require.Less(t, time.Since(start), time.Second, "must not spend the 5s non-inference budget")
 }
 
 func TestRPCRetry_UnauthenticatedThenOK(t *testing.T) {
 	var n atomic.Int32
+	start := time.Now()
 	err := rpcRetry(context.Background(), func() error {
 		if n.Add(1) == 1 {
 			return connect.NewError(connect.CodeUnauthenticated, errors.New("stale"))
@@ -718,7 +720,9 @@ func TestRPCRetry_UnauthenticatedThenOK(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, int32(2), n.Load())
+	require.Equal(t, int32(2), n.Load(), "one retry, no second Attach")
+	require.GreaterOrEqual(t, time.Since(start), 100*time.Millisecond)
+	require.Less(t, time.Since(start), time.Second)
 }
 
 func TestPeerConn_ReleaseSharedKeepsRegistry(t *testing.T) {
