@@ -29,6 +29,22 @@ func BootMixedVersiondStack(t *testing.T, prefix, baselineImage string) (*Stack,
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
+// BootProxyOverlayStack is §8.3: default compose plus docker-compose.proxy.yml.
+// JSON stays on versiond-router:8080. Peer RPC uses proxy:8443.
+func BootProxyOverlayStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	stack.PrepareProxyOverlay(t)
+	cfg := stack.LoadConfig(t)
+	pinProxyOverlayIP(t, stack, cfg)
+	requireTwoVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
 // BootStack renders the 2×versiond citest config, starts compose, and returns handles.
 func BootStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()

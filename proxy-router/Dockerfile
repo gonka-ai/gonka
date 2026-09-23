@@ -23,6 +23,6 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
 
 USER haproxy
 
-EXPOSE 80 443 18081 8404
+EXPOSE 80 443 18081 8404 9443
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

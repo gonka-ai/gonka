@@ -73,44 +73,42 @@ func TestPeerConn_H2Success(t *testing.T) {
 	require.Zero(t, infHits.Load(), "Connect must not fall back to InferenceUrl when h2 works")
 }
 
-func TestPeerConn_H2PortClosedFallsBackWithinBound(t *testing.T) {
+func TestPeerConn_H2PortClosedFailsClosed(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
-	inf, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, nil)
+	var infHits atomic.Int32
+	inf := startPeerRPCServerCounted(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, &infHits)
 	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	dead.Close()
 
-	start := time.Now()
 	pc := h2PeerConn(t, inf, hostAddr, peer, dead.URL)
 	pc.Start()
-	waitPeerReady(t, pc)
-	require.Less(t, time.Since(start), 5*time.Second)
-	require.False(t, pc.UsingH2())
-	require.True(t, transport.RPCH2MissCachedForTest(inf.URL))
+	require.Never(t, func() bool { return pc.Ready() }, time.Second, 20*time.Millisecond,
+		"closed h2 port must not Attach on InferenceUrl")
+	require.Zero(t, infHits.Load())
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL))
 }
 
-func TestPeerConn_H2AcceptHoldFallsBackWithinAttachBudget(t *testing.T) {
+func TestPeerConn_H2AcceptHoldFailsClosedWithinProbe(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
-	inf, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, nil)
+	var infHits atomic.Int32
+	inf := startPeerRPCServerCounted(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, &infHits)
 	h2URL, accepts := startAcceptHold(t)
 
 	httpguard.SetAllowPrivate(true)
 	transport.ResetRPCH2MissCacheForTest()
 	t.Cleanup(transport.ResetRPCH2MissCacheForTest)
-	start := time.Now()
 	pc := newTestPeerConn(t, inf, hostAddr, peer, transport.PeerConnConfig{
-		DialSet: transport.PeerRPCDialSet{H2URL: h2URL},
+		DialSet:        transport.PeerRPCDialSet{H2URL: h2URL},
+		H2ProbeTimeout: 200 * time.Millisecond,
 	})
 	pc.Start()
-	require.Eventually(t, func() bool {
-		return pc.Ready() && len(pc.LiveToken()) > 0
-	}, transport.DefaultAttachTimeout+200*time.Millisecond, 10*time.Millisecond)
-	require.Less(t, time.Since(start), transport.DefaultAttachTimeout+200*time.Millisecond,
-		"probe+fallback must share the 5s Attach budget, not 1s+5s")
-	require.False(t, pc.UsingH2())
+	require.Never(t, func() bool { return pc.Ready() }, time.Second, 20*time.Millisecond,
+		"blackhole h2 must not Attach on InferenceUrl")
 	require.Greater(t, accepts.Load(), int32(0), "blackhole hop must consume the h2 probe")
-	require.True(t, transport.RPCH2MissCachedForTest(inf.URL))
+	require.Zero(t, infHits.Load())
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL))
 }
 
 func TestPeerConn_H2CloseDoesNotFINSharedMux(t *testing.T) {
@@ -137,10 +135,11 @@ func TestPeerConn_H2CloseDoesNotFINSharedMux(t *testing.T) {
 	require.Zero(t, infHits.Load())
 }
 
-func TestPeerConn_H2BaselineNotH2CFallsBackNoMixedStream(t *testing.T) {
+func TestPeerConn_H2BaselineNotH2CFailsClosedNoMixedStream(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
-	inf, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, nil)
+	var infHits atomic.Int32
+	inf := startPeerRPCServerCounted(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, &infHits)
 
 	var sawH1Attach atomic.Bool
 	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -153,16 +152,18 @@ func TestPeerConn_H2BaselineNotH2CFallsBackNoMixedStream(t *testing.T) {
 
 	pc := h2PeerConn(t, inf, hostAddr, peer, plain.URL)
 	pc.Start()
-	waitPeerReady(t, pc)
-	require.False(t, pc.UsingH2())
+	require.Never(t, func() bool { return pc.Ready() }, time.Second, 20*time.Millisecond)
 	require.False(t, sawH1Attach.Load(), "http2.Transport must not complete HTTP/1.1 on the h2 origin")
+	require.Zero(t, infHits.Load(), "must not Attach on InferenceUrl")
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL))
 }
 
-func TestPeerConn_H2MissSkipsUntilTTL(t *testing.T) {
+func TestPeerConn_H2MissRetriesH2NotHTTP11(t *testing.T) {
 	httpguard.SetAllowPrivate(true)
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
-	inf, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, nil)
+	var infHits atomic.Int32
+	inf := startPeerRPCServerCounted(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, &infHits)
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -183,43 +184,28 @@ func TestPeerConn_H2MissSkipsUntilTTL(t *testing.T) {
 	}()
 	h2URL := "http://" + ln.Addr().String()
 
-	now := time.Now()
-	var cur atomic.Pointer[time.Time]
-	cur.Store(&now)
-	transport.InstallRPCH2MissCacheForTest(30*time.Minute, func() time.Time { return *cur.Load() })
-	t.Cleanup(transport.ResetRPCH2MissCacheForTest)
-
 	pc := newTestPeerConn(t, inf, hostAddr, peer, transport.PeerConnConfig{
 		DialSet:        transport.PeerRPCDialSet{H2URL: h2URL},
 		H2ProbeTimeout: 200 * time.Millisecond,
+		BackoffMin:     50 * time.Millisecond,
 	})
 	pc.Start()
-	waitPeerReady(t, pc)
-	require.False(t, pc.UsingH2())
-	require.Greater(t, accepts.Load(), int32(0))
+	require.Eventually(t, func() bool { return accepts.Load() > 0 }, time.Second, 10*time.Millisecond)
+	require.Never(t, func() bool { return pc.Ready() }, 300*time.Millisecond, 20*time.Millisecond)
 	first := accepts.Load()
+	transport.ResetRPCH2ClientPoolForTest()
 
 	pc2 := newTestPeerConn(t, inf, hostAddr, devtest.MustGenerateKey(t), transport.PeerConnConfig{
 		DialSet:        transport.PeerRPCDialSet{H2URL: h2URL},
-		H2ProbeTimeout: 2 * time.Second,
-	})
-	start := time.Now()
-	pc2.Start()
-	waitPeerReady(t, pc2)
-	require.Less(t, time.Since(start), time.Second, "cached miss must skip the h2 probe")
-	require.False(t, pc2.UsingH2())
-	require.Equal(t, first, accepts.Load(), "reconnect must not retry h2 while cached")
-
-	later := now.Add(30 * time.Minute)
-	cur.Store(&later)
-	h2 := startPeerRPCServerH2C(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
-	pc3 := newTestPeerConn(t, inf, hostAddr, devtest.MustGenerateKey(t), transport.PeerConnConfig{
-		DialSet:        transport.PeerRPCDialSet{H2URL: h2.URL},
 		H2ProbeTimeout: 200 * time.Millisecond,
+		BackoffMin:     50 * time.Millisecond,
 	})
-	pc3.Start()
-	waitPeerReady(t, pc3)
-	require.True(t, pc3.UsingH2(), "after 30 min the h2 origin must be tried again")
+	pc2.Start()
+	require.Eventually(t, func() bool { return accepts.Load() > first }, time.Second, 10*time.Millisecond,
+		"the next Attach must probe h2 again")
+	require.False(t, pc2.Ready())
+	require.Zero(t, infHits.Load())
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL))
 }
 
 func startPeerRPCServerCounted(t *testing.T, hostAddr string, authCfg rpcserver.PeerAuthConfig, hits *atomic.Int32) *httptest.Server {
@@ -306,9 +292,9 @@ func TestPeerConn_HTTPS11ALPNFallsBackNotH2Attach(t *testing.T) {
 	pool.AddCert(tls11.Certificate())
 	pc.SetH2TLSRootCAsForTest(pool)
 	pc.Start()
-	waitPeerReady(t, pc)
-	require.False(t, pc.UsingH2(), "TLS http/1.1 (no h2 ALPN) must not count as h2")
-	require.True(t, transport.RPCH2MissCachedForTest(inf.URL))
+	require.Never(t, func() bool { return pc.Ready() }, time.Second, 20*time.Millisecond,
+		"TLS http/1.1 must not Attach on InferenceUrl")
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL))
 	require.False(t, sawH2.Load(), "must not complete HTTP/2 on a 1.1-only TLS listen")
 	require.False(t, sawH1.Load(), "must not speak HTTP/1.1 on the h2 origin")
 }
@@ -333,7 +319,8 @@ func TestPeerConn_H2RefreshTransportMissCancelsWatch(t *testing.T) {
 	}), &http2.Server{}))
 	t.Cleanup(h2.Close)
 	t.Cleanup(auth.Close)
-	inf, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, nil)
+	var infHits atomic.Int32
+	inf := startPeerRPCServerCounted(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, &infHits)
 
 	httpguard.SetAllowPrivate(true)
 	transport.ResetRPCH2MissCacheForTest()
@@ -348,11 +335,13 @@ func TestPeerConn_H2RefreshTransportMissCancelsWatch(t *testing.T) {
 	waitPeerReady(t, pc)
 	require.True(t, pc.UsingH2())
 	start := time.Now()
-	require.Eventually(t, func() bool {
-		return pc.Ready() && !pc.UsingH2()
-	}, 8*time.Second, 20*time.Millisecond, "transport miss on TTL refresh must cancel Watch")
+	require.Eventually(t, func() bool { return !pc.Ready() }, 8*time.Second, 20*time.Millisecond,
+		"transport miss on TTL refresh must cancel Watch")
 	require.Less(t, time.Since(start), 90*time.Second)
-	require.True(t, transport.RPCH2MissCachedForTest(inf.URL))
+	require.Never(t, func() bool { return pc.Ready() }, 400*time.Millisecond, 20*time.Millisecond,
+		"refresh miss must not Attach on InferenceUrl")
+	require.Zero(t, infHits.Load())
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL))
 }
 
 func TestPeerConn_RefreshAttachTimeoutDoesNotPinHTTP11(t *testing.T) {
@@ -436,14 +425,15 @@ func TestPeerConn_RefreshAttachTimeoutDoesNotPinHTTP11(t *testing.T) {
 	require.False(t, transport.RPCH2MissCachedForTest(inf.URL))
 }
 
-func TestPeerConn_H2HalfOpenFallsBackWithoutWatchStale(t *testing.T) {
+func TestPeerConn_H2HalfOpenFailsClosedWithoutWatchStale(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
 	h2 := startPeerRPCServerH2C(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
 	backend, err := url.Parse(h2.URL)
 	require.NoError(t, err)
 	proxyURL, hold := startTCPHoldProxy(t, backend.Host)
-	inf, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, nil)
+	var infHits atomic.Int32
+	inf := startPeerRPCServerCounted(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, &infHits)
 
 	httpguard.SetAllowPrivate(true)
 	transport.ResetRPCH2MissCacheForTest()
@@ -462,11 +452,12 @@ func TestPeerConn_H2HalfOpenFallsBackWithoutWatchStale(t *testing.T) {
 	hold()
 	h2.Close()
 	start := time.Now()
-	require.Eventually(t, func() bool {
-		return pc.Ready() && !pc.UsingH2()
-	}, 5*time.Second, 20*time.Millisecond, "half-open mux must PING-fail, not wait WatchStale")
+	require.Eventually(t, func() bool { return !pc.Ready() }, 5*time.Second, 20*time.Millisecond,
+		"half-open mux must PING-fail, not wait WatchStale")
 	require.Less(t, time.Since(start), 5*time.Second)
-	require.True(t, transport.RPCH2MissCachedForTest(inf.URL))
+	require.Never(t, func() bool { return pc.Ready() }, 400*time.Millisecond, 20*time.Millisecond)
+	require.Zero(t, infHits.Load())
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL))
 }
 
 func startTCPHoldProxy(t *testing.T, backendHost string) (proxyURL string, hold func()) {

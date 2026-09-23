@@ -646,9 +646,9 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 			if err == nil {
 				err = io.EOF
 			}
-			// A dead HTTP/2 origin has to leave this loop so the caller
-			// can probe HTTP/1.1. Shutting down and a clean EOF stay here
-			// and reopen Watch with the same token.
+			// A dead HTTP/2 origin leaves this loop. The next Attach probes
+			// h2 again and does not use InferenceUrl. Shutting down and a
+			// clean EOF stay here and reopen Watch with the same token.
 			if !isRPCH2TransportMiss(err) && watchReopen(err) {
 				continue
 			}
@@ -664,8 +664,8 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 			if err != nil {
 				if isRPCH2TransportMiss(err) {
 					// Origin is gone (listen/RST/ALPN/half-open). End
-					// Watch; do not flip setH2(false) until the stream
-					// has returned. Outer loop probes then HTTP/1.1.
+					// Watch; do not flip setH2(false). The outer loop
+					// probes h2 again and does not Attach on InferenceUrl.
 					// A slow Attach (DeadlineExceeded) is not this:
 					// keep Watch and retry refresh.
 					stopWatch()
@@ -755,9 +755,9 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 	if p.cfg.Signer == nil {
 		return nil, time.Time{}, fmt.Errorf("peer conn: signer is required")
 	}
-	// Probe + HTTP/1.1 share one DefaultAttachTimeout. h2 is capped at
-	// h2ProbeTimeout; 1.1 gets the remainder (≈5s if the probe returns
-	// immediately, ≈4s after a 1s blackhole).
+	// One DefaultAttachTimeout. When H2URL is set the probe is capped at
+	// h2ProbeTimeout and a miss returns that error. InferenceUrl is not
+	// a second attempt.
 	overall, cancel := context.WithTimeout(p.ctx, DefaultAttachTimeout)
 	defer cancel()
 	if p.liveSession() {
@@ -801,24 +801,18 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 				return nil, time.Time{}, err
 			}
 			if isDeadDoorError(err) {
+				h2Tried = false
 				p.killDoor(door)
 				continue
 			}
 			if !isRPCH2Miss(err) {
 				return nil, time.Time{}, err
 			}
-			rememberRPCH2Miss(p.cfg.BaseURL)
-			p.origin.setH2(false)
-			logging.Warn("peer rpc h2 origin missed; using HTTP/1.1",
-				"subsystem", "transport",
-				"host", inferenceHostKey(p.cfg.BaseURL),
-				"h2_url", p.cfg.DialSet.H2URL,
-				"error", err,
-			)
-			msg, err = p.newAttachRequest()
-			if err != nil {
-				return nil, time.Time{}, err
-			}
+			// Stay on the h2 origin so a concurrent RPC cannot slide onto
+			// InferenceUrl. The next loop iteration probes again.
+			// Warn once per InferenceUrl host per miss TTL; retries are Debug.
+			noteRPCH2Miss(inferenceHostKey(p.cfg.BaseURL), p.cfg.DialSet.H2URL, err)
+			return nil, time.Time{}, err
 		}
 		tok, exp, err := p.attachOnce(overall, p.doorAuthClient(door), msg)
 		if err == nil {
@@ -874,10 +868,7 @@ func (p *PeerConn) attachOnce(ctx context.Context, client rpcpbconnect.PeerAuthS
 }
 
 func (p *PeerConn) shouldProbeH2() bool {
-	if p == nil || p.cfg.DialSet.H2URL == "" {
-		return false
-	}
-	return !skipRPCH2(p.cfg.BaseURL)
+	return p != nil && p.cfg.DialSet.H2URL != ""
 }
 
 func (p *PeerConn) useGRPC() bool {

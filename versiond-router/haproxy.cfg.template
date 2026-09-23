@@ -127,6 +127,11 @@ frontend versiond_in
     # requests and direct deployments without the public nginx proxy.
     http-request deny deny_status 413 if { req.hdr_val(content-length) gt ${MAX_BODY_BYTES} }
 
+    # Peer RPC is the proto-h2 bind only. :8080 stays JSON, healthz, and
+    # catalog. Connect on this listen would be the HTTP/1.1 fallback a
+    # current hop must not answer. /stats/rpc is not a session procedure.
+    http-request deny deny_status 404 if { dst_port 8080 } { path_sub /sessions/ } { path_sub /rpc/ }
+
     # versiond's own route grammar has versionless endpoints, and their first
     # path segment is not a version. Classifying by "field 2 is non-empty" would
     # refuse /metrics, /stats and the session observability routes.

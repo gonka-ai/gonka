@@ -224,7 +224,7 @@ func TestRPCClient_SendRoundTripGRPCOnH2(t *testing.T) {
 	require.Equal(t, "gzip", obs.requestEncoding(chat), "gRPC Chat envelope must still be gzipped")
 }
 
-func TestRPCClient_SendGRPCFallsBackToConnect(t *testing.T) {
+func TestRPCClient_SendGRPCMissFailsClosed(t *testing.T) {
 	obs := newWireObserver()
 	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	dead.Close()
@@ -234,17 +234,14 @@ func TestRPCClient_SendGRPCFallsBackToConnect(t *testing.T) {
 		H2ProbeTimeout: 200 * time.Millisecond,
 	}, false)
 	pc.Start()
-	waitPeerReady(t, pc)
-	require.False(t, pc.UsingH2())
-	require.False(t, pc.UsingGRPC())
+	require.Never(t, func() bool { return pc.Ready() }, time.Second, 20*time.Millisecond)
 
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	var stream bytes.Buffer
-	resp, err := rpc.Send(context.Background(), chatHostRequest(t, user), &stream, nil)
-	require.NoError(t, err)
-	require.NotNil(t, resp.Receipt)
-	require.Contains(t, stream.String(), "stub")
-	requireConnectContentType(t, obs.requestContentType(rpcpbconnect.PeerAuthServiceAttachProcedure))
-	requireConnectContentType(t, obs.requestContentType(rpcpbconnect.SessionServiceChatProcedure))
+	_, err := rpc.Send(ctx, chatHostRequest(t, user), &stream, nil)
+	require.Error(t, err)
+	require.Empty(t, obs.requestContentType(rpcpbconnect.PeerAuthServiceAttachProcedure))
 }
 
 func TestRPCClient_SendGzipsRequestAndKeepsFramesSingleGzip(t *testing.T) {

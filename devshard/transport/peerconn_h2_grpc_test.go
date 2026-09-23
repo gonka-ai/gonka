@@ -51,13 +51,12 @@ func TestRPCClient_GetSignaturesGRPCOnH2(t *testing.T) {
 	requireGRPCContentType(t, obs.requestContentType(rpcpbconnect.SessionServiceGetSignaturesProcedure))
 }
 
-func TestRPCClient_GetSignaturesGRPCFallbackIsConnect(t *testing.T) {
+func TestRPCClient_GetSignaturesGRPCMissFailsClosed(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
-	want := map[uint32][]byte{1: []byte("sig-connect")}
 	obs := newWireObserver()
 	inf, _ := startPeerRPCServerObserved(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond},
-		sigLookup{sigs: want}, obs)
+		sigLookup{sigs: map[uint32][]byte{1: []byte("sig-connect")}}, obs)
 	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	dead.Close()
 
@@ -72,16 +71,14 @@ func TestRPCClient_GetSignaturesGRPCFallbackIsConnect(t *testing.T) {
 		H2ProbeTimeout: 200 * time.Millisecond,
 	})
 	pc.Start()
-	waitPeerReady(t, pc)
-	require.False(t, pc.UsingH2())
-	require.False(t, pc.UsingGRPC(), "HTTP/1.1 fallback must stay Connect")
+	require.Never(t, func() bool { return pc.Ready() }, time.Second, 20*time.Millisecond)
 
 	rpc := transport.NewRPCClient(transport.NewHTTPClient(inf.URL, "escrow-1", peer), pc, transport.ParseRPCEndpoints(transport.EndpointSignatures))
-	got, err := rpc.GetSignatures(context.Background(), 7)
-	require.NoError(t, err)
-	require.Equal(t, want, got)
-	requireConnectContentType(t, obs.requestContentType(rpcpbconnect.PeerAuthServiceAttachProcedure))
-	requireConnectContentType(t, obs.requestContentType(rpcpbconnect.SessionServiceGetSignaturesProcedure))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := rpc.GetSignatures(ctx, 7)
+	require.Error(t, err)
+	require.Empty(t, obs.requestContentType(rpcpbconnect.PeerAuthServiceAttachProcedure))
 }
 
 func TestPeerConn_GRPCWithoutH2URLStaysConnect(t *testing.T) {

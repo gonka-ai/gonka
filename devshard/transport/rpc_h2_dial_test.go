@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -208,4 +209,40 @@ func TestIsRPCH2TransportMissOmitsDeadline(t *testing.T) {
 	require.True(t, isRPCH2TransportMiss(http2.StreamError{StreamID: 1, Code: http2.ErrCodeProtocol}))
 	require.True(t, isRPCH2TransportMiss(http2.ConnectionError(http2.ErrCodeProtocol)))
 	require.False(t, isRPCH2TransportMiss(connect.NewError(connect.CodeUnavailable, errors.New("refresh down"))))
+}
+
+func TestH2MissLogOncePerHostPerTTL(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	log := newH2MissLog(time.Minute, func() time.Time { return now })
+
+	require.True(t, log.first("host-a"))
+	require.False(t, log.first("host-a"), "same host inside the TTL is not another Warn")
+	require.True(t, log.first("host-b"), "a different InferenceUrl host warns on its own")
+
+	now = now.Add(time.Minute)
+	require.True(t, log.first("host-a"), "the next TTL window warns again")
+
+	var ready sync.WaitGroup
+	var done sync.WaitGroup
+	ready.Add(1)
+	firsts := 0
+	var mu sync.Mutex
+	for i := 0; i < 32; i++ {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			ready.Wait()
+			if log.first("host-c") {
+				mu.Lock()
+				firsts++
+				mu.Unlock()
+			}
+		}()
+	}
+	ready.Done()
+	done.Wait()
+	require.Equal(t, 1, firsts, "concurrent misses of one host warn once")
+
+	require.True(t, log.first(""), "an empty key is not cached")
+	require.True(t, log.first(""))
 }

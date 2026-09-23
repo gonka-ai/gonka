@@ -19,5 +19,8 @@ services:
     depends_on:
       - versiond-router
     networks:
-      - testenv
+      testenv:
+        # High address: gencompose pins .2–.11. A dynamic address collides
+        # with devshardctl (.6) and compose up fails with "address already in use".
+        ipv4_address: 172.30.0.70
     restart: unless-stopped

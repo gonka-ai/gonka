@@ -76,7 +76,7 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-baseline-smoke citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
-.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-peerrpc-chat citest-peerrpc-ha-session citest-mixed-fleet test-gateway-smoke
+.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-peerrpc-chat citest-peerrpc-ha-session citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet test-gateway-smoke
 .PHONY: build-baseline-infra
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
@@ -181,6 +181,32 @@ citest-peerrpc-ha-session: citest-images ## HA session spread: height seed + cha
 	DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestPeerRPCHASessionSpread$$' -count=1 -v -timeout 45m
 
+# Current versiond and versiond-router only. A parent B1 pin has no proto h2
+# listen, so the same-make citest-images ifeq must not see it.
+citest-peerrpc-overlay: ## §8.3 proxy overlay hop completeness (HTTP/2).
+	$(MAKE) build-devshardd
+	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
+	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
+	DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
+	DEVSHARD_RPC_H2_PORT=8443 DEVSHARD_RPC_H2_HOST=proxy DEVSHARD_RPC_H2_UPGRADE=true \
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestPeerRPCOverlayHop$$' -count=1 -v -timeout 30m
+
+# Current images only. Same pin drop as the overlay hop.
+citest-peerrpc-parity: ## §8.4 JSON / Connect HTTP/2 / native gRPC parity.
+	$(MAKE) build-devshardd
+	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
+	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
+	DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
+	DEVSHARD_RPC_H2_PORT=8443 DEVSHARD_RPC_H2_HOST=proxy DEVSHARD_RPC_H2_UPGRADE=true \
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestPeerRPCParity$$' -count=1 -v -timeout 45m
+
+# Current images for the overlay half. The no-proxy half pins 0.2.15-v5 itself.
+citest-peerrpc-limits: ## §9 R1–R8 child budget and proxy zones.
+	$(MAKE) build-devshardd
+	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
+	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestPeerRPCLimits' -count=1 -v -timeout 45m
+
 # versiond-0 is pinned inside the test. versiond-1 and the router stay on this
 # tree, so a parent B1 pin (TESTENV_VERSIOND_IMAGE / _ROUTER_IMAGE) must not
 # reach citest-images or the test process.
@@ -188,7 +214,8 @@ citest-mixed-fleet: ## §8.2 mixed fleet, RPC on, HTTP/1.1, no proxy.
 	$(MAKE) build-devshardd
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
-		-u DEVSHARD_RPC_H2_PORT -u DEVSHARD_RPC_H2_UPGRADE \
+		-u DEVSHARD_RPC_H2_PORT -u DEVSHARD_RPC_H2_HOST -u DEVSHARD_RPC_H2_UPGRADE \
+		-u TESTENV_PROXY_OVERLAY \
 		DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 		TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestMixedFleetNoProxy$$' -count=1 -v -timeout 30m
 

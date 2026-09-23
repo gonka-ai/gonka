@@ -29,6 +29,19 @@ func requireNoProxyRPC(t *testing.T) {
 			t.Fatalf("DEVSHARD_RPC_ENDPOINTS=%q missing %q", got, name)
 		}
 	}
+	if harness.ProxyOverlayFromEnv() {
+		if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_PORT")) == "" {
+			t.Fatal("§9.1 sets DEVSHARD_RPC_H2_PORT")
+		}
+		if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_HOST")) != "proxy" {
+			t.Fatalf("§9.1 DEVSHARD_RPC_H2_HOST=%q, want proxy", os.Getenv("DEVSHARD_RPC_H2_HOST"))
+		}
+		upgrade := strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_UPGRADE"))
+		if !strings.EqualFold(upgrade, "true") && upgrade != "1" {
+			t.Fatal("§9.1 sets DEVSHARD_RPC_H2_UPGRADE=true")
+		}
+		return
+	}
 	if p := strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_PORT")); p != "" {
 		t.Fatalf("§8.2 is HTTP/1.1 on :8080; DEVSHARD_RPC_H2_PORT=%q", p)
 	}
@@ -48,9 +61,14 @@ func rpcEndpointListed(list, name string) bool {
 
 func requireNoProxyService(t *testing.T, stack *harness.Stack) {
 	t.Helper()
-	require.False(t, stack.ProxyOverlay)
 	up, err := stack.ServiceRunning("proxy")
 	require.NoError(t, err)
+	if harness.ProxyOverlayFromEnv() {
+		require.True(t, stack.ProxyOverlay, "§9.1 boots the proxy overlay")
+		require.True(t, up, "§9.1 proxy must be running")
+		return
+	}
+	require.False(t, stack.ProxyOverlay)
 	require.False(t, up, "§8.2 must not start proxy")
 }
 

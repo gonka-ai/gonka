@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"devshard/logging"
+
 	"golang.org/x/net/http2"
 )
 
@@ -23,15 +25,22 @@ const (
 	// hostname, never this value.
 	envRPCH2Host    = "DEVSHARD_RPC_H2_HOST"
 	envRPCH2Upgrade = "DEVSHARD_RPC_H2_UPGRADE"
-	envRPCH2GRPC    = "DEVSHARD_RPC_GRPC"
+	// envRPCH2FrontHost lists shared front doors (comma-separated hostnames,
+	// testenv: versiond-router). The overlay dial host replaces only those.
+	// Any other InferenceUrl is a direct participant and stays on h2c at its
+	// own origin. Unset applies the overlay host to every base.
+	envRPCH2FrontHost = "DEVSHARD_RPC_H2_FRONT_HOST"
+	envRPCH2GRPC      = "DEVSHARD_RPC_GRPC"
 
 	// DefaultRPCH2Port is the in-network overlay / join RPC HTTP/2 listen.
 	// JSON and catalog stay on InferenceUrl (testenv :8080). Unset env still
 	// means no h2 dial; this is only the number operators set when opting in.
 	DefaultRPCH2Port = 8443
 
-	// DefaultRPCH2MissTTL is how long a host stays on HTTP/1.1 after an h2
-	// origin miss. Reconnects skip h2 until this elapses, then probe again.
+	// DefaultRPCH2MissTTL is retained for the miss-cache unit tests.
+	// Attach does not record a miss: a current hop fails closed and the
+	// next attempt probes h2 again. HTTP/1.1 is only the dial when H2URL
+	// is empty (upgrade off or port unset), which is the 0.2.15-v5 pin.
 	DefaultRPCH2MissTTL = 30 * time.Minute
 
 	// DefaultRPCH2MissTTLJitter is ± this fraction of DefaultRPCH2MissTTL so
@@ -39,8 +48,8 @@ const (
 	DefaultRPCH2MissTTLJitter = 0.10
 
 	// DefaultRPCH2ProbeTimeout bounds the h2 Attach probe inside
-	// DefaultAttachTimeout. A blackhole cannot consume the whole handshake;
-	// HTTP/1.1 gets the remainder.
+	// DefaultAttachTimeout. A blackhole cannot consume the whole handshake.
+	// A miss returns; it does not spend the remainder on InferenceUrl.
 	DefaultRPCH2ProbeTimeout = time.Second
 
 	// DefaultRPCH2IdleConnTimeout matches HTTP/1.1 IdleConnTimeout so a
@@ -135,6 +144,45 @@ func PeerRPCDialSetFrom(inferenceURL, h2Host, h2Port, upgrade string) (PeerRPCDi
 	}
 	out.H2URL = h2
 	return out, nil
+}
+
+// keepDirectH2Origin is true when DEVSHARD_RPC_H2_FRONT_HOST is set and base
+// names some other host. Catch-up and gossip to a solo must not be rewritten
+// onto the overlay proxy: the router hashes by escrow and the solo never
+// sees the diff.
+func keepDirectH2Origin(base string) bool {
+	raw := strings.TrimSpace(os.Getenv(envRPCH2FrontHost))
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(strings.TrimSpace(base))
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	host := u.Hostname()
+	for _, part := range strings.Split(raw, ",") {
+		if strings.EqualFold(strings.TrimSpace(part), host) {
+			return false
+		}
+	}
+	return true
+}
+
+// directH2Origin is the base URL's scheme and host, with no path. versiond
+// accepts h2c on that public listen.
+func directH2Origin(base string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(base))
+	if err != nil {
+		return "", fmt.Errorf("inference URL: %w", err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("inference URL %q has no host", base)
+	}
+	u.Path = ""
+	u.RawPath = ""
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String(), nil
 }
 
 func originWithHostPort(raw, host string, port int) (string, error) {
@@ -255,10 +303,6 @@ func (c *h2MissCache) reset() {
 
 var rpch2Miss = newH2MissCache(DefaultRPCH2MissTTL, nil)
 
-func rememberRPCH2Miss(inferenceURL string) {
-	rpch2Miss.remember(inferenceHostKey(inferenceURL))
-}
-
 func skipRPCH2(inferenceURL string) bool {
 	return rpch2Miss.skip(inferenceHostKey(inferenceURL))
 }
@@ -267,6 +311,7 @@ func skipRPCH2(inferenceURL string) bool {
 // the 30-minute TTL and wall clock.
 func ResetRPCH2MissCacheForTest() {
 	rpch2Miss = newH2MissCache(DefaultRPCH2MissTTL, nil)
+	rpch2MissLog = newH2MissLog(DefaultRPCH2MissTTL, nil)
 }
 
 // InstallRPCH2MissCacheForTest replaces the process cache clock and TTL.
@@ -275,11 +320,65 @@ func InstallRPCH2MissCacheForTest(ttl time.Duration, now func() time.Time) {
 	c := newH2MissCache(ttl, now)
 	c.jitter = func(d time.Duration) time.Duration { return d }
 	rpch2Miss = c
+	rpch2MissLog = newH2MissLog(ttl, now)
 }
 
 // RPCH2MissCachedForTest is whether this InferenceUrl host is skipping h2.
 func RPCH2MissCachedForTest(inferenceURL string) bool {
 	return skipRPCH2(inferenceURL)
+}
+
+// h2MissLog is one Warn per InferenceUrl host per miss TTL. Later misses in
+// that window are Debug. The attach loop retries a dead hop, and several
+// PeerConns can miss the same host together; only the first of those is Warn.
+type h2MissLog struct {
+	mu    sync.Mutex
+	until map[string]time.Time
+	now   func() time.Time
+	ttl   time.Duration
+}
+
+func newH2MissLog(ttl time.Duration, now func() time.Time) *h2MissLog {
+	if ttl <= 0 {
+		ttl = DefaultRPCH2MissTTL
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &h2MissLog{until: make(map[string]time.Time), now: now, ttl: ttl}
+}
+
+var rpch2MissLog = newH2MissLog(DefaultRPCH2MissTTL, nil)
+
+// first reports whether this key should Warn. An empty key always Warns.
+// The check and the TTL stamp are one critical section, so concurrent
+// misses of the same host produce one Warn.
+func (l *h2MissLog) first(key string) bool {
+	if l == nil || key == "" {
+		return true
+	}
+	now := l.now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if until, ok := l.until[key]; ok && now.Before(until) {
+		return false
+	}
+	l.until[key] = now.Add(l.ttl)
+	return true
+}
+
+func noteRPCH2Miss(host, h2URL string, err error) {
+	kv := []any{
+		"subsystem", "transport",
+		"host", host,
+		"h2_url", h2URL,
+		"error", err,
+	}
+	if rpch2MissLog.first(host) {
+		logging.Warn("peer rpc h2 origin missed; failing closed", kv...)
+		return
+	}
+	logging.Debug("peer rpc h2 origin missed; failing closed", kv...)
 }
 
 // isRPCH2Miss is a failed h2 origin (closed, not h2c, timeout, refuse,

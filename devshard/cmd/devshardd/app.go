@@ -491,7 +491,8 @@ func (a *devshardApp) Run(ctx context.Context) error {
 		chainEventsErrCh <- a.chainEvents.Start(appCtx)
 	}()
 
-	addr := fmt.Sprintf(":%d", a.port)
+	// Loopback only. versiond dials 127.0.0.1; the port is not a published hop.
+	addr := fmt.Sprintf("127.0.0.1:%d", a.port)
 	type serverError struct {
 		name string
 		err  error

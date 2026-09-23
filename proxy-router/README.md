@@ -10,9 +10,11 @@ It has three data-plane responsibilities:
 3. expose only DAPI's read-only `GET /versions` catalog on the isolated inner
    router network.
 
-The nginx workers still own TLS, HTTP/2, CORS, rate limits, path rewrites, and
-the on-chain route table. This keeps one policy implementation while allowing
-the service-pool distributors to scale and restart independently.
+The nginx workers still own TLS and HTTP/2 on `:80` and `:443`, plus CORS,
+rate limits, path rewrites, and the on-chain route table. Peer RPC is a
+separate HAProxy listen (`DEVSHARD_RPC_H2_PORT`, default 9443) and does not
+enter those workers. This keeps one policy implementation for JSON while
+allowing the service-pool distributors to scale and restart independently.
 
 ## Request path
 
@@ -22,6 +24,11 @@ client
   -> proxy-policy2 + proxy-policy (fixed rolling slots)
        -> ordinary and edge-api routes -> existing services
        -> /devshard/* -> proxy-router :18081 -> versiond-router fleet
+
+peer RPC (skips nginx)
+  -> proxy-router :${DEVSHARD_RPC_H2_PORT}  (9443; TLS+ALPN h2 when NGINX_MODE is https/both)
+       HA:     versiond-router-fleet:8081 proto h2
+       non-HA: versiond:8080 proto h2
 ```
 
 The public-to-policy hop is TCP, so encrypted HTTP/2 remains end-to-end between

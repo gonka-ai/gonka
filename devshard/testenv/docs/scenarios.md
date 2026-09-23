@@ -178,6 +178,62 @@ Each cell is one line in
 the next run. A `FAIL` line is retried. `citest-baseline-smoke` and `citest-mixed-fleet` are separate
 targets; they are not inside the grid script.
 
+### Proxy overlay hop (§8.3)
+
+Peer RPC on this tree’s versiond and router, through `proxy:8443`. `:8080` stays
+JSON and healthz. A closed h2 port does not fall back to Connect.
+
+```bash
+cd devshard/testenv
+./scripts/run-peerrpc-overlay-citest.sh
+```
+
+`TestPeerRPCOverlayHop` (`make citest-peerrpc-overlay`).
+
+### Peer RPC parity (§8.4)
+
+Same chat and the same `GetSignatures` / `GetDiffs` read on one overlay stack.
+The gateway is the chat client: JSON on `:8080`, Connect over HTTP/2, then native gRPC.
+Unary reads use the escrow user key against the published router and `proxy` ports.
+
+```bash
+cd devshard/testenv
+./scripts/run-peerrpc-parity-citest.sh
+```
+
+`TestPeerRPCParity` (`make citest-peerrpc-parity`).
+
+### Peer RPC rate limits (§9)
+
+R1–R2 on the 0.2.15-v5 pin (Connect over HTTP/1.1, no proxy). R3–R7 on the
+current-image overlay, with the child budget and proxy zones lowered in that
+stack only. R8 checks both stacks at the default ceilings.
+
+```bash
+cd devshard/testenv
+./scripts/run-peerrpc-limits-citest.sh
+```
+
+`TestPeerRPCLimitsNoProxy` and `TestPeerRPCLimitsOverlay` (`make citest-peerrpc-limits`).
+
+### HTTP/2 suite rerun (§9.1)
+
+The §8.2 suite list on this tree’s versiond and versiond-router, with
+`TESTENV_PROXY_OVERLAY=1` and Connect over HTTP/2 on `proxy:8443`. Rate limits
+stay at the defaults. `DEVSHARD_RPC_H2_FRONT_HOST=versiond-router` keeps a
+direct participant (a solo `http://versiond-N:8080`) on h2c to that host.
+The 0.2.15-v5 pin and native gRPC are not in this grid.
+
+```bash
+cd devshard/testenv
+./scripts/run-h2-overlay-citest-grid.sh
+```
+
+Each cell is one line in
+[`grpc-transport-phase6-9.1-results.txt`](../../docs/grpc-transport-phase6-9.1-results.txt)
+(`H2 citest-stack PASS`). A `PASS` line is skipped on the next run. A `FAIL`
+line is retried.
+
 ---
 
 ## Stack smoke

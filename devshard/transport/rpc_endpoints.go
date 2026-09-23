@@ -222,6 +222,17 @@ func peerConnConfigFromClient(httpClient *HTTPClient, hostAddress string, extra 
 			"error", err,
 		)
 		dial = PeerRPCDialSet{InferenceURL: base}
+	} else if dial.H2URL != "" && keepDirectH2Origin(base) {
+		direct, derr := directH2Origin(base)
+		if derr != nil {
+			logging.Warn("direct peer h2 origin ignored; using overlay dial",
+				"subsystem", "transport",
+				"base", base,
+				"error", derr,
+			)
+		} else {
+			dial.H2URL = direct
+		}
 	}
 	grpc := RPCH2GRPCEnabled(os.Getenv(envRPCH2GRPC)) && dial.H2URL != ""
 	return PeerConnConfig{

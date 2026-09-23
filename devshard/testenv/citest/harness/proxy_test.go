@@ -10,6 +10,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestProxyOverlayFromEnv(t *testing.T) {
+	t.Setenv("TESTENV_PROXY_OVERLAY", "")
+	require.False(t, ProxyOverlayFromEnv())
+	t.Setenv("TESTENV_PROXY_OVERLAY", "1")
+	require.True(t, ProxyOverlayFromEnv())
+	t.Setenv("TESTENV_PROXY_OVERLAY", "true")
+	require.True(t, ProxyOverlayFromEnv())
+	t.Setenv("TESTENV_PROXY_OVERLAY", "off")
+	require.False(t, ProxyOverlayFromEnv())
+}
+
 func TestRewriteProxyComposeRandomizesHostPort(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("..", "..", proxyComposeFileName))
 	require.NoError(t, err)
@@ -18,6 +29,7 @@ func TestRewriteProxyComposeRandomizesHostPort(t *testing.T) {
 	require.Contains(t, text, `"127.0.0.1:8443:8443"`)
 	require.Contains(t, text, "./proxy/haproxy-rpc.cfg")
 	require.Contains(t, text, "versiond-router")
+	require.Contains(t, text, "ipv4_address: 172.30.0.70")
 	require.NotContains(t, text, "8080:8080")
 
 	got := rewriteProxyCompose(text)
@@ -57,6 +69,8 @@ func TestVersiondRouterHasNoPerIPZones(t *testing.T) {
 	require.Contains(t, string(router), "Per-IP zones stay on the published hop (proxy), not here.")
 	require.Contains(t, string(router), "tune.h2.max-concurrent-streams 4096")
 	require.Contains(t, string(router), "bind ${FRONT_BIND_ADDRESS}:${H2_PORT} proto h2")
+	require.Contains(t, string(router), "dst_port 8080")
+	require.Contains(t, string(router), "path_sub /rpc/")
 }
 
 func TestComposeFileArgsDefaultOmitsProxy(t *testing.T) {

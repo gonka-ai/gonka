@@ -16,8 +16,31 @@ import (
 
 const proxyComposeFileName = "docker-compose.proxy.yml"
 
+// ProxyOverlayFromEnv is §9.1. Default citest leaves it unset and stays on
+// versiond-router:8080. The HTTP/2 rerun sets TESTENV_PROXY_OVERLAY=1.
+func ProxyOverlayFromEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TESTENV_PROXY_OVERLAY"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+// ensureProxyOverlay attaches docker-compose.proxy.yml when §9.1 requested it.
+// BootProxyOverlayStack already prepared the file; do not copy it twice.
+func (s *Stack) ensureProxyOverlay(t *testing.T) {
+	t.Helper()
+	if s == nil || s.ProxyOverlay || !ProxyOverlayFromEnv() {
+		return
+	}
+	s.PrepareProxyOverlay(t)
+	pinProxyOverlayIP(t, s, s.LoadConfig(t))
+}
+
 // PrepareProxyOverlay copies the RPC/h2 overlay into the stack workdir.
-// Default citest (RunGencompose / Up) must not call this.
+// Default citest (RunGencompose / Up) must not call this unless
+// TESTENV_PROXY_OVERLAY is set.
 func (s *Stack) PrepareProxyOverlay(t *testing.T) {
 	t.Helper()
 	s.ProxyOverlay = true
@@ -37,6 +60,22 @@ func (s *Stack) PrepareProxyOverlay(t *testing.T) {
 func rewriteProxyCompose(src string) string {
 	portRe := regexp.MustCompile(`(?m)^(\s*-\s*")127\.0\.0\.1:[0-9]+:([0-9]+)(".*)$`)
 	return portRe.ReplaceAllString(src, `${1}127.0.0.1::${2}${3}`)
+}
+
+// pinProxyOverlayIP moves the overlay's static address onto this stack's
+// subnet. 172.30.0.70 is the default; a non-default base_ip must follow.
+func pinProxyOverlayIP(t *testing.T, s *Stack, cfg *config.File) {
+	t.Helper()
+	base := "172.30.0"
+	if cfg != nil && cfg.Network.BaseIP != "" {
+		base = cfg.Network.BaseIP
+	}
+	path := filepath.Join(s.WorkDir, proxyComposeFileName)
+	text, err := os.ReadFile(path)
+	require.NoError(t, err)
+	next := strings.ReplaceAll(string(text), "172.30.0.70", base+".70")
+	require.Contains(t, next, "ipv4_address: "+base+".70")
+	require.NoError(t, os.WriteFile(path, []byte(next), 0o644))
 }
 
 // rpcProxyTestLimits are stick-table ceilings for a one-off HAProxy
@@ -86,6 +125,50 @@ func rewriteRPCProxyForTest(src, backend string, lim rpcProxyTestLimits) string 
 		"server router versiond-router:8081 proto h2 resolvers docker resolve-prefer ipv4 init-addr last,libc,none",
 		"server router "+backend, 1)
 	return out
+}
+
+// LowerProxyRPCRates rewrites the overlay HAProxy file in a booted stack.
+// Production ceilings stay in the source tree. Recreate proxy afterwards.
+// Zero values fall back to a one-off flood (conn 3, attach 2, diffs 3, chat 50).
+func LowerProxyRPCRates(t *testing.T, s *Stack, connRate, attachRate, diffsRate, chatRate int) {
+	lim := rpcProxyTestLimits{ConnRate: connRate, AttachRate: attachRate, DiffsRate: diffsRate, ChatRate: chatRate}
+	t.Helper()
+	if lim.ConnRate <= 0 {
+		lim.ConnRate = 3
+	}
+	if lim.AttachRate <= 0 {
+		lim.AttachRate = 2
+	}
+	if lim.DiffsRate <= 0 {
+		lim.DiffsRate = 3
+	}
+	if lim.ChatRate <= 0 {
+		lim.ChatRate = 50
+	}
+	path := filepath.Join(s.WorkDir, "proxy", "haproxy-rpc.cfg")
+	text, err := os.ReadFile(path)
+	require.NoError(t, err)
+	out := string(text)
+	out = replaceProxyRate(out, `tcp-request connection reject if \{ sc_conn_rate\(0\) gt \d+ \}`,
+		fmt.Sprintf("tcp-request connection reject if { sc_conn_rate(0) gt %d }", lim.ConnRate))
+	out = replaceProxyRate(out, `http-request deny deny_status 429 if is_attach \{ sc_http_req_rate\(1\) gt \d+ \}`,
+		fmt.Sprintf("http-request deny deny_status 429 if is_attach { sc_http_req_rate(1) gt %d }", lim.AttachRate))
+	out = replaceProxyRate(out, `http-request deny deny_status 429 if is_chat \{ sc_http_req_rate\(1\) gt \d+ \}`,
+		fmt.Sprintf("http-request deny deny_status 429 if is_chat { sc_http_req_rate(1) gt %d }", lim.ChatRate))
+	out = replaceProxyRate(out, `http-request deny deny_status 429 if is_diffs \{ sc_http_req_rate\(1\) gt \d+ \}`,
+		fmt.Sprintf("http-request deny deny_status 429 if is_diffs { sc_http_req_rate(1) gt %d }", lim.DiffsRate))
+	require.Contains(t, out, fmt.Sprintf("sc_conn_rate(0) gt %d", lim.ConnRate))
+	require.Contains(t, out, fmt.Sprintf("is_diffs { sc_http_req_rate(1) gt %d }", lim.DiffsRate))
+	require.Contains(t, out, "proto h2 resolvers docker")
+	require.NoError(t, os.WriteFile(path, []byte(out), 0o644))
+}
+
+func replaceProxyRate(src, pattern, repl string) string {
+	re := regexp.MustCompile(pattern)
+	if !re.MatchString(src) {
+		return src
+	}
+	return re.ReplaceAllString(src, repl)
 }
 
 func proxyOverlayPath(s *Stack) string {

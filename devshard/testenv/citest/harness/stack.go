@@ -205,6 +205,7 @@ func (s *Stack) UpWithObservability(t *testing.T, cfg *config.File) {
 // router catalog admission, then starts the gateway.
 func (s *Stack) upAfterCatalog(t *testing.T, build bool) {
 	t.Helper()
+	s.ensureProxyOverlay(t)
 	infra := withoutComposeService(s.composeServiceNames(t), gatewayComposeService)
 	require.NotEmpty(t, infra, "compose has no services besides %s", gatewayComposeService)
 	s.composeUp(t, build, infra)

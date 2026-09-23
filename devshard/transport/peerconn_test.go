@@ -428,6 +428,23 @@ func TestPeerConnConfigFromClient_H2Env(t *testing.T) {
 	require.Equal(t, "http://proxy:8443", cfg.DialSet.H2URL)
 }
 
+func TestPeerConnConfigFromClient_FrontHostKeepsDirectOrigin(t *testing.T) {
+	t.Setenv(envRPCH2Upgrade, "true")
+	t.Setenv(envRPCH2Port, "8443")
+	t.Setenv(envRPCH2Host, "proxy")
+	t.Setenv(envRPCH2FrontHost, "versiond-router")
+	signer := devtest.MustGenerateKey(t)
+
+	router := NewHTTPClient("http://versiond-router:8080/devshard/v2", "escrow-1", signer)
+	routerCfg := peerConnConfigFromClient(router, "gonka1host", nil)
+	require.Equal(t, "http://proxy:8443", routerCfg.DialSet.H2URL)
+
+	solo := NewHTTPClient("http://versiond-2:8080", "escrow-1", signer)
+	soloCfg := peerConnConfigFromClient(solo, "gonka1solo", nil)
+	require.Equal(t, "http://versiond-2:8080", soloCfg.DialSet.H2URL)
+	require.Equal(t, "http://versiond-2:8080", soloCfg.DialSet.InferenceURL)
+}
+
 func TestPeerConnConfigFromClient_UnsetPortNoH2(t *testing.T) {
 	t.Setenv(envRPCH2Upgrade, "1")
 	t.Setenv(envRPCH2Port, "")

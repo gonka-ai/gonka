@@ -12,6 +12,16 @@ test-render: test-route-status
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
 	fail() { echo "test-render: $$1" >&2; exit 1; }; \
+	if ! command -v getent >/dev/null 2>&1; then \
+		mkdir -p "$$tmpdir/bin"; \
+		printf '%s\n' '#!/bin/sh' \
+			'if [ "$$1" = ahostsv4 ] && [ "$$2" = localhost ]; then echo "127.0.0.1 STREAM localhost"; exit 0; fi' \
+			'echo "getent stub: $$*" >&2; exit 2' > "$$tmpdir/bin/getent"; \
+		printf '%s\n' '#!/bin/sh' 'printf "%s\n" "1: lo inet 127.0.0.1/8"' > "$$tmpdir/bin/ip"; \
+		chmod +x "$$tmpdir/bin/getent" "$$tmpdir/bin/ip"; \
+		PATH="$$tmpdir/bin:$$PATH"; \
+		export PATH; \
+	fi; \
 	HAPROXY_BIN=true \
 	PROXY_ROUTER_RENDER_ONLY=1 \
 	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
@@ -86,12 +96,21 @@ test-render: test-route-status
 		|| fail "router selection is not sticky by the canonical escrow key"; \
 	grep -q '^ *hash-type consistent$$' "$$tmpdir/proxy.cfg" \
 		|| fail "router pools lost consistent hashing"; \
-	grep '^ *http-request set-var(txn.hashkey)' "$$tmpdir/proxy.cfg" \
-		> "$$tmpdir/outer-hash.rules"; \
+	hash_rules() { \
+		awk -v front="$$1" ' \
+			$$0 ~ "^frontend " front "$$" { inside = 1; next } \
+			inside && $$0 ~ "^frontend |^backend " { exit } \
+			inside && $$0 ~ "^ *http-request set-var\\(txn.hashkey\\)" { print } \
+		' "$$2"; \
+	}; \
+	hash_rules versiond_router_in "$$tmpdir/proxy.cfg" > "$$tmpdir/outer-hash.rules"; \
+	hash_rules rpc_h2 "$$tmpdir/proxy.cfg" > "$$tmpdir/rpc-hash.rules"; \
 	grep '^ *http-request set-var(txn.hashkey)' ../versiond-router/haproxy.cfg.template \
 		> "$$tmpdir/inner-hash.rules"; \
 	cmp -s "$$tmpdir/outer-hash.rules" "$$tmpdir/inner-hash.rules" \
 		|| { diff -u "$$tmpdir/inner-hash.rules" "$$tmpdir/outer-hash.rules" >&2 || true; fail "outer and inner escrow placement rules diverged"; }; \
+	cmp -s "$$tmpdir/rpc-hash.rules" "$$tmpdir/inner-hash.rules" \
+		|| { diff -u "$$tmpdir/inner-hash.rules" "$$tmpdir/rpc-hash.rules" >&2 || true; fail "peer RPC hop does not reuse the escrow placement rules"; }; \
 	grep -q '^ *nameserver dns 10.96.0.10:53$$' "$$tmpdir/proxy.cfg" \
 		|| fail "the configured DNS resolver was not rendered"; \
 	grep -q '^frontend routing_catalog$$' "$$tmpdir/proxy.cfg" \
@@ -121,9 +140,31 @@ test-render: test-route-status
 	fi; \
 	grep -q '^ *bind 127.0.0.1:8404$$' "$$tmpdir/proxy.cfg" \
 		|| fail "admin listener is not loopback-only"; \
-	if grep -q 'set-header X-Real-IP' "$$tmpdir/proxy.cfg"; then \
+	if awk ' \
+		$$0 ~ "^frontend versiond_router_in$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /set-header X-Real-IP/ { found = 1 } \
+		END { exit !found } \
+	' "$$tmpdir/proxy.cfg"; then \
 		fail "parent distributor overwrites policy-derived client IP"; \
 	fi; \
+	grep -q '^frontend rpc_h2$$' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC frontend was not rendered"; \
+	grep -q '^ *bind :9443 proto h2$$' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC listen is not cleartext HTTP/2 on DEVSHARD_RPC_H2_PORT"; \
+	grep -q '^ *default_backend rpc_h2_upstream$$' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC listen is forwarded to proxy-policy"; \
+	grep -q '^ *server versiond versiond:8080 proto h2 ' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA peer RPC does not dial versiond:8080 proto h2"; \
+	grep -q 'tcp-request connection reject if { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC listen has no conn_rate on src"; \
+	awk ' \
+		$$0 ~ "^frontend rpc_h2$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /set-header X-Real-IP %\[src\]/ { found = 1 } \
+		END { exit !found } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC listen does not stamp X-Real-IP from src"; \
 	if grep -q 'X-Versiond-Router-Addr' "$$tmpdir/proxy.cfg"; then \
 		fail "public responses expose an internal upstream address"; \
 	fi; \
@@ -134,6 +175,51 @@ test-render: test-route-status
 		-v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/proxy.cfg" >/dev/null \
 		|| fail "rendered proxy config is invalid"; \
+	HAPROXY_BIN=true \
+	PROXY_ROUTER_RENDER_ONLY=1 \
+	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+	PROXY_ROUTER_OUT="$$tmpdir/ha.cfg" \
+	PROXY_ROUTER_VERSION_MAP="$$tmpdir/ha.map" \
+	VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
+	VERSIOND_ROUTER_FLEET_CAPACITY=16 \
+	./entrypoint.sh; \
+	grep -q 'server-template router 16 versiond-router-fleet:8081 proto h2 ' "$$tmpdir/ha.cfg" \
+		|| fail "HA peer RPC does not dial versiond-router proto h2"; \
+	if grep -q 'server versiond versiond:8080 proto h2' "$$tmpdir/ha.cfg"; then \
+		fail "HA peer RPC still dials the non-HA versiond"; \
+	fi; \
+	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
+		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+		PROXY_ROUTER_OUT="$$tmpdir/https-missing.cfg" \
+		PROXY_ROUTER_VERSION_MAP="$$tmpdir/https-missing.map" \
+		NGINX_MODE=https \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "HTTPS peer RPC listen started without SSL_CERT_SOURCE"; \
+	fi; \
+	mkdir -p "$$tmpdir/ssl"; \
+	openssl req -x509 -newkey rsa:2048 -keyout "$$tmpdir/ssl/private.key" \
+		-out "$$tmpdir/ssl/cert.pem" -days 1 -nodes -subj '/CN=rpc-h2.test' >/dev/null 2>&1 \
+		|| fail "could not mint a throwaway TLS cert"; \
+	DEVSHARD_RPC_H2_CERT_DIR="$$tmpdir/ssl"; \
+	DEVSHARD_RPC_H2_PEM="$$tmpdir/rpc-h2.pem"; \
+	export DEVSHARD_RPC_H2_CERT_DIR DEVSHARD_RPC_H2_PEM; \
+	HAPROXY_BIN=true \
+	PROXY_ROUTER_RENDER_ONLY=1 \
+	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+	PROXY_ROUTER_OUT="$$tmpdir/https.cfg" \
+	PROXY_ROUTER_VERSION_MAP="$$tmpdir/https.map" \
+	NGINX_MODE=https \
+	DEVSHARD_RPC_H2_CERT_DIR="$$tmpdir/ssl" \
+	DEVSHARD_RPC_H2_PEM="$$tmpdir/rpc-h2.pem" \
+	./entrypoint.sh; \
+	grep -q "^ *bind :9443 ssl crt $$tmpdir/rpc-h2.pem alpn h2$$" "$$tmpdir/https.cfg" \
+		|| fail "HTTPS peer RPC listen is not TLS with ALPN h2"; \
+	if grep -q '^ *bind :9443 proto h2$$' "$$tmpdir/https.cfg"; then \
+		fail "HTTPS peer RPC listen fell back to cleartext h2c"; \
+	fi; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
 		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
 		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
