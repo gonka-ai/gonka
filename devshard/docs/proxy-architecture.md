@@ -101,6 +101,7 @@ It is responsible for:
 - serving pooled OpenAI-compatible endpoints like `/v1/chat/completions`
 - exposing admin, OpenAPI/Swagger, debug, and metrics endpoints
 - choosing a `devshardRuntime` when multiple escrows are active
+- moving a request to another escrow when the chosen one cannot fund it
 - enforcing gateway-wide admission control:
   - `GatewayLimiter` for request concurrency and input-token reservation
   - `ParticipantRequestLimiter` for participant/nginx safety
@@ -109,6 +110,8 @@ It is responsible for:
 - managing persisted gateway settings and runtime membership via `GatewayStore`
 - activating, deactivating, importing, cleaning, and settling devshards through admin APIs
 - coordinating capacity-aware routing and automatic escrow rotation
+
+An escrow that cannot pay for a request does not end it: while nothing has reached the client, the runtime hands the request back and `Gateway` offers it to the next escrow serving the model, each one at most once. The client is refused only once every escrow has refused, with `503` and `Retry-After`, because a replacement escrow or a settling inference restores the balance.
 
 It is **not** responsible for devshard protocol execution details. Once it forwards a request to a runtime, the runtime-specific logic takes over.
 
@@ -175,7 +178,7 @@ It is responsible for:
 - building `user.InferenceParams`
 - serving cached responses when the request body/model matches a prior successful response
 - switching between streaming and non-streaming response handling
-- mapping runner errors to HTTP responses
+- mapping runner errors to HTTP responses, except a funding refusal on the pooled route, which it hands back unanswered
 - serving debug/status/finalize/request-accounting/OpenAPI endpoints
 
 It is intentionally thin. It does not know about nonces, attempts, hosts, or protocol messages. It delegates execution to `Redundancy`.
@@ -210,7 +213,7 @@ It is responsible for:
 
 - serving repeated equivalent requests without consuming another devshard nonce
 - caching both streaming and non-streaming successful responses
-- avoiding cache entries for retriable capability errors
+- avoiding cache entries for host capability errors (tool choice, context length)
 - preserving request/escrow headers when serving cached responses
 
 Request accounting records per-request attempts and cache aliases so operators can explain which request produced a cached response and which escrow/nonce attempts were involved.
@@ -347,6 +350,12 @@ It is responsible for:
 
 Rotation acts on runtime membership, not on individual request execution. When it activates or deactivates a devshard, `Gateway` updates the runtime map and `CapacityState` membership.
 
+Depletion is read from the escrow, never from one request. An escrow counts as depleted when it can no longer pay the per-nonce fee, when its balance falls under the replacement threshold, or when its nonce reaches the chain's limit; all three are independent of what any caller asked for. A request whose reserved cost, `(input_length + max_tokens) * token_price`, does not fit the balance that is left is refused on its own and leaves the escrow in service. Reading that refusal as depletion would mint one escrow per oversized request: each replacement carries a new escrow ID, so the guard that replaces a given ID only once never sees a repeat, and a caller whose request outgrows a full escrow keeps the chain of replacements running for as long as it retries.
+
+An escrow whose balance falls under the threshold while inferences still hold its money is put on hold instead of being replaced. It stops taking requests, stays active, and returns to service once the money comes back (`on_hold_since` in `GatewayStore`, `on_hold` in `/v1/status`). Money counts as coming back when it is reserved by a pending or started inference, which a finish or a timeout refunds, or paid for an inference still in dispute, which an invalidating vote refunds. A held escrow returns to service only with a margin of 32 maximum-length responses above the threshold, so it does not flip back on hold with the next request. A held escrow does not count against its model's target: while any escrow of a model is held, the gateway keeps the model's serving escrows at the target and at no fewer than half of the held ones. A hold ends in a replacement when the money in flight can no longer bring the balance back, or once it outlives the session's execution timeout.
+
+By design, settling an escrow with `force: true` credits the hosts with the full reserved cost of every inference still pending or started, on hold or not. Force skips the wait for in-flight requests and background race cleanups, so the escrow is finalized before those inferences time out, and finalization charges a still-live inference its full reservation (`settleLiveRecordLocked`). An inference still in dispute is sealed as it stands and keeps its cost. A settle without force closes admission and waits for requests and cleanups to drain, so the timeouts they carry refund their reservations before finalization.
+
 ### Gateway disabled mode
 
 Gateway disabled mode is a persisted operational switch.
@@ -441,10 +450,12 @@ For a pooled request:
     - streams SSE data lines directly to the per-send writer
     - calls the per-send receipt handler when devshard_receipt arrives
 14. `raceWriter` forwards output only from the winning nonce to the client writer.
-15. `Redundancy` finalizes the race, updates performance history, and for any failed nonce calls `Session.HandleTimeout(...)`.
-16. `Session.HandleTimeout` waits for the protocol deadline, collects timeout votes, and submits MsgTimeoutInference.
-17. `Proxy` stores eligible responses in the cache and request-accounting log.
-18. `Proxy` returns the final client response.
+15. `Redundancy` finalizes the race, updates performance history, and hands every failed nonce to a background race cleanup.
+16. `Proxy` stores eligible responses in the cache and request-accounting log.
+17. `Proxy` returns the final client response.
+18. In the background, `Session.HandleTimeout` waits for the protocol deadline, collects timeout votes, and submits MsgTimeoutInference; the runtime drain waits for it before settling or retiring the escrow.
+
+Steps 5 to 10 repeat on another escrow when the chosen one cannot fund the reservation — see `Gateway`.
 
 ## Dependency Map
 

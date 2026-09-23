@@ -35,7 +35,8 @@ const (
 var (
 	errDevshardBusy                   = errors.New("devshard has active requests")
 	errDevshardAlreadyExists          = errors.New("devshard already exists")
-	errEscrowRotationCreateSuppressed = errors.New("escrow rotation create already failed for this epoch")
+	errEscrowRotationCreateSuppressed = errors.New("escrow rotation create suppressed after a recent failure, retrying after a cooldown")
+	errChainEpochUnknown              = errors.New("chain epoch is not known yet")
 	gatewayCreateRotationEscrow       = (*Gateway).createRotationEscrow
 	gatewayCreateEscrowOnChain        = (*Gateway).createEscrowOnChain
 	gatewayCreateDepletionEscrow      func(*Gateway, context.Context, GatewaySettings, EscrowRotationModelSettings, string, uint64) (*CreateDevshardEscrowResult, error)
@@ -128,9 +129,8 @@ func (g *Gateway) rotateEscrowsOnce(ctx context.Context) {
 		return
 	}
 	pocActive, _ := rawPoCBlockingState(snapshot.EpochPhase, snapshot.ConfirmationPoCPhase)
-	blocksToEpochSwitch := snapshot.epochSwitchBlockHeight - snapshot.BlockHeight
 
-	if blocksToEpochSwitch >= 0 && blocksToEpochSwitch <= rotation.PrePoCBlocks {
+	if isBridgeWindow(snapshot, rotation.PrePoCBlocks) {
 		g.prepareBridgeEscrows(ctx, snapshot, settings)
 		return
 	}
@@ -139,10 +139,31 @@ func (g *Gateway) rotateEscrowsOnce(ctx context.Context) {
 	}
 }
 
+func isBridgeWindow(snapshot ChainPhaseSnapshot, prePoCBlocks int64) bool {
+	blocksToEpochSwitch := snapshot.epochSwitchBlockHeight - snapshot.BlockHeight
+	return blocksToEpochSwitch >= 0 && blocksToEpochSwitch <= prePoCBlocks
+}
+
+func rotationPlacement(snapshot ChainPhaseSnapshot, prePoCBlocks int64) (role string, epoch uint64) {
+	if isBridgeWindow(snapshot, prePoCBlocks) {
+		return rotationRoleTemp, snapshot.EpochIndex
+	}
+	return rotationRoleRegular, snapshot.EpochIndex
+}
+
+func rotationTargetForRole(model EscrowRotationModelSettings, role string) int {
+	if role == rotationRoleTemp {
+		return model.TempCount
+	}
+	return model.TargetCount
+}
+
 func (g *Gateway) prepareBridgeEscrows(ctx context.Context, snapshot ChainPhaseSnapshot, settings GatewaySettings) {
 	epoch := snapshot.EpochIndex
-	for _, model := range normalizedEscrowRotationModels(settings) {
-		ensure, err := g.ensureRotationEscrows(ctx, settings, model, rotationRoleTemp, epoch, model.TempCount)
+	models := normalizedEscrowRotationModels(settings)
+	fills := g.fillRotationTargets(ctx, settings, models, rotationRoleTemp, epoch)
+	for _, model := range models {
+		ensure, err := fills[model.ModelID].result, fills[model.ModelID].err
 		if err != nil {
 			log.Printf("escrow_rotation_temp_create_failed epoch=%d model=%q error=%v", epoch, model.ModelID, err)
 			promoted, promoteErr := g.promoteActiveRegularEscrowsToTemp(model.ModelID, epoch)
@@ -199,23 +220,20 @@ func (g *Gateway) prepareBridgeEscrows(ctx context.Context, snapshot ChainPhaseS
 
 func (g *Gateway) finishBridgeEscrows(ctx context.Context, snapshot ChainPhaseSnapshot, settings GatewaySettings) {
 	epoch := snapshot.EpochIndex
+	state, ok, err := g.store.LoadState()
+	if err != nil || !ok {
+		log.Printf("escrow_rotation_load_state_failed epoch=%d error=%v", epoch, err)
+		return
+	}
+	var bridgedModels []EscrowRotationModelSettings
 	for _, model := range normalizedEscrowRotationModels(settings) {
-		state, ok, err := g.store.LoadState()
-		if err != nil || !ok {
-			log.Printf("escrow_rotation_load_state_failed epoch=%d model=%q error=%v", epoch, model.ModelID, err)
-			continue
+		if hasActiveBridgeEscrows(state.Devshards, model.ModelID, epoch) {
+			bridgedModels = append(bridgedModels, model)
 		}
-		hasBridgeEscrows := false
-		for _, devshard := range state.Devshards {
-			if devshard.RotationRole == rotationRoleTemp && devshard.RotationEpoch <= epoch && devshard.Active && strings.TrimSpace(devshard.Model) == model.ModelID {
-				hasBridgeEscrows = true
-				break
-			}
-		}
-		if !hasBridgeEscrows {
-			continue
-		}
-		ensure, err := g.ensureRotationEscrows(ctx, settings, model, rotationRoleRegular, epoch, model.TargetCount)
+	}
+	fills := g.fillRotationTargets(ctx, settings, bridgedModels, rotationRoleRegular, epoch)
+	for _, model := range bridgedModels {
+		ensure, err := fills[model.ModelID].result, fills[model.ModelID].err
 		if err != nil {
 			log.Printf("escrow_rotation_regular_create_failed epoch=%d model=%q error=%v", epoch, model.ModelID, err)
 			g.saveRotationStatus(GatewayRotationStatus{
@@ -271,23 +289,70 @@ type rotationEnsureResult struct {
 	CreatedCount  int `json:"created_count"`
 }
 
-func (g *Gateway) ensureRotationEscrows(ctx context.Context, settings GatewaySettings, model EscrowRotationModelSettings, role string, epoch uint64, target int) (rotationEnsureResult, error) {
-	result := rotationEnsureResult{TargetCount: target}
+type rotationFill struct {
+	result      rotationEnsureResult
+	err         error
+	hasStarted  bool
+	isCompleted bool
+}
+
+func hasActiveBridgeEscrows(devshards []GatewayDevshardState, modelID string, epoch uint64) bool {
+	for _, devshard := range devshards {
+		if devshard.RotationRole == rotationRoleTemp && devshard.RotationEpoch <= epoch && devshard.Active && strings.TrimSpace(devshard.Model) == modelID {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *Gateway) fillRotationTargets(ctx context.Context, settings GatewaySettings, models []EscrowRotationModelSettings, role string, epoch uint64) map[string]*rotationFill {
+	fills := make(map[string]*rotationFill, len(models))
+	for _, model := range models {
+		fills[model.ModelID] = &rotationFill{result: rotationEnsureResult{TargetCount: rotationTargetForRole(model, role)}}
+	}
+	for isProgressing := true; isProgressing; {
+		isProgressing = false
+		for _, model := range models {
+			fill := fills[model.ModelID]
+			if fill.isCompleted {
+				continue
+			}
+			result, err := g.ensureRotationEscrows(ctx, settings, model, role, epoch, fill.result.TargetCount, 1)
+			if !fill.hasStarted {
+				fill.hasStarted = true
+				fill.result.ExistingCount = result.ExistingCount
+			}
+			fill.result.CreatedCount += result.CreatedCount
+			switch {
+			case err != nil:
+				fill.err, fill.isCompleted = err, true
+			case result.CreatedCount == 0 || fill.result.ExistingCount+fill.result.CreatedCount >= fill.result.TargetCount:
+				fill.isCompleted = true
+			default:
+				isProgressing = true
+			}
+		}
+	}
+	for _, model := range models {
+		fill := fills[model.ModelID]
+		if fill.result.CreatedCount > 0 || fill.result.ExistingCount+fill.result.CreatedCount < fill.result.TargetCount {
+			log.Printf("escrow_rotation_target_status model=%q role=%s epoch=%d existing=%d target=%d created=%d error=%v",
+				model.ModelID, role, epoch, fill.result.ExistingCount, fill.result.TargetCount, fill.result.CreatedCount, fill.err)
+		}
+	}
+	return fills
+}
+
+func (g *Gateway) ensureRotationEscrows(ctx context.Context, settings GatewaySettings, model EscrowRotationModelSettings, role string, epoch uint64, target, createLimit int) (result rotationEnsureResult, err error) {
+	result = rotationEnsureResult{TargetCount: target}
 	if target <= 0 {
 		return result, nil
 	}
-	state, ok, err := g.store.LoadState()
+	unlockTarget := g.rotationTargetLocks.lock(rotationTargetKey(model.ModelID, role, epoch))
+	defer unlockTarget()
+	count, err := g.activeRotationEscrowCount(role, epoch, model.ModelID)
 	if err != nil {
 		return result, err
-	}
-	if !ok {
-		return result, fmt.Errorf("gateway state is not initialized")
-	}
-	count := 0
-	for _, devshard := range state.Devshards {
-		if devshard.RotationRole == role && devshard.RotationEpoch == epoch && devshard.Active && strings.TrimSpace(devshard.Model) == model.ModelID {
-			count++
-		}
 	}
 	result.ExistingCount = count
 	if count < target {
@@ -299,7 +364,7 @@ func (g *Gateway) ensureRotationEscrows(ctx context.Context, settings GatewaySet
 	if count < target && g.rotationCreateGated(model.ModelID, role) {
 		return result, errEscrowRotationCreateSuppressed
 	}
-	for count < target {
+	for count < target && result.CreatedCount < createLimit {
 		if _, err := gatewayCreateRotationEscrow(g, ctx, settings, model, role, epoch); err != nil {
 			g.recordRotationCreateFailure(model.ModelID, role)
 			return result, err
@@ -330,6 +395,9 @@ func (g *Gateway) rotationModelServedByNetwork(modelID string) (served bool, kno
 func (g *Gateway) createEscrowOnChain(ctx context.Context, settings GatewaySettings, model EscrowRotationModelSettings, onPrepared func(txHash string) error) (*CreateDevshardEscrowResult, error) {
 	signer, _, err := signerFromRequestKey("", model.PrivateKeyEnv)
 	if err != nil {
+		return nil, err
+	}
+	if err := g.ensureCanFundEscrow(ctx, signer.Address(), model.Amount); err != nil {
 		return nil, err
 	}
 	txMgr, err := g.newChainTxManager(settings, "", "", 0, 0)
@@ -654,7 +722,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	if ok {
 		activeRequests, pendingCleanup = rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load()
 	}
-	busy := ok && (activeRequests > 0 || pendingCleanup > 0)
+	busy := ok && !req.Force && (activeRequests > 0 || pendingCleanup > 0)
 	if ok && !busy {
 		rt.active.Store(false)
 	}
@@ -728,14 +796,16 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	phase := rt.proxy.sm.Phase()
 	needFinalize := phase != types.PhaseSettlement || !rt.session.HasQuorumAt(rt.session.Nonce())
 	if needFinalize {
-		g.finalizeMu.Lock()
+		unlockFinalize := g.lockFinalize(id)
 		log.Printf("gateway_finalize_lock_acquired escrow=%s path=rotation_settle phase=%s", id, sessionPhaseLabel(phase))
-		if err := rt.session.Finalize(ctx); err != nil {
-			g.finalizeMu.Unlock()
-			log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, err.Error())
-			return nil, g.settleTerminalErr(id, err)
+		finalizeErr := func() error {
+			defer unlockFinalize()
+			return rt.session.Finalize(ctx)
+		}()
+		if finalizeErr != nil {
+			log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, finalizeErr.Error())
+			return nil, g.settleTerminalErr(id, finalizeErr)
 		}
-		g.finalizeMu.Unlock()
 		log.Printf("devshard_settle_finalize_completed escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
 	} else {
 		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s reason=quorum_present", id, sessionPhaseLabel(phase))

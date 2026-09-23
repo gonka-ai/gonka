@@ -215,7 +215,7 @@ func (p *sessionPicker) start() {
 
 // stop signals the dispatcher to drain and exit. Blocks until exit.
 // Pending requests still waiting in queue receive errPickerStopped.
-// Tests should call this in cleanup; production callers do not.
+// Production calls this via Redundancy.Stop() on retire and finalize.
 func (p *sessionPicker) stop() {
 	p.stopOnce.Do(func() {
 		p.mu.Lock()
@@ -228,6 +228,15 @@ func (p *sessionPicker) stop() {
 		p.wakeUp()
 		<-p.stopped
 	})
+}
+
+func (p *sessionPicker) isStopped() bool {
+	if p == nil {
+		return true
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.done
 }
 
 // submit enqueues a request. Non-blocking. The submitter must read
@@ -459,7 +468,7 @@ func (p *sessionPicker) run() {
 				)
 			}
 			logRequestStage(p.logCtx, "session_picker_ghost_probe", logFields...)
-			if p.dispatchGhost != nil {
+			if p.dispatchGhost != nil && !p.isStopped() {
 				p.dispatchGhost(prepared, ghost, ghostReason)
 			}
 			// Loop straight into the next iteration. Ghost burns are
