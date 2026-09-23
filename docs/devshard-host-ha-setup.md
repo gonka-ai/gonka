@@ -78,7 +78,7 @@ For managed or self-managed PostgreSQL, obtain the primary endpoint, port, datab
 
 #### Size `max_connections`
 
-devshardd releases v4 through v5.0.1 size their PostgreSQL connection pools by the host's CPU count, so the PostgreSQL default of 100 connections is too small for HA with these releases. Set `max_connections` to 500; this covers two replicas with three protocols on hosts with up to 16 CPUs. Increase it proportionally for more CPUs, replicas or protocols. For managed or self-managed PostgreSQL, set it in the server or provider settings. For local Compose PostgreSQL, the override in [§2.1](#21-same-machine-two-replicas) sets it. The value applies only after a PostgreSQL restart.
+devshardd releases v4 through v5.0.1 size their PostgreSQL connection pools by the host's CPU count, so the PostgreSQL default of 100 connections is too small for HA with these releases. Set `max_connections` to 250; this covers two replicas with three protocols on hosts with up to 16 CPUs. Increase it proportionally for more CPUs, replicas or protocols. For managed or self-managed PostgreSQL, set it in the server or provider settings. For local Compose PostgreSQL, the override in [§2.1](#21-same-machine-two-replicas) sets it. The value applies only after a PostgreSQL restart.
 
 #### Configure PostgreSQL credentials
 
@@ -218,7 +218,7 @@ services:
 
   # Local Compose PostgreSQL: size for every replica and protocol; see Step 1.
   devshard-postgres:
-    command: ["postgres", "-c", "max_connections=500"]
+    command: ["postgres", "-c", "max_connections=250"]
 
   versiond:
     environment:
