@@ -76,6 +76,10 @@ For managed or self-managed PostgreSQL, obtain the primary endpoint, port, datab
 
 **Local Compose PostgreSQL.** `docker-compose.versiond.yml` starts `devshard-postgres` on the join host. If the machine dies, the database dies with it.
 
+#### Size `max_connections`
+
+devshardd releases v4 through v5.0.1 size their PostgreSQL connection pools by the host's CPU count, so the PostgreSQL default of 100 connections is too small for HA with these releases. Set `max_connections` to 500; this covers two replicas with three protocols on hosts with up to 16 CPUs. Increase it proportionally for more CPUs, replicas or protocols. For managed or self-managed PostgreSQL, set it in the server or provider settings. For local Compose PostgreSQL, the override in [§2.1](#21-same-machine-two-replicas) sets it. The value applies only after a PostgreSQL restart.
+
 #### Configure PostgreSQL credentials
 
 Run the following command in `deploy/join` to save the PostgreSQL password in `config.env`. For a new local database, choose a password. For an existing database, enter its current password:
@@ -211,6 +215,10 @@ services:
       default: {}
       versiond-router-back: {}
     restart: always
+
+  # Local Compose PostgreSQL: size for every replica and protocol; see Step 1.
+  devshard-postgres:
+    command: ["postgres", "-c", "max_connections=500"]
 
   versiond:
     environment:
@@ -519,6 +527,8 @@ Stop if any protocol is not running or the list includes pre-HA versions.
 </details>
 
 First HA setup: complete [§2.1](#21-same-machine-two-replicas) to set the HA variables and create the filter override; retain the current protocol list. For an external database, also complete [§2.2](#22-external-or-managed-postgresql) using the existing database. Then continue below; do not run installation Steps 3–4.
+
+Existing HA host: check [`max_connections`](#size-max_connections). For local Compose PostgreSQL, add the `devshard-postgres` entry from [§2.1](#21-same-machine-two-replicas) to the existing override. The update with downtime restarts PostgreSQL and applies it; a rolling update does not.
 
 Reload and validate:
 
