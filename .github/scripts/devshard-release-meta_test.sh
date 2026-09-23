@@ -98,6 +98,7 @@ assert_eq "$(field release_tag "$got")" "devshard/v5.0.0" "docker release tag ma
 assert_eq "$(field release_body_line "$got")" "devshardd v5 protocol v5 binary stamp v5.0.0" "docker body line"
 assert_eq "$(field image_versiond "$got")" "ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5" "docker versiond image"
 assert_eq "$(field image_versiond_router "$got")" "ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5" "docker router image"
+assert_eq "$(field image_proxy "$got")" "ghcr.io/gonka-ai/proxy:0.2.15-devshard-v5" "docker proxy image"
 assert_eq "$(field image_proxy_router "$got")" "ghcr.io/gonka-ai/proxy-router:0.2.15-devshard-v5" "docker proxy-router image"
 
 run_ok docker-tag --ref-name release/v0.2.15-devshard-v5.1.0 --owner gonka-ai

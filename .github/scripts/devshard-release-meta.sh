@@ -178,6 +178,7 @@ docker_tag_cmd() {
 	emit release_body_line "devshardd $version protocol $protocol binary stamp $leftover"
 	emit image_versiond "${registry}/${owner}/versiond:${image_tag}"
 	emit image_versiond_router "${registry}/${owner}/versiond-router:${image_tag}"
+	emit image_proxy "${registry}/${owner}/proxy:${image_tag}"
 	emit image_proxy_router "${registry}/${owner}/proxy-router:${image_tag}"
 }
 
