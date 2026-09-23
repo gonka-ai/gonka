@@ -48,6 +48,10 @@ services:
       - NET_ADMIN
       - SYS_ADMIN
       - SYS_PTRACE
+    # docker's default apparmor profile refuses /proc/1/ns/net to a confined container whatever
+    # its capabilities, and the mesh is built in the host's network namespace
+    security_opt:
+      - apparmor:unconfined
     pid: host
     deploy:
       resources:
