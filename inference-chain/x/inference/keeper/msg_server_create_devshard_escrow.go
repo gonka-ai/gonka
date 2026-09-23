@@ -48,6 +48,9 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 
 	weights := make(map[string]int64)
 	for _, vw := range epochGroup.GroupData.ValidationWeights {
+		if k.IsUnderChallenge(goCtx, vw.MemberAddress) {
+			continue
+		}
 		weights[vw.MemberAddress] = vw.Weight
 	}
 	sortedEntries, totalWeight := calculations.PrepareSortedEntries(weights)

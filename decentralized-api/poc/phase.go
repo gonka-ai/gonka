@@ -12,6 +12,9 @@ func ShouldAcceptGeneratedArtifacts(epochState *chainphase.EpochState) bool {
 	if epochState.IsNilOrNotSynced() {
 		return false
 	}
+	if ch := GeneratingChallengeWork(epochState); ch != nil {
+		return epochState.CurrentBlock.Height < ch.Finish
+	}
 	if epochState.CurrentPhase == types.PoCGeneratePhase {
 		return true
 	}
@@ -56,6 +59,10 @@ func GetCurrentPocStageHeight(epochState *chainphase.EpochState) int64 {
 		return 0
 	}
 
+	if ch := GeneratingChallengeWork(epochState); ch != nil {
+		return ch.StartHeight()
+	}
+
 	// Confirmation PoC uses event's trigger height
 	if epochState.ActiveConfirmationPoCEvent != nil &&
 		epochState.CurrentPhase == types.InferencePhase {
@@ -71,6 +78,12 @@ func GetCurrentPocStageHeight(epochState *chainphase.EpochState) int64 {
 // currentHeight >= exchange deadline, the next block is already late.
 func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHeight int64) bool {
 	if epochState.IsNilOrNotSynced() {
+		return false
+	}
+	// Challenge commits use MsgPoCChallengeStoreCommit. A cPoC TriggerHeight
+	// can equal challenge StartHeight; do not publish the challenge SMST as a
+	// regular StoreCommit.
+	if GeneratingChallengeWork(epochState) != nil {
 		return false
 	}
 

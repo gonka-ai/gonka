@@ -69,6 +69,13 @@ func (msg *MsgSetDevshardRequestsEnabled) GetSignersStrings() []string {
 func (msg *MsgSetPoCDelegation) GetSignersStrings() []string    { return []string{msg.Sender} }
 func (msg *MsgRefusePoCDelegation) GetSignersStrings() []string { return []string{msg.Sender} }
 func (msg *MsgDeclarePoCIntent) GetSignersStrings() []string    { return []string{msg.Sender} }
+func (msg *MsgCreatePoCChallenge) GetSignersStrings() []string  { return []string{msg.Creator} }
+func (msg *MsgPoCChallengeStoreCommit) GetSignersStrings() []string {
+	return []string{msg.Creator}
+}
+func (msg *MsgSubmitPoCChallengeValidations) GetSignersStrings() []string {
+	return []string{msg.Creator}
+}
 
 // Maintenance messages
 func (msg *MsgScheduleMaintenance) GetSignersStrings() []string { return []string{msg.Creator} }

@@ -376,6 +376,10 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 
 	inference = am.expireInferenceAndIssueRefund(ctx, inference)
 
+	if am.keeper.IsUnderChallenge(ctx, inference.AssignedTo) {
+		return
+	}
+
 	executor.CurrentEpochStats.MissedRequests++
 	err := am.keeper.SetParticipant(ctx, executor)
 	if err != nil {
@@ -391,8 +395,9 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 //     CreateEpochGroup (line 459), CreateGroup (line 464). These mean the chain cannot
 //     advance to the next epoch and would be in an inconsistent state if we continued.
 //   - RECOVERABLE (log + continue): Inference expiry failures, pruning errors, upgrade
-//     tracking errors, compute result errors, confirmation PoC failures. These affect
-//     individual operations but the chain can safely continue without them.
+//     tracking errors, compute result errors, confirmation PoC failures, PoC challenge
+//     decision and payout. These affect individual operations but the chain can safely
+//     continue without them.
 //   - CROSS-MODULE (log + continue): Collateral AdvanceEpoch, StreamVesting AdvanceEpoch,
 //     BLS key generation. Failures here should not block the inference module's epoch
 //     transition.
@@ -411,7 +416,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Failed to handle confirmation PoC", types.PoC, "error", err)
 		// Don't return error - allow block processing to continue
 	}
-
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		am.LogError("Unable to get parameters", types.Settle, "error", err.Error())
@@ -500,6 +504,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		if err := am.keeper.SetEffectiveEpochIndex(ctx, getNextEpochIndex(*currentEpoch)); err != nil {
 			return err
 		}
+		am.keeper.PayAndDeleteOldChallenges(ctx, getNextEpochIndex(*currentEpoch))
 		am.LogInfo("Epoch index flipped; new validator set activates at H+2",
 			types.Stages,
 			"blockHeight", blockHeight,
@@ -772,6 +777,10 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	previousEpochIndex := uint64(0)
 	if found {
 		previousEpochIndex = previousEpoch.Index
+	}
+
+	if err := am.decideLastChallengeSegments(ctx, *effectiveEpoch); err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to decide last PoC challenges", types.PoC, "error", err.Error())
 	}
 
 	// Settle before collateral AdvanceEpoch so slashing can reach maturing unbonding entries.

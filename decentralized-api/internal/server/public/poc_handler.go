@@ -397,9 +397,7 @@ func (s *Server) preparePocProofRequest(
 	}
 
 	reqHeight := int64(req.PocStageStartBlockHeight)
-	s.ensureArtifactStagePinned(reqHeight)
-
-	stageStore, err := s.artifactStore.GetStore(reqHeight, req.ModelId)
+	stageStore, err := s.artifactStore.GetStoreForServing(reqHeight, req.ModelId)
 	if err != nil {
 		logging.Warn("Stage store not found", types.Validation,
 			"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
@@ -460,7 +458,7 @@ func (s *Server) getPocArtifactsState(ctx echo.Context) error {
 
 	s.ensureArtifactStagePinned(height)
 
-	store, err := s.artifactStore.GetStore(height, modelID)
+	store, err := s.artifactStore.GetStoreForServing(height, modelID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "not found for height (may be pruned or not yet created)")
 	}

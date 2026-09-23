@@ -1,10 +1,14 @@
 package inference
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"
 	coefficient "github.com/productscience/inference/x/inference/coefficients"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
@@ -404,6 +408,69 @@ func TestConfirmationScalesInSnapshot(t *testing.T) {
 	})
 
 	require.Equal(t, []*types.ConfirmationWeightScale{scales[0], scales[2]}, got)
+}
+
+func seedEvaluateConfirmationFixture(t *testing.T) (AppModule, keeper.Keeper, sdk.Context) {
+	t.Helper()
+	am, k, ctx := challengeApp(t)
+	seedChallengeParticipant(t, k, ctx)
+	p, ok := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, ok)
+	p.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromFloat(0.8)
+	require.NoError(t, k.SetParticipant(ctx, p))
+	require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
+		PocStageStartHeight: 180,
+		ModelVotingPowers: []*types.ModelVotingPowers{{
+			ModelId: "m1",
+			VotingPowers: []*types.VotingPowerEntry{{
+				Address:     testutil.Validator,
+				VotingPower: 100,
+			}},
+		}},
+	}))
+	return am, k, ctx
+}
+
+func requireUnchangedConfirmationWeightAndRatio(t *testing.T, k keeper.Keeper, ctx sdk.Context) {
+	t.Helper()
+	group, found := k.GetEpochGroupData(ctx, 2, "")
+	require.True(t, found)
+	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
+	p, ok := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, ok)
+	require.NotNil(t, p.CurrentEpochStats.ConfirmationPoCRatio)
+	require.True(t, p.CurrentEpochStats.ConfirmationPoCRatio.ToDecimal().Equal(types.DecimalFromFloat(0.8).ToDecimal()))
+}
+
+func TestEvaluateConfirmation_AbortedChallengeKeepsWeightAndRatio(t *testing.T) {
+	am, k, ctx := seedEvaluateConfirmationFixture(t)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      testutil.Executor,
+		StartHeight: 100,
+	}))
+	require.NoError(t, k.MarkChallengeAborted(ctx, testutil.Executor, "eval_error"))
+	require.NoError(t, am.updateConfirmationWeights(ctx, &types.ConfirmationPoCEvent{
+		EpochIndex:    2,
+		TriggerHeight: 180,
+		Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED,
+	}))
+	requireUnchangedConfirmationWeightAndRatio(t, k, ctx)
+}
+
+func TestEvaluateConfirmation_SkipLoadErrorWritesNothing(t *testing.T) {
+	am, k, ctx := seedEvaluateConfirmationFixture(t)
+	prev := loadChallengeSkipTargets
+	t.Cleanup(func() { loadChallengeSkipTargets = prev })
+	loadChallengeSkipTargets = func(keeper.Keeper, context.Context, uint64) (map[string]struct{}, error) {
+		return nil, fmt.Errorf("skip store unavailable")
+	}
+	require.NoError(t, am.updateConfirmationWeights(ctx, &types.ConfirmationPoCEvent{
+		EpochIndex:    2,
+		TriggerHeight: 180,
+		Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED,
+	}))
+	requireUnchangedConfirmationWeightAndRatio(t, k, ctx)
 }
 
 func requireRatioEqual(t *testing.T, got *types.Decimal, numerator, denominator int64) {

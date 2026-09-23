@@ -25,6 +25,12 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+type AuthzMigrationKeeper interface {
+	IterateGrants(ctx context.Context, handler func(granterAddr, granteeAddr sdk.AccAddress, grant authz.Grant) bool)
+	GetAuthorization(ctx context.Context, grantee, granter sdk.AccAddress, msgType string) (authz.Authorization, *time.Time)
+	SaveGrant(ctx context.Context, grantee, granter sdk.AccAddress, authorization authz.Authorization, expiration *time.Time) error
+}
+
 // UpgradeInfo is extra JSON in the software-upgrade proposal's `info` /
 // --upgrade-info field. Cosmovisor already stores binaries/api_binaries in the
 // same object; unknown keys are ignored.
@@ -38,12 +44,6 @@ import (
 type UpgradeInfo struct {
 	EnabledFeeGroups []string          `json:"enabled_fee_groups"`
 	MinGasPrices     map[string]uint64 `json:"min_gas_prices"`
-}
-
-type AuthzMigrationKeeper interface {
-	IterateGrants(ctx context.Context, handler func(granterAddr, granteeAddr sdk.AccAddress, grant authz.Grant) bool)
-	GetAuthorization(ctx context.Context, grantee, granter sdk.AccAddress, msgType string) (authz.Authorization, *time.Time)
-	SaveGrant(ctx context.Context, grantee, granter sdk.AccAddress, authorization authz.Authorization, expiration *time.Time) error
 }
 
 func CreateUpgradeHandler(
@@ -62,6 +62,9 @@ func CreateUpgradeHandler(
 		}
 
 		// Future v0.2.16 migration steps land below this line.
+		if err := grantPoCChallengeAuthz(ctx, authzKeeper, k); err != nil {
+			return fromVM, err
+		}
 		if err := migrateDevshardApprovedVersions(ctx, k); err != nil {
 			return fromVM, err
 		}
@@ -72,6 +75,9 @@ func CreateUpgradeHandler(
 			return fromVM, err
 		}
 		if err := migrateCurrentEffectiveCoefficients(ctx, k); err != nil {
+			return fromVM, err
+		}
+		if err := migratePoCChallengeParams(ctx, k); err != nil {
 			return fromVM, err
 		}
 		if err := grantDeclarePoCIntentAuthz(ctx, authzKeeper, k); err != nil {
@@ -91,6 +97,18 @@ func CreateUpgradeHandler(
 		k.LogInfo("successfully upgraded", types.Upgrades, "version", UpgradeName)
 		return toVM, nil
 	}
+}
+
+func migratePoCChallengeParams(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.PocChallengeParams != nil {
+		return nil
+	}
+	params.PocChallengeParams = types.DefaultPoCChallengeParams()
+	return k.SetParams(ctx, params)
 }
 
 func migrateDynamicCoefficientParams(ctx context.Context, k keeper.Keeper) error {
@@ -356,6 +374,60 @@ func migrateDevshardApprovedVersions(ctx context.Context, k keeper.Keeper) error
 		return err
 	}
 	k.LogInfo("migrated approved devshard versions out of params", types.Upgrades, "count", n)
+	return nil
+}
+
+// grantPoCChallengeAuthz backfills challenge commit/vote msgs on existing
+// cold->warm pairs. Identify pairs by WarmKeyGrantMarkerTypeURL (live after
+// v0.2.15), not leftover MsgStartInference.
+func grantPoCChallengeAuthz(ctx context.Context, authzKeeper AuthzMigrationKeeper, k keeper.Keeper) error {
+	type grantPair struct {
+		granter    sdk.AccAddress
+		grantee    sdk.AccAddress
+		expiration *time.Time
+	}
+	seen := make(map[string]bool)
+	var pairs []grantPair
+	authzKeeper.IterateGrants(ctx, func(granterAddr, granteeAddr sdk.AccAddress, grant authz.Grant) bool {
+		if grant.Authorization.GetTypeUrl() != "/cosmos.authz.v1beta1.GenericAuthorization" {
+			return false
+		}
+		var genAuth authz.GenericAuthorization
+		if err := k.Codec().Unmarshal(grant.Authorization.Value, &genAuth); err != nil {
+			return false
+		}
+		if genAuth.Msg != types.WarmKeyGrantMarkerTypeURL {
+			return false
+		}
+		key := granterAddr.String() + "->" + granteeAddr.String()
+		if seen[key] {
+			return false
+		}
+		seen[key] = true
+		pairs = append(pairs, grantPair{granter: granterAddr, grantee: granteeAddr, expiration: grant.Expiration})
+		return false
+	})
+
+	msgTypes := []string{
+		sdk.MsgTypeURL(&types.MsgPoCChallengeStoreCommit{}),
+		sdk.MsgTypeURL(&types.MsgSubmitPoCChallengeValidations{}),
+	}
+	blockTime := sdk.UnwrapSDKContext(ctx).BlockTime()
+	for _, pair := range pairs {
+		if pair.expiration != nil && !pair.expiration.After(blockTime) {
+			continue
+		}
+		for _, msgType := range msgTypes {
+			existing, _ := authzKeeper.GetAuthorization(ctx, pair.grantee, pair.granter, msgType)
+			if existing != nil {
+				continue
+			}
+			auth := authz.NewGenericAuthorization(msgType)
+			if err := authzKeeper.SaveGrant(ctx, pair.grantee, pair.granter, auth, pair.expiration); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

@@ -165,6 +165,9 @@ type NodeResult struct {
 	DeploymentUsesOverride bool
 	DeploymentGeneration   uint64
 	RegistrationSeq        uint64
+	PocV2BlockHeight       int64
+	PocV2BlockHash         string
+	PocV2Updated           bool
 }
 
 type UpdateNodeResultCommand struct {
@@ -300,6 +303,11 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 	} else {
 		// Clear failure reason on success
 		node.State.FailureReason = ""
+	}
+
+	if c.Result.PocV2Updated {
+		node.State.LastPocV2BlockHeight = c.Result.PocV2BlockHeight
+		node.State.LastPocV2BlockHash = c.Result.PocV2BlockHash
 	}
 
 	// Reset POC fields when moving away from POC status

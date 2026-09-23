@@ -561,6 +561,32 @@ data class LocalInferencePair(
         }
     }
 
+    fun setPocV2Weight(weight: Long, node: InferenceNode? = null) {
+        if (node == null) {
+            this.api.getNodes().forEach {
+                this.mock?.setPocV2Response(weight, it.node.pocHost)
+                this.mock?.setPocV2ValidationResponse(weight)
+            }
+        } else {
+            this.mock?.setPocV2Response(weight, node.pocHost)
+            this.mock?.setPocV2ValidationResponse(weight)
+        }
+    }
+
+    fun emitPocV2Batch(node: InferenceNode? = null) {
+        if (node == null) {
+            this.api.getNodes().forEach {
+                this.mock?.emitPocV2Batch(it.node.pocHost)
+            }
+        } else {
+            this.mock?.emitPocV2Batch(node.pocHost)
+        }
+    }
+
+    fun createPoCChallenge(target: String, waitForProcessed: Boolean = true): TxResponse {
+        return submitTransaction(listOf("inference", "create-poc-challenge", target), waitForProcessed)
+    }
+
     fun getEpochLength(): Long {
         return this.mostRecentParams?.epochParams?.epochLength ?: this.getParams().epochParams.epochLength
     }
