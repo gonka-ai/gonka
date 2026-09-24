@@ -404,10 +404,12 @@ A validation lease row records the process that claimed it (`instance_id`) and
 the container hostname beside the participant address. Ownership matches the
 address and the process id. A binary from before that column existed writes a
 blank `instance_id`; a current binary will not complete or release that row,
-and `AcquireOneStale` reclaims it after the lease TTL. During a rolling update
-the older binary still matches on the address alone, so it can still release a
-row a current binary holds. That overlap ends once every replica runs the
-current binary.
+and `AcquireOneStale` reclaims it after the lease TTL. versiond allows blue/green overlap only when both binaries print the same
+`--print-fleet-compat` token (`D_ack`, originator freshness, and lease
+identity). A binary from before that flag prints nothing, so the swap falls
+back to stop/start and the two builds do not serve one escrow together. An
+operator who runs them together anyway still has the older binary matching
+leases on the address alone, so it can release a row a current binary holds.
 
 Every versiond replica of one participant must point at the same PostgreSQL:
 the same `PGHOST`, `PGPORT`, `PGDATABASE` and `PGUSER`, with

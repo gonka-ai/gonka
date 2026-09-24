@@ -153,10 +153,12 @@ type Host struct {
 	slotToAddr  map[uint32]string   // slotID -> validator address
 	addrToSlots map[string][]uint32 // address -> all slotIDs owned
 
-	sortedSlots        []uint32             // deterministic slot order for this host
-	executing          map[uint64]struct{}  // inference IDs with in-flight execution
-	validating         map[uint64]struct{}  // inference IDs with queued or in-flight validation
-	validationCooldown map[uint64]time.Time // inference ID -> not-before; bounds retry after a released attempt
+	sortedSlots []uint32            // deterministic slot order for this host
+	executing   map[uint64]struct{} // inference IDs with in-flight execution
+	validating  map[uint64]struct{} // inference IDs with queued or in-flight validation
+	// validationCooldown is inference ID -> not-before. The zero time holds the
+	// inference until it leaves the validatable set; any other time expires.
+	validationCooldown map[uint64]time.Time
 	validationQueue    chan validateJob
 	completedResponses map[uint64][]byte // inference ID -> cached ML response body
 	ownSeed            int64             // deterministic seed derived from signer + escrowID
@@ -1201,7 +1203,8 @@ func (h *Host) collectValidationJobs() []validateJob {
 		return nil
 	}
 	for id := range h.validationCooldown {
-		if _, live := st.Inferences[id]; !live {
+		rec, live := st.Inferences[id]
+		if !live || !h.inferenceValidatable(rec) {
 			delete(h.validationCooldown, id)
 		}
 	}
@@ -1229,7 +1232,9 @@ func (h *Host) collectValidationJobs() []validateJob {
 			continue
 		}
 		if until, ok := h.validationCooldown[infID]; ok {
-			if time.Now().Before(until) {
+			// A zero time is a hold, not an expiry. A skipped lease is never
+			// reclaimed, so it stays out until the inference leaves this set.
+			if until.IsZero() || time.Now().Before(until) {
 				continue
 			}
 			delete(h.validationCooldown, infID)
@@ -1406,7 +1411,12 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		if !h.validationIsClosed() {
 			// A row that is still there, or that we failed to read, waits out
 			// the cooldown. Only a row already gone is retried on the next request.
-			if !leased || conflict == nil || !conflict.ReleasedBeforeRead() {
+			// A skipped row is terminal for this epoch, so the hold lasts until
+			// the inference leaves the validatable set.
+			switch {
+			case conflict != nil && conflict.Status == devshard.LeaseStatusSkipped:
+				h.holdValidationCooldown(job.inferenceID)
+			case !leased || conflict == nil || !conflict.ReleasedBeforeRead():
 				h.stampValidationCooldown(job.inferenceID)
 			}
 			if !leased {
@@ -1630,6 +1640,34 @@ func (h *Host) stampValidationCooldown(inferenceID uint64) {
 	h.mu.Lock()
 	h.validationCooldown[inferenceID] = time.Now().Add(validationCooldown)
 	h.mu.Unlock()
+}
+
+// holdValidationCooldown keeps the inference out of the validation queue until
+// it is no longer a candidate. Used for a skipped lease, which nothing reclaims.
+func (h *Host) holdValidationCooldown(inferenceID uint64) {
+	h.mu.Lock()
+	h.validationCooldown[inferenceID] = time.Time{}
+	h.mu.Unlock()
+}
+
+// inferenceValidatable reports whether collectValidationJobs would consider rec.
+// A cooldown hold is dropped once this is false.
+func (h *Host) inferenceValidatable(rec *types.InferenceRecord) bool {
+	if rec == nil {
+		return false
+	}
+	if rec.Status != types.StatusFinished && rec.Status != types.StatusChallenged {
+		return false
+	}
+	if h.slotIDs[rec.ExecutorSlot] {
+		return false
+	}
+	for slot := range h.slotIDs {
+		if rec.ValidatedBy.IsSet(slot) {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Host) releaseValidationLease(ctx context.Context, inferenceID uint64) {

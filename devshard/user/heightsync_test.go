@@ -920,9 +920,12 @@ func TestHeartbeatDelayAfterTickPollsWhenDeadlineStaysPast(t *testing.T) {
 	t.Cleanup(func() { _ = session.Close() })
 
 	// TurnTimeout already elapsed and nothing opened a new turn. NextWake
-	// reports 1ms; the loop must poll at Interval instead of spinning.
+	// reports 1ms. If that was already true before the tick, poll at Interval
+	// instead of spinning. If it became true during the tick, wake at once
+	// so the abandon is not postponed by a full interval.
 	session.heartbeat.OpenTurn(time.Now().Add(-2 * session.heartbeat.Config().TurnTimeout))
-	require.Equal(t, interval, session.heartbeatDelayAfterTick())
+	require.Equal(t, time.Millisecond, session.heartbeatDelayAfterTick(false))
+	require.Equal(t, interval, session.heartbeatDelayAfterTick(true))
 }
 
 func TestHeartbeat_LoopSecondGapStaysInsideOneInterval(t *testing.T) {

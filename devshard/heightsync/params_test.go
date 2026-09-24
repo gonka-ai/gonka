@@ -14,6 +14,10 @@ import (
 	"devshard/types"
 )
 
+func TestFleetCompat_PinsScheduleAndLeaseIdentity(t *testing.T) {
+	require.Equal(t, "d_ack=73,f=120000ms,lease=instance_id", heightsync.FleetCompat())
+}
+
 func TestHeartbeatConfig_Defaults(t *testing.T) {
 	cfg := heightsync.DefaultHeartbeatConfig()
 	require.Equal(t, 24*time.Second, cfg.Interval)

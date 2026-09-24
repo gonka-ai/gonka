@@ -203,19 +203,20 @@ func collectValidationJobsLocked(h *Host) []validateJob {
 func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 	signFail := errors.New("sign failed")
 	tests := []struct {
-		name         string
-		status       types.InferenceStatus
-		skipApply    bool
-		validator    scriptedValidationEngine
-		allowErr     error
-		markErr      error
-		failSign     bool
-		wantRelease  int
-		wantAllow    int
-		wantMark     int
-		wantVal      bool
-		wantVote     bool
-		wantCooldown bool
+		name             string
+		status           types.InferenceStatus
+		skipApply        bool
+		validator        scriptedValidationEngine
+		allowErr         error
+		markErr          error
+		failSign         bool
+		wantRelease      int
+		wantAllow        int
+		wantMark         int
+		wantVal          bool
+		wantVote         bool
+		wantCooldown     bool
+		wantCooldownHold bool
 	}{
 		{
 			name:         "validate error",
@@ -262,7 +263,8 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Status: devshard.LeaseStatusSkipped,
 			}},
-			wantCooldown: true,
+			wantCooldown:     true,
+			wantCooldownHold: true,
 		},
 		{
 			name:      "lease conflict stale pending",
@@ -368,7 +370,9 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			require.Equal(t, tt.wantVote, mempoolHasVote(h, 1))
 			until, onCooldown := cooldownUntil(h, 1)
 			require.Equal(t, tt.wantCooldown, onCooldown)
-			if tt.wantCooldown {
+			if tt.wantCooldownHold {
+				require.True(t, until.IsZero(), "skipped lease must be held, not retried on the 30s cooldown")
+			} else if tt.wantCooldown {
 				require.True(t, until.After(time.Now()), "cooldown must be in the future")
 				require.True(t, time.Until(until) <= validationCooldown)
 			}
@@ -721,6 +725,33 @@ func TestHost_CollectValidationJobs_SkipsCooldownThenPicksAfterExpiry(t *testing
 	require.True(t, found, "expired cooldown must allow re-pick")
 	_, still := cooldownUntil(h, 1)
 	require.False(t, still, "expired cooldown entry must be dropped on pick")
+}
+
+func TestHost_CollectValidationJobs_SkippedLeaseStaysHeld(t *testing.T) {
+	h, hosts, user := newTwoHostValidationHost(t, stub.NewValidationEngine())
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+	h.Start()
+	t.Cleanup(h.Close)
+
+	h.mu.Lock()
+	h.validationCooldown[1] = time.Time{}
+	delete(h.validating, 1)
+	h.mu.Unlock()
+
+	jobs := collectValidationJobsLocked(h)
+	for _, job := range jobs {
+		require.NotEqual(t, uint64(1), job.inferenceID, "a held skipped lease must not be re-picked")
+	}
+	until, onCooldown := cooldownUntil(h, 1)
+	require.True(t, onCooldown)
+	require.True(t, until.IsZero(), "the hold must survive collection")
+
+	h.mu.Lock()
+	h.validationCooldown[99] = time.Time{}
+	h.mu.Unlock()
+	_ = collectValidationJobsLocked(h)
+	_, gone := cooldownUntil(h, 99)
+	require.False(t, gone, "a hold for an inference outside the live set must be pruned")
 }
 
 func TestHost_CollectValidationJobs_PrunesCooldownForEvictedInferences(t *testing.T) {

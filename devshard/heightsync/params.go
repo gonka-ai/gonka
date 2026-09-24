@@ -132,6 +132,16 @@ type RepairConfig struct {
 	MaxProbesPerWindow int
 }
 
+// FleetCompat is the overlap token for one escrow. Hosts that disagree on
+// D_ack, originator freshness, or lease identity must not serve that escrow
+// together: late flags, stale origins, and lease ownership would diverge.
+// devshardd prints this with --print-fleet-compat. versiond refuses
+// blue/green overlap when the running and incoming binaries differ.
+func FleetCompat() string {
+	cfg := DefaultHeartbeatConfig()
+	return fmt.Sprintf("d_ack=%d,f=%dms,lease=instance_id", cfg.AckDeadlineBlocks, DefaultOriginatorFreshness.Milliseconds())
+}
+
 // DefaultHeartbeatConfig returns the shipped defaults: 24s interval,
 // 2 · Interval turn timeout, 4 · Interval idle, 1s blocks, and the D_ack
 // those imply.

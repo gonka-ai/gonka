@@ -101,8 +101,9 @@ func (s *Session) runHeartbeatLoop(ctx context.Context) {
 			"escrow", s.escrowID, "error", err)
 		return
 	}
+	past := s.heartbeatDelay() <= time.Millisecond
 	s.tickHeartbeat(ctx)
-	delay := s.heartbeatDelayAfterTick()
+	delay := s.heartbeatDelayAfterTick(past)
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	for {
@@ -110,8 +111,9 @@ func (s *Session) runHeartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-timer.C:
+			past = s.heartbeatDelay() <= time.Millisecond
 			s.tickHeartbeat(ctx)
-			delay = s.heartbeatDelayAfterTick()
+			delay = s.heartbeatDelayAfterTick(past)
 		case <-s.heartbeatPoke:
 			// Turnover landed while sleeping. Re-arm from the new lastTurnover;
 			// do not open a span until that deadline.
@@ -142,13 +144,14 @@ func (s *Session) heartbeatDelay() time.Duration {
 	return s.heartbeat.NextWake(s.now())
 }
 
-// heartbeatDelayAfterTick is heartbeatDelay unless the tick left the deadline
-// already past. NextWake then reports 1ms so the loop would spin: a skipped
-// tick (no height, session no longer active) does not open or settle a turn.
-// Poll once per Interval instead.
-func (s *Session) heartbeatDelayAfterTick() time.Duration {
+// heartbeatDelayAfterTick is heartbeatDelay unless the deadline was already
+// past when the tick started and the tick left it there. NextWake then
+// reports 1ms, and a skipped tick (no height, session no longer active)
+// would spin. Poll once per Interval in that case. A deadline that expires
+// during the tick is woken immediately so an abandon is not postponed.
+func (s *Session) heartbeatDelayAfterTick(alreadyPast bool) time.Duration {
 	delay := s.heartbeatDelay()
-	if delay > time.Millisecond {
+	if delay > time.Millisecond || !alreadyPast {
 		return delay
 	}
 	interval := heightsync.DefaultHeartbeatInterval
