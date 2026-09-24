@@ -251,10 +251,10 @@ func TestBuildGatewayRuntimesDeactivatesUnrecoverableLocalState(t *testing.T) {
 
 	gateway := NewGateway(runtimes, NewGatewayLimiter(0, 0), "Qwen/Test")
 	require.NotContains(t, gateway.runtimes, "12")
-	chosen, err := gateway.reserveRuntimeForModel("Qwen/Test", 1)
+	chosen, err := gateway.reserveRuntimeForModel("Qwen/Test", chatRequestCost{promptTokens: 1}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "24", chosen.id)
-	gateway.releaseRuntime(chosen, 1)
+	gateway.releaseRuntime(chosen, chatRequestCost{promptTokens: 1})
 
 	require.Contains(t, logs.String(), "devshard 12 local state unrecoverable, marking inactive and skipping runtime")
 	require.Contains(t, logs.String(), "replay nonce 151: expected 7")

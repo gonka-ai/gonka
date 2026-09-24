@@ -219,7 +219,7 @@ func ClearGatewayParticipantQuarantines(t *testing.T, client *http.Client, gatew
 		if p.AvailableForCapacity && !p.Quarantined && !p.Blocked {
 			continue
 		}
-		require.NoError(t, postGatewayJSON(client, gatewayURL+"/v1/admin/participants/unquarantine", adminAPIKey, map[string]string{
+		require.NoError(t, PostGatewayJSON(client, gatewayURL+"/v1/admin/participants/unquarantine", adminAPIKey, map[string]string{
 			"participant_key": p.ParticipantKey,
 		}, nil))
 		cleared++

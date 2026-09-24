@@ -569,7 +569,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		       perf_sample_size, perf_window_ms,
 		       escrow_rotation_enabled, escrow_rotation_settlement_enabled,
 		       escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
-	       gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url
+		       gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url
 		FROM gateway_settings
 		WHERE id = 1`)
 	var rotationEnabled int
@@ -1140,6 +1140,26 @@ func (s *GatewayStore) SetDevshardActive(id string, active bool) error {
 		return fmt.Errorf("devshard %s not found", id)
 	}
 	return nil
+}
+
+// DeactivateDevshardIfActive reports whether it moved an active row to inactive; a missing or already inactive row reports false.
+func (s *GatewayStore) DeactivateDevshardIfActive(id string, settlementPending bool) (bool, error) {
+	result, err := s.db.Exec(`
+		UPDATE gateway_devshards
+		SET active = 0, settlement_pending = MAX(settlement_pending, ?), updated_at = ?
+		WHERE id = ? AND active = 1`,
+		gatewayBoolToInt(settlementPending),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(id),
+	)
+	if err != nil {
+		return false, fmt.Errorf("deactivate devshard %s settlement_pending=%t: %w", id, settlementPending, err)
+	}
+	deactivatedRows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected for devshard %s: %w", id, err)
+	}
+	return deactivatedRows == 1, nil
 }
 
 func (s *GatewayStore) DeleteDevshard(id string) error {

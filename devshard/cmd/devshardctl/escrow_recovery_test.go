@@ -81,16 +81,27 @@ func stubRuntimeBuilder(t *testing.T) {
 // stubCreateOnChain replaces the on-chain create with a fake that mimics the real
 // flow: it invokes onPrepared(txHash) (so the commitment is written) and aborts
 // without a result if that fails — exactly as CreateDevshardEscrow does.
-func stubCreateOnChain(t *testing.T, txHash string, escrowID uint64) {
+func stubCreateOnChain(t *testing.T, txHash string, escrowID uint64) *atomic.Int32 {
 	t.Helper()
-	saved := gatewayCreateEscrowOnChain
-	gatewayCreateEscrowOnChain = func(_ *Gateway, _ context.Context, _ GatewaySettings, _ EscrowRotationModelSettings, onPrepared func(string) error) (*CreateDevshardEscrowResult, error) {
+	var broadcasts atomic.Int32
+	stubCreateOnChainWith(t, func(onPrepared func(string) error) (*CreateDevshardEscrowResult, error) {
 		if onPrepared != nil {
 			if err := onPrepared(txHash); err != nil {
 				return nil, err
 			}
 		}
+		broadcasts.Add(1)
 		return &CreateDevshardEscrowResult{EscrowID: escrowID, TxHash: txHash}, nil
+	})
+	return &broadcasts
+}
+
+// stubCreateOnChainWith swaps the on-chain create for the given body until the test ends.
+func stubCreateOnChainWith(t *testing.T, create func(onPrepared func(string) error) (*CreateDevshardEscrowResult, error)) {
+	t.Helper()
+	saved := gatewayCreateEscrowOnChain
+	gatewayCreateEscrowOnChain = func(_ *Gateway, _ context.Context, _ GatewaySettings, _ EscrowRotationModelSettings, onPrepared func(string) error) (*CreateDevshardEscrowResult, error) {
+		return create(onPrepared)
 	}
 	t.Cleanup(func() { gatewayCreateEscrowOnChain = saved })
 }
@@ -203,6 +214,7 @@ func TestEscrowProtocolVersionRouteMapping(t *testing.T) {
 		{"/devshard/v4.2", "4.2"},
 		{"/devshard/v5", "5"},
 		{"/devshard/5", "5"},
+		{"/devshard/v5.1", "5.1"},
 	} {
 		t.Run(testCase.routePrefix, func(t *testing.T) {
 			assert.Equal(t, testCase.protocolVersion, escrowProtocolVersionFor(testCase.routePrefix))

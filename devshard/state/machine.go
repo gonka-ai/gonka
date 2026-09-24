@@ -50,6 +50,10 @@ func tokenCost(a, b, price uint64) (uint64, error) {
 	return cost, nil
 }
 
+func ReservedCost(inputLength, maxTokens, tokenPrice uint64) (uint64, error) {
+	return tokenCost(inputLength, maxTokens, tokenPrice)
+}
+
 func copyInferenceRecord(v *types.InferenceRecord) *types.InferenceRecord {
 	if v == nil {
 		return nil
@@ -1176,13 +1180,12 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	// Executor slot: group[inference_id % len(group)].SlotID
 	executorSlot := sm.state.Group[msg.InferenceId%uint64(len(sm.state.Group))].SlotID
 
-	// Reserve cost: (input_length + max_tokens) * token_price
-	reservedCost, err := tokenCost(msg.InputLength, msg.MaxTokens, sm.state.Config.TokenPrice)
+	reservedCost, err := ReservedCost(msg.InputLength, msg.MaxTokens, sm.state.Config.TokenPrice)
 	if err != nil {
 		return err
 	}
 	if sm.state.Balance < reservedCost {
-		return types.ErrInsufficientBalance
+		return types.ErrRequestExceedsBalance
 	}
 
 	sm.state.Balance -= reservedCost

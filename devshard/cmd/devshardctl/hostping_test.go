@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -72,10 +73,12 @@ func TestHostPingRefcountExhaustivenessTeardownPaths(t *testing.T) {
 			},
 		},
 		{
-			name: "deactivateAndSettleDevshardByID",
+			name: "deactivateDepletedEscrow",
 			run: func(t *testing.T, g *Gateway, escrowID string) {
-				// No store/chain — settle may no-op after deactivate; release must still run.
-				g.deactivateAndSettleDevshardByID(escrowID, "test")
+				g.store = newGatewayStoreWithActiveEscrow(t, escrowID)
+				isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), escrowID, "test", GatewaySettings{})
+				require.NoError(t, err)
+				require.True(t, isTakenOutOfService)
 			},
 		},
 		{

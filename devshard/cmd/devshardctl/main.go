@@ -20,6 +20,7 @@ import (
 	"devshard/bridge"
 	"devshard/internal/boolvalue"
 	"devshard/logging"
+	"devshard/runtimeparams"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -463,7 +464,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		gatewayState.Settings.ModelLimits,
 	)
 	recorder := accounting.NewRecorder(accountingTracker, currentPoCPhaseReason)
-	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder)
+	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder, runtimeparams.MaxNonceFromSnapshot(runtimeParams.Provider))
 	if accountingTracker != nil {
 		if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingTracker, accountingCurrentEpoch(gateway))); err != nil {
 			log.Printf("register accounting metrics: %v (accounting metrics disabled)", err)

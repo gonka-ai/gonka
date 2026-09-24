@@ -212,7 +212,7 @@ func TestGatewayParticipantTimingMetricsRecordAddressAndModel(t *testing.T) {
 	m := NewDevshardMetrics()
 	now := time.Now()
 
-	m.ObserveRequestSample("12", RequestSample{
+	m.ObserveRequestSample(RequestSample{
 		HostIdx:        1,
 		ParticipantKey: "participant-1",
 		Model:          "Qwen/Test",
@@ -226,11 +226,15 @@ func TestGatewayParticipantTimingMetricsRecordAddressAndModel(t *testing.T) {
 
 	families, err := m.registry.Gather()
 	require.NoError(t, err)
-	labels := map[string]string{"participant_key": "participant-1", "model": "Qwen/Test"}
-	requireMetricHistogramCount(t, families, "devshard_gateway_participant_receipt_seconds", labels, 1)
-	requireMetricHistogramCount(t, families, "devshard_gateway_participant_first_content_seconds", labels, 1)
-	requireMetricHistogramCount(t, families, "devshard_gateway_participant_prefill_seconds_per_input_token", labels, 1)
-	requireMetricHistogramCount(t, families, "devshard_gateway_participant_total_attempt_seconds", labels, 1)
+	participantLabels := map[string]string{"participant_key": "participant-1", "model": "Qwen/Test"}
+	requireMetricHistogramCount(t, families, "devshard_gateway_participant_receipt_seconds", participantLabels, 1)
+	requireMetricHistogramCount(t, families, "devshard_gateway_participant_first_content_seconds", participantLabels, 1)
+	requireMetricHistogramCount(t, families, "devshard_gateway_participant_prefill_seconds_per_input_token", participantLabels, 1)
+	requireMetricHistogramCount(t, families, "devshard_gateway_participant_total_attempt_seconds", participantLabels, 1)
+	requireMetricFamilyAbsent(t, families, "devshard_host_receipt_seconds")
+	requireMetricFamilyAbsent(t, families, "devshard_host_first_token_seconds")
+	requireMetricFamilyAbsent(t, families, "devshard_host_cttfl_seconds_per_input_token")
+	requireMetricFamilyAbsent(t, families, "devshard_host_total_time_seconds")
 }
 
 // A role-only chunk is a token, not content: the first_content metric must not count it, or it
@@ -239,7 +243,7 @@ func TestGatewayFirstContentMetricIgnoresAContentlessStream(t *testing.T) {
 	m := NewDevshardMetrics()
 	now := time.Now()
 
-	m.ObserveRequestSample("12", RequestSample{
+	m.ObserveRequestSample(RequestSample{
 		HostIdx:        1,
 		ParticipantKey: "participant-1",
 		Model:          "Qwen/Test",
@@ -274,6 +278,42 @@ func TestGatewayAttemptMetricClassifiers(t *testing.T) {
 	require.Equal(t, "no_winner", gatewayAttemptVisibility(&inflight{nonce: 7, suspicious: true}, 7, true))
 	require.Equal(t, "suppressed_loser", gatewayAttemptVisibility(&inflight{nonce: 8}, 7, true))
 	require.Equal(t, "failed_not_finished", gatewayAttemptVisibility(&inflight{nonce: 8}, 0, false))
+}
+
+func TestForgetEscrowDropsSlotDecisionAndPickerSeries(t *testing.T) {
+	m := NewDevshardMetrics()
+	keep := GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "13",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	}
+	drop := keep
+	drop.EscrowID = "12"
+	m.RecordGatewaySlotDecision(drop)
+	m.RecordGatewaySlotDecision(keep)
+	m.RecordPickerChoice("12", "Qwen/Test")
+	m.RecordPickerChoice("13", "Qwen/Test")
+	m.RecordStartupSkippedEscrow("12", "Qwen/Test", "local_recovery_failed")
+	m.RecordStartupSkippedEscrow("13", "Qwen/Test", "local_recovery_failed")
+
+	m.ForgetEscrow("12")
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterValue(t, families, "devshard_gateway_slot_decisions_total", map[string]string{
+		"participant_key": "participant-1", "model": "Qwen/Test", "escrow_id": "13",
+		"decision": "real_send", "reason": "primary", "quarantine_mode": "none",
+	}, 1)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "12"})
+	requireMetricCounterValue(t, families, "devshard_gateway_picker_choice_total", map[string]string{"devshard_id": "13", "model": "Qwen/Test"}, 1)
+	requireMetricCounterMissing(t, families, "devshard_gateway_picker_choice_total", map[string]string{"devshard_id": "12"})
+	requireMetricGaugeValue(t, families, "devshard_gateway_startup_skipped_escrow", map[string]string{
+		"escrow_id": "13", "model": "Qwen/Test", "reason": "local_recovery_failed",
+	}, 1)
+	requireMetricGaugeMissing(t, families, "devshard_gateway_startup_skipped_escrow", map[string]string{"escrow_id": "12"})
 }
 
 func requireMetricCounterValue(t *testing.T, families []*dto.MetricFamily, name string, labels map[string]string, want float64) {
@@ -322,4 +362,56 @@ func requireMetricHistogramCount(t *testing.T, families []*dto.MetricFamily, nam
 		}
 	}
 	t.Fatalf("histogram %s with labels %v not found", name, labels)
+}
+
+func requireMetricFamilyAbsent(t *testing.T, families []*dto.MetricFamily, name string) {
+	t.Helper()
+	for _, family := range families {
+		if family.GetName() == name {
+			t.Fatalf("metric family %s should not be exported", name)
+		}
+	}
+}
+
+func requireMetricCounterMissing(t *testing.T, families []*dto.MetricFamily, name string, labels map[string]string) {
+	t.Helper()
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if metricLabelsContain(metric, labels) {
+				t.Fatalf("metric %s with labels %v should have been deleted", name, labels)
+			}
+		}
+		return
+	}
+}
+
+func requireMetricGaugeMissing(t *testing.T, families []*dto.MetricFamily, name string, labels map[string]string) {
+	t.Helper()
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if metricLabelsContain(metric, labels) {
+				t.Fatalf("metric %s with labels %v should have been deleted", name, labels)
+			}
+		}
+		return
+	}
+}
+
+func metricLabelsContain(metric *dto.Metric, want map[string]string) bool {
+	got := make(map[string]string, len(metric.GetLabel()))
+	for _, label := range metric.GetLabel() {
+		got[label.GetName()] = label.GetValue()
+	}
+	for name, value := range want {
+		if got[name] != value {
+			return false
+		}
+	}
+	return true
 }
