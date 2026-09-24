@@ -253,32 +253,53 @@ func TestGatewayCheckBalancesReplacesAHeldEscrowWhoseReservationCannotRestoreIt(
 	require.Eventually(t, func() bool { return settled() == 1 }, time.Second, 10*time.Millisecond, "the replaced escrow must be settled")
 }
 
-func TestGatewayCheckBalancesReplacesAHeldEscrowPastItsDeadline(t *testing.T) {
-	gateway, runtime, created, settled := newHeldEscrowGateway(t)
-	runBalanceTick(t, gateway, runtime.id)
+const aDay = 24 * time.Hour
 
-	runtime.holdSince.Store(time.Now().Add(-2 * maximumEscrowHoldDuration(runtime.proxy.sm.Config())).UnixNano())
-	runBalanceTick(t, gateway, runtime.id)
+func moveOnlyReservation(t *testing.T, runtime *devshardRuntime, status types.InferenceStatus, startedAt, confirmedAt int64) {
+	t.Helper()
+	state := runtime.proxy.sm.ExportState()
+	state.Inferences[1].Status = status
+	state.Inferences[1].StartedAt = startedAt
+	state.Inferences[1].ConfirmedAt = confirmedAt
+	require.NoError(t, runtime.proxy.sm.RestoreState(state))
+}
 
-	require.EqualValues(t, 1, created(), "a hold that outlived every reservation's timeout must end in a replacement")
-	require.False(t, runtime.active.Load())
-	require.Eventually(t, func() bool { return settled() == 1 }, time.Second, 10*time.Millisecond, "the replaced escrow must be settled")
+func aDayAgo() int64 {
+	return time.Now().Add(-aDay).Unix()
 }
 
 // Test flow:
-//  1. Build one record per status, one Started record long past its deadline, one exactly at it, and one whose executor stamped an absurd confirmation time.
+//  1. Put an escrow on hold whose only reservation is a Started inference confirmed a day ago, with the hold itself a day old.
+//  2. The execution-timeout sweep can still return it before settlement, so the next tick must keep the hold however long it has lasted.
+func TestGatewayCheckBalancesKeepsAHeldEscrowWhoseStartedReservationTheSweepCanReturn(t *testing.T) {
+	gateway, runtime, created, _ := newHeldEscrowGateway(t)
+	runBalanceTick(t, gateway, runtime.id)
+
+	moveOnlyReservation(t, runtime, types.StatusStarted, aDayAgo(), aDayAgo())
+	runtime.holdSince.Store(time.Now().Add(-aDay).UnixNano())
+	runBalanceTick(t, gateway, runtime.id)
+
+	require.EqualValues(t, 0, created(), "replacing it would let settlement pay the reservation to the host before the sweep returns it")
+	accepts, reason := runtime.acceptsNewInferences()
+	require.False(t, accepts)
+	require.Equal(t, "on_hold", reason)
+}
+
+// Test flow:
+//  1. Build one record per status, one Pending record long past its refusal deadline, one exactly at it, and one stamped in the absurd future.
 //  2. Summarize them at a fixed moment.
-//  3. Expect per-status counts and costs, the recoverable sum, two overdue records, and the latest deadline anchored to ConfirmedAt but never past now.
+//  3. Expect per-status counts and costs, the two overdue Pending records, and the latest Pending deadline never past now plus the window.
+//  4. Started and disputed money always counts as recoverable; overdue Pending money counts only while a vote may still be running.
 func TestSummarizeEscrowHoldInFlightCountsEachStatusAndItsDeadline(t *testing.T) {
-	config := types.SessionConfig{ExecutionTimeout: 600}
+	config := types.SessionConfig{RefusalTimeout: 60, ExecutionTimeout: 600}
 	now := time.Unix(10_000, 0)
-	window := maximumEscrowHoldDuration(config)
+	window := escrowHoldPendingWindow(config)
 	inferences := map[uint64]*types.InferenceRecord{
-		1: {Status: types.StatusPending, ReservedCost: 10, StartedAt: 9_900},
-		2: {Status: types.StatusStarted, ReservedCost: 20, StartedAt: 9_000, ConfirmedAt: 9_950},
-		3: {Status: types.StatusStarted, ReservedCost: 30, StartedAt: 1_000, ConfirmedAt: 1_000},
-		4: {Status: types.StatusStarted, ReservedCost: 100, StartedAt: now.Add(-window).Unix(), ConfirmedAt: now.Add(-window).Unix()},
-		5: {Status: types.StatusStarted, ReservedCost: 200, StartedAt: 9_000, ConfirmedAt: math.MaxInt64},
+		1: {Status: types.StatusPending, ReservedCost: 10, StartedAt: 9_990},
+		2: {Status: types.StatusPending, ReservedCost: 30, StartedAt: 1_000},
+		3: {Status: types.StatusPending, ReservedCost: 100, StartedAt: now.Add(-window).Unix()},
+		4: {Status: types.StatusPending, ReservedCost: 200, StartedAt: math.MaxInt64},
+		5: {Status: types.StatusStarted, ReservedCost: 20, StartedAt: 1_000, ConfirmedAt: 1_000},
 		6: {Status: types.StatusChallenged, ReservedCost: 1000, ActualCost: 40},
 		7: {Status: types.StatusFinished, ReservedCost: 80, ActualCost: 80},
 		8: {Status: types.StatusTimedOut, ReservedCost: 160},
@@ -286,30 +307,27 @@ func TestSummarizeEscrowHoldInFlightCountsEachStatusAndItsDeadline(t *testing.T)
 
 	summary := summarizeEscrowHoldInFlight(inferences, config, now)
 
-	require.Equal(t, 1, summary.pendingCount)
-	require.EqualValues(t, 10, summary.pendingCost)
-	require.Equal(t, 4, summary.startedCount)
-	require.EqualValues(t, 350, summary.startedCost)
+	require.Equal(t, 4, summary.pendingCount)
+	require.EqualValues(t, 340, summary.pendingCost)
+	require.Equal(t, 1, summary.startedCount)
+	require.EqualValues(t, 20, summary.startedCost)
 	require.Equal(t, 1, summary.challengedCount)
 	require.EqualValues(t, 40, summary.challengedCost)
-	require.EqualValues(t, 400, summary.recoverable())
-	require.Equal(t, 2, summary.overdueCount, "a record exactly at its deadline is overdue, a record with an absurd confirmation time is not")
-	require.Equal(t, now.Add(window), summary.latestDeadline, "a confirmation stamped in the future must count from now, not overflow into the past")
+	require.Equal(t, 2, summary.overduePendingCount, "a Pending record exactly at its deadline is overdue, one stamped in the future is not")
+	require.EqualValues(t, 130, summary.overduePendingCost)
+	require.EqualValues(t, 270, summary.recoverable(false), "an overdue Pending reservation no vote is working on will not come back")
+	require.EqualValues(t, 400, summary.recoverable(true), "a running vote may still refund an overdue Pending reservation")
+	require.Equal(t, now.Add(window), summary.latestPendingDeadline, "a start stamped in the future must count from now, not overflow into the past")
 }
 
 // Test flow:
-//  1. Put an escrow on hold that was just started.
-//  2. Move its only reservation's confirmation far enough back that its timeout deadline has passed.
-//  3. The next tick must replace it without waiting out the hold's own window.
-func TestGatewayCheckBalancesReplacesAHeldEscrowOnceEveryReservationIsPastItsDeadline(t *testing.T) {
+//  1. Put an escrow on hold, then turn its only reservation into a Pending inference started a day ago that no vote is working on.
+//  2. A refusal that far past its deadline will not come back, so the next tick must replace the escrow.
+func TestGatewayCheckBalancesReplacesAHeldEscrowWhosePendingReservationIsPastItsRefusalDeadline(t *testing.T) {
 	gateway, runtime, created, settled := newHeldEscrowGateway(t)
 	runBalanceTick(t, gateway, runtime.id)
 
-	longAgo := time.Now().Add(-2 * maximumEscrowHoldDuration(runtime.proxy.sm.Config())).Unix()
-	state := runtime.proxy.sm.ExportState()
-	state.Inferences[1].StartedAt = longAgo
-	state.Inferences[1].ConfirmedAt = longAgo
-	require.NoError(t, runtime.proxy.sm.RestoreState(state))
+	moveOnlyReservation(t, runtime, types.StatusPending, aDayAgo(), 0)
 	runBalanceTick(t, gateway, runtime.id)
 
 	require.EqualValues(t, 1, created(), "a hold whose reservations can no longer come back must end at once")
@@ -318,17 +336,13 @@ func TestGatewayCheckBalancesReplacesAHeldEscrowOnceEveryReservationIsPastItsDea
 }
 
 // Test flow:
-//  1. Put an escrow on hold whose only reservation is past its deadline while a timeout vote for it is still running.
-//  2. The vote may still refund the reservation, so the next tick must keep the hold until the vote ends or the hold's own window runs out.
+//  1. Put an escrow on hold whose only reservation is an overdue Pending inference while a race cleanup is still voting on the escrow.
+//  2. The vote may still refund it, so the next tick must keep the hold.
 func TestGatewayCheckBalancesKeepsAHeldEscrowWhileItsTimeoutVotesAreRunning(t *testing.T) {
 	gateway, runtime, created, _ := newHeldEscrowGateway(t)
 	runBalanceTick(t, gateway, runtime.id)
 
-	longAgo := time.Now().Add(-2 * maximumEscrowHoldDuration(runtime.proxy.sm.Config())).Unix()
-	state := runtime.proxy.sm.ExportState()
-	state.Inferences[1].StartedAt = longAgo
-	state.Inferences[1].ConfirmedAt = longAgo
-	require.NoError(t, runtime.proxy.sm.RestoreState(state))
+	moveOnlyReservation(t, runtime, types.StatusPending, aDayAgo(), 0)
 	runtime.pendingRaceCleanup.Add(1)
 	t.Cleanup(func() { runtime.pendingRaceCleanup.Add(-1) })
 	runBalanceTick(t, gateway, runtime.id)
@@ -340,20 +354,47 @@ func TestGatewayCheckBalancesKeepsAHeldEscrowWhileItsTimeoutVotesAreRunning(t *t
 }
 
 // Test flow:
-//  1. Put an escrow on hold whose money sits in a dispute next to a long-overdue reservation.
-//  2. A dispute has no deadline of its own, so the next tick must keep the hold.
-func TestGatewayCheckBalancesKeepsAHeldEscrowWithADisputeForTheWholeWindow(t *testing.T) {
+//  1. Drop an escrow below the balance threshold while its only reservation is a Pending inference long past its refusal deadline.
+//  2. Nothing will refund that reservation, so the tick must replace the escrow instead of holding it.
+func TestGatewayCheckBalancesReplacesALowBalanceEscrowWhoseOnlyReservationIsAnOverduePendingOne(t *testing.T) {
+	gateway, runtime, created, _ := newHeldEscrowGateway(t)
+	moveOnlyReservation(t, runtime, types.StatusPending, aDayAgo(), 0)
+
+	runBalanceTick(t, gateway, runtime.id)
+
+	require.EqualValues(t, 1, created(), "an escrow whose only reservation is overdue must be replaced at once")
+	require.False(t, runtime.active.Load())
+	require.Empty(t, devshardIDs(t, gateway.store)[runtime.id].OnHoldSince, "an escrow that cannot recover is never put on hold")
+}
+
+// Test flow:
+//  1. Drop an escrow below the balance threshold while its only reservation is a Started inference confirmed a day ago.
+//  2. The sweep can still return it, so the tick must hold the escrow rather than replace it.
+func TestGatewayCheckBalancesHoldsALowBalanceEscrowWhoseStartedReservationIsOverdue(t *testing.T) {
+	gateway, runtime, created, _ := newHeldEscrowGateway(t)
+	moveOnlyReservation(t, runtime, types.StatusStarted, aDayAgo(), aDayAgo())
+
+	runBalanceTick(t, gateway, runtime.id)
+
+	require.EqualValues(t, 0, created(), "the sweep can still return a Started reservation")
+	accepts, reason := runtime.acceptsNewInferences()
+	require.False(t, accepts)
+	require.Equal(t, "on_hold", reason)
+}
+
+// Test flow:
+//  1. Put an escrow on hold whose money sits in a dispute, with the hold itself a day old.
+//  2. A dispute has no deadline of its own, so the next tick must keep the hold however long it has lasted.
+func TestGatewayCheckBalancesKeepsAHeldEscrowWithADisputeForAsLongAsItLasts(t *testing.T) {
 	runtime := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
 	state := runtime.proxy.sm.ExportState()
 	state.Balance = balanceMinimumThreshold - 1
-	state.Inferences = map[uint64]*types.InferenceRecord{
-		1: {Status: types.StatusChallenged, ActualCost: balanceMinimumThreshold},
-		2: {Status: types.StatusStarted, ReservedCost: 1, StartedAt: 1, ConfirmedAt: 1},
-	}
+	state.Inferences = map[uint64]*types.InferenceRecord{1: {Status: types.StatusChallenged, ActualCost: balanceMinimumThreshold}}
 	require.NoError(t, runtime.proxy.sm.RestoreState(state))
 	gateway, created, _ := gatewayTestDepletionGateway(t, runtime)
 	runBalanceTick(t, gateway, runtime.id)
 
+	runtime.holdSince.Store(time.Now().Add(-aDay).UnixNano())
 	runBalanceTick(t, gateway, runtime.id)
 
 	require.EqualValues(t, 0, created.Load(), "a dispute can still refund the escrow, the hold must wait for it")

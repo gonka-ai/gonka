@@ -2826,11 +2826,20 @@ func (s *Session) refusalDeadlineUnreachable(reason types.TimeoutReason, payload
 }
 
 func (s *Session) TimeoutDeadline(nonce uint64, sendTime time.Time) (string, time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	cfg := s.sm.Config()
-	if outcome := s.nonceStates[nonce]; outcome != nil && outcome.confirmedAt > 0 {
-		return "execution", time.Unix(outcome.confirmedAt, 0).Add(
+	confirmedAt := int64(0)
+	if record, tracked := s.sm.GetInference(nonce); tracked {
+		confirmedAt = record.ConfirmedAt
+	}
+	if confirmedAt <= 0 {
+		s.mu.Lock()
+		if outcome := s.nonceStates[nonce]; outcome != nil {
+			confirmedAt = outcome.confirmedAt
+		}
+		s.mu.Unlock()
+	}
+	if confirmedAt > 0 {
+		return "execution", time.Unix(confirmedAt, 0).Add(
 			time.Duration(cfg.ExecutionTimeout)*time.Second + TimeoutBuffer,
 		)
 	}

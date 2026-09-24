@@ -33,10 +33,7 @@ func (inFlight *keyedInFlight) enter(key string) (leave func(), entered bool) {
 	}, true
 }
 
-const (
-	escrowHoldReleaseResponses = 32
-	escrowHoldTimeoutVoteGrace = time.Minute
-)
+const escrowHoldReleaseResponses = 32
 
 func servingEscrowsNeededForHolds(heldCount int) int {
 	return (heldCount + 1) / 2
@@ -46,67 +43,68 @@ func escrowHoldReleaseBalance(config types.SessionConfig) uint64 {
 	return balanceMinimumThreshold + escrowHoldReleaseResponses*RequestMaxTokensCap*config.TokenPrice
 }
 
-func maximumEscrowHoldDuration(config types.SessionConfig) time.Duration {
-	return time.Duration(config.ExecutionTimeout)*time.Second + user.TimeoutBuffer + escrowHoldTimeoutVoteGrace
+func escrowHoldPendingWindow(config types.SessionConfig) time.Duration {
+	return time.Duration(config.RefusalTimeout)*time.Second + user.TimeoutBuffer + balanceCheckInterval
 }
 
 type escrowHoldInFlightSummary struct {
-	pendingCount    int
-	pendingCost     uint64
-	startedCount    int
-	startedCost     uint64
-	challengedCount int
-	challengedCost  uint64
-	overdueCount    int
-	latestDeadline  time.Time
+	pendingCount          int
+	pendingCost           uint64
+	startedCount          int
+	startedCost           uint64
+	challengedCount       int
+	challengedCost        uint64
+	overduePendingCount   int
+	overduePendingCost    uint64
+	latestPendingDeadline time.Time
 }
 
 func summarizeEscrowHoldInFlight(inferences map[uint64]*types.InferenceRecord, config types.SessionConfig, now time.Time) escrowHoldInFlightSummary {
 	var summary escrowHoldInFlightSummary
-	executionWindow := maximumEscrowHoldDuration(config)
+	pendingWindow := escrowHoldPendingWindow(config)
 	for _, inference := range inferences {
 		switch inference.Status {
 		case types.StatusPending:
 			summary.pendingCount++
 			summary.pendingCost += inference.ReservedCost
+			deadline := deadlineFromStamp(inference.StartedAt, now, pendingWindow)
+			if !now.Before(deadline) {
+				summary.overduePendingCount++
+				summary.overduePendingCost += inference.ReservedCost
+			}
+			if deadline.After(summary.latestPendingDeadline) {
+				summary.latestPendingDeadline = deadline
+			}
 		case types.StatusStarted:
 			summary.startedCount++
 			summary.startedCost += inference.ReservedCost
 		case types.StatusChallenged:
 			summary.challengedCount++
 			summary.challengedCost += inference.ActualCost
-			continue
-		default:
-			continue
-		}
-		deadline := time.Unix(min(max(inference.StartedAt, inference.ConfirmedAt), now.Unix()), 0).Add(executionWindow)
-		if !now.Before(deadline) {
-			summary.overdueCount++
-		}
-		if deadline.After(summary.latestDeadline) {
-			summary.latestDeadline = deadline
 		}
 	}
 	return summary
 }
 
-func (summary escrowHoldInFlightSummary) recoverable() uint64 {
-	return summary.pendingCost + summary.startedCost + summary.challengedCost
+func (summary escrowHoldInFlightSummary) recoverable(hasBackgroundWork bool) uint64 {
+	recoverable := summary.pendingCost + summary.startedCost + summary.challengedCost
+	if hasBackgroundWork {
+		return recoverable
+	}
+	return recoverable - summary.overduePendingCost
 }
 
-func (summary escrowHoldInFlightSummary) latestDeadlineLabel() string {
-	if summary.latestDeadline.IsZero() {
+func (summary escrowHoldInFlightSummary) breakdown() string {
+	return fmt.Sprintf("pending=%d pending_cost=%d started=%d started_cost=%d challenged=%d challenged_cost=%d overdue_pending=%d overdue_pending_cost=%d latest_pending_deadline=%s",
+		summary.pendingCount, summary.pendingCost, summary.startedCount, summary.startedCost,
+		summary.challengedCount, summary.challengedCost, summary.overduePendingCount, summary.overduePendingCost, summary.latestPendingDeadlineLabel())
+}
+
+func (summary escrowHoldInFlightSummary) latestPendingDeadlineLabel() string {
+	if summary.latestPendingDeadline.IsZero() {
 		return "none"
 	}
-	return summary.latestDeadline.UTC().Format(time.RFC3339Nano)
-}
-
-func (summary escrowHoldInFlightSummary) holdDeadline(since time.Time, config types.SessionConfig, hasBackgroundWork bool) time.Time {
-	deadline := since.Add(maximumEscrowHoldDuration(config))
-	if hasBackgroundWork || summary.challengedCount > 0 || summary.latestDeadline.IsZero() || deadline.Before(summary.latestDeadline) {
-		return deadline
-	}
-	return summary.latestDeadline
+	return summary.latestPendingDeadline.UTC().Format(time.RFC3339Nano)
 }
 
 func (rt *devshardRuntime) clearHold() {
@@ -126,7 +124,7 @@ func (g *Gateway) holdOrReplaceDepletedEscrow(runtime *devshardRuntime, reason s
 		return
 	}
 	state := runtime.proxy.sm.SnapshotState()
-	recoverable := summarizeEscrowHoldInFlight(state.Inferences, state.Config, time.Now()).recoverable()
+	recoverable := summarizeEscrowHoldInFlight(state.Inferences, state.Config, time.Now()).recoverable(runtime.escrowHasBackgroundWork())
 	releaseBalance := escrowHoldReleaseBalance(state.Config)
 	if state.Balance+recoverable < releaseBalance || !g.canReplaceEscrowModel(runtime.model) {
 		g.scheduleDepletedEscrowReplacement(runtime.id, runtime.model, reason)
@@ -159,23 +157,17 @@ func (g *Gateway) holdOrReplaceExhaustedEscrow(escrowID, modelID string) {
 func (g *Gateway) resolveHeldEscrow(runtime *devshardRuntime, now time.Time) {
 	state := runtime.proxy.sm.SnapshotState()
 	summary := summarizeEscrowHoldInFlight(state.Inferences, state.Config, now)
-	recoverable := summary.recoverable()
+	recoverable := summary.recoverable(runtime.escrowHasBackgroundWork())
 	releaseBalance := escrowHoldReleaseBalance(state.Config)
-	since := time.Unix(0, runtime.holdSince.Load())
 	switch {
 	case state.Balance >= releaseBalance:
 		g.releaseEscrowHold(runtime, "balance_recovered")
 	case !g.canReplaceEscrowModel(runtime.model):
 		g.releaseEscrowHold(runtime, "no_replacement_model")
 	case state.Balance+recoverable < releaseBalance:
-		log.Printf("escrow_hold_unrecoverable escrow=%s balance=%d recoverable_in_flight=%d release_balance=%d", runtime.id, state.Balance, recoverable, releaseBalance)
+		log.Printf("escrow_hold_unrecoverable escrow=%s balance=%d recoverable_in_flight=%d release_balance=%d held_for=%s %s",
+			runtime.id, state.Balance, recoverable, releaseBalance, now.Sub(time.Unix(0, runtime.holdSince.Load())), summary.breakdown())
 		g.scheduleDepletedEscrowReplacement(runtime.id, runtime.model, "low_balance")
-	case now.After(summary.holdDeadline(since, state.Config, runtime.escrowHasBackgroundWork())):
-		log.Printf("escrow_hold_expired escrow=%s balance=%d recoverable_in_flight=%d held_for=%s pending=%d pending_cost=%d started=%d started_cost=%d challenged=%d challenged_cost=%d overdue=%d latest_deadline=%s",
-			runtime.id, state.Balance, recoverable, now.Sub(since),
-			summary.pendingCount, summary.pendingCost, summary.startedCount, summary.startedCost,
-			summary.challengedCount, summary.challengedCost, summary.overdueCount, summary.latestDeadlineLabel())
-		g.scheduleDepletedEscrowReplacement(runtime.id, runtime.model, "hold_expired")
 	}
 }
 
