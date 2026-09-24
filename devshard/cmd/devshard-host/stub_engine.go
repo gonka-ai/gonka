@@ -27,7 +27,12 @@ func stubInferenceEngineFromEnv() (devshardpkg.InferenceEngine, error) {
 		body := []byte(stubResponseBody)
 		responseHash := sha256.Sum256(body)
 		stubEngine.ResponseBody = body
+		servedHash, err := stub.HashServedView(body)
+		if err != nil {
+			return nil, err
+		}
 		stubEngine.ResponseHash = responseHash[:]
+		stubEngine.ServedHash = servedHash
 	}
 	return stubEngine, nil
 }
@@ -68,9 +73,14 @@ func (e processedStreamEngine) Execute(_ context.Context, req devshardpkg.Execut
 	if err != nil {
 		return nil, fmt.Errorf("read stub usage: %w", err)
 	}
+	servedHash, err := processor.GetServedHash()
+	if err != nil {
+		return nil, fmt.Errorf("collect stub served view: %w", err)
+	}
 	responseHash := sha256.Sum256(stored)
 	return &devshardpkg.ExecuteResult{
 		ResponseHash: responseHash[:],
+		ServedHash:   servedHash[:],
 		InputTokens:  usage.PromptTokens,
 		OutputTokens: usage.CompletionTokens,
 		ResponseBody: stored,

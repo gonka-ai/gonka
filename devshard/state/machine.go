@@ -61,6 +61,9 @@ func copyInferenceRecord(v *types.InferenceRecord) *types.InferenceRecord {
 	if v.ResponseHash != nil {
 		cp.ResponseHash = append([]byte(nil), v.ResponseHash...)
 	}
+	if v.ServedHash != nil {
+		cp.ServedHash = append([]byte(nil), v.ServedHash...)
+	}
 	return &cp
 }
 
@@ -1311,6 +1314,7 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 
 	rec.Status = types.StatusFinished
 	rec.ResponseHash = msg.ResponseHash
+	rec.ServedHash = msg.ServedHash
 	rec.InputTokens = msg.InputTokens
 	rec.OutputTokens = msg.OutputTokens
 	rec.ActualCost = actualCost

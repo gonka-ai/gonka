@@ -2163,6 +2163,9 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				"poc_reason", currentPoCPhaseReason(),
 			)
 		}
+		if !inf.probe && inf.err == nil && e.session != nil {
+			e.recordServedBinding(ctx, inf, params, e.session.CheckServedBinding(inf.resp, inf.nonce))
+		}
 	}()
 }
 
@@ -3951,6 +3954,10 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 	if e.longResponseFailureExempt(inf) {
 		return
 	}
+	e.recordHostFailureOnce(inf, params)
+}
+
+func (e *Redundancy) recordHostFailureOnce(inf *inflight, params user.InferenceParams) {
 	participantKey := e.participantKeyForHost(inf.hostIdx)
 	inf.sampleOnce.Do(func() {
 		sample := RequestSample{
@@ -3979,6 +3986,24 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 	if e.participantLimiter != nil && e.perf.ParticipantFailureThresholdExceeded(participantKey) {
 		inf.limiterStrikeOnce.Do(func() { e.participantLimiter.ObserveStalledWinner(participantKey) })
 	}
+}
+
+func (e *Redundancy) recordServedBinding(ctx context.Context, inf *inflight, params user.InferenceParams, verdict user.ServedBinding) {
+	if e.metrics != nil {
+		e.metrics.RecordServedBinding(string(verdict))
+	}
+	if verdict != user.ServedBindingMismatch && verdict != user.ServedBindingMissing {
+		return
+	}
+	logInferenceStage(ctx, inf.escrowID, inf.nonce, "served_binding_failed",
+		"host", inf.hostID,
+		"verdict", string(verdict),
+		"output_chunks", inf.outputChunks.Load(),
+	)
+	if inf.phaseTransitionAborted {
+		return
+	}
+	e.recordHostFailureOnce(inf, params)
 }
 
 func (e *Redundancy) recordWinnerTerminalFailureOnce(inf *inflight, params user.InferenceParams, winnerNonce uint64) {

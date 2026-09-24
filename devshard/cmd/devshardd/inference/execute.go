@@ -15,6 +15,7 @@ type mlRequestExecutor func(ctx context.Context, model string, body []byte) (*ht
 
 type processedExecutionResponse struct {
 	responseHash []byte
+	servedHash   []byte
 	inputTokens  uint64
 	outputTokens uint64
 	responseBody []byte
@@ -71,6 +72,7 @@ func executeInference(
 
 	return &devshardpkg.ExecuteResult{
 		ResponseHash: processed.responseHash,
+		ServedHash:   processed.servedHash,
 		InputTokens:  processed.inputTokens,
 		OutputTokens: processed.outputTokens,
 		ResponseBody: processed.responseBody,
@@ -114,6 +116,10 @@ func processExecutionHTTPResponse(
 
 	// The processor slimmed each chunk as it parsed it, so what it hands back is already what is stored.
 	hash := sha256.Sum256(bodyBytes)
+	servedHash, err := processor.GetServedHash()
+	if err != nil {
+		return nil, fmt.Errorf("get served hash: %w", err)
+	}
 	usage, err := processor.GetUsage()
 	if err != nil {
 		return nil, fmt.Errorf("get usage: %w", err)
@@ -121,6 +127,7 @@ func processExecutionHTTPResponse(
 
 	return &processedExecutionResponse{
 		responseHash: hash[:],
+		servedHash:   servedHash[:],
 		inputTokens:  usage.PromptTokens,
 		outputTokens: usage.CompletionTokens,
 		responseBody: bodyBytes,

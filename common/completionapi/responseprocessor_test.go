@@ -227,8 +227,8 @@ func TestForwardingLogprobsOnlyWhenAsked(t *testing.T) {
 			require.NotEmpty(t, position["top_logprobs"],
 				"the stored copy always keeps the alternatives the validator replays against: %s", stored)
 			_, keptWhole := position["logprob"]
-			require.Equal(t, testCase.storedWhole, keptWhole,
-				"a chunk that compresses loses the position logprob an alternative already spells; one that does not is stored whole: %s", stored)
+			require.Equal(t, testCase.storedWhole || testCase.forwardLogprobs, keptWhole,
+				"an asking caller's chunk and one that will not compress are stored whole; the rest lose the position logprob an alternative already spells: %s", stored)
 		})
 	}
 }
@@ -288,7 +288,7 @@ func BenchmarkPrepareBody(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, _, err := processor.prepareBody(chunk); err != nil {
+				if _, _, _, err := processor.prepareBody(chunk); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -314,7 +314,7 @@ func TestForwardedStreamRebuildsToTheStoredHash(t *testing.T) {
 		forwardStored   bool
 		wantSameHash    bool
 	}{
-		{name: "optimized, caller asked for logprobs", events: answeredStream, forwardLogprobs: true},
+		{name: "optimized, caller asked for logprobs", events: answeredStream, forwardLogprobs: true, wantSameHash: true},
 		{name: "optimized, caller did not ask", events: answeredStream, forwardLogprobs: false},
 		{name: "optimized, refused stream, caller did not ask", events: refusedStream, forwardLogprobs: false},
 		{name: "forwarding stored, caller asked for logprobs", events: answeredStream, forwardLogprobs: true, forwardStored: true, wantSameHash: true},

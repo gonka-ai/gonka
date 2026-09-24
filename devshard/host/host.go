@@ -84,6 +84,8 @@ type HostResponse struct {
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
 	ExecutionExpected  bool
+
+	ReceivedResponseHashes [][32]byte
 }
 
 type receiptOutcome struct {
@@ -1120,6 +1122,7 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:       inferenceID,
 		ResponseHash:      result.ResponseHash,
+		ServedHash:        result.ServedHash,
 		InputTokens:       result.InputTokens,
 		OutputTokens:      result.OutputTokens,
 		ExecutorSlot:      executorSlot,
@@ -1169,6 +1172,7 @@ type validateJob struct {
 	model           string
 	promptHash      []byte
 	responseHash    []byte
+	servedHash      []byte
 	inputTokens     uint64
 	outputTokens    uint64
 	escrowID        string
@@ -1264,6 +1268,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 			model:           rec.Model,
 			promptHash:      rec.PromptHash,
 			responseHash:    rec.ResponseHash,
+			servedHash:      rec.ServedHash,
 			inputTokens:     rec.InputTokens,
 			outputTokens:    rec.OutputTokens,
 			escrowID:        h.escrowID,
@@ -1395,6 +1400,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		Model:           job.model,
 		PromptHash:      job.promptHash,
 		ResponseHash:    job.responseHash,
+		ServedHash:      job.servedHash,
 		InputTokens:     job.inputTokens,
 		OutputTokens:    job.outputTokens,
 		EscrowID:        job.escrowID,

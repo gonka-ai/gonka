@@ -1,6 +1,7 @@
 package completionapi
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -25,7 +26,9 @@ type ExecutorResponseProcessor struct {
 	inferenceId                 string
 	jsonResponseBytes           []byte
 	forwardedJSON               []byte
+	servedJSON                  []byte
 	streamedResponse            []string
+	servedEnvelope              *envelopeHasher
 	forwardLogprobs             bool
 	logprobsOptimizationEnabled bool
 	observedUsage               *Usage
@@ -50,12 +53,13 @@ func (rt *ExecutorResponseProcessor) SetLogprobsOptimization(override *bool, exe
 }
 
 func (rt *ExecutorResponseProcessor) ProcessJsonResponse(responseBytes []byte) ([]byte, error) {
-	stored, forwarded, err := rt.prepareBody(responseBytes)
+	stored, forwarded, served, err := rt.prepareBody(responseBytes)
 	if err != nil {
 		return nil, err
 	}
 	rt.jsonResponseBytes = stored
 	rt.forwardedJSON = forwarded
+	rt.servedJSON = served
 	return forwarded, nil
 }
 
@@ -69,62 +73,57 @@ func (rt *ExecutorResponseProcessor) ProcessStreamedResponse(line string) (strin
 	body, isData := streamedLineBody(line)
 	if !isData {
 		rt.streamedResponse = append(rt.streamedResponse, line)
+		rt.serveLine(line)
 		return line, nil
 	}
-	stored, forwarded, err := rt.prepareBody([]byte(body))
+	stored, forwarded, served, err := rt.prepareBody([]byte(body))
 	if err != nil {
 		rt.streamedResponse = append(rt.streamedResponse, line)
+		rt.serveLine(line)
 		return line, err
 	}
 	rt.streamedResponse = append(rt.streamedResponse, DataPrefix+string(stored))
+	rt.serveLine(DataPrefix + string(served))
 	return DataPrefix + string(forwarded), nil
 }
 
-// prepareBody parses one chunk once and answers both readers: only the forwarded copy can lose logprobs,
-// because the validator replays the stored one.
-func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded []byte, err error) {
+func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded, served []byte, err error) {
 	document, err := decodeDocumentWithoutUnreadFields(body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	object, isObject := document.(map[string]any)
 	if !isObject {
-		return nil, nil, errors.New("ExecutorResponseProcessor: response body is not a JSON object")
+		return nil, nil, nil, errors.New("ExecutorResponseProcessor: response body is not a JSON object")
 	}
 	object["id"] = rt.inferenceId
 	rt.observeUsage(object)
 	dropFields(document, fieldsNoValidatorReads)
 
-	if !rt.logprobsOptimizationEnabled {
-		if stored, err = json.Marshal(document); err != nil {
-			return nil, nil, err
-		}
-		return stored, stored, nil
-	}
-
-	// Only a caller that asked is owed the host's own positions, so only it pays for a copy.
-	if rt.forwardLogprobs {
-		if forwarded, err = json.Marshal(document); err != nil {
-			return nil, nil, err
-		}
-	}
-
 	// A chunk that will not slim is stored as it arrived rather than failing the inference.
-	if err := compressLogprobsIn(document); err != nil {
-		logging.Warn("Storing the response whole: it did not compress", types.Inferences,
-			"inference_id", rt.inferenceId, "error", err)
+	optimized := rt.logprobsOptimizationEnabled && !rt.forwardLogprobs
+	if optimized {
+		if err := compressLogprobsIn(document); err != nil {
+			logging.Warn("Storing the response whole: it did not compress", types.Inferences,
+				"inference_id", rt.inferenceId, "error", err)
+		}
 	}
 	if stored, err = json.Marshal(document); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	if !rt.forwardLogprobs {
-		dropFields(document, fieldsOnlyAskingCallersSee)
-		if forwarded, err = json.Marshal(document); err != nil {
-			return nil, nil, err
+	served = stored
+	if dropFields(document, fieldsOnlyAskingCallersSee) {
+		if served, err = json.Marshal(document); err != nil {
+			return nil, nil, nil, err
 		}
 	}
-	return stored, forwarded, nil
+
+	forwarded = stored
+	if optimized {
+		forwarded = served
+	}
+	return stored, forwarded, served, nil
 }
 
 func (rt *ExecutorResponseProcessor) GetResponseBytes() ([]byte, error) {
@@ -137,6 +136,25 @@ func (rt *ExecutorResponseProcessor) GetResponseBytes() ([]byte, error) {
 		return json.Marshal(response)
 	}
 	return nil, ErrNoResponseCollected
+}
+
+func (rt *ExecutorResponseProcessor) serveLine(line string) {
+	if rt.servedEnvelope == nil {
+		rt.servedEnvelope = newEnvelopeHasher()
+	}
+	rt.servedEnvelope.add(line)
+}
+
+func (rt *ExecutorResponseProcessor) GetServedHash() ([32]byte, error) {
+	if rt.jsonResponseBytes != nil {
+		return sha256.Sum256(rt.servedJSON), nil
+	} else if rt.streamedResponse != nil {
+		if rt.servedEnvelope == nil {
+			rt.servedEnvelope = newEnvelopeHasher()
+		}
+		return rt.servedEnvelope.finish(), nil
+	}
+	return [32]byte{}, ErrNoResponseCollected
 }
 
 func (rt *ExecutorResponseProcessor) GetResponse() (CompletionResponse, error) {
