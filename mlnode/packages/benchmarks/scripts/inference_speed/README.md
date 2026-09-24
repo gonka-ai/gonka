@@ -26,8 +26,9 @@ The same number of sessions is run three times, once per cache-hit level:
 
 Each column is time-boxed: sessions start spread over 30 s, the server's Prometheus
 counters are sampled twice a second, and once the generation rate has settled a
-90 s window is measured. All rates come from the server, so client start-up, ramp
-and drain do not enter them. A full run took 9–12 minutes on 1× B300.
+180 s window is measured. All rates come from the server, so client start-up, ramp
+and drain do not enter them. With a 90 s window a run took 9–15 minutes on 1× B300; the default is now 180 s,
+since 90 s runs of 256 sessions repeated only within 5–16 %.
 
 ## Running it
 
@@ -56,6 +57,7 @@ A table per run, plus a JSON with every number and the rate trace of the ramp:
 | prefill computed tok/s/GPU | prompt tokens the engine computed (prompt minus cache hits) |
 | billed tok/s/GPU | prompt plus output tokens, cache hits included |
 | prefix cache hit | cached prompt tokens / prompt tokens |
+| mean input tokens / request | prompt length the window saw; billed tracks it closely |
 | TTFT, ITL, tok/s per session | server-side means over the window |
 | running / waiting | requests on the GPU / queued for room |
 | KV overflow | KV cache ≥ 95 % full, requests waiting, or requests preempted |

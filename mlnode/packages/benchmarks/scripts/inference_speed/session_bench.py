@@ -39,6 +39,8 @@ COUNTERS = {
     "preempt": "vllm:num_preemptions_total",
     "ttft_s": "vllm:time_to_first_token_seconds_sum",
     "ttft_n": "vllm:time_to_first_token_seconds_count",
+    "in_s": "vllm:request_prompt_tokens_sum",
+    "in_n": "vllm:request_prompt_tokens_count",
     "itl_s": "vllm:inter_token_latency_seconds_sum",
     "itl_n": "vllm:inter_token_latency_seconds_count",
     "running": "vllm:num_requests_running",
@@ -241,6 +243,8 @@ def run_mode(args, urls, model, sessions, mode, seed, tag):
     hit = smp.rate("cached", t0, t1) or 0.0
     ttft_n, itl_n = smp.delta("ttft_n", t0, t1), smp.delta("itl_n", t0, t1)
     ttft = smp.delta("ttft_s", t0, t1) / ttft_n if ttft_n else None
+    in_n = smp.delta("in_n", t0, t1)
+    mean_in = smp.delta("in_s", t0, t1) / in_n if in_n else None
     itl = smp.delta("itl_s", t0, t1) / itl_n if itl_n else None
     kv_max = smp.stat("kv", t0, t1, max)
     waiting = smp.stat("waiting", t0, t1)
@@ -259,6 +263,7 @@ def run_mode(args, urls, model, sessions, mode, seed, tag):
         "prefill_tps_per_gpu": round(max(prompt - hit, 0) / g),
         "billed_tps_per_gpu": round((out + prompt) / g),
         "prefix_hit": round(hit / prompt, 3) if prompt else 0.0,
+        "mean_input_tokens": round(mean_in) if mean_in else None,
         "ttft_ms": round(1000 * ttft) if ttft else None,
         "itl_ms": round(1000 * itl, 1) if itl else None,
         "tps_per_session": round(1 / itl, 1) if itl else None,
@@ -273,6 +278,7 @@ ROWS = [("output tok/s/GPU", "output_tps_per_gpu"),
         ("prefill computed tok/s/GPU", "prefill_tps_per_gpu"),
         ("billed tok/s/GPU (in+out)", "billed_tps_per_gpu"),
         ("prefix cache hit", "prefix_hit"),
+        ("mean input tokens / request", "mean_input_tokens"),
         ("TTFT mean, ms", "ttft_ms"),
         ("ITL mean, ms", "itl_ms"),
         ("tok/s per session", "tps_per_session"),
@@ -311,7 +317,7 @@ def main():
     ap.add_argument("--ports", default="5001,5002,5003,5004,5005,5006,5007,5008")
     ap.add_argument("--gpus", type=int, default=0, help="GPUs the instances occupy (0: all visible)")
     ap.add_argument("--label", default=os.uname().nodename)
-    ap.add_argument("--window", type=int, default=90, help="measured seconds per mode")
+    ap.add_argument("--window", type=int, default=180, help="measured seconds per mode")
     ap.add_argument("--spread", type=float, default=30, help="seconds to start all sessions")
     ap.add_argument("--min-ramp", type=int, default=90)
     ap.add_argument("--max-ramp", type=int, default=240)
@@ -359,6 +365,7 @@ def main():
                      f"{args.label}_s{args.sessions}_{mode}")
         cols.append(c)
         print(f"[{args.label}] {mode:>4} hit: out/gpu {c['output_tps_per_gpu']}  "
+              f"billed/gpu {c['billed_tps_per_gpu']}  in/req {c['mean_input_tokens']}  "
               f"hit {c['prefix_hit']:.0%}  ttft {c['ttft_ms']}ms  itl {c['itl_ms']}ms  "
               f"kv overflow: {c['kv_overflow'] or 'no'}"
               f"{'' if c['settled'] else '  (NOT SETTLED)'}", flush=True)
