@@ -34,9 +34,11 @@
     "@nomicfoundation/hardhat-ledger": "^3.0.1",
     "@nomicfoundation/hardhat-toolbox-mocha-ethers": "^3.0.4",
     "@openzeppelin/contracts": "^4.9.0",
+    "chai": "^5.1.2",
     "dotenv": "^16.4.5",
     "ethers": "^6.15.0",
-    "hardhat": "^3.0.15"
+    "hardhat": "^3.0.15",
+    "mocha": "^11.0.0"
   },
   "dependencies": {
     "@chainsafe/bls": "^8.2.0",
