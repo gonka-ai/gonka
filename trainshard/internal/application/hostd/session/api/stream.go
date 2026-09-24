@@ -5,12 +5,29 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 
+	"trainshard/internal/contract"
 	"trainshard/internal/domain/shared"
 )
 
-var errNoHijack = shared.New("STREAM_UNSUPPORTED", shared.ErrUnavailable, "this server cannot hand over the connection a shell needs")
+var (
+	errNoHijack  = shared.New("STREAM_UNSUPPORTED", shared.ErrUnavailable, "this server cannot hand over the connection a shell needs")
+	errNoUpgrade = shared.New("SHELL_UPGRADE_REQUIRED", shared.ErrValidation, "a shell is opened with Connection: Upgrade and Upgrade: "+contract.ShellProtocol)
+)
+
+func asksForShell(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), contract.ShellProtocol) {
+		return false
+	}
+	for _, token := range strings.Split(r.Header.Get("Connection"), ",") {
+		if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+			return true
+		}
+	}
+	return false
+}
 
 type stream struct {
 	writer  http.ResponseWriter
@@ -71,7 +88,7 @@ func (d *duplex) hijack() error {
 			return
 		}
 		d.conn, d.buffer, d.started = conn, buffer, true
-		_, d.err = buffer.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\r\n")
+		_, d.err = buffer.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: " + contract.ShellProtocol + "\r\n\r\n")
 		if d.err == nil {
 			d.err = buffer.Flush()
 		}

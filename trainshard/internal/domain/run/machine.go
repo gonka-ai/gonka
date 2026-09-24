@@ -26,27 +26,35 @@ type Machine struct {
 func (m Machine) Observe(ctx context.Context, node vo.NodeRef, desired Desired) (Observed, error) {
 	shardID := desired.Shard
 
-	drained, err := m.Control.Drained(ctx, node)
-	if err != nil {
-		return Observed{}, err
+	// cleanup must not wait on the dapi or the gpus: a run never outlives its reservation
+	var drained, foreign bool
+	var inUse int
+	if desired.Reserved {
+		var err error
+		if drained, err = m.Control.Drained(ctx, node); err != nil {
+			return Observed{}, err
+		}
+		if foreign, err = m.GPU.ForeignWork(ctx, shardID, node); err != nil {
+			return Observed{}, err
+		}
+		if inUse, err = m.GPU.InUse(ctx, node); err != nil {
+			return Observed{}, err
+		}
 	}
-	foreign, err := m.GPU.ForeignWork(ctx, shardID, node)
-	if err != nil {
-		return Observed{}, err
-	}
-	inUse, err := m.GPU.InUse(ctx, node)
+	container, err := m.Containers.Inspect(ctx, shardID, node)
 	if err != nil {
 		return Observed{}, err
 	}
 	leftovers, err := m.GPU.TrainingProcesses(ctx, shardID, node)
 	if err != nil {
-		return Observed{}, err
+		if desired.Reserved {
+			return Observed{}, err
+		}
+		// processes that cannot be counted are taken to be there, so the container is still
+		// stopped and the node is not handed back with its gpus unchecked
+		leftovers = container.State.Exists() || !shardID.IsZero()
 	}
 	images, err := m.cachedImages(ctx, desired.BaseImage, desired.Run.Image)
-	if err != nil {
-		return Observed{}, err
-	}
-	container, err := m.Containers.Inspect(ctx, shardID, node)
 	if err != nil {
 		return Observed{}, err
 	}

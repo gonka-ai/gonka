@@ -61,6 +61,10 @@ func (e *Endpoints) streamLogs(w http.ResponseWriter, r *http.Request) {
 func (e *Endpoints) openShell(w http.ResponseWriter, r *http.Request) {
 	requestID := requestIDFrom(r.Context())
 
+	if !asksForShell(r) {
+		httpx.WriteError(w, requestID, errNoUpgrade)
+		return
+	}
 	cmd, err := toSessionCommand(e.host, actorFrom(r.Context()), r.PathValue("shard_id"), r.PathValue("node_id"))
 	if err != nil {
 		httpx.WriteError(w, requestID, err)

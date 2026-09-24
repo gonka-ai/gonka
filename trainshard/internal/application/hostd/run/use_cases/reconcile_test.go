@@ -269,6 +269,93 @@ func TestReconcileWipesTheRunWhenTheReservationIsGone(t *testing.T) {
 	}
 }
 
+// running is a node with a started container whose reservation the chain has just dropped
+func (f *fixture) running(t *testing.T) {
+	t.Helper()
+
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Start: true}
+	f.images.present[runImage] = true
+	for range 2 {
+		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+	if !f.containers.infos[nodeA].State.Running() {
+		t.Fatalf("got %v, want the run started before its reservation goes", f.containers.infos[nodeA].State)
+	}
+	delete(f.chain.reservations, nodeA)
+	f.rec.reset()
+}
+
+func TestReconcileCleansUpWhileTheDapiCannotSayWhetherTheNodeIsDrained(t *testing.T) {
+
+	f := newFixture()
+	f.running(t)
+	f.control.unreadable = errors.New("dapi down")
+
+	_, err := f.reconcile().Execute(context.Background(), nodeA)
+
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	want := []string{"containers.stop", "containers.remove", "mesh.remove", "mesh_store.forget", "volumes.wipe"}
+	if !reflect.DeepEqual(f.rec.sequence(), want) {
+		t.Fatalf("got %v, want %v", f.rec.sequence(), want)
+	}
+}
+
+func TestReconcileStopsTheRunButKeepsTheNodeWhileTheGPUsCannotBeRead(t *testing.T) {
+
+	f := newFixture()
+	f.running(t)
+	f.gpu.err = errors.New("nvidia-smi timed out")
+
+	_, err := f.reconcile().Execute(context.Background(), nodeA)
+
+	if err == nil {
+		t.Fatal("a node whose gpus cannot be checked must report why it is not handed back")
+	}
+	calls := f.rec.sequence()
+	if len(calls) == 0 || calls[0] != "containers.stop" {
+		t.Fatalf("got %v, want the container stopped first", calls)
+	}
+	if slices.Contains(calls, "control.return") {
+		t.Fatalf("got %v, want the node kept until its gpus are checked", calls)
+	}
+}
+
+func TestReconcileKeepsANodeWithNoContainerWhileTheGPUsCannotBeRead(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	delete(f.chain.reservations, nodeA)
+	f.gpu.err = errors.New("nvidia-smi timed out")
+
+	for range 2 {
+		_, _ = f.reconcile().Execute(ctx, nodeA)
+	}
+
+	if slices.Contains(f.rec.sequence(), "control.return") {
+		t.Fatalf("got %v, want the node kept until its gpus are checked", f.rec.sequence())
+	}
+	f.gpu.err = nil
+	for range 2 {
+		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("cleanup: %v", err)
+		}
+	}
+	if !slices.Contains(f.rec.sequence(), "control.return") {
+		t.Fatalf("got %v, want the node handed back once its gpus read clean", f.rec.sequence())
+	}
+}
+
 func TestReconcileReturnsTheNodeOnlyAfterCleanupIsDone(t *testing.T) {
 
 	f := newFixture()

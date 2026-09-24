@@ -262,19 +262,41 @@ func TestPrepareDropsANodeTheChainHoldsNoAddressForWithoutWaiting(t *testing.T) 
 	}
 }
 
-func TestPrepareKeepsReleasingUntilWhatIsLeftIsConnected(t *testing.T) {
+func TestPrepareGivesTheMeshLeftAfterAKickTimeToHandshake(t *testing.T) {
 
 	chain, hosts := newChainStub(), newHostsStub()
 	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
-	hosts.failed[nodeB] = []mesh.Pair{mesh.NewPair(nodeB, nodeA), mesh.NewPair(nodeB, nodeC)}
-	hosts.failed[nodeC] = []mesh.Pair{mesh.NewPair(nodeC, nodeA), mesh.NewPair(nodeC, nodeB)}
+	hosts.secondProbe[nodeB] = []mesh.Pair{mesh.NewPair(nodeB, nodeC)}
 
 	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
 
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	if len(result.Released) != 2 || len(result.Config.Peers) != 1 {
-		t.Fatalf("got %+v released and a mesh of %d, want the run cut down to what still works", result.Released, len(result.Config.Peers))
+	if len(result.Released) != 1 || result.Released[0].Node != nodeA {
+		t.Fatalf("got %+v, want only the worst node released", result.Released)
+	}
+	if len(result.Config.Peers) != 2 {
+		t.Fatalf("got %+v, want the two nodes left kept once their tunnels come up", result.Config.Peers)
+	}
+}
+
+func TestPrepareStopsReleasingAtTwoNodes(t *testing.T) {
+
+	chain, hosts := newChainStub(), newHostsStub()
+	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
+	hosts.failed[nodeB] = []mesh.Pair{mesh.NewPair(nodeB, nodeA), mesh.NewPair(nodeB, nodeC)}
+	hosts.failed[nodeC] = []mesh.Pair{mesh.NewPair(nodeC, nodeA), mesh.NewPair(nodeC, nodeB)}
+
+	result, err := prepareWithin(chain, hosts, &verifierStub{}, 0).Execute(context.Background(), shardID, expired)
+
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if len(result.Released) != 1 {
+		t.Fatalf("got %+v, want one node released and the last two left alone", result.Released)
+	}
+	if len(result.Config.Peers) != 0 || len(result.Failed) == 0 {
+		t.Fatalf("got a mesh of %d and failures %v, want no mesh of one reported as connected", len(result.Config.Peers), result.Failed)
 	}
 }

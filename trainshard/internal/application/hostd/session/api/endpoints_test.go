@@ -250,18 +250,22 @@ func TestAStreamForANodeThisHostDoesNotServeIsRefused(t *testing.T) {
 	}
 }
 
-func TestShellCarriesBytesBothWaysOverOneConnection(t *testing.T) {
-	// arrange
-	server := newServer(t, newChainStub(), &streamsStub{})
+func openShell(t *testing.T, server *httptest.Server, upgrade bool) (net.Conn, *bufio.Reader, *http.Response) {
+	t.Helper()
+
 	path := "/trainshard/v0/shards/7/nodes/node-a/shell"
 	conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	defer conn.Close()
+	t.Cleanup(func() { conn.Close() })
 
 	request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
 	request.Header = sign(t, "gonka1creator")
+	if upgrade {
+		request.Header.Set("Connection", "Upgrade")
+		request.Header.Set("Upgrade", contract.ShellProtocol)
+	}
 	if err := request.Write(conn); err != nil {
 		t.Fatalf("write request: %v", err)
 	}
@@ -270,6 +274,13 @@ func TestShellCarriesBytesBothWaysOverOneConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read response: %v", err)
 	}
+	return conn, reader, response
+}
+
+func TestShellCarriesBytesBothWaysOverOneConnection(t *testing.T) {
+	// arrange
+	server := newServer(t, newChainStub(), &streamsStub{})
+	conn, reader, response := openShell(t, server, true)
 
 	// act
 	if _, err := fmt.Fprintln(conn, "whoami"); err != nil {
@@ -278,13 +289,54 @@ func TestShellCarriesBytesBothWaysOverOneConnection(t *testing.T) {
 	answer, err := reader.ReadString('\n')
 
 	// assert
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("got %d, want the connection handed over", response.StatusCode)
+	if response.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("got %d, want the connection switched to a shell", response.StatusCode)
+	}
+	if got := response.Header.Get("Upgrade"); got != contract.ShellProtocol {
+		t.Fatalf("got Upgrade %q, want %q", got, contract.ShellProtocol)
 	}
 	if err != nil {
 		t.Fatalf("read the answer: %v", err)
 	}
 	if answer != "you said whoami\n" {
 		t.Fatalf("got %q, want the container's answer", answer)
+	}
+}
+
+func TestAShellThatDoesNotAskToUpgradeIsRefused(t *testing.T) {
+	// arrange
+	server := newServer(t, newChainStub(), &streamsStub{})
+
+	// act
+	_, _, response := openShell(t, server, false)
+	defer response.Body.Close()
+
+	// assert
+	var envelope contract.Envelope
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if response.StatusCode == http.StatusSwitchingProtocols || envelope.Error == nil || envelope.Error.Code != "SHELL_UPGRADE_REQUIRED" {
+		t.Fatalf("got %d %+v, want a plain request refused before any connection is handed over", response.StatusCode, envelope.Error)
+	}
+}
+
+func TestARefusedShellAnswersWithAnErrorAndDoesNotSwitch(t *testing.T) {
+	// arrange
+	chain := newChainStub()
+	chain.record.Status = shard.StatusSettled
+	server := newServer(t, chain, &streamsStub{})
+
+	// act
+	_, _, response := openShell(t, server, true)
+	defer response.Body.Close()
+
+	// assert
+	var envelope contract.Envelope
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if response.StatusCode != http.StatusConflict || envelope.Error == nil || envelope.Error.Code != "SHARD_CLOSED" {
+		t.Fatalf("got %d %+v, want the shell refused with the reason", response.StatusCode, envelope.Error)
 	}
 }

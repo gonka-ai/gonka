@@ -137,8 +137,8 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			return PrepareResult{Config: config, Released: released}, nil
 		}
 
-		// 9. Give the tunnels until the deadline: a first handshake is often lost and retried
-		if uc.clock.Now().Before(deadline) {
+		// 9. Give the tunnels until the deadline, and a mesh reshaped by a kick its settle window
+		if now := uc.clock.Now(); now.Before(deadline) || now.Before(kicked.Add(uc.settle)) {
 			if err := timex.Sleep(ctx, uc.poll); err != nil {
 				return PrepareResult{}, err
 			}

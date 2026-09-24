@@ -72,6 +72,15 @@ func TestWorstBreaksTiesTheSameWayEveryTime(t *testing.T) {
 	}
 }
 
+func TestWorstBlamesNeitherOfTwoNodes(t *testing.T) {
+
+	_, found := mesh.Worst([]vo.NodeRef{nodeA, nodeB}, []mesh.Pair{mesh.NewPair(nodeA, nodeB)})
+
+	if found {
+		t.Fatal("a broken link between two nodes must not autokick either of them")
+	}
+}
+
 func TestWorstFindsNothingWithoutFailures(t *testing.T) {
 
 	_, found := mesh.Worst([]vo.NodeRef{nodeA, nodeB}, nil)
