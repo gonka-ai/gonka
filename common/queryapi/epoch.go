@@ -188,15 +188,6 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		}
 	}
 
-	// Validators at the creation height.
-	valsResp, err := h.chain.CometServiceClient().GetValidatorSetByHeight(ctx, &cmtservice.GetValidatorSetByHeightRequest{
-		Height: activeParticipants.CreatedAtBlockHeight,
-	})
-	if err != nil {
-		logging.Error("Failed to get validators", inferencetypes.Participants, "error", err)
-		return nil, err
-	}
-
 	// Derive participant addresses from validator keys.
 	addresses := make([]string, len(activeParticipants.Participants))
 	for i, participant := range activeParticipants.Participants {
@@ -214,10 +205,29 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		return nil, err
 	}
 
-	validators, err := validatorsToRawJSON(valsResp.Validators)
-	if err != nil {
-		logging.Error("Failed to encode validators", inferencetypes.Participants, "error", err)
-		return nil, err
+	// Validators at the creation height. Skip the validator-set query when
+	// CreatedAtBlockHeight is zero/negative: CometBFT rejects height <= 0
+	// ("height must be greater than 0, but got 0"), and this field is
+	// unpopulated for pre-migration blobs. Degrade to an empty validators
+	// array, matching the existing non-fatal block+1 handling above.
+	var validatorsJSON []byte
+	if activeParticipants.CreatedAtBlockHeight > 0 {
+		valsResp, err := h.chain.CometServiceClient().GetValidatorSetByHeight(ctx, &cmtservice.GetValidatorSetByHeightRequest{
+			Height: activeParticipants.CreatedAtBlockHeight,
+		})
+		if err != nil {
+			logging.Error("Failed to get validators", inferencetypes.Participants, "error", err)
+			return nil, err
+		}
+		validatorsJSON, err = validatorsToRawJSON(valsResp.Validators)
+		if err != nil {
+			logging.Error("Failed to encode validators", inferencetypes.Participants, "error", err)
+			return nil, err
+		}
+	} else {
+		logging.Warn("Skipping validator set lookup for zero/negative height",
+			inferencetypes.Participants, "height", activeParticipants.CreatedAtBlockHeight)
+		validatorsJSON = []byte("[]")
 	}
 
 	var block *gen.RawProtoJson
@@ -240,7 +250,7 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		Addresses:               addresses,
 		ActiveParticipantsBytes: hex.EncodeToString(result.Value),
 		ProofOps:                proofOps,
-		Validators:              validators,
+		Validators:              validatorsJSON,
 		Block:                   block,
 		ExcludedParticipants:    h.getExcludedParticipants(ctx, epoch),
 	}, nil
