@@ -20,6 +20,7 @@ from pow.service.manager import PowManager
 from pow.service.routes import router as pow_router
 
 from api.health import router as health_router
+from api.clock import router as clock_router
 
 from api.service_management import (
     ServiceState,
@@ -145,6 +146,14 @@ app.include_router(
     metrics_router,
     prefix=API_PREFIX,
     tags=["Metrics"],
+)
+
+# Timestamp probe for dapi's ping job. No conflict check — the probe must
+# answer in every service state, like /metrics above.
+app.include_router(
+    clock_router,
+    prefix=API_PREFIX,
+    tags=["Clock"],
 )
 
 app.include_router(
