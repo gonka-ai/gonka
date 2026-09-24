@@ -556,6 +556,7 @@ func (fp *FeeParams) EnabledPayingPrice(msgs []sdk.Msg, isExempt func(sdk.Msg) b
 		return 0
 	}
 	var price uint64
+	ungrouped := false
 	for _, msg := range msgs {
 		if msg == nil {
 			continue
@@ -564,7 +565,11 @@ func (fp *FeeParams) EnabledPayingPrice(msgs []sdk.Msg, isExempt func(sdk.Msg) b
 			continue
 		}
 		g := FeeGroupOf(msg)
-		if g == "" || !fp.IsGroupEnabled(g) {
+		if g == "" {
+			ungrouped = true
+			continue
+		}
+		if !fp.IsGroupEnabled(g) {
 			continue
 		}
 		grp := fp.GroupByName(g)
@@ -572,6 +577,28 @@ func (fp *FeeParams) EnabledPayingPrice(msgs []sdk.Msg, isExempt func(sdk.Msg) b
 			continue
 		}
 		if grp.MinGasPrice > price {
+			price = grp.MinGasPrice
+		}
+	}
+	if ungrouped {
+		// A type with no compiled group has no price of its own. Letting it
+		// through for free leaves every account a zero-fee path around all
+		// enabled groups, so it pays the highest enabled price (fail-closed).
+		if p := fp.MaxEnabledPrice(); p > price {
+			price = p
+		}
+	}
+	return price
+}
+
+// MaxEnabledPrice returns the highest min_gas_price among enabled groups, or 0.
+func (fp *FeeParams) MaxEnabledPrice() uint64 {
+	if fp == nil {
+		return 0
+	}
+	var price uint64
+	for _, name := range fp.EnabledFeeGroups {
+		if grp := fp.GroupByName(name); grp != nil && grp.MinGasPrice > price {
 			price = grp.MinGasPrice
 		}
 	}

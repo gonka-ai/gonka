@@ -39,7 +39,9 @@ var KnownFeeGroups = map[string]struct{}{
 }
 
 // MessageFeeGroups maps explicit gonka message types to a fee group.
-// Unlisted types fall through to prefix matchers, then to "" (fee-less).
+// Unlisted types fall through to prefix matchers, then to "" (ungrouped).
+// Ungrouped, non-duty types pay the highest enabled group price (see
+// FeeParams.EnabledPayingPrice), so they are never cheaper than an enabled group.
 var MessageFeeGroups = map[reflect.Type]string{
 	// epoch
 	reflect.TypeOf((*MsgSubmitHardwareDiff)(nil)):                 FeeGroupEpoch,

@@ -215,6 +215,12 @@ func (c *FeeTreeCache) PriceForMsgs(msgs []sdk.Msg) int64 {
 		}
 		g := types.FeeGroupOf(msg)
 		if g == "" {
+			// Mirrors FeeParams.EnabledPayingPrice: ungrouped pays the max enabled price.
+			for name := range c.enabled {
+				if p := c.groupPrice[name]; p > price {
+					price = p
+				}
+			}
 			continue
 		}
 		if _, on := c.enabled[g]; !on {
