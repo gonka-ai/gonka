@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # No-proxy citest grid: pinned baseline versiond (0.2.15-v5) versus this tree.
-# B1 is JSON and Connect HTTP/1.1. N0 is JSON only. Current-image peer RPC is
+# Phase 7 retired Echo session HTTP, so the B1-JSON and N0-JSON cells are not
+# a supported mode. B1-RPC is Connect HTTP/1.1. Current-image peer RPC is
 # HTTP/2 on the proxy overlay, not this grid. No proxy compose file.
 # Documented in docs/scenarios.md ("No-proxy baseline versus current").
 # One cell per line in ../docs/grpc-transport-phase6-8.2-results.txt

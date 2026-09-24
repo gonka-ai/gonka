@@ -95,8 +95,6 @@ type ClientConfig struct {
 	HeightSeedTimeout time.Duration
 	StreamCallback    func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
 	RoutePrefix       string                          // path prefix for all session routes; default /devshard/<version>
-	// CompressRequestBodies gzips a POST body; safe once every host decompresses.
-	CompressRequestBodies bool
 	// MaxSSEEventBytes caps a single SSE line (including the trailing newline).
 	// Zero means DefaultMaxSSEEventBytes. Oversize lines abort with
 	// ErrSSEEventTooLarge; they are never silently truncated.
@@ -1127,18 +1125,13 @@ func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byt
 		return nil, fmt.Errorf("sign request: %w", err)
 	}
 
-	wireBody, contentEncoding := c.encodeRequestBody(body)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(wireBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
-	if contentEncoding != "" {
-		req.Header.Set("Content-Encoding", contentEncoding)
-	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {

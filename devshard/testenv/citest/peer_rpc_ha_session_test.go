@@ -21,7 +21,7 @@ import (
 func TestPeerRPCHASessionSpread(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
-	requireNoProxyRPC(t)
+	requireNoProxyGRPC(t)
 
 	stack, cfg, eps := harness.BootHeightSyncStack(t, "citest-peerrpc-ha-session-*")
 	client := harness.GatewayChatClient()

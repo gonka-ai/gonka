@@ -50,6 +50,41 @@ func requireNoProxyRPC(t *testing.T) {
 	}
 }
 
+// requireNoProxyGRPC is the current-image no-proxy dial: native gRPC on
+// versiond-router:8081. No proxy container. :8080 stays healthz and ops.
+func requireNoProxyGRPC(t *testing.T) {
+	t.Helper()
+	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_SERVER_ENABLED")) != "true" {
+		t.Fatal("set DEVSHARD_RPC_SERVER_ENABLED=true")
+	}
+	got := os.Getenv("DEVSHARD_RPC_ENDPOINTS")
+	for _, name := range strings.Split(peerRPCEndpoints, ",") {
+		if !rpcEndpointListed(got, name) {
+			t.Fatalf("DEVSHARD_RPC_ENDPOINTS=%q missing %q", got, name)
+		}
+	}
+	if harness.ProxyOverlayFromEnv() {
+		t.Fatal("no-proxy gRPC must not set TESTENV_PROXY_OVERLAY")
+	}
+	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_PORT")) != "8081" {
+		t.Fatalf("DEVSHARD_RPC_H2_PORT=%q, want versiond-router h2 port 8081", os.Getenv("DEVSHARD_RPC_H2_PORT"))
+	}
+	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_HOST")) != "" {
+		t.Fatalf("DEVSHARD_RPC_H2_HOST=%q, want empty so the dial stays on the InferenceUrl host", os.Getenv("DEVSHARD_RPC_H2_HOST"))
+	}
+	upgrade := strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_UPGRADE"))
+	if !strings.EqualFold(upgrade, "true") && upgrade != "1" {
+		t.Fatal("set DEVSHARD_RPC_H2_UPGRADE=true")
+	}
+	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_FRONT_HOST")) != "versiond-router" {
+		t.Fatalf("DEVSHARD_RPC_H2_FRONT_HOST=%q, want versiond-router", os.Getenv("DEVSHARD_RPC_H2_FRONT_HOST"))
+	}
+	grpc := strings.TrimSpace(os.Getenv("DEVSHARD_RPC_GRPC"))
+	if !strings.EqualFold(grpc, "true") && grpc != "1" {
+		t.Fatal("set DEVSHARD_RPC_GRPC=true")
+	}
+}
+
 func rpcEndpointListed(list, name string) bool {
 	for _, part := range strings.Split(list, ",") {
 		if strings.TrimSpace(part) == name {

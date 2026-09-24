@@ -31,8 +31,6 @@ type HTTPSessionConfig struct {
 	// returns a host-signed Anchor. Default false in this library; the
 	// gateway sets it from DEVSHARD_REQUIRE_HEIGHT_SEED (default true).
 	RequireHeightSeed bool
-	// CompressRequestBodies gzips a request body on the way to every host.
-	CompressRequestBodies bool
 	// ExtraClientConfig: only its HeightSync fields reach each host client.
 	ExtraClientConfig *transport.ClientConfig
 	// Heartbeat overlays compiled height-sync scheduling knobs. Nil keeps defaults.
@@ -57,7 +55,6 @@ func hostClientConfig(
 		clientConfig.StreamCallback = cfg.StreamCallback
 	}
 	clientConfig.RoutePrefix = routePrefix
-	clientConfig.CompressRequestBodies = cfg.CompressRequestBodies
 	if cfg.RequestAdmission != nil {
 		clientConfig.ParticipantKey = validatorAddress
 		clientConfig.Admission = cfg.RequestAdmission

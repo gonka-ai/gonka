@@ -26,10 +26,6 @@ var (
 	// ResponseCompressionMiddleware compresses a response when the caller asks.
 	ResponseCompressionMiddleware = middleware.GzipWithConfig(middleware.GzipConfig{Level: gzip.BestSpeed})
 	gzipRequestReaders            = sync.Pool{New: func() any { return new(gzip.Reader) }}
-	requestCompressors            = sync.Pool{New: func() any {
-		writer, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
-		return writer
-	}}
 )
 
 // RequestDecompressionMiddleware unwraps a request body; mount it before auth.
@@ -93,19 +89,4 @@ func GzipBestSpeed(src []byte) ([]byte, error) {
 		return nil, err
 	}
 	return compressed.Bytes(), nil
-}
-
-// encodeRequestBody gzips a body worth compressing and names the encoding.
-func (c *HTTPClient) encodeRequestBody(body []byte) ([]byte, string) {
-	if !c.config.CompressRequestBodies || len(body) < minCompressedBodyBytes {
-		return body, ""
-	}
-	writer := requestCompressors.Get().(*gzip.Writer)
-	var compressed bytes.Buffer
-	writer.Reset(&compressed)
-	_, _ = writer.Write(body)
-	_ = writer.Close()
-	writer.Reset(io.Discard)
-	requestCompressors.Put(writer)
-	return compressed.Bytes(), gzipEncoding
 }

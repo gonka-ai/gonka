@@ -1,5 +1,10 @@
 package transport
 
+// HostConnectionTracker counts TCP connections per remote host. Phase 7
+// keeps it: Connect over HTTP/1.1 (DEVSHARD_RPC_H2_PORT unset, including the
+// 0.2.15-v5 pin) is still one connection per request. On the HTTP/2 listen
+// the same gauges count connections, not streams.
+
 import (
 	"context"
 	"io"

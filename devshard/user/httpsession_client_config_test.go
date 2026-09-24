@@ -17,20 +17,6 @@ func (stubAdmission) ObserveResult(string, string, int) {}
 
 func (stubAdmission) ObserveTransportFailure(string, string, error) {}
 
-func TestHostClientConfigLeavesCompressionOffByDefault(t *testing.T) {
-	config := hostClientConfig(HTTPSessionConfig{}, "/devshard/v2", "gonka1host", nil)
-
-	require.False(t, config.CompressRequestBodies,
-		"the write side stays off until the whole roster has the read side")
-}
-
-// Anything that stops in this helper never reaches the wire.
-func TestHostClientConfigCarriesCompressionToEachHost(t *testing.T) {
-	config := hostClientConfig(HTTPSessionConfig{CompressRequestBodies: true}, "/devshard/v2", "gonka1host", nil)
-
-	require.True(t, config.CompressRequestBodies)
-}
-
 func TestHostClientConfigCarriesTheRoutePrefixAndParticipant(t *testing.T) {
 	config := hostClientConfig(
 		HTTPSessionConfig{RequestAdmission: stubAdmission{}},

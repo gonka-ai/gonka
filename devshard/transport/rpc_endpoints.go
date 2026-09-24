@@ -42,8 +42,9 @@ const (
 	envRPCMaxConnsPerPeer = "DEVSHARD_RPC_MAX_CONNS_PER_PEER"
 )
 
-// EndpointSet is the DEVSHARD_RPC_ENDPOINTS opt-in set. Empty means HTTP
-// everywhere.
+// EndpointSet is the DEVSHARD_RPC_ENDPOINTS set. An empty set keeps the HTTP
+// client. Unset env is not empty: RPCEndpointsFromEnv returns every wired
+// method. "off" is the explicit empty set.
 type EndpointSet map[string]struct{}
 
 func (s EndpointSet) Empty() bool {
@@ -120,9 +121,29 @@ func ParseRPCEndpoints(raw string) EndpointSet {
 	return set
 }
 
-// RPCEndpointsFromEnv reads DEVSHARD_RPC_ENDPOINTS. Empty / unset is HTTP.
+// AllRPCEndpoints is every method that currently calls Connect.
+func AllRPCEndpoints() EndpointSet {
+	set := make(EndpointSet, len(attachRPCEndpoints))
+	for _, name := range attachRPCEndpoints {
+		set[name] = struct{}{}
+	}
+	return set
+}
+
+// RPCEndpointsFromEnv reads DEVSHARD_RPC_ENDPOINTS. Unset or empty is every
+// wired method (phase 7). "off", "none", and "http" are the empty set: the
+// HTTP client, whose Echo session routes now answer 410.
 func RPCEndpointsFromEnv() EndpointSet {
-	set := ParseRPCEndpoints(os.Getenv(envRPCEndpoints))
+	raw := strings.TrimSpace(os.Getenv(envRPCEndpoints))
+	switch strings.ToLower(raw) {
+	case "":
+		set := AllRPCEndpoints()
+		warnUnwiredRPCEndpoints(set)
+		return set
+	case "off", "none", "http":
+		return EndpointSet{}
+	}
+	set := ParseRPCEndpoints(raw)
 	warnUnwiredRPCEndpoints(set)
 	return set
 }

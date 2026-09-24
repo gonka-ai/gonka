@@ -12,11 +12,11 @@ import (
 )
 
 // TestPeerRPCChat is citest-peerrpc-chat: gateway chat (non-stream and SSE)
-// over Connect HTTP/1.1 on versiond-router:8080. No proxy, no h2 port.
+// over native gRPC on versiond-router:8081. No proxy container.
 // The child must count Attach and Chat; a JSON Send would not.
 func TestPeerRPCChat(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
-	requireNoProxyRPC(t)
+	requireNoProxyGRPC(t)
 	harness.RequireDocker(t)
 
 	stack, cfg, eps := harness.BootStack(t, "citest-peerrpc-chat-*")
@@ -38,5 +38,5 @@ func TestPeerRPCChat(t *testing.T) {
 	bodies := hostMetricBodies(t, stack, cfg)
 	require.True(t, metricLine(bodies[host], "devshard_peer_rpc_attach_total", `result="ok"`),
 		"%s Chat ok without Attach ok", host)
-	t.Logf("P6.8.2 peerrpc chat: Attach+Chat on %s via HTTP/1.1", host)
+	t.Logf("peerrpc chat: Attach+Chat on %s via gRPC", host)
 }

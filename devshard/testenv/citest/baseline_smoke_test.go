@@ -26,9 +26,9 @@ const (
 	baselineBinaryLogVersion = "0.2.13-v2-r2"
 )
 
-// TestBaselineSmoke is P6.8.1: pinned 0.2.15-v5 versiond and router, this
-// child, RPC off, no proxy overlay. JSON chat must work when
-// GET /devshard/stats/rpc is 404, a pin-to-primary, or a merge.
+// TestBaselineSmoke is the pinned 0.2.15-v5 versiond and router with this
+// child and no proxy overlay. Peer chat is Connect (phase 7). Echo session
+// HTTP is retired; ops GETs and catalog /healthz stay.
 //
 // Unpinned citest-stack skips. make citest-baseline-smoke sets the pin.
 // A pinned citest-stack runs this test too (BaselineSmoke is in STACK_CITEST_PATTERN).
@@ -53,7 +53,7 @@ func TestBaselineSmoke(t *testing.T) {
 	proxyUp, err := stack.ServiceRunning("proxy")
 	require.NoError(t, err)
 	require.False(t, proxyUp, "proxy service must not be running")
-	requireVersiondRPCOff(t, stack)
+	requireVersiondRPCOn(t, stack)
 
 	version := cfg.Versiond.VersionName
 	logs := waitBaselineChildLogs(t, stack, version)
@@ -104,11 +104,9 @@ func requireBaselinePin(t *testing.T) {
 func requireRPCOff(t *testing.T) {
 	t.Helper()
 	switch strings.TrimSpace(os.Getenv("DEVSHARD_RPC_SERVER_ENABLED")) {
-	case "", "false", "0":
+	case "", "true", "1":
 	default:
-		// Pinned citest-stack also runs this test. §8.2 RPC columns must not
-		// fail the RPC-off smoke.
-		t.Skipf("P6.8.1 is RPC off; DEVSHARD_RPC_SERVER_ENABLED=%q", os.Getenv("DEVSHARD_RPC_SERVER_ENABLED"))
+		t.Skipf("phase 7 smoke needs the RPC server; DEVSHARD_RPC_SERVER_ENABLED=%q", os.Getenv("DEVSHARD_RPC_SERVER_ENABLED"))
 	}
 }
 
@@ -121,15 +119,15 @@ func requirePinnedCompose(t *testing.T, stack *harness.Stack) {
 	require.Contains(t, text, "image: "+baselineVersiondRouterImage)
 	require.NotContains(t, text, "image: devshard-versiond:latest")
 	require.NotContains(t, text, "image: devshard-versiond-router:latest")
-	require.Contains(t, text, "DEVSHARD_RPC_SERVER_ENABLED: ${DEVSHARD_RPC_SERVER_ENABLED:-false}")
+	require.Contains(t, text, "DEVSHARD_RPC_SERVER_ENABLED: ${DEVSHARD_RPC_SERVER_ENABLED:-true}")
 	require.NotContains(t, text, "docker-compose.proxy.yml")
 }
 
-func requireVersiondRPCOff(t *testing.T, stack *harness.Stack) {
+func requireVersiondRPCOn(t *testing.T, stack *harness.Stack) {
 	t.Helper()
 	out, err := stack.ComposeExecOutput("versiond-0", "printenv", "DEVSHARD_RPC_SERVER_ENABLED")
 	require.NoError(t, err)
-	require.Equal(t, "false", strings.TrimSpace(out))
+	require.Equal(t, "true", strings.TrimSpace(out))
 }
 
 func waitBaselineChildLogs(t *testing.T, stack *harness.Stack, version string) string {

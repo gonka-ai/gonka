@@ -164,6 +164,8 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		// Hosts are Docker DNS names that resolve to private IPs.
 		// Production leaves this unset so the dial-time SSRF guard stays on.
 		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
+		// Production defaults to Connect. devshard-host still serves Echo HTTP.
+		"DEVSHARD_RPC_ENDPOINTS": "off",
 		// E2E hosts have no versiond-router catalog and no chain-oracle tip, so
 		// POST /height-sync omits. Keep the production seed gate on in citest.
 		"DEVSHARD_REQUIRE_HEIGHT_SEED": "false",
@@ -248,6 +250,8 @@ func (e *e2eEnv) startHostWithEnv(ctx context.Context, t *testing.T, index int, 
 		"DEVSHARD_STUB_INFERENCE":    "1",
 		// Peer URLs are compose aliases on the test network (private IPs).
 		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
+		// Production defaults to Connect. This binary still serves Echo HTTP.
+		"DEVSHARD_RPC_ENDPOINTS": "off",
 	}
 	for k, v := range e2eHostSessionEnv() {
 		env[k] = v

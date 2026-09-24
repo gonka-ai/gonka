@@ -102,23 +102,23 @@ func TestLoadRuntimeConfig_VoteFalseOnFetchFailureDefaultAndOverride(t *testing.
 	}
 }
 
-func TestLoadRuntimeConfig_RPCServerEnabledDefaultOff(t *testing.T) {
+func TestLoadRuntimeConfig_RPCServerEnabledDefaultOn(t *testing.T) {
 	t.Setenv("DEVSHARD_BINARY_LOG_VERSION", "")
 	t.Setenv("DEVSHARD_RPC_SERVER_ENABLED", "")
 	cfg, err := loadRuntimeConfig(nil, "v2", "dev-log")
 	if err != nil {
 		t.Fatalf("loadRuntimeConfig: %v", err)
 	}
-	if cfg.RPCServerEnabled {
-		t.Fatal("RPCServerEnabled must default false")
+	if !cfg.RPCServerEnabled {
+		t.Fatal("RPCServerEnabled must default true")
 	}
 
-	t.Setenv("DEVSHARD_RPC_SERVER_ENABLED", "true")
+	t.Setenv("DEVSHARD_RPC_SERVER_ENABLED", "false")
 	cfg, err = loadRuntimeConfig(nil, "v2", "dev-log")
 	if err != nil {
 		t.Fatalf("loadRuntimeConfig: %v", err)
 	}
-	if !cfg.RPCServerEnabled {
-		t.Fatal("RPCServerEnabled must honor true")
+	if cfg.RPCServerEnabled {
+		t.Fatal("RPCServerEnabled must honor false")
 	}
 }
