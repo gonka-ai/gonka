@@ -2920,20 +2920,20 @@ func sleepUntilDeadlineWithHeartbeat(ctx context.Context, deadline time.Time, he
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	var heartbeatC <-chan time.Time
-	var ticker *time.Ticker
 	if heartbeat != nil && TimeoutHeartbeatInterval > 0 {
-		ticker = time.NewTicker(TimeoutHeartbeatInterval)
+		ticker := time.NewTicker(TimeoutHeartbeatInterval)
 		defer ticker.Stop()
 		heartbeatC = ticker.C
 	}
-	select {
-	case <-timer.C:
-		return true
-	case <-heartbeatC:
-		heartbeat()
-		return sleepUntilDeadlineWithHeartbeat(ctx, deadline, heartbeat)
-	case <-ctx.Done():
-		return false
+	for {
+		select {
+		case <-timer.C:
+			return true
+		case <-heartbeatC:
+			heartbeat()
+		case <-ctx.Done():
+			return false
+		}
 	}
 }
 

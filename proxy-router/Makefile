@@ -11,6 +11,7 @@ test-render: test-route-status
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
+	exhausted="$$(pwd)/grpc-exhausted.http"; \
 	fail() { echo "test-render: $$1" >&2; exit 1; }; \
 	if ! command -v getent >/dev/null 2>&1; then \
 		mkdir -p "$$tmpdir/bin"; \
@@ -172,7 +173,8 @@ test-render: test-route-status
 		fail "direct ingress unexpectedly requires an incoming PROXY preamble"; \
 	fi; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
-		-v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \
+		-v "$$tmpdir:$$tmpdir:ro" \
+		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/proxy.cfg" >/dev/null \
 		|| fail "rendered proxy config is invalid"; \
 	HAPROXY_BIN=true \
@@ -242,7 +244,8 @@ test-render: test-route-status
 	grep -q 'uri /v1%3Abeta/healthz' "$$tmpdir/path-safe.cfg" \
 		|| fail "path-safe static version health URI was not encoded"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
-		-v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \
+		-v "$$tmpdir:$$tmpdir:ro" \
+		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/path-safe.cfg" >/dev/null \
 		|| fail "path-safe static version produced invalid HAProxy config"; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
@@ -331,7 +334,8 @@ test-render: test-route-status
 	[ "$$(grep -c '^ *tcp-request connection expect-proxy layer4 if trusted_external_proxy$$' "$$tmpdir/trusted-lb.cfg")" -eq 2 ] \
 		|| fail "public listeners do not consume trusted PROXY preambles"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
-		-v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \
+		-v "$$tmpdir:$$tmpdir:ro" \
+		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/trusted-lb.cfg" >/dev/null \
 		|| fail "trusted external LB config is invalid"; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \

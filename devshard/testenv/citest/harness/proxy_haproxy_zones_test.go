@@ -18,8 +18,12 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
+
+	"devshard/transport/rpcpb"
+	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
 func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
@@ -36,6 +40,8 @@ func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
 	require.Contains(t, got, "track-sc1 src table st_rpc_chat")
 	require.Contains(t, got, "if is_diffs { sc_http_req_rate(1) gt 3 }")
 	require.Contains(t, got, "if is_attach { sc_http_req_rate(1) gt 2 }")
+	require.Contains(t, got, "errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt 2 }")
+	require.Contains(t, got, "http-request deny deny_status 429 if is_attach { sc_http_req_rate(1) gt 2 }")
 	require.Contains(t, got, "server router versiond-router:19081\n")
 	require.NotContains(t, got, "server router versiond-router:19081 proto h2")
 	require.NotContains(t, got, "server router versiond-router:19081 resolvers docker")
@@ -82,6 +88,24 @@ func TestProxyHAProxy_AttachFloodNeverHitsBackend(t *testing.T) {
 	require.Greater(t, denied, 0, "Attach path zone must refuse the flood")
 	require.Equal(t, int32(ok), fx.attach.Load(), "HAProxy deny must not reach the backend (ECDSA)")
 	require.LessOrEqual(t, fx.attach.Load(), int32(defaultRPCProxyTestLimits().AttachRate))
+}
+
+func TestProxyHAProxy_NativeGRPCRateLimitIsResourceExhausted(t *testing.T) {
+	lim := defaultRPCProxyTestLimits()
+	lim.AttachRate = 1
+	fx := startRPCProxyHAProxy(t, lim)
+	httpClient := newH2CClient(t)
+
+	require.Equal(t, http.StatusOK, mustProxyRPCStatus(t, httpClient, fx.url, "/devshard.transport.v1.PeerAuthService/Attach"), "first Attach fills the zone")
+	backendHits := fx.attach.Load()
+	require.Equal(t, http.StatusTooManyRequests, mustProxyRPCStatus(t, httpClient, fx.url, "/devshard.transport.v1.PeerAuthService/Attach"), "Connect keeps HTTP 429")
+	require.Equal(t, backendHits, fx.attach.Load())
+
+	client := rpcpbconnect.NewPeerAuthServiceClient(httpClient, fx.url, connect.WithGRPC())
+	_, err := client.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{}))
+	require.Error(t, err)
+	require.Equal(t, backendHits, fx.attach.Load(), "native gRPC limit must not reach the backend")
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err), "native gRPC error: %v", err)
 }
 
 func TestProxyHAProxy_XRealIPOverwrittenFromSrc(t *testing.T) {
@@ -178,6 +202,7 @@ func TestProxyHAProxy_ProductionCfgSyntax(t *testing.T) {
 	require.NoError(t, err)
 	cmd := exec.Command("docker", "run", "--rm",
 		"-v", cfg+":/usr/local/etc/haproxy/haproxy.cfg:ro",
+		"-v", grpcExhaustedErrorfile(t)+":/etc/haproxy/grpc-exhausted.http:ro",
 		"haproxy:3.2-alpine", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", out)
@@ -252,6 +277,7 @@ func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet b
 	name := fmt.Sprintf("p67-haproxy-%d", time.Now().UnixNano())
 	args := []string{"run", "-d", "--name", name,
 		"-v", dir + ":/usr/local/etc/haproxy:ro",
+		"-v", grpcExhaustedErrorfile(t) + ":/etc/haproxy/grpc-exhausted.http:ro",
 	}
 	if userNet {
 		netName := fmt.Sprintf("p67-net-%d", time.Now().UnixNano())
@@ -324,6 +350,15 @@ func publishedLocalPort(portOut string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("docker port: %q", portOut)
+}
+
+func grpcExhaustedErrorfile(t *testing.T) string {
+	t.Helper()
+	path, err := filepath.Abs(filepath.Join("..", "..", "..", "..", "proxy-router", "grpc-exhausted.http"))
+	require.NoError(t, err)
+	_, err = os.Stat(path)
+	require.NoError(t, err)
+	return path
 }
 
 func newH2CClient(t *testing.T) *http.Client {

@@ -14,6 +14,7 @@ services:
     image: haproxy:3.2-alpine
     volumes:
       - ./proxy/haproxy-rpc.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ../../proxy-router/grpc-exhausted.http:/etc/haproxy/grpc-exhausted.http:ro
     ports:
       - "127.0.0.1:8443:8443"
     depends_on:

@@ -135,8 +135,9 @@ func TestH2C_MultiplexesConcurrentStreams(t *testing.T) {
 }
 
 func TestH2C_MoreThan100StreamsShareOneTCP(t *testing.T) {
-	// HAProxy default SETTINGS is 100; golang http2.Transport dials another
-	// TCP past that. 101 overlapping streams must still share one child mux.
+	// The child advertises 4096 streams. Until the client has read that
+	// SETTINGS frame it assumes 100 and may dial a second TCP, so the burst
+	// below starts only after one request has completed on this transport.
 	assertH2COverlappingStreamsShareOneTCP(t, 101)
 }
 
@@ -156,10 +157,23 @@ func assertH2COverlappingStreamsShareOneTCP(t *testing.T, n int) {
 	})
 
 	var dials atomic.Int32
-	srv := httptest.NewServer(H2CHandler(h))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/warm", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.Handle("/rpc/", h)
+	srv := httptest.NewServer(H2CHandler(mux))
 	t.Cleanup(srv.Close)
 
 	client := newH2CClient(t, func() { dials.Add(1) })
+	warm, err := client.Get(srv.URL + "/warm")
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, warm.Body)
+	require.NoError(t, warm.Body.Close())
+	require.Equal(t, http.StatusNoContent, warm.StatusCode)
+	require.Equal(t, 2, warm.ProtoMajor)
+	require.Equal(t, int32(1), dials.Load(), "warmup must open the only TCP connection")
+
 	var wg sync.WaitGroup
 	errCh := make(chan error, n)
 	for i := 0; i < n; i++ {
