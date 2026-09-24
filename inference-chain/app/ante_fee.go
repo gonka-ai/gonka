@@ -12,6 +12,8 @@ import (
 
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+
+	blstypes "github.com/productscience/inference/x/bls/types"
 )
 
 // --- Context key for fee bypass flag ---
@@ -45,10 +47,16 @@ func (d NetworkDutyFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, si
 		return next(ctx, tx, simulate)
 	}
 
-	// Check if ALL messages are fee-exempt network duties.
+	// Check if ALL messages are fee-exempt network duties performed by an
+	// authorized actor. An unauthorized actor simply does not get the waiver, so
+	// GonkaFeeChecker goes on to enforce the enabled fee groups against the tx.
+	//
+	// Withholding rather than rejecting here keeps a false negative from
+	// turning into a liveness failure for consensus-critical PoC / BLS traffic;
+	// NetworkDutySignerDecorator is what rejects unauthorized duty txs outright.
 	allExempt := true
 	for _, msg := range msgs {
-		if !isNetworkDuty(msg, d.InferenceKeeper) {
+		if !isNetworkDuty(ctx, msg, d.InferenceKeeper) {
 			allExempt = false
 			break
 		}
@@ -80,11 +88,18 @@ func (d NetworkDutyFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, si
 	return next(ctx, tx, simulate)
 }
 
-// isNetworkDuty checks if a message is a fee-exempt network duty. It unwraps
-// x/authz MsgExec exactly one level (the DAPI's normal use case), then calls
-// inferencetypes.IsNetworkDuty on the inner messages. Nested MsgExec wrappers
-// are not allowed — they fail closed.
-func isNetworkDuty(msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
+// isNetworkDuty checks if a message is a fee-exempt network duty whose actor is
+// authorized to claim the exemption. It unwraps x/authz MsgExec exactly one
+// level (the DAPI's normal use case), then checks the inner messages. Nested
+// MsgExec wrappers are not allowed — they fail closed. Real-world use has no
+// need for nested MsgExec and allowing arbitrary recursion is unnecessary
+// complexity.
+//
+// Not recursing is safe here because the failure mode is withholding the waiver,
+// never granting it. Nested wrappers cannot be used to smuggle a duty past this
+// function into a free transaction. NetworkDutySignerDecorator does descend
+// (see checkMessage), because there the failure mode is admitting a tx.
+func isNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
 	if execMsg, ok := msg.(*authztypes.MsgExec); ok {
 		if ik == nil {
 			return false // fail closed
@@ -102,13 +117,107 @@ func isNetworkDuty(msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
 			if _, isNestedExec := unwrapped.(*authztypes.MsgExec); isNestedExec {
 				return false
 			}
-			if !inferencetypes.IsNetworkDuty(unwrapped) {
+			if !isAuthorizedNetworkDuty(ctx, unwrapped, ik) {
 				return false
 			}
 		}
 		return true
 	}
-	return inferencetypes.IsNetworkDuty(msg)
+	return isAuthorizedNetworkDuty(ctx, msg, ik)
+}
+
+// isAuthorizedNetworkDuty reports whether msg is an exempt duty type AND its
+// protocol actor is authorized to perform that duty.
+//
+// The type check alone is not sufficient (#1539): the ante chain waives fees at
+// index 11 but only verifies signatures at index 19, so a type-only exemption
+// hands any funded account free, unauthenticated block space. The real
+// authorization for these types runs in the message handlers, i.e. in
+// DeliverTx — after mempool admission and block inclusion.
+//
+// The actor is read from the message body, never from the tx signer: in
+// warm-key mode the DAPI wraps duty messages in authz MsgExec signed by the
+// grantee while the Creator/Settler field names the cold account that is the
+// actual protocol participant (tx_manager.go broadcastMessagesAtAttempt).
+// Checking the signer would reject that production path.
+//
+// Fails closed on a nil keeper so a misconfigured ante chain cannot grant the
+// waiver.
+func isAuthorizedNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
+	auth, exempt := dutyAuthorizationFor(msg)
+	if !exempt {
+		return false
+	}
+	if ik == nil {
+		return false // fail closed
+	}
+	if auth.escrowAllowList {
+		return ik.IsAllowedEscrowCreator(ctx, auth.actor)
+	}
+	return ik.IsRegisteredParticipant(ctx, auth.actor)
+}
+
+// dutyAuthorization describes who must be authorized for a fee-exempt duty and
+// against which registry, mirroring the handler's own permission requirement.
+type dutyAuthorization struct {
+	// actor is the address named in the message body as the protocol
+	// participant performing the duty (Creator, or Settler for escrow
+	// settlement) — not the tx signer.
+	actor string
+	// escrowAllowList selects the devshard escrow allowlist instead of the
+	// participant registry, matching EscrowAllowListPermission.
+	escrowAllowList bool
+}
+
+// dutyAuthorizationFor returns the authorization requirement for a fee-exempt
+// duty message, and whether the type is exempt at all.
+//
+// The exempt set here must stay identical to inferencetypes.IsNetworkDuty,
+// which is the single source of truth for *which types* are fee-exempt duties.
+// This function only adds *who* may claim the waiver for each. In particular
+// MsgSubmitHardwareDiff is deliberately NOT here: IsNetworkDuty excludes it
+// (it belongs to the paid "epoch" fee group), so it must not receive the
+// waiver even from an authorized participant.
+func dutyAuthorizationFor(msg sdk.Msg) (dutyAuthorization, bool) {
+	switch m := msg.(type) {
+	// Participant-gated duties. Handlers require ParticipantPermission
+	// (PoC batch / seed), ActiveParticipantPermission OR
+	// PreviousActiveParticipantPermission (claim rewards), or a blocklist
+	// check on Creator (PoC V2 validations, weight distribution — declared
+	// NoPermission). Registration is a superset of all of these.
+	case *inferencetypes.MsgSubmitPocBatch:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *inferencetypes.MsgSubmitPocValidationsV2:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *inferencetypes.MsgMLNodeWeightDistribution:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *inferencetypes.MsgSubmitSeed:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *inferencetypes.MsgClaimRewards:
+		return dutyAuthorization{actor: m.Creator}, true
+
+	// Devshard escrow settlement is allowlist-restricted rather than
+	// participant-gated (EscrowAllowListPermission).
+	case *inferencetypes.MsgSettleDevshardEscrow:
+		return dutyAuthorization{actor: m.Settler, escrowAllowList: true}, true
+
+	// BLS DKG duties. Each handler scans the epoch's own participant list for
+	// Creator; requiring registration is weaker and cannot reject a member of
+	// that list, while still excluding arbitrary accounts.
+	case *blstypes.MsgSubmitDealerPart:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *blstypes.MsgSubmitVerificationVector:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *blstypes.MsgSubmitGroupKeyValidationSignature:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *blstypes.MsgSubmitPartialSignature:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *blstypes.MsgRespondDealerComplaints:
+		return dutyAuthorization{actor: m.Creator}, true
+
+	default:
+		return dutyAuthorization{}, false
+	}
 }
 
 // unwrapFeeMsgs expands MsgExec wrappers so fee-group classification sees
