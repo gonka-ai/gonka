@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"common/completionapi"
 	commonvalidation "common/validation"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -151,17 +152,32 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("verify executor signature: %w", err))
 	}
 
-	promptHash := sha256.Sum256(payloadResp.PromptPayload)
-	if !bytes.Equal(promptHash[:], req.PromptHash) {
-		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("%w: prompt expected %x got %x", commonvalidation.ErrHashMismatch, req.PromptHash, promptHash[:]))
+	if err := verifyFetchedPayloadHashes(req, payloadResp.PromptPayload, payloadResp.ResponsePayload); err != nil {
+		return nil, nil, err
 	}
-
-	responseHash := sha256.Sum256(payloadResp.ResponsePayload)
-	if !bytes.Equal(responseHash[:], req.ResponseHash) {
-		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("%w: response expected %x got %x", commonvalidation.ErrHashMismatch, req.ResponseHash, responseHash[:]))
-	}
-
 	return payloadResp.PromptPayload, payloadResp.ResponsePayload, nil
+}
+
+func verifyFetchedPayloadHashes(req devshardpkg.ValidateRequest, promptPayload, responsePayload []byte) error {
+	promptHash := sha256.Sum256(promptPayload)
+	if !bytes.Equal(promptHash[:], req.PromptHash) {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: prompt expected %x got %x", commonvalidation.ErrHashMismatch, req.PromptHash, promptHash[:]))
+	}
+
+	responseHash := sha256.Sum256(responsePayload)
+	if !bytes.Equal(responseHash[:], req.ResponseHash) {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: response expected %x got %x", commonvalidation.ErrHashMismatch, req.ResponseHash, responseHash[:]))
+	}
+
+	served, err := completionapi.StripForGateway(responsePayload)
+	if err != nil {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: served view: %w", commonvalidation.ErrHashMismatch, err))
+	}
+	servedHash := sha256.Sum256(served)
+	if !bytes.Equal(servedHash[:], req.ServedHash) {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: served expected %x got %x", commonvalidation.ErrHashMismatch, req.ServedHash, servedHash[:]))
+	}
+	return nil
 }
 
 const payloadFetchAttempts = 2

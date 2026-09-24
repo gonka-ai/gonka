@@ -159,20 +159,25 @@ func streamedLineBody(line string) (string, bool) {
 	return body, true
 }
 
-func dropFields(node any, fields []string) {
+func dropFields(node any, fields []string) bool {
+	dropped := false
 	switch typed := node.(type) {
 	case map[string]any:
 		for _, field := range fields {
-			delete(typed, field)
+			if _, present := typed[field]; present {
+				delete(typed, field)
+				dropped = true
+			}
 		}
 		for _, child := range typed {
-			dropFields(child, fields)
+			dropped = dropFields(child, fields) || dropped
 		}
 	case []any:
 		for _, child := range typed {
-			dropFields(child, fields)
+			dropped = dropFields(child, fields) || dropped
 		}
 	}
+	return dropped
 }
 
 // compressLogprobsIn checks every position before it strips any, so a refused document is left as it arrived.
