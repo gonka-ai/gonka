@@ -49,11 +49,11 @@ func (s *Server) HandleHeightSyncRepair(c echo.Context) (err error) {
 	if int(req.RequesterSlot) >= len(group) {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid requester_slot")
 	}
-	slotKey := group[req.RequesterSlot].ValidatorAddress
-	if err := heightsync.VerifyRepairRequest(s.verifier, &req, slotKey); err != nil {
+	actors := s.host.SlotActors()
+	if err := heightsync.VerifyRepairRequestAllowed(s.verifier, &req, actors); err != nil {
 		return echo.NewHTTPError(http.StatusForbidden, err.Error())
 	}
-	if !s.senderOwnsSlot(sender, req.RequesterSlot) {
+	if !actors.Allows(req.RequesterSlot, sender) {
 		return echo.NewHTTPError(http.StatusForbidden, "requester_slot does not match sender")
 	}
 
@@ -70,17 +70,6 @@ func (s *Server) HandleHeightSyncRepair(c echo.Context) (err error) {
 		return echo.NewHTTPError(http.StatusInternalServerError, "repair response failed")
 	}
 	return writeJSON(c, http.StatusOK, resp)
-}
-
-func (s *Server) senderOwnsSlot(sender string, slot uint32) bool {
-	group := s.host.Group()
-	if int(slot) >= len(group) {
-		return false
-	}
-	if sender == group[slot].ValidatorAddress {
-		return true
-	}
-	return s.host.IsWarmKeyForSlot(sender, slot)
 }
 
 // RepairProbe unicasts a signed repair request to targetSlot. Timeout /
@@ -108,7 +97,7 @@ func (s *Server) RepairProbe(ctx context.Context, targetSlot uint32, req *height
 	if int(targetSlot) >= len(group) {
 		return nil, fmt.Errorf("repair: invalid target slot")
 	}
-	if err := heightsync.VerifyRepairResponse(s.verifier, resp, group[targetSlot].ValidatorAddress); err != nil {
+	if err := heightsync.VerifyRepairResponseAllowed(s.verifier, resp, targetSlot, s.host.SlotActors()); err != nil {
 		return nil, err
 	}
 	resp.Outcome = heightsync.RepairOutcomeHeight

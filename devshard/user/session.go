@@ -241,9 +241,9 @@ type Session struct {
 	participantKeys []string
 	clients         []HostClient
 	nonce           uint64
-	diffs           []types.Diff                 // append-only log
-	hostSyncNonce   map[int]uint64               // hostIdx -> last nonce sent
-	pendingTxs      []*types.DevshardTx          // from host mempools, for next diff
+	diffs           []types.Diff        // append-only log
+	hostSyncNonce   map[int]uint64      // hostIdx -> last nonce sent
+	pendingTxs      []*types.DevshardTx // from host mempools, for next diff
 	// pendingTxKeys dedups the current pendingTxs slice by tx_type:id. It is
 	// rebuilt from what compose retained, so a tx that failed to apply frees
 	// its key again -- otherwise the first host to propose a bogus tx would
@@ -2116,14 +2116,14 @@ func (s *Session) verifyStateSignature(nonce uint64, postRoot, signature []byte,
 	if err != nil {
 		return fmt.Errorf("%w: %v", types.ErrInvalidStateSig, err)
 	}
-	if recovered != expectedAddr && !s.sm.CheckWarmKey(recovered, expectedAddr) {
+	if recovered != expectedAddr && !s.sm.HostSignerAllowedAddr(expectedAddr, recovered) {
 		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
 	}
 	return nil
 }
 
 func (s *Session) verifyTimeoutVote(inferenceID uint64, reason types.TimeoutReason, vote *types.TimeoutVote, expectedAddr string) error {
-	voteData, err := proto.Marshal(&types.TimeoutVoteContent{
+	voteData, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
 		EscrowId:    s.escrowID,
 		InferenceId: inferenceID,
 		Reason:      reason,
@@ -2136,9 +2136,7 @@ func (s *Session) verifyTimeoutVote(inferenceID uint64, reason types.TimeoutReas
 	if err != nil {
 		return fmt.Errorf("%w: %v", types.ErrInvalidVoteSig, err)
 	}
-	if recovered != expectedAddr &&
-		s.sm.WarmKeys()[vote.VoterSlot] != recovered &&
-		!s.sm.CheckWarmKey(recovered, expectedAddr) {
+	if recovered != expectedAddr && !s.sm.HostSignerAllowed(vote.VoterSlot, recovered) {
 		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidVoteSig, expectedAddr, recovered)
 	}
 	if owner := s.sm.SlotAddress(vote.VoterSlot); owner != expectedAddr {

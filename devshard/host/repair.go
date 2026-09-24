@@ -191,12 +191,11 @@ func (h *Host) ingestRepairHeight(slot uint32, resp *heightsync.RepairResponse) 
 	if resp.Ack == nil {
 		return
 	}
-	key := h.slotToAddr[slot]
 	v := h.verifier
 	if v == nil {
 		v = signing.NewSecp256k1Verifier()
 	}
-	if err := heightsync.VerifyAck(v, resp.Ack, key); err != nil {
+	if err := heightsync.VerifyAckAllowed(v, resp.Ack, h.SlotActors()); err != nil {
 		logging.Debug("repair courtesy ack dropped", "subsystem", "heightsync",
 			"escrow", h.escrowID, "slot", slot, "error", err)
 		return

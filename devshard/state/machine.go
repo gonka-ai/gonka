@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"maps"
-	"math"
 	"slices"
 	"sync"
 
@@ -1250,11 +1249,9 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 	}
 
 	expectedAddr := sm.slotToAddress[rec.ExecutorSlot]
-	if recovered != expectedAddr {
-		if !sm.ResolveWarmKey(rec.ExecutorSlot, recovered, expectedAddr) {
-			return fmt.Errorf("%w: expected executor %s (slot %d), got %s",
-				types.ErrInvalidExecutorSig, expectedAddr, rec.ExecutorSlot, recovered)
-		}
+	if !sm.hostSignerAllowedLocked(rec.ExecutorSlot, recovered) {
+		return fmt.Errorf("%w: expected executor %s (slot %d), got %s",
+			types.ErrInvalidExecutorSig, expectedAddr, rec.ExecutorSlot, recovered)
 	}
 
 	rec.Status = types.StatusStarted
@@ -1544,7 +1541,7 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 			Reason:      msg.Reason,
 			Accept:      vote.Accept,
 		}
-		voteData, err := deterministicMarshal.Marshal(voteContent)
+		voteData, err := types.CanonicalSignedBytes(voteContent)
 		if err != nil {
 			return fmt.Errorf("marshal timeout vote: %w", err)
 		}
@@ -1554,11 +1551,9 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 			return fmt.Errorf("%w: vote from slot %d: %v", types.ErrInvalidVoteSig, vote.VoterSlot, err)
 		}
 
-		if recovered != voterAddr {
-			if !sm.ResolveWarmKey(vote.VoterSlot, recovered, voterAddr) {
-				return fmt.Errorf("%w: vote from slot %d: expected %s, got %s",
-					types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
-			}
+		if !sm.hostSignerAllowedLocked(vote.VoterSlot, recovered) {
+			return fmt.Errorf("%w: vote from slot %d: expected %s, got %s",
+				types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
 		}
 
 		if vote.Accept {
@@ -1614,7 +1609,7 @@ func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
 			Accept:       vote.Accept,
 			ResponseHash: rec.ResponseHash,
 		}
-		voteData, err := deterministicMarshal.Marshal(voteContent)
+		voteData, err := types.CanonicalSignedBytes(voteContent)
 		if err != nil {
 			return fmt.Errorf("marshal error-miss vote: %w", err)
 		}
@@ -1622,11 +1617,9 @@ func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
 		if err != nil {
 			return fmt.Errorf("%w: vote from slot %d: %v", types.ErrInvalidVoteSig, vote.VoterSlot, err)
 		}
-		if recovered != voterAddr {
-			if !sm.ResolveWarmKey(vote.VoterSlot, recovered, voterAddr) {
-				return fmt.Errorf("%w: vote from slot %d: expected %s, got %s",
-					types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
-			}
+		if !sm.hostSignerAllowedLocked(vote.VoterSlot, recovered) {
+			return fmt.Errorf("%w: vote from slot %d: expected %s, got %s",
+				types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
 		}
 		if vote.Accept {
 			acceptCount += sm.addressToSlotCount[voterAddr]
@@ -1708,9 +1701,10 @@ func BuildDiffContent(escrowID string, nonce uint64, txs []*types.DevshardTx, po
 
 // VerifyFinishProposerSig checks that msg.ProposerSig was produced by the
 // executor slot named in the message. Same check applyFinishInference uses.
-// Safe to call from a verifier goroutine. Cache hits (cold key or an already
-// bound warm key) take only a read lock; a warm-key miss takes the write lock
-// because ResolveWarmKey writes sm.state.WarmKeys and may call the bridge.
+// Safe to call from a verifier goroutine. Cache hits (cold key, this slot's
+// bound warm key, or a sibling slot's binding) take only a read lock; a
+// warm-key miss takes the write lock because ResolveWarmKey writes
+// sm.state.WarmKeys and may call the bridge.
 // Callers that already hold sm.mu must use verifyFinishProposerSigLocked.
 func (sm *StateMachine) VerifyFinishProposerSig(msg *types.MsgFinishInference) error {
 	recovered, err := sm.recoveredProposerAddress(msg)
@@ -1720,15 +1714,17 @@ func (sm *StateMachine) VerifyFinishProposerSig(msg *types.MsgFinishInference) e
 
 	sm.mu.RLock()
 	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
-	cached, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
+	allowed := sm.hostSignerCachedLocked(msg.ExecutorSlot, recovered)
+	_, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
+	canResolve := sm.warmResolver != nil
 	sm.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
 	}
-	if recovered == expected || cached == recovered {
+	if allowed {
 		return nil
 	}
-	if hasCached {
+	if hasCached || !canResolve {
 		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
 	}
 
@@ -1759,13 +1755,14 @@ func (sm *StateMachine) RejectFinishProposerSigLocal(msg *types.MsgFinishInferen
 
 	sm.mu.RLock()
 	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
-	cached, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
+	allowed := sm.hostSignerCachedLocked(msg.ExecutorSlot, recovered)
+	_, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
 	canResolve := sm.warmResolver != nil
 	sm.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
 	}
-	if recovered == expected || (hasCached && cached == recovered) {
+	if allowed {
 		return nil
 	}
 	if hasCached || !canResolve {
@@ -1780,7 +1777,7 @@ func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) 
 	}
 	cloned := proto.Clone(msg).(*types.MsgFinishInference)
 	cloned.ProposerSig = nil
-	data, err := deterministicMarshal.Marshal(cloned)
+	data, err := types.CanonicalSignedBytes(cloned)
 	if err != nil {
 		return "", fmt.Errorf("marshal for proposer sig: %w", err)
 	}
@@ -1804,11 +1801,12 @@ func (sm *StateMachine) verifyFinishProposerSigLocked(msg *types.MsgFinishInfere
 	return sm.verifyProposerSig(cloned, msg.ProposerSig, addr, msg.ExecutorSlot)
 }
 
-// verifyProposerSig verifies that sig was produced by expectedAddress over
-// msgWithoutSig (the proto message with its proposer_sig field already zeroed).
-// slotID is used for warm key resolution; pass math.MaxUint32 to skip warm key lookup.
+// verifyProposerSig verifies that sig over msgWithoutSig (the proto message
+// with its proposer_sig field already zeroed) was produced by an authorized
+// actor for slotID. expectedAddress must be slotToAddress[slotID]; it is
+// carried only so the error names the slot's cold key.
 func (sm *StateMachine) verifyProposerSig(msgWithoutSig proto.Message, sig []byte, expectedAddress string, slotID uint32) error {
-	data, err := deterministicMarshal.Marshal(msgWithoutSig)
+	data, err := types.CanonicalSignedBytes(msgWithoutSig)
 	if err != nil {
 		return fmt.Errorf("marshal for proposer sig: %w", err)
 	}
@@ -1818,14 +1816,76 @@ func (sm *StateMachine) verifyProposerSig(msgWithoutSig proto.Message, sig []byt
 		return fmt.Errorf("%w: %v", types.ErrInvalidProposerSig, err)
 	}
 
-	if recovered != expectedAddress {
-		if slotID != math.MaxUint32 && sm.ResolveWarmKey(slotID, recovered, expectedAddress) {
-			return nil
-		}
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expectedAddress, recovered)
+	if sm.hostSignerAllowedLocked(slotID, recovered) {
+		return nil
 	}
+	return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expectedAddress, recovered)
+}
 
-	return nil
+// hostSignerCachedLocked answers from consensus state alone: the slot's cold
+// key, the slot's own warm binding, or — only while the slot is still unbound
+// — a sibling slot's binding for the same validator. authz grants are
+// per-address, so a sibling binding is the same fact, already checked. No
+// bridge call and no mutation, so every replica decides it identically.
+func (sm *StateMachine) hostSignerCachedLocked(slotID uint32, recovered string) bool {
+	return signing.SlotActors{
+		SlotKeys: sm.slotToAddress,
+		WarmKeys: sm.state.WarmKeys,
+	}.Allows(slotID, recovered)
+}
+
+// hostSignerAllowedLocked is the apply-path check: hostSignerCachedLocked plus
+// the live authz fallback for a still-unbound slot. Caller holds sm.mu.
+// Resolution goes through ResolveWarmKey, so a binding admitted here is written
+// into state and travels to the other hosts as WarmKeyDelta. Read-only callers
+// want HostSignerAllowed, which never binds.
+func (sm *StateMachine) hostSignerAllowedLocked(slotID uint32, recovered string) bool {
+	return signing.SlotActors{
+		SlotKeys:   sm.slotToAddress,
+		WarmKeys:   sm.state.WarmKeys,
+		AcceptWarm: sm.ResolveWarmKey,
+	}.Allows(slotID, recovered)
+}
+
+// HostSignerAllowed reports whether recovered may act for slotID. It never
+// binds WarmKeys, and it makes at most one bridge call — only when state alone
+// cannot decide — with sm.mu released.
+func (sm *StateMachine) HostSignerAllowed(slotID uint32, recovered string) bool {
+	sm.mu.RLock()
+	cached := sm.hostSignerCachedLocked(slotID, recovered)
+	expected, inGroup := sm.slotToAddress[slotID]
+	sm.mu.RUnlock()
+	if cached {
+		return true
+	}
+	if !inGroup {
+		return false
+	}
+	return sm.CheckWarmKey(recovered, expected)
+}
+
+// HostSignerAllowedAddr is HostSignerAllowed for any slot owned by expected.
+// Used where the message names a host address rather than a slot.
+func (sm *StateMachine) HostSignerAllowedAddr(expected, recovered string) bool {
+	if expected == "" || recovered == "" {
+		return false
+	}
+	if recovered == expected {
+		return true
+	}
+	sm.mu.RLock()
+	cached := false
+	for _, slot := range sm.addressToSlots[expected] {
+		if sm.hostSignerCachedLocked(slot, recovered) {
+			cached = true
+			break
+		}
+	}
+	sm.mu.RUnlock()
+	if cached {
+		return true
+	}
+	return sm.CheckWarmKey(recovered, expected)
 }
 
 // ResolveWarmKey checks if recovered is an authorized warm key for the given slot.
