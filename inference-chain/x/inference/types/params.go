@@ -938,9 +938,12 @@ func (p *PocParams) Validate() error {
 	// Non-zero thresholds below 50% would let both valid and invalid votes
 	// clear the threshold at once, making the accept/reject check order
 	// decide the outcome. Majority (>=5000) guarantees at most one side passes.
+	// The comparison is strict (votes > total*bps/10000), so 10000 could never
+	// be met even by a unanimous vote and would leave every PoC to the guardian
+	// tiebreaker; 9999 is the highest threshold a vote can clear.
 	if p.ValidationVoteThresholdBps != 0 &&
-		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 10000) {
-		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 10000]")
+		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 9999) {
+		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 9999]")
 	}
 	seen := make(map[string]bool)
 	for _, model := range p.GetModelConfigs() {
