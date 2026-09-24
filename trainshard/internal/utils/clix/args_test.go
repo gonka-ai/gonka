@@ -27,9 +27,9 @@ func TestHelpForACommandWithoutFlagsSaysWhatItDoes(t *testing.T) {
 	}
 }
 
-func TestHelpForACommandWithFlagsListsThem(t *testing.T) {
+func TestHelpForACommandWithFlagsListsItsExamplesThenItsFlags(t *testing.T) {
 	// arrange
-	flags := clix.Command("stop <shard> [flags]", "Stops the run.")
+	flags := clix.Command("stop <shard> [flags]", "Stops the run.", "trainshardctl stop 1 -grace 2m")
 	flags.Duration("grace", 0, "how long a container may take to exit")
 	var out strings.Builder
 	flags.SetOutput(&out)
@@ -39,7 +39,8 @@ func TestHelpForACommandWithFlagsListsThem(t *testing.T) {
 
 	// assert
 	got := out.String()
-	if !strings.Contains(got, "Stops the run.\n\nflags:\n") || !strings.Contains(got, "-grace") {
-		t.Fatalf("got %q, want the summary followed by the flags", got)
+	want := "Stops the run.\n\nexamples:\n  trainshardctl stop 1 -grace 2m\n\nflags:\n"
+	if !strings.Contains(got, want) || !strings.Contains(got, "-grace") {
+		t.Fatalf("got %q, want the summary, the examples and then the flags", got)
 	}
 }
