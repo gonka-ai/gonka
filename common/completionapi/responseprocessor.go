@@ -40,6 +40,7 @@ func NewExecutorResponseProcessor(inferenceId string, forwardLogprobs bool) *Exe
 		inferenceId:       inferenceId,
 		jsonResponseBytes: nil,
 		streamedResponse:  nil,
+		servedEnvelope:    newEnvelopeHasher(),
 		forwardLogprobs:   forwardLogprobs,
 	}
 }
@@ -73,17 +74,17 @@ func (rt *ExecutorResponseProcessor) ProcessStreamedResponse(line string) (strin
 	body, isData := streamedLineBody(line)
 	if !isData {
 		rt.streamedResponse = append(rt.streamedResponse, line)
-		rt.serveLine(line)
+		rt.servedEnvelope.add(line)
 		return line, nil
 	}
 	stored, forwarded, served, err := rt.prepareBody([]byte(body))
 	if err != nil {
 		rt.streamedResponse = append(rt.streamedResponse, line)
-		rt.serveLine(line)
+		rt.servedEnvelope.add(line)
 		return line, err
 	}
 	rt.streamedResponse = append(rt.streamedResponse, DataPrefix+string(stored))
-	rt.serveLine(DataPrefix + string(served))
+	rt.servedEnvelope.add(DataPrefix + string(served))
 	return DataPrefix + string(forwarded), nil
 }
 
@@ -101,8 +102,8 @@ func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded
 	dropFields(document, fieldsNoValidatorReads)
 
 	// A chunk that will not slim is stored as it arrived rather than failing the inference.
-	optimized := rt.logprobsOptimizationEnabled && !rt.forwardLogprobs
-	if optimized {
+	compressesLogprobs := rt.logprobsOptimizationEnabled && !rt.forwardLogprobs
+	if compressesLogprobs {
 		if err := compressLogprobsIn(document); err != nil {
 			logging.Warn("Storing the response whole: it did not compress", types.Inferences,
 				"inference_id", rt.inferenceId, "error", err)
@@ -120,7 +121,7 @@ func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded
 	}
 
 	forwarded = stored
-	if optimized {
+	if compressesLogprobs {
 		forwarded = served
 	}
 	return stored, forwarded, served, nil
@@ -138,20 +139,10 @@ func (rt *ExecutorResponseProcessor) GetResponseBytes() ([]byte, error) {
 	return nil, ErrNoResponseCollected
 }
 
-func (rt *ExecutorResponseProcessor) serveLine(line string) {
-	if rt.servedEnvelope == nil {
-		rt.servedEnvelope = newEnvelopeHasher()
-	}
-	rt.servedEnvelope.add(line)
-}
-
 func (rt *ExecutorResponseProcessor) GetServedHash() ([32]byte, error) {
 	if rt.jsonResponseBytes != nil {
 		return sha256.Sum256(rt.servedJSON), nil
 	} else if rt.streamedResponse != nil {
-		if rt.servedEnvelope == nil {
-			rt.servedEnvelope = newEnvelopeHasher()
-		}
 		return rt.servedEnvelope.finish(), nil
 	}
 	return [32]byte{}, ErrNoResponseCollected

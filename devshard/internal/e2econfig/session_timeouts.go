@@ -21,6 +21,7 @@ const (
 	StubInferenceHTTPMessageEnv      = "DEVSHARD_STUB_INFERENCE_HTTP_MESSAGE"
 	StubInferenceErrorMissMessageEnv = "DEVSHARD_STUB_INFERENCE_ERROR_MISS_MESSAGE"
 	StubInferenceProcessedStreamEnv  = "DEVSHARD_STUB_INFERENCE_PROCESSED_STREAM"
+	StubInferenceTamperedStreamEnv   = "DEVSHARD_STUB_INFERENCE_TAMPERED_STREAM"
 )
 
 type SessionTimeoutOverrides struct {

@@ -14,31 +14,19 @@ func applyFinishWithServedHash(t *testing.T, servedHash []byte, mutateAfterSigni
 	t.Helper()
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	stateMachine, user := newTestSM(t, hosts, 10000)
-
-	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-	})})
-	_, err := stateMachine.ApplyDiff(diff)
-	require.NoError(t, err)
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
-	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
-	})})
-	_, err = stateMachine.ApplyDiff(diff)
-	require.NoError(t, err)
+	executorSlot := applyStartConfirm(t, stateMachine, user, hosts, 1)
 
 	finishMsg := &types.MsgFinishInference{
 		InferenceId: 1, ResponseHash: []byte("response"), ServedHash: servedHash,
-		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
+		InputTokens: 80, OutputTokens: 40, ExecutorSlot: executorSlot,
 		EscrowId: "escrow-1",
 	}
-	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
+	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[executorSlot], finishMsg)
 	if mutateAfterSigning != nil {
 		mutateAfterSigning(finishMsg)
 	}
-	diff = testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{txFinish(finishMsg)})
-	_, err = stateMachine.ApplyDiff(diff)
+	diff := testutil.SignDiff(t, user, "escrow-1", stateMachine.SnapshotState().LatestNonce+1, []*types.DevshardTx{txFinish(finishMsg)})
+	_, err := stateMachine.ApplyDiff(diff)
 	return stateMachine, err
 }
 

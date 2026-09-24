@@ -24,56 +24,10 @@ var answeredChunks = []string{
 	"data: [DONE]",
 }
 
-func TestForwardedStreamRehashesToTheCommittedHash(t *testing.T) {
-	for _, testCase := range []struct {
-		name                        string
-		logprobsOptimizationEnabled bool
-		wantSameHash                bool
-	}{
-		{name: "optimization on", logprobsOptimizationEnabled: true},
-		{name: "optimization off", logprobsOptimizationEnabled: false, wantSameHash: true},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			request := devshardpkg.ExecuteRequest{
-				InferenceID: 1, EscrowID: "60453", Model: "m",
-				Prompt: []byte(`{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}]}`),
-			}
-			result, forwarded := runStubbedInference(t, request, testCase.logprobsOptimizationEnabled, answeredChunks...)
-
-			rebuilt, err := json.Marshal(completionapi.SerializedStreamedResponse{Events: dataLines(forwarded)})
-			if err != nil {
-				t.Fatalf("rebuild the forwarded stream: %v", err)
-			}
-			rebuiltHash := sha256.Sum256(rebuilt)
-			if sameHash := string(rebuiltHash[:]) == string(result.ResponseHash); sameHash != testCase.wantSameHash {
-				t.Fatalf("rehashed to the committed hash: %v, want %v\nrebuilt: %s", sameHash, testCase.wantSameHash, rebuilt)
-			}
-		})
-	}
-}
-
 func runStubbedInference(t *testing.T, request devshardpkg.ExecuteRequest, logprobsOptimizationEnabled bool, chunks ...string) (*devshardpkg.ExecuteResult, string) {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		for _, chunk := range chunks {
-			_, _ = w.Write([]byte(chunk + "\n\n"))
-		}
-	}))
-	defer server.Close()
-
-	toGateway := httptest.NewRecorder()
-	request.ResponseWriter = toGateway
-	result, err := executeInference(context.Background(), request, &recordingPayloadStore{}, 1,
-		func(ctx context.Context, _ string, requestBody []byte) (*http.Response, error) {
-			call, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
-			return http.DefaultClient.Do(call)
-		},
-		fixedChainParams{}, logprobsOptimizationEnabled)
-	if err != nil {
-		t.Fatalf("executeInference: %v", err)
-	}
-	return result, toGateway.Body.String()
+	inference := runServedRequest(t, request, "text/event-stream", logprobsOptimizationEnabled, chunks...)
+	return inference.result, inference.forwarded
 }
 
 func dataLines(stream string) []string {

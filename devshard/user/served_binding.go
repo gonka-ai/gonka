@@ -18,7 +18,7 @@ const (
 	ServedBindingMissing          ServedBinding = "missing"
 )
 
-func CheckServedBinding(response *host.HostResponse, nonce uint64, rejectUnverified func(*types.DevshardTx) error) ServedBinding {
+func checkServedBinding(response *host.HostResponse, nonce uint64, rejectUnverified func(*types.DevshardTx) error) ServedBinding {
 	if response == nil {
 		return ServedBindingNoFinish
 	}
@@ -44,7 +44,7 @@ func CheckServedBinding(response *host.HostResponse, nonce uint64, rejectUnverif
 }
 
 func (s *Session) CheckServedBinding(response *host.HostResponse, nonce uint64) ServedBinding {
-	return CheckServedBinding(response, nonce, s.rejectUnverifiedHostTx)
+	return checkServedBinding(response, nonce, s.rejectUnverifiedHostTx)
 }
 
 func acceptedFinishFor(txs []*types.DevshardTx, nonce uint64, rejectUnverified func(*types.DevshardTx) error) (accepted *types.MsgFinishInference, sawUnverified bool) {

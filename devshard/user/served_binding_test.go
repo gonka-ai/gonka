@@ -25,11 +25,7 @@ func bindingStateMachine(t *testing.T) (*state.StateMachine, []*signing.Secp256k
 	t.Helper()
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	userKey := testutil.MustGenerateKey(t)
-	group := testutil.MakeGroup(hosts)
-	config := testutil.DefaultConfig(len(hosts))
-	stateMachine, err := state.NewStateMachine("escrow-1", config, group, 10000, userKey.Address(), signing.NewSecp256k1Verifier(),
-		testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 10000))
-	require.NoError(t, err)
+	stateMachine := newTestStateMachine(t, "escrow-1", testutil.DefaultConfig(len(hosts)), testutil.MakeGroup(hosts), 10000, userKey.Address(), signing.NewSecp256k1Verifier())
 	return stateMachine, hosts
 }
 
@@ -72,7 +68,7 @@ func TestCheckServedBinding(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			response := &host.HostResponse{Mempool: testCase.mempool, ReceivedResponseHashes: testCase.received}
-			require.Equal(t, testCase.want, CheckServedBinding(response, bindingNonce, rejectUnverified))
+			require.Equal(t, testCase.want, checkServedBinding(response, bindingNonce, rejectUnverified))
 		})
 	}
 }

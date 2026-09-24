@@ -3992,7 +3992,7 @@ func (e *Redundancy) recordServedBinding(ctx context.Context, inf *inflight, par
 	if e.metrics != nil {
 		e.metrics.RecordServedBinding(string(verdict))
 	}
-	if verdict != user.ServedBindingMismatch && verdict != user.ServedBindingMissing {
+	if verdict != user.ServedBindingMismatch {
 		return
 	}
 	logInferenceStage(ctx, inf.escrowID, inf.nonce, "served_binding_failed",

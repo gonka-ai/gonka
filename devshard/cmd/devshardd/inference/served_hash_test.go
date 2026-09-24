@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 
@@ -28,6 +27,12 @@ type servedInference struct {
 
 func runServedInference(t *testing.T, prompt, contentType string, optimizationEnabled bool, chunks ...string) servedInference {
 	t.Helper()
+	request := devshardpkg.ExecuteRequest{InferenceID: 1, EscrowID: "60453", Model: "m", Prompt: []byte(prompt)}
+	return runServedRequest(t, request, contentType, optimizationEnabled, chunks...)
+}
+
+func runServedRequest(t *testing.T, request devshardpkg.ExecuteRequest, contentType string, optimizationEnabled bool, chunks ...string) servedInference {
+	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", contentType)
 		for _, chunk := range chunks {
@@ -38,9 +43,7 @@ func runServedInference(t *testing.T, prompt, contentType string, optimizationEn
 
 	store := &recordingPayloadStore{}
 	toGateway := httptest.NewRecorder()
-	request := devshardpkg.ExecuteRequest{
-		InferenceID: 1, EscrowID: "60453", Model: "m", Prompt: []byte(prompt), ResponseWriter: toGateway,
-	}
+	request.ResponseWriter = toGateway
 	result, err := executeInference(context.Background(), request, store, 1,
 		func(ctx context.Context, _ string, requestBody []byte) (*http.Response, error) {
 			call, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
@@ -105,8 +108,6 @@ func TestAJSONBodyRelayedToAStreamingGatewayIsBound(t *testing.T) {
 	body := `{"error":{"code":400,"message":"context length exceeded","type":"BadRequestError"},"usage":{"prompt_tokens":10,"completion_tokens":0}}`
 	inference := runServedInference(t, streamingPrompt, "application/json", true, body)
 
-	sums := receivedSums(inference.forwarded)
-	require.True(t,
-		slices.Contains(sums, [32]byte(inference.result.ResponseHash)) || slices.Contains(sums, [32]byte(inference.result.ServedHash)),
-		"the relayed body rehashes to a signed hash:\n%s", inference.forwarded)
+	require.Contains(t, receivedSums(inference.forwarded), [32]byte(inference.result.ServedHash),
+		"a gateway that did not ask gets the served view, relayed bare:\n%s", inference.forwarded)
 }
