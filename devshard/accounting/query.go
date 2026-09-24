@@ -179,6 +179,8 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 			record.ProtocolInvalid += slotRecord.ProtocolInvalid
 			record.RequiredValidations += slotRecord.RequiredValidations
 			record.CompletedValidations += slotRecord.CompletedValidations
+			record.ProtocolValidated += slotRecord.ProtocolValidated
+			record.ProtocolFinished += slotRecord.ProtocolFinished
 			record.ValidationsPerformed += slotRecord.ValidationsPerformed
 			record.TimeoutsApplied += slotRecord.TimeoutsApplied
 			record.UnresolvedChallenges += slotRecord.UnresolvedChallenges
@@ -325,6 +327,8 @@ func buildSlotRecord(escrow *escrowView, slot uint32, now time.Time) SlotRecord 
 		record.ProtocolInvalid = uint64(stats.Invalid)
 		record.RequiredValidations = uint64(stats.RequiredValidations)
 		record.CompletedValidations = uint64(stats.CompletedValidations)
+		record.ProtocolValidated = uint64(stats.Validated)
+		record.ProtocolFinished = uint64(stats.Finished)
 	}
 	record.ValidationsPerformed = escrow.validatedBySlot[slot]
 	record.TimeoutsApplied = escrow.timedOutBySlot[slot]
@@ -389,6 +393,8 @@ func (t *Tracker) Epochs(filter QueryFilter) []EpochSummary {
 			summary.ProtocolMisses += record.ProtocolMisses
 			summary.RequiredValidations += record.RequiredValidations
 			summary.CompletedValidations += record.CompletedValidations
+			summary.ProtocolValidated += record.ProtocolValidated
+			summary.ProtocolFinished += record.ProtocolFinished
 			summary.ProtocolInvalid += record.ProtocolInvalid
 			summary.UnresolvedChallenges += record.UnresolvedChallenges
 			summary.InFlight += record.InFlight

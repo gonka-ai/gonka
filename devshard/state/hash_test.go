@@ -3,6 +3,7 @@ package state
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -182,4 +183,23 @@ func TestStateRoot_V2_SealedAccChangesRestHash(t *testing.T) {
 	restOther, err := ComputeRestHashV2(balance, otherAcc, live, nil, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 	require.NotEqual(t, restHash, restOther, "sealed accumulator must affect v2 rest hash")
+}
+
+func TestComputeHostStatsHash_GoldenValueWithValidated(t *testing.T) {
+	hostStats := map[uint32]*types.HostStats{
+		1: {Missed: 0, Invalid: 1, Cost: 200, RequiredValidations: 10, CompletedValidations: 8, Validated: 3, Finished: 41},
+		0: {Missed: 1, Invalid: 0, Cost: 100, RequiredValidations: 10, CompletedValidations: 9, Validated: 7, Finished: 40},
+	}
+	hash, err := computeHostStatsHash(hostStats)
+	require.NoError(t, err)
+	require.Equal(t, "7871c63983e95831adb819783457b199627a3699e6048db1aa7e9aa694f41757", hex.EncodeToString(hash),
+		"golden hash mismatch: devshard HostStatsProto drifted from chain DevshardHostStatsProto")
+
+	for _, s := range hostStats {
+		s.Validated = 0
+		s.Finished = 0
+	}
+	hash, err = computeHostStatsHash(hostStats)
+	require.NoError(t, err)
+	require.Equal(t, "a3231da94dd50999b9f609263ab7b666431576806437944779c10f8124579fd1", hex.EncodeToString(hash))
 }

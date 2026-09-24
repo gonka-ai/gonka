@@ -449,6 +449,70 @@ func (p *MaintenanceParams) Validate() error {
 	return nil
 }
 
+func ApplyDevshardVersionPolicies(current, next *DevshardEscrowParams) error {
+	if next == nil {
+		return nil
+	}
+	policies := make(map[string]bool)
+	var ordered []*DevshardVersionPolicy
+	add := func(name string, reportsValidated bool) {
+		policies[name] = reportsValidated
+		ordered = append(ordered, &DevshardVersionPolicy{Name: name, ReportsValidated: reportsValidated})
+	}
+	if current != nil {
+		for _, pol := range current.VersionPolicies {
+			if pol != nil {
+				add(pol.Name, pol.ReportsValidated)
+			}
+		}
+		for _, v := range current.ApprovedVersions {
+			if v != nil {
+				if _, ok := policies[v.Name]; !ok {
+					add(v.Name, v.ReportsValidated)
+				}
+			}
+		}
+	}
+	for _, pol := range next.VersionPolicies {
+		if pol == nil {
+			continue
+		}
+		if was, ok := policies[pol.Name]; ok {
+			if was != pol.ReportsValidated {
+				return fmt.Errorf("devshard_escrow_params.version_policies[%q]: reports_validated cannot change once recorded", pol.Name)
+			}
+			continue
+		}
+		add(pol.Name, pol.ReportsValidated)
+	}
+	for _, v := range next.ApprovedVersions {
+		if v == nil {
+			continue
+		}
+		if was, ok := policies[v.Name]; ok {
+			if was != v.ReportsValidated {
+				return fmt.Errorf("devshard_escrow_params.approved_versions[%q]: reports_validated cannot change once approved", v.Name)
+			}
+			continue
+		}
+		add(v.Name, v.ReportsValidated)
+	}
+	next.VersionPolicies = ordered
+	return nil
+}
+
+func (p *DevshardEscrowParams) DevshardVersionReportsValidated(version string) bool {
+	if p == nil {
+		return false
+	}
+	for _, pol := range p.VersionPolicies {
+		if pol != nil && pol.Name == version {
+			return pol.ReportsValidated
+		}
+	}
+	return false
+}
+
 func (p *DevshardEscrowParams) Validate() error {
 	if p.MinAmount == 0 {
 		return fmt.Errorf("devshard escrow min_amount must be positive")
@@ -461,6 +525,19 @@ func (p *DevshardEscrowParams) Validate() error {
 	}
 	if p.MaxNonce == 0 {
 		return fmt.Errorf("devshard escrow max_nonce must be positive")
+	}
+	seenPolicies := make(map[string]struct{}, len(p.VersionPolicies))
+	for i, pol := range p.VersionPolicies {
+		if pol == nil {
+			return fmt.Errorf("devshard_escrow_params.version_policies[%d]: cannot be null", i)
+		}
+		if pol.Name == "" {
+			return fmt.Errorf("devshard_escrow_params.version_policies[%d]: name cannot be empty", i)
+		}
+		if _, dup := seenPolicies[pol.Name]; dup {
+			return fmt.Errorf("devshard_escrow_params.version_policies[%d]: duplicate name %q", i, pol.Name)
+		}
+		seenPolicies[pol.Name] = struct{}{}
 	}
 	seen := make(map[string]struct{}, len(p.ApprovedVersions))
 	for i, v := range p.ApprovedVersions {

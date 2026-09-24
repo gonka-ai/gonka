@@ -73,6 +73,8 @@ type HostStats struct {
 	Cost                 uint64
 	RequiredValidations  uint32
 	CompletedValidations uint32
+	Validated            uint32
+	Finished             uint32
 }
 
 // ProtocolVersion identifies the gateway/runtime protocol version for
