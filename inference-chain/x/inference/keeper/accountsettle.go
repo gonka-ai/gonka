@@ -266,6 +266,27 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		k.LogInfo("Transferred undistributed bitcoin rewards to governance", types.Settle, "amount", governanceRewardAmount)
 	}
 
+	// Work coins of participants that are not paid (non-ACTIVE at settle) are already held
+	// by the module; zeroing CoinBalance below would orphan them. Send them to governance,
+	// like the undistributed reward share above.
+	var forfeitedWorkCoins int64
+	for i, participant := range allParticipants {
+		if participant.CoinBalance > 0 && amounts[i].Settle.WorkCoins == 0 {
+			forfeitedWorkCoins += participant.CoinBalance
+		}
+	}
+	if forfeitedWorkCoins > 0 {
+		coins, err := types.GetCoins(forfeitedWorkCoins)
+		if err != nil {
+			return nil, err
+		}
+		memo := fmt.Sprintf("forfeited_work_coins_to_governance:epoch=%d", currentEpochIndex)
+		if err := k.BankKeeper.SendCoinsFromModuleToModule(cacheCtx, types.ModuleName, govtypes.ModuleName, coins, memo); err != nil {
+			k.LogError("Error transferring forfeited work coins to governance", types.Settle, "error", err, "amount", forfeitedWorkCoins)
+			return nil, err
+		}
+	}
+
 	k.LogInfo("Checking downtime for participants", types.Settle, "participants", len(allParticipants))
 
 	for i, participant := range allParticipants {
