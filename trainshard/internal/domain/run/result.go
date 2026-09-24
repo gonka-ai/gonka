@@ -32,6 +32,10 @@ func ResultOf(node vo.NodeRef, container ContainerInfo) NodeResult {
 
 func (r NodeResult) OK() bool { return r.Fault == nil }
 
+// Unanswered holds for a node the call never reached or that turned it away; a node that answered
+// always says what its container is, and a fault it carries is the one its run last hit
+func (r NodeResult) Unanswered() bool { return r.Fault != nil && r.State == vo.ContainerUnknown }
+
 func (r NodeResult) Ref() vo.NodeRef { return r.Node }
 
 // Answer is whatever a host says about one node, so a batch can be matched back to what was asked

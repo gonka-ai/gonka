@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"trainshard/internal/domain/run"
+	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -150,5 +151,18 @@ func waitFor(done chan struct{}) bool {
 		return true
 	case <-time.After(2 * time.Second):
 		return false
+	}
+}
+
+func TestANodeThatAnsweredWithTheFaultOfItsRunStillAnswered(t *testing.T) {
+
+	faulted := run.StatusOf(first, run.Desired{}, run.Observed{Container: vo.ContainerAbsent}, &shared.Fault{Code: "IMAGE_NOT_DERIVED"})
+	unreached := run.FailedStatus(first, errHost)
+
+	if faulted.Unanswered() {
+		t.Fatalf("got %+v, want a node that said what it holds counted as an answer", faulted)
+	}
+	if !unreached.Unanswered() {
+		t.Fatalf("got %+v, want a node the call never reached counted as silent", unreached)
 	}
 }

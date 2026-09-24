@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -193,6 +194,67 @@ func TestDeployBuildsANewContainerEvenWhenTheImageStaysTheSame(t *testing.T) {
 				t.Fatalf("got %v, want the container built again rather than a deploy that changes nothing", f.rec.sequence())
 			}
 		})
+	}
+}
+
+func TestARefusedDeployLeavesTheNodeOnTheRunItHad(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if _, err := f.deploy().Execute(ctx, deployCommand()); err != nil {
+		t.Fatalf("first deploy: %v", err)
+	}
+	had := f.runs.states[nodeA]
+	foreign := vo.ImageDigest("foreign@sha256:" + strings.Repeat("c", 64))
+	f.images.layers[foreign] = vo.ImageLayers{"someone-elses-layer"}
+	cmd := deployCommand()
+	cmd.RequestID = "req-2"
+	cmd.Run.Image = foreign
+
+	// act
+	results, err := f.deploy().Execute(ctx, cmd)
+	_, reconciled := f.reconcile().Execute(ctx, nodeA)
+
+	// assert
+	if err != nil {
+		t.Fatalf("a refused node must not fail the request: %v", err)
+	}
+	if len(results) != 1 || results[0].Fault == nil || results[0].Fault.Code != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("got %+v, want the foreign image refused", results)
+	}
+	state := f.runs.states[nodeA]
+	if state.Spec.Image != runImage || state.Revision != had.Revision || state.Fault != nil {
+		t.Fatalf("got %+v, want the run the node had before, with no fault to be kicked for", state)
+	}
+	if reconciled != nil {
+		t.Fatalf("got %v, want the loop to find nothing left to fail on", reconciled)
+	}
+}
+
+func TestADeployThatCouldNotPullStaysForTheLoopToFinish(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.images.pullErr = context.DeadlineExceeded
+
+	// act
+	results, err := f.deploy().Execute(ctx, deployCommand())
+
+	// assert
+	if err != nil {
+		t.Fatalf("a failed node must not fail the request: %v", err)
+	}
+	if len(results) != 1 || results[0].OK() {
+		t.Fatalf("got %+v, want the pull failure reported", results)
+	}
+	if f.runs.states[nodeA].Spec.Image != runImage {
+		t.Fatalf("got %+v, want the run kept so the pull carries on", f.runs.states[nodeA])
 	}
 }
 

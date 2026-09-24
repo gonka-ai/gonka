@@ -2,8 +2,11 @@ package run
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
+	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/ports"
 	"trainshard/internal/domain/shared/vo"
 	"trainshard/internal/utils/syncx"
@@ -44,6 +47,26 @@ func (c *Converger) Record(ctx context.Context, node vo.NodeRef, write func(cont
 		return err
 	}
 	_, err := c.converge(ctx, node)
+	return err
+}
+
+// Attempt is Record for a write the host may refuse on its merits: a refusal is taken back
+// under the same lock, or it would stay behind failing every pass until the node is handed back,
+// long after the caller was told nothing changed. A write that failed for want of time or of an
+// engine stays, so the loop carries on where it stopped
+func (c *Converger) Attempt(ctx context.Context, node vo.NodeRef, write, undo func(context.Context) error) error {
+	defer c.applying.Lock(node)()
+
+	if err := write(ctx); err != nil {
+		return err
+	}
+	_, err := c.converge(ctx, node)
+	if err == nil || !errors.Is(err, shared.ErrValidation) {
+		return err
+	}
+	if undoErr := undo(ctx); undoErr != nil {
+		return fmt.Errorf("%w (taking it back also failed: %v)", err, undoErr)
+	}
 	return err
 }
 
