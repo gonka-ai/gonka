@@ -113,7 +113,8 @@ class Sampler(threading.Thread):
             agg = {}
             for u in self.urls:
                 for k, v in scrape(u).items():
-                    agg[k] = agg.get(k, 0.0) + v
+                    # counters and request counts add up over instances; KV use is per instance
+                    agg[k] = max(agg.get(k, 0.0), v) if k == "kv" else agg.get(k, 0.0) + v
             self.s.append((time.monotonic(), agg))
 
     def points(self, key, t0, t1):
