@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -328,20 +330,35 @@ func TestTheMeshIsBuiltAndProbedOverHTTP(t *testing.T) {
 	}
 }
 
-// echoStreams stands in for the container a shell lands in: it answers every line it is sent
-// until the caller stops typing
-type echoStreams struct{}
+// echoStreams stands in for the container a shell lands in: it answers every line it is sent,
+// each after pause, until its pty reads the end of the input
+type echoStreams struct {
+	pause time.Duration
+}
 
 func (echoStreams) Logs(context.Context, run.LogRequest, io.Writer) error { return nil }
 
-func (echoStreams) Shell(_ context.Context, _ run.ExecRequest, terminal io.ReadWriter) error {
-	lines := bufio.NewScanner(terminal)
-	for lines.Scan() {
-		if _, err := fmt.Fprintf(terminal, "you said %s\n", lines.Text()); err != nil {
+func (e echoStreams) Shell(_ context.Context, _ run.ExecRequest, terminal io.ReadWriter) error {
+	typed := bufio.NewReader(terminal)
+	var line []byte
+	for {
+		b, err := typed.ReadByte()
+		if errors.Is(err, io.EOF) || b == 0x04 {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
+		if b != '\n' {
+			line = append(line, b)
+			continue
+		}
+		time.Sleep(e.pause)
+		if _, err := fmt.Fprintf(terminal, "you said %s\n", line); err != nil {
+			return err
+		}
+		line = line[:0]
 	}
-	return lines.Err()
 }
 
 // shellHost serves only the session module, behind the same route prefix a proxy strips
@@ -397,6 +414,59 @@ func TestAShellCrossesTheWireBothWays(t *testing.T) {
 	}
 	if got := typed.out.String(); got != "you said whoami\nyou said ls\n" {
 		t.Fatalf("got %q, want every line answered and the session closed when typing stops", got)
+	}
+}
+
+// strictProxy tunnels each connection to target the way nginx tunnels an upgraded one: the first
+// side to stop writing ends it for both
+func strictProxy(t *testing.T, target string) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			in, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			out, err := net.Dial("tcp", target)
+			if err != nil {
+				in.Close()
+				continue
+			}
+			go func() {
+				done := make(chan struct{}, 2)
+				go func() { io.Copy(out, in); done <- struct{}{} }()
+				go func() { io.Copy(in, out); done <- struct{}{} }()
+				<-done
+				in.Close()
+				out.Close()
+			}()
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func TestAShellBehindAProxyGetsItsAnswersAfterTheTypingStops(t *testing.T) {
+
+	client := shellHost(t, echoStreams{pause: 200 * time.Millisecond})
+	direct, err := url.Parse(string(client.machine.Endpoint))
+	if err != nil {
+		t.Fatalf("endpoint: %v", err)
+	}
+	client.machine.Endpoint = vo.Endpoint("http://" + strictProxy(t, direct.Host) + routePrefix)
+	typed := &terminal{in: strings.NewReader("whoami\nls\n")}
+
+	err = client.Shell(context.Background(), client.machine, run.ExecRequest{Shard: shardID, Node: node}, typed)
+
+	if err != nil {
+		t.Fatalf("shell: %v", err)
+	}
+	if got := typed.out.String(); got != "you said whoami\nyou said ls\n" {
+		t.Fatalf("got %q, want the answers that were still on their way when the input ran out", got)
 	}
 }
 
