@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	usecases "trainshard/internal/application/hostd/run/use_cases"
@@ -94,6 +95,36 @@ func TestApplyMeshBringsTheInterfaceUpBeforeItAnswers(t *testing.T) {
 	}
 	if !f.network.up {
 		t.Fatal("the peer list must be applied within the request, not left to the next tick")
+	}
+}
+
+func TestApplyMeshTakesTheListWhenOnlyTheRunIsRefused(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	foreign := vo.ImageDigest("foreign@sha256:" + strings.Repeat("c", 64))
+	f.images.layers[foreign] = vo.ImageLayers{"someone-elses-layer"}
+	cmd := deployCommand()
+	cmd.Run.Image = foreign
+	f.images.pullErr = context.DeadlineExceeded
+	if _, err := f.deploy().Execute(ctx, cmd); err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	f.images.pullErr = nil
+
+	results, err := f.applyMesh().Execute(ctx, meshCommand(t, nodeA))
+
+	if err != nil || len(results) != 1 || !results[0].OK() {
+		t.Fatalf("got %+v %v, want the peer list taken: a refused image is not a node that failed its mesh", results, err)
+	}
+	if !f.network.up {
+		t.Fatal("the interface must be up for the tenant's next deploy")
+	}
+	if state := f.runs.states[nodeA]; state.Fault == nil || state.Fault.Code != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("got %+v, want the refusal left for status to show", state)
 	}
 }
 

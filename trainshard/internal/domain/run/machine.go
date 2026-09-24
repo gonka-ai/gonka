@@ -150,6 +150,8 @@ func (m Machine) Apply(ctx context.Context, node vo.NodeRef, desired Desired, ac
 		return err
 	case ActionPullImage:
 		return m.Images.Pull(ctx, action.Image)
+	case ActionVerifyImage:
+		return m.verifyImage(ctx, desired)
 	case ActionCreateMeshIdentity:
 		return m.Mesh.Create(ctx, shardID, node)
 	case ActionApplyMeshConfig:
@@ -172,6 +174,8 @@ func (m Machine) Apply(ctx context.Context, node vo.NodeRef, desired Desired, ac
 		if err := m.Control.Return(ctx, node); err != nil {
 			return err
 		}
+		return m.Runs.Forget(ctx, node)
+	case ActionForgetRun:
 		return m.Runs.Forget(ctx, node)
 	default:
 		return shared.New("UNKNOWN_ACTION", shared.ErrValidation, "unknown action "+string(action.Kind))

@@ -9,7 +9,9 @@ import (
 
 type Desired struct {
 	Reservation
-	Reserved       bool
+	Reserved bool
+	// Handover holds while the shard being cleaned up is not the one the chain now holds the node for
+	Handover       bool
 	MeshConfigured bool
 	Run            RunSpec
 	Revision       int
@@ -34,8 +36,11 @@ func ReadDesired(ctx context.Context, chain Reservations, network RunNetwork, no
 	if err != nil {
 		return Desired{}, err
 	}
-	if !reserved || (!state.Shard.IsZero() && state.Shard != reservation.Shard) {
+	if !reserved {
 		return Desired{Reservation: Reservation{Shard: state.Shard}}, nil
+	}
+	if !state.Shard.IsZero() && state.Shard != reservation.Shard {
+		return Desired{Reservation: Reservation{Shard: state.Shard}, Handover: true}, nil
 	}
 
 	configured, err := network.Configured(ctx, reservation.Shard, node)

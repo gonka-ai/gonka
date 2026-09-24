@@ -124,7 +124,7 @@ func (c *Converger) converge(ctx context.Context, node vo.NodeRef) (Outcome, err
 		if err := c.machine.Apply(ctx, node, desired, action); err != nil {
 			return found, RecordFault(ctx, c.runs, node, action, err, now)
 		}
-		if action.Kind == ActionReturnNode {
+		if action.Kind == ActionReturnNode || action.Kind == ActionForgetRun {
 			return found, nil
 		}
 	}

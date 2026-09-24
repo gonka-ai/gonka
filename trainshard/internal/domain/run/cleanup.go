@@ -30,5 +30,10 @@ func CleanupPlan(d Desired, o Observed) []Action {
 	if d.Shard.IsZero() {
 		return nil
 	}
+	// a node already lent on to the next shard stays drained for it rather than going through
+	// inference in between, which on a real mlnode would load a model only to unload it again
+	if d.Handover {
+		return []Action{{Kind: ActionForgetRun}}
+	}
 	return []Action{{Kind: ActionReturnNode}}
 }

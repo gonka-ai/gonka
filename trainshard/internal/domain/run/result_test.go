@@ -166,3 +166,17 @@ func TestANodeThatAnsweredWithTheFaultOfItsRunStillAnswered(t *testing.T) {
 		t.Fatalf("got %+v, want a node the call never reached counted as silent", unreached)
 	}
 }
+
+func TestAReportOfARunThatFailedStillAnswered(t *testing.T) {
+
+	faulted := run.ReportOf(first, run.RunState{Fault: &shared.Fault{Code: "IMAGE_NOT_DERIVED"}}, nil)
+	unreached := run.FailedReport(first, errHost)
+	fromAnOlderHost := run.NodeReport{Node: first, Fault: &shared.Fault{Code: "IMAGE_NOT_DERIVED"}}
+
+	if faulted.Unanswered() {
+		t.Fatalf("got %+v, want a report drawn from the host's records counted as an answer", faulted)
+	}
+	if !unreached.Unanswered() || !fromAnOlderHost.Unanswered() {
+		t.Fatalf("want a node the call never reached, and a fault from a host that does not say, counted as silent")
+	}
+}

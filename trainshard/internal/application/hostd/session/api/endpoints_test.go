@@ -252,6 +252,16 @@ func TestAStreamForANodeThisHostDoesNotServeIsRefused(t *testing.T) {
 
 func openShell(t *testing.T, server *httptest.Server, upgrade bool) (net.Conn, *bufio.Reader, *http.Response) {
 	t.Helper()
+	if !upgrade {
+		return openShellWith(t, server, false)
+	}
+	return openShellWith(t, server, true, "Upgrade")
+}
+
+// openShellWith sends each connection value as a header line of its own, the way a proxy that
+// adds its own tokens may
+func openShellWith(t *testing.T, server *httptest.Server, upgrade bool, connection ...string) (net.Conn, *bufio.Reader, *http.Response) {
+	t.Helper()
 
 	path := "/trainshard/v0/shards/7/nodes/node-a/shell"
 	conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
@@ -262,8 +272,10 @@ func openShell(t *testing.T, server *httptest.Server, upgrade bool) (net.Conn, *
 
 	request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
 	request.Header = sign(t, "gonka1creator")
+	for _, value := range connection {
+		request.Header.Add("Connection", value)
+	}
 	if upgrade {
-		request.Header.Set("Connection", "Upgrade")
 		request.Header.Set("Upgrade", contract.ShellProtocol)
 	}
 	if err := request.Write(conn); err != nil {
@@ -300,6 +312,26 @@ func TestShellCarriesBytesBothWaysOverOneConnection(t *testing.T) {
 	}
 	if answer != "you said whoami\n" {
 		t.Fatalf("got %q, want the container's answer", answer)
+	}
+}
+
+func TestAShellAsksToUpgradeInAnyOfItsConnectionLines(t *testing.T) {
+	// arrange
+	server := newServer(t, newChainStub(), &streamsStub{})
+	conn, reader, response := openShellWith(t, server, true, "keep-alive", "Upgrade")
+
+	// act
+	if _, err := fmt.Fprintln(conn, "whoami"); err != nil {
+		t.Fatalf("type into the shell: %v", err)
+	}
+	answer, err := reader.ReadString('\n')
+
+	// assert
+	if response.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("got %d, want the upgrade found on the second connection line", response.StatusCode)
+	}
+	if err != nil || answer != "you said whoami\n" {
+		t.Fatalf("got %q, %v, want the container's answer", answer, err)
 	}
 }
 

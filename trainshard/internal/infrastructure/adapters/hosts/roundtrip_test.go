@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -285,8 +286,8 @@ func TestTheResultIsCollectedOverHTTPBeforeTheShardCloses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("report: %v", err)
 	}
-	if len(reports) != 1 || reports[0].Node != node {
-		t.Fatalf("got %+v, want a report for the run's only node", reports)
+	if len(reports) != 1 || reports[0].Node != node || !reports[0].Answered {
+		t.Fatalf("got %+v, want an answered report for the run's only node", reports)
 	}
 	if len(reports[0].Images) != 1 || reports[0].Images[0].Image != runImage {
 		t.Fatalf("got %+v, want the image the node ran with its time", reports[0].Images)
@@ -470,15 +471,33 @@ func TestAShellBehindAProxyGetsItsAnswersAfterTheTypingStops(t *testing.T) {
 	}
 }
 
-// silentStreams is a shell that never answers and ends only when the test lets it go
+// silentStreams is a shell that prints its prompt, then never answers and ends only when the test
+// lets it go
 type silentStreams struct {
 	echoStreams
 	released chan struct{}
 }
 
-func (s silentStreams) Shell(context.Context, run.ExecRequest, io.ReadWriter) error {
+func (s silentStreams) Shell(_ context.Context, _ run.ExecRequest, terminal io.ReadWriter) error {
+	if _, err := io.WriteString(terminal, "$ "); err != nil {
+		return err
+	}
 	<-s.released
 	return nil
+}
+
+// watching is a terminal that says when the first output reaches it
+type watching struct {
+	in   io.Reader
+	seen chan struct{}
+	once sync.Once
+}
+
+func (w *watching) Read(p []byte) (int, error) { return w.in.Read(p) }
+
+func (w *watching) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.seen) })
+	return len(p), nil
 }
 
 func TestAShellEndsWhenItsCallerGivesUp(t *testing.T) {
@@ -488,12 +507,19 @@ func TestAShellEndsWhenItsCallerGivesUp(t *testing.T) {
 	t.Cleanup(func() { close(silent.released) })
 	ctx, cancel := context.WithCancel(context.Background())
 	typing, _ := io.Pipe()
+	screen := &watching{in: typing, seen: make(chan struct{})}
 	done := make(chan error, 1)
 	go func() {
-		done <- client.Shell(ctx, client.machine, run.ExecRequest{Shard: shardID, Node: node}, &terminal{in: typing})
+		done <- client.Shell(ctx, client.machine, run.ExecRequest{Shard: shardID, Node: node}, screen)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-screen.seen:
+	case err := <-done:
+		t.Fatalf("the shell ended before it opened: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the shell never opened")
+	}
 	cancel()
 
 	select {

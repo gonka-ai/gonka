@@ -84,7 +84,7 @@ func RecordImage(ctx context.Context, runs RunStore, node vo.NodeRef, image vo.I
 }
 
 func RecordFault(ctx context.Context, runs RunStore, node vo.NodeRef, action Action, cause error, at time.Time) error {
-	failure := fmt.Errorf("%s: %w", action.Kind, cause)
+	failure := &ActionFailed{Kind: action.Kind, cause: cause}
 
 	change := func(state *RunState) {
 		if state.Fault == nil {

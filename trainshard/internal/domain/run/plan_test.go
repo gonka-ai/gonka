@@ -132,14 +132,31 @@ func TestPlan(t *testing.T) {
 			want:    []run.Action{},
 		},
 		{
-			name: "run image is pulled but no container is built before the peer list lands",
+			name: "run image is pulled and checked but no container is built before the peer list lands",
 			desired: func() run.Desired {
 				d := reservedDesired()
 				d.Run, d.Start, d.MeshConfigured = runSpec(), true, false
 				return d
 			},
 			observe: func(o *run.Observed) { o.MeshUp = false },
-			want:    []run.Action{{Kind: run.ActionPullImage, Image: runImage}},
+			want: []run.Action{
+				{Kind: run.ActionPullImage, Image: runImage},
+				{Kind: run.ActionVerifyImage, Image: runImage},
+			},
+		},
+		{
+			name: "run image is judged while the node is still being drained",
+			desired: func() run.Desired {
+				d := reservedDesired()
+				d.Run, d.MeshConfigured = runSpec(), false
+				return d
+			},
+			observe: func(o *run.Observed) { o.Drained, o.MeshKey, o.MeshIdentity, o.MeshUp = false, false, false, false },
+			want: []run.Action{
+				{Kind: run.ActionDrainNode},
+				{Kind: run.ActionPullImage, Image: runImage},
+				{Kind: run.ActionVerifyImage, Image: runImage},
+			},
 		},
 		{
 			name: "run image is pulled before the container is created",

@@ -170,9 +170,16 @@ type NodeReport struct {
 	Images   []ImageRun
 	ExitCode *int
 	Fault    *shared.Fault
+	// Answered holds for a report the host drew from its records; a host from before it was sent
+	// leaves it out, and its faults all read as unanswered
+	Answered bool
 }
 
 func (r NodeReport) Ref() vo.NodeRef { return r.Node }
+
+// Unanswered holds for a node the call never reached or whose host could not read its records; a
+// fault on a node that answered is the one its run last hit
+func (r NodeReport) Unanswered() bool { return r.Fault != nil && !r.Answered }
 
 func FailedReport(node vo.NodeRef, err error) NodeReport {
 	return NodeReport{Node: node, Images: make([]ImageRun, 0), Fault: shared.NewFault(err)}
@@ -183,7 +190,7 @@ func ReportOf(node vo.NodeRef, state RunState, exitCode *int) NodeReport {
 	if images == nil {
 		images = make([]ImageRun, 0)
 	}
-	return NodeReport{Node: node, Images: images, ExitCode: exitCode, Fault: state.Fault}
+	return NodeReport{Node: node, Images: images, ExitCode: exitCode, Fault: state.Fault, Answered: true}
 }
 
 type RunState struct {

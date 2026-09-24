@@ -20,8 +20,10 @@ import (
 )
 
 // endOfInput is what a terminal sends for ctrl-d: the shell runs on a pty, which reads it as the end
-// of its input, so a script piped in without an exit still ends
-const endOfInput = 0x04
+// of its input, so a script piped in without an exit still ends. It goes three times: the first
+// only hands over a line left without its newline, the shell takes the next as the end of that line
+// rather than of its input, and a program the shell runs may take one for itself
+var endOfInput = []byte{0x04, 0x04, 0x04}
 
 func (c *Client) Logs(ctx context.Context, host vo.Host, req run.LogRequest, out io.Writer) error {
 	body := contract.LogsRequest{Tail: req.Tail}
@@ -91,7 +93,7 @@ func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, s
 	// upgraded connection as a whole and drops it at the first half close, output still on its way
 	go func() {
 		if _, err := io.Copy(conn, session); err == nil {
-			_, _ = conn.Write([]byte{endOfInput})
+			_, _ = conn.Write(endOfInput)
 		}
 	}()
 

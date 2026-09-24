@@ -76,7 +76,9 @@ func (uc *ApplyMeshUseCase) Execute(ctx context.Context, cmd MeshCommand) ([]run
 				}
 				return uc.store.SaveConfig(ctx, cmd.Shard, node, cmd.Config)
 			}
-			if err := uc.converge.Record(ctx, node, write); err != nil {
+			// the list is taken once the pass gets past the mesh: a run that falls over after it is
+			// the tenant's to replace, and refusing the list for it has the node kicked at the deadline
+			if err := uc.converge.Record(ctx, node, write); err != nil && !run.FailedOnTheRun(err) {
 				return run.NodeResult{}, err
 			}
 			return run.NodeResult{Node: node, State: vo.ContainerUnknown}, nil
