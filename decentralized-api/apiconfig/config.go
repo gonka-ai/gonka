@@ -345,7 +345,7 @@ type DevshardVersionsCache struct {
 	ExecutionTimeout int64 `json:"execution_timeout"`
 	// ValidationRate is the validation sampling rate in basis points (0..10000).
 	ValidationRate uint32 `json:"validation_rate"`
-	// VoteThresholdFactor is the vote threshold factor in percent (1..100),
+	// VoteThresholdFactor is the vote threshold factor in percent (1..99),
 	// converted to slot threshold at bind time.
 	VoteThresholdFactor uint32 `json:"vote_threshold_factor"`
 }

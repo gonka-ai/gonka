@@ -533,8 +533,11 @@ func (p *DevshardEscrowParams) Validate() error {
 	if p.ValidationRate > 10000 {
 		return fmt.Errorf("devshard escrow validation_rate (%d) must be <= 10000 basis points", p.ValidationRate)
 	}
-	if p.VoteThresholdFactor == 0 || p.VoteThresholdFactor > 100 {
-		return fmt.Errorf("devshard escrow vote_threshold_factor (%d) must be in (0, 100]", p.VoteThresholdFactor)
+	// VoteThreshold = floor(groupSize*factor/100) and votes pass only with
+	// weight > VoteThreshold, so factor 100 makes timeouts and invalidations
+	// unreachable even with every slot voting.
+	if p.VoteThresholdFactor == 0 || p.VoteThresholdFactor >= 100 {
+		return fmt.Errorf("devshard escrow vote_threshold_factor (%d) must be in (0, 100)", p.VoteThresholdFactor)
 	}
 	return nil
 }
