@@ -16,7 +16,7 @@ tool output and 100-400-token answers. A one-off marker per request sets the hit
   zero  at the very start           -> nothing is served
 Rates are slopes of the server's counters over --window seconds, taken once the
 output rate has settled; billed = prompt (cache hits included) + output, prefill =
-prompt the engine computed. kv_overflow: KV >= 95 % or requests preempted --
+prompt the engine computed; reasoning tokens count as output. kv_overflow: KV >= 95 % or requests preempted --
 past it sessions evict each other's history and the hit drops. waiting_max alone
 can also come from the per-step token budget.
 """
@@ -68,6 +68,23 @@ def run_client():
         await asyncio.sleep(stagger * client_id)
         return await client_main(args, req_args, client_id, *a, **kw)
 
+    class ReasoningAsContent:
+        """The client reads only delta.content; with a reasoning parser a thinking
+        model streams everything as reasoning, which the client would reject."""
+        def __getattr__(self, name):
+            return getattr(json, name)
+
+        def loads(self, s, *a, **kw):
+            d = json.loads(s, *a, **kw)
+            try:
+                delta = d["choices"][0].get("delta") or {}
+                if not delta.get("content"):
+                    delta["content"] = delta.get("reasoning_content") or delta.get("reasoning")
+            except (KeyError, IndexError, TypeError, AttributeError):
+                pass
+            return d
+
+    mt.json = ReasoningAsContent()
     mt.send_turn, mt.client_main = busted_send_turn, staggered_client_main
     sys.argv = [str(MT_DIR / MT_FILES[0])] + sys.argv[2:]
     asyncio.run(mt.main())
