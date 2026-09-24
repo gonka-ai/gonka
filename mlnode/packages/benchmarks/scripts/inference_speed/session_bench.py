@@ -5,7 +5,8 @@ Run inside the MLNode container with a model loaded:
     docker cp session_bench.py mlnode:/root/.cache/
     docker exec mlnode python3 /root/.cache/session_bench.py --sessions 32 --trust-remote-code
 --sessions is concurrent sessions per GPU, spread over every vLLM instance on
-5001-5008. First run fetches vLLM's benchmarks/multi_turn client (pinned commit)
+5001-5008; --ports 5001 --gpus <its TP*PP> measures one instance, reported per
+instance and per GPU. First run fetches vLLM's benchmarks/multi_turn client (pinned commit)
 and pandas. One run is three columns of ~4-7 min each.
 
 Every session keeps one request in flight and resends its growing history each
