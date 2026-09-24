@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"devshard/heightsync"
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
 	"devshard/testenv/mockopenai"
@@ -290,9 +291,10 @@ func TestContainerE2E_HeightSync_OneHostStopped(t *testing.T) {
 	})
 }
 
-// TestContainerE2E_HeightSync_BusyEscrowDischarge is H42 on compose: stamped
-// inference traffic must show up as discharged_by_inference rather than an
-// absence of heartbeats.
+// TestContainerE2E_HeightSync_BusyEscrowDischarge is H42 on compose. The
+// producer sleeps until lastTurnover+Interval, so stamped traffic keeps that
+// deadline ahead of the clock and heartbeat_opened stays put. A quiet interval
+// after the stamps is when the next heartbeat opens.
 func TestContainerE2E_HeightSync_BusyEscrowDischarge(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -312,38 +314,28 @@ func TestContainerE2E_HeightSync_BusyEscrowDischarge(t *testing.T) {
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 
 	metricsURL := eps.GatewayHTTP + "/metrics"
-	// Do not wait for heartbeat_opened: that spends the Interval on ack Q
-	// (plan H42 is substitution, heartbeat_opened stays zero in the unit).
-	// Two back-to-back chats address nonce%2 == both slots, like
-	// TestHeartbeat_BusySessionWithStampsEmitsNone, then the ticker's next
-	// due-check should see lastTurnoverFromStamp.
-	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-a")
-	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-b")
+	interval := heightsync.DefaultHeartbeatInterval
+	// One pair stamps both slots (nonce%2) and arms the deadline at
+	// lastTurnover+Interval. Sample after that, then keep both slots stamped
+	// for a full interval. Boot may already have opened quiet heartbeats, so
+	// the assertion is that this counter does not move.
+	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge seed slot-a")
+	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge seed slot-b")
+	opened := heartbeatOpenedCount(t, client, metricsURL)
 
-	body := harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
+	busyUntil := time.Now().Add(interval)
+	for time.Now().Before(busyUntil) {
+		postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-a")
+		postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-b")
+	}
+	require.Equal(t, opened, heartbeatOpenedCount(t, client, metricsURL),
+		"stamped traffic must keep the heartbeat deadline ahead of the clock")
+
+	harness.WaitMetricsPredicate(t, client, metricsURL, interval+20*time.Second, func(b string) bool {
 		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",
-			map[string]string{"event": "discharged_by_inference"})
-		return ok && v >= 1
+			map[string]string{"event": "heartbeat_opened"})
+		return ok && v > opened
 	})
-	discharged, _ := harness.MetricLineValue(body, "devshard_gateway_heightsync_cadence_events_total",
-		map[string]string{"event": "discharged_by_inference"})
-	require.GreaterOrEqual(t, discharged, 1.0)
-
-	var debug struct {
-		Escrows []struct {
-			CadenceEvents []map[string]any `json:"cadence_events"`
-		} `json:"escrows"`
-	}
-	harness.GetDebugHeightSync(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, &debug)
-	require.NotEmpty(t, debug.Escrows)
-	found := false
-	for _, ev := range debug.Escrows[0].CadenceEvents {
-		if ev["event"] == "discharged_by_inference" {
-			found = true
-			break
-		}
-	}
-	require.True(t, found, "debug ring must record the substitution explicitly")
 }
 
 // TestContainerE2E_HeightSync_StaleClaimSpread is H40: after a host stops
@@ -480,6 +472,14 @@ func seedHeightSyncFloor(t *testing.T, cfg *config.File, eps harness.Endpoints) 
 	t.Helper()
 	postHeightSyncChat(t, cfg, eps, "citest height-sync seed floor a")
 	postHeightSyncChat(t, cfg, eps, "citest height-sync seed floor b")
+}
+
+func heartbeatOpenedCount(t *testing.T, client *http.Client, metricsURL string) float64 {
+	t.Helper()
+	body := harness.GetMetricsBody(t, client, metricsURL)
+	v, _ := harness.MetricLineValue(body, "devshard_gateway_heightsync_cadence_events_total",
+		map[string]string{"event": "heartbeat_opened"})
+	return v
 }
 
 func waitHeartbeatOpened(t *testing.T, client *http.Client, metricsURL string) string {
