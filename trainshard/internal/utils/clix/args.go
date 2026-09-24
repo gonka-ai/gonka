@@ -13,13 +13,19 @@ import (
 
 func Asked(arg string) bool { return arg == "-h" || arg == "--help" }
 
-// Command is a flag set whose help says what the command does, so a command without flags does
-// not answer with a bare usage line
-func Command(use, summary string) *flag.FlagSet {
+// Command is a flag set whose help says what the command does and how it is called, so a command
+// without flags does not answer with a bare usage line
+func Command(use, summary string, examples ...string) *flag.FlagSet {
 	flags := flag.NewFlagSet(use, flag.ContinueOnError)
 	flags.Usage = func() {
 		out := flags.Output()
 		fmt.Fprintf(out, "usage: %s\n\n%s\n", use, summary)
+		if len(examples) > 0 {
+			fmt.Fprintln(out, "\nexamples:")
+			for _, example := range examples {
+				fmt.Fprintf(out, "  %s\n", example)
+			}
+		}
 		hasFlags := false
 		flags.VisitAll(func(*flag.Flag) { hasFlags = true })
 		if hasFlags {
