@@ -125,7 +125,7 @@ func TestHeightSync_FeedStoppedOmitsThenRecovers(t *testing.T) {
 	harness.Step(t, "pause mock-dapi (oracle feed stop)")
 	stack.PauseService(t, "mock-dapi")
 	paused = true
-	time.Sleep(12 * time.Second)
+	time.Sleep(24 * time.Second)
 
 	postHeightSyncChat(t, cfg, eps, "citest height-sync while feed stopped")
 	var stopped string

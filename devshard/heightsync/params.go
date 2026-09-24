@@ -13,7 +13,7 @@ const (
 	// turnover must land at least this often. Wall clock, not blocks — mainnet
 	// height is the *result* of a turnover, so no party can schedule the next
 	// one from a height it has not learned yet.
-	DefaultHeartbeatInterval = 12 * time.Second
+	DefaultHeartbeatInterval = 24 * time.Second
 	// DefaultTurnTimeoutMultiple sets TurnTimeout = 2 * Interval.
 	//
 	// Patience equal to the interval leaves a turn none: the span is dispatched
@@ -132,7 +132,7 @@ type RepairConfig struct {
 	MaxProbesPerWindow int
 }
 
-// DefaultHeartbeatConfig returns the shipped defaults: 12s interval,
+// DefaultHeartbeatConfig returns the shipped defaults: 24s interval,
 // 2 · Interval turn timeout, 4 · Interval idle, 1s blocks, and the D_ack
 // those imply.
 func DefaultHeartbeatConfig() HeartbeatConfig {
@@ -145,7 +145,7 @@ func DefaultRepairConfig() RepairConfig {
 }
 
 // withDefaults fills zero fields. Compiled zeros are the shipped schedule
-// (12s / 2 · Interval / 4 · Interval). Overlaying IntervalMs alone still
+// (24s / 2 · Interval / 4 · Interval). Overlaying IntervalMs alone still
 // derives TurnTimeout and IdleTimeout from that interval (2 · and 4 ·) so a
 // partial overlay cannot produce a config Validate rejects on the scheduling
 // side. D_ack is derived from the resolved turnover budget.

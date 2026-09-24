@@ -103,7 +103,7 @@ turn after `Interval + TurnTimeout` (the **turnover budget**, the same quantity
 
 ```
 D_ack = ceil((Interval + TurnTimeout) / BlockTime) + 1
-      = ceil(36s / 1s) + 1 = 37 blocks
+      = ceil(72s / 1s) + 1 = 73 blocks
 ```
 
 The trailing block is the boundary: `h_req` is read at an arbitrary point inside
@@ -125,11 +125,11 @@ Ingest height of the Diff is not the lateness clock; only the ack's own stamp is
 ## How values are chosen
 
 1. **Compiled defaults** in `DefaultHeartbeatConfig` / `DefaultRepairConfig`.
-   The shipped `Interval` is `12s`. `TurnTimeout` is `2 · Interval` (`24s`) and
-   `T_idle` is `4 · Interval` (`48s`). `D_ack` (`37`) is the 36s turnover
+   The shipped `Interval` is `24s`. `TurnTimeout` is `2 · Interval` (`48s`) and
+   `T_idle` is `4 · Interval` (`96s`). `D_ack` (`73`) is the 72s turnover
    budget expressed in 1s blocks plus the boundary block. Overlaying `IntervalMs`
    alone still moves the two timeouts with it (`2 ·` / `4 ·`); `D_ack` stays at
-   the compiled 37.
+   the compiled 73.
 2. **Optional overlay** from the runtime-config snapshot (`Snapshot.HeightSync`).
    Only **non-zero** snapshot fields replace a default. Inference-chain does not
    publish these yet, so production snapshots are all zeros and both host and
@@ -164,16 +164,16 @@ Scheduling — local wall clock, never in `Diff`:
 
 | Spec | Go field | Default | What it regulates |
 | ---- | -------- | ------- | ----------------- |
-| `Interval` | `Interval` | `12s` | Longest gap between full height-sync turnovers. The producer opens a heartbeat turn when no turnover has landed within it. |
-| `TurnTimeout` | `TurnTimeout` | `2 · Interval` (`24s`) | How long the producer waits on one open turn before abandoning it and opening a fresh one. Stops a single unreachable slot from stalling the cadence, and gives the span plus its acks room to land. |
-| `T_idle` | `IdleTimeout` | `4 · Interval` (`48s`) | How long a **host** may see no user contact before it arms close-ready and prepares to treat the sequencer as failed. Reason is **silence only** — a missing ack never arms. |
+| `Interval` | `Interval` | `24s` | Longest gap between full height-sync turnovers. The producer opens a heartbeat turn when no turnover has landed within it. |
+| `TurnTimeout` | `TurnTimeout` | `2 · Interval` (`48s`) | How long the producer waits on one open turn before abandoning it and opening a fresh one. Stops a single unreachable slot from stalling the cadence, and gives the span plus its acks room to land. |
+| `T_idle` | `IdleTimeout` | `4 · Interval` (`96s`) | How long a **host** may see no user contact before it arms close-ready and prepares to treat the sequencer as failed. Reason is **silence only** — a missing ack never arms. |
 | `block_time` | `BlockTime` | `1s` | Assumed chain block interval — the rate that converts the schedule into `D_ack`. Not a policy: the default is the fastest chain we ship against (mock-dapi), which is the safe direction, since a window that is too wide only delays noticing a stalled turn while one too narrow calls honest acks late. |
 
 Evaluation — logged heights, deterministic under replay:
 
 | Spec | Go field | Default | What it regulates |
 | ---- | -------- | ------- | ----------------- |
-| `D_ack` | `AckDeadlineBlocks` | derived: `37` | The turn's ack window after `h_req`. An ack is late iff `observed_height > h_req + D_ack`; the turn **degrades** when the window has closed and counting acks `< Q`, and only then is a repair probe due. Derived from `Interval + TurnTimeout` through `BlockTime` so the log never disowns a turn its own producer is still working on. Missing acks are not fraud. |
+| `D_ack` | `AckDeadlineBlocks` | derived: `73` | The turn's ack window after `h_req`. An ack is late iff `observed_height > h_req + D_ack`; the turn **degrades** when the window has closed and counting acks `< Q`, and only then is a repair probe due. Derived from `Interval + TurnTimeout` through `BlockTime` so the log never disowns a turn its own producer is still working on. Missing acks are not fraud. |
 | `D` | `DeltaBlocks` | `2` | How far a host’s oracle tip may sit from the heartbeat’s `h_ref` and still report `SYNCED`. Farther → `CATCHING_UP`. Strong escalation on that value is Phase F; E only reports it. |
 `W_conf` used to be here as `HeartbeatConfig.WindowBlocks`, bounding how far one
 signer could raise `F` and how far above its own tip a producer would carry it.
@@ -196,17 +196,17 @@ envelope and it needs a coordinated rollout rather than a long-poll overlay.
 ```
 turnover          due: open turn                 give up on turn      arm (if still silent)
    |                  |                                |                     |
-   |←— Interval 12s —→|                                |                     |
-   |                  |←———— TurnTimeout 24s ————→|                          |
-   |←—————— turnover budget = 36s ——————————————→|                           |
-   |←—————— ack window = D_ack · block_time = 37s ————————→|                 |
-   |←———————————————— T_idle = 48s ———————————————————————————————————————→|
-  t=0               t=12s                           t=36s                 t=48s
+   |←— Interval 24s —→|                                |                     |
+   |                  |←———— TurnTimeout 48s ————→|                          |
+   |←—————— turnover budget = 72s ——————————————→|                           |
+   |←—————— ack window = D_ack · block_time = 73s ————————→|                 |
+   |←———————————————— T_idle = 96s ———————————————————————————————————————→|
+  t=0               t=24s                           t=72s                 t=96s
 ```
 
-At `t = 12s` the user opens the request span and keeps composing ack-carrying
+At `t = 24s` the user opens the request span and keeps composing ack-carrying
 diffs until `Q` acks land — no waiting for a block. One lost cycle occupies the
-turnover budget of `36s`, which is why `T_idle` must be strictly larger: a host
+turnover budget of `72s`, which is why `T_idle` must be strictly larger: a host
 must never arm on a single missed turnover.
 
 The ack window sits between the two: at least as long as the producer's own
@@ -225,10 +225,10 @@ The first two read as one chain: the log waits at least as long as the producer,
 and the host waits longer than either.
 
 `Validate` uses `DefaultOriginatorFreshness` (`F` = 60s) when the argument is
-zero. Shipped defaults pass: `37 · 1s ≥ 36s`, `48s > 36s`, and `2 · 12s ≤ 60s`.
+zero. Shipped defaults pass: `73 · 1s ≥ 72s`, `96s > 72s`, and `2 · 24s ≤ 60s`.
 A deployment that sets `AckDeadlineBlocks` by hand without saying what its blocks
 are is exactly what the first rule catches — `D_ack = 2` on the shipped schedule
-is now rejected, and the same value passes once `block_time` is `30s`.
+is now rejected, and the same value passes once `block_time` is `40s`.
 
 ---
 

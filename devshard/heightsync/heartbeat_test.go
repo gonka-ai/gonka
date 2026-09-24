@@ -75,7 +75,7 @@ func TestHeartbeat_StalledTurnReopensAfterTurnTimeout(t *testing.T) {
 func TestHeartbeat_NextWakeFollowsTurnoverNotTwoIntervals(t *testing.T) {
 	// Production: a ticker fired every Interval, the turnover landed just after
 	// that tick, the next tick was not yet due, and the open after that was
-	// almost 2·Interval later (measured gaps of 24.000s on a 12s interval).
+	// almost 2·Interval later (measured gaps of 48s on a 24s interval).
 	cfg := heightsync.DefaultHeartbeatConfig()
 	hb := heightsync.NewHeartbeat(cfg)
 	hb.SetRoster(4, 3)
