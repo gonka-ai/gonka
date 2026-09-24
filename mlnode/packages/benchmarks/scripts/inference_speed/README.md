@@ -27,7 +27,7 @@ The same number of sessions is run three times, once per cache-hit level:
 Each column is time-boxed: sessions start spread over 30 s, the server's Prometheus
 counters are sampled twice a second, and once the generation rate has settled a
 90 s window is measured. All rates come from the server, so client start-up, ramp
-and drain do not enter them. A full run takes about 10 minutes.
+and drain do not enter them. A full run took 9–12 minutes on 1× B300.
 
 ## Running it
 
