@@ -19,9 +19,9 @@ import (
 	"trainshard/internal/domain/shared/vo"
 )
 
-type halfCloser interface {
-	CloseWrite() error
-}
+// endOfInput is what a terminal sends for ctrl-d: the shell runs on a pty, which reads it as the end
+// of its input, so a script piped in without an exit still ends
+const endOfInput = 0x04
 
 func (c *Client) Logs(ctx context.Context, host vo.Host, req run.LogRequest, out io.Writer) error {
 	body := contract.LogsRequest{Tail: req.Tail}
@@ -87,10 +87,11 @@ func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, s
 		return shared.New("HOST_ANSWER", shared.ErrUnavailable, fmt.Sprintf("host switched to %q, not a shell", answer.Header.Get("Upgrade")))
 	}
 
+	// the end of the input travels inside the stream rather than as a half close: a proxy tunnels an
+	// upgraded connection as a whole and drops it at the first half close, output still on its way
 	go func() {
-		_, _ = io.Copy(conn, session)
-		if half, ok := conn.(halfCloser); ok {
-			_ = half.CloseWrite()
+		if _, err := io.Copy(conn, session); err == nil {
+			_, _ = conn.Write([]byte{endOfInput})
 		}
 	}()
 
