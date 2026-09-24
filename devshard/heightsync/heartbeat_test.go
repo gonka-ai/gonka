@@ -72,6 +72,40 @@ func TestHeartbeat_StalledTurnReopensAfterTurnTimeout(t *testing.T) {
 	require.Zero(t, hb.Turnovers())
 }
 
+func TestHeartbeat_NextWakeFollowsTurnoverNotTwoIntervals(t *testing.T) {
+	// Production: a ticker fired every Interval, the turnover landed just after
+	// that tick, the next tick was not yet due, and the open after that was
+	// almost 2·Interval later (measured gaps of 24.000s on a 12s interval).
+	cfg := heightsync.DefaultHeartbeatConfig()
+	hb := heightsync.NewHeartbeat(cfg)
+	hb.SetRoster(4, 3)
+	t0 := time.Unix(1_700_000_000, 0)
+
+	hb.OpenTurn(t0)
+	require.Equal(t, cfg.TurnTimeout, hb.NextWake(t0))
+
+	turnoverAt := t0.Add(200 * time.Millisecond)
+	require.False(t, hb.NoteClaim(0, turnoverAt))
+	require.False(t, hb.NoteClaim(1, turnoverAt))
+	require.True(t, hb.NoteClaim(2, turnoverAt))
+
+	// The old ticker's next fire, one Interval after the open. Age is still
+	// short of Interval, so this must not be treated as the next open.
+	tickerNext := t0.Add(cfg.Interval)
+	remain := hb.NextWake(tickerNext)
+	require.Equal(t, turnoverAt.Add(cfg.Interval).Sub(tickerNext), remain)
+	require.Less(t, remain, cfg.Interval)
+	due, _ := hb.Due(tickerNext, 500)
+	require.False(t, due)
+
+	dueAt := turnoverAt.Add(cfg.Interval)
+	require.Equal(t, time.Millisecond, hb.NextWake(dueAt))
+	due, reason := hb.Due(dueAt, 500)
+	require.True(t, due)
+	require.Equal(t, heightsync.ReasonQuietSession, reason)
+	require.Less(t, dueAt.Sub(t0), 2*cfg.Interval)
+}
+
 func TestHeartbeat_SettledTurnDoesNotWaitOutTurnTimeout(t *testing.T) {
 	// A degraded record leaves nothing to wait for, so the producer may retry
 	// immediately instead of burning the rest of TurnTimeout.

@@ -912,6 +912,33 @@ func countHeartbeatForce(d types.Diff) int {
 	return n
 }
 
+func TestHeartbeat_LoopSecondGapStaysInsideOneInterval(t *testing.T) {
+	// The first open is immediate. The bug showed up on the gap after that:
+	// the following ticker fire was not yet due, so the next open waited
+	// another full Interval (2·Interval open-to-open).
+	interval := 200 * time.Millisecond
+	var height uint64 = 100
+	session := setupBlindHeartbeatSession(t, &height,
+		WithHeartbeatConfig(heightsync.HeartbeatConfig{Interval: interval}))
+	t.Cleanup(func() { _ = session.Close() })
+
+	session.StartHeartbeatLoop()
+	var opened []time.Time
+	require.Eventually(t, func() bool {
+		n := countHeartbeats(session.Diffs())
+		spans := n / 3
+		for len(opened) < spans {
+			opened = append(opened, time.Now())
+		}
+		return spans >= 3
+	}, 3*time.Second, 5*time.Millisecond, "loop must open three turns")
+
+	gap := opened[2].Sub(opened[1])
+	require.Less(t, gap, interval+interval/2,
+		"second gap was %s; a ticker phase slip waits about %s", gap, 2*interval)
+	require.Greater(t, gap, interval/2, "second gap %s fired without waiting out Interval", gap)
+}
+
 func TestHeartbeat_LoopOpensQuietTurnWithoutCaller(t *testing.T) {
 	var height uint64 = 100
 	session := setupBlindHeartbeatSession(t, &height,
@@ -988,7 +1015,7 @@ func TestHeartbeat_LoopStopsOnClose(t *testing.T) {
 
 	nonce := session.Nonce()
 	time.Sleep(5 * interval)
-	require.Equal(t, nonce, session.Nonce(), "Close must cancel the ticker")
+	require.Equal(t, nonce, session.Nonce(), "Close must cancel the cadence timer")
 }
 
 // The producer's turn state is a function of the log, not of the clock or of the
