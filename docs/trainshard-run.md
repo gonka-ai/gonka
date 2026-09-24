@@ -58,6 +58,16 @@ INFO node prepared node_id=node1
 A node that waits on the same thing for longer than the daemon's patience
 (`TRAINSHARD_PREPARE_DEADLINE`, default 30m) is handed back to the chain.
 
+4. To stop leasing, stop the daemon. It is what keeps the node opted in, so an
+   opt-out sent while it runs is undone at its next refresh. Once it is stopped the
+   opt-in lapses on its own after `training_params.opt_in_ttl_blocks`; starting it
+   again opts the node back in. Do not stop it while the node is reserved: wait
+   until the shard is settled.
+
+```
+docker compose -f docker-compose.yml -f docker-compose.trainshard.yml stop trainshardd
+```
+
 ### More than one GPU machine
 
 One daemon per GPU machine, next to that machine's mlnode. On the machine that

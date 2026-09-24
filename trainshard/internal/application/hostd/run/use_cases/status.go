@@ -40,10 +40,11 @@ func (uc *StatusUseCase) Execute(ctx context.Context, cmd NodesCommand) ([]run.N
 		if err := shard.CanObserve(cmd.forNode(node), record, height); err != nil {
 			return run.NodeStatus{}, err
 		}
-		state, _, err := uc.runs.Load(ctx, node)
+		stored, _, err := uc.runs.Load(ctx, node)
 		if err != nil {
 			return run.NodeStatus{}, err
 		}
+		state := stored.For(record.ID)
 		configured, err := uc.machine.Mesh.Configured(ctx, record.ID, node)
 		if err != nil {
 			return run.NodeStatus{}, err

@@ -35,6 +35,21 @@ func TestStatusReportsWhatTheMachineHoldsAndWhyItStopped(t *testing.T) {
 	}
 }
 
+func TestStatusHidesWhatTheShardBeforeLeftOnTheNode(t *testing.T) {
+
+	f := newFixture()
+	f.runs.states[nodeA] = run.RunState{Shard: shardID - 1, Spec: runSpec(), Fault: &oldFault}
+
+	items, err := f.status().Execute(context.Background(), nodesCommand())
+
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if len(items) != 1 || items[0].Fault != nil {
+		t.Fatalf("got %+v, want nothing of the previous shard's run", items)
+	}
+}
+
 func TestStatusKeepsARefusalInTheNodeEntry(t *testing.T) {
 
 	f := newFixture()

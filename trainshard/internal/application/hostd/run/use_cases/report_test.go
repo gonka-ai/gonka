@@ -2,8 +2,10 @@ package usecases_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shard"
 )
 
@@ -36,6 +38,42 @@ func TestReportTellsEveryImageTheNodeRan(t *testing.T) {
 	}
 	if reports[0].Images[0].At.IsZero() {
 		t.Fatalf("got no time on %+v, want when the image was run", reports[0].Images[0])
+	}
+}
+
+func TestReportStillTellsTheImagesWhileTheGPUsAndTheDapiCannotBeRead(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Images: []run.ImageRun{{Image: runImage, At: now}}}
+	f.gpu.err = errors.New("nvidia-smi: driver not loaded")
+	f.control.unreadable = errors.New("dapi is restarting")
+
+	reports, err := f.report().Execute(ctx, nodesCommand())
+
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	if len(reports) != 1 || reports[0].Fault != nil || len(reports[0].Images) != 1 {
+		t.Fatalf("got %+v, want the recorded image history despite probes that fail", reports)
+	}
+}
+
+func TestReportHidesWhatTheShardBeforeLeftOnTheNode(t *testing.T) {
+
+	f := newFixture()
+	f.runs.states[nodeA] = run.RunState{Shard: shardID - 1, Images: []run.ImageRun{{Image: runImage, At: now}}, Fault: &oldFault}
+
+	reports, err := f.report().Execute(context.Background(), nodesCommand())
+
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	if len(reports) != 1 || len(reports[0].Images) != 0 || reports[0].Fault != nil {
+		t.Fatalf("got %+v, want nothing of the previous shard's run", reports)
 	}
 }
 

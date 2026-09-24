@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -47,7 +46,7 @@ func (c *Commands) Register(commands map[string]func(context.Context, []string) 
 }
 
 func (c *Commands) Deploy(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("deploy <shard> [flags] [-- command]", flag.ContinueOnError)
+	flags := clix.Command("deploy <shard> [flags] [-- command]", "Places the run on every node of the shard. What follows -- is the command the container runs.")
 	image := flags.String("image", "", "image digest to run, built on the proposal's base image")
 	gpus := flags.Int("gpus", 0, "gpus per node")
 	disk := flags.Int64("disk-bytes", 0, "disk quota per node")
@@ -77,7 +76,7 @@ func (c *Commands) Deploy(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Start(ctx context.Context, args []string) error {
-	rest, err := clix.Parse(flag.NewFlagSet("start <shard>", flag.ContinueOnError), args, "shard")
+	rest, err := clix.Parse(clix.Command("start <shard>", "Starts the deployed run on every node of the shard."), args, "shard")
 	if err != nil {
 		return err
 	}
@@ -94,7 +93,7 @@ func (c *Commands) Start(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Stop(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("stop <shard> [flags]", flag.ContinueOnError)
+	flags := clix.Command("stop <shard> [flags]", "Stops the run on every node of the shard.")
 	grace := flags.Duration("grace", 30*time.Second, "how long a container may take to exit on its own")
 
 	rest, err := clix.Parse(flags, args, "shard")
@@ -114,7 +113,7 @@ func (c *Commands) Stop(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Status(ctx context.Context, args []string) error {
-	rest, err := clix.Parse(flag.NewFlagSet("status <shard>", flag.ContinueOnError), args, "shard")
+	rest, err := clix.Parse(clix.Command("status <shard>", "Shows each node's container, mesh, gpus and disk, and why a node is not ready yet."), args, "shard")
 	if err != nil {
 		return err
 	}
@@ -156,7 +155,7 @@ func told(silent, asked int) error {
 }
 
 func (c *Commands) Report(ctx context.Context, args []string) error {
-	rest, err := clix.Parse(flag.NewFlagSet("report <shard>", flag.ContinueOnError), args, "shard")
+	rest, err := clix.Parse(clix.Command("report <shard>", "Shows the images each node ran and how the run exited. Collect it before the shard is settled."), args, "shard")
 	if err != nil {
 		return err
 	}
@@ -193,7 +192,7 @@ func (c *Commands) Report(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Logs(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("logs <shard> <participant/node> [flags]", flag.ContinueOnError)
+	flags := clix.Command("logs <shard> <participant/node> [flags]", "Streams the run output of one node.")
 	tail := flags.Int("tail", 0, "how many lines to start from, newest first")
 
 	rest, err := clix.Parse(flags, args, "shard", "node")
@@ -210,7 +209,7 @@ func (c *Commands) Logs(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Shell(ctx context.Context, args []string) error {
-	rest, err := clix.Parse(flag.NewFlagSet("shell <shard> <participant/node>", flag.ContinueOnError), args, "shard", "node")
+	rest, err := clix.Parse(clix.Command("shell <shard> <participant/node>", "Opens a shell in the run container of one node."), args, "shard", "node")
 	if err != nil {
 		return err
 	}

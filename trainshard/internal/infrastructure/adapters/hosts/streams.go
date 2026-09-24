@@ -33,7 +33,7 @@ func (c *Client) Logs(ctx context.Context, host vo.Host, req run.LogRequest, out
 	return c.stream(ctx, host, http.MethodPost, path, vo.NewRequestID(), body, out)
 }
 
-func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, session io.ReadWriter) error {
+func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, session io.ReadWriter) (err error) {
 	base, err := baseURL(host)
 	if err != nil {
 		return err
@@ -56,6 +56,13 @@ func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, s
 		return shared.New("HOST_UNREACHABLE", shared.ErrUnavailable, err.Error())
 	}
 	defer conn.Close()
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stop()
+	defer func() {
+		if err != nil && ctx.Err() != nil {
+			err = ctx.Err()
+		}
+	}()
 
 	if err := request.Write(conn); err != nil {
 		return err
