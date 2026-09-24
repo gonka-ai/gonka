@@ -322,6 +322,9 @@ func (k Keeper) CreatePoCChallenge(ctx context.Context, msg *types.MsgCreatePoCC
 	if err != nil {
 		return nil, err
 	}
+	if params.PocParams == nil || !params.PocParams.PocV2Enabled {
+		return nil, sdkerrors.Wrap(types.ErrNotSupported, "PoC challenge requires poc_v2_enabled=true")
+	}
 	cp := params.PocChallengeParams
 	if cp == nil {
 		cp = types.DefaultPoCChallengeParams()
