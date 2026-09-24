@@ -188,6 +188,8 @@ def run_mode(args, urls, model, gpus, mode, seed):
     kv_max, waiting = max(smp.values("kv", t0, t1)), max(smp.values("waiting", t0, t1))
     preempt = smp.delta("preempt", t0, t1)
     return {
+        "output_tps_per_instance": round(out / len(urls)),
+        "billed_tps_per_instance": round((out + prompt) / len(urls)),
         "output_tps_per_gpu": round(out / gpus),
         "prefill_tps_per_gpu": round((prompt - cached) / gpus),
         "billed_tps_per_gpu": round((out + prompt) / gpus),
@@ -206,6 +208,9 @@ def run_mode(args, urls, model, gpus, mode, seed):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sessions", type=int, required=True, help="concurrent sessions per GPU")
+    ap.add_argument("--gpus", type=int, default=0,
+                    help="GPUs of the measured instances (default: all visible); with --ports 5001 "
+                         "and --gpus <TP> one instance is measured")
     ap.add_argument("--window", type=int, default=180, help="measured seconds per column")
     ap.add_argument("--ports", default="5001,5002,5003,5004,5005,5006,5007,5008")
     ap.add_argument("--label", default=os.uname().nodename)
@@ -231,9 +236,10 @@ def main():
             pass
     if not urls:
         sys.exit("no vLLM instance answers on " + args.ports)
-    gpus = len(subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True).stdout.splitlines())
+    gpus = args.gpus or len(subprocess.run(["nvidia-smi", "-L"], capture_output=True, text=True).stdout.splitlines())
 
-    res = {"model": model, "instances": urls, "gpus": gpus, "sessions_per_gpu": args.sessions}
+    res = {"model": model, "instances": urls, "gpus": gpus, "sessions_per_gpu": args.sessions,
+           "sessions_per_instance": args.sessions * gpus // len(urls)}
     for i, mode in enumerate(MODES):
         res[mode] = run_mode(args, urls, model, gpus, mode, int(time.time()) % 97 + i)
         print(f"{mode:>4} hit: {res[mode]}", flush=True)
