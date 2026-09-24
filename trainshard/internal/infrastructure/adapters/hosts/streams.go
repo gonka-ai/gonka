@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"trainshard/internal/contract"
@@ -47,6 +48,8 @@ func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, s
 	if err != nil {
 		return err
 	}
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", contract.ShellProtocol)
 
 	conn, err := dial(ctx, address, secure)
 	if err != nil {
@@ -58,6 +61,25 @@ func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, s
 		return err
 	}
 
+	// the output that came in with the answer is already in this reader, and a 101 has no body
+	// to read it from, so the session is read from here rather than from the answer
+	reader := bufio.NewReader(conn)
+	answer, err := http.ReadResponse(reader, request)
+	if err != nil {
+		return shared.New("HOST_ANSWER", shared.ErrUnavailable, err.Error())
+	}
+	defer answer.Body.Close()
+	if answer.StatusCode != http.StatusSwitchingProtocols {
+		var envelope contract.Envelope
+		if err := json.NewDecoder(answer.Body).Decode(&envelope); err != nil {
+			return toError(answer.StatusCode, nil)
+		}
+		return toError(answer.StatusCode, envelope.Error)
+	}
+	if !strings.EqualFold(answer.Header.Get("Upgrade"), contract.ShellProtocol) {
+		return shared.New("HOST_ANSWER", shared.ErrUnavailable, fmt.Sprintf("host switched to %q, not a shell", answer.Header.Get("Upgrade")))
+	}
+
 	go func() {
 		_, _ = io.Copy(conn, session)
 		if half, ok := conn.(halfCloser); ok {
@@ -65,20 +87,7 @@ func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, s
 		}
 	}()
 
-	answer, err := http.ReadResponse(bufio.NewReader(conn), request)
-	if err != nil {
-		return shared.New("HOST_ANSWER", shared.ErrUnavailable, err.Error())
-	}
-	defer answer.Body.Close()
-	if answer.StatusCode != http.StatusOK {
-		var envelope contract.Envelope
-		if err := json.NewDecoder(answer.Body).Decode(&envelope); err != nil {
-			return toError(answer.StatusCode, nil)
-		}
-		return toError(answer.StatusCode, envelope.Error)
-	}
-
-	_, err = io.Copy(session, answer.Body)
+	_, err = io.Copy(session, reader)
 	return err
 }
 
@@ -99,7 +108,7 @@ func hostAddress(base string) (address string, secure bool, err error) {
 		return parsed.Host, secure, nil
 	}
 	if secure {
-		return parsed.Hostname() + ":443", true, nil
+		return net.JoinHostPort(parsed.Hostname(), "443"), true, nil
 	}
-	return parsed.Hostname() + ":80", false, nil
+	return net.JoinHostPort(parsed.Hostname(), "80"), false, nil
 }

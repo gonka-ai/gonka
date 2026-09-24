@@ -52,10 +52,10 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 		nodeMap[node.LocalId] = node
 	}
 
-	// a node held by an active trainshard may not be removed or operationally changed
+	// a node held by an active trainshard may not be removed or structurally changed
 	for _, node := range msg.NewOrModified {
 		if k.IsNodeActivelyReserved(goCtx, msg.Creator, node.LocalId) &&
-			!hardwareNodeOperationalEqual(node, nodeMap[node.LocalId]) {
+			!hardwareNodeReservedEqual(node, nodeMap[node.LocalId]) {
 			return nil, types.ErrTrainshardNodeReserved
 		}
 	}
@@ -146,10 +146,11 @@ func HardwareNodesUnchanged(after, before []*types.HardwareNode) bool {
 	return true
 }
 
-// hardwareNodeOperationalEqual compares the load-bearing fields of two
-// HardwareNode protos. Add to this list if hardware_node.proto adds new
-// state-affecting fields.
-func hardwareNodeOperationalEqual(a, b *types.HardwareNode) bool {
+// hardwareNodeReservedEqual compares the fields that must stay fixed while a
+// node is actively reserved by a trainshard. Status and version are left out:
+// draining the node for training reports it STOPPED, and refusing that would
+// reject the whole diff, including the host's other nodes.
+func hardwareNodeReservedEqual(a, b *types.HardwareNode) bool {
 	if a == b {
 		return true
 	}
@@ -157,10 +158,8 @@ func hardwareNodeOperationalEqual(a, b *types.HardwareNode) bool {
 		return false
 	}
 	if a.LocalId != b.LocalId ||
-		a.Status != b.Status ||
 		a.Host != b.Host ||
-		a.Port != b.Port ||
-		a.Version != b.Version {
+		a.Port != b.Port {
 		return false
 	}
 	if !slices.Equal(a.Models, b.Models) {
@@ -176,4 +175,17 @@ func hardwareNodeOperationalEqual(a, b *types.HardwareNode) bool {
 		}
 	}
 	return true
+}
+
+// hardwareNodeOperationalEqual compares the load-bearing fields of two
+// HardwareNode protos. Add to this list if hardware_node.proto adds new
+// state-affecting fields.
+func hardwareNodeOperationalEqual(a, b *types.HardwareNode) bool {
+	if !hardwareNodeReservedEqual(a, b) {
+		return false
+	}
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Status == b.Status && a.Version == b.Version
 }

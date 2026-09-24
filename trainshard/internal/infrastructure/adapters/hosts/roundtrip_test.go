@@ -1,6 +1,7 @@
 package hosts_test
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -323,6 +324,78 @@ func TestTheMeshIsBuiltAndProbedOverHTTP(t *testing.T) {
 	}
 	if len(failed) != 0 {
 		t.Fatalf("got %v, want a mesh of one node to have no broken links", failed)
+	}
+}
+
+// echoStreams stands in for the container a shell lands in: it answers every line it is sent
+// until the caller stops typing
+type echoStreams struct{}
+
+func (echoStreams) Logs(context.Context, run.LogRequest, io.Writer) error { return nil }
+
+func (echoStreams) Shell(_ context.Context, _ run.ExecRequest, terminal io.ReadWriter) error {
+	lines := bufio.NewScanner(terminal)
+	for lines.Scan() {
+		if _, err := fmt.Fprintf(terminal, "you said %s\n", lines.Text()); err != nil {
+			return err
+		}
+	}
+	return lines.Err()
+}
+
+// shellHost serves only the session module, behind the same route prefix a proxy strips
+func shellHost(t *testing.T) reached {
+	t.Helper()
+
+	clock := clock.System{}
+	chain, err := chainfake.Load(seedFile(t))
+	if err != nil {
+		t.Fatalf("load chain: %v", err)
+	}
+	state, err := localstate.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("state: %v", err)
+	}
+	streams := session.New(session.Config{Participant: host, Nodes: []vo.NodeRef{node}}, session.Deps{
+		Chain:    chain,
+		Streams:  echoStreams{},
+		Sessions: state.Sessions(),
+		Served:   state.Served(clock),
+		Clock:    clock,
+	})
+
+	mux := http.NewServeMux()
+	streams.Mount(mux, signedhttp.New(hostKey, clock, time.Minute, vo.Address(host)).Wrap)
+	server := httptest.NewServer(http.StripPrefix(routePrefix, mux))
+	t.Cleanup(server.Close)
+
+	return reached{
+		Client:  hosts.New(server.Client(), coordinatorKey, clock, time.Minute),
+		machine: vo.Host{Participant: host, Endpoint: vo.Endpoint(server.URL + routePrefix), Nodes: []vo.NodeRef{node}},
+	}
+}
+
+// terminal is what a researcher types in and reads back
+type terminal struct {
+	in  io.Reader
+	out strings.Builder
+}
+
+func (t *terminal) Read(p []byte) (int, error)  { return t.in.Read(p) }
+func (t *terminal) Write(p []byte) (int, error) { return t.out.Write(p) }
+
+func TestAShellCrossesTheWireBothWays(t *testing.T) {
+
+	client := shellHost(t)
+	typed := &terminal{in: strings.NewReader("whoami\nls\n")}
+
+	err := client.Shell(context.Background(), client.machine, run.ExecRequest{Shard: shardID, Node: node}, typed)
+
+	if err != nil {
+		t.Fatalf("shell: %v", err)
+	}
+	if got := typed.out.String(); got != "you said whoami\nyou said ls\n" {
+		t.Fatalf("got %q, want every line answered and the session closed when typing stops", got)
 	}
 }
 

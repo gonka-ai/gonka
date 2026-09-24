@@ -121,8 +121,12 @@ type hostsStub struct {
 	applied    []vo.NodeRef
 	failed     map[vo.NodeRef][]mesh.Pair
 	heals      bool
-	refuses    map[vo.NodeRef]bool
-	silent     map[vo.Participant]bool
+	// secondProbe fails only the second probe a node answers: a handshake lost right after
+	// the peers were reshaped
+	secondProbe map[vo.NodeRef][]mesh.Pair
+	probes      map[vo.NodeRef]int
+	refuses     map[vo.NodeRef]bool
+	silent      map[vo.Participant]bool
 }
 
 func newHostsStub() *hostsStub {
@@ -131,9 +135,11 @@ func newHostsStub() *hostsStub {
 			hostA: {identityOf(nodeA)},
 			hostB: {identityOf(nodeB), identityOf(nodeC)},
 		},
-		failed:  map[vo.NodeRef][]mesh.Pair{},
-		refuses: map[vo.NodeRef]bool{},
-		silent:  map[vo.Participant]bool{},
+		failed:      map[vo.NodeRef][]mesh.Pair{},
+		secondProbe: map[vo.NodeRef][]mesh.Pair{},
+		probes:      map[vo.NodeRef]int{},
+		refuses:     map[vo.NodeRef]bool{},
+		silent:      map[vo.Participant]bool{},
 	}
 }
 
@@ -159,8 +165,13 @@ func (h *hostsStub) Probe(_ context.Context, cfg mesh.Config, _ vo.Host, node vo
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	h.probes[node]++
+	failing := h.failed[node]
+	if h.probes[node] == 2 {
+		failing = append(slices.Clone(failing), h.secondProbe[node]...)
+	}
 	pairs := make([]mesh.Pair, 0)
-	for _, pair := range h.failed[node] {
+	for _, pair := range failing {
 		if cfg.Contains(pair.A) && cfg.Contains(pair.B) {
 			pairs = append(pairs, pair)
 		}

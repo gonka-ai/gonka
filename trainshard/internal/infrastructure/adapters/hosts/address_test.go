@@ -41,8 +41,10 @@ func TestHostAddressKeepsTheSchemeSoAShellIsNotSentInTheClear(t *testing.T) {
 	}{
 		{name: "https without a port is tls on 443", base: "https://host.example", address: "host.example:443", secure: true},
 		{name: "https with a port is still tls", base: "https://host.example:8443", address: "host.example:8443", secure: true},
+		{name: "https ipv6 without a port keeps brackets", base: "https://[2001:db8::1]", address: "[2001:db8::1]:443", secure: true},
 		{name: "http without a port is plain on 80", base: "http://host.example", address: "host.example:80"},
 		{name: "http with a port is plain", base: "http://127.0.0.1:9700", address: "127.0.0.1:9700"},
+		{name: "http ipv6 with a port keeps brackets", base: "http://[2001:db8::1]:9700", address: "[2001:db8::1]:9700"},
 	}
 
 	for _, tc := range cases {

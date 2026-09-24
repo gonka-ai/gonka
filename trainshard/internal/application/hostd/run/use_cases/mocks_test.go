@@ -349,24 +349,28 @@ type gpuStub struct {
 	foreign   bool
 	inUse     int
 	leftovers bool
+	err       error
 }
 
 func (g *gpuStub) Inventory(context.Context, vo.NodeRef) (vo.GPUInventory, error) {
 	return vo.GPUInventory{Profile: "H100 x8", Count: 8}, nil
 }
 
-func (g *gpuStub) InUse(context.Context, vo.NodeRef) (int, error) { return g.inUse, nil }
+func (g *gpuStub) InUse(context.Context, vo.NodeRef) (int, error) { return g.inUse, g.err }
 
 func (g *gpuStub) ForeignWork(context.Context, vo.ShardID, vo.NodeRef) (bool, error) {
-	return g.foreign, nil
+	return g.foreign, g.err
 }
 
 func (g *gpuStub) TrainingProcesses(context.Context, vo.ShardID, vo.NodeRef) (bool, error) {
-	return g.leftovers, nil
+	return g.leftovers, g.err
 }
 
 func (g *gpuStub) KillTraining(context.Context, vo.ShardID, vo.NodeRef) error {
 	g.rec.record("gpu.kill_training")
+	if g.err != nil {
+		return g.err
+	}
 	g.leftovers = false
 	return nil
 }
@@ -466,13 +470,16 @@ func (a *attestorStub) Attest(_ context.Context, payload []byte) ([]byte, error)
 }
 
 type controlStub struct {
-	rec     *recorder
-	drained bool
-	stuck   bool
-	refuse  error
+	rec        *recorder
+	drained    bool
+	stuck      bool
+	refuse     error
+	unreadable error
 }
 
-func (c *controlStub) Drained(context.Context, vo.NodeRef) (bool, error) { return c.drained, nil }
+func (c *controlStub) Drained(context.Context, vo.NodeRef) (bool, error) {
+	return c.drained, c.unreadable
+}
 
 func (c *controlStub) Drain(context.Context, vo.NodeRef) (bool, error) {
 	c.rec.record("control.drain")
