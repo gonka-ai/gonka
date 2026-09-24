@@ -232,18 +232,60 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			wantCooldown: true,
 		},
 		{
-			name:      "already leased",
-			skipApply: true,
-			validator: scriptedValidationEngine{err: devshard.ErrValidationAlreadyLeased},
+			name:         "already leased",
+			skipApply:    true,
+			validator:    scriptedValidationEngine{err: devshard.ErrValidationAlreadyLeased},
+			wantCooldown: true,
 		},
 		{
-			// The richer error must keep the sentinel's behaviour: releasing
-			// here would free a row this attempt never acquired.
+			// Releasing here would free a row this attempt never acquired.
+			// The row is still there, so the next request waits out the cooldown.
 			name:      "lease conflict",
 			skipApply: true,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Status: devshard.LeaseStatusPending,
 				Owner:  "gonka1owner",
+			}},
+			wantCooldown: true,
+		},
+		{
+			name:      "lease conflict submitted",
+			skipApply: true,
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Status: devshard.LeaseStatusSubmitted,
+			}},
+			wantCooldown: true,
+		},
+		{
+			name:      "lease conflict skipped",
+			skipApply: true,
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Status: devshard.LeaseStatusSkipped,
+			}},
+			wantCooldown: true,
+		},
+		{
+			name:      "lease conflict stale pending",
+			skipApply: true,
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Status: devshard.LeaseStatusPending,
+				Stale:  true,
+			}},
+			wantCooldown: true,
+		},
+		{
+			name:      "lease conflict read failed",
+			skipApply: true,
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Detail: "lease read failed: db down",
+			}},
+			wantCooldown: true,
+		},
+		{
+			name:      "lease conflict already released",
+			skipApply: true,
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Detail: devshard.LeaseRowAbsentDetail,
 			}},
 		},
 		{
@@ -444,7 +486,7 @@ func TestLeaseConflictSeverity(t *testing.T) {
 		},
 		{
 			name:      "row not read",
-			conflict:  &devshard.LeaseConflict{Detail: "row absent when read; already released"},
+			conflict:  &devshard.LeaseConflict{Detail: devshard.LeaseRowAbsentDetail},
 			wantLevel: observability.LevelInfo,
 			wantMsg:   "lease already held",
 		},

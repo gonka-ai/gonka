@@ -283,12 +283,12 @@ var _ devshardpkg.ValidationEngine = (*Validator)(nil)
 // that only one devshardd instance validates each (escrow_id, inference_id) pair.
 // The retry loop uses the inner Validator directly because it already holds the lease.
 type LeaseValidator struct {
-	validator    devshardpkg.ValidationEngine
-	phase        *chain.Phase
-	leases       leaseOps
-	owner        storage.LeaseOwner
-	leaseTTL     time.Duration
-	acquires     sync.Map // acquireKey -> acquireRec
+	validator devshardpkg.ValidationEngine
+	phase     *chain.Phase
+	leases    leaseOps
+	owner     storage.LeaseOwner
+	leaseTTL  time.Duration
+	acquires  sync.Map // acquireKey -> acquireRec
 }
 
 type acquireRec struct {
@@ -350,8 +350,8 @@ func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateR
 
 // describeConflict turns a refused acquire into an error that says what was in
 // the way. The extra read costs one query on a path that has already given up
-// on validating, and every failure to read still yields a usable error: the
-// caller only logs this, never branches on it.
+// on validating. The caller logs it, and stamps the validation cooldown unless
+// ReleasedBeforeRead says the row is already gone.
 func (c *LeaseValidator) describeConflict(ctx context.Context, escrowID string, inferenceID, epochID uint64) error {
 	conflict := &devshardpkg.LeaseConflict{}
 	info, found, err := c.leases.DescribeLease(ctx, escrowID, inferenceID, epochID)
@@ -361,7 +361,7 @@ func (c *LeaseValidator) describeConflict(ctx context.Context, escrowID string, 
 	case !found:
 		// Released or pruned between the acquire and this read, so the
 		// inference is already re-pickable.
-		conflict.Detail = "row absent when read; already released"
+		conflict.Detail = devshardpkg.LeaseRowAbsentDetail
 	default:
 		conflict.Status = string(info.Status)
 		conflict.Owner = info.InstanceAddr

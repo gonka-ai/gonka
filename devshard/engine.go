@@ -54,6 +54,16 @@ type LeaseConflict struct {
 	Detail string
 }
 
+// LeaseRowAbsentDetail is Detail when Acquire lost to a row that was gone
+// before the follow-up read. The inference can be picked again immediately.
+const LeaseRowAbsentDetail = "row absent when read; already released"
+
+// ReleasedBeforeRead reports that the conflicting row was already gone, so a
+// retry does not need to wait out the validation cooldown.
+func (e *LeaseConflict) ReleasedBeforeRead() bool {
+	return e != nil && !e.Observed() && e.Detail == LeaseRowAbsentDetail
+}
+
 // Observed reports whether the conflicting row was actually read.
 func (e *LeaseConflict) Observed() bool {
 	return e != nil && e.Status != ""

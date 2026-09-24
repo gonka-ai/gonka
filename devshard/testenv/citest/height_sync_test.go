@@ -375,9 +375,9 @@ func TestContainerE2E_HeightSync_StaleClaimSpread(t *testing.T) {
 	harness.Step(t, "stop versiond-1 so its tip goes stale past F")
 	stack.StopService(t, "versiond-1")
 
-	// DefaultOriginatorFreshness is 60s. Keep the live host talking so the
+	// DefaultOriginatorFreshness is 120s. Keep the live host talking so the
 	// gateway tip and the remaining claim stay fresh.
-	deadline := time.Now().Add(90 * time.Second)
+	deadline := time.Now().Add(150 * time.Second)
 	for time.Now().Before(deadline) {
 		postHeightSyncChat(t, cfg, eps, "citest height-sync keep live tip fresh")
 		time.Sleep(5 * time.Second)

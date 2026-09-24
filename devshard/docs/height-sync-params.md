@@ -219,13 +219,13 @@ than `T_idle`, so a host is never the last to know.
 | ---- | --- |
 | `D_ack · block_time ≥ Interval + TurnTimeout` | The log must not declare a turn degraded while its producer is still legitimately collecting the acks it asked for. |
 | `T_idle > Interval + TurnTimeout` | One lost turnover must not arm a host. |
-| `2 · Interval ≤ F` | Two turnovers must fit inside freshness `F` (default 60s), so a height claim does not go stale between them. |
+| `2 · Interval ≤ F` | Two turnovers must fit inside freshness `F` (default 120s), so a height claim does not go stale between them. |
 
 The first two read as one chain: the log waits at least as long as the producer,
 and the host waits longer than either.
 
-`Validate` uses `DefaultOriginatorFreshness` (`F` = 60s) when the argument is
-zero. Shipped defaults pass: `73 · 1s ≥ 72s`, `96s > 72s`, and `2 · 24s ≤ 60s`.
+`Validate` uses `DefaultOriginatorFreshness` (`F` = 120s) when the argument is
+zero. Shipped defaults pass: `73 · 1s ≥ 72s`, `96s > 72s`, and `2 · 24s ≤ 120s`.
 A deployment that sets `AckDeadlineBlocks` by hand without saying what its blocks
 are is exactly what the first rule catches — `D_ack = 2` on the shipped schedule
 is now rejected, and the same value passes once `block_time` is `40s`.

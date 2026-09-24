@@ -912,6 +912,19 @@ func countHeartbeatForce(d types.Diff) int {
 	return n
 }
 
+func TestHeartbeatDelayAfterTickPollsWhenDeadlineStaysPast(t *testing.T) {
+	var height uint64 = 100
+	interval := 40 * time.Millisecond
+	session := setupBlindHeartbeatSession(t, &height,
+		WithHeartbeatConfig(heightsync.HeartbeatConfig{Interval: interval}))
+	t.Cleanup(func() { _ = session.Close() })
+
+	// TurnTimeout already elapsed and nothing opened a new turn. NextWake
+	// reports 1ms; the loop must poll at Interval instead of spinning.
+	session.heartbeat.OpenTurn(time.Now().Add(-2 * session.heartbeat.Config().TurnTimeout))
+	require.Equal(t, interval, session.heartbeatDelayAfterTick())
+}
+
 func TestHeartbeat_LoopSecondGapStaysInsideOneInterval(t *testing.T) {
 	// The first open is immediate. The bug showed up on the gap after that:
 	// the following ticker fire was not yet due, so the next open waited

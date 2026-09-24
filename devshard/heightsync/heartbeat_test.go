@@ -82,7 +82,11 @@ func TestHeartbeat_NextWakeFollowsTurnoverNotTwoIntervals(t *testing.T) {
 	t0 := time.Unix(1_700_000_000, 0)
 
 	hb.OpenTurn(t0)
-	require.Equal(t, cfg.TurnTimeout, hb.NextWake(t0))
+	require.Equal(t, cfg.Interval, hb.NextWake(t0),
+		"an open turn is polled every Interval so a degraded record can settle")
+	nearAbandon := t0.Add(cfg.TurnTimeout - 10*time.Millisecond)
+	require.Equal(t, 10*time.Millisecond, hb.NextWake(nearAbandon),
+		"the abandon deadline still wins once it is sooner than Interval")
 
 	turnoverAt := t0.Add(200 * time.Millisecond)
 	require.False(t, hb.NoteClaim(0, turnoverAt))

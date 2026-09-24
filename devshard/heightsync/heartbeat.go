@@ -221,7 +221,9 @@ func (h *Heartbeat) SetTurnoverWake(fn func()) {
 // Interval, and the one after that is almost 2·Interval later. Sleeping until
 // the real deadline removes that phase slip.
 //
-//   - Open turn: turnOpenedAt + TurnTimeout (abandon an unanswered span).
+//   - Open turn: the sooner of TurnTimeout and one Interval. The short poll is
+//     what lets a degraded record settle and pending acks flush; TurnTimeout
+//     is still the abandon deadline.
 //   - Otherwise, after a turnover: lastTurnover + Interval.
 //   - No turnover yet: Interval from now (the no-height poll).
 func (h *Heartbeat) NextWake(now time.Time) time.Duration {
@@ -234,6 +236,9 @@ func (h *Heartbeat) NextWake(now time.Time) time.Duration {
 	switch {
 	case h.turnOpen:
 		deadline = h.turnOpenedAt.Add(h.cfg.TurnTimeout)
+		if poll := now.Add(h.cfg.Interval); poll.Before(deadline) {
+			deadline = poll
+		}
 	case !h.lastTurnover.IsZero():
 		deadline = h.lastTurnover.Add(h.cfg.Interval)
 	default:

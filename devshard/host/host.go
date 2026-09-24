@@ -1400,9 +1400,16 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		EpochID:         job.epochID,
 	})
 	if err != nil {
-		if !errors.Is(err, devshard.ErrValidationAlreadyLeased) {
-			if !h.validationIsClosed() {
+		var conflict *devshard.LeaseConflict
+		errors.As(err, &conflict)
+		leased := conflict != nil || errors.Is(err, devshard.ErrValidationAlreadyLeased)
+		if !h.validationIsClosed() {
+			// A row that is still there, or that we failed to read, waits out
+			// the cooldown. Only a row already gone is retried on the next request.
+			if !leased || conflict == nil || !conflict.ReleasedBeforeRead() {
 				h.stampValidationCooldown(job.inferenceID)
+			}
+			if !leased {
 				h.releaseValidationLease(ctx, job.inferenceID)
 			}
 		}
@@ -1418,8 +1425,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			)
 			return
 		}
-		var conflict *devshard.LeaseConflict
-		if errors.As(err, &conflict) {
+		if conflict != nil {
 			h.logValidationLeaseConflict(ctx, job, conflict)
 			return
 		}

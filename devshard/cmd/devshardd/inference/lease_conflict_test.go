@@ -67,8 +67,8 @@ func TestLeaseConflict_ErrorWithoutRow(t *testing.T) {
 	}{
 		{
 			name:     "detail carried",
-			conflict: &devshardpkg.LeaseConflict{Detail: "row absent when read; already released"},
-			want:     "row absent when read; already released",
+			conflict: &devshardpkg.LeaseConflict{Detail: devshardpkg.LeaseRowAbsentDetail},
+			want:     devshardpkg.LeaseRowAbsentDetail,
 		},
 		{
 			name:     "no detail",
@@ -84,6 +84,7 @@ func TestLeaseConflict_ErrorWithoutRow(t *testing.T) {
 			assert.Contains(t, msg, tt.want)
 			assert.NotContains(t, msg, "status=")
 			assert.False(t, tt.conflict.Observed())
+			assert.Equal(t, tt.name == "detail carried", tt.conflict.ReleasedBeforeRead())
 		})
 	}
 }

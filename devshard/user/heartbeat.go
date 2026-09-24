@@ -102,7 +102,8 @@ func (s *Session) runHeartbeatLoop(ctx context.Context) {
 		return
 	}
 	s.tickHeartbeat(ctx)
-	timer := time.NewTimer(s.heartbeatDelay())
+	delay := s.heartbeatDelayAfterTick()
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	for {
 		select {
@@ -110,9 +111,11 @@ func (s *Session) runHeartbeatLoop(ctx context.Context) {
 			return
 		case <-timer.C:
 			s.tickHeartbeat(ctx)
+			delay = s.heartbeatDelayAfterTick()
 		case <-s.heartbeatPoke:
 			// Turnover landed while sleeping. Re-arm from the new lastTurnover;
 			// do not open a span until that deadline.
+			delay = s.heartbeatDelay()
 		}
 		if !timer.Stop() {
 			select {
@@ -120,7 +123,7 @@ func (s *Session) runHeartbeatLoop(ctx context.Context) {
 			default:
 			}
 		}
-		timer.Reset(s.heartbeatDelay())
+		timer.Reset(delay)
 	}
 }
 
@@ -137,6 +140,24 @@ func (s *Session) heartbeatDelay() time.Duration {
 		return heightsync.DefaultHeartbeatInterval
 	}
 	return s.heartbeat.NextWake(s.now())
+}
+
+// heartbeatDelayAfterTick is heartbeatDelay unless the tick left the deadline
+// already past. NextWake then reports 1ms so the loop would spin: a skipped
+// tick (no height, session no longer active) does not open or settle a turn.
+// Poll once per Interval instead.
+func (s *Session) heartbeatDelayAfterTick() time.Duration {
+	delay := s.heartbeatDelay()
+	if delay > time.Millisecond {
+		return delay
+	}
+	interval := heightsync.DefaultHeartbeatInterval
+	if s != nil && s.heartbeat != nil {
+		if cfg := s.heartbeat.Config().Interval; cfg > 0 {
+			interval = cfg
+		}
+	}
+	return interval
 }
 
 func (s *Session) now() time.Time {
