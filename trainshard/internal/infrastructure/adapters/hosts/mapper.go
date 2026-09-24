@@ -97,6 +97,7 @@ func toReports(participant vo.Participant, items []contract.NodeReport) ([]run.N
 			Images:   images,
 			ExitCode: item.ExitCode,
 			Fault:    toFault(item.Error),
+			Answered: item.Answered,
 		})
 	}
 	return reports, nil

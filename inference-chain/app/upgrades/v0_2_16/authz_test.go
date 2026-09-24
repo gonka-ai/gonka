@@ -93,7 +93,7 @@ func TestGrantTrainingWarmKeyAuthz_CreatesBothGrantsPerPair(t *testing.T) {
 		grants: []testGrant{
 			genericGrant(t, testGranter, testGrantee, inferencetypes.WarmKeyGrantMarkerTypeURL, &testExpiry),
 			genericGrant(t, testGranter, testGrantee, inferencetypes.LegacyMsgStartInferenceTypeURL, &testExpiry),
-			genericGrant(t, testGranter2, testGrantee2, inferencetypes.LegacyMsgStartInferenceTypeURL, nil),
+			genericGrant(t, testGranter2, testGrantee2, inferencetypes.WarmKeyGrantMarkerTypeURL, nil),
 			genericGrant(t, testGranter, testGrantee, "/inference.inference.MsgFinishInference", &testExpiry),
 		},
 	}
@@ -107,6 +107,20 @@ func TestGrantTrainingWarmKeyAuthz_CreatesBothGrantsPerPair(t *testing.T) {
 		{granter: testGranter2, grantee: testGrantee2, msgType: refresh, expiration: nil},
 		{granter: testGranter2, grantee: testGrantee2, msgType: autokick, expiration: nil},
 	}, authzKeeper.saved)
+}
+
+func TestGrantTrainingWarmKeyAuthz_ALegacyGrantAloneDoesNotRearmADewarmedKey(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	ctx = ctx.WithBlockTime(testNow)
+	authzKeeper := &mockAuthzKeeper{
+		grants: []testGrant{
+			genericGrant(t, testGranter, testGrantee, inferencetypes.LegacyMsgStartInferenceTypeURL, &testExpiry),
+		},
+	}
+
+	require.NoError(t, grantTrainingWarmKeyAuthz(ctx, authzKeeper, k))
+
+	require.Empty(t, authzKeeper.saved)
 }
 
 func TestGrantTrainingWarmKeyAuthz_SkipsExistingAndExpired(t *testing.T) {

@@ -24,7 +24,9 @@ func Autokick(d Desired, o Observed, state RunState, now time.Time, patience tim
 		}
 		return vo.ReleaseFailedPrepare, now.Sub(since) >= patience
 	}
-	if state.Fault == nil {
+	// an image refused for not deriving from the base is the tenant's to replace with a deploy, not
+	// a node that fails; it only turns up here when the pull outlasted the deploy that asked for it
+	if state.Fault == nil || state.Fault.Code == ErrImageNotDerived.Code {
 		return "", false
 	}
 	return vo.ReleaseFailedRun, now.Sub(state.FaultAt) >= patience

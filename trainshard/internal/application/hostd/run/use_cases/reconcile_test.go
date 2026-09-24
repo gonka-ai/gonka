@@ -649,6 +649,37 @@ func TestReconcileCleansTheOldShardBeforeServingANewReservation(t *testing.T) {
 	}
 }
 
+func TestANodeLentOnToTheNextShardIsNotHandedBackInBetween(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	next := activeShard()
+	next.ID = shardID + 1
+	f.chain.shards[next.ID] = next
+	f.chain.reservations[nodeA] = next.ID
+
+	for range 4 {
+		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+
+	calls := f.rec.sequence()
+	if slices.Contains(calls, "control.return") {
+		t.Fatalf("the node went back to inference between two shards: %v", calls)
+	}
+	state, _, err := f.runs.Load(ctx, nodeA)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if state.Shard != next.ID {
+		t.Fatalf("serving shard %v, want the next one %v after %v", state.Shard, next.ID, calls)
+	}
+}
+
 func TestReconcileHoldsTheNodeWhileACommandWritesDownWhatItShouldHold(t *testing.T) {
 
 	f := newFixture()

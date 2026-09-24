@@ -18,8 +18,10 @@ func Plan(d Desired, o Observed) []Action {
 	if !o.HasImage(d.BaseImage) {
 		actions = append(actions, Action{Kind: ActionPullImage, Image: d.BaseImage})
 	}
+	// an image is judged without the cards, so a deploy that lands while the dapi still lets go of
+	// the node hears its refusal instead of leaving it for the loop
 	if !o.Drained || o.ForeignGPUWork {
-		return actions
+		return append(actions, checkRunImage(d, o)...)
 	}
 	// the key is made before the signed member is stored, so a key alone is a step to finish
 	if !o.MeshKey || !o.MeshIdentity {
@@ -31,12 +33,13 @@ func Plan(d Desired, o Observed) []Action {
 	if d.Run.IsZero() {
 		return actions
 	}
+	// A container is built with the rank the peer list gives it, so it cannot exist before one;
+	// its image can already be refused, while the deploy that brought it still waits for the answer
+	if !d.MeshConfigured {
+		return append(actions, checkRunImage(d, o)...)
+	}
 	if !o.HasImage(d.Run.Image) {
 		actions = append(actions, Action{Kind: ActionPullImage, Image: d.Run.Image})
-	}
-	// A container is built with the rank the peer list gives it, so it cannot exist before one
-	if !d.MeshConfigured {
-		return actions
 	}
 
 	// a container is boxed when it is created; a box rebuilt under one that has not started is
@@ -70,6 +73,17 @@ func Plan(d Desired, o Observed) []Action {
 		actions = append(actions, Action{Kind: ActionStopContainer})
 	}
 	return actions
+}
+
+func checkRunImage(d Desired, o Observed) []Action {
+	if d.Run.IsZero() {
+		return nil
+	}
+	actions := make([]Action, 0, 2)
+	if !o.HasImage(d.Run.Image) {
+		actions = append(actions, Action{Kind: ActionPullImage, Image: d.Run.Image})
+	}
+	return append(actions, Action{Kind: ActionVerifyImage, Image: d.Run.Image})
 }
 
 func Prepared(d Desired, o Observed) bool {

@@ -237,6 +237,7 @@ func toReportOutput(reports []run.NodeReport) contract.ReportResult {
 			Images:   images,
 			ExitCode: report.ExitCode,
 			Error:    toError(report.Fault),
+			Answered: report.Answered,
 		})
 	}
 	return contract.ReportResult{Items: items}

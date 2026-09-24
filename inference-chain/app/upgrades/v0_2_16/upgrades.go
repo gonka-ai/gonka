@@ -421,7 +421,9 @@ func grantTrainingWarmKeyAuthz(ctx context.Context, authzKeeper AuthzMigrationKe
 		if err := k.Codec().Unmarshal(grant.Authorization.Value, &authorization); err != nil {
 			return false
 		}
-		if authorization.Msg != types.WarmKeyGrantMarkerTypeURL && authorization.Msg != types.LegacyMsgStartInferenceTypeURL {
+		// v0.2.15 copied every legacy marker to the live one, so a pair holding only the legacy
+		// grant is a key its host de-warmed by revoking the live marker
+		if authorization.Msg != types.WarmKeyGrantMarkerTypeURL {
 			return false
 		}
 		if grant.Expiration != nil && !grant.Expiration.After(now) {

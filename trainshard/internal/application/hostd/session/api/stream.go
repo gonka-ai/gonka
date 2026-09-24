@@ -21,9 +21,11 @@ func asksForShell(r *http.Request) bool {
 	if !strings.EqualFold(r.Header.Get("Upgrade"), contract.ShellProtocol) {
 		return false
 	}
-	for _, token := range strings.Split(r.Header.Get("Connection"), ",") {
-		if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
-			return true
+	for _, value := range r.Header.Values("Connection") {
+		for _, token := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+				return true
+			}
 		}
 	}
 	return false

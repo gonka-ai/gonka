@@ -11,6 +11,7 @@ import (
 	usecases "trainshard/internal/application/hostd/run/use_cases"
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shard"
+	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -231,6 +232,92 @@ func TestARefusedDeployLeavesTheNodeOnTheRunItHad(t *testing.T) {
 	}
 	if reconciled != nil {
 		t.Fatalf("got %v, want the loop to find nothing left to fail on", reconciled)
+	}
+}
+
+func TestAForeignImageDeployedBeforeThePeerListIsRefusedAtOnce(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	foreign := vo.ImageDigest("foreign@sha256:" + strings.Repeat("c", 64))
+	f.images.layers[foreign] = vo.ImageLayers{"someone-elses-layer"}
+	cmd := deployCommand()
+	cmd.Run.Image = foreign
+
+	// act
+	results, err := f.deploy().Execute(ctx, cmd)
+
+	// assert
+	if err != nil {
+		t.Fatalf("a refused node must not fail the request: %v", err)
+	}
+	if len(results) != 1 || results[0].Fault == nil || results[0].Fault.Code != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("got %+v, want the foreign image refused while the deploy still waits", results)
+	}
+	if state := f.runs.states[nodeA]; !state.Spec.IsZero() || state.Fault != nil {
+		t.Fatalf("got %+v, want no run left behind to fail on once the peer list lands", state)
+	}
+}
+
+func TestAForeignImageDeployedWhileTheDapiStillHoldsTheNodeIsRefusedAtOnce(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	f.control.stuck = true
+	foreign := vo.ImageDigest("foreign@sha256:" + strings.Repeat("c", 64))
+	f.images.layers[foreign] = vo.ImageLayers{"someone-elses-layer"}
+	cmd := deployCommand()
+	cmd.Run.Image = foreign
+
+	// act
+	results, err := f.deploy().Execute(ctx, cmd)
+
+	// assert
+	if err != nil {
+		t.Fatalf("a refused node must not fail the request: %v", err)
+	}
+	if len(results) != 1 || results[0].Fault == nil || results[0].Fault.Code != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("got %+v, want the foreign image refused before the node is drained", results)
+	}
+	if state := f.runs.states[nodeA]; !state.Spec.IsZero() {
+		t.Fatalf("got %+v, want no run left behind for the loop to trip on", state)
+	}
+}
+
+func TestAForeignImageTheLoopFoundAfterTheDeployIsNotKickedFor(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	foreign := vo.ImageDigest("foreign@sha256:" + strings.Repeat("c", 64))
+	f.images.layers[foreign] = vo.ImageLayers{"someone-elses-layer"}
+	cmd := deployCommand()
+	cmd.Run.Image = foreign
+	f.images.pullErr = context.DeadlineExceeded
+	if _, err := f.deploy().Execute(ctx, cmd); err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	f.images.pullErr = nil
+
+	// act
+	_, reconciled := f.reconcile().Execute(ctx, nodeA)
+	f.clock.Advance(10 * f.patience)
+	f.reconcile().Execute(ctx, nodeA)
+
+	// assert
+	if shared.CodeOf(reconciled) != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("got %v, want the loop to refuse the image once it is pulled", reconciled)
+	}
+	if len(f.chain.releases) != 0 {
+		t.Fatalf("got %v, want the node kept for the tenant to deploy an image of theirs", f.chain.releases)
+	}
+	if state := f.runs.states[nodeA]; state.Fault == nil || state.Fault.Code != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("got %+v, want the refusal left for status to show", state)
 	}
 }
 

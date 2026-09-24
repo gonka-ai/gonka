@@ -185,7 +185,7 @@ func (c *Commands) Report(ctx context.Context, args []string) error {
 	fmt.Fprintln(out, "NODE\tIMAGE\tRAN AT\tEXIT\tREASON")
 	silent := 0
 	for _, node := range reports {
-		if node.Fault != nil {
+		if node.Unanswered() {
 			silent++
 		}
 		if len(node.Images) == 0 {

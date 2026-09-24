@@ -88,6 +88,7 @@ type NodeReport struct {
 	Images   []ImageRun `json:"images"`
 	ExitCode *int       `json:"exit_code,omitempty"`
 	Error    *Error     `json:"error,omitempty"`
+	Answered bool       `json:"answered,omitempty"`
 }
 
 type ReportResult struct {
