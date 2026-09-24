@@ -343,8 +343,8 @@ func DefaultPoCModelParams() *PoCModelParams {
 func DefaultConfirmationPoCParams() *ConfirmationPoCParams {
 	return &ConfirmationPoCParams{
 		ExpectedConfirmationsPerEpoch: 0,                     // Feature disabled by default
-		AlphaThreshold:                DecimalFromFloat(0.0), // 70% minimum ratio
-		SlashFraction:                 DecimalFromFloat(0.0), // 10% slash
+		AlphaThreshold:                DecimalFromFloat(0.0), // 0 disables the ratio check and PoC Challenge; v0_2_5 upgrade sets 0.5
+		SlashFraction:                 DecimalFromFloat(0.0), // not read outside param validation
 		UpgradeProtectionWindow:       500,                   // 500 blocks before/after upgrade
 	}
 }
