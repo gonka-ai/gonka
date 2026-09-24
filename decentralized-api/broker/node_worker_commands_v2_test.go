@@ -377,3 +377,99 @@ func TestStartPoCNodeCommandV2_StrongerRngPropagated(t *testing.T) {
 	require.NotNil(t, mockClient.LastInitGenerateV2Req)
 	assert.True(t, mockClient.LastInitGenerateV2Req.PocStrongerRng, "PocStrongerRng must be forwarded to InitGenerateV2")
 }
+
+// The mlnode proxy fans init out to every vLLM backend and answers 200 when at
+// least one of them started; the ones that refused are listed in errors.
+// One refusing backend must not turn a generating node into FAILED: that
+// resets PocIntendedStatus to Idle and the next StartPocCommand restarts every
+// backend from nonce 0.
+func TestStartPoCNodeCommandV2_PartialInitErrorKeepsNodeInPoC(t *testing.T) {
+	node := createTestNode("test-node-v2-partial")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("IDLE")
+	mockClient.InitGenerateV2Resp = &mlnodeclient.PoCInitGenerateResponseV2{
+		Status:  "OK",
+		Results: []mlnodeclient.BackendResult{{Port: 5001, Status: "OK"}},
+		Errors:  []mlnodeclient.BackendError{{Port: 5002, Error: "503 engine not ready"}},
+	}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight: 2000,
+		BlockHash:   "hash",
+		PubKey:      "test-pub-key",
+		CallbackUrl: "http://localhost:8080/callback",
+		TotalNodes:  5,
+		Model:       "test-model",
+		SeqLen:      256,
+	}
+	result := cmd.Execute(context.Background(), worker)
+	assert.True(t, result.Succeeded, result.Error)
+	assert.Equal(t, types.HardwareNodeStatus_POC, result.FinalStatus)
+	assert.Equal(t, PocStatusGenerating, result.FinalPocStatus)
+	assert.True(t, result.PocV2Updated)
+}
+
+func TestStartPoCNodeCommandV2_AllBackendsFailInitIsFailure(t *testing.T) {
+	node := createTestNode("test-node-v2-partial")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("IDLE")
+	mockClient.InitGenerateV2Resp = &mlnodeclient.PoCInitGenerateResponseV2{
+		Status: "OK",
+		Errors: []mlnodeclient.BackendError{{Port: 5001, Error: "503"}, {Port: 5002, Error: "503"}},
+	}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256}
+	result := cmd.Execute(context.Background(), worker)
+	assert.False(t, result.Succeeded)
+	assert.Equal(t, types.HardwareNodeStatus_FAILED, result.FinalStatus)
+}
+
+// A MIXED node (one backend IDLE, the rest GENERATING) is stopped before
+// re-init. One backend refusing /stop must not skip the init for the others.
+func TestStartPoCNodeCommandV2_MixedPartialStopErrorStillInits(t *testing.T) {
+	node := createTestNode("test-node-v2-partial")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("MIXED")
+	mockClient.StopPowV2Resp = &mlnodeclient.PoCStopResponseV2{
+		Status:  "OK",
+		Results: []mlnodeclient.BackendResult{{Port: 5001, Status: "stopped"}},
+		Errors:  []mlnodeclient.BackendError{{Port: 5002, Error: "500"}},
+	}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256}
+	result := cmd.Execute(context.Background(), worker)
+	assert.True(t, result.Succeeded, result.Error)
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	assert.Equal(t, 1, mockClient.StopPowV2Called)
+	assert.Equal(t, 1, mockClient.InitGenerateV2Called)
+}
+
+// During challenge wind-down every backend must actually stop: a partial stop
+// error still fails the command so it is retried.
+func TestStartPoCNodeCommandV2_WindDownPartialStopErrorFails(t *testing.T) {
+	node := createTestNode("test-node-v2-partial")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("GENERATING")
+	mockClient.StopPowV2Resp = &mlnodeclient.PoCStopResponseV2{
+		Status:  "OK",
+		Results: []mlnodeclient.BackendResult{{Port: 5001, Status: "stopped"}},
+		Errors:  []mlnodeclient.BackendError{{Port: 5002, Error: "500"}},
+	}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", WindDown: true}
+	result := cmd.Execute(context.Background(), worker)
+	assert.False(t, result.Succeeded)
+}
