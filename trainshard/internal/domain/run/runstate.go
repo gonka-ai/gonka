@@ -49,6 +49,16 @@ func RecordDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, shardID v
 	})
 }
 
+// UndoDeploy puts back the run a refused deploy took the place of, under the revision it was
+// built for, so the container it left on the node is not rebuilt for nothing
+func UndoDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, before RunState) error {
+	return runs.Update(ctx, node, func(state *RunState) {
+		was := before.For(state.Shard)
+		state.Spec, state.Revision, state.Start = was.Spec, was.Revision, was.Start
+		state.Fault, state.FaultAt = was.Fault, was.FaultAt
+	})
+}
+
 // RecordRebuild counts a container that has to be built again with what it already runs: its
 // place on the mesh is baked in at create, so a new place is a new container
 func RecordRebuild(ctx context.Context, runs RunStore, node vo.NodeRef) error {

@@ -55,6 +55,7 @@ func (uc *DeployUseCase) Execute(ctx context.Context, cmd DeployCommand) ([]run.
 			if err := shard.CanApply(cmd.forNode(node), record, uc.clock.Now(), height); err != nil {
 				return run.NodeResult{}, err
 			}
+			var before run.RunState
 			write := func(ctx context.Context) error {
 				container, err := uc.containers.Inspect(ctx, cmd.Shard, node)
 				if err != nil {
@@ -63,9 +64,13 @@ func (uc *DeployUseCase) Execute(ctx context.Context, cmd DeployCommand) ([]run.
 				if err := run.CanDeploy(cmd.Run, uc.limits, container.State); err != nil {
 					return err
 				}
+				if before, _, err = uc.runs.Load(ctx, node); err != nil {
+					return err
+				}
 				return run.RecordDeploy(ctx, uc.runs, node, cmd.Shard, cmd.Run)
 			}
-			if err := uc.converge.Record(ctx, node, write); err != nil {
+			undo := func(ctx context.Context) error { return run.UndoDeploy(ctx, uc.runs, node, before) }
+			if err := uc.converge.Attempt(ctx, node, write, undo); err != nil {
 				return run.NodeResult{}, err
 			}
 			applied, err := uc.containers.Inspect(ctx, cmd.Shard, node)
