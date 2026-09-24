@@ -1,9 +1,11 @@
-"""Simulate 20 epochs from the epoch-403 inventory and static coefficients."""
+"""Simulate from the epoch-403 inventory and static coefficients."""
 
+import argparse
 import csv
 import json
 import random
 from collections import Counter
+from fractions import Fraction
 from pathlib import Path
 
 from simulation import f, get_effective_coeff
@@ -35,13 +37,31 @@ def read_csv(name):
         return list(csv.DictReader(source))
 
 
-def inputs():
+def inputs(decode=False):
     benchmarks = {}
-    for row in read_csv('benchmarks_8gpu.csv'):
+    if decode:
+        with (HERE.parent / 'data' / 'benchmarks-decode-8gpu.csv').open(newline='') as source:
+            measurements = list(csv.DictReader(source))
+    else:
+        measurements = read_csv('benchmarks_8gpu.csv')
+    for row in measurements:
         label = row['model']
         model = 'MiniMax' if 'MiniMax' in label else 'GLM' if 'GLM' in label else 'DeepSeek'
-        benchmarks.setdefault((model, row['gpu_type']), []).append(
-            (int(row['tensor_parallel_size']), int(row['nonces_per_min'])))
+        column = 'decode_nonces_per_min_8gpu' if decode else 'nonces_per_min_8gpu'
+        benchmarks.setdefault((model, row['gpu_type']), []).append(int(row[column]))
+    if decode:
+        # Derive economic bounds and difficulty from the selected 8-GPU rates.
+        q = {m: {g: Fraction(max(benchmarks[m, g]))
+                 for g in GPUS} for m in MODELS}
+        base = Fraction(str(INITIAL['MiniMax']))
+        for m in MODELS:
+            parity = {g: q['MiniMax'][g] / q[m][g] for g in GPUS}
+            values = dict(D_i=parity['H100'],
+                          coeff_i_min=base if m == 'MiniMax' else base * min(parity.values()) / Fraction('1.05'),
+                          coeff_i_max=base if m == 'MiniMax' else base * max(parity.values()) * Fraction('1.05'))
+            for key, value in values.items():
+                # Truncate once, after evaluating the exact rational formula.
+                PARAMS[m][key] = (value.numerator * 10**12 // value.denominator) / 10**12
     assignments = {(r['participant'], r['node_id']): IDS[r['model_id']]
                    for r in read_csv('chain_poc_nodes.csv')}
     nodes, excluded = [], Counter()
@@ -54,10 +74,9 @@ def inputs():
         if gpu is None:
             excluded[row['gpu_type']] += count
             continue
-        # Each measured TP group is one replica. Spare GPUs remain assigned
-        # to the node but idle when they cannot fit another replica.
-        rates = {m: max((count // tp) * rate for tp, rate in benchmarks[m, gpu])
-                 for m in MODELS}
+        # Reported counts represent normalized capacity, not verified topology.
+        # Scale 8-GPU throughput without inferring model-fit restrictions.
+        rates = {m: max(benchmarks[m, gpu]) * count / 8 for m in MODELS}
         assert rates[assignments[key]] > 0
         nodes.append(dict(host=key[0], node=key[1], gpu=gpu, count=count,
                           initial_model=assignments[key], rates=rates))
@@ -143,7 +162,8 @@ def record(epoch, nodes, allocation, coeff, state, passes, switches):
     relative = {g: (8 * gpu_weight[g] / gpu_count[g]) / reference for g in GPUS}
     assert sum(sum(v.values()) for v in hardware.values()) == 609
     assert abs(sum(share.values()) - 1) < 1e-12
-    assert all(PARAMS[m]['coeff_i_min'] <= effective[m] <= coeff[m] <= PARAMS[m]['coeff_i_max']
+    assert epoch == 0 or all(PARAMS[m]['coeff_i_min'] - 1e-12 <= effective[m] <= coeff[m] + 1e-12
+               and coeff[m] <= PARAMS[m]['coeff_i_max'] + 1e-12
                for m in MODELS)
     return dict(epoch=epoch, base_coefficients=coeff.copy(), effective_coefficients=effective,
                 normalized_shares=share, gpu_allocation=hardware,
@@ -152,19 +172,37 @@ def record(epoch, nodes, allocation, coeff, state, passes, switches):
 
 
 def run():
-    nodes, excluded = inputs()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--target-bps', nargs=3, type=int, default=[3334, 3333, 3333],
+                        metavar=('MINIMAX', 'GLM', 'DEEPSEEK'))
+    parser.add_argument('--output', type=Path, default=HERE / 'epoch403-results.json')
+    parser.add_argument('--epochs', type=int, default=20, help='number of epochs (default: 20)')
+    parser.add_argument('--decode', action='store_true', help='use decode throughput to derive bounds and difficulty')
+    args = parser.parse_args()
+    if args.epochs < 1:
+        parser.error('epochs must be positive')
+    if any(t < 0 for t in args.target_bps) or sum(args.target_bps) != 10000:
+        parser.error('target basis points must be nonnegative and total 10000')
+    for model, target in zip(MODELS, args.target_bps):
+        PARAMS[model]['T_i'] = target / 10000
+
+    nodes, excluded = inputs(args.decode)
     rng = random.Random(SEED)
     allocation = [n['initial_model'] for n in nodes]
     coeff = INITIAL.copy()
     state = {m: dict(s=0.025, prev_sign=0) for m in MODELS}
     epochs = [record(0, nodes, allocation, coeff, state, 0, 0)]
-    for epoch in range(1, 21):
+    for epoch in range(1, args.epochs + 1):
+        coeff = {m: min(max(coeff[m], PARAMS[m]['coeff_i_min']), PARAMS[m]['coeff_i_max'])
+                 for m in MODELS}
         coeff = f(shares(totals(nodes, allocation)), coeff, PARAMS, 0.05, state)
         passes, switches = settle(nodes, allocation, coeff, rng)
         epochs.append(record(epoch, nodes, allocation, coeff, state, passes, switches))
     result = dict(seed=SEED, epsilon=EPSILON, max_passes=MAX_PASSES,
                   params=PARAMS, excluded_gpus=excluded, epochs=epochs)
-    path = HERE / 'epoch403-results.json'
+    if args.decode:
+        result['measurement'] = 'Decode 8 GPUs nonces/min'
+    path = args.output
     path.write_text(json.dumps(result, indent=2) + '\n')
     print(path)
     for r in epochs:

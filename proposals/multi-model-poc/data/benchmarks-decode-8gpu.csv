@@ -1,0 +1,15 @@
+source_url,source_row,gpu_label,gpu_type,version,model,decode_nonces_per_min_8gpu,tensor_parallel_size,tp_source
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,3,H100,H100,0.28.0,zai-org/GLM-5.3-Flash,921,8,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,4,H200,H200,0.28.0,zai-org/GLM-5.3-Flash,1702,4,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,5,B200,B200,0.28.0,zai-org/GLM-5.3-Flash,4202,4,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,6,B300,B300,0.28.0,zai-org/GLM-5.3-Flash,5050,2,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,10,H100,H100,0.25.1,MiniMax-M2.7 FP8,5188,4,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,11,H200,H200,0.25.1,MiniMax-M2.7 FP8,6832,2,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,12,B200,B200,0.25.1,MiniMax-M2.7 FP8,13711,2,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,13,B300,B300,0.25.1,MiniMax-M2.7 FP8,14368,1,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,17,4xH100,H100,0.25.1,DeepSeek V4 Flash FP8,2700,4,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,18,2xH200,H200,0.25.1,DeepSeek V4 Flash FP8,5488,2,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,19,2xB200,B200,0.25.1,DeepSeek V4 Flash FP8,11088,2,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,20,2xB200,B200,0.25.1,MJPansa/DeepSeek-V4-Flash-0731-NVFP4,11152,2,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,21,B300,B300,0.25.1,DeepSeek V4 Flash FP8,16376,1,snapshot-2026-09-23/benchmarks_8gpu.csv
+https://docs.google.com/spreadsheets/d/1G7_U5JjWo6OJ3pDx0JN30sxJKW0nDhKnOD_O2c0jB5Q/edit?usp=sharing,22,B300,B300,0.25.1,MJPansa/DeepSeek-V4-Flash-0731-NVFP4,17183,1,snapshot-2026-09-23/benchmarks_8gpu.csv
