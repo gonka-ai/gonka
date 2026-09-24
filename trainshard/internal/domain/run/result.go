@@ -174,12 +174,12 @@ func FailedReport(node vo.NodeRef, err error) NodeReport {
 	return NodeReport{Node: node, Images: make([]ImageRun, 0), Fault: shared.NewFault(err)}
 }
 
-func ReportOf(node vo.NodeRef, state RunState, observed Observed) NodeReport {
+func ReportOf(node vo.NodeRef, state RunState, exitCode *int) NodeReport {
 	images := state.Images
 	if images == nil {
 		images = make([]ImageRun, 0)
 	}
-	return NodeReport{Node: node, Images: images, ExitCode: observed.ExitCode, Fault: state.Fault}
+	return NodeReport{Node: node, Images: images, ExitCode: exitCode, Fault: state.Fault}
 }
 
 type RunState struct {

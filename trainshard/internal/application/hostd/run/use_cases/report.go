@@ -25,10 +25,8 @@ func (uc *ReportUseCase) Execute(ctx context.Context, cmd NodesCommand) ([]run.N
 		return nil, err
 	}
 
-	// 2. Take from the record only what a run needs from it
-	reservation := run.Reservation{Shard: record.ID, BaseImage: record.BaseImage, Active: record.IsActive(height)}
-
-	// 3. Return image history and exit codes
+	// 2. Return image history and exit codes; only the exit code is read off the machine, so a
+	// probe that fails elsewhere cannot hold back what is recorded
 	return run.PerNode(cmd.Nodes, run.FailedReport, func(node vo.NodeRef) (run.NodeReport, error) {
 		if err := shard.CanObserve(cmd.forNode(node), record, height); err != nil {
 			return run.NodeReport{}, err
@@ -37,10 +35,10 @@ func (uc *ReportUseCase) Execute(ctx context.Context, cmd NodesCommand) ([]run.N
 		if err != nil {
 			return run.NodeReport{}, err
 		}
-		observed, err := uc.machine.Observe(ctx, node, run.DesiredFor(reservation, state, false))
+		container, err := uc.machine.Containers.Inspect(ctx, record.ID, node)
 		if err != nil {
 			return run.NodeReport{}, err
 		}
-		return run.ReportOf(node, state, observed), nil
+		return run.ReportOf(node, state.For(record.ID), container.ExitCode), nil
 	}), nil
 }

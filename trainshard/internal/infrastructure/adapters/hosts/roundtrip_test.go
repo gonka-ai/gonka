@@ -3,6 +3,7 @@ package hosts_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -344,7 +345,7 @@ func (echoStreams) Shell(_ context.Context, _ run.ExecRequest, terminal io.ReadW
 }
 
 // shellHost serves only the session module, behind the same route prefix a proxy strips
-func shellHost(t *testing.T) reached {
+func shellHost(t *testing.T, streams run.Streams) reached {
 	t.Helper()
 
 	clock := clock.System{}
@@ -356,16 +357,16 @@ func shellHost(t *testing.T) reached {
 	if err != nil {
 		t.Fatalf("state: %v", err)
 	}
-	streams := session.New(session.Config{Participant: host, Nodes: []vo.NodeRef{node}}, session.Deps{
+	sessions := session.New(session.Config{Participant: host, Nodes: []vo.NodeRef{node}}, session.Deps{
 		Chain:    chain,
-		Streams:  echoStreams{},
+		Streams:  streams,
 		Sessions: state.Sessions(),
 		Served:   state.Served(clock),
 		Clock:    clock,
 	})
 
 	mux := http.NewServeMux()
-	streams.Mount(mux, signedhttp.New(hostKey, clock, time.Minute, vo.Address(host)).Wrap)
+	sessions.Mount(mux, signedhttp.New(hostKey, clock, time.Minute, vo.Address(host)).Wrap)
 	server := httptest.NewServer(http.StripPrefix(routePrefix, mux))
 	t.Cleanup(server.Close)
 
@@ -386,7 +387,7 @@ func (t *terminal) Write(p []byte) (int, error) { return t.out.Write(p) }
 
 func TestAShellCrossesTheWireBothWays(t *testing.T) {
 
-	client := shellHost(t)
+	client := shellHost(t, echoStreams{})
 	typed := &terminal{in: strings.NewReader("whoami\nls\n")}
 
 	err := client.Shell(context.Background(), client.machine, run.ExecRequest{Shard: shardID, Node: node}, typed)
@@ -396,6 +397,42 @@ func TestAShellCrossesTheWireBothWays(t *testing.T) {
 	}
 	if got := typed.out.String(); got != "you said whoami\nyou said ls\n" {
 		t.Fatalf("got %q, want every line answered and the session closed when typing stops", got)
+	}
+}
+
+// silentStreams is a shell that never answers and ends only when the test lets it go
+type silentStreams struct {
+	echoStreams
+	released chan struct{}
+}
+
+func (s silentStreams) Shell(context.Context, run.ExecRequest, io.ReadWriter) error {
+	<-s.released
+	return nil
+}
+
+func TestAShellEndsWhenItsCallerGivesUp(t *testing.T) {
+
+	silent := silentStreams{released: make(chan struct{})}
+	client := shellHost(t, silent)
+	t.Cleanup(func() { close(silent.released) })
+	ctx, cancel := context.WithCancel(context.Background())
+	typing, _ := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		done <- client.Shell(ctx, client.machine, run.ExecRequest{Shard: shardID, Node: node}, &terminal{in: typing})
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("got %v, want the shell to end with the caller's cancel", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the shell outlived its caller")
 	}
 }
 

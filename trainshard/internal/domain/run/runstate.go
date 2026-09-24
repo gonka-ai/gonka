@@ -22,6 +22,15 @@ func (s *RunState) Reserve(shardID vo.ShardID, at time.Time) bool {
 	return true
 }
 
+// For is the state as the given shard may read it: until the node is reserved for that shard,
+// what it holds belongs to the one before
+func (s RunState) For(shardID vo.ShardID) RunState {
+	if s.Shard != shardID {
+		return RunState{Shard: shardID}
+	}
+	return s
+}
+
 func RecordReservation(ctx context.Context, runs RunStore, node vo.NodeRef, shardID vo.ShardID, at time.Time) error {
 	return runs.Update(ctx, node, func(state *RunState) { state.Reserve(shardID, at) })
 }

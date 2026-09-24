@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"time"
@@ -31,7 +30,7 @@ func (c *Commands) Register(commands map[string]func(context.Context, []string) 
 }
 
 func (c *Commands) Assemble(ctx context.Context, args []string) error {
-	rest, err := clix.Parse(flag.NewFlagSet("assemble <proposal>", flag.ContinueOnError), args, "proposal")
+	rest, err := clix.Parse(clix.Command("assemble <proposal>", "Turns a passed proposal into a shard: the chain reserves the nodes. Prints the shard id."), args, "proposal")
 	if err != nil {
 		return err
 	}
@@ -49,7 +48,7 @@ func (c *Commands) Assemble(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Settle(ctx context.Context, args []string) error {
-	rest, err := clix.Parse(flag.NewFlagSet("settle <shard>", flag.ContinueOnError), args, "shard")
+	rest, err := clix.Parse(clix.Command("settle <shard>", "Closes the shard on the chain and hands its nodes back."), args, "shard")
 	if err != nil {
 		return err
 	}
@@ -61,7 +60,7 @@ func (c *Commands) Settle(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Prepare(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("prepare <shard> [flags]", flag.ContinueOnError)
+	flags := clix.Command("prepare <shard> [flags]", "Brings up the mesh between the nodes of the shard. A node that cannot join within -wait is released.")
 	wait := flags.Duration("wait", 30*time.Minute, "how long a node has to report its mesh identity and reach its peers before it is released")
 
 	rest, err := clix.Parse(flags, args, "shard")
