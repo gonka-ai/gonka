@@ -632,3 +632,37 @@ func TestFilterOutChallengeParticipants(t *testing.T) {
 	filtered = k.FilterOutChallengeParticipants(ctx, members)
 	require.Len(t, filtered, 2)
 }
+
+// With poc_v2_enabled=false every vote for a challenge is rejected
+// (SubmitPoCChallengeValidations -> ErrNotSupported), so a challenge that
+// opens anyway can only end without votes, i.e. with the target failing.
+// Create must be rejected in that mode too.
+func TestCreatePoCChallenge_RejectsWhenPocV2Disabled(t *testing.T) {
+	k, ctx, _ := setupChallengeCreate(t, 500)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.PocV2Enabled = false
+	require.NoError(t, k.SetParams(ctx, params))
+
+	// The vote side already refuses in this mode.
+	ms := keeper.NewMsgServerImpl(k)
+	_, voteErr := ms.SubmitPoCChallengeValidations(ctx, &types.MsgSubmitPoCChallengeValidations{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 501,
+		Validations: []*types.PoCValidationEntryV2{{
+			ParticipantAddress: testutil.Executor,
+			ModelId:            challengeTestModel,
+			ValidatedWeight:    1,
+		}},
+	})
+	require.ErrorIs(t, voteErr, types.ErrNotSupported)
+
+	_, err = k.CreatePoCChallenge(ctx, &types.MsgCreatePoCChallenge{
+		Creator: testutil.Creator,
+		Target:  testutil.Executor,
+	})
+	require.ErrorIs(t, err, types.ErrNotSupported, "challenge opened although no vote for it can be stored")
+	_, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.False(t, found)
+}
