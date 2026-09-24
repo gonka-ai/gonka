@@ -63,3 +63,32 @@ func TestFetchedPayloadHashes(t *testing.T) {
 		})
 	}
 }
+
+// Test flow:
+//  1. Execute a streamed inference with the case's logprobs request and optimization setting, keeping the prompt, the stored payload and the hashes the executor signed.
+//  2. Hand the validator the executor's own response_hash and served_hash, not ones recomputed from the payload.
+//  3. Assert both hash checks pass, so an unstripped stored payload still re-derives the served_hash its executor signed.
+func TestFetchedPayloadHashesPassWhateverTheExecutorForwarded(t *testing.T) {
+	for _, testCase := range []struct {
+		name                string
+		prompt              string
+		optimizationEnabled bool
+	}{
+		{name: "optimization off, gateway did not ask for logprobs", prompt: streamingPrompt},
+		{name: "optimization off, gateway asked for logprobs", prompt: streamingPromptAskingLogprobs},
+		{name: "optimization on, gateway did not ask for logprobs", prompt: streamingPrompt, optimizationEnabled: true},
+		{name: "optimization on, gateway asked for logprobs", prompt: streamingPromptAskingLogprobs, optimizationEnabled: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			inference := runServedInference(t, testCase.prompt, "text/event-stream", testCase.optimizationEnabled, answeredChunks...)
+			promptHash := sha256.Sum256([]byte(testCase.prompt))
+			request := devshardpkg.ValidateRequest{
+				PromptHash:   promptHash[:],
+				ResponseHash: inference.result.ResponseHash,
+				ServedHash:   inference.result.ServedHash,
+			}
+
+			require.NoError(t, verifyFetchedPayloadHashes(request, []byte(testCase.prompt), inference.stored))
+		})
+	}
+}

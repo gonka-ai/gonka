@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"devshard/internal/boolvalue"
 
@@ -26,11 +27,11 @@ func stubInferenceEngineFromEnv() (devshardpkg.InferenceEngine, error) {
 	if stubResponseBody != "" {
 		body := []byte(stubResponseBody)
 		responseHash := sha256.Sum256(body)
-		stubEngine.ResponseBody = body
 		servedHash, err := stub.HashServedView(body)
 		if err != nil {
 			return nil, err
 		}
+		stubEngine.ResponseBody = body
 		stubEngine.ResponseHash = responseHash[:]
 		stubEngine.ServedHash = servedHash
 	}
@@ -40,6 +41,7 @@ func stubInferenceEngineFromEnv() (devshardpkg.InferenceEngine, error) {
 type processedStreamEngine struct {
 	terminalErrorMessage        string
 	logprobsOptimizationEnabled bool
+	tamperedStream              bool
 }
 
 func (e processedStreamEngine) Execute(_ context.Context, req devshardpkg.ExecuteRequest) (*devshardpkg.ExecuteResult, error) {
@@ -58,6 +60,9 @@ func (e processedStreamEngine) Execute(_ context.Context, req devshardpkg.Execut
 		}
 		if req.ResponseWriter == nil {
 			continue
+		}
+		if e.tamperedStream {
+			forwarded = strings.Replace(forwarded, `"content":"hello"`, `"content":"tampered"`, 1)
 		}
 		_, _ = fmt.Fprintf(req.ResponseWriter, "%s\n\n", forwarded)
 		if flusher, ok := req.ResponseWriter.(http.Flusher); ok {

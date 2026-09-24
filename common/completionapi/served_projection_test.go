@@ -96,26 +96,35 @@ func TestServedBytesAreTheStripOfTheStoredBytes(t *testing.T) {
 //  2. Assert the served hash equals the hash of StripForGateway over the stored body.
 //  3. Relay the forwarded body as one data line plus [DONE] and assert the gateway's bare hash matches the view that caller was owed.
 func TestServedBytesOfAJSONBodyAreTheStripOfTheStoredBody(t *testing.T) {
-	for _, forwardLogprobs := range []bool{true, false} {
-		processor := NewExecutorResponseProcessor("dummy-id", forwardLogprobs)
-		processor.SetLogprobsOptimization(nil, true)
-		forwarded, err := processor.ProcessJsonResponse([]byte(answeredJSONBody))
-		require.NoError(t, err)
+	for _, testCase := range []struct {
+		name            string
+		forwardLogprobs bool
+	}{
+		{name: "caller asked for logprobs", forwardLogprobs: true},
+		{name: "caller did not ask", forwardLogprobs: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			forwardLogprobs := testCase.forwardLogprobs
+			processor := NewExecutorResponseProcessor("dummy-id", forwardLogprobs)
+			processor.SetLogprobsOptimization(nil, true)
+			forwarded, err := processor.ProcessJsonResponse([]byte(answeredJSONBody))
+			require.NoError(t, err)
 
-		stored, err := processor.GetResponseBytes()
-		require.NoError(t, err)
-		servedHash, err := processor.GetServedHash()
-		require.NoError(t, err)
-		stripped, err := StripForGateway(stored)
-		require.NoError(t, err)
-		require.Equal(t, sha256.Sum256(stripped), servedHash)
+			stored, err := processor.GetResponseBytes()
+			require.NoError(t, err)
+			servedHash, err := processor.GetServedHash()
+			require.NoError(t, err)
+			stripped, err := StripForGateway(stored)
+			require.NoError(t, err)
+			require.Equal(t, sha256.Sum256(stripped), servedHash)
 
-		relayedLines := []string{DataPrefix + string(forwarded), DataPrefix + "[DONE]"}
-		wantSum := servedHash
-		if forwardLogprobs {
-			wantSum = sha256.Sum256(stored)
-		}
-		require.Contains(t, receivedSums(relayedLines), wantSum, "a relayed body is hashed bare, as it was stored")
+			relayedLines := []string{DataPrefix + string(forwarded), DataPrefix + "[DONE]"}
+			wantSum := servedHash
+			if forwardLogprobs {
+				wantSum = sha256.Sum256(stored)
+			}
+			require.Contains(t, receivedSums(relayedLines), wantSum, "a relayed body is hashed bare, as it was stored")
+		})
 	}
 }
 
@@ -165,7 +174,9 @@ func TestReceivedResponseHasherDetectsAChangedLine(t *testing.T) {
 	tampered[0] = strings.Replace(tampered[0], `"content":"9"`, `"content":"8"`, 1)
 
 	storedSum := sha256.Sum256(processed.stored)
-	for _, sum := range receivedSums(tampered) {
+	tamperedSums := receivedSums(tampered)
+	require.NotEmpty(t, tamperedSums)
+	for _, sum := range tamperedSums {
 		require.NotEqual(t, processed.servedHash, sum)
 		require.NotEqual(t, storedSum, sum)
 	}
@@ -186,4 +197,35 @@ func TestServedHashOfAStreamWithoutDataLinesIsTheStripOfItsStoredBytes(t *testin
 //  2. Assert it reports no hash, so an empty stream is never treated as bound.
 func TestReceivedResponseHasherHasNothingForAnEmptyStream(t *testing.T) {
 	require.Empty(t, NewReceivedResponseHasher().Sums())
+}
+
+// Test flow:
+//  1. Process a stream whose comment line carries a byte that is not UTF-8, which the stored envelope escapes.
+//  2. Strip the stored envelope the way a validator would.
+//  3. Assert its hash equals the served hash the executor signed, so an honest executor is not voted invalid.
+func TestStripForGatewayKeepsAnEscapedNonDataLineByteForByte(t *testing.T) {
+	processed := processStream(t, []string{": comment \xfe", strings.TrimSpace(EVENT), DataPrefix + "[DONE]"}, false, true)
+
+	stripped, err := StripForGateway(processed.stored)
+	require.NoError(t, err)
+	require.Equal(t, processed.servedHash, sha256.Sum256(stripped))
+}
+
+// Test flow:
+//  1. Process a plain JSON completion that happens to carry a top-level events array.
+//  2. Strip the stored body the way a validator would.
+//  3. Assert it is treated as a completion, not a stream envelope, so its hash equals the executor's served hash.
+func TestStripForGatewayDoesNotMistakeABodyWithAnEventsFieldForAnEnvelope(t *testing.T) {
+	processor := NewExecutorResponseProcessor("dummy-id", false)
+	processor.SetLogprobsOptimization(nil, true)
+	_, err := processor.ProcessJsonResponse([]byte(`{"events":[1],"choices":[{"index":0,"message":{"content":"9"}}],"usage":{"prompt_tokens":3,"completion_tokens":1}}`))
+	require.NoError(t, err)
+	stored, err := processor.GetResponseBytes()
+	require.NoError(t, err)
+	servedHash, err := processor.GetServedHash()
+	require.NoError(t, err)
+
+	stripped, err := StripForGateway(stored)
+	require.NoError(t, err)
+	require.Equal(t, servedHash, sha256.Sum256(stripped))
 }

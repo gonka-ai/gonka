@@ -101,16 +101,12 @@ var ErrInferenceMissed = errors.New("inference missed")
 
 // HasMsgFinish returns true if mempool contains MsgFinishInference for the given nonce.
 func HasMsgFinish(txs []*types.DevshardTx, nonce uint64) bool {
-	return finishTxFor(txs, nonce) != nil
-}
-
-func finishTxFor(txs []*types.DevshardTx, nonce uint64) *types.DevshardTx {
 	for _, tx := range txs {
-		if finish := tx.GetFinishInference(); finish != nil && finish.InferenceId == nonce {
-			return tx
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce {
+			return true
 		}
 	}
-	return nil
+	return false
 }
 
 func HasMsgTimeout(txs []*types.DevshardTx, nonce uint64) bool {
@@ -125,15 +121,19 @@ func HasMsgTimeout(txs []*types.DevshardTx, nonce uint64) bool {
 // MarshalFinishTx returns proto bytes of the DevshardTx wrapping MsgFinishInference
 // for inferenceID, or nil if none is present.
 func MarshalFinishTx(txs []*types.DevshardTx, inferenceID uint64) []byte {
-	tx := finishTxFor(txs, inferenceID)
-	if tx == nil {
-		return nil
+	for _, tx := range txs {
+		if tx == nil {
+			continue
+		}
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			b, err := proto.Marshal(tx)
+			if err != nil {
+				return nil
+			}
+			return b
+		}
 	}
-	b, err := proto.Marshal(tx)
-	if err != nil {
-		return nil
-	}
-	return b
+	return nil
 }
 
 type HostClient interface {
@@ -191,16 +191,12 @@ func (c *InProcessClient) Send(ctx context.Context, req host.HostRequest, stream
 			// be correctly rejected by the proxy's content detector.
 			writeInProcessStreamingChunk(stream)
 		}
-		if result != nil && len(result.ResponseBody) > 0 {
-			resp.ReceivedResponseHashes = [][32]byte{sha256.Sum256(result.ResponseBody)}
-		}
 		// Re-fetch mempool after execution.
 		resp.Mempool = c.Host.MempoolTxs()
 	} else if stream != nil && len(resp.CachedResponseBody) > 0 {
 		// Reconnect path: same rationale as above — emit a streaming shape,
 		// not the cached non-streaming body.
 		writeInProcessStreamingChunk(stream)
-		resp.ReceivedResponseHashes = [][32]byte{sha256.Sum256(resp.CachedResponseBody)}
 	}
 	return resp, nil
 }

@@ -1,6 +1,7 @@
 package completionapi
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -10,53 +11,21 @@ import (
 
 const doneLine = DataPrefix + "[DONE]"
 
-func StripForGateway(stored []byte) ([]byte, error) {
-	document, err := decodeJSONDocument(stored)
-	if err != nil {
-		return nil, err
-	}
-	if events, isEnvelope := streamedEnvelopeEvents(document); isEnvelope {
-		served := make([]string, 0, len(events))
-		for _, raw := range events {
-			if line, isString := raw.(string); isString {
-				served = append(served, stripStreamedLine(line))
-			}
-		}
-		return json.Marshal(SerializedStreamedResponse{Events: served})
-	}
-	if _, isObject := document.(map[string]any); !isObject {
-		return nil, errors.New("strip for gateway: stored payload is not a JSON object")
-	}
-	dropFields(document, fieldsOnlyAskingCallersSee)
-	return json.Marshal(document)
-}
-
-func stripStreamedLine(line string) string {
-	body, isData := streamedLineBody(line)
-	if !isData {
-		return line
-	}
-	document, err := decodeJSONDocument([]byte(body))
-	if err != nil {
-		return line
-	}
-	if _, isObject := document.(map[string]any); !isObject {
-		return line
-	}
-	if !dropFields(document, fieldsOnlyAskingCallersSee) {
-		return line
-	}
-	stripped, err := json.Marshal(document)
-	if err != nil {
-		return line
-	}
-	return DataPrefix + string(stripped)
-}
-
 type envelopeHasher struct {
 	digest    hash.Hash
 	lineCount int
 	sum       *[32]byte
+}
+
+type ReceivedResponseHasher struct {
+	envelope      *envelopeHasher
+	bodyLineCount int
+	firstBody     string
+	isBareBody    bool
+}
+
+type servedEnvelope struct {
+	Events []json.RawMessage `json:"events"`
 }
 
 func newEnvelopeHasher() *envelopeHasher {
@@ -84,12 +53,6 @@ func (hasher *envelopeHasher) finish() [32]byte {
 	return *hasher.sum
 }
 
-type ReceivedResponseHasher struct {
-	envelope  *envelopeHasher
-	firstBody string
-	bareBody  bool
-}
-
 func NewReceivedResponseHasher() *ReceivedResponseHasher {
 	return &ReceivedResponseHasher{envelope: newEnvelopeHasher()}
 }
@@ -98,13 +61,12 @@ func (hasher *ReceivedResponseHasher) Add(line string) {
 	if line == "" {
 		return
 	}
-	switch {
-	case hasher.envelope.lineCount == 0:
+	if hasher.envelope.lineCount == 0 {
+		hasher.isBareBody = strings.HasPrefix(line, DataPrefix) && line != doneLine
 		hasher.firstBody = strings.TrimPrefix(line, DataPrefix)
-		hasher.bareBody = strings.HasPrefix(line, DataPrefix) && line != doneLine
-	case hasher.envelope.lineCount > 1 || line != doneLine:
-		hasher.bareBody = false
-		hasher.firstBody = ""
+	}
+	if line != doneLine {
+		hasher.bodyLineCount++
 	}
 	hasher.envelope.add(line)
 }
@@ -114,8 +76,79 @@ func (hasher *ReceivedResponseHasher) Sums() [][32]byte {
 		return nil
 	}
 	sums := [][32]byte{hasher.envelope.finish()}
-	if hasher.bareBody {
+	if hasher.isBareBody && hasher.bodyLineCount == 1 {
 		sums = append(sums, sha256.Sum256([]byte(hasher.firstBody)))
 	}
 	return sums
+}
+
+func StripForGateway(stored []byte) ([]byte, error) {
+	if events, isEnvelope := envelopeEvents(stored); isEnvelope {
+		served := make([]json.RawMessage, 0, len(events))
+		for _, event := range events {
+			var line string
+			if err := json.Unmarshal(event, &line); err != nil {
+				return nil, err
+			}
+			stripped := stripStreamedLine(line)
+			if stripped == line {
+				served = append(served, event)
+				continue
+			}
+			encoded, err := json.Marshal(stripped)
+			if err != nil {
+				return nil, err
+			}
+			served = append(served, encoded)
+		}
+		return json.Marshal(servedEnvelope{Events: served})
+	}
+	document, err := decodeJSONDocument(stored)
+	if err != nil {
+		return nil, err
+	}
+	if _, isObject := document.(map[string]any); !isObject {
+		return nil, errors.New("strip for gateway: stored payload is not a JSON object")
+	}
+	dropFields(document, fieldsOnlyAskingCallersSee)
+	return json.Marshal(document)
+}
+
+func envelopeEvents(stored []byte) ([]json.RawMessage, bool) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(stored, &fields); err != nil || len(fields) != 1 {
+		return nil, false
+	}
+	var events []json.RawMessage
+	if err := json.Unmarshal(fields["events"], &events); err != nil || events == nil {
+		return nil, false
+	}
+	for _, event := range events {
+		if !bytes.HasPrefix(bytes.TrimSpace(event), []byte(`"`)) {
+			return nil, false
+		}
+	}
+	return events, true
+}
+
+func stripStreamedLine(line string) string {
+	body, isData := streamedLineBody(line)
+	if !isData {
+		return line
+	}
+	document, err := decodeJSONDocument([]byte(body))
+	if err != nil {
+		return line
+	}
+	if _, isObject := document.(map[string]any); !isObject {
+		return line
+	}
+	if !dropFields(document, fieldsOnlyAskingCallersSee) {
+		return line
+	}
+	stripped, err := json.Marshal(document)
+	if err != nil {
+		return line
+	}
+	return DataPrefix + string(stripped)
 }
