@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	errorsmod "cosmossdk.io/errors"
 	cosmossdk_math "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
@@ -991,4 +992,79 @@ func TestLifecycle_DisabledBeforeActivateCancelsAndRefunds(t *testing.T) {
 	r, _ = k.GetMaintenanceReservation(completeCtx, resp.ReservationId)
 	require.Equal(t, types.MaintenanceReservationStatus_MAINTENANCE_RESERVATION_STATUS_CANCELED, r.Status,
 		"status must remain CANCELED — orphan COMPLETE row would have driven it elsewhere")
+}
+
+func TestScheduleMaintenance_RejectsWindowOverInProgressConfirmationPoC(t *testing.T) {
+	t.Parallel()
+	k, ms, ctx := setupMaintenanceTest(t)
+	participant := sample.AccAddress()
+	registerParticipant(t, k, ctx, participant)
+	grantCredit(t, k, ctx, participant, 100)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+
+	// Place the evaluation block (ValidationEnd+1) at 500, well past the lead time.
+	offset := (&types.ConfirmationPoCEvent{}).GetValidationEnd(params.EpochParams) + 1
+	event := types.ConfirmationPoCEvent{
+		EpochIndex:            1,
+		TriggerHeight:         ctx.BlockHeight() - 2,
+		GenerationStartHeight: 500 - offset,
+		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+	}
+	evaluationHeight := event.GetValidationEnd(params.EpochParams) + 1
+	require.Equal(t, int64(500), evaluationHeight)
+	require.NoError(t, k.SetActiveConfirmationPoCEvent(ctx, event))
+
+	// A 1-block window on the evaluation block would put the participant in
+	// CollectActiveMaintenanceAddresses when the event is evaluated.
+	_, err = ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    evaluationHeight,
+		DurationBlocks: 1,
+	})
+	require.ErrorIs(t, err, types.ErrMaintenanceOverlapsConfirmationPoC)
+	codespace, code, _ := errorsmod.ABCIInfo(err, false)
+	require.Equal(t, types.ModuleName, codespace)
+	require.Equal(t, types.ErrMaintenanceOverlapsConfirmationPoC.ABCICode(), code)
+
+	addr, _ := sdk.AccAddressFromBech32(participant)
+	state, found := k.GetMaintenanceState(ctx, addr)
+	require.True(t, found)
+	require.Equal(t, uint64(100), state.CreditBlocks)
+	require.Zero(t, state.ScheduledReservationId)
+
+	// A window after the evaluation block is unaffected.
+	_, err = ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    evaluationHeight + 1,
+		DurationBlocks: 1,
+	})
+	require.NoError(t, err)
+}
+
+func TestScheduleMaintenance_CompletedConfirmationPoCDoesNotBlock(t *testing.T) {
+	t.Parallel()
+	k, ms, ctx := setupMaintenanceTest(t)
+	participant := sample.AccAddress()
+	registerParticipant(t, k, ctx, participant)
+	grantCredit(t, k, ctx, participant, 100)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+
+	offset := (&types.ConfirmationPoCEvent{}).GetValidationEnd(params.EpochParams) + 1
+	require.NoError(t, k.SetActiveConfirmationPoCEvent(ctx, types.ConfirmationPoCEvent{
+		EpochIndex:            1,
+		GenerationStartHeight: 500 - offset,
+		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED,
+	}))
+
+	_, err = ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
+		DurationBlocks: 1,
+	})
+	require.NoError(t, err)
 }
