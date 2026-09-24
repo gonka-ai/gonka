@@ -196,16 +196,26 @@ def run_mode(args, urls, model, sessions, mode, seed, tag):
         running.append((subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, env=env,
                                          cwd=args.mt_dir, start_new_session=True), logf))
 
-    # settled: three adjacent windows of the generation rate agree
-    settled_at, trace, W = None, [], args.settle_win
-    while time.monotonic() - t_start < args.max_ramp:
+    # settled: three adjacent windows of the generation rate agree. The ramp is
+    # timed from the first generated token: building the conversations for
+    # hundreds of sessions takes the client a while before it sends anything.
+    settled_at, trace, W, t_load = None, [], args.settle_win, None
+    while True:
         time.sleep(5)
         now = time.monotonic()
         r = [smp.rate("gen", now - (k + 1) * W, now - k * W) for k in range(3)]
         trace.append(round(r[0] or 0))
+        if t_load is None and r[0]:
+            t_load = now
+        if t_load is None:
+            if now - t_start > args.prep_timeout:
+                break
+            continue
         if all(r) and (max(r) - min(r)) / max(r) < args.settle_tol \
-                and now - t_start > args.min_ramp:
+                and now - t_load > args.min_ramp:
             settled_at = now
+            break
+        if now - t_load > args.max_ramp:
             break
     t0 = settled_at or time.monotonic()
     time.sleep(args.window)
@@ -306,6 +316,8 @@ def main():
     ap.add_argument("--min-ramp", type=int, default=90)
     ap.add_argument("--max-ramp", type=int, default=240)
     ap.add_argument("--settle-win", type=int, default=20)
+    ap.add_argument("--prep-timeout", type=int, default=900,
+                    help="seconds allowed for the client to send its first request")
     ap.add_argument("--settle-tol", type=float, default=0.10)
     ap.add_argument("--conv-per-session", type=int, default=6,
                     help="conversations generated per session")
