@@ -73,6 +73,32 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.mu.Unlock()
 }
 
+// waitTimerArmed blocks until a timer is scheduled at now+d. Advance drops a
+// tick that has not been armed yet, and real-time sleeps do not move this clock.
+func (c *fakeClock) waitTimerArmed(t *testing.T, d time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if c.timerArmed(d) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for a timer at now+%s", d)
+}
+
+func (c *fakeClock) timerArmed(d time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	want := c.now.Add(d)
+	for _, timer := range c.timers {
+		if timer.deadline.Equal(want) {
+			return true
+		}
+	}
+	return false
+}
+
 // scriptNMClient returns scripted errors or configs per call index.
 type scriptNMClient struct {
 	gen.NodeManagerClient
@@ -456,17 +482,17 @@ func TestAdaptive_FailbackHysteresis_NeedsConsecutiveProbes(t *testing.T) {
 
 	waitActiveSource(t, p, SourceActiveChain, 2*time.Second)
 
+	clock.waitTimerArmed(t, cfg.GRPCReprobe)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
+	clock.waitTimerArmed(t, cfg.GRPCReprobe)
 	assert.Equal(t, SourceActiveChain, p.ActiveSource(), "one healthy probe must not fail back")
 
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
+	clock.waitTimerArmed(t, cfg.GRPCReprobe)
 	assert.Equal(t, SourceActiveChain, p.ActiveSource(), "failed reprobe must reset streak")
 
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
+	clock.waitTimerArmed(t, cfg.GRPCReprobe)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
 	waitActiveSource(t, p, SourceActiveGRPC, 3*time.Second)
 }
