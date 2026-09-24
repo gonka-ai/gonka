@@ -3,7 +3,6 @@ package inference
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -52,36 +51,29 @@ func TestFetchSignedPayloads_RPCWhenOptedIn(t *testing.T) {
 	require.Equal(t, []byte("response"), resp.ResponsePayload)
 }
 
-func TestFetchSignedPayloads_HTTPWhenNotOptedIn(t *testing.T) {
+func TestFetchSignedPayloads_NoHTTPFallback(t *testing.T) {
 	var httpHit atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		httpHit.Store(true)
-		require.Equal(t, http.MethodGet, r.Method)
-		_ = json.NewEncoder(w).Encode(commonvalidation.PayloadResponse{
-			InferenceId:     "42",
-			PromptPayload:   []byte("prompt"),
-			ResponsePayload: []byte("response"),
-		})
+		w.WriteHeader(http.StatusGone)
 	}))
 	t.Cleanup(srv.Close)
 
 	t.Run("nil client", func(t *testing.T) {
 		httpHit.Store(false)
-		resp, err := fetchSignedPayloads(context.Background(), srv.Client(), nil, srv.URL, "",
+		_, err := fetchSignedPayloads(context.Background(), srv.Client(), nil, srv.URL, "",
 			"42", "val", 1, 10, "sig", 0)
-		require.NoError(t, err)
-		require.True(t, httpHit.Load())
-		require.Equal(t, []byte("prompt"), resp.PromptPayload)
+		require.ErrorIs(t, err, errPayloadRPCUnavailable)
+		require.False(t, httpHit.Load())
 	})
 	t.Run("endpoints without payload", func(t *testing.T) {
 		httpHit.Store(false)
 		peer := testutil.MustGenerateKey(t)
 		rpc := transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-1", peer), nil, transport.ParseRPCEndpoints(transport.EndpointGossip))
-		resp, err := fetchSignedPayloads(context.Background(), srv.Client(), rpc, srv.URL, "",
+		_, err := fetchSignedPayloads(context.Background(), srv.Client(), rpc, srv.URL, "",
 			"42", "val", 1, 10, "sig", 0)
-		require.NoError(t, err)
-		require.True(t, httpHit.Load())
-		require.Equal(t, []byte("prompt"), resp.PromptPayload)
+		require.ErrorIs(t, err, errPayloadRPCUnavailable)
+		require.False(t, httpHit.Load())
 	})
 }
 

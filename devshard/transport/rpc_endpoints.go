@@ -130,22 +130,22 @@ func AllRPCEndpoints() EndpointSet {
 	return set
 }
 
-// RPCEndpointsFromEnv reads DEVSHARD_RPC_ENDPOINTS. Unset or empty is every
-// wired method (phase 7). "off", "none", and "http" are the empty set: the
-// HTTP client, whose Echo session routes now answer 410.
+var endpointsIgnoredOnce sync.Once
+
+// RPCEndpointsFromEnv is every Connect method. DEVSHARD_RPC_ENDPOINTS is
+// ignored: a partial list or "off" used to send those methods to the retired
+// HTTP routes, which answer 410.
 func RPCEndpointsFromEnv() EndpointSet {
 	raw := strings.TrimSpace(os.Getenv(envRPCEndpoints))
-	switch strings.ToLower(raw) {
-	case "":
-		set := AllRPCEndpoints()
-		warnUnwiredRPCEndpoints(set)
-		return set
-	case "off", "none", "http":
-		return EndpointSet{}
+	if raw != "" {
+		endpointsIgnoredOnce.Do(func() {
+			logging.Warn("DEVSHARD_RPC_ENDPOINTS is ignored; every peer method uses Connect",
+				"subsystem", "transport",
+				"value", raw,
+			)
+		})
 	}
-	set := ParseRPCEndpoints(raw)
-	warnUnwiredRPCEndpoints(set)
-	return set
+	return AllRPCEndpoints()
 }
 
 func isAttachRPCEndpoint(name string) bool {

@@ -47,6 +47,10 @@ x-versiond: &versiond
     - DEVSHARD_OTEL_ENABLED=${DEVSHARD_OTEL_ENABLED:-false}
     - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
     - OTEL_HEADERS=${OTEL_HEADERS:-}
+    # Children inherit this. The overlay replaces versiond's environment, so
+    # the HTTP/2 dial has to be repeated here.
+    - DEVSHARD_RPC_H2_UPGRADE=true
+    - DEVSHARD_RPC_H2_PORT=${DEVSHARD_RPC_H2_PORT:-9443}
     - PGHOST=devshard-postgres
     - PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}
     - PGUSER=${DEVSHARD_POSTGRES_USER:-devshardd}

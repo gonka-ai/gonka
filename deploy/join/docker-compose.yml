@@ -187,6 +187,10 @@ services:
       - DEVSHARD_OTEL_ENABLED=${DEVSHARD_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
+      # Children inherit this. HA peers refuse /rpc/ on :8080, so dial the
+      # proxy-router HTTP/2 port.
+      - DEVSHARD_RPC_H2_UPGRADE=true
+      - DEVSHARD_RPC_H2_PORT=${DEVSHARD_RPC_H2_PORT:-9443}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin

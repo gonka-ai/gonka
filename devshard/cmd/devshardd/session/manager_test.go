@@ -302,8 +302,11 @@ func TestRecoverSessions_HappyPath(t *testing.T) {
 	require.NotNil(t, srv)
 	require.NotNil(t, srv.Host())
 	require.Len(t, srv.PeerClients(), 3, "every group slot including self")
-	require.NotNil(t, srv.Gossip())
-	require.Equal(t, 2, srv.Gossip().PeerCount(), "gossip excludes this host")
+	require.Nil(t, srv.Gossip(), "production child must not wire gossip")
+
+	before := srv.Host().HostMempool().Len()
+	srv.ServeGossipTxs([]*types.DevshardTx{testutil.StartTx(99)})
+	require.Equal(t, before, srv.Host().HostMempool().Len(), "inbound gossip txs must be dropped")
 }
 
 func TestHostManager_WireHostToHostGetHostInfoError(t *testing.T) {

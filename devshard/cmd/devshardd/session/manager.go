@@ -34,7 +34,6 @@ import (
 	"common/chainoracle/blocks"
 	devshardpkg "devshard"
 	"devshard/bridge"
-	"devshard/gossip"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/boolvalue"
@@ -2150,10 +2149,10 @@ func closeTransportServer(srv *transport.Server) {
 	}
 }
 
-// wireHostToHost stores host-signed SelectTransport clients so gossip, repair
-// probes, and timeout verify (ChallengeReceipt / GetMempool) exist on a
-// production child. Same shape as cmd/devshard-host: Attach identity is
-// m.signer, matching finding 7. HTTP when DEVSHARD_RPC_ENDPOINTS is empty.
+// wireHostToHost stores host-signed SelectTransport clients so repair probes
+// and timeout verify (ChallengeReceipt / GetMempool) exist on a production
+// child. Attach identity is m.signer. Gossip stays unwired: s.gossip is nil,
+// so inbound gossip nonces and txs are dropped and nothing is broadcast.
 func (m *HostManager) wireHostToHost(srv *transport.Server, escrowID string, group []types.SlotAssignment) error {
 	if srv == nil || m.signer == nil || m.bridge == nil {
 		return nil
@@ -2169,10 +2168,7 @@ func (m *HostManager) wireHostToHost(srv *transport.Server, escrowID string, gro
 	cfg := transport.DefaultClientConfig()
 	cfg.RoutePrefix = routePrefix
 	endpoints := transport.RPCEndpointsFromEnv()
-	owned := h.SlotIDs()
 	hostPeers := make(map[int]transport.HostPeerClient, len(group))
-	gossipPeers := make([]gossip.PeerClient, 0, len(group))
-	var fetcher gossip.DiffFetcher
 	var created []transport.HostPeerClient
 	var err error
 	defer func() {
@@ -2207,28 +2203,8 @@ func (m *HostManager) wireHostToHost(srv *transport.Server, escrowID string, gro
 		}
 		created = append(created, pc)
 		hostPeers[int(slot.SlotID)] = pc
-		if owned[slot.SlotID] {
-			continue
-		}
-		gp, ok := selected.(gossip.PeerClient)
-		if !ok {
-			err = fmt.Errorf("peer slot %d: SelectTransport returned %T", i, selected)
-			return err
-		}
-		gossipPeers = append(gossipPeers, gp)
-		if fetcher == nil {
-			if f, ok := selected.(gossip.DiffFetcher); ok {
-				fetcher = f
-			}
-		}
 	}
 	srv.SetPeerClients(hostPeers)
-	opts := []gossip.GossipOption{gossip.WithSigAccumulator(h)}
-	if fetcher != nil {
-		opts = append(opts, gossip.WithRecovery(fetcher, h))
-	}
-	gsp := gossip.NewGossip(escrowID, h.PrimarySlot(), gossipPeers, h.HostMempool(), opts...)
-	srv.SetGossip(gsp)
 	created = nil
 	return nil
 }

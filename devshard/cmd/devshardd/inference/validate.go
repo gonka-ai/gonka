@@ -133,7 +133,7 @@ func fetchPayloadsFromExecutor(
 		commonvalidation.PayloadResponseByteLimit(req.OutputTokens),
 	)
 	if err != nil {
-		if errors.Is(err, commonvalidation.ErrPayloadGone) || ctx.Err() != nil {
+		if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, errPayloadRPCUnavailable) || ctx.Err() != nil {
 			return nil, nil, err
 		}
 		return nil, nil, tagExecutorPayloadFault(err)
@@ -239,6 +239,11 @@ func (t ttfbRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
+// errPayloadRPCUnavailable is a local configuration miss. It is not an
+// executor fault: the retired HTTP payload route answers 410, and voting
+// Valid:false on that would punish an honest executor.
+var errPayloadRPCUnavailable = errors.New("payload is served over Connect; the HTTP payload route is retired")
+
 func fetchSignedPayloads(
 	ctx context.Context,
 	client *http.Client,
@@ -249,27 +254,21 @@ func fetchSignedPayloads(
 	signature string,
 	maxBytes int64,
 ) (*commonvalidation.PayloadResponse, error) {
-	if rpc != nil && rpc.Uses(transport.EndpointPayload) {
-		waitCtx, cancel := context.WithTimeout(ctx, payloadFetchHeaderTimeout)
-		defer cancel()
-		if err := rpc.WaitReady(waitCtx); err != nil {
-			return nil, err
-		}
-		return fetchPayloadsRPCWithRetry(ctx, rpc, &rpcpb.GetPayloadRequest{
-			InferenceId:      inferenceID,
-			ValidatorAddress: validatorAddress,
-			Timestamp:        timestamp,
-			EpochId:          epochID,
-			Signature:        []byte(signature), // HTTP Authorization header text
-		}, maxBytes)
+	if rpc == nil || !rpc.Uses(transport.EndpointPayload) {
+		return nil, errPayloadRPCUnavailable
 	}
-	requestURL, err := commonvalidation.BuildPayloadRequestURL(executorURL, requestPath, inferenceID)
-	if err != nil {
+	waitCtx, cancel := context.WithTimeout(ctx, payloadFetchHeaderTimeout)
+	defer cancel()
+	if err := rpc.WaitReady(waitCtx); err != nil {
 		return nil, err
 	}
-	return fetchPayloadsHTTPWithRetry(
-		ctx, client, requestURL, validatorAddress, timestamp, epochID, signature, maxBytes,
-	)
+	return fetchPayloadsRPCWithRetry(ctx, rpc, &rpcpb.GetPayloadRequest{
+		InferenceId:      inferenceID,
+		ValidatorAddress: validatorAddress,
+		Timestamp:        timestamp,
+		EpochId:          epochID,
+		Signature:        []byte(signature), // HTTP Authorization header text
+	}, maxBytes)
 }
 
 func payloadResponseFromRPC(resp *rpcpb.GetPayloadResponse, err error) (*commonvalidation.PayloadResponse, error) {

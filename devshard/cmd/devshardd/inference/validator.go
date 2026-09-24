@@ -162,8 +162,8 @@ func (v *Validator) fetchPayloadsFor(ctx context.Context, req devshardpkg.Valida
 	)
 }
 
-// SetPayloadRPC enables Connect GetPayload when DEVSHARD_RPC_ENDPOINTS
-// includes "payload". signer is the host identity used for Attach.
+// SetPayloadRPC enables Connect GetPayload. signer is the host identity
+// used for Attach. Payload is always a Connect method; there is no HTTP GET.
 func (v *Validator) SetPayloadRPC(signer signing.Signer, endpoints transport.EndpointSet) {
 	if v == nil {
 		return

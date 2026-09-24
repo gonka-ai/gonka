@@ -44,6 +44,10 @@ jq -e '
     "http://api:9100/versions") and
   (.services.proxy.networks | has("versiond-router-front")) and
   (.services.proxy.networks | has("versiond-router-back")) and
+  (.services.versiond.environment.DEVSHARD_RPC_H2_UPGRADE == "true") and
+  (.services.versiond.environment.DEVSHARD_RPC_H2_PORT == "9443") and
+  (.services.versiond2.environment.DEVSHARD_RPC_H2_UPGRADE == "true") and
+  (.services.versiond2.environment.DEVSHARD_RPC_H2_PORT == "9443") and
   (.services.versiond.networks["versiond-router-back"].aliases | index("versiond-pool")) and
   (.networks["versiond-router-front"].external == true) and
   (.networks["versiond-router-back"].external == true)
@@ -87,5 +91,37 @@ router_scrape=$(awk '
 ' "$script_dir/observability/prometheus.yml")
 grep -q -- '- versiond-router-metrics' <<<"$router_scrape"
 grep -q 'port: 8405' <<<"$router_scrape"
+
+# Children inherit versiond's environment. Base (non-HA) and a remote HA host
+# must dial proxy-router's HTTP/2 port too; :8080 refuses /rpc/ on an HA peer.
+docker compose --project-directory "$script_dir" \
+    -f "$script_dir/docker-compose.yml" \
+    config --format json >"$tmpdir/base.json"
+jq -e '
+  (.services.versiond.environment.DEVSHARD_RPC_H2_UPGRADE == "true") and
+  (.services.versiond.environment.DEVSHARD_RPC_H2_PORT == "9443")
+' "$tmpdir/base.json" >/dev/null
+
+NETWORK_NODE_PRIVATE_IP=10.0.0.2 \
+VERSIOND_BIND_IP=10.0.0.3 \
+KEY_NAME=test \
+DEVSHARD_POSTGRES_PASSWORD=test \
+    docker compose --project-directory "$script_dir" \
+    -f "$script_dir/docker-compose.versiond-remote.yml" \
+    config --format json >"$tmpdir/remote.json"
+jq -e '
+  (.services.versiond.environment.DEVSHARD_RPC_H2_UPGRADE == "true") and
+  (.services.versiond.environment.DEVSHARD_RPC_H2_PORT == "9443")
+' "$tmpdir/remote.json" >/dev/null
+
+printf 'DEVSHARD_PORT=8080\n' >"$tmpdir/gateway.env"
+DEVSHARD_ENV_FILE="$tmpdir/gateway.env" \
+    docker compose --project-directory "$script_dir" \
+    -f "$script_dir/docker-compose.devshard-gateway.yml" \
+    config --format json >"$tmpdir/gateway.json"
+jq -e '
+  (.services["devshard-gateway"].environment.DEVSHARD_RPC_H2_UPGRADE == "true") and
+  (.services["devshard-gateway"].environment.DEVSHARD_RPC_H2_PORT == "9443")
+' "$tmpdir/gateway.json" >/dev/null
 
 echo "versiond-compose-config_test: ok"
