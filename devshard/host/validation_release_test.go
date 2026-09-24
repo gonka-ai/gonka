@@ -13,6 +13,7 @@ import (
 
 	"devshard"
 	"devshard/internal/testutil"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/stub"
@@ -236,6 +237,16 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			validator: scriptedValidationEngine{err: devshard.ErrValidationAlreadyLeased},
 		},
 		{
+			// The richer error must keep the sentinel's behaviour: releasing
+			// here would free a row this attempt never acquired.
+			name:      "lease conflict",
+			skipApply: true,
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Status: devshard.LeaseStatusPending,
+				Owner:  "gonka1owner",
+			}},
+		},
+		{
 			name:         "inference disappeared",
 			skipApply:    true,
 			wantRelease:  1,
@@ -393,6 +404,59 @@ func TestHost_CloseWithoutStartDoesNotBlock(t *testing.T) {
 	case <-closed:
 	case <-time.After(time.Second):
 		t.Fatal("Close of an unstarted host blocked")
+	}
+}
+
+// TestLeaseConflictSeverity pins which conflicts are worth a warning. A
+// submitted row and a young pending row are the dedup guard working, so grading
+// them as errors is what made this path unreadable in the first place.
+func TestLeaseConflictSeverity(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		conflict  *devshard.LeaseConflict
+		wantLevel observability.Level
+		wantMsg   string
+	}{
+		{
+			name:      "pending within ttl",
+			conflict:  &devshard.LeaseConflict{Status: devshard.LeaseStatusPending},
+			wantLevel: observability.LevelInfo,
+			wantMsg:   "lease already held",
+		},
+		{
+			name:      "pending past ttl",
+			conflict:  &devshard.LeaseConflict{Status: devshard.LeaseStatusPending, Stale: true},
+			wantLevel: observability.LevelWarn,
+			wantMsg:   "lease held past TTL",
+		},
+		{
+			name:      "submitted",
+			conflict:  &devshard.LeaseConflict{Status: devshard.LeaseStatusSubmitted},
+			wantLevel: observability.LevelInfo,
+			wantMsg:   "lease already submitted",
+		},
+		{
+			name:      "skipped",
+			conflict:  &devshard.LeaseConflict{Status: devshard.LeaseStatusSkipped},
+			wantLevel: observability.LevelWarn,
+			wantMsg:   "lease marked skipped for this epoch",
+		},
+		{
+			name:      "row not read",
+			conflict:  &devshard.LeaseConflict{Detail: "row absent when read; already released"},
+			wantLevel: observability.LevelInfo,
+			wantMsg:   "lease already held",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			level, msg := leaseConflictSeverity(tt.conflict)
+			require.Equal(t, tt.wantLevel, level)
+			require.Contains(t, msg, tt.wantMsg)
+		})
 	}
 }
 

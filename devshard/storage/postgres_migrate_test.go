@@ -129,6 +129,42 @@ SELECT identity::text FROM devshard_storage_identity WHERE singleton`).Scan(&ide
 	require.Equal(t, storageIdentity, identityAfterRerun)
 }
 
+func TestMigratePostgres_LeaseIdentityDefaultsBlank(t *testing.T) {
+	ctx := context.Background()
+	pool, cleanup := setupDevshardPostgresPool(t, nil)
+	defer cleanup()
+
+	var before []migrate.Step
+	for _, step := range PostgresMigrationSteps() {
+		if step.ID < 15 {
+			before = append(before, step)
+		}
+	}
+	require.NoError(t, migrate.ApplyPG(ctx, pool, before))
+
+	_, err := pool.Exec(ctx, `
+CREATE TABLE devshard_validation_leases_epoch_10
+    PARTITION OF devshard_validation_leases
+    FOR VALUES FROM (10) TO (11)`)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `
+INSERT INTO devshard_validation_leases
+    (epoch_id, escrow_id, inference_id, instance_address)
+VALUES (10, 'escrow-legacy', 7, 'gonka1')`)
+	require.NoError(t, err)
+
+	require.NoError(t, MigratePostgres(ctx, pool))
+
+	var instanceID, hostname string
+	err = pool.QueryRow(ctx, `
+SELECT instance_id, hostname FROM devshard_validation_leases
+WHERE epoch_id = 10 AND escrow_id = 'escrow-legacy' AND inference_id = 7`).
+		Scan(&instanceID, &hostname)
+	require.NoError(t, err)
+	require.Empty(t, instanceID)
+	require.Empty(t, hostname)
+}
+
 func TestInitializePostgresSchemaFromEnvironment(t *testing.T) {
 	_, cleanup := setupDevshardPostgresPool(t, nil)
 	defer cleanup()

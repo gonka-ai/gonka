@@ -1418,6 +1418,11 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			)
 			return
 		}
+		var conflict *devshard.LeaseConflict
+		if errors.As(err, &conflict) {
+			h.logValidationLeaseConflict(ctx, job, conflict)
+			return
+		}
 		reason, where := observability.ErrorReason(err, observability.ReasonValidateErr, observability.WhereHostValidate)
 		observability.FailValidationFinished(ctx, h.escrowID, reason, where, "validate failed", err,
 			"inference_id", job.inferenceID,
@@ -1565,6 +1570,54 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			}
 		}
 	}
+}
+
+// leaseConflictSeverity grades a lease conflict. Only two of the outcomes are
+// actionable: a skipped row, which nothing will ever reclaim, and a pending row
+// held past the TTL, which means the holder died without releasing or the retry
+// loop has fallen behind.
+func leaseConflictSeverity(conflict *devshard.LeaseConflict) (observability.Level, string) {
+	switch {
+	case conflict.Status == devshard.LeaseStatusSkipped:
+		return observability.LevelWarn, "validation stopped: lease marked skipped for this epoch"
+	case conflict.Status == devshard.LeaseStatusSubmitted:
+		return observability.LevelInfo, "validation stopped: lease already submitted"
+	case conflict.Stale:
+		return observability.LevelWarn, "validation stopped: lease held past TTL"
+	default:
+		return observability.LevelInfo, "validation stopped: lease already held"
+	}
+}
+
+// logValidationLeaseConflict reports an attempt that stopped because a lease
+// row was already in place. It stays off FailValidationFinished because most of
+// these outcomes are healthy: a submitted row means the duplicate-submit guard
+// did its job, and a young pending row means a validation is in flight.
+func (h *Host) logValidationLeaseConflict(ctx context.Context, job validateJob, conflict *devshard.LeaseConflict) {
+	observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusLeased)
+
+	level, msg := leaseConflictSeverity(conflict)
+	kv := []any{
+		"inference_id", job.inferenceID,
+		"executor_address", job.executorAddress,
+		"validator_slot", job.validatorSlot,
+		"validation_flow", string(job.flow),
+		"lease_status", conflict.Status,
+		"lease_owner", conflict.Owner,
+		"lease_instance_id", conflict.InstanceID,
+		"lease_hostname", conflict.Hostname,
+		"lease_stale", conflict.Stale,
+	}
+	if !conflict.ClaimedAt.IsZero() {
+		kv = append(kv,
+			"lease_claimed_at", conflict.ClaimedAt.UTC().Format(time.RFC3339),
+			"lease_age", time.Since(conflict.ClaimedAt).Truncate(time.Second).String())
+	}
+	if conflict.Detail != "" {
+		kv = append(kv, "lease_detail", conflict.Detail)
+	}
+	observability.Log(ctx, level, msg, observability.StageValidationFinished,
+		observability.WhereHostValidate, h.escrowID, observability.ReasonValidationLeased, conflict, kv...)
 }
 
 func (h *Host) stampValidationCooldown(inferenceID uint64) {

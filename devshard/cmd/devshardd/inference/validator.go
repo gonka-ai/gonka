@@ -24,10 +24,11 @@ import (
 
 // leaseOps is satisfied by storage.LeaseStore; extracted as interface for testing.
 type leaseOps interface {
-	Acquire(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, instanceAddr string) (bool, error)
-	SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error
-	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error)
-	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
+	Acquire(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, owner storage.LeaseOwner) (bool, error)
+	DescribeLease(ctx context.Context, escrowId string, inferenceId, epochId uint64) (storage.LeaseInfo, bool, error)
+	SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, owner storage.LeaseOwner) error
+	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) (bool, error)
+	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) error
 }
 
 type acquireKey struct {
@@ -285,7 +286,7 @@ type LeaseValidator struct {
 	validator    devshardpkg.ValidationEngine
 	phase        *chain.Phase
 	leases       leaseOps
-	instanceAddr string
+	owner        storage.LeaseOwner
 	leaseTTL     time.Duration
 	acquires     sync.Map // acquireKey -> acquireRec
 }
@@ -296,16 +297,16 @@ type acquireRec struct {
 }
 
 // NewLeaseValidator wraps v with Postgres lease deduplication.
-func NewLeaseValidator(v devshardpkg.ValidationEngine, phase *chain.Phase, leases leaseOps, instanceAddr string, leaseTTL time.Duration) *LeaseValidator {
+func NewLeaseValidator(v devshardpkg.ValidationEngine, phase *chain.Phase, leases leaseOps, owner storage.LeaseOwner, leaseTTL time.Duration) *LeaseValidator {
 	if leaseTTL <= 0 {
 		leaseTTL = 30 * time.Minute
 	}
 	return &LeaseValidator{
-		validator:    v,
-		phase:        phase,
-		leases:       leases,
-		instanceAddr: instanceAddr,
-		leaseTTL:     leaseTTL,
+		validator: v,
+		phase:     phase,
+		leases:    leases,
+		owner:     owner,
+		leaseTTL:  leaseTTL,
 	}
 }
 
@@ -328,13 +329,13 @@ func (c *LeaseValidator) loadAcquire(escrowID string, inferenceID uint64) (acqui
 
 func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
 	epochID := resolveValidationEpoch(c.phase, req.EpochID)
-	acquired, err := c.leases.Acquire(ctx, req.EscrowID, req.InferenceID, epochID, c.instanceAddr)
+	acquired, err := c.leases.Acquire(ctx, req.EscrowID, req.InferenceID, epochID, c.owner)
 	if err != nil {
 		slog.Warn("devshardd: validation lease failed",
 			"escrow", req.EscrowID, "inference", req.InferenceID, "error", err)
 		return nil, fmt.Errorf("acquire validation: %w", err)
 	} else if !acquired {
-		return nil, devshardpkg.ErrValidationAlreadyLeased
+		return nil, c.describeConflict(ctx, req.EscrowID, req.InferenceID, epochID)
 	}
 	c.rememberAcquire(req.EscrowID, req.InferenceID, epochID, time.Now())
 
@@ -345,6 +346,32 @@ func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateR
 	}
 
 	return result, nil
+}
+
+// describeConflict turns a refused acquire into an error that says what was in
+// the way. The extra read costs one query on a path that has already given up
+// on validating, and every failure to read still yields a usable error: the
+// caller only logs this, never branches on it.
+func (c *LeaseValidator) describeConflict(ctx context.Context, escrowID string, inferenceID, epochID uint64) error {
+	conflict := &devshardpkg.LeaseConflict{}
+	info, found, err := c.leases.DescribeLease(ctx, escrowID, inferenceID, epochID)
+	switch {
+	case err != nil:
+		conflict.Detail = fmt.Sprintf("lease read failed: %v", err)
+	case !found:
+		// Released or pruned between the acquire and this read, so the
+		// inference is already re-pickable.
+		conflict.Detail = "row absent when read; already released"
+	default:
+		conflict.Status = string(info.Status)
+		conflict.Owner = info.InstanceAddr
+		conflict.InstanceID = info.InstanceID
+		conflict.Hostname = info.Hostname
+		conflict.ClaimedAt = info.ClaimedAt
+		conflict.Stale = info.Status == storage.LeaseStatusPending &&
+			!info.ClaimedAt.IsZero() && time.Since(info.ClaimedAt) > c.leaseTTL
+	}
+	return conflict
 }
 
 // AllowValidationSubmit gates MsgValidation publish: TTL since acquire and
@@ -362,7 +389,7 @@ func (c *LeaseValidator) MarkValidationSubmitted(ctx context.Context, escrowID s
 		c.forgetAcquire(escrowID, inferenceID)
 		return err
 	}
-	err = c.leases.SetResult(ctx, escrowID, inferenceID, rec.epochID, storage.LeaseStatusSubmitted, c.instanceAddr)
+	err = c.leases.SetResult(ctx, escrowID, inferenceID, rec.epochID, storage.LeaseStatusSubmitted, c.owner)
 	c.forgetAcquire(escrowID, inferenceID)
 	if errors.Is(err, storage.ErrLeaseNotOwned) {
 		return fmt.Errorf("%w: %v", devshardpkg.ErrValidationLeaseAbandoned, err)
@@ -377,7 +404,7 @@ func (c *LeaseValidator) ReleaseValidationLease(ctx context.Context, escrowID st
 	}
 	releaseCtx, cancel := leaseReleaseContext(ctx)
 	defer cancel()
-	err := c.leases.Release(releaseCtx, escrowID, inferenceID, rec.epochID, c.instanceAddr)
+	err := c.leases.Release(releaseCtx, escrowID, inferenceID, rec.epochID, c.owner)
 	c.forgetAcquire(escrowID, inferenceID)
 	return err
 }
@@ -385,7 +412,7 @@ func (c *LeaseValidator) ReleaseValidationLease(ctx context.Context, escrowID st
 func (c *LeaseValidator) releaseAndForget(ctx context.Context, escrowID string, inferenceID, epochID uint64) {
 	releaseCtx, cancel := leaseReleaseContext(ctx)
 	defer cancel()
-	if err := c.leases.Release(releaseCtx, escrowID, inferenceID, epochID, c.instanceAddr); err != nil {
+	if err := c.leases.Release(releaseCtx, escrowID, inferenceID, epochID, c.owner); err != nil {
 		slog.Warn("devshardd: validation lease release failed",
 			"escrow", escrowID, "inference", inferenceID, "error", err)
 	}
@@ -414,7 +441,7 @@ func (c *LeaseValidator) ensureLeaseStillValid(ctx context.Context, escrowID str
 			"escrow", escrowID, "inference", inferenceID, "lease_ttl", c.leaseTTL)
 		return rec, fmt.Errorf("%w: %w", devshardpkg.ErrValidationLeaseAbandoned, devshardpkg.ErrValidationLeaseTTLExceeded)
 	}
-	owned, err := c.leases.OwnsPendingLease(ctx, escrowID, inferenceID, rec.epochID, c.instanceAddr)
+	owned, err := c.leases.OwnsPendingLease(ctx, escrowID, inferenceID, rec.epochID, c.owner)
 	if err != nil {
 		return rec, err
 	}

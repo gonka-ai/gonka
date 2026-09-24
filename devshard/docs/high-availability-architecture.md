@@ -400,6 +400,15 @@ independent prerequisite. This keeps a child whose database connection was lost
 out of every per-version hash ring without making a single transient probe flap
 the whole pool.
 
+A validation lease row records the process that claimed it (`instance_id`) and
+the container hostname beside the participant address. Ownership matches the
+address and the process id. A binary from before that column existed writes a
+blank `instance_id`; a current binary will not complete or release that row,
+and `AcquireOneStale` reclaims it after the lease TTL. During a rolling update
+the older binary still matches on the address alone, so it can still release a
+row a current binary holds. That overlap ends once every replica runs the
+current binary.
+
 Every versiond replica of one participant must point at the same PostgreSQL:
 the same `PGHOST`, `PGPORT`, `PGDATABASE` and `PGUSER`, with
 `DEVSHARD_STORAGE_MODE=postgres`. `deploy/join/update-devshard.sh --check`
