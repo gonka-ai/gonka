@@ -700,6 +700,29 @@ func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLS
 	return epochBLSData, nil
 }
 
+// GetEpochBLSDataBase returns only the base EpochBLSData record, without
+// rehydrating DealerParts, VerificationSubmissions or DealerComplaints from
+// their sub-keys. Everything the threshold-signing hot path reads
+// (Participants, SlotPublicKeys, GroupPublicKey, TSlotsDegree, DkgPhase and
+// the phase deadlines) lives in the base record, while the dealer parts
+// alone are tens of KB per BLS participant. Callers that need the split-out
+// fields must use GetEpochBLSData.
+func (k Keeper) GetEpochBLSDataBase(ctx sdk.Context, epochID uint64) (types.EpochBLSData, error) {
+	store := k.storeService.OpenKVStore(ctx)
+	value, err := store.Get(types.EpochBLSDataKey(epochID))
+	if err != nil {
+		return types.EpochBLSData{}, err
+	}
+	if value == nil {
+		return types.EpochBLSData{}, types.ErrEpochBLSDataNotFound
+	}
+	var epochBLSData types.EpochBLSData
+	if err := k.cdc.Unmarshal(value, &epochBLSData); err != nil {
+		return types.EpochBLSData{}, err
+	}
+	return epochBLSData, nil
+}
+
 // dealerComplaintPairKey packs a (dealer, complainer) pair into a single
 // uint64 so it can be used as a map key for fast deduplication during
 // rehydration.

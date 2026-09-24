@@ -15,7 +15,7 @@ import (
 
 // RequestThresholdSignature is the main entry point for other modules to request BLS threshold signatures
 func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.SigningData) error {
-	epochBLSData, err := k.GetEpochBLSData(ctx, signingData.CurrentEpochId)
+	epochBLSData, err := k.GetEpochBLSDataBase(ctx, signingData.CurrentEpochId)
 	if err != nil {
 		return fmt.Errorf("failed to get epoch %d BLS data: %w", signingData.CurrentEpochId, err)
 	}
@@ -435,7 +435,7 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 	}
 
 	// Get current epoch BLS data for validation
-	epochBLSData, err := k.GetEpochBLSData(ctx, request.CurrentEpochId)
+	epochBLSData, err := k.GetEpochBLSDataBase(ctx, request.CurrentEpochId)
 	if err != nil {
 		return fmt.Errorf("failed to get epoch %d BLS data: %w", request.CurrentEpochId, err)
 	}
