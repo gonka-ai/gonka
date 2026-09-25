@@ -37,6 +37,14 @@ import (
 
 const hsAnchorE2EEscrowID = "9001"
 
+// echoHTTPEndpoints keeps these Echo servers on HTTPClient. An empty set
+// does not override RPCEndpointsFromEnv, which wraps every peer method in
+// Connect. Attach never becomes ready against these routes, SeedHeightSync
+// stays retryable, and the seed loop runs until the package timeout.
+func echoHTTPEndpoints() transport.EndpointSet {
+	return transport.EndpointSet{"echo-http": {}}
+}
+
 // hsE2ERoutePrefix tracks RuntimeTestVersion so the user session (which binds
 // SM version from the route) and host SMs (EffectiveStateRootAndProtocolVersion)
 // compute the same state root.
@@ -436,6 +444,7 @@ func setupFourHostHTTPHeightSyncFromChainOracles(t *testing.T, hostSchedOracle, 
 			f(&cc)
 		}
 	}
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	extra := &cc
 	storagePath := filepath.Join(t.TempDir(), "session.db")
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
@@ -477,6 +486,7 @@ func (st *fourHostStack) newHTTPSession(t *testing.T) *user.Session {
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = st.Oracle
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     st.PrivateKeyHex,
 		EscrowID:          st.Bridge.escrow.EscrowID,
@@ -602,6 +612,7 @@ func (st *oneHostRestartStack) newHTTPSession(t *testing.T) *user.Session {
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = st.Oracle
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     st.PrivateKeyHex,
 		EscrowID:          st.Bridge.escrow.EscrowID,
@@ -2110,6 +2121,7 @@ func setupFourHostHTTPHeightSyncWithToggleableClient(t *testing.T, hostOracles [
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = clientOracle
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	extra := &cc
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     userSigner.PrivateKeyHex(),
