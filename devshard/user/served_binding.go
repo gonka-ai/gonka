@@ -15,7 +15,6 @@ const (
 	ServedBindingUnverifiedFinish ServedBinding = "unverified_finish"
 	ServedBindingBound            ServedBinding = "bound"
 	ServedBindingMismatch         ServedBinding = "mismatch"
-	ServedBindingMissing          ServedBinding = "missing"
 )
 
 func checkServedBinding(response *host.HostResponse, nonce uint64, rejectUnverified func(*types.DevshardTx) error) ServedBinding {
@@ -36,9 +35,6 @@ func checkServedBinding(response *host.HostResponse, nonce uint64, rejectUnverif
 		if bytes.Equal(received[:], finish.ResponseHash) || bytes.Equal(received[:], finish.ServedHash) {
 			return ServedBindingBound
 		}
-	}
-	if len(finish.ServedHash) == 0 {
-		return ServedBindingMissing
 	}
 	return ServedBindingMismatch
 }

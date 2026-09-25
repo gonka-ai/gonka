@@ -151,13 +151,13 @@ The executor forwards exactly one of those two documents, never a third marshal.
 | Party | Check |
 |---|---|
 | Executor | hashes the stored bytes and, incrementally, the served projection of the same chunks; signs both |
-| Gateway | hashes every non-protocol line it received as the executor enveloped them (and a single relayed body bare, as it was stored), and matches either signed hash on the first Finish the session would accept (`user.CheckServedBinding`, local checks only). A mismatch strikes the host locally: the bytes already reached the client, and the gateway cannot prove what the host sent. A Finish without `served_hash` is the shape a v5 executor signs, so it is counted and not struck |
-| Validator | `sha256(fetched) == response_hash`, then `sha256(StripForGateway(fetched)) == served_hash`. An empty `served_hash` fails closed: every executor of an escrow runs the same version, so only an executor dodging the check omits it |
+| Gateway | hashes every non-protocol line it received as the executor enveloped them (and a single relayed body bare, as it was stored), and matches either signed hash on the first Finish the session would accept (`user.CheckServedBinding`, local checks only). A mismatch strikes the host locally: the bytes already reached the client, and the gateway cannot prove what the host sent. A Finish without `served_hash` that matches nothing is a mismatch too |
+| Validator | `sha256(fetched) == response_hash`, then `sha256(StripForGateway(fetched)) == served_hash`. A Finish whose `response_hash` or `served_hash` is not 32 bytes never applies: `applyFinishInference` refuses it with `ErrInvalidFinishHash`, on every host and in every session, so leaving `served_hash` out is caught deterministically rather than by sampling |
 | Error-miss verifier | accepts the gateway's rebuilt payload when it hashes to either signed view; the vote still binds `response_hash` |
 
 This closes both gaps the earlier gating opened: an executor cannot finish one answer and stream another, and an error miss is provable with the optimization on. Two error misses stay unprovable, as before: a JSON body relayed to a streaming gateway, and a reconnect replayed from the cached body. The executor stored a bare body there, while the gateway's error-miss payload is always an envelope; the binding check covers both shapes, the error-miss proof does not. The gateway judges the Finish that arrived with the stream; an executor that sends a different Finish later, through another response or gossip, is not re-checked against the one the session applies — the validator's `served_hash` check is what binds the applied Finish.
 
-`served_hash` enters the state root through `InferenceRecordProto`, and the validator fails closed without it, so the protocol is bumped to v6 (`DevshardStateRootAndProtocolVersion`, `DefaultProtocolVersion`). The sealed-inference rows in SQL do not carry it; they serve observability only.
+`served_hash` enters the state root through `InferenceRecordProto`, and a Finish without it does not apply, so the protocol is bumped to v6 (`DevshardStateRootAndProtocolVersion`, `DefaultProtocolVersion`). The sealed-inference rows in SQL do not carry it; they serve observability only.
 
 ## Configuration
 

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/host"
+	"devshard/internal/testutil"
 	"devshard/types"
 	"devshard/user"
 )
@@ -879,7 +880,7 @@ func TestInflightFinished_StallHostNotFinished(t *testing.T) {
 	resp := &host.HostResponse{
 		Mempool: []*types.DevshardTx{
 			{Tx: &types.DevshardTx_FinishInference{
-				FinishInference: &types.MsgFinishInference{InferenceId: 7},
+				FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7},
 			}},
 		},
 	}

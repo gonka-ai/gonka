@@ -465,7 +465,7 @@ const engineCoreErrorSSE = "data: {\"error\":{\"code\":500,\"message\":\"EngineC
 
 func sseMetaWithFinish(t *testing.T, inferenceID uint64) string {
 	t.Helper()
-	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: inferenceID}}}
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: inferenceID}}}
 	b, err := DevshardTxsToBytes([]*types.DevshardTx{tx})
 	require.NoError(t, err)
 	raw, err := json.Marshal(map[string]any{"devshard_meta": DevshardMetaEvent{Mempool: b}})
