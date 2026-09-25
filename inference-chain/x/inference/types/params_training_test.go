@@ -16,9 +16,16 @@ func TestTrainingParamsValidate_EpochLimitsBindOnlyWhenEnabled(t *testing.T) {
 	require.ErrorContains(t, params.Validate(epoch), "settled_shard_retention_blocks")
 
 	params.SettledShardRetentionBlocks = 2*epoch.EpochLength + params.ReleaseBufferBlocks
-	require.ErrorContains(t, params.Validate(epoch), "opt_in_ttl_blocks")
+	require.NoError(t, params.Validate(epoch))
+}
 
-	params.OptInTtlBlocks = epoch.EpochLength
+func TestTrainingParamsValidate_AnOptInShorterThanAnEpochIsAllowed(t *testing.T) {
+	epoch := &EpochParams{EpochLength: 17280}
+	params := DefaultTrainingParams()
+	params.TrainingEnabled = true
+	params.SettledShardRetentionBlocks = 2*epoch.EpochLength + params.ReleaseBufferBlocks
+
+	require.Less(t, params.OptInTtlBlocks, epoch.EpochLength)
 	require.NoError(t, params.Validate(epoch))
 }
 
