@@ -59,6 +59,18 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 		return fmt.Errorf("failed to parse epoch_id: %w", err)
 	}
 
+	// Idempotency guard: EventKeyGenerationInitiated can be re-delivered on WS reconnect.
+	// Same pattern as isAlreadyValidated in inference_validation.go.
+	bm.processedDKGMu.Lock()
+	if _, seen := bm.processedDKGEpochs[epochID]; seen {
+		bm.processedDKGMu.Unlock()
+		logging.Debug("DKG epoch already processed, skipping duplicate event", inferenceTypes.BLS,
+			"epochID", epochID, "dealer", bm.cosmosClient.GetAddress())
+		return nil
+	}
+	bm.processedDKGEpochs[epochID] = struct{}{}
+	bm.processedDKGMu.Unlock()
+
 	totalSlotsStrs, ok := event.Result.Events["inference.bls.EventKeyGenerationInitiated.i_total_slots"]
 	if !ok || len(totalSlotsStrs) == 0 {
 		return fmt.Errorf("i_total_slots not found in event")
