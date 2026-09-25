@@ -465,11 +465,12 @@ func TestHasMsgFinish(t *testing.T) {
 
 // killableClient wraps a HostClient. Kill/Revive toggle availability.
 type killableClient struct {
-	inner  user.HostClient
-	killed atomic.Bool
-	mu     sync.Mutex
-	err    error
-	last   *host.HostRequest
+	inner          user.HostClient
+	killed         atomic.Bool
+	mu             sync.Mutex
+	err            error
+	last           *host.HostRequest
+	receivedHashes [][32]byte
 }
 
 func (c *killableClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
@@ -477,6 +478,7 @@ func (c *killableClient) Send(ctx context.Context, req host.HostRequest, stream 
 	reqCopy := req
 	c.last = &reqCopy
 	forcedErr := c.err
+	receivedHashes := c.receivedHashes
 	c.mu.Unlock()
 	if c.killed.Load() {
 		return nil, fmt.Errorf("host killed")
@@ -484,7 +486,17 @@ func (c *killableClient) Send(ctx context.Context, req host.HostRequest, stream 
 	if forcedErr != nil {
 		return nil, forcedErr
 	}
-	return c.inner.Send(ctx, req, stream, receiptHandler)
+	resp, err := c.inner.Send(ctx, req, stream, receiptHandler)
+	if resp != nil && receivedHashes != nil {
+		resp.ReceivedResponseHashes = receivedHashes
+	}
+	return resp, err
+}
+
+func (c *killableClient) ReportReceivedHashes(hashes [][32]byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.receivedHashes = hashes
 }
 
 func (c *killableClient) Kill()   { c.killed.Store(true) }

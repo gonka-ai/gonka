@@ -791,6 +791,7 @@ func (c *HTTPClient) handleSSELine(
 		if sawMeta != nil {
 			*sawMeta = true
 		}
+		received.MarkComplete()
 		var meta DevshardMetaEvent
 		if err := json.Unmarshal(raw, &meta); err != nil {
 			logging.Warn("sse_meta_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "event_key", key, "error", err)

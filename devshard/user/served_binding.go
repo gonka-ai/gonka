@@ -2,58 +2,125 @@ package user
 
 import (
 	"bytes"
+	"time"
 
-	"devshard/host"
 	"devshard/types"
+)
+
+const (
+	ServedBindingBound    ServedBinding = "bound"
+	ServedBindingMismatch ServedBinding = "mismatch"
 )
 
 type ServedBinding string
 
-const (
-	ServedBindingNoFinish         ServedBinding = "no_finish"
-	ServedBindingNothingReceived  ServedBinding = "nothing_received"
-	ServedBindingUnverifiedFinish ServedBinding = "unverified_finish"
-	ServedBindingBound            ServedBinding = "bound"
-	ServedBindingMismatch         ServedBinding = "mismatch"
-)
+type ServedBindingHandler func(nonce uint64, hostIndex int, participantKey string, verdict ServedBinding)
 
-func checkServedBinding(response *host.HostResponse, nonce uint64, rejectUnverified func(*types.DevshardTx) error) ServedBinding {
-	if response == nil {
-		return ServedBindingNoFinish
+type servedFinishHashes struct {
+	responseHash []byte
+	servedHash   []byte
+}
+
+type waitingReceivedStream struct {
+	hashes     [][32]byte
+	receivedAt time.Time
+}
+
+type waitingAppliedFinish struct {
+	hashes    servedFinishHashes
+	appliedAt time.Time
+}
+
+func (s *Session) SetServedBindingHandler(handler ServedBindingHandler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.servedBindingHandler = handler
+}
+
+func (s *Session) BindReceivedStream(nonce uint64, received [][32]byte) {
+	if len(received) == 0 {
+		return
 	}
-	finish, sawUnverified := acceptedFinishFor(response.Mempool, nonce, rejectUnverified)
-	if finish == nil && sawUnverified {
-		return ServedBindingUnverifiedFinish
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	finish, isApplied := s.appliedFinishHashes[nonce]
+	if !isApplied {
+		if s.receivedStreams == nil {
+			s.receivedStreams = make(map[uint64]waitingReceivedStream)
+		}
+		now := s.nowLocked()
+		s.receivedStreams[nonce] = waitingReceivedStream{hashes: received, receivedAt: now}
+		s.forgetExpiredServedBindingsLocked(now)
+		return
 	}
-	if finish == nil {
-		return ServedBindingNoFinish
+	delete(s.appliedFinishHashes, nonce)
+	s.reportServedBindingLocked(nonce, judgeServedBinding(received, finish.hashes))
+}
+
+func (s *Session) bindAppliedFinishLocked(finish *types.MsgFinishInference) {
+	nonce := finish.InferenceId
+	hashes := servedFinishHashes{responseHash: finish.ResponseHash, servedHash: finish.ServedHash}
+	stream, isReceived := s.receivedStreams[nonce]
+	if !isReceived {
+		if s.appliedFinishHashes == nil {
+			s.appliedFinishHashes = make(map[uint64]waitingAppliedFinish)
+		}
+		now := s.nowLocked()
+		s.appliedFinishHashes[nonce] = waitingAppliedFinish{hashes: hashes, appliedAt: now}
+		s.forgetExpiredServedBindingsLocked(now)
+		return
 	}
-	if len(response.ReceivedResponseHashes) == 0 {
-		return ServedBindingNothingReceived
+	delete(s.receivedStreams, nonce)
+	s.reportServedBindingLocked(nonce, judgeServedBinding(stream.hashes, hashes))
+}
+
+func (s *Session) reportServedBindingLocked(nonce uint64, verdict ServedBinding) {
+	if s.servedBindingHandler == nil || len(s.group) == 0 {
+		return
 	}
-	for _, received := range response.ReceivedResponseHashes {
-		if bytes.Equal(received[:], finish.ResponseHash) || bytes.Equal(received[:], finish.ServedHash) {
+	hostIndex := int(nonce % uint64(len(s.group)))
+	s.servedBindingHandler(nonce, hostIndex, s.hostParticipantKeyLocked(hostIndex), verdict)
+}
+
+func (s *Session) forgetExpiredServedBindingsLocked(now time.Time) {
+	var executionTimeoutSeconds int64
+	if s.sm != nil {
+		executionTimeoutSeconds = s.sm.Config().ExecutionTimeout
+	}
+	retention := servedBindingRetention(executionTimeoutSeconds)
+	if now.Sub(s.servedBindingsPrunedAt) < retention {
+		return
+	}
+	s.servedBindingsPrunedAt = now
+	for nonce, stream := range s.receivedStreams {
+		if now.Sub(stream.receivedAt) > retention && !s.finishCanStillApplyLocked(nonce) {
+			delete(s.receivedStreams, nonce)
+		}
+	}
+	for nonce, finish := range s.appliedFinishHashes {
+		if now.Sub(finish.appliedAt) > retention {
+			delete(s.appliedFinishHashes, nonce)
+		}
+	}
+}
+
+func (s *Session) finishCanStillApplyLocked(nonce uint64) bool {
+	if s.sm == nil {
+		return false
+	}
+	record, isTracked := s.sm.Inference(nonce)
+	return isTracked && (record.Status == types.StatusPending || record.Status == types.StatusStarted)
+}
+
+func servedBindingRetention(executionTimeoutSeconds int64) time.Duration {
+	return 2 * (time.Duration(executionTimeoutSeconds)*time.Second + TimeoutBuffer)
+}
+
+func judgeServedBinding(received [][32]byte, finish servedFinishHashes) ServedBinding {
+	for _, sum := range received {
+		if bytes.Equal(sum[:], finish.responseHash) || bytes.Equal(sum[:], finish.servedHash) {
 			return ServedBindingBound
 		}
 	}
 	return ServedBindingMismatch
-}
-
-func (s *Session) CheckServedBinding(response *host.HostResponse, nonce uint64) ServedBinding {
-	return checkServedBinding(response, nonce, s.rejectUnverifiedHostTx)
-}
-
-func acceptedFinishFor(txs []*types.DevshardTx, nonce uint64, rejectUnverified func(*types.DevshardTx) error) (accepted *types.MsgFinishInference, sawUnverified bool) {
-	for _, tx := range txs {
-		finish := tx.GetFinishInference()
-		if finish == nil || finish.InferenceId != nonce {
-			continue
-		}
-		if rejectUnverified(tx) != nil {
-			sawUnverified = true
-			continue
-		}
-		return finish, sawUnverified
-	}
-	return nil, sawUnverified
 }

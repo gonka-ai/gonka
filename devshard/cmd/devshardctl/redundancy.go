@@ -522,6 +522,8 @@ type Redundancy struct {
 	onRaceCleanupStart func()
 	onRaceCleanupDone  func()
 
+	servedBindingStrikes sync.WaitGroup
+
 	// Detached race cleanups outlive the request that spawned them, so they get
 	// their own cancellation root and are joined by Stop. Built lazily because
 	// Redundancy is also constructed as a struct literal.
@@ -579,6 +581,9 @@ func NewRedundancyWithThrottle(session *user.Session, perf *PerfTracker, groupSi
 	}
 	e.picker = newSessionPicker(session, model, e.runGhostProbe, throttleBlocked, e.escrowStateBlockReason)
 	e.picker.start()
+	if session != nil {
+		session.SetServedBindingHandler(e.handleServedBinding)
+	}
 	return e
 }
 
@@ -594,6 +599,7 @@ func (e *Redundancy) Stop() {
 		e.picker.stop()
 	}
 	e.waitRaceCleanups()
+	e.servedBindingStrikes.Wait()
 }
 
 func (e *Redundancy) Decide(primaryHostIdx int, inputTokens uint64) Decision {
@@ -2163,8 +2169,8 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				"poc_reason", currentPoCPhaseReason(),
 			)
 		}
-		if !inf.probe && inf.err == nil && e.session != nil {
-			e.recordServedBinding(ctx, inf, params, e.session.CheckServedBinding(inf.resp, inf.nonce))
+		if e.session != nil && bindsReceivedStream(inf) {
+			e.session.BindReceivedStream(inf.nonce, inf.resp.ReceivedResponseHashes)
 		}
 	}()
 }
@@ -3954,10 +3960,6 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 	if e.longResponseFailureExempt(inf) {
 		return
 	}
-	e.recordHostFailureOnce(inf, params)
-}
-
-func (e *Redundancy) recordHostFailureOnce(inf *inflight, params user.InferenceParams) {
 	participantKey := e.participantKeyForHost(inf.hostIdx)
 	inf.sampleOnce.Do(func() {
 		sample := RequestSample{
@@ -3974,10 +3976,7 @@ func (e *Redundancy) recordHostFailureOnce(inf *inflight, params user.InferenceP
 		if !inf.sendTime.IsZero() {
 			sample.TotalTime = time.Since(inf.sendTime)
 		}
-		e.perf.Record(sample)
-		if e.metrics != nil {
-			e.metrics.ObserveRequestSample(e.devshardID, sample)
-		}
+		e.recordFailureSample(sample)
 	})
 	// Outside the sample's once: the settle path records the same failing sample without ever telling
 	// the limiter, so leaving the strike under it makes quarantine depend on which writer got there
@@ -3986,24 +3985,6 @@ func (e *Redundancy) recordHostFailureOnce(inf *inflight, params user.InferenceP
 	if e.participantLimiter != nil && e.perf.ParticipantFailureThresholdExceeded(participantKey) {
 		inf.limiterStrikeOnce.Do(func() { e.participantLimiter.ObserveStalledWinner(participantKey) })
 	}
-}
-
-func (e *Redundancy) recordServedBinding(ctx context.Context, inf *inflight, params user.InferenceParams, verdict user.ServedBinding) {
-	if e.metrics != nil {
-		e.metrics.RecordServedBinding(string(verdict))
-	}
-	if verdict != user.ServedBindingMismatch {
-		return
-	}
-	logInferenceStage(ctx, inf.escrowID, inf.nonce, "served_binding_failed",
-		"host", inf.hostID,
-		"verdict", string(verdict),
-		"output_chunks", inf.outputChunks.Load(),
-	)
-	if inf.phaseTransitionAborted {
-		return
-	}
-	e.recordHostFailureOnce(inf, params)
 }
 
 func (e *Redundancy) recordWinnerTerminalFailureOnce(inf *inflight, params user.InferenceParams, winnerNonce uint64) {

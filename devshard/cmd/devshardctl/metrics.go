@@ -368,7 +368,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 		servedBindings: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "devshard_gateway_served_bindings_total",
-				Help: "Streams checked against the executor's signed Finish, by verdict (bound, mismatch, unverified_finish, nothing_received, no_finish).",
+				Help: "Streams checked against the executor's signed Finish, by verdict (bound, mismatch).",
 			},
 			[]string{"verdict"},
 		),
