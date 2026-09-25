@@ -6,6 +6,7 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 	pserver "decentralized-api/internal/server/public"
+	"decentralized-api/participant"
 	"decentralized-api/payloadstorage"
 	"net/http"
 	_ "net/http/pprof"
@@ -26,14 +27,24 @@ import (
 	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
 )
 
+// participantActivity is the cached "is this participant in the active set?"
+// signal admin handlers read, so answering it costs no chain RPC per request.
+// Narrow interface rather than the concrete *participant.ActivityTracker so
+// tests can drive the active and unknown states directly.
+type participantActivity interface {
+	IsActive() bool
+	IsKnown() bool
+}
+
 type Server struct {
-	e              *echo.Echo
-	nodeBroker     *broker.Broker
-	configManager  *apiconfig.ConfigManager
-	recorder       cosmos_client.CosmosMessageClient
-	cdc            *codec.ProtoCodec
-	blockQueue     *pserver.BridgeQueue
-	payloadStorage payloadstorage.PayloadStorage
+	e               *echo.Echo
+	nodeBroker      *broker.Broker
+	configManager   *apiconfig.ConfigManager
+	recorder        cosmos_client.CosmosMessageClient
+	cdc             *codec.ProtoCodec
+	blockQueue      *pserver.BridgeQueue
+	payloadStorage  payloadstorage.PayloadStorage
+	activityTracker participantActivity
 }
 
 func NewServer(
@@ -41,19 +52,28 @@ func NewServer(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	blockQueue *pserver.BridgeQueue,
-	payloadStorage payloadstorage.PayloadStorage) *Server {
+	payloadStorage payloadstorage.PayloadStorage,
+	activityTracker *participant.ActivityTracker) *Server {
 	cdc := getCodec()
+
+	// Assign through a nil check: storing a typed nil pointer in the interface
+	// field would make `s.activityTracker != nil` true and panic on first use.
+	var activity participantActivity
+	if activityTracker != nil {
+		activity = activityTracker
+	}
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
-		e:              e,
-		nodeBroker:     nodeBroker,
-		configManager:  configManager,
-		recorder:       recorder,
-		cdc:            cdc,
-		blockQueue:     blockQueue,
-		payloadStorage: payloadStorage,
+		e:               e,
+		nodeBroker:      nodeBroker,
+		configManager:   configManager,
+		recorder:        recorder,
+		cdc:             cdc,
+		blockQueue:      blockQueue,
+		payloadStorage:  payloadStorage,
+		activityTracker: activity,
 	}
 
 	e.Use(middleware.LoggingMiddleware)
