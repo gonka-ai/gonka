@@ -318,12 +318,11 @@ func backfillTrainingParamDefaults(ctx context.Context, k keeper.Keeper) error {
 		params.TrainingParams.MaxExpirationsPerBlock = types.DefaultTrainingMaxExpirationsPerBlk
 	}
 
-	// the block defaults are tuned for short epochs, so raise them to the
-	// minimums this chain's epoch length requires before training can be enabled
+	// retention is tuned for short epochs, so raise it to the minimum this chain's
+	// epoch length requires before training can be enabled. The opt-in ttl stays
+	// short: the daemon refreshes it every few minutes, and a longer one only keeps
+	// a host whose daemon is gone eligible for assembly
 	if epoch := params.EpochParams; epoch != nil && epoch.EpochLength > 0 {
-		if params.TrainingParams.OptInTtlBlocks < epoch.EpochLength {
-			params.TrainingParams.OptInTtlBlocks = epoch.EpochLength
-		}
 		minRetention := 2*epoch.EpochLength + params.TrainingParams.ReleaseBufferBlocks
 		if params.TrainingParams.SettledShardRetentionBlocks < minRetention {
 			params.TrainingParams.SettledShardRetentionBlocks = minRetention

@@ -525,9 +525,6 @@ func (p *TrainingParams) Validate(epochParams *EpochParams) error {
 		if p.SettledShardRetentionBlocks < minRetention {
 			return fmt.Errorf("training settled_shard_retention_blocks (%d) must be at least two epoch lengths plus release_buffer_blocks (%d)", p.SettledShardRetentionBlocks, minRetention)
 		}
-		if p.OptInTtlBlocks < epochParams.EpochLength {
-			return fmt.Errorf("training opt_in_ttl_blocks (%d) must be at least one epoch length (%d)", p.OptInTtlBlocks, epochParams.EpochLength)
-		}
 	}
 	return nil
 }

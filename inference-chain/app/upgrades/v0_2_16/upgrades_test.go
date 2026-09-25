@@ -160,7 +160,7 @@ func TestBackfillTrainingParamDefaults(t *testing.T) {
 	require.Equal(t, inferencetypes.DefaultTrainingReleaseBufferBlocks, got.TrainingParams.ReleaseBufferBlocks)
 }
 
-func TestBackfillTrainingParamDefaults_RaisesLimitsToEpochLength(t *testing.T) {
+func TestBackfillTrainingParamDefaults_RaisesRetentionButKeepsTheOptInShort(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
 	params, err := k.GetParams(ctx)
@@ -173,7 +173,7 @@ func TestBackfillTrainingParamDefaults_RaisesLimitsToEpochLength(t *testing.T) {
 
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Equal(t, int64(2000), got.TrainingParams.OptInTtlBlocks)
+	require.Equal(t, inferencetypes.DefaultTrainingOptInTtlBlocks, got.TrainingParams.OptInTtlBlocks)
 	require.Equal(t, 2*int64(2000)+got.TrainingParams.ReleaseBufferBlocks, got.TrainingParams.SettledShardRetentionBlocks)
 
 	got.TrainingParams.TrainingEnabled = true
