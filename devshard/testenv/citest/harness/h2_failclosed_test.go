@@ -90,11 +90,38 @@ func baselinePinSHA(t *testing.T, path string) string {
 
 func gitShow(t *testing.T, repoRoot, sha, path string) string {
 	t.Helper()
-	cmd := exec.Command("git", "show", sha+":"+path)
-	cmd.Dir = repoRoot
-	out, err := cmd.CombinedOutput()
+	out, err := gitShowPath(repoRoot, sha, path)
+	if err != nil && !gitCommitPresent(repoRoot, sha) {
+		// actions/checkout defaults to fetch-depth 1, so an ancestor pin is
+		// absent. git show then reports the path as missing. Fetch that commit.
+		fetchCommit(t, repoRoot, sha)
+		out, err = gitShowPath(repoRoot, sha, path)
+	}
 	if err != nil {
-		t.Skipf("git show %s:%s: %v\n%s", sha, path, err, out)
+		t.Fatalf("git show %s:%s: %v\n%s", sha, path, err, out)
 	}
 	return string(out)
+}
+
+func gitShowPath(repoRoot, sha, path string) ([]byte, error) {
+	cmd := exec.Command("git", "show", sha+":"+path)
+	cmd.Dir = repoRoot
+	return cmd.CombinedOutput()
+}
+
+func gitCommitPresent(repoRoot, sha string) bool {
+	cmd := exec.Command("git", "cat-file", "-e", sha+"^{commit}")
+	cmd.Dir = repoRoot
+	return cmd.Run() == nil
+}
+
+func fetchCommit(t *testing.T, repoRoot, sha string) {
+	t.Helper()
+	cmd := exec.Command("git", "fetch", "--depth=1", "origin", sha)
+	cmd.Dir = repoRoot
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git fetch --depth=1 origin %s: %v\n%s", sha, err, out)
+	}
 }

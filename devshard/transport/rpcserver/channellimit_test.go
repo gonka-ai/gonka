@@ -413,12 +413,44 @@ func TestChannelLimit_ConcurrentStreams(t *testing.T) {
 	for stream.Receive() {
 	}
 
-	ctx3, cancel3 := context.WithCancel(context.Background())
-	t.Cleanup(cancel3)
-	again, err := e.authc.Watch(ctx3, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), e.token))
-	require.NoError(t, err)
-	require.True(t, again.Receive(), again.Err())
+	// The client sees cancel before the server leaves Watch and releases
+	// the stream slot. Retry until that release; a single attempt races.
+	again := watchAfterSlotRelease(t, e)
 	_ = again.Close()
+}
+
+func watchAfterSlotRelease(t *testing.T, e limitEnv) *connect.ServerStreamForClient[rpcpb.SessionEvent] {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var last error
+	for {
+		ctx, cancel := context.WithCancel(context.Background())
+		stream, err := e.authc.Watch(ctx, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), e.token))
+		if err != nil {
+			cancel()
+			last = err
+		} else if stream.Receive() {
+			t.Cleanup(func() {
+				cancel()
+				_ = stream.Close()
+			})
+			return stream
+		} else {
+			last = stream.Err()
+			_ = stream.Close()
+			cancel()
+		}
+		if last != nil {
+			code := connect.CodeOf(last)
+			if code != connect.CodeResourceExhausted && code != connect.CodeAlreadyExists {
+				t.Fatalf("watch reconnect: %v", last)
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("watch slot not released: %v", last)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func TestChannelLimit_ChatStreamCapDoesNotChargeWeight(t *testing.T) {
