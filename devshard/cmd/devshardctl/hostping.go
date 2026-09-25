@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"common/httpguard"
 	"common/probe"
 
 	"devshard/transport"
@@ -381,8 +382,10 @@ func (j *hostPingJob) start() {
 		close(j.done)
 		return
 	}
+	// Probe targets are escrow hosts' on-chain base URLs: guard the dial.
 	tr := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           httpguard.NewDialer().DialContext,
 		MaxIdleConns:          64,
 		MaxIdleConnsPerHost:   2,
 		IdleConnTimeout:       j.cfg.Interval * 3,
