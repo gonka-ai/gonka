@@ -133,7 +133,7 @@ func applyInferenceTo(t *testing.T, h *Host, hosts []*signing.Secp256k1Signer, u
 	nonce++
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: engine.ResponseHash,
+		ResponseHash: engine.ResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  80,
 		OutputTokens: 40,
 		ExecutorSlot: 1,

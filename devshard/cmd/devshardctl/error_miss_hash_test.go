@@ -98,7 +98,7 @@ func signedErrorFinishTx(t *testing.T, hosts []*signing.Secp256k1Signer, respons
 	t.Helper()
 	msg := &types.MsgFinishInference{
 		InferenceId:  errorMissInferenceID,
-		ResponseHash: responseHash,
+		ResponseHash: responseHash, ServedHash: testutil.TestServedHash,
 		ExecutorSlot: errorMissExecutor,
 		EscrowId:     errorMissEscrowID,
 	}

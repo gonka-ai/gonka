@@ -382,7 +382,7 @@ func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 		{
 			name: "finish",
 			tx: &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-				FinishInference: &types.MsgFinishInference{InferenceId: 7},
+				FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7},
 			}},
 			key: "finish:7",
 		},
@@ -500,7 +500,7 @@ func TestHostMayProposeTx(t *testing.T) {
 	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{}}),
 		"nil inner Finish must not pass the allowlist")
 	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{InferenceId: 1},
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1},
 	}}))
 	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
 		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1},
@@ -526,7 +526,7 @@ func TestDevshardTxKey_NilInnerDoesNotPanic(t *testing.T) {
 	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_RevealSeed{}}))
 	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{}}))
 	require.Equal(t, "finish:7", devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{InferenceId: 7},
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7},
 	}}))
 }
 
@@ -881,7 +881,7 @@ func TestProcessResponse_DropsFinishNotSignedByExecutor(t *testing.T) {
 	execIdx := int(nonce % uint64(len(session.group)))
 
 	unsigned := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash,
 			InferenceId: nonce, ExecutorSlot: uint32(execIdx), EscrowId: "escrow-1",
 		},
 	}}
@@ -938,7 +938,7 @@ func TestHandleTimeout_RecoveryDropsInjectedStartAndUnsignedFinish(t *testing.T)
 	require.NotNil(t, confirmTx)
 
 	unsignedFinish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash,
 			InferenceId: nonce, ExecutorSlot: uint32(execIdx), EscrowId: "escrow-1",
 		},
 	}}
@@ -1044,7 +1044,7 @@ func signedFinishTx(t *testing.T, hosts []*signing.Secp256k1Signer, nonce uint64
 	t.Helper()
 	msg := &types.MsgFinishInference{
 		InferenceId:  nonce,
-		ResponseHash: []byte("hash"),
+		ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  80,
 		OutputTokens: 40,
 		ExecutorSlot: uint32(executorSlot),
@@ -2063,7 +2063,7 @@ func TestCollectTimeoutVotes_DeduplicatesRejectRecoveryTxs(t *testing.T) {
 	}}}
 	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: []byte("done"),
+		ResponseHash: []byte("done"), ServedHash: testutil.TestServedHash,
 	}}}
 
 	verifiers := map[int]TimeoutVerifier{
@@ -2094,7 +2094,7 @@ func TestCollectTimeoutVotes_DropsMalformedOrNilRecoveryTxs(t *testing.T) {
 	}}}
 	unrelatedFinish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
 		InferenceId:  99,
-		ResponseHash: []byte("other"),
+		ResponseHash: []byte("other"), ServedHash: testutil.TestServedHash,
 	}}}
 	timeoutTx := &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{
 		InferenceId: 1,

@@ -1201,7 +1201,7 @@ func newFinishedRetryFixtureForEscrow(t *testing.T, escrowID string) ([]*signing
 	}}}
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: engine.ResponseHash,
+		ResponseHash: engine.ResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  80,
 		OutputTokens: 40,
 		ExecutorSlot: 1,

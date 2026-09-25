@@ -21,7 +21,6 @@ func requireEveryStreamBound(t *testing.T, client *http.Client, clientURL string
 	})
 	require.GreaterOrEqual(t, bindings["bound"], float64(2), "both streams must match a signed hash: %v", bindings)
 	require.Zero(t, bindings["mismatch"], "an honest executor's stream was not bound: %v", bindings)
-	require.Zero(t, bindings["missing"], "an honest executor signed no served hash: %v", bindings)
 }
 
 // startProcessedStreamEnv brings up a stand whose hosts answer through the executor's own processor.

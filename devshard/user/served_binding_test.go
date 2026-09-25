@@ -42,7 +42,7 @@ func finishFrom(t *testing.T, signer *signing.Secp256k1Signer, servedHash []byte
 // Test flow:
 //  1. Build a host response from the case's mempool of Finishes and the hashes the gateway received.
 //  2. Check the binding against local proposer-signature verification.
-//  3. Assert the verdict: bound on either signed view, mismatch or missing otherwise, a decoy Finish skipped, an unverified Finish reported, nothing received reported.
+//  3. Assert the verdict: bound on either signed view, mismatch otherwise even when the Finish signed no served hash, a decoy Finish skipped, an unverified Finish reported, nothing received reported.
 func TestCheckServedBinding(t *testing.T) {
 	stateMachine, hosts := bindingStateMachine(t)
 	outsider := testutil.MustGenerateKey(t)
@@ -62,7 +62,7 @@ func TestCheckServedBinding(t *testing.T) {
 		{name: "another answer arrived", mempool: []*types.DevshardTx{finishFrom(t, hosts[1], servedSum[:])}, received: [][32]byte{tamperedSum}, want: ServedBindingMismatch},
 		{name: "nothing arrived", mempool: []*types.DevshardTx{finishFrom(t, hosts[1], servedSum[:])}, want: ServedBindingNothingReceived},
 		{name: "the finish binds no served view, the stored one arrived", mempool: []*types.DevshardTx{finishFrom(t, hosts[1], nil)}, received: [][32]byte{storedSum}, want: ServedBindingBound},
-		{name: "the finish binds no served view, another answer arrived", mempool: []*types.DevshardTx{finishFrom(t, hosts[1], nil)}, received: [][32]byte{servedSum}, want: ServedBindingMissing},
+		{name: "the finish binds no served view, another answer arrived", mempool: []*types.DevshardTx{finishFrom(t, hosts[1], nil)}, received: [][32]byte{servedSum}, want: ServedBindingMismatch},
 		{name: "a decoy finish ahead of the executor's is skipped", mempool: []*types.DevshardTx{finishFrom(t, outsider, tamperedSum[:]), finishFrom(t, hosts[1], servedSum[:])}, received: [][32]byte{tamperedSum}, want: ServedBindingMismatch},
 		{name: "the finish is not the executor's", mempool: []*types.DevshardTx{finishFrom(t, outsider, tamperedSum[:])}, received: [][32]byte{tamperedSum}, want: ServedBindingUnverifiedFinish},
 	} {

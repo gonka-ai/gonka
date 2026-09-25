@@ -53,7 +53,7 @@ func TestFinishInference_StampCoveredByProposerSig(t *testing.T) {
 	require.NoError(t, err)
 
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
 		EscrowId: "escrow-1", ObservedHeight: 100, ObservedBlockHash: hash,
 	}

@@ -13,7 +13,7 @@ import (
 // Test flow:
 //  1. Seed the host with one failure, one short of the participant failure threshold.
 //  2. Record the case's binding verdict for an attempt that delivered content, with or without an error stream.
-//  3. Assert the threshold is crossed only for a mismatch, including on an error stream, and never for a finish that signed no served hash, as a v5 executor's does.
+//  3. Assert the threshold is crossed only for a mismatch, including on an error stream.
 func TestServedBindingFailureStrikesTheHost(t *testing.T) {
 	for _, testCase := range []struct {
 		name        string
@@ -26,7 +26,6 @@ func TestServedBindingFailureStrikesTheHost(t *testing.T) {
 		{name: "unverified finish", verdict: user.ServedBindingUnverifiedFinish},
 		{name: "nothing received", verdict: user.ServedBindingNothingReceived},
 		{name: "mismatch", verdict: user.ServedBindingMismatch, wantStrike: true},
-		{name: "missing, the shape of a v5 finish", verdict: user.ServedBindingMissing},
 		{name: "mismatch on an error stream", verdict: user.ServedBindingMismatch, errorSource: "stream", wantStrike: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

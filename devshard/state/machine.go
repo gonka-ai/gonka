@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"maps"
 	"math"
@@ -1288,6 +1289,10 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	// Verify executor slot.
 	if msg.ExecutorSlot != rec.ExecutorSlot {
 		return fmt.Errorf("%w: expected %d, got %d", types.ErrWrongExecutorSlot, rec.ExecutorSlot, msg.ExecutorSlot)
+	}
+
+	if len(msg.ResponseHash) != sha256.Size || len(msg.ServedHash) != sha256.Size {
+		return fmt.Errorf("%w: response %d bytes, served %d bytes", types.ErrInvalidFinishHash, len(msg.ResponseHash), len(msg.ServedHash))
 	}
 
 	if err := sm.verifyFinishProposerSigLocked(msg); err != nil {
