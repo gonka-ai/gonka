@@ -254,6 +254,12 @@ type Session struct {
 	// so another host's mempool copy is not re-queued after the fact. Only
 	// this set survives across compose rounds.
 	appliedTxKeys map[string]struct{}
+
+	receivedStreams        map[uint64]waitingReceivedStream
+	appliedFinishHashes    map[uint64]waitingAppliedFinish
+	servedBindingsPrunedAt time.Time
+	servedBindingHandler   ServedBindingHandler
+
 	// pinnedFinishIDs holds inference IDs whose pending Finish and ErrorMiss
 	// must not be drained by a concurrent composeDiffLocked (heartbeat,
 	// PrepareInference, unrelated SendPendingDiff). HandleErrorMiss pins
@@ -940,6 +946,9 @@ func (s *Session) retainPendingLocked(held, applied []*types.DevshardTx) {
 	for _, tx := range applied {
 		if key := devshardTxKey(tx); key != "" {
 			s.appliedTxKeys[key] = struct{}{}
+		}
+		if finish := tx.GetFinishInference(); finish != nil {
+			s.bindAppliedFinishLocked(finish)
 		}
 	}
 	if len(s.appliedTxKeys) > maxAppliedTxKeys {

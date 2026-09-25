@@ -22,6 +22,7 @@ type ReceivedResponseHasher struct {
 	bodyLineCount int
 	firstBody     string
 	isBareBody    bool
+	isComplete    bool
 }
 
 type servedEnvelope struct {
@@ -65,14 +66,20 @@ func (hasher *ReceivedResponseHasher) Add(line string) {
 		hasher.isBareBody = strings.HasPrefix(line, DataPrefix) && line != doneLine
 		hasher.firstBody = strings.TrimPrefix(line, DataPrefix)
 	}
-	if line != doneLine {
+	if line == doneLine {
+		hasher.isComplete = true
+	} else {
 		hasher.bodyLineCount++
 	}
 	hasher.envelope.add(line)
 }
 
+func (hasher *ReceivedResponseHasher) MarkComplete() {
+	hasher.isComplete = true
+}
+
 func (hasher *ReceivedResponseHasher) Sums() [][32]byte {
-	if hasher.envelope.lineCount == 0 {
+	if !hasher.isComplete || hasher.envelope.lineCount == 0 {
 		return nil
 	}
 	sums := [][32]byte{hasher.envelope.finish()}

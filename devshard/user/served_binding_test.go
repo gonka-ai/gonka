@@ -3,17 +3,14 @@ package user
 import (
 	"crypto/sha256"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
-	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
-	"devshard/state"
 	"devshard/types"
 )
-
-const bindingNonce = 1
 
 var (
 	storedSum   = sha256.Sum256([]byte("stored"))
@@ -21,54 +18,170 @@ var (
 	tamperedSum = sha256.Sum256([]byte("tampered"))
 )
 
-func bindingStateMachine(t *testing.T) (*state.StateMachine, []*signing.Secp256k1Signer) {
-	t.Helper()
-	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	userKey := testutil.MustGenerateKey(t)
-	stateMachine := newTestStateMachine(t, "escrow-1", testutil.DefaultConfig(len(hosts)), testutil.MakeGroup(hosts), 10000, userKey.Address(), signing.NewSecp256k1Verifier())
-	return stateMachine, hosts
+type servedBindingReport struct {
+	nonce          uint64
+	hostIndex      int
+	participantKey string
+	verdict        ServedBinding
 }
 
-func finishFrom(t *testing.T, signer *signing.Secp256k1Signer, servedHash []byte) *types.DevshardTx {
-	t.Helper()
-	msg := &types.MsgFinishInference{
-		InferenceId: bindingNonce, ResponseHash: storedSum[:], ServedHash: servedHash,
-		ExecutorSlot: 1, EscrowId: "escrow-1",
+func bindingSession(reports *[]servedBindingReport) *Session {
+	session := &Session{
+		pendingTxKeys:   map[string]struct{}{},
+		appliedTxKeys:   map[string]struct{}{},
+		group:           []types.SlotAssignment{{SlotID: 0}, {SlotID: 1}, {SlotID: 2}},
+		participantKeys: []string{"host-zero", "host-one", "host-two"},
 	}
-	msg.ProposerSig = testutil.SignProposerTx(t, signer, msg)
-	return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: msg}}
+	session.SetServedBindingHandler(func(nonce uint64, hostIndex int, participantKey string, verdict ServedBinding) {
+		*reports = append(*reports, servedBindingReport{nonce: nonce, hostIndex: hostIndex, participantKey: participantKey, verdict: verdict})
+	})
+	return session
+}
+
+func finishTransaction(nonce uint64, responseHash [32]byte) *types.DevshardTx {
+	return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+		InferenceId: nonce, ResponseHash: responseHash[:], ServedHash: servedSum[:],
+	}}}
+}
+
+func applyFinish(session *Session, nonce uint64) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.retainPendingLocked(nil, []*types.DevshardTx{finishTransaction(nonce, storedSum)})
 }
 
 // Test flow:
-//  1. Build a host response from the case's mempool of Finishes and the hashes the gateway received.
-//  2. Check the binding against local proposer-signature verification.
-//  3. Assert the verdict: bound on either signed view, mismatch otherwise even when the Finish signed no served hash, a decoy Finish skipped, an unverified Finish reported, nothing received reported.
-func TestCheckServedBinding(t *testing.T) {
-	stateMachine, hosts := bindingStateMachine(t)
-	outsider := testutil.MustGenerateKey(t)
-	rejectUnverified := func(tx *types.DevshardTx) error {
-		return stateMachine.RejectFinishProposerSigLocal(tx.GetFinishInference())
-	}
-
+//  1. Bind the hashes the gateway received for a nonce while no Finish for it has applied yet.
+//  2. Apply that nonce's Finish afterwards, the way one gossiped through another host's mempool lands.
+//  3. Assert the verdict is reported once, against the executor's host and participant, as bound when the stream matched either signed view and as mismatch otherwise.
+func TestAFinishAppliedAfterTheStreamIsCheckedAgainstIt(t *testing.T) {
 	for _, testCase := range []struct {
 		name     string
-		mempool  []*types.DevshardTx
-		received [][32]byte
+		received [32]byte
 		want     ServedBinding
 	}{
-		{name: "no finish yet", received: [][32]byte{servedSum}, want: ServedBindingNoFinish},
-		{name: "the served view arrived", mempool: []*types.DevshardTx{finishFrom(t, hosts[1], servedSum[:])}, received: [][32]byte{servedSum}, want: ServedBindingBound},
-		{name: "the stored view arrived", mempool: []*types.DevshardTx{finishFrom(t, hosts[1], servedSum[:])}, received: [][32]byte{tamperedSum, storedSum}, want: ServedBindingBound},
-		{name: "another answer arrived", mempool: []*types.DevshardTx{finishFrom(t, hosts[1], servedSum[:])}, received: [][32]byte{tamperedSum}, want: ServedBindingMismatch},
-		{name: "nothing arrived", mempool: []*types.DevshardTx{finishFrom(t, hosts[1], servedSum[:])}, want: ServedBindingNothingReceived},
-		{name: "the finish binds no served view, the stored one arrived", mempool: []*types.DevshardTx{finishFrom(t, hosts[1], nil)}, received: [][32]byte{storedSum}, want: ServedBindingBound},
-		{name: "the finish binds no served view, another answer arrived", mempool: []*types.DevshardTx{finishFrom(t, hosts[1], nil)}, received: [][32]byte{servedSum}, want: ServedBindingMismatch},
-		{name: "a decoy finish ahead of the executor's is skipped", mempool: []*types.DevshardTx{finishFrom(t, outsider, tamperedSum[:]), finishFrom(t, hosts[1], servedSum[:])}, received: [][32]byte{tamperedSum}, want: ServedBindingMismatch},
-		{name: "the finish is not the executor's", mempool: []*types.DevshardTx{finishFrom(t, outsider, tamperedSum[:])}, received: [][32]byte{tamperedSum}, want: ServedBindingUnverifiedFinish},
+		{name: "the served view arrived", received: servedSum, want: ServedBindingBound},
+		{name: "the stored view arrived", received: storedSum, want: ServedBindingBound},
+		{name: "another answer arrived", received: tamperedSum, want: ServedBindingMismatch},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			response := &host.HostResponse{Mempool: testCase.mempool, ReceivedResponseHashes: testCase.received}
-			require.Equal(t, testCase.want, checkServedBinding(response, bindingNonce, rejectUnverified))
+			var reports []servedBindingReport
+			session := bindingSession(&reports)
+
+			session.BindReceivedStream(5, [][32]byte{testCase.received})
+			require.Empty(t, reports, "no Finish is known yet, so nothing can be judged")
+			applyFinish(session, 5)
+
+			require.Equal(t, []servedBindingReport{{nonce: 5, hostIndex: 2, participantKey: "host-two", verdict: testCase.want}}, reports)
 		})
 	}
+}
+
+// Test flow:
+//  1. Apply a nonce's Finish before the gateway has finished reading that nonce's stream.
+//  2. Bind the hashes the gateway received.
+//  3. Assert the verdict is reported at once from the Finish already applied.
+func TestAStreamEndingAfterItsFinishIsCheckedAtOnce(t *testing.T) {
+	var reports []servedBindingReport
+	session := bindingSession(&reports)
+
+	applyFinish(session, 4)
+	require.Empty(t, reports, "no stream is known yet, so nothing can be judged")
+	session.BindReceivedStream(4, [][32]byte{tamperedSum})
+
+	require.Equal(t, []servedBindingReport{{nonce: 4, hostIndex: 1, participantKey: "host-one", verdict: ServedBindingMismatch}}, reports)
+}
+
+// Test flow:
+//  1. Bind an empty set of received hashes, as a stream that carried no answer line leaves.
+//  2. Apply the nonce's Finish.
+//  3. Assert nothing is reported, since there is no answer to judge.
+func TestAStreamWithNothingReceivedIsNotJudged(t *testing.T) {
+	var reports []servedBindingReport
+	session := bindingSession(&reports)
+
+	session.BindReceivedStream(3, nil)
+	applyFinish(session, 3)
+
+	require.Empty(t, reports)
+}
+
+// Test flow:
+//  1. Leave a stream waiting for its Finish, or a Finish waiting for its stream, on a nonce the escrow no longer tracks.
+//  2. Move the clock past twice the execution deadline and trigger pruning with an unrelated entry.
+//  3. Complete the first nonce and assert nothing is reported, because the waiting entry was forgotten.
+func TestServedBindingForgetsEntriesPastTwiceTheExecutionDeadline(t *testing.T) {
+	for _, testCase := range []struct {
+		name           string
+		leaveWaiting   func(session *Session)
+		completeWaiter func(session *Session)
+	}{
+		{
+			name:           "a stream waiting for its Finish",
+			leaveWaiting:   func(session *Session) { session.BindReceivedStream(1, [][32]byte{tamperedSum}) },
+			completeWaiter: func(session *Session) { applyFinish(session, 1) },
+		},
+		{
+			name:           "a Finish waiting for its stream",
+			leaveWaiting:   func(session *Session) { applyFinish(session, 1) },
+			completeWaiter: func(session *Session) { session.BindReceivedStream(1, [][32]byte{tamperedSum}) },
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var reports []servedBindingReport
+			session := bindingSession(&reports)
+			now := time.Unix(1_000_000, 0)
+			session.clock = func() time.Time { return now }
+
+			testCase.leaveWaiting(session)
+			now = now.Add(servedBindingRetention(0) + time.Second)
+			session.BindReceivedStream(99, [][32]byte{tamperedSum})
+			applyFinish(session, 98)
+			testCase.completeWaiter(session)
+
+			require.Empty(t, reports)
+		})
+	}
+}
+
+// Test flow:
+//  1. Start an inference, so its record is pending and its Finish can still apply.
+//  2. Leave the gateway's stream for it waiting, then move the clock past twice the execution deadline and trigger pruning.
+//  3. Apply its Finish and assert the verdict is still reported, because a stream is never forgotten while its Finish can land.
+func TestServedBindingKeepsAStreamWhileItsFinishCanStillApply(t *testing.T) {
+	var reports []servedBindingReport
+	session := bindingSession(&reports)
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	userKey := testutil.MustGenerateKey(t)
+	session.sm = newTestStateMachine(t, "escrow-1", testutil.DefaultConfig(len(hosts)), testutil.MakeGroup(hosts), 1_000_000, userKey.Address(), signing.NewSecp256k1Verifier())
+	_, err := session.sm.ApplyDiff(testutil.SignDiff(t, userKey, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)}))
+	require.NoError(t, err)
+	now := time.Unix(1_000_000, 0)
+	session.clock = func() time.Time { return now }
+
+	session.BindReceivedStream(1, [][32]byte{tamperedSum})
+	now = now.Add(servedBindingRetention(session.sm.Config().ExecutionTimeout) + time.Second)
+	session.BindReceivedStream(99, [][32]byte{tamperedSum})
+	applyFinish(session, 1)
+
+	require.Equal(t, []servedBindingReport{{nonce: 1, hostIndex: 1, participantKey: "host-one", verdict: ServedBindingMismatch}}, reports)
+}
+
+// Test flow:
+//  1. Bind the stream the gateway received for a nonce.
+//  2. Queue a Finish that matches that stream but never applies, as one refused for a malformed hash or a forged signature is.
+//  3. Apply the executor's other Finish, signed over a different answer.
+//  4. Assert the only verdict is a mismatch against the Finish that applied.
+func TestOnlyTheFinishThatAppliesIsJudged(t *testing.T) {
+	var reports []servedBindingReport
+	session := bindingSession(&reports)
+
+	session.BindReceivedStream(6, [][32]byte{tamperedSum})
+	session.mu.Lock()
+	session.addPendingTx(finishTransaction(6, tamperedSum))
+	session.mu.Unlock()
+	require.Empty(t, reports, "a queued Finish may still be refused, so it is not judged")
+	applyFinish(session, 6)
+
+	require.Equal(t, []servedBindingReport{{nonce: 6, hostIndex: 0, participantKey: "host-zero", verdict: ServedBindingMismatch}}, reports)
 }

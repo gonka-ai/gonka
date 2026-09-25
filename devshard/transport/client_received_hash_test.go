@@ -36,3 +36,19 @@ func TestParseSSE_HashesTheLinesTheExecutorStoredWithoutProtocolEvents(t *testin
 	require.Contains(t, response.ReceivedResponseHashes, sha256.Sum256(envelope),
 		"the hash is of the answer the host signed, not of the devshard framing around it")
 }
+
+// Test flow:
+//  1. Feed the client a stream that carries an answer and the devshard_meta tail but no [DONE], as an executor that drops its terminator sends.
+//  2. Assert the received hashes are still reported, because meta is written only after the executor finished, so the answer it streamed is complete.
+func TestParseSSE_HashesAStreamThatReachedItsMetaTailWithoutDone(t *testing.T) {
+	answer := `data: {"choices":[{"delta":{"content":"Hi"}}]}`
+	stream := `data: {"devshard_receipt":{"nonce":1}}` + "\n\n" + answer + "\n\n" + `data: {"devshard_meta":{}}` + "\n\n"
+	client := streamBoundClient(DefaultMaxSSEStreamBytes)
+
+	response, err := client.parseSSEResponse(context.Background(), strings.NewReader(stream), nil, nil)
+
+	require.NoError(t, err)
+	envelope, err := json.Marshal(completionapi.SerializedStreamedResponse{Events: []string{answer}})
+	require.NoError(t, err)
+	require.Contains(t, response.ReceivedResponseHashes, sha256.Sum256(envelope))
+}

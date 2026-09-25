@@ -229,3 +229,12 @@ func TestStripForGatewayDoesNotMistakeABodyWithAnEventsFieldForAnEnvelope(t *tes
 	require.NoError(t, err)
 	require.Equal(t, servedHash, sha256.Sum256(stripped))
 }
+
+// Test flow:
+//  1. Feed the hasher the lines of a stream cut before its [DONE], as a clean EOF mid-stream leaves them.
+//  2. Assert it reports no hash, so a stream that never completed is not judged against the executor's Finish.
+func TestReceivedResponseHasherHasNothingForAStreamCutBeforeDone(t *testing.T) {
+	processed := processStream(t, answeredStream, false, true)
+
+	require.Empty(t, receivedSums(processed.forwarded[:len(processed.forwarded)-1]))
+}
