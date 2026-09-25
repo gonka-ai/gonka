@@ -104,7 +104,7 @@ var (
 	ErrTrainshardProposalNotOpen             = sdkerrors.Register(ModuleName, 1202, "training proposal is not open")
 	ErrTrainshardProfileNotAllowed           = sdkerrors.Register(ModuleName, 1203, "gpu profile is not allowed for training")
 	ErrTrainshardProposalLimits              = sdkerrors.Register(ModuleName, 1204, "training proposal violates static caps")
-	ErrTrainshardCapacity                    = sdkerrors.Register(ModuleName, 1205, "insufficient free training capacity for request: every model keeps at least one node free, so a model can lend at most min(cap, capacity-1) of its nodes")
+	ErrTrainshardCapacity                    = sdkerrors.Register(ModuleName, 1205, "insufficient free training capacity for request")
 	ErrTrainshardNotFound                    = sdkerrors.Register(ModuleName, 1206, "trainshard not found")
 	ErrTrainshardNotCreator                  = sdkerrors.Register(ModuleName, 1207, "only the shard creator may settle it")
 	ErrTrainshardCooldown                    = sdkerrors.Register(ModuleName, 1208, "creator is within training cooldown window")
