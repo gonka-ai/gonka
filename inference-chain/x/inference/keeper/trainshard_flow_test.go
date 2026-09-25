@@ -138,6 +138,8 @@ func TestAssembleTrainshard_RespectsCapacityBuffer(t *testing.T) {
 
 	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
 	require.ErrorIs(t, err, types.ErrTrainshardCapacity)
+	require.ErrorContains(t, err, "found 1 of 2 needed among 2 nodes")
+	require.ErrorContains(t, err, "1 over the profile share cap (1)")
 }
 
 func TestEpochReservationView_TimeLocalFullReservation(t *testing.T) {

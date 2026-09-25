@@ -290,12 +290,18 @@ func (k Keeper) selectTrainshardNodes(
 	guardians := k.trainingGuardianSet(ctx)
 	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
 
+	var skipped struct {
+		guardian, optIn, endpoint, reserved, totalCap, profileCap, modelCap int
+	}
+	ofProfile := 0
 	candidates := make([]*trainingEpochNode, 0, len(view.nodes))
 	for _, node := range view.nodes {
 		if node.profileId == "" || node.profileId != gpuProfileId {
 			continue
 		}
+		ofProfile++
 		if guardians[node.participant] {
+			skipped.guardian++
 			continue
 		}
 		opted, err := k.hasLiveTrainingOptIn(ctx, node.participant, node.nodeId, height)
@@ -303,6 +309,7 @@ func (k Keeper) selectTrainshardNodes(
 			return nil, err
 		}
 		if !opted {
+			skipped.optIn++
 			continue
 		}
 		// a node no address reaches cannot be driven, so it is not offered: the shard record is
@@ -312,9 +319,11 @@ func (k Keeper) selectTrainshardNodes(
 			return nil, err
 		}
 		if node.endpoint == "" {
+			skipped.endpoint++
 			continue
 		}
 		if k.IsNodeReserved(ctx, node.participant, node.nodeId) {
+			skipped.reserved++
 			continue
 		}
 		candidates = append(candidates, node)
@@ -342,19 +351,22 @@ func (k Keeper) selectTrainshardNodes(
 	takenTotal := 0
 	picked := make([]*types.TrainshardReservedNode, 0, maxNodes)
 
-	for _, node := range candidates {
+	for i, node := range candidates {
 		if uint32(takenTotal) >= maxNodes {
 			break
 		}
 		if reserved.total+takenTotal+1 > int(params.MaxTotalReservedNodes) {
+			skipped.totalCap = len(candidates) - i
 			break
 		}
 		if reserved.perProfile[gpuProfileId]+takenProfile+1 > profileCap {
+			skipped.profileCap++
 			continue
 		}
 		// a profile may be emptied: nothing validates per profile, so a profile
 		// with no free node left only means no more nodes of that kind
 		if view.profileCapacity[gpuProfileId]-(reserved.perProfile[gpuProfileId]+takenProfile+1) < 0 {
+			skipped.profileCap++
 			continue
 		}
 		fits := true
@@ -372,6 +384,7 @@ func (k Keeper) selectTrainshardNodes(
 			}
 		}
 		if !fits {
+			skipped.modelCap++
 			continue
 		}
 		for _, e := range node.entries {
@@ -385,7 +398,13 @@ func (k Keeper) selectTrainshardNodes(
 	}
 
 	if uint32(takenTotal) < maxNodes {
-		return nil, types.ErrTrainshardCapacity
+		return nil, types.ErrTrainshardCapacity.Wrapf(
+			"found %d of %d needed among %d nodes of profile %s; skipped: %d guardian, %d without a live opt-in, "+
+				"%d without an endpoint, %d already reserved, %d over the total reserve cap (%d), "+
+				"%d over the profile share cap (%d), %d over a model share cap or its last free node",
+			takenTotal, maxNodes, ofProfile, gpuProfileId, skipped.guardian, skipped.optIn,
+			skipped.endpoint, skipped.reserved, skipped.totalCap, params.MaxTotalReservedNodes,
+			skipped.profileCap, profileCap, skipped.modelCap)
 	}
 	return picked, nil
 }
