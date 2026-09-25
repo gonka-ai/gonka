@@ -283,7 +283,70 @@ func NewHost(
 	h.repairBudget = heightsync.NewRepairBudget(h.repairCfg, uint32(len(group)), h.PrimarySlot(), h.heartbeatCfg.Interval)
 	h.repairResponder = heightsync.NewRepairResponderBudget(h.repairCfg, uint32(len(group)), h.heartbeatCfg.Interval)
 	h.closeReady = heightsync.NewCloseReady(h.PrimarySlot(), h.heartbeatCfg)
+	h.RestorePendingFinishes()
 	return h, nil
+}
+
+// persistPendingFinish stores this executor's signed Finish so a restarted
+// process can still show it to peers voting on an EXECUTION timeout. The
+// mempool alone does not survive a restart.
+func (h *Host) persistPendingFinish(fi *types.MsgFinishInference) {
+	ps, ok := h.store.(storage.PendingFinishStore)
+	if !ok {
+		return
+	}
+	raw, err := proto.Marshal(fi)
+	if err == nil {
+		err = ps.PutPendingFinish(h.escrowID, fi.InferenceId, raw)
+	}
+	if err != nil {
+		logging.Warn("persist pending finish failed", "subsystem", "host",
+			"escrow", h.escrowID, "inference_id", fi.InferenceId, "error", err)
+	}
+}
+
+// RestorePendingFinishes puts back into the mempool the Finish messages this
+// executor signed and persisted for inferences that are still pending or
+// started, i.e. not yet sequenced. NewHost calls it after a restart; the
+// GetMempool handler calls it again because during a blue/green swap the old
+// process can still finish an in-flight inference after this one loaded the
+// session. GetMempool is only asked by peers verifying an EXECUTION timeout,
+// so the storage read stays off the request path.
+func (h *Host) RestorePendingFinishes() {
+	ps, ok := h.store.(storage.PendingFinishStore)
+	if !ok {
+		return
+	}
+	rows, err := ps.PendingFinishes(h.escrowID)
+	if err != nil {
+		logging.Warn("load pending finishes failed", "subsystem", "host",
+			"escrow", h.escrowID, "error", err)
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+	// Status check and add under h.mu, which also guards applying a diff and
+	// its RemoveIncluded: a Finish sequenced meanwhile is not re-added.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	nonce := h.sm.LatestNonce()
+	for inferenceID, raw := range rows {
+		rec, ok := h.sm.Inference(inferenceID)
+		if !ok || rec == nil || (rec.Status != types.StatusPending && rec.Status != types.StatusStarted) {
+			continue
+		}
+		fi := &types.MsgFinishInference{}
+		if err := proto.Unmarshal(raw, fi); err != nil || fi.InferenceId != inferenceID || !h.slotIDs[fi.ExecutorSlot] {
+			continue
+		}
+		// AddIfAbsent: GetMempool calls this on every poll, and overwriting
+		// ProposedAt would keep StaleFinishes from ever re-gossiping the Finish.
+		h.mempool.AddIfAbsent(MempoolEntry{
+			Tx:         &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: fi}},
+			ProposedAt: nonce,
+		})
+	}
 }
 
 // Start launches background workers owned by this host. Callers should invoke
@@ -1139,6 +1202,7 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		}},
 		ProposedAt: diffNonce,
 	})
+	h.persistPendingFinish(finishMsg)
 	if result.PartialResponse {
 		reason := observability.Reason(result.PartialResponseReason)
 		if reason == "" {
