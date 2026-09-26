@@ -1,6 +1,8 @@
 #!/bin/sh
 # Renders /etc/haproxy/haproxy.cfg and /etc/haproxy/non_ha.map from the
-# environment, then execs HAProxy.
+# environment, then starts HAProxy. SIGUSR1 soft-stops HAProxy and closes
+# Watch streams once every inference on that HTTP/2 connection has finished,
+# so a rollout does not wait out an idle Watch.
 #
 # Env:
 #   VERSIOND_POOL_HOST        DNS name resolving to every versiond in the HA
@@ -800,4 +802,4 @@ if [ -n "${VERSIOND_CONTROL_TOKEN:-}" ] && [ -x "$publish" ]; then
     "$publish" --loop &
 fi
 
-exec "$HAPROXY_BIN" -W -db -f "$OUT"
+exec /usr/local/lib/versiond-router/h2-watch-drain.sh --supervise "$HAPROXY_BIN" "$OUT"

@@ -530,7 +530,10 @@ unrelated public APIs remain available through the policy tier.
 Catalog diagnostics never include the configured source URL, so credentials or
 signed query parameters are not copied into status output or router logs.
 Each router image owns its graceful-stop signal: the transitional nginx image
-uses `SIGQUIT`, while the HAProxy image declares `SIGUSR1`. The shipped Compose
+uses `SIGQUIT`, while the HAProxy image declares `SIGUSR1`. On that signal the
+router finishes inferences already in flight, then closes Watch streams on
+HTTP/2 connections that have no inference left, so an idle Watch does not hold
+the process until Docker's grace period kills it. The shipped Compose
 overlay only bounds the drain with `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default
 `10s`) before Docker forces termination, so selecting one image cannot override
 the shutdown contract of the other.

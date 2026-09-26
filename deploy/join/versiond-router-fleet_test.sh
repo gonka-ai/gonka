@@ -529,7 +529,8 @@ mapfile -t stale_refs < <(awk -F, -v address="$selected_slot_ip" '
         next
     }
     ($(column["pxname"]) == "versiond_router_coarse" ||
-            $(column["pxname"]) ~ /^versiond_routers_/) &&
+            $(column["pxname"]) ~ /^versiond_routers_/ ||
+            $(column["pxname"]) == "rpc_h2_upstream") &&
         ($(column["addr"]) == address ||
             index($(column["addr"]), address ":") == 1) &&
         $(column["status"]) ~ /^UP/ {

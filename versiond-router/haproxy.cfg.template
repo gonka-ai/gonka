@@ -132,6 +132,19 @@ frontend versiond_in
     # current hop must not answer. /stats/rpc is not a session procedure.
     http-request deny deny_status 404 if { dst_port 8080 } { path_sub /sessions/ } { path_sub /rpc/ }
 
+    # One HTTP/2 connection carries Watch and inference together. Soft-stop
+    # waits for the connection, so an open Watch holds it after the inference
+    # has already been sent. Count non-Watch streams on the client address.
+    # The drain helper closes the remaining Watch streams once the two counts
+    # meet, which is when every inference on that connection has finished.
+    # A slash inside an ACL pattern is a delimiter, so the method is a regex.
+    # HAProxy treats $ as an environment variable; $$ is the end anchor.
+    http-request set-var(txn.h2watch) str(1) if { path_reg PeerAuthService/Watch$$ }
+    http-request set-var-fmt(txn.ckey) %[src]:%[src_port]
+    http-request track-sc0 var(txn.ckey) table h2_stream_acct
+    http-request sc-inc-gpc0(0) if !{ var(txn.h2watch) -m str 1 }
+    http-after-response sc-inc-gpc1(0) if !{ var(txn.h2watch) -m str 1 }
+
     # versiond's own route grammar has versionless endpoints, and their first
     # path segment is not a version. Classifying by "field 2 is non-empty" would
     # refuse /metrics, /stats and the session observability routes.
@@ -178,6 +191,12 @@ ${ROUTER_READY_RULES}
 
 backend router_admin_not_found
     http-request return status 404 content-type text/plain string "not found\n"
+
+# Per client connection: gpc0 is inferences started, gpc1 is inferences whose
+# response has been fully sent. Watch is not counted. The soft-stop helper
+# reads this table.
+backend h2_stream_acct
+    stick-table type string len 80 size 200000 expire 2h store gpc0,gpc1
 
 # A synthetic no-traffic backend exports catalog convergence through HAProxy's
 # standard backend/server Prometheus metrics. The reconciler enables the server
