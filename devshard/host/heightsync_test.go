@@ -72,6 +72,59 @@ func mempoolHeightAcks(txs []*types.DevshardTx) []*types.MsgHeightAck {
 	return out
 }
 
+func TestHost_RepairHeightReplaysSignedResponse(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setHeight(100)
+	or.setHash([]byte{0xaa})
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or))
+
+	const slots = uint64(3)
+	_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{
+		heartbeatDiff(t, user, 1, 1, 100, slots),
+		heartbeatDiff(t, user, 2, 1, 100, slots),
+		heartbeatDiff(t, user, 3, 1, 100, slots),
+	}})
+	require.NoError(t, err)
+	require.NotNil(t, h.HeightSyncTurnRecord(1))
+	afterSetup := or.latestCalls.Load()
+
+	req := &heightsync.RepairRequest{
+		TurnStart:         1,
+		RefNonce:          1,
+		RequesterSlot:     1,
+		ObservedHeight:    100,
+		ObservedBlockHash: []byte{0xaa},
+	}
+	first, err := h.BuildRepairHeightResponse(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, heightsync.RepairOutcomeHeight, first.Outcome)
+	require.NotEmpty(t, first.ResponderSig)
+	require.Equal(t, afterSetup+1, or.latestCalls.Load())
+
+	or.setHeight(250)
+	or.setHash([]byte{0xbb})
+	second, err := h.BuildRepairHeightResponse(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, first.ResponderSig, second.ResponderSig)
+	require.Equal(t, first.ObservedHeight, second.ObservedHeight)
+	require.Equal(t, first.ObservedBlockHash, second.ObservedBlockHash)
+	require.Equal(t, afterSetup+1, or.latestCalls.Load(), "a repeat must not read the oracle again")
+
+	served := h.RepairResponderBudget().ServedCount()
+	_, err = h.BuildRepairHeightResponse(context.Background(), &heightsync.RepairRequest{
+		TurnStart:     99,
+		RequesterSlot: 1,
+	})
+	require.ErrorIs(t, err, heightsync.ErrRepairUnknownTurn)
+	require.Equal(t, served, h.RepairResponderBudget().ServedCount(), "an unknown turn is not admitted")
+}
+
 func TestHost_HeartbeatAck_OwnSlotIntoMempool(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
