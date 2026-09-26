@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -150,6 +151,55 @@ func shouldObserveUpstreamStatus(path string, statusCode int, _, _, routerError 
 		return false
 	}
 	return statusCode > 0
+}
+
+// connectResultStatus maps a server Connect error back to the HTTP status
+// mapInferenceError started from, plus X-Devshard-Error when the server set it.
+// Dial, reset, EOF, and deadlines are not application results.
+func connectResultStatus(err error) (status int, devshardCode string, ok bool) {
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return 0, "", false
+	}
+	if ce.Code() == connect.CodeDeadlineExceeded || isChatTransportFault(err) {
+		return 0, "", false
+	}
+	devshardCode = ce.Meta().Get(HeaderDevshardError)
+	switch ce.Code() {
+	case connect.CodeResourceExhausted:
+		if isConnectMessageTooLarge(err) {
+			return http.StatusRequestEntityTooLarge, devshardCode, true
+		}
+		return http.StatusTooManyRequests, devshardCode, true
+	case connect.CodeUnavailable:
+		return http.StatusServiceUnavailable, devshardCode, true
+	case connect.CodePermissionDenied:
+		return http.StatusForbidden, devshardCode, true
+	case connect.CodeInvalidArgument:
+		return http.StatusBadRequest, devshardCode, true
+	case connect.CodeUnauthenticated:
+		return http.StatusUnauthorized, devshardCode, true
+	case connect.CodeNotFound:
+		return http.StatusNotFound, devshardCode, true
+	case connect.CodeAlreadyExists:
+		return http.StatusConflict, devshardCode, true
+	case connect.CodeFailedPrecondition:
+		return http.StatusPreconditionFailed, devshardCode, true
+	default:
+		return http.StatusInternalServerError, devshardCode, true
+	}
+}
+
+// isChatTransportFault is a call that never received an application status:
+// dial, connection reset, HTTP/2 framing, or EOF.
+func isChatTransportFault(err error) bool {
+	if err == nil || isContextDone(err) {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	return isRPCH2TransportMiss(err)
 }
 
 // connectRetryAfter is the wait advertised on a Connect error (delta-seconds

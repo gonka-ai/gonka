@@ -28,12 +28,29 @@ func (c *RPCClient) Send(ctx context.Context, req host.HostRequest, stream io.Wr
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Attach is async with SelectTransport / Start. GetPayload already waits;
-	// Chat must not take budget or a stream slot on a token miss.
-	if err := c.WaitReady(ctx); err != nil {
-		return nil, err
+	// Attach is async with SelectTransport / Start. A token-race Unauthenticated
+	// retries once after WaitReady, before that attempt takes budget.
+	path := "/sessions/" + c.escrowID + "/chat/completions"
+	var last error
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := c.WaitReady(ctx); err != nil {
+			return nil, err
+		}
+		result, err := c.sendChatOnce(ctx, req, stream, receiptHandler, path)
+		if attempt == 0 && connect.CodeOf(err) == connect.CodeUnauthenticated {
+			c.conn.refundPeerBudget(rpcpbconnect.SessionServiceChatProcedure)
+			last = err
+			if sleepErr := sleepContext(ctx, unauthenticatedRetryDelay); sleepErr != nil {
+				return nil, err
+			}
+			continue
+		}
+		return result, err
 	}
+	return nil, last
+}
 
+func (c *RPCClient) sendChatOnce(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse), path string) (*host.HostResponse, error) {
 	ir, err := HostRequestToJSON(req)
 	if err != nil {
 		return nil, fmt.Errorf("encode request: %w", err)
@@ -44,6 +61,9 @@ func (c *RPCClient) Send(ctx context.Context, req host.HostRequest, stream io.Wr
 	}
 	env, err := c.signEnvelope(body)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.allowRequest(path); err != nil {
 		return nil, err
 	}
 	if err := c.conn.takePeerBudget(ctx, rpcpbconnect.SessionServiceChatProcedure); err != nil {
@@ -62,10 +82,7 @@ func (c *RPCClient) Send(ctx context.Context, req host.HostRequest, stream io.Wr
 	}
 	cs, err := c.sessionChatClient().Chat(ctx, creq)
 	if err != nil {
-		if isQuotaResourceExhausted(err) {
-			c.conn.refundPeerBudget(rpcpbconnect.SessionServiceChatProcedure)
-		}
-		c.observeTransportFailure("/sessions/"+c.escrowID+"/chat/completions", err)
+		c.finishChatError(path, err)
 		return nil, err
 	}
 	defer func() { _ = cs.Close() }()
@@ -74,9 +91,44 @@ func (c *RPCClient) Send(ctx context.Context, req host.HostRequest, stream io.Wr
 	}
 	result, err := c.parseChatStream(ctx, cs, stream, receiptHandler)
 	if err != nil && !errors.Is(err, ErrSSEStreamTruncated) && !errors.Is(err, ErrSSEEventTooLarge) && !errors.Is(err, ErrSSEStreamTooLarge) {
-		c.observeTransportFailure("/sessions/"+c.escrowID+"/chat/completions", err)
+		c.finishChatError(path, err)
 	}
 	return result, err
+}
+
+// finishChatError refunds a server quota rejection (those arrive on the first
+// stream Receive, not from Chat) and grades an application status separately
+// from a dial, reset, or EOF.
+func (c *RPCClient) finishChatError(path string, err error) {
+	if isQuotaResourceExhausted(err) && c.conn != nil {
+		c.conn.refundPeerBudget(rpcpbconnect.SessionServiceChatProcedure)
+	}
+	c.observeChat(path, err)
+}
+
+func (c *RPCClient) observeChat(path string, err error) {
+	if err == nil || c == nil || c.HTTPClient == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || connect.CodeOf(err) == connect.CodeDeadlineExceeded {
+		return
+	}
+	status, devshardCode, ok := connectResultStatus(err)
+	if !ok {
+		c.observeTransportFailure(path, err)
+		return
+	}
+	body := ""
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		body = ce.Message()
+		if len(body) > maxErrorBodyBytes {
+			body = body[:maxErrorBodyBytes]
+		}
+	}
+	if shouldObserveUpstreamStatus(path, status, body, devshardCode, "") {
+		c.observeResultWithBody(path, status, body, devshardCode, "")
+	}
 }
 
 func (c *RPCClient) parseChatStream(ctx context.Context, stream *connect.ServerStreamForClient[rpcpb.ChatFrame], streamWriter io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
