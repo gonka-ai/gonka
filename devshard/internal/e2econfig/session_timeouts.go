@@ -11,14 +11,16 @@ import (
 )
 
 const (
-	RefusalTimeoutSecondsEnv     = "DEVSHARD_E2E_REFUSAL_TIMEOUT_SECONDS"
-	ExecutionTimeoutSecondsEnv   = "DEVSHARD_E2E_EXECUTION_TIMEOUT_SECONDS"
-	StubInferenceDelayMillisEnv  = "DEVSHARD_STUB_INFERENCE_DELAY_MS"
-	ReceiptDelayMillisEnv        = "DEVSHARD_E2E_RECEIPT_DELAY_MS"
-	StubInferenceSSEErrorEnv     = "DEVSHARD_STUB_INFERENCE_SSE_ERROR_MESSAGE"
-	StubInferenceHTTPStatusEnv   = "DEVSHARD_STUB_INFERENCE_HTTP_STATUS"
-	StubInferenceResponseBodyEnv = "DEVSHARD_STUB_INFERENCE_RESPONSE_BODY"
-	StubInferenceHTTPMessageEnv  = "DEVSHARD_STUB_INFERENCE_HTTP_MESSAGE"
+	RefusalTimeoutSecondsEnv         = "DEVSHARD_E2E_REFUSAL_TIMEOUT_SECONDS"
+	ExecutionTimeoutSecondsEnv       = "DEVSHARD_E2E_EXECUTION_TIMEOUT_SECONDS"
+	StubInferenceDelayMillisEnv      = "DEVSHARD_STUB_INFERENCE_DELAY_MS"
+	ReceiptDelayMillisEnv            = "DEVSHARD_E2E_RECEIPT_DELAY_MS"
+	StubInferenceSSEErrorEnv         = "DEVSHARD_STUB_INFERENCE_SSE_ERROR_MESSAGE"
+	StubInferenceHTTPStatusEnv       = "DEVSHARD_STUB_INFERENCE_HTTP_STATUS"
+	StubInferenceResponseBodyEnv     = "DEVSHARD_STUB_INFERENCE_RESPONSE_BODY"
+	StubInferenceHTTPMessageEnv      = "DEVSHARD_STUB_INFERENCE_HTTP_MESSAGE"
+	StubInferenceErrorMissMessageEnv = "DEVSHARD_STUB_INFERENCE_ERROR_MISS_MESSAGE"
+	StubInferenceProcessedStreamEnv  = "DEVSHARD_STUB_INFERENCE_PROCESSED_STREAM"
 )
 
 type SessionTimeoutOverrides struct {

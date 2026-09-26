@@ -75,6 +75,7 @@ func TestStoredEnvelopeMatchesTheBackfillPath(t *testing.T) {
 	}
 
 	processor := NewExecutorResponseProcessor(inferenceID, true)
+	processor.SetLogprobsOptimization(nil, true)
 	for _, chunk := range chunks {
 		_, err := processor.ProcessStreamedResponse(chunk)
 		require.NoError(t, err)

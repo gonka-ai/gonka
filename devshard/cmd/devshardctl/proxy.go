@@ -189,15 +189,16 @@ var inferenceStatusName = map[types.InferenceStatus]string{
 
 // Proxy is the OpenAI-compatible HTTP proxy backed by a devshard session.
 type Proxy struct {
-	session                 *user.Session
-	sm                      *state.StateMachine
-	escrowID                string
-	model                   string
-	redundancy              *Redundancy
-	perf                    *PerfTracker
-	phaseGate               *ChainPhaseGate
-	defaultRequestMaxTokens uint64
-	requestMaxTokensCap     uint64
+	session                      *user.Session
+	sm                           *state.StateMachine
+	escrowID                     string
+	model                        string
+	redundancy                   *Redundancy
+	perf                         *PerfTracker
+	phaseGate                    *ChainPhaseGate
+	defaultRequestMaxTokens      uint64
+	requestMaxTokensCap          uint64
+	logprobsOptimizationOverride func() *bool
 }
 
 // detachedInferenceContext drops the client's cancellation but keeps its request id, so the
@@ -231,12 +232,17 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = p.model
 	}
+	var logprobsOptimizationOverride *bool
+	if p.logprobsOptimizationOverride != nil {
+		logprobsOptimizationOverride = p.logprobsOptimizationOverride()
+	}
 	params := user.InferenceParams{
-		Model:       model,
-		Prompt:      body,
-		InputLength: uint64(len(body)),
-		MaxTokens:   req.MaxTokens,
-		StartedAt:   time.Now().Unix(),
+		Model:                        model,
+		Prompt:                       body,
+		InputLength:                  uint64(len(body)),
+		MaxTokens:                    req.MaxTokens,
+		StartedAt:                    time.Now().Unix(),
+		LogprobsOptimizationOverride: logprobsOptimizationOverride,
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 

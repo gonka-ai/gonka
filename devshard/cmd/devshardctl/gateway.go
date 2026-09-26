@@ -855,6 +855,7 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 	}
 	if rt.proxy != nil {
 		rt.proxy.phaseGate = g.phaseGate
+		rt.proxy.logprobsOptimizationOverride = g.logprobsOptimizationOverride
 		limits := g.outputTokenLimitsForModel(firstNonEmpty(rt.model, g.settings.DefaultModel))
 		rt.proxy.defaultRequestMaxTokens = limits.DefaultMaxTokens
 		rt.proxy.requestMaxTokensCap = limits.MaxTokensCap
@@ -867,6 +868,15 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 	if g.capacity != nil {
 		g.capacity.SetEscrowMembership(rt.id, rt.participantSlotCounts)
 	}
+}
+
+func (g *Gateway) logprobsOptimizationOverride() *bool {
+	if g == nil {
+		return nil
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.settings.LogprobsOptimizationOverride
 }
 
 func (g *Gateway) outputTokenLimitsForModel(model string) outputTokenLimits {
@@ -2680,22 +2690,27 @@ type adminSettleEscrowRequest struct {
 }
 
 type adminSettingsRequest struct {
-	ChainREST                      *string                          `json:"chain_rest,omitempty"`
-	PublicAPI                      *string                          `json:"public_api,omitempty"`
-	DefaultModel                   *string                          `json:"default_model,omitempty"`
-	MaxConcurrentRequests          *int64                           `json:"max_concurrent_requests,omitempty"`
-	MaxConcurrentPer10000Weight    *float64                         `json:"max_concurrent_requests_per_10000_weight,omitempty"`
-	PoCMaxConcurrentPer10000Weight *float64                         `json:"poc_max_concurrent_requests_per_10000_weight,omitempty"`
-	MaxInputTokensInFlight         *int64                           `json:"max_input_tokens_in_flight,omitempty"`
-	ModelLimits                    *[]GatewayModelLimitSettings     `json:"model_limits,omitempty"`
-	DefaultRequestMaxTokens        *uint64                          `json:"default_request_max_tokens,omitempty"`
-	RequestMaxTokensCap            *uint64                          `json:"request_max_tokens_cap,omitempty"`
-	TxGasLimit                     *uint64                          `json:"tx_gas_limit,omitempty"`
-	Disabled                       *adminGatewayDisabledRequest     `json:"disabled,omitempty"`
-	ParticipantThrottle            *adminParticipantThrottleRequest `json:"participant_throttle,omitempty"`
-	Redundancy                     *adminRedundancyRequest          `json:"redundancy,omitempty"`
-	Perf                           *adminPerfRequest                `json:"perf,omitempty"`
-	EscrowRotation                 *adminEscrowRotationRequest      `json:"escrow_rotation,omitempty"`
+	ChainREST                      *string                           `json:"chain_rest,omitempty"`
+	PublicAPI                      *string                           `json:"public_api,omitempty"`
+	DefaultModel                   *string                           `json:"default_model,omitempty"`
+	MaxConcurrentRequests          *int64                            `json:"max_concurrent_requests,omitempty"`
+	MaxConcurrentPer10000Weight    *float64                          `json:"max_concurrent_requests_per_10000_weight,omitempty"`
+	PoCMaxConcurrentPer10000Weight *float64                          `json:"poc_max_concurrent_requests_per_10000_weight,omitempty"`
+	MaxInputTokensInFlight         *int64                            `json:"max_input_tokens_in_flight,omitempty"`
+	ModelLimits                    *[]GatewayModelLimitSettings      `json:"model_limits,omitempty"`
+	DefaultRequestMaxTokens        *uint64                           `json:"default_request_max_tokens,omitempty"`
+	RequestMaxTokensCap            *uint64                           `json:"request_max_tokens_cap,omitempty"`
+	TxGasLimit                     *uint64                           `json:"tx_gas_limit,omitempty"`
+	Disabled                       *adminGatewayDisabledRequest      `json:"disabled,omitempty"`
+	ParticipantThrottle            *adminParticipantThrottleRequest  `json:"participant_throttle,omitempty"`
+	Redundancy                     *adminRedundancyRequest           `json:"redundancy,omitempty"`
+	Perf                           *adminPerfRequest                 `json:"perf,omitempty"`
+	EscrowRotation                 *adminEscrowRotationRequest       `json:"escrow_rotation,omitempty"`
+	LogprobsOptimization           *adminLogprobsOptimizationRequest `json:"logprobs_optimization,omitempty"`
+}
+
+type adminLogprobsOptimizationRequest struct {
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 type adminGatewayDisabledRequest struct {
@@ -2846,6 +2861,9 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.ModelLimits != nil {
 			settings.ModelLimits = normalizeGatewayModelLimits(*req.ModelLimits)
+		}
+		if req.LogprobsOptimization != nil {
+			settings.LogprobsOptimizationOverride = req.LogprobsOptimization.Enabled
 		}
 		if req.DefaultRequestMaxTokens != nil {
 			settings.DefaultRequestMaxTokens = *req.DefaultRequestMaxTokens
