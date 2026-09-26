@@ -406,6 +406,10 @@ func TestGonkaFeeChecker_GroupPolarity(t *testing.T) {
 
 	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}, exempt))
 	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitHardwareDiff{}}, exempt))
+	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSetClaimRecipients{}}, exempt))
+	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitUnitOfComputePriceProposal{}}, exempt))
+	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgUpdateParams{}}, exempt), "governance stays free while disabled")
+	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&blstypes.MsgRequestThresholdSignature{}}, exempt), "deprecated bls request stays ungrouped")
 	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitSeed{}}, exempt), "seed stays ante-exempt")
 	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&banktypes.MsgSend{}}, exempt), "cosmos off")
 	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{
@@ -421,6 +425,11 @@ func TestGonkaFeeChecker_GroupPolarity(t *testing.T) {
 
 	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupBLS}
 	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&blstypes.MsgSubmitDealerPart{}}, exempt), "bls duties still exempt")
+
+	fp.Groups = append(fp.Groups, &inferencetypes.FeeGroup{Name: inferencetypes.FeeGroupGovernance, MinGasPrice: 3})
+	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupGovernance}
+	require.Equal(t, uint64(3), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgUpdateParams{}}, exempt), "direct governance msg pays only when the group is enabled")
+	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSetClaimRecipients{}}, exempt), "epoch msg does not pay the governance price")
 }
 
 func TestGonkaFeeChecker_MsgExecWithoutCodecRejected(t *testing.T) {

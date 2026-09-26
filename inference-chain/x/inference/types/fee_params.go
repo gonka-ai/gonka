@@ -550,7 +550,8 @@ func (fp *FeeParams) RuleForTypeURL(typeURL string) (*FeeGroup, *MsgGasRule) {
 }
 
 // EnabledPayingPrice returns the max min_gas_price of enabled groups that
-// contain a non-exempt inner message. 0 means the tx is free.
+// contain a non-exempt inner message. A message whose group is disabled,
+// including the governance group, stays free. 0 means the tx is free.
 func (fp *FeeParams) EnabledPayingPrice(msgs []sdk.Msg, isExempt func(sdk.Msg) bool) uint64 {
 	if fp == nil {
 		return 0
