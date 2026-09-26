@@ -19,6 +19,10 @@ import (
 // validator; only the granter's own grantees can be truncated.
 const maxGrantsScanned = 10000
 
+// grantsPageSize bounds each GranterGrants page. It must be nonzero (see the
+// call site) and divides maxGrantsScanned so paging stops exactly at the cap.
+const grantsPageSize = 100
+
 func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGranteesByMessageTypeRequest) (*types.QueryGranteesByMessageTypeResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
@@ -55,6 +59,11 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 			Granter: req.GranterAddress,
 			Pagination: &query.PageRequest{
 				Key: nextKey,
+				// A nonzero limit is required: the SDK treats Limit==0 as
+				// CountTotal=true and then scans the granter's whole prefix to
+				// count it, so a page read would be O(all grants) regardless of
+				// the scan cap below.
+				Limit: grantsPageSize,
 			},
 		}
 		grants, err := authzKeeper.GranterGrants(ctx, authReq)
