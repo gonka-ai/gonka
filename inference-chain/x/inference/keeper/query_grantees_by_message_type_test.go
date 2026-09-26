@@ -198,3 +198,47 @@ func TestGranteesByMessageTypeQuery_LegacyWarmKeyMarkerAliasesClaimRewards(t *te
 	require.Len(t, response.Grantees, 1)
 	require.Equal(t, grantee.String(), response.Grantees[0].Address)
 }
+
+// TestGranteesByMessageTypeQuery_CapsUnboundedGrantSet checks the query bounds
+// its result at maxGranteesByMessageType (10000) instead of scanning the full,
+// caller-controllable grant set.
+func TestGranteesByMessageTypeQuery_CapsUnboundedGrantSet(t *testing.T) {
+	keeper, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	const cap = 10000
+	const overflow = cap + 5
+
+	msgType := "/inference.bls.MsgSubmitDealerPart"
+	granter := sdk.AccAddress(bytes.Repeat([]byte{9}, 20))
+	authorization, err := codectypes.NewAnyWithValue(authztypes.NewGenericAuthorization(msgType))
+	require.NoError(t, err)
+
+	grants := make([]*authztypes.GrantAuthorization, 0, overflow)
+	for i := 0; i < overflow; i++ {
+		grantee := sdk.AccAddress([]byte(fmt.Sprintf("grantee-%012d", i)))
+		grants = append(grants, &authztypes.GrantAuthorization{
+			Granter:       granter.String(),
+			Grantee:       grantee.String(),
+			Authorization: authorization,
+		})
+	}
+
+	// A single page carrying more matching grants than the cap; the loop must
+	// stop at the cap without paging further.
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(
+		&authztypes.QueryGranterGrantsResponse{Grants: grants},
+		nil,
+	).Times(1)
+	// The query only reads account.GetPubKey() (nil here), so any base account
+	// suffices; the grantee address comes from the grant, not the account.
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), gomock.Any()).Return(
+		authtypes.NewBaseAccountWithAddress(granter),
+	).AnyTimes()
+
+	response, err := keeper.GranteesByMessageType(ctx, &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: granter.String(),
+		MessageTypeUrl: msgType,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.Len(t, response.Grantees, cap, "grantee set must be bounded by maxGranteesByMessageType")
+}
