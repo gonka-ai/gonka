@@ -1017,17 +1017,28 @@ func TestBeginHostDrainRejectsReconcileAndDisablesRestart(t *testing.T) {
 
 func TestRequestChildrenDrainRemovesRouteBeforeLifecycleRequest(t *testing.T) {
 	m := NewManager(config.Config{BasePort: 5000})
+	var releaseCalled atomic.Bool
 	var drainCalled atomic.Bool
 	adminPort, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/drain" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rpc/release":
+			if drainCalled.Load() {
+				t.Error("peer release ran after lifecycle drain")
+			}
+			releaseCalled.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/drain":
+			if !releaseCalled.Load() {
+				t.Error("lifecycle drain ran before peer release")
+			}
+			if _, ok := m.RouteTable().Load().(proxy.RouteTable)["v1"]; ok {
+				t.Error("child route was still published during lifecycle drain request")
+			}
+			drainCalled.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		if _, ok := m.RouteTable().Load().(proxy.RouteTable)["v1"]; ok {
-			t.Error("child route was still published during lifecycle drain request")
-		}
-		drainCalled.Store(true)
-		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer shutdown()
 
@@ -1048,6 +1059,9 @@ func TestRequestChildrenDrainRemovesRouteBeforeLifecycleRequest(t *testing.T) {
 
 	if err := m.RequestChildrenDrain(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if !releaseCalled.Load() {
+		t.Fatal("peer release endpoint was not called")
 	}
 	if !drainCalled.Load() {
 		t.Fatal("child drain endpoint was not called")
@@ -2148,11 +2162,15 @@ func TestStopStartWithdrawsRouteAndWaitsForProxyLease(t *testing.T) {
 	releaseRequest := make(chan struct{})
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseRequest) }) }
-	backend := httptest.NewServer(proxy.H2CHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		close(requestStarted)
 		<-releaseRequest
 		w.WriteHeader(http.StatusNoContent)
-	})))
+	}))
+	if err := proxy.ConfigureCleartextHTTP2(backend.Config); err != nil {
+		t.Fatal(err)
+	}
+	backend.Start()
 	t.Cleanup(func() {
 		release()
 		backend.Close()

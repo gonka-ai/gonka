@@ -7,7 +7,6 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	"devshard/transport"
 )
@@ -21,23 +20,37 @@ func H2CServer() *http2.Server {
 	return &http2.Server{MaxConcurrentStreams: transport.DefaultH2MaxConcurrentStreams}
 }
 
-// H2CHandler wraps h so one TCP connection can carry HTTP/1.1 and h2c
-// (prior-knowledge HTTP/2). Multiplexing is on: concurrent streams share that
-// connection. A server without this wrapper cannot complete an HTTP/2 client.
-func H2CHandler(h http.Handler) http.Handler {
-	return h2c.NewHandler(h, H2CServer())
+// ConfigureCleartextHTTP2 enables HTTP/1.1 and prior-knowledge HTTP/2 on srv.
+// http.Server tracks those connections, so Shutdown sends GOAWAY and waits
+// for the handler. h2c.NewHandler hijacks the conn without that tracking,
+// and Shutdown returns while the stream is still running.
+// MaxConcurrentStreams is applied by ConfigureServer (4096).
+func ConfigureCleartextHTTP2(srv *http.Server) error {
+	if srv == nil {
+		return errors.New("nil http server")
+	}
+	if srv.Protocols == nil {
+		srv.Protocols = new(http.Protocols)
+	}
+	srv.Protocols.SetHTTP1(true)
+	srv.Protocols.SetUnencryptedHTTP2(true)
+	return http2.ConfigureServer(srv, H2CServer())
 }
 
-// EnableH2C installs H2CHandler on Echo's Server before start.
-// Echo.Start calls configureServer, which replaces Server.Handler with the
-// Echo itself, so a process that serves with Echo.Start is HTTP/1.1 only.
+// EnableH2C turns on cleartext HTTP/2 for Echo's Server. The setting lives
+// on the Server, so Echo.Start replacing Handler does not drop it.
 // Production uses StartH2C.
 func EnableH2C(e *echo.Echo) {
-	e.Server.Handler = H2CHandler(e)
+	if e == nil {
+		return
+	}
+	if err := ConfigureCleartextHTTP2(e.Server); err != nil {
+		e.Logger.Error(err)
+	}
 }
 
-// StartH2C listens and serves e with the h2c wrapper. Echo.Start cannot be
-// used: configureServer overwrites Server.Handler after EnableH2C.
+// StartH2C listens and serves e with cleartext HTTP/2. Echo.Start is not
+// used: this listen is started from the already-built Echo.
 func StartH2C(e *echo.Echo, address string) error {
 	if e == nil {
 		return errors.New("nil echo")
@@ -49,6 +62,10 @@ func StartH2C(e *echo.Echo, address string) error {
 	e.Listener = ln
 	e.Server.Addr = address
 	e.Server.ErrorLog = e.StdLogger
-	e.Server.Handler = H2CHandler(e)
+	e.Server.Handler = e
+	if err := ConfigureCleartextHTTP2(e.Server); err != nil {
+		_ = ln.Close()
+		return err
+	}
 	return e.Server.Serve(ln)
 }

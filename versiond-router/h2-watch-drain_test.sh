@@ -124,6 +124,9 @@ python3 -c "import socket; socket.create_connection(('127.0.0.1', $port), 1).clo
 cat >"$tmpdir/haproxy.cfg" <<EOF
 global
     stats socket /var/run/haproxy/reconciler.sock level admin mode 600
+    # Shorter than the idle below. The helper must raise its own CLI timeout
+    # or this session is gone before SIGUSR1 and Watch never closes.
+    stats timeout 2s
     tune.h2.max-concurrent-streams 100
 
 defaults
@@ -161,13 +164,17 @@ docker run -d --name "$proxy" --user root \
     /bin/sh -c 'apk add --no-cache socat >/dev/null && mkdir -p /var/run/haproxy && exec /usr/local/lib/versiond-router/h2-watch-drain.sh --supervise "$(command -v haproxy)" /tmp/haproxy.cfg' \
     >/dev/null
 
-for _ in $(seq 1 100); do
+# apk add socat runs inside the container before HAProxy listens.
+for _ in $(seq 1 300); do
     if runtime_show 'show info' 2>/dev/null | grep -q '^Name: HAProxy$'; then
         break
     fi
     sleep 0.2
 done
 runtime_show 'show info' 2>/dev/null | grep -q '^Name: HAProxy$' || fail "haproxy did not open the runtime socket"
+# The helper opened its CLI at process start. Sit past stats timeout before
+# any stream exists, which is the gap a cold `go mod tidy` hits in CI.
+sleep 3
 
 hostport=$(docker port "$proxy" 8080 | head -n 1)
 [[ -n $hostport ]] || fail "haproxy published no host port"

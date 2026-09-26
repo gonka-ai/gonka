@@ -3,12 +3,12 @@ package proxy
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"net/http"
 	"time"
 
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 // DefaultH2MaxConcurrentStreams is SETTINGS_MAX_CONCURRENT_STREAMS on
@@ -35,11 +35,21 @@ func H2CServer() *http2.Server {
 	return &http2.Server{MaxConcurrentStreams: DefaultH2MaxConcurrentStreams}
 }
 
-// H2CHandler wraps h so one TCP connection can carry HTTP/1.1 and h2c
-// (prior-knowledge HTTP/2). A listen without this wrapper cannot complete an
-// HTTP/2 client (fail closed; a default http.Client would silently speak 1.1).
-func H2CHandler(h http.Handler) http.Handler {
-	return h2c.NewHandler(h, H2CServer())
+// ConfigureCleartextHTTP2 enables HTTP/1.1 and prior-knowledge HTTP/2 on srv.
+// http.Server tracks those connections, so Shutdown sends GOAWAY and waits
+// for the handler. h2c.NewHandler hijacks the conn without that tracking,
+// and Shutdown returns while the stream is still running.
+// MaxConcurrentStreams is applied by ConfigureServer (4096).
+func ConfigureCleartextHTTP2(srv *http.Server) error {
+	if srv == nil {
+		return errors.New("nil http server")
+	}
+	if srv.Protocols == nil {
+		srv.Protocols = new(http.Protocols)
+	}
+	srv.Protocols.SetHTTP1(true)
+	srv.Protocols.SetUnencryptedHTTP2(true)
+	return http2.ConfigureServer(srv, H2CServer())
 }
 
 // childTransport is shared across ReverseProxy instances for h2c children

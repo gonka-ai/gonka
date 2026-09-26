@@ -193,6 +193,10 @@ backend rpc_h2_upstream
     option redispatch 1
     retries 2
     http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
+    ${RPC_H2_HTTPCHK}
+    ${RPC_H2_CHECK_CONNECT}
+    ${RPC_H2_CHECK_SEND}
+    ${RPC_H2_CHECK_EXPECT}
     ${RPC_H2_SERVER}
 
 frontend versiond_router_in

@@ -471,9 +471,9 @@ type appHTTPServer interface {
 	Shutdown(context.Context) error
 }
 
-// h2cPublicServer is the session listen. Echo.Start drops the h2c wrapper
-// (configureServer assigns Handler = Echo), and versiond dials that port
-// with http2.Transport.
+// h2cPublicServer is the session listen. versiond dials that port with
+// http2.Transport. StartH2C enables cleartext HTTP/2 on the Server so
+// Shutdown waits for in-flight streams.
 type h2cPublicServer struct{ *echo.Echo }
 
 func (s h2cPublicServer) Start(address string) error {

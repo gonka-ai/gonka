@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 )
 
@@ -214,8 +215,17 @@ func (c *Controller) WaitIdle(ctx context.Context) error {
 // Admission rejects new proxy work unless the host is serving. Lifecycle
 // endpoints must be registered outside this middleware so operators can still
 // observe a draining host.
+//
+// PeerAuth Watch is a keepalive, not a user request. Counting it holds host
+// drain for the session TTL: WaitIdle never reaches child /drain, and the
+// children are then SIGTERM'd. The proxy lease has the same exemption
+// (proxy.peerAuthWatchPath).
 func (c *Controller) Admission(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if peerAuthWatchRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !c.acquire() {
 			w.Header().Set("Retry-After", "1")
 			http.Error(w, "versiond host is not accepting new work", http.StatusServiceUnavailable)
@@ -224,6 +234,15 @@ func (c *Controller) Admission(next http.Handler) http.Handler {
 		defer c.release()
 		next.ServeHTTP(w, r)
 	})
+}
+
+func peerAuthWatchRequest(r *http.Request) bool {
+	if r == nil || r.URL == nil {
+		return false
+	}
+	// The procedure is "...v1.PeerAuthService/Watch": the byte before
+	// PeerAuthService is the protobuf package dot, not a slash.
+	return strings.HasSuffix(r.URL.Path, "PeerAuthService/Watch")
 }
 
 func (c *Controller) acquire() bool {

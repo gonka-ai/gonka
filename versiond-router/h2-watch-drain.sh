@@ -18,6 +18,7 @@ socket_path=/var/run/haproxy/reconciler.sock
 cli_in=/tmp/h2-watch-drain.in
 cli_out=/tmp/h2-watch-drain.out
 cli_ready=0
+cli_warned=0
 
 select_idle_watch_sessions() {
     awk '
@@ -62,7 +63,9 @@ select_idle_watch_sessions() {
 }
 
 # Master-worker soft-stop closes the listening stats socket. A CLI connection
-# opened before that signal still accepts show and shutdown session.
+# opened before that signal still accepts show and shutdown session. An idle
+# one is dropped after `stats timeout` (30s in the router, 10s by default),
+# and by soft-stop it cannot be reopened, so this session disables that timer.
 open_cli() {
     rm -f "$cli_in" "$cli_out"
     mkfifo "$cli_in"
@@ -75,11 +78,15 @@ open_cli() {
     while [ "$i" -lt 50 ]; do
         if grep -q '^> *$' "$cli_out" 2>/dev/null; then
             cli_ready=1
-            return 0
+            if cli_query 'set timeout cli 24h' "$cli_out.ack"; then
+                return 0
+            fi
+            break
         fi
         i=$((i + 1))
         sleep 0.05
     done
+    cli_ready=0
     exec 3>&-
     kill "$cli_socat" 2>/dev/null || true
     return 1
@@ -138,6 +145,10 @@ release_watches() {
     sess=$(mktemp)
     ids_file=$(mktemp)
     if ! cli_query 'show table h2_stream_acct' "$table"; then
+        if [ "$cli_warned" -eq 0 ]; then
+            log "h2-watch-drain: runtime CLI did not answer"
+            cli_warned=1
+        fi
         rm -f "$table" "$sess" "$ids_file"
         return 0
     fi

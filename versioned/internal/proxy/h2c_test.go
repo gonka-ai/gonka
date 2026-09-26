@@ -20,7 +20,16 @@ import (
 )
 
 func newH2CChild(h http.Handler) *httptest.Server {
-	return httptest.NewServer(H2CHandler(h))
+	return startCleartextHTTP2(h)
+}
+
+func startCleartextHTTP2(h http.Handler) *httptest.Server {
+	srv := httptest.NewUnstartedServer(h)
+	if err := ConfigureCleartextHTTP2(srv.Config); err != nil {
+		panic(err)
+	}
+	srv.Start()
+	return srv
 }
 
 func TestH2CServerAdvertisesStreamCap(t *testing.T) {
@@ -115,7 +124,7 @@ func assertProxyH2COverlappingStreamsShareOneTCP(t *testing.T, n int) {
 	var protoMu sync.Mutex
 	started := make(chan struct{}, n)
 	release := make(chan struct{})
-	child := httptest.NewUnstartedServer(H2CHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	child := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/rpc/" {
 			t.Errorf("child path = %s", r.URL.Path)
 		}
@@ -125,19 +134,22 @@ func assertProxyH2COverlappingStreamsShareOneTCP(t *testing.T, n int) {
 		started <- struct{}{}
 		<-release
 		w.WriteHeader(http.StatusNoContent)
-	})))
+	}))
 	var childConns atomic.Int32
 	child.Config.ConnState = func(_ net.Conn, st http.ConnState) {
 		if st == http.StateNew {
 			childConns.Add(1)
 		}
 	}
+	if err := ConfigureCleartextHTTP2(child.Config); err != nil {
+		t.Fatal(err)
+	}
 	child.Start()
 	t.Cleanup(child.Close)
 
-	parent := httptest.NewServer(H2CHandler(Handler(newRoutes(map[string]string{
+	parent := startCleartextHTTP2(Handler(newRoutes(map[string]string{
 		"v1": strings.TrimPrefix(child.URL, "http://"),
-	}))))
+	})))
 	t.Cleanup(parent.Close)
 
 	var parentDials atomic.Int32
@@ -267,7 +279,75 @@ func TestH2C_WithoutH2CFailsClosed(t *testing.T) {
 	h2resp, err := client.Do(req)
 	if err == nil {
 		defer h2resp.Body.Close()
-		t.Fatalf("h2c client succeeded Proto=%s status=%d; h2 without h2c.NewHandler must fail closed", h2resp.Proto, h2resp.StatusCode)
+		t.Fatalf("h2c client succeeded Proto=%s status=%d; h2 without cleartext HTTP/2 must fail closed", h2resp.Proto, h2resp.StatusCode)
+	}
+}
+
+func TestConfigureCleartextHTTP2_ShutdownWaitsForInFlightHTTP2(t *testing.T) {
+	entered := make(chan struct{})
+	const hold = 500 * time.Millisecond
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			close(entered)
+			time.Sleep(hold)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("done"))
+		}),
+	}
+	if err := ConfigureCleartextHTTP2(srv); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Serve(ln) }()
+
+	resCh := make(chan struct {
+		body string
+		err  error
+	}, 1)
+	go func() {
+		resp, err := newH2CClient(t, nil).Get("http://" + ln.Addr().String() + "/slow")
+		if err != nil {
+			resCh <- struct {
+				body string
+				err  error
+			}{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		resCh <- struct {
+			body string
+			err  error
+		}{body: string(b), err: err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler did not start")
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) < hold-150*time.Millisecond {
+		t.Fatalf("Shutdown returned in %s while the HTTP/2 handler was still running", time.Since(start))
+	}
+	res := <-resCh
+	if res.err != nil {
+		t.Fatal(res.err)
+	}
+	if res.body != "done" {
+		t.Fatalf("body = %q, want done", res.body)
+	}
+	if err := <-errCh; err != nil && err != http.ErrServerClosed {
+		t.Fatal(err)
 	}
 }
 

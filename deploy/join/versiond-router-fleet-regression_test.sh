@@ -1067,16 +1067,36 @@ scenario_route_removed_at_commit_allowed() {
 
 scenario_h2_parent_drain() {
     load_fleet_functions || return $?
+    # A show-stat row whose status is "no check" is still in rotation. The
+    # drain gate must not treat it as withdrawn, and must not select it for
+    # "set server state drain": a server with no check never recovers from
+    # "health down".
     cat >"$model/parent-stat.csv" <<'EOF'
-# pxname,svname,status,addr
-versiond_router_coarse,router1,UP,10.0.0.8
-rpc_h2_upstream,router1,UP,10.0.0.8:8081
-versiond_routers_v4,router1,DRAIN,10.0.0.8:8080
-policy_http,policy1,UP,10.0.0.8
-rpc_h2_upstream,router2,UP,10.0.0.9:8081
+# pxname,svname,status,check_status,check_code,addr
+versiond_router_coarse,router1,DRAIN,L7OK,200,10.0.0.8:8080
+rpc_h2_upstream,router1,no check,,,10.0.0.8:8081
+versiond_routers_v4,router1,DRAIN,L7OK,200,10.0.0.8:8080
 EOF
     docker_exec() { cat "$model/parent-stat.csv"; }
-    local refs want
+    local refs
+    refs=$(parent_server_refs 10.0.0.8 | sort) || true
+    if [[ $refs == *rpc_h2_upstream/router1* ]]; then
+        invariant_violated "parent drain selected an unchecked HTTP/2 server [$refs]"
+        return
+    fi
+    if parent_address_withdrawal_state 10.0.0.8; then
+        invariant_violated 'withdrawal reported complete while the HTTP/2 server was no check'
+        return
+    fi
+    cat >"$model/parent-stat.csv" <<'EOF'
+# pxname,svname,status,check_status,check_code,addr
+versiond_router_coarse,router1,UP,L7OK,200,10.0.0.8:8080
+rpc_h2_upstream,router1,UP,L7OK,200,10.0.0.8:8081
+versiond_routers_v4,router1,DRAIN,L7OK,200,10.0.0.8:8080
+policy_http,policy1,UP,L4OK,0,10.0.0.8
+rpc_h2_upstream,router2,UP,L7OK,200,10.0.0.9:8081
+EOF
+    local want
     refs=$(parent_server_refs 10.0.0.8 | sort) || true
     want=$(printf '%s\n' \
         rpc_h2_upstream/router1 \
@@ -1091,16 +1111,16 @@ EOF
         return
     fi
     cat >"$model/parent-stat.csv" <<'EOF'
-# pxname,svname,status,addr
-versiond_router_coarse,router1,DRAIN,10.0.0.8
-rpc_h2_upstream,router1,DRAIN,10.0.0.8:8081
-versiond_routers_v4,router1,DRAIN,10.0.0.8:8080
+# pxname,svname,status,check_status,check_code,addr
+versiond_router_coarse,router1,DRAIN,L7OK,200,10.0.0.8:8080
+rpc_h2_upstream,router1,DRAIN,L7OK,200,10.0.0.8:8081
+versiond_routers_v4,router1,DRAIN,L7OK,200,10.0.0.8:8080
 EOF
     if ! parent_address_withdrawal_state 10.0.0.8; then
         invariant_violated 'withdrawal stayed open after every router server including HTTP/2 left UP'
         return
     fi
-    invariant_holds 'parent drain includes the HTTP/2 peer RPC backend and waits until it leaves UP'
+    invariant_holds 'parent drain includes a checked HTTP/2 server and waits while it is UP or no check'
 }
 
 scenario_nonha_owner_down() {

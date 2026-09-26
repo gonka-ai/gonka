@@ -234,9 +234,21 @@ esac
 # HA sets VERSIOND_ROUTER_POOL_HOST (the fleet). Non-HA leaves it unset and
 # the h2 hop goes straight to versiond:8080. JSON :8080 on the router is not
 # this hop: peer RPC is the router's proto h2 listen (8081).
+# The data connection stays proto h2. The check is HTTP/1.1 GET /readyz on
+# the router admin port, the same question the JSON backends ask. Without
+# check-proto h1 the probe would follow proto h2, and without a check at all
+# HAProxy reports the server "no check", which the fleet drain does not match.
 if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
-    RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${RPC_H2_ROUTER_PORT} proto h2 resolvers docker init-addr none hash-key addr"
+    RPC_H2_HTTPCHK='option httpchk'
+    RPC_H2_CHECK_CONNECT="http-check connect port ${ROUTER_ADMIN_PORT} proto h1"
+    RPC_H2_CHECK_SEND="http-check send meth GET uri /readyz hdr Host ${ROUTER_POOL_HOST}"
+    RPC_H2_CHECK_EXPECT='http-check expect status 200'
+    RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${RPC_H2_ROUTER_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr"
 else
+    RPC_H2_HTTPCHK=
+    RPC_H2_CHECK_CONNECT=
+    RPC_H2_CHECK_SEND=
+    RPC_H2_CHECK_EXPECT=
     RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 resolvers docker init-addr none"
 fi
 
@@ -508,6 +520,10 @@ sed \
     -e "s|\${PUBLIC_PROXY_ACL}|$PUBLIC_PROXY_ACL|g" \
     -e "s|\${PUBLIC_PROXY_EXPECT}|$PUBLIC_PROXY_EXPECT|g" \
     -e "s|\${RPC_H2_BIND}|$RPC_H2_BIND|g" \
+    -e "s|\${RPC_H2_HTTPCHK}|$RPC_H2_HTTPCHK|g" \
+    -e "s|\${RPC_H2_CHECK_CONNECT}|$RPC_H2_CHECK_CONNECT|g" \
+    -e "s|\${RPC_H2_CHECK_SEND}|$RPC_H2_CHECK_SEND|g" \
+    -e "s|\${RPC_H2_CHECK_EXPECT}|$RPC_H2_CHECK_EXPECT|g" \
     -e "s|\${RPC_H2_SERVER}|$RPC_H2_SERVER|g" \
 	-e "/\${CATALOG_PROXY_CONFIG}/{
 		r $CATALOG_PROXY_FILE

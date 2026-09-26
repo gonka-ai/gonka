@@ -1367,9 +1367,42 @@ func (m *Manager) BeginHostDrain() {
 	m.cancelOperations()
 }
 
-// RequestChildrenDrain removes every child route before issuing lifecycle
-// drain requests. Calls run concurrently and never hold m.mu during network I/O.
+// ReleasePeers tells every live child to stop Attach and Watch. Host drain
+// calls this before WaitIdle: an open Watch otherwise holds the host until
+// the drain budget is gone and child /drain is skipped. Old binaries answer
+// 404; the caller logs and continues.
+func (m *Manager) ReleasePeers(ctx context.Context) error {
+	children := m.snapshotChildren()
+	errCh := make(chan error, len(children))
+	var wg sync.WaitGroup
+	for _, c := range children {
+		if childDone(c) {
+			continue
+		}
+		wg.Add(1)
+		go func(c *child) {
+			defer wg.Done()
+			if err := m.requestPeerRelease(ctx, c); err != nil {
+				errCh <- fmt.Errorf("release peers for %s: %w", c.version.Name, err)
+			}
+		}(c)
+	}
+	wg.Wait()
+	close(errCh)
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// RequestChildrenDrain drops peer identity, then removes every child route
+// before issuing lifecycle drain requests. Calls run concurrently and never
+// hold m.mu during network I/O.
 func (m *Manager) RequestChildrenDrain(ctx context.Context) error {
+	if err := m.ReleasePeers(ctx); err != nil {
+		slog.Warn("peer identity release failed", "error", err)
+	}
 	children := m.prepareChildrenForDrain()
 	errCh := make(chan error, len(children))
 	var wg sync.WaitGroup

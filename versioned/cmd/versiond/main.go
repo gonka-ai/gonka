@@ -99,7 +99,10 @@ func run(ctx context.Context) error {
 	}
 	srv := &http.Server{
 		Addr:    listenAddr,
-		Handler: proxy.H2CHandler(public),
+		Handler: public,
+	}
+	if err := proxy.ConfigureCleartextHTTP2(srv); err != nil {
+		return fmt.Errorf("configure cleartext http2: %w", err)
 	}
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -279,6 +282,7 @@ func shouldForceShutdown(sig os.Signal) bool {
 }
 
 type hostShutdownManager interface {
+	ReleasePeers(context.Context) error
 	RequestChildrenDrain(context.Context) error
 	WaitChildrenIdle(context.Context) error
 	Shutdown(context.Context) error
@@ -348,6 +352,13 @@ func shutdownHost(
 		}
 	}
 
+	if drainCtx.Err() == nil {
+		// End inbound Watch before waiting. A stream that stays up holds this
+		// host until the drain budget is gone, and child /drain is then skipped.
+		if err := mgr.ReleasePeers(drainCtx); err != nil {
+			slog.Warn("peer identity release failed", "error", err)
+		}
+	}
 	if err := hostLifecycle.WaitIdle(drainCtx); err != nil {
 		slog.Warn("host proxy drain incomplete", "error", err, "inflight", hostLifecycle.Snapshot().Inflight)
 	}

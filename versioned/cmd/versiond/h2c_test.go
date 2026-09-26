@@ -19,11 +19,15 @@ import (
 )
 
 func TestPublicListen_HTTP1AndH2C(t *testing.T) {
-	srv := httptest.NewServer(proxy.H2CHandler(publicHandler(
+	srv := httptest.NewUnstartedServer(publicHandler(
 		process.NewManager(config.Config{BasePort: 5000}),
 		host.NewController(),
 		nil,
-	)))
+	))
+	if err := proxy.ConfigureCleartextHTTP2(srv.Config); err != nil {
+		t.Fatal(err)
+	}
+	srv.Start()
 	t.Cleanup(srv.Close)
 
 	resp, err := http.Get(srv.URL + "/healthz")

@@ -688,7 +688,8 @@ parent_address_withdrawal_state() {
                     backend == "rpc_h2_upstream") &&
                 (server_address == address ||
                     index(server_address, address ":") == 1) &&
-                $(column["status"]) ~ /^UP/) admitted = 1
+                ($(column["status"]) ~ /^UP/ ||
+                    $(column["status"]) == "no check")) admitted = 1
         }
         END {
             if (!valid) exit 2

@@ -186,8 +186,22 @@ test-render: test-route-status
 	VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
 	VERSIOND_ROUTER_FLEET_CAPACITY=16 \
 	./entrypoint.sh; \
-	grep -q 'server-template router 16 versiond-router-fleet:8081 proto h2 ' "$$tmpdir/ha.cfg" \
-		|| fail "HA peer RPC does not dial versiond-router proto h2"; \
+	grep -q 'server-template router 16 versiond-router-fleet:8081 proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr' "$$tmpdir/ha.cfg" \
+		|| fail "HA peer RPC does not check the router over HTTP/1.1 while dialing proto h2"; \
+	awk ' \
+		$$0 ~ "^backend rpc_h2_upstream$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /http-check connect port 8404 proto h1/ { connect = 1 } \
+		inside && /http-check send meth GET uri \/readyz hdr Host versiond-router-fleet/ { send = 1 } \
+		inside && /http-check expect status 200/ { expect = 1 } \
+		END { exit !(connect && send && expect) } \
+	' "$$tmpdir/ha.cfg" \
+		|| fail "HA peer RPC check is not HTTP/1.1 GET /readyz on the router admin port"; \
+	docker run --rm --user "$$(id -u):$$(id -g)" \
+		-v "$$tmpdir:$$tmpdir:ro" \
+		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
+		haproxy -c -f "$$tmpdir/ha.cfg" >/dev/null \
+		|| fail "rendered HA proxy config is invalid"; \
 	if grep -q 'server versiond versiond:8080 proto h2' "$$tmpdir/ha.cfg"; then \
 		fail "HA peer RPC still dials the non-HA versiond"; \
 	fi; \

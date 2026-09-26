@@ -35,11 +35,72 @@ func TestH2CServerAdvertisesStreamCap(t *testing.T) {
 	require.NotZero(t, s.MaxConcurrentStreams, "zero would hide SETTINGS_MAX_CONCURRENT_STREAMS")
 }
 
-func TestEnableH2CWrapsEchoListen(t *testing.T) {
+func TestEnableH2CEnablesUnencryptedHTTP2(t *testing.T) {
 	e := echo.New()
 	EnableH2C(e)
-	require.NotNil(t, e.Server.Handler)
-	require.NotEqual(t, http.Handler(e), e.Server.Handler)
+	require.NotNil(t, e.Server.Protocols)
+	require.True(t, e.Server.Protocols.HTTP1())
+	require.True(t, e.Server.Protocols.UnencryptedHTTP2())
+}
+
+func TestStartH2C_ShutdownWaitsForInFlightHTTP2(t *testing.T) {
+	e := echo.New()
+	e.HideBanner = true
+	e.HidePort = true
+	entered := make(chan struct{})
+	const hold = 500 * time.Millisecond
+	e.GET("/slow", func(c echo.Context) error {
+		close(entered)
+		time.Sleep(hold)
+		return c.String(http.StatusOK, "done")
+	})
+	errCh := make(chan error, 1)
+	go func() { errCh <- StartH2C(e, "127.0.0.1:0") }()
+
+	var addr string
+	require.Eventually(t, func() bool {
+		if e.Listener == nil || e.Listener.Addr() == nil {
+			return false
+		}
+		addr = e.Listener.Addr().String()
+		return addr != ""
+	}, 2*time.Second, 10*time.Millisecond)
+
+	resCh := make(chan struct {
+		body string
+		err  error
+	}, 1)
+	go func() {
+		resp, err := newH2CClient(t, nil).Get("http://" + addr + "/slow")
+		if err != nil {
+			resCh <- struct {
+				body string
+				err  error
+			}{err: err}
+			return
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		resCh <- struct {
+			body string
+			err  error
+		}{body: string(b), err: err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler did not start")
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer shutdownCancel()
+	start := time.Now()
+	require.NoError(t, e.Shutdown(shutdownCtx))
+	require.GreaterOrEqual(t, time.Since(start), hold-150*time.Millisecond)
+	res := <-resCh
+	require.NoError(t, res.err)
+	require.Equal(t, "done", res.body)
+	require.ErrorIs(t, <-errCh, http.ErrServerClosed)
 }
 
 func TestStartH2C_HTTP1AndHTTP2(t *testing.T) {
@@ -88,7 +149,7 @@ func TestH2C_HTTP1JSONStillWorks(t *testing.T) {
 	e.POST("/sessions/:id/chat/completions", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"object": "chat.completion"})
 	})
-	srv := httptest.NewServer(H2CHandler(e))
+	srv := startCleartextHTTP2(t, e)
 	t.Cleanup(srv.Close)
 
 	resp, err := http.Get(srv.URL + "/healthz")
@@ -110,7 +171,7 @@ func TestH2C_HTTP1JSONStillWorks(t *testing.T) {
 func TestH2C_WithoutH2CFailsClosed(t *testing.T) {
 	e := echo.New()
 	e.GET("/rpc/", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
-	srv := httptest.NewServer(e) // Echo only — no h2c.NewHandler
+	srv := httptest.NewServer(e) // Echo only — cleartext HTTP/2 is off
 	t.Cleanup(srv.Close)
 
 	resp, err := http.Get(srv.URL + "/rpc/")
@@ -126,7 +187,7 @@ func TestH2C_WithoutH2CFailsClosed(t *testing.T) {
 	h2resp, err := client.Do(req)
 	if err == nil {
 		defer h2resp.Body.Close()
-		t.Fatalf("h2c client succeeded Proto=%s status=%d; h2 without h2c.NewHandler must fail closed", h2resp.Proto, h2resp.StatusCode)
+		t.Fatalf("h2c client succeeded Proto=%s status=%d; h2 without cleartext HTTP/2 must fail closed", h2resp.Proto, h2resp.StatusCode)
 	}
 }
 
@@ -162,7 +223,7 @@ func assertH2COverlappingStreamsShareOneTCP(t *testing.T, n int) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.Handle("/rpc/", h)
-	srv := httptest.NewServer(H2CHandler(mux))
+	srv := startCleartextHTTP2(t, mux)
 	t.Cleanup(srv.Close)
 
 	client := newH2CClient(t, func() { dials.Add(1) })
@@ -226,8 +287,7 @@ func TestH2C_AttachChat(t *testing.T) {
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
 	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: new(int)}, nil,
 		WithPeerRPC(auth, rpcserver.NewSessionHandler(staticH2CLookup{core: h2cChatCore{}})))
-	EnableH2C(e)
-	srv := httptest.NewServer(e.Server.Handler)
+	srv := startCleartextHTTP2(t, e)
 	t.Cleanup(srv.Close)
 
 	plain, err := http.Get(srv.URL + "/healthz")
@@ -276,8 +336,7 @@ func TestH2C_NativeGRPCAttachChatAndGetSignatures(t *testing.T) {
 	e.HideBanner = true
 	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: new(int)}, nil,
 		WithPeerRPC(auth, rpcserver.NewSessionHandler(staticH2CLookup{core: h2cChatCore{}})))
-	EnableH2C(e)
-	srv := httptest.NewServer(e.Server.Handler)
+	srv := startCleartextHTTP2(t, e)
 	t.Cleanup(srv.Close)
 
 	h2 := newH2CClient(t, nil)
@@ -323,6 +382,15 @@ func (e errStatus) Error() string { return http.StatusText(int(e)) }
 type errProto string
 
 func (e errProto) Error() string { return "proto " + string(e) }
+
+func startCleartextHTTP2(t *testing.T, h http.Handler) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(h)
+	require.NoError(t, ConfigureCleartextHTTP2(srv.Config))
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return srv
+}
 
 func newH2CClient(t *testing.T, onDial func()) *http.Client {
 	t.Helper()
