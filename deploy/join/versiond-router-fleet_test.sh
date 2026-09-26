@@ -102,6 +102,9 @@ VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=false
 PROXY_ROUTER_CONTAINER=gonka-router-fleet-proxy-$suffix
 VERSIOND_NON_HA_VERSIONS=
 VERSIOND_VERSIONS=v4
+# The pool upstream is Python http.server. It speaks HTTP/1.1; proto h2
+# makes the proxy's /<version>/healthz check fail and /readyz stay 503.
+VERSIOND_ROUTER_BACKEND_H2=false
 EOF
 fleet=(env GONKA_CONFIG_ENV="$tmpdir/config.env" "$script_dir/versiond-router-fleet.sh")
 
