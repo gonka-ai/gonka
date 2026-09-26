@@ -1,4 +1,4 @@
-.PHONY: all build-docker release test-render test-route-status test-compose test-routing
+.PHONY: all build-docker release test-render test-route-status test-h2-upstream-check test-compose test-routing
 
 include ../scripts/blst-portable.mk
 
@@ -6,6 +6,9 @@ HAPROXY_IMAGE ?= haproxy:3.2-alpine
 
 test-route-status:
 	@./route-status_test.sh
+
+test-h2-upstream-check:
+	@./h2-upstream-check_test.sh
 
 test-render: test-route-status
 	@set -eu; \
