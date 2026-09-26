@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"common/chain"
+	"common/httpguard"
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/golang/protobuf/proto"
@@ -257,6 +258,17 @@ func (e *RequestAdmissionError) Error() string {
 	return "request admission blocked"
 }
 
+// newVersionsProbeClient is the client for GET <InferenceUrl>/v1/versions on
+// every active participant. Those URLs come from chain state and are
+// participant-controlled, so unlike the gate's own chain API client it carries
+// the dial-time SSRF guard (redirects still followed; each hop's dial is
+// re-checked).
+func newVersionsProbeClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = httpguard.NewDialer().DialContext
+	return &http.Client{Timeout: 5 * time.Second, Transport: transport}
+}
+
 func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGate {
 	baseURL = strings.TrimSpace(baseURL)
 	if pollInterval <= 0 {
@@ -275,7 +287,7 @@ func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGa
 		client:                        client,
 		pollInterval:                  pollInterval,
 		defaultMaxSpeculativeAttempts: CurrentMaxSpeculativeAttempts(),
-		versions:                      NewVersionsCache(client, versionsTTLPollMultiplier*pollInterval),
+		versions:                      NewVersionsCache(newVersionsProbeClient(), versionsTTLPollMultiplier*pollInterval),
 		stopCh:                        make(chan struct{}),
 		doneCh:                        make(chan struct{}),
 	}
