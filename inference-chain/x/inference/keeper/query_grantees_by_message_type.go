@@ -13,11 +13,11 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// maxGranteesByMessageType caps this query's result. The authz grant set is
-// caller-controllable and effectively unbounded, and the query also runs in
-// EndBlock (infinite gas), so an uncapped scan can exhaust validator memory. The
-// only consumer truncates to maxAdditionalKeys anyway.
-const maxGranteesByMessageType = 10000
+// maxGrantsScanned bounds how many authz grants this query examines. The grant
+// set is caller-controllable and runs in EndBlock (infinite gas), so counting
+// grants scanned (not just matches) keeps an unbounded scan from stalling a
+// validator; only the granter's own grantees can be truncated.
+const maxGrantsScanned = 10000
 
 func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGranteesByMessageTypeRequest) (*types.QueryGranteesByMessageTypeResponse, error) {
 	if req == nil {
@@ -48,6 +48,7 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 	authzKeeper := k.AuthzKeeper
 	grantees := []*types.Grantee{}
 	nextKey := []byte(nil)
+	scanned := 0
 	capped := false
 	for {
 		authReq := &authztypes.QueryGranterGrantsRequest{
@@ -62,10 +63,11 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 		}
 
 		for _, grant := range grants.Grants {
-			if len(grantees) >= maxGranteesByMessageType {
+			if scanned >= maxGrantsScanned {
 				capped = true
 				break
 			}
+			scanned++
 			if grant.Expiration != nil && grant.Expiration.Before(blockTime) {
 				continue
 			}
@@ -103,14 +105,18 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 		if capped || grants.Pagination == nil || len(grants.Pagination.NextKey) == 0 {
 			break
 		}
+		if scanned >= maxGrantsScanned {
+			capped = true
+			break
+		}
 		nextKey = grants.Pagination.NextKey
 	}
 
 	if capped {
-		k.LogWarn("GranteesByMessageType hit the grantee cap; result truncated", types.Participants,
+		k.LogWarn("GranteesByMessageType hit the grant scan cap; result may be truncated", types.Participants,
 			"granter", req.GranterAddress,
 			"messageType", req.MessageTypeUrl,
-			"cap", maxGranteesByMessageType)
+			"cap", maxGrantsScanned)
 	}
 
 	k.LogInfo("GranteesByMessageType query called", types.Participants,
