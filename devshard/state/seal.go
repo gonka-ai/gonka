@@ -620,6 +620,9 @@ func cloneInferenceRecord(rec *types.InferenceRecord) *types.InferenceRecord {
 	if len(rec.ResponseHash) > 0 {
 		cp.ResponseHash = append([]byte(nil), rec.ResponseHash...)
 	}
+	if len(rec.ServedHash) > 0 {
+		cp.ServedHash = append([]byte(nil), rec.ServedHash...)
+	}
 	return &cp
 }
 

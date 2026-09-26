@@ -47,7 +47,7 @@ func driveSealInferenceToFinished(t *testing.T, sm *StateMachine, escrowID strin
 
 	finish := &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: []byte("response"),
+		ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  10,
 		OutputTokens: 20,
 		ExecutorSlot: 1,
@@ -341,7 +341,7 @@ func TestAutoSeal_FinishedClockGateIncludesExecutionTimeout(t *testing.T) {
 	})})
 	require.NoError(t, err)
 	finish := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"), InputTokens: 10, OutputTokens: 20, ExecutorSlot: 1, EscrowId: escrowID,
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 10, OutputTokens: 20, ExecutorSlot: 1, EscrowId: escrowID,
 	}
 	finish.ProposerSig = testutil.SignProposerTx(t, hosts[1], finish)
 	_, err = sm.ApplyLocal(3, []*types.DevshardTx{txFinish(finish)})
@@ -383,7 +383,7 @@ func finishedInferenceDiffs(escrowID string) []types.DiffRecord {
 			InferenceId: 1, ConfirmedAt: 2000,
 		})}}},
 		{Diff: types.Diff{Nonce: 3, Txs: []*types.DevshardTx{txFinish(&types.MsgFinishInference{
-			InferenceId: 1, ResponseHash: []byte("response"), InputTokens: 10, OutputTokens: 20,
+			InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 10, OutputTokens: 20,
 			ExecutorSlot: 1, EscrowId: escrowID,
 		})}}},
 	}

@@ -77,7 +77,7 @@ func divConfirmTx(t *testing.T, executor *signing.Secp256k1Signer, id, height ui
 func divFinishTx(t *testing.T, executor *signing.Secp256k1Signer, id uint64, slot uint32, height uint64, hash []byte) *types.DevshardTx {
 	t.Helper()
 	msg := &types.MsgFinishInference{
-		InferenceId: id, ResponseHash: []byte("response"),
+		InferenceId: id, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: slot,
 		EscrowId: "escrow-1", ObservedHeight: height, ObservedBlockHash: hash,
 	}

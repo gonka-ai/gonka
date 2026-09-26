@@ -32,6 +32,7 @@ var (
 	ErrPromptHashMismatch    = errors.New("prompt does not match hash in StartInference")
 	ErrPayloadMismatch       = errors.New("request payload does not match StartInference params")
 	ErrStateHashMismatch     = errors.New("host state hash does not match local state")
+	ErrInvalidFinishHash     = errors.New("finish hash is not a sha256")
 	ErrPostStateRootMismatch = errors.New("post_state_root does not match computed state root")
 	ErrDuplicateSeedReveal   = errors.New("duplicate seed reveal from same address")
 	ErrSeedTooShort          = errors.New("seed signature too short (need >= 8 bytes)")

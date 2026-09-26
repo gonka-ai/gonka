@@ -291,6 +291,33 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 	if sseErrorMessage != "" {
 		inferenceEngine = sseErrorInferenceEngine{message: sseErrorMessage}
 	}
+	errorMissMessage, err := e2econfig.StringFromEnv(e2econfig.StubInferenceErrorMissMessageEnv)
+	if err != nil {
+		return nil, nil, err
+	}
+	processedStream, err := e2econfig.StringFromEnv(e2econfig.StubInferenceProcessedStreamEnv)
+	if err != nil {
+		return nil, nil, err
+	}
+	parsedProcessedStream, err := boolvalue.Parse(processedStream)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", e2econfig.StubInferenceProcessedStreamEnv, err)
+	}
+	tamperedStream, err := e2econfig.StringFromEnv(e2econfig.StubInferenceTamperedStreamEnv)
+	if err != nil {
+		return nil, nil, err
+	}
+	parsedTamperedStream, err := boolvalue.Parse(tamperedStream)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", e2econfig.StubInferenceTamperedStreamEnv, err)
+	}
+	if errorMissMessage != "" || parsedProcessedStream || parsedTamperedStream {
+		inferenceEngine = processedStreamEngine{
+			terminalErrorMessage:        errorMissMessage,
+			logprobsOptimizationEnabled: logprobsOptimizationEnabled(),
+			tamperedStream:              parsedTamperedStream,
+		}
+	}
 	inferenceDelay, err := e2econfig.DurationMillisFromEnv(e2econfig.StubInferenceDelayMillisEnv)
 	if err != nil {
 		return nil, nil, err

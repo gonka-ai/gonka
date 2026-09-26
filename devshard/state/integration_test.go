@@ -75,7 +75,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 		for _, pf := range pendingFinishes {
 			finishMsg := &types.MsgFinishInference{
 				InferenceId:  pf.inferenceID,
-				ResponseHash: []byte("response"),
+				ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 				InputTokens:  80,
 				OutputTokens: 40,
 				ExecutorSlot: uint32(pf.executorIdx),
@@ -144,7 +144,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 	for _, pf := range pendingFinishes {
 		finishMsg := &types.MsgFinishInference{
 			InferenceId:  pf.inferenceID,
-			ResponseHash: []byte("response"),
+			ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 			InputTokens:  80,
 			OutputTokens: 40,
 			ExecutorSlot: uint32(pf.executorIdx),

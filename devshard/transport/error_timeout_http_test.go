@@ -53,7 +53,7 @@ func TestServer_VerifyErrorMiss_AcceptsAndBindsHash(t *testing.T) {
 	sum := sha256.Sum256(payload)
 	msg := &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: sum[:],
+		ResponseHash: sum[:], ServedHash: testutil.TestServedHash,
 		ExecutorSlot: 0,
 		EscrowId:     "escrow-1",
 	}

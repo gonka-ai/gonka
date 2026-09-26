@@ -598,7 +598,7 @@ func TestHTTP_RefusedTimeoutRecoveryIgnoresUnrelatedMempool(t *testing.T) {
 		}}},
 		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
 			InferenceId:  999,
-			ResponseHash: []byte("other-response"),
+			ResponseHash: []byte("other-response"), ServedHash: testutil.TestServedHash,
 		}}},
 	}
 	session, _ := setupHTTPRecoveryVerifierSession(t, env, unrelated)

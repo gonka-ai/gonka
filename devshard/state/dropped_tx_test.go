@@ -139,7 +139,7 @@ func TestBestEffort_DoesNotWarnOnOrdinaryStaleTransactions(t *testing.T) {
 	captured := captureLogs(t)
 
 	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{
-		txFinish(&types.MsgFinishInference{InferenceId: 9, OutputTokens: 1}),
+		txFinish(&types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 9, OutputTokens: 1}),
 	})
 	require.NoError(t, err)
 

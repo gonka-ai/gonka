@@ -212,14 +212,15 @@ func (c *InProcessClient) GetSignatures(_ context.Context, nonce uint64) (map[ui
 
 // InferenceParams describes a new inference to send.
 type InferenceParams struct {
-	Model                 string
-	Prompt                []byte
-	InputLength           uint64
-	MaxTokens             uint64
-	ContextTotalHint      uint64
-	StartedAt             int64
-	Stream                bool
-	ForceHeightSyncAnchor bool
+	Model                        string
+	Prompt                       []byte
+	InputLength                  uint64
+	MaxTokens                    uint64
+	ContextTotalHint             uint64
+	StartedAt                    int64
+	Stream                       bool
+	ForceHeightSyncAnchor        bool
+	LogprobsOptimizationOverride *bool
 }
 
 // Session manages the user side of the devshard protocol.
@@ -241,9 +242,9 @@ type Session struct {
 	participantKeys []string
 	clients         []HostClient
 	nonce           uint64
-	diffs           []types.Diff                 // append-only log
-	hostSyncNonce   map[int]uint64               // hostIdx -> last nonce sent
-	pendingTxs      []*types.DevshardTx          // from host mempools, for next diff
+	diffs           []types.Diff        // append-only log
+	hostSyncNonce   map[int]uint64      // hostIdx -> last nonce sent
+	pendingTxs      []*types.DevshardTx // from host mempools, for next diff
 	// pendingTxKeys dedups the current pendingTxs slice by tx_type:id. It is
 	// rebuilt from what compose retained, so a tx that failed to apply frees
 	// its key again -- otherwise the first host to propose a bogus tx would
@@ -253,6 +254,12 @@ type Session struct {
 	// so another host's mempool copy is not re-queued after the fact. Only
 	// this set survives across compose rounds.
 	appliedTxKeys map[string]struct{}
+
+	receivedStreams        map[uint64]waitingReceivedStream
+	appliedFinishHashes    map[uint64]waitingAppliedFinish
+	servedBindingsPrunedAt time.Time
+	servedBindingHandler   ServedBindingHandler
+
 	// pinnedFinishIDs holds inference IDs whose pending Finish and ErrorMiss
 	// must not be drained by a concurrent composeDiffLocked (heartbeat,
 	// PrepareInference, unrelated SendPendingDiff). HandleErrorMiss pins
@@ -940,6 +947,9 @@ func (s *Session) retainPendingLocked(held, applied []*types.DevshardTx) {
 		if key := devshardTxKey(tx); key != "" {
 			s.appliedTxKeys[key] = struct{}{}
 		}
+		if finish := tx.GetFinishInference(); finish != nil {
+			s.bindAppliedFinishLocked(finish)
+		}
 	}
 	if len(s.appliedTxKeys) > maxAppliedTxKeys {
 		clear(s.appliedTxKeys)
@@ -1284,11 +1294,12 @@ func (p *PreparedInference) Payload() *host.InferencePayload {
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
 	legacyForce := p.params.ForceHeightSyncAnchor && s.heightSyncK == 0
 	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
-		Diffs:                 p.catchUp,
-		Nonce:                 p.diff.Nonce,
-		ForceHeightSyncAnchor: legacyForce,
-		HeightSyncEscrow:      s.heightSyncEscrowHints(),
-		Payload:               p.Payload(),
+		Diffs:                        p.catchUp,
+		Nonce:                        p.diff.Nonce,
+		ForceHeightSyncAnchor:        legacyForce,
+		HeightSyncEscrow:             s.heightSyncEscrowHints(),
+		Payload:                      p.Payload(),
+		LogprobsOptimizationOverride: p.params.LogprobsOptimizationOverride,
 	}, stream, func(partial *host.HostResponse) {
 		s.confirmStartOnReceipt(p.diff.Nonce, partial)
 		if receiptHandler != nil {

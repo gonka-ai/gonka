@@ -5,12 +5,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/internal/testutil"
 	"devshard/types"
 )
 
 func finishTx(inferenceID uint64) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{InferenceId: inferenceID},
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: inferenceID},
 	}}
 }
 

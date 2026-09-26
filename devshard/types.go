@@ -16,11 +16,14 @@ type ExecuteRequest struct {
 	// ResponseWriter, if set, receives the raw ML node response as it streams.
 	// The engine should write inference output here for real-time forwarding.
 	ResponseWriter http.ResponseWriter
+
+	LogprobsOptimizationOverride *bool
 }
 
 // ExecuteResult contains the outcome of an inference execution.
 type ExecuteResult struct {
 	ResponseHash          []byte
+	ServedHash            []byte
 	InputTokens           uint64
 	OutputTokens          uint64
 	ResponseBody          []byte // raw ML response bytes (always populated when available)
@@ -35,6 +38,7 @@ type ValidateRequest struct {
 	Model        string
 	PromptHash   []byte
 	ResponseHash []byte
+	ServedHash   []byte
 	InputTokens  uint64
 	OutputTokens uint64
 

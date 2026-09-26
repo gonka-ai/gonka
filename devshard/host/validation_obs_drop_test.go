@@ -88,7 +88,7 @@ func driveToValidation(t *testing.T, h *Host, user *signing.Secp256k1Signer, hos
 
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:  inferenceID,
-		ResponseHash: engine.ResponseHash,
+		ResponseHash: engine.ResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  engine.InputTokens,
 		OutputTokens: engine.OutputTokens,
 		ExecutorSlot: executorSlot,
