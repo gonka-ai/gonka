@@ -1,9 +1,11 @@
 package keeper
 
 import (
+	"bytes"
 	"testing"
 
 	storetypes "cosmossdk.io/store/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/x/bls/types"
@@ -215,4 +217,106 @@ func TestStoreThresholdSigningRequest_GasBoundedWhenPartialSignaturesNulled(t *t
 
 	require.Greater(t, usedPopulated, used*3,
 		"populated (%d) must cost notably more than nulled (%d)", usedPopulated, used)
+}
+
+// The threshold-signing path reads only base-record fields (participants,
+// slot public keys, group key, phase), so its epoch lookup must not pay for
+// rehydrating every dealer part. With N=16 dealer parts of ~5 KB each the
+// full rehydration alone is ~265k gas; a mainnet dealer part is ~34 KB at
+// i_total_slots=100, so the read grows by ~100k gas per BLS participant.
+func TestThresholdSigning_EpochReadSkipsDealerParts(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	const epochID = uint64(43)
+
+	participants := make([]types.BLSParticipantInfo, gasRegressionN)
+	for i := range participants {
+		participants[i] = types.BLSParticipantInfo{
+			Address:        string(rune('a' + i)),
+			SlotStartIndex: uint32(i),
+			SlotEndIndex:   uint32(i),
+		}
+	}
+	require.NoError(t, k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:        epochID,
+		Participants:   participants,
+		DkgPhase:       types.DKGPhase_DKG_PHASE_SIGNED,
+		GroupPublicKey: []byte{1},
+		TSlotsDegree:   8,
+	}))
+	for i := 0; i < gasRegressionN; i++ {
+		require.NoError(t, k.SetDealerPart(ctx, epochID, uint32(i), makeDealerPart(participants[i].Address)))
+		require.NoError(t, k.SetVerificationSubmission(ctx, epochID, uint32(i), makeVerificationSubmission()))
+	}
+
+	gasOf := func(f func(sdk.Context)) storetypes.Gas {
+		metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+		f(metered)
+		return metered.GasMeter().GasConsumed()
+	}
+	fullRead := gasOf(func(c sdk.Context) {
+		full, err := k.GetEpochBLSData(c, epochID)
+		require.NoError(t, err)
+		require.Len(t, full.DealerParts, gasRegressionN)
+	})
+
+	signingData := types.SigningData{
+		CurrentEpochId: epochID,
+		ChainId:        bytes.Repeat([]byte{7}, 32),
+		RequestId:      bytes.Repeat([]byte{8}, 32),
+		Data:           [][]byte{bytes.Repeat([]byte{9}, 32)},
+	}
+	request := gasOf(func(c sdk.Context) { require.NoError(t, k.RequestThresholdSignature(c, signingData)) })
+	require.Less(t, request, fullRead,
+		"RequestThresholdSignature (%d gas) must not rehydrate dealer parts (full read alone %d)", request, fullRead)
+
+	// A submitter outside the participant set fails right after the epoch
+	// read, so the gas up to that point is the read plus request lookup.
+	partial := gasOf(func(c sdk.Context) {
+		err := k.AddPartialSignature(c, signingData.RequestId, []uint32{0}, make([]byte, 48), "outsider")
+		require.ErrorContains(t, err, "not found in epoch")
+	})
+	require.Less(t, partial, fullRead,
+		"AddPartialSignature (%d gas) must not rehydrate dealer parts (full read alone %d)", partial, fullRead)
+	t.Logf("gas: full epoch read %d, RequestThresholdSignature %d, AddPartialSignature up to ownership check %d",
+		fullRead, request, partial)
+}
+
+func TestGetEpochBLSDataBase_SkipsSplitFields(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	const epochID = uint64(44)
+
+	participants := make([]types.BLSParticipantInfo, gasRegressionN)
+	for i := range participants {
+		participants[i] = types.BLSParticipantInfo{Address: string(rune('a' + i)), SlotStartIndex: uint32(i), SlotEndIndex: uint32(i)}
+	}
+	require.NoError(t, k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:        epochID,
+		Participants:   participants,
+		DkgPhase:       types.DKGPhase_DKG_PHASE_SIGNED,
+		GroupPublicKey: []byte{1},
+		SlotPublicKeys: [][]byte{{2}, {3}},
+		TSlotsDegree:   8,
+	}))
+	for i := 0; i < gasRegressionN; i++ {
+		require.NoError(t, k.SetDealerPart(ctx, epochID, uint32(i), makeDealerPart(participants[i].Address)))
+		require.NoError(t, k.SetVerificationSubmission(ctx, epochID, uint32(i), makeVerificationSubmission()))
+	}
+
+	full, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	base, err := k.GetEpochBLSDataBase(ctx, epochID)
+	require.NoError(t, err)
+	require.Empty(t, base.DealerParts)
+	require.Empty(t, base.VerificationSubmissions)
+	full.DealerParts, full.VerificationSubmissions, full.DealerComplaints = nil, nil, nil
+	require.Equal(t, full, base)
+
+	_, err = k.GetEpochBLSDataBase(ctx, epochID+1)
+	require.ErrorIs(t, err, types.ErrEpochBLSDataNotFound)
+
+	metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = k.GetEpochBLSDataBase(metered, epochID)
+	require.NoError(t, err)
+	baseRead := metered.GasMeter().GasConsumed()
+	require.Less(t, baseRead, storetypes.Gas(50_000), "base read must not scale with dealer parts")
 }
