@@ -16,6 +16,9 @@ import (
 const (
 	gzipEncoding           = "gzip"
 	minCompressedBodyBytes = 1 << 10
+	// MinGzipBodyBytes is the 1 KiB floor for optional gzip (plan §8.1 /
+	// Phase 4 /stats/rpc). Smaller bodies stay identity.
+	MinGzipBodyBytes = minCompressedBodyBytes
 )
 
 // Pooled here because echo would build a new pool on every request.
@@ -23,10 +26,6 @@ var (
 	// ResponseCompressionMiddleware compresses a response when the caller asks.
 	ResponseCompressionMiddleware = middleware.GzipWithConfig(middleware.GzipConfig{Level: gzip.BestSpeed})
 	gzipRequestReaders            = sync.Pool{New: func() any { return new(gzip.Reader) }}
-	requestCompressors            = sync.Pool{New: func() any {
-		writer, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
-		return writer
-	}}
 )
 
 // RequestDecompressionMiddleware unwraps a request body; mount it before auth.
@@ -61,17 +60,33 @@ func RequestDecompressionMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
-// encodeRequestBody gzips a body worth compressing and names the encoding.
-func (c *HTTPClient) encodeRequestBody(body []byte) ([]byte, string) {
-	if !c.config.CompressRequestBodies || len(body) < minCompressedBodyBytes {
-		return body, ""
+// AcceptsGzip reports whether the caller asked for gzip (Accept-Encoding).
+func AcceptsGzip(h http.Header) bool {
+	if h == nil {
+		return false
 	}
-	writer := requestCompressors.Get().(*gzip.Writer)
+	for _, part := range strings.Split(h.Get("Accept-Encoding"), ",") {
+		encoding := strings.TrimSpace(strings.Split(part, ";")[0])
+		if strings.EqualFold(encoding, gzipEncoding) {
+			return true
+		}
+	}
+	return false
+}
+
+// GzipBestSpeed compresses src at BestSpeed. Caller sets Content-Encoding.
+func GzipBestSpeed(src []byte) ([]byte, error) {
 	var compressed bytes.Buffer
-	writer.Reset(&compressed)
-	_, _ = writer.Write(body)
-	_ = writer.Close()
-	writer.Reset(io.Discard)
-	requestCompressors.Put(writer)
-	return compressed.Bytes(), gzipEncoding
+	writer, err := gzip.NewWriterLevel(&compressed, gzip.BestSpeed)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := writer.Write(src); err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return compressed.Bytes(), nil
 }

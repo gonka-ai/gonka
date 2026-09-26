@@ -6,6 +6,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strings"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -192,6 +193,16 @@ func (sm *StateMachine) HeartbeatConfig() heightsync.HeartbeatConfig {
 	return sm.heartbeatCfg
 }
 
+// ProtocolVersion is the destshard runtime tag stamped at session bind.
+func (sm *StateMachine) ProtocolVersion() string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.state == nil {
+		return ""
+	}
+	return sm.state.StateRootAndProtocolVersion
+}
+
 // EffectiveV2Composition reports whether this session uses Phase 1 v2
 // state-root composition. This binary always returns true (sealed accumulator).
 func (sm *StateMachine) EffectiveV2Composition() bool {
@@ -334,19 +345,7 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 }
 
 func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
-	diffContent := BuildDiffContent(sm.state.EscrowID, diff.Nonce, diff.Txs, diff.PostStateRoot)
-	data, err := deterministicMarshal.Marshal(diffContent)
-	if err != nil {
-		return fmt.Errorf("marshal diff content: %w", err)
-	}
-	recovered, err := sm.verifier.RecoverAddress(data, diff.UserSig)
-	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidUserSig, err)
-	}
-	if recovered != sm.userAddress {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidUserSig, sm.userAddress, recovered)
-	}
-	return nil
+	return VerifyDiffUserSig(sm.verifier, sm.userAddress, sm.state.EscrowID, diff)
 }
 
 // ApplyLocal applies txs without signature verification. Used by the user
@@ -1160,6 +1159,10 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
 func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error {
 	if sm.state.Phase != types.PhaseActive {
 		return types.ErrSessionFinalizing
+	}
+
+	if v := strings.TrimSpace(msg.GetProtocolVersion()); v != "" && v != sm.state.StateRootAndProtocolVersion {
+		return fmt.Errorf("%w: start %s session %s", types.ErrProtocolVersionMismatch, v, sm.state.StateRootAndProtocolVersion)
 	}
 
 	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit

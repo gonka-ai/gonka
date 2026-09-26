@@ -210,6 +210,38 @@ ALTER TABLE devshard_storage_identity
     ADD COLUMN IF NOT EXISTS challenge UUID,
 	    ADD COLUMN IF NOT EXISTS challenged_at TIMESTAMPTZ`},
 	},
+	{
+		ID:   15,
+		Name: "devshard_peer_rpc_sessions",
+		Statements: []string{`
+CREATE SEQUENCE IF NOT EXISTS devshard_peer_rpc_session_seq`, `
+CREATE TABLE IF NOT EXISTS devshard_peer_rpc_sessions (
+    token_hash    BYTEA        PRIMARY KEY,
+    host_address  TEXT         NOT NULL,
+    version       TEXT         NOT NULL,
+    peer          TEXT         NOT NULL,
+    attached_unix BIGINT       NOT NULL,
+    expires_at    TIMESTAMPTZ  NOT NULL,
+    grace_until   TIMESTAMPTZ,
+    state         TEXT         NOT NULL,
+    seq           BIGINT       NOT NULL,
+    origin        TEXT         NOT NULL,
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
+)`, `
+CREATE INDEX IF NOT EXISTS devshard_peer_rpc_sessions_by_peer
+    ON devshard_peer_rpc_sessions (host_address, version, peer, state)`, `
+CREATE INDEX IF NOT EXISTS devshard_peer_rpc_sessions_by_seq
+    ON devshard_peer_rpc_sessions (host_address, version, seq)`, `
+CREATE TABLE IF NOT EXISTS devshard_peer_rpc_members (
+    instance_id   TEXT        PRIMARY KEY,
+    host_address  TEXT        NOT NULL,
+    version       TEXT        NOT NULL,
+    applied_seq   BIGINT      NOT NULL,
+    heartbeat_at  TIMESTAMPTZ NOT NULL,
+    ready         BOOLEAN     NOT NULL
+)`,
+		},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

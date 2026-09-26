@@ -3,7 +3,7 @@
 **Spec:** [`proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)  
 **Test catalog (from `devshard-testenv`):** [`height-sync-tests.md`](./height-sync-tests.md)  
 **Params:** [`height-sync-params.md`](./height-sync-params.md)  
-**Related:** [`proposals/CPOC_PROTOCOL.md`](./proposals/CPOC_PROTOCOL.md), [`proposals/FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./proposals/FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md), [`proposals/VALIDATION_PROTOCOL_PROPOSAL.md`](./proposals/VALIDATION_PROTOCOL_PROPOSAL.md)  
+**Related:** [`proposals/CPOC_PROTOCOL.md`](./proposals/CPOC_PROTOCOL.md), [`proposals/finalization.md`](./proposals/finalization.md), [`proposals/VALIDATION_PROTOCOL_PROPOSAL.md`](./proposals/VALIDATION_PROTOCOL_PROPOSAL.md)  
 **PR #1584 review (P0–P4):** [`height-sync-pr-1584-review.md`](./height-sync-pr-1584-review.md)
 
 **Status:** Phases **A**–**D** landed on this branch (dapi HTTP mount lives in `decentralized-api` and is committed separately). Catalog §2–§4 pass (`go test ./heightsync/... ./transport/... ./testenv/scenarios/ -run HeightSync`; held-response tests need `-tags=dev`). Phase C is `citest-height-sync` against this mock-dapi chainoracle (no `heightsyncd`). Phase D unit tests are D1–D8, D10, D11 (D9 is Phase E). The oracle substrate (`devshard/chainoracle/blocks`) and the mock-dapi mount already exist.

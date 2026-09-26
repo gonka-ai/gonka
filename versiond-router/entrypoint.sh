@@ -1,6 +1,8 @@
 #!/bin/sh
 # Renders /etc/haproxy/haproxy.cfg and /etc/haproxy/non_ha.map from the
-# environment, then execs HAProxy.
+# environment, then starts HAProxy. SIGUSR1 soft-stops HAProxy and closes
+# Watch streams once every inference on that HTTP/2 connection has finished,
+# so a rollout does not wait out an idle Watch.
 #
 # Env:
 #   VERSIOND_POOL_HOST        DNS name resolving to every versiond in the HA
@@ -20,6 +22,10 @@
 #                             host:port). Recognised only when no endpoint file
 #                             is set; it renders the same explicit server list.
 #   VERSIOND_PORT             upstream port (default 8080)
+#   VERSIOND_ROUTER_H2_PORT  published-hop frontend (default 8081, proto h2).
+#                             :8080 stays HTTP/1.1 for JSON/healthz/catalog.
+#   VERSIOND_ROUTER_BACKEND_H2 proto h2 on every versiond server line (default
+#                             on). Set false for HTTP/1.1 mock upstreams.
 #   VERSIOND_LEGACY_HOST      single host owning pre-HA SQLite data dirs. With an
 #                             endpoint file this may also be an endpoint id.
 #   VERSIOND_NON_HA_VERSIONS  version path segments pinned to the legacy host
@@ -64,6 +70,7 @@ HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 POOL_HOST="${VERSIOND_POOL_HOST:-versiond-pool}"
 PORT="${VERSIOND_PORT:-8080}"
 ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
+H2_PORT="${VERSIOND_ROUTER_H2_PORT:-8081}"
 LEGACY_HOST="${VERSIOND_LEGACY_HOST:-$POOL_HOST}"
 SLOTS="${VERSIOND_ROUTER_POOL_SLOTS:-64}"
 MAXCONN="${VERSIOND_ROUTER_MAX_CONNECTIONS:-4096}"
@@ -193,7 +200,7 @@ explicit_server_options() {
         *) eso_options=$(printf '%s' "$eso_options" | \
             sed 's/ resolvers docker init-addr none//') ;;
     esac
-    printf '%s' "$eso_options" | sed "s/\${SERVER_STATE}/$2/"
+    printf '%s' "$eso_options" | sed "s/\${SERVER_STATE}/$2/; s/\${BACKEND_PROTO}/$BACKEND_PROTO/"
 }
 
 # Explicit server lines for one backend, replacing the template's
@@ -291,6 +298,15 @@ ALLOW_COARSE_READINESS=$(bool_env VERSIOND_ROUTER_ALLOW_COARSE_READINESS)
 CATALOG_ALLOW_REMOVALS=$(bool_env VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS)
 RENDER_ONLY=$(bool_env VERSIOND_ROUTER_RENDER_ONLY)
 TRUST_FORWARDED_HEADERS=$(bool_env VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS)
+# Default on: inner hop is h2c to current-tree versiond. HTTP/1.1 mock
+# upstreams (test-version-routing) set VERSIOND_ROUTER_BACKEND_H2=false.
+: "${VERSIOND_ROUTER_BACKEND_H2:=true}"
+BACKEND_H2=$(bool_env VERSIOND_ROUTER_BACKEND_H2)
+if [ -n "$BACKEND_H2" ]; then
+    BACKEND_PROTO=' proto h2'
+else
+    BACKEND_PROTO=
+fi
 
 if [ -n "$TRUST_FORWARDED_HEADERS" ]; then
     FORWARDED_PROTO_RULE='# Preserve X-Forwarded-Proto from the isolated trusted ingress.'
@@ -314,7 +330,7 @@ for name in "$POOL_HOST" "$LEGACY_HOST"; do
     esac
 done
 
-for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
+for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$H2_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
     case "$value" in
         ''|*[!0-9]*)
             echo "versiond-router: invalid numeric setting '$value'" >&2
@@ -322,6 +338,10 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
             ;;
     esac
 done
+if [ "$H2_PORT" -eq 0 ] || [ "$H2_PORT" -eq 8080 ] || [ "$H2_PORT" -eq "$ADMIN_PORT" ]; then
+    echo "versiond-router: VERSIOND_ROUTER_H2_PORT must be a distinct positive port (not 8080 or the admin port)" >&2
+    exit 1
+fi
 if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
     [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || \
     [ "$CATALOG_MAX_BYTES" -eq 0 ] || \
@@ -434,6 +454,7 @@ render_backend() {
         -e "s|\${RESPONSE_BACKEND}|$7|g" \
         -e "s|\${RETRY_ON}|$9|g" \
         -e "s|\${SERVER_STATE}|$8|g" \
+        -e "s|\${BACKEND_PROTO}|$BACKEND_PROTO|g" \
         -e "$rb_servers" \
         "$POOL_TEMPLATE"
 }
@@ -712,6 +733,7 @@ sed \
     -e "s|\${MAX_CONNECTIONS}|$MAXCONN|g" \
     -e "s|\${ADMIN_PORT}|$ADMIN_PORT|g" \
     -e "s|\${FRONT_BIND_ADDRESS}|$FRONT_BIND_ADDRESS|g" \
+    -e "s|\${H2_PORT}|$H2_PORT|g" \
     -e "s|\${ADMIN_LOOPBACK_BIND}|$ADMIN_LOOPBACK_BIND|g" \
     -e "s|\${METRICS_NETWORK_BIND}|$METRICS_NETWORK_BIND|g" \
     -e "s|\${CATALOG_STATUS_SERVER_STATE}|$CATALOG_STATUS_SERVER_STATE|g" \
@@ -772,4 +794,12 @@ if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
 fi
 
-exec "$HAPROXY_BIN" -W -db -f "$OUT"
+# Membership for the peer-session barrier. The control token stays off the
+# public client path; an empty token leaves the publisher stopped, which is
+# what an old router does.
+publish=/usr/local/lib/versiond-router/publish-members
+if [ -n "${VERSIOND_CONTROL_TOKEN:-}" ] && [ -x "$publish" ]; then
+    "$publish" --loop &
+fi
+
+exec /usr/local/lib/versiond-router/h2-watch-drain.sh --supervise "$HAPROXY_BIN" "$OUT"

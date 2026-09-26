@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,6 +14,23 @@ import (
 
 	"devshard/cmd/devshardd/session"
 )
+
+func TestAdminPeerReleaseStopsIdentityWithoutDraining(t *testing.T) {
+	lifecycle := newLifecycleState()
+	lifecycle.SetReady(true)
+	var released atomic.Bool
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone, func() {
+		released.Store(true)
+	})
+
+	rec := httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/rpc/release", nil))
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.True(t, released.Load())
+	status := lifecycle.Status()
+	require.True(t, status.Ready)
+	require.False(t, status.Draining)
+}
 
 func TestLifecycleTransitionTableInvariants(t *testing.T) {
 	states := []lifecyclePhase{
@@ -175,7 +193,7 @@ func recoveryDone() session.RecoveryProgress {
 func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone)
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone, nil)
 	e.GET("/work", func(c echo.Context) error {
 		time.Sleep(20 * time.Millisecond)
 		return c.String(http.StatusOK, "done")
@@ -223,7 +241,7 @@ func TestLifecycleDrainRejectsNewWork(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone)
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone, nil)
 	e.GET("/work", func(c echo.Context) error {
 		return c.String(http.StatusOK, "done")
 	})
@@ -256,7 +274,7 @@ func TestReadyReflectsStorageReadiness(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	storageReady := false
-	admin := buildAdminServer(lifecycle, func() bool { return storageReady }, nil, recoveryDone)
+	admin := buildAdminServer(lifecycle, func() bool { return storageReady }, nil, recoveryDone, nil)
 
 	rec := httptest.NewRecorder()
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
@@ -280,7 +298,7 @@ func TestReadyReflectsSessionRecoveryProgress(t *testing.T) {
 	}
 	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, func() session.RecoveryProgress {
 		return progress
-	})
+	}, nil)
 
 	rec := httptest.NewRecorder()
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
@@ -309,7 +327,7 @@ func TestReadyReflectsSessionRecoveryProgress(t *testing.T) {
 func TestAdminExposesPprofNotPublic(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone)
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone, nil)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))

@@ -284,6 +284,10 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
     -subj /CN=policy-v2 \
     -keyout "$tmpdir/tls/key.pem" -out "$tmpdir/tls/cert.pem" \
     >/dev/null 2>&1
+# NGINX_MODE=both also opens the peer RPC TLS port. It reads the same
+# SSL_CERT_SOURCE names production mounts at /etc/haproxy/ssl.
+cp "$tmpdir/tls/key.pem" "$tmpdir/tls/private.key"
+chmod a+r "$tmpdir/tls/cert.pem" "$tmpdir/tls/key.pem" "$tmpdir/tls/private.key"
 
 mkdir "$tmpdir/catalog"
 printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"}]}' \
@@ -750,6 +754,7 @@ docker run -d --name gonka-pr-proxy-v2 --network "$network" \
     -e PROXY_POLICY_POOL_HOST=proxy-policy-v2 \
     -e NGINX_MODE=both \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -v "$tmpdir/tls:/etc/haproxy/ssl:ro" \
     "$image" >/dev/null
 for _ in $(seq 80); do
     code=$(docker exec gonka-pr-proxy-v2 curl -sS -o /dev/null \
@@ -789,6 +794,7 @@ docker run -d --name gonka-pr-proxy-both --network "$network" \
     -e PROXY_POLICY_POOL_HOST=proxy-policy \
     -e NGINX_MODE=both \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -v "$tmpdir/tls:/etc/haproxy/ssl:ro" \
     "$image" >/dev/null
 for _ in $(seq 60); do
     if docker exec gonka-pr-proxy-both sh -c \

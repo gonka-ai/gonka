@@ -28,7 +28,11 @@ import (
 )
 
 const (
-	childLoopbackHost      = "127.0.0.1"
+	childLoopbackHost = "127.0.0.1"
+	// peerReleasePath is the retiring child's admin endpoint. It stops that
+	// process from signing Attach as this host. Old binaries answer 404;
+	// callers log and continue.
+	peerReleasePath        = "/rpc/release"
 	maxChildPort           = 65535
 	storageModePostgres    = "postgres"
 	installedVersionRetain = 3
@@ -50,6 +54,8 @@ type child struct {
 	archiveSHA256 string
 	binaryVersion string
 	storageMode   string
+	// childH2C is set from --print-child-h2c. False dials the child over HTTP/1.1.
+	childH2C bool
 	// haDeployment is populated by binary preflight. Nil means the generation
 	// has not yet established whether it belongs to the HA PostgreSQL set.
 	haDeployment    *bool
@@ -1124,6 +1130,11 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	m.mu.Unlock()
 
 	slog.Info("swapped child route; old child draining", "version", v.Name, "old_port", old.port, "new_port", newChild.child.port)
+	// The new child is the only process that may sign as this host. Release
+	// after the route is published so peers reconnect onto it.
+	if err := m.requestPeerRelease(context.Background(), old); err != nil {
+		slog.Warn("peer identity release failed", "version", v.Name, "port", old.port, "error", err)
+	}
 	go m.drainAfterProxy(old, proxyDrained)
 	return nil
 }
@@ -1511,6 +1522,35 @@ func (m *Manager) snapshotChildren() []*child {
 	return m.allChildrenLocked()
 }
 
+// PeerMemberTarget is one local devshardd the membership forwarder can reach.
+type PeerMemberTarget struct {
+	Version  string
+	AdminURL string
+}
+
+// PeerMemberTargets lists children that have an admin listener. versiond
+// forwards the router membership to each of them.
+func (m *Manager) PeerMemberTargets() []PeerMemberTarget {
+	if m == nil {
+		return nil
+	}
+	var out []PeerMemberTarget
+	for _, c := range m.snapshotChildren() {
+		if c == nil || childDone(c) {
+			continue
+		}
+		addr := c.adminAddr()
+		if addr == "" || c.version.Name == "" {
+			continue
+		}
+		out = append(out, PeerMemberTarget{
+			Version:  c.version.Name,
+			AdminURL: "http://" + addr,
+		})
+	}
+	return out
+}
+
 func (m *Manager) ForceStopChildren() {
 	m.cancelOperations()
 	m.cancelChildren()
@@ -1638,6 +1678,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
+	c.childH2C = preflight.childH2C
 	if preflight.haDeployment != nil {
 		ha := *preflight.haDeployment
 		c.haDeployment = &ha
@@ -1754,7 +1795,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		m.nextProofGeneration++
 		c.proofGeneration = m.nextProofGeneration
 		transitionGenerationLocked(c, statusRunning)
-		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
+		c.proxyTarget = proxy.NewChildTarget(fmt.Sprintf("localhost:%d", c.port), c.childH2C)
 		c.readyOnce.Do(func() { close(c.ready) })
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
 			m.rebuildRoutes()
@@ -2336,6 +2377,32 @@ func (m *Manager) requestDrain(ctx context.Context, c *child) error {
 	return nil
 }
 
+// requestPeerRelease tells the retiring child to stop Attach/Watch. Both
+// generations sign with the same host key; the one still dialing wins the
+// single peer session. A child that does not know the endpoint is ignored
+// by the caller.
+func (m *Manager) requestPeerRelease(ctx context.Context, c *child) error {
+	if c == nil {
+		return nil
+	}
+	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, c.lifecyclePort(), peerReleasePath)
+	requestCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("peer release returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (m *Manager) drainAfterProxy(c *child, proxyDrained <-chan struct{}) {
 	// Proxy admission and child lifecycle draining share one safety deadline.
 	deadline := time.Now().Add(m.cfg.DrainTimeout)
@@ -2443,6 +2510,12 @@ func (m *Manager) stopRetiredChild(
 	c *child,
 	proxyDrained <-chan struct{},
 ) error {
+	// Drop this generation's peer identity before waiting. An open Watch
+	// from this child is an acquired request on the peer's proxy; leaving
+	// it up stalls the other host's stop/start.
+	if err := m.requestPeerRelease(context.Background(), c); err != nil {
+		slog.Warn("peer identity release failed", "version", c.version.Name, "port", c.port, "error", err)
+	}
 	timer := time.NewTimer(m.cfg.DrainTimeout)
 	defer timer.Stop()
 	select {
@@ -2549,7 +2622,7 @@ func (m *Manager) rebuildRoutes() {
 	for _, c := range m.processes {
 		if c.status == statusRunning {
 			if c.proxyTarget == nil {
-				c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
+				c.proxyTarget = proxy.NewChildTarget(fmt.Sprintf("localhost:%d", c.port), c.childH2C)
 			}
 			routes[c.version.Name] = c.proxyTarget
 		}

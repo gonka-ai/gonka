@@ -1,11 +1,8 @@
 package server
 
 import (
-	"bytes"
-	"compress/gzip"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/bridge"
-	"devshard/internal/testutil"
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
@@ -100,11 +96,33 @@ func TestSessionHTTPErrorChainUnavailable(t *testing.T) {
 	require.Equal(t, transport.DevshardErrorChainUnavailable, rec.Header().Get(transport.HeaderDevshardError))
 }
 
+func TestSessionHTTPErrorEscrowLookupLimited(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/x/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowLookupLimited))
+	require.Error(t, err)
+	e.HTTPErrorHandler(err, c)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Equal(t, transport.DevshardErrorEscrowLookupLimited, rec.Header().Get(transport.HeaderDevshardError))
+	status, reason := sessionResolutionStatus(fmt.Errorf("get escrow: %w", bridge.ErrEscrowLookupLimited))
+	require.Equal(t, observability.ReasonRateLimited, reason)
+	_ = status
+}
+
 func TestSessionHTTPErrorEscrowNotFoundStill500(t *testing.T) {
-	c := testEchoContext(t)
-	httpErr, ok := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowNotFound)).(*echo.HTTPError)
-	require.True(t, ok)
-	require.Equal(t, http.StatusInternalServerError, httpErr.Code)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/x/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowNotFound))
+	require.Error(t, err)
+	e.HTTPErrorHandler(err, c)
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Equal(t, transport.DevshardErrorEscrowNotFound, rec.Header().Get(transport.HeaderDevshardError))
 }
 
 func TestSessionHTTPErrorDefault(t *testing.T) {
@@ -124,108 +142,29 @@ func (r payloadsOnlyResolver) SessionServerExisting(escrowID string) (*transport
 	return nil, nil
 }
 
-// writingBinder writes to the response itself, as the inference route does.
-type writingBinder struct{ body []byte }
-
-func (b writingBinder) BindOwnerChat(c echo.Context) (*transport.Server, error) {
-	if _, err := c.Response().Write(b.body); err != nil {
-		return nil, err
-	}
-	return nil, ErrInitializing
-}
-
-type staticPayloadHandler struct{ body []byte }
-
-func (h staticPayloadHandler) HandlePayloads(c echo.Context, _ *transport.Server) error {
-	return c.JSONBlob(http.StatusOK, h.body)
-}
-
-func TestPayloadsRouteCompresses(t *testing.T) {
-	body := []byte(`{"inference_id":"1","response_payload":"` + strings.Repeat("A", 8192) + `"}`)
-
+func TestPayloadsRouteIsRetired(t *testing.T) {
 	e := echo.New()
-	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: compressedRequestEscrowID}, writingBinder{body: body}, staticPayloadHandler{body: body})
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: compressedRequestEscrowID}, countingBinder{n: new(int)}, nil)
 
 	request := httptest.NewRequest(http.MethodGet, "/sessions/"+compressedRequestEscrowID+"/payloads", nil)
-	request.Header.Set("Accept-Encoding", gzipEncodingName)
 	recorder := httptest.NewRecorder()
 	e.ServeHTTP(recorder, request)
 
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.Equal(t, gzipEncodingName, recorder.Header().Get("Content-Encoding"))
-	require.Less(t, recorder.Body.Len(), len(body)/4, "the compressed body should be a fraction of the payload")
-
-	reader, err := gzip.NewReader(bytes.NewReader(recorder.Body.Bytes()))
-	require.NoError(t, err)
-	defer reader.Close()
-	decompressed, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	require.JSONEq(t, string(body), string(decompressed), "the payload must survive the wire unchanged")
-
-	plain := httptest.NewRequest(http.MethodGet, "/sessions/"+compressedRequestEscrowID+"/payloads", nil)
-	plainRecorder := httptest.NewRecorder()
-	e.ServeHTTP(plainRecorder, plain)
-	require.Equal(t, http.StatusOK, plainRecorder.Code)
-	require.Empty(t, plainRecorder.Header().Get("Content-Encoding"))
-	require.JSONEq(t, string(body), plainRecorder.Body.String())
+	require.Equal(t, http.StatusGone, recorder.Code)
+	require.Equal(t, transport.DevshardErrorHTTPSessionRetired, recorder.Header().Get(transport.HeaderDevshardError))
+	require.Contains(t, recorder.Body.String(), "Connect")
 }
 
-// streamingBinder writes one frame per flush, as the handler does.
-type streamingBinder struct{ frames []string }
-
-func (b streamingBinder) BindOwnerChat(c echo.Context) (*transport.Server, error) {
-	for _, frame := range b.frames {
-		if _, err := c.Response().Write([]byte(frame)); err != nil {
-			return nil, err
-		}
-		c.Response().Flush()
-	}
-	return nil, ErrInitializing
-}
-
-// Each frame must reach the caller before the next one is written.
-func TestInferenceRouteStreamsEachFrameAsItIsFlushed(t *testing.T) {
-	first := "data: {\"delta\":\"" + strings.Repeat("alpha ", 200) + "\"}\n\n"
-	second := "data: {\"delta\":\"" + strings.Repeat("bravo ", 200) + "\"}\n\n"
-
+func TestChatRouteIsRetired(t *testing.T) {
 	e := echo.New()
-	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: compressedRequestEscrowID},
-		streamingBinder{frames: []string{first, second}}, nil)
-
-	request := httptest.NewRequest(http.MethodPost, "/sessions/"+compressedRequestEscrowID+"/chat/completions", nil)
-	request.Header.Set("Accept-Encoding", gzipEncodingName)
-	recorder := testutil.NewFlushRecorder()
-	e.ServeHTTP(recorder, request)
-
-	require.Equal(t, gzipEncodingName, recorder.Header().Get("Content-Encoding"))
-	require.GreaterOrEqual(t, len(recorder.Flushes()), 2, "one flush per frame must reach the wire")
-
-	var sawFirstAlone bool
-	for _, snapshot := range recorder.Flushes() {
-		decoded := testutil.GzipDecodeSoFar(t, snapshot)
-		if strings.Contains(decoded, "alpha") && !strings.Contains(decoded, "bravo") {
-			sawFirstAlone = true
-			break
-		}
-	}
-	require.True(t, sawFirstAlone, "the first frame must reach the wire before the second is written")
-
-	require.Less(t, len(recorder.Body()), len(first+second)/4, "the whole stream should still compress")
-}
-
-func TestInferenceRouteLeavesAPlainClientAlone(t *testing.T) {
-	body := []byte("data: " + strings.Repeat("A", 8192) + "\n\n")
-
-	e := echo.New()
-	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: compressedRequestEscrowID}, writingBinder{body: body}, nil)
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: compressedRequestEscrowID}, countingBinder{n: new(int)}, nil)
 
 	request := httptest.NewRequest(http.MethodPost, "/sessions/"+compressedRequestEscrowID+"/chat/completions", nil)
 	recorder := httptest.NewRecorder()
 	e.ServeHTTP(recorder, request)
 
-	require.Empty(t, recorder.Header().Get("Content-Encoding"),
-		"compression is negotiated: a client that does not ask keeps the bytes it expects")
-	require.Equal(t, string(body), recorder.Body.String())
+	require.Equal(t, http.StatusGone, recorder.Code)
+	require.Equal(t, transport.DevshardErrorHTTPSessionRetired, recorder.Header().Get(transport.HeaderDevshardError))
 }
 
 type countingBinder struct{ n *int }
@@ -244,7 +183,9 @@ func TestHeightSyncSeedUsesOwnerBind(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
-	require.Equal(t, 1, n, "seed RPC must bind like owner chat so a host without a session can answer")
+	require.Equal(t, http.StatusGone, rec.Code)
+	require.Equal(t, transport.DevshardErrorHTTPSessionRetired, rec.Header().Get(transport.HeaderDevshardError))
+	require.Zero(t, n, "a retired height-sync POST must not bind a session")
 }
 
 type fakeStaleReloader struct {

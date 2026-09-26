@@ -86,7 +86,7 @@ const DefaultHeightSeedTimeout = 5 * time.Second
 
 // ClientConfig holds per-endpoint timeout settings.
 type ClientConfig struct {
-	InferenceTimeout time.Duration // /chat/completions, default 20m
+	InferenceTimeout time.Duration // /chat/completions, default 30m
 	GossipTimeout    time.Duration // gossip/nonce, gossip/txs, default 10s
 	VerifyTimeout    time.Duration // verify-timeout, default 3m
 	QueryTimeout     time.Duration // diffs, mempool GETs, default 30s
@@ -95,8 +95,6 @@ type ClientConfig struct {
 	HeightSeedTimeout time.Duration
 	StreamCallback    func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
 	RoutePrefix       string                          // path prefix for all session routes; default /devshard/<version>
-	// CompressRequestBodies gzips a POST body; safe once every host decompresses.
-	CompressRequestBodies bool
 	// MaxSSEEventBytes caps a single SSE line (including the trailing newline).
 	// Zero means DefaultMaxSSEEventBytes. Oversize lines abort with
 	// ErrSSEEventTooLarge; they are never silently truncated.
@@ -127,6 +125,17 @@ type ClientConfig struct {
 	// HeightSyncRequestMutateHook runs after Decide and peer-tip carry-forward,
 	// before the request is marshaled. Tests / debug only.
 	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
+
+	// RPCEndpoints names to send over Connect. Attach starts only if the
+	// set intersects a wired method (chat and the Phase 3 unaries).
+	// Empty or a typo keeps HTTP. DEVSHARD_RPC_ENDPOINTS is read when this
+	// is nil at SelectTransport time — set it on ExtraClientConfig to override.
+	RPCEndpoints EndpointSet
+	// RPCMaxConnsPerPeer is MaxConnsPerHost on the PeerConn pool. Zero uses
+	// DEVSHARD_RPC_MAX_CONNS_PER_PEER or DefaultRPCMaxConnsPerPeer.
+	RPCMaxConnsPerPeer int
+	// RPCAdoption is the gateway adoption tracker. Nil on hosts.
+	RPCAdoption *PeerRPCAdoption
 }
 
 // RequestAdmissionController can reject participant-bound transport
@@ -347,7 +356,8 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		escrowID:    escrowID,
 		signer:      signer,
 		http: &http.Client{
-			Transport: DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
+			Transport:     DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
+			CheckRedirect: noFollowRedirects,
 		},
 		config:              cfg,
 		heightSync:          cfg.HeightSync,
@@ -364,6 +374,12 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		hc.heightSyncPeerTips = NewHeightSyncPeerTips()
 	}
 	return hc
+}
+
+// noFollowRedirects stops Go from forwarding Authorization / session headers
+// to a different host.
+func noFollowRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // cloneSharing returns a copy that shares this client's HTTP transport,
@@ -388,6 +404,10 @@ func (c *HTTPClient) cloneSharing() *HTTPClient {
 	cp.admissionOff.Store(c.admissionOff.Load())
 	return cp
 }
+
+// Close is a no-op. HTTPClient does not own a PeerConn; *RPCClient.Close
+// releases the handshake. HostPeerClient.Close is this method or the RPC override.
+func (c *HTTPClient) Close() {}
 
 // BaseURL returns the dial base URL for this host (no route prefix).
 func (c *HTTPClient) BaseURL() string {
@@ -442,6 +462,8 @@ func (c *HTTPClient) timestampHeader() string {
 	return HeaderTimestamp
 }
 
+// cloneWithSigner is a new HTTP client with signer. There is no Attach
+// identity, so a different key just re-signs JSON POSTs.
 func (c *HTTPClient) cloneWithSigner(signer signing.Signer, timeout time.Duration) *HTTPClient {
 	cfg := c.config
 	cfg.Admission = nil
@@ -901,9 +923,10 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	}
 
 	req := ChallengeReceiptRequest{
-		InferenceID: inferenceID,
-		Payload:     PayloadToJSON(payload),
-		Diffs:       djList,
+		InferenceID:     inferenceID,
+		Payload:         PayloadToJSON(payload),
+		Diffs:           djList,
+		ProtocolVersion: types.StartProtocolVersion(diffs),
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -1102,18 +1125,13 @@ func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byt
 		return nil, fmt.Errorf("sign request: %w", err)
 	}
 
-	wireBody, contentEncoding := c.encodeRequestBody(body)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(wireBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
-	if contentEncoding != "" {
-		req.Header.Set("Content-Encoding", contentEncoding)
-	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {

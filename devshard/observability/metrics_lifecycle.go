@@ -44,6 +44,23 @@ var (
 	diffPersistRetryTotal     *prometheus.CounterVec
 	diffForkDetectedTotal     *prometheus.CounterVec
 	reconcileFastForwardTotal prometheus.Counter
+
+	peerRPCSessions    prometheus.Gauge
+	peerRPCPeers       prometheus.Gauge
+	peerRPCEnabled     prometheus.Gauge
+	peerRPCAttachTotal *prometheus.CounterVec
+	peerRPCGateTotal   *prometheus.CounterVec
+
+	peerSessionState         *prometheus.GaugeVec
+	peerAttachTotal          *prometheus.CounterVec
+	peerReattachTotal        *prometheus.CounterVec
+	peerPoolExhaustedTotal   *prometheus.CounterVec
+	peerRPCBudgetWaitTotal   *prometheus.CounterVec
+	peerRPCBudgetWaitSeconds *prometheus.CounterVec
+	peerRPCBudgetWaitSkipped *prometheus.CounterVec
+	peerRPCRequestsTotal     *prometheus.CounterVec
+	peerRPCBannedTotal       *prometheus.CounterVec
+	peerRPCAttachBannedTotal *prometheus.CounterVec
 )
 
 var durationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
@@ -179,6 +196,66 @@ func initRegistry() {
 		Name: "devshard_reconcile_fast_forward_total",
 		Help: "Times a host fast-forwarded in-memory state from durable diffs (HA stale standby).",
 	})
+	peerRPCSessions = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_peer_rpc_sessions",
+		Help: "Host-level peer RPC sessions (Attach map size) on this child.",
+	})
+	peerRPCPeers = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_peer_rpc_peers",
+		Help: "Distinct peers with a host-level peer RPC session on this child.",
+	})
+	peerRPCEnabled = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_peer_rpc_enabled",
+		Help: "Whether the Connect peer-RPC mux is mounted on this child (1) or not (0).",
+	})
+	peerRPCAttachTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_attach_total",
+		Help: "Peer RPC Attach outcomes by Connect code (ok, invalid_argument, unauthenticated, permission_denied, resource_exhausted, failed_precondition, unavailable).",
+	}, []string{"result"})
+	peerRPCGateTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_gate_total",
+		Help: "Peer RPC handshake-gate outcomes (admitted, missing, forged, expired, oversized).",
+	}, []string{"reason"})
+	peerSessionState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "devshard_peer_session_state",
+		Help: "Client PeerConn state (1 on the current state, 0 on the others) per destination host child (addr@version).",
+	}, []string{"peer", "state"})
+	peerAttachTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_attach_total",
+		Help: "Client Attach attempts by destination host child (addr@version) and result (ok or a Connect code).",
+	}, []string{"peer", "result"})
+	peerReattachTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_reattach_total",
+		Help: "Client PeerConn re-attach reasons (watch, ttl) per destination host child (addr@version).",
+	}, []string{"peer", "reason"})
+	peerPoolExhaustedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_pool_exhausted_total",
+		Help: "Times a PeerConn HTTP/1.1 pool had more in-flight RPCs than MaxConnsPerHost.",
+	}, []string{"peer"})
+	peerRPCBudgetWaitTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_budget_wait_total",
+		Help: "Client PeerConn waits on advertised messages/min before an opted-in unary RPC.",
+	}, []string{"endpoint"})
+	peerRPCBudgetWaitSeconds = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_budget_wait_seconds_total",
+		Help: "Seconds the client slept on advertised messages/min before an opted-in unary RPC.",
+	}, []string{"endpoint"})
+	peerRPCBudgetWaitSkipped = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_budget_wait_skipped_total",
+		Help: "Times the client skipped advertised pacing because the wait could not fit in the retry budget or RPC deadline.",
+	}, []string{"endpoint"})
+	peerRPCRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_requests_total",
+		Help: "Inbound peer RPC classified attempts by endpoint and result (ok, banned). No peer/ip labels.",
+	}, []string{"endpoint", "result"})
+	peerRPCBannedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_banned_total",
+		Help: "Inbound peer RPCs refused by the channel limiter (resource_exhausted) by endpoint and zone.",
+	}, []string{"endpoint", "zone"})
+	peerRPCAttachBannedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_attach_banned_total",
+		Help: "Attach refusals by reason (floor, other). No peer/ip labels.",
+	}, []string{"reason"})
 
 	registry.MustRegister(
 		inflight,
@@ -208,6 +285,21 @@ func initRegistry() {
 		diffPersistRetryTotal,
 		diffForkDetectedTotal,
 		reconcileFastForwardTotal,
+		peerRPCSessions,
+		peerRPCPeers,
+		peerRPCEnabled,
+		peerRPCAttachTotal,
+		peerRPCGateTotal,
+		peerSessionState,
+		peerAttachTotal,
+		peerReattachTotal,
+		peerPoolExhaustedTotal,
+		peerRPCBudgetWaitTotal,
+		peerRPCBudgetWaitSeconds,
+		peerRPCBudgetWaitSkipped,
+		peerRPCRequestsTotal,
+		peerRPCBannedTotal,
+		peerRPCAttachBannedTotal,
 	)
 }
 
@@ -421,4 +513,199 @@ func IncDiffForkDetected(escrowID string) {
 func IncReconcileFastForward() {
 	ensureMetrics()
 	reconcileFastForwardTotal.Inc()
+}
+
+// SetPeerRPCSessionCounts records host-level Attach map sizes.
+func SetPeerRPCSessionCounts(sessions, peers int) {
+	ensureMetrics()
+	peerRPCSessions.Set(float64(sessions))
+	peerRPCPeers.Set(float64(peers))
+}
+
+// SetPeerRPCEnabled records whether the Connect mux is mounted.
+func SetPeerRPCEnabled(enabled bool) {
+	ensureMetrics()
+	if enabled {
+		peerRPCEnabled.Set(1)
+		return
+	}
+	peerRPCEnabled.Set(0)
+}
+
+// IncPeerRPCAttach counts one Attach outcome. result is a Connect code
+// string or "ok". No peer address label.
+func IncPeerRPCAttach(result string) {
+	ensureMetrics()
+	peerRPCAttachTotal.WithLabelValues(result).Inc()
+}
+
+// IncPeerRPCGate counts one handshake-gate outcome. reason is admitted,
+// missing, forged, expired, or oversized.
+func IncPeerRPCGate(reason string) {
+	ensureMetrics()
+	peerRPCGateTotal.WithLabelValues(reason).Inc()
+}
+
+// IncPeerRPCRequests counts one classified inbound RPC. result is ok or banned.
+func IncPeerRPCRequests(endpoint, result string) {
+	ensureMetrics()
+	if endpoint == "" {
+		endpoint = "other"
+	}
+	if result == "" {
+		result = "ok"
+	}
+	peerRPCRequestsTotal.WithLabelValues(endpoint, result).Inc()
+}
+
+// IncPeerRPCBanned counts a rate-limited inbound RPC. zone is shared,
+// streams, or attach_floor.
+func IncPeerRPCBanned(endpoint, zone string) {
+	ensureMetrics()
+	if endpoint == "" {
+		endpoint = "other"
+	}
+	if zone == "" {
+		zone = "shared"
+	}
+	peerRPCBannedTotal.WithLabelValues(endpoint, zone).Inc()
+}
+
+// IncPeerRPCAttachBanned counts an Attach resource_exhausted. reason is
+// floor (process Attach cap) or other (oversized, too many sessions).
+func IncPeerRPCAttachBanned(reason string) {
+	ensureMetrics()
+	if reason == "" {
+		reason = "other"
+	}
+	peerRPCAttachBannedTotal.WithLabelValues(reason).Inc()
+}
+
+const (
+	PeerSessionUnauthenticated = "unauthenticated"
+	PeerSessionAttaching       = "attaching"
+	PeerSessionReady           = "ready"
+)
+
+// SetPeerSessionState records the client PeerConn state machine. peer is
+// addr@version (same as the PeerConn registry). Exactly one of
+// unauthenticated / attaching / ready is 1.
+func SetPeerSessionState(peer, state string) {
+	ensureMetrics()
+	if peer == "" {
+		return
+	}
+	for _, s := range []string{PeerSessionUnauthenticated, PeerSessionAttaching, PeerSessionReady} {
+		v := 0.0
+		if s == state {
+			v = 1
+		}
+		peerSessionState.WithLabelValues(peer, s).Set(v)
+	}
+}
+
+// ClearPeerSessionState drops the three state series for a closed PeerConn.
+func ClearPeerSessionState(peer string) {
+	ensureMetrics()
+	if peer == "" {
+		return
+	}
+	for _, s := range []string{PeerSessionUnauthenticated, PeerSessionAttaching, PeerSessionReady} {
+		peerSessionState.DeleteLabelValues(peer, s)
+	}
+}
+
+// IncPeerAttach counts one client Attach attempt.
+func IncPeerAttach(peer, result string) {
+	ensureMetrics()
+	if peer == "" {
+		peer = "unknown"
+	}
+	peerAttachTotal.WithLabelValues(peer, result).Inc()
+}
+
+// IncPeerReattach counts a client re-attach after the first successful Attach.
+func IncPeerReattach(peer, reason string) {
+	ensureMetrics()
+	if peer == "" {
+		peer = "unknown"
+	}
+	peerReattachTotal.WithLabelValues(peer, reason).Inc()
+}
+
+// IncPeerPoolExhausted counts one HTTP/1.1 pool overflow on a PeerConn.
+func IncPeerPoolExhausted(peer string) {
+	ensureMetrics()
+	if peer == "" {
+		peer = "unknown"
+	}
+	peerPoolExhaustedTotal.WithLabelValues(peer).Inc()
+}
+
+func rpcBudgetEndpoint(endpoint string) string {
+	if endpoint == "" {
+		return "other"
+	}
+	return endpoint
+}
+
+// ObservePeerRPCBudgetWait records one client-side wait on advertised
+// messages/min. endpoint is the Connect method name (GetDiffs).
+func ObservePeerRPCBudgetWait(endpoint string, wait time.Duration) {
+	if wait <= 0 {
+		return
+	}
+	ensureMetrics()
+	endpoint = rpcBudgetEndpoint(endpoint)
+	peerRPCBudgetWaitTotal.WithLabelValues(endpoint).Inc()
+	peerRPCBudgetWaitSeconds.WithLabelValues(endpoint).Add(wait.Seconds())
+}
+
+// IncPeerRPCBudgetWaitSkipped counts a wait that was not slept because it
+// could not fit in the retry budget or RPC deadline.
+func IncPeerRPCBudgetWaitSkipped(endpoint string) {
+	ensureMetrics()
+	peerRPCBudgetWaitSkipped.WithLabelValues(rpcBudgetEndpoint(endpoint)).Inc()
+}
+
+// PeerRPCBudgetWaitCounter is the client pacing-wait counter for tests.
+func PeerRPCBudgetWaitCounter(endpoint string) prometheus.Counter {
+	ensureMetrics()
+	return peerRPCBudgetWaitTotal.WithLabelValues(rpcBudgetEndpoint(endpoint))
+}
+
+// PeerRPCBudgetWaitSecondsCounter is the client pacing-wait duration counter for tests.
+func PeerRPCBudgetWaitSecondsCounter(endpoint string) prometheus.Counter {
+	ensureMetrics()
+	return peerRPCBudgetWaitSeconds.WithLabelValues(rpcBudgetEndpoint(endpoint))
+}
+
+// PeerRPCBudgetWaitSkippedCounter is the skipped-pacing counter for tests.
+func PeerRPCBudgetWaitSkippedCounter(endpoint string) prometheus.Counter {
+	ensureMetrics()
+	return peerRPCBudgetWaitSkipped.WithLabelValues(rpcBudgetEndpoint(endpoint))
+}
+
+// PeerAttachCounter is the client Attach counter for tests.
+func PeerAttachCounter(peer, result string) prometheus.Counter {
+	ensureMetrics()
+	return peerAttachTotal.WithLabelValues(peer, result)
+}
+
+// PeerReattachCounter is the client re-attach counter for tests.
+func PeerReattachCounter(peer, reason string) prometheus.Counter {
+	ensureMetrics()
+	return peerReattachTotal.WithLabelValues(peer, reason)
+}
+
+// PeerSessionStateGauge is the client session-state gauge for tests.
+func PeerSessionStateGauge(peer, state string) prometheus.Gauge {
+	ensureMetrics()
+	return peerSessionState.WithLabelValues(peer, state)
+}
+
+// PeerPoolExhaustedCounter is the pool-overflow counter for tests.
+func PeerPoolExhaustedCounter(peer string) prometheus.Counter {
+	ensureMetrics()
+	return peerPoolExhaustedTotal.WithLabelValues(peer)
 }

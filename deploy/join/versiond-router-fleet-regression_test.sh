@@ -52,6 +52,7 @@ scenarios=(
     RT-COMMIT-CLEANUP-TAG-MOVED
     RT-ROUTE-REMOVED-AT-COMMIT-ALLOWED
     RT-NONHA-OWNER-DOWN
+    RT-H2-PARENT-DRAIN
 )
 
 usage() {
@@ -1064,6 +1065,44 @@ scenario_route_removed_at_commit_allowed() {
     fi
 }
 
+scenario_h2_parent_drain() {
+    load_fleet_functions || return $?
+    cat >"$model/parent-stat.csv" <<'EOF'
+# pxname,svname,status,addr
+versiond_router_coarse,router1,UP,10.0.0.8
+rpc_h2_upstream,router1,UP,10.0.0.8:8081
+versiond_routers_v4,router1,DRAIN,10.0.0.8:8080
+policy_http,policy1,UP,10.0.0.8
+rpc_h2_upstream,router2,UP,10.0.0.9:8081
+EOF
+    docker_exec() { cat "$model/parent-stat.csv"; }
+    local refs want
+    refs=$(parent_server_refs 10.0.0.8 | sort) || true
+    want=$(printf '%s\n' \
+        rpc_h2_upstream/router1 \
+        versiond_router_coarse/router1 \
+        versiond_routers_v4/router1 | sort)
+    if [[ $refs != "$want" ]]; then
+        invariant_violated "parent drain refs were [$refs]"
+        return
+    fi
+    if parent_address_withdrawal_state 10.0.0.8; then
+        invariant_violated 'withdrawal reported complete while the HTTP/2 server was still UP'
+        return
+    fi
+    cat >"$model/parent-stat.csv" <<'EOF'
+# pxname,svname,status,addr
+versiond_router_coarse,router1,DRAIN,10.0.0.8
+rpc_h2_upstream,router1,DRAIN,10.0.0.8:8081
+versiond_routers_v4,router1,DRAIN,10.0.0.8:8080
+EOF
+    if ! parent_address_withdrawal_state 10.0.0.8; then
+        invariant_violated 'withdrawal stayed open after every router server including HTTP/2 left UP'
+        return
+    fi
+    invariant_holds 'parent drain includes the HTTP/2 peer RPC backend and waits until it leaves UP'
+}
+
 scenario_nonha_owner_down() {
     EXTRA_CONFIG='VERSIOND_NON_HA_VERSIONS=v1' load_fleet_functions || return $?
     seed_previous_fleet "routes=v1 v4" "env.VERSIOND_NON_HA_VERSIONS=v1"
@@ -1111,6 +1150,7 @@ run_internal() {
         RT-COMMIT-CLEANUP-TAG-MOVED) scenario_commit_cleanup_tag_moved ;;
         RT-ROUTE-REMOVED-AT-COMMIT-ALLOWED) scenario_route_removed_at_commit_allowed ;;
         RT-NONHA-OWNER-DOWN) scenario_nonha_owner_down ;;
+        RT-H2-PARENT-DRAIN) scenario_h2_parent_drain ;;
         *) echo "HARNESS_ERROR: unknown scenario $scenario" >&2; return 2 ;;
     esac
 }

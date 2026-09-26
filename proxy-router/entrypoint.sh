@@ -27,6 +27,14 @@ ROUTER_POOL_HOST="${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}"
 ROUTER_POOL_SLOTS="${VERSIOND_ROUTER_FLEET_CAPACITY:-16}"
 ROUTER_PORT="${VERSIOND_ROUTER_PORT:-8080}"
 ROUTER_ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
+# Peer RPC listen. 9443, not 8443: join publishes API_SSL_PORT (default 8443)
+# onto container :443. Clients dial {InferenceUrl.host}:DEVSHARD_RPC_H2_PORT.
+RPC_H2_PORT="${DEVSHARD_RPC_H2_PORT:-9443}"
+RPC_H2_ROUTER_PORT="${DEVSHARD_RPC_H2_ROUTER_PORT:-8081}"
+RPC_H2_VERSIOND_HOST="${DEVSHARD_RPC_H2_VERSIOND_HOST:-versiond}"
+RPC_H2_VERSIOND_PORT="${DEVSHARD_RPC_H2_VERSIOND_PORT:-8080}"
+RPC_H2_CERT_DIR="${DEVSHARD_RPC_H2_CERT_DIR:-/etc/haproxy/ssl}"
+RPC_H2_PEM="${DEVSHARD_RPC_H2_PEM:-/var/lib/gonka-router/rpc-h2.pem}"
 ROUTER_HEALTH_CONTRACT="${VERSIOND_ROUTER_HEALTH_CONTRACT:-readyz}"
 VERSIOND_FRONTEND_PORT="${PROXY_VERSIOND_PORT:-18081}"
 ADMIN_PORT=8404
@@ -148,6 +156,7 @@ if [ -n "$CATALOG_UPSTREAM_HOST" ]; then
 fi
 for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
     "$ROUTER_ADMIN_PORT" "$VERSIOND_FRONTEND_PORT" "$ADMIN_PORT" \
+    "$RPC_H2_PORT" "$RPC_H2_ROUTER_PORT" "$RPC_H2_VERSIOND_PORT" \
     "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE" \
     "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" \
     "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" \
@@ -206,6 +215,47 @@ case "$NGINX_MODE" in
     *)
         echo "proxy-router: NGINX_MODE must be http, https, or both" >&2
         exit 1
+        ;;
+esac
+
+if [ "$RPC_H2_PORT" -eq 80 ] || [ "$RPC_H2_PORT" -eq 443 ] || \
+    [ "$RPC_H2_PORT" -eq "$VERSIOND_FRONTEND_PORT" ] || \
+    [ "$RPC_H2_PORT" -eq "$ADMIN_PORT" ]; then
+    echo "proxy-router: DEVSHARD_RPC_H2_PORT=$RPC_H2_PORT collides with an existing listen" >&2
+    exit 1
+fi
+case "$RPC_H2_VERSIOND_HOST" in
+    '' | *[!A-Za-z0-9._-]*)
+        echo "proxy-router: invalid DEVSHARD_RPC_H2_VERSIOND_HOST '$RPC_H2_VERSIOND_HOST'" >&2
+        exit 1
+        ;;
+esac
+
+# HA sets VERSIOND_ROUTER_POOL_HOST (the fleet). Non-HA leaves it unset and
+# the h2 hop goes straight to versiond:8080. JSON :8080 on the router is not
+# this hop: peer RPC is the router's proto h2 listen (8081).
+if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
+    RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${RPC_H2_ROUTER_PORT} proto h2 resolvers docker init-addr none hash-key addr"
+else
+    RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 resolvers docker init-addr none"
+fi
+
+case "$NGINX_MODE" in
+    https | both)
+        cert="$RPC_H2_CERT_DIR/cert.pem"
+        key="$RPC_H2_CERT_DIR/private.key"
+        if [ ! -f "$cert" ] || [ ! -f "$key" ]; then
+            echo "proxy-router: HTTPS InferenceUrl requires SSL_CERT_SOURCE cert.pem and private.key for DEVSHARD_RPC_H2_PORT (looked in $RPC_H2_CERT_DIR)" >&2
+            exit 1
+        fi
+        mkdir -p "$(dirname "$RPC_H2_PEM")"
+        cat "$cert" "$key" > "$RPC_H2_PEM"
+        chmod 600 "$RPC_H2_PEM"
+        # ssl+alpn is HTTP/2 over TLS. proto h2 would be cleartext h2c.
+        RPC_H2_BIND=":${RPC_H2_PORT} ssl crt ${RPC_H2_PEM} alpn h2"
+        ;;
+    *)
+        RPC_H2_BIND=":${RPC_H2_PORT} proto h2"
         ;;
 esac
 
@@ -457,6 +507,8 @@ sed \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
     -e "s|\${PUBLIC_PROXY_ACL}|$PUBLIC_PROXY_ACL|g" \
     -e "s|\${PUBLIC_PROXY_EXPECT}|$PUBLIC_PROXY_EXPECT|g" \
+    -e "s|\${RPC_H2_BIND}|$RPC_H2_BIND|g" \
+    -e "s|\${RPC_H2_SERVER}|$RPC_H2_SERVER|g" \
 	-e "/\${CATALOG_PROXY_CONFIG}/{
 		r $CATALOG_PROXY_FILE
 		d

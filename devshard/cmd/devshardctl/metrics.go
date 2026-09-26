@@ -70,6 +70,11 @@ type DevshardMetrics struct {
 	hostPingTicks           prometheus.Counter
 	hostPingTicksSkipped    prometheus.Counter
 	hostPingParticipantInfo *prometheus.GaugeVec
+
+	// Escrow work on h2 vs JSON, and which hosts have a PeerConn.
+	gatewayEscrowSessions *prometheus.CounterVec
+	gatewayHostRPC        *prometheus.GaugeVec
+	peerRPCAdoption       *transport.PeerRPCAdoption
 }
 
 type GatewaySlotDecisionMetric struct {
@@ -431,6 +436,20 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"host", "participant_key"},
 		),
+		gatewayEscrowSessions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_escrow_sessions_total",
+				Help: "Escrow sessions that started talking to a host over Connect/h2 or JSON. Once per escrow per host, not per Attach.",
+			},
+			[]string{"path"},
+		),
+		gatewayHostRPC: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_rpc",
+				Help: "Whether this host currently has a ready PeerConn (h2) or is reached over JSON.",
+			},
+			[]string{"peer", "mode"},
+		),
 	}
 
 	registry.MustRegister(
@@ -477,8 +496,11 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.hostPingTicks,
 		m.hostPingTicksSkipped,
 		m.hostPingParticipantInfo,
+		m.gatewayEscrowSessions,
+		m.gatewayHostRPC,
 	)
 
+	m.peerRPCAdoption = transport.NewPeerRPCAdoption(m)
 	m.handler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	return m
 }
@@ -888,6 +910,58 @@ func (m *DevshardMetrics) IncHostPingTicksSkipped() {
 	m.hostPingTicksSkipped.Inc()
 }
 
+// IncEscrowSession counts escrow work on h2 vs JSON.
+func (m *DevshardMetrics) IncEscrowSession(path string) {
+	if m == nil || m.gatewayEscrowSessions == nil {
+		return
+	}
+	switch path {
+	case transport.PeerRPCPathH2, transport.PeerRPCPathJSON:
+	default:
+		return
+	}
+	m.gatewayEscrowSessions.WithLabelValues(path).Inc()
+}
+
+// SetHostRPC records whether this host is reached over h2 or JSON.
+func (m *DevshardMetrics) SetHostRPC(peer, mode string, on bool) {
+	if m == nil || m.gatewayHostRPC == nil || peer == "" {
+		return
+	}
+	switch mode {
+	case transport.PeerRPCPathH2, transport.PeerRPCPathJSON:
+	default:
+		return
+	}
+	v := 0.0
+	if on {
+		v = 1
+	}
+	m.gatewayHostRPC.WithLabelValues(peer, mode).Set(v)
+}
+
+// DeleteHostRPC drops a host_rpc series so retired peers do not occupy
+// cardinality after the last escrow bind.
+func (m *DevshardMetrics) DeleteHostRPC(peer, mode string) {
+	if m == nil || m.gatewayHostRPC == nil || peer == "" {
+		return
+	}
+	switch mode {
+	case transport.PeerRPCPathH2, transport.PeerRPCPathJSON:
+	default:
+		return
+	}
+	m.gatewayHostRPC.DeleteLabelValues(peer, mode)
+}
+
+// PeerRPCAdoption is the gateway-side tracker PeerConn should call.
+func (m *DevshardMetrics) PeerRPCAdoption() *transport.PeerRPCAdoption {
+	if m == nil {
+		return nil
+	}
+	return m.peerRPCAdoption
+}
+
 func metricLabel(value, fallback string) string {
 	value = strings.TrimSpace(value)
 	if value != "" {
@@ -927,6 +1001,7 @@ type gatewayMetricsCollector struct {
 	hostStateDesc                  *prometheus.Desc
 
 	heightSync heightSyncDescs
+	rpcStats   rpcStatsDescs
 	peerMatrix bool
 }
 
@@ -1069,6 +1144,7 @@ func newGatewayMetricsCollectorWithHostConnections(gateway *Gateway, hostConnect
 			nil,
 		),
 		heightSync: newHeightSyncDescs(),
+		rpcStats:   newRPCStatsDescs(),
 		peerMatrix: heightSyncPeerMatrixEnabled(),
 	}
 }
@@ -1096,6 +1172,7 @@ func (c *gatewayMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.hostOpenDesc
 	ch <- c.hostStateDesc
 	c.heightSync.describe(ch)
+	c.rpcStats.describe(ch)
 }
 
 func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
@@ -1184,6 +1261,9 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	c.collectHeightSync(ch, runtimes)
+	if c.gateway.rpcStats != nil {
+		c.rpcStats.emit(ch, c.gateway.rpcStats.hosts())
+	}
 
 	if c.hostConnections == nil {
 		return

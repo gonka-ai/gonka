@@ -187,6 +187,10 @@ services:
       - DEVSHARD_OTEL_ENABLED=${DEVSHARD_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
+      # Children inherit this. HA peers refuse /rpc/ on :8080, so dial the
+      # proxy-router HTTP/2 port.
+      - DEVSHARD_RPC_H2_UPGRADE=true
+      - DEVSHARD_RPC_H2_PORT=${DEVSHARD_RPC_H2_PORT:-9443}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin
@@ -263,8 +267,11 @@ services:
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
+      # Peer RPC. Not :443 (API_SSL_PORT): those stay TCP to proxy-policy.
+      - "${DEVSHARD_RPC_H2_PORT:-9443}:${DEVSHARD_RPC_H2_PORT:-9443}"
     environment:
       - NGINX_MODE=${NGINX_MODE:-http}
+      - DEVSHARD_RPC_H2_PORT=${DEVSHARD_RPC_H2_PORT:-9443}
       - PROXY_POLICY_POOL_HOST=proxy-policy-front
       - PROXY_POLICY_POOL_SLOTS=${PROXY_POLICY_POOL_SLOTS:-4}
       - PROXY_ROUTER_POLICY_BIND_HOST=proxy-policy-ingress
@@ -283,6 +290,9 @@ services:
           - proxy-policy-ingress
     volumes:
       - proxy-router-state:/var/lib/gonka-router
+      # Same host cert nginx uses. The entrypoint concatenates it for the
+      # HTTP/2 bind only when NGINX_MODE is https or both.
+      - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/haproxy/ssl:ro
     restart: unless-stopped
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]

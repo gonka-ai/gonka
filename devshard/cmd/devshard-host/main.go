@@ -24,12 +24,13 @@ import (
 	"devshard/host"
 	"devshard/internal/boolvalue"
 	"devshard/internal/e2econfig"
-	"devshard/observability"
+	devshardserver "devshard/server"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
 	"devshard/stub"
 	"devshard/transport"
+	"devshard/transport/rpcserver"
 	"devshard/types"
 )
 
@@ -78,7 +79,7 @@ func main() {
 	e := echo.New()
 	e.HideBanner = true
 	registerLiveness(e, types.EffectiveStateRootAndProtocolVersion)
-	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv, gsp, stubInferenceHTTPStatus, stubInferenceHTTPMessage)
+	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv, gsp, cfg.escrowID, cfg.signer.Address(), stubInferenceHTTPStatus, stubInferenceHTTPMessage)
 
 	addr := ":" + *port
 	log.Printf("devshard-host listening on %s slot=%d address=%s route_prefix=%s",
@@ -102,49 +103,24 @@ func registerLiveness(e *echo.Echo, version string) {
 	}
 }
 
-// registerServer mounts the transport handlers the same way production
-// RegisterLazySessionRoutes does, for a single pre-bound e2e host session.
-func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, stubInferenceHTTPStatus int, stubInferenceHTTPMessage string) {
-	g.Use(observability.EchoMiddleware())
-	g.Use(observability.RequestIDMiddleware)
-	g.Use(transport.RequestDecompressionMiddleware)
-
-	withAuth := func(recordChatTerminal bool, handler echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			wrapped := srv.RateLimitMiddleware(recordChatTerminal)(handler)
-			return srv.AuthMiddleware(wrapped)(c)
-		}
+// registerServer mounts Connect on the single pre-bound e2e session.
+// Peer HTTP session routes are retired; the gateway dials /sessions/:id/rpc/.
+func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, escrowID, hostAddress string, stubInferenceHTTPStatus int, stubInferenceHTTPMessage string) {
+	core := e2eSessionCore{
+		Server:      srv,
+		stubStatus:  stubInferenceHTTPStatus,
+		stubMessage: stubInferenceHTTPMessage,
 	}
-
-	inferenceHandler := srv.HandleInference
-	if stubInferenceHTTPStatus != 0 {
-		inferenceHandler = func(c echo.Context) error {
-			message := stubInferenceHTTPMessage
-			if message == "" {
-				message = http.StatusText(stubInferenceHTTPStatus)
-			}
-			if message == "" {
-				message = fmt.Sprintf("stub inference HTTP status %d", stubInferenceHTTPStatus)
-			}
-			return c.JSON(stubInferenceHTTPStatus, map[string]any{
-				"error": map[string]string{
-					"message": message,
-				},
-			})
-		}
-	}
-
-	g.POST("/sessions/:id/chat/completions", withAuth(true, inferenceHandler), transport.ResponseCompressionMiddleware)
-	g.POST("/sessions/:id/height-sync", withAuth(false, srv.HandleHeightSync))
-	g.POST("/sessions/:id/heightsync/repair", withAuth(false, srv.HandleHeightSyncRepair))
-	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))
-	g.POST("/sessions/:id/verify-error-miss", withAuth(false, srv.HandleVerifyErrorMiss))
-	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
-	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
-	g.POST("/sessions/:id/gossip/txs", withAuth(false, srv.HandleGossipTxs))
-	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
-	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
-	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
+	lookup := e2eHostLookup{escrowID: escrowID, core: core}
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddress, rpcserver.PeerAuthConfig{})
+	auth.StartSweeper()
+	devshardserver.RegisterLazySessionRoutes(g, e2eSessionResolver{escrowID: escrowID, srv: srv}, nil, nil,
+		devshardserver.WithPeerRPC(
+			auth,
+			rpcserver.NewSessionHandler(lookup),
+			rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
+		),
+	)
 	g.GET("/debug/gossip", func(c echo.Context) error {
 		nonce, err := strconv.ParseUint(c.QueryParam("nonce"), 10, 64)
 		if err != nil {
@@ -159,6 +135,67 @@ func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, st
 			"sender_slot": status.SlotID,
 		})
 	})
+}
+
+// e2eSessionResolver serves the observability GETs for the one pre-bound session.
+type e2eSessionResolver struct {
+	escrowID string
+	srv      *transport.Server
+}
+
+func (r e2eSessionResolver) SessionServerExisting(id string) (*transport.Server, error) {
+	if id != r.escrowID || r.srv == nil {
+		return nil, nil
+	}
+	return r.srv, nil
+}
+
+// e2eHostLookup is that same session for Connect. Chat, gossip, and receipts
+// resolve it without CreateSession.
+type e2eHostLookup struct {
+	escrowID string
+	core     e2eSessionCore
+}
+
+func (l e2eHostLookup) SessionServerExisting(id string) (rpcserver.SessionCore, error) {
+	if id != l.escrowID || l.core.Server == nil {
+		return nil, nil
+	}
+	return l.core, nil
+}
+
+func (l e2eHostLookup) SessionForParticipant(id, _ string) (rpcserver.SessionCore, error) {
+	return l.SessionServerExisting(id)
+}
+
+func (l e2eHostLookup) SessionForOwner(id, _ string) (rpcserver.SessionCore, error) {
+	return l.SessionServerExisting(id)
+}
+
+func (l e2eHostLookup) SessionForStartProof(id, _ string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+	return l.SessionServerExisting(id)
+}
+
+// e2eSessionCore is the pre-bound host. A configured stub HTTP status fails
+// Connect chat the way the retired Echo handler failed the POST.
+type e2eSessionCore struct {
+	*transport.Server
+	stubStatus  int
+	stubMessage string
+}
+
+func (s e2eSessionCore) ServeInference(ctx context.Context, call transport.InferenceCall) error {
+	if s.stubStatus != 0 {
+		message := s.stubMessage
+		if message == "" {
+			message = http.StatusText(s.stubStatus)
+		}
+		if message == "" {
+			message = fmt.Sprintf("stub inference HTTP status %d", s.stubStatus)
+		}
+		return echo.NewHTTPError(s.stubStatus, message)
+	}
+	return s.Server.ServeInference(ctx, call)
 }
 
 type hostConfig struct {
@@ -329,15 +366,30 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 		return nil, nil, err
 	}
 
-	userPeers := make(map[int]*transport.HTTPClient, len(cfg.peerURLs))
+	hostPeers := make(map[int]transport.HostPeerClient, len(cfg.peerURLs))
 	var gossipPeers []gossip.PeerClient
+	endpoints := transport.RPCEndpointsFromEnv()
 	for i, peerURL := range cfg.peerURLs {
-		userPeers[i] = transport.NewHTTPClient(peerURL, cfg.escrowID, cfg.userSigner)
+		hostAddr := ""
+		if i < len(cfg.group) {
+			hostAddr = cfg.group[i].ValidatorAddress
+		}
+		hostHTTP := transport.NewHTTPClient(peerURL, cfg.escrowID, cfg.signer)
+		selected := transport.SelectTransport(hostHTTP, hostAddr, endpoints, nil)
+		pc, ok := selected.(transport.HostPeerClient)
+		if !ok {
+			return nil, nil, fmt.Errorf("peer %d: SelectTransport returned %T", i, selected)
+		}
+		hostPeers[i] = pc
 		if i != cfg.hostIndex {
-			gossipPeers = append(gossipPeers, transport.NewHTTPClient(peerURL, cfg.escrowID, cfg.signer))
+			gp, ok := selected.(gossip.PeerClient)
+			if !ok {
+				return nil, nil, fmt.Errorf("peer %d: SelectTransport returned %T", i, selected)
+			}
+			gossipPeers = append(gossipPeers, gp)
 		}
 	}
-	srv.SetPeerClients(userPeers)
+	srv.SetPeerClients(hostPeers)
 	gsp := gossip.NewGossip(cfg.escrowID, uint32(cfg.hostIndex), gossipPeers, h.HostMempool(), gossip.WithSigAccumulator(h))
 	srv.SetGossip(gsp)
 

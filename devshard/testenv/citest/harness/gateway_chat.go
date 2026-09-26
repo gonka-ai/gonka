@@ -108,6 +108,16 @@ func TryPostGatewayChatCompletion(client *http.Client, gatewayURL, adminAPIKey s
 	return resp, nil
 }
 
+// GatewayCapacityGone is a dead escrow/runtime: further chat cannot create work.
+func GatewayCapacityGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no devshard runtimes available") ||
+		strings.Contains(msg, "insufficient escrow balance")
+}
+
 // PostGatewayChatCompletionEventually retries chat while hosts recover from a
 // full versiond restart (limiter may still report no live capacity).
 func PostGatewayChatCompletionEventually(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest, timeout time.Duration) ChatCompletionResponse {

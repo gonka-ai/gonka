@@ -6,7 +6,8 @@ This document defines how an operator removes, replaces, or upgrades a whole
 `versiond` host without terminating requests that are already running. It is the
 implementation contract for `rolling-update.md` section 1.8. Child binary rolling
 updates remain a separate operation managed inside one live `versiond`
-([rolling-update.md](./rolling-update.md), Track A).
+([rolling-update.md](./rolling-update.md), Track A). Peer RPC hops:
+[grpc-transport-connection.md](./grpc-transport-connection.md).
 
 ## The operator contract
 
@@ -25,6 +26,12 @@ This works because the router derives everything it needs by observation:
 membership from DNS or the endpoint file, health from active `/readyz` checks.
 Nothing has to be told about the change beyond the membership list itself.
 
+JSON on InferenceUrl and phase 6 `/rpc/` on `{DEVSHARD_RPC_H2_PORT}` share
+that placement. `proxy`'s h2 frontend uses the same version + escrow hash as
+today's `versiond_router_in`. Failing `/readyz` withdraws the host from both
+hops. There is no second evacuation procedure for Connect. See
+[grpc-transport-connection.md](./grpc-transport-connection.md).
+
 `docker compose stop` is temporary because both hosts use `restart: always`.
 Permanent membership lives in `config.env`: `VERSIOND_REPLICAS` and
 `VERSIOND2_REPLICAS` (and `VERSIOND3_REPLICAS` for an added replica) are the
@@ -42,7 +49,7 @@ on that host. Hosts on other machines are managed on those machines (see
 2. A draining host cannot accept new proxy work or start, swap, or restart a
    child process.
 3. A proxy admission lease covers the complete response, including the full
-   lifetime of an SSE stream.
+   lifetime of an SSE stream and, after phase 6, an HTTP/2 `/rpc/` stream.
 4. Child lifecycle HTTP calls and polling never run while the process manager
    mutex is held.
 5. `SIGKILL` is only an external backstop after a configured timeout. A second
@@ -54,7 +61,8 @@ on that host. Hosts on other machines are managed on those machines (see
 7. The external kill grace must exceed versiond's single absolute shutdown
    budget, so `SIGKILL` remains a backstop rather than a competing deadline.
 8. An established request stays on its original router connection and versiond
-   generation. A later request for the same HA escrow may recover on another host
+   generation. That includes JSON SSE and phase 6 HTTP/2 `/rpc/` streams. A
+   later request for the same HA escrow may recover on another host
    from shared Postgres; legacy SQLite escrows never enter the HA pool.
 9. A host that has never converged is not routed to through the host-level
    pool: coarse readiness is a statement about capacity to serve, not about

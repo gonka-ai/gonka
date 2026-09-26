@@ -15,6 +15,7 @@ import (
 
 	commonvalidation "common/validation"
 
+	"connectrpc.com/connect"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -23,6 +24,8 @@ import (
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/observability"
+	"devshard/transport"
+	"devshard/transport/rpcpb"
 )
 
 // errExecutorPayloadFault tags failures that are the executor's responsibility
@@ -103,6 +106,7 @@ func fetchPayloadsFromExecutor(
 	epochID uint64,
 	requestPath string,
 	client *http.Client,
+	rpcFor func(executorURL, executorAddr, escrowID string) *transport.RPCClient,
 ) ([]byte, []byte, error) {
 	executorInfo, err := br.GetHostInfo(req.ExecutorAddress)
 	if err != nil {
@@ -112,11 +116,6 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, fmt.Errorf("executor has no URL")
 	}
 
-	requestURL, err := commonvalidation.BuildPayloadRequestURL(executorInfo.URL, requestPath, inferenceID)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	timestamp := time.Now().UnixNano()
 	validatorAddress := recorder.GetAccountAddress()
 	signature, err := signPayloadRequest(recorder, inferenceID, timestamp, validatorAddress, epochID)
@@ -124,12 +123,17 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, fmt.Errorf("sign request: %w", err)
 	}
 
-	payloadResp, err := fetchPayloadsHTTPWithRetry(
-		ctx, client, requestURL, validatorAddress, timestamp, epochID, signature,
+	var rpc *transport.RPCClient
+	if rpcFor != nil {
+		rpc = rpcFor(executorInfo.URL, req.ExecutorAddress, req.EscrowID)
+	}
+	payloadResp, err := fetchSignedPayloads(
+		ctx, client, rpc, executorInfo.URL, requestPath,
+		inferenceID, validatorAddress, timestamp, epochID, signature,
 		commonvalidation.PayloadResponseByteLimit(req.OutputTokens),
 	)
 	if err != nil {
-		if errors.Is(err, commonvalidation.ErrPayloadGone) || ctx.Err() != nil {
+		if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, errPayloadRPCUnavailable) || ctx.Err() != nil {
 			return nil, nil, err
 		}
 		return nil, nil, tagExecutorPayloadFault(err)
@@ -235,6 +239,60 @@ func (t ttfbRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
+// errPayloadRPCUnavailable is a local configuration miss. It is not an
+// executor fault: the retired HTTP payload route answers 410, and voting
+// Valid:false on that would punish an honest executor.
+var errPayloadRPCUnavailable = errors.New("payload is served over Connect; the HTTP payload route is retired")
+
+func fetchSignedPayloads(
+	ctx context.Context,
+	client *http.Client,
+	rpc *transport.RPCClient,
+	executorURL, requestPath, inferenceID, validatorAddress string,
+	timestamp int64,
+	epochID uint64,
+	signature string,
+	maxBytes int64,
+) (*commonvalidation.PayloadResponse, error) {
+	if rpc == nil || !rpc.Uses(transport.EndpointPayload) {
+		return nil, errPayloadRPCUnavailable
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, payloadFetchHeaderTimeout)
+	defer cancel()
+	if err := rpc.WaitReady(waitCtx); err != nil {
+		return nil, err
+	}
+	return fetchPayloadsRPCWithRetry(ctx, rpc, &rpcpb.GetPayloadRequest{
+		InferenceId:      inferenceID,
+		ValidatorAddress: validatorAddress,
+		Timestamp:        timestamp,
+		EpochId:          epochID,
+		Signature:        []byte(signature), // HTTP Authorization header text
+	}, maxBytes)
+}
+
+func payloadResponseFromRPC(resp *rpcpb.GetPayloadResponse, err error) (*commonvalidation.PayloadResponse, error) {
+	if err != nil {
+		switch connect.CodeOf(err) {
+		case connect.CodeNotFound:
+			return nil, fmt.Errorf("payload not found on executor: %w", commonvalidation.ErrPayloadGone)
+		case connect.CodeResourceExhausted:
+			return nil, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)
+		default:
+			return nil, err
+		}
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("get payload: empty response")
+	}
+	return &commonvalidation.PayloadResponse{
+		InferenceId:       resp.GetInferenceId(),
+		PromptPayload:     resp.GetPromptPayload(),
+		ResponsePayload:   resp.GetResponsePayload(),
+		ExecutorSignature: resp.GetExecutorSignature(),
+	}, nil
+}
+
 func fetchPayloadsHTTPWithRetry(
 	ctx context.Context,
 	client *http.Client,
@@ -262,20 +320,74 @@ func fetchPayloadsHTTPWithRetry(
 		if attempt == payloadFetchAttempts {
 			break
 		}
-		timer := time.NewTimer(payloadFetchRetryBackoff)
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
-			return nil, ctx.Err()
-		case <-timer.C:
+		if err := sleepPayloadFetchRetry(ctx); err != nil {
+			return nil, err
 		}
 	}
 	return nil, lastErr
+}
+
+// fetchPayloadsRPCWithRetry applies the same two-attempt pause as
+// fetchPayloadsHTTPWithRetry to an answered GetPayload failure. GetPayload
+// already retries an unanswered connection inside rpcRetry; those errors
+// return here without starting that budget again.
+func fetchPayloadsRPCWithRetry(
+	ctx context.Context,
+	rpc *transport.RPCClient,
+	req *rpcpb.GetPayloadRequest,
+	maxBytes int64,
+) (*commonvalidation.PayloadResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= payloadFetchAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		resp, err := rpc.GetPayload(ctx, req, maxBytes)
+		payloadResp, err := payloadResponseFromRPC(resp, err)
+		if err == nil {
+			return payloadResp, nil
+		}
+		if payloadRPCFetchDone(err) {
+			return nil, err
+		}
+		lastErr = err
+		if attempt == payloadFetchAttempts {
+			break
+		}
+		if err := sleepPayloadFetchRetry(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// payloadRPCFetchDone reports an error that must not be tried again at this
+// layer: the payload is gone or oversize, or rpcRetry already spent its
+// budget on an unanswered connection.
+func payloadRPCFetchDone(err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
+		return true
+	}
+	return transport.IsRetryableNonInference(err)
+}
+
+func sleepPayloadFetchRetry(ctx context.Context) error {
+	timer := time.NewTimer(payloadFetchRetryBackoff)
+	select {
+	case <-ctx.Done():
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func classifyExecuteValidationErr(err error) error {

@@ -80,8 +80,13 @@ type MsgStartInference struct {
 	StartedAt         int64                  `protobuf:"varint,6,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	ObservedHeight    uint64                 `protobuf:"varint,7,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
 	ObservedBlockHash []byte                 `protobuf:"bytes,8,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// protocol_version is the destshard runtime the gateway bound for this
+	// escrow (approved_versions.name / route prefix). It is inside the
+	// user-signed Diff so a later ChallengeReceipt can prove which version
+	// may CreateSession on a host the gateway never pinged.
+	ProtocolVersion string `protobuf:"bytes,9,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *MsgStartInference) Reset() {
@@ -168,6 +173,13 @@ func (x *MsgStartInference) GetObservedBlockHash() []byte {
 		return x.ObservedBlockHash
 	}
 	return nil
+}
+
+func (x *MsgStartInference) GetProtocolVersion() string {
+	if x != nil {
+		return x.ProtocolVersion
+	}
+	return ""
 }
 
 type MsgConfirmStart struct {
@@ -852,7 +864,7 @@ var File_devshard_v1_tx_proto protoreflect.FileDescriptor
 
 const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\n" +
-	"\x14devshard/v1/tx.proto\x12\vdevshard.v1\"\xa7\x02\n" +
+	"\x14devshard/v1/tx.proto\x12\vdevshard.v1\"\xd2\x02\n" +
 	"\x11MsgStartInference\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12\x1f\n" +
 	"\vprompt_hash\x18\x02 \x01(\fR\n" +
@@ -864,7 +876,8 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\x06 \x01(\x03R\tstartedAt\x12'\n" +
 	"\x0fobserved_height\x18\a \x01(\x04R\x0eobservedHeight\x12.\n" +
-	"\x13observed_block_hash\x18\b \x01(\fR\x11observedBlockHash\"\xd3\x01\n" +
+	"\x13observed_block_hash\x18\b \x01(\fR\x11observedBlockHash\x12)\n" +
+	"\x10protocol_version\x18\t \x01(\tR\x0fprotocolVersion\"\xd3\x01\n" +
 	"\x0fMsgConfirmStart\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12!\n" +
 	"\fexecutor_sig\x18\x02 \x01(\fR\vexecutorSig\x12!\n" +

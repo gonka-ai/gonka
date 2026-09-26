@@ -441,6 +441,8 @@ lock.
 | `VERSIOND_POOL_ENDPOINTS_FILE` | *(empty)* | JSON array of `{id, host, port}` members; replaces DNS discovery when set (see [Membership: explicit endpoint list](#membership-explicit-endpoint-list)) |
 | `VERSIOND_HOSTS` | *(empty)* | legacy whitespace/comma host list, entries optionally `host:port`; used only when no endpoint file is set |
 | `VERSIOND_PORT` | `8080` | upstream port and the default endpoint port |
+| `VERSIOND_ROUTER_H2_PORT` | `8081` | second data bind, `proto h2` (h2c). JSON/healthz/catalog stay on `:8080`. Overlay `proxy` speaks HTTP/2 here. Global `tune.h2.max-concurrent-streams 4096` (HAProxy default is 100) covers this frontend and backend `proto h2` to versiond. |
+| `VERSIOND_ROUTER_BACKEND_H2` | `true` | `proto h2` on every generated backend line to versiond. Set `false` only for HTTP/1.1 mock upstreams |
 | `VERSIOND_LEGACY_HOST` | *(none)* | single host owning pre-HA SQLite data dirs. **Required** whenever `VERSIOND_NON_HA_VERSIONS` is non-empty — the router refuses to start otherwise, because the owner of one host's data cannot default to a name that resolves to the whole pool. Unused (and may be omitted) when no version is pinned |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | static version path segments pinned to the legacy host, whitespace and/or comma separated; retains the wider path-safe startup grammar described above |
 | `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor using the wider path-safe startup grammar; compatible governance additions are learned without changing it |
@@ -528,7 +530,10 @@ unrelated public APIs remain available through the policy tier.
 Catalog diagnostics never include the configured source URL, so credentials or
 signed query parameters are not copied into status output or router logs.
 Each router image owns its graceful-stop signal: the transitional nginx image
-uses `SIGQUIT`, while the HAProxy image declares `SIGUSR1`. The shipped Compose
+uses `SIGQUIT`, while the HAProxy image declares `SIGUSR1`. On that signal the
+router finishes inferences already in flight, then closes Watch streams on
+HTTP/2 connections that have no inference left, so an idle Watch does not hold
+the process until Docker's grace period kills it. The shipped Compose
 overlay only bounds the drain with `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default
 `10s`) before Docker forces termination, so selecting one image cannot override
 the shutdown contract of the other.

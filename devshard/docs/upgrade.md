@@ -17,6 +17,12 @@ The active client contract is path-based:
 /devshard/<version>/* -> versioned path, served by versiond-managed binaries
 ```
 
+That includes JSON session routes and Connect `/rpc/`
+(`/devshard/<version>/sessions/{id}/rpc/...`). Version and escrow stay in the
+URL so `versiond-router` and versiond keep hashing the same way. Phase 6 only
+changes the **public hop** (HTTP/2 on `proxy`, skip nginx); it does not change
+the path or the bind. See [grpc-transport-connection.md](./grpc-transport-connection.md).
+
 Clients must choose a versioned route.
 
 The legacy `/v1/devshard/*` path is deprecated and returns `410 Gone`.

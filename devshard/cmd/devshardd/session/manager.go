@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,9 +17,11 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"connectrpc.com/connect"
 	"github.com/labstack/echo/v4"
 
 	"common/logging"
+	"common/storage/mode"
 	"common/storage/payloads"
 	"common/utils"
 	validationpkg "common/validation"
@@ -33,6 +36,7 @@ import (
 	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/internal/boolvalue"
 	"devshard/observability"
 	"devshard/runtimeparams"
 	devshardserver "devshard/server"
@@ -40,6 +44,8 @@ import (
 	"devshard/state"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/transport/rpcpb"
+	"devshard/transport/rpcserver"
 	"devshard/types"
 )
 
@@ -48,6 +54,10 @@ type HostManager struct {
 	sessionsMutex      sync.RWMutex
 	sessions           map[string]*transport.Server
 	resolutionFailures map[string]resolutionFailure
+	escrowLookupMu     sync.Mutex
+	escrowLookups      map[string]escrowLookupEntry
+	escrowLookupPeer   map[string][]time.Time
+	escrowLookupFloor  []time.Time
 	sf                 singleflight.Group
 
 	store              storage.Storage
@@ -74,11 +84,14 @@ type HostManager struct {
 	obsGate     *storage.ObsRepairGate
 	obsRepairWG sync.WaitGroup
 
-	statsMu            sync.Mutex
-	statsShardsCache   *statsShardsResponse
-	statsShardsCached  time.Time
-	statsDetailsCache  map[string]statsShardDetailCache
-	statsNegativeCache map[string]statsNegativeCacheEntry
+	statsMu              sync.Mutex
+	statsShardsCache     *statsShardsResponse
+	statsShardsCached    time.Time
+	statsDetailsCache    map[string]statsShardDetailCache
+	statsNegativeCache   map[string]statsNegativeCacheEntry
+	statsRPCCache        []byte
+	statsRPCCached       time.Time
+	statsRPCCachedMinute int64
 
 	binaryVersion string
 
@@ -94,6 +107,16 @@ type HostManager struct {
 	// cometLiveness is captured at wiring so CloseHeightSync can drop the
 	// scheduler without racing the chain-events goroutine.
 	cometLiveness func(bool)
+
+	rpcServerEnabled bool
+	rpcAuth          atomic.Pointer[rpcserver.PeerAuthHandler]
+	rpcAuthOnce      sync.Once
+	rpcAuthClosed    atomic.Bool
+
+	peerPushMu   sync.Mutex
+	peerPushSet  bool
+	peerInstance string
+	peerMembers  []string
 }
 
 const (
@@ -163,11 +186,12 @@ type recoveryGate struct {
 	cond      *sync.Cond
 	inFlight  int
 	requested map[string]struct{}
+	order     []string
 	stopped   bool
 }
 
-// maxRequestedRecoveryEscrows bounds the demand set. Past the cap ordering
-// degrades to list order rather than growing memory without limit.
+// maxRequestedRecoveryEscrows bounds the demand set. Past the cap the oldest
+// demand is dropped so a later genuine request still enters.
 const maxRequestedRecoveryEscrows = 4096
 
 // condLocked lazily builds the cond so a zero-value HostManager still works.
@@ -187,8 +211,14 @@ func (g *recoveryGate) begin(escrowID string) {
 	if g.requested == nil {
 		g.requested = make(map[string]struct{})
 	}
-	if len(g.requested) < maxRequestedRecoveryEscrows {
+	if _, exists := g.requested[escrowID]; !exists {
+		for len(g.requested) >= maxRequestedRecoveryEscrows && len(g.order) > 0 {
+			old := g.order[0]
+			g.order = g.order[1:]
+			delete(g.requested, old)
+		}
 		g.requested[escrowID] = struct{}{}
+		g.order = append(g.order, escrowID)
 	}
 	g.inFlight++
 	g.condLocked().Broadcast()
@@ -341,6 +371,8 @@ func NewHostManager(
 	return &HostManager{
 		sessions:           make(map[string]*transport.Server),
 		resolutionFailures: make(map[string]resolutionFailure),
+		escrowLookups:      make(map[string]escrowLookupEntry),
+		escrowLookupPeer:   make(map[string][]time.Time),
 		store:              gate,
 		obsGate:            gate,
 		signer:             signer,
@@ -363,6 +395,59 @@ func NewHostManager(
 // SetAvailabilityProvider gates completion requests on devshard_requests_enabled.
 func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider) {
 	m.availability = p
+}
+
+func (m *HostManager) SetRPCServerEnabled(enabled bool) {
+	m.rpcServerEnabled = enabled
+}
+
+func (m *HostManager) hostRPCAddress() string {
+	if m.recorder != nil {
+		if addr := strings.TrimSpace(m.recorder.GetAccountAddress()); addr != "" {
+			return addr
+		}
+	}
+	if m.signer != nil {
+		return m.signer.Address()
+	}
+	return ""
+}
+
+func (m *HostManager) allowRPCPeer(ctx context.Context, addr string) (bool, error) {
+	escrowID := rpcserver.EscrowIDFromContext(ctx)
+	srv, err := m.SessionServerExisting(escrowID)
+	if err == nil {
+		if srv == nil {
+			return false, storage.ErrSessionNotFound
+		}
+		return srv.AllowsSender(addr), nil
+	}
+	if !errors.Is(err, storage.ErrSessionNotFound) {
+		return false, err
+	}
+	if m.bridge == nil {
+		return false, err
+	}
+	escrow := m.warmedEscrow(escrowID)
+	var gerr error
+	if escrow == nil {
+		escrow, gerr = m.fetchEscrowForBind(escrowID, addr)
+	}
+	if gerr != nil {
+		return false, fmt.Errorf("get escrow: %w", gerr)
+	}
+	if escrow == nil {
+		return false, err
+	}
+	if escrow.Settled {
+		m.rememberResolutionFailure(escrowID, bridge.ErrEscrowSettled, time.Now())
+		return false, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
+	}
+	return escrowLookupEligible(escrow, nil, addr), nil
+}
+
+func escrowNotOpen(escrowID string, err error) (*transport.Server, error) {
+	return nil, fmt.Errorf("escrow %s is not open on this host: %w", escrowID, err)
 }
 
 // StorageReady reports whether the backing storage is ready to serve. When the
@@ -427,13 +512,17 @@ func (m *HostManager) CloseHosts() {
 	m.sessionsMutex.Unlock()
 
 	for escrowID, srv := range sessions {
-		srv.Host().Close()
+		if srv == nil {
+			continue
+		}
+		closeTransportServer(srv)
 		observability.DeleteEscrowMetrics(escrowID)
 	}
 }
 
 // Close stops all live session hosts and releases storage resources.
 func (m *HostManager) Close() error {
+	m.ClosePeerRPC()
 	m.CloseHosts()
 	m.CloseHeightSync()
 	return m.store.Close()
@@ -452,10 +541,25 @@ func (m *HostManager) SessionServerExisting(escrowID string) (*transport.Server,
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
 	}
+	now := time.Now()
+	if err := m.cachedResolutionFailure(escrowID, now); err != nil {
+		return nil, err
+	}
+	// Peek the store before occupying the recovery gate. A miss must not
+	// fill the demand set or park cold recovery.
+	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
+		return nil, err
+	}
+	if _, err := m.store.GetSessionMeta(escrowID); err != nil {
+		err = fmt.Errorf("get session meta: %w", err)
+		m.rememberResolutionFailure(escrowID, err, now)
+		return nil, err
+	}
 	m.recoveryGate.begin(escrowID)
 	defer m.recoveryGate.end()
 	srv, err := m.recoverAndStoreSession(escrowID)
 	if err != nil {
+		m.rememberResolutionFailure(escrowID, err, now)
 		return nil, err
 	}
 	return srv, nil
@@ -498,41 +602,32 @@ func (m *HostManager) evictSession(escrowID string, stale *transport.Server) {
 	}
 	delete(m.sessions, escrowID)
 	m.sessionsMutex.Unlock()
-	current.Host().Close()
+	closeTransportServer(current)
 	observability.DeleteEscrowMetrics(escrowID)
 }
 
-// BindOwnerChat verifies the request as the escrow owner, then returns an
-// existing session or binds a new one with this process's boundVersion.
-// Auth context (sender + body) is injected for HandleInference.
-func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
-	escrowID := c.Param("id")
-	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
-		return nil, echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	}
-	addr, body, err := transport.VerifyPOSTAuth(c, m.verifier, escrowID, m.maxBodySize)
-	if err != nil {
-		return nil, err
-	}
-
+// sessionForOwner is BindOwnerChat without POST auth: Existing + IsOwner,
+// or CreateSession only when addr is the escrow creator. Slot members
+// get (nil, nil). Chat, height-sync seed, and owner-only verify use this.
+// ChallengeReceipt must use sessionForStartProof so a peer cannot pick the version.
+func (m *HostManager) sessionForOwner(escrowID, addr string) (*transport.Server, error) {
 	srv, err := m.SessionServerExisting(escrowID)
 	if err == nil {
 		if !srv.IsOwner(addr) {
-			return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+			return nil, nil
 		}
-		transport.InjectAuthContext(c, addr, body)
 		return srv, nil
 	}
 	if !errors.Is(err, storage.ErrSessionNotFound) {
 		return nil, err
 	}
 
-	escrow, err := m.bridge.GetEscrow(escrowID)
+	escrow, err := m.fetchEscrowForBind(escrowID, addr)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
 	}
 	if escrow == nil || escrow.CreatorAddress == "" || addr != escrow.CreatorAddress {
-		return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+		return nil, nil
 	}
 	if escrow.Settled {
 		m.rememberResolutionFailure(escrowID, bridge.ErrEscrowSettled, time.Now())
@@ -545,7 +640,54 @@ func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
 		return nil, err
 	}
 	if !srv.IsOwner(addr) {
+		return nil, nil
+	}
+	return srv, nil
+}
+
+// BindOwnerChat verifies the request as the escrow owner (gateway), then
+// returns an existing session or binds a new one with this process's
+// boundVersion. Auth context (sender + body) is injected for HandleInference.
+func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
+	escrowID := c.Param("id")
+	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	addr, body, err := transport.VerifyPOSTAuth(c, m.verifier, escrowID, m.maxBodySize)
+	if err != nil {
+		return nil, err
+	}
+
+	srv, err := m.sessionForOwner(escrowID, addr)
+	if err != nil {
+		return nil, err
+	}
+	if srv == nil {
 		return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+	}
+	transport.InjectAuthContext(c, addr, body)
+	return srv, nil
+}
+
+// BindGroupPeer authenticates a creator or slot member. Gossip / repair use an
+// existing session only. Challenge / verify may CreateSession when the body
+// carries a gateway-signed MsgStartInference whose protocol_version matches
+// this child's boundVersion.
+func (m *HostManager) BindGroupPeer(c echo.Context) (*transport.Server, error) {
+	escrowID := c.Param("id")
+	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	addr, body, err := transport.VerifyPOSTAuth(c, m.verifier, escrowID, m.maxBodySize)
+	if err != nil {
+		return nil, err
+	}
+	srv, err := m.bindGroupPeerFromBody(escrowID, addr, body)
+	if err != nil {
+		return nil, err
+	}
+	if srv == nil {
+		return nil, echo.NewHTTPError(http.StatusForbidden, "sender not in group")
 	}
 	transport.InjectAuthContext(c, addr, body)
 	return srv, nil
@@ -559,7 +701,7 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 	delete(m.sessions, escrowID)
 	m.sessionsMutex.Unlock()
 	if hadSession {
-		srv.Host().Close()
+		closeTransportServer(srv)
 		observability.DeleteEscrowMetrics(escrowID)
 	}
 
@@ -577,13 +719,13 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 }
 
 // getOrCreate returns a live session, recovering from store or creating.
-// When escrow is non-nil (BindOwnerChat first-bind path), create reuses it and
-// skips a second bridge.GetEscrow.
+// When escrow is non-nil (BindOwnerChat / start-proof bind),
+// create reuses it and skips a second bridge.GetEscrow.
 func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*transport.Server, error) {
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
 	}
-	if err := m.cachedResolutionFailure(escrowID, time.Now()); err != nil {
+	if err := m.cachedCreateBlockingFailure(escrowID, time.Now()); err != nil {
 		return nil, err
 	}
 
@@ -591,7 +733,7 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 		if srv, ok := m.existingServer(escrowID); ok {
 			return srv, nil
 		}
-		if err := m.cachedResolutionFailure(escrowID, time.Now()); err != nil {
+		if err := m.cachedCreateBlockingFailure(escrowID, time.Now()); err != nil {
 			return nil, err
 		}
 
@@ -644,6 +786,18 @@ func (m *HostManager) cachedResolutionFailure(escrowID string, now time.Time) er
 		return nil
 	}
 	return cached.err
+}
+
+// cachedCreateBlockingFailure is the tombstone getOrCreate honors.
+// SessionServerExisting caches a miss so GET /signatures does not recover
+// on every request. BindOwnerChat and ChallengeReceipt start-proof bind
+// call Existing first, then getOrCreate; that miss must not block CreateSession.
+func (m *HostManager) cachedCreateBlockingFailure(escrowID string, now time.Time) error {
+	err := m.cachedResolutionFailure(escrowID, now)
+	if errors.Is(err, storage.ErrSessionNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (m *HostManager) rememberResolutionFailure(escrowID string, err error, now time.Time) {
@@ -713,7 +867,7 @@ func isPermanentResolutionFailure(err error) bool {
 func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Server) (*transport.Server, error) {
 	installed, settled := m.installSession(escrowID, srv, time.Now())
 	if settled {
-		srv.Host().Close()
+		closeTransportServer(srv)
 		if err := m.store.MarkSettled(escrowID); err != nil && !errors.Is(err, storage.ErrSessionNotFound) {
 			logging.Error("failed to mark racing session settled", inferenceTypes.System,
 				"escrow_id", escrowID, "error", err)
@@ -721,7 +875,7 @@ func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Serve
 		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
 	}
 	if installed != srv {
-		srv.Host().Close()
+		closeTransportServer(srv)
 	}
 	return installed, nil
 }
@@ -772,7 +926,7 @@ func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
 	m.sessionsMutex.Unlock()
 
 	for escrowID, srv := range evicted {
-		srv.Host().Close()
+		closeTransportServer(srv)
 		observability.DeleteEscrowMetrics(escrowID)
 	}
 	return len(evicted)
@@ -833,6 +987,10 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 	if err != nil {
 		h.Close()
 		return nil, fmt.Errorf("create server: %w", err)
+	}
+	if err := m.wireHostToHost(srv, escrowID, group); err != nil {
+		closeTransportServer(srv)
+		return nil, err
 	}
 
 	return srv, nil
@@ -1251,8 +1409,62 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 		h.Close()
 		return nil, nil, fmt.Errorf("create server: %w", err)
 	}
+	if err := m.wireHostToHost(srv, escrowID, meta.Group); err != nil {
+		closeTransportServer(srv)
+		return nil, nil, err
+	}
 
 	return srv, obsRepair, nil
+}
+
+// hostRPCLookup is the Connect session resolver. Observability GETs and
+// gossip/repair use Existing (no CreateSession). ChallengeReceipt binds via
+// SessionForStartProof (gateway-signed start + version). Chat, seed, and
+// owner-only verify use SessionForOwner (creator only).
+type hostRPCLookup struct{ m *HostManager }
+
+func (l hostRPCLookup) SessionServerExisting(id string) (rpcserver.SessionCore, error) {
+	srv, err := l.m.SessionServerExisting(id)
+	if err != nil {
+		return nil, err
+	}
+	if srv == nil {
+		return nil, nil
+	}
+	return srv, nil
+}
+
+func (l hostRPCLookup) SessionForParticipant(id, addr string) (rpcserver.SessionCore, error) {
+	srv, err := l.m.sessionForParticipant(id, addr)
+	if err != nil {
+		return nil, err
+	}
+	if srv == nil {
+		return nil, nil
+	}
+	return srv, nil
+}
+
+func (l hostRPCLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, error) {
+	srv, err := l.m.sessionForOwner(id, addr)
+	if err != nil {
+		return nil, err
+	}
+	if srv == nil {
+		return nil, nil
+	}
+	return srv, nil
+}
+
+func (l hostRPCLookup) SessionForStartProof(id, addr string, diffs []types.Diff, claimedVersion string) (rpcserver.SessionCore, error) {
+	srv, err := l.m.sessionForStartProof(id, addr, diffs, claimedVersion)
+	if err != nil {
+		return nil, err
+	}
+	if srv == nil {
+		return nil, nil
+	}
+	return srv, nil
 }
 
 // Register mounts devshard session routes on the given echo group.
@@ -1261,7 +1473,128 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 func (m *HostManager) Register(g *echo.Group) {
 	g.GET("/stats/shards", m.handleStatsShards)
 	g.GET("/stats/shards/:escrow_id", m.handleStatsShard)
-	devshardserver.RegisterLazySessionRoutes(g, m, m, m)
+	g.GET("/stats/rpc", m.handleStatsRPC)
+	var opts []devshardserver.RouteOption
+	if m.rpcServerEnabled {
+		if m.hostRPCAddress() == "" {
+			panic("devshard: DEVSHARD_RPC_SERVER_ENABLED requires a host address (signer or recorder)")
+		}
+		if auth := m.peerAuthHandler(); auth != nil {
+			lookup := hostRPCLookup{m: m}
+			opts = append(opts, devshardserver.WithPeerRPC(
+				auth,
+				rpcserver.NewSessionHandler(lookup),
+				rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
+				rpcserver.WithPayloadService(rpcserver.NewPayloadHandler(lookup, m.ServeRPCGetPayload)),
+			))
+		}
+	}
+	devshardserver.RegisterLazySessionRoutes(g, m, m, m, opts...)
+}
+
+func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
+	m.rpcAuthOnce.Do(func() {
+		if m.rpcAuthClosed.Load() {
+			return
+		}
+		hostAddr := m.hostRPCAddress()
+		if hostAddr == "" {
+			slog.Error("devshardd: peer RPC host address is empty; refusing to construct handler")
+			return
+		}
+		limits := transport.LoadChannelLimitConfig()
+		h := rpcserver.NewPeerAuthHandler(m.verifier, hostAddr, rpcserver.PeerAuthConfig{
+			Allow: m.allowRPCPeer,
+			LiveSession: func(id string) bool {
+				_, ok := m.existingServer(id)
+				return ok
+			},
+			Limits: &limits,
+		})
+		if pool := storage.PeerRPCPool(m.store); peerRPCSharedEnabled(pool != nil, m.boundVersion) {
+			h.EnableShared(rpcserver.OpenSharedSessions(pool, rpcserver.SharedConfig{
+				HostAddress: hostAddr,
+				Version:     strings.TrimSpace(m.boundVersion),
+			}))
+			slog.Info("devshardd: peer rpc sessions are shared", "version", m.boundVersion)
+		}
+		h.StartSweeper()
+		m.rpcAuth.Store(h)
+		m.applyStoredPeerPush(h)
+	})
+	return m.rpcAuth.Load()
+}
+
+// peerRPCSharedEnabled is the in-memory versus shared switch. One process
+// keeps the memory map. GONKA_HA means another devshardd of this version can
+// receive the next call, so the token has to be in Postgres.
+func peerRPCSharedEnabled(hasPool bool, version string) bool {
+	if !hasPool || strings.TrimSpace(version) == "" {
+		return false
+	}
+	ha, err := boolvalue.Parse(os.Getenv(mode.EnvHADeployment))
+	return err == nil && ha
+}
+
+// SetPeerRPCMembers installs the membership versiond forwarded from the
+// router. A process that never receives a list keeps the member-table barrier.
+func (m *HostManager) SetPeerRPCMembers(instanceID string, ids []string) {
+	if m == nil {
+		return
+	}
+	cp := append([]string(nil), ids...)
+	m.peerPushMu.Lock()
+	m.peerPushSet = true
+	m.peerInstance = instanceID
+	m.peerMembers = cp
+	m.peerPushMu.Unlock()
+	if h := m.rpcAuth.Load(); h != nil {
+		h.SetPublishedBarrier(instanceID, cp)
+	}
+}
+
+func (m *HostManager) applyStoredPeerPush(h *rpcserver.PeerAuthHandler) {
+	if m == nil || h == nil {
+		return
+	}
+	m.peerPushMu.Lock()
+	defer m.peerPushMu.Unlock()
+	if !m.peerPushSet {
+		return
+	}
+	h.SetPublishedBarrier(m.peerInstance, append([]string(nil), m.peerMembers...))
+}
+
+// PeerRPCSessionsReady is true unless this process is still loading the
+// shared peer-session table. SQLite and RPC-off stay ready.
+func (m *HostManager) PeerRPCSessionsReady() bool {
+	if m == nil || !m.rpcServerEnabled {
+		return true
+	}
+	h := m.rpcAuth.Load()
+	if h == nil {
+		return true
+	}
+	return h.SessionsReady()
+}
+
+// ClosePeerRPC stops the host-level session sweeper. Safe if RPC was never mounted.
+func (m *HostManager) ClosePeerRPC() {
+	m.rpcAuthClosed.Store(true)
+	m.rpcAuthOnce.Do(func() {})
+	if h := m.rpcAuth.Load(); h != nil {
+		h.Close()
+	}
+	observability.SetPeerRPCEnabled(false)
+}
+
+// PayloadAuthInput is the validator-auth material from HTTP headers or GetPayloadRequest.
+type PayloadAuthInput struct {
+	InferenceID      string
+	ValidatorAddress string
+	Timestamp        int64
+	EpochID          uint64
+	Signature        string
 }
 
 // HandlePayloads serves payloads to validators for devshard validation.
@@ -1270,66 +1603,183 @@ func (m *HostManager) Register(g *echo.Group) {
 func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) error {
 	escrowID := srv.Host().EscrowID()
 	ctx := c.Request().Context()
-	inferenceID := c.QueryParam("inference_id")
-	validatorAddress := c.Request().Header.Get(utils.XValidatorAddressHeader)
-
+	in, parseErr := payloadAuthFromEcho(c)
 	emit := func(level observability.Level, msg string, status observability.MetricStatus, reason observability.Reason, err error, fields ...any) {
-		base := []any{"inference_id", inferenceID, "validator_address", validatorAddress}
+		base := []any{"inference_id", c.QueryParam("inference_id"), "validator_address", c.Request().Header.Get(utils.XValidatorAddressHeader)}
+		observability.LogPayloadRequest(ctx, level, escrowID, status, reason, msg, err, append(base, fields...)...)
+	}
+	if parseErr != nil {
+		reason := payloadParseReason(parseErr)
+		if reason == observability.ReasonMissingInferenceID {
+			emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, reason, nil)
+		} else {
+			emit(observability.LevelWarn, "payload request auth failed", observability.MetricStatusError, reason, parseErr)
+		}
+		return parseErr
+	}
+	resp, err := m.ServeGetPayload(ctx, srv, in)
+	if err != nil {
+		return err
+	}
+	if err := c.JSON(http.StatusOK, resp); err != nil {
+		observability.LogPayloadRequest(ctx, observability.LevelWarn, escrowID, observability.MetricStatusError, observability.ReasonPayloadWriteErr, "payload request failed", err,
+			"inference_id", in.InferenceID, "validator_address", in.ValidatorAddress)
+		return err
+	}
+	return nil
+}
+
+// ServeGetPayload is the transport-neutral core behind GET .../payloads and
+// PayloadService.GetPayload.
+func (m *HostManager) ServeGetPayload(ctx context.Context, srv *transport.Server, in PayloadAuthInput) (*validationpkg.PayloadResponse, error) {
+	escrowID := srv.Host().EscrowID()
+	emit := func(level observability.Level, msg string, status observability.MetricStatus, reason observability.Reason, err error, fields ...any) {
+		base := []any{"inference_id", in.InferenceID, "validator_address", in.ValidatorAddress}
 		observability.LogPayloadRequest(ctx, level, escrowID, status, reason, msg, err, append(base, fields...)...)
 	}
 
-	if inferenceID == "" {
+	if in.InferenceID == "" {
 		emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonMissingInferenceID, nil)
-		return echo.NewHTTPError(http.StatusBadRequest, "inference_id required")
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "inference_id required")
 	}
 
-	if payloadFaultMatches(m.payloadFaultStatus, m.payloadFaultAddr, validatorAddress) {
+	if payloadFaultMatches(m.payloadFaultStatus, m.payloadFaultAddr, in.ValidatorAddress) {
 		emit(observability.LevelWarn, "testenv payload fault", observability.MetricStatusError, observability.ReasonPayloadRetrieveErr, nil,
 			"http_status", m.payloadFaultStatus)
-		return echo.NewHTTPError(m.payloadFaultStatus, "testenv payload fault")
+		return nil, echo.NewHTTPError(m.payloadFaultStatus, "testenv payload fault")
 	}
 
-	epochID, authReason, authErr := m.authenticatePayloadRequest(c, srv.Host().Group())
+	epochID, authReason, authErr := m.authenticatePayloadAuth(ctx, srv.Host().Group(), in)
 	if authErr != nil {
 		emit(observability.LevelWarn, "payload request auth failed", observability.MetricStatusError, authReason, authErr)
-		return authErr
+		return nil, authErr
 	}
 
-	// Retrieve payloads with adjacent epoch fallback
-	promptPayload, responsePayload, servedEpoch, err := m.retrievePayloadsWithAdjacentEpochs(ctx, escrowID, inferenceID, epochID)
+	promptPayload, responsePayload, servedEpoch, err := m.retrievePayloadsWithAdjacentEpochs(ctx, escrowID, in.InferenceID, epochID)
 	if err != nil {
 		if errors.Is(err, payloads.ErrNotFound) {
 			emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadNotFound, nil, "requested_epoch", epochID)
-			return echo.NewHTTPError(http.StatusNotFound, "payload not found")
+			return nil, echo.NewHTTPError(http.StatusNotFound, "payload not found")
 		}
 		emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadRetrieveErr, err, "requested_epoch", epochID)
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	// Sign response using same scheme as public endpoint
-	executorSignature, err := m.signPayloadResponse(inferenceID, promptPayload, responsePayload)
+	executorSignature, err := m.signPayloadResponse(in.InferenceID, promptPayload, responsePayload)
 	if err != nil {
 		emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadResponseSignErr, err,
 			"requested_epoch", epochID,
 			"served_epoch", servedEpoch)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to sign response")
+		return nil, echo.NewHTTPError(http.StatusInternalServerError, "failed to sign response")
 	}
 
-	if err := c.JSON(http.StatusOK, validationpkg.PayloadResponse{
-		InferenceId:       inferenceID,
-		PromptPayload:     promptPayload,
-		ResponsePayload:   responsePayload,
-		ExecutorSignature: executorSignature,
-	}); err != nil {
-		emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonPayloadWriteErr, err,
-			"requested_epoch", epochID,
-			"served_epoch", servedEpoch)
-		return err
-	}
 	emit(observability.LevelInfo, "payload served", observability.MetricStatusOK, observability.ReasonOK, nil,
 		"requested_epoch", epochID,
 		"served_epoch", servedEpoch)
-	return nil
+	return &validationpkg.PayloadResponse{
+		InferenceId:       in.InferenceID,
+		PromptPayload:     promptPayload,
+		ResponsePayload:   responsePayload,
+		ExecutorSignature: executorSignature,
+	}, nil
+}
+
+// ServeRPCGetPayload is the Connect adapter for PayloadService.GetPayload.
+// PayloadHandler already resolved srv and checked group membership.
+func (m *HostManager) ServeRPCGetPayload(ctx context.Context, core rpcserver.SessionCore, _ string, req *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+	srv, ok := core.(*transport.Server)
+	if !ok {
+		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("method is not implemented"))
+	}
+	in := PayloadAuthInput{
+		InferenceID:      req.GetInferenceId(),
+		ValidatorAddress: req.GetValidatorAddress(),
+		Timestamp:        req.GetTimestamp(),
+		EpochID:          req.GetEpochId(),
+		Signature:        string(req.GetSignature()), // HTTP Authorization text (base64), not raw ECDSA
+	}
+	resp, err := m.ServeGetPayload(ctx, srv, in)
+	if err != nil {
+		return nil, connectFromEcho(err)
+	}
+	return &rpcpb.GetPayloadResponse{
+		InferenceId:       resp.InferenceId,
+		PromptPayload:     resp.PromptPayload,
+		ResponsePayload:   resp.ResponsePayload,
+		ExecutorSignature: resp.ExecutorSignature,
+	}, nil
+}
+
+func connectFromEcho(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		return ce
+	}
+	var he *echo.HTTPError
+	if errors.As(err, &he) {
+		msg := fmt.Sprint(he.Message)
+		switch he.Code {
+		case http.StatusBadRequest:
+			return connect.NewError(connect.CodeInvalidArgument, errors.New(msg))
+		case http.StatusUnauthorized:
+			return connect.NewError(connect.CodeUnauthenticated, errors.New(msg))
+		case http.StatusForbidden:
+			return connect.NewError(connect.CodePermissionDenied, errors.New(msg))
+		case http.StatusNotFound:
+			return connect.NewError(connect.CodeNotFound, errors.New(msg))
+		case http.StatusTooManyRequests:
+			return connect.NewError(connect.CodeResourceExhausted, errors.New(msg))
+		case http.StatusServiceUnavailable:
+			return connect.NewError(connect.CodeUnavailable, errors.New(msg))
+		default:
+			if he.Code >= 500 {
+				return connect.NewError(connect.CodeInternal, errors.New(msg))
+			}
+			return connect.NewError(connect.CodeInvalidArgument, errors.New(msg))
+		}
+	}
+	return connect.NewError(connect.CodeInternal, err)
+}
+
+func payloadAuthFromEcho(c echo.Context) (PayloadAuthInput, error) {
+	inferenceID := c.QueryParam("inference_id")
+	if inferenceID == "" {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "inference_id required")
+	}
+	validatorAddress := c.Request().Header.Get(utils.XValidatorAddressHeader)
+	timestampStr := c.Request().Header.Get(utils.XTimestampHeader)
+	epochIDStr := c.Request().Header.Get(utils.XEpochIdHeader)
+	signature := c.Request().Header.Get(utils.AuthorizationHeader)
+	if validatorAddress == "" {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "X-Validator-Address header required")
+	}
+	if timestampStr == "" {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "X-Timestamp header required")
+	}
+	if epochIDStr == "" {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "X-Epoch-Id header required")
+	}
+	if signature == "" {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusUnauthorized, "Authorization header required")
+	}
+	timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
+	if err != nil {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "invalid timestamp format")
+	}
+	epochID, err := strconv.ParseUint(epochIDStr, 10, 64)
+	if err != nil {
+		return PayloadAuthInput{}, echo.NewHTTPError(http.StatusBadRequest, "invalid epoch_id format")
+	}
+	return PayloadAuthInput{
+		InferenceID:      inferenceID,
+		ValidatorAddress: validatorAddress,
+		Timestamp:        timestamp,
+		EpochID:          epochID,
+		Signature:        signature,
+	}, nil
 }
 
 // authenticatePayloadRequest validates headers, timestamp, group membership,
@@ -1337,40 +1787,44 @@ func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) erro
 // the observability reason for the failure (or ReasonOK), and the *echo.HTTPError
 // suitable to return directly to the client.
 func (m *HostManager) authenticatePayloadRequest(c echo.Context, group []types.SlotAssignment) (uint64, observability.Reason, error) {
-	validatorAddress := c.Request().Header.Get(utils.XValidatorAddressHeader)
-	timestampStr := c.Request().Header.Get(utils.XTimestampHeader)
-	epochIDStr := c.Request().Header.Get(utils.XEpochIdHeader)
-	signature := c.Request().Header.Get(utils.AuthorizationHeader)
-	inferenceID := c.QueryParam("inference_id")
-
-	if validatorAddress == "" {
-		return 0, observability.ReasonMissingValidatorHeader, echo.NewHTTPError(http.StatusBadRequest, "X-Validator-Address header required")
-	}
-	if timestampStr == "" {
-		return 0, observability.ReasonMissingTimestampHeader, echo.NewHTTPError(http.StatusBadRequest, "X-Timestamp header required")
-	}
-	if epochIDStr == "" {
-		return 0, observability.ReasonMissingEpochHeader, echo.NewHTTPError(http.StatusBadRequest, "X-Epoch-Id header required")
-	}
-	if signature == "" {
-		return 0, observability.ReasonMissingSignatureHeader, echo.NewHTTPError(http.StatusUnauthorized, "Authorization header required")
-	}
-
-	timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
+	in, err := payloadAuthFromEcho(c)
 	if err != nil {
-		return 0, observability.ReasonInvalidTimestamp, echo.NewHTTPError(http.StatusBadRequest, "invalid timestamp format")
+		return 0, payloadParseReason(err), err
 	}
+	return m.authenticatePayloadAuth(c.Request().Context(), group, in)
+}
 
-	epochID, err := strconv.ParseUint(epochIDStr, 10, 64)
-	if err != nil {
-		return 0, observability.ReasonInvalidEpoch, echo.NewHTTPError(http.StatusBadRequest, "invalid epoch_id format")
+func payloadParseReason(err error) observability.Reason {
+	var he *echo.HTTPError
+	if !errors.As(err, &he) {
+		return observability.ReasonInvalidSignature
 	}
+	msg := fmt.Sprint(he.Message)
+	switch {
+	case msg == "inference_id required":
+		return observability.ReasonMissingInferenceID
+	case msg == "X-Validator-Address header required":
+		return observability.ReasonMissingValidatorHeader
+	case msg == "X-Timestamp header required":
+		return observability.ReasonMissingTimestampHeader
+	case msg == "X-Epoch-Id header required":
+		return observability.ReasonMissingEpochHeader
+	case msg == "Authorization header required":
+		return observability.ReasonMissingSignatureHeader
+	case msg == "invalid timestamp format":
+		return observability.ReasonInvalidTimestamp
+	case msg == "invalid epoch_id format":
+		return observability.ReasonInvalidEpoch
+	default:
+		return observability.ReasonInvalidSignature
+	}
+}
 
-	// Validate timestamp within 60s window
+func (m *HostManager) authenticatePayloadAuth(ctx context.Context, group []types.SlotAssignment, in PayloadAuthInput) (uint64, observability.Reason, error) {
 	now := time.Now().UnixNano()
 	maxAge := int64(60 * time.Second)
 	maxFuture := int64(10 * time.Second)
-	requestAge := now - timestamp
+	requestAge := now - in.Timestamp
 	if requestAge > maxAge {
 		return 0, observability.ReasonTimestampTooOld, echo.NewHTTPError(http.StatusBadRequest, "request timestamp too old")
 	}
@@ -1378,30 +1832,28 @@ func (m *HostManager) authenticatePayloadRequest(c echo.Context, group []types.S
 		return 0, observability.ReasonTimestampInFuture, echo.NewHTTPError(http.StatusBadRequest, "request timestamp in the future")
 	}
 
-	granterAddress, err := m.findGranterInGroup(validatorAddress, group)
+	granterAddress, err := m.findGranterInGroup(in.ValidatorAddress, group)
 	if err != nil {
 		return 0, observability.ReasonNotGroupMember, echo.NewHTTPError(http.StatusUnauthorized, "not a group member")
 	}
 
-	// Collect requester's pubkeys for signature verification
-	pubkeys, err := m.getValidatorPubKeys(c.Request().Context(), validatorAddress, granterAddress)
+	pubkeys, err := m.getValidatorPubKeys(ctx, in.ValidatorAddress, granterAddress)
 	if err != nil {
 		return 0, observability.ReasonPubkeyResolutionErr, echo.NewHTTPError(http.StatusUnauthorized, "failed to resolve validator pubkeys")
 	}
 
-	// Verify signature
 	components := calculations.SignatureComponents{
-		Payload:         inferenceID,
-		EpochId:         epochID,
-		Timestamp:       timestamp,
-		TransferAddress: validatorAddress,
+		Payload:         in.InferenceID,
+		EpochId:         in.EpochID,
+		Timestamp:       in.Timestamp,
+		TransferAddress: in.ValidatorAddress,
 		ExecutorAddress: "",
 	}
-	if err := calculations.ValidateSignatureWithGrantees(components, calculations.Developer, pubkeys, signature); err != nil {
+	if err := calculations.ValidateSignatureWithGrantees(components, calculations.Developer, pubkeys, in.Signature); err != nil {
 		return 0, observability.ReasonInvalidSignature, echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")
 	}
 
-	return epochID, observability.ReasonOK, nil
+	return in.EpochID, observability.ReasonOK, nil
 }
 
 // findGranterInGroup returns the group member address that the validator
@@ -1685,4 +2137,74 @@ func (m *HostManager) sessionSMOpts(extra ...state.SMOption) []state.SMOption {
 		extra = append(extra, state.WithHeartbeatConfig(m.params.SessionParams().Heartbeat))
 	}
 	return extra
+}
+
+func closeTransportServer(srv *transport.Server) {
+	if srv == nil {
+		return
+	}
+	srv.CloseOutbound()
+	if h := srv.Host(); h != nil {
+		h.Close()
+	}
+}
+
+// wireHostToHost stores host-signed SelectTransport clients so repair probes
+// and timeout verify (ChallengeReceipt / GetMempool) exist on a production
+// child. Attach identity is m.signer. Gossip stays unwired: s.gossip is nil,
+// so inbound gossip nonces and txs are dropped and nothing is broadcast.
+func (m *HostManager) wireHostToHost(srv *transport.Server, escrowID string, group []types.SlotAssignment) error {
+	if srv == nil || m.signer == nil || m.bridge == nil {
+		return nil
+	}
+	h := srv.Host()
+	if h == nil {
+		return nil
+	}
+	routePrefix := devshardpkg.DefaultRoutePrefix()
+	if v := strings.TrimSpace(m.boundVersion); v != "" {
+		routePrefix = devshardpkg.VersionedRoutePrefix(v)
+	}
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = routePrefix
+	endpoints := transport.RPCEndpointsFromEnv()
+	hostPeers := make(map[int]transport.HostPeerClient, len(group))
+	var created []transport.HostPeerClient
+	var err error
+	defer func() {
+		if err != nil {
+			for _, pc := range created {
+				pc.Close()
+			}
+		}
+	}()
+	for i, slot := range group {
+		url := m.cachedSlotURL(escrowID, slot.ValidatorAddress)
+		if url == "" {
+			info, infoErr := m.bridge.GetHostInfo(slot.ValidatorAddress)
+			if infoErr != nil {
+				err = fmt.Errorf("get host info for slot %d %s: %w", i, slot.ValidatorAddress, infoErr)
+				return err
+			}
+			if info != nil {
+				url = strings.TrimSpace(info.URL)
+			}
+		}
+		if url == "" {
+			err = fmt.Errorf("get host info for slot %d %s: empty url", i, slot.ValidatorAddress)
+			return err
+		}
+		hostHTTP := transport.NewHTTPClient(url, escrowID, m.signer, cfg)
+		selected := transport.SelectTransport(hostHTTP, slot.ValidatorAddress, endpoints, nil)
+		pc, ok := selected.(transport.HostPeerClient)
+		if !ok {
+			err = fmt.Errorf("peer slot %d: SelectTransport returned %T", i, selected)
+			return err
+		}
+		created = append(created, pc)
+		hostPeers[int(slot.SlotID)] = pc
+	}
+	srv.SetPeerClients(hostPeers)
+	created = nil
+	return nil
 }

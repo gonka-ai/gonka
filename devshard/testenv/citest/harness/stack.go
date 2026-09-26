@@ -20,6 +20,11 @@ import (
 const (
 	defaultStackTimeout       = 12 * time.Minute
 	composeCleanupStopTimeout = 5 * time.Second
+	// versiond hosts declare stop_grace_period: 30m so operator evacuation can
+	// drain. Fault-injection StopService must not inherit that: without
+	// --timeout, compose waits the full grace, the 2m CommandContext SIGKILLs
+	// the CLI, and the container is still running (H27/H40).
+	composeFaultStopTimeout = 10 * time.Second
 	// gatewayComposeService is the citest gateway. Heartbeat/seed and escrow
 	// warmup wait for catalog admission inside the process, but client chat
 	// does not. Start the process after the router has admitted the version
@@ -35,6 +40,9 @@ type Stack struct {
 	ComposePath   string
 	Timeout       time.Duration
 	Observability bool
+	// ProxyOverlay appends docker-compose.proxy.yml. Default citest must
+	// leave this false so existing suites stay on versiond-router:8080.
+	ProxyOverlay bool
 	// ComposeProject is the docker compose project label. Empty uses the
 	// workdir basename (Compose default). Observability citest sets this so
 	// Promtail only ships this stack's containers.
@@ -105,6 +113,7 @@ func (s *Stack) RunGencompose(t *testing.T) {
 		t.Fatalf("gencompose: %v\n%s", err, out)
 	}
 	fixComposePaths(t, s.ComposePath, s.TestenvDir)
+	PinVersiondImagesFromEnv(t, s.ComposePath)
 	PatchComposeUseRandomHostPorts(t, s.ComposePath)
 }
 
@@ -196,6 +205,7 @@ func (s *Stack) UpWithObservability(t *testing.T, cfg *config.File) {
 // router catalog admission, then starts the gateway.
 func (s *Stack) upAfterCatalog(t *testing.T, build bool) {
 	t.Helper()
+	s.ensureProxyOverlay(t)
 	infra := withoutComposeService(s.composeServiceNames(t), gatewayComposeService)
 	require.NotEmpty(t, infra, "compose has no services besides %s", gatewayComposeService)
 	s.composeUp(t, build, infra)
@@ -235,8 +245,20 @@ func withoutComposeService(names []string, skip string) []string {
 	return out
 }
 
+func composeStopArgs(fileArgs []string, service string, timeout time.Duration) []string {
+	seconds := int((timeout + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	args := append([]string{"compose"}, fileArgs...)
+	return append(args, "stop", "--timeout", strconv.Itoa(seconds), service)
+}
+
 func (s *Stack) composeFileArgs() []string {
 	args := []string{"-f", s.ComposePath}
+	if s.ProxyOverlay {
+		args = append(args, "-f", proxyOverlayPath(s))
+	}
 	if s.Observability {
 		overlay := filepath.Join(s.WorkDir, "docker-compose.observability.yml")
 		if _, err := os.Stat(overlay); err != nil {
@@ -309,12 +331,19 @@ func (s *Stack) StopService(t *testing.T, service string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "stop", service)...)
+	cmd := exec.CommandContext(ctx, "docker", composeStopArgs(s.composeFileArgs(), service, composeFaultStopTimeout)...)
 	cmd.Dir = s.WorkDir
 	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose stop %s: %v\n%s", service, err, out)
+	}
+	running, err := s.ServiceRunning(service)
+	if err != nil {
+		t.Fatalf("inspect stopped %s: %v", service, err)
+	}
+	if running {
+		t.Fatalf("docker compose stop %s: container still running", service)
 	}
 }
 
@@ -334,12 +363,9 @@ func (s *Stack) StopServiceGracefully(service string, grace time.Duration) (Serv
 	if err != nil {
 		return ServiceStopResult{}, err
 	}
-	graceSeconds := int((grace + time.Second - 1) / time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), grace+30*time.Second)
 	defer cancel()
-	args := append([]string{"compose"}, s.composeFileArgs()...)
-	args = append(args, "stop", "--timeout", strconv.Itoa(graceSeconds), service)
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", composeStopArgs(s.composeFileArgs(), service, grace)...)
 	cmd.Dir = s.WorkDir
 	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
@@ -474,6 +500,25 @@ func (s *Stack) RequireServicesRunning(t *testing.T, services ...string) {
 	for _, name := range services {
 		require.Contains(t, running, name, "service %s not running; running=%v", name, running)
 	}
+}
+
+// ServiceImage is the image name of the running container (Config.Image).
+func (s *Stack) ServiceImage(t *testing.T, service string) string {
+	t.Helper()
+	cmd := exec.Command("docker", append(append([]string{"compose"}, s.composeFileArgs()...), "ps", "-aq", service)...)
+	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "docker compose ps -q %s\n%s", service, out)
+	id := strings.TrimSpace(string(out))
+	if i := strings.IndexByte(id, '\n'); i >= 0 {
+		id = id[:i]
+	}
+	require.NotEmpty(t, id, "no container for %s", service)
+	inspect := exec.Command("docker", "inspect", "-f", "{{.Config.Image}}", id)
+	img, err := inspect.CombinedOutput()
+	require.NoError(t, err, "docker inspect %s\n%s", id, img)
+	return strings.TrimSpace(string(img))
 }
 
 func (s *Stack) ServiceRunning(service string) (bool, error) {

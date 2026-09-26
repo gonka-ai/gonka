@@ -65,6 +65,10 @@ func setupServerEnv(t *testing.T, opts ...ServerOption) *serverTestEnv {
 }
 
 func setupServerEnvHost(t *testing.T, hostOpts []host.HostOption, opts ...ServerOption) *serverTestEnv {
+	return setupServerEnvEngine(t, nil, hostOpts, opts...)
+}
+
+func setupServerEnvEngine(t *testing.T, engine devshard.InferenceEngine, hostOpts []host.HostOption, opts ...ServerOption) *serverTestEnv {
 	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
@@ -74,7 +78,9 @@ func setupServerEnvHost(t *testing.T, hostOpts []host.HostOption, opts ...Server
 
 	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
-	engine := stub.NewInferenceEngine()
+	if engine == nil {
+		engine = stub.NewInferenceEngine()
+	}
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",

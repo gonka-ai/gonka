@@ -77,15 +77,16 @@ type VerifyTimeoutResponse struct {
 	Accept      bool     `json:"accept"`
 	Signature   []byte   `json:"signature,omitempty"` // signed TimeoutVoteContent
 	VoterSlot   uint32   `json:"voter_slot"`
-	Mempool     [][]byte `json:"mempool,omitempty"`      // recovery txs on reject; each: proto bytes of DevshardTx
+	Mempool     [][]byte `json:"mempool,omitempty"` // recovery txs on reject; each: proto bytes of DevshardTx
 	RejectCause string   `json:"reject_cause,omitempty"`
 }
 
 // ChallengeReceiptRequest is the JSON body for POST /sessions/:id/challenge-receipt.
 type ChallengeReceiptRequest struct {
-	InferenceID uint64       `json:"inference_id"`
-	Payload     *PayloadJSON `json:"payload"`
-	Diffs       []DiffJSON   `json:"diffs"`
+	InferenceID     uint64       `json:"inference_id"`
+	Payload         *PayloadJSON `json:"payload"`
+	Diffs           []DiffJSON   `json:"diffs"`
+	ProtocolVersion string       `json:"protocol_version,omitempty"`
 }
 
 // ChallengeReceiptResponse is returned by the challenge-receipt endpoint.
@@ -114,12 +115,9 @@ type SignaturesResponse struct {
 
 // DiffToJSON converts a domain Diff to its JSON wire format.
 func DiffToJSON(d types.Diff) (DiffJSON, error) {
-	// Serialize the txs as a DiffContent proto (nonce + txs together)
-	// to preserve the exact bytes that were signed.
-	content := &types.DiffContent{Nonce: d.Nonce, Txs: d.Txs}
-	txsBytes, err := proto.Marshal(content)
+	txsBytes, err := marshalDiffWireTxs(d)
 	if err != nil {
-		return DiffJSON{}, fmt.Errorf("marshal diff content: %w", err)
+		return DiffJSON{}, err
 	}
 	return DiffJSON{
 		Nonce:         d.Nonce,
@@ -127,6 +125,17 @@ func DiffToJSON(d types.Diff) (DiffJSON, error) {
 		UserSig:       d.UserSig,
 		PostStateRoot: d.PostStateRoot,
 	}, nil
+}
+
+// marshalDiffWireTxs is the Txs field on DiffJSON / rpcpb.Diff: proto bytes
+// of DiffContent{Nonce, Txs}. Same bytes JSON and Connect must emit.
+func marshalDiffWireTxs(d types.Diff) ([]byte, error) {
+	content := &types.DiffContent{Nonce: d.Nonce, Txs: d.Txs}
+	txsBytes, err := proto.Marshal(content)
+	if err != nil {
+		return nil, fmt.Errorf("marshal diff content: %w", err)
+	}
+	return txsBytes, nil
 }
 
 // DiffFromJSON converts a JSON wire diff back to the domain Diff.
@@ -141,6 +150,22 @@ func DiffFromJSON(dj DiffJSON) (types.Diff, error) {
 		UserSig:       dj.UserSig,
 		PostStateRoot: dj.PostStateRoot,
 	}, nil
+}
+
+// DiffsFromJSON decodes a challenge / verify diffs list.
+func DiffsFromJSON(djs []DiffJSON) ([]types.Diff, error) {
+	if len(djs) == 0 {
+		return nil, nil
+	}
+	diffs := make([]types.Diff, 0, len(djs))
+	for i, dj := range djs {
+		d, err := DiffFromJSON(dj)
+		if err != nil {
+			return nil, fmt.Errorf("decode diff %d: %w", i, err)
+		}
+		diffs = append(diffs, d)
+	}
+	return diffs, nil
 }
 
 // HostRequestToJSON converts a HostRequest to InferenceRequest.

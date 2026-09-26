@@ -1,0 +1,99 @@
+#!/bin/sh
+# publish-members — the membership document versiond-router posts to each
+# versiond. Hash input is one TSV line per ready member:
+#   id <TAB> addr <TAB> ver1,ver2 <NL>
+# with members sorted by id and versions sorted. versioned/internal/peerrpcmembers
+# hashes the same bytes.
+set -eu
+
+hash_text() {
+    text=$1
+    if command -v sha256sum >/dev/null 2>&1; then
+        printf '%s' "$text" | sha256sum | awk '{print $1}'
+    else
+        printf '%s' "$text" | shasum -a 256 | awk '{print $1}'
+    fi
+}
+
+render() {
+    router_id=${VERSIOND_ROUTER_ID:-versiond-router}
+    port=${VERSIOND_PORT:-8080}
+    if [ -n "${VERSIOND_READY_FILE:-}" ]; then
+        ready=$(cat "$VERSIOND_READY_FILE")
+    else
+        ready='{}'
+    fi
+    if [ -n "${VERSIOND_POOL_ENDPOINTS:-}" ]; then
+        eps=$VERSIOND_POOL_ENDPOINTS
+    elif [ -n "${VERSIOND_POOL_ENDPOINTS_FILE:-}" ]; then
+        eps=$(cat "$VERSIOND_POOL_ENDPOINTS_FILE")
+    elif [ -n "${VERSIOND_POOL_HOST:-}" ]; then
+        eps=$(jq -n --arg id "$VERSIOND_POOL_HOST" --arg host "$VERSIOND_POOL_HOST" --argjson port "$port" \
+            '[{id:$id,host:$host,port:$port}]')
+    else
+        echo "publish-members: no pool membership" >&2
+        return 1
+    fi
+    members=$(printf '%s' "$eps" | jq -c --argjson ready "$ready" --argjson port "$port" '
+        [ .[] |
+            .id as $id |
+            ($ready[$id] // []) as $vers |
+            select(($vers | length) > 0) |
+            {
+                id: $id,
+                addr: (.host + ":" + ((.port // $port) | tostring)),
+                ready_versions: ($vers | sort)
+            }
+        ] | sort_by(.id)
+    ')
+    # Command substitution strips the final newline. Put it back so the hash
+    # matches the Go canonical form, which ends every line with NL.
+    canon=$(printf '%s' "$members" | jq -j '.[] | [.id, .addr, (.ready_versions | join(","))] | @tsv, "\n"')
+    if [ -n "$canon" ]; then
+        canon="${canon}
+"
+    fi
+    hash=$(hash_text "$canon")
+    jq -n --arg router_id "$router_id" --arg hash "$hash" --argjson members "$members" \
+        '{router_id:$router_id, hash:$hash, members:$members}'
+}
+
+post_doc() {
+    doc=$1
+    token=${VERSIOND_CONTROL_TOKEN:-}
+    printf '%s' "$doc" | jq -r '.members[] | [.id, .addr] | @tsv' |
+        while IFS=$(printf '\t') read -r id addr; do
+            [ -n "$id" ] || continue
+            body=$(printf '%s' "$doc" | jq -c --arg id "$id" '. + {recipient_id:$id}')
+            curl -fsS -m 2 -X POST \
+                -H "Authorization: Bearer ${token}" \
+                -H "Content-Type: application/json" \
+                --data "$body" \
+                "http://${addr}/internal/peer-rpc/members" \
+                || echo "publish-members: post to ${id} failed" >&2
+        done
+}
+
+if [ "${1:-}" = "--loop" ]; then
+    token=${VERSIOND_CONTROL_TOKEN:-}
+    if [ -z "$token" ]; then
+        echo "publish-members: VERSIOND_CONTROL_TOKEN is empty" >&2
+        exit 1
+    fi
+    interval=${VERSIOND_MEMBER_PUBLISH_SECONDS:-10}
+    prev=""
+    last=0
+    while :; do
+        if doc=$(render); then
+            now=$(date +%s)
+            if [ "$doc" != "$prev" ] || [ $((now - last)) -ge "$interval" ]; then
+                post_doc "$doc" || true
+                prev=$doc
+                last=$now
+            fi
+        fi
+        sleep 1
+    done
+fi
+
+render

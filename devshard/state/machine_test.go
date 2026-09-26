@@ -187,6 +187,23 @@ func TestApplyDiff_StartInference(t *testing.T) {
 	require.Equal(t, uint32(1), rec.ExecutorSlot)
 }
 
+func TestApplyDiff_StartInference_ProtocolVersionMismatch(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, user := newTestSM(t, hosts, 10000)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId:     1,
+		PromptHash:      []byte("prompt"),
+		Model:           "llama",
+		InputLength:     100,
+		MaxTokens:       testutil.TestMaxTokens,
+		StartedAt:       1000,
+		ProtocolVersion: "other-version",
+	})})
+	_, err := sm.ApplyDiff(diff)
+	require.ErrorIs(t, err, types.ErrProtocolVersionMismatch)
+}
+
 func TestApplyDiff_ConfirmStart(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)

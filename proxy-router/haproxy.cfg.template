@@ -16,6 +16,10 @@ global
     stats socket /var/run/haproxy/haproxy.sock mode 660 level operator
     stats socket /var/run/haproxy/reconciler.sock mode 600 level admin
     stats timeout 30s
+    # SETTINGS_MAX_CONCURRENT_STREAMS on the peer-RPC frontend. HAProxy's
+    # default is 100; one TCP carries every Watch. Matches
+    # DefaultH2MaxConcurrentStreams (4096).
+    tune.h2.max-concurrent-streams 4096
 
 defaults
     log global
@@ -91,6 +95,105 @@ backend policy_https
     tcp-check send-binary 474554202f6865616c746820485454502f312e310d0a486f73743a20706f6c6963792d6865616c74680d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a
     tcp-check expect rstring ^HTTP/1\.[01][[:space:]]+200
     server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:443 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr send-proxy-v2 verify none
+
+# Peer RPC. Public :80/:443 stay TCP to proxy-policy. This bind skips nginx.
+# HTTPS InferenceUrl: TLS + ALPN h2 with nginx's cert. HTTP: cleartext proto h2.
+# conn_rate / path zones key src (the client). Do not copy them onto
+# versiond_router_in: that hop's src is the policy worker, and X-Real-IP
+# there is already the address nginx derived from PROXY v2.
+frontend rpc_h2
+    bind ${RPC_H2_BIND}
+    maxconn 4096
+    stick-table type ip size 1m expire 10s store conn_rate(1s),sess_rate(1s)
+    tcp-request connection track-sc0 src
+    tcp-request connection reject if { sc_conn_rate(0) gt 200 }
+    tcp-request session track-sc0 src
+    tcp-request session reject if { sc_sess_rate(0) gt 400 }
+
+    http-request del-header X-Real-IP
+    http-request set-header X-Real-IP %[src]
+
+    acl is_attach path_end /devshard.transport.v1.PeerAuthService/Attach
+    acl is_chat path_end /devshard.transport.v1.SessionService/Chat
+    acl is_diffs path_end /devshard.transport.v1.SessionService/GetDiffs
+    acl is_mempool path_end /devshard.transport.v1.SessionService/GetMempool
+    acl is_signatures path_end /devshard.transport.v1.SessionService/GetSignatures
+    acl is_gossip path_end /devshard.transport.v1.GossipService/Nonce /devshard.transport.v1.GossipService/Txs
+    acl is_payload path_end /devshard.transport.v1.PayloadService/GetPayload
+    acl is_heavy path_end /devshard.transport.v1.SessionService/SeedHeightSync /devshard.transport.v1.SessionService/RepairHeightSync /devshard.transport.v1.SessionService/VerifyTimeout /devshard.transport.v1.SessionService/VerifyErrorMiss /devshard.transport.v1.SessionService/ChallengeReceipt
+    # This frontend is HTTP/2 only. Connect keeps HTTP 429. Native gRPC
+    # (content-type application/grpc) needs HTTP 200, content-type
+    # application/grpc, and grpc-status 8. A bare return drops Content-Type
+    # unless the body comes from an errorfile, so that file carries both
+    # headers. The return is first so it wins over deny_status 429.
+    acl is_native_grpc req.hdr(content-type) -m reg ^application/grpc($|\+|;)
+
+    http-request track-sc1 src table st_rpc_attach if is_attach
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt 100 }
+    http-request deny deny_status 429 if is_attach { sc_http_req_rate(1) gt 100 }
+    http-request track-sc1 src table st_rpc_chat if is_chat
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_chat { sc_http_req_rate(1) gt 500 }
+    http-request deny deny_status 429 if is_chat { sc_http_req_rate(1) gt 500 }
+    http-request track-sc1 src table st_rpc_diffs if is_diffs
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_diffs { sc_http_req_rate(1) gt 400 }
+    http-request deny deny_status 429 if is_diffs { sc_http_req_rate(1) gt 400 }
+    http-request track-sc1 src table st_rpc_mempool if is_mempool
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_mempool { sc_http_req_rate(1) gt 400 }
+    http-request deny deny_status 429 if is_mempool { sc_http_req_rate(1) gt 400 }
+    http-request track-sc1 src table st_rpc_signatures if is_signatures
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_signatures { sc_http_req_rate(1) gt 600 }
+    http-request deny deny_status 429 if is_signatures { sc_http_req_rate(1) gt 600 }
+    http-request track-sc1 src table st_rpc_gossip if is_gossip
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_gossip { sc_http_req_rate(1) gt 200 }
+    http-request deny deny_status 429 if is_gossip { sc_http_req_rate(1) gt 200 }
+    http-request track-sc1 src table st_rpc_payload if is_payload
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_payload { sc_http_req_rate(1) gt 200 }
+    http-request deny deny_status 429 if is_payload { sc_http_req_rate(1) gt 200 }
+    http-request track-sc1 src table st_rpc_heavy if is_heavy
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_heavy { sc_http_req_rate(1) gt 200 }
+    http-request deny deny_status 429 if is_heavy { sc_http_req_rate(1) gt 200 }
+
+    # Same placement key as versiond_router_in and the inner versiond-router.
+    http-request set-var(txn.canonpath) path,regsub(^/devshard/,/)
+    http-request set-var(txn.hashkey) var(txn.canonpath)
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/stats/shards/[^/]+$ }
+
+    default_backend rpc_h2_upstream
+
+backend st_rpc_attach
+    stick-table type ip size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_chat
+    stick-table type ip size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_diffs
+    stick-table type ip size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_mempool
+    stick-table type ip size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_signatures
+    stick-table type ip size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_gossip
+    stick-table type ip size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_payload
+    stick-table type ip size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_heavy
+    stick-table type ip size 1m expire 10s store http_req_rate(10s)
+
+backend rpc_h2_upstream
+    balance hash var(txn.hashkey)
+    hash-type consistent
+    http-reuse safe
+    option redispatch 1
+    retries 2
+    http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
+    ${RPC_H2_SERVER}
 
 frontend versiond_router_in
     option httplog

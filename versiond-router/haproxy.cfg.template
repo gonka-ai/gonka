@@ -32,6 +32,11 @@ global
     # sockets live inside the same unprivileged container.
     stats socket /var/run/haproxy/reconciler.sock mode 600 level admin
     stats timeout 30s
+    # SETTINGS_MAX_CONCURRENT_STREAMS on proto-h2 frontends and backend
+    # proto h2 to versiond. HAProxy default is 100; overlay muxes every
+    # peer Watch onto one TCP. Must match DefaultH2MaxConcurrentStreams
+    # (4096) on versiond and the child. Per-peer interceptor stays 256.
+    tune.h2.max-concurrent-streams 4096
 
 defaults
     log     global
@@ -78,6 +83,7 @@ resolvers docker
 
 frontend versiond_in
     bind ${FRONT_BIND_ADDRESS}:8080
+    bind ${FRONT_BIND_ADDRESS}:${H2_PORT} proto h2
     maxconn ${MAX_CONNECTIONS}
 
     # This is a trusted router-to-devshardd signal, never client input. Backends
@@ -101,6 +107,10 @@ frontend versiond_in
     # non-session traffic still spreads. Derived here and never taken from a
     # client header: it selects the upstream, so an attacker could otherwise
     # pin themselves to a chosen host.
+    #
+    # ^/[^/]+/sessions/[^/]+ also matches /{version}/sessions/{escrow}/rpc/…
+    # (Connect). Do not add a second regex for /rpc/; field 4 is still the
+    # escrow. Per-IP zones stay on the published hop (proxy), not here.
     http-request set-var(txn.hashkey) var(txn.canonpath)
     http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
     http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }
@@ -116,6 +126,24 @@ frontend versiond_in
     # enforces the same default against bytes actually read, including chunked
     # requests and direct deployments without the public nginx proxy.
     http-request deny deny_status 413 if { req.hdr_val(content-length) gt ${MAX_BODY_BYTES} }
+
+    # Peer RPC is the proto-h2 bind only. :8080 stays JSON, healthz, and
+    # catalog. Connect on this listen would be the HTTP/1.1 fallback a
+    # current hop must not answer. /stats/rpc is not a session procedure.
+    http-request deny deny_status 404 if { dst_port 8080 } { path_sub /sessions/ } { path_sub /rpc/ }
+
+    # One HTTP/2 connection carries Watch and inference together. Soft-stop
+    # waits for the connection, so an open Watch holds it after the inference
+    # has already been sent. Count non-Watch streams on the client address.
+    # The drain helper closes the remaining Watch streams once the two counts
+    # meet, which is when every inference on that connection has finished.
+    # A slash inside an ACL pattern is a delimiter, so the method is a regex.
+    # HAProxy treats $ as an environment variable; $$ is the end anchor.
+    http-request set-var(txn.h2watch) str(1) if { path_reg PeerAuthService/Watch$$ }
+    http-request set-var-fmt(txn.ckey) %[src]:%[src_port]
+    http-request track-sc0 var(txn.ckey) table h2_stream_acct
+    http-request sc-inc-gpc0(0) if !{ var(txn.h2watch) -m str 1 }
+    http-after-response sc-inc-gpc1(0) if !{ var(txn.h2watch) -m str 1 }
 
     # versiond's own route grammar has versionless endpoints, and their first
     # path segment is not a version. Classifying by "field 2 is non-empty" would
@@ -163,6 +191,12 @@ ${ROUTER_READY_RULES}
 
 backend router_admin_not_found
     http-request return status 404 content-type text/plain string "not found\n"
+
+# Per client connection: gpc0 is inferences started, gpc1 is inferences whose
+# response has been fully sent. Watch is not counted. The soft-stop helper
+# reads this table.
+backend h2_stream_acct
+    stick-table type string len 80 size 200000 expire 2h store gpc0,gpc1
 
 # A synthetic no-traffic backend exports catalog convergence through HAProxy's
 # standard backend/server Prometheus metrics. The reconciler enables the server

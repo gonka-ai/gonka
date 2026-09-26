@@ -92,6 +92,8 @@ services:
       - chain-public
     restart: unless-stopped
 
+  # nginx (proxy/ image). JSON and chain /chain-grpc/ only. Peer /rpc/ HTTP/2
+  # is join proxy-router's DEVSHARD_RPC_H2_PORT; do not grpc_pass that path here.
   proxy:
     container_name: ${KEY_NAME}-proxy
     image: ghcr.io/product-science/proxy:latest

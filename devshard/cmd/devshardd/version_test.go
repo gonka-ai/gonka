@@ -58,6 +58,21 @@ func TestMaybeInitializePostgresRecognizesOnlyExplicitCommand(t *testing.T) {
 	}
 }
 
+func TestMaybePrintChildH2C(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code, handled := maybePrintVersion([]string{printChildH2CFlag}, &stdout, &stderr)
+	if !handled {
+		t.Fatal("expected child h2c flag to be handled")
+	}
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if strings.TrimSpace(stdout.String()) != childH2CAdvertise {
+		t.Fatalf("stdout = %q, want %q", strings.TrimSpace(stdout.String()), childH2CAdvertise)
+	}
+}
+
 func TestMaybePrintVersionUnknownFlag(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

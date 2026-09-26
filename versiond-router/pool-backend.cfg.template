@@ -78,4 +78,4 @@ backend ${BACKEND_NAME}
     # replaces it by one `server` line per member carrying the same options
     # (minus the resolver for IPv4 literals). versiond's drain announcement is
     # sized from the `inter`, `fall` and `timeout check` values found here.
-    server-template versiond ${BACKEND_SLOTS} ${BACKEND_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr ${SERVER_STATE}
+    server-template versiond ${BACKEND_SLOTS} ${BACKEND_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr${BACKEND_PROTO} ${SERVER_STATE}

@@ -84,6 +84,61 @@ func TestTargetRetireWaitsForAcquiredRequest(t *testing.T) {
 	}
 }
 
+func TestProxy_PeerAuthWatchDoesNotHoldDrain(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	var releaseOnce sync.Once
+	releaseRequest := func() { releaseOnce.Do(func() { close(release) }) }
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		startedOnce.Do(func() { close(started) })
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	target := NewTarget(strings.TrimPrefix(backend.URL, "http://"))
+	routes := &atomic.Value{}
+	routes.Store(RouteTable{"v1": target})
+	server := httptest.NewServer(Handler(routes))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer releaseRequest()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/v1/sessions/_/rpc/devshard.transport.v1.PeerAuthService/Watch", nil)
+		if err != nil {
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil {
+			resp.Body.Close()
+		}
+	}()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watch did not reach the child")
+	}
+
+	drained := target.Retire()
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("peer watch held the proxy drain")
+	}
+	releaseRequest()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watch request did not finish")
+	}
+}
+
 func TestProxy_RouteSwapKeepsAcquiredRequestOnRetiredTarget(t *testing.T) {
 	oldStarted := make(chan struct{})
 	releaseOld := make(chan struct{})
@@ -91,13 +146,13 @@ func TestProxy_RouteSwapKeepsAcquiredRequestOnRetiredTarget(t *testing.T) {
 	var releaseOldOnce sync.Once
 	releaseOldRequest := func() { releaseOldOnce.Do(func() { close(releaseOld) }) }
 	defer releaseOldRequest()
-	oldBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	oldBackend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		oldStartedOnce.Do(func() { close(oldStarted) })
 		<-releaseOld
 		fmt.Fprint(w, "old")
 	}))
 	defer oldBackend.Close()
-	newBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	newBackend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "new")
 	}))
 	defer newBackend.Close()
@@ -158,8 +213,89 @@ func TestProxy_RouteSwapKeepsAcquiredRequestOnRetiredTarget(t *testing.T) {
 	}
 }
 
-func TestProxy_BasicForwarding(t *testing.T) {
+func TestProxy_PreservesXRealIP(t *testing.T) {
+	var got string
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Real-IP")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	addr := strings.TrimPrefix(backend.URL, "http://")
+	handler := Handler(newRoutes(map[string]string{"v1": addr}))
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/v1/sessions/1/rpc/connectrpc.health.v1.Health/Check", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Real-IP", "203.0.113.9")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if got != "203.0.113.9" {
+		t.Fatalf("child X-Real-IP = %q, want the ingress origin", got)
+	}
+}
+
+func TestProxy_ChildSeesHTTP2(t *testing.T) {
+	var proto string
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proto = r.Proto
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	addr := strings.TrimPrefix(backend.URL, "http://")
+	handler := Handler(newRoutes(map[string]string{"v1": addr}))
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/v1/chat/completions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.ProtoMajor != 1 {
+		t.Fatalf("client proto major = %d, want 1 (JSON stays HTTP/1.1 on versiond)", resp.ProtoMajor)
+	}
+	if proto != "HTTP/2.0" {
+		t.Fatalf("child proto = %q, want HTTP/2.0 (ReverseProxy uses HTTP/2 transport)", proto)
+	}
+}
+
+func TestProxy_LegacyChildSeesHTTP1(t *testing.T) {
+	var proto string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proto = r.Proto
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	addr := strings.TrimPrefix(backend.URL, "http://")
+	routes := &atomic.Value{}
+	routes.Store(RouteTable{"v4": NewChildTarget(addr, false)})
+	srv := httptest.NewServer(Handler(routes))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/v4/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+	if proto != "HTTP/1.1" {
+		t.Fatalf("child proto = %q, want HTTP/1.1", proto)
+	}
+}
+
+func TestProxy_BasicForwarding(t *testing.T) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "path=%s", r.URL.Path)
 	}))
 	defer backend.Close()
@@ -185,7 +321,7 @@ func TestProxy_BasicForwarding(t *testing.T) {
 }
 
 func TestProxy_OptionalDevshardPrefix(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "path=%s", r.URL.Path)
 	}))
 	defer backend.Close()
@@ -210,7 +346,7 @@ func TestProxy_OptionalDevshardPrefix(t *testing.T) {
 
 func TestProxy_VersionedPingForwardsToChild(t *testing.T) {
 	var gotPath string
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -253,7 +389,7 @@ func TestProxy_VersionedPingForwardsToChild(t *testing.T) {
 }
 
 func TestProxy_RootPath(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "path=%s", r.URL.Path)
 	}))
 	defer backend.Close()
@@ -312,7 +448,7 @@ func TestProxy_NoVersionPrefix(t *testing.T) {
 }
 
 func TestProxy_VersionlessObs_Primary(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "path=%s", r.URL.Path)
 	}))
 	defer backend.Close()
@@ -336,7 +472,7 @@ func TestProxy_VersionlessObs_Primary(t *testing.T) {
 }
 
 func TestProxy_VersionlessObs_PrimarySemverIsh(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "ok")
 	}))
 	defer backend.Close()
@@ -360,11 +496,11 @@ func TestProxy_VersionlessObs_PrimarySemverIsh(t *testing.T) {
 }
 
 func TestProxy_VersionlessObs_SessionFanout(t *testing.T) {
-	miss := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	miss := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.NotFound(w, nil)
 	}))
 	defer miss.Close()
-	hit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	hit := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "path=%s", r.URL.Path)
 	}))
 	defer hit.Close()
@@ -402,11 +538,11 @@ func (e errLookup) LookupSessionVersion(context.Context, string) (string, bool, 
 }
 
 func TestProxy_VersionlessObs_BoundVersionLookup(t *testing.T) {
-	v1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	v1 := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "v1:%s", r.URL.Path)
 	}))
 	defer v1.Close()
-	v2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	v2 := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "v2:%s", r.URL.Path)
 	}))
 	defer v2.Close()
@@ -442,7 +578,7 @@ func TestProxy_VersionlessObs_BoundVersionLookup(t *testing.T) {
 }
 
 func TestProxy_VersionlessObs_LookupUnbound404(t *testing.T) {
-	hit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	hit := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("backend must not be contacted for unbound escrow")
 	}))
 	defer hit.Close()
@@ -464,7 +600,7 @@ func TestProxy_VersionlessObs_LookupUnbound404(t *testing.T) {
 
 func TestProxy_VersionlessObs_LookupErrorFallsBackToFanout(t *testing.T) {
 	resetLookupFanoutTelemetryForTest()
-	hit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	hit := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "ok:%s", r.URL.Path)
 	}))
 	defer hit.Close()
@@ -516,7 +652,7 @@ func TestProxy_VersionlessObs_PayloadsStillVersioned(t *testing.T) {
 }
 
 func TestProxy_QueryParams(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "query=%s", r.URL.RawQuery)
 	}))
 	defer backend.Close()
@@ -541,7 +677,7 @@ func TestProxy_QueryParams(t *testing.T) {
 }
 
 func TestProxy_SSEStreaming(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		flusher, ok := w.(http.Flusher)

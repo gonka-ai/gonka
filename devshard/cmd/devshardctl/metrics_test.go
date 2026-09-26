@@ -98,6 +98,130 @@ func TestStartupSkippedEscrowMetric(t *testing.T) {
 	}, 1)
 }
 
+func TestPeerRPCAdoptionMetrics_TwoEscrowsOnePeerConn(t *testing.T) {
+	m := NewDevshardMetrics()
+	const peer = "gonka1host"
+	m.PeerRPCAdoption().SetPeerConnReady(peer, true)
+	m.PeerRPCAdoption().BindEscrow("escrow-a", peer)
+	m.PeerRPCAdoption().BindEscrow("escrow-b", peer)
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterValue(t, families, "devshard_gateway_escrow_sessions_total", map[string]string{"path": "h2"}, 2)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "h2"}, 1)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "json"}, 0)
+}
+
+func TestPeerRPCAdoptionMetrics_BindThenReadyOneSeries(t *testing.T) {
+	m := NewDevshardMetrics()
+	const peer = "gonka1host@v5"
+	m.PeerRPCAdoption().BindEscrow("escrow-a", peer)
+	m.PeerRPCAdoption().SetPeerConnReady(peer, true)
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "h2"}, 1)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "json"}, 0)
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": "gonka1host", "mode": "json"})
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": "gonka1host", "mode": "h2"})
+
+	m.PeerRPCAdoption().SetPeerConnReady(peer, false)
+	families, err = m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "json"}, 1)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "h2"}, 0)
+}
+
+func TestPeerRPCAdoptionMetrics_ReleaseDeletesHostRPC(t *testing.T) {
+	m := NewDevshardMetrics()
+	const peer = "gonka1host"
+	m.PeerRPCAdoption().BindEscrow("escrow-a", peer)
+	m.PeerRPCAdoption().BindEscrow("escrow-b", peer)
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterValue(t, families, "devshard_gateway_escrow_sessions_total", map[string]string{"path": "json"}, 2)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "json"}, 1)
+
+	m.PeerRPCAdoption().ReleaseEscrow("escrow-a")
+	families, err = m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "json"}, 1)
+
+	m.PeerRPCAdoption().ReleaseEscrow("escrow-b")
+	families, err = m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "json"})
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "h2"})
+	requireMetricCounterValue(t, families, "devshard_gateway_escrow_sessions_total", map[string]string{"path": "json"}, 2)
+}
+
+func TestPeerRPCAdoptionMetrics_RetireRuntimeDeletesHostRPC(t *testing.T) {
+	m := NewDevshardMetrics()
+	const peer = "gonka1host"
+	const id = "12"
+	rt := &devshardRuntime{id: id}
+	rt.active.Store(true)
+	g := &Gateway{
+		runtimes:         map[string]*devshardRuntime{id: rt},
+		runtimeOrder:     []*devshardRuntime{rt},
+		metrics:          m,
+		rotationBreakers: make(map[string]*rotationBreaker),
+	}
+	m.PeerRPCAdoption().BindEscrow(id, peer)
+	require.True(t, g.retireRuntime(id, "test"))
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "json"})
+	requireMetricCounterValue(t, families, "devshard_gateway_escrow_sessions_total", map[string]string{"path": "json"}, 1)
+}
+
+func TestPeerRPCAdoptionMetrics_AdminCleanDeletesHostRPC(t *testing.T) {
+	m := NewDevshardMetrics()
+	const peer = "gonka1host"
+	const id = "12"
+	rt := &devshardRuntime{id: id}
+	g := &Gateway{
+		runtimes:         map[string]*devshardRuntime{id: rt},
+		runtimeOrder:     []*devshardRuntime{rt},
+		metrics:          m,
+		rotationBreakers: make(map[string]*rotationBreaker),
+	}
+	m.PeerRPCAdoption().BindEscrow(id, peer)
+	g.mu.Lock()
+	g.unregisterRuntimeLocked(id)
+	g.mu.Unlock()
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": peer, "mode": "json"})
+	requireMetricCounterValue(t, families, "devshard_gateway_escrow_sessions_total", map[string]string{"path": "json"}, 1)
+	_, ok := g.runtimes[id]
+	require.False(t, ok)
+}
+
+func TestAttachMetrics_BindsRuntimeParticipantKeysWithoutSession(t *testing.T) {
+	m := NewDevshardMetrics()
+	g := &Gateway{metrics: m}
+	rt := &devshardRuntime{
+		id:              "12",
+		participantKeys: []string{"gonka1a", "gonka1a", "gonka1b"},
+		routePrefix:     "/devshard/v5",
+		proxy:           &Proxy{redundancy: &Redundancy{}},
+	}
+	g.mu.Lock()
+	g.attachMetrics(rt)
+	g.mu.Unlock()
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterValue(t, families, "devshard_gateway_escrow_sessions_total", map[string]string{"path": "json"}, 2)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": "gonka1a@v5", "mode": "json"}, 1)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": "gonka1b@v5", "mode": "json"}, 1)
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_host_rpc", map[string]string{"peer": "gonka1a", "mode": "json"})
+}
+
 func TestGatewayMetricsCollectorIncludesParticipantQuarantineState(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
