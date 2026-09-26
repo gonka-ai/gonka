@@ -284,6 +284,66 @@ func TestStartPoCNodeCommandV2_UnknownLastTrustsGenerating(t *testing.T) {
 	assert.Equal(t, 0, mockClient.InitGenerateV2Called)
 }
 
+// After a DAPI restart LastPocV2 is unknown, but the MLNode reports which
+// stage it is generating. A stage left over from before the restart (e.g. the
+// previous challenge segment) must be stopped and re-initialised, otherwise
+// its callbacks are rejected as not the active stage and the new stage is empty.
+func TestStartPoCNodeCommandV2_UnknownLastRestartsStaleStage(t *testing.T) {
+	node := createTestNode("test-node-v2-gen")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("GENERATING")
+	mockClient.PowStatusV2Config = &mlnodeclient.BackendPoCConfigV2{BlockHeight: 1000, BlockHash: "old-hash"}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-gen", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight: 2000,
+		BlockHash:   "new-hash",
+		PubKey:      "test-pub-key",
+		CallbackUrl: "http://localhost:8080/callback",
+		TotalNodes:  5,
+		Model:       "test-model",
+		SeqLen:      256,
+	}
+	result := cmd.Execute(context.Background(), worker)
+	assert.True(t, result.Succeeded)
+	assert.Equal(t, int64(2000), result.PocV2BlockHeight)
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	assert.Equal(t, 1, mockClient.StopPowV2Called, "stale stage must be stopped")
+	assert.Equal(t, 1, mockClient.InitGenerateV2Called, "requested stage must be initialised")
+	require.NotNil(t, mockClient.LastInitGenerateV2Req)
+	assert.Equal(t, int64(2000), mockClient.LastInitGenerateV2Req.BlockHeight)
+}
+
+func TestStartPoCNodeCommandV2_UnknownLastKeepsReportedSameStage(t *testing.T) {
+	node := createTestNode("test-node-v2-gen")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("GENERATING")
+	mockClient.PowStatusV2Config = &mlnodeclient.BackendPoCConfigV2{BlockHeight: 2000, BlockHash: "new-hash"}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-gen", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight: 2000,
+		BlockHash:   "new-hash",
+		PubKey:      "test-pub-key",
+		CallbackUrl: "http://localhost:8080/callback",
+		TotalNodes:  5,
+		Model:       "test-model",
+		SeqLen:      256,
+	}
+	result := cmd.Execute(context.Background(), worker)
+	assert.True(t, result.Succeeded)
+	assert.True(t, result.PocV2Updated)
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	assert.Equal(t, 0, mockClient.StopPowV2Called)
+	assert.Equal(t, 0, mockClient.InitGenerateV2Called)
+}
+
 func TestStartPoCNodeCommandV2_ValidatingSameParamsStopsThenInit(t *testing.T) {
 	node := createTestNode("test-node-v2-gen")
 	mockClient := mlnodeclient.NewMockClient()

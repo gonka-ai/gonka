@@ -292,8 +292,17 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		logging.Debug("[StartPoCNodeCommandV2] GetPowStatusV2 status", types.PoC, "node_id", worker.nodeId, "status", status.Status)
 		knownLast := c.LastPocV2BlockHeight != 0
 		sameParams := c.LastPocV2BlockHeight == c.BlockHeight && c.LastPocV2BlockHash == c.BlockHash
-		// After a DAPI restart LastPocV2 is zero in memory. Trust an already
-		// GENERATING MLNode rather than Stop+Init with the same stage.
+		// After a DAPI restart LastPocV2 is zero in memory. Ask the MLNode which
+		// stage it is generating: a stage left from before the restart (previous
+		// challenge segment, or the last segment before a regular PoC) must be
+		// restarted, its callbacks are rejected as not the active stage.
+		// Backends that do not report their stage are trusted as before.
+		if !knownLast {
+			if h, hash, ok := status.GeneratingStage(); ok {
+				knownLast = true
+				sameParams = h == c.BlockHeight && hash == c.BlockHash
+			}
+		}
 		if status.Status == "GENERATING" && (sameParams || !knownLast) {
 			logging.Info("[StartPoCNodeCommandV2] Already generating, skipping restart", types.PoC, "node_id", worker.nodeId)
 			result.Succeeded = true

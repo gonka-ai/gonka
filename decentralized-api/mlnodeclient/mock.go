@@ -63,6 +63,7 @@ type MockClient struct {
 
 	// PoC v2 state
 	PowStatusV2            string // "IDLE", "GENERATING", etc.
+	PowStatusV2Config      *BackendPoCConfigV2
 	PoCValidationInference bool
 
 	// Capture parameters
@@ -179,6 +180,7 @@ func (m *MockClient) Reset() {
 	m.LastModelDownload = nil
 	m.LastModelDelete = nil
 	m.PowStatusV2 = ""
+	m.PowStatusV2Config = nil
 	m.PoCValidationInference = false
 }
 
@@ -476,7 +478,7 @@ func (m *MockClient) GetPowStatusV2(ctx context.Context) (*PoCStatusResponseV2, 
 	return &PoCStatusResponseV2{
 		Status: status,
 		Backends: []BackendStatusV2{
-			{Port: 8000, Status: status},
+			{Port: 8000, Status: status, Config: m.PowStatusV2Config},
 		},
 	}, nil
 }
