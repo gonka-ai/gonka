@@ -21,7 +21,7 @@ fun createPoCChallengeSpec(
                     this[EpochParams::pocStageDuration] = pocStageDuration
                     this[EpochParams::pocValidationDuration] = 4L
                     this[EpochParams::pocExchangeDuration] = 2L
-                    this[EpochParams::pocValidationDelay] = 1L
+                    this[EpochParams::pocValidationDelay] = 2L
                     this[EpochParams::setNewValidatorsDelay] = 1L
                     this[EpochParams::confirmationPocSafetyWindow] = 0L
                 }

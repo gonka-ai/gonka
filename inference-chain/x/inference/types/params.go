@@ -787,6 +787,13 @@ func (p *EpochParams) Validate() error {
 	if p.ConfirmationPocSafetyWindow < 0 {
 		return fmt.Errorf("safety window cannot be negative")
 	}
+	// Regular PoC commits are accepted until EndOfPoC+exchange, while validators
+	// read them once, at EndOfPoC+delay. A commit raised after that read keeps
+	// the valid vote given to the earlier root, and weight uses the final Count.
+	if p.PocExchangeDuration > p.PocValidationDelay {
+		return fmt.Errorf("poc exchange duration (%d) cannot exceed poc validation delay (%d)",
+			p.PocExchangeDuration, p.PocValidationDelay)
+	}
 	return nil
 }
 

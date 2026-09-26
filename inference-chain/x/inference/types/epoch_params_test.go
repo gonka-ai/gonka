@@ -40,6 +40,7 @@ func TestEpochParamsValidate_PocValidationDelay(t *testing.T) {
 		{delay: 5, wantErr: false},
 	} {
 		params := types.DefaultEpochParams()
+		params.PocExchangeDuration = 0
 		params.PocValidationDelay = tc.delay
 		err := params.Validate()
 		if tc.wantErr && err == nil {
@@ -57,6 +58,7 @@ func TestEpochParamsValidate_PocValidationDelay(t *testing.T) {
 // With delay 0 that single pass happens before the segment finishes.
 func TestConfirmationPoCValidationStartsAfterChallengeFinish(t *testing.T) {
 	params := types.DefaultEpochParams()
+	params.PocExchangeDuration = 0
 	params.PocValidationDelay = 1
 	if err := params.Validate(); err != nil {
 		t.Fatal(err)
