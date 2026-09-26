@@ -123,8 +123,13 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 		if !caughtUp {
 			if live, ok := snap.(*host.Host); ok {
 				if err := live.CatchUpFromStore(ctx); err != nil {
-					slog.Warn("devshardd: validation retry: catch-up from store failed",
+					// The snapshot may be behind the store, so an inference
+					// behind a stale lease can look absent or unfinished, and
+					// retryStaleValidation would mark it skipped for good.
+					// Claim nothing; the next tick retries the catch-up.
+					slog.Warn("devshardd: validation retry: catch-up from store failed, not claiming leases",
 						"escrow", escrowID, "error", err)
+					return
 				}
 			}
 			caughtUp = true
