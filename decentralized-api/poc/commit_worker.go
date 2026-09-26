@@ -43,6 +43,10 @@ type pendingCommit struct {
 	state           commitState
 	submittedHeight int64
 	timeoutHeight   uint64 // tx timeout_height; 0 means never treat as expired
+	// absentHeight is the last height at which a successful chain query did
+	// not show this payload. A replacement goes out only once that height is
+	// past timeoutHeight: during a query outage the first tx may have landed.
+	absentHeight int64
 }
 
 type storeCommitRecorder interface {
@@ -298,7 +302,32 @@ func (w *CommitWorker) maybeCalibrateStoreCommitGas(pocHeight int64) {
 		"rate", rate, "base", base)
 }
 
-func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, timeoutHeight uint64) {
+// storeCommitRetryBlocks bounds how long one admitted StoreCommit holds its
+// model, the same bound challengeCommitRetryBlocks puts on challenge commits.
+// The pending model is blocked until currentHeight > timeout_height; with the
+// exchange deadline as timeout, a tx that never lands (dropped from the
+// mempool, expired by its unordered timeout timestamp, failed in DeliverTx, or
+// sent by a process that restarted) blocks every higher count for the rest of
+// the window, and the stage keeps the last confirmed count. After
+// timeout_height the tx can no longer be included, so a replacement still
+// cannot collide with it (1137). The replacement also waits for a chain query
+// after timeout_height that does not show the first tx (reconcilePending).
+const storeCommitRetryBlocks int64 = 3
+
+// storeCommitTimeoutHeight caps the per-broadcast timeout at
+// height+storeCommitRetryBlocks and never past the exchange deadline.
+func storeCommitTimeoutHeight(height int64, deadline uint64) uint64 {
+	if height <= 0 || deadline == 0 {
+		return deadline
+	}
+	timeout := uint64(height + storeCommitRetryBlocks)
+	if timeout > deadline {
+		return deadline
+	}
+	return timeout
+}
+
+func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, deadline uint64) {
 	if w.lastCommitted == nil {
 		w.lastCommitted = make(map[commitKey]commitState)
 	}
@@ -323,6 +352,7 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, timeoutHeight uint64) 
 	}
 
 	height := w.blockHeight
+	timeoutHeight := storeCommitTimeoutHeight(height, deadline)
 	if height > 0 && height == w.lastAcceptedBroadcastHeight {
 		logging.Debug("CommitWorker: already admitted a StoreCommit this height", types.PoC,
 			"pocHeight", pocHeight, "height", height)
@@ -373,7 +403,7 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, timeoutHeight uint64) 
 			}
 		}
 
-		if pending, ok := w.pending[key]; ok && !samePayloadRetryable(pending, height) {
+		if pending, ok := w.pending[key]; ok && !samePayloadRetryable(pending, pending.absentHeight) {
 			continue
 		}
 
@@ -650,6 +680,8 @@ func (w *CommitWorker) reconcilePending(pocHeight int64) {
 				"pocHeight", pocHeight, "modelId", key.modelID, "count", pending.state.count)
 			continue
 		}
+		pending.absentHeight = height
+		w.pending[key] = pending
 	}
 }
 
