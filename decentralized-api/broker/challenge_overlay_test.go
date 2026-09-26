@@ -1,0 +1,311 @@
+package broker
+
+import (
+	"testing"
+
+	"decentralized-api/apiconfig"
+	"decentralized-api/chainphase"
+
+	"github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/require"
+)
+
+type stubChallengeOverlay struct {
+	self string
+	ch   *types.OpenPoCChallenge
+}
+
+func (s stubChallengeOverlay) Self() string { return s.self }
+
+func (s stubChallengeOverlay) Own(addr string) *types.OpenPoCChallenge {
+	if s.ch != nil && s.ch.Target() == addr {
+		return s.ch
+	}
+	return nil
+}
+
+func (s stubChallengeOverlay) UnderChallenge() *types.OpenPoCChallenge {
+	if s.ch != nil && s.ch.Generating && s.ch.Target() == s.self {
+		return s.ch
+	}
+	return nil
+}
+
+func testOpenCh(target string, start, finish int64, generating bool, seed ...byte) *types.OpenPoCChallenge {
+	return &types.OpenPoCChallenge{
+		Challenge: &types.PoCChallenge{
+			Target:      target,
+			StartHeight: start,
+			Seed:        seed,
+		},
+		Finish:     finish,
+		Generating: generating,
+	}
+}
+
+func withOverlay(t *testing.T, o challengeOverlay) {
+	t.Helper()
+	prev := overlay
+	SetChallengeOverlay(o)
+	t.Cleanup(func() { SetChallengeOverlay(prev) })
+}
+
+func TestStartPocCommand_UnderChallengeNothingPreserved(t *testing.T) {
+	node := createTestNode("node-1")
+	node.State.PreservedModels = map[string]bool{"m": true}
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+
+	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 500, 900, true, 1),
+	})
+
+	b := &Broker{
+		nodes:        map[string]*NodeWithState{"node-1": node},
+		phaseTracker: tracker,
+	}
+	cmd := NewStartPocCommand()
+	cmd.Execute(b)
+
+	require.Equal(t, types.HardwareNodeStatus_POC, node.State.IntendedStatus)
+	require.Equal(t, PocStatusGenerating, node.State.PocIntendedStatus)
+}
+
+func TestStartPocCommand_VoteWindowDoesNotStartGeneration(t *testing.T) {
+	node := createTestNode("node-1")
+	node.State.PreservedModels = map[string]bool{"m": true}
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 500, 900, true),
+	})
+
+	b := &Broker{
+		nodes:        map[string]*NodeWithState{"node-1": node},
+		phaseTracker: trackerWithCPoCValidation(t),
+	}
+	cmd := NewStartPocCommand()
+	cmd.Execute(b)
+
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.IntendedStatus)
+}
+
+func trackerWithCPoCValidation(t *testing.T) *chainphase.ChainPhaseTracker {
+	t.Helper()
+	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
+	epoch := tracker.GetCurrentEpochState()
+	params := epoch.LatestEpoch.EpochParams
+	tracker.Update(
+		epoch.CurrentBlock,
+		&types.Epoch{Index: epoch.LatestEpoch.EpochIndex, PocStartBlockHeight: epoch.LatestEpoch.PocStartBlockHeight},
+		&params,
+		true,
+		&types.ConfirmationPoCEvent{
+			Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
+			GenerationStartHeight: 120,
+		},
+	)
+	return tracker
+}
+
+func TestInitValidateCommand_UnderChallengeNothingPreservedInVoteWindow(t *testing.T) {
+	node := createTestNode("node-1")
+	node.State.PreservedModels = map[string]bool{"m": true}
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 500, 900, true),
+	})
+
+	b := &Broker{
+		nodes:        map[string]*NodeWithState{"node-1": node},
+		phaseTracker: trackerWithCPoCValidation(t),
+	}
+	cmd := NewInitValidateCommand()
+	cmd.Execute(b)
+
+	require.Equal(t, types.HardwareNodeStatus_POC, node.State.IntendedStatus)
+	require.Equal(t, PocStatusValidating, node.State.PocIntendedStatus)
+}
+
+func TestInitValidateCommand_AfterSafetyKeepsPreserved(t *testing.T) {
+	node := createTestNode("node-1")
+	node.State.PreservedModels = map[string]bool{"m": true}
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 500, 900, false),
+	})
+
+	b := &Broker{
+		nodes:        map[string]*NodeWithState{"node-1": node},
+		phaseTracker: trackerWithCPoCValidation(t),
+	}
+	cmd := NewInitValidateCommand()
+	cmd.Execute(b)
+
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.IntendedStatus)
+}
+
+func TestInferenceUpAllCommand_NoopWhileGeneratingChallengeWork(t *testing.T) {
+	node := createTestNode("node-1")
+	node.State.IntendedStatus = types.HardwareNodeStatus_POC
+
+	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 500, 900, true),
+	})
+
+	b := &Broker{
+		nodes:        map[string]*NodeWithState{"node-1": node},
+		phaseTracker: tracker,
+	}
+	cmd := NewInferenceUpAllCommand()
+	cmd.Execute(b)
+	require.Equal(t, types.HardwareNodeStatus_POC, node.State.IntendedStatus)
+}
+
+func TestPrefetchPocParams_UsesChallengeSeedOutsideVoteWindow(t *testing.T) {
+	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 777, 2000, true, 0xab, 0xcd),
+	})
+
+	bridge := &MockBrokerChainBridge{}
+	bridge.On("GetParams").Return(&types.QueryParamsResponse{Params: types.Params{}}, nil)
+
+	b := &Broker{phaseTracker: tracker, chainBridge: bridge}
+	node := createTestNode("node-1")
+	node.State.IntendedStatus = types.HardwareNodeStatus_POC
+	node.State.PocIntendedStatus = PocStatusGenerating
+	params, err := b.prefetchPocParams(*tracker.GetCurrentEpochState(), map[string]*NodeWithState{"n": node}, 800)
+	require.NoError(t, err)
+	require.NotNil(t, params)
+	require.Equal(t, int64(777), params.startPoCBlockHeight)
+	require.Equal(t, "abcd", params.startPoCBlockHash)
+}
+
+func TestPrefetchPocParams_VoteWindowKeepsRegularParams(t *testing.T) {
+	tracker := newPhaseTrackerWithPhase(t, types.PoCValidatePhase)
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 777, 2000, true, 0xab, 0xcd),
+	})
+
+	bridge := &MockBrokerChainBridge{}
+	bridge.On("GetBlockHash", int64(100)).Return("regular-hash", nil)
+	bridge.On("GetParams").Return(&types.QueryParamsResponse{Params: types.Params{}}, nil)
+
+	b := &Broker{phaseTracker: tracker, chainBridge: bridge}
+	node := createTestNode("node-1")
+	node.State.IntendedStatus = types.HardwareNodeStatus_POC
+	node.State.PocIntendedStatus = PocStatusValidating
+	params, err := b.prefetchPocParams(*tracker.GetCurrentEpochState(), map[string]*NodeWithState{"n": node}, 130)
+	require.NoError(t, err)
+	require.NotNil(t, params)
+	require.Equal(t, int64(100), params.startPoCBlockHeight)
+	require.Equal(t, "regular-hash", params.startPoCBlockHash)
+}
+
+func TestChallengeGenerateNeedsDispatch(t *testing.T) {
+	tracker := newPhaseTrackerWithPhase(t, types.InferencePhase)
+	epoch := *tracker.GetCurrentEpochState()
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 500, 900, true, 0xab, 0xcd),
+	})
+
+	node := createTestNode("n1")
+	node.State.IntendedStatus = types.HardwareNodeStatus_POC
+	node.State.PocIntendedStatus = PocStatusGenerating
+	node.State.CurrentStatus = types.HardwareNodeStatus_POC
+	node.State.PocCurrentStatus = PocStatusGenerating
+	node.State.LastPocV2BlockHeight = 400
+	node.State.LastPocV2BlockHash = "old"
+	require.True(t, challengeGenerateNeedsDispatch(node, epoch))
+
+	node.State.LastPocV2BlockHeight = 500
+	node.State.LastPocV2BlockHash = hexEncodeSeed([]byte{0xab, 0xcd})
+	require.False(t, challengeGenerateNeedsDispatch(node, epoch), "matching params outside lead should not dispatch")
+}
+
+func TestChallengeGenerateNeedsDispatch_FinishLead(t *testing.T) {
+	tracker := &chainphase.ChainPhaseTracker{}
+	epoch := &types.Epoch{Index: 1, PocStartBlockHeight: 100}
+	params := &types.EpochParams{
+		EpochLength:           1000,
+		EpochMultiplier:       1,
+		PocStageDuration:      100,
+		PocExchangeDuration:   50,
+		PocValidationDelay:    10,
+		PocValidationDuration: 100,
+	}
+	tracker.Update(chainphase.BlockInfo{Height: 897, Hash: "h"}, epoch, params, true, nil)
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 500, 900, true, 1),
+	})
+	node := createTestNode("n1")
+	node.State.IntendedStatus = types.HardwareNodeStatus_POC
+	node.State.PocIntendedStatus = PocStatusGenerating
+	node.State.LastPocV2BlockHeight = 500
+	node.State.LastPocV2BlockHash = hexEncodeSeed([]byte{1})
+	require.True(t, challengeGenerateNeedsDispatch(node, *tracker.GetCurrentEpochState()))
+}
+
+func TestGetCommandForState_SetsWindDownAndLastPocV2(t *testing.T) {
+	tracker := &chainphase.ChainPhaseTracker{}
+	epoch := &types.Epoch{Index: 1, PocStartBlockHeight: 100}
+	params := &types.EpochParams{
+		EpochLength:           1000,
+		EpochMultiplier:       1,
+		PocStageDuration:      100,
+		PocExchangeDuration:   50,
+		PocValidationDelay:    10,
+		PocValidationDuration: 100,
+	}
+	tracker.Update(chainphase.BlockInfo{Height: 897, Hash: "h"}, epoch, params, true, nil)
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 500, 900, true, 1),
+	})
+	b := NewTestBroker()
+	b.phaseTracker = tracker
+	nodeState := &NodeState{
+		IntendedStatus:       types.HardwareNodeStatus_POC,
+		PocIntendedStatus:    PocStatusGenerating,
+		LastPocV2BlockHeight: 500,
+		LastPocV2BlockHash:   "old",
+		EpochModels:          map[string]types.Model{},
+		EpochMLNodes:         map[string]types.MLNodeInfo{},
+	}
+	cmd := b.getCommandForState("n1", nodeState, map[string]ModelArgs{"model-a": {}}, &pocParams{
+		startPoCBlockHeight: 500,
+		startPoCBlockHash:   "abcd",
+		models:              map[string]apiconfig.PoCModelConfigCache{"model-a": {ModelId: "model-a", SeqLen: 128}},
+	}, nil, 1, nil)
+	got, ok := cmd.(StartPoCNodeCommandV2)
+	require.True(t, ok)
+	require.True(t, got.WindDown)
+	require.Equal(t, int64(500), got.LastPocV2BlockHeight)
+	require.Equal(t, "old", got.LastPocV2BlockHash)
+}
+
+func TestEpochState_IsPoCVoteWindow(t *testing.T) {
+	validate := newPhaseTrackerWithPhase(t, types.PoCValidatePhase).GetCurrentEpochState()
+	require.True(t, validate.IsPoCVoteWindow())
+	inference := newPhaseTrackerWithPhase(t, types.InferencePhase).GetCurrentEpochState()
+	require.False(t, inference.IsPoCVoteWindow())
+
+	cpocVal := newPhaseTrackerWithPhase(t, types.InferencePhase).GetCurrentEpochState()
+	cpocVal.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
+		Phase: types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
+	}
+	require.True(t, cpocVal.IsPoCVoteWindow())
+}

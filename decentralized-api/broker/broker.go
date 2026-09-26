@@ -8,6 +8,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -60,11 +61,19 @@ func (b *BrokerChainBridgeImpl) GetHardwareNodes() (*types.QueryHardwareNodesRes
 	req := &types.QueryHardwareNodesRequest{
 		Participant: b.client.GetAccountAddress(),
 	}
-	return queryClient.HardwareNodes(b.client.GetContext(), req)
+	resp, err := queryClient.HardwareNodes(b.client.GetContext(), req)
+	if err == nil && resp != nil && resp.Nodes != nil {
+		if setter, ok := b.client.(interface {
+			SetHardwarePrev([]*types.HardwareNode)
+		}); ok {
+			setter.SetHardwarePrev(resp.Nodes.HardwareNodes)
+		}
+	}
+	return resp, err
 }
 
 func (b *BrokerChainBridgeImpl) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
-	_, err := b.client.SendTransactionAsyncNoRetry(diff)
+	_, err := b.client.SendTransactionAsyncWithRetry(diff)
 	return err
 }
 
@@ -119,6 +128,7 @@ type Broker struct {
 	nodes                map[string]*NodeWithState
 	mu                   sync.RWMutex
 	curMaxNodesNum       atomic.Uint64
+	nextRegistrationSeq  atomic.Uint64
 	chainBridge          BrokerChainBridge
 	nodeWorkGroup        *NodeWorkGroup
 	phaseTracker         *chainphase.ChainPhaseTracker
@@ -132,11 +142,14 @@ type Broker struct {
 	configManager        *apiconfig.ConfigManager
 	lockMap              map[string]lockEntry
 	lockMapMu            sync.Mutex
+	afterSnapshot        func()
+	staleApplied         map[string]struct{}
 }
 
 type lockEntry struct {
-	nodeID    string
-	createdAt time.Time
+	nodeID          string
+	registrationSeq uint64
+	createdAt       time.Time
 }
 
 // GetParticipantAddress returns the current participant's address if available.
@@ -148,6 +161,32 @@ func (b *Broker) GetParticipantAddress() string {
 }
 
 const PoCBatchesBasePathV2 = "/v2/poc-batches"
+
+func hexEncodeSeed(seed []byte) string {
+	if len(seed) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(seed)
+}
+
+func challengeGenerateNeedsDispatch(node *NodeWithState, epochState chainphase.EpochState) bool {
+	if node == nil {
+		return false
+	}
+	if node.State.IntendedStatus != types.HardwareNodeStatus_POC ||
+		node.State.PocIntendedStatus != PocStatusGenerating {
+		return false
+	}
+	ch := overlayGeneratingChallengeWork(&epochState)
+	if ch == nil {
+		return false
+	}
+	if node.State.LastPocV2BlockHeight != ch.StartHeight() ||
+		node.State.LastPocV2BlockHash != hexEncodeSeed(ch.Seed()) {
+		return true
+	}
+	return overlayInCommitLead(&epochState)
+}
 
 func GetPoCCallbackBaseURLV2(callbackUrl string) string {
 	return fmt.Sprintf("%s%s", callbackUrl, PoCBatchesBasePathV2)
@@ -169,6 +208,7 @@ type Node struct {
 	MaxConcurrent    int                  `json:"max_concurrent"`
 	NodeNum          uint64               `json:"node_num"`
 	Hardware         []apiconfig.Hardware `json:"hardware"`
+	RegistrationSeq  uint64               `json:"registration_seq,omitempty"`
 }
 
 func (n *Node) InferenceUrl() string {
@@ -226,6 +266,9 @@ type NodeState struct {
 	// DeploymentGeneration increments for each dispatched reconciliation so
 	// late results from a cancelled attempt cannot be applied to a newer one.
 	DeploymentGeneration uint64 `json:"deployment_generation,omitempty"`
+	// RegistrationSeq is assigned once at RegisterNode. It does not
+	// reset across reconciles; re-registering the same id gets a new value.
+	RegistrationSeq uint64 `json:"registration_seq,omitempty"`
 
 	// Epoch data for this node, keyed by model_id.
 	// We currently expect one item in each map.
@@ -233,6 +276,11 @@ type NodeState struct {
 	EpochModels     map[string]types.Model      `json:"epoch_models"`
 	EpochMLNodes    map[string]types.MLNodeInfo `json:"epoch_ml_nodes"`
 	PreservedModels map[string]bool             `json:"preserved_models"`
+
+	// Last dispatched PoC v2 generate params. StartPoCNodeCommandV2 skips
+	// InitGenerateV2 only when the node is already GENERATING with these values.
+	LastPocV2BlockHeight int64  `json:"last_poc_v2_block_height,omitempty"`
+	LastPocV2BlockHash   string `json:"last_poc_v2_block_hash,omitempty"`
 }
 
 func (s NodeState) MarshalJSON() ([]byte, error) {
@@ -449,20 +497,43 @@ type InvalidCommandError struct {
 }
 
 func (b *Broker) QueueMessage(command Command) error {
+	queue, err := b.commandQueue(command)
+	if err != nil {
+		return err
+	}
+	queue <- command
+	return nil
+}
+
+var errWorkerStopping = errors.New("worker stopping")
+
+func (b *Broker) commandQueue(command Command) (chan Command, error) {
 	// Check validity of command. Primarily check all `Response` channels to make sure they
 	// support buffering, or else we could end up blocking the broker.
 	if command.GetResponseChannelCapacity() == 0 {
 		logging.Error("Message queued with unbuffered channel", types.Nodes, "command", reflect.TypeOf(command).String())
-		return errors.New("response channel must support buffering")
+		return nil, errors.New("response channel must support buffering")
 	}
 
 	switch command.(type) {
 	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand, UpdateNodeResultCommand, SetNodesActualStatusCommand, SetNodeAdminStateCommand, RegisterNode, RemoveNode, SyncNodesCommand:
-		b.highPriorityCommands <- command
+		return b.highPriorityCommands, nil
 	default:
-		b.lowPriorityCommands <- command
+		return b.lowPriorityCommands, nil
 	}
-	return nil
+}
+
+func (b *Broker) queueMessageUntil(command Command, stop <-chan struct{}) error {
+	queue, err := b.commandQueue(command)
+	if err != nil {
+		return err
+	}
+	select {
+	case queue <- command:
+		return nil
+	case <-stop:
+		return errWorkerStopping
+	}
 }
 
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
@@ -482,8 +553,14 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	if leastBusyNode == nil {
 		command.Response <- nil
 	} else {
-		command.Response <- &leastBusyNode.Node
+		command.Response <- nodeWithLease(leastBusyNode)
 	}
+}
+
+func nodeWithLease(nws *NodeWithState) *Node {
+	n := nws.Node
+	n.RegistrationSeq = nws.State.RegistrationSeq
+	return &n
 }
 
 func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
@@ -569,8 +646,20 @@ func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, currentE
 func (b *Broker) releaseNode(command ReleaseNode) {
 	b.mu.Lock()
 	node, ok := b.nodes[command.NodeId]
+	released := false
 	if ok {
-		node.State.LockCount--
+		if node.State.RegistrationSeq != command.RegistrationSeq {
+			logging.Info("Ignoring release for node. registration seq mismatch", types.Nodes,
+				"node_id", command.NodeId,
+				"release_registration_seq", command.RegistrationSeq,
+				"current_registration_seq", node.State.RegistrationSeq)
+		} else if node.State.LockCount <= 0 {
+			logging.Info("Ignoring release for node. lock count already 0", types.Nodes,
+				"node_id", command.NodeId)
+		} else {
+			node.State.LockCount--
+			released = true
+		}
 	}
 	b.mu.Unlock()
 
@@ -578,11 +667,13 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 		command.Response <- false
 		return
 	}
-	if !command.Outcome.IsSuccess() {
+	if released && !command.Outcome.IsSuccess() {
 		logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
 	}
-	logging.Debug("Released node", types.Nodes, "node_id", command.NodeId)
-	command.Response <- true
+	if released {
+		logging.Debug("Released node", types.Nodes, "node_id", command.NodeId)
+	}
+	command.Response <- released
 }
 
 var ErrNoNodesAvailable = errors.New("no nodes available for inference")
@@ -609,9 +700,10 @@ func LockNode[T any](
 
 	defer func() {
 		queueError := b.QueueMessage(ReleaseNode{
-			NodeId:   node.Id,
-			Outcome:  InferenceSuccess{},
-			Response: make(chan bool, 2),
+			NodeId:          node.Id,
+			RegistrationSeq: node.RegistrationSeq,
+			Outcome:         InferenceSuccess{},
+			Response:        make(chan bool, 2),
 		})
 
 		if queueError != nil {
@@ -758,6 +850,12 @@ func areHardwareNodesEqual(a, b *types.HardwareNode) bool {
 	}
 
 	if a.Version != b.Version {
+		return false
+	}
+	if a.Host != b.Host {
+		return false
+	}
+	if a.Port != b.Port {
 		return false
 	}
 
@@ -970,28 +1068,30 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 	blockHeight := epochState.CurrentBlock.Height
 
 	// Phase 1: Cancel outdated tasks
-	nodesToCancel := make(map[string]func())
+	type capturedCancel struct {
+		fn  func()
+		seq uint64
+	}
+	nodesToCancel := make(map[string]capturedCancel)
 	b.mu.RLock()
 	for id, node := range b.nodes {
 		if node.State.ReconcileInfo != nil &&
 			(node.State.ReconcileInfo.Status != node.State.IntendedStatus ||
 				node.State.ReconcileInfo.PocStatus != node.State.PocIntendedStatus) {
 			if node.State.cancelInFlightTask != nil {
-				nodesToCancel[id] = node.State.cancelInFlightTask
+				nodesToCancel[id] = capturedCancel{
+					fn:  node.State.cancelInFlightTask,
+					seq: node.State.RegistrationSeq,
+				}
 			}
 		}
 	}
 	b.mu.RUnlock()
 
-	for id, cancel := range nodesToCancel {
+	for id, captured := range nodesToCancel {
 		logging.Info("Cancelling outdated task for node", types.Nodes, "node_id", id, "blockHeight", blockHeight)
-		cancel()
-		b.mu.Lock()
-		if node, ok := b.nodes[id]; ok {
-			node.State.ReconcileInfo = nil
-			node.State.cancelInFlightTask = nil
-		}
-		b.mu.Unlock()
+		captured.fn()
+		b.clearReconcileIfSeq(id, captured.seq)
 	}
 
 	nodesToDispatch := make(map[string]*NodeWithState)
@@ -1006,23 +1106,31 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		// Condition: The primary or PoC intended state does not match the current state.
 		if node.State.IntendedStatus != node.State.CurrentStatus ||
 			node.State.PocIntendedStatus != node.State.PocCurrentStatus ||
-			deploymentUpdateReady(node, now) {
+			deploymentUpdateReady(node, now) ||
+			challengeGenerateNeedsDispatch(node, epochState) {
 			nodeCopy := *node
 			nodesToDispatch[id] = &nodeCopy
 		}
 	}
 	b.mu.RUnlock()
 
+	if b.afterSnapshot != nil {
+		b.afterSnapshot()
+	}
+
 	currentPoCParams, pocParamsErr := b.prefetchPocParams(epochState, nodesToDispatch, blockHeight)
 
 	for id, node := range nodesToDispatch {
+		capturedSeq := node.State.RegistrationSeq
 		// Re-check conditions under write lock to prevent races
 		b.mu.Lock()
 		currentNode, ok := b.nodes[id]
 		if !ok ||
+			!sameRegistration(currentNode, capturedSeq) ||
 			(currentNode.State.IntendedStatus == currentNode.State.CurrentStatus &&
 				(currentNode.State.CurrentStatus != types.HardwareNodeStatus_POC || currentNode.State.PocIntendedStatus == currentNode.State.PocCurrentStatus) &&
-				!deploymentUpdateReady(currentNode, time.Now())) ||
+				!deploymentUpdateReady(currentNode, time.Now()) &&
+				!challengeGenerateNeedsDispatch(currentNode, epochState)) ||
 			currentNode.State.ReconcileInfo != nil {
 			b.mu.Unlock()
 			continue
@@ -1039,29 +1147,27 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 			Generation: generation,
 		}
 		currentNode.State.cancelInFlightTask = cancel
+		stateForCmd := currentNode.State
+		modelsForCmd := currentNode.Node.Models
 
 		worker, exists := b.nodeWorkGroup.GetWorker(id)
 		b.mu.Unlock()
 
 		if !exists {
 			logging.Error("Worker not found for reconciliation", types.Nodes, "node_id", id, "blockHeight", blockHeight)
-			cancel() // Cancel context if worker doesn't exist
-			b.mu.Lock()
-			if nodeToClean, ok := b.nodes[id]; ok {
-				nodeToClean.State.ReconcileInfo = nil
-				nodeToClean.State.cancelInFlightTask = nil
-			}
-			b.mu.Unlock()
+			cancel()
+			b.clearReconcileIfSeq(id, capturedSeq)
 			continue
 		}
 
 		// TODO: we should make reindexing as some indexes might be skipped
 		totalNumNodes := b.curMaxNodesNum.Load() + 1
-		// Create and dispatch the command
+		// Create and dispatch the command from the node that passed the seq check,
+		// not the pre-recheck snapshot (that snapshot can be a deleted registration).
 		cmd := b.getCommandForState(
 			id,
-			&node.State,
-			node.Node.Models,
+			&stateForCmd,
+			modelsForCmd,
 			currentPoCParams,
 			pocParamsErr,
 			int(totalNumNodes),
@@ -1069,28 +1175,31 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		)
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
-				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
+				"node_id", id, "target_status", stateForCmd.IntendedStatus, "target_poc_status", stateForCmd.PocIntendedStatus, "blockHeight", blockHeight)
 			if !worker.submit(ctx, cmd, generation) {
 				logging.Error("Failed to submit reconciliation command", types.Nodes, "node_id", id, "blockHeight", blockHeight)
 				cancel()
-				b.mu.Lock()
-				if nodeToClean, ok := b.nodes[id]; ok {
-					nodeToClean.State.ReconcileInfo = nil
-					nodeToClean.State.cancelInFlightTask = nil
-				}
-				b.mu.Unlock()
+				b.clearReconcileIfSeq(id, capturedSeq)
 			}
 		} else {
 			logging.Info("No valid command for reconciliation, cleaning up", types.Nodes, "node_id", id)
 			cancel()
-			b.mu.Lock()
-			if nodeToClean, ok := b.nodes[id]; ok {
-				nodeToClean.State.ReconcileInfo = nil
-				nodeToClean.State.cancelInFlightTask = nil
-			}
-			b.mu.Unlock()
+			b.clearReconcileIfSeq(id, capturedSeq)
 		}
 	}
+}
+
+func (b *Broker) clearReconcileIfSeq(nodeId string, seq uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if node, ok := b.nodes[nodeId]; ok && sameRegistration(node, seq) {
+		node.State.ReconcileInfo = nil
+		node.State.cancelInFlightTask = nil
+	}
+}
+
+func sameRegistration(node *NodeWithState, seq uint64) bool {
+	return node != nil && node.State.RegistrationSeq == seq
 }
 
 func deploymentUpdateReady(node *NodeWithState, now time.Time) bool {
@@ -1110,6 +1219,15 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 	}
 
 	if needsPocParams {
+		if ch := overlayGeneratingChallengeWork(&epochState); ch != nil {
+			params := &pocParams{
+				startPoCBlockHeight: ch.StartHeight(),
+				startPoCBlockHash:   hexEncodeSeed(ch.Seed()),
+			}
+			b.loadPoCModels(params)
+			return params, nil
+		}
+
 		// CONFIRMATION PoC - use hash from event (populated by chain at generation_start_height)
 		if epochState.CurrentPhase == types.InferencePhase && epochState.ActiveConfirmationPoCEvent != nil {
 			event := epochState.ActiveConfirmationPoCEvent
@@ -1268,15 +1386,22 @@ func (b *Broker) getCommandForState(
 					logging.Warn("Skipping PoC scheduling without resolvable model", types.PoC, "node_id", nodeId)
 					return nil
 				}
+				windDown := false
+				if b.phaseTracker != nil {
+					windDown = overlayInCommitLead(b.phaseTracker.GetCurrentEpochState())
+				}
 				return StartPoCNodeCommandV2{
-					BlockHeight:    pocGenParams.startPoCBlockHeight,
-					BlockHash:      pocGenParams.startPoCBlockHash,
-					PubKey:         b.participantInfo.GetPubKey(),
-					CallbackUrl:    GetPoCCallbackBaseURLV2(b.callbackUrl),
-					TotalNodes:     totalNodes,
-					Model:          modelConfig.ModelId,
-					SeqLen:         modelConfig.SeqLen,
-					PocStrongerRng: pocGenParams.pocStrongerRng,
+					BlockHeight:          pocGenParams.startPoCBlockHeight,
+					BlockHash:            pocGenParams.startPoCBlockHash,
+					PubKey:               b.participantInfo.GetPubKey(),
+					CallbackUrl:          GetPoCCallbackBaseURLV2(b.callbackUrl),
+					TotalNodes:           totalNodes,
+					Model:                modelConfig.ModelId,
+					SeqLen:               modelConfig.SeqLen,
+					PocStrongerRng:       pocGenParams.pocStrongerRng,
+					WindDown:             windDown,
+					LastPocV2BlockHeight: nodeState.LastPocV2BlockHeight,
+					LastPocV2BlockHash:   nodeState.LastPocV2BlockHash,
 				}
 			}
 			logging.Error("Cannot create StartPoCNodeCommand: missing PoC parameters", types.Nodes, "error", pocGenErr)
@@ -1378,6 +1503,7 @@ func nodeStatusQueryWorker(broker *Broker) {
 				nodeResp.State.PoCValidationInference != queryStatusResult.PoCValidationInference {
 				statusUpdates = append(statusUpdates, StatusUpdate{
 					NodeId:                 nodeResp.Node.Id,
+					RegistrationSeq:        nodeResp.State.RegistrationSeq,
 					PrevStatus:             queryStatusResult.PrevStatus,
 					NewStatus:              queryStatusResult.CurrentStatus,
 					Timestamp:              timestamp,

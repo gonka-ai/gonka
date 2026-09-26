@@ -254,14 +254,17 @@ func (c *NoOpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeR
 }
 
 type StartPoCNodeCommandV2 struct {
-	BlockHeight    int64
-	BlockHash      string
-	PubKey         string
-	CallbackUrl    string
-	TotalNodes     int
-	Model          string
-	SeqLen         int64
-	PocStrongerRng bool
+	BlockHeight          int64
+	BlockHash            string
+	PubKey               string
+	CallbackUrl          string
+	TotalNodes           int
+	Model                string
+	SeqLen               int64
+	PocStrongerRng       bool
+	WindDown             bool
+	LastPocV2BlockHeight int64
+	LastPocV2BlockHash   string
 }
 
 func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
@@ -278,19 +281,39 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		return result
 	}
 
-	// Idempotency check - if already generating, skip restart
-	// This is safe: any old-epoch generation was stopped during inference transition
+	if c.WindDown {
+		return c.executeWindDown(ctx, worker, result)
+	}
+
 	status, err := worker.GetClient().GetPowStatusV2(ctx)
 	if err != nil {
 		logging.Debug("[StartPoCNodeCommandV2] GetPowStatusV2 failed, proceeding with init", types.PoC, "node_id", worker.nodeId, "error", err)
 	} else if status != nil {
 		logging.Debug("[StartPoCNodeCommandV2] GetPowStatusV2 status", types.PoC, "node_id", worker.nodeId, "status", status.Status)
-		if status.Status == "GENERATING" {
+		knownLast := c.LastPocV2BlockHeight != 0
+		sameParams := c.LastPocV2BlockHeight == c.BlockHeight && c.LastPocV2BlockHash == c.BlockHash
+		// After a DAPI restart LastPocV2 is zero in memory. Trust an already
+		// GENERATING MLNode rather than Stop+Init with the same stage.
+		if status.Status == "GENERATING" && (sameParams || !knownLast) {
 			logging.Info("[StartPoCNodeCommandV2] Already generating, skipping restart", types.PoC, "node_id", worker.nodeId)
 			result.Succeeded = true
 			result.FinalStatus = types.HardwareNodeStatus_POC
 			result.FinalPocStatus = PocStatusGenerating
+			result.PocV2Updated = true
+			result.PocV2BlockHeight = c.BlockHeight
+			result.PocV2BlockHash = c.BlockHash
 			return result
+		}
+		if powStatusNeedsStop(status.Status) {
+			if stopErr := stopPowV2Checked(ctx, worker); stopErr != nil {
+				logging.Warn("[StartPoCNodeCommandV2] StopPowV2 before re-init failed", types.PoC,
+					"node_id", worker.nodeId, "error", stopErr)
+				result.Succeeded = false
+				result.Error = stopErr.Error()
+				result.FinalStatus = worker.node.State.CurrentStatus
+				result.FinalPocStatus = worker.node.State.PocCurrentStatus
+				return result
+			}
 		}
 	}
 
@@ -308,18 +331,90 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		PocStrongerRng: c.PocStrongerRng,
 	}
 
-	if _, err := worker.GetClient().InitGenerateV2(ctx, req); err != nil {
+	if err := initGenerateV2Checked(ctx, worker, req); err != nil {
 		logging.Error("[StartPoCNodeCommandV2] Failed to start PoC v2", types.PoC, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
 		result.FinalStatus = types.HardwareNodeStatus_FAILED
-	} else {
-		result.Succeeded = true
-		result.FinalStatus = types.HardwareNodeStatus_POC
-		result.FinalPocStatus = PocStatusGenerating
-		logging.Info("[StartPoCNodeCommandV2] Successfully started PoC v2 on node", types.PoC, "node_id", worker.nodeId)
+		return result
 	}
+	result.Succeeded = true
+	result.FinalStatus = types.HardwareNodeStatus_POC
+	result.FinalPocStatus = PocStatusGenerating
+	result.PocV2Updated = true
+	result.PocV2BlockHeight = c.BlockHeight
+	result.PocV2BlockHash = c.BlockHash
+	logging.Info("[StartPoCNodeCommandV2] Successfully started PoC v2 on node", types.PoC, "node_id", worker.nodeId)
 	return result
+}
+
+func (c StartPoCNodeCommandV2) executeWindDown(ctx context.Context, worker *NodeWorker, result NodeResult) NodeResult {
+	status, err := worker.GetClient().GetPowStatusV2(ctx)
+	if err != nil || status == nil {
+		result.Succeeded = false
+		if err != nil {
+			result.Error = err.Error()
+		} else {
+			result.Error = "GetPowStatusV2 returned nil during wind-down"
+		}
+		result.FinalStatus = worker.node.State.CurrentStatus
+		result.FinalPocStatus = worker.node.State.PocCurrentStatus
+		return result
+	}
+	if powStatusNeedsStop(status.Status) {
+		if stopErr := stopPowV2Checked(ctx, worker); stopErr != nil {
+			logging.Warn("[StartPoCNodeCommandV2] StopPowV2 during challenge wind-down failed", types.PoC,
+				"node_id", worker.nodeId, "error", stopErr)
+			result.Succeeded = false
+			result.Error = stopErr.Error()
+			result.FinalStatus = worker.node.State.CurrentStatus
+			result.FinalPocStatus = worker.node.State.PocCurrentStatus
+			return result
+		}
+	}
+	result.Succeeded = true
+	result.FinalStatus = types.HardwareNodeStatus_POC
+	result.FinalPocStatus = PocStatusGenerating
+	return result
+}
+
+func powStatusNeedsStop(status string) bool {
+	return status == "GENERATING" || status == "VALIDATING" || status == "MIXED"
+}
+
+func stopPowV2Checked(ctx context.Context, worker *NodeWorker) error {
+	resp, err := worker.GetClient().StopPowV2(ctx)
+	if err != nil {
+		return err
+	}
+	if resp != nil && len(resp.Errors) > 0 {
+		return fmt.Errorf("StopPowV2 backend errors: %s", resp.Errors[0].Error)
+	}
+	return nil
+}
+
+func initGenerateV2Checked(ctx context.Context, worker *NodeWorker, req mlnodeclient.PoCInitGenerateRequestV2) error {
+	resp, err := worker.GetClient().InitGenerateV2(ctx, req)
+	if err != nil {
+		return err
+	}
+	if resp != nil && len(resp.Errors) > 0 {
+		return fmt.Errorf("InitGenerateV2 backend errors: %s", resp.Errors[0].Error)
+	}
+	return nil
+}
+
+// ChallengeCommitLeadBlocksValue is set from poc at init to avoid a package cycle.
+var challengeCommitLeadBlocks int64 = 4
+
+func SetChallengeCommitLeadBlocks(n int64) {
+	if n > 0 {
+		challengeCommitLeadBlocks = n
+	}
+}
+
+func ChallengeCommitLeadBlocksValue() int64 {
+	return challengeCommitLeadBlocks
 }
 
 // TransitionPoCToValidatingCommandV2 is a no-network command that transitions the broker's

@@ -114,6 +114,7 @@ type participantWork struct {
 	pubKey     string
 	count      uint32
 	rootHash   []byte
+	treeDepth  uint32
 	attempt    int       // current attempt number (0-based)
 	retryAfter time.Time // don't process before this time
 
@@ -439,12 +440,13 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		}
 
 		workItems = append(workItems, participantWork{
-			address:  commit.ParticipantAddress,
-			modelId:  commit.ModelId,
-			url:      participantResp.Participant.InferenceUrl,
-			pubKey:   commit.HexPubKey,
-			count:    commit.Count,
-			rootHash: commit.RootHash,
+			address:   commit.ParticipantAddress,
+			modelId:   commit.ModelId,
+			url:       participantResp.Participant.InferenceUrl,
+			pubKey:    commit.HexPubKey,
+			count:     commit.Count,
+			rootHash:  commit.RootHash,
+			treeDepth: commit.TreeDepth,
 		})
 	}
 
@@ -490,7 +492,20 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		}
 	}
 
-	// Randomize order to avoid thundering herd
+	v.executeValidation(pocStageStartBlockHeight, samplingBlockHash, pocStartBlockHash, pocParams, sampleSize, nodes, workItems, gr, false)
+}
+
+func (v *OffChainValidator) executeValidation(
+	pocStageStartBlockHeight int64,
+	samplingBlockHash string,
+	pocStartBlockHash string,
+	pocParams *types.PocParams,
+	sampleSize int,
+	nodes []broker.NodeResponse,
+	workItems []participantWork,
+	gr *guardRuntime,
+	challenge bool,
+) {
 	rand.Shuffle(len(workItems), func(i, j int) {
 		workItems[i], workItems[j] = workItems[j], workItems[i]
 	})
@@ -499,7 +514,6 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		Timeout: v.config.RequestTimeout,
 	})
 
-	// Buffered so a worker re-queueing a retry never blocks on a full channel.
 	workChan := make(chan participantWork, len(workItems)*2)
 	var wg sync.WaitGroup
 
@@ -509,11 +523,9 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	abstainCount := 0
 	pendingCount := len(workItems)
 
-	// Context for coordinating shutdown. The phase watcher cancels as soon
-	// as the chain stops accepting validation results for this PoC stage.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	v.cancelWhenValidationPhaseEnds(ctx, cancel, pocStageStartBlockHeight)
+	v.cancelWhenValidationPhaseEnds(ctx, cancel, pocStageStartBlockHeight, challenge)
 
 	numWorkers := v.config.WorkerCount
 	if numWorkers > len(workItems) {
@@ -554,20 +566,25 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 
 	logging.Info("OffChainValidator: validation complete", types.PoC,
 		"pocStageStartBlockHeight", pocStageStartBlockHeight,
+		"challenge", challenge,
 		"totalParticipants", len(workItems),
 		"dispatched", dispatchedCount,
 		"votedInvalid", failCount,
 		"abstained", abstainCount)
 }
 
-func (v *OffChainValidator) cancelWhenValidationPhaseEnds(ctx context.Context, cancel context.CancelFunc, pocStageStartBlockHeight int64) {
+func (v *OffChainValidator) cancelWhenValidationPhaseEnds(ctx context.Context, cancel context.CancelFunc, pocStageStartBlockHeight int64, challenge bool) {
 	phaseCheckInterval := v.config.PhaseCheckInterval
 	if phaseCheckInterval <= 0 {
 		phaseCheckInterval = 3 * time.Second
 	}
 
 	go func() {
-		if v.cancelIfValidationPhaseEnded(cancel, pocStageStartBlockHeight) {
+		if challenge {
+			if v.cancelIfChallengeValidationEnded(cancel, pocStageStartBlockHeight) {
+				return
+			}
+		} else if v.cancelIfValidationPhaseEnded(cancel, pocStageStartBlockHeight) {
 			return
 		}
 
@@ -579,6 +596,12 @@ func (v *OffChainValidator) cancelWhenValidationPhaseEnds(ctx context.Context, c
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				if challenge {
+					if v.cancelIfChallengeValidationEnded(cancel, pocStageStartBlockHeight) {
+						return
+					}
+					continue
+				}
 				if v.cancelIfValidationPhaseEnded(cancel, pocStageStartBlockHeight) {
 					return
 				}
@@ -594,6 +617,22 @@ func (v *OffChainValidator) cancelIfValidationPhaseEnded(cancel context.CancelFu
 	}
 
 	logging.Info("OffChainValidator: validation phase ended, stopping workers", types.PoC,
+		"currentPhase", state.CurrentPhase,
+		"blockHeight", state.CurrentBlock.Height,
+		"pocStageStartBlockHeight", pocStageStartBlockHeight)
+	cancel()
+	return true
+}
+
+func (v *OffChainValidator) cancelIfChallengeValidationEnded(cancel context.CancelFunc, pocStageStartBlockHeight int64) bool {
+	state := v.phaseTracker.GetCurrentEpochState()
+	if state.IsNilOrNotSynced() {
+		return false
+	}
+	if ShouldAcceptValidatedArtifacts(state) {
+		return false
+	}
+	logging.Info("OffChainValidator: vote window ended, stopping challenge validation", types.PoC,
 		"currentPhase", state.CurrentPhase,
 		"blockHeight", state.CurrentBlock.Height,
 		"pocStageStartBlockHeight", pocStageStartBlockHeight)
@@ -799,6 +838,7 @@ func (v *OffChainValidator) checkValidateeProofs(
 		ModelId:                  work.modelId,
 		RootHash:                 work.rootHash,
 		Count:                    work.count,
+		TreeDepth:                work.treeDepth,
 		LeafIndices:              leafIndices,
 		ParticipantAddress:       work.address,
 	})
@@ -1043,6 +1083,15 @@ func (v *OffChainValidator) getSamplingBlockHash(epochState *chainphase.EpochSta
 	return block.Block.Hash().String()
 }
 
+func (v *OffChainValidator) PrepareValidationNodes() {
+	nodes, err := v.getNodesWithRetry(0)
+	if err != nil || len(nodes) == 0 {
+		logging.Warn("OffChainValidator: no nodes available to stop before validation", types.PoC, "error", err)
+		return
+	}
+	v.stopGenerationOnAllNodes(nodes)
+}
+
 func (v *OffChainValidator) stopGenerationOnAllNodes(nodes []broker.NodeResponse) {
 	logging.Info("OffChainValidator: stopping generation on all nodes", types.PoC,
 		"numNodes", len(nodes))
@@ -1110,7 +1159,7 @@ func (v *OffChainValidator) getNodesWithRetryConfig(
 			return nil, errors.New("epoch state is nil during node filtering")
 		}
 
-		nodes = filterNodesForValidation(nodes, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase)
+		nodes = filterNodesForValidation(nodes, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase, OpenChallenges.UnderChallenge() != nil)
 		logging.Info("OffChainValidator: filtered nodes for validation", types.PoC,
 			"numNodes", len(nodes),
 			"attempt", attempt)
@@ -1135,10 +1184,8 @@ func (v *OffChainValidator) getNodesWithRetryConfig(
 }
 
 // filterNodesForValidation returns nodes available for PoC validation.
-// - Accept nodes in POC status with any sub-status
-// - Accept nodes in INFERENCE status (unless preserved for inference via POC_SLOT)
-// - Exclude FAILED, nodes that are not operational for the current epoch/phase, or POC_SLOT-preserved nodes
-func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, currentPhase types.EpochPhase) []broker.NodeResponse {
+// Under challenge, nothing is preserved.
+func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, currentPhase types.EpochPhase, underChallenge bool) []broker.NodeResponse {
 	filtered := make([]broker.NodeResponse, 0, len(nodes))
 	for _, node := range nodes {
 		// Exclude failed nodes
@@ -1164,7 +1211,7 @@ func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, c
 		}
 
 		// Exclude nodes preserved for inference (POC_SLOT allocation)
-		if node.State.ShouldContinueInference() {
+		if node.State.ShouldContinueInference() && !underChallenge {
 			logging.Debug("filterNodesForValidation: Skipping node preserved for inference", types.PoC, "node_id", node.Node.Id)
 			continue
 		}
@@ -1209,15 +1256,25 @@ func filterValidationNodesForModel(nodes []broker.NodeResponse, modelID string) 
 // reportInvalidParticipant votes ValidatedWeight=-1 on chain. Reserved for failures
 // the validatee is responsible for; anything on our side abstains instead.
 func (v *OffChainValidator) reportInvalidParticipant(pocHeight int64, participantAddress, modelID string) {
+	entry := &types.PoCValidationEntryV2{
+		ParticipantAddress: participantAddress,
+		ModelId:            modelID,
+		ValidatedWeight:    -1, // Invalid
+	}
+	if OpenChallenges.VoteFor(participantAddress, pocHeight) != nil {
+		msg := &types.MsgSubmitPoCChallengeValidations{
+			PocStageStartBlockHeight: pocHeight,
+			Validations:              []*types.PoCValidationEntryV2{entry},
+		}
+		if err := v.recorder.SubmitPoCChallengeValidations(msg); err != nil {
+			logging.Error("OffChainValidator: failed to submit challenge invalid vote", types.PoC,
+				"participant", participantAddress, "error", err)
+		}
+		return
+	}
 	msg := &types.MsgSubmitPocValidationsV2{
 		PocStageStartBlockHeight: pocHeight,
-		Validations: []*types.PoCValidationEntryV2{
-			{
-				ParticipantAddress: participantAddress,
-				ModelId:            modelID,
-				ValidatedWeight:    -1, // Invalid
-			},
-		},
+		Validations:              []*types.PoCValidationEntryV2{entry},
 	}
 	if err := v.recorder.SubmitPocValidationsV2(msg); err != nil {
 		logging.Error("OffChainValidator: failed to report invalid participant", types.PoC,

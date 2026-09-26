@@ -168,8 +168,12 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "get-minimum-validation-average"))
     }
 
-    fun getRawParticipants(): RawParticipantWrapper = wrapLog("getRawParticipants", false) {
-        execAndParse(listOf("query", "inference", "list-participant"))
+    fun getRawParticipants(height: Long? = null): RawParticipantWrapper = wrapLog("getRawParticipants", false) {
+        val args = mutableListOf("query", "inference", "list-participant")
+        if (height != null) {
+            args += listOf("--height", height.toString())
+        }
+        execAndParse(args)
     }
 
     fun getStatus(): NodeInfoResponse = wrapLog("getStatus", false) { execAndParse(listOf("status")) }
@@ -406,6 +410,18 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "params"))
     }
 
+    fun queryOpenPoCChallenges(height: Long? = null): OpenPoCChallengesResponse = wrapLog("queryOpenPoCChallenges", false) {
+        val args = mutableListOf("query", "inference", "open-poc-challenges")
+        if (height != null) {
+            args += listOf("--height", height.toString())
+        }
+        execAndParse(args)
+    }
+
+    fun createPoCChallenge(target: String): TxResponse = wrapLog("createPoCChallenge", true) {
+        sendTransactionDirectly(listOf("inference", "create-poc-challenge", target), useColdAccount = true)
+    }
+
     fun getValidators(): ValidatorsResponse = wrapLog("getValidators", false) {
         execAndParse(listOf("query", "staking", "validators"))
     }
@@ -430,6 +446,10 @@ data class ApplicationCLI(
 
     fun queryDevshardEscrow(id: Long): DevshardEscrowResponse = wrapLog("queryDevshardEscrow", false) {
         execAndParse(listOf("query", "inference", "show-devshard-escrow", id.toString()))
+    }
+
+    fun queryDevshardApprovedVersions(): DevshardApprovedVersionsWrapper = wrapLog("queryDevshardApprovedVersions", false) {
+        execAndParse(listOf("query", "inference", "devshard-approved-versions"))
     }
 
     fun queryPreservedNodesSnapshot(): PreservedNodesSnapshotQueryResponse =
@@ -883,6 +903,11 @@ data class ApplicationCLI(
                     epochIndex.toString()
                 )
             )
+        }
+
+    fun queryHardwareNodesAll(): HardwareNodesAllResponse =
+        wrapLog("queryHardwareNodesAll", infoLevel = false) {
+            execAndParse(listOf("query", "inference", "hardware-nodes-all"))
         }
 
     fun queryEpochGroupData(epochIndex: Long, modelId: String = ""): EpochGroupDataResponse =

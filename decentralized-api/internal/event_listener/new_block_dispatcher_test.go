@@ -1,14 +1,16 @@
 package event_listener
 
 import (
-	"decentralized-api/chainphase"
-	"github.com/productscience/inference/x/inference/types"
 	"testing"
 	"time"
 
+	"decentralized-api/chainphase"
 	"decentralized-api/internal/event_listener/chainevents"
+	"decentralized-api/poc"
 
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
@@ -92,6 +94,43 @@ func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
 	}
 }
 
+func TestShouldTriggerReconciliation_ChallengeGenerateUsesPoCInterval(t *testing.T) {
+	t.Cleanup(poc.OpenChallenges.Reset)
+	dispatcher := &OnNewBlockDispatcher{
+		reconciliationConfig: MlNodeReconciliationConfig{
+			Inference: &MlNodeStageReconciliationConfig{
+				BlockInterval: 5,
+				TimeInterval:  30 * time.Second,
+			},
+			PoC: &MlNodeStageReconciliationConfig{
+				BlockInterval: 1,
+				TimeInterval:  30 * time.Second,
+			},
+			LastBlockHeight: 15,
+			LastTime:        time.Now(),
+		},
+	}
+	epoch := chainphase.EpochState{
+		CurrentPhase: types.InferencePhase,
+		CurrentBlock: chainphase.BlockInfo{Height: 16},
+		IsSynced:     true,
+	}
+
+	require.False(t, dispatcher.shouldTriggerReconciliation(epoch),
+		"inference cadence is 5 blocks; 1 block later should not reconcile")
+
+	poc.OpenChallenges.Replace("me", []*types.OpenPoCChallenge{{
+		Challenge: &types.PoCChallenge{
+			Target:      "me",
+			StartHeight: 10,
+		},
+		Finish:     100,
+		Generating: true,
+	}}, 0)
+	require.True(t, dispatcher.shouldTriggerReconciliation(epoch),
+		"own challenge generate should reconcile on the PoC cadence so StartPocCommand can wind down")
+}
+
 func TestParseNewBlockInfo(t *testing.T) {
 	// This test shows how we can test the parsing logic independently
 	// without needing a real blockchain event
@@ -99,7 +138,9 @@ func TestParseNewBlockInfo(t *testing.T) {
 	testData := map[string]interface{}{
 		"block": map[string]interface{}{
 			"header": map[string]interface{}{
-				"height": "12345",
+				"height":   "12345",
+				"chain_id": "gonka-test",
+				"time":     "2024-01-02T03:04:05Z",
 			},
 		},
 		"block_id": map[string]interface{}{
@@ -125,4 +166,6 @@ func TestParseNewBlockInfo(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(12345), blockInfo.Height)
 	assert.Equal(t, "ABCDEF123456", blockInfo.Hash)
+	assert.Equal(t, "gonka-test", blockInfo.ChainID)
+	assert.Equal(t, time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC), blockInfo.Time.UTC())
 }

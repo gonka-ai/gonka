@@ -38,6 +38,11 @@ func validateEncryptedSharesShape(participant types.BLSParticipantInfo, encrypte
 	if len(encryptedShares) != expected {
 		return fmt.Errorf("invalid encrypted shares count: expected %d, got %d", expected, len(encryptedShares))
 	}
+	for i, share := range encryptedShares {
+		if err := types.ValidateEncryptedShareCiphertextLen(share); err != nil {
+			return fmt.Errorf("encrypted_shares[%d]: %w", i, err)
+		}
+	}
 	return nil
 }
 

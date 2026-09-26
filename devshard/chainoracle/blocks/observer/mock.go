@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
-	comobs "common/chainoracle/blocks/observer"
 	"devshard/signing"
 )
 
@@ -382,7 +381,7 @@ func (m *Mock) Latest(_ context.Context) (*blocks.Header, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.latest == nil {
-		return nil, errors.New("mock observer: no headers produced yet")
+		return nil, fmt.Errorf("%w: no headers produced yet", blocks.ErrHeaderNotFound)
 	}
 	return cloneHeader(m.latest), nil
 }
@@ -394,7 +393,7 @@ func (m *Mock) At(_ context.Context, height int64) (*blocks.Header, error) {
 	defer m.mu.RUnlock()
 	h, ok := m.history[height]
 	if !ok {
-		return nil, fmt.Errorf("mock observer: no header at height %d", height)
+		return nil, fmt.Errorf("%w: no header at height %d", blocks.ErrHeaderNotFound, height)
 	}
 	return cloneHeader(h), nil
 }
@@ -408,7 +407,7 @@ func (m *Mock) Prove(_ context.Context, path string, height int64) (*blocks.Proo
 	defer m.mu.RUnlock()
 	h, ok := m.history[height]
 	if !ok {
-		return nil, fmt.Errorf("mock observer: no header at height %d for proof", height)
+		return nil, fmt.Errorf("%w: no header at height %d for proof", blocks.ErrHeaderNotFound, height)
 	}
 	var hb [8]byte
 	binary.BigEndian.PutUint64(hb[:], uint64(height))
@@ -618,6 +617,5 @@ func cloneHeader(h *blocks.Header) *blocks.Header {
 	return &cp
 }
 
-// Compile-time assertion that Mock implements the shared Observer
-// (and thus blocks.BlockOracle).
-var _ comobs.Observer = (*Mock)(nil)
+// Compile-time assertion that Mock implements the shared BlockOracle.
+var _ blocks.BlockOracle = (*Mock)(nil)

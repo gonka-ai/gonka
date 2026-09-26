@@ -1,5 +1,5 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::Uint128;
+use cosmwasm_std::{Uint128, Uint256};
 use cw_storage_plus::Item;
 
 #[cw_serde]
@@ -9,13 +9,13 @@ pub struct Config {
     /// Native token denomination
     pub native_denom: String,
     /// Daily selling limit in basis points (1-10000)
-    pub daily_limit_bp: Uint128,
+    pub daily_limit_bp: Uint256,
     /// Whether contract is paused
     pub is_paused: bool,
     /// Total supply of native tokens allocated to this contract
-    pub total_supply: Uint128,
+    pub total_supply: Uint256,
     /// Total tokens sold across all tiers (used for pricing tier calculation)
-    pub total_tokens_sold: Uint128,
+    pub total_tokens_sold: Uint256,
 }
 
 #[cw_serde]
@@ -23,19 +23,19 @@ pub struct DailyStats {
     /// Current day (block time / 86400)
     pub current_day: u64,
     /// USD amount received today (for tracking)
-    pub usd_received_today: Uint128,
+    pub usd_received_today: Uint256,
     /// Token amount sold today (for daily limits)
-    pub tokens_sold_today: Uint128,
+    pub tokens_sold_today: Uint256,
 }
 
 #[cw_serde]
 pub struct PricingConfig {
     /// Base price per token in USD (with 6 decimals for USD, so 25000 = $0.025)
-    pub base_price_usd: Uint128,
+    pub base_price_usd: Uint256,
     /// Tokens per tier with 9 decimals (3 million = 3_000_000_000_000_000)
-    pub tokens_per_tier: Uint128,
+    pub tokens_per_tier: Uint256,
     /// Price multiplier for each tier (1.3x = 1300, representing 1300/1000)
-    pub tier_multiplier: Uint128,
+    pub tier_multiplier: Uint256,
 }
 
 /// Contract configuration
@@ -47,16 +47,27 @@ pub const DAILY_STATS: Item<DailyStats> = Item::new("daily_stats");
 /// Pricing configuration for tiered pricing
 pub const PRICING_CONFIG: Item<PricingConfig> = Item::new("pricing_config");
 
+fn uint256_as_u32(value: Uint256) -> u32 {
+    match Uint128::try_from(value) {
+        Ok(v) => u32::try_from(v.u128()).unwrap_or(u32::MAX),
+        Err(_) => u32::MAX,
+    }
+}
+
 /// Calculate current tier based on tokens sold
-pub fn calculate_current_tier(tokens_sold: Uint128, tokens_per_tier: Uint128) -> u32 {
+pub fn calculate_current_tier(tokens_sold: Uint256, tokens_per_tier: Uint256) -> u32 {
     if tokens_per_tier.is_zero() {
         return 0;
     }
-    (tokens_sold / tokens_per_tier).u128() as u32
+    uint256_as_u32(tokens_sold / tokens_per_tier)
 }
 
 /// Calculate current tier based on USD value sold
-pub fn calculate_current_tier_usd(usd_sold: Uint128, tokens_per_tier: Uint128, base_price: Uint128) -> u32 {
+pub fn calculate_current_tier_usd(
+    usd_sold: Uint256,
+    tokens_per_tier: Uint256,
+    base_price: Uint256,
+) -> u32 {
     if tokens_per_tier.is_zero() || base_price.is_zero() {
         return 0;
     }
@@ -65,60 +76,60 @@ pub fn calculate_current_tier_usd(usd_sold: Uint128, tokens_per_tier: Uint128, b
     if usd_per_tier.is_zero() {
         return 0;
     }
-    (usd_sold / usd_per_tier).u128() as u32
+    uint256_as_u32(usd_sold / usd_per_tier)
 }
 
 /// Calculate current price per token in USD (6 decimals for USD)
 pub fn calculate_current_price(
-    base_price: Uint128,
+    base_price: Uint256,
     current_tier: u32,
-    tier_multiplier: Uint128,
-) -> Uint128 {
+    tier_multiplier: Uint256,
+) -> Uint256 {
     let mut price = base_price;
     for _ in 0..current_tier {
         price = price
             .checked_mul(tier_multiplier)
             .unwrap_or(price)
-            .checked_div(Uint128::from(1000u128))
+            .checked_div(Uint256::from(1000u128))
             .unwrap_or(price);
     }
     price
 }
 
 /// Calculate how many tokens can be bought with given USD amount
-pub fn calculate_tokens_for_usd(
-    usd_amount: Uint128,
-    price_per_token: Uint128,
-) -> Uint128 {
+pub fn calculate_tokens_for_usd(usd_amount: Uint256, price_per_token: Uint256) -> Uint256 {
     if price_per_token.is_zero() {
-        return Uint128::zero();
+        return Uint256::zero();
     }
     // usd_amount has 6 decimals, price_per_token has 6 decimals
     // Result should be in token units (9 decimals)
     // Scale by 1e9 to get 9-decimal tokens
     usd_amount
-        .checked_mul(Uint128::from(1_000_000_000u128)) // 1e9 for 9-decimal tokens
-        .unwrap_or(Uint128::zero())
+        .checked_mul(Uint256::from(1_000_000_000u128)) // 1e9 for 9-decimal tokens
+        .unwrap_or(Uint256::zero())
         .checked_div(price_per_token)
-        .unwrap_or(Uint128::zero())
+        .unwrap_or(Uint256::zero())
 }
 
 /// Calculate multi-tier purchase: handles purchases that span multiple pricing tiers
 /// Returns (total_tokens_to_buy, actual_usd_spent, start_tier, end_tier, average_price_paid)
 pub fn calculate_multi_tier_purchase(
-    usd_amount: Uint128,
-    current_tokens_sold: Uint128,
+    usd_amount: Uint256,
+    current_tokens_sold: Uint256,
     pricing_config: &PricingConfig,
-) -> (Uint128, Uint128, u32, u32, Uint128) {
-    if usd_amount.is_zero() || pricing_config.tokens_per_tier.is_zero() || pricing_config.base_price_usd.is_zero() {
-        return (Uint128::zero(), Uint128::zero(), 0, 0, Uint128::zero());
+) -> (Uint256, Uint256, u32, u32, Uint256) {
+    if usd_amount.is_zero()
+        || pricing_config.tokens_per_tier.is_zero()
+        || pricing_config.base_price_usd.is_zero()
+    {
+        return (Uint256::zero(), Uint256::zero(), 0, 0, Uint256::zero());
     }
 
     let mut remaining_usd = usd_amount;
-    let mut total_tokens = Uint128::zero();
+    let mut total_tokens = Uint256::zero();
     let mut current_tokens_sold_so_far = current_tokens_sold;
-    let mut actual_usd_spent = Uint128::zero();
-    
+    let mut actual_usd_spent = Uint256::zero();
+
     // Track tier progression
     let start_tier = calculate_current_tier(current_tokens_sold, pricing_config.tokens_per_tier);
     let mut end_tier = start_tier;
@@ -130,10 +141,11 @@ pub fn calculate_multi_tier_purchase(
         }
 
         // Calculate current tier based on tokens sold so far
-        let current_tier = calculate_current_tier(current_tokens_sold_so_far, pricing_config.tokens_per_tier);
-        
+        let current_tier =
+            calculate_current_tier(current_tokens_sold_so_far, pricing_config.tokens_per_tier);
+
         // Calculate tier progression
-        
+
         // Calculate current price for this tier
         let current_price = calculate_current_price(
             pricing_config.base_price_usd,
@@ -149,7 +161,8 @@ pub fn calculate_multi_tier_purchase(
         let tokens_already_sold_in_tier = current_tokens_sold_so_far
             .checked_rem(pricing_config.tokens_per_tier)
             .unwrap_or_default();
-        let tokens_left_in_tier = pricing_config.tokens_per_tier
+        let tokens_left_in_tier = pricing_config
+            .tokens_per_tier
             .checked_sub(tokens_already_sold_in_tier)
             .unwrap_or_default();
 
@@ -159,7 +172,7 @@ pub fn calculate_multi_tier_purchase(
         let usd_for_remaining_tier = tokens_left_in_tier
             .checked_mul(current_price)
             .unwrap_or_default()
-            .checked_div(Uint128::from(1_000_000_000u128))
+            .checked_div(Uint256::from(1_000_000_000u128))
             .unwrap_or_default();
 
         // Calculate USD needed and spending strategy
@@ -177,30 +190,45 @@ pub fn calculate_multi_tier_purchase(
 
         // Calculate tokens for this tier portion
         let tokens_in_tier = calculate_tokens_for_usd(usd_to_spend_in_tier, current_price);
-        
+
         // Update running totals
-        total_tokens = total_tokens.checked_add(tokens_in_tier).unwrap_or(total_tokens);
-        actual_usd_spent = actual_usd_spent.checked_add(usd_to_spend_in_tier).unwrap_or(actual_usd_spent);
-        remaining_usd = remaining_usd.checked_sub(usd_to_spend_in_tier).unwrap_or_default();
-        current_tokens_sold_so_far = current_tokens_sold_so_far.checked_add(tokens_in_tier).unwrap_or(current_tokens_sold_so_far);
-        
+        total_tokens = total_tokens
+            .checked_add(tokens_in_tier)
+            .unwrap_or(total_tokens);
+        actual_usd_spent = actual_usd_spent
+            .checked_add(usd_to_spend_in_tier)
+            .unwrap_or(actual_usd_spent);
+        remaining_usd = remaining_usd
+            .checked_sub(usd_to_spend_in_tier)
+            .unwrap_or_default();
+        current_tokens_sold_so_far = current_tokens_sold_so_far
+            .checked_add(tokens_in_tier)
+            .unwrap_or(current_tokens_sold_so_far);
+
         // Update end tier
-        end_tier = calculate_current_tier(current_tokens_sold_so_far, pricing_config.tokens_per_tier);
+        end_tier =
+            calculate_current_tier(current_tokens_sold_so_far, pricing_config.tokens_per_tier);
     }
 
     // Calculate average price paid (USD per token)
     // USD has 6 decimals, tokens have 9 decimals, we want price in 6-decimal USD format
     let average_price = if total_tokens.is_zero() {
-        Uint128::zero()
+        Uint256::zero()
     } else {
         // Scale up USD by 1e9 to match token decimals, then divide by tokens
         // This gives us price in micro-USD per token (same as base_price format)
         actual_usd_spent
-            .checked_mul(Uint128::from(1_000_000_000u128))
+            .checked_mul(Uint256::from(1_000_000_000u128))
             .unwrap_or_default()
             .checked_div(total_tokens)
             .unwrap_or_default()
     };
 
-    (total_tokens, actual_usd_spent, start_tier, end_tier, average_price)
-} 
+    (
+        total_tokens,
+        actual_usd_spent,
+        start_tier,
+        end_tier,
+        average_price,
+    )
+}

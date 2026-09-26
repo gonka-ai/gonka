@@ -30,6 +30,8 @@ data class InferenceState(
     val modelList: List<ModelListItem>,
     /** Optional; testermint genesis overrides can seed WGNK unwrap bridge contracts. */
     val bridge: BridgeState? = null,
+    @SerializedName("devshard_approved_versions")
+    val devshardApprovedVersions: List<DevshardApprovedVersion>? = emptyList(),
 )
 
 /**
@@ -95,6 +97,8 @@ data class InferenceParams(
     val maintenanceParams: MaintenanceParams? = null,
     @SerializedName("delegation_params")
     val delegationParams: DelegationParams? = null,
+    @SerializedName("poc_challenge_params")
+    val pocChallengeParams: PocChallengeParams? = null,
 )
 
 data class FeeParamsData(
@@ -104,6 +108,10 @@ data class FeeParamsData(
     val baseValidationGas: Long = 0,
     @SerializedName("gas_per_poc_count")
     val gasPerPocCount: Long = 0,
+    @SerializedName("enabled_fee_groups")
+    val enabledFeeGroups: List<String> = emptyList(),
+    @SerializedName("groups")
+    val groups: com.google.gson.JsonArray? = null,
 )
 
 data class DelegationParams(
@@ -282,6 +290,80 @@ data class BandwidthLimitsParams(
     val maxInferencesPerBlock: Long? = null,
 )
 
+data class PocChallengeParams(
+    @SerializedName("payment_ratio")
+    val paymentRatio: Decimal? = Decimal.fromDouble(0.1),
+    @SerializedName("max_active_challenges")
+    val maxActiveChallenges: Long = 4,
+    @SerializedName("min_punishable_segment_blocks")
+    val minPunishableSegmentBlocks: Long = 300,
+)
+
+data class OpenPoCChallengesResponse(
+    val challenges: List<OpenPoCChallenge> = emptyList(),
+)
+
+data class StoredPoCChallenge(
+    val target: String = "",
+    @SerializedName("start_height")
+    val startHeight: Long = 0,
+    val seed: String? = null,
+    val challenger: String = "",
+    @SerializedName("epoch_index")
+    val epochIndex: Long = 0,
+    @SerializedName("locked_payment")
+    val lockedPayment: Long = 0,
+    val state: String? = null,
+    @SerializedName("expected_reward")
+    val expectedReward: Long = 0,
+)
+
+data class OpenPoCChallenge(
+    val challenge: StoredPoCChallenge? = null,
+    val finish: Long = 0,
+    val generating: Boolean = false,
+    val commits: List<OpenPoCChallengeCommit> = emptyList(),
+) {
+    val target: String get() = challenge?.target.orEmpty()
+    val startHeight: Long get() = challenge?.startHeight ?: 0
+    val seed: String? get() = challenge?.seed
+    val challenger: String get() = challenge?.challenger.orEmpty()
+    val epochIndex: Long get() = challenge?.epochIndex ?: 0
+    val lockedPayment: Long get() = challenge?.lockedPayment ?: 0
+    val state: String? get() = challenge?.state
+
+    fun isOpen(): Boolean {
+        val kind = state.orEmpty()
+        return kind.isEmpty() ||
+            kind == "POC_CHALLENGE_STATE_OPEN" ||
+            kind == "OPEN" ||
+            kind == "0"
+    }
+
+    fun isPassed(): Boolean {
+        val kind = state.orEmpty()
+        return kind.contains("PASSED") || kind == "3"
+    }
+
+    fun isChallengeFailed(): Boolean {
+        val kind = state.orEmpty()
+        return kind.contains("CHALLENGE_FAILED") || kind == "1"
+    }
+
+    fun isAborted(): Boolean {
+        val kind = state.orEmpty()
+        return kind.contains("ABORTED") || kind == "2"
+    }
+}
+
+data class OpenPoCChallengeCommit(
+    val count: Long = 0,
+    @SerializedName("model_id")
+    val modelId: String = "",
+    @SerializedName("poc_stage_start_block_height")
+    val pocStageStartBlockHeight: Long = 0,
+)
+
 data class ConfirmationPoCParams(
     @SerializedName("expected_confirmations_per_epoch")
     val expectedConfirmationsPerEpoch: Long = 0,
@@ -302,6 +384,10 @@ data class DevshardApprovedVersion(
     val name: String,
     val binary: String,
     val sha256: String,
+)
+
+data class DevshardApprovedVersionsWrapper(
+    val versions: List<DevshardApprovedVersion>? = emptyList(),
 )
 
 data class DevshardEscrowParams(
@@ -370,6 +456,8 @@ data class PocParams(
     val validationVoteThresholdBps: Long = 5000,
     @SerializedName("poc_normalization_enabled")
     val pocNormalizationEnabled: Boolean = false,  // Disabled by default in tests
+    @SerializedName("dynamic_coefficient_params")
+    val dynamicCoefficientParams: DynamicCoefficientParams? = null,
 ) {
     fun primaryModelConfig(): PoCModelConfig? {
         return models.firstOrNull()
@@ -393,6 +481,32 @@ data class PoCModelConfig(
     val weightScaleFactor: Decimal? = null,
     @SerializedName("penalty_start_epoch")
     val penaltyStartEpoch: Long = 0,
+    @SerializedName("dynamic_coefficient")
+    val dynamicCoefficient: DynamicCoefficientModelConfig? = null,
+)
+
+data class DynamicCoefficientModelConfig(
+    @SerializedName("coeff_min")
+    val coeffMin: Decimal? = null,
+    @SerializedName("coeff_max")
+    val coeffMax: Decimal? = null,
+    @SerializedName("relative_difficulty")
+    val relativeDifficulty: Decimal? = null,
+    @SerializedName("target_share_bps")
+    val targetShareBps: Long = 0,
+)
+
+data class DynamicCoefficientParams(
+    @SerializedName("target_zone_bps")
+    val targetZoneBps: Long = 0,
+    @SerializedName("step_min")
+    val stepMin: Decimal? = null,
+    @SerializedName("step_max")
+    val stepMax: Decimal? = null,
+    @SerializedName("bootstrap_step_max")
+    val bootstrapStepMax: Decimal? = null,
+    @SerializedName("bootstrap_share_bps")
+    val bootstrapShareBps: Long = 0,
 )
 
 data class PoCStatTestParams(

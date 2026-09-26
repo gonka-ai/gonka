@@ -195,7 +195,7 @@ func (s *Service) runChainPoll(ctx context.Context) error {
 
 func (s *Service) serveGRPCOn(ctx context.Context, lis net.Listener) error {
 	gs := grpc.NewServer()
-	gen.RegisterNodeManagerServer(gs, newNodeManagerServer(s.paramsSrv, s.hostEvents, s.blockMock))
+	gen.RegisterNodeManagerServer(gs, newNodeManagerServer(s.paramsSrv, s.hostEvents, s.blockMock, s.cfg.OmitBlockRoutes))
 	s.grpcServer = gs
 	go func() {
 		<-ctx.Done()

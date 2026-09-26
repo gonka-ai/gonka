@@ -94,14 +94,16 @@ func TestGuardBlocksHostnameResolvingToLoopback(t *testing.T) {
 	}
 }
 
-// Decimal and hex host forms are alternate spellings of 127.0.0.1. The guard
-// checks the resolved IP, so the spelling is irrelevant -- this pins that.
+// Decimal and hex host forms are alternate spellings of 127.0.0.1. The
+// guard only sees the IP after DNS; glibc inet_aton maps these to
+// loopback, but this resolver treats them as hostnames. Force the
+// resolved target the attack relies on so the test is not resolver-bound.
 func TestGuardBlocksNumericLoopbackSpellings(t *testing.T) {
 	SetAllowPrivate(false)
 
 	for _, raw := range []string{"http://2130706433/", "http://0x7f000001/", "http://127.1/"} {
 		t.Run(raw, func(t *testing.T) {
-			client := NewNoRedirectClient(5 * time.Second)
+			client := resolveTo(t, "127.0.0.1")
 			_, err := client.Get(raw)
 			requireBlocked(t, err)
 		})
