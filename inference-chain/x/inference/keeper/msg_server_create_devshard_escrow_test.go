@@ -263,6 +263,7 @@ func TestCreateDevshardEscrow_ParamsOverrideDefaults(t *testing.T) {
 		MaxNonce:                types.DefaultDevshardMaxNonce,
 		RefusalTimeout:          5,
 		ExecutionTimeout:        17,
+		VoteThresholdFactor:     66,
 	}
 	require.NoError(t, k.SetParams(ctx, params))
 
@@ -283,6 +284,7 @@ func TestCreateDevshardEscrow_ParamsOverrideDefaults(t *testing.T) {
 	require.Len(t, escrow.Slots, 8)
 	require.Equal(t, int64(5), escrow.RefusalTimeout)
 	require.Equal(t, int64(17), escrow.ExecutionTimeout)
+	require.Equal(t, uint32(66), escrow.VoteThresholdFactor)
 }
 
 func TestCreateDevshardEscrow_ModelIDRequired(t *testing.T) {

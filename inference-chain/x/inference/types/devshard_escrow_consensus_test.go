@@ -12,3 +12,9 @@ func TestDevshardValidationRateForCreate(t *testing.T) {
 	require.Equal(t, uint32(3000), DevshardValidationRateForCreate(&DevshardEscrowParams{ValidationRate: 3000}))
 	require.Equal(t, uint32(10000), DevshardValidationRateForCreate(&DevshardEscrowParams{ValidationRate: 10000}))
 }
+
+func TestDevshardVoteThresholdFactorForCreate(t *testing.T) {
+	require.Equal(t, DefaultDevshardVoteThresholdFactor, DevshardVoteThresholdFactorForCreate(nil))
+	require.Equal(t, DefaultDevshardVoteThresholdFactor, DevshardVoteThresholdFactorForCreate(&DevshardEscrowParams{}))
+	require.Equal(t, uint32(66), DevshardVoteThresholdFactorForCreate(&DevshardEscrowParams{VoteThresholdFactor: 66}))
+}
