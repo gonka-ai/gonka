@@ -242,8 +242,10 @@ message CollateralParams {
   // slash_fraction_downtime is the percentage of collateral to slash for downtime.
   Decimal slash_fraction_downtime = 2;
 
-  // downtime_missed_percentage_threshold is the missed request percentage that triggers a downtime slash.
-  Decimal downtime_missed_percentage_threshold = 3;
+  // downtime_missed_percentage_threshold is deprecated and has no effect.
+  // Downtime slashing is triggered by INACTIVE status transitions based on SPRT downtime detection
+  // or confirmation PoC failures, not by a simple missed percentage threshold.
+  Decimal downtime_missed_percentage_threshold = 3 [deprecated = true];
 
   uint64 grace_period_end_epoch = 4;
 
