@@ -614,7 +614,9 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 		defer closer.Close()
 	}
 	intent, _ := clientResponseIntentFromContext(r.Context())
-	assembled := filterClientInternalFields(aggregateSSEStreamReader(src, intent), intent)
+	// The reader strips internal fields itself; decoding its output again here
+	// would rebuild the whole logprobs tree the fold keeps out of RAM (R4).
+	assembled := aggregateSSEStreamReader(src, intent)
 	if rid, ok := requestLogFromContext(r.Context()); ok {
 		w.Header().Set("X-Request-Id", rid)
 	}
