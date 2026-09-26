@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"common/chainoracle/blocks"
 	"devshard/heightsync"
@@ -487,4 +489,31 @@ func TestClient_RequestLeg_OmitsSenderSignature(t *testing.T) {
 	}
 	peerTips.Carry(outbound)
 	require.Nil(t, outbound.SenderSignature)
+}
+
+func TestWrapInferenceRequest_PromptIsProtobufBytes(t *testing.T) {
+	prompt := []byte("<<<chat prompt that must not be base64>>>")
+	client := &HTTPClient{}
+	ir := InferenceRequest{
+		Nonce: 4,
+		Payload: &PayloadJSON{
+			Prompt: prompt,
+			Model:  "Qwen/Test",
+		},
+	}
+
+	body, contentType, hs, err := client.wrapInferenceRequest(context.Background(), host.HostRequest{}, ir)
+	require.NoError(t, err)
+	require.Nil(t, hs)
+	require.Equal(t, "application/x-protobuf", contentType)
+
+	var env types.InferenceRequestEnvelope
+	require.NoError(t, proto.Unmarshal(body, &env))
+	require.Equal(t, prompt, env.GetPrompt())
+	require.NotContains(t, string(env.GetInferenceRequestJson()), base64.StdEncoding.EncodeToString(prompt))
+
+	got, err := UnwrapInferenceRequestBody(body)
+	require.NoError(t, err)
+	require.Equal(t, prompt, got.Request.Payload.Prompt)
+	require.Equal(t, "Qwen/Test", got.Request.Payload.Model)
 }
