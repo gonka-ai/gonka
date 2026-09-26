@@ -1,0 +1,6 @@
+/*
+!/.gitignore
+!/benchmarks_8gpu.csv
+!/chain_models.csv
+!/chain_node_hardware.csv
+!/chain_poc_nodes.csv

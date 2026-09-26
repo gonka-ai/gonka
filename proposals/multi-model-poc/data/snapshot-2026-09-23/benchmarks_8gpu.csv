@@ -1,0 +1,15 @@
+source_id,source_row,gpu_label,gpu_type,version,model,nonces_per_min,nonces_per_min_8gpu,tensor_parallel_size,sheet_nonces_per_poc,sheet_consensus_weight
+benchmarks_sheet,2,H100,H100,0.28.0,zai-org/GLM-5.3-Flash,1775,1775,8,4508.5,2795.3
+benchmarks_sheet,3,H200,H200,0.28.0,zai-org/GLM-5.3-Flash,1439,2878,4,7310.1,4532.3
+benchmarks_sheet,4,B200,B200,0.28.0,zai-org/GLM-5.3-Flash,2727,5454,4,13853.2,8589.0
+benchmarks_sheet,5,B300,B300,0.28.0,zai-org/GLM-5.3-Flash,2030,8120,2,20624.8,12787.4
+benchmarks_sheet,9,H100,H100,0.20.0,MiniMax-M2.7 FP8,2368,4736,4,12029.4,3637.7
+benchmarks_sheet,10,H200,H200,0.20.0,MiniMax-M2.7 FP8,1728,6912,2,17556.5,5309.1
+benchmarks_sheet,11,B200,B200,0.20.0,MiniMax-M2.7 FP8,2624,10496,2,26659.8,8061.9
+benchmarks_sheet,12,B300,B300,,MiniMax-M2.7 FP8,1792,14336,1,36413.4,11011.4
+benchmarks_sheet,16,4xH100,H100,0.25.1,DeepSeek V4 Flash FP8,1536,3072,4,7802.9,1919.5
+benchmarks_sheet,17,2xH200,H200,0.25.1,DeepSeek V4 Flash FP8,1216,4864,2,12354.6,3039.2
+benchmarks_sheet,18,2xB200,B200,0.25.1,DeepSeek V4 Flash FP8,2304,9216,2,23408.6,5758.5
+benchmarks_sheet,19,2xB200,B200,0.25.1,MJPansa/DeepSeek-V4-Flash-0731-NVFP4,3200,12800,2,32512.0,7998.0
+benchmarks_sheet,20,B300,B300,0.25.1,DeepSeek V4 Flash FP8,1728,13824,1,35113.0,8637.8
+benchmarks_sheet,21,B300,B300,0.25.1,MJPansa/DeepSeek-V4-Flash-0731-NVFP4,2816,22528,1,57221.1,14076.4
