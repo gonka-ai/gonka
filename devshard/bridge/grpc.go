@@ -3,7 +3,6 @@ package bridge
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"common/chain"
@@ -18,16 +17,11 @@ const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
 // context parameter, so the deadline has to be applied here.
 const warmKeyQueryTimeout = 10 * time.Second
 
-type warmCacheKey struct {
-	host string
-	warm string
-}
-
 // GRPCBridge implements MainnetBridge query methods via common/chain gRPC.
 // Notification and action methods return ErrNotImplemented.
 type GRPCBridge struct {
 	client    *chain.Client
-	warmCache sync.Map // warmCacheKey -> bool
+	warmCache WarmKeyCache
 }
 
 // NewGRPCBridge creates a bridge backed by an existing chain gRPC client.
@@ -124,33 +118,27 @@ func (b *GRPCBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, 
 	if b == nil || b.client == nil {
 		return false, fmt.Errorf("grpc bridge: chain client is nil")
 	}
-	key := warmCacheKey{host: validatorAddress, warm: warmAddress}
-	if cached, ok := b.warmCache.Load(key); ok {
-		return cached.(bool), nil
-	}
+	return b.warmCache.Verify(warmAddress, validatorAddress, b.fetchWarmGrantees)
+}
 
+func (b *GRPCBridge) fetchWarmGrantees(granter string) ([]string, error) {
 	// Callers reach this from state-machine apply while holding session locks,
 	// so an unresponsive node must not stall the escrow indefinitely.
 	ctx, cancel := context.WithTimeout(context.Background(), warmKeyQueryTimeout)
 	defer cancel()
 	resp, err := b.client.InferenceQueryClient().GranteesByMessageType(ctx,
 		&inferencetypes.QueryGranteesByMessageTypeRequest{
-			GranterAddress: validatorAddress,
+			GranterAddress: granter,
 			MessageTypeUrl: warmKeyMsgTypeGRPC,
 		})
 	if err != nil {
-		return false, fmt.Errorf("GranteesByMessageType: %w", err)
+		return nil, fmt.Errorf("GranteesByMessageType: %w", err)
 	}
-
-	found := false
+	addrs := make([]string, 0, len(resp.GetGrantees()))
 	for _, g := range resp.GetGrantees() {
-		if g.GetAddress() == warmAddress {
-			found = true
-			break
-		}
+		addrs = append(addrs, g.GetAddress())
 	}
-	b.warmCache.Store(key, found)
-	return found, nil
+	return addrs, nil
 }
 
 func (b *GRPCBridge) OnEscrowCreated(_ EscrowInfo) error {
