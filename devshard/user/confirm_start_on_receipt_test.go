@@ -324,7 +324,7 @@ func TestCatchUpReportsAHostThatRefusedTheDiffs(t *testing.T) {
 
 	require.Error(t, catchUpErr,
 		"a caller told the group is caught up treats every host as holding the escrow, and this one does not")
-	require.Contains(t, catchUpErr.Error(), "host 2")
+	require.Contains(t, catchUpErr.Error(), "host "+session.HostLabel(2))
 }
 
 type countingClient struct {

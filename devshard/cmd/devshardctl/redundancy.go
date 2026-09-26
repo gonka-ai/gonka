@@ -109,6 +109,18 @@ type sseErrorDetails struct {
 	Message string
 }
 
+// statusCode maps an upstream error's code, or failing that its type, to the HTTP status the caller sees.
+func (details sseErrorDetails) statusCode() int {
+	status, err := strconv.Atoi(details.Code)
+	if err == nil && status >= 400 && status <= 599 {
+		return status
+	}
+	if strings.Contains(strings.ToLower(details.Type), "badrequest") {
+		return http.StatusBadRequest
+	}
+	return http.StatusBadGateway
+}
+
 type hostApplicationError struct {
 	details sseErrorDetails
 	payload []byte
@@ -131,14 +143,7 @@ func (e *hostApplicationError) statusCode() int {
 	if e == nil {
 		return http.StatusBadGateway
 	}
-	status, err := strconv.Atoi(e.details.Code)
-	if err == nil && status >= 400 && status <= 599 {
-		return status
-	}
-	if strings.Contains(strings.ToLower(e.details.Type), "badrequest") {
-		return http.StatusBadRequest
-	}
-	return http.StatusBadGateway
+	return e.details.statusCode()
 }
 
 func (e *hostApplicationError) jsonPayload() []byte {
@@ -924,6 +929,10 @@ type inflight struct {
 	cancel context.CancelFunc
 }
 
+func (inf *inflight) errorDetails() sseErrorDetails {
+	return sseErrorDetails{Code: inf.errorCode, Type: inf.errorType, Message: inf.errorMessage}
+}
+
 func (inf *inflight) receiptAt() time.Time {
 	if n := inf.receiptTimeNano.Load(); n != 0 {
 		return time.Unix(0, n)
@@ -1130,6 +1139,8 @@ type raceGroup struct {
 	logCtx         context.Context
 	writeCtx       context.Context
 	escrow         string
+
+	deterministicallyRejected atomic.Bool
 }
 
 func newRaceGroup(logCtx, writeCtx context.Context, escrow string, w io.Writer) *raceGroup {
@@ -1257,6 +1268,16 @@ func (rg *raceGroup) hasDecided() bool {
 	return rg.decided.Load()
 }
 
+func (rg *raceGroup) markDeterministicallyRejected() {
+	if rg != nil {
+		rg.deterministicallyRejected.Store(true)
+	}
+}
+
+func (rg *raceGroup) isDeterministicallyRejected() bool {
+	return rg != nil && rg.deterministicallyRejected.Load()
+}
+
 func (rg *raceGroup) winnerNonce() uint64 {
 	rg.mu.Lock()
 	defer rg.mu.Unlock()
@@ -1360,8 +1381,7 @@ func (rw *raceWriter) takeParseable(p []byte) []byte {
 	return parseable
 }
 
-// classifyParseable records the first content/non-retriable-error signal for
-// this attempt, returning whether the buffer carried either.
+// classifyParseable records the attempt's first content or error, marks the race on a trusted deterministic rejection, and reports whether the buffer carried content or a non-retriable error.
 func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError bool) {
 	if len(parseable) == 0 {
 		return false, false
@@ -1392,6 +1412,9 @@ func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError 
 			rw.inf.errorType = details.Type
 			rw.inf.errorMessage = details.Message
 			rw.inf.errorBodySample = append(rw.inf.errorBodySample, parseable...)
+			if isTrustedDeterministicRejection(rw.inf) {
+				rw.group.markDeterministicallyRejected()
+			}
 		}
 	}
 	return hasContent, hasError
@@ -2172,7 +2195,7 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 	if streamCtx.Err() != nil {
 		return nil
 	}
-	if race.hasDecided() {
+	if race.hasDecided() || race.isDeterministicallyRejected() || clientFlag.Gone() {
 		return nil
 	}
 	fields := []any{"host", trigger.hostID}
@@ -3601,17 +3624,23 @@ func isErrorStreamAttempt(inf *inflight) bool {
 	return inf != nil && inf.errorSource != ""
 }
 
+// isTrustedDeterministicRejection reports whether a non-suspicious host answered an error any host would repeat: a context-length rejection or a 400 the response cache would replay.
+func isTrustedDeterministicRejection(inf *inflight) bool {
+	if !isErrorStreamAttempt(inf) || inf.suspicious {
+		return false
+	}
+	details := inf.errorDetails()
+	return parseContextLengthLimit(details.Message) > 0 ||
+		details.statusCode() == http.StatusBadRequest && isCacheableOpenAIErrorDetails(details)
+}
+
 func hostApplicationErrorFromInflight(inf *inflight) *hostApplicationError {
 	if !isErrorStreamAttempt(inf) {
 		return nil
 	}
 	details, payload, ok := sseChunkErrorPayload(inf.errorBodySample)
 	if !ok {
-		details = sseErrorDetails{
-			Code:    inf.errorCode,
-			Type:    inf.errorType,
-			Message: inf.errorMessage,
-		}
+		details = inf.errorDetails()
 	}
 	return &hostApplicationError{details: details, payload: payload}
 }
@@ -3620,6 +3649,11 @@ func hostApplicationErrorFromAttempts(attempts []*inflight, winnerNonce uint64) 
 	if winner := inflightByNonce(attempts, winnerNonce); winner != nil {
 		if err := hostApplicationErrorFromInflight(winner); err != nil {
 			return err
+		}
+	}
+	for _, attempt := range attempts {
+		if isTrustedDeterministicRejection(attempt) {
+			return hostApplicationErrorFromInflight(attempt)
 		}
 	}
 	for _, inf := range attempts {
@@ -4115,80 +4149,25 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		if opts.recordFailureSamples {
 			e.recordStartedAttemptSamples(attempts, params, false)
 		}
-		for _, inf := range failed {
-			func(inf *inflight) {
-				defer inf.releaseErrorStreamRetention()
-				if errorMissEnabledFor(inf) {
-					defer e.session.UnpinPendingFinish(inf.nonce)
-				}
-				if inf.probe {
-					logInferenceStage(ctx, inf.escrowID, inf.nonce, "poc_probe_failed_no_timeout", "host", inf.hostID, "poc_reason", currentPoCPhaseReason())
-					return
-				}
-				errorMiss := errorMissRunnable(inf, e.session)
-				kind := timeoutKindForInflight(inf, errorMiss)
-				if errorMissEnabledFor(inf) && !errorMiss {
-					logInferenceStage(ctx, inf.escrowID, inf.nonce, "error_miss_skipped",
-						"host", inf.hostID, "reason", "no_finish_artifact")
-				}
-				if inf.phaseTransitionAborted {
-					logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
-						"host", inf.hostID, "reason", "phase_transition_aborted")
-					e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "phase_transition_aborted")
-					return
-				}
-				if reason, skip := skipEmptyStreamTimeout(inf, e.session, errorMiss); skip {
-					logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
-						"host", inf.hostID, "reason", reason)
-					e.recordGatewayTimeoutAction(inf, params, kind, "skipped", reason)
-					return
-				}
-				if !shouldRunHandleTimeoutOn(inf, e.session, errorMiss) {
-					logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
-						"host", inf.hostID, "reason", "nonce_already_finished")
-					e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "nonce_already_finished")
-					return
-				}
-				// Only knowable here: at the end of the stream the finish is merely late, not missing.
-				if deliveredWholeAnswer(inf) {
-					logInferenceWarn(ctx, inf.escrowID, inf.nonce, "served_without_finish", "host", inf.hostID)
-				}
-				if e.longResponseFailureExempt(inf) {
-					logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
-						"host", inf.hostID,
-						"reason", "long_response_after_content",
-						"elapsed_ms", time.Since(inf.sendTime).Milliseconds(),
-						"content_chunks", inf.contentChunks.Load(),
-						"output_bytes", inf.outputBytes.Load(),
-					)
-					e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "long_response_after_content")
-					return
-				}
-				e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
-				result, err := e.runHandleTimeout(ctx, inf, params, errorMiss)
-				e.recordHandleTimeoutResult(ctx, inf, params, result, err, errorMiss, "timeout_failed")
-			}(inf)
+		var failure error
+		if clientVisibleErr := clientVisibleAllAttemptsFailedError(attempts, winnerNonce); clientVisibleErr != nil {
+			failure = clientVisibleErr
+		} else if opts.forceTreatAsFailure && anySucceeded {
+			failure = errors.New("inference: winner failed after streaming started (alternate completion ignored)")
+		} else {
+			failure = errors.New("inference: no non-probe attempt finished")
 		}
-		if failErr := clientVisibleAllAttemptsFailedError(attempts, winnerNonce); failErr != nil {
-			captureAllAttemptsFailedRequest(ctx, e.devshardID, params, failErr)
-			logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", failErr)
-			e.recordGatewayRequestOutcome(params.Model, "failed", gatewayRequestFailureReason(failed))
-			e.completeAccountingRequest(ctx, 0, decision, "failed")
-			e.logRequestSettled(ctx, 0, decision, "failed")
-			e.checkEscrowMissing(ctx, attempts)
-			return failErr
-		}
-		errMsg := "inference: no non-probe attempt finished"
-		if opts.forceTreatAsFailure && anySucceeded {
-			errMsg = "inference: winner failed after streaming started (alternate completion ignored)"
-		}
-		captureAllAttemptsFailedRequest(ctx, e.devshardID, params, fmt.Errorf("%s", errMsg))
-		logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", errMsg)
+		captureAllAttemptsFailedRequest(ctx, e.devshardID, params, failure)
+		logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", failure)
 		e.recordGatewayRequestOutcome(params.Model, "failed", gatewayRequestFailureReason(failed))
 		e.completeAccountingRequest(ctx, 0, decision, "failed")
-		e.logRequestSettled(ctx, 0, decision, "failed")
 		e.checkEscrowMissing(ctx, attempts)
-		return fmt.Errorf("%s", errMsg)
+		e.goTrackedRaceCleanup(ctx, func(cleanupCtx context.Context) {
+			bgCtx, _ := ensureRequestLogContext(cleanupCtx)
+			e.voteTimeoutsForFailedRequest(bgCtx, failed, params)
+			e.logRequestSettled(bgCtx, 0, decision, "failed")
+		})
+		return failure
 	}
 
 	var involvement []HostInvolvement
@@ -4282,6 +4261,64 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	e.checkEscrowMissing(ctx, attempts)
 
 	return nil
+}
+
+// voteTimeoutsForFailedRequest posts the timeout or error-miss vote each unfinished attempt of a failed request still owes.
+func (e *Redundancy) voteTimeoutsForFailedRequest(ctx context.Context, failed []*inflight, params user.InferenceParams) {
+	for _, inf := range failed {
+		func(inf *inflight) {
+			defer inf.releaseErrorStreamRetention()
+			if errorMissEnabledFor(inf) {
+				defer e.session.UnpinPendingFinish(inf.nonce)
+			}
+			if inf.probe {
+				logInferenceStage(ctx, inf.escrowID, inf.nonce, "poc_probe_failed_no_timeout", "host", inf.hostID, "poc_reason", currentPoCPhaseReason())
+				return
+			}
+			errorMiss := errorMissRunnable(inf, e.session)
+			kind := timeoutKindForInflight(inf, errorMiss)
+			if errorMissEnabledFor(inf) && !errorMiss {
+				logInferenceStage(ctx, inf.escrowID, inf.nonce, "error_miss_skipped",
+					"host", inf.hostID, "reason", "no_finish_artifact")
+			}
+			if inf.phaseTransitionAborted {
+				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
+					"host", inf.hostID, "reason", "phase_transition_aborted")
+				e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "phase_transition_aborted")
+				return
+			}
+			if reason, skip := skipEmptyStreamTimeout(inf, e.session, errorMiss); skip {
+				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
+					"host", inf.hostID, "reason", reason)
+				e.recordGatewayTimeoutAction(inf, params, kind, "skipped", reason)
+				return
+			}
+			if !shouldRunHandleTimeoutOn(inf, e.session, errorMiss) {
+				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
+					"host", inf.hostID, "reason", "nonce_already_finished")
+				e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "nonce_already_finished")
+				return
+			}
+			// Only knowable here: at the end of the stream the finish is merely late, not missing.
+			if deliveredWholeAnswer(inf) {
+				logInferenceWarn(ctx, inf.escrowID, inf.nonce, "served_without_finish", "host", inf.hostID)
+			}
+			if e.longResponseFailureExempt(inf) {
+				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
+					"host", inf.hostID,
+					"reason", "long_response_after_content",
+					"elapsed_ms", time.Since(inf.sendTime).Milliseconds(),
+					"content_chunks", inf.contentChunks.Load(),
+					"output_bytes", inf.outputBytes.Load(),
+				)
+				e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "long_response_after_content")
+				return
+			}
+			e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
+			result, err := e.runHandleTimeout(ctx, inf, params, errorMiss)
+			e.recordHandleTimeoutResult(ctx, inf, params, result, err, errorMiss, "timeout_failed")
+		}(inf)
+	}
 }
 
 func (e *Redundancy) maxAttempts() int {
