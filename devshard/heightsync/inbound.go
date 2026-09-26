@@ -7,8 +7,11 @@ import (
 	"common/chainoracle/blocks"
 )
 
-// DefaultOriginatorFreshness is the courier carry-forward budget F (proposal default).
-const DefaultOriginatorFreshness = 60 * time.Second
+// DefaultOriginatorFreshness is the courier carry-forward budget F.
+// Two intervals are 48s and one unanswered turn is 48s, so 60s left a height
+// claim able to expire before the producer gave up. 120s restores the headroom
+// the 12s schedule had against a 60s budget.
+const DefaultOriginatorFreshness = 120 * time.Second
 
 // AnchorCadenceTag classifies how an inbound user Anchor relates to sync-turn cadence.
 type AnchorCadenceTag string

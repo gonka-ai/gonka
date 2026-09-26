@@ -2651,7 +2651,7 @@ func TestHeightSyncAnchor_E2E_StaleOriginRejected(t *testing.T) {
 // originator section replayed after freshness budget F expires.
 func TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected(t *testing.T) {
 	if testing.Short() {
-		t.Skip("held-originator replay requires 70s wall-clock hold (run without -short)")
+		t.Skip("held-originator replay requires 130s wall-clock hold (run without -short)")
 	}
 	ctx := context.Background()
 	logs := installCaptureLogger(t)
@@ -2668,7 +2668,8 @@ func TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected(t *testing.T) {
 	}
 	st, peerTips := setupFourHostHTTPHeightSyncCourier(t, hostOracles, func(cc *transport.ClientConfig) {
 		// Courier cache F is widened so the held originator is still emitted after
-		// the 70s wait (the attack is replay). Host inbound F stays 60s and must reject.
+		// the wait (the attack is replay). Host inbound F stays at
+		// DefaultOriginatorFreshness and must reject.
 		if cc.HeightSyncPeerTips != nil {
 			cc.HeightSyncPeerTips.Freshness = 24 * time.Hour
 			cc.HeightSync = heightsync.MustNewAnchorScheduler(8, 4,
@@ -2681,7 +2682,7 @@ func TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected(t *testing.T) {
 	require.NotNil(t, peerTips.MaxFresh(time.Now(), peerTips.Freshness),
 		"sync turn must warm courier cache before hold")
 
-	time.Sleep(70 * time.Second)
+	time.Sleep(heightsync.DefaultOriginatorFreshness + 10*time.Second)
 
 	staleBefore := heightsync.StaleOriginRejectedTotal()
 	lazyBefore := heightsync.LazyAnchorTotal()

@@ -10,8 +10,8 @@ import (
 	"devshard/logging"
 )
 
-// defaultPeerTipFreshness matches MOCKDAPI_STALE_AFTER / proposal courier F for PoC.
-const defaultPeerTipFreshness = 60 * time.Second
+// defaultPeerTipFreshness is the courier carry-forward budget F.
+const defaultPeerTipFreshness = heightsync.DefaultOriginatorFreshness
 
 var _ heightsync.LazyPropagator = (*HeightSyncPeerTips)(nil)
 
