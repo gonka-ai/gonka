@@ -430,8 +430,8 @@ func TestStartPoCNodeCommandV2_AllBackendsFailInitIsFailure(t *testing.T) {
 	assert.Equal(t, types.HardwareNodeStatus_FAILED, result.FinalStatus)
 }
 
-// A MIXED node (one backend IDLE, the rest GENERATING) is stopped before
-// re-init. One backend refusing /stop must not skip the init for the others.
+// A MIXED node left over from a previous stage is stopped before re-init.
+// One backend refusing /stop must not skip the init for the others.
 func TestStartPoCNodeCommandV2_MixedPartialStopErrorStillInits(t *testing.T) {
 	node := createTestNode("test-node-v2-partial")
 	mockClient := mlnodeclient.NewMockClient()
@@ -445,7 +445,8 @@ func TestStartPoCNodeCommandV2_MixedPartialStopErrorStillInits(t *testing.T) {
 	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
 	defer worker.Shutdown()
 
-	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256}
+	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
+		LastPocV2BlockHeight: 1000, LastPocV2BlockHash: "old-hash"}
 	result := cmd.Execute(context.Background(), worker)
 	assert.True(t, result.Succeeded, result.Error)
 	mockClient.Mu.Lock()
@@ -472,4 +473,67 @@ func TestStartPoCNodeCommandV2_WindDownPartialStopErrorFails(t *testing.T) {
 	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", WindDown: true}
 	result := cmd.Execute(context.Background(), worker)
 	assert.False(t, result.Succeeded)
+}
+
+// MIXED in the same stage (or after a DAPI restart, when the last stage is
+// unknown): init goes out without a stop, so the generating backends keep
+// their run (they answer 409 "Already generating") and the idle one starts.
+func TestStartPoCNodeCommandV2_MixedSameStageInitsWithoutStop(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		lastHeight int64
+		lastHash   string
+	}{
+		{"same stage", 2000, "hash"},
+		{"after DAPI restart", 0, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			node := createTestNode("test-node-v2-mixed")
+			mockClient := mlnodeclient.NewMockClient()
+			mockClient.SetV2Status("MIXED")
+			mockClient.InitGenerateV2Resp = &mlnodeclient.PoCInitGenerateResponseV2{
+				Status:  "OK",
+				Results: []mlnodeclient.BackendResult{{Port: 5002, Status: "OK"}},
+				Errors:  []mlnodeclient.BackendError{{Port: 5001, Error: "409 Already generating"}},
+			}
+			b := NewTestBroker2(1)
+			worker := NewNodeWorkerWithClient("test-node-v2-mixed", node, mockClient, b)
+			defer worker.Shutdown()
+
+			cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
+				LastPocV2BlockHeight: tc.lastHeight, LastPocV2BlockHash: tc.lastHash}
+			result := cmd.Execute(context.Background(), worker)
+			assert.True(t, result.Succeeded, result.Error)
+			assert.Equal(t, types.HardwareNodeStatus_POC, result.FinalStatus)
+			assert.Equal(t, PocStatusGenerating, result.FinalPocStatus)
+			mockClient.Mu.Lock()
+			defer mockClient.Mu.Unlock()
+			assert.Equal(t, 0, mockClient.StopPowV2Called, "MIXED in the same stage must not stop the generating backends")
+			assert.Equal(t, 1, mockClient.InitGenerateV2Called)
+		})
+	}
+}
+
+// If the idle backend refuses again, the command fails (and is retried by the
+// next reconcile), but still without a stop.
+func TestStartPoCNodeCommandV2_MixedSameStageInitFailureDoesNotStop(t *testing.T) {
+	node := createTestNode("test-node-v2-mixed")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("MIXED")
+	mockClient.InitGenerateV2Resp = &mlnodeclient.PoCInitGenerateResponseV2{
+		Status: "OK",
+		Errors: []mlnodeclient.BackendError{{Port: 5001, Error: "409 Already generating"}, {Port: 5002, Error: "503"}},
+	}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-mixed", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
+		LastPocV2BlockHeight: 2000, LastPocV2BlockHash: "hash"}
+	result := cmd.Execute(context.Background(), worker)
+	assert.False(t, result.Succeeded)
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	assert.Equal(t, 0, mockClient.StopPowV2Called)
+	assert.Equal(t, 1, mockClient.InitGenerateV2Called)
 }

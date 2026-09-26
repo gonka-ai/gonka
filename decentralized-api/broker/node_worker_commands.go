@@ -304,7 +304,13 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 			result.PocV2BlockHash = c.BlockHash
 			return result
 		}
-		if powStatusNeedsStop(status.Status) {
+		// MIXED in the same stage: some backends generate, others dropped out.
+		// Init without a stop: generating backends refuse it (409 "Already
+		// generating") and keep their run, idle ones start. If none start, the
+		// command fails and the next reconcile retries it the same way.
+		if status.Status == "MIXED" && (sameParams || !knownLast) {
+			logging.Info("[StartPoCNodeCommandV2] MIXED in the same stage, re-init without stop", types.PoC, "node_id", worker.nodeId)
+		} else if powStatusNeedsStop(status.Status) {
 			if stopErr := stopPowV2Tolerant(ctx, worker); stopErr != nil {
 				logging.Warn("[StartPoCNodeCommandV2] StopPowV2 before re-init failed", types.PoC,
 					"node_id", worker.nodeId, "error", stopErr)
