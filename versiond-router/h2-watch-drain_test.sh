@@ -33,8 +33,6 @@ cleanup() {
     if [[ ${failed:-0} -ne 0 ]]; then
         echo "--- proxy ---" >&2
         cat "$tmpdir/proxy.log" >&2 || true
-        echo "--- drain ---" >&2
-        cat "$tmpdir/drain.log" >&2 || true
         echo "--- paths ---" >&2
         cat "$tmpdir/paths" >&2 || true
         echo "--- client ---" >&2
@@ -80,10 +78,6 @@ expect_ids "idle watches only" "$tmpdir/fix/table" "$tmpdir/fix/sess" \
 
 runtime_show() {
     printf '%s\n' "$1" | docker exec -i "$proxy" socat -t 1 stdio /var/run/haproxy/reconciler.sock
-}
-
-h2_count() {
-    runtime_show 'show sess all' | grep -c 'h2c=' || true
 }
 
 command -v python3 >/dev/null || fail "python3 is required for the backend"
@@ -158,12 +152,9 @@ EOF
 suffix=$$
 proxy=gonka-h2-watch-drain-$suffix
 docker rm -f "$proxy" >/dev/null 2>&1 || true
-: >"$tmpdir/drain.log"
 docker run -d --name "$proxy" --user root \
     --add-host=host.docker.internal:host-gateway \
     -p 127.0.0.1::8080 \
-    -e H2_WATCH_DRAIN_LOG=/tmp/drain.log \
-    -v "$tmpdir/drain.log:/tmp/drain.log" \
     -v "$drain:/usr/local/lib/versiond-router/h2-watch-drain.sh:ro" \
     -v "$tmpdir/haproxy.cfg:/tmp/haproxy.cfg:ro" \
     "$haproxy_image" \
@@ -295,21 +286,12 @@ done
 [[ $ready == 1 ]] || fail "inference and watch were not both in flight: paths=[$(cat "$tmpdir/paths" 2>/dev/null)] table=[$(runtime_show 'show table h2_stream_acct' 2>/dev/null || true)] client=[$(cat "$tmpdir/client.err" 2>/dev/null)]"
 
 docker kill --signal SIGUSR1 "$proxy" >/dev/null
-inflight=$tmpdir/inflight-table
-inflight_sess=$tmpdir/inflight-sess
-assert_inflight() {
-    runtime_show 'show table h2_stream_acct' >"$inflight" || fail "lost the stick table during the inference"
-    runtime_show 'show sess all' >"$inflight_sess" || fail "lost sessions during the inference"
-    grep -q 'gpc1=0' "$inflight" || fail "inference was counted finished while the backend was still holding it: $(cat "$inflight")"
-    [[ $(grep -c 'h2c=' "$inflight_sess" || true) -ge 2 ]] || fail "a stream was closed while the inference was in flight"
-    [[ -z $("$drain" --select "$inflight" "$inflight_sess") ]] || fail "drain selected a session while the inference was in flight: $("$drain" --select "$inflight" "$inflight_sess")"
-    if grep -q 'chat-ok' "$tmpdir/client.status"; then
-        fail "inference response arrived during the in-flight window"
-    fi
-}
-assert_inflight
 sleep 1
-assert_inflight
+[[ $(docker inspect --format '{{.State.Running}}' "$proxy") == true ]] \
+    || fail "proxy exited while the inference was still held"
+if grep -q 'chat-ok' "$tmpdir/client.status" || grep -q 'watch-done' "$tmpdir/client.status"; then
+    fail "a stream finished during the in-flight window: $(cat "$tmpdir/client.status")"
+fi
 
 chat_ok=0
 for _ in $(seq 1 40); do
@@ -321,23 +303,23 @@ for _ in $(seq 1 40); do
 done
 [[ $chat_ok == 1 ]] || fail "inference response was not delivered"
 
-released=0
-for _ in $(seq 1 25); do
-    if [[ $(h2_count) -eq 0 ]]; then
-        released=1
+watch_done=0
+for _ in $(seq 1 20); do
+    if grep -q 'watch-done' "$tmpdir/client.status"; then
+        watch_done=1
         break
     fi
-    sleep 0.2
+    sleep 0.25
 done
-[[ $released == 1 ]] || fail "watch was still open after the inference finished"
+[[ $watch_done == 1 ]] || fail "watch stayed open after the inference finished"
 
 stopped=0
-for _ in $(seq 1 50); do
+for _ in $(seq 1 40); do
     if [[ $(docker inspect --format '{{.State.Running}}' "$proxy") == false ]]; then
         stopped=1
         break
     fi
-    sleep 0.2
+    sleep 0.25
 done
 [[ $stopped == 1 ]] || fail "soft-stop did not finish after watch was released"
 

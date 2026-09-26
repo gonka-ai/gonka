@@ -12,12 +12,12 @@ set -eu
 
 log() {
     echo "$*" >&2
-    if [ -n "${H2_WATCH_DRAIN_LOG:-}" ]; then
-        printf '%s\n' "$*" >>"$H2_WATCH_DRAIN_LOG"
-    fi
 }
 
 socket_path=/var/run/haproxy/reconciler.sock
+cli_in=/tmp/h2-watch-drain.in
+cli_out=/tmp/h2-watch-drain.out
+cli_ready=0
 
 select_idle_watch_sessions() {
     awk '
@@ -61,43 +61,155 @@ select_idle_watch_sessions() {
     ' "$1" "$2"
 }
 
+# Master-worker soft-stop closes the listening stats socket. A CLI connection
+# opened before that signal still accepts show and shutdown session.
+open_cli() {
+    rm -f "$cli_in" "$cli_out"
+    mkfifo "$cli_in"
+    : >"$cli_out"
+    socat -t 7200 - "$socket_path" <"$cli_in" >"$cli_out" &
+    cli_socat=$!
+    exec 3>"$cli_in"
+    printf 'prompt\n' >&3
+    i=0
+    while [ "$i" -lt 50 ]; do
+        if grep -q '^> *$' "$cli_out" 2>/dev/null; then
+            cli_ready=1
+            return 0
+        fi
+        i=$((i + 1))
+        sleep 0.05
+    done
+    exec 3>&-
+    kill "$cli_socat" 2>/dev/null || true
+    return 1
+}
+
+close_cli() {
+    [ "$cli_ready" -eq 1 ] || return 0
+    cli_ready=0
+    exec 3>&-
+    kill "$cli_socat" 2>/dev/null || true
+}
+
+cli_query() {
+    cmd=$1
+    dest=$2
+    start=$(wc -c <"$cli_out" | awk '{print $1}')
+    printf '%s\n' "$cmd" >&3
+    i=0
+    while [ "$i" -lt 100 ]; do
+        tail -c +$((start + 1)) "$cli_out" >"$cli_out.chunk" 2>/dev/null || true
+        if grep -q '^> *$' "$cli_out.chunk" 2>/dev/null; then
+            grep -v '^> *$' "$cli_out.chunk" | sed 's/^> //' >"$dest"
+            return 0
+        fi
+        i=$((i + 1))
+        sleep 0.05
+    done
+    return 1
+}
+
+# Session ids that belong to an HTTP/2 connection. Soft-stop cannot finish
+# while any of these, or the CLI connection itself, is still open.
+h2_session_ids() {
+    awk '
+        function flush() {
+            if (have && h2) print id
+        }
+        /^0x[0-9a-fA-F]+:/ {
+            flush()
+            have = 1
+            id = $1
+            sub(/:$/, "", id)
+            h2 = index($0, "h2c=") > 0
+            next
+        }
+        {
+            if (index($0, "h2c=")) h2 = 1
+        }
+        END { flush() }
+    ' "$1"
+}
+
 release_watches() {
-    sock=$1
+    [ "$cli_ready" -eq 1 ] || return 0
     table=$(mktemp)
     sess=$(mktemp)
-    if ! printf '%s\n' 'show table h2_stream_acct' | socat -t 1 stdio "$sock" >"$table" 2>/dev/null; then
-        rm -f "$table" "$sess"
+    ids_file=$(mktemp)
+    if ! cli_query 'show table h2_stream_acct' "$table"; then
+        rm -f "$table" "$sess" "$ids_file"
         return 0
     fi
-    if ! printf '%s\n' 'show sess all' | socat -t 1 stdio "$sock" >"$sess" 2>/dev/null; then
-        rm -f "$table" "$sess"
+    if ! cli_query 'show sess all' "$sess"; then
+        rm -f "$table" "$sess" "$ids_file"
         return 0
     fi
-    ids=$(select_idle_watch_sessions "$table" "$sess" || true)
+    select_idle_watch_sessions "$table" "$sess" >"$ids_file" || true
+    h2_ids=$(h2_session_ids "$sess")
     rm -f "$table" "$sess"
-    [ -n "$ids" ] || return 0
-    log "h2-watch-drain: closing idle watch sessions"
-    printf '%s\n' "$ids" | while IFS= read -r id; do
-        case $id in
-            0x*) ;;
-            *) continue ;;
-        esac
-        printf 'shutdown session %s\n' "$id" | socat -t 1 stdio "$sock" >/dev/null 2>&1 || true
-        log "h2-watch-drain: closed idle watch session $id"
+    # Close the CLI once every HTTP/2 session in this snapshot is idle.
+    # An in-flight inference is an h2 session that is not in the idle set,
+    # and that connection has to stay up until its response is flushed.
+    close_after=1
+    for id in $h2_ids; do
+        if ! grep -qx "$id" "$ids_file"; then
+            close_after=0
+            break
+        fi
     done
+    if [ -s "$ids_file" ]; then
+        while IFS= read -r id; do
+            case $id in
+                0x*) ;;
+                *) continue ;;
+            esac
+            cli_query "shutdown session $id" "$cli_out.ack" || true
+            log "h2-watch-drain: closed idle watch session $id"
+        done <"$ids_file"
+    fi
+    rm -f "$ids_file"
+    if [ "$close_after" -eq 1 ]; then
+        close_cli
+    fi
+}
+
+wait_for_socket() {
+    i=0
+    while [ "$i" -lt 50 ]; do
+        if printf 'show info\n' | socat -t 1 stdio "$socket_path" 2>/dev/null | grep -q '^Name:'; then
+            return 0
+        fi
+        kill -0 "$1" 2>/dev/null || return 1
+        i=$((i + 1))
+        sleep 0.2
+    done
+    return 1
 }
 
 supervise() {
     bin=$1
     cfg=$2
+    stopping=0
+    signaled=0
+    hard=0
+    trap 'stopping=1' USR1
+    trap 'stopping=1; hard=1' TERM INT
     "$bin" -W -db -f "$cfg" &
     pid=$!
-    stopping=0
-    trap 'stopping=1; log "h2-watch-drain: soft-stop"; kill -USR1 "$pid" 2>/dev/null || true' USR1
-    trap 'stopping=1; kill -TERM "$pid" 2>/dev/null || true' TERM INT
+    if wait_for_socket "$pid"; then
+        open_cli || log "h2-watch-drain: runtime CLI did not stay open"
+    fi
     while kill -0 "$pid" 2>/dev/null; do
-        if [ "$stopping" -eq 1 ]; then
-            release_watches "$socket_path" || true
+        if [ "$hard" -eq 1 ]; then
+            kill -TERM "$pid" 2>/dev/null || true
+        elif [ "$stopping" -eq 1 ] && [ "$signaled" -eq 0 ]; then
+            log "h2-watch-drain: soft-stop"
+            kill -USR1 "$pid" 2>/dev/null || true
+            signaled=1
+        fi
+        if [ "$signaled" -eq 1 ]; then
+            release_watches || true
         fi
         sleep 0.2
     done
@@ -114,6 +226,7 @@ case ${1:-} in
         supervise "$2" "$3"
         ;;
     *)
-        release_watches "${1:-$socket_path}"
+        echo "h2-watch-drain: use --supervise or --select" >&2
+        exit 2
         ;;
 esac
