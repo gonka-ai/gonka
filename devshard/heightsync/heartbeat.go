@@ -46,6 +46,9 @@ type Heartbeat struct {
 	abandoned    int
 
 	lastTurnoverFromStamp bool
+	// onTurnover is optional. The session sets it so a turnover that lands
+	// off the heartbeat loop can re-arm the sleep. Nil in unit tests.
+	onTurnover            func()
 	lastLimited           map[CadenceEventKind]time.Time
 	ring                  cadenceRing
 	// cadenceTotals counts every due-check disposition, including the ones the
@@ -195,6 +198,59 @@ func (h *Heartbeat) dueLocked(now time.Time, hNow uint64) (bool, HeartbeatReason
 	return false, "", nil
 }
 
+// minHeartbeatWake keeps a deadline that is already past from spinning the
+// loop. The next MaybeHeartbeat then either opens or arms a real deadline.
+const minHeartbeatWake = time.Millisecond
+
+// SetTurnoverWake registers fn to run, without Heartbeat's lock, each time a
+// turnover is recorded. The session uses it to interrupt a sleep that was
+// armed from an older turnover.
+func (h *Heartbeat) SetTurnoverWake(fn func()) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.onTurnover = fn
+}
+
+// NextWake is how long the producer should sleep before the next due check.
+//
+// A free-running ticker of length Interval opens on every other tick: the
+// turnover lands just after a tick, the next tick still sees an age under
+// Interval, and the one after that is almost 2·Interval later. Sleeping until
+// the real deadline removes that phase slip.
+//
+//   - Open turn: the sooner of TurnTimeout and one Interval. The short poll is
+//     what lets a degraded record settle and pending acks flush; TurnTimeout
+//     is still the abandon deadline.
+//   - Otherwise, after a turnover: lastTurnover + Interval.
+//   - No turnover yet: Interval from now (the no-height poll).
+func (h *Heartbeat) NextWake(now time.Time) time.Duration {
+	if h == nil {
+		return DefaultHeartbeatInterval
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var deadline time.Time
+	switch {
+	case h.turnOpen:
+		deadline = h.turnOpenedAt.Add(h.cfg.TurnTimeout)
+		if poll := now.Add(h.cfg.Interval); poll.Before(deadline) {
+			deadline = poll
+		}
+	case !h.lastTurnover.IsZero():
+		deadline = h.lastTurnover.Add(h.cfg.Interval)
+	default:
+		deadline = now.Add(h.cfg.Interval)
+	}
+	d := deadline.Sub(now)
+	if d < minHeartbeatWake {
+		return minHeartbeatWake
+	}
+	return d
+}
+
 // Deadline is the instant by which a due turn must have turned over before a
 // host's idle budget starts running: lastTurnover + Interval + TurnTimeout.
 func (h *Heartbeat) Deadline(now time.Time) time.Time {
@@ -295,12 +351,12 @@ func (h *Heartbeat) noteClaim(slot uint32, at time.Time, stamp bool) (turnover b
 		return false
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.claimed == nil {
 		h.claimed = make(map[uint32]struct{})
 	}
 	h.claimed[slot] = struct{}{}
 	if len(h.claimed) < h.quorum {
+		h.mu.Unlock()
 		return false
 	}
 	h.lastTurnover = at
@@ -309,6 +365,11 @@ func (h *Heartbeat) noteClaim(slot uint32, at time.Time, stamp bool) (turnover b
 	h.turnovers++
 	h.lastTurnoverFromStamp = stamp
 	h.claimed = make(map[uint32]struct{})
+	wake := h.onTurnover
+	h.mu.Unlock()
+	if wake != nil {
+		wake()
+	}
 	return true
 }
 

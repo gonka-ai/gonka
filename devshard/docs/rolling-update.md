@@ -113,7 +113,10 @@ versiond does **not** reimplement storage resolution and does **not** probe
 
 - running child records `--print-storage-mode` at preflight;
 - incoming binary is probed with `--print-storage-mode` before overlap;
-- overlap is allowed only when **both** answers are exactly `postgres`.
+- overlap is allowed only when **both** answers are exactly `postgres`
+  and both `--print-fleet-compat` tokens are equal. A missing or different
+  token (height-sync `D_ack`, freshness, or lease identity) falls back to
+  stop/start so the two builds do not share an escrow.
 
 Anything else (legacy binary without the flag, probe error, `hybrid`,
 `sqlite`, unknown) fails closed to stop/start. See

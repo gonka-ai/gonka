@@ -74,7 +74,7 @@ type PeerTipOracleSource struct {
 // NewPeerTipOracleSource constructs a courier-mode oracle from a peer-tip cache.
 func NewPeerTipOracleSource(cache PeerTipCache, freshness time.Duration) *PeerTipOracleSource {
 	if freshness <= 0 {
-		freshness = 60 * time.Second
+		freshness = DefaultOriginatorFreshness
 	}
 	return &PeerTipOracleSource{cache: cache, freshness: freshness, now: time.Now}
 }

@@ -306,6 +306,9 @@ type Session struct {
 	heartbeatClosed   bool
 	heartbeatStop     context.CancelFunc
 	heartbeatDone     chan struct{}
+	// heartbeatPoke is buffered 1. A turnover off the loop sends without
+	// blocking; the loop re-arms from lastTurnover and does not tick early.
+	heartbeatPoke chan struct{}
 
 	// heightSeedMu serializes seed state. The session loop (gate on) retries
 	// forever after catalog admission; missed is not terminal.
@@ -498,6 +501,8 @@ func NewSession(
 		sess.clock = time.Now
 	}
 	sess.heartbeat = heightsync.NewHeartbeat(sess.heartbeatCfg)
+	sess.heartbeatPoke = make(chan struct{}, 1)
+	sess.heartbeat.SetTurnoverWake(sess.pokeHeartbeat)
 	slots := uint64(len(group))
 	sess.heartbeat.SetRoster(slots, 0)
 	cfg := sess.heartbeat.Config()
@@ -2929,20 +2934,20 @@ func sleepUntilDeadlineWithHeartbeat(ctx context.Context, deadline time.Time, he
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	var heartbeatC <-chan time.Time
-	var ticker *time.Ticker
 	if heartbeat != nil && TimeoutHeartbeatInterval > 0 {
-		ticker = time.NewTicker(TimeoutHeartbeatInterval)
+		ticker := time.NewTicker(TimeoutHeartbeatInterval)
 		defer ticker.Stop()
 		heartbeatC = ticker.C
 	}
-	select {
-	case <-timer.C:
-		return true
-	case <-heartbeatC:
-		heartbeat()
-		return sleepUntilDeadlineWithHeartbeat(ctx, deadline, heartbeat)
-	case <-ctx.Done():
-		return false
+	for {
+		select {
+		case <-timer.C:
+			return true
+		case <-heartbeatC:
+			heartbeat()
+		case <-ctx.Done():
+			return false
+		}
 	}
 }
 
