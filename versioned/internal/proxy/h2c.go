@@ -42,10 +42,21 @@ func H2CHandler(h http.Handler) http.Handler {
 	return h2c.NewHandler(h, H2CServer())
 }
 
-// childTransport is shared across ReverseProxy instances (one is built per
-// request). A new http2.Transport per request would be one TCP conn per
-// stream; this one multiplexes to each child host:port.
-var childTransport http.RoundTripper = newChildH2Transport()
+// childTransport is shared across ReverseProxy instances for h2c children
+// (one ReverseProxy is built per request). A new http2.Transport per request
+// would be one TCP conn per stream; this one multiplexes to each child
+// host:port. childHTTP1Transport is the dial for a child with no h2c listen.
+var (
+	childTransport      http.RoundTripper = newChildH2Transport()
+	childHTTP1Transport http.RoundTripper = newChildHTTP1Transport()
+)
+
+func newChildHTTP1Transport() *http.Transport {
+	return &http.Transport{
+		ForceAttemptHTTP2: false,
+		IdleConnTimeout:   DefaultChildH2IdleConnTimeout,
+	}
+}
 
 func newChildH2Transport() *http2.Transport {
 	return &http2.Transport{

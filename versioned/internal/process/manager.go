@@ -54,6 +54,8 @@ type child struct {
 	archiveSHA256 string
 	binaryVersion string
 	storageMode   string
+	// childH2C is set from --print-child-h2c. False dials the child over HTTP/1.1.
+	childH2C bool
 	// haDeployment is populated by binary preflight. Nil means the generation
 	// has not yet established whether it belongs to the HA PostgreSQL set.
 	haDeployment    *bool
@@ -1676,6 +1678,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
+	c.childH2C = preflight.childH2C
 	if preflight.haDeployment != nil {
 		ha := *preflight.haDeployment
 		c.haDeployment = &ha
@@ -1792,7 +1795,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		m.nextProofGeneration++
 		c.proofGeneration = m.nextProofGeneration
 		transitionGenerationLocked(c, statusRunning)
-		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
+		c.proxyTarget = proxy.NewChildTarget(fmt.Sprintf("localhost:%d", c.port), c.childH2C)
 		c.readyOnce.Do(func() { close(c.ready) })
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
 			m.rebuildRoutes()
@@ -2619,7 +2622,7 @@ func (m *Manager) rebuildRoutes() {
 	for _, c := range m.processes {
 		if c.status == statusRunning {
 			if c.proxyTarget == nil {
-				c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
+				c.proxyTarget = proxy.NewChildTarget(fmt.Sprintf("localhost:%d", c.port), c.childH2C)
 			}
 			routes[c.version.Name] = c.proxyTarget
 		}

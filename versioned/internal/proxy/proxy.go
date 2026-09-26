@@ -87,7 +87,7 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 				http.Error(w, fmt.Sprintf("version %q not found", version), http.StatusNotFound)
 				return
 			}
-			serveChild(w, r, target.Address(), rest, originLookups)
+			serveChild(w, r, target, rest, originLookups)
 			return
 		}
 
@@ -98,7 +98,7 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 		}
 		defer target.release()
 
-		serveChild(w, r, target.Address(), rest, originLookups)
+		serveChild(w, r, target, rest, originLookups)
 	})
 }
 
@@ -194,7 +194,7 @@ func serveAcquired(w http.ResponseWriter, r *http.Request, routes routeTableLoad
 		return
 	}
 	defer target.release()
-	reverseProxy(target.Address(), rest, nil).ServeHTTP(w, r)
+	reverseProxy(target, rest, nil).ServeHTTP(w, r)
 }
 
 func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routes routeTableLoader, versions []string, rest string) {
@@ -207,7 +207,7 @@ func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routes routeT
 			continue
 		}
 		rec := httptest.NewRecorder()
-		reverseProxy(target.Address(), rest, nil).ServeHTTP(rec, r.Clone(r.Context()))
+		reverseProxy(target, rest, nil).ServeHTTP(rec, r.Clone(r.Context()))
 		target.release()
 		switch {
 		case rec.Code == http.StatusNotFound:
@@ -247,7 +247,7 @@ func escrowIDFromObsPath(rest string) (string, bool) {
 	return "", false
 }
 
-func serveChild(w http.ResponseWriter, r *http.Request, target, rest string, lim *originLookupLimiter) {
+func serveChild(w http.ResponseWriter, r *http.Request, target *Target, rest string, lim *originLookupLimiter) {
 	if lim.blocked(r, rest) {
 		w.Header().Set(headerDevshardError, errorEscrowLookupLimited)
 		http.Error(w, "too many escrow lookups", http.StatusTooManyRequests)
@@ -256,8 +256,8 @@ func serveChild(w http.ResponseWriter, r *http.Request, target, rest string, lim
 	reverseProxy(target, rest, lim).ServeHTTP(w, r)
 }
 
-func reverseProxy(target, rest string, lim *originLookupLimiter) *httputil.ReverseProxy {
-	targetURL, err := url.Parse("http://" + target)
+func reverseProxy(target *Target, rest string, lim *originLookupLimiter) *httputil.ReverseProxy {
+	targetURL, err := url.Parse("http://" + target.Address())
 	if err != nil {
 		return &httputil.ReverseProxy{
 			Director: func(req *http.Request) {
@@ -270,7 +270,7 @@ func reverseProxy(target, rest string, lim *originLookupLimiter) *httputil.Rever
 		}
 	}
 	rp := &httputil.ReverseProxy{
-		Transport: childTransport, // HTTP/2 (h2c) to the child; not DefaultTransport
+		Transport: target.transport(), // h2c or HTTP/1.1, chosen when the child was registered
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetXForwarded()
 			// SetXForwarded rewrites X-Forwarded-*. Keep X-Real-IP from the

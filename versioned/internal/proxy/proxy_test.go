@@ -267,6 +267,33 @@ func TestProxy_ChildSeesHTTP2(t *testing.T) {
 	}
 }
 
+func TestProxy_LegacyChildSeesHTTP1(t *testing.T) {
+	var proto string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proto = r.Proto
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	addr := strings.TrimPrefix(backend.URL, "http://")
+	routes := &atomic.Value{}
+	routes.Store(RouteTable{"v4": NewChildTarget(addr, false)})
+	srv := httptest.NewServer(Handler(routes))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/v4/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+	if proto != "HTTP/1.1" {
+		t.Fatalf("child proto = %q, want HTTP/1.1", proto)
+	}
+}
+
 func TestProxy_BasicForwarding(t *testing.T) {
 	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "path=%s", r.URL.Path)

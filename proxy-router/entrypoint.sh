@@ -235,9 +235,9 @@ esac
 # the h2 hop goes straight to versiond:8080. JSON :8080 on the router is not
 # this hop: peer RPC is the router's proto h2 listen (8081).
 if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
-    RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${RPC_H2_ROUTER_PORT} proto h2 resolvers docker init-addr last,libc,none hash-key addr"
+    RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${RPC_H2_ROUTER_PORT} proto h2 resolvers docker init-addr none hash-key addr"
 else
-    RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 resolvers docker init-addr last,libc,none"
+    RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 resolvers docker init-addr none"
 fi
 
 case "$NGINX_MODE" in
