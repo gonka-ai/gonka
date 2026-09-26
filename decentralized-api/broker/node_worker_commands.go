@@ -304,8 +304,14 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 			result.PocV2BlockHash = c.BlockHash
 			return result
 		}
-		if powStatusNeedsStop(status.Status) {
-			if stopErr := stopPowV2Checked(ctx, worker); stopErr != nil {
+		// MIXED in the same stage: some backends generate, others dropped out.
+		// Init without a stop: generating backends refuse it (409 "Already
+		// generating") and keep their run, idle ones start. If none start, the
+		// command fails and the next reconcile retries it the same way.
+		if status.Status == "MIXED" && (sameParams || !knownLast) {
+			logging.Info("[StartPoCNodeCommandV2] MIXED in the same stage, re-init without stop", types.PoC, "node_id", worker.nodeId)
+		} else if powStatusNeedsStop(status.Status) {
+			if stopErr := stopPowV2Tolerant(ctx, worker); stopErr != nil {
 				logging.Warn("[StartPoCNodeCommandV2] StopPowV2 before re-init failed", types.PoC,
 					"node_id", worker.nodeId, "error", stopErr)
 				result.Succeeded = false
@@ -393,13 +399,40 @@ func stopPowV2Checked(ctx context.Context, worker *NodeWorker) error {
 	return nil
 }
 
+// stopPowV2Tolerant stops generation before a re-init. A backend that refused
+// /stop is logged, not fatal: failing here would leave the backends that did
+// stop idle for the stage. The init that follows restarts them; a backend that
+// is still generating answers it with an error and keeps its current run.
+func stopPowV2Tolerant(ctx context.Context, worker *NodeWorker) error {
+	resp, err := worker.GetClient().StopPowV2(ctx)
+	if err != nil {
+		return err
+	}
+	if resp != nil && len(resp.Errors) > 0 {
+		if len(resp.Results) == 0 {
+			return fmt.Errorf("StopPowV2 backend errors: %s", resp.Errors[0].Error)
+		}
+		logging.Warn("[StartPoCNodeCommandV2] StopPowV2 failed on some backends", types.PoC,
+			"node_id", worker.nodeId, "failed", len(resp.Errors), "stopped", len(resp.Results), "error", resp.Errors[0].Error)
+	}
+	return nil
+}
+
+// initGenerateV2Checked fails only when no backend started. The mlnode proxy
+// answers 200 when at least one backend accepted init and lists the rest in
+// errors; treating that as a failure marks the node FAILED, and the next
+// StartPocCommand restarts every backend from nonce 0.
 func initGenerateV2Checked(ctx context.Context, worker *NodeWorker, req mlnodeclient.PoCInitGenerateRequestV2) error {
 	resp, err := worker.GetClient().InitGenerateV2(ctx, req)
 	if err != nil {
 		return err
 	}
 	if resp != nil && len(resp.Errors) > 0 {
-		return fmt.Errorf("InitGenerateV2 backend errors: %s", resp.Errors[0].Error)
+		if len(resp.Results) == 0 {
+			return fmt.Errorf("InitGenerateV2 backend errors: %s", resp.Errors[0].Error)
+		}
+		logging.Warn("[StartPoCNodeCommandV2] InitGenerateV2 failed on some backends", types.PoC,
+			"node_id", worker.nodeId, "failed", len(resp.Errors), "started", len(resp.Results), "error", resp.Errors[0].Error)
 	}
 	return nil
 }
