@@ -2144,6 +2144,9 @@ func (s *Postgres) PruneEpoch(epochID uint64) error {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_escrow_cache WHERE epoch_id = $1`, epochID); err != nil {
 		return fmt.Errorf("prune escrow cache for epoch %d: %w", epochID, err)
 	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_pending_finishes WHERE epoch_id = $1`, epochID); err != nil {
+		return fmt.Errorf("prune pending finishes for epoch %d: %w", epochID, err)
+	}
 
 	s.mu.Lock()
 	delete(s.knownEpochs, epochID)
@@ -2203,6 +2206,9 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_escrow_cache WHERE epoch_id < $1`, cutoff); err != nil {
 		return fmt.Errorf("prune escrow cache before epoch %d: %w", cutoff, err)
 	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_pending_finishes WHERE epoch_id < $1`, cutoff); err != nil {
+		return fmt.Errorf("prune pending finishes before epoch %d: %w", cutoff, err)
+	}
 
 	s.mu.Lock()
 	for epochID := range s.knownEpochs {
@@ -2217,6 +2223,54 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 	}
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *Postgres) PutPendingFinish(escrowID string, inferenceID uint64, finishProto []byte) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO devshard_pending_finishes (escrow_id, inference_id, epoch_id, finish_proto)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (escrow_id, inference_id) DO UPDATE SET
+		  epoch_id = EXCLUDED.epoch_id,
+		  finish_proto = EXCLUDED.finish_proto`,
+		escrowID, inferenceID, epochID, finishProto,
+	)
+	if err != nil {
+		return fmt.Errorf("put pending finish: %w", err)
+	}
+	return nil
+}
+
+func (s *Postgres) PendingFinishes(escrowID string) (map[uint64][]byte, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
+		`SELECT inference_id, finish_proto FROM devshard_pending_finishes WHERE escrow_id = $1 AND epoch_id = $2`,
+		escrowID, epochID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pending finishes: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[uint64][]byte)
+	for rows.Next() {
+		var id int64
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			return nil, err
+		}
+		out[uint64(id)] = raw
+	}
+	return out, rows.Err()
 }
 
 func (s *Postgres) PutEscrowCache(info EscrowCacheInfo) error {
