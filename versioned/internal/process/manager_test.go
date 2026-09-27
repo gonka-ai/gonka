@@ -1228,24 +1228,37 @@ func TestInstallBinPathUsesVersionAndSHA(t *testing.T) {
 
 func TestRollingOverlapAllowedRequiresPostgresForDevshard(t *testing.T) {
 	devshardMgr := NewManager(config.Config{BinaryName: "devshard", BasePort: 5000})
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: ""}, "postgres") {
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: ""}, "postgres", "") {
 		t.Fatal("devshard overlap should be disabled when running child storage mode is unknown")
 	}
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "hybrid"}, "postgres") {
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "hybrid"}, "postgres", "") {
 		t.Fatal("devshard overlap should be disabled when running child is not postgres-only")
 	}
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, "") {
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, "", "") {
 		t.Fatal("devshard overlap should be disabled when new binary does not expose storage mode")
 	}
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, "hybrid") {
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, "hybrid", "") {
 		t.Fatal("devshard overlap should be disabled when new binary is not postgres-only")
 	}
-	if !devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, "postgres") {
-		t.Fatal("devshard overlap should be allowed when both children are postgres-only")
+	if !devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, "postgres", "") {
+		t.Fatal("devshard overlap should be allowed when both children are postgres-only and fleet compat matches")
+	}
+	const compat = "d_ack=73,f=120000ms,lease=instance_id"
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, "postgres", compat) {
+		t.Fatal("devshard overlap should be disabled when the running binary has no fleet compat")
+	}
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres", fleetCompat: compat}, "postgres", "") {
+		t.Fatal("devshard overlap should be disabled when the incoming binary has no fleet compat")
+	}
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres", fleetCompat: "d_ack=37,f=60000ms,lease=address"}, "postgres", compat) {
+		t.Fatal("devshard overlap should be disabled when fleet compat differs")
+	}
+	if !devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres", fleetCompat: compat}, "postgres", compat) {
+		t.Fatal("devshard overlap should be allowed when postgres and fleet compat match")
 	}
 
 	testappMgr := NewManager(config.Config{BinaryName: "testapp", BasePort: 5000})
-	if !testappMgr.rollingOverlapAllowed("v1", &child{}, "") {
+	if !testappMgr.rollingOverlapAllowed("v1", &child{}, "", "") {
 		t.Fatal("non-devshard test binary should allow overlap without storage mode probing")
 	}
 }

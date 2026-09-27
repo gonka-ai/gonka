@@ -54,6 +54,14 @@ var (
 
 const toolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
 
+// modelContextLimits mirrors each model's --max-model-len in the chain's model_args.
+// TODO: temporary fix until protocol will be updated - https://github.com/gonka-ai/gonka/pull/1763
+var modelContextLimits = map[string]uint64{
+	"MiniMaxAI/MiniMax-M2.7":             180000,
+	"deepseek-ai/DeepSeek-V4-Flash-0731": 400000,
+	"zai-org/GLM-5.3-Flash":              400000,
+}
+
 var sseUsageKeyMarker = []byte(`"usage"`)
 
 // sseChunkUsageCompletionTokens reads usage.completion_tokens from an SSE
@@ -810,6 +818,7 @@ type inflight struct {
 	hostID                     string
 	nonce                      uint64
 	escrowID                   string
+	model                      string
 	sendTime                   time.Time
 	escalated                  bool
 	probe                      bool
@@ -2045,6 +2054,7 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 			hostID:                   e.session.HostLabel(res.prepared.HostIdx()),
 			nonce:                    res.prepared.Nonce(),
 			escrowID:                 e.devshardID,
+			model:                    normalizeModelID(params.Model),
 			probe:                    res.isProbe,
 			suspicious:               noWinnerOK,
 			noWinnerReason:           noWinner.reason,
@@ -3633,8 +3643,16 @@ func isTrustedDeterministicRejection(inf *inflight) bool {
 		return false
 	}
 	details := inf.errorDetails()
-	return parseContextLengthLimit(details.Message) > 0 ||
-		details.statusCode() == http.StatusBadRequest && isCacheableOpenAIErrorDetails(details)
+	if parseContextLengthLimit(details.Message) > 0 {
+		return contextRefusalIsFinal(details.Message, inf.model)
+	}
+	return details.statusCode() == http.StatusBadRequest && isCacheableOpenAIErrorDetails(details)
+}
+
+// contextRefusalIsFinal keeps a model with a known context limit racing while a larger host could still serve the request.
+func contextRefusalIsFinal(message, model string) bool {
+	modelContextLimit, known := modelContextLimits[model]
+	return !known || contextRefusalBeyondModelLimit(message, modelContextLimit)
 }
 
 func hostApplicationErrorFromInflight(inf *inflight) *hostApplicationError {
@@ -3897,6 +3915,15 @@ func isStateRootDivergenceError(err error) bool {
 
 func isRetriableCapabilityErrorMessage(msg string) bool {
 	return isToolChoiceCapabilityError(msg) || parseContextLengthLimit(msg) > 0
+}
+
+// contextRefusalBeyondModelLimit is a context-length refusal no honest host avoids: the host already serves the model limit, or the request exceeds it.
+func contextRefusalBeyondModelLimit(message string, modelContextLimit uint64) bool {
+	hostContextLimit := parseContextLengthLimit(message)
+	if modelContextLimit == 0 || hostContextLimit == 0 {
+		return false
+	}
+	return hostContextLimit >= modelContextLimit || parseContextTotalRequested(message) > modelContextLimit
 }
 
 func isToolChoiceCapabilityError(msg string) bool {

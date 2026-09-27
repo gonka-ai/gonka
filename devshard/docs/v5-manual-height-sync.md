@@ -194,7 +194,7 @@ Not the three lie scenarios; still this feature.
 ```gherkin
 Scenario: Quiet escrow heartbeats
   Given two chats have landed host-signed confirm/finish (F exists)
-  When Interval (12s) passes with no further chat
+  When Interval (24s) passes with no further chat
   Then cadence_events_total{event="heartbeat_opened"} increases
 
 Scenario: Busy escrow discharges by inference

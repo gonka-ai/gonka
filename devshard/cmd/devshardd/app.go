@@ -27,6 +27,7 @@ import (
 	"devshard/signing"
 	devshardstorage "devshard/storage"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 )
 
@@ -225,6 +226,23 @@ func buildMLNodeCapacityCache(ctx context.Context, mlClient *mlnodeclient.Client
 	return cache
 }
 
+func newLeaseOwner(address string) (devshardstorage.LeaseOwner, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return devshardstorage.LeaseOwner{}, fmt.Errorf("validation lease identity: %w", err)
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		slog.Warn("devshardd: hostname unavailable for validation leases", "error", err)
+		hostname = ""
+	}
+	return devshardstorage.LeaseOwner{
+		Address:    address,
+		InstanceID: id.String(),
+		Hostname:   hostname,
+	}, nil
+}
+
 func buildHostManager(
 	ctx context.Context,
 	cfg runtimeConfig,
@@ -250,6 +268,15 @@ func buildHostManager(
 	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase)
 
 	instanceAddr := chainRuntime.identity.GetSignerAddress()
+	leaseOwner, err := newLeaseOwner(instanceAddr)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("devshardd: validation lease identity",
+		"instance_address", leaseOwner.Address,
+		"instance_id", leaseOwner.InstanceID,
+		"hostname", leaseOwner.Hostname,
+	)
 
 	thresholds := inference.NewValidationThresholdResolver(paramsSetup.Provider, chainBridge)
 	validator := inference.NewValidator(
@@ -270,7 +297,7 @@ func buildHostManager(
 	store := devshardstorage.NewManagedStorage(innerStore, sessionEpochRetain, chainParams)
 	closers.Add(func() { _ = store.Close() })
 
-	leaseValidator := inference.NewLeaseValidator(validator, phase, store, instanceAddr, cfg.ValidationLeaseTTL)
+	leaseValidator := inference.NewLeaseValidator(validator, phase, store, leaseOwner, cfg.ValidationLeaseTTL)
 
 	// warmBridge lets lazy bind fall back to escrow_cache (populated by the
 	// host-events long-poll warm) when the live chain escrow query is
@@ -357,7 +384,7 @@ func buildHostManager(
 	// leaves those rows empty, and recovery will not retry once a snapshot exists.
 	closers.Add(manager.WaitRecoveryRepairs)
 
-	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, instanceAddr)
+	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, leaseOwner)
 	validationRetry.WithInterval(cfg.ValidationRetryInterval)
 	validationRetry.WithLeaseTTL(cfg.ValidationLeaseTTL)
 	validationRetryCtx, cancelValidationRetry := context.WithCancel(ctx)

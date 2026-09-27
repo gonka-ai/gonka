@@ -61,32 +61,34 @@ type Gateway struct {
 	capacity           *CapacityState
 	// heightSyncCloser is a test double for closing/routing. Collect must never
 	// call it: arming_predicted is an early warning, not a close decision.
-	heightSyncCloser      func(escrowID, slot string)
-	settings              GatewaySettings
-	store                 *GatewayStore
-	perf                  *PerfTracker
-	perfStore             *PerfStore
-	accounting            *accounting.Recorder
-	chatCache             *chatResponseCache
-	apiKeys               map[string]struct{}
-	baseStorageDir        string
-	rotatorStop           chan struct{}
-	rotatorDone           chan struct{}
-	rotationBreakers      map[string]*rotationBreaker
-	rotationTargetLocks   keyedMutex
-	holdTopUpsInFlight    keyedInFlight
-	runtimeParams         *runtimeparams.Managed
-	runtimeParamsClose    func()
-	maxNonce              devshardpkg.MaxNonceProvider
-	chainClient           *chain.Client
-	finalizeLocksMu       sync.Mutex
-	finalizeLocks         map[string]*sync.Mutex
-	settlementMu          sync.Mutex
-	settlementInFlight    map[string]struct{}
-	replenishmentMu       sync.Mutex
-	replenishmentInFlight map[string]struct{}
-	mu                    sync.Mutex
-	roundRobinSeed        atomic.Uint64
+	heightSyncCloser             func(escrowID, slot string)
+	settings                     GatewaySettings
+	store                        *GatewayStore
+	perf                         *PerfTracker
+	perfStore                    *PerfStore
+	accounting                   *accounting.Recorder
+	chatCache                    *chatResponseCache
+	apiKeys                      map[string]struct{}
+	baseStorageDir               string
+	rotatorStop                  chan struct{}
+	rotatorDone                  chan struct{}
+	rotationBreakers             map[string]*rotationBreaker
+	rotationTargetLocks          keyedMutex
+	holdTopUpsInFlight           keyedInFlight
+	executionTimeoutSweepCursor  atomic.Uint64
+	executionTimeoutSweepRunning atomic.Bool
+	runtimeParams                *runtimeparams.Managed
+	runtimeParamsClose           func()
+	maxNonce                     devshardpkg.MaxNonceProvider
+	chainClient                  *chain.Client
+	finalizeLocksMu              sync.Mutex
+	finalizeLocks                map[string]*sync.Mutex
+	settlementMu                 sync.Mutex
+	settlementInFlight           map[string]struct{}
+	replenishmentMu              sync.Mutex
+	replenishmentInFlight        map[string]struct{}
+	mu                           sync.Mutex
+	roundRobinSeed               atomic.Uint64
 
 	suspiciousHosts map[string]struct{}
 
@@ -985,10 +987,12 @@ func (g *Gateway) checkBalances() {
 // balanceCheckLoop periodically checks each active runtime's escrow limits.
 func (g *Gateway) balanceCheckLoop() {
 	g.checkBalances()
+	g.startExecutionTimeoutSweep()
 	ticker := time.NewTicker(balanceCheckInterval)
 	defer ticker.Stop()
 	for range ticker.C {
 		g.checkBalances()
+		g.startExecutionTimeoutSweep()
 	}
 }
 
