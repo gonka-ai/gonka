@@ -198,6 +198,43 @@ func TestRPCClient_Send_RequestsDisabledIsUpstreamStatus(t *testing.T) {
 	require.Equal(t, []string{"503 " + DevshardErrorRequestsDisabled + " requests disabled"}, admission.results)
 }
 
+func TestRPCClient_Send_ReadyTimeoutIsTransportFault(t *testing.T) {
+	prev := chatReadyTimeout
+	chatReadyTimeout = 40 * time.Millisecond
+	t.Cleanup(func() { chatReadyTimeout = prev })
+
+	signer := testutil.MustGenerateKey(t)
+	admission := &bodyAdmission{}
+	cfg := DefaultClientConfig()
+	cfg.InferenceTimeout = 5 * time.Second
+	cfg.ParticipantKey = "shared-host"
+	cfg.Admission = admission
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: "gonka1chatready",
+		Signer:      signer,
+		DirectMux:   true,
+	})
+	t.Cleanup(pc.Close)
+	rpc := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer, cfg), pc, ParseRPCEndpoints(EndpointChat))
+
+	start := time.Now()
+	_, err := rpc.Send(context.Background(), chatRequest(), nil, nil)
+	require.ErrorIs(t, err, ErrPeerNotReady)
+	require.Less(t, time.Since(start), time.Second)
+	require.Equal(t, []string{"transport"}, admission.faults)
+	require.Empty(t, admission.results)
+
+	cancelled := &bodyAdmission{}
+	cfg.Admission = cancelled
+	rpc = NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer, cfg), pc, ParseRPCEndpoints(EndpointChat))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = rpc.Send(ctx, chatRequest(), nil, nil)
+	require.ErrorIs(t, err, ErrPeerNotReady)
+	require.Empty(t, cancelled.faults)
+}
+
 func TestRPCClient_Send_DeadListenerIsTransportFault(t *testing.T) {
 	admission := &bodyAdmission{}
 	rpc := readyChatClient(t, "http://127.0.0.1:1", admission)

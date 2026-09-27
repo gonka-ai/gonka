@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -14,6 +15,11 @@ import (
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
+
+// chatReadyTimeout caps WaitReady on Chat. A dead origin must not hold the
+// attempt until InferenceTimeout. Same scale as the validator's
+// payloadFetchHeaderTimeout. Tests shorten it.
+var chatReadyTimeout = 10 * time.Second
 
 // Send implements user.HostClient. Opted-in Chat uses Connect frames that
 // concatenate into one gzip stream, then the existing SSE parser.
@@ -33,7 +39,7 @@ func (c *RPCClient) Send(ctx context.Context, req host.HostRequest, stream io.Wr
 	path := "/sessions/" + c.escrowID + "/chat/completions"
 	var last error
 	for attempt := 0; attempt < 2; attempt++ {
-		if err := c.WaitReady(ctx); err != nil {
+		if err := c.waitChatReady(ctx, path); err != nil {
 			return nil, err
 		}
 		result, err := c.sendChatOnce(ctx, req, stream, receiptHandler, path)
@@ -48,6 +54,21 @@ func (c *RPCClient) Send(ctx context.Context, req host.HostRequest, stream io.Wr
 		return result, err
 	}
 	return nil, last
+}
+
+// waitChatReady bounds Attach. When this budget elapses and the caller is
+// still waiting, the miss is a host transport failure. A caller cancel is not.
+func (c *RPCClient) waitChatReady(ctx context.Context, path string) error {
+	readyCtx, cancel := context.WithTimeout(ctx, chatReadyTimeout)
+	defer cancel()
+	err := c.WaitReady(readyCtx)
+	if err == nil {
+		return nil
+	}
+	if readyCtx.Err() != nil && ctx.Err() == nil {
+		c.observeTransportFailure(path, err)
+	}
+	return err
 }
 
 func (c *RPCClient) sendChatOnce(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse), path string) (*host.HostResponse, error) {
