@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -48,33 +49,52 @@ func TestChatRequestCostCoversTheBodyTheProxyActuallySends(t *testing.T) {
 	}
 }
 
-// The predicted cost is the reservation and nothing else. One below it the escrow refuses the
-// request outright; at it the reservation lands and only the per-nonce fee is short, which is the
-// signal that marks the escrow exhausted — so the pre-filter must not swallow that case.
-func TestChatRequestCostIsExactlyTheReservation(t *testing.T) {
+// The predicted cost is what the start nonce charges: the reservation plus the per-nonce fee. One below
+// it the escrow refuses the request; at it the request starts.
+func TestChatRequestCostIsExactlyWhatTheStartNonceCharges(t *testing.T) {
+	// Test flow:
+	// 1. Price a request on a config with a token price and a per-nonce fee.
+	// 2. Start it on a real escrow funded one below the prediction, then at the prediction.
+	// 3. The first is refused for balance, the second starts.
 	config := testutil.DefaultConfig(3)
 	config.TokenPrice = 3
 	config.FeePerNonce = 1_000
 	cost := chatRequestCost{inputLengthBytes: 400, maxTokens: testutil.TestMaxTokens}
 
-	predicted, err := cost.reservedOn(config)
+	predicted, err := cost.startChargeOn(config)
 	require.NoError(t, err)
 
-	require.ErrorIs(t, applyStartInferenceWithBalance(t, config, cost, predicted-1), types.ErrRequestExceedsBalance,
-		"an escrow one short of the predicted cost took the reservation, so the prediction is loose")
-	atPrediction := applyStartInferenceWithBalance(t, config, cost, predicted)
-	require.ErrorIs(t, atPrediction, types.ErrInsufficientBalance)
-	require.NotErrorIs(t, atPrediction, types.ErrRequestExceedsBalance,
-		"the reservation itself was refused, so the escrow never reaches the fee that marks it exhausted")
+	require.ErrorIs(t, applyStartInferenceWithBalance(t, config, cost, predicted-1), types.ErrInsufficientBalance,
+		"an escrow one short of the predicted cost started the request, so the prediction is loose")
+	require.NoError(t, applyStartInferenceWithBalance(t, config, cost, predicted),
+		"an escrow holding the predicted cost refused the request, so the prediction undercharges")
 }
 
 func TestChatRequestCostReportsOverflowInsteadOfWrapping(t *testing.T) {
-	config := testutil.DefaultConfig(3)
-	config.TokenPrice = 2
+	// Test flow:
+	// 1. Price a request whose reservation overflows, and one whose reservation fits but not with the fee.
+	// 2. Compute the start charge.
+	// 3. Both report an overflow instead of wrapping to a small number.
+	testCases := []struct {
+		name        string
+		tokenPrice  uint64
+		feePerNonce uint64
+		cost        chatRequestCost
+	}{
+		{name: "reservation overflows", tokenPrice: 2, cost: chatRequestCost{inputLengthBytes: 1 << 63, maxTokens: 1 << 63}},
+		{name: "fee overflows the reservation", tokenPrice: 1, feePerNonce: 1_000, cost: chatRequestCost{inputLengthBytes: math.MaxUint64 - 10, maxTokens: 10}},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			config := testutil.DefaultConfig(3)
+			config.TokenPrice = testCase.tokenPrice
+			config.FeePerNonce = testCase.feePerNonce
 
-	_, err := chatRequestCost{inputLengthBytes: 1 << 63, maxTokens: 1 << 63}.reservedOn(config)
+			_, err := testCase.cost.startChargeOn(config)
 
-	require.ErrorIs(t, err, types.ErrCostOverflow)
+			require.ErrorIs(t, err, types.ErrCostOverflow)
+		})
+	}
 }
 
 // An escrow whose price cannot even be computed can never pay it, so it must not be offered work.
@@ -144,7 +164,7 @@ func TestReserveRuntimeAsksForARetryWhenNoEscrowCanPay(t *testing.T) {
 // same money a second time would drop the busiest escrows at exactly the load they exist to carry.
 func TestReserveRuntimeStillPicksAnEscrowServingWorkItCanAfford(t *testing.T) {
 	cost := fundingTestCost()
-	oneRequest, err := cost.reservedOn(testutil.DefaultConfig(3))
+	oneRequest, err := cost.startChargeOn(testutil.DefaultConfig(3))
 	require.NoError(t, err)
 	escrowRuntime := fundingTestRuntime(t, "6", 2*oneRequest)
 	gateway := newFundingTestGateway(escrowRuntime)
@@ -157,18 +177,28 @@ func TestReserveRuntimeStillPicksAnEscrowServingWorkItCanAfford(t *testing.T) {
 	require.NoError(t, err, "an escrow holding enough for this request was refused because its in-flight work was counted twice")
 }
 
-// A balance short only of the per-nonce fee is what marks an escrow exhausted, so such an escrow must
-// still be offered the request instead of being filtered out before it can raise that signal.
-func TestReserveRuntimePicksAnEscrowShortOnlyOfThePerNonceFee(t *testing.T) {
+// An escrow that can pay the reservation but not the per-nonce fee would fail the start nonce and read
+// as exhausted over one request, so it must not be offered that request.
+func TestReserveRuntimeSkipsAnEscrowShortOfThePerNonceFee(t *testing.T) {
+	// Test flow:
+	// 1. Fund an idle escrow with the reservation alone and a busy one with the reservation plus the fee.
+	// 2. Reserve an escrow for the request.
+	// 3. The busy escrow is chosen, because the idle one cannot pay the fee.
+	const feePerNonce = 1_000
 	cost := fundingTestCost()
-	reserved, err := cost.reservedOn(testutil.DefaultConfig(3))
+	reserved, err := cost.startChargeOn(testutil.DefaultConfig(3))
 	require.NoError(t, err)
-	gateway := newFundingTestGateway(fundingTestRuntime(t, "6", reserved))
+	feeShortEscrow := fundingTestRuntime(t, "6", reserved)
+	setEscrowFeePerNonce(t, feeShortEscrow, feePerNonce)
+	fundedEscrow := fundingTestRuntime(t, "12", reserved+feePerNonce)
+	setEscrowFeePerNonce(t, fundedEscrow, feePerNonce)
+	fundedEscrow.activeUserRequests.Store(5)
+	gateway := newFundingTestGateway(feeShortEscrow, fundedEscrow)
 
 	chosen, err := gateway.reserveRuntimeForModel(fundingTestModel, cost, nil)
 
-	require.NoError(t, err, "an escrow that can pay the reservation was filtered out over the per-nonce fee")
-	require.Equal(t, "6", chosen.id)
+	require.NoError(t, err)
+	require.Equal(t, "12", chosen.id, "the gateway routed to an escrow that cannot pay the per-nonce fee")
 }
 
 // The client-facing count must name every escrow that was asked, whichever stage refused it.
@@ -210,6 +240,13 @@ func fundingTestRuntime(t *testing.T, escrowID string, balance uint64) *devshard
 
 func newFundingTestGateway(runtimes ...*devshardRuntime) *Gateway {
 	return NewGateway(runtimes, NewGatewayLimiter(0, 0), fundingTestModel)
+}
+
+func setEscrowFeePerNonce(t *testing.T, rt *devshardRuntime, feePerNonce uint64) {
+	t.Helper()
+	snapshot := rt.proxy.sm.ExportState()
+	snapshot.Config.FeePerNonce = feePerNonce
+	require.NoError(t, rt.proxy.sm.RestoreState(snapshot))
 }
 
 // setEscrowBalance moves the escrow's balance the way a landed reservation does.

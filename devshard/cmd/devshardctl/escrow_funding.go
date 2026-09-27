@@ -1,6 +1,8 @@
 package main
 
 import (
+	"math"
+
 	"devshard/state"
 	"devshard/types"
 )
@@ -19,17 +21,24 @@ func newChatRequestCost(body []byte, req chatRequest, promptTokens int64) chatRe
 	}
 }
 
-func (cost chatRequestCost) reservedOn(config types.SessionConfig) (uint64, error) {
-	return state.ReservedCost(cost.inputLengthBytes, cost.maxTokens, config.TokenPrice)
+func (cost chatRequestCost) startChargeOn(config types.SessionConfig) (uint64, error) {
+	reserved, err := state.ReservedCost(cost.inputLengthBytes, cost.maxTokens, config.TokenPrice)
+	if err != nil {
+		return 0, err
+	}
+	if reserved > math.MaxUint64-config.FeePerNonce {
+		return 0, types.ErrCostOverflow
+	}
+	return reserved + config.FeePerNonce, nil
 }
 
 func escrowCanFund(rt *devshardRuntime, cost chatRequestCost) bool {
 	if rt == nil || rt.proxy == nil || rt.proxy.sm == nil {
 		return true
 	}
-	reserved, err := cost.reservedOn(rt.proxy.sm.Config())
+	charge, err := cost.startChargeOn(rt.proxy.sm.Config())
 	if err != nil {
 		return false
 	}
-	return rt.proxy.sm.Balance() >= reserved
+	return rt.proxy.sm.Balance() >= charge
 }
