@@ -1792,7 +1792,7 @@ func ssePayloadDataLines(p []byte) []string {
 		return nil
 	}
 	var lines []string
-	for _, raw := range bytes.Split(p, []byte("\n")) {
+	for raw := range bytes.SplitSeq(p, []byte("\n")) {
 		line := strings.TrimRight(string(raw), "\r")
 		if !strings.HasPrefix(line, "data: ") {
 			continue

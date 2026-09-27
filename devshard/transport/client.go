@@ -653,6 +653,7 @@ func (c *HTTPClient) maxSSEStreamBytes() int64 {
 // readBoundedSSELine reads up to and including the next '\n', aborting as soon
 // as the accumulated line would exceed max bytes. On oversize it returns
 // ErrSSEEventTooLarge and drops the partial buffer rather than retaining it.
+// A line that fits the reader's buffer is returned as a view valid only until the next read.
 func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
 	if max <= 0 {
 		max = DefaultMaxSSEEventBytes
@@ -662,6 +663,12 @@ func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
 		// ReadSlice returns a view into the reader's own buffer, valid only until
 		// the next read, so every fragment is copied out before looping.
 		fragment, err := br.ReadSlice('\n')
+		if err == nil && buf == nil {
+			if len(fragment) > max {
+				return nil, fmt.Errorf("%w: %d byte limit", ErrSSEEventTooLarge, max)
+			}
+			return fragment, nil
+		}
 		if len(fragment) > 0 {
 			if len(buf)+len(fragment) > max {
 				return nil, fmt.Errorf("%w: %d byte limit", ErrSSEEventTooLarge, max)
@@ -720,7 +727,14 @@ func (c *HTTPClient) handleSSELine(
 		return
 	}
 
-	// Try to parse as devshard protocol envelope.
+	// Only a line that could spell a devshard_ key, literally or escaped, is decoded as an envelope.
+	if !strings.Contains(data, "devshard_") && !strings.Contains(data, `\u`) {
+		if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
+			*writeErrLogged = true
+			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", err)
+		}
+		return
+	}
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(data), &envelope); err != nil {
 		// Not JSON -- forward as-is.

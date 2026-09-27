@@ -1,6 +1,7 @@
 package completionapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -76,7 +77,11 @@ func (rt *ExecutorResponseProcessor) ProcessStreamedResponse(line string) (strin
 		rt.streamedResponse = append(rt.streamedResponse, line)
 		return line, err
 	}
-	rt.streamedResponse = append(rt.streamedResponse, DataPrefix+string(stored))
+	storedLine := DataPrefix + string(stored)
+	rt.streamedResponse = append(rt.streamedResponse, storedLine)
+	if bytes.Equal(forwarded, stored) {
+		return storedLine, nil
+	}
 	return DataPrefix + string(forwarded), nil
 }
 
