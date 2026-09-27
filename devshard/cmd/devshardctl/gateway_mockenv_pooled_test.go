@@ -491,3 +491,44 @@ func TestGatewayMockEnvPooledChatParticipantLimiterAllHostsRejectedBeforeRuntime
 	require.EqualValues(t, 0, alpha.calls.Load())
 	require.EqualValues(t, 0, beta.calls.Load())
 }
+
+// Steps:
+// - Configure an `api_key` model with two user API keys and store a pooled chat response for the first key.
+// - Send the identical pooled chat request with the second key, then with the admin key.
+// - Assert each caller reaches the runtime instead of being served another caller's completion.
+// - Assert a repeat from the first key is still a cache hit.
+func TestGatewayMockEnvPooledChatCacheIsScopedByCaller(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt},
+		func(cfg *gatewayMockConfig) {
+			cfg.apiKeys = map[string]struct{}{mockenvUserKey: {}, "second-api-token": {}}
+		},
+		withMockenvSettings(func(settings *GatewaySettings) {
+			settings.ModelLimits = []GatewayModelLimitSettings{{
+				ModelID:    "Qwen/Test",
+				AccessMode: string(gatewayAccessModeAPIKey),
+			}}
+		}))
+	body := mockenvChatBody("Qwen/Test", "cache per caller")
+
+	first := env.postChat(body, withBearer(mockenvUserKey))
+	require.Equal(t, http.StatusOK, first.Code)
+	require.EqualValues(t, 1, rt.calls.Load())
+
+	other := env.postChat(body, withBearer("second-api-token"))
+	require.Equal(t, http.StatusOK, other.Code)
+	require.EqualValues(t, 2, rt.calls.Load(), "another API key must not be served the first key's cached completion")
+
+	admin := env.postChat(body, withBearer(mockenvAdminKey))
+	require.Equal(t, http.StatusOK, admin.Code)
+	require.EqualValues(t, 3, rt.calls.Load(), "the admin must not be served a user key's cached completion")
+
+	repeat := env.postChat(body, withBearer(mockenvUserKey))
+	require.Equal(t, http.StatusOK, repeat.Code)
+	require.Equal(t, first.Body.String(), repeat.Body.String())
+	require.EqualValues(t, 3, rt.calls.Load(), "the same key repeating its request is still a cache hit")
+}

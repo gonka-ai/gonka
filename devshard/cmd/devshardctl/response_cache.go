@@ -96,9 +96,26 @@ func (c *chatResponseCache) sweepExpiredLocked(now time.Time) {
 	}
 }
 
+// chatCacheScope is the part of the chat cache key that names the caller: the admin, one configured
+// API key (by hash, so the cache never holds the key itself), or everyone without a valid key.
+// Callers in different scopes never share a cached completion.
+func (g *Gateway) chatCacheScope(r *http.Request) string {
+	if requestHasAdminAuth(r) {
+		return "admin"
+	}
+	if key, ok := bearerToken(r); ok && g.requestHasAPIKey(r) {
+		sum := sha256.Sum256([]byte(key))
+		return "key:" + hex.EncodeToString(sum[:])
+	}
+	return "anon"
+}
+
 // The body is already normalized, so it no longer records what the client asked for: the intent must key too.
-func chatCacheKey(model string, body []byte, intent clientResponseIntent) string {
+// scope names the caller (see Gateway.chatCacheScope), so one API key is never served another key's completion.
+func chatCacheKey(scope string, model string, body []byte, intent clientResponseIntent) string {
 	h := sha256.New()
+	io.WriteString(h, scope)
+	h.Write([]byte{0})
 	io.WriteString(h, strings.TrimSpace(model))
 	h.Write([]byte{0})
 	fmt.Fprintf(h, "%t|%t|%t", intent.keepLogprobs, intent.keepTopLogprobs, intent.keepUsage)
