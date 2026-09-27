@@ -2175,8 +2175,8 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, cost chatRequestCo
 	// below for diagnostics.
 	if math.IsInf(bestScore, +1) {
 		log.Printf(
-			"gateway: all %d candidate escrow(s) at zero capacity, returning 503; per-escrow weights: %s",
-			len(candidates), g.formatCandidateWeightsLocked(candidates, requestModel),
+			"gateway: all %d affordable escrow(s) at zero capacity (%d skipped as unable to fund the request), returning 503; per-escrow weights: %s",
+			len(affordable), len(candidates)-len(affordable), g.formatCandidateWeightsLocked(affordable, requestModel),
 		)
 		return nil, &EscrowParticipantRateLimitError{}
 	}
