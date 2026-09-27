@@ -11,8 +11,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
-
-	devshardserver "devshard/server"
 )
 
 func TestBuildServerEnablesH2C(t *testing.T) {
@@ -21,17 +19,15 @@ func TestBuildServerEnablesH2C(t *testing.T) {
 	require.True(t, e.Server.Protocols.HTTP1())
 	require.True(t, e.Server.Protocols.UnencryptedHTTP2())
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- devshardserver.StartH2C(e, "127.0.0.1:0") }()
+	// Listen here. StartH2C assigns e.Listener from its own goroutine, and
+	// Echo does not synchronize that field.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	e.Server.Handler = e
 
-	var addr string
-	require.Eventually(t, func() bool {
-		if e.Listener == nil || e.Listener.Addr() == nil {
-			return false
-		}
-		addr = e.Listener.Addr().String()
-		return addr != ""
-	}, 2*time.Second, 10*time.Millisecond)
+	errCh := make(chan error, 1)
+	go func() { errCh <- e.Server.Serve(ln) }()
 
 	plain, err := http.Get("http://" + addr + "/healthz")
 	require.NoError(t, err)
