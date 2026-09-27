@@ -238,3 +238,24 @@ func TestReceivedResponseHasherHasNothingForAStreamCutBeforeDone(t *testing.T) {
 
 	require.Empty(t, receivedSums(processed.forwarded[:len(processed.forwarded)-1]))
 }
+
+// Test flow:
+//  1. Feed one hasher lines carrying HTML characters, line separators, control bytes, quotes, backslashes and a byte that is not UTF-8.
+//  2. Assert its hash is the sha256 of json.Marshal over the same envelope, the bytes a validator rehashes.
+func TestReceivedResponseHasherHashesTheMarshalledEnvelope(t *testing.T) {
+	lines := []string{
+		`data: {"choices":[{"delta":{"content":"<b>&amp;</b>"}}]}`,
+		"data: {\"choices\":[{\"delta\":{\"content\":\"  \\u0000\x01\"}}]}",
+		`data: {"choices":[{"delta":{"content":"\"quoted\" \\ back"}}]}`,
+		": comment \xff\xfe",
+		DataPrefix + "[DONE]",
+	}
+	hasher := NewReceivedResponseHasher()
+	for _, line := range lines {
+		hasher.Add(line)
+	}
+
+	envelope, err := json.Marshal(SerializedStreamedResponse{Events: lines})
+	require.NoError(t, err)
+	require.Equal(t, [][32]byte{sha256.Sum256(envelope)}, hasher.Sums())
+}

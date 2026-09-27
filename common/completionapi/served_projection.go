@@ -15,6 +15,8 @@ type envelopeHasher struct {
 	digest    hash.Hash
 	lineCount int
 	sum       *[32]byte
+	encoded   bytes.Buffer
+	encoder   *json.Encoder
 }
 
 type ReceivedResponseHasher struct {
@@ -31,6 +33,7 @@ type servedEnvelope struct {
 
 func newEnvelopeHasher() *envelopeHasher {
 	hasher := &envelopeHasher{digest: sha256.New()}
+	hasher.encoder = json.NewEncoder(&hasher.encoded)
 	hasher.digest.Write([]byte(`{"events":[`))
 	return hasher
 }
@@ -39,8 +42,10 @@ func (hasher *envelopeHasher) add(line string) {
 	if hasher.lineCount > 0 {
 		hasher.digest.Write([]byte(","))
 	}
-	encoded, _ := json.Marshal(line)
-	hasher.digest.Write(encoded)
+	// Encode is json.Marshal plus a trailing newline, written into a buffer reused across lines.
+	hasher.encoded.Reset()
+	_ = hasher.encoder.Encode(line)
+	hasher.digest.Write(bytes.TrimSuffix(hasher.encoded.Bytes(), []byte("\n")))
 	hasher.lineCount++
 }
 
