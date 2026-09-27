@@ -363,6 +363,63 @@ func TestLeaseValidator_Canceled_Releases(t *testing.T) {
 	require.Len(t, store.releaseCalls, 1, "forgotten acquire must not release again")
 }
 
+func TestLeaseValidator_CanceledParentContext_StillReleases(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := &stubLeases{
+		acquireFn: func(ctx context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+			require.NoError(t, ctx.Err())
+			return true, nil
+		},
+		releaseFn: func(ctx context.Context, _ string, _, _ uint64, _ string) error {
+			require.NoError(t, ctx.Err(), "release must not inherit the canceled request context")
+			return nil
+		},
+	}
+	started := make(chan struct{})
+	c := newTestLeaseValidator(store, func(ctx context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.Validate(ctx, makeReq())
+		errCh <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-errCh:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Validate did not return after cancel")
+	}
+	require.Equal(t, []string{"escrow-1/42/0/validator-addr"}, store.releaseCalls,
+		"shutdown abort must still DELETE the pending row")
+}
+
+func TestLeaseValidator_ReleaseValidationLease_CanceledContext(t *testing.T) {
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+			return true, nil
+		},
+		releaseFn: func(ctx context.Context, _ string, _, _ uint64, _ string) error {
+			require.NoError(t, ctx.Err(), "explicit release must not inherit a canceled parent")
+			return nil
+		},
+	}
+	c := newTestLeaseValidator(store, successInner)
+	_, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = c.ReleaseValidationLease(ctx, "escrow-1", 42)
+	require.NoError(t, err)
+	require.Equal(t, []string{"escrow-1/42/0/validator-addr"}, store.releaseCalls)
+}
+
 func TestLeaseValidator_AlreadyLeased_DoesNotRelease(t *testing.T) {
 	store := &stubLeases{
 		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {

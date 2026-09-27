@@ -32,7 +32,7 @@ import (
 const (
 	contextKeySender = "devshard_sender"
 
-	// DefaultMaxBodySize matches the public proxy and versiond-router limit.
+	// DefaultMaxBodySize bounds the decompressed body auth reads.
 	// The transport enforces actual bytes read, so it also covers chunked bodies
 	// and deployments that expose devshardd without the public proxy.
 	DefaultMaxBodySize int64 = 10 * 1024 * 1024

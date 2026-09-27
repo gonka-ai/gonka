@@ -846,6 +846,29 @@ func TestProcessResponse_DropsHostTxForUnknownInference(t *testing.T) {
 		"slot-scoped HeightAck must still queue")
 }
 
+func TestProcessResponse_DropsHeightAckOnceFinalizing(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	_, err := session.SendInference(ctx, params)
+	require.NoError(t, err)
+	require.NoError(t, session.Finalize(ctx))
+	require.True(t, session.StateMachine().Phase() >= types.PhaseFinalizing)
+
+	nonce := session.Nonce()
+	require.NoError(t, session.ProcessResponse(0, &host.HostResponse{
+		Nonce: nonce,
+		Mempool: []*types.DevshardTx{
+			{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{RefNonce: 1, SlotId: 0}}},
+		},
+	}, nonce))
+	require.Nil(t, findPendingHeightAck(session.PendingTxs(), 1, 0),
+		"height acks must not queue after finalize")
+}
+
 func TestProcessResponse_DropsFinishNotSignedByExecutor(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 100)
 	params := InferenceParams{

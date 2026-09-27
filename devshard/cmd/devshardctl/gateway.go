@@ -36,6 +36,10 @@ import (
 	"devshard/user"
 )
 
+const (
+	modelUnavailableRetryAfterSeconds = "10"
+)
+
 type RuntimeConfig struct {
 	ID              string `json:"id"`
 	PrivateKeyHex   string `json:"private_key,omitempty"`
@@ -71,6 +75,7 @@ type Gateway struct {
 	rotationBreakers      map[string]*rotationBreaker
 	runtimeParams         *runtimeparams.Managed
 	runtimeParamsClose    func()
+	maxNonce              devshardpkg.MaxNonceProvider
 	chainClient           *chain.Client
 	finalizeMu            sync.Mutex
 	settlementMu          sync.Mutex
@@ -109,8 +114,14 @@ type devshardRuntime struct {
 	activeUserRequests atomic.Int64
 	reservedTokens     atomic.Int64
 
-	// pendingRaceCleanup counts background race cleanups (refund + loser-signature persistence) still in flight
+	// pendingRaceCleanup counts background race cleanups (refund, loser-signature persistence, timeout votes) still in flight
 	pendingRaceCleanup atomic.Int64
+
+	// finalizing marks a runtime whose finalize request is in flight. It is set
+	// in the same g.mu critical section that observed the drain barrier as
+	// quiet, and admission reads it under that same lock, so no new inference
+	// can slip in between the quiescence check and the finalize handler run.
+	finalizing atomic.Bool
 
 	// settlementPending marks an escrow that has been deactivated and must
 	// be settled once its in-flight requests drain. settlementReason is
@@ -318,6 +329,15 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: height sync: %w", cfg.ID, err)
 	}
+	if extraClient == nil || extraClient.HeightSyncPeerTips == nil {
+		log.Printf("heightsync courier not wired escrow=%s (need NODE_MANAGER_ADDR, NODE_RPC_URL, or DEVSHARD_CHAIN_GRPC)", cfg.ID)
+	} else {
+		log.Printf("heightsync courier wired escrow=%s peer_tips=true", cfg.ID)
+	}
+	compressRequestBodies, err := compressRequestBodiesFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, err)
+	}
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:           keyHex,
 		EscrowID:                cfg.ID,
@@ -326,6 +346,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		RoutePrefix:             routePrefix,
 		RequestAdmission:        sharedParticipantRequestLimiter,
 		RequireHeightSeed:       requireHeightSeedFromEnv(),
+		CompressRequestBodies:   compressRequestBodies,
 		Escrow:                  escrow,
 		RefusalTimeoutSeconds:   timeoutOverrides.RefusalTimeoutSeconds,
 		ExecutionTimeoutSeconds: timeoutOverrides.ExecutionTimeoutSeconds,
@@ -625,6 +646,9 @@ func (rt *devshardRuntime) acceptsNewInferences() (bool, string) {
 	if rt == nil || !rt.active.Load() {
 		return false, "inactive"
 	}
+	if rt.finalizing.Load() {
+		return false, "finalize_in_flight"
+	}
 	if rt.proxy == nil || rt.proxy.sm == nil {
 		return true, ""
 	}
@@ -775,7 +799,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder) *Gateway {
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder, maxNonce devshardpkg.MaxNonceProvider) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
@@ -783,6 +807,7 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	g.baseStorageDir = baseStorageDir
 	g.store = store
 	g.chainClient = chainClient
+	g.maxNonce = maxNonce
 	if perf != nil {
 		g.perf = perf
 	}
@@ -881,6 +906,7 @@ const (
 // checkBalances scans all active runtimes and deactivates any whose
 // escrow is close to exhausting its usable balance or nonce budget.
 func (g *Gateway) checkBalances() {
+	g.retireExpiredEpochEscrows()
 	g.mu.Lock()
 	if !g.settings.EscrowRotation.Enabled {
 		g.mu.Unlock()
@@ -890,21 +916,23 @@ func (g *Gateway) checkBalances() {
 	copy(runtimes, g.runtimeOrder)
 	g.mu.Unlock()
 
+	chainMaxNonce := g.chainMaxNonce()
 	for _, rt := range runtimes {
 		if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 			continue
 		}
 		balance := rt.proxy.sm.Balance()
 		if balance < balanceMinimumThreshold {
-			log.Printf("escrow_balance_low escrow=%s balance=%d threshold=%d — scheduling replacement before deactivation",
+			log.Printf("escrow_balance_low escrow=%s balance=%d threshold=%d — deactivating before replacement",
 				rt.id, balance, balanceMinimumThreshold)
 			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "low_balance")
 			continue
 		}
 		nonce := rt.proxy.sm.LatestNonce()
-		if nonce >= nonceDeactivationLimit {
-			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — scheduling replacement before deactivation",
-				rt.id, nonce, nonceDeactivationLimit)
+		nonceLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
+		if chainMaxNonce != 0 && nonce >= nonceLimit {
+			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — deactivating before replacement",
+				rt.id, nonce, nonceLimit)
 			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "high_nonce")
 		}
 	}
@@ -986,6 +1014,11 @@ func (g *Gateway) modelLimitSettings(model string) (GatewayModelLimitSettings, b
 	return GatewayModelLimitSettings{}, false
 }
 
+// isModelListedInLimits reports whether the operator lists the model in model_limits, so the gateway still offers it while no runtime serves it.
+func isModelListedInLimits(limits []GatewayModelLimitSettings, model string) bool {
+	return slices.ContainsFunc(limits, func(entry GatewayModelLimitSettings) bool { return strings.TrimSpace(entry.ModelID) == model })
+}
+
 func (g *Gateway) modelAccessError(r *http.Request, model string) error {
 	if requestHasAdminAuth(r) {
 		return nil
@@ -1053,10 +1086,11 @@ func bearerToken(r *http.Request) (string, bool) {
 		return "", false
 	}
 	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
+	parts := strings.Fields(auth)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		return "", false
 	}
-	key := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+	key := strings.TrimSpace(parts[1])
 	return key, key != ""
 }
 
@@ -1476,6 +1510,11 @@ func (g *Gateway) handleSingleOnly(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 	if len(runtimes) == 1 {
 		if r.URL.Path == "/v1/finalize" && r.Method == http.MethodPost {
+			if ok, reason := g.beginFinalizeGate(runtimes[0]); !ok {
+				http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s %s"}}`, runtimes[0].id, reason), http.StatusConflict)
+				return
+			}
+			defer g.endFinalizeGate(runtimes[0])
 			g.finalizeMu.Lock()
 			defer g.finalizeMu.Unlock()
 			log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", runtimes[0].id, r.URL.Path)
@@ -1540,7 +1579,13 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 
 	rt, err := g.reserveRuntimeForModel(model, inputTokens)
 	if err != nil {
-		logRequestStage(ctx, "gateway_runtime_select_failed", "error", err)
+		var unavailableModelErr *ModelTemporarilyUnavailableError
+		if errors.As(err, &unavailableModelErr) {
+			logRequestStage(ctx, "gateway_model_unavailable_retry_later", "model", unavailableModelErr.Model, "retry_after_seconds", modelUnavailableRetryAfterSeconds, "error", err)
+			w.Header().Set("Retry-After", modelUnavailableRetryAfterSeconds)
+		} else {
+			logRequestStage(ctx, "gateway_runtime_select_failed", "error", err)
+		}
 		if isParticipantRateLimitError(err) {
 			g.metrics.RecordParticipantLimitRejection("all", normalizeModelID(model), "pooled_route")
 		}
@@ -1566,8 +1611,9 @@ func (g *Gateway) validatePooledRequestedModel(requestModel string) error {
 	}
 	g.mu.Lock()
 	runtimes := append([]*devshardRuntime(nil), g.runtimeOrder...)
+	listed := isModelListedInLimits(g.settings.ModelLimits, requestModel)
 	g.mu.Unlock()
-	if len(runtimes) == 0 {
+	if len(runtimes) == 0 || listed {
 		return nil
 	}
 	for _, rt := range runtimes {
@@ -1678,7 +1724,12 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 			logRequestStage(ctx, "gateway_devshard_limiter_bypassed_during_poc", "escrow", devshardID, "input_tokens", inputTokens, "reason", currentPoCPhaseReason())
 		}
 
-		g.reserveRuntime(rt, inputTokens)
+		if ok, reason := g.reserveRuntimeIfAccepting(rt, inputTokens); !ok {
+			logRequestStage(ctx, "gateway_devshard_unavailable", "escrow", devshardID, "reason", reason)
+			g.recordGatewayRequestOutcome(limitModel, "runtime_unavailable", runtimeSkipReasonKey(reason))
+			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s is unavailable for new inferences: %s"}}`, devshardID, reason), http.StatusConflict)
+			return
+		}
 		defer g.releaseRuntime(rt, inputTokens)
 		logRequestStage(ctx, "gateway_devshard_runtime_selected", "escrow", devshardID, "input_tokens", inputTokens)
 
@@ -1692,10 +1743,11 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if innerPath == "/v1/finalize" && r.Method == http.MethodPost {
-		if rt.escrowHasBackgroundWork() {
-			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, devshardID), http.StatusConflict)
+		if ok, reason := g.beginFinalizeGate(rt); !ok {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s %s"}}`, devshardID, reason), http.StatusConflict)
 			return
 		}
+		defer g.endFinalizeGate(rt)
 		g.finalizeMu.Lock()
 		defer g.finalizeMu.Unlock()
 		log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", devshardID, r.URL.Path)
@@ -1826,6 +1878,36 @@ func (g *Gateway) serveInactiveDevshardMetadata(w http.ResponseWriter, r *http.R
 	return true
 }
 
+// beginFinalizeGate takes the drain-barrier check and the finalizing mark in a
+// single g.mu critical section -- the same lock admission holds across its own
+// gate check and reservation -- so no request can be admitted after finalize has
+// observed the runtime as quiet. It reports false plus a refusal reason when
+// another finalize is already in flight or background work has not drained; a
+// second finalize is refused rather than queued on finalizeMu, where it would
+// run after the first one reopened admission.
+func (g *Gateway) beginFinalizeGate(rt *devshardRuntime) (bool, string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if rt.finalizing.Load() {
+		return false, "already has a finalize in flight"
+	}
+	if rt.escrowHasBackgroundWork() {
+		return false, "has active requests"
+	}
+	rt.finalizing.Store(true)
+	return true, ""
+}
+
+// endFinalizeGate reopens admission. After a successful finalize the runtime is
+// protected by other means -- the /devshard/{id} route deactivates it
+// (markDevshardInactiveAfterFinalize), and on the single-runtime route the
+// settled session phase makes acceptsNewInferences refuse -- so clearing the
+// mark changes nothing there; every failure path -- non-2xx, or a panic in the
+// inner handler -- needs it so the runtime stays usable.
+func (g *Gateway) endFinalizeGate(rt *devshardRuntime) {
+	rt.finalizing.Store(false)
+}
+
 func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRuntime) {
 	rt.active.Store(false)
 	if g.accounting != nil && rt.proxy != nil && rt.proxy.sm != nil {
@@ -1920,9 +2002,10 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 
 	var candidates []*devshardRuntime
 	skipReasonCounts := make(map[string]int)
+	chainMaxNonce := g.chainMaxNonce()
 	for _, rt := range g.runtimeOrder {
-		if g.runtimeAtNonceLimit(rt) {
-			if g.settings.EscrowRotation.Enabled {
+		if runtimeAtNonceLimit(rt, chainMaxNonce) {
+			if g.settings.EscrowRotation.Enabled && chainMaxNonce != 0 {
 				depletedEscrows = append(depletedEscrows, struct {
 					id     string
 					model  string
@@ -1953,6 +2036,9 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 			}
 		}
 		if len(matching) == 0 {
+			if isModelListedInLimits(g.settings.ModelLimits, requestModel) {
+				return nil, &ModelTemporarilyUnavailableError{Model: requestModel}
+			}
 			return nil, &UnsupportedModelError{Model: requestModel, Supported: supportedModels(candidates)}
 		}
 		candidates = matching
@@ -2001,12 +2087,11 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 	return chosen, nil
 }
 
-func (g *Gateway) runtimeAtNonceLimit(rt *devshardRuntime) bool {
+func runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32) bool {
 	if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 		return false
 	}
-	nonce := rt.proxy.sm.LatestNonce()
-	return nonce >= nonceDeactivationLimit
+	return rt.proxy.sm.LatestNonce() >= escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
 }
 
 // formatCandidateWeightsLocked returns a compact "id=W(e)" diagnostic
@@ -2044,6 +2129,20 @@ func (g *Gateway) runtimeLoad(rt *devshardRuntime, requestModel string) float64 
 		return rt.load(1.0)
 	}
 	return rt.load(g.capacity.EscrowWeightForModel(rt.id, firstNonEmpty(requestModel, rt.model)))
+}
+
+// reserveRuntimeIfAccepting re-runs the admission gate and reserves in one g.mu
+// critical section, mirroring reserveRuntimeForModel. The direct /devshard/{id}
+// chat route gates early, before parsing and limiter admission, so it must
+// re-check at reservation time: a finalize may have closed the gate in between.
+func (g *Gateway) reserveRuntimeIfAccepting(rt *devshardRuntime, inputTokens int64) (bool, string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if ok, reason := rt.acceptsNewInferences(); !ok {
+		return false, reason
+	}
+	g.reserveRuntimeLocked(rt, inputTokens)
+	return true, ""
 }
 
 func (g *Gateway) reserveRuntime(rt *devshardRuntime, inputTokens int64) {
@@ -3842,7 +3941,7 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if rt, ok := g.runtimes[id]; ok {
-		if rt.activeUserRequests.Load() > 0 {
+		if rt.escrowHasBackgroundWork() {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, id), http.StatusConflict)
 			return
 		}
@@ -4054,6 +4153,54 @@ func (g *Gateway) sortRuntimeOrderLocked() {
 	})
 }
 
+const epochRetentionRetireReason = "epoch retention prune"
+
+// retireExpiredEpochEscrows drops gateway runtimes whose creation epoch is
+// below the host prune cutoff (retain 3: current + two previous). Settlement
+// is not attempted: chain settle only accepts current or previous epoch.
+func (g *Gateway) retireExpiredEpochEscrows() {
+	if g == nil || g.phaseGate == nil {
+		return
+	}
+	current := g.phaseGate.Snapshot().EpochIndex
+	cutoff := storage.RetentionCutoff(current, storage.DefaultEpochRetain)
+	if cutoff == 0 {
+		return
+	}
+
+	g.mu.Lock()
+	type expired struct {
+		id            string
+		creationEpoch uint64
+	}
+	var stale []expired
+	for _, rt := range g.runtimeOrder {
+		if rt == nil || rt.creationEpoch == 0 || rt.creationEpoch >= cutoff {
+			continue
+		}
+		// Settlement owns the runtime until it succeeds, hits ErrEscrowSettled or
+		// exhausts its retries; every one of those paths retires. Closing the
+		// runtime's store underneath an in-flight settle would strand the funds.
+		if rt.settlementPending.Load() {
+			continue
+		}
+		// runtimeDrained fires the deferred retire once requests finish; without
+		// this the 30s tick re-logs the same deferral until the runtime drains.
+		if rt.retirePending.Load() {
+			continue
+		}
+		stale = append(stale, expired{id: rt.id, creationEpoch: rt.creationEpoch})
+	}
+	g.mu.Unlock()
+
+	for _, e := range stale {
+		log.Printf("escrow_epoch_retention_retire escrow=%s creation_epoch=%d current_epoch=%d cutoff=%d",
+			e.id, e.creationEpoch, current, cutoff)
+		g.deactivateDevshardByIDWithReason(e.id, epochRetentionRetireReason)
+		g.retireRuntime(e.id, epochRetentionRetireReason)
+	}
+}
+
 // retireRuntime drops a runtime from the in-memory registry and closes it,
 // releasing its user session and the per-runtime SQLite handles that session owns.
 func (g *Gateway) retireRuntime(id, reason string) bool {
@@ -4214,27 +4361,6 @@ func (g *Gateway) deactivateDevshardByIDWithReason(id, reason string) bool {
 	return true
 }
 
-// deactivateAndSettleDevshardByID stops new traffic to an escrow and settles
-// it. If requests are still in flight it marks the escrow settlement-pending
-// and returns; the drain hook in releaseRuntime settles once the last request
-// finishes. Otherwise it settles immediately.
-func (g *Gateway) deactivateAndSettleDevshardByID(id, reason string) {
-	if !g.deactivateDevshardByIDWithReason(id, reason) {
-		return
-	}
-	g.markSettlementPending(id, reason)
-
-	g.mu.Lock()
-	rt, ok := g.runtimes[id]
-	g.mu.Unlock()
-	if ok && rt.escrowHasBackgroundWork() {
-		log.Printf("settlement_queued_waiting_for_drain escrow=%s reason=%s active_requests=%d pending_race_cleanup=%d",
-			id, reason, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
-		return
-	}
-	g.scheduleAutoSettlement(id, reason)
-}
-
 // markSettlementPending records that an escrow must be settled once its
 // in-flight requests drain. The reason is stored before the flag so the
 // lock-free drain hook in releaseRuntime reads a consistent value.
@@ -4375,6 +4501,7 @@ func (g *Gateway) scheduleDepletedEscrowReplacement(id, modelID, reason string) 
 	}()
 }
 
+// replaceDepletedEscrow takes a depleted escrow that rotation can replace out of service, then tries one replacement for it and does not retry a failed one.
 func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason string) error {
 	g.mu.Lock()
 	settings := g.settings
@@ -4385,6 +4512,13 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	model, ok := replacementModelForDepletedEscrow(settings, modelID)
 	if !ok {
 		return fmt.Errorf("no escrow rotation model configured for %q", modelID)
+	}
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(ctx, id, reason, settings)
+	if err != nil {
+		return fmt.Errorf("deactivate depleted escrow: %w", err)
+	}
+	if !isTakenOutOfService {
+		return nil
 	}
 
 	var epoch uint64
@@ -4401,11 +4535,6 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	}
 	log.Printf("escrow_depletion_replacement_created old_escrow=%s new_escrow=%d model=%q reason=%q tx_hash=%s",
 		id, result.EscrowID, model.ModelID, reason, result.TxHash)
-	if !settings.EscrowRotation.SettlementEnabled {
-		g.deactivateDevshardByIDWithReason(id, reason)
-	} else {
-		g.deactivateAndSettleDevshardByID(id, reason)
-	}
 	return nil
 }
 
@@ -4420,6 +4549,42 @@ func replacementModelForDepletedEscrow(settings GatewaySettings, modelID string)
 		}
 	}
 	return EscrowRotationModelSettings{}, false
+}
+
+// deactivateDepletedEscrow saves the escrow inactive, with its settlement mark when settlement is enabled, before stopping its traffic in memory, and reports whether this call took it out of service.
+func (g *Gateway) deactivateDepletedEscrow(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
+	isSettlementEnabled := settings.EscrowRotation.SettlementEnabled
+	var isDeactivatedInStore bool
+	if err := withDBRetry(ctx, func() error {
+		var err error
+		isDeactivatedInStore, err = g.store.DeactivateDevshardIfActive(id, isSettlementEnabled)
+		return err
+	}); err != nil {
+		return false, err
+	}
+	isSettlementDue := isSettlementEnabled && isDeactivatedInStore
+	g.mu.Lock()
+	depletedRuntime, isResident := g.runtimes[id]
+	if isResident {
+		depletedRuntime.active.Store(false)
+		g.releaseHostPing(id)
+		if isSettlementDue {
+			depletedRuntime.settlementReason = reason
+			depletedRuntime.settlementPending.Store(true)
+		}
+	}
+	g.mu.Unlock()
+	log.Printf("escrow_depletion_deactivated escrow=%s reason=%q deactivated_in_store=%t settlement_due=%t", id, reason, isDeactivatedInStore, isSettlementDue)
+	if !isSettlementDue {
+		return isDeactivatedInStore, nil
+	}
+	if isResident && depletedRuntime.escrowHasBackgroundWork() {
+		log.Printf("settlement_queued_waiting_for_drain escrow=%s reason=%s active_requests=%d pending_race_cleanup=%d",
+			id, reason, depletedRuntime.activeUserRequests.Load(), depletedRuntime.pendingRaceCleanup.Load())
+		return isDeactivatedInStore, nil
+	}
+	g.scheduleAutoSettlement(id, reason)
+	return isDeactivatedInStore, nil
 }
 
 func (g *Gateway) scheduleAutoSettlement(id, reason string) {

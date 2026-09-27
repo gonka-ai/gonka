@@ -26,6 +26,11 @@ guard_old_volume=""
 guard_replacement_volume=""
 
 cleanup() {
+    docker rm -f "$project-source-writer" >/dev/null 2>&1 || true
+    if [[ -n ${fresh_compose+x} ]]; then
+        "${fresh_compose[@]}" down --volumes --remove-orphans --timeout 1 \
+            >/dev/null 2>&1 || true
+    fi
     "${new_compose[@]}" down --volumes --remove-orphans --timeout 1 \
         >/dev/null 2>&1 || true
     "${guard_new_compose[@]}" down --volumes --remove-orphans --timeout 1 \
@@ -128,6 +133,41 @@ preflight_result=$("$preflight" --source-container "$new_container" \
     --target-dir "$GONKA_POSTGRES_TEST_DATA")
 grep -q 'no migration copy is required' <<<"$preflight_result" || fail \
     "preflight did not recognize migrated persistent PGDATA"
+
+# A target-only advance is valid. A later write to the preserved source is
+# divergent even when its checkpoint remains numerically below the target.
+"${new_compose[@]}" exec -T "$service" psql -U devshardd -d devshardd -v ON_ERROR_STOP=1 -c \
+    "CREATE TABLE target_writes AS SELECT i, repeat(md5(i::text), 20) AS payload FROM generate_series(1,20000) i; CHECKPOINT;" >/dev/null
+"${new_compose[@]}" restart "$service" >/dev/null
+wait_for_postgres "${new_compose[@]}"
+"${new_compose[@]}" stop "$service" >/dev/null
+source_writer="$project-source-writer"
+docker run -d --name "$source_writer" -v "$old_volume:/var/lib/postgresql/data" postgres:16-alpine >/dev/null
+for _ in {1..60}; do
+    docker exec "$source_writer" pg_isready -U devshardd -d devshardd >/dev/null 2>&1 && break
+    sleep 1
+done
+docker exec "$source_writer" psql -U devshardd -d devshardd -v ON_ERROR_STOP=1 -c \
+    "INSERT INTO migration_probe VALUES ('source-only'); CHECKPOINT;" >/dev/null
+docker stop "$source_writer" >/dev/null
+docker rm "$source_writer" >/dev/null
+source_lsn=$(docker run --rm -v "$old_volume:/data:ro" --entrypoint sh postgres:16-alpine -c "pg_controldata /data | sed -n 's/^Latest checkpoint location: *//p'")
+target_lsn=$(docker run --rm -v "$GONKA_POSTGRES_TEST_DATA:/target:ro" --entrypoint sh postgres:16-alpine -c "pg_controldata /target/data | sed -n 's/^Latest checkpoint location: *//p'")
+python3 - "$source_lsn" "$target_lsn" <<'LSN'
+import sys
+value = lambda lsn: int(lsn.split('/')[0], 16) * 2**32 + int(lsn.split('/')[1], 16)
+assert value(sys.argv[1]) < value(sys.argv[2]), sys.argv
+LSN
+# Call the real entrypoint directly, without Compose's automatic restarts.
+if docker run --rm -e PGDATA=/var/lib/postgresql/gonka/data \
+    -v "$old_volume:/var/lib/postgresql/data:ro" \
+    -v "$GONKA_POSTGRES_TEST_DATA:/var/lib/postgresql/gonka" \
+    -v "$script_dir/devshard-postgres-entrypoint.sh:/entrypoint:ro" \
+    --entrypoint /entrypoint postgres:16-alpine postgres >"$tmpdir/divergence.log" 2>&1; then
+    fail "accepted a changed source whose LSN is below the target"
+fi
+grep -q 'source changed after the copy' "$tmpdir/divergence.log" || fail "wrong divergence refusal"
+echo "devshard-postgres-upgrade_test: divergent source rejected ($source_lsn < $target_lsn)"
 
 # Once migrated, even removing the container is safe: the bind-mounted PGDATA
 # is authoritative and the replacement no longer needs the anonymous source.
@@ -259,5 +299,37 @@ recovered_row=$("${guard_new_compose[@]}" exec -T "$service" psql \
     "SELECT value FROM detached_volume_probe;")
 [[ $recovered_row == recovered-v4-row ]] || fail \
     "recovered PostgreSQL data was lost after detaching the v4 volume"
+
+# A fresh HA installation on the pinned image: initdb and its hooks run as the
+# postgres user, so the completion marker must land inside PGDATA, and a plain
+# restart must accept the cluster it just created.
+fresh_data="$tmpdir/fresh-persistent"
+mkdir -p "$fresh_data" "$tmpdir/fresh-existing" "$tmpdir/fresh-versiond-data" \
+    "$tmpdir/fresh-versiond2-data"
+fresh_compose=(env "GONKA_POSTGRES_TEST_DATA=$fresh_data" \
+    "GONKA_POSTGRES_TEST_EXISTING=$tmpdir/fresh-existing" \
+    "GONKA_POSTGRES_TEST_VERSIOND_DATA=$tmpdir/fresh-versiond-data" \
+    "GONKA_POSTGRES_TEST_VERSIOND2_DATA=$tmpdir/fresh-versiond2-data" \
+    docker compose --project-name "$project-fresh" -f "$base" -f "$overlay")
+"${fresh_compose[@]}" up -d "$service"
+wait_for_postgres "${fresh_compose[@]}"
+# pg_isready answers as soon as the official entrypoint's temporary server is
+# up, which is before the initdb hooks have run; the marker follows shortly.
+fresh_marked=false
+for _ in {1..60}; do
+    if "${fresh_compose[@]}" exec -T "$service" \
+        test -f /var/lib/postgresql/gonka/data/.gonka-init-complete 2>/dev/null; then
+        fresh_marked=true
+        break
+    fi
+    sleep 1
+done
+[[ $fresh_marked == true ]] || fail \
+    "fresh initialization did not record its completion marker inside PGDATA: $("${fresh_compose[@]}" logs --no-color "$service" 2>&1 | tail -20)"
+"${fresh_compose[@]}" up -d --force-recreate "$service"
+wait_for_postgres "${fresh_compose[@]}"
+fresh_logs=$("${fresh_compose[@]}" logs --no-color "$service" 2>&1)
+! grep -q 'no completion marker' <<<"$fresh_logs" || fail \
+    "a completed fresh cluster was refused on restart"
 
 echo "devshard-postgres-upgrade_test: ok"

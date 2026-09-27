@@ -491,6 +491,68 @@ func TestRecoverSession_HeartbeatContinuesTurnStart(t *testing.T) {
 	}
 }
 
+// TestRecoverSession_HeartbeatDrainCatchUpAfterCrashBeforeDispatch: the drain
+// nonce is persist-first. A crash before dispatch must still deliver it on
+// recovery catch-up.
+func TestRecoverSession_HeartbeatDrainCatchUpAfterCrashBeforeDispatch(t *testing.T) {
+	store := newTestStore(t)
+	var height uint64 = 100
+	now := time.Unix(1000, 0).UTC()
+	oracles := newSessionOracles(3, height, []byte{0xaa})
+	session, group, hosts, user := setupRecoverableHeartbeatSessionWithOracles(t, store, &height, &now, oracles)
+	seedFloorByInference(t, session)
+	ctx := context.Background()
+	seedNonce := session.Nonce()
+
+	setSessionOraclesHeight(oracles, 150)
+	height = 150
+	_, err := session.SendInference(ctx, InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+
+	now = now.Add(heightsync.DefaultHeartbeatConfig().Interval + time.Second)
+	composed, err := session.composeHeartbeatSpan()
+	require.NoError(t, err)
+	require.NotEmpty(t, composed)
+
+	confirmNonce, confirmH, ok := firstRaisingConfirm(session.Diffs(), seedNonce)
+	require.True(t, ok)
+	require.Equal(t, uint64(150), confirmH)
+	span := heartbeatDiffsAfter(session.Diffs(), seedNonce)
+	require.NotEmpty(t, span)
+	require.Greater(t, span[0].Nonce, confirmNonce)
+
+	require.NoError(t, session.Close())
+
+	recovered := recoverHeartbeatSession(t, store, group, hosts, user, &height)
+	t.Cleanup(func() { _ = recovered.Close() })
+	recovered.clock = func() time.Time { return now }
+
+	for i, c := range recovered.Clients() {
+		h, ok := c.(*InProcessClient)
+		require.True(t, ok, "host %d", i)
+		require.Zero(t, h.Host.LatestNonce(), "crash before dispatch: hosts never saw the drain")
+	}
+
+	_, err = recovered.SendInference(ctx, InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+	var caught uint64
+	for i, c := range recovered.Clients() {
+		h, ok := c.(*InProcessClient)
+		require.True(t, ok, "host %d", i)
+		if n := h.Host.LatestNonce(); n > caught {
+			caught = n
+		}
+	}
+	require.GreaterOrEqual(t, caught, confirmNonce,
+		"recovery catch-up must deliver the persisted drain confirm")
+}
+
 func TestRecoverSession_HeartbeatPendingAckLossDoesNotDuplicateTurnOrStall(t *testing.T) {
 	store := newTestStore(t)
 	var height uint64 = 100

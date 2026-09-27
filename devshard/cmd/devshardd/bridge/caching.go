@@ -121,6 +121,8 @@ func EscrowCacheFromInfo(e *bridge.EscrowInfo) storage.EscrowCacheInfo {
 		AutoSealEveryNNonces:      e.AutoSealEveryNNonces,
 		ValidationRate:            e.ValidationRate,
 		VoteThresholdFactor:       e.VoteThresholdFactor,
+		RefusalTimeout:            e.RefusalTimeout,
+		ExecutionTimeout:          e.ExecutionTimeout,
 		EpochID:                   e.EpochID,
 	}
 }
@@ -141,6 +143,8 @@ func EscrowInfoFromCache(c *storage.EscrowCacheInfo) *bridge.EscrowInfo {
 		AutoSealEveryNNonces:      c.AutoSealEveryNNonces,
 		ValidationRate:            c.ValidationRate,
 		VoteThresholdFactor:       c.VoteThresholdFactor,
+		RefusalTimeout:            c.RefusalTimeout,
+		ExecutionTimeout:          c.ExecutionTimeout,
 		EpochID:                   c.EpochID,
 	}
 }

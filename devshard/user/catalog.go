@@ -15,12 +15,13 @@ type catalogHealthzSource interface {
 	CatalogHealthzURL() string
 }
 
-// WaitRouterCatalog polls GET /{version}/healthz on each HTTP client's host
-// base until one returns 200 or ctx is done. That path is catalog admission
-// on the versiond-router, child health on versiond, and the matching probe
-// on e2e hosts. 503, 404, and dial errors keep waiting — root /healthz is
-// never consulted (router process-up is not this version). In-process
-// clients have no catalog URL and return immediately.
+// WaitRouterCatalog polls GET /devshard/{version}/healthz on each HTTP
+// client's public host base until one returns 200 or ctx is done. The public
+// proxy forwards it to the versiond-router catalog probe /{version}/healthz.
+// Direct routers and e2e hosts also accept the public path. 503, 404, and
+// dial errors keep waiting — root /healthz is never consulted (router
+// process-up is not this version). In-process clients have no catalog URL
+// and return immediately.
 func (s *Session) WaitRouterCatalog(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -85,7 +86,7 @@ const (
 	catalogProbeAdmitted
 )
 
-// probeRouterCatalog classifies GET /{version}/healthz on the HTTP client bases.
+// probeRouterCatalog classifies the public catalog probes on the HTTP client bases.
 // 200 means this version is serving. Anything else keeps waiting.
 func probeRouterCatalog(client *http.Client, urls []string) catalogProbe {
 	if len(urls) == 0 {

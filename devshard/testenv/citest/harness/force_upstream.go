@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -126,21 +125,21 @@ func RequireAggregateSpilledInGatewayLogs(t *testing.T, s *Stack) {
 		"expected aggregate spill in gateway logs")
 }
 
-// RequireAggregateSpoolDirEmpty asserts the bind-mounted aggregate spool has no
-// leftover named files (unlinked-at-create + Close).
+// RequireAggregateSpoolDirEmpty asserts the aggregate spool has no leftover
+// named files (unlinked-at-create + Close).
+//
+// List from inside the gateway container: spool.Open creates the dir as 0o700,
+// so a host os.ReadDir on the bind mount fails with EACCES on Linux CI.
 func RequireAggregateSpoolDirEmpty(t *testing.T, s *Stack) {
 	t.Helper()
-	dir := filepath.Join(s.WorkDir, "data", "devshardctl", "aggregate-spool")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return
-		}
-		require.NoError(t, err)
-	}
+	const dir = "/var/lib/devshardctl/aggregate-spool"
+	out := s.ComposeExec(t, "devshardctl", "sh", "-c",
+		`if [ ! -e '`+dir+`' ]; then exit 0; fi; ls -A -1 '`+dir+`'`)
 	var names []string
-	for _, e := range entries {
-		names = append(names, e.Name())
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line != "" {
+			names = append(names, line)
+		}
 	}
 	require.Empty(t, names, "aggregate spool should be empty after request close; got %v", names)
 }

@@ -210,7 +210,7 @@ It is responsible for:
 
 - serving repeated equivalent requests without consuming another devshard nonce
 - caching both streaming and non-streaming successful responses
-- avoiding cache entries for retriable capability errors
+- avoiding cache entries for host capability errors (tool choice, context length)
 - preserving request/escrow headers when serving cached responses
 
 Request accounting records per-request attempts and cache aliases so operators can explain which request produced a cached response and which escrow/nonce attempts were involved.
@@ -441,10 +441,10 @@ For a pooled request:
     - streams SSE data lines directly to the per-send writer
     - calls the per-send receipt handler when devshard_receipt arrives
 14. `raceWriter` forwards output only from the winning nonce to the client writer.
-15. `Redundancy` finalizes the race, updates performance history, and for any failed nonce calls `Session.HandleTimeout(...)`.
-16. `Session.HandleTimeout` waits for the protocol deadline, collects timeout votes, and submits MsgTimeoutInference.
-17. `Proxy` stores eligible responses in the cache and request-accounting log.
-18. `Proxy` returns the final client response.
+15. `Redundancy` finalizes the race, updates performance history, and hands every failed nonce to a background race cleanup.
+16. `Proxy` stores eligible responses in the cache and request-accounting log.
+17. `Proxy` returns the final client response.
+18. In the background, `Session.HandleTimeout` waits for the protocol deadline, collects timeout votes, and submits MsgTimeoutInference; the runtime drain waits for it before settling or retiring the escrow.
 
 ## Dependency Map
 

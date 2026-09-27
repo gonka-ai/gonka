@@ -88,9 +88,8 @@ func main() {
 	}
 }
 
-// registerLiveness mounts GET /{version}/healthz for the gateway catalog
-// wait (same public path as versiond / the versiond-router). GET /health
-// is the container start probe and is not catalog admission.
+// registerLiveness mounts the public gateway catalog probe and its internal
+// router form. GET /health is the container start probe, not catalog admission.
 func registerLiveness(e *echo.Echo, version string) {
 	ok := func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
@@ -98,6 +97,7 @@ func registerLiveness(e *echo.Echo, version string) {
 	e.GET("/health", ok)
 	version = strings.Trim(strings.TrimSpace(version), "/")
 	if version != "" {
+		e.GET(devshardpkg.VersionedRoutePrefix(version)+"/healthz", ok)
 		e.GET("/"+version+"/healthz", ok)
 	}
 }
@@ -107,6 +107,7 @@ func registerLiveness(e *echo.Echo, version string) {
 func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, stubInferenceHTTPStatus int, stubInferenceHTTPMessage string) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
+	g.Use(transport.RequestDecompressionMiddleware)
 
 	withAuth := func(recordChatTerminal bool, handler echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -133,7 +134,7 @@ func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, st
 		}
 	}
 
-	g.POST("/sessions/:id/chat/completions", withAuth(true, inferenceHandler))
+	g.POST("/sessions/:id/chat/completions", withAuth(true, inferenceHandler), transport.ResponseCompressionMiddleware)
 	g.POST("/sessions/:id/height-sync", withAuth(false, srv.HandleHeightSync))
 	g.POST("/sessions/:id/heightsync/repair", withAuth(false, srv.HandleHeightSyncRepair))
 	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))

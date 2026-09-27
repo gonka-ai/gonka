@@ -11,6 +11,28 @@ import (
 // depend on Prove.
 var ErrProveNotImplemented = errors.New("blockoracle: prove not implemented")
 
+// ErrHeaderNotFound is a missing height (pruned, unknown, or empty Comet
+// response), or a dapi with no oracle configured.
+var ErrHeaderNotFound = errors.New("blockoracle: header not found")
+
+// ErrHeaderRPCUnimplemented is a dapi (or stub) that has no GetBlockHeader
+// route. Failover skips Latest() and At() against that backend until the
+// next GetBlockHeader re-probe (15m).
+var ErrHeaderRPCUnimplemented = errors.New("blockoracle: header rpc unimplemented")
+
+// HistoryWindow is how far below the tip At() retains.
+// oldest = max(1, tip − HistoryWindow).
+const HistoryWindow = 100
+
+// OldestHeight is the inclusive floor of the retained window for tip.
+func OldestHeight(tip int64) int64 {
+	oldest := tip - HistoryWindow
+	if oldest < 1 {
+		return 1
+	}
+	return oldest
+}
+
 // BlockOracle is the stable contract between producers (observers, the
 // standalone binary, the in-process dapi mount) and consumers (devshardd
 // hosts, real dapi internals).

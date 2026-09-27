@@ -73,3 +73,20 @@ func TestHeaderFromNewBlock(t *testing.T) {
 	require.Equal(t, want, got.BlockHash)
 	require.Equal(t, "gonka-test", got.ChainID)
 }
+
+func TestAsEventDataNewBlock(t *testing.T) {
+	block := cmttypes.MakeBlock(12, nil, nil, nil)
+	val := cmttypes.EventDataNewBlock{Block: block}
+	got, ok := AsEventDataNewBlock(val)
+	require.True(t, ok)
+	require.Equal(t, block, got.Block)
+
+	got, ok = AsEventDataNewBlock(&val)
+	require.True(t, ok)
+	require.Equal(t, block, got.Block)
+
+	_, ok = AsEventDataNewBlock((*cmttypes.EventDataNewBlock)(nil))
+	require.False(t, ok)
+	_, ok = AsEventDataNewBlock(cmttypes.EventDataNewBlockHeader{})
+	require.False(t, ok)
+}

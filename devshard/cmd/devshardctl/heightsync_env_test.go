@@ -25,10 +25,10 @@ func resetHeightSyncForTest() {
 
 func unsetHeightSyncSources(t *testing.T) {
 	t.Helper()
-	t.Setenv("DEVSHARD_CHAINORACLE_URL", "")
 	t.Setenv("DEVSHARD_CHAIN_RPC", "")
 	t.Setenv("NODE_RPC_URL", "")
 	t.Setenv("DEVSHARD_COMET_RPC", "")
+	t.Setenv("NODE_MANAGER_ADDR", "")
 	t.Setenv(envGatewayChainOracle, "")
 }
 
@@ -43,11 +43,25 @@ func TestExtraClientConfigFromEnv_EmptyIsNil(t *testing.T) {
 func TestExtraClientConfigFromEnv_InvalidK(t *testing.T) {
 	resetHeightSyncForTest()
 	unsetHeightSyncSources(t)
-	t.Setenv("DEVSHARD_CHAINORACLE_URL", "http://127.0.0.1:9")
+	t.Setenv("NODE_MANAGER_ADDR", "api:9400")
 	t.Setenv("DEVSHARD_HEIGHTSYNC_K", "xyz")
 	cfg, err := extraClientConfigFromEnv()
 	require.Error(t, err)
 	require.Nil(t, cfg)
+}
+
+func TestExtraClientConfigFromEnv_ChainGRPCEnablesCourier(t *testing.T) {
+	resetHeightSyncForTest()
+	t.Cleanup(resetHeightSyncForTest)
+	unsetHeightSyncSources(t)
+	t.Setenv("DEVSHARD_CHAIN_GRPC", "genesis-node:9090")
+	cfg, err := extraClientConfigFromEnv()
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.NotNil(t, cfg.HeightSync)
+	require.NotNil(t, cfg.HeightSyncPeerTips)
+	require.Nil(t, cfg.HeightSyncLogOracle, "chain gRPC alone must not start the follower")
+	require.Equal(t, "peer_tip_cache", cfg.HeightSync.SourceKind())
 }
 
 func TestExtraClientConfigFromEnv_ChainRPCEnablesWithoutOracleURL(t *testing.T) {
@@ -61,6 +75,18 @@ func TestExtraClientConfigFromEnv_ChainRPCEnablesWithoutOracleURL(t *testing.T) 
 	require.NotNil(t, cfg.HeightSync)
 	require.NotNil(t, cfg.HeightSyncPeerTips)
 	require.Nil(t, cfg.HeightSyncLogOracle, "chain RPC alone must not start the follower")
+	require.Equal(t, "peer_tip_cache", cfg.HeightSync.SourceKind())
+}
+
+func TestExtraClientConfigFromEnv_NodeManagerEnablesCourier(t *testing.T) {
+	resetHeightSyncForTest()
+	t.Cleanup(resetHeightSyncForTest)
+	unsetHeightSyncSources(t)
+	t.Setenv("NODE_MANAGER_ADDR", "api:9400")
+	cfg, err := extraClientConfigFromEnv()
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.NotNil(t, cfg.HeightSync)
 	require.Equal(t, "peer_tip_cache", cfg.HeightSync.SourceKind())
 }
 

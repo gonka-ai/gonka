@@ -434,7 +434,30 @@ func (s *Stack) ComposeLogsTail(tail int, services ...string) (string, error) {
 	if tail <= 0 {
 		tail = 120
 	}
-	args := append(append([]string{"compose"}, s.composeFileArgs()...), "logs", "--no-color", "--tail", strconv.Itoa(tail))
+	return s.composeLogs(tail, services)
+}
+
+// ComposeLogsAll returns the full log buffer (no --tail). One-shot warns stay
+// visible after later SSE/debug noise that would evict a short tail window.
+func (s *Stack) ComposeLogsAll(services ...string) (string, error) {
+	return s.composeLogs(0, services)
+}
+
+// ComposeLogsContain reports whether needle appears anywhere in those services'
+// full logs.
+func (s *Stack) ComposeLogsContain(needle string, services ...string) (bool, error) {
+	out, err := s.ComposeLogsAll(services...)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(out, needle), nil
+}
+
+func (s *Stack) composeLogs(tail int, services []string) (string, error) {
+	args := append(append([]string{"compose"}, s.composeFileArgs()...), "logs", "--no-color")
+	if tail > 0 {
+		args = append(args, "--tail", strconv.Itoa(tail))
+	}
 	args = append(args, services...)
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = s.WorkDir

@@ -15,6 +15,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	devshardpkg "devshard"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -69,10 +70,23 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 }
 
 func TestHTTPClient_CatalogHealthzURL(t *testing.T) {
-	cfg := DefaultClientConfig()
-	cfg.RoutePrefix = "/devshard/v2"
-	c := NewHTTPClient("http://router:8080", "1", nil, cfg)
-	require.Equal(t, "http://router:8080/v2/healthz", c.CatalogHealthzURL())
+	for _, tc := range []struct {
+		name, base, prefix, want string
+	}{
+		{"public host", "https://host.example", "/devshard/v2", "https://host.example/devshard/v2/healthz"},
+		{"direct router", "http://router:8080", "/devshard/v2", "http://router:8080/devshard/v2/healthz"},
+		{"normalized", " https://host.example/ ", " /devshard/v2/ ", "https://host.example/devshard/v2/healthz"},
+		{"default version", "https://host.example", "", "https://host.example" + devshardpkg.DefaultRoutePrefix() + "/healthz"},
+		{"empty base", " ", "/devshard/v2", ""},
+		{"invalid prefix", "https://host.example", "/other/v2", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultClientConfig()
+			cfg.RoutePrefix = tc.prefix
+			c := NewHTTPClient(tc.base, "1", nil, cfg)
+			require.Equal(t, tc.want, c.CatalogHealthzURL())
+		})
+	}
 	require.Empty(t, (*HTTPClient)(nil).CatalogHealthzURL())
 }
 
@@ -297,7 +311,7 @@ func TestParseSSE_PartialResult(t *testing.T) {
 	require.Equal(t, int64(1000), result.ConfirmedAt)
 }
 
-// truncatedReader returns data followed by an io.ErrUnexpectedEOF to simulate a broken connection.
+// truncatedReader returns data and then io.ErrUnexpectedEOF.
 type truncatedReader struct {
 	data []byte
 	pos  int
@@ -306,11 +320,11 @@ type truncatedReader struct {
 
 func (r *truncatedReader) Read(p []byte) (int, error) {
 	if r.done {
-		return 0, fmt.Errorf("connection reset")
+		return 0, io.ErrUnexpectedEOF
 	}
 	if r.pos >= len(r.data) {
 		r.done = true
-		return 0, fmt.Errorf("connection reset")
+		return 0, io.ErrUnexpectedEOF
 	}
 	n := copy(p, r.data[r.pos:])
 	r.pos += n
@@ -588,6 +602,7 @@ func (r *endlessReader) Read(p []byte) (int, error) {
 func TestMaxSSEEventBytes_DefaultsToHardCap(t *testing.T) {
 	client := &HTTPClient{config: DefaultClientConfig()}
 	require.Equal(t, DefaultMaxSSEEventBytes, client.maxSSEEventBytes())
+	require.Equal(t, MaxJSONResponseBytes, DefaultMaxSSEEventBytes, "a host that does not stream sends its whole response as one event")
 
 	client.config.MaxSSEEventBytes = 4096
 	require.Equal(t, 4096, client.maxSSEEventBytes())
@@ -665,7 +680,7 @@ func TestParseSSE_RealisticLogprobChunkStaysWellUnderTheCap(t *testing.T) {
 		strings.Repeat("a", 29), strings.Join(top, ","))
 
 	require.Less(t, len(chunk), DefaultMaxSSEEventBytes/4,
-		"a real widest-shape chunk must sit far below the 1 MiB event cap")
+		"a real widest-shape chunk must sit far below the event cap")
 
 	client := &HTTPClient{config: DefaultClientConfig()}
 	var forwarded []string
@@ -680,6 +695,27 @@ func TestParseSSE_RealisticLogprobChunkStaysWellUnderTheCap(t *testing.T) {
 	require.NotNil(t, result.Receipt)
 	require.Len(t, forwarded, 1)
 	require.Contains(t, forwarded[0], "top_logprobs")
+}
+
+// A host that does not stream writes its whole response as one data line, and the gateway always asks for logprobs, so a few thousand tokens already pass 1 MiB.
+func TestParseSSE_WholeResponseWithLogprobsParsesAsOneEvent(t *testing.T) {
+	const entry = `{"token":"tok","logprob":-0.1234567890123,"bytes":[116,111,107],"top_logprobs":[{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]}]}`
+	logprobEntries := strings.TrimSuffix(strings.Repeat(entry+",", 4096), ",")
+	response := `{"id":"chatcmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"answer"},"logprobs":{"content":[` + logprobEntries + `]},"finish_reason":"stop"}]}`
+	require.Greater(t, len(response), 1<<20, "the response must be larger than the old 1 MiB cap")
+	client := &HTTPClient{config: DefaultClientConfig()}
+	var forwarded []string
+	sink := lineCollector(func(line string) {
+		forwarded = append(forwarded, line)
+	})
+
+	result, err := client.parseSSEResponse(context.Background(),
+		strings.NewReader("data: "+response+"\n\n"+receiptOnlySSE), sink, nil)
+
+	require.NoError(t, err, "a whole response with forced logprobs was rejected as an oversize event")
+	require.NotNil(t, result.Receipt)
+	require.Len(t, forwarded, 1)
+	require.Contains(t, forwarded[0], `"finish_reason":"stop"`, "the response line was not forwarded whole")
 }
 
 func TestReadBoundedResponseBody_RejectsOversizeInsteadOfTruncating(t *testing.T) {

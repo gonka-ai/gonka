@@ -13,7 +13,7 @@ const (
 	// turnover must land at least this often. Wall clock, not blocks — mainnet
 	// height is the *result* of a turnover, so no party can schedule the next
 	// one from a height it has not learned yet.
-	DefaultHeartbeatInterval = 6 * time.Second
+	DefaultHeartbeatInterval = 12 * time.Second
 	// DefaultTurnTimeoutMultiple sets TurnTimeout = 2 * Interval.
 	//
 	// Patience equal to the interval leaves a turn none: the span is dispatched
@@ -22,11 +22,12 @@ const (
 	// interval then reopens forever and records no turnover at all — the failure
 	// is total rather than degraded, which is why this needs real headroom.
 	DefaultTurnTimeoutMultiple = 2
-	// DefaultIdleMultiple sets T_idle = 4 * Interval: how long a host tolerates
-	// user silence before it arms close-ready. It must exceed
-	// (1 + DefaultTurnTimeoutMultiple) * Interval, the worst-case cost of one
-	// lost turnover, or a host arms while the producer is still mid-retry.
+	// DefaultTurnTimeout is the shipped TurnTimeout: 2 · Interval.
+	DefaultTurnTimeout = DefaultTurnTimeoutMultiple * DefaultHeartbeatInterval
+	// DefaultIdleMultiple sets T_idle = 4 * Interval.
 	DefaultIdleMultiple = 4
+	// DefaultHeartbeatIdleTimeout is T_idle over the shipped interval.
+	DefaultHeartbeatIdleTimeout = DefaultIdleMultiple * DefaultHeartbeatInterval
 
 	// MinAckDeadlineBlocks is the floor on D_ack. Zero would make an ack late
 	// the instant a block ticks, which no round trip can beat.
@@ -49,9 +50,6 @@ const (
 
 	DefaultRepairStagger = time.Second
 )
-
-// DefaultHeartbeatIdleTimeout is T_idle over the shipped interval.
-const DefaultHeartbeatIdleTimeout = DefaultIdleMultiple * DefaultHeartbeatInterval
 
 // HeartbeatConfig is the log-plane height cadence (spec §20).
 //
@@ -134,8 +132,9 @@ type RepairConfig struct {
 	MaxProbesPerWindow int
 }
 
-// DefaultHeartbeatConfig returns the shipped defaults: 6s interval, 12s turn
-// timeout, 24s idle, 1s blocks, and the D_ack those imply.
+// DefaultHeartbeatConfig returns the shipped defaults: 12s interval,
+// 2 · Interval turn timeout, 4 · Interval idle, 1s blocks, and the D_ack
+// those imply.
 func DefaultHeartbeatConfig() HeartbeatConfig {
 	return HeartbeatConfig{}.withDefaults()
 }
@@ -145,19 +144,29 @@ func DefaultRepairConfig() RepairConfig {
 	return RepairConfig{Stagger: DefaultRepairStagger}
 }
 
-// withDefaults fills zero fields. TurnTimeout, IdleTimeout and AckDeadlineBlocks
-// are all derived from Interval, so overriding the interval alone cannot produce
-// a config that Validate rejects — including on the block-denominated side,
-// which is what a bare constant could not manage.
+// withDefaults fills zero fields. Compiled zeros are the shipped schedule
+// (12s / 2 · Interval / 4 · Interval). Overlaying IntervalMs alone still
+// derives TurnTimeout and IdleTimeout from that interval (2 · and 4 ·) so a
+// partial overlay cannot produce a config Validate rejects on the scheduling
+// side. D_ack is derived from the resolved turnover budget.
 func (c HeartbeatConfig) withDefaults() HeartbeatConfig {
+	intervalSet := c.Interval > 0
 	if c.Interval <= 0 {
 		c.Interval = DefaultHeartbeatInterval
 	}
 	if c.TurnTimeout <= 0 {
-		c.TurnTimeout = DefaultTurnTimeoutMultiple * c.Interval
+		if intervalSet {
+			c.TurnTimeout = DefaultTurnTimeoutMultiple * c.Interval
+		} else {
+			c.TurnTimeout = DefaultTurnTimeout
+		}
 	}
 	if c.IdleTimeout <= 0 {
-		c.IdleTimeout = DefaultIdleMultiple * c.Interval
+		if intervalSet {
+			c.IdleTimeout = DefaultIdleMultiple * c.Interval
+		} else {
+			c.IdleTimeout = DefaultHeartbeatIdleTimeout
+		}
 	}
 	if c.BlockTime <= 0 {
 		c.BlockTime = DefaultBlockTime

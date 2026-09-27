@@ -18,6 +18,7 @@ import (
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
 	"devshard/signing"
+	"devshard/state"
 	"devshard/stub"
 	"devshard/types"
 )
@@ -310,6 +311,72 @@ func TestHeartbeat_QuietSessionOpensTurn(t *testing.T) {
 	require.Equal(t, uint64(100), rec.HReq)
 }
 
+// TestHeartbeat_DrainsPendingRaiseBeforeSpan is the producer fix for mixing a
+// host raise into heartbeat 1 while later slots still stamp the old F.
+func TestHeartbeat_DrainsPendingRaiseBeforeSpan(t *testing.T) {
+	var height uint64 = 100
+	now := time.Unix(1000, 0).UTC()
+	oracles, own := sessionOracles(3, height)
+	session := setupHeartbeatSessionWithOracles(t, &height, oracles,
+		WithHeartbeatClock(func() time.Time { return now }))
+	t.Cleanup(func() { _ = session.Close() })
+
+	floor, _, known := session.StateMachine().HeightSyncFloorAsOf(session.Nonce() + 1)
+	require.True(t, known)
+	require.Equal(t, uint64(100), floor)
+
+	for _, o := range own {
+		o.height.Store(150)
+	}
+	height = 150
+	_, err := session.SendInference(context.Background(), InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, pendingConfirmStarts(session),
+		"confirm must still be pending so the span is what drains it")
+
+	now = now.Add(heightsync.DefaultHeartbeatConfig().Interval + time.Second)
+	base := session.Nonce()
+	require.NoError(t, session.MaybeHeartbeat(context.Background()))
+
+	confirmNonce, confirmH, ok := firstRaisingConfirm(session.Diffs(), base)
+	require.True(t, ok, "drain must persist the pending confirm")
+	require.Equal(t, uint64(150), confirmH)
+	span := heartbeatDiffsAfter(session.Diffs(), base)
+	require.GreaterOrEqual(t, len(span), 2, "group size ≥ 2 so a later heartbeat exists")
+	require.Greater(t, span[0].Nonce, confirmNonce,
+		"confirm must land on its own nonce before the span")
+	for _, d := range span {
+		for _, tx := range d.Txs {
+			if hb := tx.GetHeartbeat(); hb != nil {
+				require.Equal(t, uint64(150), hb.ObservedHeight,
+					"every heartbeat copies F after the raise, nonce %d", d.Nonce)
+			}
+			require.Nil(t, tx.GetConfirmStart(),
+				"confirm must not share a heartbeat nonce")
+		}
+	}
+	rec := session.HeartbeatTurnTracker().Record(span[0].Nonce)
+	require.NotNil(t, rec)
+	require.Equal(t, uint64(150), rec.HReq)
+}
+
+func firstRaisingConfirm(diffs []types.Diff, after uint64) (nonce, height uint64, ok bool) {
+	for _, d := range diffs {
+		if d.Nonce <= after {
+			continue
+		}
+		for _, tx := range d.Txs {
+			if c := tx.GetConfirmStart(); c != nil && c.ObservedHeight > 0 {
+				return d.Nonce, c.ObservedHeight, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
 func TestHeartbeat_ForceSlotsNumFollowsGroupNotCadenceOverride(t *testing.T) {
 	var height uint64 = 100
 	session := setupHeartbeatSession(t, &height)
@@ -486,6 +553,90 @@ func TestHeartbeat_LiveHostsQuorumCompletes(t *testing.T) {
 	require.Equal(t, heightsync.TurnComplete, rec.State)
 	require.Equal(t, uint64(100), session.HeartbeatTurnTracker().LastCompletedHeight())
 	require.True(t, session.HeartbeatTurnTracker().CompletedAtOrAbove(100))
+}
+
+func setupWarmHeartbeatSession(t *testing.T, height *uint64) (*Session, []*signing.Secp256k1Signer, []*signing.Secp256k1Signer) {
+	t.Helper()
+	const numHosts = 3
+	coldKeys := makeKeys(t, numHosts)
+	warmKeys := makeKeys(t, numHosts)
+	resolver := acceptResolver(warmKeys, coldKeys)
+	oracles, _ := sessionOracles(numHosts, *height)
+
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(coldKeys)
+	config := testutil.DefaultConfig(numHosts)
+	verifier := signing.NewSecp256k1Verifier()
+	smOpts := []state.SMOption{state.WithWarmKeyResolver(resolver)}
+
+	clients := make([]HostClient, numHosts)
+	for i := range coldKeys {
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, smOpts...)
+		h, err := host.NewHost(sm, warmKeys[i], stub.NewInferenceEngine(), "escrow-1", group, nil,
+			host.WithGrace(100), host.WithChainOracle(oracles[i]))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, smOpts...)
+	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier,
+		WithHeightSyncCadence(10, uint64(numHosts)),
+		WithObservedHeight(func() (uint64, []byte, bool) {
+			h := *height
+			if h == 0 {
+				return 0, nil, false
+			}
+			return h, []byte{0xaa}, true
+		}),
+	)
+	require.NoError(t, err)
+	seedFloorByInference(t, session)
+	return session, coldKeys, warmKeys
+}
+
+func TestHeartbeat_WarmKeyAckAppliesWithoutPriorBinding(t *testing.T) {
+	var height uint64 = 100
+	session, _, warmKeys := setupWarmHeartbeatSession(t, &height)
+	t.Cleanup(func() { _ = session.Close() })
+
+	wk := session.StateMachine().WarmKeys()
+	require.Equal(t, warmKeys[1].Address(), wk[1], "bootstrap confirm binds only the executor slot")
+	_, slot0Bound := wk[0]
+	_, slot2Bound := wk[2]
+	require.False(t, slot0Bound)
+	require.False(t, slot2Bound)
+
+	base := session.Nonce()
+	require.NoError(t, session.MaybeHeartbeat(context.Background()))
+
+	acks := heightAcksInDiffs(session.Diffs())
+	require.Len(t, acks, 3, "first-time warm acks must compose, not drop")
+	verifier := signing.NewSecp256k1Verifier()
+	for _, ack := range acks {
+		recovered, err := heightsync.RecoverAckSigner(verifier, ack)
+		require.NoError(t, err)
+		require.Equal(t, warmKeys[ack.SlotId].Address(), recovered)
+		require.Equal(t, types.SyncState_SYNCED, ack.SyncState)
+	}
+
+	wk = session.StateMachine().WarmKeys()
+	require.Equal(t, warmKeys[0].Address(), wk[0])
+	require.Equal(t, warmKeys[1].Address(), wk[1])
+	require.Equal(t, warmKeys[2].Address(), wk[2])
+
+	for _, d := range session.Diffs() {
+		if len(heightAcksInDiffs([]types.Diff{d})) == 0 {
+			continue
+		}
+		hostIdx := int(d.Nonce % uint64(len(session.clients)))
+		h := session.clients[hostIdx].(*InProcessClient).Host
+		require.GreaterOrEqual(t, h.LatestNonce(), d.Nonce,
+			"target host %d must apply warm-ack diff nonce %d", hostIdx, d.Nonce)
+	}
+
+	rec := session.HeartbeatTurnTracker().Record(base + 1)
+	require.NotNil(t, rec)
+	require.Equal(t, heightsync.TurnComplete, rec.State)
 }
 
 // TestHeartbeat_CarriesTheFloorNotTheCourierTip is the producer half of §10.3.1.

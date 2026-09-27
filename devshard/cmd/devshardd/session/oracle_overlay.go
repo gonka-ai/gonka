@@ -65,6 +65,19 @@ func (o *testenvOracleOverlay) Subscribe(ctx context.Context, fromHeight int64) 
 	return o.inner.Subscribe(ctx, fromHeight)
 }
 
+func (o *testenvOracleOverlay) Stale() bool {
+	if s, ok := o.inner.(interface{ Stale() bool }); ok {
+		return s.Stale()
+	}
+	return false
+}
+
+func (o *testenvOracleOverlay) SetCometConnected(ok bool) {
+	if s, has := o.inner.(interface{ SetCometConnected(bool) }); has {
+		s.SetCometConnected(ok)
+	}
+}
+
 func shiftTestenvHeader(h *blocks.Header, delta int64, fabricate bool) *blocks.Header {
 	out := *h
 	out.BlockHash = append([]byte(nil), h.BlockHash...)

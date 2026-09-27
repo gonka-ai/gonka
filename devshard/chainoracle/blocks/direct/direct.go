@@ -37,18 +37,15 @@ func New(primary, secondary Fetcher) *Oracle {
 	return &Oracle{primary: primary, secondary: secondary}
 }
 
-// NewFromChain uses direct gRPC GetLatestBlock as primary. rpcURL, when set,
-// is Comet HTTP RPC used when gRPC is missing. GetLatestBlock is not an ABCI
-// query, so this does not ride chain.Client's query-fallback conn.
-func NewFromChain(c *chain.Client, rpcURL string) *Oracle {
-	var primary, secondary Fetcher
-	if c != nil {
-		primary = NewGRPCFetcher(cmtservice.NewServiceClient(c.Conn()))
+// NewFromChain attaches gRPC GetLatestBlock / GetBlockByHeight. failover
+// Latest() uses this Latest() after the Comet cache and GetBlockHeader.
+// HTTP GET /block is not attached. GetBlockByHeight is not an ABCI query,
+// so this does not ride chain.Client's query-fallback conn.
+func NewFromChain(c *chain.Client) *Oracle {
+	if c == nil {
+		return New(nil, nil)
 	}
-	if u := strings.TrimSpace(rpcURL); u != "" {
-		secondary = NewRPCFetcher(u, nil)
-	}
-	return New(primary, secondary)
+	return New(NewGRPCFetcher(cmtservice.NewServiceClient(c.Conn())), nil)
 }
 
 func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
@@ -152,7 +149,8 @@ func headerFromSDKBlock(id *types.BlockID, sdkBlock *cmtservice.Block) (*blocks.
 	return blocks.HashOnlyHeader(hdr.Height, hdr.Time, hdr.ChainID, hash), nil
 }
 
-// RPCFetcher reads CometBFT JSON-RPC GET /block.
+// RPCFetcher reads CometBFT JSON-RPC GET /block. Height-sync does not
+// attach this; it is kept for direct-oracle tests of the JSON shape.
 type RPCFetcher struct {
 	base string
 	hc   *http.Client

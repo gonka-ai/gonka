@@ -12,17 +12,58 @@ import (
 	"common/chain"
 	shardbridge "devshard/bridge"
 	"devshard/cmd/devshardd/bridge"
+	"devshard/testenv/mockchain/grpcface"
+	"devshard/testenv/mockchain/seed"
+	"devshard/testenv/mockchain/store"
 )
 
 func newTestBridge(t *testing.T, submitter bridge.Submitter) *bridge.ChainBridge {
 	t.Helper()
-	conn, err := grpc.NewClient("localhost:9090", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return newTestBridgeWithStore(t, seed.Defaults(), submitter)
+}
+
+func newTestBridgeWithStore(t *testing.T, st *store.Store, submitter bridge.Submitter) *bridge.ChainBridge {
+	t.Helper()
+	srv, lis, err := grpcface.NewInProcessServer(grpcface.Deps{Store: st})
 	require.NoError(t, err)
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() {
+		srv.Stop()
+		_ = lis.Close()
+	})
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	return bridge.NewChainBridge(chain.NewFromConn(conn), submitter)
+}
 
-	client := chain.NewFromConn(conn)
+func TestChainBridge_GetEscrow_MapsSessionConfigFields(t *testing.T) {
+	st := seed.Defaults()
+	escrow := st.GetEscrow(1)
+	require.NotNil(t, escrow)
+	escrow.TokenPrice = 7
+	escrow.CreateDevshardFee = 12_345
+	escrow.FeePerNonce = 19
+	escrow.InferenceSealGraceNonces = 9
+	escrow.InferenceSealGraceSeconds = 77
+	escrow.AutoSealEveryNNonces = 21
+	escrow.ValidationRate = 7_777
+	escrow.VoteThresholdFactor = 67
+	escrow.RefusalTimeout = 5
+	escrow.ExecutionTimeout = 17
+	st.PutEscrow(escrow)
 
-	return bridge.NewChainBridge(client, submitter)
+	info, err := newTestBridgeWithStore(t, st, nil).GetEscrow("1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), info.TokenPrice)
+	require.Equal(t, uint64(12_345), info.CreateDevshardFee)
+	require.Equal(t, uint64(19), info.FeePerNonce)
+	require.Equal(t, uint32(9), info.InferenceSealGraceNonces)
+	require.Equal(t, uint32(77), info.InferenceSealGraceSeconds)
+	require.Equal(t, uint32(21), info.AutoSealEveryNNonces)
+	require.Equal(t, uint32(7_777), info.ValidationRate)
+	require.Equal(t, uint32(67), info.VoteThresholdFactor)
+	require.Equal(t, int64(5), info.RefusalTimeout)
+	require.Equal(t, int64(17), info.ExecutionTimeout)
 }
 
 func TestBridge_NotificationsNoop(t *testing.T) {

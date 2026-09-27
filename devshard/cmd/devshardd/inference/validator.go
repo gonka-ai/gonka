@@ -375,17 +375,33 @@ func (c *LeaseValidator) ReleaseValidationLease(ctx context.Context, escrowID st
 	if !ok {
 		return nil
 	}
-	err := c.leases.Release(ctx, escrowID, inferenceID, rec.epochID, c.instanceAddr)
+	releaseCtx, cancel := leaseReleaseContext(ctx)
+	defer cancel()
+	err := c.leases.Release(releaseCtx, escrowID, inferenceID, rec.epochID, c.instanceAddr)
 	c.forgetAcquire(escrowID, inferenceID)
 	return err
 }
 
 func (c *LeaseValidator) releaseAndForget(ctx context.Context, escrowID string, inferenceID, epochID uint64) {
-	if err := c.leases.Release(ctx, escrowID, inferenceID, epochID, c.instanceAddr); err != nil {
+	releaseCtx, cancel := leaseReleaseContext(ctx)
+	defer cancel()
+	if err := c.leases.Release(releaseCtx, escrowID, inferenceID, epochID, c.instanceAddr); err != nil {
 		slog.Warn("devshardd: validation lease release failed",
 			"escrow", escrowID, "inference", inferenceID, "error", err)
 	}
 	c.forgetAcquire(escrowID, inferenceID)
+}
+
+// leaseReleaseTimeout bounds a best-effort DELETE after Validate aborts.
+// Shutdown cancels the request ctx; Release must not inherit that cancel or
+// the row stays pending until TTL and blocks the sibling.
+const leaseReleaseTimeout = 5 * time.Second
+
+func leaseReleaseContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(parent), leaseReleaseTimeout)
 }
 
 func (c *LeaseValidator) ensureLeaseStillValid(ctx context.Context, escrowID string, inferenceID uint64) (acquireRec, error) {

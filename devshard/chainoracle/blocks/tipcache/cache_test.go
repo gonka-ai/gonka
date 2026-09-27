@@ -16,6 +16,7 @@ func TestCache_ObserveLatestAndSubscribe(t *testing.T) {
 	_, err := c.Latest(context.Background())
 	require.Error(t, err)
 	require.True(t, c.Stale())
+	require.True(t, c.LastObservedAt().IsZero())
 
 	hdr := blocks.HashOnlyHeader(5, time.Unix(10, 0).UTC(), "gonka", []byte{0xaa})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -29,6 +30,8 @@ func TestCache_ObserveLatestAndSubscribe(t *testing.T) {
 	require.Equal(t, int64(5), got.Height)
 	require.Equal(t, []byte{0xaa}, got.BlockHash)
 	require.False(t, c.Stale())
+	require.False(t, c.LastObservedAt().IsZero())
+	require.InDelta(t, time.Now().UnixNano(), c.LastObservedAt().UnixNano(), float64(time.Second))
 
 	at, err := c.At(context.Background(), 5)
 	require.NoError(t, err)

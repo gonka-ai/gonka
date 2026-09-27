@@ -19,7 +19,7 @@ type PeerTipCache interface {
 	MaxFresh(now time.Time, freshness time.Duration) *HeightSyncSection
 }
 
-// LocalOracleSource wraps a host-side block oracle (follower / height-sync SSE).
+// LocalOracleSource wraps a host-side block oracle (failover.Oracle).
 type LocalOracleSource struct {
 	oracle blocks.BlockOracle
 	now    func() time.Time

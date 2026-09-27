@@ -9,7 +9,6 @@ import (
 	"common/chainoracle/blocks/observer"
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
-	cmttypes "github.com/cometbft/cometbft/types"
 )
 
 const (
@@ -18,25 +17,36 @@ const (
 	cometSubBuffer      = 100
 )
 
+// CometHooks reports subscription liveness to failover.Oracle.
+type CometHooks struct {
+	OnConnected    func()
+	OnDisconnected func()
+}
+
 // StartComet feeds c from CometBFT tm.event='NewBlock' until ctx is cancelled.
 // Same subscription hosts already use; gateway has no other NewBlock listener.
 func StartComet(ctx context.Context, rpcURL string, c *Cache) error {
+	return StartCometWithHooks(ctx, rpcURL, c, CometHooks{})
+}
+
+// StartCometWithHooks is StartComet plus connect/disconnect callbacks.
+func StartCometWithHooks(ctx context.Context, rpcURL string, c *Cache, hooks CometHooks) error {
 	if c == nil {
 		return fmt.Errorf("tipcache: nil cache")
 	}
 	if rpcURL == "" {
 		return fmt.Errorf("tipcache: empty comet rpc url")
 	}
-	go runComet(ctx, rpcURL, c)
+	go runComet(ctx, rpcURL, c, hooks)
 	return nil
 }
 
-func runComet(ctx context.Context, rpcURL string, c *Cache) {
+func runComet(ctx context.Context, rpcURL string, c *Cache, hooks CometHooks) {
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		err := consumeComet(ctx, rpcURL, c)
+		err := consumeComet(ctx, rpcURL, c, hooks)
 		if ctx.Err() != nil {
 			return
 		}
@@ -50,7 +60,7 @@ func runComet(ctx context.Context, rpcURL string, c *Cache) {
 	}
 }
 
-func consumeComet(ctx context.Context, rpcURL string, c *Cache) error {
+func consumeComet(ctx context.Context, rpcURL string, c *Cache, hooks CometHooks) error {
 	client, err := rpchttp.New(rpcURL, "/websocket")
 	if err != nil {
 		return fmt.Errorf("rpc client: %w", err)
@@ -66,6 +76,14 @@ func consumeComet(ctx context.Context, rpcURL string, c *Cache) error {
 	if err != nil {
 		return fmt.Errorf("subscribe NewBlock: %w", err)
 	}
+	if hooks.OnConnected != nil {
+		hooks.OnConnected()
+	}
+	defer func() {
+		if hooks.OnDisconnected != nil {
+			hooks.OnDisconnected()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -74,8 +92,10 @@ func consumeComet(ctx context.Context, rpcURL string, c *Cache) error {
 			if !ok {
 				return fmt.Errorf("subscription closed")
 			}
-			data, ok := result.Data.(cmttypes.EventDataNewBlock)
+			data, ok := observer.AsEventDataNewBlock(result.Data)
 			if !ok {
+				slog.Warn("height-sync comet: unexpected NewBlock data type",
+					"query", result.Query, "got", fmt.Sprintf("%T", result.Data))
 				continue
 			}
 			hdr, ok := observer.HeaderFromNewBlock(data)

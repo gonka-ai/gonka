@@ -1465,8 +1465,9 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 		return nil
 	}
 
+	hostLabel := s.HostLabel(hostIdx)
 	logging.Info("sendCatchUp starting", "subsystem", "finalize", "escrow", s.escrowID,
-		"nonce", nonce, "host", hostIdx,
+		"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 		"total_diffs", len(catchUp), "budget_bytes", budgetBytes)
 
 	diffIdx := 0
@@ -1474,7 +1475,7 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 	for diffIdx < len(catchUp) {
 		if err := ctx.Err(); err != nil {
 			logging.Warn("sendCatchUp context cancelled", "subsystem", "finalize", "escrow", s.escrowID,
-				"nonce", nonce, "host", hostIdx,
+				"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 				"chunk", chunkNumber+1, "error", err)
 			return nil
 		}
@@ -1482,14 +1483,14 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 		chunk, err := catchUpChunk(catchUp[diffIdx:], budgetBytes)
 		if err != nil {
 			logging.Warn("sendCatchUp diff over budget", "subsystem", "finalize", "escrow", s.escrowID,
-				"nonce", catchUp[diffIdx].Nonce, "host", hostIdx, "budget_bytes", budgetBytes)
-			return fmt.Errorf("catch-up to host %d: %w", hostIdx, err)
+				"nonce", catchUp[diffIdx].Nonce, "host", hostLabel, "host_idx", hostIdx, "budget_bytes", budgetBytes)
+			return fmt.Errorf("catch-up to host %s: %w", hostLabel, err)
 		}
 		chunkNonce := chunk[len(chunk)-1].Nonce
 		chunkNumber++
 
 		logging.Info("sendCatchUp chunk", "subsystem", "finalize", "escrow", s.escrowID,
-			"nonce", nonce, "host", hostIdx,
+			"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 			"chunk", chunkNumber,
 			"diffs_in_chunk", len(chunk),
 			"chunk_first_nonce", chunk[0].Nonce,
@@ -1498,14 +1499,14 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 		resp, err := s.deliverCatchUpChunk(ctx, hostIdx, client, chunk)
 		if err != nil {
 			logging.Warn("sendCatchUp chunk failed", "subsystem", "finalize", "escrow", s.escrowID,
-				"nonce", nonce, "host", hostIdx,
+				"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 				"chunk", chunkNumber, "error", err)
 			s.publishHeightSyncView()
-			return fmt.Errorf("catch-up chunk %d to host %d: %w", chunkNumber, hostIdx, err)
+			return fmt.Errorf("catch-up chunk %d to host %s: %w", chunkNumber, hostLabel, err)
 		}
 
 		logging.Info("sendCatchUp chunk response", "subsystem", "finalize", "escrow", s.escrowID,
-			"nonce", nonce, "host", hostIdx,
+			"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 			"chunk", chunkNumber,
 			"resp_nonce", resp.Nonce, "has_sig", resp.StateSig != nil)
 
@@ -1523,7 +1524,7 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 			}
 			if skipTo > nextDiffIdx {
 				logging.Info("sendCatchUp skip-forward", "subsystem", "finalize", "escrow", s.escrowID,
-					"nonce", nonce, "host", hostIdx,
+					"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 					"resp_nonce", resp.Nonce,
 					"skipping_from_idx", nextDiffIdx, "to_idx", skipTo,
 					"skipped_diffs", skipTo-nextDiffIdx)
@@ -1572,7 +1573,7 @@ func (s *Session) CatchUpAllHosts(ctx context.Context) error {
 	for i, target := range hosts {
 		wg.Go(func() {
 			if err := s.sendCatchUpWith(ctx, target.idx, finalizeClients[target.idx]); err != nil {
-				perHost[i] = fmt.Errorf("host %d: %w", target.idx, err)
+				perHost[i] = fmt.Errorf("host %s: %w", s.HostLabel(target.idx), err)
 			}
 		})
 	}
@@ -1603,7 +1604,7 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 	for cycle := 0; cycle < syncCycles; cycle++ {
 		for _, h := range hosts {
 			if err := s.sendCatchUp(ctx, h.idx); err != nil {
-				failures = append(failures, fmt.Errorf("cycle %d host %d: %w", cycle+1, h.idx, err))
+				failures = append(failures, fmt.Errorf("cycle %d host %s: %w", cycle+1, s.HostLabel(h.idx), err))
 			}
 		}
 		for i := 0; i < len(s.group); i++ {
@@ -1621,7 +1622,7 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 
 	for _, h := range hosts {
 		if err := s.sendCatchUp(ctx, h.idx); err != nil {
-			failures = append(failures, fmt.Errorf("final host %d: %w", h.idx, err))
+			failures = append(failures, fmt.Errorf("final host %s: %w", s.HostLabel(h.idx), err))
 		}
 	}
 
@@ -1915,6 +1916,9 @@ func (s *Session) addPendingFromHostLocked(hostIdx int, resp *host.HostResponse,
 		logging.Warn("dropped user-proposed tx from host mempool",
 			"subsystem", "session", "escrow", s.escrowID, "host_idx", hostIdx,
 			"tx_type", fmt.Sprintf("%T", tx.GetTx()))
+		return
+	}
+	if tx.GetHeightAck() != nil && s.sm != nil && s.sm.Phase() != types.PhaseActive {
 		return
 	}
 	// Settle dedup before verifying: every host gossips the same Finish, and

@@ -86,11 +86,14 @@ type HostManager struct {
 	payloadFaultStatus int
 	payloadFaultAddr   string
 
-	// Height-sync scheduler (chain RPC or DEVSHARD_CHAINORACLE_URL). Nil when neither is available.
+	// Height-sync scheduler (NodeManager GetBlockHeader or chain client). Nil when neither is available.
 	chainOracle      blocks.BlockOracle
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
 	heightSyncTip    interface{ Observe(h *blocks.Header) }
+	// cometLiveness is captured at wiring so CloseHeightSync can drop the
+	// scheduler without racing the chain-events goroutine.
+	cometLiveness func(bool)
 }
 
 const (
@@ -411,9 +414,9 @@ func (m *HostManager) SetBinaryVersion(v string) {
 	m.binaryVersion = strings.TrimSpace(v)
 }
 
-// CloseHosts cancels in-flight validation workers without closing storage.
-// Shutdown must do this before closing the ML client or store so Validate
-// aborts, then Release frees the Postgres row for the sibling to re-acquire.
+// CloseHosts cancels in-flight Validate and waits for workers to Release
+// pending leases, without closing storage. Shutdown must do this before
+// closing the ML client or store so the DELETE still has a live pool.
 func (m *HostManager) CloseHosts() {
 	m.sessionsMutex.Lock()
 	sessions := make(map[string]*transport.Server, len(m.sessions))

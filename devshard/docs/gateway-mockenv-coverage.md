@@ -109,6 +109,8 @@ flowchart TD
     ParseError["400 parse or validation error"]
     Model["resolve requested model or default model"]
     Supported["model exists among gateway runtimes"]
+    Listed["model listed in model_limits"]
+    Unavailable["503 model temporarily unavailable, Retry-After: 10"]
     Unsupported["400 unsupported model"]
     Access["model access check: open, api_key, admin_only"]
     AccessDenied["401 access denied"]
@@ -126,7 +128,9 @@ flowchart TD
     Parse -->|"malformed or invalid"| ParseError
     Parse --> Model
     Model --> Supported
-    Supported -->|"no"| Unsupported
+    Supported -->|"no"| Listed
+    Listed -->|"yes"| Access
+    Listed -->|"no"| Unsupported
     Supported -->|"yes"| Access
     Access -->|"denied"| AccessDenied
     Access -->|"allowed"| Cache
@@ -134,6 +138,7 @@ flowchart TD
     Cache -->|"miss"| Limit
     Limit -->|"rejected"| Limited
     Limit -->|"acquired"| Select
+    Select -->|"listed model that no available runtime serves"| Unavailable
     Select -->|"failed"| SelectFail
     Select -->|"runtime selected"| Forward
     Forward --> StoreCache --> Done
@@ -148,6 +153,10 @@ Mock coverage:
 | Does not inject the default model back into the forwarded body | `TestGatewayMockEnvPooledChatUsesDefaultModel` |
 | Enforces default-model access when request omits `model` | `TestGatewayMockEnvPooledChatMissingModelEnforcesDefaultModelAccess` |
 | Rejects unsupported pooled model before runtime call | `TestGatewayMockEnvUnsupportedModelRejectedBeforeRuntime` |
+| Answers 503 with `Retry-After` for a model listed in `model_limits` that no runtime serves | `TestGatewayMockEnvListedModelWithoutRuntimeAnswersTemporarilyUnavailable` |
+| Answers 503 with `Retry-After` for a model listed in `model_limits` whose only runtime is inactive | `TestGatewayMockEnvListedModelWithInactiveRuntimeAnswersTemporarilyUnavailable` |
+| Keeps unsupported model 400 for a model outside `model_limits` whose only runtime is inactive | `TestGatewayMockEnvUnlistedModelWithInactiveRuntimeStaysUnsupported` |
+| Checks model access before answering 503 for a listed model without a runtime | `TestGatewayMockEnvListedModelWithoutRuntimeStillChecksAccessFirst` |
 | Rejects malformed JSON before runtime call | `TestGatewayMockEnvMalformedJSONRejectedBeforeRuntime` |
 | Enforces `api_key` model access | `TestGatewayMockEnvAPIKeyModelAccess` |
 | Enforces `admin_only` model access | `TestGatewayMockEnvAdminOnlyModelAccess` |

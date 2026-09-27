@@ -420,6 +420,119 @@ func TestRaceWriter_CapabilityErrorsDoNotSelectWinner(t *testing.T) {
 	require.False(t, rg.hasDecided(), "capability miss should let redundancy try another host")
 }
 
+func TestRaceWriter_ATrustedDeterministicRejectionMarksTheWholeRaceBeforeTheAttemptEnds(t *testing.T) {
+	cases := []struct {
+		name       string
+		errorEvent string
+	}{
+		{name: "context length rejection", errorEvent: contextLengthErrorEvent},
+		{name: "context length rejection without a status code", errorEvent: contextLengthWithoutStatusErrorEvent},
+		{name: "malformed request", errorEvent: malformedJSONErrorEvent},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			race, writer := newSingleAttemptRaceWriter(false)
+
+			_, err := writer.Write([]byte(testCase.errorEvent))
+
+			require.NoError(t, err)
+			require.True(t, race.isDeterministicallyRejected(), "the rejection must stop new attempts before this attempt finishes")
+			require.False(t, race.hasDecided(), "a rejection is not an answer")
+		})
+	}
+}
+
+func TestRaceWriter_ASuspiciousHostsContextLengthRejectionLeavesTheRaceOpen(t *testing.T) {
+	race, writer := newSingleAttemptRaceWriter(true)
+
+	_, err := writer.Write([]byte(contextLengthErrorEvent))
+
+	require.NoError(t, err)
+	require.False(t, race.isDeterministicallyRejected(), "a quarantined host's rejection must not stop other hosts from serving the request")
+}
+
+func TestRaceWriter_AContextLengthEventAfterAnotherErrorLeavesTheRaceOpen(t *testing.T) {
+	race, writer := newSingleAttemptRaceWriter(false)
+
+	_, firstWriteErr := writer.Write([]byte(toolChoiceErrorEvent))
+	_, secondWriteErr := writer.Write([]byte(contextLengthErrorEvent))
+
+	require.NoError(t, firstWriteErr)
+	require.NoError(t, secondWriteErr)
+	require.False(t, race.isDeterministicallyRejected(), "the race may stop only on the error the attempt reports to the caller")
+}
+
+func TestHostApplicationErrorFromAttempts_PicksTheErrorTheCallerShouldSee(t *testing.T) {
+	cases := []struct {
+		name        string
+		attempts    []*inflight
+		winnerNonce uint64
+		wantStatus  int
+	}{
+		{name: "the winner's error comes first", attempts: []*inflight{contextLengthRejectedAttempt(t, 1), missingModelAttempt(t, 2)}, winnerNonce: 2, wantStatus: http.StatusNotFound},
+		{name: "a context-length rejection beats an earlier error", attempts: []*inflight{missingModelAttempt(t, 1), contextLengthRejectedAttempt(t, 2)}, winnerNonce: 0, wantStatus: http.StatusBadRequest},
+		{name: "a malformed request rejection beats an earlier error", attempts: []*inflight{missingModelAttempt(t, 1), malformedJSONRejectedAttempt(t, 2)}, winnerNonce: 0, wantStatus: http.StatusBadRequest},
+		{name: "a winner without an error gives way to a context-length rejection", attempts: []*inflight{contextLengthRejectedAttempt(t, 1), {nonce: 2}}, winnerNonce: 2, wantStatus: http.StatusBadRequest},
+		{name: "a suspicious host's rejection gets no preference over a trusted error before it", attempts: []*inflight{missingModelAttempt(t, 1), markedSuspicious(contextLengthRejectedAttempt(t, 2))}, winnerNonce: 0, wantStatus: http.StatusNotFound},
+		{name: "without a rejection the first error is kept", attempts: []*inflight{missingModelAttempt(t, 1), toolChoiceRejectedAttempt(t, 2)}, winnerNonce: 0, wantStatus: http.StatusNotFound},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			hostErr := hostApplicationErrorFromAttempts(testCase.attempts, testCase.winnerNonce)
+
+			require.NotNil(t, hostErr)
+			require.Equal(t, testCase.wantStatus, hostErr.statusCode())
+		})
+	}
+}
+
+// attemptFromErrorEvent returns the attempt a trusted host leaves after streaming errorEvent through the race writer.
+func attemptFromErrorEvent(t *testing.T, nonce uint64, errorEvent string) *inflight {
+	t.Helper()
+	_, writer := newSingleAttemptRaceWriter(false)
+	_, err := writer.Write([]byte(errorEvent))
+	require.NoError(t, err)
+	require.True(t, isErrorStreamAttempt(writer.inf), "the fixture must stream a parseable error event")
+	writer.inf.nonce = nonce
+	return writer.inf
+}
+
+func contextLengthRejectedAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, contextLengthErrorEvent)
+}
+
+func malformedJSONRejectedAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, malformedJSONErrorEvent)
+}
+
+func missingModelAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, modelNotFoundErrorEvent)
+}
+
+func toolChoiceRejectedAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, toolChoiceErrorEvent)
+}
+
+func markedSuspicious(attempt *inflight) *inflight {
+	attempt.suspicious = true
+	return attempt
+}
+
+func newSingleAttemptRaceWriter(suspicious bool) (*raceGroup, *raceWriter) {
+	ctx := context.Background()
+	race := newRaceGroup(ctx, ctx, "escrow-x", &bytes.Buffer{})
+	attempt := &inflight{
+		hostID:       "host-A",
+		escrowID:     "escrow-x",
+		nonce:        1,
+		suspicious:   suspicious,
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	return race, &raceWriter{group: race, nonce: 1, inf: attempt}
+}
+
 func TestCapabilityErrorsSkippedFromCache(t *testing.T) {
 	streamBody := []byte(`data: {"error":{"message":"tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"}}` + "\n\n")
 	jsonBody := []byte(`{"error":{"message":"This model's maximum context length is 120000 tokens."}}`)

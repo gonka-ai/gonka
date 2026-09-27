@@ -171,6 +171,15 @@ func sessionsAt(t *testing.T, store Storage) []uint64 {
 	return epochs
 }
 
+func TestRetentionCutoff(t *testing.T) {
+	require.Equal(t, uint64(0), RetentionCutoff(0, DefaultEpochRetain))
+	require.Equal(t, uint64(0), RetentionCutoff(2, DefaultEpochRetain))
+	require.Equal(t, uint64(1), RetentionCutoff(3, DefaultEpochRetain))
+	require.Equal(t, uint64(4), RetentionCutoff(6, DefaultEpochRetain))
+	require.Equal(t, uint64(8), RetentionCutoff(10, 3))
+	require.Equal(t, uint64(5), RetentionCutoff(5, 1))
+}
+
 // TestManaged_RetainsLastN: with retain=3 and observed epochs 1..6, only
 // epochs 4, 5, 6 must remain.
 func TestManaged_RetainsLastN(t *testing.T) {

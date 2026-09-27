@@ -28,3 +28,23 @@ func TestRequireGatewaySessionStable_EqualIsOK(t *testing.T) {
 	}
 	RequireGatewaySessionStable(t, snap, snap)
 }
+
+func TestGatewaySessionLedgerQuiet_IgnoresLiveInferences(t *testing.T) {
+	prev := GatewaySessionSnapshot{
+		EscrowID: "1", SessionNonce: 1, LatestNonce: 1, Balance: 961700, LiveInferences: 1,
+	}
+	cur := prev
+	cur.LiveInferences = 1
+	if !gatewaySessionLedgerQuiet(prev, cur) {
+		t.Fatal("Finished inferences remaining live must not block settle")
+	}
+	cur.Balance = 972200
+	if gatewaySessionLedgerQuiet(prev, cur) {
+		t.Fatal("a timeout-refund changing balance must not look settled")
+	}
+	cur = prev
+	cur.SessionNonce = 2
+	if gatewaySessionLedgerQuiet(prev, cur) {
+		t.Fatal("a heartbeat advancing nonce must not look settled")
+	}
+}

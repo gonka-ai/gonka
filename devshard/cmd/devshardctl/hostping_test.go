@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -72,10 +73,12 @@ func TestHostPingRefcountExhaustivenessTeardownPaths(t *testing.T) {
 			},
 		},
 		{
-			name: "deactivateAndSettleDevshardByID",
+			name: "deactivateDepletedEscrow",
 			run: func(t *testing.T, g *Gateway, escrowID string) {
-				// No store/chain — settle may no-op after deactivate; release must still run.
-				g.deactivateAndSettleDevshardByID(escrowID, "test")
+				g.store = newGatewayStoreWithActiveEscrow(t, escrowID)
+				isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), escrowID, "test", GatewaySettings{})
+				require.NoError(t, err)
+				require.True(t, isTakenOutOfService)
 			},
 		},
 		{
@@ -140,8 +143,55 @@ func TestHostPingRefcountExhaustivenessTeardownPaths(t *testing.T) {
 			require.Equal(t, 0, job.targets.refcount(dial), "teardown path %s must drop refcount to 0", tc.name)
 			require.Empty(t, job.targets.Targets())
 			assertNoHostPingSeriesForHost(t, metrics, dial)
+			requireHostPingTargets(t, metrics, 0)
 		})
 	}
+}
+
+func TestHostPingTargetsPublishedOnObserveAndRelease(t *testing.T) {
+	metrics := NewDevshardMetrics()
+	job := newHostPingJob(metrics, hostPingConfig{
+		Interval:    defaultHostPingInterval,
+		Timeout:     defaultHostPingTimeout,
+		Concurrency: defaultHostPingConcurrency,
+	})
+	const dial = "http://shared.example:8080"
+
+	job.ObserveEscrowHost("e1", dial, "/devshard/v4", "pk-a")
+	job.ObserveEscrowHost("e2", dial, "/devshard/v4", "pk-b")
+	requireHostPingTargets(t, metrics, 1)
+
+	job.ReleaseEscrow("e1")
+	requireHostPingTargets(t, metrics, 1)
+	require.Equal(t, 1, job.targets.refcount(dial))
+
+	job.ReleaseEscrow("e2")
+	requireHostPingTargets(t, metrics, 0)
+	require.Empty(t, job.targets.Targets())
+}
+
+func TestHostPingObserveAfterReleaseDoesNotRestoreSeries(t *testing.T) {
+	metrics := NewDevshardMetrics()
+	job := newHostPingJob(metrics, hostPingConfig{
+		Interval:    defaultHostPingInterval,
+		Timeout:     defaultHostPingTimeout,
+		Concurrency: defaultHostPingConcurrency,
+	})
+	const dial = "http://late.example:8080"
+	const pk = "pk-late"
+
+	job.ObserveEscrowHost("e1", dial, "/devshard/v4", pk)
+	requireHostPingTargets(t, metrics, 1)
+
+	job.ReleaseEscrow("e1")
+	assertNoHostPingSeriesForHost(t, metrics, dial)
+	requireHostPingTargets(t, metrics, 0)
+
+	job.ObserveEscrowHost("e1", dial, "/devshard/v4", pk)
+	require.False(t, job.targets.hasEscrow("e1"))
+	require.Empty(t, job.targets.Targets())
+	assertNoHostPingSeriesForHost(t, metrics, dial)
+	requireHostPingTargets(t, metrics, 0)
 }
 
 func TestHostPingCleanupCompleteness(t *testing.T) {
@@ -271,6 +321,7 @@ func TestHostPingParticipantInfoDedupeMapping(t *testing.T) {
 	requireMetricGaugeValue(t, families, "devshard_gateway_host_ping_participant_info", map[string]string{"host": dial, "participant_key": "pk-a"}, 1)
 	requireMetricGaugeValue(t, families, "devshard_gateway_host_ping_participant_info", map[string]string{"host": dial, "participant_key": "pk-b"}, 1)
 	require.Len(t, job.targets.Targets(), 1)
+	requireHostPingTargets(t, metrics, 1)
 }
 
 func TestHostPingJoinProbePath(t *testing.T) {
@@ -323,6 +374,13 @@ type fakeDialer struct {
 
 func (f *fakeDialer) BaseURL() string     { return f.base }
 func (f *fakeDialer) RoutePrefix() string { return f.prefix }
+
+func requireHostPingTargets(t *testing.T, metrics *DevshardMetrics, want float64) {
+	t.Helper()
+	families, err := metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_ping_targets", nil, want)
+}
 
 func assertNoHostPingSeriesForHost(t *testing.T, metrics *DevshardMetrics, host string) {
 	t.Helper()

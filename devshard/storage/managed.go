@@ -11,11 +11,29 @@ import (
 	"devshard/types"
 )
 
+// DefaultEpochRetain is how many epochs of sessions hosts keep, including
+// the current epoch (current + two previous). Gateway membership must use
+// the same horizon so it stops heartbeating at escrows hosts have pruned.
+const DefaultEpochRetain = 3
+
 // EpochProvider lets ManagedStorage learn the chain's current epoch even
 // when the host is quiet (no CreateSession activity). Optional: if nil,
 // retention is driven entirely by the highest epoch we have ever stored to.
 type EpochProvider interface {
 	CurrentEpochID() uint64
+}
+
+// RetentionCutoff is the exclusive epoch lower bound for DefaultEpochRetain
+// math: every epoch < cutoff is pruneable. Returns 0 until enough epochs
+// have been observed to drop anything (current+1 <= retain).
+func RetentionCutoff(currentEpoch, retain uint64) uint64 {
+	if retain == 0 {
+		retain = 1
+	}
+	if currentEpoch+1 <= retain {
+		return 0
+	}
+	return currentEpoch + 1 - retain
 }
 
 type rangePruner interface {
@@ -99,11 +117,7 @@ func (m *ManagedStorage) PruneCutoff() uint64 {
 	if m.epochs != nil {
 		m.observe(m.epochs.CurrentEpochID())
 	}
-	maxE := m.maxObservedEpoch.Load()
-	if maxE+1 <= m.retain {
-		return 0
-	}
-	return maxE + 1 - m.retain
+	return RetentionCutoff(m.maxObservedEpoch.Load(), m.retain)
 }
 
 // Start runs a single catch-up prune. Call it before session recovery so

@@ -137,7 +137,7 @@ If rollback across this boundary must be supported, the standard two-phase rollo
 
 **Nothing is approximated.** Values are dropped whole or kept exactly. An earlier draft quantised logprobs to float16 — 4.9e-04 relative error, 2.3e-05 on the verdict — and was discarded: a lossless scheme reaches 20.0 B/pos against 10.3 B/pos lossy, which does not justify introducing an error into the number that decides an inference's fate.
 
-**gzip is not applied to the inference stream.** It is scoped to the payload route; on a streamed response it would buffer chunks.
+**gzip is not applied to the inference stream here.** It is scoped to the payload route, on the reading that a streamed response would buffer. Measured since against echo v4.15.1 that reading does not hold, and the transit legs are compressed by [gzip-in-transit.md](gzip-in-transit.md).
 
 ## Verification
 
@@ -147,4 +147,4 @@ If rollback across this boundary must be supported, the standard two-phase rollo
 - Redundancy: all 100 responses / 409 600 positions in the reference corpus pass the pre-drop check.
 - Bounds: a payload file that inflates past 256 MiB is refused rather than read, asserted with a real bomb. The bound turns an unbounded decompression into one failed read rather than an OOM; the largest legitimate payload is ~90 MiB, a 10 MiB request at the body cap plus 300k output tokens.
 - Divergence: an inference driven through a streaming stub asserts both outputs at once — the gateway receives no logprobs, and the payload stored from the same stream still replays the executor's token path with its alternatives intact.
-- Mutation testing: 13 mutants, 11 killed. The two survivors both concern gzip being scoped to one route rather than the whole group; echo leaves a handler-written body uncompressed either way, so no test can distinguish them. That scoping rests on where the middleware is written, not on a test.
+- Mutation testing: 13 mutants, 11 killed. The two survivors both concerned gzip being scoped to one route rather than the whole group, which no test could distinguish at the time. That scoping has since been replaced: the inference route compresses too, and `TestInferenceRouteStreamsEachFrameAsItIsFlushed` distinguishes the mounts.
