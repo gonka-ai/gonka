@@ -4412,18 +4412,13 @@ func (g *Gateway) reconcilePendingSettlements() {
 		}
 		return
 	}
-	// Honor the operator's config: when settlement is disabled, never settle on
-	// startup. Leave the marker intact so a later re-enable still settles it.
-	if !state.Settings.EscrowRotation.SettlementEnabled {
-		for _, devshard := range state.Devshards {
-			if !devshard.Active && devshard.SettlementPending {
-				log.Printf("settlement_reconcile_skipped escrow=%s reason=settlement_disabled", devshard.ID)
-			}
-		}
-		return
-	}
 	for _, devshard := range state.Devshards {
 		if devshard.Active || !devshard.SettlementPending {
+			continue
+		}
+		// A disabled model keeps its marker, so a later re-enable still settles it.
+		if !settlementEnabledForModel(state.Settings, devshard.Model) {
+			log.Printf("settlement_reconcile_skipped escrow=%s model=%q reason=settlement_disabled", devshard.ID, devshard.Model)
 			continue
 		}
 		g.mu.Lock()
@@ -4440,8 +4435,8 @@ func (g *Gateway) reconcilePendingSettlements() {
 	}
 }
 
-func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
-	if !settings.EscrowRotation.SettlementEnabled {
+func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, modelID, reason string, settings GatewaySettings) (bool, error) {
+	if !settlementEnabledForModel(settings, modelID) {
 		if g.deactivateDevshardByIDWithReason(id, reason) {
 			log.Printf("escrow_rotation_deactivated_without_settlement escrow=%s reason=%q", id, reason)
 		}
@@ -4510,7 +4505,7 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	if !ok {
 		return fmt.Errorf("no escrow rotation model configured for %q", modelID)
 	}
-	isTakenOutOfService, err := g.deactivateDepletedEscrow(ctx, id, reason, settings)
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(ctx, id, modelID, reason, settings)
 	if err != nil {
 		return fmt.Errorf("deactivate depleted escrow: %w", err)
 	}
@@ -4548,9 +4543,9 @@ func replacementModelForDepletedEscrow(settings GatewaySettings, modelID string)
 	return EscrowRotationModelSettings{}, false
 }
 
-// deactivateDepletedEscrow saves the escrow inactive, with its settlement mark when settlement is enabled, before stopping its traffic in memory, and reports whether this call took it out of service.
-func (g *Gateway) deactivateDepletedEscrow(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
-	isSettlementEnabled := settings.EscrowRotation.SettlementEnabled
+// deactivateDepletedEscrow saves the escrow inactive, with its settlement mark when settlement is enabled for its model, before stopping its traffic in memory, and reports whether this call took it out of service.
+func (g *Gateway) deactivateDepletedEscrow(ctx context.Context, id, modelID, reason string, settings GatewaySettings) (bool, error) {
+	isSettlementEnabled := settlementEnabledForModel(settings, modelID)
 	var isDeactivatedInStore bool
 	if err := withDBRetry(ctx, func() error {
 		var err error

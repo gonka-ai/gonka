@@ -154,11 +154,12 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 			SettlementEnabled: true,
 			PrePoCBlocks:      123,
 			Models: []EscrowRotationModelSettings{{
-				ModelID:       "Kimi/Rotate",
-				TempCount:     2,
-				TargetCount:   6,
-				Amount:        555,
-				PrivateKeyEnv: "KIMI_ROTATION_KEY",
+				ModelID:           "Kimi/Rotate",
+				TempCount:         2,
+				TargetCount:       6,
+				Amount:            555,
+				PrivateKeyEnv:     "KIMI_ROTATION_KEY",
+				SettlementEnabled: boolPtr(false),
 			}},
 		},
 	}))
@@ -189,11 +190,12 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 	require.True(t, state.Settings.EscrowRotation.SettlementEnabled)
 	require.EqualValues(t, 123, state.Settings.EscrowRotation.PrePoCBlocks)
 	require.Equal(t, []EscrowRotationModelSettings{{
-		ModelID:       "Kimi/Rotate",
-		TempCount:     2,
-		TargetCount:   6,
-		Amount:        555,
-		PrivateKeyEnv: "KIMI_ROTATION_KEY",
+		ModelID:           "Kimi/Rotate",
+		TempCount:         2,
+		TargetCount:       6,
+		Amount:            555,
+		PrivateKeyEnv:     "KIMI_ROTATION_KEY",
+		SettlementEnabled: boolPtr(false),
 	}}, state.Settings.EscrowRotation.Models)
 }
 
