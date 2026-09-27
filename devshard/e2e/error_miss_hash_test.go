@@ -59,7 +59,7 @@ func TestE2E_ErrorMissLandsOnTheShippedDefaults(t *testing.T) {
 	stats := testutil.WaitEscrowHostStats(t, client, env.clientURL, missLandsWindow, func(stats testutil.EscrowHostStats) bool {
 		return stats.Missed > 0
 	})
-	require.Positive(t, stats.Missed, "a default-configured executor must forward the bytes it hashed")
+	require.Positive(t, stats.Missed, "a default-configured executor must forward a view the gateway can prove")
 	require.Zero(t, stats.Cost, "a missed inference is unwound, so the refusal is not paid for")
 }
 

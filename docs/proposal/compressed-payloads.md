@@ -38,7 +38,7 @@ The remaining shape is OpenAI's own, with the same field names, and parses back 
 
 As shipped, `logprobs` are treated separately from those three: the executor withholds them from the forwarded copy when the client did not ask for them, keeps them in the stored copy always, and stores an asking client's inference whole. What the gateway receives is always one of two signed views of the stored bytes — see [Two signed views](#two-signed-views).
 
-**3. Apply zstd at rest and gzip in transit.** Files are written zstd-encoded (`{inferenceId}.json.zst`); both suffixes are read, so files written by earlier versions stay readable. Writing is gated by `DEVSHARD_PAYLOAD_ZSTD_ENABLED`, default off, because a node that writes `.zst` hides those payloads from an older binary reading the same directory. The payload route serves gzip, negotiated by `Accept-Encoding` — the validator's Go client already asks for it and unwraps it, so no fetcher changes.
+**3. Apply zstd at rest and gzip in transit.** Files are written zstd-encoded (`{inferenceId}.json.zst`); both suffixes are read, so files written by earlier versions stay readable. Writing is gated by `DEVSHARD_PAYLOAD_ZSTD_ENABLED`, default on. A node that writes `.zst` hides those payloads from a binary that cannot read the suffix, but an escrow's payloads are read only by the devshardd of the protocol version that owns the escrow, and every v6 build reads both suffixes. The payload route serves gzip, negotiated by `Accept-Encoding` — the validator's Go client already asks for it and unwraps it, so no fetcher changes.
 
 ## Impact
 
@@ -163,12 +163,12 @@ This closes both gaps the earlier gating opened, within the limits above: an exe
 
 ## Configuration
 
-Both compression steps ship off. The figures above are what an operator gets by opting in, not what a node does out of the box.
+Both compression steps ship on. The logprobs optimization no longer costs the error-miss proof, because `served_hash` lets the gateway prove a miss from the served view; zstd at rest is safe because only the owning version's binary reads an escrow's payloads.
 
 | Knob | Default | Effect |
 |---|---|---|
-| `DEVSHARD_PAYLOAD_ZSTD_ENABLED` | `false` | write payload files zstd-encoded. Reading accepts both suffixes either way, so the gate governs writing alone |
-| `DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED` | `false` | the executor's own default. Off, it stores whole and forwards the stored bytes; `true` compresses what it stores and forwards the served view to a gateway that did not ask for logprobs. Either way the gateway receives a signed view |
+| `DEVSHARD_PAYLOAD_ZSTD_ENABLED` | `true` | write payload files zstd-encoded. Reading accepts both suffixes either way, so the gate governs writing alone |
+| `DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED` | `true` | the executor's own default. Off, it stores whole and forwards the stored bytes; `true` compresses what it stores and forwards the served view to a gateway that did not ask for logprobs. Either way the gateway receives a signed view |
 | `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` | unset | what the gateway asks executors for, per inference. Unset says nothing and leaves every executor its own default |
 
 The gateway's override also moves at runtime, without restarting the gateway or any host:

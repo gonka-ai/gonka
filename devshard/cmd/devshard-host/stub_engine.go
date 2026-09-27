@@ -113,10 +113,15 @@ func processedStreamEvents(terminalErrorMessage string) []string {
 	}
 }
 
+// logprobsOptimizationEnabled mirrors devshardd's default: unset or unparseable means on.
 func logprobsOptimizationEnabled() bool {
-	enabled, err := boolvalue.Parse(os.Getenv("DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED"))
+	raw := strings.TrimSpace(os.Getenv("DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED"))
+	if raw == "" {
+		return true
+	}
+	enabled, err := boolvalue.Parse(raw)
 	if err != nil {
-		return false
+		return true
 	}
 	return enabled
 }
