@@ -2829,6 +2829,9 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 		if inflightFinished(inf) {
 			return escalationTrigger{}, false
 		}
+		if errors.Is(inf.err, user.ErrPromptTooLargeForHost) {
+			return escalationTrigger{}, false
+		}
 		return escalationTrigger{
 			inf:      inf,
 			deadline: time.Now(),
@@ -3770,7 +3773,10 @@ func (e *Redundancy) recordSampleOnce(inf *inflight, params user.InferenceParams
 		e.maybeRecordCapabilityError(inf)
 		return
 	}
-	if inf != nil && errors.Is(inf.processErr, types.ErrStateHashMismatch) {
+	if inf != nil && (errors.Is(inf.err, user.ErrRequestTooLargeForHost) || errors.Is(inf.err, user.ErrCatchUpNotStarted)) {
+		return
+	}
+	if inf != nil && (errors.Is(inf.processErr, types.ErrStateHashMismatch) || errors.Is(inf.err, types.ErrStateHashMismatch)) {
 		return
 	}
 	if e.longResponseFailureExempt(inf) {
@@ -3886,6 +3892,9 @@ func (e *Redundancy) escrowStateBlockReason(participantKey string) (string, bool
 func isStateRootDivergenceError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, types.ErrStateHashMismatch) {
+		return true
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "apply diff nonce") &&

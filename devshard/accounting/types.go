@@ -349,6 +349,8 @@ var reasonOrigin = map[string]FailureOrigin{
 	"long_response_after_content":  FailureGatewayPolicy,
 	"timeout_not_applied":          FailureGatewayPolicy,
 	"host_served_probe":            FailureGatewayPolicy,
+	"request_too_large":            FailureGatewayPolicy,
+	"catch_up_not_started":         FailureGatewayPolicy,
 	"nonce_already_finished":       FailureGatewayPolicy,
 	"not_finished":                 FailureHostResponse,
 	"escrow_state_root_diverged":   FailureHostResponse,
