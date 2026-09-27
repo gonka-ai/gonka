@@ -7,6 +7,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
+	"devshard/storage"
 	"devshard/transport/rpcpb"
 )
 
@@ -46,4 +47,37 @@ func TestPayloadHandler_GroupNonMemberRejected(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 	require.Contains(t, err.Error(), "restricted to group members")
+}
+
+func TestPayloadHandler_ExistingSessionSkipsUnbound(t *testing.T) {
+	lookup := stubLookup{core: stubCore{member: true}}
+	h := NewPayloadHandler(lookup, func(context.Context, SessionCore, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+		return &rpcpb.GetPayloadResponse{InferenceId: "7"}, nil
+	})
+	h.SetUnboundGetPayload(func(context.Context, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+		t.Fatal("unbound roster must not run when the session exists")
+		return nil, nil
+	})
+	env := newSessionEnvWith(t, lookup, "escrow-1", nil, WithPayloadService(h))
+	resp, err := env.payload.GetPayload(context.Background(), withSession(
+		connect.NewRequest(&rpcpb.GetPayloadRequest{InferenceId: "7"}), env.token))
+	require.NoError(t, err)
+	require.Equal(t, "7", resp.Msg.GetInferenceId())
+}
+
+func TestPayloadHandler_MissingSessionUsesUnboundRoster(t *testing.T) {
+	lookup := stubLookup{err: storage.ErrSessionNotFound}
+	h := NewPayloadHandler(lookup, func(context.Context, SessionCore, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+		t.Fatal("bound serve must not run without a session")
+		return nil, nil
+	})
+	h.SetUnboundGetPayload(func(_ context.Context, peer string, req *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+		require.NotEmpty(t, peer)
+		return &rpcpb.GetPayloadResponse{InferenceId: req.GetInferenceId()}, nil
+	})
+	env := newSessionEnvWith(t, lookup, "escrow-1", nil, WithPayloadService(h))
+	resp, err := env.payload.GetPayload(context.Background(), withSession(
+		connect.NewRequest(&rpcpb.GetPayloadRequest{InferenceId: "9"}), env.token))
+	require.NoError(t, err)
+	require.Equal(t, "9", resp.Msg.GetInferenceId())
 }

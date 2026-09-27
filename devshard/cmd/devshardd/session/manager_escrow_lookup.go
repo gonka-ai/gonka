@@ -16,6 +16,7 @@ const (
 	defaultUnknownEscrowPerPeerPerMin = 2
 	defaultUnknownEscrowFloorPerMin   = 300
 	maxEscrowLookupCache              = 4096
+	maxRosterPeerDecisions            = 256
 )
 
 var (
@@ -30,37 +31,342 @@ type escrowLookupEntry struct {
 	expiresAt time.Time
 }
 
+// rosterEscrow is one retained chain escrow plus the warm-key decisions
+// already made for it. A slot address is not stored: that check is the
+// slot list. peers holds a definitive allow or deny from VerifyWarmKey.
+type rosterEscrow struct {
+	info  *bridge.EscrowInfo
+	peers map[string]bool
+}
+
+// errPayloadPeerDenied is the unbound GetPayload gate: the handshake peer is
+// not a slot and not a warm key for one. It is not a chain-lookup failure.
+var errPayloadPeerDenied = errors.New("peer is not a known participant")
+
+// errPayloadEpochClosed is a retained escrow whose epoch is older than
+// current-1. The roster keeps it so the chain is not queried again. Attach
+// and GetPayload both refuse it.
+var errPayloadEpochClosed = errors.New("escrow epoch is not open for payload")
+
 // fetchEscrowForBind is the chain lookup used when owner chat finds no local
-// session, and when Attach / BindGroupPeer has no fresh escrow_cache row.
+// session, and when Attach / BindGroupPeer / unbound GetPayload has no roster
+// hit and no fresh escrow_cache row. Unknown ids stay in the one-minute
+// escrowLookups cache. Real escrows inside retention also go into rosterEscrows
+// via loadRosterEscrow, which calls this on a miss.
+//
 // Eligibility (owner / group slot) is on the escrow record, so the query has
 // to run before we know whether the peer belongs. Unique unknown or
 // ineligible ids are charged against a per-peer (2/min) and process-wide
 // budget before that query. A successful load that shows the peer is the
 // creator or a slot member is refunded so first bind of a real escrow does
-// not consume the unknown-id budget. Per origin IP is not keyed here: mixed
-// fleets and hop-stamped X-Real-IP would collapse every client onto one
-// 2/min slot. versiond applies that cap on inbound X-Real-IP after it sees
-// a bind miss (X-Devshard-Error escrow_not_found / escrow_lookup_limited).
-// Attach of a warmed id uses warmedEscrow instead (no query, no charge).
-// RecoverSessions and create() with a prefetched escrow do not use this.
+// not consume the unknown-id budget. GetPayload uses the same charge and
+// refunds a warm-key peer that the slot check missed. Per origin IP is not
+// keyed here: mixed fleets and hop-stamped X-Real-IP would collapse every
+// client onto one 2/min slot. versiond applies that cap on inbound X-Real-IP
+// after it sees a bind miss (X-Devshard-Error escrow_not_found /
+// escrow_lookup_limited). Attach of a warmed id uses warmedEscrow instead
+// (no query, no charge). RecoverSessions and create() with a prefetched
+// escrow do not use this.
 func (m *HostManager) fetchEscrowForBind(escrowID, peer string) (*bridge.EscrowInfo, error) {
+	info, _, err := m.fetchEscrowTracked(escrowID, peer)
+	return info, err
+}
+
+// fetchEscrowTracked is fetchEscrowForBind plus the timestamp still charged
+// to peer. Zero means this call did not consume budget (cache hit, or the
+// creator/slot refund already ran).
+func (m *HostManager) fetchEscrowTracked(escrowID, peer string) (*bridge.EscrowInfo, time.Time, error) {
 	if m.bridge == nil {
-		return nil, fmt.Errorf("get escrow: bridge is nil")
+		return nil, time.Time{}, fmt.Errorf("get escrow: bridge is nil")
 	}
 	now := time.Now()
 	if info, err, ok := m.cachedEscrowLookup(escrowID, now); ok {
-		return info, err
+		return info, time.Time{}, err
 	}
 	chargedAt, err := m.chargeEscrowLookup(peer, now)
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	info, err := m.bridge.GetEscrow(escrowID)
 	if escrowLookupEligible(info, err, peer) {
 		m.refundEscrowLookup(peer, chargedAt)
+		chargedAt = time.Time{}
 	}
 	m.rememberEscrowLookup(escrowID, info, err, now)
-	return info, err
+	return info, chargedAt, err
+}
+
+// loadRosterEscrow returns a chain escrow from the retention roster, the
+// durable escrow cache, or one rate-limited GetEscrow. Retained escrows
+// (current epoch and the two before it) are stored in rosterEscrows so later
+// calls do not reload them. Unknown ids stay on the one-minute cache inside
+// fetchEscrowTracked. A pruned epoch is not stored and returns ErrEpochPruned.
+// Settled escrows are returned for the caller to reject and are not stored.
+// chargedAt is non-zero only when this call still holds an unknown-id charge.
+func (m *HostManager) loadRosterEscrow(escrowID, peer string) (*bridge.EscrowInfo, time.Time, error) {
+	if info, ok := m.cachedRoster(escrowID); ok {
+		return info, time.Time{}, nil
+	}
+	if warmed := m.warmedEscrow(escrowID); warmed != nil {
+		if warmed.Settled {
+			return cloneEscrowInfo(warmed), time.Time{}, nil
+		}
+		if !m.rosterRetained(warmed.EpochID) {
+			return cloneEscrowInfo(warmed), time.Time{}, storage.ErrEpochPruned
+		}
+		m.rememberRoster(escrowID, warmed)
+		return cloneEscrowInfo(warmed), time.Time{}, nil
+	}
+	info, chargedAt, err := m.fetchEscrowTracked(escrowID, peer)
+	if err != nil {
+		return info, chargedAt, err
+	}
+	if info == nil {
+		return nil, chargedAt, bridge.ErrEscrowNotFound
+	}
+	if info.Settled {
+		return cloneEscrowInfo(info), chargedAt, nil
+	}
+	if !m.rosterRetained(info.EpochID) {
+		return cloneEscrowInfo(info), chargedAt, storage.ErrEpochPruned
+	}
+	m.rememberRoster(escrowID, info)
+	return cloneEscrowInfo(info), chargedAt, nil
+}
+
+// payloadRoster is the GetPayload gate when SessionServerExisting misses.
+// It does not CreateSession. The handshake peer must be a slot or a warm
+// key for one, and the escrow epoch must be current or current-1. A warm-key
+// hit refunds the Attach unknown-id charge.
+func (m *HostManager) payloadRoster(escrowID, peer string) (*bridge.EscrowInfo, error) {
+	info, chargedAt, err := m.loadRosterEscrow(escrowID, peer)
+	if err != nil {
+		return nil, err
+	}
+	if info != nil && info.Settled {
+		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
+	}
+	// The validator Attaches on this same escrow, so GetPayload only runs
+	// for an epoch the door admits: current and current-1. current-2 stays
+	// cached and is not served. Reject it before any warm-key query.
+	if !m.payloadEpochOpen(info.EpochID) {
+		return nil, errPayloadEpochClosed
+	}
+	if !m.payloadPeerAllowed(escrowID, info, peer) {
+		return nil, errPayloadPeerDenied
+	}
+	if !chargedAt.IsZero() && !escrowLookupEligible(info, nil, peer) {
+		m.refundEscrowLookup(peer, chargedAt)
+	}
+	return info, nil
+}
+
+// payloadPeerAllowed reports whether peer may call unbound GetPayload.
+// A slot address returns before any chain call. Any other peer uses the
+// decision stored on the roster entry. The first miss scans warm keys once;
+// concurrent callers for the same escrow and peer share that scan. A deny is
+// stored. A scan that saw a query error and no matching grant is not stored.
+func (m *HostManager) payloadPeerAllowed(escrowID string, info *bridge.EscrowInfo, peer string) bool {
+	if info == nil || peer == "" {
+		return false
+	}
+	for _, slot := range info.Slots {
+		if slot == peer {
+			return true
+		}
+	}
+	if allowed, ok := m.cachedRosterPeer(escrowID, peer); ok {
+		return allowed
+	}
+	if m.bridge == nil {
+		return false
+	}
+	v, _, _ := m.rosterPeerSF.Do(escrowID+"\x00"+peer, func() (interface{}, error) {
+		if allowed, ok := m.cachedRosterPeer(escrowID, peer); ok {
+			return allowed, nil
+		}
+		allowed, definitive := m.scanRosterWarmKey(info, peer)
+		if definitive {
+			m.rememberRosterPeer(escrowID, peer, allowed)
+		}
+		return allowed, nil
+	})
+	allowed, _ := v.(bool)
+	return allowed
+}
+
+// scanRosterWarmKey walks slots in order. allowed is true when one grant
+// matches. definitive is false when a query failed and no grant matched, so
+// the caller must not cache the deny.
+func (m *HostManager) scanRosterWarmKey(info *bridge.EscrowInfo, peer string) (allowed, definitive bool) {
+	if m == nil || m.bridge == nil || info == nil {
+		return false, false
+	}
+	sawSlot := false
+	uncertain := false
+	for _, slot := range info.Slots {
+		if slot == "" || slot == peer {
+			continue
+		}
+		sawSlot = true
+		ok, err := m.bridge.VerifyWarmKey(peer, slot)
+		if err != nil {
+			uncertain = true
+			continue
+		}
+		if ok {
+			return true, true
+		}
+	}
+	if !sawSlot {
+		return false, true
+	}
+	if uncertain {
+		return false, false
+	}
+	return false, true
+}
+
+func (m *HostManager) rosterCurrentEpoch() uint64 {
+	if m == nil {
+		return 0
+	}
+	return currentEpochIDFromStore(m.store)
+}
+
+// rosterRetained reports whether epoch is the current epoch or one of the
+// two before it. A zero clock (tests, store without an epoch) keeps the
+// escrow: there is no horizon to close.
+func (m *HostManager) rosterRetained(epoch uint64) bool {
+	current := m.rosterCurrentEpoch()
+	if current == 0 {
+		return true
+	}
+	cutoff := m.pruneCutoff()
+	if cutoff == 0 {
+		cutoff = storage.RetentionCutoff(current, storage.DefaultEpochRetain)
+	}
+	return epoch >= cutoff
+}
+
+// attachDoorOpen is the Attach admission on top of roster eligibility.
+// The current epoch and the one before it open the door. A validator
+// Attaches on the same escrow it uses for GetPayload, so current-1 has to
+// admit the handshake or that payload never runs. current-2 stays cached
+// and does not admit. A zero clock leaves the door open.
+func (m *HostManager) attachDoorOpen(epoch uint64) bool {
+	return m.payloadEpochOpen(epoch)
+}
+
+// payloadEpochOpen is the current epoch and current-1. Unbound GetPayload
+// serves those epochs only. A zero clock leaves the gate open.
+func (m *HostManager) payloadEpochOpen(epoch uint64) bool {
+	current := m.rosterCurrentEpoch()
+	if current == 0 {
+		return true
+	}
+	if epoch == current {
+		return true
+	}
+	return epoch+1 == current
+}
+
+func (m *HostManager) cachedRoster(escrowID string) (*bridge.EscrowInfo, bool) {
+	m.escrowLookupMu.Lock()
+	entry := m.rosterEscrows[escrowID]
+	if entry == nil || entry.info == nil {
+		m.escrowLookupMu.Unlock()
+		return nil, false
+	}
+	cloned := cloneEscrowInfo(entry.info)
+	m.escrowLookupMu.Unlock()
+	if m.rosterRetained(cloned.EpochID) {
+		return cloned, true
+	}
+	m.escrowLookupMu.Lock()
+	if cur := m.rosterEscrows[escrowID]; cur != nil && cur.info != nil && cur.info.EpochID == cloned.EpochID {
+		delete(m.rosterEscrows, escrowID)
+	}
+	m.escrowLookupMu.Unlock()
+	return nil, false
+}
+
+func (m *HostManager) rememberRoster(escrowID string, info *bridge.EscrowInfo) {
+	if info == nil || info.Settled || !m.rosterRetained(info.EpochID) {
+		return
+	}
+	m.escrowLookupMu.Lock()
+	defer m.escrowLookupMu.Unlock()
+	if m.rosterEscrows == nil {
+		m.rosterEscrows = make(map[string]*rosterEscrow)
+	}
+	if existing := m.rosterEscrows[escrowID]; existing != nil {
+		existing.info = cloneEscrowInfo(info)
+		return
+	}
+	if len(m.rosterEscrows) >= maxEscrowLookupCache {
+		m.evictOneRosterLocked(info.EpochID)
+	}
+	m.rosterEscrows[escrowID] = &rosterEscrow{info: cloneEscrowInfo(info)}
+}
+
+func (m *HostManager) cachedRosterPeer(escrowID, peer string) (bool, bool) {
+	m.escrowLookupMu.Lock()
+	defer m.escrowLookupMu.Unlock()
+	entry := m.rosterEscrows[escrowID]
+	if entry == nil || entry.peers == nil {
+		return false, false
+	}
+	allowed, ok := entry.peers[peer]
+	return allowed, ok
+}
+
+func (m *HostManager) rememberRosterPeer(escrowID, peer string, allowed bool) {
+	if peer == "" {
+		return
+	}
+	m.escrowLookupMu.Lock()
+	defer m.escrowLookupMu.Unlock()
+	entry := m.rosterEscrows[escrowID]
+	if entry == nil {
+		return
+	}
+	if entry.peers == nil {
+		entry.peers = make(map[string]bool)
+	}
+	if _, exists := entry.peers[peer]; !exists && len(entry.peers) >= maxRosterPeerDecisions {
+		for id := range entry.peers {
+			delete(entry.peers, id)
+			break
+		}
+	}
+	entry.peers[peer] = allowed
+}
+
+func (m *HostManager) evictOneRosterLocked(keepEpoch uint64) {
+	for id, entry := range m.rosterEscrows {
+		if entry == nil || entry.info == nil || entry.info.EpochID != keepEpoch {
+			delete(m.rosterEscrows, id)
+			return
+		}
+	}
+	for id := range m.rosterEscrows {
+		delete(m.rosterEscrows, id)
+		return
+	}
+}
+
+func (m *HostManager) dropRosterBefore(cutoff uint64) {
+	if cutoff == 0 {
+		return
+	}
+	m.escrowLookupMu.Lock()
+	defer m.escrowLookupMu.Unlock()
+	for id, entry := range m.rosterEscrows {
+		if entry == nil || entry.info == nil || entry.info.EpochID < cutoff {
+			delete(m.rosterEscrows, id)
+		}
+	}
 }
 
 // warmedEscrow returns a fresh escrow_cache row without a chain query. First

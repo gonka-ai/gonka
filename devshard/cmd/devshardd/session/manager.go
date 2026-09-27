@@ -58,7 +58,14 @@ type HostManager struct {
 	escrowLookups      map[string]escrowLookupEntry
 	escrowLookupPeer   map[string][]time.Time
 	escrowLookupFloor  []time.Time
-	sf                 singleflight.Group
+	// rosterEscrows keeps chain escrows inside retention (current epoch and
+	// the two before it). Unknown ids stay in escrowLookups. peers on each
+	// entry is the unbound GetPayload warm-key decision for that escrow.
+	rosterEscrows map[string]*rosterEscrow
+	// rosterPeerSF collapses concurrent warm-key scans for one escrow and
+	// peer. It is not the session-create group: those keys are escrow ids.
+	rosterPeerSF singleflight.Group
+	sf           singleflight.Group
 
 	store              storage.Storage
 	signer             *signing.Secp256k1Signer
@@ -373,6 +380,7 @@ func NewHostManager(
 		resolutionFailures: make(map[string]resolutionFailure),
 		escrowLookups:      make(map[string]escrowLookupEntry),
 		escrowLookupPeer:   make(map[string][]time.Time),
+		rosterEscrows:      make(map[string]*rosterEscrow),
 		store:              gate,
 		obsGate:            gate,
 		signer:             signer,
@@ -428,12 +436,11 @@ func (m *HostManager) allowRPCPeer(ctx context.Context, addr string) (bool, erro
 	if m.bridge == nil {
 		return false, err
 	}
-	escrow := m.warmedEscrow(escrowID)
-	var gerr error
-	if escrow == nil {
-		escrow, gerr = m.fetchEscrowForBind(escrowID, addr)
-	}
+	escrow, _, gerr := m.loadRosterEscrow(escrowID, addr)
 	if gerr != nil {
+		if errors.Is(gerr, storage.ErrEpochPruned) {
+			return false, nil
+		}
 		return false, fmt.Errorf("get escrow: %w", gerr)
 	}
 	if escrow == nil {
@@ -443,7 +450,16 @@ func (m *HostManager) allowRPCPeer(ctx context.Context, addr string) (bool, erro
 		m.rememberResolutionFailure(escrowID, bridge.ErrEscrowSettled, time.Now())
 		return false, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
 	}
-	return escrowLookupEligible(escrow, nil, addr), nil
+	if !escrowLookupEligible(escrow, nil, addr) {
+		return false, nil
+	}
+	// Current and current-1 admit Attach so GetPayload on that same escrow
+	// can run. current-2 stays cached and does not admit. An unknown clock
+	// keeps the door open.
+	if !m.attachDoorOpen(escrow.EpochID) {
+		return false, nil
+	}
+	return true, nil
 }
 
 func escrowNotOpen(escrowID string, err error) (*transport.Server, error) {
@@ -913,6 +929,7 @@ func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
 	if cutoffEpoch == 0 {
 		return 0
 	}
+	m.dropRosterBefore(cutoffEpoch)
 	m.sessionsMutex.Lock()
 	evicted := make(map[string]*transport.Server)
 	for escrowID, srv := range m.sessions {
@@ -1481,11 +1498,13 @@ func (m *HostManager) Register(g *echo.Group) {
 		}
 		if auth := m.peerAuthHandler(); auth != nil {
 			lookup := hostRPCLookup{m: m}
+			payloads := rpcserver.NewPayloadHandler(lookup, m.ServeRPCGetPayload)
+			payloads.SetUnboundGetPayload(m.ServeUnboundGetPayload)
 			opts = append(opts, devshardserver.WithPeerRPC(
 				auth,
 				rpcserver.NewSessionHandler(lookup),
 				rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
-				rpcserver.WithPayloadService(rpcserver.NewPayloadHandler(lookup, m.ServeRPCGetPayload)),
+				rpcserver.WithPayloadService(payloads),
 			))
 		}
 	}
@@ -1632,7 +1651,57 @@ func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) erro
 // ServeGetPayload is the transport-neutral core behind GET .../payloads and
 // PayloadService.GetPayload.
 func (m *HostManager) ServeGetPayload(ctx context.Context, srv *transport.Server, in PayloadAuthInput) (*validationpkg.PayloadResponse, error) {
-	escrowID := srv.Host().EscrowID()
+	return m.serveGetPayload(ctx, srv.Host().EscrowID(), srv.Host().Group(), in)
+}
+
+// ServeUnboundGetPayload serves a payload when this host has no session row.
+// The chain roster is the group gate. Current and current-1 are served.
+// It does not CreateSession. A chain load uses the same budget as Attach.
+func (m *HostManager) ServeUnboundGetPayload(ctx context.Context, peer string, req *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+	if req == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	escrowID := rpcserver.EscrowIDFromContext(ctx)
+	info, err := m.payloadRoster(escrowID, peer)
+	if err != nil {
+		if errors.Is(err, errPayloadPeerDenied) {
+			return nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
+		}
+		if errors.Is(err, errPayloadEpochClosed) {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow epoch is not open for payload"))
+		}
+		return nil, rpcserver.MapSessionError(err)
+	}
+	group, err := bridge.BuildGroupFromEscrow(info)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow group is not available"))
+	}
+	resp, err := m.serveGetPayload(ctx, escrowID, group, PayloadAuthInput{
+		InferenceID:      req.GetInferenceId(),
+		ValidatorAddress: req.GetValidatorAddress(),
+		Timestamp:        req.GetTimestamp(),
+		EpochID:          req.GetEpochId(),
+		Signature:        string(req.GetSignature()),
+	})
+	if err != nil {
+		return nil, connectFromEcho(err)
+	}
+	return payloadRPCResponse(resp), nil
+}
+
+func payloadRPCResponse(resp *validationpkg.PayloadResponse) *rpcpb.GetPayloadResponse {
+	if resp == nil {
+		return &rpcpb.GetPayloadResponse{}
+	}
+	return &rpcpb.GetPayloadResponse{
+		InferenceId:       resp.InferenceId,
+		PromptPayload:     resp.PromptPayload,
+		ResponsePayload:   resp.ResponsePayload,
+		ExecutorSignature: resp.ExecutorSignature,
+	}
+}
+
+func (m *HostManager) serveGetPayload(ctx context.Context, escrowID string, group []types.SlotAssignment, in PayloadAuthInput) (*validationpkg.PayloadResponse, error) {
 	emit := func(level observability.Level, msg string, status observability.MetricStatus, reason observability.Reason, err error, fields ...any) {
 		base := []any{"inference_id", in.InferenceID, "validator_address", in.ValidatorAddress}
 		observability.LogPayloadRequest(ctx, level, escrowID, status, reason, msg, err, append(base, fields...)...)
@@ -1649,7 +1718,7 @@ func (m *HostManager) ServeGetPayload(ctx context.Context, srv *transport.Server
 		return nil, echo.NewHTTPError(m.payloadFaultStatus, "testenv payload fault")
 	}
 
-	epochID, authReason, authErr := m.authenticatePayloadAuth(ctx, srv.Host().Group(), in)
+	epochID, authReason, authErr := m.authenticatePayloadAuth(ctx, group, in)
 	if authErr != nil {
 		emit(observability.LevelWarn, "payload request auth failed", observability.MetricStatusError, authReason, authErr)
 		return nil, authErr
@@ -1702,12 +1771,7 @@ func (m *HostManager) ServeRPCGetPayload(ctx context.Context, core rpcserver.Ses
 	if err != nil {
 		return nil, connectFromEcho(err)
 	}
-	return &rpcpb.GetPayloadResponse{
-		InferenceId:       resp.InferenceId,
-		PromptPayload:     resp.PromptPayload,
-		ResponsePayload:   resp.ResponsePayload,
-		ExecutorSignature: resp.ExecutorSignature,
-	}, nil
+	return payloadRPCResponse(resp), nil
 }
 
 func connectFromEcho(err error) error {
@@ -2150,9 +2214,11 @@ func closeTransportServer(srv *transport.Server) {
 }
 
 // wireHostToHost stores host-signed SelectTransport clients so repair probes
-// and timeout verify (ChallengeReceipt / GetMempool) exist on a production
-// child. Attach identity is m.signer. Gossip stays unwired: s.gossip is nil,
-// so inbound gossip nonces and txs are dropped and nothing is broadcast.
+// and timeout verify exist on a production child. Refused and execution
+// timeouts both ChallengeReceipt the executor with the creator-signed diffs,
+// so a cold host can CreateSession. Attach identity is m.signer. Gossip stays
+// unwired: s.gossip is nil, so inbound gossip nonces and txs are dropped and
+// nothing is broadcast.
 func (m *HostManager) wireHostToHost(srv *transport.Server, escrowID string, group []types.SlotAssignment) error {
 	if srv == nil || m.signer == nil || m.bridge == nil {
 		return nil
