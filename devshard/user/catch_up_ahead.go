@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	defaultVerifierGateWait = 2 * time.Second
-	verifierDrainBudget     = 30 * time.Second
-	catchUpChunkTimeout     = 60 * time.Second
+	defaultVerifierGateWait   = 2 * time.Second
+	defaultCatchUpDrainBudget = 30 * time.Second
+	catchUpChunkTimeout       = 60 * time.Second
 )
 
 var (
@@ -73,6 +73,15 @@ func (s *Session) deliverCatchUpChunk(ctx context.Context, hostIdx int, client H
 	return resp, nil
 }
 
+func (s *Session) catchUpDrainBudget() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.catchUpDrainBudgetOverride > 0 {
+		return s.catchUpDrainBudgetOverride
+	}
+	return defaultCatchUpDrainBudget
+}
+
 func (s *Session) enterCatchUpGate(ctx context.Context, hostIdx int, gateWait time.Duration) (func(), error) {
 	waitCtx := ctx
 	if gateWait > 0 {
@@ -96,9 +105,9 @@ func (s *Session) verifierCatchUpTail(ctx context.Context, hostIdx int, reserveB
 		return nil, false
 	}
 
-	drainCtx, cancel := context.WithTimeout(ctx, verifierDrainBudget)
+	drainCtx, cancel := context.WithTimeout(ctx, s.catchUpDrainBudget())
 	defer cancel()
-	tail, err := s.catchUpTailForHost(drainCtx, hostIdx, targetNonce, reserveBytes, defaultVerifierGateWait)
+	tail, err := s.catchUpTailForHost(drainCtx, hostIdx, s.finalizeClientFor(hostIdx), targetNonce, reserveBytes, defaultVerifierGateWait)
 	if err != nil {
 		logging.Warn("verifier catch-up ahead failed", "subsystem", "session",
 			"escrow", s.escrowID, "host", hostIdx, "target_nonce", targetNonce, "error", err)
@@ -107,7 +116,7 @@ func (s *Session) verifierCatchUpTail(ctx context.Context, hostIdx int, reserveB
 	return tail, true
 }
 
-func (s *Session) catchUpTailForHost(ctx context.Context, hostIdx int, targetNonce uint64, reserveBytes int, gateWait time.Duration) ([]types.Diff, error) {
+func (s *Session) catchUpTailForHost(ctx context.Context, hostIdx int, client HostClient, targetNonce uint64, reserveBytes int, gateWait time.Duration) ([]types.Diff, error) {
 	s.mu.Lock()
 	budgetBytes := s.catchUpBudgetLocked()
 	tail, fits := s.tailToSendLocked(hostIdx, targetNonce, reserveBytes, budgetBytes)
@@ -125,7 +134,6 @@ func (s *Session) catchUpTailForHost(ctx context.Context, hostIdx int, targetNon
 	}
 	defer release()
 
-	client := s.finalizeClientFor(hostIdx)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err

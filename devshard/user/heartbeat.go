@@ -423,7 +423,7 @@ func (s *Session) heartbeatGateWait() time.Duration {
 }
 
 func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error {
-	catchUp, err := s.catchUpTailForHost(ctx, item.hostIdx, item.diff.Nonce, 0, s.heartbeatGateWait())
+	catchUp, err := s.catchUpTailForHost(ctx, item.hostIdx, s.clients[item.hostIdx], item.diff.Nonce, 0, s.heartbeatGateWait())
 	if err != nil {
 		logging.Warn("heartbeat catch-up ahead failed", "subsystem", "heightsync",
 			"escrow", s.escrowID, "nonce", item.diff.Nonce, "host", item.hostIdx, "error", err)

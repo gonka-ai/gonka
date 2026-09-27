@@ -238,15 +238,16 @@ type Session struct {
 	// admission controller. Multi-slot validators legitimately repeat
 	// the same key here; ParticipantKeys() de-duplicates for views
 	// that want a per-host (not per-slot) list.
-	participantKeys           []string
-	clients                   []HostClient
-	nonce                     uint64
-	diffs                     []types.Diff   // append-only log
-	hostSyncNonce             map[int]uint64 // hostIdx -> last nonce sent
-	catchUpGate               []chan struct{}
-	catchUpBudgetBytes        int
-	heartbeatGateWaitOverride time.Duration
-	pendingTxs                []*types.DevshardTx // from host mempools, for next diff
+	participantKeys            []string
+	clients                    []HostClient
+	nonce                      uint64
+	diffs                      []types.Diff   // append-only log
+	hostSyncNonce              map[int]uint64 // hostIdx -> last nonce sent
+	catchUpGate                []chan struct{}
+	catchUpBudgetBytes         int
+	heartbeatGateWaitOverride  time.Duration
+	catchUpDrainBudgetOverride time.Duration
+	pendingTxs                 []*types.DevshardTx // from host mempools, for next diff
 	// pendingTxKeys dedups the current pendingTxs slice by tx_type:id. It is
 	// rebuilt from what compose retained, so a tx that failed to apply frees
 	// its key again -- otherwise the first host to propose a bogus tx would
@@ -1299,7 +1300,9 @@ func (p *PreparedInference) Payload() *host.InferencePayload {
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
 	reserveBytes := transport.EncodedPromptSize(p.params.Prompt, p.params.Model)
-	catchUp, err := s.catchUpTailForHost(ctx, p.hostIdx, p.diff.Nonce, reserveBytes, 0)
+	drainCtx, cancelDrain := context.WithTimeout(ctx, s.catchUpDrainBudget())
+	catchUp, err := s.catchUpTailForHost(drainCtx, p.hostIdx, s.clients[p.hostIdx], p.diff.Nonce, reserveBytes, 0)
+	cancelDrain()
 	if err != nil {
 		return nil, err
 	}

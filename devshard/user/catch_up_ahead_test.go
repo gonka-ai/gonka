@@ -61,7 +61,11 @@ func (c *sizeRecordingClient) Send(ctx context.Context, req host.HostRequest, st
 		signal <- struct{}{}
 	}
 	if release != nil {
-		<-release
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	if sendErr != nil {
 		return nil, sendErr
@@ -330,7 +334,7 @@ func TestAWaiterNeitherSendsNorHoldsWhileTheGateIsTaken(t *testing.T) {
 	holderDone := make(chan struct{})
 	go func() {
 		defer close(holderDone)
-		_, _ = session.catchUpTailForHost(holderCtx, prepared.hostIdx, prepared.diff.Nonce, 0, 0)
+		_, _ = session.catchUpTailForHost(holderCtx, prepared.hostIdx, session.clients[prepared.hostIdx], prepared.diff.Nonce, 0, 0)
 	}()
 	select {
 	case <-signal:
@@ -341,7 +345,7 @@ func TestAWaiterNeitherSendsNorHoldsWhileTheGateIsTaken(t *testing.T) {
 	waiterCtx, cancelWaiter := context.WithCancel(context.Background())
 	waiterErr := make(chan error, 1)
 	go func() {
-		_, err := session.catchUpTailForHost(waiterCtx, prepared.hostIdx, prepared.diff.Nonce, 0, 0)
+		_, err := session.catchUpTailForHost(waiterCtx, prepared.hostIdx, session.clients[prepared.hostIdx], prepared.diff.Nonce, 0, 0)
 		waiterErr <- err
 	}()
 
@@ -374,7 +378,7 @@ func TestAWaiterNeitherSendsNorHoldsWhileTheGateIsTaken(t *testing.T) {
 	runsBefore := len(recorder.recordedNonceRuns())
 	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelDrain()
-	_, err := session.catchUpTailForHost(drainCtx, prepared.hostIdx, prepared.diff.Nonce, 0, 0)
+	_, err := session.catchUpTailForHost(drainCtx, prepared.hostIdx, session.clients[prepared.hostIdx], prepared.diff.Nonce, 0, 0)
 	require.NoError(t, err, "a released gate lets the next drain through")
 	require.Greater(t, len(recorder.recordedNonceRuns()), runsBefore,
 		"and that drain had work to do, so it proves the gate was free rather than empty")
@@ -438,7 +442,7 @@ func TestATailBiggerThanTheBudgetIsRefusedNotShipped(t *testing.T) {
 	session.catchUpBudgetBytes = 128
 	session.mu.Unlock()
 
-	_, err := session.catchUpTailForHost(context.Background(), prepared.hostIdx, prepared.diff.Nonce, 0, 0)
+	_, err := session.catchUpTailForHost(context.Background(), prepared.hostIdx, session.clients[prepared.hostIdx], prepared.diff.Nonce, 0, 0)
 
 	require.ErrorIs(t, err, ErrTailTooLargeForHost)
 	require.ErrorIs(t, err, ErrRequestTooLargeForHost)
@@ -453,24 +457,113 @@ func TestADiffBiggerThanTheBudgetIsRefusedNotShipped(t *testing.T) {
 	session.catchUpBudgetBytes = 128
 	session.mu.Unlock()
 
-	_, err := session.catchUpTailForHost(context.Background(), prepared.hostIdx, prepared.diff.Nonce, 0, 0)
+	_, err := session.catchUpTailForHost(context.Background(), prepared.hostIdx, session.clients[prepared.hostIdx], prepared.diff.Nonce, 0, 0)
 
 	require.ErrorIs(t, err, ErrTailTooLargeForHost)
 	require.Empty(t, recorder.recordedNonceRuns(), "a chunk the host would refuse must not leave the gateway")
 }
 
-func TestTheDrainBypassesTheParticipantBudget(t *testing.T) {
+func TestAVerifierDrainBypassesTheParticipantBudget(t *testing.T) {
+	// Test flow:
+	// 1. Put a verifier behind a backlog over the body budget, on a client whose participant budget refuses everything.
+	// 2. Drain the verifier's tail ahead of its vote.
+	// 3. The drain succeeds without ever asking the budget: a vote records misbehaviour the budget must not silence.
 	session, prepared, recorder := backloggedSession(t, promptOfSize(100), 4)
 	refusing := &admissionRefusingClient{InProcessClient: recorder.InProcessClient}
 	session.mu.Lock()
 	session.clients[prepared.hostIdx] = refusing
 	session.mu.Unlock()
 
-	_, err := session.catchUpTailForHost(context.Background(), prepared.hostIdx, prepared.diff.Nonce, 0, 0)
+	_, ok := session.verifierCatchUpTail(context.Background(), prepared.hostIdx, 0)
 
-	require.NoError(t, err)
+	require.True(t, ok)
 	require.Zero(t, refusing.refusals,
-		"a host locked out by the budget can never catch up, so the drain has to bypass it")
+		"a verifier locked out by the budget still has to catch up before it can vote")
+}
+
+type admissionGatedClient struct {
+	InProcessClient
+	bypass   *sizeRecordingClient
+	refusals int
+}
+
+func (c *admissionGatedClient) WithoutAdmission() any { return c.bypass }
+
+func (c *admissionGatedClient) Send(context.Context, host.HostRequest, io.Writer, func(*host.HostResponse)) (*host.HostResponse, error) {
+	c.refusals++
+	return nil, fmt.Errorf("participant request budget exhausted")
+}
+
+func TestAnInferenceDrainRespectsTheParticipantBudget(t *testing.T) {
+	// Test flow:
+	// 1. Put the executor behind a backlog over the body budget, on a client whose participant budget refuses everything.
+	// 2. Send the inference.
+	// 3. Nothing may leave through the admission-free client, and the refusal is what the attempt reports.
+	session, prepared, recorder := backloggedSession(t, promptOfSize(100), 4)
+	gated := &admissionGatedClient{InProcessClient: recorder.InProcessClient, bypass: recorder}
+	session.mu.Lock()
+	session.clients[prepared.hostIdx] = gated
+	session.mu.Unlock()
+
+	_, err := session.SendOnly(context.Background(), prepared, nil, nil)
+
+	require.ErrorContains(t, err, "participant request budget exhausted")
+	sizes, _ := recorder.recorded()
+	require.Empty(t, sizes, "an inference must not push catch-up bytes past the budget that refuses the host")
+	require.Equal(t, 1, gated.refusals, "the first drain chunk is the request the budget refuses")
+}
+
+func sendOnlyWithin(t *testing.T, session *Session, prepared *PreparedInference, limit time.Duration) error {
+	t.Helper()
+	sendErr := make(chan error, 1)
+	go func() {
+		_, err := session.SendOnly(context.Background(), prepared, nil, nil)
+		sendErr <- err
+	}()
+	select {
+	case err := <-sendErr:
+		return err
+	case <-time.After(limit):
+		t.Fatal("the inference outlived its drain budget")
+		return nil
+	}
+}
+
+func TestAnInferenceBehindABusyGateGivesUpWithoutBlame(t *testing.T) {
+	// Test flow:
+	// 1. Put the executor behind a backlog over the body budget and hold its catch-up gate, as another drain would.
+	// 2. Send the inference with a short drain budget.
+	// 3. It gives up within that budget, sends nothing, and reports that its catch-up never started.
+	session, prepared, recorder := backloggedSession(t, promptOfSize(100), 4)
+	session.catchUpGate[prepared.hostIdx] <- struct{}{}
+	t.Cleanup(func() { <-session.catchUpGate[prepared.hostIdx] })
+	session.mu.Lock()
+	session.catchUpDrainBudgetOverride = 20 * time.Millisecond
+	session.mu.Unlock()
+
+	err := sendOnlyWithin(t, session, prepared, 5*time.Second)
+
+	require.ErrorIs(t, err, ErrCatchUpNotStarted, "waiting behind another drain is not the host's fault")
+	sizes, _ := recorder.recorded()
+	require.Empty(t, sizes, "a drain that never took the gate must not reach the host")
+}
+
+func TestADrainThatOutlivesItsBudgetIsTheHostsFault(t *testing.T) {
+	// Test flow:
+	// 1. Put the executor behind a backlog over the body budget, on a host that never answers a catch-up chunk.
+	// 2. Send the inference with a short drain budget.
+	// 3. It gives up within that budget with a deadline error that is not a never-started catch-up, so the host is scored.
+	session, prepared, recorder := backloggedSession(t, promptOfSize(100), 4)
+	recorder.park(t)
+	session.mu.Lock()
+	session.catchUpDrainBudgetOverride = 20 * time.Millisecond
+	session.mu.Unlock()
+
+	err := sendOnlyWithin(t, session, prepared, 5*time.Second)
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.NotErrorIs(t, err, ErrCatchUpNotStarted,
+		"a host that took the chunk and never caught up must not hide behind a never-started drain")
 }
 
 func TestAHeartbeatWhoseDrainFailsDeliversNothing(t *testing.T) {
@@ -507,7 +600,7 @@ func TestAPromptOverTheBudgetIsRefusedOnACurrentHost(t *testing.T) {
 	budgetBytes := session.catchUpBudgetBytes
 	session.mu.Unlock()
 
-	_, err := session.catchUpTailForHost(context.Background(), prepared.hostIdx, prepared.diff.Nonce, budgetBytes, 0)
+	_, err := session.catchUpTailForHost(context.Background(), prepared.hostIdx, session.clients[prepared.hostIdx], prepared.diff.Nonce, budgetBytes, 0)
 
 	require.ErrorIs(t, err, ErrPromptTooLargeForHost)
 	require.Empty(t, recorder.recordedNonceRuns())
@@ -521,7 +614,7 @@ func TestAHostThatNeverAdvancesStopsTheDrain(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	_, err := session.catchUpTailForHost(ctx, prepared.hostIdx, prepared.diff.Nonce, 0, 0)
+	_, err := session.catchUpTailForHost(ctx, prepared.hostIdx, session.clients[prepared.hostIdx], prepared.diff.Nonce, 0, 0)
 
 	require.ErrorContains(t, err, "stalled at nonce",
 		"a host whose answer never advances would otherwise be asked forever")
@@ -538,7 +631,7 @@ func TestTheFinalizeCatchUpWaitsOnTheSameGate(t *testing.T) {
 	holderDone := make(chan struct{})
 	go func() {
 		defer close(holderDone)
-		_, _ = session.catchUpTailForHost(holderCtx, prepared.hostIdx, prepared.diff.Nonce, 0, 0)
+		_, _ = session.catchUpTailForHost(holderCtx, prepared.hostIdx, session.clients[prepared.hostIdx], prepared.diff.Nonce, 0, 0)
 	}()
 	select {
 	case <-signal:
@@ -609,7 +702,7 @@ func TestTheHeartbeatDoesNotWaitOutAnInferenceDrain(t *testing.T) {
 	holderDone := make(chan struct{})
 	go func() {
 		defer close(holderDone)
-		_, _ = session.catchUpTailForHost(holderCtx, prepared.hostIdx, prepared.diff.Nonce, 0, 0)
+		_, _ = session.catchUpTailForHost(holderCtx, prepared.hostIdx, session.clients[prepared.hostIdx], prepared.diff.Nonce, 0, 0)
 	}()
 	select {
 	case <-signal:
