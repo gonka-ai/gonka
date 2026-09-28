@@ -15,6 +15,10 @@ import (
 
 // --- Test helpers (package-specific) ---
 
+// balanceForReservationWithoutFee covers a 100-token input reserved at the max_tokens floor, and
+// nothing beyond it, so the per-nonce fee is what the escrow cannot pay.
+const balanceForReservationWithoutFee = 100 + testutil.TestMaxTokens
+
 func newTestSM(t *testing.T, hosts []*signing.Secp256k1Signer, balance uint64) (*StateMachine, *signing.Secp256k1Signer) {
 	t.Helper()
 	user := testutil.MustGenerateKey(t)
@@ -825,6 +829,7 @@ func TestApplyDiff_EscrowBalanceCheck(t *testing.T) {
 		InferenceId: 1, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})})
 	_, err := sm.ApplyDiff(diff)
+	require.ErrorIs(t, err, types.ErrRequestExceedsBalance, "a reservation too large for the balance is not the escrow running out of funds")
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
 }
 
@@ -1455,8 +1460,7 @@ func TestApplyDiff_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
 	config.FeePerNonce = 1
 	verifier := signing.NewSecp256k1Verifier()
 
-	// Balance is enough for reserve ((100+50)*1) but not reserve+fee.
-	sm, err := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 150))
+	sm, err := NewStateMachine("escrow-1", config, group, balanceForReservationWithoutFee, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balanceForReservationWithoutFee))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
@@ -1469,10 +1473,11 @@ func TestApplyDiff_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
+	require.NotErrorIs(t, err, types.ErrRequestExceedsBalance, "the escrow refused the per-nonce fee, not the reservation")
 
 	st := sm.SnapshotState()
 	require.Equal(t, uint64(0), st.LatestNonce)
-	require.Equal(t, uint64(150), st.Balance)
+	require.Equal(t, uint64(balanceForReservationWithoutFee), st.Balance)
 	require.Empty(t, st.Inferences)
 }
 
@@ -1511,8 +1516,7 @@ func TestApplyLocalBestEffort_FeePerNonce_InsufficientBalance_Rollback(t *testin
 	config.FeePerNonce = 1
 	verifier := signing.NewSecp256k1Verifier()
 
-	// Balance is enough for reserve ((100+50)*1) but not reserve+fee.
-	sm, err := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 150))
+	sm, err := NewStateMachine("escrow-1", config, group, balanceForReservationWithoutFee, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balanceForReservationWithoutFee))
 	require.NoError(t, err)
 
 	_, applied, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
@@ -1524,11 +1528,12 @@ func TestApplyLocalBestEffort_FeePerNonce_InsufficientBalance_Rollback(t *testin
 		StartedAt:   1000,
 	})})
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
+	require.NotErrorIs(t, err, types.ErrRequestExceedsBalance, "the escrow refused the per-nonce fee, not the reservation")
 	require.Nil(t, applied)
 
 	st := sm.SnapshotState()
 	require.Equal(t, uint64(0), st.LatestNonce)
-	require.Equal(t, uint64(150), st.Balance)
+	require.Equal(t, uint64(balanceForReservationWithoutFee), st.Balance)
 	require.Empty(t, st.Inferences)
 }
 

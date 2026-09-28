@@ -101,6 +101,7 @@ It is responsible for:
 - serving pooled OpenAI-compatible endpoints like `/v1/chat/completions`
 - exposing admin, OpenAPI/Swagger, debug, and metrics endpoints
 - choosing a `devshardRuntime` when multiple escrows are active
+- moving a request to another escrow when the chosen one cannot fund it
 - enforcing gateway-wide admission control:
   - `GatewayLimiter` for request concurrency and input-token reservation
   - `ParticipantRequestLimiter` for participant/nginx safety
@@ -109,6 +110,8 @@ It is responsible for:
 - managing persisted gateway settings and runtime membership via `GatewayStore`
 - activating, deactivating, importing, cleaning, and settling devshards through admin APIs
 - coordinating capacity-aware routing and automatic escrow rotation
+
+An escrow that cannot pay for a request does not end it: while nothing has reached the client, the runtime hands the request back and `Gateway` offers it to the next escrow serving the model, each one at most once. The client is refused only once every escrow has refused, with `503` and `Retry-After`, because a replacement escrow or a settling inference restores the balance.
 
 It is **not** responsible for devshard protocol execution details. Once it forwards a request to a runtime, the runtime-specific logic takes over.
 
@@ -175,7 +178,7 @@ It is responsible for:
 - building `user.InferenceParams`
 - serving cached responses when the request body/model matches a prior successful response
 - switching between streaming and non-streaming response handling
-- mapping runner errors to HTTP responses
+- mapping runner errors to HTTP responses, except a funding refusal on the pooled route, which it hands back unanswered
 - serving debug/status/finalize/request-accounting/OpenAPI endpoints
 
 It is intentionally thin. It does not know about nonces, attempts, hosts, or protocol messages. It delegates execution to `Redundancy`.
@@ -347,6 +350,8 @@ It is responsible for:
 
 Rotation acts on runtime membership, not on individual request execution. When it activates or deactivates a devshard, `Gateway` updates the runtime map and `CapacityState` membership.
 
+Depletion is read from the escrow, never from one request. An escrow counts as depleted when it can no longer pay the per-nonce fee, when its balance falls under the replacement threshold, or when its nonce reaches the chain's limit; all three are independent of what any caller asked for. A request whose reserved cost, `(input_length + max_tokens) * token_price`, does not fit the balance that is left is refused on its own and leaves the escrow in service. Reading that refusal as depletion would mint one escrow per oversized request: each replacement carries a new escrow ID, so the guard that replaces a given ID only once never sees a repeat, and a caller whose request outgrows a full escrow keeps the chain of replacements running for as long as it retries.
+
 ### Gateway disabled mode
 
 Gateway disabled mode is a persisted operational switch.
@@ -445,6 +450,8 @@ For a pooled request:
 16. `Proxy` stores eligible responses in the cache and request-accounting log.
 17. `Proxy` returns the final client response.
 18. In the background, `Session.HandleTimeout` waits for the protocol deadline, collects timeout votes, and submits MsgTimeoutInference; the runtime drain waits for it before settling or retiring the escrow.
+
+Steps 5 to 10 repeat on another escrow when the chosen one cannot fund the reservation — see `Gateway`.
 
 ## Dependency Map
 
