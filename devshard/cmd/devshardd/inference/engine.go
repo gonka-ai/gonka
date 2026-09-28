@@ -40,13 +40,14 @@ const fallbackSlotWait = 100 * time.Millisecond
 // round-robins direct HTTP without lock/release. When capacity has been
 // observed via ListNodeCapacity, fallback is bounded by capacity.Cache.
 type Engine struct {
-	mlClient     *mlnodeclient.Client
-	mgr          *mlnodeclient.Manager
-	capacity     *mlnodeclient.Cache
-	payloadStore PayloadStore
-	httpClient   *http.Client
-	chainParams  ChainParamsProvider
-	phase        *chain.Phase
+	mlClient                    *mlnodeclient.Client
+	mgr                         *mlnodeclient.Manager
+	capacity                    *mlnodeclient.Cache
+	payloadStore                PayloadStore
+	httpClient                  *http.Client
+	chainParams                 ChainParamsProvider
+	phase                       *chain.Phase
+	logprobsOptimizationEnabled bool
 }
 
 // NewEngine creates an Engine backed by a NodeManager gRPC client and optional
@@ -59,15 +60,17 @@ func NewEngine(
 	payloadStore PayloadStore,
 	chainParams ChainParamsProvider,
 	phase *chain.Phase,
+	logprobsOptimizationEnabled bool,
 ) *Engine {
 	return &Engine{
-		mlClient:     mlClient,
-		mgr:          mgr,
-		capacity:     capacity,
-		payloadStore: payloadStore,
-		httpClient:   NewNoRedirectClient(mlNodeHTTPTimeout),
-		chainParams:  chainParams,
-		phase:        phase,
+		mlClient:                    mlClient,
+		mgr:                         mgr,
+		capacity:                    capacity,
+		payloadStore:                payloadStore,
+		httpClient:                  NewNoRedirectClient(mlNodeHTTPTimeout),
+		chainParams:                 chainParams,
+		phase:                       phase,
+		logprobsOptimizationEnabled: logprobsOptimizationEnabled,
 	}
 }
 
@@ -80,7 +83,7 @@ func NewEngine(
 func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
 	return executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
 		return e.executeMLRequest(ctx, model, req.EscrowID, body)
-	}, e.chainParams)
+	}, e.chainParams, e.logprobsOptimizationEnabled)
 }
 
 func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {

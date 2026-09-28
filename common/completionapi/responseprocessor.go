@@ -1,6 +1,7 @@
 package completionapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -22,13 +23,14 @@ type ResponseProcessor interface {
 }
 
 type ExecutorResponseProcessor struct {
-	inferenceId       string
-	jsonResponseBytes []byte
-	forwardedJSON     []byte
-	streamedResponse  []string
-	forwardLogprobs   bool
-	observedUsage     *Usage
-	usageRefused      bool
+	inferenceId                 string
+	jsonResponseBytes           []byte
+	forwardedJSON               []byte
+	streamedResponse            []string
+	forwardLogprobs             bool
+	logprobsOptimizationEnabled bool
+	observedUsage               *Usage
+	usageRefused                bool
 }
 
 func NewExecutorResponseProcessor(inferenceId string, forwardLogprobs bool) *ExecutorResponseProcessor {
@@ -37,6 +39,14 @@ func NewExecutorResponseProcessor(inferenceId string, forwardLogprobs bool) *Exe
 		jsonResponseBytes: nil,
 		streamedResponse:  nil,
 		forwardLogprobs:   forwardLogprobs,
+	}
+}
+
+// SetLogprobsOptimization takes the gateway's override when it stated one and the executor's default otherwise.
+func (rt *ExecutorResponseProcessor) SetLogprobsOptimization(override *bool, executorDefault bool) {
+	rt.logprobsOptimizationEnabled = executorDefault
+	if override != nil {
+		rt.logprobsOptimizationEnabled = *override
 	}
 }
 
@@ -67,7 +77,11 @@ func (rt *ExecutorResponseProcessor) ProcessStreamedResponse(line string) (strin
 		rt.streamedResponse = append(rt.streamedResponse, line)
 		return line, err
 	}
-	rt.streamedResponse = append(rt.streamedResponse, DataPrefix+string(stored))
+	storedLine := DataPrefix + string(stored)
+	rt.streamedResponse = append(rt.streamedResponse, storedLine)
+	if bytes.Equal(forwarded, stored) {
+		return storedLine, nil
+	}
 	return DataPrefix + string(forwarded), nil
 }
 
@@ -85,6 +99,13 @@ func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded
 	object["id"] = rt.inferenceId
 	rt.observeUsage(object)
 	dropFields(document, fieldsNoValidatorReads)
+
+	if !rt.logprobsOptimizationEnabled {
+		if stored, err = json.Marshal(document); err != nil {
+			return nil, nil, err
+		}
+		return stored, stored, nil
+	}
 
 	// Only a caller that asked is owed the host's own positions, so only it pays for a copy.
 	if rt.forwardLogprobs {

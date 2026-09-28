@@ -111,30 +111,34 @@ func rewriteStreamingPayload(p []byte, intent clientResponseIntent) []byte {
 			continue
 		}
 		payload := bytes.TrimSpace(event[len("data: "):])
-		usageStripped := false
-		if !intent.keepUsage {
-			stripped, ok := stripUsageChunk(payload)
-			if ok {
-				changed, usageStripped = true, true
-				if stripped == nil {
-					continue
+		if bytes.Contains(payload, []byte(`"message"`)) {
+			completion := payload
+			if !intent.keepUsage {
+				if stripped, ok := stripUsageChunk(payload); ok {
+					if stripped == nil {
+						changed = true
+						continue
+					}
+					completion = stripped
 				}
-				payload = stripped
 			}
-		}
-		rewritten, ok := rewriteStreamingDataEvent(payload, intent)
-		if !ok {
-			filtered := filterClientInternalFields(payload, intent)
-			if usageStripped || !bytes.Equal(filtered, payload) {
-				fmt.Fprintf(&out, "data: %s\n\n", filtered)
+			if rewritten, ok := rewriteStreamingDataEvent(completion, intent); ok {
 				changed = true
+				out.Write(rewritten)
 				continue
 			}
-			out.Write(eventChunk)
+		}
+		filtered := filterClientEvent(payload, intent)
+		if filtered == nil {
+			changed = true
 			continue
 		}
-		changed = true
-		out.Write(rewritten)
+		if !bytes.Equal(filtered, payload) {
+			fmt.Fprintf(&out, "data: %s\n\n", filtered)
+			changed = true
+			continue
+		}
+		out.Write(eventChunk)
 	}
 	if !changed {
 		return p
@@ -347,13 +351,7 @@ func filterClientInternalFields(payload []byte, intent clientResponseIntent) []b
 	if err := json.Unmarshal(payload, &v); err != nil {
 		return payload
 	}
-	changed := stripClientInternalFields(v, intent.strippedFields())
-	if intent.keepLogprobs && !intent.keepTopLogprobs {
-		if emptyTopLogprobs(v) {
-			changed = true
-		}
-	}
-	if !changed {
+	if !stripClientFields(v, intent) {
 		return payload
 	}
 	out, err := json.Marshal(v)
@@ -361,6 +359,41 @@ func filterClientInternalFields(payload []byte, intent clientResponseIntent) []b
 		return payload
 	}
 	return out
+}
+
+// filterClientEvent is stripUsageChunk and filterClientInternalFields over one decode; nil drops the event.
+func filterClientEvent(payload []byte, intent clientResponseIntent) []byte {
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return payload
+	}
+	changed := false
+	if _, carries := decoded["usage"]; carries && !intent.keepUsage {
+		delete(decoded, "usage")
+		if choices, _ := decoded["choices"].([]any); len(choices) == 0 {
+			return nil
+		}
+		changed = true
+	}
+	if stripClientFields(decoded, intent) {
+		changed = true
+	}
+	if !changed {
+		return payload
+	}
+	out, err := json.Marshal(decoded)
+	if err != nil {
+		return payload
+	}
+	return out
+}
+
+func stripClientFields(document any, intent clientResponseIntent) bool {
+	changed := stripClientInternalFields(document, intent.strippedFields())
+	if intent.keepLogprobs && !intent.keepTopLogprobs && emptyTopLogprobs(document) {
+		changed = true
+	}
+	return changed
 }
 
 func stripClientInternalFields(v any, fields []string) bool {
