@@ -6,6 +6,7 @@ func buildConfirmationWeightScales(
 	eligibleModels []string,
 	activeParticipants []*types.ActiveParticipant,
 	pocParams *types.PocParams,
+	recipe *types.PocStageRecipe,
 ) []*types.ConfirmationWeightScale {
 	eligible := make(map[string]bool, len(eligibleModels))
 	for _, modelID := range eligibleModels {
@@ -25,11 +26,37 @@ func buildConfirmationWeightScales(
 
 	scales := make([]*types.ConfirmationWeightScale, 0, len(confirmable))
 	for _, modelID := range sortedKeys(confirmable) {
-		config, _ := pocParams.GetModelConfig(modelID)
 		scales = append(scales, &types.ConfirmationWeightScale{
 			ModelId:           modelID,
-			WeightScaleFactor: config.GetWeightScaleFactor().CloneOrOne(),
+			WeightScaleFactor: confirmationScaleFactor(modelID, pocParams, recipe).CloneOrOne(),
 		})
 	}
 	return scales
+}
+
+// confirmationScaleFactor is the weight scale of the frozen regular-stage block.
+// A missing recipe falls back to the live regular-slot block, then the flat field.
+func confirmationScaleFactor(modelID string, pocParams *types.PocParams, recipe *types.PocStageRecipe) *types.Decimal {
+	if recipe != nil {
+		mc, ok := recipe.GetModelConfig(modelID)
+		if !ok {
+			return nil
+		}
+		block, ok := mc.SchemeParams(recipe.Scheme)
+		if !ok || block == nil {
+			return nil
+		}
+		return block.WeightScaleFactor
+	}
+	if pocParams == nil {
+		return nil
+	}
+	config, ok := pocParams.GetModelConfig(modelID)
+	if !ok || config == nil {
+		return nil
+	}
+	if block, ok := config.SchemeParams(pocParams.PocScheme); ok && block != nil {
+		return block.WeightScaleFactor
+	}
+	return config.GetWeightScaleFactor()
 }

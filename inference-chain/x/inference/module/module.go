@@ -844,6 +844,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		participationState.eligibleModels,
 		activeParticipants,
 		params.PocParams,
+		participationState.recipe,
 	)
 
 	emitWeightPipelineLogs(am, upcomingEpoch.Index, groupSummaries,

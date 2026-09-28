@@ -68,6 +68,7 @@ type epochParticipationState struct {
 	eligibleModels          []string
 	participationByModel    map[string]map[string]ParticipationMode
 	bootstrapPenaltyByModel map[string]map[string]BootstrapPenaltyMode
+	recipe                  *types.PocStageRecipe
 }
 
 func buildParticipationByModel(
@@ -88,6 +89,15 @@ func (am AppModule) prepareEpochParticipationState(
 	pocStageStartHeight int64,
 ) (*epochParticipationState, error) {
 	coefficients := modelCoefficients(params.PocParams)
+	var recipe *types.PocStageRecipe
+	stored, found, err := am.keeper.GetPocStageRecipe(ctx, pocStageStartHeight)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		recipe = &stored
+		coefficients = modelCoefficientsFromRecipe(recipe)
+	}
 	calculator := am.buildDelegationWeightCalculator(ctx, activeParticipants, coefficients, params)
 	eligibleModels := calculator.EligibleGroups()
 	participationByModel := buildParticipationByModel(calculator, eligibleModels)
@@ -97,6 +107,7 @@ func (am AppModule) prepareEpochParticipationState(
 		eligibleModels:          eligibleModels,
 		participationByModel:    participationByModel,
 		bootstrapPenaltyByModel: map[string]map[string]BootstrapPenaltyMode{},
+		recipe:                  recipe,
 	}
 
 	bootstrapInputs, found := am.loadBootstrapPenaltyInputs(ctx)

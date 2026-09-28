@@ -115,7 +115,7 @@ type participantWork struct {
 	pubKey     string
 	count      uint32
 	rootHash   []byte
-	decodeMax  int64     // decode_max_tokens of the model config; 0 = prefill scheme
+	decodeMax  int64     // frozen scheme block max_tokens; 0 = prefill
 	attempt    int       // current attempt number (0-based)
 	retryAfter time.Time // don't process before this time
 
@@ -456,7 +456,9 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 			rootHash: commit.RootHash,
 		}
 		if mc, ok := pocParams.GetModelConfig(commit.ModelId); ok {
-			work.decodeMax = types.DecodeMaxForStage(pocParams.PocScheme, mc.DecodeMaxTokens)
+			if steps, ok := mc.MaxTokensForScheme(pocParams.PocScheme); ok {
+				work.decodeMax = steps
+			}
 		}
 		workItems = append(workItems, work)
 	}
@@ -925,6 +927,16 @@ func (v *OffChainValidator) dispatchToMLNode(
 	}
 
 	scheme := pocParams.PocScheme
+	seqLen := modelConfig.SeqLen
+	maxTokens := int64(0)
+	if block, ok := modelConfig.SchemeParams(scheme); ok && block != nil {
+		seqLen = block.SeqLen
+		if scheme == types.PocScheme_POC_SCHEME_DECODE {
+			maxTokens = block.MaxTokens
+		}
+	} else if scheme == types.PocScheme_POC_SCHEME_DECODE {
+		seqLen = 0
+	}
 	decode := scheme == types.PocScheme_POC_SCHEME_DECODE
 	if decode {
 		for i := range artifacts {
@@ -948,7 +960,7 @@ func (v *OffChainValidator) dispatchToMLNode(
 		PublicKey:   work.pubKey,
 		NodeCount:   len(modelNodes),
 		Nonces:      nonces,
-		Params:      mlnodeclient.PoCParamsForScheme(modelConfig.ModelId, modelConfig.SeqLen, types.DecodeMaxForStage(scheme, modelConfig.DecodeMaxTokens), scheme),
+		Params:      mlnodeclient.PoCParamsForScheme(modelConfig.ModelId, seqLen, maxTokens, scheme),
 		URL:         validationCallbackUrl,
 		Validation: &mlnodeclient.ValidationV2{
 			Artifacts: artifacts,

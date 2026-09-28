@@ -272,9 +272,8 @@ func NewPoCParamsCache(modelConfigs []*types.PoCModelConfig) PoCParamsCache {
 			continue
 		}
 		models = append(models, PoCModelConfigCache{
-			ModelId:         modelConfig.ModelId,
-			SeqLen:          modelConfig.SeqLen,
-			DecodeMaxTokens: modelConfig.DecodeMaxTokens,
+			ModelId: modelConfig.ModelId,
+			SeqLen:  modelConfig.SeqLen,
 		})
 	}
 	return PoCParamsCache{Models: models}

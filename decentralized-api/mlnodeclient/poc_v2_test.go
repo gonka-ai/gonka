@@ -57,15 +57,15 @@ func TestKStepsBytesRoundTrip(t *testing.T) {
 	require.Equal(t, steps, got)
 }
 
-func TestPoCParamsForScheme_PrefillIgnoresN(t *testing.T) {
-	prefill := PoCParamsForScheme("m", 128, 256, types.PocScheme_POC_SCHEME_PREFILL)
+func TestPoCParamsForScheme_CopiesBlockLengths(t *testing.T) {
+	prefill := PoCParamsForScheme("m", 128, 0, types.PocScheme_POC_SCHEME_PREFILL)
 	require.False(t, prefill.Decode)
 	require.Equal(t, int64(128), prefill.SeqLen)
 	require.Equal(t, int64(0), prefill.MaxTokens)
 
-	decode := PoCParamsForScheme("m", 128, 256, types.PocScheme_POC_SCHEME_DECODE)
+	decode := PoCParamsForScheme("m", 256, 256, types.PocScheme_POC_SCHEME_DECODE)
 	require.True(t, decode.Decode)
-	require.Equal(t, int64(DecodeSeqLen), decode.SeqLen)
+	require.Equal(t, int64(256), decode.SeqLen)
 	require.Equal(t, int64(256), decode.MaxTokens)
 }
 
