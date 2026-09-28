@@ -656,6 +656,22 @@ func validateParamDecimalExponents(p Params) error {
 			{fmt.Sprintf("poc_params.models[%d].stat_test.p_mismatch", i), model.GetStatTest().GetPMismatch()},
 			{fmt.Sprintf("poc_params.models[%d].stat_test.p_value_threshold", i), model.GetStatTest().GetPValueThreshold()},
 		}
+		if dynamic := model.GetDynamicCoefficient(); dynamic != nil {
+			modelFields = append(modelFields,
+				struct {
+					name  string
+					value *Decimal
+				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_min", i), dynamic.GetCoeffMin()},
+				struct {
+					name  string
+					value *Decimal
+				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_max", i), dynamic.GetCoeffMax()},
+				struct {
+					name  string
+					value *Decimal
+				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.relative_difficulty", i), dynamic.GetRelativeDifficulty()},
+			)
+		}
 		for j, block := range model.GetSchemes() {
 			if block == nil {
 				continue
@@ -1042,43 +1058,62 @@ func (p *PocParams) validateDynamicCoefficientParams() error {
 		return fmt.Errorf("poc_params.dynamic_coefficient_params.step_max must be <= bootstrap_step_max")
 	}
 
-	// Shares sum over the regular scheme's blocks: a stage splits weight among
-	// the configs of its scheme.
+	// Shares sum for the regular scheme. A scheme block that has a coefficient
+	// is that scheme's config. Until v0.2.17, PREFILL still reads the model
+	// field v0.2.16 wrote.
 	var targetTotal uint64
 	for i, model := range p.Models {
+		if model == nil {
+			continue
+		}
 		for j, block := range model.GetSchemes() {
-			config := block.GetDynamicCoefficient()
-			if config == nil {
+			if block == nil || block.DynamicCoefficient == nil {
 				continue
 			}
 			prefix := fmt.Sprintf("poc_params.models[%d].schemes[%d].dynamic_coefficient", i, j)
-			coeffMin, err := validatePositiveDecimal(prefix+".coeff_min", config.CoeffMin)
-			if err != nil {
+			if err := validateDynamicCoefficientConfig(prefix, block.DynamicCoefficient, params.TargetZoneBps); err != nil {
 				return err
 			}
-			coeffMax, err := validatePositiveDecimal(prefix+".coeff_max", config.CoeffMax)
-			if err != nil {
+		}
+		if model.DynamicCoefficient != nil {
+			prefix := fmt.Sprintf("poc_params.models[%d].dynamic_coefficient", i)
+			if err := validateDynamicCoefficientConfig(prefix, model.DynamicCoefficient, params.TargetZoneBps); err != nil {
 				return err
 			}
-			if coeffMin.GT(coeffMax) {
-				return fmt.Errorf("%s.coeff_min must be <= coeff_max", prefix)
-			}
-			if _, err := validatePositiveDecimal(prefix+".relative_difficulty", config.RelativeDifficulty); err != nil {
-				return err
-			}
-			if config.TargetShareBps > 10000 {
-				return fmt.Errorf("%s.target_share_bps must be <= 10000", prefix)
-			}
-			if config.TargetShareBps > 0 && config.TargetShareBps <= params.TargetZoneBps {
-				return fmt.Errorf("%s.target_share_bps must be greater than target_zone_bps", prefix)
-			}
-			if block.Scheme == p.PocScheme {
-				targetTotal += uint64(config.TargetShareBps)
-			}
+		}
+		if config := model.DynamicCoefficientFor(p.PocScheme); config != nil {
+			targetTotal += uint64(config.TargetShareBps)
 		}
 	}
 	if targetTotal != 10000 {
 		return fmt.Errorf("poc_params dynamic target shares must sum to 10000 bps, got %d", targetTotal)
+	}
+	return nil
+}
+
+func validateDynamicCoefficientConfig(prefix string, config *DynamicCoefficientModelConfig, targetZoneBps uint32) error {
+	if config == nil {
+		return fmt.Errorf("%s cannot be nil", prefix)
+	}
+	coeffMin, err := validatePositiveDecimal(prefix+".coeff_min", config.CoeffMin)
+	if err != nil {
+		return err
+	}
+	coeffMax, err := validatePositiveDecimal(prefix+".coeff_max", config.CoeffMax)
+	if err != nil {
+		return err
+	}
+	if coeffMin.GT(coeffMax) {
+		return fmt.Errorf("%s.coeff_min must be <= coeff_max", prefix)
+	}
+	if _, err := validatePositiveDecimal(prefix+".relative_difficulty", config.RelativeDifficulty); err != nil {
+		return err
+	}
+	if config.TargetShareBps > 10000 {
+		return fmt.Errorf("%s.target_share_bps must be <= 10000", prefix)
+	}
+	if config.TargetShareBps > 0 && config.TargetShareBps <= targetZoneBps {
+		return fmt.Errorf("%s.target_share_bps must be greater than target_zone_bps", prefix)
 	}
 	return nil
 }

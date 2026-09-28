@@ -42,8 +42,8 @@ func IsSchemeTrackingWithGrace(p *PocParams, event *ConfirmationPoCEvent, epoch,
 
 // SchemeParams returns the recipe block for scheme.
 // A populated schemes list never falls back to another scheme.
-// An empty list still reads the flat prefill fields (flat genesis and test
-// configs; the v0.2.16 upgrade moves mainnet into schemes[PREFILL]).
+// An empty list still reads the flat prefill fields (flat genesis and the
+// post-v0.2.16 store; the v0.2.17 upgrade moves mainnet into schemes[PREFILL]).
 // DECODE has no flat-field fallback: it is not deployed, so a missing block is missing.
 func (m *PoCModelConfig) SchemeParams(scheme PocScheme) (*PocSchemeParams, bool) {
 	if m == nil {
@@ -67,8 +67,18 @@ func (m *PoCModelConfig) SchemeParams(scheme PocScheme) (*PocSchemeParams, bool)
 
 // DynamicCoefficientFor is the coefficient config of the model's block for scheme, or nil.
 func (m *PoCModelConfig) DynamicCoefficientFor(scheme PocScheme) *DynamicCoefficientModelConfig {
-	block, _ := m.SchemeParams(scheme)
-	return block.GetDynamicCoefficient()
+	if m == nil {
+		return nil
+	}
+	for _, block := range m.Schemes {
+		if block != nil && block.Scheme == scheme && block.DynamicCoefficient != nil {
+			return block.DynamicCoefficient
+		}
+	}
+	if scheme == PocScheme_POC_SCHEME_PREFILL {
+		return m.DynamicCoefficient
+	}
+	return nil
 }
 
 // DecodeMaxForStage is N for DECODE stages and 0 for PREFILL even if the model has N set.

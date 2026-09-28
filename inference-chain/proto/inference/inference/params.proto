@@ -205,12 +205,14 @@ message PocSchemeParams {
 message PoCModelConfig {
   option (gogoproto.equal) = true;
   string model_id = 1;
-  int64 seq_len = 2 [deprecated = true]; // v0.2.16 migration input; use schemes[PREFILL].seq_len
-  PoCStatTestParams stat_test = 3 [deprecated = true]; // v0.2.16 migration input; use schemes[PREFILL].stat_test
+  int64 seq_len = 2 [deprecated = true]; // v0.2.17 migration input; use schemes[PREFILL].seq_len
+  PoCStatTestParams stat_test = 3 [deprecated = true]; // v0.2.17 migration input; use schemes[PREFILL].stat_test
   Decimal weight_scale_factor = 4 [deprecated = true]; // Migration input; the static factor only without dynamic_coefficient_params.
   uint64 penalty_start_epoch = 5;
-  reserved 6;
-  reserved "dynamic_coefficient";
+  // v0.2.16 writes the controller here and clears weight_scale_factor.
+  // v0.2.17 copies it onto schemes[PREFILL] and then clears this field.
+  // Tag 6 stays allocated so a post-v0.2.16 store still decodes.
+  DynamicCoefficientModelConfig dynamic_coefficient = 6;
   // One block per scheme. A stage copies the block whose scheme matches.
   // Tags 2, 3, 4 stay so mainnet params still decode for the migration.
   repeated PocSchemeParams schemes = 7;
