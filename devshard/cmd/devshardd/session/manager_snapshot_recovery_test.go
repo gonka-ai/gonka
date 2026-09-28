@@ -144,7 +144,7 @@ func populateFinishedAndSeal(t *testing.T, store storage.Storage) ([]types.SlotA
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	}}}})
 	finish := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"), InputTokens: 10, OutputTokens: 20,
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 10, OutputTokens: 20,
 		ExecutorSlot: 1, EscrowId: "1",
 	}
 	finish.ProposerSig = testutil.SignProposerTx(t, hosts[1], finish)

@@ -274,7 +274,7 @@ func VerifyErrorMiss(
 		return false, nil, ErrorTimeoutRejectNoPayload, nil
 	}
 	sum := sha256.Sum256(responsePayload)
-	if !bytes.Equal(sum[:], msg.ResponseHash) {
+	if !bytes.Equal(sum[:], msg.ResponseHash) && !bytes.Equal(sum[:], msg.ServedHash) {
 		return false, nil, ErrorTimeoutRejectHashMismatch, nil
 	}
 

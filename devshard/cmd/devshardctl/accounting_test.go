@@ -461,7 +461,7 @@ func TestAccountingObserverSyncsActiveInvalidation(t *testing.T) {
 	apply(2, &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}})
 	finish := &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: []byte("response"),
+		ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  80,
 		OutputTokens: 40,
 		ExecutorSlot: executorSlot,

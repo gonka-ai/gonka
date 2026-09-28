@@ -53,6 +53,7 @@ type DevshardMetrics struct {
 	timeoutActions         *prometheus.CounterVec
 	errorMissRejects       *prometheus.CounterVec
 	errorMissVerifyRejects *prometheus.CounterVec
+	servedBindings         *prometheus.CounterVec
 
 	// Host ping observability (common/probe sink). Fleet warm RTT histogram
 	// cannot share the gauge name, so it uses _warm_rtt_seconds.
@@ -328,6 +329,13 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"cause", "completeness"},
 		),
+		servedBindings: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_served_bindings_total",
+				Help: "Streams checked against the executor's signed Finish, by verdict (bound, mismatch).",
+			},
+			[]string{"verdict"},
+		),
 		hostPingUp: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "devshard_gateway_host_ping_up",
@@ -427,6 +435,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.timeoutActions,
 		m.errorMissRejects,
 		m.errorMissVerifyRejects,
+		m.servedBindings,
 		m.hostPingUp,
 		m.hostPingRTT,
 		m.hostPingWarmRTT,
@@ -706,6 +715,13 @@ func (m *DevshardMetrics) RecordErrorMissVerifyReject(cause, completeness string
 		metricLabel(cause, "unknown"),
 		metricLabel(completeness, "unknown"),
 	).Inc()
+}
+
+func (m *DevshardMetrics) RecordServedBinding(verdict string) {
+	if m == nil {
+		return
+	}
+	m.servedBindings.WithLabelValues(metricLabel(verdict, "unknown")).Inc()
 }
 
 func (m *DevshardMetrics) ObserveRequestSample(sample RequestSample) {

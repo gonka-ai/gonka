@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"devshard/internal/boolvalue"
 
@@ -26,8 +27,13 @@ func stubInferenceEngineFromEnv() (devshardpkg.InferenceEngine, error) {
 	if stubResponseBody != "" {
 		body := []byte(stubResponseBody)
 		responseHash := sha256.Sum256(body)
+		servedHash, err := stub.HashServedView(body)
+		if err != nil {
+			return nil, err
+		}
 		stubEngine.ResponseBody = body
 		stubEngine.ResponseHash = responseHash[:]
+		stubEngine.ServedHash = servedHash
 	}
 	return stubEngine, nil
 }
@@ -35,6 +41,7 @@ func stubInferenceEngineFromEnv() (devshardpkg.InferenceEngine, error) {
 type processedStreamEngine struct {
 	terminalErrorMessage        string
 	logprobsOptimizationEnabled bool
+	tamperedStream              bool
 }
 
 func (e processedStreamEngine) Execute(_ context.Context, req devshardpkg.ExecuteRequest) (*devshardpkg.ExecuteResult, error) {
@@ -54,6 +61,9 @@ func (e processedStreamEngine) Execute(_ context.Context, req devshardpkg.Execut
 		if req.ResponseWriter == nil {
 			continue
 		}
+		if e.tamperedStream {
+			forwarded = strings.Replace(forwarded, `"content":"hello"`, `"content":"tampered"`, 1)
+		}
 		_, _ = fmt.Fprintf(req.ResponseWriter, "%s\n\n", forwarded)
 		if flusher, ok := req.ResponseWriter.(http.Flusher); ok {
 			flusher.Flush()
@@ -68,9 +78,14 @@ func (e processedStreamEngine) Execute(_ context.Context, req devshardpkg.Execut
 	if err != nil {
 		return nil, fmt.Errorf("read stub usage: %w", err)
 	}
+	servedHash, err := processor.GetServedHash()
+	if err != nil {
+		return nil, fmt.Errorf("collect stub served view: %w", err)
+	}
 	responseHash := sha256.Sum256(stored)
 	return &devshardpkg.ExecuteResult{
 		ResponseHash: responseHash[:],
+		ServedHash:   servedHash[:],
 		InputTokens:  usage.PromptTokens,
 		OutputTokens: usage.CompletionTokens,
 		ResponseBody: stored,
@@ -98,10 +113,15 @@ func processedStreamEvents(terminalErrorMessage string) []string {
 	}
 }
 
+// logprobsOptimizationEnabled mirrors devshardd's default: unset or unparseable means on.
 func logprobsOptimizationEnabled() bool {
-	enabled, err := boolvalue.Parse(os.Getenv("DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED"))
+	raw := strings.TrimSpace(os.Getenv("DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED"))
+	if raw == "" {
+		return true
+	}
+	enabled, err := boolvalue.Parse(raw)
 	if err != nil {
-		return false
+		return true
 	}
 	return enabled
 }
