@@ -152,7 +152,7 @@ func keepHealthyInference(
 		logging.Debug("GetPowStatusV2 failed during inference transition", types.Nodes, "node_id", nodeID, "error", err)
 	} else if pocStatus != nil {
 		logging.Debug("GetPowStatusV2 status during inference transition", types.Nodes, "node_id", nodeID, "status", pocStatus.Status)
-		if pocStatus.Status == "GENERATING" || pocStatus.Status == "VALIDATING" {
+		if powStatusNeedsStop(pocStatus.Status) {
 			if _, err := client.StopPowV2(ctx); err != nil {
 				logging.Debug("StopPowV2 during inference transition failed", types.Nodes, "node_id", nodeID, "error", err)
 			}
@@ -267,6 +267,14 @@ type StartPoCNodeCommandV2 struct {
 	LastPocV2BlockHash   string
 }
 
+// MIXED handling:
+//
+//	Start PoC, same/unknown stage -> init only (preserve ongoing generation)
+//	Start PoC, known old stage    -> stop, then init (partial success allowed)
+//	Challenge wind-down          -> stop only (any backend error fails)
+//	Return to healthy inference  -> stop only (best effort)
+//
+// Init retries rely on generating backends rejecting init without restarting.
 func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
 	result := NodeResult{
 		OriginalTarget:    types.HardwareNodeStatus_POC,
@@ -292,8 +300,7 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		logging.Debug("[StartPoCNodeCommandV2] GetPowStatusV2 status", types.PoC, "node_id", worker.nodeId, "status", status.Status)
 		knownLast := c.LastPocV2BlockHeight != 0
 		sameParams := c.LastPocV2BlockHeight == c.BlockHeight && c.LastPocV2BlockHash == c.BlockHash
-		// After a DAPI restart LastPocV2 is zero in memory. Trust an already
-		// GENERATING MLNode rather than Stop+Init with the same stage.
+		// A zero last height means the stage is unknown after a DAPI restart.
 		if status.Status == "GENERATING" && (sameParams || !knownLast) {
 			logging.Info("[StartPoCNodeCommandV2] Already generating, skipping restart", types.PoC, "node_id", worker.nodeId)
 			result.Succeeded = true
@@ -304,8 +311,10 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 			result.PocV2BlockHash = c.BlockHash
 			return result
 		}
-		if powStatusNeedsStop(status.Status) {
-			if stopErr := stopPowV2Checked(ctx, worker); stopErr != nil {
+		if status.Status == "MIXED" && (sameParams || !knownLast) {
+			logging.Info("[StartPoCNodeCommandV2] MIXED in the same stage, re-init without stop", types.PoC, "node_id", worker.nodeId)
+		} else if powStatusNeedsStop(status.Status) {
+			if stopErr := stopPowV2Tolerant(ctx, worker); stopErr != nil {
 				logging.Warn("[StartPoCNodeCommandV2] StopPowV2 before re-init failed", types.PoC,
 					"node_id", worker.nodeId, "error", stopErr)
 				result.Succeeded = false
@@ -393,13 +402,34 @@ func stopPowV2Checked(ctx context.Context, worker *NodeWorker) error {
 	return nil
 }
 
+// stopPowV2Tolerant allows re-init when only some backends stopped.
+func stopPowV2Tolerant(ctx context.Context, worker *NodeWorker) error {
+	resp, err := worker.GetClient().StopPowV2(ctx)
+	if err != nil {
+		return err
+	}
+	if resp != nil && len(resp.Errors) > 0 {
+		if len(resp.Results) == 0 {
+			return fmt.Errorf("StopPowV2 backend errors: %s", resp.Errors[0].Error)
+		}
+		logging.Warn("[StartPoCNodeCommandV2] StopPowV2 failed on some backends", types.PoC,
+			"node_id", worker.nodeId, "failed", len(resp.Errors), "stopped", len(resp.Results), "error", resp.Errors[0].Error)
+	}
+	return nil
+}
+
+// initGenerateV2Checked accepts partial backend success.
 func initGenerateV2Checked(ctx context.Context, worker *NodeWorker, req mlnodeclient.PoCInitGenerateRequestV2) error {
 	resp, err := worker.GetClient().InitGenerateV2(ctx, req)
 	if err != nil {
 		return err
 	}
 	if resp != nil && len(resp.Errors) > 0 {
-		return fmt.Errorf("InitGenerateV2 backend errors: %s", resp.Errors[0].Error)
+		if len(resp.Results) == 0 {
+			return fmt.Errorf("InitGenerateV2 backend errors: %s", resp.Errors[0].Error)
+		}
+		logging.Warn("[StartPoCNodeCommandV2] InitGenerateV2 failed on some backends", types.PoC,
+			"node_id", worker.nodeId, "failed", len(resp.Errors), "started", len(resp.Results), "error", resp.Errors[0].Error)
 	}
 	return nil
 }
