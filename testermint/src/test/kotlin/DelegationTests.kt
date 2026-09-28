@@ -27,23 +27,31 @@ class DelegationTests : TestermintTest() {
                     this[PocParams::models] = listOf(
                         PoCModelConfig(
                             modelId = defaultModel,
-                            seqLen = 256L,
-                            dynamicCoefficient = DynamicCoefficientModelConfig(
-                                coeffMin = Decimal.fromDouble(coeffA),
-                                coeffMax = Decimal.fromDouble(coeffA),
-                                relativeDifficulty = Decimal.fromDouble(1.0),
-                                targetShareBps = 5000,
+                            schemes = listOf(
+                                PocSchemeParams(
+                                    seqLen = 256L,
+                                    dynamicCoefficient = DynamicCoefficientModelConfig(
+                                        coeffMin = Decimal.fromDouble(coeffA),
+                                        coeffMax = Decimal.fromDouble(coeffA),
+                                        relativeDifficulty = Decimal.fromDouble(1.0),
+                                        targetShareBps = 5000,
+                                    ),
+                                ),
                             ),
                         ),
                         PoCModelConfig(
                             modelId = secondModel,
-                            seqLen = 256L,
                             penaltyStartEpoch = secondModelPenaltyStartEpoch,
-                            dynamicCoefficient = DynamicCoefficientModelConfig(
-                                coeffMin = Decimal.fromDouble(coeffB),
-                                coeffMax = Decimal.fromDouble(coeffB),
-                                relativeDifficulty = Decimal.fromDouble(1.0),
-                                targetShareBps = 5000,
+                            schemes = listOf(
+                                PocSchemeParams(
+                                    seqLen = 256L,
+                                    dynamicCoefficient = DynamicCoefficientModelConfig(
+                                        coeffMin = Decimal.fromDouble(coeffB),
+                                        coeffMax = Decimal.fromDouble(coeffB),
+                                        relativeDifficulty = Decimal.fromDouble(1.0),
+                                        targetShareBps = 5000,
+                                    ),
+                                ),
                             ),
                         ),
                     )

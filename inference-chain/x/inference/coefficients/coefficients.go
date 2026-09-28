@@ -28,8 +28,9 @@ type Result struct {
 }
 
 // Freeze copies live governance config into deterministic epoch scale entries.
-// Without dynamic coefficients the scale is the static factor of the scheme
-// block that recipe froze for the stage.
+// With dynamic coefficients each model's config is the one in its block for
+// the stage scheme: the block recipe froze for the stage, else the live block
+// for the live scheme.
 func Freeze(pocParams *types.PocParams, recipe *types.PocStageRecipe) (*FrozenConfig, error) {
 	if pocParams == nil {
 		return &FrozenConfig{}, nil
@@ -42,7 +43,7 @@ func Freeze(pocParams *types.PocParams, recipe *types.PocStageRecipe) (*FrozenCo
 			}
 			scales = append(scales, &types.ConfirmationWeightScale{
 				ModelId:           model.ModelId,
-				WeightScaleFactor: cloneDecimal(staticScale(model, pocParams.PocScheme, recipe)),
+				WeightScaleFactor: cloneDecimal(model.WeightScaleFactor),
 			})
 		}
 		slices.SortFunc(scales, func(a, b *types.ConfirmationWeightScale) int {
@@ -50,14 +51,22 @@ func Freeze(pocParams *types.PocParams, recipe *types.PocStageRecipe) (*FrozenCo
 		})
 		return &FrozenConfig{Scales: scales}, nil
 	}
-	scales := make([]*types.ConfirmationWeightScale, 0, len(pocParams.Models))
-	for _, model := range pocParams.Models {
-		if model == nil || model.ModelId == "" || model.DynamicCoefficient == nil {
+	scheme, models := pocParams.PocScheme, pocParams.Models
+	if recipe != nil {
+		scheme, models = recipe.Scheme, recipe.Models
+	}
+	scales := make([]*types.ConfirmationWeightScale, 0, len(models))
+	for _, model := range models {
+		if model == nil || model.ModelId == "" {
+			continue
+		}
+		config := model.DynamicCoefficientFor(scheme)
+		if config == nil {
 			continue
 		}
 		scales = append(scales, &types.ConfirmationWeightScale{
 			ModelId: model.ModelId,
-			Config:  cloneModelConfig(model.DynamicCoefficient),
+			Config:  cloneModelConfig(config),
 		})
 	}
 	slices.SortFunc(scales, func(a, b *types.ConfirmationWeightScale) int {
@@ -81,16 +90,17 @@ func GovernanceCoefficients(pocParams *types.PocParams) map[string]mathsdk.Legac
 			continue
 		}
 		if pocParams.DynamicCoefficientParams == nil {
-			result[model.ModelId] = legacyWeightScaleFactor(staticScale(model, pocParams.PocScheme, nil))
+			result[model.ModelId] = legacyWeightScaleFactor(model)
 			continue
 		}
-		if model.DynamicCoefficient == nil {
+		config := model.DynamicCoefficientFor(pocParams.PocScheme)
+		if config == nil {
 			result[model.ModelId] = mathsdk.LegacyZeroDec()
 			continue
 		}
 		coeff, err := positiveDecimal(
 			fmt.Sprintf("coeff_min for model %q", model.ModelId),
-			model.DynamicCoefficient.CoeffMin,
+			config.CoeffMin,
 		)
 		if err != nil {
 			result[model.ModelId] = mathsdk.LegacyZeroDec()
@@ -524,38 +534,17 @@ func encodeDecimal(value mathsdk.LegacyDec) (*types.Decimal, mathsdk.LegacyDec, 
 	return encoded, quantized, nil
 }
 
-func legacyWeightScaleFactor(factor *types.Decimal) mathsdk.LegacyDec {
-	if factor == nil {
+func legacyWeightScaleFactor(model *types.PoCModelConfig) mathsdk.LegacyDec {
+	if model == nil || model.WeightScaleFactor == nil {
 		return mathsdk.LegacyOneDec()
 	}
-	dec, err := factor.ToLegacyDec()
+	dec, err := model.WeightScaleFactor.ToLegacyDec()
 	if err != nil {
 		return mathsdk.LegacyOneDec()
 	}
 	return dec
 }
 
-// staticScale is a model's weight scale without dynamic coefficients: the
-// factor of the scheme block the stage recipe froze, else of the live block
-// for the live scheme, else the flat field. A stage that froze only the
-// DECODE block does not fall back to the prefill factor.
-func staticScale(model *types.PoCModelConfig, scheme types.PocScheme, recipe *types.PocStageRecipe) *types.Decimal {
-	if recipe != nil {
-		frozen, ok := recipe.GetModelConfig(model.ModelId)
-		if !ok {
-			return nil
-		}
-		block, ok := frozen.SchemeParams(recipe.Scheme)
-		if !ok || block == nil {
-			return nil
-		}
-		return block.WeightScaleFactor
-	}
-	if block, ok := model.SchemeParams(scheme); ok && block != nil {
-		return block.WeightScaleFactor
-	}
-	return model.WeightScaleFactor
-}
 
 func cloneParams(params *types.DynamicCoefficientParams) *types.DynamicCoefficientParams {
 	if params == nil {

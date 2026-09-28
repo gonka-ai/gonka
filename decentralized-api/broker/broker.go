@@ -1292,7 +1292,7 @@ func (b *Broker) loadPoCModels(params *pocParams) {
 	}
 
 	if paramsResp.Params.PocParams != nil {
-		cachedParams := apiconfig.NewPoCParamsCache(paramsResp.Params.PocParams.GetModelConfigs())
+		cachedParams := apiconfig.NewPoCParamsCache(paramsResp.Params.PocParams)
 		params.models = make(map[string]apiconfig.PoCModelConfigCache, len(cachedParams.Models))
 		for _, modelConfig := range cachedParams.Models {
 			params.models[modelConfig.ModelId] = modelConfig
@@ -1301,6 +1301,7 @@ func (b *Broker) loadPoCModels(params *pocParams) {
 			_ = b.configManager.SetPoCParams(cachedParams)
 		}
 		params.pocStrongerRng = paramsResp.Params.PocParams.PocStrongerRngEnabled
+		params.scheme = paramsResp.Params.PocParams.PocScheme
 		logging.Info("Using PoC params", types.PoC,
 			"models_count", len(cachedParams.Models),
 			"poc_stronger_rng", params.pocStrongerRng)

@@ -68,6 +68,9 @@ func CreateUpgradeHandler(
 		if err := migrateDevshardApprovedVersions(ctx, k); err != nil {
 			return fromVM, err
 		}
+		if err := migratePocSchemeBlocks(ctx, k); err != nil {
+			return fromVM, err
+		}
 		if err := migrateDynamicCoefficientParams(ctx, k); err != nil {
 			return fromVM, err
 		}
@@ -111,6 +114,48 @@ func migratePoCChallengeParams(ctx context.Context, k keeper.Keeper) error {
 	return k.SetParams(ctx, params)
 }
 
+// migratePocSchemeBlocks moves each model's flat prefill recipe (seq_len,
+// stat_test) into schemes[PREFILL]; migrateDynamicCoefficientParams then writes
+// that block's dynamic_coefficient. A model without a flat seq_len keeps its
+// flat fields and is read as before.
+func migratePocSchemeBlocks(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.PocParams == nil {
+		return nil
+	}
+	changed := false
+	for _, model := range params.PocParams.Models {
+		if model == nil || len(model.Schemes) > 0 || model.SeqLen <= 0 {
+			continue
+		}
+		model.Schemes = []*types.PocSchemeParams{{
+			Scheme:   types.PocScheme_POC_SCHEME_PREFILL,
+			SeqLen:   model.SeqLen,
+			StatTest: model.StatTest,
+		}}
+		model.SeqLen = 0
+		model.StatTest = nil
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return k.SetParams(ctx, params)
+}
+
+// prefillBlock is the model's stored PREFILL block, or nil.
+func prefillBlock(model *types.PoCModelConfig) *types.PocSchemeParams {
+	for _, block := range model.Schemes {
+		if block != nil && block.Scheme == types.PocScheme_POC_SCHEME_PREFILL {
+			return block
+		}
+	}
+	return nil
+}
+
 func migrateDynamicCoefficientParams(ctx context.Context, k keeper.Keeper) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
@@ -148,8 +193,7 @@ func migrateDynamicCoefficientParams(ctx context.Context, k keeper.Keeper) error
 		if err != nil {
 			return fmt.Errorf("dynamic coefficient migration model %q: %w", model.ModelId, err)
 		}
-		if !legacy.IsPositive() {
-			model.DynamicCoefficient = nil
+		if !legacy.IsPositive() || prefillBlock(model) == nil {
 			model.WeightScaleFactor = nil
 			continue
 		}
@@ -183,7 +227,7 @@ func migrateDynamicCoefficientParams(ctx context.Context, k keeper.Keeper) error
 		}
 		model := modelByID[modelID]
 		legacyScale := cloneMigrationDecimal(model.WeightScaleFactor)
-		model.DynamicCoefficient = &types.DynamicCoefficientModelConfig{
+		prefillBlock(model).DynamicCoefficient = &types.DynamicCoefficientModelConfig{
 			CoeffMin:           cloneMigrationDecimal(legacyScale),
 			CoeffMax:           cloneMigrationDecimal(legacyScale),
 			RelativeDifficulty: &types.Decimal{Value: 1, Exponent: 0},

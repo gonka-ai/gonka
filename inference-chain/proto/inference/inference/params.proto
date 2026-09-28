@@ -189,25 +189,30 @@ enum PocScheme {
 // PocSchemeParams is one recipe for one scheme on one model.
 // seq_len is the prompt length in tokens. max_tokens is the decode step count
 // (sphere snaps, not sampled token ids). 0 means there is no decode loop.
+// dynamic_coefficient is the coefficient controller config for this scheme:
+// nonce rates differ per scheme, so relative_difficulty and the bounds do too.
 message PocSchemeParams {
   option (gogoproto.equal) = true;
   PocScheme scheme = 1;
   int64 seq_len = 2;
   int64 max_tokens = 3;
   PoCStatTestParams stat_test = 4;
-  Decimal weight_scale_factor = 5;
+  reserved 5;
+  reserved "weight_scale_factor";
+  DynamicCoefficientModelConfig dynamic_coefficient = 6;
 }
 
 message PoCModelConfig {
   option (gogoproto.equal) = true;
   string model_id = 1;
-  int64 seq_len = 2 [deprecated = true]; // Deprecated: use schemes[PREFILL].seq_len
-  PoCStatTestParams stat_test = 3 [deprecated = true]; // Deprecated: use schemes[PREFILL].stat_test
-  Decimal weight_scale_factor = 4 [deprecated = true]; // Migration input only; use dynamic_coefficient, or schemes[scheme].weight_scale_factor without it.
+  int64 seq_len = 2 [deprecated = true]; // v0.2.16 migration input; use schemes[PREFILL].seq_len
+  PoCStatTestParams stat_test = 3 [deprecated = true]; // v0.2.16 migration input; use schemes[PREFILL].stat_test
+  Decimal weight_scale_factor = 4 [deprecated = true]; // Migration input; the static factor only without dynamic_coefficient_params.
   uint64 penalty_start_epoch = 5;
-  DynamicCoefficientModelConfig dynamic_coefficient = 6;
+  reserved 6;
+  reserved "dynamic_coefficient";
   // One block per scheme. A stage copies the block whose scheme matches.
-  // Tags 2, 3, 4 stay reserved so mainnet params still decode.
+  // Tags 2, 3, 4 stay so mainnet params still decode for the migration.
   repeated PocSchemeParams schemes = 7;
 }
 

@@ -300,15 +300,20 @@ type PoCParamsCache struct {
 	Models []PoCModelConfigCache `koanf:"models" json:"models"`
 }
 
-func NewPoCParamsCache(modelConfigs []*types.PoCModelConfig) PoCParamsCache {
+// NewPoCParamsCache caches each model's recipe for the live scheme.
+func NewPoCParamsCache(pocParams *types.PocParams) PoCParamsCache {
+	scheme := pocParams.GetPocScheme()
+	modelConfigs := pocParams.GetModelConfigs()
 	models := make([]PoCModelConfigCache, 0, len(modelConfigs))
 	for _, modelConfig := range modelConfigs {
 		if modelConfig == nil || modelConfig.ModelId == "" {
 			continue
 		}
+		block, _ := modelConfig.SchemeParams(scheme)
 		models = append(models, PoCModelConfigCache{
-			ModelId: modelConfig.ModelId,
-			SeqLen:  modelConfig.SeqLen,
+			ModelId:         modelConfig.ModelId,
+			SeqLen:          block.GetSeqLen(),
+			DecodeMaxTokens: types.DecodeMaxForStage(scheme, block.GetMaxTokens()),
 		})
 	}
 	return PoCParamsCache{Models: models}

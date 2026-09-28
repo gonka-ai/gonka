@@ -21,12 +21,16 @@ func model(
 ) *types.PoCModelConfig {
 	return &types.PoCModelConfig{
 		ModelId: id,
-		DynamicCoefficient: &types.DynamicCoefficientModelConfig{
-			CoeffMin:           minValue,
-			CoeffMax:           maxValue,
-			RelativeDifficulty: difficulty,
-			TargetShareBps:     target,
-		},
+		Schemes: []*types.PocSchemeParams{{
+			Scheme: types.PocScheme_POC_SCHEME_PREFILL,
+			SeqLen: 128,
+			DynamicCoefficient: &types.DynamicCoefficientModelConfig{
+				CoeffMin:           minValue,
+				CoeffMax:           maxValue,
+				RelativeDifficulty: difficulty,
+				TargetShareBps:     target,
+			},
+		}},
 	}
 }
 
@@ -106,33 +110,35 @@ func TestLegacyCalculateCarriesExactEffectiveEncoding(t *testing.T) {
 	require.Equal(t, dec(1234567890123, -13), result.Scales[0].EffectiveCoefficient)
 }
 
-func TestLegacyFreezeUsesFrozenSchemeBlock(t *testing.T) {
-	prefill, decode := dec(1, 0), dec(4, 0)
-	live := &types.PocParams{
-		PocScheme: types.PocScheme_POC_SCHEME_DECODE,
-		Models: []*types.PoCModelConfig{{
-			ModelId:           "m",
-			WeightScaleFactor: prefill,
-			Schemes: []*types.PocSchemeParams{
-				{Scheme: types.PocScheme_POC_SCHEME_PREFILL, SeqLen: 128, WeightScaleFactor: prefill},
-				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256, WeightScaleFactor: decode},
-			},
-		}},
-	}
+func TestFreezeUsesFrozenSchemeBlockConfig(t *testing.T) {
+	prefill := &types.DynamicCoefficientModelConfig{CoeffMin: dec(1, 0), CoeffMax: dec(1, 0), RelativeDifficulty: dec(1, 0), TargetShareBps: 10000}
+	decode := &types.DynamicCoefficientModelConfig{CoeffMin: dec(4, 0), CoeffMax: dec(4, 0), RelativeDifficulty: dec(3, 0), TargetShareBps: 10000}
+	live := params(&types.PoCModelConfig{
+		ModelId: "m",
+		Schemes: []*types.PocSchemeParams{
+			{Scheme: types.PocScheme_POC_SCHEME_PREFILL, SeqLen: 128, DynamicCoefficient: prefill},
+			{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256, DynamicCoefficient: decode},
+		},
+	})
 	recipe := &types.PocStageRecipe{
 		Scheme: types.PocScheme_POC_SCHEME_DECODE,
 		Models: []*types.PoCModelConfig{{
-			ModelId:           "m",
-			WeightScaleFactor: prefill,
+			ModelId: "m",
 			Schemes: []*types.PocSchemeParams{
-				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256, WeightScaleFactor: decode},
+				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256, DynamicCoefficient: decode},
 			},
 		}},
 	}
 	frozen, err := Freeze(live, recipe)
 	require.NoError(t, err)
 	require.Len(t, frozen.Scales, 1)
-	require.Equal(t, decode, frozen.Scales[0].WeightScaleFactor)
+	require.Equal(t, decode, frozen.Scales[0].Config)
+
+	// Without a recipe the live scheme picks the block.
+	frozen, err = Freeze(live, nil)
+	require.NoError(t, err)
+	require.Equal(t, prefill, frozen.Scales[0].Config)
+	require.Equal(t, "1.000000000000000000", GovernanceCoefficients(live)["m"].String())
 }
 
 func TestTransitionScaleWithoutControllerStateSeedsMinimum(t *testing.T) {
@@ -160,8 +166,8 @@ func TestCalculateUsesConfigFrozenAtPoCStart(t *testing.T) {
 	live := params(model("a", dec(5, -1), dec(2, 0), dec(1, 0), 10000))
 	frozen, err := Freeze(live, nil)
 	require.NoError(t, err)
-	live.Models[0].DynamicCoefficient.CoeffMin = dec(15, -1)
-	live.Models[0].DynamicCoefficient.TargetShareBps = 9000
+	live.Models[0].Schemes[0].DynamicCoefficient.CoeffMin = dec(15, -1)
+	live.Models[0].Schemes[0].DynamicCoefficient.TargetShareBps = 9000
 
 	result, err := Calculate(
 		frozen.Params,

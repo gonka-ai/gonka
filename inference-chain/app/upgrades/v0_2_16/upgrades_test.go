@@ -25,14 +25,15 @@ func TestMigrateDynamicCoefficientParams(t *testing.T) {
 	require.NoError(t, err)
 	params.PocParams.DynamicCoefficientParams = nil
 	params.PocParams.Models = []*inferencetypes.PoCModelConfig{
-		{ModelId: "model-c", WeightScaleFactor: inferencetypes.DecimalFromFloat(3)},
-		{ModelId: "model-a", WeightScaleFactor: inferencetypes.DecimalFromFloat(1)},
-		{ModelId: "model-b", WeightScaleFactor: inferencetypes.DecimalFromFloat(2)},
-		{ModelId: "disabled", WeightScaleFactor: &inferencetypes.Decimal{Value: 0, Exponent: 0}},
+		{ModelId: "model-c", SeqLen: 1024, WeightScaleFactor: inferencetypes.DecimalFromFloat(3)},
+		{ModelId: "model-a", SeqLen: 1024, WeightScaleFactor: inferencetypes.DecimalFromFloat(1)},
+		{ModelId: "model-b", SeqLen: 1024, WeightScaleFactor: inferencetypes.DecimalFromFloat(2)},
+		{ModelId: "disabled", SeqLen: 1024, WeightScaleFactor: &inferencetypes.Decimal{Value: 0, Exponent: 0}},
 	}
 	params.DelegationParams.InitialModelId = "model-b"
 	require.NoError(t, k.SetParams(ctx, params))
 
+	require.NoError(t, migratePocSchemeBlocks(ctx, k))
 	require.NoError(t, migrateDynamicCoefficientParams(ctx, k))
 
 	got, err := k.GetParams(ctx)
@@ -48,15 +49,17 @@ func TestMigrateDynamicCoefficientParams(t *testing.T) {
 	}
 	for _, model := range got.PocParams.Models {
 		require.Nil(t, model.WeightScaleFactor)
+		block := prefillBlock(model)
+		require.NotNil(t, block)
 		if model.ModelId == "disabled" {
-			require.Nil(t, model.DynamicCoefficient)
+			require.Nil(t, block.DynamicCoefficient)
 			continue
 		}
-		require.NotNil(t, model.DynamicCoefficient)
-		require.Equal(t, expectedScales[model.ModelId], model.DynamicCoefficient.CoeffMin)
-		require.Equal(t, expectedScales[model.ModelId], model.DynamicCoefficient.CoeffMax)
-		require.Equal(t, &inferencetypes.Decimal{Value: 1, Exponent: 0}, model.DynamicCoefficient.RelativeDifficulty)
-		targets[model.ModelId] = model.DynamicCoefficient.TargetShareBps
+		require.NotNil(t, block.DynamicCoefficient)
+		require.Equal(t, expectedScales[model.ModelId], block.DynamicCoefficient.CoeffMin)
+		require.Equal(t, expectedScales[model.ModelId], block.DynamicCoefficient.CoeffMax)
+		require.Equal(t, &inferencetypes.Decimal{Value: 1, Exponent: 0}, block.DynamicCoefficient.RelativeDifficulty)
+		targets[model.ModelId] = block.DynamicCoefficient.TargetShareBps
 	}
 	require.Equal(t, uint32(3333), targets["model-a"])
 	require.Equal(t, uint32(3334), targets["model-b"])
@@ -77,10 +80,12 @@ func TestMigrateDynamicCoefficientParamsPreservesLegacyPrecision(t *testing.T) {
 	params.PocParams.DynamicCoefficientParams = nil
 	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{
 		ModelId:           "model-a",
+		SeqLen:            1024,
 		WeightScaleFactor: &inferencetypes.Decimal{Value: 1234567890123, Exponent: -13},
 	}}
 	require.NoError(t, k.SetParams(ctx, params))
 
+	require.NoError(t, migratePocSchemeBlocks(ctx, k))
 	require.NoError(t, migrateDynamicCoefficientParams(ctx, k))
 
 	got, getErr := k.GetParams(ctx)
@@ -89,8 +94,33 @@ func TestMigrateDynamicCoefficientParamsPreservesLegacyPrecision(t *testing.T) {
 	require.Nil(t, got.PocParams.Models[0].WeightScaleFactor)
 	require.Equal(t,
 		&inferencetypes.Decimal{Value: 1234567890123, Exponent: -13},
-		got.PocParams.Models[0].DynamicCoefficient.CoeffMin,
+		prefillBlock(got.PocParams.Models[0]).DynamicCoefficient.CoeffMin,
 	)
+}
+
+func TestMigratePocSchemeBlocks(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	statTest := &inferencetypes.PoCStatTestParams{DistThreshold: inferencetypes.DecimalFromFloat(0.41)}
+	params.PocParams.Models = []*inferencetypes.PoCModelConfig{
+		{ModelId: "flat", SeqLen: 1024, StatTest: statTest},
+		{ModelId: "no-seq-len"},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, migratePocSchemeBlocks(ctx, k))
+	require.NoError(t, migratePocSchemeBlocks(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, &inferencetypes.PoCModelConfig{
+		ModelId: "flat",
+		Schemes: []*inferencetypes.PocSchemeParams{{
+			Scheme: inferencetypes.PocScheme_POC_SCHEME_PREFILL, SeqLen: 1024, StatTest: statTest,
+		}},
+	}, got.PocParams.Models[0])
+	require.Empty(t, got.PocParams.Models[1].Schemes, "a model without seq_len stays flat")
 }
 
 func TestMigrateCurrentEffectiveCoefficients(t *testing.T) {
@@ -122,10 +152,12 @@ func TestFreezeUpcomingCoefficientConfigDuringUpgrade(t *testing.T) {
 	params.PocParams.DynamicCoefficientParams = nil
 	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{
 		ModelId:           "model-a",
+		SeqLen:            1024,
 		WeightScaleFactor: inferencetypes.DecimalFromFloat(2),
 	}}
 	require.NoError(t, k.SetParams(ctx, params))
 
+	require.NoError(t, migratePocSchemeBlocks(ctx, k))
 	require.NoError(t, migrateDynamicCoefficientParams(ctx, k))
 	require.NoError(t, freezeUpcomingCoefficientConfig(ctx, k))
 
@@ -270,6 +302,7 @@ func TestLeftoverApprovedVersionsDoNotBlockCoefficientMigrate(t *testing.T) {
 	params.PocParams.DynamicCoefficientParams = nil
 	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{
 		ModelId:           "model-a",
+		SeqLen:            1024,
 		WeightScaleFactor: inferencetypes.DecimalFromFloat(1),
 	}}
 	params.DevshardEscrowParams.ApprovedVersions = []*inferencetypes.DevshardApprovedVersion{{
@@ -278,6 +311,7 @@ func TestLeftoverApprovedVersionsDoNotBlockCoefficientMigrate(t *testing.T) {
 		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}}
 	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, migratePocSchemeBlocks(ctx, k))
 
 	require.Error(t, migrateDynamicCoefficientParams(ctx, k))
 	require.NoError(t, migrateDevshardApprovedVersions(ctx, k))

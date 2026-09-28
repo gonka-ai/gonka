@@ -14,9 +14,9 @@ func testSchemeParams(poc, confirmation PocScheme, k uint32) *PocParams {
 		PocStrongerRngEnabled:    true,
 		Models: []*PoCModelConfig{
 			{
-				ModelId:  "m",
-				SeqLen:   128,
-				StatTest: DefaultPoCStatTestParams(),
+				ModelId:           "m",
+				SeqLen:            128,
+				StatTest:          DefaultPoCStatTestParams(),
 				WeightScaleFactor: DecimalFromFloat(1),
 			},
 		},
@@ -79,11 +79,10 @@ func TestStatTestForScheme(t *testing.T) {
 func TestSnapshotPocStageRecipe_IsolatesFromLaterParamChanges(t *testing.T) {
 	p := testSchemeParams(PocScheme_POC_SCHEME_PREFILL, PocScheme_POC_SCHEME_DECODE, 1)
 	block := &PocSchemeParams{
-		Scheme:            PocScheme_POC_SCHEME_DECODE,
-		SeqLen:            256,
-		MaxTokens:         256,
-		StatTest:          &PoCStatTestParams{DistThreshold: DecimalFromFloat(0.03)},
-		WeightScaleFactor: DecimalFromFloat(4),
+		Scheme:    PocScheme_POC_SCHEME_DECODE,
+		SeqLen:    256,
+		MaxTokens: 256,
+		StatTest:  &PoCStatTestParams{DistThreshold: DecimalFromFloat(0.03)},
 	}
 	p.Models[0].Schemes = []*PocSchemeParams{block}
 	event := &ConfirmationPoCEvent{EventSequence: 0, TriggerHeight: 50}
@@ -192,9 +191,14 @@ func TestPocParamsValidate_ActiveSlotsNeedBlocks(t *testing.T) {
 func TestSchemeBlockDecimalExponent(t *testing.T) {
 	params := DefaultParams()
 	params.PocParams.Models[0].Schemes = []*PocSchemeParams{{
-		Scheme:            PocScheme_POC_SCHEME_PREFILL,
-		SeqLen:            128,
-		WeightScaleFactor: &Decimal{Value: 1, Exponent: MaxDecimalExponentAbs + 1},
+		Scheme: PocScheme_POC_SCHEME_PREFILL,
+		SeqLen: 128,
+		DynamicCoefficient: &DynamicCoefficientModelConfig{
+			CoeffMin:           &Decimal{Value: 1, Exponent: MaxDecimalExponentAbs + 1},
+			CoeffMax:           DecimalFromFloat(1),
+			RelativeDifficulty: DecimalFromFloat(1),
+			TargetShareBps:     10000,
+		},
 	}}
 	require.ErrorIs(t, params.Validate(), ErrInvalidDecimalExponent)
 }

@@ -301,15 +301,18 @@ func DefaultPoCStatTestParams() *PoCStatTestParams {
 func DefaultPoCModelConfig() *PoCModelConfig {
 	return &PoCModelConfig{
 		ModelId:           "",
-		SeqLen:            256,
-		StatTest:          DefaultPoCStatTestParams(),
 		PenaltyStartEpoch: 0,
-		DynamicCoefficient: &DynamicCoefficientModelConfig{
-			CoeffMin:           DecimalFromFloat(1.0),
-			CoeffMax:           DecimalFromFloat(1.0),
-			RelativeDifficulty: DecimalFromFloat(1.0),
-			TargetShareBps:     10000,
-		},
+		Schemes: []*PocSchemeParams{{
+			Scheme:   PocScheme_POC_SCHEME_PREFILL,
+			SeqLen:   256,
+			StatTest: DefaultPoCStatTestParams(),
+			DynamicCoefficient: &DynamicCoefficientModelConfig{
+				CoeffMin:           DecimalFromFloat(1.0),
+				CoeffMax:           DecimalFromFloat(1.0),
+				RelativeDifficulty: DecimalFromFloat(1.0),
+				TargetShareBps:     10000,
+			},
+		}},
 	}
 }
 
@@ -653,32 +656,28 @@ func validateParamDecimalExponents(p Params) error {
 			{fmt.Sprintf("poc_params.models[%d].stat_test.p_mismatch", i), model.GetStatTest().GetPMismatch()},
 			{fmt.Sprintf("poc_params.models[%d].stat_test.p_value_threshold", i), model.GetStatTest().GetPValueThreshold()},
 		}
-		if dynamic := model.GetDynamicCoefficient(); dynamic != nil {
-			modelFields = append(modelFields,
-				struct {
-					name  string
-					value *Decimal
-				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_min", i), dynamic.GetCoeffMin()},
-				struct {
-					name  string
-					value *Decimal
-				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_max", i), dynamic.GetCoeffMax()},
-				struct {
-					name  string
-					value *Decimal
-				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.relative_difficulty", i), dynamic.GetRelativeDifficulty()},
-			)
-		}
 		for j, block := range model.GetSchemes() {
 			if block == nil {
 				continue
 			}
 			prefix := fmt.Sprintf("poc_params.models[%d].schemes[%d]", i, j)
+			if dynamic := block.GetDynamicCoefficient(); dynamic != nil {
+				modelFields = append(modelFields,
+					struct {
+						name  string
+						value *Decimal
+					}{prefix + ".dynamic_coefficient.coeff_min", dynamic.GetCoeffMin()},
+					struct {
+						name  string
+						value *Decimal
+					}{prefix + ".dynamic_coefficient.coeff_max", dynamic.GetCoeffMax()},
+					struct {
+						name  string
+						value *Decimal
+					}{prefix + ".dynamic_coefficient.relative_difficulty", dynamic.GetRelativeDifficulty()},
+				)
+			}
 			modelFields = append(modelFields,
-				struct {
-					name  string
-					value *Decimal
-				}{prefix + ".weight_scale_factor", block.GetWeightScaleFactor()},
 				struct {
 					name  string
 					value *Decimal
@@ -1043,43 +1042,40 @@ func (p *PocParams) validateDynamicCoefficientParams() error {
 		return fmt.Errorf("poc_params.dynamic_coefficient_params.step_max must be <= bootstrap_step_max")
 	}
 
+	// Shares sum over the regular scheme's blocks: a stage splits weight among
+	// the configs of its scheme.
 	var targetTotal uint64
 	for i, model := range p.Models {
-		config := model.GetDynamicCoefficient()
-		if config == nil {
-			continue
+		for j, block := range model.GetSchemes() {
+			config := block.GetDynamicCoefficient()
+			if config == nil {
+				continue
+			}
+			prefix := fmt.Sprintf("poc_params.models[%d].schemes[%d].dynamic_coefficient", i, j)
+			coeffMin, err := validatePositiveDecimal(prefix+".coeff_min", config.CoeffMin)
+			if err != nil {
+				return err
+			}
+			coeffMax, err := validatePositiveDecimal(prefix+".coeff_max", config.CoeffMax)
+			if err != nil {
+				return err
+			}
+			if coeffMin.GT(coeffMax) {
+				return fmt.Errorf("%s.coeff_min must be <= coeff_max", prefix)
+			}
+			if _, err := validatePositiveDecimal(prefix+".relative_difficulty", config.RelativeDifficulty); err != nil {
+				return err
+			}
+			if config.TargetShareBps > 10000 {
+				return fmt.Errorf("%s.target_share_bps must be <= 10000", prefix)
+			}
+			if config.TargetShareBps > 0 && config.TargetShareBps <= params.TargetZoneBps {
+				return fmt.Errorf("%s.target_share_bps must be greater than target_zone_bps", prefix)
+			}
+			if block.Scheme == p.PocScheme {
+				targetTotal += uint64(config.TargetShareBps)
+			}
 		}
-
-		coeffMin, err := validatePositiveDecimal(
-			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_min", i),
-			config.CoeffMin,
-		)
-		if err != nil {
-			return err
-		}
-		coeffMax, err := validatePositiveDecimal(
-			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_max", i),
-			config.CoeffMax,
-		)
-		if err != nil {
-			return err
-		}
-		if coeffMin.GT(coeffMax) {
-			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.coeff_min must be <= coeff_max", i)
-		}
-		if _, err := validatePositiveDecimal(
-			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.relative_difficulty", i),
-			config.RelativeDifficulty,
-		); err != nil {
-			return err
-		}
-		if config.TargetShareBps > 10000 {
-			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.target_share_bps must be <= 10000", i)
-		}
-		if config.TargetShareBps > 0 && config.TargetShareBps <= params.TargetZoneBps {
-			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.target_share_bps must be greater than target_zone_bps", i)
-		}
-		targetTotal += uint64(config.TargetShareBps)
 	}
 	if targetTotal != 10000 {
 		return fmt.Errorf("poc_params dynamic target shares must sum to 10000 bps, got %d", targetTotal)
