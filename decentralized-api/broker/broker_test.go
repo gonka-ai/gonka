@@ -132,6 +132,7 @@ func NewTestBroker() *Broker {
 	}
 
 	mockChainBridge.On("GetCurrentEpochGroupData").Return(parentEpochData, nil)
+	mockChainBridge.On("GetPocStageRecipe", mock.Anything).Return(&types.QueryPocStageRecipeResponse{}, nil).Maybe()
 	// Mock for parent group query (empty modelId) - returns SubGroupModels list
 	parentGroupResp := &types.QueryGetEpochGroupDataResponse{
 		EpochGroupData: types.EpochGroupData{
