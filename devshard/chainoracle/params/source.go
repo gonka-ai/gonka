@@ -110,7 +110,8 @@ func laneCContentEqual(a, b commrc.Snapshot) bool {
 		a.RefusalTimeout == b.RefusalTimeout &&
 		a.ExecutionTimeout == b.ExecutionTimeout &&
 		a.ValidationRate == b.ValidationRate &&
-		a.VoteThresholdFactor == b.VoteThresholdFactor
+		a.VoteThresholdFactor == b.VoteThresholdFactor &&
+		a.HeightSync == b.HeightSync
 }
 
 // ApplyBlockIfChanged mirrors decentralized-api ApplyRuntimeConfigBlockIfChanged:

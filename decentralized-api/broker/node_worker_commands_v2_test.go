@@ -2,8 +2,11 @@ package broker
 
 import (
 	"context"
-	"decentralized-api/mlnodeclient"
+	"errors"
 	"testing"
+
+	"decentralized-api/chainphase"
+	"decentralized-api/mlnodeclient"
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
@@ -118,6 +121,8 @@ func TestStartPoCNodeCommandV2_Success(t *testing.T) {
 // TestStartPoCNodeCommandV2_AlreadyGenerating verifies idempotency - if already generating, return success without restart.
 func TestStartPoCNodeCommandV2_AlreadyGenerating(t *testing.T) {
 	node := createTestNode("test-node-v2-gen")
+	node.State.LastPocV2BlockHeight = 1000
+	node.State.LastPocV2BlockHash = "test-block-hash"
 	mockClient := mlnodeclient.NewMockClient()
 	mockClient.SetV2Status("GENERATING")
 	broker := NewTestBroker2(1)
@@ -125,13 +130,15 @@ func TestStartPoCNodeCommandV2_AlreadyGenerating(t *testing.T) {
 	defer worker.Shutdown()
 
 	cmd := StartPoCNodeCommandV2{
-		BlockHeight: 1000,
-		BlockHash:   "test-block-hash",
-		PubKey:      "test-pub-key",
-		CallbackUrl: "http://localhost:8080/callback",
-		TotalNodes:  5,
-		Model:       "test-model",
-		SeqLen:      256,
+		BlockHeight:          1000,
+		BlockHash:            "test-block-hash",
+		PubKey:               "test-pub-key",
+		CallbackUrl:          "http://localhost:8080/callback",
+		TotalNodes:           5,
+		Model:                "test-model",
+		SeqLen:               256,
+		LastPocV2BlockHeight: 1000,
+		LastPocV2BlockHash:   "test-block-hash",
 	}
 
 	result := cmd.Execute(context.Background(), worker)
@@ -145,6 +152,163 @@ func TestStartPoCNodeCommandV2_AlreadyGenerating(t *testing.T) {
 	assert.Equal(t, 1, mockClient.GetPowStatusV2Called, "GetPowStatusV2() should be called for idempotency check")
 	assert.Equal(t, 0, mockClient.StopPowV2Called, "StopPowV2() should NOT be called")
 	assert.Equal(t, 0, mockClient.InitGenerateV2Called, "InitGenerateV2() should NOT be called (already generating)")
+}
+
+func TestStartPoCNodeCommandV2_ChallengeWindDownStopsPow(t *testing.T) {
+	node := createTestNode("test-node-v2-gen")
+	node.State.LastPocV2BlockHeight = 500
+	node.State.LastPocV2BlockHash = "challenge-hash"
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("GENERATING")
+
+	tracker := &chainphase.ChainPhaseTracker{}
+	epoch := &types.Epoch{Index: 1, PocStartBlockHeight: 100}
+	params := &types.EpochParams{
+		EpochLength:           1000,
+		EpochMultiplier:       1,
+		PocStageDuration:      100,
+		PocExchangeDuration:   50,
+		PocValidationDelay:    10,
+		PocValidationDuration: 100,
+	}
+	tracker.Update(chainphase.BlockInfo{Height: 897, Hash: "h"}, epoch, params, true, nil)
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch: testOpenCh("me", 500, 900, true),
+	})
+
+	b := NewTestBroker2(1)
+	b.phaseTracker = tracker
+	worker := NewNodeWorkerWithClient("test-node-v2-gen", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight:          500,
+		BlockHash:            "challenge-hash",
+		PubKey:               "test-pub-key",
+		CallbackUrl:          "http://localhost:8080/callback",
+		TotalNodes:           1,
+		Model:                "test-model",
+		SeqLen:               256,
+		WindDown:             true,
+		LastPocV2BlockHeight: 500,
+		LastPocV2BlockHash:   "challenge-hash",
+	}
+	result := cmd.Execute(context.Background(), worker)
+	assert.True(t, result.Succeeded)
+	assert.Equal(t, types.HardwareNodeStatus_POC, result.FinalStatus)
+	assert.Equal(t, PocStatusGenerating, result.FinalPocStatus)
+
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	assert.Equal(t, 1, mockClient.StopPowV2Called, "wind-down should StopPowV2 via the node-worker command")
+	assert.Equal(t, 0, mockClient.InitGenerateV2Called, "wind-down must not re-init generate")
+}
+
+func TestStartPoCNodeCommandV2_WindDownDoesNotInitOnStatusError(t *testing.T) {
+	node := createTestNode("test-node-v2-gen")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.GetPowStatusV2Error = errors.New("status down")
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-gen", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{WindDown: true, BlockHeight: 500, BlockHash: "h"}
+	result := cmd.Execute(context.Background(), worker)
+	assert.False(t, result.Succeeded)
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	assert.Equal(t, 0, mockClient.InitGenerateV2Called)
+}
+
+func TestStartPoCNodeCommandV2_ReinitWhenHeightHashChange(t *testing.T) {
+	node := createTestNode("test-node-v2-gen")
+	node.State.LastPocV2BlockHeight = 1000
+	node.State.LastPocV2BlockHash = "old-hash"
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("GENERATING")
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-gen", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight:          2000,
+		BlockHash:            "new-hash",
+		PubKey:               "test-pub-key",
+		CallbackUrl:          "http://localhost:8080/callback",
+		TotalNodes:           5,
+		Model:                "test-model",
+		SeqLen:               256,
+		LastPocV2BlockHeight: 1000,
+		LastPocV2BlockHash:   "old-hash",
+	}
+
+	result := cmd.Execute(context.Background(), worker)
+	assert.True(t, result.Succeeded)
+	assert.True(t, result.PocV2Updated)
+	assert.Equal(t, int64(2000), result.PocV2BlockHeight)
+	assert.Equal(t, "new-hash", result.PocV2BlockHash)
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	assert.Equal(t, 1, mockClient.StopPowV2Called, "must stop old segment before re-init")
+	assert.Equal(t, 1, mockClient.InitGenerateV2Called, "InitGenerateV2 should re-init on height/hash change")
+	require.NotNil(t, mockClient.LastInitGenerateV2Req)
+	assert.Equal(t, int64(2000), mockClient.LastInitGenerateV2Req.BlockHeight)
+	assert.Equal(t, "new-hash", mockClient.LastInitGenerateV2Req.BlockHash)
+}
+
+func TestStartPoCNodeCommandV2_UnknownLastTrustsGenerating(t *testing.T) {
+	node := createTestNode("test-node-v2-gen")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("GENERATING")
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-gen", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight: 2000,
+		BlockHash:   "new-hash",
+		PubKey:      "test-pub-key",
+		CallbackUrl: "http://localhost:8080/callback",
+		TotalNodes:  5,
+		Model:       "test-model",
+		SeqLen:      256,
+	}
+	result := cmd.Execute(context.Background(), worker)
+	assert.True(t, result.Succeeded)
+	assert.True(t, result.PocV2Updated)
+	assert.Equal(t, int64(2000), result.PocV2BlockHeight)
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	assert.Equal(t, 0, mockClient.StopPowV2Called)
+	assert.Equal(t, 0, mockClient.InitGenerateV2Called)
+}
+
+func TestStartPoCNodeCommandV2_ValidatingSameParamsStopsThenInit(t *testing.T) {
+	node := createTestNode("test-node-v2-gen")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("VALIDATING")
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-gen", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight:          500,
+		BlockHash:            "challenge-hash",
+		PubKey:               "test-pub-key",
+		CallbackUrl:          "http://localhost:8080/callback",
+		TotalNodes:           1,
+		Model:                "test-model",
+		SeqLen:               256,
+		LastPocV2BlockHeight: 500,
+		LastPocV2BlockHash:   "challenge-hash",
+	}
+	result := cmd.Execute(context.Background(), worker)
+	assert.True(t, result.Succeeded)
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	assert.Equal(t, 1, mockClient.StopPowV2Called)
+	assert.Equal(t, 1, mockClient.InitGenerateV2Called)
 }
 
 func TestStartPoCNodeCommandV2_EncodesCallbackModelID(t *testing.T) {

@@ -22,7 +22,7 @@ type Choice struct {
 	Text         string         `json:"text,omitempty"`
 	Logprobs     ChoiceLogprobs `json:"logprobs"`
 	FinishReason string         `json:"finish_reason"`
-	StopReason   string         `json:"stop_reason"`
+	StopReason   any            `json:"stop_reason"`
 }
 
 type ChoiceLogprobs struct {

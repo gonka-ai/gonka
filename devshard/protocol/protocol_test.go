@@ -77,7 +77,7 @@ func defaultParams() user.InferenceParams {
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 }
@@ -229,7 +229,7 @@ func TestProtocol_SignatureWithholding(t *testing.T) {
 		Diffs: []types.Diff{diff1}, Nonce: 1,
 		Payload: &host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		},
 	})
 	require.NoError(t, err)
@@ -286,7 +286,7 @@ func TestProtocol_SignatureResumesAfterInclusion(t *testing.T) {
 		Diffs: []types.Diff{diff1}, Nonce: 1,
 		Payload: &host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		},
 	})
 	require.NoError(t, err)
@@ -307,7 +307,7 @@ func TestProtocol_SignatureResumesAfterInclusion(t *testing.T) {
 	// Nonce 2: confirm start.
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId: 1, PromptHash: testutil.TestPromptHash[:], Model: "llama",
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000, EscrowId: "escrow-1",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000, EscrowId: "escrow-1",
 		ConfirmedAt: resp.ConfirmedAt,
 	}
 	receiptData, _ := proto.Marshal(receiptContent)
@@ -459,7 +459,7 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 		Diffs: []types.Diff{diff1}, Nonce: 1,
 		Payload: &host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		},
 	})
 	require.NoError(t, err)
@@ -557,12 +557,12 @@ func TestProtocol_VaryingInferenceCosts(t *testing.T) {
 	// Send 6 inferences. Accounting must cover the shared TestPrompt workload;
 	// MaxTokens may over-reserve, InputLength must equal len(prompt).
 	paramsList := []user.InferenceParams{
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 100, StartedAt: 2000},
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 3000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 3000},
 		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 75, StartedAt: 4000},
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 5000},
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 6000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 5000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 6000},
 	}
 
 	for _, p := range paramsList {

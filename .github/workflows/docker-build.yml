@@ -1,26 +1,46 @@
-# Build and push Docker images for decentralized-api and inference-chain.
-# Mirrors the pattern from dev/hacked/.github/workflows/docker-build.yml (subset of targets).
-name: Build Docker (decentralized-api & inference-chain)
+# Build and push Docker images to this repo's GHCR (ghcr.io/<owner>/…).
+# Tag push of release/vX.Y.Z-devshard-vA.B.C builds versiond and versiond-router
+# as <chain>-devshard-<leftover-major> (e.g. 0.2.15-devshard-v5). If that tag
+# already exists on GHCR, skip the rebuild. Tag runs also upsert the same
+# GitHub Release as the host zip (Devshard Release vX.Y.Z).
+#
+# workflow_dispatch can select any subset of decentralized-api, inference-chain,
+# versiond, versiond-router, and proxy.
+name: Build Docker images
 
 on:
+  push:
+    tags:
+      - 'release/v[0-9]*.[0-9]*.[0-9]*-devshard-v[0-9]*.[0-9]*.[0-9]*'
   workflow_dispatch:
     inputs:
-      build_target:
-        description: 'What to build'
-        required: true
-        type: choice
-        options:
-          - decentralized-api
-          - inference-chain
-          - both
+      build_decentralized_api:
+        description: 'Build decentralized-api'
+        type: boolean
+        default: false
+      build_inference_chain:
+        description: 'Build inference-chain'
+        type: boolean
+        default: false
+      build_versiond:
+        description: 'Build versiond'
+        type: boolean
+        default: false
+      build_versiond_router:
+        description: 'Build versiond-router'
+        type: boolean
+        default: false
+      build_proxy:
+        description: 'Build proxy'
+        type: boolean
+        default: false
       version_tag:
-        description: 'Version tag (leave empty for latest)'
-        required: false
+        description: 'Image tag for a manual run (ignored on host leftover tags)'
         type: string
+        required: false
         default: 'latest'
       push_to_registry:
-        description: 'Push to registry'
-        required: true
+        description: 'Push to GHCR'
         type: boolean
         default: true
 
@@ -28,45 +48,134 @@ env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository_owner }}
 
-jobs:
-  build-decentralized-api:
-    if: ${{ github.event.inputs.build_target == 'decentralized-api' || github.event.inputs.build_target == 'both' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
+permissions:
+  contents: write
+  packages: write
 
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    outputs:
+      is_tag: ${{ steps.out.outputs.is_tag }}
+      push: ${{ steps.out.outputs.push }}
+      image_tag: ${{ steps.out.outputs.image_tag }}
+      release_name: ${{ steps.out.outputs.release_name }}
+      release_tag: ${{ steps.out.outputs.release_tag }}
+      release_body_line: ${{ steps.out.outputs.release_body_line }}
+      image_versiond: ${{ steps.out.outputs.image_versiond }}
+      image_versiond_router: ${{ steps.out.outputs.image_versiond_router }}
+      build_decentralized_api: ${{ steps.out.outputs.build_decentralized_api }}
+      build_inference_chain: ${{ steps.out.outputs.build_inference_chain }}
+      build_versiond: ${{ steps.out.outputs.build_versiond }}
+      build_versiond_router: ${{ steps.out.outputs.build_versiond_router }}
+      build_proxy: ${{ steps.out.outputs.build_proxy }}
+      owner_type: ${{ steps.out.outputs.owner_type }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Classify docker build
+        id: out
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          OWNER: ${{ github.repository_owner }}
+          OWNER_TYPE: ${{ github.event.repository.owner.type }}
+          IN_DAPI: ${{ github.event.inputs.build_decentralized_api }}
+          IN_INFERENCE: ${{ github.event.inputs.build_inference_chain }}
+          IN_VERSIOND: ${{ github.event.inputs.build_versiond }}
+          IN_ROUTER: ${{ github.event.inputs.build_versiond_router }}
+          IN_PROXY: ${{ github.event.inputs.build_proxy }}
+          IN_VERSION_TAG: ${{ github.event.inputs.version_tag }}
+          IN_PUSH: ${{ github.event.inputs.push_to_registry }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/devshard-release-meta.sh
+          owner_type=${OWNER_TYPE:-Organization}
+          printf 'owner_type=%s\n' "$owner_type" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = push ]; then
+            .github/scripts/devshard-release-meta.sh docker-tag \
+              --ref-name "$REF_NAME" \
+              --owner "$OWNER" \
+              --registry ghcr.io | tee "$RUNNER_TEMP/docker-meta.txt"
+            while IFS= read -r line; do
+              printf '%s\n' "$line" >> "$GITHUB_OUTPUT"
+            done < "$RUNNER_TEMP/docker-meta.txt"
+            {
+              echo 'is_tag=true'
+              echo 'push=true'
+              echo 'build_decentralized_api=false'
+              echo 'build_inference_chain=false'
+              echo 'build_versiond=true'
+              echo 'build_versiond_router=true'
+              echo 'build_proxy=false'
+            } >> "$GITHUB_OUTPUT"
+          else
+            dapi=false
+            inference=false
+            versiond=false
+            router=false
+            proxy=false
+            [ "${IN_DAPI:-false}" = true ] && dapi=true
+            [ "${IN_INFERENCE:-false}" = true ] && inference=true
+            [ "${IN_VERSIOND:-false}" = true ] && versiond=true
+            [ "${IN_ROUTER:-false}" = true ] && router=true
+            [ "${IN_PROXY:-false}" = true ] && proxy=true
+            if [ "$dapi" = false ] && [ "$inference" = false ] && [ "$versiond" = false ] && [ "$router" = false ] && [ "$proxy" = false ]; then
+              echo 'select at least one image' >&2
+              exit 1
+            fi
+            image_tag=${IN_VERSION_TAG:-latest}
+            [ -n "$image_tag" ] || image_tag=latest
+            push=false
+            [ "${IN_PUSH:-true}" = true ] && push=true
+            {
+              echo 'is_tag=false'
+              echo "push=$push"
+              echo "image_tag=$image_tag"
+              echo 'release_name='
+              echo 'release_tag='
+              echo 'release_body_line='
+              echo "image_versiond=ghcr.io/${OWNER}/versiond:${image_tag}"
+              echo "image_versiond_router=ghcr.io/${OWNER}/versiond-router:${image_tag}"
+              echo "build_decentralized_api=$dapi"
+              echo "build_inference_chain=$inference"
+              echo "build_versiond=$versiond"
+              echo "build_versiond_router=$router"
+              echo "build_proxy=$proxy"
+            } >> "$GITHUB_OUTPUT"
+          fi
 
+  build-decentralized-api:
+    needs: classify
+    if: needs.classify.outputs.build_decentralized_api == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Log in to Container Registry
-        if: ${{ github.event.inputs.push_to_registry == 'true' }}
+        if: needs.classify.outputs.push == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/decentralized-api
           tags: |
-            type=raw,value=${{ github.event.inputs.version_tag || 'latest' }}
+            type=raw,value=${{ needs.classify.outputs.image_tag }}
             type=sha,prefix=
             type=ref,event=branch
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./decentralized-api/Dockerfile
-          push: ${{ github.event.inputs.push_to_registry == 'true' }}
+          push: ${{ needs.classify.outputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -76,43 +185,36 @@ jobs:
             GOARCH=amd64
 
   build-inference-chain:
-    if: ${{ github.event.inputs.build_target == 'inference-chain' || github.event.inputs.build_target == 'both' }}
+    needs: classify
+    if: needs.classify.outputs.build_inference_chain == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
       - name: Log in to Container Registry
-        if: ${{ github.event.inputs.push_to_registry == 'true' }}
+        if: needs.classify.outputs.push == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/gonka-node-test
           tags: |
-            type=raw,value=${{ github.event.inputs.version_tag || 'latest' }}
+            type=raw,value=${{ needs.classify.outputs.image_tag }}
             type=sha,prefix=
             type=ref,event=branch
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./inference-chain/Dockerfile
-          push: ${{ github.event.inputs.push_to_registry == 'true' }}
+          push: ${{ needs.classify.outputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -121,23 +223,150 @@ jobs:
             GOOS=linux
             GOARCH=amd64
 
+  build-join:
+    needs: classify
+    if: needs.classify.outputs.build_versiond == 'true' || needs.classify.outputs.build_versiond_router == 'true' || needs.classify.outputs.build_proxy == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: versiond
+            package: versiond
+            file: ./versioned/Dockerfile
+            context: ./versioned
+          - id: versiond-router
+            package: versiond-router
+            file: ./versiond-router/Dockerfile
+            context: .
+          - id: proxy
+            package: proxy
+            file: ./proxy/Dockerfile
+            context: ./proxy
+    steps:
+      - name: Decide whether to build
+        id: select
+        run: |
+          skip=false
+          case "${{ matrix.id }}" in
+            versiond)
+              [ "${{ needs.classify.outputs.build_versiond }}" = true ] || skip=true
+              ;;
+            versiond-router)
+              [ "${{ needs.classify.outputs.build_versiond_router }}" = true ] || skip=true
+              ;;
+            proxy)
+              [ "${{ needs.classify.outputs.build_proxy }}" = true ] || skip=true
+              ;;
+          esac
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout code
+        if: steps.select.outputs.skip != 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        if: steps.select.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        if: steps.select.outputs.skip != 'true' && needs.classify.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check existing GHCR tag
+        id: exists
+        if: steps.select.outputs.skip != 'true' && needs.classify.outputs.is_tag == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/devshard-ghcr-tag-exists.sh
+          if .github/scripts/devshard-ghcr-tag-exists.sh \
+            --owner "${{ github.repository_owner }}" \
+            --owner-type "${{ needs.classify.outputs.owner_type }}" \
+            --package "${{ matrix.package }}" \
+            --tag "${{ needs.classify.outputs.image_tag }}"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "GHCR already has ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.package }}:${{ needs.classify.outputs.image_tag }}"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract metadata
+        id: meta
+        if: steps.select.outputs.skip != 'true' && steps.exists.outputs.exists != 'true'
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.package }}
+          tags: |
+            type=raw,value=${{ needs.classify.outputs.image_tag }}
+            type=sha,prefix=,enable=${{ needs.classify.outputs.is_tag != 'true' }}
+            type=ref,event=branch,enable=${{ needs.classify.outputs.is_tag != 'true' }}
+
+      - name: Build and push Docker image
+        if: steps.select.outputs.skip != 'true' && steps.exists.outputs.exists != 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: ${{ needs.classify.outputs.push == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  upsert-release:
+    needs: [classify, build-join]
+    if: needs.classify.outputs.is_tag == 'true' && needs.classify.result == 'success' && needs.build-join.result != 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Upsert Devshard Release image notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/devshard-release-upsert-notes.sh
+          .github/scripts/devshard-release-upsert-notes.sh \
+            --repo "${{ github.repository }}" \
+            --name "${{ needs.classify.outputs.release_name }}" \
+            --tag "${{ needs.classify.outputs.release_tag }}" \
+            --target "${{ github.sha }}" \
+            --body-line "${{ needs.classify.outputs.release_body_line }}" \
+            --image "${{ needs.classify.outputs.image_versiond }}" \
+            --image "${{ needs.classify.outputs.image_versiond_router }}"
+
   summary:
-    needs: [build-decentralized-api, build-inference-chain]
+    needs: [classify, build-decentralized-api, build-inference-chain, build-join, upsert-release]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Build Summary
         run: |
-          echo "## Docker Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Build Target:** ${{ github.event.inputs.build_target }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Version Tag:** ${{ github.event.inputs.version_tag || 'latest' }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Pushed to Registry:** ${{ github.event.inputs.push_to_registry }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Built Images:" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ github.event.inputs.build_target }}" == "decentralized-api" ] || [ "${{ github.event.inputs.build_target }}" == "both" ]; then
-            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/decentralized-api:${{ github.event.inputs.version_tag || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "## Docker Build Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Event:** ${{ github.event_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Image tag:** \`${{ needs.classify.outputs.image_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Pushed to registry:** ${{ needs.classify.outputs.push }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Images" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ needs.classify.outputs.build_decentralized_api }}" = true ]; then
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/decentralized-api:${{ needs.classify.outputs.image_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ "${{ github.event.inputs.build_target }}" == "inference-chain" ] || [ "${{ github.event.inputs.build_target }}" == "both" ]; then
-            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/inferenced:${{ github.event.inputs.version_tag || 'latest' }}\`" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.classify.outputs.build_inference_chain }}" = true ]; then
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/gonka-node-test:${{ needs.classify.outputs.image_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${{ needs.classify.outputs.build_versiond }}" = true ]; then
+            echo "- \`${{ needs.classify.outputs.image_versiond }}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${{ needs.classify.outputs.build_versiond_router }}" = true ]; then
+            echo "- \`${{ needs.classify.outputs.image_versiond_router }}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${{ needs.classify.outputs.build_proxy }}" = true ]; then
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/proxy:${{ needs.classify.outputs.image_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
           fi

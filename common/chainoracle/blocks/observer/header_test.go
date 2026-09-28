@@ -97,3 +97,20 @@ func TestHeaderFromResultHeader_NilIsNotFound(t *testing.T) {
 	_, err := HeaderFromResultHeader(&ctypes.ResultHeader{})
 	require.ErrorIs(t, err, blocks.ErrHeaderNotFound)
 }
+
+func TestAsEventDataNewBlock(t *testing.T) {
+	block := cmttypes.MakeBlock(12, nil, nil, nil)
+	val := cmttypes.EventDataNewBlock{Block: block}
+	got, ok := AsEventDataNewBlock(val)
+	require.True(t, ok)
+	require.Equal(t, block, got.Block)
+
+	got, ok = AsEventDataNewBlock(&val)
+	require.True(t, ok)
+	require.Equal(t, block, got.Block)
+
+	_, ok = AsEventDataNewBlock((*cmttypes.EventDataNewBlock)(nil))
+	require.False(t, ok)
+	_, ok = AsEventDataNewBlock(cmttypes.EventDataNewBlockHeader{})
+	require.False(t, ok)
+}

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/signing"
 )
 
@@ -28,7 +28,7 @@ type MockValidator struct {
 //
 // BlockInterval controls Run cadence; tests drive the observer with
 // AdvanceOne instead. Same Seed + same Validators produce byte-identical
-// headers, which the §8.1 determinism test depends on.
+// headers, which the determinism test depends on.
 //
 // The mock simulates a multi-validator Cosmos chain: every block is
 // multi-signed by (most of) the pinned validator set. Each block
@@ -43,9 +43,9 @@ type MockConfig struct {
 	// BlockIntervalDelta adds symmetric jitter around BlockInterval.
 	// Example: 1s ± 250ms => [750ms, 1250ms]. ≤0 disables jitter.
 	BlockIntervalDelta time.Duration
-	Seed          int64
-	Start         time.Time
-	InitialHeight int64 // default 1
+	Seed               int64
+	Start              time.Time
+	InitialHeight      int64 // default 1
 }
 
 // Mock is a testenv-only observer that fabricates signed block headers on
@@ -381,7 +381,7 @@ func (m *Mock) Latest(_ context.Context) (*blocks.Header, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.latest == nil {
-		return nil, errors.New("mock observer: no headers produced yet")
+		return nil, fmt.Errorf("%w: no headers produced yet", blocks.ErrHeaderNotFound)
 	}
 	return cloneHeader(m.latest), nil
 }
@@ -393,7 +393,7 @@ func (m *Mock) At(_ context.Context, height int64) (*blocks.Header, error) {
 	defer m.mu.RUnlock()
 	h, ok := m.history[height]
 	if !ok {
-		return nil, fmt.Errorf("mock observer: no header at height %d", height)
+		return nil, fmt.Errorf("%w: no header at height %d", blocks.ErrHeaderNotFound, height)
 	}
 	return cloneHeader(h), nil
 }
@@ -407,7 +407,7 @@ func (m *Mock) Prove(_ context.Context, path string, height int64) (*blocks.Proo
 	defer m.mu.RUnlock()
 	h, ok := m.history[height]
 	if !ok {
-		return nil, fmt.Errorf("mock observer: no header at height %d for proof", height)
+		return nil, fmt.Errorf("%w: no header at height %d for proof", blocks.ErrHeaderNotFound, height)
 	}
 	var hb [8]byte
 	binary.BigEndian.PutUint64(hb[:], uint64(height))
@@ -617,6 +617,5 @@ func cloneHeader(h *blocks.Header) *blocks.Header {
 	return &cp
 }
 
-// Compile-time assertion that Mock implements Observer (and thus
-// blocks.BlockOracle).
-var _ Observer = (*Mock)(nil)
+// Compile-time assertion that Mock implements the shared BlockOracle.
+var _ blocks.BlockOracle = (*Mock)(nil)

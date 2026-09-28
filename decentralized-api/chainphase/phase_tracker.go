@@ -54,6 +54,25 @@ func (es *EpochState) IsNilOrNotSynced() bool {
 	return es == nil || !es.IsSynced
 }
 
+// IsPoCVoteWindow is true during regular PoC validation (including wind-down)
+// and confirmation-PoC validation. Challenged nodes still take InitValidate
+// and ValidateAll in this window even while their generate overlay is on.
+func (es *EpochState) IsPoCVoteWindow() bool {
+	if es.IsNilOrNotSynced() {
+		return false
+	}
+	if es.CurrentPhase == types.PoCValidatePhase ||
+		es.CurrentPhase == types.PoCValidateWindDownPhase {
+		return true
+	}
+	if es.CurrentPhase == types.InferencePhase &&
+		es.ActiveConfirmationPoCEvent != nil &&
+		es.ActiveConfirmationPoCEvent.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION {
+		return true
+	}
+	return false
+}
+
 func (t *ChainPhaseTracker) GetCurrentEpochState() *EpochState {
 	t.mu.RLock()
 	defer t.mu.RUnlock()

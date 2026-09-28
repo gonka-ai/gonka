@@ -100,7 +100,7 @@ const (
 	DefaultDevshardMaxEscrowsPerEpoch  uint32 = 100
 	DefaultDevshardGroupSize           uint32 = 16
 	DefaultDevshardTokenPrice          uint64 = 1
-	DefaultDevshardMaxNonce            uint32 = 20_000
+	DefaultDevshardMaxNonce            uint32 = 1_000_000
 	DefaultDevshardRequestsEnabled     bool   = true
 	DefaultDevshardCreateDevshardFee   uint64 = 10_000
 	DefaultDevshardFeePerNonce         uint64 = 1_000
@@ -116,7 +116,19 @@ const (
 	DefaultMaintenanceMaxConcurrentPowerBps    uint32 = 1000 // 10% in basis points
 	DefaultMaintenanceCreditCapBlocks          uint64 = 400
 	DefaultMaintenanceCreditEarnPerEpochBlocks uint64 = 20
+
+	DefaultPoCChallengeMaxActiveChallenges uint32 = 4
 )
+
+// DefaultMinPunishableSegmentBlocks is the voted-segment floor. A clipped
+// challenge window shorter than this rotates without evaluate.
+// Same-block / minimum clipped duration is max(cutoff,1)+stage+exchange-1.
+// Genesis-era numbers give 144; current upgrade params (cutoff 2, stage 35,
+// exchange 0) give 36. Both are below this floor, so a same-block overlap
+// rotates. A challenge created long enough before the trigger can still be
+// evaluated at cPoC complete. Not enforced in Validate().
+// PoCChallengeParams.MinPunishableSegmentBlocks <= 0 means this value.
+const DefaultMinPunishableSegmentBlocks int64 = 300
 
 // DefaultSealGraceMultiplier is the multiplier used to compute the default seal grace nonces.
 const DefaultSealGraceMultiplier uint32 = 10
@@ -208,6 +220,7 @@ func DefaultParams() Params {
 		MaintenanceParams:    DefaultMaintenanceParams(),
 		DelegationParams:     DefaultDelegationParams(),
 		FeeParams:            DefaultFeeParams(),
+		PocChallengeParams:   DefaultPoCChallengeParams(),
 	}
 }
 
@@ -402,6 +415,37 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 		ValidationRate:                   DefaultDevshardValidationRate,
 		VoteThresholdFactor:              DefaultDevshardVoteThresholdFactor,
 	}
+}
+
+func DefaultPoCChallengeParams() *PoCChallengeParams {
+	return &PoCChallengeParams{
+		PaymentRatio:               DecimalFromFloat(0.1),
+		MaxActiveChallenges:        DefaultPoCChallengeMaxActiveChallenges,
+		MinPunishableSegmentBlocks: DefaultMinPunishableSegmentBlocks,
+	}
+}
+
+// EffectiveMinPunishableSegmentBlocks returns the voted-segment floor.
+// Zero or missing params mean DefaultMinPunishableSegmentBlocks so unsaved
+// genesis/upgrade state stays mainnet-safe.
+func EffectiveMinPunishableSegmentBlocks(p *PoCChallengeParams) int64 {
+	if p == nil || p.GetMinPunishableSegmentBlocks() <= 0 {
+		return DefaultMinPunishableSegmentBlocks
+	}
+	return p.GetMinPunishableSegmentBlocks()
+}
+
+func (p *PoCChallengeParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if err := validateDecimalFraction(p.PaymentRatio, "poc_challenge_params.payment_ratio"); err != nil {
+		return err
+	}
+	if p.MaxActiveChallenges == 0 {
+		return fmt.Errorf("poc_challenge_params.max_active_challenges must be greater than 0")
+	}
+	return nil
 }
 
 func DefaultMaintenanceParams() *MaintenanceParams {
@@ -745,8 +789,12 @@ func (p *EpochParams) Validate() error {
 	if p.PocExchangeDuration < 0 {
 		return fmt.Errorf("poc exchange duration cannot be negative")
 	}
-	if p.PocValidationDelay < 0 {
-		return fmt.Errorf("poc validation delay cannot be negative")
+	// Validation must start at least one block after the exchange ends:
+	// at delay 0 InitValidate and StartValidation fire on the same block, and a
+	// confirmation-PoC challenge segment (Finish = ExchangeEnd+1) is normally not
+	// voted: the single vote pass reads height ExchangeEnd < Finish.
+	if p.PocValidationDelay < 1 {
+		return fmt.Errorf("poc validation delay must be at least 1")
 	}
 	if p.PocValidationDuration <= 0 {
 		return fmt.Errorf("poc validation duration must be positive")
@@ -895,6 +943,12 @@ func (p Params) Validate() error {
 
 	if p.MaintenanceParams != nil {
 		if err := p.MaintenanceParams.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if p.PocChallengeParams != nil {
+		if err := p.PocChallengeParams.Validate(); err != nil {
 			return err
 		}
 	}

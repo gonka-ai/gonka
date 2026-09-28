@@ -1,14 +1,16 @@
 package event_listener
 
 import (
-	"decentralized-api/chainphase"
-	"github.com/productscience/inference/x/inference/types"
 	"testing"
 	"time"
 
+	"decentralized-api/chainphase"
 	"decentralized-api/internal/event_listener/chainevents"
+	"decentralized-api/poc"
 
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
@@ -90,6 +92,43 @@ func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
 			assert.Equal(t, tc.expectedResult, result, tc.description)
 		})
 	}
+}
+
+func TestShouldTriggerReconciliation_ChallengeGenerateUsesPoCInterval(t *testing.T) {
+	t.Cleanup(poc.OpenChallenges.Reset)
+	dispatcher := &OnNewBlockDispatcher{
+		reconciliationConfig: MlNodeReconciliationConfig{
+			Inference: &MlNodeStageReconciliationConfig{
+				BlockInterval: 5,
+				TimeInterval:  30 * time.Second,
+			},
+			PoC: &MlNodeStageReconciliationConfig{
+				BlockInterval: 1,
+				TimeInterval:  30 * time.Second,
+			},
+			LastBlockHeight: 15,
+			LastTime:        time.Now(),
+		},
+	}
+	epoch := chainphase.EpochState{
+		CurrentPhase: types.InferencePhase,
+		CurrentBlock: chainphase.BlockInfo{Height: 16},
+		IsSynced:     true,
+	}
+
+	require.False(t, dispatcher.shouldTriggerReconciliation(epoch),
+		"inference cadence is 5 blocks; 1 block later should not reconcile")
+
+	poc.OpenChallenges.Replace("me", []*types.OpenPoCChallenge{{
+		Challenge: &types.PoCChallenge{
+			Target:      "me",
+			StartHeight: 10,
+		},
+		Finish:     100,
+		Generating: true,
+	}}, 0)
+	require.True(t, dispatcher.shouldTriggerReconciliation(epoch),
+		"own challenge generate should reconcile on the PoC cadence so StartPocCommand can wind down")
 }
 
 func TestParseNewBlockInfo(t *testing.T) {

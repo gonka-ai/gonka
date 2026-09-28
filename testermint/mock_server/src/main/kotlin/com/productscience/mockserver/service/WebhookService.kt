@@ -8,6 +8,7 @@ import kotlinx.coroutines.*
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.productscience.mockserver.model.latestNonce
 import org.slf4j.LoggerFactory
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Service for handling webhook callbacks.
@@ -23,6 +24,8 @@ class WebhookService(private val responseService: ResponseService) {
 
     // Default URL for batch validation webhooks
     private val batchValidationWebhookUrl = "http://localhost:9100/v1/poc-batches/validated"
+
+    private val lastGenerateV2 = ConcurrentHashMap<HostName, LastGenerateV2Context>()
 
     /**
      * Extracts a value from a JSON string using a JSONPath-like expression.
@@ -169,50 +172,17 @@ class WebhookService(private val responseService: ResponseService) {
             logger.info("Processing PoC v2 generate webhook - URL: $url, PublicKey: $publicKey, BlockHeight: $blockHeight, NodeId: $nodeId")
 
             if (url != null && publicKey != null && blockHash != null && blockHeight != null) {
-                // Normalize URL: if url already contains /v2/poc-batches, append /generated; otherwise treat as host base
-                val webhookUrl = if (url.contains("/v2/poc-batches")) {
-                    "$url/generated"
-                } else {
-                    "$url/v2/poc-batches/generated"
-                }
-
-                // Get the weight from the ResponseService, default to 10 if not set
-                val weight = responseService.getPocResponseWeight(hostName) ?: 10L
-
-                // Sequential nonce assignment via atomic counter.
-                // In prod, nodes use a strided pattern (nonce % nodeCount == nodeId),
-                // but since mock nodes arrive as separate HTTP calls with advancing counters,
-                // simple sequential nonces are sufficient — the validator only checks
-                // uniqueness and porosity (maxNonce / count < 100), not the stride pattern.
-                val base = latestNonce.getAndAdd(weight)
-                val artifacts = (0 until weight.toInt()).map { i ->
-                    val nonce = base + i
-                    // Generate valid FP16 vectors (24 bytes = 12 FP16 values)
-                    // FP16 NaN/Inf have exponent bits = 31 (0x7C00-0x7FFF, 0xFC00-0xFFFF)
-                    // To avoid these, we mask the high byte to keep exponent < 31
-                    val vectorBytes = ByteArray(24) { j ->
-                        val rawByte = ((nonce * 2 + j) % 256).toByte()
-                        // For odd indices (high byte of FP16), mask to avoid exp=31
-                        // exp bits are in bits 2-6 of high byte; masking with 0x7B ensures exp <= 30
-                        if (j % 2 == 1) (rawByte.toInt() and 0x7B).toByte() else rawByte
-                    }
-                    val vectorB64 = java.util.Base64.getEncoder().encodeToString(vectorBytes)
-                    """{"nonce": $nonce, "vector_b64": "$vectorB64"}"""
-                }.joinToString(", ")
-
-                val webhookBody = """
-                    {
-                      "public_key": "$publicKey",
-                      "node_id": $nodeId,
-                      "block_hash": "$blockHash",
-                      "block_height": $blockHeight,
-                      "artifacts": [$artifacts],
-                      "encoding": {"dtype": "f16", "k_dim": 12, "endian": "le"}
-                    }
-                """.trimIndent()
-
-                logger.info("Sending PoC v2 generate webhook to $webhookUrl with ${weight.toInt()} artifacts")
-                sendDelayedWebhook(webhookUrl, webhookBody)
+                val webhookUrl = generateWebhookUrl(url)
+                val ctx = LastGenerateV2Context(
+                    hostName = hostName,
+                    webhookUrl = webhookUrl,
+                    publicKey = publicKey,
+                    blockHash = blockHash,
+                    blockHeight = blockHeight,
+                    nodeId = nodeId,
+                )
+                lastGenerateV2[hostName] = ctx
+                sendGenerateV2Artifacts(ctx)
             } else {
                 logger.warn("Missing required fields in PoC v2 generate webhook request: url=$url, publicKey=$publicKey, blockHash=$blockHash, blockHeight=$blockHeight")
             }
@@ -220,6 +190,76 @@ class WebhookService(private val responseService: ResponseService) {
             logger.error("Error processing PoC v2 generate webhook: ${e.message}", e)
         }
     }
+
+    fun emitGeneratePocV2Batch(hostName: HostName?): Boolean {
+        val ctx = resolveGenerateContext(hostName)
+        if (ctx == null) {
+            logger.warn("No stored PoC v2 generate context for emit-batch host=$hostName")
+            return false
+        }
+        sendGenerateV2Artifacts(ctx)
+        return true
+    }
+
+    fun clearGenerateContext() {
+        lastGenerateV2.clear()
+    }
+
+    private fun resolveGenerateContext(hostName: HostName?): LastGenerateV2Context? {
+        if (hostName != null) {
+            lastGenerateV2[hostName]?.let { return it }
+            return lastGenerateV2.entries.firstOrNull { it.key.name == hostName.name }?.value
+        }
+        if (lastGenerateV2.size == 1) {
+            return lastGenerateV2.values.first()
+        }
+        return lastGenerateV2.values.lastOrNull()
+    }
+
+    private fun generateWebhookUrl(url: String): String {
+        return if (url.contains("/v2/poc-batches")) {
+            "$url/generated"
+        } else {
+            "$url/v2/poc-batches/generated"
+        }
+    }
+
+    private fun sendGenerateV2Artifacts(ctx: LastGenerateV2Context) {
+        val weight = responseService.getPocResponseWeight(ctx.hostName) ?: 10L
+        val base = latestNonce.getAndAdd(weight)
+        val artifacts = (0 until weight.toInt()).map { i ->
+            val nonce = base + i
+            val vectorBytes = ByteArray(24) { j ->
+                val rawByte = ((nonce * 2 + j) % 256).toByte()
+                if (j % 2 == 1) (rawByte.toInt() and 0x7B).toByte() else rawByte
+            }
+            val vectorB64 = java.util.Base64.getEncoder().encodeToString(vectorBytes)
+            """{"nonce": $nonce, "vector_b64": "$vectorB64"}"""
+        }.joinToString(", ")
+
+        val webhookBody = """
+            {
+              "public_key": "${ctx.publicKey}",
+              "node_id": ${ctx.nodeId},
+              "block_hash": "${ctx.blockHash}",
+              "block_height": ${ctx.blockHeight},
+              "artifacts": [$artifacts],
+              "encoding": {"dtype": "f16", "k_dim": 12, "endian": "le"}
+            }
+        """.trimIndent()
+
+        logger.info("Sending PoC v2 generate webhook to ${ctx.webhookUrl} with ${weight.toInt()} artifacts")
+        sendDelayedWebhook(ctx.webhookUrl, webhookBody)
+    }
+
+    private data class LastGenerateV2Context(
+        val hostName: HostName,
+        val webhookUrl: String,
+        val publicKey: String,
+        val blockHash: String,
+        val blockHeight: Int,
+        val nodeId: Int,
+    )
 
     /**
      * Processes a webhook for PoC v2 /generate (validation) endpoint.

@@ -17,6 +17,11 @@ var ErrProveNotImplemented = errors.New("blockoracle: prove not implemented")
 // "old dapi / no route" from "this dapi is up, RPC failed" (§7.3).
 var ErrHeaderNotFound = errors.New("blockoracle: header not found")
 
+// ErrHeaderRPCUnimplemented is a dapi (or stub) that has no GetBlockHeader
+// route. Failover skips Latest() and At() against that backend until the
+// next GetBlockHeader re-probe (15m).
+var ErrHeaderRPCUnimplemented = errors.New("blockoracle: header rpc unimplemented")
+
 // BlockOracle is the stable contract between producers (observers, the
 // standalone binary, the in-process dapi mount) and consumers (devshardd
 // hosts, real dapi internals).

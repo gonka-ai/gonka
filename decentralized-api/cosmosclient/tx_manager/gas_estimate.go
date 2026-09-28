@@ -191,8 +191,12 @@ func lookupMsgGasHinted(msg sdk.Msg, hints GasHints) (uint64, bool) {
 		return gasSubmitPocBatch, true
 	case *inferencetypes.MsgSubmitPocValidationsV2:
 		return gasSubmitPocValidationsV2, true
+	case *inferencetypes.MsgSubmitPoCChallengeValidations:
+		return gasSubmitPocValidationsV2, true
 	case *inferencetypes.MsgPoCV2StoreCommit:
 		return estimateStoreCommitGas(m, hints), true
+	case *inferencetypes.MsgPoCChallengeStoreCommit:
+		return gasPoCV2Base, true
 	case *inferencetypes.MsgMLNodeWeightDistribution:
 		var totalNodes uint64
 		for _, e := range m.Entries {

@@ -127,10 +127,22 @@ Lifecycle controls live on a **loopback admin** listener when versiond sets
 `DEVSHARD_ADMIN_ADDR=127.0.0.1:<port>` (after `--print-admin-api-version`
 succeeds). Those paths are **not** registered on the public Echo instance.
 
-1. **`GET /ready` (admin)** — `200` when chain-event subscriptions report ready
-   and the child is not draining; otherwise `503`. versiond also requires
-   public `/healthz` `2xx` before publishing the route for admin-capable
-   children (`waitForChildServingReady`).
+1. **`GET /ready` (admin)** — initial startup requires the chain-event
+   subscriptions to connect. A later reconnect keeps returning `200` because
+   it affects all replicas together while they can still serve existing shard
+   state. Draining or unavailable storage returns `503`. versiond also requires
+   public `/healthz` `2xx` before publishing the route for admin-capable children
+   (`waitForChildServingReady`).
+
+   **Status vs body split (v5):** the status code answers "can this process
+   serve" (chain up, storage open, not draining) and is `200` within seconds of
+   boot, so a solo restart or boot is not force-stopped by the 60s
+   `VERSIOND_READY_TIMEOUT` before it ever serves. The body field
+   `recovery_complete` answers "is this process warm" — the recovery backlog is
+   drained and background sealed-index / validation-obs repairs have finished.
+   Only a version replacement with a healthy old generation still serving waits
+   on it (see §1.4d). A solo start and the stop/start branch never wait:
+   waiting with no warm generation to fall back on would just be an outage.
 2. **`GET /drain/status` (admin)** — `{ready, draining, inflight}` from the
    lifecycle middleware (all non-lifecycle HTTP, including full SSE duration).
    Same count as Prometheus `devshardd_lifecycle_inflight_requests`.
@@ -226,6 +238,8 @@ func (m *Manager) downloadAndSwap(...) error {
 		return nil
 	}
 	// newChild on fresh port → waitForChildReady
+	// (overlap only) waitForChildRecoveryComplete: poll admin /ready body
+	//   until recovery_complete: true, with flow-D bail-outs
 	// move old → draining; processes[name]=new; rebuildRoutes; retire old Target
 	go m.drainAfterProxy(old, proxyDrained)
 }
@@ -237,7 +251,19 @@ deadline), then `POST /drain` and polls `/drain/status` until `inflight == 0`
 
 Invariants:
 
-- New ready before traffic (admin `/ready` + public `/healthz`).
+- **New warm before traffic, overlap only.** In the blue/green overlap branch
+  (both children report `postgres`), versiond waits for `recovery_complete:
+  true` on the new child's admin `/ready` body **before** the route swap, so an
+  overlap cutover routes traffic at a host whose recovery backlog has drained
+  rather than mid-wipe. Solo start and the stop/start branch publish on status
+  code alone — there is no healthy old generation to keep serving, so waiting
+  would just be an outage. Bail-outs (companion *ready-on-boot-warm-cutover*
+  flow D): `recovery_complete` absent from the body → skip the wait and cut
+  over cold (an un-updated child cannot know about the field); old child stops
+  being `Running` → abandon the wait and publish immediately (a warming child
+  plus a dead old child is an outage); `hostDraining` or ctx done → abort, stop
+  the new child; `VERSIOND_RECOVERY_TIMEOUT` elapsed → abort, old keeps serving,
+  retry next reconcile.
 - New requests use the new `Target` after publish.
 - No boundary gap: acquire lease or retry after retirement.
 - Old finishes in-flight: proxy leases then lifecycle inflight before SIGTERM.
@@ -274,6 +300,7 @@ children but still waits for reap.
 |---|---|---|
 | `VERSIOND_READY_PATH` | `/ready` | Admin readiness path; public `/healthz` must also pass for admin children |
 | `VERSIOND_READY_TIMEOUT` | `60s` | Max wait for incoming child before aborting swap |
+| `VERSIOND_RECOVERY_TIMEOUT` | `30m` | Max wait for the new child's `recovery_complete` before aborting an overlap swap (old keeps serving). Not the 60s ready timeout — recovery of a long journal is minutes to hours |
 | `VERSIOND_DRAIN_PATH` | `/drain` | POST path to put old child into drain mode |
 | `VERSIOND_DRAIN_STATUS_PATH` | `/drain/status` | Poll path for lifecycle inflight |
 | `VERSIOND_DRAIN_TIMEOUT` | `15m` | Shared deadline for proxy leases + child inflight before SIGTERM |
@@ -416,10 +443,13 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 ### 1.9 Test coverage
 
 - **Unit (`versioned/internal/process`):** swap readiness abort keeps old serving;
-  drain waits for proxy leases then lifecycle inflight; drain timeout; async
-  version removal; re-add deferred while draining; postgres-only overlap gate;
-  port pool exhaustion; process FSM graceful stop / SIGKILL escalation / reap;
-  manager shutdown forces then waits for Done.
+  warm-cutover wait on `recovery_complete` (overlap waits then cuts over,
+  absent field skips, old-child death publishes, timeout/hostDraining/ctx
+  abort); readiness monitor never reads the body; drain waits for proxy
+  leases then lifecycle inflight; drain timeout; async version removal;
+  re-add deferred while draining; postgres-only overlap gate; port pool
+  exhaustion; process FSM graceful stop / SIGKILL escalation / reap; manager
+  shutdown forces then waits for Done.
 - **Unit (`versioned/internal/proxy`):** retired-route acquire retries; acquired
   request stays on retired target across route swap until release.
 - **e2e (`versioned/e2e`):** `TestSameNameNewSHA_RollingUpdateDrainsOld` — long
@@ -427,7 +457,13 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 - **testenv:** `TestVersiondRollingUpdateSameVersionSHA` (Postgres overlap + SSE
   continuity) and `TestVersiondRollingUpdateHybridFallback` (no overlap).
   Target: `make -C devshard/testenv citest-versiond-rolling-update` (see
-  [testenv/docs/scenarios.md](../testenv/docs/scenarios.md)).
+  [testenv/docs/scenarios.md](../testenv/docs/scenarios.md)). The v5 warm-cutover
+  contract (status-vs-body split at boot + overlap swap waits for
+  `recovery_complete`) is pinned by `TestVersiondWarmCutoverBoot` and
+  `TestVersiondWarmCutoverOverlapWaitsThenServes`; target
+  `make -C devshard/testenv citest-versiond-warm-cutover` (see
+  [testenv/docs/scenarios.md](../testenv/docs/scenarios.md) §"Versiond warm
+  cutover").
 - **testermint:** `VersiondTests` same-version binary update drains old requests
   and keeps serving.
 - **devshardd:** lifecycle tests for `/ready`, `/drain` / `/drain/status`, and

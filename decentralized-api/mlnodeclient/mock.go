@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -39,6 +40,7 @@ type MockClient struct {
 	DeleteModelError      error
 	ListModelsError       error
 	GetDiskSpaceError     error
+	GetPowStatusV2Error   error
 
 	// Call tracking
 	StopCalled             int
@@ -86,13 +88,15 @@ func NewMockClient() *MockClient {
 }
 
 func (m *MockClient) WithTryLock(t *testing.T, f func()) {
-	lock := m.Mu.TryLock()
-	if !lock {
-		t.Fatal("TryLock called more than once")
-	} else {
-		defer m.Mu.Unlock()
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !m.Mu.TryLock() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for mock client lock")
+		}
+		time.Sleep(time.Millisecond)
 	}
-
+	defer m.Mu.Unlock()
 	f()
 }
 
@@ -460,6 +464,9 @@ func (m *MockClient) GetPowStatusV2(ctx context.Context) (*PoCStatusResponseV2, 
 	defer m.Mu.Unlock()
 
 	m.GetPowStatusV2Called++
+	if m.GetPowStatusV2Error != nil {
+		return nil, m.GetPowStatusV2Error
+	}
 
 	// Use configured status or default to IDLE
 	status := m.PowStatusV2

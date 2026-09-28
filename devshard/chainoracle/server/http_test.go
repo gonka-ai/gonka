@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
+	blockserver "common/chainoracle/blocks/server"
 	"devshard/chainoracle/blocks/observer"
-	blockserver "devshard/chainoracle/blocks/server"
 	"devshard/chainoracle/server"
 	"devshard/signing"
 
@@ -65,8 +65,8 @@ func TestMount_VersionsAndBlocks(t *testing.T) {
 	require.Len(t, cfg.Versions, 1)
 	require.Equal(t, "v0.2.13", cfg.Versions[0].Name)
 
-	// /block/latest (delegated to blocks/server)
-	resp2, err := http.Get(ts.URL + "/block/latest")
+	// /block/:height (delegated to blocks/server)
+	resp2, err := http.Get(ts.URL + "/block/1")
 	require.NoError(t, err)
 	defer resp2.Body.Close()
 	require.Equal(t, http.StatusOK, resp2.StatusCode)

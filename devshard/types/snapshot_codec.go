@@ -58,16 +58,23 @@ func EscrowStateToProto(state *EscrowState) *EscrowStateProto {
 			InferenceSealGraceSeconds: cfg.InferenceSealGraceSeconds,
 			AutoSealEveryNNonces:      cfg.AutoSealEveryNNonces,
 		},
-		Group:         group,
-		Balance:       state.Balance,
-		Fees:          state.Fees,
-		Phase:         uint32(state.Phase),
-		FinalizeNonce: state.FinalizeNonce,
-		Inferences:    inferences,
-		HostStats:     hostStats,
-		WarmKeys:      warmKeys,
-		LatestNonce:   state.LatestNonce,
-		SealedAcc:     append([]byte(nil), state.SealedAcc...),
+		Group:                         group,
+		Balance:                       state.Balance,
+		Fees:                          state.Fees,
+		Phase:                         uint32(state.Phase),
+		FinalizeNonce:                 state.FinalizeNonce,
+		Inferences:                    inferences,
+		HostStats:                     hostStats,
+		WarmKeys:                      warmKeys,
+		LatestNonce:                   state.LatestNonce,
+		SealedAcc:                     append([]byte(nil), state.SealedAcc...),
+		HeightSyncForcedStart:         state.HeightSyncForcedStart,
+		HeightSyncForcedEnd:           state.HeightSyncForcedEnd,
+		HeightSyncCadenceSwallowUntil: state.HeightSyncCadenceSwallowUntil,
+		HeightSyncSwallowFe:           state.HeightSyncSwallowFe,
+		HeightSyncTurnK:               state.HeightSyncTurnK,
+		HeightSyncTurnSlots:           state.HeightSyncTurnSlots,
+		HeightSyncTurnReason:          state.HeightSyncTurnReason,
 	}
 }
 
@@ -130,42 +137,53 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 	}
 
 	return &EscrowState{
-		EscrowID:                    msg.EscrowId,
-		StateRootAndProtocolVersion: msg.StateRootAndProtocolVersion,
-		Config:                      cfg,
-		Group:                       group,
-		Balance:                     msg.Balance,
-		Fees:                        msg.Fees,
-		Phase:                       SessionPhase(msg.Phase),
-		FinalizeNonce:               msg.FinalizeNonce,
-		Inferences:                  inferences,
-		HostStats:                   hostStats,
-		WarmKeys:                    warmKeys,
-		LatestNonce:                 msg.LatestNonce,
-		SealedAcc:                   append([]byte(nil), msg.SealedAcc...),
+		EscrowID:                      msg.EscrowId,
+		StateRootAndProtocolVersion:   msg.StateRootAndProtocolVersion,
+		Config:                        cfg,
+		Group:                         group,
+		Balance:                       msg.Balance,
+		Fees:                          msg.Fees,
+		Phase:                         SessionPhase(msg.Phase),
+		FinalizeNonce:                 msg.FinalizeNonce,
+		Inferences:                    inferences,
+		HostStats:                     hostStats,
+		WarmKeys:                      warmKeys,
+		LatestNonce:                   msg.LatestNonce,
+		SealedAcc:                     append([]byte(nil), msg.SealedAcc...),
+		HeightSyncForcedStart:         msg.GetHeightSyncForcedStart(),
+		HeightSyncForcedEnd:           msg.GetHeightSyncForcedEnd(),
+		HeightSyncCadenceSwallowUntil: msg.GetHeightSyncCadenceSwallowUntil(),
+		HeightSyncSwallowFe:           msg.GetHeightSyncSwallowFe(),
+		HeightSyncTurnK:               msg.GetHeightSyncTurnK(),
+		HeightSyncTurnSlots:           msg.GetHeightSyncTurnSlots(),
+		HeightSyncTurnReason:          msg.GetHeightSyncTurnReason(),
 	}
 }
 
 // MarshalStateSnapshotProto serializes a state snapshot envelope to protobuf.
-func MarshalStateSnapshotProto(state *EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64) ([]byte, error) {
+// heightSyncFloor is derived RAM (not hashed); nil omits the field so legacy
+// readers still load the hashed EscrowState.
+func MarshalStateSnapshotProto(state *EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *FloorIndexProto) ([]byte, error) {
 	msg := &StateSnapshotProto{
 		State:            EscrowStateToProto(state),
 		CommittedEntries: cloneBytesMap(committedEntries),
 		SealedNonces:     cloneUint64Map(sealedNonces),
+		HeightSyncFloor:  heightSyncFloor,
 	}
 	return proto.Marshal(msg)
 }
 
 // UnmarshalStateSnapshotProto deserializes a protobuf state snapshot envelope.
-func UnmarshalStateSnapshotProto(data []byte) (*EscrowState, map[uint64][]byte, map[uint64]uint64, error) {
+// A nil height-sync floor means the snapshot predates the field (rebuild from the journal).
+func UnmarshalStateSnapshotProto(data []byte) (*EscrowState, map[uint64][]byte, map[uint64]uint64, *FloorIndexProto, error) {
 	msg := &StateSnapshotProto{}
 	if err := proto.Unmarshal(data, msg); err != nil {
-		return nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: %w", err)
 	}
 	if msg.State == nil {
-		return nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: missing state")
+		return nil, nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: missing state")
 	}
-	return EscrowStateFromProto(msg.State), cloneBytesMap(msg.CommittedEntries), cloneUint64Map(msg.SealedNonces), nil
+	return EscrowStateFromProto(msg.State), cloneBytesMap(msg.CommittedEntries), cloneUint64Map(msg.SealedNonces), msg.HeightSyncFloor, nil
 }
 
 func inferenceRecordToProto(id uint64, rec *InferenceRecord) *InferenceRecordProto {
@@ -173,23 +191,25 @@ func inferenceRecordToProto(id uint64, rec *InferenceRecord) *InferenceRecordPro
 		return &InferenceRecordProto{InferenceId: id}
 	}
 	return &InferenceRecordProto{
-		InferenceId:  id,
-		Status:       uint32(rec.Status),
-		ExecutorSlot: rec.ExecutorSlot,
-		Model:        rec.Model,
-		PromptHash:   append([]byte(nil), rec.PromptHash...),
-		ResponseHash: append([]byte(nil), rec.ResponseHash...),
-		InputLength:  rec.InputLength,
-		MaxTokens:    rec.MaxTokens,
-		InputTokens:  rec.InputTokens,
-		OutputTokens: rec.OutputTokens,
-		ReservedCost: rec.ReservedCost,
-		ActualCost:   rec.ActualCost,
-		StartedAt:    rec.StartedAt,
-		ConfirmedAt:  rec.ConfirmedAt,
-		VotesValid:   rec.VotesValid,
-		VotesInvalid: rec.VotesInvalid,
-		ValidatedBy:  rec.ValidatedBy.Bytes(),
+		InferenceId:       id,
+		Status:            uint32(rec.Status),
+		ExecutorSlot:      rec.ExecutorSlot,
+		Model:             rec.Model,
+		PromptHash:        append([]byte(nil), rec.PromptHash...),
+		ResponseHash:      append([]byte(nil), rec.ResponseHash...),
+		InputLength:       rec.InputLength,
+		MaxTokens:         rec.MaxTokens,
+		InputTokens:       rec.InputTokens,
+		OutputTokens:      rec.OutputTokens,
+		ReservedCost:      rec.ReservedCost,
+		ActualCost:        rec.ActualCost,
+		StartedAt:         rec.StartedAt,
+		ConfirmedAt:       rec.ConfirmedAt,
+		StartedAtHeight:   rec.StartedAtHeight,
+		ConfirmedAtHeight: rec.ConfirmedAtHeight,
+		VotesValid:        rec.VotesValid,
+		VotesInvalid:      rec.VotesInvalid,
+		ValidatedBy:       rec.ValidatedBy.Bytes(),
 	}
 }
 
@@ -198,22 +218,24 @@ func inferenceRecordFromProto(msg *InferenceRecordProto) *InferenceRecord {
 		return &InferenceRecord{}
 	}
 	return &InferenceRecord{
-		Status:       InferenceStatus(msg.Status),
-		ExecutorSlot: msg.ExecutorSlot,
-		Model:        msg.Model,
-		PromptHash:   append([]byte(nil), msg.PromptHash...),
-		ResponseHash: append([]byte(nil), msg.ResponseHash...),
-		InputLength:  msg.InputLength,
-		MaxTokens:    msg.MaxTokens,
-		InputTokens:  msg.InputTokens,
-		OutputTokens: msg.OutputTokens,
-		ReservedCost: msg.ReservedCost,
-		ActualCost:   msg.ActualCost,
-		StartedAt:    msg.StartedAt,
-		ConfirmedAt:  msg.ConfirmedAt,
-		VotesValid:   msg.VotesValid,
-		VotesInvalid: msg.VotesInvalid,
-		ValidatedBy:  Bitmap128FromBytes(msg.ValidatedBy),
+		Status:            InferenceStatus(msg.Status),
+		ExecutorSlot:      msg.ExecutorSlot,
+		Model:             msg.Model,
+		PromptHash:        append([]byte(nil), msg.PromptHash...),
+		ResponseHash:      append([]byte(nil), msg.ResponseHash...),
+		InputLength:       msg.InputLength,
+		MaxTokens:         msg.MaxTokens,
+		InputTokens:       msg.InputTokens,
+		OutputTokens:      msg.OutputTokens,
+		ReservedCost:      msg.ReservedCost,
+		ActualCost:        msg.ActualCost,
+		StartedAt:         msg.StartedAt,
+		ConfirmedAt:       msg.ConfirmedAt,
+		StartedAtHeight:   msg.StartedAtHeight,
+		ConfirmedAtHeight: msg.ConfirmedAtHeight,
+		VotesValid:        msg.VotesValid,
+		VotesInvalid:      msg.VotesInvalid,
+		ValidatedBy:       Bitmap128FromBytes(msg.ValidatedBy),
 	}
 }
 

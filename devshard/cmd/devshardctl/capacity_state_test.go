@@ -321,7 +321,7 @@ func TestGatewayLimiterAcquireBlocksWhenScaledToZero(t *testing.T) {
 	l := NewGatewayLimiter(4, 100)
 	l.ApplyScaleFactor(0)
 
-	require.ErrorContains(t, l.Acquire(1), "too many concurrent requests")
+	require.ErrorContains(t, l.Acquire(1), "no live host capacity")
 }
 
 func TestGatewayLimiterUpdateLimitsPreservesScale(t *testing.T) {

@@ -73,16 +73,18 @@ func (l *Lookup) Subscribe(context.Context, int64) (<-chan *blocks.Header, error
 	return nil, errors.New("nmclient: no subscribe; use the Comet tip")
 }
 
-// mapHeaderErr keeps a missing height, a dapi without the RPC, and a dapi
-// with no oracle configured on the same quiet path HTTP 404 on /block/* takes.
-// Transport and other codes stay verbatim so failover can tell them apart.
+// mapHeaderErr keeps a missing height and a dapi with no oracle configured
+// on the quiet miss path. Unimplemented (old dapi) is a distinct sentinel
+// so failover can disable unary Latest(). Transport codes stay verbatim.
 func mapHeaderErr(err error) error {
 	st, ok := status.FromError(err)
 	if !ok {
 		return err
 	}
 	switch st.Code() {
-	case codes.NotFound, codes.Unimplemented, codes.FailedPrecondition:
+	case codes.Unimplemented:
+		return fmt.Errorf("%w: %s", blocks.ErrHeaderRPCUnimplemented, st.Message())
+	case codes.NotFound, codes.FailedPrecondition:
 		return fmt.Errorf("%w: %s", blocks.ErrHeaderNotFound, st.Message())
 	default:
 		return err

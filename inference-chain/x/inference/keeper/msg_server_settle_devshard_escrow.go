@@ -215,7 +215,18 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		}
 		_, seen := seenValidators[addr]
 		firstForValidator := !seen
-		if err := k.UpdateDevshardHostEpochStats(goCtx, escrow.EpochIndex, participantAddr, *hs, firstForValidator); err != nil {
+		adjusted := *hs
+		assignedToSlot := uint64(0)
+		if treatAsCurrentEpochSettle[addr] {
+			var err error
+			assignedToSlot, err = devshardAssignedUpperBoundForSlot(msg.Nonce, totalSlots, hs.SlotId)
+			if err != nil {
+				return nil, fmt.Errorf("failed to derive assigned upper bound for slot %d: %w", hs.SlotId, err)
+			}
+		}
+		// TODO: waive only challenge-window misses. Host stats are epoch totals, so all misses are waived for now.
+		adjusted, assignedToSlot = k.WaiveDevshardMissesForActiveChallenge(goCtx, addr, adjusted, assignedToSlot)
+		if err := k.UpdateDevshardHostEpochStats(goCtx, escrow.EpochIndex, participantAddr, adjusted, firstForValidator); err != nil {
 			return nil, fmt.Errorf("failed to aggregate host stats: %w", err)
 		}
 		if treatAsCurrentEpochSettle[addr] {
@@ -223,11 +234,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			if !found {
 				return nil, fmt.Errorf("participant %s not found", addr)
 			}
-			assignedToSlot, err := devshardAssignedUpperBoundForSlot(msg.Nonce, totalSlots, hs.SlotId)
-			if err != nil {
-				return nil, fmt.Errorf("failed to derive assigned upper bound for slot %d: %w", hs.SlotId, err)
-			}
-			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(participant, *hs, assignedToSlot); err != nil {
+			if err := AggregateDevshardHostStatsIntoCurrentEpochStats(participant, adjusted, assignedToSlot); err != nil {
 				return nil, fmt.Errorf("failed to aggregate host stats into participant epoch stats: %w", err)
 			}
 			touchedParticipants[addr] = true

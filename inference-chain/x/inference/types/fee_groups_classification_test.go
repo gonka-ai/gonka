@@ -24,28 +24,8 @@ import (
 // be added to MessageFeeGroups, IsNetworkDuty, or this map.
 func intentionallyUngrouped() map[string]string {
 	return map[string]string{
-		sdk.MsgTypeURL(&types.MsgUpdateParams{}):                     "governance params; authority-gated",
-		sdk.MsgTypeURL(&types.MsgRegisterModel{}):                    "governance model registry",
-		sdk.MsgTypeURL(&types.MsgDeleteGovernanceModel{}):            "governance model registry",
-		sdk.MsgTypeURL(&types.MsgPutDevshardApprovedVersion{}):       "governance approved devshard versions",
-		sdk.MsgTypeURL(&types.MsgDeleteDevshardApprovedVersion{}):    "governance approved devshard versions",
-		sdk.MsgTypeURL(&types.MsgCreatePartialUpgrade{}):             "governance upgrade",
-		sdk.MsgTypeURL(&types.MsgRegisterLiquidityPool{}):            "governance liquidity allowlist",
-		sdk.MsgTypeURL(&types.MsgGovernanceCancelBridgeOperation{}):  "governance bridge cancel",
-		sdk.MsgTypeURL(&types.MsgRegisterBridgeAddresses{}):          "governance bridge addresses",
-		sdk.MsgTypeURL(&types.MsgAddParticipantsToAllowList{}):       "governance allowlist",
-		sdk.MsgTypeURL(&types.MsgRemoveParticipantsFromAllowList{}):  "governance allowlist",
-		sdk.MsgTypeURL(&types.MsgMigrateAllWrappedTokens{}):          "governance wrapped-token migration",
-		sdk.MsgTypeURL(&types.MsgSubmitUnitOfComputePriceProposal{}): "optional price proposal; not epoch-metered",
-		sdk.MsgTypeURL(&types.MsgSetClaimRecipients{}):               "optional claim-recipient override; not epoch-metered",
-		sdk.MsgTypeURL(&blstypes.MsgUpdateParams{}):                  "governance params; authority-gated",
-		sdk.MsgTypeURL(&blstypes.MsgRequestThresholdSignature{}):     "omitted from bls group until gateway simulation exists",
-		sdk.MsgTypeURL(&collateraltypes.MsgUpdateParams{}):           "governance params; authority-gated",
-		sdk.MsgTypeURL(&restrictionstypes.MsgUpdateParams{}):         "governance params; authority-gated",
-		sdk.MsgTypeURL(&streamvestingtypes.MsgUpdateParams{}):        "governance params; authority-gated",
-		sdk.MsgTypeURL(&genesistransfertypes.MsgUpdateParams{}):      "governance params; authority-gated",
+		sdk.MsgTypeURL(&blstypes.MsgRequestThresholdSignature{}):     "deprecated; handler always fails",
 		sdk.MsgTypeURL(&genesistransfertypes.MsgTransferOwnership{}): "one-shot genesis transfer",
-		sdk.MsgTypeURL(&bookkeepertypes.MsgUpdateParams{}):           "governance params; authority-gated",
 	}
 }
 
