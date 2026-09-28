@@ -765,8 +765,12 @@ func (p *EpochParams) Validate() error {
 	if p.PocExchangeDuration < 0 {
 		return fmt.Errorf("poc exchange duration cannot be negative")
 	}
-	if p.PocValidationDelay < 0 {
-		return fmt.Errorf("poc validation delay cannot be negative")
+	// Validation must start at least one block after the exchange ends:
+	// at delay 0 InitValidate and StartValidation fire on the same block, and a
+	// confirmation-PoC challenge segment (Finish = ExchangeEnd+1) is normally not
+	// voted: the single vote pass reads height ExchangeEnd < Finish.
+	if p.PocValidationDelay < 1 {
+		return fmt.Errorf("poc validation delay must be at least 1")
 	}
 	if p.PocValidationDuration <= 0 {
 		return fmt.Errorf("poc validation duration must be positive")
