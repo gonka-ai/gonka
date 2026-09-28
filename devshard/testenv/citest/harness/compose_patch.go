@@ -324,6 +324,41 @@ func PatchComposeServiceEnv(t *testing.T, composePath, service, key, value strin
 	return ""
 }
 
+// PatchVersiondServiceBinaryMount replaces the host-side devshardd mount for
+// one versiond service. This is intentionally service-scoped so a citest can
+// run two child generations under the same current versiond/router fleet.
+func PatchVersiondServiceBinaryMount(t *testing.T, composePath, service, hostPath string) {
+	t.Helper()
+	body, err := os.ReadFile(composePath)
+	require.NoError(t, err)
+
+	lines := strings.Split(string(body), "\n")
+	start := -1
+	for i, line := range lines {
+		if line == "  "+service+":" {
+			start = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, start, 0, "compose %s: service %q not found", composePath, service)
+
+	volume := regexp.MustCompile(`^(\s*-\s*)[^:]+:/opt/devshard/devshardd:ro$`)
+	for i := start + 1; i < len(lines); i++ {
+		if trimmed := strings.TrimLeft(lines[i], " "); trimmed != "" &&
+			len(lines[i])-len(trimmed) <= 2 {
+			break
+		}
+		match := volume.FindStringSubmatch(lines[i])
+		if match == nil {
+			continue
+		}
+		lines[i] = match[1] + hostPath + ":/opt/devshard/devshardd:ro"
+		require.NoError(t, os.WriteFile(composePath, []byte(strings.Join(lines, "\n")), 0o644))
+		return
+	}
+	t.Fatalf("compose %s: service %q has no devshardd binary mount", composePath, service)
+}
+
 // PatchComposeServiceInsertEnv adds environment lines after afterKey inside a
 // single service block. Unlike PatchComposeInsertEnvAfterAll this does not
 // touch sibling services, which is what makes it usable for putting one host

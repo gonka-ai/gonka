@@ -201,16 +201,32 @@ func (s *Stack) UpWithObservability(t *testing.T, cfg *config.File) {
 	s.upAfterCatalog(t, false)
 }
 
-// upAfterCatalog brings up every compose service except the gateway, waits for
-// router catalog admission, then starts the gateway.
-func (s *Stack) upAfterCatalog(t *testing.T, build bool) {
+// UpInfra starts every compose service except the gateway. Compatibility tests
+// use this to put a short, explicit bound on catalog admission failures instead
+// of inheriting the normal five-minute healthy-stack startup window.
+func (s *Stack) UpInfra(t *testing.T, build bool) {
 	t.Helper()
 	s.ensureProxyOverlay(t)
 	infra := withoutComposeService(s.composeServiceNames(t), gatewayComposeService)
 	require.NotEmpty(t, infra, "compose has no services besides %s", gatewayComposeService)
 	s.composeUp(t, build, infra)
-	WaitRouterCatalogAdmitted(t, s, 5*time.Minute)
+}
+
+// UpGateway creates the gateway after a caller has established catalog
+// admission. This preserves the heartbeat ordering enforced by Up; StartGateway
+// is reserved for a gateway container that was already created and then stopped.
+func (s *Stack) UpGateway(t *testing.T) {
+	t.Helper()
 	s.composeUp(t, false, []string{gatewayComposeService})
+}
+
+// upAfterCatalog brings up every compose service except the gateway, waits for
+// router catalog admission, then starts the gateway.
+func (s *Stack) upAfterCatalog(t *testing.T, build bool) {
+	t.Helper()
+	s.UpInfra(t, build)
+	WaitRouterCatalogAdmitted(t, s, 5*time.Minute)
+	s.UpGateway(t)
 }
 
 func (s *Stack) composeServiceNames(t *testing.T) []string {
