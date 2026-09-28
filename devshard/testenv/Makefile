@@ -76,17 +76,18 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-baseline-smoke citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
-.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet test-gateway-smoke
+.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-legacy-compat test-gateway-smoke
 .PHONY: build-baseline-infra
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
-# suites. citest-baseline-smoke, citest-mixed-fleet, and
+# suites. citest-baseline-smoke, citest-mixed-fleet,
+# citest-peerrpc-legacy-compat, and
 # citest-height-sync-dapi-compat are manual only (pinned images). All four
 # stay out of the auto-discovered CI matrix.
 list-citest-targets: ## Print runnable citest suite targets (one per line) for the CI matrix.
 	@grep -hoE '^citest-[A-Za-z0-9_-]+:' $(firstword $(MAKEFILE_LIST)) \
 		| sed 's/://' \
-		| grep -vxE 'citest-images|citest-stack-build|citest-baseline-smoke|citest-mixed-fleet|citest-height-sync-dapi-compat' \
+		| grep -vxE 'citest-images|citest-stack-build|citest-baseline-smoke|citest-mixed-fleet|citest-peerrpc-legacy-compat|citest-height-sync-dapi-compat' \
 		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
@@ -234,6 +235,18 @@ citest-mixed-fleet: ## §8.2 mixed fleet, RPC on, HTTP/1.1, no proxy.
 		-u TESTENV_PROXY_OVERLAY \
 		DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 		TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestMixedFleetNoProxy$$' -count=1 -v -timeout 30m
+
+# Manual compatibility gate: it needs both baseline images and a baseline child
+# binary built from the pinned source ref. The tests intentionally use the
+# current native-gRPC configuration without an HTTP/1.1 fallback.
+citest-peerrpc-legacy-compat: ## Native gRPC with mixed versiond and a legacy child.
+	$(MAKE) build-devshardd
+	$(MAKE) build-baseline-infra
+	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
+	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
+		TESTENV_GRPC_LEGACY_COMPAT=1 \
+		TESTENV_MIXED_CHILD_BINARY=$(CURDIR)/baselines/devshardd-0.2.15-v5 \
+		$(CITEST_RPC_RUN) -run '^TestPeerRPCMixedChildCapabilitiesNativeGRPC$$' -count=1 -v -timeout 30m
 
 # Local-only: 0.2.15-v5 (mock /block/*) vs 0.2.15 (omit /block/*). Real images
 # ghcr.io/product-science/api:0.2.15-v5 and :0.2.15 cannot replace mock-dapi
