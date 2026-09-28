@@ -174,7 +174,7 @@ func TestStartPoCNodeCommandV2_ChallengeWindDownStopsPow(t *testing.T) {
 	tracker.Update(chainphase.BlockInfo{Height: 897, Hash: "h"}, epoch, params, true, nil)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: testOpenCh("me", 500, 900, true),
+		ch:   testOpenCh("me", 500, 900, true),
 	})
 
 	b := NewTestBroker2(1)
@@ -378,11 +378,6 @@ func TestStartPoCNodeCommandV2_StrongerRngPropagated(t *testing.T) {
 	assert.True(t, mockClient.LastInitGenerateV2Req.PocStrongerRng, "PocStrongerRng must be forwarded to InitGenerateV2")
 }
 
-// The mlnode proxy fans init out to every vLLM backend and answers 200 when at
-// least one of them started; the ones that refused are listed in errors.
-// One refusing backend must not turn a generating node into FAILED: that
-// resets PocIntendedStatus to Idle and the next StartPocCommand restarts every
-// backend from nonce 0.
 func TestStartPoCNodeCommandV2_PartialInitErrorKeepsNodeInPoC(t *testing.T) {
 	node := createTestNode("test-node-v2-partial")
 	mockClient := mlnodeclient.NewMockClient()
@@ -430,8 +425,6 @@ func TestStartPoCNodeCommandV2_AllBackendsFailInitIsFailure(t *testing.T) {
 	assert.Equal(t, types.HardwareNodeStatus_FAILED, result.FinalStatus)
 }
 
-// A MIXED node left over from a previous stage is stopped before re-init.
-// One backend refusing /stop must not skip the init for the others.
 func TestStartPoCNodeCommandV2_MixedPartialStopErrorStillInits(t *testing.T) {
 	node := createTestNode("test-node-v2-partial")
 	mockClient := mlnodeclient.NewMockClient()
@@ -455,8 +448,6 @@ func TestStartPoCNodeCommandV2_MixedPartialStopErrorStillInits(t *testing.T) {
 	assert.Equal(t, 1, mockClient.InitGenerateV2Called)
 }
 
-// During challenge wind-down every backend must actually stop: a partial stop
-// error still fails the command so it is retried.
 func TestStartPoCNodeCommandV2_WindDownPartialStopErrorFails(t *testing.T) {
 	node := createTestNode("test-node-v2-partial")
 	mockClient := mlnodeclient.NewMockClient()
@@ -475,9 +466,6 @@ func TestStartPoCNodeCommandV2_WindDownPartialStopErrorFails(t *testing.T) {
 	assert.False(t, result.Succeeded)
 }
 
-// MIXED in the same stage (or after a DAPI restart, when the last stage is
-// unknown): init goes out without a stop, so the generating backends keep
-// their run (they answer 409 "Already generating") and the idle one starts.
 func TestStartPoCNodeCommandV2_MixedSameStageInitsWithoutStop(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -514,8 +502,6 @@ func TestStartPoCNodeCommandV2_MixedSameStageInitsWithoutStop(t *testing.T) {
 	}
 }
 
-// If the idle backend refuses again, the command fails (and is retried by the
-// next reconcile), but still without a stop.
 func TestStartPoCNodeCommandV2_MixedSameStageInitFailureDoesNotStop(t *testing.T) {
 	node := createTestNode("test-node-v2-mixed")
 	mockClient := mlnodeclient.NewMockClient()
@@ -536,4 +522,17 @@ func TestStartPoCNodeCommandV2_MixedSameStageInitFailureDoesNotStop(t *testing.T
 	defer mockClient.Mu.Unlock()
 	assert.Equal(t, 0, mockClient.StopPowV2Called)
 	assert.Equal(t, 1, mockClient.InitGenerateV2Called)
+}
+
+func TestKeepHealthyInferenceStopsMixedPoC(t *testing.T) {
+	client := mlnodeclient.NewMockClient()
+	client.SetV2Status("MIXED")
+
+	result := keepHealthyInference(context.Background(), client, NodeResult{}, "mixed-node")
+
+	require.True(t, result.Succeeded)
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, result.FinalStatus)
+	assert.Equal(t, PocStatusIdle, result.FinalPocStatus)
+	assert.Equal(t, 1, client.StopPowV2Called)
+	assert.Equal(t, 0, client.InitGenerateV2Called)
 }

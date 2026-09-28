@@ -152,7 +152,7 @@ func keepHealthyInference(
 		logging.Debug("GetPowStatusV2 failed during inference transition", types.Nodes, "node_id", nodeID, "error", err)
 	} else if pocStatus != nil {
 		logging.Debug("GetPowStatusV2 status during inference transition", types.Nodes, "node_id", nodeID, "status", pocStatus.Status)
-		if pocStatus.Status == "GENERATING" || pocStatus.Status == "VALIDATING" {
+		if powStatusNeedsStop(pocStatus.Status) {
 			if _, err := client.StopPowV2(ctx); err != nil {
 				logging.Debug("StopPowV2 during inference transition failed", types.Nodes, "node_id", nodeID, "error", err)
 			}
@@ -267,6 +267,14 @@ type StartPoCNodeCommandV2 struct {
 	LastPocV2BlockHash   string
 }
 
+// MIXED handling:
+//
+//	Start PoC, same/unknown stage -> init only (preserve ongoing generation)
+//	Start PoC, known old stage    -> stop, then init (partial success allowed)
+//	Challenge wind-down          -> stop only (any backend error fails)
+//	Return to healthy inference  -> stop only (best effort)
+//
+// Init retries rely on generating backends rejecting init without restarting.
 func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
 	result := NodeResult{
 		OriginalTarget:    types.HardwareNodeStatus_POC,
@@ -292,8 +300,7 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		logging.Debug("[StartPoCNodeCommandV2] GetPowStatusV2 status", types.PoC, "node_id", worker.nodeId, "status", status.Status)
 		knownLast := c.LastPocV2BlockHeight != 0
 		sameParams := c.LastPocV2BlockHeight == c.BlockHeight && c.LastPocV2BlockHash == c.BlockHash
-		// After a DAPI restart LastPocV2 is zero in memory. Trust an already
-		// GENERATING MLNode rather than Stop+Init with the same stage.
+		// A zero last height means the stage is unknown after a DAPI restart.
 		if status.Status == "GENERATING" && (sameParams || !knownLast) {
 			logging.Info("[StartPoCNodeCommandV2] Already generating, skipping restart", types.PoC, "node_id", worker.nodeId)
 			result.Succeeded = true
@@ -304,10 +311,6 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 			result.PocV2BlockHash = c.BlockHash
 			return result
 		}
-		// MIXED in the same stage: some backends generate, others dropped out.
-		// Init without a stop: generating backends refuse it (409 "Already
-		// generating") and keep their run, idle ones start. If none start, the
-		// command fails and the next reconcile retries it the same way.
 		if status.Status == "MIXED" && (sameParams || !knownLast) {
 			logging.Info("[StartPoCNodeCommandV2] MIXED in the same stage, re-init without stop", types.PoC, "node_id", worker.nodeId)
 		} else if powStatusNeedsStop(status.Status) {
@@ -399,10 +402,7 @@ func stopPowV2Checked(ctx context.Context, worker *NodeWorker) error {
 	return nil
 }
 
-// stopPowV2Tolerant stops generation before a re-init. A backend that refused
-// /stop is logged, not fatal: failing here would leave the backends that did
-// stop idle for the stage. The init that follows restarts them; a backend that
-// is still generating answers it with an error and keeps its current run.
+// stopPowV2Tolerant allows re-init when only some backends stopped.
 func stopPowV2Tolerant(ctx context.Context, worker *NodeWorker) error {
 	resp, err := worker.GetClient().StopPowV2(ctx)
 	if err != nil {
@@ -418,10 +418,7 @@ func stopPowV2Tolerant(ctx context.Context, worker *NodeWorker) error {
 	return nil
 }
 
-// initGenerateV2Checked fails only when no backend started. The mlnode proxy
-// answers 200 when at least one backend accepted init and lists the rest in
-// errors; treating that as a failure marks the node FAILED, and the next
-// StartPocCommand restarts every backend from nonce 0.
+// initGenerateV2Checked accepts partial backend success.
 func initGenerateV2Checked(ctx context.Context, worker *NodeWorker, req mlnodeclient.PoCInitGenerateRequestV2) error {
 	resp, err := worker.GetClient().InitGenerateV2(ctx, req)
 	if err != nil {
