@@ -1,0 +1,202 @@
+source_id,block_height,epoch_index,participant,local_id,hardware_index,gpu_type,gpu_count,status,registered_models,epoch_poc_models,in_epoch_poc
+chain_hardware,6218275,403,gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x13,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x18,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x19,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x22,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x25,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x38,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x43,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x48,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x52,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k,node801,0,NVIDIA B200 | 179GB,4,FAILED,[],[],false
+chain_hardware,6218275,403,gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k,node811,0,NVIDIA B300 SXM6 AC | 268GB,4,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k,node821,0,NVIDIA B200 | 179GB,8,FAILED,[],[],false
+chain_hardware,6218275,403,gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k,node831,0,NVIDIA B300 SXM6 AC | 268GB,2,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k,node841,0,NVIDIA B300 SXM6 AC | 275GB,1,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]",[],false
+chain_hardware,6218275,403,gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k,node851,0,NVIDIA B300 SXM6 AC | 268GB,1,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k,node861,0,NVIDIA B300 SXM6 AC | 268GB,4,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k,node871,0,NVIDIA B200 | 179GB,8,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k,node881,0,NVIDIA B200 | 179GB,8,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka10thh6z0wvq9c05j4z3f9qtpxxedruqn5ae350k,node891,0,NVIDIA B200 | 179GB,8,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka1346p2h8dn4kp98c5e93k5q64g0h7vxjxnd55fh,node-mm,0,NVIDIA RTX PRO 6000 Blackwell Server Edition | 95GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1346p2h8dn4kp98c5e93k5q64g0h7vxjxnd55fh,node2,0,NVIDIA RTX PRO 6000 Blackwell Server Edition | 95GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-300,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-301,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-304,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-305,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-306,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-307,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-308,0,NVIDIA B300 SXM6 AC | 268GB,1,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]",[],false
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-309,0,NVIDIA B300 SXM6 AC | 268GB,1,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]",[],false
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-310,0,NVIDIA B300 SXM6 AC | 268GB,1,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]",[],false
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-311,0,NVIDIA B300 SXM6 AC | 268GB,1,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]",[],false
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-312,0,NVIDIA B300 SXM6 AC | 268GB,1,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]",[],false
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-313,0,NVIDIA B300 SXM6 AC | 268GB,1,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]",[],false
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-314,0,NVIDIA B300 SXM6 AC | 268GB,1,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]",[],false
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-315,0,NVIDIA B300 SXM6 AC | 268GB,1,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]",[],false
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-400,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-401,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-402,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-403,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-404,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-405,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-406,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-407,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-50,0,NVIDIA B300 SXM6 AC | 268GB,2,INFERENCE,"[""zai-org/GLM-5.3-Flash""]","[""zai-org/GLM-5.3-Flash""]",true
+chain_hardware,6218275,403,gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-1-1,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""zai-org/GLM-5.3-Flash""]","[""zai-org/GLM-5.3-Flash""]",true
+chain_hardware,6218275,403,gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-3,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-5,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-6,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-7,0,NVIDIA H200 | 140GB,6,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-8,0,NVIDIA H200 | 140GB,6,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-9,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka17r099027khes2w2lv95dvuq3ehfeljgukagan4,gaib-1,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1830lqug50lse998x2lakk4pj5ypfumz5pasz0y,node802,0,NVIDIA B300 SXM6 AC | 268GB,2,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1830lqug50lse998x2lakk4pj5ypfumz5pasz0y,node812,0,NVIDIA B300 SXM6 AC | 268GB,2,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka1830lqug50lse998x2lakk4pj5ypfumz5pasz0y,node822,0,NVIDIA B200 | 179GB,4,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka1830lqug50lse998x2lakk4pj5ypfumz5pasz0y,node832,0,NVIDIA B200 | 179GB,4,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka1830lqug50lse998x2lakk4pj5ypfumz5pasz0y,node842,0,NVIDIA B300 SXM6 AC | 268GB,4,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w11,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w23,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w3,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w4,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w5,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w6,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1ajmhqgvkf76hss5xe35kcnntqqhs7r8jz8s939,node207,0,NVIDIA B200 | 179GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1ajmhqgvkf76hss5xe35kcnntqqhs7r8jz8s939,node217,0,NVIDIA B200 | 179GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka1ajmhqgvkf76hss5xe35kcnntqqhs7r8jz8s939,node227,0,NVIDIA B200 | 179GB,8,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka1ajmhqgvkf76hss5xe35kcnntqqhs7r8jz8s939,node237,0,NVIDIA B200 | 179GB,8,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka1al62tfyd6xud4hr25zxwcx78rapwhx5gjz0qxy,gaudi2-minimax,0,GPU | 0GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp,minimax-1,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp,mlnode-4,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka1f90vekylyqvx3u8pdst3mcjv05tg5ux0sl3tts,node903,0,NVIDIA B200 | 179GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1f90vekylyqvx3u8pdst3mcjv05tg5ux0sl3tts,node913,0,NVIDIA B200 | 179GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka1f90vekylyqvx3u8pdst3mcjv05tg5ux0sl3tts,node923,0,NVIDIA B200 | 179GB,8,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx,FTJ-141,0,NVIDIA H200 | 140GB,2,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx,FTJ-71,0,NVIDIA H200 | 140GB,2,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka1gvpv7vhk5gyxhmf9u8sc8pw5j8fr6lzalyrmkx,FTJ-81,0,NVIDIA H200 | 140GB,2,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,AS-LA-1,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,AS-LA-2,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,AS-LA-3,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,AS-LA-4,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,BSTN-H100-1,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-LA-1,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-LA-5,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DMIN-LA-1,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DMIN-LA-2,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,GL-LA-4,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,ML-GMN-H100-2,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,ML-GMN-h100-1,0,NVIDIA H100 80GB HBM3 | 79GB,8,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,OC-A100-1,0,NVIDIA A100-SXM4-80GB | 80GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-1,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-16,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-17,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-18,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-19,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-2,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-24,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-25,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-26,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-3,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-30,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-31,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-33,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-34,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-35,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-36,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-4,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-42,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-44,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-45,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-46,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-47,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-5,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-52,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-53,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-54,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-6,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-7,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-8,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,VR-JS-2,0,NVIDIA A100-SXM4-80GB | 80GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,vl-NV-1,0,NVIDIA H100 80GB HBM3 | 79GB,8,FAILED,"[""MiniMaxAI/MiniMax-M2.7""]",[],false
+chain_hardware,6218275,403,gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,vs-glm-4b200-1,0,NVIDIA B200 | 179GB,4,INFERENCE,"[""zai-org/GLM-5.3-Flash""]","[""zai-org/GLM-5.3-Flash""]",true
+chain_hardware,6218275,403,gonka1gyk0aahvr3qeju4zx0nplfreej6cy4jjk8svc5,node2,0,NVIDIA H100 PCIe | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ-10,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ-14,0,NVIDIA H200 | 140GB,6,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ-15,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ-19,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ11,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ12,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5,4xB300,0,NVIDIA B300 SXM6 AC | 268GB,2,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5,inference-2,0,NVIDIA H100 80GB HBM3 | 79GB,4,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5,mlnode-2,0,NVIDIA B300 SXM6 AC | 268GB,2,FAILED,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5,mlnode5,0,NVIDIA B300 SXM6 AC | 268GB,2,INFERENCE,"[""zai-org/GLM-5.3-Flash""]","[""zai-org/GLM-5.3-Flash""]",true
+chain_hardware,6218275,403,gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5,node-minimax,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m,node1,0,NVIDIA H20 | 95GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m,node2,0,NVIDIA H20 | 95GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1q60h5av2pxe6gz3edmlcvd8p36vtj7r24fm43v,n21,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1q60h5av2pxe6gz3edmlcvd8p36vtj7r24fm43v,n23,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1q60h5av2pxe6gz3edmlcvd8p36vtj7r24fm43v,n24,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1q60h5av2pxe6gz3edmlcvd8p36vtj7r24fm43v,n25,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1q60h5av2pxe6gz3edmlcvd8p36vtj7r24fm43v,n26,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1qwfrtz9c7kcrfkrrlne2pkcye74mj6ce33xdkl,node1,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1qwfrtz9c7kcrfkrrlne2pkcye74mj6ce33xdkl,node2,0,NVIDIA H200 NVL | 140GB,2,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1qwfrtz9c7kcrfkrrlne2pkcye74mj6ce33xdkl,node3,0,NVIDIA H200 NVL | 140GB,2,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1rqm2u7lxzn7r68y0drcyhag6xnckpsnfmgd53t,x60,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1rqm2u7lxzn7r68y0drcyhag6xnckpsnfmgd53t,x65,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DA-LA-2,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DA-LA-3,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DA-LA-4,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DAY-ATRO-1,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DAY-ATRO-2,0,NVIDIA H200 | 140GB,2,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DAY-PO-1,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DAY-PO-2,0,NVIDIA H200 | 140GB,2,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DAY-SPU-1,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DAY-SPU-2,0,NVIDIA H200 | 140GB,2,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,GL-LA-1,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,GL-LA-2,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,GL-LA-3,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-10,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-11,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-12,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-13,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-14,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-15,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-20,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-21,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-22,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-23,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-27,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-28,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-29,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-37,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-38,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-39,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-40,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-41,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-43,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-48,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-49,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-50,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-51,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-55,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-56,0,NVIDIA B300 SXM6 PC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-9,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,VR-JS-4,0,NVIDIA A100-SXM4-80GB | 80GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,VR-JS-5,0,NVIDIA A100-SXM4-80GB | 80GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,VR-JS-6,0,NVIDIA A100-SXM4-80GB | 80GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,lu-b300-01,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,lu-b300-02,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,sh-b300-01,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,sh-b300-02,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1tlvg4kjx7ljd5thgd5fkgh39q6lu8cmxupktgg,node6,0,NVIDIA H200 | 140GB,8,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq,node6,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq,node7,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq,node8,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq,node9,0,NVIDIA H100 80GB HBM3 | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1vjz8csqsr0ph0lv0yylc4auypnzrld7y6l2feu,A22,0,NVIDIA H100 PCIe | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le,4xB200-1,0,NVIDIA B200 | 179GB,4,FAILED,[],[],false
+chain_hardware,6218275,403,gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le,mlnode-3,0,NVIDIA B300 SXM6 AC | 268GB,1,INFERENCE,"[""deepseek-ai/DeepSeek-V4-Flash-0731""]","[""deepseek-ai/DeepSeek-V4-Flash-0731""]",true
+chain_hardware,6218275,403,gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le,node-235b-1,0,NVIDIA H100 80GB HBM3 | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1ym3np7guxart483yfdxnlztuazx22cjt0e4a2p,A18,0,NVIDIA H100 PCIe | 79GB,8,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
+chain_hardware,6218275,403,gonka1ym3np7guxart483yfdxnlztuazx22cjt0e4a2p,A5,0,NVIDIA H100 PCIe | 79GB,4,INFERENCE,"[""MiniMaxAI/MiniMax-M2.7""]","[""MiniMaxAI/MiniMax-M2.7""]",true
