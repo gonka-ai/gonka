@@ -39,6 +39,7 @@ message MsgFinishInference {
   string escrow_id = 7;
   uint64 observed_height = 8;
   bytes  observed_block_hash = 9;
+  bytes  served_hash = 10;
 }
 
 message MsgTimeoutInference {

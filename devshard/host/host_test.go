@@ -1780,7 +1780,7 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	// Nonce 3: FinishInference from executor.
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: engine.ResponseHash,
+		ResponseHash: engine.ResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  80,
 		OutputTokens: 40,
 		ExecutorSlot: 1,
@@ -1886,7 +1886,7 @@ func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {
 
 		finishMsg := &types.MsgFinishInference{
 			InferenceId:  inferenceID,
-			ResponseHash: []byte{byte(i)},
+			ResponseHash: bytes.Repeat([]byte{byte(i)}, 32), ServedHash: testutil.TestServedHash,
 			InputTokens:  80,
 			OutputTokens: 40,
 			ExecutorSlot: 1,
@@ -2230,7 +2230,7 @@ func TestHost_FinishGossipRecovery_PeerImportedFinishNotAmplified(t *testing.T) 
 
 	// Inject a peer-imported Finish for an inference this host did not execute.
 	imported := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{InferenceId: 999},
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 999},
 	}}
 	h.HostMempool().AddTx(imported) // ProposedAt=0 sentinel.
 

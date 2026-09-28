@@ -56,7 +56,8 @@ type HostRequest struct {
 	Payload *InferencePayload // nil if no new inference (e.g., Finalize, empty diffs)
 	// ForceHeightSyncAnchor asks transport to emit Anchor even when cadence would Omit
 	// (legacy single-message override when escrow state does not carry a forced turn).
-	ForceHeightSyncAnchor bool
+	ForceHeightSyncAnchor        bool
+	LogprobsOptimizationOverride *bool
 	// HeightSyncEscrow carries MsgForceHeightSyncTurn-derived state (not serialized on HTTP JSON).
 	HeightSyncEscrow *heightsync.EscrowHeightSyncHints
 }
@@ -83,6 +84,8 @@ type HostResponse struct {
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
 	ExecutionExpected  bool
+
+	ReceivedResponseHashes [][32]byte
 }
 
 type receiptOutcome struct {
@@ -1048,14 +1051,15 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 	outcome.reason = observability.ReasonOK
 
 	job := &devshard.ExecuteRequest{
-		InferenceID: inferenceID,
-		Model:       rec.Model,
-		Prompt:      req.Payload.Prompt,
-		PromptHash:  rec.PromptHash,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		EscrowID:    h.escrowID,
-		EpochID:     h.epochID,
+		InferenceID:                  inferenceID,
+		Model:                        rec.Model,
+		Prompt:                       req.Payload.Prompt,
+		PromptHash:                   rec.PromptHash,
+		InputLength:                  rec.InputLength,
+		MaxTokens:                    rec.MaxTokens,
+		EscrowID:                     h.escrowID,
+		EpochID:                      h.epochID,
+		LogprobsOptimizationOverride: req.LogprobsOptimizationOverride,
 	}
 	return sig, confirmedAt, job, nil, outcome, nil
 }
@@ -1118,6 +1122,7 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:       inferenceID,
 		ResponseHash:      result.ResponseHash,
+		ServedHash:        result.ServedHash,
 		InputTokens:       result.InputTokens,
 		OutputTokens:      result.OutputTokens,
 		ExecutorSlot:      executorSlot,
@@ -1167,6 +1172,7 @@ type validateJob struct {
 	model           string
 	promptHash      []byte
 	responseHash    []byte
+	servedHash      []byte
 	inputTokens     uint64
 	outputTokens    uint64
 	escrowID        string
@@ -1262,6 +1268,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 			model:           rec.Model,
 			promptHash:      rec.PromptHash,
 			responseHash:    rec.ResponseHash,
+			servedHash:      rec.ServedHash,
 			inputTokens:     rec.InputTokens,
 			outputTokens:    rec.OutputTokens,
 			escrowID:        h.escrowID,
@@ -1393,6 +1400,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		Model:           job.model,
 		PromptHash:      job.promptHash,
 		ResponseHash:    job.responseHash,
+		ServedHash:      job.servedHash,
 		InputTokens:     job.inputTokens,
 		OutputTokens:    job.outputTokens,
 		EscrowID:        job.escrowID,

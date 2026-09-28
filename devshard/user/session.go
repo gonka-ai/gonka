@@ -212,14 +212,15 @@ func (c *InProcessClient) GetSignatures(_ context.Context, nonce uint64) (map[ui
 
 // InferenceParams describes a new inference to send.
 type InferenceParams struct {
-	Model                 string
-	Prompt                []byte
-	InputLength           uint64
-	MaxTokens             uint64
-	ContextTotalHint      uint64
-	StartedAt             int64
-	Stream                bool
-	ForceHeightSyncAnchor bool
+	Model                        string
+	Prompt                       []byte
+	InputLength                  uint64
+	MaxTokens                    uint64
+	ContextTotalHint             uint64
+	StartedAt                    int64
+	Stream                       bool
+	ForceHeightSyncAnchor        bool
+	LogprobsOptimizationOverride *bool
 }
 
 // Session manages the user side of the devshard protocol.
@@ -241,9 +242,9 @@ type Session struct {
 	participantKeys []string
 	clients         []HostClient
 	nonce           uint64
-	diffs           []types.Diff                 // append-only log
-	hostSyncNonce   map[int]uint64               // hostIdx -> last nonce sent
-	pendingTxs      []*types.DevshardTx          // from host mempools, for next diff
+	diffs           []types.Diff        // append-only log
+	hostSyncNonce   map[int]uint64      // hostIdx -> last nonce sent
+	pendingTxs      []*types.DevshardTx // from host mempools, for next diff
 	// pendingTxKeys dedups the current pendingTxs slice by tx_type:id. It is
 	// rebuilt from what compose retained, so a tx that failed to apply frees
 	// its key again -- otherwise the first host to propose a bogus tx would
@@ -253,6 +254,12 @@ type Session struct {
 	// so another host's mempool copy is not re-queued after the fact. Only
 	// this set survives across compose rounds.
 	appliedTxKeys map[string]struct{}
+
+	receivedStreams        map[uint64]waitingReceivedStream
+	appliedFinishHashes    map[uint64]waitingAppliedFinish
+	servedBindingsPrunedAt time.Time
+	servedBindingHandler   ServedBindingHandler
+
 	// pinnedFinishIDs holds inference IDs whose pending Finish and ErrorMiss
 	// must not be drained by a concurrent composeDiffLocked (heartbeat,
 	// PrepareInference, unrelated SendPendingDiff). HandleErrorMiss pins
@@ -940,6 +947,9 @@ func (s *Session) retainPendingLocked(held, applied []*types.DevshardTx) {
 		if key := devshardTxKey(tx); key != "" {
 			s.appliedTxKeys[key] = struct{}{}
 		}
+		if finish := tx.GetFinishInference(); finish != nil {
+			s.bindAppliedFinishLocked(finish)
+		}
 	}
 	if len(s.appliedTxKeys) > maxAppliedTxKeys {
 		clear(s.appliedTxKeys)
@@ -1284,11 +1294,12 @@ func (p *PreparedInference) Payload() *host.InferencePayload {
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
 	legacyForce := p.params.ForceHeightSyncAnchor && s.heightSyncK == 0
 	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
-		Diffs:                 p.catchUp,
-		Nonce:                 p.diff.Nonce,
-		ForceHeightSyncAnchor: legacyForce,
-		HeightSyncEscrow:      s.heightSyncEscrowHints(),
-		Payload:               p.Payload(),
+		Diffs:                        p.catchUp,
+		Nonce:                        p.diff.Nonce,
+		ForceHeightSyncAnchor:        legacyForce,
+		HeightSyncEscrow:             s.heightSyncEscrowHints(),
+		Payload:                      p.Payload(),
+		LogprobsOptimizationOverride: p.params.LogprobsOptimizationOverride,
 	}, stream, func(partial *host.HostResponse) {
 		s.confirmStartOnReceipt(p.diff.Nonce, partial)
 		if receiptHandler != nil {
@@ -1441,15 +1452,16 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 	}
 
 	totalChunks := (len(catchUp) + catchUpChunkSize - 1) / catchUpChunkSize
+	hostLabel := s.HostLabel(hostIdx)
 	logging.Info("sendCatchUp starting", "subsystem", "finalize", "escrow", s.escrowID,
-		"nonce", nonce, "host", hostIdx,
+		"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 		"total_diffs", len(catchUp), "chunks", totalChunks)
 
 	chunkIdx := 0
 	for chunkIdx < len(catchUp) {
 		if err := ctx.Err(); err != nil {
 			logging.Warn("sendCatchUp context cancelled", "subsystem", "finalize", "escrow", s.escrowID,
-				"nonce", nonce, "host", hostIdx,
+				"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 				"chunk", chunkIdx/catchUpChunkSize+1, "error", err)
 			return nil
 		}
@@ -1463,7 +1475,7 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 		chunkNum := chunkIdx/catchUpChunkSize + 1
 
 		logging.Info("sendCatchUp chunk", "subsystem", "finalize", "escrow", s.escrowID,
-			"nonce", nonce, "host", hostIdx,
+			"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 			"chunk", chunkNum, "of", totalChunks,
 			"diffs_in_chunk", len(chunk),
 			"chunk_first_nonce", chunk[0].Nonce,
@@ -1474,13 +1486,13 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 		cancel()
 		if err != nil {
 			logging.Warn("sendCatchUp chunk failed", "subsystem", "finalize", "escrow", s.escrowID,
-				"nonce", nonce, "host", hostIdx,
+				"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 				"chunk", chunkNum, "error", err)
-			return fmt.Errorf("catch-up chunk %d to host %d: %w", chunkNum, hostIdx, err)
+			return fmt.Errorf("catch-up chunk %d to host %s: %w", chunkNum, hostLabel, err)
 		}
 
 		logging.Info("sendCatchUp chunk response", "subsystem", "finalize", "escrow", s.escrowID,
-			"nonce", nonce, "host", hostIdx,
+			"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 			"chunk", chunkNum,
 			"resp_nonce", resp.Nonce, "has_sig", resp.StateSig != nil)
 
@@ -1510,7 +1522,7 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 			if skipTo > nextChunkIdx {
 				skippedChunks := (skipTo - nextChunkIdx) / catchUpChunkSize
 				logging.Info("sendCatchUp skip-forward", "subsystem", "finalize", "escrow", s.escrowID,
-					"nonce", nonce, "host", hostIdx,
+					"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 					"resp_nonce", resp.Nonce,
 					"skipping_from_idx", nextChunkIdx, "to_idx", skipTo,
 					"skipped_chunks", skippedChunks)
@@ -1559,7 +1571,7 @@ func (s *Session) CatchUpAllHosts(ctx context.Context) error {
 	for i, target := range hosts {
 		wg.Go(func() {
 			if err := s.sendCatchUpWith(ctx, target.idx, finalizeClients[target.idx]); err != nil {
-				perHost[i] = fmt.Errorf("host %d: %w", target.idx, err)
+				perHost[i] = fmt.Errorf("host %s: %w", s.HostLabel(target.idx), err)
 			}
 		})
 	}
@@ -1590,7 +1602,7 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 	for cycle := 0; cycle < syncCycles; cycle++ {
 		for _, h := range hosts {
 			if err := s.sendCatchUp(ctx, h.idx); err != nil {
-				failures = append(failures, fmt.Errorf("cycle %d host %d: %w", cycle+1, h.idx, err))
+				failures = append(failures, fmt.Errorf("cycle %d host %s: %w", cycle+1, s.HostLabel(h.idx), err))
 			}
 		}
 		for i := 0; i < len(s.group); i++ {
@@ -1608,7 +1620,7 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 
 	for _, h := range hosts {
 		if err := s.sendCatchUp(ctx, h.idx); err != nil {
-			failures = append(failures, fmt.Errorf("final host %d: %w", h.idx, err))
+			failures = append(failures, fmt.Errorf("final host %s: %w", s.HostLabel(h.idx), err))
 		}
 	}
 

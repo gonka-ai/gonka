@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -216,6 +217,12 @@ func (env *gatewayMockEnv) do(method, path, body string, opts ...func(*http.Requ
 	rec := httptest.NewRecorder()
 	env.handler.ServeHTTP(rec, req)
 	return rec
+}
+
+func withRequestContext(ctx context.Context) func(*http.Request) {
+	return func(req *http.Request) {
+		*req = *req.WithContext(ctx)
+	}
 }
 
 func withBearer(token string) func(*http.Request) {

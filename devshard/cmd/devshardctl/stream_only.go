@@ -2,6 +2,8 @@ package main
 
 import "bytes"
 
+const upstreamStreamRewriteMargin = 128
+
 var (
 	forcedStreamOptions = map[string]any{"include_usage": true}
 

@@ -27,6 +27,7 @@ import (
 	"devshard/types"
 
 	"common/chainoracle/blocks"
+	"common/completionapi"
 	"common/httpguard"
 
 	devshardpkg "devshard"
@@ -66,10 +67,9 @@ func transportAddress(baseURL string) string {
 	return strings.TrimSpace(baseURL)
 }
 
-// DefaultMaxSSEEventBytes is the hard default cap for a single SSE line/event
-// read by the gateway transport client (1 MiB). Matches the historical
-// bufio.Scanner ceiling and the gateway raceWriter classify attempt cap.
-const DefaultMaxSSEEventBytes = 1 << 20
+// DefaultMaxSSEEventBytes is the hard default cap for a single SSE line/event read by the gateway transport client.
+// A host that does not stream writes its whole response, forced logprobs included, as one line, so an event may be as large as the largest body served.
+const DefaultMaxSSEEventBytes = MaxJSONResponseBytes
 
 // DefaultMaxSSEStreamBytes caps what one inference stream may decode to.
 const DefaultMaxSSEStreamBytes int64 = 256 << 20
@@ -571,7 +571,7 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 // the caller could not distinguish a successful completion from a peer /
 // middlebox closing the body early.
 //
-// Line size is capped by MaxSSEEventBytes, the stream by MaxSSEStreamBytes. A malicious
+// Line size is hard-capped by MaxSSEEventBytes (default 16 MiB). A malicious
 // executor can otherwise open `data: ` and stream bytes without ever sending a
 // newline; the old unbounded ReadBytes('\n') grew the returned slice for the
 // whole inference deadline. Oversize aborts with ErrSSEEventTooLarge instead of
@@ -587,6 +587,8 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 	var unexpectedLineLogged bool
 	var sawTerminator bool // true once we observe [DONE] or a devshard_receipt event
 	var sawMeta bool       // true once we observe a devshard_meta tail
+	received := completionapi.NewReceivedResponseHasher()
+	defer func() { result.ReceivedResponseHashes = received.Sums() }()
 
 	for {
 		raw, readErr := readBoundedSSELine(br, maxLine)
@@ -594,7 +596,7 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 			streamBytes += int64(len(raw))
 			line := string(bytes.TrimRight(raw, "\r\n"))
 			// Handled before the bound: the line arrived whole.
-			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &sawMeta)
+			c.handleSSELine(line, stream, received, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &sawMeta)
 			if streamBytes > maxStream {
 				logging.Warn("sse_stream_too_large", "subsystem", "transport", "escrow", c.escrowID, "limit_bytes", maxStream)
 				return &result, fmt.Errorf("%w: %d byte limit", ErrSSEStreamTooLarge, maxStream)
@@ -654,6 +656,7 @@ func (c *HTTPClient) maxSSEStreamBytes() int64 {
 // readBoundedSSELine reads up to and including the next '\n', aborting as soon
 // as the accumulated line would exceed max bytes. On oversize it returns
 // ErrSSEEventTooLarge and drops the partial buffer rather than retaining it.
+// A line that fits the reader's buffer is returned as a view valid only until the next read.
 func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
 	if max <= 0 {
 		max = DefaultMaxSSEEventBytes
@@ -663,6 +666,12 @@ func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
 		// ReadSlice returns a view into the reader's own buffer, valid only until
 		// the next read, so every fragment is copied out before looping.
 		fragment, err := br.ReadSlice('\n')
+		if err == nil && buf == nil {
+			if len(fragment) > max {
+				return nil, fmt.Errorf("%w: %d byte limit", ErrSSEEventTooLarge, max)
+			}
+			return fragment, nil
+		}
 		if len(fragment) > 0 {
 			if len(buf)+len(fragment) > max {
 				return nil, fmt.Errorf("%w: %d byte limit", ErrSSEEventTooLarge, max)
@@ -693,11 +702,20 @@ func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
 func (c *HTTPClient) handleSSELine(
 	line string,
 	stream io.Writer,
+	received *completionapi.ReceivedResponseHasher,
 	receiptHandler func(*host.HostResponse),
 	result *host.HostResponse,
 	writeErrLogged, unexpectedLineLogged, sawTerminator, sawMeta *bool,
 ) {
+	forward := func(event string) {
+		received.Add(line)
+		if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
+			*writeErrLogged = true
+			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", event, "error", err)
+		}
+	}
 	if !strings.HasPrefix(line, "data: ") {
+		received.Add(line)
 		if line != "" && !strings.HasPrefix(line, ":") && !*unexpectedLineLogged {
 			lineLen, lineHex := sseLineBytesForLog(line)
 			if strings.HasPrefix(line, "data:") {
@@ -714,21 +732,19 @@ func (c *HTTPClient) handleSSELine(
 	data := strings.TrimPrefix(line, "data: ")
 	if data == "[DONE]" {
 		*sawTerminator = true
-		if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
-			*writeErrLogged = true
-			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "[DONE]", "error", err)
-		}
+		forward("[DONE]")
 		return
 	}
 
-	// Try to parse as devshard protocol envelope.
+	// Only a line that could spell a devshard_ key, literally or escaped, is decoded as an envelope.
+	if !strings.Contains(data, "devshard_") && !strings.Contains(data, `\u`) {
+		forward("data")
+		return
+	}
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(data), &envelope); err != nil {
 		// Not JSON -- forward as-is.
-		if werr := writeSSELine(stream, line); werr != nil && !*writeErrLogged {
-			*writeErrLogged = true
-			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", werr)
-		}
+		forward("data")
 		return
 	}
 
@@ -785,6 +801,7 @@ func (c *HTTPClient) handleSSELine(
 		if sawMeta != nil {
 			*sawMeta = true
 		}
+		received.MarkComplete()
 		var meta DevshardMetaEvent
 		if err := json.Unmarshal(raw, &meta); err != nil {
 			logging.Warn("sse_meta_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "event_key", key, "error", err)
@@ -800,10 +817,7 @@ func (c *HTTPClient) handleSSELine(
 	}
 
 	// Inference data line -- forward to callback.
-	if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
-		*writeErrLogged = true
-		logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", err)
-	}
+	forward("data")
 }
 
 func (c *HTTPClient) protocolEnvelope(envelope map[string]json.RawMessage, suffix string) (json.RawMessage, string, bool) {

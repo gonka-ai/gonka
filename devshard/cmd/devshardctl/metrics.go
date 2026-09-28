@@ -33,10 +33,6 @@ type DevshardMetrics struct {
 	speculativeAttempts        *prometheus.CounterVec
 	inferenceTimeouts          *prometheus.CounterVec
 	pickerChoices              *prometheus.CounterVec
-	hostReceiptSeconds         *prometheus.HistogramVec
-	hostFirstTokenSeconds      *prometheus.HistogramVec
-	hostCTTFLSecondsPerToken   *prometheus.HistogramVec
-	hostTotalSeconds           *prometheus.HistogramVec
 	participantReceiptSeconds  *prometheus.HistogramVec
 	participantFirstContent    *prometheus.HistogramVec
 	participantPrefillPerToken *prometheus.HistogramVec
@@ -58,6 +54,7 @@ type DevshardMetrics struct {
 	errorMissRejects       *prometheus.CounterVec
 	errorMissVerifyRejects *prometheus.CounterVec
 	chatCache              *prometheus.CounterVec
+	servedBindings         *prometheus.CounterVec
 
 	// Host ping observability (common/probe sink). Fleet warm RTT histogram
 	// cannot share the gauge name, so it uses _warm_rtt_seconds.
@@ -193,38 +190,6 @@ func NewDevshardMetrics() *DevshardMetrics {
 				Help: "Total escrow selections by the capacity-aware gateway picker.",
 			},
 			[]string{"devshard_id", "model"},
-		),
-		hostReceiptSeconds: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_receipt_seconds",
-				Help:    "Time from inference send until host receipt confirmation.",
-				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
-		),
-		hostFirstTokenSeconds: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_first_token_seconds",
-				Help:    "Time from inference send until first streamed token.",
-				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
-		),
-		hostCTTFLSecondsPerToken: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_cttfl_seconds_per_input_token",
-				Help:    "Prefill time per input token, computed from receipt to first token.",
-				Buckets: prometheus.ExponentialBuckets(0.0001, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
-		),
-		hostTotalSeconds: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_total_time_seconds",
-				Help:    "Total inference time observed per host.",
-				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
 		),
 		participantReceiptSeconds: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
@@ -372,6 +337,13 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"model", "result"},
 		),
+		servedBindings: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_served_bindings_total",
+				Help: "Streams checked against the executor's signed Finish, by verdict (bound, mismatch).",
+			},
+			[]string{"verdict"},
+		),
 		hostPingUp: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "devshard_gateway_host_ping_up",
@@ -452,10 +424,6 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.speculativeAttempts,
 		m.inferenceTimeouts,
 		m.pickerChoices,
-		m.hostReceiptSeconds,
-		m.hostFirstTokenSeconds,
-		m.hostCTTFLSecondsPerToken,
-		m.hostTotalSeconds,
 		m.participantReceiptSeconds,
 		m.participantFirstContent,
 		m.participantPrefillPerToken,
@@ -476,6 +444,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.errorMissRejects,
 		m.errorMissVerifyRejects,
 		m.chatCache,
+		m.servedBindings,
 		m.hostPingUp,
 		m.hostPingRTT,
 		m.hostPingWarmRTT,
@@ -656,6 +625,21 @@ func (m *DevshardMetrics) RecordGatewaySlotDecision(decision GatewaySlotDecision
 	).Inc()
 }
 
+// ForgetEscrow drops escrow-labelled children the dashboard still uses:
+// slot_decisions_total, picker_choice_total, and startup_skipped_escrow.
+func (m *DevshardMetrics) ForgetEscrow(escrowID string) {
+	if m == nil {
+		return
+	}
+	escrowID = strings.TrimSpace(escrowID)
+	if escrowID == "" {
+		return
+	}
+	m.slotDecisions.DeletePartialMatch(prometheus.Labels{"escrow_id": escrowID})
+	m.pickerChoices.DeletePartialMatch(prometheus.Labels{"devshard_id": escrowID})
+	m.startupSkippedEscrows.DeletePartialMatch(prometheus.Labels{"escrow_id": escrowID})
+}
+
 func (m *DevshardMetrics) RecordGatewayAttemptStarted(start GatewayAttemptStartMetric) {
 	if m == nil {
 		return
@@ -749,22 +733,23 @@ func (m *DevshardMetrics) RecordErrorMissVerifyReject(cause, completeness string
 	).Inc()
 }
 
-func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample RequestSample) {
+func (m *DevshardMetrics) RecordServedBinding(verdict string) {
 	if m == nil {
 		return
 	}
+	m.servedBindings.WithLabelValues(metricLabel(verdict, "unknown")).Inc()
+}
 
-	labels := []string{devshardID, strconv.Itoa(sample.HostIdx)}
+func (m *DevshardMetrics) ObserveRequestSample(sample RequestSample) {
+	if m == nil {
+		return
+	}
 	participantLabels := []string{
 		metricLabel(sample.ParticipantKey, "unknown"),
 		metricLabel(sample.Model, "unknown"),
 	}
 	if receiptSeconds := sample.ReceiptMs() / 1000; receiptSeconds > 0 {
-		m.hostReceiptSeconds.WithLabelValues(labels...).Observe(receiptSeconds)
 		m.participantReceiptSeconds.WithLabelValues(participantLabels...).Observe(receiptSeconds)
-	}
-	if !sample.SendTime.IsZero() && !sample.FirstToken.IsZero() {
-		m.hostFirstTokenSeconds.WithLabelValues(labels...).Observe(sample.FirstToken.Sub(sample.SendTime).Seconds())
 	}
 	// Fed from the first CONTENT chunk, which is what this metric is named for: FirstToken fires on
 	// a role-only chunk and made it report a prefill no client ever waited for.
@@ -772,11 +757,9 @@ func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample Request
 		m.participantFirstContent.WithLabelValues(participantLabels...).Observe(sample.FirstContent.Sub(sample.SendTime).Seconds())
 	}
 	if cttfl := sample.CTTFL() / 1000; cttfl > 0 {
-		m.hostCTTFLSecondsPerToken.WithLabelValues(labels...).Observe(cttfl)
 		m.participantPrefillPerToken.WithLabelValues(participantLabels...).Observe(cttfl)
 	}
 	if sample.TotalTime > 0 {
-		m.hostTotalSeconds.WithLabelValues(labels...).Observe(sample.TotalTime.Seconds())
 		m.participantTotalSeconds.WithLabelValues(participantLabels...).Observe(sample.TotalTime.Seconds())
 	}
 }

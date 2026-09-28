@@ -117,3 +117,49 @@ func TestRunGhostProbe_BurningANonceChargesTheHostNothing(t *testing.T) {
 		})
 	}
 }
+
+func TestRunGhostProbe_RecordsGhostNoSendSlotDecision(t *testing.T) {
+	cases := []ghostKind{ghostPoC, ghostExclude, ghostThrottled, ghostStateDiverged}
+	for _, kind := range cases {
+		kind := kind
+		t.Run(kind.reason(), func(t *testing.T) {
+			env := setupTestProxy(t, 3, nil, true)
+			env.proxy.redundancy.picker.stop()
+			metrics := NewDevshardMetrics()
+			env.proxy.redundancy.metrics = metrics
+			env.proxy.redundancy.devshardID = "escrow-proxy"
+
+			prepared := prepareForGhost(t, env.session, "llama")
+			env.proxy.redundancy.runGhostProbe(prepared, kind, kind.reason())
+
+			participantKey := env.proxy.redundancy.participantKeyForHost(prepared.HostIdx())
+			families, err := metrics.registry.Gather()
+			require.NoError(t, err)
+			requireMetricCounterValue(t, families, "devshard_gateway_slot_decisions_total", map[string]string{
+				"participant_key": participantKey,
+				"model":           "llama",
+				"escrow_id":       "escrow-proxy",
+				"decision":        "ghost_no_send",
+				"reason":          kind.reason(),
+				"quarantine_mode": "none",
+			}, 1)
+			require.Nil(t, env.killables[prepared.HostIdx()].LastRequest(),
+				"ghost_no_send recording must not contact the host")
+		})
+	}
+}
+
+func TestRunGhostProbe_SkipsAfterRedundancyStop(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	metrics := NewDevshardMetrics()
+	env.proxy.redundancy.metrics = metrics
+	env.proxy.redundancy.devshardID = "escrow-proxy"
+	env.proxy.redundancy.Stop()
+
+	prepared := prepareForGhost(t, env.session, "llama")
+	env.proxy.redundancy.runGhostProbe(prepared, ghostThrottled, ghostThrottled.reason())
+
+	families, err := metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "escrow-proxy"})
+}

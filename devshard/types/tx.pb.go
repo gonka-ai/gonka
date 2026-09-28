@@ -257,6 +257,7 @@ type MsgFinishInference struct {
 	EscrowId          string                 `protobuf:"bytes,7,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
 	ObservedHeight    uint64                 `protobuf:"varint,8,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
 	ObservedBlockHash []byte                 `protobuf:"bytes,9,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
+	ServedHash        []byte                 `protobuf:"bytes,10,opt,name=served_hash,json=servedHash,proto3" json:"served_hash,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -350,6 +351,13 @@ func (x *MsgFinishInference) GetObservedHeight() uint64 {
 func (x *MsgFinishInference) GetObservedBlockHash() []byte {
 	if x != nil {
 		return x.ObservedBlockHash
+	}
+	return nil
+}
+
+func (x *MsgFinishInference) GetServedHash() []byte {
+	if x != nil {
+		return x.ServedHash
 	}
 	return nil
 }
@@ -870,7 +878,7 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\fexecutor_sig\x18\x02 \x01(\fR\vexecutorSig\x12!\n" +
 	"\fconfirmed_at\x18\x03 \x01(\x03R\vconfirmedAt\x12'\n" +
 	"\x0fobserved_height\x18\x04 \x01(\x04R\x0eobservedHeight\x12.\n" +
-	"\x13observed_block_hash\x18\x05 \x01(\fR\x11observedBlockHash\"\xe2\x02\n" +
+	"\x13observed_block_hash\x18\x05 \x01(\fR\x11observedBlockHash\"\x83\x03\n" +
 	"\x12MsgFinishInference\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12#\n" +
 	"\rresponse_hash\x18\x02 \x01(\fR\fresponseHash\x12!\n" +
@@ -880,7 +888,10 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\fproposer_sig\x18\x06 \x01(\fR\vproposerSig\x12\x1b\n" +
 	"\tescrow_id\x18\a \x01(\tR\bescrowId\x12'\n" +
 	"\x0fobserved_height\x18\b \x01(\x04R\x0eobservedHeight\x12.\n" +
-	"\x13observed_block_hash\x18\t \x01(\fR\x11observedBlockHash\"\x9c\x01\n" +
+	"\x13observed_block_hash\x18\t \x01(\fR\x11observedBlockHash\x12\x1f\n" +
+	"\vserved_hash\x18\n" +
+	" \x01(\fR\n" +
+	"servedHash\"\x9c\x01\n" +
 	"\x13MsgTimeoutInference\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x122\n" +
 	"\x06reason\x18\x02 \x01(\x0e2\x1a.devshard.v1.TimeoutReasonR\x06reason\x12.\n" +

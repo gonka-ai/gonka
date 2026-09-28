@@ -203,7 +203,7 @@ func TestReleaseRuntimeRetiresAfterDrain(t *testing.T) {
 	_, stillRegistered := g.runtimes["12"]
 	require.True(t, stillRegistered, "busy runtime must stay registered")
 
-	g.releaseRuntime(rt, 0)
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 0})
 
 	_, stillRegistered = g.runtimes["12"]
 	require.False(t, stillRegistered, "drained runtime must be retired by releaseRuntime")
@@ -218,7 +218,7 @@ func TestReleaseRuntimeRetiresWithOnlyRetirePending(t *testing.T) {
 	rt.retireReason = "balance exhausted"
 	rt.retirePending.Store(true)
 
-	g.releaseRuntime(rt, 0)
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 0})
 
 	_, stillRegistered := g.runtimes["12"]
 	require.False(t, stillRegistered, "retire branch must fire on drain")
@@ -233,15 +233,15 @@ func TestReleaseRuntimeDefersWhileRequestsRemain(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
 	g, _, settled := gatewayTestDepletionGateway(t, rt)
 
-	g.reserveRuntime(rt, 1)
-	g.reserveRuntime(rt, 1)
+	g.reserveRuntime(rt, chatRequestCost{promptTokens: 1})
+	g.reserveRuntime(rt, chatRequestCost{promptTokens: 1})
 	rt.settlementReason = "low_balance"
 	rt.settlementPending.Store(true)
 
-	g.releaseRuntime(rt, 1) // remaining == 1 → quiet
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 1}) // remaining == 1 → quiet
 	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
 
-	g.releaseRuntime(rt, 1) // remaining == 0 → settles once
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 1}) // remaining == 0 → settles once
 	require.Eventually(t, func() bool { return settled.Load() == 1 }, time.Second, 10*time.Millisecond)
 }
 
@@ -389,4 +389,24 @@ func TestScheduleAutoSettlementPersistsDeactivationWhenAlreadySettled(t *testing
 		}
 		return !state.Devshards[0].Active
 	}, 5*time.Second, 20*time.Millisecond, "already-settled escrow must be persisted inactive")
+}
+
+func TestRetireRuntimeDropsSlotDecisionSeries(t *testing.T) {
+	m := NewDevshardMetrics()
+	g, _ := newRetireTestGateway("12")
+	g.metrics = m
+	m.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "12",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	})
+
+	require.True(t, g.retireRuntime("12", "test"))
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "12"})
 }

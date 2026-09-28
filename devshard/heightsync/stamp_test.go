@@ -3,6 +3,7 @@ package heightsync
 import (
 	"testing"
 
+	"devshard/internal/testutil"
 	"devshard/types"
 )
 
@@ -91,7 +92,7 @@ func TestExecutorStamp_OnlyHostSignedInferenceLegs(t *testing.T) {
 		t.Fatalf("stamped confirm: got (%d, %d, %v)", id, h, ok)
 	}
 
-	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash,
 		InferenceId: 8, ObservedHeight: 101, ObservedBlockHash: hash,
 	}}}
 	id, h, ok = ExecutorStamp(finish)
