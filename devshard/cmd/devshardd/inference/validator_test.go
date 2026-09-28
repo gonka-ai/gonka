@@ -496,9 +496,54 @@ func newFaultTestValidator(phaseEpoch uint64, voteFalse bool, fetch payloadFetch
 		phase:                   phase,
 		chainParams:             stubChainParams{},
 		thresholds:              thresholds,
+		vocabularySizes:         stubVocabularyResolver{},
 		voteFalseOnFetchFailure: voteFalse,
 		fetchPayloads:           fetch,
 		executeML:               executeML,
+	}
+}
+
+type stubVocabularyResolver struct {
+	vocabularySize int
+}
+
+func (resolver stubVocabularyResolver) Resolve(context.Context, uint64, string) int {
+	return resolver.vocabularySize
+}
+
+// Test flow:
+// 1. The executor stored token id 42 and the resolver reports the model's vocab size.
+// 2. With vocab 42 the id is out of range: the validator votes false and never calls its ML node.
+// 3. With vocab 43 the id is valid and the replay reaches the ML node.
+func TestValidator_Validate_BoundsTokenIDsByResolvedVocabulary(t *testing.T) {
+	validPrompt := []byte(`{"messages":[]}`)
+	storedResponse := []byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"logprobs":{"content":[{"token":"42","logprob":-0.5,"top_logprobs":[{"token":"42","logprob":-0.5}]}]}}]}`)
+	cases := []struct {
+		name           string
+		vocabularySize int
+		wantReplayed   bool
+	}{
+		{"id at vocab size votes false without replay", 42, false},
+		{"id inside vocab is replayed", 43, true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			replayed := false
+			fetch := func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
+				return validPrompt, storedResponse, nil
+			}
+			executeML := func(context.Context, string, string, []byte) (*http.Response, error) {
+				replayed = true
+				return &http.Response{StatusCode: http.StatusBadRequest, Body: http.NoBody}, nil
+			}
+			validator := newFaultTestValidator(10, true, fetch, executeML, nil)
+			validator.vocabularySizes = stubVocabularyResolver{vocabularySize: testCase.vocabularySize}
+
+			result, err := validator.Validate(context.Background(), faultReq(10))
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantReplayed, replayed)
+			assert.Equal(t, testCase.wantReplayed, result.Valid)
+		})
 	}
 }
 
