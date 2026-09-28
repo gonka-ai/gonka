@@ -1,10 +1,43 @@
-# Optional Kubernetes HA for Gonka
+# Optional Kubernetes deployment for the Gonka HA serving tier
 
-This package deploys the **existing HA serving tier** from `devshard-0.2.x-v6`.
+**Scope: HA serving components only.** This package deploys the existing HA
+serving tier from `devshard-0.2.x-v6` into an operator-provided Kubernetes cluster.
 Docker Compose remains supported in `deploy/join`, including multi-host HA;
 neither deployment method depends on the other. DAPI, the chain node, TMKMS and
-ML nodes remain outside Kubernetes. Their availability is still a dependency of
-this tier. This chart does not make DAPI active-active or duplicate a validator.
+ML nodes are external dependencies and are not installed by these charts. The
+documented topology keeps them outside Kubernetes. This chart does not make
+DAPI active-active or duplicate a validator.
+
+## Deployment scope and future ML nodes
+
+The `gonka-ha` chart owns the HA serving tier. The optional `gonka-postgres`
+chart owns a separate database release. Neither chart installs Kubernetes
+itself or packages a complete Gonka node.
+
+Future Kubernetes support for ML nodes should have its own chart and Helm
+release, with independent upgrades, GPU settings and model storage. No ML-node
+chart is included here. A separate release does **not** require a separate
+Kubernetes cluster:
+
+- For one operator at one site, a shared cluster is a reasonable starting
+  point: run HA services on CPU workers and ML nodes on a dedicated GPU worker
+  pool, preferably in a separate namespace. Reserve GPU workers with taints
+  and select the intended workers for each workload; namespaces alone do not
+  isolate compute resources. The HA chart already exposes per-component
+  `nodeSelector` and `tolerations` settings.
+- Use a separate ML cluster when GPU infrastructure has different owners,
+  locations, maintenance schedules or isolation requirements. This separates
+  cluster control planes and cluster-wide changes, while adding another cluster
+  and cross-cluster networking to operate. HA still depends on available ML
+  capacity, even when the clusters are separate.
+
+In either layout, a future ML release must provide stable per-node identity and
+addresses reachable by external DAPI and the HA serving tier. Cluster-only DNS
+or a shared load balancer must not silently replace registered ML-node identity.
+GPU driver/device-plugin setup, model caches and restart behavior also need
+their own implementation and validation; the HA chart does not provide them.
+See the Kubernetes guidance on [GPU scheduling](https://kubernetes.io/docs/tasks/manage-gpus/scheduling-gpus/)
+and [dedicated workers with taints and tolerations](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/#example-use-cases).
 
 ## Architecture
 

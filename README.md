@@ -36,9 +36,11 @@ To join Testnet:
 ### Local Quickstart
 
 Hosts can also deploy the existing HA serving tier with the optional
-[Kubernetes Helm charts](deploy/kubernetes/README.md), using an external
+[Kubernetes deployment for HA](deploy/kubernetes/README.md), using an external
 PostgreSQL primary or a separately managed in-cluster PostgreSQL HA cluster.
-Docker Compose remains supported for both standard and HA deployments.
+These charts cover the HA serving tier only; DAPI, chain-node, TMKMS and ML nodes
+are external dependencies. Docker Compose remains supported for both standard
+and HA deployments.
 
 This section walks you through setting up a local development environment to build and test the core components, without joining the real network or running a full MLNode.
 #### 1. Environment setup
