@@ -344,3 +344,7 @@ release:
 		-f Dockerfile \
 		-t ghcr.io/product-science/proxy-router:$(VERSION) \
 		--push ..
+
+.PHONY: test-supervisor
+test-supervisor:
+	@../router-runtime/router-supervisor_test.sh

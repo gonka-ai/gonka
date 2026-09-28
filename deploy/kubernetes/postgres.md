@@ -271,10 +271,11 @@ promotion; this smoke test checks that clients can reconnect to the new writer.
 Use a current supported patched operator release for production; testing the
 minimum API version here does not recommend deploying that old patch level.
 
-For an offline run with independently verified cached images, use
+To reuse independently verified cached container images, use
 `PRELOAD_IMAGES=1` and, if the local archive has only a tag, `POSTGRES_IMAGE` to
 select that PostgreSQL 16 tag. `KIND_NODE_IMAGE` can likewise select a verified
 cached node tag. These overrides are for controlled test environments; the
 default run pins the upstream kind and PostgreSQL image digests. Cached mode
 loads images only into the test cluster and switches the operator manifest's
 image pull policy to `IfNotPresent` after verifying the original manifest hash.
+The script still needs network access to download that operator manifest.

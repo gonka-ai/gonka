@@ -68,6 +68,7 @@ def main():
                     events.append(json.loads(line[6:]))
         assert events[-1]["event"] == "complete", f"{component} replacement cut stream: {events}"
         assert len({event["owner"] for event in events}) == 1, events
+        print(f"PASS {component} accepted SSE completed during deletion; waiting for replacement", flush=True)
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             try:

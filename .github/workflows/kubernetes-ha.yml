@@ -53,7 +53,7 @@ jobs:
             -f deploy/kubernetes/examples/values.yaml --kube-version 1.33.0 \
             | kubeconform -strict -summary -kubernetes-version 1.33.0
       - name: Verify router and Compose compatibility
-        run: make -C proxy-router test-render test-pod-routing test-compose
+        run: make -C proxy-router test-render test-pod-routing test-supervisor test-compose
 
   kind-smoke:
     runs-on: ubuntu-latest

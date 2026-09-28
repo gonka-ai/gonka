@@ -262,7 +262,7 @@ manifests but cannot undo PostgreSQL schema changes or recreate deleted data.
 ```bash
 HELM=helm python3 -m unittest discover -s deploy/kubernetes/tests -v
 python3 deploy/kubernetes/charts/gonka-postgres/tests/validate.py
-make -C proxy-router test-render test-pod-routing test-compose
+make -C proxy-router test-render test-pod-routing test-supervisor test-compose
 deploy/kubernetes/tests/kind-smoke.sh
 deploy/kubernetes/tests/postgres-kind-smoke.sh
 ```

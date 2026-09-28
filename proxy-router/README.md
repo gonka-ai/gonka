@@ -83,8 +83,22 @@ explicit client retry is outside this routing layer and remains unchanged.
 An established SSE stream stays on the policy worker, router, versiond host,
 and child generation that accepted it. Rolling a replicated inner router or
 application member removes it from new selection while that process drains.
-The singleton public `proxy-router` is the stated host-level failure boundary:
-restarting it interrupts connections crossing that process.
+
+The image uses `SIGUSR1` for graceful shutdown. With a routing catalog enabled,
+a shared supervisor forwards that signal to HAProxy, stops the catalog retry
+loop, and waits for accepted streams to finish. An unexpected reconciler exit
+still restarts during normal operation; it cannot keep a drained router alive.
+Run `make test-supervisor` to exercise both router images with a live catalog,
+reconciler failure, reload, accepted POST stream, and idle shutdown.
+
+For maintenance with a live routing catalog, replace the container so its
+entrypoint restores accepted versions from the persistent cache. A raw HAProxy
+`SIGUSR2` reload resets dynamic runtime maps and does not reconstruct their
+accepted slot assignments; it is unsuitable for catalog-aware maintenance.
+Reloading nginx to rotate TLS certificates is independent of this limitation.
+In the Compose topology described here, the singleton public `proxy-router` is
+the host-level failure boundary: restarting it interrupts connections crossing
+that process.
 
 The optional [Kubernetes chart](../deploy/kubernetes/README.md) runs an ingress
 pod per public router and policy worker. `PROXY_ROUTER_PUBLIC_BIND_ADDRESS` is
