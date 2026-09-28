@@ -45,7 +45,7 @@ resolvers docker
 frontend public_http
     mode tcp
     option tcplog
-    bind :80
+    bind ${PUBLIC_BIND_ADDRESS}:80
     maxconn ${MAX_CONNECTIONS}
     ${PUBLIC_PROXY_ACL}
     ${PUBLIC_PROXY_EXPECT}
@@ -55,7 +55,7 @@ frontend public_http
 frontend public_https
     mode tcp
     option tcplog
-    bind :443
+    bind ${PUBLIC_BIND_ADDRESS}:443
     maxconn ${MAX_CONNECTIONS}
     ${PUBLIC_PROXY_ACL}
     ${PUBLIC_PROXY_EXPECT}

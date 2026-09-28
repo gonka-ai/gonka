@@ -46,6 +46,7 @@ CATALOG_CACHE_MAX_AGE="${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}"
 CATALOG_STATUS_FILE=/var/run/haproxy/catalog-status.json
 CATALOG_CACHE_BIN="${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}"
 NGINX_MODE="${NGINX_MODE:-http}"
+PUBLIC_BIND_ADDRESS="${PROXY_ROUTER_PUBLIC_BIND_ADDRESS:-0.0.0.0}"
 POLICY_BIND_HOST="${PROXY_ROUTER_POLICY_BIND_HOST:-}"
 METRICS_BIND_HOST="${PROXY_ROUTER_METRICS_BIND_HOST:-}"
 CATALOG_BIND_HOST="${PROXY_ROUTER_CATALOG_BIND_HOST:-}"
@@ -54,6 +55,18 @@ CATALOG_UPSTREAM_HOST="${PROXY_ROUTER_CATALOG_UPSTREAM_HOST:-}"
 CATALOG_UPSTREAM_PORT="${PROXY_ROUTER_CATALOG_UPSTREAM_PORT:-9100}"
 DNS_RESOLVER="${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
 TRUSTED_PROXY_CIDRS="${PROXY_ROUTER_PROXY_PROTOCOL_FROM:-}"
+
+# A pod can share its network namespace with the policy worker: bind public
+# traffic to the pod address and reserve loopback :80/:443 for nginx. Restrict
+# this value to IPv4 literals so it cannot inject HAProxy bind options.
+if ! printf '%s\n' "$PUBLIC_BIND_ADDRESS" | awk -F. '
+    NR != 1 || NF != 4 { exit 1 }
+    { for (i = 1; i <= NF; i++)
+        if ($i !~ /^[0-9]+$/ || length($i) > 3 || $i + 0 > 255) exit 1 }
+'; then
+    echo "proxy-router: PROXY_ROUTER_PUBLIC_BIND_ADDRESS must be an IPv4 address" >&2
+    exit 1
+fi
 
 resolve_local_ipv4() {
     host=$1
@@ -447,6 +460,7 @@ sed \
     -e "s|\${UNDECLARED_VERSION_GUARD}|$UNDECLARED_VERSION_GUARD|g" \
     -e "s|\${DYNAMIC_READY_GUARD}|$DYNAMIC_READY_GUARD|g" \
     -e "s|\${VERSIOND_FRONTEND_PORT}|$VERSIOND_FRONTEND_PORT|g" \
+    -e "s|\${PUBLIC_BIND_ADDRESS}|$PUBLIC_BIND_ADDRESS|g" \
     -e "s|\${POLICY_BIND_ADDRESS}|$POLICY_BIND_ADDRESS|g" \
     -e "s|\${METRICS_NETWORK_BIND}|$METRICS_NETWORK_BIND|g" \
     -e "s|\${ADMIN_PORT}|$ADMIN_PORT|g" \

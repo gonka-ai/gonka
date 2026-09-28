@@ -25,4 +25,8 @@ USER haproxy
 
 EXPOSE 80 443 18081 8404
 
+# Native Kubernetes sidecar ordering stops this after nginx has drained. Keep
+# established public connections alive while the remaining bytes are flushed.
+STOPSIGNAL SIGUSR1
+
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

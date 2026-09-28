@@ -1,4 +1,4 @@
-.PHONY: all build-docker release test-render test-route-status test-compose test-routing
+.PHONY: all build-docker release test-render test-public-bind test-route-status test-compose test-routing test-pod-routing
 
 include ../scripts/blst-portable.mk
 
@@ -7,7 +7,10 @@ HAPROXY_IMAGE ?= haproxy:3.2-alpine
 test-route-status:
 	@./route-status_test.sh
 
-test-render: test-route-status
+test-public-bind:
+	@sh ./public-bind_test.sh
+
+test-render: test-route-status test-public-bind
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
@@ -272,6 +275,9 @@ test-render: test-route-status
 
 test-routing:
 	@./test-routing.sh
+
+test-pod-routing:
+	@bash ./pod-routing_test.sh
 
 test-compose:
 	@set -eu; \

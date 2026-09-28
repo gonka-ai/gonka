@@ -1,0 +1,298 @@
+{{- $name := include "gonka.fullname" . -}}
+{{- $mode := ternary "both" "http" (not (empty .Values.ingress.tlsSecret)) -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-ingress
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+  {{- with .Values.ingress.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.ingress.service.type }}
+  {{- if or (eq .Values.ingress.service.type "LoadBalancer") (eq .Values.ingress.service.type "NodePort") }}
+  externalTrafficPolicy: {{ .Values.ingress.service.externalTrafficPolicy }}
+  {{- end }}
+  selector:
+    {{- include "gonka.selector" (dict "root" . "component" "ingress") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+    {{- if .Values.ingress.tlsSecret }}
+    - name: https
+      port: 443
+      targetPort: https
+    {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-ingress-headless
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "gonka.selector" (dict "root" . "component" "ingress") | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}-ingress
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $name }}-ingress-headless
+  replicas: {{ .Values.ingress.replicas }}
+  podManagementPolicy: Parallel
+  minReadySeconds: 10
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      {{- include "gonka.selector" (dict "root" . "component" "ingress") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gonka.selector" (dict "root" . "component" "ingress") | nindent 8 }}
+      annotations:
+        checksum/scripts: {{ include (print $.Template.BasePath "/scripts.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.ingress.terminationGracePeriodSeconds }}
+      securityContext:
+        fsGroup: 99
+        fsGroupChangePolicy: OnRootMismatch
+      {{- include "gonka.scheduling" (dict "root" . "component" "ingress" "config" .Values.ingress) | nindent 6 }}
+      # Native sidecar termination keeps :18081 alive until nginx finishes all
+      # requests, including uploads which have not opened their upstream yet.
+      initContainers:
+        - name: proxy-router
+          restartPolicy: Always
+          image: {{ required "images.proxyRouter must name an image built from this branch" .Values.images.proxyRouter | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/bin/sh", "/opt/gonka/dns-entrypoint.sh"]
+          args: ["/usr/local/bin/entrypoint.sh"]
+          securityContext:
+            runAsUser: 99
+            runAsGroup: 99
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_BIND_SERVICE"]
+          ports:
+            - name: http
+              containerPort: 80
+            - name: https
+              containerPort: 443
+            - name: metrics
+              containerPort: 8405
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: PROXY_ROUTER_PUBLIC_BIND_ADDRESS
+              value: "$(POD_IP)"
+            - name: PROXY_ROUTER_METRICS_BIND_HOST
+              value: "$(POD_IP)"
+            - name: PROXY_ROUTER_POLICY_BIND_HOST
+              value: "127.0.0.1"
+            - name: PROXY_POLICY_POOL_HOST
+              value: "127.0.0.1"
+            - name: PROXY_POLICY_POOL_SLOTS
+              value: "1"
+            - name: PROXY_VERSIOND_PORT
+              value: "18081"
+            - name: NGINX_MODE
+              value: {{ $mode | quote }}
+            - name: VERSIOND_ROUTER_POOL_HOST
+              value: {{ printf "%s-router.%s.svc.%s" $name .Release.Namespace .Values.clusterDomain | quote }}
+            - name: VERSIOND_ROUTER_FLEET_CAPACITY
+              value: "64"
+            - name: VERSIOND_ROUTER_PORT
+              value: "8080"
+            - name: VERSIOND_ROUTER_ADMIN_PORT
+              value: "8404"
+            - name: VERSIOND_VERSIONS
+              value: {{ join " " .Values.protocols | quote }}
+            - name: VERSIOND_NON_HA_VERSIONS
+              value: ""
+            - name: VERSIOND_ROUTING_CATALOG_URL
+              value: {{ include "gonka.oracleURL" . | quote }}
+            - name: PROXY_ROUTER_ACTIVATION_MIN_READY
+              value: {{ .Values.router.activationMinReady | quote }}
+            - name: PROXY_ROUTER_VERSION_CAPACITY
+              value: {{ .Values.router.versionCapacity | quote }}
+            - name: PROXY_ROUTER_PROXY_PROTOCOL_FROM
+              value: {{ .Values.ingress.trustedProxyCidrs | quote }}
+            {{- with .Values.ingress.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          # Startup waits for the router process only: policy cannot start
+          # until this succeeds, so /readyz here would deadlock pod startup.
+          startupProbe:
+            exec:
+              command: ["/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8404/livez"]
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: ["/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8404/readyz"]
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 2
+          livenessProbe:
+            exec:
+              command: ["/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8404/livez"]
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # The image's SIGUSR1 stop signal softly closes HAProxy only after
+          # Kubernetes has waited for the main nginx container to finish.
+          resources:
+            {{- toYaml .Values.ingress.resources | nindent 12 }}
+          volumeMounts:
+            - name: scripts
+              mountPath: /opt/gonka
+              readOnly: true
+            - name: router-state
+              mountPath: /var/lib/gonka-router
+      containers:
+        - name: proxy-policy
+          image: {{ required "images.proxyPolicy is required" .Values.images.proxyPolicy | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/bin/sh", "/opt/gonka/dns-entrypoint.sh"]
+          args: ["/entrypoint.sh", "nginx", "-g", "daemon off;"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_BIND_SERVICE", "CHOWN", "SETUID", "SETGID"]
+          env:
+            - name: NGINX_MODE
+              value: {{ $mode | quote }}
+            - name: SERVER_NAME
+              value: {{ .Values.ingress.serverName | quote }}
+            - name: KEY_NAME
+              value: ""
+            - name: PROXY_ADD_NODE_PREFIX
+              value: "false"
+            - name: PROXY_PROTOCOL
+              value: "true"
+            - name: PROXY_PROTOCOL_BIND_ADDRESS
+              value: "127.0.0.1"
+            - name: PROXY_PROTOCOL_TRUSTED_FROM
+              value: "127.0.0.1/32"
+            - name: API_SERVICE_NAME
+              value: {{ .Values.external.dapiHost | quote }}
+            - name: GONKA_API_PORT
+              value: {{ .Values.external.dapiPort | quote }}
+            - name: NODE_SERVICE_NAME
+              value: "127.0.0.1"
+            - name: DISABLE_CHAIN_API
+              value: "true"
+            - name: DISABLE_CHAIN_RPC
+              value: "true"
+            - name: DISABLE_CHAIN_GRPC
+              value: "true"
+            - name: DISABLE_VALIDATOR_WHITELIST
+              value: "true"
+            - name: DISABLE_FAIL2BAN
+              value: "true"
+            - name: GONKA_API_EXEMPT_ROUTES
+              value: "chat inference poc/proofs subnet devshard"
+            - name: GONKA_API_BLOCKED_ROUTES
+              value: "poc-batches training"
+            - name: EXEMPT_CONN_LIMIT
+              value: "200"
+            - name: VERSIOND_SERVICE_NAME
+              value: "127.0.0.1"
+            - name: VERSIOND_SERVICE_IS_ABSOLUTE
+              value: "true"
+            - name: VERSIOND_PORT
+              value: "18081"
+            - name: EDGE_API_SERVICE_NAME
+              value: {{ printf "%s-edge-api.%s.svc.%s" $name .Release.Namespace .Values.clusterDomain | quote }}
+            - name: EDGE_API_SERVICE_IS_ABSOLUTE
+              value: "true"
+            - name: EDGE_API_PORT
+              value: "18080"
+            {{- with .Values.ingress.policyExtraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            exec:
+              command: ["curl", "--fail", "--silent", "--max-time", "2", "http://127.0.0.1:8081/health"]
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: ["curl", "--fail", "--silent", "--max-time", "2", "http://127.0.0.1:8081/health"]
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 2
+          lifecycle:
+            preStop:
+              exec:
+                # Endpoint withdrawal gets a short propagation window before
+                # nginx closes admission. Its active requests retain access to
+                # the native router sidecar throughout nginx's graceful exit.
+                # The image's SIGQUIT stop signal then drains nginx.
+                command: ["/bin/sh", "-c", "sleep 5"]
+          resources:
+            {{- toYaml .Values.ingress.policyResources | nindent 12 }}
+          volumeMounts:
+            - name: scripts
+              mountPath: /opt/gonka
+              readOnly: true
+            {{- if .Values.ingress.tlsSecret }}
+            - name: tls
+              mountPath: /etc/nginx/ssl
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ $name }}-scripts
+        {{- if .Values.ingress.tlsSecret }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.ingress.tlsSecret }}
+            items:
+              - key: tls.crt
+                path: cert.pem
+              - key: tls.key
+                path: private.key
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: router-state
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.ingress.storage.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.ingress.storage.size }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}-ingress
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ sub (int .Values.ingress.replicas) 1 }}
+  selector:
+    matchLabels:
+      {{- include "gonka.selector" (dict "root" . "component" "ingress") | nindent 6 }}

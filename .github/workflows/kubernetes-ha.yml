@@ -1,0 +1,89 @@
+name: Kubernetes HA
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/kubernetes/**'
+      - 'proxy-router/**'
+      - 'proxy/**'
+      - 'versiond-router/**'
+      - 'versioned/**'
+      - 'edge-api/**'
+      - 'router-runtime/**'
+      - '.github/workflows/kubernetes-ha.yml'
+  workflow_dispatch:
+    inputs:
+      postgres_smoke:
+        description: Run the real CloudNativePG primary failover smoke
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kubernetes-ha-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.9'
+      - name: Install validation tools
+        run: |
+          python3 -m pip install 'PyYAML==6.0.3' 'jsonschema==4.23.0'
+          go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+      - name: Validate charts and storage verifier
+        run: |
+          helm lint deploy/kubernetes/charts/gonka-ha -f deploy/kubernetes/examples/values.yaml
+          python3 -m unittest discover -s deploy/kubernetes/tests -v
+          python3 deploy/kubernetes/charts/gonka-postgres/tests/validate.py
+          helm template test deploy/kubernetes/charts/gonka-ha -n gonka \
+            -f deploy/kubernetes/examples/values.yaml --kube-version 1.33.0 \
+            | kubeconform -strict -summary -kubernetes-version 1.33.0
+      - name: Verify router and Compose compatibility
+        run: make -C proxy-router test-render test-pod-routing test-compose
+
+  kind-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.9'
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: Install kind
+        run: go install sigs.k8s.io/kind@v0.30.0
+      - name: Verify Kubernetes routing and graceful replacement
+        run: deploy/kubernetes/tests/kind-smoke.sh
+
+  postgres-smoke:
+    if: github.event_name == 'workflow_dispatch' && inputs.postgres_smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.9'
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: Install kind
+        run: go install sigs.k8s.io/kind@v0.30.0
+      - name: Verify real PostgreSQL primary failover
+        run: deploy/kubernetes/tests/postgres-kind-smoke.sh

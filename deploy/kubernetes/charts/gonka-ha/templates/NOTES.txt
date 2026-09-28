@@ -1,0 +1,13 @@
+Installed the Gonka HA serving tier in {{ .Release.Namespace }}.
+DAPI, chain-node, validator signing and ML management remain external.
+
+Public Service: {{ include "gonka.fullname" . }}-ingress ({{ .Values.ingress.service.type }})
+Protocols selected: {{ join ", " .Values.protocols }}
+
+Before public cutover, verify every live child against the intended PostgreSQL
+primary with deploy/kubernetes/verify-storage.py, then test inference using the
+governance-approved artifacts. See deploy/kubernetes/README.md.
+
+Keep this release's persistent volumes and the independently managed database.
+Do not use ingress port-forward port 80 as a public-route test: localhost is the
+private PROXY-protocol policy listener. Use the Service from inside the cluster.

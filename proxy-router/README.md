@@ -86,6 +86,17 @@ application member removes it from new selection while that process drains.
 The singleton public `proxy-router` is the stated host-level failure boundary:
 restarting it interrupts connections crossing that process.
 
+The optional [Kubernetes chart](../deploy/kubernetes/README.md) runs an ingress
+pod per public router and policy worker. `PROXY_ROUTER_PUBLIC_BIND_ADDRESS` is
+the pod's IPv4 address; nginx binds only loopback, as does the router's private
+`:18081` listener. The policy worker trusts PROXY protocol only from loopback.
+The native router sidecar starts with a liveness probe, so it does not block
+nginx startup waiting for policy readiness. Kubernetes stops nginx first and
+keeps the router running until nginx's graceful drain completes; this preserves
+the private upstream path even for accepted requests still uploading their
+bodies. The pod termination grace bounds the complete drain, including streams.
+Kubernetes readiness uses the same production PROXY health checks as Compose.
+
 ## Membership and state
 
 All pools use Docker DNS plus HAProxy active checks. Protocol names are projected
@@ -194,6 +205,7 @@ availability.
 | `PROXY_ROUTER_VERSION_CAPACITY` | `32` | minimum number of backends reserved for names added after process start; a larger valid LKG cache raises this floor automatically |
 | `PROXY_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server inactivity timeout |
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
+| `PROXY_ROUTER_PUBLIC_BIND_ADDRESS` | `0.0.0.0` | IPv4 bind address for both public listeners; Kubernetes sets the pod IP so a colocated policy worker can listen on loopback at the same ports |
 | `PROXY_ROUTER_PROXY_PROTOCOL_FROM` | *(empty)* | space-separated trusted external L4 load-balancer CIDRs that must send PROXY protocol |
 | `PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | upstream connect timeout |
 | `PROXY_ROUTER_METRICS_BIND_HOST` | *(empty; loopback)* | internal DNS alias whose interface receives the read-only Prometheus listener; join Compose uses `proxy-router-metrics` |
@@ -256,6 +268,7 @@ the static bootstrap floor remaining fail-closed.
 make -C proxy-router test-render
 make -C proxy-router test-compose
 make -C proxy-router test-routing
+make -C proxy-router test-pod-routing
 ```
 
 The routing test uses real Docker networks, HAProxy, policy workers, route-aware
@@ -263,3 +276,10 @@ router health, an unavailable router data port, and a legacy edge-api-router
 fixture. It verifies failover, a policy replacement that receives a new Docker
 IP, withdrawal before replacement admission, exactly-once POST execution in the
 tested connection-failure path, and the unchanged edge-api routing path.
+
+`test-pod-routing` shares one network namespace between the actual router and
+nginx images. It checks pod-IP versus loopback binds, startup before the policy
+worker, HTTP/HTTPS PROXY client identity, a read-only TLS certificate mount,
+private-listener isolation, nginx reload, and completion of an accepted SSE
+response while nginx drains before the router stops. Containers use the chart's
+UIDs, groups and limited capabilities.

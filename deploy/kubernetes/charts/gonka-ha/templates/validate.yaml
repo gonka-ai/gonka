@@ -1,0 +1,39 @@
+{{- range $key, $value := .Values.images }}
+{{- $_ := required (printf "images.%s must be an explicit image reference" $key) $value }}
+{{- end }}
+{{- range $key := list "oracleUrl" "dapiHost" "dapiPort" "chainRpcUrl" "chainGrpcUrl" "nodeManagerAddress" }}
+{{- $value := index $.Values.external $key }}
+{{- $_ := required (printf "external.%s is required; the control plane stays outside Kubernetes" $key) $value }}
+{{- end }}
+{{- range $key, $value := .Values.identity }}
+{{- $_ := required (printf "identity.%s is required" $key) $value }}
+{{- end }}
+{{- $_ := required "postgres.host is required (external primary or gonka-postgres -rw Service)" .Values.postgres.host }}
+{{- $_ := required "postgres.credentialsSecret is required" .Values.postgres.credentialsSecret }}
+{{- $_ := required "postgres.database is required" .Values.postgres.database }}
+{{- $_ := required "postgres.user is required" .Values.postgres.user }}
+{{- $_ := required "postgres.passwordKey is required" .Values.postgres.passwordKey }}
+{{- if and (has .Values.postgres.sslMode (list "verify-ca" "verify-full")) (not .Values.postgres.caSecret) }}
+{{- fail "postgres.caSecret is required when verifying PostgreSQL TLS" }}
+{{- end }}
+{{- if le (int .Values.versiond.terminationGracePeriodSeconds) (int .Values.versiond.hostShutdownBudgetSeconds) }}
+{{- fail "versiond termination grace must exceed its host shutdown budget" }}
+{{- end }}
+{{- if le (int .Values.versiond.hostShutdownBudgetSeconds) (add 600 (int .Values.versiond.drainAnnounceSeconds)) }}
+{{- fail "versiond host shutdown budget must exceed announce plus the 600s child shutdown grace" }}
+{{- end }}
+{{- if gt (int .Values.router.activationMinReady) (sub (int .Values.versiond.replicas) 1) }}
+{{- fail "versiond.replicas must preserve router.activationMinReady while one replica is replaced" }}
+{{- end }}
+{{- if gt (int .Values.router.activationMinReady) (sub (int .Values.router.replicas) 1) }}
+{{- fail "router.replicas must preserve router.activationMinReady while one replica is replaced" }}
+{{- end }}
+{{- if gt (len .Values.protocols) (int .Values.router.versionCapacity) }}
+{{- fail "router.versionCapacity must cover protocols" }}
+{{- end }}
+{{- range .Values.protocols }}
+{{- if has . (list "v1" "v2" "v3") }}
+{{- fail "legacy SQLite protocols v1/v2/v3 cannot join the Kubernetes HA pool" }}
+{{- end }}
+{{- end }}
+# Render-time validations only. No Kubernetes object is created.

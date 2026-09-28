@@ -1,0 +1,34 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- range $component, $ports := dict "ingress" (list 80 443) "versiond" (list 8080) "router" (list 8080 8404) "edge-api" (list 18080) "oracle" (list 9100) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "gonka.fullname" $ }}-{{ $component }}
+  labels:
+    {{- include "gonka.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "gonka.selector" (dict "root" $ "component" $component) | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        {{- range $ports }}
+        - protocol: TCP
+          port: {{ . }}
+        {{- end }}
+      {{- if ne $component "ingress" }}
+      from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gonka-ha
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+              {{- if eq $component "versiond" }}
+              app.kubernetes.io/component: router
+              {{- else if or (eq $component "router") (eq $component "edge-api") }}
+              app.kubernetes.io/component: ingress
+              {{- end }}
+      {{- end }}
+{{- end }}
+{{- end }}
