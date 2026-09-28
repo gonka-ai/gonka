@@ -91,7 +91,9 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 	decode := recipe.Scheme == types.PocScheme_POC_SCHEME_DECODE
 	n := int64(0)
 	if mc, ok := recipe.GetModelConfig(modelID); ok {
-		n = types.DecodeMaxForStage(recipe.Scheme, mc.DecodeMaxTokens)
+		if steps, ok := mc.MaxTokensForScheme(recipe.Scheme); ok {
+			n = steps
+		}
 	}
 
 	// Convert artifacts from JSON format to proto format for local storage

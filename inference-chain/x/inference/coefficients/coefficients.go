@@ -28,7 +28,9 @@ type Result struct {
 }
 
 // Freeze copies live governance config into deterministic epoch scale entries.
-func Freeze(pocParams *types.PocParams) (*FrozenConfig, error) {
+// Without dynamic coefficients the scale is the static factor of the scheme
+// block that recipe froze for the stage.
+func Freeze(pocParams *types.PocParams, recipe *types.PocStageRecipe) (*FrozenConfig, error) {
 	if pocParams == nil {
 		return &FrozenConfig{}, nil
 	}
@@ -40,7 +42,7 @@ func Freeze(pocParams *types.PocParams) (*FrozenConfig, error) {
 			}
 			scales = append(scales, &types.ConfirmationWeightScale{
 				ModelId:           model.ModelId,
-				WeightScaleFactor: cloneDecimal(model.WeightScaleFactor),
+				WeightScaleFactor: cloneDecimal(staticScale(model, pocParams.PocScheme, recipe)),
 			})
 		}
 		slices.SortFunc(scales, func(a, b *types.ConfirmationWeightScale) int {
@@ -79,7 +81,7 @@ func GovernanceCoefficients(pocParams *types.PocParams) map[string]mathsdk.Legac
 			continue
 		}
 		if pocParams.DynamicCoefficientParams == nil {
-			result[model.ModelId] = legacyWeightScaleFactor(model)
+			result[model.ModelId] = legacyWeightScaleFactor(staticScale(model, pocParams.PocScheme, nil))
 			continue
 		}
 		if model.DynamicCoefficient == nil {
@@ -522,15 +524,37 @@ func encodeDecimal(value mathsdk.LegacyDec) (*types.Decimal, mathsdk.LegacyDec, 
 	return encoded, quantized, nil
 }
 
-func legacyWeightScaleFactor(model *types.PoCModelConfig) mathsdk.LegacyDec {
-	if model == nil || model.WeightScaleFactor == nil {
+func legacyWeightScaleFactor(factor *types.Decimal) mathsdk.LegacyDec {
+	if factor == nil {
 		return mathsdk.LegacyOneDec()
 	}
-	dec, err := model.WeightScaleFactor.ToLegacyDec()
+	dec, err := factor.ToLegacyDec()
 	if err != nil {
 		return mathsdk.LegacyOneDec()
 	}
 	return dec
+}
+
+// staticScale is a model's weight scale without dynamic coefficients: the
+// factor of the scheme block the stage recipe froze, else of the live block
+// for the live scheme, else the flat field. A stage that froze only the
+// DECODE block does not fall back to the prefill factor.
+func staticScale(model *types.PoCModelConfig, scheme types.PocScheme, recipe *types.PocStageRecipe) *types.Decimal {
+	if recipe != nil {
+		frozen, ok := recipe.GetModelConfig(model.ModelId)
+		if !ok {
+			return nil
+		}
+		block, ok := frozen.SchemeParams(recipe.Scheme)
+		if !ok || block == nil {
+			return nil
+		}
+		return block.WeightScaleFactor
+	}
+	if block, ok := model.SchemeParams(scheme); ok && block != nil {
+		return block.WeightScaleFactor
+	}
+	return model.WeightScaleFactor
 }
 
 func cloneParams(params *types.DynamicCoefficientParams) *types.DynamicCoefficientParams {

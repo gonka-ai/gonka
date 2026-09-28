@@ -36,7 +36,10 @@ func (k Keeper) FreezePocStageRecipe(ctx context.Context, stageHeight int64, eve
 	}
 	epoch, _ := k.GetEffectiveEpochIndex(ctx)
 	graceEpoch, graceFound := k.GetPocSchemeEnabledEpoch(ctx)
-	recipe := types.SnapshotPocStageRecipe(params.PocParams, event, stageHeight, epoch, graceEpoch, graceFound)
+	recipe, err := types.SnapshotPocStageRecipe(params.PocParams, event, stageHeight, epoch, graceEpoch, graceFound)
+	if err != nil {
+		return nil, err
+	}
 	if err := k.PocStageRecipes.Set(ctx, stageHeight, *recipe); err != nil {
 		return nil, err
 	}

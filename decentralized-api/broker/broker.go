@@ -1385,7 +1385,7 @@ func (b *Broker) getCommandForState(
 					Model:           modelConfig.ModelId,
 					SeqLen:          modelConfig.SeqLen,
 					PocStrongerRng:  pocGenParams.pocStrongerRng,
-					DecodeMaxTokens: types.DecodeMaxForStage(pocGenParams.scheme, modelConfig.DecodeMaxTokens),
+					DecodeMaxTokens: modelConfig.DecodeMaxTokens,
 					Scheme:          pocGenParams.scheme,
 				}
 			}
@@ -1422,6 +1422,19 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 	return params, nil
 }
 
+func stagePromptAndSteps(model *types.PoCModelConfig, scheme types.PocScheme) (int64, int64) {
+	if block, ok := model.SchemeParams(scheme); ok && block != nil {
+		if scheme == types.PocScheme_POC_SCHEME_DECODE {
+			return block.SeqLen, block.MaxTokens
+		}
+		return block.SeqLen, 0
+	}
+	if scheme == types.PocScheme_POC_SCHEME_DECODE {
+		return 0, 0
+	}
+	return model.SeqLen, 0
+}
+
 func applyStageRecipe(params *pocParams, recipe *types.PocStageRecipe) {
 	params.scheme = recipe.Scheme
 	params.pocStrongerRng = recipe.PocStrongerRngEnabled
@@ -1430,10 +1443,11 @@ func applyStageRecipe(params *pocParams, recipe *types.PocStageRecipe) {
 		if modelConfig == nil {
 			continue
 		}
+		seqLen, maxTokens := stagePromptAndSteps(modelConfig, recipe.Scheme)
 		params.models[modelConfig.ModelId] = apiconfig.PoCModelConfigCache{
 			ModelId:         modelConfig.ModelId,
-			SeqLen:          modelConfig.SeqLen,
-			DecodeMaxTokens: types.DecodeMaxForStage(recipe.Scheme, modelConfig.DecodeMaxTokens),
+			SeqLen:          seqLen,
+			DecodeMaxTokens: maxTokens,
 		}
 	}
 }

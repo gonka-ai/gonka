@@ -406,6 +406,7 @@ func TestConfirmationScalesInSnapshot(t *testing.T) {
 	require.Equal(t, []*types.ConfirmationWeightScale{scales[0], scales[2]}, got)
 }
 
+
 func requireRatioEqual(t *testing.T, got *types.Decimal, numerator, denominator int64) {
 	t.Helper()
 	require.NotNil(t, got)

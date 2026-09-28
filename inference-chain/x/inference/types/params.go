@@ -625,6 +625,30 @@ func validateParamDecimalExponents(p Params) error {
 				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.relative_difficulty", i), dynamic.GetRelativeDifficulty()},
 			)
 		}
+		for j, block := range model.GetSchemes() {
+			if block == nil {
+				continue
+			}
+			prefix := fmt.Sprintf("poc_params.models[%d].schemes[%d]", i, j)
+			modelFields = append(modelFields,
+				struct {
+					name  string
+					value *Decimal
+				}{prefix + ".weight_scale_factor", block.GetWeightScaleFactor()},
+				struct {
+					name  string
+					value *Decimal
+				}{prefix + ".stat_test.dist_threshold", block.GetStatTest().GetDistThreshold()},
+				struct {
+					name  string
+					value *Decimal
+				}{prefix + ".stat_test.p_mismatch", block.GetStatTest().GetPMismatch()},
+				struct {
+					name  string
+					value *Decimal
+				}{prefix + ".stat_test.p_value_threshold", block.GetStatTest().GetPValueThreshold()},
+			)
+		}
 		for _, field := range modelFields {
 			if err := check(field.name, field.value); err != nil {
 				return err
@@ -889,6 +913,10 @@ func (p *PocParams) Validate() error {
 		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 10000) {
 		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 10000]")
 	}
+	requiredSchemes, err := activePocSchemes(p)
+	if err != nil {
+		return err
+	}
 	seen := make(map[string]bool)
 	for _, model := range p.GetModelConfigs() {
 		if model == nil {
@@ -900,18 +928,12 @@ func (p *PocParams) Validate() error {
 			}
 			seen[model.ModelId] = true
 		}
-		if model.SeqLen < 0 {
-			return fmt.Errorf("poc_params.models.seq_len cannot be negative")
-		}
-		if model.DecodeMaxTokens < 0 {
-			return fmt.Errorf("poc_params.models.decode_max_tokens cannot be negative")
-		}
-		if pocSlotIsDecode(p) && model.DecodeMaxTokens <= 0 {
-			return fmt.Errorf("poc_params.models.decode_max_tokens must be > 0 when a PoC slot is DECODE (model_id %q)", model.ModelId)
+		if err := model.validateSchemeBlocks(requiredSchemes); err != nil {
+			return err
 		}
 	}
-	if pocSlotIsDecode(p) && len(p.GetModelConfigs()) == 0 {
-		return fmt.Errorf("DECODE requires at least one model with decode_max_tokens > 0")
+	if _, needDecode := requiredSchemes[PocScheme_POC_SCHEME_DECODE]; needDecode && len(p.GetModelConfigs()) == 0 {
+		return fmt.Errorf("DECODE requires at least one model with a DECODE scheme block")
 	}
 	if p.DynamicCoefficientParams != nil {
 		if err := p.validateDynamicCoefficientParams(); err != nil {

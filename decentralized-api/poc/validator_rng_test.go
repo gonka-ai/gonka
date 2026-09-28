@@ -160,27 +160,35 @@ func TestValidateParticipant_DecodeSchemePropagated(t *testing.T) {
 	t.Run("decode", func(t *testing.T) {
 		params := testModelPocParams()
 		params.PocScheme = types.PocScheme_POC_SCHEME_DECODE
-		params.Models[0].DecodeMaxTokens = 256
-		params.Models[0].DecodeStatTest = &types.PoCStatTestParams{
-			DistThreshold:   types.DecimalFromFloat(0.03),
-			PMismatch:       types.DecimalFromFloat(0.1),
-			PValueThreshold: types.DecimalFromFloat(0.05),
-		}
+		params.Models[0].Schemes = []*types.PocSchemeParams{{
+			Scheme:    types.PocScheme_POC_SCHEME_DECODE,
+			SeqLen:    128,
+			MaxTokens: 64,
+			StatTest: &types.PoCStatTestParams{
+				DistThreshold:   types.DecimalFromFloat(0.03),
+				PMismatch:       types.DecimalFromFloat(0.1),
+				PValueThreshold: types.DecimalFromFloat(0.05),
+			},
+		}}
 		req := runValidateParticipant(t, params, artifact)
 		assert.True(t, req.Params.Decode)
-		assert.Equal(t, int64(256), req.Params.MaxTokens)
-		assert.Equal(t, int64(mlnodeclient.DecodeSeqLen), req.Params.SeqLen)
+		assert.Equal(t, int64(128), req.Params.SeqLen)
+		assert.Equal(t, int64(64), req.Params.MaxTokens)
 		require.Len(t, req.Validation.Artifacts, 1)
 		assert.Equal(t, []int{1, 2, 3}, req.Validation.Artifacts[0].KPointsSteps)
 		assert.Equal(t, "", req.Validation.Artifacts[0].VectorB64)
 		assert.InDelta(t, 0.03, req.StatTest.DistThreshold, 1e-9)
 	})
 
-	t.Run("prefill with N set is still prefill", func(t *testing.T) {
+	t.Run("prefill ignores the decode block", func(t *testing.T) {
 		params := testModelPocParams()
-		params.Models[0].DecodeMaxTokens = 256
+		params.Models[0].Schemes = []*types.PocSchemeParams{
+			{Scheme: types.PocScheme_POC_SCHEME_PREFILL, SeqLen: 128},
+			{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 64},
+		}
 		req := runValidateParticipant(t, params, artifact)
 		assert.False(t, req.Params.Decode)
+		assert.Equal(t, int64(128), req.Params.SeqLen)
 		assert.Equal(t, int64(0), req.Params.MaxTokens)
 		require.Len(t, req.Validation.Artifacts, 1)
 		assert.Nil(t, req.Validation.Artifacts[0].KPointsSteps)

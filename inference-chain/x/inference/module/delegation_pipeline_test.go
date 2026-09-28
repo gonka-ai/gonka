@@ -1358,7 +1358,7 @@ func TestResolveEpochCoefficients_IncludesAllSnapshottedHosts(t *testing.T) {
 		dynamicModel("a", dec(1, 0), dec(5, -1), dec(2, 0), dec(1, 0), 5000),
 		dynamicModel("b", dec(1, 0), dec(5, -1), dec(2, 0), dec(1, 0), 5000),
 	)
-	frozen, err := coefficient.Freeze(params)
+	frozen, err := coefficient.Freeze(params, nil)
 	require.NoError(t, err)
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: 1,
@@ -1407,7 +1407,7 @@ func TestResolveEpochCoefficients_EpochOneSkipsPriorRead(t *testing.T) {
 	params := dynamicPocParams(
 		dynamicModel("a", dec(12, -1), dec(5, -1), dec(2, 0), dec(1, 0), 10000),
 	)
-	frozen, err := coefficient.Freeze(params)
+	frozen, err := coefficient.Freeze(params, nil)
 	require.NoError(t, err)
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex:               1,

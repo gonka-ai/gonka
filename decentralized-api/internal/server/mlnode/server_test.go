@@ -23,6 +23,7 @@ import (
 type stubBrokerChainBridge struct {
 	models    []string
 	scheme    types.PocScheme
+	seqLen    int64
 	decodeMax int64
 }
 
@@ -67,20 +68,27 @@ func (s stubBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
 	return &types.QueryParamsResponse{}, nil
 }
 
+func recipeModel(id string, scheme types.PocScheme, seqLen, maxTokens int64) *types.PoCModelConfig {
+	return &types.PoCModelConfig{
+		ModelId: id,
+		Schemes: []*types.PocSchemeParams{{
+			Scheme:    scheme,
+			SeqLen:    seqLen,
+			MaxTokens: maxTokens,
+		}},
+	}
+}
+
 func (s stubBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
 	models := make([]*types.PoCModelConfig, 0, len(s.models))
 	if len(s.models) == 0 {
 		models = []*types.PoCModelConfig{
-			{ModelId: testModelA, SeqLen: 256, DecodeMaxTokens: s.decodeMax},
-			{ModelId: testModelB, SeqLen: 256, DecodeMaxTokens: s.decodeMax},
+			recipeModel(testModelA, s.scheme, s.seqLen, s.decodeMax),
+			recipeModel(testModelB, s.scheme, s.seqLen, s.decodeMax),
 		}
 	} else {
 		for _, id := range s.models {
-			models = append(models, &types.PoCModelConfig{
-				ModelId:         id,
-				SeqLen:          256,
-				DecodeMaxTokens: s.decodeMax,
-			})
+			models = append(models, recipeModel(id, s.scheme, s.seqLen, s.decodeMax))
 		}
 	}
 	return &types.QueryPocStageRecipeResponse{
@@ -94,10 +102,10 @@ func (s stubBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.Quer
 }
 
 func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...string) *broker.Broker {
-	return newMLNodeTestBrokerWithRecipe(t, phase, types.PocScheme_POC_SCHEME_PREFILL, 0, modelIDs...)
+	return newMLNodeTestBrokerWithRecipe(t, phase, types.PocScheme_POC_SCHEME_PREFILL, 1, 0, modelIDs...)
 }
 
-func newMLNodeTestBrokerWithRecipe(t *testing.T, phase types.EpochPhase, scheme types.PocScheme, decodeMax int64, modelIDs ...string) *broker.Broker {
+func newMLNodeTestBrokerWithRecipe(t *testing.T, phase types.EpochPhase, scheme types.PocScheme, seqLen, maxTokens int64, modelIDs ...string) *broker.Broker {
 	t.Helper()
 
 	tracker := &chainphase.ChainPhaseTracker{}
@@ -116,7 +124,7 @@ func newMLNodeTestBrokerWithRecipe(t *testing.T, phase types.EpochPhase, scheme 
 		nil,
 	)
 	testBroker := broker.NewBroker(
-		stubBrokerChainBridge{models: modelIDs, scheme: scheme, decodeMax: decodeMax},
+		stubBrokerChainBridge{models: modelIDs, scheme: scheme, seqLen: seqLen, decodeMax: maxTokens},
 		tracker,
 		nil,
 		"http://callback",
@@ -275,7 +283,7 @@ func TestV2GeneratedCallback_DecodeRejectsOutOfRangeSteps(t *testing.T) {
 	defer artifactStore.Close()
 	artifactStore.ActivateStage(100)
 
-	server := NewServer(nil, newMLNodeTestBrokerWithRecipe(t, types.PoCGeneratePhase, types.PocScheme_POC_SCHEME_DECODE, 2, testModelA), WithArtifactStore(artifactStore))
+	server := NewServer(nil, newMLNodeTestBrokerWithRecipe(t, types.PoCGeneratePhase, types.PocScheme_POC_SCHEME_DECODE, 1, 2, testModelA), WithArtifactStore(artifactStore))
 
 	post := func(steps []int) *httptest.ResponseRecorder {
 		body, err := json.Marshal(map[string]any{

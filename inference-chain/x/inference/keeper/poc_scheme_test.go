@@ -63,6 +63,15 @@ func TestFreezePocStageRecipe_WriteOnce(t *testing.T) {
 	params.PocParams.PocScheme = types.PocScheme_POC_SCHEME_PREFILL
 	params.PocParams.ConfirmationPocScheme = types.PocScheme_POC_SCHEME_DECODE
 	params.PocParams.ConfirmationSchemeEvents = 1
+	for _, model := range params.PocParams.Models {
+		model.Schemes = []*types.PocSchemeParams{{
+			Scheme:            types.PocScheme_POC_SCHEME_DECODE,
+			SeqLen:            256,
+			MaxTokens:         256,
+			StatTest:          model.StatTest,
+			WeightScaleFactor: model.WeightScaleFactor,
+		}}
+	}
 	require.NoError(t, k.SetParams(ctx, params))
 
 	canary, err := k.FreezePocStageRecipe(ctx, 200, &types.ConfirmationPoCEvent{EventSequence: 0, TriggerHeight: 200})

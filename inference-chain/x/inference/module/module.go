@@ -547,7 +547,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to initialize epoch sub-groups", types.EpochGroup, "error", err.Error())
 			return err
 		}
-		frozenCoefficients, err := coefficient.Freeze(params.PocParams)
+		frozenCoefficients, err := coefficient.Freeze(params.PocParams, recipe)
 		if err != nil {
 			am.LogError("Unable to freeze dynamic coefficient config", types.PoC, "error", err.Error())
 			return err

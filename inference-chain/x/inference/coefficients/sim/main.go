@@ -67,7 +67,7 @@ func main() {
 
 	cfg := loadConfig(*configPath)
 	params, modelIDs := buildParams(cfg)
-	frozen, err := coefficient.Freeze(params)
+	frozen, err := coefficient.Freeze(params, nil)
 	check(err)
 	rng := rand.New(rand.NewSource(cfg.Seed))
 	hardware := buildHardware(cfg, rng)

@@ -64,7 +64,7 @@ func calculateForTest(
 	modelIDs []string,
 	hasPrior bool,
 ) (*Result, error) {
-	frozen, err := Freeze(config)
+	frozen, err := Freeze(config, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func TestLegacyCalculateCarriesExactEffectiveEncoding(t *testing.T) {
 		ModelId:           "legacy",
 		WeightScaleFactor: dec(1234567890123, -13),
 	}}}
-	frozen, err := Freeze(legacy)
+	frozen, err := Freeze(legacy, nil)
 	require.NoError(t, err)
 	result, err := Calculate(
 		frozen.Params,
@@ -106,9 +106,38 @@ func TestLegacyCalculateCarriesExactEffectiveEncoding(t *testing.T) {
 	require.Equal(t, dec(1234567890123, -13), result.Scales[0].EffectiveCoefficient)
 }
 
+func TestLegacyFreezeUsesFrozenSchemeBlock(t *testing.T) {
+	prefill, decode := dec(1, 0), dec(4, 0)
+	live := &types.PocParams{
+		PocScheme: types.PocScheme_POC_SCHEME_DECODE,
+		Models: []*types.PoCModelConfig{{
+			ModelId:           "m",
+			WeightScaleFactor: prefill,
+			Schemes: []*types.PocSchemeParams{
+				{Scheme: types.PocScheme_POC_SCHEME_PREFILL, SeqLen: 128, WeightScaleFactor: prefill},
+				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256, WeightScaleFactor: decode},
+			},
+		}},
+	}
+	recipe := &types.PocStageRecipe{
+		Scheme: types.PocScheme_POC_SCHEME_DECODE,
+		Models: []*types.PoCModelConfig{{
+			ModelId:           "m",
+			WeightScaleFactor: prefill,
+			Schemes: []*types.PocSchemeParams{
+				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256, WeightScaleFactor: decode},
+			},
+		}},
+	}
+	frozen, err := Freeze(live, recipe)
+	require.NoError(t, err)
+	require.Len(t, frozen.Scales, 1)
+	require.Equal(t, decode, frozen.Scales[0].WeightScaleFactor)
+}
+
 func TestTransitionScaleWithoutControllerStateSeedsMinimum(t *testing.T) {
 	config := params(model("a", dec(5, -1), dec(2, 0), dec(1, 0), 10000))
-	frozen, err := Freeze(config)
+	frozen, err := Freeze(config, nil)
 	require.NoError(t, err)
 	previous := []*types.ConfirmationWeightScale{{
 		ModelId:           "a",
@@ -129,7 +158,7 @@ func TestTransitionScaleWithoutControllerStateSeedsMinimum(t *testing.T) {
 
 func TestCalculateUsesConfigFrozenAtPoCStart(t *testing.T) {
 	live := params(model("a", dec(5, -1), dec(2, 0), dec(1, 0), 10000))
-	frozen, err := Freeze(live)
+	frozen, err := Freeze(live, nil)
 	require.NoError(t, err)
 	live.Models[0].DynamicCoefficient.CoeffMin = dec(15, -1)
 	live.Models[0].DynamicCoefficient.TargetShareBps = 9000
