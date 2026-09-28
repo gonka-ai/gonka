@@ -26,7 +26,6 @@ const (
 )
 
 // DefaultFeeParams returns the default fee parameters.
-// Groups ship compiled in; none are enabled. Global min_gas_price stays 0.
 func DefaultFeeParams() *FeeParams {
 	storeCommitURL := sdk.MsgTypeURL(&MsgPoCV2StoreCommit{})
 	hdURL := sdk.MsgTypeURL(&MsgSubmitHardwareDiff{})
@@ -34,11 +33,11 @@ func DefaultFeeParams() *FeeParams {
 		MinGasPriceNgonka: 0,
 		BaseValidationGas: 500_000,
 		GasPerPocCount:    100,
-		EnabledFeeGroups:  nil,
+		EnabledFeeGroups:  []string{FeeGroupEpoch, FeeGroupCosmos},
 		Groups: []*FeeGroup{
 			{
 				Name:        FeeGroupEpoch,
-				MinGasPrice: 0,
+				MinGasPrice: 1,
 				Base:        &PeriodBase{Gas: 0, PeriodType: PeriodTypeEpoch, PeriodLength: 1},
 				Msgs: []*MsgGasRule{
 					{
@@ -62,6 +61,7 @@ func DefaultFeeParams() *FeeParams {
 					},
 				},
 			},
+			{Name: FeeGroupCosmos, MinGasPrice: 1},
 		},
 	}
 }

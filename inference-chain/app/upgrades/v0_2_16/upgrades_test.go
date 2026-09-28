@@ -147,7 +147,7 @@ func TestFreezeUpcomingCoefficientConfigMissingGroupData(t *testing.T) {
 	require.Contains(t, err.Error(), "upcoming epoch 2 has no root epoch group data")
 }
 
-func TestApplyFeeGroupUpgradeInfo_EmptyKeepsDisabled(t *testing.T) {
+func TestApplyFeeGroupUpgradeInfo_OmittedKeepsDefaultsEmptyDisables(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
@@ -157,7 +157,7 @@ func TestApplyFeeGroupUpgradeInfo_EmptyKeepsDisabled(t *testing.T) {
 	require.NoError(t, applyFeeGroupUpgradeInfo(ctx, k, ""))
 	updated, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Empty(t, updated.FeeParams.EnabledFeeGroups)
+	require.Equal(t, []string{inferencetypes.FeeGroupEpoch, inferencetypes.FeeGroupCosmos}, updated.FeeParams.EnabledFeeGroups)
 
 	require.NoError(t, applyFeeGroupUpgradeInfo(ctx, k, `{"enabled_fee_groups":[]}`))
 	updated, err = k.GetParams(ctx)
@@ -165,7 +165,7 @@ func TestApplyFeeGroupUpgradeInfo_EmptyKeepsDisabled(t *testing.T) {
 	require.Empty(t, updated.FeeParams.EnabledFeeGroups)
 }
 
-func TestApplyFeeGroupUpgradeInfo_BinariesOnlyKeepsDisabled(t *testing.T) {
+func TestApplyFeeGroupUpgradeInfo_BinariesOnlyKeepsDefaults(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
@@ -179,7 +179,7 @@ func TestApplyFeeGroupUpgradeInfo_BinariesOnlyKeepsDisabled(t *testing.T) {
 	require.NoError(t, applyFeeGroupUpgradeInfo(ctx, k, infoJSON))
 	updated, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Empty(t, updated.FeeParams.EnabledFeeGroups)
+	require.Equal(t, []string{inferencetypes.FeeGroupEpoch, inferencetypes.FeeGroupCosmos}, updated.FeeParams.EnabledFeeGroups)
 }
 
 func TestApplyFeeGroupUpgradeInfo_EnablesEpochAtPrice(t *testing.T) {
@@ -216,7 +216,7 @@ func TestApplyFeeGroupUpgradeInfo_RejectsInvalid(t *testing.T) {
 	require.Error(t, applyFeeGroupUpgradeInfo(ctx, k, `{"enabled_fee_groups":["epoch"],"min_gas_prices":{"epoch":0}}`))
 	require.Error(t, applyFeeGroupUpgradeInfo(ctx, k, `{"enabled_fee_groups":["epoch"],"min_gas_prices":{"epoch":10,"bls":1}}`))
 	require.Error(t, applyFeeGroupUpgradeInfo(ctx, k, `{"enabled_fee_groups":["epoc"],"min_gas_prices":{"epoc":10}}`))
-	require.Error(t, applyFeeGroupUpgradeInfo(ctx, k, `{"enabled_fee_groups":["bls"],"min_gas_prices":{"bls":10}}`))
+	require.Error(t, applyFeeGroupUpgradeInfo(ctx, k, `{"min_gas_prices":{"epoch":1}}`))
 	require.Error(t, applyFeeGroupUpgradeInfo(ctx, k, `{not json`))
 }
 
@@ -423,4 +423,21 @@ func TestGrantDeclarePoCIntentAuthzSkipsExistingGrant(t *testing.T) {
 
 	require.NoError(t, grantDeclarePoCIntentAuthz(ctx, authzKeeper, k))
 	require.Empty(t, authzKeeper.saved)
+}
+
+func TestApplyFeeGroupUpgradeInfo_CreatesMissingGroups(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.FeeParams = inferencetypes.DefaultFeeParams()
+	params.FeeParams.Groups = params.FeeParams.Groups[:1]
+	params.FeeParams.EnabledFeeGroups = []string{inferencetypes.FeeGroupEpoch}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, applyFeeGroupUpgradeInfo(ctx, k, `{"enabled_fee_groups":["epoch","cosmos","governance"],"min_gas_prices":{"epoch":1,"cosmos":1,"governance":2}}`))
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"epoch", "cosmos", "governance"}, updated.FeeParams.EnabledFeeGroups)
+	require.Equal(t, uint64(1), updated.FeeParams.GroupByName("cosmos").MinGasPrice)
+	require.Equal(t, uint64(2), updated.FeeParams.GroupByName("governance").MinGasPrice)
+	require.Equal(t, params.FeeParams.Groups[0].Msgs, updated.FeeParams.Groups[0].Msgs)
 }

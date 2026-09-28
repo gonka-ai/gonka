@@ -35,9 +35,8 @@ type AuthzMigrationKeeper interface {
 // --upgrade-info field. Cosmovisor already stores binaries/api_binaries in the
 // same object; unknown keys are ignored.
 //
-// Omitted or empty enabled_fee_groups keeps coins off (extra gas still runs).
-// Enable later with MsgUpdateParams. To charge at upgrade height, add the same
-// field the param uses:
+// Omitted enabled_fee_groups preserves migration defaults; an empty list disables fees.
+// Example override:
 //
 //	"enabled_fee_groups": ["epoch"],
 //	"min_gas_prices": {"epoch": 10}
@@ -89,7 +88,7 @@ func CreateUpgradeHandler(
 			return toVM, err
 		}
 
-		// Apply after RunMigrations: inference module 14 forces enabled=[].
+		// Apply overrides after RunMigrations installs the default fee groups.
 		if err := applyFeeGroupUpgradeInfo(ctx, k, plan.Info); err != nil {
 			return toVM, err
 		}
@@ -290,7 +289,7 @@ func freezeUpcomingCoefficientConfig(ctx context.Context, k keeper.Keeper) error
 
 func applyFeeGroupUpgradeInfo(ctx context.Context, k keeper.Keeper, infoJSON string) error {
 	if infoJSON == "" {
-		k.LogInfo("no upgrade info, fee groups stay disabled", types.Upgrades)
+		k.LogInfo("no upgrade info, keeping default fee groups", types.Upgrades)
 		return nil
 	}
 
@@ -298,8 +297,11 @@ func applyFeeGroupUpgradeInfo(ctx context.Context, k keeper.Keeper, infoJSON str
 	if err := json.Unmarshal([]byte(infoJSON), &info); err != nil {
 		return fmt.Errorf("unmarshal v0.2.16 upgrade info: %w", err)
 	}
-	if len(info.EnabledFeeGroups) == 0 {
-		k.LogInfo("enabled_fee_groups empty, fee groups stay disabled", types.Upgrades)
+	if info.EnabledFeeGroups == nil {
+		if len(info.MinGasPrices) != 0 {
+			return fmt.Errorf("min_gas_prices requires enabled_fee_groups")
+		}
+		k.LogInfo("enabled_fee_groups omitted, keeping default fee groups", types.Upgrades)
 		return nil
 	}
 
@@ -312,13 +314,17 @@ func applyFeeGroupUpgradeInfo(ctx context.Context, k keeper.Keeper, infoJSON str
 	}
 
 	for _, name := range info.EnabledFeeGroups {
+		if !types.IsKnownFeeGroup(name) {
+			return fmt.Errorf("unknown fee group %q", name)
+		}
 		price, ok := info.MinGasPrices[name]
 		if !ok || price == 0 {
 			return fmt.Errorf("enabled fee group %q requires min_gas_prices[%q] > 0", name, name)
 		}
 		group := params.FeeParams.GroupByName(name)
 		if group == nil {
-			return fmt.Errorf("enabled fee group %q has no groups[] entry", name)
+			group = &types.FeeGroup{Name: name}
+			params.FeeParams.Groups = append(params.FeeParams.Groups, group)
 		}
 		group.MinGasPrice = price
 	}
