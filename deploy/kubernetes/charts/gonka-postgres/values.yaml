@@ -1,0 +1,45 @@
+# Install as a separate Helm release; see ../../postgres.md.
+# CloudNativePG >= 1.28.0 and its CRDs/webhook must already be installed.
+fullnameOverride: ''
+
+# Explicit tested CloudNativePG-compatible PostgreSQL 16 image. Include a
+# concrete 16.x tag, optionally followed by @sha256:...; never a floating major.
+# The v5 Compose database uses PostgreSQL 16. Raw PGDATA is not portable from
+# its Alpine image to a different libc/image family: use a logical migration.
+imageName: ''
+imagePullPolicy: IfNotPresent
+imagePullSecrets: []
+instances: 3
+
+# Existing kubernetes.io/basic-auth Secret in this namespace. Its fixed keys
+# are username (must equal owner) and password. No credentials enter Helm values.
+database: devshardd
+owner: devshardd
+credentialsSecret: ''
+
+# One independent RWO PVC per instance. Empty storageClass uses the default.
+# Benchmark storage latency/IOPS; replicated volumes do not replace PG replicas.
+storage:
+  size: 100Gi
+  storageClass: ''
+resources:
+  requests: {cpu: '1', memory: 2Gi}
+  limits: {memory: 4Gi}
+nodeSelector: {}
+tolerations: []
+
+# Native CNPG CSI snapshot backups, disabled unless the platform supports them.
+# Cold backup of a preferred standby; if no standby is usable, CNPG may fence
+# the primary during the backup. Snapshot retention/pruning is operator-owned.
+snapshots:
+  enabled: false
+  className: ''
+  # CNPG cron has SIX fields, beginning with seconds (daily at 02:00).
+  schedule: '0 0 2 * * *'
+  immediate: false
+
+# Bootstrap ONLY a new cluster from a cold snapshot made by this chart.
+# Snapshot must contain PGDATA and pg_wal (this chart keeps them on one volume).
+# Keep this value on subsequent upgrades; never use it to overwrite a live DB.
+recovery:
+  volumeSnapshot: ''

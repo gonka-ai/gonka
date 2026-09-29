@@ -533,6 +533,15 @@ overlay only bounds the drain with `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default
 `10s`) before Docker forces termination, so selecting one image cannot override
 the shutdown contract of the other.
 
+With a routing catalog enabled, a shared supervisor forwards the image stop
+signal to HAProxy, stops the catalog retry loop, and waits for accepted streams
+to finish. Unexpected reconciler exits still restart during normal operation.
+Use full container replacement for maintenance: the entrypoint restores the
+accepted catalog from its persistent cache. A raw HAProxy `SIGUSR2` reload
+resets dynamic runtime maps without reconstructing their accepted slot
+assignments. `make test-supervisor` exercises both images with catalog restart,
+bootstrap-route reload, accepted POST stream drain, and idle shutdown.
+
 `VERSIOND_ROUTER_PULL_POLICY=always` is the release default and requires the
 registry to be reachable before a slot operation. During a registry incident,
 an operator may use `missing` only when the intended image or digest is already

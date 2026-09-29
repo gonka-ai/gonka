@@ -1,0 +1,34 @@
+# Replace image references, addresses and identity before installation.
+# These are example names, not published Gonka Kubernetes images.
+images:
+  versiond: registry.example.com/gonka/versiond:REVISION
+  router: registry.example.com/gonka/versiond-router:REVISION
+  proxyRouter: registry.example.com/gonka/proxy-router:REVISION
+  proxyPolicy: registry.example.com/gonka/proxy:REVISION
+  edgeApi: registry.example.com/gonka/edge-api:REVISION
+protocols: [v6]
+external:
+  oracleUrl: http://network-node.internal:9100/versions
+  dapiHost: network-node.internal
+  dapiPort: 9000
+  chainRpcUrl: http://network-node.internal:26657
+  chainGrpcUrl: network-node.internal:9090
+  chainGrpcTls: false
+  nodeManagerAddress: network-node.internal:9400
+identity:
+  keyName: warm-key
+  accountPubKey: REPLACE_WITH_PARTICIPANT_PUBLIC_KEY
+  keyringSecret: gonka-keyring
+  passwordSecret: gonka-keyring-password
+postgres:
+  # A self-managed CNPG primary can use db-gonka-postgres-rw.gonka.svc.cluster.local.
+  host: postgres.internal
+  credentialsSecret: gonka-postgres-app
+  sslMode: verify-full
+  caSecret: gonka-postgres-ca
+ingress:
+  # Expose with LoadBalancer after the storage check and private smoke tests.
+  service:
+    type: ClusterIP
+  serverName: gonka.example.com
+  tlsSecret: gonka-tls

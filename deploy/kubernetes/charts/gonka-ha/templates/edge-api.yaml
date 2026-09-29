@@ -1,0 +1,112 @@
+{{- $name := include "gonka.fullname" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-edge-api
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge-api
+spec:
+  selector:
+    {{- include "gonka.selector" (dict "root" . "component" "edge-api") | nindent 4 }}
+  ports:
+    - name: http
+      port: 18080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-edge-api
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge-api
+spec:
+  replicas: {{ .Values.edgeApi.replicas }}
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "gonka.selector" (dict "root" . "component" "edge-api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gonka.selector" (dict "root" . "component" "edge-api") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.edgeApi.terminationGracePeriodSeconds | default 30 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- include "gonka.scheduling" (dict "root" . "component" "edge-api" "config" .Values.edgeApi) | nindent 6 }}
+      containers:
+        - name: edge-api
+          image: {{ .Values.images.edgeApi | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: http
+              containerPort: 18080
+          env:
+            - name: EDGE_API_PORT
+              value: "18080"
+            - name: CHAIN_GRPC_URL
+              value: {{ .Values.external.chainGrpcUrl | quote }}
+            - name: CHAIN_GRPC_TLS
+              value: {{ .Values.external.chainGrpcTls | default false | quote }}
+            - name: CHAIN_RPC_URL
+              value: {{ .Values.external.chainRpcUrl | quote }}
+            {{- with .Values.edgeApi.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # The v6 edge-api exposes process health, not a chain-readiness API.
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 1
+          lifecycle:
+            preStop:
+              exec:
+                # Allow Service endpoint removal before the binary's 10s drain.
+                command: ["/bin/sh", "-c", "sleep 5"]
+          resources:
+            {{- toYaml .Values.edgeApi.resources | nindent 12 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}-edge-api
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ sub (int .Values.edgeApi.replicas) 1 }}
+  selector:
+    matchLabels:
+      {{- include "gonka.selector" (dict "root" . "component" "edge-api") | nindent 6 }}

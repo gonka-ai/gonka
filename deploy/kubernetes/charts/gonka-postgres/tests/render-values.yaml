@@ -1,0 +1,3 @@
+# Render/schema checks only. This image is deliberately not a deployable image.
+imageName: registry.invalid/gonka/postgresql:16.13-test
+credentialsSecret: gonka-postgres-credentials

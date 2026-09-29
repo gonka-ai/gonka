@@ -1,0 +1,156 @@
+{{- $name := include "gonka.fullname" . -}}
+{{- $endpoints := include "gonka.versiondEndpoints" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-router
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+    app.kubernetes.io/component: router
+spec:
+  clusterIP: None
+  # The outer HAProxy asks each router precise per-version readiness itself.
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "gonka.selector" (dict "root" . "component" "router") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: admin
+      port: 8404
+      targetPort: admin
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}-router
+  annotations:
+    gonka.ai/desired-replicas: {{ .Values.router.replicas | quote }}
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+    app.kubernetes.io/component: router
+spec:
+  serviceName: {{ $name }}-router
+  replicas: {{ ternary 0 (int .Values.router.replicas) .Values.maintenance }}
+  podManagementPolicy: OrderedReady
+  minReadySeconds: 10
+  updateStrategy:
+    type: OnDelete
+  selector:
+    matchLabels:
+      {{- include "gonka.selector" (dict "root" . "component" "router") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gonka.selector" (dict "root" . "component" "router") | nindent 8 }}
+      annotations:
+        checksum/scripts: {{ include (print $.Template.BasePath "/scripts.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.router.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 99
+        runAsGroup: 99
+        fsGroup: 99
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      {{- include "gonka.scheduling" (dict "root" . "component" "router" "config" .Values.router) | nindent 6 }}
+      containers:
+        - name: router
+          image: {{ .Values.images.router | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/bin/sh", "/opt/gonka/dns-entrypoint.sh"]
+          args: ["/usr/local/bin/entrypoint.sh"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: admin
+              containerPort: 8404
+          env:
+            - name: GONKA_HA
+              value: "true"
+            - name: VERSIOND_NON_HA_VERSIONS
+              value: ""
+            - name: VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS
+              value: "true"
+            - name: VERSIOND_POOL_ENDPOINTS
+              value: {{ $endpoints | quote }}
+            - name: VERSIOND_VERSIONS
+              # The allowlist filters governance; it must not pre-admit routes.
+              # Static bootstrap names bypass the catalog activation reserve.
+              value: ""
+            - name: VERSIOND_ROUTER_VERSION_CAPACITY
+              value: {{ .Values.router.versionCapacity | toString | quote }}
+            - name: VERSIOND_ROUTING_ACTIVATION_MIN_READY
+              value: {{ .Values.router.activationMinReady | toString | quote }}
+            - name: VERSIOND_ROUTING_CATALOG_URL
+              value: {{ include "gonka.oracleURL" . | quote }}
+            {{- with .Values.router.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: admin
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: admin
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: admin
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 1
+          # The image's STOPSIGNAL SIGUSR1 soft-stops HAProxy. Kubernetes keeps
+          # established streams alive within terminationGracePeriodSeconds.
+          volumeMounts:
+            - name: catalog
+              mountPath: /var/lib/gonka-router
+            - name: scripts
+              mountPath: /opt/gonka
+              readOnly: true
+          resources:
+            {{- toYaml .Values.router.resources | nindent 12 }}
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ $name }}-scripts
+            defaultMode: 0555
+  volumeClaimTemplates:
+    - metadata:
+        name: catalog
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.router.storage.storageClass }}
+        storageClassName: {{ .Values.router.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.router.storage.size }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}-router
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ sub (int .Values.router.replicas) 1 }}
+  selector:
+    matchLabels:
+      {{- include "gonka.selector" (dict "root" . "component" "router") | nindent 6 }}

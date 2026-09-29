@@ -1,5 +1,9 @@
 # High-availability Devshard Host Setup
 
+For the optional Kubernetes deployment of the v6 HA serving tier, see
+[Kubernetes for the HA serving tier](../deploy/kubernetes/README.md). This document
+remains the Docker Compose operator path; Kubernetes is not required for Compose HA.
+
 **Audience:** hosts that serve inference over **devshard** (`/devshard/...` → `versiond` → `devshardd`).  
 **Status:** draft for host operators - edit before wider distribution.  
 **Goal:** run a **high-available (HA)** host stack so a single `versiond` / `devshardd` failure does not take the host offline.
