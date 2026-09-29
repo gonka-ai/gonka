@@ -9,6 +9,8 @@ repo_dir=$(cd -- "$test_dir/../../.." && pwd)
 chart_dir="$repo_dir/deploy/kubernetes/charts/gonka-ha"
 kind_bin=${KIND_BIN:-kind}
 helm_bin=${HELM_BIN:-helm}
+smoke_suite=${SMOKE_SUITE:-all}
+case "$smoke_suite" in all|completion) ;; *) echo "unknown SMOKE_SUITE: $smoke_suite" >&2; exit 1 ;; esac
 for command in docker kubectl python3 timeout "$kind_bin" "$helm_bin"; do
     command -v "$command" >/dev/null || { echo "required command missing: $command" >&2; exit 1; }
 done
@@ -191,8 +193,13 @@ for ((attempt = 0; attempt < 100; attempt++)); do
 done
 forward_port=$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\) ->.*/\1/p' "$scratch/port-forward.log" | head -1)
 [[ -n $forward_port ]] || { cat "$scratch/port-forward.log" >&2; exit 1; }
-python3 "$test_dir/fixtures/smoke.py" --kubeconfig "$kubeconfig" --context "$context" --namespace "$namespace" --base-url "http://127.0.0.1:$forward_port" --prefix "$prefix"
-python3 "$test_dir/fixtures/rollout_smoke.py" \
+python3 "$test_dir/fixtures/completion_smoke.py" \
     --kubeconfig "$kubeconfig" --context "$context" --namespace "$namespace" \
-    --base-url "http://127.0.0.1:$forward_port" --prefix "$prefix" \
     --helm "$helm_bin" --values "$scratch/values.json" --release smoke
+if [[ $smoke_suite == all ]]; then
+    python3 "$test_dir/fixtures/smoke.py" --kubeconfig "$kubeconfig" --context "$context" --namespace "$namespace" --base-url "http://127.0.0.1:$forward_port" --prefix "$prefix"
+    python3 "$test_dir/fixtures/rollout_smoke.py" \
+        --kubeconfig "$kubeconfig" --context "$context" --namespace "$namespace" \
+        --base-url "http://127.0.0.1:$forward_port" --prefix "$prefix" \
+        --helm "$helm_bin" --values "$scratch/values.json" --release smoke
+fi

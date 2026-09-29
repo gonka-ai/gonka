@@ -253,6 +253,14 @@ parent admission before the next pod can stop. If it fails, the coordinator
 restores that pod's prior ControllerRevision template; if the remaining pool
 has also degraded, it stops and retains the recovery journal.
 
+After every Helm apply, the coordinator also waits for the edge-api and oracle
+Deployments: the controller must observe the applied generation, all desired
+replicas must be updated, ready and available, and old replicas must retire.
+Ready replicas from the previous image do not count as a completed update.
+A failed Deployment update stops the command and retains the journal; correct
+the image or other failing configuration and repeat with `--resume`. The
+coordinator does not automatically roll back the whole Helm release.
+
 Changing the versiond pool requires an explicit **maintenance window**:
 
 ```bash
@@ -269,6 +277,12 @@ placement contracts never serve concurrently. Replica changes for any serving
 tier, endpoint changes and allowlist removals are rejected by live Helm checks
 while routing pods still exist, including terminating pods. `maintenance: true`
 is an internal staging setting for this procedure, not a bypass flag.
+
+Choose `fullnameOverride` at installation time. Changing the rendered serving
+StatefulSet names on an installed release is unsupported, even in maintenance.
+The coordinator rejects it before draining ingress, and the chart also rejects
+it with both routing tiers already offline. Renaming requires a separate
+migration of resources and persistent data.
 
 The coordinator requires Python 3 and PyYAML (`python3 -m pip install PyYAML==6.0.3`
 in your operator environment). Both commands use local `kubectl` and Helm credentials; optional `--context`
@@ -368,7 +382,10 @@ deploy/kubernetes/tests/postgres-kind-smoke.sh
 The kind smoke uses an isolated cluster, real router/policy images and **mock**
 versiond/edge/control-plane dependencies. It checks Kubernetes networking,
 placement, admission, stream drain, refused live membership changes, maintenance
-scaling, per-version reserve and failed-candidate restoration. It does not prove real inference or
+scaling, per-version reserve, failed-candidate restoration, failed Deployment
+updates with corrected resume, and rename rejection before draining or while
+offline. Set `SMOKE_SUITE=completion` to run only the Deployment/rename
+regressions in a fresh isolated cluster. It does not prove real inference or
 PostgreSQL failover. Run real chain/devshard acceptance and a primary-failure
 exercise with the exact approved artifacts before production rollout. Existing
 Compose host-evacuation coverage remains applicable to the shared runtime.

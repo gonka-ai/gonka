@@ -28,6 +28,11 @@ be able to list these objects. Even terminating routing Pods count as live.
 {{- range .statefulSets.items | default list -}}
 {{- $labels := .metadata.labels | default dict -}}
 {{- $component := get (.spec.template.metadata.labels | default dict) "app.kubernetes.io/component" -}}
+{{- if and (eq (get $labels "app.kubernetes.io/name") "gonka-ha") (eq (get $labels "app.kubernetes.io/instance") $root.Release.Name) (has $component (list "versiond" "router" "ingress")) -}}
+{{- if ne .metadata.name (printf "%s-%s" $name $component) -}}
+{{- fail "changing serving StatefulSet names is unsupported, including during maintenance; keep fullnameOverride unchanged after installation" -}}
+{{- end -}}
+{{- end -}}
 {{- if and (eq (get $labels "app.kubernetes.io/name") "gonka-ha") (eq (get $labels "app.kubernetes.io/instance") $root.Release.Name) (has $component (list "router" "ingress")) (gt (int .spec.replicas) 0) -}}
 {{- $routingControllers = true -}}
 {{- end -}}
@@ -46,9 +51,6 @@ be able to list these objects. Even terminating routing Pods count as live.
 {{- fail (printf "cannot verify %s membership: multiple StatefulSets belong to this release; drain routing Pods before maintenance" $component) -}}
 {{- end -}}
 {{- $_ := set $seen $component true -}}
-{{- if ne .metadata.name (printf "%s-%s" $name $component) -}}
-{{- fail "changing serving StatefulSet names requires offline maintenance=true with ingress/router scaled to zero and no remaining Pods" -}}
-{{- end -}}
 {{- $desired := int (get (get $root.Values $component) "replicas") -}}
 {{- $previous := int .spec.replicas -}}
 {{- $annotations := .metadata.annotations | default dict -}}

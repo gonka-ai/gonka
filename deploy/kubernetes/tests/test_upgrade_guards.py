@@ -154,8 +154,19 @@ class UpgradeGuards(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("maintenance=true", result.stderr)
 
+    def test_rename_is_rejected_even_after_all_routing_pods_have_gone(self):
+        result = guarded_render(lookup_state(self.documents, live=False),
+                                {"maintenance": True, "fullnameOverride": "renamed"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("StatefulSet names is unsupported", result.stderr)
+
+    def test_explicit_override_preserving_existing_names_is_allowed(self):
+        result = guarded_render(lookup_state(self.documents), {"fullnameOverride": "test-gonka-ha"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_fresh_install_has_no_previous_membership(self):
-        result = guarded_render({name: {"items": []} for name in ("pods", "statefulSets", "deployments")})
+        result = guarded_render({name: {"items": []} for name in ("pods", "statefulSets", "deployments")},
+                                {"fullnameOverride": "custom-name"})
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_other_releases_do_not_block_maintenance(self):

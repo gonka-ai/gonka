@@ -4,6 +4,9 @@ import copy
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import Mock, patch
+
+import yaml
 
 spec = importlib.util.spec_from_file_location("rollout", Path(__file__).resolve().parents[1] / "rollout.py")
 rollout = importlib.util.module_from_spec(spec)
@@ -49,6 +52,108 @@ class ReserveTests(unittest.TestCase):
         self.assertEqual(rollout.route_map("0x123 v6 backend\n"), {"v6": "backend"})
         with self.assertRaises(RuntimeError):
             rollout.route_map("Can't find map")
+
+
+class DeploymentTests(unittest.TestCase):
+    def make_fleet(self, command="upgrade"):
+        fleet = rollout.Fleet(argparse.Namespace(namespace="ns", release="host", context=None,
+                              kubeconfig=None, timeout=1, resume=False, command=command, values="values.yaml"))
+        self.deployments = [{"kind": "Deployment", "metadata": {"name": c, "uid": c, "generation": 2},
+                             "spec": {"replicas": 2, "template": {
+                                 "metadata": {"labels": {"app.kubernetes.io/component": c}},
+                                 "spec": {"containers": [{"env": [{"name": "ORACLE_ALLOW", "value": "v6"}]}]}}},
+                             "status": {"observedGeneration": 2, "replicas": 2, "updatedReplicas": 2,
+                                        "readyReplicas": 2, "availableReplicas": 2}}
+                            for c in rollout.DEPLOYMENTS]
+        fleet.deployment_targets = [copy.deepcopy(d["metadata"]) for d in self.deployments]
+        fleet.get = lambda kind, name=None: ({"items": self.deployments} if kind == "deployments" else
+                                            next(d for d in self.deployments if d["metadata"]["name"] == name))
+        fleet.sets = {c: {"kind": "StatefulSet", "metadata": {"name": c}, "spec": {"template": {
+            "metadata": {"labels": {"app.kubernetes.io/component": c}}}}} for c in rollout.COMPONENTS}
+        fleet.refresh = Mock()
+        return fleet
+
+    def test_both_deployments_must_finish_the_applied_generation(self):
+        fleet = self.make_fleet()
+        self.assertTrue(fleet.deployments_ready())
+        for index in range(2):
+            for status in ({"observedGeneration": 1}, {"updatedReplicas": 1},
+                           {"replicas": 3}, {"readyReplicas": 1}, {"availableReplicas": 1}):
+                with self.subTest(component=index, status=status):
+                    fleet = self.make_fleet()
+                    self.deployments[index]["status"].update(status)
+                    with self.assertRaisesRegex(RuntimeError, "rollout incomplete"):
+                        fleet.deployments_ready()
+
+    def test_paused_deleted_or_concurrently_replaced_deployment_is_not_success(self):
+        for change in ({"generation": 3}, {"uid": "replacement"}, {"deletionTimestamp": "now"}, {}):
+            with self.subTest(change=change):
+                fleet = self.make_fleet()
+                if change:
+                    self.deployments[0]["metadata"].update(change)
+                else:
+                    self.deployments[0]["spec"]["paused"] = True
+                with self.assertRaises(RuntimeError):
+                    fleet.deployments_ready()
+
+    def test_helm_requires_both_deployments_and_ignores_unrelated_components(self):
+        for count in (0, 1, 2):
+            with self.subTest(oracle_count=count):
+                fleet = self.make_fleet()
+                edge, oracle = self.deployments
+                unrelated = copy.deepcopy(edge)
+                unrelated["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/component"] = "fixture"
+                self.deployments[:] = [edge, unrelated] + [oracle] * count
+                fleet.wait = lambda description, predicate: self.assertTrue(predicate())
+                with patch.object(rollout, "run"):
+                    if count == 1:
+                        fleet.helm_upgrade(False)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "exactly one oracle"):
+                            fleet.helm_upgrade(False)
+
+    def prepare_run(self, fleet):
+        fleet.acquire = Mock()
+        fleet.same_membership = Mock()
+        fleet.discover = Mock()
+        fleet.stop_tier = Mock()
+        fleet.replace_component = Mock()
+        fleet.kub = Mock()
+        manifests = [*fleet.sets.values(), *self.deployments]
+        return yaml.safe_dump_all(manifests)
+
+    def test_failed_deployment_update_retains_journal_and_stops_before_replacements(self):
+        for command in ("upgrade", "maintenance-upgrade"):
+            with self.subTest(command=command):
+                fleet = self.make_fleet(command)
+                rendered = self.prepare_run(fleet)
+                # Old healthy replicas still serve, but the new image cannot start.
+                self.deployments[0]["status"].update(replicas=3, updatedReplicas=1)
+                fleet.wait = lambda description, predicate: predicate()
+                with patch.object(rollout, "run", return_value=Mock(stdout=rendered)) as run:
+                    with self.assertRaisesRegex(RuntimeError, "Deployment edge-api rollout incomplete"):
+                        fleet.run()
+                fleet.acquire.assert_called_once()
+                fleet.replace_component.assert_not_called()
+                fleet.kub.assert_not_called()  # includes journal DELETE
+                applies = [c.args[0] for c in run.call_args_list if "upgrade" in c.args[0]]
+                self.assertEqual(len(applies), 1)
+                self.assertIn("maintenance=" + str(command == "maintenance-upgrade").lower(), applies[0])
+
+    def test_rename_is_rejected_before_lock_or_drain_in_both_modes(self):
+        for command in ("upgrade", "maintenance-upgrade"):
+            with self.subTest(command=command):
+                fleet = self.make_fleet(command)
+                rendered = self.prepare_run(fleet)
+                manifests = list(yaml.safe_load_all(rendered))
+                manifests[0]["metadata"]["name"] = "renamed-versiond"
+                with patch.object(rollout, "run", return_value=Mock(stdout=yaml.safe_dump_all(manifests))) as run:
+                    with self.assertRaisesRegex(RuntimeError, "names is unsupported"):
+                        fleet.run()
+                run.assert_called_once()  # template only, never upgrade
+                fleet.acquire.assert_not_called()
+                fleet.stop_tier.assert_not_called()
+                fleet.kub.assert_not_called()
 
 
 class ReplacementTests(unittest.TestCase):

@@ -22,6 +22,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent
 COMPONENTS = ("versiond", "router", "ingress")
+DEPLOYMENTS = ("edge-api", "oracle")
 CONTAINERS = {"versiond": "versiond", "router": "router", "ingress": "proxy-router"}
 MAPS = {"router": "/etc/haproxy/versions.map", "ingress": "/etc/haproxy/version-router.map"}
 
@@ -130,6 +131,7 @@ class Fleet:
         self.lock_name = lock_prefix + "-ha-rollout"
         self.state = {}
         self.sets = {}
+        self.deployment_targets = []
         self.versions = set()
 
     def kub(self, *argv, **kwargs):
@@ -141,10 +143,23 @@ class Fleet:
         return json.loads(self.kub(*argv, "-o", "json").stdout)
 
     def refresh(self):
-        self.sets = {x["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/component"]: x
-                     for x in self.get("statefulsets")["items"]}
+        self.sets = {}
+        for obj in self.get("statefulsets")["items"]:
+            component = obj["spec"]["template"]["metadata"]["labels"].get("app.kubernetes.io/component")
+            if component not in COMPONENTS:
+                continue
+            if component in self.sets:
+                raise RuntimeError(f"multiple {component} StatefulSets belong to this release")
+            self.sets[component] = obj
         if not set(COMPONENTS).issubset(self.sets):
             raise RuntimeError("expected the installed gonka-ha serving StatefulSets")
+
+    def require_same_names(self, manifests):
+        desired = {x["spec"]["template"]["metadata"]["labels"].get("app.kubernetes.io/component"):
+                   x["metadata"]["name"] for x in manifests if x["kind"] == "StatefulSet"}
+        if any(desired.get(c) != self.sets[c]["metadata"]["name"] for c in COMPONENTS):
+            raise RuntimeError("changing serving StatefulSet names is unsupported, including during maintenance; "
+                               "keep fullnameOverride unchanged after installation")
 
     def pods(self, component):
         return sorted([p for p in self.get("pods")["items"]
@@ -297,6 +312,35 @@ class Fleet:
         # or replicas while the coordinator is still draining the old generation.
         run(argv, timeout=self.args.timeout)
         self.refresh()
+        # Helm stages OnDelete templates without completing their rollout.
+        # Gate the independent Deployment updates before touching serving pods.
+        deployments = self.get("deployments")["items"]
+        self.deployment_targets = []
+        for component in DEPLOYMENTS:
+            matches = [d for d in deployments if d["spec"]["template"]["metadata"]["labels"].get(
+                "app.kubernetes.io/component") == component]
+            if len(matches) != 1:
+                raise RuntimeError(f"expected exactly one {component} Deployment")
+            self.deployment_targets.append(matches[0]["metadata"])
+        self.wait("edge-api and oracle Deployment rollouts", self.deployments_ready)
+
+    def deployments_ready(self):
+        for target in self.deployment_targets:
+            name = target["name"]
+            obj = self.get("deployment", name)
+            metadata, spec, status = obj["metadata"], obj["spec"], obj.get("status", {})
+            if (metadata["uid"] != target["uid"] or metadata["generation"] != target["generation"] or
+                    metadata.get("deletionTimestamp")):
+                raise RuntimeError(f"Deployment {name} changed concurrently")
+            desired = spec.get("replicas", 1)
+            # Availability alone can describe old replicas while a bad new
+            # image is stuck. Require the entire observed generation to finish.
+            if (spec.get("paused") or status.get("observedGeneration", 0) < target["generation"] or
+                    any(status.get(key, 0) != desired for key in
+                        ("replicas", "updatedReplicas", "readyReplicas", "availableReplicas"))):
+                raise RuntimeError(f"Deployment {name} rollout incomplete: desired={desired}, "
+                                   f"status={json.dumps(status, sort_keys=True)}")
+        return True
 
     def delete(self, pod):
         name = pod["metadata"]["name"]
@@ -420,6 +464,7 @@ class Fleet:
                       x["spec"]["template"]["metadata"]["labels"].get("app.kubernetes.io/component") == "oracle")
         allowed = set(env(oracle["spec"]["template"]["spec"]["containers"][0], "ORACLE_ALLOW").split())
         self.refresh()
+        self.require_same_names(manifests)
         self.acquire()
         try:
             if self.args.command == "upgrade":
@@ -451,6 +496,7 @@ class Fleet:
                 self.wait("new routers and all protected versions", self.maintenance_ready)
                 self.helm_upgrade(False)
                 self.wait("public ingress and all protected versions", self.all_ready)
+            self.wait("edge-api and oracle Deployment rollouts", self.deployments_ready)
             self.kub("delete", "configmap", self.lock_name)
         except BaseException:
             if self.args.command == "upgrade" and self.state.get("replacement"):
