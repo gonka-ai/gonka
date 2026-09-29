@@ -118,8 +118,9 @@ func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHei
 	return epochState.LatestEpoch.IsPoCExchangeWindow(currentHeight)
 }
 
-// StoreCommitTimeoutHeight is the tx timeout_height for StoreCommit: last
-// legal inclusion block. 0 means leave unset.
+// StoreCommitTimeoutHeight is the last legal inclusion block for StoreCommit,
+// the upper bound on its tx timeout_height (see storeCommitTimeoutHeight).
+// 0 means leave unset.
 func StoreCommitTimeoutHeight(epochState *chainphase.EpochState, pocStageStartHeight int64) uint64 {
 	if epochState.IsNilOrNotSynced() {
 		return 0
