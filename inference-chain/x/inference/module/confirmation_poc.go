@@ -434,21 +434,19 @@ func (am AppModule) evaluateConfirmation(
 	preserved := preservedWeightByParticipant(activeParticipants, &preservedSnapshot, presentScales)
 	totalExpected := weightByParticipant(activeParticipants, presentScales)
 
-	// remove reserved nodes' expected confirmation weight so they do not drag down the host ratio
-	coefficients := types.ConfirmationWeightCoefficients(presentScales)
-	for host, nodes := range am.keeper.CollectEpochReservedNodeWeightsAtHeight(ctx, event.EpochIndex, event.TriggerHeight, keeper.ReservationScopeShield) {
-		modelNodes := make(map[string][]*types.MLNodeInfo)
-		for _, n := range nodes {
-			modelNodes[n.ModelId] = append(modelNodes[n.ModelId], &types.MLNodeInfo{NodeId: n.NodeId, PocWeight: n.PocWeight})
-		}
-		reservedExpected := types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
-		if totalExpected[host] -= reservedExpected; totalExpected[host] < 0 {
+	// remove reserved nodes' expected confirmation weight so they do not drag down the host ratio,
+	// and shield the ones the sample did not preserve: settlement already strips a reserved node's
+	// share, so a confirmation weight lowered by its absence would cut the host's free nodes too
+	reserved := am.keeper.CollectEpochReservedNodeWeightsAtHeight(ctx, event.EpochIndex, event.TriggerHeight, keeper.ReservationScopeShield)
+	reservedExpected, shielded := reservedConfirmationWeights(reserved, &preservedSnapshot, types.ConfirmationWeightCoefficients(presentScales))
+	for host, w := range reservedExpected {
+		if totalExpected[host] -= w; totalExpected[host] < 0 {
 			totalExpected[host] = 0
 		}
 	}
 
 	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
-	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, maintenanceAddrs)
+	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, shielded, totalExpected, maintenanceAddrs)
 	if updated {
 		am.LogInfo("evaluateConfirmation: confirmation weights lowered", types.PoC,
 			"epochIndex", event.EpochIndex,
@@ -495,14 +493,41 @@ func (am AppModule) evaluateConfirmation(
 	return nil
 }
 
+// reservedConfirmationWeights returns, per host, the confirmation weight of its reserved
+// nodes and the part of it the preserved sample did not already count.
+func reservedConfirmationWeights(
+	reserved map[string][]*types.TrainshardReservedNode,
+	preservedSnapshot *types.PreservedNodesSnapshot,
+	coefficients map[string]mathsdk.LegacyDec,
+) (expected, shielded map[string]int64) {
+	expected = make(map[string]int64, len(reserved))
+	shielded = make(map[string]int64, len(reserved))
+	for host, nodes := range reserved {
+		all := make(map[string][]*types.MLNodeInfo)
+		unsampled := make(map[string][]*types.MLNodeInfo)
+		for _, n := range nodes {
+			node := &types.MLNodeInfo{NodeId: n.NodeId, PocWeight: n.PocWeight}
+			all[n.ModelId] = append(all[n.ModelId], node)
+			if !keeper.IsPreservedNode(keeper.PreservedNodeSetByModel(preservedSnapshot, n.ModelId), host, n.NodeId) {
+				unsampled[n.ModelId] = append(unsampled[n.ModelId], node)
+			}
+		}
+		expected[host] = types.ConfirmationWeightOfModelNodesWithCoefficients(all, coefficients)
+		shielded[host] = types.ConfirmationWeightOfModelNodesWithCoefficients(unsampled, coefficients)
+	}
+	return expected, shielded
+}
+
 // foldEventReadings applies this event's reading (preserved + measured) to every
 // ValidationWeight via min-take and returns the per-participant slashing ratio.
+// Shielded weight (reserved nodes the sample did not preserve) counts toward the
+// ConfirmationWeight reading only, never toward the ratio.
 // Participants in skipAddrs (e.g. active maintenance) are left untouched: no
 // ConfirmationWeight change and no ratio entry.
 // Pure: no keeper reads, no logging. Caller persists the result.
 func foldEventReadings(
 	epochGroupData *types.EpochGroupData,
-	measured, preserved, totalExpected map[string]int64,
+	measured, preserved, shielded, totalExpected map[string]int64,
 	skipAddrs map[string]struct{},
 ) (updated bool, ratios map[string]*types.Decimal) {
 	ratios = make(map[string]*types.Decimal, len(epochGroupData.ValidationWeights))
@@ -515,8 +540,8 @@ func foldEventReadings(
 		if totalExpected[addr] == 0 {
 			continue
 		}
-		if reading < vw.ConfirmationWeight {
-			epochGroupData.ValidationWeights[i].ConfirmationWeight = reading
+		if full := reading + shielded[addr]; full < vw.ConfirmationWeight {
+			epochGroupData.ValidationWeights[i].ConfirmationWeight = full
 			updated = true
 		}
 
