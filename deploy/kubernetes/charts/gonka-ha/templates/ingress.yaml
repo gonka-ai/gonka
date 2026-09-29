@@ -46,15 +46,17 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: {{ $name }}-ingress
+  annotations:
+    gonka.ai/desired-replicas: {{ .Values.ingress.replicas | quote }}
   labels:
     {{- include "gonka.labels" . | nindent 4 }}
 spec:
   serviceName: {{ $name }}-ingress-headless
-  replicas: {{ .Values.ingress.replicas }}
+  replicas: {{ ternary 0 (int .Values.ingress.replicas) .Values.maintenance }}
   podManagementPolicy: Parallel
   minReadySeconds: 10
   updateStrategy:
-    type: RollingUpdate
+    type: OnDelete
   selector:
     matchLabels:
       {{- include "gonka.selector" (dict "root" . "component" "ingress") | nindent 6 }}
@@ -123,7 +125,8 @@ spec:
             - name: VERSIOND_ROUTER_ADMIN_PORT
               value: "8404"
             - name: VERSIOND_VERSIONS
-              value: {{ join " " .Values.protocols | quote }}
+              # Admit all allowed names through the ready-router reserve.
+              value: ""
             - name: VERSIOND_NON_HA_VERSIONS
               value: ""
             - name: VERSIOND_ROUTING_CATALOG_URL

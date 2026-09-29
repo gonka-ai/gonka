@@ -2,6 +2,9 @@
 # same tested revision, including the proxy-router Kubernetes bind support.
 fullnameOverride: ''
 clusterDomain: cluster.local
+# Only the offline maintenance procedure may enable this after routing Pods exit.
+# Desired replica counts remain unchanged; ingress/router are held at zero.
+maintenance: false
 images:
   versiond: ''
   router: ''
@@ -14,6 +17,9 @@ imagePullSecrets: []
 
 # Only governance-approved, PostgreSQL-capable protocols belong here.
 # The chart's read-only oracle filters the external catalog for ALL consumers.
+# This is an allowlist, not static router bootstrap: each newly seen protocol
+# needs activationMinReady ready peers before either router tier publishes it.
+# Accepted catalog snapshots remain available below that reserve after restart.
 protocols: [v6]
 external:
   oracleUrl: ''

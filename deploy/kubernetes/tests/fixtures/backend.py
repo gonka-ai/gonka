@@ -7,6 +7,7 @@ kubectl port-forward never bypasses the public router's PodIP-only listener.
 
 import json
 import os
+from pathlib import Path
 import signal
 import threading
 import time
@@ -28,8 +29,26 @@ if MODE != "versiond":
     READY.set()
 
 
+def served_protocols():
+    # The rollout regression changes only fixture-owned state via kubectl exec.
+    # Keep it on the replica PVC so replacement cannot accidentally heal a
+    # missing protocol and hide an unsafe attempt to stop its last other owner.
+    path = Path("/opt/versiond/gonka-fixture-protocols.json")
+    versions = set(json.loads(path.read_text())) if path.exists() else {"v6", "v7"}
+    # The chart intentionally accepts only observability extra env variables.
+    # Interpret one fixture-only attribute to make a replacement coarse-ready
+    # while a formerly available protocol is broken, without changing images.
+    if "gonka.fixture.drop_protocol=v7" in os.environ.get("OTEL_RESOURCE_ATTRIBUTES", "").split(","):
+        versions.discard("v7")
+    return versions
+
+
 class Server(ThreadingHTTPServer):
     daemon_threads = False
+    # Three routers perform simultaneous two-connection health checks while the
+    # placement regression sends application requests. Python's default queue
+    # of five can itself create transient failed checks and false ring changes.
+    request_queue_size = 128
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -57,19 +76,30 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/versions":
             self.reply(200, {"versions": [
                 {"name": name, "binary": "http://fixture:9000/mock.zip", "sha256": "0" * 64}
-                for name in ("v1", "v6")
+                for name in ("v1", "v6", "v7")
             ]})
             return
         if parsed.path == "/healthz":
-            self.reply(200, {"component": MODE, "owner": OWNER})
+            if MODE == "versiond":
+                self.reply(200, [{"name": version, "port": 9200 + ordinal, "status": "running"}
+                                 for ordinal, version in enumerate(sorted(served_protocols()))])
+            else:
+                self.reply(200, {"component": MODE, "owner": OWNER})
             return
-        if parsed.path == "/readyz" or parsed.path == "/v6/healthz":
-            version = urllib.parse.parse_qs(parsed.query).get("version", ["v6"])[0]
-            self.reply(200 if READY.is_set() and version == "v6" else 503, {"ready": READY.is_set()})
+        if parsed.path == "/readyz" or parsed.path in ("/v6/healthz", "/v7/healthz"):
+            version = urllib.parse.parse_qs(parsed.query).get("version", [""])[0]
+            if parsed.path != "/readyz":
+                version = parsed.path.split("/")[1]
+            ready = READY.is_set() and (not version or version in served_protocols())
+            self.reply(200 if ready else 503, {"ready": ready})
             return
         if MODE == "versiond" and not READY.is_set() and not STOPPING.is_set():
             self.reply(503, {"error": "mock oracle not ready"})
             return
+        if MODE == "versiond" and parsed.path.split("/")[1] in {"v6", "v7"}:
+            if parsed.path.split("/")[1] not in served_protocols():
+                self.reply(503, {"error": "fixture protocol unavailable"})
+                return
         if parsed.path.endswith("/stream"):
             self.stream(parsed)
             return
@@ -144,7 +174,7 @@ def await_oracle():
         try:
             with urllib.request.urlopen(os.environ["VERSIOND_ORACLE_URL"], timeout=3) as response:
                 names = {entry["name"] for entry in json.load(response)["versions"]}
-            if names == {"v6"}:
+            if "v6" in names and names <= {"v6", "v7"}:
                 READY.set()
                 return
         except (OSError, KeyError, ValueError):

@@ -54,12 +54,19 @@ jobs:
             | kubeconform -strict -summary -kubernetes-version 1.33.0
       - name: Verify router and Compose compatibility
         run: make -C proxy-router test-render test-pod-routing test-supervisor test-compose
+      - name: Verify catalog admission in both router images
+        run: python3 deploy/kubernetes/tests/protocol-admission-smoke.py
 
   kind-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install rollout parser
+        run: python3 -m pip install 'PyYAML==6.0.3'
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.9'

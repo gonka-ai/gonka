@@ -130,6 +130,11 @@ the actual external `/versions` response and approved artifact capabilities.
 The filter preserves binary URLs and digests; it never manufactures an approval.
 The same filtered feed reaches supervisors and both router tiers. Malformed or
 unavailable upstream responses produce an error, never a synthetic empty list.
+The allowlist is **not** a list of static router bootstrap routes:
+`VERSIOND_VERSIONS` is empty in both router tiers. Every initially published
+version must pass the catalog's `activationMinReady` check. Once admitted, its
+durable catalog entry remains available with fewer healthy peers; admission is
+not a rule to withdraw an already serving version during a failure.
 
 Legacy SQLite `v1`/`v2`/`v3` are rejected. Existing legacy escrows must remain on
 their current single owner/public route until finished. Do not move a public
@@ -179,8 +184,14 @@ not a routine upgrade. Routers retain previously admitted catalog entries.
      -f /secure/path/gonka-values.yaml > /tmp/gonka-ha.yaml
    helm upgrade --install host deploy/kubernetes/charts/gonka-ha -n gonka \
      -f /secure/path/gonka-values.yaml --wait --timeout 45m
+   # Default replica counts. Adjust the expected count per tier if customized.
+   kubectl -n gonka wait --for=jsonpath='{.status.readyReplicas}'=3 \
+     statefulset/host-gonka-ha-versiond statefulset/host-gonka-ha-router \
+     statefulset/host-gonka-ha-ingress --timeout=45m
    ```
 
+   Explicitly wait for these `OnDelete` StatefulSets: Helm's `--wait` and
+   `kubectl rollout status` do not provide that initial readiness check.
    Downloads, schema initialization and recovery may take time. Check pod logs
    and per-version readiness before extending timeouts. Liveness deliberately
    checks processes, not shared database/catalog availability, to avoid restart
@@ -223,13 +234,65 @@ timeouts and forwarded-header policy require their own configuration.
 
 ## Rollouts, failures and scaling
 
-- Change one component/image at a time, save the change in values, then run
-  `helm upgrade --wait`. StatefulSets retain per-replica cache/data volumes and
-  replace one pod at a time. PDBs protect voluntary eviction; they do not stop
-  an operator deleting pods or limit concurrent independent rollouts.
-- The default three versiond and router replicas preserve two while one is
-  replaced. `activationMinReady` controls admission of new catalog versions;
-  Helm validates the configured rollout reserve.
+Use the operator-side coordinator for upgrades of an installed release:
+
+```bash
+python3 deploy/kubernetes/rollout.py upgrade --namespace gonka --release host \
+  --values /secure/path/gonka-values.yaml
+```
+
+Change one component/image at a time in that complete saved values file.
+The versiond, router and ingress StatefulSets use `OnDelete`: Helm stages their
+pod templates; the coordinator owns planned replacements. Before each stop it
+checks a reserve of `activationMinReady` other backends **for every admitted or
+serving version**, and checks their actual admission in every parent HAProxy.
+An overall `/readyz` response and the configured replica count cannot prove
+that reserve. For example, three pods serving v6 do not authorize stopping the
+only pod serving v7. A replacement must recover all protected versions and
+parent admission before the next pod can stop. If it fails, the coordinator
+restores that pod's prior ControllerRevision template; if the remaining pool
+has also degraded, it stops and retains the recovery journal.
+
+Changing the versiond pool requires an explicit **maintenance window**:
+
+```bash
+python3 deploy/kubernetes/rollout.py maintenance-upgrade --namespace gonka --release host \
+  --values /secure/path/gonka-values.yaml
+```
+
+The coordinator drains ingress completely, then drains every old inner router,
+including established streams, before changing membership. During this window
+the public endpoint is unavailable. It applies the new pool with both routing
+tiers held at zero, starts the new routers, verifies each protected version's
+reserve and admission, and only then starts public ingress. Old and new escrow
+placement contracts never serve concurrently. Replica changes for any serving
+tier, endpoint changes and allowlist removals are rejected by live Helm checks
+while routing pods still exist, including terminating pods. `maintenance: true`
+is an internal staging setting for this procedure, not a bypass flag.
+
+The coordinator requires Python 3 and PyYAML (`python3 -m pip install PyYAML==6.0.3`
+in your operator environment). Both commands use local `kubectl` and Helm credentials; optional `--context`
+and `--kubeconfig` apply to both tools. No Kubernetes API access is given to
+the application containers. A ConfigMap named `<release>-ha-rollout` (hashed for
+long release names) prevents
+concurrent coordinator runs and records protected routes and an in-progress
+replacement. A failure or interruption retains it. Resolve the failure, ensure
+the previous process is no longer running, and repeat the command with
+`--resume` (corrected values may be supplied). An interrupted maintenance run
+drains both routing tiers again before applying anything; it may leave ingress
+off until recovery completes. Do not remove the journal to bypass a failed
+reserve check. Previously served routes remain protected during maintenance;
+this command does not authorize retiring an active protocol.
+
+- Serialize Helm/coordinator operations, node maintenance and other pod
+  disruptions. Do not use `kubectl rollout restart`, scale these StatefulSets
+  directly, or apply client-rendered manifests to an installed release. Helm
+  live guards cannot protect changes made outside Helm. PDBs limit voluntary
+  evictions but do not enforce per-version reserves; use the same reserve
+  checks before planned node work. Pod/node crashes can interrupt streams.
+- The first upgrade from the earlier draft chart must install `OnDelete`
+  through this coordinator before any planned replacement. `helm upgrade
+  --wait` alone stages templates without verifying that every pod uses them.
 - A Service for **each** versiond ordinal has one stable virtual IP and selects
   one pod. Every router hashes those same addresses. Do not replace this with
   one balancing Service or `sessionAffinity: ClientIP`. Services publish unready
@@ -241,17 +304,16 @@ timeouts and forwarded-header policy require their own configuration.
 - Ingress HAProxy is a native sidecar: nginx first withdraws and exits gracefully
   with SIGQUIT while its local routing sidecar remains alive. HAProxy then uses
   SIGUSR1 to soft-stop. This includes uploads that open their upstream late.
-- Inner routers also soft-stop with SIGUSR1. Established streams remain on the
-  old connection; new requests use healthy peers. Pod/node crashes can interrupt
-  streams; recovery of subsequent requests is the failure contract. DNS and
-  active-check views converge asynchronously during membership changes; this
-  chart does not promise zero failed requests during those transitions.
+- Inner routers also soft-stop with SIGUSR1. During an ordinary compatible
+  replacement, established streams remain on the old connection and new
+  requests use admitted peers. Membership changes use the offline procedure
+  above; they are not ordinary rolling updates.
 - PostgreSQL primary failure is different from planned app drain: loss of the
   session fence force-closes affected child listeners. versiond restarts them,
   establishes fresh fences and recovers from PostgreSQL. Existing streams can
   fail, and the restart backoff can reach 60 seconds. Test the complete database
   failover path with the operator/provider you deploy.
-- Scale replicas through saved values and Helm, one operation at a time. New
+- Scale replicas through saved values and `maintenance-upgrade`. New
   replicas need storage and node capacity. There is no HPA in this first chart;
   replicas and explicit router membership must change together. Do not scale
   the StatefulSet independently of Helm or delete its per-ordinal Services.
@@ -287,8 +349,10 @@ tier to it. Do not run two independently writable restored copies for one host.
 StatefulSet PVCs are retained by Kubernetes by default after scale-down or Helm
 uninstall; verify your StorageClass reclaim policy before deleting any PVC. Keep
 router accepted-catalog snapshots as well as versiond state. Never share one
-router cache volume between independent replicas. Helm rollback can restore app
-manifests but cannot undo PostgreSQL schema changes or recreate deleted data.
+router cache volume between independent replicas. To return to earlier app
+values, use the same guarded upgrade procedure (maintenance for membership
+changes); an uncoordinated `helm rollback` bypasses the rollout checks. Neither
+procedure can undo PostgreSQL schema changes or recreate deleted data.
 
 ## Verification
 
@@ -296,13 +360,15 @@ manifests but cannot undo PostgreSQL schema changes or recreate deleted data.
 HELM=helm python3 -m unittest discover -s deploy/kubernetes/tests -v
 python3 deploy/kubernetes/charts/gonka-postgres/tests/validate.py
 make -C proxy-router test-render test-pod-routing test-supervisor test-compose
+python3 deploy/kubernetes/tests/protocol-admission-smoke.py
 deploy/kubernetes/tests/kind-smoke.sh
 deploy/kubernetes/tests/postgres-kind-smoke.sh
 ```
 
 The kind smoke uses an isolated cluster, real router/policy images and **mock**
 versiond/edge/control-plane dependencies. It checks Kubernetes networking,
-placement, admission and stream drain; it does not prove real inference or
+placement, admission, stream drain, refused live membership changes, maintenance
+scaling, per-version reserve and failed-candidate restoration. It does not prove real inference or
 PostgreSQL failover. Run real chain/devshard acceptance and a primary-failure
 exercise with the exact approved artifacts before production rollout. Existing
 Compose host-evacuation coverage remains applicable to the shared runtime.

@@ -70,6 +70,7 @@ nodes:
   - role: worker
   - role: worker
   - role: worker
+  - role: worker
 YAML
 # Pinned image from the kind v0.30.0 release; Kubernetes >=1.33 is required by
 # the production chart's native sidecar termination contract.
@@ -156,6 +157,7 @@ values = {
     'images': {'versiond': fixture, 'edgeApi': fixture, 'oracle': fixture,
                'router': router, 'proxyRouter': public, 'proxyPolicy': policy},
     'imagePullPolicy': 'Never',
+    'protocols': ['v6', 'v7'],
     'external': {'oracleUrl': 'http://fixture:9000/versions', 'dapiHost': 'fixture.gonka-smoke.svc.cluster.local',
                  'dapiPort': 9000, 'chainRpcUrl': 'http://fixture:9000', 'chainGrpcUrl': 'fixture:9000',
                  'nodeManagerAddress': 'fixture:9000'},
@@ -170,9 +172,12 @@ with open(path, 'w') as output:
     json.dump(values, output)
 PY
 "$helm_bin" upgrade --install smoke "$chart_dir" --kubeconfig "$kubeconfig" --kube-context "$context" --namespace "$namespace" --values "$scratch/values.json" --wait --timeout 8m
-kube rollout status statefulset/"$prefix-versiond" --timeout=120s --request-timeout=125s
-kube rollout status statefulset/"$prefix-router" --timeout=120s --request-timeout=125s
-kube rollout status statefulset/"$prefix-ingress" --timeout=120s --request-timeout=125s
+for component in versiond router ingress; do
+    # kubectl rollout status only understands RollingUpdate StatefulSets. The
+    # guarded chart deliberately uses OnDelete, including the initial install.
+    kube wait --for=jsonpath='{.status.readyReplicas}'=3 "statefulset/$prefix-$component" \
+        --timeout=180s --request-timeout=185s
+done
 
 # Port-forward only the fixture service, which sends traffic to the public
 # ingress via its ClusterIP. Forwarding the ingress Pod port directly would hit
@@ -187,3 +192,7 @@ done
 forward_port=$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\) ->.*/\1/p' "$scratch/port-forward.log" | head -1)
 [[ -n $forward_port ]] || { cat "$scratch/port-forward.log" >&2; exit 1; }
 python3 "$test_dir/fixtures/smoke.py" --kubeconfig "$kubeconfig" --context "$context" --namespace "$namespace" --base-url "http://127.0.0.1:$forward_port" --prefix "$prefix"
+python3 "$test_dir/fixtures/rollout_smoke.py" \
+    --kubeconfig "$kubeconfig" --context "$context" --namespace "$namespace" \
+    --base-url "http://127.0.0.1:$forward_port" --prefix "$prefix" \
+    --helm "$helm_bin" --values "$scratch/values.json" --release smoke

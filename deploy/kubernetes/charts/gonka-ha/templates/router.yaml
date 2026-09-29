@@ -1,9 +1,5 @@
 {{- $name := include "gonka.fullname" . -}}
-{{- $root := . -}}
-{{- $endpoints := list -}}
-{{- range $ordinal := until (int .Values.versiond.replicas) -}}
-{{- $endpoints = append $endpoints (dict "id" (printf "versiond-%d" $ordinal) "host" (printf "%s-versiond-%d.%s.svc.%s" $name $ordinal $root.Release.Namespace $root.Values.clusterDomain) "port" 8080) -}}
-{{- end -}}
+{{- $endpoints := include "gonka.versiondEndpoints" . -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -29,16 +25,18 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: {{ $name }}-router
+  annotations:
+    gonka.ai/desired-replicas: {{ .Values.router.replicas | quote }}
   labels:
     {{- include "gonka.labels" . | nindent 4 }}
     app.kubernetes.io/component: router
 spec:
   serviceName: {{ $name }}-router
-  replicas: {{ .Values.router.replicas }}
+  replicas: {{ ternary 0 (int .Values.router.replicas) .Values.maintenance }}
   podManagementPolicy: OrderedReady
   minReadySeconds: 10
   updateStrategy:
-    type: RollingUpdate
+    type: OnDelete
   selector:
     matchLabels:
       {{- include "gonka.selector" (dict "root" . "component" "router") | nindent 6 }}
@@ -83,9 +81,11 @@ spec:
             - name: VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS
               value: "true"
             - name: VERSIOND_POOL_ENDPOINTS
-              value: {{ $endpoints | toJson | quote }}
+              value: {{ $endpoints | quote }}
             - name: VERSIOND_VERSIONS
-              value: {{ join " " .Values.protocols | quote }}
+              # The allowlist filters governance; it must not pre-admit routes.
+              # Static bootstrap names bypass the catalog activation reserve.
+              value: ""
             - name: VERSIOND_ROUTER_VERSION_CAPACITY
               value: {{ .Values.router.versionCapacity | toString | quote }}
             - name: VERSIOND_ROUTING_ACTIVATION_MIN_READY

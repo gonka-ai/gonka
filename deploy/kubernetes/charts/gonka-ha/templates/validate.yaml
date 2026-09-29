@@ -28,6 +28,9 @@
 {{- if gt (int .Values.router.activationMinReady) (sub (int .Values.router.replicas) 1) }}
 {{- fail "router.replicas must preserve router.activationMinReady while one replica is replaced" }}
 {{- end }}
+{{- if gt (int .Values.router.activationMinReady) (sub (int .Values.ingress.replicas) 1) }}
+{{- fail "ingress.replicas must preserve router.activationMinReady while one replica is replaced" }}
+{{- end }}
 {{- if gt (len .Values.protocols) (int .Values.router.versionCapacity) }}
 {{- fail "router.versionCapacity must cover protocols" }}
 {{- end }}
@@ -36,4 +39,6 @@
 {{- fail "legacy SQLite protocols v1/v2/v3 cannot join the Kubernetes HA pool" }}
 {{- end }}
 {{- end }}
+# API-backed upgrade guard. Normal offline Helm template/lint cannot see Pods.
+{{- include "gonka.validateLiveUpgrade" (dict "root" . "statefulSets" (lookup "apps/v1" "StatefulSet" .Release.Namespace "") "deployments" (lookup "apps/v1" "Deployment" .Release.Namespace "") "pods" (lookup "v1" "Pod" .Release.Namespace "")) }}
 # Render-time validations only. No Kubernetes object is created.

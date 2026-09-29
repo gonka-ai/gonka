@@ -44,6 +44,8 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: {{ $name }}-versiond
+  annotations:
+    gonka.ai/desired-replicas: {{ .Values.versiond.replicas | quote }}
   labels:
     {{- include "gonka.labels" . | nindent 4 }}
     app.kubernetes.io/component: versiond
@@ -53,7 +55,7 @@ spec:
   podManagementPolicy: OrderedReady
   minReadySeconds: 10
   updateStrategy:
-    type: RollingUpdate
+    type: OnDelete
   selector:
     matchLabels:
       {{- include "gonka.selector" (dict "root" . "component" "versiond") | nindent 6 }}
