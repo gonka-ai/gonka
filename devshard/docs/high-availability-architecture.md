@@ -316,6 +316,28 @@ which drains every old router
 before exposing the new generation and restores exact old image+env snapshots
 if the required live routes do not return.
 
+Known limitations of this hop, recorded in
+[grpc-transport-connection.md](./grpc-transport-connection.md#known-limitations):
+
+- The placement contract does not include `VERSIOND_ROUTER_H2_PORT` or
+  `VERSIOND_ROUTER_BACKEND_H2`. A direct `fleet apply` may mix a pre-h2
+  router image with a current one. While a current slot remains, redispatch
+  covers the refused connect. When the last current slot leaves and the
+  proxy still publishes `{DEVSHARD_RPC_H2_PORT}`, every slot refuses peer
+  RPC and clients fail closed. `update-devshard.sh` avoids that order: a
+  rollback off images labeled `ai.gonka.peer-rpc-h2=1` replaces the proxy
+  before the fleet. A direct fleet apply does not.
+- `update-devshard.sh --check`, proxy `/readyz`, and `verify-admission` do
+  not prove the HTTP/2 data ports agree. The `_rpc` health check is
+  HTTP/1.1 `GET /readyz` on router admin `:8404`. The slot compose does not
+  pass `VERSIOND_ROUTER_H2_PORT`, so it stays `8081` unless the image
+  default changes, while `DEVSHARD_RPC_H2_ROUTER_PORT` can move the proxy
+  dial alone. Stock defaults match (`9443` once in `config.env`, `8081` on
+  both sides of the router hop). A remote endpoint `{id, host, port}` is
+  the versiond listen (`8080`); that process has to speak h2c, and a remote
+  `config.env` with a different `DEVSHARD_RPC_H2_PORT` is not visible to
+  the updater on the network node.
+
 ### Multiple versiond instances (multi-host)
 
 This is the **key capability**: versiond instances can run on **separate

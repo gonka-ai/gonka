@@ -837,6 +837,41 @@ func TestRebuildRoutes(t *testing.T) {
 	}
 }
 
+func TestServesPeerRPCRequiresChildH2C(t *testing.T) {
+	m := NewManager(config.Config{BinDir: "/tmp/bin", DataDir: "/tmp/data", BinaryName: "testapp", BasePort: 5000})
+	now := time.Now().UnixNano()
+	h2c := &child{version: oracle.Version{Name: "v-h2"}, port: 9001, done: make(chan struct{}), status: statusRunning, childH2C: true}
+	plain := &child{version: oracle.Version{Name: "v-h1"}, port: 9002, done: make(chan struct{}), status: statusRunning}
+	h2c.serving.Store(true)
+	h2c.servingAt.Store(now)
+	plain.serving.Store(true)
+	plain.servingAt.Store(now)
+
+	m.mu.Lock()
+	m.processes["v-h2"] = h2c
+	m.processes["v-h1"] = plain
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	if !m.ServesPeerRPC("v-h2") {
+		t.Fatal("h2c child is not a peer-RPC target")
+	}
+	if m.ServesPeerRPC("v-h1") {
+		t.Fatal("HTTP/1.1 child is a peer-RPC target")
+	}
+	if m.PeerRPCHostReady() {
+		t.Fatal("a host with one HTTP/1.1 child is peer-RPC ready")
+	}
+
+	m.mu.Lock()
+	delete(m.processes, "v-h1")
+	m.rebuildRoutes()
+	m.mu.Unlock()
+	if !m.PeerRPCHostReady() {
+		t.Fatal("a host whose only child advertised h2c is not peer-RPC ready")
+	}
+}
+
 func TestRebuildRoutes_ExcludesNonRunning(t *testing.T) {
 	cfg := config.Config{
 		BinDir:     "/tmp/bin",

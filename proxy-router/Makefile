@@ -70,7 +70,7 @@ test-render: test-route-status
 	fi; \
 	grep -q '^backend versiond_routers_v5$$' "$$tmpdir/proxy.cfg" \
 		|| fail "v5 router backend was not rendered"; \
-	[ "$$(grep -c '^backend versiond_routers_dynamic_' "$$tmpdir/proxy.cfg")" -eq 32 ] \
+	[ "$$(grep -c '^backend versiond_routers_dynamic_[0-9]*$$' "$$tmpdir/proxy.cfg")" -eq 32 ] \
 		|| fail "the default dynamic governance capacity is not pre-rendered"; \
 	[ "$$(grep -c '^versiond_routers_dynamic_.* __unassigned__$$' \
 		"$$tmpdir/proxy.cfg.version-slots.map")" -eq 32 ] \
@@ -200,6 +200,36 @@ test-render: test-route-status
 		END { exit !(connect && send && expect) } \
 	' "$$tmpdir/ha.cfg" \
 		|| fail "HA peer RPC check is not HTTP/1.1 GET /readyz on the router admin port"; \
+	grep -q 'use_backend %\[var(txn.ver),map_str(.*/ha.map),concat(_rpc)\]' "$$tmpdir/ha.cfg" \
+		|| fail "peer RPC does not select the per-version _rpc backend"; \
+	awk '/^backend versiond_routers_dynamic_1_rpc$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /server-template router 16 versiond-router-fleet:8081 proto h2/ { dial = 1 } \
+		inside && /regsub\(_rpc/ { check = 1 } \
+		inside && /disabled$$/ { down = 1 } \
+		END { exit !(dial && check && down) }' "$$tmpdir/ha.cfg" \
+		|| fail "dynamic peer RPC backends are not version-scoped proto h2 pools"; \
+	HAPROXY_BIN=true \
+	PROXY_ROUTER_RENDER_ONLY=1 \
+	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+	PROXY_ROUTER_OUT="$$tmpdir/ha-v5.cfg" \
+	PROXY_ROUTER_VERSION_MAP="$$tmpdir/ha-v5.map" \
+	VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
+	VERSIOND_VERSIONS=v5 \
+	./entrypoint.sh; \
+	awk '/^backend versiond_routers_v5_rpc$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /http-check send meth GET uri \/readyz\?version=v5 hdr Host versiond-router-fleet/ { found = 1 } \
+		inside && /disabled$$/ { bad = 1 } \
+		END { exit !found || bad }' "$$tmpdir/ha-v5.cfg" \
+		|| fail "static peer RPC backend does not check /readyz?version=v5"; \
+	docker run --rm --user "$$(id -u):$$(id -g)" \
+		-v "$$tmpdir:$$tmpdir:ro" \
+		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
+		haproxy -c -f "$$tmpdir/ha-v5.cfg" >/dev/null \
+		|| fail "rendered versioned HA proxy config is invalid"; \
+	if grep -q 'use_backend %\[var(txn.ver),map_str(.*),concat(_rpc)\]' "$$tmpdir/proxy.cfg"; then \
+		fail "non-HA peer RPC selects a version pool"; \
+	fi; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
 		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \

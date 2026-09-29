@@ -3,7 +3,6 @@
 package citest
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,11 +20,10 @@ const (
 	mixedChildBinaryEnv = "TESTENV_MIXED_CHILD_BINARY"
 )
 
-// TestPeerRPCMixedChildCapabilitiesNativeGRPC checks the protocol adaptation
-// at both sides of a mixed deployment: one current versiond runs the
-// pre-capability child (Peer RPC + h2c, but no --print-child-h2c flag), while
-// its sibling runs the current child. The router admits both versiond hosts;
-// the test then forces native-gRPC traffic through each backend independently.
+// TestPeerRPCMixedChildCapabilitiesNativeGRPC checks a mixed child rollout.
+// versiond-0 runs a real pre-capability child (no --print-child-h2c). versiond-1
+// runs the current child. Both stay in the JSON pool. Only the current child
+// stays in the native-gRPC pool, and a chat through that pool succeeds.
 // The historical child path is supplied by TESTENV_MIXED_CHILD_BINARY so this
 // test uses a real pre-fix artifact rather than a fake protocol stub.
 func TestPeerRPCMixedChildCapabilitiesNativeGRPC(t *testing.T) {
@@ -71,12 +69,16 @@ func TestPeerRPCMixedChildCapabilitiesNativeGRPC(t *testing.T) {
 	})
 
 	backend := harness.WaitRouterVersionBackend(t, stack, cfg.Versiond.VersionName, 60*time.Second)
-	state := harness.RouterPoolHostState(t, stack, cfg, backend)
-	require.Equal(t, harness.RouterSlotUp, state["versiond-0"],
-		"legacy versiond must be admitted by the versiond-level h2 router")
-	require.Equal(t, harness.RouterSlotUp, state["versiond-1"],
-		"current versiond must be admitted by the versiond-level h2 router")
-	t.Logf("native-gRPC version backend %s states: %v", backend, state)
+	peerBackend := backend + "_rpc"
+	jsonState := harness.RouterPoolHostState(t, stack, cfg, backend)
+	require.Equal(t, harness.RouterSlotUp, jsonState["versiond-0"],
+		"legacy versiond must stay in the JSON pool")
+	require.Equal(t, harness.RouterSlotUp, jsonState["versiond-1"],
+		"current versiond must stay in the JSON pool")
+	harness.WaitRouterPoolState(t, stack, cfg, peerBackend, "versiond-1", harness.RouterSlotUp, 60*time.Second)
+	harness.WaitRouterPoolState(t, stack, cfg, peerBackend, "versiond-0", harness.RouterSlotDown, 60*time.Second)
+	t.Logf("json backend %s: %v", backend, jsonState)
+	t.Logf("native-gRPC backend %s: %v", peerBackend, harness.RouterPoolHostState(t, stack, cfg, peerBackend))
 
 	harness.WaitRouterCatalogAdmitted(t, stack, 60*time.Second)
 	stack.UpGateway(t)
@@ -84,57 +86,12 @@ func TestPeerRPCMixedChildCapabilitiesNativeGRPC(t *testing.T) {
 	client := harness.GatewayChatClient()
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 2*time.Minute, stack)
 
-	slots := make(map[string]harness.RouterSlot, len(cfg.Hosts))
-	for _, slot := range harness.RouterPool(t, stack) {
-		if slot.Backend == backend {
-			if host := harness.HostIDForUpstream(cfg, slot.Address); host != "" {
-				slots[host] = slot
-			}
-		}
-	}
-	require.Len(t, slots, 2, "version backend %s must expose both versiond hosts", backend)
-	t.Cleanup(func() {
-		for _, slot := range slots {
-			harness.SetRouterServerEnabled(t, stack, backend, slot.Name, true)
-		}
-	})
-
 	model := config.PrimaryModelID(cfg)
-	var probeFailures []string
-	// Probe the current host first so a legacy transport failure cannot poison
-	// the gateway's long-lived peer connection before the control probe runs.
-	for _, target := range []string{"versiond-1", "versiond-0"} {
-		for host, slot := range slots {
-			harness.SetRouterServerEnabled(t, stack, backend, slot.Name, host == target)
-		}
-		other := "versiond-1"
-		if target == "versiond-1" {
-			other = "versiond-0"
-		}
-		ready := harness.AssertEventually(t, 15*time.Second, 250*time.Millisecond, func() bool {
-			current := harness.RouterPoolHostState(t, stack, cfg, backend)
-			return current[target] == harness.RouterSlotUp && current[other] != harness.RouterSlotUp
+	_, err = harness.TryPostGatewayChatCompletion(client, eps.GatewayHTTP,
+		harness.TestenvAdminAPIKey, harness.ChatCompletionRequest{
+			Model:     model,
+			Messages:  []harness.ChatMessage{{Role: "user", Content: "mixed-child-capability probe through the native-gRPC pool"}},
+			MaxTokens: 8,
 		})
-		require.True(t, ready, "router did not isolate native-gRPC traffic to %s: %s",
-			target, harness.DescribeRouterPool(t, stack, cfg))
-
-		_, err := harness.TryPostGatewayChatCompletion(client, eps.GatewayHTTP,
-			harness.TestenvAdminAPIKey, harness.ChatCompletionRequest{
-				Model: model,
-				Messages: []harness.ChatMessage{{Role: "user", Content: fmt.Sprintf(
-					"mixed-child-capability probe through %s", target)}},
-				MaxTokens: 8,
-			})
-		t.Logf("native-gRPC request through forced backend %s: err=%v", target, err)
-		if err != nil {
-			probeFailures = append(probeFailures, target+": "+err.Error())
-		}
-
-		for _, slot := range slots {
-			harness.SetRouterServerEnabled(t, stack, backend, slot.Name, true)
-		}
-		harness.WaitRouterPoolState(t, stack, cfg, backend, "versiond-0", harness.RouterSlotUp, 15*time.Second)
-		harness.WaitRouterPoolState(t, stack, cfg, backend, "versiond-1", harness.RouterSlotUp, 15*time.Second)
-	}
-	require.Empty(t, probeFailures, "forced native-gRPC backend probes failed: %s", strings.Join(probeFailures, "; "))
+	require.NoError(t, err)
 }

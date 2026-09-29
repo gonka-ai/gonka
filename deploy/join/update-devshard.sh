@@ -6,6 +6,9 @@
 # The host updater sequences PostgreSQL, the router fleet, public ingress, and
 # versiond replicas. VERSIOND_LEGACY_HOST is replaced last. Public ingress is
 # replaced as a group because its proxy and policy workers depend on each other.
+# A forward move keeps the fleet ahead of the proxy, so :8081 exists before
+# :9443 is published. A rollback off peer RPC (image label ai.gonka.peer-rpc-h2)
+# replaces the proxy first, so :9443 is gone before any router loses :8081.
 # Failed replacements restore the saved Docker specification; an interrupted
 # replacement is recovered on the next normal run. PostgreSQL restores only its
 # image, retaining the migration target and its data. See the release guide for
@@ -837,7 +840,16 @@ if [[ $postgres_mode == local ]]; then
     up devshard-postgres
 fi
 
-if [[ $topology == ha ]]; then
+# ai.gonka.peer-rpc-h2=1 marks an image that publishes the HTTP/2 peer hop.
+# Pre-h2 images have no such label, which is how a rollback is recognized.
+image_label() {
+    local image=$1 key=$2
+    [[ -n $image ]] || return 0
+    "$docker_bin" image inspect --format "{{if .Config.Labels}}{{index .Config.Labels \"$key\"}}{{end}}" "$image" 2>/dev/null || true
+}
+
+apply_router_fleet() {
+    [[ $topology == ha ]] || return 0
     echo "Step: versiond-router fleet"
     [[ -x $fleet_bin ]] || fail "missing $fleet_bin"
     run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" prepare-networks
@@ -862,27 +874,66 @@ if [[ $topology == ha ]]; then
     done
     # The image was refreshed above; the fleet may not depend on the registry.
     run env GONKA_CONFIG_ENV="$config_env" VERSIOND_ROUTER_PULL_POLICY=missing "$fleet_bin" apply
+}
+
+apply_public_proxy() {
+    echo "Step: public proxy listener, then the private policy workers one at a time"
+    # The policy workers resolve proxy-policy-ingress, an alias only the new
+    # public proxy publishes, and give up after 30 seconds. Start the new proxy
+    # first without waiting for its health (it needs a policy worker for that),
+    # keep the previous proxy image under its tag, then bring the workers up and
+    # finally wait for the proxy itself.
+    begin_replacement proxy proxy-policy2 proxy-policy
+    run "${compose[@]}" up -d --no-deps proxy || fail "public proxy creation failed"
+    for service in proxy-policy2 proxy-policy proxy; do
+        run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service" || \
+            fail "$service did not become healthy during public cutover"
+    done
+    if [[ $topology == ha ]]; then
+        # The proxy healthcheck covers its policy workers only. Before the legacy
+        # router is removed and versiond is replaced, the public proxy must
+        # admit every router slot and every live route end to end.
+        run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" verify-admission || fail "public route admission failed"
+    fi
+    commit_replacement
+}
+
+# Rolling the routers off peer RPC while :9443 is still published refuses
+# every Connect call. Drop the proxy's hop first. A candidate proxy that
+# still carries the label would put :9443 back, so that combination stops.
+peer_rpc_rollback=false
+if [[ $topology == ha && -n $router_image && $(image_label "$router_image" ai.gonka.peer-rpc-h2) != 1 ]]; then
+    running_peer_rpc=false
+    if container_exists proxy; then
+        running_proxy_image=$("$docker_bin" inspect --format '{{.Config.Image}}' proxy) || \
+            fail "cannot read the running proxy image"
+        [[ $(image_label "$running_proxy_image" ai.gonka.peer-rpc-h2) == 1 ]] && running_peer_rpc=true
+    fi
+    while IFS= read -r router_name; do
+        [[ -n $router_name ]] || continue
+        running_router_image=$("$docker_bin" inspect --format '{{.Config.Image}}' "$router_name") || \
+            fail "cannot read the image of router $router_name"
+        if [[ $(image_label "$running_router_image" ai.gonka.peer-rpc-h2) == 1 ]]; then
+            running_peer_rpc=true
+            break
+        fi
+    done < <("$docker_bin" ps -a --format '{{.Names}}' --filter label=ai.gonka.component=versiond-router)
+    if [[ $running_peer_rpc == true ]]; then
+        candidate_proxy_image=$(jq -r '.services.proxy.image // ""' <<<"$rendered")
+        [[ $(image_label "$candidate_proxy_image" ai.gonka.peer-rpc-h2) != 1 ]] || \
+            fail "refusing to roll versiond-router off peer RPC while proxy image ${candidate_proxy_image:-<unset>} still serves :9443; roll that proxy back in the same run"
+        peer_rpc_rollback=true
+        echo "Step: peer RPC rollback — public proxy leaves :9443 before the router fleet loses :8081"
+    fi
 fi
 
-echo "Step: public proxy listener, then the private policy workers one at a time"
-# The policy workers resolve proxy-policy-ingress, an alias only the new
-# public proxy publishes, and give up after 30 seconds. Start the new proxy
-# first without waiting for its health (it needs a policy worker for that),
-# keep the previous proxy image under its tag, then bring the workers up and
-# finally wait for the proxy itself.
-begin_replacement proxy proxy-policy2 proxy-policy
-run "${compose[@]}" up -d --no-deps proxy || fail "public proxy creation failed"
-for service in proxy-policy2 proxy-policy proxy; do
-    run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service" || \
-        fail "$service did not become healthy during public cutover"
-done
-if [[ $topology == ha ]]; then
-    # The proxy healthcheck covers its policy workers only. Before the legacy
-    # router is removed and versiond is replaced, the new public proxy must
-    # admit every router slot and every live route end to end.
-    run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" verify-admission || fail "public route admission failed"
+if [[ $peer_rpc_rollback == true ]]; then
+    apply_public_proxy
+    apply_router_fleet
+else
+    apply_router_fleet
+    apply_public_proxy
 fi
-commit_replacement
 
 if container_exists versiond-router; then
     # The pre-v5 overlay ran one nginx versiond-router service. The fleet slots

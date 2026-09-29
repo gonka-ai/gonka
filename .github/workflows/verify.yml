@@ -293,6 +293,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Render and exercise versiond-router
         run: make -C versiond-router test-render
+      - name: Check h2 backends with an HTTP/1.1 health check
+        run: make -C versiond-router test-h2-backend-h1-check
       - name: Exercise isolated versiond-router fleet rollouts
         run: make -C versiond-router test-fleet
       - name: Gate router fleet failure scenarios

@@ -385,7 +385,11 @@ historical; do not treat it as current join behavior.
 JSON on InferenceUrl and phase 6 `/rpc/` on `{DEVSHARD_RPC_H2_PORT}` **share
 placement**. `proxy`'s h2 frontend uses the same version + escrow hash as
 `versiond_router_in`. Failing `/readyz` withdraws the host from both hops. Do not
-add a second evacuation procedure for `/rpc/`.
+add a second evacuation procedure for `/rpc/`. That check is the versiond
+listen. It does not prove the router's HTTP/2 bind matches the proxy dial
+port, and the placement contract does not include that bind. Both are known
+limitations in
+[grpc-transport-connection.md](./grpc-transport-connection.md#known-limitations).
 
 #### Target flow (evacuate one versiond host)
 

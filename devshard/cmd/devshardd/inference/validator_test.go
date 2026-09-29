@@ -16,6 +16,7 @@ import (
 	commonvalidation "common/validation"
 	devshardpkg "devshard"
 	"devshard/storage"
+	"devshard/transport"
 )
 
 // stubLeases implements leaseOps for testing.
@@ -741,6 +742,41 @@ func TestExecutorFaultVerdict_DisabledOrCancelled(t *testing.T) {
 	assert.Nil(t, executorFaultVerdict(context.Background(), phase, req, req.EpochID, err, false))
 	assert.Nil(t, executorFaultVerdict(cancelledCtx(), phase, req, req.EpochID, err, true))
 	assert.Nil(t, executorFaultVerdict(context.Background(), phase, req, req.EpochID, errors.New("local bridge down"), true))
+	assert.Nil(t, executorFaultVerdict(context.Background(), phase, req, req.EpochID, transport.ErrPeerNotReady, true))
+}
+
+func TestLeaseValidator_PeerNotReadyReleasesForNextAcquire(t *testing.T) {
+	held := false
+	store := &stubLeases{
+		acquireFn: func(context.Context, string, uint64, uint64, string) (bool, error) {
+			if held {
+				return false, nil
+			}
+			held = true
+			return true, nil
+		},
+		releaseFn: func(context.Context, string, uint64, uint64, string) error {
+			held = false
+			return nil
+		},
+	}
+	calls := 0
+	c := newTestLeaseValidator(store, func(context.Context, devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		calls++
+		if calls == 1 {
+			return nil, transport.ErrPeerNotReady
+		}
+		return &devshardpkg.ValidateResult{Valid: true}, nil
+	})
+
+	_, err := c.Validate(context.Background(), makeReq())
+	require.ErrorIs(t, err, transport.ErrPeerNotReady)
+	require.Len(t, store.releaseCalls, 1)
+
+	result, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+	require.True(t, result.Valid)
+	require.Equal(t, 2, calls)
 }
 
 // The D2 window must follow the epoch the payload was actually requested for.

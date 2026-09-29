@@ -1,6 +1,6 @@
 .PHONY: all build-docker release test-render test-compose-contract test-fleet
 .PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose
-.PHONY: test-join-versiond-healthcheck test-pool-status test-endpoints-render
+.PHONY: test-join-versiond-healthcheck test-pool-status test-endpoints-render test-h2-backend-h1-check
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
@@ -53,6 +53,11 @@ test-pool-status:
 # must all render valid pools; the real image validates each shape.
 test-endpoints-render:
 	@HAPROXY_IMAGE=$(HAPROXY_IMAGE) ./endpoints-render_test.sh
+
+# proto h2 toward versiond, with the health check kept on HTTP/1.1. An
+# HTTP/1.1 /readyz becomes UP. A proto h2 line with no check stays "no check".
+test-h2-backend-h1-check:
+	@HAPROXY_IMAGE=$(HAPROXY_IMAGE) ./h2-backend-h1-check_test.sh
 
 # The membership document the router posts to versiond. DNS discovery and an
 # explicit endpoint file must both list exactly the ready members per version.

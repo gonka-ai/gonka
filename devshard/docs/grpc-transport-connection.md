@@ -558,3 +558,68 @@ POST on HTTP/2 on **every** hop (`proxy` → versiond-router → versiond → ch
 
 Until phase 7, any behavioral gap between the JSON route and the RPC path is a bug in the
 RPC path.
+
+## Known limitations
+
+Two HA deploy gaps are accepted. Neither fires on an unmodified join: the
+public port is one `config.env` value, and both sides of the router hop
+default to `8081`. They are real fail-closed outages for peer RPC when an
+operator crosses them. Clients do not fall back to JSON. An HA router
+refuses `/sessions/.../rpc/` on `:8080`.
+
+### Placement contract does not include the HTTP/2 listen
+
+`PLACEMENT_PROTOCOL_VERSION` stays `1`. `placement_contract` in
+`deploy/join/versiond-router-fleet.sh` covers pool, network, legacy host,
+versions, catalog, DNS, and membership. It does not cover
+`VERSIOND_ROUTER_H2_PORT` or `VERSIOND_ROUTER_BACKEND_H2`. An old router
+image and a current one satisfy the same contract, so a direct
+`versiond-router-fleet.sh apply` may mix them.
+
+The proxy sends HTTP/2 to `:8081` on every slot. A pre-h2 slot refuses that
+connect. Redispatch tries another slot and succeeds while any current slot
+remains. When the last current slot leaves and the proxy is still
+publishing `{DEVSHARD_RPC_H2_PORT}`, every slot refuses the only peer path.
+
+`update-devshard.sh` does not take that path. Images labeled
+`ai.gonka.peer-rpc-h2=1` are the HTTP/2 builds. A rollback to images
+without the label replaces the public proxy before `fleet apply`, so
+`:9443` is gone before any router loses `:8081`. A candidate proxy that
+still has the label is refused. A direct fleet apply is unchanged.
+
+The safe direction is a proxy rollback to a build that does not publish
+`:9443`, then the routers. A router rollback under a proxy that still
+publishes `:9443` is not safe. Putting the listen port and
+`VERSIOND_ROUTER_BACKEND_H2` on the placement contract would force that
+boundary through `maintenance-rollout`. That bump is not in this tree.
+
+### The updater does not prove the HTTP/2 ports agree
+
+`update-devshard.sh --check` does not read `DEVSHARD_RPC_H2_*`. Proxy
+`/readyz` counts policy workers and the coarse JSON pool. `verify-admission`
+requires the per-version `_rpc` server to be UP. That server's check is
+HTTP/1.1 `GET /readyz` on the router admin port `:8404`, then traffic is
+sent to `DEVSHARD_RPC_H2_ROUTER_PORT`. A server can be UP, and the proxy
+healthy, while the data port is closed.
+
+The three hops are different ports. They are paired, not one number:
+
+| Hop | Setting | Stock |
+| --- | --- | --- |
+| Client to proxy | `DEVSHARD_RPC_H2_PORT`, one value in `config.env`, published on the proxy and inherited by local versiond and the gateway | `9443` |
+| Proxy to router | Proxy `DEVSHARD_RPC_H2_ROUTER_PORT`. Router `VERSIOND_ROUTER_H2_PORT` | both default `8081` |
+| Router to versiond | Endpoint `{id, host, port}` or DNS, `proto h2` on the same listen as JSON | `8080` |
+
+The slot compose does not pass `VERSIOND_ROUTER_H2_PORT`. The router
+entrypoint defaults it to `8081`. The proxy side is
+`${DEVSHARD_RPC_H2_ROUTER_PORT:-8081}`. Setting that variable moves only
+the dial target. Every slot still listens on `8081`, redispatch cannot
+find a listener, and JSON on `:443` still works.
+
+A remote endpoint has no separate HTTP/2 port. The versiond listen on
+that `port` has to speak cleartext HTTP/2; `/readyz` on it is HTTP/1.1.
+Current `docker-compose.versiond-remote.yml` sets `DEVSHARD_RPC_H2_UPGRADE`
+and `DEVSHARD_RPC_H2_PORT`. A remote `config.env` with a different public
+port, or a versiond image that does not speak h2c, is invisible to the
+updater on the network node. Requiring `rpc_h2_upstream` to be UP would
+not catch either case: that state is decided by the admin check.

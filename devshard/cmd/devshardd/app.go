@@ -23,6 +23,7 @@ import (
 	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
 	chaintx "devshard/cmd/devshardd/tx"
+	"devshard/host"
 	"devshard/hostevents"
 	"devshard/runtimeparams"
 	devshardserver "devshard/server"
@@ -123,6 +124,10 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	var admin *echo.Echo
 	if cfg.AdminAddr != "" {
 		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryProgressSnapshot, func() {
+			// Stop taking leases before the peers close, and cancel fetches
+			// still on those peers. A validation that already has the
+			// payload keeps its context and may vote.
+			host.StopValidationEnqueue()
 			transport.ReleaseOutboundPeerConns()
 			manager.ClosePeerRPC()
 		})

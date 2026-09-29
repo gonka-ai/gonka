@@ -133,17 +133,14 @@ frontend versiond_in
     http-request deny deny_status 404 if { dst_port 8080 } { path_sub /sessions/ } { path_sub /rpc/ }
 
     # One HTTP/2 connection carries Watch and inference together. Soft-stop
-    # waits for the connection, so an open Watch holds it after the inference
-    # has already been sent. Count non-Watch streams on the client address.
-    # The drain helper closes the remaining Watch streams once the two counts
-    # meet, which is when every inference on that connection has finished.
+    # waits for the connection, so an open Watch holds it. Record the Watch
+    # stream id; the drain helper shuts down only those sessions. Chat is not
+    # recorded. http-after-response runs when headers are ready, before the
+    # body, so it cannot say that an inference has finished.
     # A slash inside an ACL pattern is a delimiter, so the method is a regex.
     # HAProxy treats $ as an environment variable; $$ is the end anchor.
-    http-request set-var(txn.h2watch) str(1) if { path_reg PeerAuthService/Watch$$ }
-    http-request set-var-fmt(txn.ckey) %[src]:%[src_port]
-    http-request track-sc0 var(txn.ckey) table h2_stream_acct
-    http-request sc-inc-gpc0(0) if !{ var(txn.h2watch) -m str 1 }
-    http-after-response sc-inc-gpc1(0) if !{ var(txn.h2watch) -m str 1 }
+    http-request set-var-fmt(txn.wid) %[txn.id32] if { path_reg PeerAuthService/Watch$$ }
+    http-request track-sc0 var(txn.wid) table h2_watch_ids if { var(txn.wid) -m found }
 
     # versiond's own route grammar has versionless endpoints, and their first
     # path segment is not a version. Classifying by "field 2 is non-empty" would
@@ -156,16 +153,23 @@ frontend versiond_in
     # Versionless endpoints are part of versiond's own API namespace. Resolve
     # them before consulting any version map so a governance name can never
     # shadow health, metrics, stats, or session-observability routes.
+    # Peer RPC is the h2 bind. Its backends are the JSON pools with _rpc
+    # appended, and their check is /readyz?peer-rpc=1. A child that did not
+    # advertise h2c stays in the JSON pool and out of this one.
+    use_backend versiond_ha_pool_rpc if versionless_request { dst_port ${H2_PORT} }
     use_backend versiond_ha_pool if versionless_request
 
     # Legacy pinning wins: the map yields that version's backend on the one host
     # that owns its SQLite data.
+    use_backend %[var(txn.ver),map_str(${NON_HA_MAP}),concat(_rpc)] if { dst_port ${H2_PORT} } { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
     use_backend %[var(txn.ver),map_str(${NON_HA_MAP})] if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
     # Then the version's own pool. The map yields a backend name; with no entry
     # there is no match and the request falls through to the host-level pool,
     # which the guard above has already restricted to non-version paths whenever
     # any version is declared.
+    use_backend %[var(txn.ver),map_str(${VERSIONS_MAP}),concat(_rpc)] if { dst_port ${H2_PORT} } { var(txn.ver),map_str(${VERSIONS_MAP}) -m found }
     use_backend %[var(txn.ver),map_str(${VERSIONS_MAP})]
+    use_backend versiond_ha_pool_rpc if { dst_port ${H2_PORT} }
     default_backend versiond_ha_pool
 
 ${POOL_BACKENDS}
@@ -192,11 +196,12 @@ ${ROUTER_READY_RULES}
 backend router_admin_not_found
     http-request return status 404 content-type text/plain string "not found\n"
 
-# Per client connection: gpc0 is inferences started, gpc1 is inferences whose
-# response has been fully sent. Watch is not counted. The soft-stop helper
-# reads this table.
-backend h2_stream_acct
-    stick-table type string len 80 size 200000 expire 2h store gpc0,gpc1
+# One row per live Watch stream, keyed by that stream's txn.id32 (the "id="
+# field in "show sess"). The soft-stop helper shuts down those sessions and
+# no others. Rows outlive a short Watch; a row whose stream is already gone
+# does not match a session.
+backend h2_watch_ids
+    stick-table type string len 16 size 200000 expire 7d store gpc0
 
 # A synthetic no-traffic backend exports catalog convergence through HAProxy's
 # standard backend/server Prometheus metrics. The reconciler enables the server

@@ -408,9 +408,12 @@ for version in v9 v10; do
         "http://127.0.0.1:8404/readyz?version=$version" >/dev/null \
         || fail "reduced capacity dropped cached route $version"
 done
-[[ $(docker exec gonka-pr-proxy-cache-floor grep -c \
-    '^backend versiond_routers_dynamic_' /etc/haproxy/haproxy.cfg) == 2 ]] \
+[[ $(docker exec gonka-pr-proxy-cache-floor grep -Ec \
+    '^backend versiond_routers_dynamic_[0-9]+$' /etc/haproxy/haproxy.cfg) == 2 ]] \
     || fail "LKG routes did not raise the effective dynamic capacity"
+[[ $(docker exec gonka-pr-proxy-cache-floor grep -Ec \
+    '^backend versiond_routers_dynamic_[0-9]+_rpc$' /etc/haproxy/haproxy.cfg) == 2 ]] \
+    || fail "LKG routes did not render a peer RPC backend per dynamic slot"
 docker rm -f gonka-pr-proxy-cache-floor >/dev/null
 
 # The reversible upgrade keeps a healthy singleton for v4 nginx rollback. Its

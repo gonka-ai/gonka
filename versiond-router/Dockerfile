@@ -4,7 +4,8 @@ ARG PLACEMENT_PROTOCOL_VERSION=1
 ARG CATALOG_CACHE_PROTOCOL_VERSION=2
 LABEL ai.gonka.component="versiond-router" \
       ai.gonka.placement-protocol-version="${PLACEMENT_PROTOCOL_VERSION}" \
-      ai.gonka.catalog-cache-protocol-version="${CATALOG_CACHE_PROTOCOL_VERSION}"
+      ai.gonka.catalog-cache-protocol-version="${CATALOG_CACHE_PROTOCOL_VERSION}" \
+      ai.gonka.peer-rpc-h2="1"
 
 # Sticky reverse-proxy in front of N versiond instances. Hashes by escrow id
 # from the URL so the same session always lands on the same versiond, and takes

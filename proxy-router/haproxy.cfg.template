@@ -160,6 +160,10 @@ frontend rpc_h2
     http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }
     http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/stats/shards/[^/]+$ }
 
+    # Versioned Attach/Chat uses the same map as versiond_router_in, with _rpc
+    # appended. A version that is not in the map, or whose twin has no ready
+    # slot, is not forwarded. Versionless paths stay on the coarse pool.
+${RPC_H2_VERSION_RULES}
     default_backend rpc_h2_upstream
 
 backend st_rpc_attach

@@ -313,6 +313,39 @@ func (m *Manager) ServesVersion(name string) bool {
 	return running && c.servingFresh()
 }
 
+// ServesPeerRPC reports whether the child serving version accepts
+// prior-knowledge HTTP/2. Connect is hashed only onto that child. A binary
+// that rejects --print-child-h2c stays on HTTP/1.1 and is not a peer-RPC target.
+func (m *Manager) ServesPeerRPC(name string) bool {
+	if !m.ServesVersion(name) {
+		return false
+	}
+	m.mu.Lock()
+	c := m.processes[name]
+	h2c := c != nil && c.childH2C
+	m.mu.Unlock()
+	return h2c
+}
+
+// PeerRPCHostReady is the host-level peer-RPC answer. Every running child
+// must have advertised h2c. One HTTP/1.1 child keeps the host out of the
+// coarse peer pool so versionless Connect is not hashed onto it.
+func (m *Manager) PeerRPCHostReady() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	anyRunning := false
+	for _, c := range m.processes {
+		if c == nil || c.status != statusRunning || !c.servingFresh() {
+			continue
+		}
+		anyRunning = true
+		if !c.childH2C {
+			return false
+		}
+	}
+	return anyRunning
+}
+
 // watchChildReadiness keeps one generation's serving flag current. It is bound to
 // the generation, so a swap simply ends this monitor and starts the next one; a
 // late answer can only ever be written to the child that was asked.

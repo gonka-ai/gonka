@@ -133,10 +133,7 @@ func fetchPayloadsFromExecutor(
 		commonvalidation.PayloadResponseByteLimit(req.OutputTokens),
 	)
 	if err != nil {
-		if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, errPayloadRPCUnavailable) || ctx.Err() != nil {
-			return nil, nil, err
-		}
-		return nil, nil, tagExecutorPayloadFault(err)
+		return nil, nil, classifyPayloadFetchError(ctx, err)
 	}
 
 	encodedPubKeys, err := resolveExecutorPubKeys(ctx, recorder, req.ExecutorAddress)
@@ -244,6 +241,25 @@ func (t ttfbRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 // Valid:false on that would punish an honest executor.
 var errPayloadRPCUnavailable = errors.New("payload is served over Connect; the HTTP payload route is retired")
 
+// classifyPayloadFetchError leaves a failure of this process's closed peer
+// untagged, so the lease is released and another generation can fetch. A
+// payload that is gone or too large is still the executor's result.
+func classifyPayloadFetchError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, errPayloadRPCUnavailable) || ctx.Err() != nil {
+		return err
+	}
+	if errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
+		return tagExecutorPayloadFault(err)
+	}
+	if errors.Is(err, transport.ErrPeerNotReady) || transport.OutboundPeersReleased() {
+		return err
+	}
+	return tagExecutorPayloadFault(err)
+}
+
 func fetchSignedPayloads(
 	ctx context.Context,
 	client *http.Client,
@@ -254,6 +270,8 @@ func fetchSignedPayloads(
 	signature string,
 	maxBytes int64,
 ) (*commonvalidation.PayloadResponse, error) {
+	ctx, stopFetch := transport.WithPayloadFetchCancel(ctx)
+	defer stopFetch()
 	if rpc == nil || !rpc.Uses(transport.EndpointPayload) {
 		return nil, errPayloadRPCUnavailable
 	}

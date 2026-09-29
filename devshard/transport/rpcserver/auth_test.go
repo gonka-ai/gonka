@@ -85,6 +85,33 @@ func withSession[T any](req *connect.Request[T], token []byte) *connect.Request[
 	return req
 }
 
+// watchAfterRelease opens a Watch once the previous one has left the slot.
+// Cancelling the client context makes Receive return before the server runs
+// endWatch, so the next Watch can still be "watch already active".
+func watchAfterRelease(t *testing.T, client rpcpbconnect.PeerAuthServiceClient, token []byte) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		stream, err := client.Watch(context.Background(), withSession(connect.NewRequest(&rpcpb.WatchRequest{}), token))
+		if err != nil {
+			if connect.CodeOf(err) == connect.CodeAlreadyExists {
+				return false
+			}
+			t.Fatalf("reopened Watch: %v", err)
+		}
+		if stream.Receive() {
+			t.Cleanup(func() { _ = stream.Close() })
+			return true
+		}
+		recvErr := stream.Err()
+		_ = stream.Close()
+		if connect.CodeOf(recvErr) == connect.CodeAlreadyExists {
+			return false
+		}
+		t.Fatalf("reopened Watch: %v", recvErr)
+		return false
+	}, time.Second, 5*time.Millisecond, "after the first Watch ends, a new Watch on the same token must be allowed")
+}
+
 func TestPeerAuth_AttachWatch(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	auth := newTestAuth(PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
@@ -115,11 +142,7 @@ func TestPeerAuth_AttachWatch(t *testing.T) {
 	_, ok = auth.LookupToken(attached.SessionToken)
 	require.True(t, ok, "Watch termination must not drop the host session")
 
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	t.Cleanup(cancel2)
-	again, err := client.Watch(ctx2, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), attached.SessionToken))
-	require.NoError(t, err)
-	require.True(t, again.Receive(), again.Err(), "a later Watch on the same token must be allowed")
+	watchAfterRelease(t, client, attached.SessionToken)
 }
 
 func TestPeerAuth_AttachLiveNonceRejected(t *testing.T) {
@@ -734,7 +757,7 @@ func TestPeerAuth_WatchOnHostPath(t *testing.T) {
 	t.Cleanup(cancel)
 	stream, err := client.Watch(ctx, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), attached.SessionToken))
 	require.NoError(t, err)
-	require.True(t, stream.Receive(), stream.Err(), "Watch on /sessions/_/rpc must admit a live token")
+	require.Truef(t, stream.Receive(), "Watch on /sessions/_/rpc must admit a live token: %v", stream.Err())
 }
 
 func TestPeerAuth_SecondAttachReplacesOnAnyEscrowPath(t *testing.T) {
@@ -931,10 +954,7 @@ func TestPeerAuth_SecondWatchRejected(t *testing.T) {
 	_, ok = auth.LookupToken(token)
 	require.True(t, ok, "Watch termination must not drop the host session")
 
-	again, err := client.Watch(context.Background(), withSession(connect.NewRequest(&rpcpb.WatchRequest{}), token))
-	require.NoError(t, err)
-	require.True(t, again.Receive(), again.Err(), "after the first Watch ends, a new Watch on the same token must be allowed")
-	_ = again.Close()
+	watchAfterRelease(t, client, token)
 }
 
 func TestPeerAuth_OldWatchEndDoesNotDropReattachedSession(t *testing.T) {

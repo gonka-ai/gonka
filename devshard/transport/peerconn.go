@@ -383,11 +383,91 @@ func newPeerConnTransports(cfg PeerConnConfig, maxConns int) (*originSwitchTrans
 // later RPC cannot open a new PeerConn and take the identity back.
 var outboundPeerReleased atomic.Bool
 
+// payloadFetchGate cancels payload RPCs that are still on the peer when
+// this generation is released. Replacing the context lets a test clear the
+// gate; callers snapshot ctx under the mutex and re-check the flag.
+var payloadFetchGate struct {
+	mu     sync.Mutex
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func ensurePayloadFetchGateLocked() {
+	if payloadFetchGate.ctx == nil {
+		payloadFetchGate.ctx, payloadFetchGate.cancel = context.WithCancel(context.Background())
+	}
+}
+
+func cancelInflightPayloadFetches() {
+	payloadFetchGate.mu.Lock()
+	ensurePayloadFetchGateLocked()
+	cancel := payloadFetchGate.cancel
+	payloadFetchGate.ctx, payloadFetchGate.cancel = context.WithCancel(context.Background())
+	payloadFetchGate.mu.Unlock()
+	cancel()
+}
+
+// OutboundPeersReleased reports that this process has dropped its outbound
+// peer sessions. Payload fetches that fail after this are this process's
+// closed connection, not an executor fault.
+func OutboundPeersReleased() bool {
+	return outboundPeerReleased.Load()
+}
+
+// WithPayloadFetchCancel returns a child of parent that is also cancelled
+// when outbound peers are released. The parent stays live so a validation
+// that already has the payload can finish.
+func WithPayloadFetchCancel(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	if outboundPeerReleased.Load() {
+		cancel()
+		return ctx, func() {}
+	}
+	payloadFetchGate.mu.Lock()
+	ensurePayloadFetchGateLocked()
+	src := payloadFetchGate.ctx
+	released := outboundPeerReleased.Load()
+	payloadFetchGate.mu.Unlock()
+	if released || src.Err() != nil {
+		cancel()
+		return ctx, func() {}
+	}
+	stop := context.AfterFunc(src, cancel)
+	if outboundPeerReleased.Load() {
+		stop()
+		cancel()
+		return ctx, func() {}
+	}
+	return ctx, func() {
+		stop()
+		cancel()
+	}
+}
+
+// ResetOutboundPeerReleaseForTest clears the retiring-generation gate.
+// Tests that release outbound peers must defer it.
+func ResetOutboundPeerReleaseForTest() {
+	outboundPeerReleased.Store(false)
+	payloadFetchGate.mu.Lock()
+	old := payloadFetchGate.cancel
+	payloadFetchGate.ctx, payloadFetchGate.cancel = context.WithCancel(context.Background())
+	payloadFetchGate.mu.Unlock()
+	if old != nil {
+		old()
+	}
+}
+
 // ReleaseOutboundPeerConns stops every outbound Attach/Watch in this process
-// and refuses new ones. The admin listener calls it when versiond retires
-// this generation. Safe to call more than once.
+// and refuses new ones. It also cancels payload fetches still waiting on
+// those peers. The admin listener calls it when versiond retires this
+// generation, after validation enqueue has been stopped. Safe to call more
+// than once.
 func ReleaseOutboundPeerConns() {
 	outboundPeerReleased.Store(true)
+	cancelInflightPayloadFetches()
 	peerConnMu.Lock()
 	conns := make([]*PeerConn, 0, len(peerConnRegistry))
 	for key, pc := range peerConnRegistry {

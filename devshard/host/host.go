@@ -1193,7 +1193,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 	q := h.validationQueue
 	closed := h.validationClosed
 	h.validationLifecycleMu.RUnlock()
-	if h.validator == nil || q == nil || closed {
+	if h.validator == nil || q == nil || closed || validationEnqueueStopped.Load() {
 		return nil
 	}
 	if !h.completionRequestsEnabled() {
@@ -1310,6 +1310,21 @@ func (h *Host) validationIsClosed() bool {
 	return h.validationClosed
 }
 
+// validationEnqueueStopped is process-wide. /rpc/release sets it before
+// outbound peers close so this generation does not Acquire a lease the
+// new generation should take.
+var validationEnqueueStopped atomic.Bool
+
+// StopValidationEnqueue stops this process from taking new validation leases.
+// A Validate call that has already started keeps running.
+func StopValidationEnqueue() {
+	validationEnqueueStopped.Store(true)
+}
+
+func resetValidationEnqueueForTest() {
+	validationEnqueueStopped.Store(false)
+}
+
 // EnqueueDueValidations offers collectValidationJobs work to the validation
 // queue. GET /mempool catch-up uses this so an HA survivor can re-acquire
 // after the owner Released on graceful stop, without waiting for a new chat.
@@ -1325,7 +1340,7 @@ func (h *Host) EnqueueDueValidations() {
 func (h *Host) enqueueValidation(job validateJob) {
 	h.validationLifecycleMu.RLock()
 	q := h.validationQueue
-	closed := h.validationClosed
+	closed := h.validationClosed || validationEnqueueStopped.Load()
 	if q == nil || closed {
 		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
@@ -1374,13 +1389,6 @@ func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 // another host challenged the inference while this validator was running.
 // Called outside the mutex.
 func (h *Host) validateAsync(ctx context.Context, job validateJob) {
-	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
-	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
-	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
-		"inference_id", job.inferenceID,
-		"executor_address", job.executorAddress,
-		"validator_slot", job.validatorSlot,
-		"validation_flow", string(job.flow))
 	defer func() {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
@@ -1392,6 +1400,18 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			observability.SetValidationQueueDepth(h.escrowID, len(queue))
 		}
 	}()
+	// Queued work that has not entered Validate must not take a lease after
+	// this generation was released. A call already inside Validate continues.
+	if validationEnqueueStopped.Load() {
+		return
+	}
+	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
+	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
+	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
+		"inference_id", job.inferenceID,
+		"executor_address", job.executorAddress,
+		"validator_slot", job.validatorSlot,
+		"validation_flow", string(job.flow))
 
 	result, err := h.validator.Validate(ctx, devshard.ValidateRequest{
 		InferenceID:     job.inferenceID,

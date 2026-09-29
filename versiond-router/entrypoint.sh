@@ -1,8 +1,9 @@
 #!/bin/sh
 # Renders /etc/haproxy/haproxy.cfg and /etc/haproxy/non_ha.map from the
 # environment, then starts HAProxy. SIGUSR1 soft-stops HAProxy and closes
-# Watch streams once every inference on that HTTP/2 connection has finished,
-# so a rollout does not wait out an idle Watch.
+# Watch streams. An in-flight Chat keeps its own stream until the response
+# finishes, so a rollout does not wait out an idle Watch or reset a body
+# that is still streaming.
 #
 # Env:
 #   VERSIOND_POOL_HOST        DNS name resolving to every versiond in the HA
@@ -25,7 +26,9 @@
 #   VERSIOND_ROUTER_H2_PORT  published-hop frontend (default 8081, proto h2).
 #                             :8080 stays HTTP/1.1 for JSON/healthz/catalog.
 #   VERSIOND_ROUTER_BACKEND_H2 proto h2 on every versiond server line (default
-#                             on). Set false for HTTP/1.1 mock upstreams.
+#                             on), with check-proto h1 so the existing health
+#                             check stays HTTP/1.1. Set false for HTTP/1.1
+#                             mock upstreams.
 #   VERSIOND_LEGACY_HOST      single host owning pre-HA SQLite data dirs. With an
 #                             endpoint file this may also be an endpoint id.
 #   VERSIOND_NON_HA_VERSIONS  version path segments pinned to the legacy host
@@ -298,12 +301,16 @@ ALLOW_COARSE_READINESS=$(bool_env VERSIOND_ROUTER_ALLOW_COARSE_READINESS)
 CATALOG_ALLOW_REMOVALS=$(bool_env VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS)
 RENDER_ONLY=$(bool_env VERSIOND_ROUTER_RENDER_ONLY)
 TRUST_FORWARDED_HEADERS=$(bool_env VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS)
-# Default on: inner hop is h2c to current-tree versiond. HTTP/1.1 mock
+# Default on: the data connection to versiond is h2c. The health check does
+# not follow that protocol. A v5.0.2 versiond is plain HTTP/1.1, and a check
+# that speaks h2 marks every server DOWN, so fleet apply rolls back. Dropping
+# the check instead would report "no check", which drain does not treat as UP
+# and which "set server health down" cannot bring back. HTTP/1.1 mock
 # upstreams (test-version-routing) set VERSIOND_ROUTER_BACKEND_H2=false.
 : "${VERSIOND_ROUTER_BACKEND_H2:=true}"
 BACKEND_H2=$(bool_env VERSIOND_ROUTER_BACKEND_H2)
 if [ -n "$BACKEND_H2" ]; then
-    BACKEND_PROTO=' proto h2'
+    BACKEND_PROTO=' proto h2 check-proto h1'
 else
     BACKEND_PROTO=
 fi
@@ -431,7 +438,29 @@ VERSIONLESS_RETRY_ON="$DEFAULT_RETRY_ON 404"
 # With an explicit endpoint list the template's server-template line is
 # replaced by explicit servers, except for a legacy owner that is not an
 # endpoint id: that keeps the single-host DNS template.
+# peer_rpc_check turns a JSON /readyz probe into the peer-RPC probe. The
+# dynamic form looks the slot up under the JSON backend name: the _rpc twin
+# is not a slot-map key, so be_name drops that suffix first.
+peer_rpc_check() {
+    printf '%s\n' "$1" | awk '
+        {
+            gsub(/be_name,map/, "be_name,regsub(_rpc$,),map")
+            amp = "\\&"
+            if (sub(/uri-lf \/readyz\?/, "uri-lf /readyz?peer-rpc=1" amp)) { print; next }
+            if (sub(/uri \/readyz\?/, "uri /readyz?peer-rpc=1" amp)) { print; next }
+            sub(/uri \/readyz$/, "uri /readyz?peer-rpc=1")
+            print
+        }
+    '
+}
+
+# sed treats &, \, and the | delimiter as replacement syntax.
+sed_repl() {
+    printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
+}
+
 render_backend() {
+    expect=${READY_EXPECT:-200,404}
     : > "$POOL_SERVERS_FILE"
     if [ "$POOL_MODE" = endpoints ]; then
         explicit_server_lines "${10}" "$4" "$8" > "$POOL_SERVERS_FILE"
@@ -446,8 +475,8 @@ render_backend() {
     fi
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
-        -e "s|\${READY_CHECK_SEND}|$2|g" \
-        -e "s|\${ROUTE_CHECK_SEND}|$3|g" \
+        -e "s|\${READY_CHECK_SEND}|$(sed_repl "$2")|g" \
+        -e "s|\${ROUTE_CHECK_SEND}|$(sed_repl "$3")|g" \
         -e "s|\${VERSIOND_PORT}|$PORT|g" \
         -e "s|\${BACKEND_SLOTS}|$5|g" \
         -e "s|\${REQUEST_HA_HEADER}|$6|g" \
@@ -455,8 +484,26 @@ render_backend() {
         -e "s|\${RETRY_ON}|$9|g" \
         -e "s|\${SERVER_STATE}|$8|g" \
         -e "s|\${BACKEND_PROTO}|$BACKEND_PROTO|g" \
+        -e "s|\${READY_EXPECT}|$expect|g" \
         -e "$rb_servers" \
         "$POOL_TEMPLATE"
+}
+
+# The JSON backend and this twin share servers. Only the readiness check
+# differs, so a child without h2c stays UP for JSON and DOWN for Connect.
+# Args match render_backend except the response label, which is the twin name:
+# $1 name, $2 readiness check, $3 route check, $4 host, $5 slots, $6 HA header,
+# $7 server state, $8 retry policy, $9 kind.
+peer_route_check() {
+    printf '%s\n' "$1" | sed 's|be_name,map|be_name,regsub(_rpc$,),map|'
+}
+
+render_peer_backend() {
+    saved_expect=${READY_EXPECT-}
+    READY_EXPECT=200
+    render_backend "${1}_rpc" "$(peer_rpc_check "$2")" "$(peer_route_check "$3")" \
+        "$4" "$5" "$6" "${1}_rpc" "$7" "$8" "$9"
+    READY_EXPECT=$saved_expect
 }
 
 : > "$MAP"
@@ -494,6 +541,11 @@ render_backend versiond_ha_pool \
     'http-check send meth GET uri /healthz' \
     "$POOL_HOST" "$SLOTS" "$(ha_header_for versiond_ha_pool)" \
     versiond_ha_pool '' "$VERSIONLESS_RETRY_ON" pool > "$POOL_BACKENDS_FILE"
+render_peer_backend versiond_ha_pool \
+    'http-check send meth GET uri /readyz' \
+    'http-check send meth GET uri /healthz' \
+    "$POOL_HOST" "$SLOTS" "$(ha_header_for versiond_ha_pool_rpc)" \
+    '' "$VERSIONLESS_RETRY_ON" pool >> "$POOL_BACKENDS_FILE"
 declare_ha_version() {
     version=$1
     [ -n "$version" ] || return 0
@@ -525,6 +577,12 @@ declare_ha_version() {
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" '' \
+        "$DEFAULT_RETRY_ON" pool \
+        >> "$POOL_BACKENDS_FILE"
+    render_peer_backend "$backend" \
+        "http-check send meth GET uri /readyz?version=$encoded_version" \
+        "http-check send meth GET uri /$encoded_version/healthz" \
+        "$POOL_HOST" "$SLOTS" "$(ha_header_for "${backend}_rpc")" '' \
         "$DEFAULT_RETRY_ON" pool \
         >> "$POOL_BACKENDS_FILE"
 }
@@ -577,6 +635,12 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" "$server_state" \
         "$DEFAULT_RETRY_ON" pool \
         >> "$POOL_BACKENDS_FILE"
+    render_peer_backend "$backend" \
+        "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)]" \
+        "http-check send meth GET uri-lf /%[be_name,map($SLOT_MAP)]/healthz" \
+        "$POOL_HOST" "$SLOTS" "$(ha_header_for "${backend}_rpc")" "$server_state" \
+        "$DEFAULT_RETRY_ON" pool \
+        >> "$POOL_BACKENDS_FILE"
     index=$((index + 1))
 done
 
@@ -603,6 +667,12 @@ while IFS= read -r version; do
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
         versiond_legacy '' "$DEFAULT_RETRY_ON" legacy \
+        >> "$POOL_BACKENDS_FILE"
+    render_peer_backend "$backend" \
+        "http-check send meth GET uri /readyz?version=$encoded_version" \
+        "http-check send meth GET uri /$encoded_version/healthz" \
+        "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
+        '' "$DEFAULT_RETRY_ON" legacy \
         >> "$POOL_BACKENDS_FILE"
 done < "$LEGACY_VERSIONS_FILE"
 

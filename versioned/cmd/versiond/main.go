@@ -460,9 +460,14 @@ func readinessHandler(mgr *process.Manager, hostLifecycle *host.Controller) http
 		// ?version=<name> asks the precise question the router wants answered
 		// before it sends a request: can you serve *this* version. Without it the
 		// answer is the coarse host-level one.
+		peerRPC := r.URL.Query().Get("peer-rpc") == "1"
 		if version := r.URL.Query().Get("version"); version != "" {
 			if !versiondReadyForVersion(hostStatus, mgr, version) {
 				http.Error(w, "no route for version "+version, http.StatusServiceUnavailable)
+				return
+			}
+			if peerRPC && !mgr.ServesPeerRPC(version) {
+				http.Error(w, "child does not speak peer rpc", http.StatusServiceUnavailable)
 				return
 			}
 			w.WriteHeader(http.StatusOK)
@@ -471,6 +476,10 @@ func readinessHandler(mgr *process.Manager, hostLifecycle *host.Controller) http
 		}
 		if !versiondReady(hostStatus, mgr.Conditions()) {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		if peerRPC && !mgr.PeerRPCHostReady() {
+			http.Error(w, "child does not speak peer rpc", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
