@@ -267,6 +267,24 @@ func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
 		require.NoError(t, err, "inference %d", i)
 	}
 
+	// Validate jobs start asynchronously once a diff delivers Finished, and
+	// Phase B votes only after a later diff delivers the challenge, so "no
+	// Validate in flight" can hold before either has started. Pump diffs
+	// until the property under test is observable instead of sampling once.
+	var challenged, invalidated, numRecords int
+	countStatuses := func() {
+		challenged, invalidated = 0, 0
+		allRecords := session.StateMachine().ExportAllInferenceRecords()
+		numRecords = len(allRecords)
+		for _, rec := range allRecords {
+			switch rec.Status {
+			case types.StatusChallenged:
+				challenged++
+			case types.StatusInvalidated:
+				invalidated++
+			}
+		}
+	}
 	allDrained := func() bool {
 		for _, v := range validators {
 			if v.inflight.Load() != 0 {
@@ -276,13 +294,16 @@ func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
 		return true
 	}
 	deadline := time.Now().Add(20 * time.Second)
-	for !allDrained() {
+	for {
 		require.NoError(t, session.SendPendingDiff(ctx))
-		require.False(t, time.Now().After(deadline), "validate goroutines did not drain")
-	}
-	time.Sleep(100 * time.Millisecond)
-	for i := 0; i < 2*numHosts; i++ {
-		require.NoError(t, session.SendPendingDiff(ctx))
+		countStatuses()
+		if invalidated > 0 && allDrained() {
+			break
+		}
+		require.False(t, time.Now().After(deadline),
+			"fetch-failure challenge did not resolve (challenged=%d invalidated=%d records=%d)",
+			challenged, invalidated, numRecords)
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	var totalCalls uint64
@@ -291,19 +312,9 @@ func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
 	}
 	require.Greater(t, totalCalls, uint64(0), "fetch-failure validators never ran")
 
-	allRecords := session.StateMachine().ExportAllInferenceRecords()
-	var challenged, invalidated int
-	for _, rec := range allRecords {
-		switch rec.Status {
-		case types.StatusChallenged:
-			challenged++
-		case types.StatusInvalidated:
-			invalidated++
-		}
-	}
 	require.Greater(t, challenged+invalidated, 0,
 		"fetch-failure verdict never opened a challenge (challenged=%d invalidated=%d records=%d)",
-		challenged, invalidated, len(allRecords))
+		challenged, invalidated, numRecords)
 	require.Greater(t, invalidated, 0,
 		"mandatory Phase B did not invalidate after fetch-failure challenge (challenged=%d invalidated=%d)",
 		challenged, invalidated)
