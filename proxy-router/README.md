@@ -84,8 +84,8 @@ An established SSE stream stays on the policy worker, router, versiond host,
 and child generation that accepted it. Rolling a replicated inner router or
 application member removes it from new selection while that process drains.
 
-The image uses `SIGUSR1` for graceful shutdown. With a routing catalog enabled,
-a shared supervisor forwards that signal to HAProxy, stops the catalog retry
+The image defaults to `SIGUSR1` for graceful shutdown. With a routing catalog
+enabled, a shared supervisor forwards that signal to HAProxy, stops the catalog retry
 loop, and waits for accepted streams to finish. An unexpected reconciler exit
 still restarts during normal operation; it cannot keep a drained router alive.
 Run `make test-supervisor` to exercise both router images with a live catalog,
@@ -98,7 +98,11 @@ accepted slot assignments; it is unsuitable for catalog-aware maintenance.
 Reloading nginx to rotate TLS certificates is independent of this limitation.
 In the Compose topology described here, the singleton public `proxy-router` is
 the host-level failure boundary: restarting it interrupts connections crossing
-that process.
+that process. The `proxy` service explicitly uses `stop_signal: SIGTERM` to
+release its published host ports promptly so its replacement can start.
+Graceful stop would close the listeners but hold those exclusive ports until
+existing connections finish or Docker's stop timeout expires, prolonging the
+interruption. Replicated inner routers retain their graceful stop signal.
 
 The optional [Kubernetes chart](../deploy/kubernetes/README.md) runs an ingress
 pod per public router and policy worker. `PROXY_ROUTER_PUBLIC_BIND_ADDRESS` is

@@ -64,7 +64,8 @@ import http.client
 import sys
 
 connection = http.client.HTTPConnection(sys.argv[1], int(sys.argv[2]), timeout=45)
-connection.request("POST", "/v6/sessions/" + sys.argv[1] + "/stream", body=b"{}")
+session = sys.argv[3] if len(sys.argv) > 3 else sys.argv[1]
+connection.request("POST", "/v6/sessions/" + session + "/stream", body=b"{}")
 response = connection.getresponse()
 assert response.status == 200, response.status
 for line in response:
@@ -198,4 +199,41 @@ for component in versiond-router proxy-router; do
     [ "$(docker inspect -f '{{.State.Running}} {{.State.ExitCode}}' "$container")" = 'false 137' ] \
         || fail "$component did not preserve the master failure status"
     echo "router-supervisor: $component catalog restart, reload, SSE/idle drain, and exit status passed"
+
+    if [ "$component" = proxy-router ]; then
+        # Compose's singleton public listener cannot keep draining while its
+        # replacement binds the same host ports. Exercise its actual configured
+        # stop signal with an accepted stream and the catalog supervisor alive.
+        compose_signal=$(docker compose -f deploy/join/docker-compose.yml \
+            config --format json 2>/dev/null | jq -er '.services.proxy.stop_signal')
+        [ "$compose_signal" = SIGTERM ] || fail "Compose public proxy must use SIGTERM"
+        docker rm "$container" >/dev/null
+        docker run -d --name "$container" --network "$task_id" --network-alias "$component" \
+            --user 99:99 --cap-drop ALL --cap-add NET_BIND_SERVICE \
+            --security-opt no-new-privileges --stop-signal "$compose_signal" \
+            -e VERSIOND_VERSIONS=v6 \
+            -e VERSIOND_ROUTING_CATALOG_URL=http://fixture:8080/versions \
+            -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 "${args[@]}" "$container" >/dev/null
+        for _ in $(seq 150); do ready v7 && break; sleep 0.2; done
+        ready v7 || fail "public proxy did not start for Compose stop test"
+        docker exec "$task_id-fixture" python /fixture/client.py "$component" "$port" compose-stop \
+            >"$tmpdir/compose-stop.stream" &
+        stream_pid=$!
+        for _ in $(seq 60); do
+            grep -q 'data: started' "$tmpdir/compose-stop.stream" && break
+            sleep 0.1
+        done
+        grep -q 'data: started' "$tmpdir/compose-stop.stream" \
+            || fail "public proxy did not accept the Compose stop test stream"
+        stop_started=$SECONDS
+        timeout 5s docker stop --time 10 "$container" >/dev/null \
+            || fail "public proxy waited for graceful drain instead of releasing its ports"
+        wait "$stream_pid"
+        [ "$(docker inspect -f '{{.State.ExitCode}}' "$container")" = 0 ] \
+            || fail "Compose public proxy required a forced stop"
+        if grep -q 'data: completed' "$tmpdir/compose-stop.stream"; then
+            fail "Compose stop test did not keep its stream open until SIGTERM"
+        fi
+        echo "router-supervisor: Compose public proxy exited in $((SECONDS - stop_started))s with an open SSE stream, without SIGKILL"
+    fi
 done
