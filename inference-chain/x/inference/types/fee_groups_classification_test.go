@@ -24,7 +24,6 @@ import (
 // be added to MessageFeeGroups, IsNetworkDuty, or this map.
 func intentionallyUngrouped() map[string]string {
 	return map[string]string{
-		sdk.MsgTypeURL(&blstypes.MsgRequestThresholdSignature{}):     "deprecated; handler always fails",
 		sdk.MsgTypeURL(&genesistransfertypes.MsgTransferOwnership{}): "one-shot genesis transfer",
 	}
 }
@@ -81,7 +80,6 @@ func collectFeeDecisionSubjects(registry codectypes.InterfaceRegistry, ungrouped
 	}
 	for _, msg := range []sdk.Msg{
 		&types.MsgSubmitPocBatch{},
-		&blstypes.MsgRequestThresholdSignature{},
 	} {
 		seen[sdk.MsgTypeURL(msg)] = struct{}{}
 	}

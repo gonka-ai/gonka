@@ -182,7 +182,6 @@ func TestIsExemptMessageType(t *testing.T) {
 
 	// Not exempt
 	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgSubmitHardwareDiff{}))
-	require.False(t, inferencetypes.IsNetworkDuty(&blstypes.MsgRequestThresholdSignature{}))  // open to anyone, no rate limit
 	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgPoCV2StoreCommit{}))     // intentional sybil-defense fee via chargePoCV2StoreCommitGas
 	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgCreateDevshardEscrow{})) // user-driven, paid
 	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgSubmitNewParticipant{}))
@@ -409,7 +408,6 @@ func TestGonkaFeeChecker_GroupPolarity(t *testing.T) {
 	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSetClaimRecipients{}}, exempt))
 	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitUnitOfComputePriceProposal{}}, exempt))
 	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgUpdateParams{}}, exempt), "governance stays free while disabled")
-	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&blstypes.MsgRequestThresholdSignature{}}, exempt), "deprecated bls request stays ungrouped")
 	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitSeed{}}, exempt), "seed stays ante-exempt")
 	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&banktypes.MsgSend{}}, exempt), "cosmos off")
 	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{
