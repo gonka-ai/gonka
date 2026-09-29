@@ -437,7 +437,7 @@ func TestFoldEventReadings_ReservedNodeDoesNotLowerConfirmationWeight(t *testing
 	require.True(t, ratios[addr].ToDecimal().LessThan(decimal.NewFromFloat(0.5)), "ratio judges the free node alone")
 }
 
-func TestReservedConfirmationWeights_SampledReservedNodeIsNotShieldedTwice(t *testing.T) {
+func TestReservedConfirmationWeights_SplitsTheSampledReservedNodes(t *testing.T) {
 	reserved := map[string][]*types.TrainshardReservedNode{
 		"host": {
 			{Participant: "host", ModelId: "m", NodeId: "sampled", PocWeight: 30},
@@ -451,9 +451,35 @@ func TestReservedConfirmationWeights_SampledReservedNodeIsNotShieldedTwice(t *te
 		}},
 	}
 
-	expected, shielded := reservedConfirmationWeights(reserved, snapshot, map[string]mathsdk.LegacyDec{"m": mathsdk.LegacyOneDec()})
-	require.Equal(t, int64(100), expected["host"])
-	require.Equal(t, int64(70), shielded["host"], "a sampled reserved node already counts as preserved")
+	all, sampled := reservedConfirmationWeights(reserved, snapshot, map[string]mathsdk.LegacyDec{"m": mathsdk.LegacyOneDec()})
+	require.Equal(t, int64(100), all["host"])
+	require.Equal(t, int64(30), sampled["host"])
+}
+
+// A reserved node sampled as preserved leaves the preserved reading: counted there,
+// it would let the free nodes cheat up to its weight without lowering the ratio.
+func TestFoldEventReadings_SampledReservedNodeDoesNotCoverACheatingFreeNode(t *testing.T) {
+	addr := "host"
+	ege := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: addr, Weight: 200, ConfirmationWeight: 200},
+		},
+	}
+
+	// free node (100) delivers nothing; reserved node (100) was sampled, and evaluateConfirmation
+	// has already taken it out of the preserved reading
+	updated, ratios := foldEventReadings(
+		ege,
+		map[string]int64{addr: 0},
+		map[string]int64{addr: 0},
+		map[string]int64{addr: 100},
+		map[string]int64{addr: 100},
+		nil,
+	)
+	require.True(t, updated)
+	require.Equal(t, int64(100), ege.ValidationWeights[0].ConfirmationWeight)
+	require.True(t, ratios[addr].ToDecimal().IsZero())
 }
 
 func TestConfirmationScalesInSnapshot(t *testing.T) {

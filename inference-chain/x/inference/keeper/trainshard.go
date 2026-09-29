@@ -805,6 +805,11 @@ func (k Keeper) CollectEpochReservedNodeWeightsAtHeight(ctx context.Context, epo
 	return k.collectEpochReservedNodeWeights(ctx, epochIndex, scope, &height)
 }
 
+// CollectEpochReservedNodeWeightsBetween returns the nodes reserved at any height in [from, to]
+func (k Keeper) CollectEpochReservedNodeWeightsBetween(ctx context.Context, epochIndex uint64, from, to int64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {
+	return k.BuildEpochReservedWeightView(ctx, epochIndex, scope).nodeWeightsBetween(from, to)
+}
+
 func (k Keeper) collectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, scope ReservationScope, height *int64) map[string][]*types.TrainshardReservedNode {
 	return k.BuildEpochReservedWeightView(ctx, epochIndex, scope).nodeWeights(height)
 }
@@ -832,11 +837,18 @@ func (v EpochReservedWeightView) TotalsAt(height int64) (byModelHost map[string]
 }
 
 func (v EpochReservedWeightView) nodeWeights(height *int64) map[string][]*types.TrainshardReservedNode {
+	if height == nil {
+		return v.nodeWeightsBetween(math.MinInt64, math.MaxInt64)
+	}
+	return v.nodeWeightsBetween(*height, *height)
+}
+
+func (v EpochReservedWeightView) nodeWeightsBetween(from, to int64) map[string][]*types.TrainshardReservedNode {
 	type modelNode struct{ model, nodeId string }
 	seen := make(map[string]map[modelNode]int64)
 	for _, w := range v.windows {
 		n := w.node
-		if height != nil && (*height < w.start || *height > w.end) {
+		if w.end < from || w.start > to {
 			continue
 		}
 		set, ok := seen[n.Participant]

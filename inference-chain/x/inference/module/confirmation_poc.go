@@ -434,14 +434,23 @@ func (am AppModule) evaluateConfirmation(
 	preserved := preservedWeightByParticipant(activeParticipants, &preservedSnapshot, presentScales)
 	totalExpected := weightByParticipant(activeParticipants, presentScales)
 
-	// remove reserved nodes' expected confirmation weight so they do not drag down the host ratio,
-	// and shield the ones the sample did not preserve: settlement already strips a reserved node's
-	// share, so a confirmation weight lowered by its absence would cut the host's free nodes too
-	reserved := am.keeper.CollectEpochReservedNodeWeightsAtHeight(ctx, event.EpochIndex, event.TriggerHeight, keeper.ReservationScopeShield)
-	reservedExpected, shielded := reservedConfirmationWeights(reserved, &preservedSnapshot, types.ConfirmationWeightCoefficients(presentScales))
-	for host, w := range reservedExpected {
+	// a node lent at any point before generation ends cannot be held to the event, so the ratio
+	// judges the host's free nodes alone: reserved nodes leave both the expected weight and the
+	// preserved reading. Their weight still counts toward the ConfirmationWeight, since settlement
+	// strips a reserved node's share itself and would otherwise cut the host's free nodes too
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("evaluateConfirmation: failed to get params: %w", err)
+	}
+	reserved := am.keeper.CollectEpochReservedNodeWeightsBetween(ctx, event.EpochIndex,
+		event.TriggerHeight, event.GetGenerationEnd(params.EpochParams), keeper.ReservationScopeShield)
+	shielded, sampled := reservedConfirmationWeights(reserved, &preservedSnapshot, types.ConfirmationWeightCoefficients(presentScales))
+	for host, w := range shielded {
 		if totalExpected[host] -= w; totalExpected[host] < 0 {
 			totalExpected[host] = 0
+		}
+		if preserved[host] -= sampled[host]; preserved[host] < 0 {
+			preserved[host] = 0
 		}
 	}
 
@@ -494,34 +503,34 @@ func (am AppModule) evaluateConfirmation(
 }
 
 // reservedConfirmationWeights returns, per host, the confirmation weight of its reserved
-// nodes and the part of it the preserved sample did not already count.
+// nodes and the part of it the preserved sample counted as preserved.
 func reservedConfirmationWeights(
 	reserved map[string][]*types.TrainshardReservedNode,
 	preservedSnapshot *types.PreservedNodesSnapshot,
 	coefficients map[string]mathsdk.LegacyDec,
-) (expected, shielded map[string]int64) {
-	expected = make(map[string]int64, len(reserved))
-	shielded = make(map[string]int64, len(reserved))
+) (all, sampled map[string]int64) {
+	all = make(map[string]int64, len(reserved))
+	sampled = make(map[string]int64, len(reserved))
 	for host, nodes := range reserved {
-		all := make(map[string][]*types.MLNodeInfo)
-		unsampled := make(map[string][]*types.MLNodeInfo)
+		allNodes := make(map[string][]*types.MLNodeInfo)
+		sampledNodes := make(map[string][]*types.MLNodeInfo)
 		for _, n := range nodes {
 			node := &types.MLNodeInfo{NodeId: n.NodeId, PocWeight: n.PocWeight}
-			all[n.ModelId] = append(all[n.ModelId], node)
-			if !keeper.IsPreservedNode(keeper.PreservedNodeSetByModel(preservedSnapshot, n.ModelId), host, n.NodeId) {
-				unsampled[n.ModelId] = append(unsampled[n.ModelId], node)
+			allNodes[n.ModelId] = append(allNodes[n.ModelId], node)
+			if keeper.IsPreservedNode(keeper.PreservedNodeSetByModel(preservedSnapshot, n.ModelId), host, n.NodeId) {
+				sampledNodes[n.ModelId] = append(sampledNodes[n.ModelId], node)
 			}
 		}
-		expected[host] = types.ConfirmationWeightOfModelNodesWithCoefficients(all, coefficients)
-		shielded[host] = types.ConfirmationWeightOfModelNodesWithCoefficients(unsampled, coefficients)
+		all[host] = types.ConfirmationWeightOfModelNodesWithCoefficients(allNodes, coefficients)
+		sampled[host] = types.ConfirmationWeightOfModelNodesWithCoefficients(sampledNodes, coefficients)
 	}
-	return expected, shielded
+	return all, sampled
 }
 
 // foldEventReadings applies this event's reading (preserved + measured) to every
 // ValidationWeight via min-take and returns the per-participant slashing ratio.
-// Shielded weight (reserved nodes the sample did not preserve) counts toward the
-// ConfirmationWeight reading only, never toward the ratio.
+// Shielded weight (the host's reserved nodes) counts toward the ConfirmationWeight
+// reading only, never toward the ratio; preserved must not include it.
 // Participants in skipAddrs (e.g. active maintenance) are left untouched: no
 // ConfirmationWeight change and no ratio entry.
 // Pure: no keeper reads, no logging. Caller persists the result.

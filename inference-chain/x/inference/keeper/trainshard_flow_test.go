@@ -257,6 +257,13 @@ func TestCollectEpochReservedWeightTotalsAtHeight(t *testing.T) {
 
 	_, byHost = k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch, 160, keeper.ReservationScopeShield)
 	require.Equal(t, int64(50), byHost[host])
+
+	// a shard assembled after the range starts still counts for the range
+	between := k.CollectEpochReservedNodeWeightsBetween(ctx, epoch, 130, 155, keeper.ReservationScopeShield)
+	require.Len(t, between[host], 1)
+	require.Equal(t, int64(50), between[host][0].PocWeight)
+
+	require.Empty(t, k.CollectEpochReservedNodeWeightsBetween(ctx, epoch, 121, 149, keeper.ReservationScopeShield))
 }
 
 func TestTrainshardLifecycle_E2E(t *testing.T) {
