@@ -8,12 +8,14 @@
     "models": {
       "MiniMaxAI/MiniMax-M2.7": {
         "args": [
+          "--scheduling-policy", "priority",
           "--max-num-batched-tokens",
           "32768",
           "--revision", "d494266a4affc0d2995ba1fa35c8481cbd84294b",
           "--tensor-parallel-size", "2",
-          "--gpu-memory-utilization", "0.92",
-          "--max-num-seqs", "128",
+          "--gpu-memory-utilization", "0.95",
+          "--max-num-seqs", "608",
+          "--compilation-config", "{\"max_cudagraph_capture_size\": 608}",
           "--max-model-len", "180000",
           "--kv-cache-dtype", "fp8",
           "--moe-backend", "triton",

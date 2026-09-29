@@ -12,6 +12,9 @@
           "hf_commit": "64d64cd89bc63a66aa46506da89d7821f7491c62"
         },
         "args": [
+          "--scheduling-policy", "priority",
+          "--max-num-seqs", "2048",
+          "--compilation-config", "{\"max_cudagraph_capture_size\": 2048}",
           "--tensor-parallel-size", "1",
           "--gpu-memory-utilization", "0.90",
           "--max-model-len", "400000",
