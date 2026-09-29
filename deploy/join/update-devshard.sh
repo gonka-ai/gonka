@@ -3,11 +3,12 @@
 # Update the devshard services of one Gonka join deployment to the release in
 # this checkout.
 #
-# The host updater sequences PostgreSQL, the router fleet, public ingress, and
-# versiond replicas. VERSIOND_LEGACY_HOST is replaced last. Public ingress is
-# replaced as a group because its proxy and policy workers depend on each other.
-# A forward move keeps the fleet ahead of the proxy, so :8081 exists before
-# :9443 is published. A rollback off peer RPC (image label ai.gonka.peer-rpc-h2)
+# The host updater sequences PostgreSQL, the router fleet, versiond replicas,
+# and public ingress. Among versiond replicas, VERSIOND_LEGACY_HOST is last.
+# Public ingress is replaced as a group because its proxy and policy workers
+# depend on each other. A forward move applies the fleet, then versiond, then
+# the proxy: :8081 exists, versiond answers the peer-RPC check, and only then
+# is :9443 published. A rollback off peer RPC (image label ai.gonka.peer-rpc-h2)
 # replaces the proxy first, so :9443 is gone before any router loses :8081.
 # Failed replacements restore the saved Docker specification; an interrupted
 # replacement is recovered on the next normal run. PostgreSQL restores only its
@@ -927,12 +928,65 @@ if [[ $topology == ha && -n $router_image && $(image_label "$router_image" ai.go
     fi
 fi
 
-if [[ $peer_rpc_rollback == true ]]; then
+# versiond has to answer the peer-RPC body before :9443 is published. While
+# the proxy from the previous release is still the public listener, its
+# admission looks at JSON only, so these replicas can roll behind it.
+replace_versiond() {
+    required_versiond_routes=()
+    required_legacy_routes=()
+    if [[ $topology == ha ]]; then
+        live_routes=$(GONKA_CONFIG_ENV="$config_env" "$fleet_bin" versiond-routes) || fail "cannot preserve the served version set"
+        proof_routes=$(for proof in "${proof_documents[@]}"; do jq -r '.targets[].version' <<<"$proof"; done)
+        routes=$(jq -nr --arg live "$live_routes $proof_routes" '
+            $live | [splits("[ ,;\\s]+") | select(length > 0)] | unique | .[]') || fail "cannot preserve the required version set"
+        while IFS= read -r route; do
+            [[ -n $route ]] || continue
+            [[ $route =~ ^[a-zA-Z0-9][a-zA-Z0-9._+~-]{0,63}$ ]] || fail "invalid required route $route"
+            if jq -en --arg route "$route" --arg legacy "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" '$legacy | [splits("[ ,;\\s]+") | select(length > 0)] | index($route) != null' >/dev/null; then
+                required_legacy_routes+=("$route")
+            else
+                required_versiond_routes+=("$route")
+            fi
+        done <<<"$routes"
+    fi
+
+    echo "Step: versiond replicas (${active_versiond[*]})"
+    # Last replica first, the legacy owner last: while it is being replaced, the
+    # other replicas already run the new release behind the routers.
+    for ((i = ${#active_versiond[@]} - 1; i >= 0; i--)); do
+        [[ ${active_versiond[i]} != "$legacy_owner" ]] || continue
+        up "${active_versiond[i]}"
+    done
+    if [[ " ${active_versiond[*]} " == *" $legacy_owner "* ]]; then
+        up "$legacy_owner"
+    fi
+    # A replica whose desired count is 0 is decommissioned: stop and remove it so
+    # `restart: always` cannot bring it back into the pool.
+    for service in "${versiond_services[@]}"; do
+        [[ $(replicas "$service") == 0 ]] || continue
+        existing=$("${compose[@]}" ps --all --quiet "$service") || fail "cannot list $service"
+        [[ -n $existing ]] || continue
+        echo "Step: decommissioning $service (replicas: 0)"
+        if [[ $topology == ha ]]; then
+            run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" verify-member-reserve "$existing" "${required_versiond_routes[@]}" || \
+                fail "cannot decommission $service: no ready reserve for its routes"
+        fi
+        run "${compose[@]}" stop "$service"
+        run "${compose[@]}" rm -f "$service"
+    done
+}
+
+if [[ $topology == ha && $peer_rpc_rollback == true ]]; then
     apply_public_proxy
     apply_router_fleet
+    replace_versiond
+elif [[ $topology == ha ]]; then
+    apply_router_fleet
+    replace_versiond
+    apply_public_proxy
 else
-    apply_router_fleet
     apply_public_proxy
+    replace_versiond
 fi
 
 if container_exists versiond-router; then
@@ -946,49 +1000,6 @@ if container_exists versiond-router; then
         echo "Leaving container versiond-router alone: it belongs to another Compose project"
     fi
 fi
-
-required_versiond_routes=()
-required_legacy_routes=()
-if [[ $topology == ha ]]; then
-    live_routes=$(GONKA_CONFIG_ENV="$config_env" "$fleet_bin" versiond-routes) || fail "cannot preserve the served version set"
-    proof_routes=$(for proof in "${proof_documents[@]}"; do jq -r '.targets[].version' <<<"$proof"; done)
-    routes=$(jq -nr --arg live "$live_routes $proof_routes" '
-        $live | [splits("[ ,;\\s]+") | select(length > 0)] | unique | .[]') || fail "cannot preserve the required version set"
-    while IFS= read -r route; do
-        [[ -n $route ]] || continue
-        [[ $route =~ ^[a-zA-Z0-9][a-zA-Z0-9._+~-]{0,63}$ ]] || fail "invalid required route $route"
-        if jq -en --arg route "$route" --arg legacy "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" '$legacy | [splits("[ ,;\\s]+") | select(length > 0)] | index($route) != null' >/dev/null; then
-            required_legacy_routes+=("$route")
-        else
-            required_versiond_routes+=("$route")
-        fi
-    done <<<"$routes"
-fi
-
-echo "Step: versiond replicas (${active_versiond[*]})"
-# Last replica first, the legacy owner last: while it is being replaced, the
-# other replicas already run the new release behind the routers.
-for ((i = ${#active_versiond[@]} - 1; i >= 0; i--)); do
-    [[ ${active_versiond[i]} != "$legacy_owner" ]] || continue
-    up "${active_versiond[i]}"
-done
-if [[ " ${active_versiond[*]} " == *" $legacy_owner "* ]]; then
-    up "$legacy_owner"
-fi
-# A replica whose desired count is 0 is decommissioned: stop and remove it so
-# `restart: always` cannot bring it back into the pool.
-for service in "${versiond_services[@]}"; do
-    [[ $(replicas "$service") == 0 ]] || continue
-    existing=$("${compose[@]}" ps --all --quiet "$service") || fail "cannot list $service"
-    [[ -n $existing ]] || continue
-    echo "Step: decommissioning $service (replicas: 0)"
-    if [[ $topology == ha ]]; then
-        run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" verify-member-reserve "$existing" "${required_versiond_routes[@]}" || \
-            fail "cannot decommission $service: no ready reserve for its routes"
-    fi
-    run "${compose[@]}" stop "$service"
-    run "${compose[@]}" rm -f "$service"
-done
 
 echo "Update finished"
 run "${compose[@]}" ps

@@ -337,6 +337,12 @@ Known limitations of this hop, recorded in
   the versiond listen (`8080`); that process has to speak h2c, and a remote
   `config.env` with a different `DEVSHARD_RPC_H2_PORT` is not visible to
   the updater on the network node.
+- Each `_rpc` twin repeats its sibling's health check at `inter 1s`. Only
+  enabled servers that DNS has resolved are probed. On a stock join that is
+  on the order of 20 extra `/readyz` plus `/healthz` requests per second
+  per versiond, and about 2 extra admin-port checks per second per router.
+  The interval stays: `fall 1` is what withdraws a failed server in about
+  a second.
 
 ### Multiple versiond instances (multi-host)
 

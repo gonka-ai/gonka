@@ -470,8 +470,7 @@ func readinessHandler(mgr *process.Manager, hostLifecycle *host.Controller) http
 				http.Error(w, "child does not speak peer rpc", http.StatusServiceUnavailable)
 				return
 			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("ready\n"))
+			writeReady(w, peerRPC)
 			return
 		}
 		if !versiondReady(hostStatus, mgr.Conditions()) {
@@ -482,9 +481,22 @@ func readinessHandler(mgr *process.Manager, hostLifecycle *host.Controller) http
 			http.Error(w, "child does not speak peer rpc", http.StatusServiceUnavailable)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready\n"))
+		writeReady(w, peerRPC)
 	}
+}
+
+// peerRPCReadyBody is the peer-RPC check's success body. A v5.0.2 /readyz
+// answers 200 and ignores peer-rpc=1, with the plain ready body. The router
+// expects this string, so that process stays out of the HTTP/2 pool.
+const peerRPCReadyBody = "peer-rpc-ok\n"
+
+func writeReady(w http.ResponseWriter, peerRPC bool) {
+	w.WriteHeader(http.StatusOK)
+	if peerRPC {
+		_, _ = io.WriteString(w, peerRPCReadyBody)
+		return
+	}
+	_, _ = io.WriteString(w, "ready\n")
 }
 
 func publicHandler(

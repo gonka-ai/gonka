@@ -41,6 +41,8 @@ global
 defaults
     log     global
     mode    http
+    # The soft-stop helper finds Watch from this request line
+    # (`show sess all show-uri`). It is kept until the stream ends.
     option  httplog
     option  dontlognull
     # Append the client address to X-Forwarded-For, as the nginx router did:
@@ -132,16 +134,6 @@ frontend versiond_in
     # current hop must not answer. /stats/rpc is not a session procedure.
     http-request deny deny_status 404 if { dst_port 8080 } { path_sub /sessions/ } { path_sub /rpc/ }
 
-    # One HTTP/2 connection carries Watch and inference together. Soft-stop
-    # waits for the connection, so an open Watch holds it. Record the Watch
-    # stream id; the drain helper shuts down only those sessions. Chat is not
-    # recorded. http-after-response runs when headers are ready, before the
-    # body, so it cannot say that an inference has finished.
-    # A slash inside an ACL pattern is a delimiter, so the method is a regex.
-    # HAProxy treats $ as an environment variable; $$ is the end anchor.
-    http-request set-var-fmt(txn.wid) %[txn.id32] if { path_reg PeerAuthService/Watch$$ }
-    http-request track-sc0 var(txn.wid) table h2_watch_ids if { var(txn.wid) -m found }
-
     # versiond's own route grammar has versionless endpoints, and their first
     # path segment is not a version. Classifying by "field 2 is non-empty" would
     # refuse /metrics, /stats and the session observability routes.
@@ -195,13 +187,6 @@ ${ROUTER_READY_RULES}
 
 backend router_admin_not_found
     http-request return status 404 content-type text/plain string "not found\n"
-
-# One row per live Watch stream, keyed by that stream's txn.id32 (the "id="
-# field in "show sess"). The soft-stop helper shuts down those sessions and
-# no others. Rows outlive a short Watch; a row whose stream is already gone
-# does not match a session.
-backend h2_watch_ids
-    stick-table type string len 16 size 200000 expire 7d store gpc0
 
 # A synthetic no-traffic backend exports catalog convergence through HAProxy's
 # standard backend/server Prometheus metrics. The reconciler enables the server

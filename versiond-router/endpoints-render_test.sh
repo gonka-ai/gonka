@@ -90,6 +90,9 @@ grep -q 'uri /readyz?peer-rpc=1&version=' "$tmpdir/endpoints.cfg" || \
     fail "peer-RPC backends must check /readyz?peer-rpc=1"
 grep -q 'http-check expect status 200$' "$tmpdir/endpoints.cfg" || \
     fail "peer-RPC readiness must not treat a 404 as success"
+[[ $(grep -c 'http-check expect string peer-rpc-ok' "$tmpdir/endpoints.cfg") -eq \
+    $(grep -c '^backend .*_rpc$' "$tmpdir/endpoints.cfg") ]] || \
+    fail "every peer-RPC backend must expect the peer-rpc-ok body, and JSON backends must not"
 grep -q 'proto h2 check-proto h1' "$tmpdir/endpoints.cfg" || \
     fail "h2 server lines must keep an HTTP/1.1 health check"
 grep -q ' check inter 1s fall 1 rise 2 ' "$tmpdir/endpoints.cfg" || \

@@ -473,6 +473,10 @@ render_backend() {
     else
         rb_servers="s|\\\${BACKEND_HOST}|$4|g"
     fi
+    # Empty on JSON pools. The peer-RPC twin requires a body v5.0.2 never
+    # sends, so its plain /readyz 200 does not join the HTTP/2 pool.
+    body_expect=${PEER_RPC_BODY_EXPECT-}
+    PEER_RPC_BODY_EXPECT=
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
         -e "s|\${READY_CHECK_SEND}|$(sed_repl "$2")|g" \
@@ -485,6 +489,7 @@ render_backend() {
         -e "s|\${SERVER_STATE}|$8|g" \
         -e "s|\${BACKEND_PROTO}|$BACKEND_PROTO|g" \
         -e "s|\${READY_EXPECT}|$expect|g" \
+        -e "s|\${PEER_RPC_BODY_EXPECT}|$(sed_repl "$body_expect")|g" \
         -e "$rb_servers" \
         "$POOL_TEMPLATE"
 }
@@ -501,6 +506,9 @@ peer_route_check() {
 render_peer_backend() {
     saved_expect=${READY_EXPECT-}
     READY_EXPECT=200
+    # v5.0.2 answers /readyz?peer-rpc=1 with 200 and "ready". Only a current
+    # versiond sends this body, so the twin stays down until that process is up.
+    PEER_RPC_BODY_EXPECT='http-check expect string peer-rpc-ok'
     render_backend "${1}_rpc" "$(peer_rpc_check "$2")" "$(peer_route_check "$3")" \
         "$4" "$5" "$6" "${1}_rpc" "$7" "$8" "$9"
     READY_EXPECT=$saved_expect

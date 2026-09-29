@@ -561,11 +561,12 @@ RPC path.
 
 ## Known limitations
 
-Two HA deploy gaps are accepted. Neither fires on an unmodified join: the
-public port is one `config.env` value, and both sides of the router hop
-default to `8081`. They are real fail-closed outages for peer RPC when an
-operator crosses them. Clients do not fall back to JSON. An HA router
-refuses `/sessions/.../rpc/` on `:8080`.
+Three HA deploy gaps are accepted. The first two are fail-closed peer-RPC
+outages when an operator crosses them. Neither fires on an unmodified join:
+the public port is one `config.env` value, and both sides of the router hop
+default to `8081`. Clients do not fall back to JSON. An HA router refuses
+`/sessions/.../rpc/` on `:8080`. The third is the extra health check on each
+`_rpc` twin. It does not need a fix.
 
 ### Placement contract does not include the HTTP/2 listen
 
@@ -623,3 +624,17 @@ and `DEVSHARD_RPC_H2_PORT`. A remote `config.env` with a different public
 port, or a versiond image that does not speak h2c, is invisible to the
 updater on the network node. Requiring `rpc_h2_upstream` to be UP would
 not catch either case: that state is decided by the admin check.
+
+### The `_rpc` twin repeats the health check
+
+Every JSON backend has an `_rpc` twin, and that twin checks its servers on
+the same `inter 1s` `fall 1` cadence. Disabled dynamic slots and template
+servers with no DNS address are not checked. On a stock join (3 router
+slots, 2 versiond, the declared versions) that is on the order of 20 extra
+`/readyz` plus `/healthz` requests per second on each versiond, and about 2
+extra admin-port checks per second on each router. `/readyz` is an
+in-memory snapshot.
+
+Leave the interval where it is. `fall 1` drops a failed server from the
+hash ring in about a second. A slower check, or one check shared with the
+JSON backend, would leave that server selectable for longer.

@@ -2,11 +2,12 @@
 # Closes Watch streams when the router soft-stops.
 #
 # Watch and Chat share one HTTP/2 connection, and soft-stop waits for that
-# connection. Each Watch request records its stream id in stick table
-# h2_watch_ids. This helper shuts down only those streams. A Chat stream is
-# left alone until its own response finishes. HAProxy evaluates
-# http-after-response when the response headers are ready, before the body,
-# so a header-time counter is not used to decide which streams to close.
+# connection. option httplog keeps each stream's request line until that
+# stream ends. "show sess all show-uri" prints it. This helper shuts down
+# HTTP/2 streams whose request line is PeerAuthService/Watch. A Chat stream
+# has a different line and is left alone until its own response finishes.
+# HAProxy does not print an http-request capture in "show sess", and it has
+# no end-of-body rule, so neither a capture nor a stick table is used.
 #
 # The runtime CLI is opened when SIGUSR1 arrives, and only then is SIGUSR1
 # forwarded to HAProxy. Soft-stop closes the listening stats socket, so the
@@ -27,41 +28,31 @@ cli_done=0
 cli_warned=0
 cli_socat=
 
-# Print HTTP/2 session pointers whose stream id was recorded as a Watch.
-# Chat sessions on the same connection are not selected. The id compared
-# here is the "id=" field, not a substring of "h2s.id=".
+# Print HTTP/2 session pointers whose request line is a Watch.
+# "show sess all show-uri" puts that line on the txn field as
+# uri="METHOD target HTTP/x.y". Chat on the same connection has a different
+# line. An HTTP/1.1 stream is not selected: h2c=0x is the mux pointer, and
+# a path cannot spoof that prefix. The numeric id= is not used.
 select_watch_sessions() {
     awk '
-        function field_prefix(name,    i, p) {
-            p = name "="
-            for (i = 1; i <= NF; i++)
-                if (index($i, p) == 1)
-                    return substr($i, length(p) + 1)
-            return ""
-        }
-        FNR == NR {
-            if ($0 ~ /^#/) next
-            key = field_prefix("key")
-            if (key != "") watch[key] = 1
-            next
-        }
         function flush() {
-            if (have && h2 && sid != "" && (sid in watch)) print ptr
+            if (have && h2 && watch) print ptr
         }
         /^0x[0-9a-fA-F]+:/ {
             flush()
             have = 1
             ptr = $1
             sub(/:$/, "", ptr)
-            sid = field_prefix("id")
-            h2 = index($0, "h2c=") > 0
+            h2 = index($0, "h2c=0x") > 0
+            watch = index($0, "PeerAuthService/Watch HTTP/") > 0
             next
         }
         {
-            if (index($0, "h2c=")) h2 = 1
+            if (index($0, "h2c=0x")) h2 = 1
+            if (index($0, "PeerAuthService/Watch HTTP/")) watch = 1
         }
         END { flush() }
-    ' "$1" "$2"
+    ' "$1"
 }
 
 # Drop a half-open CLI. The listening socket is still up until SIGUSR1 is
@@ -149,7 +140,7 @@ note_cli_down() {
         log "h2-watch-drain: runtime CLI did not answer"
         cli_warned=1
     fi
-    rm -f "$table" "$sess" "$ids_file"
+    rm -f "$sess" "$ids_file"
 }
 
 release_watches() {
@@ -158,19 +149,14 @@ release_watches() {
     # no live CLI is an unfinished drain.
     [ "$cli_done" -eq 1 ] && return 0
     [ "$cli_ready" -eq 1 ] || return 1
-    table=$(mktemp)
     sess=$(mktemp)
     ids_file=$(mktemp)
-    if ! cli_query 'show table h2_watch_ids' "$table"; then
+    if ! cli_query 'show sess all show-uri' "$sess"; then
         note_cli_down
         return 1
     fi
-    if ! cli_query 'show sess all' "$sess"; then
-        note_cli_down
-        return 1
-    fi
-    select_watch_sessions "$table" "$sess" >"$ids_file" || true
-    rm -f "$table" "$sess"
+    select_watch_sessions "$sess" >"$ids_file" || true
+    rm -f "$sess"
     if [ -s "$ids_file" ]; then
         while IFS= read -r id; do
             case $id in
@@ -227,8 +213,8 @@ supervise() {
 
 case ${1:-} in
     --select)
-        [ "$#" -eq 3 ] || exit 2
-        select_watch_sessions "$2" "$3"
+        [ "$#" -eq 2 ] || exit 2
+        select_watch_sessions "$2"
         ;;
     --supervise)
         [ "$#" -eq 3 ] || exit 2

@@ -36,6 +36,7 @@ backend ${BACKEND_NAME}
     http-check connect
     ${READY_CHECK_SEND}
     http-check expect status ${READY_EXPECT}
+    ${PEER_RPC_BODY_EXPECT}
     http-check connect
     ${ROUTE_CHECK_SEND}
     http-check expect status 200

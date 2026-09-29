@@ -219,21 +219,37 @@ func (c *Controller) WaitIdle(ctx context.Context) error {
 // PeerAuth Watch is a keepalive, not a user request. Counting it holds host
 // drain for the session TTL: WaitIdle never reaches child /drain, and the
 // children are then SIGTERM'd. The proxy lease has the same exemption
-// (proxy.peerAuthWatchPath).
+// (proxy.peerAuthWatchPath). A Watch that arrives after the host has stopped
+// accepting is still rejected; only a stream already inside the handler is
+// left out of the idle counter.
 func (c *Controller) Admission(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if peerAuthWatchRequest(r) {
+			if !c.accepting() {
+				rejectAdmission(w)
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
 		if !c.acquire() {
-			w.Header().Set("Retry-After", "1")
-			http.Error(w, "versiond host is not accepting new work", http.StatusServiceUnavailable)
+			rejectAdmission(w)
 			return
 		}
 		defer c.release()
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (c *Controller) accepting() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return acceptsWork(c.state)
+}
+
+func rejectAdmission(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	http.Error(w, "versiond host is not accepting new work", http.StatusServiceUnavailable)
 }
 
 func peerAuthWatchRequest(r *http.Request) bool {

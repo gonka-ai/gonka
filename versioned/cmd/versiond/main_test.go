@@ -1113,6 +1113,19 @@ func TestVersiondReadyForVersionAnswersPerVersion(t *testing.T) {
 	}
 }
 
+func TestWriteReadyPeerRPCBody(t *testing.T) {
+	plain := httptest.NewRecorder()
+	writeReady(plain, false)
+	if plain.Body.String() != "ready\n" {
+		t.Fatalf("JSON readiness body = %q, want ready", plain.Body.String())
+	}
+	peer := httptest.NewRecorder()
+	writeReady(peer, true)
+	if peer.Body.String() != peerRPCReadyBody {
+		t.Fatalf("peer-RPC readiness body = %q, want %q", peer.Body.String(), peerRPCReadyBody)
+	}
+}
+
 func TestReadinessAnswersTheVersionItWasAskedAbout(t *testing.T) {
 	hostLifecycle := host.NewController()
 	mgr := process.NewManager(config.Config{BasePort: 5000})

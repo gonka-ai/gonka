@@ -290,14 +290,14 @@ fleet prepare-networks
 network connect --alias versiond-pool gonka-versiond-router-back cid-versiond
 network connect --alias versiond-pool gonka-versiond-router-back cid-versiond2
 fleet apply
+compose up -d --no-deps --wait --wait-timeout 2100 versiond2
+compose up -d --no-deps --wait --wait-timeout 2100 versiond
 compose up -d --no-deps proxy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy
 fleet verify-admission
-rm -f versiond-router
-compose up -d --no-deps --wait --wait-timeout 2100 versiond2
-compose up -d --no-deps --wait --wait-timeout 2100 versiond'
+rm -f versiond-router'
 [[ $(mutations) == "$expected" ]] || fail "HA sequence:
 $(mutations)"
 grep -q 'preflight --source-container cid-devshard-postgres --target-dir /srv/gonka/postgres' "$tmpdir/log" || \
@@ -332,9 +332,9 @@ fleet prepare-networks
 network connect --alias versiond-pool gonka-versiond-router-back cid-versiond
 network connect --alias versiond-pool gonka-versiond-router-back cid-versiond2
 fleet apply
-rm -f versiond-router
 compose up -d --no-deps --wait --wait-timeout 2100 versiond2
-compose up -d --no-deps --wait --wait-timeout 2100 versiond'
+compose up -d --no-deps --wait --wait-timeout 2100 versiond
+rm -f versiond-router'
 [[ $(mutations) == "$expected" ]] || fail "peer RPC rollback sequence:
 $(mutations)"
 grep -q 'peer RPC rollback' "$tmpdir/out" || fail "peer RPC rollback was not announced"
@@ -378,15 +378,15 @@ network connect --alias versiond-pool gonka-versiond-router-back cid-versiond
 network connect --alias versiond-pool gonka-versiond-router-back cid-versiond2
 network connect --alias versiond-pool gonka-versiond-router-back cid-versiond3
 fleet apply
+compose up -d --no-deps --wait --wait-timeout 2100 versiond3
+compose up -d --no-deps --wait --wait-timeout 2100 versiond
+compose stop versiond2
+compose rm -f versiond2
 compose up -d --no-deps proxy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy
-fleet verify-admission
-compose up -d --no-deps --wait --wait-timeout 2100 versiond3
-compose up -d --no-deps --wait --wait-timeout 2100 versiond
-compose stop versiond2
-compose rm -f versiond2'
+fleet verify-admission'
 [[ $(mutations) == "$expected" ]] || fail "three-replica sequence:
 $(mutations)"
 grep -q 'Topology: ha (versiond versiond2 versiond3)' "$tmpdir/out" || \
