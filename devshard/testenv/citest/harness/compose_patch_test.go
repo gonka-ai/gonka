@@ -85,6 +85,49 @@ services:
 	require.Contains(t, got, "image: devshard-versiond-router:latest")
 }
 
+func TestPinVersiondRouterServiceImageLeavesVersiondServices(t *testing.T) {
+	src := `
+services:
+  versiond-0:
+    build:
+      context: /repo/versioned
+      dockerfile: Dockerfile
+    image: devshard-versiond:latest
+  versiond-router:
+    build:
+      context: /repo
+      dockerfile: versiond-router/Dockerfile
+    image: devshard-versiond-router:latest
+`
+	got, err := pinComposeServiceImage(src, "versiond-router", "devshard-versiond-router:0.2.15-v5", composeVersiondRouterImageLatest)
+	require.NoError(t, err)
+	require.Contains(t, got, "image: devshard-versiond:latest")
+	require.Contains(t, got, "image: devshard-versiond-router:0.2.15-v5")
+	require.NotContains(t, serviceBlock(got, "versiond-router"), "build:")
+	require.Contains(t, serviceBlock(got, "versiond-0"), "build:")
+}
+
+func TestPatchComposeServiceImageSwitchesPinnedService(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	src := `
+services:
+  versiond-0:
+    image: devshard-versiond:0.2.15-v5
+  versiond-router:
+    image: devshard-versiond-router:0.2.15-v5
+`
+	require.NoError(t, os.WriteFile(path, []byte(src), 0o644))
+
+	PatchComposeServiceImage(t, path, "versiond-0", "devshard-versiond:latest")
+	PatchComposeServiceImage(t, path, "versiond-router", "devshard-versiond-router:latest")
+
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(body), "image: devshard-versiond:latest")
+	require.Contains(t, string(body), "image: devshard-versiond-router:latest")
+}
+
 func serviceBlock(text, service string) string {
 	marker := "\n  " + service + ":\n"
 	start := strings.Index(text, marker)
