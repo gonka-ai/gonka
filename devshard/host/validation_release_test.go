@@ -13,6 +13,7 @@ import (
 
 	"devshard"
 	"devshard/internal/testutil"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/stub"
@@ -202,19 +203,20 @@ func collectValidationJobsLocked(h *Host) []validateJob {
 func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 	signFail := errors.New("sign failed")
 	tests := []struct {
-		name         string
-		status       types.InferenceStatus
-		skipApply    bool
-		validator    scriptedValidationEngine
-		allowErr     error
-		markErr      error
-		failSign     bool
-		wantRelease  int
-		wantAllow    int
-		wantMark     int
-		wantVal      bool
-		wantVote     bool
-		wantCooldown bool
+		name             string
+		status           types.InferenceStatus
+		skipApply        bool
+		validator        scriptedValidationEngine
+		allowErr         error
+		markErr          error
+		failSign         bool
+		wantRelease      int
+		wantAllow        int
+		wantMark         int
+		wantVal          bool
+		wantVote         bool
+		wantCooldown     bool
+		wantCooldownHold bool
 	}{
 		{
 			name:         "validate error",
@@ -231,9 +233,62 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			wantCooldown: true,
 		},
 		{
-			name:      "already leased",
+			name:         "already leased",
+			skipApply:    true,
+			validator:    scriptedValidationEngine{err: devshard.ErrValidationAlreadyLeased},
+			wantCooldown: true,
+		},
+		{
+			// Releasing here would free a row this attempt never acquired.
+			// The row is still there, so the next request waits out the cooldown.
+			name:      "lease conflict",
 			skipApply: true,
-			validator: scriptedValidationEngine{err: devshard.ErrValidationAlreadyLeased},
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Status: devshard.LeaseStatusPending,
+				Owner:  "gonka1owner",
+			}},
+			wantCooldown: true,
+		},
+		{
+			name:      "lease conflict submitted",
+			skipApply: true,
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Status: devshard.LeaseStatusSubmitted,
+			}},
+			wantCooldown: true,
+		},
+		{
+			name:      "lease conflict skipped",
+			skipApply: true,
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Status: devshard.LeaseStatusSkipped,
+			}},
+			wantCooldown:     true,
+			wantCooldownHold: true,
+		},
+		{
+			name:      "lease conflict stale pending",
+			skipApply: true,
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Status: devshard.LeaseStatusPending,
+				Stale:  true,
+			}},
+			wantCooldown: true,
+		},
+		{
+			name:      "lease conflict read failed",
+			skipApply: true,
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Detail: "lease read failed: db down",
+			}},
+			wantCooldown: true,
+		},
+		{
+			name:      "lease conflict already released",
+			skipApply: true,
+			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
+				Detail: devshard.LeaseRowAbsentDetail,
+			}},
 		},
 		{
 			name:         "inference disappeared",
@@ -315,7 +370,9 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			require.Equal(t, tt.wantVote, mempoolHasVote(h, 1))
 			until, onCooldown := cooldownUntil(h, 1)
 			require.Equal(t, tt.wantCooldown, onCooldown)
-			if tt.wantCooldown {
+			if tt.wantCooldownHold {
+				require.True(t, until.IsZero(), "skipped lease must be held, not retried on the 30s cooldown")
+			} else if tt.wantCooldown {
 				require.True(t, until.After(time.Now()), "cooldown must be in the future")
 				require.True(t, time.Until(until) <= validationCooldown)
 			}
@@ -393,6 +450,59 @@ func TestHost_CloseWithoutStartDoesNotBlock(t *testing.T) {
 	case <-closed:
 	case <-time.After(time.Second):
 		t.Fatal("Close of an unstarted host blocked")
+	}
+}
+
+// TestLeaseConflictSeverity pins which conflicts are worth a warning. A
+// submitted row and a young pending row are the dedup guard working, so grading
+// them as errors is what made this path unreadable in the first place.
+func TestLeaseConflictSeverity(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		conflict  *devshard.LeaseConflict
+		wantLevel observability.Level
+		wantMsg   string
+	}{
+		{
+			name:      "pending within ttl",
+			conflict:  &devshard.LeaseConflict{Status: devshard.LeaseStatusPending},
+			wantLevel: observability.LevelInfo,
+			wantMsg:   "lease already held",
+		},
+		{
+			name:      "pending past ttl",
+			conflict:  &devshard.LeaseConflict{Status: devshard.LeaseStatusPending, Stale: true},
+			wantLevel: observability.LevelWarn,
+			wantMsg:   "lease held past TTL",
+		},
+		{
+			name:      "submitted",
+			conflict:  &devshard.LeaseConflict{Status: devshard.LeaseStatusSubmitted},
+			wantLevel: observability.LevelInfo,
+			wantMsg:   "lease already submitted",
+		},
+		{
+			name:      "skipped",
+			conflict:  &devshard.LeaseConflict{Status: devshard.LeaseStatusSkipped},
+			wantLevel: observability.LevelWarn,
+			wantMsg:   "lease marked skipped for this epoch",
+		},
+		{
+			name:      "row not read",
+			conflict:  &devshard.LeaseConflict{Detail: devshard.LeaseRowAbsentDetail},
+			wantLevel: observability.LevelInfo,
+			wantMsg:   "lease already held",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			level, msg := leaseConflictSeverity(tt.conflict)
+			require.Equal(t, tt.wantLevel, level)
+			require.Contains(t, msg, tt.wantMsg)
+		})
 	}
 }
 
@@ -615,6 +725,33 @@ func TestHost_CollectValidationJobs_SkipsCooldownThenPicksAfterExpiry(t *testing
 	require.True(t, found, "expired cooldown must allow re-pick")
 	_, still := cooldownUntil(h, 1)
 	require.False(t, still, "expired cooldown entry must be dropped on pick")
+}
+
+func TestHost_CollectValidationJobs_SkippedLeaseStaysHeld(t *testing.T) {
+	h, hosts, user := newTwoHostValidationHost(t, stub.NewValidationEngine())
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+	h.Start()
+	t.Cleanup(h.Close)
+
+	h.mu.Lock()
+	h.validationCooldown[1] = time.Time{}
+	delete(h.validating, 1)
+	h.mu.Unlock()
+
+	jobs := collectValidationJobsLocked(h)
+	for _, job := range jobs {
+		require.NotEqual(t, uint64(1), job.inferenceID, "a held skipped lease must not be re-picked")
+	}
+	until, onCooldown := cooldownUntil(h, 1)
+	require.True(t, onCooldown)
+	require.True(t, until.IsZero(), "the hold must survive collection")
+
+	h.mu.Lock()
+	h.validationCooldown[99] = time.Time{}
+	h.mu.Unlock()
+	_ = collectValidationJobsLocked(h)
+	_, gone := cooldownUntil(h, 99)
+	require.False(t, gone, "a hold for an inference outside the live set must be pruned")
 }
 
 func TestHost_CollectValidationJobs_PrunesCooldownForEvictedInferences(t *testing.T) {

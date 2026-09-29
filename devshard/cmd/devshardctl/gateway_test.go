@@ -167,6 +167,25 @@ func TestGatewayCheckBalancesReplacesAndDeactivatesLowBalance(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestGatewayCheckBalancesSkipsReplacementWhenModelAlreadyAtTarget(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.Models[0].TargetCount = 1
+	})
+	require.NoError(t, g.store.UpsertDevshard(GatewayDevshardState{
+		RuntimeConfig: RuntimeConfig{ID: "13", PrivateKeyHex: "secret", Model: "m"},
+		Active:        true,
+		RotationRole:  rotationRoleRegular,
+		RotationEpoch: 0, // replaceDepletedEscrow reads g.phaseGate.Snapshot().EpochIndex; this fixture's Gateway has no phaseGate, so epoch is always 0 here.
+	}))
+
+	runBalanceTick(t, g, rt.id)
+
+	require.Eventually(t, func() bool { return settled.Load() == 1 }, time.Second, 10*time.Millisecond, "the depleted escrow must still be settled")
+	require.False(t, rt.active.Load())
+	require.EqualValues(t, 0, created.Load(), "a model already at its rotation target must not mint another replacement")
+}
+
 func TestGatewayCheckBalancesReplacesAndDeactivatesHighNonce(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, 999_796)
 	require.EqualValues(t, 3, rt.proxy.sm.TotalSlots(), "the nonce above assumes a three-slot group: 1_000_000 - (3+1) - 200")
@@ -1494,6 +1513,125 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, state.Devshards, 1)
 	require.False(t, state.Devshards[0].Active)
+}
+
+// blockingFinalizeHandler answers /v1/finalize by reporting entry on
+// entered, then waiting for release before returning.
+func blockingFinalizeHandler(entered chan<- string, release <-chan struct{}, escrowID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entered <- escrowID
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func newFinalizeTestGateway(t *testing.T, runtimes ...*devshardRuntime) *Gateway {
+	t.Helper()
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	devshards := make([]GatewayDevshardState, 0, len(runtimes))
+	for _, rt := range runtimes {
+		devshards = append(devshards, GatewayDevshardState{RuntimeConfig: RuntimeConfig{ID: rt.id, PrivateKeyHex: "secret", Model: rt.model}, Active: true})
+	}
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, devshards))
+	g := NewGateway(runtimes, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+	return g
+}
+
+func finalizeRequest(escrowID string) *http.Request {
+	return httptest.NewRequest(http.MethodPost, "/devshard/"+escrowID+"/v1/finalize", nil)
+}
+
+func waitForDone(t *testing.T, done <-chan struct{}, message string) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal(message)
+	}
+}
+
+func TestGatewayFinalizeDoesNotSerializeAcrossEscrows(t *testing.T) {
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	rtA := &devshardRuntime{id: "A", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "A")}
+	rtB := &devshardRuntime{id: "B", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "B")}
+	g := newFinalizeTestGateway(t, rtA, rtB)
+
+	doneA := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("A"))
+		close(doneA)
+	}()
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "A", escrowID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("escrow A finalize never entered its handler")
+	}
+
+	doneB := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("B"))
+		close(doneB)
+	}()
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "B", escrowID, "escrow B must finalize while escrow A is still finalizing")
+	case <-time.After(2 * time.Second):
+		t.Fatal("escrow B finalize blocked behind escrow A's finalize")
+	}
+
+	close(release)
+	waitForDone(t, doneA, "escrow A finalize never returned")
+	waitForDone(t, doneB, "escrow B finalize never returned")
+}
+
+func TestGatewayFinalizeStillSerializesSameEscrow(t *testing.T) {
+	// Test flow:
+	// 1. Hold escrow A's finalize lock the way rotation settle and the execution-timeout sweep do.
+	// 2. Send a finalize for escrow A over HTTP.
+	// 3. It does not reach the handler until the lock is released, then it runs.
+	entered := make(chan string, 1)
+	release := make(chan struct{})
+	close(release)
+	rt := &devshardRuntime{id: "A", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "A")}
+	g := newFinalizeTestGateway(t, rt)
+	unlockFinalize := g.lockFinalize("A")
+
+	done := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("A"))
+		close(done)
+	}()
+
+	select {
+	case <-entered:
+		t.Fatal("a finalize for escrow A must wait while another path holds its finalize lock")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	unlockFinalize()
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "A", escrowID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the finalize for escrow A never ran after its finalize lock was released")
+	}
+	waitForDone(t, done, "the finalize for escrow A never returned")
 }
 
 func TestGatewayHandlePooledChatSetsChosenDevshardHeader(t *testing.T) {
