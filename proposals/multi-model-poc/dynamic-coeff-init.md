@@ -1,6 +1,6 @@
-# Initializing dynamic PoC coefficients
+# Target configuration for dynamic PoC coefficients
 
-This document describes how to initialize dynamic PoC coefficients from current chain parameters and measured model throughput. It defines coefficient bounds, relative difficulties, target shares, and the initial controller state.
+This document defines the target coefficient bounds and relative difficulties from measured model throughput. It also describes target shares, controller defaults, and a simulation of this configuration. The initial configuration applied by v0.2.16 is described separately in the [upgrade proposal](../governance-artifacts/update-v0.2.16/README.md#dynamic-coefficients-v1).
 
 MiniMax M2.7 is the base model with a fixed coefficient of `0.3024`. Its coefficient can stay fixed because the other models' coefficients adjust relative to it. Its allocation is the share left after allocation to the other models. Governance chooses target shares based on demand.
 
@@ -55,7 +55,7 @@ coeff_min[b] = coeff_max[b] = c_b
 D[b] = 1
 ```
 
-At parity, `q[i,g] * parity[i,g] = q[b,g] * c_b`. At the floor, MiniMax earns at least 5% more raw weight on every measured class. At the ceiling, model `i` earns at least 5% more on every measured class before dilution.
+At parity, `q[i,g] * parity[i,g] = q[b,g] * c_b`. At the floor, MiniMax earns at least 5% more PoC weight before dilution on every measured class. At the ceiling, model `i` earns at least 5% more on every measured class before dilution.
 
 `D` converts each model's PoC weight to comparable compute units using an 8xH100 reference server. It depends only on measured throughput ratios.
 
@@ -68,7 +68,7 @@ For these measurements, B300 sets both non-base floors and H100 sets both ceilin
 | DeepSeek | `4736 / 3072` | `0.3024 * (14336 / 22528) / 1.05` | `0.3024 * (4736 / 3072) * 1.05` |
 
 
-The resulting parameters, truncated to 12 fractional places, are:
+The target parameters, truncated to 12 fractional places, are:
 
 
 | Model    | Current coeff (for reference) | `relative_difficulty` | `coeff_min`    | `coeff_max`    |
@@ -82,7 +82,7 @@ The resulting parameters, truncated to 12 fractional places, are:
 
 ## 4. Targets and controller initialization
 
-Governance sets `target_share_bps` for every enabled model, totaling `10000` basis points (100%). MiniMax still requires a target in the configuration. Setting `coeff_min = coeff_max = 0.3024` keeps its coefficient fixed. For an equal-share experiment only, use MiniMax `3334`, GLM `3333`, DeepSeek `3333`.
+Governance chooses `target_share_bps` based on demand, totaling `10000` basis points (100%) across enabled models. MiniMax still needs a target share even though its coefficient is fixed. The equal-share simulation below uses MiniMax `3334`, GLM `3333`, and DeepSeek `3333`.
 
 Targets apply to each model's share of difficulty-normalized PoC weight:
 
@@ -100,17 +100,13 @@ bootstrap_step_max = 0.25
 bootstrap_share_bps = 100
 ```
 
-A fresh simulation or newly enabled model starts with `base_coeff = coeff_min`, `s = step_max / 2 = 0.025`, and `prev_sign = 0`. Here `s` is the fractional adjustment step, and `prev_sign` records the previous adjustment direction.
+A newly enabled model starts with `base_coeff = coeff_min`, `s = step_max / 2 = 0.025`, and `prev_sign = 0`. Here `s` is the fractional adjustment step, and `prev_sign` records the previous adjustment direction.
 
-For existing models, preserve their starting coefficients during rollout:
-
-1. Enable dynamic configuration with each model's bounds pinned to its old static coefficient. The migration seeds `D = 1` and targets totaling `10000`. Pinned bounds keep adjustment and dilution inert.
-2. Form an epoch with that configuration so the old coefficients are stored as dynamic controller state.
-3. Apply the derived bounds and difficulties plus governance-selected targets. Carry existing controller state, clamp coefficients into the new bounds, and then apply the normal epoch adjustment. All three current static coefficients already lie within the derived bounds.
+When governance changes bounds, difficulties, or targets, existing models carry their previous controller state forward. The next calculation keeps the base coefficient within the new bounds, then applies the normal epoch adjustment.
 
 Configuration is frozen at PoC start. When a model exceeds its target share, the excess earns `coeff_min`, reducing the effective coefficient used for participant weights. A zero target pins that model's coefficient to its floor and resets the step/sign state.
 
-See [the protocol](dynamic-coeff.md) for epoch adjustments and [the rollout rules](dynamic-coeff-impl.md) for migration details.
+See [the protocol](dynamic-coeff.md) for epoch adjustments and [the implementation](dynamic-coeff-impl.md) for state handling.
 
 ---
 
@@ -118,7 +114,7 @@ See [the protocol](dynamic-coeff.md) for epoch adjustments and [the rollout rule
 
 ## 5. Simulation
 
-We simulate 20 epochs with the epoch-403 hardware and the parameters above. Targets are 33.34% MiniMax, 33.33% GLM, and 33.33% DeepSeek. Epoch 0 is the starting allocation with the current static coefficients. Epoch 1 applies the first coefficient adjustment.
+We simulate 20 epochs with the epoch-403 hardware and the parameters above. Targets are 33.34% MiniMax, 33.33% GLM, and 33.33% DeepSeek. Epoch 0 is the starting allocation with the current static coefficients. Epoch 1 applies the first coefficient adjustment. The simulation uses the target bounds from section 3 and starts the controller from the static coefficients in section 1.
 
 ### Hardware and host behavior
 
