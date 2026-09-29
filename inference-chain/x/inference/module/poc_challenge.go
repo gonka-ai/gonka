@@ -189,7 +189,7 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 	fullExpected := weightByParticipant(participants.Participants, presentScales)
 	totalExpected := map[string]int64{ch.Target: fullExpected[ch.Target]}
 
-	updated, ratios := foldEventReadings(&epochGroupData, measured, map[string]int64{}, totalExpected, nil)
+	updated, ratios := foldEventReadings(&epochGroupData, measured, map[string]int64{}, map[string]int64{}, totalExpected, nil)
 	if updated {
 		am.keeper.SetEpochGroupData(ctx, epochGroupData)
 	}
