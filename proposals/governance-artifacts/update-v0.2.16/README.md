@@ -129,6 +129,7 @@ Compatibility testing covered devshard v4.1 and v5 with both v0.2.15 and v0.2.16
 - @aikuznetsov
 - @akup
 - @baychak
+- @cyberdelamain
 - @DimaOrekhovPS
 - @GLiberman
 - @gmorgachev
