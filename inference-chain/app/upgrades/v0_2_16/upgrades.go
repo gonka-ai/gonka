@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"slices"
 	"time"
 
@@ -174,6 +175,7 @@ func migrateDynamicCoefficientParams(ctx context.Context, k keeper.Keeper) error
 		}
 	}
 
+	initialState := make([]*types.ConfirmationWeightScale, 0, len(enabled))
 	smallestTarget := baseTarget
 	for _, modelID := range enabled {
 		target := baseTarget
@@ -181,13 +183,17 @@ func migrateDynamicCoefficientParams(ctx context.Context, k keeper.Keeper) error
 			target += remainder
 		}
 		model := modelByID[modelID]
-		legacyScale := cloneMigrationDecimal(model.WeightScaleFactor)
-		model.DynamicCoefficient = &types.DynamicCoefficientModelConfig{
-			CoeffMin:           cloneMigrationDecimal(legacyScale),
-			CoeffMax:           cloneMigrationDecimal(legacyScale),
-			RelativeDifficulty: &types.Decimal{Value: 1, Exponent: 0},
-			TargetShareBps:     target,
+		config, err := initialDynamicCoefficientConfig(model)
+		if err != nil {
+			return fmt.Errorf("dynamic coefficient migration model %q: %w", modelID, err)
 		}
+		config.TargetShareBps = target
+		model.DynamicCoefficient = config
+		initialState = append(initialState, &types.ConfirmationWeightScale{
+			ModelId:         modelID,
+			BaseCoefficient: cloneMigrationDecimal(model.WeightScaleFactor),
+			AdaptiveStep:    &types.Decimal{Value: 25, Exponent: -3}, // step_max / 2
+		})
 		model.WeightScaleFactor = nil
 	}
 	targetZone := uint32(500)
@@ -205,6 +211,9 @@ func migrateDynamicCoefficientParams(ctx context.Context, k keeper.Keeper) error
 	if err := params.Validate(); err != nil {
 		return fmt.Errorf("dynamic coefficient migration produced invalid params: %w", err)
 	}
+	if err := seedCurrentCoefficientState(ctx, k, initialState); err != nil {
+		return err
+	}
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
@@ -212,6 +221,113 @@ func migrateDynamicCoefficientParams(ctx context.Context, k keeper.Keeper) error
 		"enabled_models", len(enabled),
 		"target_zone_bps", targetZone)
 	return nil
+}
+
+// seedCurrentCoefficientState lets the first dynamic epoch carry the current scales
+// through the normal controller path without changing current-epoch reward weights.
+func seedCurrentCoefficientState(ctx context.Context, k keeper.Keeper, initialState []*types.ConfirmationWeightScale) error {
+	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		return fmt.Errorf("cannot seed coefficient state: effective epoch index not found")
+	}
+	data, found, err := k.GetEpochGroupDataWithError(ctx, epochIndex, "")
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("cannot seed coefficient state: current epoch %d has no root epoch group data", epochIndex)
+	}
+	scales := make(map[string]*types.ConfirmationWeightScale, len(data.ConfirmationWeightScales))
+	for _, scale := range data.ConfirmationWeightScales {
+		if scale != nil {
+			scales[scale.ModelId] = scale
+		}
+	}
+	for _, seed := range initialState {
+		scale := scales[seed.ModelId]
+		if scale == nil {
+			// A configured model absent from this epoch has no current reward weight.
+			scale = &types.ConfirmationWeightScale{
+				ModelId:                 seed.ModelId,
+				EffectiveCoefficient:    &types.Decimal{},
+				ExcludeFromConfirmation: true,
+			}
+			data.ConfirmationWeightScales = append(data.ConfirmationWeightScales, scale)
+		}
+		scale.BaseCoefficient = seed.BaseCoefficient
+		scale.AdaptiveStep = seed.AdaptiveStep
+		scale.PrevSign = 0
+	}
+	k.SetEpochGroupData(ctx, data)
+	return nil
+}
+
+func initialDynamicCoefficientConfig(model *types.PoCModelConfig) (*types.DynamicCoefficientModelConfig, error) {
+	lower, err := scaleMigrationDecimal(model.WeightScaleFactor, 9)
+	if err != nil {
+		return nil, err
+	}
+	upper, err := scaleMigrationDecimal(model.WeightScaleFactor, 11)
+	if err != nil {
+		return nil, err
+	}
+	config := &types.DynamicCoefficientModelConfig{
+		RelativeDifficulty: &types.Decimal{Value: 1, Exponent: 0},
+	}
+	// Target values from proposals/multi-model-poc/dynamic-coeff-init.md.
+	//
+	// Model                   CoeffMin        CoeffMax        RelativeDifficulty
+	// MiniMax M2.7            0.3024          0.3024          1
+	// GLM 5.3 Flash           0.508468965517  0.847197025352  2.668169014084
+	// DeepSeek V4 Flash 0731  0.183272727272  0.48951         1.541666666666
+	//
+	// Initial values with +/-10% limits, within the target bounds:
+	//
+	// Model                   Current scale  Initial min  Initial max
+	// MiniMax M2.7            0.3024         0.3024       0.3024
+	// GLM 5.3 Flash           0.62           0.558        0.682
+	// DeepSeek V4 Flash 0731  0.246          0.2214       0.2706
+	//
+	// These initial values use the scales shown. Actual scales are read at upgrade height.
+	switch model.ModelId {
+	case "MiniMaxAI/MiniMax-M2.7":
+		config.CoeffMin = &types.Decimal{Value: 3024, Exponent: -4}
+		config.CoeffMax = &types.Decimal{Value: 3024, Exponent: -4}
+	case "zai-org/GLM-5.3-Flash":
+		config.CoeffMin = &types.Decimal{Value: 508468965517, Exponent: -12}
+		config.CoeffMax = &types.Decimal{Value: 847197025352, Exponent: -12}
+		config.RelativeDifficulty = &types.Decimal{Value: 2668169014084, Exponent: -12}
+	case "deepseek-ai/DeepSeek-V4-Flash-0731":
+		config.CoeffMin = &types.Decimal{Value: 183272727272, Exponent: -12}
+		config.CoeffMax = &types.Decimal{Value: 48951, Exponent: -5}
+		config.RelativeDifficulty = &types.Decimal{Value: 1541666666666, Exponent: -12}
+	}
+	// Limit initial movement to +/-10% of the current scale, within benchmark bounds.
+	if config.CoeffMin == nil || lower.ToDecimal().GreaterThan(config.CoeffMin.ToDecimal()) {
+		config.CoeffMin = lower
+	}
+	if config.CoeffMax == nil || upper.ToDecimal().LessThan(config.CoeffMax.ToDecimal()) {
+		config.CoeffMax = upper
+	}
+	if config.CoeffMin.ToDecimal().GreaterThan(config.CoeffMax.ToDecimal()) {
+		return nil, fmt.Errorf("current coefficient +/-10%% does not overlap benchmark bounds")
+	}
+	return config, nil
+}
+
+// scaleMigrationDecimal multiplies by tenths without floating point or int64 overflow.
+func scaleMigrationDecimal(value *types.Decimal, tenths int64) (*types.Decimal, error) {
+	coefficient := new(big.Int).Mul(big.NewInt(value.Value), big.NewInt(tenths))
+	exponent := value.Exponent - 1
+	ten := big.NewInt(10)
+	for coefficient.Sign() != 0 && new(big.Int).Mod(coefficient, ten).Sign() == 0 {
+		coefficient.Quo(coefficient, ten)
+		exponent++
+	}
+	if !coefficient.IsInt64() {
+		return nil, fmt.Errorf("scaled coefficient does not fit int64")
+	}
+	return &types.Decimal{Value: coefficient.Int64(), Exponent: exponent}, nil
 }
 
 func canonicalMigrationDecimal(value *types.Decimal) (*types.Decimal, error) {

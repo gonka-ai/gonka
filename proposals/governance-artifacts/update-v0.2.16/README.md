@@ -16,7 +16,20 @@ With fixed coefficients, an entire hardware class tends to switch to the same mo
 
 This upgrade lets governance set a target percentage of network compute and a coefficient range for each model. The protocol dynamically adjusts the coefficient inside that range to move compute toward the target. Compute above the target is scored at the minimum coefficient, which discourages oversupply.
 
-Governance initially sets targets from demand estimates and data sources such as OpenRouter. Later versions can aggregate host estimates and eventually use on-chain model usage. This version changes incentives only. It does not automatically switch the models deployed by a host. At upgrade, the minimum and maximum both equal the current scale, so coefficients and rewards stay unchanged until governance opens the ranges.
+The target configuration is defined in [dynamic-coeff-init.md](../../multi-model-poc/dynamic-coeff-init.md). The upgrade applies the initial configuration below. Each model starts from its existing coefficient, with a range of up to 10% above or below it, within the target bounds. Models not listed in that document use only the 10% limit.
+
+Initial configuration at upgrade, using existing coefficients of 0.3024 (MiniMax), 0.62 (GLM), and 0.246 (DeepSeek):
+
+| Model | Starting coefficient | Allowed range | Relative difficulty |
+| --- | --- | --- | --- |
+| MiniMax M2.7 | 0.3024 | Fixed at 0.3024 | 1 |
+| GLM 5.3 Flash | 0.62 | 0.558 - 0.682 | 2.668169014084 |
+| DeepSeek V4 Flash 0731 | 0.246 | 0.2214 - 0.2706 | 1.541666666666 |
+| Other enabled models | Current scale | Current scale * [0.9, 1.1] | 1 |
+
+Starting coefficients come from chain parameters at upgrade height. Current-epoch reward weights stay unchanged. Later epochs use the new ranges.
+
+Target compute shares start equal across enabled models, with rounding to total 100%. Governance can later apply the target configuration without resetting coefficients. Hosts choose which models to deploy.
 
 ## Fee
 
@@ -51,14 +64,10 @@ The handler is [`inference-chain/app/upgrades/v0_2_16/upgrades.go`](https://gith
 
 - Extend existing cold-to-warm grants with PoC Challenge and model intent messages, so hosts do not have to repeat the ML ops grant.
 - Move approved devshard versions from shared escrow params into a separate store without changing the approved list.
-- Convert existing model scales to Dynamic Coefficients v1 and freeze the config for the upcoming epoch. Each model starts with its minimum and maximum equal to the current scale, so the upgrade does not change reward weights.
+- Start dynamic coefficients from current model scales and apply the ranges and targets above to the upcoming epoch.
 - Initialize PoC Challenge with a payment ratio of 0.1, at most 4 active challenges, and a minimum punishable segment of 300 blocks.
 
 The epoch and cosmos fee groups default to 1 ngonka/gas. The software-upgrade proposal info can override the enabled groups and their prices. An explicit empty `enabled_fee_groups` list disables charging.
-
-## TODO
-
-- [ ] Include additional simulation results and confirm the target percentage and coefficient range for each model in Dynamic Coefficients v1.
 
 ## Other Changes
 
