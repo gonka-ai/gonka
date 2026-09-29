@@ -13,11 +13,13 @@ import (
 	"decentralized-api/cosmosclient/tx_manager"
 	"decentralized-api/poc/artifacts"
 
+	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 )
 
@@ -30,6 +32,8 @@ type commitWorkerQueryServer struct {
 	distributionOnChain map[string]bool
 	failCommitQuery     bool
 	commitQueryCalls    int
+	failModels          map[string]bool
+	queryHeights        []string
 }
 
 func (s *commitWorkerQueryServer) commitKey(req *types.QueryPoCV2StoreCommitRequest) string {
@@ -40,9 +44,11 @@ func (s *commitWorkerQueryServer) distributionKey(req *types.QueryMLNodeWeightDi
 	return fmt.Sprintf("%d|%s|%s", req.PocStageStartBlockHeight, req.ParticipantAddress, req.ModelId)
 }
 
-func (s *commitWorkerQueryServer) PoCV2StoreCommit(_ context.Context, req *types.QueryPoCV2StoreCommitRequest) (*types.QueryPoCV2StoreCommitResponse, error) {
+func (s *commitWorkerQueryServer) PoCV2StoreCommit(ctx context.Context, req *types.QueryPoCV2StoreCommitRequest) (*types.QueryPoCV2StoreCommitResponse, error) {
 	s.commitQueryCalls++
-	if s.failCommitQuery {
+	md, _ := metadata.FromIncomingContext(ctx)
+	s.queryHeights = append(s.queryHeights, md.Get(grpctypes.GRPCBlockHeightHeader)...)
+	if s.failCommitQuery || s.failModels[req.ModelId] {
 		return nil, fmt.Errorf("query unavailable")
 	}
 	key := s.commitKey(req)
