@@ -20,18 +20,30 @@ import (
 
 // fakeClock drives supervisor timers deterministically in tests.
 type fakeClock struct {
-	mu     sync.Mutex
-	now    time.Time
-	timers []*fakeTimer
+	mu        sync.Mutex
+	now       time.Time
+	timers    []*fakeTimer
+	armCounts map[time.Duration]int
+	// missed credits an Advance(d) that fired no timer of duration d, so the
+	// next After(d) delivers that tick instead of losing it. Without this the
+	// supervisor's arm-after-processing order races every advance: a test that
+	// advances while the goroutine is still handling the previous tick just
+	// pushes now forward, and the tick is gone.
+	missed map[time.Duration]int
 }
 
 type fakeTimer struct {
 	deadline time.Time
+	dur      time.Duration
 	ch       chan time.Time
 }
 
 func newFakeClock(start time.Time) *fakeClock {
-	return &fakeClock{now: start}
+	return &fakeClock{
+		now:       start,
+		armCounts: make(map[time.Duration]int),
+		missed:    make(map[time.Duration]int),
+	}
 }
 
 func (c *fakeClock) Now() time.Time {
@@ -47,20 +59,40 @@ func (c *fakeClock) Since(t time.Time) time.Duration {
 func (c *fakeClock) After(d time.Duration) <-chan time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	t := &fakeTimer{
-		deadline: c.now.Add(d),
-		ch:       make(chan time.Time, 1),
+	c.armCounts[d]++
+	ch := make(chan time.Time, 1)
+	if c.missed[d] > 0 {
+		// An advance already went past this interval while nothing was armed.
+		c.missed[d]--
+		ch <- c.now
+		return ch
 	}
-	c.timers = append(c.timers, t)
-	return t.ch
+	c.timers = append(c.timers, &fakeTimer{
+		deadline: c.now.Add(d),
+		dur:      d,
+		ch:       ch,
+	})
+	return ch
+}
+
+// armCount reports how many times After has been called for duration d,
+// letting tests observe timer (re-)arming instead of guessing with sleeps.
+func (c *fakeClock) armCount(d time.Duration) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.armCounts[d]
 }
 
 func (c *fakeClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	c.now = c.now.Add(d)
 	var pending []*fakeTimer
+	fired := 0
 	for _, t := range c.timers {
 		if !t.deadline.After(c.now) {
+			if t.dur == d {
+				fired++
+			}
 			select {
 			case t.ch <- c.now:
 			default:
@@ -70,6 +102,9 @@ func (c *fakeClock) Advance(d time.Duration) {
 		}
 	}
 	c.timers = pending
+	if fired == 0 {
+		c.missed[d]++
+	}
 	c.mu.Unlock()
 }
 
@@ -154,7 +189,26 @@ func waitActiveSource(t *testing.T, p AdaptiveProvider, want string, max time.Du
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
+	// The transition can land during the final sleep, after the deadline check
+	// but before the report — without this the helper fails with "want X, got X".
+	if p.ActiveSource() == want {
+		return
+	}
 	t.Fatalf("timeout waiting for active source %q (got %q)", want, p.ActiveSource())
+}
+
+// waitTickProcessed blocks until duration d re-arms since armed, proving the
+// tick just advanced was fully processed (a re-arm only follows completed
+// tick handling). Do not call after a tick that switches to another timer.
+func waitTickProcessed(t *testing.T, clock *fakeClock, d time.Duration, armed int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for clock.armCount(d) <= armed {
+		if !time.Now().Before(deadline) {
+			t.Fatalf("timeout waiting for tick (duration=%s) to be processed", d)
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func TestAdaptive_BootUnimplemented_StartsChain(t *testing.T) {
@@ -211,9 +265,7 @@ func TestAdaptive_FailbackAfterDapiUpgrade(t *testing.T) {
 	waitActiveSource(t, p, SourceActiveChain, 2*time.Second)
 
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
 
 	waitActiveSource(t, p, SourceActiveGRPC, 3*time.Second)
 	waitForHeight(t, p, 50)
@@ -372,9 +424,7 @@ func TestAdaptive_RoundTrip_GRPCChainGRPC(t *testing.T) {
 	waitActiveSource(t, p, SourceActiveChain, 3*time.Second)
 
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
 	waitActiveSource(t, p, SourceActiveGRPC, 3*time.Second)
 	waitForHeight(t, p, 50)
 }
@@ -456,17 +506,17 @@ func TestAdaptive_FailbackHysteresis_NeedsConsecutiveProbes(t *testing.T) {
 
 	waitActiveSource(t, p, SourceActiveChain, 2*time.Second)
 
+	armed := clock.armCount(cfg.GRPCReprobe)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
+	waitTickProcessed(t, clock, cfg.GRPCReprobe, armed)
 	assert.Equal(t, SourceActiveChain, p.ActiveSource(), "one healthy probe must not fail back")
 
+	armed = clock.armCount(cfg.GRPCReprobe)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
+	waitTickProcessed(t, clock, cfg.GRPCReprobe, armed)
 	assert.Equal(t, SourceActiveChain, p.ActiveSource(), "failed reprobe must reset streak")
 
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
 	waitActiveSource(t, p, SourceActiveGRPC, 3*time.Second)
 }
