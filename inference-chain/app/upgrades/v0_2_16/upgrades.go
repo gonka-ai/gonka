@@ -83,6 +83,9 @@ func CreateUpgradeHandler(
 		if err := grantDeclarePoCIntentAuthz(ctx, authzKeeper, k); err != nil {
 			return fromVM, err
 		}
+		if err := distributeBountyRewards(ctx, k); err != nil {
+			return fromVM, err
+		}
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
