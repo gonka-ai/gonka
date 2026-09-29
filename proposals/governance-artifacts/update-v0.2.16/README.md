@@ -54,7 +54,7 @@ The handler is [`inference-chain/app/upgrades/v0_2_16/upgrades.go`](https://gith
 - Convert existing model scales to Dynamic Coefficients v1 and freeze the config for the upcoming epoch. Each model starts with its minimum and maximum equal to the current scale, so the upgrade does not change reward weights.
 - Initialize PoC Challenge with a payment ratio of 0.1, at most 4 active challenges, and a minimum punishable segment of 300 blocks.
 
-Fee groups stay disabled unless the software-upgrade proposal info explicitly enables and prices them.
+The epoch and cosmos fee groups default to 1 ngonka/gas. The software-upgrade proposal info can override the enabled groups and their prices. An explicit empty `enabled_fee_groups` list disables charging.
 
 ## TODO
 
@@ -67,7 +67,8 @@ Fee groups stay disabled unless the software-upgrade proposal info explicitly en
 - Cap governance, BLS, and PoC voting power by previously confirmed compute. Rewards still use current weight. [#1588](https://github.com/gonka-ai/gonka/pull/1588), [#1694](https://github.com/gonka-ai/gonka/pull/1694), reworking [#1585](https://github.com/gonka-ai/gonka/pull/1585), by @libermans, @gmorgachev, @DimaOrekhovPS.
 - Adjust model coefficients toward governance targets within configured bounds. [#1566](https://github.com/gonka-ai/gonka/pull/1566) by @gmorgachev.
 - Add paid PoC challenges between regular PoCs. [#1811](https://github.com/gonka-ai/gonka/pull/1811) by @gmorgachev.
-- Add fee groups and per-message gas rules, with charging disabled by default. [#1616](https://github.com/gonka-ai/gonka/pull/1616) by @GLiberman.
+- Reject submitted transaction fees above 100 GNK before fee deduction.
+- Add fee groups and per-message gas rules, with epoch and cosmos charging enabled at 1 ngonka/gas by default. [#1616](https://github.com/gonka-ai/gonka/pull/1616) by @GLiberman.
 - Require participant permission for PoC v2 submissions and reject unauthorized authz wrappers. [#1623](https://github.com/gonka-ai/gonka/pull/1623), incorporating [#1552](https://github.com/gonka-ai/gonka/pull/1552), by @staaason, based on a HackerOne report.
 - Reject malformed BLS encrypted shares and skip dealers whose shares cannot be decrypted. [#1687](https://github.com/gonka-ai/gonka/pull/1687) by @GLiberman.
 - Reject SMST proofs that do not match the stored commitment. [#1782](https://github.com/gonka-ai/gonka/pull/1782) by @gmorgachev, based on a HackerOne report.

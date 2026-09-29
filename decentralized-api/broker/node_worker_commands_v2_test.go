@@ -174,7 +174,7 @@ func TestStartPoCNodeCommandV2_ChallengeWindDownStopsPow(t *testing.T) {
 	tracker.Update(chainphase.BlockInfo{Height: 897, Hash: "h"}, epoch, params, true, nil)
 	withOverlay(t, stubChallengeOverlay{
 		self: "me",
-		ch: testOpenCh("me", 500, 900, true),
+		ch:   testOpenCh("me", 500, 900, true),
 	})
 
 	b := NewTestBroker2(1)
@@ -376,4 +376,163 @@ func TestStartPoCNodeCommandV2_StrongerRngPropagated(t *testing.T) {
 	require.Equal(t, 1, mockClient.InitGenerateV2Called)
 	require.NotNil(t, mockClient.LastInitGenerateV2Req)
 	assert.True(t, mockClient.LastInitGenerateV2Req.PocStrongerRng, "PocStrongerRng must be forwarded to InitGenerateV2")
+}
+
+func TestStartPoCNodeCommandV2_PartialInitErrorKeepsNodeInPoC(t *testing.T) {
+	node := createTestNode("test-node-v2-partial")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("IDLE")
+	mockClient.InitGenerateV2Resp = &mlnodeclient.PoCInitGenerateResponseV2{
+		Status:  "OK",
+		Results: []mlnodeclient.BackendResult{{Port: 5001, Status: "OK"}},
+		Errors:  []mlnodeclient.BackendError{{Port: 5002, Error: "503 engine not ready"}},
+	}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{
+		BlockHeight: 2000,
+		BlockHash:   "hash",
+		PubKey:      "test-pub-key",
+		CallbackUrl: "http://localhost:8080/callback",
+		TotalNodes:  5,
+		Model:       "test-model",
+		SeqLen:      256,
+	}
+	result := cmd.Execute(context.Background(), worker)
+	assert.True(t, result.Succeeded, result.Error)
+	assert.Equal(t, types.HardwareNodeStatus_POC, result.FinalStatus)
+	assert.Equal(t, PocStatusGenerating, result.FinalPocStatus)
+	assert.True(t, result.PocV2Updated)
+}
+
+func TestStartPoCNodeCommandV2_AllBackendsFailInitIsFailure(t *testing.T) {
+	node := createTestNode("test-node-v2-partial")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("IDLE")
+	mockClient.InitGenerateV2Resp = &mlnodeclient.PoCInitGenerateResponseV2{
+		Status: "OK",
+		Errors: []mlnodeclient.BackendError{{Port: 5001, Error: "503"}, {Port: 5002, Error: "503"}},
+	}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256}
+	result := cmd.Execute(context.Background(), worker)
+	assert.False(t, result.Succeeded)
+	assert.Equal(t, types.HardwareNodeStatus_FAILED, result.FinalStatus)
+}
+
+func TestStartPoCNodeCommandV2_MixedPartialStopErrorStillInits(t *testing.T) {
+	node := createTestNode("test-node-v2-partial")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("MIXED")
+	mockClient.StopPowV2Resp = &mlnodeclient.PoCStopResponseV2{
+		Status:  "OK",
+		Results: []mlnodeclient.BackendResult{{Port: 5001, Status: "stopped"}},
+		Errors:  []mlnodeclient.BackendError{{Port: 5002, Error: "500"}},
+	}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
+		LastPocV2BlockHeight: 1000, LastPocV2BlockHash: "old-hash"}
+	result := cmd.Execute(context.Background(), worker)
+	assert.True(t, result.Succeeded, result.Error)
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	assert.Equal(t, 1, mockClient.StopPowV2Called)
+	assert.Equal(t, 1, mockClient.InitGenerateV2Called)
+}
+
+func TestStartPoCNodeCommandV2_WindDownPartialStopErrorFails(t *testing.T) {
+	node := createTestNode("test-node-v2-partial")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("GENERATING")
+	mockClient.StopPowV2Resp = &mlnodeclient.PoCStopResponseV2{
+		Status:  "OK",
+		Results: []mlnodeclient.BackendResult{{Port: 5001, Status: "stopped"}},
+		Errors:  []mlnodeclient.BackendError{{Port: 5002, Error: "500"}},
+	}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", WindDown: true}
+	result := cmd.Execute(context.Background(), worker)
+	assert.False(t, result.Succeeded)
+}
+
+func TestStartPoCNodeCommandV2_MixedSameStageInitsWithoutStop(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		lastHeight int64
+		lastHash   string
+	}{
+		{"same stage", 2000, "hash"},
+		{"after DAPI restart", 0, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			node := createTestNode("test-node-v2-mixed")
+			mockClient := mlnodeclient.NewMockClient()
+			mockClient.SetV2Status("MIXED")
+			mockClient.InitGenerateV2Resp = &mlnodeclient.PoCInitGenerateResponseV2{
+				Status:  "OK",
+				Results: []mlnodeclient.BackendResult{{Port: 5002, Status: "OK"}},
+				Errors:  []mlnodeclient.BackendError{{Port: 5001, Error: "409 Already generating"}},
+			}
+			b := NewTestBroker2(1)
+			worker := NewNodeWorkerWithClient("test-node-v2-mixed", node, mockClient, b)
+			defer worker.Shutdown()
+
+			cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
+				LastPocV2BlockHeight: tc.lastHeight, LastPocV2BlockHash: tc.lastHash}
+			result := cmd.Execute(context.Background(), worker)
+			assert.True(t, result.Succeeded, result.Error)
+			assert.Equal(t, types.HardwareNodeStatus_POC, result.FinalStatus)
+			assert.Equal(t, PocStatusGenerating, result.FinalPocStatus)
+			mockClient.Mu.Lock()
+			defer mockClient.Mu.Unlock()
+			assert.Equal(t, 0, mockClient.StopPowV2Called, "MIXED in the same stage must not stop the generating backends")
+			assert.Equal(t, 1, mockClient.InitGenerateV2Called)
+		})
+	}
+}
+
+func TestStartPoCNodeCommandV2_MixedSameStageInitFailureDoesNotStop(t *testing.T) {
+	node := createTestNode("test-node-v2-mixed")
+	mockClient := mlnodeclient.NewMockClient()
+	mockClient.SetV2Status("MIXED")
+	mockClient.InitGenerateV2Resp = &mlnodeclient.PoCInitGenerateResponseV2{
+		Status: "OK",
+		Errors: []mlnodeclient.BackendError{{Port: 5001, Error: "409 Already generating"}, {Port: 5002, Error: "503"}},
+	}
+	b := NewTestBroker2(1)
+	worker := NewNodeWorkerWithClient("test-node-v2-mixed", node, mockClient, b)
+	defer worker.Shutdown()
+
+	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
+		LastPocV2BlockHeight: 2000, LastPocV2BlockHash: "hash"}
+	result := cmd.Execute(context.Background(), worker)
+	assert.False(t, result.Succeeded)
+	mockClient.Mu.Lock()
+	defer mockClient.Mu.Unlock()
+	assert.Equal(t, 0, mockClient.StopPowV2Called)
+	assert.Equal(t, 1, mockClient.InitGenerateV2Called)
+}
+
+func TestKeepHealthyInferenceStopsMixedPoC(t *testing.T) {
+	client := mlnodeclient.NewMockClient()
+	client.SetV2Status("MIXED")
+
+	result := keepHealthyInference(context.Background(), client, NodeResult{}, "mixed-node")
+
+	require.True(t, result.Succeeded)
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, result.FinalStatus)
+	assert.Equal(t, PocStatusIdle, result.FinalPocStatus)
+	assert.Equal(t, 1, client.StopPowV2Called)
+	assert.Equal(t, 0, client.InitGenerateV2Called)
 }
