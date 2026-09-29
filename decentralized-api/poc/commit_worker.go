@@ -78,6 +78,7 @@ type CommitWorker struct {
 	lastAcceptedBroadcastHeight  int64
 	lastAcceptedModelHeight      map[commitKey]int64
 	lastChallengeBroadcastHeight int64
+	lastChallengeModelHeight     map[commitKey]int64
 	lastDistributionAttempt      time.Time
 	lastCommitted                map[commitKey]commitState
 	challengeLastCommitted       map[commitKey]commitState
@@ -308,7 +309,7 @@ func (w *CommitWorker) maybeCalibrateStoreCommitGas(pocHeight int64) {
 }
 
 // storeCommitRetryBlocks bounds how long one admitted StoreCommit holds its
-// model, the same bound challengeCommitRetryBlocks puts on challenge commits.
+// model, also used for challenge commits.
 // The pending model is blocked until currentHeight > timeout_height; with the
 // exchange deadline as timeout, a tx that never lands (dropped from the
 // mempool, expired by its unordered timeout timestamp, failed in DeliverTx, or
@@ -363,7 +364,7 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, deadline uint64) {
 	if height > 0 && deadline > 0 && uint64(height) >= deadline {
 		return
 	}
-	finalWindow := height > 0 && deadline > 0 && deadline-uint64(height) <= 3
+	finalWindow := inFinalCommitWindow(height, deadline)
 	timeoutHeight := storeCommitTimeoutHeight(height, deadline)
 	if finalWindow {
 		timeoutHeight = deadline
@@ -462,14 +463,14 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, deadline uint64) {
 		return
 	}
 
-	if finalWindow {
-		for _, entry := range entries {
+	for _, batch := range commitBatches(entries, finalWindow) {
+		states := make(map[commitKey]commitState, len(batch))
+		for _, entry := range batch {
 			key := commitKey{stage: pocHeight, modelID: entry.ModelId}
-			w.submitCommit(pocHeight, timeoutHeight, []*types.PoCV2CommitEntry{entry}, map[commitKey]commitState{key: submittedStates[key]})
+			states[key] = submittedStates[key]
 		}
-		return
+		w.submitCommit(pocHeight, timeoutHeight, batch, states)
 	}
-	w.submitCommit(pocHeight, timeoutHeight, entries, submittedStates)
 }
 
 func (w *CommitWorker) submitCommit(pocHeight int64, timeoutHeight uint64, entries []*types.PoCV2CommitEntry, submittedStates map[commitKey]commitState) {
@@ -534,35 +535,50 @@ func (w *CommitWorker) submitCommit(pocHeight int64, timeoutHeight uint64, entri
 		"pocHeight", pocHeight, "models", len(entries), "height", height, "timeoutHeight", timeoutHeight)
 }
 
-const challengeCommitRetryBlocks int64 = 3
+func inFinalCommitWindow(height int64, deadline uint64) bool {
+	return height > 0 && uint64(height) < deadline && deadline-uint64(height) <= 3
+}
+
+func commitBatches(entries []*types.PoCV2CommitEntry, finalWindow bool) [][]*types.PoCV2CommitEntry {
+	if !finalWindow {
+		return [][]*types.PoCV2CommitEntry{entries}
+	}
+	batches := make([][]*types.PoCV2CommitEntry, 0, len(entries))
+	for _, entry := range entries {
+		batches = append(batches, []*types.PoCV2CommitEntry{entry})
+	}
+	return batches
+}
+
+func challengeCountReady(count, confirmed uint32) bool {
+	return count > confirmed && uint64(count-confirmed)*100 > uint64(confirmed)*3
+}
 
 func challengeCommitTimeoutHeight(height, finish int64) uint64 {
 	if finish <= 1 {
 		return 0
 	}
-	capHeight := finish - 1
-	timeout := height + challengeCommitRetryBlocks
-	if timeout > capHeight {
-		timeout = capHeight
-	}
-	if timeout <= 0 {
-		return 0
-	}
-	return uint64(timeout)
+	return storeCommitTimeoutHeight(height, uint64(finish-1))
 }
 
+// Send after each model grows by more than 3% of its confirmed count.
+// In the last 3 sending blocks, retry models separately regardless of growth.
 func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochState) {
 	ch := OpenChallenges.Own(w.participantAddress)
 	if ch == nil || ch.StartHeight() <= 0 {
 		w.challengePending = make(map[commitKey]pendingCommit)
 		w.challengeLastCommitted = make(map[commitKey]commitState)
 		w.challengeStage = 0
+		w.lastChallengeModelHeight = nil
+		w.lastChallengeBroadcastHeight = 0
 		return
 	}
 	if w.challengeStage != ch.StartHeight() {
 		w.challengePending = make(map[commitKey]pendingCommit)
 		w.challengeLastCommitted = make(map[commitKey]commitState)
 		w.challengeStage = ch.StartHeight()
+		w.lastChallengeModelHeight = nil
+		w.lastChallengeBroadcastHeight = 0
 	}
 	if w.challengePending == nil {
 		w.challengePending = make(map[commitKey]pendingCommit)
@@ -571,29 +587,26 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 		w.challengeLastCommitted = make(map[commitKey]commitState)
 	}
 
+	if w.lastChallengeModelHeight == nil {
+		w.lastChallengeModelHeight = make(map[commitKey]int64)
+	}
 	w.reconcileChallengePending(ch)
 
 	height := epochState.CurrentBlock.Height
-	if ch.Finish > 0 && height >= ch.Finish-1 {
+	if ch.Finish <= 1 || height >= ch.Finish-1 {
 		return
 	}
 
+	deadline := uint64(ch.Finish - 1)
+	finalWindow := inFinalCommitWindow(height, deadline)
 	pocHeight := ch.StartHeight()
 	stageStores, err := w.store.GetStoresForServing(pocHeight)
 	if err != nil || len(stageStores) == 0 {
 		return
 	}
 
-	if height > 0 && height == w.lastChallengeBroadcastHeight {
+	if !finalWindow && height > 0 && height == w.lastChallengeBroadcastHeight {
 		return
-	}
-
-	onChain := make(map[string]commitState, len(ch.Commits))
-	for _, commit := range ch.Commits {
-		if commit == nil {
-			continue
-		}
-		onChain[commit.ModelId] = commitState{count: commit.Count, rootHash: commit.RootHash}
 	}
 
 	entries := make([]*types.PoCV2CommitEntry, 0, len(stageStores))
@@ -611,16 +624,13 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 			continue
 		}
 		key := commitKey{stage: pocHeight, modelID: stageStore.ModelID}
-		if pending, ok := w.challengePending[key]; ok && !samePayloadRetryable(pending, height) {
+		if finalWindow && w.lastChallengeModelHeight[key] == height {
+			continue
+		}
+		if pending, ok := w.challengePending[key]; ok && !finalWindow && !samePayloadRetryable(pending, height) {
 			continue
 		}
 		last, hasLast := w.challengeLastCommitted[key]
-		if !hasLast {
-			if chainLast, ok := onChain[stageStore.ModelID]; ok {
-				last = chainLast
-				hasLast = true
-			}
-		}
 		if hasLast {
 			if last.count == count && (last.rootHash == nil || bytes.Equal(last.rootHash, rootHash)) {
 				continue
@@ -628,6 +638,9 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 			if count <= last.count {
 				continue
 			}
+		}
+		if !finalWindow && !challengeCountReady(count, last.count) {
+			continue
 		}
 		entries = append(entries, &types.PoCV2CommitEntry{
 			ModelId:   stageStore.ModelID,
@@ -645,25 +658,32 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 	}
 
 	timeoutHeight := challengeCommitTimeoutHeight(height, ch.Finish)
-	msg := &types.MsgPoCChallengeStoreCommit{
-		PocStageStartBlockHeight: pocHeight,
-		Entries:                  entries,
+	if finalWindow {
+		timeoutHeight = deadline
 	}
-	if err := w.recorder.SubmitPoCChallengeStoreCommitWithTimeout(msg, timeoutHeight); err != nil {
-		logging.Warn("CommitWorker: challenge commit failed", types.PoC,
-			"pocHeight", pocHeight, "error", err)
-		return
+	for _, batch := range commitBatches(entries, finalWindow) {
+		msg := &types.MsgPoCChallengeStoreCommit{
+			PocStageStartBlockHeight: pocHeight,
+			Entries:                  batch,
+		}
+		if err := w.recorder.SubmitPoCChallengeStoreCommitWithTimeout(msg, timeoutHeight); err != nil {
+			logging.Warn("CommitWorker: challenge commit failed", types.PoC,
+				"pocHeight", pocHeight, "error", err)
+			continue
+		}
+		w.lastChallengeBroadcastHeight = height
+		for _, entry := range batch {
+			key := commitKey{stage: pocHeight, modelID: entry.ModelId}
+			w.lastChallengeModelHeight[key] = height
+			w.challengePending[key] = pendingCommit{state: submittedStates[key], submittedHeight: height, timeoutHeight: timeoutHeight}
+		}
+		logging.Debug("CommitWorker: submitted challenge store commit", types.PoC,
+			"pocHeight", pocHeight, "models", len(batch), "height", height, "timeoutHeight", timeoutHeight)
 	}
-	w.lastChallengeBroadcastHeight = height
-	for key, state := range submittedStates {
-		w.challengePending[key] = pendingCommit{state: state, submittedHeight: height, timeoutHeight: timeoutHeight}
-	}
-	logging.Debug("CommitWorker: submitted challenge store commit", types.PoC,
-		"pocHeight", pocHeight, "models", len(entries), "height", height, "timeoutHeight", timeoutHeight)
 }
 
 func (w *CommitWorker) reconcileChallengePending(ch *types.OpenPoCChallenge) {
-	if ch == nil || len(w.challengePending) == 0 {
+	if ch == nil {
 		return
 	}
 	onChain := make(map[string]commitState, len(ch.Commits))
@@ -672,6 +692,10 @@ func (w *CommitWorker) reconcileChallengePending(ch *types.OpenPoCChallenge) {
 			continue
 		}
 		onChain[commit.ModelId] = commitState{count: commit.Count, rootHash: bytes.Clone(commit.RootHash)}
+		key := commitKey{stage: ch.StartHeight(), modelID: commit.ModelId}
+		if commit.Count >= w.challengeLastCommitted[key].count {
+			w.challengeLastCommitted[key] = onChain[commit.ModelId]
+		}
 	}
 	for key, pending := range w.challengePending {
 		if key.stage != ch.StartHeight() {
@@ -683,7 +707,6 @@ func (w *CommitWorker) reconcileChallengePending(ch *types.OpenPoCChallenge) {
 			continue
 		}
 		if chain.count > pending.state.count || sameCommitState(pending.state, chain.count, chain.rootHash) {
-			w.challengeLastCommitted[key] = chain
 			delete(w.challengePending, key)
 		}
 	}
