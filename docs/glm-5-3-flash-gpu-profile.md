@@ -227,7 +227,7 @@ measured; the inference gate is the corroborating signal.
 
 ```
 ghcr.io/gonka-ai/mlnode:3.1.0-post2-vllm-0.28.0
-ghcr.io/gonka-ai/mlnode@sha256:fb510fcf89cce09d41d668f99156e58048a43352f43a1e64493fe77a064f4db8
+ghcr.io/gonka-ai/mlnode@sha256:581435c21f7825423417688e369ec96e7c80105e8bddf2ee014b33414d2f78b8
 ```
 
 3.1.0-post2 is 3.1.0 (`sha256:de9150fcee0ad77199ca8a48ecae993b2cac0b92a7b05284d1575657d04522fa`)
@@ -236,6 +236,9 @@ with gonka-poc `0.1.7` (gonka-ai/gonka-vllm-plugins#22) as one layer on top and
 one call instead of one call per request id. On 2×B300 with ~1500 chat requests in flight,
 `/init/generate` reached the first nonces after 29 s on 3.1.0 and after under 5 s on 0.1.7;
 PoC artifacts are unchanged. gonka-ai/vllm#117 pins v0.1.7 in `docker/Dockerfile.gonka-poc`.
+The image also carries this PR's `entrypoint.sh`, which raises the open-file soft limit to the
+hard one: at Docker's default of 1024 the MLNode chat proxy ran out of descriptors with ~1500
+requests in flight (`Errno 24`, 502s), the vLLM heartbeat failed and the watcher exited MLNode.
 
 3.1.0 is 3.0.17 with gonka-poc `0.1.6` (gonka-ai/gonka-vllm-plugins#10 and #11): the same layers with
 one added on top, so every layer of 3.0.17 is reused verbatim. Its vLLM base is likewise
