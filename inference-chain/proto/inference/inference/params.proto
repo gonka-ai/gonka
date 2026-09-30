@@ -166,13 +166,47 @@ message PoCStatTestParams {
   Decimal p_value_threshold = 3;   // P-value cutoff to declare fraud (default: 0.05)
 }
 
+// PocScheme is the leaf recipe for a PoC v2 stage (same msgs/MMR/proofs).
+// Zero value is PREFILL so existing params keep today's behavior.
+enum PocScheme {
+  POC_SCHEME_PREFILL = 0;  // FP16 k_dim=12 vector
+  POC_SCHEME_DECODE  = 1;  // packed decode trajectory, N+1 bytes
+}
+
+// PocSchemeParams is one recipe for one scheme on one model.
+// seq_len is the prompt length in tokens. max_tokens is the decode step count
+// (sphere snaps, not sampled token ids). 0 means there is no decode loop.
+message PocSchemeParams {
+  option (gogoproto.equal) = true;
+  PocScheme scheme = 1;
+  int64 seq_len = 2;
+  int64 max_tokens = 3;
+  PoCStatTestParams stat_test = 4;
+  Decimal weight_scale_factor = 5;
+}
+
 message PoCModelConfig {
   option (gogoproto.equal) = true;
   string model_id = 1;
-  int64 seq_len = 2;
-  PoCStatTestParams stat_test = 3;
-  Decimal weight_scale_factor = 4;
+  int64 seq_len = 2 [deprecated = true]; // Deprecated: use schemes[PREFILL].seq_len
+  PoCStatTestParams stat_test = 3 [deprecated = true]; // Deprecated: use schemes[PREFILL].stat_test
+  Decimal weight_scale_factor = 4 [deprecated = true]; // Deprecated: use schemes[scheme].weight_scale_factor
   uint64 penalty_start_epoch = 5;
+  // One block per scheme. A stage copies the block whose scheme matches.
+  // Tags 2, 3, 4 stay reserved so mainnet params still decode.
+  repeated PocSchemeParams schemes = 6;
+}
+
+// PocStageRecipe is the frozen generate/validate/evaluate snapshot for one stage height.
+// Written once when regular PoC starts or a CPoC event is created. Later MsgUpdateParams
+// must not overwrite it.
+message PocStageRecipe {
+  option (gogoproto.equal) = true;
+  int64 stage_height = 1;
+  PocScheme scheme = 2;
+  bool tracking = 3;  // CPoC dry-run: record commits/votes, skip ConfirmationWeight haircut
+  bool poc_stronger_rng_enabled = 4;
+  repeated PoCModelConfig models = 5;
 }
 
 message PocParams {
@@ -184,14 +218,17 @@ message PocParams {
   PoCModelParams model_params = 5 [deprecated = true]; // V1 model architecture params, deprecated
   string model_id = 6 [deprecated = true];  // Deprecated: use models[*].model_id
   int64 seq_len = 7 [deprecated = true];    // Deprecated: use models[*].seq_len
-  bool poc_v2_enabled = 8;  // false = V1 (on-chain batches), true = V2 (off-chain commits). Default: true
-  bool confirmation_poc_v2_enabled = 9;  // Enables V2 for Confirmation PoC only. Migration mode: poc_v2_enabled=false + confirmation_poc_v2_enabled=true
+  bool poc_v2_enabled = 8 [deprecated = true];  // Deprecated: protocol v1 vs v2 gate. Do not reuse for scheme. false = V1 batches, true = V2 commits.
+  bool confirmation_poc_v2_enabled = 9 [deprecated = true];  // Deprecated: do not reuse for scheme. Was V2-for-CPoC-only during v1→v2.
   PoCStatTestParams stat_test = 10 [deprecated = true];  // Deprecated: use models[*].stat_test
   uint32 validation_slots = 11;  // Number of slots sampled per participant (0 = disabled)
   bool poc_normalization_enabled = 12;  // Enables time-based weight normalization for PoC
   bool poc_stronger_rng_enabled = 13;  // Switches input generation to concatenated murmur3 with full 256-bit SHA256 seed (prevents 32-bit seed-collision attacks)
   repeated PoCModelConfig models = 14;
   uint32 validation_vote_threshold_bps = 15;  // Strict vote threshold in basis points, 0 = default 5000; valid range [5000, 10000] so at most one side can pass
+  PocScheme poc_scheme = 16;  // Regular (epoch) PoC leaf recipe. Default PREFILL.
+  PocScheme confirmation_poc_scheme = 17;  // CPoC canary slot; ignored when confirmation_scheme_events = 0
+  uint32 confirmation_scheme_events = 18;  // K: CPoC EventSequence < K uses slot 17. 0 = CPoC follows poc_scheme
 }
 
 message Decimal {

@@ -157,6 +157,38 @@ func TestConfirmationScalesInSnapshot(t *testing.T) {
 	require.Equal(t, []*types.ConfirmationWeightScale{scales[0], scales[2]}, got)
 }
 
+func TestBuildConfirmationWeightScales_UsesFrozenSchemeBlock(t *testing.T) {
+	prefill := types.DecimalFromFloat(1)
+	decode := types.DecimalFromFloat(4)
+	participants := []*types.ActiveParticipant{{
+		VotingPowers: []*types.ModelVotingPower{{ModelId: "m", VotingPower: 1}},
+	}}
+	live := &types.PocParams{
+		PocScheme: types.PocScheme_POC_SCHEME_DECODE,
+		Models: []*types.PoCModelConfig{{
+			ModelId:           "m",
+			WeightScaleFactor: prefill,
+			Schemes: []*types.PocSchemeParams{
+				{Scheme: types.PocScheme_POC_SCHEME_PREFILL, SeqLen: 128, WeightScaleFactor: prefill},
+				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256, WeightScaleFactor: decode},
+			},
+		}},
+	}
+	recipe := &types.PocStageRecipe{
+		Scheme: types.PocScheme_POC_SCHEME_DECODE,
+		Models: []*types.PoCModelConfig{{
+			ModelId:           "m",
+			WeightScaleFactor: prefill,
+			Schemes: []*types.PocSchemeParams{
+				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256, WeightScaleFactor: decode},
+			},
+		}},
+	}
+	scales := buildConfirmationWeightScales([]string{"m"}, participants, live, recipe)
+	require.Len(t, scales, 1)
+	require.True(t, scales[0].WeightScaleFactor.ToDecimal().Equal(decode.ToDecimal()))
+}
+
 func requireRatioEqual(t *testing.T, got *types.Decimal, numerator, denominator int64) {
 	t.Helper()
 	require.NotNil(t, got)

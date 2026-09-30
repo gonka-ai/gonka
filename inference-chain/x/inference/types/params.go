@@ -615,6 +615,30 @@ func validateParamDecimalExponents(p Params) error {
 			{fmt.Sprintf("poc_params.models[%d].stat_test.p_mismatch", i), model.GetStatTest().GetPMismatch()},
 			{fmt.Sprintf("poc_params.models[%d].stat_test.p_value_threshold", i), model.GetStatTest().GetPValueThreshold()},
 		}
+		for j, block := range model.GetSchemes() {
+			if block == nil {
+				continue
+			}
+			prefix := fmt.Sprintf("poc_params.models[%d].schemes[%d]", i, j)
+			modelFields = append(modelFields,
+				struct {
+					name  string
+					value *Decimal
+				}{prefix + ".weight_scale_factor", block.GetWeightScaleFactor()},
+				struct {
+					name  string
+					value *Decimal
+				}{prefix + ".stat_test.dist_threshold", block.GetStatTest().GetDistThreshold()},
+				struct {
+					name  string
+					value *Decimal
+				}{prefix + ".stat_test.p_mismatch", block.GetStatTest().GetPMismatch()},
+				struct {
+					name  string
+					value *Decimal
+				}{prefix + ".stat_test.p_value_threshold", block.GetStatTest().GetPValueThreshold()},
+			)
+		}
 		for _, field := range modelFields {
 			if err := check(field.name, field.value); err != nil {
 				return err
@@ -864,6 +888,10 @@ func (p *PocParams) Validate() error {
 		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 10000) {
 		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 10000]")
 	}
+	requiredSchemes, err := activePocSchemes(p)
+	if err != nil {
+		return err
+	}
 	seen := make(map[string]bool)
 	for _, model := range p.GetModelConfigs() {
 		if model == nil {
@@ -875,9 +903,12 @@ func (p *PocParams) Validate() error {
 			}
 			seen[model.ModelId] = true
 		}
-		if model.SeqLen < 0 {
-			return fmt.Errorf("poc_params.models.seq_len cannot be negative")
+		if err := model.validateSchemeBlocks(requiredSchemes); err != nil {
+			return err
 		}
+	}
+	if _, needDecode := requiredSchemes[PocScheme_POC_SCHEME_DECODE]; needDecode && len(p.GetModelConfigs()) == 0 {
+		return fmt.Errorf("DECODE requires at least one model with a DECODE scheme block")
 	}
 	return nil
 }
@@ -1485,6 +1516,12 @@ func (p *PocParams) GetWeightScaleFactorDec() sdkmath.LegacyDec {
 func (p *PoCModelConfig) GetWeightScaleFactorDec() sdkmath.LegacyDec {
 	if p == nil {
 		return sdkmath.LegacyOneDec()
+	}
+	if len(p.Schemes) == 1 && p.Schemes[0] != nil {
+		return p.Schemes[0].WeightScaleFactor.LegacyDecOrOne()
+	}
+	if block, ok := p.SchemeParams(PocScheme_POC_SCHEME_PREFILL); ok && block != nil && len(p.Schemes) > 0 {
+		return block.WeightScaleFactor.LegacyDecOrOne()
 	}
 	return p.WeightScaleFactor.LegacyDecOrOne()
 }
