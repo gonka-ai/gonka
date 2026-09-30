@@ -166,6 +166,47 @@ func TestPreviewLocalBestEffort_DoesNotCommit(t *testing.T) {
 	require.Equal(t, uint64(1), sm.LatestNonce())
 }
 
+func TestPreviewLocalBestEffort_CopiesStateOnce(t *testing.T) {
+	// Test flow:
+	// 1. Fill a state machine with 200 pending inferences.
+	// 2. Count the allocations of one state snapshot and of one state root.
+	// 3. Count the allocations of previewing the next nonce.
+	// 4. The preview must cost less than two snapshots plus the root.
+	const inferenceCount = 200
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 1_000_000_000)
+
+	startTxs := func(inferenceID uint64) []*types.DevshardTx {
+		return []*types.DevshardTx{txStart(&types.MsgStartInference{
+			InferenceId: inferenceID,
+			PromptHash:  []byte("prompt"),
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   testutil.TestMaxTokens,
+			StartedAt:   1000,
+		})}
+	}
+	for nonce := uint64(1); nonce <= inferenceCount; nonce++ {
+		_, _, err := sm.ApplyLocalBestEffort(nonce, startTxs(nonce))
+		require.NoError(t, err)
+	}
+	require.Len(t, sm.SnapshotState().Inferences, inferenceCount)
+
+	snapshotAllocs := testing.AllocsPerRun(10, func() { sm.snapshotMutable() })
+	rootAllocs := testing.AllocsPerRun(10, func() {
+		_, err := sm.computeStateRootLocked()
+		require.NoError(t, err)
+	})
+	nextTxs := startTxs(inferenceCount + 1)
+	previewAllocs := testing.AllocsPerRun(10, func() {
+		_, err := sm.PreviewLocalBestEffort(inferenceCount+1, nextTxs)
+		require.NoError(t, err)
+	})
+
+	require.Less(t, previewAllocs, 2*snapshotAllocs+rootAllocs,
+		"snapshot=%v root=%v preview=%v", snapshotAllocs, rootAllocs, previewAllocs)
+}
+
 func TestApplyDiff_StartInference(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)

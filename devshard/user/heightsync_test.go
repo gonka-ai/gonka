@@ -1150,3 +1150,61 @@ func TestHeartbeat_LogResidentStampsNeedDistinctExecutors(t *testing.T) {
 	session.observeTurnLocked(types.Diff{Nonce: 3, Txs: []*types.DevshardTx{stampedConfirmTx(2, 100)}})
 	require.Equal(t, 1, session.heartbeat.Turnovers())
 }
+
+func setupHeartbeatSessionWithProbedHost(t *testing.T, now *time.Time, hostIdx int) (*Session, *spanProbeClient) {
+	t.Helper()
+	var height uint64 = 100
+	session := setupBlindHeartbeatSession(t, &height, WithHeartbeatClock(func() time.Time { return *now }))
+	t.Cleanup(func() { _ = session.Close() })
+	inner, ok := session.Clients()[hostIdx].(*InProcessClient)
+	require.True(t, ok)
+	probe := &spanProbeClient{inner: inner, calls: &atomic.Int32{}, fail: errors.New("injected host failure")}
+	session.Clients()[hostIdx] = probe
+	return session, probe
+}
+
+func TestHeartbeat_RepeatedSendFailureBacksOffTheHost(t *testing.T) {
+	// Test flow:
+	// 1. Build a session on a fixed clock whose host 1 refuses every send.
+	// 2. Send to host 1 twice: both attempts reach the host.
+	// 3. Send a third time at the same instant: the host is skipped.
+	// 4. Advance the clock by one heartbeat interval: the host is tried again.
+	now := time.Unix(1_700_000_000, 0)
+	session, probe := setupHeartbeatSessionWithProbedHost(t, &now, 1)
+	item := composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 1}
+
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.Equal(t, int32(2), probe.calls.Load())
+
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.Equal(t, int32(2), probe.calls.Load(), "a host that failed twice in a row must be skipped")
+
+	now = now.Add(session.heartbeat.Config().Interval)
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.Equal(t, int32(3), probe.calls.Load(), "the host must be retried once the back-off elapsed")
+}
+
+func TestHeartbeat_AnsweringHostClearsTheBackoff(t *testing.T) {
+	// Test flow:
+	// 1. Build a session on a fixed clock whose host 1 refuses every send.
+	// 2. Fail two sends so the host is backed off, then advance the clock past it.
+	// 3. Let the host answer one send.
+	// 4. Fail again and send once more at the same instant: the host is still tried.
+	now := time.Unix(1_700_000_000, 0)
+	session, probe := setupHeartbeatSessionWithProbedHost(t, &now, 1)
+	item := composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 1}
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	now = now.Add(session.heartbeat.Config().Interval)
+
+	hostFailure := probe.fail
+	probe.fail = nil
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.Equal(t, int32(3), probe.calls.Load())
+
+	probe.fail = hostFailure
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.Equal(t, int32(5), probe.calls.Load(), "one failure after an answer must not skip the host")
+}
