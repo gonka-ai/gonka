@@ -47,10 +47,10 @@ const (
 	// distinct InferenceUrl hosts do not expire on the same tick.
 	DefaultRPCH2MissTTLJitter = 0.10
 
-	// DefaultRPCH2ProbeTimeout bounds the h2 Attach probe inside
-	// DefaultAttachTimeout. A blackhole cannot consume the whole handshake.
-	// A miss returns; it does not spend the remainder on InferenceUrl.
-	DefaultRPCH2ProbeTimeout = time.Second
+	// DefaultRPCH2ProbeTimeout bounds dial and TLS for an h2 origin.
+	// The Attach RPC uses DefaultAttachTimeout. A blackhole cannot hold
+	// the handshake. A context deadline on Attach is not an h2 miss.
+	DefaultRPCH2ProbeTimeout = 3 * time.Second
 
 	// DefaultRPCH2IdleConnTimeout matches HTTP/1.1 IdleConnTimeout so a
 	// quiet mux does not last until process exit. versiond's child reverse
@@ -381,19 +381,12 @@ func noteRPCH2Miss(host, h2URL string, err error) {
 	logging.Debug("peer rpc h2 origin missed; failing closed", kv...)
 }
 
-// isRPCH2Miss is a failed h2 origin (closed, not h2c, timeout, refuse,
-// preface). Connect status from a working HTTP/2 server — including
-// Unavailable / Unknown after an RPC — must not pin HTTP/1.1.
-// DeadlineExceeded / Canceled are probe misses only (1s blackhole). A
-// live TTL refresh uses isRPCH2TransportMiss so a slow Attach does not
-// drop Watch or rememberRPCH2Miss.
+// isRPCH2Miss is a failed h2 origin (closed, not h2c, refuse, preface,
+// dial or TLS that hit the probe timeout). Connect status from a working
+// HTTP/2 server — including Unavailable / Unknown after an RPC — is not
+// a miss. A context deadline on the Attach call is not a miss either:
+// that RPC has the full DefaultAttachTimeout.
 func isRPCH2Miss(err error) bool {
-	if err == nil || errors.Is(err, errAttachTTL) {
-		return false
-	}
-	if isContextDone(err) {
-		return true
-	}
 	return isRPCH2TransportMiss(err)
 }
 

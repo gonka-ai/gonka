@@ -234,6 +234,29 @@ func TestStripRPCPrefix(t *testing.T) {
 	require.Equal(t, proc, got)
 }
 
+func TestRPCMount_RejectsEncodedProcedure(t *testing.T) {
+	var hits int
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusNoContent)
+	})
+	e := echo.New()
+	mountPeerRPC(e.Group("/devshard/v5"), inner)
+
+	req := httptest.NewRequest(http.MethodPost, "/devshard/v5/sessions/1/rpc/devshard.transport.v1.PeerAuthService/%41ttach", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "encoded rpc path")
+	require.Zero(t, hits)
+
+	req = httptest.NewRequest(http.MethodPost, "/devshard/v5/sessions/1/rpc/devshard.transport.v1.PeerAuthService/Attach", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.Equal(t, 1, hits)
+}
+
 func TestRPCMount_RewritesProcedurePathAndEscrow(t *testing.T) {
 	var gotPath, gotEscrow string
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

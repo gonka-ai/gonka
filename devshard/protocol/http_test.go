@@ -72,6 +72,7 @@ const httpTestRoutePrefix = "/devshard/v2"
 
 func httpTestClient(baseURL string, escrowID string, signer signing.Signer) *transport.HTTPClient {
 	cfg := transport.DefaultClientConfig()
+	cfg.AllowRetiredHTTPSession = true
 	cfg.RoutePrefix = httpTestRoutePrefix
 	return transport.NewHTTPClient(baseURL, escrowID, signer, cfg)
 }
@@ -684,6 +685,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 	t.Cleanup(slowExecutor.Close)
 
 	slowCfg := transport.DefaultClientConfig()
+	slowCfg.AllowRetiredHTTPSession = true
 	slowCfg.RoutePrefix = httpTestRoutePrefix
 	slowCfg.VerifyTimeout = 100 * time.Millisecond
 	slowClient := transport.NewHTTPClient(slowExecutor.URL, "escrow-1", env.userSigner, slowCfg)

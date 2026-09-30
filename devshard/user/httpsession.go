@@ -60,6 +60,7 @@ func hostClientConfig(
 		clientConfig.Admission = cfg.RequestAdmission
 	}
 	if cfg.ExtraClientConfig != nil {
+		clientConfig.AllowRetiredHTTPSession = cfg.ExtraClientConfig.AllowRetiredHTTPSession
 		if cfg.ExtraClientConfig.HeightSync != nil {
 			clientConfig.HeightSync = cfg.ExtraClientConfig.HeightSync
 			clientConfig.HeightSyncPeerTips = sharedPeerTips
@@ -222,7 +223,11 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 	endpoints := transport.RPCEndpointsFromEnv()
 	if cfg.ExtraClientConfig != nil && !cfg.ExtraClientConfig.RPCEndpoints.Empty() {
-		endpoints = cfg.ExtraClientConfig.RPCEndpoints
+		if cfg.ExtraClientConfig.AllowRetiredHTTPSession {
+			endpoints = cfg.ExtraClientConfig.RPCEndpoints
+		} else {
+			endpoints = transport.ResolveRPCEndpoints(cfg.ExtraClientConfig.RPCEndpoints)
+		}
 	}
 	for i, slot := range group {
 		participantKeys[i] = slot.ValidatorAddress

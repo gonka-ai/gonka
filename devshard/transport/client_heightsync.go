@@ -154,6 +154,9 @@ func (c *HTTPClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 	if c == nil {
 		return false, nil
 	}
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return false, err
+	}
 	if c.heightSyncPeerTips == nil {
 		logging.Warn("heightsync: seed skipped, peer-tip cache not wired",
 			heightsync.LogFieldSubsystem, "heightsync",
@@ -411,6 +414,9 @@ func (c *HTTPClient) wrapInferenceRequest(ctx context.Context, req host.HostRequ
 
 // HeightSyncRepair POSTs a signed repair probe (group-member HTTP auth).
 func (c *HTTPClient) HeightSyncRepair(ctx context.Context, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
 	path := fmt.Sprintf("/sessions/%s/heightsync/repair", c.escrowID)
 	timeout := c.config.QueryTimeout
 	if timeout <= 0 || timeout > DefaultRepairTimeout {

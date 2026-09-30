@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -309,7 +310,7 @@ func TestRPCH2DialTLSServerNameUsesInferenceHost(t *testing.T) {
 		}
 	}()
 
-	tr := newRPCH2Transport(nil, false, want, 0, 0)
+	tr := newRPCH2Transport(nil, false, want, 0, 0, 0)
 	tr.TLSClientConfig.RootCAs = pool
 	// x/net would pass the H2URL dial host here (127.0.0.1 / proxy).
 	cfg := &tls.Config{
@@ -367,7 +368,7 @@ func dialRPCH2TLS(t *testing.T, serverProtos, clientProtos []string) error {
 		}
 	}()
 
-	tr := newRPCH2Transport(nil, false, name, 0, 0)
+	tr := newRPCH2Transport(nil, false, name, 0, 0, 0)
 	tr.TLSClientConfig.RootCAs = pool
 	cfg := &tls.Config{
 		ServerName: name,
@@ -381,6 +382,58 @@ func dialRPCH2TLS(t *testing.T, serverProtos, clientProtos []string) error {
 		t.Cleanup(func() { _ = conn.Close() })
 	}
 	return err
+}
+
+func TestRPCH2ProbeBoundsDialAndTLS(t *testing.T) {
+	const probe = 200 * time.Millisecond
+
+	parent, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	blocked := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	tr := newRPCH2Transport(blocked, true, "", 0, 0, probe)
+	start := time.Now()
+	_, err := tr.DialTLSContext(parent, "tcp", "192.0.2.1:443", nil)
+	elapsed := time.Since(start)
+	require.Error(t, err)
+	require.False(t, errors.Is(err, context.DeadlineExceeded))
+	require.True(t, isRPCH2Miss(err), "a dial that hits the probe timeout is a transport miss")
+	require.NoError(t, parent.Err())
+	require.Less(t, elapsed, time.Second, "dial must stop at the probe timeout, not DefaultAttachTimeout")
+
+	tlsLn, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	held := make(chan struct{})
+	t.Cleanup(func() {
+		close(held)
+		_ = tlsLn.Close()
+	})
+	go func() {
+		for {
+			c, accErr := tlsLn.Accept()
+			if accErr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				select {
+				case <-held:
+				case <-time.After(time.Minute):
+				}
+			}(c)
+		}
+	}()
+	tlsTr := newRPCH2Transport(nil, false, "probe.example", 0, 0, probe)
+	start = time.Now()
+	_, err = tlsTr.DialTLSContext(parent, "tcp", tlsLn.Addr().String(), &tls.Config{InsecureSkipVerify: true})
+	elapsed = time.Since(start)
+	require.Error(t, err)
+	require.False(t, errors.Is(err, context.DeadlineExceeded))
+	require.True(t, isRPCH2Miss(err), "a TLS handshake that hits the probe timeout is a transport miss")
+	require.NoError(t, parent.Err())
+	require.Less(t, elapsed, time.Second, "TLS must stop at the probe timeout, not DefaultAttachTimeout")
 }
 
 func testHostnameCert(t *testing.T, dnsName string) (tls.Certificate, *x509.Certificate) {

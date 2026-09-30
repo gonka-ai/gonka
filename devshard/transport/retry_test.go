@@ -208,12 +208,13 @@ func TestHTTPClient_InferenceObservesRouterUndeclaredHeader(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewHTTPClient(server.URL, "escrow-1", signer, ClientConfig{
-		InferenceTimeout: DefaultClientConfig().InferenceTimeout,
-		GossipTimeout:    DefaultClientConfig().GossipTimeout,
-		VerifyTimeout:    DefaultClientConfig().VerifyTimeout,
-		QueryTimeout:     DefaultClientConfig().QueryTimeout,
-		ParticipantKey:   "shared-host",
-		Admission:        admission,
+		AllowRetiredHTTPSession: true,
+		InferenceTimeout:        DefaultClientConfig().InferenceTimeout,
+		GossipTimeout:           DefaultClientConfig().GossipTimeout,
+		VerifyTimeout:           DefaultClientConfig().VerifyTimeout,
+		QueryTimeout:            DefaultClientConfig().QueryTimeout,
+		ParticipantKey:          "shared-host",
+		Admission:               admission,
 	})
 
 	_, err := client.Send(context.Background(), host.HostRequest{
@@ -282,12 +283,13 @@ func TestHTTPClient_Inference503IsNotRetried(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewHTTPClient(server.URL, "escrow-1", signer, ClientConfig{
-		InferenceTimeout: DefaultClientConfig().InferenceTimeout,
-		GossipTimeout:    DefaultClientConfig().GossipTimeout,
-		VerifyTimeout:    DefaultClientConfig().VerifyTimeout,
-		QueryTimeout:     DefaultClientConfig().QueryTimeout,
-		ParticipantKey:   "shared-host",
-		Admission:        admission,
+		AllowRetiredHTTPSession: true,
+		InferenceTimeout:        DefaultClientConfig().InferenceTimeout,
+		GossipTimeout:           DefaultClientConfig().GossipTimeout,
+		VerifyTimeout:           DefaultClientConfig().VerifyTimeout,
+		QueryTimeout:            DefaultClientConfig().QueryTimeout,
+		ParticipantKey:          "shared-host",
+		Admission:               admission,
 	})
 
 	_, err := client.Send(context.Background(), host.HostRequest{

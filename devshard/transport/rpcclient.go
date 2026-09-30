@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -258,9 +259,27 @@ func (c *RPCClient) withPeerBudget(ctx context.Context, procedure string, fn fun
 }
 
 func (c *RPCClient) rpcAttempt(ctx context.Context, procedure string, fn func() error) error {
-	return rpcRetry(ctx, func() error {
+	// Same admission as HTTP doPostRaw: one check for the logical call, then
+	// the limiter sees only the final result. A local rejection is not a
+	// host fault.
+	path := ""
+	if c != nil && c.HTTPClient != nil {
+		path = connectAdmissionPath(c.escrowID, procedure)
+		if err := c.allowRequest(path); err != nil {
+			return err
+		}
+	}
+	err := rpcRetry(ctx, func() error {
 		return c.withPeerBudget(ctx, procedure, fn)
 	})
+	if c != nil && c.HTTPClient != nil {
+		if err != nil {
+			c.observeConnect(path, err)
+		} else {
+			c.observeResult(path, http.StatusOK)
+		}
+	}
+	return err
 }
 
 const maxUnauthenticatedRPCRetries = 1
@@ -508,6 +527,12 @@ func (c *RPCClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.heightSeedTimeout())
 	defer cancel()
+	// HTTP seed admits once and does not retry. Status results stay off the
+	// limiter (height-sync path); a dial failure is still a transport fault.
+	path := connectAdmissionPath(c.escrowID, rpcpbconnect.SessionServiceSeedHeightSyncProcedure)
+	if err := c.allowRequest(path); err != nil {
+		return false, err
+	}
 	err = c.withPeerBudget(ctx, rpcpbconnect.SessionServiceSeedHeightSyncProcedure, func() error {
 		env, err := c.signEnvelope(nil)
 		if err != nil {
@@ -533,6 +558,11 @@ func (c *RPCClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 		)
 		return nil
 	})
+	if err != nil {
+		c.observeConnect(path, err)
+	} else {
+		c.observeResult(path, http.StatusOK)
+	}
 	return ok, err
 }
 

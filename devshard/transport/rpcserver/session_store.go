@@ -35,15 +35,25 @@ const (
 	sharedBarrierWait  = time.Second
 	sharedBarrierPoll  = 20 * time.Millisecond
 	sharedPoll         = 5 * time.Second
+	// sharedApplyLookback re-reads a row that commits after a higher seq was
+	// already applied. It has to outlast sharedPoll so a missed NOTIFY still
+	// lands on the next catch-up.
+	sharedApplyLookback = 15 * time.Second
+	// sharedSeqHoleGrace is how long a missing seq holds the published
+	// watermark. A transaction open longer than this is still applied when
+	// it commits, but the barrier may already have moved on.
+	sharedSeqHoleGrace = 2 * time.Second
 )
 
-// sinceSessionsSQL is the catch-up read. seq > $3 fills a gap left by a
-// missed NOTIFY or a deleted tombstone; callers then advance applied_seq
-// to the highest seq in the result.
+// sinceSessionsSQL is the catch-up read. seq > $3 is the highest seq already
+// seen. updated_at > $4 is the lookback: nextval runs before commit, so a
+// lower seq can become visible after a higher one. Applying a row twice is
+// safe; a lower seq than the one already stored for that token is ignored.
 const sinceSessionsSQL = `
 SELECT token_hash, peer, attached_unix, expires_at, grace_until, state, seq, updated_at
 FROM devshard_peer_rpc_sessions
-WHERE host_address = $1 AND version = $2 AND seq > $3
+WHERE host_address = $1 AND version = $2
+  AND (seq > $3 OR updated_at > $4)
 ORDER BY seq`
 
 // sessionRow is one replicated peer-session record. AdmitUntil is when this

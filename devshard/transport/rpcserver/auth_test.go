@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1345,9 +1346,9 @@ func TestPeerAuth_AttachFloorBeforeVerify(t *testing.T) {
 	require.Equal(t, calls, spy.n.Load(), "floor must fire before ECDSA")
 	requireRetryAfter(t, err)
 
-	clock.Advance(time.Minute + time.Second)
+	clock.Advance(time.Second)
 	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("rate-attach-nonce-dddddddddd"))
-	require.NoError(t, err)
+	require.NoError(t, err, "the bucket refills within a second")
 }
 
 func TestPeerAuth_FailedKnownPeerAttachConsumesFloor(t *testing.T) {
@@ -1377,17 +1378,111 @@ func TestPeerAuth_KnownPeerReattachDoesNotConsumeFloor(t *testing.T) {
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
 	auth := newTestAuth(PeerAuthConfig{AttachFloorPerMin: 2, Now: clock.Now})
 	a := testutil.MustGenerateKey(t)
-	for i := 0; i < 5; i++ {
-		_, err := attachDirectAt(t, auth, a, []byte(fmt.Sprintf("known-reattach-%08dxxxx", i)), clock.Now().Unix()+int64(i))
+	first, err := attachDirectAt(t, auth, a, []byte("known-reattach-00000000xxxx"), clock.Now().Unix())
+	require.NoError(t, err)
+	token := first.SessionToken
+	for i := 1; i < 5; i++ {
+		req, err := signedAttach(a, []byte(fmt.Sprintf("known-reattach-%08dxxxx", i)), clock.Now().Unix()+int64(i))
 		require.NoError(t, err)
+		creq := connect.NewRequest(req)
+		SetSessionHeader(creq.Header(), token)
+		resp, err := auth.Attach(WithEscrowID(context.Background(), testEscrowID), creq)
+		require.NoError(t, err)
+		token = resp.Msg.SessionToken
 	}
-	_, err := attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("rate-new-peer-nonce-bbbbbb"))
+	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("rate-new-peer-nonce-bbbbbb"))
 	require.NoError(t, err, "known-peer renewals must not occupy extra floor slots")
 
 	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("rate-new-peer-nonce-cccccc"))
 	require.Error(t, err)
 	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
 	requireRetryAfter(t, err)
+}
+
+func TestPeerAuth_LiveTokenSkipsEmptyBucket(t *testing.T) {
+	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
+	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
+	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{AttachFloorPerMin: 1, Now: clock.Now})
+	signer := testutil.MustGenerateKey(t)
+	first, err := attachDirect(t, auth, signer, []byte("live-token-skip-nonce-aaaa"))
+	require.NoError(t, err)
+	calls := spy.n.Load()
+
+	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("live-token-skip-nonce-bbbb"))
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Equal(t, calls, spy.n.Load())
+
+	req, err := signedAttach(signer, []byte("live-token-skip-nonce-cccc"), clock.Now().Unix()+1)
+	require.NoError(t, err)
+	creq := connect.NewRequest(req)
+	SetSessionHeader(creq.Header(), first.SessionToken)
+	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), creq)
+	require.NoError(t, err)
+	require.Equal(t, calls+1, spy.n.Load(), "a live token still verifies, and does not spend the empty bucket")
+}
+
+func TestPeerAuth_LiveTokenWrongPeerChargesBucket(t *testing.T) {
+	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
+	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
+	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{AttachFloorPerMin: 2, Now: clock.Now})
+	owner := testutil.MustGenerateKey(t)
+	first, err := attachDirect(t, auth, owner, []byte("live-token-wrong-nonce-aa"))
+	require.NoError(t, err)
+
+	other := testutil.MustGenerateKey(t)
+	req, err := signedAttach(other, []byte("live-token-wrong-nonce-bb"), clock.Now().Unix()+1)
+	require.NoError(t, err)
+	creq := connect.NewRequest(req)
+	SetSessionHeader(creq.Header(), first.SessionToken)
+	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), creq)
+	require.NoError(t, err, "a valid signature for a different peer is admitted once it pays the bucket")
+	calls := spy.n.Load()
+	require.Greater(t, calls, int32(1))
+
+	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("live-token-wrong-nonce-cc"))
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Equal(t, calls, spy.n.Load(), "the charged mismatch must leave the bucket empty before ECDSA")
+}
+
+func TestPeerAuth_LiveTokenWrongPeerRejectedWhenBucketEmpty(t *testing.T) {
+	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
+	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
+	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{AttachFloorPerMin: 1, Now: clock.Now})
+	owner := testutil.MustGenerateKey(t)
+	first, err := attachDirect(t, auth, owner, []byte("live-token-empty-nonce-aa"))
+	require.NoError(t, err)
+	calls := spy.n.Load()
+
+	other := testutil.MustGenerateKey(t)
+	req, err := signedAttach(other, []byte("live-token-empty-nonce-bb"), clock.Now().Unix()+1)
+	require.NoError(t, err)
+	creq := connect.NewRequest(req)
+	SetSessionHeader(creq.Header(), first.SessionToken)
+	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), creq)
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Equal(t, calls+1, spy.n.Load(), "the signature is checked, then the empty bucket refuses the other peer")
+}
+
+func TestPeerAuth_LiveTokenBadSignatureChargesBucket(t *testing.T) {
+	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
+	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
+	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{AttachFloorPerMin: 2, Now: clock.Now})
+	owner := testutil.MustGenerateKey(t)
+	first, err := attachDirect(t, auth, owner, []byte("live-token-badsig-nonce-aa"))
+	require.NoError(t, err)
+
+	req, err := signedAttach(owner, []byte("live-token-badsig-nonce-bb"), clock.Now().Unix()+1)
+	require.NoError(t, err)
+	req.Signature[0] ^= 0xff
+	creq := connect.NewRequest(req)
+	SetSessionHeader(creq.Header(), first.SessionToken)
+	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), creq)
+	require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err))
+
+	calls := spy.n.Load()
+	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("live-token-badsig-nonce-cc"))
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Equal(t, calls, spy.n.Load(), "a failed signature on a live token keeps the charge")
 }
 
 func TestPeerAuth_SweeperDropsExpired(t *testing.T) {
@@ -1416,7 +1511,7 @@ func TestPeerAuth_SweepOnceClearsMoreThanOneBatch(t *testing.T) {
 	const n = sweepBatchSize + 2
 	auth := newTestAuth(PeerAuthConfig{
 		SessionTTL:        30 * time.Second,
-		AttachFloorPerMin: n + 1,
+		AttachFloorPerMin: math.MaxInt,
 		MaxSessions:       n,
 		Now:               clock.Now,
 	})

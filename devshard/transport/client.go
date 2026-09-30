@@ -126,11 +126,14 @@ type ClientConfig struct {
 	// before the request is marshaled. Tests / debug only.
 	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
 
-	// RPCEndpoints names to send over Connect. Attach starts only if the
-	// set intersects a wired method (chat and the Phase 3 unaries).
-	// Empty or a typo keeps HTTP. DEVSHARD_RPC_ENDPOINTS is read when this
-	// is nil at SelectTransport time — set it on ExtraClientConfig to override.
+	// RPCEndpoints names to send over Connect. A partial list or "off" is
+	// ignored by ResolveRPCEndpoints: every retired session method uses
+	// Connect. Empty means "not set".
 	RPCEndpoints EndpointSet
+	// AllowRetiredHTTPSession lets HTTPClient post the retired Echo session
+	// routes. Test servers that still mount those handlers set it. Production
+	// leaves it false, and the methods return ErrHTTPSessionRetired.
+	AllowRetiredHTTPSession bool
 	// RPCMaxConnsPerPeer is MaxConnsPerHost on the PeerConn pool. Zero uses
 	// DEVSHARD_RPC_MAX_CONNS_PER_PEER or DefaultRPCMaxConnsPerPeer.
 	RPCMaxConnsPerPeer int
@@ -227,9 +230,16 @@ func (e *UpstreamStatusError) Error() string {
 	return fmt.Sprintf("http %s: status %d: %s", e.Path, e.StatusCode, e.Body)
 }
 
-// IsUpstreamEscrowNotFound returns true if err is an UpstreamStatusError
-// whose body indicates the host could not find the escrow on chain.
+// IsUpstreamEscrowNotFound reports a host that could not find the escrow on
+// chain. HTTP sends 500 with that phrase. Connect sends FailedPrecondition
+// and X-Devshard-Error: escrow_not_found.
 func IsUpstreamEscrowNotFound(err error) bool {
+	if status, code, message, ok := ConnectApplicationStatus(err); ok {
+		if strings.EqualFold(strings.TrimSpace(code), DevshardErrorEscrowNotFound) {
+			return true
+		}
+		return status == http.StatusInternalServerError && strings.Contains(message, "escrow not found")
+	}
 	var ue *UpstreamStatusError
 	if !errors.As(err, &ue) {
 		return false
@@ -238,9 +248,13 @@ func IsUpstreamEscrowNotFound(err error) bool {
 		strings.Contains(ue.Body, "escrow not found")
 }
 
-// IsSessionNotFound returns true if err is an UpstreamStatusError from a host that does not hold the
-// escrow at all, as opposed to holding it and disagreeing about a nonce.
+// IsSessionNotFound reports a host that does not hold the escrow at all, as
+// opposed to holding it and disagreeing about a nonce. HTTP and Connect both
+// use 404 and the phrase "session not found".
 func IsSessionNotFound(err error) bool {
+	if status, _, message, ok := ConnectApplicationStatus(err); ok {
+		return status == http.StatusNotFound && strings.Contains(message, "session not found")
+	}
 	var ue *UpstreamStatusError
 	if !errors.As(err, &ue) {
 		return false
@@ -263,9 +277,16 @@ func IsTransientWriteError(err error) bool {
 		errors.Is(err, syscall.ECONNREFUSED)
 }
 
-// IsUpstreamEscrowSettled returns true if err is an UpstreamStatusError whose
-// body indicates the host refused to serve an escrow already settled on chain.
+// IsUpstreamEscrowSettled reports a host that refused an escrow already
+// settled on chain. The header is escrow_settled. HTTP also uses 409 and
+// the phrase "escrow already settled".
 func IsUpstreamEscrowSettled(err error) bool {
+	if status, code, message, ok := ConnectApplicationStatus(err); ok {
+		if strings.EqualFold(strings.TrimSpace(code), DevshardErrorEscrowSettled) {
+			return true
+		}
+		return status == http.StatusConflict && strings.Contains(message, "escrow already settled")
+	}
 	var ue *UpstreamStatusError
 	if !errors.As(err, &ue) {
 		return false
@@ -521,7 +542,17 @@ func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration
 }
 
 // Send implements user.HostClient.
+func (c *HTTPClient) errIfRetiredHTTP() error {
+	if c == nil || c.config.AllowRetiredHTTPSession {
+		return nil
+	}
+	return ErrHTTPSessionRetired
+}
+
 func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
 	timeout := c.config.InferenceTimeout
 	if req.Payload == nil {
 		// Finalize/catch-up sends only exchange protocol state, so a dead host
@@ -876,12 +907,18 @@ func sseLineBytesForLog(line string) (int, string) {
 
 // GossipNonce sends a nonce notification to a peer.
 func (c *HTTPClient) GossipNonce(ctx context.Context, nonce uint64, stateHash, stateSig []byte, slotID uint32) error {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return err
+	}
 	return c.post(ctx, "/sessions/"+c.escrowID+"/gossip/nonce", c.config.GossipTimeout,
 		GossipNonceRequest{Nonce: nonce, StateHash: stateHash, StateSig: stateSig, SlotID: slotID}, nil)
 }
 
 // GossipTxs sends transactions to a peer.
 func (c *HTTPClient) GossipTxs(ctx context.Context, txs []*types.DevshardTx) error {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return err
+	}
 	txBytes, err := DevshardTxsToBytes(txs)
 	if err != nil {
 		return fmt.Errorf("encode txs: %w", err)
@@ -892,6 +929,9 @@ func (c *HTTPClient) GossipTxs(ctx context.Context, txs []*types.DevshardTx) err
 
 // SendVerifyTimeout asks a peer to verify a timeout (raw transport).
 func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutRequest) (*VerifyTimeoutResponse, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
 	var resp VerifyTimeoutResponse
 	if err := c.post(ctx, "/sessions/"+c.escrowID+"/verify-timeout", c.config.VerifyTimeout, req, &resp); err != nil {
 		return nil, err
@@ -900,6 +940,9 @@ func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutReq
 }
 
 func (c *HTTPClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMissRequest) (*VerifyErrorMissResponse, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
 	var resp VerifyErrorMissResponse
 	if err := c.post(ctx, "/sessions/"+c.escrowID+"/verify-error-miss", c.config.VerifyTimeout, req, &resp); err != nil {
 		return nil, err
@@ -910,6 +953,9 @@ func (c *HTTPClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMis
 // ChallengeReceipt forwards diffs + payload to the executor and returns the
 // receipt plus a snapshot of the executor mempool (recovery txs).
 func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
 

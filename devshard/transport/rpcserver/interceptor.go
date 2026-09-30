@@ -80,19 +80,13 @@ func isImplementedRPC(implemented map[string]struct{}, path string) bool {
 // Unimplemented procedures (unmounted Gossip/Payload, junk paths) are
 // answered here before the peer budget is charged, so Connect never reads
 // the body. Chat is implemented; it is charged after the stream slot is
-// acquired. Attach is bounded by the process floor (ECDSA) and a 4 KiB
-// body cap, not by origin IP.
+// acquired. Attach's anonymous bucket bounds ECDSA. A body over 4 KiB is
+// refused here and does not take a bucket token.
 func handshakeGate(auth *PeerAuthHandler, next http.Handler, implemented map[string]struct{}) http.Handler {
 	ew := connect.NewErrorWriter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isAttachPath(r.URL.Path) {
 			if r.ContentLength > maxAttachRecvBytes {
-				if _, err := auth.chargeAttach(r.Context()); err != nil {
-					observability.IncPeerRPCAttach(connect.CodeOf(err).String())
-					auth.observeAttach(r.Context(), err)
-					_ = ew.Write(w, r, err)
-					return
-				}
 				observability.IncPeerRPCAttach(connect.CodeResourceExhausted.String())
 				sizeErr := connect.NewError(connect.CodeResourceExhausted, errors.New("attach request too large"))
 				auth.observeAttach(r.Context(), sizeErr)

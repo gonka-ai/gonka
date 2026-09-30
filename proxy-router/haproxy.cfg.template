@@ -20,6 +20,9 @@ global
     # default is 100; one TCP carries every Watch. Matches
     # DefaultH2MaxConcurrentStreams (4096).
     tune.h2.max-concurrent-streams 4096
+    # normalize-uri is experimental on HAProxy 3.2. The peer-RPC frontend
+    # uses it so path zones see the decoded procedure name.
+    expose-experimental-directives
 
 defaults
     log global
@@ -105,6 +108,10 @@ frontend rpc_h2
     bind ${RPC_H2_BIND}
     maxconn 4096
     stick-table type ip size 1m expire 10s store conn_rate(1s),sess_rate(1s)
+    # Same trusted-proxy list as :80/:443. The preamble is accepted before
+    # track-sc0 so conn_rate, the path zones, and X-Real-IP see the client.
+    ${PUBLIC_PROXY_ACL}
+    ${PUBLIC_PROXY_EXPECT}
     tcp-request connection track-sc0 src
     tcp-request connection reject if { sc_conn_rate(0) gt 200 }
     tcp-request session track-sc0 src
@@ -113,7 +120,22 @@ frontend rpc_h2
     http-request del-header X-Real-IP
     http-request set-header X-Real-IP %[src]
 
+    # Match zones on the path the child will route. Unreserved escapes
+    # (%41ttach) decode to Attach; a leftover % under a session RPC path is
+    # never a procedure name.
+    http-request normalize-uri percent-decode-unreserved strict
+    http-request normalize-uri percent-to-uppercase
+    http-request normalize-uri path-strip-dot
+    http-request normalize-uri path-strip-dotdot
+    http-request deny deny_status 400 if { path_reg ^(/devshard)?/[^/]+/sessions/[^/]+/rpc/.*[%] }
+    # Session RPC only, including Watch on /sessions/_/rpc/. A dot-dot
+    # segment is removed above, so /sessions/{id}/rpc/../metrics becomes
+    # /sessions/{id}/metrics and misses this pattern. Obs, healthz, and
+    # versionless diffs stay on :80/:443.
+    http-request deny deny_status 404 unless { path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$ }
+
     acl is_attach path_end /devshard.transport.v1.PeerAuthService/Attach
+    acl is_watch path_end /devshard.transport.v1.PeerAuthService/Watch
     acl is_chat path_end /devshard.transport.v1.SessionService/Chat
     acl is_diffs path_end /devshard.transport.v1.SessionService/GetDiffs
     acl is_mempool path_end /devshard.transport.v1.SessionService/GetMempool
@@ -131,6 +153,9 @@ frontend rpc_h2
     http-request track-sc1 src table st_rpc_attach if is_attach
     http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt 100 }
     http-request deny deny_status 429 if is_attach { sc_http_req_rate(1) gt 100 }
+    http-request track-sc1 src table st_rpc_watch if is_watch
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_watch { sc_http_req_rate(1) gt 100 }
+    http-request deny deny_status 429 if is_watch { sc_http_req_rate(1) gt 100 }
     http-request track-sc1 src table st_rpc_chat if is_chat
     http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_chat { sc_http_req_rate(1) gt 500 }
     http-request deny deny_status 429 if is_chat { sc_http_req_rate(1) gt 500 }
@@ -167,6 +192,9 @@ ${RPC_H2_VERSION_RULES}
     default_backend rpc_h2_upstream
 
 backend st_rpc_attach
+    stick-table type ip size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_watch
     stick-table type ip size 1m expire 10s store http_req_rate(10s)
 
 backend st_rpc_chat

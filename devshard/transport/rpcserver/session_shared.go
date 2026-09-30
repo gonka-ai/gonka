@@ -96,7 +96,7 @@ func (h *PeerAuthHandler) sharedPeerLive(addr string) bool {
 	return false
 }
 
-func (h *PeerAuthHandler) attachShared(ctx context.Context, peer string, token []byte, attached int64, wasLive bool, chargedAt time.Time) (*connect.Response[rpcpb.AttachResponse], error) {
+func (h *PeerAuthHandler) attachShared(ctx context.Context, peer string, token []byte, attached int64) (*connect.Response[rpcpb.AttachResponse], error) {
 	out, err := h.shared.Commit(ctx, attachCommit{
 		Peer:         peer,
 		Hash:         tokenHashBytes(token),
@@ -110,9 +110,6 @@ func (h *PeerAuthHandler) attachShared(ctx context.Context, peer string, token [
 	}
 	h.applySharedBatch(out.Rows, token)
 	h.shared.WaitApplied(ctx, out.Seq)
-	if wasLive {
-		h.refundAttach(chargedAt)
-	}
 	expires := out.Expires
 	if expires.IsZero() {
 		expires = h.now().Add(h.cfg.SessionTTL)

@@ -405,7 +405,8 @@ func TestChannelLimit_ConcurrentStreams(t *testing.T) {
 	second, err := e.authc.Watch(ctx2, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), e.token))
 	require.NoError(t, err)
 	require.False(t, second.Receive())
-	requireResourceExhausted(t, second.Err(), "too many concurrent streams")
+	require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(second.Err()))
+	require.ErrorContains(t, second.Err(), "watch already active")
 	_ = second.Close()
 
 	cancel()
@@ -459,13 +460,22 @@ func TestChannelLimit_ChatStreamCapDoesNotChargeWeight(t *testing.T) {
 		Limits: &transport.ChannelLimitConfig{
 			MaxStreams:     1,
 			MessagesPerMin: 100,
-			MessagesBurst:  10,
+			MessagesBurst:  100,
 		},
-	}, stubLookup{core: stubCore{}})
+	}, stubLookup{core: blockingChatCore{stubCore: stubCore{owner: true}}})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	watch, err := e.authc.Watch(ctx, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), e.token))
+	env, err := transport.SignEnvelope(e.signer, testEscrowID, nil, time.Now().Unix())
+	require.NoError(t, err)
+	holdCtx, holdCancel := context.WithCancel(context.Background())
+	t.Cleanup(holdCancel)
+	hold, err := e.session.Chat(holdCtx, withSession(connect.NewRequest(env), e.token))
+	require.NoError(t, err)
+	require.True(t, hold.Receive(), hold.Err())
+	t.Cleanup(func() { _ = hold.Close() })
+
+	watchCtx, watchCancel := context.WithCancel(context.Background())
+	t.Cleanup(watchCancel)
+	watch, err := e.authc.Watch(watchCtx, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), e.token))
 	require.NoError(t, err)
 	require.True(t, watch.Receive(), watch.Err())
 
@@ -540,8 +550,10 @@ func TestChannelLimit_ChatReservesWatchSlotLimiter(t *testing.T) {
 	require.NoError(t, l.acquireStream(ctx, "p", chat))
 	requireResourceExhausted(t, l.acquireStream(ctx, "p", chat), "too many concurrent streams")
 	require.NoError(t, l.acquireStream(ctx, "p", watch), "Watch still connects at Chat cap max-1")
-	require.Equal(t, 2, l.streams["p"].total)
+	require.Equal(t, 1, l.streams["p"].total, "Watch must not take a stream slot")
 	require.Equal(t, 1, l.streams["p"].chat)
+	require.Equal(t, 1, l.procStreams)
+	require.Equal(t, 1, l.procWatches)
 
 	l.releaseStream("p", watch)
 	require.NoError(t, l.acquireStream(ctx, "p", watch), "Watch reconnect after Chat-full")
@@ -554,7 +566,8 @@ func TestChannelLimit_ChatReservesWatchSlotLimiter(t *testing.T) {
 	require.NoError(t, l2.acquireStream(ctx, "p", watch))
 	require.NoError(t, l2.acquireStream(ctx, "p", chat), "Watch first still leaves a Chat slot")
 	requireResourceExhausted(t, l2.acquireStream(ctx, "p", chat), "too many concurrent streams")
-	require.Equal(t, 2, l2.streams["p"].total)
+	require.Equal(t, 1, l2.streams["p"].total, "Watch must not take a stream slot")
+	require.Equal(t, 1, l2.procWatches)
 }
 
 func TestChannelLimit_ProcessChatCapAcrossPeers(t *testing.T) {
@@ -574,14 +587,15 @@ func TestChannelLimit_ProcessChatCapAcrossPeers(t *testing.T) {
 	requireResourceExhausted(t, l.acquireStream(ctx, "c", chat), "too many concurrent chats")
 	require.NoError(t, l.acquireStream(ctx, "w", watch), "Watch does not spend the Chat ceiling")
 	require.Equal(t, 2, l.procChats)
-	require.Equal(t, 3, l.procStreams)
+	require.Equal(t, 2, l.procStreams, "Watch must not spend the process stream cap")
+	require.Equal(t, 1, l.procWatches)
 
 	l.releaseStream("a", chat)
 	require.NoError(t, l.acquireStream(ctx, "c", chat))
 	require.Equal(t, 2, l.procChats)
 }
 
-func TestChannelLimit_ProcessStreamCapAcrossPeers(t *testing.T) {
+func TestChannelLimit_WatchCapIsSeparateFromStreams(t *testing.T) {
 	l := newChannelLimiter(transport.ChannelLimitConfig{
 		MaxStreams:      256,
 		MaxStreamsTotal: 2,
@@ -589,16 +603,29 @@ func TestChannelLimit_ProcessStreamCapAcrossPeers(t *testing.T) {
 		MessagesPerMin:  6000,
 		MessagesBurst:   600,
 	}, time.Now)
+	l.maxWatches = 2
 	ctx := context.Background()
+	chat := rpcpbconnect.SessionServiceChatProcedure
 	watch := rpcpbconnect.PeerAuthServiceWatchProcedure
 
-	require.NoError(t, l.acquireStream(ctx, "a", watch))
-	require.NoError(t, l.acquireStream(ctx, "b", watch))
-	requireResourceExhausted(t, l.acquireStream(ctx, "c", watch), "too many concurrent streams")
-	l.releaseStream("a", watch)
-	require.NoError(t, l.acquireStream(ctx, "c", watch))
+	require.NoError(t, l.acquireStream(ctx, "a", chat))
+	require.NoError(t, l.acquireStream(ctx, "b", chat))
+	requireResourceExhausted(t, l.acquireStream(ctx, "c", chat), "too many concurrent chats")
+	require.NoError(t, l.acquireStream(ctx, "w1", watch), "a full Chat roster must not refuse Watch")
+	require.NoError(t, l.acquireStream(ctx, "w2", watch))
+	requireResourceExhausted(t, l.acquireStream(ctx, "w3", watch), "too many concurrent watches")
 	require.Equal(t, 2, l.procStreams)
-	require.Equal(t, 0, l.procChats)
+	require.Equal(t, 2, l.procChats)
+	require.Equal(t, 2, l.procWatches)
+	require.Equal(t, defaultMaxSessions, newChannelLimiter(transport.ChannelLimitConfig{}, time.Now).maxWatches)
+
+	l.releaseStream("w1", watch)
+	require.Equal(t, 1, l.procWatches)
+	require.Equal(t, 2, l.procStreams, "releasing Watch must not free a Chat slot")
+	require.NoError(t, l.acquireStream(ctx, "w3", watch))
+
+	auth := newTestAuth(PeerAuthConfig{MaxSessions: 2})
+	require.Equal(t, 2, auth.limiter.maxWatches)
 }
 
 func TestChannelLimit_ProcessStreamCapRecordsStreamsZone(t *testing.T) {
@@ -645,7 +672,8 @@ func TestChannelLimit_MaxConnsCapsStreamAcquire(t *testing.T) {
 	require.NoError(t, l.acquireStream(ctx, "p", chat))
 	requireResourceExhausted(t, l.acquireStream(ctx, "p", chat), "too many concurrent streams")
 	require.NoError(t, l.acquireStream(ctx, "p", watch), "Watch still connects at the pool min")
-	require.Equal(t, 2, l.streams["p"].total)
+	require.Equal(t, 1, l.streams["p"].total, "Watch must not take a stream slot")
+	require.Equal(t, 1, l.procWatches)
 	require.Equal(t, uint32(2), l.advertised().GetMaxStreams())
 }
 
@@ -873,70 +901,36 @@ func TestChannelLimit_OverflowEvictsIdlePartial(t *testing.T) {
 	require.LessOrEqual(t, l.evictVisited, channelLimiterEvictBatch)
 }
 
-func TestAttachRing_DropExpiredFromHead(t *testing.T) {
-	var r attachRing
-	r.ensure(4)
+func TestAttachBucket_RefillsInOneSecond(t *testing.T) {
+	var b attachBucket
 	t0 := time.Unix(1_700_000_000, 0)
-	for i := 0; i < 3; i++ {
-		r.push(t0.Add(time.Duration(i) * time.Second))
-	}
-	require.Equal(t, 3, r.n)
-	r.dropExpired(t0.Add(time.Second))
-	ts, ok := r.oldest()
-	require.True(t, ok)
-	require.Equal(t, t0.Add(2*time.Second), ts)
-	require.Equal(t, 1, r.n)
-	r.removeLastEqual(t0.Add(2 * time.Second))
-	require.Equal(t, 0, r.n)
+	b.refill(t0, 2, 2)
+	require.Equal(t, float64(2), b.tokens)
+	b.tokens = 0
+	b.refill(t0, 2, 2)
+	require.Equal(t, float64(0), b.tokens)
+	b.refill(t0.Add(time.Second), 2, 2)
+	require.Equal(t, float64(2), b.tokens)
 }
 
-func TestAttachRing_GrowsByDoublingNotLimit(t *testing.T) {
-	var r attachRing
-	r.ensure(transport.DefaultRPCAttachFloorPerMin)
-	require.Equal(t, attachRingMinCap, len(r.buf), "first Attach must not reserve the whole floor")
-	require.Equal(t, 0, r.n)
-
-	t0 := time.Unix(1_700_000_000, 0)
-	for i := 0; i < attachRingMinCap; i++ {
-		r.push(t0.Add(time.Duration(i) * time.Second))
-	}
-	require.Equal(t, attachRingMinCap, r.n)
-	require.Equal(t, attachRingMinCap, len(r.buf))
-
-	r.ensure(transport.DefaultRPCAttachFloorPerMin)
-	require.Equal(t, attachRingMinCap*2, len(r.buf))
-	require.Equal(t, attachRingMinCap, r.n)
-	ts, ok := r.oldest()
-	require.True(t, ok)
-	require.Equal(t, t0, ts)
-}
-
-func TestAttachRing_GrowsUpToLimit(t *testing.T) {
-	const limit = 40
-	var r attachRing
-	t0 := time.Unix(1_700_000_000, 0)
-	for i := 0; i < limit; i++ {
-		r.ensure(limit)
-		r.push(t0.Add(time.Duration(i) * time.Second))
-	}
-	require.Equal(t, limit, r.n)
-	require.Equal(t, limit, len(r.buf))
-	r.ensure(limit)
-	r.push(t0.Add(time.Hour))
-	require.Equal(t, limit, r.n, "push must not grow past the floor")
-}
-
-func TestAttachRing_EnsureDoesNotAllocateHugeLimit(t *testing.T) {
-	var r attachRing
-	r.ensure(50_000_000)
-	require.Equal(t, attachRingMinCap, len(r.buf))
-	require.LessOrEqual(t, len(r.buf), transport.MaxRPCAttachFloorPerMin)
+func TestAttachBucket_DefaultBurstIsNotTheMinuteCap(t *testing.T) {
+	auth := NewPeerAuthHandler(signing.NewSecp256k1Verifier(), testHostAddress, PeerAuthConfig{})
+	burst, perSec, maxIn, unlimited := auth.attachLimit()
+	require.False(t, unlimited)
+	require.Equal(t, float64(defaultAttachBurst), burst)
+	require.Equal(t, float64(defaultAttachRefillPerSec), perSec)
+	require.Equal(t, defaultAttachInFlight, maxIn)
 }
 
 func TestChannelLimit_OverflowRefusesNewStreamPeers(t *testing.T) {
-	l := overflowTestLimiter(time.Now, 1)
+	l := newChannelLimiter(transport.ChannelLimitConfig{
+		MessagesPerMin: 10,
+		MessagesBurst:  10,
+		MaxStreams:     3,
+		MaxEntries:     1,
+	}, time.Now)
 	ctx := context.Background()
-	proc := rpcpbconnect.PeerAuthServiceWatchProcedure
+	proc := rpcpbconnect.SessionServiceChatProcedure
 
 	require.NoError(t, l.acquireStream(ctx, "a", proc))
 	requireResourceExhausted(t, l.acquireStream(ctx, "b", proc), "too many concurrent streams")

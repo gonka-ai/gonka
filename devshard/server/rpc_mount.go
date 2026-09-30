@@ -38,6 +38,12 @@ func mountPeerRPC(g *echo.Group, h http.Handler) {
 	g.Any(peerRPCRoute, func(c echo.Context) error {
 		escrowID := c.Param("id")
 		r := c.Request()
+		// Same gate as versiond: a non-empty RawPath means the request line
+		// was encoded, and routing on the decoded path would serve Attach
+		// for %41ttach.
+		if r.URL != nil && r.URL.RawPath != "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "encoded rpc path")
+		}
 		u := *r.URL
 		u.Path = stripRPCPrefix(r.URL.Path, escrowID)
 		u.RawPath = ""

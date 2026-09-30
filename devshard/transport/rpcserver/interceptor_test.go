@@ -428,7 +428,7 @@ func TestHandshakeGate_OversizedAttachCountsResourceExhausted(t *testing.T) {
 	require.Equal(t, before+1, metricCounter(t, "devshard_peer_rpc_attach_total", map[string]string{"result": "resource_exhausted"}))
 }
 
-func TestHandshakeGate_OversizedAttachConsumesFloor(t *testing.T) {
+func TestHandshakeGate_OversizedAttachDoesNotConsumeFloor(t *testing.T) {
 	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
 	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{AttachFloorPerMin: 1})
 	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
@@ -441,9 +441,6 @@ func TestHandshakeGate_OversizedAttachConsumesFloor(t *testing.T) {
 	require.Equal(t, int32(0), spy.n.Load())
 
 	client := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
-	req, err := signedAttach(testutil.MustGenerateKey(t), []byte("oversized-floor-nonce-aaaa"), time.Now().Unix())
-	require.NoError(t, err)
-	_, err = client.Attach(context.Background(), connect.NewRequest(req))
-	requireResourceExhausted(t, err, "too many attach attempts")
-	require.Equal(t, int32(0), spy.n.Load(), "floor charged on oversized must fire before ECDSA")
+	_ = attach(t, client, testutil.MustGenerateKey(t), []byte("oversized-floor-nonce-aaaa"))
+	require.Equal(t, int32(1), spy.n.Load(), "an oversized body must not spend the anonymous bucket")
 }

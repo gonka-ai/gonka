@@ -444,6 +444,7 @@ func setupFourHostHTTPHeightSyncFromChainOracles(t *testing.T, hostSchedOracle, 
 			f(&cc)
 		}
 	}
+	cc.AllowRetiredHTTPSession = true
 	cc.RPCEndpoints = echoHTTPEndpoints()
 	extra := &cc
 	storagePath := filepath.Join(t.TempDir(), "session.db")
@@ -486,6 +487,7 @@ func (st *fourHostStack) newHTTPSession(t *testing.T) *user.Session {
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = st.Oracle
+	cc.AllowRetiredHTTPSession = true
 	cc.RPCEndpoints = echoHTTPEndpoints()
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     st.PrivateKeyHex,
@@ -612,6 +614,7 @@ func (st *oneHostRestartStack) newHTTPSession(t *testing.T) *user.Session {
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = st.Oracle
+	cc.AllowRetiredHTTPSession = true
 	cc.RPCEndpoints = echoHTTPEndpoints()
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     st.PrivateKeyHex,
@@ -730,8 +733,9 @@ func (st *repairTimingStack) wireRepairPeersFrom(prober int) {
 	peers := make(map[int]*transport.HTTPClient, len(st.httpSrvs))
 	for slot, ts := range st.httpSrvs {
 		peers[slot] = transport.NewHTTPClient(ts.URL, "9003", st.user, transport.ClientConfig{
-			QueryTimeout: 200 * time.Millisecond,
-			RoutePrefix:  hsE2ERoutePrefix,
+			AllowRetiredHTTPSession: true,
+			QueryTimeout:            200 * time.Millisecond,
+			RoutePrefix:             hsE2ERoutePrefix,
 		})
 	}
 	st.servers[prober].SetPeerClients(transport.HTTPPeerClients(peers))
@@ -2121,6 +2125,7 @@ func setupFourHostHTTPHeightSyncWithToggleableClient(t *testing.T, hostOracles [
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = clientOracle
+	cc.AllowRetiredHTTPSession = true
 	cc.RPCEndpoints = echoHTTPEndpoints()
 	extra := &cc
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{

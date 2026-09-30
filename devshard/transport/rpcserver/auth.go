@@ -2,6 +2,7 @@ package rpcserver
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -32,12 +33,19 @@ const (
 	defaultMessagesPerMin = transport.DefaultRPCMessagesPerMin
 	defaultMaxStreams     = transport.DefaultRPCMaxStreams
 	defaultMaxSessions    = 10_000
-	// defaultAttachFloorPerMin is the process-wide Attach cap.
-	// Per-IP Attach bounds live on versiond / Phase 6 proxy, not this child.
-	// The floor is one first-Attach per current peer per minute so a full map
-	// re-attaching after a Watch mass-break still fits; known-peer renewals
-	// are refunded and do not occupy extra slots.
+	// defaultAttachFloorPerMin is the configured ceiling passed in when the
+	// operator does not set a tighter cap. The enforced bucket is smaller:
+	// defaultAttachBurst tokens, refilled at defaultAttachRefillPerSec.
 	defaultAttachFloorPerMin = transport.DefaultRPCAttachFloorPerMin
+	// defaultAttachBurst is how many anonymous Attaches may run VerifyAttach
+	// before the bucket is empty. A live X-Devshard-Session does not take one.
+	defaultAttachBurst = 50
+	// defaultAttachRefillPerSec refills the anonymous bucket continuously.
+	// A full burst is back one second later. Retry-After on an empty bucket is 1.
+	defaultAttachRefillPerSec = 50
+	// defaultAttachInFlight is how many anonymous VerifyAttach calls may run
+	// at once. Renewals that present a live token are not in this count.
+	defaultAttachInFlight = 50
 	// defaultTokenGrace is how long a replaced token still admits RPCs.
 	// Matches transport.nonInferenceRetryBudget: one Attach RTT plus retry.
 	defaultTokenGrace = 5 * time.Second
@@ -53,10 +61,8 @@ const (
 	// deletes per write-lock hold. Attach's in-lock sweep at the cap is
 	// unchanged (already under mu).
 	sweepBatchSize = 256
-	// attachRingMinCap is the first allocation of the Attach window. Doubling
-	// grows it up to AttachFloorPerMin so a quiet child does not reserve the
-	// whole floor.
-	attachRingMinCap = 16
+	// attachRetryAfterSec is the Retry-After on an empty anonymous bucket.
+	attachRetryAfterSec = 1
 )
 
 // AllowPeer decides whether a recovered address may use the escrow in
@@ -81,10 +87,12 @@ type PeerAuthConfig struct {
 	// means defaultTokenGrace. In-flight RPCs carry the old header; they are
 	// new HTTP requests, not a connection established at Attach.
 	TokenGrace time.Duration
-	// AttachFloorPerMin is the process-wide Attach cap, enforced before ECDSA.
-	// Zero means Limits.AttachFloorPerMin or defaultAttachFloorPerMin. Not keyed
-	// on peer_address: that is attacker-chosen; recovered address is after ECDSA.
-	// Child is on loopback, so this is the process floor, not a client-IP limiter.
+	// AttachFloorPerMin sizes the anonymous Attach bucket. Zero means
+	// Limits.AttachFloorPerMin or defaultAttachFloorPerMin. A value below
+	// defaultAttachBurst is the burst (tests). The default and anything
+	// larger use defaultAttachBurst tokens refilled at defaultAttachRefillPerSec.
+	// Not keyed on peer_address: that field is unsigned. A live session token
+	// skips the bucket. math.MaxInt disables it.
 	AttachFloorPerMin int
 	// Limits is advertised on Attach and enforced by the channel interceptor.
 	// Nil uses defaults (not process env — production passes LoadChannelLimitConfig).
@@ -124,8 +132,8 @@ type PeerAuthHandler struct {
 	sweepOnce sync.Once
 	closed    atomic.Bool
 
-	attachMu   sync.Mutex
-	attachRing attachRing
+	attachMu     sync.Mutex
+	attachBucket attachBucket
 
 	limiter *channelLimiter
 	traffic *transport.RPCTraffic
@@ -203,6 +211,8 @@ func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerA
 	} else {
 		cfg.AttachFloorPerMin = transport.ClampAttachFloorPerMin(cfg.AttachFloorPerMin)
 	}
+	limiter := newChannelLimiter(limits, cfg.Now)
+	limiter.maxWatches = cfg.MaxSessions
 	return &PeerAuthHandler{
 		verifier:    verifier,
 		hostAddress: hostAddress,
@@ -212,7 +222,7 @@ func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerA
 		prevByPeer:  make(map[string]string),
 		retired:     make(map[string]time.Time),
 		closeCh:     make(chan struct{}),
-		limiter:     newChannelLimiter(limits, cfg.Now),
+		limiter:     limiter,
 		traffic:     transport.NewRPCTraffic(cfg.Now),
 	}
 }
@@ -302,20 +312,36 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("unsupported protocol_version"))
 	}
 
-	chargedAt, err := h.chargeAttach(ctx)
-	if err != nil {
-		return nil, err
+	// A live X-Devshard-Session skips the anonymous bucket. peer_address is
+	// unsigned, so it is not the skip key. sharedPeerLive walks every shared
+	// session and is not used here.
+	tokenPeer, tokenLive := h.liveSessionToken(req.Header())
+	if !tokenLive {
+		if err := h.acquireAttachVerify(); err != nil {
+			return nil, err
+		}
+		defer h.releaseAttachVerify()
 	}
 
 	recovered, err := transport.VerifyAttach(h.verifier, msg, h.now().Unix())
 	if err != nil {
+		// The anonymous path already spent a token. A skipped Attach whose
+		// signature does not verify spends one now, so the next anonymous
+		// attempt pays the floor. The auth error is unchanged.
+		if tokenLive {
+			h.takeAttachToken()
+		}
 		return nil, connect.NewError(connect.CodeUnauthenticated, err)
+	}
+	// A signature for the token's peer leaves the bucket alone, even when
+	// peer_address does not match. Any other recovered peer pays once; if
+	// the bucket is empty that request is not admitted.
+	if tokenLive && recovered != tokenPeer && !h.takeAttachToken() {
+		return nil, attachFloorExhausted(attachRetryAfterSec)
 	}
 	if recovered != msg.PeerAddress {
 		return nil, connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("recovered address %s does not match peer_address", recovered))
 	}
-	// Refund only after a successful bind. A live peer whose
-	// Attach then fails (nonce reuse, roster, cap) must keep the charge.
 	wasLive := h.peerSessionLive(recovered) || h.sharedPeerLive(recovered)
 	// Live renewals on /sessions/_/rpc skip the door: the URL is not a
 	// roster. Any real escrow URL is checked even when the peer already
@@ -328,7 +354,7 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 
 	token := append([]byte(nil), msg.AttachNonce...)
 	if h.shared != nil {
-		return h.attachShared(ctx, recovered, token, msg.Timestamp, wasLive, chargedAt)
+		return h.attachShared(ctx, recovered, token, msg.Timestamp)
 	}
 	tok := rawTokenKey(token)
 	expires := h.now().Add(h.cfg.SessionTTL)
@@ -372,9 +398,6 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	h.replaceSessionLocked(recovered, token, expires, msg.Timestamp)
 	h.observeSizesLocked()
 	h.mu.Unlock()
-	if wasLive {
-		h.refundAttach(chargedAt)
-	}
 
 	return connect.NewResponse(&rpcpb.AttachResponse{
 		SessionToken: token,
@@ -599,139 +622,119 @@ func (h *PeerAuthHandler) evictOldestIdleLocked() bool {
 	return true
 }
 
-// chargeAttach is the process-wide Attach throttle. Sliding one-minute
-// window as a ring (drop expired from the head). Child sees versiond as
-// src, so this is not per client IP. handshakeGate charges it on oversized
-// Content-Length (before decode). The handler charges it after decode and
-// before ECDSA. A later refundAttach drops this charge if the Attach
-// succeeds for a peer that already held a live or grace session.
-func (h *PeerAuthHandler) chargeAttach(ctx context.Context) (time.Time, error) {
-	limit := transport.ClampAttachFloorPerMin(h.cfg.AttachFloorPerMin)
-	if limit <= 0 || limit == math.MaxInt {
-		return time.Time{}, nil
+// liveSessionToken is the peer bound to a still-valid X-Devshard-Session.
+// A missing, forged, or expired header is not live. The unsigned
+// peer_address is not consulted.
+func (h *PeerAuthHandler) liveSessionToken(header http.Header) (string, bool) {
+	if h == nil || header == nil {
+		return "", false
+	}
+	enc := header.Get(transport.SessionHeader)
+	if enc == "" || len(enc) > maxAttachNonceBytes*2 {
+		return "", false
+	}
+	raw, err := hex.DecodeString(enc)
+	if err != nil || len(raw) == 0 {
+		return "", false
+	}
+	return h.LookupToken(raw)
+}
+
+// acquireAttachVerify takes one anonymous-bucket token and an in-flight
+// slot before VerifyAttach. A live session token does not call this.
+func (h *PeerAuthHandler) acquireAttachVerify() error {
+	if !h.spendAttachToken(true) {
+		return attachFloorExhausted(attachRetryAfterSec)
+	}
+	return nil
+}
+
+func (h *PeerAuthHandler) releaseAttachVerify() {
+	h.attachMu.Lock()
+	if h.attachBucket.inFlight > 0 {
+		h.attachBucket.inFlight--
+	}
+	h.attachMu.Unlock()
+}
+
+// takeAttachToken charges one anonymous token after a skipped Attach whose
+// signature was not for the token's peer. false means the bucket was empty,
+// so this request must not be treated as admitted.
+func (h *PeerAuthHandler) takeAttachToken() bool {
+	return h.spendAttachToken(false)
+}
+
+func (h *PeerAuthHandler) spendAttachToken(inFlight bool) bool {
+	burst, perSec, maxIn, unlimited := h.attachLimit()
+	if unlimited {
+		return true
 	}
 	now := h.now()
-	cutoff := now.Add(-time.Minute)
-	h.attachMu.Lock()
-	h.attachRing.ensure(limit)
-	h.attachRing.dropExpired(cutoff)
-	if h.attachRing.n >= limit {
-		retry := time.Minute
-		if ts, ok := h.attachRing.oldest(); ok {
-			retry = ts.Add(time.Minute).Sub(now)
-		}
-		h.attachMu.Unlock()
-		if h.limiter != nil {
-			h.limiter.warnBanned(ctx, rpcpbconnect.PeerAuthServiceAttachProcedure, zoneAttachFloor, "process")
-		}
-		return time.Time{}, attachFloorExhausted(retryAfterSeconds(retry))
-	}
-	h.attachRing.push(now)
-	h.attachMu.Unlock()
-	return now, nil
-}
-
-func (h *PeerAuthHandler) refundAttach(at time.Time) {
-	if at.IsZero() {
-		return
-	}
 	h.attachMu.Lock()
 	defer h.attachMu.Unlock()
-	h.attachRing.removeLastEqual(at)
-}
-
-// attachRing is a circular one-minute Attach window. dropExpired is O(expired)
-// from the head; charge is O(1) amortized. refund is O(n) and rare. The buffer
-// doubles from attachRingMinCap up to the clamped floor so the first Attach
-// does not allocate the whole policy window.
-type attachRing struct {
-	buf  []time.Time
-	head int
-	n    int
-}
-
-func (r *attachRing) ensure(limit int) {
-	if r == nil || limit <= 0 {
-		return
-	}
-	limit = transport.ClampAttachFloorPerMin(limit)
-	if limit == math.MaxInt {
-		return
-	}
-	if len(r.buf) >= limit {
-		return
-	}
-	if len(r.buf) > 0 && r.n < len(r.buf) {
-		return
-	}
-	newCap := len(r.buf) * 2
-	if newCap == 0 {
-		newCap = attachRingMinCap
-	}
-	if newCap > limit {
-		newCap = limit
-	}
-	if newCap <= len(r.buf) {
-		return
-	}
-	oldLen := len(r.buf)
-	newBuf := make([]time.Time, newCap)
-	for i := 0; i < r.n; i++ {
-		newBuf[i] = r.buf[(r.head+i)%oldLen]
-	}
-	r.buf = newBuf
-	r.head = 0
-}
-
-func (r *attachRing) dropExpired(cutoff time.Time) {
-	if r == nil || len(r.buf) == 0 {
-		return
-	}
-	for r.n > 0 {
-		if r.buf[r.head].After(cutoff) {
-			return
+	h.attachBucket.refill(now, burst, perSec)
+	if h.attachBucket.tokens < 1 {
+		if h.limiter != nil {
+			h.limiter.warnBanned(context.Background(), rpcpbconnect.PeerAuthServiceAttachProcedure, zoneAttachFloor, "process")
 		}
-		r.head = (r.head + 1) % len(r.buf)
-		r.n--
+		return false
 	}
-	r.head = 0
+	if inFlight && h.attachBucket.inFlight >= maxIn {
+		if h.limiter != nil {
+			h.limiter.warnBanned(context.Background(), rpcpbconnect.PeerAuthServiceAttachProcedure, zoneAttachFloor, "process")
+		}
+		return false
+	}
+	h.attachBucket.tokens--
+	if inFlight {
+		h.attachBucket.inFlight++
+	}
+	return true
 }
 
-func (r *attachRing) oldest() (time.Time, bool) {
-	if r == nil || r.n == 0 || len(r.buf) == 0 {
-		return time.Time{}, false
+func (h *PeerAuthHandler) attachLimit() (burst, perSec float64, maxIn int, unlimited bool) {
+	n := h.cfg.AttachFloorPerMin
+	if n <= 0 || n == math.MaxInt {
+		return 0, 0, 0, true
 	}
-	return r.buf[r.head], true
+	if n < defaultAttachBurst {
+		return float64(n), float64(n), n, false
+	}
+	return defaultAttachBurst, defaultAttachRefillPerSec, defaultAttachInFlight, false
 }
 
-func (r *attachRing) push(ts time.Time) {
-	if r == nil || len(r.buf) == 0 || r.n >= len(r.buf) {
-		return
-	}
-	r.buf[(r.head+r.n)%len(r.buf)] = ts
-	r.n++
+// attachBucket is the anonymous Attach budget. tokens refill continuously.
+// inFlight counts VerifyAttach calls that already took a token.
+type attachBucket struct {
+	tokens   float64
+	burst    float64
+	perSec   float64
+	last     time.Time
+	ready    bool
+	inFlight int
 }
 
-func (r *attachRing) removeLastEqual(at time.Time) {
-	if r == nil || r.n == 0 || len(r.buf) == 0 {
+func (b *attachBucket) refill(now time.Time, burst, perSec float64) {
+	if b == nil {
 		return
 	}
-	for i := r.n - 1; i >= 0; i-- {
-		idx := (r.head + i) % len(r.buf)
-		if !r.buf[idx].Equal(at) {
-			continue
-		}
-		for j := i; j < r.n-1; j++ {
-			a := (r.head + j) % len(r.buf)
-			b := (r.head + j + 1) % len(r.buf)
-			r.buf[a] = r.buf[b]
-		}
-		r.n--
-		if r.n == 0 {
-			r.head = 0
-		}
+	if !b.ready || b.burst != burst || b.perSec != perSec {
+		b.tokens = burst
+		b.burst = burst
+		b.perSec = perSec
+		b.last = now
+		b.ready = true
 		return
 	}
+	elapsed := now.Sub(b.last).Seconds()
+	if elapsed <= 0 {
+		return
+	}
+	b.tokens += elapsed * b.perSec
+	if b.tokens > b.burst {
+		b.tokens = b.burst
+	}
+	b.last = now
 }
 
 func (h *PeerAuthHandler) peerSessionLive(addr string) bool {

@@ -56,6 +56,13 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 	}
 	originLookups := newOriginLookupLimiter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// HAProxy normalizes before its path zones. A request that reaches
+		// versiond with a still-encoded RPC path would be forwarded on the
+		// decoded Path (RawPath cleared in the rewrite) and skip those zones.
+		if encodedPeerRPCPath(r.URL) {
+			http.Error(w, "encoded rpc path", http.StatusBadRequest)
+			return
+		}
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		path = strings.TrimPrefix(path, "devshard/")
 		if path == "" {
@@ -100,6 +107,13 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 
 		serveChild(w, r, target, rest, originLookups)
 	})
+}
+
+func encodedPeerRPCPath(u *url.URL) bool {
+	if u == nil || u.RawPath == "" {
+		return false
+	}
+	return strings.Contains(u.Path, "/sessions/") && strings.Contains(u.Path, "/rpc/")
 }
 
 func peerAuthWatchPath(rest string) bool {
@@ -248,6 +262,13 @@ func escrowIDFromObsPath(rest string) (string, bool) {
 }
 
 func serveChild(w http.ResponseWriter, r *http.Request, target *Target, rest string, lim *originLookupLimiter) {
+	// A token already rejected in this window is the child's
+	// invalid_session_token, not the IP budget. 429 would not send the
+	// peer back through Attach.
+	if lim.cachedInvalidToken(r, rest) {
+		writeInvalidSessionToken(w)
+		return
+	}
 	if lim.blocked(r, rest) {
 		w.Header().Set(headerDevshardError, errorEscrowLookupLimited)
 		http.Error(w, "too many escrow lookups", http.StatusTooManyRequests)

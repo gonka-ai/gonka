@@ -125,12 +125,19 @@ func assertProxyH2COverlappingStreamsShareOneTCP(t *testing.T, n int) {
 	started := make(chan struct{}, n)
 	release := make(chan struct{})
 	child := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/rpc/" {
-			t.Errorf("child path = %s", r.URL.Path)
-		}
 		protoMu.Lock()
 		sawProto = r.Proto
 		protoMu.Unlock()
+		// Warmup returns immediately so both hops apply SETTINGS before
+		// the burst. Holding it would leave the client on the library
+		// default of 100 streams.
+		if r.URL.Path == "/rpc/warmup" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.URL.Path != "/rpc/" {
+			t.Errorf("child path = %s", r.URL.Path)
+		}
 		started <- struct{}{}
 		<-release
 		w.WriteHeader(http.StatusNoContent)
@@ -154,6 +161,24 @@ func assertProxyH2COverlappingStreamsShareOneTCP(t *testing.T, n int) {
 
 	var parentDials atomic.Int32
 	client := newH2CClient(t, func() { parentDials.Add(1) })
+	// golang.org/x/net/http2 uses initialMaxConcurrentStreams=100 until
+	// SETTINGS arrives. One request first, or a cold burst of 101 dials
+	// a second TCP. That window is TestH2CClient_BurstBeforeSettingsDialsAnotherTCP.
+	warm, err := client.Get(parent.URL + "/v1/rpc/warmup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, warm.Body)
+	_ = warm.Body.Close()
+	if warm.StatusCode != http.StatusNoContent {
+		t.Fatalf("warmup status = %d", warm.StatusCode)
+	}
+	if got := parentDials.Load(); got != 1 {
+		t.Fatalf("warmup client→versiond dials = %d, want 1", got)
+	}
+	if got := childConns.Load(); got != 1 {
+		t.Fatalf("warmup versiond→child connections = %d, want 1", got)
+	}
 	var wg sync.WaitGroup
 	errCh := make(chan error, n)
 	for i := 0; i < n; i++ {
@@ -348,6 +373,69 @@ func TestConfigureCleartextHTTP2_ShutdownWaitsForInFlightHTTP2(t *testing.T) {
 	}
 	if err := <-errCh; err != nil && err != http.ErrServerClosed {
 		t.Fatal(err)
+	}
+}
+
+// TestH2CClient_BurstBeforeSettingsDialsAnotherTCP is the cold-burst
+// failure: until SETTINGS, the client allows 100 streams and the 101st
+// dials another TCP. The server here never writes a preface, so one run
+// always hits that window.
+func TestH2CClient_BurstBeforeSettingsDialsAnotherTCP(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dials atomic.Int32
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			dials.Add(1)
+			go func() { _, _ = io.Copy(io.Discard, c) }()
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	tr := &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, ln.Addr().String())
+		},
+	}
+	client := &http.Client{Transport: tr}
+	t.Cleanup(func() {
+		cancel()
+		tr.CloseIdleConnections()
+		_ = ln.Close()
+	})
+
+	const n = 101
+	for i := 0; i < n; i++ {
+		go func() {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://h2c/rpc/", nil)
+			if err != nil {
+				return
+			}
+			resp, err := client.Do(req)
+			if resp != nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+			}
+			_ = err
+		}()
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for dials.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	got := dials.Load()
+	cancel()
+	if got != 2 {
+		t.Fatalf("dials before SETTINGS = %d, want 2 (stream 101 opens a second TCP while the cap is still 100)", got)
 	}
 }
 

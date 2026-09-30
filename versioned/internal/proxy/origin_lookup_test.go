@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -468,4 +469,150 @@ func unknownEscrowMissResponse() *http.Response {
 
 func testOriginIP(i int) string {
 	return fmt.Sprintf("10.%d.%d.%d", (i>>16)&0xff, (i>>8)&0xff, i&0xff)
+}
+
+func TestProxy_SameInvalidTokenChargesOnce(t *testing.T) {
+	var forwarded atomic.Int32
+	var entered atomic.Int32
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	openRelease := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(openRelease)
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		entered.Add(1)
+		<-release
+		w.Header().Set(headerDevshardError, errorInvalidSessionToken)
+		http.Error(w, invalidSessionTokenBody, http.StatusUnauthorized)
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := Handler(newRoutes(map[string]string{"v1": strings.TrimPrefix(backend.URL, "http://")}))
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	const path = "/v1/sessions/1/rpc/devshard.transport.v1.SessionService/GetSignatures"
+	post := func(token, ip string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(originIPHeader, ip)
+		if token != "" {
+			req.Header.Set(sessionHeader, token)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		resp.Body = io.NopCloser(strings.NewReader(string(body)))
+		return resp
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := post("dead-token", "203.0.113.9")
+			if resp.StatusCode != http.StatusUnauthorized {
+				errCh <- fmt.Errorf("burst status = %d", resp.StatusCode)
+			}
+		}()
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for entered.Load() < 4 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	openRelease()
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+	if forwarded.Load() != 4 {
+		t.Fatalf("in-flight burst forwarded = %d, want 4", forwarded.Load())
+	}
+
+	repeat := post("dead-token", "203.0.113.9")
+	if repeat.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("cached repeat status = %d", repeat.StatusCode)
+	}
+	if repeat.Header.Get(headerDevshardError) != errorInvalidSessionToken {
+		t.Fatalf("cached repeat header = %q", repeat.Header.Get(headerDevshardError))
+	}
+	body, _ := io.ReadAll(repeat.Body)
+	if !strings.Contains(string(body), invalidSessionTokenBody) {
+		t.Fatalf("cached repeat body = %q", body)
+	}
+	if forwarded.Load() != 4 {
+		t.Fatalf("cached repeat forwarded = %d, want 4", forwarded.Load())
+	}
+
+	if post("other-token", "203.0.113.9").StatusCode != http.StatusUnauthorized {
+		t.Fatal("a different token must still reach the child")
+	}
+	if forwarded.Load() != 5 {
+		t.Fatalf("second token forwarded = %d, want 5", forwarded.Load())
+	}
+	limited := post("third-token", "203.0.113.9")
+	if limited.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("third distinct token status = %d, want 429", limited.StatusCode)
+	}
+	if forwarded.Load() != 5 {
+		t.Fatalf("budget forwarded = %d, want 5", forwarded.Load())
+	}
+	// The cached token stays a re-Attach signal after the IP budget is spent.
+	again := post("dead-token", "203.0.113.9")
+	if again.StatusCode != http.StatusUnauthorized || again.Header.Get(headerDevshardError) != errorInvalidSessionToken {
+		t.Fatalf("cached token after budget status=%d header=%q", again.StatusCode, again.Header.Get(headerDevshardError))
+	}
+}
+
+func TestStaleSessionTokenExpiresIntoANewMiss(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	l := newOriginLookupLimiter()
+	l.now = func() time.Time { return now }
+	rest := "/sessions/1/rpc/devshard.transport.v1.SessionService/GetSignatures"
+	req := func(token string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "http://versiond/v1"+rest, nil)
+		r.Header.Set(originIPHeader, "203.0.113.9")
+		r.Header.Set(sessionHeader, token)
+		return r
+	}
+	miss := func(token string) *http.Response {
+		h := make(http.Header)
+		h.Set(headerDevshardError, errorInvalidSessionToken)
+		return &http.Response{Header: h, Request: req(token)}
+	}
+
+	l.observe(req("tok-a"), rest, miss("tok-a"))
+	l.observe(req("tok-a"), rest, miss("tok-a"))
+	if l.blocked(req("tok-b"), rest) {
+		t.Fatal("one token must count as one miss")
+	}
+	if !l.cachedInvalidToken(req("tok-a"), rest) {
+		t.Fatal("repeat must be cached")
+	}
+
+	now = now.Add(staleSessionTokenTTL)
+	if l.cachedInvalidToken(req("tok-a"), rest) {
+		t.Fatal("token entry must expire")
+	}
+	l.observe(req("tok-a"), rest, miss("tok-a"))
+	if !l.blocked(req("tok-c"), rest) {
+		t.Fatal("the same token after the window is a second miss")
+	}
+
+	escrow := "/sessions/1/chat/completions"
+	escrowReq := originBindRequest("203.0.113.10")
+	l.observe(escrowReq, escrow, unknownEscrowMissResponse())
+	l.observe(escrowReq, escrow, unknownEscrowMissResponse())
+	if !l.blocked(escrowReq, escrow) {
+		t.Fatal("unknown-escrow misses must still each count")
+	}
 }

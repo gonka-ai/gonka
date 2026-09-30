@@ -37,6 +37,9 @@ global
     # peer Watch onto one TCP. Must match DefaultH2MaxConcurrentStreams
     # (4096) on versiond and the child. Per-peer interceptor stays 256.
     tune.h2.max-concurrent-streams 4096
+    # normalize-uri is experimental on HAProxy 3.2. The frontend uses it
+    # before canonpath and the :8080 peer-RPC deny.
+    expose-experimental-directives
 
 defaults
     log     global
@@ -92,6 +95,12 @@ frontend versiond_in
     # below either stamp the deployment value or deliberately leave it absent.
     http-request del-header Devshard-Ha
 
+    # Decode before canonpath and the :8080 deny. HAProxy otherwise matches
+    # the raw path, and versiond routes the decoded one.
+    http-request normalize-uri percent-decode-unreserved strict
+    http-request normalize-uri percent-to-uppercase
+    http-request deny deny_status 400 if { path_reg ^(/devshard)?/[^/]+/sessions/[^/]+/rpc/.*[%] }
+
     # Normalised path: the optional /devshard/ prefix is present only when
     # genesis-proxy is not in front, and must not change routing. Field 2 is
     # then the protocol version and field 4 the escrow id — field 1 is the
@@ -132,7 +141,8 @@ frontend versiond_in
     # Peer RPC is the proto-h2 bind only. :8080 stays JSON, healthz, and
     # catalog. Connect on this listen would be the HTTP/1.1 fallback a
     # current hop must not answer. /stats/rpc is not a session procedure.
-    http-request deny deny_status 404 if { dst_port 8080 } { path_sub /sessions/ } { path_sub /rpc/ }
+    # Anchored on the decoded canonpath: /{version}/sessions/{id}/rpc/.
+    http-request deny deny_status 404 if { dst_port 8080 } { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+/rpc/ }
 
     # versiond's own route grammar has versionless endpoints, and their first
     # path segment is not a version. Classifying by "field 2 is non-empty" would

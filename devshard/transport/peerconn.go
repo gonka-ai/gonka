@@ -33,12 +33,13 @@ const (
 	tokenRefreshFraction    = 0.75
 	reattachReasonWatch     = "watch"
 	reattachReasonTTL       = "ttl"
-	// sessionReplacedReleaseAfter is how many times another generation may
-	// take this host's session before this process stops dialing. The first
-	// loss is retried so an in-flight Attach from the retiring child cannot
-	// stick the new child with the loss. The second loss is the retiring
-	// child; it must not Attach again.
+	// sessionReplacedReleaseAfter is how many session-replaced losses a
+	// retiring process absorbs before it stops dialing. A live process
+	// always Attaches again. The count resets after a Watch that stays up
+	// for sessionReplacedHealthyWatch, so two losses with a healthy period
+	// between them do not add up.
 	sessionReplacedReleaseAfter = 2
+	sessionReplacedHealthyWatch = 2 * time.Second
 	defaultAttachTTL            = 5 * time.Minute
 	maxAttachTTL                = time.Hour
 	minAttachTTL                = 30 * time.Second
@@ -58,6 +59,9 @@ var (
 	errWatchStale   = errors.New("watch heartbeat stale")
 	errAttachTTL    = errors.New("attach expires_at is out of range")
 	errNoAttachDoor = errors.New("peer rpc has no attach door")
+	// errWatchStreamCap is a local max_streams refusal. The token is still
+	// good; Watch waits for a free slot instead of Attaching again.
+	errWatchStreamCap = errors.New("too many concurrent streams")
 )
 
 var (
@@ -102,8 +106,8 @@ type PeerConnConfig struct {
 	// BaseURL only. Production fills this from DEVSHARD_RPC_H2_*.
 	// H2URL is the TCP target; TLS SNI/verify use InferenceURL's hostname.
 	DialSet PeerRPCDialSet
-	// H2ProbeTimeout bounds the h2 Attach probe. Zero uses
-	// DefaultRPCH2ProbeTimeout (1s).
+	// H2ProbeTimeout bounds dial and TLS for the h2 origin. The Attach
+	// RPC uses DefaultAttachTimeout. Zero uses DefaultRPCH2ProbeTimeout (3s).
 	H2ProbeTimeout time.Duration
 	// H2ReadIdleTimeout PINGs a quiet h2 mux. Zero uses
 	// DefaultRPCH2ReadIdleTimeout (15s).
@@ -148,12 +152,12 @@ func (c PeerConnConfig) signerAddress() string {
 	return c.Signer.Address()
 }
 
-// registryKey is the PeerConn map identity: host child + dial URL + signer.
-// Two escrows with different keys or InferenceUrls must not share a token.
+// registryKey is the PeerConn map identity: host child + signer.
+// The server keeps one session per peer address, so two InferenceUrls for
+// the same child and signer share one Watch. Different signers do not.
 // Prometheus still uses childID.
 func (c PeerConnConfig) registryKey() string {
-	base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
-	return c.childID() + "|" + base + "|" + c.signerAddress()
+	return c.childID() + "|" + c.signerAddress()
 }
 
 func (c PeerConnConfig) connectBase(escrowID string) string {
@@ -198,7 +202,7 @@ func (c PeerConnConfig) jitter(d time.Duration) time.Duration {
 	return half + time.Duration(rand.Int64N(int64(span)+1))
 }
 
-// PeerConn is one Attach → Watch session per (host, version, BaseURL, signer).
+// PeerConn is one Attach → Watch session per (host, version, signer).
 type PeerConn struct {
 	cfg    PeerConnConfig
 	http   *http.Client
@@ -242,9 +246,9 @@ type PeerConn struct {
 	budget  peerRPCBudget
 	streams peerStreamBudget
 	firstOK atomic.Bool
-	// replaced counts Watch endings caused by another Attach of this same
-	// host key. The second one means a newer generation owns the identity;
-	// re-Attach would cancel its Watch.
+	// replaced counts Watch endings caused by another Attach of this signer
+	// since the last healthy Watch. A retiring process stops after
+	// sessionReplacedReleaseAfter. A live process Attaches again.
 	replaced atomic.Int32
 
 	// doors are escrow IDs of live RPCClient refs. First Attach (and
@@ -368,7 +372,7 @@ func newPeerConnTransports(cfg PeerConnConfig, maxConns int) (*originSwitchTrans
 		if serverName == "" {
 			serverName = rpcH2ServerName(cfg.BaseURL)
 		}
-		h2 = rpch2Clients.get(h2URL, serverName, h2Dial, cfg.H2ReadIdleTimeout, cfg.H2PingTimeout)
+		h2 = rpch2Clients.get(h2URL, serverName, h2Dial, cfg.H2ReadIdleTimeout, cfg.H2PingTimeout, h2ProbeTimeout(cfg))
 	}
 	origin := newOriginSwitchTransport(h1, h2, h2URL)
 	rt := DefaultHostConnectionTracker().WrapRoundTripper(&poolWatchRoundTripper{
@@ -445,6 +449,19 @@ func WithPayloadFetchCancel(parent context.Context) (context.Context, context.Ca
 		stop()
 		cancel()
 	}
+}
+
+// MarkOutboundPeersReleasedForTest sets the retiring-generation flag
+// without closing conns already in the registry. Tests defer
+// ResetOutboundPeerReleaseForTest.
+func MarkOutboundPeersReleasedForTest() {
+	outboundPeerReleased.Store(true)
+}
+
+// AcquirePeerConnForTest inserts cfg into the process registry the same
+// way SelectTransport does.
+func AcquirePeerConnForTest(cfg PeerConnConfig) *PeerConn {
+	return acquirePeerConn(cfg)
 }
 
 // ResetOutboundPeerReleaseForTest clears the retiring-generation gate.
@@ -558,34 +575,45 @@ func (p *PeerConn) loop() {
 		if err != nil {
 			p.setState(stateUnauthenticated)
 			p.clearToken()
-			backoff = nextAttachBackoff(backoff, p.cfg.BackoffMin, p.cfg.BackoffMax)
+			backoff = p.attachBackoff(backoff)
 			continue
 		}
 		p.publishToken(tok, exp)
 		p.setState(stateReady)
-		backoff = 0
 		if p.firstOK.CompareAndSwap(false, true) {
 			RecordPeerReconnect(p.metricPeer(), ReconnectFirstAttach)
 		}
-		if err := p.serveWatch(tok, exp); err != nil {
+		watchAt := time.Now()
+		sawBeat, err := p.serveWatch(tok, exp)
+		if err != nil {
 			if p.ctx.Err() != nil {
 				return
 			}
-			if peerSessionReplaced(err) && p.replaced.Add(1) >= sessionReplacedReleaseAfter {
-				// The other generation's Attach won twice. Further Attach
-				// from here only cancels its Watch.
-				logging.Warn("peer rpc release: another generation owns this host identity",
-					"subsystem", "transport",
-					"host", p.cfg.HostAddress,
-					"peer", p.metricPeer(),
-				)
-				p.setState(stateUnauthenticated)
-				p.clearToken()
-				return
+			// A Watch that delivered a beat was healthy. The next failure
+			// starts again at BackoffMin. Fast failures (no beat) keep
+			// growing, including across a successful Attach.
+			if sawBeat {
+				backoff = 0
+			}
+			if peerSessionReplaced(err) {
+				if time.Since(watchAt) >= sessionReplacedHealthyWatch {
+					p.replaced.Store(0)
+				}
+				// Only the retiring generation stops. A live process
+				// Attaches again so two front doors cannot deadlock.
+				if outboundPeerReleased.Load() && p.replaced.Add(1) >= sessionReplacedReleaseAfter {
+					logging.Warn("peer rpc release: another generation owns this host identity",
+						"subsystem", "transport",
+						"host", p.cfg.HostAddress,
+						"peer", p.metricPeer(),
+					)
+					p.dropAfterSessionReplaced()
+					return
+				}
 			}
 			p.setState(stateUnauthenticated)
 			p.clearToken()
-			backoff = p.cfg.BackoffMin
+			backoff = p.attachBackoff(backoff)
 		}
 	}
 }
@@ -658,13 +686,20 @@ func (p *PeerConn) doorWaiter() <-chan struct{} {
 	return p.doorCh
 }
 
-func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
+func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 	// Refresh is scheduled on its own deadline so it still fires while Watch
-	// is down. Shutting down and EOF reopen Watch with the same token.
+	// is down. Shutting down, EOF, and a local stream-cap refusal reopen
+	// Watch with the same token, on the same exponential backoff as Attach.
 	// session replaced, session expired, and any other Unauthenticated end
 	// the loop so the caller clears the token and Attaches again.
 	refreshBackoff := time.Duration(0)
+	var reopenBackoff atomic.Int64
+	var sawBeat atomic.Bool
 	refreshDue := time.Now().Add(p.nextRefreshWait(exp, 0))
+	noteBeat := func() {
+		sawBeat.Store(true)
+		reopenBackoff.Store(0)
+	}
 	var (
 		cancelWatch context.CancelFunc
 		watchErr    chan error
@@ -684,7 +719,7 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 		cancelWatch = cancel
 		watchErr = make(chan error, 1)
 		go func(token []byte) {
-			watchErr <- p.watch(watchCtx, token)
+			watchErr <- p.watch(watchCtx, token, noteBeat)
 		}(append([]byte(nil), token...))
 	}
 	startWatch(tok)
@@ -698,7 +733,7 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 		var reopenTimer *time.Timer
 		var reopenC <-chan time.Time
 		if cancelWatch == nil {
-			reopenTimer = time.NewTimer(p.reopenWait())
+			reopenTimer = time.NewTimer(p.reopenWait(time.Duration(reopenBackoff.Load())))
 			reopenC = reopenTimer.C
 		}
 		refreshWait := time.Until(refreshDue)
@@ -711,7 +746,7 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 			stopTimer(refreshTimer)
 			stopTimer(reopenTimer)
 			stopWatch()
-			return p.ctx.Err()
+			return sawBeat.Load(), p.ctx.Err()
 		case err := <-watchC:
 			stopTimer(refreshTimer)
 			stopTimer(reopenTimer)
@@ -721,19 +756,21 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 			cancelWatch = nil
 			watchErr = nil
 			if p.ctx.Err() != nil {
-				return p.ctx.Err()
+				return sawBeat.Load(), p.ctx.Err()
 			}
 			if err == nil {
 				err = io.EOF
 			}
 			// A dead HTTP/2 origin leaves this loop. The next Attach probes
-			// h2 again and does not use InferenceUrl. Shutting down and a
-			// clean EOF stay here and reopen Watch with the same token.
-			if !isRPCH2TransportMiss(err) && watchReopen(err) {
+			// h2 again and does not use InferenceUrl. Shutting down, a
+			// clean EOF, and a local stream-cap refusal stay here and
+			// reopen Watch with the same token.
+			if errors.Is(err, errWatchStreamCap) || (!isRPCH2TransportMiss(err) && watchReopen(err)) {
+				reopenBackoff.Store(int64(p.attachBackoff(time.Duration(reopenBackoff.Load()))))
 				continue
 			}
 			p.incReattach(reattachReasonWatch)
-			return err
+			return sawBeat.Load(), err
 		case <-reopenC:
 			stopTimer(refreshTimer)
 			startWatch(tok)
@@ -750,7 +787,7 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 					// keep Watch and retry refresh.
 					stopWatch()
 					p.incReattach(reattachReasonWatch)
-					return err
+					return sawBeat.Load(), err
 				}
 				// Watch and token stay. Retry refresh; do not drop to
 				// unauthenticated.
@@ -768,11 +805,26 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) error {
 	}
 }
 
-func (p *PeerConn) reopenWait() time.Duration {
-	if p.cfg.BackoffMin > 0 {
-		return p.cfg.BackoffMin
+func (p *PeerConn) reopenWait(backoff time.Duration) time.Duration {
+	if backoff <= 0 {
+		backoff = p.cfg.BackoffMin
+		if backoff <= 0 {
+			backoff = defaultAttachBackoffMin
+		}
 	}
-	return defaultAttachBackoffMin
+	return p.cfg.jitter(backoff)
+}
+
+func (p *PeerConn) attachBackoff(prev time.Duration) time.Duration {
+	min := p.cfg.BackoffMin
+	if min <= 0 {
+		min = defaultAttachBackoffMin
+	}
+	max := p.cfg.BackoffMax
+	if max <= 0 {
+		max = defaultAttachBackoffMax
+	}
+	return nextAttachBackoff(prev, min, max)
 }
 
 func stopTimer(t *time.Timer) {
@@ -835,9 +887,9 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 	if p.cfg.Signer == nil {
 		return nil, time.Time{}, fmt.Errorf("peer conn: signer is required")
 	}
-	// One DefaultAttachTimeout. When H2URL is set the probe is capped at
-	// h2ProbeTimeout and a miss returns that error. InferenceUrl is not
-	// a second attempt.
+	// One DefaultAttachTimeout for the Attach RPC, including a cold door
+	// lookup. Dial and TLS use h2ProbeTimeout inside the h2 transport.
+	// InferenceUrl is not a second attempt.
 	overall, cancel := context.WithTimeout(p.ctx, DefaultAttachTimeout)
 	defer cancel()
 	if p.liveSession() {
@@ -869,9 +921,7 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 		}
 		if !h2Tried && p.shouldProbeH2() {
 			p.origin.setH2(true)
-			h2ctx, h2cancel := context.WithTimeout(overall, p.h2ProbeTimeout())
-			tok, exp, err := p.attachOnce(h2ctx, p.doorAuthClient(door), msg)
-			h2cancel()
+			tok, exp, err := p.attachOnce(overall, p.doorAuthClient(door), msg)
 			h2Tried = true
 			if err == nil {
 				return tok, exp, nil
@@ -929,7 +979,13 @@ func (p *PeerConn) newAttachRequest() (*rpcpb.AttachRequest, error) {
 }
 
 func (p *PeerConn) attachOnce(ctx context.Context, client rpcpbconnect.PeerAuthServiceClient, msg *rpcpb.AttachRequest) ([]byte, time.Time, error) {
-	resp, err := client.Attach(ctx, connect.NewRequest(msg))
+	req := connect.NewRequest(msg)
+	// A refresh already holds a session token. The child skips the anonymous
+	// Attach bucket only when LookupToken accepts this header.
+	if tok := p.LiveToken(); len(tok) > 0 {
+		SetSessionHeader(req.Header(), tok)
+	}
+	resp, err := client.Attach(ctx, req)
 	if err != nil {
 		// Timeout/cancel of this Attach must win over a racing RST /
 		// INTERNAL_ERROR so a slow live refresh is not an h2 miss.
@@ -971,9 +1027,9 @@ func (p *PeerConn) peerAuthClient(host bool) rpcpbconnect.PeerAuthServiceClient 
 	return p.doorAuthClient(door)
 }
 
-func (p *PeerConn) h2ProbeTimeout() time.Duration {
-	if p.cfg.H2ProbeTimeout > 0 {
-		return p.cfg.H2ProbeTimeout
+func h2ProbeTimeout(cfg PeerConnConfig) time.Duration {
+	if cfg.H2ProbeTimeout > 0 {
+		return cfg.H2ProbeTimeout
 	}
 	return DefaultRPCH2ProbeTimeout
 }
@@ -1054,9 +1110,9 @@ func (p *PeerConn) attachExpiry(expiresAt int64) (time.Time, error) {
 	return exp, nil
 }
 
-func (p *PeerConn) watch(ctx context.Context, token []byte) error {
+func (p *PeerConn) watch(ctx context.Context, token []byte, onBeat func()) error {
 	if !p.acquireStream() {
-		return connect.NewError(connect.CodeResourceExhausted, errors.New("too many concurrent streams"))
+		return errWatchStreamCap
 	}
 	defer p.releaseStream()
 	req := connect.NewRequest(&rpcpb.WatchRequest{SessionToken: token})
@@ -1115,6 +1171,9 @@ func (p *PeerConn) watch(ctx context.Context, token []byte) error {
 					return io.EOF
 				}
 				return r.err
+			}
+			if onBeat != nil {
+				onBeat()
 			}
 			if !timer.Stop() {
 				select {
@@ -1212,7 +1271,7 @@ func (p *PeerConn) Ready() bool {
 }
 
 // metricPeer is the Prometheus / adoption identity: addr@version.
-// Distinct from registryKey, which also includes BaseURL and signer.
+// Distinct from registryKey, which also includes the signer.
 func (p *PeerConn) metricPeer() string {
 	if p == nil {
 		return ""
@@ -1342,7 +1401,7 @@ func (p *PeerConn) Close() {
 }
 
 // PeerConnRegistered is whether any registry-backed PeerConn is still live
-// for this host+version (any signer / BaseURL).
+// for this host+version (any signer).
 func PeerConnRegistered(hostAddress, version string) bool {
 	if hostAddress == "" {
 		return false
@@ -1359,6 +1418,21 @@ func PeerConnRegistered(hostAddress, version string) bool {
 		}
 	}
 	return false
+}
+
+// dropAfterSessionReplaced removes this conn from the registry and cancels
+// it. The loop then returns. WaitReady observes the cancelled context.
+// The next SelectTransport does not receive this object.
+func (p *PeerConn) dropAfterSessionReplaced() {
+	p.setState(stateUnauthenticated)
+	p.clearToken()
+	peerConnMu.Lock()
+	if p.key != "" && peerConnRegistry[p.key] == p {
+		delete(peerConnRegistry, p.key)
+	}
+	peerConnMu.Unlock()
+	p.cancel()
+	p.wakeWaiters()
 }
 
 // Release drops a registry reference and Closes when the last user leaves.

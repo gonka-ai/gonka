@@ -17,8 +17,38 @@ func TestSessionStoreMemoryQueriesStayZero(t *testing.T) {
 
 func TestSinceReadsAcrossSeqGaps(t *testing.T) {
 	require.Contains(t, sinceSessionsSQL, "seq >")
+	require.Contains(t, sinceSessionsSQL, "updated_at >")
 	require.Contains(t, sinceSessionsSQL, "host_address = $1")
 	require.Contains(t, sinceSessionsSQL, "version = $2")
+}
+
+func TestWatermarkHoldsAGapUntilTheMissingSeqArrives(t *testing.T) {
+	s := &SharedSessions{}
+	now := time.Now()
+	mark, advanced := s.noteAppliedSeqs([]int64{10}, now)
+	require.True(t, advanced)
+	require.Equal(t, int64(10), mark)
+
+	mark, advanced = s.noteAppliedSeqs([]int64{12}, now)
+	require.False(t, advanced)
+	require.Equal(t, int64(10), s.applied.Load())
+	require.Equal(t, int64(10), mark)
+
+	mark, advanced = s.noteAppliedSeqs([]int64{11}, now)
+	require.True(t, advanced)
+	require.Equal(t, int64(12), mark)
+}
+
+func TestWatermarkExpiresAnAbandonedHole(t *testing.T) {
+	s := &SharedSessions{}
+	now := time.Now()
+	_, advanced := s.noteAppliedSeqs([]int64{10, 12}, now)
+	require.True(t, advanced)
+	require.Equal(t, int64(10), s.applied.Load())
+
+	mark, advanced := s.noteAppliedSeqs(nil, now.Add(sharedSeqHoleGrace))
+	require.True(t, advanced)
+	require.Equal(t, int64(12), mark)
 }
 
 func TestApplySharedHigherSeqWinsAndStopsWatch(t *testing.T) {

@@ -130,7 +130,46 @@ func AllRPCEndpoints() EndpointSet {
 	return set
 }
 
-var endpointsIgnoredOnce sync.Once
+var (
+	endpointsIgnoredOnce sync.Once
+	partialRPCWarnOnce   sync.Once
+)
+
+// ResolveRPCEndpoints returns every Connect method. An empty set is "not
+// set". A partial list, "off", or an unknown name is logged and replaced
+// with the full set so a retired Echo route is not the transport.
+func ResolveRPCEndpoints(set EndpointSet) EndpointSet {
+	if set.Empty() || endpointSetCoversAttach(set) {
+		if set.Empty() {
+			return AllRPCEndpoints()
+		}
+		return set
+	}
+	partialRPCWarnOnce.Do(func() {
+		names := make([]string, 0, len(set))
+		for name := range set {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		logging.Warn("peer RPC endpoint list is incomplete; every Connect method is used",
+			"subsystem", "transport",
+			"configured", strings.Join(names, ","),
+		)
+	})
+	return AllRPCEndpoints()
+}
+
+func endpointSetCoversAttach(set EndpointSet) bool {
+	if len(set) != len(attachRPCEndpoints) {
+		return false
+	}
+	for _, name := range attachRPCEndpoints {
+		if !set.Has(name) {
+			return false
+		}
+	}
+	return true
+}
 
 // RPCEndpointsFromEnv is every Connect method. DEVSHARD_RPC_ENDPOINTS is
 // ignored: a partial list or "off" used to send those methods to the retired

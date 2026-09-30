@@ -138,8 +138,9 @@ func (p *repairPair) wirePeersFrom(prober int) {
 	peers := make(map[int]*HTTPClient)
 	for j, ts := range p.httpSrv {
 		peers[j] = NewHTTPClient(ts.URL, "escrow-1", p.user, ClientConfig{
-			QueryTimeout: DefaultRepairTimeout,
-			RoutePrefix:  testRoutePrefix,
+			AllowRetiredHTTPSession: true,
+			QueryTimeout:            DefaultRepairTimeout,
+			RoutePrefix:             testRoutePrefix,
 		})
 	}
 	p.servers[prober].SetPeerClients(HTTPPeerClients(peers))

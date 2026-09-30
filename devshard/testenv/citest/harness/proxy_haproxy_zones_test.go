@@ -26,6 +26,9 @@ import (
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
+// rpcProxySession is the session prefix the rpc_h2 allowlist requires.
+const rpcProxySession = "/v1/sessions/1/rpc"
+
 func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("..", "..", "proxy", "haproxy-rpc.cfg"))
 	require.NoError(t, err)
@@ -34,6 +37,9 @@ func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
 	require.Contains(t, got, "tune.h2.max-concurrent-streams 4096")
 	require.Contains(t, got, "http-request del-header X-Real-IP")
 	require.Contains(t, got, "X-Real-IP %[src]")
+	require.Contains(t, got, "path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$")
+	require.Contains(t, got, "path_end /devshard.transport.v1.PeerAuthService/Watch")
+	require.Contains(t, got, "track-sc1 src table st_rpc_watch")
 	require.Contains(t, got, "path_end /devshard.transport.v1.PeerAuthService/Attach")
 	require.Contains(t, got, "path_end /devshard.transport.v1.SessionService/GetDiffs")
 	require.Contains(t, got, "track-sc1 src table st_rpc_attach")
@@ -55,7 +61,7 @@ func TestProxyHAProxy_GetDiffsFloodDoesNotStarveChat(t *testing.T) {
 
 	var lastDiffs int
 	for i := 0; i < 8; i++ {
-		lastDiffs = mustProxyRPCStatus(t, client, fx.url, "/devshard.transport.v1.SessionService/GetDiffs")
+		lastDiffs = mustProxyRPCStatus(t, client, fx.url, rpcProxySession+"/devshard.transport.v1.SessionService/GetDiffs")
 		if lastDiffs == http.StatusTooManyRequests {
 			break
 		}
@@ -64,8 +70,51 @@ func TestProxyHAProxy_GetDiffsFloodDoesNotStarveChat(t *testing.T) {
 	require.Greater(t, fx.diffs.Load(), int32(0))
 	require.LessOrEqual(t, fx.diffs.Load(), int32(defaultRPCProxyTestLimits().DiffsRate))
 
-	require.Equal(t, http.StatusOK, mustProxyRPCStatus(t, client, fx.url, "/devshard.transport.v1.SessionService/Chat"))
+	require.Equal(t, http.StatusOK, mustProxyRPCStatus(t, client, fx.url, rpcProxySession+"/devshard.transport.v1.SessionService/Chat"))
 	require.Equal(t, int32(1), fx.chat.Load(), "Chat table is independent of GetDiffs")
+}
+
+func TestProxyHAProxy_EncodedAttachUsesAttachZone(t *testing.T) {
+	lim := defaultRPCProxyTestLimits()
+	lim.AttachRate = 2
+	fx := startRPCProxyHAProxy(t, lim)
+	client := newH2CClient(t)
+	proc := "/v1/sessions/1/rpc/devshard.transport.v1.PeerAuthService/%41ttach"
+
+	ok := 0
+	denied := 0
+	for i := 0; i < 6; i++ {
+		switch mustProxyRPCStatus(t, client, fx.url, proc) {
+		case http.StatusOK:
+			ok++
+		case http.StatusTooManyRequests:
+			denied++
+		default:
+			t.Fatalf("encoded attach status was neither 200 nor 429")
+		}
+	}
+	require.Equal(t, 2, ok, "decoded Attach must spend the attach zone")
+	require.Equal(t, 4, denied)
+	require.Equal(t, int32(2), fx.attach.Load(), "backend must see the decoded Attach path")
+
+	reserved := "/v1/sessions/1/rpc/devshard.transport.v1.PeerAuthService/%2Fttach"
+	require.Equal(t, http.StatusBadRequest, mustProxyRPCStatus(t, client, fx.url, reserved))
+	require.Equal(t, int32(2), fx.attach.Load(), "a leftover percent must not reach the child")
+}
+
+func TestProxyHAProxy_NonSessionPathDenied(t *testing.T) {
+	fx := startRPCProxyHAProxy(t, defaultRPCProxyTestLimits())
+	client := newH2CClient(t)
+	for _, path := range []string{
+		"/metrics",
+		"/stats/rpc",
+		"/sessions/1/diffs",
+		"/v1/sessions/1/rpc/../metrics",
+	} {
+		require.Equal(t, http.StatusNotFound, mustProxyRPCStatus(t, client, fx.url, path), path)
+	}
+	require.Equal(t, int32(0), fx.attach.Load()+fx.chat.Load()+fx.diffs.Load())
+	require.Equal(t, http.StatusOK, mustProxyRPCStatus(t, client, fx.url, "/sessions/_/rpc/devshard.transport.v1.PeerAuthService/Watch"))
 }
 
 func TestProxyHAProxy_AttachFloodNeverHitsBackend(t *testing.T) {
@@ -75,7 +124,7 @@ func TestProxyHAProxy_AttachFloodNeverHitsBackend(t *testing.T) {
 	ok := 0
 	denied := 0
 	for i := 0; i < 8; i++ {
-		code := mustProxyRPCStatus(t, client, fx.url, "/devshard.transport.v1.PeerAuthService/Attach")
+		code := mustProxyRPCStatus(t, client, fx.url, rpcProxySession+"/devshard.transport.v1.PeerAuthService/Attach")
 		switch code {
 		case http.StatusOK:
 			ok++
@@ -96,12 +145,12 @@ func TestProxyHAProxy_NativeGRPCRateLimitIsResourceExhausted(t *testing.T) {
 	fx := startRPCProxyHAProxy(t, lim)
 	httpClient := newH2CClient(t)
 
-	require.Equal(t, http.StatusOK, mustProxyRPCStatus(t, httpClient, fx.url, "/devshard.transport.v1.PeerAuthService/Attach"), "first Attach fills the zone")
+	require.Equal(t, http.StatusOK, mustProxyRPCStatus(t, httpClient, fx.url, rpcProxySession+"/devshard.transport.v1.PeerAuthService/Attach"), "first Attach fills the zone")
 	backendHits := fx.attach.Load()
-	require.Equal(t, http.StatusTooManyRequests, mustProxyRPCStatus(t, httpClient, fx.url, "/devshard.transport.v1.PeerAuthService/Attach"), "Connect keeps HTTP 429")
+	require.Equal(t, http.StatusTooManyRequests, mustProxyRPCStatus(t, httpClient, fx.url, rpcProxySession+"/devshard.transport.v1.PeerAuthService/Attach"), "Connect keeps HTTP 429")
 	require.Equal(t, backendHits, fx.attach.Load())
 
-	client := rpcpbconnect.NewPeerAuthServiceClient(httpClient, fx.url, connect.WithGRPC())
+	client := rpcpbconnect.NewPeerAuthServiceClient(httpClient, fx.url+rpcProxySession, connect.WithGRPC())
 	_, err := client.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{}))
 	require.Error(t, err)
 	require.Equal(t, backendHits, fx.attach.Load(), "native gRPC limit must not reach the backend")
@@ -111,7 +160,7 @@ func TestProxyHAProxy_NativeGRPCRateLimitIsResourceExhausted(t *testing.T) {
 func TestProxyHAProxy_XRealIPOverwrittenFromSrc(t *testing.T) {
 	fx := startRPCProxyHAProxy(t, defaultRPCProxyTestLimits())
 	client := newH2CClient(t)
-	req, err := http.NewRequest(http.MethodPost, fx.url+"/devshard.transport.v1.SessionService/Chat", nil)
+	req, err := http.NewRequest(http.MethodPost, fx.url+rpcProxySession+"/devshard.transport.v1.SessionService/Chat", nil)
 	require.NoError(t, err)
 	req.Header.Set("X-Real-IP", "203.0.113.9")
 	resp, err := client.Do(req)
@@ -133,10 +182,10 @@ func TestProxyHAProxy_SecondSrcNotThrottled(t *testing.T) {
 	a := startCurlPeer(t, fx.network)
 	b := startCurlPeer(t, fx.network)
 
-	codeA := a.flood(t, fx.alias, "/devshard.transport.v1.PeerAuthService/Attach", 6)
+	codeA := a.flood(t, fx.alias, rpcProxySession+"/devshard.transport.v1.PeerAuthService/Attach", 6)
 	require.Contains(t, codeA, "429", "first src must hit the Attach zone")
 
-	codeB := b.flood(t, fx.alias, "/devshard.transport.v1.PeerAuthService/Attach", 1)
+	codeB := b.flood(t, fx.alias, rpcProxySession+"/devshard.transport.v1.PeerAuthService/Attach", 1)
 	require.Contains(t, codeB, "200", "second src must not share the first src's stick-table, got %q", codeB)
 }
 
@@ -145,7 +194,9 @@ func TestProxyHAProxy_MoreThan100StreamsShareOneTCP(t *testing.T) {
 	started := make(chan struct{}, n)
 	release := make(chan struct{})
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/rpc/") {
+		// Hold is a session RPC path the allowlist admits and no zone
+		// counts, so the burst is one TCP rather than a 429.
+		if strings.HasSuffix(r.URL.Path, "/Hold") {
 			started <- struct{}{}
 			<-release
 		}
@@ -159,7 +210,7 @@ func TestProxyHAProxy_MoreThan100StreamsShareOneTCP(t *testing.T) {
 	// sees the server SETTINGS frame. One RPC on this client first so the
 	// 101-stream burst is judged against HAProxy's advertised 4096, not
 	// the library default (which would dial a second TCP at stream 101).
-	require.Equal(t, http.StatusOK, mustProxyRPCStatus(t, client, fx.url, "/devshard.transport.v1.SessionService/Chat"))
+	require.Equal(t, http.StatusOK, mustProxyRPCStatus(t, client, fx.url, rpcProxySession+"/devshard.transport.v1.SessionService/Chat"))
 	require.Equal(t, int32(1), dials.Load(), "warmup must open the mux")
 
 	var wg sync.WaitGroup
@@ -168,7 +219,7 @@ func TestProxyHAProxy_MoreThan100StreamsShareOneTCP(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			code, err := proxyRPCStatus(client, fx.url, "/rpc/")
+			code, err := proxyRPCStatus(client, fx.url, rpcProxySession+"/devshard.transport.v1.PeerAuthService/Hold")
 			if err != nil {
 				errCh <- err
 				return
@@ -299,7 +350,7 @@ func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet b
 		fx.url = "http://proxy:8443"
 		peer := startCurlPeer(t, fx.network)
 		waitHAProxyReady(t, name, func() (int, error) {
-			got := peer.flood(t, fx.alias, "/devshard.transport.v1.SessionService/Chat", 1)
+			got := peer.flood(t, fx.alias, rpcProxySession+"/devshard.transport.v1.SessionService/Chat", 1)
 			if strings.Contains(got, "200") {
 				return http.StatusOK, nil
 			}
@@ -317,7 +368,7 @@ func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet b
 
 	client := newH2CClient(t)
 	waitHAProxyReady(t, name, func() (int, error) {
-		return proxyRPCStatus(client, fx.url, "/devshard.transport.v1.SessionService/Chat")
+		return proxyRPCStatus(client, fx.url, rpcProxySession+"/devshard.transport.v1.SessionService/Chat")
 	})
 	fx.chat.Store(0)
 	return fx

@@ -120,7 +120,7 @@ func TestObserveChat_ApplicationStatusNotTransportFault(t *testing.T) {
 			cfg.ParticipantKey = "shared-host"
 			cfg.Admission = admission
 			rpc := &RPCClient{HTTPClient: NewHTTPClient("http://127.0.0.1", "escrow-1", signer, cfg)}
-			rpc.observeChat(path, tc.err)
+			rpc.observeConnect(path, tc.err)
 			if tc.silent {
 				require.Empty(t, admission.results)
 				require.Empty(t, admission.faults)
@@ -258,6 +258,42 @@ func TestRPCClient_Send_UnauthenticatedRetriesOnce(t *testing.T) {
 	require.Equal(t, 2, handler.calls)
 	require.Empty(t, admission.faults)
 	require.Len(t, admission.results, 2)
+}
+
+func TestRPCAttempt_AdmitsOnceAndObservesTheFinalStatus(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	cfg := DefaultClientConfig()
+	cfg.ParticipantKey = "shared-host"
+	admission := &bodyAdmission{}
+	cfg.Admission = admission
+	rpc := &RPCClient{HTTPClient: NewHTTPClient("http://127.0.0.1", "escrow-1", signer, cfg)}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	calls := 0
+	err := rpc.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetDiffsProcedure, func() error {
+		calls++
+		disabled := connect.NewError(connect.CodeUnavailable, errors.New("requests disabled"))
+		disabled.Meta().Set(HeaderDevshardError, DevshardErrorRequestsDisabled)
+		return disabled
+	})
+	require.Error(t, err)
+	require.GreaterOrEqual(t, calls, 1)
+	require.Empty(t, admission.faults)
+	require.Equal(t, []string{"503 " + DevshardErrorRequestsDisabled + " requests disabled"}, admission.results)
+
+	blocked := &bodyAdmission{allowErr: errors.New("participant request budget exhausted")}
+	cfg.Admission = blocked
+	rpc = &RPCClient{HTTPClient: NewHTTPClient("http://127.0.0.1", "escrow-1", signer, cfg)}
+	calls = 0
+	err = rpc.rpcAttempt(context.Background(), rpcpbconnect.GossipServiceNonceProcedure, func() error {
+		calls++
+		return nil
+	})
+	require.ErrorContains(t, err, "participant request budget exhausted")
+	require.Equal(t, 0, calls)
+	require.Empty(t, blocked.results)
+	require.Empty(t, blocked.faults)
 }
 
 func TestRPCClient_Send_AllowRequestSkipsTheHost(t *testing.T) {

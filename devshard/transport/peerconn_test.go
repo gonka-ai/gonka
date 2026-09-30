@@ -829,7 +829,7 @@ func TestSelectTransport_DifferentSignersDoNotSharePeerConn(t *testing.T) {
 	require.Equal(t, b.signer.Address(), rpcB.conn.cfg.Signer.Address())
 }
 
-func TestSelectTransport_DifferentBaseURLDoNotSharePeerConn(t *testing.T) {
+func TestSelectTransport_SameSignerSharesPeerConnAcrossBaseURL(t *testing.T) {
 	host := "gonka1twourls"
 	signer := devtest.MustGenerateKey(t)
 	a := NewHTTPClient("http://peer-a.example", "escrow-1", signer)
@@ -839,11 +839,10 @@ func TestSelectTransport_DifferentBaseURLDoNotSharePeerConn(t *testing.T) {
 	rpcB := SelectTransport(b, host, set, nil).(*RPCClient)
 	t.Cleanup(rpcA.Close)
 	t.Cleanup(rpcB.Close)
-	require.NotSame(t, rpcA.conn, rpcB.conn)
+	require.Same(t, rpcA.conn, rpcB.conn)
 	require.Equal(t, a.BaseURL(), rpcA.conn.cfg.BaseURL)
-	require.Equal(t, b.BaseURL(), rpcB.conn.cfg.BaseURL)
+	require.Equal(t, a.BaseURL(), rpcB.conn.cfg.BaseURL)
 	require.Contains(t, rpcA.conn.cfg.connectBase(a.escrowID), "peer-a.example")
-	require.Contains(t, rpcB.conn.cfg.connectBase(b.escrowID), "peer-b.example")
 }
 
 func TestPeerConn_AcquireReleaseRace(t *testing.T) {

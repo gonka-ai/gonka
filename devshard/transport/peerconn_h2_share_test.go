@@ -134,7 +134,7 @@ func waitPeerReadyTimeout(t *testing.T, pc *transport.PeerConn, d time.Duration)
 }
 
 // TestPeerConn_TenEscrowsShareOneH2Conn is one process in 10 escrows talking to
-// one host. Sessions stay per (host, version, BaseURL, signer); the TCP+h2
+// one host. Sessions stay per (host, version, signer); the TCP+h2
 // mux to that host is shared.
 func TestPeerConn_TenEscrowsShareOneH2Conn(t *testing.T) {
 	const n = 10

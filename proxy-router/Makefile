@@ -35,6 +35,7 @@ test-render: test-route-status
 	HAPROXY_DNS_RESOLVER=10.96.0.10:53 \
 	PROXY_ROUTER_CATALOG_BIND_HOST=localhost \
 	PROXY_ROUTER_CATALOG_UPSTREAM_HOST=api \
+	PROXY_ROUTER_PROXY_PROTOCOL_FROM= \
 	VERSIOND_NON_HA_VERSIONS='v1 v2 v3' \
 	VERSIOND_VERSIONS='v4 v5' \
 	./entrypoint.sh; \
@@ -169,12 +170,51 @@ test-render: test-route-status
 		END { exit !found } \
 	' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen does not stamp X-Real-IP from src"; \
+	awk ' \
+		$$0 ~ "^frontend rpc_h2$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /path-strip-dotdot/ { dotdot = 1 } \
+		inside && /table st_rpc_watch if is_watch/ { watch = 1 } \
+		END { exit !(dotdot && watch) } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC listen does not strip dot-dot or Watch has no zone"; \
+	grep -F -q 'deny deny_status 404 unless { path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$$ }' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC listen forwards paths other than session RPC"; \
+	grep -q '^backend st_rpc_watch$$' "$$tmpdir/proxy.cfg" \
+		|| fail "Watch request zone was not rendered"; \
 	if grep -q 'X-Versiond-Router-Addr' "$$tmpdir/proxy.cfg"; then \
 		fail "public responses expose an internal upstream address"; \
 	fi; \
 	if grep -q 'expect-proxy' "$$tmpdir/proxy.cfg"; then \
 		fail "direct ingress unexpectedly requires an incoming PROXY preamble"; \
 	fi; \
+	HAPROXY_BIN=true \
+	PROXY_ROUTER_RENDER_ONLY=1 \
+	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+	PROXY_ROUTER_OUT="$$tmpdir/proxy-lb.cfg" \
+	PROXY_ROUTER_VERSION_MAP="$$tmpdir/lb.map" \
+	HAPROXY_DNS_RESOLVER=10.96.0.10:53 \
+	PROXY_ROUTER_CATALOG_BIND_HOST=localhost \
+	PROXY_ROUTER_CATALOG_UPSTREAM_HOST=api \
+	PROXY_ROUTER_PROXY_PROTOCOL_FROM='10.0.0.0/8' \
+	VERSIOND_NON_HA_VERSIONS='v1 v2 v3' \
+	VERSIOND_VERSIONS='v4 v5' \
+	./entrypoint.sh; \
+	awk ' \
+		$$0 ~ "^frontend rpc_h2$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /acl trusted_external_proxy src 10\.0\.0\.0\/8/ { acl = 1 } \
+		inside && /expect-proxy layer4 if trusted_external_proxy/ { if (!expect) expect = 1; seen = 1 } \
+		inside && /track-sc0 src/ && seen { after = 1 } \
+		END { exit !(acl && expect && after) } \
+	' "$$tmpdir/proxy-lb.cfg" \
+		|| fail "peer RPC listen does not expect PROXY before tracking src"; \
+	docker run --rm --user "$$(id -u):$$(id -g)" \
+		-v "$$tmpdir:$$tmpdir:ro" \
+		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
+		haproxy -c -f "$$tmpdir/proxy-lb.cfg" >/dev/null \
+		|| fail "rendered PROXY-protocol proxy config is invalid"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
 		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
@@ -376,10 +416,10 @@ test-render: test-route-status
 	PROXY_ROUTER_VERSION_MAP="$$tmpdir/trusted-lb.map" \
 	PROXY_ROUTER_PROXY_PROTOCOL_FROM='192.0.2.10/32 2001:db8::/48' \
 	./entrypoint.sh; \
-	[ "$$(grep -c '^ *acl trusted_external_proxy src 192.0.2.10/32 2001:db8::/48$$' "$$tmpdir/trusted-lb.cfg")" -eq 2 ] \
-		|| fail "trusted external LB CIDRs were not rendered on both public listeners"; \
-	[ "$$(grep -c '^ *tcp-request connection expect-proxy layer4 if trusted_external_proxy$$' "$$tmpdir/trusted-lb.cfg")" -eq 2 ] \
-		|| fail "public listeners do not consume trusted PROXY preambles"; \
+	[ "$$(grep -c '^ *acl trusted_external_proxy src 192.0.2.10/32 2001:db8::/48$$' "$$tmpdir/trusted-lb.cfg")" -eq 3 ] \
+		|| fail "trusted external LB CIDRs were not rendered on the public listeners and rpc_h2"; \
+	[ "$$(grep -c '^ *tcp-request connection expect-proxy layer4 if trusted_external_proxy$$' "$$tmpdir/trusted-lb.cfg")" -eq 3 ] \
+		|| fail "public listeners and rpc_h2 do not consume trusted PROXY preambles"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
 		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \

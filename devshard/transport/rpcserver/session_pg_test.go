@@ -382,4 +382,44 @@ INSERT INTO devshard_peer_rpc_members (
 		h.Close()
 		require.Equal(t, 1, countLiveSessions(t, pool), "shutdown must not delete session rows")
 	})
+
+	t.Run("catch_up_applies_seq_committed_after_a_higher_one", func(t *testing.T) {
+		truncatePeerRPC(t, pool)
+		h := startHAHandler(t, pool, PeerAuthConfig{})
+		ctx := context.Background()
+		conn, err := pool.Acquire(ctx)
+		require.NoError(t, err)
+		t.Cleanup(conn.Release)
+		tx, err := conn.Begin(ctx)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = tx.Rollback(ctx) })
+
+		low := nonceN(0x51)
+		lowSum := sha256.Sum256(low)
+		_, err = tx.Exec(ctx, `
+INSERT INTO devshard_peer_rpc_sessions (
+    token_hash, host_address, version, peer, attached_unix, expires_at, grace_until, state, seq, origin, updated_at
+) VALUES (
+    $1, $2, $3, 'peer-low', $4, now() + interval '5 minutes', NULL, 'live',
+    nextval('devshard_peer_rpc_session_seq'), 'test', now()
+)`, lowSum[:], testHostAddress, haTestVersion, time.Now().Unix())
+		require.NoError(t, err)
+
+		high := nonceN(0x52)
+		insertLiveRow(t, pool, haTestVersion, "peer-high", high)
+		_, err = pool.Exec(ctx, `SELECT pg_notify($1, '')`, sessionNotifyChannel)
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			peer, ok := h.LookupToken(high)
+			return ok && peer == "peer-high"
+		}, 5*time.Second, 20*time.Millisecond, "higher seq was not applied")
+
+		require.NoError(t, tx.Commit(ctx))
+		_, err = pool.Exec(ctx, `SELECT pg_notify($1, '')`, sessionNotifyChannel)
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			peer, ok := h.LookupToken(low)
+			return ok && peer == "peer-low"
+		}, 5*time.Second, 20*time.Millisecond, "seq committed after a higher one was not applied")
+	})
 }

@@ -176,8 +176,9 @@ func TestIsRPCH2Miss(t *testing.T) {
 	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, errors.New("host initializing"))))
 	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, errors.New("connection refused"))))
 	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnknown, errors.New("decode"))))
-	require.True(t, isRPCH2Miss(context.DeadlineExceeded))
-	require.True(t, isRPCH2Miss(context.Canceled))
+	require.False(t, isRPCH2Miss(context.DeadlineExceeded))
+	require.False(t, isRPCH2Miss(context.Canceled))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)))
 	op := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}
 	require.True(t, isRPCH2Miss(op))
 	require.True(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, op)),
@@ -198,8 +199,8 @@ func TestIsRPCH2TransportMissOmitsDeadline(t *testing.T) {
 		"live refresh timeout must not look like a dead origin")
 	require.False(t, isRPCH2TransportMiss(context.Canceled))
 	require.False(t, isRPCH2TransportMiss(connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)))
-	require.True(t, isRPCH2Miss(context.DeadlineExceeded), "first-Attach probe still treats deadline as an h2 miss")
-	require.True(t, isRPCH2Miss(connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)))
+	require.False(t, isRPCH2Miss(context.DeadlineExceeded), "Attach deadline is not an h2 miss")
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)))
 
 	op := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}
 	require.True(t, isRPCH2TransportMiss(op))

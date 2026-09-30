@@ -2318,6 +2318,14 @@ func gatewayStatusCodeForError(err error) int {
 	if u := transport.UndeclaredVersionFromError(err); u != nil {
 		return http.StatusServiceUnavailable
 	}
+	if status, code, message, ok := transport.ConnectApplicationStatus(err); ok {
+		if transport.IsUndeclaredVersionError(status, message, code) {
+			return http.StatusServiceUnavailable
+		}
+		if isParticipantThrottleStatus(status) {
+			return http.StatusTooManyRequests
+		}
+	}
 	var upstreamErr *transport.UpstreamStatusError
 	if errors.As(err, &upstreamErr) && isParticipantThrottleStatus(upstreamErr.StatusCode) {
 		return http.StatusTooManyRequests

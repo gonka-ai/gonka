@@ -73,6 +73,31 @@ func TestPeerConn_H2Success(t *testing.T) {
 	require.Zero(t, infHits.Load(), "Connect must not fall back to InferenceUrl when h2 works")
 }
 
+func TestPeerConn_SlowAttachUsesFullHandshakeTimeout(t *testing.T) {
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{
+		Heartbeat: 50 * time.Millisecond,
+	})
+	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(nil))
+	h2 := httptest.NewServer(h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "PeerAuthService/Attach") {
+			time.Sleep(400 * time.Millisecond)
+		}
+		mux.ServeHTTP(w, r.WithContext(rpcserver.WithEscrowID(r.Context(), "escrow-1")))
+	}), &http2.Server{}))
+	t.Cleanup(h2.Close)
+	t.Cleanup(auth.Close)
+
+	var infHits atomic.Int32
+	inf := startPeerRPCServerCounted(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, &infHits)
+	pc := h2PeerConn(t, inf, hostAddr, peer, h2.URL)
+	pc.Start()
+	waitPeerReady(t, pc)
+	require.True(t, pc.UsingH2())
+	require.Zero(t, infHits.Load(), "a slow Attach must stay on h2")
+}
+
 func TestPeerConn_H2PortClosedFailsClosed(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)

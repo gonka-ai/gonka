@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -32,11 +33,23 @@ type SharedSessions struct {
 	version string
 	apply   func([]sessionRow, []byte)
 
-	applied atomic.Int64
+	applied atomic.Int64 // contiguous watermark published as applied_seq
 	ready   atomic.Bool
 	sqlN    atomic.Int64
 	closed  atomic.Bool
 	inst    atomic.Value // string
+
+	// wmMu guards the catch-up cursor. highWater is the highest seq seen.
+	// pending holds seqs above the contiguous watermark. A missing integer
+	// between the watermark and the next pending seq is an in-flight or
+	// rolled-back nextval; it holds the watermark until it appears or
+	// sharedSeqHoleGrace passes.
+	wmMu         sync.Mutex
+	highWater    int64
+	baseline     int64
+	bootstrapped bool
+	gapSince     time.Time
+	pending      map[int64]struct{}
 
 	startOnce sync.Once
 	closeOnce sync.Once
@@ -281,26 +294,134 @@ func (s *SharedSessions) listenOnce(ctx context.Context) error {
 
 func (s *SharedSessions) catchUp(ctx context.Context, conn *pgx.Conn) error {
 	s.sqlN.Add(1)
-	rows, err := conn.Query(ctx, sinceSessionsSQL, s.host, s.version, s.applied.Load())
+	now := time.Now()
+	high, since := s.catchupBounds(now)
+	rows, err := conn.Query(ctx, sinceSessionsSQL, s.host, s.version, high, since)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	got, maxSeq, err := scanSessionRows(rows, s.host, s.version)
+	got, _, err := scanSessionRows(rows, s.host, s.version)
 	if err != nil {
 		return err
 	}
-	prev := s.applied.Load()
 	if len(got) > 0 && s.apply != nil {
 		s.apply(got, nil)
 	}
-	if maxSeq > prev {
-		ensureSessionHAMetrics()
-		applyLagSeq.Set(float64(maxSeq - prev))
-		s.applied.Store(maxSeq)
-		return s.upsertMember(ctx, true)
+	seqs := make([]int64, 0, len(got))
+	for _, row := range got {
+		if row.Seq > 0 {
+			seqs = append(seqs, row.Seq)
+		}
 	}
-	return nil
+	prev := s.applied.Load()
+	mark, advanced := s.noteAppliedSeqs(seqs, now)
+	if !advanced {
+		return nil
+	}
+	ensureSessionHAMetrics()
+	applyLagSeq.Set(float64(mark - prev))
+	return s.upsertMember(ctx, true)
+}
+
+func (s *SharedSessions) catchupBounds(now time.Time) (int64, time.Time) {
+	s.wmMu.Lock()
+	defer s.wmMu.Unlock()
+	return s.highWater, now.Add(-sharedApplyLookback)
+}
+
+// noteAppliedSeqs records seqs this process has applied. The returned mark is
+// the highest contiguous seq: a hole left by an in-flight nextval does not
+// advance it. advanced is true when that mark moved and should be published.
+func (s *SharedSessions) noteAppliedSeqs(seqs []int64, now time.Time) (int64, bool) {
+	if s == nil {
+		return 0, false
+	}
+	s.wmMu.Lock()
+	defer s.wmMu.Unlock()
+	if s.pending == nil {
+		s.pending = map[int64]struct{}{}
+	}
+	ordered := append([]int64(nil), seqs...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	for _, seq := range ordered {
+		if seq <= 0 {
+			continue
+		}
+		if seq > s.highWater {
+			s.highWater = seq
+		}
+		if !s.bootstrapped {
+			s.bootstrapped = true
+			s.baseline = seq
+			continue
+		}
+		floor := s.applied.Load()
+		if floor == 0 {
+			floor = s.baseline
+		}
+		if seq <= floor {
+			continue
+		}
+		s.pending[seq] = struct{}{}
+	}
+	return s.walkWatermarkLocked(now)
+}
+
+func (s *SharedSessions) walkWatermarkLocked(now time.Time) (int64, bool) {
+	start := s.applied.Load()
+	if !s.bootstrapped {
+		return start, false
+	}
+	prev := start
+	if prev == 0 {
+		prev = s.baseline
+	}
+	for {
+		next, ok := minPending(s.pending)
+		if !ok {
+			s.gapSince = time.Time{}
+			break
+		}
+		if next <= prev {
+			delete(s.pending, next)
+			continue
+		}
+		if next == prev+1 {
+			prev = next
+			delete(s.pending, next)
+			s.gapSince = time.Time{}
+			continue
+		}
+		if s.gapSince.IsZero() {
+			s.gapSince = now
+		}
+		if now.Sub(s.gapSince) < sharedSeqHoleGrace {
+			break
+		}
+		// The missing seq did not commit inside the grace. Skip it so the
+		// watermark can move. A later commit is still applied via the
+		// updated_at lookback.
+		prev = next - 1
+		s.gapSince = time.Time{}
+	}
+	if prev == start {
+		return prev, false
+	}
+	s.applied.Store(prev)
+	return prev, true
+}
+
+func minPending(pending map[int64]struct{}) (int64, bool) {
+	var min int64
+	ok := false
+	for seq := range pending {
+		if !ok || seq < min {
+			min = seq
+			ok = true
+		}
+	}
+	return min, ok
 }
 
 func (s *SharedSessions) heartbeatLoop(ctx context.Context) {
@@ -314,6 +435,7 @@ func (s *SharedSessions) heartbeatLoop(ctx context.Context) {
 			if !s.ready.Load() || s.closed.Load() {
 				continue
 			}
+			_, _ = s.noteAppliedSeqs(nil, time.Now())
 			_ = s.upsertMember(ctx, true)
 		}
 	}
@@ -371,6 +493,8 @@ func (s *SharedSessions) Commit(ctx context.Context, in attachCommit) (attachOut
 		if out.Seq == 0 {
 			return errors.New("peer rpc session commit produced no seq")
 		}
+		// Publish the contiguous watermark, not this commit's seq. A higher
+		// seq can commit while a lower nextval is still open.
 		s.sqlN.Add(1)
 		if _, err := tx.Exec(ctx, `
 INSERT INTO devshard_peer_rpc_members (
@@ -380,7 +504,7 @@ ON CONFLICT (instance_id) DO UPDATE SET
     applied_seq = GREATEST(devshard_peer_rpc_members.applied_seq, EXCLUDED.applied_seq),
     heartbeat_at = now(),
     ready = true`,
-			s.instanceID(), s.host, s.version, out.Seq); err != nil {
+			s.instanceID(), s.host, s.version, s.applied.Load()); err != nil {
 			return err
 		}
 		s.sqlN.Add(1)
@@ -390,8 +514,16 @@ ON CONFLICT (instance_id) DO UPDATE SET
 	if err != nil {
 		return attachOutcome{}, mapPGAttachErr(err)
 	}
-	if out.Seq > s.applied.Load() {
-		s.applied.Store(out.Seq)
+	seqs := make([]int64, 0, len(out.Rows))
+	for _, row := range out.Rows {
+		if row.Seq > 0 {
+			seqs = append(seqs, row.Seq)
+		}
+	}
+	if _, advanced := s.noteAppliedSeqs(seqs, time.Now()); advanced {
+		if upErr := s.upsertMember(ctx, true); upErr != nil {
+			slog.Warn("devshard peer rpc session watermark", "err", upErr, "version", s.version)
+		}
 	}
 	return out, nil
 }

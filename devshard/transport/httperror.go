@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"errors"
+
 	"github.com/labstack/echo/v4"
 )
 
@@ -38,6 +40,10 @@ const (
 
 // HTTPSessionRetiredMessage is the 410 body for a decommissioned Echo session route.
 const HTTPSessionRetiredMessage = "peer HTTP session route retired; use Connect /sessions/{id}/rpc/"
+
+// ErrHTTPSessionRetired is returned by HTTPClient before it posts a session
+// method whose Echo route answers 410. Connect is the live path.
+var ErrHTTPSessionRetired = errors.New(HTTPSessionRetiredMessage)
 
 // HTTPError returns an echo HTTP error and sets X-Devshard-Error when devshardCode is non-empty.
 func HTTPError(c echo.Context, code int, devshardCode, message string) error {
