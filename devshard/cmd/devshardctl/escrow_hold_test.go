@@ -109,7 +109,11 @@ func waitForHoldTopUpIdle(t *testing.T, gateway *Gateway) {
 	}, 2*time.Second, 10*time.Millisecond, "hold top-up did not finish")
 }
 
-func TestGatewayTopUpKeepsServingEscrowsAtHalfTheHeldOnes(t *testing.T) {
+// Test flow:
+//  1. Register heldCount held escrows and servingCount serving ones for a model with targetCount.
+//  2. Run one top-up.
+//  3. Expect only the shortfall against the rotation target to be minted, never a share of the held ones.
+func TestGatewayTopUpRefillsOnlyTheRotationTargetWhateverTheHeldCount(t *testing.T) {
 	for _, testCase := range []struct {
 		name         string
 		heldCount    int
@@ -118,9 +122,9 @@ func TestGatewayTopUpKeepsServingEscrowsAtHalfTheHeldOnes(t *testing.T) {
 		snapshot     ChainPhaseSnapshot
 		createdCount int
 	}{
-		{name: "four_held_one_serving_mints_one_for_half", heldCount: 4, servingCount: 1, targetCount: 1, snapshot: regularEpochSnapshot(1), createdCount: 1},
-		{name: "four_held_two_serving_mints_nothing", heldCount: 4, servingCount: 2, targetCount: 1, snapshot: regularEpochSnapshot(1), createdCount: 0},
-		{name: "three_held_none_serving_mints_two_for_half", heldCount: 3, servingCount: 0, targetCount: 1, snapshot: regularEpochSnapshot(1), createdCount: 2},
+		{name: "four_held_one_serving_meets_the_target_of_one", heldCount: 4, servingCount: 1, targetCount: 1, snapshot: regularEpochSnapshot(1), createdCount: 0},
+		{name: "three_held_none_serving_mints_one_for_the_target", heldCount: 3, servingCount: 0, targetCount: 1, snapshot: regularEpochSnapshot(1), createdCount: 1},
+		{name: "twenty_held_two_serving_mints_nothing_for_the_target_of_one", heldCount: 20, servingCount: 2, targetCount: 1, snapshot: regularEpochSnapshot(1), createdCount: 0},
 		{name: "one_held_fifteen_serving_refills_the_target_of_sixteen", heldCount: 1, servingCount: 15, targetCount: 16, snapshot: regularEpochSnapshot(1), createdCount: 1},
 		{name: "two_held_six_serving_refills_the_target_of_eight", heldCount: 2, servingCount: 6, targetCount: 8, snapshot: regularEpochSnapshot(1), createdCount: 2},
 		{name: "unknown_epoch_mints_nothing", heldCount: 4, servingCount: 1, targetCount: 8, snapshot: regularEpochSnapshot(0), createdCount: 0},
@@ -145,7 +149,7 @@ func TestGatewayTopUpMintsATempEscrowInsideTheBridgeWindow(t *testing.T) {
 }
 
 func TestGatewayCheckBalancesTopsUpServingEscrowsForHeldOnes(t *testing.T) {
-	gateway, recorder := newHoldTopUpGateway(t, 4, 1, 1, regularEpochSnapshot(1))
+	gateway, recorder := newHoldTopUpGateway(t, 4, 0, 1, regularEpochSnapshot(1))
 
 	gateway.checkBalances()
 	waitForHoldTopUpIdle(t, gateway)
@@ -231,7 +235,7 @@ func TestGatewayCheckBalancesReleasesAHeldEscrowOnceItsBalanceRecovers(t *testin
 	gateway, runtime, created, _ := newHeldEscrowGateway(t)
 	runBalanceTick(t, gateway, runtime.id)
 
-	setEscrowBalanceAndReservation(t, runtime, escrowHoldReleaseBalance(runtime.proxy.sm.Config()), 0)
+	setEscrowBalanceAndReservation(t, runtime, escrowHoldReleaseBalance(runtime.model, runtime.proxy.sm.Config()), 0)
 	runBalanceTick(t, gateway, runtime.id)
 
 	accepts, _ := runtime.acceptsNewInferences()

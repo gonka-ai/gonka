@@ -31,6 +31,22 @@ func newTestSM(t *testing.T, hosts []*signing.Secp256k1Signer, balance uint64) (
 	return sm, user
 }
 
+// requireValidationLeavesLiveStateUntouched validates diff without committing it and requires the live state and root to be exactly what they were.
+func requireValidationLeavesLiveStateUntouched(t *testing.T, sm *StateMachine, diff types.Diff) {
+	t.Helper()
+	before := sm.SnapshotState()
+	rootBefore, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
+
+	_, err = sm.ValidateDiff(diff)
+	require.NoError(t, err)
+
+	require.Equal(t, before, sm.SnapshotState(), "validating a diff changed the live state")
+	rootAfter, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter, "validating a diff changed the live state root")
+}
+
 func TestNewStateMachine_NormalizesInferenceSealGraceNonces(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
@@ -164,6 +180,99 @@ func TestPreviewLocalBestEffort_DoesNotCommit(t *testing.T) {
 	require.Equal(t, vd.Root, root2)
 	require.Len(t, applied2, 1)
 	require.Equal(t, uint64(1), sm.LatestNonce())
+}
+
+// Test flow:
+//  1. Fill a state machine with 200 pending inferences.
+//  2. Count the allocations of previewing the next nonce.
+//  3. The preview must allocate less than once per live inference.
+func TestPreviewLocalBestEffort_DoesNotAllocatePerInference(t *testing.T) {
+	const inferenceCount = 200
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 1_000_000_000)
+
+	startTxs := func(inferenceID uint64) []*types.DevshardTx {
+		return []*types.DevshardTx{txStart(&types.MsgStartInference{
+			InferenceId: inferenceID,
+			PromptHash:  []byte("prompt"),
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   testutil.TestMaxTokens,
+			StartedAt:   1000,
+		})}
+	}
+	for nonce := uint64(1); nonce <= inferenceCount; nonce++ {
+		_, _, err := sm.ApplyLocalBestEffort(nonce, startTxs(nonce))
+		require.NoError(t, err)
+	}
+	require.Len(t, sm.SnapshotState().Inferences, inferenceCount)
+
+	nextTxs := startTxs(inferenceCount + 1)
+	previewAllocs := testing.AllocsPerRun(10, func() {
+		_, err := sm.PreviewLocalBestEffort(inferenceCount+1, nextTxs)
+		require.NoError(t, err)
+	})
+
+	require.Less(t, previewAllocs, float64(inferenceCount))
+}
+
+// Test flow:
+//  1. Start an inference and record the live state root.
+//  2. Preview a ConfirmStart on it without committing.
+//  3. The live record and root must be unchanged; committing the preview must then promote the record.
+func TestPreviewOfARecordUpdateLeavesTheLiveRecordUntouched(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 10000)
+	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})})
+	require.NoError(t, err)
+	rootBefore, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
+
+	executorSignature := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	vd, err := sm.PreviewLocalBestEffort(2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+		InferenceId: 1, ExecutorSig: executorSignature, ConfirmedAt: 1000,
+	})})
+	require.NoError(t, err)
+	require.Len(t, vd.Applied, 1)
+
+	record, found := sm.GetInference(1)
+	require.True(t, found)
+	require.Equal(t, types.StatusPending, record.Status)
+	rootAfterPreview, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfterPreview)
+
+	require.True(t, sm.CommitValidated(vd))
+	record, found = sm.GetInference(1)
+	require.True(t, found)
+	require.Equal(t, types.StatusStarted, record.Status)
+	committedRoot, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, vd.Root, committedRoot)
+}
+
+// Test flow:
+//  1. Fill a state machine with 200 pending inferences.
+//  2. Count the allocations of one mutable-state snapshot.
+//  3. The snapshot must allocate less than once per inference.
+func TestSnapshotMutableDoesNotCopyEveryInferenceRecord(t *testing.T) {
+	const inferenceCount = 200
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 1_000_000_000)
+	for nonce := uint64(1); nonce <= inferenceCount; nonce++ {
+		_, _, err := sm.ApplyLocalBestEffort(nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
+			InferenceId: nonce, PromptHash: []byte("prompt"), Model: "llama",
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		})})
+		require.NoError(t, err)
+	}
+
+	snapshotAllocs := testing.AllocsPerRun(10, func() { sm.snapshotMutable() })
+
+	require.Less(t, snapshotAllocs, float64(inferenceCount))
 }
 
 func TestApplyDiff_StartInference(t *testing.T) {
@@ -351,6 +460,7 @@ func TestApplyDiff_Validation_Valid(t *testing.T) {
 
 	nonce := sm.SnapshotState().LatestNonce + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+	requireValidationLeavesLiveStateUntouched(t, sm, diff)
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
@@ -407,6 +517,7 @@ func TestApplyDiff_Validation_Invalid_ChallengeVoting(t *testing.T) {
 
 	nonce = sm.SnapshotState().LatestNonce + 1
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, voteTxs)
+	requireValidationLeavesLiveStateUntouched(t, sm, diff)
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
@@ -441,6 +552,7 @@ func TestApplyDiff_Timeout_Refused(t *testing.T) {
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes,
 	})})
+	requireValidationLeavesLiveStateUntouched(t, sm, diff)
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
@@ -2493,6 +2605,7 @@ func advanceToSettlement(t *testing.T, sm *StateMachine, user *signing.Secp256k1
 	st := sm.SnapshotState()
 	for n := st.LatestNonce + 1; n <= st.FinalizeNonce+uint64(groupSize); n++ {
 		diff = testutil.SignDiff(t, user, "escrow-1", n, nil)
+		requireValidationLeavesLiveStateUntouched(t, sm, diff)
 		_, err = sm.ApplyDiff(diff)
 		require.NoError(t, err)
 	}

@@ -52,6 +52,8 @@ var (
 	StreamingAttemptHardTimeout = 30 * time.Minute
 )
 
+const DefaultMaxSpeculativeAttempts = 2
+
 const toolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
 
 // modelContextLimits mirrors each model's --max-model-len in the chain's model_args.
@@ -494,7 +496,11 @@ func normalizeRedundancySpeedPolicy(policy string) string {
 	}
 }
 
-var maxSpeculativeAttempts atomic.Int64
+var maxSpeculativeAttempts = func() *atomic.Int64 {
+	attempts := new(atomic.Int64)
+	attempts.Store(DefaultMaxSpeculativeAttempts)
+	return attempts
+}()
 
 func SetMaxSpeculativeAttempts(v int) {
 	maxSpeculativeAttempts.Store(int64(v))

@@ -66,6 +66,7 @@ type Gateway struct {
 	store                        *GatewayStore
 	perf                         *PerfTracker
 	perfStore                    *PerfStore
+	perfPruner                   *perfPruner
 	accounting                   *accounting.Recorder
 	chatCache                    *chatResponseCache
 	apiKeys                      map[string]struct{}
@@ -967,9 +968,9 @@ func (g *Gateway) checkBalances() {
 		}
 		if rt.holdSince.Load() != 0 {
 			g.resolveHeldEscrow(rt, now)
-		} else if balance := rt.proxy.sm.Balance(); balance < balanceMinimumThreshold {
+		} else if balance, threshold := rt.proxy.sm.Balance(), escrowMinimumBalance(rt.model, rt.proxy.sm.Config()); balance < threshold {
 			log.Printf("escrow_balance_low escrow=%s balance=%d threshold=%d — holding or replacing",
-				rt.id, balance, balanceMinimumThreshold)
+				rt.id, balance, threshold)
 			g.holdOrReplaceDepletedEscrow(rt, "low_balance")
 			continue
 		}
@@ -1397,6 +1398,9 @@ func (g *Gateway) Close() error {
 		if err := rt.close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
+	}
+	if g.perfPruner != nil {
+		g.perfPruner.stopAndWait()
 	}
 	if g.perfStore != nil {
 		if err := g.perfStore.Close(); err != nil && firstErr == nil {

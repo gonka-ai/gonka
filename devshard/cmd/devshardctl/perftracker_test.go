@@ -21,6 +21,28 @@ func TestPerfTrackerAggregatesParticipantAcrossHostSlots(t *testing.T) {
 	require.Equal(t, 0.5, stats.ResponsiveRate)
 }
 
+// Test flow:
+//  1. Fill a host ring past its capacity so it wraps.
+//  2. Read its stats and look up a slot in it many times.
+//  3. Require both reads to allocate nothing and stats to still cover only the newest window.
+func TestHostRingReadsDoNotCopyTheWindow(t *testing.T) {
+	ring := &hostRing{}
+	now := time.Now()
+	for index := range PerfWindowSize + 10 {
+		ring.add(RequestSample{HostIdx: index % 4, Responsive: index%2 == 0, SendTime: now, TotalTime: time.Second})
+	}
+
+	allocations := testing.AllocsPerRun(100, func() {
+		_ = ring.stats("participant-a", 0, time.Time{})
+		_ = ring.hasHostIdx(3)
+	})
+
+	require.Zero(t, allocations)
+	require.Equal(t, PerfWindowSize, ring.stats("participant-a", 0, time.Time{}).TotalSamples)
+	require.True(t, ring.hasHostIdx(3))
+	require.False(t, ring.hasHostIdx(4))
+}
+
 func TestParticipantPerfWindowUsesDeterministicJitter(t *testing.T) {
 	saved := ParticipantPerfWindow
 	ParticipantPerfWindow = time.Minute

@@ -373,7 +373,7 @@ func (sm *StateMachine) ApplyLocalPersisted(nonce uint64, txs []*types.DevshardT
 func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	return sm.localBestEffortLocked(nonce, txs)
+	return sm.localBestEffortLocked(sm.snapshotMutable(), nonce, txs)
 }
 
 // PreviewLocalBestEffort is the validate-on-clone form of ApplyLocalBestEffort:
@@ -390,7 +390,7 @@ func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.Devsha
 	var marks []heightsync.AttributableMark
 	sm.obsDeferred = &obs
 	sm.marksDeferred = &marks
-	root, applied, err := sm.localBestEffortLocked(nonce, txs)
+	root, applied, err := sm.localBestEffortLocked(pre, nonce, txs)
 	sm.obsDeferred = nil
 	sm.marksDeferred = nil
 	if err != nil {
@@ -398,7 +398,7 @@ func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.Devsha
 		return nil, err
 	}
 	warmAfter := copyStringMap(sm.state.WarmKeys)
-	post := sm.snapshotMutable()
+	post := sm.takeMutable()
 	sm.restoreMutable(pre)
 	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, Applied: applied, nonce: nonce, post: post, obs: obs, marks: marks}, nil
 }
@@ -472,15 +472,11 @@ func heightSyncTraffic(tx *types.DevshardTx) bool {
 // localBestEffortLocked implements ApplyLocalBestEffort and the trial-apply core
 // of PreviewLocalBestEffort. It applies txs one by one (skipping non-mandatory
 // failures and log-plane-invalid height-sync txs) and, on success, leaves the
-// mutable state advanced to nonce. On any error it self-restores the mutable
-// state before returning. Caller must hold sm.mu. The preview/restore-on-success
+// mutable state advanced to nonce. On any error it restores snap, which must be
+// the state it was called on, before returning. Caller must hold sm.mu. The preview/restore-on-success
 // and warm-key capture that persist-first needs are handled by the
 // PreviewLocalBestEffort wrapper.
-func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, error) {
-	// Snapshot mutable state so fee charging and root computation remain atomic
-	// with respect to this nonce, matching applyCore semantics.
-	snap := sm.snapshotMutable()
-
+func (sm *StateMachine) localBestEffortLocked(snap mutableSnapshot, nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, error) {
 	expectedNonce := sm.state.LatestNonce + 1
 	if nonce != expectedNonce {
 		return nil, nil, fmt.Errorf("%w: expected %d, got %d", types.ErrInvalidNonce, expectedNonce, nonce)
@@ -953,6 +949,17 @@ func (sm *StateMachine) Inference(id uint64) (*types.InferenceRecord, bool) {
 	return copyInferenceRecord(rec), true
 }
 
+// inferenceForUpdateLocked swaps a live record for a private copy before it is mutated, so snapshots sharing the old pointer stay intact.
+func (sm *StateMachine) inferenceForUpdateLocked(id uint64) (*types.InferenceRecord, bool) {
+	rec, ok := sm.state.Inferences[id]
+	if !ok || rec == nil {
+		return rec, ok
+	}
+	rec = copyInferenceRecord(rec)
+	sm.state.Inferences[id] = rec
+	return rec, true
+}
+
 // InferenceExecutorSlot returns the executor slot of a live inference record.
 // Unlike Inference it does not deep-copy the record, so it is cheap enough for
 // per-response admission checks.
@@ -1006,32 +1013,49 @@ type mutableSnapshot struct {
 }
 
 func (sm *StateMachine) snapshotMutable() mutableSnapshot {
-	infCopy := copyInferences(sm.state.Inferences)
+	snap := sm.takeMutable()
+	inferencesCopy := make(map[uint64]*types.InferenceRecord, len(snap.Inferences))
+	maps.Copy(inferencesCopy, snap.Inferences)
+	snap.Inferences = inferencesCopy
+	committedCopy := make(map[uint64][]byte, len(snap.Committed))
+	maps.Copy(committedCopy, snap.Committed)
+	snap.Committed = committedCopy
 
-	hsCopy := make(map[uint32]*types.HostStats, len(sm.state.HostStats))
-	for k, v := range sm.state.HostStats {
-		cp := *v
-		hsCopy[k] = &cp
+	hostStatsCopy := make(map[uint32]*types.HostStats, len(snap.HostStats))
+	for slot, stats := range snap.HostStats {
+		statsCopy := *stats
+		hostStatsCopy[slot] = &statsCopy
 	}
+	snap.HostStats = hostStatsCopy
 
-	warmCopy := make(map[uint32]string, len(sm.state.WarmKeys))
-	maps.Copy(warmCopy, sm.state.WarmKeys)
+	warmCopy := make(map[uint32]string, len(snap.WarmKeys))
+	maps.Copy(warmCopy, snap.WarmKeys)
+	snap.WarmKeys = warmCopy
 
-	sealedNoncesCopy := make(map[uint64]uint64, len(sm.sealedNonces))
-	maps.Copy(sealedNoncesCopy, sm.sealedNonces)
+	sealedNoncesCopy := make(map[uint64]uint64, len(snap.SealedNonces))
+	maps.Copy(sealedNoncesCopy, snap.SealedNonces)
+	snap.SealedNonces = sealedNoncesCopy
 
+	snap.SealedAcc = append([]byte(nil), snap.SealedAcc...)
+	snap.turnTracker = snap.turnTracker.Clone()
+	snap.heightSyncFloor = snap.heightSyncFloor.Clone()
+	return snap
+}
+
+// takeMutable hands over the live mutable state uncopied; restoreMutable another snapshot before reuse.
+func (sm *StateMachine) takeMutable() mutableSnapshot {
 	return mutableSnapshot{
 		Balance:                       sm.state.Balance,
 		Fees:                          sm.state.Fees,
 		Phase:                         sm.state.Phase,
 		FinalizeNonce:                 sm.state.FinalizeNonce,
 		LatestNonce:                   sm.state.LatestNonce,
-		Inferences:                    infCopy,
-		Committed:                     cloneCommittedInferenceEntries(sm.committedEntries),
-		HostStats:                     hsCopy,
-		WarmKeys:                      warmCopy,
-		SealedAcc:                     append([]byte(nil), sm.state.SealedAcc...),
-		SealedNonces:                  sealedNoncesCopy,
+		Inferences:                    sm.state.Inferences,
+		Committed:                     sm.committedEntries,
+		HostStats:                     sm.state.HostStats,
+		WarmKeys:                      sm.state.WarmKeys,
+		SealedAcc:                     sm.state.SealedAcc,
+		SealedNonces:                  sm.sealedNonces,
 		HeightSyncForcedStart:         sm.state.HeightSyncForcedStart,
 		HeightSyncForcedEnd:           sm.state.HeightSyncForcedEnd,
 		HeightSyncCadenceSwallowUntil: sm.state.HeightSyncCadenceSwallowUntil,
@@ -1041,8 +1065,8 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 		HeightSyncTurnReason:          sm.state.HeightSyncTurnReason,
 		HeightSyncLastCompletedHeight: sm.state.HeightSyncLastCompletedHeight,
 		HeightSyncLatestTurnStart:     sm.state.HeightSyncLatestTurnStart,
-		turnTracker:                   sm.turnTracker.Clone(),
-		heightSyncFloor:               sm.heightSyncFloor.Clone(),
+		turnTracker:                   sm.turnTracker,
+		heightSyncFloor:               sm.heightSyncFloor,
 	}
 }
 
@@ -1215,7 +1239,7 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 }
 
 func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.inferenceForUpdateLocked(msg.InferenceId)
 	if !ok {
 		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
 			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
@@ -1271,7 +1295,7 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 }
 
 func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.inferenceForUpdateLocked(msg.InferenceId)
 	if !ok {
 		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
 			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
@@ -1329,7 +1353,7 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 }
 
 func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.inferenceForUpdateLocked(msg.InferenceId)
 	if !ok {
 		if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
 			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
@@ -1413,7 +1437,7 @@ func (sm *StateMachine) addressHasValidated(rec *types.InferenceRecord, slotID u
 }
 
 func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.inferenceForUpdateLocked(msg.InferenceId)
 	if !ok {
 		if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
 			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
@@ -1499,7 +1523,7 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 }
 
 func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.inferenceForUpdateLocked(msg.InferenceId)
 	if !ok {
 		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
 			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
@@ -1585,7 +1609,7 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 }
 
 func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.inferenceForUpdateLocked(msg.InferenceId)
 	if !ok {
 		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
 			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)

@@ -128,7 +128,7 @@ func gatewayTestDepletionGateway(t *testing.T, rt *devshardRuntime, modifySettin
 	oldCreate := gatewayCreateDepletionEscrow
 	oldSettle := gatewaySettleDevshardOnChain
 	gatewayCreateDepletionEscrow = func(_ *Gateway, _ context.Context, _ GatewaySettings, model EscrowRotationModelSettings, role string, _ uint64) (*CreateDevshardEscrowResult, error) {
-		require.Equal(t, "m", model.ModelID)
+		require.Equal(t, rt.model, model.ModelID)
 		require.Equal(t, rotationRoleRegular, role)
 		created.Add(1)
 		return &CreateDevshardEscrowResult{EscrowID: 99, TxHash: "OK"}, nil
@@ -159,6 +159,29 @@ func mustParseUintForTest(t *testing.T, value string) uint64 {
 func TestGatewayCheckBalancesReplacesAndDeactivatesLowBalance(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
 	g, created, settled := gatewayTestDepletionGateway(t, rt)
+
+	g.checkBalances()
+
+	require.Eventually(t, func() bool {
+		return created.Load() == 1 && settled.Load() == 1 && !rt.active.Load()
+	}, time.Second, 10*time.Millisecond)
+}
+
+// Test flow:
+//  1. An escrow of a model with a known context limit sits above balanceMinimumThreshold but below one full-context request (180000 tokens * token_price 10 = 1.8e6).
+//  2. A balance tick runs.
+//  3. The escrow is replaced: it would refuse every long-context request until heartbeat fees wore it down.
+func TestGatewayCheckBalancesReplacesEscrowShortOfAFullContextRequest(t *testing.T) {
+	const modelID, tokenPrice = "MiniMaxAI/MiniMax-M2.7", 10
+	rt := gatewayTestRuntimeForLimits(t, "12", 1_500_000, nonceDeactivationLimit-1)
+	rt.model = modelID
+	state := rt.proxy.sm.ExportState()
+	state.Config.TokenPrice = tokenPrice
+	require.NoError(t, rt.proxy.sm.RestoreState(state))
+	g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.DefaultModel = modelID
+		settings.EscrowRotation.Models[0].ModelID = modelID
+	})
 
 	g.checkBalances()
 

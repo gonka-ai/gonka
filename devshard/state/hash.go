@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"slices"
 
 	"google.golang.org/protobuf/encoding/protowire"
@@ -255,19 +256,33 @@ func computeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecor
 }
 
 func computeInferencesHash(inferences map[uint64]*types.InferenceRecord) ([]byte, error) {
-	entries := make(map[uint64][]byte, len(inferences))
-	for id, rec := range inferences {
-		entry, err := marshalInferenceEntry(id, rec)
+	hasher := sha256.New()
+	var message types.InferenceRecordProto
+	var validatedBy [16]byte
+	var entry, prefix []byte
+	for _, id := range slices.Sorted(maps.Keys(inferences)) {
+		var err error
+		entry, err = appendInferenceEntry(entry[:0], &message, validatedBy[:], id, inferences[id])
 		if err != nil {
 			return nil, err
 		}
-		entries[id] = entry
+		prefix = protowire.AppendTag(prefix[:0], 1, protowire.BytesType)
+		prefix = protowire.AppendVarint(prefix, uint64(len(entry)))
+		hasher.Write(prefix)
+		hasher.Write(entry)
 	}
-	return computeInferencesHashFromEntries(entries), nil
+	return hasher.Sum(nil), nil
 }
 
 func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) {
-	data, err := deterministicMarshal.Marshal(&types.InferenceRecordProto{
+	var message types.InferenceRecordProto
+	return appendInferenceEntry(nil, &message, make([]byte, 16), id, r)
+}
+
+func appendInferenceEntry(buffer []byte, message *types.InferenceRecordProto, validatedBy []byte, id uint64, r *types.InferenceRecord) ([]byte, error) {
+	binary.LittleEndian.PutUint64(validatedBy[:8], r.ValidatedBy[0])
+	binary.LittleEndian.PutUint64(validatedBy[8:], r.ValidatedBy[1])
+	*message = types.InferenceRecordProto{
 		InferenceId:       id,
 		Status:            uint32(r.Status),
 		ExecutorSlot:      r.ExecutorSlot,
@@ -286,8 +301,9 @@ func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) 
 		ConfirmedAtHeight: r.ConfirmedAtHeight,
 		VotesValid:        r.VotesValid,
 		VotesInvalid:      r.VotesInvalid,
-		ValidatedBy:       r.ValidatedBy.Bytes(),
-	})
+		ValidatedBy:       validatedBy,
+	}
+	data, err := deterministicMarshal.MarshalAppend(buffer, message)
 	if err != nil {
 		return nil, fmt.Errorf("marshal inference %d: %w", id, err)
 	}
@@ -320,23 +336,4 @@ func unmarshalInferenceEntry(data []byte) (uint64, *types.InferenceRecord, error
 		ValidatedBy:       types.Bitmap128FromBytes(msg.ValidatedBy),
 	}
 	return msg.InferenceId, rec, nil
-}
-
-func computeInferencesHashFromEntries(entries map[uint64][]byte) []byte {
-	ids := make([]uint64, 0, len(entries))
-	for id := range entries {
-		ids = append(ids, id)
-	}
-	slices.SortFunc(ids, func(a, b uint64) int { return cmp.Compare(a, b) })
-
-	buf := make([]byte, 0, len(entries)*64)
-	for _, id := range ids {
-		entry := entries[id]
-		buf = protowire.AppendTag(buf, 1, protowire.BytesType)
-		buf = protowire.AppendVarint(buf, uint64(len(entry)))
-		buf = append(buf, entry...)
-	}
-
-	sum := sha256.Sum256(buf)
-	return sum[:]
 }

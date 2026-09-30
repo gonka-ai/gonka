@@ -12,7 +12,7 @@ import (
 func TestOpenAccountingTracker_DefaultsToEnabled(t *testing.T) {
 	dir := t.TempDir()
 
-	tracker := openAccountingTracker(dir)
+	tracker := openAccountingTracker(dir, defaultAccountingRetentionEpochs)
 
 	require.NotNil(t, tracker)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
@@ -24,7 +24,7 @@ func TestOpenAccountingTracker_DisabledOpensNoDatabase(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DEVSHARD_STATS_ENABLED", "false")
 
-	require.Nil(t, openAccountingTracker(dir))
+	require.Nil(t, openAccountingTracker(dir, defaultAccountingRetentionEpochs))
 	require.NoFileExists(t, filepath.Join(dir, "accounting.db"))
 }
 
@@ -47,4 +47,15 @@ func TestAccountingCapability_DerivesTheFlagsFromTheCounts(t *testing.T) {
 	clean := lookup("never-seen", "m")
 	require.False(t, clean.ProtocolVersionUnsupported)
 	require.Zero(t, clean.VersionRefusals)
+}
+
+// Test flow:
+//  1. Read the accounting retention with DEVSHARD_STATS_RETENTION_EPOCHS unset, then set to 0.
+//  2. Require two epochs by default and an explicit 0 to keep everything.
+func TestAccountingRetentionEpochsDefaultsToTwo(t *testing.T) {
+	t.Setenv("DEVSHARD_STATS_RETENTION_EPOCHS", "")
+	require.Equal(t, uint64(2), accountingRetentionEpochs())
+
+	t.Setenv("DEVSHARD_STATS_RETENTION_EPOCHS", "0")
+	require.Equal(t, uint64(0), accountingRetentionEpochs())
 }

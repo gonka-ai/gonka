@@ -76,6 +76,9 @@ var VerifyTimeoutSlowLog = 15 * time.Second
 // timeout_vote_queue_expired. The count is still exact.
 const inflightSnapshotLimit = 8
 
+// defaultDiffsKeptInMemory is how many of the newest diffs a stored session keeps in s.diffs.
+const defaultDiffsKeptInMemory = 1024
+
 // nonceOutcome tracks protocol-relevant facts observed for a single inference nonce.
 type nonceOutcome struct {
 	confirmedAt int64
@@ -241,9 +244,11 @@ type Session struct {
 	participantKeys []string
 	clients         []HostClient
 	nonce           uint64
-	diffs           []types.Diff                 // append-only log
+	diffs           []types.Diff                 // newest diffs; a stored session reads older ones from the store
 	hostSyncNonce   map[int]uint64               // hostIdx -> last nonce sent
 	pendingTxs      []*types.DevshardTx          // from host mempools, for next diff
+	// diffsKeptInMemory is what s.diffs is trimmed back to once twice as many diffs accumulate.
+	diffsKeptInMemory int
 	// pendingTxKeys dedups the current pendingTxs slice by tx_type:id. It is
 	// rebuilt from what compose retained, so a tx that failed to apply frees
 	// its key again -- otherwise the first host to propose a bogus tx would
@@ -295,6 +300,9 @@ type Session struct {
 	// open turn. The heartbeat cadence is wall clock, so the producer does not
 	// wait for a block tick to collect acks.
 	heartbeatFlushLeft int
+	// heartbeatSendFailures and heartbeatRetryAt back a host off heartbeat sends while it keeps failing.
+	heartbeatSendFailures []int
+	heartbeatRetryAt      []time.Time
 	// clock drives the heartbeat cadence and is injectable for tests. It is
 	// never written into Diff: turn records stay clock-free.
 	clock func() time.Time
@@ -508,6 +516,9 @@ func NewSession(
 	cfg := sess.heartbeat.Config()
 	sess.turnTracker = heightsync.NewTurnTracker(slots, 0, cfg)
 	sess.lastContact = make([]time.Time, len(group))
+	sess.diffsKeptInMemory = defaultDiffsKeptInMemory
+	sess.heartbeatSendFailures = make([]int, len(group))
+	sess.heartbeatRetryAt = make([]time.Time, len(group))
 	sess.lastPeerSeen = make(map[uint32][]byte)
 	sess.lastSyncState = make(map[uint32]string)
 	sess.anchors = heightsync.NewAnchorTally(cfg.AckDeadlineBlocks, 0)
@@ -534,17 +545,50 @@ func txPriority(tx *types.DevshardTx) int {
 	}
 }
 
-// diffsForHost returns catch-up diffs for a host (from its last sync nonce to current).
-// Caller must hold s.mu.
+// diffsForHost returns catch-up diffs for a host (from its last sync nonce to current),
+// reading from the store the part s.diffs no longer holds. Caller must hold s.mu.
 func (s *Session) diffsForHost(hostIdx int) []types.Diff {
 	lastSent := s.hostSyncNonce[hostIdx]
-	var result []types.Diff
+	result := s.storedDiffsBeforeMemoryLocked(lastSent)
 	for _, d := range s.diffs {
 		if d.Nonce > lastSent {
 			result = append(result, d)
 		}
 	}
 	return result
+}
+
+// storedDiffsBeforeMemoryLocked reads the diffs after lastSent that s.diffs no longer holds.
+func (s *Session) storedDiffsBeforeMemoryLocked(lastSent uint64) []types.Diff {
+	firstInMemory := s.nonce + 1
+	if len(s.diffs) > 0 {
+		firstInMemory = s.diffs[0].Nonce
+	}
+	if s.store == nil || lastSent+1 >= firstInMemory {
+		return nil
+	}
+	records, err := s.store.GetDiffs(s.escrowID, lastSent+1, firstInMemory-1)
+	if err == nil {
+		err = validateDiffRange(records, lastSent+1, firstInMemory-1)
+	}
+	if err != nil {
+		logging.Error("catch_up_store_read_failed", "subsystem", "session", "escrow", s.escrowID,
+			"from", lastSent+1, "to", firstInMemory-1, "error", err)
+		return nil
+	}
+	stored := make([]types.Diff, 0, len(records)+len(s.diffs))
+	for _, record := range records {
+		stored = append(stored, record.Diff)
+	}
+	return stored
+}
+
+// trimDiffsLocked keeps the newest diffsKeptInMemory diffs of a stored session; the rest stay in the store.
+func (s *Session) trimDiffsLocked() {
+	if s.store == nil || len(s.diffs) < 2*s.diffsKeptInMemory {
+		return
+	}
+	s.diffs = append([]types.Diff(nil), s.diffs[len(s.diffs)-s.diffsKeptInMemory:]...)
 }
 
 // validateCatchUp warns if the catch-up diffs for a host are non-contiguous
@@ -601,9 +645,8 @@ func (s *Session) validateCatchUp(diffs []types.Diff, targetNonce uint64, hostId
 }
 
 // postStateRootForNonce returns the persisted post-state root for the given
-// nonce when it is present in s.diffs. Recovery may intentionally keep only a
-// contiguous suffix of diffs (for stranded-host catch-up), so callers must not
-// assume s.diffs is indexed from nonce 1.
+// nonce from s.diffs, or from the store for a nonce older than s.diffs holds.
+// s.diffs is a contiguous suffix, so callers must not assume it is indexed from nonce 1.
 func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool) {
 	if len(s.diffs) == 0 {
 		return nil, false
@@ -622,6 +665,14 @@ func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool) {
 		if diff.Nonce == nonce {
 			return diff.PostStateRoot, true
 		}
+	}
+	if s.store != nil && nonce < firstNonce {
+		records, err := s.store.GetDiffs(s.escrowID, nonce, nonce)
+		if err == nil && len(records) == 1 {
+			return records[0].PostStateRoot, true
+		}
+		logging.Error("state_root_store_read_failed", "subsystem", "session", "escrow", s.escrowID,
+			"nonce", nonce, "records", len(records), "error", err)
 	}
 	return nil, false
 }
@@ -839,6 +890,7 @@ func (s *Session) composeDiffLockedInclude(extraTxs []*types.DevshardTx, include
 			return types.Diff{}, 0, fmt.Errorf("commit diff nonce %d: state advanced concurrently", nonce)
 		}
 		s.diffs = append(s.diffs, diff)
+		s.trimDiffsLocked()
 		s.nonce = nonce
 		s.retainPendingLocked(held, vd.Applied)
 		s.maybeSaveSnapshotLocked()
@@ -2057,7 +2109,7 @@ func (s *Session) forgetHostState(hostIdx int, err error) {
 	s.RewindHostCatchUp(hostIdx, "host lost the escrow")
 }
 
-// RewindHostCatchUp rewinds a host to the start of the history we still hold, so the next request
+// RewindHostCatchUp rewinds a host to the start of the history we can still send, so the next request
 // carries the whole chain instead of the tail its cursor claims it needs. Reports whether it moved.
 func (s *Session) RewindHostCatchUp(hostIdx int, cause string) bool {
 	s.mu.Lock()
@@ -2066,10 +2118,9 @@ func (s *Session) RewindHostCatchUp(hostIdx int, cause string) bool {
 	if hostIdx < 0 || hostIdx >= len(s.group) || !tracked || cursor == 0 {
 		return false
 	}
-	// Only as far back as the diffs actually held: after a restart the history starts at the group's
-	// lowest cursor, and rewinding past it would hand the host a chain missing its own beginning.
+	// A stored session can rewind to 0; without a store, only as far back as s.diffs holds.
 	var earliest uint64
-	if len(s.diffs) > 0 {
+	if s.store == nil && len(s.diffs) > 0 {
 		earliest = s.diffs[0].Nonce - 1
 	}
 	if cursor <= earliest {

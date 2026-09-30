@@ -145,7 +145,7 @@ For non-streaming requests, a finished successful attempt is also treated as the
 
 The runner does not have to use every host forever.
 
-`MaxSpeculativeAttempts` controls the upper bound:
+`MaxSpeculativeAttempts` controls the upper bound, `2` by default:
 
 - `0` means "allow up to the full group size"
 - any positive number caps the total attempts for one user request

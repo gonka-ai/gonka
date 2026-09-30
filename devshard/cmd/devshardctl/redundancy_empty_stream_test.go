@@ -612,6 +612,7 @@ func TestRunInference_ContextRefusalBeyondModelLimitIsNotRetried(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 			zeroReceiptTimeout(t)
+			allowSpeculativeAttemptsOnWholeGroup(t)
 			env := setupTestProxy(t, 3, nil, true)
 			var hostRequests atomic.Int32
 			for _, killable := range env.killables {
