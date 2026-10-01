@@ -1,0 +1,27 @@
+[
+  {
+    "id": "node1",
+    "host": "inference",
+    "inference_port": 5000,
+    "poc_port": 8080,
+    "max_concurrent": 500,
+    "models": {
+      "zai-org/GLM-5.3-Flash": {
+        "args": [
+          "--revision", "04c4e9e95c5da8862dced7e5056455116f83a7e0",
+          "--tensor-parallel-size", "4",
+          "--gpu-memory-utilization", "0.90",
+          "--max-num-batched-tokens", "16384",
+          "--kv-cache-dtype", "fp8",
+          "--block-size", "2304",
+          "--max-num-seqs", "256",
+          "--no-enable-flashinfer-autotune",
+          "--enable-auto-tool-choice",
+          "--tool-call-parser", "glm47",
+          "--reasoning-parser", "glm45",
+          "--trust-remote-code"
+        ]
+      }
+    }
+  }
+]
