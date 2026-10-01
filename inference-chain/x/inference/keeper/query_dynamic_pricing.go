@@ -113,9 +113,10 @@ func (k Keeper) GetAllModelCapacities(goCtx context.Context, req *types.QueryGet
 		}, nil
 	}
 
-	mainEpochData, found := k.GetEpochGroupData(goCtx, uint64(currentEpoch.PocStartBlockHeight), "")
+	// EpochGroupDataMap is keyed by epoch index, not by PoC start height.
+	mainEpochData, found := k.GetEpochGroupData(goCtx, currentEpoch.Index, "")
 	if !found {
-		k.LogError("Failed to get epoch group data for capacity query", types.Pricing)
+		k.LogError("Failed to get epoch group data for capacity query", types.Pricing, "epochIndex", currentEpoch.Index)
 		return &types.QueryGetAllModelCapacitiesResponse{
 			ModelCapacities: modelCapacities,
 		}, nil
