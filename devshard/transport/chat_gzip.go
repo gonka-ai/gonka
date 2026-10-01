@@ -5,17 +5,35 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"sync/atomic"
 )
 
-// chatGzipCoalesceMin is the uncompressed cut for one ChatFrame.
-// 1024 bytes is about five vLLM token events (id, object, created, model, delta).
-// BestSpeed keeps its match table from 128 bytes up; this cut is larger so one
-// Huffman tree covers those tokens.
+// ChatGzipCoalesceBytes is the aggregation cut: about five vLLM token events
+// (id, object, created, model, delta). BestSpeed keeps its match table from
+// 128 bytes up; this cut is larger so one Huffman tree covers those tokens.
+// The default is per token. SetChatGzipCoalesce(ChatGzipCoalesceBytes) packs
+// later events to this size. The first model token still leaves on its own.
 // chatGzipCoalesceMax bounds a stream that never sends a blank line.
 const (
-	chatGzipCoalesceMin = 1024
-	chatGzipCoalesceMax = 16 << 10
+	ChatGzipCoalesceBytes = 1024
+	chatGzipCoalesceMax   = 16 << 10
 )
+
+// chatGzipCoalesceMin is the live cut. Zero flushes every finished SSE event.
+var chatGzipCoalesceMin atomic.Int32
+
+// SetChatGzipCoalesce sets the uncompressed cut for frames after the first
+// token. Zero is per token. ChatGzipCoalesceBytes packs about five tokens.
+func SetChatGzipCoalesce(n int) {
+	if n < 0 {
+		n = 0
+	}
+	chatGzipCoalesceMin.Store(int32(n))
+}
+
+func chatGzipCut() int {
+	return int(chatGzipCoalesceMin.Load())
+}
 
 // ChatGzipEmitter is one gzip.Writer (BestSpeed). Concatenating chunks
 // reconstitutes the stream. Close with no Write emits nothing so a handler
@@ -84,13 +102,16 @@ func (e *ChatGzipEmitter) emit() error {
 // ChatFrameSink writes uncompressed SSE bytes into ChatGzipEmitter as if it
 // were an http.ResponseWriter. ExecutionJob.ResponseWriter uses this.
 //
-// The executor still flushes every scanner line. This sink holds those
-// flushes and emits one gzip block when:
+// The executor still flushes every scanner line, so one token is two writes:
+// the data line, then a blank line. The data-line flush is not a frame. The
+// blank line finishes that same event, and the two lines leave together.
+// With the default cut of zero, that finished event is one gzip frame.
+// SetChatGzipCoalesce raises the cut. Then this sink holds flushes and emits
+// one gzip block when:
 //   - the receipt has already left (FlushNow) and the next finished SSE
 //     event is the first model token: that event leaves immediately, even
 //     under 128 bytes, so the gateway can time it, or
-//   - at least chatGzipCoalesceMin uncompressed bytes are pending and they
-//     end on an SSE event (\n\n), about five tokens, or
+//   - pending uncompressed bytes reach the cut and end on an SSE event, or
 //   - pending bytes reach chatGzipCoalesceMax, so a missing blank line
 //     cannot stall the stream, or
 //   - Close, which is after [DONE] and devshard_meta. The short tail waits
@@ -163,7 +184,11 @@ func (s *ChatFrameSink) eventBoundary() bool {
 }
 
 func (s *ChatFrameSink) eventReady() bool {
-	return s.pending >= chatGzipCoalesceMin && s.eventBoundary()
+	if !s.eventBoundary() {
+		return false
+	}
+	cut := chatGzipCut()
+	return cut <= 0 || s.pending >= cut
 }
 
 // firstTokenReady is the model event the gateway times. The receipt uses
@@ -177,11 +202,11 @@ func (s *ChatFrameSink) Flush() {
 	_ = s.FlushErr()
 }
 
-// FlushErr emits a ChatFrame when the held SSE is the first model token,
-// reaches chatGzipCoalesceMin on an event boundary, or reaches
-// chatGzipCoalesceMax. A later event under the cut stays buffered.
-// http.Flusher.Flush cannot return stream.Send errors. The receipt calls
-// FlushNow so a failed frame still returns before execution.
+// FlushErr emits a ChatFrame on each finished SSE event when the cut is zero.
+// A positive cut holds later events until that many uncompressed bytes, the
+// first model token, or chatGzipCoalesceMax. http.Flusher.Flush cannot
+// return stream.Send errors. The receipt calls FlushNow so a failed frame
+// still returns before execution.
 func (s *ChatFrameSink) FlushErr() error {
 	if s == nil {
 		return io.ErrClosedPipe
@@ -203,7 +228,7 @@ func (s *ChatFrameSink) FlushErr() error {
 	return nil
 }
 
-// FlushNow sends the held bytes even when they are under chatGzipCoalesceMin.
+// FlushNow sends the held bytes even when they are under the coalesce cut.
 // The receipt uses this so a failed frame returns before RunExecution.
 func (s *ChatFrameSink) FlushNow() error {
 	if s == nil || s.gzip == nil {

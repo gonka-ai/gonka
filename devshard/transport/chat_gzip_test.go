@@ -91,13 +91,13 @@ func TestChatFrameSink_SendErrorStopsLaterWrites(t *testing.T) {
 		}
 		return nil
 	})
-	_, err := sink.Write([]byte(sseEventAtLeast(chatGzipCoalesceMin, "a")))
+	_, err := sink.Write([]byte(sseEventAtLeast(ChatGzipCoalesceBytes, "a")))
 	require.NoError(t, err)
 	require.NoError(t, sink.FlushErr())
-	_, err = sink.Write([]byte(sseEventAtLeast(chatGzipCoalesceMin, "b")))
+	_, err = sink.Write([]byte(sseEventAtLeast(ChatGzipCoalesceBytes, "b")))
 	require.NoError(t, err)
 	require.Error(t, sink.FlushErr())
-	_, err = sink.Write([]byte(sseEventAtLeast(chatGzipCoalesceMin, "c")))
+	_, err = sink.Write([]byte(sseEventAtLeast(ChatGzipCoalesceBytes, "c")))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "peer gone")
 }
@@ -106,10 +106,10 @@ func TestChatFrameSink_FlushErrSurfacesSendError(t *testing.T) {
 	sink := NewChatFrameSink(func([]byte) error {
 		return errors.New("peer gone")
 	})
-	_, err := sink.Write([]byte(sseEventAtLeast(chatGzipCoalesceMin, "a")))
+	_, err := sink.Write([]byte(sseEventAtLeast(ChatGzipCoalesceBytes, "a")))
 	require.NoError(t, err)
 	require.ErrorContains(t, sink.FlushErr(), "peer gone")
-	_, err = sink.Write([]byte(sseEventAtLeast(chatGzipCoalesceMin, "b")))
+	_, err = sink.Write([]byte(sseEventAtLeast(ChatGzipCoalesceBytes, "b")))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "peer gone")
 }
@@ -118,7 +118,7 @@ func TestWriteSSEEvent_ChatFlushFailure(t *testing.T) {
 	sink := NewChatFrameSink(func([]byte) error {
 		return errors.New("peer gone")
 	})
-	err := writeSSEEvent(sink, map[string]string{"devshard_receipt": strings.Repeat("x", chatGzipCoalesceMin)})
+	err := writeSSEEvent(sink, map[string]string{"devshard_receipt": strings.Repeat("x", ChatGzipCoalesceBytes)})
 	require.ErrorContains(t, err, "peer gone")
 }
 
@@ -126,7 +126,7 @@ func TestReplaySSEBody_ChatFlushFailure(t *testing.T) {
 	sink := NewChatFrameSink(func([]byte) error {
 		return errors.New("peer gone")
 	})
-	err := replaySSEBody(sink, bytes.Repeat([]byte("x"), chatGzipCoalesceMin))
+	err := replaySSEBody(sink, bytes.Repeat([]byte("x"), ChatGzipCoalesceBytes))
 	require.ErrorContains(t, err, "peer gone")
 }
 
@@ -156,14 +156,40 @@ func TestChatGzipEmitter_ConcatIsOneStream(t *testing.T) {
 	require.Equal(t, strings.Join(parts, ""), gzipConcat(t, chunks))
 }
 
+func withChatGzipCoalesce(t *testing.T, n int) {
+	t.Helper()
+	prev := chatGzipCut()
+	SetChatGzipCoalesce(n)
+	t.Cleanup(func() { SetChatGzipCoalesce(prev) })
+}
+
+func TestChatFrameSink_FlushesEachToken(t *testing.T) {
+	require.Zero(t, chatGzipCut())
+	var chunks [][]byte
+	sink := NewChatFrameSink(func(chunk []byte) error {
+		chunks = append(chunks, append([]byte(nil), chunk...))
+		return nil
+	})
+	// The executor writes one scanner line and flushes, then the blank line
+	// and flushes again. Both lines are one event and must be one frame.
+	data := "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}"
+	require.NoError(t, relaySSELines(data+"\n", sink))
+	require.Empty(t, chunks, "the data line flush is not its own frame")
+	require.NoError(t, relaySSELines("\n", sink))
+	require.Len(t, chunks, 1, "the blank line completes the event; it is not a second frame")
+	require.NoError(t, sink.Close())
+	require.Equal(t, data+"\n\n", gzipConcat(t, chunks))
+}
+
 func TestChatFrameSink_HoldsShortEventUntilClose(t *testing.T) {
+	withChatGzipCoalesce(t, ChatGzipCoalesceBytes)
 	var chunks [][]byte
 	sink := NewChatFrameSink(func(chunk []byte) error {
 		chunks = append(chunks, append([]byte(nil), chunk...))
 		return nil
 	})
 	event := "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n"
-	require.Less(t, len(event), chatGzipCoalesceMin)
+	require.Less(t, len(event), ChatGzipCoalesceBytes)
 	require.NoError(t, relaySSELines(event, sink))
 	require.Empty(t, chunks, "one token stays in the gzip window until the stream ends")
 	require.NoError(t, sink.Close())
@@ -171,6 +197,7 @@ func TestChatFrameSink_HoldsShortEventUntilClose(t *testing.T) {
 }
 
 func TestChatFrameSink_FlushesFinishedEventsAt128(t *testing.T) {
+	withChatGzipCoalesce(t, ChatGzipCoalesceBytes)
 	var chunks [][]byte
 	sink := NewChatFrameSink(func(chunk []byte) error {
 		chunks = append(chunks, append([]byte(nil), chunk...))
@@ -179,10 +206,10 @@ func TestChatFrameSink_FlushesFinishedEventsAt128(t *testing.T) {
 	var body strings.Builder
 	for {
 		ev := "data: {\"choices\":[{\"delta\":{\"content\":\"tok\"}}]}\n\n"
-		require.Less(t, len(ev), chatGzipCoalesceMin)
+		require.Less(t, len(ev), ChatGzipCoalesceBytes)
 		body.WriteString(ev)
 		require.NoError(t, relaySSELines(ev, sink))
-		if body.Len() >= chatGzipCoalesceMin {
+		if body.Len() >= ChatGzipCoalesceBytes {
 			break
 		}
 		require.Empty(t, chunks)
@@ -206,6 +233,7 @@ func TestChatFrameSink_FlushesAtCoalesceMaxWithoutEvent(t *testing.T) {
 }
 
 func TestChatFrameSink_CoalesceBeatsPerLineFlush(t *testing.T) {
+	withChatGzipCoalesce(t, ChatGzipCoalesceBytes)
 	body := sampleChatSSE(80)
 	perLine := gzipRelay(t, body, true)
 	perEvent := gzipPerEvent(t, body)
@@ -243,11 +271,55 @@ func TestChatFrameSink_ReceiptFlushNowSurfacesSendError(t *testing.T) {
 		return errors.New("peer gone")
 	})
 	err := writeSSEEvent(sink, map[string]string{"devshard_receipt": "{}"})
+	require.ErrorContains(t, err, "peer gone", "per-token gzip flushes the receipt with the event")
+}
+
+func TestChatFrameSink_CoalescedReceiptStaysUntilFlushNow(t *testing.T) {
+	withChatGzipCoalesce(t, ChatGzipCoalesceBytes)
+	sink := NewChatFrameSink(func([]byte) error {
+		return errors.New("peer gone")
+	})
+	err := writeSSEEvent(sink, map[string]string{"devshard_receipt": "{}"})
 	require.NoError(t, err, "a receipt under the cut stays buffered")
 	require.ErrorContains(t, flushSSENow(sink), "peer gone")
 }
 
+func TestChatFrameSink_GatewayUnpacksPerTokenStream(t *testing.T) {
+	require.Zero(t, chatGzipCut())
+	var chunks [][]byte
+	sink := NewChatFrameSink(func(chunk []byte) error {
+		chunks = append(chunks, append([]byte(nil), chunk...))
+		return nil
+	})
+	var body strings.Builder
+	events := []string{
+		"data: {\"devshard_receipt\":{}}\n\n",
+		"data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n",
+		vllmTokenEvent(1, "Hello"),
+		vllmTokenEvent(2, " world"),
+		"data: [DONE]\n\n",
+	}
+	for i, ev := range events {
+		body.WriteString(ev)
+		require.NoError(t, relaySSELines(ev, sink))
+		require.Len(t, chunks, i+1, "each finished event is its own frame")
+	}
+	require.NoError(t, sink.Close())
+	require.Equal(t, body.String(), gzipConcat(t, chunks))
+
+	client := &HTTPClient{}
+	fromFrames := gatewayStream(t, client, &chunkReader{chunks: chunks})
+	var fromRaw bytes.Buffer
+	_, err := client.parseSSEResponse(context.Background(), strings.NewReader(body.String()), &fromRaw, nil)
+	require.NoError(t, err)
+	require.Equal(t, fromRaw.String(), fromFrames)
+	require.Contains(t, fromFrames, `"content":"Hi"`)
+	require.Contains(t, fromFrames, `"content":"Hello"`)
+	require.Contains(t, fromFrames, "data: [DONE]\n\n")
+}
+
 func TestChatFrameSink_GatewayUnpacksCoalescedStream(t *testing.T) {
+	withChatGzipCoalesce(t, ChatGzipCoalesceBytes)
 	var chunks [][]byte
 	sink := NewChatFrameSink(func(chunk []byte) error {
 		chunks = append(chunks, append([]byte(nil), chunk...))
