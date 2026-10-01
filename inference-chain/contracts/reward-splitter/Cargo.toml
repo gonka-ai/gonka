@@ -1,0 +1,30 @@
+[package]
+name = "reward-splitter"
+version = "0.1.0"
+authors = ["Inference Team"]
+edition = "2021"
+description = "Minimal push-only immutable payment splitter for redistributing mined epoch rewards on Gonka"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = 3
+debug = false
+rpath = false
+lto = true
+debug-assertions = false
+codegen-units = 1
+panic = 'abort'
+incremental = false
+overflow-checks = true
+
+[dependencies]
+cosmwasm-schema = "2.2.2"
+cosmwasm-std = { version = "2.2.2", features = ["cosmwasm_2_0"] }
+cw-storage-plus = "2.0.0"
+schemars = "0.8.12"
+serde = { version = "1.0.184", default-features = false, features = ["derive"] }
+
+[dev-dependencies]
+cw-multi-test = "2.2.2"

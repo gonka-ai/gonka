@@ -715,6 +715,103 @@ data class ApplicationCLI(
             }
         }
 
+    // ---------------------------------------------------------------------
+    // CosmWasm
+    //
+    // These drive stock `wasmd` CLI subcommands. Contract messages are JSON
+    // blobs, so every call goes through `/bin/sh -lc` with explicit quoting
+    // (same shape as setClaimRecipients) rather than argv, which would let the
+    // shell mangle the braces.
+    // ---------------------------------------------------------------------
+
+    /**
+     * Uploads a wasm binary already present *inside the node container* and
+     * returns the processed tx. Use [installWasmArtifact] to get the file there.
+     * Storing code costs far more gas than the default tx args allow.
+     */
+    fun storeWasmCode(
+        containerPath: String,
+        from: String = getColdAccountName(),
+        gas: String = "40000000"
+    ): TxResponse = wrapLog("storeWasmCode", true) {
+        submitWasmTx(listOf("tx", "wasm", "store", containerPath), from, gas)
+    }
+
+    fun instantiateWasmContract(
+        codeId: Long,
+        initMsg: String,
+        label: String,
+        from: String = getColdAccountName(),
+        admin: String? = null,
+        noAdmin: Boolean = admin == null,
+        gas: String = "5000000"
+    ): TxResponse = wrapLog("instantiateWasmContract", true) {
+        val adminArgs = when {
+            admin != null -> listOf("--admin", admin)
+            noAdmin -> listOf("--no-admin")
+            else -> emptyList()
+        }
+        submitWasmTx(
+            listOf("tx", "wasm", "instantiate", codeId.toString(), initMsg, "--label", label) + adminArgs,
+            from,
+            gas
+        )
+    }
+
+    fun executeWasmContract(
+        contractAddress: String,
+        execMsg: String,
+        from: String = getColdAccountName(),
+        gas: String = "5000000"
+    ): TxResponse = wrapLog("executeWasmContract", true) {
+        submitWasmTx(listOf("tx", "wasm", "execute", contractAddress, execMsg), from, gas)
+    }
+
+    /**
+     * Smart query against a contract. [T] must model the `{"data": ...}` envelope.
+     * Queries need no stdin, so this takes the plain argv path — the JSON message
+     * reaches the binary as a single argument with no shell in between.
+     */
+    inline fun <reified T> queryWasmSmart(contractAddress: String, queryMsg: String): T =
+        execAndParse(listOf("query", "wasm", "contract-state", "smart", contractAddress, queryMsg))
+
+    /**
+     * Runs a wasm tx with an explicit gas limit and waits for it to be indexed.
+     * Returns the *failed* tx response as-is so callers can assert on `code`.
+     */
+    private fun submitWasmTx(txArgs: List<String>, from: String, gas: String): TxResponse {
+        val finalArgs = listOf(config.execName) + txArgs +
+            wasmTransactionArgs(from, gas) + listOf("--output", "json")
+        val command = if (passwordInjection != null) {
+            "printf '%s' ${shellQuote(passwordInjection)} | ${finalArgs.joinToString(" ") { shellQuote(it) }}"
+        } else {
+            finalArgs.joinToString(" ") { shellQuote(it) }
+        }
+        val output = exec(listOf("/bin/sh", "-lc", command)).joinToString("")
+        val txResponse = cosmosJson.fromJson(output, TxResponse::class.java)
+        return if (txResponse.code == 0) {
+            waitForTxProcessed(txResponse.txhash)
+        } else {
+            txResponse
+        }
+    }
+
+    // Same as getTransactionArgs but with a caller-supplied gas limit and no
+    // gas-adjustment (which only applies to `--gas auto`).
+    private fun wasmTransactionArgs(from: String, gas: String): List<String> = listOf(
+        "--keyring-backend",
+        this.config.keyringBackend,
+        "--keyring-dir=/root/${config.stateDirName}",
+        "--yes",
+        "--unordered",
+        "--timeout-duration",
+        "60s",
+        "--gas",
+        gas,
+        "--from",
+        from
+    )
+
     private fun getTransactionArgs(from: String): List<String> = listOf(
         "--keyring-backend",
         this.config.keyringBackend,
