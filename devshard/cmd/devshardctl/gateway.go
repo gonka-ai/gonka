@@ -50,36 +50,41 @@ type RuntimeConfig struct {
 }
 
 type Gateway struct {
-	runtimes              map[string]*devshardRuntime
-	runtimeOrder          []*devshardRuntime
-	limiter               *GatewayLimiter
-	participantLimiter    *ParticipantRequestLimiter
-	phaseGate             *ChainPhaseGate
-	escrowChecker         *EscrowChecker
-	metrics               *DevshardMetrics
-	capacity              *CapacityState
-	settings              GatewaySettings
-	store                 *GatewayStore
-	perf                  *PerfTracker
-	perfStore             *PerfStore
-	accounting            *accounting.Recorder
-	chatCache             *chatResponseCache
-	apiKeys               map[string]struct{}
-	baseStorageDir        string
-	rotatorStop           chan struct{}
-	rotatorDone           chan struct{}
-	rotationBreakers      map[string]*rotationBreaker
-	runtimeParams         *runtimeparams.Managed
-	runtimeParamsClose    func()
-	maxNonce              devshardpkg.MaxNonceProvider
-	chainClient           *chain.Client
-	finalizeMu            sync.Mutex
-	settlementMu          sync.Mutex
-	settlementInFlight    map[string]struct{}
-	replenishmentMu       sync.Mutex
-	replenishmentInFlight map[string]struct{}
-	mu                    sync.Mutex
-	roundRobinSeed        atomic.Uint64
+	runtimes                     map[string]*devshardRuntime
+	runtimeOrder                 []*devshardRuntime
+	limiter                      *GatewayLimiter
+	participantLimiter           *ParticipantRequestLimiter
+	phaseGate                    *ChainPhaseGate
+	escrowChecker                *EscrowChecker
+	metrics                      *DevshardMetrics
+	capacity                     *CapacityState
+	settings                     GatewaySettings
+	store                        *GatewayStore
+	perf                         *PerfTracker
+	perfStore                    *PerfStore
+	accounting                   *accounting.Recorder
+	chatCache                    *chatResponseCache
+	apiKeys                      map[string]struct{}
+	baseStorageDir               string
+	rotatorStop                  chan struct{}
+	rotatorDone                  chan struct{}
+	rotationBreakers             map[string]*rotationBreaker
+	rotationTargetLocks          keyedMutex
+	holdTopUpsInFlight           keyedInFlight
+	executionTimeoutSweepCursor  atomic.Uint64
+	executionTimeoutSweepRunning atomic.Bool
+	runtimeParams                *runtimeparams.Managed
+	runtimeParamsClose           func()
+	maxNonce                     devshardpkg.MaxNonceProvider
+	chainClient                  *chain.Client
+	finalizeLocksMu              sync.Mutex
+	finalizeLocks                map[string]*sync.Mutex
+	settlementMu                 sync.Mutex
+	settlementInFlight           map[string]struct{}
+	replenishmentMu              sync.Mutex
+	replenishmentInFlight        map[string]struct{}
+	mu                           sync.Mutex
+	roundRobinSeed               atomic.Uint64
 
 	suspiciousHosts map[string]struct{}
 }
@@ -107,6 +112,7 @@ type devshardRuntime struct {
 	active             atomic.Bool
 	activeUserRequests atomic.Int64
 	reservedTokens     atomic.Int64
+	holdSince          atomic.Int64
 
 	// pendingRaceCleanup counts background race cleanups (refund, loser-signature persistence, timeout votes) still in flight
 	pendingRaceCleanup atomic.Int64
@@ -132,10 +138,26 @@ func (rt *devshardRuntime) escrowHasBackgroundWork() bool {
 	return rt.activeUserRequests.Load() > 0 || rt.pendingRaceCleanup.Load() > 0
 }
 
+func (g *Gateway) lockFinalize(escrowID string) func() {
+	g.finalizeLocksMu.Lock()
+	if g.finalizeLocks == nil {
+		g.finalizeLocks = make(map[string]*sync.Mutex)
+	}
+	lock, ok := g.finalizeLocks[escrowID]
+	if !ok {
+		lock = &sync.Mutex{}
+		g.finalizeLocks[escrowID] = lock
+	}
+	g.finalizeLocksMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
+}
+
 type runtimeStatus struct {
 	ID                   string `json:"id"`
 	Model                string `json:"model"`
 	Active               bool   `json:"active"`
+	OnHold               bool   `json:"on_hold"`
 	Phase                string `json:"phase,omitempty"`
 	Nonce                uint64 `json:"nonce,omitempty"`
 	Balance              uint64 `json:"balance,omitempty"`
@@ -620,6 +642,9 @@ func (rt *devshardRuntime) acceptsNewInferences() (bool, string) {
 	if rt == nil || !rt.active.Load() {
 		return false, "inactive"
 	}
+	if rt.holdSince.Load() != 0 {
+		return false, "on_hold"
+	}
 	if rt.proxy == nil || rt.proxy.sm == nil {
 		return true, ""
 	}
@@ -676,6 +701,7 @@ func (rt *devshardRuntime) snapshot() runtimeStatus {
 		ID:                 rt.id,
 		Model:              rt.model,
 		Active:             rt.active.Load(),
+		OnHold:             rt.active.Load() && rt.holdSince.Load() != 0,
 		ActiveRequests:     rt.activeUserRequests.Load(),
 		PendingRaceCleanup: rt.pendingRaceCleanup.Load(),
 		ReservedTokens:     rt.reservedTokens.Load(),
@@ -810,6 +836,7 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 		}
 	}
 	g.reconcilePendingSettlements()
+	g.restoreEscrowHolds()
 	g.startEscrowRotatorIfEnabled()
 	go g.balanceCheckLoop()
 	return g
@@ -873,24 +900,27 @@ const (
 // escrow is close to exhausting its usable balance or nonce budget.
 func (g *Gateway) checkBalances() {
 	g.mu.Lock()
-	if !g.settings.EscrowRotation.Enabled {
-		g.mu.Unlock()
-		return
-	}
+	isRotationEnabled := g.settings.EscrowRotation.Enabled
 	runtimes := make([]*devshardRuntime, len(g.runtimeOrder))
 	copy(runtimes, g.runtimeOrder)
 	g.mu.Unlock()
+	if !isRotationEnabled {
+		g.releaseEscrowHolds(runtimes, "rotation_disabled")
+		return
+	}
 
 	chainMaxNonce := g.chainMaxNonce()
+	now := time.Now()
 	for _, rt := range runtimes {
 		if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 			continue
 		}
-		balance := rt.proxy.sm.Balance()
-		if balance < balanceMinimumThreshold {
-			log.Printf("escrow_balance_low escrow=%s balance=%d threshold=%d — deactivating before replacement",
+		if rt.holdSince.Load() != 0 {
+			g.resolveHeldEscrow(rt, now)
+		} else if balance := rt.proxy.sm.Balance(); balance < balanceMinimumThreshold {
+			log.Printf("escrow_balance_low escrow=%s balance=%d threshold=%d — holding or replacing",
 				rt.id, balance, balanceMinimumThreshold)
-			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "low_balance")
+			g.holdOrReplaceDepletedEscrow(rt, "low_balance")
 			continue
 		}
 		nonce := rt.proxy.sm.LatestNonce()
@@ -901,15 +931,18 @@ func (g *Gateway) checkBalances() {
 			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "high_nonce")
 		}
 	}
+	g.topUpServingEscrowsForHolds(runtimes)
 }
 
 // balanceCheckLoop periodically checks each active runtime's escrow limits.
 func (g *Gateway) balanceCheckLoop() {
 	g.checkBalances()
+	g.startExecutionTimeoutSweep()
 	ticker := time.NewTicker(balanceCheckInterval)
 	defer ticker.Stop()
 	for range ticker.C {
 		g.checkBalances()
+		g.startExecutionTimeoutSweep()
 	}
 }
 
@@ -1436,8 +1469,8 @@ func (g *Gateway) handleSingleOnly(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 	if len(runtimes) == 1 {
 		if r.URL.Path == "/v1/finalize" && r.Method == http.MethodPost {
-			g.finalizeMu.Lock()
-			defer g.finalizeMu.Unlock()
+			unlockFinalize := g.lockFinalize(runtimes[0].id)
+			defer unlockFinalize()
 			log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", runtimes[0].id, r.URL.Path)
 		}
 		runtimes[0].handler.ServeHTTP(w, r)
@@ -1712,8 +1745,8 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, devshardID), http.StatusConflict)
 			return
 		}
-		g.finalizeMu.Lock()
-		defer g.finalizeMu.Unlock()
+		unlockFinalize := g.lockFinalize(devshardID)
+		defer unlockFinalize()
 		log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", devshardID, r.URL.Path)
 		req := cloneRequestWithBody(r, nil)
 		req.URL.Path = innerPath
@@ -2566,6 +2599,7 @@ type adminSettleEscrowRequest struct {
 	FeeDenom      string `json:"fee_denom,omitempty"`
 	FeeAmount     uint64 `json:"fee_amount,omitempty"`
 	GasLimit      uint64 `json:"gas_limit,omitempty"`
+	Force         bool   `json:"force,omitempty"`
 }
 
 type adminSettingsRequest struct {
@@ -3166,6 +3200,10 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 		return
 	}
+	if err := g.ensureCanPayTx(r.Context(), signer.Address(), req.Amount, req.FeeDenom, req.FeeAmount); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusPaymentRequired)
+		return
+	}
 	txMgr, err := g.newChainTxManager(g.settings, req.ChainID, req.FeeDenom, req.FeeAmount, req.GasLimit)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
@@ -3284,6 +3322,10 @@ func (g *Gateway) handleAdminDevshardAction(w http.ResponseWriter, r *http.Reque
 	}
 	if len(parts) == 1 && parts[0] == "import" && r.Method == http.MethodPost {
 		g.handleAdminImportDevshard(w, r)
+		return
+	}
+	if len(parts) == 1 && parts[0] == "settle" && r.Method == http.MethodPost {
+		g.handleAdminSettleBatch(w, r)
 		return
 	}
 	id := parts[0]
@@ -3435,6 +3477,9 @@ func (g *Gateway) handleAdminSettleDevshard(w http.ResponseWriter, r *http.Reque
 		case errors.Is(err, errDevshardBusy):
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, id), http.StatusConflict)
 			return
+		case errors.Is(err, errInsufficientSpendableFunds):
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusPaymentRequired)
+			return
 		case strings.Contains(err.Error(), "is not active"):
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusNotFound)
 			return
@@ -3452,6 +3497,144 @@ func (g *Gateway) handleAdminSettleDevshard(w http.ResponseWriter, r *http.Reque
 		"tx_hash":   result.TxHash,
 		"settler":   result.Settler,
 	})
+}
+
+const (
+	defaultSettleConcurrency = 10
+	maxSettleConcurrency     = 50
+)
+
+type adminSettleBatchRequest struct {
+	adminSettleEscrowRequest
+	EscrowIDs []string `json:"escrow_ids"`
+	BatchSize int      `json:"batch_size,omitempty"`
+}
+
+type adminSettleBatchResult struct {
+	EscrowID string `json:"escrow_id"`
+	OK       bool   `json:"ok"`
+	TxHash   string `json:"tx_hash,omitempty"`
+	Settler  string `json:"settler,omitempty"`
+	Error    string `json:"error,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+type settleEscrowFunc func(ctx context.Context, id string, req adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error)
+
+func (g *Gateway) handleAdminSettleBatch(w http.ResponseWriter, r *http.Request) {
+	if g.store == nil {
+		http.Error(w, `{"error":{"message":"gateway state store unavailable"}}`, http.StatusServiceUnavailable)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	var req adminSettleBatchRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	if len(req.EscrowIDs) == 0 {
+		http.Error(w, `{"error":{"message":"escrow_ids is required"}}`, http.StatusBadRequest)
+		return
+	}
+	concurrency := req.BatchSize
+	if concurrency <= 0 {
+		concurrency = defaultSettleConcurrency
+	}
+	if concurrency > maxSettleConcurrency {
+		concurrency = maxSettleConcurrency
+	}
+	runSettleBatch(r.Context(), w, dedupeEscrowIDs(req.EscrowIDs), concurrency, req.adminSettleEscrowRequest, g.settleDevshardOnChain)
+}
+
+func dedupeEscrowIDs(escrowIDs []string) []string {
+	seen := make(map[string]struct{}, len(escrowIDs))
+	deduped := make([]string, 0, len(escrowIDs))
+	for _, id := range escrowIDs {
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		deduped = append(deduped, id)
+	}
+	return deduped
+}
+
+func runSettleBatch(ctx context.Context, w http.ResponseWriter, escrowIDs []string, concurrency int, req adminSettleEscrowRequest, settle settleEscrowFunc) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(http.StatusOK)
+
+	ids := make(chan string)
+	var writeMu sync.Mutex
+	var workers sync.WaitGroup
+	for worker := 0; worker < concurrency; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for id := range ids {
+				result := settleOneForBatchRecovered(ctx, id, req, settle)
+				writeMu.Lock()
+				writeSettleBatchResult(w, result)
+				writeMu.Unlock()
+			}
+		}()
+	}
+	for _, id := range escrowIDs {
+		ids <- id
+	}
+	close(ids)
+	workers.Wait()
+}
+
+func settleOneForBatchRecovered(ctx context.Context, id string, req adminSettleEscrowRequest, settle settleEscrowFunc) (result adminSettleBatchResult) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("devshard_settle_batch_panic escrow=%s recovered=%v", id, recovered)
+			result = adminSettleBatchResult{EscrowID: id, Reason: "broadcast_failed", Error: fmt.Sprintf("panic: %v", recovered)}
+		}
+	}()
+	return settleOneForBatch(ctx, id, req, settle)
+}
+
+func settleOneForBatch(ctx context.Context, id string, req adminSettleEscrowRequest, settle settleEscrowFunc) adminSettleBatchResult {
+	settleContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), autoSettlementAttemptTimeout)
+	defer cancel()
+	result, err := settle(settleContext, id, req)
+	if err != nil {
+		return adminSettleBatchResult{EscrowID: id, Reason: settleBatchErrorReason(err), Error: err.Error()}
+	}
+	return adminSettleBatchResult{EscrowID: id, OK: true, TxHash: result.TxHash, Settler: result.Settler}
+}
+
+func writeSettleBatchResult(w http.ResponseWriter, result adminSettleBatchResult) {
+	line, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("devshard_settle_batch_marshal_failed escrow=%s error=%q", result.EscrowID, err.Error())
+		return
+	}
+	if _, err := w.Write(append(line, '\n')); err != nil {
+		log.Printf("devshard_settle_batch_write_failed escrow=%s error=%q", result.EscrowID, err.Error())
+		return
+	}
+	_ = flushResponseWriter(w)
+}
+
+func settleBatchErrorReason(err error) string {
+	switch {
+	case errors.Is(err, errDevshardBusy):
+		return "busy"
+	case errors.Is(err, errInsufficientSpendableFunds):
+		return "insufficient_funds"
+	case strings.Contains(err.Error(), "is not active"), strings.Contains(err.Error(), "not found"):
+		return "not_found"
+	case strings.Contains(err.Error(), "private key") || strings.Contains(err.Error(), "private_key") || strings.Contains(err.Error(), "gateway state"):
+		return "invalid_request"
+	default:
+		return "broadcast_failed"
+	}
 }
 
 func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Request) {
@@ -3667,6 +3850,7 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 			return
 		}
+		existing.clearHold()
 		existing.active.Store(true)
 		writeJSON(w, map[string]any{
 			"id":           record.ID,
@@ -3767,6 +3951,7 @@ func (g *Gateway) handleAdminActivateDevshard(w http.ResponseWriter, r *http.Req
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 			return
 		}
+		rt.clearHold()
 		rt.active.Store(true)
 		g.mu.Unlock()
 		writeJSON(w, map[string]any{
@@ -4156,7 +4341,7 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 			return
 		}
 		log.Printf("gateway_replacing_exhausted_escrow escrow=%s", escrowID)
-		g.scheduleDepletedEscrowReplacement(escrowID, modelID, "balance_exhausted")
+		g.holdOrReplaceExhaustedEscrow(escrowID, modelID)
 	}
 }
 
@@ -4247,18 +4432,13 @@ func (g *Gateway) reconcilePendingSettlements() {
 		}
 		return
 	}
-	// Honor the operator's config: when settlement is disabled, never settle on
-	// startup. Leave the marker intact so a later re-enable still settles it.
-	if !state.Settings.EscrowRotation.SettlementEnabled {
-		for _, devshard := range state.Devshards {
-			if !devshard.Active && devshard.SettlementPending {
-				log.Printf("settlement_reconcile_skipped escrow=%s reason=settlement_disabled", devshard.ID)
-			}
-		}
-		return
-	}
 	for _, devshard := range state.Devshards {
 		if devshard.Active || !devshard.SettlementPending {
+			continue
+		}
+		// A disabled model keeps its marker, so a later re-enable still settles it.
+		if !settlementEnabledForModel(state.Settings, devshard.Model) {
+			log.Printf("settlement_reconcile_skipped escrow=%s model=%q reason=settlement_disabled", devshard.ID, devshard.Model)
 			continue
 		}
 		g.mu.Lock()
@@ -4275,8 +4455,8 @@ func (g *Gateway) reconcilePendingSettlements() {
 	}
 }
 
-func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
-	if !settings.EscrowRotation.SettlementEnabled {
+func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, modelID, reason string, settings GatewaySettings) (bool, error) {
+	if !settlementEnabledForModel(settings, modelID) {
 		if g.deactivateDevshardByIDWithReason(id, reason) {
 			log.Printf("escrow_rotation_deactivated_without_settlement escrow=%s reason=%q", id, reason)
 		}
@@ -4328,6 +4508,7 @@ func (g *Gateway) scheduleDepletedEscrowReplacement(id, modelID, reason string) 
 func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason string) error {
 	g.mu.Lock()
 	settings := g.settings
+	phaseGate := g.phaseGate
 	g.mu.Unlock()
 	if !settings.EscrowRotation.Enabled {
 		return nil
@@ -4336,7 +4517,15 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	if !ok {
 		return fmt.Errorf("no escrow rotation model configured for %q", modelID)
 	}
-	isTakenOutOfService, err := g.deactivateDepletedEscrow(ctx, id, reason, settings)
+	role, epoch := rotationRoleRegular, uint64(0)
+	if phaseGate != nil {
+		snapshot := phaseGate.Snapshot()
+		if snapshot.EpochIndex == 0 {
+			return errChainEpochUnknown
+		}
+		role, epoch = rotationPlacement(snapshot, settings.EscrowRotation.PrePoCBlocks)
+	}
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(ctx, id, modelID, reason, settings)
 	if err != nil {
 		return fmt.Errorf("deactivate depleted escrow: %w", err)
 	}
@@ -4349,15 +4538,22 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 		g.retireRuntime(id, reason)
 	}
 
-	var epoch uint64
-	if g.phaseGate != nil {
-		epoch = g.phaseGate.Snapshot().EpochIndex
+	target := rotationTargetForRole(model, role)
+	unlockTarget := g.rotationTargetLocks.lock(rotationTargetKey(model.ModelID, role, epoch))
+	defer unlockTarget()
+	activeCount, err := g.activeRotationEscrowCount(role, epoch, model.ModelID)
+	if err != nil {
+		return fmt.Errorf("check rotation target for replacement: %w", err)
+	}
+	if activeCount >= target {
+		log.Printf("escrow_depletion_replacement_skipped old_escrow=%s model=%q role=%s reason=%q target=%d", id, model.ModelID, role, "target_already_met", target)
+		return nil
 	}
 	create := (*Gateway).createRotationEscrow
 	if gatewayCreateDepletionEscrow != nil {
 		create = gatewayCreateDepletionEscrow
 	}
-	result, err := create(g, ctx, settings, model, rotationRoleRegular, epoch)
+	result, err := create(g, ctx, settings, model, role, epoch)
 	if err != nil {
 		return fmt.Errorf("create replacement escrow: %w", err)
 	}
@@ -4379,9 +4575,9 @@ func replacementModelForDepletedEscrow(settings GatewaySettings, modelID string)
 	return EscrowRotationModelSettings{}, false
 }
 
-// deactivateDepletedEscrow saves the escrow inactive, with its settlement mark when settlement is enabled, before stopping its traffic in memory, and reports whether this call took it out of service.
-func (g *Gateway) deactivateDepletedEscrow(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
-	isSettlementEnabled := settings.EscrowRotation.SettlementEnabled
+// deactivateDepletedEscrow saves the escrow inactive, with its settlement mark when settlement is enabled for its model, before stopping its traffic in memory, and reports whether this call took it out of service.
+func (g *Gateway) deactivateDepletedEscrow(ctx context.Context, id, modelID, reason string, settings GatewaySettings) (bool, error) {
+	isSettlementEnabled := settlementEnabledForModel(settings, modelID)
 	var isDeactivatedInStore bool
 	if err := withDBRetry(ctx, func() error {
 		var err error

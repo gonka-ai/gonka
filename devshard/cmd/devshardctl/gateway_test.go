@@ -166,6 +166,25 @@ func TestGatewayCheckBalancesReplacesAndDeactivatesLowBalance(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestGatewayCheckBalancesSkipsReplacementWhenModelAlreadyAtTarget(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.Models[0].TargetCount = 1
+	})
+	require.NoError(t, g.store.UpsertDevshard(GatewayDevshardState{
+		RuntimeConfig: RuntimeConfig{ID: "13", PrivateKeyHex: "secret", Model: "m"},
+		Active:        true,
+		RotationRole:  rotationRoleRegular,
+		RotationEpoch: 0, // replaceDepletedEscrow reads g.phaseGate.Snapshot().EpochIndex; this fixture's Gateway has no phaseGate, so epoch is always 0 here.
+	}))
+
+	runBalanceTick(t, g, rt.id)
+
+	require.Eventually(t, func() bool { return settled.Load() == 1 }, time.Second, 10*time.Millisecond, "the depleted escrow must still be settled")
+	require.False(t, rt.active.Load())
+	require.EqualValues(t, 0, created.Load(), "a model already at its rotation target must not mint another replacement")
+}
+
 func TestGatewayCheckBalancesReplacesAndDeactivatesHighNonce(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, 999_796)
 	require.EqualValues(t, 3, rt.proxy.sm.TotalSlots(), "the nonce above assumes a three-slot group: 1_000_000 - (3+1) - 200")
@@ -244,7 +263,7 @@ func TestEnqueueSettlementWaitsForActiveRequests(t *testing.T) {
 	// One request in flight → settlement must NOT fire yet, but escrow is
 	// deactivated and marked pending (in-memory + persisted).
 	g.reserveRuntime(rt, 1)
-	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "low_balance", g.settings)
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "m", "low_balance", g.settings)
 	require.NoError(t, err)
 	require.True(t, isTakenOutOfService, "an active escrow was not reported as taken out of service")
 
@@ -273,7 +292,7 @@ func TestEnqueueSettlementSettlesImmediatelyWhenDrained(t *testing.T) {
 	g, _, settled := gatewayTestDepletionGateway(t, rt)
 
 	// No active requests → settle right away.
-	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "low_balance", g.settings)
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "m", "low_balance", g.settings)
 	require.NoError(t, err)
 	require.True(t, isTakenOutOfService, "an active escrow was not reported as taken out of service")
 
@@ -315,6 +334,103 @@ func TestReconcilePendingSettlementsSkipsWhenSettlementDisabled(t *testing.T) {
 
 	// Inactive escrow flagged pending, but settlement is disabled → reconcile
 	// must not settle, and the marker is preserved for a later re-enable.
+	rt.active.Store(false)
+	require.NoError(t, g.store.SetDevshardActive("12", false))
+	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
+
+	g.reconcilePendingSettlements()
+
+	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+}
+
+func TestSettlementEnabledForModelFallsBackToTheGlobalFlag(t *testing.T) {
+	// Test flow:
+	// 1. Build rotation settings with a global flag and one model that may or may not set its own.
+	// 2. Ask whether a model's escrows are settled.
+	// 3. A model's own flag wins; an unset flag or an unknown model takes the global one.
+	testCases := []struct {
+		name          string
+		globalEnabled bool
+		modelEnabled  *bool
+		modelID       string
+		expected      bool
+	}{
+		{name: "unset model takes enabled global", globalEnabled: true, modelEnabled: nil, modelID: "m", expected: true},
+		{name: "unset model takes disabled global", globalEnabled: false, modelEnabled: nil, modelID: "m", expected: false},
+		{name: "model disables over enabled global", globalEnabled: true, modelEnabled: boolPtr(false), modelID: "m", expected: false},
+		{name: "model enables over disabled global", globalEnabled: false, modelEnabled: boolPtr(true), modelID: "m", expected: true},
+		{name: "model id is trimmed", globalEnabled: false, modelEnabled: boolPtr(true), modelID: " m ", expected: true},
+		{name: "unknown model takes global", globalEnabled: true, modelEnabled: boolPtr(false), modelID: "other", expected: true},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			settings := GatewaySettings{EscrowRotation: EscrowRotationSettings{
+				SettlementEnabled: testCase.globalEnabled,
+				Models:            []EscrowRotationModelSettings{{ModelID: "m", SettlementEnabled: testCase.modelEnabled}},
+			}}
+
+			require.Equal(t, testCase.expected, settlementEnabledForModel(settings, testCase.modelID))
+		})
+	}
+}
+
+func TestDepletionHonorsAModelThatDisablesSettlement(t *testing.T) {
+	// Test flow:
+	// 1. Enable settlement globally but disable it for the escrow's model.
+	// 2. Take the depleted escrow out of service.
+	// 3. It is deactivated without a settlement mark and never settled.
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.Models[0].SettlementEnabled = boolPtr(false)
+	})
+
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "m", "low_balance", g.settings)
+
+	require.NoError(t, err)
+	require.True(t, isTakenOutOfService)
+	require.False(t, rt.settlementPending.Load())
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending,
+		"a model that opted out must not leave a mark a restart would settle")
+	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+}
+
+func TestReconcileSettlesAModelThatEnablesSettlement(t *testing.T) {
+	// Test flow:
+	// 1. Disable settlement globally but enable it for the escrow's model, and leave a pending mark from before a restart.
+	// 2. Reconcile pending settlements.
+	// 3. The escrow is settled.
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.SettlementEnabled = false
+		settings.EscrowRotation.Models[0].SettlementEnabled = boolPtr(true)
+	})
+	rt.active.Store(false)
+	require.NoError(t, g.store.SetDevshardActive("12", false))
+	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
+
+	g.reconcilePendingSettlements()
+
+	require.Eventually(t, func() bool {
+		return settled.Load() == 1 && !rt.settlementPending.Load()
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestReconcileKeepsTheMarkOfAModelThatDisablesSettlement(t *testing.T) {
+	// Test flow:
+	// 1. Enable settlement globally but disable it for the escrow's model, and leave a pending mark from before a restart.
+	// 2. Reconcile pending settlements.
+	// 3. The escrow is not settled and keeps its mark for a later re-enable.
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.Models[0].SettlementEnabled = boolPtr(false)
+	})
 	rt.active.Store(false)
 	require.NoError(t, g.store.SetDevshardActive("12", false))
 	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
@@ -1483,6 +1599,134 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, state.Devshards, 1)
 	require.False(t, state.Devshards[0].Active)
+}
+
+// blockingFinalizeHandler answers /v1/finalize by reporting entry on
+// entered, then waiting for release before returning.
+func blockingFinalizeHandler(entered chan<- string, release <-chan struct{}, escrowID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entered <- escrowID
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func newFinalizeTestGateway(t *testing.T, runtimes ...*devshardRuntime) *Gateway {
+	t.Helper()
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	devshards := make([]GatewayDevshardState, 0, len(runtimes))
+	for _, rt := range runtimes {
+		devshards = append(devshards, GatewayDevshardState{RuntimeConfig: RuntimeConfig{ID: rt.id, PrivateKeyHex: "secret", Model: rt.model}, Active: true})
+	}
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, devshards))
+	g := NewGateway(runtimes, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+	return g
+}
+
+func finalizeRequest(escrowID string) *http.Request {
+	return httptest.NewRequest(http.MethodPost, "/devshard/"+escrowID+"/v1/finalize", nil)
+}
+
+func waitForDone(t *testing.T, done <-chan struct{}, message string) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal(message)
+	}
+}
+
+func TestGatewayFinalizeDoesNotSerializeAcrossEscrows(t *testing.T) {
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	rtA := &devshardRuntime{id: "A", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "A")}
+	rtB := &devshardRuntime{id: "B", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "B")}
+	g := newFinalizeTestGateway(t, rtA, rtB)
+
+	doneA := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("A"))
+		close(doneA)
+	}()
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "A", escrowID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("escrow A finalize never entered its handler")
+	}
+
+	doneB := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("B"))
+		close(doneB)
+	}()
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "B", escrowID, "escrow B must finalize while escrow A is still finalizing")
+	case <-time.After(2 * time.Second):
+		t.Fatal("escrow B finalize blocked behind escrow A's finalize")
+	}
+
+	close(release)
+	waitForDone(t, doneA, "escrow A finalize never returned")
+	waitForDone(t, doneB, "escrow B finalize never returned")
+}
+
+func TestGatewayFinalizeStillSerializesSameEscrow(t *testing.T) {
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	rt := &devshardRuntime{id: "A", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "A")}
+	g := newFinalizeTestGateway(t, rt)
+
+	doneFirst := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("A"))
+		close(doneFirst)
+	}()
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "A", escrowID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("escrow A finalize never entered its handler")
+	}
+
+	doneSecond := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("A"))
+		close(doneSecond)
+	}()
+
+	select {
+	case <-entered:
+		t.Fatal("a second finalize for the same escrow must wait for the first to finish")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(release)
+	waitForDone(t, doneFirst, "the first finalize for escrow A never returned")
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "A", escrowID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second finalize for escrow A never ran after the first released")
+	}
+	waitForDone(t, doneSecond, "the second finalize for escrow A never returned")
 }
 
 func TestGatewayHandlePooledChatSetsChosenDevshardHeader(t *testing.T) {
