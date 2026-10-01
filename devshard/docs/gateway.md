@@ -48,8 +48,209 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | no | `300` | Blocks before the next epoch switch at `set_new_validators` to create temp bridge escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env` |
 | - | `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` | no | `30` | After client disconnect, keep draining host SSE for protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) up to this many seconds |
+| - | `PGHOST` | no | - | When set (or `DEVSHARD_STORAGE_MODE` is `hybrid`/`postgres`), gateway settings and epoch accounting use Postgres only. Local `{baseStorageDir}/gateway.db` / `accounting.db` are migration sources, not runtime fallbacks |
+| - | `PGPORT` | when `PGHOST` set | `5432` | Postgres port |
+| - | `PGDATABASE` | when `PGHOST` set | - | Postgres database name |
+| - | `PGUSER` | when `PGHOST` set | - | Postgres user |
+| - | `PGPASSWORD` | when `PGHOST` set | - | Postgres password |
+| - | `PG_CONNECT_TIMEOUT` | when `PGHOST` set | `2s` | Dial/auth timeout for each new Postgres connection (`common/storage/pgtimeouts`) |
+| - | `PG_OPERATION_TIMEOUT` | when `PGHOST` set | `2s` | Per-call Go context deadline for gateway/accounting Postgres ops; `0` disables. Does **not** disable server-side `statement_timeout` / `lock_timeout` |
+| - | `PG_IMPORT_TIMEOUT` | when `PGHOST` set | `5m` | Boot-time SQLite→Postgres import (+ leftover journal drain) budget |
+| - | `PG_RETRY_INTERVAL` | when `PGHOST` set | session/payload defaults | Used by **session** / payload hybrid reconnect; gateway/accounting do not fall back to SQLite |
+| - | `DEVSHARD_ACCOUNTING_WRITER_ID` | **required for HA** | hostname | Names this instance's epoch accounting rows in Postgres. **Multi-instance gateway deployments must set a stable, unique value per replica** (pod name / StatefulSet ordinal). Defaulting to hostname is only safe when hostnames are unique and stable across restarts; colliding ids make two replicas rewrite the same request-local rows |
 
-## Quick start
+Postgres timeout defaults live in `common/storage/pgtimeouts` and are shared by
+gateway, epoch accounting, session storage, and payload reconnect. Two bounds
+are **not** env-tunable — they are applied as connection `RuntimeParams` on every
+pooled connection:
+
+| Server param | Default | Meaning |
+| --- | --- | --- |
+| `statement_timeout` | `5s` | Abort one SQL statement that runs too long |
+| `lock_timeout` | `3s` | Abort a statement waiting too long for a row/table lock |
+
+### Gateway persistence backend
+
+Gateway settings, devshard topology, rotation status, escrow commitments, suspicious
+hosts, and participant throttle state are persisted in Postgres when `PGHOST` is
+set (or `DEVSHARD_STORAGE_MODE` is `hybrid` / `postgres`). Local
+`{baseStorageDir}/gateway.db` remains only as a one-shot migration source.
+Full design (including HA LWW-per-key semantics vs additive accounting) is in
+[storage-design.md](storage-design.md#gateway-store).
+
+When Postgres is selected:
+
+- On startup Postgres must be reachable or open fails (no SQLite runtime fallback).
+- Existing SQLite data is imported once (idempotent; skipped when Postgres already
+  has settings or a migration marker exists).
+- Any leftover `gateway_sync_journal` rows from older hybrid builds are drained,
+  then the gateway serves **Postgres only**.
+
+When `PGHOST` is unset and mode is `sqlite`/`auto`, only SQLite is used.
+
+**Rollback:** unset `PGHOST` and use `DEVSHARD_STORAGE_MODE=sqlite` to run
+SQLite-only again. Writes that landed in Postgres after migration are not
+automatically copied back to SQLite.
+
+**Postgres outage:** gateway store and epoch accounting fail closed (errors /
+boot failure). Session storage may still degrade to owner-only SQLite while
+reconnecting — that fallback is session-only.
+
+Gateway tables (`gateway_*`, `escrow_rotation_*`, `participant_throttle_state`)
+can share the same Postgres database as devshard session or payload tables; table
+names do not collide.
+
+### Epoch accounting backend
+
+Epoch accounting follows the same switch, with one difference: it is written to
+merge across instances rather than replaced wholesale. Every escrow is stored as
+rows in `accounting_escrow_*` with an explicit merge rule per field, so two
+gateways that both hold an escrow combine instead of overwriting each other, and
+a retried flush cannot double count. See
+[storage-design.md](storage-design.md#epoch-accounting) for the full field table.
+
+**HA requirement.** When more than one gateway can write accounting against the
+same Postgres database, each replica **must** set
+`DEVSHARD_ACCOUNTING_WRITER_ID` to a stable, unique string. Request-local counters
+are partitioned by that id; two replicas that share it overwrite each other's
+share. SQLite mode ignores the variable (single writer, no merge). Resolution
+order: env → `os.Hostname()` → `"default"`.
+
+On first boot against a database written by an older build, the legacy
+`accounting_escrows` blob table is converted into these rows once (marker
+`blob_to_rows`) under the frozen writer `_legacy_blob`, then drained. A separate
+`sqlite_import` marker covers one-shot import from local `accounting.db`.
+
+#### HA merge framework
+
+There is no single merge rule that fits every field, so each one is classified
+first. **The question that decides the class: if two instances are live on the
+same escrow, do both of them produce this value?**
+
+| Class | Test | Merge rule | Storage shape |
+| --- | --- | --- | --- |
+| Request-local | Only the instance that dispatched the request can produce it — it needs a local signal (`RecordGhost`, `RecordRealSend`, `RecordUsage`) | `SUM` across writers | Per-writer row `(escrow_id, writer_id, key)` holding that writer's own share |
+| Replicated | Read off the committed diff stream or a verdict, so every instance derives it identically | Set union; monotonic flags with `OR` | One row per nonce, **no** `writer_id`; totals counted on read |
+| Absolute mirror | The chain already publishes the total and each instance re-reads it | `GREATEST` per column | Shared row, no `writer_id` |
+| Ordered / identity | Moves through a fixed order, or is fixed at registration | Highest rank wins / identity write | Shared row |
+
+Worked examples: a `finished_used` disposition is request-local (a passive
+instance sees the finish on chain but never learns the result was used). A
+protocol-only nonce is replicated (it is exactly the absence of a local start).
+Host stats and the `latest` watermark are absolute mirrors. Escrow phase is
+ordered; slots and timeouts are identity.
+
+**The rule for replicated facts is the counter-intuitive one: never store a
+count.** Two instances observing one chain event would each contribute 1, and
+summing reports 2; taking the max instead reports 1 but silently drops the second
+nonce when the two instances observed *different* events. Storing the nonce
+itself sidesteps the choice — the row is the observation, so a union is exact in
+both directions.
+
+Whatever the class, three invariants hold:
+
+- **Replay-safe.** A flush may be replayed after an ambiguous timeout. Summed
+  rows are written as absolute values, set rows are insert-if-absent; never
+  `count = count + delta`.
+- **No cross-writer writes.** An instance only ever writes rows it owns, or adds
+  set members. This is what removes the need for a lease or fencing token.
+- **Monotonic.** Nothing decreases. A resolved challenge is flagged, not deleted,
+  so a repeated verdict from another instance cannot reopen it.
+
+#### Challenges and the legacy `ChallengeBySlot` carry
+
+A challenge is a protocol fact: inference status `Challenged` / `Validated` /
+`Invalidated` on a committed nonce, attributed to the executor slot. The tracker
+records it in `Challenge map[nonce]{Slot, Resolved}`:
+
+- `ProtocolChallenged` → `openChallenge` (insert once; never reopen a resolved entry)
+- `ProtocolValidated` → `resolveChallenge` (`Resolved = true`, entry kept)
+- `ProtocolInvalidated` → resolve, then add the nonce to `Invalid`
+
+`UnresolvedChallenges` in the query API is the count of set members with
+`!Resolved` (plus any frozen legacy baseline below). Resolved entries stay in the
+set so a repeated challenge verdict cannot reopen them and so HA can merge with
+`resolved OR excluded.resolved`.
+
+**Why `ChallengeBySlot` existed.** The API wanted a per-slot number. The old
+design persisted that number (`ChallengeBySlot[slot]++` / `--`) and kept
+`OpenChallenge` only in memory (`json:"-"`) so close knew which slot to
+decrement. That was cheap for single-writer reporting, but the open set was lost
+on every restart (counts drifted up) and a bare count cannot merge across HA
+writers.
+
+**What changed.** The hot path no longer writes `ChallengeBySlot` /
+`InvalidBySlot`. Those maps, and `InvalidLegacy`, are **read-only carries** for
+blobs written before the set layout. New activity — SQLite or Postgres — only
+touches the sets. The same is true if you never leave SQLite: after upgrade, new
+escrows leave the carry empty.
+
+**What we do not lose for new data.** The reportable fields
+(`UnresolvedChallenges`, recorded invalid) are unchanged in meaning; they are
+derived on read instead of stored as counters. The tradeoff is a little more
+CPU/memory (count the set; keep resolved nonces until the escrow is pruned), not
+missing API data. Correctness improves: restarts and multi-writer merge stay exact.
+
+**When the carry can leave the codebase.** After every deployment you care about
+has migrated past the old blob shape, no old `accounting.db` is still imported,
+and retention has dropped every escrow that still holds non-zero carry (or those
+rows have been verified empty). Until then, keep decode + fold of the old JSON /
+`accounting_escrow_slot_counts` paths. Dropping the carry too early loses
+historical totals that cannot be reconstructed (nonces were never stored).
+
+#### Adding a field
+
+1. Classify it with the table above, and add it to the field table in
+   `storage-design.md`.
+2. Add it to `escrowState` in `accounting/tracker.go`. For a replicated fact,
+   store the set (nonce → slot), not a count.
+3. If the query path needs a per-slot or per-key total, derive it in
+   `escrowState.view` rather than storing it as well. Storing both a set and its
+   count means two representations under two merge rules, which drift apart and
+   cannot be reconciled afterwards.
+4. Extend `escrowBlob` in `accounting/store.go` plus `blobFromEscrow` /
+   `applyLoadedEscrow`. This is also the SQLite format, so leave old field names
+   and JSON tags in place and treat them as read-only carries.
+5. In `accounting/store_postgres_rows.go`: add the DDL to `accountingRowSchema`
+   (new tables via `CREATE TABLE IF NOT EXISTS`, new columns via
+   `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` with a default that identifies
+   pre-existing rows), then the read in `readLedger`, the write in
+   `writeEscrowRows`, and the table in `deleteEscrowRows` so retention pruning
+   removes it.
+6. For a summed field, feed `contributionFromBlob` and the peer baseline so the
+   writer publishes its own share; for a set, no baseline is needed.
+7. Test both HA directions, not just the sum: two writers observing *different*
+   things must keep both, and two writers observing the *same* thing must count it
+   once. `accounting/merge_test.go` covers the rules without Docker;
+   `store_postgres_ha_test.go` covers them against a real database.
+
+Only the merge machinery is Postgres-specific. The in-memory model and the blob
+format are shared with SQLite, which has a single writer and therefore never
+merges anything.
+
+#### Staying on SQLite: how new fields appear
+
+SQLite does **not** run the row-merge schema. It keeps one JSON blob per escrow
+in `accounting_escrows.payload` (`store_sqlite.go`). Adding a field while
+remaining on SQLite is therefore a **blob evolve**, not a SQL migration:
+
+1. Add the Go field to `escrowState` / `escrowBlob` with a new JSON key
+   (`omitempty` for optional data).
+2. On load, `encoding/json` leaves missing keys as zero values — old files open
+   without a rewrite step.
+3. On the next successful flush, the whole blob is rewritten with the new keys
+   present. There is no per-column `ALTER`, no marker table, and no
+   `writer_id`.
+4. Keep old JSON tags as read-only carries when a representation changes (e.g.
+   pre-set `challenge_by_slot` / `invalid_nonces`), so a file written by an older
+   build still loads and does not double-count after promotion into a set.
+5. Bump `SchemaVersion` in `types.go` when the query API shape changes; it is
+   stored in `accounting_meta` for observability, not as a gate that blocks load.
+
+If you later switch that node to Postgres, the same blob is what
+`sqlite_import` / `blob_to_rows` convert — so the SQLite blob rules and the
+Postgres field checklist must stay aligned.
+
 
 ```bash
 devshardctl \

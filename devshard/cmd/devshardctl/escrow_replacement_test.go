@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -212,17 +213,19 @@ func withoutReplacementModel(settings *GatewaySettings) {
 	settings.EscrowRotation.Models[0].ModelID = "another-model"
 }
 
-func pendingCommitments(t *testing.T, store *GatewayStore) []GatewayEscrowCommitment {
+func pendingCommitments(t *testing.T, store GatewayStore) []GatewayEscrowCommitment {
 	t.Helper()
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	return commitments
 }
 
 // rejectDevshardColumnUpdate makes the store refuse writing the value to the escrow's column and returns a function that lifts the refusal.
-func rejectDevshardColumnUpdate(t *testing.T, store *GatewayStore, escrowID, column string, rejectedValue int) func() {
+func rejectDevshardColumnUpdate(t *testing.T, store GatewayStore, escrowID, column string, rejectedValue int) func() {
 	t.Helper()
-	_, err := store.db.Exec(fmt.Sprintf(`
+	sqlite, ok := store.(*SQLiteGatewayStore)
+	require.True(t, ok, "column trigger requires the sqlite gateway store")
+	_, err := sqlite.db.Exec(fmt.Sprintf(`
 		CREATE TRIGGER reject_%[2]s_update
 		BEFORE UPDATE OF %[2]s ON gateway_devshards
 		WHEN NEW.id = '%[1]s' AND NEW.%[2]s = %[3]d
@@ -231,7 +234,7 @@ func rejectDevshardColumnUpdate(t *testing.T, store *GatewayStore, escrowID, col
 		END`, escrowID, column, rejectedValue))
 	require.NoError(t, err)
 	return func() {
-		_, err := store.db.Exec(fmt.Sprintf(`DROP TRIGGER reject_%s_update`, column))
+		_, err := sqlite.db.Exec(fmt.Sprintf(`DROP TRIGGER reject_%s_update`, column))
 		require.NoError(t, err)
 	}
 }
@@ -256,7 +259,7 @@ func waitForReplacementIdle(t *testing.T, gateway *Gateway, escrowID string) {
 func waitForSettlementFinished(t *testing.T, gateway *Gateway, escrowID string, settled *atomic.Int32) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		record, _, err := gateway.store.GetDevshard(escrowID)
+		record, _, err := gateway.store.GetDevshard(context.Background(), escrowID)
 		return settled.Load() == 1 && err == nil && !record.SettlementPending && !isSettlementInFlight(gateway, escrowID)
 	}, time.Second, 10*time.Millisecond, "settlement of escrow %s did not finish", escrowID)
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -22,11 +23,11 @@ func (provider *signalingMaxNonce) MaxNonce() uint32 {
 
 // The first balance check runs as the gateway starts, so the chain max nonce must reach the gateway before it.
 func TestNewManagedGatewayChecksBalancesWithTheChainMaxNonceFromTheStart(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	settings := GatewaySettings{DefaultModel: "m", EscrowRotation: EscrowRotationSettings{Enabled: true}}
-	require.NoError(t, store.Initialize(settings, nil))
+	require.NoError(t, store.Initialize(context.Background(), settings, nil))
 	maxNonce := &signalingMaxNonce{read: make(chan struct{})}
 
 	gateway := NewManagedGateway(nil, NewGatewayLimiter(0, 0), settings, t.TempDir(), store, nil, nil, nil, maxNonce)
