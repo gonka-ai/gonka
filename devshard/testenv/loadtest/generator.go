@@ -37,9 +37,11 @@ type Summary struct {
 	Seed                    int64           `json:"seed"`
 	StartedAt               time.Time       `json:"started_at"`
 	Duration                time.Duration   `json:"duration"`
+	Offered                 int             `json:"offered_requests"`
 	Requests                int             `json:"requests"`
 	Completed               int             `json:"completed"`
 	Failed                  int             `json:"failed"`
+	Dropped                 int             `json:"dropped_by_generator"`
 	ErrorRate               float64         `json:"error_rate"`
 	P50                     time.Duration   `json:"p50_latency"`
 	P95                     time.Duration   `json:"p95_latency"`
@@ -57,7 +59,7 @@ func RunGenerator(ctx context.Context, cfg GeneratorConfig) (Summary, error) {
 		return Summary{}, err
 	}
 	if cfg.Client == nil {
-		cfg.Client = defaultHTTPClient(cfg.Scenario.Workload.Concurrency)
+		cfg.Client = defaultHTTPClient(cfg.Scenario.Workload.MaxInFlight)
 	}
 	if cfg.OutputDir == "" {
 		return Summary{}, fmt.Errorf("output directory is required")
@@ -71,9 +73,27 @@ func RunGenerator(ctx context.Context, cfg GeneratorConfig) (Summary, error) {
 	var sequence atomic.Uint64
 	results := make([]RequestResult, 0)
 	var resultsMu sync.Mutex
-	var workers sync.WaitGroup
+	record := func(result RequestResult) {
+		resultsMu.Lock()
+		results = append(results, result)
+		resultsMu.Unlock()
+	}
+	if cfg.Scenario.Workload.Traffic.IsRateBased() {
+		runRateProfile(ctx, cfg, started, deadline, &sequence, record)
+	} else {
+		runClosedLoop(ctx, cfg, deadline, &sequence, record)
+	}
 
-	for i := 0; i < cfg.Scenario.Workload.Concurrency; i++ {
+	summary := summarize(cfg.Scenario, started, time.Since(started), results)
+	if err := writeResults(cfg.OutputDir, summary); err != nil {
+		return Summary{}, err
+	}
+	return summary, nil
+}
+
+func runClosedLoop(ctx context.Context, cfg GeneratorConfig, deadline time.Time, sequence *atomic.Uint64, record func(RequestResult)) {
+	var workers sync.WaitGroup
+	for i := 0; i < cfg.Scenario.Workload.MaxInFlight; i++ {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
@@ -83,21 +103,64 @@ func RunGenerator(ctx context.Context, cfg GeneratorConfig) (Summary, error) {
 					return
 				default:
 				}
-				index := sequence.Add(1)
-				result := executeRequest(ctx, cfg, index)
-				resultsMu.Lock()
-				results = append(results, result)
-				resultsMu.Unlock()
+				record(executeRequest(ctx, cfg, sequence.Add(1)))
 			}
 		}()
 	}
 	workers.Wait()
+}
 
-	summary := summarize(cfg.Scenario, started, time.Since(started), results)
-	if err := writeResults(cfg.OutputDir, summary); err != nil {
-		return Summary{}, err
+func runRateProfile(ctx context.Context, cfg GeneratorConfig, started, deadline time.Time, sequence *atomic.Uint64, record func(RequestResult)) {
+	profile := cfg.Scenario.Workload.Traffic
+	permits := make(chan struct{}, cfg.Scenario.Workload.MaxInFlight)
+	var requests sync.WaitGroup
+	nextArrival := started
+
+	for {
+		if !waitForArrival(ctx, nextArrival) || !time.Now().Before(deadline) {
+			break
+		}
+		index := sequence.Add(1)
+		select {
+		case permits <- struct{}{}:
+			requests.Add(1)
+			go func() {
+				defer requests.Done()
+				defer func() { <-permits }()
+				record(executeRequest(ctx, cfg, index))
+			}()
+		default:
+			record(droppedRequest(cfg.Scenario, index))
+		}
+
+		rate := profile.RPSAt(time.Since(started), cfg.Scenario.Duration())
+		nextArrival = time.Now().Add(time.Duration(float64(time.Second) / rate))
 	}
-	return summary, nil
+	requests.Wait()
+}
+
+func waitForArrival(ctx context.Context, at time.Time) bool {
+	delay := time.Until(at)
+	if delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func droppedRequest(scenario Scenario, index uint64) RequestResult {
+	return RequestResult{
+		RequestID: fmt.Sprintf("%s-%d-%06d", scenario.Scenario, scenario.Seed, index),
+		StartedAt: time.Now().UTC(),
+		Outcome:   "dropped_by_generator",
+		Error:     "max_in_flight reached",
+	}
 }
 
 func defaultHTTPClient(concurrency int) *http.Client {
@@ -182,7 +245,7 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) Requ
 }
 
 func summarize(scenario Scenario, started time.Time, duration time.Duration, results []RequestResult) Summary {
-	summary := Summary{Scenario: scenario.Scenario, Seed: scenario.Seed, StartedAt: started, Duration: duration, Requests: len(results), Results: results}
+	summary := Summary{Scenario: scenario.Scenario, Seed: scenario.Seed, StartedAt: started, Duration: duration, Offered: len(results), Requests: len(results), Results: results}
 	latencies := make([]time.Duration, 0, len(results))
 	for _, result := range results {
 		latencies = append(latencies, result.Duration)
@@ -190,6 +253,9 @@ func summarize(scenario Scenario, started time.Time, duration time.Duration, res
 			summary.Completed++
 		} else {
 			summary.Failed++
+		}
+		if result.Outcome == "dropped_by_generator" {
+			summary.Dropped++
 		}
 	}
 	if summary.Requests > 0 {
