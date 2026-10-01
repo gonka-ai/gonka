@@ -871,3 +871,24 @@ func (k Keeper) hashToG1(hash []byte) (bls12381.G1Affine, error) {
 }
 
 // trySetFromHash removed; mapping now uses single-field SWU map aligned with EIP-2537.
+
+// dealerCommitmentsZeroSlot derives every slot public key from the dealer's
+// commitments and returns the first slot whose key is the identity or otherwise
+// fails KeyValidate (i.e. the dealer polynomial has a root there), or -1 if none.
+func dealerCommitmentsZeroSlot(commitments [][]byte, totalSlots uint32) (int64, error) {
+	slotIndices := make([]uint32, totalSlots)
+	for i := range slotIndices {
+		slotIndices[i] = uint32(i)
+	}
+	slotPublicKeys, err := buildDealerSlotPublicKeysForSlots(commitments, totalSlots, slotIndices)
+	if err != nil {
+		return -1, err
+	}
+	for slot, pkBytes := range slotPublicKeys {
+		pk := new(blst.P2Affine).Uncompress(pkBytes)
+		if pk == nil || !pk.KeyValidate() {
+			return int64(slot), nil
+		}
+	}
+	return -1, nil
+}
