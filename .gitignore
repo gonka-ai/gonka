@@ -54,7 +54,7 @@ run-parallel-tests/
 **/node_modules/
 **/target/
 /tmp
-devshard/testenv/baselines/checkout/
+devshard/testenv/baselines/
 .worklog
 .worklog
 .worklog
