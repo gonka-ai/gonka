@@ -96,6 +96,25 @@ func (m *Mempool) StaleFinishes(currentNonce, grace uint64) []*types.DevshardTx 
 	return out
 }
 
+// HasFinish reports whether a MsgFinishInference for inferenceID is waiting
+// in the mempool.
+func (m *Mempool) HasFinish(inferenceID uint64) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range m.entries {
+		if e.Tx == nil {
+			continue
+		}
+		if fi := e.Tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Mempool) Txs() []*types.DevshardTx {
 	m.mu.Lock()
 	defer m.mu.Unlock()

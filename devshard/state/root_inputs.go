@@ -37,8 +37,8 @@ type RootInputs struct {
 	TurnSlots           uint64 `json:"hs_turn_slots"`
 	TurnReason          string `json:"hs_turn_reason,omitempty"`
 
-	WarmKeys map[uint32]string `json:"warm_keys,omitempty"`
-	HostStats []RootHostStat   `json:"host_stats,omitempty"`
+	WarmKeys  map[uint32]string `json:"warm_keys,omitempty"`
+	HostStats []RootHostStat    `json:"host_stats,omitempty"`
 
 	Inferences        []inferenceDiagEntry `json:"inferences,omitempty"`
 	InferencesOmitted bool                 `json:"inferences_omitted,omitempty"`
@@ -96,15 +96,14 @@ func (sm *StateMachine) ExportRootInputs(nonce uint64) RootInputs {
 	}
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	root, err := sm.computeStateRootLocked()
+	parts, err := sm.rootComponentsLocked()
 	if err != nil {
-		in := sm.rootInputsLocked(nonce, nil)
-		return in
+		return sm.rootInputsFromComponents(nonce, rootComponents{})
 	}
-	return sm.rootInputsLocked(nonce, root)
+	return sm.rootInputsFromComponents(nonce, parts)
 }
 
-func (sm *StateMachine) rootInputsLocked(nonce uint64, computedRoot []byte) RootInputs {
+func (sm *StateMachine) rootInputsFromComponents(nonce uint64, parts rootComponents) RootInputs {
 	st := sm.state
 	hs := types.HeightSyncEscrowCommitFromState(st)
 	acc := sealedAccBytes32(st.SealedAcc)
@@ -127,18 +126,12 @@ func (sm *StateMachine) rootInputsLocked(nonce uint64, computedRoot []byte) Root
 		TurnReason:          hs.Reason,
 		WarmKeys:            mapsClone(st.WarmKeys),
 		HostStats:           rootHostStats(st.HostStats),
-		ComputedRoot:        hex.EncodeToString(computedRoot),
-	}
-	if h, err := computeHostStatsHash(st.HostStats); err == nil {
-		in.HostStatsHash = hex.EncodeToString(h)
-	}
-	if h, err := computeInferencesHash(st.Inferences); err == nil {
-		in.InferencesHash = hex.EncodeToString(h)
-	}
-	in.WarmKeysHash = hex.EncodeToString(computeWarmKeysHash(st.WarmKeys))
-	in.HeightSyncHash = hex.EncodeToString(hashHeightSyncEscrow(hs))
-	if rest, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys, hs); err == nil {
-		in.RestHash = hex.EncodeToString(rest)
+		HostStatsHash:       hex.EncodeToString(parts.hostStatsHash),
+		InferencesHash:      hex.EncodeToString(parts.inferencesHash),
+		WarmKeysHash:        hex.EncodeToString(parts.warmKeysHash),
+		HeightSyncHash:      hex.EncodeToString(parts.heightSyncHash),
+		RestHash:            hex.EncodeToString(parts.restHash),
+		ComputedRoot:        hex.EncodeToString(parts.root),
 	}
 	if len(st.Inferences)+len(sm.sealedNonces) <= rootInputInferenceCap {
 		in.Inferences = sm.collectInferenceDiagEntriesLocked()

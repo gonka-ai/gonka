@@ -1364,11 +1364,26 @@ func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference, err e
 	if !ok {
 		return
 	}
-	local := s.sm.ExportRootInputs(p.diff.Nonce)
+	// The host may fail on an earlier catch-up diff, and other requests may
+	// have advanced the gateway. Inputs from different nonces differ in every
+	// field, so compare only when both sides describe the same nonce.
+	if localNonce := s.sm.LatestNonce(); localNonce != hostInputs.LatestNonce {
+		logging.Error("state root divergence comparison",
+			"subsystem", "user",
+			"escrow_id", s.escrowID,
+			"nonce", p.diff.Nonce,
+			"host_nonce", hostInputs.LatestNonce,
+			"local_nonce", localNonce,
+			"host_state", hostInputs,
+		)
+		return
+	}
+	local := s.sm.ExportRootInputs(hostInputs.LatestNonce)
 	logging.Error("state root divergence comparison",
 		"subsystem", "user",
 		"escrow_id", s.escrowID,
 		"nonce", p.diff.Nonce,
+		"host_nonce", hostInputs.LatestNonce,
 		"differ", state.DiffRootInputs(local, hostInputs),
 	)
 }

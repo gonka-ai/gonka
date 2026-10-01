@@ -769,16 +769,18 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 		}
 	}
 
-	// 7. Compute state root.
-	root, err := sm.computeStateRootLocked()
+	// 7. Compute state root. Keep the component hashes so a mismatch can
+	// report them without walking the live inference set a second time.
+	parts, err := sm.rootComponentsLocked()
 	if err != nil {
 		sm.restoreMutable(snap)
 		return nil, fmt.Errorf("compute state root: %w", err)
 	}
+	root := parts.root
 
 	// 8. Verify post_state_root if present. On mismatch, roll back everything.
 	if len(postStateRoot) > 0 && !bytes.Equal(root, postStateRoot) {
-		inputs := sm.rootInputsLocked(nonce, root)
+		inputs := sm.rootInputsFromComponents(nonce, parts)
 		sm.logStateRootMismatchDiagnosticLocked(StateRootMismatchOpts{
 			Side:          "devshardd",
 			Nonce:         nonce,
