@@ -24,3 +24,10 @@ type PayloadAuthClient interface {
 type PayloadStore interface {
 	Store(ctx context.Context, escrowId string, inferenceId, epochId uint64, promptPayload, responsePayload []byte) error
 }
+
+// PayloadReader reads a stored payload back. A store without it cannot
+// recover a lost finish: RecoveryStoredFirst runs the model and
+// RecoveryStoredOnly fails with ErrNoStoredResponse.
+type PayloadReader interface {
+	Retrieve(ctx context.Context, escrowId string, inferenceId, epochId uint64) (prompt, response []byte, err error)
+}

@@ -1677,6 +1677,22 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 		sp := m.params.SessionParams()
 		opts = append(opts, host.WithHeartbeatConfig(sp.Heartbeat), host.WithRepairConfig(sp.Repair))
 	}
+	if m.payloadStore != nil {
+		ps := m.payloadStore
+		// One epoch per call. The host probes the neighboring epochs itself,
+		// matching the boundary between the escrow epoch and the phase epoch
+		// used when the payload was stored.
+		opts = append(opts, host.WithStoredResponse(func(ctx context.Context, escrowID string, inferenceID, epochID uint64) ([]byte, error) {
+			_, response, err := ps.Retrieve(ctx, escrowID, inferenceID, epochID)
+			if err != nil {
+				if errors.Is(err, payloads.ErrNotFound) {
+					return nil, nil
+				}
+				return nil, err
+			}
+			return response, nil
+		}))
+	}
 	return m.appendChainOracleOpt(opts)
 }
 

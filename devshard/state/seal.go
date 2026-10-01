@@ -134,19 +134,48 @@ func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.Infer
 	return rec, nil
 }
 
+// rootComponents is one pass over the values that enter the state root.
+// The mismatch diagnostic reuses these bytes instead of hashing the live set again.
+type rootComponents struct {
+	hostStatsHash  []byte
+	inferencesHash []byte
+	warmKeysHash   []byte
+	heightSyncHash []byte
+	restHash       []byte
+	root           []byte
+}
+
+func (sm *StateMachine) rootComponentsLocked() (rootComponents, error) {
+	st := sm.state
+	hs := types.HeightSyncEscrowCommitFromState(st)
+	acc := sealedAccBytes32(st.SealedAcc)
+	hostStatsHash, err := computeHostStatsHash(st.HostStats)
+	if err != nil {
+		return rootComponents{}, err
+	}
+	liveHash, err := computeInferencesHash(st.Inferences)
+	if err != nil {
+		return rootComponents{}, err
+	}
+	warmKeysHash := computeWarmKeysHash(st.WarmKeys)
+	heightSyncHash := hashHeightSyncEscrow(hs)
+	restHash := restHashFromV2Parts(st.Balance, acc, liveHash, warmKeysHash, heightSyncHash)
+	return rootComponents{
+		hostStatsHash:  hostStatsHash,
+		inferencesHash: liveHash,
+		warmKeysHash:   warmKeysHash,
+		heightSyncHash: heightSyncHash,
+		restHash:       restHash,
+		root:           ComputeStateRootFromRestHash(hostStatsHash, restHash, st.Fees, st.Phase, st.StateRootAndProtocolVersion),
+	}, nil
+}
+
 func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {
-	hostStatsHash, err := computeHostStatsHash(sm.state.HostStats)
+	parts, err := sm.rootComponentsLocked()
 	if err != nil {
 		return nil, err
 	}
-
-	acc := sealedAccBytes32(sm.state.SealedAcc)
-	restHash, err := ComputeRestHashV2(sm.state.Balance, acc, sm.state.Inferences, sm.state.WarmKeys, types.HeightSyncEscrowCommitFromState(sm.state))
-	if err != nil {
-		return nil, err
-	}
-
-	return ComputeStateRootFromRestHash(hostStatsHash, restHash, sm.state.Fees, sm.state.Phase, sm.state.StateRootAndProtocolVersion), nil
+	return parts.root, nil
 }
 
 func (sm *StateMachine) ExportCommittedEntries() map[uint64][]byte {

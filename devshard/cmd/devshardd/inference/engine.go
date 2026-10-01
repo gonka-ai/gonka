@@ -44,6 +44,7 @@ type Engine struct {
 	mgr          *mlnodeclient.Manager
 	capacity     *mlnodeclient.Cache
 	payloadStore PayloadStore
+	payloadRead  PayloadReader
 	httpClient   *http.Client
 	chainParams  ChainParamsProvider
 	phase        *chain.Phase
@@ -60,11 +61,13 @@ func NewEngine(
 	chainParams ChainParamsProvider,
 	phase *chain.Phase,
 ) *Engine {
+	reader, _ := payloadStore.(PayloadReader)
 	return &Engine{
 		mlClient:     mlClient,
 		mgr:          mgr,
 		capacity:     capacity,
 		payloadStore: payloadStore,
+		payloadRead:  reader,
 		httpClient:   NewNoRedirectClient(mlNodeHTTPTimeout),
 		chainParams:  chainParams,
 		phase:        phase,
@@ -77,10 +80,41 @@ func NewEngine(
 // canonicalize + store payloads.
 // Node acquisition prefers gRPC (dapi authoritative); on dapi-unreachable it
 // falls back to the passive ML-node cache.
+//
+// With req.Recovery set, a response already stored for this inference is
+// returned instead of running the model. A read failure fails the execution:
+// running the model then could commit a hash the stored payload contradicts.
 func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
-	return executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
-		return e.executeMLRequest(ctx, model, req.EscrowID, body)
-	}, e.chainParams)
+	return executeWithRecovery(ctx, req, e.payloadRead, e.phase.EpochID(), func(ctx context.Context) (*devshard.ExecuteResult, error) {
+		return executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
+			return e.executeMLRequest(ctx, model, req.EscrowID, body)
+		}, e.chainParams)
+	})
+}
+
+func executeWithRecovery(
+	ctx context.Context,
+	req devshard.ExecuteRequest,
+	reader PayloadReader,
+	phaseEpoch uint64,
+	run func(context.Context) (*devshard.ExecuteResult, error),
+) (*devshard.ExecuteResult, error) {
+	if req.Recovery == devshard.RecoveryNone {
+		return run(ctx)
+	}
+	result, err := recoverStoredExecution(ctx, req, reader, phaseEpoch)
+	if err != nil {
+		return nil, err
+	}
+	if result != nil {
+		observability.ObserveTokens(observability.PathExecute, "", observability.TokenKindPrompt, result.InputTokens)
+		observability.ObserveTokens(observability.PathExecute, "", observability.TokenKindCompletion, result.OutputTokens)
+		return result, nil
+	}
+	if req.Recovery == devshard.RecoveryStoredOnly {
+		return nil, devshard.ErrNoStoredResponse
+	}
+	return run(ctx)
 }
 
 func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {

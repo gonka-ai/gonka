@@ -512,7 +512,9 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 				return nil
 			}
 			observability.RecordExecutionNoFinish(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, reason, where)
-			logging.Error("deferred execution failed", "subsystem", "server", "error", execErr)
+			if !errors.Is(execErr, devshard.ErrNoStoredResponse) {
+				logging.Error("deferred execution failed", "subsystem", "server", "error", execErr)
+			}
 			return nil
 		}
 		if execResult != nil && execResult.PartialResponse {
