@@ -1,6 +1,7 @@
 package rpcserver
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -126,4 +127,56 @@ func TestApplyAfterCloseDoesNotResurrect(t *testing.T) {
 		State: sessionStateLive, AdmitUntil: time.Now().Add(time.Minute), Seq: 1,
 	}}, nil)
 	require.Empty(t, h.byHash)
+}
+
+func TestSharedCacheCloseDoesNotRaceTheSweep(t *testing.T) {
+	h := newTestAuth(PeerAuthConfig{})
+	h.byHash = map[string]*peerSession{
+		"aa": {peer: "peer-a", current: true, expires: time.Now().Add(time.Hour)},
+	}
+	require.True(t, h.sharedPeerLive("peer-a"))
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			h.sweepSharedCache(time.Now())
+			h.sharedPeerLive("peer-a")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		h.Close()
+	}()
+	wg.Wait()
+	require.False(t, h.sharedPeerLive("peer-a"))
+	h.sweepSharedCache(time.Now())
+}
+
+func TestListenOutageClearsReadinessPastTheLimit(t *testing.T) {
+	s := OpenSharedSessions(nil, SharedConfig{HostAddress: "h", Version: "v"})
+	s.ready.Store(true)
+	now := time.Unix(1_700_000_000, 0)
+	require.True(t, s.ListenHealthy())
+	require.Zero(t, s.AppliedLag(now))
+
+	s.noteListenDown(now)
+	require.False(t, s.ListenHealthy())
+	require.True(t, s.Ready(), "a LISTEN break inside the limit keeps the child in rotation")
+	require.False(t, s.degradeIfListenDown(now.Add(sharedListenDownLimit-time.Millisecond)))
+	require.True(t, s.Ready())
+	require.Equal(t, sharedListenDownLimit-time.Millisecond, s.AppliedLag(now.Add(sharedListenDownLimit-time.Millisecond)))
+
+	require.True(t, s.degradeIfListenDown(now.Add(sharedListenDownLimit)))
+	require.False(t, s.Ready())
+	require.GreaterOrEqual(t, s.AppliedLag(now.Add(sharedListenDownLimit)), sharedListenDownLimit)
+	require.True(t, s.degradeIfListenDown(now.Add(sharedListenDownLimit+time.Second)))
+	require.False(t, s.Ready())
+
+	s.clearListenDown()
+	s.ready.Store(true)
+	require.True(t, s.ListenHealthy())
+	require.Zero(t, s.AppliedLag(now.Add(time.Hour)))
+	require.False(t, s.degradeIfListenDown(now.Add(time.Hour)))
 }

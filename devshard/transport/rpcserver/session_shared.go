@@ -82,11 +82,14 @@ func (h *PeerAuthHandler) SetPublishedBarrier(self string, ids []string) {
 }
 
 func (h *PeerAuthHandler) sharedPeerLive(addr string) bool {
-	if h == nil || h.byHash == nil || addr == "" {
+	if h == nil || addr == "" {
 		return false
 	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
+	if h.byHash == nil {
+		return false
+	}
 	now := h.now()
 	for _, sess := range h.byHash {
 		if sess != nil && sess.current && sess.peer == addr && !now.After(sess.expires) {
@@ -206,11 +209,14 @@ func (h *PeerAuthHandler) applyOneLocked(row sessionRow) {
 }
 
 func (h *PeerAuthHandler) sweepSharedCache(now time.Time) {
-	if h == nil || h.byHash == nil {
+	if h == nil {
 		return
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.byHash == nil {
+		return
+	}
 	for hash, sess := range h.byHash {
 		if sess == nil || !now.After(sess.expires) {
 			continue

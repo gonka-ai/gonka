@@ -194,9 +194,10 @@ func tokenRequest[T any](c *RPCClient, msg *T) (*connect.Request[T], error) {
 	return req, nil
 }
 
-// unauthenticatedRetryDelay is the single Unauthenticated retry. It sits
-// past a barrier timeout (1s is the server cap; this delay only has to
-// clear the usual apply lag) and inside the 100–250ms window.
+// unauthenticatedRetryDelay is the pause before the single Unauthenticated
+// retry when the token is still live. It covers the usual apply lag. A
+// cleared token does not use this pause as its deadline: the retry waits
+// for the next Attach inside the non-inference budget.
 const unauthenticatedRetryDelay = 200 * time.Millisecond
 
 func rpcRetry(ctx context.Context, fn func() error) error {
@@ -269,7 +270,17 @@ func (c *RPCClient) rpcAttempt(ctx context.Context, procedure string, fn func() 
 			return err
 		}
 	}
+	attempt := 0
 	err := rpcRetry(ctx, func() error {
+		attempt++
+		// The 200ms pause already ran. If Watch cleared the token during
+		// that pause, wait for the replacement Attach instead of failing
+		// the retry with ErrPeerNotReady.
+		if attempt > 1 && c != nil && c.conn != nil && !c.conn.Ready() {
+			if err := c.waitReadyForRetry(ctx); err != nil {
+				return err
+			}
+		}
 		return c.withPeerBudget(ctx, procedure, fn)
 	})
 	if c != nil && c.HTTPClient != nil {
@@ -280,6 +291,14 @@ func (c *RPCClient) rpcAttempt(ctx context.Context, procedure string, fn func() 
 		}
 	}
 	return err
+}
+
+// waitReadyForRetry blocks until Attach publishes a token or the
+// non-inference retry budget runs out. The caller's deadline still applies.
+func (c *RPCClient) waitReadyForRetry(ctx context.Context) error {
+	waitCtx, cancel := context.WithDeadline(ctx, nonInferenceRetryDeadline(ctx))
+	defer cancel()
+	return c.WaitReady(waitCtx)
 }
 
 const maxUnauthenticatedRPCRetries = 1

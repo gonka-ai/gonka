@@ -95,7 +95,7 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 			logging.Debug("HandleInference: devshard_requests_enabled=false", "subsystem", "server")
 			call.Sink.Header().Set(HeaderDevshardError, DevshardErrorRequestsDisabled)
 			return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
-				"HandleInference: requests disabled", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()))
+				"HandleInference: requests disabled", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()).SetInternal(err))
 		}
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
 			"HandleInference: handle request", echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err))
@@ -176,6 +176,13 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 		}
 	}
 	if werr := writeSSEEvent(w, receiptWrapper); werr != nil {
+		observability.RecordReceiptWriteFailure(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonReceiptWriteErr, observability.WhereTransportWriteReceiptSSE)
+		if resp.ExecutionJob != nil {
+			s.host.ReleaseExecution(resp.InferenceID)
+		}
+		return werr
+	}
+	if werr := flushSSENow(w); werr != nil {
 		observability.RecordReceiptWriteFailure(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonReceiptWriteErr, observability.WhereTransportWriteReceiptSSE)
 		if resp.ExecutionJob != nil {
 			s.host.ReleaseExecution(resp.InferenceID)

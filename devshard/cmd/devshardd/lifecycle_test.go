@@ -12,7 +12,11 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"common/storage/mode"
 	"devshard/cmd/devshardd/session"
+	devshardserver "devshard/server"
+	"devshard/storage"
+	"devshard/transport"
 )
 
 func TestAdminPeerReleaseStopsIdentityWithoutDraining(t *testing.T) {
@@ -342,4 +346,39 @@ func TestAdminExposesPprofNotPublic(t *testing.T) {
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/heap", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NotEmpty(t, rec.Body.Bytes())
+}
+
+type missingSessionResolver struct{}
+
+func (missingSessionResolver) SessionServerExisting(string) (*transport.Server, error) {
+	return nil, storage.ErrSessionNotFound
+}
+
+func TestDrainAndHAGuardAnswerRetiredRoutes410(t *testing.T) {
+	t.Setenv(mode.EnvStorageMode, "hybrid")
+	t.Setenv("PGHOST", "db.example")
+
+	lifecycle := newLifecycleState()
+	lifecycle.SetReady(true)
+	e := buildServer(lifecycle)
+	devshardserver.RegisterLazySessionRoutes(e.Group(""), missingSessionResolver{}, nil, nil)
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone, nil)
+
+	rec := httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/drain", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	chat := httptest.NewRequest(http.MethodPost, "/sessions/not-an-id/chat/completions", nil)
+	chat.Header.Set(mode.HeaderDevshardHA, "true")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, chat)
+	require.Equal(t, http.StatusGone, rec.Code)
+	require.Equal(t, transport.DevshardErrorHTTPSessionRetired, rec.Header().Get(transport.HeaderDevshardError))
+
+	diffs := httptest.NewRequest(http.MethodGet, "/sessions/1/diffs", nil)
+	diffs.Header.Set(mode.HeaderDevshardHA, "true")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, diffs)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Empty(t, rec.Header().Get(transport.HeaderDevshardError))
 }

@@ -386,6 +386,53 @@ INSERT INTO devshard_peer_rpc_members (
 		require.Less(t, time.Since(start), 500*time.Millisecond, "barrier must return once every ready member has applied")
 	})
 
+	t.Run("listen_outage_clears_ready", func(t *testing.T) {
+		truncatePeerRPC(t, pool)
+		a := startHAHandler(t, pool, PeerAuthConfig{})
+		a.shared.listenDownLimit.Store(int64(200 * time.Millisecond))
+		require.True(t, a.shared.ListenHealthy())
+		a.shared.DropListenForTest()
+		require.Eventually(t, func() bool { return !a.SessionsReady() }, 2*time.Second, 20*time.Millisecond)
+		require.False(t, a.shared.ListenHealthy())
+		require.Greater(t, a.shared.AppliedLag(time.Now()), time.Duration(0))
+		var ready bool
+		err := pool.QueryRow(context.Background(), `
+SELECT ready FROM devshard_peer_rpc_members WHERE instance_id = $1`, a.shared.instanceID()).Scan(&ready)
+		require.NoError(t, err)
+		require.False(t, ready, "a frozen child must leave the member barrier")
+		raw := nonceN(0x93)
+		insertLiveRow(t, pool, haTestVersion, "peer-outage", raw)
+		_, ok := a.LookupToken(raw)
+		require.False(t, ok, "a token committed while LISTEN is down is not in the cache")
+		require.Eventually(t, a.SessionsReady, 5*time.Second, 20*time.Millisecond, "readiness returns after catch-up")
+		require.Eventually(t, func() bool {
+			_, ok := a.LookupToken(raw)
+			return ok
+		}, 8*time.Second, 20*time.Millisecond, "catch-up applies the row missed during the outage")
+		require.True(t, a.shared.ListenHealthy())
+		require.Zero(t, a.shared.AppliedLag(time.Now()))
+		err = pool.QueryRow(context.Background(), `
+SELECT ready FROM devshard_peer_rpc_members WHERE instance_id = $1`, a.shared.instanceID()).Scan(&ready)
+		require.NoError(t, err)
+		require.True(t, ready)
+	})
+
+	t.Run("published_barrier_skips_member_that_cleared_ready", func(t *testing.T) {
+		truncatePeerRPC(t, pool)
+		h := startHAHandler(t, pool, PeerAuthConfig{})
+		_, err := pool.Exec(context.Background(), `
+INSERT INTO devshard_peer_rpc_members (
+    instance_id, host_address, version, applied_seq, heartbeat_at, ready
+) VALUES ('frozen', $1, $2, 0, now(), false)`, testHostAddress, haTestVersion)
+		require.NoError(t, err)
+		h.SetPublishedBarrier("self", []string{"self", "frozen"})
+		signer := testutil.MustGenerateKey(t)
+		start := time.Now()
+		_, err = attachDirectAt(t, h, signer, nonceN(0xb5), time.Now().Unix())
+		require.NoError(t, err)
+		require.Less(t, time.Since(start), 500*time.Millisecond, "a member that cleared readiness must not stall Attach")
+	})
+
 	t.Run("listen_drop_catch_up", func(t *testing.T) {
 		truncatePeerRPC(t, pool)
 		a := startHAHandler(t, pool, PeerAuthConfig{})

@@ -450,10 +450,13 @@ func mapInferenceError(err error) error {
 		case http.StatusRequestEntityTooLarge, http.StatusTooManyRequests:
 			return connect.NewError(connect.CodeResourceExhausted, inner)
 		case http.StatusServiceUnavailable:
-			return withDevshardError(
-				connect.NewError(connect.CodeUnavailable, inner),
-				transport.DevshardErrorRequestsDisabled,
-			)
+			if errors.Is(err, devshard.ErrRequestsDisabled) {
+				return withDevshardError(
+					connect.NewError(connect.CodeUnavailable, inner),
+					transport.DevshardErrorRequestsDisabled,
+				)
+			}
+			return connect.NewError(connect.CodeUnavailable, inner)
 		default:
 			return connect.NewError(connect.CodeInternal, inner)
 		}

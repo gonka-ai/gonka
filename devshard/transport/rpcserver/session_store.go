@@ -35,6 +35,11 @@ const (
 	sharedBarrierWait  = time.Second
 	sharedBarrierPoll  = 20 * time.Millisecond
 	sharedPoll         = 5 * time.Second
+	// sharedListenDownLimit is how long LISTEN may stay down before this
+	// child stops advertising itself. A shorter break reconnects and catchUp
+	// fills the cache while /healthz stays 200. Past this, readiness clears
+	// so versiond stops sending peers to a frozen session map.
+	sharedListenDownLimit = 15 * time.Second
 	// sharedApplyLookback re-reads a row that commits after a higher seq was
 	// already applied. It has to outlast sharedPoll so a missed NOTIFY still
 	// lands on the next catch-up.

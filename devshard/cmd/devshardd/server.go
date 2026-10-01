@@ -25,6 +25,7 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	e.HideBanner = true
 	e.HidePort = true
 	e.Use(middleware.Recover())
+	e.Use(devshardserver.RetiredPeerHTTPMiddleware())
 	e.Use(haStorageGuard())
 	e.Use(lifecycle.middleware)
 

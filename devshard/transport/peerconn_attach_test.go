@@ -565,6 +565,69 @@ func TestRPCClient_GetSignaturesRoundTrip(t *testing.T) {
 	require.Equal(t, want, got)
 }
 
+func TestRPCClient_GetSignaturesUnauthenticatedWaitsForReattach(t *testing.T) {
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	want := map[uint32][]byte{1: []byte("sig-after-reattach")}
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
+	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(sigLookup{sigs: want}))
+	var holdFirst sync.Once
+	held := make(chan struct{})
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "GetSignatures") {
+			var first bool
+			holdFirst.Do(func() { first = true })
+			if first {
+				close(held)
+				<-release
+				ew := connect.NewErrorWriter()
+				_ = ew.Write(w, r, connect.NewError(connect.CodeUnauthenticated, errors.New("session replaced")))
+				return
+			}
+		}
+		mux.ServeHTTP(w, r.WithContext(rpcserver.WithEscrowID(r.Context(), "escrow-1")))
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(auth.Close)
+
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{
+		BackoffMin: 2 * time.Second,
+		Jitter:     func(d time.Duration) time.Duration { return d },
+	})
+	pc.Start()
+	old := waitPeerReady(t, pc)
+	rpc := transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-1", peer), pc, transport.ParseRPCEndpoints(transport.EndpointSignatures))
+
+	errCh := make(chan error, 1)
+	gotCh := make(chan map[uint32][]byte, 1)
+	go func() {
+		got, err := rpc.GetSignatures(context.Background(), 1)
+		gotCh <- got
+		errCh <- err
+	}()
+	select {
+	case <-held:
+	case <-time.After(3 * time.Second):
+		t.Fatal("GetSignatures did not reach the server")
+	}
+	stealNonce(t, srv, hostAddr, peer, []byte("steal-while-unary-aaaa"))
+	require.Eventually(t, func() bool { return !pc.Ready() }, 3*time.Second, 10*time.Millisecond, "Watch must clear the token after session replaced")
+	start := time.Now()
+	close(release)
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+		require.Equal(t, want, <-gotCh)
+	case <-time.After(6 * time.Second):
+		t.Fatal("GetSignatures did not return")
+	}
+	require.GreaterOrEqual(t, time.Since(start), time.Second, "the retry must wait for re-Attach, not return at 200ms")
+	require.Less(t, time.Since(start), 5*time.Second)
+	require.NotEqual(t, string(old), string(pc.LiveToken()))
+	require.True(t, pc.Ready())
+}
+
 func TestRPCClient_GetSignaturesUnauthenticatedFailsFast(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)

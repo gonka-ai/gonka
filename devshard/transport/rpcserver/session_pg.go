@@ -38,6 +38,14 @@ type SharedSessions struct {
 	sqlN    atomic.Int64
 	closed  atomic.Bool
 	inst    atomic.Value // string
+	// listenDownSince is the unix nano when the current LISTEN outage began.
+	// Zero means the connection is up, or this process has not lost one yet.
+	listenDownSince atomic.Int64
+	// listenDownLimit overrides sharedListenDownLimit in tests. Zero uses the default.
+	listenDownLimit atomic.Int64
+	// readyMu serializes the readiness flag with the member-row upsert so a
+	// heartbeat cannot mark the row ready after an outage cleared it.
+	readyMu sync.Mutex
 
 	// wmMu guards the catch-up cursor. highWater is the highest seq seen.
 	// pending holds seqs above the contiguous watermark. A missing integer
@@ -56,8 +64,9 @@ type SharedSessions struct {
 	cancel    context.CancelFunc
 	done      chan struct{}
 
-	mu     sync.Mutex
-	listen *pgx.Conn
+	mu         sync.Mutex
+	listen     *pgx.Conn
+	wakeListen context.CancelFunc
 
 	// pubMu guards the router membership list. usePublished is false until
 	// the first publish, and the barrier then uses the member table.
@@ -144,6 +153,72 @@ func (s *SharedSessions) Ready() bool {
 	return s != nil && s.ready.Load()
 }
 
+// ListenHealthy reports a live LISTEN connection. It is false during the
+// grace before readiness is cleared, and before the first catch-up.
+func (s *SharedSessions) ListenHealthy() bool {
+	return s != nil && s.listenDownSince.Load() == 0 && s.ready.Load()
+}
+
+// AppliedLag is how long the in-memory session map has been cut off from
+// NOTIFY. It is zero while LISTEN is up, because catch-up is running.
+func (s *SharedSessions) AppliedLag(now time.Time) time.Duration {
+	if s == nil {
+		return 0
+	}
+	since := s.listenDownSince.Load()
+	if since == 0 {
+		return 0
+	}
+	start := time.Unix(0, since)
+	if now.Before(start) {
+		return 0
+	}
+	return now.Sub(start)
+}
+
+func (s *SharedSessions) listenLimit() time.Duration {
+	if s == nil {
+		return sharedListenDownLimit
+	}
+	if n := s.listenDownLimit.Load(); n > 0 {
+		return time.Duration(n)
+	}
+	return sharedListenDownLimit
+}
+
+func (s *SharedSessions) noteListenDown(now time.Time) {
+	if s == nil {
+		return
+	}
+	s.listenDownSince.CompareAndSwap(0, now.UnixNano())
+}
+
+func (s *SharedSessions) clearListenDown() {
+	if s == nil {
+		return
+	}
+	s.listenDownSince.Store(0)
+}
+
+// degradeIfListenDown clears readiness once the LISTEN outage passes the
+// limit, and marks the member row not ready so other children do not wait
+// for this cache. It returns whether the outage is past the limit.
+func (s *SharedSessions) degradeIfListenDown(now time.Time) bool {
+	if s == nil || s.AppliedLag(now) < s.listenLimit() {
+		return false
+	}
+	s.readyMu.Lock()
+	cleared := s.ready.CompareAndSwap(true, false)
+	if cleared {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_ = s.upsertMember(ctx, false)
+		cancel()
+		slog.Warn("devshard peer rpc listen down", "version", s.version, "lag", s.AppliedLag(now).String())
+	}
+	s.readyMu.Unlock()
+	return true
+}
+
 func (s *SharedSessions) SQLQueries() int64 {
 	if s == nil {
 		return 0
@@ -186,16 +261,16 @@ func (s *SharedSessions) Close() {
 	})
 }
 
-// DropListenForTest closes the LISTEN connection so the run loop reconnects.
+// DropListenForTest cancels the LISTEN wait so the run loop reconnects.
 func (s *SharedSessions) DropListenForTest() {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
-	c := s.listen
+	wake := s.wakeListen
 	s.mu.Unlock()
-	if c != nil {
-		_ = c.Close(context.Background())
+	if wake != nil {
+		wake()
 	}
 }
 
@@ -221,14 +296,31 @@ func (s *SharedSessions) listenLoop(ctx context.Context) {
 			return
 		}
 		if err != nil {
+			s.noteListenDown(time.Now())
 			slog.Warn("devshard peer rpc session listen", "err", err, "version", s.version)
 		}
-		timer := time.NewTimer(time.Second)
+		if !s.waitReconnect(ctx) {
+			return
+		}
+	}
+}
+
+// waitReconnect pauses a second before the next LISTEN dial. While it waits
+// it clears readiness if the outage has passed sharedListenDownLimit, so a
+// child does not stay healthy for the whole gap.
+func (s *SharedSessions) waitReconnect(ctx context.Context) bool {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		s.degradeIfListenDown(time.Now())
 		select {
 		case <-ctx.Done():
-			timer.Stop()
-			return
+			return false
 		case <-timer.C:
+			return true
+		case <-tick.C:
 		}
 	}
 }
@@ -256,35 +348,45 @@ func (s *SharedSessions) listenOnce(ctx context.Context) error {
 	if _, err = conn.Exec(ctx, "LISTEN "+sessionNotifyChannel); err != nil {
 		return err
 	}
+	wakeCtx, wakeCancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	s.listen = conn
+	s.wakeListen = wakeCancel
 	s.mu.Unlock()
+	defer wakeCancel()
 
-	if err = s.catchUp(ctx, conn); err != nil {
+	if err = s.catchUp(wakeCtx, conn); err != nil {
 		return err
 	}
+	s.clearListenDown()
+	s.readyMu.Lock()
 	if !s.ready.Load() {
 		if err = s.upsertMember(ctx, true); err != nil {
+			s.readyMu.Unlock()
 			return err
 		}
 		s.ready.Store(true)
 	}
+	s.readyMu.Unlock()
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		waitCtx, cancel := context.WithTimeout(ctx, sharedPoll)
+		waitCtx, cancel := context.WithTimeout(wakeCtx, sharedPoll)
 		_, err = conn.WaitForNotification(waitCtx)
 		cancel()
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		if wakeCtx.Err() != nil || (err != nil && !errors.Is(err, context.DeadlineExceeded)) {
 			ensureSessionHAMetrics()
 			notifyReconnects.Inc()
+			if wakeCtx.Err() != nil {
+				return wakeCtx.Err()
+			}
 			return err
 		}
-		if err = s.catchUp(ctx, conn); err != nil {
+		if err = s.catchUp(wakeCtx, conn); err != nil {
 			ensureSessionHAMetrics()
 			notifyReconnects.Inc()
 			return err
@@ -321,6 +423,13 @@ func (s *SharedSessions) catchUp(ctx context.Context, conn *pgx.Conn) error {
 	}
 	ensureSessionHAMetrics()
 	applyLagSeq.Set(float64(mark - prev))
+	// Publish the watermark only while this child is still ready. A row
+	// written true here would put a frozen member back in the barrier.
+	s.readyMu.Lock()
+	defer s.readyMu.Unlock()
+	if !s.ready.Load() {
+		return nil
+	}
 	return s.upsertMember(ctx, true)
 }
 
@@ -432,11 +541,18 @@ func (s *SharedSessions) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !s.ready.Load() || s.closed.Load() {
+			if s.closed.Load() {
 				continue
 			}
+			s.degradeIfListenDown(time.Now())
 			_, _ = s.noteAppliedSeqs(nil, time.Now())
+			s.readyMu.Lock()
+			if !s.ready.Load() {
+				s.readyMu.Unlock()
+				continue
+			}
 			_ = s.upsertMember(ctx, true)
+			s.readyMu.Unlock()
 		}
 	}
 }
@@ -864,7 +980,13 @@ WHERE host_address = $1 AND version = $2`, s.host, s.version)
 			continue
 		}
 		seen = append(seen, id)
-		if !row.ready || row.applied < seq {
+		// A member that has cleared readiness is out of the barrier. The
+		// table query already ignores ready=false. Waiting here would add a
+		// second to every Attach for a child whose cache is frozen.
+		if !row.ready {
+			continue
+		}
+		if row.applied < seq {
 			behind++
 		}
 	}

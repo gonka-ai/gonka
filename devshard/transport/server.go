@@ -480,6 +480,15 @@ func flushSSE(w http.ResponseWriter) error {
 	return nil
 }
 
+// flushSSENow sends bytes held under the chat gzip cut. Token flushes stay
+// on flushSSE. The receipt uses this so the frame is on the wire before execution.
+func flushSSENow(w http.ResponseWriter) error {
+	if f, ok := w.(interface{ FlushNow() error }); ok {
+		return f.FlushNow()
+	}
+	return flushSSE(w)
+}
+
 // replaySSEBody writes cached ML response bytes as SSE data lines.
 // The cached bytes are the raw response body (JSON). Wrap as a single SSE data event.
 func replaySSEBody(w http.ResponseWriter, body []byte) error {

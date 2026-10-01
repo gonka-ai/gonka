@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -494,7 +495,9 @@ type blockingChatCore struct {
 
 func (c blockingChatCore) ServeInference(ctx context.Context, call transport.InferenceCall) error {
 	if call.Sink != nil {
-		_, _ = call.Sink.Write([]byte("x"))
+		// A frame has to leave while this handler is still blocked. The chat
+		// gzip cut holds a short write until 1024 bytes or Close.
+		_, _ = call.Sink.Write([]byte("data: " + strings.Repeat("x", 1024) + "\n\n"))
 		call.Sink.Flush()
 	}
 	<-ctx.Done()

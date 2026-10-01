@@ -7,10 +7,19 @@ import (
 	"net/http"
 )
 
-// ChatGzipEmitter is one gzip.Writer (BestSpeed) that sync-flushes per
-// event into opaque chunks. Concatenating chunks reconstitutes the stream.
-// Close with no Write emits nothing so a handler error before the first
-// event is zero frames, not an empty gzip member.
+// chatGzipCoalesceMin is the uncompressed cut for one ChatFrame.
+// 1024 bytes is about five vLLM token events (id, object, created, model, delta).
+// BestSpeed keeps its match table from 128 bytes up; this cut is larger so one
+// Huffman tree covers those tokens.
+// chatGzipCoalesceMax bounds a stream that never sends a blank line.
+const (
+	chatGzipCoalesceMin = 1024
+	chatGzipCoalesceMax = 16 << 10
+)
+
+// ChatGzipEmitter is one gzip.Writer (BestSpeed). Concatenating chunks
+// reconstitutes the stream. Close with no Write emits nothing so a handler
+// error before the first event is zero frames, not an empty gzip member.
 type ChatGzipEmitter struct {
 	buf   bytes.Buffer
 	gz    *gzip.Writer
@@ -74,11 +83,22 @@ func (e *ChatGzipEmitter) emit() error {
 
 // ChatFrameSink writes uncompressed SSE bytes into ChatGzipEmitter as if it
 // were an http.ResponseWriter. ExecutionJob.ResponseWriter uses this.
+//
+// The executor still flushes every scanner line. This sink holds those
+// flushes and emits one gzip block when:
+//   - at least chatGzipCoalesceMin uncompressed bytes are pending and they
+//     end on an SSE event (\n\n), about five tokens, or
+//   - pending bytes reach chatGzipCoalesceMax, so a missing blank line
+//     cannot stall the stream, or
+//   - Close, which is after [DONE] and devshard_meta. The short tail waits
+//     for that instead of becoming its own block.
 type ChatFrameSink struct {
 	header  http.Header
 	status  int
 	gzip    *ChatGzipEmitter
 	sendErr error
+	pending int
+	tail    [2]byte
 }
 
 func NewChatFrameSink(send func([]byte) error) *ChatFrameSink {
@@ -103,16 +123,46 @@ func (s *ChatFrameSink) Write(p []byte) (int, error) {
 	if s.sendErr != nil {
 		return 0, s.sendErr
 	}
-	return s.gzip.Write(p)
+	n, err := s.gzip.Write(p)
+	if n > 0 {
+		s.note(p[:n])
+	}
+	if err != nil {
+		return n, err
+	}
+	if s.pending >= chatGzipCoalesceMax {
+		if ferr := s.flushGzip(); ferr != nil {
+			return n, ferr
+		}
+	}
+	return n, nil
+}
+
+func (s *ChatFrameSink) note(p []byte) {
+	s.pending += len(p)
+	switch len(p) {
+	case 0:
+	case 1:
+		s.tail[0] = s.tail[1]
+		s.tail[1] = p[0]
+	default:
+		s.tail[0] = p[len(p)-2]
+		s.tail[1] = p[len(p)-1]
+	}
+}
+
+func (s *ChatFrameSink) eventReady() bool {
+	return s.pending >= chatGzipCoalesceMin && s.tail[0] == '\n' && s.tail[1] == '\n'
 }
 
 func (s *ChatFrameSink) Flush() {
 	_ = s.FlushErr()
 }
 
-// FlushErr flushes the gzip window and the current ChatFrame. http.Flusher.Flush
-// cannot return stream.Send errors; writeSSEEvent uses this so a failed receipt
-// frame fails ServeInference before RunExecution.
+// FlushErr emits a ChatFrame when the held SSE reaches chatGzipCoalesceMin
+// on an event boundary, or chatGzipCoalesceMax. A shorter complete event
+// stays buffered. http.Flusher.Flush cannot return stream.Send errors.
+// The receipt calls FlushNow so a failed frame still returns before execution.
 func (s *ChatFrameSink) FlushErr() error {
 	if s == nil {
 		return io.ErrClosedPipe
@@ -123,20 +173,50 @@ func (s *ChatFrameSink) FlushErr() error {
 	if s.gzip == nil {
 		return io.ErrClosedPipe
 	}
-	if err := s.gzip.Flush(); err != nil {
-		s.sendErr = err
-		return err
+	if s.pending >= chatGzipCoalesceMax || s.eventReady() {
+		return s.flushGzip()
 	}
 	return nil
 }
 
-func (s *ChatFrameSink) Close() error {
+// FlushNow sends the held bytes even when they are under chatGzipCoalesceMin.
+// The receipt uses this so a failed frame returns before RunExecution.
+func (s *ChatFrameSink) FlushNow() error {
 	if s == nil || s.gzip == nil {
+		return io.ErrClosedPipe
+	}
+	if s.sendErr != nil {
 		return s.sendErr
 	}
+	return s.flushGzip()
+}
+
+func (s *ChatFrameSink) flushGzip() error {
+	if s.pending == 0 {
+		return nil
+	}
+	if err := s.gzip.Flush(); err != nil {
+		s.sendErr = err
+		return err
+	}
+	s.pending = 0
+	return nil
+}
+
+func (s *ChatFrameSink) Close() error {
+	if s == nil {
+		return io.ErrClosedPipe
+	}
+	if s.gzip == nil {
+		return s.sendErr
+	}
+	s.pending = 0
 	err := s.gzip.Close()
 	if s.sendErr != nil {
 		return s.sendErr
+	}
+	if err != nil {
+		s.sendErr = err
 	}
 	return err
 }

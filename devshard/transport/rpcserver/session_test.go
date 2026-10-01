@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/labstack/echo/v4"
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
+	"devshard"
 	"devshard/bridge"
 	"devshard/internal/testutil"
 	"devshard/observability"
@@ -358,6 +360,22 @@ func TestMapAllowError(t *testing.T) {
 			require.Equal(t, tt.header, ce.Meta().Get(transport.HeaderDevshardError))
 		})
 	}
+}
+
+func TestMapInferenceError_UnavailableLabel(t *testing.T) {
+	disabled := echo.NewHTTPError(http.StatusServiceUnavailable, devshard.ErrRequestsDisabled.Error()).SetInternal(devshard.ErrRequestsDisabled)
+	err := mapInferenceError(disabled)
+	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
+	var ce *connect.Error
+	require.ErrorAs(t, err, &ce)
+	require.Equal(t, transport.DevshardErrorRequestsDisabled, ce.Meta().Get(transport.HeaderDevshardError))
+
+	draining := echo.NewHTTPError(http.StatusServiceUnavailable, "devshardd is draining")
+	err = mapInferenceError(draining)
+	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
+	require.ErrorAs(t, err, &ce)
+	require.Empty(t, ce.Meta().Get(transport.HeaderDevshardError))
+	require.Contains(t, err.Error(), "draining")
 }
 
 func TestSessionHandler_GetSignaturesLookupClassified(t *testing.T) {

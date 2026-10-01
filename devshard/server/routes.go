@@ -89,6 +89,47 @@ func retiredPeerHTTP(c echo.Context) error {
 	return transport.HTTPError(c, http.StatusGone, transport.DevshardErrorHTTPSessionRetired, transport.HTTPSessionRetiredMessage)
 }
 
+// IsRetiredPeerHTTP reports a decommissioned Echo session route. The path may
+// be the child shape (/sessions/id/...) or still carry /devshard/<version>.
+func IsRetiredPeerHTTP(method, path string) bool {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) >= 4 && parts[0] == "devshard" {
+		parts = parts[2:]
+	}
+	if len(parts) < 3 || parts[0] != "sessions" || parts[1] == "" {
+		return false
+	}
+	rest := strings.Join(parts[2:], "/")
+	switch method {
+	case http.MethodPost:
+		switch rest {
+		case "chat/completions", "height-sync", "heightsync/repair", "verify-timeout", "verify-error-miss", "challenge-receipt", "gossip/nonce", "gossip/txs":
+			return true
+		}
+	case http.MethodGet:
+		return rest == "payloads"
+	}
+	return false
+}
+
+// RetiredPeerHTTPMiddleware answers 410 before drain, the HA storage guard,
+// and the canonical-id check. Those run first on the Echo instance and would
+// otherwise give an old peer a retryable 503 or a 400.
+func RetiredPeerHTTPMiddleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			req := c.Request()
+			if req != nil && IsRetiredPeerHTTP(req.Method, req.URL.Path) {
+				return retiredPeerHTTP(c)
+			}
+			return next(c)
+		}
+	}
+}
+
 // RegisterLazySessionRoutes mounts the devshard HTTP surface on g.
 // Observability GETs (diffs, mempool, signatures) resolve existing sessions
 // only. Protocol session routes answer 410; peers use Connect /rpc/.
