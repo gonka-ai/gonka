@@ -835,6 +835,24 @@ func (k Keeper) enqueueCompletedPostProcessRetry(ctx sdk.Context, requestID []by
 	}
 }
 
+// completedPostProcessRetryAttempts decodes the per-entry retry attempt counter
+// stored as the retry queue value. Legacy and freshly enqueued entries carry an
+// empty value, which decodes to zero.
+func completedPostProcessRetryAttempts(value []byte) uint32 {
+	if len(value) < 4 {
+		return 0
+	}
+	return binary.BigEndian.Uint32(value)
+}
+
+// encodeCompletedPostProcessRetryAttempts encodes the per-entry retry attempt
+// counter for storage as the retry queue value.
+func encodeCompletedPostProcessRetryAttempts(attempts uint32) []byte {
+	buf := make([]byte, 4)
+	binary.BigEndian.PutUint32(buf, attempts)
+	return buf
+}
+
 func (k Keeper) finalizeFailedThresholdSigningRequest(
 	ctx sdk.Context,
 	request *types.ThresholdSigningRequest,
@@ -871,8 +889,29 @@ func (k Keeper) removeFromExpirationIndex(ctx sdk.Context, deadlineBlockHeight i
 const defaultMaxExpiredRequestsPerBlock uint32 = 200
 const defaultMaxCompletedPostProcessRetriesPerBlock uint32 = 100
 
+// defaultMaxCompletedPostProcessRetryAttempts bounds how many times a single
+// completed request's post-process may be retried before it is abandoned, so a
+// persistently failing cleanup cannot retry forever without visibility. Retries
+// run once per block in EndBlock, so this caps a stuck entry at ~50 blocks.
+// Abandoning leaves the stale pending refund in place — harmless, since
+// cancellation is rejected once a BLS request is COMPLETED, so there is no
+// double-spend — and emits a loud Error log plus a monitoring event.
+const defaultMaxCompletedPostProcessRetryAttempts uint32 = 50
+
 var maxExpiredRequestsPerBlock = defaultMaxExpiredRequestsPerBlock
 var maxCompletedPostProcessRetriesPerBlock = defaultMaxCompletedPostProcessRetriesPerBlock
+var maxCompletedPostProcessRetryAttempts = defaultMaxCompletedPostProcessRetryAttempts
+
+// Event and attribute keys emitted when a completed-post-process retry is
+// abandoned after exhausting its attempt budget. Surfaced as a raw event so it
+// is observable by monitoring without adding a typed proto event for this
+// purely operational signal.
+const (
+	eventTypeCompletedPostProcessRetryAbandoned = "completed_post_process_retry_abandoned"
+	attrKeyAbandonedRequestID                   = "request_id"
+	attrKeyAbandonedEpochID                     = "current_epoch_id"
+	attrKeyAbandonedAttempts                    = "attempts"
+)
 
 // ProcessThresholdSigningDeadlines processes expired threshold signing requests efficiently using expiration index
 func (k Keeper) ProcessThresholdSigningDeadlines(ctx sdk.Context) error {
@@ -1021,22 +1060,37 @@ func (k Keeper) ProcessCompletedPostProcessRetries(ctx sdk.Context) error {
 		maxToProcess = defaultMaxCompletedPostProcessRetriesPerBlock
 	}
 
-	var queuedRequestIDs [][]byte
+	maxAttempts := maxCompletedPostProcessRetryAttempts
+	if maxAttempts == 0 {
+		maxAttempts = defaultMaxCompletedPostProcessRetryAttempts
+	}
+
+	type queuedRetry struct {
+		requestID []byte
+		attempts  uint32
+	}
+
+	var queued []queuedRetry
 	hasBacklog := false
 	for ; iterator.Valid(); iterator.Next() {
-		if uint32(len(queuedRequestIDs)) >= maxToProcess {
+		if uint32(len(queued)) >= maxToProcess {
 			hasBacklog = true
 			break
 		}
-		queuedRequestIDs = append(queuedRequestIDs, append([]byte(nil), iterator.Key()...))
+		queued = append(queued, queuedRetry{
+			requestID: append([]byte(nil), iterator.Key()...),
+			attempts:  completedPostProcessRetryAttempts(iterator.Value()),
+		})
 	}
 	iterator.Close()
 
 	var succeededCount uint32
 	var failedCount uint32
 	var staleCount uint32
+	var abandonedCount uint32
 
-	for _, requestID := range queuedRequestIDs {
+	for _, entry := range queued {
+		requestID := entry.requestID
 		if len(requestID) == 0 {
 			retryStore.Delete(requestID)
 			staleCount++
@@ -1059,8 +1113,31 @@ func (k Keeper) ProcessCompletedPostProcessRetries(ctx sdk.Context) error {
 		}
 
 		if err := k.runThresholdSigningCompletedPostProcess(ctx, request.RequestId, request.CurrentEpochId); err != nil {
+			attempts := entry.attempts + 1
+			if attempts >= maxAttempts {
+				retryStore.Delete(requestID)
+				abandonedCount++
+				k.Logger().Error("Abandoning threshold signing completion retry after exhausting attempts",
+					"request_id", fmt.Sprintf("%x", requestID),
+					"current_epoch_id", request.CurrentEpochId,
+					"attempts", attempts,
+					"max_attempts", maxAttempts,
+					"error", err)
+				ctx.EventManager().EmitEvent(sdk.NewEvent(
+					eventTypeCompletedPostProcessRetryAbandoned,
+					sdk.NewAttribute(attrKeyAbandonedRequestID, fmt.Sprintf("%x", requestID)),
+					sdk.NewAttribute(attrKeyAbandonedEpochID, fmt.Sprintf("%d", request.CurrentEpochId)),
+					sdk.NewAttribute(attrKeyAbandonedAttempts, fmt.Sprintf("%d", attempts)),
+				))
+				continue
+			}
+
+			retryStore.Set(requestID, encodeCompletedPostProcessRetryAttempts(attempts))
 			k.Logger().Error("Failed to re-run threshold signing completion hooks",
-				"request_id", fmt.Sprintf("%x", requestID), "error", err)
+				"request_id", fmt.Sprintf("%x", requestID),
+				"attempts", attempts,
+				"max_attempts", maxAttempts,
+				"error", err)
 			failedCount++
 			continue
 		}
@@ -1069,14 +1146,16 @@ func (k Keeper) ProcessCompletedPostProcessRetries(ctx sdk.Context) error {
 		succeededCount++
 	}
 
-	processedCount := uint32(len(queuedRequestIDs))
+	processedCount := uint32(len(queued))
 	if processedCount > 0 || hasBacklog {
 		k.Logger().Info("Processed threshold signing completion retries",
 			"processed_count", processedCount,
 			"succeeded_count", succeededCount,
 			"failed_count", failedCount,
 			"stale_count", staleCount,
+			"abandoned_count", abandonedCount,
 			"max_per_block", maxToProcess,
+			"max_attempts", maxAttempts,
 			"has_backlog", hasBacklog)
 	}
 
