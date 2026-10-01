@@ -82,6 +82,26 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 		return &types.MsgSubmitHardwareDiffResponse{}, nil
 	}
 
+	// Extra gas is floor(Δbytes × gas_per_unit / unitSize(b|kb|mb)).
+	// Default 100/kb. First-ever inventory has before=0 so the new blob is
+	// charged. Same-size rewrites pay 0 extra. SDK KV still meters the full Set.
+	before := 0
+	if found && existingNodes != nil {
+		before = existingNodes.Size()
+	}
+	after := updatedNodes.Size()
+	qty := uint64(0)
+	if after > before {
+		qty = uint64(after - before)
+	}
+	addr, err := sdk.AccAddressFromBech32(msg.Creator)
+	if err != nil {
+		return nil, err
+	}
+	if err := k.ChargeExtraGas(ctx, addr, msg, qty, false); err != nil {
+		return nil, err
+	}
+
 	k.LogInfo("Updating hardware nodes", types.Nodes, "nodes", updatedNodes)
 	if err := k.SetHardwareNodes(ctx, updatedNodes); err != nil {
 		k.LogError("Error setting hardware nodes", types.Nodes, "err", err)
@@ -92,13 +112,11 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 }
 
 // HardwareNodesUnchanged reports whether two sorted hardware-node lists are
-// equivalent in their *operational* fields: local_id, status, models,
-// hardware, host, port. The Version field is excluded because it's
-// explicitly informational (see hardware_node.proto) and a flapping value
-// shouldn't trigger spurious writes.
+// equivalent in their operational fields: local_id, status, models,
+// hardware, host, port, version.
 //
 // This is a best-effort idempotency check, not a security boundary. A
-// caller that wants to bypass it can flip any operational field.
+// caller that wants to bypass it can flip any compared field.
 // Exported for testing.
 func HardwareNodesUnchanged(after, before []*types.HardwareNode) bool {
 	if len(after) != len(before) {
@@ -125,7 +143,8 @@ func hardwareNodeOperationalEqual(a, b *types.HardwareNode) bool {
 	if a.LocalId != b.LocalId ||
 		a.Status != b.Status ||
 		a.Host != b.Host ||
-		a.Port != b.Port {
+		a.Port != b.Port ||
+		a.Version != b.Version {
 		return false
 	}
 	if !slices.Equal(a.Models, b.Models) {

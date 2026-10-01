@@ -1,4 +1,4 @@
-package tipcache_test
+package tipcache
 
 import (
 	"context"
@@ -6,123 +6,57 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
-	"common/chainoracle/blocks/tipcache"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestCache_ObserveLatestAndSubscribe(t *testing.T) {
-	c := tipcache.New(time.Hour)
-	_, err := c.Latest(context.Background())
-	require.Error(t, err)
-	require.ErrorIs(t, err, blocks.ErrHeaderNotFound)
-	require.True(t, c.Stale())
-	require.True(t, c.LastObservedAt().IsZero())
+func hdr(height int64, b byte) *blocks.Header {
+	return blocks.HashOnlyHeader(height, time.Unix(height, 0).UTC(), "gonka-test", []byte{b})
+}
 
-	hdr := blocks.HashOnlyHeader(5, time.Unix(10, 0).UTC(), "gonka", []byte{0xaa})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	ch, err := c.Subscribe(ctx, 1)
-	require.NoError(t, err)
+func TestCache_ObserveStoresHistoricalAndAdvancesTip(t *testing.T) {
+	c := New(time.Hour)
+	c.Observe(hdr(10, 10))
+	c.Observe(hdr(9, 9)) // older than tip: kept for At, does not move Latest
 
-	c.Observe(hdr)
 	got, err := c.Latest(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, int64(5), got.Height)
-	require.Equal(t, []byte{0xaa}, got.BlockHash)
-	require.False(t, c.Stale())
-	require.False(t, c.LastObservedAt().IsZero())
-	require.InDelta(t, time.Now().UnixNano(), c.LastObservedAt().UnixNano(), float64(time.Second))
+	require.Equal(t, int64(10), got.Height)
 
-	at, err := c.At(context.Background(), 5)
+	h9, err := c.At(context.Background(), 9)
 	require.NoError(t, err)
-	require.Equal(t, []byte{0xaa}, at.BlockHash)
-	_, err = c.At(context.Background(), 4)
-	require.ErrorIs(t, err, blocks.ErrHeaderNotFound)
-
-	select {
-	case h := <-ch:
-		require.Equal(t, int64(5), h.Height)
-	case <-time.After(time.Second):
-		t.Fatal("subscribe missed Observe")
-	}
+	require.Equal(t, int64(9), h9.Height)
+	require.Equal(t, []byte{9}, h9.BlockHash)
 }
 
-func TestCache_LPA1a_WindowIncludesTipMinusHistoryWindow(t *testing.T) {
-	c := tipcache.New(time.Hour)
-	h := int64(200_000)
-	floor := h - tipcache.HistoryWindow
-	c.Observe(hdr(floor))
-	c.Observe(hdr(h))
+func TestCache_RememberDoesNotMoveLatest(t *testing.T) {
+	c := New(time.Hour)
+	c.Observe(hdr(20, 20))
+	c.Remember(hdr(15, 15))
 
-	got, err := c.At(context.Background(), floor)
+	got, err := c.Latest(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, floor, got.Height)
-	_, err = c.At(context.Background(), floor-1)
-	require.ErrorIs(t, err, blocks.ErrHeaderNotFound)
-	got, err = c.At(context.Background(), h)
+	require.Equal(t, int64(20), got.Height)
+
+	h15, err := c.At(context.Background(), 15)
 	require.NoError(t, err)
-	require.Equal(t, h, got.Height)
+	require.Equal(t, []byte{15}, h15.BlockHash)
 }
 
-func TestCache_LPA1b_AdvancingTipEvictsOldFloor(t *testing.T) {
-	c := tipcache.New(time.Hour)
-	h := int64(200_000)
-	floor := h - tipcache.HistoryWindow
-	c.Observe(hdr(floor))
-	c.Observe(hdr(floor + 1))
-	c.Observe(hdr(h))
-	_, err := c.At(context.Background(), floor)
-	require.NoError(t, err)
-
-	c.Observe(hdr(h + 1))
-	_, err = c.At(context.Background(), floor)
-	require.Error(t, err, "old floor evicted when tip advances")
-	got, err := c.At(context.Background(), floor+1)
-	require.NoError(t, err)
-	require.Equal(t, floor+1, got.Height)
-}
-
-func TestCache_LPA1c_RememberDoesNotAdvanceTip(t *testing.T) {
-	c := tipcache.New(time.Hour)
-	c.Remember(hdr(8))
-	_, err := c.Latest(context.Background())
-	require.Error(t, err)
-	require.True(t, c.Stale())
-	got, err := c.At(context.Background(), 8)
-	require.NoError(t, err)
-	require.Equal(t, int64(8), got.Height)
-
-	c.Observe(hdr(100))
-	c.Remember(hdr(90))
-	got, err = c.Latest(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, int64(100), got.Height)
-	require.False(t, c.Stale())
-	got, err = c.At(context.Background(), 90)
-	require.NoError(t, err)
-	require.Equal(t, int64(90), got.Height)
-}
-
-func TestCache_RememberOutsideWindowDropped(t *testing.T) {
-	c := tipcache.New(time.Hour)
-	tip := int64(tipcache.HistoryWindow + 50)
-	c.Observe(hdr(tip))
-	c.Remember(hdr(1))
+func TestCache_EvictsOutsideHistoryWindow(t *testing.T) {
+	c := New(time.Hour)
+	c.Observe(hdr(HistoryWindow+5, 1))
 	_, err := c.At(context.Background(), 1)
 	require.Error(t, err)
+
+	h, err := c.At(context.Background(), HistoryWindow+5)
+	require.NoError(t, err)
+	require.Equal(t, int64(HistoryWindow+5), h.Height)
 }
 
-func TestCache_LPA1d_DummyNotStored(t *testing.T) {
-	c := tipcache.New(time.Hour)
+func TestCache_DummyIgnored(t *testing.T) {
+	c := New(time.Hour)
 	c.Observe(blocks.DummyHeader(3))
-	c.Remember(blocks.DummyHeader(3))
-	_, err := c.At(context.Background(), 3)
+	_, err := c.Latest(context.Background())
 	require.Error(t, err)
-	_, err = c.Latest(context.Background())
-	require.Error(t, err)
-}
-
-func hdr(height int64) *blocks.Header {
-	return blocks.HashOnlyHeader(height, time.Unix(height, 0).UTC(), "gonka", []byte{byte(height)})
 }

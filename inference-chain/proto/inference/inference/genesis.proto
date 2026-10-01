@@ -42,4 +42,5 @@ message GenesisState {
   repeated Participant                participant_list               =  5 [(gogoproto.nullable) = false, (amino.dont_omitempty) = true];
            MLNodeVersion              mlnode_version                 =  6;
            Bridge                     bridge                         =  7;
+  repeated DevshardApprovedVersion    devshard_approved_versions     =  8;
 }
