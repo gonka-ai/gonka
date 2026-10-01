@@ -226,9 +226,19 @@ measured; the inference gate is the corroborating signal.
 ## MLNode image
 
 ```
-ghcr.io/gonka-ai/mlnode:3.1.0-post2-vllm-0.28.0
-ghcr.io/gonka-ai/mlnode@sha256:581435c21f7825423417688e369ec96e7c80105e8bddf2ee014b33414d2f78b8
+ghcr.io/gonka-ai/mlnode:3.1.0-post3-vllm-0.28.0
+ghcr.io/gonka-ai/mlnode@sha256:2f37488921812d0470b6962a02e66548a15ea73fa45bc052a321b311153cd759
 ```
+
+3.1.0-post3 is 3.1.0-post2 (`sha256:581435c21f7825423417688e369ec96e7c80105e8bddf2ee014b33414d2f78b8`)
+with the MLNode proxy from gonka-ai/gonka#1889, also carried in this PR. When a client leaves
+before a non-streaming response arrives, the proxy now cancels the vLLM request instead of
+letting it generate to the end. Inference validations are non-streaming and are retried on another
+node after a 5 min timeout, so each timed-out validation used to stay in the original node's
+queue. On a 3090 with Qwen3-4B, an abandoned non-streaming request ran to completion on post2
+(50 s; 20 at once, 89 s) and was aborted about 0.1 s after the client left on post3; streaming,
+completed, large-body and logprobs requests and PoC were unchanged. A mid-stream client
+disconnect is no longer logged as `Stream cancelled … during shutdown`.
 
 3.1.0-post2 is 3.1.0 (`sha256:de9150fcee0ad77199ca8a48ecae993b2cac0b92a7b05284d1575657d04522fa`)
 with gonka-poc `0.1.7` (gonka-ai/gonka-vllm-plugins#22) as one layer on top and
