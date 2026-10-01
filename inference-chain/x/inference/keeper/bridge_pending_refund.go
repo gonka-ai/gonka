@@ -191,6 +191,21 @@ func (k Keeper) ProcessAutoRefundForFailedBridgeOperation(ctx context.Context, b
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	requestKey := hex.EncodeToString(blsRequestID)
+	request, err := k.BlsKeeper.GetSigningStatus(sdkCtx, blsRequestID)
+	if err != nil {
+		return false, fmt.Errorf("failed to get threshold signing status for request %s: %w", requestKey, err)
+	}
+	if request == nil {
+		return false, fmt.Errorf("threshold signing request %s is nil", requestKey)
+	}
+	if request.Status != blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_FAILED &&
+		request.Status != blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED {
+		return false, fmt.Errorf(
+			"threshold signing request %s has status %s; auto-refund requires FAILED or EXPIRED",
+			requestKey,
+			request.Status.String(),
+		)
+	}
 
 	pendingMint, err := k.BridgeMintRefundsMap.Get(ctx, requestKey)
 	switch {
