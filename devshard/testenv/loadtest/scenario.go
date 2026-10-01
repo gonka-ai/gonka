@@ -48,10 +48,32 @@ type MockMLNode struct {
 }
 
 type Workload struct {
-	Mode        string  `yaml:"mode"`
-	Concurrency int     `yaml:"concurrency"`
-	Duration    string  `yaml:"duration"`
-	Request     Request `yaml:"request"`
+	MaxInFlight int            `yaml:"max_in_flight"`
+	Duration    string         `yaml:"duration"`
+	Traffic     TrafficProfile `yaml:"traffic"`
+	Request     Request        `yaml:"request"`
+}
+
+// TrafficProfile describes the rate of new requests over a workload's duration.
+// An omitted type preserves the original closed-loop behavior.
+type TrafficProfile struct {
+	Type          string         `yaml:"type"`
+	RPS           float64        `yaml:"rps"`
+	FromRPS       float64        `yaml:"from_rps"`
+	ToRPS         float64        `yaml:"to_rps"`
+	MinRPS        float64        `yaml:"min_rps"`
+	MaxRPS        float64        `yaml:"max_rps"`
+	Period        string         `yaml:"period"`
+	BaseRPS       float64        `yaml:"base_rps"`
+	SpikeRPS      float64        `yaml:"spike_rps"`
+	SpikeDuration string         `yaml:"spike_duration"`
+	Interval      string         `yaml:"interval"`
+	Stages        []TrafficStage `yaml:"stages"`
+}
+
+type TrafficStage struct {
+	Duration string  `yaml:"duration"`
+	RPS      float64 `yaml:"rps"`
 }
 
 type Request struct {
@@ -159,11 +181,15 @@ func (s Scenario) Validate() error {
 		}
 		seen[node.Name] = struct{}{}
 	}
-	if s.Workload.Mode != "closed_loop" || s.Workload.Concurrency <= 0 {
-		return fmt.Errorf("only closed_loop workloads with positive concurrency are supported")
+	if s.Workload.MaxInFlight <= 0 {
+		return fmt.Errorf("workload max_in_flight must be positive")
 	}
-	if _, err := time.ParseDuration(s.Workload.Duration); err != nil {
+	duration, err := time.ParseDuration(s.Workload.Duration)
+	if err != nil {
 		return fmt.Errorf("workload duration: %w", err)
+	}
+	if err := s.Workload.Traffic.Validate(duration); err != nil {
+		return fmt.Errorf("workload traffic: %w", err)
 	}
 	if s.Workload.Request.Stream {
 		return fmt.Errorf("streaming requests are not supported by the initial runner")

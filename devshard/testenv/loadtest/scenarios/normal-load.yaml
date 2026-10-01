@@ -18,9 +18,10 @@ topology:
         profile: fast
 
 workload:
-  mode: closed_loop
-  concurrency: 2
+  max_in_flight: 2
   duration: 30s
+  traffic:
+    type: closed_loop
   request:
     model: test-model
     stream: false
