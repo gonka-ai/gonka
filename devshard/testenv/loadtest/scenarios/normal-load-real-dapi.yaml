@@ -1,10 +1,10 @@
 schema_version: v1
-scenario: normal-load
+scenario: normal-load-real-dapi
 seed: 42
 
 environment:
-  chain: mock
-  dapi: mock
+  chain: local_testnet
+  dapi: real
 
 topology:
   versiond_mode: multi
@@ -14,7 +14,7 @@ topology:
     escrow_amount: 1000000000
     max_nonce: 100000
   mock_ml:
-    allocator: round_robin
+    allocator: dapi
     nodes:
       - name: mock-openai-0
         profile: fast
@@ -27,7 +27,7 @@ workload:
   traffic:
     type: closed_loop
   request:
-    model: test-model
+    model: Qwen/Qwen2.5-7B-Instruct
     stream: false
     max_tokens: 64
     messages:

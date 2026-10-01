@@ -57,6 +57,20 @@ func TestChatCompletions_JSONDeterministic(t *testing.T) {
 	}
 }
 
+func TestModelStatus_Downloaded(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/api/v1/models/status", "application/json", strings.NewReader(`{"hf_repo":"Qwen/Qwen2.5-7B-Instruct"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	require.Equal(t, "DOWNLOADED", result["status"])
+}
+
 func TestChatCompletions_StreamCompletionAPI(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
