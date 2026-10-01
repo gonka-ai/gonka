@@ -40,10 +40,17 @@ func NewServer(cfg Config) *Server {
 	e.HideBanner = true
 	e.POST("/v1/chat/completions", s.handleChatCompletions)
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.POST("/api/v1/models/status", s.handleModelStatus)
 	e.POST("/testenv/fault", s.handleFaultPatch)
 	e.POST("/testenv/stream/release", s.handleStreamRelease)
 	s.echo = e
 	return s
+}
+
+// handleModelStatus is the small ML-node management contract real DAPI uses
+// before it makes a node available for inference.
+func (s *Server) handleModelStatus(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]string{"status": "DOWNLOADED"})
 }
 
 func (s *Server) patchFault(p FaultPatch) {

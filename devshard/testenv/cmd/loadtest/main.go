@@ -20,7 +20,7 @@ func main() {
 	keepStack := flag.Bool("keep-stack", false, "keep the Docker stack and work directory after the run")
 	flag.Parse()
 	if *scenarioPath == "" {
-		log.Fatal("-scenario is required")
+		log.Fatal("provide -scenario")
 	}
 	testenvDir, err := filepath.Abs(".")
 	if err != nil {
@@ -40,6 +40,10 @@ func main() {
 	})
 	if err != nil {
 		log.Fatal(err)
+	}
+	if result.Summary.Requests == 0 {
+		fmt.Fprintf(os.Stdout, "scenario=%s output=%s\n", result.Summary.Scenario, result.OutputDir)
+		return
 	}
 	fmt.Fprintf(os.Stdout, "scenario=%s requests=%d completed=%d failed=%d output=%s\n", result.Summary.Scenario, result.Summary.Requests, result.Summary.Completed, result.Summary.Failed, result.OutputDir)
 }

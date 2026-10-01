@@ -1,5 +1,5 @@
 schema_version: v1
-scenario: normal-load
+scenario: single-slow-ml-node
 seed: 42
 
 environment:
@@ -20,19 +20,24 @@ topology:
         profile: fast
       - name: mock-openai-1
         profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: slow
 
 workload:
-  max_in_flight: 2
+  max_in_flight: 10
   duration: 30s
   traffic:
-    type: closed_loop
+    type: constant
+    rps: 4
   request:
     model: test-model
     stream: false
     max_tokens: 64
     messages:
       - role: user
-        content: "normal-load request"
+        content: "single slow ML node request"
 
 thresholds:
   error_rate: 0
@@ -48,4 +53,4 @@ assertions:
   mock_ml:
     require_each_node_used: true
 
-drain_timeout: 30s
+drain_timeout: 60s
