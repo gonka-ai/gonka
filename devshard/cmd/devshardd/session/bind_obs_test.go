@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -204,6 +205,36 @@ func (b *bindRPC) seed(escrowID string, signer *signing.Secp256k1Signer) error {
 	return err
 }
 
+func (b *bindRPC) verifyTimeout(escrowID string, signer *signing.Secp256k1Signer, req transport.VerifyTimeoutRequest) (*transport.VerifyTimeoutResponse, error) {
+	b.t.Helper()
+	token, err := b.attach(escrowID, signer)
+	if err != nil {
+		return nil, err
+	}
+	env := signBindEnvelope(b.t, signer, escrowID, marshalBindPayload(b.t, transport.VerifyTimeoutRequestToProto(req)))
+	client := rpcpbconnect.NewSessionServiceClient(b.http.Client(), b.base(escrowID))
+	resp, err := client.VerifyTimeout(context.Background(), withBindSession(connect.NewRequest(env), token))
+	if err != nil {
+		return nil, err
+	}
+	return transport.VerifyTimeoutResponseFromProto(resp.Msg), nil
+}
+
+func (b *bindRPC) verifyErrorMiss(escrowID string, signer *signing.Secp256k1Signer, req transport.VerifyErrorMissRequest) (*transport.VerifyErrorMissResponse, error) {
+	b.t.Helper()
+	token, err := b.attach(escrowID, signer)
+	if err != nil {
+		return nil, err
+	}
+	env := signBindEnvelope(b.t, signer, escrowID, marshalBindPayload(b.t, transport.VerifyErrorMissRequestToProto(req)))
+	client := rpcpbconnect.NewSessionServiceClient(b.http.Client(), b.base(escrowID))
+	resp, err := client.VerifyErrorMiss(context.Background(), withBindSession(connect.NewRequest(env), token))
+	if err != nil {
+		return nil, err
+	}
+	return transport.VerifyErrorMissResponseFromProto(resp.Msg), nil
+}
+
 func (b *bindRPC) challenge(escrowID string, signer *signing.Secp256k1Signer, req transport.ChallengeReceiptRequest) (*transport.ChallengeReceiptResponse, error) {
 	b.t.Helper()
 	token, err := b.attach(escrowID, signer)
@@ -396,6 +427,106 @@ func TestChallengeReceiptUnbound_StrangerDoesNotBind(t *testing.T) {
 
 	_, err := rpc.attach(escrowID, mustGenerateKey(t))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err), "rpc=%v", err)
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func creatorStartDiff(t *testing.T, user *signing.Secp256k1Signer, escrowID, version string) transport.DiffJSON {
+	t.Helper()
+	diff := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTxVersioned(1, version)})
+	dj, err := transport.DiffToJSON(diff)
+	require.NoError(t, err)
+	return dj
+}
+
+func TestVerifyTimeoutUnbound_BindsFromCreatorSignature(t *testing.T) {
+	const escrowID = "9731"
+	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
+	rpc := newBindRPC(t, mgr)
+
+	_, rpcErr := rpc.verifyTimeout(escrowID, hosts[2], transport.VerifyTimeoutRequest{
+		InferenceID: 1,
+		Reason:      transport.TimeoutReasonToString(types.TimeoutReason_TIMEOUT_REASON_EXECUTION),
+		Diffs:       []transport.DiffJSON{creatorStartDiff(t, user, escrowID, testutil.RuntimeTestVersion)},
+	})
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "verify-timeout on a cold host must CreateSession from the creator signature; rpc=%v", rpcErr)
+	require.Equal(t, user.Address(), meta.CreatorAddr)
+	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+}
+
+func TestVerifyTimeoutUnbound_ForeignSignatureDoesNotBind(t *testing.T) {
+	const escrowID = "9732"
+	mgr, store, _, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
+	rpc := newBindRPC(t, mgr)
+
+	_, err := rpc.verifyTimeout(escrowID, hosts[2], transport.VerifyTimeoutRequest{
+		InferenceID: 1,
+		Reason:      transport.TimeoutReasonToString(types.TimeoutReason_TIMEOUT_REASON_EXECUTION),
+		Diffs:       []transport.DiffJSON{creatorStartDiff(t, hosts[2], escrowID, testutil.RuntimeTestVersion)},
+	})
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err), "rpc=%v", err)
+	require.Contains(t, err.Error(), "invalid user signature")
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestVerifyTimeoutUnbound_MissingStartDoesNotBind(t *testing.T) {
+	const escrowID = "9733"
+	mgr, store, _, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
+	rpc := newBindRPC(t, mgr)
+
+	_, err := rpc.verifyTimeout(escrowID, hosts[2], transport.VerifyTimeoutRequest{
+		InferenceID: 1,
+		Reason:      transport.TimeoutReasonToString(types.TimeoutReason_TIMEOUT_REASON_EXECUTION),
+	})
+	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err), "rpc=%v", err)
+	require.Contains(t, err.Error(), "gateway start proof required")
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestVerifyTimeoutUnbound_WrongVersionDoesNotBind(t *testing.T) {
+	const escrowID = "9734"
+	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
+	rpc := newBindRPC(t, mgr)
+
+	_, err := rpc.verifyTimeout(escrowID, hosts[2], transport.VerifyTimeoutRequest{
+		InferenceID: 1,
+		Reason:      transport.TimeoutReasonToString(types.TimeoutReason_TIMEOUT_REASON_EXECUTION),
+		Diffs:       []transport.DiffJSON{creatorStartDiff(t, user, escrowID, "other-version")},
+	})
+	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err), "rpc=%v", err)
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestVerifyErrorMissUnbound_BindsFromCreatorSignature(t *testing.T) {
+	const escrowID = "9735"
+	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
+	rpc := newBindRPC(t, mgr)
+
+	_, rpcErr := rpc.verifyErrorMiss(escrowID, hosts[2], transport.VerifyErrorMissRequest{
+		InferenceID: 1,
+		Diffs:       []transport.DiffJSON{creatorStartDiff(t, user, escrowID, testutil.RuntimeTestVersion)},
+	})
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "verify-error-miss on a cold host must CreateSession from the creator signature; rpc=%v", rpcErr)
+	require.Equal(t, user.Address(), meta.CreatorAddr)
+	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+}
+
+func TestVerifyErrorMissUnbound_ForeignSignatureDoesNotBind(t *testing.T) {
+	const escrowID = "9736"
+	mgr, store, _, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
+	rpc := newBindRPC(t, mgr)
+
+	_, err := rpc.verifyErrorMiss(escrowID, hosts[2], transport.VerifyErrorMissRequest{
+		InferenceID: 1,
+		Diffs:       []transport.DiffJSON{creatorStartDiff(t, hosts[2], escrowID, testutil.RuntimeTestVersion)},
+	})
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err), "rpc=%v", err)
+	require.Contains(t, err.Error(), "invalid user signature")
 	_, err = store.GetSessionMeta(escrowID)
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 }
@@ -604,6 +735,21 @@ func TestSessionServerExisting_NegativeCachesMiss(t *testing.T) {
 	_, err = mgr.SessionServerExisting(escrowID)
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 	require.Equal(t, first, counted.gets.Load(), "cached miss must not recover again")
+}
+
+func TestRememberResolutionFailure_NotFoundExpiresSooner(t *testing.T) {
+	mgr := NewHostManager(storage.NewMemory(), mustGenerateKey(t), nil, nil, nil, "v5", nil, nil, nil)
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	now := time.Unix(1_700_000_000, 0)
+	mgr.rememberResolutionFailure("97081", fmt.Errorf("get session meta: %w", storage.ErrSessionNotFound), now)
+	mgr.rememberResolutionFailure("97082", bridge.ErrChainUnavailable, now)
+
+	require.ErrorIs(t, mgr.cachedResolutionFailure("97081", now.Add(notFoundResolutionTTL-time.Millisecond)), storage.ErrSessionNotFound)
+	require.NoError(t, mgr.cachedResolutionFailure("97081", now.Add(notFoundResolutionTTL)))
+	require.ErrorIs(t, mgr.cachedResolutionFailure("97082", now.Add(notFoundResolutionTTL)), bridge.ErrChainUnavailable)
+	require.ErrorIs(t, mgr.cachedResolutionFailure("97082", now.Add(resolutionFailureTTL-time.Millisecond)), bridge.ErrChainUnavailable)
+	require.NoError(t, mgr.cachedResolutionFailure("97082", now.Add(resolutionFailureTTL)))
 }
 
 func TestSessionServerExisting_MissDoesNotOccupyRecoveryGate(t *testing.T) {

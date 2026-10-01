@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -146,13 +147,19 @@ type PeerAuthHandler struct {
 }
 
 type peerSession struct {
-	peer        string
-	expires     time.Time
-	created     time.Time
-	attached    int64 // AttachRequest.timestamp that created this session
-	watching    bool
-	watchID     uint64
-	cancelWatch chan struct{}
+	peer     string
+	expires  time.Time
+	created  time.Time
+	attached int64 // AttachRequest.timestamp that created this session
+	// lastAdmit is the last time this token passed admitSession or a Watch
+	// heartbeat, in unix nanoseconds. Eviction of an idle session uses it.
+	// lastSeenWrite is the last time this process tried to store that in
+	// Postgres, so the touch stays throttled.
+	lastAdmit     atomic.Int64
+	lastSeenWrite atomic.Int64
+	watching      bool
+	watchID       uint64
+	cancelWatch   chan struct{}
 	// rawKey, tokenHash, current, and seq are set when a shared store is on.
 	// The memory store leaves them empty and keeps using sessions/byPeer.
 	rawKey    string
@@ -448,6 +455,7 @@ func (h *PeerAuthHandler) Watch(ctx context.Context, req *connect.Request[rpcpb.
 			if _, ok := h.LookupToken(token); !ok {
 				return connect.NewError(connect.CodeUnauthenticated, errors.New("session expired"))
 			}
+			h.noteAdmit(token)
 			if err := sendBeat(); err != nil {
 				return err
 			}
@@ -580,7 +588,9 @@ func (h *PeerAuthHandler) replaceSessionLocked(peer string, token []byte, expire
 			sess.stopWatchLocked()
 		}
 	}
-	h.sessions[tok] = &peerSession{peer: peer, expires: expires, created: h.now(), attached: attached}
+	sess := &peerSession{peer: peer, expires: expires, created: h.now(), attached: attached}
+	sess.lastAdmit.Store(h.now().UnixNano())
+	h.sessions[tok] = sess
 	h.byPeer[peer] = tok
 }
 
@@ -597,22 +607,27 @@ func (h *PeerAuthHandler) dropPeerLocked(peer string) {
 	}
 }
 
-// evictOldestIdleLocked drops the current session that has been sitting
-// without a Watch the longest. Watching peers are left alone. False if every
-// current session is watching (then Attach is resource_exhausted).
+// evictOldestIdleLocked drops the current session that has gone longest
+// without an admitted RPC or a Watch heartbeat. Watching peers are left
+// alone. False if every current session is watching (then Attach is
+// resource_exhausted).
 func (h *PeerAuthHandler) evictOldestIdleLocked() bool {
 	var (
 		oldestPeer string
-		oldestAt   time.Time
+		oldestAt   int64
 	)
 	for peer, tok := range h.byPeer {
 		sess := h.sessions[tok]
 		if sess == nil || sess.watching {
 			continue
 		}
-		if oldestPeer == "" || sess.created.Before(oldestAt) {
+		at := sess.lastAdmit.Load()
+		if at == 0 {
+			at = sess.created.UnixNano()
+		}
+		if oldestPeer == "" || at < oldestAt {
 			oldestPeer = peer
-			oldestAt = sess.created
+			oldestAt = at
 		}
 	}
 	if oldestPeer == "" {
@@ -620,6 +635,43 @@ func (h *PeerAuthHandler) evictOldestIdleLocked() bool {
 	}
 	h.dropPeerLocked(oldestPeer)
 	return true
+}
+
+// noteAdmit records that token was just accepted. The memory cap evicts by
+// this stamp. A shared store also moves last_seen, at most once per
+// lastSeenThrottle, so a Watch or a live unary is not the eviction victim.
+func (h *PeerAuthHandler) noteAdmit(token []byte) {
+	if h == nil || h.Closed() || len(token) == 0 || len(token) > maxAttachNonceBytes {
+		return
+	}
+	now := h.now().UnixNano()
+	h.mu.RLock()
+	sess, ok := h.sessions[rawTokenKey(token)]
+	if !ok && h.byHash != nil {
+		sess, ok = h.byHash[tokenHashHex(token)]
+	}
+	shared := h.shared
+	h.mu.RUnlock()
+	if !ok || sess == nil {
+		return
+	}
+	sess.lastAdmit.Store(now)
+	if shared == nil {
+		return
+	}
+	prev := sess.lastSeenWrite.Load()
+	if prev != 0 && time.Duration(now-prev) < lastSeenThrottle {
+		return
+	}
+	if !sess.lastSeenWrite.CompareAndSwap(prev, now) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := shared.TouchLastSeen(ctx, tokenHashBytes(token)); err != nil {
+		sess.lastSeenWrite.CompareAndSwap(now, prev)
+		slog.Warn("devshard peer rpc session last_seen", "err", err)
+	}
 }
 
 // liveSessionToken is the peer bound to a still-valid X-Devshard-Session.

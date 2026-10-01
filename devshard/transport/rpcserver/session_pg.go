@@ -558,6 +558,7 @@ WHERE token_hash = $1`, in.Hash).Scan(&state, &peer, &attached)
 	rows, err := tx.Query(ctx, `
 UPDATE devshard_peer_rpc_sessions
 SET expires_at = now() + ($2 * interval '1 microsecond'),
+    last_seen = now(),
     seq = nextval('devshard_peer_rpc_session_seq'),
     updated_at = now(),
     state = 'live'
@@ -638,11 +639,12 @@ WHERE token_hash = (
     SELECT token_hash
     FROM devshard_peer_rpc_sessions
     WHERE host_address = $1 AND version = $2 AND state = 'live' AND expires_at > now()
-    ORDER BY attached_unix ASC
+      AND (last_seen IS NULL OR last_seen <= now() - ($4 * interval '1 microsecond'))
+    ORDER BY COALESCE(last_seen, to_timestamp(attached_unix)) ASC
     LIMIT 1
 )
 RETURNING token_hash, peer, attached_unix, expires_at, grace_until, state, seq, updated_at`,
-		s.host, s.version, durationMicros(in.Grace))
+		s.host, s.version, durationMicros(in.Grace), durationMicros(lastSeenKeep))
 	if err != nil {
 		return err
 	}
@@ -656,6 +658,23 @@ RETURNING token_hash, peer, attached_unix, expires_at, grace_until, state, seq, 
 	}
 	out.Rows = append(out.Rows, got...)
 	return nil
+}
+
+// TouchLastSeen moves last_seen for a live token. It does not allocate a
+// seq: replicas read the column when they evict, and a touch must not look
+// like a new session row. The WHERE clause is the throttle.
+func (s *SharedSessions) TouchLastSeen(ctx context.Context, hash []byte) error {
+	if s == nil || s.pool == nil || len(hash) == 0 {
+		return nil
+	}
+	s.sqlN.Add(1)
+	_, err := s.pool.Exec(ctx, `
+UPDATE devshard_peer_rpc_sessions
+SET last_seen = now()
+WHERE token_hash = $1 AND state = 'live'
+  AND (last_seen IS NULL OR last_seen < now() - ($2 * interval '1 microsecond'))`,
+		hash, durationMicros(lastSeenThrottle))
+	return err
 }
 
 func (s *SharedSessions) replaceLive(ctx context.Context, tx pgx.Tx, in attachCommit, out *attachOutcome) error {

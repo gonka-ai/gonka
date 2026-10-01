@@ -17,9 +17,10 @@ import (
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
-// chatReadyTimeout caps WaitReady on Chat. A dead origin must not hold the
-// attempt until InferenceTimeout. Same scale as the validator's
-// payloadFetchHeaderTimeout. Tests shorten it.
+// chatReadyTimeout caps WaitReady for Chat and GetPayload. A dead origin
+// must not hold the attempt until InferenceTimeout or the caller's deadline.
+// The validator's HTTP payload client keeps payloadFetchHeaderTimeout for
+// dial, TLS, and response headers. Tests shorten this.
 var chatReadyTimeout = 10 * time.Second
 
 // Send implements user.HostClient. Opted-in Chat uses Connect frames that

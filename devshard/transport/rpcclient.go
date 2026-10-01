@@ -875,7 +875,9 @@ func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest
 	// Signature must be the HTTP Authorization header value (base64 text)
 	// as UTF-8 bytes, not raw ECDSA. The server adapter does
 	// string(req.GetSignature()) then base64-decodes that string.
-	if err := c.WaitReady(ctx); err != nil {
+	readyCtx, cancelReady := context.WithTimeout(ctx, chatReadyTimeout)
+	defer cancelReady()
+	if err := c.WaitReady(readyCtx); err != nil {
 		return nil, fmt.Errorf("get payload: %w", err)
 	}
 	client, err := c.payloadClient(maxBytes)

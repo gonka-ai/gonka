@@ -742,6 +742,25 @@ func TestRPCRetry_UnauthenticatedThenOK(t *testing.T) {
 	require.Less(t, time.Since(start), time.Second)
 }
 
+func TestAcquirePeerConn_ReleaseDuringBuildDoesNotRegister(t *testing.T) {
+	t.Cleanup(ResetOutboundPeerReleaseForTest)
+	testPeerConnBeforeInsert = func() { outboundPeerReleased.Store(true) }
+	t.Cleanup(func() { testPeerConnBeforeInsert = nil })
+
+	peer := devtest.MustGenerateKey(t)
+	host := "gonka1releaseduringbuild"
+	pc := acquirePeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: host,
+		Signer:      peer,
+		DirectMux:   true,
+	})
+	t.Cleanup(pc.Close)
+	require.Error(t, pc.ctx.Err())
+	require.Zero(t, pc.refs.Load())
+	require.False(t, PeerConnRegistered(host, "direct"))
+}
+
 func TestPeerConn_ReleaseSharedKeepsRegistry(t *testing.T) {
 	peer := devtest.MustGenerateKey(t)
 	host := "gonka1relshare"

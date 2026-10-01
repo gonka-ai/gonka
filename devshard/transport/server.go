@@ -567,7 +567,8 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 }
 
 // ServeVerifyTimeout is the transport-neutral core behind POST .../verify-timeout
-// and SessionService.VerifyTimeout. Callers enforce owner-only.
+// and SessionService.VerifyTimeout. Callers allow the escrow owner or a group
+// member. A cold host CreateSession requires a creator-signed start in diffs.
 func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutRequest) (*VerifyTimeoutResponse, error) {
 	if !s.host.CompletionRequestsEnabled() {
 		logging.Debug("ServeVerifyTimeout: devshard_requests_enabled=false", "subsystem", "server")
@@ -713,7 +714,8 @@ func (s *Server) HandleVerifyErrorMiss(c echo.Context) (err error) {
 }
 
 // ServeVerifyErrorMiss is the transport-neutral core behind POST .../verify-error-miss
-// and SessionService.VerifyErrorMiss. Callers enforce owner-only.
+// and SessionService.VerifyErrorMiss. Callers allow the escrow owner or a group
+// member. A cold host CreateSession requires a creator-signed start in diffs.
 func (s *Server) ServeVerifyErrorMiss(ctx context.Context, req VerifyErrorMissRequest) (*VerifyErrorMissResponse, error) {
 	_ = ctx
 	if !s.host.CompletionRequestsEnabled() {

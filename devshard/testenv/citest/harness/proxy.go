@@ -199,3 +199,9 @@ func (s *Stack) ProxyH2HTTP(t *testing.T) string {
 	t.Helper()
 	return "http://" + s.composePublishedAddr(t, config.DefaultProxyService, config.DefaultRPCH2Port)
 }
+
+// RouterH2HTTP is the host-published versiond-router proto-h2 URL.
+func (s *Stack) RouterH2HTTP(t *testing.T) string {
+	t.Helper()
+	return "http://" + s.composePublishedAddr(t, "versiond-router", config.DefaultVersiondRouterH2Port)
+}

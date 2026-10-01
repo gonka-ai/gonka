@@ -242,6 +242,13 @@ CREATE TABLE IF NOT EXISTS devshard_peer_rpc_members (
 )`,
 		},
 	},
+	{
+		ID:   16,
+		Name: "devshard_peer_rpc_session_last_seen",
+		Statements: []string{`
+ALTER TABLE devshard_peer_rpc_sessions
+    ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

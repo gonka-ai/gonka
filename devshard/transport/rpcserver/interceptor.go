@@ -256,6 +256,7 @@ func admitSession(auth *PeerAuthHandler, ctx context.Context, header http.Header
 		return ctx, invalidSessionToken()
 	}
 	observability.IncPeerRPCGate(gateReasonAdmitted)
+	auth.noteAdmit(raw)
 	ctx = withPeer(ctx, peer)
 	if stashToken {
 		// Watch is the only reader of TokenFromContext.

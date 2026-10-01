@@ -503,6 +503,10 @@ func ReleaseOutboundPeerConns() {
 	wg.Wait()
 }
 
+// testPeerConnBeforeInsert runs after NewPeerConn and before the registry
+// insert. Tests set the release flag in that gap.
+var testPeerConnBeforeInsert func()
+
 func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 	if outboundPeerReleased.Load() {
 		pc := NewPeerConn(cfg)
@@ -519,7 +523,18 @@ func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 	peerConnMu.Unlock()
 
 	fresh := NewPeerConn(cfg)
+	if hook := testPeerConnBeforeInsert; hook != nil {
+		hook()
+	}
 	peerConnMu.Lock()
+	// ReleaseOutboundPeerConns may have drained the registry while this
+	// conn was built outside the lock. Inserting it would Start an Attach
+	// on the retiring generation.
+	if outboundPeerReleased.Load() {
+		peerConnMu.Unlock()
+		fresh.Close()
+		return fresh
+	}
 	if pc := peerConnRegistry[key]; pc != nil {
 		pc.refs.Add(1)
 		peerConnMu.Unlock()

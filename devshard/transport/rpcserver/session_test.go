@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
 	"devshard/bridge"
 	"devshard/internal/testutil"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/storage"
 	"devshard/transport"
@@ -58,6 +60,24 @@ func (s stubCore) ServeGetMempool(context.Context) ([]*types.DevshardTx, error) 
 
 func (s stubCore) ServeChallengeReceipt(context.Context, transport.ChallengeReceiptRequest) (*transport.ChallengeReceiptResponse, error) {
 	return &transport.ChallengeReceiptResponse{}, s.err
+}
+
+func (s stubCore) ServeVerifyTimeout(context.Context, transport.VerifyTimeoutRequest) (*transport.VerifyTimeoutResponse, error) {
+	return &transport.VerifyTimeoutResponse{}, s.err
+}
+
+func (s stubCore) ServeVerifyErrorMiss(context.Context, transport.VerifyErrorMissRequest) (*transport.VerifyErrorMissResponse, error) {
+	return &transport.VerifyErrorMissResponse{}, s.err
+}
+
+// inferenceStub is stubCore plus ServeInference, so a Chat can finish
+// without a terminal. stubCore itself stays unimplemented.
+type inferenceStub struct {
+	stubCore
+}
+
+func (inferenceStub) ServeInference(context.Context, transport.InferenceCall) error {
+	return nil
 }
 
 type stubLookup struct {
@@ -132,6 +152,26 @@ func (s *countingBindLookup) SessionForOwner(string, string) (SessionCore, error
 
 func (s *countingBindLookup) SessionForStartProof(string, string, []types.Diff, string) (SessionCore, error) {
 	s.bind++
+	return s.core, nil
+}
+
+type recordingStartLookup struct {
+	stubLookup
+	diffs   []types.Diff
+	claimed string
+	owner   int
+	proofs  int
+}
+
+func (s *recordingStartLookup) SessionForOwner(id, addr string) (SessionCore, error) {
+	s.owner++
+	return s.stubLookup.SessionForOwner(id, addr)
+}
+
+func (s *recordingStartLookup) SessionForStartProof(_ string, _ string, diffs []types.Diff, claimed string) (SessionCore, error) {
+	s.proofs++
+	s.diffs = append([]types.Diff(nil), diffs...)
+	s.claimed = claimed
 	return s.core, nil
 }
 
@@ -552,13 +592,51 @@ func TestSessionHandler_OwnerVsGroup(t *testing.T) {
 		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 		require.Contains(t, err.Error(), "restricted to escrow owner")
 	})
-	t.Run("group member cannot verify timeout", func(t *testing.T) {
+	t.Run("group member can verify timeout", func(t *testing.T) {
 		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
+		_, err := env.session.VerifyTimeout(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyTimeoutRequest{})), env.token))
+		require.NoError(t, err)
+	})
+	t.Run("group member can verify error miss", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
+		_, err := env.session.VerifyErrorMiss(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyErrorMissRequest{})), env.token))
+		require.NoError(t, err)
+	})
+	t.Run("verify uses the start proof, not the owner bind", func(t *testing.T) {
+		start := testutil.StartTxVersioned(1, "v-proof")
+		diff := types.Diff{Nonce: 1, Txs: []*types.DevshardTx{start}}
+		dj, err := transport.DiffToJSON(diff)
+		require.NoError(t, err)
+		lookup := &recordingStartLookup{stubLookup: stubLookup{core: stubCore{member: true}}}
+		env := newSessionEnv(t, lookup, "escrow-1")
+		_, err = env.session.VerifyTimeout(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", transport.VerifyTimeoutRequestToProto(transport.VerifyTimeoutRequest{
+				InferenceID: 1,
+				Reason:      "execution",
+				Diffs:       []transport.DiffJSON{dj},
+			}))), env.token))
+		require.NoError(t, err)
+		_, err = env.session.VerifyErrorMiss(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", transport.VerifyErrorMissRequestToProto(transport.VerifyErrorMissRequest{
+				InferenceID: 1,
+				Diffs:       []transport.DiffJSON{dj},
+			}))), env.token))
+		require.NoError(t, err)
+		require.Equal(t, 0, lookup.owner)
+		require.Equal(t, 2, lookup.proofs)
+		require.Equal(t, "v-proof", lookup.claimed)
+		require.Len(t, lookup.diffs, 1)
+		require.Equal(t, uint64(1), lookup.diffs[0].Nonce)
+	})
+	t.Run("outsider cannot verify timeout", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{}}, "escrow-1")
 		_, err := env.session.VerifyTimeout(context.Background(), withSession(
 			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyTimeoutRequest{})), env.token))
 		require.Error(t, err)
 		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
-		require.Contains(t, err.Error(), "restricted to escrow owner")
+		require.Contains(t, err.Error(), "restricted to escrow owner or group member")
 	})
 	t.Run("group member can challenge receipt", func(t *testing.T) {
 		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
@@ -629,4 +707,122 @@ func TestSessionHandler_ParticipantBindVsExisting(t *testing.T) {
 	require.Equal(t, 1, lookup.owner, "Chat must bind an owner session")
 	require.Equal(t, 1, lookup.bind, "Chat must not use SessionForParticipant")
 	require.Equal(t, 2, lookup.existing)
+}
+
+func TestChat_NoReceiptBeforeServeInference(t *testing.T) {
+	noReceipt := func(reason observability.Reason) float64 {
+		t.Helper()
+		return promtest.ToFloat64(observability.RequestTerminalCounterForTest(
+			observability.TerminalNoReceiptInterrupted, reason))
+	}
+	wantOnce := func(reason observability.Reason, fn func()) {
+		t.Helper()
+		before := noReceipt(reason)
+		fn()
+		require.Equal(t, before+1, noReceipt(reason))
+	}
+	wantSame := func(reason observability.Reason, fn func()) {
+		t.Helper()
+		before := noReceipt(reason)
+		fn()
+		require.Equal(t, before, noReceipt(reason))
+	}
+
+	t.Run("non-owner", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
+		wantOnce(observability.ReasonOwnerErr, func() {
+			stream, err := env.session.Chat(context.Background(), withSession(
+				connect.NewRequest(env.signedEnvelope(t, "escrow-1", nil)), env.token))
+			require.NoError(t, err)
+			require.False(t, stream.Receive())
+			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(stream.Err()))
+		})
+	})
+
+	t.Run("missing session", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{}, "escrow-1")
+		wantOnce(observability.ReasonSessionResolveErr, func() {
+			stream, err := env.session.Chat(context.Background(), withSession(
+				connect.NewRequest(env.signedEnvelope(t, "escrow-1", nil)), env.token))
+			require.NoError(t, err)
+			require.False(t, stream.Receive())
+			require.Error(t, stream.Err())
+		})
+		wantSame(observability.ReasonSessionResolveErr, func() {
+			_, err := env.getSignatures(1)
+			require.Error(t, err)
+		})
+	})
+
+	t.Run("escrow mismatch", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{owner: true}}, "escrow-1")
+		wantOnce(observability.ReasonInvalidEscrowID, func() {
+			stream, err := env.session.Chat(context.Background(), withSession(
+				connect.NewRequest(env.signedEnvelope(t, "other-escrow", nil)), env.token))
+			require.NoError(t, err)
+			require.False(t, stream.Receive())
+			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(stream.Err()))
+		})
+		wantSame(observability.ReasonInvalidEscrowID, func() {
+			_, err := env.session.SeedHeightSync(context.Background(), withSession(
+				connect.NewRequest(env.signedEnvelope(t, "other-escrow", nil)), env.token))
+			require.Error(t, err)
+		})
+	})
+
+	t.Run("bad signature", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{owner: true}}, "escrow-1")
+		bad := env.signedEnvelope(t, "escrow-1", nil)
+		bad.Signature = bad.Signature[:len(bad.Signature)-1]
+		wantOnce(observability.ReasonInvalidSignature, func() {
+			stream, err := env.session.Chat(context.Background(), withSession(
+				connect.NewRequest(bad), env.token))
+			require.NoError(t, err)
+			require.False(t, stream.Receive())
+			require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(stream.Err()))
+		})
+	})
+
+	t.Run("signer mismatch", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{owner: true}}, "escrow-1")
+		other := testutil.MustGenerateKey(t)
+		bad, err := transport.SignEnvelope(other, "escrow-1", nil, time.Now().Unix())
+		require.NoError(t, err)
+		wantOnce(observability.ReasonOwnerErr, func() {
+			stream, err := env.session.Chat(context.Background(), withSession(
+				connect.NewRequest(bad), env.token))
+			require.NoError(t, err)
+			require.False(t, stream.Receive())
+			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(stream.Err()))
+		})
+	})
+
+	t.Run("success", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: inferenceStub{stubCore: stubCore{owner: true}}}, "escrow-1")
+		reasons := []observability.Reason{
+			observability.ReasonOwnerErr,
+			observability.ReasonSessionResolveErr,
+			observability.ReasonInvalidEscrowID,
+			observability.ReasonInvalidSignature,
+			observability.ReasonParseErr,
+		}
+		for _, reason := range reasons {
+			wantSame(reason, func() {
+				stream, err := env.session.Chat(context.Background(), withSession(
+					connect.NewRequest(env.signedEnvelope(t, "escrow-1", nil)), env.token))
+				require.NoError(t, err)
+				require.False(t, stream.Receive())
+				require.NoError(t, stream.Err())
+			})
+		}
+	})
+
+	t.Run("verify stays off the chat counter", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
+		wantSame(observability.ReasonOwnerErr, func() {
+			_, err := env.session.VerifyTimeout(context.Background(), withSession(
+				connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyTimeoutRequest{})), env.token))
+			require.NoError(t, err)
+		})
+	})
 }

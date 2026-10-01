@@ -43,6 +43,14 @@ const (
 	// watermark. A transaction open longer than this is still applied when
 	// it commits, but the barrier may already have moved on.
 	sharedSeqHoleGrace = 2 * time.Second
+	// lastSeenThrottle is the minimum gap between last_seen writes for one
+	// token. Admit and Watch heartbeats both try; the row itself also refuses
+	// a newer write inside this gap.
+	lastSeenThrottle = 30 * time.Second
+	// lastSeenKeep is how recently a last_seen must have moved for that live
+	// row to be kept at the session cap. It outlasts one missed heartbeat
+	// plus the throttle, so a Watch that is still up is not the victim.
+	lastSeenKeep = 2 * time.Minute
 )
 
 // sinceSessionsSQL is the catch-up read. seq > $3 is the highest seq already

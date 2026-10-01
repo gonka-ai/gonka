@@ -187,6 +187,9 @@ func (h *PeerAuthHandler) applyOneLocked(row sessionRow) {
 	if sess.created.IsZero() {
 		sess.created = h.now()
 	}
+	if sess.lastAdmit.Load() == 0 {
+		sess.lastAdmit.Store(h.now().UnixNano())
+	}
 	sess.current = row.State == sessionStateLive
 	if !sess.current {
 		sess.stopWatchLocked()

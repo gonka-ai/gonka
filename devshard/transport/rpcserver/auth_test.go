@@ -1281,6 +1281,35 @@ func TestPeerAuth_MaxSessionsRefusesWhenAllWatching(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestPeerAuth_EvictsLeastRecentlyAdmittedIdle(t *testing.T) {
+	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
+	auth := newTestAuth(PeerAuthConfig{MaxSessions: 2, SessionTTL: time.Minute, Now: clock.Now})
+
+	olderKey := testutil.MustGenerateKey(t)
+	newerKey := testutil.MustGenerateKey(t)
+	older, err := attachDirect(t, auth, olderKey, []byte("evict-admit-nonce-aaaaaaaa"))
+	require.NoError(t, err)
+	clock.Advance(time.Second)
+	newer, err := attachDirect(t, auth, newerKey, []byte("evict-admit-nonce-bbbbbbbb"))
+	require.NoError(t, err)
+
+	clock.Advance(time.Second)
+	header := make(http.Header)
+	SetSessionHeader(header, older.SessionToken)
+	_, err = admitSession(auth, context.Background(), header, false)
+	require.NoError(t, err)
+
+	clock.Advance(time.Second)
+	incoming, err := attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("evict-admit-nonce-cccccccc"))
+	require.NoError(t, err)
+	_, ok := auth.LookupToken(older.SessionToken)
+	require.True(t, ok, "the session admitted more recently must stay")
+	_, ok = auth.LookupToken(newer.SessionToken)
+	require.False(t, ok, "the idle session with the older admit stamp must be evicted")
+	_, ok = auth.LookupToken(incoming.SessionToken)
+	require.True(t, ok)
+}
+
 func TestPeerAuth_EvictsOldestIdleFirst(t *testing.T) {
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
 	auth := newTestAuth(PeerAuthConfig{MaxSessions: 2, SessionTTL: time.Minute, Now: clock.Now})

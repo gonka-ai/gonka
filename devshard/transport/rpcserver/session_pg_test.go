@@ -5,11 +5,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	promtest "github.com/prometheus/client_golang/prometheus/testutil"
@@ -131,6 +133,16 @@ func startHAHandler(t *testing.T, pool *pgxpool.Pool, cfg PeerAuthConfig) *PeerA
 func nonceN(n byte) []byte {
 	b := bytes.Repeat([]byte{n}, 16)
 	return b
+}
+
+func sessionRowState(t *testing.T, pool *pgxpool.Pool, token []byte) string {
+	t.Helper()
+	sum := sha256.Sum256(token)
+	var state string
+	err := pool.QueryRow(context.Background(), `
+SELECT state FROM devshard_peer_rpc_sessions WHERE token_hash = $1`, sum[:]).Scan(&state)
+	require.NoError(t, err)
+	return state
 }
 
 func countLiveSessions(t *testing.T, pool *pgxpool.Pool) int {
@@ -280,6 +292,59 @@ func TestSharedSessionsPostgres(t *testing.T) {
 		}
 		require.GreaterOrEqual(t, okN, 1)
 		require.Equal(t, 1, countLiveSessions(t, pool))
+	})
+
+	t.Run("max_sessions_keeps_recently_seen", func(t *testing.T) {
+		truncatePeerRPC(t, pool)
+		h := startHAHandler(t, pool, PeerAuthConfig{MaxSessions: 2})
+		ts := time.Now().Unix()
+		firstKey := testutil.MustGenerateKey(t)
+		secondKey := testutil.MustGenerateKey(t)
+		first, err := attachDirectAt(t, h, firstKey, nonceN(0xc1), ts)
+		require.NoError(t, err)
+		second, err := attachDirectAt(t, h, secondKey, nonceN(0xc2), ts+1)
+		require.NoError(t, err)
+
+		header := make(http.Header)
+		SetSessionHeader(header, first.SessionToken)
+		_, err = admitSession(h, context.Background(), header, false)
+		require.NoError(t, err)
+		SetSessionHeader(header, second.SessionToken)
+		_, err = admitSession(h, context.Background(), header, false)
+		require.NoError(t, err)
+
+		_, err = attachDirectAt(t, h, testutil.MustGenerateKey(t), nonceN(0xc3), ts+2)
+		require.Error(t, err)
+		require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+		require.Equal(t, 2, countLiveSessions(t, pool))
+		_, ok := h.LookupToken(first.SessionToken)
+		require.True(t, ok)
+		_, ok = h.LookupToken(second.SessionToken)
+		require.True(t, ok)
+	})
+
+	t.Run("max_sessions_evicts_unseen_before_recent", func(t *testing.T) {
+		truncatePeerRPC(t, pool)
+		h := startHAHandler(t, pool, PeerAuthConfig{MaxSessions: 2})
+		ts := time.Now().Unix()
+		seenKey := testutil.MustGenerateKey(t)
+		idleKey := testutil.MustGenerateKey(t)
+		seen, err := attachDirectAt(t, h, seenKey, nonceN(0xd1), ts)
+		require.NoError(t, err)
+		idle, err := attachDirectAt(t, h, idleKey, nonceN(0xd2), ts+1)
+		require.NoError(t, err)
+
+		header := make(http.Header)
+		SetSessionHeader(header, seen.SessionToken)
+		_, err = admitSession(h, context.Background(), header, false)
+		require.NoError(t, err)
+
+		incoming, err := attachDirectAt(t, h, testutil.MustGenerateKey(t), nonceN(0xd3), ts+2)
+		require.NoError(t, err)
+		require.Equal(t, 2, countLiveSessions(t, pool))
+		require.Equal(t, sessionStateLive, sessionRowState(t, pool, seen.SessionToken), "a session admitted after attach must stay live")
+		require.Equal(t, sessionStateEvicted, sessionRowState(t, pool, idle.SessionToken), "a live row that was never admitted must be the victim")
+		require.Equal(t, sessionStateLive, sessionRowState(t, pool, incoming.SessionToken))
 	})
 
 	t.Run("max_sessions_across_handlers", func(t *testing.T) {

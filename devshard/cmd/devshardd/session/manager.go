@@ -129,8 +129,13 @@ type HostManager struct {
 const (
 	recoverSessionsConcurrency = 8
 	resolutionFailureTTL       = 30 * time.Second
-	permanentFailureTTL        = 10 * time.Minute
-	maxResolutionFailures      = 1024
+	// notFoundResolutionTTL bounds a miss that another replica may have
+	// filled in. Five seconds still collapses a retry onto one GetSessionMeta.
+	// Other failures stay on resolutionFailureTTL; settled and conflicts stay
+	// on permanentFailureTTL.
+	notFoundResolutionTTL = 5 * time.Second
+	permanentFailureTTL   = 10 * time.Minute
+	maxResolutionFailures = 1024
 	// resolutionFailureLowWater is the size the tombstone map is trimmed to
 	// once it exceeds maxResolutionFailures. Trimming below the cap amortises
 	// the eviction sort over many inserts; trimming exactly to the cap would
@@ -624,8 +629,10 @@ func (m *HostManager) evictSession(escrowID string, stale *transport.Server) {
 
 // sessionForOwner is BindOwnerChat without POST auth: Existing + IsOwner,
 // or CreateSession only when addr is the escrow creator. Slot members
-// get (nil, nil). Chat, height-sync seed, and owner-only verify use this.
-// ChallengeReceipt must use sessionForStartProof so a peer cannot pick the version.
+// get (nil, nil). Chat and height-sync seed use this.
+// ChallengeReceipt, VerifyTimeout, and VerifyErrorMiss use sessionForStartProof
+// so a peer cannot pick the version: a cold host binds only from the
+// creator-signed MsgStartInference in the diffs.
 func (m *HostManager) sessionForOwner(escrowID, addr string) (*transport.Server, error) {
 	srv, err := m.SessionServerExisting(escrowID)
 	if err == nil {
@@ -821,8 +828,11 @@ func (m *HostManager) rememberResolutionFailure(escrowID string, err error, now 
 		return
 	}
 	ttl := resolutionFailureTTL
-	if isPermanentResolutionFailure(err) {
+	switch {
+	case isPermanentResolutionFailure(err):
 		ttl = permanentFailureTTL
+	case errors.Is(err, storage.ErrSessionNotFound):
+		ttl = notFoundResolutionTTL
 	}
 	m.sessionsMutex.Lock()
 	m.resolutionFailures[escrowID] = resolutionFailure{err: err, expiresAt: now.Add(ttl)}
@@ -1435,9 +1445,10 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 }
 
 // hostRPCLookup is the Connect session resolver. Observability GETs and
-// gossip/repair use Existing (no CreateSession). ChallengeReceipt binds via
-// SessionForStartProof (gateway-signed start + version). Chat, seed, and
-// owner-only verify use SessionForOwner (creator only).
+// gossip/repair use Existing (no CreateSession). ChallengeReceipt,
+// VerifyTimeout, and VerifyErrorMiss bind via SessionForStartProof
+// (creator-signed start + version). Chat and seed use SessionForOwner
+// (creator only).
 type hostRPCLookup struct{ m *HostManager }
 
 func (l hostRPCLookup) SessionServerExisting(id string) (rpcserver.SessionCore, error) {

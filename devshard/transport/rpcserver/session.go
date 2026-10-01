@@ -33,7 +33,8 @@ type SessionCore interface {
 // SessionForParticipant never CreateSession (gossip / repair on a live row).
 // SessionForOwner CreateSession only when addr is the escrow creator (Chat, seed).
 // SessionForStartProof CreateSession when diffs carry a creator-signed
-// MsgStartInference whose protocol_version matches this child.
+// MsgStartInference whose protocol_version matches this child
+// (ChallengeReceipt, VerifyTimeout, VerifyErrorMiss).
 type SessionLookup interface {
 	SessionServerExisting(escrowID string) (SessionCore, error)
 	// SessionForParticipant returns a live session when addr is allowed.
@@ -42,9 +43,9 @@ type SessionLookup interface {
 	// SessionForOwner is BindOwnerChat: Existing + owner, or CreateSession
 	// only for the escrow creator. Slot members return (nil, nil).
 	SessionForOwner(escrowID, addr string) (SessionCore, error)
-	// SessionForStartProof is ChallengeReceipt bind: Existing, or CreateSession
-	// when diffs prove the gateway start and version. claimedVersion, when set,
-	// must match MsgStartInference.protocol_version.
+	// SessionForStartProof is the ChallengeReceipt / verify-* bind: Existing,
+	// or CreateSession when diffs prove the gateway start and version.
+	// claimedVersion, when set, must match MsgStartInference.protocol_version.
 	SessionForStartProof(escrowID, addr string, diffs []types.Diff, claimedVersion string) (SessionCore, error)
 }
 
@@ -103,7 +104,7 @@ func (h *SessionHandler) Chat(ctx context.Context, req *connect.Request[rpcpb.Si
 	if req == nil || req.Msg == nil {
 		return connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	peer, srv, payload, err := h.openSignedOwner(ctx, req.Msg, "rpc_chat")
+	peer, srv, payload, err := h.openSignedOwner(ctx, req.Msg, rpcChatRoute)
 	if err != nil {
 		return err
 	}
@@ -276,15 +277,21 @@ func (h *SessionHandler) VerifyTimeout(ctx context.Context, req *connect.Request
 	if req == nil || req.Msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	peer, srv, payload, err := h.openSignedOwner(ctx, req.Msg, "rpc_verify_timeout")
+	_, _, payload, err := h.signedPeerPayload(ctx, req.Msg)
 	if err != nil {
-		return nil, err
-	}
-	if err := requireOwner(srv, peer); err != nil {
 		return nil, err
 	}
 	var inner rpcpb.VerifyTimeoutRequest
 	if err := unmarshalPayload(payload, &inner); err != nil {
+		return nil, err
+	}
+	jsonReq := transport.VerifyTimeoutRequestFromProto(&inner)
+	diffs, err := transport.DiffsFromJSON(jsonReq.Diffs)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	srv, err := h.bindStartProof(ctx, "rpc_verify_timeout", diffs, types.StartProtocolVersion(diffs))
+	if err != nil {
 		return nil, err
 	}
 	type verifyCore interface {
@@ -294,7 +301,7 @@ func (h *SessionHandler) VerifyTimeout(ctx context.Context, req *connect.Request
 	if !ok {
 		return nil, unimplementedCore()
 	}
-	resp, err := core.ServeVerifyTimeout(ctx, transport.VerifyTimeoutRequestFromProto(&inner))
+	resp, err := core.ServeVerifyTimeout(ctx, jsonReq)
 	if err != nil {
 		return nil, mapCoreError(err)
 	}
@@ -305,15 +312,21 @@ func (h *SessionHandler) VerifyErrorMiss(ctx context.Context, req *connect.Reque
 	if req == nil || req.Msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	peer, srv, payload, err := h.openSignedOwner(ctx, req.Msg, "rpc_verify_error_miss")
+	_, _, payload, err := h.signedPeerPayload(ctx, req.Msg)
 	if err != nil {
-		return nil, err
-	}
-	if err := requireOwner(srv, peer); err != nil {
 		return nil, err
 	}
 	var inner rpcpb.VerifyErrorMissRequest
 	if err := unmarshalPayload(payload, &inner); err != nil {
+		return nil, err
+	}
+	jsonReq := transport.VerifyErrorMissRequestFromProto(&inner)
+	diffs, err := transport.DiffsFromJSON(jsonReq.Diffs)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	srv, err := h.bindStartProof(ctx, "rpc_verify_error_miss", diffs, types.StartProtocolVersion(diffs))
+	if err != nil {
 		return nil, err
 	}
 	type missCore interface {
@@ -323,7 +336,7 @@ func (h *SessionHandler) VerifyErrorMiss(ctx context.Context, req *connect.Reque
 	if !ok {
 		return nil, unimplementedCore()
 	}
-	resp, err := core.ServeVerifyErrorMiss(ctx, transport.VerifyErrorMissRequestFromProto(&inner))
+	resp, err := core.ServeVerifyErrorMiss(ctx, jsonReq)
 	if err != nil {
 		return nil, mapCoreError(err)
 	}
@@ -334,26 +347,12 @@ func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Requ
 	if req == nil || req.Msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	peer, escrow, err := requirePeer(ctx)
+	_, _, payload, err := h.signedPeerPayload(ctx, req.Msg)
 	if err != nil {
 		return nil, err
 	}
-	if h.lookup == nil {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("session lookup not configured"))
-	}
-	env := req.Msg
-	if env.GetEscrowId() != escrow {
-		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("escrow mismatch"))
-	}
-	addr, vErr := transport.VerifyEnvelope(h.verifier, env, h.now())
-	if vErr != nil {
-		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid envelope signature"))
-	}
-	if addr != peer {
-		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("envelope signer does not match handshake"))
-	}
 	var inner rpcpb.ChallengeReceiptRequest
-	if err := unmarshalPayload(env.GetPayload(), &inner); err != nil {
+	if err := unmarshalPayload(payload, &inner); err != nil {
 		return nil, err
 	}
 	jsonReq := transport.ChallengeReceiptRequestFromProto(&inner)
@@ -361,20 +360,8 @@ func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Requ
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	srv, err := h.lookup.SessionForStartProof(escrow, peer, diffs, jsonReq.ProtocolVersion)
+	srv, err := h.bindStartProof(ctx, "rpc_challenge_receipt", diffs, jsonReq.ProtocolVersion)
 	if err != nil {
-		recordRPCSessionResolution(ctx, "rpc_challenge_receipt", escrow, err)
-		return nil, mapAllowError(err)
-	}
-	if srv == nil {
-		recordRPCSessionResolution(ctx, "rpc_challenge_receipt", escrow, storage.ErrSessionNotFound)
-		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
-	}
-	recordRPCSessionResolution(ctx, "rpc_challenge_receipt", escrow, nil)
-	if !srv.AllowsSender(peer) {
-		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
-	}
-	if err := requireOwnerOrGroup(srv, peer); err != nil {
 		return nil, err
 	}
 	type challengeCore interface {
@@ -389,6 +376,61 @@ func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Requ
 		return nil, mapCoreError(err)
 	}
 	return connect.NewResponse(transport.ChallengeReceiptResponseToProto(resp)), nil
+}
+
+// signedPeerPayload checks the handshake peer signed this envelope for the
+// URL escrow. It does not look up a session.
+func (h *SessionHandler) signedPeerPayload(ctx context.Context, env *rpcpb.SignedEnvelope) (peer, escrow string, payload []byte, err error) {
+	peer, escrow, err = requirePeer(ctx)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if h.lookup == nil {
+		return "", "", nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("session lookup not configured"))
+	}
+	if env == nil {
+		return "", "", nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil signed envelope"))
+	}
+	if env.GetEscrowId() != escrow {
+		return "", "", nil, connect.NewError(connect.CodeInvalidArgument, errors.New("escrow mismatch"))
+	}
+	addr, vErr := transport.VerifyEnvelope(h.verifier, env, h.now())
+	if vErr != nil {
+		return "", "", nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid envelope signature"))
+	}
+	if addr != peer {
+		return "", "", nil, connect.NewError(connect.CodePermissionDenied, errors.New("envelope signer does not match handshake"))
+	}
+	return peer, escrow, env.GetPayload(), nil
+}
+
+// bindStartProof opens an existing session or creates one from a creator-signed
+// MsgStartInference in diffs. The caller must already have checked the envelope.
+func (h *SessionHandler) bindStartProof(ctx context.Context, route string, diffs []types.Diff, claimedVersion string) (SessionCore, error) {
+	peer, escrow, err := requirePeer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if h.lookup == nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("session lookup not configured"))
+	}
+	srv, err := h.lookup.SessionForStartProof(escrow, peer, diffs, claimedVersion)
+	if err != nil {
+		recordRPCSessionResolution(ctx, route, escrow, err)
+		return nil, mapAllowError(err)
+	}
+	if srv == nil {
+		recordRPCSessionResolution(ctx, route, escrow, storage.ErrSessionNotFound)
+		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
+	}
+	recordRPCSessionResolution(ctx, route, escrow, nil)
+	if !srv.AllowsSender(peer) {
+		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
+	}
+	if err := requireOwnerOrGroup(srv, peer); err != nil {
+		return nil, err
+	}
+	return srv, nil
 }
 
 func mapInferenceError(err error) error {
@@ -532,15 +574,29 @@ func isTransientSessionError(err error) bool {
 	return errors.Is(err, storage.ErrStorageIndexRebuilding)
 }
 
-const rpcGetSignaturesRoute = "rpc_get_signatures"
+const (
+	rpcGetSignaturesRoute = "rpc_get_signatures"
+	rpcChatRoute          = "rpc_chat"
+)
 
 func recordRPCSessionResolution(ctx context.Context, route, escrowID string, err error) {
 	status, reason := rpcResolutionStatus(err)
 	observability.IncSessionResolution(route, status, reason)
-	if err != nil {
-		observability.Log(ctx, observability.LevelWarn, "devshard session resolution failed",
-			observability.StageSessionResolved, observability.WhereRoutesSessionResolve, escrowID, reason, err)
+	if err == nil {
+		return
 	}
+	observability.Log(ctx, observability.LevelWarn, "devshard session resolution failed",
+		observability.StageSessionResolved, observability.WhereRoutesSessionResolve, escrowID, reason, err)
+	recordChatNoReceipt(ctx, route, escrowID, reason)
+}
+
+// recordChatNoReceipt counts a Chat that was admitted and then died before
+// ServeInference. Seed and verify use the same owner bind and must not.
+func recordChatNoReceipt(ctx context.Context, route, escrowID string, reason observability.Reason) {
+	if route != rpcChatRoute {
+		return
+	}
+	observability.RecordNoReceiptInterrupted(ctx, escrowID, reason, observability.WhereRoutesSessionResolve)
 }
 
 func rpcResolutionStatus(err error) (observability.MetricStatus, observability.Reason) {
