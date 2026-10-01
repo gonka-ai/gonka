@@ -54,11 +54,43 @@ func (am AppModule) loadBootstrapDirectCommitters(
 	if err != nil {
 		return nil, err
 	}
+	validations, err := am.keeper.GetPoCValidationsV2ByStage(ctx, pocStageStartHeight)
+	if err != nil {
+		return nil, err
+	}
 
+	return validatedDirectCommitters(allStoreCommits, validations, modelSet), nil
+}
+
+// validatedDirectCommitters builds the (model -> participant) direct-committer
+// set from raw PoC store commits, keeping only commits that entered the
+// validation process: at least one validator vote must exist for the
+// (participant, model) pair.
+//
+// Rationale: a store commit alone proves nothing about real inference work —
+// validateNewCommit enforces only syntax (count > 0, 32-byte root, depth
+// 1..32), so a syntactically valid but meaningless commit used to earn the
+// BootstrapPenaltyDirect exemption and dodge the NoParticipationPenalty at the
+// cost of a single transaction fee (B-1). Requiring validation entry mirrors
+// the "no validations" gate in validatedParticipant (chainvalidation.go): the
+// commit must have been seen by the validation pipeline. This preserves the
+// design intent for genuinely failed launches (PR #1740): raw commits remain
+// the signal (no validated weight is required), but commits nobody ever
+// validated no longer count as direct participation. Commits filtered out here
+// fall through to the delegation/intent checks in ResolveBootstrapPenaltyModes
+// instead of being force-demoted, so genuine delegation signals are preserved.
+func validatedDirectCommitters(
+	allStoreCommits map[types.PoCParticipantModelKey]types.PoCV2StoreCommit,
+	validations map[types.PoCParticipantModelKey][]types.PoCValidationV2,
+	modelSet map[string]bool,
+) map[string]map[string]bool {
 	storeCommitKeys := sortedStoreCommitKeys(allStoreCommits)
 	directCommitters := make(map[string]map[string]bool)
 	for _, key := range storeCommitKeys {
 		if !modelSet[key.ModelID] {
+			continue
+		}
+		if len(validations[key]) == 0 {
 			continue
 		}
 		if directCommitters[key.ModelID] == nil {
@@ -66,7 +98,7 @@ func (am AppModule) loadBootstrapDirectCommitters(
 		}
 		directCommitters[key.ModelID][key.ParticipantAddress] = true
 	}
-	return directCommitters, nil
+	return directCommitters
 }
 
 func (am AppModule) resolveBootstrapPenaltyModes(
