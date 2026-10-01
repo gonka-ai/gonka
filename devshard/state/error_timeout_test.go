@@ -11,7 +11,7 @@ import (
 	"devshard/types"
 )
 
-const errorTimeoutResponseHash = "response"
+const errorTimeoutResponseHash = "response-hash-of-thirty-two-byte"
 
 func errorTimeoutHosts(t *testing.T) []*signing.Secp256k1Signer {
 	t.Helper()
@@ -47,7 +47,7 @@ func signedFinish(t *testing.T, hosts []*signing.Secp256k1Signer, inferenceID ui
 	t.Helper()
 	msg := &types.MsgFinishInference{
 		InferenceId:  inferenceID,
-		ResponseHash: responseHash,
+		ResponseHash: responseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
 		ExecutorSlot: executorSlot,
@@ -323,8 +323,8 @@ func TestApplyDiff_Timeout_Error_HashMismatchRejected(t *testing.T) {
 func TestApplyDiff_Timeout_Error_CrossInferenceVoteRejected(t *testing.T) {
 	hosts := errorTimeoutHosts(t)
 	sm, user := newTestSM(t, hosts, 10000)
-	hashA := []byte("body-a")
-	hashB := []byte("body-b")
+	hashA := []byte("body-a-hash-of-thirty-two-bytes!")
+	hashB := []byte("body-b-hash-of-thirty-two-bytes!")
 
 	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
@@ -375,7 +375,7 @@ func TestVerifyFinishProposerSig(t *testing.T) {
 	sm, _ := newTestSM(t, hosts, 10000)
 
 	msg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("h"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 1, OutputTokens: 0, ExecutorSlot: 0, EscrowId: "escrow-1",
 	}
 	msg.ProposerSig = testutil.SignProposerTx(t, hosts[0], msg)
@@ -384,14 +384,14 @@ func TestVerifyFinishProposerSig(t *testing.T) {
 	require.ErrorIs(t, sm.VerifyFinishProposerSig(nil), types.ErrInvalidProposerSig)
 
 	wrong := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("h"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 1, OutputTokens: 0, ExecutorSlot: 0, EscrowId: "escrow-1",
 	}
 	wrong.ProposerSig = testutil.SignProposerTx(t, hosts[1], wrong)
 	require.ErrorIs(t, sm.VerifyFinishProposerSig(wrong), types.ErrInvalidProposerSig)
 
 	unknownSlot := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("h"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 1, OutputTokens: 0, ExecutorSlot: 99, EscrowId: "escrow-1",
 	}
 	unknownSlot.ProposerSig = testutil.SignProposerTx(t, hosts[0], unknownSlot)
@@ -411,7 +411,7 @@ func TestVerifyFinishProposerSig_CachedWarmKeyDoesNotCallResolver(t *testing.T) 
 	sm, _ := newTestSMWithWarmKey(t, hosts, 100000, resolver)
 
 	finish := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("h"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 0, OutputTokens: 0, ExecutorSlot: 0, EscrowId: "escrow-1",
 	}
 	finish.ProposerSig = testutil.SignProposerTx(t, warm, finish)
@@ -433,7 +433,7 @@ func TestVerifyFinishProposerSig_ConcurrentWithApplyDiff(t *testing.T) {
 	sm, user := newTestSMWithWarmKey(t, hosts, 100000, resolver)
 
 	finish := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("h"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 0, OutputTokens: 0, ExecutorSlot: 0, EscrowId: "escrow-1",
 	}
 	finish.ProposerSig = testutil.SignProposerTx(t, warm, finish)

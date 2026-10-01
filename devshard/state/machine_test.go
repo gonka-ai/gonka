@@ -15,6 +15,10 @@ import (
 
 // --- Test helpers (package-specific) ---
 
+// balanceForReservationWithoutFee covers a 100-token input reserved at the max_tokens floor, and
+// nothing beyond it, so the per-nonce fee is what the escrow cannot pay.
+const balanceForReservationWithoutFee = 100 + testutil.TestMaxTokens
+
 func newTestSM(t *testing.T, hosts []*signing.Secp256k1Signer, balance uint64) (*StateMachine, *signing.Secp256k1Signer) {
 	t.Helper()
 	user := testutil.MustGenerateKey(t)
@@ -269,7 +273,7 @@ func TestApplyDiff_FinishInference(t *testing.T) {
 
 	// Finish inference. Executor is slot 1 (hosts[1]).
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
 		EscrowId: "escrow-1",
 	}
@@ -307,7 +311,7 @@ func TestApplyDiff_FinishInference_WrongExecutorSlot(t *testing.T) {
 	require.NoError(t, err)
 
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 2, // Wrong! Should be 1.
 		EscrowId: "escrow-1",
 	}
@@ -338,7 +342,7 @@ func TestApplyDiff_FinishInference_InvalidProposerSig(t *testing.T) {
 
 	outsider := testutil.MustGenerateKey(t)
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
 		EscrowId: "escrow-1",
 	}
@@ -484,7 +488,7 @@ func TestApplyDiff_PostTimeoutRecoveryDoesNotReviveInference(t *testing.T) {
 			name: "late finish inference",
 			tx: func(t *testing.T, hosts []*signing.Secp256k1Signer) *types.DevshardTx {
 				finishMsg := &types.MsgFinishInference{
-					InferenceId: 1, ResponseHash: []byte("response"),
+					InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 					InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
 					EscrowId: "escrow-1",
 				}
@@ -783,7 +787,7 @@ func TestApplyDiff_FinalizeRound_HostTxsStillAccepted(t *testing.T) {
 	require.NoError(t, err)
 
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
 		EscrowId: "escrow-1",
 	}
@@ -842,6 +846,7 @@ func TestApplyDiff_EscrowBalanceCheck(t *testing.T) {
 		InferenceId: 1, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})})
 	_, err := sm.ApplyDiff(diff)
+	require.ErrorIs(t, err, types.ErrRequestExceedsBalance, "a reservation too large for the balance is not the escrow running out of funds")
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
 }
 
@@ -960,7 +965,7 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 		require.NoError(t, err)
 
 		finishMsg := &types.MsgFinishInference{
-			InferenceId: infID, ResponseHash: []byte("response"),
+			InferenceId: infID, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 			InputTokens: 80, OutputTokens: 40, ExecutorSlot: uint32(executorSlotIdx),
 			EscrowId: "escrow-1",
 		}
@@ -1215,7 +1220,7 @@ func applyStartConfirmFinish(t *testing.T, sm *StateMachine, user *signing.Secp2
 	require.NoError(t, err)
 
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: inferenceID, ResponseHash: []byte("response"),
+		InferenceId: inferenceID, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: uint32(executorSlotIdx),
 		EscrowId: "escrow-1",
 	}
@@ -1242,7 +1247,7 @@ func TestApplyDiff_FinishInference_WrongProposer(t *testing.T) {
 
 	// Sign finish with hosts[0] (in group, but not the executor).
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
 		EscrowId: "escrow-1",
 	}
@@ -1390,7 +1395,7 @@ func TestApplyDiff_AtomicRollback(t *testing.T) {
 	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 2, // Wrong executor slot.
 		EscrowId: "escrow-1",
 	}
@@ -1472,8 +1477,7 @@ func TestApplyDiff_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
 	config.FeePerNonce = 1
 	verifier := signing.NewSecp256k1Verifier()
 
-	// Balance is enough for reserve ((100+50)*1) but not reserve+fee.
-	sm, err := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 150))
+	sm, err := NewStateMachine("escrow-1", config, group, balanceForReservationWithoutFee, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balanceForReservationWithoutFee))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
@@ -1486,10 +1490,11 @@ func TestApplyDiff_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
+	require.NotErrorIs(t, err, types.ErrRequestExceedsBalance, "the escrow refused the per-nonce fee, not the reservation")
 
 	st := sm.SnapshotState()
 	require.Equal(t, uint64(0), st.LatestNonce)
-	require.Equal(t, uint64(150), st.Balance)
+	require.Equal(t, uint64(balanceForReservationWithoutFee), st.Balance)
 	require.Empty(t, st.Inferences)
 }
 
@@ -1528,8 +1533,7 @@ func TestApplyLocalBestEffort_FeePerNonce_InsufficientBalance_Rollback(t *testin
 	config.FeePerNonce = 1
 	verifier := signing.NewSecp256k1Verifier()
 
-	// Balance is enough for reserve ((100+50)*1) but not reserve+fee.
-	sm, err := NewStateMachine("escrow-1", config, group, 150, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 150))
+	sm, err := NewStateMachine("escrow-1", config, group, balanceForReservationWithoutFee, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balanceForReservationWithoutFee))
 	require.NoError(t, err)
 
 	_, applied, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
@@ -1541,11 +1545,12 @@ func TestApplyLocalBestEffort_FeePerNonce_InsufficientBalance_Rollback(t *testin
 		StartedAt:   1000,
 	})})
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
+	require.NotErrorIs(t, err, types.ErrRequestExceedsBalance, "the escrow refused the per-nonce fee, not the reservation")
 	require.Nil(t, applied)
 
 	st := sm.SnapshotState()
 	require.Equal(t, uint64(0), st.LatestNonce)
-	require.Equal(t, uint64(150), st.Balance)
+	require.Equal(t, uint64(balanceForReservationWithoutFee), st.Balance)
 	require.Empty(t, st.Inferences)
 }
 
@@ -1761,7 +1766,7 @@ func applyStartConfirmFinishMultiSlot(t *testing.T, sm *StateMachine, user *sign
 	require.NoError(t, err)
 
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: inferenceID, ResponseHash: []byte("response"),
+		InferenceId: inferenceID, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: executorSlot.SlotID,
 		EscrowId: "escrow-1",
 	}
@@ -2113,7 +2118,7 @@ func TestPhase_FinalizationLeavesValidationCountersZero(t *testing.T) {
 	require.NoError(t, err)
 
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("resp"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
 		EscrowId: "escrow-1",
 	}
@@ -2173,7 +2178,7 @@ func TestReplayAttack_CrossEscrow(t *testing.T) {
 
 	// Build a valid MsgFinishInference for escrow-A.
 	finishMsgA := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1, EscrowId: "escrow-A",
 	}
 	finishMsgA.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsgA)
@@ -2228,7 +2233,7 @@ func TestFinishInference_CostCapped(t *testing.T) {
 
 	// Finish with actualCost = (200+100)*1 = 300 > reserved 164. Should cap.
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 200, OutputTokens: 100, ExecutorSlot: 1, EscrowId: "escrow-1",
 	}
 	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
@@ -2446,7 +2451,7 @@ func TestV2_FinalizeDrainDeterministicOrder(t *testing.T) {
 		require.NoError(t, err)
 
 		finishMsg := &types.MsgFinishInference{
-			InferenceId: inferenceID, ResponseHash: []byte("response"),
+			InferenceId: inferenceID, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 			InputTokens: 80, OutputTokens: 40, ExecutorSlot: uint32(executorSlotIdx),
 			EscrowId: "escrow-1",
 		}
@@ -2673,7 +2678,7 @@ func TestDrainSettle_MixedDeterministic(t *testing.T) {
 		require.NoError(t, err)
 
 		finishMsg := &types.MsgFinishInference{
-			InferenceId: 7, ResponseHash: []byte("response"),
+			InferenceId: 7, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 			InputTokens: 80, OutputTokens: 40, ExecutorSlot: 2,
 			EscrowId: "escrow-1",
 		}
@@ -2772,7 +2777,7 @@ func TestRejectFinishProposerSigLocal(t *testing.T) {
 	finishFrom := func(t *testing.T, signer *signing.Secp256k1Signer, slot uint32) *types.MsgFinishInference {
 		t.Helper()
 		msg := &types.MsgFinishInference{
-			InferenceId: 1, ResponseHash: []byte("hash"),
+			InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 			InputTokens: 80, OutputTokens: 40, ExecutorSlot: slot, EscrowId: "escrow-1",
 		}
 		msg.ProposerSig = testutil.SignProposerTx(t, signer, msg)
@@ -2911,7 +2916,7 @@ func TestWarmKey_FinishInferenceWithWarmKey(t *testing.T) {
 
 	// Finish inference signed by warm key.
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
 		EscrowId: "escrow-1",
 	}
@@ -3235,7 +3240,7 @@ func TestApplyDiff_RevealSeed_PreservesExistingBinding(t *testing.T) {
 
 	// Finish the inference so state is clean.
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 3, ResponseHash: []byte("resp"), InputTokens: 80,
+		InferenceId: 3, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 80,
 		OutputTokens: 40, ExecutorSlot: 0, EscrowId: "escrow-1",
 	}
 	finishMsg.ProposerSig = testutil.SignProposerTx(t, warmSigner, finishMsg)

@@ -77,11 +77,23 @@ func TestAdminAuthMiddlewareRequiresAdminKey(t *testing.T) {
 		handler.ServeHTTP(rec, req)
 		require.Equal(t, http.StatusUnauthorized, rec.Code)
 
-		req = httptest.NewRequest(http.MethodGet, path, nil)
-		req.Header.Set("Authorization", "Bearer adminkey")
-		rec = httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
-		require.Equal(t, http.StatusNoContent, rec.Code)
+		for name, test := range map[string]struct {
+			header string
+			status int
+		}{
+			"canonical scheme": {header: "Bearer adminkey", status: http.StatusNoContent},
+			"lowercase scheme": {header: "bearer adminkey", status: http.StatusNoContent},
+			"wrong scheme":     {header: "Basic adminkey", status: http.StatusUnauthorized},
+			"wrong key":        {header: "bearer wrong-key", status: http.StatusUnauthorized},
+		} {
+			t.Run(name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodGet, path, nil)
+				req.Header.Set("Authorization", test.header)
+				rec := httptest.NewRecorder()
+				handler.ServeHTTP(rec, req)
+				require.Equal(t, test.status, rec.Code)
+			})
+		}
 	}
 }
 
@@ -966,6 +978,44 @@ func TestEscrowRotationUsesEpochSwitchHeightDuringPoC(t *testing.T) {
 	require.Equal(t, 1, settleAttempts)
 }
 
+func TestGatewayStoreDeactivateDevshardIfActiveKeepsAnExistingSettlementMark(t *testing.T) {
+	store := newGatewayStoreWithActiveEscrow(t, "12")
+	require.NoError(t, store.SetDevshardSettlementPending("12", true))
+
+	isDeactivated, err := store.DeactivateDevshardIfActive("12", false)
+
+	require.NoError(t, err)
+	require.True(t, isDeactivated, "deactivating an active escrow did not report the change")
+	record := devshardIDs(t, store)["12"]
+	require.False(t, record.Active, "the active escrow was not saved inactive")
+	require.True(t, record.SettlementPending, "deactivating without settlement dropped the escrow's existing settlement mark")
+}
+
+func TestGatewayStoreDeactivateDevshardIfActiveLeavesAnInactiveEscrowUntouched(t *testing.T) {
+	store := newGatewayStoreWithActiveEscrow(t, "12")
+	require.NoError(t, store.SetDevshardActive("12", false))
+
+	isDeactivated, err := store.DeactivateDevshardIfActive("12", true)
+
+	require.NoError(t, err)
+	require.False(t, isDeactivated, "deactivating an already inactive escrow reported a change")
+	require.False(t, devshardIDs(t, store)["12"].SettlementPending, "an already inactive escrow was marked for settlement")
+}
+
+func newGatewayStoreWithActiveEscrow(t *testing.T, escrowID string) *GatewayStore {
+	t.Helper()
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST: "http://node:1317", DefaultModel: "m", DefaultRequestMaxTokens: 1000,
+	}.WithTuningDefaults(), []GatewayDevshardState{{
+		RuntimeConfig: RuntimeConfig{ID: escrowID, PrivateKeyHex: "secret", Model: "m"},
+		Active:        true,
+	}}))
+	return store
+}
+
 func TestGatewayStoreSetDevshardSettlementPending(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
@@ -1015,4 +1065,43 @@ func gatewayDevshardsByID(devshards []GatewayDevshardState) map[string]GatewayDe
 		byID[devshard.ID] = devshard
 	}
 	return byID
+}
+
+func TestGatewayStorePersistsLogprobsOptimizationOverride(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	require.NoError(t, store.Initialize(GatewaySettings{
+		DefaultModel:                 "Qwen/Test",
+		LogprobsOptimizationOverride: boolPtr(false),
+	}, nil))
+
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, state.Settings.LogprobsOptimizationOverride, "a bootstrapped override must survive the store")
+	require.False(t, *state.Settings.LogprobsOptimizationOverride)
+
+	for _, testCase := range []struct {
+		name  string
+		write *bool
+	}{
+		{name: "gateway asks to optimize", write: boolPtr(true)},
+		{name: "gateway asks for the stored bytes", write: boolPtr(false)},
+		{name: "gateway clears its choice", write: nil},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			settings := state.Settings
+			settings.LogprobsOptimizationOverride = testCase.write
+			require.NoError(t, store.UpdateSettings(settings))
+
+			reloaded, ok, err := store.LoadState()
+			require.NoError(t, err)
+			require.True(t, ok)
+			require.Equal(t, testCase.write, reloaded.Settings.LogprobsOptimizationOverride)
+		})
+	}
 }

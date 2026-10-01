@@ -106,6 +106,8 @@ If an attempt finishes with an error before succeeding, the proxy does not wait 
 
 This is what makes the "first host dead, second host dead, third host wins" case work.
 
+A 400 caused by the request itself stops escalation for the whole request. Such errors include a context-length rejection (`maximum context length is N tokens`), a tool call whose arguments are not valid JSON, and a message order the chat template refuses. Once an attempt from a host the gateway does not treat as suspicious reports one, the proxy starts no further attempt, lets the attempts already running finish, and returns the host's error. Every host receives the same body, and the chain pins a model's `ModelArgs`, `--max-model-len` included, for every host, so another host would reject the request the same way, while every rejected attempt leaves a started nonce that its host is later voted a timeout for. A 400 that points at the host rather than the request still moves on: a missing tool parser (`tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set`), a model the host does not serve, a timeout or an overload. The rule is `isTrustedDeterministicRejection`: a context-length rejection, or any other 400 the response cache would replay (`isCacheableOpenAIErrorDetails`). The proxy trusts the host's error; the network does not verify it yet, so a rejection from a suspicious host, for example one in shadow quarantine, does not stop the other hosts.
+
 ## What changed in the universal version
 
 The earlier version only handled:
@@ -157,7 +159,7 @@ When one attempt succeeds and others fail, the request still succeeds for the us
 - finished successful attempts are processed into session state
 - failed attempts go through timeout vote collection and timeout diff submission
 
-If no attempt succeeds, the whole request fails.
+If no attempt succeeds, the whole request fails. The error goes back to the client at once, and the timeout votes for the failed attempts run in a background race cleanup that the runtime drain waits for before settling or retiring the escrow, as the votes for the losers of a successful race do. Each vote first waits out the protocol deadline: `ExecutionTimeout` plus `TimeoutBuffer` after the host's receipt for an execution timeout, `RefusalTimeout` plus `TimeoutBuffer` after sending for a refused one.
 
 ## Answer to the "slow first token" question
 

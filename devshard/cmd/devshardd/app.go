@@ -260,7 +260,7 @@ func buildHostManager(
 	chainParams := paramsSetup.Provider
 	mlNodeMgr := buildMLNodeManager(ctx)
 	mlNodeCapacity := buildMLNodeCapacityCache(ctx, mlClient)
-	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase)
+	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase, cfg.LogprobsOptimizationEnabled)
 
 	instanceAddr := chainRuntime.identity.GetSignerAddress()
 

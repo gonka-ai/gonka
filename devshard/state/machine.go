@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"maps"
 	"math"
@@ -51,6 +52,10 @@ func tokenCost(a, b, price uint64) (uint64, error) {
 	return cost, nil
 }
 
+func ReservedCost(inputLength, maxTokens, tokenPrice uint64) (uint64, error) {
+	return tokenCost(inputLength, maxTokens, tokenPrice)
+}
+
 func copyInferenceRecord(v *types.InferenceRecord) *types.InferenceRecord {
 	if v == nil {
 		return nil
@@ -61,6 +66,9 @@ func copyInferenceRecord(v *types.InferenceRecord) *types.InferenceRecord {
 	}
 	if v.ResponseHash != nil {
 		cp.ResponseHash = append([]byte(nil), v.ResponseHash...)
+	}
+	if v.ServedHash != nil {
+		cp.ServedHash = append([]byte(nil), v.ServedHash...)
 	}
 	return &cp
 }
@@ -1179,13 +1187,12 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	// Executor slot: group[inference_id % len(group)].SlotID
 	executorSlot := sm.state.Group[msg.InferenceId%uint64(len(sm.state.Group))].SlotID
 
-	// Reserve cost: (input_length + max_tokens) * token_price
-	reservedCost, err := tokenCost(msg.InputLength, msg.MaxTokens, sm.state.Config.TokenPrice)
+	reservedCost, err := ReservedCost(msg.InputLength, msg.MaxTokens, sm.state.Config.TokenPrice)
 	if err != nil {
 		return err
 	}
 	if sm.state.Balance < reservedCost {
-		return types.ErrInsufficientBalance
+		return types.ErrRequestExceedsBalance
 	}
 
 	sm.state.Balance -= reservedCost
@@ -1290,6 +1297,10 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 		return fmt.Errorf("%w: expected %d, got %d", types.ErrWrongExecutorSlot, rec.ExecutorSlot, msg.ExecutorSlot)
 	}
 
+	if len(msg.ResponseHash) != sha256.Size || len(msg.ServedHash) != sha256.Size {
+		return fmt.Errorf("%w: response %d bytes, served %d bytes", types.ErrInvalidFinishHash, len(msg.ResponseHash), len(msg.ServedHash))
+	}
+
 	if err := sm.verifyFinishProposerSigLocked(msg); err != nil {
 		return err
 	}
@@ -1314,6 +1325,7 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 
 	rec.Status = types.StatusFinished
 	rec.ResponseHash = msg.ResponseHash
+	rec.ServedHash = msg.ServedHash
 	rec.InputTokens = msg.InputTokens
 	rec.OutputTokens = msg.OutputTokens
 	rec.ActualCost = actualCost

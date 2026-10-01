@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"common/completionapi"
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
@@ -169,8 +170,10 @@ func TestGatewayCheckBalancesReplacesAndDeactivatesLowBalance(t *testing.T) {
 }
 
 func TestGatewayCheckBalancesReplacesAndDeactivatesHighNonce(t *testing.T) {
-	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit)
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, 999_796)
+	require.EqualValues(t, 3, rt.proxy.sm.TotalSlots(), "the nonce above assumes a three-slot group: 1_000_000 - (3+1) - 200")
 	g, created, settled := gatewayTestDepletionGateway(t, rt)
+	g.maxNonce = devshardpkg.StaticMaxNonce(1_000_000)
 
 	g.checkBalances()
 
@@ -201,7 +204,10 @@ func TestGatewayCheckBalancesReplacesAndDeactivatesWithoutSettlement(t *testing.
 	g.checkBalances()
 
 	require.Eventually(t, func() bool {
-		return created.Load() == 1 && !rt.active.Load()
+		g.mu.Lock()
+		_, stillRegistered := g.runtimes[rt.id]
+		g.mu.Unlock()
+		return created.Load() == 1 && !rt.active.Load() && !stillRegistered
 	}, time.Second, 10*time.Millisecond)
 	require.EqualValues(t, 0, settled.Load())
 }
@@ -240,8 +246,10 @@ func TestEnqueueSettlementWaitsForActiveRequests(t *testing.T) {
 
 	// One request in flight → settlement must NOT fire yet, but escrow is
 	// deactivated and marked pending (in-memory + persisted).
-	g.reserveRuntime(rt, 1)
-	g.deactivateAndSettleDevshardByID("12", "low_balance")
+	g.reserveRuntime(rt, chatRequestCost{promptTokens: 1})
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "low_balance", g.settings)
+	require.NoError(t, err)
+	require.True(t, isTakenOutOfService, "an active escrow was not reported as taken out of service")
 
 	require.False(t, rt.active.Load())
 	require.True(t, rt.settlementPending.Load())
@@ -253,7 +261,7 @@ func TestEnqueueSettlementWaitsForActiveRequests(t *testing.T) {
 
 	// Draining the last request triggers exactly one settlement, which
 	// clears the marker.
-	g.releaseRuntime(rt, 1)
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 1})
 	require.Eventually(t, func() bool {
 		return settled.Load() == 1 && !rt.settlementPending.Load()
 	}, time.Second, 10*time.Millisecond)
@@ -268,7 +276,9 @@ func TestEnqueueSettlementSettlesImmediatelyWhenDrained(t *testing.T) {
 	g, _, settled := gatewayTestDepletionGateway(t, rt)
 
 	// No active requests → settle right away.
-	g.deactivateAndSettleDevshardByID("12", "low_balance")
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "low_balance", g.settings)
+	require.NoError(t, err)
+	require.True(t, isTakenOutOfService, "an active escrow was not reported as taken out of service")
 
 	require.Eventually(t, func() bool {
 		return settled.Load() == 1 && !rt.active.Load()
@@ -361,7 +371,7 @@ func TestGatewayChooseRuntimeUsesLowestLoad(t *testing.T) {
 	b.activeUserRequests.Store(1)
 
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 	require.EqualValues(t, 2, chosen.activeUserRequests.Load())
@@ -530,7 +540,7 @@ func TestGatewayModelAccessAdminOnlyAllowsAdminAuthenticatedInference(t *testing
 
 	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"Kimi/Test","messages":[{"role":"user","content":"hello"}]}`))
-	req.Header.Set("Authorization", "Bearer admin-key")
+	req.Header.Set("Authorization", "bearer admin-key")
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusNoContent, rec.Code)
@@ -647,6 +657,16 @@ func TestGatewayAPIKeyLogFieldsUsesLastEightCharacters(t *testing.T) {
 	}))
 	req.Header.Set("Authorization", "Bearer admin-key-abcdefgh")
 	handler.ServeHTTP(httptest.NewRecorder(), req)
+}
+
+func TestBearerTokenAcceptsCaseInsensitiveScheme(t *testing.T) {
+	for _, header := range []string{"Bearer client-key", "bearer client-key", "BEARER client-key"} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("Authorization", header)
+		key, ok := bearerToken(req)
+		require.True(t, ok, header)
+		require.Equal(t, "client-key", key, header)
+	}
 }
 
 func TestGatewayModelAccessDefaultsToAdminOnly(t *testing.T) {
@@ -908,6 +928,103 @@ func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T
 	require.False(t, forwarded)
 }
 
+func TestAdminDeactivateIdleDevshardDropsSlotDecisionSeries(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "Qwen/Test"}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
+	}))
+
+	rt := &devshardRuntime{id: "12", model: "Qwen/Test"}
+	rt.active.Store(true)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+	g.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "12",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/devshards/12/deactivate", nil)
+	rec := httptest.NewRecorder()
+	g.handleAdminDeactivateDevshard(rec, req, "12")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	families, err := g.metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "12"})
+}
+
+func TestAdminCleanDevshardDropsSlotDecisionSeries(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "Qwen/Test"}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: false},
+	}))
+
+	rt := &devshardRuntime{id: "12", model: "Qwen/Test"}
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+	g.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "12",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/devshards/12/clean", nil)
+	rec := httptest.NewRecorder()
+	g.handleAdminCleanDevshard(rec, req, "12")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	families, err := g.metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "12"})
+}
+
+func TestAdminCleanDevshardRejectsBackgroundRaceCleanup(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "Qwen/Test"}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: false},
+	}))
+
+	rt := &devshardRuntime{id: "12", model: "Qwen/Test"}
+	rt.pendingRaceCleanup.Store(1)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+	g.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "12",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/devshards/12/clean", nil)
+	rec := httptest.NewRecorder()
+	g.handleAdminCleanDevshard(rec, req, "12")
+	require.Equal(t, http.StatusConflict, rec.Code)
+	_, stillRegistered := g.runtimes["12"]
+	require.True(t, stillRegistered, "clean must not drop a runtime with race cleanup in flight")
+
+	families, err := g.metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterValue(t, families, "devshard_gateway_slot_decisions_total", map[string]string{
+		"participant_key": "participant-1", "model": "Qwen/Test", "escrow_id": "12",
+		"decision": "real_send", "reason": "primary", "quarantine_mode": "none",
+	}, 1)
+}
+
 func TestAdminDevshardParticipantsShowsQuarantineState(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 	limiter.ObserveResult("dead-host", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
@@ -1070,9 +1187,9 @@ func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
 	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
 }
 
-func TestRuntimeRoutePrefixDefaultsToV5(t *testing.T) {
+func TestRuntimeRoutePrefixDefaultsToV6(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
-	require.Equal(t, "/devshard/v5", resolveRuntimeRoutePrefix(""))
+	require.Equal(t, "/devshard/v6", resolveRuntimeRoutePrefix(""))
 }
 
 func TestRuntimeRoutePrefixPreservesExplicitDev(t *testing.T) {
@@ -1335,6 +1452,16 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 	rt.activeUserRequests.Store(1)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.store = store
+	g.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "12",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	})
+	g.metrics.RecordPickerChoice("12", "Qwen/Test")
+	g.metrics.RecordStartupSkippedEscrow("12", "Qwen/Test", "local_recovery_failed")
 
 	req := httptest.NewRequest(http.MethodPost, "/devshard/12/v1/finalize", nil)
 	rec := httptest.NewRecorder()
@@ -1351,6 +1478,18 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, rec.Code)
 	require.True(t, forwarded)
 	require.False(t, rt.active.Load())
+	_, stillRegistered := g.runtimes["12"]
+	require.True(t, stillRegistered, "successful finalize must keep the runtime registered")
+
+	families, err := g.metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "12"})
+	requireMetricCounterMissing(t, families, "devshard_gateway_picker_choice_total", map[string]string{"devshard_id": "12"})
+	requireMetricGaugeMissing(t, families, "devshard_gateway_startup_skipped_escrow", map[string]string{"escrow_id": "12"})
+
+	rec = httptest.NewRecorder()
+	g.handleDevshard(rec, req)
+	require.NotEqual(t, http.StatusNotFound, rec.Code, "repeated finalize must not 404")
 
 	state, ok, err := store.LoadState()
 	require.NoError(t, err)
@@ -1646,7 +1785,6 @@ func TestGatewayHandlePooledChatRejectsUnsupportedModel(t *testing.T) {
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.settings.ModelLimits = []GatewayModelLimitSettings{
 		{ModelID: "Qwen/Test", AccessMode: string(gatewayAccessModeOpen)},
-		{ModelID: "Nope/Unsupported", AccessMode: string(gatewayAccessModeOpen)},
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
@@ -1898,7 +2036,7 @@ func TestGatewayChooseRuntimeSkipsInactiveDevshard(t *testing.T) {
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
 	b.active.Store(false)
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "6", chosen.id)
 }
@@ -1908,7 +2046,7 @@ func TestGatewayChooseRuntimeSkipsHighNonceBeforeRouting(t *testing.T) {
 	available := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
 	g := NewGateway([]*devshardRuntime{highNonce, available}, NewGatewayLimiter(0, 0), "m")
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 	require.True(t, highNonce.active.Load())
@@ -1918,7 +2056,7 @@ func TestGatewayChooseRuntimeFailsWhenAllDevshardsHighNonce(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "6", balanceMinimumThreshold, nonceDeactivationLimit)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
 
-	_, err := g.reserveRuntimeForModel("m", 5)
+	_, err := g.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no devshard runtimes available for new inferences")
 	require.Contains(t, err.Error(), "skipped: high_nonce=1")
@@ -1931,7 +2069,7 @@ func TestGatewayChooseRuntimeSkipsNonActivePhaseDevshard(t *testing.T) {
 	active := &devshardRuntime{id: "12", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseActive)}}
 	g := NewGateway([]*devshardRuntime{finalizing, settlement, active}, NewGatewayLimiter(0, 0), "m")
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 }
@@ -1941,7 +2079,7 @@ func TestGatewayChooseRuntimeFailsWhenOnlyNonActivePhaseDevshardsRemain(t *testi
 	settlement := &devshardRuntime{id: "12", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseSettlement)}}
 	g := NewGateway([]*devshardRuntime{finalizing, settlement}, NewGatewayLimiter(0, 0), "m")
 
-	_, err := g.reserveRuntimeForModel("m", 5)
+	_, err := g.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no devshard runtimes available for new inferences")
 	require.Contains(t, err.Error(), "skipped: finalizing=1, settlement=1")
@@ -2002,7 +2140,7 @@ func TestGatewayChooseRuntimeSkipsParticipantLimitedDevshard(t *testing.T) {
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 }
@@ -2030,7 +2168,7 @@ func TestGatewayChooseRuntimePrefersHealthyEscrowWithoutBenchingPartial(t *testi
 
 	counts := map[string]int{}
 	for i := 0; i < 60; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1)
+		rt, err := g.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 1}, nil)
 		require.NoError(t, err)
 		counts[rt.id]++
 	}
@@ -2056,7 +2194,7 @@ func TestGatewayChooseRuntimeFailsWhenAllDevshardsParticipantLimited(t *testing.
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
-	_, err := g.reserveRuntimeForModel("m", 5)
+	_, err := g.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 5}, nil)
 	require.Error(t, err)
 	require.True(t, isParticipantRateLimitError(err))
 }
@@ -2085,10 +2223,10 @@ func TestGatewayChooseRuntimeReactsToRecoveryWithoutPhasePoll(t *testing.T) {
 
 	// Immediately after 503: a is dead (W=0), picks must hit b only.
 	for i := 0; i < 5; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1)
+		rt, err := g.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 1}, nil)
 		require.NoError(t, err)
 		require.Equal(t, "b", rt.id, "iteration %d before recovery", i)
-		g.releaseRuntime(rt, 1)
+		g.releaseRuntime(rt, chatRequestCost{promptTokens: 1})
 	}
 
 	// Simulate full recovery after the 503 quarantine (wall clock would be
@@ -2101,10 +2239,10 @@ func TestGatewayChooseRuntimeReactsToRecoveryWithoutPhasePoll(t *testing.T) {
 	// should receive at least one request.
 	counts := map[string]int{}
 	for i := 0; i < 20; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1)
+		rt, err := g.reserveRuntimeForModel("m", chatRequestCost{promptTokens: 1}, nil)
 		require.NoError(t, err)
 		counts[rt.id]++
-		g.releaseRuntime(rt, 1)
+		g.releaseRuntime(rt, chatRequestCost{promptTokens: 1})
 	}
 	require.Greater(t, counts["a"], 0, "recovered escrow should receive traffic: %v", counts)
 }
@@ -2922,7 +3060,7 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 			Message: "please use http://.../v1/ base url",
 			NewURL:  "http://.../v1/chat/completions",
 		},
-	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil)
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"chain_rest":"http://node:2317","public_api":"http://api:9900","default_model":"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8","max_concurrent_requests":7,"max_input_tokens_in_flight":700,"default_request_max_tokens":3072,"request_max_tokens_cap":4096,"tx_gas_limit":700000,"model_limits":[{"model_id":"moonshotai/Kimi-K2.6","access_mode":"admin_only","access_message":"Kimi temporarily unavailable"}],"disabled":{"enabled":true,"message":"please use ... base url","new_url":"https://.../v1/chat/completions"},"participant_throttle":{"request_burst":42,"recovery_per_minute":7,"http_quarantine_ms":1100,"transport_failure_quarantine_ms":1200,"empty_stream_quarantine_ms":1300,"stalled_winner_quarantine_ms":1400,"empty_stream_threshold":2},"redundancy":{"receipt_timeout_ms":1500,"first_token_timeout_floor_ms":1600,"per_input_token_first_token_lag_ms":17,"inter_chunk_stall_timeout_ms":1800,"streaming_attempt_hard_timeout_ms":1810,"non_stream_response_floor_ms":1900,"non_stream_no_content_timeout_ms":2200,"non_stream_max_attempt_wait_ms":2600,"per_input_token_response_lag_ms":20,"secondary_wait_after_winner_ms":2100,"parallel_advantage_threshold":0.4,"unresponsive_threshold":0.8}}`))
@@ -2991,7 +3129,7 @@ func TestAdminSettingsRejectsInvalidTuning(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		MaxInputTokensInFlight:  200,
-	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil)
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"participant_throttle":{"empty_stream_threshold":0}}`))
@@ -3024,7 +3162,7 @@ func TestAdminSettingsUpdatesEscrowRotationSettlementEnabled(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		MaxInputTokensInFlight:  200,
-	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil)
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"escrow_rotation":{"settlement_enabled":true}}`))

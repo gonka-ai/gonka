@@ -310,6 +310,7 @@ func lookupValidateTarget(h hostSnap, escrowID string, inferenceID, epochID uint
 		Model:           rec.Model,
 		PromptHash:      rec.PromptHash,
 		ResponseHash:    rec.ResponseHash,
+		ServedHash:      rec.ServedHash,
 		InputTokens:     rec.InputTokens,
 		OutputTokens:    rec.OutputTokens,
 		EscrowID:        escrowID,

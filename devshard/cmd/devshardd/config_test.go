@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"devshard/cmd/devshardd/session"
 )
@@ -68,9 +71,10 @@ func TestEnvBoolOrUsesDevshardBooleanGrammar(t *testing.T) {
 
 func TestLoadRuntimeConfig_VoteFalseOnFetchFailureDefaultAndOverride(t *testing.T) {
 	tests := []struct {
-		name string
-		env  string
-		want bool
+		name  string
+		env   string
+		unset bool
+		want  bool
 	}{
 		{name: "unset defaults on", want: true},
 		{name: "false disables", env: "false", want: false},
@@ -120,5 +124,72 @@ func TestLoadRuntimeConfig_RPCServerEnabledDefaultOn(t *testing.T) {
 	}
 	if cfg.RPCServerEnabled {
 		t.Fatal("RPCServerEnabled must honor false")
+	}
+}
+
+func TestLoadRuntimeConfig_LogprobsOptimizationDefaultAndOverride(t *testing.T) {
+	tests := []struct {
+		name  string
+		env   string
+		unset bool
+		want  bool
+	}{
+		{name: "unset defaults on", env: "", unset: true, want: true},
+		{name: "true enables", env: "true", want: true},
+		{name: "false disables", env: "false", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DEVSHARD_BINARY_LOG_VERSION", "")
+			t.Setenv("DEVSHARD_VALIDATION_RETRY_INTERVAL", "")
+			t.Setenv("DEVSHARD_VALIDATION_LEASE_TTL", "")
+			t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "")
+			t.Setenv("DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED", tt.env)
+			if tt.unset {
+				require.NoError(t, os.Unsetenv("DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED"))
+			}
+
+			cfg, err := loadRuntimeConfig(nil, "v2", "dev-log")
+			if err != nil {
+				t.Fatalf("loadRuntimeConfig: %v", err)
+			}
+			if cfg.LogprobsOptimizationEnabled != tt.want {
+				t.Fatalf("LogprobsOptimizationEnabled got %v, want %v", cfg.LogprobsOptimizationEnabled, tt.want)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Load the runtime config with DEVSHARD_PAYLOAD_ZSTD_ENABLED unset, then set to true and to false.
+//  2. Assert unset writes zstd payload files and an explicit value wins.
+func TestLoadRuntimeConfig_PayloadZstdDefaultAndOverride(t *testing.T) {
+	tests := []struct {
+		name  string
+		env   string
+		unset bool
+		want  bool
+	}{
+		{name: "unset defaults on", unset: true, want: true},
+		{name: "true enables", env: "true", want: true},
+		{name: "false disables", env: "false", want: false},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("DEVSHARD_BINARY_LOG_VERSION", "")
+			t.Setenv("DEVSHARD_VALIDATION_RETRY_INTERVAL", "")
+			t.Setenv("DEVSHARD_VALIDATION_LEASE_TTL", "")
+			t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "")
+			t.Setenv("DEVSHARD_PAYLOAD_ZSTD_ENABLED", testCase.env)
+			if testCase.unset {
+				require.NoError(t, os.Unsetenv("DEVSHARD_PAYLOAD_ZSTD_ENABLED"))
+			}
+
+			cfg, err := loadRuntimeConfig(nil, "v2", "dev-log")
+			require.NoError(t, err)
+			require.Equal(t, testCase.want, cfg.CompressPayloadFiles)
+		})
 	}
 }

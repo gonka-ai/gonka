@@ -1640,7 +1640,7 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 	// ApplyLocal, caching the warm key in state. Capture delta.
 	warmBefore := sm.WarmKeys()
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("resp"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 10, OutputTokens: 20, ExecutorSlot: executorSlot, EscrowId: "escrow-1",
 	}
 	finishMsg.ProposerSig = testutil.SignProposerTx(t, warmKey, finishMsg)
@@ -1875,7 +1875,7 @@ func TestRecoverSession_SnapshotOnly_RestoresPendingTxDedupKeysForHostProposedTy
 		{
 			name: "finish",
 			tx: &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-				FinishInference: &types.MsgFinishInference{InferenceId: 7, ExecutorSlot: 1, EscrowId: "escrow-1"},
+				FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7, ExecutorSlot: 1, EscrowId: "escrow-1"},
 			}},
 		},
 		{
@@ -1970,7 +1970,7 @@ func TestRecoverSession_SnapshotOnly_RestoresSealedInferenceIndexes(t *testing.T
 		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000},
 	}}})
 	finish := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 10, OutputTokens: 20, ExecutorSlot: 1, EscrowId: escrowID,
 	}
 	finish.ProposerSig = testutil.SignProposerTx(t, hosts[1], finish)

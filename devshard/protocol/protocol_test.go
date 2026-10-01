@@ -528,18 +528,19 @@ func TestProtocol_VaryingInferenceCosts(t *testing.T) {
 	defaultHash := sha256.Sum256([]byte("stub"))
 	defaultResult := devshard.ExecuteResult{
 		ResponseHash: defaultHash[:],
+		ServedHash:   defaultHash[:],
 		InputTokens:  80,
 		OutputTokens: 40,
 	}
 
 	// 6 inferences with different engine outputs.
 	overrides := map[uint64]devshard.ExecuteResult{
-		1: {ResponseHash: defaultHash[:], InputTokens: 50, OutputTokens: 20},
-		2: {ResponseHash: defaultHash[:], InputTokens: 90, OutputTokens: 45},
-		3: {ResponseHash: defaultHash[:], InputTokens: 30, OutputTokens: 10},
-		4: {ResponseHash: defaultHash[:], InputTokens: 100, OutputTokens: 50},
-		5: {ResponseHash: defaultHash[:], InputTokens: 60, OutputTokens: 30},
-		6: {ResponseHash: defaultHash[:], InputTokens: 40, OutputTokens: 15},
+		1: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 50, OutputTokens: 20},
+		2: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 90, OutputTokens: 45},
+		3: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 30, OutputTokens: 10},
+		4: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 100, OutputTokens: 50},
+		5: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 60, OutputTokens: 30},
+		6: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 40, OutputTokens: 15},
 	}
 
 	// All 3 hosts share the same configurable engine.

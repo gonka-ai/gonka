@@ -219,7 +219,7 @@ func TestVerifyRefused_PayloadMismatch_Rejects(t *testing.T) {
 func TestVerifyExecution_FinishInLocalMempool(t *testing.T) {
 	st := stateWithStarted(1, 1)
 	mempool := []*types.DevshardTx{
-		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1}}},
+		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1}}},
 	}
 
 	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, mempool, nil, st.Config, deadlinePassedExecution(st, 1))
@@ -232,7 +232,7 @@ func TestVerifyExecution_ExecutorHasFinish(t *testing.T) {
 	proof := []types.Diff{{Nonce: 1, UserSig: []byte("gateway-start")}}
 	executor := &mockExecutorClient{
 		challengeMempool: []*types.DevshardTx{
-			{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1}}},
+			{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1}}},
 		},
 	}
 
@@ -283,7 +283,7 @@ func TestVerifyExecution_NilExecutorClient(t *testing.T) {
 func TestVerifyRefused_FinishInMempool(t *testing.T) {
 	st := stateWithPendingFull(1, 1)
 	mempool := []*types.DevshardTx{
-		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1}}},
+		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1}}},
 	}
 
 	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, mempool, nil, nil, st.Config, deadlinePassedRefused(st, 1))
@@ -350,7 +350,7 @@ func TestVerifyRefused_CopiesChallengeMempool(t *testing.T) {
 func TestRecoveryTxsFor_FiltersByInferenceID(t *testing.T) {
 	confirm1 := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 1}}}
 	confirm2 := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 2}}}
-	finish1 := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1}}}
+	finish1 := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1}}}
 	empty := &types.DevshardTx{}
 
 	got := RecoveryTxsFor([]*types.DevshardTx{nil, empty, confirm2, confirm1, finish1}, 1)
