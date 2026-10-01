@@ -70,6 +70,7 @@ func TestCompletionTokenCountForStreamedResponse(t *testing.T) {
 	expectedUsage := &Usage{
 		PromptTokens:     31,
 		CompletionTokens: 10,
+		TotalTokens:      41,
 	}
 	require.NotNil(t, usage, "expected usage to be not nil")
 	require.Equal(t, *expectedUsage, *usage, "expected usage to be %v, got %v", *expectedUsage, *usage)
@@ -176,6 +177,7 @@ func TestCompletionTokenCountForWholeResponse(t *testing.T) {
 	expectedUsage := &Usage{
 		PromptTokens:     31,
 		CompletionTokens: 10,
+		TotalTokens:      41,
 	}
 	require.NotNil(t, usage, "expected usage to be not nil")
 	require.Equal(t, *expectedUsage, *usage, "expected usage to be %v, got %v", *expectedUsage, *usage)

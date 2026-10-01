@@ -133,8 +133,20 @@ type Logprob struct {
 }
 
 type Usage struct {
-	PromptTokens     uint64 `json:"prompt_tokens"`
-	CompletionTokens uint64 `json:"completion_tokens"`
+	PromptTokens        uint64               `json:"prompt_tokens"`
+	CompletionTokens    uint64               `json:"completion_tokens"`
+	TotalTokens         uint64               `json:"total_tokens,omitempty"`
+	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+// PromptTokensDetails carries provider-reported prompt-cache metadata. When a
+// provider serves a prompt prefix from cache, the cached token count is the
+// authoritative number for downstream cached-input billing and caching
+// telemetry. The field is preserved losslessly so that gateway round-trips
+// through the typed Response struct never drop it.
+type PromptTokensDetails struct {
+	CachedTokens   uint64 `json:"cached_tokens,omitempty"`
+	UncachedTokens uint64 `json:"uncached_tokens,omitempty"`
 }
 
 func (u *Usage) IsEmpty() bool {
