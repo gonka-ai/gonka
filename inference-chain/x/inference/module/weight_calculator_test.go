@@ -238,6 +238,15 @@ func TestPassesValidationVoteThresholdAvoidsOverflow(t *testing.T) {
 	require.False(t, passesValidationVoteThreshold(math.MaxInt64/2, math.MaxInt64, 5000))
 }
 
+// The comparison is strict, so a 10000 bps threshold cannot be met even by a
+// unanimous vote; params validation caps the threshold at 9999 for that reason.
+func TestPassesValidationVoteThresholdMaxBps(t *testing.T) {
+	require.False(t, passesValidationVoteThreshold(100, 100, 10000))
+	require.True(t, passesValidationVoteThreshold(100, 100, 9999))
+	require.False(t, passesValidationVoteThreshold(9999, 10000, 9999))
+	require.True(t, passesValidationVoteThreshold(math.MaxInt64, math.MaxInt64, 9999))
+}
+
 // Regression for the guardian-vote-loss incident: a guardian that could not
 // run a model that epoch has no voting weight for it, so its votes were
 // filtered out before the tiebreaker and participants got rejected on split

@@ -28260,7 +28260,7 @@ type PocParams struct {
 	PocNormalizationEnabled    bool                      `protobuf:"varint,12,opt,name=poc_normalization_enabled,json=pocNormalizationEnabled,proto3" json:"poc_normalization_enabled,omitempty"` // Enables time-based weight normalization for PoC
 	PocStrongerRngEnabled      bool                      `protobuf:"varint,13,opt,name=poc_stronger_rng_enabled,json=pocStrongerRngEnabled,proto3" json:"poc_stronger_rng_enabled,omitempty"`     // Switches input generation to concatenated murmur3 with full 256-bit SHA256 seed (prevents 32-bit seed-collision attacks)
 	Models                     []*PoCModelConfig         `protobuf:"bytes,14,rep,name=models,proto3" json:"models,omitempty"`
-	ValidationVoteThresholdBps uint32                    `protobuf:"varint,15,opt,name=validation_vote_threshold_bps,json=validationVoteThresholdBps,proto3" json:"validation_vote_threshold_bps,omitempty"` // Strict vote threshold in basis points, 0 = default 5000; valid range [5000, 10000] so at most one side can pass
+	ValidationVoteThresholdBps uint32                    `protobuf:"varint,15,opt,name=validation_vote_threshold_bps,json=validationVoteThresholdBps,proto3" json:"validation_vote_threshold_bps,omitempty"` // Strict vote threshold in basis points, 0 = default 5000; valid range [5000, 9999] so at most one side can pass and a unanimous vote still can
 	DynamicCoefficientParams   *DynamicCoefficientParams `protobuf:"bytes,16,opt,name=dynamic_coefficient_params,json=dynamicCoefficientParams,proto3" json:"dynamic_coefficient_params,omitempty"`
 }
 
