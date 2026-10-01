@@ -80,6 +80,13 @@ func NewGossip(escrowID string, slotID uint32, peers []PeerClient, mempool Mempo
 	return g
 }
 
+// PeerCount is the number of outbound gossip peers (not including this host).
+func (g *Gossip) PeerCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.peers)
+}
+
 // GossipOption configures optional Gossip behavior.
 type GossipOption func(*Gossip)
 

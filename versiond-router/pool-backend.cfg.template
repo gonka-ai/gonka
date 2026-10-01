@@ -31,9 +31,12 @@ backend ${BACKEND_NAME}
     # readiness contract available during rollback and mixed-version cutover.
     # The second request is required in both cases, so accepting 404 never
     # admits a legacy process that cannot actually serve this backend.
+    # When the server line is proto h2, check-proto h1 keeps these requests
+    # on HTTP/1.1. The check itself stays: without it the server is "no check".
     http-check connect
     ${READY_CHECK_SEND}
-    http-check expect status 200,404
+    http-check expect status ${READY_EXPECT}
+    ${PEER_RPC_BODY_EXPECT}
     http-check connect
     ${ROUTE_CHECK_SEND}
     http-check expect status 200
@@ -78,4 +81,4 @@ backend ${BACKEND_NAME}
     # replaces it by one `server` line per member carrying the same options
     # (minus the resolver for IPv4 literals). versiond's drain announcement is
     # sized from the `inter`, `fall` and `timeout check` values found here.
-    server-template versiond ${BACKEND_SLOTS} ${BACKEND_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr ${SERVER_STATE}
+    server-template versiond ${BACKEND_SLOTS} ${BACKEND_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr${BACKEND_PROTO} ${SERVER_STATE}

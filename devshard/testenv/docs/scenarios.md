@@ -59,6 +59,10 @@ TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestParamsLongPoll -v -t
 
 Wrapper script: [`scripts/run-stack-citest.sh`](../scripts/run-stack-citest.sh).
 
+No-proxy grid, pinned baseline versiond versus this tree, JSON and Connect HTTP/1.1:
+[`scripts/run-noproxy-baseline-current-citest-grid.sh`](../scripts/run-noproxy-baseline-current-citest-grid.sh).
+See [No-proxy baseline versus current](#no-proxy-baseline-versus-current).
+
 CI: `workflow_dispatch` with `integration: true`, or PR comment `/run-testenv`
 (OWNER/MEMBER). The `devshard testenv` workflow discovers the runnable suites via
 `make -C devshard/testenv list-citest-targets` and fans them out into a GitHub
@@ -89,6 +93,10 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Host ping** | Gateway host-ping target set + metrics (unused → chat → ping tier → deactivate); kill switch; probe outage does not quarantine | `TestHostPing`, `TestHostPingKillSwitch` |
 | **Height-sync cadence** | Two chats seed `F` (§10.3.1), then quiet `Interval` → `heartbeat_opened`; one host stopped; peer-matrix opt-in | `TestContainerE2E_HeightSync_QuietEscrowHeartbeat`, `…OneHostStopped`, `…PeerMatrixOptIn` |
 | **Height-sync host claims** | Solo oracle overlay: lag / future `\|Δ\|>D` / fabricated `H+1`; chat 200; detection logs + spread | `TestContainerE2E_HeightSync_HostLowerHeightAutoAligns`, `…HostFutureHeightBeyondD`, `…HostFabricatedHashInsideD` |
+| **Baseline smoke** | Pinned 0.2.15-v5 versiond/router, this child, RPC off, no proxy | `TestBaselineSmoke` |
+| **Peer RPC chat** | Gateway chat over Connect HTTP/1.1; child counts Attach and Chat | `TestPeerRPCChat` |
+| **Peer RPC HA session** | Two escrows hashed to different children both seed and chat; shared session, `GONKA_HA` | `TestPeerRPCHASessionSpread` |
+| **Mixed fleet** | versiond-0 on 0.2.15-v5, versiond-1 and router on this tree, RPC on, both `:8080` HTTP/1.1 | `TestMixedFleetNoProxy` |
 
 Source files under `devshard/testenv/citest/` use the same behavior-oriented
 names. Versiond failover and restart persistence intentionally remain separate
@@ -122,6 +130,109 @@ Full plan: [`chain-transport-consolidation.md`](./chain-transport-consolidation.
 | **G4** | REST removed gate | Static test: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl | `TestG4_NoRESTChainClientsInGatewayProduction` | ✅ |
 
 Run: `make citest-grpc-transport` from `devshard/testenv/`.
+
+### No-proxy baseline versus current
+
+Peer RPC on the default compose. No `proxy` overlay and no `DEVSHARD_RPC_H2_PORT`.
+HTTP/2 and native gRPC are not in this grid. Checklist:
+[`grpc-transport-phase6-plan.md`](../../docs/grpc-transport-phase6-plan.md) §8.2.
+
+| Column | versiond + router | Client |
+|--------|-------------------|--------|
+| **B1 JSON** | `devshard-versiond:0.2.15-v5` and `devshard-versiond-router:0.2.15-v5` | JSON (`DEVSHARD_RPC_SERVER_ENABLED=false`) |
+| **B1+RPC** | same pin | Connect HTTP/1.1 on `versiond-router:8080` |
+| **N0 JSON** | this tree (`:latest`) | JSON |
+
+Peer RPC on this tree’s versiond and router is HTTP/2 on the proxy overlay
+(plan §8.4). This grid does not run that dial, and it does not run Connect
+HTTP/1.1 against those images.
+
+RPC-on cells set:
+
+```text
+DEVSHARD_RPC_SERVER_ENABLED=true
+DEVSHARD_RPC_ENDPOINTS=signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat
+```
+
+| Scenario | What we validate | Test | Run |
+|----------|------------------|------|-----|
+| **Baseline smoke** | Old hop + this child boots; router `/healthz`; gateway chat; record `GET /devshard/stats/rpc` | `TestBaselineSmoke` | `make citest-baseline-smoke` |
+| **Peer RPC chat** | Non-stream and SSE chat; child `Attach` and `Chat` counters | `TestPeerRPCChat` | `make citest-peerrpc-chat` |
+| **Peer RPC HA session** | Height seed and chat on two escrows that hash to different children. The child shares the session only when `GONKA_HA` is set | `TestPeerRPCHASessionSpread` | `make citest-peerrpc-ha-session` |
+| **Mixed fleet** | versiond-0 pinned to 0.2.15-v5, versiond-1 and the router this tree; Chat+Attach; both images' `/{version}/healthz` | `TestMixedFleetNoProxy` | `make citest-mixed-fleet` |
+
+Height-sync and payload withholding use `citest-height-sync` and
+`citest-payload-withholding`. B1+RPC turns peer RPC on for those targets.
+
+The three columns over the existing `citest-*` suites, plus chat and the HA
+session on B1+RPC, are one sequential run:
+
+```bash
+cd devshard/testenv
+./scripts/run-noproxy-baseline-current-citest-grid.sh
+```
+
+Each cell is one line in
+[`grpc-transport-phase6-8.2-results.txt`](../../docs/grpc-transport-phase6-8.2-results.txt)
+(`B1-JSON citest-stack PASS`). A `PASS` or `EXPECTED-FAIL` line is skipped on
+the next run. A `FAIL` line is retried. `citest-baseline-smoke` and `citest-mixed-fleet` are separate
+targets; they are not inside the grid script.
+
+### Proxy overlay hop (§8.3)
+
+Peer RPC on this tree’s versiond and router, through `proxy:8443`. `:8080` stays
+JSON and healthz. A closed h2 port does not fall back to Connect.
+
+```bash
+cd devshard/testenv
+./scripts/run-peerrpc-overlay-citest.sh
+```
+
+`TestPeerRPCOverlayHop` (`make citest-peerrpc-overlay`).
+
+### Peer RPC parity (§8.4)
+
+Same chat and the same `GetSignatures` / `GetDiffs` read on one overlay stack.
+The gateway is the chat client: JSON on `:8080`, Connect over HTTP/2, then native gRPC.
+Unary reads use the escrow user key against the published router and `proxy` ports.
+
+```bash
+cd devshard/testenv
+./scripts/run-peerrpc-parity-citest.sh
+```
+
+`TestPeerRPCParity` (`make citest-peerrpc-parity`).
+
+### Peer RPC rate limits (§9)
+
+R1–R2 on the 0.2.15-v5 pin (Connect over HTTP/1.1, no proxy). R3–R7 on the
+current-image overlay, with the child budget and proxy zones lowered in that
+stack only. R8 checks both stacks at the default ceilings.
+
+```bash
+cd devshard/testenv
+./scripts/run-peerrpc-limits-citest.sh
+```
+
+`TestPeerRPCLimitsNoProxy` and `TestPeerRPCLimitsOverlay` (`make citest-peerrpc-limits`).
+
+### HTTP/2 suite rerun (§9.1)
+
+The §8.2 suite list on this tree’s versiond and versiond-router, with
+`TESTENV_PROXY_OVERLAY=1` and Connect over HTTP/2 on `proxy:8443`. Rate limits
+stay at the defaults. `DEVSHARD_RPC_H2_FRONT_HOST=versiond-router` keeps a
+direct participant (a solo `http://versiond-N:8080`) on h2c to that host.
+The 0.2.15-v5 pin and native gRPC are not in this grid.
+
+```bash
+cd devshard/testenv
+./scripts/run-h2-overlay-citest-grid.sh
+```
+
+Each cell is one line in
+[`grpc-transport-phase6-9.1-results.txt`](../../docs/grpc-transport-phase6-9.1-results.txt)
+(`H2 citest-stack PASS`). A `PASS` line is skipped on the next run. A `FAIL`
+line is retried.
 
 ---
 
@@ -351,9 +462,9 @@ bail-out). The testenv suite pins the end-to-end effect: the wait returns and th
 swap completes. With the testenv's empty journal the wait is sub-second, so the
 suite does not assert a measurable wait duration.
 
-Run: `make citest-versiond-warm-cutover` from `devshard/testenv/`. Also matched by
-the `citest-stack` pattern (`Versiond.*`); skips if the linux `devshardd` binary
-is absent (run `make build-devshardd` first).
+Run: `make citest-versiond-warm-cutover` from `devshard/testenv/`. Not part of
+`citest-stack`. Skips if the linux `devshardd` binary is absent (run
+`make build-devshardd` first).
 
 Tests: `TestVersiondWarmCutoverBoot`,
 `TestVersiondWarmCutoverOverlapWaitsThenServes`.
@@ -649,6 +760,7 @@ alignment (`INVALID(height_regression)`) stays a unit pin.
 | Adversarial | `make citest-adversarial` | A1–A5 (fault injection on mock-openai / mock-chain) |
 | Observability | `make citest-observability` | O1 Jaeger + Loki + host histogram scrape (isolated overlay) |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
+| No-proxy baseline versus current | [`scripts/run-noproxy-baseline-current-citest-grid.sh`](../scripts/run-noproxy-baseline-current-citest-grid.sh) | B1 JSON, B1+RPC HTTP/1.1, N0 JSON; no `proxy` |
 
 See [`README.md`](../README.md) for adversarial and observability detail.
 

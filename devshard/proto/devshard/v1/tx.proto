@@ -19,6 +19,11 @@ message MsgStartInference {
   int64  started_at = 6;
   uint64 observed_height = 7;
   bytes  observed_block_hash = 8;
+  // protocol_version is the destshard runtime the gateway bound for this
+  // escrow (approved_versions.name / route prefix). It is inside the
+  // user-signed Diff so a later ChallengeReceipt can prove which version
+  // may CreateSession on a host the gateway never pinged.
+  string protocol_version = 9;
 }
 
 message MsgConfirmStart {

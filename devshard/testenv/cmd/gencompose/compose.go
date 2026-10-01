@@ -149,12 +149,24 @@ services:
       # Peers/executors here are compose service names resolving to private IPs,
       # so the dial-time SSRF guard must be off. Production leaves this unset.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
+      DEVSHARD_RPC_SERVER_ENABLED: ${DEVSHARD_RPC_SERVER_ENABLED:-true}
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
+      DEVSHARD_RPC_MSGS_PER_MIN: ${DEVSHARD_RPC_MSGS_PER_MIN:-}
+      DEVSHARD_RPC_MSGS_BURST: ${DEVSHARD_RPC_MSGS_BURST:-}
+      DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL: ${DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL:-}
+      # Client dial. Empty keeps InferenceUrl. Citest sets 8081 + grpc so
+      # peer RPC uses versiond-router's proto h2 bind, not the proxy overlay.
+      DEVSHARD_RPC_H2_PORT: ${DEVSHARD_RPC_H2_PORT:-}
+      DEVSHARD_RPC_H2_HOST: ${DEVSHARD_RPC_H2_HOST:-}
+      DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
+      DEVSHARD_RPC_H2_FRONT_HOST: ${DEVSHARD_RPC_H2_FRONT_HOST:-}
+      DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
-      # GONKA_HA is intentionally omitted from versiond in this fixture. The
-      # SQLite-to-HA scenario first boots children before enabling HA at the
-      # router, where Devshard-Ha exercises the request-time storage guard.
 {{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
+      # HA replicas declare GONKA_HA so the child shares peer RPC sessions.
+      # The sqlite migration clears this before booting these hosts on sqlite.
+      GONKA_HA: "{{ haDeployment $ }}"
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
       PGHOST: {{ $.Postgres.Host }}
@@ -163,6 +175,7 @@ services:
       PGUSER: {{ $.Postgres.User }}
       PGPASSWORD: {{ $.Postgres.Password }}
 {{ else if eq $.Versiond.Mode "multi" }}
+      # Solo hosts omit GONKA_HA and keep peer RPC sessions in memory.
       # Solo executor: local sqlite so it does not multi-write shared PG diffs.
       DEVSHARD_STORAGE_MODE: sqlite
 {{ end }}
@@ -224,9 +237,9 @@ services:
       VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
       VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
       VERSIOND_ROUTING_ACTIVATION_MIN_READY: "{{ routingActivationMinReady . }}"
-      # Only the router is told this deployment is HA. The versiond containers
-      # are not, so scenarios that deliberately run the pool on sqlite still
-      # boot and fail at request time on the storage guard instead.
+      # HA replicas set GONKA_HA too, so their children share peer RPC sessions.
+      # Solo sqlite hosts omit it. Scenarios that run the pool on sqlite clear
+      # GONKA_HA before boot and still fail at request time on Devshard-Ha.
       GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
@@ -269,6 +282,12 @@ services:
       DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
       # Hosts are compose service names resolving to private IPs; see versiond.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
+      DEVSHARD_RPC_H2_PORT: ${DEVSHARD_RPC_H2_PORT:-}
+      DEVSHARD_RPC_H2_HOST: ${DEVSHARD_RPC_H2_HOST:-}
+      DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
+      DEVSHARD_RPC_H2_FRONT_HOST: ${DEVSHARD_RPC_H2_FRONT_HOST:-}
+      DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       GATEWAY_MAX_TOKENS_CAP: "4096"
       # Host ping (gateway → used hosts). On by default; observability only.
       DEVSHARD_GATEWAY_HOST_PING_DISABLED: "false"

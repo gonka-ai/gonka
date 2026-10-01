@@ -25,6 +25,7 @@ const (
 	LevelInfo  Level = "info"
 	LevelWarn  Level = "warn"
 	LevelError Level = "error"
+	LevelDebug Level = "debug"
 )
 
 const (
@@ -62,6 +63,8 @@ const (
 	WhereManagerPayloads            Where = "manager.payloads"
 	WhereRuntimeExecute             Where = "runtime.execute"
 	WhereRuntimeValidate            Where = "runtime.validate"
+	WherePeerRPCGate                Where = "rpc.handshake_gate"
+	WhereGatewayRPCStats            Where = "gateway.rpc_stats"
 )
 
 const (
@@ -289,6 +292,8 @@ func Log(ctx context.Context, level Level, msg string, stage Stage, where Where,
 		logging.Error(msg, fields...)
 	case LevelWarn:
 		logging.Warn(msg, fields...)
+	case LevelDebug:
+		logging.Debug(msg, fields...)
 	default:
 		logging.Info(msg, fields...)
 	}

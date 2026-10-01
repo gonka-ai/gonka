@@ -19,6 +19,7 @@ import (
 	"versioned/internal/health"
 	"versioned/internal/host"
 	"versioned/internal/oracle"
+	"versioned/internal/peerrpcmembers"
 	"versioned/internal/process"
 	"versioned/internal/proxy"
 	"versioned/internal/sessionversion"
@@ -72,9 +73,36 @@ func run(ctx context.Context) error {
 	}
 
 	listenAddr := config.ListenAddr()
+	public := publicHandler(mgr, hostLifecycle, mgr, proxyOpts...)
+	if token := os.Getenv("VERSIOND_CONTROL_TOKEN"); token != "" {
+		store := &peerrpcmembers.Store{}
+		control := peerrpcmembers.Handler(token, store, func(snap peerrpcmembers.Snapshot) {
+			targets := mgr.PeerMemberTargets()
+			go func() {
+				forwardTargets := make([]peerrpcmembers.Target, len(targets))
+				for i, target := range targets {
+					forwardTargets[i] = peerrpcmembers.Target{Version: target.Version, AdminURL: target.AdminURL}
+				}
+				if err := peerrpcmembers.Forward(context.Background(), nil, snap.Members, snap.RecipientID, forwardTargets); err != nil {
+					slog.Warn("peer rpc membership forward", "error", err)
+				}
+			}()
+		})
+		next := public
+		public = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == peerrpcmembers.Path {
+				control.ServeHTTP(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 	srv := &http.Server{
 		Addr:    listenAddr,
-		Handler: publicHandler(mgr, hostLifecycle, mgr, proxyOpts...),
+		Handler: public,
+	}
+	if err := proxy.ConfigureCleartextHTTP2(srv); err != nil {
+		return fmt.Errorf("configure cleartext http2: %w", err)
 	}
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -254,6 +282,7 @@ func shouldForceShutdown(sig os.Signal) bool {
 }
 
 type hostShutdownManager interface {
+	ReleasePeers(context.Context) error
 	RequestChildrenDrain(context.Context) error
 	WaitChildrenIdle(context.Context) error
 	Shutdown(context.Context) error
@@ -323,6 +352,13 @@ func shutdownHost(
 		}
 	}
 
+	if drainCtx.Err() == nil {
+		// End inbound Watch before waiting. A stream that stays up holds this
+		// host until the drain budget is gone, and child /drain is then skipped.
+		if err := mgr.ReleasePeers(drainCtx); err != nil {
+			slog.Warn("peer identity release failed", "error", err)
+		}
+	}
 	if err := hostLifecycle.WaitIdle(drainCtx); err != nil {
 		slog.Warn("host proxy drain incomplete", "error", err, "inflight", hostLifecycle.Snapshot().Inflight)
 	}
@@ -424,22 +460,43 @@ func readinessHandler(mgr *process.Manager, hostLifecycle *host.Controller) http
 		// ?version=<name> asks the precise question the router wants answered
 		// before it sends a request: can you serve *this* version. Without it the
 		// answer is the coarse host-level one.
+		peerRPC := r.URL.Query().Get("peer-rpc") == "1"
 		if version := r.URL.Query().Get("version"); version != "" {
 			if !versiondReadyForVersion(hostStatus, mgr, version) {
 				http.Error(w, "no route for version "+version, http.StatusServiceUnavailable)
 				return
 			}
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("ready\n"))
+			if peerRPC && !mgr.ServesPeerRPC(version) {
+				http.Error(w, "child does not speak peer rpc", http.StatusServiceUnavailable)
+				return
+			}
+			writeReady(w, peerRPC)
 			return
 		}
 		if !versiondReady(hostStatus, mgr.Conditions()) {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready\n"))
+		if peerRPC && !mgr.PeerRPCHostReady() {
+			http.Error(w, "child does not speak peer rpc", http.StatusServiceUnavailable)
+			return
+		}
+		writeReady(w, peerRPC)
 	}
+}
+
+// peerRPCReadyBody is the peer-RPC check's success body. A v5.0.2 /readyz
+// answers 200 and ignores peer-rpc=1, with the plain ready body. The router
+// expects this string, so that process stays out of the HTTP/2 pool.
+const peerRPCReadyBody = "peer-rpc-ok\n"
+
+func writeReady(w http.ResponseWriter, peerRPC bool) {
+	w.WriteHeader(http.StatusOK)
+	if peerRPC {
+		_, _ = io.WriteString(w, peerRPCReadyBody)
+		return
+	}
+	_, _ = io.WriteString(w, "ready\n")
 }
 
 func publicHandler(

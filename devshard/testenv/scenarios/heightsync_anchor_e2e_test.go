@@ -37,6 +37,14 @@ import (
 
 const hsAnchorE2EEscrowID = "9001"
 
+// echoHTTPEndpoints keeps these Echo servers on HTTPClient. An empty set
+// does not override RPCEndpointsFromEnv, which wraps every peer method in
+// Connect. Attach never becomes ready against these routes, SeedHeightSync
+// stays retryable, and the seed loop runs until the package timeout.
+func echoHTTPEndpoints() transport.EndpointSet {
+	return transport.EndpointSet{"echo-http": {}}
+}
+
 // hsE2ERoutePrefix tracks RuntimeTestVersion so the user session (which binds
 // SM version from the route) and host SMs (EffectiveStateRootAndProtocolVersion)
 // compute the same state root.
@@ -436,6 +444,8 @@ func setupFourHostHTTPHeightSyncFromChainOracles(t *testing.T, hostSchedOracle, 
 			f(&cc)
 		}
 	}
+	cc.AllowRetiredHTTPSession = true
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	extra := &cc
 	storagePath := filepath.Join(t.TempDir(), "session.db")
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
@@ -477,6 +487,8 @@ func (st *fourHostStack) newHTTPSession(t *testing.T) *user.Session {
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = st.Oracle
+	cc.AllowRetiredHTTPSession = true
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     st.PrivateKeyHex,
 		EscrowID:          st.Bridge.escrow.EscrowID,
@@ -602,6 +614,8 @@ func (st *oneHostRestartStack) newHTTPSession(t *testing.T) *user.Session {
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = st.Oracle
+	cc.AllowRetiredHTTPSession = true
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     st.PrivateKeyHex,
 		EscrowID:          st.Bridge.escrow.EscrowID,
@@ -719,11 +733,12 @@ func (st *repairTimingStack) wireRepairPeersFrom(prober int) {
 	peers := make(map[int]*transport.HTTPClient, len(st.httpSrvs))
 	for slot, ts := range st.httpSrvs {
 		peers[slot] = transport.NewHTTPClient(ts.URL, "9003", st.user, transport.ClientConfig{
-			QueryTimeout: 200 * time.Millisecond,
-			RoutePrefix:  hsE2ERoutePrefix,
+			AllowRetiredHTTPSession: true,
+			QueryTimeout:            200 * time.Millisecond,
+			RoutePrefix:             hsE2ERoutePrefix,
 		})
 	}
-	st.servers[prober].SetPeerClients(peers)
+	st.servers[prober].SetPeerClients(transport.HTTPPeerClients(peers))
 }
 
 func (st *repairTimingStack) applyDiffsToHosts(t *testing.T, diffs ...types.Diff) {
@@ -2110,6 +2125,8 @@ func setupFourHostHTTPHeightSyncWithToggleableClient(t *testing.T, hostOracles [
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = clientOracle
+	cc.AllowRetiredHTTPSession = true
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	extra := &cc
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     userSigner.PrivateKeyHex(),

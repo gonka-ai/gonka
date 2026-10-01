@@ -18,6 +18,8 @@ const (
 	printProtocolVersionFlag = "--print-protocol-version"
 	printAdminAPIVersionFlag = "--print-admin-api-version"
 	printStorageModeFlag     = "--print-storage-mode"
+	printChildH2CFlag        = "--print-child-h2c"
+	childH2CAdvertise        = "h2c"
 	initializePostgresFlag   = "--initialize-postgres-schema"
 	envHADeployment          = "GONKA_HA"
 	envNonHAVersions         = "VERSIOND_NON_HA_VERSIONS"
@@ -40,6 +42,10 @@ type childPreflight struct {
 	// other than devshard, false for legacy-pinned versions, and true for
 	// devshard versions that can be routed across the HA pool.
 	haDeployment *bool
+	// childH2C is true when the binary's listen accepts prior-knowledge
+	// HTTP/2. Older binaries do not support --print-child-h2c; versiond
+	// dials those over HTTP/1.1.
+	childH2C bool
 }
 
 // preflightChildWithAdminProbeContext verifies a downloaded binary when
@@ -134,11 +140,22 @@ func preflightChildWithAdminProbeContext(
 		}
 	}
 
+	childH2C, err := readChildH2CContext(ctx, binPath)
+	if err != nil {
+		return childPreflight{}, fmt.Errorf("read child h2c: %w", err)
+	}
+	if childH2C {
+		slog.Info("child listen accepts h2c; proxy will dial HTTP/2", "slot", slotName, "bin", binPath)
+	} else {
+		slog.Info("child has no h2c listen; proxy will dial HTTP/1.1", "slot", slotName, "bin", binPath)
+	}
+
 	return childPreflight{
 		binaryLogVersion:  binaryLogVersion,
 		adminAPISupported: adminSupported,
 		storageMode:       storageMode,
 		haDeployment:      childHA,
+		childH2C:          childH2C,
 	}, nil
 }
 
@@ -236,6 +253,24 @@ func readAdminAPIVersionContext(ctx context.Context, binPath string) (string, er
 
 func readStorageModeContext(ctx context.Context, binPath string) (string, error) {
 	return readEmbeddedVersionContext(ctx, binPath, printStorageModeFlag)
+}
+
+// readChildH2CContext reports whether binPath advertises an h2c listen.
+// Only stdout "h2c" enables the HTTP/2 dial. A missing flag, empty output,
+// or a non-zero exit means HTTP/1.1. Any other successful output is a
+// broken advertisement and fails preflight. A timed-out probe still fails.
+func readChildH2CContext(ctx context.Context, binPath string) (bool, error) {
+	v, err := readEmbeddedVersionContext(ctx, binPath, printChildH2CFlag)
+	if err != nil {
+		if ctx.Err() != nil || strings.Contains(err.Error(), "timed out") {
+			return false, err
+		}
+		return false, nil
+	}
+	if v != childH2CAdvertise {
+		return false, fmt.Errorf("%s %s: got %q, want %q", binPath, printChildH2CFlag, v, childH2CAdvertise)
+	}
+	return true, nil
 }
 
 func initializePostgresSchemaContext(ctx context.Context, binPath string, env []string) (bool, error) {

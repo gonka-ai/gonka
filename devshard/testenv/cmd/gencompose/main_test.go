@@ -373,6 +373,8 @@ func TestWriteCompose_MockChainService(t *testing.T) {
       dockerfile: versiond-router/Dockerfile`)
 	require.NotContains(t, text, "context: ../../versiond-router")
 	require.Contains(t, text, `VERSIOND_PORT: "8080"`)
+	require.NotRegexp(t, `(?m)^  proxy:`, text,
+		"default gencompose must not add the Phase 6 proxy overlay")
 	require.Contains(t, text, `VERSIOND_LEGACY_HOST: "versiond-0"`)
 	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: ""`)
 	require.Contains(t, text, "versiond-router-state:/var/lib/gonka-router",

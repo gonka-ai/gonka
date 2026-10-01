@@ -19,13 +19,17 @@ type mockExecutorClient struct {
 	challengeReceipt    []byte
 	challengeMempool    []*types.DevshardTx
 	challengeReceiptErr error
+	challengePayload    *InferencePayload
+	challengeDiffs      []types.Diff
 }
 
 func (m *mockExecutorClient) GetMempool(_ context.Context) ([]*types.DevshardTx, error) {
 	return m.mempool, m.mempoolErr
 }
 
-func (m *mockExecutorClient) ChallengeReceipt(_ context.Context, _ uint64, _ *InferencePayload, _ []types.Diff) ([]byte, []*types.DevshardTx, error) {
+func (m *mockExecutorClient) ChallengeReceipt(_ context.Context, _ uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+	m.challengePayload = payload
+	m.challengeDiffs = diffs
 	return m.challengeReceipt, m.challengeMempool, m.challengeReceiptErr
 }
 
@@ -218,29 +222,44 @@ func TestVerifyExecution_FinishInLocalMempool(t *testing.T) {
 		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1}}},
 	}
 
-	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, mempool, nil, st.Config, deadlinePassedExecution(st, 1))
+	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, mempool, nil, st.Config, deadlinePassedExecution(st, 1))
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: finish in local mempool")
 }
 
 func TestVerifyExecution_ExecutorHasFinish(t *testing.T) {
 	st := stateWithStarted(1, 1)
+	proof := []types.Diff{{Nonce: 1, UserSig: []byte("gateway-start")}}
 	executor := &mockExecutorClient{
-		mempool: []*types.DevshardTx{
+		challengeMempool: []*types.DevshardTx{
 			{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1}}},
 		},
 	}
 
-	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, executor, st.Config, deadlinePassedExecution(st, 1))
+	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, proof, nil, executor, st.Config, deadlinePassedExecution(st, 1))
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: executor has finish")
+	require.Nil(t, executor.challengePayload, "execution timeout must not ask the executor to run")
+	require.Equal(t, proof, executor.challengeDiffs)
+}
+
+func TestVerifyExecution_ForwardsCreatorDiffs(t *testing.T) {
+	st := stateWithStarted(1, 1)
+	proof := []types.Diff{{Nonce: 1, UserSig: []byte("gateway-start")}}
+	executor := &mockExecutorClient{}
+
+	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, proof, nil, executor, st.Config, deadlinePassedExecution(st, 1))
+	require.NoError(t, err)
+	require.True(t, accept)
+	require.Nil(t, executor.challengePayload)
+	require.Equal(t, proof, executor.challengeDiffs, "cold host binds from the creator-signed diffs")
 }
 
 func TestVerifyExecution_ExecutorUnreachable_DeadlinePassed(t *testing.T) {
 	st := stateWithStarted(1, 1)
-	executor := &mockExecutorClient{mempoolErr: errors.New("unreachable")}
+	executor := &mockExecutorClient{challengeReceiptErr: errors.New("unreachable")}
 
-	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, executor, st.Config, deadlinePassedExecution(st, 1))
+	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, nil, executor, st.Config, deadlinePassedExecution(st, 1))
 	require.NoError(t, err)
 	require.True(t, accept, "should accept: executor unreachable")
 }
@@ -248,7 +267,7 @@ func TestVerifyExecution_ExecutorUnreachable_DeadlinePassed(t *testing.T) {
 func TestVerifyExecution_InferenceNotStarted(t *testing.T) {
 	st := stateWithPending(1, 1) // pending, not started
 
-	_, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, nil, st.Config, deadlinePassedExecution(st, 1))
+	_, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, nil, nil, st.Config, deadlinePassedExecution(st, 1))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "expected started")
 }
@@ -256,7 +275,7 @@ func TestVerifyExecution_InferenceNotStarted(t *testing.T) {
 func TestVerifyExecution_NilExecutorClient(t *testing.T) {
 	st := stateWithStarted(1, 1)
 
-	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, nil, st.Config, deadlinePassedExecution(st, 1))
+	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, nil, nil, st.Config, deadlinePassedExecution(st, 1))
 	require.NoError(t, err)
 	require.True(t, accept, "should accept: no executor client (unreachable)")
 }
@@ -276,7 +295,7 @@ func TestVerifyExecution_DeadlineNotPassed(t *testing.T) {
 	st := stateWithStarted(1, 1)
 	tooEarly := st.Inferences[1].StartedAt + st.Config.ExecutionTimeout - 1
 
-	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, nil, st.Config, tooEarly)
+	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, nil, nil, st.Config, tooEarly)
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: deadline not passed")
 }

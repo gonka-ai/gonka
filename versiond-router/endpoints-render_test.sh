@@ -81,10 +81,22 @@ pool_servers endpoints | grep '^ *server versiond3 10.20.0.13:8080 ' >/dev/null 
     fail "VERSIOND_PORT was not applied as the default endpoint port"
 # Every HA backend (coarse, two static versions, two dynamic slots) lists all
 # three members; the legacy backend lists only the owner.
-[[ $(pool_servers endpoints | grep -c '^ *server versiond2 ') -eq 5 ]] || \
-    fail "expected five HA backends with the second endpoint"
-[[ $(grep -c '^backend versiond_legacy_v1' "$tmpdir/endpoints.cfg") -eq 1 ]] || \
+# Five JSON backends plus the native-gRPC twin of each.
+[[ $(pool_servers endpoints | grep -c '^ *server versiond2 ') -eq 10 ]] || \
+    fail "expected ten HA backends with the second endpoint"
+[[ $(grep -c '^backend versiond_legacy_v1$' "$tmpdir/endpoints.cfg") -eq 1 ]] || \
     fail "legacy backend is missing"
+grep -q 'uri /readyz?peer-rpc=1&version=' "$tmpdir/endpoints.cfg" || \
+    fail "peer-RPC backends must check /readyz?peer-rpc=1"
+grep -q 'http-check expect status 200$' "$tmpdir/endpoints.cfg" || \
+    fail "peer-RPC readiness must not treat a 404 as success"
+[[ $(grep -c 'http-check expect string peer-rpc-ok' "$tmpdir/endpoints.cfg") -eq \
+    $(grep -c '^backend .*_rpc$' "$tmpdir/endpoints.cfg") ]] || \
+    fail "every peer-RPC backend must expect the peer-rpc-ok body, and JSON backends must not"
+grep -q 'proto h2 check-proto h1' "$tmpdir/endpoints.cfg" || \
+    fail "h2 server lines must keep an HTTP/1.1 health check"
+grep -q ' check inter 1s fall 1 rise 2 ' "$tmpdir/endpoints.cfg" || \
+    fail "h2 server lines must keep a health check"
 sed -n '/^backend versiond_legacy_v1/,/^backend /p' "$tmpdir/endpoints.cfg" | \
     grep '^ *server versiond1 versiond:8080 ' >/dev/null || \
     fail "legacy backend must resolve VERSIOND_LEGACY_HOST through the endpoint list"
@@ -153,8 +165,19 @@ fi
 grep -q 'is not readable' "$tmpdir/missing.err" || \
     fail "missing endpoint file: unexpected rejection"
 
+# HTTP/1.1 mock upstreams keep the check and do not speak h2. The h2
+# frontend bind stays; only the versiond server lines change.
+render h1 VERSIOND_ROUTER_BACKEND_H2=false GONKA_HA=true VERSIOND_VERSIONS=v4 2>/dev/null
+h1_servers=$(grep -E '^[[:space:]]*server(-template)? versiond' "$tmpdir/h1.cfg")
+! grep -q 'proto h2' <<<"$h1_servers" || \
+    fail "HTTP/1.1 upstreams must not be proto h2"
+! grep -q 'check-proto' <<<"$h1_servers" || \
+    fail "HTTP/1.1 upstreams must not set check-proto"
+grep -q ' check inter 1s fall 1 rise 2 ' <<<"$h1_servers" || \
+    fail "HTTP/1.1 upstreams must still be health-checked"
+
 # The real HAProxy must accept every rendered shape.
-for name in endpoints legacy-dns hosts dns; do
+for name in endpoints legacy-dns hosts dns h1; do
     docker run --rm --user 0 -v "$tmpdir:$tmpdir:ro" "$haproxy_image" \
         haproxy -c -f "$tmpdir/$name.cfg" >/dev/null 2>"$tmpdir/$name.check" || \
         fail "$name: HAProxy rejected the rendered configuration: $(cat "$tmpdir/$name.check")"

@@ -539,7 +539,7 @@ assign_slot() {
     [ -z "$response" ] || return 1
 }
 
-set_slot_server_state() {
+apply_slot_server_state() {
     action=$1 backend=$2
     commands=
     index=1
@@ -554,6 +554,22 @@ set_slot_server_state() {
     done
     response=$(runtime "$commands" 2>&1) || return 1
     [ -z "$response" ]
+}
+
+# The _rpc twin is the native-gRPC backend for the same slot. Enabling or
+# disabling one without the other would leave Connect on a server the JSON
+# pool has already withdrawn, or the reverse.
+set_slot_server_state() {
+    action=$1 backend=$2
+    apply_slot_server_state "$action" "$backend" || return 1
+    case "$backend" in
+        *_rpc) return 0 ;;
+    esac
+    case "$backend" in
+        "$backend_prefix"*)
+            apply_slot_server_state "$action" "${backend}_rpc" || return 1
+            ;;
+    esac
 }
 
 enable_slot() {

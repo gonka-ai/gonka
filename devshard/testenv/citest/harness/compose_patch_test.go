@@ -3,11 +3,113 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestPinVersiondCompose(t *testing.T) {
+	src := `
+services:
+  versiond-0:
+    build:
+      context: /repo/versioned
+      dockerfile: Dockerfile
+    image: devshard-versiond:latest
+    environment:
+      KEY: a
+  versiond-1:
+    build:
+      context: /repo/versioned
+      dockerfile: Dockerfile
+    image: devshard-versiond:latest
+  versiond-router:
+    build:
+      context: /repo
+      dockerfile: versiond-router/Dockerfile
+    image: devshard-versiond-router:latest
+  devshardctl:
+    build:
+      context: /repo
+      dockerfile: devshard/Dockerfile
+      target: devshardctl-runtime
+    image: devshard-runtime:latest
+`
+	got, err := pinVersiondCompose(src, "devshard-versiond:0.2.15-v5", "devshard-versiond-router:0.2.15-v5")
+	require.NoError(t, err)
+	require.NotContains(t, got, "image: devshard-versiond:latest")
+	require.NotContains(t, got, "image: devshard-versiond-router:latest")
+	require.Equal(t, 2, strings.Count(got, "image: devshard-versiond:0.2.15-v5"))
+	require.Contains(t, got, "image: devshard-versiond-router:0.2.15-v5")
+	require.NotContains(t, got, "dockerfile: Dockerfile\n")
+	require.NotContains(t, got, "versiond-router/Dockerfile")
+	require.Contains(t, got, "dockerfile: devshard/Dockerfile")
+	require.Contains(t, got, "image: devshard-runtime:latest")
+}
+
+func TestPinVersiondServiceImageLeavesSibling(t *testing.T) {
+	src := `
+services:
+  versiond-0:
+    build:
+      context: /repo/versioned
+      dockerfile: Dockerfile
+    image: devshard-versiond:latest
+    environment:
+      KEY: a
+  versiond-1:
+    build:
+      context: /repo/versioned
+      dockerfile: Dockerfile
+    image: devshard-versiond:latest
+  versiond-router:
+    build:
+      context: /repo
+      dockerfile: versiond-router/Dockerfile
+    image: devshard-versiond-router:latest
+`
+	got, err := pinVersiondServiceImage(src, "versiond-0", "devshard-versiond:0.2.15-v5")
+	require.NoError(t, err)
+	require.Contains(t, got, "image: devshard-versiond:0.2.15-v5")
+	require.Contains(t, got, "image: devshard-versiond:latest")
+	require.Equal(t, 1, strings.Count(got, "image: devshard-versiond:0.2.15-v5"))
+	require.Contains(t, got, "dockerfile: Dockerfile")
+	zero := serviceBlock(got, "versiond-0")
+	require.NotContains(t, zero, "build:")
+	require.Contains(t, zero, "image: devshard-versiond:0.2.15-v5")
+	one := serviceBlock(got, "versiond-1")
+	require.Contains(t, one, "build:")
+	require.Contains(t, one, "image: devshard-versiond:latest")
+	require.Contains(t, got, "image: devshard-versiond-router:latest")
+}
+
+func serviceBlock(text, service string) string {
+	marker := "\n  " + service + ":\n"
+	start := strings.Index(text, marker)
+	if start < 0 {
+		return ""
+	}
+	rest := text[start+len(marker):]
+	if loc := regexp.MustCompile(`\n  [A-Za-z0-9_-]+:\n`).FindStringIndex(rest); loc != nil {
+		return text[start : start+len(marker)+loc[0]]
+	}
+	return text[start:]
+}
+
+func TestPinVersiondImagesFromEnvNoop(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	original := "image: devshard-versiond:latest\n"
+	require.NoError(t, os.WriteFile(path, []byte(original), 0o644))
+	t.Setenv(EnvVersiondImage, "")
+	t.Setenv(EnvVersiondRouterImage, "")
+	PinVersiondImagesFromEnv(t, path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, original, string(body))
+}
 
 func TestPatchComposeEnvKey(t *testing.T) {
 	dir := t.TempDir()

@@ -86,3 +86,18 @@ func TestSession_Close_ClosesUnderlyingStore(t *testing.T) {
 	require.NoError(t, session.Close())
 	require.Equal(t, 1, store.closeCalls, "Session.Close must close the injected storage exactly once")
 }
+
+type closeCountingHostClient struct {
+	InProcessClient
+	n int
+}
+
+func (c *closeCountingHostClient) Close() { c.n++ }
+
+func TestSession_Close_ClosesHostClients(t *testing.T) {
+	session, _, _ := setupSessionWithOptions(t, 1, 1_000_000, 0)
+	c := &closeCountingHostClient{}
+	session.clients[0] = c
+	require.NoError(t, session.Close())
+	require.Equal(t, 1, c.n)
+}
