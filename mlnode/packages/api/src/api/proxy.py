@@ -88,15 +88,29 @@ async def _proxy_request_to_backend(request: Request, backend_path: str) -> Resp
         return Response(status_code=503, content=b"vLLM client not initialized")
     
     try:
+        # Read the body first so the disconnect watcher below owns receive().
+        body = await request.body()
         context_manager = vllm_client.stream(
             request.method,
             url,
             params=request.query_params,
             headers=headers,
-            content=request.stream(),
+            content=body,
             timeout=httpx.Timeout(None, read=900),
         )
-        upstream = await context_manager.__aenter__()
+        # A non-streaming response has no headers until generation ends, so a
+        # client that leaves meanwhile would keep the vLLM request alive.
+        # Closing the upstream connection makes vLLM abort it.
+        upstream_task = asyncio.ensure_future(context_manager.__aenter__())
+        client_gone = asyncio.ensure_future(_wait_client_disconnect(request))
+        await asyncio.wait({upstream_task, client_gone}, return_when=asyncio.FIRST_COMPLETED)
+        client_gone.cancel()
+        if not upstream_task.done():
+            upstream_task.cancel()
+            await asyncio.gather(upstream_task, return_exceptions=True)
+            await _release_vllm_backend(port)
+            return Response(status_code=499)
+        upstream = upstream_task.result()
     except Exception as exc:
         logger.exception(f"Failed to connect to vLLM backend: {exc}")
         await _release_vllm_backend(port)
@@ -145,6 +159,15 @@ async def _proxy_request_to_backend(request: Request, backend_path: str) -> Resp
         status_code=upstream.status_code,
         headers=resp_headers,
     )
+
+
+async def _wait_client_disconnect(request: Request) -> None:
+    """Return once the client disconnects; never return if it cannot be watched."""
+    try:
+        while (await request.receive())["type"] != "http.disconnect":
+            pass
+    except Exception:
+        await asyncio.Event().wait()
 
 
 async def _pick_vllm_backend() -> int:
