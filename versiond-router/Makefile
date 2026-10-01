@@ -1,6 +1,7 @@
 .PHONY: all build-docker release test-render test-compose-contract test-fleet
 .PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose
 .PHONY: test-join-versiond-healthcheck test-pool-status test-endpoints-render
+.PHONY: test-shutdown
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
@@ -45,6 +46,9 @@ test-compose-contract:
 
 test-fleet:
 	@../deploy/join/versiond-router-fleet_test.sh
+
+test-shutdown:
+	@./shutdown_test.sh
 
 test-pool-status:
 	@./pool-status_test.sh
@@ -413,7 +417,8 @@ test-version-routing:
 		| grep -Fq 'haproxy_backend_active_servers{proxy="router_catalog_serving_status"} 1' \
 		|| fail "accepted-route readiness is not exposed through HAProxy metrics"; \
 	sleep 4; \
-	docker exec gonka-vp-router sh -c 'kill -STOP $$(pidof haproxy)' \
+	: 'Send STOP from outside the PID namespace: HAProxy may be container PID 1'; \
+	docker kill --signal=STOP gonka-vp-router >/dev/null \
 		|| fail "could not suspend HAProxy for the Runtime API timeout test"; \
 	for i in $$(seq 15); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
@@ -428,7 +433,7 @@ test-version-routing:
 			docker logs --tail 30 gonka-vp-router >&2; \
 			fail "a half-open Runtime API socket did not reach its deadline"; \
 		}; \
-	docker exec gonka-vp-router sh -c 'kill -CONT $$(pidof haproxy)' \
+	docker kill --signal=CONT gonka-vp-router >/dev/null \
 		|| fail "could not resume HAProxy after the Runtime API timeout test"; \
 	for i in $$(seq 20); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
@@ -1231,8 +1236,12 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -qx v10 \
 		|| fail "capacity-blocked maintenance replacement removed v10"; \
-	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v10/sessions/replacement-held/chat)" = b ] \
-		|| fail "capacity-blocked maintenance replacement stopped the old route"; \
+	: 'Both a and b serve v10 here; preserving the route does not pin this session to b'; \
+	held_host=$$(curl -fsS -m 3 http://127.0.0.1:18132/v10/sessions/replacement-held/chat); \
+	case "$$held_host" in \
+		a|b) ;; \
+		*) fail "capacity-blocked maintenance replacement stopped the old route" ;; \
+	esac; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
 		/var/lib/gonka-router/catalog.json 86400 | grep -Fqx v10 \
 		|| fail "capacity-blocked maintenance replacement removed v10 from durable state"; \
