@@ -778,6 +778,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 
 	// 8. Verify post_state_root if present. On mismatch, roll back everything.
 	if len(postStateRoot) > 0 && !bytes.Equal(root, postStateRoot) {
+		inputs := sm.rootInputsLocked(nonce, root)
 		sm.logStateRootMismatchDiagnosticLocked(StateRootMismatchOpts{
 			Side:          "devshardd",
 			Nonce:         nonce,
@@ -786,7 +787,11 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 			SealClock:     sealClockWin,
 		})
 		sm.restoreMutable(snap)
-		return nil, fmt.Errorf("%w: diff %x, computed %x", types.ErrPostStateRootMismatch, postStateRoot, root)
+		return nil, &RootDivergenceError{
+			Inputs:   inputs,
+			DiffRoot: append([]byte(nil), postStateRoot...),
+			Computed: append([]byte(nil), root...),
+		}
 	}
 
 	logging.Debug("applied diff", "subsystem", "state", "nonce", nonce, "txs", len(txs))
