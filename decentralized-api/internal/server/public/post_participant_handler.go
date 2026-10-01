@@ -15,7 +15,7 @@ func (s *Server) submitNewParticipantHandler(ctx echo.Context) error {
 
 	if err := ctx.Bind(&body); err != nil {
 		logging.Error("Failed to decode request body", types.Participants, "error", err)
-		return echo.NewHTTPError(http.StatusBadRequest, err)
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request body").SetInternal(err)
 	}
 
 	logging.Debug("SubmitNewParticipantDto", types.Participants, "body", body)
