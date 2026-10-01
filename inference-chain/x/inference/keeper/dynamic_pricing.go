@@ -349,16 +349,16 @@ func (k *Keeper) CacheAllModelCapacities(ctx context.Context) error {
 			continue
 		}
 
-		// TODO: The proposal mentions copying from a `total_throughput` field, but this field
-		// doesn't exist in the current EpochGroupData structure. For now, we use TotalWeight
-		// as a proxy for capacity (tokens per second), as 1000 nonce of PoC produce aproximetely
-		// 1000 tokens for of QwQ-32B model. In a future task, we need to:
-		// 1. Add `total_throughput` field to EpochGroupData proto
-		// 2. Update this function to use the actual throughput data (tokens/second)
-		// 3. Implement logic to calculate/set throughput during epoch formation
-		capacity := modelEpochData.TotalWeight
+		// Prefer TotalThroughput (tokens/s summed from per-node Throughput at epoch
+		// formation). Fall back to TotalWeight as a QwQ-calibrated proxy (≈1000 nonce
+		// ≈ 1000 tokens/s for QwQ-32B) when throughput is unset — e.g. the epoch before
+		// a coordinated upgrade, or models with zero ThroughputPerNonce /
+		// UnitsOfComputePerToken. Default 1000 when both are zero.
+		capacity := modelEpochData.TotalThroughput
 		if capacity <= 0 {
-			// Set a reasonable default capacity for models with no weight
+			capacity = modelEpochData.TotalWeight
+		}
+		if capacity <= 0 {
 			capacity = 1000 // 1K tokens per second as default
 			k.LogWarn("Using default capacity for model with zero total weight", types.Pricing,
 				"modelId", modelId, "defaultCapacityPerSec", capacity)

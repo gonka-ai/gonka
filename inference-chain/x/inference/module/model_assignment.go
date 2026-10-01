@@ -357,9 +357,10 @@ func sumLiveRootTotalWeight(rootData types.EpochGroupData, liveRootSet map[strin
 }
 
 func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant, upcomingEpoch types.Epoch) {
-	// TODO: We may need to populate throughput in MLNodeInfo using the model's ThroughputPerNonce
-	// This would ensure consistent throughput calculations based on governance model parameters
-	// rather than relying on hardware node declarations alone.
+	// MLNodeInfo.Throughput is populated later at epoch-group formation
+	// (epochgroup.updateEpochGroupWithNewMember) from the governance model's
+	// ThroughputPerNonce / UnitsOfComputePerToken, once the final model assignment
+	// is known. See proposals/tokenomics-v2/dynamic-pricing.md.
 	ma.LogInfo("Starting model and slot assignment for participants", types.Allocation, "flow_context", FlowContext, "step", "start", "num_participants", len(participants), "epoch_index", upcomingEpoch.Index)
 
 	governanceModels, err := ma.keeper.GetGovernanceModelsSorted(ctx)
