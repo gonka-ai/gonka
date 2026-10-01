@@ -39,6 +39,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if opts.ScenarioPath == "" || opts.TestenvDir == "" || opts.OutputDir == "" {
 		return RunResult{}, fmt.Errorf("scenario path, testenv directory, and output directory are required")
 	}
+	result.OutputDir = opts.OutputDir
 	scenario, err := LoadScenario(opts.ScenarioPath)
 	if err != nil {
 		return RunResult{}, err
