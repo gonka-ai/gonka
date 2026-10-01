@@ -1052,6 +1052,13 @@ func (v *OffChainValidator) stopGenerationOnAllNodes(nodes []broker.NodeResponse
 	failCount := 0
 
 	for _, node := range nodes {
+		// Preserved executors keep serving normal inference. A capable preserved
+		// executor can validate concurrently inside vLLM, so stopping PoC here
+		// would interrupt the generation reservation this path is meant to keep.
+		if node.State.ShouldContinueInference() {
+			continue
+		}
+
 		nodeClient := v.nodeBroker.NewNodeClient(&node.Node)
 		_, err := nodeClient.StopPowV2(ctx)
 		if err != nil {
@@ -1135,9 +1142,12 @@ func (v *OffChainValidator) getNodesWithRetryConfig(
 }
 
 // filterNodesForValidation returns nodes available for PoC validation.
-// - Accept nodes in POC status with any sub-status
-// - Accept nodes in INFERENCE status (unless preserved for inference via POC_SLOT)
-// - Exclude FAILED, nodes that are not operational for the current epoch/phase, or POC_SLOT-preserved nodes
+//   - Accept nodes in POC status with any sub-status
+//   - Accept nodes in INFERENCE status
+//   - Accept an inference-preserved node only when its live state explicitly reports
+//     concurrent PoC validation support
+//   - Exclude FAILED, nodes that are not operational for the current epoch/phase, or
+//     preserved nodes without qualified concurrent-validation capability
 func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, currentPhase types.EpochPhase) []broker.NodeResponse {
 	filtered := make([]broker.NodeResponse, 0, len(nodes))
 	for _, node := range nodes {
@@ -1163,10 +1173,18 @@ func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, c
 			continue
 		}
 
-		// Exclude nodes preserved for inference (POC_SLOT allocation)
+		// A preserved node remains reserved for normal inference. It may also be
+		// used for validation only while it is actually serving inference and its
+		// refreshed runtime state explicitly reports concurrent validation support.
+		// The zero value covers both false and capability missing from older nodes.
 		if node.State.ShouldContinueInference() {
-			logging.Debug("filterNodesForValidation: Skipping node preserved for inference", types.PoC, "node_id", node.Node.Id)
-			continue
+			if node.State.CurrentStatus != types.HardwareNodeStatus_INFERENCE || !node.State.PoCValidationInference {
+				logging.Debug("filterNodesForValidation: Skipping preserved node without qualified concurrent validation", types.PoC,
+					"node_id", node.Node.Id,
+					"status", node.State.CurrentStatus.String(),
+					"poc_validation_inference", node.State.PoCValidationInference)
+				continue
+			}
 		}
 
 		// Accept nodes in POC status (any sub-status)
