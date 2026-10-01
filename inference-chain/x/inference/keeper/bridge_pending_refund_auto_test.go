@@ -175,6 +175,7 @@ func TestProcessAutoRefundForFailedBridgeOperation_MintRefundFailure(t *testing.
 	k, _, ctx, mocks := setupKeeperWithMocks(t)
 	requestID := bytes.Repeat([]byte{0x67}, 32)
 	requestKey := hex.EncodeToString(requestID)
+	ctx = expireSigningRequest(t, k, ctx, requestID, 904)
 
 	require.NoError(t, k.BridgeMintRefundsMap.Set(ctx, requestKey, types.MsgRequestBridgeMint{
 		Creator:            testutil.Creator,
@@ -214,6 +215,7 @@ func TestProcessAutoRefundForFailedBridgeOperation_WithdrawalContractNotRegister
 	k, _, ctx, _ := setupKeeperWithMocks(t)
 	requestID := bytes.Repeat([]byte{0x68}, 32)
 	requestKey := hex.EncodeToString(requestID)
+	ctx = expireSigningRequest(t, k, ctx, requestID, 905)
 
 	require.NoError(t, k.BridgeWithdrawalRefundsMap.Set(ctx, requestKey, types.MsgRequestBridgeWithdrawal{
 		Creator:            testutil.Creator,

@@ -494,6 +494,14 @@ func TestBlsHooksSharedAcrossKeeperCopies(t *testing.T) {
 	require.True(t, hook.called)
 }
 
+// A keeper without shared hooks state would keep the hooks on its own copy,
+// where nothing ever calls them; SetHooks must say so instead.
+func TestSetHooksRejectsKeeperNotBuiltByNewKeeper(t *testing.T) {
+	var k Keeper
+	err := k.SetHooks(&retryTestBlsHook{})
+	require.ErrorContains(t, err, "NewKeeper")
+}
+
 func TestProcessThresholdSigningDeadlines_HookCanCloseRetry(t *testing.T) {
 	k, ctx := setupBlsKeeperForRetryTests(t)
 	epochID := uint64(306)

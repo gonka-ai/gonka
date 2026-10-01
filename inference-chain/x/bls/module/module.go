@@ -240,11 +240,16 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 	return ModuleOutputs{BlsKeeper: k, Module: m}
 }
 
+// InvokeSetBlsHooks takes the keeper by value because ProvideModule outputs
+// keeper.Keeper, and depinject matches types exactly: asking for *keeper.Keeper
+// left the dependency unresolved, the invoker received nil, and no hook was ever
+// installed. Keeper copies share their hooks state, so setting hooks on this copy
+// installs them on the keeper held by the app and by every dependent module.
 func InvokeSetBlsHooks(
-	keeper *keeper.Keeper,
+	keeper keeper.Keeper,
 	blsHooks map[string]types.BlsHooksWrapper,
 ) error {
-	if keeper == nil || len(blsHooks) == 0 {
+	if len(blsHooks) == 0 {
 		return nil
 	}
 

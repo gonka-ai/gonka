@@ -803,6 +803,14 @@ func (k Keeper) maybeCloseRetryAfterFailedPostProcess(ctx sdk.Context, request *
 				"request_id", fmt.Sprintf("%x", request.RequestId), "error", err)
 			return false
 		}
+	} else {
+		// No hook claimed the request: either nothing is waiting on it, or the
+		// hooks are not installed. Anything held for it stays held until someone
+		// releases it by hand, so leave a trace.
+		k.Logger().Info("Threshold signing failure was not handled by any hook",
+			"request_id", fmt.Sprintf("%x", request.RequestId),
+			"status", request.Status.String(),
+			"reason", reason)
 	}
 
 	writeCache()

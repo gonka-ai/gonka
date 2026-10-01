@@ -195,6 +195,9 @@ func (k Keeper) ProcessAutoRefundForFailedBridgeOperation(ctx context.Context, b
 	pendingMint, err := k.BridgeMintRefundsMap.Get(ctx, requestKey)
 	switch {
 	case err == nil:
+		if err := k.requireFailedSigningRequest(sdkCtx, blsRequestID, requestKey); err != nil {
+			return false, err
+		}
 		if err := k.processAutoRefundMint(sdkCtx, requestKey, pendingMint, reason); err != nil {
 			return false, err
 		}
@@ -206,6 +209,9 @@ func (k Keeper) ProcessAutoRefundForFailedBridgeOperation(ctx context.Context, b
 	pendingWithdrawal, err := k.BridgeWithdrawalRefundsMap.Get(ctx, requestKey)
 	switch {
 	case err == nil:
+		if err := k.requireFailedSigningRequest(sdkCtx, blsRequestID, requestKey); err != nil {
+			return false, err
+		}
 		if err := k.processAutoRefundWithdrawal(sdkCtx, requestKey, pendingWithdrawal, reason); err != nil {
 			return false, err
 		}
@@ -215,6 +221,24 @@ func (k Keeper) ProcessAutoRefundForFailedBridgeOperation(ctx context.Context, b
 	}
 
 	return false, nil
+}
+
+// requireFailedSigningRequest refuses an auto-refund unless the signing request
+// ended in FAILED or EXPIRED. A refund releases the escrow backing the operation;
+// if the signature was produced, tokens may already exist on the other chain and
+// the refund would pay the user twice.
+func (k Keeper) requireFailedSigningRequest(ctx sdk.Context, blsRequestID []byte, requestKey string) error {
+	request, err := k.BlsKeeper.GetSigningStatus(ctx, blsRequestID)
+	if err != nil {
+		return fmt.Errorf("cannot auto-refund bridge request %s: failed to load signing request: %w", requestKey, err)
+	}
+	switch request.Status {
+	case blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_FAILED,
+		blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED:
+		return nil
+	default:
+		return fmt.Errorf("cannot auto-refund bridge request %s: signing request status is %s, not failed or expired", requestKey, request.Status)
+	}
 }
 
 func (k Keeper) processAutoRefundMint(
