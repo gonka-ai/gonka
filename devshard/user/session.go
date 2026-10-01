@@ -1301,7 +1301,7 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 		}
 	})
 	if err != nil && state.IsPostStateRootMismatchError(err) {
-		s.logStateRootMismatchUserDiagnostic(p)
+		s.logStateRootMismatchUserDiagnostic(p, err)
 	}
 	return resp, err
 }
@@ -1344,7 +1344,7 @@ func (s *Session) heightSyncEscrowHints() *heightsync.EscrowHeightSyncHints {
 	return s.sm.HeightSyncEscrowHints(k, slots)
 }
 
-func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
+func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference, err error) {
 	if p == nil {
 		return
 	}
@@ -1356,6 +1356,21 @@ func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
 		DiffPostState: p.diff.PostStateRoot,
 		SealClock:     s.sm.AutoSealStateClock(),
 	})
+	var upstream *transport.UpstreamStatusError
+	if !errors.As(err, &upstream) {
+		return
+	}
+	hostInputs, ok := state.ParseHostRootInputs(upstream.Body)
+	if !ok {
+		return
+	}
+	local := s.sm.ExportRootInputs(p.diff.Nonce)
+	logging.Error("state root divergence comparison",
+		"subsystem", "user",
+		"escrow_id", s.escrowID,
+		"nonce", p.diff.Nonce,
+		"differ", state.DiffRootInputs(local, hostInputs),
+	)
 }
 
 // SendInference composes diff, sends to correct host, processes response.
