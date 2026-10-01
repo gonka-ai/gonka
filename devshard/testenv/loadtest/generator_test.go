@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +31,7 @@ func TestRunGenerator_WritesRequestArtifacts(t *testing.T) {
 
 	outputDir := t.TempDir()
 	scenario := testScenario()
-	scenario.Workload.Concurrency = 1
+	scenario.Workload.MaxInFlight = 1
 	scenario.Workload.Duration = "20ms"
 	summary, err := RunGenerator(context.Background(), GeneratorConfig{
 		GatewayURL: server.URL,
@@ -50,6 +51,28 @@ func TestRunGenerator_WritesRequestArtifacts(t *testing.T) {
 	require.NotEmpty(t, strings.TrimSpace(string(body)))
 }
 
+func TestRunGenerator_RateProfileRecordsDroppedRequests(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]string{{"text": "ok"}}})
+	}))
+	defer server.Close()
+
+	scenario := testScenario()
+	scenario.Workload.Duration = "60ms"
+	scenario.Workload.MaxInFlight = 1
+	scenario.Workload.Traffic = TrafficProfile{Type: "constant", RPS: 100}
+	summary, err := RunGenerator(context.Background(), GeneratorConfig{
+		GatewayURL: server.URL,
+		Scenario:   scenario,
+		OutputDir:  t.TempDir(),
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, summary.Completed)
+	require.Greater(t, summary.Dropped, 0)
+	require.Equal(t, summary.Offered, summary.Requests)
+}
+
 func testScenario() Scenario {
 	scenario := Scenario{
 		SchemaVersion: "v1",
@@ -65,8 +88,7 @@ func testScenario() Scenario {
 			}},
 		},
 		Workload: Workload{
-			Mode:        "closed_loop",
-			Concurrency: 1,
+			MaxInFlight: 1,
 			Duration:    "1s",
 			Request: Request{
 				Model:    "test-model",

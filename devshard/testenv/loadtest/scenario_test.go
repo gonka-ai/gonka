@@ -16,6 +16,8 @@ func TestLoadScenario_NormalLoad(t *testing.T) {
 	require.Equal(t, uint32(100_000), scenario.Topology.Chain.MaxNonce)
 	require.Equal(t, 3, scenario.Topology.Participants)
 	require.Equal(t, 0.02, scenario.Assertions.Devshard.MaxGhostRate)
+	require.Equal(t, "closed_loop", scenario.Workload.Traffic.ResolvedType())
+	require.Equal(t, 2, scenario.Workload.MaxInFlight)
 	require.Equal(t, "30s", scenario.Workload.Duration)
 	require.Equal(t, "30s", scenario.DrainTimeout)
 }
