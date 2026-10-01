@@ -70,7 +70,7 @@ index 000000000..5a2d131fe
 +                escrowAmount,
 +                requireCompletedValidations = false,
 +            )
-+            settlementVersion = settlement.parsed.version
++            settlementVersion = settlement.parsed.stateRootAndProtocolVersion
 +        } finally {
 +            genesis.stopDevshardProxy(escrowId)
 +        }
