@@ -316,7 +316,7 @@ struct WithdrawalCommand {
 
 1. **Epoch Validation**: Verify group key exists for specified `epochId` (`epochGroupKeys[epochId].length > 0`)
 2. **Replay Protection**: Check `requestId` hasn't been processed for this `epochId`
-3. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, requestId, WITHDRAW_OPERATION, recipient, tokenContract, amount)`
+3. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, GONKA_CHAIN_ID, requestId, ETHEREUM_CHAIN_ID, WITHDRAW_OPERATION, recipient, address(this), tokenContract, amount)`
 4. **Balance Check**: Ensure contract has sufficient token or ETH balance
 5. **Execution**: Transfer tokens or ETH to recipient address
    - **ETH withdrawals**: When `tokenContract == address(this)`, transfer ETH using `call{value:}`
@@ -467,7 +467,7 @@ function mintWithSignature(MintCommand calldata cmd) external;
 1. **State Check**: Only allowed in `NORMAL_OPERATION` state
 2. **Epoch Validation**: Verify group key exists for specified `epochId`
 3. **Replay Protection**: Check `requestId` hasn't been processed for this `epochId`
-4. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, requestId, MINT_OPERATION, recipient, amount, )`
+4. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, GONKA_CHAIN_ID, requestId, ETHEREUM_CHAIN_ID, MINT_OPERATION, recipient, address(this), amount)`
 5. **Execution**: Mint WGNK tokens to recipient's balance, increase total supply
 6. **Record Processing**: Mark `requestId` as processed for this `epochId`
 
