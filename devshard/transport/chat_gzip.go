@@ -86,6 +86,9 @@ func (e *ChatGzipEmitter) emit() error {
 //
 // The executor still flushes every scanner line. This sink holds those
 // flushes and emits one gzip block when:
+//   - the receipt has already left (FlushNow) and the next finished SSE
+//     event is the first model token: that event leaves immediately, even
+//     under 128 bytes, so the gateway can time it, or
 //   - at least chatGzipCoalesceMin uncompressed bytes are pending and they
 //     end on an SSE event (\n\n), about five tokens, or
 //   - pending bytes reach chatGzipCoalesceMax, so a missing blank line
@@ -99,6 +102,10 @@ type ChatFrameSink struct {
 	sendErr error
 	pending int
 	tail    [2]byte
+	// oweFirstToken is set by FlushNow. The next finished event is the first
+	// model token and must not wait for chatGzipCoalesceMin.
+	oweFirstToken  bool
+	sentFirstToken bool
 }
 
 func NewChatFrameSink(send func([]byte) error) *ChatFrameSink {
@@ -151,18 +158,30 @@ func (s *ChatFrameSink) note(p []byte) {
 	}
 }
 
+func (s *ChatFrameSink) eventBoundary() bool {
+	return s.pending > 0 && s.tail[0] == '\n' && s.tail[1] == '\n'
+}
+
 func (s *ChatFrameSink) eventReady() bool {
-	return s.pending >= chatGzipCoalesceMin && s.tail[0] == '\n' && s.tail[1] == '\n'
+	return s.pending >= chatGzipCoalesceMin && s.eventBoundary()
+}
+
+// firstTokenReady is the model event the gateway times. The receipt uses
+// FlushNow and does not count. Size does not matter, including under the
+// 128-byte BestSpeed floor.
+func (s *ChatFrameSink) firstTokenReady() bool {
+	return s.oweFirstToken && !s.sentFirstToken && s.eventBoundary()
 }
 
 func (s *ChatFrameSink) Flush() {
 	_ = s.FlushErr()
 }
 
-// FlushErr emits a ChatFrame when the held SSE reaches chatGzipCoalesceMin
-// on an event boundary, or chatGzipCoalesceMax. A shorter complete event
-// stays buffered. http.Flusher.Flush cannot return stream.Send errors.
-// The receipt calls FlushNow so a failed frame still returns before execution.
+// FlushErr emits a ChatFrame when the held SSE is the first model token,
+// reaches chatGzipCoalesceMin on an event boundary, or reaches
+// chatGzipCoalesceMax. A later event under the cut stays buffered.
+// http.Flusher.Flush cannot return stream.Send errors. The receipt calls
+// FlushNow so a failed frame still returns before execution.
 func (s *ChatFrameSink) FlushErr() error {
 	if s == nil {
 		return io.ErrClosedPipe
@@ -172,6 +191,11 @@ func (s *ChatFrameSink) FlushErr() error {
 	}
 	if s.gzip == nil {
 		return io.ErrClosedPipe
+	}
+	if s.firstTokenReady() {
+		s.sentFirstToken = true
+		s.oweFirstToken = false
+		return s.flushGzip()
 	}
 	if s.pending >= chatGzipCoalesceMax || s.eventReady() {
 		return s.flushGzip()
@@ -188,7 +212,15 @@ func (s *ChatFrameSink) FlushNow() error {
 	if s.sendErr != nil {
 		return s.sendErr
 	}
-	return s.flushGzip()
+	if err := s.flushGzip(); err != nil {
+		return err
+	}
+	// The receipt has left, or this was a no-op after it already left.
+	// The next finished event is the first token.
+	if !s.sentFirstToken {
+		s.oweFirstToken = true
+	}
+	return nil
 }
 
 func (s *ChatFrameSink) flushGzip() error {

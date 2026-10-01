@@ -254,20 +254,32 @@ func TestChatFrameSink_GatewayUnpacksCoalescedStream(t *testing.T) {
 		return nil
 	})
 	var body strings.Builder
+	receipt := "data: {\"devshard_receipt\":{}}\n\n"
+	body.WriteString(receipt)
+	require.NoError(t, relaySSELines(receipt, sink))
+	require.Empty(t, chunks, "a short receipt stays buffered until FlushNow")
+	require.NoError(t, sink.FlushNow())
+	require.Len(t, chunks, 1, "the receipt leaves in its own frame")
+
+	first := "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n"
+	require.Less(t, len(first), 128, "the first token is under the BestSpeed floor")
+	body.WriteString(first)
+	require.NoError(t, relaySSELines(first, sink))
+	require.Len(t, chunks, 2, "the first token leaves immediately, not with the next tokens")
+
+	words := []string{"Hello", " world", " from", " the", " model"}
 	events := 0
-	for events < 12 {
+	for events < 12 && len(chunks) == 2 {
 		events++
-		ev := vllmTokenEvent(events, []string{"Hello", " world", " from", " the", " model"}[(events-1)%5])
+		ev := vllmTokenEvent(events, words[(events-1)%len(words)])
 		body.WriteString(ev)
 		require.NoError(t, relaySSELines(ev, sink))
-		if len(chunks) > 0 {
-			break
-		}
 	}
-	require.Equal(t, 5, events, "1024 bytes is about five vLLM token events")
+	require.Equal(t, 5, events, "after the first token, 1024 bytes is about five vLLM events")
+	require.NotEqual(t, len(chunks[1]), len(chunks[2]), "the first token frame and the packed frame are different sizes")
 	for events < 12 {
 		events++
-		ev := vllmTokenEvent(events, []string{"Hello", " world", " from", " the", " model"}[(events-1)%5])
+		ev := vllmTokenEvent(events, words[(events-1)%len(words)])
 		body.WriteString(ev)
 		require.NoError(t, relaySSELines(ev, sink))
 	}
@@ -283,6 +295,7 @@ func TestChatFrameSink_GatewayUnpacksCoalescedStream(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, fromRaw.String(), fromFrames)
 	require.Contains(t, fromFrames, "data: [DONE]\n\n")
+	require.Contains(t, fromFrames, `"content":"Hi"`)
 	require.Contains(t, fromFrames, `"content":"Hello"`)
 	require.Contains(t, fromFrames, `"content":" model"`)
 }
