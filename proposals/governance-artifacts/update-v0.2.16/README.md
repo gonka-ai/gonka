@@ -132,7 +132,9 @@ Compatibility testing covered devshard v4.1 and v5 with both v0.2.15 and v0.2.16
 - @aikuznetsov
 - @akup
 - @baychak
+- @bonujel
 - @cyberdelamain
+- @clanster
 - @DimaOrekhovPS
 - @GLiberman
 - @gmorgachev
@@ -140,11 +142,14 @@ Compatibility testing covered devshard v4.1 and v5 with both v0.2.15 and v0.2.16
 - @maksimenkoff
 - @Mayveskii
 - @niktverd
+- @qdanik
 - @redstartechno
 - @snevolin
 - @staaason
 - @tcharchian
 - @vbgd0
+- @vitaly-andr
+- @x0152
 - @zpoken
 
 ## Proposed Bounties
