@@ -135,7 +135,12 @@ async def _proxy_request_to_backend(request: Request, backend_path: str) -> Resp
                 yield chunk
                 
         except asyncio.CancelledError:
-            logger.info(f"Stream cancelled for port {port} during shutdown")
+            # Starlette cancels the stream when the client disconnects; that is
+            # routine and not a shutdown.
+            if shutdown_event.is_set():
+                logger.info(f"Stream cancelled for port {port} during shutdown")
+            else:
+                logger.debug(f"Stream cancelled for port {port}: client disconnected")
             raise
         
         except Exception as exc:
