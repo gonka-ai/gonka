@@ -198,3 +198,77 @@ func TestGranteesByMessageTypeQuery_LegacyWarmKeyMarkerAliasesClaimRewards(t *te
 	require.Len(t, response.Grantees, 1)
 	require.Equal(t, grantee.String(), response.Grantees[0].Address)
 }
+
+// TestGranteesByMessageTypeQuery_CapsUnboundedGrantSet checks the query bounds
+// its result at maxGranteesByMessageType (10000) instead of scanning the full,
+// caller-controllable grant set.
+func TestGranteesByMessageTypeQuery_CapsUnboundedGrantSet(t *testing.T) {
+	keeper, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	const cap = 10000
+	const overflow = cap + 5
+
+	msgType := "/inference.bls.MsgSubmitDealerPart"
+	granter := sdk.AccAddress(bytes.Repeat([]byte{9}, 20))
+	authorization, err := codectypes.NewAnyWithValue(authztypes.NewGenericAuthorization(msgType))
+	require.NoError(t, err)
+
+	grants := make([]*authztypes.GrantAuthorization, 0, overflow)
+	for i := 0; i < overflow; i++ {
+		grantee := sdk.AccAddress([]byte(fmt.Sprintf("grantee-%012d", i)))
+		grants = append(grants, &authztypes.GrantAuthorization{
+			Granter:       granter.String(),
+			Grantee:       grantee.String(),
+			Authorization: authorization,
+		})
+	}
+
+	// A single page carrying more matching grants than the cap; the loop must
+	// stop at the cap without paging further.
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(
+		&authztypes.QueryGranterGrantsResponse{Grants: grants},
+		nil,
+	).Times(1)
+	// The query only reads account.GetPubKey() (nil here), so any base account
+	// suffices; the grantee address comes from the grant, not the account.
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), gomock.Any()).Return(
+		authtypes.NewBaseAccountWithAddress(granter),
+	).AnyTimes()
+
+	response, err := keeper.GranteesByMessageType(ctx, &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: granter.String(),
+		MessageTypeUrl: msgType,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, response)
+	require.Len(t, response.Grantees, cap, "grantee set must be bounded by maxGranteesByMessageType")
+}
+
+// TestGranteesByMessageType_NonMatchingGrantsBypassCap reproduces the reported
+// gap: the cap counts matched grantees, so a granter who piles up grants of an
+// unrelated message type is scanned in full and the cap never fires.
+func TestGranteesByMessageType_NonMatchingGrantsBypassCap(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	granter := sdk.AccAddress([]byte("granter-000000000000"))
+	auth, _ := codectypes.NewAnyWithValue(authztypes.NewGenericAuthorization("/cosmos.bank.v1beta1.MsgSend"))
+	const pages, perPage = 200, 100
+	calls := 0
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ interface{}, _ *authztypes.QueryGranterGrantsRequest) (*authztypes.QueryGranterGrantsResponse, error) {
+			p := calls
+			calls++
+			gs := make([]*authztypes.GrantAuthorization, 0, perPage)
+			for i := 0; i < perPage; i++ {
+				grantee := sdk.AccAddress([]byte(fmt.Sprintf("grantee-%012d", p*perPage+i)))
+				gs = append(gs, &authztypes.GrantAuthorization{Granter: granter.String(), Grantee: grantee.String(), Authorization: auth})
+			}
+			var next []byte
+			if p+1 < pages {
+				next = []byte(fmt.Sprintf("page-%d", p+1))
+			}
+			return &authztypes.QueryGranterGrantsResponse{Grants: gs, Pagination: &query.PageResponse{NextKey: next}}, nil
+		}).AnyTimes()
+	_, err := k.GranteesByMessageType(ctx, &types.QueryGranteesByMessageTypeRequest{
+		GranterAddress: granter.String(), MessageTypeUrl: "/inference.bls.MsgSubmitDealerPart"})
+	require.NoError(t, err)
+	require.LessOrEqual(t, calls*perPage, 10000, "scan must be bounded regardless of grant type")
+}
