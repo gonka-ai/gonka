@@ -50,6 +50,35 @@ type ExecutorClient interface {
 	ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) (receipt []byte, mempool []*types.DevshardTx, err error)
 }
 
+// ConfirmStartVerifier checks an executor's MsgConfirmStart against local
+// state without applying it. *state.StateMachine (via *Host) satisfies it.
+type ConfirmStartVerifier interface {
+	VerifyConfirmStart(msg *types.MsgConfirmStart) error
+}
+
+func (h *Host) VerifyConfirmStart(msg *types.MsgConfirmStart) error {
+	return h.sm.VerifyConfirmStart(msg)
+}
+
+var _ ConfirmStartVerifier = (*Host)(nil)
+
+// verifiedRecovery drops the ConfirmStarts that do not verify and keeps the
+// FinishInference txs as before. ok reports whether a verified ConfirmStart
+// remained: without one the receipt cannot move the record off Pending.
+func verifiedRecovery(txs []*types.DevshardTx, v ConfirmStartVerifier) (out []*types.DevshardTx, ok bool) {
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil {
+			if v.VerifyConfirmStart(cs) == nil {
+				out = append(out, tx)
+				ok = true
+			}
+			continue
+		}
+		out = append(out, tx)
+	}
+	return out, ok
+}
+
 // TxSink receives mempool txs copied from a challenge-receipt response.
 type TxSink interface {
 	AddTx(tx *types.DevshardTx)
@@ -138,10 +167,22 @@ func VerifyRefusedTimeout(
 			return true, nil
 		}
 		if len(receipt) > 0 {
+			recovery := RecoveryTxsFor(mempool, inferenceID)
+			// The receipt bytes alone prove nothing: only a ConfirmStart the
+			// user can sequence moves the record off Pending, and a Pending
+			// record is credited to the executor at drain. Without one that
+			// verifies, treat the executor as refusing.
+			if v, isVerifier := ingest.(ConfirmStartVerifier); isVerifier {
+				var verified bool
+				recovery, verified = verifiedRecovery(recovery, v)
+				if !verified {
+					return true, nil
+				}
+			}
 			// Copy executor recovery txs into the verifier pool. Same bytes as
 			// the executor queued — do not mint a new ConfirmStart from receipt.
 			if ingest != nil {
-				for _, tx := range RecoveryTxsFor(mempool, inferenceID) {
+				for _, tx := range recovery {
 					ingest.AddTx(tx)
 				}
 			}
