@@ -1234,6 +1234,27 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 	}
 
 	// Verify executor receipt (includes confirmed_at from the executor's wall clock).
+	if err := sm.verifyConfirmStartLocked(rec, msg); err != nil {
+		return err
+	}
+
+	rec.Status = types.StatusStarted
+	rec.ConfirmedAt = msg.ConfirmedAt
+	if heightsync.StampPresent(msg.ObservedBlockHash) {
+		rec.ConfirmedAtHeight = msg.ObservedHeight
+	}
+	logging.Debug("inference pending -> started", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", rec.ExecutorSlot,
+		"confirmed_at", msg.ConfirmedAt,
+	)
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+// verifyConfirmStartLocked checks that msg.ExecutorSig is the executor's
+// receipt over rec's committed fields. Same check applyConfirmStart uses.
+// Callers hold sm.mu (write: ResolveWarmKey may bind a warm key).
+func (sm *StateMachine) verifyConfirmStartLocked(rec *types.InferenceRecord, msg *types.MsgConfirmStart) error {
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId:       msg.InferenceId,
 		PromptHash:        rec.PromptHash,
@@ -1263,18 +1284,26 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 				types.ErrInvalidExecutorSig, expectedAddr, rec.ExecutorSlot, recovered)
 		}
 	}
+	return nil
+}
 
-	rec.Status = types.StatusStarted
-	rec.ConfirmedAt = msg.ConfirmedAt
-	if heightsync.StampPresent(msg.ObservedBlockHash) {
-		rec.ConfirmedAtHeight = msg.ObservedHeight
+// VerifyConfirmStart checks an executor's MsgConfirmStart against the local
+// record without applying it. The inference must be pending here.
+func (sm *StateMachine) VerifyConfirmStart(msg *types.MsgConfirmStart) error {
+	if msg == nil {
+		return fmt.Errorf("%w: nil confirm start", types.ErrInvalidExecutorSig)
 	}
-	logging.Debug("inference pending -> started", "subsystem", "state",
-		"inference_id", msg.InferenceId,
-		"executor_slot", rec.ExecutorSlot,
-		"confirmed_at", msg.ConfirmedAt,
-	)
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	rec, ok := sm.state.Inferences[msg.InferenceId]
+	if !ok {
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+	}
+	if rec.Status != types.StatusPending {
+		return fmt.Errorf("%w: expected pending, got %d", types.ErrInvalidTransition, rec.Status)
+	}
+	// Write lock: a warm-key miss goes through ResolveWarmKey, as in apply.
+	return sm.verifyConfirmStartLocked(rec, msg)
 }
 
 func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) error {

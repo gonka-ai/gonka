@@ -4,7 +4,7 @@
 
 Executor receives MsgStartInference but never signs a receipt.
 
-After RefusalTimeout, verifiers challenge the executor via ChallengeReceipt. If the executor is unreachable or returns no receipt, verifiers vote accept. The user gets a full refund; the executor gets missed++ in HostStats.
+After RefusalTimeout, verifiers challenge the executor via ChallengeReceipt. If the executor is unreachable or returns no receipt, verifiers vote accept. A receipt counts only together with a MsgConfirmStart for the inference that verifies against the verifier's state; that is what lets the user move the record to Started. A receipt without one is treated as no receipt, since a record left Pending is credited to the executor at drain. The user gets a full refund; the executor gets missed++ in HostStats.
 
 ChallengeReceipt also handles the case where the executor is alive but the user never delivered the prompt. The verifier forwards diffs and payload through ChallengeReceipt, forcing the executor to either produce a receipt (and compute) or be marked unresponsive.
 
