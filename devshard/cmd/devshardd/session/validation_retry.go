@@ -142,8 +142,10 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 
 		// Sessions are epoch-bounded: validation is no longer useful once the
 		// chain advances beyond the inference epoch. Rows may be retained longer
-		// for history and cleanup, but retry should stop at epoch+1.
-		if r.phase != nil && r.phase.EpochID() > leaseEpochID {
+		// for history and cleanup, but retry should stop after epoch+1: the
+		// phase reaches epoch+1 at poc_start, while escrows of the lease epoch
+		// still serve until set_new_validators.
+		if r.phase != nil && r.phase.EpochID() > leaseEpochID+1 {
 			slog.Info("devshardd: validation retry: epoch stale, skipping validation",
 				"escrow", escrowID, "inference", inferenceID,
 				"lease_epoch", leaseEpochID, "current_epoch", r.phase.EpochID())
