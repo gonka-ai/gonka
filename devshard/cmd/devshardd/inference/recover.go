@@ -42,6 +42,46 @@ func recoverStoredExecution(
 		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeExecute,
 			fmt.Errorf("stored prompt at epoch %d does not match the inference: expected %x got %x", epoch, req.PromptHash, promptHash[:]))
 	}
+	result, err := resultFromStoredResponse(response)
+	if err != nil {
+		return nil, err
+	}
+	if req.ResponseWriter != nil {
+		if err := writeStoredResponse(req.ResponseWriter, response); err != nil {
+			return nil, fmt.Errorf("relay stored response: %w", err)
+		}
+	}
+	return result, nil
+}
+
+// storedExecutionResult is the result of an execution whose own response lost
+// the store to an earlier execution of the same inference. The caller has
+// already relayed its own response, so nothing is written to the client.
+func storedExecutionResult(
+	ctx context.Context,
+	req devshardpkg.ExecuteRequest,
+	store PayloadStore,
+	payloadEpoch uint64,
+) (*devshardpkg.ExecuteResult, error) {
+	reader, ok := store.(PayloadReader)
+	if !ok {
+		return nil, observability.Classify(observability.ReasonPayloadStoreErr, observability.WhereRuntimeExecute,
+			fmt.Errorf("store payloads: %w, and the store cannot read it back", payloads.ErrAlreadyStored))
+	}
+	prompt, response, err := reader.Retrieve(ctx, req.EscrowID, req.InferenceID, payloadEpoch)
+	if err != nil {
+		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeExecute, fmt.Errorf("read the payload stored first: %w", err))
+	}
+	if promptHash := sha256.Sum256(prompt); len(req.PromptHash) > 0 && !bytes.Equal(promptHash[:], req.PromptHash) {
+		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeExecute,
+			fmt.Errorf("the payload stored first at epoch %d is for another prompt: expected %x got %x", payloadEpoch, req.PromptHash, promptHash[:]))
+	}
+	return resultFromStoredResponse(response)
+}
+
+// resultFromStoredResponse hashes the exact bytes validators fetch and takes
+// the token counts from the parser validators use.
+func resultFromStoredResponse(response []byte) (*devshardpkg.ExecuteResult, error) {
 	parsed, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(response)
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonProcessResponseErr, observability.WhereRuntimeExecute, fmt.Errorf("parse stored response: %w", err))
@@ -49,11 +89,6 @@ func recoverStoredExecution(
 	usage, err := parsed.GetUsage()
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonProcessResponseErr, observability.WhereRuntimeExecute, fmt.Errorf("stored response usage: %w", err))
-	}
-	if req.ResponseWriter != nil {
-		if err := writeStoredResponse(req.ResponseWriter, response); err != nil {
-			return nil, fmt.Errorf("relay stored response: %w", err)
-		}
 	}
 	hash := sha256.Sum256(response)
 	return &devshardpkg.ExecuteResult{
