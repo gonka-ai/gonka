@@ -23,9 +23,10 @@ func (m *memoryPayloads) Store(_ context.Context, _ string, _, epochID uint64, p
 	if m.rows == nil {
 		m.rows = map[uint64][2][]byte{}
 	}
-	if _, exists := m.rows[epochID]; !exists {
-		m.rows[epochID] = [2][]byte{prompt, response}
+	if _, exists := m.rows[epochID]; exists {
+		return payloads.ErrAlreadyStored
 	}
+	m.rows[epochID] = [2][]byte{prompt, response}
 	return nil
 }
 

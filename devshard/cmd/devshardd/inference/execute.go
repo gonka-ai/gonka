@@ -3,10 +3,12 @@ package inference
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"common/completionapi"
+	"common/storage/payloads"
 	devshardpkg "devshard"
 	"devshard/observability"
 )
@@ -54,14 +56,22 @@ func executeInference(
 		return nil, observability.Classify(observability.ReasonCanonicalizePromptErr, observability.WhereRuntimeExecute, fmt.Errorf("canonicalize prompt: %w", err))
 	}
 
-	if err := store.Store(
+	err = store.Store(
 		ctx,
 		req.EscrowID,
 		req.InferenceID,
 		payloadEpoch,
 		promptPayload,
 		processed.responseBody,
-	); err != nil {
+	)
+	if errors.Is(err, payloads.ErrAlreadyStored) {
+		// Another execution of this inference stored first: a host closed
+		// mid-generation keeps its detached run going while a reconnect on the
+		// new host runs the model again. Validators fetch the stored bytes, so
+		// the finish must commit their hash, not the hash of this run.
+		return storedExecutionResult(ctx, req, store, payloadEpoch)
+	}
+	if err != nil {
 		return nil, observability.Classify(observability.ReasonPayloadStoreErr, observability.WhereRuntimeExecute, fmt.Errorf("store payloads: %w", err))
 	}
 
