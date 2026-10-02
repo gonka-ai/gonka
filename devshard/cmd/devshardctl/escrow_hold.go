@@ -35,9 +35,9 @@ func (inFlight *keyedInFlight) enter(key string) (leave func(), entered bool) {
 
 const escrowHoldReleaseResponses = 32
 
-// escrowMinimumBalance is the balance under which an escrow is replaced: one full-context request of its model, never under balanceMinimumThreshold.
+// escrowMinimumBalance is the balance under which an escrow is replaced: one full-context request of its model priced in prompt bytes, as reservations are, never under balanceMinimumThreshold.
 func escrowMinimumBalance(modelID string, config types.SessionConfig) uint64 {
-	return max(balanceMinimumThreshold, modelContextLimits[modelID]*config.TokenPrice)
+	return max(balanceMinimumThreshold, modelContextLimits[modelID]*estimatedPromptBytesPerToken*config.TokenPrice)
 }
 
 func escrowHoldReleaseBalance(modelID string, config types.SessionConfig) uint64 {

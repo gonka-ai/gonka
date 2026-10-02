@@ -3929,7 +3929,7 @@ func contextRefusalBeyondModelLimit(message string, modelContextLimit uint64) bo
 	if modelContextLimit == 0 || hostContextLimit == 0 {
 		return false
 	}
-	return hostContextLimit >= modelContextLimit || parseContextTotalRequested(message) > modelContextLimit
+	return hostContextLimit >= modelContextLimit || max(parseContextTotalRequested(message), parseContextRequested(message)) > modelContextLimit
 }
 
 func isToolChoiceCapabilityError(msg string) bool {
@@ -3961,6 +3961,10 @@ func parseContextLengthLimit(msg string) uint64 {
 
 func parseContextTotalRequested(msg string) uint64 {
 	return parseUintAfterMarker(msg, "for a total of at least ")
+}
+
+func parseContextRequested(msg string) uint64 {
+	return parseUintAfterMarker(msg, "you requested ")
 }
 
 func parseUintAfterMarker(msg, marker string) uint64 {

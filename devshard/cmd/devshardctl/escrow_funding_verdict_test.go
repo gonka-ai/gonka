@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 const (
@@ -175,6 +178,38 @@ func TestGatewayPooledChatReportsRetryAfterOnceNoEscrowCanFundTheRequest(t *test
 	require.EqualValues(t, 1, first.calls.Load(), "an escrow that had already refused the request was asked again")
 	require.EqualValues(t, 1, second.calls.Load(), "an escrow that had already refused the request was asked again")
 	requireEveryEscrowStillServing(t, env, 2)
+}
+
+// Test flow:
+//  1. Register an escrow that refuses the request when asked and an escrow whose balance cannot fund even one attempt of this request.
+//  2. Post the request through the pooled route.
+//  3. Expect the short escrow never to be asked, and one 503 with Retry-After that counts both escrows once instead of nesting two refusals.
+func TestGatewayPooledChatSkipsAnEscrowThatCannotFundOneAttempt(t *testing.T) {
+	ctx, abandonRunawayRetries := context.WithCancel(context.Background())
+	defer abandonRunawayRetries()
+	var attempts atomic.Int64
+	refusing := &gatewayMockRuntime{id: "11", model: mockenvDefaultModel, active: true, handler: func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) > 1 {
+			abandonRunawayRetries()
+			return
+		}
+		refuseToFundRequest(t, r)
+	}}
+	short := &gatewayMockRuntime{id: "22", model: mockenvDefaultModel, active: true}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{refusing, short})
+	shortStateMachine := gatewayTestStateMachineInPhase(t, types.PhaseActive)
+	shortState := shortStateMachine.ExportState()
+	shortState.Balance = unfundableBalance
+	require.NoError(t, shortStateMachine.RestoreState(shortState))
+	env.gateway.runtimes["22"].proxy = &Proxy{sm: shortStateMachine}
+
+	rec := env.postChat(mockenvChatBody(mockenvDefaultModel, "hello"), withRequestContext(ctx))
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, "10", rec.Header().Get("Retry-After"))
+	require.EqualValues(t, 0, short.calls.Load(), "an escrow that cannot fund the request was asked to serve it")
+	require.Equal(t, 1, strings.Count(rec.Body.String(), "no escrow can fund this request"), "the refusal nests: %s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), "(2 refused)")
 }
 
 func TestGatewayPooledChatStopsMovingTheRequestOnceTheClientIsGone(t *testing.T) {
