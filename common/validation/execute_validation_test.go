@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"common/completionapi"
@@ -29,7 +30,7 @@ func TestExecuteValidation_ReplayRequestCarriesMinTokensFloor(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(responsePayload))}, nil
 	}
 
-	_, err := ExecuteValidation(context.Background(), "inf-1", promptPayload, responsePayload, execute, 0, 0, "")
+	_, err := ExecuteValidation(context.Background(), "inf-1", promptPayload, responsePayload, execute, 0, 0, "", 0)
 	require.NoError(t, err)
 	require.EqualValues(t, completionapi.MinTokensFloor, captured["min_tokens"])
 	require.EqualValues(t, completionapi.MinTokensFloor, captured["max_tokens"])
@@ -104,7 +105,7 @@ func TestExecuteValidation_RejectsShortOutputThatIgnoredMinTokens(t *testing.T) 
 	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(stored))}, nil
 	}
-	res, err := ExecuteValidation(context.Background(), "inf-short", prompt, stored, execute, 0, 0, "")
+	res, err := ExecuteValidation(context.Background(), "inf-short", prompt, stored, execute, 0, 0, "", 0)
 	require.NoError(t, err)
 	_, invalid := res.(*InvalidInferenceResult)
 	require.True(t, invalid, "short natural-EOS output below min_tokens must be invalid")
@@ -119,7 +120,7 @@ func TestExecuteValidation_AllowsFullLengthNaturalStop(t *testing.T) {
 	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(stored))}, nil
 	}
-	res, err := ExecuteValidation(context.Background(), "inf-full", prompt, stored, execute, 0, 0, "")
+	res, err := ExecuteValidation(context.Background(), "inf-full", prompt, stored, execute, 0, 0, "", 0)
 	require.NoError(t, err)
 	_, invalid := res.(*InvalidInferenceResult)
 	require.False(t, invalid, "a response of exactly min_tokens ending on natural EOS is valid")
@@ -134,7 +135,7 @@ func TestExecuteValidation_RejectsShortOutputEvenWithStopReason(t *testing.T) {
 	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(stored))}, nil
 	}
-	res, err := ExecuteValidation(context.Background(), "inf-stopstr", prompt, stored, execute, 0, 0, "")
+	res, err := ExecuteValidation(context.Background(), "inf-stopstr", prompt, stored, execute, 0, 0, "", 0)
 	require.NoError(t, err)
 	_, invalid := res.(*InvalidInferenceResult)
 	require.True(t, invalid, "short output is a floor violation even with a stop_reason")
@@ -260,7 +261,7 @@ func TestExecuteValidation_InvalidPromptPayload(t *testing.T) {
 		[]byte("not-json"),
 		responsePayloadJSON("42", -0.5),
 		staticExecutor(200, responsePayloadJSON("42", -0.5)),
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	assert.IsType(t, &InvalidInferenceResult{}, result)
@@ -276,7 +277,7 @@ func TestExecuteValidation_ExecuteError(t *testing.T) {
 		minimalPrompt,
 		responsePayloadJSON("42", -0.5),
 		exec,
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.Error(t, err)
 	assert.Nil(t, result)
@@ -290,7 +291,7 @@ func TestExecuteValidation_400Response_TreatedAsPass(t *testing.T) {
 		minimalPrompt,
 		responsePayloadJSON("42", -0.5),
 		staticExecutor(http.StatusBadRequest, nil),
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	require.IsType(t, &SimilarityValidationResult{}, result)
@@ -303,11 +304,191 @@ func TestExecuteValidation_422Response_TreatedAsPass(t *testing.T) {
 		minimalPrompt,
 		responsePayloadJSON("42", -0.5),
 		staticExecutor(http.StatusUnprocessableEntity, nil),
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	require.IsType(t, &SimilarityValidationResult{}, result)
 	assert.True(t, result.IsSuccessful(), "validator re-exec 422 must autopass per mainnet 4xx semantics")
+}
+
+// Test flow:
+// 1. The executor stores a token id below the replay cap, so the replay reaches the validator node.
+// 2. The node answers 400 naming exactly enforced_tokens (its vocab check) and the validation is invalid.
+// 3. A pydantic 400 whose param only nests enforced_tokens keeps the 4xx autopass.
+func TestExecuteValidation_400EnforcedTokensParam(t *testing.T) {
+	cases := []struct {
+		name           string
+		errorBody      []byte
+		wantSuccessful bool
+	}{
+		{"vocab rejection is invalid", []byte(`{"error":{"message":"invalid enforced token at position 0: 151936 not in [0, 151936)","type":"BadRequestError","param":"enforced_tokens","code":400}}`), false},
+		{"nested pydantic param autopasses", []byte(`{"error":{"message":"List should have at most 32768 items","type":"BadRequestError","param":"body.enforced_tokens.tokens","code":400}}`), true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			replayed := false
+			execute := func(_ context.Context, _ []byte) (*http.Response, error) {
+				replayed = true
+				return fakeHTTPResponse(http.StatusBadRequest, testCase.errorBody), nil
+			}
+			result, err := ExecuteValidation(context.Background(), "inf-1", minimalPrompt, responsePayloadJSON("151936", -0.5), execute, 0, 0, "processed_logprobs", 0)
+			require.NoError(t, err)
+			assert.True(t, replayed, "the 400 must come from the validator node")
+			assert.Equal(t, testCase.wantSuccessful, result.IsSuccessful())
+		})
+	}
+}
+
+// responsePayloadWithTopTokens builds a one-position response whose top_logprobs carry topTokenCount entries.
+func responsePayloadWithTopTokens(token string, topTokenCount int) []byte {
+	topLogprobs := make([]map[string]interface{}, 0, topTokenCount)
+	for position := 0; position < topTokenCount; position++ {
+		topLogprobs = append(topLogprobs, map[string]interface{}{"token": strconv.Itoa(position), "logprob": -1.0})
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"id":     "test",
+		"object": "chat.completion",
+		"choices": []map[string]interface{}{{
+			"index": 0,
+			"logprobs": map[string]interface{}{"content": []map[string]interface{}{{
+				"token": token, "logprob": -0.5, "top_logprobs": topLogprobs,
+			}}},
+		}},
+	})
+	return payload
+}
+
+// Test flow:
+// 1. The executor stores a token id at the replay cap or a position with more top tokens than the node accepts.
+// 2. The validation is invalid and the replay never reaches the validator node.
+func TestExecuteValidation_UnreplayableTokens_InvalidWithoutReplay(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload []byte
+	}{
+		{"token id at cap", responsePayloadWithTopTokens("9999999", 5)},
+		{"too many top tokens", responsePayloadWithTopTokens("42", 65)},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			replayed := false
+			execute := func(_ context.Context, _ []byte) (*http.Response, error) {
+				replayed = true
+				return fakeHTTPResponse(http.StatusOK, testCase.payload), nil
+			}
+			result, err := ExecuteValidation(context.Background(), "inf-1", minimalPrompt, testCase.payload, execute, 0, 0, "processed_logprobs", 0)
+			require.NoError(t, err)
+			assert.False(t, replayed, "unreplayable tokens must not reach the validator node")
+			require.IsType(t, &InvalidInferenceResult{}, result)
+		})
+	}
+}
+
+// Test flow:
+// 1. The executor stores a token id just below the cap or exactly the node's top-token limit.
+// 2. The replay is sent to the validator node.
+func TestExecuteValidation_TokensWithinReplayLimits_Replayed(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload []byte
+	}{
+		{"token id below cap", responsePayloadWithTopTokens("9999998", 5)},
+		{"top tokens at node limit", responsePayloadWithTopTokens("42", 64)},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			replayed := false
+			execute := func(_ context.Context, _ []byte) (*http.Response, error) {
+				replayed = true
+				return fakeHTTPResponse(http.StatusOK, testCase.payload), nil
+			}
+			_, err := ExecuteValidation(context.Background(), "inf-1", minimalPrompt, testCase.payload, execute, 0, 0, "processed_logprobs", 0)
+			require.NoError(t, err)
+			assert.True(t, replayed, "tokens within the limits must be replayed")
+		})
+	}
+}
+
+// Test flow:
+// 1. The model's vocab size is known and the executor stores a token id equal to it (one past the last valid id).
+// 2. The validation is invalid and the replay never reaches the validator node.
+// 3. The last valid id (vocab size minus one) is replayed.
+func TestExecuteValidation_KnownVocabulary_BoundsTokenIDs(t *testing.T) {
+	const vocabularySize = 151936
+	cases := []struct {
+		name         string
+		token        string
+		wantReplayed bool
+	}{
+		{"id equal to vocab size is not replayed", "151936", false},
+		{"last vocab id is replayed", "151935", true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := responsePayloadWithTopTokens(testCase.token, 5)
+			replayed := false
+			execute := func(_ context.Context, _ []byte) (*http.Response, error) {
+				replayed = true
+				return fakeHTTPResponse(http.StatusOK, payload), nil
+			}
+			_, err := ExecuteValidation(context.Background(), "inf-1", minimalPrompt, payload, execute, 0, 0, "processed_logprobs", vocabularySize)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantReplayed, replayed)
+		})
+	}
+}
+
+// responsePayloadWithPositions builds a response whose logprobs carry positionCount positions.
+func responsePayloadWithPositions(positionCount int) []byte {
+	positions := make([]map[string]interface{}, 0, positionCount)
+	for position := 0; position < positionCount; position++ {
+		positions = append(positions, map[string]interface{}{
+			"token": "42", "logprob": -0.5, "top_logprobs": []map[string]interface{}{{"token": "42", "logprob": -0.5}},
+		})
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"id":      "test",
+		"object":  "chat.completion",
+		"choices": []map[string]interface{}{{"index": 0, "logprobs": map[string]interface{}{"content": positions}}},
+	})
+	return payload
+}
+
+// Test flow:
+// 1. The executor stores more logprobs positions than the prompt's max_tokens raised to the 64-token floor.
+// 2. The validation is invalid and the replay never reaches the validator node.
+// 3. Up to that limit the output is replayed, including a 64-token output for max_tokens 10 or 0.
+func TestExecuteValidation_PositionsBoundedByMaxTokens(t *testing.T) {
+	cases := []struct {
+		name          string
+		prompt        []byte
+		positionCount int
+		wantReplayed  bool
+	}{
+		{"padded past the node's list limit", []byte(`{"messages":[],"max_tokens":4096}`), 32769, false},
+		{"one past max_tokens", []byte(`{"messages":[],"max_tokens":4096}`), 4097, false},
+		{"exactly max_tokens", []byte(`{"messages":[],"max_tokens":4096}`), 4096, true},
+		{"max_completion_tokens bounds too", []byte(`{"messages":[],"max_completion_tokens":100}`), 101, false},
+		{"floor output for small max_tokens", []byte(`{"messages":[],"max_tokens":10}`), 64, true},
+		{"past the floor for small max_tokens", []byte(`{"messages":[],"max_tokens":10}`), 65, false},
+		{"floor output for zero max_tokens", []byte(`{"messages":[],"max_tokens":0}`), 64, true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := responsePayloadWithPositions(testCase.positionCount)
+			replayed := false
+			execute := func(_ context.Context, _ []byte) (*http.Response, error) {
+				replayed = true
+				return fakeHTTPResponse(http.StatusOK, payload), nil
+			}
+			result, err := ExecuteValidation(context.Background(), "inf-1", testCase.prompt, payload, execute, 0, 0, "processed_logprobs", 0)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantReplayed, replayed)
+			if !testCase.wantReplayed {
+				require.IsType(t, &InvalidInferenceResult{}, result)
+			}
+		})
+	}
 }
 
 func TestExecuteValidation_NonNumericTokens_ReturnsInvalid(t *testing.T) {
@@ -316,7 +497,7 @@ func TestExecuteValidation_NonNumericTokens_ReturnsInvalid(t *testing.T) {
 		minimalPrompt,
 		responsePayloadJSON("hello", -0.5), // non-numeric token
 		staticExecutor(200, responsePayloadJSON("42", -0.5)),
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	assert.IsType(t, &InvalidInferenceResult{}, result)
@@ -330,7 +511,7 @@ func TestExecuteValidation_EmptySentinel_ExecutorServes200_ReturnsInvalid(t *tes
 		minimalPrompt,
 		responsePayloadJSON("<EMPTY>", -0.5),
 		staticExecutor(http.StatusOK, responsePayloadJSON("42", -0.5)),
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	assert.IsType(t, &InvalidInferenceResult{}, result)
@@ -348,7 +529,7 @@ func TestExecuteValidation_EmptySentinel_DropsEnforcedTokens(t *testing.T) {
 		minimalPrompt,
 		responsePayloadJSON("<EMPTY>", -0.5),
 		exec,
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 
@@ -369,7 +550,7 @@ func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) 
 		minimalPrompt,
 		responsePayloadTokens(n, "stop", ""),
 		exec,
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	assert.True(t, result.IsSuccessful())
@@ -394,7 +575,7 @@ func TestExecuteValidation_MatchingLogits_PassesSimilarityThreshold(t *testing.T
 		minimalPrompt,
 		payload,
 		staticExecutor(http.StatusOK, payload), // identical response → similarity 1.0
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	require.IsType(t, &SimilarityValidationResult{}, result)
@@ -421,7 +602,7 @@ func TestExecuteValidation_EmptyOriginalLogits_IsInvalid(t *testing.T) {
 		minimalPrompt,
 		emptyLogprobsResponsePayload(),
 		staticExecutor(http.StatusOK, responsePayloadJSON("42", -0.5)),
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	require.IsType(t, &InvalidInferenceResult{}, result)
@@ -435,7 +616,7 @@ func TestExecuteValidation_NoLogitsInValidatorResponse_IsInvalid(t *testing.T) {
 		minimalPrompt,
 		responsePayloadJSON("42", -0.5),
 		staticExecutor(http.StatusOK, emptyLogprobsResponsePayload()),
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	require.IsType(t, &InvalidInferenceResult{}, result)
@@ -451,7 +632,7 @@ func TestExecuteValidation_BothEmptyLogits_StaysValid(t *testing.T) {
 		minimalPrompt,
 		empty,
 		staticExecutor(http.StatusOK, empty),
-		0, 0, "processed_logprobs",
+		0, 0, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	require.IsType(t, &SimilarityValidationResult{}, result)
@@ -469,7 +650,7 @@ func TestExecuteValidation_TokenInflationWithinTolerance_Passes(t *testing.T) {
 		minimalPrompt,
 		original,
 		staticExecutor(http.StatusOK, validatorResponse),
-		100, 103, "processed_logprobs",
+		100, 103, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	assert.True(t, result.IsSuccessful())
@@ -483,7 +664,7 @@ func TestExecuteValidation_TokenInflationAboveTolerance_Fails(t *testing.T) {
 		minimalPrompt,
 		original,
 		staticExecutor(http.StatusOK, validatorResponse),
-		100, 104, "processed_logprobs",
+		100, 104, "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
 	assert.IsType(t, &InvalidInferenceResult{}, result)

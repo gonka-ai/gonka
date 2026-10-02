@@ -260,6 +260,7 @@ func buildHostManager(
 		cfg.RuntimeVersion,
 		chainParams,
 		thresholds,
+		inference.NewVocabularyResolver(chainBridge),
 		cfg.VoteFalseOnFetchFailure,
 	)
 
