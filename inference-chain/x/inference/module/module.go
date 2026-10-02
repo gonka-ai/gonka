@@ -1400,6 +1400,11 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 				"participantIndex", p.Index)
 			continue
 		}
+		if p.Weight <= 0 || len(p.MlNodes) == 0 || len(p.Models) == 0 {
+			am.LogWarn("onSetNewValidatorsStage: addEpochMembers. Participant has no weight or no model/ml_node. Skipping this participant", types.EpochGroup,
+				"participantIndex", p.Index, "weight", p.Weight, "models", len(p.Models), "mlNodes", len(p.MlNodes))
+			continue
+		}
 
 		// Confirmation events can only lower ConfirmationWeight via min-take, never raise it.
 		initialConfirmationWeight := types.ConfirmationWeightOfParticipantWithCoefficients(p, coefficients)
