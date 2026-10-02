@@ -1,10 +1,6 @@
 schema_version: v1
-scenario: normal-load-real-dapi
+scenario: spike-load
 seed: 42
-
-environment:
-  chain: local_testnet
-  dapi: real
 
 topology:
   versiond_mode: multi
@@ -14,25 +10,33 @@ topology:
     escrow_amount: 1000000000
     max_nonce: 100000
   mock_ml:
-    allocator: dapi
+    allocator: round_robin
     nodes:
       - name: mock-openai-0
         profile: fast
       - name: mock-openai-1
         profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: slow
 
 workload:
-  max_in_flight: 2
-  duration: 30s
+  max_in_flight: 32
+  duration: 60s
   traffic:
-    type: closed_loop
+    type: spikes
+    base_rps: 4
+    spike_rps: 20
+    spike_duration: 5s
+    interval: 20s
   request:
-    model: Qwen/Qwen2.5-7B-Instruct
+    model: test-model
     stream: false
     max_tokens: 64
     messages:
       - role: user
-        content: "normal-load request"
+        content: "spike-load request"
 
 thresholds:
   error_rate: 0
@@ -48,4 +52,4 @@ assertions:
   mock_ml:
     require_each_node_used: true
 
-drain_timeout: 30s
+drain_timeout: 60s

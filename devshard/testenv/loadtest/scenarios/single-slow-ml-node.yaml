@@ -2,10 +2,6 @@ schema_version: v1
 scenario: single-slow-ml-node
 seed: 42
 
-environment:
-  chain: mock
-  dapi: mock
-
 topology:
   versiond_mode: multi
   storage: per_participant
