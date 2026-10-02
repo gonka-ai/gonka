@@ -78,7 +78,6 @@ func testScenario() Scenario {
 		SchemaVersion: "v1",
 		Scenario:      "normal-load",
 		Seed:          42,
-		Environment:   Environment{Chain: "mock", DAPI: "mock"},
 		Topology: Topology{
 			VersiondMode: "multi",
 			Storage:      "per_participant",

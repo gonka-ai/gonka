@@ -11,8 +11,6 @@ func TestLoadScenario_NormalLoad(t *testing.T) {
 	scenario, err := LoadScenario(filepath.Join("scenarios", "normal-load.yaml"))
 	require.NoError(t, err)
 	require.Equal(t, "normal-load", scenario.Scenario)
-	require.Equal(t, "mock", scenario.Environment.Chain)
-	require.Equal(t, "mock", scenario.Environment.DAPI)
 	require.Len(t, scenario.Topology.MockML.Nodes, 2)
 	require.Equal(t, uint64(1_000_000_000), scenario.Topology.Chain.EscrowAmount)
 	require.Equal(t, uint32(100_000), scenario.Topology.Chain.MaxNonce)
@@ -22,24 +20,6 @@ func TestLoadScenario_NormalLoad(t *testing.T) {
 	require.Equal(t, 2, scenario.Workload.MaxInFlight)
 	require.Equal(t, "30s", scenario.Workload.Duration)
 	require.Equal(t, "30s", scenario.DrainTimeout)
-}
-
-func TestLoadScenario_RealDAPIBootstrap(t *testing.T) {
-	scenario, err := LoadScenario(filepath.Join("scenarios", "real-dapi-bootstrap.yaml"))
-	require.NoError(t, err)
-	require.Equal(t, "real-dapi-bootstrap", scenario.Scenario)
-	require.True(t, scenario.Environment.IsRealDAPI())
-	require.True(t, scenario.Environment.Bootstrap)
-}
-
-func TestLoadScenario_NormalLoadRealDAPI(t *testing.T) {
-	scenario, err := LoadScenario(filepath.Join("scenarios", "normal-load-real-dapi.yaml"))
-	require.NoError(t, err)
-	require.Equal(t, "normal-load-real-dapi", scenario.Scenario)
-	require.True(t, scenario.Environment.IsRealDAPI())
-	require.False(t, scenario.Environment.Bootstrap)
-	require.Equal(t, "dapi", scenario.Topology.MockML.Allocator)
-	require.Equal(t, "30s", scenario.Workload.Duration)
 }
 
 func TestLoadScenario_SingleSlowMLNode(t *testing.T) {
@@ -52,6 +32,19 @@ func TestLoadScenario_SingleSlowMLNode(t *testing.T) {
 	require.Len(t, scenario.Topology.MockML.Nodes, 4)
 	require.Equal(t, "slow", scenario.Topology.MockML.Nodes[3].Profile)
 	require.Equal(t, "60s", scenario.DrainTimeout)
+}
+
+func TestLoadScenario_SpikeLoad(t *testing.T) {
+	scenario, err := LoadScenario(filepath.Join("scenarios", "spike-load.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "spike-load", scenario.Scenario)
+	require.Equal(t, "spikes", scenario.Workload.Traffic.ResolvedType())
+	require.Equal(t, 4.0, scenario.Workload.Traffic.BaseRPS)
+	require.Equal(t, 20.0, scenario.Workload.Traffic.SpikeRPS)
+	require.Equal(t, "5s", scenario.Workload.Traffic.SpikeDuration)
+	require.Equal(t, "20s", scenario.Workload.Traffic.Interval)
+	require.Equal(t, 32, scenario.Workload.MaxInFlight)
+	require.Equal(t, "60s", scenario.Workload.Duration)
 }
 
 func TestLoadProfile_Fast(t *testing.T) {

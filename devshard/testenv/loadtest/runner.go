@@ -55,28 +55,6 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err := copyFile(opts.ScenarioPath, filepath.Join(opts.OutputDir, "run.yaml")); err != nil {
 		return RunResult{}, err
 	}
-	if scenario.Environment.IsRealDAPI() && scenario.Environment.Bootstrap {
-		bootstrap, err := BootstrapRealDAPI(ctx, RealDAPIConfig{
-			TestenvDir: opts.TestenvDir,
-			OutputDir:  opts.OutputDir,
-			KeepStack:  opts.KeepStack,
-		})
-		if err != nil {
-			return RunResult{}, err
-		}
-		return RunResult{
-			Summary:   Summary{Scenario: scenario.Scenario},
-			OutputDir: bootstrap.OutputDir,
-			WorkDir:   bootstrap.WorkDir,
-		}, nil
-	}
-	if scenario.Environment.IsRealDAPI() {
-		return RunResult{}, fmt.Errorf(
-			"scenario %q requires real-DAPI DevShard provisioning; local-test-net bootstrap is available, but versiond, gateway, and ML node registration are not wired yet",
-			scenario.Scenario,
-		)
-	}
-
 	profilesDir := opts.ProfilesDir
 	if profilesDir == "" {
 		profilesDir = filepath.Join(opts.TestenvDir, "loadtest", "profiles")
