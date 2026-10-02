@@ -343,6 +343,16 @@ const openapiSpec = `{
         }
       }
     },
+    "/v1/debug/state-sizes": {
+      "get": {
+        "summary": "Gateway state collection sizes",
+        "description": "Admin endpoint. Returns sizes of gateway-side diffs, the logical serialized diff payload in bytes and MiB, signature nonces, nonce states, pending transactions, and applied transaction keys.",
+        "security": [{ "AdminBearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Gateway state collection sizes" }
+        }
+      }
+    },
     "/v1/debug/rotation": {
       "get": {
         "summary": "Escrow rotation debug status",

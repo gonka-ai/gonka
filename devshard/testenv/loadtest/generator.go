@@ -248,7 +248,9 @@ func summarize(scenario Scenario, started time.Time, duration time.Duration, res
 	summary := Summary{Scenario: scenario.Scenario, Seed: scenario.Seed, StartedAt: started, Duration: duration, Offered: len(results), Requests: len(results), Results: results}
 	latencies := make([]time.Duration, 0, len(results))
 	for _, result := range results {
-		latencies = append(latencies, result.Duration)
+		if result.Outcome != "dropped_by_generator" && result.Duration > 0 {
+			latencies = append(latencies, result.Duration)
+		}
 		if result.Outcome == scenario.Assertions.Requests.TerminalOutcome {
 			summary.Completed++
 		} else {

@@ -73,7 +73,7 @@ func TestWaitForFinishedInferences_AllowsLoggedGhostPendingWithinThreshold(t *te
 	}))
 	defer server.Close()
 
-	err := waitForFinishedInferences(context.Background(), server.URL, "", 1, 0.5, map[string]struct{}{"2": {}}, time.Second)
+	_, err := waitForFinishedInferences(context.Background(), server.URL, "", 1, 0.5, map[string]struct{}{"2": {}}, time.Second)
 	require.NoError(t, err)
 }
 
@@ -83,7 +83,7 @@ func TestWaitForFinishedInferences_RejectsGhostRateAboveThreshold(t *testing.T) 
 	}))
 	defer server.Close()
 
-	err := waitForFinishedInferences(context.Background(), server.URL, "", 1, 0.25, map[string]struct{}{"2": {}}, time.Second)
+	_, err := waitForFinishedInferences(context.Background(), server.URL, "", 1, 0.25, map[string]struct{}{"2": {}}, time.Second)
 	require.ErrorContains(t, err, "ghost inference rate 0.5000")
 }
 
@@ -94,4 +94,42 @@ func TestReadGhostInferenceIDs(t *testing.T) {
 	ghosts, err := readGhostInferenceIDs(path)
 	require.NoError(t, err)
 	require.Equal(t, map[string]struct{}{"9": {}}, ghosts)
+}
+
+func TestFetchGatewayStateSizes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/debug/state-sizes", r.URL.Path)
+		require.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
+		_, _ = fmt.Fprint(w, `{"diffs":12,"diffs_bytes":12345,"diffs_mb":0.011,"signature_nonces":8,"nonce_states":14,"pending_txs":2,"applied_tx_keys":11}`)
+	}))
+	defer server.Close()
+
+	sizes, err := fetchGatewayStateSizes(context.Background(), server.URL, "test-key")
+	require.NoError(t, err)
+	require.Equal(t, GatewayStateSizes{
+		Diffs:           12,
+		DiffsBytes:      12345,
+		DiffsMB:         0.011,
+		SignatureNonces: 8,
+		NonceStates:     14,
+		PendingTxs:      2,
+		AppliedTxKeys:   11,
+	}, sizes)
+}
+
+func TestWriteGatewayStateSizes(t *testing.T) {
+	outputDir := t.TempDir()
+	require.NoError(t, writeGatewayStateSizes(outputDir, GatewayStateSizes{
+		Diffs:           12,
+		DiffsBytes:      12345,
+		DiffsMB:         0.011,
+		SignatureNonces: 8,
+		NonceStates:     14,
+		PendingTxs:      2,
+		AppliedTxKeys:   11,
+	}))
+
+	body, err := os.ReadFile(filepath.Join(outputDir, "gateway-state.json"))
+	require.NoError(t, err)
+	require.JSONEq(t, `{"diffs":12,"diffs_bytes":12345,"diffs_mb":0.011,"signature_nonces":8,"nonce_states":14,"pending_txs":2,"applied_tx_keys":11}`, string(body))
 }
