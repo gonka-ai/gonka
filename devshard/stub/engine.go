@@ -34,6 +34,10 @@ func (e *InferenceEngine) Execute(ctx context.Context, req devshard.ExecuteReque
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
+	// The stub stores nothing, so there is never a response to recover.
+	if req.Recovery == devshard.RecoveryStoredOnly {
+		return nil, devshard.ErrNoStoredResponse
+	}
 
 	if req.ResponseWriter != nil {
 		// Write mock SSE events to the response writer.

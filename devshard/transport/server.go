@@ -25,6 +25,7 @@ import (
 	"devshard/logging"
 	"devshard/observability"
 	"devshard/signing"
+	"devshard/state"
 	"devshard/storage"
 	"devshard/types"
 )
@@ -403,7 +404,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 				"HandleInference: requests disabled", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()))
 		}
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
-			"HandleInference: handle request", echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err))
+			"HandleInference: handle request", inferenceHTTPError(err))
 	}
 	s.recordForceRequestAnchorMissingIfApplicable(sender, req.Nonce, unwrapped.HeightSync, c.Request().Method+" "+c.Path())
 	observability.Request.SetInferenceID(op, resp.InferenceID)
@@ -511,7 +512,9 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 				return nil
 			}
 			observability.RecordExecutionNoFinish(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, reason, where)
-			logging.Error("deferred execution failed", "subsystem", "server", "error", execErr)
+			if !errors.Is(execErr, devshard.ErrNoStoredResponse) {
+				logging.Error("deferred execution failed", "subsystem", "server", "error", execErr)
+			}
 			return nil
 		}
 		if execResult != nil && execResult.PartialResponse {
@@ -547,6 +550,24 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	}
 
 	return nil
+}
+
+// divergenceHTTPBody is the 500 body for a post_state_root mismatch.
+// message keeps the phrase gateways already match; host_state is this
+// process's root inputs so the gateway can name the field that differs.
+type divergenceHTTPBody struct {
+	Message   string           `json:"message"`
+	HostState state.RootInputs `json:"host_state"`
+}
+
+func inferenceHTTPError(err error) error {
+	if div := state.AsRootDivergence(err); div != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, divergenceHTTPBody{
+			Message:   err.Error(),
+			HostState: div.Inputs,
+		}).SetInternal(err)
+	}
+	return echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err)
 }
 
 // replaySSEBody writes cached ML response bytes as SSE data lines.

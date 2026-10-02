@@ -107,12 +107,20 @@ func hashHeightSyncEscrow(h types.HeightSyncEscrowCommit) []byte {
 // ComputeRestHashV2 returns sha256(balance_be || inferences_hash_v2 || warm_keys_hash || height_sync_hash)
 // for Phase 1 v2 sessions (sealed accumulator + live inference set + height-sync escrow flags).
 func ComputeRestHashV2(balance uint64, sealedAcc [32]byte, liveInferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string, heightSync types.HeightSyncEscrowCommit) ([]byte, error) {
-	infHash, err := ComputeInferencesHashV2(sealedAcc, liveInferences)
+	liveHash, err := computeInferencesHash(liveInferences)
 	if err != nil {
 		return nil, err
 	}
-	warmKeysHash := computeWarmKeysHash(warmKeys)
-	hsHash := hashHeightSyncEscrow(heightSync)
+	return restHashFromV2Parts(balance, sealedAcc, liveHash, computeWarmKeysHash(warmKeys), hashHeightSyncEscrow(heightSync)), nil
+}
+
+// restHashFromV2Parts assembles sha256(balance_be || inferences_hash_v2 || warm_keys_hash || height_sync_hash)
+// from hashes that have already been computed. inferences_hash_v2 is sha256(sealed_acc || live_inferences_hash).
+func restHashFromV2Parts(balance uint64, sealedAcc [32]byte, liveHash, warmKeysHash, heightSyncHash []byte) []byte {
+	v2 := sha256.New()
+	v2.Write(sealedAcc[:])
+	v2.Write(liveHash)
+	infHash := v2.Sum(nil)
 
 	balBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(balBytes, balance)
@@ -121,8 +129,8 @@ func ComputeRestHashV2(balance uint64, sealedAcc [32]byte, liveInferences map[ui
 	h.Write(balBytes)
 	h.Write(infHash)
 	h.Write(warmKeysHash)
-	h.Write(hsHash)
-	return h.Sum(nil), nil
+	h.Write(heightSyncHash)
+	return h.Sum(nil)
 }
 
 func sealedAccBytes32(b []byte) [32]byte {

@@ -85,7 +85,16 @@ func NewValidator(
 	}
 }
 
+func (v *Validator) CanValidate(model string) bool {
+	return v.engine == nil || v.engine.validationBudget.available(model)
+}
+
 func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+	// Reject exhausted models before payload fetching. Acquisition later reserves
+	// atomically, since another escrow may spend the credit during the fetch.
+	if !v.CanValidate(req.Model) {
+		return nil, devshardpkg.ErrValidationDeferred
+	}
 	inferenceID := strconv.FormatUint(req.InferenceID, 10)
 
 	epochID := resolveValidationEpoch(v.phase, req.EpochID)
@@ -260,15 +269,24 @@ func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string
 	if v.executeML != nil {
 		return v.executeML(ctx, model, escrowID, body)
 	}
-	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string) (*http.Response, error) {
+	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string, refund func()) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		// NewRequest also accepts URLs that the HTTP transport cannot dispatch.
+		if reqErr == nil && (httpReq.URL.Host == "" || (httpReq.URL.Scheme != "http" && httpReq.URL.Scheme != "https")) {
+			reqErr = fmt.Errorf("invalid ML node HTTP endpoint %q", endpoint)
+		}
 		if reqErr != nil {
+			refund()
 			return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		observability.InjectRequestContext(ctx, httpReq.Header)
 		observability.AttachRequestID(httpReq)
+		if err := ctx.Err(); err != nil {
+			refund()
+			return nil, err
+		}
 		return v.engine.httpClient.Do(httpReq)
 	})
 	if err != nil {
@@ -299,7 +317,7 @@ type acquireRec struct {
 // NewLeaseValidator wraps v with Postgres lease deduplication.
 func NewLeaseValidator(v devshardpkg.ValidationEngine, phase *chain.Phase, leases leaseOps, owner storage.LeaseOwner, leaseTTL time.Duration) *LeaseValidator {
 	if leaseTTL <= 0 {
-		leaseTTL = 30 * time.Minute
+		leaseTTL = 32 * time.Minute
 	}
 	return &LeaseValidator{
 		validator: v,
@@ -327,7 +345,14 @@ func (c *LeaseValidator) loadAcquire(escrowID string, inferenceID uint64) (acqui
 	return rec, ok
 }
 
+func (c *LeaseValidator) CanValidate(model string) bool {
+	return devshardpkg.CanValidate(c.validator, model)
+}
+
 func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+	if !c.CanValidate(req.Model) {
+		return nil, devshardpkg.ErrValidationDeferred
+	}
 	epochID := resolveValidationEpoch(c.phase, req.EpochID)
 	acquired, err := c.leases.Acquire(ctx, req.EscrowID, req.InferenceID, epochID, c.owner)
 	if err != nil {
