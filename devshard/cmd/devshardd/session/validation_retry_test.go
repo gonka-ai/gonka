@@ -132,12 +132,12 @@ func retryOwner(addr string) storage.LeaseOwner {
 
 func newTestValidationRetryLoop(leases *stubStaleLeaseStore, snap hostSnap, inner *stubEngine) *ValidationRetryLoop {
 	return &ValidationRetryLoop{
-		leases:       leases,
-		inner:        inner,
-		manager:      &stubSessionManager{snap: snap},
-		owner: retryOwner("addr"),
-		leaseTTL:     DefaultValidationLeaseTTL,
-		interval:     DefaultValidationRetryInterval,
+		leases:   leases,
+		inner:    inner,
+		manager:  &stubSessionManager{snap: snap},
+		owner:    retryOwner("addr"),
+		leaseTTL: DefaultValidationLeaseTTL,
+		interval: DefaultValidationRetryInterval,
 	}
 }
 
@@ -187,11 +187,11 @@ func TestRetryStaleValidationsForEscrow_NoStaleLeases(t *testing.T) {
 		},
 	}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		manager:      &stubSessionManager{snap: inferenceSnap(1, types.StatusFinished)},
-		owner: retryOwner("addr"),
-		leaseTTL:     DefaultValidationLeaseTTL,
-		interval:     DefaultValidationRetryInterval,
+		leases:   leases,
+		manager:  &stubSessionManager{snap: inferenceSnap(1, types.StatusFinished)},
+		owner:    retryOwner("addr"),
+		leaseTTL: DefaultValidationLeaseTTL,
+		interval: DefaultValidationRetryInterval,
 	}
 	rl.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
 	assert.Equal(t, 1, calls, "should call AcquireOneStale once and stop")
@@ -206,10 +206,10 @@ func TestRetryStaleValidationsForEscrow_AcquireError_Stops(t *testing.T) {
 		},
 	}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		manager:      &stubSessionManager{snap: inferenceSnap(1, types.StatusFinished)},
-		owner: retryOwner("addr"),
-		leaseTTL:     DefaultValidationLeaseTTL,
+		leases:   leases,
+		manager:  &stubSessionManager{snap: inferenceSnap(1, types.StatusFinished)},
+		owner:    retryOwner("addr"),
+		leaseTTL: DefaultValidationLeaseTTL,
 	}
 	rl.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
 	assert.Equal(t, 1, calls, "should stop after first error")
@@ -229,11 +229,11 @@ func TestRetryStaleValidationsForEscrow_LeaseFromPreviousEpochIsSkipped(t *testi
 	phase := new(chain.Phase)
 	phase.SetEpoch(11)
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		manager:      &stubSessionManager{snap: inferenceSnap(1, types.StatusFinished)},
-		phase:        phase,
-		owner: retryOwner("addr"),
-		leaseTTL:     DefaultValidationLeaseTTL,
+		leases:   leases,
+		manager:  &stubSessionManager{snap: inferenceSnap(1, types.StatusFinished)},
+		phase:    phase,
+		owner:    retryOwner("addr"),
+		leaseTTL: DefaultValidationLeaseTTL,
 	}
 
 	rl.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
@@ -252,10 +252,10 @@ func TestRetryStaleValidationsForEscrow_SessionNotLoaded_DoesNotClaim(t *testing
 		},
 	}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		manager:      &stubSessionManager{},
-		owner: retryOwner("addr"),
-		leaseTTL:     DefaultValidationLeaseTTL,
+		leases:   leases,
+		manager:  &stubSessionManager{},
+		owner:    retryOwner("addr"),
+		leaseTTL: DefaultValidationLeaseTTL,
 	}
 	rl.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
 	assert.Equal(t, 0, calls, "must not AcquireOneStale when the session is not loaded")
@@ -294,11 +294,11 @@ func TestRetryStaleValidationsForEscrow_SessionUnloadsAfterClaim_Releases(t *tes
 		return nil, false
 	}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        &stubEngine{},
-		manager:      mgr,
-		owner: retryOwner("addr"),
-		leaseTTL:     DefaultValidationLeaseTTL,
+		leases:   leases,
+		inner:    &stubEngine{},
+		manager:  mgr,
+		owner:    retryOwner("addr"),
+		leaseTTL: DefaultValidationLeaseTTL,
 	}
 	rl.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
 
@@ -427,11 +427,11 @@ func TestRetryStaleValidationsForEscrow_TransientErrorReleaseThenHotPathReacquir
 		},
 	}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        inner,
-		manager:      &stubSessionManager{snap: h},
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   leases,
+		inner:    inner,
+		manager:  &stubSessionManager{snap: h},
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
@@ -471,11 +471,11 @@ func TestRetryStaleValidationsForEscrow_StaleSubmittedWithLocalMempoolDoesNotRev
 
 	inner := &stubEngine{}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        inner,
-		manager:      &stubSessionManager{snap: h},
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   leases,
+		inner:    inner,
+		manager:  &stubSessionManager{snap: h},
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
@@ -513,11 +513,11 @@ func TestRetryStaleValidationsForEscrow_StaleSubmittedAlreadyAppliedDoesNotRepub
 	require.NoError(t, leases.SetResult(ctx, "escrow-1", 1, 3, storage.LeaseStatusSubmitted, retryOwner("old-owner")))
 	inner := &stubEngine{}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        inner,
-		manager:      &stubSessionManager{snap: h},
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   leases,
+		inner:    inner,
+		manager:  &stubSessionManager{snap: h},
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
@@ -536,11 +536,11 @@ func TestRetryStaleValidation_OwnershipLostAfterValidate_DoesNotSubmit(t *testin
 	}
 	inner := &stubEngine{}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        inner,
-		manager:      &stubSessionManager{snap: h},
-		owner: retryOwner("addr"),
-		leaseTTL:     DefaultValidationLeaseTTL,
+		leases:   leases,
+		inner:    inner,
+		manager:  &stubSessionManager{snap: h},
+		owner:    retryOwner("addr"),
+		leaseTTL: DefaultValidationLeaseTTL,
 	}
 
 	err := rl.retryStaleValidation(context.Background(), "escrow-1", 1, 3)
@@ -562,11 +562,11 @@ func TestRetryStaleValidation_SetResultLeaseNotOwnedAfterSubmit_IsBenign(t *test
 	}
 	inner := &stubEngine{}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        inner,
-		manager:      &stubSessionManager{snap: h},
-		owner: retryOwner("addr"),
-		leaseTTL:     DefaultValidationLeaseTTL,
+		leases:   leases,
+		inner:    inner,
+		manager:  &stubSessionManager{snap: h},
+		owner:    retryOwner("addr"),
+		leaseTTL: DefaultValidationLeaseTTL,
 	}
 
 	err := rl.retryStaleValidation(context.Background(), "escrow-1", 1, 3)
@@ -594,11 +594,11 @@ func TestRetryStaleValidation_OwnsPendingLeaseErrorAfterValidate_Releases(t *tes
 	}
 	inner := &stubEngine{}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        inner,
-		manager:      &stubSessionManager{snap: h},
-		owner: retryOwner("addr"),
-		leaseTTL:     DefaultValidationLeaseTTL,
+		leases:   leases,
+		inner:    inner,
+		manager:  &stubSessionManager{snap: h},
+		owner:    retryOwner("addr"),
+		leaseTTL: DefaultValidationLeaseTTL,
 	}
 
 	err := rl.retryStaleValidation(context.Background(), "escrow-1", 1, 3)
@@ -660,11 +660,11 @@ func TestRetryStaleValidation_Finished_SubmitsInline(t *testing.T) {
 	leases := &stubStaleLeaseStore{}
 	inner := &stubEngine{}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        inner,
-		manager:      &stubSessionManager{snap: h},
-		owner: retryOwner("addr"),
-		leaseTTL:     DefaultValidationLeaseTTL,
+		leases:   leases,
+		inner:    inner,
+		manager:  &stubSessionManager{snap: h},
+		owner:    retryOwner("addr"),
+		leaseTTL: DefaultValidationLeaseTTL,
 	}
 
 	err := rl.retryStaleValidation(context.Background(), "escrow-1", 1, 3)
@@ -693,11 +693,11 @@ func TestRetryStaleValidation_ReclaimedValidationAppearsInMempoolEndpoint(t *tes
 	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
 
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        &stubEngine{},
-		manager:      &stubSessionManager{snap: h},
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   leases,
+		inner:    &stubEngine{},
+		manager:  &stubSessionManager{snap: h},
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
@@ -744,11 +744,11 @@ func TestRetryStaleValidation_TerminalInferenceDoesNotAppearInMempoolEndpoint(t 
 	ctx := context.Background()
 	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        &stubEngine{},
-		manager:      &stubSessionManager{snap: h},
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   leases,
+		inner:    &stubEngine{},
+		manager:  &stubSessionManager{snap: h},
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
@@ -783,11 +783,11 @@ func TestRetryStaleValidation_ChallengedInferenceDoesNotAppearInMempoolEndpoint(
 	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
 	inner := &stubEngine{}
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        inner,
-		manager:      &stubSessionManager{snap: h},
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   leases,
+		inner:    inner,
+		manager:  &stubSessionManager{snap: h},
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
@@ -808,11 +808,11 @@ func TestRetryStaleValidation_MempoolValidationAppliesThroughPeerEndpoint(t *tes
 	ctx := context.Background()
 	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
 	rl := &ValidationRetryLoop{
-		leases:       leases,
-		inner:        &stubEngine{},
-		manager:      &stubSessionManager{snap: producer},
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   leases,
+		inner:    &stubEngine{},
+		manager:  &stubSessionManager{snap: producer},
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
@@ -864,11 +864,11 @@ func TestRetryStaleValidation_LazyRecoveredManagerMempoolEndpoint(t *testing.T) 
 	ctx := context.Background()
 	require.NoError(t, acquireMemoryLease(ctx, store, escrowID, 1, 7, "old-owner"))
 	rl := &ValidationRetryLoop{
-		leases:       store,
-		inner:        &stubEngine{},
-		manager:      mgr,
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   store,
+		inner:    &stubEngine{},
+		manager:  mgr,
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
@@ -907,11 +907,11 @@ func TestRetryStaleValidation_RestartedManagerReclaimsPendingLease(t *testing.T)
 	require.Equal(t, []string{escrowID}, restarted.ActiveEscrowIDs())
 
 	rl := &ValidationRetryLoop{
-		leases:       store,
-		inner:        &stubEngine{},
-		manager:      restarted,
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   store,
+		inner:    &stubEngine{},
+		manager:  restarted,
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
@@ -952,11 +952,11 @@ func TestRetryStaleValidation_ObsoleteLeaseAfterLazyRecoveryStaysOutOfMempool(t 
 	require.NoError(t, acquireMemoryLease(ctx, store, escrowID, 1, 7, "old-owner"))
 	inner := &stubEngine{}
 	rl := &ValidationRetryLoop{
-		leases:       store,
-		inner:        inner,
-		manager:      mgr,
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   store,
+		inner:    inner,
+		manager:  mgr,
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
@@ -982,11 +982,11 @@ func TestRetryStaleValidation_SubmittedMempoolLossRepublishesAfterManagerRestart
 	ctx := context.Background()
 	require.NoError(t, acquireMemoryLease(ctx, store, escrowID, 1, 7, "old-owner"))
 	rl := &ValidationRetryLoop{
-		leases:       store,
-		inner:        &stubEngine{},
-		manager:      first,
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   store,
+		inner:    &stubEngine{},
+		manager:  first,
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
@@ -1009,11 +1009,11 @@ func TestRetryStaleValidation_SubmittedMempoolLossRepublishesAfterManagerRestart
 	require.False(t, rec.ValidatedBy.IsSet(group[0].SlotID))
 
 	rl = &ValidationRetryLoop{
-		leases:       store,
-		inner:        &stubEngine{},
-		manager:      restarted,
-		owner: retryOwner("addr"),
-		leaseTTL:     50 * time.Millisecond,
+		leases:   store,
+		inner:    &stubEngine{},
+		manager:  restarted,
+		owner:    retryOwner("addr"),
+		leaseTTL: 50 * time.Millisecond,
 	}
 	time.Sleep(60 * time.Millisecond)
 	rl.retryStaleValidationsForEscrow(ctx, escrowID)
@@ -1317,5 +1317,96 @@ func retrySessionConfig() types.SessionConfig {
 		TokenPrice:       1,
 		VoteThreshold:    1,
 		ValidationRate:   10000,
+	}
+}
+
+func TestValidationRetryDeferredReleasesWithoutMarkingComplete(t *testing.T) {
+	leases := &stubStaleLeaseStore{}
+	inner := &stubEngine{validateFn: func(context.Context, devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		return nil, devshardpkg.ErrValidationDeferred
+	}}
+	loop := newTestValidationRetryLoop(leases, inferenceSnap(1, types.StatusFinished), inner)
+	err := loop.retryStaleValidation(context.Background(), "escrow-1", 1, 0)
+	require.ErrorIs(t, err, devshardpkg.ErrValidationDeferred)
+	require.Equal(t, 1, inner.calls)
+	require.Len(t, leases.releaseCalls, 1)
+	require.Empty(t, leases.setResultCalls, "deferral must not mark the inference submitted or skipped")
+}
+
+type creditGatedRetryEngine struct {
+	*stubEngine
+	available         bool
+	availableForModel func(string) bool
+}
+
+func (e *creditGatedRetryEngine) CanValidate(model string) bool {
+	if e.availableForModel != nil {
+		return e.availableForModel(model)
+	}
+	return e.available
+}
+func TestValidationRetryCreditGateBeforeClaim(t *testing.T) {
+	claims := 0
+	leases := &stubStaleLeaseStore{acquireFn: func(context.Context, string, storage.LeaseOwner, time.Duration) (uint64, uint64, error) {
+		claims++
+		return 1, 0, nil
+	}}
+	inner := &stubEngine{}
+	gate := &creditGatedRetryEngine{stubEngine: inner}
+	inner.validateFn = func(context.Context, devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		gate.available = false // Another worker spent the credit after the hint.
+		return nil, devshardpkg.ErrValidationDeferred
+	}
+	loop := newTestValidationRetryLoop(leases, inferenceSnap(1, types.StatusFinished), inner)
+	loop.inner = gate
+	loop.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
+	require.Zero(t, claims)
+	require.Zero(t, inner.calls)
+	gate.available = true
+	loop.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
+	require.Equal(t, 1, claims, "exhaustion stops further claims")
+	require.Len(t, leases.releaseCalls, 1)
+	require.Empty(t, leases.setResultCalls)
+}
+
+func TestValidationRetryDeferredModelDoesNotBlockCreditedModel(t *testing.T) {
+	for _, releaseFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("releaseFails=%t", releaseFails), func(t *testing.T) {
+			claims := 0
+			leases := &stubStaleLeaseStore{acquireFn: func(context.Context, string, storage.LeaseOwner, time.Duration) (uint64, uint64, error) {
+				claims++
+				if claims <= 2 {
+					return uint64(claims), 0, nil
+				}
+				return 0, 0, nil
+			}}
+			if releaseFails {
+				leases.releaseFn = func(context.Context, string, uint64, uint64, storage.LeaseOwner) error {
+					return errors.New("release unavailable")
+				}
+			}
+			snap := inferenceSnap(1, types.StatusFinished)
+			snap.state.Inferences[1].Model = "empty"
+			snap.state.Inferences[2] = &types.InferenceRecord{Model: "credited", Status: types.StatusFinished}
+			credits := 1
+			var attempted []string
+			inner := &stubEngine{validateFn: func(_ context.Context, req devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+				attempted = append(attempted, req.Model)
+				if req.Model == "empty" {
+					return nil, devshardpkg.ErrValidationDeferred
+				}
+				credits--
+				return &devshardpkg.ValidateResult{Valid: true}, nil
+			}}
+			loop := newTestValidationRetryLoop(leases, snap, inner)
+			loop.inner = &creditGatedRetryEngine{stubEngine: inner, availableForModel: func(model string) bool {
+				return model == "credited" && credits > 0
+			}}
+			loop.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
+			require.Equal(t, []string{"empty", "credited"}, attempted)
+			require.Equal(t, 2, claims, "stop claiming once the remaining model is exhausted")
+			require.Contains(t, leases.releaseCalls, "escrow-1/1/0/addr")
+			require.Empty(t, leases.setResultCalls, "the exhausted row must stay retryable")
+		})
 	}
 }

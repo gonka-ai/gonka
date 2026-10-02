@@ -230,6 +230,13 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			wantCooldown: true,
 		},
 		{
+			name:         "validation deferred",
+			status:       types.StatusFinished,
+			validator:    scriptedValidationEngine{err: devshard.ErrValidationDeferred},
+			wantRelease:  1,
+			wantCooldown: true,
+		},
+		{
 			name:         "validation skipped",
 			status:       types.StatusFinished,
 			validator:    scriptedValidationEngine{err: devshard.ErrValidationSkipped},
@@ -806,4 +813,62 @@ func TestHost_CollectValidationJobs_QueueFullDoesNotAcquireOrCooldown(t *testing
 	h.mu.Unlock()
 	require.False(t, validating, "queue-full collection must not reserve the inference")
 	require.False(t, onCooldown, "queue-full collection must not stamp cooldown")
+}
+
+func TestHostDeferredValidationRecordsFinished(t *testing.T) {
+	deferredCount := func() float64 {
+		families, err := observability.Registry().Gather()
+		require.NoError(t, err)
+		for _, family := range families {
+			if family.GetName() != "devshard_validation_total" {
+				continue
+			}
+			for _, metric := range family.Metric {
+				labels := map[string]string{}
+				for _, label := range metric.Label {
+					labels[label.GetName()] = label.GetValue()
+				}
+				if labels["stage"] == "validation_finished" && labels["status"] == "deferred" {
+					return metric.GetCounter().GetValue()
+				}
+			}
+		}
+		return 0
+	}
+	rec := &recordingLeaseRecorder{}
+	h, hosts, user := newLeaseReleaseHost(t, &scriptedValidationEngine{err: devshard.ErrValidationDeferred}, rec)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+	before := deferredCount()
+	h.validateAsync(context.Background(), testValidateJob())
+	require.Equal(t, before+1, deferredCount())
+}
+
+type creditGatedValidator struct {
+	available bool
+	calls     int
+}
+
+func (v *creditGatedValidator) CanValidate(string) bool { return v.available }
+func (v *creditGatedValidator) Validate(context.Context, devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	v.calls++
+	return nil, devshard.ErrValidationDeferred
+}
+func TestHostValidationCreditScheduling(t *testing.T) {
+	v := &creditGatedValidator{}
+	h, hosts, user := newTwoHostValidationHost(t, v)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+	h.validationQueue = make(chan validateJob, defaultValidationQueueSize)
+	require.Empty(t, collectValidationJobsLocked(h))
+	require.Empty(t, h.validating)
+	require.Empty(t, h.validationCooldown)
+	v.available = true
+	jobs := collectValidationJobsLocked(h)
+	require.Len(t, jobs, 1, "earning credit makes the obligation schedulable")
+	v.available = false
+	h.validateAsync(context.Background(), jobs[0])
+	require.Zero(t, v.calls, "queued work must recheck before validation or leases")
+	require.Empty(t, h.validating)
+	require.Empty(t, h.validationCooldown)
+	v.available = true
+	require.Len(t, collectValidationJobsLocked(h), 1, "deferral keeps the obligation")
 }
