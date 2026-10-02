@@ -45,22 +45,30 @@ class HardwareRelabelTests : TestermintTest() {
                     this[PocParams::models] = listOf(
                         PoCModelConfig(
                             modelId = sourceModel,
-                            seqLen = 256L,
-                            dynamicCoefficient = DynamicCoefficientModelConfig(
-                                coeffMin = Decimal.fromDouble(coeffSource),
-                                coeffMax = Decimal.fromDouble(coeffSource),
-                                relativeDifficulty = Decimal.fromDouble(1.0),
-                                targetShareBps = 5000,
+                            schemes = listOf(
+                                PocSchemeParams(
+                                    seqLen = 256L,
+                                    dynamicCoefficient = DynamicCoefficientModelConfig(
+                                        coeffMin = Decimal.fromDouble(coeffSource),
+                                        coeffMax = Decimal.fromDouble(coeffSource),
+                                        relativeDifficulty = Decimal.fromDouble(1.0),
+                                        targetShareBps = 5000,
+                                    ),
+                                ),
                             ),
                         ),
                         PoCModelConfig(
                             modelId = targetModel,
-                            seqLen = 256L,
-                            dynamicCoefficient = DynamicCoefficientModelConfig(
-                                coeffMin = Decimal.fromDouble(coeffTarget),
-                                coeffMax = Decimal.fromDouble(coeffTarget),
-                                relativeDifficulty = Decimal.fromDouble(1.0),
-                                targetShareBps = 5000,
+                            schemes = listOf(
+                                PocSchemeParams(
+                                    seqLen = 256L,
+                                    dynamicCoefficient = DynamicCoefficientModelConfig(
+                                        coeffMin = Decimal.fromDouble(coeffTarget),
+                                        coeffMax = Decimal.fromDouble(coeffTarget),
+                                        relativeDifficulty = Decimal.fromDouble(1.0),
+                                        targetShareBps = 5000,
+                                    ),
+                                ),
                             ),
                         ),
                     )

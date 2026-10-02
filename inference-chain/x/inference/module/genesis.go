@@ -66,7 +66,33 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	// this line is used by starport scaffolding # genesis/module/init
 	importDevshardApprovedVersions(ctx, k, &genState)
+	modelIDs := make([]string, 0, len(genState.ModelList)+1)
+	for _, model := range genState.ModelList {
+		modelIDs = append(modelIDs, model.Id)
+	}
+	if genState.Params.PocParams != nil && genState.Params.PocParams.ModelId != "" {
+		modelIDs = append(modelIDs, genState.Params.PocParams.ModelId)
+	}
+	types.PrepareGenesisPocModels(&genState.Params, modelIDs)
+	types.EnableGenesisPocV2(&genState.Params)
+	if genState.Params.PocParams != nil {
+		ids := make([]string, 0, len(genState.Params.PocParams.Models))
+		for _, model := range genState.Params.PocParams.Models {
+			if model != nil {
+				ids = append(ids, model.ModelId)
+			}
+		}
+		k.LogInfo("InitGenesis: PREFILL scheme blocks", types.PoC,
+			"models", ids,
+			"poc_v2_enabled", genState.Params.PocParams.PocV2Enabled,
+			"confirmation_poc_v2_enabled", genState.Params.PocParams.ConfirmationPocV2Enabled,
+		)
+	}
 	if err := k.SetParams(ctx, genState.Params); err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
+	if _, err := k.FreezePocStageRecipe(ctx, 0, nil); err != nil {
 		//nolint:forbidigo // genesis code
 		panic(err)
 	}

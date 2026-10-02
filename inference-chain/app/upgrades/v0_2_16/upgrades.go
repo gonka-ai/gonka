@@ -396,7 +396,7 @@ func freezeUpcomingCoefficientConfig(ctx context.Context, k keeper.Keeper) error
 	if err != nil {
 		return err
 	}
-	frozen, err := coefficient.Freeze(params.PocParams)
+	frozen, err := coefficient.Freeze(params.PocParams, nil)
 	if err != nil {
 		return err
 	}

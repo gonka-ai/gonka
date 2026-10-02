@@ -13,7 +13,8 @@ fi
 
 if ! id -u appuser >/dev/null 2>&1; then
   echo "Creating user 'appuser'"
-  useradd -m -u "$HOST_UID" -g appgroup appuser
+  # The vLLM 0.30 base (Ubuntu 24.04) already owns UID 1000; appuser then gets the next free one.
+  useradd -m -u "$HOST_UID" -g appgroup appuser 2>/dev/null || useradd -m -g appgroup appuser
 else
   echo "User 'appuser' already exists"
 fi

@@ -25,6 +25,9 @@ class PoCParamsModel(BaseModel):
     model: str
     seq_len: int
     k_dim: int = 12
+    # Decode PoC scheme and its step count; absent => prefill scheme.
+    decode: Optional[bool] = None
+    max_tokens: Optional[int] = None
 
 
 class PoCInitGenerateRequest(BaseModel):
@@ -34,7 +37,7 @@ class PoCInitGenerateRequest(BaseModel):
     public_key: str
     node_id: int
     node_count: int
-    batch_size: int = 32
+    batch_size: Optional[int] = None  # absent: see _backend_payload
     params: PoCParamsModel
     url: Optional[str] = None
     poc_stronger_rng: bool = False
@@ -43,6 +46,7 @@ class PoCInitGenerateRequest(BaseModel):
 class ArtifactModel(BaseModel):
     nonce: int
     vector_b64: str
+    k_points_steps: Optional[List[int]] = None  # decode scheme artifact
 
 
 class ValidationModel(BaseModel):
@@ -64,12 +68,23 @@ class PoCGenerateRequest(BaseModel):
     node_count: int
     nonces: List[int]
     params: PoCParamsModel
-    batch_size: int = 32
+    batch_size: Optional[int] = None  # absent: see _backend_payload
     wait: bool = False
     url: Optional[str] = None
     validation: Optional[ValidationModel] = None
     stat_test: Optional[StatTestModel] = None
     poc_stronger_rng: bool = False
+
+
+def _backend_payload(body) -> dict:
+    """The request as the vLLM backend gets it. Without a batch_size from the chain
+    the decode scheme runs as many nonces at once as the backend holds (0 = AUTO:
+    its poc_max_batch_size, else max_num_seqs); the prefill scheme keeps 32, one
+    forward of 32 x seq_len. Prefill must never get 0."""
+    payload = body.model_dump(exclude_none=True)
+    if body.batch_size is None:
+        payload["batch_size"] = 0 if body.params.decode else 32
+    return payload
 
 
 # Endpoints
@@ -86,7 +101,7 @@ async def init_generate(body: PoCInitGenerateRequest) -> dict:
     errors = []
     
     async def call_one(port: int, group_id: int):
-        payload = body.model_dump()
+        payload = _backend_payload(body)
         payload["group_id"] = group_id
         payload["n_groups"] = n_groups
         try:
@@ -197,7 +212,7 @@ async def generate(body: PoCGenerateRequest) -> dict:
         raise HTTPException(status_code=503, detail="No vLLM backends available")
     
     try:
-        r = await call_backend(port, "POST", "/api/v1/pow/generate", body.model_dump())
+        r = await call_backend(port, "POST", "/api/v1/pow/generate", _backend_payload(body))
         
         if r.status_code != 200:
             raise HTTPException(status_code=r.status_code, detail=r.text)
