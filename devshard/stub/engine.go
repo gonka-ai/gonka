@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"net/http"
 
+	"common/completionapi"
+
 	"devshard"
 )
 
 // InferenceEngine returns fixed values for testing.
 type InferenceEngine struct {
 	ResponseHash          []byte
+	ServedHash            []byte
 	InputTokens           uint64
 	OutputTokens          uint64
 	ResponseBody          []byte
@@ -23,6 +26,7 @@ func NewInferenceEngine() *InferenceEngine {
 	h := sha256.Sum256(body)
 	return &InferenceEngine{
 		ResponseHash: h[:],
+		ServedHash:   mustHashServedView(body),
 		InputTokens:  80,
 		OutputTokens: 40,
 		ResponseBody: body,
@@ -47,10 +51,28 @@ func (e *InferenceEngine) Execute(ctx context.Context, req devshard.ExecuteReque
 
 	return &devshard.ExecuteResult{
 		ResponseHash: e.ResponseHash,
+		ServedHash:   e.ServedHash,
 		InputTokens:  e.InputTokens,
 		OutputTokens: e.OutputTokens,
 		ResponseBody: e.ResponseBody,
 	}, nil
+}
+
+func HashServedView(body []byte) ([]byte, error) {
+	served, err := completionapi.StripForGateway(body)
+	if err != nil {
+		return nil, fmt.Errorf("strip the stub body for the gateway: %w", err)
+	}
+	sum := sha256.Sum256(served)
+	return sum[:], nil
+}
+
+func mustHashServedView(body []byte) []byte {
+	sum, err := HashServedView(body)
+	if err != nil {
+		panic(err)
+	}
+	return sum
 }
 
 // ConfigurableEngine allows per-inference overrides for testing with

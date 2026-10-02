@@ -119,7 +119,7 @@ func signedErrorFinishTx(t *testing.T, hosts []*signing.Secp256k1Signer, nonce u
 	hash := sum[:]
 	msg := &types.MsgFinishInference{
 		InferenceId:  nonce,
-		ResponseHash: hash,
+		ResponseHash: hash, ServedHash: testutil.TestServedHash,
 		InputTokens:  0,
 		OutputTokens: 0,
 		ExecutorSlot: uint32(execIdx),
@@ -471,7 +471,7 @@ func TestProcessResponse_TimedOutNonceDoesNotRefinish(t *testing.T) {
 
 func TestMarshalFinishTx(t *testing.T) {
 	require.Nil(t, MarshalFinishTx(nil, 1))
-	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 7}}}
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7}}}
 	got := MarshalFinishTx([]*types.DevshardTx{nil, tx}, 7)
 	require.NotEmpty(t, got)
 	decoded := &types.DevshardTx{}
@@ -482,7 +482,7 @@ func TestMarshalFinishTx(t *testing.T) {
 
 func TestFinishTxFor_MarshalsUnderLock(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
-	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 7}}}
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7}}}
 	session.mu.Lock()
 	session.addPendingTx(tx)
 	session.mu.Unlock()
@@ -497,7 +497,7 @@ func TestFinishTxFor_ConcurrentWithSendPendingDiff(t *testing.T) {
 	const n = 8
 	for i := 0; i < n; i++ {
 		session.mu.Lock()
-		session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: uint64(200 + i)}}})
+		session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: uint64(200 + i)}}})
 		session.mu.Unlock()
 	}
 
@@ -513,7 +513,7 @@ func TestFinishTxFor_ConcurrentWithSendPendingDiff(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 40; i++ {
 			session.mu.Lock()
-			session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: uint64(300 + i)}}})
+			session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: uint64(300 + i)}}})
 			session.mu.Unlock()
 			_ = session.SendPendingDiff(ctx)
 		}

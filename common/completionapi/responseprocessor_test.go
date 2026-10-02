@@ -2,6 +2,7 @@ package completionapi
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -210,6 +211,7 @@ func TestForwardingLogprobsOnlyWhenAsked(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			processor := NewExecutorResponseProcessor("dummy-id", testCase.forwardLogprobs)
+			processor.SetLogprobsOptimization(nil, true)
 
 			forwarded, err := processor.ProcessStreamedResponse(strings.TrimSpace(testCase.event))
 			require.NoError(t, err)
@@ -225,8 +227,8 @@ func TestForwardingLogprobsOnlyWhenAsked(t *testing.T) {
 			require.NotEmpty(t, position["top_logprobs"],
 				"the stored copy always keeps the alternatives the validator replays against: %s", stored)
 			_, keptWhole := position["logprob"]
-			require.Equal(t, testCase.storedWhole, keptWhole,
-				"a chunk that compresses loses the position logprob an alternative already spells; one that does not is stored whole: %s", stored)
+			require.Equal(t, testCase.storedWhole || testCase.forwardLogprobs, keptWhole,
+				"an asking caller's chunk and one that will not compress are stored whole; the rest lose the position logprob an alternative already spells: %s", stored)
 		})
 	}
 }
@@ -286,10 +288,71 @@ func BenchmarkPrepareBody(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, _, err := processor.prepareBody(chunk); err != nil {
+				if _, _, _, err := processor.prepareBody(chunk); err != nil {
 					b.Fatal(err)
 				}
 			}
 		})
 	}
+}
+
+var (
+	answeredStream = []string{strings.TrimSpace(EVENT), DataPrefix + "[DONE]"}
+	refusedStream  = []string{
+		`data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m",` +
+			`"choices":[{"index":0,"delta":{"role":"assistant"},"logprobs":null}]}`,
+		`data: {"error":{"code":400,"message":"context length exceeded","type":"BadRequestError"},"id":"x"}`,
+		DataPrefix + "[DONE]",
+	}
+)
+
+func TestForwardedStreamRebuildsToTheStoredHash(t *testing.T) {
+	for _, testCase := range []struct {
+		name            string
+		events          []string
+		forwardLogprobs bool
+		forwardStored   bool
+		wantSameHash    bool
+	}{
+		{name: "optimized, caller asked for logprobs", events: answeredStream, forwardLogprobs: true, wantSameHash: true},
+		{name: "optimized, caller did not ask", events: answeredStream, forwardLogprobs: false},
+		{name: "optimized, refused stream, caller did not ask", events: refusedStream, forwardLogprobs: false},
+		{name: "forwarding stored, caller asked for logprobs", events: answeredStream, forwardLogprobs: true, forwardStored: true, wantSameHash: true},
+		{name: "forwarding stored, caller did not ask", events: answeredStream, forwardLogprobs: false, forwardStored: true, wantSameHash: true},
+		{name: "forwarding stored, refused stream, caller did not ask", events: refusedStream, forwardLogprobs: false, forwardStored: true, wantSameHash: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			processor := NewExecutorResponseProcessor("dummy-id", testCase.forwardLogprobs)
+			processor.SetLogprobsOptimization(nil, !testCase.forwardStored)
+
+			var forwarded []string
+			for _, line := range testCase.events {
+				relayed, err := processor.ProcessStreamedResponse(line)
+				require.NoError(t, err)
+				forwarded = append(forwarded, relayed)
+			}
+
+			stored, err := processor.GetResponseBytes()
+			require.NoError(t, err)
+			rebuilt, err := json.Marshal(SerializedStreamedResponse{Events: forwarded})
+			require.NoError(t, err)
+
+			require.Equal(t, testCase.wantSameHash, sha256.Sum256(stored) == sha256.Sum256(rebuilt),
+				"stored: %s\nrebuilt from the wire: %s", stored, rebuilt)
+		})
+	}
+}
+
+func TestForwardingStoredKeepsTheHostsOwnPositions(t *testing.T) {
+	processor := NewExecutorResponseProcessor("dummy-id", true)
+	processor.SetLogprobsOptimization(nil, false)
+
+	_, err := processor.ProcessStreamedResponse(strings.TrimSpace(EVENT))
+	require.NoError(t, err)
+
+	stored, err := processor.GetResponseBytes()
+	require.NoError(t, err)
+	position := storedPosition(t, stored)
+	require.Contains(t, position, "logprob", "the position keeps its own logprob: %s", stored)
+	require.Contains(t, position, "bytes", "the position keeps its bytes: %s", stored)
 }

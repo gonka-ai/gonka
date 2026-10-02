@@ -470,7 +470,7 @@ func TestHasMsgFinish(t *testing.T) {
 	}
 	require.False(t, user.HasMsgFinish(txs, 1))
 
-	txs = append(txs, &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1}}})
+	txs = append(txs, &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1}}})
 	require.True(t, user.HasMsgFinish(txs, 1))
 	require.False(t, user.HasMsgFinish(txs, 2))
 }
@@ -479,11 +479,12 @@ func TestHasMsgFinish(t *testing.T) {
 
 // killableClient wraps a HostClient. Kill/Revive toggle availability.
 type killableClient struct {
-	inner  user.HostClient
-	killed atomic.Bool
-	mu     sync.Mutex
-	err    error
-	last   *host.HostRequest
+	inner          user.HostClient
+	killed         atomic.Bool
+	mu             sync.Mutex
+	err            error
+	last           *host.HostRequest
+	receivedHashes [][32]byte
 }
 
 func (c *killableClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
@@ -491,6 +492,7 @@ func (c *killableClient) Send(ctx context.Context, req host.HostRequest, stream 
 	reqCopy := req
 	c.last = &reqCopy
 	forcedErr := c.err
+	receivedHashes := c.receivedHashes
 	c.mu.Unlock()
 	if c.killed.Load() {
 		return nil, fmt.Errorf("host killed")
@@ -498,7 +500,17 @@ func (c *killableClient) Send(ctx context.Context, req host.HostRequest, stream 
 	if forcedErr != nil {
 		return nil, forcedErr
 	}
-	return c.inner.Send(ctx, req, stream, receiptHandler)
+	resp, err := c.inner.Send(ctx, req, stream, receiptHandler)
+	if resp != nil && receivedHashes != nil {
+		resp.ReceivedResponseHashes = receivedHashes
+	}
+	return resp, err
+}
+
+func (c *killableClient) ReportReceivedHashes(hashes [][32]byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.receivedHashes = hashes
 }
 
 func (c *killableClient) Kill()   { c.killed.Store(true) }
@@ -683,6 +695,11 @@ func setupTestProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngi
 
 func setupTestProxyWithBalance(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, balance uint64) *testProxyEnv {
 	t.Helper()
+	return setupTestProxyWithFeePerNonce(t, numHosts, engines, verifierAccept, balance, 0)
+}
+
+func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, balance, feePerNonce uint64) *testProxyEnv {
+	t.Helper()
 	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hostSigners {
 		hostSigners[i] = testutil.MustGenerateKey(t)
@@ -693,6 +710,7 @@ func setupTestProxyWithBalance(t *testing.T, numHosts int, engines []devshard.In
 		RefusalTimeout:   1,
 		ExecutionTimeout: 1,
 		TokenPrice:       1,
+		FeePerNonce:      feePerNonce,
 		VoteThreshold:    uint32(numHosts) / 2,
 	}
 	verifier := signing.NewSecp256k1Verifier()
@@ -1051,7 +1069,7 @@ func (c *streamContentThenReleaseClient) Send(ctx context.Context, req host.Host
 		Nonce: nid,
 		Mempool: []*types.DevshardTx{
 			{Tx: &types.DevshardTx_FinishInference{
-				FinishInference: &types.MsgFinishInference{InferenceId: nid},
+				FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: nid},
 			}},
 		},
 		ConfirmedAt: time.Now().Unix(),
@@ -1078,7 +1096,7 @@ func (c *releaseAfterClient) Send(ctx context.Context, req host.HostRequest, str
 		Nonce: nid,
 		Mempool: []*types.DevshardTx{
 			{Tx: &types.DevshardTx_FinishInference{
-				FinishInference: &types.MsgFinishInference{InferenceId: nid},
+				FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: nid},
 			}},
 		},
 	}, nil
@@ -1564,7 +1582,7 @@ func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) 
 	inf.resp.Mempool = []*types.DevshardTx{
 		{
 			Tx: &types.DevshardTx_FinishInference{
-				FinishInference: &types.MsgFinishInference{InferenceId: prepared.Nonce()},
+				FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: prepared.Nonce()},
 			},
 		},
 	}
@@ -1760,7 +1778,7 @@ func TestRunInference_CancelStillSettlesStartedAttempt(t *testing.T) {
 			Mempool: []*types.DevshardTx{
 				{
 					Tx: &types.DevshardTx_FinishInference{
-						FinishInference: &types.MsgFinishInference{InferenceId: 1},
+						FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1},
 					},
 				},
 			},
@@ -1864,7 +1882,7 @@ func TestHandleDebugInferences_IncludesSealedInferences(t *testing.T) {
 	}}}})
 	require.NoError(t, err)
 	finish := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"), InputTokens: 10, OutputTokens: 20, ExecutorSlot: 1, EscrowId: escrowID,
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 10, OutputTokens: 20, ExecutorSlot: 1, EscrowId: escrowID,
 	}
 	finish.ProposerSig = testutil.SignProposerTx(t, hosts[1], finish)
 	_, err = sm.ApplyLocal(3, []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{FinishInference: finish}}})
@@ -2112,8 +2130,8 @@ func TestRunInference_ExportsPrometheusMetrics(t *testing.T) {
 	require.Contains(t, body, "devshard_speculative_attempt_starts_total")
 	require.Contains(t, body, `reason="receipt_timeout"`)
 	require.Contains(t, body, `reason="attempt_failed"`)
-	require.Contains(t, body, `devshard_id="escrow-proxy"`)
-	require.Contains(t, body, "devshard_host_total_time_seconds")
+	require.Contains(t, body, `escrow_id="escrow-proxy"`)
+	require.Contains(t, body, "devshard_gateway_participant_total_attempt_seconds")
 }
 
 func TestPerfTrackerIsUnresponsiveUsesThreshold(t *testing.T) {

@@ -42,9 +42,24 @@ type StreamResponse struct {
 
 func SendStreamingCompletion(t *testing.T, client *http.Client, clientURL, content string) StreamResponse {
 	t.Helper()
-	DebugLogf(t, "sending streaming completion request content=%q", content)
+	return SendStreamingBody(t, client, clientURL, ChatCompletionBody(content, true))
+}
 
-	data, err := json.Marshal(ChatCompletionBody(content, true))
+// SendStreamingCompletionWithLogprobs asks for the host's own positions, which a plain request never does.
+func SendStreamingCompletionWithLogprobs(t *testing.T, client *http.Client, clientURL, content string, topLogprobs int) StreamResponse {
+	t.Helper()
+	body := ChatCompletionBody(content, true)
+	body["logprobs"] = true
+	body["top_logprobs"] = topLogprobs
+	return SendStreamingBody(t, client, clientURL, body)
+}
+
+// SendStreamingBody streams whatever body the caller composed, for requests ChatCompletionBody cannot express.
+func SendStreamingBody(t *testing.T, client *http.Client, clientURL string, body map[string]any) StreamResponse {
+	t.Helper()
+	DebugLogf(t, "sending streaming completion request body=%v", body)
+
+	data, err := json.Marshal(body)
 	require.NoError(t, err)
 
 	req, err := http.NewRequest(http.MethodPost, clientURL+"/v1/chat/completions", strings.NewReader(string(data)))
@@ -56,9 +71,9 @@ func SendStreamingCompletion(t *testing.T, client *http.Client, clientURL, conte
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	body, events := readSSEEvents(t, resp.Body)
-	DebugLogf(t, "streaming completion status=%d content_type=%q body=%s", resp.StatusCode, resp.Header.Get("Content-Type"), body)
-	require.Less(t, resp.StatusCode, 300, "streaming completion returned %d: %s", resp.StatusCode, body)
+	rawBody, events := readSSEEvents(t, resp.Body)
+	DebugLogf(t, "streaming completion status=%d content_type=%q body=%s", resp.StatusCode, resp.Header.Get("Content-Type"), rawBody)
+	require.Less(t, resp.StatusCode, 300, "streaming completion returned %d: %s", resp.StatusCode, rawBody)
 
 	return StreamResponse{
 		ContentType: resp.Header.Get("Content-Type"),
@@ -278,6 +293,7 @@ func GetGossipNonceStatus(t *testing.T, client *http.Client, hostURL, routePrefi
 		SenderSlot: NumericField(t, status, "sender_slot"),
 	}
 }
+
 // The gateway refuses finalize with 409 while the escrow still has work in
 // flight, including the background race cleanup that outlives the winning
 // completion response, so a finalize issued right after a completion can be
