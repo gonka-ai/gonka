@@ -235,7 +235,7 @@ func TestGatewayCheckBalancesReleasesAHeldEscrowOnceItsBalanceRecovers(t *testin
 	gateway, runtime, created, _ := newHeldEscrowGateway(t)
 	runBalanceTick(t, gateway, runtime.id)
 
-	setEscrowBalanceAndReservation(t, runtime, escrowHoldReleaseBalance(runtime.proxy.sm.Config()), 0)
+	setEscrowBalanceAndReservation(t, runtime, escrowHoldReleaseBalance(runtime.model, runtime.proxy.sm.Config()), 0)
 	runBalanceTick(t, gateway, runtime.id)
 
 	accepts, _ := runtime.acceptsNewInferences()

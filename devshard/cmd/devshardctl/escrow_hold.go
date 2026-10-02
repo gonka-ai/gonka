@@ -35,8 +35,13 @@ func (inFlight *keyedInFlight) enter(key string) (leave func(), entered bool) {
 
 const escrowHoldReleaseResponses = 32
 
-func escrowHoldReleaseBalance(config types.SessionConfig) uint64 {
-	return balanceMinimumThreshold + escrowHoldReleaseResponses*RequestMaxTokensCap*config.TokenPrice
+// escrowMinimumBalance is the balance under which an escrow is replaced: one full-context request of its model priced in prompt bytes, as reservations are, never under balanceMinimumThreshold.
+func escrowMinimumBalance(modelID string, config types.SessionConfig) uint64 {
+	return max(balanceMinimumThreshold, modelContextLimits[modelID]*estimatedPromptBytesPerToken*config.TokenPrice)
+}
+
+func escrowHoldReleaseBalance(modelID string, config types.SessionConfig) uint64 {
+	return escrowMinimumBalance(modelID, config) + escrowHoldReleaseResponses*RequestMaxTokensCap*config.TokenPrice
 }
 
 func escrowHoldPendingWindow(config types.SessionConfig) time.Duration {
@@ -121,7 +126,7 @@ func (g *Gateway) holdOrReplaceDepletedEscrow(runtime *devshardRuntime, reason s
 	}
 	state := runtime.proxy.sm.SnapshotState()
 	recoverable := summarizeEscrowHoldInFlight(state.Inferences, state.Config, time.Now()).recoverable(runtime.escrowHasBackgroundWork())
-	releaseBalance := escrowHoldReleaseBalance(state.Config)
+	releaseBalance := escrowHoldReleaseBalance(runtime.model, state.Config)
 	if state.Balance+recoverable < releaseBalance || !g.canReplaceEscrowModel(runtime.model) {
 		g.scheduleDepletedEscrowReplacement(runtime.id, runtime.model, reason)
 		return
@@ -154,7 +159,7 @@ func (g *Gateway) resolveHeldEscrow(runtime *devshardRuntime, now time.Time) {
 	state := runtime.proxy.sm.SnapshotState()
 	summary := summarizeEscrowHoldInFlight(state.Inferences, state.Config, now)
 	recoverable := summary.recoverable(runtime.escrowHasBackgroundWork())
-	releaseBalance := escrowHoldReleaseBalance(state.Config)
+	releaseBalance := escrowHoldReleaseBalance(runtime.model, state.Config)
 	switch {
 	case state.Balance >= releaseBalance:
 		g.releaseEscrowHold(runtime, "balance_recovered")

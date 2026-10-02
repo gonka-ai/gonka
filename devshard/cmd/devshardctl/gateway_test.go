@@ -37,6 +37,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const (
+	testReservationLength = 1_100
+	testTokenPrice        = 10
+)
+
 func gatewayTestStateMachineInPhase(t *testing.T, phase types.SessionPhase) *state.StateMachine {
 	t.Helper()
 
@@ -127,7 +132,7 @@ func gatewayTestDepletionGateway(t *testing.T, rt *devshardRuntime, modifySettin
 	oldCreate := gatewayCreateDepletionEscrow
 	oldSettle := gatewaySettleDevshardOnChain
 	gatewayCreateDepletionEscrow = func(_ *Gateway, _ context.Context, _ GatewaySettings, model EscrowRotationModelSettings, role string, _ uint64) (*CreateDevshardEscrowResult, error) {
-		require.Equal(t, "m", model.ModelID)
+		require.Equal(t, rt.model, model.ModelID)
 		require.Equal(t, rotationRoleRegular, role)
 		created.Add(1)
 		return &CreateDevshardEscrowResult{EscrowID: 99, TxHash: "OK"}, nil
@@ -484,7 +489,7 @@ func TestGatewayChooseRuntimeUsesLowestLoad(t *testing.T) {
 	b.activeUserRequests.Store(1)
 
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
-	chosen, err := g.reserveRuntimeForModel("m", 5, nil)
+	chosen, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 	require.EqualValues(t, 2, chosen.activeUserRequests.Load())
@@ -2267,7 +2272,7 @@ func TestGatewayChooseRuntimeSkipsInactiveDevshard(t *testing.T) {
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
 	b.active.Store(false)
 
-	chosen, err := g.reserveRuntimeForModel("m", 5, nil)
+	chosen, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, "6", chosen.id)
 }
@@ -2277,7 +2282,7 @@ func TestGatewayChooseRuntimeSkipsHighNonceBeforeRouting(t *testing.T) {
 	available := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
 	g := NewGateway([]*devshardRuntime{highNonce, available}, NewGatewayLimiter(0, 0), "m")
 
-	chosen, err := g.reserveRuntimeForModel("m", 5, nil)
+	chosen, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 	require.True(t, highNonce.active.Load())
@@ -2287,11 +2292,166 @@ func TestGatewayChooseRuntimeFailsWhenAllDevshardsHighNonce(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "6", balanceMinimumThreshold, nonceDeactivationLimit)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
 
-	_, err := g.reserveRuntimeForModel("m", 5, nil)
+	_, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no devshard runtimes available for new inferences")
 	require.Contains(t, err.Error(), "skipped: high_nonce=1")
 	require.True(t, rt.active.Load())
+}
+
+func gatewayTestRuntimeWithBalanceAndPrice(t *testing.T, id string, balance, tokenPrice uint64) *devshardRuntime {
+	t.Helper()
+	rt := gatewayTestRuntimeForLimits(t, id, balance, nonceDeactivationLimit-1)
+	state := rt.proxy.sm.ExportState()
+	state.Config.TokenPrice = tokenPrice
+	rt.proxy.sm.RestoreState(state)
+	return rt
+}
+
+// Test flow:
+//  1. Register an idle escrow that can fund one attempt of the request but not two, and a funded one.
+//  2. Pick an escrow for the request three times; each pick adds load to the funded escrow.
+//  3. Expect every pick to land on the funded escrow even once it is the busier one.
+func TestGatewayChooseRuntimeSkipsEscrowThatCannotFundTwoAttempts(t *testing.T) {
+	shortOfTwoAttempts := gatewayTestRuntimeWithBalanceAndPrice(t, "6", 2*testReservationLength*testTokenPrice-1, testTokenPrice)
+	funded := gatewayTestRuntimeWithBalanceAndPrice(t, "12", 1_000_000, testTokenPrice)
+	g := NewGateway([]*devshardRuntime{shortOfTwoAttempts, funded}, NewGatewayLimiter(0, 0), "m")
+
+	for pick := 0; pick < 3; pick++ {
+		chosen, err := g.reserveRuntimeForModel("m", 5, testReservationLength, nil)
+		require.NoError(t, err)
+		require.Equal(t, "12", chosen.id)
+	}
+}
+
+// Test flow:
+//  1. Register a single escrow that can fund one attempt of the request but not two.
+//  2. Pick an escrow for the request.
+//  3. Expect that escrow to be picked: the request runs without a hedge rather than being refused.
+func TestGatewayChooseRuntimeFallsBackToAnEscrowThatFundsOneAttempt(t *testing.T) {
+	rt := gatewayTestRuntimeWithBalanceAndPrice(t, "6", 2*testReservationLength*testTokenPrice-1, testTokenPrice)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
+
+	chosen, err := g.reserveRuntimeForModel("m", 5, testReservationLength, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "6", chosen.id)
+}
+
+// Test flow:
+//  1. Register an escrow that funds every attempt but whose only host PoC excludes, and a healthy escrow that funds one attempt.
+//  2. Pick an escrow for the request.
+//  3. Expect the healthy one-attempt escrow, not a 429 for the escrow that has money but no capacity.
+func TestGatewayChooseRuntimeFallsBackToAOneAttemptEscrowWhenTheFundedOnesHaveNoCapacity(t *testing.T) {
+	funded := gatewayTestRuntimeWithBalanceAndPrice(t, "funded", 1_000_000, testTokenPrice)
+	funded.active.Store(true)
+	oneAttempt := gatewayTestRuntimeWithBalanceAndPrice(t, "one-attempt", 2*testReservationLength*testTokenPrice-1, testTokenPrice)
+	oneAttempt.active.Store(true)
+	g := NewGateway([]*devshardRuntime{funded, oneAttempt}, NewGatewayLimiter(0, 0), "m")
+	g.capacity = NewCapacityState()
+	g.capacity.SetEscrowMembership("one-attempt", map[string]int{"A": 1})
+	g.capacity.SetEscrowMembership("funded", map[string]int{"B": 1})
+	g.capacity.SetHostWeights(map[string]float64{"A": 1, "B": 1}, false)
+	g.capacity.SetPoCPreserved([]string{"A"})
+
+	chosen, err := g.reserveRuntimeForModel("m", 5, testReservationLength, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "one-attempt", chosen.id)
+}
+
+// Test flow:
+//  1. Register a single escrow that cannot fund even one attempt of the request.
+//  2. Pick an escrow for the request.
+//  3. Expect the funding refusal the pooled route answers with 503 and Retry-After, not a generic no-runtime error.
+func TestGatewayChooseRuntimeRefusesWhenNoEscrowCanFundOneAttempt(t *testing.T) {
+	rt := gatewayTestRuntimeWithBalanceAndPrice(t, "6", testReservationLength*testTokenPrice-1, testTokenPrice)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
+
+	_, err := g.reserveRuntimeForModel("m", 5, testReservationLength, nil)
+
+	var cannotFundErr *EscrowsCannotFundRequestError
+	require.ErrorAs(t, err, &cannotFundErr)
+	require.Equal(t, 1, cannotFundErr.EscrowsRefused)
+}
+
+// Test flow:
+//  1. Set the speculative attempt cap, restoring the previous value afterwards.
+//  2. Register an escrow that funds exactly two attempts of the request and one that funds three, then pick three times; each pick adds load to the escrow it chose.
+//  3. Expect the two-attempt escrow to share the load under a cap of two or a whole-group cap (0), which funds DefaultMaxSpeculativeAttempts, and to be passed over under a cap of three.
+func TestGatewayChooseRuntimeFundsTheSpeculativeAttemptCap(t *testing.T) {
+	for _, testCase := range []struct {
+		name                       string
+		attemptCap                 int
+		isTwoAttemptEscrowPickable bool
+	}{
+		{name: "whole_group_cap_funds_the_default_of_two", attemptCap: 0, isTwoAttemptEscrowPickable: true},
+		{name: "cap_of_two_fits", attemptCap: 2, isTwoAttemptEscrowPickable: true},
+		{name: "cap_of_three_does_not_fit", attemptCap: 3, isTwoAttemptEscrowPickable: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			saved := CurrentMaxSpeculativeAttempts()
+			SetMaxSpeculativeAttempts(testCase.attemptCap)
+			t.Cleanup(func() { SetMaxSpeculativeAttempts(saved) })
+			twoAttempts := gatewayTestRuntimeWithBalanceAndPrice(t, "6", 2*testReservationLength*testTokenPrice, testTokenPrice)
+			threeAttempts := gatewayTestRuntimeWithBalanceAndPrice(t, "12", 3*testReservationLength*testTokenPrice, testTokenPrice)
+			g := NewGateway([]*devshardRuntime{twoAttempts, threeAttempts}, NewGatewayLimiter(0, 0), "m")
+
+			chosenIDs := map[string]bool{}
+			for pick := 0; pick < 3; pick++ {
+				chosen, err := g.reserveRuntimeForModel("m", 5, testReservationLength, nil)
+				require.NoError(t, err)
+				chosenIDs[chosen.id] = true
+			}
+
+			require.Equal(t, testCase.isTwoAttemptEscrowPickable, chosenIDs["6"], "picked: %v", chosenIDs)
+			require.True(t, chosenIDs["12"], "picked: %v", chosenIDs)
+		})
+	}
+}
+
+// Test flow:
+//  1. Register one escrow of the given model, token price and balance, with rotation able to replace it and no money in flight.
+//  2. Run a balance tick and wait for any replacement it schedules.
+//  3. Expect the escrow replaced exactly when its balance is under max(balanceMinimumThreshold, max_model_len * estimatedPromptBytesPerToken * token_price), and kept at the floor itself.
+func TestGatewayCheckBalancesReplacesEscrowShortOfAFullContextRequest(t *testing.T) {
+	const minimaxModel, deepseekModel, unknownModel = "MiniMaxAI/MiniMax-M2.7", "deepseek-ai/DeepSeek-V4-Flash-0731", "m"
+	for _, testCase := range []struct {
+		name       string
+		modelID    string
+		tokenPrice uint64
+		balance    uint64
+		isReplaced bool
+	}{
+		{name: "minimax_under_one_full_context_request", modelID: minimaxModel, tokenPrice: 10, balance: 7_199_999, isReplaced: true},
+		{name: "minimax_at_one_full_context_request", modelID: minimaxModel, tokenPrice: 10, balance: 7_200_000, isReplaced: false},
+		{name: "deepseek_under_one_full_context_request", modelID: deepseekModel, tokenPrice: 10, balance: 15_999_999, isReplaced: true},
+		{name: "deepseek_at_one_full_context_request", modelID: deepseekModel, tokenPrice: 10, balance: 16_000_000, isReplaced: false},
+		{name: "unknown_model_keeps_the_minimum_threshold", modelID: unknownModel, tokenPrice: 10, balance: balanceMinimumThreshold, isReplaced: false},
+		{name: "unknown_model_under_the_minimum_threshold", modelID: unknownModel, tokenPrice: 10, balance: balanceMinimumThreshold - 1, isReplaced: true},
+		{name: "cheap_context_never_lowers_the_minimum_threshold", modelID: minimaxModel, tokenPrice: 1, balance: balanceMinimumThreshold - 1, isReplaced: true},
+		{name: "cheap_context_at_the_minimum_threshold", modelID: minimaxModel, tokenPrice: 1, balance: balanceMinimumThreshold, isReplaced: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			rt := gatewayTestRuntimeWithBalanceAndPrice(t, "12", testCase.balance, testCase.tokenPrice)
+			rt.model = testCase.modelID
+			g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+				settings.DefaultModel = testCase.modelID
+				settings.EscrowRotation.Models[0].ModelID = testCase.modelID
+			})
+
+			runBalanceTick(t, g, rt.id)
+
+			if testCase.isReplaced {
+				require.Eventually(t, func() bool {
+					return created.Load() == 1 && settled.Load() == 1 && !rt.active.Load()
+				}, 2*time.Second, 10*time.Millisecond)
+				return
+			}
+			require.EqualValues(t, 0, created.Load(), "an escrow at the floor was replaced")
+			require.True(t, rt.active.Load(), "an escrow at the floor was taken out of service")
+		})
+	}
 }
 
 func TestGatewayChooseRuntimeSkipsNonActivePhaseDevshard(t *testing.T) {
@@ -2300,7 +2460,7 @@ func TestGatewayChooseRuntimeSkipsNonActivePhaseDevshard(t *testing.T) {
 	active := &devshardRuntime{id: "12", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseActive)}}
 	g := NewGateway([]*devshardRuntime{finalizing, settlement, active}, NewGatewayLimiter(0, 0), "m")
 
-	chosen, err := g.reserveRuntimeForModel("m", 5, nil)
+	chosen, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 }
@@ -2310,7 +2470,7 @@ func TestGatewayChooseRuntimeFailsWhenOnlyNonActivePhaseDevshardsRemain(t *testi
 	settlement := &devshardRuntime{id: "12", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseSettlement)}}
 	g := NewGateway([]*devshardRuntime{finalizing, settlement}, NewGatewayLimiter(0, 0), "m")
 
-	_, err := g.reserveRuntimeForModel("m", 5, nil)
+	_, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no devshard runtimes available for new inferences")
 	require.Contains(t, err.Error(), "skipped: finalizing=1, settlement=1")
@@ -2371,7 +2531,7 @@ func TestGatewayChooseRuntimeSkipsParticipantLimitedDevshard(t *testing.T) {
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
-	chosen, err := g.reserveRuntimeForModel("m", 5, nil)
+	chosen, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 }
@@ -2399,7 +2559,7 @@ func TestGatewayChooseRuntimePrefersHealthyEscrowWithoutBenchingPartial(t *testi
 
 	counts := map[string]int{}
 	for i := 0; i < 60; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1, nil)
+		rt, err := g.reserveRuntimeForModel("m", 1, 0, nil)
 		require.NoError(t, err)
 		counts[rt.id]++
 	}
@@ -2425,7 +2585,7 @@ func TestGatewayChooseRuntimeFailsWhenAllDevshardsParticipantLimited(t *testing.
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
-	_, err := g.reserveRuntimeForModel("m", 5, nil)
+	_, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.Error(t, err)
 	require.True(t, isParticipantRateLimitError(err))
 }
@@ -2454,7 +2614,7 @@ func TestGatewayChooseRuntimeReactsToRecoveryWithoutPhasePoll(t *testing.T) {
 
 	// Immediately after 503: a is dead (W=0), picks must hit b only.
 	for i := 0; i < 5; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1, nil)
+		rt, err := g.reserveRuntimeForModel("m", 1, 0, nil)
 		require.NoError(t, err)
 		require.Equal(t, "b", rt.id, "iteration %d before recovery", i)
 		g.releaseRuntime(rt, 1)
@@ -2470,7 +2630,7 @@ func TestGatewayChooseRuntimeReactsToRecoveryWithoutPhasePoll(t *testing.T) {
 	// should receive at least one request.
 	counts := map[string]int{}
 	for i := 0; i < 20; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1, nil)
+		rt, err := g.reserveRuntimeForModel("m", 1, 0, nil)
 		require.NoError(t, err)
 		counts[rt.id]++
 		g.releaseRuntime(rt, 1)
