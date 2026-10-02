@@ -101,6 +101,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.RecoveryProgressSnapshot)
 	}
 	manager.Register(e.Group(""))
+	startMemoryLog(ctx, manager)
 	chainRuntime.chainEvents.OnReady(lifecycle.SetReady)
 
 	return &devshardApp{

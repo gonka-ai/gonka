@@ -23,6 +23,7 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 
 	observability.RegisterRuntimeCollectors()
 	e.GET("/metrics", echo.WrapHandler(observability.MetricsHandler()))
+	e.GET("/stats/memory", echo.WrapHandler(http.HandlerFunc(handleDebugMemory)))
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
 
 	return e
