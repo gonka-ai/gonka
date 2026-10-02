@@ -389,6 +389,19 @@ func TestChatCompletions_FaultHTTPStatus(t *testing.T) {
 	_ = resp.Body.Close()
 }
 
+func TestChatCompletions_DeterministicFailureRate(t *testing.T) {
+	srv := httptest.NewServer(mockopenai.NewServer(mockopenai.Config{
+		Faults: mockopenai.FaultConfig{FailureRate: 1, HTTPStatus: 503},
+	}).Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json",
+		bytes.NewReader([]byte(`{"messages":[{"role":"user","content":"x"}]}`)))
+	require.NoError(t, err)
+	require.Equal(t, 503, resp.StatusCode)
+	_ = resp.Body.Close()
+}
+
 func TestChatCompletions_FaultPatch(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()

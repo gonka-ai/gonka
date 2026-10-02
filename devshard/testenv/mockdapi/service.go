@@ -2,6 +2,7 @@ package mockdapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -40,6 +41,15 @@ type Service struct {
 	hostEvents     *hostEventRing
 	grpcServer     *grpc.Server
 	httpEcho       *echo.Echo
+}
+
+type mlNodeStats struct {
+	Allocations         uint64 `json:"allocations"`
+	RequestsReceived    uint64 `json:"requests_received"`
+	SuccessfulResponses uint64 `json:"successful_responses"`
+	FailedResponses     uint64 `json:"failed_responses"`
+	Timeouts            uint64 `json:"timeouts"`
+	Error               string `json:"error,omitempty"`
 }
 
 // New connects to mock-chain gRPC and prepares chainoracle surfaces.
@@ -222,6 +232,9 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 	e.GET("/testenv/ml-allocations", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, s.nodeManager.AllocationCounts())
 	})
+	e.GET("/testenv/ml-stats", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, s.mlNodeStats(c.Request().Context()))
+	})
 	if s.cfg.BinaryDir != "" {
 		mountBinaryFiles(e.Group(""), s.cfg.BinaryDir)
 	}
@@ -243,6 +256,50 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 		return err
 	}
 	return ctx.Err()
+}
+
+func (s *Service) mlNodeStats(ctx context.Context) map[string]mlNodeStats {
+	allocations := s.nodeManager.AllocationCounts()
+	result := make(map[string]mlNodeStats, len(s.nodeManager.mlNodes))
+	client := &http.Client{Timeout: 2 * time.Second}
+	for _, node := range s.nodeManager.mlNodes {
+		stats := mlNodeStats{Allocations: allocations[node.ID]}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, node.Endpoint+"/testenv/stats", nil)
+		if err != nil {
+			stats.Error = err.Error()
+			result[node.ID] = stats
+			continue
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			stats.Error = err.Error()
+			result[node.ID] = stats
+			continue
+		}
+		if response.StatusCode != http.StatusOK {
+			stats.Error = response.Status
+			_ = response.Body.Close()
+			result[node.ID] = stats
+			continue
+		}
+		var nodeStats struct {
+			RequestsReceived    uint64 `json:"requests_received"`
+			SuccessfulResponses uint64 `json:"successful_responses"`
+			FailedResponses     uint64 `json:"failed_responses"`
+			Timeouts            uint64 `json:"timeouts"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&nodeStats); err != nil {
+			stats.Error = err.Error()
+		} else {
+			stats.RequestsReceived = nodeStats.RequestsReceived
+			stats.SuccessfulResponses = nodeStats.SuccessfulResponses
+			stats.FailedResponses = nodeStats.FailedResponses
+			stats.Timeouts = nodeStats.Timeouts
+		}
+		_ = response.Body.Close()
+		result[node.ID] = stats
+	}
+	return result
 }
 
 func mountBinaryFiles(g *echo.Group, dir string) {

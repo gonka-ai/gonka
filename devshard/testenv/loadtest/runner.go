@@ -28,11 +28,44 @@ type RunnerConfig struct {
 }
 
 type RunResult struct {
-	Summary     Summary
-	OutputDir   string
-	WorkDir     string
-	GatewayURL  string
-	Allocations map[string]uint64
+	Summary      Summary
+	Terminal     TerminalSummary
+	OutputDir    string
+	WorkDir      string
+	GatewayURL   string
+	Allocations  map[string]uint64
+	MLStats      map[string]MLNodeStats
+	GatewayState GatewayStateSizes
+}
+
+type MLNodeStats struct {
+	Allocations         uint64 `json:"allocations"`
+	RequestsReceived    uint64 `json:"requests_received"`
+	SuccessfulResponses uint64 `json:"successful_responses"`
+	FailedResponses     uint64 `json:"failed_responses"`
+	Timeouts            uint64 `json:"timeouts"`
+	Error               string `json:"error,omitempty"`
+}
+
+type GatewayStateSizes struct {
+	Diffs           int     `json:"diffs"`
+	DiffsBytes      int64   `json:"diffs_bytes"`
+	DiffsMB         float64 `json:"diffs_mb"`
+	SignatureNonces int     `json:"signature_nonces"`
+	NonceStates     int     `json:"nonce_states"`
+	PendingTxs      int     `json:"pending_txs"`
+	AppliedTxKeys   int     `json:"applied_tx_keys"`
+}
+
+// TerminalSummary describes all DevShard inference records observed during
+// the drain phase. It can exceed the number of client requests because the
+// gateway may create speculative attempts.
+type TerminalSummary struct {
+	Finished  int            `json:"finished"`
+	Ghost     int            `json:"ghost"`
+	Total     int            `json:"total"`
+	GhostRate float64        `json:"ghost_rate"`
+	Statuses  map[string]int `json:"statuses,omitempty"`
 }
 
 func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err error) {
@@ -151,6 +184,15 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, err
 	}
 	result.Allocations = allocations
+	mlStats, err := fetchMLNodeStats(ctx, cfg.MockDapi.HTTPPort)
+	if err != nil {
+		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
+		return RunResult{}, err
+	}
+	result.MLStats = mlStats
+	if err := writeMLNodeStats(opts.OutputDir, mlStats); err != nil {
+		return RunResult{}, err
+	}
 	if err := writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath); err != nil {
 		return RunResult{}, err
 	}
@@ -158,7 +200,17 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return RunResult{}, err
 	}
-	assertionErr := assertRun(ctx, scenario, summary, allocations, result.GatewayURL, apiKey, ghostIDs)
+	terminal, assertionErr := assertRun(ctx, scenario, summary, allocations, result.GatewayURL, apiKey, ghostIDs)
+	result.Terminal = terminal
+	gatewayState, stateErr := fetchGatewayStateSizes(ctx, result.GatewayURL, apiKey)
+	if stateErr == nil {
+		result.GatewayState = gatewayState
+		if err := writeGatewayStateSizes(opts.OutputDir, gatewayState); err != nil && assertionErr == nil {
+			return RunResult{}, err
+		}
+	} else if assertionErr == nil {
+		return RunResult{}, stateErr
+	}
 	_ = writeGatewayInferences(ctx, result.GatewayURL, apiKey, opts.OutputDir)
 	if assertionErr != nil {
 		return RunResult{}, assertionErr
@@ -190,6 +242,8 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 			TokenInterval: profile.TokenInterval,
 			Workers:       profile.Workers,
 			Queue:         profile.Queue,
+			FailureRate:   profile.FailureRate,
+			HTTPStatus:    profile.HTTPStatus,
 		})
 	}
 	if err := randomizeTestenv(cfg); err != nil {
@@ -355,27 +409,87 @@ func fetchAllocations(ctx context.Context, dapiPort int) (map[string]uint64, err
 	return allocations, nil
 }
 
-func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocations map[string]uint64, gatewayURL, apiKey string, ghostIDs map[string]struct{}) error {
+func fetchMLNodeStats(ctx context.Context, dapiPort int) (map[string]MLNodeStats, error) {
+	url := fmt.Sprintf("http://127.0.0.1:%d/testenv/ml-stats", dapiPort)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ML stats endpoint returned %s", response.Status)
+	}
+	var stats map[string]MLNodeStats
+	if err := json.NewDecoder(response.Body).Decode(&stats); err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
+func writeMLNodeStats(outputDir string, stats map[string]MLNodeStats) error {
+	body, err := json.MarshalIndent(stats, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(outputDir, "ml-stats.json"), append(body, '\n'), 0o644)
+}
+
+func fetchGatewayStateSizes(ctx context.Context, gatewayURL, apiKey string) (GatewayStateSizes, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/v1/debug/state-sizes", nil)
+	if err != nil {
+		return GatewayStateSizes{}, err
+	}
+	if apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		return GatewayStateSizes{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return GatewayStateSizes{}, fmt.Errorf("gateway state sizes endpoint returned %s", response.Status)
+	}
+	var sizes GatewayStateSizes
+	if err := json.NewDecoder(response.Body).Decode(&sizes); err != nil {
+		return GatewayStateSizes{}, err
+	}
+	return sizes, nil
+}
+
+func writeGatewayStateSizes(outputDir string, sizes GatewayStateSizes) error {
+	body, err := json.MarshalIndent(sizes, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(outputDir, "gateway-state.json"), append(body, '\n'), 0o644)
+}
+
+func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocations map[string]uint64, gatewayURL, apiKey string, ghostIDs map[string]struct{}) (TerminalSummary, error) {
 	if summary.Requests == 0 {
-		return fmt.Errorf("load generator produced no requests")
+		return TerminalSummary{}, fmt.Errorf("load generator produced no requests")
 	}
 	if summary.ErrorRate > scenario.Thresholds.ErrorRate {
-		return fmt.Errorf("error rate %.4f exceeds threshold %.4f", summary.ErrorRate, scenario.Thresholds.ErrorRate)
+		return TerminalSummary{}, fmt.Errorf("error rate %.4f exceeds threshold %.4f", summary.ErrorRate, scenario.Thresholds.ErrorRate)
 	}
 	if scenario.Assertions.MockML.RequireEachNodeUsed {
 		for _, node := range scenario.Topology.MockML.Nodes {
 			if allocations[node.Name] == 0 {
-				return fmt.Errorf("mock ML node %s received no allocations", node.Name)
+				return TerminalSummary{}, fmt.Errorf("mock ML node %s received no allocations", node.Name)
 			}
 		}
 	}
 	if scenario.Assertions.Devshard.RequireDrain || scenario.Assertions.Devshard.NoOrphanedWork {
 		return waitForFinishedInferences(ctx, gatewayURL, apiKey, summary.Completed, scenario.Assertions.Devshard.MaxGhostRate, ghostIDs, scenario.DrainDuration())
 	}
-	return nil
+	return TerminalSummary{}, nil
 }
 
-func waitForFinishedInferences(ctx context.Context, gatewayURL, apiKey string, expected int, maxGhostRate float64, ghostIDs map[string]struct{}, timeout time.Duration) error {
+func waitForFinishedInferences(ctx context.Context, gatewayURL, apiKey string, expected int, maxGhostRate float64, ghostIDs map[string]struct{}, timeout time.Duration) (TerminalSummary, error) {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(time.Second)
@@ -384,10 +498,11 @@ func waitForFinishedInferences(ctx context.Context, gatewayURL, apiKey string, e
 	lastStatuses := map[string]int(nil)
 	lastGhosts := 0
 	lastTotal := 0
+	lastState := TerminalSummary{}
 	for {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/v1/debug/inferences", nil)
 		if err != nil {
-			return err
+			return TerminalSummary{}, err
 		}
 		if apiKey != "" {
 			request.Header.Set("Authorization", "Bearer "+apiKey)
@@ -423,12 +538,19 @@ func waitForFinishedInferences(ctx context.Context, gatewayURL, apiKey string, e
 				if lastTotal > 0 {
 					ghostRate = float64(lastGhosts) / float64(lastTotal)
 				}
+				lastState = TerminalSummary{
+					Finished:  finished,
+					Ghost:     lastGhosts,
+					Total:     lastTotal,
+					GhostRate: ghostRate,
+					Statuses:  lastStatuses,
+				}
 				if finished >= expected && allNonGhostFinished {
 					if ghostRate > maxGhostRate {
-						return fmt.Errorf("ghost inference rate %.4f exceeds max_ghost_rate %.4f (ghost=%d total=%d)", ghostRate, maxGhostRate, lastGhosts, lastTotal)
+						return lastState, fmt.Errorf("ghost inference rate %.4f exceeds max_ghost_rate %.4f (ghost=%d total=%d)", ghostRate, maxGhostRate, lastGhosts, lastTotal)
 					}
 					log.Printf("loadtest: terminal state finished=%d ghost=%d total=%d ghost_rate=%.4f", finished, lastGhosts, lastTotal, ghostRate)
-					return nil
+					return lastState, nil
 				}
 			}
 		} else if response != nil {
@@ -436,13 +558,13 @@ func waitForFinishedInferences(ctx context.Context, gatewayURL, apiKey string, e
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return lastState, ctx.Err()
 		case <-deadline.C:
 			ghostRate := 0.0
 			if lastTotal > 0 {
 				ghostRate = float64(lastGhosts) / float64(lastTotal)
 			}
-			return fmt.Errorf("Devshard did not drain %d successful inferences within %s (last non-ghost statuses: %s; ghost=%d total=%d ghost_rate=%.4f max_ghost_rate=%.4f)", expected, timeout, formatStatusCounts(lastStatuses), lastGhosts, lastTotal, ghostRate, maxGhostRate)
+			return lastState, fmt.Errorf("Devshard did not drain %d successful inferences within %s (last non-ghost statuses: %s; ghost=%d total=%d ghost_rate=%.4f max_ghost_rate=%.4f)", expected, timeout, formatStatusCounts(lastStatuses), lastGhosts, lastTotal, ghostRate, maxGhostRate)
 		case <-ticker.C:
 		}
 	}

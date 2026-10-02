@@ -260,6 +260,7 @@ func newRuntimeMux(proxy *Proxy) http.Handler {
 	mux.HandleFunc("GET /v1/state", proxy.handleState)
 	mux.HandleFunc("GET /v1/debug/pending", proxy.handleDebugPending)
 	mux.HandleFunc("GET /v1/debug/state", proxy.handleDebugState)
+	mux.HandleFunc("GET /v1/debug/state-sizes", proxy.handleDebugStateSizes)
 	mux.HandleFunc("GET /v1/debug/perf", proxy.handleDebugPerf)
 	mux.HandleFunc("GET /v1/debug/pairwise", proxy.handleDebugPairwise)
 	mux.HandleFunc("GET /v1/debug/signatures", proxy.handleDebugSignatures)
@@ -576,6 +577,7 @@ func isReadOnlyDevshardPath(method, innerPath string) bool {
 		"/v1/models",
 		"/v1/debug/pending",
 		"/v1/debug/state",
+		"/v1/debug/state-sizes",
 		"/v1/debug/inferences",
 		"/v1/debug/perf",
 		"/v1/debug/pairwise",
@@ -1365,6 +1367,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/state", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/pending", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/state", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/state-sizes", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/perf", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/pairwise", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/signatures", g.handleSingleOnly)

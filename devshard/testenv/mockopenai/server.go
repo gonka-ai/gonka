@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -21,6 +22,12 @@ type Server struct {
 	streamGate chan struct{}
 	capacity   chan struct{}
 	workers    chan struct{}
+	stats      struct {
+		requestsReceived    atomic.Uint64
+		successfulResponses atomic.Uint64
+		failedResponses     atomic.Uint64
+		timeouts            atomic.Uint64
+	}
 }
 
 // NewServer builds the HTTP server.
@@ -40,6 +47,7 @@ func NewServer(cfg Config) *Server {
 	e.HideBanner = true
 	e.POST("/v1/chat/completions", s.handleChatCompletions)
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/testenv/stats", s.handleStats)
 	e.POST("/api/v1/models/status", s.handleModelStatus)
 	e.POST("/testenv/fault", s.handleFaultPatch)
 	e.POST("/testenv/stream/release", s.handleStreamRelease)
@@ -101,27 +109,46 @@ func (s *Server) handleFaultPatch(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) handleStats(c echo.Context) error {
+	return c.JSON(http.StatusOK, Stats{
+		RequestsReceived:    s.stats.requestsReceived.Load(),
+		SuccessfulResponses: s.stats.successfulResponses.Load(),
+		FailedResponses:     s.stats.failedResponses.Load(),
+		Timeouts:            s.stats.timeouts.Load(),
+	})
+}
+
+func (s *Server) recordFailure(ctx context.Context) {
+	if ctx.Err() != nil {
+		s.stats.timeouts.Add(1)
+		return
+	}
+	s.stats.failedResponses.Add(1)
+}
+
 func (s *Server) handleChatCompletions(c echo.Context) error {
+	s.stats.requestsReceived.Add(1)
 	if !s.acquire(c.Request().Context()) {
+		s.recordFailure(c.Request().Context())
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "mock-openai capacity exhausted"})
 	}
 	defer s.release()
 
 	f, streamGate := s.streamFaults()
 	if f.StreamErrorEnvelope {
+		s.stats.failedResponses.Add(1)
 		return s.streamErrorEnvelope(c)
-	}
-	if f.HTTPStatus >= 400 {
-		return c.JSON(f.HTTPStatus, map[string]string{"error": "mock-openai fault injection"})
 	}
 
 	body, err := readBody(c.Request())
 	if err != nil {
+		s.recordFailure(c.Request().Context())
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	var req ChatRequest
 	if err := json.Unmarshal(body, &req); err != nil {
+		s.recordFailure(c.Request().Context())
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if req.Model == "" {
@@ -132,14 +159,47 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 	// still emit a first token immediately so gateway first-token timeout
 	// (1s floor) is not tripped while leases stay pending.
 	if f.Latency > 0 && !req.Stream {
-		time.Sleep(f.Latency)
+		timer := time.NewTimer(f.Latency)
+		select {
+		case <-timer.C:
+		case <-c.Request().Context().Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			s.recordFailure(c.Request().Context())
+			return c.Request().Context().Err()
+		}
+	}
+
+	if f.HTTPStatus >= 400 || f.FailureRate > 0 {
+		selected := f.FailureRate <= 0 || f.ShouldFail(body)
+		if selected {
+			status := f.HTTPStatus
+			if status < 400 {
+				status = http.StatusServiceUnavailable
+			}
+			s.stats.failedResponses.Add(1)
+			return c.JSON(status, map[string]string{"error": "mock-openai fault injection"})
+		}
 	}
 
 	text := completionText(body)
 	if req.Stream {
-		return s.streamCompletion(c, req, text, body, f, streamGate)
+		err := s.streamCompletion(c, req, text, body, f, streamGate)
+		if err != nil || f.PartialStream || f.DropFirstChunk {
+			s.recordFailure(c.Request().Context())
+			return err
+		}
+		s.stats.successfulResponses.Add(1)
+		return nil
 	}
-	return s.jsonCompletion(c, req, text, body)
+	err = s.jsonCompletion(c, req, text, body)
+	if err != nil {
+		s.recordFailure(c.Request().Context())
+		return err
+	}
+	s.stats.successfulResponses.Add(1)
+	return nil
 }
 
 func (s *Server) acquire(ctx context.Context) bool {
