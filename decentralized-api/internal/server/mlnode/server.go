@@ -67,7 +67,7 @@ func (s *Server) getVersions(c echo.Context) error {
 	if s.configManager == nil {
 		return c.JSON(http.StatusOK, apiconfig.DevshardVersionsCache{Versions: []apiconfig.DevshardVersion{}})
 	}
-	return c.JSON(http.StatusOK, s.configManager.GetDevshardVersions())
+	return c.JSON(http.StatusOK, s.configManager.GetEffectiveDevshardVersions())
 }
 
 func (s *Server) Start(addr string) {

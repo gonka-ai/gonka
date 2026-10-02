@@ -181,14 +181,30 @@ Testermint `VERSIOND_FORCE` and settlement assertions).
 
 ## Operator overrides
 
-Operators need an escape hatch for hotfixes and local testing:
+Replace a devshard archive through the admin API without restarting dapi or
+versiond:
 
-- `VERSIOND_OVERRIDE_<name>=/path/to/binary` replaces the downloaded binary for
-  `<name>` with a local file. versiond still checks sha256 and still restarts
-  on changes.
-- `VERSIOND_FORCE=<name>` runs a version that is not in
-  `approved_versions`. This is for local validation and release-candidate
-  testing, not for the steady-state governance flow.
+```sh
+curl -X POST http://localhost:9200/admin/v1/devshard/versions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "from": {"binary": "https://example.com/original.tar.gz", "sha256": "<original archive SHA-256>"},
+    "to": {"binary": "https://example.com/hotfix.tar.gz", "sha256": "<replacement archive SHA-256>"}
+  }'
+```
+
+Use HTTP(S) URLs and 64-character hexadecimal SHA-256 checksums. POST adds or
+updates a mapping. GET on the same path lists mappings; DELETE with just the
+`{"from": {...}}` object removes one.
+
+Mappings survive API restarts and apply only when **both the chain URL and
+checksum match**. An upgrade changing either value bypasses the mapping; future
+pairs can be registered in advance. Versiond picks up changes on its next poll
+(30 seconds by default).
+
+Legacy/local development: `VERSIOND_OVERRIDE_<name>=/path/to/binary` takes
+precedence over API mappings; remove it to use this flow. `VERSIOND_FORCE=<name>`
+with a local override can still run a version absent from `approved_versions`.
 
 ## What versiond manages
 
