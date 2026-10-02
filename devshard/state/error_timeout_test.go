@@ -87,6 +87,7 @@ func TestApplyDiff_Timeout_Error_SameDiff(t *testing.T) {
 			InferenceId: 1, Votes: votes,
 		}),
 	})
+	requireValidationLeavesLiveStateUntouched(t, sm, diff)
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
@@ -99,6 +100,29 @@ func TestApplyDiff_Timeout_Error_SameDiff(t *testing.T) {
 	require.Equal(t, uint64(10000), state.Balance)
 	require.Equal(t, reserved, rec.ReservedCost)
 	require.Equal(t, uint64(120), rec.ActualCost)
+}
+
+// Test flow:
+//  1. Start, confirm and finish an inference, committing the finish in its own diff.
+//  2. Validate an error-miss for it in the next diff without committing, then apply it.
+//  3. Require the validation to leave the finished record untouched and the apply to time it out.
+func TestApplyDiff_Timeout_Error_LaterDiffValidatesWithoutTouchingTheRecord(t *testing.T) {
+	hosts := errorTimeoutHosts(t)
+	sm, user := newTestSM(t, hosts, 10000)
+	slot := applyStartConfirm(t, sm, user, hosts, 1)
+	hash := []byte(errorTimeoutResponseHash)
+	finishDiff := testutil.SignDiff(t, user, "escrow-1", sm.LatestNonce()+1, []*types.DevshardTx{txFinish(signedFinish(t, hosts, 1, slot, 80, 40, hash))})
+	_, err := sm.ApplyDiff(finishDiff)
+	require.NoError(t, err)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", sm.LatestNonce()+1, []*types.DevshardTx{txErrorMiss(&types.MsgErrorMiss{
+		InferenceId: 1, Votes: errorTimeoutVotes(t, hosts, 1, hash, []uint32{0, 2, 3}),
+	})})
+	requireValidationLeavesLiveStateUntouched(t, sm, diff)
+	_, err = sm.ApplyDiff(diff)
+
+	require.NoError(t, err)
+	require.Equal(t, types.StatusTimedOut, sm.SnapshotState().Inferences[1].Status)
 }
 
 func TestApplyDiff_Timeout_Error_RequiresFinished(t *testing.T) {

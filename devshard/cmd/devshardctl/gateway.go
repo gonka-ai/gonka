@@ -38,6 +38,7 @@ import (
 
 const (
 	modelUnavailableRetryAfterSeconds = "10"
+	estimatedPromptBytesPerToken      = 4
 )
 
 type RuntimeConfig struct {
@@ -66,6 +67,7 @@ type Gateway struct {
 	store                        *GatewayStore
 	perf                         *PerfTracker
 	perfStore                    *PerfStore
+	perfPruner                   *perfPruner
 	accounting                   *accounting.Recorder
 	chatCache                    *chatResponseCache
 	apiKeys                      map[string]struct{}
@@ -967,9 +969,9 @@ func (g *Gateway) checkBalances() {
 		}
 		if rt.holdSince.Load() != 0 {
 			g.resolveHeldEscrow(rt, now)
-		} else if balance := rt.proxy.sm.Balance(); balance < balanceMinimumThreshold {
+		} else if balance, threshold := rt.proxy.sm.Balance(), escrowMinimumBalance(rt.model, rt.proxy.sm.Config()); balance < threshold {
 			log.Printf("escrow_balance_low escrow=%s balance=%d threshold=%d — holding or replacing",
-				rt.id, balance, balanceMinimumThreshold)
+				rt.id, balance, threshold)
 			g.holdOrReplaceDepletedEscrow(rt, "low_balance")
 			continue
 		}
@@ -1398,6 +1400,9 @@ func (g *Gateway) Close() error {
 			firstErr = err
 		}
 	}
+	if g.perfPruner != nil {
+		g.perfPruner.stopAndWait()
+	}
 	if g.perfStore != nil {
 		if err := g.perfStore.Close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -1619,7 +1624,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 		logRequestStage(ctx, "gateway_limiter_bypassed_during_poc", "input_tokens", inputTokens, "reason", currentPoCPhaseReason())
 	}
 
-	rt, capture, err := g.serveChatAcrossEscrows(model, body, inputTokens, w, r)
+	rt, capture, err := g.serveChatAcrossEscrows(model, body, req.MaxTokens, inputTokens, w, r)
 	if err != nil {
 		var unavailableModelErr *ModelTemporarilyUnavailableError
 		var cannotFundErr *EscrowsCannotFundRequestError
@@ -1652,14 +1657,16 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 
 // serveChatAcrossEscrows hands the request to one escrow after another while each refuses to pay for
 // it before answering the client, and returns the escrow that served it, still reserved for the caller.
-func (g *Gateway) serveChatAcrossEscrows(model string, body []byte, inputTokens int64, w http.ResponseWriter, r *http.Request) (*devshardRuntime, *gatewayChatCacheCapture, error) {
+func (g *Gateway) serveChatAcrossEscrows(model string, body []byte, maxTokens uint64, inputTokens int64, w http.ResponseWriter, r *http.Request) (*devshardRuntime, *gatewayChatCacheCapture, error) {
 	ctx := r.Context()
+	reservationLength := uint64(len(body)) + maxTokens
 	refusedEscrowIDs := map[string]bool{}
 	for {
-		rt, err := g.reserveRuntimeForModel(model, inputTokens, refusedEscrowIDs)
+		rt, err := g.reserveRuntimeForModel(model, inputTokens, reservationLength, refusedEscrowIDs)
 		if err != nil {
 			// A refusal is why the picker ran out of escrows; a rate limit is its own answer and keeps it.
-			if len(refusedEscrowIDs) > 0 && !isParticipantRateLimitError(err) {
+			var cannotFundErr *EscrowsCannotFundRequestError
+			if len(refusedEscrowIDs) > 0 && !isParticipantRateLimitError(err) && !errors.As(err, &cannotFundErr) {
 				return nil, nil, &EscrowsCannotFundRequestError{EscrowsRefused: len(refusedEscrowIDs), wrapped: err}
 			}
 			return nil, nil, err
@@ -2042,7 +2049,7 @@ func (g *Gateway) recordCachedAccountingAlias(ctx context.Context, entry cachedC
 	logRequestStage(ctx, "gateway_cache_accounting_alias", "escrow", entry.EscrowID, "source_request_id", entry.SourceRequestID)
 }
 
-func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64, refusedEscrowIDs map[string]bool) (*devshardRuntime, error) {
+func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64, reservationLength uint64, refusedEscrowIDs map[string]bool) (*devshardRuntime, error) {
 	g.mu.Lock()
 	var depletedEscrows []struct {
 		id     string
@@ -2103,6 +2110,22 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64,
 		}
 		candidates = matching
 	}
+	if reservationLength > 0 {
+		fundingOneAttempt := runtimesFundingAttempts(candidates, reservationLength, 1)
+		skipReasonCounts["cannot_fund_request"] += len(candidates) - len(fundingOneAttempt)
+		if len(fundingOneAttempt) == 0 {
+			return nil, &EscrowsCannotFundRequestError{
+				EscrowsRefused: len(candidates) + len(refusedEscrowIDs),
+				wrapped:        fmt.Errorf("no devshard runtimes available for new inferences (skipped: %s)", formatRuntimeSkipReasonCounts(skipReasonCounts)),
+			}
+		}
+		candidates = fundingOneAttempt
+		if attempts := escrowAttemptsFundedPerRequest(); attempts > 1 {
+			if fundingEveryAttempt := runtimesFundingAttempts(candidates, reservationLength, attempts); g.hasRuntimeWithCapacity(fundingEveryAttempt, requestModel) {
+				candidates = fundingEveryAttempt
+			}
+		}
+	}
 
 	bestScore := g.runtimeLoad(candidates[0], requestModel)
 	best := []*devshardRuntime{candidates[0]}
@@ -2145,6 +2168,33 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64,
 		g.metrics.RecordPickerChoice(chosen.id, chosen.model)
 	}
 	return chosen, nil
+}
+
+// escrowAttemptsFundedPerRequest is how many nonces of one request an escrow should afford to be preferred; a whole-group cap (0) funds DefaultMaxSpeculativeAttempts.
+func escrowAttemptsFundedPerRequest() uint64 {
+	if attempts := CurrentMaxSpeculativeAttempts(); attempts > 0 {
+		return uint64(attempts)
+	}
+	return DefaultMaxSpeculativeAttempts
+}
+
+func (g *Gateway) hasRuntimeWithCapacity(runtimes []*devshardRuntime, requestModel string) bool {
+	for _, rt := range runtimes {
+		if !math.IsInf(g.runtimeLoad(rt, requestModel), +1) {
+			return true
+		}
+	}
+	return false
+}
+
+func runtimesFundingAttempts(runtimes []*devshardRuntime, reservationLength uint64, attempts uint64) []*devshardRuntime {
+	var funded []*devshardRuntime
+	for _, rt := range runtimes {
+		if rt.proxy == nil || rt.proxy.sm == nil || rt.proxy.sm.Balance()/attempts/reservationLength >= rt.proxy.sm.Config().TokenPrice {
+			funded = append(funded, rt)
+		}
+	}
+	return funded
 }
 
 func runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32) bool {
@@ -2542,7 +2592,7 @@ func estimatePromptTokens(body []byte) int64 {
 		return 1
 	}
 	// Approximate tokenizer: 1 token ~= 4 bytes. Good enough for admission control.
-	estimate := (len(body) + 3) / 4
+	estimate := (len(body) + estimatedPromptBytesPerToken - 1) / estimatedPromptBytesPerToken
 	if estimate < 1 {
 		estimate = 1
 	}

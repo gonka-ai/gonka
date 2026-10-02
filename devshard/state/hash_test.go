@@ -3,6 +3,7 @@ package state
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -182,4 +183,74 @@ func TestStateRoot_V2_SealedAccChangesRestHash(t *testing.T) {
 	restOther, err := ComputeRestHashV2(balance, otherAcc, live, nil, types.HeightSyncEscrowCommit{})
 	require.NoError(t, err)
 	require.NotEqual(t, restHash, restOther, "sealed accumulator must affect v2 rest hash")
+}
+
+func inferencesHashFixture(count int) map[uint64]*types.InferenceRecord {
+	emptyInputDigest := sha256.Sum256(nil)
+	inferences := make(map[uint64]*types.InferenceRecord, count)
+	for index := range count {
+		id := uint64(index*3 + 1)
+		record := &types.InferenceRecord{
+			Status:       types.InferenceStatus(index % 5),
+			ExecutorSlot: uint32(index % 7),
+			Model:        "loadsim-model",
+			PromptHash:   append([]byte{byte(index)}, emptyInputDigest[:]...),
+			InputTokens:  uint64(index),
+			ActualCost:   uint64(index) * 7,
+			StartedAt:    int64(1_700_000_000 + index),
+		}
+		if index%2 == 0 {
+			record.ResponseHash = []byte{byte(index), 1, 2}
+			record.ValidatedBy = types.Bitmap128{uint64(index), 1}
+		}
+		inferences[id] = record
+	}
+	return inferences
+}
+
+// Test flow:
+//  1. Build fixed inference sets and records.
+//  2. Hash and marshal them with the current code.
+//  3. Require the exact bytes the previous encoding produced, so gateways and hosts on either build agree on every state root.
+func TestInferenceEncodingMatchesThePreviousRelease(t *testing.T) {
+	wantHashes := map[int]string{
+		0:   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		1:   "e7f5a443cb40f3ffbbf85a2e20c13679a6bdef9de3d0c14f3da040756392f692",
+		300: "20878299e101202bdc4f2b86f69b1cf7cc4fff650f3dc51757d9503c04ceb6f2",
+	}
+	for count, want := range wantHashes {
+		got, err := computeInferencesHash(inferencesHashFixture(count))
+		require.NoError(t, err)
+		require.Equal(t, want, hex.EncodeToString(got), "inference count %d", count)
+	}
+
+	wantEntries := map[uint64]string{
+		1: "0801220d6c6f616473696d2d6d6f64656c2a2100e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85532030001026880e2cfaa068a011000000000000000000100000000000000",
+		4: "080410011801220d6c6f616473696d2d6d6f64656c2a2101e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855480160076881e2cfaa068a011000000000000000000000000000000000",
+		7: "080710021802220d6c6f616473696d2d6d6f64656c2a2102e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b85532030201024802600e6882e2cfaa068a011002000000000000000100000000000000",
+	}
+	inferences := inferencesHashFixture(3)
+	for id, want := range wantEntries {
+		got, err := marshalInferenceEntry(id, inferences[id])
+		require.NoError(t, err)
+		require.Equal(t, want, hex.EncodeToString(got), "inference %d", id)
+	}
+
+	hostStats := map[uint32]*types.HostStats{0: {Cost: 100}, 1: {Cost: 200}}
+	root, err := ComputeStateRoot(500, hostStats, inferencesHashFixture(300), types.PhaseActive, nil, 99, types.DevshardStateRootAndProtocolVersion)
+	require.NoError(t, err)
+	require.Equal(t, "9ef896fc48385ea6bd0f1606cd63325001afe99ff7cbd5ce8da93c504134747d", hex.EncodeToString(root))
+}
+
+// Test flow:
+//  1. Build a set of a thousand live inferences.
+//  2. Hash it repeatedly while counting allocations.
+//  3. Require fewer allocations than inferences, so the hash does not allocate per inference.
+func TestComputeInferencesHashDoesNotAllocatePerInference(t *testing.T) {
+	inferences := inferencesHashFixture(1000)
+	allocations := testing.AllocsPerRun(20, func() {
+		_, err := computeInferencesHash(inferences)
+		require.NoError(t, err)
+	})
+	require.Less(t, allocations, float64(len(inferences)))
 }
