@@ -2087,6 +2087,34 @@ func (g *Gateway) recordCachedAccountingAlias(ctx context.Context, entry cachedC
 	logRequestStage(ctx, "gateway_cache_accounting_alias", "escrow", entry.EscrowID, "source_request_id", entry.SourceRequestID)
 }
 
+// strandedEscrowForRequest picks the idle escrow with the lowest balance among those that refused a request
+// a fresh rotation escrow of the same model could fund. It returns nil for a request without a model, and
+// skips escrows whose in-flight work or race refunds will return reservations to their balance.
+func (g *Gateway) strandedEscrowForRequest(requestModel string, refused []*devshardRuntime, cost chatRequestCost) *devshardRuntime {
+	if requestModel == "" {
+		return nil
+	}
+	var poorest *devshardRuntime
+	var poorestBalance uint64
+	for _, rt := range refused {
+		if rt.escrowHasBackgroundWork() || rt.proxy == nil || rt.proxy.sm == nil {
+			continue
+		}
+		model, ok := replacementModelForDepletedEscrow(g.settings, rt.model)
+		if !ok {
+			continue
+		}
+		charge, err := cost.startChargeOn(rt.proxy.sm.Config())
+		if err != nil || charge > model.Amount {
+			continue
+		}
+		if balance := rt.proxy.sm.Balance(); poorest == nil || balance < poorestBalance {
+			poorest, poorestBalance = rt, balance
+		}
+	}
+	return poorest
+}
+
 func (g *Gateway) reserveRuntimeForModel(requestModel string, cost chatRequestCost, refusedEscrowIDs map[string]bool) (*devshardRuntime, error) {
 	g.mu.Lock()
 	var depletedEscrows []struct {
@@ -2157,6 +2185,16 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, cost chatRequestCo
 		affordable = append(affordable, rt)
 	}
 	if len(affordable) == 0 {
+		// A request a fresh rotation escrow could fund is not oversized, yet an idle escrow above
+		// balanceMinimumThreshold that refused it stays in service until heartbeat fees wear it down.
+		// Replace one such escrow, the poorest, so the client's retry lands on a replacement.
+		if stranded := g.strandedEscrowForRequest(requestModel, candidates, cost); stranded != nil {
+			depletedEscrows = append(depletedEscrows, struct {
+				id     string
+				model  string
+				reason string
+			}{id: stranded.id, model: stranded.model, reason: "cannot_fund_request"})
+		}
 		return nil, &EscrowsCannotFundRequestError{EscrowsRefused: len(candidates), wrapped: types.ErrRequestExceedsBalance}
 	}
 

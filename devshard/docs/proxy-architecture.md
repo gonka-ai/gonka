@@ -111,7 +111,7 @@ It is responsible for:
 - activating, deactivating, importing, cleaning, and settling devshards through admin APIs
 - coordinating capacity-aware routing and automatic escrow rotation
 
-An escrow that cannot pay for a request does not end it: while nothing has reached the client, the runtime hands the request back and `Gateway` offers it to the next escrow serving the model, each one at most once. The client is refused only once every escrow has refused, with `503` and `Retry-After`, because a replacement escrow or a settling inference restores the balance.
+An escrow that cannot pay for a request does not end it: while nothing has reached the client, the runtime hands the request back and `Gateway` offers it to the next escrow serving the model, each one at most once. The client is refused only once every escrow has refused, with `503` and `Retry-After`, because a replacement escrow or a settling inference restores the balance; when the request names a model and would fit a fresh rotation escrow, the poorest idle escrow among those that refused it is replaced so that the retry has somewhere to land.
 
 It is **not** responsible for devshard protocol execution details. Once it forwards a request to a runtime, the runtime-specific logic takes over.
 
@@ -350,7 +350,7 @@ It is responsible for:
 
 Rotation acts on runtime membership, not on individual request execution. When it activates or deactivates a devshard, `Gateway` updates the runtime map and `CapacityState` membership.
 
-Depletion is read from the escrow, never from one request. An escrow counts as depleted when it can no longer pay the per-nonce fee, when its balance falls under the replacement threshold, or when its nonce reaches the chain's limit; all three are independent of what any caller asked for. A request whose reserved cost, `(input_length + max_tokens) * token_price`, does not fit the balance that is left is refused on its own and leaves the escrow in service. Reading that refusal as depletion would mint one escrow per oversized request: each replacement carries a new escrow ID, so the guard that replaces a given ID only once never sees a repeat, and a caller whose request outgrows a full escrow keeps the chain of replacements running for as long as it retries.
+Depletion is read from the escrow, never from one request. An escrow counts as depleted when it can no longer pay the per-nonce fee, when its balance falls under the replacement threshold, or when its nonce reaches the chain's limit; all three are independent of what any caller asked for. A request whose reserved cost, `(input_length + max_tokens) * token_price`, does not fit the balance that is left is refused on its own and leaves the escrow in service. The one exception is a request that every escrow of its model refused and that a fresh rotation escrow could fund: then the poorest of the refusing escrows with no requests or race refunds in flight is replaced, one per refusal, because without it the escrows stay above the replacement threshold and keep refusing that traffic until heartbeat fees wear them down. Reading the refusal of a request larger than a whole rotation escrow as depletion would mint one escrow per oversized request: each replacement carries a new escrow ID, so the guard that replaces a given ID only once never sees a repeat, and a caller whose request outgrows a full escrow keeps the chain of replacements running for as long as it retries.
 
 ### Gateway disabled mode
 
