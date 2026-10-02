@@ -1894,6 +1894,19 @@ func (sm *StateMachine) AddressSlotCount(addr string) uint32 {
 	return sm.addressToSlotCount[addr]
 }
 
+// LiveAndSealedCounts reports how many inferences are in the live map and how
+// many have been folded into the sealed accumulator. Both are map lengths, so
+// the call does not walk the records.
+func (sm *StateMachine) LiveAndSealedCounts() (live, sealed int) {
+	if sm == nil {
+		return 0, 0
+	}
+	sm.mu.RLock()
+	live, sealed = len(sm.state.Inferences), len(sm.sealedNonces)
+	sm.mu.RUnlock()
+	return live, sealed
+}
+
 // LiveInferenceIDs returns the set of inference ids currently in live state.
 // The live set is bounded (in-flight plus in-grace), so this is cheap. The host
 // uses it to detect which inferences a diff sealed (live before, gone after).
