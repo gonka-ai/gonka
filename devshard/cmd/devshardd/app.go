@@ -344,6 +344,9 @@ func buildHostManager(
 		applyEpoch(boot, false, false)
 	} else {
 		store.Start()
+		go seedEpochWhenKnown(ctx, chainParams, phase, time.Second, func(epoch uint64) {
+			applyEpoch(epoch, true, true)
+		})
 	}
 
 	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
