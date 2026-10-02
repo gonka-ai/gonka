@@ -25,12 +25,17 @@ type logprobStore struct {
 	spilled bool
 }
 
-func (s *logprobStore) appendEntries(entries []json.RawMessage, emptyTop bool, b *foldBudget) error {
+func (s *logprobStore) appendEntries(entries []json.RawMessage, emptyTop bool, strip []string, b *foldBudget) error {
 	for _, entry := range entries {
 		raw := bytes.TrimSpace(entry)
 		if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
 			continue
 		}
+		stripped, err := stripInternalFieldsRaw(raw, strip)
+		if err != nil {
+			return err
+		}
+		raw = stripped
 		if emptyTop {
 			rewritten, err := emptyTopLogprobsRaw(raw)
 			if err != nil {
@@ -202,6 +207,35 @@ func (s *logprobStore) corruptForTest() error {
 }
 
 var topLogprobsKeyMarker = []byte(`"top_logprobs"`)
+
+// stripInternalFieldsRaw removes the client-stripped keys from one raw entry.
+// Entries are stored raw, so this is the only place their nested keys are
+// seen before emit; the tree is decoded only when a stripped key's quoted
+// name occurs in the bytes at all, which honest entries never carry.
+func stripInternalFieldsRaw(entry json.RawMessage, strip []string) (json.RawMessage, error) {
+	found := false
+	for _, k := range strip {
+		if bytes.Contains(entry, []byte(`"`+k+`"`)) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return entry, nil
+	}
+	var v any
+	if err := json.Unmarshal(entry, &v); err != nil {
+		return entry, nil
+	}
+	if !stripClientInternalFields(v, strip) {
+		return entry, nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return entry, err
+	}
+	return b, nil
+}
 
 var emptyJSONArray = json.RawMessage(`[]`)
 

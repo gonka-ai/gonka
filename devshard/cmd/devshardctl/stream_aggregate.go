@@ -435,7 +435,7 @@ func (f *completionFolder) foldTooLargeResult() []byte {
 func (f *completionFolder) ingest(p []byte) (out []byte, early bool) {
 	if isHostErrorPayload(p) {
 		if !f.sawUsable {
-			return append([]byte(nil), p...), true
+			return filterPassthroughPayload(p, f.intent), true
 		}
 		if hasTerminalFinishReason(f.choices) {
 			aggregateDroppedTrailingErrorTotal.Add(1)
@@ -443,7 +443,7 @@ func (f *completionFolder) ingest(p []byte) (out []byte, early bool) {
 			return nil, false
 		}
 		if f.firstError == nil {
-			f.firstError = append([]byte(nil), p...)
+			f.firstError = filterPassthroughPayload(p, f.intent)
 		}
 		return nil, false
 	}
@@ -623,6 +623,7 @@ func (f *completionFolder) result() ([]byte, bool) {
 			log.Printf("aggregate_fold: logprobs emit failed for choice %d: %v", idx, err)
 			return []byte(aggregateStreamReadFailedJSON), true
 		}
+		stripChoiceInternalFields(choice, f.strip)
 		outChoices = append(outChoices, choice)
 	}
 
@@ -648,12 +649,33 @@ func (f *completionFolder) result() ([]byte, bool) {
 	if f.haveUsage {
 		result["usage"] = f.usage
 	}
+	// Keys are stripped at their own level while folding, but a nested one
+	// (inside an extension value, usage or a tool call) is only visible here.
+	// logprobs.content entries are json.RawMessage, which this walk skips:
+	// appendEntries stripped them already, so the fold output is final and
+	// callers need not decode it again.
+	for k, v := range result {
+		if k != "choices" {
+			stripClientInternalFields(v, f.strip)
+		}
+	}
 
 	b, err := json.Marshal(result)
 	if err != nil {
 		return nil, false
 	}
 	return b, true
+}
+
+// stripChoiceInternalFields strips nested internal keys from one built choice
+// but keeps the choice-level "logprobs": null buildChoice emits when none
+// arrived (F10), which "logprobs" in the strip list would otherwise delete.
+func stripChoiceInternalFields(choice map[string]any, strip []string) {
+	lp, had := choice["logprobs"]
+	stripClientInternalFields(choice, strip)
+	if had && lp == nil {
+		choice["logprobs"] = nil
+	}
 }
 
 func hasTerminalFinishReason(choices map[int]*aggChoice) bool {
@@ -672,7 +694,7 @@ func (f *completionFolder) accumulateChoiceLogprobs(ac *aggChoice, lpRaw json.Ra
 	}
 	// The store charges the shared budget itself: RAM while it fits, spool
 	// bytes once it does not.
-	if err := ac.lp.appendEntries(content, !f.intent.keepTopLogprobs, &f.foldBudget); err != nil {
+	if err := ac.lp.appendEntries(content, !f.intent.keepTopLogprobs, f.strip, &f.foldBudget); err != nil {
 		return err
 	}
 
