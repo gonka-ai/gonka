@@ -58,6 +58,21 @@ func TestMaybeInitializePostgresRecognizesOnlyExplicitCommand(t *testing.T) {
 	}
 }
 
+func TestMaybePrintFleetCompat(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code, handled := maybePrintVersion([]string{printFleetCompatFlag}, &stdout, &stderr)
+	if !handled {
+		t.Fatal("expected fleet compat flag to be handled")
+	}
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if strings.TrimSpace(stdout.String()) != "d_ack=73,f=120000ms,lease=instance_id" {
+		t.Fatalf("stdout = %q", strings.TrimSpace(stdout.String()))
+	}
+}
+
 func TestMaybePrintVersionUnknownFlag(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
