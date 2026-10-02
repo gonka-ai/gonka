@@ -593,10 +593,20 @@ func TestValidator_Validate_ExecutorFaultClassification(t *testing.T) {
 			wantFalse:  true,
 		},
 		{
-			name:       "404 out of window skipped",
+			// PoC window: phase is LatestEpoch (11 from poc_start), the escrow
+			// is still on EffectiveEpoch 10 until set_new_validators.
+			name:       "404 at phase epoch+1 votes false",
 			fetch:      taggedFetch(fmt.Errorf("payload not found: %w", commonvalidation.ErrPayloadGone)),
 			voteFalse:  true,
 			phaseEpoch: 11,
+			reqEpoch:   10,
+			wantFalse:  true,
+		},
+		{
+			name:       "404 out of window skipped",
+			fetch:      taggedFetch(fmt.Errorf("payload not found: %w", commonvalidation.ErrPayloadGone)),
+			voteFalse:  true,
+			phaseEpoch: 12,
 			reqEpoch:   10,
 			wantSkip:   true,
 		},

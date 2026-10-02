@@ -179,9 +179,14 @@ func executorFaultVerdict(ctx context.Context, phase *chain.Phase, req devshardp
 	if !enabled || err == nil || ctx.Err() != nil {
 		return nil
 	}
+	// phase follows LatestEpoch (moves at poc_start), the escrow epoch follows
+	// EffectiveEpoch (moves at set_new_validators), so escrows of epoch E keep
+	// serving at phase E+1 through the PoC window. The executor stores under
+	// its phase and the payload handler also looks up epochID+1, so at phase
+	// E+1 a 404 is never an honest prune.
 	inWindow := true
 	if phase != nil {
-		inWindow = phase.EpochID() <= epochID
+		inWindow = phase.EpochID() <= epochID+1
 	}
 	reason := observability.ReasonPayloadFetchErr
 	switch {

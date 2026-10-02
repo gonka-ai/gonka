@@ -223,7 +223,7 @@ func TestRetryStaleValidationsForEscrow_LeaseFromPreviousEpochIsSkipped(t *testi
 		},
 	}
 	phase := new(chain.Phase)
-	phase.SetEpoch(11)
+	phase.SetEpoch(12)
 	rl := &ValidationRetryLoop{
 		leases:       leases,
 		manager:      &stubSessionManager{snap: inferenceSnap(1, types.StatusFinished)},
@@ -237,6 +237,36 @@ func TestRetryStaleValidationsForEscrow_LeaseFromPreviousEpochIsSkipped(t *testi
 	assert.Equal(t, 2, callCount)
 	require.Len(t, leases.setResultCalls, 1)
 	assert.Equal(t, "escrow-1/1/10/skipped", leases.setResultCalls[0])
+}
+
+// The phase reaches lease epoch+1 at poc_start while escrows of the lease
+// epoch still serve until set_new_validators, so their stale leases are
+// still validated there.
+func TestRetryStaleValidationsForEscrow_LeaseAtPhaseEpochPlusOneIsValidated(t *testing.T) {
+	callCount := 0
+	leases := &stubStaleLeaseStore{
+		acquireFn: func(_ context.Context, _, _ string, _ time.Duration) (uint64, uint64, error) {
+			callCount++
+			if callCount == 1 {
+				return 7, 10, nil
+			}
+			return 0, 0, nil
+		},
+	}
+	inner := &stubEngine{
+		validateFn: func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+			return nil, errors.New("local ml 503")
+		},
+	}
+	rl := newTestValidationRetryLoop(leases, inferenceSnap(7, types.StatusFinished), inner)
+	phase := new(chain.Phase)
+	phase.SetEpoch(11)
+	rl.phase = phase
+
+	rl.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
+
+	assert.Equal(t, 1, inner.calls, "lease of epoch 10 must be validated at phase 11")
+	assert.NotContains(t, leases.setResultCalls, "escrow-1/7/10/skipped")
 }
 
 func TestRetryStaleValidationsForEscrow_SessionNotLoaded_DoesNotClaim(t *testing.T) {
