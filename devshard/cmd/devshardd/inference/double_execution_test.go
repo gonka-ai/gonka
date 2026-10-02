@@ -171,3 +171,38 @@ func mustCanonical(t *testing.T, prompt string) string {
 	}
 	return string(canonical)
 }
+
+// Without PGHOST the payload store is FileStorage (DEVSHARD_STORAGE_MODE=auto
+// resolves to sqlite). There the order was reversed from Postgres: a rename
+// replaced the file, so the run that stored LAST was what validators fetch. If
+// the reconnect's run finishes first and commits its hashes, the detached run
+// on the closed host stores afterwards and must not replace those bytes.
+func TestALateDetachedRunDoesNotReplaceTheCommittedFilePayload(t *testing.T) {
+	store := payloads.NewFileStorage(t.TempDir())
+	const epoch = 5
+	req := doubleExecutionRequest(t, epoch)
+
+	release := make(chan struct{})
+	close(release)
+	second, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "second run", release), fixedChainParams{}, true)
+	if err != nil {
+		t.Fatalf("reconnect execution: %v", err)
+	}
+	// The closed host's run comes back after the reconnect committed.
+	if _, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "first run", release), fixedChainParams{}, true); err != nil {
+		t.Fatalf("detached execution: %v", err)
+	}
+
+	_, stored, err := store.Retrieve(context.Background(), "e", 1, epoch)
+	if err != nil {
+		t.Fatalf("retrieve: %v", err)
+	}
+	if err := verifyFetchedPayloadHashes(devshardpkg.ValidateRequest{
+		InferenceID:  req.InferenceID,
+		PromptHash:   req.PromptHash,
+		ResponseHash: second.ResponseHash,
+		ServedHash:   second.ServedHash,
+	}, []byte(mustCanonical(t, doubleExecutionPrompt)), stored); err != nil {
+		t.Fatalf("validators reject the committed finish against the stored payload (stored: %q): %v", stored, err)
+	}
+}
