@@ -212,8 +212,8 @@ The gateway has a short-lived in-memory chat response cache keyed by normalized 
 It is responsible for:
 
 - serving repeated equivalent requests without consuming another devshard nonce
-- caching both streaming and non-streaming successful responses
-- avoiding cache entries for host capability errors (tool choice, context length)
+- caching both streaming and non-streaming responses only when every choice carries a terminal `finish_reason` or `stop_reason` (a truncated generation, even one closed with `[DONE]`, is never replayed)
+- avoiding cache entries for host capability errors (tool choice, context length) and other transient failures
 - preserving request/escrow headers when serving cached responses
 
 Request accounting records per-request attempts and cache aliases so operators can explain which request produced a cached response and which escrow/nonce attempts were involved.

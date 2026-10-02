@@ -67,6 +67,14 @@ func TestChainBridge_GetEscrow_MapsSessionConfigFields(t *testing.T) {
 	require.Equal(t, int64(17), info.ExecutionTimeout)
 }
 
+func TestBridge_GetEscrow_TransientQueryError(t *testing.T) {
+	st := seed.Defaults()
+	st.SetEscrowQueryFault(true)
+
+	_, err := newTestBridgeWithStore(t, st, nil).GetEscrow("1")
+	require.ErrorIs(t, err, shardbridge.ErrChainUnavailable)
+}
+
 func TestBridge_NotificationsNoop(t *testing.T) {
 	b := newTestBridge(t, nil)
 	assert.NoError(t, b.OnEscrowCreated(shardbridge.EscrowInfo{}))
