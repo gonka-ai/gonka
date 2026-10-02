@@ -54,6 +54,11 @@ func faultsFromEnv() mockopenai.FaultConfig {
 			f.HTTPStatus = code
 		}
 	}
+	if v := os.Getenv("MOCK_OPENAI_FAILURE_RATE"); v != "" {
+		if rate, err := strconv.ParseFloat(v, 64); err == nil {
+			f.FailureRate = rate
+		}
+	}
 	if envTruthy("MOCK_OPENAI_DROP_FIRST_CHUNK") {
 		f.DropFirstChunk = true
 	}

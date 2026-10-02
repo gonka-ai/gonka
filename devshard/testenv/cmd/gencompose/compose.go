@@ -98,6 +98,8 @@ services:
       MOCK_OPENAI_TOKEN_INTERVAL: "{{ .TokenInterval }}"
       MOCK_OPENAI_WORKERS: "{{ .Workers }}"
       MOCK_OPENAI_QUEUE: "{{ .Queue }}"
+      MOCK_OPENAI_FAILURE_RATE: "{{ .FailureRate }}"
+      MOCK_OPENAI_HTTP_STATUS: "{{ .HTTPStatus }}"
 {{ if eq (len (mockMLNodes $)) 1 }}
     ports:
       - "{{ $.MockOpenAI.HTTPPort }}:{{ $.MockOpenAI.HTTPPort }}"

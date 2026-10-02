@@ -1,0 +1,53 @@
+schema_version: v1
+scenario: single-failing-ml-node
+seed: 42
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    escrow_amount: 1000000000
+    max_nonce: 100000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: fast
+      - name: mock-openai-1
+        profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: failing
+
+workload:
+  max_in_flight: 16
+  duration: 60s
+  traffic:
+    type: constant
+    rps: 4
+  request:
+    model: test-model
+    stream: false
+    max_tokens: 64
+    messages:
+      - role: user
+        content: "single failing ML node request"
+
+thresholds:
+  # One of four nodes fails 33% of its requests; allow routing/retry effects.
+  error_rate: 0.15
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+  devshard:
+    no_orphaned_work: true
+    require_drain: true
+    max_ghost_rate: 0.02
+  mock_ml:
+    require_each_node_used: true
+
+drain_timeout: 90s

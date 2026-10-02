@@ -121,11 +121,13 @@ type MockOpenAICfg struct {
 // MockOpenAINodeCfg configures one independently-behaving Mock ML container.
 // An empty Nodes slice preserves the historical single mock-openai service.
 type MockOpenAINodeCfg struct {
-	Name          string `yaml:"name"`
-	TTFT          string `yaml:"ttft,omitempty"`
-	TokenInterval string `yaml:"token_interval,omitempty"`
-	Workers       int    `yaml:"workers,omitempty"`
-	Queue         int    `yaml:"queue,omitempty"`
+	Name          string  `yaml:"name"`
+	TTFT          string  `yaml:"ttft,omitempty"`
+	TokenInterval string  `yaml:"token_interval,omitempty"`
+	Workers       int     `yaml:"workers,omitempty"`
+	Queue         int     `yaml:"queue,omitempty"`
+	FailureRate   float64 `yaml:"failure_rate,omitempty"`
+	HTTPStatus    int     `yaml:"http_status,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
@@ -491,6 +493,12 @@ func (c *File) Validate() error {
 		}
 		if node.Workers < 0 || node.Queue < 0 {
 			return fmt.Errorf("mock_openai.nodes[%d] workers and queue must be non-negative", i)
+		}
+		if node.FailureRate < 0 || node.FailureRate > 1 {
+			return fmt.Errorf("mock_openai.nodes[%d] failure_rate must be between 0 and 1", i)
+		}
+		if node.HTTPStatus != 0 && (node.HTTPStatus < 400 || node.HTTPStatus > 599) {
+			return fmt.Errorf("mock_openai.nodes[%d] http_status must be between 400 and 599", i)
 		}
 		seenMLNodes[node.Name] = struct{}{}
 	}

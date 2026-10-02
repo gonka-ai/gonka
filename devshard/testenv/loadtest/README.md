@@ -38,9 +38,10 @@ TODO: Document `closed_loop`, `constant`, `ramp`, `sine`, `spikes`, and
 ## Mock ML profiles
 
 TODO: Document latency, capacity, queue, and failure behavior for Mock ML
-nodes. The initial profiles are `fast` and `slow`.
+nodes. The available profiles are `fast`, `slow`, and `failing`.
 
 ## Artifacts
 
 TODO: Document `summary.json`, `requests.jsonl`, `assertions.json`,
-`gateway-inferences.json`, and `compose.log`.
+`gateway-inferences.json`, `gateway-state.json`, `ml-stats.json`, and
+`compose.log`.

@@ -12,14 +12,14 @@ import (
 )
 
 type Scenario struct {
-	SchemaVersion string      `yaml:"schema_version"`
-	Scenario      string      `yaml:"scenario"`
-	Seed          int64       `yaml:"seed"`
-	Topology      Topology    `yaml:"topology"`
-	Workload      Workload    `yaml:"workload"`
-	Thresholds    Thresholds  `yaml:"thresholds"`
-	Assertions    Assertions  `yaml:"assertions"`
-	DrainTimeout  string      `yaml:"drain_timeout"`
+	SchemaVersion string     `yaml:"schema_version"`
+	Scenario      string     `yaml:"scenario"`
+	Seed          int64      `yaml:"seed"`
+	Topology      Topology   `yaml:"topology"`
+	Workload      Workload   `yaml:"workload"`
+	Thresholds    Thresholds `yaml:"thresholds"`
+	Assertions    Assertions `yaml:"assertions"`
+	DrainTimeout  string     `yaml:"drain_timeout"`
 }
 
 type Topology struct {
@@ -108,13 +108,15 @@ type Assertions struct {
 }
 
 type Profile struct {
-	SchemaVersion string `yaml:"schema_version"`
-	Profile       string `yaml:"profile"`
-	TTFT          string `yaml:"ttft"`
-	TokenInterval string `yaml:"token_interval"`
-	Workers       int    `yaml:"workers"`
-	Queue         int    `yaml:"queue"`
-	Failures      []any  `yaml:"failures"`
+	SchemaVersion string  `yaml:"schema_version"`
+	Profile       string  `yaml:"profile"`
+	TTFT          string  `yaml:"ttft"`
+	TokenInterval string  `yaml:"token_interval"`
+	Workers       int     `yaml:"workers"`
+	Queue         int     `yaml:"queue"`
+	FailureRate   float64 `yaml:"failure_rate"`
+	HTTPStatus    int     `yaml:"http_status"`
+	Failures      []any   `yaml:"failures"`
 }
 
 func LoadScenario(path string) (Scenario, error) {
@@ -145,6 +147,12 @@ func LoadProfile(dir, name string) (Profile, error) {
 	}
 	if profile.Workers <= 0 || profile.Queue < 0 {
 		return Profile{}, fmt.Errorf("profile %s workers must be positive and queue non-negative", path)
+	}
+	if profile.FailureRate < 0 || profile.FailureRate > 1 {
+		return Profile{}, fmt.Errorf("profile %s failure_rate must be between 0 and 1", path)
+	}
+	if profile.HTTPStatus != 0 && (profile.HTTPStatus < 400 || profile.HTTPStatus > 599) {
+		return Profile{}, fmt.Errorf("profile %s http_status must be between 400 and 599", path)
 	}
 	return profile, nil
 }
