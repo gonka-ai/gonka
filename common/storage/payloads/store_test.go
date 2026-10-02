@@ -77,7 +77,8 @@ func TestStore_Retrieve_NotFound(t *testing.T) {
 }
 
 // TestStore_Store_Idempotent stores with same key twice with different data,
-// then retrieves and asserts the first data is kept (ON CONFLICT DO NOTHING).
+// then retrieves and asserts the first data is kept (ON CONFLICT DO NOTHING)
+// and the second Store reports ErrAlreadyStored.
 func TestStore_Store_Idempotent(t *testing.T) {
 	store, _ := setupStore(t)
 	ctx := context.Background()
@@ -86,8 +87,8 @@ func TestStore_Store_Idempotent(t *testing.T) {
 	second := []byte(`{"second": true}`)
 
 	require.NoError(t, store.Store(ctx, "escrow-1", 1, 10, first, []byte(`{}`)))
-	// Second store with same key is a no-op — first value is kept.
-	require.NoError(t, store.Store(ctx, "escrow-1", 1, 10, second, []byte(`{}`)))
+	// Second store with same key is a no-op — first value is kept, and the caller learns it.
+	require.ErrorIs(t, store.Store(ctx, "escrow-1", 1, 10, second, []byte(`{}`)), payloads.ErrAlreadyStored)
 
 	got, _, err := store.Retrieve(ctx, "escrow-1", 1, 10)
 	require.NoError(t, err)
