@@ -2,6 +2,7 @@ package mockopenai
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"hash/fnv"
@@ -15,6 +16,14 @@ type Config struct {
 	Faults  FaultConfig
 	Workers int
 	Queue   int
+}
+
+// Stats is the test-only request outcome snapshot exposed by a Mock ML node.
+type Stats struct {
+	RequestsReceived    uint64 `json:"requests_received"`
+	SuccessfulResponses uint64 `json:"successful_responses"`
+	FailedResponses     uint64 `json:"failed_responses"`
+	Timeouts            uint64 `json:"timeouts"`
 }
 
 // DefaultConfig returns local dev defaults.
@@ -31,6 +40,7 @@ func DefaultConfig() Config {
 type FaultConfig struct {
 	Latency          time.Duration
 	HTTPStatus       int // 0 = OK
+	FailureRate      float64
 	DropFirstChunk   bool
 	PartialStream    bool // omit final chunk + [DONE]
 	StreamChunkDelay time.Duration
@@ -39,6 +49,21 @@ type FaultConfig struct {
 	// error envelope and [DONE], matching vLLM EngineCore failures. Distinct
 	// from HTTPStatus >= 400, which is a JSON 5xx with no Finish.
 	StreamErrorEnvelope bool
+}
+
+// ShouldFail deterministically selects requests for a configured failure
+// rate. The request body includes the load-generator request ID, so a fixed
+// scenario seed produces the same failure pattern on every run.
+func (f FaultConfig) ShouldFail(body []byte) bool {
+	if f.FailureRate <= 0 {
+		return false
+	}
+	if f.FailureRate >= 1 {
+		return true
+	}
+	sum := sha256.Sum256(body)
+	sample := binary.BigEndian.Uint64(sum[:8])
+	return float64(sample)/float64(^uint64(0)) < f.FailureRate
 }
 
 // FaultPatch is the JSON body for POST /testenv/fault.

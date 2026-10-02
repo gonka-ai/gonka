@@ -47,6 +47,17 @@ func TestLoadScenario_SpikeLoad(t *testing.T) {
 	require.Equal(t, "60s", scenario.Workload.Duration)
 }
 
+func TestLoadScenario_SingleFailingMLNode(t *testing.T) {
+	scenario, err := LoadScenario(filepath.Join("scenarios", "single-failing-ml-node.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "single-failing-ml-node", scenario.Scenario)
+	require.Len(t, scenario.Topology.MockML.Nodes, 4)
+	require.Equal(t, "failing", scenario.Topology.MockML.Nodes[3].Profile)
+	require.Equal(t, 0.15, scenario.Thresholds.ErrorRate)
+	require.Equal(t, "60s", scenario.Workload.Duration)
+	require.Equal(t, "90s", scenario.DrainTimeout)
+}
+
 func TestLoadProfile_Fast(t *testing.T) {
 	profile, err := LoadProfile("profiles", "fast")
 	require.NoError(t, err)
@@ -59,4 +70,12 @@ func TestLoadProfile_Slow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "slow", profile.Profile)
 	require.Equal(t, "1s", profile.TTFT)
+}
+
+func TestLoadProfile_Failing(t *testing.T) {
+	profile, err := LoadProfile("profiles", "failing")
+	require.NoError(t, err)
+	require.Equal(t, "failing", profile.Profile)
+	require.Equal(t, 0.7, profile.FailureRate)
+	require.Equal(t, 503, profile.HTTPStatus)
 }
