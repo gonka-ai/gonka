@@ -38,12 +38,12 @@ type hostSnap interface {
 
 const (
 	DefaultValidationRetryInterval = 5 * time.Minute
-	DefaultValidationLeaseTTL      = 30 * time.Minute
+	DefaultValidationLeaseTTL      = 32 * time.Minute
 )
 
 // ValidationRetryLoop scans for stale validation leases and re-runs validation for each
 // active in-memory session. A lease is stale when status is pending/submitted and
-// claimed_at < now() - leaseTTL (default 30m). FOR UPDATE SKIP LOCKED in the
+// claimed_at < now() - leaseTTL (default 32m). FOR UPDATE SKIP LOCKED in the
 // underlying query ensures concurrent instances each pick a different row.
 type ValidationRetryLoop struct {
 	leases   staleLeaseStore
