@@ -57,11 +57,15 @@ func (r *recordingLeaseRecorder) counts() (allow, mark, release int) {
 }
 
 type scriptedValidationEngine struct {
-	result *devshard.ValidateResult
-	err    error
+	beforeReturn func()
+	result       *devshard.ValidateResult
+	err          error
 }
 
 func (e *scriptedValidationEngine) Validate(context.Context, devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	if e.beforeReturn != nil {
+		e.beforeReturn()
+	}
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -220,29 +224,29 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 	}{
 		{
 			name:         "validate error",
-			skipApply:    true,
+			status:       types.StatusFinished,
 			validator:    scriptedValidationEngine{err: errors.New("local ml 503")},
 			wantRelease:  1,
 			wantCooldown: true,
 		},
 		{
 			name:         "validation skipped",
-			skipApply:    true,
+			status:       types.StatusFinished,
 			validator:    scriptedValidationEngine{err: devshard.ErrValidationSkipped},
 			wantRelease:  1,
 			wantCooldown: true,
 		},
 		{
 			name:         "already leased",
-			skipApply:    true,
+			status:       types.StatusFinished,
 			validator:    scriptedValidationEngine{err: devshard.ErrValidationAlreadyLeased},
 			wantCooldown: true,
 		},
 		{
 			// Releasing here would free a row this attempt never acquired.
 			// The row is still there, so the next request waits out the cooldown.
-			name:      "lease conflict",
-			skipApply: true,
+			name:   "lease conflict",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Status: devshard.LeaseStatusPending,
 				Owner:  "gonka1owner",
@@ -250,16 +254,16 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			wantCooldown: true,
 		},
 		{
-			name:      "lease conflict submitted",
-			skipApply: true,
+			name:   "lease conflict submitted",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Status: devshard.LeaseStatusSubmitted,
 			}},
 			wantCooldown: true,
 		},
 		{
-			name:      "lease conflict skipped",
-			skipApply: true,
+			name:   "lease conflict skipped",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Status: devshard.LeaseStatusSkipped,
 			}},
@@ -267,8 +271,8 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			wantCooldownHold: true,
 		},
 		{
-			name:      "lease conflict stale pending",
-			skipApply: true,
+			name:   "lease conflict stale pending",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Status: devshard.LeaseStatusPending,
 				Stale:  true,
@@ -276,16 +280,16 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			wantCooldown: true,
 		},
 		{
-			name:      "lease conflict read failed",
-			skipApply: true,
+			name:   "lease conflict read failed",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Detail: "lease read failed: db down",
 			}},
 			wantCooldown: true,
 		},
 		{
-			name:      "lease conflict already released",
-			skipApply: true,
+			name:   "lease conflict already released",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Detail: devshard.LeaseRowAbsentDetail,
 			}},
@@ -353,9 +357,21 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			rec := &recordingLeaseRecorder{allowErr: tt.allowErr, markErr: tt.markErr}
 			validator := tt.validator
 			h, hosts, user := newLeaseReleaseHost(t, &validator, rec)
-			if !tt.skipApply {
-				applyInferenceTo(t, h, hosts, user, tt.status)
+			initialStatus := tt.status
+			if tt.skipApply || tt.status == types.StatusStarted {
+				initialStatus = types.StatusFinished
+				// Keep exercising state changes after the new preflight check.
+				validator.beforeReturn = func() {
+					snapshot := h.sm.SnapshotState()
+					if tt.skipApply {
+						delete(snapshot.Inferences, 1)
+					} else {
+						snapshot.Inferences[1].Status = tt.status
+					}
+					require.NoError(t, h.sm.RestoreState(&snapshot))
+				}
 			}
+			applyInferenceTo(t, h, hosts, user, initialStatus)
 			if tt.failSign {
 				h.signer = errorSigner{addr: hosts[0].Address(), err: signFail}
 			}
@@ -382,7 +398,8 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 
 func TestHost_ValidateAsync_CanceledReleases(t *testing.T) {
 	rec := &recordingLeaseRecorder{}
-	h, _, _ := newLeaseReleaseHost(t, &scriptedValidationEngine{err: errors.New("local ml 503")}, rec)
+	h, hosts, user := newLeaseReleaseHost(t, &scriptedValidationEngine{err: errors.New("local ml 503")}, rec)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -410,7 +427,8 @@ func (e *releaseOnErrorEngine) Validate(ctx context.Context, req devshard.Valida
 func TestHost_CloseWaitsForInFlightLeaseRelease(t *testing.T) {
 	inner := newBlockingValidationEngine(1)
 	engine := &releaseOnErrorEngine{inner: inner}
-	h, _, _ := newLeaseReleaseHost(t, engine, nil)
+	h, hosts, user := newLeaseReleaseHost(t, engine, nil)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
 	h.Start()
 	t.Cleanup(h.Close)
 
@@ -508,7 +526,8 @@ func TestLeaseConflictSeverity(t *testing.T) {
 
 func TestHost_ValidateAsync_ClosedDoesNotRelease(t *testing.T) {
 	rec := &recordingLeaseRecorder{}
-	h, _, _ := newLeaseReleaseHost(t, &scriptedValidationEngine{err: errors.New("local ml 503")}, rec)
+	h, hosts, user := newLeaseReleaseHost(t, &scriptedValidationEngine{err: errors.New("local ml 503")}, rec)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
 	h.Close()
 	h.validateAsync(context.Background(), testValidateJob())
 
