@@ -389,11 +389,13 @@ func restoreAppliedTxKeys(sess *Session, records []types.DiffRecord) {
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	now := sess.nowLocked()
 	for _, diff := range sess.diffs {
 		for _, tx := range diff.Txs {
 			if key := devshardTxKey(tx); key != "" {
 				sess.appliedTxKeys[key] = struct{}{}
 			}
+			sess.rememberAppliedFinishLocked(tx, now)
 		}
 	}
 	for _, rec := range records {

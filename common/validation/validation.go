@@ -338,11 +338,21 @@ func ExecuteValidation(
 	logprobsMode string,
 	vocabularySize int,
 ) (ValidationResult, error) {
+	if completionapi.IsClientFaultErrorResponse(responsePayload) {
+		if claimedInputTokens > 0 || claimedOutputTokens > 0 {
+			logging.Warn("validation failed: client fault response billed tokens", types.Validation,
+				"inferenceId", inferenceID, "claimedInput", claimedInputTokens, "claimedOutput", claimedOutputTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Client fault response billed tokens."}, nil
+		}
+		return replayClientFault(ctx, inferenceID, promptPayload, execute, logprobsMode)
+	}
+
 	var requestMap map[string]interface{}
-	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
+	modifiedRequest, err := completionapi.ModifyRequestBodyForVocabulary(
 		promptPayload,
 		validationReplaySeed(inferenceID),
 		logprobsMode,
+		vocabularySize,
 	)
 	if err != nil {
 		return &InvalidInferenceResult{inferenceID, "Failed to modify promptPayload.", err}, nil
@@ -502,6 +512,78 @@ func ExecuteValidation(
 	}
 
 	return CompareLogits(originalLogits, validationLogits, baseResult), nil
+}
+
+var ErrClientFaultReplayInconclusive = errors.New("client fault replay cannot establish executor fault")
+
+var errClientFaultReplayServed = errors.New("client fault replay served output")
+
+type clientFaultReplayProcessor struct {
+	completionapi.ResponseProcessor
+}
+
+func (p clientFaultReplayProcessor) ProcessStreamedResponse(line string) (string, error) {
+	processed, err := p.ResponseProcessor.ProcessStreamedResponse(line)
+	if err == nil && completionapi.StreamedLineCarriesOutput(line) {
+		return processed, errClientFaultReplayServed
+	}
+	return processed, err
+}
+
+func replayClientFault(
+	ctx context.Context,
+	inferenceID string,
+	promptPayload []byte,
+	execute func(ctx context.Context, body []byte) (*http.Response, error),
+	logprobsMode string,
+) (ValidationResult, error) {
+	modifiedRequest, err := completionapi.ModifyRequestBodyForVocabulary(
+		promptPayload,
+		validationReplaySeed(inferenceID),
+		logprobsMode,
+		0,
+	)
+	if err != nil {
+		return &InvalidInferenceResult{inferenceID, "Failed to modify promptPayload.", err}, nil
+	}
+	resp, err := execute(ctx, modifiedRequest.NewBody)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	confirmed := resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity
+	if resp.StatusCode == http.StatusOK && completionapi.IsEventStream(resp) {
+		processor := completionapi.NewExecutorResponseProcessor(inferenceID, true)
+		err := completionapi.ProcessHTTPResponse(resp, clientFaultReplayProcessor{ResponseProcessor: processor})
+		if errors.Is(err, errClientFaultReplayServed) {
+			return nil, fmt.Errorf("%w: validator served the prompt", ErrClientFaultReplayInconclusive)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read client fault replay: %w", err)
+		}
+		payload, err := processor.GetResponseBytes()
+		if err != nil {
+			return nil, err
+		}
+		confirmed = completionapi.IsClientFaultErrorResponse(payload)
+		if _, terminal := completionapi.IsTerminalErrorResponse(payload); terminal && !confirmed {
+			return nil, fmt.Errorf("client fault replay: validator stream failed")
+		}
+	}
+
+	if confirmed {
+		logging.Info("executor client fault confirmed by validator replay", types.Validation,
+			"inferenceId", inferenceID, "status", resp.StatusCode)
+		return &SimilarityValidationResult{
+			BaseValidationResult: BaseValidationResult{InferenceId: inferenceID, ResponseBytes: []byte{}},
+			Value:                1.0,
+		}, nil
+	}
+	if resp.StatusCode == http.StatusOK {
+		return nil, fmt.Errorf("%w: validator served the prompt", ErrClientFaultReplayInconclusive)
+	}
+	return nil, fmt.Errorf("client fault replay: validator node returned status %d", resp.StatusCode)
 }
 
 func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionResponse, error) {

@@ -448,6 +448,32 @@ func TestHost_ValidateAsync_ErrorReleaseCooldownThenRecollects(t *testing.T) {
 	require.False(t, still, "expired cooldown entry must be cleared when the job is collected")
 }
 
+func TestHost_ValidateAsync_AbstainedValidationIsNotRecollected(t *testing.T) {
+	rec := &recordingLeaseRecorder{}
+	validator := &scriptedValidationEngine{err: fmt.Errorf("%w: validator served the prompt", devshard.ErrValidationAbstained)}
+	h, hosts, user := newTwoHostValidationHost(t, validator)
+	h.validationRecorder = rec
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+
+	h.validationLifecycleMu.Lock()
+	h.validationQueue = make(chan validateJob, defaultValidationQueueSize)
+	h.validationLifecycleMu.Unlock()
+
+	h.validateAsync(context.Background(), testValidateJob())
+
+	_, _, release := rec.counts()
+	require.Zero(t, release)
+	until, onCooldown := cooldownUntil(h, 1)
+	require.True(t, onCooldown)
+	require.True(t, until.After(time.Now().Add(time.Hour)))
+	h.mu.Lock()
+	delete(h.validating, 1)
+	h.mu.Unlock()
+	for _, job := range collectValidationJobsLocked(h) {
+		require.NotEqual(t, uint64(1), job.inferenceID)
+	}
+}
+
 func TestHost_ValidateAsync_SubmitAbandonedLostOwnershipReleasesWithoutCooldown(t *testing.T) {
 	rec := &recordingLeaseRecorder{allowErr: devshard.ErrValidationLeaseAbandoned}
 	validator := &scriptedValidationEngine{result: &devshard.ValidateResult{Valid: true}}

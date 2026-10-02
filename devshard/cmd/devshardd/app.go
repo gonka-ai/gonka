@@ -247,7 +247,8 @@ func buildHostManager(
 	chainParams := paramsSetup.Provider
 	mlNodeMgr := buildMLNodeManager(ctx)
 	mlNodeCapacity := buildMLNodeCapacityCache(ctx, mlClient)
-	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase, cfg.LogprobsOptimizationEnabled)
+	vocabularySizes := inference.NewVocabularyResolver(chainBridge)
+	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase, vocabularySizes, cfg.LogprobsOptimizationEnabled)
 
 	instanceAddr := chainRuntime.identity.GetSignerAddress()
 
@@ -260,7 +261,7 @@ func buildHostManager(
 		cfg.RuntimeVersion,
 		chainParams,
 		thresholds,
-		inference.NewVocabularyResolver(chainBridge),
+		vocabularySizes,
 		cfg.VoteFalseOnFetchFailure,
 	)
 

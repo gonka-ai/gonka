@@ -980,10 +980,11 @@ func (c *HTTPClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, di
 		}
 	}
 	resp, err := c.SendVerifyErrorMiss(ctx, VerifyErrorMissRequest{
-		InferenceID:     inferenceID,
-		Diffs:           djList,
-		FinishTx:        artifacts.FinishTx,
-		ResponsePayload: artifacts.ResponsePayload,
+		InferenceID:        inferenceID,
+		Diffs:              djList,
+		FinishTx:           artifacts.FinishTx,
+		ResponsePayload:    artifacts.ResponsePayload,
+		SiblingInferenceID: artifacts.SiblingInferenceID,
 	})
 	if err != nil {
 		return false, nil, 0, nil, "", err

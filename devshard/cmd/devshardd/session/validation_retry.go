@@ -224,6 +224,12 @@ func (r *ValidationRetryLoop) retryStaleValidation(ctx context.Context, escrowID
 	}
 
 	result, err := r.inner.Validate(ctx, req)
+	if errors.Is(err, devshardpkg.ErrValidationAbstained) {
+		slog.Info("devshardd: validation retry: validator abstained",
+			"escrow", escrowID, "inference", inferenceID, "error", err)
+		r.markLeaseResult(ctx, escrowID, inferenceID, epochID, storage.LeaseStatusSkipped)
+		return nil
+	}
 	if err != nil {
 		r.releaseOwnedLease(ctx, escrowID, inferenceID, epochID)
 		return fmt.Errorf("validate: %w", err)

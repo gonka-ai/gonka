@@ -421,7 +421,7 @@ func TestRaceWriter_CapabilityErrorsDoNotSelectWinner(t *testing.T) {
 	require.False(t, rg.hasDecided(), "capability miss should let redundancy try another host")
 }
 
-func TestRaceWriter_ATrustedDeterministicRejectionMarksTheWholeRaceBeforeTheAttemptEnds(t *testing.T) {
+func TestRaceWriter_TwoHostsTrustedDeterministicRejectionMarksTheWholeRaceBeforeTheAttemptEnds(t *testing.T) {
 	cases := []struct {
 		name       string
 		errorEvent string
@@ -433,11 +433,18 @@ func TestRaceWriter_ATrustedDeterministicRejectionMarksTheWholeRaceBeforeTheAtte
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			race, writer := newSingleAttemptRaceWriter(false)
+			second := &raceWriter{group: race, nonce: 2, inf: &inflight{
+				hostID: "host-B", escrowID: "escrow-x", nonce: 2,
+				done: make(chan struct{}), receiptCh: make(chan struct{}), firstTokenCh: make(chan struct{}),
+			}}
 
 			_, err := writer.Write([]byte(testCase.errorEvent))
-
 			require.NoError(t, err)
-			require.True(t, race.isDeterministicallyRejected(), "the rejection must stop new attempts before this attempt finishes")
+			require.False(t, race.isDeterministicallyRejected(), "one host's rejection must not stop other hosts from serving the request")
+
+			_, err = second.Write([]byte(testCase.errorEvent))
+			require.NoError(t, err)
+			require.True(t, race.isDeterministicallyRejected(), "a second host's rejection must stop new attempts before this attempt finishes")
 			require.False(t, race.hasDecided(), "a rejection is not an answer")
 		})
 	}

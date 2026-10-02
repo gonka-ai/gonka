@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,16 +34,37 @@ func TestGatewayChatCacheCaptureAllowsSuccessfulResponse(t *testing.T) {
 	require.JSONEq(t, `{"choices":[{"message":{"content":"ok"}}]}`, string(entry.Body))
 }
 
-func TestGatewayChatCacheCaptureAllowsDeterministicOpenAIStyleBadRequest(t *testing.T) {
-	rec := httptest.NewRecorder()
-	capture := &gatewayChatCacheCapture{ResponseWriter: rec}
-	writeJSONPayload(capture, http.StatusBadRequest, []byte(`{"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}`))
+func TestGatewayChatCacheCaptureCachesAHostRejectionOnlyOnceConfirmed(t *testing.T) {
+	badRequest := []byte(`{"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}`)
+	streamedRejection := []byte("data: {\"error\":{\"message\":\"bad response_format schema\",\"type\":\"BadRequestError\",\"code\":400}}\n\ndata: [DONE]\n\n")
+	for _, tc := range []struct {
+		name      string
+		status    int
+		body      []byte
+		confirmed bool
+		want      bool
+	}{
+		{name: "unconfirmed bad request", status: http.StatusBadRequest, body: badRequest},
+		{name: "unconfirmed streamed rejection", status: http.StatusOK, body: streamedRejection},
+		{name: "confirmed bad request", status: http.StatusBadRequest, body: badRequest, confirmed: true, want: true},
+		{name: "confirmed streamed rejection", status: http.StatusOK, body: streamedRejection, confirmed: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			confirmed := new(atomic.Bool)
+			capture := &gatewayChatCacheCapture{ResponseWriter: httptest.NewRecorder(), rejectionConfirmed: confirmed}
+			writeJSONPayload(capture, tc.status, tc.body)
+			if tc.confirmed {
+				confirmRejection(withRejectionConfirmation(context.Background(), confirmed))
+			}
 
-	entry, ok := capture.cacheEntry("escrow-1", false, "req-source", nil)
+			entry, ok := capture.cacheEntry("escrow-1", false, "req-source", nil)
 
-	require.True(t, ok)
-	require.Equal(t, http.StatusBadRequest, entry.StatusCode)
-	require.JSONEq(t, `{"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}`, string(entry.Body))
+			require.Equal(t, tc.want, ok)
+			if tc.want {
+				require.Equal(t, tc.status, entry.StatusCode)
+			}
+		})
+	}
 }
 
 func TestGatewayChatCacheCaptureRejectsRuntimeAndCapabilityErrors(t *testing.T) {

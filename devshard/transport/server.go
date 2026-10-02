@@ -790,7 +790,7 @@ func (s *Server) HandleVerifyErrorMiss(c echo.Context) (err error) {
 
 	st := s.host.SnapshotState()
 	localMempool := s.host.MempoolTxs()
-	accept, responseHash, rejectCause, err := host.VerifyErrorMiss(st, req.InferenceID, req.FinishTx, req.ResponsePayload, localMempool, s.host)
+	accept, responseHash, rejectCause, err := host.VerifyErrorMissWithSibling(st, req.InferenceID, req.FinishTx, req.ResponsePayload, req.SiblingInferenceID, localMempool, s.host)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}

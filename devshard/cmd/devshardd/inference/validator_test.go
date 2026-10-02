@@ -2,8 +2,10 @@ package inference
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -339,6 +341,28 @@ func TestLeaseValidator_InnerError_Releases(t *testing.T) {
 	err = c.ReleaseValidationLease(context.Background(), "escrow-1", 42)
 	require.NoError(t, err)
 	require.Len(t, store.releaseCalls, 1, "forgotten acquire must not release again")
+}
+
+func TestLeaseValidator_Abstained_MarksSkippedWithoutRelease(t *testing.T) {
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+			return true, nil
+		},
+	}
+	c := newTestLeaseValidator(store, func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		return nil, fmt.Errorf("%w: validator served the prompt", devshardpkg.ErrValidationAbstained)
+	})
+
+	result, err := c.Validate(context.Background(), makeReq())
+	require.ErrorIs(t, err, devshardpkg.ErrValidationAbstained)
+	require.ErrorIs(t, err, devshardpkg.ErrValidationSkipped)
+	assert.Nil(t, result)
+	require.Empty(t, store.releaseCalls)
+	require.Len(t, store.setResultCalls, 1)
+	require.Contains(t, store.setResultCalls[0], string(storage.LeaseStatusSkipped))
+
+	require.NoError(t, c.ReleaseValidationLease(context.Background(), "escrow-1", 42))
+	require.Empty(t, store.releaseCalls)
 }
 
 func TestLeaseValidator_Canceled_Releases(t *testing.T) {
@@ -823,4 +847,46 @@ func TestTruncateCause(t *testing.T) {
 	got := truncateCause(long)
 	assert.Len(t, got, maxVerdictCauseBytes+len("...(truncated)"))
 	assert.True(t, strings.HasSuffix(got, "...(truncated)"))
+}
+
+func TestValidator_Validate_ClientFaultReplayVerdicts(t *testing.T) {
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	clientFault := []byte(`{"events":["data: {\"error\":{\"code\":400,\"message\":\"bad\"},\"id\":\"x\"}","data: [DONE]"]}`)
+	hiddenOutputThenFault := []byte(`{"events":["data: {\"choices\":[{\"delta\":{},\"index\":0,\"logprobs\":{\"content\":[{\"token\":\"42\",\"logprob\":-0.5,\"top_logprobs\":[{\"token\":\"42\",\"logprob\":-0.5}]}]}}],\"id\":\"x\"}","data: {\"error\":{\"code\":400,\"message\":\"bad\"},\"id\":\"x\"}","data: [DONE]"]}`)
+	for _, tc := range []struct {
+		name         string
+		stored       []byte
+		replayStatus int
+		wantAbstain  bool
+		wantEnforced bool
+		wantValid    bool
+	}{
+		{name: "replay rejects too", stored: clientFault, replayStatus: http.StatusBadRequest, wantValid: true},
+		{name: "replay serves", stored: clientFault, replayStatus: http.StatusOK, wantAbstain: true},
+		{name: "hidden output before the fault takes the output replay", stored: hiddenOutputThenFault, replayStatus: http.StatusBadRequest, wantEnforced: true, wantValid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var replayed map[string]any
+			fetch := func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
+				return prompt, tc.stored, nil
+			}
+			executeML := func(_ context.Context, _ string, _ string, body []byte) (*http.Response, error) {
+				require.NoError(t, json.Unmarshal(body, &replayed))
+				return &http.Response{StatusCode: tc.replayStatus, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"answer"}}]}`))}, nil
+			}
+			req := faultReq(10)
+			req.InputTokens, req.OutputTokens = 0, 0
+			result, err := newFaultTestValidator(10, true, fetch, executeML, nil).Validate(context.Background(), req)
+			if tc.wantAbstain {
+				require.ErrorIs(t, err, devshardpkg.ErrValidationAbstained)
+				require.Nil(t, result)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tc.wantValid, result.Valid)
+			}
+			require.NotNil(t, replayed)
+			_, enforced := replayed["enforced_tokens"]
+			require.Equal(t, tc.wantEnforced, enforced)
+		})
+	}
 }

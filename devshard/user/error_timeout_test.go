@@ -491,6 +491,51 @@ func TestFinishTxFor_MarshalsUnderLock(t *testing.T) {
 	require.Nil(t, session.FinishTxFor(1))
 }
 
+func TestFinishTxForErrorMiss_SelectsAppliedFinish(t *testing.T) {
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
+	params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
+	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
+	applied := signedFinishTx(t, hosts, nonce, execIdx, execIdx)
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{Mempool: []*types.DevshardTx{applied}}, nonce))
+	require.NoError(t, session.SendPendingDiff(context.Background()))
+	rec, ok := session.StateMachine().GetInference(nonce)
+	require.True(t, ok)
+	require.Equal(t, types.StatusFinished, rec.Status)
+
+	alternative := proto.Clone(applied).(*types.DevshardTx)
+	alternative.GetFinishInference().InputTokens = 0
+	alternative.GetFinishInference().OutputTokens = 0
+	alternative.GetFinishInference().ProposerSig = testutil.SignProposerTx(t, hosts[execIdx], alternative.GetFinishInference())
+	selected := session.FinishTxForErrorMiss(nonce, []*types.DevshardTx{alternative, applied})
+	require.True(t, proto.Equal(applied.GetFinishInference(), host.DecodeFinishTx(selected)))
+	selected = session.FinishTxForErrorMiss(nonce, []*types.DevshardTx{alternative})
+	require.True(t, proto.Equal(applied.GetFinishInference(), host.DecodeFinishTx(selected)))
+}
+
+func TestFinishTxForErrorMiss_UsesRememberedFinishNotTheDiffLog(t *testing.T) {
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
+	params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
+	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
+	applied := signedFinishTx(t, hosts, nonce, execIdx, execIdx)
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{Mempool: []*types.DevshardTx{applied}}, nonce))
+	require.NoError(t, session.SendPendingDiff(context.Background()))
+
+	session.mu.Lock()
+	diffs := session.diffs
+	session.diffs = nil
+	session.mu.Unlock()
+	require.True(t, proto.Equal(applied.GetFinishInference(), host.DecodeFinishTx(session.FinishTxForErrorMiss(nonce, nil))))
+
+	session.mu.Lock()
+	session.diffs = diffs
+	clear(session.appliedFinishTxs)
+	session.mu.Unlock()
+	require.Nil(t, session.FinishTxForErrorMiss(nonce, nil))
+
+	restoreAppliedTxKeys(session, nil)
+	require.True(t, proto.Equal(applied.GetFinishInference(), host.DecodeFinishTx(session.FinishTxForErrorMiss(nonce, nil))))
+}
+
 func TestFinishTxFor_ConcurrentWithSendPendingDiff(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	ctx := context.Background()

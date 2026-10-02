@@ -50,7 +50,7 @@ func TestTheStoredPayloadIsSlimAndItsHashCoversTheSlimBytes(t *testing.T) {
 			request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
 			return http.DefaultClient.Do(request)
 		},
-		fixedChainParams{}, true)
+		fixedChainParams{}, true, 0)
 	if err != nil {
 		t.Fatalf("executeInference: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestTheGatewayGetsStreamedLogprobsOnlyWhenItAsked(t *testing.T) {
 					request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
 					return http.DefaultClient.Do(request)
 				},
-				fixedChainParams{}, true)
+				fixedChainParams{}, true, 0)
 			if err != nil {
 				t.Fatalf("executeInference: %v", err)
 			}
@@ -278,7 +278,7 @@ func TestAJSONHostRelayedToAStreamingClientCarriesLogprobsOnlyWhenAsked(t *testi
 					request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
 					return http.DefaultClient.Do(request)
 				},
-				fixedChainParams{}, true)
+				fixedChainParams{}, true, 0)
 			if err != nil {
 				t.Fatalf("executeInference: %v", err)
 			}

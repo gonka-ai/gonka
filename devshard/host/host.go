@@ -109,6 +109,7 @@ const (
 	defaultValidationWorkers   = 20
 	defaultValidationQueueSize = 20_000
 	validationCooldown         = 30 * time.Second
+	abstainedValidationHold    = 24 * time.Hour
 
 	// defaultExecutionBudget bounds a detached execution when the session config
 	// carries no ExecutionTimeout (zero is a legal value that
@@ -1408,7 +1409,11 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		EpochID:         job.epochID,
 	})
 	if err != nil {
-		if !errors.Is(err, devshard.ErrValidationAlreadyLeased) {
+		if errors.Is(err, devshard.ErrValidationAbstained) {
+			if !h.validationIsClosed() {
+				h.holdAbstainedValidation(job.inferenceID)
+			}
+		} else if !errors.Is(err, devshard.ErrValidationAlreadyLeased) {
 			if !h.validationIsClosed() {
 				h.stampValidationCooldown(job.inferenceID)
 				h.releaseValidationLease(ctx, job.inferenceID)
@@ -1418,11 +1423,12 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		// effectively over for us. Drop silently -- no MsgValidation, no
 		// challenge, no error in the executor receipt path.
 		if errors.Is(err, devshard.ErrValidationSkipped) {
-			logging.Info("validation skipped: payload pruned",
+			logging.Info("validation skipped",
 				"subsystem", "host",
 				"inference_id", job.inferenceID,
 				"executor_address", job.executorAddress,
 				"epoch_id", job.epochID,
+				"reason", err.Error(),
 			)
 			return
 		}
@@ -1573,6 +1579,12 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			}
 		}
 	}
+}
+
+func (h *Host) holdAbstainedValidation(inferenceID uint64) {
+	h.mu.Lock()
+	h.validationCooldown[inferenceID] = time.Now().Add(abstainedValidationHold)
+	h.mu.Unlock()
 }
 
 func (h *Host) stampValidationCooldown(inferenceID uint64) {

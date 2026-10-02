@@ -137,6 +137,9 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		v.vocabularySizes.Resolve(ctx, epochID, req.Model),
 	)
 	if err != nil {
+		if errors.Is(err, commonvalidation.ErrClientFaultReplayInconclusive) {
+			return nil, fmt.Errorf("%w: %v", devshardpkg.ErrValidationAbstained, err)
+		}
 		return nil, classifyExecuteValidationErr(err)
 	}
 
@@ -344,6 +347,10 @@ func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateR
 	c.rememberAcquire(req.EscrowID, req.InferenceID, epochID, time.Now())
 
 	result, err := c.validator.Validate(ctx, req)
+	if errors.Is(err, devshardpkg.ErrValidationAbstained) {
+		c.abstainAndForget(ctx, req.EscrowID, req.InferenceID, epochID)
+		return nil, err
+	}
 	if err != nil {
 		c.releaseAndForget(ctx, req.EscrowID, req.InferenceID, epochID)
 		return nil, err
@@ -385,6 +392,16 @@ func (c *LeaseValidator) ReleaseValidationLease(ctx context.Context, escrowID st
 	err := c.leases.Release(releaseCtx, escrowID, inferenceID, rec.epochID, c.instanceAddr)
 	c.forgetAcquire(escrowID, inferenceID)
 	return err
+}
+
+func (c *LeaseValidator) abstainAndForget(ctx context.Context, escrowID string, inferenceID, epochID uint64) {
+	resultCtx, cancel := leaseReleaseContext(ctx)
+	defer cancel()
+	if err := c.leases.SetResult(resultCtx, escrowID, inferenceID, epochID, storage.LeaseStatusSkipped, c.instanceAddr); err != nil {
+		slog.Warn("devshardd: validation lease abstain failed",
+			"escrow", escrowID, "inference", inferenceID, "error", err)
+	}
+	c.forgetAcquire(escrowID, inferenceID)
 }
 
 func (c *LeaseValidator) releaseAndForget(ctx context.Context, escrowID string, inferenceID, epochID uint64) {

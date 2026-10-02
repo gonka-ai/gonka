@@ -650,16 +650,80 @@ deterministic miss by appending one junk line. Junk is the proof, not a veto.
 Token counts are never the criterion. Host-reported `completion_tokens` do not
 veto an error envelope.
 
-Out of scope by construction: client-fault errors. A 4xx from the ML node is
-returned to the caller without rotation (`inference/engine.go:174`), but its
-JSON body carries no usage block, so `JsonCompletionResponse.GetUsage()` fails
-on `Usage.IsEmpty()` (`completionresponse.go:40`), `processExecutionHTTPResponse`
-returns an error (`execute.go:113`), and **no Finish is ever signed**. This
-design only ever sees errors that produced a Finish, so a malformed request
-cannot be turned into a miss on an honest host. Keep it that way: if a future
-change makes `GetUsage` tolerant of missing usage, this predicate needs an
-explicit executor-fault condition, or a user could grief every host in the
-group with one bad prompt.
+Client-fault errors are not a miss. The original premise here, that a 4xx
+from the ML node never produces a Finish, did not hold: a streamed request gets
+the 400 as an SSE error event and the streamed `GetUsage` falls back to 0/0, so
+the host signed a Finish; a non-streamed 400 produced no Finish and fell through
+to an execution timeout. Either way an honest executor was charged a miss, or,
+behind a gateway that did not emit `MsgErrorMiss`, an invalidation, for a
+request the client got wrong.
+
+A client fault is a streamed payload whose first error envelope has `code` 400
+or 422, with no chunk carrying output (content, reasoning, tool calls, logprobs
+or completion usage) before it and no unparseable `data:` line anywhere
+(`completionapi.IsClientFaultErrorResponse`). The exemption below applies only
+when the signed Finish also bills zero input and zero output tokens
+(`completionapi.IsUnbilledClientFault`). Anything else stays a miss: an executor
+cannot append a 400 to real output, or bill tokens on a 400, to keep the pay
+that `MsgErrorMiss` would refund. It is handled as follows:
+
+- The executor signs a Finish over it with zero tokens whether the ML node
+  streamed the error or answered with a JSON 400/422 (`execute.go`,
+  `processClientFaultResponse`). The client pays nothing and the executor earns
+  nothing.
+- The gateway does not treat one host's rejection as final. A 400 or a
+  context-length rejection stops the request, and may be cached, only once two
+  distinct hosts return it (`deterministicRejectionQuorum`). Until then the
+  request moves to another host, so a single executor cannot refuse a prompt
+  for every caller of the gateway. An unbilled client fault does not count as a
+  responsive attempt in host performance stats.
+- The gateway emits `MsgErrorMiss` for it only with evidence that the prompt
+  was servable: another attempt of the same request (`errorMissSibling`) whose
+  record is Finished or Validated, has the same `PromptHash` and billed output
+  tokens. The sibling's Finish is published before the miss is sent. The
+  inference id of that sibling goes to the verifiers with the error-miss
+  artifacts (`TimeoutArtifacts.SiblingInferenceID`). Without a served sibling
+  the skip is logged as `error_miss_skipped` with `reason=client_fault`.
+- Verifiers reject a `MsgErrorMiss` over it with cause `client_fault` unless the
+  named sibling in their own state served the same prompt
+  (`host.SiblingServedPrompt`). The check reads only applied state, so every
+  verifier reaches the same answer, and a gateway cannot force the miss without
+  a host that actually served the prompt. An honest executor whose engine
+  rejects what another host's engine serves, for example after a version skew
+  or a failed vocabulary lookup, takes a miss. That is the outcome every client
+  fault had before this exemption, and it is refundable.
+- A validator that samples it rejects it outright if the Finish billed tokens,
+  and otherwise replays the original prompt without enforced tokens. A 400/422
+  from its own ML node confirms the client fault and passes. A served replay is
+  inconclusive: the validator stops reading at the first output chunk, abstains
+  (`ErrValidationAbstained`) and records the lease as skipped, so the prompt is
+  not replayed again. The executor's refusal is judged through the sibling miss
+  above, never through an Invalid vote. A replay that fails for any other reason
+  is retried, not voted.
+
+Large JSON and streamed 400/422 error bodies are reduced to a bounded error
+envelope before the host signs them (`completionapi.CompactClientFaultBody`).
+This keeps the signed zero-token payload inside the validator's response fetch
+limit even when the engine repeats a large client parameter in its error
+message. Only a line that the client-fault predicate itself accepts is
+compacted; any other line, including one that does not decode, passes through
+unchanged.
+
+The gateway classifies the bytes it received, the served view with logprobs
+removed. A chunk whose only output evidence was logprobs therefore reads as no
+output there, while the stored payload still shows it. Only a dishonest
+executor produces that shape, since an engine rejects a request before it
+generates, and it gains nothing over a plain fabricated 400, which the sibling
+miss covers.
+
+Known engine rejections are removed before the request reaches the ML node, on
+the executor and in the validator replay alike (`ModifyRequestBodyForVocabulary`):
+`logit_bias` keys and `allowed_token_ids` outside the model vocabulary are
+dropped and a caller-supplied `enforced_tokens` is stripped. The vocabulary size
+comes from the chain-pinned `config.json`, with a coarse limit when it cannot be
+resolved. The client-fault replay uses the coarse limit only, so a validator
+that resolved the vocabulary never drops a key that an executor without the
+vocabulary forwarded to its engine.
 
 There is no second, independent check behind this predicate. Verifiers run the
 same implementation over the same hash-pinned bytes as the gateway, so they
@@ -819,7 +883,8 @@ Remaining rollout rules:
 - Extend the timeout-reason label set (`RecordInferenceTimeout`,
   `timeoutReasonLogLabel` at `session.go:2239`) with `"error"`.
 - Counter for rejected error-miss verifications by cause
-  (`no_finish_tx`, `no_payload`, `sig`, `hash_mismatch`, `not_error_body`),
+  (`no_finish_tx`, `no_payload`, `sig`, `hash_mismatch`, `not_error_body`,
+  `client_fault`),
   labelled by whether the gateway read the attempt's stream to completion.
   `hash_mismatch` on a cancelled attempt is expected (truncated prefix).
   `hash_mismatch` on a fully-read attempt is the alarm that matters: the
