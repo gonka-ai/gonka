@@ -15,26 +15,11 @@ type Scenario struct {
 	SchemaVersion string      `yaml:"schema_version"`
 	Scenario      string      `yaml:"scenario"`
 	Seed          int64       `yaml:"seed"`
-	Environment   Environment `yaml:"environment"`
 	Topology      Topology    `yaml:"topology"`
 	Workload      Workload    `yaml:"workload"`
 	Thresholds    Thresholds  `yaml:"thresholds"`
 	Assertions    Assertions  `yaml:"assertions"`
 	DrainTimeout  string      `yaml:"drain_timeout"`
-}
-
-// Environment selects the backing services for a scenario.
-//
-// local_testnet/real is currently a bootstrap-only scenario while the
-// remaining DevShard provisioning is migrated from the mock stack.
-type Environment struct {
-	Chain     string `yaml:"chain"`
-	DAPI      string `yaml:"dapi"`
-	Bootstrap bool   `yaml:"bootstrap"`
-}
-
-func (e Environment) IsRealDAPI() bool {
-	return e.Chain == "local_testnet" && e.DAPI == "real"
 }
 
 type Topology struct {
@@ -168,12 +153,6 @@ func (s Scenario) Validate() error {
 	if s.SchemaVersion != "v1" || strings.TrimSpace(s.Scenario) == "" {
 		return fmt.Errorf("schema_version must be v1 and scenario must be set")
 	}
-	if s.Environment.IsRealDAPI() && s.Environment.Bootstrap {
-		return nil
-	}
-	if !s.Environment.IsRealDAPI() && (s.Environment.Chain != "mock" || s.Environment.DAPI != "mock") {
-		return fmt.Errorf("environment must be mock/mock or local_testnet/real")
-	}
 	if s.Topology.VersiondMode != "multi" {
 		return fmt.Errorf("only versiond_mode multi is supported")
 	}
@@ -186,10 +165,7 @@ func (s Scenario) Validate() error {
 	if s.Topology.Chain.EscrowAmount == 0 || s.Topology.Chain.MaxNonce == 0 {
 		return fmt.Errorf("topology.chain requires positive escrow_amount and max_nonce")
 	}
-	if s.Environment.IsRealDAPI() && s.Topology.MockML.Allocator != "dapi" {
-		return fmt.Errorf("real DAPI scenarios require mock_ml allocator dapi")
-	}
-	if !s.Environment.IsRealDAPI() && s.Topology.MockML.Allocator != "round_robin" {
+	if s.Topology.MockML.Allocator != "round_robin" {
 		return fmt.Errorf("mock DAPI scenarios require mock_ml allocator round_robin")
 	}
 	if len(s.Topology.MockML.Nodes) < 2 {

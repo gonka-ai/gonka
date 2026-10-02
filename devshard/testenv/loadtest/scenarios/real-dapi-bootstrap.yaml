@@ -1,7 +1,0 @@
-schema_version: v1
-scenario: real-dapi-bootstrap
-
-environment:
-  chain: local_testnet
-  dapi: real
-  bootstrap: true
