@@ -823,6 +823,15 @@ func (sm *StateMachine) Balance() uint64 {
 	return sm.state.Balance
 }
 
+// StateRootAndProtocolVersion returns the session's protocol tag (stamped at
+// creation, replaced only by RestoreState). Use this instead of SnapshotState().StateRootAndProtocolVersion to
+// avoid deep-copying the inference map.
+func (sm *StateMachine) StateRootAndProtocolVersion() string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state.StateRootAndProtocolVersion
+}
+
 // Config returns a copy of the session config (a small value type). Use this
 // instead of SnapshotState().Config to avoid deep-copying the inference map.
 func (sm *StateMachine) Config() types.SessionConfig {
