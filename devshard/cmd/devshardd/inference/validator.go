@@ -46,6 +46,7 @@ type Validator struct {
 	boundVersion            string
 	chainParams             ChainParamsProvider
 	thresholds              ValidationThresholdResolver
+	vocabularySizes         VocabularyResolver
 	voteFalseOnFetchFailure bool
 	payloadHTTPClient       *http.Client
 	fetchPayloads           payloadFetchFunc
@@ -59,6 +60,7 @@ type mlExecuteFunc func(ctx context.Context, model, escrowID string, body []byte
 // NewValidator creates a Validator. boundVersion is the runtime version string used
 // to construct the payload request path. thresholds resolves the per-model
 // similarity pass threshold (long-poll snapshot first, chain fallback).
+// vocabularySizes bounds enforced token ids by the model's vocab before the replay reaches the ML node.
 // voteFalseOnFetchFailure converts executor-attributable payload failures into
 // Valid:false instead of abandoning the attempt.
 func NewValidator(
@@ -69,6 +71,7 @@ func NewValidator(
 	boundVersion string,
 	chainParams ChainParamsProvider,
 	thresholds ValidationThresholdResolver,
+	vocabularySizes VocabularyResolver,
 	voteFalseOnFetchFailure bool,
 ) *Validator {
 	return &Validator{
@@ -79,6 +82,7 @@ func NewValidator(
 		boundVersion:            boundVersion,
 		chainParams:             chainParams,
 		thresholds:              thresholds,
+		vocabularySizes:         vocabularySizes,
 		voteFalseOnFetchFailure: voteFalseOnFetchFailure,
 		payloadHTTPClient:       newPayloadFetchClient(),
 	}
@@ -130,8 +134,12 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		},
 		req.InputTokens, req.OutputTokens,
 		v.chainParams.LogprobsMode(),
+		v.vocabularySizes.Resolve(ctx, epochID, req.Model),
 	)
 	if err != nil {
+		if errors.Is(err, commonvalidation.ErrClientFaultReplayInconclusive) {
+			return nil, fmt.Errorf("%w: %v", devshardpkg.ErrValidationAbstained, err)
+		}
 		return nil, classifyExecuteValidationErr(err)
 	}
 
@@ -339,6 +347,10 @@ func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateR
 	c.rememberAcquire(req.EscrowID, req.InferenceID, epochID, time.Now())
 
 	result, err := c.validator.Validate(ctx, req)
+	if errors.Is(err, devshardpkg.ErrValidationAbstained) {
+		c.abstainAndForget(ctx, req.EscrowID, req.InferenceID, epochID)
+		return nil, err
+	}
 	if err != nil {
 		c.releaseAndForget(ctx, req.EscrowID, req.InferenceID, epochID)
 		return nil, err
@@ -380,6 +392,16 @@ func (c *LeaseValidator) ReleaseValidationLease(ctx context.Context, escrowID st
 	err := c.leases.Release(releaseCtx, escrowID, inferenceID, rec.epochID, c.instanceAddr)
 	c.forgetAcquire(escrowID, inferenceID)
 	return err
+}
+
+func (c *LeaseValidator) abstainAndForget(ctx context.Context, escrowID string, inferenceID, epochID uint64) {
+	resultCtx, cancel := leaseReleaseContext(ctx)
+	defer cancel()
+	if err := c.leases.SetResult(resultCtx, escrowID, inferenceID, epochID, storage.LeaseStatusSkipped, c.instanceAddr); err != nil {
+		slog.Warn("devshardd: validation lease abstain failed",
+			"escrow", escrowID, "inference", inferenceID, "error", err)
+	}
+	c.forgetAcquire(escrowID, inferenceID)
 }
 
 func (c *LeaseValidator) releaseAndForget(ctx context.Context, escrowID string, inferenceID, epochID uint64) {

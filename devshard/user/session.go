@@ -257,6 +257,7 @@ type Session struct {
 
 	receivedStreams        map[uint64]waitingReceivedStream
 	appliedFinishHashes    map[uint64]waitingAppliedFinish
+	appliedFinishTxs       map[uint64]appliedFinishTx
 	servedBindingsPrunedAt time.Time
 	servedBindingHandler   ServedBindingHandler
 
@@ -948,6 +949,7 @@ func (s *Session) retainPendingLocked(held, applied []*types.DevshardTx) {
 			s.appliedTxKeys[key] = struct{}{}
 		}
 		if finish := tx.GetFinishInference(); finish != nil {
+			s.rememberAppliedFinishLocked(tx, s.nowLocked())
 			s.bindAppliedFinishLocked(finish)
 		}
 	}
@@ -2016,6 +2018,54 @@ func (s *Session) FinishTxFor(inferenceID uint64) []byte {
 	return MarshalFinishTx(s.pendingTxs, inferenceID)
 }
 
+func (s *Session) FinishTxForErrorMiss(inferenceID uint64, responseMempool []*types.DevshardTx) []byte {
+	rec, found := s.sm.GetInference(inferenceID)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if found && rec.Status == types.StatusFinished {
+		var applied []*types.DevshardTx
+		if remembered, ok := s.appliedFinishTxs[inferenceID]; ok {
+			applied = []*types.DevshardTx{remembered.tx}
+		}
+		for _, txs := range [][]*types.DevshardTx{responseMempool, s.pendingTxs, applied} {
+			for _, tx := range txs {
+				if !s.finishTxMatchesRecordLocked(tx, inferenceID, rec) {
+					continue
+				}
+				if encoded, err := proto.Marshal(tx); err == nil {
+					return encoded
+				}
+			}
+		}
+		return nil
+	}
+	if finishTx := MarshalFinishTx(responseMempool, inferenceID); len(finishTx) > 0 {
+		return finishTx
+	}
+	return MarshalFinishTx(s.pendingTxs, inferenceID)
+}
+
+func (s *Session) finishTxMatchesRecordLocked(tx *types.DevshardTx, inferenceID uint64, rec types.InferenceRecord) bool {
+	if tx == nil {
+		return false
+	}
+	msg := tx.GetFinishInference()
+	return msg != nil && msg.InferenceId == inferenceID && msg.EscrowId == s.escrowID && msg.ExecutorSlot == rec.ExecutorSlot &&
+		bytes.Equal(msg.ResponseHash, rec.ResponseHash) && (len(rec.ServedHash) == 0 || bytes.Equal(msg.ServedHash, rec.ServedHash)) &&
+		msg.InputTokens == rec.InputTokens && msg.OutputTokens == rec.OutputTokens
+}
+
+func (s *Session) rememberAppliedFinishLocked(tx *types.DevshardTx, now time.Time) {
+	finish := tx.GetFinishInference()
+	if finish == nil {
+		return
+	}
+	if s.appliedFinishTxs == nil {
+		s.appliedFinishTxs = make(map[uint64]appliedFinishTx)
+	}
+	s.appliedFinishTxs[finish.InferenceId] = appliedFinishTx{tx: tx, appliedAt: now}
+}
+
 func (s *Session) StateMachine() *state.StateMachine { return s.sm }
 
 // sigWeight computes the slot-weighted signature count for a set of slot signatures,
@@ -2851,6 +2901,22 @@ func (s *Session) TimeoutDeadline(nonce uint64, sendTime time.Time) (string, tim
 }
 
 func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, responsePayload []byte) (TimeoutResult, error) {
+	return s.HandleErrorMissWithSibling(ctx, nonce, finishTx, responsePayload, 0)
+}
+
+func (s *Session) ServedSibling(inferenceID, siblingID uint64) bool {
+	if inferenceID == siblingID {
+		return false
+	}
+	rec, found := s.sm.GetInference(inferenceID)
+	if !found {
+		return false
+	}
+	sibling, found := s.sm.GetInference(siblingID)
+	return found && host.SiblingServedPrompt(&rec, &sibling)
+}
+
+func (s *Session) HandleErrorMissWithSibling(ctx context.Context, nonce uint64, finishTx, responsePayload []byte, siblingInferenceID uint64) (TimeoutResult, error) {
 	s.pinPendingFinish(nonce)
 	defer s.unpinPendingFinish(nonce)
 
@@ -2882,8 +2948,9 @@ func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, r
 
 	verifiers := s.TimeoutVerifiers()
 	votes, _, rejectCauses, err := s.CollectErrorMissVotes(ctx, nonce, verifiers, nil, host.TimeoutArtifacts{
-		FinishTx:        finishTx,
-		ResponsePayload: responsePayload,
+		FinishTx:           finishTx,
+		ResponsePayload:    responsePayload,
+		SiblingInferenceID: siblingInferenceID,
 	})
 	if err != nil {
 		return result, fmt.Errorf("collect error-miss votes: %w", err)

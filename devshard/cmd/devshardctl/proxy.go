@@ -429,6 +429,9 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 		logRequestStage(r.Context(), "proxy_stream_failed", "escrow", p.escrowID, "error", err)
 		var hostErr *hostApplicationError
 		if errors.As(err, &hostErr) {
+			if hostErr.confirmedByHosts {
+				confirmRejection(r.Context())
+			}
 			if !dw.started {
 				if _, werr := fmt.Fprintf(dw, "data: %s\n\n", hostErr.jsonPayload()); werr != nil {
 					doneWriteErr = werr
@@ -606,6 +609,9 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 			"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
 		var hostErr *hostApplicationError
 		if errors.As(err, &hostErr) {
+			if hostErr.confirmedByHosts {
+				confirmRejection(r.Context())
+			}
 			writeJSONPayload(w, hostErr.statusCode(), hostErr.jsonPayload())
 			return
 		}

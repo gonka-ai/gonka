@@ -2027,7 +2027,9 @@ func (g *Gateway) serveChatToRuntime(rt *devshardRuntime, path string, body []by
 	req.RequestURI = path
 	w.Header().Set("X-Devshard-ID", rt.id)
 	logRequestStage(req.Context(), "gateway_request_forwarded", "escrow", rt.id, "path", path)
-	capture := &gatewayChatCacheCapture{ResponseWriter: w}
+	confirmed := new(atomic.Bool)
+	req = req.WithContext(withRejectionConfirmation(req.Context(), confirmed))
+	capture := &gatewayChatCacheCapture{ResponseWriter: w, rejectionConfirmed: confirmed}
 	rt.handler.ServeHTTP(capture, req)
 	return capture
 }

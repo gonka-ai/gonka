@@ -1752,12 +1752,30 @@ func TestGatewayPooledChatReportsOversizedResponseAsSkipped(t *testing.T) {
 }
 
 func TestGatewayPooledChatCachesOpenAIStyleBadRequestWithFreshRequestID(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		confirmed bool
+		wantCalls int32
+	}{
+		{name: "rejection confirmed by two hosts is cached", confirmed: true, wantCalls: 1},
+		{name: "rejection from one host is not cached", wantCalls: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertPooledBadRequestCaching(t, tc.confirmed, tc.wantCalls)
+		})
+	}
+}
+
+func assertPooledBadRequestCaching(t *testing.T, confirmed bool, wantCalls int32) {
 	var calls atomic.Int32
 	rt := &devshardRuntime{
 		id:    "12",
 		model: "Qwen/Test",
 		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			calls.Add(1)
+			if confirmed {
+				confirmRejection(r.Context())
+			}
 			if rid, ok := requestLogFromContext(r.Context()); ok {
 				w.Header().Set("X-Request-Id", rid)
 			}
@@ -1789,7 +1807,7 @@ func TestGatewayPooledChatCachesOpenAIStyleBadRequestWithFreshRequestID(t *testi
 	require.Equal(t, "12", rec.Header().Get("X-Devshard-ID"))
 	require.NotEmpty(t, rec.Header().Get("X-Request-Id"))
 	require.NotEqual(t, firstRequestID, rec.Header().Get("X-Request-Id"))
-	require.EqualValues(t, 1, calls.Load())
+	require.Equal(t, wantCalls, calls.Load())
 }
 
 func TestGatewayChatCacheSharedAcrossDifferentEscrowRoutes(t *testing.T) {

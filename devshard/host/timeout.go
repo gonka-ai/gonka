@@ -23,8 +23,9 @@ type FinishProposerVerifier interface {
 // Required for MsgErrorMiss (finish_tx + response_payload). Unused for
 // refused/execution timeout votes.
 type TimeoutArtifacts struct {
-	FinishTx        []byte
-	ResponsePayload []byte
+	FinishTx           []byte
+	ResponsePayload    []byte
+	SiblingInferenceID uint64
 }
 
 func (h *Host) VerifyFinishProposerSig(msg *types.MsgFinishInference) error {
@@ -217,6 +218,7 @@ const (
 	ErrorTimeoutRejectSig          = "sig"
 	ErrorTimeoutRejectHashMismatch = "hash_mismatch"
 	ErrorTimeoutRejectNotErrorBody = "not_error_body"
+	ErrorTimeoutRejectClientFault  = "client_fault"
 )
 
 // VerifyErrorMiss checks whether a finished error/malformed body is a miss.
@@ -238,6 +240,18 @@ func VerifyErrorMiss(
 	localMempool []*types.DevshardTx,
 	finishVerifier FinishProposerVerifier,
 ) (bool, []byte, string, error) {
+	return VerifyErrorMissWithSibling(st, inferenceID, finishTx, responsePayload, 0, localMempool, finishVerifier)
+}
+
+func VerifyErrorMissWithSibling(
+	st types.EscrowState,
+	inferenceID uint64,
+	finishTx []byte,
+	responsePayload []byte,
+	siblingInferenceID uint64,
+	localMempool []*types.DevshardTx,
+	finishVerifier FinishProposerVerifier,
+) (bool, []byte, string, error) {
 	rec, ok := st.Inferences[inferenceID]
 	if !ok || rec == nil {
 		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
@@ -246,7 +260,7 @@ func VerifyErrorMiss(
 		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
 	}
 
-	msg := resolveFinishMessage(finishTx, localMempool, inferenceID)
+	msg := resolveFinishMessage(finishTx, localMempool, inferenceID, rec, st.EscrowID)
 	if msg == nil {
 		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
 	}
@@ -259,7 +273,7 @@ func VerifyErrorMiss(
 	if msg.ExecutorSlot != rec.ExecutorSlot {
 		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
 	}
-	if rec.Status == types.StatusFinished && !bytes.Equal(msg.ResponseHash, rec.ResponseHash) {
+	if rec.Status == types.StatusFinished && !finishMatchesAppliedRecord(msg, rec, st.EscrowID) {
 		return false, nil, ErrorTimeoutRejectHashMismatch, nil
 	}
 
@@ -273,28 +287,64 @@ func VerifyErrorMiss(
 	if len(responsePayload) == 0 {
 		return false, nil, ErrorTimeoutRejectNoPayload, nil
 	}
+	inputTokens, outputTokens := msg.InputTokens, msg.OutputTokens
+	servedHash := msg.ServedHash
+	if rec.Status == types.StatusFinished {
+		inputTokens, outputTokens = rec.InputTokens, rec.OutputTokens
+		servedHash = rec.ServedHash
+	}
 	sum := sha256.Sum256(responsePayload)
-	if !bytes.Equal(sum[:], msg.ResponseHash) && !bytes.Equal(sum[:], msg.ServedHash) {
+	if !bytes.Equal(sum[:], msg.ResponseHash) && !bytes.Equal(sum[:], servedHash) {
 		return false, nil, ErrorTimeoutRejectHashMismatch, nil
 	}
 
 	if _, ok := completionapi.IsTerminalErrorResponse(responsePayload); !ok {
 		return false, nil, ErrorTimeoutRejectNotErrorBody, nil
 	}
+	if completionapi.IsUnbilledClientFault(responsePayload, inputTokens, outputTokens) &&
+		(siblingInferenceID == inferenceID || !SiblingServedPrompt(rec, st.Inferences[siblingInferenceID])) {
+		return false, nil, ErrorTimeoutRejectClientFault, nil
+	}
 	return true, append([]byte(nil), msg.ResponseHash...), "", nil
 }
 
-func resolveFinishMessage(finishTx []byte, localMempool []*types.DevshardTx, inferenceID uint64) *types.MsgFinishInference {
+func resolveFinishMessage(finishTx []byte, localMempool []*types.DevshardTx, inferenceID uint64, rec *types.InferenceRecord, escrowID string) *types.MsgFinishInference {
+	if rec.Status == types.StatusFinished {
+		for _, tx := range localMempool {
+			if tx == nil {
+				continue
+			}
+			if msg := tx.GetFinishInference(); msg != nil && msg.InferenceId == inferenceID && finishMatchesAppliedRecord(msg, rec, escrowID) {
+				return msg
+			}
+		}
+		if msg := DecodeFinishTx(finishTx); msg != nil && msg.InferenceId == inferenceID && finishMatchesAppliedRecord(msg, rec, escrowID) {
+			return msg
+		}
+	}
 	if msg := finishFromMempool(localMempool, inferenceID); msg != nil {
 		return msg
 	}
 	if len(finishTx) == 0 {
 		return nil
 	}
-	return decodeFinishTx(finishTx)
+	return DecodeFinishTx(finishTx)
 }
 
-func decodeFinishTx(finishTx []byte) *types.MsgFinishInference {
+func SiblingServedPrompt(rec, sibling *types.InferenceRecord) bool {
+	return rec != nil && sibling != nil && rec != sibling && len(rec.PromptHash) > 0 &&
+		(sibling.Status == types.StatusFinished || sibling.Status == types.StatusValidated) &&
+		sibling.OutputTokens > 0 && bytes.Equal(sibling.PromptHash, rec.PromptHash)
+}
+
+func finishMatchesAppliedRecord(msg *types.MsgFinishInference, rec *types.InferenceRecord, escrowID string) bool {
+	return msg.EscrowId == escrowID && msg.ExecutorSlot == rec.ExecutorSlot &&
+		bytes.Equal(msg.ResponseHash, rec.ResponseHash) &&
+		(len(rec.ServedHash) == 0 || bytes.Equal(msg.ServedHash, rec.ServedHash)) &&
+		msg.InputTokens == rec.InputTokens && msg.OutputTokens == rec.OutputTokens
+}
+
+func DecodeFinishTx(finishTx []byte) *types.MsgFinishInference {
 	tx := &types.DevshardTx{}
 	if err := proto.Unmarshal(finishTx, tx); err != nil {
 		return nil

@@ -313,5 +313,5 @@ and `devshard_inference_timeouts_total{reason="error"}`. Rejected
 verifier votes increment
 `devshard_gateway_error_miss_verify_rejects_total{cause,completeness}`
 (`cause` is `no_finish_tx` / `no_payload` / `sig` / `hash_mismatch` /
-`not_error_body`; `completeness` is `cancelled` / `drift` /
+`not_error_body` / `client_fault`; `completeness` is `cancelled` / `drift` /
 `truncated`). Alert only on `{cause=hash_mismatch,completeness=drift}`.
