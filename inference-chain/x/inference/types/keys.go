@@ -150,6 +150,4 @@ var (
 	FinishedInferenceQueueEntryPrefix = collections.NewPrefix(1)
 	FinishedInferenceQueueNextSeqKey  = collections.NewPrefix(2)
 	TransientSPRTValuesKey            = collections.NewPrefix(3)
-	TransientEpochDataModelMetaKey    = collections.NewPrefix(4)
-	TransientEpochDataModelWeightKey  = collections.NewPrefix(5)
 )
