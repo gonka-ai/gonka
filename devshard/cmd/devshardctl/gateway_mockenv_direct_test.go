@@ -552,3 +552,39 @@ func TestGatewayMockEnvUnknownDirectDevshardReturnsNotFound(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "unknown devshard 404")
 	require.EqualValues(t, 0, rt.calls.Load())
 }
+
+// Steps:
+// - Configure an `api_key` model with two user API keys and store a direct chat response for the first key.
+// - Send the identical direct chat request with the second key.
+// - Assert the second key reaches the runtime, while a repeat from the first key is still a cache hit.
+func TestGatewayMockEnvDirectDevshardCacheIsScopedByCaller(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt},
+		func(cfg *gatewayMockConfig) {
+			cfg.apiKeys = map[string]struct{}{mockenvUserKey: {}, "second-api-token": {}}
+		},
+		withMockenvSettings(func(settings *GatewaySettings) {
+			settings.ModelLimits = []GatewayModelLimitSettings{{
+				ModelID:    "Qwen/Test",
+				AccessMode: string(gatewayAccessModeAPIKey),
+			}}
+		}))
+	body := mockenvChatBody("Qwen/Test", "direct cache per caller")
+
+	first := env.postDirectChat("12", body, withBearer(mockenvUserKey))
+	require.Equal(t, http.StatusOK, first.Code)
+	require.EqualValues(t, 1, rt.calls.Load())
+
+	other := env.postDirectChat("12", body, withBearer("second-api-token"))
+	require.Equal(t, http.StatusOK, other.Code)
+	require.EqualValues(t, 2, rt.calls.Load(), "another API key must not be served the first key's cached completion")
+
+	repeat := env.postDirectChat("12", body, withBearer(mockenvUserKey))
+	require.Equal(t, http.StatusOK, repeat.Code)
+	require.Equal(t, first.Body.String(), repeat.Body.String())
+	require.EqualValues(t, 2, rt.calls.Load(), "the same key repeating its request is still a cache hit")
+}
