@@ -83,7 +83,7 @@ func CanonicalRepairResponseBytes(r *RepairResponse) ([]byte, error) {
 	body = appendBytesField(body, 3, r.ObservedBlockHash)
 	body = appendVarintField(body, 4, uint64(r.SyncState))
 	if r.Ack != nil {
-		ackBytes, err := proto.Marshal(r.Ack)
+		ackBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(r.Ack)
 		if err != nil {
 			return nil, fmt.Errorf("marshal repair ack: %w", err)
 		}
@@ -126,8 +126,17 @@ func SignRepairResponse(signer signing.Signer, r *RepairResponse) error {
 	return nil
 }
 
-// VerifyRepairRequest checks requester_sig against slotKey.
+// VerifyRepairRequest checks requester_sig against slotKey (exact match).
 func VerifyRepairRequest(verifier signing.Verifier, r *RepairRequest, slotKey string) error {
+	if r == nil {
+		return ErrRepairEmpty
+	}
+	return VerifyRepairRequestAllowed(verifier, r, signing.Exact(r.RequesterSlot, slotKey))
+}
+
+// VerifyRepairRequestAllowed checks requester_sig against the same actor set
+// as HeightAck L2 (cold / bound warm / sibling / authz).
+func VerifyRepairRequestAllowed(verifier signing.Verifier, r *RepairRequest, actors signing.SlotActors) error {
 	if verifier == nil {
 		return errors.New("heightsync: nil verifier")
 	}
@@ -141,11 +150,21 @@ func VerifyRepairRequest(verifier signing.Verifier, r *RepairRequest, slotKey st
 	if err != nil {
 		return err
 	}
-	return verifyRepairSig(verifier, blob, r.RequesterSig, slotKey)
+	return verifyRepairSig(verifier, blob, r.RequesterSig, r.RequesterSlot, actors)
 }
 
-// VerifyRepairResponse checks responder_sig against slotKey.
+// exactSlot is a placeholder id for a RepairResponse, which carries no slot
+// field. An actor set from signing.Exact holds a single key, so the id only
+// has to agree between construction and lookup.
+const exactSlot uint32 = 0
+
+// VerifyRepairResponse checks responder_sig against slotKey (exact match).
 func VerifyRepairResponse(verifier signing.Verifier, r *RepairResponse, slotKey string) error {
+	return VerifyRepairResponseAllowed(verifier, r, exactSlot, signing.Exact(exactSlot, slotKey))
+}
+
+// VerifyRepairResponseAllowed checks responder_sig for targetSlot.
+func VerifyRepairResponseAllowed(verifier signing.Verifier, r *RepairResponse, targetSlot uint32, actors signing.SlotActors) error {
 	if verifier == nil {
 		return errors.New("heightsync: nil verifier")
 	}
@@ -162,16 +181,17 @@ func VerifyRepairResponse(verifier signing.Verifier, r *RepairResponse, slotKey 
 	if err != nil {
 		return err
 	}
-	return verifyRepairSig(verifier, blob, r.ResponderSig, slotKey)
+	return verifyRepairSig(verifier, blob, r.ResponderSig, targetSlot, actors)
 }
 
-func verifyRepairSig(verifier signing.Verifier, blob, sig []byte, slotKey string) error {
+func verifyRepairSig(verifier signing.Verifier, blob, sig []byte, slotID uint32, actors signing.SlotActors) error {
 	recovered, err := verifier.RecoverAddress(blob, sig)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrRepairVerify, err)
 	}
-	if recovered != slotKey {
-		return fmt.Errorf("%w: signer %q != slot key %q", ErrRepairVerify, recovered, slotKey)
+	if !actors.Allows(slotID, recovered) {
+		expected, _ := actors.Expected(slotID)
+		return fmt.Errorf("%w: signer %q != slot key %q", ErrRepairVerify, recovered, expected)
 	}
 	return nil
 }

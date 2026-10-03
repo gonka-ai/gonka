@@ -124,7 +124,7 @@ func SignDiffWithRoot(t *testing.T, signer signing.Signer, escrowID string, nonc
 
 func SignProposerTx(t *testing.T, signer signing.Signer, msg proto.Message) []byte {
 	t.Helper()
-	data, err := deterministicMarshal.Marshal(msg)
+	data, err := types.CanonicalSignedBytes(msg)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -168,7 +168,7 @@ func SignTimeoutVote(t *testing.T, signer signing.Signer, escrowID string, infer
 		Reason:      reason,
 		Accept:      accept,
 	}
-	data, err := deterministicMarshal.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func SignErrorMissVote(t *testing.T, signer signing.Signer, escrowID string, inf
 		Accept:       accept,
 		ResponseHash: responseHash,
 	}
-	data, err := deterministicMarshal.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)

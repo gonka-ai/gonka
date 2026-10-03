@@ -462,6 +462,9 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Check signed proto preimages are not interchangeable
+        run: go test ./types/ -run 'TestAllDevshardProtoMessagesClassified|TestSignedProtoPreimagesAreNotInterchangeable|TestCanonicalSignedBytesRejects|TestSignedPreimageDomainsAreUnique' -count=1 -v
+
       - name: Run devshardd lifecycle tests with race detector
         run: go test -race ./cmd/devshardd
 
