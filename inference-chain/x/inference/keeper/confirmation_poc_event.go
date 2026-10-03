@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 
 	"cosmossdk.io/collections"
 	"github.com/productscience/inference/x/inference/types"
@@ -25,17 +26,11 @@ func (k Keeper) GetConfirmationPoCEvent(ctx context.Context, epochIndex uint64, 
 
 // GetActiveConfirmationPoCEvent retrieves the currently active confirmation PoC event (if any)
 func (k Keeper) GetActiveConfirmationPoCEvent(ctx context.Context) (*types.ConfirmationPoCEvent, bool, error) {
-	// Check if active event exists
-	has, err := k.ActiveConfirmationPoCEventItem.Has(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	if !has {
+	// one Get: a Has first would cost a second read whenever the event exists
+	event, err := k.ActiveConfirmationPoCEventItem.Get(ctx)
+	if errors.Is(err, collections.ErrNotFound) {
 		return nil, false, nil // No active event is normal
 	}
-	
-	// Get the active event
-	event, err := k.ActiveConfirmationPoCEventItem.Get(ctx)
 	if err != nil {
 		return nil, false, err
 	}
