@@ -20,6 +20,13 @@ func (k Keeper) dealerPartsStore(ctx sdk.Context, epochID uint64) prefix.Store {
 	return prefix.NewStore(store, types.DealerPartEpochPrefix(epochID))
 }
 
+// dealerCommitmentsStore returns a prefix.Store scoped to the dealers'
+// commitments for a single epoch, keyed like dealerPartsStore.
+func (k Keeper) dealerCommitmentsStore(ctx sdk.Context, epochID uint64) prefix.Store {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	return prefix.NewStore(store, types.DealerCommitmentsEpochPrefix(epochID))
+}
+
 // verificationSubmissionsStore returns a prefix.Store scoped to all
 // verification vector submissions for a single epoch. Keys within the
 // returned store are the sub-keys produced by
@@ -394,11 +401,57 @@ func (k Keeper) SetDealerPart(ctx sdk.Context, epochID uint64, participantIndex 
 	if dealerPart == nil {
 		return fmt.Errorf("nil dealer part")
 	}
-	value, err := k.cdc.Marshal(dealerPart)
+	// Commitments go under their own sub-key so the verifier can read them
+	// without the encrypted shares; GetDealerPart joins the two back.
+	commitments, err := k.cdc.Marshal(&types.DealerPartStorage{Commitments: dealerPart.Commitments})
+	if err != nil {
+		return fmt.Errorf("marshal dealer commitments: %w", err)
+	}
+	rest := *dealerPart
+	rest.Commitments = nil
+	value, err := k.cdc.Marshal(&rest)
 	if err != nil {
 		return fmt.Errorf("marshal dealer part: %w", err)
 	}
+	k.dealerCommitmentsStore(ctx, epochID).Set(types.DealerPartSubKey(participantIndex), commitments)
 	k.dealerPartsStore(ctx, epochID).Set(types.DealerPartSubKey(participantIndex), value)
+	return nil
+}
+
+// GetDealerCommitments reads only a dealer's commitments. Parts written
+// before the commitments split keep them inline and are read whole.
+// Returns nil if the dealer has not submitted.
+func (k Keeper) GetDealerCommitments(ctx sdk.Context, epochID uint64, participantIndex uint32) ([][]byte, error) {
+	value := k.dealerCommitmentsStore(ctx, epochID).Get(types.DealerPartSubKey(participantIndex))
+	if value == nil {
+		dp, err := k.GetDealerPart(ctx, epochID, participantIndex)
+		if err != nil || dp == nil {
+			return nil, err
+		}
+		return dp.Commitments, nil
+	}
+	var c types.DealerPartStorage
+	if err := k.cdc.Unmarshal(value, &c); err != nil {
+		return nil, fmt.Errorf("unmarshal dealer commitments %d: %w", participantIndex, err)
+	}
+	return c.Commitments, nil
+}
+
+// joinDealerCommitments fills dp.Commitments from the commitments sub-key
+// when the stored part does not carry them inline.
+func (k Keeper) joinDealerCommitments(ctx sdk.Context, epochID uint64, participantIndex uint32, dp *types.DealerPartStorage) error {
+	if len(dp.Commitments) > 0 {
+		return nil
+	}
+	value := k.dealerCommitmentsStore(ctx, epochID).Get(types.DealerPartSubKey(participantIndex))
+	if value == nil {
+		return nil
+	}
+	var c types.DealerPartStorage
+	if err := k.cdc.Unmarshal(value, &c); err != nil {
+		return fmt.Errorf("unmarshal dealer commitments %d: %w", participantIndex, err)
+	}
+	dp.Commitments = c.Commitments
 	return nil
 }
 
@@ -411,6 +464,9 @@ func (k Keeper) GetDealerPart(ctx sdk.Context, epochID uint64, participantIndex 
 	}
 	var dp types.DealerPartStorage
 	if err := k.cdc.Unmarshal(value, &dp); err != nil {
+		return nil, err
+	}
+	if err := k.joinDealerCommitments(ctx, epochID, participantIndex, &dp); err != nil {
 		return nil, err
 	}
 	return &dp, nil
@@ -433,6 +489,17 @@ func (k Keeper) DeleteDealerPartsForEpoch(ctx sdk.Context, epochID uint64) error
 
 	for _, key := range keysToDelete {
 		dealerStore.Delete(key)
+	}
+
+	commitmentsStore := k.dealerCommitmentsStore(ctx, epochID)
+	cit := commitmentsStore.Iterator(nil, nil)
+	keysToDelete = keysToDelete[:0]
+	for ; cit.Valid(); cit.Next() {
+		keysToDelete = append(keysToDelete, append([]byte(nil), cit.Key()...))
+	}
+	cit.Close()
+	for _, key := range keysToDelete {
+		commitmentsStore.Delete(key)
 	}
 	return nil
 }
@@ -645,6 +712,9 @@ func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLS
 			if err := k.cdc.Unmarshal(value, &dp); err != nil {
 				return fmt.Errorf("unmarshal dealer part %d: %w", idx, err)
 			}
+			if err := k.joinDealerCommitments(ctx, epochID, idx, &dp); err != nil {
+				return err
+			}
 			epochBLSData.DealerParts[idx] = &dp
 			return nil
 		},
@@ -697,6 +767,29 @@ func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLS
 		epochBLSData.DealerComplaints = append(epochBLSData.DealerComplaints, c)
 	}
 
+	return epochBLSData, nil
+}
+
+// GetEpochBLSDataBase returns only the base EpochBLSData record, without
+// rehydrating DealerParts, VerificationSubmissions or DealerComplaints from
+// their sub-keys. Everything the threshold-signing hot path reads
+// (Participants, SlotPublicKeys, GroupPublicKey, TSlotsDegree, DkgPhase and
+// the phase deadlines) lives in the base record, while the dealer parts
+// alone are tens of KB per BLS participant. Callers that need the split-out
+// fields must use GetEpochBLSData.
+func (k Keeper) GetEpochBLSDataBase(ctx sdk.Context, epochID uint64) (types.EpochBLSData, error) {
+	store := k.storeService.OpenKVStore(ctx)
+	value, err := store.Get(types.EpochBLSDataKey(epochID))
+	if err != nil {
+		return types.EpochBLSData{}, err
+	}
+	if value == nil {
+		return types.EpochBLSData{}, types.ErrEpochBLSDataNotFound
+	}
+	var epochBLSData types.EpochBLSData
+	if err := k.cdc.Unmarshal(value, &epochBLSData); err != nil {
+		return types.EpochBLSData{}, err
+	}
 	return epochBLSData, nil
 }
 

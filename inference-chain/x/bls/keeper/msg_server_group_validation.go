@@ -42,7 +42,7 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	previousEpochId := msg.NewEpochId - 1
 
 	// Get the new epoch's BLS data to get the group public key being validated
-	newEpochBLSData, err := ms.GetEpochBLSData(ctx, msg.NewEpochId)
+	newEpochBLSData, err := ms.GetEpochBLSDataBase(ctx, msg.NewEpochId)
 	if err != nil {
 		ms.Keeper.LogError("Failed to get new epoch BLS data", "new_epoch_id", msg.NewEpochId, "error", err.Error())
 		return nil, fmt.Errorf("failed to get new epoch %d BLS data: %w", msg.NewEpochId, err)
@@ -61,7 +61,7 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	}
 
 	// Get the previous epoch's BLS data for slot validation and signature verification
-	previousEpochBLSData, err := ms.GetEpochBLSData(ctx, previousEpochId)
+	previousEpochBLSData, err := ms.GetEpochBLSDataBase(ctx, previousEpochId)
 	if err != nil {
 		if errors.Is(err, types.ErrEpochBLSDataNotFound) {
 			// Emit a searchable event and continue using current epoch data as fallback

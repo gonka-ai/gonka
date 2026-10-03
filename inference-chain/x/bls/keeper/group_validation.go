@@ -199,9 +199,9 @@ func (k Keeper) GetGroupKeyValidationState(ctx sdk.Context, newEpochID uint64) (
 // skipped with a warning; dropping one unclaimable legacy partial is
 // preferable to halting an upgrade block.
 func (k Keeper) syncInlinePartialsToSubKeys(ctx sdk.Context, state *types.GroupKeyValidationState) error {
-	prev, err := k.GetEpochBLSData(ctx, state.PreviousEpochId)
+	prev, err := k.GetEpochBLSDataBase(ctx, state.PreviousEpochId)
 	if err != nil {
-		prev, err = k.GetEpochBLSData(ctx, state.NewEpochId)
+		prev, err = k.GetEpochBLSDataBase(ctx, state.NewEpochId)
 		if err != nil {
 			return fmt.Errorf("resolve participants for epoch %d (fallback %d): %w",
 				state.PreviousEpochId, state.NewEpochId, err)
