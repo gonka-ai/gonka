@@ -403,12 +403,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
 
-	// Handle confirmation PoC trigger decisions and phase transitions
-	err := am.handleConfirmationPoC(ctx, blockHeight)
-	if err != nil {
-		am.LogError("Failed to handle confirmation PoC", types.PoC, "error", err)
-		// Don't return error - allow block processing to continue
-	}
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		am.LogError("Unable to get parameters", types.Settle, "error", err.Error())
@@ -426,6 +420,13 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if err != nil {
 		am.LogError("Unable to create epoch context", types.EpochGroup, "error", err.Error())
 		return nil
+	}
+
+	// Handle confirmation PoC trigger decisions and phase transitions
+	err = am.handleConfirmationPoC(ctx, blockHeight, &params, epochContext)
+	if err != nil {
+		am.LogError("Failed to handle confirmation PoC", types.PoC, "error", err)
+		// Don't return error - allow block processing to continue
 	}
 
 	currentEpochGroup, err := am.keeper.GetEpochGroupForEpoch(ctx, *currentEpoch)

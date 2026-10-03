@@ -23,15 +23,10 @@ func defaultLoadChallengeSkipTargets(k keeper.Keeper, ctx context.Context, epoch
 	return k.SameEpochChallengeTargets(ctx, epochIndex)
 }
 
-// handleConfirmationPoC manages confirmation PoC trigger decisions and phase transitions
-func (am AppModule) handleConfirmationPoC(ctx context.Context, blockHeight int64) error {
+// handleConfirmationPoC manages confirmation PoC trigger decisions and phase transitions.
+// params and epochContext are the ones EndBlock already read for this block.
+func (am AppModule) handleConfirmationPoC(ctx context.Context, blockHeight int64, params *types.Params, epochContext *types.EpochContext) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-
-	// Get current parameters
-	params, err := am.keeper.GetParams(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get params: %w", err)
-	}
 
 	confirmationParams := params.ConfirmationPocParams
 	if confirmationParams == nil {
@@ -45,31 +40,21 @@ func (am AppModule) handleConfirmationPoC(ctx context.Context, blockHeight int64
 	}
 
 	epochParams := params.EpochParams
-	if epochParams == nil {
-		return fmt.Errorf("epoch params not found")
-	}
-
-	// Get current epoch context
-	currentEpoch, found := am.keeper.GetEffectiveEpoch(ctx)
-	if !found || currentEpoch == nil {
-		// No epoch yet, skip
-		return nil
-	}
-
-	epochContext, err := types.NewEpochContextFromEffectiveEpoch(*currentEpoch, *epochParams, blockHeight)
-	if err != nil {
-		return fmt.Errorf("failed to create epoch context: %w", err)
-	}
 
 	// Handle phase transitions for active event
-	err = am.handleConfirmationPoCPhaseTransitions(ctx, blockHeight, epochContext, epochParams)
+	activeAfter, err := am.handleConfirmationPoCPhaseTransitions(ctx, blockHeight, epochContext, epochParams)
+	isActive := func() (bool, error) { return activeAfter, nil }
 	if err != nil {
 		am.LogError("Error handling confirmation PoC phase transitions", types.PoC, "error", err)
-		// Continue to check for new triggers
+		// Continue to check for new triggers; the stored event state is unknown, so read it again
+		isActive = func() (bool, error) {
+			_, ok, err := am.keeper.GetActiveConfirmationPoCEvent(ctx)
+			return ok, err
+		}
 	}
 
 	// Check if we should trigger a new confirmation PoC event
-	err = am.checkConfirmationPoCTrigger(ctx, blockHeight, epochContext, epochParams, confirmationParams, sdkCtx)
+	err = am.checkConfirmationPoCTrigger(ctx, blockHeight, epochContext, epochParams, confirmationParams, sdkCtx, isActive)
 	if err != nil {
 		return fmt.Errorf("failed to check confirmation PoC trigger: %w", err)
 	}
@@ -85,6 +70,7 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	epochParams *types.EpochParams,
 	confirmationParams *types.ConfirmationPoCParams,
 	sdkCtx sdk.Context,
+	isActive func() (bool, error),
 ) error {
 	// Don't trigger in early epochs (0, 1) - no confirmation PoC needed
 	if epochContext.EpochIndex <= 1 {
@@ -98,11 +84,11 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	}
 
 	// Check if there's already an active event
-	_, isActive, err := am.keeper.GetActiveConfirmationPoCEvent(ctx)
+	active, err := isActive()
 	if err != nil {
 		return fmt.Errorf("failed to get active confirmation PoC event: %w", err)
 	}
-	if isActive {
+	if active {
 		// Already have an active event, don't trigger another
 		return nil
 	}
@@ -228,30 +214,32 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	return nil
 }
 
-// handleConfirmationPoCPhaseTransitions manages phase transitions for active confirmation PoC events
+// handleConfirmationPoCPhaseTransitions manages phase transitions for active confirmation PoC events.
+// It reports whether an event is still active afterwards; the value is meaningless when err != nil.
 func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	ctx context.Context,
 	blockHeight int64,
 	epochContext *types.EpochContext,
 	epochParams *types.EpochParams,
-) error {
+) (bool, error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
 	if epochContext.EpochIndex <= 1 {
-		return nil
+		return false, nil
 	}
 
 	activeEvent, isActive, err := am.keeper.GetActiveConfirmationPoCEvent(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to get active confirmation PoC event: %w", err)
+		return false, fmt.Errorf("failed to get active confirmation PoC event: %w", err)
 	}
 	if !isActive || activeEvent == nil {
 		// No active event
-		return nil
+		return false, nil
 	}
 
 	event := *activeEvent
 	updated := false
+	cleared := false
 	transitionCount := 0
 	var transitions []string
 
@@ -349,9 +337,10 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)
 			if err != nil {
-				return fmt.Errorf("failed to clear active confirmation PoC event: %w", err)
+				return false, fmt.Errorf("failed to clear active confirmation PoC event: %w", err)
 			}
 			updated = false
+			cleared = true
 			am.LogInfo("Confirmation PoC: Cleared active event", types.PoC,
 				"epochIndex", event.EpochIndex,
 				"eventSequence", event.EventSequence,
@@ -374,17 +363,17 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		// Update stored event
 		err = am.keeper.SetConfirmationPoCEvent(ctx, event)
 		if err != nil {
-			return fmt.Errorf("failed to update confirmation PoC event: %w", err)
+			return false, fmt.Errorf("failed to update confirmation PoC event: %w", err)
 		}
 
 		// Update active event (keep during COMPLETED transition period)
 		err = am.keeper.SetActiveConfirmationPoCEvent(ctx, event)
 		if err != nil {
-			return fmt.Errorf("failed to update active confirmation PoC event: %w", err)
+			return false, fmt.Errorf("failed to update active confirmation PoC event: %w", err)
 		}
 	}
 
-	return nil
+	return !cleared, nil
 }
 
 // updateConfirmationWeights calculates confirmation weights from PoC batches/validations
