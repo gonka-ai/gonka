@@ -74,3 +74,24 @@ func TestTxParamsCache_OffAfterSetParams(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, types.DefaultParams().EpochParams.EpochLength, got.EpochParams.EpochLength)
 }
+
+func TestTxParamsCache_SPRTValuesReadOnce(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.SetParams(ctx, types.DefaultParams()))
+	require.NoError(t, k.PrecomputeSPRTValues(ctx))
+	want := k.GetPrecomputedSPRTValues(ctx)
+
+	c := keeper.WithTxParamsCache(ctx.WithGasMeter(storetypes.NewInfiniteGasMeter()))
+	require.Equal(t, want, k.GetPrecomputedSPRTValues(c))
+	before := c.GasMeter().GasConsumed()
+	require.Equal(t, want, k.GetPrecomputedSPRTValues(c))
+	require.Equal(t, before, c.GasMeter().GasConsumed(), "second read must not touch the store")
+
+	// Recomputing in the tx turns the cache off: later reads see the store.
+	params := types.DefaultParams()
+	params.ValidationParams.FalsePositiveRate = types.DecimalFromFloat(0.2)
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.PrecomputeSPRTValues(c))
+	require.NotEqual(t, want, k.GetPrecomputedSPRTValues(c))
+	require.Equal(t, k.GetPrecomputedSPRTValues(ctx), k.GetPrecomputedSPRTValues(c))
+}

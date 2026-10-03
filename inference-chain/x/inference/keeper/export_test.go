@@ -33,3 +33,7 @@ func SetPoCV2StoreCommitRawBytesForTesting(k Keeper, ctx sdk.Context, startHeigh
 func (k Keeper) RemoveFromEpochGroupsForTesting(ctx sdk.Context, participant *types.Participant, reason calculations.ParticipantStatusReason) error {
 	return k.removeFromEpochGroups(ctx, participant, reason)
 }
+
+func SetParticipantFromStoredForTesting(k Keeper, ctx sdk.Context, p types.Participant, stored *types.CurrentEpochStats) error {
+	return k.setParticipantFromStored(ctx, p, stored)
+}

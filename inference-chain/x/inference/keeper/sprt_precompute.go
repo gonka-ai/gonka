@@ -63,6 +63,7 @@ func (k Keeper) PrecomputeSPRTValues(ctx context.Context) error {
 	}
 
 	transientStore := k.transientStoreService.OpenTransientStore(ctx)
+	turnOffTxCache(ctx)
 	return transientStore.Set(types.TransientSPRTValuesKey, bz)
 }
 
@@ -79,8 +80,7 @@ var zeroSprtValues = types.SPRTPrecomputedValues{
 
 // GetPrecomputedSPRTValues retrieves the precomputed SPRT values from the transient store.
 func (k Keeper) GetPrecomputedSPRTValues(ctx context.Context) types.SPRTPrecomputedValues {
-	transientStore := k.transientStoreService.OpenTransientStore(ctx)
-	bz, err := transientStore.Get(types.TransientSPRTValuesKey)
+	bz, err := k.precomputedSPRTBytes(ctx)
 	if err != nil || len(bz) == 0 {
 		k.LogError("Failed to get SPRT precomputed values from transient store", types.Validation, "error", err)
 		return zeroSprtValues
@@ -117,4 +117,16 @@ func CalculateLogLLR(p1, p0 decimal.Decimal, isFail bool) decimal.Decimal {
 	}
 	res, _ := one.Sub(p1).Div(one.Sub(p0)).Ln(precision)
 	return res
+}
+
+func (k Keeper) precomputedSPRTBytes(ctx context.Context) ([]byte, error) {
+	c := txCacheFrom(ctx)
+	if c != nil && c.sprt != nil {
+		return c.sprt, nil
+	}
+	bz, err := k.transientStoreService.OpenTransientStore(ctx).Get(types.TransientSPRTValuesKey)
+	if c != nil && err == nil && len(bz) > 0 {
+		c.sprt = append([]byte(nil), bz...)
+	}
+	return bz, err
 }
