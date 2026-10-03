@@ -1,6 +1,8 @@
 package keeper_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -784,4 +786,57 @@ func setupTestKeeperWithDynamicPricing(t *testing.T) (keeper.Keeper, sdk.Context
 	k.SetParams(ctx, params)
 
 	return k, ctx
+}
+
+// Mainnet shape: every model sits at the price floor with no load, so the price never changes.
+func TestUpdateDynamicPricing_SkipsUnchangedPriceWrite(t *testing.T) {
+	k, ctx := setupTestKeeperWithDynamicPricing(t)
+	goCtx := sdk.WrapSDKContext(ctx)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DynamicPricingParams.MinPerTokenPrice = 1
+	params.DynamicPricingParams.BasePerTokenPrice = 100
+	params.DynamicPricingParams.GracePeriodEndEpoch = 0
+	params.DynamicPricingParams.UtilizationWindowDuration = 60
+	require.NoError(t, k.SetParams(ctx, params))
+
+	effectiveEpoch := types.Epoch{Index: 1, PocStartBlockHeight: ctx.BlockHeight()}
+	require.NoError(t, k.SetEpoch(ctx, &effectiveEpoch))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, effectiveEpoch.Index))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:          effectiveEpoch.Index,
+		PocStartBlockHeight: uint64(effectiveEpoch.PocStartBlockHeight),
+		SubGroupModels:      []string{"model-floor", "model-new"},
+	})
+	require.NoError(t, k.CacheModelCapacity(goCtx, "model-floor", 1000))
+	require.NoError(t, k.CacheModelCapacity(goCtx, "model-new", 1000))
+	require.NoError(t, k.SetModelCurrentPrice(goCtx, "model-floor", 1))
+
+	var trace bytes.Buffer
+	ctx.MultiStore().SetTracer(&trace)
+	require.NoError(t, k.UpdateDynamicPricing(goCtx))
+	ctx.MultiStore().SetTracer(nil)
+
+	written := map[string]int{}
+	for _, line := range bytes.Split(trace.Bytes(), []byte("\n")) {
+		var op struct {
+			Operation string `json:"operation"`
+			Key       []byte `json:"key"`
+		}
+		if json.Unmarshal(line, &op) != nil || op.Operation != "write" {
+			continue
+		}
+		if prefix := types.DynamicPricingCurrentPrefix.Bytes(); bytes.HasPrefix(op.Key, prefix) {
+			written[string(op.Key[len(prefix):])]++
+		}
+	}
+	assert.Equal(t, map[string]int{"model-new": 1}, written, "only the model without a stored price is written")
+
+	price, err := k.GetModelCurrentPrice(goCtx, "model-floor")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), price)
+	price, err = k.GetModelCurrentPrice(goCtx, "model-new")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(98), price, "a model without a price starts from base and still moves")
 }
