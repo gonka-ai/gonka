@@ -143,10 +143,10 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 	ctx := sdk.UnwrapSDKContext(goCtx)
 	height := ctx.BlockHeight()
 	startBlockHeight := msg.PocStageStartBlockHeight
-	if err := k.validateChallengeVoteWindow(goCtx, height, startBlockHeight, params); err != nil {
+	epochIndex, ok := k.GetEffectiveEpochIndex(goCtx)
+	if err := k.validateChallengeVoteWindow(goCtx, height, epochIndex, ok, params); err != nil {
 		return nil, err
 	}
-	epochIndex, ok := k.GetEffectiveEpochIndex(goCtx)
 	if !ok {
 		return nil, types.ErrEffectiveEpochNotFound
 	}
@@ -216,7 +216,8 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 	return &types.MsgSubmitPoCChallengeValidationsResponse{}, nil
 }
 
-func (k msgServer) validateChallengeVoteWindow(ctx context.Context, height, startBlockHeight int64, params types.Params) error {
+// effectiveIndex/found come from the caller's GetEffectiveEpochIndex, so it is read once per tx.
+func (k msgServer) validateChallengeVoteWindow(ctx context.Context, height int64, effectiveIndex uint64, found bool, params types.Params) error {
 	if params.EpochParams == nil {
 		return sdkerrors.Wrap(types.ErrIllegalState, "epoch params not set")
 	}
@@ -233,7 +234,10 @@ func (k msgServer) validateChallengeVoteWindow(ctx context.Context, height, star
 		}
 		return nil
 	}
-	upcomingEpoch, found := k.GetUpcomingEpoch(ctx)
+	var upcomingEpoch *types.Epoch
+	if found {
+		upcomingEpoch, found = k.GetEpoch(ctx, effectiveIndex+1)
+	}
 	if !found || upcomingEpoch == nil {
 		return sdkerrors.Wrap(types.ErrUpcomingEpochNotFound, "failed to get upcoming epoch")
 	}
@@ -241,6 +245,5 @@ func (k msgServer) validateChallengeVoteWindow(ctx context.Context, height, star
 	if !epochContext.IsValidationExchangeWindow(height) {
 		return sdkerrors.Wrap(types.ErrPocTooLate, "PoC validation exchange window is closed")
 	}
-	_ = startBlockHeight
 	return nil
 }
