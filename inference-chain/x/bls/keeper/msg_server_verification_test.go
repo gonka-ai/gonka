@@ -428,6 +428,49 @@ func TestSubmitVerificationVector_TrueDealerWithValidProof(t *testing.T) {
 	require.Empty(t, storedData.DealerComplaints)
 }
 
+// A verifier checks another dealer's proof against the commitments that
+// SetDealerPart stores apart from the encrypted shares.
+func TestSubmitVerificationVector_OtherDealerWithValidProof(t *testing.T) {
+	for _, tc := range []struct {
+		scalar uint64
+		err    string
+	}{{7, ""}, {8, "BLS proof signature verification failed"}} {
+		k, msgServer, goCtx := setupMsgServerVerification(t)
+		ctx := sdk.UnwrapSDKContext(goCtx)
+
+		epochID := uint64(114)
+		epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+		const dealerScalar uint64 = 7
+		epochBLSData.DealerParts[0].DealerAddress = epochBLSData.Participants[0].Address
+		epochBLSData.DealerParts[0].Commitments = [][]byte{g2CommitmentFromScalar(dealerScalar)}
+		require.NoError(t, k.SetEpochBLSData(ctx, epochBLSData))
+
+		participant := epochBLSData.Participants[1]
+		slotCount := int(participant.SlotEndIndex-participant.SlotStartIndex) + 1
+		proofSignature, err := constantShareProofSignature(types.BuildDealerValidityProofHash(epochID, 0), tc.scalar, slotCount)
+		require.NoError(t, err)
+
+		msg := &types.MsgSubmitVerificationVector{
+			Creator:              participant.Address,
+			EpochId:              epochID,
+			DealerValidity:       []bool{true, false, false},
+			DealerValidityProofs: []types.DealerValidityProof{{DealerIndex: 0, ProofSignature: proofSignature}},
+		}
+		_, err = msgServer.SubmitVerificationVector(goCtx, msg)
+		if tc.err != "" {
+			require.ErrorContains(t, err, tc.err)
+			continue
+		}
+		require.NoError(t, err)
+
+		storedData, err := k.GetEpochBLSData(ctx, epochID)
+		require.NoError(t, err)
+		require.Equal(t, msg.DealerValidity, storedData.VerificationSubmissions[1].DealerValidity)
+		_, err = msgServer.SubmitVerificationVector(goCtx, msg)
+		require.ErrorContains(t, err, "already submitted")
+	}
+}
+
 func TestSubmitVerificationVector_ComplaintsPersisted(t *testing.T) {
 	k, msgServer, goCtx := setupMsgServerVerification(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
