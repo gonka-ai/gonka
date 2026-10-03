@@ -9,6 +9,7 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -70,6 +71,8 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	slices.Sort(uniqueAddrs)
 
 	participantByAddr := make(map[string]*types.Participant, len(uniqueAddrs))
+	// Stats as read, so SetParticipant below need not read each participant again.
+	storedStatsByAddr := make(map[string]*types.CurrentEpochStats, len(uniqueAddrs))
 	treatAsCurrentEpochSettle := make(map[string]bool, len(uniqueAddrs))
 	for _, addr := range uniqueAddrs {
 		participant, found := k.GetParticipant(goCtx, addr)
@@ -77,6 +80,9 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			return nil, fmt.Errorf("participant %s not found", addr)
 		}
 		participantByAddr[addr] = &participant
+		if participant.CurrentEpochStats != nil {
+			storedStatsByAddr[addr] = proto.Clone(participant.CurrentEpochStats).(*types.CurrentEpochStats)
+		}
 		if escrow.EpochIndex != currentEpochIndex {
 			treatAsCurrentEpochSettle[addr] = false
 			continue
@@ -205,16 +211,20 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		}
 	}
 
-	// Aggregate host stats per validator per epoch (deterministic: iterate msg.HostStats by slot_id order)
-	seenValidators := make(map[string]bool)
+	// Aggregate host stats per validator per epoch (deterministic: iterate msg.HostStats by slot_id order).
+	// A validator may hold several slots: its epoch stats are summed here and written once below.
+	hostDeltas := make(map[string]*devshardHostStatsDelta)
+	hostOrder := make([]string, 0, len(uniqueAddrs))
+	activeChallenge := make(map[string]bool, len(uniqueAddrs))
 	for _, hs := range msg.HostStats {
 		addr := escrow.Slots[hs.SlotId]
-		participantAddr, err := sdk.AccAddressFromBech32(addr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid participant address %s: %w", addr, err)
+		delta, seen := hostDeltas[addr]
+		if !seen {
+			delta = &devshardHostStatsDelta{}
+			hostDeltas[addr] = delta
+			hostOrder = append(hostOrder, addr)
+			activeChallenge[addr] = k.HasActiveChallengeRecord(goCtx, addr)
 		}
-		_, seen := seenValidators[addr]
-		firstForValidator := !seen
 		adjusted := *hs
 		assignedToSlot := uint64(0)
 		if treatAsCurrentEpochSettle[addr] {
@@ -225,10 +235,8 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			}
 		}
 		// TODO: waive only challenge-window misses. Host stats are epoch totals, so all misses are waived for now.
-		adjusted, assignedToSlot = k.WaiveDevshardMissesForActiveChallenge(goCtx, addr, adjusted, assignedToSlot)
-		if err := k.UpdateDevshardHostEpochStats(goCtx, escrow.EpochIndex, participantAddr, adjusted, firstForValidator); err != nil {
-			return nil, fmt.Errorf("failed to aggregate host stats: %w", err)
-		}
+		adjusted, assignedToSlot = waiveDevshardMisses(activeChallenge[addr], adjusted, assignedToSlot)
+		delta.add(adjusted)
 		if treatAsCurrentEpochSettle[addr] {
 			participant, found := participantByAddr[addr]
 			if !found {
@@ -239,8 +247,14 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			}
 			touchedParticipants[addr] = true
 		}
-		if firstForValidator {
-			seenValidators[addr] = true
+	}
+	for _, addr := range hostOrder {
+		participantAddr, err := sdk.AccAddressFromBech32(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid participant address %s: %w", addr, err)
+		}
+		if err := k.applyDevshardHostStatsDelta(goCtx, escrow.EpochIndex, participantAddr, *hostDeltas[addr], true); err != nil {
+			return nil, fmt.Errorf("failed to aggregate host stats: %w", err)
 		}
 	}
 
@@ -251,7 +265,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	slices.Sort(touchedAddrs)
 	for _, addr := range touchedAddrs {
 		participant := participantByAddr[addr]
-		if err := k.SetParticipant(goCtx, *participant); err != nil {
+		if err := k.setParticipantFromStored(goCtx, *participant, storedStatsByAddr[addr]); err != nil {
 			return nil, fmt.Errorf("failed to update participant %s: %w", addr, err)
 		}
 	}
