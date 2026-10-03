@@ -24,6 +24,7 @@ import (
 	types3 "github.com/cosmos/cosmos-sdk/x/staking/types"
 	types4 "github.com/productscience/inference/x/bls/types"
 	types5 "github.com/productscience/inference/x/inference/types"
+	types6 "github.com/productscience/inference/x/streamvesting/types"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -850,6 +851,20 @@ func (m *MockStreamVestingKeeper) AddVestedRewards(ctx context.Context, particip
 func (mr *MockStreamVestingKeeperMockRecorder) AddVestedRewards(ctx, participantAddress, fundingModule, amount, vestingEpochs, memo any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddVestedRewards", reflect.TypeOf((*MockStreamVestingKeeper)(nil).AddVestedRewards), ctx, participantAddress, fundingModule, amount, vestingEpochs, memo)
+}
+
+// AddVestedRewardsBatch mocks base method.
+func (m *MockStreamVestingKeeper) AddVestedRewardsBatch(ctx context.Context, participantAddress, fundingModule string, rewards []types6.VestedReward) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AddVestedRewardsBatch", ctx, participantAddress, fundingModule, rewards)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AddVestedRewardsBatch indicates an expected call of AddVestedRewardsBatch.
+func (mr *MockStreamVestingKeeperMockRecorder) AddVestedRewardsBatch(ctx, participantAddress, fundingModule, rewards any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddVestedRewardsBatch", reflect.TypeOf((*MockStreamVestingKeeper)(nil).AddVestedRewardsBatch), ctx, participantAddress, fundingModule, rewards)
 }
 
 // AdvanceEpoch mocks base method.

@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"errors"
 	"fmt"
 
 	"context"
@@ -93,14 +94,50 @@ const (
 
 // AddVestedRewards adds vested rewards to a participant's schedule with aggregation logic
 func (k Keeper) AddVestedRewards(ctx context.Context, participantAddress string, fundingModule string, amount sdk.Coins, vestingEpochs *uint64, memo string) error {
+	err := k.AddVestedRewardsBatch(ctx, participantAddress, fundingModule, []types.VestedReward{{Amount: amount, VestingEpochs: vestingEpochs, Memo: memo}})
+	var batchErr *types.VestedRewardError
+	if errors.As(err, &batchErr) {
+		return batchErr.Err
+	}
+	return err
+}
+
+// AddVestedRewardsBatch applies several AddVestedRewards to one participant in order,
+// reading and writing the vesting schedule once instead of once per reward.
+func (k Keeper) AddVestedRewardsBatch(ctx context.Context, participantAddress string, fundingModule string, rewards []types.VestedReward) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	err := k.bookkeepingBankKeeper.SendCoinsFromModuleToModule(ctx, fundingModule, types.ModuleName, amount, memo)
+	var schedule *types.VestingSchedule
+	var events sdk.Events
+	for i, reward := range rewards {
+		if err := k.addVestedReward(sdkCtx, participantAddress, fundingModule, reward, &schedule, &events); err != nil {
+			return &types.VestedRewardError{Index: i, Err: err}
+		}
+	}
+	if schedule == nil {
+		return nil
+	}
+
+	// Store the updated schedule
+	if err := k.SetVestingSchedule(sdkCtx, *schedule); err != nil {
+		return err
+	}
+
+	// Emit event for reward vesting
+	sdkCtx.EventManager().EmitEvents(events)
+
+	return nil
+}
+
+func (k Keeper) addVestedReward(sdkCtx sdk.Context, participantAddress string, fundingModule string, reward types.VestedReward, schedule **types.VestingSchedule, events *sdk.Events) error {
+	amount, vestingEpochs, memo := reward.Amount, reward.VestingEpochs, reward.Memo
+
+	err := k.bookkeepingBankKeeper.SendCoinsFromModuleToModule(sdkCtx, fundingModule, types.ModuleName, amount, memo)
 	if err != nil {
 		return fmt.Errorf("failed to transfer coins from module %s to streamvesting module: %w", fundingModule, err)
 	}
 	for _, coin := range amount {
-		k.bookkeepingBankKeeper.LogSubAccountTransaction(ctx, types.ModuleName, participantAddress, HoldingSubAccount,
+		k.bookkeepingBankKeeper.LogSubAccountTransaction(sdkCtx, types.ModuleName, participantAddress, HoldingSubAccount,
 			coin, "vesting started for "+participantAddress)
 	}
 
@@ -128,18 +165,22 @@ func (k Keeper) AddVestedRewards(ctx context.Context, participantAddress string,
 	}
 
 	// Get or create vesting schedule
-	schedule, found := k.GetVestingSchedule(sdkCtx, participantAddress)
-	if !found {
-		schedule = types.VestingSchedule{
-			ParticipantAddress: participantAddress,
-			EpochAmounts:       []types.EpochCoins{},
+	if *schedule == nil {
+		loaded, found := k.GetVestingSchedule(sdkCtx, participantAddress)
+		if !found {
+			loaded = types.VestingSchedule{
+				ParticipantAddress: participantAddress,
+				EpochAmounts:       []types.EpochCoins{},
+			}
 		}
+		*schedule = &loaded
 	}
+	s := *schedule
 
 	// Extend the schedule if necessary
 	requiredLength := int(epochs)
-	for len(schedule.EpochAmounts) < requiredLength {
-		schedule.EpochAmounts = append(schedule.EpochAmounts, types.EpochCoins{
+	for len(s.EpochAmounts) < requiredLength {
+		s.EpochAmounts = append(s.EpochAmounts, types.EpochCoins{
 			Coins: sdk.NewCoins(),
 		})
 	}
@@ -161,24 +202,16 @@ func (k Keeper) AddVestedRewards(ctx context.Context, participantAddress string,
 			}
 
 			// Add to existing amount in this epoch
-			schedule.EpochAmounts[i].Coins = schedule.EpochAmounts[i].Coins.Add(epochCoin)
+			s.EpochAmounts[i].Coins = s.EpochAmounts[i].Coins.Add(epochCoin)
 		}
 	}
 
-	// Store the updated schedule
-	if err := k.SetVestingSchedule(sdkCtx, schedule); err != nil {
-		return err
-	}
-
-	// Emit event for reward vesting
-	sdkCtx.EventManager().EmitEvent(
-		sdk.NewEvent(
-			types.EventTypeVestReward,
-			sdk.NewAttribute(types.AttributeKeyParticipant, participantAddress),
-			sdk.NewAttribute(types.AttributeKeyAmount, amount.String()),
-			sdk.NewAttribute(types.AttributeKeyVestingEpochs, fmt.Sprintf("%d", epochs)),
-		),
-	)
+	*events = append(*events, sdk.NewEvent(
+		types.EventTypeVestReward,
+		sdk.NewAttribute(types.AttributeKeyParticipant, participantAddress),
+		sdk.NewAttribute(types.AttributeKeyAmount, amount.String()),
+		sdk.NewAttribute(types.AttributeKeyVestingEpochs, fmt.Sprintf("%d", epochs)),
+	))
 
 	return nil
 }
