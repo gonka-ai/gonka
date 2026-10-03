@@ -147,3 +147,57 @@ func TestSweepExecutionTimeoutsSkipsAnEscrowThatIsNoLongerRegistered(t *testing.
 	require.Zero(t, due)
 	require.Equal(t, types.StatusStarted, env.sm.SnapshotState().Inferences[nonce].Status)
 }
+
+func setEveryTimeoutVote(env *testProxyEnv, isAccepted bool) {
+	for _, verifier := range env.verifiers {
+		verifier.accept = isAccepted
+	}
+}
+
+// Test flow:
+//  1. Start an overdue inference and have every host reject the timeout vote, so its execution timeout falls short of votes.
+//  2. Run the sweep, let the hosts accept again, run it again, then let the backoff run out and run it once more.
+//  3. Expect the failed nonce skipped while its backoff lasts and timed out once it is over, so a nonce whose votes keep failing does not take every tick's budget.
+func TestSweepExecutionTimeoutsBacksOffANonceWhoseTimeoutFailed(t *testing.T) {
+	gateway, runtime, env := newSweepTestGateway(t)
+	nonce := startedInferenceConfirmedAt(t, env, time.Now().Add(-time.Hour))
+	setEveryTimeoutVote(env, false)
+
+	_, _, failed := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
+	require.Equal(t, 1, failed, "the fixture must make the timeout fail")
+	setEveryTimeoutVote(env, true)
+	dueDuringBackoff, _, _ := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
+	require.Zero(t, dueDuringBackoff, "a nonce whose timeout just failed was retried before its backoff ran out")
+	runtime.executionTimeoutRetryAfter[nonce] = time.Now().Add(-time.Second)
+	_, appliedAfterBackoff, _ := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
+
+	require.Equal(t, 1, appliedAfterBackoff)
+	require.Equal(t, types.StatusTimedOut, env.sm.SnapshotState().Inferences[nonce].Status)
+}
+
+// Test flow:
+//  1. Start two overdue inferences, have every host reject the timeout vote and run the sweep with a budget of one, so one nonce fails and backs off.
+//  2. Let the hosts accept again and run the sweep with a budget of one.
+//  3. Expect the second tick to spend its budget on the other nonce instead of the backed-off one.
+func TestSweepExecutionTimeoutsSpendsItsBudgetPastABackedOffNonce(t *testing.T) {
+	gateway, runtime, env := newSweepTestGateway(t)
+	firstNonce := startedInferenceConfirmedAt(t, env, time.Now().Add(-time.Hour))
+	secondNonce := startedInferenceConfirmedAt(t, env, time.Now().Add(-time.Hour))
+	setEveryTimeoutVote(env, false)
+	_, _, failed := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, 1)
+	require.Equal(t, 1, failed, "the fixture must make the timeout fail")
+	require.Len(t, runtime.executionTimeoutRetryAfter, 1, "the failed nonce must be backed off")
+	backedOffNonce, otherNonce := firstNonce, secondNonce
+	if _, isBackedOff := runtime.executionTimeoutRetryAfter[secondNonce]; isBackedOff {
+		backedOffNonce, otherNonce = secondNonce, firstNonce
+	}
+	setEveryTimeoutVote(env, true)
+
+	due, applied, _ := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, 1)
+
+	require.Equal(t, 1, due)
+	require.Equal(t, 1, applied)
+	inferences := env.sm.SnapshotState().Inferences
+	require.Equal(t, types.StatusTimedOut, inferences[otherNonce].Status, "the budget went to the backed-off nonce")
+	require.Equal(t, types.StatusStarted, inferences[backedOffNonce].Status)
+}

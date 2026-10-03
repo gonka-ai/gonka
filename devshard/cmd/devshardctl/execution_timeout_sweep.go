@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	executionTimeoutSweepBudget  = 8
-	executionTimeoutSweepGrace   = 2 * time.Minute
-	executionTimeoutSweepTimeout = 5 * time.Minute
+	executionTimeoutSweepBudget       = 64
+	executionTimeoutSweepGrace        = 2 * time.Minute
+	executionTimeoutSweepTimeout      = 5 * time.Minute
+	executionTimeoutSweepRetryBackoff = 5 * time.Minute
 )
 
 func executionTimeoutSweepWindow(config types.SessionConfig) time.Duration {
@@ -23,14 +24,14 @@ func deadlineFromStamp(stampedAt int64, now time.Time, window time.Duration) tim
 	return time.Unix(min(stampedAt, now.Unix()), 0).Add(window)
 }
 
-func overdueStartedInferences(state types.EscrowState, now time.Time, budget int) []uint64 {
+func overdueStartedInferences(state types.EscrowState, now time.Time, budget int, retryAfter map[uint64]time.Time) []uint64 {
 	window := executionTimeoutSweepWindow(state.Config)
 	var due []uint64
 	for nonce, inference := range state.Inferences {
 		if len(due) == budget {
 			break
 		}
-		if inference.Status != types.StatusStarted || inference.ConfirmedAt <= 0 {
+		if inference.Status != types.StatusStarted || inference.ConfirmedAt <= 0 || now.Before(retryAfter[nonce]) {
 			continue
 		}
 		if now.Before(deadlineFromStamp(inference.ConfirmedAt, now, window)) {
@@ -82,7 +83,8 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 	if runtime == nil || runtime.session == nil || runtime.proxy == nil || runtime.proxy.sm == nil {
 		return 0, 0, 0
 	}
-	if runtime.proxy.sm.Phase() != types.PhaseActive || len(overdueStartedInferences(runtime.proxy.sm.SnapshotState(), time.Now(), budget)) == 0 {
+	forgetExpiredExecutionTimeoutRetries(runtime, time.Now())
+	if runtime.proxy.sm.Phase() != types.PhaseActive || len(overdueStartedInferences(runtime.proxy.sm.SnapshotState(), time.Now(), budget, runtime.executionTimeoutRetryAfter)) == 0 {
 		return 0, 0, 0
 	}
 	g.mu.Lock()
@@ -100,7 +102,7 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 	if runtime.proxy.sm.Phase() != types.PhaseActive {
 		return 0, 0, 0
 	}
-	for _, nonce := range overdueStartedInferences(runtime.proxy.sm.SnapshotState(), time.Now(), budget) {
+	for _, nonce := range overdueStartedInferences(runtime.proxy.sm.SnapshotState(), time.Now(), budget, runtime.executionTimeoutRetryAfter) {
 		if ctx.Err() != nil {
 			break
 		}
@@ -109,11 +111,24 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 		switch {
 		case result.Applied:
 			applied++
+			delete(runtime.executionTimeoutRetryAfter, nonce)
 		case err != nil:
 			failed++
+			if runtime.executionTimeoutRetryAfter == nil {
+				runtime.executionTimeoutRetryAfter = make(map[uint64]time.Time)
+			}
+			runtime.executionTimeoutRetryAfter[nonce] = time.Now().Add(executionTimeoutSweepRetryBackoff)
 			log.Printf("execution_timeout_sweep_not_applied escrow=%s nonce=%d outcome=%q detail=%q error=%q",
 				runtime.id, nonce, result.Outcome, result.DetailReason, err.Error())
 		}
 	}
 	return due, applied, failed
+}
+
+func forgetExpiredExecutionTimeoutRetries(runtime *devshardRuntime, now time.Time) {
+	for nonce, retryAfter := range runtime.executionTimeoutRetryAfter {
+		if !now.Before(retryAfter) {
+			delete(runtime.executionTimeoutRetryAfter, nonce)
+		}
+	}
 }

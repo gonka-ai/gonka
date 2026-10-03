@@ -88,7 +88,7 @@ func summarizeEscrowHoldInFlight(inferences map[uint64]*types.InferenceRecord, c
 }
 
 func (summary escrowHoldInFlightSummary) recoverable(hasBackgroundWork bool) uint64 {
-	recoverable := summary.pendingCost + summary.startedCost + summary.challengedCost
+	recoverable := summary.pendingCost + summary.startedCost
 	if hasBackgroundWork {
 		return recoverable
 	}

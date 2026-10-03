@@ -177,7 +177,11 @@ func TestGatewayCheckBalancesReplacesADepletedEscrowWhenTheOthersAreOnlyHeld(t *
 	require.Eventually(t, func() bool { return settled.Load() == 1 }, time.Second, 10*time.Millisecond)
 }
 
-func TestGatewayCheckBalancesHoldsAnEscrowWhoseMoneyIsInDisputes(t *testing.T) {
+// Test flow:
+//  1. Drop an escrow under the threshold with all of its money in a dispute.
+//  2. Run a balance tick.
+//  3. Expect it replaced, not held: a dispute refunds only if invalid votes win, and unresolved ones never do.
+func TestGatewayCheckBalancesReplacesAnEscrowWhoseMoneyIsOnlyInDisputes(t *testing.T) {
 	runtime := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
 	state := runtime.proxy.sm.ExportState()
 	state.Balance = balanceMinimumThreshold - 1
@@ -187,10 +191,9 @@ func TestGatewayCheckBalancesHoldsAnEscrowWhoseMoneyIsInDisputes(t *testing.T) {
 
 	runBalanceTick(t, gateway, runtime.id)
 
-	require.EqualValues(t, 0, created.Load(), "an escrow whose money is only held by a dispute was replaced")
-	accepts, reason := runtime.acceptsNewInferences()
-	require.False(t, accepts)
-	require.Equal(t, "on_hold", reason)
+	require.EqualValues(t, 1, created.Load(), "an escrow whose money is only held by a dispute was kept on hold")
+	require.Zero(t, runtime.holdSince.Load())
+	require.False(t, runtime.active.Load())
 }
 
 func TestGatewayCheckBalancesKeepsAnEscrowHeldUntilItClearsTheReleaseMargin(t *testing.T) {
@@ -293,7 +296,7 @@ func TestGatewayCheckBalancesKeepsAHeldEscrowWhoseStartedReservationTheSweepCanR
 //  1. Build one record per status, one Pending record long past its refusal deadline, one exactly at it, and one stamped in the absurd future.
 //  2. Summarize them at a fixed moment.
 //  3. Expect per-status counts and costs, the two overdue Pending records, and the latest Pending deadline never past now plus the window.
-//  4. Started and disputed money always counts as recoverable; overdue Pending money counts only while a vote may still be running.
+//  4. Started money always counts as recoverable, disputed money never does, and overdue Pending money counts only while a vote may still be running.
 func TestSummarizeEscrowHoldInFlightCountsEachStatusAndItsDeadline(t *testing.T) {
 	config := types.SessionConfig{RefusalTimeout: 60, ExecutionTimeout: 600}
 	now := time.Unix(10_000, 0)
@@ -319,8 +322,8 @@ func TestSummarizeEscrowHoldInFlightCountsEachStatusAndItsDeadline(t *testing.T)
 	require.EqualValues(t, 40, summary.challengedCost)
 	require.Equal(t, 2, summary.overduePendingCount, "a Pending record exactly at its deadline is overdue, one stamped in the future is not")
 	require.EqualValues(t, 130, summary.overduePendingCost)
-	require.EqualValues(t, 270, summary.recoverable(false), "an overdue Pending reservation no vote is working on will not come back")
-	require.EqualValues(t, 400, summary.recoverable(true), "a running vote may still refund an overdue Pending reservation")
+	require.EqualValues(t, 230, summary.recoverable(false), "neither a dispute nor an overdue Pending reservation no vote is working on will come back")
+	require.EqualValues(t, 360, summary.recoverable(true), "a running vote may still refund an overdue Pending reservation, never a dispute")
 	require.Equal(t, now.Add(window), summary.latestPendingDeadline, "a start stamped in the future must count from now, not overflow into the past")
 }
 
@@ -387,24 +390,25 @@ func TestGatewayCheckBalancesHoldsALowBalanceEscrowWhoseStartedReservationIsOver
 }
 
 // Test flow:
-//  1. Put an escrow on hold whose money sits in a dispute, with the hold itself a day old.
-//  2. A dispute has no deadline of its own, so the next tick must keep the hold however long it has lasted.
-func TestGatewayCheckBalancesKeepsAHeldEscrowWithADisputeForAsLongAsItLasts(t *testing.T) {
+//  1. Put an escrow on hold whose only money in flight sits in a dispute.
+//  2. Run a balance tick.
+//  3. Expect the hold to end in a replacement, since no deadline brings a dispute's money back.
+func TestGatewayCheckBalancesReplacesAHeldEscrowWhoseMoneyIsOnlyInDisputes(t *testing.T) {
 	runtime := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
 	state := runtime.proxy.sm.ExportState()
 	state.Balance = balanceMinimumThreshold - 1
 	state.Inferences = map[uint64]*types.InferenceRecord{1: {Status: types.StatusChallenged, ActualCost: balanceMinimumThreshold}}
 	runtime.proxy.sm.RestoreState(state)
 	gateway, created, _ := gatewayTestDepletionGateway(t, runtime)
+	heldSince, isHeld, err := gateway.store.HoldDevshardIfActive(runtime.id, time.Now())
+	require.NoError(t, err)
+	require.True(t, isHeld)
+	runtime.holdSince.Store(heldSince.UnixNano())
+
 	runBalanceTick(t, gateway, runtime.id)
 
-	runtime.holdSince.Store(time.Now().Add(-aDay).UnixNano())
-	runBalanceTick(t, gateway, runtime.id)
-
-	require.EqualValues(t, 0, created.Load(), "a dispute can still refund the escrow, the hold must wait for it")
-	accepts, reason := runtime.acceptsNewInferences()
-	require.False(t, accepts)
-	require.Equal(t, "on_hold", reason)
+	require.EqualValues(t, 1, created.Load(), "a hold kept waiting on a dispute")
+	require.False(t, runtime.active.Load())
 }
 
 func TestGatewayRestoreEscrowHoldsReopensASavedHold(t *testing.T) {

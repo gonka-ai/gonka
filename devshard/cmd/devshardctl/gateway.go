@@ -132,6 +132,9 @@ type devshardRuntime struct {
 
 	activeConfigured bool
 	accountingRetire func()
+
+	// executionTimeoutRetryAfter is touched only by the execution-timeout sweep, which never runs twice at once.
+	executionTimeoutRetryAfter map[uint64]time.Time
 }
 
 // escrowHasBackgroundWork reports whether foreground requests or background race cleanups are in flight; settle and store-close must wait until it is false.
