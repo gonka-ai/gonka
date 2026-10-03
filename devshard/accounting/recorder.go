@@ -106,7 +106,12 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		// touches the tallies.
 		var inferenceID uint64
 		verdict := false
-		switch timeout, validation, vote := tx.GetTimeoutInference(), tx.GetValidation(), tx.GetValidationVote(); {
+		statsOnly := false
+		switch timeout, validation, vote, finish, errorMiss := tx.GetTimeoutInference(), tx.GetValidation(), tx.GetValidationVote(), tx.GetFinishInference(), tx.GetErrorMiss(); {
+		case finish != nil:
+			inferenceID, statsOnly = finish.InferenceId, true
+		case errorMiss != nil:
+			inferenceID, statsOnly = errorMiss.InferenceId, true
 		case timeout != nil:
 			inferenceID = timeout.InferenceId
 		case validation != nil:
@@ -115,6 +120,12 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		case vote != nil:
 			inferenceID, verdict = vote.InferenceId, true
 		default:
+			continue
+		}
+		if statsOnly {
+			if record, ok := state.GetInference(inferenceID); ok {
+				hostStats = r.appendHostStats(record.ExecutorSlot, state, hostStats)
+			}
 			continue
 		}
 		if _, ok := seen[inferenceID]; ok {

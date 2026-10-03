@@ -26,6 +26,7 @@ type escrowBlob struct {
 	Meta            EscrowMetadata             `json:"meta"`
 	Latest          uint64                     `json:"latest"`
 	HostStats       map[uint32]types.HostStats `json:"host_stats"`
+	HostStatsNonce  map[uint32]uint64          `json:"host_stats_nonce,omitempty"`
 	Counters        []counterBlob              `json:"counters"`
 	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
 	ValidatedBySlot map[uint32]uint64          `json:"validated_by_slot,omitempty"`
@@ -131,6 +132,7 @@ func (s *Store) Load(ctx context.Context, t *Tracker) error {
 			Meta:            meta,
 			Latest:          blob.Latest,
 			HostStats:       make(map[uint32]types.HostStats, len(blob.HostStats)),
+			HostStatsNonce:  blob.HostStatsNonce,
 			Counters:        make(map[CounterKey]uint64, len(blob.Counters)),
 			OpenChallenge:   make(map[uint64]uint32),
 			ChallengeBySlot: blob.ChallengeBySlot,
@@ -156,6 +158,9 @@ func (s *Store) Load(ctx context.Context, t *Tracker) error {
 		}
 		if escrow.TimedOutBySlot == nil {
 			escrow.TimedOutBySlot = make(map[uint32]uint64)
+		}
+		if escrow.HostStatsNonce == nil {
+			escrow.HostStatsNonce = make(map[uint32]uint64)
 		}
 		for slot, stats := range blob.HostStats {
 			escrow.HostStats[slot] = stats
@@ -230,6 +235,7 @@ func (t *Tracker) snapshot(retention uint64) storeSnapshot {
 			Meta:            escrow.Meta,
 			Latest:          escrow.Latest,
 			HostStats:       make(map[uint32]types.HostStats, len(escrow.HostStats)),
+			HostStatsNonce:  copyUint32Map(escrow.HostStatsNonce),
 			ChallengeBySlot: copyUint32Map(escrow.ChallengeBySlot),
 			ValidatedBySlot: copyUint32Map(escrow.ValidatedBySlot),
 			TimedOutBySlot:  copyUint32Map(escrow.TimedOutBySlot),

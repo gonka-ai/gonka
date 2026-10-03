@@ -222,6 +222,8 @@ type SlotRecord struct {
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
 	RequiredValidations   uint64                    `json:"required_validations"`
 	CompletedValidations  uint64                    `json:"completed_validations"`
+	ProtocolValidated     uint64                    `json:"protocol_validated"`
+	ProtocolFinished      uint64                    `json:"protocol_finished"`
 	ValidationsPerformed  uint64                    `json:"validations_performed"`
 	TimeoutsApplied       uint64                    `json:"timeouts_applied"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
@@ -258,6 +260,8 @@ type ParticipantRecord struct {
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
 	RequiredValidations   uint64                    `json:"required_validations"`
 	CompletedValidations  uint64                    `json:"completed_validations"`
+	ProtocolValidated     uint64                    `json:"protocol_validated"`
+	ProtocolFinished      uint64                    `json:"protocol_finished"`
 	ValidationsPerformed  uint64                    `json:"validations_performed"`
 	TimeoutsApplied       uint64                    `json:"timeouts_applied"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
@@ -286,6 +290,8 @@ type EpochSummary struct {
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
 	RequiredValidations   uint64                    `json:"required_validations"`
 	CompletedValidations  uint64                    `json:"completed_validations"`
+	ProtocolValidated     uint64                    `json:"protocol_validated"`
+	ProtocolFinished      uint64                    `json:"protocol_finished"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	InFlight              uint64                    `json:"in_flight"`
 	InFlightRequests      uint64                    `json:"in_flight_requests"`
