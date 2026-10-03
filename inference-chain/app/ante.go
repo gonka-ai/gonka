@@ -197,6 +197,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 
 	anteDecorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
+		TxParamsCacheDecorator{},        // inference params read once per tx
 		wasmkeeper.NewLimitSimulationGasDecorator(options.NodeConfig.SimulationGasLimit), // after setup context to enforce limits early
 		// wasmd CountTX skips KV in Simulate; this wrapper meters it. Remove when wasmd does.
 		NewCountTXSimulateGasDecorator(options.TXCounterStoreService),
@@ -254,6 +255,14 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	}
 
 	return sdk.ChainAnteDecorators(anteDecorators...), nil
+}
+
+// TxParamsCacheDecorator installs the per-tx inference params cache; the
+// context reaches the msg handlers, so ante and handlers share one KV read.
+type TxParamsCacheDecorator struct{}
+
+func (TxParamsCacheDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	return next(inferencemodulekeeper.WithTxParamsCache(ctx), tx, simulate)
 }
 
 func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.NodeConfig, txCounterStoreKey *storetypes.KVStoreKey) {

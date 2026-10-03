@@ -33,7 +33,39 @@ func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) 
 	if cached, ok := ctx.Value(paramsKey{}).(*types.Params); ok && cached != nil {
 		return *cached, nil
 	}
+	if c, ok := ctx.Value(txParamsCacheKey{}).(*txParamsCache); ok && c != nil && !c.off {
+		return k.getParamsTxCached(ctx, c)
+	}
 	return k.getParamsFromStore(ctx)
+}
+
+// txParamsCache keeps the params bytes for one tx, so repeated GetParams calls
+// pay the KV read once. Turned off for the rest of the tx by SetParams.
+type txParamsCache struct {
+	bz  []byte
+	off bool
+}
+
+type txParamsCacheKey struct{}
+
+// WithTxParamsCache installs an empty per-tx params cache (set in the ante handler).
+func WithTxParamsCache(ctx sdk.Context) sdk.Context {
+	return ctx.WithValue(txParamsCacheKey{}, &txParamsCache{})
+}
+
+func (k Keeper) getParamsTxCached(ctx context.Context, c *txParamsCache) (params types.Params, err error) {
+	if c.bz == nil {
+		store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+		bz := store.Get(types.ParamsKey)
+		if bz == nil {
+			return params, nil
+		}
+		c.bz = append([]byte(nil), bz...)
+	}
+	if err := k.cdc.Unmarshal(c.bz, &params); err != nil {
+		return types.Params{}, err
+	}
+	return params, nil
 }
 
 // InjectParamsIntoContext returns a new context with the params cached.
@@ -55,6 +87,10 @@ func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
 		return err
 	}
 	store.Set(types.ParamsKey, bz)
+	// A write may be discarded with a CacheContext, so stop trusting the cache.
+	if c, ok := ctx.Value(txParamsCacheKey{}).(*txParamsCache); ok && c != nil {
+		c.bz, c.off = nil, true
+	}
 
 	// Auto-set grace epoch when poc_v2_enabled transitions false -> true
 	if params.PocParams != nil && params.PocParams.PocV2Enabled {
