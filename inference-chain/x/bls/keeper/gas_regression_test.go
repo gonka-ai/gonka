@@ -468,3 +468,121 @@ func TestSubmitVerificationVector_ReadsCommitmentsNotDealerParts(t *testing.T) {
 		"SubmitVerificationVector (%d gas) must read commitments only, not full dealer parts (full read %d)", verifier, fullRead)
 	t.Logf("gas: full epoch read %d, SubmitVerificationVector up to the first proof %d", fullRead, verifier)
 }
+
+// EndBlock reads the active DKG epoch every block; only a deadline block
+// needs the dealer parts, so earlier blocks must read just the base record.
+func TestProcessDKGPhaseTransition_SkipsDealerPartsBeforeDeadline(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	const epochID = uint64(48)
+	seedEpochWithDealerParts(t, k, ctx, epochID, types.DKGPhase_DKG_PHASE_DEALING, gasRegressionN)
+
+	metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err := k.GetEpochBLSData(metered, epochID)
+	require.NoError(t, err)
+	fullRead := metered.GasMeter().GasConsumed()
+
+	metered = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	require.NoError(t, k.ProcessDKGPhaseTransitionForEpoch(metered, epochID))
+	idle := metered.GasMeter().GasConsumed()
+	require.Less(t, idle, fullRead/4,
+		"a block before the deadline (%d gas) must not rehydrate dealer parts (full read %d)", idle, fullRead)
+
+	base, err := k.GetEpochBLSDataBase(ctx, epochID)
+	require.NoError(t, err)
+	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, base.DkgPhase)
+
+	// The deadline block still sees every dealer part and moves the phase on.
+	require.NoError(t, k.ProcessDKGPhaseTransitionForEpoch(ctx.WithBlockHeight(base.DealingPhaseDeadlineBlock), epochID))
+	base, err = k.GetEpochBLSDataBase(ctx, epochID)
+	require.NoError(t, err)
+	require.Equal(t, types.DKGPhase_DKG_PHASE_VERIFYING, base.DkgPhase)
+	t.Logf("gas: full epoch read %d, EndBlock before deadline %d", fullRead, idle)
+}
+
+// A dealer answering a complaint needs the base record and its own
+// complaint, not every dealer part of the epoch.
+func TestRespondDealerComplaints_GasSkipsDealerParts(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	ms := NewMsgServerImpl(k)
+	const epochID = uint64(49)
+	participants := seedEpochWithDealerParts(t, k, ctx, epochID, types.DKGPhase_DKG_PHASE_DISPUTING, gasRegressionN)
+	base, err := k.GetEpochBLSDataBase(ctx, epochID)
+	require.NoError(t, err)
+	base.DisputingPhaseDeadlineBlock = ctx.BlockHeight() + 100
+	require.NoError(t, k.SetEpochBLSDataBaseOnly(ctx, base))
+	require.NoError(t, k.SetDealerComplaint(ctx, epochID, &types.DealerComplaint{DealerIndex: 1, ComplainerIndex: 0}))
+
+	metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = k.GetEpochBLSData(metered, epochID)
+	require.NoError(t, err)
+	fullRead := metered.GasMeter().GasConsumed()
+
+	msg := &types.MsgRespondDealerComplaints{
+		Creator:     participants[1].Address,
+		EpochId:     epochID,
+		DealerIndex: 1,
+		Responses: []types.DealerComplaintResponse{{
+			ComplainerIndex:         0,
+			ResponseShareBytes:      bytes.Repeat([]byte{1}, dkgShareBytesLen),
+			ResponseOpeningMaterial: bytes.Repeat([]byte{2}, dkgOpeningSeedLen),
+		}},
+	}
+	metered = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = ms.RespondDealerComplaints(metered, msg)
+	require.NoError(t, err)
+	respond := metered.GasMeter().GasConsumed()
+	require.Less(t, respond, fullRead/4,
+		"RespondDealerComplaints (%d gas) must not rehydrate dealer parts (full read %d)", respond, fullRead)
+
+	stored, err := k.GetDealerComplaint(ctx, epochID, 1, 0)
+	require.NoError(t, err)
+	require.True(t, stored.ResponseSubmitted)
+	require.Equal(t, msg.Responses[0].ResponseShareBytes, stored.ResponseShareBytes)
+
+	_, err = ms.RespondDealerComplaints(ctx, msg)
+	require.ErrorContains(t, err, "already submitted")
+
+	msg.Responses[0].ComplainerIndex = 2
+	_, err = ms.RespondDealerComplaints(ctx, msg)
+	require.ErrorContains(t, err, "complaint not found")
+	t.Logf("gas: full epoch read %d, RespondDealerComplaints %d", fullRead, respond)
+}
+
+// A complaint still inline in a pre-split base record can be answered once.
+func TestRespondDealerComplaints_LegacyInlineComplaint(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	ms := NewMsgServerImpl(k)
+	const epochID = uint64(50)
+	legacy := &types.EpochBLSData{
+		EpochId:                     epochID,
+		Participants:                []types.BLSParticipantInfo{{Address: "addr-0"}, {Address: "addr-1"}},
+		DkgPhase:                    types.DKGPhase_DKG_PHASE_DISPUTING,
+		DisputingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+		DealerComplaints:            []types.DealerComplaint{{DealerIndex: 1, ComplainerIndex: 0, DisputedSlotIndex: 7}},
+	}
+	bz, err := k.cdc.Marshal(legacy)
+	require.NoError(t, err)
+	require.NoError(t, k.storeService.OpenKVStore(ctx).Set(types.EpochBLSDataKey(epochID), bz))
+
+	msg := &types.MsgRespondDealerComplaints{
+		Creator:     "addr-1",
+		EpochId:     epochID,
+		DealerIndex: 1,
+		Responses: []types.DealerComplaintResponse{{
+			ComplainerIndex:         0,
+			ResponseShareBytes:      bytes.Repeat([]byte{1}, dkgShareBytesLen),
+			ResponseOpeningMaterial: bytes.Repeat([]byte{2}, dkgOpeningSeedLen),
+		}},
+	}
+	_, err = ms.RespondDealerComplaints(ctx, msg)
+	require.NoError(t, err)
+
+	got, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Len(t, got.DealerComplaints, 1)
+	require.True(t, got.DealerComplaints[0].ResponseSubmitted)
+	require.Equal(t, uint32(7), got.DealerComplaints[0].DisputedSlotIndex)
+
+	_, err = ms.RespondDealerComplaints(ctx, msg)
+	require.ErrorContains(t, err, "already submitted")
+}
