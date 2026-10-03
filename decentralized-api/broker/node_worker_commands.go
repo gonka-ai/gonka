@@ -124,6 +124,11 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 
 	logging.Info("Selected model deployment for inference", types.Nodes,
 		"node_id", worker.nodeId, "governance_model", deployment.GovernanceID, "load_model", deployment.LoadModel)
+	_, suppressedOptions := mergeModelArgs(selectedModel.ModelArgs, localConfig.Args)
+	for _, option := range suppressedOptions {
+		logging.Warn("Local model option conflicts with epoch snapshot", types.Nodes,
+			"node_id", worker.nodeId, "model_id", selectedModel.Id, "option", option)
+	}
 	if err := client.InferenceUp(ctx, deployment.LoadModel, deployment.Args); err != nil {
 		logging.Error("Failed to bring up inference", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false

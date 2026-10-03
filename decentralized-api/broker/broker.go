@@ -1805,60 +1805,198 @@ func (b *Broker) populateNodeWithConfiguredModel(nodeId string) error {
 
 // MergeModelArgs combines model arguments from the epoch snapshot with locally
 // configured arguments, with epoch arguments taking precedence.
-// It understands arguments as --key or --key value pairs.
+// It understands arguments as --key, --key value, or --key=value.
 func (b *Broker) MergeModelArgs(epochArgs []string, localArgs []string) []string {
-	// The final merged arguments, preserving the order from epochArgs, then localArgs.
-	mergedArgs := make([]string, 0, len(epochArgs)+len(localArgs))
-	// A set to store the keys from epochArgs to check for precedence.
-	epochKeys := make(map[string]struct{})
+	mergedArgs, _ := mergeModelArgs(epochArgs, localArgs)
+	return mergedArgs
+}
 
-	// 1. Process epochArgs first. They all go into the result and populate epochKeys.
+func modelArgKey(arg string) string {
+	key, _, _ := strings.Cut(arg, "=")
+	if strings.HasPrefix(key, "-O") && len(key) > 2 && key[2] >= '0' && key[2] <= '9' {
+		return "--optimization-level"
+	}
+	switch key {
+	case "-asc":
+		return "--api-server-count"
+	case "-q":
+		return "--quantization"
+	case "-tp":
+		return "--tensor-parallel-size"
+	case "-pp":
+		return "--pipeline-parallel-size"
+	case "-n":
+		return "--nnodes"
+	case "-r":
+		return "--node-rank"
+	case "-dcp":
+		return "--decode-context-parallel-size"
+	case "-pcp":
+		return "--prefill-context-parallel-size"
+	case "-dp":
+		return "--data-parallel-size"
+	case "-dpn":
+		return "--data-parallel-rank"
+	case "-dpr":
+		return "--data-parallel-start-rank"
+	case "-dpl":
+		return "--data-parallel-size-local"
+	case "-dpa":
+		return "--data-parallel-address"
+	case "-dpp":
+		return "--data-parallel-rpc-port"
+	case "-dpb":
+		return "--data-parallel-backend"
+	case "-dph":
+		return "--data-parallel-hybrid-lb"
+	case "-dpe":
+		return "--data-parallel-external-lb"
+	case "-dpm":
+		return "--data-parallel-multi-port-external-lb"
+	case "-ep":
+		return "--enable-expert-parallel"
+	case "-sc":
+		return "--speculative-config"
+	case "-dc":
+		return "--diffusion-config"
+	case "-cc":
+		return "--compilation-config"
+	case "-ac":
+		return "--attention-config"
+	case "-O":
+		return "--optimization-level"
+	}
+	if !strings.HasPrefix(key, "--") {
+		return key
+	}
+	key, _, _ = strings.Cut(key, ".")
+	key = strings.TrimPrefix(key, "--no-")
+	if !strings.HasPrefix(key, "--") {
+		key = "--" + key
+	}
+	key = strings.ReplaceAll(key, "_", "-")
+	switch key {
+	case "--max-model":
+		return "--max-model-len"
+	case "--rev":
+		return "--revision"
+	}
+	return key
+}
+
+func isModelOption(arg string) bool {
+	return len(arg) > 1 && arg[0] == '-' && arg != "--" &&
+		(arg[1] < '0' || arg[1] > '9') && !(len(arg) > 2 && arg[1] == '.' && arg[2] >= '0' && arg[2] <= '9')
+}
+
+func modelArgValue(args []string, i int) string {
+	if _, value, hasValue := strings.Cut(args[i], "="); hasValue {
+		return value
+	}
+	if strings.HasPrefix(args[i], "-O") && len(args[i]) > 2 && args[i][2] >= '0' && args[i][2] <= '9' {
+		return args[i][2:]
+	}
+	if strings.HasPrefix(args[i], "--no-") {
+		return "false:" + modelArgKey(args[i])
+	}
+	if end := modelArgEnd(args, i); end > i+1 {
+		return strings.Join(args[i+1:end], "\x00")
+	}
+	return "present:" + modelArgKey(args[i])
+}
+
+func modelArgEnd(args []string, i int) int {
+	arg := args[i]
+	end := i + 1
+	if strings.Contains(arg, "=") || strings.HasPrefix(arg, "--no-") ||
+		(strings.HasPrefix(arg, "-O") && len(arg) > 2 && arg[2] >= '0' && arg[2] <= '9') {
+		return end
+	}
+	for end < len(args) && args[end] != "--" && !isModelOption(args[end]) {
+		end++
+	}
+	return end
+}
+
+func mergeModelArgs(epochArgs []string, localArgs []string) ([]string, []string) {
+	epochMerged := append([]string(nil), epochArgs...)
+	localMerged := make([]string, 0, len(localArgs))
+	epochKeys := make(map[string]struct{})
+	epochValues := make(map[string]string)
+	suppressed := make([]string, 0)
+	suppressedKeys := make(map[string]struct{})
+	prefixConflict := false
+
 	for i := 0; i < len(epochArgs); i++ {
 		arg := epochArgs[i]
-		if strings.HasPrefix(arg, "--") {
-			key := arg
+		if arg == "--" {
+			break
+		}
+		if isModelOption(arg) {
+			key := modelArgKey(arg)
 			epochKeys[key] = struct{}{}
-			mergedArgs = append(mergedArgs, key)
-
-			// Check if the next element is a value for this key.
-			if i+1 < len(epochArgs) && !strings.HasPrefix(epochArgs[i+1], "--") {
-				// It's a value, add it to mergedArgs and skip it in the next iteration.
-				mergedArgs = append(mergedArgs, epochArgs[i+1])
-				i++
-			}
-		} else {
-			// This case handles a value without a preceding key in epochArgs,
-			// which is unlikely but we add it to be safe.
-			mergedArgs = append(mergedArgs, arg)
+			epochValues[key] = modelArgValue(epochArgs, i)
+			i = modelArgEnd(epochArgs, i) - 1
 		}
 	}
 
-	// 2. Process localArgs and add only the ones with keys not present in epochArgs.
-	for i := 0; i < len(localArgs); i++ {
+	for i := 0; i < len(localArgs); {
 		arg := localArgs[i]
-		if strings.HasPrefix(arg, "--") {
-			key := arg
-			if _, exists := epochKeys[key]; !exists {
-				// This key is not in epochArgs, so we can add it.
-				mergedArgs = append(mergedArgs, key)
-
-				// Check if it has a value.
-				if i+1 < len(localArgs) && !strings.HasPrefix(localArgs[i+1], "--") {
-					// It has a value, add it and skip.
-					mergedArgs = append(mergedArgs, localArgs[i+1])
-					i++
+		if arg == "--" {
+			localMerged = append(localMerged, localArgs[i:]...)
+			break
+		}
+		if !isModelOption(arg) {
+			localMerged = append(localMerged, arg)
+			i++
+			continue
+		}
+		end := modelArgEnd(localArgs, i)
+		key := modelArgKey(arg)
+		if _, exists := epochKeys[key]; exists {
+			if _, logged := suppressedKeys[key]; !logged && modelArgValue(localArgs, i) != epochValues[key] {
+				suppressed = append(suppressed, argName(arg))
+				suppressedKeys[key] = struct{}{}
+			}
+			i = end
+			continue
+		}
+		for epochKey := range epochKeys {
+			if len(key) < len(epochKey) && strings.HasPrefix(epochKey, key) && !isKnownFullModelOption(key) {
+				prefixConflict = true
+				if _, logged := suppressedKeys[key]; !logged {
+					suppressed = append(suppressed, argName(arg))
+					suppressedKeys[key] = struct{}{}
 				}
-			} else {
-				// Key already exists in epoch args, so we skip it.
-				// If it has a value, we need to skip that too.
-				if i+1 < len(localArgs) && !strings.HasPrefix(localArgs[i+1], "--") {
-					i++ // Skip the value of the overridden key.
-				}
+				break
 			}
 		}
-		// Non-key arguments are ignored here as they are considered values
-		// of keys, which are handled within the loop.
+		localMerged = append(localMerged, localArgs[i:end]...)
+		i = end
 	}
 
-	return mergedArgs
+	if prefixConflict {
+		// Let vLLM resolve abbreviations without discarding unrelated local options.
+		return append(localMerged, epochMerged...), suppressed
+	}
+	return append(epochMerged, localMerged...), suppressed
+}
+
+func argName(arg string) string {
+	name, _, _ := strings.Cut(arg, "=")
+	if strings.HasPrefix(name, "-O") && len(name) > 2 && name[2] >= '0' && name[2] <= '9' {
+		return "-O"
+	}
+	return name
+}
+
+func isKnownFullModelOption(key string) bool {
+	// These complete vLLM option names also prefix another option name.
+	switch key {
+	case "--chat-template", "--config", "--data-parallel-size", "--kv-cache-dtype",
+		"--kv-cache-metrics", "--model", "--numa-bind", "--quantization",
+		"--reasoning-parser", "--tokenizer":
+		return true
+	}
+	return false
 }

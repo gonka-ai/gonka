@@ -18,6 +18,7 @@ from abc import abstractmethod
 from common.logger import create_logger
 from common.trackable_task import ITrackableTask
 from api.proxy import setup_vllm_proxy
+from api.inference.vllm.arg_values import get_numeric_arg_value
 
 
 TERMINATION_TIMEOUT = 20
@@ -184,13 +185,7 @@ class VLLMRunner(IVLLMRunner):
         }
 
     def _get_arg_value(self, name: str, default: int = 1) -> int:
-        if name in self.additional_args:
-            try:
-                idx = self.additional_args.index(name)
-                return int(self.additional_args[idx + 1])
-            except (ValueError, IndexError):
-                pass
-        return default
+        return get_numeric_arg_value(self.additional_args, name, default)
 
     @staticmethod
     def _fix_flashinfer_cache_if_locked():
