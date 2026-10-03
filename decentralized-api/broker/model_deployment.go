@@ -52,7 +52,7 @@ func (d ModelDeployment) Fingerprint() string {
 func removeDeploymentArgs(args []string) []string {
 	cleaned := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
-		key := strings.SplitN(args[i], "=", 2)[0]
+		key := modelArgKey(args[i])
 		if !isDeploymentArg(key) {
 			cleaned = append(cleaned, args[i])
 			continue
