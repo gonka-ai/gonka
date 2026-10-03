@@ -417,3 +417,54 @@ func TestSubmitGroupKeyValidationSignature_EpochReadsSkipDealerParts(t *testing.
 		"two epoch reads (%d gas) must cost less than one full read (%d)", validation, fullRead)
 	t.Logf("gas: full epoch read %d, SubmitGroupKeyValidationSignature up to participant check %d", fullRead, validation)
 }
+
+// A verifier needs the commitments of the dealers it votes valid, not every
+// dealer's encrypted shares for all participants.
+func TestSubmitVerificationVector_ReadsCommitmentsNotDealerParts(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	ms := NewMsgServerImpl(k)
+	const epochID = uint64(49)
+	participants := make([]types.BLSParticipantInfo, gasRegressionN)
+	for i := range participants {
+		participants[i] = types.BLSParticipantInfo{Address: string(rune('a' + i)), SlotStartIndex: uint32(i), SlotEndIndex: uint32(i)}
+	}
+	require.NoError(t, k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:                     epochID,
+		ITotalSlots:                 gasRegressionN,
+		TSlotsDegree:                7,
+		Participants:                participants,
+		DkgPhase:                    types.DKGPhase_DKG_PHASE_VERIFYING,
+		VerifyingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+	}))
+	for i := range participants {
+		require.NoError(t, k.SetDealerPart(ctx, epochID, uint32(i), makeDealerPart(participants[i].Address)))
+	}
+
+	metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err := k.GetEpochBLSData(metered, epochID)
+	require.NoError(t, err)
+	fullRead := metered.GasMeter().GasConsumed()
+
+	// Every dealer voted valid; the loaded (junk) commitments fail to decode
+	// at the first proof check, after all the dealer data has been read.
+	validity := make([]bool, gasRegressionN)
+	proofs := make([]types.DealerValidityProof, 0, gasRegressionN-1)
+	for i := range validity {
+		validity[i] = true
+		if i > 0 {
+			proofs = append(proofs, types.DealerValidityProof{DealerIndex: uint32(i), ProofSignature: make([]byte, 96)})
+		}
+	}
+	metered = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = ms.SubmitVerificationVector(metered, &types.MsgSubmitVerificationVector{
+		Creator:              participants[0].Address,
+		EpochId:              epochID,
+		DealerValidity:       validity,
+		DealerValidityProofs: proofs,
+	})
+	require.ErrorContains(t, err, "invalid proof for dealer 1: failed to precompute dealer slot public keys")
+	verifier := metered.GasMeter().GasConsumed()
+	require.Less(t, verifier*2, fullRead,
+		"SubmitVerificationVector (%d gas) must read commitments only, not full dealer parts (full read %d)", verifier, fullRead)
+	t.Logf("gas: full epoch read %d, SubmitVerificationVector up to the first proof %d", fullRead, verifier)
+}
