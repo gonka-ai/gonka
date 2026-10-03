@@ -320,3 +320,100 @@ func TestGetEpochBLSDataBase_SkipsSplitFields(t *testing.T) {
 	baseRead := metered.GasMeter().GasConsumed()
 	require.Less(t, baseRead, storetypes.Gas(50_000), "base read must not scale with dealer parts")
 }
+
+// seedEpochWithDealerParts stores an epoch whose first `parts` participants
+// have submitted dealer parts, so a full GetEpochBLSData pays for all of them.
+func seedEpochWithDealerParts(t *testing.T, k Keeper, ctx sdk.Context, epochID uint64, phase types.DKGPhase, parts int) []types.BLSParticipantInfo {
+	t.Helper()
+	participants := make([]types.BLSParticipantInfo, gasRegressionN)
+	for i := range participants {
+		participants[i] = types.BLSParticipantInfo{
+			Address:        string(rune('a' + i)),
+			SlotStartIndex: uint32(i),
+			SlotEndIndex:   uint32(i),
+		}
+	}
+	require.NoError(t, k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:                   epochID,
+		ITotalSlots:               gasRegressionN,
+		TSlotsDegree:              1,
+		Participants:              participants,
+		DkgPhase:                  phase,
+		DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+		GroupPublicKey:            []byte{1},
+	}))
+	for i := 0; i < parts; i++ {
+		require.NoError(t, k.SetDealerPart(ctx, epochID, uint32(i), makeDealerPart(participants[i].Address)))
+	}
+	return participants
+}
+
+// The last dealer must not pay for reading every earlier dealer part: its
+// handler needs only the base record and its own sub-key.
+func TestSubmitDealerPart_GasIndependentOfEarlierDealers(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	ms := NewMsgServerImpl(k)
+	const epochID = uint64(45)
+	participants := seedEpochWithDealerParts(t, k, ctx, epochID, types.DKGPhase_DKG_PHASE_DEALING, gasRegressionN-1)
+
+	gasOf := func(f func(sdk.Context)) storetypes.Gas {
+		metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+		f(metered)
+		return metered.GasMeter().GasConsumed()
+	}
+	fullRead := gasOf(func(c sdk.Context) {
+		_, err := k.GetEpochBLSData(c, epochID)
+		require.NoError(t, err)
+	})
+
+	shares := make([]types.EncryptedSharesForParticipant, gasRegressionN)
+	for i := range shares {
+		shares[i] = types.EncryptedSharesForParticipant{EncryptedShares: [][]byte{make([]byte, types.MinEncryptedShareCiphertextLen)}}
+	}
+	msg := &types.MsgSubmitDealerPart{
+		Creator:                        participants[gasRegressionN-1].Address,
+		EpochId:                        epochID,
+		Commitments:                    [][]byte{{1}, {2}},
+		EncryptedSharesForParticipants: shares,
+	}
+	dealer := gasOf(func(c sdk.Context) {
+		_, err := ms.SubmitDealerPart(c, msg)
+		require.NoError(t, err)
+	})
+	require.Less(t, dealer, fullRead,
+		"SubmitDealerPart (%d gas) must not rehydrate earlier dealer parts (full read alone %d)", dealer, fullRead)
+
+	// A second submission by the same dealer is still rejected.
+	_, err := ms.SubmitDealerPart(ctx, msg)
+	require.ErrorContains(t, err, "already submitted")
+	t.Logf("gas: full epoch read %d, SubmitDealerPart %d", fullRead, dealer)
+}
+
+// Group key validation reads two epochs but only their base fields
+// (participants, slot keys, group key, phase).
+func TestSubmitGroupKeyValidationSignature_EpochReadsSkipDealerParts(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	ms := NewMsgServerImpl(k)
+	const prevEpochID, newEpochID = uint64(46), uint64(47)
+	seedEpochWithDealerParts(t, k, ctx, prevEpochID, types.DKGPhase_DKG_PHASE_SIGNED, gasRegressionN)
+	seedEpochWithDealerParts(t, k, ctx, newEpochID, types.DKGPhase_DKG_PHASE_COMPLETED, gasRegressionN)
+
+	metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err := k.GetEpochBLSData(metered, prevEpochID)
+	require.NoError(t, err)
+	fullRead := metered.GasMeter().GasConsumed()
+
+	// An outsider fails right after both epoch reads.
+	metered = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = ms.SubmitGroupKeyValidationSignature(metered, &types.MsgSubmitGroupKeyValidationSignature{
+		Creator:          "outsider",
+		NewEpochId:       newEpochID,
+		SlotIndices:      []uint32{0},
+		PartialSignature: make([]byte, 48),
+	})
+	require.ErrorContains(t, err, "not found in previous epoch")
+	validation := metered.GasMeter().GasConsumed()
+	require.Less(t, validation, fullRead,
+		"two epoch reads (%d gas) must cost less than one full read (%d)", validation, fullRead)
+	t.Logf("gas: full epoch read %d, SubmitGroupKeyValidationSignature up to participant check %d", fullRead, validation)
+}
