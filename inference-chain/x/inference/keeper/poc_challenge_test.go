@@ -707,3 +707,49 @@ func TestSubmitPoCChallengeValidations_ReadsEffectiveEpochIndexOnce(t *testing.T
 	}
 	require.Equal(t, 1, reads)
 }
+
+// A challenge vote during a confirmation PoC reads the active event once (window check and finish share it).
+func TestSubmitPoCChallengeValidations_ReadsConfirmationEventOnce(t *testing.T) {
+	k, ctx, _ := setupChallengeCreate(t, 100)
+	seedOpenChallenge(t, k, ctx, 50)
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(testutil.Validator), types.Participant{
+		Index:   testutil.Validator,
+		Address: testutil.Validator,
+	}))
+	require.NoError(t, k.SetActiveConfirmationPoCEvent(ctx, types.ConfirmationPoCEvent{
+		EpochIndex:            2,
+		GenerationStartHeight: 80,
+		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
+	}))
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	event, ok, err := k.GetActiveConfirmationPoCEvent(ctx)
+	require.NoError(t, err)
+	require.True(t, ok)
+	voteCtx := ctx.WithBlockHeight(event.GetValidationStart(params.EpochParams))
+
+	var trace bytes.Buffer
+	voteCtx.MultiStore().SetTracer(&trace)
+	_, err = keeper.NewMsgServerImpl(k).SubmitPoCChallengeValidations(voteCtx, &types.MsgSubmitPoCChallengeValidations{
+		Creator:                  testutil.Validator,
+		PocStageStartBlockHeight: 50,
+		Validations: []*types.PoCValidationEntryV2{{
+			ParticipantAddress: testutil.Executor,
+			ModelId:            challengeTestModel,
+			ValidatedWeight:    4,
+		}},
+	})
+	require.NoError(t, err)
+	vals, err := k.ListChallengeValidations(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.Len(t, vals, 1)
+
+	key := base64.StdEncoding.EncodeToString(types.ActiveConfirmationPoCEventPrefix)
+	reads := 0
+	for _, line := range strings.Split(trace.String(), "\n") {
+		if strings.Contains(line, `"operation":"read"`) && strings.Contains(line, `"key":"`+key+`"`) {
+			reads++
+		}
+	}
+	require.Equal(t, 1, reads)
+}

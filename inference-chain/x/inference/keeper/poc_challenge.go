@@ -94,15 +94,21 @@ func SafetyWindowHeight(nextPoCStart, safetyWindow int64) int64 {
 }
 
 func (k Keeper) ChallengeFinish(ctx context.Context, ch types.PoCChallenge) (int64, error) {
+	event, ok, err := k.GetActiveConfirmationPoCEvent(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return k.challengeFinishWithEvent(ctx, ch, event, ok)
+}
+
+// challengeFinishWithEvent is ChallengeFinish for a caller that already read the active
+// confirmation PoC event in this tx.
+func (k Keeper) challengeFinishWithEvent(ctx context.Context, ch types.PoCChallenge, event *types.ConfirmationPoCEvent, ok bool) (int64, error) {
 	safety, err := k.ChallengeSafetyFinish(ctx, ch)
 	if err != nil {
 		return 0, err
 	}
 	params, err := k.GetParams(ctx)
-	if err != nil {
-		return 0, err
-	}
-	event, ok, err := k.GetActiveConfirmationPoCEvent(ctx)
 	if err != nil {
 		return 0, err
 	}
