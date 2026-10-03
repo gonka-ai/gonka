@@ -56,6 +56,7 @@ type sessionData struct {
 	inferences             map[uint64]InferenceRow
 	inferenceValidationObs map[uint64]map[uint32]SlotValidationObs
 	sealedValidationObs    map[uint64]map[uint32]SlotValidationObs
+	pendingFinishes        map[uint64][]byte
 }
 
 // Memory is an in-memory storage implementation for testing.
@@ -604,6 +605,34 @@ func (m *Memory) DeleteEscrowCache(escrowID string) error {
 	defer m.mu.Unlock()
 	delete(m.escrowCache, escrowID)
 	return nil
+}
+
+func (m *Memory) PutPendingFinish(escrowID string, inferenceID uint64, finishProto []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if s.pendingFinishes == nil {
+		s.pendingFinishes = make(map[uint64][]byte)
+	}
+	s.pendingFinishes[inferenceID] = append([]byte(nil), finishProto...)
+	return nil
+}
+
+func (m *Memory) PendingFinishes(escrowID string) (map[uint64][]byte, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+	out := make(map[uint64][]byte, len(s.pendingFinishes))
+	for id, raw := range s.pendingFinishes {
+		out[id] = append([]byte(nil), raw...)
+	}
+	return out, nil
 }
 
 func (m *Memory) Close() error { return nil }

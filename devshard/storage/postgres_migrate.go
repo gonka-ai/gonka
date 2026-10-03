@@ -210,6 +210,21 @@ ALTER TABLE devshard_storage_identity
     ADD COLUMN IF NOT EXISTS challenge UUID,
 	    ADD COLUMN IF NOT EXISTS challenged_at TIMESTAMPTZ`},
 	},
+	{
+		// 15 is devshard_validation_lease_identity in devshard-0.2.x-v5.0.2.
+		ID:   16,
+		Name: "devshard_pending_finishes",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_pending_finishes (
+    escrow_id     TEXT   NOT NULL,
+    inference_id  BIGINT NOT NULL,
+    epoch_id      BIGINT NOT NULL,
+    finish_proto  BYTEA  NOT NULL,
+    PRIMARY KEY (escrow_id, inference_id)
+)`,
+			`CREATE INDEX IF NOT EXISTS devshard_pending_finishes_by_epoch ON devshard_pending_finishes(epoch_id)`,
+		},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

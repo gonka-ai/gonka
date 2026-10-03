@@ -1049,6 +1049,7 @@ func (s *Server) HandleGetMempool(c echo.Context) (err error) {
 			"error", catchErr)
 	}
 	s.host.EnqueueDueValidations()
+	s.host.RestorePendingFinishes()
 
 	txs := s.host.MempoolTxs()
 	observability.Request.SetMempoolSize(op, len(txs))

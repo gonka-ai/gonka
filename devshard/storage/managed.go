@@ -257,6 +257,22 @@ func (m *ManagedStorage) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	return m.inner.LoadSnapshot(escrowID)
 }
 
+func (m *ManagedStorage) PutPendingFinish(escrowID string, inferenceID uint64, finishProto []byte) error {
+	ps, ok := m.inner.(PendingFinishStore)
+	if !ok {
+		return nil
+	}
+	return ps.PutPendingFinish(escrowID, inferenceID, finishProto)
+}
+
+func (m *ManagedStorage) PendingFinishes(escrowID string) (map[uint64][]byte, error) {
+	ps, ok := m.inner.(PendingFinishStore)
+	if !ok {
+		return nil, nil
+	}
+	return ps.PendingFinishes(escrowID)
+}
+
 func (m *ManagedStorage) InsertSealedInference(escrowID string, row InferenceRow) error {
 	return m.inner.InsertSealedInference(escrowID, row)
 }

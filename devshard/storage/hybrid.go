@@ -673,6 +673,30 @@ func (h *HybridStorage) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	return b.LoadSnapshot(escrowID)
 }
 
+func (h *HybridStorage) PutPendingFinish(escrowID string, inferenceID uint64, finishProto []byte) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	ps, ok := b.(PendingFinishStore)
+	if !ok {
+		return nil
+	}
+	return ps.PutPendingFinish(escrowID, inferenceID, finishProto)
+}
+
+func (h *HybridStorage) PendingFinishes(escrowID string) (map[uint64][]byte, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	ps, ok := b.(PendingFinishStore)
+	if !ok {
+		return nil, nil
+	}
+	return ps.PendingFinishes(escrowID)
+}
+
 func (h *HybridStorage) InsertSealedInference(escrowID string, row InferenceRow) error {
 	b, err := h.routed(escrowID)
 	if err != nil {

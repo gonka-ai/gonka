@@ -29,6 +29,19 @@ func (m *Mempool) Add(entry MempoolEntry) {
 	m.entries[types.TxHash(entry.Tx)] = entry
 }
 
+// AddIfAbsent inserts entry unless a tx with the same hash is already present,
+// so re-adding keeps the original ProposedAt (StaleFinishes measures from it).
+func (m *Mempool) AddIfAbsent(entry MempoolEntry) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := types.TxHash(entry.Tx)
+	if _, ok := m.entries[key]; ok {
+		return false
+	}
+	m.entries[key] = entry
+	return true
+}
+
 // RemoveIncluded removes entries whose tx matches any tx in the diff (by hash).
 func (m *Mempool) RemoveIncluded(txs []*types.DevshardTx) {
 	m.mu.Lock()

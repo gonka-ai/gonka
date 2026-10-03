@@ -126,6 +126,17 @@ CREATE TABLE IF NOT EXISTS inference_validation_obs (
     PRIMARY KEY (escrow_id, inference_id, slot_id)
 )`},
 	},
+	{
+		ID:   8,
+		Name: "pending_finishes",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS pending_finishes (
+    escrow_id     TEXT NOT NULL,
+    inference_id  INTEGER NOT NULL,
+    finish_proto  BLOB NOT NULL,
+    PRIMARY KEY (escrow_id, inference_id)
+)`},
+	},
 	// The SQLite lease store
 	// is now a no-op (single-instance; see storage/leases.go),
 	// so we skip creating the validation_leases table

@@ -1472,6 +1472,47 @@ func (s *SQLite) DeleteEscrowCache(escrowID string) error {
 	return nil
 }
 
+func (s *SQLite) PutPendingFinish(escrowID string, inferenceID uint64, finishProto []byte) error {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	_, err = p.writeDB.Exec(
+		`INSERT INTO pending_finishes (escrow_id, inference_id, finish_proto)
+		 VALUES (?, ?, ?)
+		 ON CONFLICT(escrow_id, inference_id) DO UPDATE SET finish_proto = excluded.finish_proto`,
+		escrowID, inferenceID, finishProto,
+	)
+	if err != nil {
+		return fmt.Errorf("put pending finish: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLite) PendingFinishes(escrowID string) (map[uint64][]byte, error) {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := p.readDB.Query(
+		`SELECT inference_id, finish_proto FROM pending_finishes WHERE escrow_id = ?`, escrowID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list pending finishes: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[uint64][]byte)
+	for rows.Next() {
+		var id uint64
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			return nil, err
+		}
+		out[id] = raw
+	}
+	return out, rows.Err()
+}
+
 // marshalTxs serializes a slice of DevshardTx into a single proto blob
 // by wrapping them in DiffContent (reusing the existing proto message).
 func marshalTxs(txs []*types.DevshardTx) ([]byte, error) {
