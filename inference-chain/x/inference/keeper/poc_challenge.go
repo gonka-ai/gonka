@@ -94,15 +94,21 @@ func SafetyWindowHeight(nextPoCStart, safetyWindow int64) int64 {
 }
 
 func (k Keeper) ChallengeFinish(ctx context.Context, ch types.PoCChallenge) (int64, error) {
+	event, ok, err := k.GetActiveConfirmationPoCEvent(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return k.challengeFinishWithEvent(ctx, ch, event, ok)
+}
+
+// challengeFinishWithEvent is ChallengeFinish for a caller that already read the active
+// confirmation PoC event in this tx.
+func (k Keeper) challengeFinishWithEvent(ctx context.Context, ch types.PoCChallenge, event *types.ConfirmationPoCEvent, ok bool) (int64, error) {
 	safety, err := k.ChallengeSafetyFinish(ctx, ch)
 	if err != nil {
 		return 0, err
 	}
 	params, err := k.GetParams(ctx)
-	if err != nil {
-		return 0, err
-	}
-	event, ok, err := k.GetActiveConfirmationPoCEvent(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -121,6 +127,52 @@ func (k Keeper) IsUnderChallenge(ctx context.Context, addr string) bool {
 	if err != nil || !found {
 		return false
 	}
+	return k.challengeBlocks(ctx, ch)
+}
+
+// challengedAddresses is IsUnderChallenge for every address at once: one pass over the
+// challenge records (few) instead of a lookup per group member (all of them). Keyed by
+// raw address bytes; a record that fails to decode is skipped, as IsUnderChallenge would.
+func (k Keeper) challengedAddresses(ctx context.Context) map[string]struct{} {
+	iter, err := k.PoCChallenges.Iterate(ctx, nil)
+	if err != nil {
+		return nil
+	}
+	var open []collections.KeyValue[sdk.AccAddress, types.PoCChallenge]
+	for ; iter.Valid(); iter.Next() {
+		kv, err := iter.KeyValue()
+		if err != nil || kv.Value.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
+			continue
+		}
+		open = append(open, kv)
+	}
+	iter.Close()
+	var out map[string]struct{}
+	for _, kv := range open {
+		if !k.challengeBlocks(ctx, kv.Value) {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]struct{}, len(open))
+		}
+		out[string(kv.Key)] = struct{}{}
+	}
+	return out
+}
+
+func isChallengedAddress(challenged map[string]struct{}, addr string) bool {
+	if len(challenged) == 0 {
+		return false
+	}
+	acc, err := sdk.AccAddressFromBech32(addr)
+	if err != nil {
+		return false
+	}
+	_, ok := challenged[string(acc)]
+	return ok
+}
+
+func (k Keeper) challengeBlocks(ctx context.Context, ch types.PoCChallenge) bool {
 	if ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 		return false
 	}
@@ -575,7 +627,7 @@ func (k Keeper) filterOutChallengeParticipants(ctx context.Context, members []*g
 		return members
 	}
 	for _, ch := range list {
-		if k.IsUnderChallenge(ctx, ch.Target) {
+		if k.challengeBlocks(ctx, ch) {
 			blocked[ch.Target] = struct{}{}
 		}
 	}
@@ -601,7 +653,15 @@ func (k Keeper) WaiveDevshardMissesForActiveChallenge(
 	hostStats types.DevshardSettlementHostStats,
 	assignedToSlot uint64,
 ) (types.DevshardSettlementHostStats, uint64) {
-	if !k.HasActiveChallengeRecord(ctx, host) {
+	return waiveDevshardMisses(k.HasActiveChallengeRecord(ctx, host), hostStats, assignedToSlot)
+}
+
+func waiveDevshardMisses(
+	activeChallenge bool,
+	hostStats types.DevshardSettlementHostStats,
+	assignedToSlot uint64,
+) (types.DevshardSettlementHostStats, uint64) {
+	if !activeChallenge {
 		return hostStats, assignedToSlot
 	}
 	original := uint64(hostStats.Missed)

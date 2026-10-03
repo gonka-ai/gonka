@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/rand"
 
@@ -14,6 +15,7 @@ import (
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+	streamvestingtypes "github.com/productscience/inference/x/streamvesting/types"
 	"github.com/shopspring/decimal"
 )
 
@@ -87,7 +89,8 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 		return nil, fmt.Errorf("failed to get params: %w", err)
 	}
 	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
-	if err := ms.PayParticipantFromEscrow(cacheCtx, payoutAddress, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
+	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
+	workFailed := func(err error) (*types.MsgClaimRewardsResponse, error) {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying participant for work, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 			return &types.MsgClaimRewardsResponse{
@@ -101,13 +104,7 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 			Result: "Error paying participant from escrow, claim can be retried",
 		}, err
 	}
-	if err := ms.AddTokenomicsData(cacheCtx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()}); err != nil {
-		ms.LogError("Failed to update tokenomics data after work payment", types.Claims, "error", err)
-	}
-
-	// Pay rewards from module
-	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
-	if err := ms.PayParticipantFromModule(cacheCtx, payoutAddress, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
+	rewardFailed := func(err error) (*types.MsgClaimRewardsResponse, error) {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying rewards, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 		} else {
@@ -117,6 +114,39 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 			Amount: 0,
 			Result: "Reward payment failed, claim can be retried",
 		}, err
+	}
+
+	if escrowPayment > 0 && settleAmount.GetRewardCoins() > 0 && *workVestingPeriod > 0 && *rewardVestingPeriod > 0 {
+		// Both payments vest into the same schedule: write it once, not twice.
+		err := ms.payParticipantVested(cacheCtx, payoutAddress, []vestedPayment{
+			{amount: int64(escrowPayment), memo: "work_coins:" + settleAmount.Participant, vestingPeriods: workVestingPeriod},
+			{amount: int64(settleAmount.GetRewardCoins()), memo: "reward_coins:" + settleAmount.Participant, vestingPeriods: rewardVestingPeriod},
+		})
+		if err != nil {
+			var paymentErr *streamvestingtypes.VestedRewardError
+			if !errors.As(err, &paymentErr) {
+				return workFailed(err)
+			}
+			if paymentErr.Index == 1 {
+				return rewardFailed(paymentErr.Err)
+			}
+			return workFailed(paymentErr.Err)
+		}
+		if err := ms.AddTokenomicsData(cacheCtx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()}); err != nil {
+			ms.LogError("Failed to update tokenomics data after work payment", types.Claims, "error", err)
+		}
+	} else {
+		if err := ms.PayParticipantFromEscrow(cacheCtx, payoutAddress, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
+			return workFailed(err)
+		}
+		if err := ms.AddTokenomicsData(cacheCtx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()}); err != nil {
+			ms.LogError("Failed to update tokenomics data after work payment", types.Claims, "error", err)
+		}
+
+		// Pay rewards from module
+		if err := ms.PayParticipantFromModule(cacheCtx, payoutAddress, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
+			return rewardFailed(err)
+		}
 	}
 
 	ms.finishSettle(cacheCtx, settleAmount)
