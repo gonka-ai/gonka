@@ -144,7 +144,8 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 	height := ctx.BlockHeight()
 	startBlockHeight := msg.PocStageStartBlockHeight
 	epochIndex, ok := k.GetEffectiveEpochIndex(goCtx)
-	if err := k.validateChallengeVoteWindow(goCtx, height, epochIndex, ok, params); err != nil {
+	event, eventActive, err := k.validateChallengeVoteWindow(goCtx, height, epochIndex, ok, params)
+	if err != nil {
 		return nil, err
 	}
 	if !ok {
@@ -174,7 +175,7 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 		if startBlockHeight != ch.StartHeight {
 			continue
 		}
-		finish, err := k.ChallengeFinish(goCtx, ch)
+		finish, err := k.challengeFinishWithEvent(goCtx, ch, event, eventActive)
 		if err != nil {
 			return nil, err
 		}
@@ -217,33 +218,34 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 }
 
 // effectiveIndex/found come from the caller's GetEffectiveEpochIndex, so it is read once per tx.
-func (k msgServer) validateChallengeVoteWindow(ctx context.Context, height int64, effectiveIndex uint64, found bool, params types.Params) error {
+// Returns the active confirmation PoC event it read, for challengeFinishWithEvent.
+func (k msgServer) validateChallengeVoteWindow(ctx context.Context, height int64, effectiveIndex uint64, found bool, params types.Params) (*types.ConfirmationPoCEvent, bool, error) {
 	if params.EpochParams == nil {
-		return sdkerrors.Wrap(types.ErrIllegalState, "epoch params not set")
+		return nil, false, sdkerrors.Wrap(types.ErrIllegalState, "epoch params not set")
 	}
 	event, isActive, err := k.GetActiveConfirmationPoCEvent(ctx)
 	if err != nil {
-		return err
+		return nil, false, err
 	}
 	if isActive && event != nil && event.Phase != types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
 		if event.Phase != types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION {
-			return sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC is not in validation")
+			return nil, false, sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC is not in validation")
 		}
 		if !event.IsInValidationWindow(height, params.EpochParams) {
-			return sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC validation window closed")
+			return nil, false, sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC validation window closed")
 		}
-		return nil
+		return event, isActive, nil
 	}
 	var upcomingEpoch *types.Epoch
 	if found {
 		upcomingEpoch, found = k.GetEpoch(ctx, effectiveIndex+1)
 	}
 	if !found || upcomingEpoch == nil {
-		return sdkerrors.Wrap(types.ErrUpcomingEpochNotFound, "failed to get upcoming epoch")
+		return nil, false, sdkerrors.Wrap(types.ErrUpcomingEpochNotFound, "failed to get upcoming epoch")
 	}
 	epochContext := types.NewEpochContext(*upcomingEpoch, *params.EpochParams)
 	if !epochContext.IsValidationExchangeWindow(height) {
-		return sdkerrors.Wrap(types.ErrPocTooLate, "PoC validation exchange window is closed")
+		return nil, false, sdkerrors.Wrap(types.ErrPocTooLate, "PoC validation exchange window is closed")
 	}
-	return nil
+	return event, isActive, nil
 }
