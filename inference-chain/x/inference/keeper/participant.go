@@ -15,7 +15,22 @@ func (k Keeper) SetParticipant(ctx context.Context, participant types.Participan
 		k.LogError("Failed to update participant status", types.Validation, "error", err)
 		return err
 	}
+	return k.saveParticipant(ctx, participant)
+}
 
+// setParticipantFromStored is SetParticipant for a participant read earlier in the same tx
+// and not written since: storedStats is a copy of its CurrentEpochStats as read, so the
+// status check does not read the participant again.
+func (k Keeper) setParticipantFromStored(ctx context.Context, participant types.Participant, storedStats *types.CurrentEpochStats) error {
+	err := k.updateParticipantStatus(ctx, &participant, storedStats, true)
+	if err != nil {
+		k.LogError("Failed to update participant status", types.Validation, "error", err)
+		return err
+	}
+	return k.saveParticipant(ctx, participant)
+}
+
+func (k Keeper) saveParticipant(ctx context.Context, participant types.Participant) error {
 	participantAddress, err := sdk.AccAddressFromBech32(participant.Index)
 	if err != nil {
 		return err
