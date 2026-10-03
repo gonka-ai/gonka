@@ -97,19 +97,16 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 			"capacityPerSec", capacity, "utilization", utilization.String())
 
 		// Calculate new price using our algorithm
-		oldPrice, newPrice, err := k.CalculateModelDynamicPrice(ctx, modelId, utilization)
-		if err != nil {
-			k.LogError("Failed to calculate dynamic price for model", types.Pricing,
-				"modelId", modelId, "error", err)
-			continue
-		}
+		oldPrice, newPrice, stored := k.calculateModelDynamicPrice(ctx, dpParams, modelId, utilization)
 
-		// Update the price in KV storage
-		err = k.SetModelCurrentPrice(ctx, modelId, newPrice)
-		if err != nil {
-			k.LogError("Failed to update price for model", types.Pricing,
-				"modelId", modelId, "newPrice", newPrice, "error", err)
-			continue
+		// An unchanged price is not rewritten: the IAVL write would still add a leaf every block.
+		if !stored || newPrice != oldPrice {
+			err = k.SetModelCurrentPrice(ctx, modelId, newPrice)
+			if err != nil {
+				k.LogError("Failed to update price for model", types.Pricing,
+					"modelId", modelId, "newPrice", newPrice, "error", err)
+				continue
+			}
 		}
 
 		// Track changes
@@ -142,13 +139,18 @@ func (k *Keeper) CalculateModelDynamicPrice(ctx context.Context, modelId string,
 		return 0, 0, fmt.Errorf("dynamic pricing parameters not found")
 	}
 
-	dpParams := params.DynamicPricingParams
+	currentPrice, newPrice, _ := k.calculateModelDynamicPrice(ctx, params.DynamicPricingParams, modelId, utilization)
+	return currentPrice, newPrice, nil
+}
 
+// calculateModelDynamicPrice also reports whether the model had a stored price.
+func (k *Keeper) calculateModelDynamicPrice(ctx context.Context, dpParams *types.DynamicPricingParams, modelId string, utilization decimal.Decimal) (uint64, uint64, bool) {
 	// Note: Grace period is checked globally in UpdateDynamicPricing()
 	// so this function is only called when grace period has ended
 
 	// Get current price for this model
 	currentPrice, err := k.GetModelCurrentPrice(ctx, modelId)
+	stored := err == nil
 	if err != nil {
 		// If no current price exists, use base price
 		currentPrice = dpParams.BasePerTokenPrice
@@ -227,7 +229,7 @@ func (k *Keeper) CalculateModelDynamicPrice(ctx context.Context, modelId string,
 		newPrice = minPrice
 	}
 
-	return currentPrice, newPrice, nil
+	return currentPrice, newPrice, stored
 }
 
 // handleGracePeriod handles both active grace period and transition out of grace period
