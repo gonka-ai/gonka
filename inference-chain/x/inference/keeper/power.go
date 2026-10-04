@@ -126,14 +126,16 @@ func (k Keeper) GetLiveSubGroupsForCurrentEpoch(ctx context.Context) (
 }
 
 func (k Keeper) epochGroupFromData(data types.EpochGroupData) *epochgroup.EpochGroup {
+	// One pointer for all five roles: each Keeper value boxed into an interface is a ~7 KB heap copy.
+	kp := &k
 	return epochgroup.NewEpochGroup(
 		k.group,
-		k,
-		k,
-		k,
+		kp,
+		kp,
+		kp,
 		k.GetAuthority(),
-		k,
-		k,
+		kp,
+		kp,
 		&data,
 	)
 }
