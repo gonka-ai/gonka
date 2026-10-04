@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
@@ -195,9 +197,10 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		return nil, errors.New("circuit keeper is required for ante builder")
 	}
 
+	ak := txAuthKeeper{options.AccountKeeper}
 	anteDecorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
-		TxParamsCacheDecorator{},        // inference params read once per tx
+		TxParamsCacheDecorator{},        // inference params, auth params and signer accounts read once per tx
 		wasmkeeper.NewLimitSimulationGasDecorator(options.NodeConfig.SimulationGasLimit), // after setup context to enforce limits early
 		// wasmd CountTX skips KV in Simulate; this wrapper meters it. Remove when wasmd does.
 		NewCountTXSimulateGasDecorator(options.TXCounterStoreService),
@@ -207,8 +210,8 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		ante.NewValidateBasicDecorator(),
 		MaxTxFeeDecorator{},
 		ante.NewTxTimeoutHeightDecorator(),
-		ante.NewValidateMemoDecorator(options.AccountKeeper),
-		ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
+		ante.NewValidateMemoDecorator(ak),
+		ante.NewConsumeGasForTxSizeDecorator(ak),
 		LiquidityPoolFeeBypassDecorator{
 			WasmKeeper:      options.WasmKeeper,
 			InferenceKeeper: options.InferenceKeeper,
@@ -231,16 +234,16 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 			// before discretionary swap traffic.
 			Priority: 10_000_000,
 		},
-		ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, GonkaFeeChecker(options.InferenceKeeper)),
+		ante.NewDeductFeeDecorator(ak, options.BankKeeper, options.FeegrantKeeper, GonkaFeeChecker(options.InferenceKeeper)),
 		FeeGroupRepeatedLenDecorator{InferenceKeeper: options.InferenceKeeper},
 		// Cheap mempool filters before signature verification (avoid crypto work on
 		// obviously invalid PoC txs). CheckTx ante failures discard
 		// state (including fee deduction), so fee-first is not an economic throttle.
 		NewPocPeriodValidationDecorator(options.InferenceKeeper, options.Codec),
-		ante.NewSetPubKeyDecorator(options.AccountKeeper),
-		ante.NewValidateSigCountDecorator(options.AccountKeeper),
-		ante.NewSigGasConsumeDecorator(options.AccountKeeper, options.SigGasConsumer),
-		ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler),
+		ante.NewSetPubKeyDecorator(ak),
+		ante.NewValidateSigCountDecorator(ak),
+		ante.NewSigGasConsumeDecorator(ak, options.SigGasConsumer),
+		ante.NewSigVerificationDecorator(ak, options.SignModeHandler),
 		// SDK skips unordered nonce KV in Simulate; this meters it. Remove when the SDK does.
 		NewUnorderedNonceSimGasDecorator(options.AccountKeeper),
 		// Authz grant lookup after signature verification: the outer Grantee has
@@ -250,7 +253,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		// Bridge early-reject after sig verification: group membership / bridge-state
 		// reads must not run on unauthenticated txs.
 		NewBridgeExchangeEarlyRejectDecorator(options.InferenceKeeper),
-		ante.NewIncrementSequenceDecorator(options.AccountKeeper),
+		ante.NewIncrementSequenceDecorator(ak),
 		ibcante.NewRedundantRelayDecorator(options.IBCKeeper),
 	}
 
@@ -262,7 +265,64 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 type TxParamsCacheDecorator struct{}
 
 func (TxParamsCacheDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
-	return next(inferencemodulekeeper.WithTxParamsCache(ctx), tx, simulate)
+	ctx = inferencemodulekeeper.WithTxParamsCache(ctx).WithValue(txAuthCacheKey{}, newTxAuthCache())
+	return next(ctx, tx, simulate)
+}
+
+// txAuthKeeper serves the SDK ante decorators x/auth params and accounts from one read per tx.
+// Within the ante chain accounts are written only through SetAccount below.
+type txAuthKeeper struct {
+	ante.AccountKeeper
+}
+
+type txAuthCacheKey struct{}
+
+type txAuthCache struct {
+	params   authtypes.Params
+	paramsOk bool
+	accounts map[string]sdk.AccountI
+}
+
+func newTxAuthCache() *txAuthCache {
+	return &txAuthCache{accounts: map[string]sdk.AccountI{}}
+}
+
+func txAuthCacheFrom(ctx context.Context) *txAuthCache {
+	c, _ := ctx.Value(txAuthCacheKey{}).(*txAuthCache)
+	return c
+}
+
+func (k txAuthKeeper) GetParams(ctx context.Context) authtypes.Params {
+	c := txAuthCacheFrom(ctx)
+	if c == nil {
+		return k.AccountKeeper.GetParams(ctx)
+	}
+	if !c.paramsOk {
+		c.params, c.paramsOk = k.AccountKeeper.GetParams(ctx), true
+	}
+	return c.params
+}
+
+func (k txAuthKeeper) GetAccount(ctx context.Context, addr sdk.AccAddress) sdk.AccountI {
+	c := txAuthCacheFrom(ctx)
+	if c == nil {
+		return k.AccountKeeper.GetAccount(ctx, addr)
+	}
+	if acc, ok := c.accounts[string(addr)]; ok {
+		return acc
+	}
+	acc := k.AccountKeeper.GetAccount(ctx, addr)
+	if acc != nil {
+		c.accounts[string(addr)] = acc
+	}
+	return acc
+}
+
+func (k txAuthKeeper) SetAccount(ctx context.Context, acc sdk.AccountI) {
+	k.AccountKeeper.SetAccount(ctx, acc)
+	if c := txAuthCacheFrom(ctx); c != nil {
+		c.accounts[string(acc.GetAddress())] = acc
+	}
 }
 
 func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.NodeConfig, txCounterStoreKey *storetypes.KVStoreKey) {
