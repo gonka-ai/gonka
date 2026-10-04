@@ -284,8 +284,6 @@ func TestModelRollingWindows_ReconcileAndUpdate(t *testing.T) {
 		[]string{"model-1", "model-2"},
 		map[string]uint64{"model-1": 100},
 		60,
-		map[string]uint64{"model-1": 1},
-		120,
 	)
 	require.NoError(t, err)
 
@@ -301,18 +299,11 @@ func TestModelRollingWindows_ReconcileAndUpdate(t *testing.T) {
 	avg2Float, _ := avg2.Float64()
 	assert.InDelta(t, 0.0, avg2Float, 1e-6)
 
-	count1, found, err := k.GetModelInferenceCountRollingSum(goCtx, "model-1", 24)
-	require.NoError(t, err)
-	require.True(t, found)
-	assert.Equal(t, uint64(1), count1)
-
 	err = k.UpdateModelRollingWindowsForActiveModels(
 		goCtx,
 		[]string{"model-1"},
 		map[string]uint64{"model-1": 200},
 		60,
-		map[string]uint64{"model-1": 2},
-		120,
 	)
 	require.NoError(t, err)
 
@@ -322,18 +313,9 @@ func TestModelRollingWindows_ReconcileAndUpdate(t *testing.T) {
 	avg1Float, _ = avg1.Float64()
 	assert.InDelta(t, 300.0/12.0, avg1Float, 1e-6)
 
-	count1, found, err = k.GetModelInferenceCountRollingSum(goCtx, "model-1", 24)
-	require.NoError(t, err)
-	require.True(t, found)
-	assert.Equal(t, uint64(3), count1)
-
 	_, found, err = k.GetModelLoadRollingAveragePerBlock(goCtx, "model-2", 12)
 	require.NoError(t, err)
 	assert.False(t, found, "non-active model load state should be removed")
-
-	_, found, err = k.GetModelInferenceCountRollingSum(goCtx, "model-2", 24)
-	require.NoError(t, err)
-	assert.False(t, found, "non-active model inference-count state should be removed")
 }
 
 func TestUpdateDynamicPricing_UsesRollingAverageUtilization(t *testing.T) {
@@ -376,8 +358,6 @@ func TestUpdateDynamicPricing_UsesRollingAverageUtilization(t *testing.T) {
 			[]string{"model-high", "model-zero"},
 			map[string]uint64{"model-high": 5000},
 			60,
-			map[string]uint64{"model-high": 1},
-			120,
 		))
 	}
 
@@ -848,7 +828,7 @@ func TestModelRollingWindows_SkipsUnchangedWrite(t *testing.T) {
 	models := []string{"model-idle", "model-busy"}
 
 	for i := 0; i < 24; i++ {
-		require.NoError(t, k.UpdateModelRollingWindowsForActiveModels(goCtx, models, nil, 60, nil, 120))
+		require.NoError(t, k.UpdateModelRollingWindowsForActiveModels(goCtx, models, nil, 60))
 	}
 
 	var trace bytes.Buffer
@@ -858,8 +838,6 @@ func TestModelRollingWindows_SkipsUnchangedWrite(t *testing.T) {
 		models,
 		map[string]uint64{"model-busy": 100},
 		60,
-		map[string]uint64{"model-busy": 1},
-		120,
 	))
 	ctx.MultiStore().SetTracer(nil)
 
@@ -878,14 +856,10 @@ func TestModelRollingWindows_SkipsUnchangedWrite(t *testing.T) {
 			}
 		}
 	}
-	assert.Equal(t, map[string]int{"model-busy": 2}, written, "only the window that moved is written")
+	assert.Equal(t, map[string]int{"model-busy": 1}, written, "only the window that moved is written")
 
 	avg, found, err := k.GetModelLoadRollingAveragePerBlock(goCtx, "model-idle", 12)
 	require.NoError(t, err)
 	require.True(t, found)
 	assert.True(t, avg.IsZero())
-	count, found, err := k.GetModelInferenceCountRollingSum(goCtx, "model-busy", 24)
-	require.NoError(t, err)
-	require.True(t, found)
-	assert.Equal(t, uint64(1), count)
 }
