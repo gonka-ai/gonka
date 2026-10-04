@@ -752,7 +752,43 @@ func (sm *StateMachine) RebuildSealedInferenceIndexFromDiffs(store storage.Stora
 	// needs only the group and config captured above plus the slot lookup maps,
 	// which are immutable after construction.
 	folded := sm.foldInferenceRecordsFromDiffs(group, price, threshold, records)
+	return writeFoldedSealedIndex(store, escrowID, sealedNonces, live, folded)
+}
 
+// RebuildSealedInferenceIndexFromRange wipes the escrow's sealed-inference rows
+// and reinserts them from [from, to] plus current live RAM records. The journal
+// is folded one page at a time. The wipe runs only after that fold finishes, so
+// a failed read leaves the existing rows in place.
+func (sm *StateMachine) RebuildSealedInferenceIndexFromRange(store storage.Storage, from, to uint64) error {
+	if store == nil {
+		store = sm.inferenceStore
+	}
+
+	sm.mu.RLock()
+	escrowID := sm.state.EscrowID
+	group := append([]types.SlotAssignment(nil), sm.state.Group...)
+	price := sm.state.Config.TokenPrice
+	threshold := sm.state.Config.VoteThreshold
+	sealedNonces := maps.Clone(sm.sealedNonces)
+	live := make(map[uint64]*types.InferenceRecord, len(sm.state.Inferences))
+	for id, rec := range sm.state.Inferences {
+		live[id] = cloneInferenceRecord(rec)
+	}
+	sm.mu.RUnlock()
+
+	folded := make(map[uint64]*types.InferenceRecord)
+	if len(group) > 0 && from <= to {
+		if err := storage.ReadDiffPages(store, escrowID, from, to, func(page []types.DiffRecord) error {
+			sm.foldInferenceRecordsInto(group, price, threshold, page, folded)
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	return writeFoldedSealedIndex(store, escrowID, sealedNonces, live, folded)
+}
+
+func writeFoldedSealedIndex(store storage.Storage, escrowID string, sealedNonces map[uint64]uint64, live map[uint64]*types.InferenceRecord, folded map[uint64]*types.InferenceRecord) error {
 	if err := store.DeleteSealedInferences(escrowID); err != nil {
 		return err
 	}
@@ -793,8 +829,15 @@ func (sm *StateMachine) RebuildSealedInferenceIndexFromDiffs(store storage.Stora
 // before the walk; everything else it reads is immutable after construction.
 func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignment, price uint64, threshold uint32, records []types.DiffRecord) map[uint64]*types.InferenceRecord {
 	out := make(map[uint64]*types.InferenceRecord)
-	if len(group) == 0 {
-		return out
+	sm.foldInferenceRecordsInto(group, price, threshold, records, out)
+	return out
+}
+
+// foldInferenceRecordsInto replays records into out. A later page continues
+// the same map, so a paged walk matches one pass over the whole journal.
+func (sm *StateMachine) foldInferenceRecordsInto(group []types.SlotAssignment, price uint64, threshold uint32, records []types.DiffRecord, out map[uint64]*types.InferenceRecord) {
+	if len(group) == 0 || out == nil {
+		return
 	}
 	groupLen := uint64(len(group))
 	for _, rec := range records {
@@ -923,7 +966,6 @@ func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignme
 			}
 		}
 	}
-	return out
 }
 
 // persistLiveInferenceObsLocked upserts the current live inference snapshot

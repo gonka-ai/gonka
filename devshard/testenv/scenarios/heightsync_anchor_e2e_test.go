@@ -778,6 +778,23 @@ func syncHostsFromSession(t *testing.T, st *fourHostStack) {
 	}
 }
 
+// observeComposedDiffs records every diff the session composes from now on.
+// Diffs() is only the retained suffix, which empties once every host answers.
+func observeComposedDiffs(session *user.Session) func() []types.Diff {
+	var mu sync.Mutex
+	var diffs []types.Diff
+	session.SetDiffObserver(func(d types.Diff) {
+		mu.Lock()
+		diffs = append(diffs, d)
+		mu.Unlock()
+	})
+	return func() []types.Diff {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]types.Diff(nil), diffs...)
+	}
+}
+
 func diffNonces(diffs []types.Diff) []uint64 {
 	out := make([]uint64, 0, len(diffs))
 	for _, d := range diffs {
@@ -1477,7 +1494,12 @@ func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotCompatibility(t *testing.
 	require.Equal(t, uint64(1), resp.Nonce)
 	rootBefore, err := st.Session.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
+	var bare types.EscrowState
 	bareSnapshot, err := json.Marshal(st.Session.StateMachine().SnapshotState())
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(bareSnapshot, &bare))
+	bare.Balance++
+	bareSnapshot, err = json.Marshal(bare)
 	require.NoError(t, err)
 
 	require.NoError(t, st.Session.Close())
@@ -1491,10 +1513,11 @@ func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotCompatibility(t *testing.
 	st.Session = recovered
 	require.Equal(t, uint64(1), recovered.Nonce())
 	require.Len(t, recovered.Diffs(), 1,
-		"legacy bare snapshots have no host cursor, so recovery must backfill pre-snapshot diffs")
+		"a bare snapshot is ignored, so recovery replays the journal into sess.diffs")
 	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
 	require.Equal(t, rootBefore, rootAfter)
+	require.NotEqual(t, bare.Balance, recovered.StateMachine().SnapshotState().Balance)
 
 	upgradedStore, err := storage.NewSQLite(st.StoragePath)
 	require.NoError(t, err)
@@ -1506,7 +1529,8 @@ func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotCompatibility(t *testing.
 		HostSyncNonce map[int]uint64     `json:"host_sync_nonce,omitempty"`
 	}
 	require.NoError(t, json.Unmarshal(upgradedData, &upgraded))
-	require.NotNil(t, upgraded.State, "legacy snapshot must be upgraded to the wrapped format")
+	require.NotNil(t, upgraded.State, "replaying from nonce 1 replaces the bare blob with a wrapper")
+	require.NotEqual(t, bare.Balance, upgraded.State.Balance)
 
 	resp, err = recovered.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -1538,7 +1562,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotUpgradeBecomesSnapshotOnl
 	st.Session = firstRecover
 	require.Equal(t, uint64(1), firstRecover.Nonce())
 	require.Len(t, firstRecover.Diffs(), 1,
-		"first legacy recovery must keep full pre-snapshot backfill for unknown host cursors")
+		"a bare snapshot is ignored, so the first recovery replays the journal")
 
 	resp, err = firstRecover.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -1678,6 +1702,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartHostLowerNonceCatchesUpFromSnapshot(t *
 	ctx := context.Background()
 	st := setupOneHostHTTPHeightSyncRestartStack(t)
 	params := defaultInferenceParams()
+	composed := observeComposedDiffs(st.Session)
 
 	for nonce := uint64(1); nonce <= 2; nonce++ {
 		resp, err := st.Session.SendInference(ctx, params)
@@ -1685,7 +1710,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartHostLowerNonceCatchesUpFromSnapshot(t *
 		require.Equal(t, nonce, resp.Nonce)
 	}
 	require.Equal(t, uint64(2), st.Server.Host().SnapshotState().LatestNonce)
-	diffs := append([]types.Diff(nil), st.Session.Diffs()...)
+	diffs := composed()
 	require.Equal(t, []uint64{1, 2}, diffNonces(diffs))
 	stateSnapshot := st.Session.StateMachine().SnapshotState()
 	rootBefore, err := st.Session.StateMachine().ComputeStateRoot()
@@ -1734,6 +1759,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	require.NoError(t, st.Session.Close())
 	st.Heartbeat = &heightsync.HeartbeatConfig{Interval: 20 * time.Millisecond}
 	st.Session = st.newHTTPSession(t)
+	composed := observeComposedDiffs(st.Session)
 
 	_, err := st.Session.SendInference(ctx, defaultInferenceParams())
 	require.NoError(t, err)
@@ -1742,7 +1768,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	time.Sleep(40 * time.Millisecond)
 
 	require.NoError(t, st.Session.MaybeHeartbeat(ctx))
-	ackDiffs := st.Session.Diffs()
+	ackDiffs := composed()
 	acks := heightAcksInScenarioDiffs(ackDiffs)
 	require.Len(t, acks, 1)
 	require.Equal(t, uint32(0), acks[0].SlotId)
@@ -1767,12 +1793,13 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	require.Empty(t, heightAcksInScenarioTxs(recovered.PendingTxs()),
 		"late duplicate durable height_ack must not re-enter pending after recovery")
 
+	recoveredComposed := observeComposedDiffs(recovered)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
 	var oldTurnAcks []*types.MsgHeightAck
 	var newTurnAcks []*types.MsgHeightAck
 	// ref_nonce names the turn now. The pre-restart ack answers the heartbeat at
 	// acks[0].RefNonce; anything answering a later nonce belongs to the fresh turn.
-	for _, ack := range heightAcksInScenarioDiffs(recovered.Diffs()) {
+	for _, ack := range heightAcksInScenarioDiffs(recoveredComposed()) {
 		if ack.RefNonce == acks[0].RefNonce {
 			oldTurnAcks = append(oldTurnAcks, ack)
 			continue

@@ -229,6 +229,10 @@ func (m *ManagedStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([
 	return m.inner.GetDiffs(escrowID, fromNonce, toNonce)
 }
 
+func (m *ManagedStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	return m.inner.DiffSizes(escrowID, fromNonce, toNonce, limit)
+}
+
 func (m *ManagedStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	return m.inner.AddSignature(escrowID, nonce, slotID, sig)
 }

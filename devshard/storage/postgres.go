@@ -1445,6 +1445,40 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 	return result, rows.Err()
 }
 
+// DiffSizes reads octet_length from the TOAST header, so a large txs_proto is
+// not fetched or decompressed.
+func (s *Postgres) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	if fromNonce > toNonce || limit <= 0 {
+		return nil, nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
+		`SELECT nonce, octet_length(txs_proto) FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
+		 ORDER BY nonce LIMIT $5`,
+		epochID, escrowID, fromNonce, toNonce, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DiffSize
+	for rows.Next() {
+		var nonce uint64
+		var size int64
+		if err := rows.Scan(&nonce, &size); err != nil {
+			return nil, err
+		}
+		out = append(out, DiffSize{Nonce: nonce, Bytes: int(size)})
+	}
+	return out, rows.Err()
+}
+
 func (s *Postgres) MarkFinalized(escrowID string, nonce uint64) error {
 	epochID, err := s.lookupEpoch(escrowID)
 	if err != nil {

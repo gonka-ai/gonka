@@ -617,6 +617,14 @@ func (h *HybridStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]
 	return b.GetDiffs(escrowID, fromNonce, toNonce)
 }
 
+func (h *HybridStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	return b.DiffSizes(escrowID, fromNonce, toNonce, limit)
+}
+
 func (h *HybridStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	b, err := h.routed(escrowID)
 	if err != nil {

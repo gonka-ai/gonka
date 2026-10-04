@@ -693,18 +693,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 	var rejectCause string
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		// Fetch stored diffs to forward to executor during challenge.
-		var storedDiffs []types.Diff
-		if s.store != nil && st.LatestNonce > 0 {
-			records, dErr := s.store.GetDiffs(s.host.EscrowID(), 1, st.LatestNonce)
-			if dErr == nil {
-				storedDiffs = make([]types.Diff, len(records))
-				for i, r := range records {
-					storedDiffs[i] = r.Diff
-				}
-			}
-		}
-		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, s.host, st.Config, nowUnix)
+		accept, err = host.VerifyRefusedTimeoutPaged(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, st.Config, nowUnix, s.loadRefusedDiffPage)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		accept, err = host.VerifyExecutionTimeout(c.Request().Context(), st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
 	default:
@@ -730,6 +719,37 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		resp.Mempool = mempoolBytes
 	}
 	return writeJSON(c, http.StatusOK, resp)
+}
+
+// errStopRefusedDiffPage ends a ReadDiffPages walk after the first page.
+var errStopRefusedDiffPage = errors.New("stop after refused diff page")
+
+// loadRefusedDiffPage reads one page of [from, to] for a refused-timeout
+// challenge. The caller drops the slice after ChallengeReceipt returns.
+func (s *Server) loadRefusedDiffPage(from, to uint64) ([]types.Diff, uint64, error) {
+	if s.store == nil || from > to {
+		return nil, 0, nil
+	}
+	var page []types.DiffRecord
+	err := storage.ReadDiffPages(s.store, s.host.EscrowID(), from, to, func(recs []types.DiffRecord) error {
+		page = append([]types.DiffRecord(nil), recs...)
+		return errStopRefusedDiffPage
+	})
+	if err != nil && !errors.Is(err, errStopRefusedDiffPage) {
+		return nil, 0, err
+	}
+	if len(page) == 0 {
+		return nil, 0, nil
+	}
+	diffs := make([]types.Diff, len(page))
+	var last uint64
+	for i, rec := range page {
+		diffs[i] = rec.Diff
+		if rec.Nonce > last {
+			last = rec.Nonce
+		}
+	}
+	return diffs, last + 1, nil
 }
 
 // signTimeoutVote marshals and signs a TimeoutVoteContent, returning the
@@ -1035,7 +1055,10 @@ func (s *Server) HandleGetDiffs(c echo.Context) (err error) {
 	}
 	observability.Request.SetDiffsRange(op, from, to)
 
-	records, err := s.store.GetDiffs(s.host.EscrowID(), from, to)
+	records, err := storage.LoadBoundedDiffs(s.store, s.host.EscrowID(), from, to)
+	if errors.Is(err, storage.ErrDiffPageLimit) {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}

@@ -326,18 +326,22 @@ func TestUser_Finalize_DiffCount(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
+	var composed int
+	session.SetDiffObserver(func(types.Diff) { composed++ })
 	for i := 0; i < 3; i++ {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
-	preFinalize := len(session.Diffs())
+	preFinalize := composed
 
 	err := session.Finalize(ctx)
 	require.NoError(t, err)
 
 	// Finalize adds N (Phase A) + 1 (drain) = N + 1. Phase B sends catch-up only.
+	// sess.diffs drops a prefix every host has applied, so the count is the
+	// composed journal, not the catch-up suffix.
 	expected := preFinalize + numHosts + 1
-	require.Equal(t, expected, len(session.Diffs()),
+	require.Equal(t, expected, composed,
 		"total diffs = pre-finalize(%d) + N+1(%d)", preFinalize, numHosts+1)
 }
 
@@ -1893,11 +1897,11 @@ func TestFinalize_SettlementRerun_EmptyDiffsCollectsFromHosts(t *testing.T) {
 	require.True(t, session.HasQuorumAt(session.Nonce()))
 
 	finalNonce := session.Nonce()
-	// Sign over the ORIGINAL final-diff post-state-root (what a real host signed
-	// at finalize time), captured before wiping diffs. Verifying these against
-	// the post-recovery live ComputeStateRoot proves the two roots are equal.
-	diffs := session.Diffs()
-	originalRoot := append([]byte(nil), diffs[len(diffs)-1].PostStateRoot...)
+	// Sign over the final post-state-root. The catch-up suffix may already
+	// have dropped that diff once every host applied it; the state machine
+	// still holds the root the hosts signed.
+	originalRoot, err := session.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
 	require.NotEmpty(t, originalRoot)
 
 	// Default in-process test hosts have no signature store (GET fails). Inject

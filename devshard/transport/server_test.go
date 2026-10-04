@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -105,6 +106,24 @@ func setupServerEnvHost(t *testing.T, hostOpts []host.HostOption, opts ...Server
 		group:      group,
 		config:     config,
 	}
+}
+
+func TestLoadRefusedDiffPage_StopsAtAHoleThenReportsIt(t *testing.T) {
+	env := setupServerEnv(t)
+	for _, nonce := range []uint64{1, 2, 3, 5} {
+		require.NoError(t, env.store.AppendDiff("escrow-1", types.DiffRecord{Diff: types.Diff{Nonce: nonce}}))
+	}
+
+	diffs, next, err := env.server.loadRefusedDiffPage(1, 5)
+	require.NoError(t, err)
+	require.Len(t, diffs, 3)
+	require.Equal(t, uint64(4), next)
+
+	_, _, err = env.server.loadRefusedDiffPage(next, 5)
+	var gap *storage.DiffGapError
+	require.ErrorAs(t, err, &gap, "the verifier tells a hole from a store error")
+	require.Equal(t, uint64(4), gap.Expected)
+	require.Equal(t, uint64(5), gap.Next)
 }
 
 func TestNewServer_DefaultsRequestBodyLimit(t *testing.T) {
@@ -281,6 +300,51 @@ func TestServer_GetDiffs(t *testing.T) {
 	rec = env.doGet(t, "/devshard/v2/sessions/escrow-1/diffs?from=1&to=1")
 	require.Equal(t, http.StatusOK, rec.Code)
 
+	var diffs []json.RawMessage
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &diffs))
+	require.Len(t, diffs, 1)
+}
+
+func TestServer_GetDiffs_RejectsRangeOverOnePage(t *testing.T) {
+	env := setupServerEnv(t)
+	const n = storage.DiffPageMaxNonces + 1
+	for i := uint64(1); i <= n; i++ {
+		require.NoError(t, env.store.AppendDiff("escrow-1", types.DiffRecord{
+			Diff: types.Diff{Nonce: i},
+		}))
+	}
+
+	rec := env.doGet(t, fmt.Sprintf("/devshard/v2/sessions/escrow-1/diffs?from=1&to=%d", n))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), fmt.Sprintf("%d", storage.DiffPageMaxNonces))
+	require.Contains(t, rec.Body.String(), fmt.Sprintf("%d", storage.DiffPageMaxBytes))
+
+	rec = env.doGet(t, fmt.Sprintf("/devshard/v2/sessions/escrow-1/diffs?from=1&to=%d", storage.DiffPageMaxNonces))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var diffs []json.RawMessage
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &diffs))
+	require.Len(t, diffs, storage.DiffPageMaxNonces)
+}
+
+func TestServer_GetDiffs_RejectsByteBudget(t *testing.T) {
+	env := setupServerEnv(t)
+	huge := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		PromptHash: bytes.Repeat([]byte{0xab}, storage.DiffPageMaxBytes+1),
+	}}}
+	require.NoError(t, env.store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff: types.Diff{Nonce: 1, Txs: []*types.DevshardTx{huge}},
+	}))
+	require.NoError(t, env.store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff: types.Diff{Nonce: 2},
+	}))
+
+	rec := env.doGet(t, "/devshard/v2/sessions/escrow-1/diffs?from=1&to=2")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), fmt.Sprintf("%d", storage.DiffPageMaxNonces))
+	require.Contains(t, rec.Body.String(), fmt.Sprintf("%d", storage.DiffPageMaxBytes))
+
+	rec = env.doGet(t, "/devshard/v2/sessions/escrow-1/diffs?from=1&to=1")
+	require.Equal(t, http.StatusOK, rec.Code)
 	var diffs []json.RawMessage
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &diffs))
 	require.Len(t, diffs, 1)
