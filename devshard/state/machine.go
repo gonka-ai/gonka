@@ -777,15 +777,18 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 		}
 	}
 
-	// 7. Compute state root.
-	root, err := sm.computeStateRootLocked()
+	// 7. Compute state root. Keep the component hashes so a mismatch can
+	// report them without walking the live inference set a second time.
+	parts, err := sm.rootComponentsLocked()
 	if err != nil {
 		sm.restoreMutable(snap)
 		return nil, fmt.Errorf("compute state root: %w", err)
 	}
+	root := parts.root
 
 	// 8. Verify post_state_root if present. On mismatch, roll back everything.
 	if len(postStateRoot) > 0 && !bytes.Equal(root, postStateRoot) {
+		inputs := sm.rootInputsFromComponents(nonce, parts)
 		sm.logStateRootMismatchDiagnosticLocked(StateRootMismatchOpts{
 			Side:          "devshardd",
 			Nonce:         nonce,
@@ -794,7 +797,11 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 			SealClock:     sealClockWin,
 		})
 		sm.restoreMutable(snap)
-		return nil, fmt.Errorf("%w: diff %x, computed %x", types.ErrPostStateRootMismatch, postStateRoot, root)
+		return nil, &RootDivergenceError{
+			Inputs:   inputs,
+			DiffRoot: append([]byte(nil), postStateRoot...),
+			Computed: append([]byte(nil), root...),
+		}
 	}
 
 	logging.Debug("applied diff", "subsystem", "state", "nonce", nonce, "txs", len(txs))
@@ -1903,6 +1910,19 @@ func (sm *StateMachine) SlotAddress(slotID uint32) string {
 
 func (sm *StateMachine) AddressSlotCount(addr string) uint32 {
 	return sm.addressToSlotCount[addr]
+}
+
+// LiveAndSealedCounts reports how many inferences are in the live map and how
+// many have been folded into the sealed accumulator. Both are map lengths, so
+// the call does not walk the records.
+func (sm *StateMachine) LiveAndSealedCounts() (live, sealed int) {
+	if sm == nil {
+		return 0, 0
+	}
+	sm.mu.RLock()
+	live, sealed = len(sm.state.Inferences), len(sm.sealedNonces)
+	sm.mu.RUnlock()
+	return live, sealed
 }
 
 // LiveInferenceIDs returns the set of inference ids currently in live state.

@@ -207,6 +207,30 @@ func TestOnNonceReceived_Amplification(t *testing.T) {
 	require.Equal(t, uint32(2), calls[0].slotID)
 }
 
+func TestOnNonceReceived_AcceptWindow(t *testing.T) {
+	peer := &mockPeer{}
+	g := NewGossip("escrow-1", 0, []PeerClient{peer}, nil)
+	g.AfterRequest(context.Background(), 10, []byte("h10"), []byte("s10"))
+	before := len(peer.getNonceCalls())
+
+	edge := uint64(10 + maxRecoverySpan)
+	require.NoError(t, g.OnNonceReceived(edge, []byte("edge"), []byte("sig"), 2))
+	require.NoError(t, g.OnNonceReceived(edge+1, []byte("past"), []byte("sig"), 2))
+	require.NoError(t, g.OnNonceReceived(uint64(1)<<62, []byte("far"), []byte("sig"), 2))
+	time.Sleep(50 * time.Millisecond)
+
+	var forwarded []uint64
+	for _, call := range peer.getNonceCalls()[before:] {
+		forwarded = append(forwarded, call.nonce)
+	}
+	require.Equal(t, []uint64{edge}, forwarded, "only the nonce inside the window is forwarded")
+	require.Equal(t, edge, g.HighestSeen())
+	_, stored := g.NonceStatus(edge + 1)
+	require.False(t, stored, "a nonce past the window is not stored")
+	_, stored = g.NonceStatus(uint64(1) << 62)
+	require.False(t, stored)
+}
+
 func TestOnNonceReceived_NoAmplificationForKnownNonce(t *testing.T) {
 	peer := &mockPeer{}
 	g := NewGossip("escrow-1", 0, []PeerClient{peer}, nil)
@@ -680,4 +704,46 @@ func TestRecovery_DoesNotTriggerWhenUpToDate(t *testing.T) {
 	// No gap -> recovery should not fetch.
 	g.tryRecovery(context.Background())
 	// No panic/error = success.
+}
+
+func TestRecovery_AttemptIsBoundedBySpan(t *testing.T) {
+	fetcher := &rangeDiffFetcher{}
+	updater := &recordingUpdater{}
+	g := NewGossip("escrow-1", 0, nil, nil, WithRecovery(fetcher, updater))
+	g.RecoveryDelay = time.Hour
+	g.mu.Lock()
+	g.highestSeen = uint64(1) << 40
+	g.mu.Unlock()
+
+	g.tryRecovery(context.Background())
+	require.Len(t, fetcher.calls, maxRecoveryPagesPerTick)
+	for _, call := range fetcher.calls {
+		require.LessOrEqual(t, call[1], uint64(maxRecoverySpan))
+		require.LessOrEqual(t, call[1]-call[0], uint64(storage.DiffPageMaxNonces-1))
+	}
+	g.mu.Lock()
+	require.Equal(t, uint64(maxRecoveryPagesPerTick*storage.DiffPageMaxNonces)+1, g.recoveryFrom)
+	require.True(t, g.lastAfterReq.IsZero(), "a tick that stops at the page budget does not start the delay")
+	g.mu.Unlock()
+
+	for tick := 0; tick < 16; tick++ {
+		g.mu.Lock()
+		finished := g.recoveryFrom == 0 && g.recoveryLimit == 0
+		g.mu.Unlock()
+		if finished {
+			break
+		}
+		g.tryRecovery(context.Background())
+	}
+	require.NotEmpty(t, fetcher.calls)
+	for _, call := range fetcher.calls {
+		require.LessOrEqual(t, call[1], uint64(maxRecoverySpan))
+	}
+	g.mu.Lock()
+	require.False(t, g.lastAfterReq.IsZero())
+	g.mu.Unlock()
+	done := len(fetcher.calls)
+
+	g.tryRecovery(context.Background())
+	require.Len(t, fetcher.calls, done, "the next attempt waits out RecoveryDelay")
 }

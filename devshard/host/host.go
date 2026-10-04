@@ -78,7 +78,7 @@ type HostResponse struct {
 	HasEnvelope        bool
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
+	CachedResponseBody []byte                   // non-nil when reconnecting to a response already stored
 	StreamBytesRead    int64                    // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
@@ -95,7 +95,14 @@ type receiptOutcome struct {
 	executionExpected bool
 	observedHeight    uint64
 	observedHash      []byte
+	// lookupStored means the inference already ran here and the caller loads
+	// its stored body outside the host lock. No execution claim is held.
+	lookupStored bool
 }
+
+// StoredResponse loads a response this host already persisted for an inference.
+// A nil body means it was not stored.
+type StoredResponse func(ctx context.Context, escrowID string, inferenceID, epochID uint64) ([]byte, error)
 
 // AcceptanceChecker is an optional hook that lets the host withhold its
 // signature when a diff contains content the host considers unacceptable
@@ -163,8 +170,10 @@ type Host struct {
 	// inference until it leaves the validatable set; any other time expires.
 	validationCooldown map[uint64]time.Time
 	validationQueue    chan validateJob
-	completedResponses map[uint64][]byte // inference ID -> cached ML response body
-	ownSeed            int64             // deterministic seed derived from signer + escrowID
+	// storedResponse reads the response payload written at the end of execution.
+	// Nil means this host has no payload store (tests); reconnect cannot replay.
+	storedResponse StoredResponse
+	ownSeed        int64 // deterministic seed derived from signer + escrowID
 
 	validationLifecycleMu sync.RWMutex
 	validationStartOnce   sync.Once
@@ -275,7 +284,6 @@ func NewHost(
 		executing:          make(map[uint64]struct{}),
 		validating:         make(map[uint64]struct{}),
 		validationCooldown: make(map[uint64]time.Time),
-		completedResponses: make(map[uint64][]byte),
 		finishObs:          make(map[uint64]inferenceFinishObs),
 		ownSeed:            ownSeed,
 		peerSeen:           heightsync.NewPeerSeen(uint32(len(group)), 0),
@@ -350,6 +358,12 @@ func WithStorage(s storage.Storage) HostOption {
 // Payload storage and validation use this epoch to route across epoch changes.
 func WithEpochID(epochID uint64) HostOption {
 	return func(h *Host) { h.epochID = epochID }
+}
+
+// WithStoredResponse sets the loader used to replay a response that execution
+// already persisted. The host does not keep a second copy in memory.
+func WithStoredResponse(load StoredResponse) HostOption {
+	return func(h *Host) { h.storedResponse = load }
 }
 
 // WithVerifier sets the signature verifier for gossip sig accumulation.
@@ -452,7 +466,36 @@ func (h *Host) AddTx(tx *types.DevshardTx) {
 	h.mempool.AddTx(tx)
 }
 
-func (h *Host) EscrowID() string              { return h.escrowID }
+func (h *Host) EscrowID() string { return h.escrowID }
+
+// MemoryCounts is the size of the maps that retain an escrow in this process.
+// Lengths only: nothing is copied and no record is visited.
+type MemoryCounts struct {
+	EscrowID   string
+	Live       int
+	Sealed     int
+	Mempool    int
+	Executing  int
+	Validating int
+}
+
+func (h *Host) MemoryCounts() MemoryCounts {
+	if h == nil {
+		return MemoryCounts{}
+	}
+	out := MemoryCounts{EscrowID: h.escrowID}
+	if h.sm != nil {
+		out.Live, out.Sealed = h.sm.LiveAndSealedCounts()
+	}
+	if h.mempool != nil {
+		out.Mempool = h.mempool.Len()
+	}
+	h.mu.Lock()
+	out.Executing = len(h.executing)
+	out.Validating = len(h.validating)
+	h.mu.Unlock()
+	return out
+}
 func (h *Host) EpochID() uint64               { return h.epochID }
 func (h *Host) Group() []types.SlotAssignment { return h.group }
 func (h *Host) SlotIDs() map[uint32]bool      { return h.slotIDs }
@@ -569,7 +612,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	h.noteCloseReadyLocked(newlyApplied, hdr, hdrErr)
 
 	// (b) Sign executor receipt (sync, under mutex).
-	receipt, confirmedAt, job, cachedBody, receiptOutcome, err := h.signReceipt(ctx, req, hdr, hdrErr)
+	receipt, confirmedAt, job, cachedBody, receiptOutcome, err := h.signReceipt(ctx, req, hdr, hdrErr, appliedNonce(newlyApplied, req.Nonce))
 	if err != nil {
 		h.mu.Unlock()
 		return nil, err
@@ -598,6 +641,10 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	}
 
 	h.mu.Unlock()
+
+	if body := h.resolveStoredResponse(ctx, &receiptOutcome); body != nil {
+		cachedBody = body
+	}
 
 	// (f) Execution job for caller to run via RunExecution.
 	// Execution is always deferred so the caller can send the receipt
@@ -749,17 +796,9 @@ func (h *Host) applyAndPersist(ctx context.Context, diff types.Diff) error {
 	}
 	h.mempool.RemoveIncluded(diff.Txs)
 
-	// Evict cached responses for finalized or timed-out inferences.
 	for _, tx := range diff.Txs {
 		if fi := tx.GetFinishInference(); fi != nil {
-			delete(h.completedResponses, fi.InferenceId)
 			h.recordFinishObsLocked(fi.InferenceId, diff.Nonce, time.Now())
-		}
-		if ti := tx.GetTimeoutInference(); ti != nil {
-			delete(h.completedResponses, ti.InferenceId)
-		}
-		if em := tx.GetErrorMiss(); em != nil {
-			delete(h.completedResponses, em.InferenceId)
 		}
 	}
 
@@ -993,14 +1032,18 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 }
 
 // signReceipt verifies the payload and signs the executor receipt (sync, under mutex).
-// Returns the receipt sig, confirmed_at timestamp, an ExecuteRequest if this host is the executor,
-// and cached response body if the inference already completed (reconnect case).
+// Returns the receipt sig, confirmed_at timestamp, and an ExecuteRequest if this host is the executor.
+// A reconnect does not get the body here: resolveStoredResponse loads it from payload storage.
 //
 // Authorization comes from applied escrow state for req.Nonce, not from MsgStartInference
 // bytes in the request. applyAndPersist may skip stale diffs without verifying them; those
 // skipped bytes must never authorize execution.
+// startedHere reports that this request applied the inference's start. Only an
+// inference that existed before the request can have a response stored by an
+// earlier execution, so only those pay for a payload-storage read.
+//
 // Caller must hold h.mu.
-func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Header, hdrErr error) ([]byte, int64, *devshard.ExecuteRequest, []byte, receiptOutcome, error) {
+func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Header, hdrErr error, startedHere bool) ([]byte, int64, *devshard.ExecuteRequest, []byte, receiptOutcome, error) {
 	outcome := receiptOutcome{reason: observability.ReasonNotExecutor}
 	if req.Payload == nil {
 		outcome.reason = observability.ReasonPayloadAbsent
@@ -1036,9 +1079,29 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 	}
 
 	_, alreadyExecuting := h.executing[inferenceID]
-	cached, hasCached := h.completedResponses[inferenceID]
-	if rec.Status != types.StatusPending && !alreadyExecuting && !hasCached {
-		outcome.reason = observability.ReasonInferenceDisappeared
+	// ConfirmStart applies only while the inference is pending. Returning a
+	// receipt for any later status makes the gateway queue one anyway.
+	if rec.Status != types.StatusPending {
+		finishQueued := h.mempool.HasFinish(inferenceID)
+		switch {
+		case alreadyExecuting:
+			outcome.reason = observability.ReasonAlreadyExecuting
+		case h.storedResponse != nil && replayableStatus(rec.Status, finishQueued):
+			outcome.lookupStored = true
+		case h.storedResponse != nil && rec.Status == types.StatusStarted:
+			// Started with no finish anywhere here: an earlier process ran
+			// the model and lost its finish. Publish it from storage. The
+			// model never runs for a started inference.
+			job := h.newExecuteRequest(inferenceID, rec, req.Payload)
+			job.LogprobsOptimizationOverride = req.LogprobsOptimizationOverride
+			job.Recovery = devshard.RecoveryStoredOnly
+			h.executing[inferenceID] = struct{}{}
+			outcome.executionExpected = true
+			outcome.reason = observability.ReasonOK
+			return nil, 0, job, nil, outcome, nil
+		default:
+			outcome.reason = observability.ReasonInferenceDisappeared
+		}
 		return nil, 0, nil, nil, outcome, nil
 	}
 
@@ -1058,32 +1121,116 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 		return sig, confirmedAt, nil, nil, outcome, nil
 	}
 
-	// Already completed: execution finished, response cached.
-	if hasCached {
-		outcome.reason = observability.ReasonCachedResponse
-		return sig, confirmedAt, nil, cached, outcome, nil
+	// A queued finish means this process already ran the model. Replay the
+	// stored body and never execute again: a second run would queue a second
+	// finish. No claim is taken because nothing will start.
+	if h.storedResponse != nil && h.mempool.HasFinish(inferenceID) {
+		outcome.lookupStored = true
+		return sig, confirmedAt, nil, nil, outcome, nil
 	}
 
+	job := h.newExecuteRequest(inferenceID, rec, req.Payload)
+	job.LogprobsOptimizationOverride = req.LogprobsOptimizationOverride
+	if !startedHere && h.storedResponse != nil {
+		job.Recovery = devshard.RecoveryStoredFirst
+	}
 	h.executing[inferenceID] = struct{}{}
 	outcome.executionExpected = true
 	outcome.reason = observability.ReasonOK
-
-	job := &devshard.ExecuteRequest{
-		InferenceID:                  inferenceID,
-		Model:                        rec.Model,
-		Prompt:                       req.Payload.Prompt,
-		PromptHash:                   rec.PromptHash,
-		InputLength:                  rec.InputLength,
-		MaxTokens:                    rec.MaxTokens,
-		EscrowID:                     h.escrowID,
-		EpochID:                      h.epochID,
-		LogprobsOptimizationOverride: req.LogprobsOptimizationOverride,
-	}
 	return sig, confirmedAt, job, nil, outcome, nil
 }
 
+func (h *Host) newExecuteRequest(inferenceID uint64, rec types.InferenceRecord, payload *InferencePayload) *devshard.ExecuteRequest {
+	return &devshard.ExecuteRequest{
+		InferenceID: inferenceID,
+		Model:       rec.Model,
+		Prompt:      payload.Prompt,
+		PromptHash:  rec.PromptHash,
+		InputLength: rec.InputLength,
+		MaxTokens:   rec.MaxTokens,
+		EscrowID:    h.escrowID,
+		EpochID:     h.epochID,
+	}
+}
+
+// appliedNonce reports whether diffs includes the diff at nonce. The diff at
+// an inference's nonce carries its start, so this tells a fresh inference
+// from one an earlier request or process already held.
+func appliedNonce(diffs []types.Diff, nonce uint64) bool {
+	for _, diff := range diffs {
+		if diff.Nonce == nonce {
+			return true
+		}
+	}
+	return false
+}
+
+// replayableStatus reports whether a non-pending inference may replay its
+// stored body. Finished and later statuses carry an applied finish. Started
+// replays only while this host's finish is still queued. TimedOut never
+// replays: the work was not settled.
+func replayableStatus(status types.InferenceStatus, finishQueued bool) bool {
+	switch status {
+	case types.StatusFinished, types.StatusChallenged, types.StatusValidated, types.StatusInvalidated:
+		return true
+	case types.StatusStarted:
+		return finishQueued
+	default:
+		return false
+	}
+}
+
+// resolveStoredResponse loads the body for a reconnect that signReceipt marked
+// replayable. It runs outside h.mu and never starts execution. A read failure
+// or a miss sends the response without a body: the request also carries the
+// state signature and mempool, which must not be lost to a payload-store error.
+func (h *Host) resolveStoredResponse(ctx context.Context, outcome *receiptOutcome) []byte {
+	if outcome == nil || !outcome.lookupStored || h.storedResponse == nil {
+		return nil
+	}
+	outcome.executionExpected = false
+	body, err := h.loadStoredResponse(ctx, outcome.inferenceID)
+	if err != nil {
+		logging.Warn("stored response read failed",
+			"subsystem", "host",
+			"escrow_id", h.escrowID,
+			"inference_id", outcome.inferenceID,
+			"error", err)
+	}
+	if len(body) == 0 {
+		outcome.reason = observability.ReasonInferenceDisappeared
+		return nil
+	}
+	outcome.reason = observability.ReasonCachedResponse
+	return body
+}
+
+// loadStoredResponse reads the response payload at the escrow epoch, then the
+// neighboring epochs. Execution stores under the chain phase epoch, which is
+// usually the escrow epoch or the one after it.
+func (h *Host) loadStoredResponse(ctx context.Context, inferenceID uint64) ([]byte, error) {
+	for _, epoch := range storedResponseEpochs(h.epochID) {
+		body, err := h.storedResponse(ctx, h.escrowID, inferenceID, epoch)
+		if err != nil {
+			return nil, err
+		}
+		if len(body) > 0 {
+			return body, nil
+		}
+	}
+	return nil, nil
+}
+
+func storedResponseEpochs(epochID uint64) []uint64 {
+	epochs := []uint64{epochID, epochID + 1}
+	if epochID > 0 {
+		epochs = append(epochs, epochID-1)
+	}
+	return epochs
+}
+
 // executeAsync runs inference and adds MsgFinishInference to the mempool.
-// Delegates to RunExecution which also caches the response body for reconnection.
+// Delegates to RunExecution. A later request replays the body from payload storage.
 // The caller must not wait for the inference: it holds a request context whose
 // deadline is far shorter than a long generation, and the executor receipt is
 // already signed. Detaching from cancellation keeps MsgFinishInference on track
@@ -1129,6 +1276,13 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	defer h.ReleaseExecution(inferenceID)
 
 	result, err := h.engine.Execute(ctx, *job)
+	if errors.Is(err, devshard.ErrNoStoredResponse) {
+		logging.Debug("no stored response to recover",
+			"subsystem", "host",
+			"escrow_id", h.escrowID,
+			"inference_id", inferenceID)
+		return nil, observability.Classify(observability.ReasonInferenceDisappeared, observability.WhereHostExecute, err)
+	}
 	if err != nil {
 		reason, where := observability.ErrorReason(err, observability.ReasonExecuteErr, observability.WhereHostExecute)
 		return nil, observability.FailReceiptOrphan(ctx, h.escrowID, reason, where,
@@ -1171,11 +1325,6 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		observability.Log(ctx, observability.LevelWarn, "finish published from partial response", observability.StageFinished, observability.WhereHostPublishFinish, h.escrowID, reason, nil,
 			"inference_id", inferenceID,
 			"partial_where", partialWhere)
-	}
-	if len(result.ResponseBody) > 0 {
-		h.mu.Lock()
-		h.completedResponses[inferenceID] = result.ResponseBody
-		h.mu.Unlock()
 	}
 	observability.SetMempoolSize(h.escrowID, h.mempool.Len())
 
@@ -1233,6 +1382,9 @@ func (h *Host) collectValidationJobs() []validateJob {
 	var jobs []validateJob
 
 	for infID, rec := range st.Inferences {
+		if !devshard.CanValidate(h.validator, rec.Model) {
+			continue
+		}
 		if rec.Status != types.StatusFinished && rec.Status != types.StatusChallenged {
 			continue
 		}
@@ -1397,13 +1549,6 @@ func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 // another host challenged the inference while this validator was running.
 // Called outside the mutex.
 func (h *Host) validateAsync(ctx context.Context, job validateJob) {
-	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
-	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
-	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
-		"inference_id", job.inferenceID,
-		"executor_address", job.executorAddress,
-		"validator_slot", job.validatorSlot,
-		"validation_flow", string(job.flow))
 	defer func() {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
@@ -1415,6 +1560,24 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			observability.SetValidationQueueDepth(h.escrowID, len(queue))
 		}
 	}()
+
+	// A job can become obsolete while waiting in the queue. Check before
+	// acquiring a lease, fetching payloads, or dispatching to MLNode.
+	h.mu.Lock()
+	rec, exists := h.sm.GetInference(job.inferenceID)
+	eligible := exists && h.inferenceValidatable(&rec) && !h.hasMempoolValidationOrVote(job.inferenceID)
+	h.mu.Unlock()
+	if !eligible || !devshard.CanValidate(h.validator, job.model) {
+		return
+	}
+
+	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
+	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
+	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
+		"inference_id", job.inferenceID,
+		"executor_address", job.executorAddress,
+		"validator_slot", job.validatorSlot,
+		"validation_flow", string(job.flow))
 
 	result, err := h.validator.Validate(ctx, devshard.ValidateRequest{
 		InferenceID:     job.inferenceID,
@@ -1446,6 +1609,12 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			if !leased {
 				h.releaseValidationLease(ctx, job.inferenceID)
 			}
+		}
+		if errors.Is(err, devshard.ErrValidationDeferred) {
+			observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusDeferred)
+			observability.Log(ctx, observability.LevelInfo, "validation deferred: no credit", observability.StageValidationFinished, observability.WhereHostValidate, h.escrowID, "", nil,
+				"inference_id", job.inferenceID, "model", job.model)
+			return // Keep the obligation eligible after cooldown.
 		}
 		// Payload already pruned on the executor: the validation window is
 		// effectively over for us. Drop silently -- no MsgValidation, no
@@ -1833,6 +2002,9 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// An inference this host already held may have been executed by an
+	// earlier process that lost its finish.
+	_, heldBefore := h.sm.GetInference(inferenceID)
 	for _, diff := range diffs {
 		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
 			return nil, 0, nil, fmt.Errorf("apply challenge diff nonce %d: %w", diff.Nonce, err)
@@ -1877,15 +2049,9 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 
 	h.executing[inferenceID] = struct{}{}
 
-	job := &devshard.ExecuteRequest{
-		InferenceID: inferenceID,
-		Model:       rec.Model,
-		Prompt:      payload.Prompt,
-		PromptHash:  rec.PromptHash,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		EscrowID:    h.escrowID,
-		EpochID:     h.epochID,
+	job := h.newExecuteRequest(inferenceID, rec, payload)
+	if heldBefore && h.storedResponse != nil {
+		job.Recovery = devshard.RecoveryStoredFirst
 	}
 	return sig, confirmedAt, job, nil
 }

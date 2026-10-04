@@ -3898,9 +3898,7 @@ func isStateRootDivergenceError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "apply diff nonce") &&
-		strings.Contains(msg, "post_state_root does not match computed state root")
+	return strings.Contains(err.Error(), "post_state_root does not match computed state root")
 }
 
 func isRetriableCapabilityErrorMessage(msg string) bool {
