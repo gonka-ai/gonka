@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -849,6 +850,43 @@ func TestUpdateDynamicPricing_SkipsUnchangedPriceWrite(t *testing.T) {
 	price, err = k.GetModelCurrentPrice(goCtx, "model-new")
 	require.NoError(t, err)
 	assert.Equal(t, uint64(98), price, "a model without a price starts from base and still moves")
+}
+
+// Mainnet shape at the default node log level: an unchanged price logs nothing per block.
+func TestUpdateDynamicPricing_QuietAtInfoWhenPriceUnchanged(t *testing.T) {
+	k, ctx := setupTestKeeperWithDynamicPricing(t)
+	goCtx := sdk.WrapSDKContext(ctx)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DynamicPricingParams.MinPerTokenPrice = 1
+	params.DynamicPricingParams.GracePeriodEndEpoch = 0
+	require.NoError(t, k.SetParams(ctx, params))
+
+	effectiveEpoch := types.Epoch{Index: 1, PocStartBlockHeight: ctx.BlockHeight()}
+	require.NoError(t, k.SetEpoch(ctx, &effectiveEpoch))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, effectiveEpoch.Index))
+	models := []string{"model-a", "model-b", "model-c"}
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:          effectiveEpoch.Index,
+		PocStartBlockHeight: uint64(effectiveEpoch.PocStartBlockHeight),
+		SubGroupModels:      models,
+	})
+	for _, m := range models {
+		require.NoError(t, k.CacheModelCapacity(goCtx, m, 1000))
+		require.NoError(t, k.SetModelCurrentPrice(goCtx, m, 1))
+	}
+
+	infoFilter, err := log.ParseLogLevel("info")
+	require.NoError(t, err)
+	var out bytes.Buffer
+	keeper.SetLoggerForTesting(&k, log.NewLogger(&out, log.OutputJSONOption(), log.FilterOption(infoFilter)))
+	require.NoError(t, k.UpdateDynamicPricing(goCtx))
+	assert.Empty(t, out.String())
+
+	price, err := k.GetModelCurrentPrice(goCtx, "model-a")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), price)
 }
 
 // Mainnet shape: no on-chain inferences, so every window is all zeros and the push changes nothing.
