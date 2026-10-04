@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -84,6 +85,11 @@ func TestUser_ForceHeightSyncTurn_AppearsOnlyInTriggerDiff(t *testing.T) {
 		return nil
 	}
 
+	var journal []types.Diff
+	session.SetDiffObserver(func(diff types.Diff) {
+		journal = append(journal, diff)
+	})
+
 	_, err := session.SendInference(ctx, forced)
 	require.NoError(t, err, "trigger inference at nonce 1")
 	require.Equal(t, uint64(1), session.Nonce())
@@ -94,7 +100,7 @@ func TestUser_ForceHeightSyncTurn_AppearsOnlyInTriggerDiff(t *testing.T) {
 	}
 	require.Equal(t, slots, session.Nonce(), "session advanced through the full forced window")
 
-	diffs := session.Diffs()
+	diffs := journal
 	require.Len(t, diffs, int(slots))
 	require.Equal(t, 1, countForceTxs(diffs[0]),
 		"trigger diff at nonce 1 must contain exactly one MsgForceHeightSyncTurn")
@@ -117,7 +123,7 @@ func TestUser_ForceHeightSyncTurn_AppearsOnlyInTriggerDiff(t *testing.T) {
 
 	_, err = session.SendInference(ctx, forced)
 	require.NoError(t, err, "next forced trigger after window closes")
-	diffs = session.Diffs()
+	diffs = journal
 	require.Len(t, diffs, int(slots)+1)
 	require.Equal(t, 1, countForceTxs(diffs[int(slots)]),
 		"a fresh ForceHeightSyncAnchor after the previous window closes must re-open a new turn")
@@ -138,7 +144,7 @@ func TestUser_ForceHeightSyncTurn_SlotsNumFollowsGroupNotCadenceOverride(t *test
 	})
 	require.NoError(t, err)
 	var force *types.MsgForceHeightSyncTurn
-	for _, tx := range session.Diffs()[0].Txs {
+	for _, tx := range seenDiffs(session)[0].Txs {
 		if inner := tx.GetForceHeightSyncTurn(); inner != nil {
 			force = inner
 			break
@@ -258,7 +264,38 @@ func setupFloorlessHeartbeatSession(t *testing.T, height *uint64, oracles []bloc
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier,
 		append(opts, extra...)...)
 	require.NoError(t, err)
+	rememberJournal(session)
 	return session
+}
+
+// composedJournal keeps every diff compose produced. sess.diffs drops the
+// prefix once every host cursor passes it, and these tests read the log.
+type composedJournal struct {
+	mu    sync.Mutex
+	diffs []types.Diff
+}
+
+var composedJournals sync.Map
+
+func rememberJournal(session *Session) {
+	j := &composedJournal{}
+	composedJournals.Store(session, j)
+	session.SetDiffObserver(func(d types.Diff) {
+		j.mu.Lock()
+		j.diffs = append(j.diffs, d)
+		j.mu.Unlock()
+	})
+}
+
+func seenDiffs(session *Session) []types.Diff {
+	v, ok := composedJournals.Load(session)
+	if !ok {
+		return session.Diffs()
+	}
+	j := v.(*composedJournal)
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return append([]types.Diff(nil), j.diffs...)
 }
 
 // heartbeatDiffsAfter is the span dispatched after nonce base, in nonce order.
@@ -294,7 +331,7 @@ func TestHeartbeat_QuietSessionOpensTurn(t *testing.T) {
 	ctx := context.Background()
 
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	span := heartbeatDiffsAfter(session.Diffs(), base)
+	span := heartbeatDiffsAfter(seenDiffs(session), base)
 	require.GreaterOrEqual(t, len(span), 3, "slots_num heartbeat diffs")
 	force := span[0].Txs[0].GetForceHeightSyncTurn()
 	require.NotNil(t, force)
@@ -341,10 +378,10 @@ func TestHeartbeat_DrainsPendingRaiseBeforeSpan(t *testing.T) {
 	base := session.Nonce()
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 
-	confirmNonce, confirmH, ok := firstRaisingConfirm(session.Diffs(), base)
+	confirmNonce, confirmH, ok := firstRaisingConfirm(seenDiffs(session), base)
 	require.True(t, ok, "drain must persist the pending confirm")
 	require.Equal(t, uint64(150), confirmH)
-	span := heartbeatDiffsAfter(session.Diffs(), base)
+	span := heartbeatDiffsAfter(seenDiffs(session), base)
 	require.GreaterOrEqual(t, len(span), 2, "group size ≥ 2 so a later heartbeat exists")
 	require.Greater(t, span[0].Nonce, confirmNonce,
 		"confirm must land on its own nonce before the span")
@@ -383,7 +420,7 @@ func TestHeartbeat_ForceSlotsNumFollowsGroupNotCadenceOverride(t *testing.T) {
 	base := session.Nonce()
 	session.SetHeightSyncCadence(10, 1)
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
-	span := heartbeatDiffsAfter(session.Diffs(), base)
+	span := heartbeatDiffsAfter(seenDiffs(session), base)
 	require.NotEmpty(t, span)
 	force := span[0].Txs[0].GetForceHeightSyncTurn()
 	require.NotNil(t, force)
@@ -405,14 +442,14 @@ func TestHeartbeat_NoFloorSkipsUntilFirstInference(t *testing.T) {
 	session := setupFloorlessHeartbeatSession(t, &height, oracles)
 
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
-	require.Empty(t, session.Diffs(), "no floor: nothing truthful to stamp, so no turn opens")
+	require.Empty(t, seenDiffs(session), "no floor: nothing truthful to stamp, so no turn opens")
 	require.Equal(t, 1, session.HeartbeatSkippedNoHeight())
 	require.Equal(t, uint64(0), session.Nonce())
 
 	seedFloorByInference(t, session)
 	base := session.Nonce()
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
-	span := heartbeatDiffsAfter(session.Diffs(), base)
+	span := heartbeatDiffsAfter(seenDiffs(session), base)
 	require.NotEmpty(t, span, "the first host stamp arms the cadence")
 	require.Equal(t, uint64(100), span[0].Txs[1].GetHeartbeat().ObservedHeight)
 }
@@ -428,7 +465,7 @@ func TestHeartbeat_NoHeightAnywhereSkips(t *testing.T) {
 	}
 	session := setupFloorlessHeartbeatSession(t, &height, oracles)
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
-	require.Empty(t, session.Diffs())
+	require.Empty(t, seenDiffs(session))
 	require.Equal(t, 1, session.HeartbeatSkippedNoHeight())
 	require.Equal(t, uint64(0), session.Nonce())
 }
@@ -439,7 +476,7 @@ func TestHeartbeat_SpanDispatchAddressesEverySlot(t *testing.T) {
 	base := session.Nonce()
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 
-	diffs := session.Diffs()
+	diffs := seenDiffs(session)
 	const slots = 3
 	span := heartbeatDiffsAfter(diffs, base)
 	require.GreaterOrEqual(t, len(span), slots)
@@ -479,7 +516,7 @@ func TestHeartbeat_AckInclusionAndSyncVectorPrevTurn(t *testing.T) {
 	ctx := context.Background()
 	require.NoError(t, session.MaybeHeartbeat(ctx))
 
-	diffs := session.Diffs()
+	diffs := seenDiffs(session)
 	const slots = 3
 	span := heartbeatDiffsAfter(diffs, base)
 	require.GreaterOrEqual(t, len(span), slots)
@@ -515,7 +552,7 @@ func TestHeartbeat_AckInclusionAndSyncVectorPrevTurn(t *testing.T) {
 	// turn, so the latest diff carrying one is the selector.
 	var hb *types.MsgHeartbeat
 	var hbNonce uint64
-	for _, d := range session.Diffs() {
+	for _, d := range seenDiffs(session) {
 		for _, tx := range d.Txs {
 			if inner := tx.GetHeartbeat(); inner != nil && d.Nonce >= hbNonce {
 				hb, hbNonce = inner, d.Nonce
@@ -541,7 +578,7 @@ func TestHeartbeat_LiveHostsQuorumCompletes(t *testing.T) {
 	base := session.Nonce()
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 
-	acks := heightAcksInDiffs(session.Diffs())
+	acks := heightAcksInDiffs(seenDiffs(session))
 	require.Len(t, acks, 3)
 	for _, ack := range acks {
 		require.Equal(t, types.SyncState_SYNCED, ack.SyncState)
@@ -609,7 +646,7 @@ func TestHeartbeat_WarmKeyAckAppliesWithoutPriorBinding(t *testing.T) {
 	base := session.Nonce()
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 
-	acks := heightAcksInDiffs(session.Diffs())
+	acks := heightAcksInDiffs(seenDiffs(session))
 	require.Len(t, acks, 3, "first-time warm acks must compose, not drop")
 	verifier := signing.NewSecp256k1Verifier()
 	for _, ack := range acks {
@@ -624,7 +661,7 @@ func TestHeartbeat_WarmKeyAckAppliesWithoutPriorBinding(t *testing.T) {
 	require.Equal(t, warmKeys[1].Address(), wk[1])
 	require.Equal(t, warmKeys[2].Address(), wk[2])
 
-	for _, d := range session.Diffs() {
+	for _, d := range seenDiffs(session) {
 		if len(heightAcksInDiffs([]types.Diff{d})) == 0 {
 			continue
 		}
@@ -669,7 +706,7 @@ func TestHeartbeat_CarriesTheFloorNotTheCourierTip(t *testing.T) {
 
 	var hb *types.MsgHeartbeat
 	var hbNonce uint64
-	for _, d := range session.Diffs() {
+	for _, d := range seenDiffs(session) {
 		for _, tx := range d.Txs {
 			if inner := tx.GetHeartbeat(); inner != nil && d.Nonce >= hbNonce {
 				hb, hbNonce = inner, d.Nonce
@@ -695,7 +732,7 @@ func TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor(t *testing.T) {
 	base := session.Nonce()
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 
-	acks := heightAcksInDiffs(session.Diffs())
+	acks := heightAcksInDiffs(seenDiffs(session))
 	require.Len(t, acks, 3, "ack is required even when the oracle is down")
 	for _, ack := range acks {
 		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.SyncState,
@@ -735,7 +772,7 @@ func TestHeartbeat_BusySessionWithStampsEmitsNone(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	require.Zero(t, countHeartbeats(session.Diffs()), "stamped inference traffic emits zero heartbeats")
+	require.Zero(t, countHeartbeats(seenDiffs(session)), "stamped inference traffic emits zero heartbeats")
 	require.Equal(t, uint64(100), session.HeartbeatTurnTracker().LastCompletedHeight())
 }
 
@@ -773,7 +810,7 @@ func TestHeartbeat_SustainedInferenceFlowNeverHeartbeats(t *testing.T) {
 		}
 		now = now.Add(gap)
 		require.NoError(t, session.MaybeHeartbeat(ctx))
-		require.Zero(t, countHeartbeats(session.Diffs()),
+		require.Zero(t, countHeartbeats(seenDiffs(session)),
 			"round %d: inference traffic discharges the cadence, so no heartbeat is owed", round)
 	}
 	require.Greater(t, now.Sub(time.Unix(1_700_000_000, 0)), 2*heightsync.DefaultHeartbeatInterval,
@@ -784,7 +821,7 @@ func TestHeartbeat_SustainedInferenceFlowNeverHeartbeats(t *testing.T) {
 	// Traffic stops: the next crossing has nothing to ride and must heartbeat.
 	now = now.Add(heightsync.DefaultHeartbeatInterval + time.Second)
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	require.NotZero(t, countHeartbeats(session.Diffs()),
+	require.NotZero(t, countHeartbeats(seenDiffs(session)),
 		"a silent Interval must still open a turn — otherwise the zeros above prove nothing")
 }
 
@@ -814,7 +851,7 @@ func TestHeartbeat_UserOwnStampIsNotATurnover(t *testing.T) {
 		"a self-signed stamp credits no slot")
 
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
-	require.NotEmpty(t, heartbeatDiffsAfter(session.Diffs(), base),
+	require.NotEmpty(t, heartbeatDiffsAfter(seenDiffs(session), base),
 		"a self-signed stamp must not discharge the obligation")
 }
 
@@ -835,16 +872,16 @@ func TestHeartbeat_QuietSessionWaitsOutIntervalBetweenTurns(t *testing.T) {
 
 	require.NoError(t, session.MaybeHeartbeat(ctx))
 	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Record(base+1).State)
-	turns := countHeartbeats(session.Diffs())
+	turns := countHeartbeats(seenDiffs(session))
 	require.NotZero(t, turns)
 
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	require.Equal(t, turns, countHeartbeats(session.Diffs()),
+	require.Equal(t, turns, countHeartbeats(seenDiffs(session)),
 		"inside Interval the turnover already discharged the obligation")
 
 	now = now.Add(heightsync.DefaultHeartbeatInterval)
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	require.Greater(t, countHeartbeats(session.Diffs()), turns,
+	require.Greater(t, countHeartbeats(seenDiffs(session)), turns,
 		"Interval elapsed at an unchanged height still opens a turn")
 	require.NotNil(t, session.HeartbeatTurnTracker().Latest())
 }
@@ -872,11 +909,11 @@ func TestHeartbeat_OverlayShortensCadence(t *testing.T) {
 
 	require.NoError(t, session.MaybeHeartbeat(ctx))
 	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Record(base+1).State)
-	turns := countHeartbeats(session.Diffs())
+	turns := countHeartbeats(seenDiffs(session))
 
 	now = now.Add(2 * time.Second)
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	require.Greater(t, countHeartbeats(session.Diffs()), turns,
+	require.Greater(t, countHeartbeats(seenDiffs(session)), turns,
 		"overlay Interval=2s opens the next turn before the compiled 6s")
 	require.NotNil(t, session.HeartbeatTurnTracker().Latest())
 }
@@ -924,7 +961,7 @@ func TestHeartbeat_LoopOpensQuietTurnWithoutCaller(t *testing.T) {
 		return session.Nonce() >= base+3 && session.HeartbeatTurnTracker().Record(base+1) != nil
 	}, 2*time.Second, 10*time.Millisecond, "loop must open a turn without the test calling MaybeHeartbeat")
 
-	require.GreaterOrEqual(t, countHeartbeats(session.Diffs()), 3)
+	require.GreaterOrEqual(t, countHeartbeats(seenDiffs(session)), 3)
 	require.Equal(t, base+1, session.StateMachine().HeightSyncLatestTurnStart())
 }
 

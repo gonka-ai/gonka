@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"devshard/logging"
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -354,22 +355,43 @@ func (g *Gossip) tryRecovery(ctx context.Context) {
 		"last_after_req_nonce", lastAppliedNonce,
 	)
 
-	diffs, err := fetcher.GetDiffs(ctx, lastAppliedNonce+1, highestSeen)
-	if err != nil {
-		logging.Debug("recovery fetch diffs failed", "subsystem", "gossip", "error", err)
-		return
+	// One nonce window per fetch. The fetcher hands over each page before the
+	// next request, so the gap is never assembled into one slice. A window the
+	// peer stores nothing for moves on to the next one: a later nonce up to
+	// highestSeen can still be stored past a hole.
+	var applyErr error
+	apply := func(diffs []types.Diff) error {
+		sigs, err := updater.ApplyRecoveredDiffs(ctx, diffs)
+		if err != nil {
+			applyErr = err
+			return err
+		}
+		g.publishRecovered(ctx, sigs)
+		return nil
 	}
-	if len(diffs) == 0 {
-		return
+	for from := lastAppliedNonce + 1; from <= highestSeen; {
+		pageTo := highestSeen
+		if highestSeen-from >= uint64(storage.DiffPageMaxNonces) {
+			pageTo = from + uint64(storage.DiffPageMaxNonces) - 1
+		}
+		if err := fetcher.GetDiffPages(ctx, from, pageTo, apply); err != nil {
+			if applyErr != nil {
+				logging.Debug("recovery apply diffs failed", "subsystem", "gossip", "error", err)
+			} else {
+				logging.Debug("recovery fetch diffs failed", "subsystem", "gossip", "error", err)
+			}
+			return
+		}
+		if pageTo == highestSeen {
+			return
+		}
+		from = pageTo + 1
 	}
+}
 
-	sigs, err := updater.ApplyRecoveredDiffs(ctx, diffs)
-	if err != nil {
-		logging.Debug("recovery apply diffs failed", "subsystem", "gossip", "error", err)
-		return
-	}
-
-	// Update watermark to highest recovered nonce.
+// publishRecovered records recovered signatures and rebroadcasts them.
+// Already-applied pages are published before the next page is fetched.
+func (g *Gossip) publishRecovered(ctx context.Context, sigs []GossipSig) {
 	var maxRecovered uint64
 	for _, sig := range sigs {
 		if sig.Nonce > maxRecovered {
@@ -377,7 +399,6 @@ func (g *Gossip) tryRecovery(ctx context.Context) {
 		}
 	}
 
-	// Ensure recovered nonces are in the seen map and gossip own sigs.
 	g.mu.Lock()
 	for _, sig := range sigs {
 		if _, ok := g.seen[sig.Nonce]; !ok {

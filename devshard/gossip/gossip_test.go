@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -100,8 +101,14 @@ type mockDiffFetcher struct {
 	err   error
 }
 
-func (m *mockDiffFetcher) GetDiffs(_ context.Context, _, _ uint64) ([]types.Diff, error) {
-	return m.diffs, m.err
+func (m *mockDiffFetcher) GetDiffPages(_ context.Context, _, _ uint64, fn func([]types.Diff) error) error {
+	if m.err != nil {
+		return m.err
+	}
+	if len(m.diffs) == 0 {
+		return nil
+	}
+	return fn(m.diffs)
 }
 
 // mockStateUpdater returns pre-configured sigs.
@@ -497,6 +504,108 @@ func TestStop_DoubleSafe(t *testing.T) {
 		// This should not panic.
 		g.closeOnce.Do(func() {}) // noop
 	})
+}
+
+func TestRecovery_PagesAMultiPageGap(t *testing.T) {
+	const n = storage.DiffPageMaxNonces + 5
+	journal := make([]types.Diff, n)
+	for i := range journal {
+		journal[i] = types.Diff{Nonce: uint64(i + 1)}
+	}
+	fetcher := &rangeDiffFetcher{journal: journal}
+	updater := &recordingUpdater{}
+
+	g := NewGossip("escrow-1", 0, nil, nil, WithRecovery(fetcher, updater))
+	g.RecoveryDelay = 0
+	g.mu.Lock()
+	g.highestSeen = n
+	g.lastAfterReqNonce = 0
+	g.lastAfterReq = time.Now().Add(-2 * time.Hour)
+	g.mu.Unlock()
+
+	g.tryRecovery(context.Background())
+
+	require.Greater(t, len(updater.batches), 1, "a gap wider than one page is more than one apply")
+	var applied []uint64
+	for _, batch := range updater.batches {
+		require.LessOrEqual(t, len(batch), storage.DiffPageMaxNonces)
+		require.NotEmpty(t, batch)
+		for _, diff := range batch {
+			applied = append(applied, diff.Nonce)
+		}
+	}
+	require.Len(t, applied, n)
+	for i := uint64(1); i <= n; i++ {
+		require.Equal(t, i, applied[i-1])
+	}
+	for _, call := range fetcher.calls {
+		require.LessOrEqual(t, call[1]-call[0], uint64(storage.DiffPageMaxNonces-1))
+	}
+	g.mu.Lock()
+	require.Equal(t, uint64(n), g.lastAfterReqNonce)
+	g.mu.Unlock()
+}
+
+func TestRecovery_WalksPastAnEmptyWindow(t *testing.T) {
+	const page = storage.DiffPageMaxNonces
+	const highest = 2*page + 3
+	var journal []types.Diff
+	for _, nonce := range []uint64{1, 2, 3, highest - 1, highest} {
+		journal = append(journal, types.Diff{Nonce: nonce})
+	}
+	fetcher := &rangeDiffFetcher{journal: journal}
+	updater := &recordingUpdater{}
+
+	g := NewGossip("escrow-1", 0, nil, nil, WithRecovery(fetcher, updater))
+	g.RecoveryDelay = 0
+	g.mu.Lock()
+	g.highestSeen = highest
+	g.lastAfterReq = time.Now().Add(-2 * time.Hour)
+	g.mu.Unlock()
+
+	g.tryRecovery(context.Background())
+
+	require.Equal(t, [][2]uint64{{1, page}, {page + 1, 2 * page}, {2*page + 1, highest}}, fetcher.calls,
+		"a window with no stored diffs moves on to the next one")
+	require.Len(t, updater.batches, 2)
+	require.Equal(t, []types.Diff{{Nonce: highest - 1}, {Nonce: highest}}, updater.batches[1])
+	g.mu.Lock()
+	require.Equal(t, uint64(highest), g.lastAfterReqNonce)
+	g.mu.Unlock()
+}
+
+// rangeDiffFetcher returns only the journal slice inside the requested window.
+type rangeDiffFetcher struct {
+	journal []types.Diff
+	calls   [][2]uint64
+}
+
+func (f *rangeDiffFetcher) GetDiffPages(_ context.Context, from, to uint64, fn func([]types.Diff) error) error {
+	f.calls = append(f.calls, [2]uint64{from, to})
+	var page []types.Diff
+	for _, diff := range f.journal {
+		if diff.Nonce >= from && diff.Nonce <= to {
+			page = append(page, diff)
+		}
+	}
+	if len(page) == 0 {
+		return nil
+	}
+	return fn(page)
+}
+
+// recordingUpdater applies each page and returns one signature per diff.
+type recordingUpdater struct {
+	batches [][]types.Diff
+}
+
+func (u *recordingUpdater) ApplyRecoveredDiffs(_ context.Context, diffs []types.Diff) ([]GossipSig, error) {
+	u.batches = append(u.batches, append([]types.Diff(nil), diffs...))
+	sigs := make([]GossipSig, len(diffs))
+	for i, diff := range diffs {
+		sigs[i] = GossipSig{Nonce: diff.Nonce, StateHash: []byte("h"), Sig: []byte("s"), SlotID: 0}
+	}
+	return sigs, nil
 }
 
 func TestRecovery_DoesNotTriggerWhenUpToDate(t *testing.T) {

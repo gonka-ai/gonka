@@ -863,11 +863,10 @@ func TestHTTP_StateRecovery(t *testing.T) {
 	// GET diffs from the host that stored them. At least one host should have diffs.
 	var storedDiffs int
 	for _, c := range env.clients {
-		diffs, err := c.GetDiffs(ctx, 1, lastNonce)
-		if err != nil {
-			continue
-		}
-		storedDiffs += len(diffs)
+		_ = c.GetDiffPages(ctx, 1, lastNonce, func(page []types.Diff) error {
+			storedDiffs += len(page)
+			return nil
+		})
 	}
 	require.True(t, storedDiffs > 0, "at least one host should have stored diffs")
 }

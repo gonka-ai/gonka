@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
 	"common/completionapi"
 
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -75,6 +78,11 @@ func RecoveryTxsFor(txs []*types.DevshardTx, inferenceID uint64) []*types.Devsha
 	return out
 }
 
+// DiffPageLoader returns one page of stored diffs in [from, to]. next is the
+// nonce after this page. An empty page with next 0 means the range has no
+// diffs. The caller must not retain diffs after the challenge returns.
+type DiffPageLoader func(from, to uint64) (diffs []types.Diff, next uint64, err error)
+
 // VerifyRefusedTimeout checks if a refused timeout is valid.
 //
 // Flow:
@@ -96,6 +104,60 @@ func VerifyRefusedTimeout(
 	ingest TxSink,
 	config types.SessionConfig,
 	nowUnix int64,
+) (bool, error) {
+	return verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, executorClient, ingest, config, nowUnix,
+		func(from, to uint64) ([]types.Diff, uint64, error) {
+			if from > to || len(storedDiffs) == 0 {
+				return nil, 0, nil
+			}
+			next := to + 1
+			if to == ^uint64(0) {
+				next = 0
+			}
+			return storedDiffs, next, nil
+		})
+}
+
+// VerifyRefusedTimeoutPaged is VerifyRefusedTimeout with the journal loaded
+// one page at a time. A receipt, an unreachable executor, or coverage of
+// LatestNonce stops the walk. The verifier holds only the page being challenged.
+// A page that cannot be read after a no-receipt page accepts the timeout. A hole
+// at the first nonce challenges with no diffs. A read error before any challenge
+// is returned after refusedPageReadAttempts reads.
+func VerifyRefusedTimeoutPaged(
+	ctx context.Context,
+	st types.EscrowState,
+	inferenceID uint64,
+	payload *InferencePayload,
+	localMempool []*types.DevshardTx,
+	executorClient ExecutorClient,
+	ingest TxSink,
+	config types.SessionConfig,
+	nowUnix int64,
+	load DiffPageLoader,
+) (bool, error) {
+	return verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, executorClient, ingest, config, nowUnix, load)
+}
+
+type refusedChallenge int
+
+const (
+	refusedUnreachable refusedChallenge = iota
+	refusedReceipt
+	refusedNoReceipt
+)
+
+func verifyRefusedTimeout(
+	ctx context.Context,
+	st types.EscrowState,
+	inferenceID uint64,
+	payload *InferencePayload,
+	localMempool []*types.DevshardTx,
+	executorClient ExecutorClient,
+	ingest TxSink,
+	config types.SessionConfig,
+	nowUnix int64,
+	load DiffPageLoader,
 ) (bool, error) {
 	rec, ok := st.Inferences[inferenceID]
 	if !ok {
@@ -130,27 +192,101 @@ func VerifyRefusedTimeout(
 		return false, nil // bad payload -> reject timeout
 	}
 
-	// Challenge executor: one call that applies diffs + verifies payload + returns receipt.
-	if executorClient != nil {
-		receipt, mempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, storedDiffs)
-		if err != nil {
-			// Executor unreachable or internal error -> accept timeout.
-			return true, nil
-		}
-		if len(receipt) > 0 {
-			// Copy executor recovery txs into the verifier pool. Same bytes as
-			// the executor queued — do not mint a new ConfirmStart from receipt.
-			if ingest != nil {
-				for _, tx := range RecoveryTxsFor(mempool, inferenceID) {
-					ingest.AddTx(tx)
-				}
-			}
-			return false, nil // executor produced receipt -> reject timeout
-		}
-		// Executor reachable but no receipt (refusing to work) -> accept timeout.
+	if executorClient == nil {
+		return true, nil
+	}
+	if st.LatestNonce == 0 || load == nil {
+		return finishRefusedChallenge(challengeRefused(ctx, inferenceID, payload, nil, executorClient, ingest))
 	}
 
-	return true, nil
+	from := uint64(1)
+	to := st.LatestNonce
+	challenged := false
+	for {
+		diffs, next, err := loadRefusedPage(ctx, load, from, to)
+		if err != nil {
+			var gap *storage.DiffGapError
+			switch {
+			case challenged:
+				// The executor answered every readable page with no receipt.
+				return true, nil
+			case errors.As(err, &gap):
+				// The hole is at the first nonce: the executor decides from its own state.
+				return finishRefusedChallenge(challengeRefused(ctx, inferenceID, payload, nil, executorClient, ingest))
+			default:
+				return false, err
+			}
+		}
+		if len(diffs) == 0 {
+			if from == 1 {
+				return finishRefusedChallenge(challengeRefused(ctx, inferenceID, payload, nil, executorClient, ingest))
+			}
+			return true, nil
+		}
+		outcome := challengeRefused(ctx, inferenceID, payload, diffs, executorClient, ingest)
+		challenged = true
+		switch outcome {
+		case refusedUnreachable:
+			return true, nil
+		case refusedReceipt:
+			return false, nil
+		}
+		if next == 0 || next > to {
+			return true, nil
+		}
+		from = next
+	}
+}
+
+// refusedPageReadAttempts bounds the reads of one refused-timeout page. A hole
+// is returned on the first attempt; any other error is retried.
+const refusedPageReadAttempts = 3
+
+var refusedPageRetryDelay = 50 * time.Millisecond
+
+func loadRefusedPage(ctx context.Context, load DiffPageLoader, from, to uint64) ([]types.Diff, uint64, error) {
+	var gap *storage.DiffGapError
+	for attempt := 1; ; attempt++ {
+		diffs, next, err := load(from, to)
+		if err == nil || errors.As(err, &gap) || attempt == refusedPageReadAttempts {
+			return diffs, next, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, 0, err
+		case <-time.After(time.Duration(attempt) * refusedPageRetryDelay):
+		}
+	}
+}
+
+func finishRefusedChallenge(outcome refusedChallenge) (bool, error) {
+	return outcome != refusedReceipt, nil
+}
+
+func challengeRefused(
+	ctx context.Context,
+	inferenceID uint64,
+	payload *InferencePayload,
+	diffs []types.Diff,
+	executorClient ExecutorClient,
+	ingest TxSink,
+) refusedChallenge {
+	receipt, mempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, diffs)
+	if err != nil {
+		// Executor unreachable or internal error -> accept timeout.
+		return refusedUnreachable
+	}
+	if len(receipt) == 0 {
+		return refusedNoReceipt
+	}
+	// Copy executor recovery txs into the verifier pool. Same bytes as
+	// the executor queued — do not mint a new ConfirmStart from receipt.
+	if ingest != nil {
+		for _, tx := range RecoveryTxsFor(mempool, inferenceID) {
+			ingest.AddTx(tx)
+		}
+	}
+	return refusedReceipt
 }
 
 // VerifyExecutionTimeout checks if an execution timeout is valid.

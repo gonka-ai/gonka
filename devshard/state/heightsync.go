@@ -6,6 +6,7 @@ import (
 
 	"devshard/heightsync"
 	"devshard/logging"
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -26,16 +27,20 @@ func countForceHeightSyncTurn(txs []*types.DevshardTx) int {
 }
 
 func (sm *StateMachine) clearExpiredHeightSyncFlags() {
-	if sm.state.HeightSyncForcedEnd != 0 && sm.state.LatestNonce > sm.state.HeightSyncForcedEnd {
-		sm.state.HeightSyncForcedStart = 0
-		sm.state.HeightSyncForcedEnd = 0
+	clearExpiredHeightSyncFlagsOf(sm.state)
+}
+
+func clearExpiredHeightSyncFlagsOf(st *types.EscrowState) {
+	if st.HeightSyncForcedEnd != 0 && st.LatestNonce > st.HeightSyncForcedEnd {
+		st.HeightSyncForcedStart = 0
+		st.HeightSyncForcedEnd = 0
 	}
-	if sm.state.HeightSyncCadenceSwallowUntil != 0 && sm.state.LatestNonce > sm.state.HeightSyncCadenceSwallowUntil {
-		sm.state.HeightSyncCadenceSwallowUntil = 0
-		sm.state.HeightSyncSwallowFe = 0
-		sm.state.HeightSyncTurnK = 0
-		sm.state.HeightSyncTurnSlots = 0
-		sm.state.HeightSyncTurnReason = ""
+	if st.HeightSyncCadenceSwallowUntil != 0 && st.LatestNonce > st.HeightSyncCadenceSwallowUntil {
+		st.HeightSyncCadenceSwallowUntil = 0
+		st.HeightSyncSwallowFe = 0
+		st.HeightSyncTurnK = 0
+		st.HeightSyncTurnSlots = 0
+		st.HeightSyncTurnReason = ""
 	}
 }
 
@@ -57,13 +62,17 @@ func (sm *StateMachine) HeightSyncForcedTurnActive(nextNonce uint64) bool {
 }
 
 func (sm *StateMachine) applyForceHeightSyncTurn(msg *types.MsgForceHeightSyncTurn, diffNonce uint64) error {
+	return applyForceHeightSyncTurnTo(sm.state, msg, diffNonce)
+}
+
+func applyForceHeightSyncTurnTo(st *types.EscrowState, msg *types.MsgForceHeightSyncTurn, diffNonce uint64) error {
 	if msg == nil {
 		return types.ErrEmptyTx
 	}
-	if sm.state.Phase != types.PhaseActive {
+	if st.Phase != types.PhaseActive {
 		return types.ErrSessionFinalizing
 	}
-	slots := uint64(len(sm.state.Group))
+	slots := uint64(len(st.Group))
 	if msg.TriggerNonce != diffNonce {
 		return fmt.Errorf("%w: trigger_nonce must equal diff nonce", types.ErrInvalidNonce)
 	}
@@ -78,22 +87,22 @@ func (sm *StateMachine) applyForceHeightSyncTurn(msg *types.MsgForceHeightSyncTu
 		return fmt.Errorf("MsgForceHeightSyncTurn end_nonce must be trigger_nonce+slots_num-1")
 	}
 	// Ignore duplicate open while a forced turn still covers this diff nonce.
-	if sm.state.HeightSyncForcedEnd != 0 && diffNonce <= sm.state.HeightSyncForcedEnd {
+	if st.HeightSyncForcedEnd != 0 && diffNonce <= st.HeightSyncForcedEnd {
 		return nil
 	}
 
-	sm.state.HeightSyncForcedStart = msg.TriggerNonce
-	sm.state.HeightSyncForcedEnd = msg.EndNonce
-	sm.state.HeightSyncTurnK = msg.AnchorK
-	sm.state.HeightSyncTurnSlots = msg.SlotsNum
-	sm.state.HeightSyncTurnReason = msg.Reason
+	st.HeightSyncForcedStart = msg.TriggerNonce
+	st.HeightSyncForcedEnd = msg.EndNonce
+	st.HeightSyncTurnK = msg.AnchorK
+	st.HeightSyncTurnSlots = msg.SlotsNum
+	st.HeightSyncTurnReason = msg.Reason
 
 	if swallowUntil, swallowFe, ok := heightsync.ComputeCadenceSwallow(msg.TriggerNonce, msg.EndNonce, msg.AnchorK, msg.SlotsNum); ok {
-		sm.state.HeightSyncCadenceSwallowUntil = swallowUntil
-		sm.state.HeightSyncSwallowFe = swallowFe
+		st.HeightSyncCadenceSwallowUntil = swallowUntil
+		st.HeightSyncSwallowFe = swallowFe
 	} else {
-		sm.state.HeightSyncCadenceSwallowUntil = 0
-		sm.state.HeightSyncSwallowFe = 0
+		st.HeightSyncCadenceSwallowUntil = 0
+		st.HeightSyncSwallowFe = 0
 	}
 	return nil
 }
@@ -233,7 +242,11 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 	if sm.turnTracker == nil {
 		return
 	}
-	sm.turnTracker.Observe(nonce, txs, heightsync.LogResidentHeight(txs, sm.turnTracker.LastCompletedHeight()))
+	observeHeightSync(sm.state, sm.turnTracker, sm.heightSyncFloor, nonce, txs)
+}
+
+func observeHeightSync(st *types.EscrowState, tracker *heightsync.TurnTracker, floor *heightsync.FloorIndex, nonce uint64, txs []*types.DevshardTx) {
+	tracker.Observe(nonce, txs, heightsync.LogResidentHeight(txs, tracker.LastCompletedHeight()))
 	// Every Diff-resident height is a reference height and feeds L0, heartbeats
 	// and acks included. Only host-signed first-party stamps raise F (spec §14
 	// rule 3). Producers lift to F(m) or omit, so a party that is behind is
@@ -246,78 +259,108 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 	// envelope to refuse. Letting admission feed the floor would give two honest
 	// verifiers different floors and therefore different L0 verdicts for every
 	// later diff — an escrow split. Floor updates therefore run only on apply.
-	sm.heightSyncFloor.Observe(nonce, sm.floorClaimsLocked(txs))
-	sm.state.HeightSyncLastCompletedHeight = sm.turnTracker.LastCompletedHeight()
-	sm.state.HeightSyncLatestTurnStart = sm.turnTracker.LatestTurnStart()
+	floor.Observe(nonce, floorClaims(st, txs))
+	st.HeightSyncLastCompletedHeight = tracker.LastCompletedHeight()
+	st.HeightSyncLatestTurnStart = tracker.LatestTurnStart()
 }
 
-// rebuildHeightSyncLocked reconstructs the turn tracker and floor.
+// heightSyncRestore is the tracker and floor a restore installs.
+type heightSyncRestore struct {
+	tracker *heightsync.TurnTracker
+	floor   *heightsync.FloorIndex
+	ready   bool
+	err     error
+}
+
+func (r heightSyncRestore) installLocked(sm *StateMachine) error {
+	sm.turnTracker = r.tracker
+	sm.heightSyncFloor = r.floor
+	sm.floorReady = r.ready
+	return r.err
+}
+
+// foldHeightSync reconstructs the turn tracker and floor for a restored state.
+// st must be private to the caller: the fold writes its height-sync fields and
+// runs without sm.mu, so a long journal does not block the state machine.
 //
 // The journal is the canonical fold (tracker + floor). A snapshot floor is
 // installed only when that replay cannot run, so L0 still agrees after a
 // GetDiffs failure. If LatestNonce > 0 and neither source works, restore
 // fails: an empty floor would skip L0 and split the escrow from any replica
 // that rebuilt.
-func (sm *StateMachine) rebuildHeightSyncLocked(snapFloor *heightsync.FloorIndex) error {
-	savedLast := sm.state.HeightSyncLastCompletedHeight
-	savedStart := sm.state.HeightSyncLatestTurnStart
-	slots := uint64(len(sm.state.Group))
-	tracker := heightsync.NewTurnTracker(slots, 0, sm.heartbeatCfg)
+func foldHeightSync(store storage.DiffReader, st *types.EscrowState, hbCfg heightsync.HeartbeatConfig, snapFloor *heightsync.FloorIndex) heightSyncRestore {
+	savedLast := st.HeightSyncLastCompletedHeight
+	savedStart := st.HeightSyncLatestTurnStart
+	slots := uint64(len(st.Group))
+	tracker := heightsync.NewTurnTracker(slots, 0, hbCfg)
 	cfg := heightsync.FloorConfig{}
 	emptyFloor := heightsync.NewFloorIndexWith(cfg)
 
-	install := func(floor *heightsync.FloorIndex, ready bool) {
-		sm.turnTracker = tracker
-		sm.heightSyncFloor = floor
-		sm.floorReady = ready
-		sm.state.HeightSyncLastCompletedHeight = savedLast
-		sm.state.HeightSyncLatestTurnStart = savedStart
+	restore := func(floor *heightsync.FloorIndex, ready bool, err error) heightSyncRestore {
+		st.HeightSyncLastCompletedHeight = savedLast
+		st.HeightSyncLatestTurnStart = savedStart
+		return heightSyncRestore{tracker: tracker, floor: floor, ready: ready, err: err}
 	}
 
-	if sm.state.LatestNonce == 0 {
-		install(emptyFloor, true)
-		return nil
+	if st.LatestNonce == 0 {
+		return restore(emptyFloor, true, nil)
 	}
 
-	if sm.inferenceStore != nil {
-		records, err := sm.inferenceStore.GetDiffs(sm.state.EscrowID, 1, sm.state.LatestNonce)
-		if err == nil {
-			sm.turnTracker = tracker
-			sm.heightSyncFloor = emptyFloor
-			sm.floorReady = true
-			for _, rec := range records {
+	if store != nil {
+		// The snapshot already restored these flags. A page that fails after
+		// an earlier page applied a force turn must not leave that prefix in
+		// place: the snapshot floor path below puts the restored flags back.
+		savedForcedStart := st.HeightSyncForcedStart
+		savedForcedEnd := st.HeightSyncForcedEnd
+		savedCadence := st.HeightSyncCadenceSwallowUntil
+		savedSwallowFe := st.HeightSyncSwallowFe
+		savedTurnK := st.HeightSyncTurnK
+		savedTurnSlots := st.HeightSyncTurnSlots
+		savedReason := st.HeightSyncTurnReason
+
+		foldTracker := heightsync.NewTurnTracker(slots, 0, hbCfg)
+		foldFloor := heightsync.NewFloorIndexWith(cfg)
+		err := storage.ReadDiffPages(store, st.EscrowID, 1, st.LatestNonce, func(page []types.DiffRecord) error {
+			for _, rec := range page {
 				for _, tx := range rec.Txs {
 					if msg := tx.GetForceHeightSyncTurn(); msg != nil {
-						_ = sm.applyForceHeightSyncTurn(msg, rec.Nonce)
+						_ = applyForceHeightSyncTurnTo(st, msg, rec.Nonce)
 					}
 				}
-				sm.observeHeightSyncLocked(rec.Nonce, rec.Txs)
+				observeHeightSync(st, foldTracker, foldFloor, rec.Nonce, rec.Txs)
 			}
-			sm.clearExpiredHeightSyncFlags()
 			return nil
+		})
+		if err == nil {
+			clearExpiredHeightSyncFlagsOf(st)
+			return heightSyncRestore{tracker: foldTracker, floor: foldFloor, ready: true}
 		}
+		st.HeightSyncForcedStart = savedForcedStart
+		st.HeightSyncForcedEnd = savedForcedEnd
+		st.HeightSyncCadenceSwallowUntil = savedCadence
+		st.HeightSyncSwallowFe = savedSwallowFe
+		st.HeightSyncTurnK = savedTurnK
+		st.HeightSyncTurnSlots = savedTurnSlots
+		st.HeightSyncTurnReason = savedReason
 		if snapFloor == nil {
 			logging.Warn("heightsync: snapshot restore could not load diffs",
-				"escrow_id", sm.state.EscrowID, "error", err)
+				"escrow_id", st.EscrowID, "error", err)
 			tracker.SeedCompleted(savedLast, savedStart)
-			install(emptyFloor, false)
-			return fmt.Errorf("%w: %v", types.ErrFloorNotRestored, err)
+			return restore(emptyFloor, false, fmt.Errorf("%w: %v", types.ErrFloorNotRestored, err))
 		}
 		logging.Warn("heightsync: snapshot restore could not load diffs; using snapshot floor",
-			"escrow_id", sm.state.EscrowID, "error", err)
+			"escrow_id", st.EscrowID, "error", err)
 	} else if snapFloor == nil {
-		install(emptyFloor, false)
-		return fmt.Errorf("%w: no inference store", types.ErrFloorNotRestored)
+		return restore(emptyFloor, false, fmt.Errorf("%w: no inference store", types.ErrFloorNotRestored))
 	}
 
 	tracker.SeedCompleted(savedLast, savedStart)
 	cloned := snapFloor.Clone()
 	cloned.ApplyConfig(cfg)
-	install(cloned, true)
-	return nil
+	return restore(cloned, true, nil)
 }
 
-// floorClaimsLocked attributes each Diff-resident height to the identity that
+// floorClaims attributes each Diff-resident height to the identity that
 // signed it, which is what the floor's raise rule counts.
 //
 // Every carrier is named in the log itself: `slot_id` on an ack (L2 verifies the
@@ -326,7 +369,7 @@ func (sm *StateMachine) rebuildHeightSyncLocked(snapFloor *heightsync.FloorIndex
 // wire field is added — and the sequencer for the legs it composes. A leg the
 // log cannot attribute is still judged by L0; it simply does not vote on where
 // the floor goes.
-func (sm *StateMachine) floorClaimsLocked(txs []*types.DevshardTx) []heightsync.FloorClaim {
+func floorClaims(st *types.EscrowState, txs []*types.DevshardTx) []heightsync.FloorClaim {
 	claims := make([]heightsync.FloorClaim, 0, len(txs))
 	for _, tx := range txs {
 		h, hash, ok := heightsync.RefStamp(tx)
@@ -340,7 +383,7 @@ func (sm *StateMachine) floorClaimsLocked(txs []*types.DevshardTx) []heightsync.
 		case tx.GetFinishInference() != nil:
 			signer = tx.GetFinishInference().ExecutorSlot
 		case tx.GetConfirmStart() != nil:
-			rec := sm.state.Inferences[tx.GetConfirmStart().InferenceId]
+			rec := st.Inferences[tx.GetConfirmStart().InferenceId]
 			if rec == nil {
 				continue
 			}

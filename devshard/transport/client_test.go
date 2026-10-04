@@ -8,9 +8,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/proto"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
@@ -263,10 +267,214 @@ func TestHTTPClient_GetDiffs(t *testing.T) {
 	require.NoError(t, err)
 
 	// Fetch diffs.
-	diffs, err := client.GetDiffs(ctx, 1, 1)
+	pages := collectDiffPages(t, client, 1, 1)
+	require.Len(t, pages, 1)
+	require.Len(t, pages[0], 1)
+	require.Equal(t, uint64(1), pages[0][0].Nonce)
+}
+
+// diffWindowServer serves GET /diffs for the stored nonces. A window wider
+// than maxNonces gets the byte-budget 400 the real server sends.
+func diffWindowServer(t *testing.T, stored func(uint64) bool, maxNonces uint64) (*HTTPClient, func() [][2]uint64) {
+	t.Helper()
+	var mu sync.Mutex
+	var calls [][2]uint64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		from, _ := strconv.ParseUint(r.URL.Query().Get("from"), 10, 64)
+		to, _ := strconv.ParseUint(r.URL.Query().Get("to"), 10, 64)
+		mu.Lock()
+		calls = append(calls, [2]uint64{from, to})
+		mu.Unlock()
+		if to < from || to-from >= uint64(storage.DiffPageMaxNonces) || to-from >= maxNonces {
+			http.Error(w, storage.ErrDiffPageLimit.Error(), http.StatusBadRequest)
+			return
+		}
+		type wire struct {
+			Diff DiffJSON `json:"diff"`
+		}
+		out := make([]wire, 0, to-from+1)
+		for nonce := from; nonce <= to; nonce++ {
+			if !stored(nonce) {
+				continue
+			}
+			txs, err := proto.Marshal(&types.DiffContent{Nonce: nonce})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			out = append(out, wire{Diff: DiffJSON{Nonce: nonce, Txs: txs}})
+		}
+		body, err := json.Marshal(out)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := DefaultClientConfig()
+	cfg.RoutePrefix = ""
+	client := NewHTTPClient(srv.URL, "escrow-1", testutil.MustGenerateKey(t), cfg)
+	return client, func() [][2]uint64 {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([][2]uint64(nil), calls...)
+	}
+}
+
+func collectDiffPages(t *testing.T, client *HTTPClient, from, to uint64) [][]types.Diff {
+	t.Helper()
+	var pages [][]types.Diff
+	require.NoError(t, client.GetDiffPages(context.Background(), from, to, func(page []types.Diff) error {
+		pages = append(pages, page)
+		return nil
+	}))
+	return pages
+}
+
+func pageNonces(pages [][]types.Diff) [][2]uint64 {
+	out := make([][2]uint64, len(pages))
+	for i, page := range pages {
+		out[i] = [2]uint64{page[0].Nonce, page[len(page)-1].Nonce}
+	}
+	return out
+}
+
+func TestHTTPClient_GetDiffPages_PagesAWideRange(t *testing.T) {
+	const n = storage.DiffPageMaxNonces + 1
+	client, calls := diffWindowServer(t, func(uint64) bool { return true }, storage.DiffPageMaxNonces)
+
+	pages := collectDiffPages(t, client, 1, n)
+	require.Equal(t, [][2]uint64{{1, storage.DiffPageMaxNonces}, {n, n}}, pageNonces(pages),
+		"each request window reaches the caller as its own page")
+	require.Equal(t, [][2]uint64{{1, storage.DiffPageMaxNonces}, {n, n}}, calls())
+}
+
+func TestHTTPClient_GetDiffPages_HalvesAShortWindowOverBudget(t *testing.T) {
+	client, calls := diffWindowServer(t, func(uint64) bool { return true }, 4)
+
+	pages := collectDiffPages(t, client, 1, 10)
+	require.Equal(t, [][2]uint64{{1, 3}, {4, 7}, {8, 10}}, pageNonces(pages))
+	require.Equal(t, [][2]uint64{{1, 10}, {1, 5}, {1, 3}, {4, 10}, {4, 7}, {8, 10}}, calls(),
+		"a window under one nonce page still halves on the byte budget")
+}
+
+func TestHTTPClient_GetDiffPages_SkipsAnEmptyWindow(t *testing.T) {
+	const tail = 2*storage.DiffPageMaxNonces + 3
+	client, calls := diffWindowServer(t, func(n uint64) bool { return n <= 3 || n >= tail-1 }, storage.DiffPageMaxNonces)
+
+	pages := collectDiffPages(t, client, 1, tail)
+	require.Equal(t, [][2]uint64{{1, 3}, {tail - 1, tail}}, pageNonces(pages))
+	require.Equal(t, [][2]uint64{
+		{1, storage.DiffPageMaxNonces},
+		{storage.DiffPageMaxNonces + 1, 2 * storage.DiffPageMaxNonces},
+		{2*storage.DiffPageMaxNonces + 1, tail},
+	}, calls())
+}
+
+func TestHTTPClient_GetDiffPages_CallbackErrorStopsTheWalk(t *testing.T) {
+	client, calls := diffWindowServer(t, func(uint64) bool { return true }, storage.DiffPageMaxNonces)
+	stop := errors.New("stop")
+
+	err := client.GetDiffPages(context.Background(), 1, 3*storage.DiffPageMaxNonces, func([]types.Diff) error {
+		return stop
+	})
+	require.ErrorIs(t, err, stop)
+	require.Len(t, calls(), 1)
+}
+
+// rawDiffsServer answers every GET /diffs with records, whatever was asked.
+func rawDiffsServer(t *testing.T, records []DiffJSON) *HTTPClient {
+	t.Helper()
+	type wire struct {
+		Diff DiffJSON `json:"diff"`
+	}
+	out := make([]wire, len(records))
+	for i, d := range records {
+		out[i] = wire{Diff: d}
+	}
+	body, err := json.Marshal(out)
 	require.NoError(t, err)
-	require.Len(t, diffs, 1)
-	require.Equal(t, uint64(1), diffs[0].Nonce)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := DefaultClientConfig()
+	cfg.RoutePrefix = ""
+	return NewHTTPClient(srv.URL, "escrow-1", testutil.MustGenerateKey(t), cfg)
+}
+
+func requireNoDiffPage(t *testing.T, client *HTTPClient, target error) {
+	t.Helper()
+	err := client.GetDiffPages(context.Background(), 1, storage.DiffPageMaxNonces, func([]types.Diff) error {
+		t.Fatal("a page that breaks the page rule must not reach the caller")
+		return nil
+	})
+	require.ErrorIs(t, err, target)
+}
+
+func TestHTTPClient_GetDiffPages_RejectsMoreRecordsThanOnePage(t *testing.T) {
+	records := make([]DiffJSON, storage.DiffPageMaxNonces+1)
+	for i := range records {
+		records[i] = DiffJSON{Nonce: uint64(i + 1)}
+	}
+	requireNoDiffPage(t, rawDiffsServer(t, records), ErrDiffPageOversized)
+}
+
+func TestHTTPClient_GetDiffPages_RejectsAMultiRecordPageOverTheByteBudget(t *testing.T) {
+	half := make([]byte, storage.DiffPageMaxBytes/2+diffWireNonceBytes+1)
+	records := []DiffJSON{{Nonce: 1, Txs: half}, {Nonce: 2, Txs: half}}
+	requireNoDiffPage(t, rawDiffsServer(t, records), ErrDiffPageOversized)
+}
+
+func TestHTTPClient_GetDiffPages_RejectsABodyOverOnePage(t *testing.T) {
+	records := []DiffJSON{{Nonce: 1, Txs: make([]byte, maxDiffPageBodyBytes)}}
+	requireNoDiffPage(t, rawDiffsServer(t, records), ErrResponseBodyTooLarge)
+}
+
+func TestHTTPClient_GetDiffPages_AcceptsAPageAtTheByteBudget(t *testing.T) {
+	promptTx := func(n int) []*types.DevshardTx {
+		return []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+			InferenceId: 1,
+			PromptHash:  make([]byte, n),
+		}}}}
+	}
+	half := storage.DiffPageMaxBytes / 2
+	overhead := proto.Size(&types.DiffContent{Txs: promptTx(half)}) - half
+	txs := promptTx(half - overhead)
+	require.Equal(t, half, proto.Size(&types.DiffContent{Txs: txs}), "stored txs_proto as DiffSizes measures it")
+
+	const base = uint64(1) << 62
+	var records []DiffJSON
+	for nonce := base; nonce <= base+1; nonce++ {
+		dj, err := DiffToJSON(types.Diff{Nonce: nonce, Txs: txs})
+		require.NoError(t, err)
+		records = append(records, dj)
+	}
+	require.Greater(t, len(records[0].Txs)+len(records[1].Txs), storage.DiffPageMaxBytes,
+		"the wire txs carry the nonce on top of the stored bytes")
+
+	pages := collectDiffPages(t, rawDiffsServer(t, records), base, base+1)
+	require.Equal(t, [][2]uint64{{base, base + 1}}, pageNonces(pages))
+}
+
+func TestHTTPClient_GetDiffPages_AcceptsASingleDiffOverTheByteBudget(t *testing.T) {
+	txs := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  make([]byte, storage.DiffPageMaxBytes+1),
+	}}}}
+	dj, err := DiffToJSON(types.Diff{Nonce: 1, Txs: txs})
+	require.NoError(t, err)
+	require.Greater(t, len(dj.Txs), storage.DiffPageMaxBytes)
+
+	pages := collectDiffPages(t, rawDiffsServer(t, []DiffJSON{dj}), 1, 1)
+	require.Len(t, pages, 1)
+	require.Len(t, pages[0], 1, "a diff larger than the byte budget is a page by itself")
+	require.Equal(t, uint64(1), pages[0][0].Nonce)
 }
 
 func TestHTTPClient_GetMempool(t *testing.T) {

@@ -27,6 +27,7 @@ import (
 	"common/completionapi"
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/heightsync"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -79,7 +80,11 @@ func gatewayTestRuntimeForLimits(t *testing.T, id string, balance, nonce uint64)
 	st := sm.ExportState()
 	st.Balance = balance
 	st.LatestNonce = nonce
-	require.NoError(t, sm.RestoreState(st))
+	// The store holds no journal through the faked nonce; the live floor
+	// stands in for the snapshot floor a real restore would carry.
+	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, sm.ExportHeightSyncFloor())
+	require.NoError(t, err)
+	require.NoError(t, sm.RestoreStateWithFloor(st, floor))
 
 	return &devshardRuntime{
 		id:    id,
