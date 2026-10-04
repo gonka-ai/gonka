@@ -246,6 +246,7 @@ func New(
 				// Supply the logger
 				app.GetWasmKeeper,
 				logger,
+				GonkaMintFn(),
 			),
 		)
 	)
