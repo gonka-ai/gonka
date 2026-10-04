@@ -446,7 +446,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.RemoveInferenceTimeout(ctx, t.ExpirationHeight, t.InferenceId)
 	}
 
-	err = am.keeper.Prune(ctx, int64(currentEpoch.Index))
+	err = am.keeper.PruneWithParams(ctx, params, int64(currentEpoch.Index))
 	if err != nil {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
 	}
