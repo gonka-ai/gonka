@@ -21,21 +21,14 @@ func (k Keeper) UpdateModelRollingWindows(
 	groupData *types.EpochGroupData,
 	params *types.Params,
 	modelBlockLoads map[string]uint64,
-	modelBlockInferenceCounts map[string]uint64,
 ) error {
 	if groupData == nil {
 		return nil
 	}
 
 	utilizationWindowSeconds := uint64(0)
-	invalidationsSamplePeriodSeconds := uint64(0)
-	if params != nil {
-		if params.DynamicPricingParams != nil {
-			utilizationWindowSeconds = params.DynamicPricingParams.UtilizationWindowDuration
-		}
-		if params.BandwidthLimitsParams != nil {
-			invalidationsSamplePeriodSeconds = params.BandwidthLimitsParams.InvalidationsSamplePeriod
-		}
+	if params != nil && params.DynamicPricingParams != nil {
+		utilizationWindowSeconds = params.DynamicPricingParams.UtilizationWindowDuration
 	}
 
 	return k.UpdateModelRollingWindowsForActiveModels(
@@ -43,8 +36,6 @@ func (k Keeper) UpdateModelRollingWindows(
 		groupData.SubGroupModels,
 		modelBlockLoads,
 		utilizationWindowSeconds,
-		modelBlockInferenceCounts,
-		invalidationsSamplePeriodSeconds,
 	)
 }
 
@@ -53,11 +44,8 @@ func (k Keeper) UpdateModelRollingWindowsForActiveModels(
 	activeModels []string,
 	modelBlockLoads map[string]uint64,
 	utilizationWindowSeconds uint64,
-	modelBlockInferenceCounts map[string]uint64,
-	invalidationsSamplePeriodSeconds uint64,
 ) error {
 	loadWindowBlocks := types.UtilizationWindowToBlocks(utilizationWindowSeconds)
-	inferenceCountWindowBlocks := types.InvalidationsSamplePeriodToBlocks(invalidationsSamplePeriodSeconds)
 
 	activeSet := make(map[string]struct{}, len(activeModels))
 	for _, modelID := range activeModels {
@@ -72,22 +60,9 @@ func (k Keeper) UpdateModelRollingWindowsForActiveModels(
 		); err != nil {
 			return fmt.Errorf("update model load rolling window for %s: %w", modelID, err)
 		}
-
-		if err := k.updateModelRollingWindowState(
-			ctx,
-			k.ModelInferenceCountRollingWindowMap,
-			modelID,
-			inferenceCountWindowBlocks,
-			modelBlockInferenceCounts[modelID],
-		); err != nil {
-			return fmt.Errorf("update model inference-count rolling window for %s: %w", modelID, err)
-		}
 	}
 
 	if err := k.removeInactiveModelRollingStates(ctx, k.ModelLoadRollingWindowMap, activeSet, "load"); err != nil {
-		return err
-	}
-	if err := k.removeInactiveModelRollingStates(ctx, k.ModelInferenceCountRollingWindowMap, activeSet, "inference_count"); err != nil {
 		return err
 	}
 
@@ -135,19 +110,6 @@ func (k Keeper) GetModelLoadRollingAveragePerBlock(ctx context.Context, modelID 
 	}
 
 	return decimal.NewFromUint64(state.Sum).Div(decimal.NewFromInt(int64(len(state.Values)))), true, nil
-}
-
-func (k Keeper) GetModelInferenceCountRollingSum(ctx context.Context, modelID string, windowBlocks uint64) (uint64, bool, error) {
-	state, found, err := k.getModelRollingWindowState(ctx, k.ModelInferenceCountRollingWindowMap, modelID)
-	if err != nil {
-		return 0, false, err
-	}
-	if !found {
-		return 0, false, nil
-	}
-
-	state = state.normalize(types.WindowBlocksToSize(windowBlocks))
-	return state.Sum, true, nil
 }
 
 func (k Keeper) getModelRollingWindowState(
