@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"cosmossdk.io/collections"
+	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -37,3 +38,5 @@ func (k Keeper) RemoveFromEpochGroupsForTesting(ctx sdk.Context, participant *ty
 func SetParticipantFromStoredForTesting(k Keeper, ctx sdk.Context, p types.Participant, stored *types.CurrentEpochStats) error {
 	return k.setParticipantFromStored(ctx, p, stored)
 }
+
+func SetLoggerForTesting(k *Keeper, l log.Logger) { k.logger = l }

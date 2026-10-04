@@ -53,7 +53,7 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 	}
 
 	windowBlocks := types.UtilizationWindowToBlocks(dpParams.UtilizationWindowDuration)
-	k.LogInfo("Starting dynamic pricing update", types.Pricing,
+	k.LogDebug("Starting dynamic pricing update", types.Pricing,
 		"windowSeconds", dpParams.UtilizationWindowDuration,
 		"windowBlocks", windowBlocks)
 
@@ -92,7 +92,7 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 			utilization = averageLoadPerBlock.Div(capacityPerBlock)
 		}
 
-		k.LogInfo("Model utilization calculated", types.Pricing,
+		k.LogDebug("Model utilization calculated", types.Pricing,
 			"modelId", modelId, "averageLoadPerBlock", averageLoadPerBlock.String(),
 			"capacityPerSec", capacity, "utilization", utilization.String())
 
@@ -115,14 +115,19 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 			totalPriceChanges++
 		}
 
-		k.LogInfo("Updated model price", types.Pricing,
+		k.LogDebug("Updated model price", types.Pricing,
 			"modelId", modelId, "oldPrice", oldPrice, "newPrice", newPrice,
 			"utilization", utilization.String(), "changed", newPrice != oldPrice)
 	}
 
-	k.LogInfo("Completed dynamic pricing update", types.Pricing,
-		"totalModels", len(mainEpochData.SubGroupModels), "modelsProcessed", totalModelsProcessed,
-		"priceChanges", totalPriceChanges)
+	// Runs every block: stay below Info unless a price actually moved.
+	summary := []interface{}{"totalModels", len(mainEpochData.SubGroupModels), "modelsProcessed", totalModelsProcessed,
+		"priceChanges", totalPriceChanges}
+	if totalPriceChanges > 0 {
+		k.LogInfo("Completed dynamic pricing update", types.Pricing, summary...)
+	} else {
+		k.LogDebug("Completed dynamic pricing update", types.Pricing, summary...)
+	}
 
 	return nil
 }
@@ -182,7 +187,7 @@ func (k *Keeper) calculateModelDynamicPrice(ctx context.Context, dpParams *types
 	if utilization.GreaterThanOrEqual(lowerBound) && utilization.LessThanOrEqual(upperBound) {
 		// Stability zone - no price change
 		newPrice = currentPrice
-		k.LogInfo("Price unchanged - within stability zone", types.Pricing,
+		k.LogDebug("Price unchanged - within stability zone", types.Pricing,
 			"modelId", modelId, "utilization", utilization.String(), "price", newPrice)
 	} else if utilization.LessThan(lowerBound) {
 		// Below stability zone - decrease price (with cap)
@@ -201,7 +206,7 @@ func (k *Keeper) calculateModelDynamicPrice(ctx context.Context, dpParams *types
 		newPriceDec := decimal.NewFromUint64(currentPrice).Mul(adjustmentFactor)
 		newPrice = uint64(newPriceDec.IntPart())
 
-		k.LogInfo("Price decreased - below stability zone", types.Pricing,
+		k.LogDebug("Price decreased - below stability zone", types.Pricing,
 			"modelId", modelId, "utilization", utilization.String(), "deficit", utilizationDeficit.String(),
 			"adjustmentFactor", adjustmentFactor.String(), "oldPrice", currentPrice, "newPrice", newPrice)
 	} else {
@@ -217,14 +222,14 @@ func (k *Keeper) calculateModelDynamicPrice(ctx context.Context, dpParams *types
 		newPriceDec := decimal.NewFromUint64(currentPrice).Mul(adjustmentFactor)
 		newPrice = uint64(newPriceDec.IntPart())
 
-		k.LogInfo("Price increased - above stability zone", types.Pricing,
+		k.LogDebug("Price increased - above stability zone", types.Pricing,
 			"modelId", modelId, "utilization", utilization.String(), "excess", utilizationExcess.String(),
 			"adjustmentFactor", adjustmentFactor.String(), "oldPrice", currentPrice, "newPrice", newPrice)
 	}
 
 	// Enforce minimum price floor
 	if newPrice < minPrice {
-		k.LogInfo("Enforcing minimum price floor", types.Pricing,
+		k.LogDebug("Enforcing minimum price floor", types.Pricing,
 			"modelId", modelId, "calculatedPrice", newPrice, "minPrice", minPrice)
 		newPrice = minPrice
 	}
@@ -250,7 +255,7 @@ func (k *Keeper) handleGracePeriod(ctx context.Context, epochIndex uint64, dpPar
 		actionDesc = "Grace period ending - initializing base pricing for all models"
 	}
 
-	k.LogInfo(actionDesc, types.Pricing,
+	k.LogDebug(actionDesc, types.Pricing,
 		"currentEpoch", epochIndex, "gracePeriodEndEpoch", dpParams.GracePeriodEndEpoch,
 		"targetPrice", targetPrice, "totalModels", len(subGroupModels))
 
@@ -262,7 +267,7 @@ func (k *Keeper) handleGracePeriod(ctx context.Context, epochIndex uint64, dpPar
 				"modelId", modelId, "priceType", priceType, "targetPrice", targetPrice, "error", err)
 			continue
 		}
-		k.LogInfo("Set grace period price", types.Pricing,
+		k.LogDebug("Set grace period price", types.Pricing,
 			"modelId", modelId, "priceType", priceType, "price", targetPrice)
 	}
 }
