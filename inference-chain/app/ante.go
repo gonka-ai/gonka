@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,11 +14,13 @@ import (
 	storetypes "cosmossdk.io/store/types"
 	circuitante "cosmossdk.io/x/circuit/ante"
 	circuitkeeper "cosmossdk.io/x/circuit/keeper"
+	"cosmossdk.io/x/feegrant"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
@@ -37,6 +40,7 @@ type HandlerOptions struct {
 	NodeConfig            *wasmtypes.NodeConfig
 	WasmKeeper            *wasmkeeper.Keeper
 	TXCounterStoreService corestoretypes.KVStoreService
+	FeegrantStoreService  corestoretypes.KVStoreService
 	CircuitKeeper         *circuitkeeper.Keeper
 	InferenceKeeper       *inferencemodulekeeper.Keeper
 	Codec                 codec.Codec
@@ -234,7 +238,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 			// before discretionary swap traffic.
 			Priority: 10_000_000,
 		},
-		ante.NewDeductFeeDecorator(ak, options.BankKeeper, options.FeegrantKeeper, GonkaFeeChecker(options.InferenceKeeper)),
+		ante.NewDeductFeeDecorator(ak, options.BankKeeper, wrapFeegrantKeeper(options.FeegrantKeeper, options.FeegrantStoreService, options.Codec), GonkaFeeChecker(options.InferenceKeeper)),
 		FeeGroupRepeatedLenDecorator{InferenceKeeper: options.InferenceKeeper},
 		// Cheap mempool filters before signature verification (avoid crypto work on
 		// obviously invalid PoC txs). CheckTx ante failures discard
@@ -325,6 +329,74 @@ func (k txAuthKeeper) SetAccount(ctx context.Context, acc sdk.AccountI) {
 	}
 }
 
+// txFeegrantKeeper is Keeper.UseGrantedFees with one grant read instead of two (UpdateAllowance re-reads)
+// and no write when Accept leaves the grant unchanged (zero-fee duty txs).
+type txFeegrantKeeper struct {
+	ante.FeegrantKeeper
+	store corestoretypes.KVStoreService
+	cdc   codec.BinaryCodec
+}
+
+func wrapFeegrantKeeper(k ante.FeegrantKeeper, store corestoretypes.KVStoreService, cdc codec.BinaryCodec) ante.FeegrantKeeper {
+	if k == nil || store == nil || cdc == nil {
+		return k
+	}
+	return txFeegrantKeeper{FeegrantKeeper: k, store: store, cdc: cdc}
+}
+
+func (k txFeegrantKeeper) UseGrantedFees(ctx context.Context, granter, grantee sdk.AccAddress, fee sdk.Coins, msgs []sdk.Msg) error {
+	store := k.store.OpenKVStore(ctx)
+	key := feegrant.FeeAllowanceKey(granter, grantee)
+	bz, err := store.Get(key)
+	if err != nil {
+		return err
+	}
+	if len(bz) == 0 {
+		return sdkerrors.ErrNotFound.Wrap("fee-grant not found")
+	}
+	var grant feegrant.Grant
+	if err := k.cdc.Unmarshal(bz, &grant); err != nil {
+		return err
+	}
+	allowance, err := grant.GetGrant()
+	if err != nil {
+		return err
+	}
+	remove, err := allowance.Accept(ctx, fee, msgs)
+	if remove {
+		// revocation (grant and expiry-queue entry) stays with the SDK keeper
+		return k.FeegrantKeeper.UseGrantedFees(ctx, granter, grantee, fee, msgs)
+	}
+	if err != nil {
+		return err
+	}
+
+	updated, err := feegrant.NewGrant(granter, grantee, allowance)
+	if err != nil {
+		return err
+	}
+	out, err := k.cdc.Marshal(&updated)
+	if err != nil {
+		return err
+	}
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	// Same events as Keeper.UseGrantedFees: the use event, then UpdateAllowance's.
+	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(feegrant.EventTypeUseFeeGrant,
+		sdk.NewAttribute(feegrant.AttributeKeyGranter, granter.String()),
+		sdk.NewAttribute(feegrant.AttributeKeyGrantee, grantee.String()),
+	))
+	if !bytes.Equal(out, bz) {
+		if err := store.Set(key, out); err != nil {
+			return err
+		}
+	}
+	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(feegrant.EventTypeUpdateFeeGrant,
+		sdk.NewAttribute(feegrant.AttributeKeyGranter, updated.Granter),
+		sdk.NewAttribute(feegrant.AttributeKeyGrantee, updated.Grantee),
+	))
+	return nil
+}
+
 func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.NodeConfig, txCounterStoreKey *storetypes.KVStoreKey) {
 	anteHandler, err := NewAnteHandler(
 		HandlerOptions{
@@ -345,6 +417,7 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 			Codec:                 app.appCodec,
 			AuthzKeeper:           &app.AuthzKeeper,
 			TXCounterStoreService: runtime.NewKVStoreService(txCounterStoreKey),
+			FeegrantStoreService:  runtime.NewKVStoreService(app.GetKey(feegrant.StoreKey)),
 			CircuitKeeper:         &app.CircuitBreakerKeeper,
 		},
 	)
