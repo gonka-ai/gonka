@@ -9,18 +9,24 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// BeginBlock must not touch epoch group data: nothing in the block reads a per-block copy of it.
+// BeginBlock reads only the current root epoch group (pricing needs its model list), never a per-block copy of all groups.
 func TestBeginBlockDoesNotReadEpochGroupData(t *testing.T) {
 	traceBeginBlock := func(withGroups bool) int {
 		k, ctx := newMinimalInferenceKeeper(t)
 		require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+		// Pricing reads the current root group for its model list; nothing else may be read.
+		k.SetEpochGroupData(ctx, types.EpochGroupData{
+			EpochIndex:        5,
+			SubGroupModels:    []string{"model-a"},
+			ValidationWeights: []*types.ValidationWeight{{MemberAddress: "val1", Weight: 10}},
+		})
 		if withGroups {
+			k.SetEpochGroupData(ctx, types.EpochGroupData{
+				EpochIndex:        4,
+				SubGroupModels:    []string{"model-a"},
+				ValidationWeights: []*types.ValidationWeight{{MemberAddress: "val1", Weight: 10}},
+			})
 			for _, epoch := range []uint64{4, 5} {
-				k.SetEpochGroupData(ctx, types.EpochGroupData{
-					EpochIndex:        epoch,
-					SubGroupModels:    []string{"model-a"},
-					ValidationWeights: []*types.ValidationWeight{{MemberAddress: "val1", Weight: 10}},
-				})
 				k.SetEpochGroupData(ctx, types.EpochGroupData{
 					EpochIndex:        epoch,
 					ModelId:           "model-a",

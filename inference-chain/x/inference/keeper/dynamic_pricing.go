@@ -26,14 +26,14 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 
 	dpParams := params.DynamicPricingParams
 
-	// Get current epoch to check if we're in grace period
-	currentEpoch, found := k.GetEffectiveEpoch(ctx)
+	// Only the index is needed for the grace period check
+	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if !found {
 		return fmt.Errorf("effective epoch not found")
 	}
 
 	// Get all active models from current epoch group (needed for both grace period and normal pricing)
-	currentEpochGroup, err := k.GetCurrentEpochGroup(ctx)
+	currentEpochGroup, err := k.GetEpochGroup(ctx, epochIndex, "")
 	if err != nil {
 		return fmt.Errorf("failed to get current epoch group: %w", err)
 	}
@@ -47,8 +47,8 @@ func (k *Keeper) UpdateDynamicPricing(ctx context.Context) error {
 	models := mainEpochData.SubGroupModels
 
 	// Handle grace period (active and transition)
-	if currentEpoch.Index <= dpParams.GracePeriodEndEpoch {
-		k.handleGracePeriod(ctx, currentEpoch, dpParams, models)
+	if epochIndex <= dpParams.GracePeriodEndEpoch {
+		k.handleGracePeriod(ctx, epochIndex, dpParams, models)
 		return nil
 	}
 
@@ -234,11 +234,11 @@ func (k *Keeper) calculateModelDynamicPrice(ctx context.Context, dpParams *types
 
 // handleGracePeriod handles both active grace period and transition out of grace period
 // This unified function manages pricing during the grace period and the transition to dynamic pricing
-func (k *Keeper) handleGracePeriod(ctx context.Context, currentEpoch *types.Epoch, dpParams *types.DynamicPricingParams, subGroupModels []string) {
+func (k *Keeper) handleGracePeriod(ctx context.Context, epochIndex uint64, dpParams *types.DynamicPricingParams, subGroupModels []string) {
 	var targetPrice uint64
 	var priceType, actionDesc string
 
-	if currentEpoch.Index < dpParams.GracePeriodEndEpoch {
+	if epochIndex < dpParams.GracePeriodEndEpoch {
 		// Grace period is still active - use configurable grace period price
 		targetPrice = dpParams.GracePeriodPerTokenPrice
 		priceType = "grace"
@@ -251,7 +251,7 @@ func (k *Keeper) handleGracePeriod(ctx context.Context, currentEpoch *types.Epoc
 	}
 
 	k.LogInfo(actionDesc, types.Pricing,
-		"currentEpoch", currentEpoch.Index, "gracePeriodEndEpoch", dpParams.GracePeriodEndEpoch,
+		"currentEpoch", epochIndex, "gracePeriodEndEpoch", dpParams.GracePeriodEndEpoch,
 		"targetPrice", targetPrice, "totalModels", len(subGroupModels))
 
 	// Set target price for all models
