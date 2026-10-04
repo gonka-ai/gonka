@@ -55,7 +55,8 @@ type child struct {
 	binaryVersion string
 	storageMode   string
 	// childH2C is set from --print-child-h2c. False dials the child over HTTP/1.1.
-	childH2C bool
+	childH2C    bool
+	fleetCompat string
 	// haDeployment is populated by binary preflight. Nil means the generation
 	// has not yet established whether it belongs to the HA PostgreSQL set.
 	haDeployment    *bool
@@ -1032,7 +1033,7 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		m.mu.Unlock()
 		return fmt.Errorf("preflight replacement version %s: %w", v.Name, err)
 	}
-	if !m.rollingOverlapAllowed(v.Name, old, preflight.storageMode) {
+	if !m.rollingOverlapAllowed(v.Name, old, preflight.storageMode, preflight.fleetCompat) {
 		slog.Warn("rolling overlap disabled without shared storage; falling back to stop/start swap", "version", v.Name)
 		m.mu.Lock()
 		if m.hostDraining {
@@ -1745,6 +1746,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
 	c.childH2C = preflight.childH2C
+	c.fleetCompat = preflight.fleetCompat
 	if preflight.haDeployment != nil {
 		ha := *preflight.haDeployment
 		c.haDeployment = &ha
@@ -2095,7 +2097,7 @@ func (m *Manager) childStopTimeout() time.Duration {
 	return m.cfg.ChildShutdownGrace
 }
 
-func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newMode string) bool {
+func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newMode, newCompat string) bool {
 	name := strings.ToLower(m.cfg.BinaryName)
 	if name != "devshard" && name != "devshardd" {
 		return true
@@ -2103,8 +2105,10 @@ func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newMode 
 
 	m.mu.Lock()
 	oldMode := ""
+	oldCompat := ""
 	if old != nil {
 		oldMode = old.storageMode
+		oldCompat = old.fleetCompat
 	}
 	m.mu.Unlock()
 
@@ -2121,6 +2125,15 @@ func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newMode 
 			"rolling overlap disabled: new devshard storage mode is not postgres",
 			"version", versionName,
 			"storage_mode", newMode,
+		)
+		return false
+	}
+	if oldCompat != newCompat {
+		slog.Warn(
+			"rolling overlap disabled: fleet compat differs, so the binaries must not share an escrow",
+			"version", versionName,
+			"running", oldCompat,
+			"incoming", newCompat,
 		)
 		return false
 	}

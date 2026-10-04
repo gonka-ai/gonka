@@ -99,6 +99,7 @@ const (
 	ReasonReceiptSignErr              Reason = "receipt_sign_err"
 	ReasonQueueFull                   Reason = "queue_full"
 	ReasonValidateErr                 Reason = "validate_err"
+	ReasonValidationLeased            Reason = "validation_leased"
 	ReasonInferenceDisappeared        Reason = "inference_disappeared"
 	ReasonSignValidationErr           Reason = "sign_validation_err"
 	ReasonSignVoteErr                 Reason = "sign_vote_err"
@@ -157,6 +158,10 @@ const (
 	MetricStatusError  MetricStatus = "error"
 	MetricStatusQueued MetricStatus = "queued"
 	MetricStatusCached MetricStatus = "cached"
+	// MetricStatusLeased marks an attempt that stopped because a lease row was
+	// already in place. Distinct from error: most of these are the dedup guard
+	// working as intended.
+	MetricStatusLeased MetricStatus = "leased"
 )
 
 const (

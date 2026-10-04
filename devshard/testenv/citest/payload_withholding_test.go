@@ -5,6 +5,8 @@ package citest
 import (
 	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,24 +84,85 @@ func TestPayloadWithholding_D7Off_LeaseReleasedAndReacquired(t *testing.T) {
 	model := config.PrimaryModelID(cfg)
 
 	harness.Step(t, "drive chat so HA validators acquire while D7 keeps fetch failure as an error")
-	first := harness.WaitLeasePendingUnderLoad(t, stack, cfg, 1, 45*time.Second, func(stop <-chan struct{}) {
-		drivePayloadWithholdingUntil(t, client, eps.GatewayHTTP, model, "d7off-acquire", stop)
-	})
-	require.Equal(t, 0, first.DuplicateGroups)
-	harness.Step(t, "observed pending=%d; waiting for Release to delete the row", first.Pending)
+	drivePayloadWithholdingChats(t, client, eps.GatewayHTTP, model, 6)
 
+	// Acquire inserts a pending row and Release deletes it before Validate
+	// returns, so the row often never overlaps a poll. payload_fetch_err is
+	// the attempt: it is logged only after Acquire succeeded.
+	waitPayloadFetchErrCounts(t, stack)
 	released := harness.WaitLeasePendingZero(t, stack, cfg, 45*time.Second)
 	require.Equal(t, 0, released.Submitted,
 		"D7 off must not publish a vote (submitted=%d skipped=%d)", released.Submitted, released.Skipped)
-	harness.Step(t, "lease row gone well inside 30m TTL (total=%d)", released.Total)
+	require.Equal(t, 0, released.DuplicateGroups)
+	require.Equal(t, 0, released.Total, "fetch error must delete the lease instead of parking it for 30m")
+	harness.Step(t, "payload fetch failed and the lease row is gone (total=%d)", released.Total)
 
-	harness.Step(t, "more traffic after cooldown; a later attempt must be able to Acquire again")
+	harness.Step(t, "more traffic after cooldown; the same inference must be fetched again")
 	time.Sleep(35 * time.Second)
-	second := harness.WaitLeasePendingUnderLoad(t, stack, cfg, 1, 90*time.Second, func(stop <-chan struct{}) {
-		drivePayloadWithholdingUntil(t, client, eps.GatewayHTTP, model, "d7off-reacquire", stop)
+	// Snapshot after the cooldown, so the first wave's errors are the baseline
+	// and only a later fetch of one of those inferences counts as a re-acquire.
+	before := payloadFetchErrCounts(t, stack)
+	require.NotEmpty(t, before)
+	drivePayloadWithholdingChats(t, client, eps.GatewayHTTP, model, 6)
+
+	var again string
+	ok := harness.AssertEventually(t, 90*time.Second, time.Second, func() bool {
+		snap := stack.PostgresLeaseSnapshot(t, cfg)
+		require.Equal(t, 0, snap.Submitted, "D7 off must not publish a vote")
+		require.Equal(t, 0, snap.DuplicateGroups)
+		again = repeatedPayloadFetchErr(before, payloadFetchErrCounts(t, stack))
+		return again != ""
 	})
-	require.Equal(t, 0, second.DuplicateGroups)
-	harness.Step(t, "re-acquired pending=%d inside TTL (not parked for 30m)", second.Pending)
+	require.True(t, ok, "inference that already failed payload fetch was not attempted again; before=%v", before)
+	harness.Step(t, "inference %s fetched again after cooldown", again)
+
+	settled := harness.WaitLeasePendingZero(t, stack, cfg, 15*time.Second)
+	require.Equal(t, 0, settled.Submitted, "D7 off must not publish a vote")
+	require.Equal(t, 0, settled.Total, "released retry must not leave a parked lease (pending=%d skipped=%d)", settled.Pending, settled.Skipped)
+}
+
+var payloadFetchErrInference = regexp.MustCompile(`inference_id=(\d+)`)
+
+func payloadWithholdingHosts() []string {
+	return []string{"versiond-0", "versiond-1", "versiond-2", "versiond-3"}
+}
+
+func payloadFetchErrCounts(t *testing.T, stack *harness.Stack) map[string]int {
+	t.Helper()
+	logs, err := stack.ComposeLogsAll(payloadWithholdingHosts()...)
+	require.NoError(t, err)
+	counts := map[string]int{}
+	for _, line := range strings.Split(logs, "\n") {
+		if !strings.Contains(line, "payload_fetch_err") {
+			continue
+		}
+		m := payloadFetchErrInference.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		counts[m[1]]++
+	}
+	return counts
+}
+
+func waitPayloadFetchErrCounts(t *testing.T, stack *harness.Stack) map[string]int {
+	t.Helper()
+	var counts map[string]int
+	ok := harness.AssertEventually(t, 45*time.Second, time.Second, func() bool {
+		counts = payloadFetchErrCounts(t, stack)
+		return len(counts) > 0
+	})
+	require.True(t, ok, "no payload_fetch_err in versiond logs")
+	return counts
+}
+
+func repeatedPayloadFetchErr(before, after map[string]int) string {
+	for id, n := range before {
+		if after[id] > n {
+			return id
+		}
+	}
+	return ""
 }
 
 func bootPayloadWithholdingReady(t *testing.T, stack *harness.Stack, cfg *config.File, eps harness.Endpoints, client *http.Client) {
@@ -121,6 +184,22 @@ func bootPayloadWithholdingReady(t *testing.T, stack *harness.Stack, cfg *config
 	escrow := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey).EscrowID
 	require.NotEmpty(t, escrow)
 	harness.WarmEscrowOnBothReplicas(t, stack, cfg, escrow)
+}
+
+func drivePayloadWithholdingChats(t *testing.T, client *http.Client, gatewayURL, model string, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		req := harness.ChatCompletionRequest{
+			Model: model,
+			Messages: []harness.ChatMessage{
+				{Role: "user", Content: fmt.Sprintf("citest payload withholding chat %d", i)},
+			},
+			MaxTokens: 16,
+		}
+		if _, err := harness.TryPostGatewayChatCompletion(client, gatewayURL, harness.TestenvAdminAPIKey, req); err != nil {
+			t.Logf("citest: payload withholding chat %d: %v", i, err)
+		}
+	}
 }
 
 func drivePayloadWithholdingUntil(t *testing.T, client *http.Client, gatewayURL, model, label string, stop <-chan struct{}) {

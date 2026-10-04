@@ -30,37 +30,37 @@ import (
 // --- stubs ---
 
 type stubStaleLeaseStore struct {
-	acquireFn      func(ctx context.Context, escrowId, instanceAddr string, ttl time.Duration) (uint64, uint64, error)
-	setResultFn    func(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error
-	ownsFn         func(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error)
-	releaseFn      func(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
+	acquireFn      func(ctx context.Context, escrowId string, owner storage.LeaseOwner, ttl time.Duration) (uint64, uint64, error)
+	setResultFn    func(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, owner storage.LeaseOwner) error
+	ownsFn         func(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) (bool, error)
+	releaseFn      func(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) error
 	setResultCalls []string
 	releaseCalls   []string
 }
 
-func (s *stubStaleLeaseStore) AcquireOneStale(ctx context.Context, escrowId, instanceAddr string, ttl time.Duration) (uint64, uint64, error) {
-	return s.acquireFn(ctx, escrowId, instanceAddr, ttl)
+func (s *stubStaleLeaseStore) AcquireOneStale(ctx context.Context, escrowId string, owner storage.LeaseOwner, ttl time.Duration) (uint64, uint64, error) {
+	return s.acquireFn(ctx, escrowId, owner, ttl)
 }
 
-func (s *stubStaleLeaseStore) SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error {
+func (s *stubStaleLeaseStore) SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, owner storage.LeaseOwner) error {
 	s.setResultCalls = append(s.setResultCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, status))
 	if s.setResultFn != nil {
-		return s.setResultFn(ctx, escrowId, inferenceId, epochId, status, instanceAddr)
+		return s.setResultFn(ctx, escrowId, inferenceId, epochId, status, owner)
 	}
 	return nil
 }
 
-func (s *stubStaleLeaseStore) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error) {
+func (s *stubStaleLeaseStore) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) (bool, error) {
 	if s.ownsFn != nil {
-		return s.ownsFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
+		return s.ownsFn(ctx, escrowId, inferenceId, epochId, owner)
 	}
 	return true, nil
 }
 
-func (s *stubStaleLeaseStore) Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error {
-	s.releaseCalls = append(s.releaseCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, instanceAddr))
+func (s *stubStaleLeaseStore) Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) error {
+	s.releaseCalls = append(s.releaseCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, owner.Address))
 	if s.releaseFn != nil {
-		return s.releaseFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
+		return s.releaseFn(ctx, escrowId, inferenceId, epochId, owner)
 	}
 	return nil
 }
@@ -126,12 +126,16 @@ func inferenceSnap(id uint64, status types.InferenceStatus) *stubHostSnap {
 	}
 }
 
+func retryOwner(addr string) storage.LeaseOwner {
+	return storage.LeaseOwner{Address: addr, InstanceID: addr, Hostname: "host-" + addr}
+}
+
 func newTestValidationRetryLoop(leases *stubStaleLeaseStore, snap hostSnap, inner *stubEngine) *ValidationRetryLoop {
 	return &ValidationRetryLoop{
 		leases:       leases,
 		inner:        inner,
 		manager:      &stubSessionManager{snap: snap},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     DefaultValidationLeaseTTL,
 		interval:     DefaultValidationRetryInterval,
 	}
@@ -177,7 +181,7 @@ func TestLookupValidateTarget_HappyPath(t *testing.T) {
 func TestRetryStaleValidationsForEscrow_NoStaleLeases(t *testing.T) {
 	calls := 0
 	leases := &stubStaleLeaseStore{
-		acquireFn: func(_ context.Context, _, _ string, _ time.Duration) (uint64, uint64, error) {
+		acquireFn: func(_ context.Context, _ string, _ storage.LeaseOwner, _ time.Duration) (uint64, uint64, error) {
 			calls++
 			return 0, 0, nil // no stale leases
 		},
@@ -185,7 +189,7 @@ func TestRetryStaleValidationsForEscrow_NoStaleLeases(t *testing.T) {
 	rl := &ValidationRetryLoop{
 		leases:       leases,
 		manager:      &stubSessionManager{snap: inferenceSnap(1, types.StatusFinished)},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     DefaultValidationLeaseTTL,
 		interval:     DefaultValidationRetryInterval,
 	}
@@ -196,7 +200,7 @@ func TestRetryStaleValidationsForEscrow_NoStaleLeases(t *testing.T) {
 func TestRetryStaleValidationsForEscrow_AcquireError_Stops(t *testing.T) {
 	calls := 0
 	leases := &stubStaleLeaseStore{
-		acquireFn: func(_ context.Context, _, _ string, _ time.Duration) (uint64, uint64, error) {
+		acquireFn: func(_ context.Context, _ string, _ storage.LeaseOwner, _ time.Duration) (uint64, uint64, error) {
 			calls++
 			return 0, 0, errors.New("db error")
 		},
@@ -204,7 +208,7 @@ func TestRetryStaleValidationsForEscrow_AcquireError_Stops(t *testing.T) {
 	rl := &ValidationRetryLoop{
 		leases:       leases,
 		manager:      &stubSessionManager{snap: inferenceSnap(1, types.StatusFinished)},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     DefaultValidationLeaseTTL,
 	}
 	rl.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
@@ -214,7 +218,7 @@ func TestRetryStaleValidationsForEscrow_AcquireError_Stops(t *testing.T) {
 func TestRetryStaleValidationsForEscrow_LeaseFromPreviousEpochIsSkipped(t *testing.T) {
 	callCount := 0
 	leases := &stubStaleLeaseStore{
-		acquireFn: func(_ context.Context, _, _ string, _ time.Duration) (uint64, uint64, error) {
+		acquireFn: func(_ context.Context, _ string, _ storage.LeaseOwner, _ time.Duration) (uint64, uint64, error) {
 			callCount++
 			if callCount == 1 {
 				return 1, 10, nil
@@ -228,7 +232,7 @@ func TestRetryStaleValidationsForEscrow_LeaseFromPreviousEpochIsSkipped(t *testi
 		leases:       leases,
 		manager:      &stubSessionManager{snap: inferenceSnap(1, types.StatusFinished)},
 		phase:        phase,
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     DefaultValidationLeaseTTL,
 	}
 
@@ -245,7 +249,7 @@ func TestRetryStaleValidationsForEscrow_LeaseFromPreviousEpochIsSkipped(t *testi
 func TestRetryStaleValidationsForEscrow_LeaseAtPhaseEpochPlusOneIsValidated(t *testing.T) {
 	callCount := 0
 	leases := &stubStaleLeaseStore{
-		acquireFn: func(_ context.Context, _, _ string, _ time.Duration) (uint64, uint64, error) {
+		acquireFn: func(_ context.Context, _ string, _ storage.LeaseOwner, _ time.Duration) (uint64, uint64, error) {
 			callCount++
 			if callCount == 1 {
 				return 7, 10, nil
@@ -272,7 +276,7 @@ func TestRetryStaleValidationsForEscrow_LeaseAtPhaseEpochPlusOneIsValidated(t *t
 func TestRetryStaleValidationsForEscrow_SessionNotLoaded_DoesNotClaim(t *testing.T) {
 	calls := 0
 	leases := &stubStaleLeaseStore{
-		acquireFn: func(_ context.Context, _, _ string, _ time.Duration) (uint64, uint64, error) {
+		acquireFn: func(_ context.Context, _ string, _ storage.LeaseOwner, _ time.Duration) (uint64, uint64, error) {
 			calls++
 			return 1, 3, nil
 		},
@@ -280,7 +284,7 @@ func TestRetryStaleValidationsForEscrow_SessionNotLoaded_DoesNotClaim(t *testing
 	rl := &ValidationRetryLoop{
 		leases:       leases,
 		manager:      &stubSessionManager{},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     DefaultValidationLeaseTTL,
 	}
 	rl.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
@@ -302,7 +306,7 @@ func TestRetryStaleValidation_SessionNotLoaded_Releases(t *testing.T) {
 func TestRetryStaleValidationsForEscrow_SessionUnloadsAfterClaim_Releases(t *testing.T) {
 	callCount := 0
 	leases := &stubStaleLeaseStore{
-		acquireFn: func(_ context.Context, _, _ string, _ time.Duration) (uint64, uint64, error) {
+		acquireFn: func(_ context.Context, _ string, _ storage.LeaseOwner, _ time.Duration) (uint64, uint64, error) {
 			callCount++
 			if callCount == 1 {
 				return 7, 3, nil
@@ -323,7 +327,7 @@ func TestRetryStaleValidationsForEscrow_SessionUnloadsAfterClaim_Releases(t *tes
 		leases:       leases,
 		inner:        &stubEngine{},
 		manager:      mgr,
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     DefaultValidationLeaseTTL,
 	}
 	rl.retryStaleValidationsForEscrow(context.Background(), "escrow-1")
@@ -336,7 +340,7 @@ func TestRetryStaleValidationsForEscrow_SessionUnloadsAfterClaim_Releases(t *tes
 func TestRetryStaleValidationsForEscrow_ChallengedReleasesAndContinues(t *testing.T) {
 	callCount := 0
 	leases := &stubStaleLeaseStore{
-		acquireFn: func(_ context.Context, _, _ string, _ time.Duration) (uint64, uint64, error) {
+		acquireFn: func(_ context.Context, _ string, _ storage.LeaseOwner, _ time.Duration) (uint64, uint64, error) {
 			callCount++
 			if callCount == 1 {
 				return 7, 3, nil
@@ -456,7 +460,7 @@ func TestRetryStaleValidationsForEscrow_TransientErrorReleaseThenHotPathReacquir
 		leases:       leases,
 		inner:        inner,
 		manager:      &stubSessionManager{snap: h},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 
@@ -467,7 +471,7 @@ func TestRetryStaleValidationsForEscrow_TransientErrorReleaseThenHotPathReacquir
 	require.False(t, ownsMemoryLease(ctx, t, leases, "escrow-1", 1, 3, "addr"),
 		"release deletes the stale row; retry must not immediately reacquire it")
 
-	won, err := leases.Acquire(ctx, "escrow-1", 1, 3, "hot-path")
+	won, err := leases.Acquire(ctx, "escrow-1", 1, 3, retryOwner("hot-path"))
 	require.NoError(t, err)
 	require.True(t, won, "hot path should be able to recreate the released lease")
 
@@ -475,7 +479,7 @@ func TestRetryStaleValidationsForEscrow_TransientErrorReleaseThenHotPathReacquir
 	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
 
 	assert.Equal(t, 2, inner.calls)
-	owned, err := leases.OwnsPendingLease(ctx, "escrow-1", 1, 3, "addr")
+	owned, err := leases.OwnsPendingLease(ctx, "escrow-1", 1, 3, retryOwner("addr"))
 	require.NoError(t, err)
 	require.False(t, owned, "submitted lease must no longer be pending")
 
@@ -500,7 +504,7 @@ func TestRetryStaleValidationsForEscrow_StaleSubmittedWithLocalMempoolDoesNotRev
 		leases:       leases,
 		inner:        inner,
 		manager:      &stubSessionManager{snap: h},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 
@@ -536,13 +540,13 @@ func TestRetryStaleValidationsForEscrow_StaleSubmittedAlreadyAppliedDoesNotRepub
 
 	leases := storage.NewMemory()
 	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
-	require.NoError(t, leases.SetResult(ctx, "escrow-1", 1, 3, storage.LeaseStatusSubmitted, "old-owner"))
+	require.NoError(t, leases.SetResult(ctx, "escrow-1", 1, 3, storage.LeaseStatusSubmitted, retryOwner("old-owner")))
 	inner := &stubEngine{}
 	rl := &ValidationRetryLoop{
 		leases:       leases,
 		inner:        inner,
 		manager:      &stubSessionManager{snap: h},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 
@@ -556,7 +560,7 @@ func TestRetryStaleValidationsForEscrow_StaleSubmittedAlreadyAppliedDoesNotRepub
 func TestRetryStaleValidation_OwnershipLostAfterValidate_DoesNotSubmit(t *testing.T) {
 	h := newFinishedRetryHost(t)
 	leases := &stubStaleLeaseStore{
-		ownsFn: func(_ context.Context, _ string, _, _ uint64, _ string) (bool, error) {
+		ownsFn: func(_ context.Context, _ string, _, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return false, nil
 		},
 	}
@@ -565,7 +569,7 @@ func TestRetryStaleValidation_OwnershipLostAfterValidate_DoesNotSubmit(t *testin
 		leases:       leases,
 		inner:        inner,
 		manager:      &stubSessionManager{snap: h},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     DefaultValidationLeaseTTL,
 	}
 
@@ -582,7 +586,7 @@ func TestRetryStaleValidation_OwnershipLostAfterValidate_DoesNotSubmit(t *testin
 func TestRetryStaleValidation_SetResultLeaseNotOwnedAfterSubmit_IsBenign(t *testing.T) {
 	h := newFinishedRetryHost(t)
 	leases := &stubStaleLeaseStore{
-		setResultFn: func(_ context.Context, _ string, _, _ uint64, _ storage.LeaseStatus, _ string) error {
+		setResultFn: func(_ context.Context, _ string, _, _ uint64, _ storage.LeaseStatus, _ storage.LeaseOwner) error {
 			return storage.ErrLeaseNotOwned
 		},
 	}
@@ -591,7 +595,7 @@ func TestRetryStaleValidation_SetResultLeaseNotOwnedAfterSubmit_IsBenign(t *test
 		leases:       leases,
 		inner:        inner,
 		manager:      &stubSessionManager{snap: h},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     DefaultValidationLeaseTTL,
 	}
 
@@ -614,7 +618,7 @@ func TestRetryStaleValidation_SetResultLeaseNotOwnedAfterSubmit_IsBenign(t *test
 func TestRetryStaleValidation_OwnsPendingLeaseErrorAfterValidate_Releases(t *testing.T) {
 	h := newFinishedRetryHost(t)
 	leases := &stubStaleLeaseStore{
-		ownsFn: func(_ context.Context, _ string, _, _ uint64, _ string) (bool, error) {
+		ownsFn: func(_ context.Context, _ string, _, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return false, errors.New("database unavailable")
 		},
 	}
@@ -623,7 +627,7 @@ func TestRetryStaleValidation_OwnsPendingLeaseErrorAfterValidate_Releases(t *tes
 		leases:       leases,
 		inner:        inner,
 		manager:      &stubSessionManager{snap: h},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     DefaultValidationLeaseTTL,
 	}
 
@@ -637,8 +641,8 @@ func TestRetryStaleValidation_OwnsPendingLeaseErrorAfterValidate_Releases(t *tes
 	}
 }
 
-func acquireMemoryLease(ctx context.Context, store *storage.Memory, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
-	won, err := store.Acquire(ctx, escrowID, inferenceID, epochID, instanceAddr)
+func acquireMemoryLease(ctx context.Context, store *storage.Memory, escrowID string, inferenceID, epochID uint64, addr string) error {
+	won, err := store.Acquire(ctx, escrowID, inferenceID, epochID, retryOwner(addr))
 	if err != nil {
 		return err
 	}
@@ -648,9 +652,9 @@ func acquireMemoryLease(ctx context.Context, store *storage.Memory, escrowID str
 	return nil
 }
 
-func ownsMemoryLease(ctx context.Context, t *testing.T, store *storage.Memory, escrowID string, inferenceID, epochID uint64, instanceAddr string) bool {
+func ownsMemoryLease(ctx context.Context, t *testing.T, store *storage.Memory, escrowID string, inferenceID, epochID uint64, addr string) bool {
 	t.Helper()
-	owned, err := store.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, instanceAddr)
+	owned, err := store.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, retryOwner(addr))
 	require.NoError(t, err)
 	return owned
 }
@@ -689,7 +693,7 @@ func TestRetryStaleValidation_Finished_SubmitsInline(t *testing.T) {
 		leases:       leases,
 		inner:        inner,
 		manager:      &stubSessionManager{snap: h},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     DefaultValidationLeaseTTL,
 	}
 
@@ -722,7 +726,7 @@ func TestRetryStaleValidation_ReclaimedValidationAppearsInMempoolEndpoint(t *tes
 		leases:       leases,
 		inner:        &stubEngine{},
 		manager:      &stubSessionManager{snap: h},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 
@@ -773,14 +777,14 @@ func TestRetryStaleValidation_TerminalInferenceDoesNotAppearInMempoolEndpoint(t 
 		leases:       leases,
 		inner:        &stubEngine{},
 		manager:      &stubSessionManager{snap: h},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 
 	time.Sleep(60 * time.Millisecond)
 	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
 
-	owned, err := leases.OwnsPendingLease(ctx, "escrow-1", 1, 3, "addr")
+	owned, err := leases.OwnsPendingLease(ctx, "escrow-1", 1, 3, retryOwner("addr"))
 	require.NoError(t, err)
 	require.False(t, owned, "terminal retry must mark the stale lease skipped")
 	for _, tx := range mempoolEndpointTxs(t, h) {
@@ -812,7 +816,7 @@ func TestRetryStaleValidation_ChallengedInferenceDoesNotAppearInMempoolEndpoint(
 		leases:       leases,
 		inner:        inner,
 		manager:      &stubSessionManager{snap: h},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 
@@ -820,7 +824,7 @@ func TestRetryStaleValidation_ChallengedInferenceDoesNotAppearInMempoolEndpoint(
 	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
 
 	require.Equal(t, 0, inner.calls, "retry loop must leave challenged validation to the hot path")
-	owned, err := leases.OwnsPendingLease(ctx, "escrow-1", 1, 3, "addr")
+	owned, err := leases.OwnsPendingLease(ctx, "escrow-1", 1, 3, retryOwner("addr"))
 	require.NoError(t, err)
 	require.False(t, owned, "challenged retry must release the reclaimed lease")
 	for _, tx := range mempoolEndpointTxs(t, h) {
@@ -837,7 +841,7 @@ func TestRetryStaleValidation_MempoolValidationAppliesThroughPeerEndpoint(t *tes
 		leases:       leases,
 		inner:        &stubEngine{},
 		manager:      &stubSessionManager{snap: producer},
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 
@@ -893,7 +897,7 @@ func TestRetryStaleValidation_LazyRecoveredManagerMempoolEndpoint(t *testing.T) 
 		leases:       store,
 		inner:        &stubEngine{},
 		manager:      mgr,
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 
@@ -936,7 +940,7 @@ func TestRetryStaleValidation_RestartedManagerReclaimsPendingLease(t *testing.T)
 		leases:       store,
 		inner:        &stubEngine{},
 		manager:      restarted,
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 
@@ -981,7 +985,7 @@ func TestRetryStaleValidation_ObsoleteLeaseAfterLazyRecoveryStaysOutOfMempool(t 
 		leases:       store,
 		inner:        inner,
 		manager:      mgr,
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 
@@ -989,7 +993,7 @@ func TestRetryStaleValidation_ObsoleteLeaseAfterLazyRecoveryStaysOutOfMempool(t 
 	rl.retryStaleValidationsForEscrow(ctx, escrowID)
 
 	require.Equal(t, 0, inner.calls, "retry must observe recovered terminal state before validation")
-	owned, err := store.OwnsPendingLease(ctx, escrowID, 1, 7, "addr")
+	owned, err := store.OwnsPendingLease(ctx, escrowID, 1, 7, retryOwner("addr"))
 	require.NoError(t, err)
 	require.False(t, owned, "obsolete stale lease must be moved out of pending")
 	for _, tx := range managerMempoolEndpointTxs(t, e, escrowID) {
@@ -1011,7 +1015,7 @@ func TestRetryStaleValidation_SubmittedMempoolLossRepublishesAfterManagerRestart
 		leases:       store,
 		inner:        &stubEngine{},
 		manager:      first,
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 
@@ -1038,7 +1042,7 @@ func TestRetryStaleValidation_SubmittedMempoolLossRepublishesAfterManagerRestart
 		leases:       store,
 		inner:        &stubEngine{},
 		manager:      restarted,
-		instanceAddr: "addr",
+		owner: retryOwner("addr"),
 		leaseTTL:     50 * time.Millisecond,
 	}
 	time.Sleep(60 * time.Millisecond)
@@ -1082,6 +1086,83 @@ func decodeMempoolResponse(t *testing.T, rec *httptest.ResponseRecorder) []*type
 	txs, err := transport.DevshardTxsFromBytes(body.Txs)
 	require.NoError(t, err)
 	return txs
+}
+
+func TestRetryStaleValidation_SiblingReleaseDoesNotDropStolenLease(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := storage.NewMemory()
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
+
+	proc1Entered := make(chan struct{})
+	proc2Entered := make(chan struct{})
+	releaseProc1 := make(chan struct{})
+	releaseProc2 := make(chan struct{})
+	inner1 := &stubEngine{validateFn: func(context.Context, devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		close(proc1Entered)
+		<-releaseProc1
+		return &devshardpkg.ValidateResult{Valid: true}, nil
+	}}
+	inner2 := &stubEngine{validateFn: func(context.Context, devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		close(proc2Entered)
+		<-releaseProc2
+		return &devshardpkg.ValidateResult{Valid: true}, nil
+	}}
+	owner1 := storage.LeaseOwner{Address: "gonka1", InstanceID: "proc-1", Hostname: "versiond"}
+	owner2 := storage.LeaseOwner{Address: "gonka1", InstanceID: "proc-2", Hostname: "versiond2"}
+	ttl := 40 * time.Millisecond
+	snap := &stubSessionManager{snap: h}
+	rl1 := &ValidationRetryLoop{leases: leases, inner: inner1, manager: snap, owner: owner1, leaseTTL: ttl}
+	rl2 := &ValidationRetryLoop{leases: leases, inner: inner2, manager: snap, owner: owner2, leaseTTL: ttl}
+
+	time.Sleep(ttl + 15*time.Millisecond)
+	done1 := make(chan struct{})
+	go func() {
+		rl1.retryStaleValidationsForEscrow(ctx, "escrow-1")
+		close(done1)
+	}()
+	select {
+	case <-proc1Entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first process did not claim the stale lease")
+	}
+
+	time.Sleep(ttl + 15*time.Millisecond)
+	done2 := make(chan struct{})
+	go func() {
+		rl2.retryStaleValidationsForEscrow(ctx, "escrow-1")
+		close(done2)
+	}()
+	select {
+	case <-proc2Entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second process did not reclaim the lease")
+	}
+
+	close(releaseProc1)
+	select {
+	case <-done1:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first process did not finish after the TTL")
+	}
+	owned, err := leases.OwnsPendingLease(ctx, "escrow-1", 1, 3, owner2)
+	require.NoError(t, err)
+	require.True(t, owned, "the slow process must not delete the row the sibling reclaimed")
+
+	close(releaseProc2)
+	select {
+	case <-done2:
+	case <-time.After(2 * time.Second):
+		t.Fatal("second process did not finish")
+	}
+	var validations int
+	for _, tx := range h.MempoolTxs() {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			validations++
+		}
+	}
+	require.Equal(t, 1, validations)
+	require.Equal(t, 1, inner2.calls)
 }
 
 func hasValidationTx(txs []*types.DevshardTx, inferenceID uint64) bool {
