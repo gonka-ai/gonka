@@ -359,14 +359,20 @@ func (g *Gossip) tryRecovery(ctx context.Context) {
 	// next request, so the gap is never assembled into one slice. A window the
 	// peer stores nothing for moves on to the next one: a later nonce up to
 	// highestSeen can still be stored past a hole.
+	//
+	// A failed page still returns the signatures of the nonces it applied.
+	// They are published before the walk stops: a retry of that prefix signs
+	// the current nonce, not the skipped one. Only a walk that reaches
+	// highestSeen refreshes lastAfterReq, so an open gap is retried on the
+	// next tick instead of after RecoveryDelay.
 	var applyErr error
 	apply := func(diffs []types.Diff) error {
 		sigs, err := updater.ApplyRecoveredDiffs(ctx, diffs)
+		g.publishRecovered(ctx, sigs)
 		if err != nil {
 			applyErr = err
 			return err
 		}
-		g.publishRecovered(ctx, sigs)
 		return nil
 	}
 	for from := lastAppliedNonce + 1; from <= highestSeen; {
@@ -383,15 +389,22 @@ func (g *Gossip) tryRecovery(ctx context.Context) {
 			return
 		}
 		if pageTo == highestSeen {
+			g.mu.Lock()
+			g.lastAfterReq = time.Now()
+			g.mu.Unlock()
 			return
 		}
 		from = pageTo + 1
 	}
 }
 
-// publishRecovered records recovered signatures and rebroadcasts them.
-// Already-applied pages are published before the next page is fetched.
+// publishRecovered records recovered signatures, advances lastAfterReqNonce
+// to the highest recovered nonce, and rebroadcasts them. Already-applied
+// pages are published before the next page is fetched.
 func (g *Gossip) publishRecovered(ctx context.Context, sigs []GossipSig) {
+	if len(sigs) == 0 {
+		return
+	}
 	var maxRecovered uint64
 	for _, sig := range sigs {
 		if sig.Nonce > maxRecovered {
@@ -415,7 +428,6 @@ func (g *Gossip) publishRecovered(ctx context.Context, sigs []GossipSig) {
 	}
 	if maxRecovered > g.lastAfterReqNonce {
 		g.lastAfterReqNonce = maxRecovered
-		g.lastAfterReq = time.Now()
 	}
 	peers := g.pickPeers()
 	g.mu.Unlock()
