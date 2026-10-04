@@ -202,6 +202,11 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 		}
 	}
 
+	// SPRT, pricing and maintenance all read params; load them once for the block.
+	if paramsCtx, err := am.keeper.InjectParamsIntoContext(sdkCtx); err == nil {
+		ctx = paramsCtx
+	}
+
 	// Precompute SPRT values for the block
 	err := am.keeper.PrecomputeSPRTValues(ctx)
 	// We continue if there is something wrong with SPRT. Invalidation will effectively be turned off, but
