@@ -840,3 +840,52 @@ func TestUpdateDynamicPricing_SkipsUnchangedPriceWrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(98), price, "a model without a price starts from base and still moves")
 }
+
+// Mainnet shape: no on-chain inferences, so every window is all zeros and the push changes nothing.
+func TestModelRollingWindows_SkipsUnchangedWrite(t *testing.T) {
+	k, ctx := setupTestKeeperWithDynamicPricing(t)
+	goCtx := sdk.WrapSDKContext(ctx)
+	models := []string{"model-idle", "model-busy"}
+
+	for i := 0; i < 24; i++ {
+		require.NoError(t, k.UpdateModelRollingWindowsForActiveModels(goCtx, models, nil, 60, nil, 120))
+	}
+
+	var trace bytes.Buffer
+	ctx.MultiStore().SetTracer(&trace)
+	require.NoError(t, k.UpdateModelRollingWindowsForActiveModels(
+		goCtx,
+		models,
+		map[string]uint64{"model-busy": 100},
+		60,
+		map[string]uint64{"model-busy": 1},
+		120,
+	))
+	ctx.MultiStore().SetTracer(nil)
+
+	written := map[string]int{}
+	for _, line := range bytes.Split(trace.Bytes(), []byte("\n")) {
+		var op struct {
+			Operation string `json:"operation"`
+			Key       []byte `json:"key"`
+		}
+		if json.Unmarshal(line, &op) != nil || op.Operation != "write" {
+			continue
+		}
+		for _, prefix := range [][]byte{types.ModelLoadRollingWindowPrefix.Bytes(), types.ModelInferenceCountRollingWindowPrefix.Bytes()} {
+			if bytes.HasPrefix(op.Key, prefix) {
+				written[string(op.Key[len(prefix):])]++
+			}
+		}
+	}
+	assert.Equal(t, map[string]int{"model-busy": 2}, written, "only the window that moved is written")
+
+	avg, found, err := k.GetModelLoadRollingAveragePerBlock(goCtx, "model-idle", 12)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.True(t, avg.IsZero())
+	count, found, err := k.GetModelInferenceCountRollingSum(goCtx, "model-busy", 24)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, uint64(1), count)
+}
