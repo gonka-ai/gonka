@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Default versiond backends dial proto h2 and keep a health check on
-# HTTP/1.1. An HTTP/1.1 /readyz takes that server to UP. A proto h2 line
-# with no check stays "no check": drain does not match it, and a health-down
-# command cannot bring it back.
+# The peer-RPC twin dials proto h2 and keeps a health check on HTTP/1.1.
+# JSON backends stay HTTP/1.1. An HTTP/1.1 /readyz takes the proto h2 line
+# to UP. A proto h2 line with no check stays "no check": drain does not
+# match it, and a health-down command cannot bring it back.
 set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -56,12 +56,22 @@ VERSIOND_ROUTER_NON_HA_MAP="$tmpdir/non_ha.map" \
 VERSIOND_ROUTER_VERSIONS_MAP="$tmpdir/versions.map" \
     ./entrypoint.sh >/dev/null
 
-server_line=$(grep -m1 '^[[:space:]]*server-template versiond ' "$tmpdir/rendered.cfg" || true)
+json_line=$(awk '
+    $1 == "backend" && $2 !~ /_rpc$/ { inside = 1; next }
+    inside && $1 == "backend" { exit }
+    inside && $1 == "server-template" { print; exit }
+' "$tmpdir/rendered.cfg" || true)
+! grep -q 'proto h2' <<<"$json_line" || fail "JSON backend enabled proto h2: $json_line"
+server_line=$(awk '
+    $1 == "backend" && $2 ~ /_rpc$/ { inside = 1; next }
+    inside && $1 == "backend" { exit }
+    inside && $1 == "server-template" { print; exit }
+' "$tmpdir/rendered.cfg" || true)
 printf '%s\n' "$server_line" >"$tmpdir/server-line"
 grep -q ' check inter 1s fall 1 rise 2 ' "$tmpdir/server-line" \
-    || fail "rendered server line has no health check"
+    || fail "rendered peer-RPC server line has no health check"
 grep -q 'proto h2 check-proto h1' "$tmpdir/server-line" \
-    || fail "rendered server line does not keep proto h2 with an HTTP/1.1 check"
+    || fail "peer-RPC twin does not enable proto h2 with an HTTP/1.1 check"
 options=${server_line#*versiond-pool:8080 }
 options=${options#"${options%%[![:space:]]*}"}
 [[ $options == *'check-proto h1'* ]] || fail "rendered options lost check-proto h1"

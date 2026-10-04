@@ -3,13 +3,18 @@
 # Update the devshard services of one Gonka join deployment to the release in
 # this checkout.
 #
-# The host updater sequences PostgreSQL, the router fleet, versiond replicas,
-# and public ingress. Among versiond replicas, VERSIOND_LEGACY_HOST is last.
+# The host updater sequences PostgreSQL, the router fleet, public ingress,
+# and versiond replicas. Among versiond replicas, VERSIOND_LEGACY_HOST is last.
 # Public ingress is replaced as a group because its proxy and policy workers
-# depend on each other. A forward move applies the fleet, then versiond, then
-# the proxy: :8081 exists, versiond answers the peer-RPC check, and only then
-# is :9443 published. A rollback off peer RPC (image label ai.gonka.peer-rpc-h2)
-# replaces the proxy first, so :9443 is gone before any router loses :8081.
+# depend on each other. A forward move, including a switch onto the v6 peer-RPC
+# release, applies the fleet, then the proxy, then versiond. Admission is the
+# point the public path changes; a failure there restores the previous proxy
+# and leaves the old versiond. JSON backends stay HTTP/1.1, so a v4 or v5
+# child stays up. Only the peer-RPC twin dials proto h2, and it stays down
+# until the child answers peer-rpc-ok, so :9443 can be published with the
+# proxy while that pool is empty. A rollback off peer RPC (image label
+# ai.gonka.peer-rpc-h2) replaces the proxy first, so :9443 is gone before any
+# router loses :8081.
 # Failed replacements restore the saved Docker specification; an interrupted
 # replacement is recovered on the next normal run. PostgreSQL restores only its
 # image, retaining the migration target and its data. See the release guide for
@@ -928,9 +933,9 @@ if [[ $topology == ha && -n $router_image && $(image_label "$router_image" ai.go
     fi
 fi
 
-# versiond has to answer the peer-RPC body before :9443 is published. While
-# the proxy from the previous release is still the public listener, its
-# admission looks at JSON only, so these replicas can roll behind it.
+# versiond rolls after admission. JSON is already served over HTTP/1.1.
+# Replacing these children is what fills the peer-RPC pool: the twin stays
+# down until the new process answers peer-rpc-ok.
 replace_versiond() {
     required_versiond_routes=()
     required_legacy_routes=()
@@ -982,8 +987,8 @@ if [[ $topology == ha && $peer_rpc_rollback == true ]]; then
     replace_versiond
 elif [[ $topology == ha ]]; then
     apply_router_fleet
-    replace_versiond
     apply_public_proxy
+    replace_versiond
 else
     apply_public_proxy
     replace_versiond

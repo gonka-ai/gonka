@@ -442,7 +442,7 @@ lock.
 | `VERSIOND_HOSTS` | *(empty)* | legacy whitespace/comma host list, entries optionally `host:port`; used only when no endpoint file is set |
 | `VERSIOND_PORT` | `8080` | upstream port and the default endpoint port |
 | `VERSIOND_ROUTER_H2_PORT` | `8081` | second data bind, `proto h2` (h2c). JSON/healthz/catalog stay on `:8080`. Overlay `proxy` speaks HTTP/2 here. Global `tune.h2.max-concurrent-streams 4096` (HAProxy default is 100) covers this frontend and backend `proto h2` to versiond. |
-| `VERSIOND_ROUTER_BACKEND_H2` | `true` | `proto h2` on every generated backend line to versiond, with `check-proto h1` so the health check stays HTTP/1.1. Set `false` only for HTTP/1.1 mock upstreams |
+| `VERSIOND_ROUTER_BACKEND_H2` | `true` | `proto h2` on the peer-RPC twin of each backend, with `check-proto h1` so that health check stays HTTP/1.1. JSON backends stay HTTP/1.1 either way, so a v4 or v5 child stays up through cutover. Set `false` only for HTTP/1.1 mock upstreams that never answer `peer-rpc-ok` |
 | `VERSIOND_LEGACY_HOST` | *(none)* | single host owning pre-HA SQLite data dirs. **Required** whenever `VERSIOND_NON_HA_VERSIONS` is non-empty — the router refuses to start otherwise, because the owner of one host's data cannot default to a name that resolves to the whole pool. Unused (and may be omitted) when no version is pinned |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | static version path segments pinned to the legacy host, whitespace and/or comma separated; retains the wider path-safe startup grammar described above |
 | `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor using the wider path-safe startup grammar; compatible governance additions are learned without changing it |

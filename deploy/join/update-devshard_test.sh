@@ -290,13 +290,13 @@ fleet prepare-networks
 network connect --alias versiond-pool gonka-versiond-router-back cid-versiond
 network connect --alias versiond-pool gonka-versiond-router-back cid-versiond2
 fleet apply
-compose up -d --no-deps --wait --wait-timeout 2100 versiond2
-compose up -d --no-deps --wait --wait-timeout 2100 versiond
 compose up -d --no-deps proxy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy
 fleet verify-admission
+compose up -d --no-deps --wait --wait-timeout 2100 versiond2
+compose up -d --no-deps --wait --wait-timeout 2100 versiond
 rm -f versiond-router'
 [[ $(mutations) == "$expected" ]] || fail "HA sequence:
 $(mutations)"
@@ -310,6 +310,35 @@ grep -q -- '--project-name gonka' "$tmpdir/log" || fail "project name from label
 grep -c 'docker-compose.observability.yml' "$tmpdir/log" >/dev/null || \
     fail "operator overlays from labels were dropped"
 grep -q 'fleet status' "$tmpdir/log" || fail "fleet status was not printed"
+
+# Switching onto v6: the candidate router and proxy publish peer RPC, and the
+# running release does not. Admission still happens before versiond is
+# replaced. proto h2 is the peer-RPC twin inside the new router.
+UPDATE_ARGS=()
+run_update env \
+    FAKE_CONTAINERS="versiond versiond2 devshard-postgres versiond-router proxy" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml,docker-compose.observability.yml" \
+    FAKE_ROUTER_IMAGE="ghcr.io/example/versiond-router:v6" \
+    FAKE_ROUTER_SLOTS="router-1" \
+    FAKE_H2_IMAGES="ghcr.io/example/versiond-router:v6 ghcr.io/example/proxy-router:new" \
+    || fail "v6 switch failed: $(cat "$tmpdir/err")"
+[[ $(mutations) == "$expected" ]] || fail "v6 switch sequence:
+$(mutations)"
+! grep -q 'peer RPC rollback' "$tmpdir/out" || fail "a v6 switch took the peer RPC rollback path"
+
+# A host already on v6 keeps that same order. The h2 label on the running
+# proxy and router is not a rollback.
+UPDATE_ARGS=()
+run_update env \
+    FAKE_CONTAINERS="versiond versiond2 devshard-postgres versiond-router proxy" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml,docker-compose.observability.yml" \
+    FAKE_ROUTER_IMAGE="ghcr.io/example/versiond-router:v6" \
+    FAKE_ROUTER_SLOTS="router-1" \
+    FAKE_H2_IMAGES="ghcr.io/example/versiond-router:v6 ghcr.io/example/proxy-router:new old-proxy old-router-1" \
+    || fail "v6 rerun failed: $(cat "$tmpdir/err")"
+[[ $(mutations) == "$expected" ]] || fail "v6 rerun sequence:
+$(mutations)"
+! grep -q 'peer RPC rollback' "$tmpdir/out" || fail "a v6 rerun took the peer RPC rollback path"
 
 # Peer RPC rollback: the running proxy and a router slot still serve h2, and
 # both candidate images do not. The proxy must leave :9443 before fleet apply.
@@ -378,15 +407,15 @@ network connect --alias versiond-pool gonka-versiond-router-back cid-versiond
 network connect --alias versiond-pool gonka-versiond-router-back cid-versiond2
 network connect --alias versiond-pool gonka-versiond-router-back cid-versiond3
 fleet apply
-compose up -d --no-deps --wait --wait-timeout 2100 versiond3
-compose up -d --no-deps --wait --wait-timeout 2100 versiond
-compose stop versiond2
-compose rm -f versiond2
 compose up -d --no-deps proxy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy
-fleet verify-admission'
+fleet verify-admission
+compose up -d --no-deps --wait --wait-timeout 2100 versiond3
+compose up -d --no-deps --wait --wait-timeout 2100 versiond
+compose stop versiond2
+compose rm -f versiond2'
 [[ $(mutations) == "$expected" ]] || fail "three-replica sequence:
 $(mutations)"
 grep -q 'Topology: ha (versiond versiond2 versiond3)' "$tmpdir/out" || \

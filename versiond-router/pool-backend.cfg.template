@@ -31,8 +31,9 @@ backend ${BACKEND_NAME}
     # readiness contract available during rollback and mixed-version cutover.
     # The second request is required in both cases, so accepting 404 never
     # admits a legacy process that cannot actually serve this backend.
-    # When the server line is proto h2, check-proto h1 keeps these requests
-    # on HTTP/1.1. The check itself stays: without it the server is "no check".
+    # JSON server lines stay HTTP/1.1. The peer-RPC twin is proto h2, and
+    # check-proto h1 keeps these requests on HTTP/1.1. The check itself
+    # stays: without it the server is "no check".
     http-check connect
     ${READY_CHECK_SEND}
     http-check expect status ${READY_EXPECT}

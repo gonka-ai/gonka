@@ -93,8 +93,23 @@ grep -q 'http-check expect status 200$' "$tmpdir/endpoints.cfg" || \
 [[ $(grep -c 'http-check expect string peer-rpc-ok' "$tmpdir/endpoints.cfg") -eq \
     $(grep -c '^backend .*_rpc$' "$tmpdir/endpoints.cfg") ]] || \
     fail "every peer-RPC backend must expect the peer-rpc-ok body, and JSON backends must not"
-grep -q 'proto h2 check-proto h1' "$tmpdir/endpoints.cfg" || \
-    fail "h2 server lines must keep an HTTP/1.1 health check"
+# JSON stays HTTP/1.1. proto h2 is enabled only on the peer-RPC twin, and
+# that twin keeps the health check on HTTP/1.1.
+json_servers=$(awk '
+    $1 == "backend" { json = ($2 !~ /_rpc$/); next }
+    json && ($1 == "server" || $1 == "server-template") { print }
+' "$tmpdir/endpoints.cfg")
+rpc_servers=$(awk '
+    $1 == "backend" { rpc = ($2 ~ /_rpc$/); next }
+    rpc && ($1 == "server" || $1 == "server-template") { print }
+' "$tmpdir/endpoints.cfg")
+[[ -n $json_servers && -n $rpc_servers ]] || fail "expected both JSON and peer-RPC server lines"
+! grep -q 'proto h2' <<<"$json_servers" || \
+    fail "JSON backends must stay HTTP/1.1 while proto h2 is enabled"
+grep -q 'proto h2 check-proto h1' <<<"$rpc_servers" || \
+    fail "peer-RPC twins must enable proto h2 with an HTTP/1.1 health check"
+! grep -v 'proto h2 check-proto h1' <<<"$rpc_servers" | grep -q 'server' || \
+    fail "every peer-RPC server line must enable proto h2"
 grep -q ' check inter 1s fall 1 rise 2 ' "$tmpdir/endpoints.cfg" || \
     fail "h2 server lines must keep a health check"
 sed -n '/^backend versiond_legacy_v1/,/^backend /p' "$tmpdir/endpoints.cfg" | \

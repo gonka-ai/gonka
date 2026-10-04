@@ -1519,8 +1519,15 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		inside && /stick-table/ {found=1} END{exit !found}' "$$tmpdir/mixed.cfg"; then \
 		fail "per-IP zones must not be keyed on versiond-router RemoteAddr"; \
 	fi; \
-	grep -q '^[[:space:]]*server-template versiond .* proto h2' "$$tmpdir/mixed.cfg" \
-		|| fail "backend lines to versiond are not proto h2"; \
+	awk ' \
+		$$1 == "backend" { json = ($$2 !~ /_rpc$$/); rpc = ($$2 ~ /_rpc$$/); next } \
+		$$1 == "server" || $$1 == "server-template" { \
+			if (json && /proto h2/) json_h2 = 1; \
+			if (rpc) { rpc_n++; if ($$0 !~ /proto h2 check-proto h1/) rpc_plain = 1 } \
+		} \
+		END { if (json_h2 || rpc_plain || rpc_n == 0) exit 1 } \
+	' "$$tmpdir/mixed.cfg" \
+		|| fail "JSON backends must stay HTTP/1.1 and peer-RPC twins must enable proto h2 with an HTTP/1.1 check"; \
 	grep -q '^[[:space:]]*nameserver dns 10.96.0.10:53$$' "$$tmpdir/mixed.cfg" \
 		|| fail "the configured DNS resolver was not rendered"; \
 	grep -q '^[[:space:]]*server-template versiond .*hash-key addr' "$$tmpdir/mixed.cfg" \

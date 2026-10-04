@@ -301,18 +301,22 @@ ALLOW_COARSE_READINESS=$(bool_env VERSIOND_ROUTER_ALLOW_COARSE_READINESS)
 CATALOG_ALLOW_REMOVALS=$(bool_env VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS)
 RENDER_ONLY=$(bool_env VERSIOND_ROUTER_RENDER_ONLY)
 TRUST_FORWARDED_HEADERS=$(bool_env VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS)
-# Default on: the data connection to versiond is h2c. The health check does
-# not follow that protocol. A v5.0.2 versiond is plain HTTP/1.1, and a check
-# that speaks h2 marks every server DOWN, so fleet apply rolls back. Dropping
-# the check instead would report "no check", which drain does not treat as UP
-# and which "set server health down" cannot bring back. HTTP/1.1 mock
-# upstreams (test-version-routing) set VERSIOND_ROUTER_BACKEND_H2=false.
+# Default on for the peer-RPC twin only. JSON backends stay HTTP/1.1 so a
+# v4 or v5 child stays UP while this router is already serving, and the
+# public proxy can be admitted before versiond is replaced. The twin dials
+# h2c and keeps its health check on HTTP/1.1: a check that speaks h2 marks
+# every server DOWN, and dropping the check reports "no check", which drain
+# does not treat as UP. The twin also requires the peer-rpc-ok body, so a
+# v5.0.2 /readyz 200 does not join the HTTP/2 pool. HTTP/1.1 mock upstreams
+# (test-version-routing) set VERSIOND_ROUTER_BACKEND_H2=false and the twin
+# stays on HTTP/1.1 with them.
 : "${VERSIOND_ROUTER_BACKEND_H2:=true}"
 BACKEND_H2=$(bool_env VERSIOND_ROUTER_BACKEND_H2)
+BACKEND_PROTO=
 if [ -n "$BACKEND_H2" ]; then
-    BACKEND_PROTO=' proto h2 check-proto h1'
+    PEER_BACKEND_PROTO=' proto h2 check-proto h1'
 else
-    BACKEND_PROTO=
+    PEER_BACKEND_PROTO=
 fi
 
 if [ -n "$TRUST_FORWARDED_HEADERS" ]; then
@@ -505,13 +509,16 @@ peer_route_check() {
 
 render_peer_backend() {
     saved_expect=${READY_EXPECT-}
+    saved_proto=$BACKEND_PROTO
     READY_EXPECT=200
+    BACKEND_PROTO=$PEER_BACKEND_PROTO
     # v5.0.2 answers /readyz?peer-rpc=1 with 200 and "ready". Only a current
     # versiond sends this body, so the twin stays down until that process is up.
     PEER_RPC_BODY_EXPECT='http-check expect string peer-rpc-ok'
     render_backend "${1}_rpc" "$(peer_rpc_check "$2")" "$(peer_route_check "$3")" \
         "$4" "$5" "$6" "${1}_rpc" "$7" "$8" "$9"
     READY_EXPECT=$saved_expect
+    BACKEND_PROTO=$saved_proto
 }
 
 : > "$MAP"
