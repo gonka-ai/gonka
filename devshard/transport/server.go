@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -901,6 +902,10 @@ func (s *Server) HandleGossipNonce(c echo.Context) (err error) {
 	// equivocation detection against an honest host.
 	if len(req.StateSig) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "missing state signature")
+	}
+	// A state root is a SHA-256 digest. The gossip seen map keeps this value.
+	if len(req.StateHash) != sha256.Size {
+		return echo.NewHTTPError(http.StatusBadRequest, "state hash must be 32 bytes")
 	}
 	if req.SlotID >= uint32(len(s.host.Group())) {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid slot id")
