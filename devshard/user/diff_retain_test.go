@@ -164,6 +164,78 @@ func TestSession_SendCatchUpReadsEachChunkFromTheStore(t *testing.T) {
 	require.Equal(t, uint64(n), session.hostSyncNonce[0])
 }
 
+type recordedSend struct {
+	from, to, nonce uint64
+	payload         bool
+}
+
+// recordingSendClient records the diff range, request nonce, and payload
+// presence of every request.
+type recordingSendClient struct {
+	*InProcessClient
+	mu    sync.Mutex
+	sends []recordedSend
+}
+
+func (c *recordingSendClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, onReceipt func(*host.HostResponse)) (*host.HostResponse, error) {
+	rec := recordedSend{nonce: req.Nonce, payload: req.Payload != nil}
+	if len(req.Diffs) > 0 {
+		rec.from, rec.to = req.Diffs[0].Nonce, req.Diffs[len(req.Diffs)-1].Nonce
+	}
+	c.mu.Lock()
+	c.sends = append(c.sends, rec)
+	c.mu.Unlock()
+	return c.InProcessClient.Send(ctx, req, stream, onReceipt)
+}
+
+func TestSession_InlineCatchUpIsAtMostOneChunk(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	const n = catchUpChunkSize + 50
+	composeEmptyDiffs(t, session, n)
+
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	_, ok := session.inlineCatchUpLocked(0, n)
+	require.False(t, ok, "a host at 0 is more than one chunk behind the tip")
+
+	diffs, ok := session.inlineCatchUpLocked(0, catchUpChunkSize)
+	require.True(t, ok)
+	requireContiguous(t, diffs, 1, catchUpChunkSize)
+
+	session.hostSyncNonce[0] = 60
+	diffs, ok = session.inlineCatchUpLocked(0, n)
+	require.True(t, ok)
+	requireContiguous(t, diffs, 61, n)
+}
+
+func TestSession_InferenceToAFarBehindHostCatchesUpInChunksFirst(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	const n = catchUpChunkSize + 100
+	composeEmptyDiffs(t, session, n)
+	recorders := make([]*recordingSendClient, len(session.clients))
+	for i, c := range session.clients {
+		recorders[i] = &recordingSendClient{InProcessClient: c.(*InProcessClient)}
+		session.clients[i] = recorders[i]
+	}
+
+	resp, err := session.SendInference(context.Background(), InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint64(n+1), resp.Nonce)
+
+	var sends []recordedSend
+	for _, r := range recorders {
+		sends = append(sends, r.sends...)
+	}
+	require.Equal(t, []recordedSend{
+		{from: 1, to: catchUpChunkSize, nonce: catchUpChunkSize},
+		{from: catchUpChunkSize + 1, to: n, nonce: n},
+		{from: n + 1, to: n + 1, nonce: n + 1, payload: true},
+	}, sends, "the earlier nonces go in chunks, and the inference carries only its own diff")
+}
+
 // hostSlot returns the first slot owned by host i.
 func hostSlot(session *Session, i int) uint32 {
 	return session.addrToSlots[session.group[i].ValidatorAddress][0]
