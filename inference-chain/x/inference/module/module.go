@@ -499,6 +499,12 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			return err
 		}
 		am.keeper.PayAndDeleteOldChallenges(ctx, getNextEpochIndex(*currentEpoch))
+		// The active model set changes only here; drop windows of models that left it.
+		if groupData, found := am.keeper.GetEpochGroupData(ctx, getNextEpochIndex(*currentEpoch), ""); found {
+			if err := am.keeper.RemoveInactiveModelRollingStates(ctx, groupData.SubGroupModels); err != nil {
+				am.LogWarn("Failed to remove inactive model rolling windows", types.Pricing, "error", err)
+			}
+		}
 		am.LogInfo("Epoch index flipped; new validator set activates at H+2",
 			types.Stages,
 			"blockHeight", blockHeight,

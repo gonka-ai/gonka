@@ -47,10 +47,7 @@ func (k Keeper) UpdateModelRollingWindowsForActiveModels(
 ) error {
 	loadWindowBlocks := types.UtilizationWindowToBlocks(utilizationWindowSeconds)
 
-	activeSet := make(map[string]struct{}, len(activeModels))
 	for _, modelID := range activeModels {
-		activeSet[modelID] = struct{}{}
-
 		if err := k.updateModelRollingWindowState(
 			ctx,
 			k.ModelLoadRollingWindowMap,
@@ -62,11 +59,17 @@ func (k Keeper) UpdateModelRollingWindowsForActiveModels(
 		}
 	}
 
-	if err := k.removeInactiveModelRollingStates(ctx, k.ModelLoadRollingWindowMap, activeSet, "load"); err != nil {
-		return err
-	}
-
 	return nil
+}
+
+// RemoveInactiveModelRollingStates drops windows of models outside activeModels.
+// The model set changes only at epoch switch, so this runs there, not every block.
+func (k Keeper) RemoveInactiveModelRollingStates(ctx context.Context, activeModels []string) error {
+	activeSet := make(map[string]struct{}, len(activeModels))
+	for _, modelID := range activeModels {
+		activeSet[modelID] = struct{}{}
+	}
+	return k.removeInactiveModelRollingStates(ctx, k.ModelLoadRollingWindowMap, activeSet, "load")
 }
 
 func (k Keeper) updateModelRollingWindowState(

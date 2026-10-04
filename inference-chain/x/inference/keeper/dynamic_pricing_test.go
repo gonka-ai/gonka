@@ -315,7 +315,37 @@ func TestModelRollingWindows_ReconcileAndUpdate(t *testing.T) {
 
 	_, found, err = k.GetModelLoadRollingAveragePerBlock(goCtx, "model-2", 12)
 	require.NoError(t, err)
+	assert.True(t, found, "the per-block update leaves cleanup to the epoch switch")
+
+	require.NoError(t, k.RemoveInactiveModelRollingStates(goCtx, []string{"model-1"}))
+	_, found, err = k.GetModelLoadRollingAveragePerBlock(goCtx, "model-2", 12)
+	require.NoError(t, err)
 	assert.False(t, found, "non-active model load state should be removed")
+	_, found, err = k.GetModelLoadRollingAveragePerBlock(goCtx, "model-1", 12)
+	require.NoError(t, err)
+	assert.True(t, found)
+}
+
+func TestModelRollingWindows_PerBlockUpdateDoesNotIterate(t *testing.T) {
+	k, ctx := setupTestKeeperWithDynamicPricing(t)
+	goCtx := sdk.WrapSDKContext(ctx)
+	models := []string{"model-1", "model-2", "model-3"}
+	require.NoError(t, k.UpdateModelRollingWindowsForActiveModels(goCtx, models, nil, 60))
+
+	var trace bytes.Buffer
+	ctx.MultiStore().SetTracer(&trace)
+	require.NoError(t, k.UpdateModelRollingWindowsForActiveModels(goCtx, models, nil, 60))
+	ctx.MultiStore().SetTracer(nil)
+
+	for _, line := range bytes.Split(trace.Bytes(), []byte("\n")) {
+		var op struct {
+			Operation string `json:"operation"`
+		}
+		if json.Unmarshal(line, &op) != nil {
+			continue
+		}
+		assert.NotEqual(t, "iterKey", op.Operation, "per-block update must not walk the window map")
+	}
 }
 
 func TestUpdateDynamicPricing_UsesRollingAverageUtilization(t *testing.T) {
