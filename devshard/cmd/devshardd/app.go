@@ -185,7 +185,10 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("tx manager: %w", err)
 	}
 
-	chainEvents := newChainEventBridge(ctx, nodeConfig.ChainRpcUrl, chainClient, chaintx.NewDisputeSubmitter(txMgr))
+	chainEvents, err := newChainEventBridge(ctx, nodeConfig.ChainRpcUrl, chainClient, chaintx.NewDisputeSubmitter(txMgr))
+	if err != nil {
+		return nil, fmt.Errorf("chain events: %w", err)
+	}
 	return &chainRuntime{
 		client:      chainClient,
 		identity:    identity,
@@ -344,9 +347,6 @@ func buildHostManager(
 		applyEpoch(boot, false, false)
 	} else {
 		store.Start()
-		go seedEpochWhenKnown(ctx, chainParams, phase, time.Second, func(epoch uint64) {
-			applyEpoch(epoch, true, true)
-		})
 	}
 
 	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
