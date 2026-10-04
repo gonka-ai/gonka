@@ -93,28 +93,6 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		return nil
 	}
 
-	// Check for upgrades within upgrade protection window
-	upgradeProtectionWindow := confirmationParams.UpgradeProtectionWindow
-	if upgradeProtectionWindow <= 0 {
-		upgradeProtectionWindow = 500 // Default to 500 blocks if not set
-	}
-	// Check if current epoch is a grace epoch with extended protection window
-	if graceParams, ok := am.keeper.GetPunishmentGraceEpoch(ctx, epochContext.EpochIndex); ok && graceParams.UpgradeProtectionWindow > 0 {
-		upgradeProtectionWindow = graceParams.UpgradeProtectionWindow
-		am.LogDebug("using grace UpgradeProtectionWindow", types.PoC, "epoch", epochContext.EpochIndex, "window", upgradeProtectionWindow)
-	}
-	hasUpgrade, reason, err := am.keeper.HasUpgradeInWindow(ctx, blockHeight, upgradeProtectionWindow)
-	if err != nil {
-		return fmt.Errorf("failed to check upgrade window: %w", err)
-	}
-	if hasUpgrade {
-		am.LogDebug("Skipping confirmation PoC trigger due to upgrade protection", types.PoC,
-			"blockHeight", blockHeight,
-			"upgradeProtectionWindow", upgradeProtectionWindow,
-			"reason", reason)
-		return nil
-	}
-
 	// Calculate valid trigger window
 	// [SetNewValidators(), NextPoCStart - InferenceValidationCutoff - ConfirmationWindowDuration]
 	setNewValidatorsHeight := epochContext.SetNewValidators()
@@ -158,6 +136,28 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	shouldTrigger := randFloat.LessThan(triggerProbability)
 
 	if !shouldTrigger {
+		return nil
+	}
+
+	// Upgrade protection reads the store, so it runs after the window and the draw.
+	upgradeProtectionWindow := confirmationParams.UpgradeProtectionWindow
+	if upgradeProtectionWindow <= 0 {
+		upgradeProtectionWindow = 500 // Default to 500 blocks if not set
+	}
+	// Check if current epoch is a grace epoch with extended protection window
+	if graceParams, ok := am.keeper.GetPunishmentGraceEpoch(ctx, epochContext.EpochIndex); ok && graceParams.UpgradeProtectionWindow > 0 {
+		upgradeProtectionWindow = graceParams.UpgradeProtectionWindow
+		am.LogDebug("using grace UpgradeProtectionWindow", types.PoC, "epoch", epochContext.EpochIndex, "window", upgradeProtectionWindow)
+	}
+	hasUpgrade, reason, err := am.keeper.HasUpgradeInWindow(ctx, blockHeight, upgradeProtectionWindow)
+	if err != nil {
+		return fmt.Errorf("failed to check upgrade window: %w", err)
+	}
+	if hasUpgrade {
+		am.LogDebug("Skipping confirmation PoC trigger due to upgrade protection", types.PoC,
+			"blockHeight", blockHeight,
+			"upgradeProtectionWindow", upgradeProtectionWindow,
+			"reason", reason)
 		return nil
 	}
 
