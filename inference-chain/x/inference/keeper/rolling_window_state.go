@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"cosmossdk.io/collections"
 	"github.com/productscience/inference/x/inference/types"
@@ -100,16 +101,22 @@ func (k Keeper) updateModelRollingWindowState(
 	windowBlocks uint64,
 	newValue uint64,
 ) error {
-	state, found, err := k.getModelRollingWindowState(ctx, stateMap, modelID)
-	if err != nil {
+	stored, err := stateMap.Get(ctx, modelID)
+	found := err == nil
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
 		return err
 	}
-	if !found {
-		state = rollingWindowState{}
+	state := rollingWindowState{}
+	if found {
+		state = rollingWindowStateFromProto(stored)
 	}
 
 	state = state.normalize(types.WindowBlocksToSize(windowBlocks))
 	state = state.push(newValue)
+	// An idle model's window stays all zeros; an equal Set still adds an IAVL leaf.
+	if found && state.equalsProto(stored) {
+		return nil
+	}
 	return k.setModelRollingWindowState(ctx, stateMap, modelID, state)
 }
 
@@ -243,6 +250,10 @@ func rollingWindowStateFromProto(state types.RollingWindowState) rollingWindowSt
 		Values: append([]uint64(nil), state.Values...),
 		Sum:    state.Sum,
 	}.normalize(int64(len(state.Values)))
+}
+
+func (s rollingWindowState) equalsProto(p types.RollingWindowState) bool {
+	return s.Sum == p.Sum && slices.Equal(s.Values, p.Values)
 }
 
 func (s rollingWindowState) toProto() types.RollingWindowState {
