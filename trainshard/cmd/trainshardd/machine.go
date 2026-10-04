@@ -69,10 +69,15 @@ func machinery(cfg config, clock ports.Clock, log *slog.Logger) (parts, error) {
 		network := netns.New(netns.Config{
 			Nodes:       cfg.nodes,
 			Endpoint:    cfg.meshEndpoint,
+			Private:     cfg.meshPrivate,
 			PortBase:    cfg.meshPortBase,
 			KeyDir:      cfg.meshKeyDir,
 			DeniedCIDRs: cfg.deniedCIDRs,
 		}, engine, clock, log)
+		if cfg.meshPrivate {
+			log.Warn("mesh endpoint may be private: a peer outside this network cannot reach it, and a shard with one fails prepare",
+				"mesh_endpoint", cfg.meshEndpoint)
+		}
 
 		return parts{
 			images:     engine,

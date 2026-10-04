@@ -52,6 +52,43 @@ func TestADockerMachineWithOneNodeLoads(t *testing.T) {
 	}
 }
 
+func TestAPrivateMeshIsOnlyTakenWhenAskedFor(t *testing.T) {
+	cases := map[string]struct {
+		raw     string
+		private bool
+		refused bool
+	}{
+		"unset":     {raw: "", private: false},
+		"asked for": {raw: "true", private: true},
+		"declined":  {raw: "false", private: false},
+		"garbled":   {raw: "sure", refused: true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			onADockerMachine(t, "node1")
+			t.Setenv("TRAINSHARD_MESH_PRIVATE", tc.raw)
+
+			// act
+			cfg, err := load()
+
+			// assert
+			if tc.refused {
+				if err == nil || !strings.Contains(err.Error(), "TRAINSHARD_MESH_PRIVATE") {
+					t.Fatalf("got %v, want %q refused", err, tc.raw)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if cfg.meshPrivate != tc.private {
+				t.Fatalf("got private %v, want %v", cfg.meshPrivate, tc.private)
+			}
+		})
+	}
+}
+
 func TestEveryMachineHasToSayWhereItIsReached(t *testing.T) {
 	cases := map[string]struct{ machine, endpoint string }{
 		"unset":               {"docker", ""},

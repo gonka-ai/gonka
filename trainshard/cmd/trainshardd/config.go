@@ -33,6 +33,7 @@ type config struct {
 	gpuKind          string
 	nvidiaSMI        string
 	meshEndpoint     string
+	meshPrivate      bool
 	endpoint         vo.Endpoint
 	meshPortBase     int
 	meshPorts        int
@@ -128,6 +129,10 @@ func load() (config, error) {
 	}
 
 	cfg.meshPortBase, cfg.meshPorts, err = portRange(env("MESH_PORTS", "51820-51827"))
+	if err != nil {
+		return config{}, err
+	}
+	cfg.meshPrivate, err = boolean("MESH_PRIVATE", false)
 	if err != nil {
 		return config{}, err
 	}
@@ -313,6 +318,18 @@ func number(name string, fallback int64) (int64, error) {
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("TRAINSHARD_%s: %w", name, err)
+	}
+	return value, nil
+}
+
+func boolean(name string, fallback bool) (bool, error) {
+	raw := env(name, "")
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("TRAINSHARD_%s: %w", name, err)
 	}
 	return value, nil
 }

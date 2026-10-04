@@ -30,6 +30,9 @@ type Config struct {
 
 	Endpoint string
 
+	// Private takes a private endpoint, reachable only by peers on the same network
+	Private bool
+
 	PortBase int
 
 	KeyDir string
@@ -71,10 +74,11 @@ type Network struct {
 	sandbox Sandboxes
 	clock   ports.Clock
 	log     *slog.Logger
+	lookup  func(ctx context.Context, network, host string) ([]net.IP, error)
 }
 
 func New(cfg Config, sandbox Sandboxes, clock ports.Clock, log *slog.Logger) *Network {
-	return &Network{cfg: cfg.withDefaults(), sandbox: sandbox, clock: clock, log: log}
+	return &Network{cfg: cfg.withDefaults(), sandbox: sandbox, clock: clock, log: log, lookup: net.DefaultResolver.LookupIP}
 }
 
 func (n *Network) Identity(_ context.Context, shardID vo.ShardID, node vo.NodeRef) (mesh.Member, error) {
@@ -316,15 +320,22 @@ func (n *Network) dialable(ctx context.Context) error {
 		return fmt.Errorf("mesh endpoint is not configured")
 	}
 
-	address := net.ParseIP(n.cfg.Endpoint)
-	if address == nil {
-		if _, err := net.DefaultResolver.LookupHost(ctx, n.cfg.Endpoint); err != nil {
+	// a name is held to what it resolves to, or it would carry a private address past the check
+	addresses := []net.IP{net.ParseIP(n.cfg.Endpoint)}
+	if addresses[0] == nil {
+		found, err := n.lookup(ctx, "ip", n.cfg.Endpoint)
+		if err != nil {
 			return fmt.Errorf("mesh endpoint %q does not resolve: %w", n.cfg.Endpoint, err)
 		}
-		return nil
+		addresses = found
 	}
-	if address.IsPrivate() || address.IsLoopback() || address.IsUnspecified() {
-		return fmt.Errorf("mesh endpoint %s is not reachable from outside the host", address)
+	for _, address := range addresses {
+		if address.IsLoopback() || address.IsUnspecified() {
+			return fmt.Errorf("mesh endpoint %s is %s, which no other host reaches", n.cfg.Endpoint, address)
+		}
+		if address.IsPrivate() && !n.cfg.Private {
+			return fmt.Errorf("mesh endpoint %s is %s, which peers outside this network cannot reach; a private mesh has to be asked for", n.cfg.Endpoint, address)
+		}
 	}
 	return nil
 }

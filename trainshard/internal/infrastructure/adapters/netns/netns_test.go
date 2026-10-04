@@ -327,9 +327,16 @@ func TestShardsFromKeysOnDisk(t *testing.T) {
 
 func TestDialable(t *testing.T) {
 	// arrange
+	names := map[string][]net.IP{
+		"mesh.example.com":    {net.ParseIP("198.51.100.7")},
+		"10-1-2-3.sslip.io":   {net.ParseIP("10.1.2.3")},
+		"split.example.com":   {net.ParseIP("198.51.100.7"), net.ParseIP("192.168.1.5")},
+		"loopback.example.io": {net.ParseIP("127.0.0.1")},
+	}
 	cases := []struct {
 		name     string
 		endpoint string
+		private  bool
 		refused  bool
 	}{
 		{name: "public address", endpoint: "198.51.100.7"},
@@ -337,12 +344,26 @@ func TestDialable(t *testing.T) {
 		{name: "private address", endpoint: "10.1.2.3", refused: true},
 		{name: "loopback", endpoint: "127.0.0.1", refused: true},
 		{name: "unspecified", endpoint: "0.0.0.0", refused: true},
+		{name: "name of a public address", endpoint: "mesh.example.com"},
+		{name: "name of a private address", endpoint: "10-1-2-3.sslip.io", refused: true},
+		{name: "name with a private address among others", endpoint: "split.example.com", refused: true},
+		{name: "name that does not resolve", endpoint: "nowhere.example.com", refused: true},
+		{name: "private address asked for", endpoint: "10.1.2.3", private: true},
+		{name: "name of a private address asked for", endpoint: "10-1-2-3.sslip.io", private: true},
+		{name: "loopback asked for as private", endpoint: "127.0.0.1", private: true, refused: true},
+		{name: "name of loopback asked for as private", endpoint: "loopback.example.io", private: true, refused: true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// arrange
-			n := network(t, Config{Endpoint: tc.endpoint})
+			n := network(t, Config{Endpoint: tc.endpoint, Private: tc.private})
+			n.lookup = func(_ context.Context, _, host string) ([]net.IP, error) {
+				if found, ok := names[host]; ok {
+					return found, nil
+				}
+				return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+			}
 
 			// act
 			err := n.dialable(context.Background())

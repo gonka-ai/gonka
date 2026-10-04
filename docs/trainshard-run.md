@@ -16,12 +16,15 @@ export TRAINSHARD_SERVICE_NAME=trainshardd
 export TRAINSHARD_PARTICIPANT=gonka1...          # your address
 export TRAINSHARD_NODES=node1                    # the node this machine's mlnode is registered as
 export TRAINSHARD_ENDPOINT=http://host1.example.com:8000   # where a coordinator reaches you: the proxy
-export TRAINSHARD_MESH_ENDPOINT=203.0.113.10     # public address peers reach you at, not behind nat
-export TRAINSHARD_MESH_PORTS=51820-51827         # one per leased node, udp, open on the host to the internet
+export TRAINSHARD_MESH_ENDPOINT=203.0.113.10     # public address peers reach you at
+export TRAINSHARD_MESH_PORTS=51820-51827         # one per leased node, udp; behind nat, forwarded on the same numbers
 export TRAINSHARD_STATE_DIR=/mnt/xfs/trainshardd # xfs with prjquota
 export TRAINSHARD_CONTAINER_MEMORY_BYTES=137438953472
 export TRAINSHARD_CONTAINER_NANO_CPUS=8000000000
 ```
+
+A private `TRAINSHARD_MESH_ENDPOINT` is refused unless `TRAINSHARD_MESH_PRIVATE=true`,
+which only works when every peer of a shard is on the same network.
 
 The daemon signs with the key the api uses (`KEY_NAME` from `.inference`). If
 that is a warm key rather than the participant's own, it needs the ML ops
