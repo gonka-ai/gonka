@@ -36,6 +36,30 @@ func validationTx(inferenceID uint64, slot uint32) *types.DevshardTx {
 	}}
 }
 
+func confirmTx(inferenceID uint64, confirmedAt int64) *types.DevshardTx {
+	return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
+		ConfirmStart: &types.MsgConfirmStart{InferenceId: inferenceID, ConfirmedAt: confirmedAt},
+	}}
+}
+
+func TestMempool_QueuedConfirmStart(t *testing.T) {
+	m := NewMempool()
+	require.Nil(t, m.QueuedConfirmStart(1))
+
+	m.AddTx(confirmTx(1, 50))
+	require.Nil(t, m.QueuedConfirmStart(1), "a peer-imported copy is not this host's receipt")
+
+	m.Add(MempoolEntry{Tx: confirmTx(1, 200), ProposedAt: 3})
+	m.Add(MempoolEntry{Tx: confirmTx(1, 100), ProposedAt: 4})
+	m.Add(MempoolEntry{Tx: confirmTx(2, 10), ProposedAt: 4})
+	m.Add(MempoolEntry{Tx: finishTx(1), ProposedAt: 4})
+
+	got := m.QueuedConfirmStart(1)
+	require.NotNil(t, got)
+	require.Equal(t, int64(100), got.ConfirmedAt, "the earliest own receipt wins")
+	require.Nil(t, m.QueuedConfirmStart(3))
+}
+
 func TestMempool_RemoveIncluded(t *testing.T) {
 	m := NewMempool()
 	m.Add(MempoolEntry{Tx: validationTx(1, 0), ProposedAt: 5})

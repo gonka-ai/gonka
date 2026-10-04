@@ -2,6 +2,7 @@ package gossip
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -606,6 +607,65 @@ func (u *recordingUpdater) ApplyRecoveredDiffs(_ context.Context, diffs []types.
 		sigs[i] = GossipSig{Nonce: diff.Nonce, StateHash: []byte("h"), Sig: []byte("s"), SlotID: 0}
 	}
 	return sigs, nil
+}
+
+// failingUpdater applies diffs up to failAt, then fails, returning the
+// signatures of the nonces it applied as Host.ApplyRecoveredDiffs does.
+type failingUpdater struct {
+	failAt uint64
+	calls  int
+}
+
+func (u *failingUpdater) ApplyRecoveredDiffs(_ context.Context, diffs []types.Diff) ([]GossipSig, error) {
+	u.calls++
+	var sigs []GossipSig
+	for _, diff := range diffs {
+		if diff.Nonce == u.failAt {
+			return sigs, errors.New("apply failed")
+		}
+		sigs = append(sigs, GossipSig{Nonce: diff.Nonce, StateHash: []byte("h"), Sig: []byte("s")})
+	}
+	return sigs, nil
+}
+
+func TestRecovery_PublishesTheAppliedPrefixOfAFailedPage(t *testing.T) {
+	journal := []types.Diff{{Nonce: 1}, {Nonce: 2}, {Nonce: 3}, {Nonce: 4}, {Nonce: 5}}
+	fetcher := &rangeDiffFetcher{journal: journal}
+	updater := &failingUpdater{failAt: 4}
+	peer := &mockPeer{}
+
+	g := NewGossip("escrow-1", 0, []PeerClient{peer}, nil, WithRecovery(fetcher, updater))
+	g.RecoveryDelay = time.Hour
+	g.mu.Lock()
+	g.highestSeen = 5
+	g.mu.Unlock()
+
+	g.tryRecovery(context.Background())
+
+	var published []uint64
+	for _, call := range peer.getNonceCalls() {
+		published = append(published, call.nonce)
+	}
+	require.Equal(t, []uint64{1, 2, 3}, published, "the applied prefix is published before the walk stops")
+	g.mu.Lock()
+	require.Equal(t, uint64(3), g.lastAfterReqNonce)
+	require.True(t, g.lastAfterReq.IsZero(), "a walk that stops short does not start the recovery delay")
+	g.mu.Unlock()
+
+	updater.failAt = 0
+	g.tryRecovery(context.Background())
+
+	require.Equal(t, [][2]uint64{{1, 5}, {4, 5}}, fetcher.calls, "the next pass resumes after the applied prefix")
+	g.mu.Lock()
+	require.Equal(t, uint64(5), g.lastAfterReqNonce)
+	require.False(t, g.lastAfterReq.IsZero(), "reaching highestSeen starts the recovery delay")
+	g.mu.Unlock()
+
+	g.mu.Lock()
+	g.highestSeen = 6
+	g.mu.Unlock()
+	g.tryRecovery(context.Background())
+	require.Len(t, fetcher.calls, 2, "a caught-up walk waits out RecoveryDelay")
 }
 
 func TestRecovery_DoesNotTriggerWhenUpToDate(t *testing.T) {
