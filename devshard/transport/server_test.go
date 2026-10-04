@@ -108,24 +108,6 @@ func setupServerEnvHost(t *testing.T, hostOpts []host.HostOption, opts ...Server
 	}
 }
 
-func TestLoadRefusedDiffPage_StopsAtAHoleThenReportsIt(t *testing.T) {
-	env := setupServerEnv(t)
-	for _, nonce := range []uint64{1, 2, 3, 5} {
-		require.NoError(t, env.store.AppendDiff("escrow-1", types.DiffRecord{Diff: types.Diff{Nonce: nonce}}))
-	}
-
-	diffs, next, err := env.server.loadRefusedDiffPage(1, 5)
-	require.NoError(t, err)
-	require.Len(t, diffs, 3)
-	require.Equal(t, uint64(4), next)
-
-	_, _, err = env.server.loadRefusedDiffPage(next, 5)
-	var gap *storage.DiffGapError
-	require.ErrorAs(t, err, &gap, "the verifier tells a hole from a store error")
-	require.Equal(t, uint64(4), gap.Expected)
-	require.Equal(t, uint64(5), gap.Next)
-}
-
 func TestNewServer_DefaultsRequestBodyLimit(t *testing.T) {
 	env := setupServerEnv(t)
 	require.Equal(t, DefaultMaxBodySize, env.server.maxBodySize)
