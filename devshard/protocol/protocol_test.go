@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"crypto/sha256"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -160,10 +161,29 @@ func TestProtocol_HappyPath_15Inferences(t *testing.T) {
 	require.NotEmpty(t, sigs)
 }
 
+// composedDiffs records every diff the session composes. The session drops
+// the prefix every host has applied, so a test that needs the whole journal
+// reads this copy instead of Session.Diffs.
+func composedDiffs(session *user.Session) func() []types.Diff {
+	var mu sync.Mutex
+	var journal []types.Diff
+	session.SetDiffObserver(func(d types.Diff) {
+		mu.Lock()
+		journal = append(journal, d)
+		mu.Unlock()
+	})
+	return func() []types.Diff {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]types.Diff(nil), journal...)
+	}
+}
+
 func TestProtocol_ReceiptPipelining(t *testing.T) {
 	env := setupEnv(t, 3, 100000, 10)
 	ctx := context.Background()
 	params := defaultParams()
+	journal := composedDiffs(env.session)
 
 	// Send 3 inferences.
 	for i := 0; i < 3; i++ {
@@ -171,7 +191,7 @@ func TestProtocol_ReceiptPipelining(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	diffs := env.session.Diffs()
+	diffs := journal()
 	require.Len(t, diffs, 3)
 
 	// Diff at nonce 2 should include MsgConfirmStart for inference 1
@@ -360,6 +380,7 @@ func TestProtocol_StateSignatureContent(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 	verifier := signing.NewSecp256k1Verifier()
+	journal := composedDiffs(env.session)
 
 	for i := 0; i < 3; i++ {
 		_, err := env.session.SendInference(ctx, params)
@@ -370,7 +391,7 @@ func TestProtocol_StateSignatureContent(t *testing.T) {
 	replaySM, err := state.NewStateMachine("escrow-1", env.config, env.group, 100000, env.user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", env.user.Address(), env.config, env.group, 100000))
 	require.NoError(t, err)
 	roots := make(map[uint64][]byte)
-	for _, diff := range env.session.Diffs() {
+	for _, diff := range journal() {
 		root, err := replaySM.ApplyDiff(diff)
 		require.NoError(t, err)
 		roots[diff.Nonce] = root
@@ -634,6 +655,7 @@ func TestProtocol_Finalize_ExactDiffCount(t *testing.T) {
 	env := setupEnv(t, numHosts, 1000000, 100)
 	ctx := context.Background()
 	params := defaultParams()
+	journal := composedDiffs(env.session)
 
 	for i := 0; i < numInferences; i++ {
 		_, err := env.session.SendInference(ctx, params)
@@ -645,7 +667,7 @@ func TestProtocol_Finalize_ExactDiffCount(t *testing.T) {
 
 	// Total diffs = numInferences + N (Phase A) + 1 (drain). Phase B sends catch-up only.
 	expected := numInferences + numHosts + 1
-	require.Equal(t, expected, len(env.session.Diffs()),
+	require.Equal(t, expected, len(journal()),
 		"total diffs = inferences(%d) + N+1(%d)", numInferences, numHosts+1)
 }
 

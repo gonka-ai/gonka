@@ -112,6 +112,10 @@ func TestSQLite_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, newTestSQLite(t))
 }
 
+func TestSQLite_DiffSizes(t *testing.T) {
+	runDiffSizes(t, newTestSQLite(t))
+}
+
 func TestSQLite_GetSignatures(t *testing.T) {
 	runGetSignatures(t, newTestSQLite(t))
 }

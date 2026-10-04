@@ -895,20 +895,26 @@ func (sm *StateMachine) RestoreState(state *types.EscrowState) error {
 }
 
 // RestoreStateWithFloor is RestoreState with an optional snapshot floor.
-// The journal is preferred so the turn tracker is reconstructed. A non-nil
-// floor is installed when GetDiffs fails, which is the restore hole that
-// previously served an empty index and skipped L0. If LatestNonce > 0 and
-// neither source can reconstruct the fold, restore fails rather than splitting
-// the escrow.
+// The journal is preferred so the turn tracker is reconstructed. That read
+// is paged. A non-nil floor is installed when the read fails, which is the
+// restore hole that previously served an empty index and skipped L0. If
+// LatestNonce > 0 and neither source can reconstruct the fold, restore fails
+// rather than splitting the escrow.
+//
+// The fold runs on a private copy without sm.mu. The state, tracker, and
+// floor are swapped in together under the lock, so readers see the previous
+// state until the restore is complete.
 func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *heightsync.FloorIndex) error {
 	if state == nil {
 		return nil
 	}
+	restored := cloneEscrowState(state)
+	hs := foldHeightSync(sm.inferenceStore, restored, sm.heartbeatCfg, floor)
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.state = cloneEscrowState(state)
+	sm.state = restored
 	sm.rebuildCommittedEntriesLocked()
-	return sm.rebuildHeightSyncLocked(floor)
+	return hs.installLocked(sm)
 }
 
 func cloneEscrowState(src *types.EscrowState) *types.EscrowState {

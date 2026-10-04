@@ -185,9 +185,10 @@ func TestSeed_PrimesTheEnvelopeNotTheLog(t *testing.T) {
 	require.NoError(t, env.session.SendPendingDiff(ctx))
 	base := env.session.Nonce()
 
+	rememberJournal(env.session)
 	require.NoError(t, env.session.MaybeHeartbeat(ctx))
 	var hb *types.MsgHeartbeat
-	for _, d := range env.session.Diffs() {
+	for _, d := range seenDiffs(env.session) {
 		if d.Nonce <= base {
 			continue
 		}

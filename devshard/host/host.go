@@ -940,6 +940,52 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 	return stateSig, root, nonce, nil
 }
 
+// confirmStartLocked returns the executor receipt for a pending inference as a
+// MsgConfirmStart queued in the mempool. A receipt this host already queued is
+// returned as is, so every retry hands out the same bytes: whichever copy lands
+// in a diff, RemoveIncluded clears the queued one. Otherwise it signs a new
+// receipt with a wall-clock confirmed_at and the reference stamp for
+// inferenceID, and queues it. Caller must hold h.mu.
+func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord, hdr *blocks.Header, hdrErr error) (*types.MsgConfirmStart, error) {
+	if queued := h.mempool.QueuedConfirmStart(inferenceID); queued != nil {
+		return queued, nil
+	}
+	confirmedAt := time.Now().Unix()
+	obsH, obsHash := headerStamp(hdr, hdrErr)
+	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
+	receiptData, err := proto.Marshal(&types.ExecutorReceiptContent{
+		InferenceId:       inferenceID,
+		PromptHash:        rec.PromptHash,
+		Model:             rec.Model,
+		InputLength:       rec.InputLength,
+		MaxTokens:         rec.MaxTokens,
+		StartedAt:         rec.StartedAt,
+		EscrowId:          h.escrowID,
+		ConfirmedAt:       confirmedAt,
+		ObservedHeight:    obsH,
+		ObservedBlockHash: obsHash,
+	})
+	if err != nil {
+		return nil, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
+	}
+	sig, err := h.signer.Sign(receiptData)
+	if err != nil {
+		return nil, observability.Classify(observability.ReasonReceiptSignErr, observability.WhereHostSignReceipt, fmt.Errorf("sign executor receipt: %w", err))
+	}
+	confirm := &types.MsgConfirmStart{
+		InferenceId:       inferenceID,
+		ExecutorSig:       sig,
+		ConfirmedAt:       confirmedAt,
+		ObservedHeight:    obsH,
+		ObservedBlockHash: obsHash,
+	}
+	h.mempool.Add(MempoolEntry{
+		Tx:         &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}},
+		ProposedAt: h.sm.LatestNonce(),
+	})
+	return confirm, nil
+}
+
 func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 	for i := range diffs {
 		if diffs[i].Nonce == nonce {
@@ -999,45 +1045,15 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 		return nil, 0, nil, nil, outcome, nil
 	}
 
-	// Sign executor receipt with wall-clock confirmed_at and optional height stamp.
-	confirmedAt := time.Now().Unix()
-	obsH, obsHash := headerStamp(hdr, hdrErr)
-	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
-	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId:       inferenceID,
-		PromptHash:        rec.PromptHash,
-		Model:             rec.Model,
-		InputLength:       rec.InputLength,
-		MaxTokens:         rec.MaxTokens,
-		StartedAt:         rec.StartedAt,
-		EscrowId:          h.escrowID,
-		ConfirmedAt:       confirmedAt,
-		ObservedHeight:    obsH,
-		ObservedBlockHash: obsHash,
-	}
-	receiptData, err := proto.Marshal(receiptContent)
+	// The ConfirmStart is queued in the mempool so it survives HTTP failures:
+	// if the response is lost (e.g. 503), the next request delivers it.
+	confirm, err := h.confirmStartLocked(inferenceID, rec, hdr, hdrErr)
 	if err != nil {
-		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
+		return nil, 0, nil, nil, outcome, err
 	}
-	sig, err := h.signer.Sign(receiptData)
-	if err != nil {
-		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptSignErr, observability.WhereHostSignReceipt, fmt.Errorf("sign executor receipt: %w", err))
-	}
-	outcome.observedHeight = obsH
-	outcome.observedHash = obsHash
-
-	// Add MsgConfirmStart to mempool so it survives HTTP failures.
-	// If the response is lost (e.g. 503), the next request delivers it via mempool.
-	h.mempool.Add(MempoolEntry{
-		Tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId:       inferenceID,
-			ExecutorSig:       sig,
-			ConfirmedAt:       confirmedAt,
-			ObservedHeight:    obsH,
-			ObservedBlockHash: obsHash,
-		}}},
-		ProposedAt: h.sm.LatestNonce(),
-	})
+	sig, confirmedAt := confirm.ExecutorSig, confirm.ConfirmedAt
+	outcome.observedHeight = confirm.ObservedHeight
+	outcome.observedHash = confirm.ObservedBlockHash
 
 	// Dedup: return receipt (proves executor alive) but skip execution.
 	if alreadyExecuting {
@@ -1765,67 +1781,25 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 		return nil, 0, nil, nil
 	}
 
-	confirmedAt := time.Now().Unix()
-	obsH, obsHash := headerStamp(hdr, hdrErr)
-	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
-	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId:       inferenceID,
-		PromptHash:        rec.PromptHash,
-		Model:             rec.Model,
-		InputLength:       rec.InputLength,
-		MaxTokens:         rec.MaxTokens,
-		StartedAt:         rec.StartedAt,
-		EscrowId:          h.escrowID,
-		ConfirmedAt:       confirmedAt,
-		ObservedHeight:    obsH,
-		ObservedBlockHash: obsHash,
-	}
-	receiptData, err := proto.Marshal(receiptContent)
-	if err != nil {
-		return nil, 0, nil, fmt.Errorf("marshal executor receipt: %w", err)
-	}
-	sig, err := h.signer.Sign(receiptData)
-	if err != nil {
-		return nil, 0, nil, fmt.Errorf("sign executor receipt: %w", err)
-	}
-
-	var hasConfirmStart, hasFinish bool
-	for _, tx := range h.mempool.Txs() {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
-			hasConfirmStart = true
-		}
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
-			hasFinish = true
-		}
-	}
-
-	// Publish MsgConfirmStart the way the SSE path does. To the verifier the
+	// Publish MsgConfirmStart the way the request path does. To the verifier the
 	// receipt is only a liveness proof and is discarded after the timeout vote,
 	// so without ConfirmStart the inference stays pending and applyFinishInference
 	// rejects the MsgFinishInference this execution produces as an invalid
 	// transition -- the work could never be settled. Only reachable while the
 	// record is still pending, so this cannot confirm an already-started
-	// inference. Skipped when one is already queued to avoid stacking entries
-	// that differ only by confirmed_at.
-	if !hasConfirmStart {
-		h.mempool.Add(MempoolEntry{
-			Tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId:       inferenceID,
-				ExecutorSig:       sig,
-				ConfirmedAt:       confirmedAt,
-				ObservedHeight:    obsH,
-				ObservedBlockHash: obsHash,
-			}}},
-			ProposedAt: h.sm.LatestNonce(),
-		})
+	// inference.
+	confirm, err := h.confirmStartLocked(inferenceID, rec, hdr, hdrErr)
+	if err != nil {
+		return nil, 0, nil, err
 	}
+	sig, confirmedAt := confirm.ExecutorSig, confirm.ConfirmedAt
 
 	// Dedup: return receipt (proves executor alive) but skip execution
 	// if already in-flight or already finished in mempool.
 	if _, dup := h.executing[inferenceID]; dup {
 		return sig, confirmedAt, nil, nil
 	}
-	if hasFinish {
+	if h.mempool.HasFinish(inferenceID) {
 		return sig, confirmedAt, nil, nil
 	}
 

@@ -49,6 +49,7 @@ type Validator struct {
 	boundVersion            string
 	chainParams             ChainParamsProvider
 	thresholds              ValidationThresholdResolver
+	vocabularySizes         VocabularyResolver
 	voteFalseOnFetchFailure bool
 	payloadHTTPClient       *http.Client
 	payloadSigner           signing.Signer
@@ -66,6 +67,7 @@ type mlExecuteFunc func(ctx context.Context, model, escrowID string, body []byte
 // NewValidator creates a Validator. boundVersion is the runtime version string used
 // to construct the payload request path. thresholds resolves the per-model
 // similarity pass threshold (long-poll snapshot first, chain fallback).
+// vocabularySizes bounds enforced token ids by the model's vocab before the replay reaches the ML node.
 // voteFalseOnFetchFailure converts executor-attributable payload failures into
 // Valid:false instead of abandoning the attempt.
 func NewValidator(
@@ -76,6 +78,7 @@ func NewValidator(
 	boundVersion string,
 	chainParams ChainParamsProvider,
 	thresholds ValidationThresholdResolver,
+	vocabularySizes VocabularyResolver,
 	voteFalseOnFetchFailure bool,
 ) *Validator {
 	return &Validator{
@@ -86,6 +89,7 @@ func NewValidator(
 		boundVersion:            boundVersion,
 		chainParams:             chainParams,
 		thresholds:              thresholds,
+		vocabularySizes:         vocabularySizes,
 		voteFalseOnFetchFailure: voteFalseOnFetchFailure,
 		payloadHTTPClient:       newPayloadFetchClient(),
 	}
@@ -137,6 +141,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		},
 		req.InputTokens, req.OutputTokens,
 		v.chainParams.LogprobsMode(),
+		v.vocabularySizes.Resolve(ctx, epochID, req.Model),
 	)
 	if err != nil {
 		return nil, classifyExecuteValidationErr(err)
@@ -242,9 +247,14 @@ func executorFaultVerdict(ctx context.Context, phase *chain.Phase, req devshardp
 	if !enabled || err == nil || ctx.Err() != nil {
 		return nil
 	}
+	// phase follows LatestEpoch (moves at poc_start), the escrow epoch follows
+	// EffectiveEpoch (moves at set_new_validators), so escrows of epoch E keep
+	// serving at phase E+1 through the PoC window. The executor stores under
+	// its phase and the payload handler also looks up epochID+1, so at phase
+	// E+1 a 404 is never an honest prune.
 	inWindow := true
 	if phase != nil {
-		inWindow = phase.EpochID() <= epochID
+		inWindow = phase.EpochID() <= epochID+1
 	}
 	reason := observability.ReasonPayloadFetchErr
 	switch {

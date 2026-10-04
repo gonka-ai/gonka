@@ -497,7 +497,7 @@ func mapCoreError(err error) error {
 		errors.Is(err, heightsync.ErrRepairEmpty) {
 		return connect.NewError(connect.CodePermissionDenied, err)
 	}
-	if transport.IsClientRequest(err) {
+	if errors.Is(err, storage.ErrDiffPageLimit) || transport.IsClientRequest(err) {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return connect.NewError(connect.CodeInternal, err)

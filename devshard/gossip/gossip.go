@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"devshard/logging"
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -361,22 +362,56 @@ func (g *Gossip) tryRecovery(ctx context.Context) {
 		"last_after_req_nonce", lastAppliedNonce,
 	)
 
-	diffs, err := fetcher.GetDiffs(ctx, lastAppliedNonce+1, highestSeen)
-	if err != nil {
-		logging.Debug("recovery fetch diffs failed", "subsystem", "gossip", "error", err)
-		return
+	// One nonce window per fetch. The fetcher hands over each page before the
+	// next request, so the gap is never assembled into one slice. A window the
+	// peer stores nothing for moves on to the next one: a later nonce up to
+	// highestSeen can still be stored past a hole.
+	//
+	// A failed page still returns the signatures of the nonces it applied.
+	// They are published before the walk stops: a retry of that prefix signs
+	// the current nonce, not the skipped one. Only a walk that reaches
+	// highestSeen refreshes lastAfterReq, so an open gap is retried on the
+	// next tick instead of after RecoveryDelay.
+	var applyErr error
+	apply := func(diffs []types.Diff) error {
+		sigs, err := updater.ApplyRecoveredDiffs(ctx, diffs)
+		g.publishRecovered(ctx, sigs)
+		if err != nil {
+			applyErr = err
+			return err
+		}
+		return nil
 	}
-	if len(diffs) == 0 {
-		return
+	for from := lastAppliedNonce + 1; from <= highestSeen; {
+		pageTo := highestSeen
+		if highestSeen-from >= uint64(storage.DiffPageMaxNonces) {
+			pageTo = from + uint64(storage.DiffPageMaxNonces) - 1
+		}
+		if err := fetcher.GetDiffPages(ctx, from, pageTo, apply); err != nil {
+			if applyErr != nil {
+				logging.Debug("recovery apply diffs failed", "subsystem", "gossip", "error", err)
+			} else {
+				logging.Debug("recovery fetch diffs failed", "subsystem", "gossip", "error", err)
+			}
+			return
+		}
+		if pageTo == highestSeen {
+			g.mu.Lock()
+			g.lastAfterReq = time.Now()
+			g.mu.Unlock()
+			return
+		}
+		from = pageTo + 1
 	}
+}
 
-	sigs, err := updater.ApplyRecoveredDiffs(ctx, diffs)
-	if err != nil {
-		logging.Debug("recovery apply diffs failed", "subsystem", "gossip", "error", err)
+// publishRecovered records recovered signatures, advances lastAfterReqNonce
+// to the highest recovered nonce, and rebroadcasts them. Already-applied
+// pages are published before the next page is fetched.
+func (g *Gossip) publishRecovered(ctx context.Context, sigs []GossipSig) {
+	if len(sigs) == 0 {
 		return
 	}
-
-	// Update watermark to highest recovered nonce.
 	var maxRecovered uint64
 	for _, sig := range sigs {
 		if sig.Nonce > maxRecovered {
@@ -384,7 +419,6 @@ func (g *Gossip) tryRecovery(ctx context.Context) {
 		}
 	}
 
-	// Ensure recovered nonces are in the seen map and gossip own sigs.
 	g.mu.Lock()
 	for _, sig := range sigs {
 		if _, ok := g.seen[sig.Nonce]; !ok {
@@ -401,7 +435,6 @@ func (g *Gossip) tryRecovery(ctx context.Context) {
 	}
 	if maxRecovered > g.lastAfterReqNonce {
 		g.lastAfterReqNonce = maxRecovered
-		g.lastAfterReq = time.Now()
 	}
 	peers := g.pickPeers()
 	g.mu.Unlock()

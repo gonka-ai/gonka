@@ -86,6 +86,9 @@ func (s *legacyOnlyStorage) AppendDiff(escrowID string, rec types.DiffRecord) er
 func (s *legacyOnlyStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	return s.inner.GetDiffs(escrowID, fromNonce, toNonce)
 }
+func (s *legacyOnlyStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	return s.inner.DiffSizes(escrowID, fromNonce, toNonce, limit)
+}
 func (s *legacyOnlyStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	return s.inner.AddSignature(escrowID, nonce, slotID, sig)
 }

@@ -162,6 +162,9 @@ func TestPostgres_CreateSession_EmptyVersionRejected(t *testing.T) {
 func TestPostgres_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, newTestPostgres(t))
 }
+func TestPostgres_DiffSizes(t *testing.T) {
+	runDiffSizes(t, newTestPostgres(t))
+}
 func TestPostgres_GetSignatures(t *testing.T) {
 	runGetSignatures(t, newTestPostgres(t))
 }

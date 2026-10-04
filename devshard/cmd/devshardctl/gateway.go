@@ -1625,6 +1625,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	cacheKey := chatCacheKey(requestModel, body, clientIntent)
 	stream := chatRequestStream(body)
 	if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
+		g.metrics.RecordChatCache(requestModel, "hit")
 		logRequestStage(ctx, "gateway_cache_hit", "escrow", entry.EscrowID, "model", requestModel, "stream", stream)
 		g.recordCachedAccountingAlias(ctx, entry)
 		serveCachedChatResponse(w, r, entry)
@@ -1672,10 +1673,8 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 
 	if capture != nil {
 		sourceRequestID, _ := requestLogFromContext(ctx)
-		if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
-			g.chatCache.Set(cacheKey, entry, time.Now())
-			logRequestStage(ctx, "gateway_cache_stored", "escrow", rt.id, "model", requestModel, "stream", stream, "bytes", len(entry.Body))
-		}
+		entry, reason := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err())
+		g.storeChatCache(ctx, "gateway_cache", cacheKey, rt.id, requestModel, stream, entry, reason)
 	}
 }
 
@@ -1817,6 +1816,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		cacheKey := chatCacheKey(limitModel, body, clientIntent)
 		stream := chatRequestStream(body)
 		if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
+			g.metrics.RecordChatCache(limitModel, "hit")
 			logRequestStage(ctx, "gateway_devshard_cache_hit", "escrow", entry.EscrowID, "model", limitModel, "stream", stream)
 			g.recordCachedAccountingAlias(ctx, entry)
 			g.recordGatewayRequestOutcome(limitModel, "cached", "cache_hit")
@@ -1852,10 +1852,8 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 
 		if capture := g.serveChatToRuntime(rt, innerPath, body, w, r); capture != nil {
 			sourceRequestID, _ := requestLogFromContext(ctx)
-			if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
-				g.chatCache.Set(cacheKey, entry, time.Now())
-				logRequestStage(ctx, "gateway_devshard_cache_stored", "escrow", rt.id, "model", limitModel, "stream", stream, "bytes", len(entry.Body))
-			}
+			entry, reason := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err())
+			g.storeChatCache(ctx, "gateway_devshard_cache", cacheKey, rt.id, limitModel, stream, entry, reason)
 		}
 		return
 	}
@@ -2049,6 +2047,19 @@ func (g *Gateway) serveChatToRuntime(rt *devshardRuntime, path string, body []by
 	capture := &gatewayChatCacheCapture{ResponseWriter: w}
 	rt.handler.ServeHTTP(capture, req)
 	return capture
+}
+
+func (g *Gateway) storeChatCache(ctx context.Context, stage, cacheKey, escrow, model string, stream bool, entry cachedChatResponse, reason string) {
+	if reason == "" && !g.chatCache.Set(cacheKey, entry, time.Now()) {
+		reason = "too_large"
+	}
+	if reason != "" {
+		g.metrics.RecordChatCache(model, "skipped_"+reason)
+		logRequestStage(ctx, stage+"_skipped", "escrow", escrow, "model", model, "stream", stream, "reason", reason)
+		return
+	}
+	g.metrics.RecordChatCache(model, "stored")
+	logRequestStage(ctx, stage+"_stored", "escrow", escrow, "model", model, "stream", stream, "bytes", len(entry.Body))
 }
 
 func (g *Gateway) recordGatewayRequestOutcome(model, outcome, reason string) {
@@ -4631,18 +4642,13 @@ func (g *Gateway) reconcilePendingSettlements() {
 		}
 		return
 	}
-	// Honor the operator's config: when settlement is disabled, never settle on
-	// startup. Leave the marker intact so a later re-enable still settles it.
-	if !state.Settings.EscrowRotation.SettlementEnabled {
-		for _, devshard := range state.Devshards {
-			if !devshard.Active && devshard.SettlementPending {
-				log.Printf("settlement_reconcile_skipped escrow=%s reason=settlement_disabled", devshard.ID)
-			}
-		}
-		return
-	}
 	for _, devshard := range state.Devshards {
 		if devshard.Active || !devshard.SettlementPending {
+			continue
+		}
+		// A disabled model keeps its marker, so a later re-enable still settles it.
+		if !settlementEnabledForModel(state.Settings, devshard.Model) {
+			log.Printf("settlement_reconcile_skipped escrow=%s model=%q reason=settlement_disabled", devshard.ID, devshard.Model)
 			continue
 		}
 		g.mu.Lock()
@@ -4659,8 +4665,8 @@ func (g *Gateway) reconcilePendingSettlements() {
 	}
 }
 
-func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
-	if !settings.EscrowRotation.SettlementEnabled {
+func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, modelID, reason string, settings GatewaySettings) (bool, error) {
+	if !settlementEnabledForModel(settings, modelID) {
 		if g.deactivateDevshardByIDWithReason(id, reason) {
 			log.Printf("escrow_rotation_deactivated_without_settlement escrow=%s reason=%q", id, reason)
 		}
@@ -4729,7 +4735,7 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	if !ok {
 		return fmt.Errorf("no escrow rotation model configured for %q", modelID)
 	}
-	isTakenOutOfService, err := g.deactivateDepletedEscrow(ctx, id, reason, settings)
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(ctx, id, modelID, reason, settings)
 	if err != nil {
 		return fmt.Errorf("deactivate depleted escrow: %w", err)
 	}
@@ -4772,9 +4778,9 @@ func replacementModelForDepletedEscrow(settings GatewaySettings, modelID string)
 	return EscrowRotationModelSettings{}, false
 }
 
-// deactivateDepletedEscrow saves the escrow inactive, with its settlement mark when settlement is enabled, before stopping its traffic in memory, and reports whether this call took it out of service.
-func (g *Gateway) deactivateDepletedEscrow(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
-	isSettlementEnabled := settings.EscrowRotation.SettlementEnabled
+// deactivateDepletedEscrow saves the escrow inactive, with its settlement mark when settlement is enabled for its model, before stopping its traffic in memory, and reports whether this call took it out of service.
+func (g *Gateway) deactivateDepletedEscrow(ctx context.Context, id, modelID, reason string, settings GatewaySettings) (bool, error) {
+	isSettlementEnabled := settlementEnabledForModel(settings, modelID)
 	var isDeactivatedInStore bool
 	if err := withDBRetry(ctx, func() error {
 		var err error

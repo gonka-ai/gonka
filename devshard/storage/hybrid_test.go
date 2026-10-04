@@ -36,6 +36,10 @@ func (r *recordingStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) 
 	r.lastMethod = "GetDiffs"
 	return nil, nil
 }
+func (r *recordingStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	r.lastMethod = "DiffSizes"
+	return nil, nil
+}
 func (r *recordingStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	r.lastMethod = "AddSignature"
 	return nil

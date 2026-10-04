@@ -161,7 +161,7 @@ func TestFetchSignedPayloads_RPCRespectsMaxBytes(t *testing.T) {
 }
 
 func TestValidator_PayloadRPCRequiresPayloadEndpoint(t *testing.T) {
-	v := NewValidator(nil, nil, nil, nil, "v1", nil, nil, false)
+	v := NewValidator(nil, nil, nil, nil, "v1", nil, nil, nil, false)
 	require.Nil(t, v.payloadRPC("http://example", "addr", "escrow-1"))
 
 	signer := testutil.MustGenerateKey(t)
