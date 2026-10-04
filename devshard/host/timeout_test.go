@@ -190,11 +190,10 @@ func TestVerifyRefused_NilPayload_Rejects(t *testing.T) {
 	st := stateWithPendingFull(1, 1)
 	executor := &mockExecutorClient{challengeReceipt: []byte("would-return-receipt")}
 
-	// Nil payload -> error (reject).
+	// Nil payload -> decline (accept=false, no error), same as the bad-payload branch.
 	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, nil, nil, nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
-	require.Error(t, err)
+	require.NoError(t, err)
 	require.False(t, accept, "should reject: nil payload")
-	require.Contains(t, err.Error(), "no payload")
 }
 
 func TestVerifyRefused_PayloadMismatch_Rejects(t *testing.T) {

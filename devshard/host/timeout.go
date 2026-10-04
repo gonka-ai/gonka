@@ -120,9 +120,9 @@ func VerifyRefusedTimeout(
 		}
 	}
 
-	// Reject if no payload provided.
+	// No payload to challenge with: decline like the bad-payload branch below, don't error.
 	if payload == nil {
-		return false, fmt.Errorf("no payload for refused timeout verification")
+		return false, nil
 	}
 
 	// Verifier validates payload against on-chain record (same checks executor does).
