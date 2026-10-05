@@ -188,16 +188,22 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, err
 	}
 	result.Allocations = allocations
-	if err := writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath); err != nil {
+	if err := writeComposeLogsTo(opts.OutputDir, opts.TestenvDir, project, composePath, "compose-pre-drain.log"); err != nil {
 		return RunResult{}, err
 	}
-	ghostIDs, err := readGhostInferenceIDs(filepath.Join(opts.OutputDir, "compose.log"))
+	ghostIDs, err := readGhostInferenceIDs(filepath.Join(opts.OutputDir, "compose-pre-drain.log"))
 	if err != nil {
 		return RunResult{}, err
 	}
 	terminal, assertionErr := assertRun(ctx, scenario, summary, allocations, result.GatewayURL, apiKey, ghostIDs)
 	result.Terminal = terminal
 	log.Printf("loadtest: stage=artifacts_collection")
+	if err := writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath); err != nil {
+		if assertionErr == nil {
+			return RunResult{}, err
+		}
+		log.Printf("loadtest: final Compose log collection failed: %v", err)
+	}
 	gatewayState, stateErr := fetchGatewayStateSizes(ctx, result.GatewayURL, apiKey)
 	if stateErr == nil {
 		result.GatewayState = gatewayState
@@ -675,13 +681,17 @@ func writeGatewayInferences(ctx context.Context, gatewayURL, apiKey, outputDir s
 }
 
 func writeComposeLogs(outputDir, testenvDir, project, composePath string) error {
+	return writeComposeLogsTo(outputDir, testenvDir, project, composePath, "compose.log")
+}
+
+func writeComposeLogsTo(outputDir, testenvDir, project, composePath, filename string) error {
 	cmd := exec.Command("docker", "compose", "-p", project, "-f", composePath, "logs", "--no-color")
 	cmd.Dir = testenvDir
 	body, err := cmd.CombinedOutput()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(outputDir, "compose.log"), body, 0o644)
+	return os.WriteFile(filepath.Join(outputDir, filename), body, 0o644)
 }
 
 func envValue(path, key string) (string, error) {
