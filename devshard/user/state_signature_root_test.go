@@ -18,6 +18,16 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+type countingStateSignatureVerifier struct {
+	signing.Verifier
+	calls atomic.Int32
+}
+
+func (v *countingStateSignatureVerifier) RecoverAddress(message, signature []byte) (string, error) {
+	v.calls.Add(1)
+	return v.Verifier.RecoverAddress(message, signature)
+}
+
 func signRootForTest(t *testing.T, signer *signing.Secp256k1Signer, escrowID string, nonce uint64, root []byte) []byte {
 	t.Helper()
 	data, err := proto.Marshal(&types.StateSignatureContent{StateRoot: root, EscrowId: escrowID, Nonce: nonce})
@@ -182,13 +192,45 @@ func TestTrimKeepsEarlierValidQuorumAfterWrongRootSignature(t *testing.T) {
 	require.True(t, hasBefore)
 	require.Equal(t, uint64(1), before)
 
+	verifier := &countingStateSignatureVerifier{Verifier: session.verifier}
+	session.verifier = verifier
 	session.mu.Lock()
 	session.dropSignaturesThroughLocked(3)
+	firstRecoveries := verifier.calls.Load()
+	session.nonce = 5
+	session.dropSignaturesThroughLocked(4)
 	session.mu.Unlock()
+	require.Positive(t, firstRecoveries)
+	require.Equal(t, firstRecoveries, verifier.calls.Load())
 	_, after, hasAfter := session.SignatureStatus()
 	require.True(t, hasAfter)
 	require.Equal(t, uint64(1), after)
 	require.True(t, session.HasQuorumAt(1))
+}
+
+func TestTrimReusesIngressSignatureSigners(t *testing.T) {
+	session, _, nonce, _ := sessionWithRootForTest(t, 3)
+	verifier := &countingStateSignatureVerifier{Verifier: session.verifier}
+	session.verifier = verifier
+	session.mu.Lock()
+	session.nonce++
+	session.dropSignaturesThroughLocked(nonce)
+	session.mu.Unlock()
+	require.Zero(t, verifier.calls.Load())
+}
+
+func TestTrimRechecksReplacedSignature(t *testing.T) {
+	session, signers, nonce, _ := sessionWithRootForTest(t, 3)
+	poison := signRootForTest(t, signers[0], session.escrowID, nonce, nil)
+	verifier := &countingStateSignatureVerifier{Verifier: session.verifier}
+	session.verifier = verifier
+	session.mu.Lock()
+	session.signatures[nonce][0] = poison
+	session.nonce++
+	session.dropSignaturesThroughLocked(nonce)
+	session.mu.Unlock()
+	require.Positive(t, verifier.calls.Load())
+	require.False(t, session.HasQuorumAt(nonce))
 }
 
 func TestStoredWrongRootWarmLookupDoesNotHoldSessionLock(t *testing.T) {

@@ -236,6 +236,11 @@ type warmCheckResult struct {
 	retryAt time.Time
 }
 
+type cachedSignatureSigner struct {
+	signature []byte
+	address   string
+}
+
 // Session manages the user side of the devshard protocol.
 type Session struct {
 	mu          sync.Mutex
@@ -279,12 +284,13 @@ type Session struct {
 	// must not be drained by a concurrent composeDiffLocked (heartbeat,
 	// PrepareInference, unrelated SendPendingDiff). HandleErrorMiss pins
 	// the nonce for the vote round and compose so Finish+ErrorMiss land together.
-	pinnedFinishIDs map[uint64]int
-	signatures      map[uint64]map[uint32][]byte // nonce -> slotID -> sig
-	store           storage.Storage              // optional persistent storage
-	nonceStates     map[uint64]*nonceOutcome     // nonce -> protocol outcome
-	verifierQueue   *verifierHostQueue           // per-verifier RPC limiter for timeout votes
-	diffObserver    func(types.Diff)
+	pinnedFinishIDs  map[uint64]int
+	signatures       map[uint64]map[uint32][]byte // nonce -> slotID -> sig
+	signatureSigners map[uint64]map[uint32]cachedSignatureSigner
+	store            storage.Storage          // optional persistent storage
+	nonceStates      map[uint64]*nonceOutcome // nonce -> protocol outcome
+	verifierQueue    *verifierHostQueue       // per-verifier RPC limiter for timeout votes
+	diffObserver     func(types.Diff)
 
 	// sigsTrimmedThrough is the highest nonce whose signatures may be missing
 	// from s.signatures. signaturesAtLocked reads those nonces from the store.
@@ -498,23 +504,24 @@ func NewSession(
 		addrToSlots[s.ValidatorAddress] = append(addrToSlots[s.ValidatorAddress], s.SlotID)
 	}
 	sess := &Session{
-		sm:              sm,
-		signer:          signer,
-		verifier:        verifier,
-		warmChecks:      make(map[warmCheckKey]*warmCheckResult),
-		escrowID:        escrowID,
-		group:           group,
-		addrToSlots:     addrToSlots,
-		participantKeys: make([]string, len(group)),
-		clients:         clients,
-		hostSyncNonce:   make(map[int]uint64),
-		pendingTxKeys:   make(map[string]struct{}),
-		appliedTxKeys:   make(map[string]struct{}),
-		pinnedFinishIDs: make(map[uint64]int),
-		signatures:      make(map[uint64]map[uint32][]byte),
-		nonceStates:     make(map[uint64]*nonceOutcome),
-		verifierQueue:   SharedVerifierQueue,
-		diffObserver:    func(types.Diff) {},
+		sm:               sm,
+		signer:           signer,
+		verifier:         verifier,
+		warmChecks:       make(map[warmCheckKey]*warmCheckResult),
+		escrowID:         escrowID,
+		group:            group,
+		addrToSlots:      addrToSlots,
+		participantKeys:  make([]string, len(group)),
+		clients:          clients,
+		hostSyncNonce:    make(map[int]uint64),
+		pendingTxKeys:    make(map[string]struct{}),
+		appliedTxKeys:    make(map[string]struct{}),
+		pinnedFinishIDs:  make(map[uint64]int),
+		signatures:       make(map[uint64]map[uint32][]byte),
+		signatureSigners: make(map[uint64]map[uint32]cachedSignatureSigner),
+		nonceStates:      make(map[uint64]*nonceOutcome),
+		verifierQueue:    SharedVerifierQueue,
+		diffObserver:     func(types.Diff) {},
 		//TODO: check if we should move it from Session
 		signatureCollectMaxRetries:  3,
 		signatureCollectBaseDelay:   2 * time.Second,
@@ -716,24 +723,38 @@ func (s *Session) dropSignaturesThroughLocked(floor uint64) {
 		return
 	}
 	s.sigsTrimmedThrough = floor
-	highest := make(map[string]uint64, len(s.addrToSlots))
+	highest := make(map[[2]string]uint64, len(s.addrToSlots))
 	keep := make(map[uint64]struct{})
 	for nonce, slotSigs := range s.signatures {
-		root, err := s.expectedStateRootLocked(nonce)
-		if err != nil {
-			keep[nonce] = struct{}{}
-			continue
-		}
+		var root []byte
+		var rootErr error
+		rootChecked := false
 		for slotID, sig := range slotSigs {
 			owner := s.sm.SlotAddress(slotID)
 			if owner == "" {
 				continue
 			}
-			signer, err := s.recoverStateSignatureAddress(nonce, root, sig)
-			if err != nil {
+			cached, ok := s.signatureSigners[nonce][slotID]
+			if !ok || !bytes.Equal(cached.signature, sig) {
+				if !rootChecked {
+					root, rootErr = s.expectedStateRootLocked(nonce)
+					rootChecked = true
+				}
+				if rootErr != nil {
+					keep[nonce] = struct{}{}
+					break
+				}
+				signer, err := s.recoverStateSignatureAddress(nonce, root, sig)
+				if err != nil {
+					signer = ""
+				}
+				cached = cachedSignatureSigner{signature: bytes.Clone(sig), address: signer}
+				s.rememberSignatureSignerLocked(nonce, slotID, cached)
+			}
+			if cached.address == "" {
 				continue
 			}
-			key := owner + "\x00" + signer
+			key := [2]string{owner, cached.address}
 			highest[key] = max(highest[key], nonce)
 		}
 	}
@@ -743,8 +764,19 @@ func (s *Session) dropSignaturesThroughLocked(floor uint64) {
 	for nonce := range s.signatures {
 		if _, ok := keep[nonce]; nonce <= floor && !ok {
 			delete(s.signatures, nonce)
+			delete(s.signatureSigners, nonce)
 		}
 	}
+}
+
+func (s *Session) rememberSignatureSignerLocked(nonce uint64, slot uint32, cached cachedSignatureSigner) {
+	if s.signatureSigners == nil {
+		s.signatureSigners = make(map[uint64]map[uint32]cachedSignatureSigner)
+	}
+	if s.signatureSigners[nonce] == nil {
+		s.signatureSigners[nonce] = make(map[uint32]cachedSignatureSigner)
+	}
+	s.signatureSigners[nonce][slot] = cached
 }
 
 func (s *Session) signaturesAtLocked(nonce uint64) map[uint32][]byte {
@@ -934,7 +966,8 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	// Verify and store state signature.
 	if resp.StateSig != nil {
 		expectedAddr := s.group[hostIdx].ValidatorAddress
-		if err := s.verifyStateSignature(resp.Nonce, expected, resp.StateSig, expectedAddr); err != nil {
+		signer, err := s.verifiedStateSignatureAddress(resp.Nonce, expected, resp.StateSig, expectedAddr)
+		if err != nil {
 			return fmt.Errorf("host %d: %w", hostIdx, err)
 		}
 
@@ -942,8 +975,10 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		if _, ok := s.signatures[resp.Nonce]; !ok {
 			s.signatures[resp.Nonce] = make(map[uint32][]byte)
 		}
+		cached := cachedSignatureSigner{signature: bytes.Clone(resp.StateSig), address: signer}
 		for _, slot := range s.addrToSlots[expectedAddr] {
 			s.signatures[resp.Nonce][slot] = resp.StateSig
+			s.rememberSignatureSignerLocked(resp.Nonce, slot, cached)
 			if s.store != nil {
 				if sigErr := s.store.AddSignature(s.escrowID, resp.Nonce, slot, resp.StateSig); sigErr != nil {
 					logging.Warn("failed to persist signature",
@@ -2461,14 +2496,19 @@ func (s *Session) getFinalizeClients() []HostClient {
 // processResponse (inbound host responses) and fetchSignature (pulled signatures)
 // so a host cannot get bytes that don't verify against its slot into the pool.
 func (s *Session) verifyStateSignature(nonce uint64, postRoot, signature []byte, expectedAddr string) error {
+	_, err := s.verifiedStateSignatureAddress(nonce, postRoot, signature, expectedAddr)
+	return err
+}
+
+func (s *Session) verifiedStateSignatureAddress(nonce uint64, postRoot, signature []byte, expectedAddr string) (string, error) {
 	recovered, err := s.recoverStateSignatureAddress(nonce, postRoot, signature)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if recovered != expectedAddr && !s.warmKeyAuthorized(recovered, expectedAddr) {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
+		return "", fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
 	}
-	return nil
+	return recovered, nil
 }
 
 func (s *Session) warmKeyAuthorized(warm, cold string) bool {
@@ -2581,7 +2621,8 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 		if addr != expectedAddr {
 			continue
 		}
-		if err := s.verifyStateSignature(nonce, postRoot, sigs[slotID], expectedAddr); err != nil {
+		signer, err := s.verifiedStateSignatureAddress(nonce, postRoot, sigs[slotID], expectedAddr)
+		if err != nil {
 			logging.Warn("fetchSignature: rejected unverified signature", "subsystem", "finalize",
 				"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "slot", slotID, "error", err)
 			return false
@@ -2589,8 +2630,10 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 		if _, ok := s.signatures[nonce]; !ok {
 			s.signatures[nonce] = make(map[uint32][]byte)
 		}
+		cached := cachedSignatureSigner{signature: bytes.Clone(sigs[slotID]), address: signer}
 		for _, slot := range s.addrToSlots[expectedAddr] {
 			s.signatures[nonce][slot] = sigs[slotID]
+			s.rememberSignatureSignerLocked(nonce, slot, cached)
 			if s.store != nil {
 				if sigErr := s.store.AddSignature(s.escrowID, nonce, slot, sigs[slotID]); sigErr != nil {
 					logging.Warn("failed to persist fetched signature",
