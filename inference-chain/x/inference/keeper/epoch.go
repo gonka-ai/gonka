@@ -19,7 +19,7 @@ func (k Keeper) SetEffectiveEpochIndex(ctx context.Context, epoch uint64) error 
 	if err := k.EffectiveEpochIndex.Set(sdkCtx, epoch); err != nil {
 		return err
 	}
-	turnOffTxCache(ctx)
+	forgetTxEpochIndex(ctx)
 
 	if k.BlsKeeper != nil {
 		k.BlsKeeper.SetCurrentSigningEpochID(sdkCtx, epoch)
@@ -44,7 +44,7 @@ func (k Keeper) effectiveEpochIndex(ctx context.Context) (uint64, error) {
 		return c.epoch, nil
 	}
 	v, err := k.EffectiveEpochIndex.Get(ctx)
-	if err == nil && c != nil {
+	if err == nil && c != nil && !c.epochWritten {
 		c.epoch, c.epochSet = v, true
 	}
 	return v, err

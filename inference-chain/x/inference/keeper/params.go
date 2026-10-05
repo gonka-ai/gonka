@@ -41,15 +41,16 @@ func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) 
 
 // txParamsCache keeps the params bytes (and the SPRT values derived from them) and
 // the effective epoch index for one tx, so repeated reads pay the store once.
-// Turned off for the rest of the tx by SetParams, PrecomputeSPRTValues or
-// SetEffectiveEpochIndex.
+// Turned off for the rest of the tx by SetParams or PrecomputeSPRTValues;
+// SetEffectiveEpochIndex stops caching only the epoch index.
 type txParamsCache struct {
-	bz       []byte
-	sprt     []byte
-	epoch    uint64
-	epochSet bool
-	off      bool
-	egd      egdTxCache // not turned off with the params part
+	bz           []byte
+	sprt         []byte
+	epoch        uint64
+	epochSet     bool
+	epochWritten bool // the write may sit in a discarded CacheContext
+	off          bool
+	egd          egdTxCache // not turned off with the params part
 }
 
 func txCacheFrom(ctx context.Context) *txParamsCache {
@@ -62,6 +63,13 @@ func txCacheFrom(ctx context.Context) *txParamsCache {
 func turnOffTxCache(ctx context.Context) {
 	if c, ok := ctx.Value(txParamsCacheKey{}).(*txParamsCache); ok && c != nil {
 		c.bz, c.sprt, c.epochSet, c.off = nil, nil, false, true
+	}
+}
+
+// forgetTxEpochIndex stops caching the effective epoch index for the rest of the tx.
+func forgetTxEpochIndex(ctx context.Context) {
+	if c, ok := ctx.Value(txParamsCacheKey{}).(*txParamsCache); ok && c != nil {
+		c.epochSet, c.epochWritten = false, true
 	}
 }
 
