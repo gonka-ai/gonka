@@ -1,0 +1,14 @@
+syntax = "proto3";
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// ReputationAggregate folds a participant's EpochPerformanceSummary records
+// into what reputation needs, so epoch formation reads only new summaries.
+message ReputationAggregate {
+  uint64 epoch_count = 1;
+  uint64 last_epoch_index = 2;
+  // Sum of epoch miss rates above miss_cutoff, as a decimal string.
+  string miss_sum = 3;
+  string miss_cutoff = 4;
+}
