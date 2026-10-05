@@ -1,6 +1,8 @@
 package keeper_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"math"
 	"testing"
 
@@ -47,6 +49,24 @@ func TestChallengedAddresses_MatchesIsUnderChallenge(t *testing.T) {
 	late := ctx.WithBlockHeight(1960) // inside the safety window
 	require.False(t, k.IsUnderChallenge(late, testutil.Executor))
 	require.False(t, k.IsChallengedForTesting(late, testutil.Executor))
+}
+
+func TestActiveChallengeRecords_MatchesHasActiveChallengeRecord(t *testing.T) {
+	k, ctx, _ := setupChallengeCreate(t, 500)
+	open := types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{EpochIndex: 2, Target: testutil.Executor, State: open}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{EpochIndex: 2, Target: testutil.Validator,
+		State: types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{EpochIndex: 1, Target: testutil.Executor2, State: open}))
+
+	epoch, ok := k.GetEffectiveEpochIndex(ctx)
+	require.True(t, ok)
+	for _, c := range []sdk.Context{ctx, ctx.WithBlockHeight(1960)} { // the safety window does not matter here
+		for _, addr := range []string{testutil.Executor, testutil.Validator, testutil.Executor2, testutil.Validator2, "not-an-address"} {
+			require.Equal(t, k.HasActiveChallengeRecord(c, addr), k.HasActiveChallengeRecordInSetForTesting(c, epoch, addr), addr)
+		}
+	}
+	require.True(t, k.HasActiveChallengeRecordInSetForTesting(ctx, epoch, testutil.Executor))
 }
 
 func createEscrowForGasTest(t *testing.T, members int, challenged bool) (escrow types.DevshardEscrow, reads int) {
@@ -201,4 +221,67 @@ func TestSettleDevshardEscrow_RepeatedSlotsAddNoReads(t *testing.T) {
 	// Before: each repeated slot read its host's epoch stats and challenge record again,
 	// and SetParticipant read every participant a second time.
 	require.Equal(t, twoSlots, fourSlots)
+}
+
+func TestSettleDevshardEscrow_WaivesMissesOfChallengedHostOnly(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	keys, addrs := generateDevshardKeys(t, 2)
+	for _, a := range addrs {
+		setParticipantForDevshardTest(t, k, ctx, a)
+	}
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+	setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrs...)
+	open := types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{EpochIndex: 5, Target: addrs[0], State: open}))
+	// a record of another epoch does not waive
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{EpochIndex: 4, Target: addrs[1], State: open}))
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0x11
+	escrow := types.DevshardEscrow{Id: 1, Creator: creator.String(), Amount: 1_000_000, Slots: addrs, EpochIndex: 5}
+	_, err := k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+	hostStats := []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Missed: 2, Cost: 10},
+		{SlotId: 1, Missed: 3, Cost: 20},
+	}
+	msg := buildSettlementTestDataWithNonce(t, escrow, keys, hostStats, 0, 20)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil).AnyTimes()
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	var trace bytes.Buffer
+	ctx.MultiStore().SetTracer(&trace)
+	_, err = ms.SettleDevshardEscrow(ctx, msg)
+	require.NoError(t, err)
+	ctx.MultiStore().SetTracer(nil)
+	require.Equal(t, 0, pointReadsOfPrefix(t, trace.Bytes(), types.PoCChallengePrefix), "no challenge lookup per host")
+
+	h0, found := k.GetDevshardHostEpochStats(ctx, 5, sdk.MustAccAddressFromBech32(addrs[0]))
+	require.True(t, found)
+	require.Equal(t, uint32(0), h0.Missed)
+	h1, found := k.GetDevshardHostEpochStats(ctx, 5, sdk.MustAccAddressFromBech32(addrs[1]))
+	require.True(t, found)
+	require.Equal(t, uint32(3), h1.Missed)
+	p0, _ := k.GetParticipant(ctx, addrs[0])
+	p1, _ := k.GetParticipant(ctx, addrs[1])
+	require.Equal(t, uint64(0), p0.CurrentEpochStats.MissedRequests)
+	require.Equal(t, uint64(3), p1.CurrentEpochStats.MissedRequests)
+}
+
+func pointReadsOfPrefix(t *testing.T, trace []byte, prefix []byte) int {
+	reads := 0
+	for _, line := range bytes.Split(trace, []byte("\n")) {
+		var op struct {
+			Operation string `json:"operation"`
+			Key       []byte `json:"key"`
+		}
+		if len(line) == 0 {
+			continue
+		}
+		require.NoError(t, json.Unmarshal(line, &op))
+		if op.Operation == "read" && bytes.HasPrefix(op.Key, prefix) {
+			reads++
+		}
+	}
+	return reads
 }
