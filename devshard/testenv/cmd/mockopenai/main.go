@@ -75,6 +75,9 @@ func faultsFromEnv() mockopenai.FaultConfig {
 			f.StreamChunkDelay = d
 		}
 	}
+	if envTruthy("MOCK_OPENAI_HANG") {
+		f.Hang = true
+	}
 	return f
 }
 

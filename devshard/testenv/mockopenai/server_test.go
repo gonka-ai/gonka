@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -69,6 +70,61 @@ func TestModelStatus_Downloaded(t *testing.T) {
 	var result map[string]string
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 	require.Equal(t, "DOWNLOADED", result["status"])
+}
+
+func TestChatCompletions_HangRecordsTimeoutOnCancellation(t *testing.T) {
+	baseCtx, cancelBase := context.WithCancel(context.Background())
+	defer cancelBase()
+	srv := httptest.NewUnstartedServer(mockopenai.NewServer(mockopenai.Config{
+		Faults: mockopenai.FaultConfig{Hang: true},
+	}).Handler())
+	srv.Config.BaseContext = func(net.Listener) context.Context { return baseCtx }
+	srv.Start()
+	defer srv.Close()
+
+	request, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(`{"model":"test-model"}`))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	requestDone := make(chan error, 1)
+	go func() {
+		_, requestErr := http.DefaultClient.Do(request)
+		requestDone <- requestErr
+	}()
+
+	var stats mockopenai.Stats
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		statsResponse, statsErr := http.Get(srv.URL + "/testenv/stats")
+		if statsErr == nil {
+			stats = mockopenai.Stats{}
+			statsErr = json.NewDecoder(statsResponse.Body).Decode(&stats)
+			_ = statsResponse.Body.Close()
+			require.NoError(t, statsErr)
+			if stats.RequestsReceived == 1 {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Equal(t, uint64(1), stats.RequestsReceived)
+	cancelBase()
+	<-requestDone
+
+	deadline = time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		statsResponse, statsErr := http.Get(srv.URL + "/testenv/stats")
+		if statsErr == nil {
+			stats = mockopenai.Stats{}
+			statsErr = json.NewDecoder(statsResponse.Body).Decode(&stats)
+			_ = statsResponse.Body.Close()
+			require.NoError(t, statsErr)
+			if stats.Timeouts == 1 {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Equal(t, uint64(1), stats.Timeouts)
 }
 
 func TestChatCompletions_StreamCompletionAPI(t *testing.T) {

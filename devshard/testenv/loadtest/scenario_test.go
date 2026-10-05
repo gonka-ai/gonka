@@ -3,6 +3,7 @@ package loadtest
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -58,6 +59,25 @@ func TestLoadScenario_SingleFailingMLNode(t *testing.T) {
 	require.Equal(t, "90s", scenario.DrainTimeout)
 }
 
+func TestLoadScenario_SingleTimeoutMLNode(t *testing.T) {
+	scenario, err := LoadScenario(filepath.Join("scenarios", "single-timeout-ml-node.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "single-timeout-ml-node", scenario.Scenario)
+	require.Len(t, scenario.Topology.MockML.Nodes, 4)
+	require.Equal(t, "timeout", scenario.Topology.MockML.Nodes[3].Profile)
+	require.Equal(t, 0.35, scenario.Thresholds.ErrorRate)
+	require.Equal(t, "30s", scenario.Gateway.Redundancy.SecondaryWaitAfterWinner)
+	require.Equal(t, 30*time.Second, scenario.SecondaryWaitAfterWinner())
+	require.Equal(t, "60s", scenario.DrainTimeout)
+}
+
+func TestScenario_DefaultSecondaryWaitAfterWinner(t *testing.T) {
+	scenario, err := LoadScenario(filepath.Join("scenarios", "normal-load.yaml"))
+	require.NoError(t, err)
+	require.Empty(t, scenario.Gateway.Redundancy.SecondaryWaitAfterWinner)
+	require.Equal(t, DefaultSecondaryWaitAfterWinner, scenario.SecondaryWaitAfterWinner())
+}
+
 func TestLoadProfile_Fast(t *testing.T) {
 	profile, err := LoadProfile("profiles", "fast")
 	require.NoError(t, err)
@@ -78,4 +98,11 @@ func TestLoadProfile_Failing(t *testing.T) {
 	require.Equal(t, "failing", profile.Profile)
 	require.Equal(t, 0.7, profile.FailureRate)
 	require.Equal(t, 503, profile.HTTPStatus)
+}
+
+func TestLoadProfile_Timeout(t *testing.T) {
+	profile, err := LoadProfile("profiles", "timeout")
+	require.NoError(t, err)
+	require.Equal(t, "timeout", profile.Profile)
+	require.True(t, profile.Hang)
 }

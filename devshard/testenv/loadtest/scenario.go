@@ -17,10 +17,21 @@ type Scenario struct {
 	Seed          int64      `yaml:"seed"`
 	Topology      Topology   `yaml:"topology"`
 	Workload      Workload   `yaml:"workload"`
+	Gateway       Gateway    `yaml:"gateway"`
 	Thresholds    Thresholds `yaml:"thresholds"`
 	Assertions    Assertions `yaml:"assertions"`
 	DrainTimeout  string     `yaml:"drain_timeout"`
 }
+
+type Gateway struct {
+	Redundancy GatewayRedundancy `yaml:"redundancy"`
+}
+
+type GatewayRedundancy struct {
+	SecondaryWaitAfterWinner string `yaml:"secondary_wait_after_winner"`
+}
+
+const DefaultSecondaryWaitAfterWinner = 10 * time.Minute
 
 type Topology struct {
 	VersiondMode string         `yaml:"versiond_mode"`
@@ -114,6 +125,7 @@ type Profile struct {
 	TokenInterval string  `yaml:"token_interval"`
 	Workers       int     `yaml:"workers"`
 	Queue         int     `yaml:"queue"`
+	Hang          bool    `yaml:"hang"`
 	FailureRate   float64 `yaml:"failure_rate"`
 	HTTPStatus    int     `yaml:"http_status"`
 	Failures      []any   `yaml:"failures"`
@@ -214,6 +226,15 @@ func (s Scenario) Validate() error {
 	if s.Assertions.Devshard.MaxGhostRate < 0 || s.Assertions.Devshard.MaxGhostRate > 1 {
 		return fmt.Errorf("devshard max_ghost_rate must be between 0 and 1")
 	}
+	if s.Gateway.Redundancy.SecondaryWaitAfterWinner != "" {
+		duration, err := time.ParseDuration(s.Gateway.Redundancy.SecondaryWaitAfterWinner)
+		if err != nil || duration <= 0 {
+			if err != nil {
+				return fmt.Errorf("gateway.redundancy.secondary_wait_after_winner: %w", err)
+			}
+			return fmt.Errorf("gateway.redundancy.secondary_wait_after_winner must be positive")
+		}
+	}
 	if _, err := time.ParseDuration(s.DrainTimeout); err != nil {
 		return fmt.Errorf("drain_timeout: %w", err)
 	}
@@ -222,6 +243,14 @@ func (s Scenario) Validate() error {
 
 func (s Scenario) Duration() time.Duration {
 	d, _ := time.ParseDuration(s.Workload.Duration)
+	return d
+}
+
+func (s Scenario) SecondaryWaitAfterWinner() time.Duration {
+	if s.Gateway.Redundancy.SecondaryWaitAfterWinner == "" {
+		return DefaultSecondaryWaitAfterWinner
+	}
+	d, _ := time.ParseDuration(s.Gateway.Redundancy.SecondaryWaitAfterWinner)
 	return d
 }
 
