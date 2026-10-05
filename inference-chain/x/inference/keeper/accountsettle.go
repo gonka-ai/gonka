@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/bits"
 
+	"cosmossdk.io/collections"
 	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
@@ -146,13 +147,17 @@ func CheckAndPunishForDowntime(total, missed, reward uint64, p0 *types.Decimal) 
 // Model identity is preserved so callers can apply per-model coefficients.
 func (k *Keeper) AggregateMLNodesFromModelSubgroups(ctx context.Context, epochIndex uint64, validationWeights []*types.ValidationWeight) map[string]map[string][]*types.MLNodeInfo {
 	participantMLNodes := make(map[string]map[string][]*types.MLNodeInfo)
-	allEpochGroups := k.GetAllEpochGroupData(ctx)
+	// Only this epoch's groups: the map is keyed by (epoch, model) and never pruned.
+	var epochGroups []types.EpochGroupData
+	if iter, err := k.EpochGroupDataMap.Iterate(ctx, collections.NewPrefixedPairRange[uint64, string](epochIndex)); err == nil {
+		epochGroups, _ = iter.Values()
+	}
 
 	for _, vw := range validationWeights {
 		modelNodes := make(map[string][]*types.MLNodeInfo)
-		for _, subgroup := range allEpochGroups {
-			if subgroup.EpochIndex != epochIndex || subgroup.ModelId == "" {
-				continue // Skip wrong epoch or parent group
+		for _, subgroup := range epochGroups {
+			if subgroup.ModelId == "" {
+				continue // Skip parent group
 			}
 			for _, subVw := range subgroup.ValidationWeights {
 				if subVw.MemberAddress == vw.MemberAddress {
