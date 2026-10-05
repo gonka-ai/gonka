@@ -23,11 +23,13 @@ func TestReputationMissTotals_MatchesAllSummaries(t *testing.T) {
 		for _, s := range summaries {
 			missRates = append(missRates, calculations.EpochMissRate(s.InferenceCount, s.MissedRequests))
 		}
-		return calculations.CalculateReputation(&calculations.ReputationContext{
+		got := calculations.CalculateReputation(&calculations.ReputationContext{
 			EpochCount:           int64(len(summaries)),
 			EpochMissPercentages: missRates,
 			ValidationParams:     params,
 		})
+		require.Equal(t, perEpochReputation(int64(len(summaries)), missRates, params), got)
+		return got
 	}
 
 	epoch := uint64(0)
@@ -74,4 +76,26 @@ func TestReputationMissTotals_ReadsOnlyNewSummaries(t *testing.T) {
 	next := gasOf()
 	t.Logf("gas: first %d, next epoch %d", first, next)
 	require.Less(t, next, first/10)
+}
+
+// perEpochReputation is the reputation formula before the aggregate: a miss cost per epoch.
+func perEpochReputation(epochCount int64, missRates []decimal.Decimal, params *types.ValidationParams) int64 {
+	epochsToMax := decimal.NewFromInt(params.EpochsToMax)
+	cutoff := params.MissPercentageCutoff.ToDecimal()
+	penalty := params.MissRequestsPenalty.ToDecimal()
+	singleEpochValue := decimal.NewFromInt(1).Div(epochsToMax)
+	missCost := decimal.Zero
+	for _, m := range missRates {
+		if m.GreaterThan(cutoff) {
+			missCost = missCost.Add(m.Mul(singleEpochValue).Mul(penalty))
+		}
+	}
+	actual := decimal.NewFromInt(epochCount).Sub(missCost.Mul(epochsToMax))
+	if actual.GreaterThan(epochsToMax) {
+		return 100
+	}
+	if actual.LessThanOrEqual(decimal.Zero) {
+		return 0
+	}
+	return actual.Div(epochsToMax).Truncate(2).Mul(decimal.NewFromInt(100)).IntPart()
 }
