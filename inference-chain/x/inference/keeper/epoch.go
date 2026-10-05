@@ -19,6 +19,7 @@ func (k Keeper) SetEffectiveEpochIndex(ctx context.Context, epoch uint64) error 
 	if err := k.EffectiveEpochIndex.Set(sdkCtx, epoch); err != nil {
 		return err
 	}
+	turnOffTxCache(ctx)
 
 	if k.BlsKeeper != nil {
 		k.BlsKeeper.SetCurrentSigningEpochID(sdkCtx, epoch)
@@ -28,11 +29,25 @@ func (k Keeper) SetEffectiveEpochIndex(ctx context.Context, epoch uint64) error 
 }
 
 func (k Keeper) GetEffectiveEpochIndex(ctx context.Context) (uint64, bool) {
-	v, err := k.EffectiveEpochIndex.Get(ctx)
+	v, err := k.effectiveEpochIndex(ctx)
 	if err != nil {
 		return 0, false
 	}
 	return v, true
+}
+
+// effectiveEpochIndex reads EffectiveEpochIndex once per tx: permission checks
+// and handlers ask for it separately.
+func (k Keeper) effectiveEpochIndex(ctx context.Context) (uint64, error) {
+	c := txCacheFrom(ctx)
+	if c != nil && c.epochSet {
+		return c.epoch, nil
+	}
+	v, err := k.EffectiveEpochIndex.Get(ctx)
+	if err == nil && c != nil {
+		c.epoch, c.epochSet = v, true
+	}
+	return v, err
 }
 
 func (k Keeper) SetEpoch(ctx context.Context, epoch *types.Epoch) error {
