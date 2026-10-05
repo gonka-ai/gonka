@@ -507,6 +507,10 @@ func ReleaseOutboundPeerConns() {
 // insert. Tests set the release flag in that gap.
 var testPeerConnBeforeInsert func()
 
+// testWatchRecvExit runs when a Watch receive goroutine has handed off the
+// stream end and is about to exit.
+var testWatchRecvExit func(*PeerConn)
+
 func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 	if outboundPeerReleased.Load() {
 		pc := NewPeerConn(cfg)
@@ -1149,26 +1153,26 @@ func (p *PeerConn) watch(ctx context.Context, token []byte, onBeat func()) error
 		return err
 	}
 
-	type recvResult struct {
-		ok  bool
-		err error
-	}
-	recv := make(chan recvResult, 1)
+	// The stream end has its own slot. A beat still queued in beats must
+	// not push session replaced off the channel: the reader would then
+	// wait for WatchStale on a token the host no longer serves.
+	beats := make(chan struct{}, 1)
+	ended := make(chan error, 1)
 	recvDone := make(chan struct{})
 	shutdown := make(chan struct{})
 	go func() {
 		defer close(recvDone)
 		for stream.Receive() {
 			select {
-			case recv <- recvResult{ok: true}:
+			case beats <- struct{}{}:
 			case <-ctx.Done():
 			case <-shutdown:
 				return
 			}
 		}
-		select {
-		case recv <- recvResult{err: stream.Err()}:
-		default:
+		ended <- stream.Err()
+		if hook := testWatchRecvExit; hook != nil {
+			hook(p)
 		}
 	}()
 	defer func() {
@@ -1185,13 +1189,20 @@ func (p *PeerConn) watch(ctx context.Context, token []byte, onBeat func()) error
 			return ctx.Err()
 		case <-timer.C:
 			return errWatchStale
-		case r := <-recv:
-			if !r.ok {
-				if r.err == nil {
-					return io.EOF
+		case err := <-ended:
+			// A beat received before the end still counts toward sawBeat.
+			select {
+			case <-beats:
+				if onBeat != nil {
+					onBeat()
 				}
-				return r.err
+			default:
 			}
+			if err == nil {
+				return io.EOF
+			}
+			return err
+		case <-beats:
 			if onBeat != nil {
 				onBeat()
 			}

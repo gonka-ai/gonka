@@ -493,6 +493,12 @@ func (h *PeerAuthHandler) beginWatch(token []byte) (uint64, <-chan struct{}, err
 		h.observeSizesLocked()
 		return 0, nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or expired session token"))
 	}
+	// A replaced token keeps its grace for in-flight unaries only. A Watch
+	// on it would beat until grace ends and then say session expired, so
+	// the peer would never learn another Attach took its identity.
+	if h.byPeer[sess.peer] != tok {
+		return 0, nil, connect.NewError(connect.CodeUnauthenticated, errors.New("session replaced"))
+	}
 	if sess.watching {
 		return 0, nil, connect.NewError(connect.CodeAlreadyExists, errors.New("watch already active"))
 	}
