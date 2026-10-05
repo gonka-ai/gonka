@@ -419,9 +419,14 @@ class Fleet:
             raise RuntimeError(f"{component}: no target ControllerRevision")
         # Ascending order is intentional, but safety must not depend on order.
         for pod in self.pods(component):
+            name = pod["metadata"]["name"]
+            # Scale-down pods can outlive Helm apply while versiond drains.
+            # They have no replacement; leave their deletion to the controller.
+            if (pod["metadata"].get("deletionTimestamp") or
+                    int(name.rsplit("-", 1)[1]) >= sts["spec"].get("replicas", 1)):
+                continue
             if pod["metadata"]["labels"].get("controller-revision-hash") == target:
                 continue
-            name = pod["metadata"]["name"]
             if not offline:
                 self.discover()
                 self.guard(component, name)

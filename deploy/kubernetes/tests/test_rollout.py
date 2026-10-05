@@ -163,7 +163,7 @@ class ReplacementTests(unittest.TestCase):
         fleet = rollout.Fleet(args)
         fleet.versions = {"v6", "v7"}
         fleet.sets = {"versiond": {"metadata": {"name": "versiond", "generation": 1},
-                                  "spec": {"template": {"spec": {"candidate": True}}},
+                                  "spec": {"replicas": 3, "template": {"spec": {"candidate": True}}},
                                   "status": {"updateRevision": "new"}}}
         pod = {"metadata": {"name": "pod-2", "uid": "old-uid",
                             "labels": {"controller-revision-hash": "old"}}}
@@ -175,6 +175,51 @@ class ReplacementTests(unittest.TestCase):
         fleet.save = lambda: None
         fleet.wait = lambda *args: None
         return fleet
+
+    def test_offline_scale_down_never_replaces_removed_ordinals(self):
+        for terminating in (False, True):
+            with self.subTest(terminating=terminating):
+                fleet = self.make_fleet()
+                pods = [{"metadata": {"name": f"versiond-{i}", "uid": f"old-{i}",
+                                      "labels": {"controller-revision-hash": "old"}}}
+                        for i in range(4)]
+                if terminating:
+                    pods[3]["metadata"]["deletionTimestamp"] = "now"
+                fleet.pods = lambda _: copy.deepcopy(pods)
+                journaled, deleted = [], []
+                def save():
+                    if "replacement" in fleet.state:
+                        journaled.append(fleet.state["replacement"]["pod"])
+                def delete(pod):
+                    name = pod["metadata"]["name"]
+                    self.assertNotEqual(name, "versiond-3", "scale-down pod must never be deleted")
+                    deleted.append(name)
+                    # The controller removes ordinal 3 while lower ordinals
+                    # roll, but replace_component still holds its old snapshot.
+                    pods[:] = [p for p in pods if p["metadata"]["name"] != "versiond-3"]
+                    current = next(p for p in pods if p["metadata"]["name"] == name)
+                    current["metadata"]["uid"] = "new-" + name
+                    current["metadata"]["labels"]["controller-revision-hash"] = "new"
+                fleet.save = save
+                fleet.delete = delete
+                fleet.stable = fleet.pods
+                fleet.wait = lambda description, predicate: self.assertTrue(predicate(), description)
+                fleet.replace_component("versiond", offline=True)
+                self.assertEqual(deleted, ["versiond-0", "versiond-1", "versiond-2"])
+                self.assertEqual(journaled, deleted)
+                self.assertNotIn("replacement", fleet.state)
+
+    def test_already_terminating_pod_is_not_journaled_or_deleted(self):
+        fleet = self.make_fleet()
+        pod = fleet.pods("versiond")[0]
+        pod["metadata"]["deletionTimestamp"] = "now"
+        fleet.pods = lambda _: [pod]
+        fleet.save = Mock()
+        fleet.delete = Mock()
+        fleet.replace_component("versiond", offline=True)
+        fleet.save.assert_not_called()
+        fleet.delete.assert_not_called()
+        self.assertNotIn("replacement", fleet.state)
 
     def test_refusal_does_not_delete_or_start_a_replacement(self):
         fleet = self.make_fleet()
