@@ -126,6 +126,7 @@ type MockOpenAINodeCfg struct {
 	TokenInterval string  `yaml:"token_interval,omitempty"`
 	Workers       int     `yaml:"workers,omitempty"`
 	Queue         int     `yaml:"queue,omitempty"`
+	Hang          bool    `yaml:"hang,omitempty"`
 	FailureRate   float64 `yaml:"failure_rate,omitempty"`
 	HTTPStatus    int     `yaml:"http_status,omitempty"`
 }

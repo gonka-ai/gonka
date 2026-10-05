@@ -305,7 +305,7 @@ func TestWriteCompose_MultipleMockMLNodes(t *testing.T) {
 	cfg := defaultConfig()
 	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{
 		{Name: "mock-openai-0", TTFT: "10ms", TokenInterval: "2ms", Workers: 8, Queue: 16},
-		{Name: "mock-openai-1", TTFT: "20ms", TokenInterval: "3ms", Workers: 4, Queue: 8},
+		{Name: "mock-openai-1", TTFT: "20ms", TokenInterval: "3ms", Workers: 4, Queue: 8, Hang: true},
 	}
 	require.NoError(t, fillConfig(cfg))
 
@@ -319,6 +319,7 @@ func TestWriteCompose_MultipleMockMLNodes(t *testing.T) {
 	require.Contains(t, text, `MOCK_ML_NODES: "mock-openai-0=http://mock-openai-0:8088,mock-openai-1=http://mock-openai-1:8088"`)
 	require.Contains(t, text, `MOCK_OPENAI_WORKERS: "8"`)
 	require.Contains(t, text, `MOCK_OPENAI_QUEUE: "8"`)
+	require.Contains(t, text, `MOCK_OPENAI_HANG: "true"`)
 }
 
 func TestWriteCompose_PerParticipantPostgres(t *testing.T) {

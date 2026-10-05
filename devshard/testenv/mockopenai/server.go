@@ -135,6 +135,11 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 	defer s.release()
 
 	f, streamGate := s.streamFaults()
+	if f.Hang {
+		<-c.Request().Context().Done()
+		s.stats.timeouts.Add(1)
+		return c.Request().Context().Err()
+	}
 	if f.StreamErrorEnvelope {
 		s.stats.failedResponses.Add(1)
 		return s.streamErrorEnvelope(c)

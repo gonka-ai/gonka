@@ -26,8 +26,20 @@ Run artifacts are written under `loadtest/results/<timestamp>/`.
 
 ## Scenario configuration
 
-TODO: Document the scenario schema: topology, workload, assertions, and drain
-behavior.
+Scenarios may override the Gateway speculative-cleanup grace period:
+
+```yaml
+gateway:
+  redundancy:
+    secondary_wait_after_winner: 30s
+
+drain_timeout: 60s
+```
+
+`secondary_wait_after_winner` defaults to `10m`. It controls how long the
+Gateway lets speculative losers finish after a winner is selected. The
+`drain_timeout` is the load-test harness deadline and should be longer than
+that grace period when the scenario verifies cleanup.
 
 ## Traffic profiles
 
@@ -38,7 +50,7 @@ TODO: Document `closed_loop`, `constant`, `ramp`, `sine`, `spikes`, and
 ## Mock ML profiles
 
 TODO: Document latency, capacity, queue, and failure behavior for Mock ML
-nodes. The available profiles are `fast`, `slow`, and `failing`.
+nodes. The available profiles are `fast`, `slow`, `failing`, and `timeout`.
 
 ## Artifacts
 
