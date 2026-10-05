@@ -55,5 +55,7 @@ nodes. The available profiles are `fast`, `slow`, `failing`, and `timeout`.
 ## Artifacts
 
 TODO: Document `summary.json`, `requests.jsonl`, `assertions.json`,
-`gateway-inferences.json`, `gateway-state.json`, `ml-stats.json`, and
-`compose.log`.
+`gateway-inferences.json`, `gateway-state.json`, and `ml-stats.json`.
+`compose-pre-drain.log` contains the snapshot used to identify ghost probes;
+`compose.log` is collected after drain and contains the final container logs
+for diagnosis.
