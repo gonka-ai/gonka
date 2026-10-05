@@ -50,9 +50,6 @@ func validateDiffRange(records []types.DiffRecord, from, to uint64) error {
 // (HostSyncNonce) stays fresh.
 const snapshotInterval = 500
 
-// recoverDiffPageSize is how many diffs recovery reads from the store at a time.
-const recoverDiffPageSize = 1024
-
 // sessionSnapshot is the on-disk wrapper for a session snapshot. It bundles
 // the state-machine state with the session-level per-host sync cursor so
 // that after a restart we can both:
@@ -221,7 +218,7 @@ func RecoverSession(
 		sess.hostSyncNonce[h] = n
 	}
 
-	// Backfill the in-memory window of pre-snapshot diffs a lagging host needs; diffsForHost reads anything
+	// Backfill the in-memory window of pre-snapshot diffs a lagging host needs; closeStoredGap reads anything
 	// older from the store. Gated on snapshotRestored: an ignored snapshot replays from 1 instead.
 	if snapshotRestored {
 		backfillFrom := minHostSyncNonce(sess.hostSyncNonce, len(group)) + 1
@@ -378,8 +375,8 @@ func restoreRecordSignatures(sess *Session, record types.DiffRecord) {
 
 // forEachDiffPage reads diffs fromNonce..toNonce from the store one page at a time.
 func forEachDiffPage(store storage.Storage, escrowID string, fromNonce, toNonce uint64, visit func(pageFrom, pageTo uint64, records []types.DiffRecord) error) error {
-	for pageFrom := fromNonce; pageFrom <= toNonce; pageFrom += recoverDiffPageSize {
-		pageTo := min(pageFrom+recoverDiffPageSize-1, toNonce)
+	for pageFrom := fromNonce; pageFrom <= toNonce; pageFrom += diffPageSize {
+		pageTo := min(pageFrom+diffPageSize-1, toNonce)
 		records, err := store.GetDiffs(escrowID, pageFrom, pageTo)
 		if err != nil {
 			return fmt.Errorf("get diffs %d..%d: %w", pageFrom, pageTo, err)

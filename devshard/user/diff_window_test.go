@@ -1,6 +1,9 @@
 package user
 
 import (
+	"context"
+	"io"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,16 +17,35 @@ import (
 
 const bareHistoryLength = 3 * defaultDiffsKeptInMemory
 
+// diffRecordingClient acknowledges every request at its nonce and keeps the diffs it was sent.
+type diffRecordingClient struct {
+	mu       sync.Mutex
+	received []types.Diff
+}
+
+func (client *diffRecordingClient) Send(_ context.Context, request host.HostRequest, _ io.Writer, _ func(*host.HostResponse)) (*host.HostResponse, error) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	client.received = append(client.received, request.Diffs...)
+	return &host.HostResponse{Nonce: request.Nonce}, nil
+}
+
+func (client *diffRecordingClient) receivedDiffs() []types.Diff {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return append([]types.Diff(nil), client.received...)
+}
+
 func recoverOverBareHistory(t *testing.T, store storage.Storage, rawStore storage.Storage, hostCursors map[int]uint64) *Session {
 	t.Helper()
-	const numHosts = 3
-	hosts := make([]*signing.Secp256k1Signer, numHosts)
-	for i := range hosts {
-		hosts[i] = testutil.MustGenerateKey(t)
+	const hostCount = 3
+	hosts := make([]*signing.Secp256k1Signer, hostCount)
+	for hostIdx := range hosts {
+		hosts[hostIdx] = testutil.MustGenerateKey(t)
 	}
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
-	config := testutil.DefaultConfig(numHosts)
+	config := testutil.DefaultConfig(hostCount)
 	verifier := signing.NewSecp256k1Verifier()
 
 	require.NoError(t, rawStore.CreateSession(storage.CreateSessionParams{
@@ -38,8 +60,8 @@ func recoverOverBareHistory(t *testing.T, store storage.Storage, rawStore storag
 		require.NoError(t, rawStore.AppendDiff("escrow-1", types.DiffRecord{Diff: types.Diff{Nonce: nonce}}))
 	}
 	if hostCursors != nil {
-		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
-		saveSnapshot(rawStore, sm, "escrow-1", bareHistoryLength, hostCursors)
+		machine := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+		saveSnapshot(rawStore, machine, "escrow-1", bareHistoryLength, hostCursors)
 	}
 
 	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
@@ -52,7 +74,7 @@ func requireContiguousDiffs(t *testing.T, diffs []types.Diff, firstNonce, lastNo
 	t.Helper()
 	require.Len(t, diffs, int(lastNonce-firstNonce+1))
 	for offset, diff := range diffs {
-		require.Equal(t, firstNonce+uint64(offset), diff.Nonce)
+		require.Equal(t, firstNonce+uint64(offset), diff.Nonce, "diff %d nonce = %d, want %d", offset, diff.Nonce, firstNonce+uint64(offset))
 	}
 }
 
@@ -62,14 +84,22 @@ func buildLiveSessionWithSmallDiffWindow(t *testing.T, diffCount int) (*Session,
 	session, _, _, _, _ := buildLiveSession(t, 3, store)
 	session.diffsKeptInMemory = 2
 	for range diffCount {
-		_, err := session.PrepareInference(InferenceParams{
-			Model: "llama", Prompt: testutil.TestPrompt,
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-		})
+		_, err := session.PrepareInference(storedCatchUpInference())
 		require.NoError(t, err)
 	}
 	require.Equal(t, uint64(diffCount), session.Nonce())
 	return session, store
+}
+
+// catchUpThroughRecorder closes a host's stored gap through a recording client and returns every diff it
+// would be taught: what the store sent, then what memory still holds past the cursor.
+func catchUpThroughRecorder(t *testing.T, session *Session, hostIdx int) []types.Diff {
+	t.Helper()
+	recorder := &diffRecordingClient{}
+	require.NoError(t, session.closeStoredGap(context.Background(), hostIdx, recorder))
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	return append(recorder.receivedDiffs(), session.diffsForHost(hostIdx)...)
 }
 
 // Test flow:
@@ -85,8 +115,7 @@ func TestRecoverSession_ReadsHistoryInPages(t *testing.T) {
 
 	require.NotEmpty(t, spy.calls)
 	for _, call := range spy.calls {
-		require.LessOrEqual(t, call.to-call.from+1, uint64(recoverDiffPageSize),
-			"read %d..%d spans more than one page", call.from, call.to)
+		require.LessOrEqual(t, call.to-call.from+1, diffPageSize, "read %d..%d spans more than one page", call.from, call.to)
 	}
 }
 
@@ -101,9 +130,9 @@ func TestRecoverSession_ReplaysHistoryWithoutSnapshotInPages(t *testing.T) {
 	session := recoverOverBareHistory(t, spy, rawStore, nil)
 
 	require.Equal(t, uint64(bareHistoryLength), session.Nonce())
+	require.NotEmpty(t, spy.calls)
 	for _, call := range spy.calls {
-		require.LessOrEqual(t, call.to-call.from+1, uint64(recoverDiffPageSize),
-			"read %d..%d spans more than one page", call.from, call.to)
+		require.LessOrEqual(t, call.to-call.from+1, diffPageSize, "read %d..%d spans more than one page", call.from, call.to)
 	}
 }
 
@@ -111,7 +140,7 @@ func TestRecoverSession_ReplaysHistoryWithoutSnapshotInPages(t *testing.T) {
 //  1. Store a long history with a snapshot at its tip and host 0 stranded at nonce 10.
 //  2. Recover the session.
 //  3. Memory holds less than twice the diff window.
-//  4. Host 0 is still handed every diff from nonce 11 to the tip.
+//  4. Host 0 is still taught every diff from nonce 11 to the tip, the older part from the store.
 func TestRecoverSession_StrandedHostIsServedFromStoreNotMemory(t *testing.T) {
 	rawStore := newTestStore(t)
 	strandedHost := map[int]uint64{0: 10, 1: bareHistoryLength, 2: bareHistoryLength}
@@ -119,25 +148,21 @@ func TestRecoverSession_StrandedHostIsServedFromStoreNotMemory(t *testing.T) {
 	session := recoverOverBareHistory(t, rawStore, rawStore, strandedHost)
 
 	require.Less(t, len(session.Diffs()), 2*session.diffsKeptInMemory)
-	session.mu.Lock()
-	catchUp := session.diffsForHost(0)
-	session.mu.Unlock()
-	requireContiguousDiffs(t, catchUp, 11, bareHistoryLength)
+	requireContiguousDiffs(t, catchUpThroughRecorder(t, session, 0), 11, bareHistoryLength)
 }
 
 // Test flow:
 //  1. Run a stored session with a two-diff window through ten nonces.
 //  2. Memory holds less than twice the window.
-//  3. A host whose cursor is at nonce 1 is handed every diff from 2 to 10.
+//  3. A host whose cursor is at nonce 1 is taught every diff from 2 to 10.
 func TestSession_TrimsDiffsInMemoryAndServesLaggingHostFromStore(t *testing.T) {
 	session, _ := buildLiveSessionWithSmallDiffWindow(t, 10)
 
 	require.Less(t, len(session.Diffs()), 2*session.diffsKeptInMemory)
 	session.mu.Lock()
 	session.hostSyncNonce[2] = 1
-	catchUp := session.diffsForHost(2)
 	session.mu.Unlock()
-	requireContiguousDiffs(t, catchUp, 2, 10)
+	requireContiguousDiffs(t, catchUpThroughRecorder(t, session, 2), 2, 10)
 }
 
 // Test flow:
@@ -158,7 +183,7 @@ func TestSession_VerifiesStateHashForNonceTrimmedFromMemory(t *testing.T) {
 // Test flow:
 //  1. Run a stored session with a two-diff window through ten nonces.
 //  2. Rewind a host whose cursor is at the tip.
-//  3. The host is handed the whole history from nonce 1.
+//  3. The host is taught the whole history from nonce 1, the trimmed part from the store.
 func TestSession_RewindReachesHistoryTrimmedFromMemory(t *testing.T) {
 	session, _ := buildLiveSessionWithSmallDiffWindow(t, 10)
 	session.mu.Lock()
@@ -167,8 +192,5 @@ func TestSession_RewindReachesHistoryTrimmedFromMemory(t *testing.T) {
 
 	require.True(t, session.RewindHostCatchUp(2, "host lost the escrow"))
 
-	session.mu.Lock()
-	catchUp := session.diffsForHost(2)
-	session.mu.Unlock()
-	requireContiguousDiffs(t, catchUp, 1, 10)
+	requireContiguousDiffs(t, catchUpThroughRecorder(t, session, 2), 1, 10)
 }

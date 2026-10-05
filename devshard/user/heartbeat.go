@@ -478,18 +478,22 @@ func (s *Session) observedHeightLocked() (uint64, []byte, bool) {
 
 func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error {
 	s.mu.Lock()
-	if s.nowLocked().Before(s.heartbeatRetryAt[item.hostIdx]) {
-		s.mu.Unlock()
+	backedOff := s.nowLocked().Before(s.heartbeatRetryAt[item.hostIdx])
+	s.mu.Unlock()
+	if backedOff {
 		return nil
 	}
-	catchUp := s.diffsForHost(item.hostIdx)
-	s.mu.Unlock()
 
-	resp, err := s.clients[item.hostIdx].Send(ctx, host.HostRequest{
-		Diffs:            catchUp,
-		Nonce:            item.diff.Nonce,
-		HeightSyncEscrow: s.heightSyncEscrowHints(),
-	}, nil, nil)
+	client := s.clients[item.hostIdx]
+	catchUp, err := s.catchUpForRequest(ctx, item.hostIdx, client, item.diff.Nonce)
+	var resp *host.HostResponse
+	if err == nil {
+		resp, err = client.Send(ctx, host.HostRequest{
+			Diffs:            catchUp,
+			Nonce:            item.diff.Nonce,
+			HeightSyncEscrow: s.heightSyncEscrowHints(),
+		}, nil, nil)
+	}
 	if err != nil {
 		backoff := s.noteHeartbeatSendFailure(item.hostIdx)
 		logging.Warn("heartbeat host dead", "subsystem", "heightsync",
@@ -525,6 +529,9 @@ func heartbeatBackoff(consecutiveFailures int, interval time.Duration) time.Dura
 
 // clearHeartbeatBackoffLocked lets a host that answered be sent heartbeats again. Caller holds s.mu.
 func (s *Session) clearHeartbeatBackoffLocked(hostIdx int) {
+	if hostIdx < 0 || hostIdx >= len(s.heartbeatSendFailures) {
+		return
+	}
 	s.heartbeatSendFailures[hostIdx] = 0
 	s.heartbeatRetryAt[hostIdx] = time.Time{}
 }

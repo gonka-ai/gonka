@@ -1151,16 +1151,19 @@ func TestHeartbeat_LogResidentStampsNeedDistinctExecutors(t *testing.T) {
 	require.Equal(t, 1, session.heartbeat.Turnovers())
 }
 
-func setupHeartbeatSessionWithProbedHost(t *testing.T, now *time.Time, hostIdx int) (*Session, *spanProbeClient) {
+func setupHeartbeatSessionWithProbedHosts(t *testing.T, now *time.Time) (*Session, []*spanProbeClient) {
 	t.Helper()
 	var height uint64 = 100
 	session := setupBlindHeartbeatSession(t, &height, WithHeartbeatClock(func() time.Time { return *now }))
 	t.Cleanup(func() { _ = session.Close() })
-	inner, ok := session.Clients()[hostIdx].(*InProcessClient)
-	require.True(t, ok)
-	probe := &spanProbeClient{inner: inner, calls: &atomic.Int32{}, fail: errors.New("injected host failure")}
-	session.Clients()[hostIdx] = probe
-	return session, probe
+	probes := make([]*spanProbeClient, len(session.Clients()))
+	for hostIdx, client := range session.Clients() {
+		inner, ok := client.(*InProcessClient)
+		require.True(t, ok)
+		probes[hostIdx] = &spanProbeClient{inner: inner, calls: &atomic.Int32{}}
+		session.Clients()[hostIdx] = probes[hostIdx]
+	}
+	return session, probes
 }
 
 // Test flow:
@@ -1170,19 +1173,20 @@ func setupHeartbeatSessionWithProbedHost(t *testing.T, now *time.Time, hostIdx i
 //  4. Advance the clock by one heartbeat interval: the host is tried again.
 func TestHeartbeat_RepeatedSendFailureBacksOffTheHost(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	session, probe := setupHeartbeatSessionWithProbedHost(t, &now, 1)
+	session, probes := setupHeartbeatSessionWithProbedHosts(t, &now)
+	probes[1].fail = errors.New("injected host failure")
 	item := composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 1}
 
 	require.NoError(t, session.sendComposedDiff(context.Background(), item))
 	require.NoError(t, session.sendComposedDiff(context.Background(), item))
-	require.Equal(t, int32(2), probe.calls.Load())
+	require.Equal(t, int32(2), probes[1].calls.Load())
 
 	require.NoError(t, session.sendComposedDiff(context.Background(), item))
-	require.Equal(t, int32(2), probe.calls.Load(), "a host that failed twice in a row must be skipped")
+	require.Equal(t, int32(2), probes[1].calls.Load(), "sendComposedDiff after two failures reached the host %d times, want 2", probes[1].calls.Load())
 
 	now = now.Add(session.heartbeat.Config().Interval)
 	require.NoError(t, session.sendComposedDiff(context.Background(), item))
-	require.Equal(t, int32(3), probe.calls.Load(), "the host must be retried once the back-off elapsed")
+	require.Equal(t, int32(3), probes[1].calls.Load(), "sendComposedDiff after the back-off reached the host %d times, want 3", probes[1].calls.Load())
 }
 
 // Test flow:
@@ -1192,19 +1196,61 @@ func TestHeartbeat_RepeatedSendFailureBacksOffTheHost(t *testing.T) {
 //  4. Fail again and send once more at the same instant: the host is still tried.
 func TestHeartbeat_AnsweringHostClearsTheBackoff(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	session, probe := setupHeartbeatSessionWithProbedHost(t, &now, 1)
+	session, probes := setupHeartbeatSessionWithProbedHosts(t, &now)
+	hostFailure := errors.New("injected host failure")
+	probes[1].fail = hostFailure
 	item := composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 1}
 	require.NoError(t, session.sendComposedDiff(context.Background(), item))
 	require.NoError(t, session.sendComposedDiff(context.Background(), item))
 	now = now.Add(session.heartbeat.Config().Interval)
 
-	hostFailure := probe.fail
-	probe.fail = nil
+	probes[1].fail = nil
 	require.NoError(t, session.sendComposedDiff(context.Background(), item))
-	require.Equal(t, int32(3), probe.calls.Load())
+	require.Equal(t, int32(3), probes[1].calls.Load())
 
-	probe.fail = hostFailure
+	probes[1].fail = hostFailure
 	require.NoError(t, session.sendComposedDiff(context.Background(), item))
 	require.NoError(t, session.sendComposedDiff(context.Background(), item))
-	require.Equal(t, int32(5), probe.calls.Load(), "one failure after an answer must not skip the host")
+	require.Equal(t, int32(5), probes[1].calls.Load(), "sendComposedDiff after an answer and one failure reached the host %d times, want 5", probes[1].calls.Load())
+}
+
+// Test flow:
+//  1. Build a session on a fixed clock whose host 1 refuses every send.
+//  2. Send to every host once per heartbeat interval for twenty intervals.
+//  3. Hosts 0 and 2 are sent every heartbeat; host 1 only at back-off ends of 1, 2, 4, 8, 8 intervals.
+func TestHeartbeat_BackoffSkipsOnlyTheFailingHost(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	session, probes := setupHeartbeatSessionWithProbedHosts(t, &now)
+	probes[1].fail = errors.New("injected host failure")
+	interval := session.heartbeat.Config().Interval
+	var failingHostTicks []int
+
+	for tick := range 20 {
+		for hostIdx := range probes {
+			before := probes[hostIdx].calls.Load()
+			require.NoError(t, session.sendComposedDiff(context.Background(), composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: hostIdx}))
+			if hostIdx == 1 && probes[hostIdx].calls.Load() > before {
+				failingHostTicks = append(failingHostTicks, tick)
+			}
+		}
+		now = now.Add(interval)
+	}
+
+	require.Equal(t, int32(20), probes[0].calls.Load(), "healthy host 0 was sent %d heartbeats, want 20", probes[0].calls.Load())
+	require.Equal(t, int32(20), probes[2].calls.Load(), "healthy host 2 was sent %d heartbeats, want 20", probes[2].calls.Load())
+	require.Equal(t, []int{0, 1, 2, 4, 8, 16}, failingHostTicks, "failing host was tried at ticks %v, want [0 1 2 4 8 16]", failingHostTicks)
+}
+
+// Test flow:
+//  1. Ask for the back-off after one to seven consecutive failures.
+//  2. The first failure is not backed off; then one, two, four and eight intervals, capped at eight.
+func TestHeartbeatBackoff_DoublesUpToEightIntervals(t *testing.T) {
+	interval := 12 * time.Second
+	want := []time.Duration{0, interval, 2 * interval, 4 * interval, 8 * interval, 8 * interval, 8 * interval}
+
+	for failures := 1; failures <= len(want); failures++ {
+		got := heartbeatBackoff(failures, interval)
+		require.Equal(t, want[failures-1], got, "heartbeatBackoff(%d, %s) = %s, want %s", failures, interval, got, want[failures-1])
+	}
+	require.Equal(t, 8*interval, heartbeatBackoff(1_000_000, interval), "heartbeatBackoff(1000000) must stay at the cap")
 }
