@@ -258,7 +258,7 @@ ALTER TABLE devshard_validation_leases
     ADD COLUMN IF NOT EXISTS hostname    TEXT NOT NULL DEFAULT ''`},
 	},
 	{
-		ID:   16,
+		ID:   18,
 		Name: "devshard_sessions_obs_rebuild_pending",
 		Statements: []string{`
 ALTER TABLE devshard_sessions
@@ -267,7 +267,7 @@ ALTER TABLE devshard_sessions
 	{
 		// Credits are participant-scoped, not epoch-scoped: an HA replica must
 		// spend a credit its sibling earned, and epoch prune must not drop it.
-		ID:   17,
+		ID:   19,
 		Name: "devshard_validation_credits",
 		Statements: []string{`
 CREATE TABLE IF NOT EXISTS devshard_validation_credits (
