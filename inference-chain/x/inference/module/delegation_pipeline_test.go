@@ -160,7 +160,7 @@ func (*stubGroupKeeper) Vote(context.Context, *group.MsgVote) (*group.MsgVoteRes
 	return &group.MsgVoteResponse{}, nil
 }
 func (*stubGroupKeeper) GroupInfo(context.Context, *group.QueryGroupInfoRequest) (*group.QueryGroupInfoResponse, error) {
-	return &group.QueryGroupInfoResponse{}, nil
+	return &group.QueryGroupInfoResponse{Info: &group.GroupInfo{}}, nil
 }
 func (*stubGroupKeeper) ProposalsByGroupPolicy(context.Context, *group.QueryProposalsByGroupPolicyRequest) (*group.QueryProposalsByGroupPolicyResponse, error) {
 	return &group.QueryProposalsByGroupPolicyResponse{}, nil
