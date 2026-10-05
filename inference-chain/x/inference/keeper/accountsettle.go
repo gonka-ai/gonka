@@ -190,10 +190,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	// Stats as read, so the final SetParticipant does not read each participant again.
 	storedStats := make([]*types.CurrentEpochStats, len(allParticipants))
 	for i, participant := range allParticipants {
-		if participant.CurrentEpochStats != nil {
-			stats := *participant.CurrentEpochStats
-			storedStats[i] = &stats
-		}
+		storedStats[i] = participant.CurrentEpochStats.StoredCopy()
 	}
 
 	k.LogInfo("Block height", types.Settle, "height", blockHeight)
