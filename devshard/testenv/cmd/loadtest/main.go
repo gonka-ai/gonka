@@ -41,22 +41,29 @@ func main() {
 		KeepStack:    *keepStack,
 	})
 	if err != nil {
+		if result.Summary.Requests > 0 {
+			printSummary(result, false)
+		}
 		log.Fatal(err)
 	}
 	if result.Summary.Requests == 0 {
 		fmt.Fprintf(os.Stdout, "Load test summary\n\nScenario: %s\nResult: NO REQUESTS\n\nArtifacts\n---------\n  output: %s\n", result.Summary.Scenario, result.OutputDir)
 		return
 	}
-	printSummary(result)
+	printSummary(result, true)
 }
 
-func printSummary(result loadtest.RunResult) {
+func printSummary(result loadtest.RunResult, passed bool) {
 	summary := result.Summary
 	fmt.Fprintln(os.Stdout, "Load test summary")
 	fmt.Fprintln(os.Stdout, "=================")
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintf(os.Stdout, "Scenario: %s\n", summary.Scenario)
-	fmt.Fprintln(os.Stdout, "Result: PASS")
+	if passed {
+		fmt.Fprintln(os.Stdout, "Result: PASS")
+	} else {
+		fmt.Fprintln(os.Stdout, "Result: FAIL")
+	}
 	fmt.Fprintln(os.Stdout)
 
 	fmt.Fprintln(os.Stdout, "Client workload")

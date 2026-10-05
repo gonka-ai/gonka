@@ -103,7 +103,6 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 		profiles[node.Profile] = profile
 	}
-
 	workDir, err := os.MkdirTemp(opts.TestenvDir, "loadtest-")
 	if err != nil {
 		return RunResult{}, fmt.Errorf("create testenv work directory: %w", err)
@@ -123,6 +122,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}()
 
 	const maxStartAttempts = 3
+	log.Printf("loadtest: stage=stack_start scenario=%s", scenario.Scenario)
 	for attempt := 1; attempt <= maxStartAttempts; attempt++ {
 		project = "loadtest-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 		log.Printf("loadtest: starting isolated Docker stack (attempt %d/%d, project %s)", attempt, maxStartAttempts, project)
@@ -164,8 +164,13 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
 		return RunResult{}, err
 	}
+	if err := applyGatewayScenarioSettings(ctx, result.GatewayURL, apiKey, scenario); err != nil {
+		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
+		return RunResult{}, err
+	}
+	log.Printf("loadtest: stage=gateway_ready secondary_wait_after_winner=%s", scenario.SecondaryWaitAfterWinner())
 
-	log.Printf("loadtest: gateway is ready; generating %s workload", scenario.Scenario)
+	log.Printf("loadtest: stage=workload_start scenario=%s", scenario.Scenario)
 	summary, err := RunGenerator(ctx, GeneratorConfig{
 		GatewayURL: result.GatewayURL,
 		APIKey:     apiKey,
@@ -177,22 +182,12 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, err
 	}
 	result.Summary = summary
-	log.Printf("loadtest: generated %d requests; validating terminal state", summary.Requests)
 	allocations, err := fetchAllocations(ctx, cfg.MockDapi.HTTPPort)
 	if err != nil {
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
 		return RunResult{}, err
 	}
 	result.Allocations = allocations
-	mlStats, err := fetchMLNodeStats(ctx, cfg.MockDapi.HTTPPort)
-	if err != nil {
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
-		return RunResult{}, err
-	}
-	result.MLStats = mlStats
-	if err := writeMLNodeStats(opts.OutputDir, mlStats); err != nil {
-		return RunResult{}, err
-	}
 	if err := writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath); err != nil {
 		return RunResult{}, err
 	}
@@ -202,6 +197,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}
 	terminal, assertionErr := assertRun(ctx, scenario, summary, allocations, result.GatewayURL, apiKey, ghostIDs)
 	result.Terminal = terminal
+	log.Printf("loadtest: stage=artifacts_collection")
 	gatewayState, stateErr := fetchGatewayStateSizes(ctx, result.GatewayURL, apiKey)
 	if stateErr == nil {
 		result.GatewayState = gatewayState
@@ -211,14 +207,54 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	} else if assertionErr == nil {
 		return RunResult{}, stateErr
 	}
+	mlStats, statsErr := fetchMLNodeStats(ctx, cfg.MockDapi.HTTPPort)
+	if statsErr == nil {
+		result.MLStats = mlStats
+		if err := writeMLNodeStats(opts.OutputDir, mlStats); err != nil && assertionErr == nil {
+			return RunResult{}, err
+		}
+	} else if assertionErr == nil {
+		return RunResult{}, statsErr
+	}
 	_ = writeGatewayInferences(ctx, result.GatewayURL, apiKey, opts.OutputDir)
 	if assertionErr != nil {
-		return RunResult{}, assertionErr
+		return result, assertionErr
 	}
 	if err := writeAssertions(opts.OutputDir, nil); err != nil {
 		return RunResult{}, err
 	}
 	return result, nil
+}
+
+func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string, scenario Scenario) error {
+	duration := scenario.SecondaryWaitAfterWinner()
+
+	body, err := json.Marshal(map[string]any{
+		"redundancy": map[string]any{
+			"secondary_wait_after_winner_ms": duration.Milliseconds(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("marshal gateway settings: %w", err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, gatewayURL+"/v1/admin/settings", strings.NewReader(string(body)))
+	if err != nil {
+		return fmt.Errorf("create gateway settings request: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		return fmt.Errorf("apply gateway settings: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		reply, _ := io.ReadAll(response.Body)
+		return fmt.Errorf("apply gateway settings returned %s: %s", response.Status, strings.TrimSpace(string(reply)))
+	}
+	return nil
 }
 
 func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles map[string]Profile) error {
@@ -242,6 +278,7 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 			TokenInterval: profile.TokenInterval,
 			Workers:       profile.Workers,
 			Queue:         profile.Queue,
+			Hang:          profile.Hang,
 			FailureRate:   profile.FailureRate,
 			HTTPStatus:    profile.HTTPStatus,
 		})
@@ -490,6 +527,7 @@ func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocati
 }
 
 func waitForFinishedInferences(ctx context.Context, gatewayURL, apiKey string, expected int, maxGhostRate float64, ghostIDs map[string]struct{}, timeout time.Duration) (TerminalSummary, error) {
+	log.Printf("loadtest: stage=devshard_drain_start timeout=%s expected_finished=%d max_ghost_rate=%.2f%%", timeout, expected, maxGhostRate*100)
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(time.Second)

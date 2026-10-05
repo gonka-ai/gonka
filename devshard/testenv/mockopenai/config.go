@@ -41,6 +41,7 @@ type FaultConfig struct {
 	Latency          time.Duration
 	HTTPStatus       int // 0 = OK
 	FailureRate      float64
+	Hang             bool // accept the request and wait for its context to be cancelled
 	DropFirstChunk   bool
 	PartialStream    bool // omit final chunk + [DONE]
 	StreamChunkDelay time.Duration
@@ -75,6 +76,7 @@ type FaultPatch struct {
 	StreamChunkDelay    *int  `json:"stream_chunk_delay_ms,omitempty"`
 	PauseStream         *bool `json:"pause_stream,omitempty"`
 	StreamErrorEnvelope *bool `json:"stream_error_envelope,omitempty"`
+	Hang                *bool `json:"hang,omitempty"`
 }
 
 func (p FaultPatch) apply(dst *FaultConfig) {
@@ -98,6 +100,9 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	}
 	if p.StreamErrorEnvelope != nil {
 		dst.StreamErrorEnvelope = *p.StreamErrorEnvelope
+	}
+	if p.Hang != nil {
+		dst.Hang = *p.Hang
 	}
 }
 
