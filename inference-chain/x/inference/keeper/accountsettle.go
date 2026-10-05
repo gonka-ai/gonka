@@ -289,6 +289,8 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			ValidatedInferences:   participant.CurrentEpochStats.ValidatedInferences,
 			InvalidatedInferences: participant.CurrentEpochStats.InvalidatedInferences,
 			Claimed:               false,
+			ParticipantRewardWeight: amount.ParticipantRewardWeight,
+
 		}
 		err = k.SetEpochPerformanceSummary(cacheCtx, epochPerformance)
 		if err != nil {
