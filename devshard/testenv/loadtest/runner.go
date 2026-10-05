@@ -201,6 +201,12 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, err
 	}
 	result.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.Port)
+	debugGatewayURL := result.GatewayURL
+	if replaySelector != nil {
+		// Replay stacks configure Gateway through DEVSHARDS_JSON, so even a
+		// single dataset model uses the multi-DevShard debug route.
+		debugGatewayURL = scopedGatewayURL(result.GatewayURL, config.PrimaryEscrowID(cfg))
+	}
 	log.Printf("loadtest: waiting for gateway at %s", result.GatewayURL)
 	if err := waitGateway(ctx, result.GatewayURL); err != nil {
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
@@ -238,7 +244,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return RunResult{}, err
 	}
-	terminal, assertions, assertionErr := assertRun(ctx, scenario, summary, allocations, result.GatewayURL, apiKey, ghostIDs)
+	terminal, assertions, assertionErr := assertRun(ctx, scenario, summary, allocations, debugGatewayURL, apiKey, ghostIDs)
 	result.Terminal = terminal
 	result.Assertions = assertions
 	log.Printf("loadtest: stage=artifacts_collection")
@@ -248,7 +254,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 		log.Printf("loadtest: final Compose log collection failed: %v", err)
 	}
-	gatewayState, stateErr := fetchGatewayStateSizes(ctx, result.GatewayURL, apiKey)
+	gatewayState, stateErr := fetchGatewayStateSizes(ctx, debugGatewayURL, apiKey)
 	if stateErr == nil {
 		result.GatewayState = gatewayState
 		if err := writeGatewayStateSizes(opts.OutputDir, gatewayState); err != nil && assertionErr == nil {
@@ -266,7 +272,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	} else if assertionErr == nil {
 		return RunResult{}, statsErr
 	}
-	_ = writeGatewayInferences(ctx, result.GatewayURL, apiKey, opts.OutputDir)
+	_ = writeGatewayInferences(ctx, debugGatewayURL, apiKey, opts.OutputDir)
 	if assertionErr != nil {
 		return result, assertionErr
 	}
@@ -606,6 +612,18 @@ func fetchGatewayStateSizes(ctx context.Context, gatewayURL, apiKey string) (Gat
 		return GatewayStateSizes{}, err
 	}
 	return sizes, nil
+}
+
+// scopedGatewayURL selects a runtime in multi-DevShard mode for diagnostic
+// endpoints. Client traffic intentionally keeps using the Gateway root URL,
+// which performs model-based routing.
+func scopedGatewayURL(gatewayURL, escrowID string) string {
+	base := strings.TrimRight(gatewayURL, "/")
+	id := strings.Trim(strings.TrimSpace(escrowID), "/")
+	if id == "" {
+		return base
+	}
+	return base + "/devshard/" + id
 }
 
 func writeGatewayStateSizes(outputDir string, sizes GatewayStateSizes) error {
