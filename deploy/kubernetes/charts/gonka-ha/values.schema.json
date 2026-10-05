@@ -513,6 +513,10 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
         "replicas": {
           "type": "integer",
           "minimum": 2,

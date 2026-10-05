@@ -108,6 +108,7 @@ ingress:
   policyExtraEnv: []
 edgeApi:
   replicas: 2
+  terminationGracePeriodSeconds: 30
   resources:
     requests: {cpu: 100m, memory: 128Mi}
   nodeSelector: {}
