@@ -407,19 +407,21 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 		return nil
 	}
 
-	records, err := store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
+	err = storage.ReadDiffPages(store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
+		for _, rec := range page {
+			sm.InjectWarmKeys(rec.WarmKeyDelta)
+			root, err := sm.ApplyDiff(rec.Diff)
+			if err != nil {
+				return fmt.Errorf("replay nonce %d: %w", rec.Nonce, err)
+			}
+			if len(rec.StateHash) > 0 && len(root) > 0 && !bytes.Equal(root, rec.StateHash) {
+				return fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("get diffs %d..%d: %w", replayFrom, meta.LatestNonce, err)
-	}
-	for _, rec := range records {
-		sm.InjectWarmKeys(rec.WarmKeyDelta)
-		root, err := sm.ApplyDiff(rec.Diff)
-		if err != nil {
-			return fmt.Errorf("replay nonce %d: %w", rec.Nonce, err)
-		}
-		if len(rec.StateHash) > 0 && len(root) > 0 && !bytes.Equal(root, rec.StateHash) {
-			return fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
-		}
+		return fmt.Errorf("replay diffs %d..%d: %w", replayFrom, meta.LatestNonce, err)
 	}
 	return nil
 }

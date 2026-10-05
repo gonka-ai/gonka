@@ -69,6 +69,10 @@ type Storage interface {
 	// different payload at the same nonce returns ErrDiffFork.
 	AppendDiff(escrowID string, rec types.DiffRecord) error
 	GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error)
+	// DiffSizes lists stored nonces in [fromNonce, toNonce] in ascending
+	// order, at most limit of them, with the stored txs_proto length. It is
+	// one indexed read and does not decode transactions.
+	DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error)
 	AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error
 	GetSignatures(escrowID string, nonce uint64) (map[uint32][]byte, error)
 	GetSessionMeta(escrowID string) (*SessionMeta, error)

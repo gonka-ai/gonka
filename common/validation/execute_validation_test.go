@@ -438,6 +438,59 @@ func TestExecuteValidation_KnownVocabulary_BoundsTokenIDs(t *testing.T) {
 	}
 }
 
+// responsePayloadWithPositions builds a response whose logprobs carry positionCount positions.
+func responsePayloadWithPositions(positionCount int) []byte {
+	positions := make([]map[string]interface{}, 0, positionCount)
+	for position := 0; position < positionCount; position++ {
+		positions = append(positions, map[string]interface{}{
+			"token": "42", "logprob": -0.5, "top_logprobs": []map[string]interface{}{{"token": "42", "logprob": -0.5}},
+		})
+	}
+	payload, _ := json.Marshal(map[string]interface{}{
+		"id":      "test",
+		"object":  "chat.completion",
+		"choices": []map[string]interface{}{{"index": 0, "logprobs": map[string]interface{}{"content": positions}}},
+	})
+	return payload
+}
+
+// Test flow:
+// 1. The executor stores more logprobs positions than the prompt's max_tokens raised to the 64-token floor.
+// 2. The validation is invalid and the replay never reaches the validator node.
+// 3. Up to that limit the output is replayed, including a 64-token output for max_tokens 10 or 0.
+func TestExecuteValidation_PositionsBoundedByMaxTokens(t *testing.T) {
+	cases := []struct {
+		name          string
+		prompt        []byte
+		positionCount int
+		wantReplayed  bool
+	}{
+		{"padded past the node's list limit", []byte(`{"messages":[],"max_tokens":4096}`), 32769, false},
+		{"one past max_tokens", []byte(`{"messages":[],"max_tokens":4096}`), 4097, false},
+		{"exactly max_tokens", []byte(`{"messages":[],"max_tokens":4096}`), 4096, true},
+		{"max_completion_tokens bounds too", []byte(`{"messages":[],"max_completion_tokens":100}`), 101, false},
+		{"floor output for small max_tokens", []byte(`{"messages":[],"max_tokens":10}`), 64, true},
+		{"past the floor for small max_tokens", []byte(`{"messages":[],"max_tokens":10}`), 65, false},
+		{"floor output for zero max_tokens", []byte(`{"messages":[],"max_tokens":0}`), 64, true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := responsePayloadWithPositions(testCase.positionCount)
+			replayed := false
+			execute := func(_ context.Context, _ []byte) (*http.Response, error) {
+				replayed = true
+				return fakeHTTPResponse(http.StatusOK, payload), nil
+			}
+			result, err := ExecuteValidation(context.Background(), "inf-1", testCase.prompt, payload, execute, 0, 0, "processed_logprobs", 0)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantReplayed, replayed)
+			if !testCase.wantReplayed {
+				require.IsType(t, &InvalidInferenceResult{}, result)
+			}
+		})
+	}
+}
+
 func TestExecuteValidation_NonNumericTokens_ReturnsInvalid(t *testing.T) {
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",

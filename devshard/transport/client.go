@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -24,6 +26,7 @@ import (
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
+	"devshard/storage"
 	"devshard/types"
 
 	"common/chainoracle/blocks"
@@ -488,10 +491,16 @@ func (c *HTTPClient) postJSON(ctx context.Context, path string, timeout time.Dur
 
 // get sends a GET request and unmarshals the response into resp.
 func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration, resp any) error {
+	return c.getBounded(ctx, path, timeout, 0, resp)
+}
+
+// getBounded is get with the success body capped at maxBody bytes. A body past
+// the cap is ErrResponseBodyTooLarge; maxBody 0 reads the whole body.
+func (c *HTTPClient) getBounded(ctx context.Context, path string, timeout time.Duration, maxBody int64, resp any) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	url := fmt.Sprintf("%s%s%s", c.baseURL, c.routePrefix, path)
-	body, err := c.doGet(ctx, url)
+	body, err := c.doGet(ctx, url, maxBody)
 	if err != nil {
 		return err
 	}
@@ -996,16 +1005,91 @@ func (c *HTTPClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, di
 	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
 }
 
-// GetDiffs fetches stored diffs from a peer.
-func (c *HTTPClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff, error) {
+// GetDiffPages fetches stored diffs from a peer and passes each page to fn
+// before the next request, so the range is never held in one slice. Each
+// request asks for at most one nonce page. A byte-budget rejection halves the
+// window until it fits; a single diff is always one page. Windows the peer
+// stores no diffs for are skipped. An error from fn stops the walk and is
+// returned unwrapped.
+func (c *HTTPClient) GetDiffPages(ctx context.Context, fromNonce, toNonce uint64, fn func([]types.Diff) error) error {
+	for from := fromNonce; from <= toNonce; {
+		hi := diffPageEnd(from, toNonce, storage.DiffPageMaxNonces)
+		page, err := c.getDiffWindow(ctx, from, hi)
+		for err != nil && errors.Is(err, storage.ErrDiffPageLimit) && hi > from {
+			hi = from + (hi-from)/2
+			page, err = c.getDiffWindow(ctx, from, hi)
+		}
+		if err != nil {
+			return fmt.Errorf("get diffs %d..%d: %w", from, hi, err)
+		}
+		if len(page) > 0 {
+			if err := fn(page); err != nil {
+				return err
+			}
+		}
+		if hi == toNonce {
+			break
+		}
+		from = hi + 1
+	}
+	return nil
+}
+
+func diffPageEnd(from, to uint64, maxNonces int) uint64 {
+	if maxNonces <= 1 || to-from < uint64(maxNonces-1) {
+		return to
+	}
+	return from + uint64(maxNonces) - 1
+}
+
+// ErrDiffPageOversized is a diffs response that breaks the page rule the
+// server enforces: more than DiffPageMaxNonces records, or several records
+// over DiffPageMaxBytes. Only a faulty or hostile peer sends one.
+var ErrDiffPageOversized = errors.New("diffs response exceeds one page")
+
+const (
+	// diffRecordJSONOverhead bounds what one record adds to the body beyond
+	// its base64 txs: field names, nonce, user_sig, post_state_root and
+	// state_hash.
+	diffRecordJSONOverhead = 4 << 10
+	// diffWireNonceBytes is the nonce field DiffToJSON adds to the stored
+	// txs_proto: one tag byte and a varint.
+	diffWireNonceBytes = 1 + binary.MaxVarintLen64
+)
+
+// maxDiffPageBodyBytes caps a diffs response body. A packed page is at most
+// DiffPageMaxBytes of txs. A single larger diff reached the host in a request
+// body of at most DefaultMaxBodySize, so the larger of the two covers it.
+var maxDiffPageBodyBytes = int64(max(
+	base64.StdEncoding.EncodedLen(storage.DiffPageMaxBytes+storage.DiffPageMaxNonces*diffWireNonceBytes),
+	int(DefaultMaxBodySize),
+) + storage.DiffPageMaxNonces*diffRecordJSONOverhead)
+
+func (c *HTTPClient) getDiffWindow(ctx context.Context, from, to uint64) ([]types.Diff, error) {
 	type diffRecordJSON struct {
 		DiffJSON  `json:"diff"`
 		StateHash []byte `json:"state_hash"`
 	}
 	var records []diffRecordJSON
 	path := fmt.Sprintf("/sessions/%s/diffs?from=%d&to=%d", c.escrowID, from, to)
-	if err := c.get(ctx, path, c.config.QueryTimeout, &records); err != nil {
-		return nil, fmt.Errorf("get diffs: %w", err)
+	if err := c.getBounded(ctx, path, c.config.QueryTimeout, maxDiffPageBodyBytes, &records); err != nil {
+		var status *UpstreamStatusError
+		if errors.As(err, &status) && strings.Contains(status.Body, storage.ErrDiffPageLimit.Error()) {
+			return nil, fmt.Errorf("%w: %s", storage.ErrDiffPageLimit, status.Body)
+		}
+		return nil, err
+	}
+	if len(records) > storage.DiffPageMaxNonces {
+		return nil, fmt.Errorf("%w: %d records, at most %d", ErrDiffPageOversized, len(records), storage.DiffPageMaxNonces)
+	}
+	if len(records) > 1 {
+		total := 0
+		for _, rec := range records {
+			total += len(rec.Txs)
+		}
+		if limit := storage.DiffPageMaxBytes + len(records)*diffWireNonceBytes; total > limit {
+			return nil, fmt.Errorf("%w: %d records carry %d txs bytes, at most %d", ErrDiffPageOversized, len(records), total, limit)
+		}
 	}
 
 	diffs := make([]types.Diff, len(records))
@@ -1192,9 +1276,9 @@ func (c *HTTPClient) doPostOnce(ctx context.Context, path string, body []byte) (
 
 // doGet sends a GET request and returns the response body.
 // No auth signing -- GET endpoints skip auth on the server side for now.
-func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
+func (c *HTTPClient) doGet(ctx context.Context, url string, maxBody int64) ([]byte, error) {
 	if isInferencePath(url) {
-		return c.doGetOnce(ctx, url, true)
+		return c.doGetOnce(ctx, url, true, maxBody)
 	}
 	// See doPostRaw: admit once per logical request, and never attribute a local
 	// limiter rejection to the host.
@@ -1205,7 +1289,7 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	delay := nonInferenceRetryInitial
 	var lastRetryable error
 	for {
-		body, err := c.getAttempt(ctx, url, false)
+		body, err := c.getAttempt(ctx, url, false, maxBody)
 		if err == nil {
 			c.observeResult(url, http.StatusOK)
 			return body, nil
@@ -1239,15 +1323,15 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	}
 }
 
-func (c *HTTPClient) doGetOnce(ctx context.Context, url string, observe bool) ([]byte, error) {
+func (c *HTTPClient) doGetOnce(ctx context.Context, url string, observe bool, maxBody int64) ([]byte, error) {
 	if err := c.allowRequest(url); err != nil {
 		return nil, err
 	}
-	return c.getAttempt(ctx, url, observe)
+	return c.getAttempt(ctx, url, observe, maxBody)
 }
 
 // getAttempt is one GET with no admission check. See postRawAttempt.
-func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) ([]byte, error) {
+func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool, maxBody int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -1279,6 +1363,9 @@ func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) (
 	}
 	if observe {
 		c.observeResult(url, resp.StatusCode)
+	}
+	if maxBody > 0 {
+		return readBoundedResponseBody(resp.Body, maxBody)
 	}
 	return io.ReadAll(resp.Body)
 }

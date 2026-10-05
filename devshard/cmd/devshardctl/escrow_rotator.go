@@ -174,7 +174,7 @@ func (g *Gateway) prepareBridgeEscrows(ctx context.Context, snapshot ChainPhaseS
 			if devshard.RotationRole == rotationRoleTemp || !devshard.Active || strings.TrimSpace(devshard.Model) != model.ModelID {
 				continue
 			}
-			settledOnChain, err := g.retireRotatedDevshard(ctx, devshard.ID, "escrow rotation regular retired", settings)
+			settledOnChain, err := g.retireRotatedDevshard(ctx, devshard.ID, model.ModelID, "escrow rotation regular retired", settings)
 			if err != nil {
 				log.Printf("escrow_rotation_regular_retire_failed epoch=%d model=%q escrow=%s error=%v", epoch, model.ModelID, devshard.ID, err)
 				settleFailed++
@@ -242,7 +242,7 @@ func (g *Gateway) finishBridgeEscrows(ctx context.Context, snapshot ChainPhaseSn
 			if devshard.RotationRole != rotationRoleTemp || devshard.RotationEpoch > epoch || !devshard.Active || strings.TrimSpace(devshard.Model) != model.ModelID {
 				continue
 			}
-			settledOnChain, err := g.retireRotatedDevshard(ctx, devshard.ID, "escrow rotation temp retired", settings)
+			settledOnChain, err := g.retireRotatedDevshard(ctx, devshard.ID, model.ModelID, "escrow rotation temp retired", settings)
 			if err != nil {
 				log.Printf("escrow_rotation_temp_retire_failed epoch=%d model=%q escrow=%s error=%v", epoch, model.ModelID, devshard.ID, err)
 				settleFailed++
@@ -396,6 +396,16 @@ func normalizedEscrowRotationModels(settings GatewaySettings) []EscrowRotationMo
 		models = append(models, model)
 	}
 	return models
+}
+
+func settlementEnabledForModel(settings GatewaySettings, modelID string) bool {
+	modelID = strings.TrimSpace(modelID)
+	for _, model := range normalizedEscrowRotationModels(settings) {
+		if model.ModelID == modelID && model.SettlementEnabled != nil {
+			return *model.SettlementEnabled
+		}
+	}
+	return settings.EscrowRotation.SettlementEnabled
 }
 
 func (g *Gateway) promoteActiveRegularEscrowsToTemp(modelID string, epoch uint64) (int, error) {

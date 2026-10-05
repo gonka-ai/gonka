@@ -397,6 +397,14 @@ func ExecuteValidation(
 		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Enforced tokens exceed the replay limits."}, nil
 	}
 
+	if !isEmptySentinel {
+		if maxTokens, err := completionapi.EffectiveMaxTokens(modifiedRequest.NewBody); err == nil && uint64(len(enforcedTokens.Tokens)) > maxTokens {
+			logging.Warn("validation failed: more output positions than max_tokens, not sent to the validator node", types.Validation,
+				"inferenceId", inferenceID, "positions", len(enforcedTokens.Tokens), "maxTokens", maxTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "More output positions than max_tokens."}, nil
+		}
+	}
+
 	if isEmptySentinel {
 		logging.Info("Detected empty sentinel response; replaying prompt without enforced tokens to verify executor failure", types.Validation,
 			"inferenceId", inferenceID)

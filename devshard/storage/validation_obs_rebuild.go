@@ -48,6 +48,34 @@ const validationObsRebuildChunk = 500
 // of already-drained rows would count those validations a second time. Callers
 // must pass the whole journal, never a partial range.
 func RebuildValidationObsFromDiffs(store Storage, escrowID string, records []types.DiffRecord, sealedInferenceIDs []uint64) error {
+	return rebuildValidationObs(store, escrowID, sealedInferenceIDs, func(record func([]types.DiffRecord) error) error {
+		return record(records)
+	})
+}
+
+// RebuildValidationObsFromJournal clears the obs tables once, then walks
+// [from, to] through ReadDiffPages. Each page is recorded with the 500-entry
+// flush and dropped. A partial page is never passed to
+// RebuildValidationObsFromDiffs, which would clear again. from > to still
+// clears and drains, and does not read the store. onPage, when set, sees each
+// page before it is dropped and must not retain the slice.
+func RebuildValidationObsFromJournal(store Storage, escrowID string, from, to uint64, sealedInferenceIDs []uint64, onPage func([]types.DiffRecord) error) error {
+	return rebuildValidationObs(store, escrowID, sealedInferenceIDs, func(record func([]types.DiffRecord) error) error {
+		if from > to {
+			return nil
+		}
+		return ReadDiffPages(store, escrowID, from, to, func(page []types.DiffRecord) error {
+			if onPage != nil {
+				if err := onPage(page); err != nil {
+					return err
+				}
+			}
+			return record(page)
+		})
+	})
+}
+
+func rebuildValidationObs(store Storage, escrowID string, sealedInferenceIDs []uint64, walk func(func([]types.DiffRecord) error) error) error {
 	if store == nil {
 		return fmt.Errorf("validation obs rebuild: nil store")
 	}
@@ -68,17 +96,22 @@ func RebuildValidationObsFromDiffs(store Storage, escrowID string, records []typ
 		pending = pending[:0]
 		return nil
 	}
-	for _, rec := range records {
-		entries := ValidationObsEntriesFromTxs(rec.Txs)
-		if len(entries) == 0 {
-			continue
-		}
-		pending = append(pending, entries...)
-		if len(pending) >= validationObsRebuildChunk {
-			if err := flush(); err != nil {
-				return err
+	if err := walk(func(records []types.DiffRecord) error {
+		for _, rec := range records {
+			entries := ValidationObsEntriesFromTxs(rec.Txs)
+			if len(entries) == 0 {
+				continue
+			}
+			pending = append(pending, entries...)
+			if len(pending) >= validationObsRebuildChunk {
+				if err := flush(); err != nil {
+					return err
+				}
 			}
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	if err := flush(); err != nil {
 		return err

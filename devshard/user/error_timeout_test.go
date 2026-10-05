@@ -532,7 +532,11 @@ func TestFinishTxForErrorMiss_UsesRememberedFinishNotTheDiffLog(t *testing.T) {
 	session.mu.Unlock()
 	require.Nil(t, session.FinishTxForErrorMiss(nonce, nil))
 
-	restoreAppliedTxKeys(session, nil)
+	records := make([]types.DiffRecord, len(diffs))
+	for i, diff := range diffs {
+		records[i].Diff = diff
+	}
+	noteAppliedTxKeys(session, records)
 	require.True(t, proto.Equal(applied.GetFinishInference(), host.DecodeFinishTx(session.FinishTxForErrorMiss(nonce, nil))))
 }
 

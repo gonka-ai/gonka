@@ -1181,23 +1181,26 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 				"escrow_id", escrowID, "error", snapErr)
 		}
 
-		var records []types.DiffRecord
+		var replayed int
 		if replayFrom <= meta.LatestNonce {
-			records, err = m.store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
-			if err != nil {
-				return nil, nil, fmt.Errorf("get diffs: %w", err)
-			}
-			for _, rec := range records {
-				sm.InjectWarmKeys(rec.WarmKeyDelta)
-				root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
-				if applyErr != nil {
-					return nil, nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
-				}
-				if len(rec.StateHash) > 0 && len(root) > 0 {
-					if !bytes.Equal(root, rec.StateHash) {
-						return nil, nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+			err = storage.ReadDiffPages(m.store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
+				for _, rec := range page {
+					sm.InjectWarmKeys(rec.WarmKeyDelta)
+					root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+					if applyErr != nil {
+						return fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
+					}
+					if len(rec.StateHash) > 0 && len(root) > 0 {
+						if !bytes.Equal(root, rec.StateHash) {
+							return fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+						}
 					}
 				}
+				replayed += len(page)
+				return nil
+			})
+			if err != nil {
+				return nil, nil, err
 			}
 		}
 
@@ -1212,14 +1215,16 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 		//
 		// Hand it to the gate instead of running it here: it is the expensive
 		// half of recovery (a write transaction per historical seal) and it
-		// would otherwise keep the caller of a cold bind waiting. Reuse the
-		// journal already in hand, whose last nonce the seal set matches;
-		// seals landing later reach the rebuild through the gate queue.
+		// would otherwise keep the caller of a cold bind waiting. The replay
+		// loop does not keep the journal. The job pages it from the store
+		// after the session is published; seals landing later reach the
+		// rebuild through the gate queue.
 		if replayFrom == 1 {
 			obsRepair = &obsRepairJob{
-				records: records,
-				sealed:  storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
-				sm:      sm,
+				from:   1,
+				to:     meta.LatestNonce,
+				sealed: storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+				sm:     sm,
 			}
 		} else {
 			fillStarted := time.Now()
@@ -1233,7 +1238,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 				"duration", time.Since(fillStarted))
 		}
 
-		if replayFrom == 1 || uint64(len(records)) >= host.SnapshotInterval {
+		if replayFrom == 1 || uint64(replayed) >= host.SnapshotInterval {
 			if saveErr := saveHostSnapshot(m.store, sm, escrowID, meta.LatestNonce); saveErr != nil {
 				logging.Error("failed to save devshard recovery snapshot", inferenceTypes.System,
 					"escrow_id", escrowID, "nonce", meta.LatestNonce, "error", saveErr)
@@ -1523,6 +1528,53 @@ func (m *HostManager) signPayloadResponse(inferenceID string, promptPayload, res
 	return calculations.Sign(accountSigner, components, calculations.Developer)
 }
 
+// SessionMemory is the retained-map sizes across loaded sessions.
+type SessionMemory struct {
+	Sessions    int
+	Live        int
+	Sealed      int
+	Mempool     int
+	Executing   int
+	Validating  int
+	Fattest     string
+	FattestLive int
+}
+
+// SessionMemoryCounts sums map lengths across loaded sessions. It copies the
+// server list under the session lock, then reads each host after releasing it,
+// so a large live map is never walked and the session lock is not held across
+// host locks.
+func (m *HostManager) SessionMemoryCounts() SessionMemory {
+	if m == nil {
+		return SessionMemory{}
+	}
+	m.sessionsMutex.RLock()
+	servers := make([]*transport.Server, 0, len(m.sessions))
+	for _, srv := range m.sessions {
+		servers = append(servers, srv)
+	}
+	m.sessionsMutex.RUnlock()
+
+	var out SessionMemory
+	out.Sessions = len(servers)
+	for _, srv := range servers {
+		if srv == nil || srv.Host() == nil {
+			continue
+		}
+		c := srv.Host().MemoryCounts()
+		out.Live += c.Live
+		out.Sealed += c.Sealed
+		out.Mempool += c.Mempool
+		out.Executing += c.Executing
+		out.Validating += c.Validating
+		if c.Live > out.FattestLive {
+			out.FattestLive = c.Live
+			out.Fattest = c.EscrowID
+		}
+	}
+	return out
+}
+
 // ActiveEscrowIDs returns the escrow IDs of all currently loaded sessions.
 // The returned slice is a snapshot; the set may change after this call.
 func (m *HostManager) ActiveEscrowIDs() []string {
@@ -1595,13 +1647,15 @@ func verifySnapshotRoot(store storage.Storage, sm *state.StateMachine, escrowID 
 }
 
 // obsRepairJob carries the inputs for a deferred validation-obs rebuild: the
-// journal the recovery already read, and the seal set as of that journal's last
-// nonce. Anything the live path writes while the rebuild runs is queued by the
-// gate and applied after it, so the two never overlap.
+// nonce range of the journal, and the seal set as of that journal's last
+// nonce. The replay loop does not retain the diffs. startObsRepair pages the
+// range after the session is published. Anything the live path writes while
+// the rebuild runs is queued by the gate and applied after it, so the two
+// never overlap.
 type obsRepairJob struct {
-	records []types.DiffRecord
-	sealed  []uint64
-	sm      *state.StateMachine
+	from, to uint64
+	sealed   []uint64
+	sm       *state.StateMachine
 }
 
 // startObsRepair rebuilds validation obs and the sealed-inference index for a
@@ -1612,6 +1666,10 @@ type obsRepairJob struct {
 func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
 	if job == nil || m.obsGate == nil {
 		return
+	}
+	diffs := 0
+	if job.to >= job.from {
+		diffs = int(job.to - job.from + 1)
 	}
 	m.obsRepairWG.Add(1)
 	m.recoveryCounts.repairs.Add(1)
@@ -1624,13 +1682,13 @@ func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
 		}()
 		startedAt := time.Now()
 		err := m.obsGate.RepairValidationObs(escrowID, func(inner storage.Storage) error {
-			if err := storage.RebuildValidationObsFromDiffs(inner, escrowID, job.records, job.sealed); err != nil {
+			if err := storage.RebuildValidationObsFromJournal(inner, escrowID, job.from, job.to, job.sealed, nil); err != nil {
 				return err
 			}
 			if job.sm == nil {
 				return nil
 			}
-			return job.sm.RebuildSealedInferenceIndexFromDiffs(inner, job.records)
+			return job.sm.RebuildSealedInferenceIndexFromRange(inner, job.from, job.to)
 		})
 		if err != nil {
 			logging.Warn("background validation obs rebuild failed", inferenceTypes.System,
@@ -1638,7 +1696,7 @@ func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
 			return
 		}
 		logging.Info("rebuilt validation obs", inferenceTypes.System,
-			"escrow_id", escrowID, "diffs", len(job.records),
+			"escrow_id", escrowID, "diffs", diffs,
 			"sealed_inferences", len(job.sealed), "duration", time.Since(startedAt))
 	}()
 }
@@ -1676,6 +1734,22 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 	if m.params != nil {
 		sp := m.params.SessionParams()
 		opts = append(opts, host.WithHeartbeatConfig(sp.Heartbeat), host.WithRepairConfig(sp.Repair))
+	}
+	if m.payloadStore != nil {
+		ps := m.payloadStore
+		// One epoch per call. The host probes the neighboring epochs itself,
+		// matching the boundary between the escrow epoch and the phase epoch
+		// used when the payload was stored.
+		opts = append(opts, host.WithStoredResponse(func(ctx context.Context, escrowID string, inferenceID, epochID uint64) ([]byte, error) {
+			_, response, err := ps.Retrieve(ctx, escrowID, inferenceID, epochID)
+			if err != nil {
+				if errors.Is(err, payloads.ErrNotFound) {
+					return nil, nil
+				}
+				return nil, err
+			}
+			return response, nil
+		}))
 	}
 	return m.appendChainOracleOpt(opts)
 }

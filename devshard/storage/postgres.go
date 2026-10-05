@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"common/storage/pgpool"
 	"devshard/observability"
 	"devshard/types"
 
@@ -85,7 +85,8 @@ const (
 	// pgx otherwise scales the default pool to runtime.NumCPU. Versiond runs
 	// several devshard processes per host, so a CPU-sized pool per generation
 	// can exhaust PostgreSQL before application load reaches its own limits.
-	defaultPostgresPoolMaxConns int32 = 4
+	// Payload pools use the same cap via pgpool.ConfigureMaxConns.
+	defaultPostgresPoolMaxConns int32 = pgpool.DefaultMaxConns
 	// A timed-out pgx query closes the session and therefore releases its
 	// advisory fence. Give this terminal check a wider budget than ordinary
 	// readiness probes so transient database stalls do not replace every child.
@@ -276,17 +277,7 @@ func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Dura
 }
 
 func configurePostgresPool(cfg *pgxpool.Config) error {
-	raw := strings.TrimSpace(os.Getenv("PG_POOL_MAX_CONNS"))
-	if raw == "" {
-		cfg.MaxConns = defaultPostgresPoolMaxConns
-		return nil
-	}
-	value, err := strconv.ParseInt(raw, 10, 32)
-	if err != nil || value <= 0 {
-		return fmt.Errorf("PG_POOL_MAX_CONNS must be a positive integer, got %q", raw)
-	}
-	cfg.MaxConns = int32(value)
-	return nil
+	return pgpool.ConfigureMaxConns(cfg)
 }
 
 func (s *Postgres) startHealthMonitor(connConfig *pgx.ConnConfig) {
@@ -1452,6 +1443,40 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 	}
 
 	return result, rows.Err()
+}
+
+// DiffSizes reads octet_length from the TOAST header, so a large txs_proto is
+// not fetched or decompressed.
+func (s *Postgres) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	if fromNonce > toNonce || limit <= 0 {
+		return nil, nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
+		`SELECT nonce, octet_length(txs_proto) FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
+		 ORDER BY nonce LIMIT $5`,
+		epochID, escrowID, fromNonce, toNonce, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DiffSize
+	for rows.Next() {
+		var nonce uint64
+		var size int64
+		if err := rows.Scan(&nonce, &size); err != nil {
+			return nil, err
+		}
+		out = append(out, DiffSize{Nonce: nonce, Bytes: int(size)})
+	}
+	return out, rows.Err()
 }
 
 func (s *Postgres) MarkFinalized(escrowID string, nonce uint64) error {

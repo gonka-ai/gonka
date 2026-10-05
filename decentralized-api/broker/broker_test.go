@@ -823,6 +823,13 @@ func TestSingleNode(t *testing.T) {
 }
 
 func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apiconfig.InferenceNodeConfig) {
+	t.Helper()
+
+	// Seed the client the broker dials, including PoCSegment. A URL without the
+	// segment is a different mock, so the real client stays STOPPED and a status
+	// sample from that window is applied over INFERENCE.
+	seedMockInferenceClient(broker, node)
+
 	cmd := NewRegisterNodeCommand(node)
 	nodeIsRegistered := cmd.Response
 	queueMessage(t, broker, cmd)
@@ -851,71 +858,66 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	}
 	broker.UpdateNodeEpochData([]*types.MLNodeInfo{&mlNode}, modelId, model)
 
-	// Before calling InferenceUpAll, make sure the mock client will return INFERENCE state
-	mockFactory := broker.mlNodeClientFactory.(*mlnodeclient.MockClientFactory)
-	mockClient := mockFactory.GetClientForNode(fmt.Sprintf("http://%s:%d", node.Host, node.PoCPort))
-	if mockClient == nil {
-		// If it's not created yet, create it.
-		mockClient = mockFactory.CreateClient(fmt.Sprintf("http://%s:%d", node.Host, node.PoCPort), fmt.Sprintf("http://%s:%d", node.Host, node.InferencePort)).(*mlnodeclient.MockClient)
+	inferenceUpCommand := NewInferenceUpAllCommand()
+	queueMessage(t, broker, inferenceUpCommand)
+	<-inferenceUpCommand.Response
+
+	if !waitForNodeInferenceReady(broker, node.Id, 2*time.Second) {
+		setNodeActualStatus(t, broker, node.Id, time.Now())
+		if !waitForNodeInferenceReady(broker, node.Id, 2*time.Second) {
+			t.Fatalf("Node did not reach INFERENCE status in time")
+		}
 	}
+
+	// A status query stamps time.Now() when it returns, and an equal timestamp
+	// overwrites the current status. Pin INFERENCE ahead of any sample that
+	// observed STOPPED during bring-up and has not been applied yet.
+	setNodeActualStatus(t, broker, node.Id, time.Now().Add(time.Hour))
+	if !waitForNodeInferenceReady(broker, node.Id, 2*time.Second) {
+		t.Fatalf("Node did not stay in INFERENCE status")
+	}
+}
+
+func seedMockInferenceClient(broker *Broker, node apiconfig.InferenceNodeConfig) {
+	pocURL := fmt.Sprintf("http://%s:%d%s", node.Host, node.PoCPort, node.PoCSegment)
+	inferenceURL := fmt.Sprintf("http://%s:%d%s", node.Host, node.InferencePort, node.InferenceSegment)
+	mockFactory := broker.mlNodeClientFactory.(*mlnodeclient.MockClientFactory)
+	mockClient := mockFactory.CreateClient(pocURL, inferenceURL).(*mlnodeclient.MockClient)
 	mockClient.Mu.Lock()
 	mockClient.CurrentState = mlnodeclient.MlNodeState_INFERENCE
 	mockClient.InferenceIsHealthy = true
 	mockClient.Mu.Unlock()
+}
 
-	inferenceUpCommand := NewInferenceUpAllCommand()
-	queueMessage(t, broker, inferenceUpCommand)
-
-	// Wait for InferenceUpAllCommand to complete
-	<-inferenceUpCommand.Response
-
-	// Wait for reconciliation to actually bring the node to INFERENCE status
-	// by polling until the mock client's InferenceUp has been called
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		allClients := mockFactory.GetAllClients()
-		for _, client := range allClients {
-			if client.GetInferenceUpCalled() > 0 {
-				// InferenceUp was called, wait a bit for status to propagate
-				time.Sleep(50 * time.Millisecond)
-				return
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	// Fallback: manually set status if reconciliation didn't complete in time
-	setStatusCommand := NewSetNodesActualStatusCommand(
-		[]StatusUpdate{
-			{
-				NodeId:     node.Id,
-				PrevStatus: types.HardwareNodeStatus_UNKNOWN,
-				NewStatus:  types.HardwareNodeStatus_INFERENCE,
-				Timestamp:  time.Now(),
-			},
-		},
-	)
+func setNodeActualStatus(t *testing.T, broker *Broker, nodeID string, timestamp time.Time) {
+	t.Helper()
+	setStatusCommand := NewSetNodesActualStatusCommand([]StatusUpdate{{
+		NodeId:     nodeID,
+		PrevStatus: types.HardwareNodeStatus_UNKNOWN,
+		NewStatus:  types.HardwareNodeStatus_INFERENCE,
+		Timestamp:  timestamp,
+	}})
 	queueMessage(t, broker, setStatusCommand)
 	<-setStatusCommand.Response
+}
 
-	// Wait until the node is fully stable for inference in broker state.
-	// CurrentStatus can become INFERENCE before in-flight reconciliation clears,
-	// and a reconciling node is considered unavailable.
-	brokerDeadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(brokerDeadline) {
-		nodes, _ := broker.GetNodes()
-		for _, n := range nodes {
-			if n.Node.Id == node.Id &&
-				n.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
-				n.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
-				n.State.ReconcileInfo == nil {
-				return
+func waitForNodeInferenceReady(broker *Broker, nodeID string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		nodes, err := broker.GetNodes()
+		if err == nil {
+			for _, n := range nodes {
+				if n.Node.Id == nodeID &&
+					n.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
+					n.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
+					n.State.ReconcileInfo == nil {
+					return true
+				}
 			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-
-	t.Fatalf("Node did not reach INFERENCE status in time")
+	return false
 }
 
 func TestNodeRemoval(t *testing.T) {
@@ -1069,9 +1071,6 @@ func TestReleaseNode(t *testing.T) {
 }
 
 func TestRoundTripSegment(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping flaky test in short mode")
-	}
 	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
 		Host:             "localhost",

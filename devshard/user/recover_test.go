@@ -430,6 +430,22 @@ func lastTurn(diffs []types.Diff, slots uint64) uint64 {
 	return starts[len(starts)-1]
 }
 
+// journalDiffs is the durable log. sess.diffs keeps only the catch-up suffix
+// once every host cursor has moved past a prefix.
+func journalDiffs(t *testing.T, session *Session) []types.Diff {
+	t.Helper()
+	if session.store == nil || session.Nonce() == 0 {
+		return session.Diffs()
+	}
+	recs, err := session.store.GetDiffs(session.escrowID, 1, session.Nonce())
+	require.NoError(t, err)
+	out := make([]types.Diff, len(recs))
+	for i, rec := range recs {
+		out[i] = rec.Diff
+	}
+	return out
+}
+
 func heartbeatTxForTurn(diffs []types.Diff, turnStart uint64) *types.MsgHeartbeat {
 	if turnStart == 0 {
 		return nil // no such turn; see nthTurn
@@ -464,7 +480,7 @@ func TestRecoverSession_HeartbeatContinuesTurnStart(t *testing.T) {
 			now = now.Add(interval + time.Second)
 		}
 	}
-	thirdTurn := lastTurn(session.Diffs(), 3)
+	thirdTurn := lastTurn(journalDiffs(t, session), 3)
 	require.Equal(t, thirdTurn, session.StateMachine().HeightSyncLatestTurnStart())
 	require.NoError(t, session.FlushSnapshot())
 	require.NoError(t, session.Close())
@@ -479,11 +495,11 @@ func TestRecoverSession_HeartbeatContinuesTurnStart(t *testing.T) {
 	require.Equal(t, heightsync.TurnComplete, prev.State)
 
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	// recovered.Diffs() starts empty, so the turn just composed is the only one
-	// in it — the fourth of the session, and the first of this diff list.
-	hb := heartbeatTxForTurn(recovered.Diffs(), lastTurn(recovered.Diffs(), 3))
+	// The in-memory suffix may already have dropped the turn the hosts just
+	// acknowledged. The store still has the span the producer composed.
+	hb := heartbeatTxForTurn(journalDiffs(t, recovered), lastTurn(journalDiffs(t, recovered), 3))
 	require.NotNil(t, hb, "recovery must compose a fresh turn")
-	require.Greater(t, lastTurn(recovered.Diffs(), 3), thirdTurn,
+	require.Greater(t, lastTurn(journalDiffs(t, recovered), 3), thirdTurn,
 		"the new turn opens after the span the third turn owned")
 	require.Len(t, hb.SyncVector, 3)
 	for i, ent := range hb.SyncVector {
@@ -591,20 +607,20 @@ func TestRecoverSession_HeartbeatPendingAckLossDoesNotDuplicateTurnOrStall(t *te
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
 	require.Equal(t, base+3, recovered.Nonce(),
 		"the recovered in-flight turn must suppress an immediate duplicate turn")
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), firstTurn, 3), 3)
-	require.Empty(t, heartbeatsForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2), 3))
+	require.Len(t, heartbeatsForTurn(journalDiffs(t, recovered), firstTurn, 3), 3)
+	require.Empty(t, heartbeatsForTurn(journalDiffs(t, recovered), nthTurn(journalDiffs(t, recovered), 3, 2), 3))
 
 	height = 101
 	recoveredAt = recoveredAt.Add(recovered.heartbeat.Config().TurnTimeout + time.Second)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
 	require.GreaterOrEqual(t, recovered.Nonce(), base+6,
 		"lost pre-flush acks must not permanently stall the heartbeat producer")
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), firstTurn, 3), 3,
+	require.Len(t, heartbeatsForTurn(journalDiffs(t, recovered), firstTurn, 3), 3,
 		"recovery must not replay or duplicate the abandoned first span")
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2), 3), 3,
+	require.Len(t, heartbeatsForTurn(journalDiffs(t, recovered), nthTurn(journalDiffs(t, recovered), 3, 2), 3), 3,
 		"after TurnTimeout the producer may abandon the lost-ack turn and open the next one")
 	require.NotNil(t, recovered.HeartbeatTurnTracker().Latest())
-	require.Equal(t, lastTurn(recovered.Diffs(), 3), recovered.StateMachine().HeightSyncLatestTurnStart())
+	require.Equal(t, lastTurn(journalDiffs(t, recovered), 3), recovered.StateMachine().HeightSyncLatestTurnStart())
 }
 
 func TestRecoverSession_HeartbeatPartialPendingAckLossDoesNotStall(t *testing.T) {
@@ -640,14 +656,14 @@ func TestRecoverSession_HeartbeatPartialPendingAckLossDoesNotStall(t *testing.T)
 	require.Equal(t, heightsync.TurnOpen, recovered.HeartbeatTurnTracker().Record(firstTurn).State)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
 	require.Equal(t, base+3, recovered.Nonce(), "open turn suppresses immediate duplicate span")
-	require.Empty(t, heartbeatsForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2), 3))
+	require.Empty(t, heartbeatsForTurn(journalDiffs(t, recovered), nthTurn(journalDiffs(t, recovered), 3, 2), 3))
 
 	height = 101
 	recoveredAt = recoveredAt.Add(recovered.heartbeat.Config().TurnTimeout + time.Second)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), firstTurn, 3), 3)
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2), 3), 3)
-	require.Equal(t, lastTurn(recovered.Diffs(), 3), recovered.StateMachine().HeightSyncLatestTurnStart())
+	require.Len(t, heartbeatsForTurn(journalDiffs(t, recovered), firstTurn, 3), 3)
+	require.Len(t, heartbeatsForTurn(journalDiffs(t, recovered), nthTurn(journalDiffs(t, recovered), 3, 2), 3), 3)
+	require.Equal(t, lastTurn(journalDiffs(t, recovered), 3), recovered.StateMachine().HeightSyncLatestTurnStart())
 }
 
 func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testing.T) {
@@ -693,7 +709,7 @@ func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testi
 
 	height = 101
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	hb := heartbeatTxForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2))
+	hb := heartbeatTxForTurn(journalDiffs(t, recovered), nthTurn(journalDiffs(t, recovered), 3, 2))
 	require.NotNil(t, hb)
 	require.Len(t, hb.SyncVector, 3)
 	statuses := syncVectorStatuses(hb.SyncVector)
@@ -857,19 +873,19 @@ func TestRecoverSession_BlindCourierStillHeartbeatsCarryingTheFloor(t *testing.T
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
 	require.Equal(t, base+3, recovered.Nonce(),
 		"the recovered in-flight turn still suppresses an immediate duplicate")
-	require.Empty(t, heartbeatsForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2), 3))
+	require.Empty(t, heartbeatsForTurn(journalDiffs(t, recovered), nthTurn(journalDiffs(t, recovered), 3, 2), 3))
 
 	recoveredAt = recoveredAt.Add(recovered.heartbeat.Config().TurnTimeout + time.Second)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	secondTurn := nthTurn(recovered.Diffs(), 3, 2)
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), secondTurn, 3), 3,
+	secondTurn := nthTurn(journalDiffs(t, recovered), 3, 2)
+	require.Len(t, heartbeatsForTurn(journalDiffs(t, recovered), secondTurn, 3), 3,
 		"after TurnTimeout the next turn opens, blank courier view or not")
-	hb := heartbeatTxForTurn(recovered.Diffs(), secondTurn)
+	hb := heartbeatTxForTurn(journalDiffs(t, recovered), secondTurn)
 	require.NotNil(t, hb)
 	require.Equal(t, uint64(100), hb.ObservedHeight, "the stamp is F, which no local view can move")
 	require.Zero(t, recovered.HeartbeatSkippedNoHeight(),
 		"a missing courier tip is not a missing height: F is what the cadence needs")
-	require.Equal(t, lastTurn(recovered.Diffs(), 3), recovered.StateMachine().HeightSyncLatestTurnStart())
+	require.Equal(t, lastTurn(journalDiffs(t, recovered), 3), recovered.StateMachine().HeightSyncLatestTurnStart())
 }
 
 func TestRecoverSession_SeedBeforeFirstDurableDiffStaysVolatile(t *testing.T) {
@@ -928,7 +944,7 @@ func TestRecoverSession_ChangedHeartbeatConfigAffectsFutureCadenceOnly(t *testin
 	firstTurn := session.Nonce() + 1
 
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	require.NotNil(t, heartbeatTxForTurn(session.Diffs(), firstTurn))
+	require.NotNil(t, heartbeatTxForTurn(journalDiffs(t, session), firstTurn))
 	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Record(firstTurn).State)
 	rootBefore, err := session.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
@@ -961,19 +977,19 @@ func TestRecoverSession_ChangedHeartbeatConfigAffectsFutureCadenceOnly(t *testin
 	height = 101
 	setSessionOraclesHeight(recoveredOracles, height)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.NotNil(t, heartbeatTxForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2)))
+	require.NotNil(t, heartbeatTxForTurn(journalDiffs(t, recovered), nthTurn(journalDiffs(t, recovered), 3, 2)))
 	require.Equal(t, heightsync.TurnComplete, recovered.HeartbeatTurnTracker().Latest().State)
 
 	now = now.Add(shortCfg.Interval - time.Millisecond)
 	height = 102
 	setSessionOraclesHeight(recoveredOracles, height)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.Nil(t, heartbeatTxForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 3)),
+	require.Nil(t, heartbeatTxForTurn(journalDiffs(t, recovered), nthTurn(journalDiffs(t, recovered), 3, 3)),
 		"future producer decisions should still honor the recovered overlay interval")
 
 	now = now.Add(2 * time.Millisecond)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.NotNil(t, heartbeatTxForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 3)),
+	require.NotNil(t, heartbeatTxForTurn(journalDiffs(t, recovered), nthTurn(journalDiffs(t, recovered), 3, 3)),
 		"after the recovered overlay interval elapses, the next turn should open")
 }
 
@@ -1003,7 +1019,7 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 
 	require.NoError(t, session.flushHeartbeatAckRounds(ctx))
 	require.Empty(t, session.PendingTxs())
-	require.Len(t, heightAcksForTurn(session.Diffs(), firstTurn, 3), len(hosts)-1)
+	require.Len(t, heightAcksForTurn(journalDiffs(t, session), firstTurn, 3), len(hosts)-1)
 	rec1 := session.HeartbeatTurnTracker().Record(firstTurn)
 	require.NotNil(t, rec1)
 	require.Equal(t, heightsync.TurnComplete, rec1.State,
@@ -1011,6 +1027,27 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 	require.Len(t, rec1.Acks, len(hosts)-1)
 
 	freshTarget := recoveryHeartbeatClients(t, group, hosts, user)[targetHostIdx]
+	// The gateway has already dropped the prefix every live cursor passed.
+	// Teach the restarted host that prefix from the store, then catch it up
+	// from the trimmed start. Rewinding the cursor to 0 would send a chain
+	// that no longer begins at nonce 1.
+	session.mu.Lock()
+	var floor uint64
+	if len(session.diffs) > 0 {
+		floor = session.diffs[0].Nonce - 1
+	}
+	session.mu.Unlock()
+	if floor > 0 {
+		recs, err := store.GetDiffs(session.escrowID, 1, floor)
+		require.NoError(t, err)
+		for _, rec := range recs {
+			_, err := freshTarget.(*InProcessClient).Host.HandleRequest(ctx, host.HostRequest{
+				Diffs: []types.Diff{rec.Diff},
+				Nonce: rec.Nonce,
+			})
+			require.NoError(t, err)
+		}
+	}
 	restartedTarget := &dropHeightAckTurnClient{
 		HostClient: freshTarget,
 		refNonce:   firstTurn,
@@ -1018,7 +1055,7 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 	}
 	session.clients[targetHostIdx] = restartedTarget
 	session.mu.Lock()
-	session.hostSyncNonce[targetHostIdx] = 0
+	session.hostSyncNonce[targetHostIdx] = floor
 	session.mu.Unlock()
 
 	require.NoError(t, session.sendCatchUp(ctx, targetHostIdx))
@@ -1030,7 +1067,7 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 	height = 101
 	now = now.Add(session.heartbeat.Config().TurnTimeout + time.Second)
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	hb2 := heartbeatTxForTurn(session.Diffs(), nthTurn(session.Diffs(), 3, 2))
+	hb2 := heartbeatTxForTurn(journalDiffs(t, session), nthTurn(journalDiffs(t, session), 3, 2))
 	require.NotNil(t, hb2)
 	statuses := syncVectorStatuses(hb2.SyncVector)
 	require.Equal(t, types.AckStatus_MISSING, statuses[targetHostIdx],
@@ -1041,10 +1078,10 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 		}
 		require.Equal(t, types.AckStatus_ACKED, statuses[slot], "slot %d", slot)
 	}
-	require.Len(t, heartbeatsForTurn(session.Diffs(), firstTurn, 3), len(hosts))
-	require.Len(t, heartbeatsForTurn(session.Diffs(), nthTurn(session.Diffs(), 3, 2), 3), len(hosts))
-	require.Empty(t, heartbeatsForTurn(session.Diffs(), nthTurn(session.Diffs(), 3, 3), 3))
-	require.Equal(t, lastTurn(session.Diffs(), 3), session.StateMachine().HeightSyncLatestTurnStart())
+	require.Len(t, heartbeatsForTurn(journalDiffs(t, session), firstTurn, 3), len(hosts))
+	require.Len(t, heartbeatsForTurn(journalDiffs(t, session), nthTurn(journalDiffs(t, session), 3, 2), 3), len(hosts))
+	require.Empty(t, heartbeatsForTurn(journalDiffs(t, session), nthTurn(journalDiffs(t, session), 3, 3), 3))
+	require.Equal(t, lastTurn(journalDiffs(t, session), 3), session.StateMachine().HeightSyncLatestTurnStart())
 	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Latest().State)
 	require.Empty(t, session.PendingTxs())
 }
@@ -1343,8 +1380,8 @@ func TestRecoverSession_EmptyLogWaitsForTheFirstHostStamp(t *testing.T) {
 	seedFloorByInference(t, recovered)
 	firstTurn := recovered.Nonce() + 1
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.NotNil(t, heartbeatTxForTurn(recovered.Diffs(), firstTurn))
-	require.Nil(t, heartbeatTxForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2)))
+	require.NotNil(t, heartbeatTxForTurn(journalDiffs(t, recovered), firstTurn))
+	require.Nil(t, heartbeatTxForTurn(journalDiffs(t, recovered), nthTurn(journalDiffs(t, recovered), 3, 2)))
 }
 
 func recoveryHeartbeatClients(
@@ -1815,7 +1852,7 @@ func TestRecoverSession_SnapshotOnly_RestoresSignatures(t *testing.T) {
 	}
 }
 
-func TestRecoverSession_SnapshotOnly_RestoresPendingTxDedupKeys(t *testing.T) {
+func TestRecoverSession_SnapshotOnly_ReseedsTrimmedPrefixKeys(t *testing.T) {
 	store := newTestStore(t)
 	var height uint64 = 100
 	now := time.Unix(1000, 0).UTC()
@@ -1851,23 +1888,26 @@ func TestRecoverSession_SnapshotOnly_RestoresPendingTxDedupKeys(t *testing.T) {
 	require.Zero(t, spy.replayedRecords(ackDiff.Nonce), "must use snapshot-only early return")
 	require.Empty(t, recovered.Diffs(), "snapshot-only recovery keeps diffs empty when all hosts are caught up")
 
+	ackTx := &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: acks[0]}}
+	recovered.mu.Lock()
+	_, seeded := recovered.appliedTxKeys[devshardTxKey(ackTx)]
+	recovered.mu.Unlock()
+	require.True(t, seeded, "a caught-up snapshot keeps no diffs, so the prefix ack is re-seeded from the journal")
+
 	rootBefore, err := recovered.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
 	require.NoError(t, recovered.ProcessResponse(int(acks[0].SlotId), &host.HostResponse{
-		Nonce: recovered.Nonce(),
-		Mempool: []*types.DevshardTx{
-			{Tx: &types.DevshardTx_HeightAck{HeightAck: acks[0]}},
-		},
+		Nonce:   recovered.Nonce(),
+		Mempool: []*types.DevshardTx{ackTx},
 	}, recovered.Nonce()))
-	require.Empty(t, heightAcksInTxs(recovered.PendingTxs()),
-		"duplicate height_ack from a durable pre-snapshot diff must not re-enter pending")
+	require.Empty(t, heightAcksInTxs(recovered.PendingTxs()), "an ack already in the journal is not re-queued")
 	require.Equal(t, ackDiff.Nonce, recovered.Nonce())
 	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
 	require.Equal(t, rootBefore, rootAfter)
 }
 
-func TestRecoverSession_SnapshotOnly_RestoresPendingTxDedupKeysForHostProposedTypes(t *testing.T) {
+func TestRecoverSession_SnapshotOnly_ReseedsHostTxKeys(t *testing.T) {
 	tests := []struct {
 		name string
 		tx   *types.DevshardTx
@@ -1909,18 +1949,19 @@ func TestRecoverSession_SnapshotOnly_RestoresPendingTxDedupKeysForHostProposedTy
 			recovered := recoverSnapshotOnlyWithDurableHostTx(t, tc.tx)
 			t.Cleanup(func() { _ = recovered.Close() })
 
-			rootBefore, err := recovered.StateMachine().ComputeStateRoot()
-			require.NoError(t, err)
+			key := devshardTxKey(tc.tx)
+			require.NotEmpty(t, key)
+			recovered.mu.Lock()
+			_, seeded := recovered.appliedTxKeys[key]
+			recovered.mu.Unlock()
+			require.True(t, seeded, "snapshot-only recovery re-seeds %s from the journal", tc.name)
+
 			require.NoError(t, recovered.ProcessResponse(0, &host.HostResponse{
 				Nonce:   recovered.Nonce(),
 				Mempool: []*types.DevshardTx{tc.tx},
 			}, recovered.Nonce()))
-			require.Empty(t, recovered.PendingTxs(),
-				"duplicate %s from a durable pre-snapshot diff must not re-enter pending", tc.name)
 			require.Equal(t, uint64(1), recovered.Nonce())
-			rootAfter, err := recovered.StateMachine().ComputeStateRoot()
-			require.NoError(t, err)
-			require.Equal(t, rootBefore, rootAfter)
+			require.Empty(t, recovered.PendingTxs(), "%s already in the journal is not re-queued", tc.name)
 		})
 	}
 }
@@ -2203,17 +2244,67 @@ func TestRecoverSession_NewFormatSnapshot_ProcessResponseUsesActualDiffNonce(t *
 	require.NoError(t, err)
 }
 
-// TestRecoverSession_LegacySnapshot_BackwardCompat verifies that a
-// snapshot blob written in the old bare-EscrowState format is loaded
-// successfully, that the host cursor is treated as unknown (forcing
-// full diff backfill into sess.diffs), and that the snapshot is
-// upgraded to the new wrapper format on disk so subsequent restarts
-// pay the full-backfill cost only once.
-func TestRecoverSession_LegacySnapshot_BackwardCompat(t *testing.T) {
+// A bare EscrowState snapshot is not a snapshot this process restores. Recovery
+// replays the journal from nonce 1, so the tampered balance in the blob does
+// not become the live state, and sess.diffs is the replay, not a backfill
+// under that blob.
+func TestRecoverSession_BareSnapshotIsIgnored(t *testing.T) {
+	session, recSM, honest := recoverIgnoringSnapshot(t, func(honest types.EscrowState) []byte {
+		honest.Balance++
+		bare, err := json.Marshal(honest)
+		require.NoError(t, err)
+		return bare
+	})
+	require.Equal(t, honest.Balance, recSM.SnapshotState().Balance)
+	require.Len(t, session.Diffs(), int(honest.LatestNonce))
+	session.mu.Lock()
+	cursorLen := len(session.hostSyncNonce)
+	session.mu.Unlock()
+	require.Zero(t, cursorLen)
+
+	_, snapData, err := session.store.LoadSnapshot("escrow-1")
+	require.NoError(t, err)
+	var blob sessionSnapshot
+	require.NoError(t, json.Unmarshal(snapData, &blob))
+	require.NotNil(t, blob.State)
+	require.Equal(t, honest.Balance, blob.State.Balance, "the replay save replaces the bare blob")
+}
+
+// A wrapped snapshot with no host_sync_nonce is the same miss: the cursor is
+// not unknown-zero, and recovery does not restore the blob.
+func TestRecoverSession_SnapshotWithoutCursorIsIgnored(t *testing.T) {
+	session, recSM, honest := recoverIgnoringSnapshot(t, func(honest types.EscrowState) []byte {
+		honest.Balance++
+		blob, err := json.Marshal(sessionSnapshot{State: &honest})
+		require.NoError(t, err)
+		return blob
+	})
+	require.Equal(t, honest.Balance, recSM.SnapshotState().Balance)
+	require.Len(t, session.Diffs(), int(honest.LatestNonce))
+	require.Equal(t, uint64(1), session.Diffs()[0].Nonce)
+}
+
+// A cursor that skips a host is incomplete. Recovery must not treat the
+// missing host as cursor 0 and backfill 1..snapshot under the restored blob.
+func TestRecoverSession_IncompleteCursorIsIgnored(t *testing.T) {
+	session, recSM, honest := recoverIgnoringSnapshot(t, func(honest types.EscrowState) []byte {
+		honest.Balance++
+		blob, err := json.Marshal(sessionSnapshot{
+			State:         &honest,
+			HostSyncNonce: map[int]uint64{0: honest.LatestNonce},
+		})
+		require.NoError(t, err)
+		return blob
+	})
+	require.Equal(t, honest.Balance, recSM.SnapshotState().Balance)
+	require.Len(t, session.Diffs(), int(honest.LatestNonce))
+}
+
+func recoverIgnoringSnapshot(t *testing.T, encode func(types.EscrowState) []byte) (*Session, *state.StateMachine, types.EscrowState) {
+	t.Helper()
 	store := newTestStore(t)
 	numHosts := 3
 	numInferences := 5
-
 	group, hosts, user := setupRecoverableSession(t, numHosts, numInferences, store)
 
 	verifier := signing.NewSecp256k1Verifier()
@@ -2225,26 +2316,146 @@ func TestRecoverSession_LegacySnapshot_BackwardCompat(t *testing.T) {
 		_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
 		require.NoError(t, err)
 	}
-	bareData, err := json.Marshal(sm.ExportState())
-	require.NoError(t, err)
-	require.NoError(t, store.SaveSnapshot("escrow-1", uint64(numInferences), bareData))
+	honest := sm.ExportState()
+	require.NoError(t, store.SaveSnapshot("escrow-1", uint64(numInferences), encode(*honest)))
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), session.Nonce())
+	return session, recSM, *honest
+}
+
+func TestRecoverSession_ReplaysOnePageAtATime(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+	numInferences := 4
+	group, hosts, user := setupRecoverableSession(t, numHosts, numInferences, store)
+	verifier := signing.NewSecp256k1Verifier()
+	spy := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
+
+	session, sm, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, uint64(numInferences), session.Nonce())
+	require.Len(t, session.Diffs(), numInferences)
+
+	require.Equal(t, [][2]uint64{{1, 4}, {1, 4}}, spy.diffRanges(),
+		"replay and the validation-obs rebuild each read the four-nonce journal as one page")
+	require.Equal(t, 1, spy.clearCalls())
+
+	records, err := store.GetDiffs("escrow-1", 1, uint64(numInferences))
+	require.NoError(t, err)
+	fresh := newTestStore(t)
+	require.NoError(t, fresh.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", EpochID: 1, Version: testutil.RuntimeTestVersion,
+	}))
+	require.NoError(t, storage.RebuildValidationObsFromDiffs(fresh, "escrow-1", records, storage.SealedInferenceIDsSorted(sm.ExportSealedNonces())))
+	want, err := fresh.GetValidationObservability("escrow-1")
+	require.NoError(t, err)
+	got, err := store.GetValidationObservability("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, want, got, "a paged full-replay rebuild matches a one-shot rebuild")
+}
+
+func TestRecoverSession_CursorZeroBackfillIsPaged(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+	numInferences := 4
+	group, hosts, user := setupRecoverableSession(t, numHosts, numInferences, store)
+
+	verifier := signing.NewSecp256k1Verifier()
+	config := testutil.DefaultConfig(numHosts)
+	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	records, err := store.GetDiffs("escrow-1", 1, uint64(numInferences))
+	require.NoError(t, err)
+	for _, rec := range records {
+		_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
+		require.NoError(t, err)
+	}
+	saveSnapshot(store, sm, "escrow-1", uint64(numInferences), map[int]uint64{
+		0: 0,
+		1: uint64(numInferences),
+		2: uint64(numInferences),
+	})
+
+	spy := &replaySpyStore{Storage: store}
+	session, _, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, uint64(numInferences), session.Nonce())
+	require.Zero(t, spy.replayedRecords(uint64(numInferences)), "snapshot is current, so nothing after it is replayed")
+
+	diffs := session.Diffs()
+	require.Len(t, diffs, numInferences)
+	require.Equal(t, uint64(1), diffs[0].Nonce, "host 0 at cursor 0 is backfilled from nonce 1")
+
+	require.Equal(t, [][2]uint64{{1, 4}, {1, 4}, {1, 4}}, spy.diffRanges(),
+		"the height-sync fold, the cursor-0 backfill and the applied-key reload each read one page; validation obs is not rebuilt")
+}
+
+// A snapshot restore does not replay from nonce 1, so it must not clear the
+// obs rows the live path already wrote. Applied keys are paged back from the
+// whole journal, including the prefix sess.diffs no longer holds.
+func TestRecoverSession_SnapshotPathSkipsObsRebuild(t *testing.T) {
+	store := newTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = testutil.MustGenerateKey(t)
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
+	require.NoError(t, store.AppendDiff("escrow-1", validationRecord(1, 1, 0)))
+	require.NoError(t, store.AppendDiff("escrow-1", validationRecord(2, 2, 0)))
+	require.NoError(t, store.RecordValidationsAppliedOnce("escrow-1", []storage.ValidationObsEntry{
+		{InferenceID: 9, SlotID: 1},
+	}))
+
+	snap := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier).ExportState()
+	snap.LatestNonce = 2
+	writeSnapshot(store, "escrow-1", 2, snap, map[int]uint64{0: 1, 1: 2, 2: 2}, nil, nil, nil)
+
+	spy := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
+	session, _, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), session.Nonce())
+	require.Len(t, session.Diffs(), 1)
+	require.Equal(t, uint64(2), session.Diffs()[0].Nonce)
+	require.Zero(t, spy.clearCalls(), "a snapshot restore must not clear durable obs rows")
+
+	rows, err := store.GetValidationObservability("escrow-1")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, uint32(1), rows[0].SlotID)
+	require.Equal(t, uint32(1), rows[0].CompletedValidations)
+
+	require.Equal(t, [][2]uint64{{1, 2}, {2, 2}, {1, 2}}, spy.diffRanges(),
+		"height-sync folds 1..snapshot, backfill reads the stranded suffix, then applied keys page the journal")
 
 	session.mu.Lock()
-	cursorLen := len(session.hostSyncNonce)
+	_, prefix := session.appliedTxKeys["validation:1:0"]
+	_, suffix := session.appliedTxKeys["validation:2:0"]
 	session.mu.Unlock()
-	require.Equal(t, 0, cursorLen, "legacy snapshot must produce empty cursor")
+	require.True(t, prefix, "a tx only in the trimmed prefix is re-seeded from the journal")
+	require.True(t, suffix, "a tx in the backfill suffix is re-seeded")
+}
 
-	require.Len(t, session.Diffs(), numInferences, "legacy recovery must load full diff history into sess.diffs")
-
-	_, snapData, err := store.LoadSnapshot("escrow-1")
-	require.NoError(t, err)
-	var blob sessionSnapshot
-	require.NoError(t, json.Unmarshal(snapData, &blob))
-	require.NotNil(t, blob.State, "snapshot must be upgraded to wrapper format on legacy recovery")
+func validationRecord(nonce, inferenceID uint64, slot uint32) types.DiffRecord {
+	return types.DiffRecord{Diff: types.Diff{
+		Nonce: nonce,
+		Txs: []*types.DevshardTx{{Tx: &types.DevshardTx_Validation{Validation: &types.MsgValidation{
+			InferenceId:   inferenceID,
+			ValidatorSlot: slot,
+			EscrowId:      "escrow-1",
+		}}}},
+	}}
 }
 
 // legacyMetaWrapper wraps a Storage and forces meta.Version to "" for a
@@ -2506,8 +2717,6 @@ func TestDecodeSnapshot_HeightSyncFloor(t *testing.T) {
 
 	legacy, err := json.Marshal(types.EscrowState{EscrowID: "escrow-2"})
 	require.NoError(t, err)
-	st2, _, _, _, floor2, err := decodeSnapshot(legacy)
-	require.NoError(t, err)
-	require.Equal(t, "escrow-2", st2.EscrowID)
-	require.Nil(t, floor2)
+	_, _, _, _, _, err = decodeSnapshot(legacy)
+	require.ErrorContains(t, err, "snapshot state missing")
 }
