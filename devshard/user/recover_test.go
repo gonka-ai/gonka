@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -2270,34 +2271,78 @@ func TestRecoverSession_BareSnapshotIsIgnored(t *testing.T) {
 	require.Equal(t, honest.Balance, blob.State.Balance, "the replay save replaces the bare blob")
 }
 
-// A wrapped snapshot with no host_sync_nonce is the same miss: the cursor is
-// not unknown-zero, and recovery does not restore the blob.
-func TestRecoverSession_SnapshotWithoutCursorIsIgnored(t *testing.T) {
-	session, recSM, honest := recoverIgnoringSnapshot(t, func(honest types.EscrowState) []byte {
-		honest.Balance++
-		blob, err := json.Marshal(sessionSnapshot{State: &honest})
-		require.NoError(t, err)
-		return blob
-	})
-	require.Equal(t, honest.Balance, recSM.SnapshotState().Balance)
-	require.Len(t, session.Diffs(), int(honest.LatestNonce))
+// A snapshot taken before any host answered has no host_sync_nonce. It is
+// restored with every host at 0, and the backfill starts at nonce 1.
+func TestRecoverSession_SnapshotWithoutCursorIsRestored(t *testing.T) {
+	const n = 5
+	store := newTestStore(t)
+	group, hosts, user := setupRecoverableSession(t, 3, n, store)
+	saveHonestSnapshot(t, store, group, user, n, nil)
+
+	session, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion,
+		group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, map[int]uint64{0: 0, 1: 0, 2: 0}, hostCursorOf(session))
+	require.Len(t, session.Diffs(), n)
 	require.Equal(t, uint64(1), session.Diffs()[0].Nonce)
 }
 
-// A cursor that skips a host is incomplete. Recovery must not treat the
-// missing host as cursor 0 and backfill 1..snapshot under the restored blob.
-func TestRecoverSession_IncompleteCursorIsIgnored(t *testing.T) {
-	session, recSM, honest := recoverIgnoringSnapshot(t, func(honest types.EscrowState) []byte {
-		honest.Balance++
-		blob, err := json.Marshal(sessionSnapshot{
-			State:         &honest,
-			HostSyncNonce: map[int]uint64{0: honest.LatestNonce},
-		})
+// A host that never answered is missing from the cursor. The snapshot is still
+// restored, the hosts that answered keep their cursors, and the snapshot on
+// disk is not replaced, so every later restart restores it again.
+func TestRecoverSession_SilentHostKeepsTheSnapshot(t *testing.T) {
+	const n = 5
+	store := newTestStore(t)
+	group, hosts, user := setupRecoverableSession(t, 3, n, store)
+	answered := map[int]uint64{0: n, 1: n}
+	saveHonestSnapshot(t, store, group, user, n, answered)
+
+	for restart := range 2 {
+		session, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion,
+			group, buildRecoveryClients(t, hosts, group, user))
 		require.NoError(t, err)
-		return blob
-	})
-	require.Equal(t, honest.Balance, recSM.SnapshotState().Balance)
-	require.Len(t, session.Diffs(), int(honest.LatestNonce))
+		require.Equal(t, map[int]uint64{0: n, 1: n, 2: 0}, hostCursorOf(session), "restart %d", restart)
+		require.Len(t, session.Diffs(), n, "restart %d: the silent host is backfilled from nonce 1", restart)
+
+		_, data, err := store.LoadSnapshot("escrow-1")
+		require.NoError(t, err)
+		_, cursor, _, _, _, err := decodeSnapshot(data)
+		require.NoError(t, err)
+		require.Equal(t, answered, cursor, "restart %d: the snapshot keeps the answering hosts' cursors", restart)
+	}
+}
+
+// A cursor past the snapshot nonce is a host claim the journal cannot back.
+func TestRecoverSession_CursorPastSnapshotIsClamped(t *testing.T) {
+	const n = 5
+	store := newTestStore(t)
+	group, hosts, user := setupRecoverableSession(t, 3, n, store)
+	saveHonestSnapshot(t, store, group, user, n, map[int]uint64{0: n + 50, 1: n, 2: n})
+
+	session, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion,
+		group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, map[int]uint64{0: n, 1: n, 2: n}, hostCursorOf(session))
+}
+
+// saveHonestSnapshot replays the journal through 1..nonce and saves that state
+// with cursor.
+func saveHonestSnapshot(t *testing.T, store storage.Storage, group []types.SlotAssignment, user *signing.Secp256k1Signer, nonce uint64, cursor map[int]uint64) {
+	t.Helper()
+	sm := newTestStateMachine(t, "escrow-1", testutil.DefaultConfig(len(group)), group, 100000, user.Address(), signing.NewSecp256k1Verifier())
+	records, err := store.GetDiffs("escrow-1", 1, nonce)
+	require.NoError(t, err)
+	for _, rec := range records {
+		_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
+		require.NoError(t, err)
+	}
+	saveSnapshot(store, sm, "escrow-1", nonce, cursor)
+}
+
+func hostCursorOf(session *Session) map[int]uint64 {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	return maps.Clone(session.hostSyncNonce)
 }
 
 func recoverIgnoringSnapshot(t *testing.T, encode func(types.EscrowState) []byte) (*Session, *state.StateMachine, types.EscrowState) {

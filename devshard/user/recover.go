@@ -72,9 +72,9 @@ const snapshotInterval = 500
 // the snapshot at restart time then reject with "invalid nonce: must be
 // sequential: expected M, got N" because we never re-send the gap diffs.
 //
-// A blob with no state, or a cursor that does not name every host, is not
-// restored. Recovery replays from nonce 1. A host recorded at cursor 0 is a
-// real cursor: that host's prefix is backfilled.
+// A blob with no state is not restored; recovery replays from nonce 1. A host
+// the cursor does not name has never answered, so it is at 0 and its prefix
+// is backfilled from the store.
 type sessionSnapshot struct {
 	State            *types.EscrowState     `json:"state"`
 	HostSyncNonce    map[int]uint64         `json:"host_sync_nonce,omitempty"`
@@ -96,25 +96,20 @@ func decodeSnapshot(data []byte) (*types.EscrowState, map[int]uint64, map[uint64
 	return blob.State, blob.HostSyncNonce, blob.CommittedEntries, blob.SealedNonces, blob.HeightSyncFloor, nil
 }
 
-// hostCursorComplete reports whether cursor names every host in the group.
-// A missing map, or a map that skips a host, is not a cursor: recovery must
-// not treat the gap as "host is at 0" and backfill 1..snapshot under a
-// restored state. A present 0 is a real cursor.
-func hostCursorComplete(cursor map[int]uint64, groupSize int) bool {
-	if cursor == nil || groupSize <= 0 {
-		return false
-	}
+// restoredHostCursor names every host in the group. A host the snapshot does
+// not name is at 0. A value past snapNonce can only be a host's unverified
+// claim, so it is clamped: no host can hold a nonce the journal does not.
+func restoredHostCursor(cursor map[int]uint64, groupSize int, snapNonce uint64) map[int]uint64 {
+	out := make(map[int]uint64, groupSize)
 	for h := 0; h < groupSize; h++ {
-		if _, ok := cursor[h]; !ok {
-			return false
-		}
+		out[h] = min(cursor[h], snapNonce)
 	}
-	return true
+	return out
 }
 
-// minHostSyncNonce returns the smallest cursor value across a complete host
-// map. Callers must pass a cursor hostCursorComplete accepts. A host at 0
-// pulls the minimum to 0, and recovery backfills that host from nonce 1.
+// minHostSyncNonce returns the smallest cursor value across the group. A
+// missing host counts as 0. A host at 0 pulls the minimum to 0, and recovery
+// backfills that host from nonce 1.
 func minHostSyncNonce(cursor map[int]uint64, groupSize int) uint64 {
 	if len(cursor) == 0 || groupSize == 0 {
 		return 0
@@ -194,9 +189,7 @@ func RecoverSession(
 		return finishRecover(sess, sm, 1)
 	}
 
-	// Try to restore from a snapshot to skip replaying old diffs. A blob
-	// that does not carry a cursor for every host is ignored: replaying
-	// from nonce 1 is the recovery, not a backfill under restored state.
+	// Try to restore from a snapshot to skip replaying old diffs.
 	var snapshotCursor map[int]uint64
 	snapshotRestored := false
 	replayFrom := uint64(1)
@@ -205,9 +198,6 @@ func RecoverSession(
 		snapState, cursor, committedEntries, sealedNonces, floorProto, decodeErr := decodeSnapshot(snapData)
 		if decodeErr != nil {
 			log.Printf("recover_session escrow=%s snapshot_nonce=%d unmarshal_failed=%v (replaying from 1)", escrowID, snapNonce, decodeErr)
-		} else if !hostCursorComplete(cursor, len(group)) {
-			log.Printf("recover_session escrow=%s snapshot_nonce=%d incomplete_host_cursor=%d (replaying from 1)",
-				escrowID, snapNonce, len(cursor))
 		} else {
 			// A rejected blob degrades to a journal replay; if that cannot run
 			// either, RestoreStateWithFloor fails closed rather than serving
@@ -225,7 +215,7 @@ func RecoverSession(
 			sm.RestoreSealedNonces(sealedNonces)
 			replayFrom = snapNonce + 1
 			sess.nonce = snapNonce
-			snapshotCursor = cursor
+			snapshotCursor = restoredHostCursor(cursor, len(group), snapNonce)
 			snapshotRestored = true
 			log.Printf("recover_session escrow=%s snapshot_restored nonce=%d replay_from=%d total=%d skipped=%d host_cursors=%d",
 				escrowID, snapNonce, replayFrom, meta.LatestNonce, snapNonce, len(cursor))
@@ -245,11 +235,11 @@ func RecoverSession(
 	// non-contiguous slice and the host rejects (it requires sequential
 	// nonces, only silent-skipping diffs <= its currentNonce).
 	//
-	// A complete cursor whose slowest host is behind snapNonce backfills
-	// that suffix into sess.diffs. A host at 0 is included: that is a real
-	// cursor, and the read is paged. An ignored snapshot (future nonce,
-	// decode failure, incomplete cursor) replays from 1, which already
-	// covers the range, so this block does not run.
+	// A cursor whose slowest host is behind snapNonce backfills that suffix
+	// into sess.diffs. A host at 0, named or not, is included; the read is
+	// paged and sess.diffs stays capped. An ignored snapshot (future nonce,
+	// decode failure) replays from 1, which already covers the range, so
+	// this block does not run.
 	if snapshotRestored {
 		backfillFrom := minHostSyncNonce(sess.hostSyncNonce, len(group)) + 1
 		if backfillFrom <= snapNonce {

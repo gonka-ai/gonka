@@ -38,6 +38,10 @@ var TimeoutBuffer = 5 * time.Second
 // success would hide a caller bug on the streaming path.
 var ErrNilHostResponse = errors.New("nil host response")
 
+// ErrHostNonceAhead is returned when a host reports a nonce the session has
+// not composed. The gateway is the only sequencer, so such a claim is false.
+var ErrHostNonceAhead = errors.New("host nonce ahead of session")
+
 // MaxConcurrentVerifierRPCs caps how many simultaneous VerifyTimeout RPCs the
 // proxy may have open against the same verifier host. CollectTimeoutVotes fans
 // out one VerifyTimeout per verifier per timed-out nonce; the cap is
@@ -839,6 +843,12 @@ func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool) {
 func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenceNonce uint64) error {
 	if resp == nil {
 		return ErrNilHostResponse
+	}
+	// A response without a state hash is not checked against a root, so its
+	// nonce is the only bound on the host's cursor.
+	if resp.Nonce > s.nonce {
+		return fmt.Errorf("%w: host %d at nonce %d (session nonce %d)",
+			ErrHostNonceAhead, hostIdx, resp.Nonce, s.nonce)
 	}
 	// Verify state hash if the host returned one. Contact/overlap wait until
 	// verification succeeds so a bad hash cannot inflate monitoring.
