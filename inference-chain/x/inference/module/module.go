@@ -35,7 +35,6 @@ import (
 	"github.com/productscience/inference/x/inference/calculations"
 	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/epochgroup"
-	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
 
 	// this line is used by starport scaffolding # 1
@@ -1455,27 +1454,12 @@ func (am AppModule) computePrice(ctx context.Context, upcomingEpoch types.Epoch,
 }
 
 func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types.ActiveParticipant, params *types.ValidationParams) (int64, error) {
-	summaries := am.keeper.GetEpochPerformanceSummariesByParticipant(ctx, p.Index)
-
-	reputationContext := calculations.ReputationContext{
-		EpochCount:           int64(len(summaries)),
-		EpochMissPercentages: make([]decimal.Decimal, len(summaries)),
-		ValidationParams:     params,
+	epochCount, missSum, err := am.keeper.ReputationMissTotals(ctx, p.Index, params.MissPercentageCutoff.ToDecimal())
+	if err != nil {
+		return 0, err
 	}
 
-	for i, summary := range summaries {
-		inferenceCount := decimal.NewFromInt(int64(summary.InferenceCount))
-		if inferenceCount.IsZero() {
-			reputationContext.EpochMissPercentages[i] = decimal.Zero
-			continue
-		}
-
-		missed := decimal.NewFromInt(int64(summary.MissedRequests))
-		reputationMetric := missed.Div(inferenceCount)
-		reputationContext.EpochMissPercentages[i] = reputationMetric
-	}
-
-	reputation := calculations.CalculateReputation(&reputationContext)
+	reputation := calculations.CalculateReputationFromMissSum(epochCount, missSum, params)
 	am.LogInfo("ReputationCalculated", types.EpochGroup, "participantIndex", p.Index, "reputation", reputation)
 
 	return reputation, nil
