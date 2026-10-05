@@ -57,6 +57,7 @@ type sessionData struct {
 	inferences             map[uint64]InferenceRow
 	inferenceValidationObs map[uint64]map[uint32]SlotValidationObs
 	sealedValidationObs    map[uint64]map[uint32]SlotValidationObs
+	obsRebuildPending      bool
 }
 
 // Memory is an in-memory storage implementation for testing.
@@ -382,6 +383,34 @@ func (m *Memory) ClearValidationObs(escrowID string) error {
 	s.inferenceValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
 	s.sealedValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
 	return nil
+}
+
+func (m *Memory) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	s.obsRebuildPending = pending
+	return nil
+}
+
+func (m *Memory) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return false, fmt.Errorf("session %s not found", escrowID)
+	}
+	return s.obsRebuildPending, nil
+}
+
+// LockValidationObsRebuild always succeeds: a Memory store has one owner.
+func (m *Memory) LockValidationObsRebuild(string) (func(), bool, error) {
+	return func() {}, true, nil
 }
 
 // ImportValidationObs replaces live/sealed validation-obs maps for an escrow

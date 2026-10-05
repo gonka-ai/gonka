@@ -103,6 +103,17 @@ type Storage interface {
 	// ClearValidationObs removes all live and sealed validation observability
 	// rows for an escrow. Used when rebuilding obs from the diff journal.
 	ClearValidationObs(escrowID string) error
+	// SetValidationObsRebuildPending marks whether the escrow's obs rows are
+	// mid-rebuild. It is stored on the session row, so it survives a restart
+	// and is dropped with the session.
+	SetValidationObsRebuildPending(escrowID string, pending bool) error
+	// ValidationObsRebuildPending reports a rebuild that cleared the obs rows
+	// and has not finished. A session without the mark reads false.
+	ValidationObsRebuildPending(escrowID string) (bool, error)
+	// LockValidationObsRebuild takes the escrow's rebuild lock without
+	// waiting. acquired is false when another process holds it. The lock is
+	// released by unlock or by the holder's death, never by a stale row.
+	LockValidationObsRebuild(escrowID string) (unlock func(), acquired bool, err error)
 	// RecordValidationsAppliedOnce records required+completed=1 for each
 	// (inference_id, slot_id) entry at most once per escrow epoch, reusing the
 	// devshard_inference_validation_obs unique key as the dedup ledger via

@@ -289,6 +289,18 @@ func (m *ManagedStorage) ClearValidationObs(escrowID string) error {
 	return m.inner.ClearValidationObs(escrowID)
 }
 
+func (m *ManagedStorage) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	return m.inner.SetValidationObsRebuildPending(escrowID, pending)
+}
+
+func (m *ManagedStorage) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	return m.inner.ValidationObsRebuildPending(escrowID)
+}
+
+func (m *ManagedStorage) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	return m.inner.LockValidationObsRebuild(escrowID)
+}
+
 func (m *ManagedStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
 	return m.inner.RecordValidationsAppliedOnce(escrowID, entries)
 }

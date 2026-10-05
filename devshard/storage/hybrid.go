@@ -865,6 +865,30 @@ func (h *HybridStorage) ClearValidationObs(escrowID string) error {
 	return b.ClearValidationObs(escrowID)
 }
 
+func (h *HybridStorage) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.SetValidationObsRebuildPending(escrowID, pending)
+}
+
+func (h *HybridStorage) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return false, err
+	}
+	return b.ValidationObsRebuildPending(escrowID)
+}
+
+func (h *HybridStorage) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, false, err
+	}
+	return b.LockValidationObsRebuild(escrowID)
+}
+
 func (h *HybridStorage) Acquire(ctx context.Context, escrowID string, inferenceID, epochID uint64, owner LeaseOwner) (bool, error) {
 	b, err := h.routed(escrowID)
 	if err != nil {

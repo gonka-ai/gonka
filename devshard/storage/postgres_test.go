@@ -186,6 +186,35 @@ func TestPostgres_SealedInferenceBulkInsert(t *testing.T) {
 func TestPostgres_ValidationObsBatchDrain(t *testing.T) {
 	runValidationObsBatchDrain(t, newTestPostgres(t))
 }
+func TestPostgres_ValidationObsRebuildPending(t *testing.T) {
+	runValidationObsRebuildPending(t, newTestPostgres(t))
+}
+
+// Two handles on one database stand in for two replicas: the rebuild lock is
+// exclusive across them, and unlocking hands it to the other.
+func TestPostgres_ValidationObsRebuildLockIsExclusiveAcrossPools(t *testing.T) {
+	first := newTestPostgres(t)
+	require.NoError(t, first.CreateSession(defaultParams()))
+
+	second, err := NewPostgres(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+	require.NoError(t, second.WaitReady(context.Background()))
+
+	unlock, acquired, err := first.LockValidationObsRebuild("escrow-1")
+	require.NoError(t, err)
+	require.True(t, acquired)
+
+	_, acquired, err = second.LockValidationObsRebuild("escrow-1")
+	require.NoError(t, err)
+	require.False(t, acquired, "a second replica must not rebuild while the first holds the lock")
+
+	unlock()
+	unlockSecond, acquired, err := second.LockValidationObsRebuild("escrow-1")
+	require.NoError(t, err)
+	require.True(t, acquired, "closing the holder's connection releases the lock")
+	unlockSecond()
+}
 func TestPostgres_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestPostgres(t))
 }

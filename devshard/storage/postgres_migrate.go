@@ -218,6 +218,13 @@ ALTER TABLE devshard_validation_leases
     ADD COLUMN IF NOT EXISTS instance_id TEXT NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS hostname    TEXT NOT NULL DEFAULT ''`},
 	},
+	{
+		ID:   16,
+		Name: "devshard_sessions_obs_rebuild_pending",
+		Statements: []string{`
+ALTER TABLE devshard_sessions
+    ADD COLUMN IF NOT EXISTS obs_rebuild_pending BOOLEAN NOT NULL DEFAULT FALSE`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.
