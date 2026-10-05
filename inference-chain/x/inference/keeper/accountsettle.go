@@ -74,14 +74,7 @@ func (k *Keeper) loadBitcoinRewardInputs(ctx context.Context, epochIndex uint64)
 	}
 
 	participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, epochIndex, data.ValidationWeights)
-	rewardTransfers, err := k.GetDelegationRewardTransfersForEpoch(ctx, epochIndex)
-	if err != nil {
-		return nil, true, err
-	}
-	rewardPenalties, err := k.GetDelegationRewardPenaltiesForEpoch(ctx, epochIndex)
-	if err != nil {
-		return nil, true, err
-	}
+	rewardTransfers, rewardPenalties := k.GetDelegationRewardsForEpoch(ctx, epochIndex)
 	validationParams := params.ValidationParams
 	if validationParams == nil {
 		validationParams = types.DefaultValidationParams()
