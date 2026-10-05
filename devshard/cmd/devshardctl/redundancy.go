@@ -34,6 +34,20 @@ import (
 // offending host is recorded as non-responsive in the local PerfTracker.
 var errEmptyStream = errors.New("empty content stream")
 
+// errStreamStalled marks an attempt whose upstream SSE stream started and then
+// went silent for InterChunkStallTimeout without another forwarded event. The
+// attempt's context is cancelled on the deadline, which unwinds
+// transport.parseSSEResponse and closes the response body; this sentinel
+// replaces the bare context.Canceled it would otherwise surface so the race can
+// classify the stall as a host failure rather than a client-side abort.
+//
+// Deliberately distinct from errEmptyStream: an empty stream forwarded nothing
+// at all, while a stalled stream stops part-way through. Whether the stall can
+// be retried behind the client turns on inflight.clientVisible, not on the
+// sentinel: the two are orthogonal, and a stall that never reached the client
+// is retryable even though it is not empty.
+var errStreamStalled = errors.New("stream stalled: no meaningful SSE event within inter-chunk timeout")
+
 // Fail-closed when every attempted host receipts (or never receipts) and none
 // produce a first token, with no unused host left to start. Always-stream
 // first-token / receipt timers are failover triggers; at the attempt limit they
@@ -835,19 +849,52 @@ type inflight struct {
 	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
 	receiptCh       chan struct{} // closed when receipt arrives
 
-	tokenOnce         sync.Once
-	firstTokenNano    atomic.Int64 // unix nano; 0 means no chunk of any kind yet
-	firstTokenCh      chan struct{}
-	outputChunks      atomic.Int64
-	contentChunks     atomic.Int64
-	outputBytes       atomic.Int64
-	lastChunkAt       atomic.Int64
-	maxChunkGap       atomic.Int64
-	maxChunkGapAt     atomic.Int64
-	firstContentNano  atomic.Int64
-	stallMu           sync.Mutex
-	stallActive       bool
-	stalls            []attemptStall
+	tokenOnce        sync.Once
+	firstTokenNano   atomic.Int64 // unix nano; 0 means no chunk of any kind yet
+	firstTokenCh     chan struct{}
+	outputChunks     atomic.Int64
+	contentChunks    atomic.Int64
+	outputBytes      atomic.Int64
+	lastChunkAt      atomic.Int64
+	maxChunkGap      atomic.Int64
+	maxChunkGapAt    atomic.Int64
+	firstContentNano atomic.Int64
+	// streamTerminated is set once a `data: [DONE]` line has been forwarded to
+	// the client. Upstream then tails the body with devshard_meta /
+	// devshard_receipt, which are consumed by the transport and never reach the
+	// race writer, so lastChunkAt freezes at the terminator. Without this flag a
+	// 60s inter-chunk deadline would fire during a healthy meta tail and cancel
+	// an answer the client has already fully received.
+	streamTerminated atomic.Bool
+	// clientVisible is set once this attempt has written bytes to the client's
+	// response writer. It is the only correct gate for "can this attempt still
+	// be retried": content that this attempt classified but never forwarded (a
+	// loser's suppressed stream, a winner whose client already detached) is not
+	// on the wire, so cancelling the attempt costs the client nothing.
+	// contentChunks is emphatically NOT that gate -- it counts content parsed
+	// from this attempt's own stream, including streams nobody will ever see.
+	clientVisible atomic.Bool
+	stallMu       sync.Mutex
+	stallActive   bool
+	stalls        []attemptStall
+	// stallLogged is set once the observational stall log has fired for the
+	// current silent episode and cleared when the next chunk resumes the
+	// stream. It is what makes the log threshold (30s) and the cancel
+	// threshold (InterChunkStallTimeout, 60s) two distinct deadlines on the
+	// same sliding anchor instead of both landing on the log threshold.
+	stallLogged bool
+	// stallCancelIssued is monotonic for the life of the attempt: once the
+	// inter-chunk cancel has been fired, no further stall deadline is armed.
+	// Separate from stallActive because finishActiveStallLocked legitimately
+	// re-arms the episode on a later silence, and a second cancel would be a
+	// double-cancel of an already-unwound attempt.
+	stallCancelIssued bool
+	// stallCancelReason records why the attempt's context was cancelled when the
+	// cancel came from the inter-chunk stall deadline rather than the client or
+	// the race finalizer. The send goroutine reads it to replace the bare
+	// context.Canceled that unwinding SendOnly produces with errStreamStalled,
+	// so the race classifies a stall as a retryable host failure.
+	stallCancelReason atomic.Value // string
 	forwardedLog      sync.Once
 	suppressedLog     sync.Once
 	ctxCancelledLog   sync.Once
@@ -1036,14 +1083,29 @@ func (inf *inflight) finishActiveStallLocked(now time.Time) {
 		return
 	}
 	inf.stallActive = false
+	// The stream resumed, so the next silence is a new episode and must be able
+	// to log again. stallCancelIssued stays latched: it guards a one-shot cancel
+	// for the life of the attempt, not per episode.
+	inf.stallLogged = false
 	idx := len(inf.stalls) - 1
 	if inf.stalls[idx].EndTime.IsZero() {
 		inf.stalls[idx].EndTime = now
 	}
 }
 
+// startInterChunkStall records the opening of a silent episode on this attempt
+// and marks the observational log as delivered. It reports false when the
+// attempt is not eligible (probe, finished, no content yet, already an open
+// episode) or when the log threshold has not elapsed yet.
+//
+// Recording the log does NOT suppress the cancel deadline; both are derived
+// independently in interChunkStallDeadline so that the log at 30s and the
+// cancel at InterChunkStallTimeout (60s) are two deadlines on one anchor.
 func (inf *inflight) startInterChunkStall(now time.Time) (attemptStall, bool) {
 	if inf == nil || inf.probe || inflightDone(inf) || InterChunkStallLogThreshold <= 0 {
+		return attemptStall{}, false
+	}
+	if inf.streamTerminated.Load() {
 		return attemptStall{}, false
 	}
 	lastChunkAt := inf.lastChunkAt.Load()
@@ -1072,7 +1134,82 @@ func (inf *inflight) startInterChunkStall(now time.Time) (attemptStall, bool) {
 	}
 	inf.stalls = append(inf.stalls, rec)
 	inf.stallActive = true
+	inf.stallLogged = true
 	return rec, true
+}
+
+// stallCancelExpired reports whether the inter-chunk cancel threshold
+// (InterChunkStallTimeout) has elapsed since the last meaningful SSE event on
+// this attempt. It is the gate for actually aborting the upstream request; the
+// log threshold deliberately plays no part.
+func (inf *inflight) stallCancelExpired(now time.Time) bool {
+	if inf == nil || inf.probe || InterChunkStallTimeout <= 0 {
+		return false
+	}
+	if inflightDone(inf) || inf.streamTerminated.Load() {
+		return false
+	}
+	// Mirrors interChunkStallDeadline: any forwarded event starts the clock, not
+	// just content. An attempt that emitted a role chunk and then hung is a real
+	// stall with no other failure path.
+	lastChunkAt := inf.lastChunkAt.Load()
+	if lastChunkAt <= 0 {
+		return false
+	}
+	inf.stallMu.Lock()
+	issued := inf.stallCancelIssued
+	inf.stallMu.Unlock()
+	if issued {
+		return false
+	}
+	return now.Sub(time.Unix(0, lastChunkAt)) >= InterChunkStallTimeout
+}
+
+// markStallCancelIssued latches the one-shot cancel guard and reports whether
+// this caller is the one that should issue the cancel. A concurrent or repeated
+// deadline must not cancel an already-unwound attempt a second time.
+func (inf *inflight) markStallCancelIssued() bool {
+	if inf == nil {
+		return false
+	}
+	inf.stallMu.Lock()
+	defer inf.stallMu.Unlock()
+	if inf.stallCancelIssued {
+		return false
+	}
+	inf.stallCancelIssued = true
+	return true
+}
+
+func (inf *inflight) stallCancelRecorded() string {
+	if inf == nil {
+		return ""
+	}
+	reason, _ := inf.stallCancelReason.Load().(string)
+	return reason
+}
+
+// stallCancelError rewrites the transport error of an attempt whose context was
+// cancelled by the inter-chunk stall deadline. Cancelling the attempt context is
+// how the stall is enforced, but SendOnly reports that as context.Canceled,
+// which is indistinguishable from a client disconnect and would be classified as
+// a client-side abort rather than a retryable host failure. Replace it with the
+// typed sentinel so the race, the perf tracker and the metrics all see the stall
+// for what it is.
+func stallCancelError(inf *inflight, err error) error {
+	if inf == nil || inf.stallCancelRecorded() == "" {
+		return err
+	}
+	if err == nil {
+		return fmt.Errorf("%w", errStreamStalled)
+	}
+	if errors.Is(err, errStreamStalled) {
+		return err
+	}
+	// Keep the transport context (stream-bytes, EOF vs reset) under the sentinel
+	// so errors.Is(err, errStreamStalled) is the classification key while the
+	// log detail still shows why the read unwound.
+	return fmt.Errorf("%w: %v", errStreamStalled, err)
 }
 
 func (inf *inflight) hasRecordedStall() bool {
@@ -1617,7 +1754,13 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	nowNano := now.UnixNano()
 	previousChunkNano := rw.inf.lastChunkAt.Swap(nowNano)
 	// The silence before [DONE] is the end of the stream, not a host that went quiet.
-	if previousChunkNano > 0 && !bytes.HasPrefix(p, sseDoneMarker) {
+	if bytes.HasPrefix(p, sseDoneMarker) {
+		// Latch the terminator: everything after this is the upstream's meta tail,
+		// which the transport consumes without reaching this writer. Without the
+		// latch the inter-chunk cancel would fire mid-tail and abort a fully
+		// delivered answer.
+		rw.inf.streamTerminated.Store(true)
+	} else if previousChunkNano > 0 {
 		rw.inf.recordChunkGap(nowNano - previousChunkNano)
 	}
 	rw.inf.captureShortContentResponseChunk(p)
@@ -1711,11 +1854,18 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 				rw.inf.pendingBuf = nil
 				return 0, err
 			}
+			// The buffered pre-content bytes just reached the client, so this
+			// attempt is now client-visible even before its content chunk lands.
+			rw.inf.clientVisible.Store(true)
 		}
 		rw.inf.pendingBuf = nil
 		if rw.group.w == nil {
 			return len(p), nil
 		}
+		// Past this point the client sees this attempt's bytes. Latch it before
+		// the write so a stall racing the write cannot be judged retryable
+		// after part of the answer is already on the wire.
+		rw.inf.clientVisible.Store(true)
 		return rw.group.w.Write(p)
 
 	case winnerNonce != 0:
@@ -2111,6 +2261,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		defer inf.releaseClassifyPartial()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
+		inf.err = stallCancelError(inf, inf.err)
 		streamBytes := int64(0)
 		if inf.resp != nil {
 			streamBytes = inf.resp.StreamBytesRead
@@ -2308,44 +2459,120 @@ func receiptTimeoutForInput(inputTokens uint64) time.Duration {
 	return ReceiptTimeout
 }
 
-func interChunkStallDeadline(inf *inflight) (time.Time, bool) {
-	if inf == nil || inf.probe || inflightDone(inf) || InterChunkStallLogThreshold <= 0 {
-		return time.Time{}, false
+// interChunkStallDeadline returns the next moment at which this attempt must be
+// inspected for inter-chunk silence, and what should happen then.
+//
+// The two thresholds are one sliding deadline pair anchored on lastChunkAt, the
+// most recent meaningful SSE event:
+//
+//   - logDeadline  = lastChunkAt + InterChunkStallLogThreshold  (30s): record and
+//     log the silent episode. Observational only.
+//   - cancelDeadline = lastChunkAt + InterChunkStallTimeout (60s): abort the
+//     upstream request. This is what InterChunkStallTimeout was always
+//     documented to do and never did -- the deadline computation read the log
+//     threshold, so cancelling was unreachable.
+//
+// The caller arms a single timer on the earlier of the two and re-derives on
+// every wakeup, which is why the log threshold gating moves from "suppress the
+// deadline once stalled" to "report logDeadline first, then cancelDeadline".
+// The old code bailed out whenever stallActive was set, so after the first log
+// the timer never re-armed and nothing could ever cancel until the 30-minute
+// hard timeout.
+func interChunkStallDeadline(inf *inflight) (logDeadline, cancelDeadline time.Time, ok bool) {
+	if inf == nil || inf.probe || inflightDone(inf) {
+		return time.Time{}, time.Time{}, false
 	}
-	if inf.contentChunks.Load() == 0 {
-		return time.Time{}, false
+	// The anchor is the last event this attempt forwarded, content-bearing or
+	// not. Gating on contentChunks here would leave an attempt that emitted only
+	// a role chunk and then went silent with no deadline at all: the
+	// first-token escalation timer disarms once hasFirstToken() is true, so a
+	// role-only chunk followed by silence had no failure path short of the
+	// 30-minute hard timeout. lastChunkAt > 0 is the honest "this attempt has
+	// started streaming" test, and startInterChunkStall already declines to
+	// record a stall log before content so the two stay consistent.
+	if inf.lastChunkAt.Load() <= 0 {
+		return time.Time{}, time.Time{}, false
 	}
+	// A terminated stream ends the generation. The meta tail that follows is
+	// bounded by the transport deadline, not by inter-chunk silence.
+	if inf.streamTerminated.Load() {
+		return time.Time{}, time.Time{}, false
+	}
+	anchor := time.Unix(0, inf.lastChunkAt.Load())
+
 	inf.stallMu.Lock()
-	active := inf.stallActive
+	logged := inf.stallLogged
+	cancelIssued := inf.stallCancelIssued
 	inf.stallMu.Unlock()
-	if active {
-		return time.Time{}, false
+	if cancelIssued {
+		return time.Time{}, time.Time{}, false
 	}
-	lastChunkAt := inf.lastChunkAt.Load()
-	if lastChunkAt <= 0 {
-		return time.Time{}, false
+	if !logged && InterChunkStallLogThreshold > 0 {
+		logDeadline = anchor.Add(InterChunkStallLogThreshold)
 	}
-	return time.Unix(0, lastChunkAt).Add(InterChunkStallLogThreshold), true
+	if InterChunkStallTimeout > 0 {
+		cancelDeadline = anchor.Add(InterChunkStallTimeout)
+	}
+	// A cancel timer that would fire at or before the log is nonsense
+	// (misconfigured cancel < log): the log is not a precondition for
+	// cancelling, so drop it rather than reorder the two.
+	if !logDeadline.IsZero() && !cancelDeadline.IsZero() && !cancelDeadline.After(logDeadline) {
+		logDeadline = time.Time{}
+	}
+	if logDeadline.IsZero() && cancelDeadline.IsZero() {
+		return time.Time{}, time.Time{}, false
+	}
+	if logDeadline.IsZero() {
+		logDeadline = cancelDeadline
+	}
+	return logDeadline, cancelDeadline, true
 }
 
-func nextInterChunkStallTrigger(attempts []*inflight) (*inflight, time.Time, bool) {
+// interChunkStallPlan is the earliest pending inter-chunk deadline across all
+// attempts, together with whether that deadline is the cancel threshold rather
+// than the observational log threshold.
+type interChunkStallPlan struct {
+	inf              *inflight
+	deadline         time.Time
+	cancelThreshold  time.Time
+	cancelConfigured bool
+}
+
+func nextInterChunkStallPlan(attempts []*inflight) (interChunkStallPlan, bool) {
 	var (
-		chosen   *inflight
-		deadline time.Time
-		ok       bool
+		best interChunkStallPlan
+		ok   bool
 	)
 	for _, inf := range attempts {
-		d, candidate := interChunkStallDeadline(inf)
+		logDeadline, cancelDeadline, candidate := interChunkStallDeadline(inf)
 		if !candidate {
 			continue
 		}
-		if !ok || d.Before(deadline) {
-			chosen = inf
-			deadline = d
+		// logDeadline is never zero when the log threshold is configured; when
+		// it is disabled the cancel deadline stands alone.
+		earliest := logDeadline
+		if cancelDeadline.Before(earliest) {
+			earliest = cancelDeadline
+		}
+		if !ok || earliest.Before(best.deadline) {
+			best = interChunkStallPlan{
+				inf:              inf,
+				deadline:         earliest,
+				cancelThreshold:  cancelDeadline,
+				cancelConfigured: !cancelDeadline.IsZero(),
+			}
 			ok = true
 		}
 	}
-	return chosen, deadline, ok
+	return best, ok
+}
+
+func nextInterChunkStallTrigger(attempts []*inflight) (*inflight, time.Time, bool) {
+	plan, ok := nextInterChunkStallPlan(attempts)
+	if !ok {
+		return nil, time.Time{}, false
+	}
+	return plan.inf, plan.deadline, true
 }
 
 func winnerHardTimeoutDeadline(inf *inflight) (time.Time, bool) {
@@ -2507,12 +2734,14 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 		var stallInf *inflight
 		var stallTimer *time.Timer
 		var stallC <-chan time.Time
-		if inf, deadline, ok := nextInterChunkStallTrigger(attempts); ok {
-			wait := time.Until(deadline)
+		var stallPlan interChunkStallPlan
+		if plan, ok := nextInterChunkStallPlan(attempts); ok {
+			wait := time.Until(plan.deadline)
 			if wait < 0 {
 				wait = 0
 			}
-			stallInf = inf
+			stallInf = plan.inf
+			stallPlan = plan
 			stallTimer = time.NewTimer(wait)
 			stallC = stallTimer.C
 		}
@@ -2649,35 +2878,99 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if stallInf == nil {
 				break
 			}
-			deadline, stalled := interChunkStallDeadline(stallInf)
-			if !stalled || now.Before(deadline) {
+			// Two deadlines share this timer: the observational log at
+			// InterChunkStallLogThreshold and the abort at InterChunkStallTimeout.
+			// Log first so an operator always sees the silence before it is acted
+			// on, then decide whether this wakeup is also the cancel.
+			if _, ok := stallInf.startInterChunkStall(now); ok {
+				w := race.winnerNonce()
+				role := "pending"
+				if w == stallInf.nonce {
+					role = "winner"
+				} else if w != 0 {
+					role = "loser"
+				}
+				stage := "attempt_inter_chunk_stall"
+				if role == "winner" {
+					stage = "winner_stalled_after_content"
+				}
+				logInferenceStage(settleCtx, stallInf.escrowID, stallInf.nonce, stage,
+					"host", stallInf.hostID,
+					"role", role,
+					"winner_nonce", w,
+					"stall_threshold_ms", InterChunkStallLogThreshold.Milliseconds(),
+					"cancel_timeout_ms", InterChunkStallTimeout.Milliseconds(),
+					"since_last_chunk_ms", now.Sub(time.Unix(0, stallInf.lastChunkAt.Load())).Milliseconds(),
+					"output_chunks", stallInf.outputChunks.Load(),
+					"content_chunks", stallInf.contentChunks.Load(),
+					"output_bytes", stallInf.outputBytes.Load(),
+				)
+			}
+			if !stallPlan.cancelConfigured || !stallInf.stallCancelExpired(now) {
 				break
 			}
-			rec, ok := stallInf.startInterChunkStall(now)
-			if !ok {
+			// Re-check the role at fire time: the attempt may have been crowned,
+			// or defeated, between arming the timer and this wakeup.
+			stalledWinner := race.winnerNonce()
+			stalledRole := "pending"
+			if stalledWinner == stallInf.nonce {
+				stalledRole = "winner"
+			} else if stalledWinner != 0 {
+				stalledRole = "loser"
+			}
+			// The retry decision turns on whether the client has seen this
+			// attempt's bytes, not on whether the attempt parsed content. A
+			// loser's content is suppressed, and a winner whose client detached
+			// stops writing, so both can be cancelled and replaced for free.
+			stalledVisible := stallInf.clientVisible.Load()
+			if !stallInf.markStallCancelIssued() {
 				break
 			}
-			w := race.winnerNonce()
-			role := "pending"
-			if w == stallInf.nonce {
-				role = "winner"
-			} else if w != 0 {
-				role = "loser"
-			}
-			stage := "attempt_inter_chunk_stall"
-			if role == "winner" {
-				stage = "winner_stalled_after_content"
+			// Cancel the upstream and close the body in every case: the stream is
+			// dead either way. What differs is what happens next.
+			//
+			// A visible attempt (always the winner, since only the winner writes
+			// to the client) cannot be retried transparently: its bytes are on the
+			// wire and a replacement host would replay the answer from the
+			// beginning. Let the normal post-content failure path settle the
+			// request honestly. An invisible attempt has delivered nothing
+			// downstream, so the race may start a replacement.
+			stage := "attempt_stall_canceled"
+			if stalledRole == "winner" {
+				stage = "winner_stall_canceled"
 			}
 			logInferenceStage(settleCtx, stallInf.escrowID, stallInf.nonce, stage,
 				"host", stallInf.hostID,
-				"role", role,
-				"winner_nonce", w,
-				"stall_threshold_ms", InterChunkStallLogThreshold.Milliseconds(),
-				"since_last_chunk_ms", now.Sub(rec.StartTime).Milliseconds(),
-				"output_chunks_before_stall", rec.OutputChunksBefore,
-				"content_chunks_before_stall", rec.ContentChunksBefore,
-				"output_bytes_before_stall", rec.OutputBytesBefore,
+				"role", stalledRole,
+				"winner_nonce", stalledWinner,
+				"cancel_timeout_ms", InterChunkStallTimeout.Milliseconds(),
+				"since_last_chunk_ms", now.Sub(time.Unix(0, stallInf.lastChunkAt.Load())).Milliseconds(),
+				"output_chunks", stallInf.outputChunks.Load(),
+				"content_chunks", stallInf.contentChunks.Load(),
+				"output_bytes", stallInf.outputBytes.Load(),
+				"client_visible", stalledVisible,
 			)
+			stallInf.stallCancelReason.Store(errStreamStalled.Error())
+			if stallInf.cancel != nil {
+				stallInf.cancel()
+			}
+			if stalledVisible {
+				break
+			}
+			// A stalled loser has no replacement to offer: the race is already
+			// decided, and startAdditionalInflight would decline. Only a stalled
+			// pending attempt -- no winner crowned yet -- can be stood in for.
+			if stalledWinner != 0 {
+				break
+			}
+			if len(attempts) < maxAttempts {
+				e.reincludeStallCanceledParticipant(stallInf, triedParticipants)
+				if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "stream_stall_retry", stallInf, "stream_stalled", triedParticipants, clientFlag); next != nil {
+					stallInf.escalated = true
+					attempts = append(attempts, next)
+					e.watchInflightDone(next, doneCh)
+				}
+			}
 		case <-winnerHardTimeoutC:
 			w := race.winnerNonce()
 			winning := inflightByNonce(attempts, w)
@@ -3626,6 +3919,20 @@ func phaseTransitionAbortRetryable(inf *inflight) bool {
 
 func (e *Redundancy) reincludePhaseTransitionAbortParticipant(inf *inflight, triedParticipants map[string]bool) {
 	if e == nil || e.session == nil || inf == nil || !inf.phaseTransitionAborted || triedParticipants == nil {
+		return
+	}
+	delete(triedParticipants, e.session.HostParticipantKey(inf.hostIdx))
+}
+
+// reincludeStallCanceledParticipant un-excludes the host whose stream we just
+// aborted for inter-chunk silence. Exclusion is what keeps prepareInflight from
+// re-picking a host we have already tried, but a host we cancelled mid-stream
+// is exactly the one worth re-asking: the abort was ours, not the host's, and
+// it has already been struck on the PerfTracker for the stall. Without this the
+// retry would be forced onto a host that may have no capacity, or be skipped
+// entirely when this was the last untried slot.
+func (e *Redundancy) reincludeStallCanceledParticipant(inf *inflight, triedParticipants map[string]bool) {
+	if e == nil || e.session == nil || inf == nil || triedParticipants == nil {
 		return
 	}
 	delete(triedParticipants, e.session.HostParticipantKey(inf.hostIdx))
