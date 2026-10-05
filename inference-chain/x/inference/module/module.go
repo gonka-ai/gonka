@@ -1396,6 +1396,7 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 	scales := upcomingEg.GroupData.ConfirmationWeightScales
 	coefficients := types.ConfirmationWeightCoefficients(scales)
 
+	members := make([]epochgroup.EpochMember, 0, len(activeParticipants))
 	for _, p := range activeParticipants {
 		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)
 		if err != nil {
@@ -1410,13 +1411,11 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 
 		// Confirmation events can only lower ConfirmationWeight via min-take, never raise it.
 		initialConfirmationWeight := types.ConfirmationWeightOfParticipantWithCoefficients(p, coefficients)
-		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, initialConfirmationWeight)
-		err = upcomingEg.AddMember(ctx, member)
-		if err != nil {
-			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
-			continue
-		}
+		members = append(members, epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, initialConfirmationWeight))
 	}
+	upcomingEg.AddMembers(ctx, members, func(_ epochgroup.EpochMember, err error) {
+		am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
+	})
 }
 
 func (am AppModule) computePrice(ctx context.Context, upcomingEpoch types.Epoch, upcomingEg *epochgroup.EpochGroup) (uint64, error) {

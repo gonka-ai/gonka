@@ -3,6 +3,7 @@ package epochgroup
 import (
 	"context"
 	"encoding/base64"
+	"slices"
 	"strconv"
 	"time"
 
@@ -139,35 +140,70 @@ func (eg *EpochGroup) CreateGroup(ctx context.Context) error {
 }
 
 func (eg *EpochGroup) AddMember(ctx context.Context, member EpochMember) error {
+	var err error
+	eg.AddMembers(ctx, []EpochMember{member}, func(_ EpochMember, e error) { err = e })
+	return err
+}
+
+// AddMembers adds members in order, reading and writing each group's data once
+// rather than once per member; onError gets each member that could not be added.
+func (eg *EpochGroup) AddMembers(ctx context.Context, members []EpochMember, onError func(EpochMember, error)) {
+	if len(members) == 0 {
+		return
+	}
+	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.EpochIndex, eg.GroupData.ModelId)
+	if !found {
+		eg.Logger.LogError("Epoch group not found", types.EpochGroup, "blockHeight", eg.GroupData.PocStartBlockHeight, "modelId", eg.GroupData.ModelId)
+		for _, member := range members {
+			if onError != nil {
+				onError(member, types.ErrCurrentEpochGroupNotFound)
+			}
+		}
+		return
+	}
+	eg.GroupData = &val
+
+	changed := false
+	var touched []*EpochGroup
+	for _, member := range members {
+		added, err := eg.addMemberUnsaved(ctx, member, &touched)
+		changed = changed || added
+		if err != nil && onError != nil {
+			onError(member, err)
+		}
+	}
+	if changed {
+		eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
+	}
+	for _, subGroup := range touched {
+		subGroup.GroupDataKeeper.SetEpochGroupData(ctx, *subGroup.GroupData)
+	}
+}
+
+// addMemberUnsaved appends member to the in-memory group data; the caller saves it.
+func (eg *EpochGroup) addMemberUnsaved(ctx context.Context, member EpochMember, touched *[]*EpochGroup) (bool, error) {
 	if eg.GroupData.IsModelGroup() {
 		if !eg.memberSupportsModel(member.Models) {
 			eg.Logger.LogInfo("Skipping member", types.EpochGroup, "address", member.Address, "models", member.Models, "groupModel", eg.GroupData.ModelId)
-			return nil
+			return false, nil
 		}
 	}
 
 	eg.Logger.LogInfo("Adding member", types.EpochGroup, "address", member.Address, "weight", member.Weight, "pubkey", member.Pubkey, "seedSignature", member.SeedSignature, "models", member.Models)
-	val, found := eg.GroupDataKeeper.GetEpochGroupData(ctx, eg.GroupData.EpochIndex, eg.GroupData.ModelId)
-	if !found {
-		eg.Logger.LogError("Epoch group not found", types.EpochGroup, "blockHeight", eg.GroupData.PocStartBlockHeight, "modelId", eg.GroupData.ModelId)
-		return types.ErrCurrentEpochGroupNotFound
-	}
-
-	eg.updateEpochGroupWithNewMember(ctx, member, val)
+	eg.updateEpochGroupWithNewMember(member)
 	err := eg.updateMember(ctx, member.Address, member.Weight, member.Pubkey)
 	if err != nil {
-		return err
+		return true, err
 	}
 
 	if !eg.GroupData.IsModelGroup() && len(member.Models) > 0 {
-		eg.addToModelGroups(ctx, member)
+		eg.addToModelGroups(ctx, member, touched)
 	}
 
-	return nil
+	return true, nil
 }
 
-func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member EpochMember, val types.EpochGroupData) {
-	eg.GroupData = &val
+func (eg *EpochGroup) updateEpochGroupWithNewMember(member EpochMember) {
 	if eg.GroupData.MemberSeedSignatures == nil {
 		eg.GroupData.MemberSeedSignatures = []*types.SeedSignature{}
 	}
@@ -194,8 +230,6 @@ func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member 
 		totalThroughput += node.Throughput
 	}
 	eg.GroupData.TotalThroughput += totalThroughput
-
-	eg.GroupDataKeeper.SetEpochGroupData(ctx, *eg.GroupData)
 }
 
 func (eg *EpochGroup) getMLNodeInfo(member EpochMember, modelId string) []*types.MLNodeInfo {
@@ -235,7 +269,7 @@ func (eg *EpochGroup) getVotingPowerForModel(member EpochMember, modelId string)
 	return 0
 }
 
-func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) {
+func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember, touched *[]*EpochGroup) {
 	for _, modelId := range member.Models {
 		eg.Logger.LogInfo("Adding member to sub-group", types.EpochGroup, "model", modelId, "address", member.Address)
 
@@ -275,7 +309,10 @@ func (eg *EpochGroup) addToModelGroups(ctx context.Context, member EpochMember) 
 			subMember.Weight = 0
 		}
 
-		err = subGroup.AddMember(ctx, subMember)
+		added, err := subGroup.addMemberUnsaved(ctx, subMember, nil)
+		if added && !slices.Contains(*touched, subGroup) {
+			*touched = append(*touched, subGroup)
+		}
 		if err != nil {
 			eg.Logger.LogError("Error adding member to sub-group", types.EpochGroup, "error", err, "model", modelId)
 		}
