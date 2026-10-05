@@ -1,18 +1,33 @@
 package inference
 
 import (
+	"context"
+	"log/slog"
 	"slices"
 	"sort"
 	"sync"
 	"time"
 
 	"devshard/observability"
+	"devshard/storage"
 )
+
+// creditProbeFresh is how long a shared-credit lookup can be reused. The
+// check runs while the host lock is held, so a collect over many inferences
+// must not query once per inference.
+const creditProbeFresh = time.Second
+
+type creditProbe struct {
+	at time.Time
+	ok bool
+}
 
 const defaultValidationCreditTTL = 60 * time.Minute
 
 // validationBudget is shared by all escrows using this process's Engine.
-// Credits expire individually and are spent oldest first. Restart starts empty.
+// Credits expire individually and are spent oldest first. The process-local
+// budget starts empty on restart. Replicas of one participant use the shared
+// store instead, so a credit outlives the process that earned it.
 type validationBudget struct {
 	mu      sync.Mutex
 	ttl     time.Duration
@@ -87,9 +102,97 @@ func (b *validationBudget) reserve(model string) (refund func(), ok bool) {
 	}, true
 }
 
-func (e *Engine) reserveValidationCredit(path observability.Path, model string) (func(), bool) {
+// UseSharedValidationCredits spends this participant's credits from store.
+// store is the Postgres table shared by replicas of participant. A nil store
+// or an empty participant keeps the process-local budget.
+func (e *Engine) UseSharedValidationCredits(store storage.ValidationCreditStore, participant string) {
+	if e == nil || store == nil || participant == "" {
+		return
+	}
+	e.sharedCredits = store
+	e.participant = participant
+}
+
+func (e *Engine) creditAvailable(model string) bool {
+	if e == nil || e.validationBudget == nil {
+		return true
+	}
+	if e.sharedCredits == nil {
+		return e.validationBudget.available(model)
+	}
+	return e.sharedCreditAvailable(model)
+}
+
+func (e *Engine) earnValidationCredit(ctx context.Context, model string) {
+	if e.sharedCredits == nil {
+		e.validationBudget.earn(model)
+		return
+	}
+	if err := e.sharedCredits.EarnValidationCredit(ctx, e.participant, model, defaultValidationCreditTTL); err != nil {
+		slog.Warn("devshardd: validation credit earn failed", "participant", e.participant, "model", model, "error", err)
+		return
+	}
+	e.dropCreditProbe(model)
+}
+
+func (e *Engine) sharedCreditAvailable(model string) bool {
+	e.creditMu.Lock()
+	if p, ok := e.creditCache[model]; ok && time.Since(p.at) < creditProbeFresh {
+		e.creditMu.Unlock()
+		return p.ok
+	}
+	e.creditMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	ok, err := e.sharedCredits.ValidationCreditAvailable(ctx, e.participant, model)
+	if err != nil {
+		slog.Warn("devshardd: validation credit lookup failed", "participant", e.participant, "model", model, "error", err)
+		return false
+	}
+	e.creditMu.Lock()
+	if e.creditCache == nil {
+		e.creditCache = make(map[string]creditProbe)
+	}
+	e.creditCache[model] = creditProbe{at: time.Now(), ok: ok}
+	e.creditMu.Unlock()
+	return ok
+}
+
+func (e *Engine) dropCreditProbe(model string) {
+	e.creditMu.Lock()
+	delete(e.creditCache, model)
+	e.creditMu.Unlock()
+}
+
+func (e *Engine) reserveValidationCredit(ctx context.Context, path observability.Path, model string) (func(), bool) {
 	if path != observability.PathValidate {
 		return func() {}, true
 	}
-	return e.validationBudget.reserve(model)
+	if e.sharedCredits == nil {
+		return e.validationBudget.reserve(model)
+	}
+	reserveCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	expiresAt, ok, err := e.sharedCredits.ReserveValidationCredit(reserveCtx, e.participant, model)
+	cancel()
+	if err != nil {
+		slog.Warn("devshardd: validation credit reserve failed", "participant", e.participant, "model", model, "error", err)
+		return nil, false
+	}
+	if !ok {
+		e.dropCreditProbe(model)
+		return nil, false
+	}
+	e.dropCreditProbe(model)
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			refundCtx, refundCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer refundCancel()
+			if refundErr := e.sharedCredits.RefundValidationCredit(refundCtx, e.participant, model, expiresAt); refundErr != nil {
+				slog.Warn("devshardd: validation credit refund failed", "participant", e.participant, "model", model, "error", refundErr)
+			}
+			e.dropCreditProbe(model)
+		})
+	}, true
 }

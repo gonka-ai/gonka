@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"common/chain"
@@ -13,6 +14,7 @@ import (
 	mlnodegen "common/nodemanager/gen"
 	"devshard"
 	"devshard/observability"
+	"devshard/storage"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -41,14 +43,20 @@ const fallbackSlotWait = 100 * time.Millisecond
 // observed via ListNodeCapacity, fallback is bounded by capacity.Cache.
 type Engine struct {
 	validationBudget *validationBudget
-	mlClient         *mlnodeclient.Client
-	mgr              *mlnodeclient.Manager
-	capacity         *mlnodeclient.Cache
-	payloadStore     PayloadStore
-	payloadRead      PayloadReader
-	httpClient       *http.Client
-	chainParams      ChainParamsProvider
-	phase            *chain.Phase
+	// sharedCredits, when set, is the participant's credit table. Replicas of
+	// the same key spend from it instead of the process-local budget.
+	sharedCredits storage.ValidationCreditStore
+	participant   string
+	creditMu      sync.Mutex
+	creditCache   map[string]creditProbe
+	mlClient      *mlnodeclient.Client
+	mgr           *mlnodeclient.Manager
+	capacity      *mlnodeclient.Cache
+	payloadStore  PayloadStore
+	payloadRead   PayloadReader
+	httpClient    *http.Client
+	chainParams   ChainParamsProvider
+	phase         *chain.Phase
 }
 
 // NewEngine creates an Engine backed by a NodeManager gRPC client and optional
@@ -92,7 +100,7 @@ func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*dev
 			return e.executeMLRequest(ctx, model, req.EscrowID, body)
 		}, e.chainParams)
 		if err == nil && result != nil && !result.PartialResponse {
-			e.validationBudget.earn(req.Model)
+			e.earnValidationCredit(ctx, req.Model)
 		}
 		return result, err
 	})
@@ -160,7 +168,7 @@ func (e *Engine) doWithLockedNode(
 	lastReason := observability.ReasonAcquireErr
 
 	for attempt := 0; attempt < maxAcquireAttempts; attempt++ {
-		refund, ok := e.reserveValidationCredit(path, model)
+		refund, ok := e.reserveValidationCredit(ctx, path, model)
 		if !ok {
 			return nil, devshard.ErrValidationDeferred
 		}
@@ -280,7 +288,7 @@ func (e *Engine) doWithFallbackNodes(
 			return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, ctx.Err())
 		}
 
-		refund, ok := e.reserveValidationCredit(path, model)
+		refund, ok := e.reserveValidationCredit(ctx, path, model)
 		if !ok {
 			return nil, devshard.ErrValidationDeferred
 		}

@@ -225,6 +225,22 @@ ALTER TABLE devshard_validation_leases
 ALTER TABLE devshard_sessions
     ADD COLUMN IF NOT EXISTS obs_rebuild_pending BOOLEAN NOT NULL DEFAULT FALSE`},
 	},
+	{
+		// Credits are participant-scoped, not epoch-scoped: an HA replica must
+		// spend a credit its sibling earned, and epoch prune must not drop it.
+		ID:   17,
+		Name: "devshard_validation_credits",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_validation_credits (
+    id           BIGSERIAL   PRIMARY KEY,
+    participant  TEXT        NOT NULL,
+    model        TEXT        NOT NULL,
+    expires_at   TIMESTAMPTZ NOT NULL
+)`,
+			`CREATE INDEX IF NOT EXISTS devshard_validation_credits_live
+    ON devshard_validation_credits (participant, model, expires_at, id)`,
+		},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

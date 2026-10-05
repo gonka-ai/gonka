@@ -86,7 +86,7 @@ func NewValidator(
 }
 
 func (v *Validator) CanValidate(model string) bool {
-	return v.engine == nil || v.engine.validationBudget.available(model)
+	return v.engine == nil || v.engine.creditAvailable(model)
 }
 
 func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {

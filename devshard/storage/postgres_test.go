@@ -215,6 +215,33 @@ func TestPostgres_ValidationObsRebuildLockIsExclusiveAcrossPools(t *testing.T) {
 	require.True(t, acquired, "closing the holder's connection releases the lock")
 	unlockSecond()
 }
+func TestPostgres_ValidationCreditsAreSharedAcrossPools(t *testing.T) {
+	first := newTestPostgres(t)
+	second, err := NewPostgres(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+	require.NoError(t, second.WaitReady(context.Background()))
+
+	ctx := context.Background()
+	require.NoError(t, first.EarnValidationCredit(ctx, "gonka1participant", "model-a", time.Hour))
+
+	ok, err := second.ValidationCreditAvailable(ctx, "gonka1participant", "model-a")
+	require.NoError(t, err)
+	require.True(t, ok, "the sibling replica must see the earned credit")
+
+	other, err := second.ValidationCreditAvailable(ctx, "gonka1other", "model-a")
+	require.NoError(t, err)
+	require.False(t, other, "another participant cannot spend this credit")
+
+	_, reserved, err := second.ReserveValidationCredit(ctx, "gonka1participant", "model-a")
+	require.NoError(t, err)
+	require.True(t, reserved)
+
+	_, reserved, err = first.ReserveValidationCredit(ctx, "gonka1participant", "model-a")
+	require.NoError(t, err)
+	require.False(t, reserved, "one execution yields one credit across replicas")
+}
+
 func TestPostgres_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestPostgres(t))
 }
