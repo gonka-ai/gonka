@@ -485,8 +485,9 @@ func (am AppModule) evaluateConfirmation(
 				"address", addr)
 			continue
 		}
+		storedStats := *participant.CurrentEpochStats
 		participant.CurrentEpochStats.ConfirmationPoCRatio = ratio
-		am.keeper.SetParticipant(ctx, participant)
+		am.keeper.SetParticipantFromStored(ctx, participant, &storedStats)
 	}
 
 	if updated {
