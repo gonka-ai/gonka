@@ -194,6 +194,14 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		return nil, err
 	}
 	allParticipants := inputs.Participants
+	// Stats as read, so the final SetParticipant does not read each participant again.
+	storedStats := make([]*types.CurrentEpochStats, len(allParticipants))
+	for i, participant := range allParticipants {
+		if participant.CurrentEpochStats != nil {
+			stats := *participant.CurrentEpochStats
+			storedStats[i] = &stats
+		}
+	}
 
 	k.LogInfo("Block height", types.Settle, "height", blockHeight)
 	k.LogInfo("Got all participants", types.Settle, "participants", len(allParticipants))
@@ -273,6 +281,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 
 	k.LogInfo("Checking downtime for participants", types.Settle, "participants", len(allParticipants))
 
+	settled := make(map[string]struct{}, len(allParticipants))
 	for i, participant := range allParticipants {
 		// amount should have the same order as participants
 		amount := amounts[i]
@@ -300,10 +309,15 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			return nil, err
 		}
 		participant.CurrentEpochStats = types.NewCurrentEpochStats()
-		err := k.SetParticipant(cacheCtx, participant)
+		if _, dup := settled[participant.Address]; dup {
+			err = k.SetParticipant(cacheCtx, participant)
+		} else {
+			err = k.SetParticipantFromStored(cacheCtx, participant, storedStats[i])
+		}
 		if err != nil {
 			return nil, err
 		}
+		settled[participant.Address] = struct{}{}
 	}
 
 	for _, amount := range amounts {

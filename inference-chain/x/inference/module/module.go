@@ -1534,9 +1534,10 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 
 	am.LogInfo("Setting participants to active", types.EpochGroup, "len(participants)", len(participants))
 	for _, participant := range participants {
+		storedStats := participant.CurrentEpochStats.StoredCopy()
 		participant.Status = types.ParticipantStatus_ACTIVE
 		participant.ConsecutiveInvalidInferences = 0
-		err := am.keeper.SetParticipant(ctx, participant)
+		err := am.keeper.SetParticipantFromStored(ctx, participant, storedStats)
 		if err != nil {
 			am.LogError("Unable to set participant to active", types.EpochGroup, "participantIndex", participant.Index, "error", err.Error())
 			continue

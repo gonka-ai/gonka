@@ -265,7 +265,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	slices.Sort(touchedAddrs)
 	for _, addr := range touchedAddrs {
 		participant := participantByAddr[addr]
-		if err := k.setParticipantFromStored(goCtx, *participant, storedStatsByAddr[addr]); err != nil {
+		if err := k.SetParticipantFromStored(goCtx, *participant, storedStatsByAddr[addr]); err != nil {
 			return nil, fmt.Errorf("failed to update participant %s: %w", addr, err)
 		}
 	}
