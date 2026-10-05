@@ -42,6 +42,10 @@ var ErrNilHostResponse = errors.New("nil host response")
 // not composed. The gateway is the only sequencer, so such a claim is false.
 var ErrHostNonceAhead = errors.New("host nonce ahead of session")
 
+// ErrLocalRootUnavailable is returned when the gateway cannot read its own
+// post-state root for a nonce. It says nothing about the host's state.
+var ErrLocalRootUnavailable = errors.New("local post-state root unavailable")
+
 // MaxConcurrentVerifierRPCs caps how many simultaneous VerifyTimeout RPCs the
 // proxy may have open against the same verifier host. CollectTimeoutVotes fans
 // out one VerifyTimeout per verifier per timed-out nonce; the cap is
@@ -801,22 +805,22 @@ func (s *Session) validateCatchUp(diffs []types.Diff, targetNonce uint64, hostId
 
 // postStateRootForNonce returns the persisted post-state root for the given
 // nonce. Recovery and the live prefix drop keep only a contiguous suffix in
-// s.diffs, so a nonce below it is read from the store.
-func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool) {
+// s.diffs, so a nonce below it is read from the store. Every such nonce was
+// persisted before it was retained, so a failed read or a missing record is
+// ErrLocalRootUnavailable, never "no root".
+func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool, error) {
 	if nonce > 0 && nonce < s.firstRetainedNonceLocked() && s.store != nil {
 		recs, err := s.store.GetDiffs(s.escrowID, nonce, nonce)
 		if err != nil {
-			logging.Warn("read trimmed post-state root from store", "subsystem", "session",
-				"escrow", s.escrowID, "nonce", nonce, "error", err)
-			return nil, false
+			return nil, false, fmt.Errorf("%w: nonce %d: %w", ErrLocalRootUnavailable, nonce, err)
 		}
-		if len(recs) == 1 && recs[0].Nonce == nonce {
-			return recs[0].PostStateRoot, true
+		if len(recs) != 1 || recs[0].Nonce != nonce {
+			return nil, false, fmt.Errorf("%w: nonce %d not in store", ErrLocalRootUnavailable, nonce)
 		}
-		return nil, false
+		return recs[0].PostStateRoot, true, nil
 	}
 	if len(s.diffs) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	firstNonce := s.diffs[0].Nonce
 	if nonce >= firstNonce {
@@ -824,16 +828,16 @@ func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool) {
 		if idx < uint64(len(s.diffs)) {
 			diff := s.diffs[idx]
 			if diff.Nonce == nonce {
-				return diff.PostStateRoot, true
+				return diff.PostStateRoot, true, nil
 			}
 		}
 	}
 	for _, diff := range s.diffs {
 		if diff.Nonce == nonce {
-			return diff.PostStateRoot, true
+			return diff.PostStateRoot, true, nil
 		}
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // processResponse updates session state from a host response.
@@ -854,7 +858,11 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	// verification succeeds so a bad hash cannot inflate monitoring.
 	if len(resp.StateHash) > 0 {
 		var expected []byte
-		if root, ok := s.postStateRootForNonce(resp.Nonce); ok {
+		root, ok, rootErr := s.postStateRootForNonce(resp.Nonce)
+		if rootErr != nil {
+			return fmt.Errorf("host %d at nonce %d: %w", hostIdx, resp.Nonce, rootErr)
+		}
+		if ok {
 			expected = root
 		} else if resp.Nonce == s.nonce {
 			// Finalize/recovery path: the nonce is beyond the diffs array
@@ -2453,7 +2461,12 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	postRoot, ok := s.postStateRootForNonce(nonce)
+	postRoot, ok, rootErr := s.postStateRootForNonce(nonce)
+	if rootErr != nil {
+		logging.Warn("fetchSignature: read post-state root", "subsystem", "finalize",
+			"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "error", rootErr)
+		return false
+	}
 	if !ok {
 		// A trimmed suffix can omit this nonce while the SM is already at
 		// s.nonce. Mirror processResponse: the live root is authoritative
