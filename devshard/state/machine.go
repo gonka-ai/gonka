@@ -1888,11 +1888,15 @@ func (sm *StateMachine) InjectWarmKeys(delta map[uint32]string) {
 // without caching the result in state. Use for slot discovery at host startup
 // to avoid mutating state before any diffs are applied.
 func (sm *StateMachine) CheckWarmKey(warmAddr, coldAddr string) bool {
-	if sm.warmResolver == nil {
-		return false
-	}
-	ok, err := sm.warmResolver(warmAddr, coldAddr)
+	ok, err := sm.CheckWarmKeyWithError(warmAddr, coldAddr)
 	return err == nil && ok
+}
+
+func (sm *StateMachine) CheckWarmKeyWithError(warmAddr, coldAddr string) (bool, error) {
+	if sm.warmResolver == nil {
+		return false, nil
+	}
+	return sm.warmResolver(warmAddr, coldAddr)
 }
 
 func (sm *StateMachine) TotalSlots() uint32 {

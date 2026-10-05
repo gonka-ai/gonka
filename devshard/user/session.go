@@ -225,9 +225,22 @@ type InferenceParams struct {
 	LogprobsOptimizationOverride *bool
 }
 
+type warmCheckKey struct {
+	warm string
+	cold string
+}
+
+type warmCheckResult struct {
+	done    chan struct{}
+	valid   bool
+	retryAt time.Time
+}
+
 // Session manages the user side of the devshard protocol.
 type Session struct {
 	mu          sync.Mutex
+	warmCheckMu sync.Mutex
+	warmChecks  map[warmCheckKey]*warmCheckResult
 	sm          *state.StateMachine
 	signer      signing.Signer
 	verifier    signing.Verifier
@@ -488,6 +501,7 @@ func NewSession(
 		sm:              sm,
 		signer:          signer,
 		verifier:        verifier,
+		warmChecks:      make(map[warmCheckKey]*warmCheckResult),
 		escrowID:        escrowID,
 		group:           group,
 		addrToSlots:     addrToSlots,
@@ -693,12 +707,6 @@ func (s *Session) dropDiffPrefixLocked() {
 	s.diffs = kept
 }
 
-// dropSignaturesThroughLocked drops signature entries at or below floor.
-// The current nonce is never dropped: settlement reads it from
-// Signatures(). A nonce that holds some validator's highest signature also
-// stays, so signatureStatusLocked, which credits a validator at every nonce
-// up to its highest, reports the same quorum. That keeps at most one entry
-// per validator below floor. Caller must hold s.mu.
 func (s *Session) dropSignaturesThroughLocked(floor uint64) {
 	if s.nonce == 0 {
 		return
@@ -709,13 +717,26 @@ func (s *Session) dropSignaturesThroughLocked(floor uint64) {
 	}
 	s.sigsTrimmedThrough = floor
 	highest := make(map[string]uint64, len(s.addrToSlots))
+	keep := make(map[uint64]struct{})
 	for nonce, slotSigs := range s.signatures {
-		for slotID := range slotSigs {
-			addr := s.sm.SlotAddress(slotID)
-			highest[addr] = max(highest[addr], nonce)
+		root, err := s.expectedStateRootLocked(nonce)
+		if err != nil {
+			keep[nonce] = struct{}{}
+			continue
+		}
+		for slotID, sig := range slotSigs {
+			owner := s.sm.SlotAddress(slotID)
+			if owner == "" {
+				continue
+			}
+			signer, err := s.recoverStateSignatureAddress(nonce, root, sig)
+			if err != nil {
+				continue
+			}
+			key := owner + "\x00" + signer
+			highest[key] = max(highest[key], nonce)
 		}
 	}
-	keep := make(map[uint64]struct{}, len(highest))
 	for _, nonce := range highest {
 		keep[nonce] = struct{}{}
 	}
@@ -726,27 +747,54 @@ func (s *Session) dropSignaturesThroughLocked(floor uint64) {
 	}
 }
 
-// signaturesAtLocked returns the signatures held for nonce. A nonce at or
-// below sigsTrimmedThrough is read from the store and merged with what memory
-// still holds. The result must not be mutated. Caller must hold s.mu.
 func (s *Session) signaturesAtLocked(nonce uint64) map[uint32][]byte {
 	held := s.signatures[nonce]
-	if s.store == nil || nonce == 0 || nonce > s.sigsTrimmedThrough {
-		return held
+	if s.store != nil && nonce != 0 && nonce <= s.sigsTrimmedThrough {
+		stored, err := s.store.GetSignatures(s.escrowID, nonce)
+		if err != nil {
+			logging.Warn("read trimmed signatures from store", "subsystem", "session",
+				"escrow", s.escrowID, "nonce", nonce, "error", err)
+		} else if len(stored) > 0 {
+			merged := make(map[uint32][]byte, len(stored)+len(held))
+			maps.Copy(merged, stored)
+			maps.Copy(merged, held)
+			held = merged
+		}
 	}
-	stored, err := s.store.GetSignatures(s.escrowID, nonce)
+	if len(held) == 0 {
+		return nil
+	}
+	return held
+}
+
+func (s *Session) signatureSnapshot(nonce uint64) (map[uint32][]byte, []byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.expectedStateRootLocked(nonce)
 	if err != nil {
-		logging.Warn("read trimmed signatures from store", "subsystem", "session",
-			"escrow", s.escrowID, "nonce", nonce, "error", err)
-		return held
+		return nil, nil, err
 	}
-	if len(stored) == 0 {
-		return held
+	raw := s.signaturesAtLocked(nonce)
+	sigs := make(map[uint32][]byte, len(raw))
+	for slot, sig := range raw {
+		sigs[slot] = append([]byte(nil), sig...)
 	}
-	merged := make(map[uint32][]byte, len(stored)+len(held))
-	maps.Copy(merged, stored)
-	maps.Copy(merged, held)
-	return merged
+	return sigs, append([]byte(nil), root...), nil
+}
+
+func (s *Session) verifiedSignatures(nonce uint64) (map[uint32][]byte, error) {
+	raw, root, err := s.signatureSnapshot(nonce)
+	if err != nil {
+		return nil, err
+	}
+	valid := make(map[uint32][]byte, len(raw))
+	for slot, sig := range raw {
+		addr := s.sm.SlotAddress(slot)
+		if addr != "" && s.verifyStateSignature(nonce, root, sig, addr) == nil {
+			valid[slot] = sig
+		}
+	}
+	return valid, nil
 }
 
 // validateCatchUp warns if the catch-up diffs for a host are non-contiguous
@@ -839,6 +887,26 @@ func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool) {
 	return nil, false
 }
 
+func (s *Session) expectedStateRootLocked(nonce uint64) ([]byte, error) {
+	if root, ok := s.postStateRootForNonce(nonce); ok {
+		if len(root) != 32 {
+			return nil, fmt.Errorf("%w: invalid local root length %d at nonce %d", types.ErrStateHashMismatch, len(root), nonce)
+		}
+		return root, nil
+	}
+	if nonce != s.nonce {
+		return nil, fmt.Errorf("%w: no post-state-root at nonce %d (session nonce %d)", types.ErrStateHashMismatch, nonce, s.nonce)
+	}
+	root, err := s.sm.ComputeStateRoot()
+	if err != nil {
+		return nil, fmt.Errorf("compute local state root: %w", err)
+	}
+	if len(root) != 32 {
+		return nil, fmt.Errorf("%w: invalid local root length %d at nonce %d", types.ErrStateHashMismatch, len(root), nonce)
+	}
+	return root, nil
+}
+
 // processResponse updates session state from a host response.
 // inferenceNonce is the nonce assigned during PrepareInference (the logical inference ID).
 // resp.Nonce may differ when the host has already advanced past inferenceNonce.
@@ -847,27 +915,15 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	if resp == nil {
 		return ErrNilHostResponse
 	}
-	// Verify state hash if the host returned one. Contact/overlap wait until
-	// verification succeeds so a bad hash cannot inflate monitoring.
-	if len(resp.StateHash) > 0 {
-		var expected []byte
-		if root, ok := s.postStateRootForNonce(resp.Nonce); ok {
-			expected = root
-		} else if resp.Nonce == s.nonce {
-			// Finalize/recovery path: the nonce is beyond the diffs array
-			// (empty or suffix-only after snapshot recovery). The SM's live
-			// root is authoritative only for the current frozen nonce.
-			var err error
-			expected, err = s.sm.ComputeStateRoot()
-			if err != nil {
-				return fmt.Errorf("compute local state root: %w", err)
-			}
-		} else {
-			// No stored root for a non-current nonce: we cannot reconstruct
-			// the expected root, so reject rather than compare against the
-			// wrong nonce's live root.
-			return fmt.Errorf("%w: host %d at nonce %d: no post-state-root (session nonce %d)",
-				types.ErrStateHashMismatch, hostIdx, resp.Nonce, s.nonce)
+	var expected []byte
+	if len(resp.StateHash) > 0 || resp.StateSig != nil {
+		if resp.StateSig != nil && len(resp.StateHash) != 32 {
+			return fmt.Errorf("%w: host %d at nonce %d: state hash length %d with signature", types.ErrStateHashMismatch, hostIdx, resp.Nonce, len(resp.StateHash))
+		}
+		var err error
+		expected, err = s.expectedStateRootLocked(resp.Nonce)
+		if err != nil {
+			return fmt.Errorf("host %d: %w", hostIdx, err)
 		}
 		if !bytes.Equal(expected, resp.StateHash) {
 			return fmt.Errorf("%w: host %d at nonce %d (local %x, host %x)",
@@ -878,7 +934,7 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	// Verify and store state signature.
 	if resp.StateSig != nil {
 		expectedAddr := s.group[hostIdx].ValidatorAddress
-		if err := s.verifyStateSignature(resp.Nonce, resp.StateHash, resp.StateSig, expectedAddr); err != nil {
+		if err := s.verifyStateSignature(resp.Nonce, expected, resp.StateSig, expectedAddr); err != nil {
 			return fmt.Errorf("host %d: %w", hostIdx, err)
 		}
 
@@ -2252,6 +2308,26 @@ func (s *Session) Signatures() map[uint64]map[uint32][]byte {
 	return s.signatures
 }
 
+func (s *Session) SettlementSignatures(nonce uint64) (map[uint32][]byte, error) {
+	sigs, err := s.verifiedSignatures(nonce)
+	if err != nil {
+		return nil, err
+	}
+	settlementSigs := make(map[uint32][]byte, len(sigs))
+	for slot, sig := range sigs {
+		addr := s.sm.SlotAddress(slot)
+		for _, ownedSlot := range s.addrToSlots[addr] {
+			settlementSigs[ownedSlot] = sig
+		}
+	}
+	weight := uint32(len(settlementSigs))
+	threshold := s.sm.QuorumThreshold()
+	if weight < threshold {
+		return nil, fmt.Errorf("insufficient valid signatures: %d/%d weight", weight, threshold)
+	}
+	return settlementSigs, nil
+}
+
 func (s *Session) Nonce() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2281,8 +2357,6 @@ func (s *Session) FinishTxFor(inferenceID uint64) []byte {
 
 func (s *Session) StateMachine() *state.StateMachine { return s.sm }
 
-// sigWeight computes the slot-weighted signature count for a set of slot signatures,
-// deduplicating by validator address. Caller must hold s.mu.
 func (s *Session) sigWeight(sigs map[uint32][]byte) uint32 {
 	counted := make(map[string]bool, len(s.addrToSlots))
 	var weight uint32
@@ -2300,30 +2374,26 @@ func (s *Session) sigWeight(sigs map[uint32][]byte) uint32 {
 // hasQuorum returns true if signatures at the given nonce meet the threshold.
 // Thread-safe.
 func (s *Session) hasQuorum(nonce uint64, threshold uint32) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sigs := s.signaturesAtLocked(nonce)
-	if len(sigs) == 0 {
+	sigs, err := s.verifiedSignatures(nonce)
+	if err != nil || len(sigs) == 0 {
 		return false
 	}
 	return s.sigWeight(sigs) >= threshold
 }
 
-// hostSignedLocked reports whether any slot of addr signed nonce. Caller must
-// hold s.mu.
-func (s *Session) hostSignedLocked(nonce uint64, addr string) bool {
-	sigs := s.signaturesAtLocked(nonce)
+func (s *Session) hostSigned(nonce uint64, addr string) bool {
+	sigs, root, err := s.signatureSnapshot(nonce)
+	if err != nil {
+		return false
+	}
 	for _, slot := range s.addrToSlots[addr] {
-		if _, ok := sigs[slot]; ok {
+		if sig, ok := sigs[slot]; ok && s.verifyStateSignature(nonce, root, sig, addr) == nil {
 			return true
 		}
 	}
 	return false
 }
 
-// HasQuorumAt reports whether in-memory signatures at nonce meet the session
-// quorum threshold. Used by settle to decide whether Finalize must re-run
-// after a snapshot-only recovery left PhaseSettlement but empty signatures.
 func (s *Session) HasQuorumAt(nonce uint64) bool {
 	return s.hasQuorum(nonce, s.sm.QuorumThreshold())
 }
@@ -2391,22 +2461,66 @@ func (s *Session) getFinalizeClients() []HostClient {
 // processResponse (inbound host responses) and fetchSignature (pulled signatures)
 // so a host cannot get bytes that don't verify against its slot into the pool.
 func (s *Session) verifyStateSignature(nonce uint64, postRoot, signature []byte, expectedAddr string) error {
+	recovered, err := s.recoverStateSignatureAddress(nonce, postRoot, signature)
+	if err != nil {
+		return err
+	}
+	if recovered != expectedAddr && !s.warmKeyAuthorized(recovered, expectedAddr) {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
+	}
+	return nil
+}
+
+func (s *Session) warmKeyAuthorized(warm, cold string) bool {
+	key := warmCheckKey{warm: warm, cold: cold}
+	for {
+		s.warmCheckMu.Lock()
+		check := s.warmChecks[key]
+		if check != nil {
+			if check.done != nil {
+				done := check.done
+				s.warmCheckMu.Unlock()
+				<-done
+				continue
+			}
+			if check.valid || time.Now().Before(check.retryAt) {
+				valid := check.valid
+				s.warmCheckMu.Unlock()
+				return valid
+			}
+		}
+		check = &warmCheckResult{done: make(chan struct{})}
+		s.warmChecks[key] = check
+		s.warmCheckMu.Unlock()
+
+		valid, err := s.sm.CheckWarmKeyWithError(warm, cold)
+		s.warmCheckMu.Lock()
+		check.valid = err == nil && valid
+		if !check.valid {
+			check.retryAt = time.Now().Add(30 * time.Second)
+		}
+		close(check.done)
+		check.done = nil
+		accepted := check.valid
+		s.warmCheckMu.Unlock()
+		return accepted
+	}
+}
+
+func (s *Session) recoverStateSignatureAddress(nonce uint64, postRoot, signature []byte) (string, error) {
 	sigData, err := proto.Marshal(&types.StateSignatureContent{
 		StateRoot: postRoot,
 		EscrowId:  s.escrowID,
 		Nonce:     nonce,
 	})
 	if err != nil {
-		return fmt.Errorf("marshal state sig content: %w", err)
+		return "", fmt.Errorf("marshal state sig content: %w", err)
 	}
 	recovered, err := s.verifier.RecoverAddress(sigData, signature)
 	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidStateSig, err)
+		return "", fmt.Errorf("%w: %v", types.ErrInvalidStateSig, err)
 	}
-	if recovered != expectedAddr && !s.sm.CheckWarmKey(recovered, expectedAddr) {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
-	}
-	return nil
+	return recovered, nil
 }
 
 func (s *Session) verifyTimeoutVote(inferenceID uint64, reason types.TimeoutReason, vote *types.TimeoutVote, expectedAddr string) error {
@@ -2455,27 +2569,11 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	postRoot, ok := s.postStateRootForNonce(nonce)
-	if !ok {
-		// A trimmed suffix can omit this nonce while the SM is already at
-		// s.nonce. Mirror processResponse: the live root is authoritative
-		// only for that current nonce. For any other nonce we have no way
-		// to reconstruct the root, so refuse rather than verify against a
-		// root for a different nonce.
-		if nonce != s.nonce {
-			logging.Info("fetchSignature: no post-state-root for nonce", "subsystem", "finalize",
-				"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "session_nonce", s.nonce)
-			return false
-		}
-		var err error
-		postRoot, err = s.sm.ComputeStateRoot()
-		if err != nil {
-			logging.Info("fetchSignature: no post-state-root for nonce", "subsystem", "finalize",
-				"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "error", err)
-			return false
-		}
-		logging.Info("fetchSignature: using live state root", "subsystem", "finalize",
-			"escrow", s.escrowID, "nonce", nonce, "host", hostIdx)
+	postRoot, err := s.expectedStateRootLocked(nonce)
+	if err != nil {
+		logging.Info("fetchSignature: no post-state-root for nonce", "subsystem", "finalize",
+			"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "error", err)
+		return false
 	}
 
 	for slotID := range sigs {
@@ -2549,13 +2647,11 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 
 	// Filter to hosts that don't already have a signature at the final nonce.
 	var missing []hostEntry
-	s.mu.Lock()
 	for _, h := range hosts {
-		if !s.hostSignedLocked(nonce, h.addr) {
+		if !s.hostSigned(nonce, h.addr) {
 			missing = append(missing, h)
 		}
 	}
-	s.mu.Unlock()
 
 	logging.Info("collecting signatures: fan-out", "subsystem", "finalize", "escrow", s.escrowID,
 		"nonce", nonce, "missing_hosts", len(missing), "total_hosts", len(hosts))
@@ -2589,10 +2685,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 				}
 
 				// Already got it on a previous retry?
-				s.mu.Lock()
-				hasSig := s.hostSignedLocked(nonce, h.addr)
-				s.mu.Unlock()
-				if hasSig {
+				if s.hostSigned(nonce, h.addr) {
 					return
 				}
 
@@ -2620,9 +2713,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 	}
 	wg.Wait()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if sigs := s.signaturesAtLocked(nonce); len(sigs) > 0 {
+	if sigs, err := s.verifiedSignatures(nonce); err == nil && len(sigs) > 0 {
 		weight = s.sigWeight(sigs)
 	}
 
@@ -2630,7 +2721,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 	if weight < threshold {
 		var missing []string
 		for _, h := range hosts {
-			if !s.hostSignedLocked(nonce, h.addr) {
+			if !s.hostSigned(nonce, h.addr) {
 				missing = append(missing, fmt.Sprintf("%d(%s)", h.idx, shortAddress(h.addr)))
 			}
 		}
@@ -2654,21 +2745,23 @@ type SignatureStatusEntry struct {
 // nonce that has reached 2/3+1 quorum. Thread-safe.
 func (s *Session) SignatureStatus() (entries []SignatureStatusEntry, highestQuorum uint64, hasAny bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.signatureStatusLocked()
-}
+	candidates := make([]uint64, 0, len(s.signatures))
+	for nonce := range s.signatures {
+		candidates = append(candidates, nonce)
+	}
+	s.mu.Unlock()
 
-// signatureStatusLocked computes signature status using the monotonic property:
-// a validator that signed nonce M implicitly accepted all nonces <= M.
-// For each nonce N, effective weight = sum of slots for all validators whose
-// highest signed nonce >= N.
-// Caller must hold s.mu.
-func (s *Session) signatureStatusLocked() (entries []SignatureStatusEntry, highestQuorum uint64, hasAny bool) {
 	total := s.sm.TotalSlots()
 	threshold := s.sm.QuorumThreshold()
 
 	addrMaxNonce := make(map[string]uint64)
-	for nonce, slotSigs := range s.signatures {
+	nonces := make([]uint64, 0, len(candidates))
+	for _, nonce := range candidates {
+		slotSigs, err := s.verifiedSignatures(nonce)
+		if err != nil || len(slotSigs) == 0 {
+			continue
+		}
+		nonces = append(nonces, nonce)
 		for slotID := range slotSigs {
 			addr := s.sm.SlotAddress(slotID)
 			if nonce > addrMaxNonce[addr] {
@@ -2677,10 +2770,6 @@ func (s *Session) signatureStatusLocked() (entries []SignatureStatusEntry, highe
 		}
 	}
 
-	nonces := make([]uint64, 0, len(s.signatures))
-	for n := range s.signatures {
-		nonces = append(nonces, n)
-	}
 	sort.Slice(nonces, func(i, j int) bool { return nonces[i] < nonces[j] })
 
 	nonceWeight := make(map[uint64]uint32, len(addrMaxNonce))

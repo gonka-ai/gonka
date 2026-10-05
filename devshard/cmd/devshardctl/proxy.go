@@ -661,7 +661,11 @@ func (p *Proxy) handBackToGateway(ctx context.Context, err error) bool {
 func (p *Proxy) settlementJSON() (SettlementJSON, error) {
 	finalNonce := p.session.Nonce()
 	st := p.sm.SnapshotState()
-	payload, err := state.BuildSettlement(p.escrowID, st, p.session.Signatures()[finalNonce], finalNonce)
+	sigs, err := p.session.SettlementSignatures(finalNonce)
+	if err != nil {
+		return SettlementJSON{}, err
+	}
+	payload, err := state.BuildSettlement(p.escrowID, st, sigs, finalNonce)
 	if err != nil {
 		return SettlementJSON{}, err
 	}
@@ -671,7 +675,12 @@ func (p *Proxy) settlementJSON() (SettlementJSON, error) {
 func (p *Proxy) writeSettlement(w http.ResponseWriter) {
 	finalNonce := p.session.Nonce()
 	st := p.sm.SnapshotState()
-	payload, err := state.BuildSettlement(p.escrowID, st, p.session.Signatures()[finalNonce], finalNonce)
+	sigs, err := p.session.SettlementSignatures(finalNonce)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	payload, err := state.BuildSettlement(p.escrowID, st, sigs, finalNonce)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
