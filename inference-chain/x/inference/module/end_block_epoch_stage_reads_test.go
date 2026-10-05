@@ -3,6 +3,7 @@ package inference
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -119,4 +120,59 @@ func TestEndBlockSetNewValidatorsRecomputesStoredRatio(t *testing.T) {
 		require.True(t, found)
 		require.Equal(t, types.ParticipantStatus_INACTIVE, p.Status, ap.Index)
 	}
+}
+
+// The validation-start block builds the delegation and validation snapshots from
+// one read of the base state and one pass over the stage's store commits.
+func TestEndBlockValidationStartReadsStageInputsOnce(t *testing.T) {
+	fixture := newFormationRecoveryFixture(t, noopCollateralKeeper{}, 1, 2)
+	fixture.addFreshPoC(t, 100)
+	params, err := fixture.keeper.GetParams(fixture.ctx)
+	require.NoError(t, err)
+	ec, err := types.NewEpochContextFromEffectiveEpoch(fixture.currentEpoch, *params.EpochParams, 0)
+	require.NoError(t, err)
+	height := ec.StartOfPoCValidation()
+	require.True(t, ec.IsStartOfPoCValidationStage(height))
+	blockCtx := fixture.ctx.WithBlockHeight(height)
+
+	commitPrefix := fixture.keeper.PoCV2StoreCommits.GetPrefix()
+	traced := func(run func()) (apReads, commitIters int) {
+		var trace bytes.Buffer
+		blockCtx.MultiStore().SetTracer(&trace)
+		run()
+		blockCtx.MultiStore().SetTracer(nil)
+		apKey := base64.StdEncoding.EncodeToString(types.ActiveParticipantsFullKey(fixture.currentEpoch.Index))
+		for _, line := range strings.Split(trace.String(), "\n") {
+			if strings.Contains(line, `"operation":"read"`) && strings.Contains(line, `"key":"`+apKey+`"`) {
+				apReads++
+			}
+			if !strings.Contains(line, `"operation":"iterKey"`) {
+				continue
+			}
+			var op struct {
+				Key []byte `json:"key"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(line), &op))
+			if bytes.HasPrefix(op.Key, commitPrefix) {
+				commitIters++
+			}
+		}
+		return apReads, commitIters
+	}
+
+	_, onePass := traced(func() {
+		_, err := fixture.keeper.GetAllPoCV2StoreCommitsForStage(blockCtx, fixture.upcomingEpoch.PocStartBlockHeight)
+		require.NoError(t, err)
+	})
+	require.Positive(t, onePass)
+	apReads, commitIters := traced(func() { require.NoError(t, fixture.module.EndBlock(blockCtx)) })
+
+	_, found := fixture.keeper.GetDelegationSnapshot(blockCtx)
+	require.True(t, found, "delegation snapshot written")
+	snapshot, found, err := fixture.keeper.GetPoCValidationSnapshot(blockCtx, fixture.upcomingEpoch.PocStartBlockHeight)
+	require.NoError(t, err)
+	require.True(t, found, "validation snapshot written")
+	require.Equal(t, height, snapshot.SnapshotHeight)
+	require.Equal(t, 1, apReads, "active participants of the effective epoch")
+	require.Equal(t, onePass, commitIters, "one pass over the stage's store commits")
 }
