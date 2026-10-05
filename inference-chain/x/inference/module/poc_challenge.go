@@ -178,7 +178,7 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 	}
 
 	measured := map[string]int64{ch.Target: 0}
-	calculatorResult, calcErr := am.challengeCalculatorResult(ctx, ch, finish, snapshot, params)
+	calculatorResult, calcErr := am.challengeCalculatorResult(ctx, ch, finish, snapshot, params, participant)
 	if calcErr != nil {
 		return calcErr
 	}
@@ -194,6 +194,8 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 		am.keeper.SetEpochGroupData(ctx, epochGroupData)
 	}
 
+	// Nothing writes the participant between its read above and the save below.
+	storedStats := participant.CurrentEpochStats.StoredCopy()
 	if participant.CurrentEpochStats == nil {
 		participant.CurrentEpochStats = types.NewCurrentEpochStats()
 	}
@@ -205,7 +207,7 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 			return err
 		}
 	}
-	return am.keeper.SetParticipant(ctx, participant)
+	return am.keeper.SetParticipantFromStored(ctx, participant, storedStats)
 }
 
 func (am AppModule) challengeCalculatorResult(
@@ -214,6 +216,7 @@ func (am AppModule) challengeCalculatorResult(
 	finish int64,
 	snapshot types.PoCValidationSnapshot,
 	params types.Params,
+	participant types.Participant,
 ) ([]*types.ActiveParticipant, error) {
 	commits, err := am.keeper.ListChallengeCommits(ctx, ch.Target)
 	if err != nil {
@@ -250,10 +253,6 @@ func (am AppModule) challengeCalculatorResult(
 		return nil, nil
 	}
 
-	participant, found := am.keeper.GetParticipant(ctx, ch.Target)
-	if !found {
-		return nil, evaluationError("target participant not found")
-	}
 	participants := map[string]types.Participant{ch.Target: participant}
 	seeds := make(map[string]types.RandomSeed)
 	if seed, found := am.keeper.GetRandomSeed(ctx, ch.EpochIndex, ch.Target); found {
