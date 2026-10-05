@@ -193,7 +193,7 @@ func (k msgServer) buildPoCV2CommitUpdate(
 	if modelID == "" {
 		return pocV2CommitUpdate{}, sdkerrors.Wrap(types.ErrIllegalState, "model_id must not be empty")
 	}
-	if _, found := k.GetGovernanceModel(ctx, modelID); !found {
+	if !k.IsValidGovernanceModel(ctx, modelID) {
 		return pocV2CommitUpdate{}, sdkerrors.Wrap(types.ErrInvalidModel, fmt.Sprintf("model_id %q is not a governance model", modelID))
 	}
 
@@ -357,7 +357,7 @@ func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.Ms
 		if modelID == "" {
 			return nil, sdkerrors.Wrap(types.ErrIllegalState, "model_id must not be empty")
 		}
-		if _, found := k.GetGovernanceModel(ctx, modelID); !found {
+		if !k.IsValidGovernanceModel(ctx, modelID) {
 			return nil, sdkerrors.Wrap(types.ErrInvalidModel, fmt.Sprintf("model_id %q is not a governance model", modelID))
 		}
 
