@@ -425,8 +425,8 @@ func sleepPayloadFetchRetry(ctx context.Context) error {
 }
 
 func classifyExecuteValidationErr(err error) error {
-	if err == nil {
-		return nil
+	if err == nil || errors.Is(err, devshardpkg.ErrValidationDeferred) {
+		return err
 	}
 	var classified *observability.ClassifiedError
 	if errors.As(err, &classified) {

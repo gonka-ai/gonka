@@ -154,10 +154,11 @@ const (
 )
 
 const (
-	MetricStatusOK     MetricStatus = "ok"
-	MetricStatusError  MetricStatus = "error"
-	MetricStatusQueued MetricStatus = "queued"
-	MetricStatusCached MetricStatus = "cached"
+	MetricStatusOK       MetricStatus = "ok"
+	MetricStatusDeferred MetricStatus = "deferred"
+	MetricStatusError    MetricStatus = "error"
+	MetricStatusQueued   MetricStatus = "queued"
+	MetricStatusCached   MetricStatus = "cached"
 	// MetricStatusLeased marks an attempt that stopped because a lease row was
 	// already in place. Distinct from error: most of these are the dedup guard
 	// working as intended.

@@ -98,7 +98,7 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 				"HandleInference: requests disabled", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()).SetInternal(err))
 		}
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
-			"HandleInference: handle request", echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err))
+			"HandleInference: handle request", inferenceHTTPError(err))
 	}
 	s.recordForceRequestAnchorMissingIfApplicable(call.Sender, req.Nonce, unwrapped.HeightSync, call.Source)
 	if call.Op != nil {

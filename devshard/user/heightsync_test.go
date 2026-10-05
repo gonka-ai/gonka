@@ -978,7 +978,7 @@ func TestHeartbeat_LoopSecondGapStaysInsideOneInterval(t *testing.T) {
 	session.StartHeartbeatLoop()
 	var opened []time.Time
 	require.Eventually(t, func() bool {
-		n := countHeartbeats(session.Diffs())
+		n := countHeartbeats(seenDiffs(session))
 		spans := n / 3
 		for len(opened) < spans {
 			opened = append(opened, time.Now())

@@ -136,6 +136,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	}
 	manager.Register(e.Group(""))
 	lifecycle.SetPeerRPCReady(manager.PeerRPCSessionsReady)
+	startMemoryLog(ctx, manager)
 	chainRuntime.chainEvents.OnReady(func(ready bool) {
 		lifecycle.SetReady(ready)
 		manager.SetCometConnected(ready)

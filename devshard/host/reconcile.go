@@ -201,17 +201,6 @@ func (h *Host) applyDurableRecordLocked(rec types.DiffRecord) error {
 	}
 
 	h.mempool.RemoveIncluded(rec.Txs)
-	for _, tx := range rec.Txs {
-		if fi := tx.GetFinishInference(); fi != nil {
-			delete(h.completedResponses, fi.InferenceId)
-		}
-		if ti := tx.GetTimeoutInference(); ti != nil {
-			delete(h.completedResponses, ti.InferenceId)
-		}
-		if em := tx.GetErrorMiss(); em != nil {
-			delete(h.completedResponses, em.InferenceId)
-		}
-	}
 	h.recordValidationObsFromAppliedDiff(rec.Txs)
 	phaseAfter := h.sm.Phase()
 	settledNow := phaseBefore != types.PhaseSettlement && phaseAfter == types.PhaseSettlement

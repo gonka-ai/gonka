@@ -1,7 +1,9 @@
 package transport
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -45,14 +47,15 @@ func TestServeGetDiffs_HTTP(t *testing.T) {
 
 func TestServeGossipNonce_RejectsBadStateSig(t *testing.T) {
 	env := setupServerEnv(t)
+	hash := bytes.Repeat([]byte{1}, sha256.Size)
 	require.ErrorIs(t, env.server.ServeGossipNonce(GossipNonceRequest{
 		Nonce: 1, StateHash: []byte{1}, SlotID: 0,
 	}), ErrGossipMissingStateSig)
 	require.ErrorIs(t, env.server.ServeGossipNonce(GossipNonceRequest{
-		Nonce: 1, StateHash: []byte{1}, StateSig: []byte{1, 2, 3}, SlotID: 0,
+		Nonce: 1, StateHash: hash, StateSig: []byte{1, 2, 3}, SlotID: 0,
 	}), ErrGossipInvalidStateSig)
 	require.ErrorIs(t, env.server.ServeGossipNonce(GossipNonceRequest{
-		Nonce: 1, StateHash: []byte{1}, StateSig: []byte{1}, SlotID: 99,
+		Nonce: 1, StateHash: hash, StateSig: []byte{1}, SlotID: 99,
 	}), ErrGossipInvalidSlot)
 }
 

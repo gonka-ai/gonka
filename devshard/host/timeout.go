@@ -4,15 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 
 	"common/completionapi"
 
-	"devshard/storage"
 	"devshard/types"
 )
 
@@ -49,9 +46,10 @@ type ExecutorClient interface {
 	// execution. A nil payload only binds and catches up: no receipt, no
 	// execution. mempool is the executor pool after that (ConfirmStart and
 	// FinishInference for this inference). Refused timeout copies those txs
-	// rather than synthesizing ConfirmStart from the receipt. Execution
-	// timeout sends the same diffs with a nil payload and rejects when the
-	// returned pool contains MsgFinishInference.
+	// rather than synthesizing ConfirmStart from the receipt. A refused vote
+	// challenges once and passes no diffs. Execution timeout sends the same
+	// diffs with a nil payload and rejects when the returned pool contains
+	// MsgFinishInference.
 	ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) (receipt []byte, mempool []*types.DevshardTx, err error)
 }
 
@@ -80,11 +78,6 @@ func RecoveryTxsFor(txs []*types.DevshardTx, inferenceID uint64) []*types.Devsha
 	return out
 }
 
-// DiffPageLoader returns one page of stored diffs in [from, to]. next is the
-// nonce after this page. An empty page with next 0 means the range has no
-// diffs. The caller must not retain diffs after the challenge returns.
-type DiffPageLoader func(from, to uint64) (diffs []types.Diff, next uint64, err error)
-
 // VerifyRefusedTimeout checks if a refused timeout is valid.
 //
 // Flow:
@@ -92,53 +85,21 @@ type DiffPageLoader func(from, to uint64) (diffs []types.Diff, next uint64, err 
 //  2. Check deadline has passed.
 //  3. Check local mempool for MsgConfirmStart -- if found, reject.
 //  4. Validate payload against on-chain record (same checks executor does).
-//  5. Challenge executor: forward diffs + payload in one call.
-//  6. If executor produces receipt -> reject (it received data and will compute).
-//  7. If executor unreachable or no receipt -> accept.
+//  5. Challenge the executor once, with the payload and no diffs.
+//  6. If the executor produces a receipt -> reject (it has the inference and will compute).
+//  7. If the executor is unreachable or returns no receipt -> accept.
 func VerifyRefusedTimeout(
 	ctx context.Context,
 	st types.EscrowState,
 	inferenceID uint64,
 	payload *InferencePayload,
-	storedDiffs []types.Diff,
 	localMempool []*types.DevshardTx,
 	executorClient ExecutorClient,
 	ingest TxSink,
 	config types.SessionConfig,
 	nowUnix int64,
 ) (bool, error) {
-	return verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, executorClient, ingest, config, nowUnix,
-		func(from, to uint64) ([]types.Diff, uint64, error) {
-			if from > to || len(storedDiffs) == 0 {
-				return nil, 0, nil
-			}
-			next := to + 1
-			if to == ^uint64(0) {
-				next = 0
-			}
-			return storedDiffs, next, nil
-		})
-}
-
-// VerifyRefusedTimeoutPaged is VerifyRefusedTimeout with the journal loaded
-// one page at a time. A receipt, an unreachable executor, or coverage of
-// LatestNonce stops the walk. The verifier holds only the page being challenged.
-// A page that cannot be read after a no-receipt page accepts the timeout. A hole
-// at the first nonce challenges with no diffs. A read error before any challenge
-// is returned after refusedPageReadAttempts reads.
-func VerifyRefusedTimeoutPaged(
-	ctx context.Context,
-	st types.EscrowState,
-	inferenceID uint64,
-	payload *InferencePayload,
-	localMempool []*types.DevshardTx,
-	executorClient ExecutorClient,
-	ingest TxSink,
-	config types.SessionConfig,
-	nowUnix int64,
-	load DiffPageLoader,
-) (bool, error) {
-	return verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, executorClient, ingest, config, nowUnix, load)
+	return verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, executorClient, ingest, config, nowUnix)
 }
 
 type refusedChallenge int
@@ -159,7 +120,6 @@ func verifyRefusedTimeout(
 	ingest TxSink,
 	config types.SessionConfig,
 	nowUnix int64,
-	load DiffPageLoader,
 ) (bool, error) {
 	rec, ok := st.Inferences[inferenceID]
 	if !ok {
@@ -197,68 +157,7 @@ func verifyRefusedTimeout(
 	if executorClient == nil {
 		return true, nil
 	}
-	if st.LatestNonce == 0 || load == nil {
-		return finishRefusedChallenge(challengeRefused(ctx, inferenceID, payload, nil, executorClient, ingest))
-	}
-
-	from := uint64(1)
-	to := st.LatestNonce
-	challenged := false
-	for {
-		diffs, next, err := loadRefusedPage(ctx, load, from, to)
-		if err != nil {
-			var gap *storage.DiffGapError
-			switch {
-			case challenged:
-				// The executor answered every readable page with no receipt.
-				return true, nil
-			case errors.As(err, &gap):
-				// The hole is at the first nonce: the executor decides from its own state.
-				return finishRefusedChallenge(challengeRefused(ctx, inferenceID, payload, nil, executorClient, ingest))
-			default:
-				return false, err
-			}
-		}
-		if len(diffs) == 0 {
-			if from == 1 {
-				return finishRefusedChallenge(challengeRefused(ctx, inferenceID, payload, nil, executorClient, ingest))
-			}
-			return true, nil
-		}
-		outcome := challengeRefused(ctx, inferenceID, payload, diffs, executorClient, ingest)
-		challenged = true
-		switch outcome {
-		case refusedUnreachable:
-			return true, nil
-		case refusedReceipt:
-			return false, nil
-		}
-		if next == 0 || next > to {
-			return true, nil
-		}
-		from = next
-	}
-}
-
-// refusedPageReadAttempts bounds the reads of one refused-timeout page. A hole
-// is returned on the first attempt; any other error is retried.
-const refusedPageReadAttempts = 3
-
-var refusedPageRetryDelay = 50 * time.Millisecond
-
-func loadRefusedPage(ctx context.Context, load DiffPageLoader, from, to uint64) ([]types.Diff, uint64, error) {
-	var gap *storage.DiffGapError
-	for attempt := 1; ; attempt++ {
-		diffs, next, err := load(from, to)
-		if err == nil || errors.As(err, &gap) || attempt == refusedPageReadAttempts {
-			return diffs, next, err
-		}
-		select {
-		case <-ctx.Done():
-			return nil, 0, err
-		case <-time.After(time.Duration(attempt) * refusedPageRetryDelay):
-		}
-	}
+	return finishRefusedChallenge(challengeRefused(ctx, inferenceID, payload, nil, executorClient, ingest))
 }
 
 func finishRefusedChallenge(outcome refusedChallenge) (bool, error) {

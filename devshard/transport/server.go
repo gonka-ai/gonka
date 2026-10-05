@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"devshard/logging"
 	"devshard/observability"
 	"devshard/signing"
+	"devshard/state"
 	"devshard/storage"
 	"devshard/types"
 )
@@ -489,6 +491,24 @@ func flushSSENow(w http.ResponseWriter) error {
 	return flushSSE(w)
 }
 
+// divergenceHTTPBody is the 500 body for a post_state_root mismatch.
+// message keeps the phrase gateways already match; host_state is this
+// process's root inputs so the gateway can name the field that differs.
+type divergenceHTTPBody struct {
+	Message   string           `json:"message"`
+	HostState state.RootInputs `json:"host_state"`
+}
+
+func inferenceHTTPError(err error) error {
+	if div := state.AsRootDivergence(err); div != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, divergenceHTTPBody{
+			Message:   err.Error(),
+			HostState: div.Inputs,
+		}).SetInternal(err)
+	}
+	return echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err)
+}
+
 // replaySSEBody writes cached ML response bytes as SSE data lines.
 // The cached bytes are the raw response body (JSON). Wrap as a single SSE data event.
 func replaySSEBody(w http.ResponseWriter, body []byte) error {
@@ -613,10 +633,10 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	var accept bool
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = host.VerifyRefusedTimeoutPaged(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, st.Config, nowUnix, s.loadRefusedDiffPage)
+		accept, err = host.VerifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, st.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		// Creator-signed diffs (the gateway start lives in nonce 1) let a cold
-		// executor CreateSession. Refused checks page this journal instead.
+		// executor CreateSession. A refused vote challenges once and sends none.
 		var storedDiffs []types.Diff
 		if s.store != nil && st.LatestNonce > 0 {
 			records, dErr := s.store.GetDiffs(s.host.EscrowID(), 1, st.LatestNonce)
@@ -651,37 +671,6 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 		resp.Mempool = mempoolBytes
 	}
 	return resp, nil
-}
-
-// errStopRefusedDiffPage ends a ReadDiffPages walk after the first page.
-var errStopRefusedDiffPage = errors.New("stop after refused diff page")
-
-// loadRefusedDiffPage reads one page of [from, to] for a refused-timeout
-// challenge. The caller drops the slice after ChallengeReceipt returns.
-func (s *Server) loadRefusedDiffPage(from, to uint64) ([]types.Diff, uint64, error) {
-	if s.store == nil || from > to {
-		return nil, 0, nil
-	}
-	var page []types.DiffRecord
-	err := storage.ReadDiffPages(s.store, s.host.EscrowID(), from, to, func(recs []types.DiffRecord) error {
-		page = append([]types.DiffRecord(nil), recs...)
-		return errStopRefusedDiffPage
-	})
-	if err != nil && !errors.Is(err, errStopRefusedDiffPage) {
-		return nil, 0, err
-	}
-	if len(page) == 0 {
-		return nil, 0, nil
-	}
-	diffs := make([]types.Diff, len(page))
-	var last uint64
-	for i, rec := range page {
-		diffs[i] = rec.Diff
-		if rec.Nonce > last {
-			last = rec.Nonce
-		}
-	}
-	return diffs, last + 1, nil
 }
 
 // signTimeoutVote marshals and signs a TimeoutVoteContent, returning the
@@ -924,6 +913,10 @@ func (s *Server) HandleGossipNonce(c echo.Context) (err error) {
 func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 	if len(req.StateSig) == 0 {
 		return ErrGossipMissingStateSig
+	}
+	// A state root is a SHA-256 digest. The gossip seen map keeps this value.
+	if len(req.StateHash) != sha256.Size {
+		return echo.NewHTTPError(http.StatusBadRequest, "state hash must be 32 bytes")
 	}
 	if req.SlotID >= uint32(len(s.host.Group())) {
 		return ErrGossipInvalidSlot

@@ -40,10 +40,12 @@ const fallbackSlotWait = 100 * time.Millisecond
 // round-robins direct HTTP without lock/release. When capacity has been
 // observed via ListNodeCapacity, fallback is bounded by capacity.Cache.
 type Engine struct {
+	validationBudget            *validationBudget
 	mlClient                    *mlnodeclient.Client
 	mgr                         *mlnodeclient.Manager
 	capacity                    *mlnodeclient.Cache
 	payloadStore                PayloadStore
+	payloadRead                 PayloadReader
 	httpClient                  *http.Client
 	chainParams                 ChainParamsProvider
 	phase                       *chain.Phase
@@ -62,11 +64,14 @@ func NewEngine(
 	phase *chain.Phase,
 	logprobsOptimizationEnabled bool,
 ) *Engine {
+	reader, _ := payloadStore.(PayloadReader)
 	return &Engine{
+		validationBudget:            newValidationBudget(defaultValidationCreditTTL),
 		mlClient:                    mlClient,
 		mgr:                         mgr,
 		capacity:                    capacity,
 		payloadStore:                payloadStore,
+		payloadRead:                 reader,
 		httpClient:                  NewNoRedirectClient(mlNodeHTTPTimeout),
 		chainParams:                 chainParams,
 		phase:                       phase,
@@ -80,14 +85,49 @@ func NewEngine(
 // canonicalize + store payloads.
 // Node acquisition prefers gRPC (dapi authoritative); on dapi-unreachable it
 // falls back to the passive ML-node cache.
+//
+// With req.Recovery set, a response already stored for this inference is
+// returned instead of running the model. A read failure fails the execution:
+// running the model then could commit a hash the stored payload contradicts.
 func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
-	return executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
-		return e.executeMLRequest(ctx, model, req.EscrowID, body)
-	}, e.chainParams, e.logprobsOptimizationEnabled)
+	return executeWithRecovery(ctx, req, e.payloadRead, e.phase.EpochID(), func(ctx context.Context) (*devshard.ExecuteResult, error) {
+		result, err := executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
+			return e.executeMLRequest(ctx, model, req.EscrowID, body)
+		}, e.chainParams, e.logprobsOptimizationEnabled)
+		if err == nil && result != nil && !result.PartialResponse {
+			e.validationBudget.earn(req.Model)
+		}
+		return result, err
+	})
+}
+
+func executeWithRecovery(
+	ctx context.Context,
+	req devshard.ExecuteRequest,
+	reader PayloadReader,
+	phaseEpoch uint64,
+	run func(context.Context) (*devshard.ExecuteResult, error),
+) (*devshard.ExecuteResult, error) {
+	if req.Recovery == devshard.RecoveryNone {
+		return run(ctx)
+	}
+	result, err := recoverStoredExecution(ctx, req, reader, phaseEpoch)
+	if err != nil {
+		return nil, err
+	}
+	if result != nil {
+		observability.ObserveTokens(observability.PathExecute, "", observability.TokenKindPrompt, result.InputTokens)
+		observability.ObserveTokens(observability.PathExecute, "", observability.TokenKindCompletion, result.OutputTokens)
+		return result, nil
+	}
+	if req.Recovery == devshard.RecoveryStoredOnly {
+		return nil, devshard.ErrNoStoredResponse
+	}
+	return run(ctx)
 }
 
 func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
-	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, func(endpoint string) (*http.Response, error) {
+	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, func(endpoint string, refund func()) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {
@@ -109,12 +149,13 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, b
 // unreachable it falls back to mgr.PickNode round-robin without lock/release.
 // ResourceExhausted (dapi up, no free nodes) stays on the gRPC retry path.
 // escrowID is forwarded on Acquire so dapi can attribute per-escrow load.
+// fn must call refund if it returns before attempting an HTTP dispatch.
 func (e *Engine) doWithLockedNode(
 	ctx context.Context,
 	path observability.Path,
 	model string,
 	escrowID string,
-	fn func(endpoint string) (*http.Response, error),
+	fn func(endpoint string, refund func()) (*http.Response, error),
 ) (*http.Response, error) {
 	var excluded []string
 	excludedSet := make(map[string]struct{})
@@ -122,11 +163,16 @@ func (e *Engine) doWithLockedNode(
 	lastReason := observability.ReasonAcquireErr
 
 	for attempt := 0; attempt < maxAcquireAttempts; attempt++ {
+		refund, ok := e.reserveValidationCredit(path, model)
+		if !ok {
+			return nil, devshard.ErrValidationDeferred
+		}
 		acqCtx, cancel := context.WithTimeout(ctx, acquireTimeout)
 		acq, err := e.mlClient.Acquire(acqCtx, model, excluded, escrowID)
 		cancel()
 
 		if err != nil {
+			refund()
 			if ctx.Err() != nil {
 				lastReason = observability.ReasonTimeout
 				return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, ctx.Err())
@@ -154,7 +200,7 @@ func (e *Engine) doWithLockedNode(
 		}
 
 		started := time.Now()
-		resp, httpErr := fn(acq.Endpoint)
+		resp, httpErr := fn(acq.Endpoint, refund)
 		outcome := mlnodegen.ReleaseOutcome_SUCCESS
 
 		lastReason = observability.ClassifyMLNodeHTTP(resp, httpErr, ctx.Err())
@@ -214,7 +260,7 @@ func (e *Engine) doWithFallbackNodes(
 	path observability.Path,
 	model string,
 	excluded map[string]struct{},
-	fn func(endpoint string) (*http.Response, error),
+	fn func(endpoint string, refund func()) (*http.Response, error),
 	acquireErr error,
 ) (*http.Response, error) {
 	if e.mgr == nil {
@@ -237,6 +283,11 @@ func (e *Engine) doWithFallbackNodes(
 			return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, ctx.Err())
 		}
 
+		refund, ok := e.reserveValidationCredit(path, model)
+		if !ok {
+			return nil, devshard.ErrValidationDeferred
+		}
+
 		pickExcluded := excluded
 		if limit && len(capacityExcluded) > 0 {
 			pickExcluded = mergeExcluded(excluded, capacityExcluded)
@@ -244,6 +295,7 @@ func (e *Engine) doWithFallbackNodes(
 
 		endpoint, nodeID, ok := e.mgr.PickNode(model, pickExcluded)
 		if !ok {
+			refund()
 			if limit && len(capacityExcluded) > 0 {
 				// Every known node is at its local bound — wait and retry.
 				clear(capacityExcluded)
@@ -268,11 +320,13 @@ func (e *Engine) doWithFallbackNodes(
 		if limit {
 			if _, known := e.capacity.Get(nodeID); known {
 				if !e.capacity.TryAcquire(nodeID, model) {
+					refund()
 					capacityExcluded[nodeID] = struct{}{}
 					continue
 				}
 				acquired = true
 			} else if !e.capacity.TryAcquireUnknown(nodeID, model) {
+				refund()
 				// PickNode returned a node dapi never reported. Bound it with a
 				// synthetic budget instead of an unbounded bypass; retry another.
 				capacityExcluded[nodeID] = struct{}{}
@@ -283,7 +337,7 @@ func (e *Engine) doWithFallbackNodes(
 		}
 
 		started := time.Now()
-		resp, httpErr := fn(endpoint)
+		resp, httpErr := fn(endpoint, refund)
 		if acquired {
 			e.capacity.Release(nodeID, model)
 		}

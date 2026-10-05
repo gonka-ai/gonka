@@ -34,6 +34,7 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	// devshardd is the verifier, so it also owns the log-plane instruments.
 	_ = heightsync.RegisterLogPlaneMetrics(observability.Registry())
 	e.GET("/metrics", echo.WrapHandler(observability.MetricsHandler()))
+	e.GET("/stats/memory", echo.WrapHandler(http.HandlerFunc(handleDebugMemory)))
 	e.GET("/healthz", func(c echo.Context) error {
 		if !lifecycle.peerSessionsReady() {
 			return c.String(http.StatusServiceUnavailable, "peer rpc sessions loading")
