@@ -63,3 +63,6 @@ inference-chain/proto/github.com/
 inference-chain/proto/api/
 inference-chain/proto/**/module/*.pb.go
 inference-chain/.docker-context
+
+# Local testenv baseline checkouts and pinned binaries.
+devshard/testenv/baselines/

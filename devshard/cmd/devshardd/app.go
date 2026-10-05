@@ -301,6 +301,10 @@ func buildHostManager(
 	}
 	store := devshardstorage.NewManagedStorage(innerStore, sessionEpochRetain, chainParams)
 	closers.Add(func() { _ = store.Close() })
+	if credits, ok := devshardstorage.AsValidationCreditStore(store); ok {
+		eng.UseSharedValidationCredits(credits, instanceAddr)
+		slog.Info("devshardd: validation credits are shared across replicas", "participant", instanceAddr)
+	}
 
 	leaseValidator := inference.NewLeaseValidator(validator, phase, store, leaseOwner, cfg.ValidationLeaseTTL)
 

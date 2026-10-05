@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -238,7 +239,25 @@ type TimeoutInferenceTransaction struct {
 
 func FindTimeoutInferenceTransaction(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64) (TimeoutInferenceTransaction, bool) {
 	t.Helper()
-	diffs := GetJSONArray(t, client, fmt.Sprintf("%s%s/sessions/%s/diffs?from=1&to=%d", hostURL, routePrefix, escrowID, toNonce))
+	for from := uint64(1); from <= toNonce; {
+		to := from + uint64(storage.DiffPageMaxNonces) - 1
+		if to > toNonce {
+			to = toNonce
+		}
+		diffs := GetJSONArray(t, client, fmt.Sprintf("%s%s/sessions/%s/diffs?from=%d&to=%d", hostURL, routePrefix, escrowID, from, to))
+		if tx, found := timeoutInferenceInDiffs(t, diffs); found {
+			return tx, true
+		}
+		if to == toNonce {
+			break
+		}
+		from = to + 1
+	}
+	return TimeoutInferenceTransaction{}, false
+}
+
+func timeoutInferenceInDiffs(t *testing.T, diffs []any) (TimeoutInferenceTransaction, bool) {
+	t.Helper()
 	for _, raw := range diffs {
 		record, ok := raw.(map[string]any)
 		require.True(t, ok, "host diff record should be an object")

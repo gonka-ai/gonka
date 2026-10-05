@@ -144,6 +144,10 @@ func TestSQLite_ValidationObsBatchDrain(t *testing.T) {
 	runValidationObsBatchDrain(t, newTestSQLite(t))
 }
 
+func TestSQLite_ValidationObsRebuildPending(t *testing.T) {
+	runValidationObsRebuildPending(t, newTestSQLite(t))
+}
+
 func TestSQLite_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestSQLite(t))
 }

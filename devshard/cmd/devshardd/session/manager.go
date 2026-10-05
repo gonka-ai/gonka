@@ -1236,6 +1236,22 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 				"escrow_id", escrowID, "inserted", inserted,
 				"sealed_ids", sm.SealedNonceCount(),
 				"duration", time.Since(fillStarted))
+			// The rows a snapshot covers are on disk unless an earlier
+			// rebuild cleared them and never finished, which the mark records.
+			pending, pendingErr := m.store.ValidationObsRebuildPending(escrowID)
+			if pendingErr != nil {
+				logging.Warn("failed to read validation obs rebuild mark", inferenceTypes.System,
+					"escrow_id", escrowID, "error", pendingErr)
+			} else if pending {
+				logging.Info("validation obs rebuild did not finish before restart; repeating it", inferenceTypes.System,
+					"escrow_id", escrowID, "latest_nonce", meta.LatestNonce)
+				obsRepair = &obsRepairJob{
+					from:   1,
+					to:     meta.LatestNonce,
+					sealed: storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+					sm:     sm,
+				}
+			}
 		}
 
 		if replayFrom == 1 || uint64(replayed) >= host.SnapshotInterval {
@@ -1681,15 +1697,24 @@ func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
 			m.publishRecoveryProgress()
 		}()
 		startedAt := time.Now()
-		err := m.obsGate.RepairValidationObs(escrowID, func(inner storage.Storage) error {
-			if err := storage.RebuildValidationObsFromJournal(inner, escrowID, job.from, job.to, job.sealed, nil); err != nil {
-				return err
-			}
-			if job.sm == nil {
-				return nil
-			}
-			return job.sm.RebuildSealedInferenceIndexFromRange(inner, job.from, job.to)
+		// The mark is cleared only after the queued live writes are flushed,
+		// so a restart at any point before that repeats the whole repair.
+		err := storage.RunValidationObsRebuild(m.store, escrowID, func() error {
+			return m.obsGate.RepairValidationObs(escrowID, func(inner storage.Storage) error {
+				if err := storage.RebuildValidationObsFromJournal(inner, escrowID, job.from, job.to, job.sealed, nil); err != nil {
+					return err
+				}
+				if job.sm == nil {
+					return nil
+				}
+				return job.sm.RebuildSealedInferenceIndexFromRange(inner, job.from, job.to)
+			})
 		})
+		if errors.Is(err, storage.ErrValidationObsRebuildBusy) {
+			logging.Info("validation obs rebuild skipped; another instance is running it", inferenceTypes.System,
+				"escrow_id", escrowID)
+			return
+		}
 		if err != nil {
 			logging.Warn("background validation obs rebuild failed", inferenceTypes.System,
 				"escrow_id", escrowID, "duration", time.Since(startedAt), "error", err)
@@ -1702,9 +1727,9 @@ func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
 }
 
 // WaitRecoveryRepairs blocks until background recovery rebuilds finish
-// (validation obs and the sealed-inference index). Shutdown must call it: a
-// rebuild interrupted after its clear leaves those rows empty, and recovery
-// will not retry once a snapshot exists.
+// (validation obs and the sealed-inference index). Shutdown should call it: a
+// rebuild interrupted after its clear leaves those rows empty until the next
+// recovery repeats it from the pending mark.
 func (m *HostManager) WaitRecoveryRepairs() {
 	m.obsRepairWG.Wait()
 }

@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"path/filepath"
@@ -2490,6 +2491,125 @@ func TestRecoverSession_SnapshotPathSkipsObsRebuild(t *testing.T) {
 	session.mu.Unlock()
 	require.True(t, prefix, "a tx only in the trimmed prefix is re-seeded from the journal")
 	require.True(t, suffix, "a tx in the backfill suffix is re-seeded")
+}
+
+// obsFaultStore fails the rebuild's final drain, after the clear has run, or
+// the clear itself.
+type obsFaultStore struct {
+	storage.Storage
+	failDrain bool
+	failClear bool
+}
+
+func (s *obsFaultStore) DrainInferenceValidationObsBatch(escrowID string, ids []uint64) error {
+	if s.failDrain {
+		return fmt.Errorf("drain refused")
+	}
+	return s.Storage.DrainInferenceValidationObsBatch(escrowID, ids)
+}
+
+func (s *obsFaultStore) ClearValidationObs(escrowID string) error {
+	if s.failClear {
+		return fmt.Errorf("clear refused")
+	}
+	return s.Storage.ClearValidationObs(escrowID)
+}
+
+func requireObsRebuildPending(t *testing.T, store storage.Storage, want bool) {
+	t.Helper()
+	pending, err := store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, want, pending)
+}
+
+// A full replay saves its snapshot before the obs rebuild. A rebuild that
+// fails after its clear must not leave the next start trusting that snapshot's
+// obs rows: the mark makes the snapshot restore repeat the rebuild.
+func TestRecoverSession_FailedObsRebuildRepeatsAfterRestart(t *testing.T) {
+	store := newTestStore(t)
+	group, hosts, user := setupRecoverableSession(t, 3, 4, store)
+	verifier := signing.NewSecp256k1Verifier()
+
+	faulty := &obsFaultStore{Storage: store, failDrain: true}
+	_, _, err := RecoverSession(faulty, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.ErrorContains(t, err, "drain refused")
+	requireObsRebuildPending(t, store, true)
+	snapNonce, _, err := store.LoadSnapshot("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), snapNonce, "the snapshot landed before the rebuild failed")
+
+	spy := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
+	session, _, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), session.Nonce())
+	require.Equal(t, 1, spy.clearCalls(), "the snapshot restore repeats the unfinished rebuild")
+	requireObsRebuildPending(t, store, false)
+
+	again := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
+	_, _, err = RecoverSession(again, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Zero(t, again.clearCalls(), "a finished rebuild is not repeated")
+}
+
+// The retry rebuilds from the whole journal, not just the snapshot tail, and
+// a retry that fails keeps the mark without stopping the session.
+func TestRecoverSession_PendingObsRebuildOnSnapshotPath(t *testing.T) {
+	setup := func(t *testing.T) (*storage.SQLite, []types.SlotAssignment, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {
+		t.Helper()
+		store := newTestStore(t)
+		hosts := make([]*signing.Secp256k1Signer, 3)
+		for i := range hosts {
+			hosts[i] = testutil.MustGenerateKey(t)
+		}
+		user := testutil.MustGenerateKey(t)
+		group := testutil.MakeGroup(hosts)
+		config := testutil.DefaultConfig(len(hosts))
+		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+			EscrowID:       "escrow-1",
+			Version:        testutil.RuntimeTestVersion,
+			CreatorAddr:    user.Address(),
+			Config:         config,
+			Group:          group,
+			InitialBalance: 100000,
+		}))
+		require.NoError(t, store.AppendDiff("escrow-1", validationRecord(1, 1, 0)))
+		require.NoError(t, store.AppendDiff("escrow-1", validationRecord(2, 2, 0)))
+		snap := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), signing.NewSecp256k1Verifier()).ExportState()
+		snap.LatestNonce = 2
+		writeSnapshot(store, "escrow-1", 2, snap, map[int]uint64{0: 2, 1: 2, 2: 2}, nil, nil, nil)
+		// The state a rebuild leaves when it dies right after its clear.
+		require.NoError(t, store.SetValidationObsRebuildPending("escrow-1", true))
+		return store, group, hosts, user
+	}
+
+	t.Run("rebuilds the cleared rows", func(t *testing.T) {
+		store, group, hosts, user := setup(t)
+		spy := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
+		_, _, err := RecoverSession(spy, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+		require.NoError(t, err)
+		require.Equal(t, 1, spy.clearCalls())
+		requireObsRebuildPending(t, store, false)
+
+		rows, err := store.GetValidationObservability("escrow-1")
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		require.Equal(t, uint32(0), rows[0].SlotID)
+		require.Equal(t, uint32(2), rows[0].CompletedValidations, "both journal validations are counted again")
+	})
+
+	t.Run("a failed retry keeps the mark and recovers", func(t *testing.T) {
+		store, group, hosts, user := setup(t)
+		faulty := &obsFaultStore{Storage: store, failClear: true}
+		session, _, err := RecoverSession(faulty, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+		require.NoError(t, err)
+		require.Equal(t, uint64(2), session.Nonce())
+		requireObsRebuildPending(t, store, true)
+
+		session.mu.Lock()
+		_, applied := session.appliedTxKeys["validation:1:0"]
+		session.mu.Unlock()
+		require.True(t, applied, "applied keys are still re-seeded when the retry fails")
+	})
 }
 
 func validationRecord(nonce, inferenceID uint64, slot uint32) types.DiffRecord {

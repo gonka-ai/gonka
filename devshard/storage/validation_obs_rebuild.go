@@ -1,11 +1,46 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 
 	"devshard/types"
 )
+
+// ErrValidationObsRebuildBusy is returned when another process holds the
+// escrow's rebuild lock. Its rebuild clears the pending mark when it finishes;
+// if it dies, the mark stays set for the next recovery.
+var ErrValidationObsRebuildBusy = errors.New("validation obs rebuild already running")
+
+// RunValidationObsRebuild runs a full obs rebuild under the escrow's rebuild
+// lock and the durable pending mark. The mark is set before rebuild runs, so
+// before anything clears the obs rows, and is removed only when rebuild
+// returns nil. A failed or interrupted rebuild leaves the mark set, and
+// recovery that finds it repeats the rebuild instead of trusting the rows.
+func RunValidationObsRebuild(store Storage, escrowID string, rebuild func() error) error {
+	if store == nil {
+		return fmt.Errorf("validation obs rebuild: nil store")
+	}
+	unlock, acquired, err := store.LockValidationObsRebuild(escrowID)
+	if err != nil {
+		return fmt.Errorf("validation obs rebuild: lock: %w", err)
+	}
+	if !acquired {
+		return ErrValidationObsRebuildBusy
+	}
+	defer unlock()
+	if err := store.SetValidationObsRebuildPending(escrowID, true); err != nil {
+		return fmt.Errorf("validation obs rebuild: mark pending: %w", err)
+	}
+	if err := rebuild(); err != nil {
+		return err
+	}
+	if err := store.SetValidationObsRebuildPending(escrowID, false); err != nil {
+		return fmt.Errorf("validation obs rebuild: mark complete: %w", err)
+	}
+	return nil
+}
 
 // ValidationObsEntriesFromTxs collects distinct (inference_id, slot_id) pairs
 // from validation and validation-vote txs in a diff.

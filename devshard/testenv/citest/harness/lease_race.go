@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"devshard/storage"
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockopenai"
@@ -210,6 +211,10 @@ func WarmEscrowOnHost(t *testing.T, stack *Stack, cfg *config.File, hostID, escr
 	t.Logf("citest: warm %s → %s (%d bytes)", hostID, url, len(lastOut))
 }
 
+// hostDiffProbeCeil is how far WaitHostDurableNonce walks the journal.
+// One GET covers at most DiffPageMaxNonces nonces, so the walk is paged.
+const hostDiffProbeCeil uint64 = 10000
+
 // WaitHostDurableNonce polls GET /sessions/{escrow}/diffs on a versiond host
 // until the highest durable nonce is at least want. Mempool byte length is not
 // a catch-up signal (empty can mean caught-up or still at the seed nonce).
@@ -218,7 +223,6 @@ func WaitHostDurableNonce(t *testing.T, stack *Stack, cfg *config.File, hostID, 
 	require.NotEmpty(t, escrowID)
 	require.NotEmpty(t, hostID)
 	ver := cfg.Versiond.VersionName
-	url := fmt.Sprintf("http://%s:8080/%s/sessions/%s/diffs?from=1&to=10000", hostID, ver, escrowID)
 	deadline := time.Now().Add(timeout)
 	var (
 		attempts int
@@ -227,16 +231,9 @@ func WaitHostDurableNonce(t *testing.T, stack *Stack, cfg *config.File, hostID, 
 	)
 	for time.Now().Before(deadline) {
 		attempts++
-		out, err := stack.ComposeExecOutput("mock-chain", "wget", "-q", "-O", "-", "-T", "15", url)
+		n, err := hostDurableNonce(stack, ver, hostID, escrowID, want)
 		if err != nil {
 			lastErr = err.Error()
-			maybeLogWaitAttempt(t, "host durable nonce "+hostID, attempts, lastErr)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		n, parseErr := maxDiffNonceJSON(out)
-		if parseErr != nil {
-			lastErr = parseErr.Error()
 			maybeLogWaitAttempt(t, "host durable nonce "+hostID, attempts, lastErr)
 			time.Sleep(2 * time.Second)
 			continue
@@ -250,9 +247,39 @@ func WaitHostDurableNonce(t *testing.T, stack *Stack, cfg *config.File, hostID, 
 		time.Sleep(2 * time.Second)
 	}
 	DumpComposeLogs(t, stack, hostID, "versiond-0", "versiond-1", "versiond-router", "devshardctl")
-	t.Fatalf("citest: %s durable nonce=%d < %d after %s (%d attempts) → %s: %s",
-		hostID, last, want, timeout, attempts, url, lastErr)
+	t.Fatalf("citest: %s durable nonce=%d < %d after %s (%d attempts): %s",
+		hostID, last, want, timeout, attempts, lastErr)
 	return last
+}
+
+// hostDurableNonce walks GET /diffs in windows the server will accept.
+// A request with to-from >= DiffPageMaxNonces is HTTP 400, so the old
+// from=1&to=10000 probe could never observe a caught-up host.
+func hostDurableNonce(stack *Stack, ver, hostID, escrowID string, want uint64) (uint64, error) {
+	var max uint64
+	for from := uint64(1); from <= hostDiffProbeCeil; {
+		to := from + uint64(storage.DiffPageMaxNonces) - 1
+		if to > hostDiffProbeCeil {
+			to = hostDiffProbeCeil
+		}
+		url := fmt.Sprintf("http://%s:8080/%s/sessions/%s/diffs?from=%d&to=%d", hostID, ver, escrowID, from, to)
+		out, err := stack.ComposeExecOutput("mock-chain", "wget", "-q", "-O", "-", "-T", "15", url)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %w", url, err)
+		}
+		n, err := maxDiffNonceJSON(out)
+		if err != nil {
+			return 0, err
+		}
+		if n > max {
+			max = n
+		}
+		if max >= want || n == 0 {
+			return max, nil
+		}
+		from = to + 1
+	}
+	return max, nil
 }
 
 func maxDiffNonceJSON(raw string) (uint64, error) {
