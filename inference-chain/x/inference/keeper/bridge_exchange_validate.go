@@ -74,6 +74,12 @@ func (k Keeper) RequireActiveParticipantAtOffset(ctx sdk.Context, addr sdk.AccAd
 
 // ValidateBridgeExchange is read-only. No writes to bridge state, balances, or sequences.
 func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExchange) (*ValidatedBridgeExchange, error) {
+	return k.validateBridgeExchange(ctx, msg, true)
+}
+
+// validateBridgeExchange skips the active-set check when the caller's
+// CheckPermission(Active, PreviousActive) already ran it for msg.Validator.
+func (k Keeper) validateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExchange, checkActive bool) (*ValidatedBridgeExchange, error) {
 	addr, err := sdk.AccAddressFromBech32(msg.Validator)
 	if err != nil {
 		k.LogError(
@@ -83,8 +89,10 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 		return nil, fmt.Errorf("invalid validator address: %v", err)
 	}
 
-	if err := k.RequireActiveOrPreviousActiveParticipant(ctx, addr); err != nil {
-		return nil, err
+	if checkActive {
+		if err := k.RequireActiveOrPreviousActiveParticipant(ctx, addr); err != nil {
+			return nil, err
+		}
 	}
 
 	_, ok := new(big.Int).SetString(msg.Amount, 10)
