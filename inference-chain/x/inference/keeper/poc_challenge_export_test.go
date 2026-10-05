@@ -15,3 +15,7 @@ func (k Keeper) FilterOutChallengeParticipants(ctx context.Context, members []*g
 func (k Keeper) IsChallengedForTesting(ctx context.Context, addr string) bool {
 	return isChallengedAddress(k.challengedAddresses(ctx), addr)
 }
+
+func (k Keeper) HasActiveChallengeRecordInSetForTesting(ctx context.Context, epoch uint64, addr string) bool {
+	return isChallengedAddress(k.activeChallengeRecords(ctx, epoch), addr)
+}

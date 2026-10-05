@@ -216,6 +216,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	hostDeltas := make(map[string]*devshardHostStatsDelta)
 	hostOrder := make([]string, 0, len(uniqueAddrs))
 	activeChallenge := make(map[string]bool, len(uniqueAddrs))
+	challenged := k.activeChallengeRecords(goCtx, currentEpochIndex)
 	for _, hs := range msg.HostStats {
 		addr := escrow.Slots[hs.SlotId]
 		delta, seen := hostDeltas[addr]
@@ -223,7 +224,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			delta = &devshardHostStatsDelta{}
 			hostDeltas[addr] = delta
 			hostOrder = append(hostOrder, addr)
-			activeChallenge[addr] = k.HasActiveChallengeRecord(goCtx, addr)
+			activeChallenge[addr] = isChallengedAddress(challenged, addr)
 		}
 		adjusted := *hs
 		assignedToSlot := uint64(0)

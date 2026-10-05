@@ -183,6 +183,28 @@ func (k Keeper) challengeBlocks(ctx context.Context, ch types.PoCChallenge) bool
 	return sdk.UnwrapSDKContext(ctx).BlockHeight() < safety
 }
 
+// activeChallengeRecords is HasActiveChallengeRecord for every address at once, with the
+// effective epoch already read: one pass over the challenge records instead of a lookup per host.
+func (k Keeper) activeChallengeRecords(ctx context.Context, epoch uint64) map[string]struct{} {
+	iter, err := k.PoCChallenges.Iterate(ctx, nil)
+	if err != nil {
+		return nil
+	}
+	defer iter.Close()
+	var out map[string]struct{}
+	for ; iter.Valid(); iter.Next() {
+		kv, err := iter.KeyValue()
+		if err != nil || kv.Value.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN || kv.Value.EpochIndex != epoch {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]struct{})
+		}
+		out[string(kv.Key)] = struct{}{}
+	}
+	return out
+}
+
 func (k Keeper) HasActiveChallengeRecord(ctx context.Context, addr string) bool {
 	ch, found, err := k.GetPoCChallenge(ctx, addr)
 	if err != nil || !found {
