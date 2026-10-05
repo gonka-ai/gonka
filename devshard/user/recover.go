@@ -371,27 +371,44 @@ func finishRecover(sess *Session, sm *state.StateMachine, replayFrom uint64) (*S
 	if err != nil {
 		return nil, nil, fmt.Errorf("get session meta for validation obs rebuild: %w", err)
 	}
-	// A tail replay or a snapshot restore already has the obs rows the live
-	// path wrote. Rebuilding them would clear that durable state, so only the
-	// applied-key set is read back from the journal.
-	if replayFrom != 1 {
-		if err := restoreAppliedTxKeys(sess, meta.LatestNonce); err != nil {
-			return nil, nil, err
+	rebuildObs := func() error {
+		return storage.RunValidationObsRebuild(sess.store, sess.escrowID, func() error {
+			return storage.RebuildValidationObsFromJournal(
+				sess.store,
+				sess.escrowID,
+				1,
+				meta.LatestNonce,
+				storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+				func(page []types.DiffRecord) error {
+					noteAppliedTxKeys(sess, page)
+					return nil
+				},
+			)
+		})
+	}
+	if replayFrom == 1 {
+		if err := rebuildObs(); err != nil {
+			return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
 		}
 		return sess, sm, nil
 	}
-	if err := storage.RebuildValidationObsFromJournal(
-		sess.store,
-		sess.escrowID,
-		1,
-		meta.LatestNonce,
-		storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
-		func(page []types.DiffRecord) error {
-			noteAppliedTxKeys(sess, page)
-			return nil
-		},
-	); err != nil {
-		return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
+	// A tail replay or a snapshot restore keeps the obs rows on disk, so it
+	// rebuilds only when an earlier rebuild cleared them and never finished.
+	// That retry is best effort: obs is not state, and a failure keeps the
+	// mark for the next start instead of stopping the session.
+	pending, err := sess.store.ValidationObsRebuildPending(sess.escrowID)
+	if err != nil {
+		log.Printf("recover_session escrow=%s obs_rebuild_pending_read_failed=%v", sess.escrowID, err)
+	} else if pending {
+		log.Printf("recover_session escrow=%s obs_rebuild_retry from=1 to=%d", sess.escrowID, meta.LatestNonce)
+		retryErr := rebuildObs()
+		if retryErr == nil {
+			return sess, sm, nil
+		}
+		log.Printf("recover_session escrow=%s obs_rebuild_retry_failed=%v", sess.escrowID, retryErr)
+	}
+	if err := restoreAppliedTxKeys(sess, meta.LatestNonce); err != nil {
+		return nil, nil, err
 	}
 	return sess, sm, nil
 }
