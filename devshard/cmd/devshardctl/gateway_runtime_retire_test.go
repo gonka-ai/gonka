@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -409,4 +410,108 @@ func TestRetireRuntimeDropsSlotDecisionSeries(t *testing.T) {
 	families, err := m.registry.Gather()
 	require.NoError(t, err)
 	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "12"})
+}
+
+func writeEpochSessionFiles(t *testing.T, dir string, epochs ...uint64) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "_meta.db"), nil, 0o600))
+	for _, epoch := range epochs {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("epoch_%d.db", epoch)), nil, 0o600))
+	}
+}
+
+// newStorageRetentionTestGateway builds a gateway at epoch 10 (cutoff 8) with devshards in its registry and runtimes registered.
+func newStorageRetentionTestGateway(t *testing.T, baseDir string, devshards []GatewayDevshardState, runtimes ...*devshardRuntime) *Gateway {
+	t.Helper()
+	store, err := NewGatewayStore(filepath.Join(baseDir, "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "m"}, devshards))
+
+	g := &Gateway{
+		runtimes:         make(map[string]*devshardRuntime, len(runtimes)),
+		rotationBreakers: make(map[string]*rotationBreaker),
+		phaseGate:        &ChainPhaseGate{},
+		store:            store,
+		baseStorageDir:   baseDir,
+	}
+	for _, runtime := range runtimes {
+		g.runtimes[runtime.id] = runtime
+		g.runtimeOrder = append(g.runtimeOrder, runtime)
+	}
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 10})
+	return g
+}
+
+// Test flow:
+//  1. Register devshards at epochs 6, 7, 7 (its settling runtime still registered), 7 (awaiting settlement), 7+8 and 8, and put a foreign epoch-6 store in the same base directory.
+//  2. Run the retention pass twice at current epoch 10 (cutoff 8).
+//  3. Require only the unregistered, settled directories whose newest epoch is below 8 to be gone, and the second pass to change nothing.
+func TestRetireExpiredEpochEscrowsRemovesExpiredSessionDirs(t *testing.T) {
+	baseDir := t.TempDir()
+	expiredDir := defaultStoragePath(baseDir, "6")
+	lastExpiredDir := filepath.Join(baseDir, "custom-7")
+	registeredDir := defaultStoragePath(baseDir, "registered")
+	awaitingSettlementDir := defaultStoragePath(baseDir, "awaiting-settlement")
+	mixedDir := defaultStoragePath(baseDir, "mixed")
+	retainedDir := defaultStoragePath(baseDir, "8")
+	foreignDir := filepath.Join(baseDir, "devshard-9")
+	writeEpochSessionFiles(t, expiredDir, 6)
+	writeEpochSessionFiles(t, lastExpiredDir, 7)
+	writeEpochSessionFiles(t, registeredDir, 7)
+	writeEpochSessionFiles(t, awaitingSettlementDir, 7)
+	writeEpochSessionFiles(t, mixedDir, 7, 8)
+	writeEpochSessionFiles(t, retainedDir, 8)
+	writeEpochSessionFiles(t, foreignDir, 6)
+
+	settlingRuntime := &devshardRuntime{id: "registered", creationEpoch: 7}
+	settlingRuntime.settlementPending.Store(true)
+	g := newStorageRetentionTestGateway(t, baseDir, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "6", StoragePath: expiredDir}},
+		{RuntimeConfig: RuntimeConfig{ID: "7", StoragePath: lastExpiredDir}},
+		{RuntimeConfig: RuntimeConfig{ID: "registered", StoragePath: registeredDir}},
+		{RuntimeConfig: RuntimeConfig{ID: "awaiting-settlement", StoragePath: awaitingSettlementDir}, SettlementPending: true},
+		{RuntimeConfig: RuntimeConfig{ID: "mixed", StoragePath: mixedDir}},
+		{RuntimeConfig: RuntimeConfig{ID: "8", StoragePath: retainedDir}},
+	}, settlingRuntime)
+
+	for range 2 {
+		g.retireExpiredEpochEscrows()
+
+		require.NoDirExists(t, expiredDir)
+		require.NoDirExists(t, lastExpiredDir)
+		require.DirExists(t, registeredDir, "a registered runtime still owns its store")
+		require.DirExists(t, awaitingSettlementDir, "an unsettled escrow keeps its store for manual recovery")
+		require.DirExists(t, mixedDir, "epoch 8 is retained")
+		require.DirExists(t, retainedDir)
+		require.DirExists(t, foreignDir, "a store outside the gateway registry is not ours to drop")
+	}
+}
+
+// Test flow:
+//  1. Keep an expired directory alive through a registered settlement-pending runtime and run the retention pass at epoch 10.
+//  2. Retire the runtime, run the pass again at epoch 10, then at epoch 11.
+//  3. Require the directory to survive until the cutoff advances, since each cutoff is pruned once.
+func TestRetireExpiredEpochEscrowsRemovesHeldDirAtNextCutoff(t *testing.T) {
+	baseDir := t.TempDir()
+	settlingDir := defaultStoragePath(baseDir, "settling")
+	writeEpochSessionFiles(t, settlingDir, 7)
+
+	settlingRuntime := &devshardRuntime{id: "settling", creationEpoch: 7}
+	settlingRuntime.settlementPending.Store(true)
+	g := newStorageRetentionTestGateway(t, baseDir, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "settling", StoragePath: settlingDir}},
+	}, settlingRuntime)
+
+	g.retireExpiredEpochEscrows()
+	require.DirExists(t, settlingDir)
+
+	g.retireRuntime(settlingRuntime.id, "settled")
+	g.retireExpiredEpochEscrows()
+	require.DirExists(t, settlingDir, "cutoff 8 was already pruned")
+
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 11})
+	g.retireExpiredEpochEscrows()
+	require.NoDirExists(t, settlingDir)
 }

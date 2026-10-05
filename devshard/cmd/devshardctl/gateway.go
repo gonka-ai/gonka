@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"math"
 	"net/http"
@@ -79,6 +80,7 @@ type Gateway struct {
 	holdTopUpsInFlight           keyedInFlight
 	executionTimeoutSweepCursor  atomic.Uint64
 	executionTimeoutSweepRunning atomic.Bool
+	prunedStorageCutoff          atomic.Uint64
 	runtimeParams                *runtimeparams.Managed
 	runtimeParamsClose           func()
 	maxNonce                     devshardpkg.MaxNonceProvider
@@ -4450,6 +4452,55 @@ func (g *Gateway) retireExpiredEpochEscrows() {
 			e.id, e.creationEpoch, current, cutoff)
 		g.deactivateDevshardByIDWithReason(e.id, epochRetentionRetireReason)
 		g.retireRuntime(e.id, epochRetentionRetireReason)
+	}
+
+	if cutoff > g.prunedStorageCutoff.Swap(cutoff) {
+		g.removeExpiredEpochStorage(cutoff)
+	}
+}
+
+// removeExpiredEpochStorage deletes unowned, settled registry session dirs whose newest epoch file is below cutoff.
+func (g *Gateway) removeExpiredEpochStorage(cutoff uint64) {
+	if g.store == nil {
+		return
+	}
+	state, _, err := g.store.LoadState()
+	if err != nil {
+		log.Printf("escrow_storage_prune_failed stage=load_registry error=%v", err)
+		return
+	}
+
+	g.mu.Lock()
+	registeredIDs := make(map[string]struct{}, len(g.runtimes))
+	for id := range g.runtimes {
+		registeredIDs[id] = struct{}{}
+	}
+	g.mu.Unlock()
+
+	for _, devshard := range state.Devshards {
+		storageDir := normalizeStorageDir(devshard.StoragePath)
+		if devshard.SettlementPending || storageDir == "" {
+			continue
+		}
+		newestEpoch, hasEpochFiles, err := storage.NewestSQLiteEpoch(storageDir)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			log.Printf("escrow_storage_prune_failed escrow=%s dir=%s error=%v", devshard.ID, storageDir, err)
+			continue
+		}
+		if !hasEpochFiles || newestEpoch >= cutoff {
+			continue
+		}
+		if _, isRegistered := registeredIDs[devshard.ID]; isRegistered {
+			continue
+		}
+		if err := removeDevshardStorage(storageDir, g.baseStorageDir); err != nil {
+			log.Printf("escrow_storage_prune_failed escrow=%s dir=%s error=%v", devshard.ID, storageDir, err)
+			continue
+		}
+		log.Printf("escrow_storage_pruned escrow=%s dir=%s newest_epoch=%d cutoff=%d", devshard.ID, storageDir, newestEpoch, cutoff)
 	}
 }
 
