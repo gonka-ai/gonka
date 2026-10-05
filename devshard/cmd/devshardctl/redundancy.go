@@ -3963,7 +3963,8 @@ func parseUintAfterMarker(msg, marker string) uint64 {
 	if idx < 0 {
 		return 0
 	}
-	rest := msg[idx+len(marker):]
+	// Slice lower, where idx is valid: ToLower can lengthen the string (e.g. U+023A), so idx may exceed len(msg) and msg[idx:] would panic; digits are ASCII-identical in lower.
+	rest := lower[idx+len(marker):]
 	end := strings.IndexFunc(rest, func(r rune) bool {
 		return r < '0' || r > '9'
 	})
