@@ -14,4 +14,5 @@ message EpochPerformanceSummary {
   uint64 validated_inferences = 8;
   uint64 invalidated_inferences = 9;
   bool claimed = 10;
+  uint64 participant_reward_weight = 11;
 }
