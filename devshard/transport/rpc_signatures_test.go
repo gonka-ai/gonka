@@ -52,6 +52,9 @@ func TestServeGossipNonce_RejectsBadStateSig(t *testing.T) {
 		Nonce: 1, StateHash: []byte{1}, SlotID: 0,
 	}), ErrGossipMissingStateSig)
 	require.ErrorIs(t, env.server.ServeGossipNonce(GossipNonceRequest{
+		Nonce: 1, StateHash: []byte{1}, StateSig: []byte{1}, SlotID: 0,
+	}), ErrGossipInvalidStateHash)
+	require.ErrorIs(t, env.server.ServeGossipNonce(GossipNonceRequest{
 		Nonce: 1, StateHash: hash, StateSig: []byte{1, 2, 3}, SlotID: 0,
 	}), ErrGossipInvalidStateSig)
 	require.ErrorIs(t, env.server.ServeGossipNonce(GossipNonceRequest{

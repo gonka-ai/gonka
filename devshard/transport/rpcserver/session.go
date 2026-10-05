@@ -480,6 +480,7 @@ func mapCoreError(err error) error {
 	if errors.Is(err, transport.ErrInvalidRequesterSlot) ||
 		errors.Is(err, transport.ErrGossipMissingStateSig) ||
 		errors.Is(err, transport.ErrGossipInvalidSlot) ||
+		errors.Is(err, transport.ErrGossipInvalidStateHash) ||
 		errors.Is(err, transport.ErrGossipInvalidStateSig) {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}

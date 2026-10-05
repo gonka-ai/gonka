@@ -85,6 +85,9 @@ var (
 	ErrGossipMissingStateSig = errors.New("missing state signature")
 	// ErrGossipInvalidSlot is GossipNonce with a slot outside the group.
 	ErrGossipInvalidSlot = errors.New("invalid slot id")
+	// ErrGossipInvalidStateHash is GossipNonce whose state root is not a
+	// SHA-256 digest. The same bytes fail again, so this is not a conflict.
+	ErrGossipInvalidStateHash = errors.New("state hash must be 32 bytes")
 	// ErrGossipInvalidStateSig is a state signature that does not recover
 	// to the claimed slot (or a warm key for that slot).
 	ErrGossipInvalidStateSig = errors.New("invalid gossip state signature")
@@ -921,7 +924,7 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 	}
 	// A state root is a SHA-256 digest. The gossip seen map keeps this value.
 	if len(req.StateHash) != sha256.Size {
-		return echo.NewHTTPError(http.StatusBadRequest, "state hash must be 32 bytes")
+		return ErrGossipInvalidStateHash
 	}
 	if req.SlotID >= uint32(len(s.host.Group())) {
 		return ErrGossipInvalidSlot
@@ -1003,7 +1006,7 @@ func (s *Server) ServeGossipTxs(txs []*types.DevshardTx) {
 
 func mapGossipHTTP(err error) error {
 	switch {
-	case errors.Is(err, ErrGossipMissingStateSig), errors.Is(err, ErrGossipInvalidSlot), errors.Is(err, ErrGossipInvalidStateSig):
+	case errors.Is(err, ErrGossipMissingStateSig), errors.Is(err, ErrGossipInvalidSlot), errors.Is(err, ErrGossipInvalidStateHash), errors.Is(err, ErrGossipInvalidStateSig):
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	case errors.Is(err, errGossipMarshal):
 		return echo.NewHTTPError(http.StatusInternalServerError, "marshal sig content")
