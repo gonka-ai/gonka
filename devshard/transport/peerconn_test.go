@@ -612,9 +612,17 @@ func TestSelectTransport_UnwiredNamesWarnOnce(t *testing.T) {
 	_ = SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints("typo"), nil)
 	require.Len(t, capLog.warns, 1, "unwired-name warn is one-shot")
 
+	// A wired name starts the attach loop. A refused dial logs its own
+	// warning, so only the unwired-name warning is forbidden here.
 	resetUnwiredRPCWarnForTest()
-	_ = SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints(EndpointSignatures), nil)
-	require.Len(t, capLog.warns, 1, "wired names must not warn")
+	before := len(capLog.warns)
+	wired := SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints(EndpointSignatures), nil)
+	client, ok := wired.(*RPCClient)
+	require.True(t, ok)
+	client.Close()
+	for _, line := range capLog.warns[before:] {
+		require.NotContains(t, line, "not served over Connect", "wired names must not warn: %s", line)
+	}
 }
 
 func TestIsRetryableNonInference_ConnectCodes(t *testing.T) {
