@@ -95,3 +95,25 @@ func TestTxParamsCache_SPRTValuesReadOnce(t *testing.T) {
 	require.NotEqual(t, want, k.GetPrecomputedSPRTValues(c))
 	require.Equal(t, k.GetPrecomputedSPRTValues(ctx), k.GetPrecomputedSPRTValues(c))
 }
+
+func TestTxParamsCache_EffectiveEpochIndexReadOnce(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+
+	c := keeper.WithTxParamsCache(ctx.WithGasMeter(storetypes.NewInfiniteGasMeter()))
+	got, found := k.GetEffectiveEpochIndex(c)
+	require.True(t, found)
+	require.Equal(t, uint64(5), got)
+	before := c.GasMeter().GasConsumed()
+	got, _ = k.GetEffectiveEpochIndex(c)
+	require.Equal(t, uint64(5), got)
+	require.Equal(t, before, c.GasMeter().GasConsumed(), "second read must not touch the store")
+
+	// A write inside a discarded CacheContext must not leak into later reads.
+	sub, _ := c.CacheContext()
+	require.NoError(t, k.SetEffectiveEpochIndex(sub, 6))
+	got, _ = k.GetEffectiveEpochIndex(sub)
+	require.Equal(t, uint64(6), got)
+	got, _ = k.GetEffectiveEpochIndex(c)
+	require.Equal(t, uint64(5), got)
+}
