@@ -20,6 +20,7 @@ func main() {
 	profilesDir := flag.String("profiles-dir", "", "directory containing ML profile YAML files")
 	outputDir := flag.String("output", "", "directory for run artifacts")
 	keepStack := flag.Bool("keep-stack", false, "keep the Docker stack and work directory after the run")
+	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
 	flag.Parse()
 	if *scenarioPath == "" {
 		log.Fatal("provide -scenario")
@@ -31,6 +32,12 @@ func main() {
 	if *outputDir == "" {
 		*outputDir = filepath.Join(testenvDir, "loadtest", "results", time.Now().UTC().Format("20060102T150405Z"))
 	}
+	if *loadDataset != "" {
+		*loadDataset, err = filepath.Abs(*loadDataset)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	result, err := loadtest.RunScenario(ctx, loadtest.RunnerConfig{
@@ -39,6 +46,7 @@ func main() {
 		TestenvDir:   testenvDir,
 		OutputDir:    *outputDir,
 		KeepStack:    *keepStack,
+		LoadDataset:  *loadDataset,
 	})
 	if err != nil {
 		if result.Summary.Requests > 0 {
@@ -84,13 +92,18 @@ func printSummary(result loadtest.RunResult, passed bool) {
 
 	fmt.Fprintln(os.Stdout, "DevShard terminal state")
 	fmt.Fprintln(os.Stdout, "-----------------------")
-	if result.Terminal.Total > 0 {
+	if result.Terminal.Total > 0 || result.Terminal.Statuses != nil {
 		terminal := result.Terminal
 		fmt.Fprintf(os.Stdout, "  finished:         %d\n", terminal.Finished)
+		fmt.Fprintf(os.Stdout, "  orphaned:         %d\n", terminal.Orphaned)
 		fmt.Fprintf(os.Stdout, "  ghost:            %d\n", terminal.Ghost)
 		fmt.Fprintf(os.Stdout, "  total:             %d\n", terminal.Total)
 		fmt.Fprintf(os.Stdout, "  ghost rate:       %.2f%%\n", terminal.GhostRate*100)
-		fmt.Fprintf(os.Stdout, "  statuses:         %s\n", formatIntCounts(terminal.Statuses))
+		statuses := formatIntCounts(terminal.Statuses)
+		if statuses == "" {
+			statuses = "none"
+		}
+		fmt.Fprintf(os.Stdout, "  statuses:         %s\n", statuses)
 	} else {
 		fmt.Fprintln(os.Stdout, "  unavailable")
 	}
@@ -103,6 +116,40 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	fmt.Fprintln(os.Stdout, "Artifacts")
 	fmt.Fprintln(os.Stdout, "---------")
 	fmt.Fprintf(os.Stdout, "  output: %s\n", result.OutputDir)
+	fmt.Fprintln(os.Stdout)
+	printAssertions(result.Assertions)
+}
+
+func printAssertions(assertions []loadtest.AssertionResult) {
+	fmt.Fprintln(os.Stdout, "Assertions")
+	fmt.Fprintln(os.Stdout, "----------")
+	if len(assertions) == 0 {
+		fmt.Fprintln(os.Stdout, "  no assertions evaluated")
+		return
+	}
+	for _, assertion := range assertions {
+		marker := "✗"
+		if assertion.Passed {
+			marker = "✓"
+		}
+		fmt.Fprintf(os.Stdout, "  %s %s\n", assertionMarker(marker, assertion.Passed), assertion.Name)
+		fmt.Fprintf(os.Stdout, "      expected: %s\n", assertion.Expected)
+		fmt.Fprintf(os.Stdout, "      actual:   %s\n", assertion.Actual)
+		if assertion.Details != "" {
+			fmt.Fprintf(os.Stdout, "      details:  %s\n", assertion.Details)
+		}
+	}
+}
+
+func assertionMarker(marker string, passed bool) string {
+	info, err := os.Stdout.Stat()
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return marker
+	}
+	if passed {
+		return "\033[32m" + marker + "\033[0m"
+	}
+	return "\033[31m" + marker + "\033[0m"
 }
 
 func printMLNodeStats(stats map[string]loadtest.MLNodeStats) {
@@ -116,7 +163,7 @@ func printMLNodeStats(stats map[string]loadtest.MLNodeStats) {
 	sort.Strings(keys)
 	fmt.Fprintln(os.Stdout, "ML nodes")
 	fmt.Fprintln(os.Stdout, "--------")
-	fmt.Fprintln(os.Stdout, "  Node                 Allocated Received Successful Failed Timeouts Unaccounted Failure rate")
+	fmt.Fprintln(os.Stdout, "  Node                 Allocated Received Successful Failed Timeouts Replay hits Replay misses Unaccounted Failure rate")
 	for _, key := range keys {
 		stat := stats[key]
 		failureRate := 0.0
@@ -128,7 +175,7 @@ func printMLNodeStats(stats map[string]loadtest.MLNodeStats) {
 		if stat.RequestsReceived > accounted {
 			unaccounted = stat.RequestsReceived - accounted
 		}
-		fmt.Fprintf(os.Stdout, "  %-20s %9d %8d %10d %6d %8d %11d %11.2f%%\n", key, stat.Allocations, stat.RequestsReceived, stat.SuccessfulResponses, stat.FailedResponses, stat.Timeouts, unaccounted, failureRate*100)
+		fmt.Fprintf(os.Stdout, "  %-20s %9d %8d %10d %6d %8d %11d %13d %11d %11.2f%%\n", key, stat.Allocations, stat.RequestsReceived, stat.SuccessfulResponses, stat.FailedResponses, stat.Timeouts, stat.ReplayHits, stat.ReplayMisses, unaccounted, failureRate*100)
 		if stat.Error != "" {
 			fmt.Fprintf(os.Stdout, "    error: %s\n", stat.Error)
 		}

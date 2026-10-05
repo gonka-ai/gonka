@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -101,9 +103,14 @@ services:
       MOCK_OPENAI_HANG: "{{ .Hang }}"
       MOCK_OPENAI_FAILURE_RATE: "{{ .FailureRate }}"
       MOCK_OPENAI_HTTP_STATUS: "{{ .HTTPStatus }}"
+{{ if $.MockOpenAI.ReplayFile }}      MOCK_OPENAI_REPLAY_FILE: "{{ $.MockOpenAI.ReplayFile }}"
+{{ end }}
 {{ if eq (len (mockMLNodes $)) 1 }}
     ports:
       - "{{ $.MockOpenAI.HTTPPort }}:{{ $.MockOpenAI.HTTPPort }}"
+{{ end }}
+{{ if $.MockOpenAI.ReplayFile }}    volumes:
+      - ./replay.jsonl:{{ $.MockOpenAI.ReplayFile }}:ro
 {{ end }}
     networks:
       testenv:
@@ -313,8 +320,11 @@ services:
       DEVSHARD_NODE_MANAGER_ADDR: {{ .MockDapi.Host }}:{{ .MockDapi.GRPCPort }}
       DEVSHARD_CHAIN_ID: "{{ .ChainID }}"
       DEVSHARD_PUBLIC_API: http://{{ .MockDapi.Host }}:{{ .MockDapi.HTTPPort }}
+{{ if .MockOpenAI.ReplayFile }}      DEVSHARDS_JSON: {{ runtimeConfigsJSON . }}
+{{ else }}
       DEVSHARD_ESCROW_ID: "{{ primaryEscrowID . }}"
       DEVSHARD_MODEL: "{{ primaryModelID . }}"
+{{ end }}
       DEVSHARD_PRIVATE_KEY: ${TESTENV_USER_PRIVATE_KEY}
       DEVSHARD_ADMIN_API_KEY: ${TESTENV_ADMIN_API_KEY}
       DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
@@ -363,6 +373,7 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"legacyVersiondHost":        legacyVersiondHost,
 		"primaryEscrowID":           primaryEscrowID,
 		"primaryModelID":            primaryModelID,
+		"runtimeConfigsJSON":        runtimeConfigsJSON,
 		"mockMLNodes":               mockMLNodes,
 		"mockMLNodesEnv":            mockMLNodesEnv,
 	}
@@ -503,4 +514,33 @@ func primaryEscrowID(cfg *config.File) string {
 
 func primaryModelID(cfg *config.File) string {
 	return config.PrimaryModelID(cfg)
+}
+
+// runtimeConfigsJSON is used only by replay stacks. A replay dataset may
+// contain several model IDs, so the Gateway needs one runtime per generated
+// escrow instead of the single legacy DEVSHARD_ESCROW_ID path.
+func runtimeConfigsJSON(cfg *config.File) string {
+	type runtimeConfig struct {
+		ID          string `json:"id"`
+		PrivateKey  string `json:"private_key,omitempty"`
+		Model       string `json:"model,omitempty"`
+		StoragePath string `json:"storage_path,omitempty"`
+	}
+	configs := make([]runtimeConfig, 0, len(cfg.Escrows))
+	for _, escrow := range cfg.Escrows {
+		if escrow.ID == 0 || strings.TrimSpace(escrow.ModelID) == "" {
+			continue
+		}
+		configs = append(configs, runtimeConfig{
+			ID:          fmt.Sprintf("%d", escrow.ID),
+			PrivateKey:  cfg.User.PrivateKeyHex,
+			Model:       escrow.ModelID,
+			StoragePath: "/var/lib/devshardctl/escrow-" + fmt.Sprintf("%d", escrow.ID),
+		})
+	}
+	data, err := json.Marshal(configs)
+	if err != nil {
+		return strconv.Quote("[]")
+	}
+	return strconv.Quote(string(data))
 }

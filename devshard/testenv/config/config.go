@@ -116,9 +116,10 @@ type MockDapiCfg struct {
 
 // MockOpenAICfg is the listen addresses of cmd/mockopenai.
 type MockOpenAICfg struct {
-	HTTPPort int                 `yaml:"http_port"`
-	Host     string              `yaml:"host"`
-	Nodes    []MockOpenAINodeCfg `yaml:"nodes"`
+	HTTPPort   int                 `yaml:"http_port"`
+	Host       string              `yaml:"host"`
+	ReplayFile string              `yaml:"replay_file,omitempty"`
+	Nodes      []MockOpenAINodeCfg `yaml:"nodes"`
 }
 
 // MockOpenAINodeCfg configures one independently-behaving Mock ML container.

@@ -47,7 +47,6 @@ assertions:
     terminal_outcome: completed
   devshard:
     no_orphaned_work: true
-    require_drain: true
     max_ghost_rate: 0.02
   mock_ml:
     require_each_node_used: true

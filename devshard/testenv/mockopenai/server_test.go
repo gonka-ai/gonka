@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -56,6 +58,46 @@ func TestChatCompletions_JSONDeterministic(t *testing.T) {
 			require.Equal(t, firstContent, content)
 		}
 	}
+}
+
+func TestChatCompletions_ReplaysCapturedResponseByFingerprint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "samples.jsonl")
+	body := `{"model":"replay-model","messages":[{"role":"user","content":"captured prompt"}],"response":{"role":"assistant","content":"captured answer"}}
+`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	srv, err := mockopenai.NewServerWithError(mockopenai.Config{ReplayFile: path})
+	require.NoError(t, err)
+	httpServer := httptest.NewServer(srv.Handler())
+	defer httpServer.Close()
+
+	requestBody := `{"model":"replay-model","messages":[{"role":"user","content":"captured prompt"}]}`
+	response, err := http.Post(httpServer.URL+"/v1/chat/completions", "application/json", strings.NewReader(requestBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	var payload struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
+	_ = response.Body.Close()
+	require.Len(t, payload.Choices, 1)
+	require.Equal(t, "captured answer", payload.Choices[0].Message.Content)
+
+	response, err = http.Post(httpServer.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"unknown","messages":[{"role":"user","content":"missing"}]}`))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, response.StatusCode)
+	_ = response.Body.Close()
+
+	var stats mockopenai.Stats
+	response, err = http.Get(httpServer.URL + "/testenv/stats")
+	require.NoError(t, err)
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&stats))
+	_ = response.Body.Close()
+	require.Equal(t, uint64(1), stats.ReplayHits)
+	require.Equal(t, uint64(1), stats.ReplayMisses)
 }
 
 func TestModelStatus_Downloaded(t *testing.T) {
@@ -514,7 +556,7 @@ func TestChatCompletions_FaultStreamErrorEnvelope(t *testing.T) {
 	}
 }
 
-func TestLatencyAppliesToJSONNotStream(t *testing.T) {
+func TestLatencyAppliesToJSONAndFirstStreamChunk(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
@@ -533,7 +575,7 @@ func TestLatencyAppliesToJSONNotStream(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	_, _ = io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	require.Less(t, time.Since(start), 200*time.Millisecond, "streaming inference must not sleep on Validate latency")
+	require.GreaterOrEqual(t, time.Since(start), 350*time.Millisecond, "streaming inference must honor TTFT latency")
 
 	jsonBody := []byte(`{"model":"test-model","messages":[{"role":"user","content":"slow"}]}`)
 	start = time.Now()

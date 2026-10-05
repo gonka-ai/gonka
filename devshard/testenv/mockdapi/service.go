@@ -49,6 +49,8 @@ type mlNodeStats struct {
 	SuccessfulResponses uint64 `json:"successful_responses"`
 	FailedResponses     uint64 `json:"failed_responses"`
 	Timeouts            uint64 `json:"timeouts"`
+	ReplayHits          uint64 `json:"replay_hits"`
+	ReplayMisses        uint64 `json:"replay_misses"`
 	Error               string `json:"error,omitempty"`
 }
 
@@ -287,6 +289,8 @@ func (s *Service) mlNodeStats(ctx context.Context) map[string]mlNodeStats {
 			SuccessfulResponses uint64 `json:"successful_responses"`
 			FailedResponses     uint64 `json:"failed_responses"`
 			Timeouts            uint64 `json:"timeouts"`
+			ReplayHits          uint64 `json:"replay_hits"`
+			ReplayMisses        uint64 `json:"replay_misses"`
 		}
 		if err := json.NewDecoder(response.Body).Decode(&nodeStats); err != nil {
 			stats.Error = err.Error()
@@ -295,6 +299,8 @@ func (s *Service) mlNodeStats(ctx context.Context) map[string]mlNodeStats {
 			stats.SuccessfulResponses = nodeStats.SuccessfulResponses
 			stats.FailedResponses = nodeStats.FailedResponses
 			stats.Timeouts = nodeStats.Timeouts
+			stats.ReplayHits = nodeStats.ReplayHits
+			stats.ReplayMisses = nodeStats.ReplayMisses
 		}
 		_ = response.Body.Close()
 		result[node.ID] = stats
