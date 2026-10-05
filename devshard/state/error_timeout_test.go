@@ -1,6 +1,7 @@
 package state
 
 import (
+	"math"
 	"sync"
 	"testing"
 
@@ -10,6 +11,29 @@ import (
 	"devshard/signing"
 	"devshard/types"
 )
+
+func TestVerifyFinishInference_MatchesApplyPreflight(t *testing.T) {
+	hosts := errorTimeoutHosts(t)
+	sm, user := newTestSM(t, hosts, 10000)
+	slot := applyStartConfirm(t, sm, user, hosts, 1)
+	valid := signedFinish(t, hosts, 1, slot, 80, 40, testutil.TestResponseHash)
+	require.NoError(t, sm.VerifyFinishInference(valid))
+
+	for _, tc := range []struct {
+		name string
+		edit func(*types.MsgFinishInference)
+	}{
+		{"malformed hash", func(m *types.MsgFinishInference) { m.ResponseHash = []byte("short") }},
+		{"cost overflow", func(m *types.MsgFinishInference) { m.InputTokens = math.MaxUint64; m.OutputTokens = 1 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := signedFinish(t, hosts, 1, slot, 80, 40, testutil.TestResponseHash)
+			tc.edit(msg)
+			msg.ProposerSig = testutil.SignProposerTx(t, hosts[slot], msg)
+			require.Error(t, sm.VerifyFinishInference(msg))
+		})
+	}
+}
 
 const errorTimeoutResponseHash = "response-hash-of-thirty-two-byte"
 
@@ -418,6 +442,8 @@ func TestVerifyFinishProposerSig_CachedWarmKeyDoesNotCallResolver(t *testing.T) 
 
 	require.NoError(t, sm.VerifyFinishProposerSig(finish))
 	require.Equal(t, 1, calls, "first miss must consult the resolver")
+	require.Empty(t, sm.WarmKeys(), "verification must not commit a binding")
+	sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
 	require.NoError(t, sm.VerifyFinishProposerSig(finish))
 	require.Equal(t, 1, calls, "cached warm key must take the read-locked path")
 }

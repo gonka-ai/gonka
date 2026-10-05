@@ -3509,6 +3509,9 @@ func shouldRunHandleTimeoutOn(inf *inflight, session nonceFinishedChecker, error
 	if errorMiss {
 		return true
 	}
+	if canonical, ok := session.(interface{ IsNonceCanonicalFinished(uint64) bool }); ok {
+		return !canonical.IsNonceCanonicalFinished(inf.nonce)
+	}
 	return !session.IsNonceFinished(inf.nonce)
 }
 
@@ -3532,6 +3535,9 @@ func errorMissRunnable(inf *inflight, session *user.Session) bool {
 
 func emptyStreamWithoutWinnerTimeoutSkipReason(inf *inflight, session nonceFinishedChecker) (string, bool) {
 	if session != nil && isEmptyStreamAttempt(inf) && session.IsNonceFinished(inf.nonce) {
+		if canonical, ok := session.(interface{ IsNonceCanonicalFinished(uint64) bool }); ok && !canonical.IsNonceCanonicalFinished(inf.nonce) {
+			return "", false
+		}
 		return "empty_stream_without_non_empty_winner", true
 	}
 	return "", false
@@ -4140,7 +4146,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		// The list is what the protocol still owes a vote, not what the request failed on: a winner whose
 		// answer reached the caller can still leave its nonce open, and an open nonce is owed one either way.
-		if !ok || !e.session.IsNonceFinished(inf.nonce) {
+		if !ok || !e.session.IsNonceCanonicalFinished(inf.nonce) {
 			failed = append(failed, inf)
 		}
 	}

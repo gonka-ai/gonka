@@ -59,8 +59,8 @@ func pendingConfirmStarts(session *Session) []uint64 {
 }
 
 func TestTheExecutorReceiptIsQueuedWhileTheStreamIsStillOpen(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
-	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{}), receipt: []byte("receipt")}
+	session, signers, _ := setupSession(t, 3, 100000, 10)
+	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{})}
 	session.clients[1] = holding
 
 	prepared, err := session.PrepareInference(InferenceParams{
@@ -69,6 +69,7 @@ func TestTheExecutorReceiptIsQueuedWhileTheStreamIsStillOpen(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, prepared.HostIdx())
+	holding.receipt = testutil.SignExecutorReceipt(t, signers[1], "escrow-1", prepared.Nonce(), testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 
 	sent := make(chan struct{})
 	go func() {
@@ -93,9 +94,18 @@ func TestAResponseWithoutAReceiptQueuesNothing(t *testing.T) {
 	require.Empty(t, pendingConfirmStarts(session))
 }
 
-func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
+func TestZeroTimeReceiptIsNotQueued(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
-	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{}), receipt: []byte("receipt")}
+	session.confirmStartOnReceipt(1, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: 0})
+	require.NoError(t, session.ProcessResponse(1, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: 0}, 1))
+	require.Empty(t, pendingConfirmStarts(session))
+	deadline, _ := session.TimeoutDeadline(1, time.Now())
+	require.Equal(t, "refused", deadline)
+}
+
+func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
+	session, signers, _ := setupSession(t, 3, 100000, 10)
+	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{})}
 	session.clients[1] = holding
 
 	prepared, err := session.PrepareInference(InferenceParams{
@@ -103,6 +113,7 @@ func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
 	require.NoError(t, err)
+	holding.receipt = testutil.SignExecutorReceipt(t, signers[1], "escrow-1", prepared.Nonce(), testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 
 	sent := make(chan struct{})
 	go func() {
@@ -134,14 +145,15 @@ func TestAResponseWithoutAConfirmedAtLeavesTheReasonAlone(t *testing.T) {
 }
 
 func TestALaterResponseWithoutAStampDoesNotEraseTheConfirmation(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, signers, _ := setupSession(t, 3, 100000, 10)
 	prepared, err := session.PrepareInference(InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
 	require.NoError(t, err)
 
-	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: 1000})
+	receipt := testutil.SignExecutorReceipt(t, signers[1], "escrow-1", prepared.Nonce(), testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{Receipt: receipt, ConfirmedAt: 1000})
 	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{Receipt: []byte("receipt")})
 
 	reason, _ := session.TimeoutDeadline(prepared.Nonce(), time.Now())

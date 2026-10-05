@@ -8,6 +8,7 @@ import (
 
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/types"
 )
 
 // prepareNonce consumes one nonce so the session tracks an outcome for it, which is what
@@ -45,17 +46,43 @@ func TestProcessResponse_AConfirmationWithoutItsReceiptIsNotBelieved(t *testing.
 
 // The receipt is what the verifiers can check, so with one present the confirmation counts.
 func TestProcessResponse_AConfirmationWithItsReceiptIsBelieved(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 1_000_000, 0)
+	session, signers, _ := setupSession(t, 3, 1_000_000, 0)
 	nonce := prepareNonce(t, session)
+	rec, ok := session.StateMachine().Inference(nonce)
+	require.True(t, ok)
+	confirmedAt := time.Now().Unix()
+	receipt := testutil.SignExecutorReceipt(t, signers[nonce%uint64(len(signers))], "escrow-1", nonce, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt, confirmedAt)
 
 	require.NoError(t, session.ProcessResponse(int(nonce%3), &host.HostResponse{
 		Nonce:       nonce,
-		Receipt:     []byte("executor-signature"),
-		ConfirmedAt: time.Now().Unix(),
+		Receipt:     receipt,
+		ConfirmedAt: confirmedAt,
 	}, nonce))
 
 	reason, _ := session.TimeoutDeadline(nonce, time.Now())
 	require.Equal(t, "execution", reason)
+}
+
+func TestProcessResponse_InvalidPositiveReceiptLeavesRefusalRoute(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 1_000_000, 0)
+	nonce := prepareNonce(t, session)
+	require.NoError(t, session.ProcessResponse(int(nonce%3), &host.HostResponse{
+		Nonce: nonce, Receipt: []byte("garbage"), ConfirmedAt: time.Now().Unix(),
+	}, nonce))
+	reason, _ := session.TimeoutDeadline(nonce, time.Now())
+	require.Equal(t, "refused", reason)
+	require.Empty(t, pendingConfirmStarts(session))
+}
+
+func TestProcessResponse_RawInvalidFinishDoesNotCloseNonce(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 1_000_000, 0)
+	nonce := prepareNonce(t, session)
+	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+		InferenceId: nonce, EscrowId: "escrow-1", ExecutorSlot: uint32(nonce % 3), ProposerSig: []byte("garbage"),
+	}}}
+	require.NoError(t, session.ProcessResponse(int(nonce%3), &host.HostResponse{Nonce: nonce, Mempool: []*types.DevshardTx{finish}}, nonce))
+	require.False(t, session.IsNonceFinished(nonce))
+	require.Empty(t, session.PendingTxs())
 }
 
 // A host that reports neither is simply one that has not answered yet.

@@ -466,3 +466,14 @@ func (sm *StateMachine) HeightSyncMarks() []heightsync.AttributableMark {
 	}
 	return sm.heightSyncMarks.All()
 }
+
+// verifyExecutorEvidenceLogPlaneLocked checks the same replay-stable stamp
+// rules as diff application. Authentication alone cannot make a regressing
+// ConfirmStart or Finish usable as timeout-blocking evidence.
+func (sm *StateMachine) verifyExecutorEvidenceLogPlaneLocked(tx *types.DevshardTx) error {
+	if !sm.floorReady {
+		return types.ErrFloorNotRestored
+	}
+	_, err := sm.logPlaneErrLocked(sm.state.LatestNonce+1, []*types.DevshardTx{tx})
+	return err
+}
