@@ -398,6 +398,17 @@ func TestRetriableCapabilityErrorClassification(t *testing.T) {
 	require.EqualValues(t, 120001, parseContextTotalRequested("This model's maximum context length is 120000 tokens. However, you requested 3072 output tokens and your prompt contains at least 116929 input tokens, for a total of at least 120001 tokens."))
 }
 
+// Test flow:
+//  1. Put U+023A, which lowercases from 2 bytes to 3, before a marker that ends the message.
+//  2. Parse each context marker from it and require 0 instead of a slice-out-of-range panic.
+//  3. Put two expanders before a marker followed by a number and require that exact number, not one shifted by the expansion.
+func TestParseUintAfterMarkerByteExpandingUnicode(t *testing.T) {
+	require.EqualValues(t, 0, parseContextLengthLimit("Ⱥmaximum context length is "))
+	require.EqualValues(t, 0, parseContextTotalRequested("Ⱥfor a total of at least "))
+	require.EqualValues(t, 0, parseContextRequested("Ⱥyou requested "))
+	require.EqualValues(t, 4096, parseContextLengthLimit("ȺȺmaximum context length is 4096 tokens"))
+}
+
 func TestRaceWriter_CapabilityErrorsDoNotSelectWinner(t *testing.T) {
 	ctx := context.Background()
 	var sink bytes.Buffer

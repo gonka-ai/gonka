@@ -3526,7 +3526,7 @@ func parseUintAfterMarker(msg, marker string) uint64 {
 	if idx < 0 {
 		return 0
 	}
-	rest := msg[idx+len(marker):]
+	rest := lower[idx+len(marker):]
 	end := strings.IndexFunc(rest, func(r rune) bool {
 		return r < '0' || r > '9'
 	})
