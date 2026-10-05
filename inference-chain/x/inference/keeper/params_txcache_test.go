@@ -117,3 +117,33 @@ func TestTxParamsCache_EffectiveEpochIndexReadOnce(t *testing.T) {
 	got, _ = k.GetEffectiveEpochIndex(c)
 	require.Equal(t, uint64(5), got)
 }
+
+func TestTxParamsCache_ParamsSurviveEpochSwitch(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.SetParams(ctx, types.DefaultParams()))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+
+	c := keeper.WithTxParamsCache(ctx.WithGasMeter(storetypes.NewInfiniteGasMeter()))
+	_, err := k.GetParams(c)
+	require.NoError(t, err)
+	got, _ := k.GetEffectiveEpochIndex(c)
+	require.Equal(t, uint64(5), got)
+
+	require.NoError(t, k.SetEffectiveEpochIndex(c, 6))
+	before := c.GasMeter().GasConsumed()
+	p, err := k.GetParams(c)
+	require.NoError(t, err)
+	require.Equal(t, types.DefaultParams(), p)
+	require.Equal(t, before, c.GasMeter().GasConsumed(), "params must not be read again after an epoch switch")
+
+	got, _ = k.GetEffectiveEpochIndex(c)
+	require.Equal(t, uint64(6), got)
+
+	// The written index is not cached again: a discarded write must not leak.
+	sub, _ := c.CacheContext()
+	require.NoError(t, k.SetEffectiveEpochIndex(sub, 7))
+	got, _ = k.GetEffectiveEpochIndex(sub)
+	require.Equal(t, uint64(7), got)
+	got, _ = k.GetEffectiveEpochIndex(c)
+	require.Equal(t, uint64(6), got)
+}
