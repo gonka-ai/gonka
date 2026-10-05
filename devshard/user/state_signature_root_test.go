@@ -2,12 +2,17 @@ package user
 
 import (
 	"context"
+	"errors"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"devshard/host"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
 	"devshard/signing"
+	"devshard/state"
+	"devshard/storage"
 	"devshard/types"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -148,4 +153,86 @@ func TestSettlementSignaturesExpandsRepeatedOwnerSlots(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, sigs, 3)
 	require.Equal(t, sigs[0], sigs[2])
+}
+
+func TestTrimKeepsEarlierValidQuorumAfterWrongRootSignature(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	roots := composeEmptyDiffs(t, session, 4)
+	sigs := map[uint64]map[uint32][]byte{1: {}, 2: {}, 3: {}}
+	for i := 0; i < 3; i++ {
+		slot := hostSlot(session, i)
+		sig := signSessionHostRootForTest(t, session, i, 1, roots[1])
+		sigs[1][slot] = sig
+		require.NoError(t, session.store.AddSignature(session.escrowID, 1, slot, sig))
+	}
+	slot := hostSlot(session, 0)
+	poison := signSessionHostRootForTest(t, session, 0, 2, nil)
+	sigs[2][slot] = poison
+	require.NoError(t, session.store.AddSignature(session.escrowID, 2, slot, poison))
+	for i := 1; i < 3; i++ {
+		slot := hostSlot(session, i)
+		sig := signSessionHostRootForTest(t, session, i, 3, roots[3])
+		sigs[3][slot] = sig
+		require.NoError(t, session.store.AddSignature(session.escrowID, 3, slot, sig))
+	}
+	session.mu.Lock()
+	session.signatures = sigs
+	session.mu.Unlock()
+	_, before, hasBefore := session.SignatureStatus()
+	require.True(t, hasBefore)
+	require.Equal(t, uint64(1), before)
+
+	session.mu.Lock()
+	session.dropSignaturesThroughLocked(3)
+	session.mu.Unlock()
+	_, after, hasAfter := session.SignatureStatus()
+	require.True(t, hasAfter)
+	require.Equal(t, uint64(1), after)
+	require.True(t, session.HasQuorumAt(1))
+}
+
+func TestStoredWrongRootWarmLookupDoesNotHoldSessionLock(t *testing.T) {
+	owner := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{owner})
+	config := testutil.DefaultConfig(1)
+	verifier := signing.NewSecp256k1Verifier()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	resolver := func(_, _ string) (bool, error) {
+		calls.Add(1)
+		close(started)
+		<-release
+		return false, errors.New("chain unavailable")
+	}
+	sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier,
+		state.WithWarmKeyResolver(resolver))
+	session, err := NewSession(sm, user, "escrow-1", group, []HostClient{&ErrorClient{}}, verifier)
+	require.NoError(t, err)
+	session.mu.Lock()
+	session.nonce = 1
+	session.signatures[1] = map[uint32][]byte{0: signRootForTest(t, owner, "escrow-1", 1, nil)}
+	session.mu.Unlock()
+
+	quorumDone := make(chan bool, 1)
+	go func() { quorumDone <- session.HasQuorumAt(1) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("warm-key lookup did not start")
+	}
+	nonceDone := make(chan uint64, 1)
+	go func() { nonceDone <- session.Nonce() }()
+	select {
+	case nonce := <-nonceDone:
+		require.Equal(t, uint64(1), nonce)
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("session lock remained held during warm-key lookup")
+	}
+	close(release)
+	require.False(t, <-quorumDone)
+	require.False(t, session.HasQuorumAt(1))
+	require.Equal(t, int32(1), calls.Load())
 }
