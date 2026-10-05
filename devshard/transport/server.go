@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -693,18 +694,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 	var rejectCause string
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		// Fetch stored diffs to forward to executor during challenge.
-		var storedDiffs []types.Diff
-		if s.store != nil && st.LatestNonce > 0 {
-			records, dErr := s.store.GetDiffs(s.host.EscrowID(), 1, st.LatestNonce)
-			if dErr == nil {
-				storedDiffs = make([]types.Diff, len(records))
-				for i, r := range records {
-					storedDiffs[i] = r.Diff
-				}
-			}
-		}
-		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, s.host, st.Config, nowUnix)
+		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, st.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		accept, err = host.VerifyExecutionTimeout(c.Request().Context(), st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
 	default:
@@ -913,6 +903,10 @@ func (s *Server) HandleGossipNonce(c echo.Context) (err error) {
 	if len(req.StateSig) == 0 {
 		return echo.NewHTTPError(http.StatusBadRequest, "missing state signature")
 	}
+	// A state root is a SHA-256 digest. The gossip seen map keeps this value.
+	if len(req.StateHash) != sha256.Size {
+		return echo.NewHTTPError(http.StatusBadRequest, "state hash must be 32 bytes")
+	}
 	if req.SlotID >= uint32(len(s.host.Group())) {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid slot id")
 	}
@@ -1035,7 +1029,10 @@ func (s *Server) HandleGetDiffs(c echo.Context) (err error) {
 	}
 	observability.Request.SetDiffsRange(op, from, to)
 
-	records, err := s.store.GetDiffs(s.host.EscrowID(), from, to)
+	records, err := storage.LoadBoundedDiffs(s.store, s.host.EscrowID(), from, to)
+	if errors.Is(err, storage.ErrDiffPageLimit) {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}

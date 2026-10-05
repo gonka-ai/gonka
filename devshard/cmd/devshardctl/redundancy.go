@@ -3736,7 +3736,8 @@ func (e *Redundancy) recordSampleOnce(inf *inflight, params user.InferenceParams
 		e.maybeRecordCapabilityError(inf)
 		return
 	}
-	if inf != nil && errors.Is(inf.processErr, types.ErrStateHashMismatch) {
+	if inf != nil && (errors.Is(inf.processErr, types.ErrStateHashMismatch) ||
+		errors.Is(inf.processErr, user.ErrLocalRootUnavailable)) {
 		return
 	}
 	if e.longResponseFailureExempt(inf) {

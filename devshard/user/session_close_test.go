@@ -26,6 +26,9 @@ func (s *closeCountingStore) AppendDiff(string, types.DiffRecord) error { return
 func (s *closeCountingStore) GetDiffs(string, uint64, uint64) ([]types.DiffRecord, error) {
 	return nil, nil
 }
+func (s *closeCountingStore) DiffSizes(string, uint64, uint64, int) ([]storage.DiffSize, error) {
+	return nil, nil
+}
 func (s *closeCountingStore) AddSignature(string, uint64, uint32, []byte) error { return nil }
 func (s *closeCountingStore) GetSignatures(string, uint64) (map[uint32][]byte, error) {
 	return nil, nil
@@ -63,7 +66,14 @@ func (s *closeCountingStore) DrainInferenceValidationObsBatch(string, []uint64) 
 func (s *closeCountingStore) GetValidationObservability(string) ([]storage.SlotValidationObs, error) {
 	return nil, nil
 }
-func (s *closeCountingStore) ClearValidationObs(string) error              { return nil }
+func (s *closeCountingStore) ClearValidationObs(string) error { return nil }
+func (s *closeCountingStore) SetValidationObsRebuildPending(string, bool) error {
+	return nil
+}
+func (s *closeCountingStore) ValidationObsRebuildPending(string) (bool, error) { return false, nil }
+func (s *closeCountingStore) LockValidationObsRebuild(string) (func(), bool, error) {
+	return func() {}, true, nil
+}
 func (s *closeCountingStore) PutEscrowCache(storage.EscrowCacheInfo) error { return nil }
 func (s *closeCountingStore) GetEscrowCache(string) (*storage.EscrowCacheInfo, error) {
 	return nil, storage.ErrEscrowCacheNotFound

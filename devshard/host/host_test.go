@@ -1025,6 +1025,115 @@ func TestHost_ExecuteFailure_ReturnsReceiptNoMempool(t *testing.T) {
 	require.NotNil(t, mptxs[0].GetConfirmStart())
 }
 
+func countMempoolConfirms(txs []*types.DevshardTx, inferenceID uint64) int {
+	n := 0
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			n++
+		}
+	}
+	return n
+}
+
+// signTestReceipt signs an unstamped executor receipt for rec, as the host does
+// when it has no oracle.
+func signTestReceipt(t *testing.T, signer *signing.Secp256k1Signer, inferenceID uint64, rec types.InferenceRecord, confirmedAt int64) []byte {
+	t.Helper()
+	data, err := proto.Marshal(&types.ExecutorReceiptContent{
+		InferenceId: inferenceID,
+		PromptHash:  rec.PromptHash,
+		Model:       rec.Model,
+		InputLength: rec.InputLength,
+		MaxTokens:   rec.MaxTokens,
+		StartedAt:   rec.StartedAt,
+		EscrowId:    "escrow-1",
+		ConfirmedAt: confirmedAt,
+	})
+	require.NoError(t, err)
+	sig, err := signer.Sign(data)
+	require.NoError(t, err)
+	return sig
+}
+
+func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 10000, 10)
+
+	startDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	req := HostRequest{Diffs: []types.Diff{startDiff}, Nonce: 1, Payload: defaultPayload()}
+	first, err := h.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, first.Receipt)
+
+	// Stand in for a retry a few seconds later: the queued receipt is one
+	// signed at an earlier confirmed_at than the retry would sign now.
+	rec, ok := h.sm.GetInference(1)
+	require.True(t, ok)
+	earlier := first.ConfirmedAt - 30
+	queued := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1,
+		ExecutorSig: signTestReceipt(t, hosts[1], 1, rec, earlier),
+		ConfirmedAt: earlier,
+	}}}
+	h.mempool.RemoveIncluded([]*types.DevshardTx{findMempoolConfirm(h.MempoolTxs())})
+	h.mempool.Add(MempoolEntry{Tx: queued, ProposedAt: 1})
+
+	retry, err := h.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, queued.GetConfirmStart().ExecutorSig, retry.Receipt, "a retry while pending returns the queued receipt")
+	require.Equal(t, earlier, retry.ConfirmedAt)
+	require.Equal(t, 1, countMempoolConfirms(h.MempoolTxs(), 1), "a retry must not queue a second ConfirmStart")
+
+	challenge, challengeAt, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), nil)
+	require.NoError(t, err)
+	require.Equal(t, retry.Receipt, challenge, "the challenge path hands out the same receipt")
+	require.Equal(t, earlier, challengeAt)
+	require.Equal(t, 1, countMempoolConfirms(h.MempoolTxs(), 1))
+
+	// The gateway composes the receipt it got back. Its bytes match the queued
+	// entry, so applying it clears the mempool.
+	landed := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId:       1,
+		ExecutorSig:       retry.Receipt,
+		ConfirmedAt:       retry.ConfirmedAt,
+		ObservedHeight:    retry.ObservedHeight,
+		ObservedBlockHash: retry.ObservedBlockHash,
+	}}}
+	confirmDiff := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{landed})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{confirmDiff}})
+	require.NoError(t, err)
+	rec, ok = h.sm.GetInference(1)
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+	require.Zero(t, countMempoolConfirms(h.MempoolTxs(), 1), "the landed receipt leaves no ConfirmStart behind")
+}
+
+func TestHost_ReceiptIgnoresPeerImportedConfirmStart(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 10000, 10)
+
+	startDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{startDiff}})
+	require.NoError(t, err)
+
+	forged := []byte("not this host's signature")
+	h.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1,
+		ExecutorSig: forged,
+		ConfirmedAt: 1,
+	}}})
+
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{startDiff}, Nonce: 1, Payload: defaultPayload()})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Receipt)
+	require.NotEqual(t, forged, resp.Receipt, "a gossiped copy must not stand in for this host's receipt")
+	own := h.mempool.QueuedConfirmStart(1)
+	require.NotNil(t, own)
+	require.Equal(t, resp.Receipt, own.ExecutorSig)
+}
+
 func TestHost_RunExecutionQueuesFinishForPartialResult(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)

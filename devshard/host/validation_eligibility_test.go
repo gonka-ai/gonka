@@ -54,7 +54,7 @@ func TestHost_QueuedValidationRechecksEligibility(t *testing.T) {
 					rec.ExecutorSlot = 0
 				}
 			}
-			require.NoError(t, h.sm.RestoreState(&snapshot))
+			restoreWithLiveFloor(t, h.sm, &snapshot)
 			switch tc.mempool {
 			case "validation", "other":
 				slot := uint32(0)

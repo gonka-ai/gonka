@@ -158,6 +158,11 @@ type heapTop struct {
 	Stack        string `json:"stack"`
 }
 
+// topHeapInUse ranks sampled heap by the stack that allocated it, so retained
+// escrow state shows up under state.snapshotMutable (copyInferences,
+// cloneCommittedInferenceEntries). ValidateDiff and PreviewLocalBestEffort
+// build the post-state as a copy and CommitValidated installs that copy as the
+// live state. Those stacks are mostly live inferences, not snapshot garbage.
 func topHeapInUse(limit int) []heapTop {
 	if limit <= 0 {
 		return nil

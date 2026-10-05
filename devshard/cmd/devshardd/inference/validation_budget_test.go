@@ -250,6 +250,72 @@ func TestValidationRequestBuildFailureRefundsCredit(t *testing.T) {
 	}
 }
 
+type sharedCreditFake struct {
+	mu   sync.Mutex
+	live map[string]int
+}
+
+func creditKey(participant, model string) string { return participant + "\x00" + model }
+
+func (s *sharedCreditFake) EarnValidationCredit(_ context.Context, participant, model string, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.live == nil {
+		s.live = make(map[string]int)
+	}
+	s.live[creditKey(participant, model)]++
+	return nil
+}
+
+func (s *sharedCreditFake) ValidationCreditAvailable(_ context.Context, participant, model string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.live[creditKey(participant, model)] > 0, nil
+}
+
+func (s *sharedCreditFake) ReserveValidationCredit(_ context.Context, participant, model string) (time.Time, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := creditKey(participant, model)
+	if s.live[key] == 0 {
+		return time.Time{}, false, nil
+	}
+	s.live[key]--
+	return time.Now().Add(time.Hour), true, nil
+}
+
+func (s *sharedCreditFake) RefundValidationCredit(_ context.Context, participant, model string, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.live[creditKey(participant, model)]++
+	return nil
+}
+
+func TestSharedValidationCreditIsSpendableByTheOtherReplica(t *testing.T) {
+	store := &sharedCreditFake{}
+	earner := NewEngine(nil, nil, nil, nil, nil, nil)
+	survivor := NewEngine(nil, nil, nil, nil, nil, nil)
+	earner.UseSharedValidationCredits(store, "gonka1pair")
+	survivor.UseSharedValidationCredits(store, "gonka1pair")
+
+	require.False(t, survivor.creditAvailable("m"))
+	earner.earnValidationCredit(context.Background(), "m")
+	require.Empty(t, earner.validationBudget.credits["m"], "the shared store replaces the process-local budget")
+	// A replica that has not probed yet must observe the sibling's earn.
+	// survivor's negative probe is cached for creditProbeFresh.
+	late := NewEngine(nil, nil, nil, nil, nil, nil)
+	late.UseSharedValidationCredits(store, "gonka1pair")
+	require.True(t, late.creditAvailable("m"))
+
+	refund, ok := late.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
+	require.True(t, ok)
+	_, ok = earner.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
+	require.False(t, ok, "the sibling already spent the only credit")
+	refund()
+	_, ok = earner.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
+	require.True(t, ok, "a refund returns the credit to the shared balance")
+}
+
 func TestLeaseValidatorNoCreditsDoesNotAcquire(t *testing.T) {
 	v := &Validator{engine: &Engine{validationBudget: newValidationBudget(defaultValidationCreditTTL)}}
 	leases := &stubLeases{} // Acquire would panic: it must not be called.

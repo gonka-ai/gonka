@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard"
+	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/observability"
 	"devshard/signing"
@@ -375,7 +376,7 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 					} else {
 						snapshot.Inferences[1].Status = tt.status
 					}
-					require.NoError(t, h.sm.RestoreState(&snapshot))
+					restoreWithLiveFloor(t, h.sm, &snapshot)
 				}
 			}
 			applyInferenceTo(t, h, hosts, user, initialStatus)
@@ -698,6 +699,16 @@ func TestHost_FetchFailureVerdict_PublishesInvalidValidation(t *testing.T) {
 	_, mark, release := rec.counts()
 	require.Equal(t, 1, mark, "false verdict is submitted, not released")
 	require.Equal(t, 0, release)
+}
+
+// restoreWithLiveFloor swaps in an edited snapshot. These hosts run without a
+// store, so the state machine's store holds no journal to fold; the live
+// floor is the snapshot floor a real restore would carry.
+func restoreWithLiveFloor(t *testing.T, sm *state.StateMachine, st *types.EscrowState) {
+	t.Helper()
+	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, sm.ExportHeightSyncFloor())
+	require.NoError(t, err)
+	require.NoError(t, sm.RestoreStateWithFloor(st, floor))
 }
 
 func newTwoHostValidationHost(t *testing.T, validator devshard.ValidationEngine) (*Host, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {

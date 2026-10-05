@@ -39,11 +39,11 @@ type ExecutorClient interface {
 	// Used by VerifyExecutionTimeout to check for MsgFinishInference.
 	GetMempool(ctx context.Context) ([]*types.DevshardTx, error)
 
-	// ChallengeReceipt forwards diffs + payload to the executor.
-	// The executor applies missing diffs, verifies the payload, and returns
-	// a signed receipt if it can produce one. Also triggers execution so
-	// the inference actually completes. Returns nil receipt if executor
-	// cannot produce one (not the executor, inference not pending, etc).
+	// ChallengeReceipt asks the executor for a receipt for inferenceID.
+	// Diffs are applied first when the caller supplies them. The refused-timeout
+	// vote passes none: the executor answers from its own state. A receipt also
+	// starts execution. A nil receipt means the executor cannot produce one
+	// (not the executor, inference not pending, and so on).
 	// mempool is a snapshot of the executor's pool after the challenge
 	// (typically including MsgConfirmStart). Callers must copy those txs
 	// rather than synthesizing ConfirmStart from the receipt.
@@ -82,15 +82,36 @@ func RecoveryTxsFor(txs []*types.DevshardTx, inferenceID uint64) []*types.Devsha
 //  2. Check deadline has passed.
 //  3. Check local mempool for MsgConfirmStart -- if found, reject.
 //  4. Validate payload against on-chain record (same checks executor does).
-//  5. Challenge executor: forward diffs + payload in one call.
-//  6. If executor produces receipt -> reject (it received data and will compute).
-//  7. If executor unreachable or no receipt -> accept.
+//  5. Challenge the executor once, with the payload and no diffs.
+//  6. If the executor produces a receipt -> reject (it has the inference and will compute).
+//  7. If the executor is unreachable or returns no receipt -> accept.
 func VerifyRefusedTimeout(
 	ctx context.Context,
 	st types.EscrowState,
 	inferenceID uint64,
 	payload *InferencePayload,
-	storedDiffs []types.Diff,
+	localMempool []*types.DevshardTx,
+	executorClient ExecutorClient,
+	ingest TxSink,
+	config types.SessionConfig,
+	nowUnix int64,
+) (bool, error) {
+	return verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, executorClient, ingest, config, nowUnix)
+}
+
+type refusedChallenge int
+
+const (
+	refusedUnreachable refusedChallenge = iota
+	refusedReceipt
+	refusedNoReceipt
+)
+
+func verifyRefusedTimeout(
+	ctx context.Context,
+	st types.EscrowState,
+	inferenceID uint64,
+	payload *InferencePayload,
 	localMempool []*types.DevshardTx,
 	executorClient ExecutorClient,
 	ingest TxSink,
@@ -130,27 +151,40 @@ func VerifyRefusedTimeout(
 		return false, nil // bad payload -> reject timeout
 	}
 
-	// Challenge executor: one call that applies diffs + verifies payload + returns receipt.
-	if executorClient != nil {
-		receipt, mempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, storedDiffs)
-		if err != nil {
-			// Executor unreachable or internal error -> accept timeout.
-			return true, nil
-		}
-		if len(receipt) > 0 {
-			// Copy executor recovery txs into the verifier pool. Same bytes as
-			// the executor queued — do not mint a new ConfirmStart from receipt.
-			if ingest != nil {
-				for _, tx := range RecoveryTxsFor(mempool, inferenceID) {
-					ingest.AddTx(tx)
-				}
-			}
-			return false, nil // executor produced receipt -> reject timeout
-		}
-		// Executor reachable but no receipt (refusing to work) -> accept timeout.
+	if executorClient == nil {
+		return true, nil
 	}
+	return finishRefusedChallenge(challengeRefused(ctx, inferenceID, payload, nil, executorClient, ingest))
+}
 
-	return true, nil
+func finishRefusedChallenge(outcome refusedChallenge) (bool, error) {
+	return outcome != refusedReceipt, nil
+}
+
+func challengeRefused(
+	ctx context.Context,
+	inferenceID uint64,
+	payload *InferencePayload,
+	diffs []types.Diff,
+	executorClient ExecutorClient,
+	ingest TxSink,
+) refusedChallenge {
+	receipt, mempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, diffs)
+	if err != nil {
+		// Executor unreachable or internal error -> accept timeout.
+		return refusedUnreachable
+	}
+	if len(receipt) == 0 {
+		return refusedNoReceipt
+	}
+	// Copy executor recovery txs into the verifier pool. Same bytes as
+	// the executor queued — do not mint a new ConfirmStart from receipt.
+	if ingest != nil {
+		for _, tx := range RecoveryTxsFor(mempool, inferenceID) {
+			ingest.AddTx(tx)
+		}
+	}
+	return refusedReceipt
 }
 
 // VerifyExecutionTimeout checks if an execution timeout is valid.

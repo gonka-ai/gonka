@@ -473,9 +473,12 @@ func (s *Session) observedHeightLocked() (uint64, []byte, bool) {
 }
 
 func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error {
-	s.mu.Lock()
-	catchUp := s.diffsForHost(item.hostIdx)
-	s.mu.Unlock()
+	catchUp, err := s.catchUpForSend(ctx, item.hostIdx, item.diff.Nonce)
+	if err != nil {
+		logging.Warn("heartbeat host dead", "subsystem", "heightsync",
+			"escrow", s.escrowID, "nonce", item.diff.Nonce, "host", item.hostIdx, "error", err)
+		return nil
+	}
 
 	resp, err := s.clients[item.hostIdx].Send(ctx, host.HostRequest{
 		Diffs:            catchUp,

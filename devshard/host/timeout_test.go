@@ -19,13 +19,15 @@ type mockExecutorClient struct {
 	challengeReceipt    []byte
 	challengeMempool    []*types.DevshardTx
 	challengeReceiptErr error
+	challengePages      [][]types.Diff
 }
 
 func (m *mockExecutorClient) GetMempool(_ context.Context) ([]*types.DevshardTx, error) {
 	return m.mempool, m.mempoolErr
 }
 
-func (m *mockExecutorClient) ChallengeReceipt(_ context.Context, _ uint64, _ *InferencePayload, _ []types.Diff) ([]byte, []*types.DevshardTx, error) {
+func (m *mockExecutorClient) ChallengeReceipt(_ context.Context, _ uint64, _ *InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+	m.challengePages = append(m.challengePages, append([]types.Diff(nil), diffs...))
 	return m.challengeReceipt, m.challengeMempool, m.challengeReceiptErr
 }
 
@@ -125,7 +127,7 @@ func TestVerifyRefused_ReceiptInLocalMempool(t *testing.T) {
 		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 1}}},
 	}
 
-	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, mempool, nil, nil, st.Config, deadlinePassedRefused(st, 1))
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), mempool, nil, nil, st.Config, deadlinePassedRefused(st, 1))
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: receipt in local mempool")
 }
@@ -142,7 +144,7 @@ func TestVerifyRefused_ChallengeErrorAcceptsTimeout(t *testing.T) {
 			st := stateWithPendingFull(1, 1)
 			executor := &mockExecutorClient{challengeReceiptErr: tc.err}
 
-			accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
+			accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
 			require.NoError(t, err)
 			require.True(t, accept, "challenge error should be treated as executor unreachable")
 		})
@@ -153,9 +155,31 @@ func TestVerifyRefused_ExecutorReturnsReceipt(t *testing.T) {
 	st := stateWithPendingFull(1, 1)
 	executor := &mockExecutorClient{challengeReceipt: []byte("receipt-sig")}
 
-	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: executor produced receipt via ChallengeReceipt")
+}
+
+func TestVerifyRefused_ChallengesOnceWithoutDiffs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		receipt []byte
+		accept  bool
+	}{
+		{name: "no receipt accepts", accept: true},
+		{name: "receipt rejects", receipt: []byte("receipt-sig"), accept: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := stateWithPendingFull(1, 1)
+			st.LatestNonce = 100_000
+			executor := &mockExecutorClient{challengeReceipt: tc.receipt}
+
+			accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
+			require.NoError(t, err)
+			require.Equal(t, tc.accept, accept)
+			require.Equal(t, [][]types.Diff{nil}, executor.challengePages, "the executor answers from its own state")
+		})
+	}
 }
 
 func TestVerifyRefused_ExecutorReturnsEmptyReceipt(t *testing.T) {
@@ -163,7 +187,7 @@ func TestVerifyRefused_ExecutorReturnsEmptyReceipt(t *testing.T) {
 	// Executor reachable but returns nil receipt (cannot produce one).
 	executor := &mockExecutorClient{challengeReceipt: nil}
 
-	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
 	require.NoError(t, err)
 	require.True(t, accept, "should accept: executor returned no receipt")
 }
@@ -171,7 +195,7 @@ func TestVerifyRefused_ExecutorReturnsEmptyReceipt(t *testing.T) {
 func TestVerifyRefused_InferenceNotPending(t *testing.T) {
 	st := stateWithStarted(1, 1) // started, not pending
 
-	_, err := VerifyRefusedTimeout(context.Background(), st, 1, nil, nil, nil, nil, nil, st.Config, deadlinePassedRefused(st, 1))
+	_, err := VerifyRefusedTimeout(context.Background(), st, 1, nil, nil, nil, nil, st.Config, deadlinePassedRefused(st, 1))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "expected pending")
 }
@@ -181,7 +205,7 @@ func TestVerifyRefused_DeadlineNotPassed(t *testing.T) {
 	// nowUnix is before the deadline.
 	tooEarly := st.Inferences[1].StartedAt + st.Config.RefusalTimeout - 1
 
-	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, nil, nil, nil, st.Config, tooEarly)
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, nil, nil, st.Config, tooEarly)
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: deadline not passed")
 }
@@ -191,7 +215,7 @@ func TestVerifyRefused_NilPayload_Rejects(t *testing.T) {
 	executor := &mockExecutorClient{challengeReceipt: []byte("would-return-receipt")}
 
 	// Nil payload -> error (reject).
-	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, nil, nil, nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, nil, nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
 	require.Error(t, err)
 	require.False(t, accept, "should reject: nil payload")
 	require.Contains(t, err.Error(), "no payload")
@@ -205,7 +229,7 @@ func TestVerifyRefused_PayloadMismatch_Rejects(t *testing.T) {
 	badPayload := testPayload()
 	badPayload.Model = "wrong-model"
 
-	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, badPayload, nil, nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, badPayload, nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: payload mismatch")
 }
@@ -267,7 +291,7 @@ func TestVerifyRefused_FinishInMempool(t *testing.T) {
 		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1}}},
 	}
 
-	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, mempool, nil, nil, st.Config, deadlinePassedRefused(st, 1))
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), mempool, nil, nil, st.Config, deadlinePassedRefused(st, 1))
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: MsgFinishInference in local mempool")
 }
@@ -302,7 +326,7 @@ func TestVerifyRefused_CopiesChallengeMempool(t *testing.T) {
 	}
 	verifierPool := NewMempool()
 
-	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, nil, executor, verifierPool, st.Config, deadlinePassedRefused(st, 1))
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, executor, verifierPool, st.Config, deadlinePassedRefused(st, 1))
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: executor produced receipt")
 
@@ -316,7 +340,7 @@ func TestVerifyRefused_CopiesChallengeMempool(t *testing.T) {
 		}
 	}
 
-	accept, err = VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, nil, executor, verifierPool, st.Config, deadlinePassedRefused(st, 1))
+	accept, err = VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, executor, verifierPool, st.Config, deadlinePassedRefused(st, 1))
 	require.NoError(t, err)
 	require.False(t, accept)
 	var confirmCount int
