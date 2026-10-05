@@ -8,14 +8,17 @@ import (
 	"hash/fnv"
 	"strconv"
 	"time"
+
+	"devshard/testenv/replay"
 )
 
 // Config wires the mock OpenAI HTTP server.
 type Config struct {
-	Addr    string
-	Faults  FaultConfig
-	Workers int
-	Queue   int
+	Addr       string
+	Faults     FaultConfig
+	Workers    int
+	Queue      int
+	ReplayFile string
 }
 
 // Stats is the test-only request outcome snapshot exposed by a Mock ML node.
@@ -24,6 +27,8 @@ type Stats struct {
 	SuccessfulResponses uint64 `json:"successful_responses"`
 	FailedResponses     uint64 `json:"failed_responses"`
 	Timeouts            uint64 `json:"timeouts"`
+	ReplayHits          uint64 `json:"replay_hits"`
+	ReplayMisses        uint64 `json:"replay_misses"`
 }
 
 // DefaultConfig returns local dev defaults.
@@ -121,6 +126,14 @@ type ChatRequest struct {
 type ChatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+func replayMessages(messages []ChatMessage) []replay.Message {
+	out := make([]replay.Message, len(messages))
+	for i, message := range messages {
+		out[i] = replay.Message{Role: message.Role, Content: message.Content}
+	}
+	return out
 }
 
 // completionText derives deterministic assistant text from model + messages.

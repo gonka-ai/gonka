@@ -13,11 +13,12 @@ func TestLoadScenario_NormalLoad(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "normal-load", scenario.Scenario)
 	require.Len(t, scenario.Topology.MockML.Nodes, 2)
-	require.Equal(t, uint64(1_000_000_000), scenario.Topology.Chain.EscrowAmount)
+	require.Equal(t, uint64(2_000_000_000_000_000), scenario.Topology.Chain.EscrowAmount)
 	require.Equal(t, uint32(100_000), scenario.Topology.Chain.MaxNonce)
 	require.Equal(t, 3, scenario.Topology.Participants)
 	require.Equal(t, 0.02, scenario.Assertions.Devshard.MaxGhostRate)
 	require.Equal(t, "closed_loop", scenario.Workload.Traffic.ResolvedType())
+	require.Equal(t, 0.0, scenario.Workload.Traffic.RPS)
 	require.Equal(t, 2, scenario.Workload.MaxInFlight)
 	require.Equal(t, "30s", scenario.Workload.Duration)
 	require.Equal(t, "30s", scenario.DrainTimeout)
@@ -82,6 +83,8 @@ func TestLoadProfile_Fast(t *testing.T) {
 	profile, err := LoadProfile("profiles", "fast")
 	require.NoError(t, err)
 	require.Equal(t, "fast", profile.Profile)
+	require.Equal(t, "2ms", profile.TTFT)
+	require.Equal(t, "0s", profile.TokenInterval)
 	require.Equal(t, 100, profile.Workers)
 }
 
@@ -90,6 +93,15 @@ func TestLoadProfile_Slow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "slow", profile.Profile)
 	require.Equal(t, "1s", profile.TTFT)
+	require.Equal(t, "50ms", profile.TokenInterval)
+}
+
+func TestLoadProfile_Realistic(t *testing.T) {
+	profile, err := LoadProfile("profiles", "realistic")
+	require.NoError(t, err)
+	require.Equal(t, "realistic", profile.Profile)
+	require.Equal(t, "250ms", profile.TTFT)
+	require.Equal(t, "20ms", profile.TokenInterval)
 }
 
 func TestLoadProfile_Failing(t *testing.T) {

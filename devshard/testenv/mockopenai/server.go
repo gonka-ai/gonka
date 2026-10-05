@@ -11,12 +11,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"devshard/testenv/replay"
+
 	"github.com/labstack/echo/v4"
 )
 
 // Server serves OpenAI-compatible /v1/chat/completions.
 type Server struct {
 	echo       *echo.Echo
+	replay     *replay.Dataset
 	mu         sync.RWMutex
 	fault      FaultConfig
 	streamGate chan struct{}
@@ -27,21 +30,36 @@ type Server struct {
 		successfulResponses atomic.Uint64
 		failedResponses     atomic.Uint64
 		timeouts            atomic.Uint64
+		replayHits          atomic.Uint64
+		replayMisses        atomic.Uint64
 	}
 }
 
 // NewServer builds the HTTP server.
 func NewServer(cfg Config) *Server {
+	server, err := NewServerWithError(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return server
+}
+
+// NewServerWithError builds the HTTP server and loads an optional replay file.
+func NewServerWithError(cfg Config) (*Server, error) {
 	s := &Server{fault: cfg.Faults}
+	if cfg.ReplayFile != "" {
+		dataset, err := replay.LoadFile(cfg.ReplayFile)
+		if err != nil {
+			return nil, fmt.Errorf("load replay file: %w", err)
+		}
+		s.replay = dataset
+	}
 	if cfg.Workers > 0 {
 		s.capacity = make(chan struct{}, cfg.Workers+cfg.Queue)
 		s.workers = make(chan struct{}, cfg.Workers)
 	}
 	if s.fault.PauseStream {
 		s.streamGate = make(chan struct{})
-	}
-	if s.fault.StreamChunkDelay <= 0 {
-		s.fault.StreamChunkDelay = 5 * time.Millisecond
 	}
 	e := echo.New()
 	e.HideBanner = true
@@ -52,7 +70,7 @@ func NewServer(cfg Config) *Server {
 	e.POST("/testenv/fault", s.handleFaultPatch)
 	e.POST("/testenv/stream/release", s.handleStreamRelease)
 	s.echo = e
-	return s
+	return s, nil
 }
 
 // handleModelStatus is the small ML-node management contract real DAPI uses
@@ -115,6 +133,8 @@ func (s *Server) handleStats(c echo.Context) error {
 		SuccessfulResponses: s.stats.successfulResponses.Load(),
 		FailedResponses:     s.stats.failedResponses.Load(),
 		Timeouts:            s.stats.timeouts.Load(),
+		ReplayHits:          s.stats.replayHits.Load(),
+		ReplayMisses:        s.stats.replayMisses.Load(),
 	})
 }
 
@@ -160,9 +180,8 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		req.Model = "test-model"
 	}
 
-	// Latency stretches Validate (non-stream JSON). Streaming inference must
-	// still emit a first token immediately so gateway first-token timeout
-	// (1s floor) is not tripped while leases stay pending.
+	// Latency is the time to first response for JSON and the time to first
+	// chunk for streaming. StreamChunkDelay controls only later chunks.
 	if f.Latency > 0 && !req.Stream {
 		timer := time.NewTimer(f.Latency)
 		select {
@@ -189,6 +208,15 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 	}
 
 	text := completionText(body)
+	if s.replay != nil {
+		sample, _, ok := s.replay.Lookup(req.Model, replayMessages(req.Messages))
+		if !ok {
+			s.stats.replayMisses.Add(1)
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "mock-openai replay sample not found"})
+		}
+		s.stats.replayHits.Add(1)
+		text = sample.Response.Content
+	}
 	if req.Stream {
 		err := s.streamCompletion(c, req, text, body, f, streamGate)
 		if err != nil || f.PartialStream || f.DropFirstChunk {
@@ -272,6 +300,9 @@ func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, bo
 }
 
 func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, streamGate <-chan struct{}) error {
+	if err := waitForLatency(c.Request().Context(), f.Latency); err != nil {
+		return err
+	}
 	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
 	c.Response().Header().Set("Connection", "keep-alive")
@@ -375,6 +406,20 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		flusher.Flush()
 	}
 	return nil
+}
+
+func waitForLatency(ctx context.Context, latency time.Duration) error {
+	if latency <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(latency)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 const engineCoreErrorEvent = `data: {"error":{"code":500,"message":"EngineCore encountered an issue. See stack trace (above) for the root cause.","param":null,"type":"InternalServerError"},"id":"chatcmpl-mockopenai"}`
