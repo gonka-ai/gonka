@@ -581,8 +581,17 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
 		upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
 		if found && upcomingEpoch != nil {
-			am.captureDelegationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight)
-			am.captureValidationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight, "regular PoC")
+			// Both snapshots share one read of the base state and the stage's store commits.
+			baseState := am.getEffectiveValidationBaseState(ctx)
+			storeCommits, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, upcomingEpoch.PocStartBlockHeight)
+			if err != nil {
+				am.LogError("captureValidationSnapshot: Failed to get store commits", types.PoC,
+					"context", "regular PoC", "error", err)
+				am.writeValidationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight, "regular PoC", nil, baseState.totalWeight)
+			} else {
+				am.captureDelegationSnapshot(ctx, blockHeight, baseState, storeCommits)
+				am.captureValidationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight, "regular PoC", baseState, storeCommits)
+			}
 		} else {
 			am.LogError("captureValidationSnapshot: Unable to get upcoming epoch", types.PoC)
 		}
@@ -1094,9 +1103,11 @@ func (am AppModule) captureGenerationStartTimestamp(
 //
 // For confirmation PoC: voting powers come from AP(N).voting_powers (already delegation-resolved
 // at epoch formation). DIRECT = who was assigned models in AP(N).
-func (am AppModule) captureValidationSnapshot(ctx context.Context, blockHeight, snapshotKey int64, logContext string) {
-	baseState := am.getEffectiveValidationBaseState(ctx)
-	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, baseState, snapshotKey, logContext)
+func (am AppModule) captureValidationSnapshot(
+	ctx context.Context, blockHeight, snapshotKey int64, logContext string,
+	baseState effectiveValidationBaseState, allStoreCommits map[types.PoCParticipantModelKey]types.PoCV2StoreCommit,
+) {
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, baseState, allStoreCommits, logContext)
 	am.writeValidationSnapshot(ctx, blockHeight, snapshotKey, logContext, modelWeights, totalWeight)
 }
 
@@ -1281,7 +1292,10 @@ func emptyValidationBaseState() effectiveValidationBaseState {
 // computeStoreCommitVotingPowers builds validation-time voting powers by combining:
 // - existing model voting powers from the provided base state
 // - bootstrap-model voting powers derived from bootstrap delegation + consensus weights + store commits
-func (am AppModule) computeStoreCommitVotingPowers(ctx context.Context, baseState effectiveValidationBaseState, snapshotKey int64, logContext string) ([]*types.ModelVotingPowers, int64) {
+func (am AppModule) computeStoreCommitVotingPowers(
+	ctx context.Context, baseState effectiveValidationBaseState,
+	allStoreCommits map[types.PoCParticipantModelKey]types.PoCV2StoreCommit, logContext string,
+) ([]*types.ModelVotingPowers, int64) {
 	consensusWeights := baseState.weights
 	totalNetworkWeight := baseState.totalWeight
 	if totalNetworkWeight == 0 {
@@ -1303,12 +1317,6 @@ func (am AppModule) computeStoreCommitVotingPowers(ctx context.Context, baseStat
 		bootstrapDelegations = map[string]map[string]string{}
 	}
 
-	allStoreCommits, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, snapshotKey)
-	if err != nil {
-		am.LogError("computeStoreCommitVotingPowers: Failed to get store commits", types.PoC,
-			"context", logContext, "error", err)
-		return nil, totalNetworkWeight
-	}
 	// Bootstrap intent is frozen at start_poc - deploy_window. If a participant
 	// switches from intent to delegation after that snapshot, the late delegation
 	// is intentionally ignored for the current bootstrap-model validation path.
