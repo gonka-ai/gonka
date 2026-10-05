@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -298,6 +300,41 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "/health")
 	require.Contains(t, text, "DEVSHARD_MODEL")
 	require.Contains(t, text, "/v1/status")
+}
+
+func TestWriteCompose_ReplayUsesGatewayRuntimeCatalog(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	require.NoError(t, fillConfig(cfg))
+	cfg.MockOpenAI.ReplayFile = "/fixtures/replay.jsonl"
+	cfg.Escrows[0].ModelID = "model-a"
+	cfg.Escrows = append(cfg.Escrows, cfg.Escrows[0])
+	cfg.Escrows[1].ID = 2
+	cfg.Escrows[1].ModelID = "model-b"
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "DEVSHARDS_JSON:")
+	require.NotContains(t, text, "DEVSHARD_ESCROW_ID:")
+	require.NotContains(t, text, "DEVSHARD_MODEL:")
+
+	line := ""
+	for _, candidate := range strings.Split(text, "\n") {
+		if strings.Contains(candidate, "DEVSHARDS_JSON:") {
+			line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(candidate), "DEVSHARDS_JSON:"))
+			break
+		}
+	}
+	var runtimes []map[string]string
+	decoded, err := strconv.Unquote(line)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(decoded), &runtimes))
+	require.Len(t, runtimes, 2)
+	require.Equal(t, "model-a", runtimes[0]["model"])
+	require.Equal(t, "model-b", runtimes[1]["model"])
 }
 
 func TestWriteCompose_MultipleMockMLNodes(t *testing.T) {

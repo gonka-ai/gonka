@@ -110,7 +110,6 @@ type Assertions struct {
 	} `yaml:"requests"`
 	Devshard struct {
 		NoOrphanedWork bool    `yaml:"no_orphaned_work"`
-		RequireDrain   bool    `yaml:"require_drain"`
 		MaxGhostRate   float64 `yaml:"max_ghost_rate"`
 	} `yaml:"devshard"`
 	MockML struct {

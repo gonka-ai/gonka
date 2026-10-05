@@ -305,32 +305,34 @@ func syncChainSeed(cfg *config.File) {
 	if len(cfg.Escrows) == 0 {
 		cfg.Escrows = []config.Escrow{{ID: 1}}
 	}
-	e := &cfg.Escrows[0]
-	if e.ID == 0 {
-		e.ID = 1
-	}
-	e.Creator = cfg.User.Address
-	e.Slots = slots
-	if e.Amount == 0 {
-		e.Amount = config.DefaultEscrowAmount
-	}
-	if e.EpochIndex == 0 {
-		e.EpochIndex = cfg.Epoch.Index
-	}
-	if e.AppHash == "" {
-		e.AppHash = config.DefaultAppHash
-	}
-	if e.ModelID == "" {
-		e.ModelID = config.DefaultModelID
-	}
-	if e.TokenPrice == 0 {
-		e.TokenPrice = config.DefaultTokenPrice
-	}
-	if e.ValidationRate == 0 {
-		e.ValidationRate = cfg.Params.ValidationRate
-	}
-	if e.VoteThresholdFactor == 0 {
-		e.VoteThresholdFactor = cfg.Params.VoteThresholdFactor
+	for i := range cfg.Escrows {
+		e := &cfg.Escrows[i]
+		if e.ID == 0 {
+			e.ID = uint64(i + 1)
+		}
+		e.Creator = cfg.User.Address
+		e.Slots = append([]string(nil), slots...)
+		if e.Amount == 0 {
+			e.Amount = config.DefaultEscrowAmount
+		}
+		if e.EpochIndex == 0 {
+			e.EpochIndex = cfg.Epoch.Index
+		}
+		if e.AppHash == "" {
+			e.AppHash = config.DefaultAppHash
+		}
+		if e.ModelID == "" {
+			e.ModelID = config.DefaultModelID
+		}
+		if e.TokenPrice == 0 {
+			e.TokenPrice = config.DefaultTokenPrice
+		}
+		if e.ValidationRate == 0 {
+			e.ValidationRate = cfg.Params.ValidationRate
+		}
+		if e.VoteThresholdFactor == 0 {
+			e.VoteThresholdFactor = cfg.Params.VoteThresholdFactor
+		}
 	}
 
 	if len(cfg.Hosts) > 0 && cfg.Hosts[0].Address != "" {

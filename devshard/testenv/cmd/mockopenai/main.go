@@ -16,6 +16,7 @@ import (
 func main() {
 	cfg := mockopenai.DefaultConfig()
 	cfg.Addr = envOr("MOCK_OPENAI_ADDR", ":8088")
+	cfg.ReplayFile = envOr("MOCK_OPENAI_REPLAY_FILE", "")
 	cfg.Faults = faultsFromEnv()
 	cfg.Workers = intFromEnv("MOCK_OPENAI_WORKERS")
 	cfg.Queue = intFromEnv("MOCK_OPENAI_QUEUE")
@@ -23,7 +24,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := mockopenai.NewServer(cfg)
+	srv, err := mockopenai.NewServerWithError(cfg)
+	if err != nil {
+		log.Fatalf("mock-openai: %v", err)
+	}
 	log.Printf("mock-openai on %s", cfg.Addr)
 	if err := srv.Serve(ctx, cfg.Addr); err != nil && err != context.Canceled {
 		log.Fatalf("mock-openai: %v", err)

@@ -1,6 +1,7 @@
 package loadtest
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,9 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"devshard/testenv/replay"
 )
 
 type GeneratorConfig struct {
@@ -21,15 +25,18 @@ type GeneratorConfig struct {
 	Scenario   Scenario
 	OutputDir  string
 	Client     *http.Client
+	Replay     *replay.Selector
 }
 
 type RequestResult struct {
-	RequestID string        `json:"request_id"`
-	StartedAt time.Time     `json:"started_at"`
-	Duration  time.Duration `json:"duration"`
-	Status    int           `json:"status"`
-	Outcome   string        `json:"outcome"`
-	Error     string        `json:"error,omitempty"`
+	RequestID         string        `json:"request_id"`
+	SampleIndex       *int          `json:"sample_index,omitempty"`
+	SampleFingerprint string        `json:"sample_fingerprint,omitempty"`
+	StartedAt         time.Time     `json:"started_at"`
+	Duration          time.Duration `json:"duration"`
+	Status            int           `json:"status"`
+	Outcome           string        `json:"outcome"`
+	Error             string        `json:"error,omitempty"`
 }
 
 type Summary struct {
@@ -180,18 +187,47 @@ func defaultHTTPClient(concurrency int) *http.Client {
 	}
 }
 
-func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) RequestResult {
+func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (result RequestResult) {
 	requestID := fmt.Sprintf("%s-%d-%06d", cfg.Scenario.Scenario, cfg.Scenario.Seed, index)
 	started := time.Now().UTC()
-	result := RequestResult{RequestID: requestID, StartedAt: started}
+	result = RequestResult{RequestID: requestID, StartedAt: started}
+	defer func() {
+		result.Duration = time.Since(started)
+	}()
 	request := cfg.Scenario.Workload.Request
-	messages := append([]Message(nil), request.Messages...)
-	messages[len(messages)-1].Content += " [load-request:" + requestID + "]"
+	stream := request.Stream
+	var messages []Message
+	model := request.Model
+	maxTokens := int64(request.MaxTokens)
+	var temperature float64
+	if cfg.Replay != nil {
+		sample, sampleIndex, ok := cfg.Replay.Select(index)
+		if !ok {
+			result.Error = "replay selector has no samples"
+			result.Outcome = "error"
+			return result
+		}
+		result.SampleIndex = &sampleIndex
+		model = sample.Model
+		stream = sample.Stream
+		temperature = sample.Temperature
+		maxTokens = sample.MaxTokens
+		messages = make([]Message, len(sample.Messages))
+		for i, message := range sample.Messages {
+			messages[i] = Message{Role: message.Role, Content: message.Content}
+		}
+		result.SampleFingerprint = replay.Fingerprint(sample.Model, sample.Messages)
+	} else {
+		messages = append([]Message(nil), request.Messages...)
+		messages[len(messages)-1].Content += " [load-request:" + requestID + "]"
+	}
 	body, err := json.Marshal(struct {
-		Model     string    `json:"model"`
-		Messages  []Message `json:"messages"`
-		MaxTokens int       `json:"max_tokens,omitempty"`
-	}{Model: request.Model, Messages: messages, MaxTokens: request.MaxTokens})
+		Model       string    `json:"model"`
+		Stream      bool      `json:"stream,omitempty"`
+		Temperature float64   `json:"temperature,omitempty"`
+		Messages    []Message `json:"messages"`
+		MaxTokens   int64     `json:"max_tokens,omitempty"`
+	}{Model: model, Stream: stream, Temperature: temperature, Messages: messages, MaxTokens: maxTokens})
 	if err != nil {
 		result.Error = err.Error()
 		result.Outcome = "error"
@@ -209,7 +245,6 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) Requ
 		httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	}
 	resp, err := cfg.Client.Do(httpReq)
-	result.Duration = time.Since(started)
 	if err != nil {
 		result.Error = err.Error()
 		result.Outcome = "error"
@@ -228,20 +263,63 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) Requ
 		result.Error = string(responseBody)
 		return result
 	}
-	var payload struct {
-		Choices []json.RawMessage `json:"choices"`
-	}
-	if err := json.Unmarshal(responseBody, &payload); err != nil || len(payload.Choices) == 0 {
+	if err := validateGatewayResponse(responseBody, stream); err != nil {
 		result.Outcome = "error"
-		if err != nil {
-			result.Error = err.Error()
-		} else {
-			result.Error = "response has no choices"
-		}
+		result.Error = err.Error()
 		return result
 	}
 	result.Outcome = cfg.Scenario.Assertions.Requests.TerminalOutcome
 	return result
+}
+
+func validateGatewayResponse(body []byte, stream bool) error {
+	if !stream {
+		var payload struct {
+			Choices []json.RawMessage `json:"choices"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			return err
+		}
+		if len(payload.Choices) == 0 {
+			return fmt.Errorf("response has no choices")
+		}
+		return nil
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	sawChoice := false
+	sawDone := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			sawDone = true
+			continue
+		}
+		var chunk struct {
+			Choices []json.RawMessage `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return fmt.Errorf("decode streaming response: %w", err)
+		}
+		if len(chunk.Choices) > 0 {
+			sawChoice = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	if !sawChoice {
+		return fmt.Errorf("streaming response has no choices")
+	}
+	if !sawDone {
+		return fmt.Errorf("streaming response has no [DONE]")
+	}
+	return nil
 }
 
 func summarize(scenario Scenario, started time.Time, duration time.Duration, results []RequestResult) Summary {
