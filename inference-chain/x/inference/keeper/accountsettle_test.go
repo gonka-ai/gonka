@@ -504,7 +504,8 @@ func TestSettleWithoutGraceEpoch(t *testing.T) {
 	logger.Info("Verified participant was punished without grace epoch", "rewardCoins", settleAmount.RewardCoins)
 }
 
-// Settlement reads each participant once: the final write reuses the stats read for rewards.
+// Settlement reads each participant and the delegation reward snapshot once:
+// the final write reuses the stats read for rewards.
 func TestSettleAccountsReadsParticipantsOnce(t *testing.T) {
 	k, ctx, mocks := keeper2.InferenceKeeperReturningMocks(t)
 	var addrs []string
@@ -523,6 +524,9 @@ func TestSettleAccountsReadsParticipantsOnce(t *testing.T) {
 		ConfirmationWeightScales: []*types.ConfirmationWeightScale{{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)}}})
 	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochIndex: 10, ModelId: "model-a", ValidationWeights: weights})
 	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{EpochId: 10, Participants: active}))
+	require.NoError(t, k.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{EpochIndex: 10,
+		Transfers: []*types.DelegationRewardTransfer{{ModelId: "model-a", From: addrs[0], To: addrs[1], Share: types.DecimalFromFloat(0.05)}},
+		Penalties: []*types.DelegationRewardPenalty{{Participant: addrs[2], PenaltyFraction: types.DecimalFromFloat(0.1)}}}))
 	mocks.BankKeeper.EXPECT().MintCoins(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -532,6 +536,9 @@ func TestSettleAccountsReadsParticipantsOnce(t *testing.T) {
 	_, err := k.SettleAccounts(ctx, 10, 0)
 	ctx.MultiStore().SetTracer(nil)
 	require.NoError(t, err)
+
+	snap := base64.StdEncoding.EncodeToString(types.DelegationRewardTransferSnapshotPrefix)
+	require.Equal(t, 1, strings.Count(trace.String(), `"operation":"read","key":"`+snap+`"`))
 
 	m := k.Participants
 	for _, a := range addrs {
