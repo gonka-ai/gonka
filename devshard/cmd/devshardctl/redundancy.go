@@ -40,7 +40,17 @@ var (
 	StreamingAttemptHardTimeout = 30 * time.Minute
 )
 
+const DefaultMaxSpeculativeAttempts = 2
+
 const toolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
+
+// modelContextLimits mirrors each model's --max-model-len in the chain's model_args.
+// TODO: temporary fix until protocol will be updated - https://github.com/gonka-ai/gonka/pull/1763
+var modelContextLimits = map[string]uint64{
+	"MiniMaxAI/MiniMax-M2.7":             180000,
+	"deepseek-ai/DeepSeek-V4-Flash-0731": 400000,
+	"zai-org/GLM-5.3-Flash":              400000,
+}
 
 var sseUsageKeyMarker = []byte(`"usage"`)
 
@@ -474,7 +484,11 @@ func normalizeRedundancySpeedPolicy(policy string) string {
 	}
 }
 
-var maxSpeculativeAttempts atomic.Int64
+var maxSpeculativeAttempts = func() *atomic.Int64 {
+	attempts := new(atomic.Int64)
+	attempts.Store(DefaultMaxSpeculativeAttempts)
+	return attempts
+}()
 
 func SetMaxSpeculativeAttempts(v int) {
 	maxSpeculativeAttempts.Store(int64(v))
@@ -783,6 +797,7 @@ type inflight struct {
 	hostID                     string
 	nonce                      uint64
 	escrowID                   string
+	model                      string
 	sendTime                   time.Time
 	escalated                  bool
 	probe                      bool
@@ -1860,6 +1875,7 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 			hostID:                   e.session.HostLabel(res.prepared.HostIdx()),
 			nonce:                    res.prepared.Nonce(),
 			escrowID:                 e.devshardID,
+			model:                    normalizeModelID(params.Model),
 			probe:                    res.isProbe,
 			suspicious:               noWinnerOK,
 			noWinnerReason:           noWinner.reason,
@@ -3211,8 +3227,16 @@ func isTrustedDeterministicRejection(inf *inflight) bool {
 		return false
 	}
 	details := inf.errorDetails()
-	return parseContextLengthLimit(details.Message) > 0 ||
-		details.statusCode() == http.StatusBadRequest && isCacheableOpenAIErrorDetails(details)
+	if parseContextLengthLimit(details.Message) > 0 {
+		return contextRefusalIsFinal(details.Message, inf.model)
+	}
+	return details.statusCode() == http.StatusBadRequest && isCacheableOpenAIErrorDetails(details)
+}
+
+// contextRefusalIsFinal keeps a model with a known context limit racing while a larger host could still serve the request.
+func contextRefusalIsFinal(message, model string) bool {
+	modelContextLimit, known := modelContextLimits[model]
+	return !known || contextRefusalBeyondModelLimit(message, modelContextLimit)
 }
 
 func hostApplicationErrorFromInflight(inf *inflight) *hostApplicationError {
@@ -3452,6 +3476,15 @@ func isRetriableCapabilityErrorMessage(msg string) bool {
 	return isToolChoiceCapabilityError(msg) || parseContextLengthLimit(msg) > 0
 }
 
+// contextRefusalBeyondModelLimit is a context-length refusal no honest host avoids: the host already serves the model limit, or the request exceeds it.
+func contextRefusalBeyondModelLimit(message string, modelContextLimit uint64) bool {
+	hostContextLimit := parseContextLengthLimit(message)
+	if modelContextLimit == 0 || hostContextLimit == 0 {
+		return false
+	}
+	return hostContextLimit >= modelContextLimit || max(parseContextTotalRequested(message), parseContextRequested(message)) > modelContextLimit
+}
+
 func isToolChoiceCapabilityError(msg string) bool {
 	return strings.Contains(msg, toolChoiceUnsupportedMessage)
 }
@@ -3483,13 +3516,17 @@ func parseContextTotalRequested(msg string) uint64 {
 	return parseUintAfterMarker(msg, "for a total of at least ")
 }
 
+func parseContextRequested(msg string) uint64 {
+	return parseUintAfterMarker(msg, "you requested ")
+}
+
 func parseUintAfterMarker(msg, marker string) uint64 {
 	lower := strings.ToLower(msg)
 	idx := strings.Index(lower, marker)
 	if idx < 0 {
 		return 0
 	}
-	rest := msg[idx+len(marker):]
+	rest := lower[idx+len(marker):]
 	end := strings.IndexFunc(rest, func(r rune) bool {
 		return r < '0' || r > '9'
 	})

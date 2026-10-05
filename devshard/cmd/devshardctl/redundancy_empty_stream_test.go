@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -397,6 +398,17 @@ func TestRetriableCapabilityErrorClassification(t *testing.T) {
 	require.EqualValues(t, 120001, parseContextTotalRequested("This model's maximum context length is 120000 tokens. However, you requested 3072 output tokens and your prompt contains at least 116929 input tokens, for a total of at least 120001 tokens."))
 }
 
+// Test flow:
+//  1. Put U+023A, which lowercases from 2 bytes to 3, before a marker that ends the message.
+//  2. Parse each context marker from it and require 0 instead of a slice-out-of-range panic.
+//  3. Put two expanders before a marker followed by a number and require that exact number, not one shifted by the expansion.
+func TestParseUintAfterMarkerByteExpandingUnicode(t *testing.T) {
+	require.EqualValues(t, 0, parseContextLengthLimit("Ⱥmaximum context length is "))
+	require.EqualValues(t, 0, parseContextTotalRequested("Ⱥfor a total of at least "))
+	require.EqualValues(t, 0, parseContextRequested("Ⱥyou requested "))
+	require.EqualValues(t, 4096, parseContextLengthLimit("ȺȺmaximum context length is 4096 tokens"))
+}
+
 func TestRaceWriter_CapabilityErrorsDoNotSelectWinner(t *testing.T) {
 	ctx := context.Background()
 	var sink bytes.Buffer
@@ -442,6 +454,77 @@ func TestRaceWriter_ATrustedDeterministicRejectionMarksTheWholeRaceBeforeTheAtte
 	}
 }
 
+type contextRefusalClient struct {
+	message string
+	calls   *atomic.Int32
+}
+
+func (client contextRefusalClient) Send(_ context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if req.Payload != nil {
+		client.calls.Add(1)
+	}
+	if receiptHandler != nil {
+		receiptHandler(&host.HostResponse{})
+	}
+	if stream != nil {
+		_, _ = io.WriteString(stream, `data: {"error":{"code":400,"message":"`+client.message+`","type":"BadRequestError"}}`+"\n\n")
+		_, _ = io.WriteString(stream, "data: [DONE]\n\n")
+	}
+	return &host.HostResponse{Nonce: req.Nonce, ConfirmedAt: time.Now().Unix()}, nil
+}
+
+// Test flow:
+//  1. Pair a host's context-length refusal with the model's context limit.
+//  2. Ask whether any honest host could still serve the request.
+//  3. Only a host already at the model limit, or a request beyond it, is final.
+func TestContextRefusalBeyondModelLimit(t *testing.T) {
+	testCases := []struct {
+		name              string
+		modelContextLimit uint64
+		message           string
+		want              bool
+	}{
+		{name: "host_already_serves_the_model_limit", modelContextLimit: 400000, message: "This model's maximum context length is 400000 tokens. However, you requested 1000000 tokens.", want: true},
+		{name: "requested_total_exceeds_the_model_limit", modelContextLimit: 400000, message: "This model's maximum context length is 131072 tokens. However, you requested 3072 output tokens and your prompt contains at least 396929 input tokens, for a total of at least 400001 tokens.", want: true},
+		{name: "requested_total_fits_the_model_limit", modelContextLimit: 400000, message: "This model's maximum context length is 131072 tokens. However, you requested 3072 output tokens and your prompt contains at least 196929 input tokens, for a total of at least 200001 tokens.", want: false},
+		{name: "smaller_host_without_requested_total", modelContextLimit: 400000, message: "This model's maximum context length is 131072 tokens. However, you requested 150000 tokens.", want: false},
+		{name: "smaller_host_with_a_request_beyond_the_model_limit", modelContextLimit: 400000, message: "This model's maximum context length is 131072 tokens. However, you requested 1000000 tokens.", want: true},
+		{name: "model_without_a_known_limit", modelContextLimit: 0, message: "This model's maximum context length is 400000 tokens. However, you requested 1000000 tokens.", want: false},
+		{name: "not_a_context_refusal", modelContextLimit: 400000, message: "The model does not exist.", want: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.want, contextRefusalBeyondModelLimit(testCase.message, testCase.modelContextLimit))
+		})
+	}
+}
+
+// Test flow:
+//  1. A trusted host streams a context-length refusal for DeepSeek, whose context limit is 400000 tokens.
+//  2. The race writer classifies the refusal.
+//  3. Only a refusal no larger host could avoid stops the race; one from a smaller host leaves it open.
+func TestRaceWriter_AContextLengthRejectionForAModelWithAKnownLimitStopsOnlyWhenFinal(t *testing.T) {
+	cases := []struct {
+		name         string
+		message      string
+		wantRejected bool
+	}{
+		{name: "host already serves the model limit", message: "This model's maximum context length is 400000 tokens. However, you requested 1000000 tokens.", wantRejected: true},
+		{name: "a larger host could still serve it", message: "This model's maximum context length is 131072 tokens. However, you requested 150000 tokens.", wantRejected: false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			race, writer := newSingleAttemptRaceWriter(false)
+			writer.inf.model = "deepseek-ai/DeepSeek-V4-Flash-0731"
+
+			_, err := writer.Write([]byte(`data: {"error":{"code":400,"message":"` + testCase.message + `","type":"BadRequestError"}}` + "\n\n"))
+
+			require.NoError(t, err)
+			require.Equal(t, testCase.wantRejected, race.isDeterministicallyRejected())
+		})
+	}
+}
+
 func TestRaceWriter_ASuspiciousHostsContextLengthRejectionLeavesTheRaceOpen(t *testing.T) {
 	race, writer := newSingleAttemptRaceWriter(true)
 
@@ -482,6 +565,59 @@ func TestHostApplicationErrorFromAttempts_PicksTheErrorTheCallerShouldSee(t *tes
 
 			require.NotNil(t, hostErr)
 			require.Equal(t, testCase.wantStatus, hostErr.statusCode())
+		})
+	}
+}
+
+// Test flow:
+//  1. Every host of a three-host group refuses a DeepSeek prompt as longer than its context.
+//  2. Run one inference for that model, whose context limit is 400000 tokens.
+//  3. A refusal from a host at the model limit stops at the first host; one from a smaller host still moves on, across the whole group when the cap allows it and to one more host under the default cap.
+func TestRunInference_ContextRefusalBeyondModelLimitIsNotRetried(t *testing.T) {
+	testCases := []struct {
+		name             string
+		message          string
+		isWholeGroup     bool
+		wantHostRequests int32
+	}{
+		{
+			name:             "host_already_serves_the_model_limit",
+			message:          "This model's maximum context length is 400000 tokens. However, you requested 1000000 tokens.",
+			isWholeGroup:     true,
+			wantHostRequests: 1,
+		},
+		{
+			name:             "a_host_with_the_model_limit_could_still_serve_it",
+			message:          "This model's maximum context length is 131072 tokens. However, you requested 150000 tokens.",
+			isWholeGroup:     true,
+			wantHostRequests: 3,
+		},
+		{
+			name:             "the_default_cap_tries_one_more_host",
+			message:          "This model's maximum context length is 131072 tokens. However, you requested 150000 tokens.",
+			isWholeGroup:     false,
+			wantHostRequests: DefaultMaxSpeculativeAttempts,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+			zeroReceiptTimeout(t)
+			if testCase.isWholeGroup {
+				allowSpeculativeAttemptsOnWholeGroup(t)
+			}
+			env := setupTestProxy(t, 3, nil, true)
+			var hostRequests atomic.Int32
+			for _, killable := range env.killables {
+				killable.inner = contextRefusalClient{message: testCase.message, calls: &hostRequests}
+			}
+			params := defaultParams()
+			params.Model = "deepseek-ai/DeepSeek-V4-Flash-0731"
+
+			var sink bytes.Buffer
+			_ = env.proxy.redundancy.RunInference(context.Background(), params, &sink, nil)
+
+			require.Equal(t, testCase.wantHostRequests, hostRequests.Load())
 		})
 	}
 }
