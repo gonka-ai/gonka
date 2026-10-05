@@ -201,6 +201,11 @@ func TestFetchGatewayStateSizes(t *testing.T) {
 	}, sizes)
 }
 
+func TestScopedGatewayURL(t *testing.T) {
+	require.Equal(t, "http://127.0.0.1:1234/devshard/7", scopedGatewayURL("http://127.0.0.1:1234/", "7"))
+	require.Equal(t, "http://127.0.0.1:1234", scopedGatewayURL("http://127.0.0.1:1234/", ""))
+}
+
 func TestWriteGatewayStateSizes(t *testing.T) {
 	outputDir := t.TempDir()
 	require.NoError(t, writeGatewayStateSizes(outputDir, GatewayStateSizes{
