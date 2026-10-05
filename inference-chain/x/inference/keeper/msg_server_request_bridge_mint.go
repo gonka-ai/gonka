@@ -77,7 +77,7 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 	requestID := k.generateRequestID(ctx)
 
 	// 6. Get current epoch for BLS signature
-	currentEpochGroup, err := k.GetCurrentEpochGroup(goCtx)
+	currentEpochIndex, err := k.GetCurrentEpochIndexWithGroup(goCtx)
 	if err != nil {
 		// Rollback the escrow transfer if epoch retrieval fails
 		rollbackErr := k.ReleaseFromEscrow(ctx, userAddr, nativeCoins)
@@ -123,7 +123,7 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 	requestIdHash := keccak256Hash([]byte(requestID))
 
 	signingData := blstypes.SigningData{
-		CurrentEpochId: currentEpochGroup.GroupData.EpochIndex,
+		CurrentEpochId: currentEpochIndex,
 		ChainId:        gonkaChainIdHash[:], // GONKA_CHAIN_ID (32 bytes) - SOURCE chain
 		RequestId:      requestIdHash[:],    // Request ID as bytes32 (32 bytes)
 		Data:           blsData,             // The remaining data fields
@@ -157,7 +157,7 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 		"destinationBridgeAddress", msg.DestinationBridgeAddress,
 		"chainId", msg.ChainId,
 		"requestId", requestID,
-		"epochIndex", currentEpochGroup.GroupData.EpochIndex,
+		"epochIndex", currentEpochIndex,
 		"blsRequestId", blsRequestId)
 
 	// 9. Emit bridge mint event for off-chain monitoring
@@ -170,14 +170,14 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 			sdk.NewAttribute("destination_bridge_address", msg.DestinationBridgeAddress),
 			sdk.NewAttribute("chain_id", msg.ChainId),
 			sdk.NewAttribute("request_id", requestID),
-			sdk.NewAttribute("epoch_index", fmt.Sprintf("%d", currentEpochGroup.GroupData.EpochIndex)),
+			sdk.NewAttribute("epoch_index", fmt.Sprintf("%d", currentEpochIndex)),
 			sdk.NewAttribute("bls_request_id", blsRequestId),
 		),
 	)
 
 	return &types.MsgRequestBridgeMintResponse{
 		RequestId:    requestID,
-		EpochIndex:   currentEpochGroup.GroupData.EpochIndex,
+		EpochIndex:   currentEpochIndex,
 		BlsRequestId: blsRequestId,
 	}, nil
 }
