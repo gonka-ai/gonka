@@ -307,6 +307,11 @@ func (s *Server) IsOwner(addr string) bool {
 	return s.isOwner(addr)
 }
 
+// OwnerAddress is the escrow creator for this session.
+func (s *Server) OwnerAddress() string {
+	return s.userAddr
+}
+
 // InjectAuthContext stores a verified sender and request body for handlers
 // that run after auth (HandleInference, gossip, etc.).
 func InjectAuthContext(c echo.Context, sender string, body []byte) {

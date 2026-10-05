@@ -58,6 +58,9 @@ type HostManager struct {
 	escrowLookups      map[string]escrowLookupEntry
 	escrowLookupPeer   map[string][]time.Time
 	escrowLookupFloor  []time.Time
+	// knownCreators are signers that own a session here or proved creatorship
+	// on a lookup. Their lookups skip escrowLookupFloor.
+	knownCreators map[string]time.Time
 	// rosterEscrows keeps chain escrows inside retention (current epoch and
 	// the two before it). Unknown ids stay in escrowLookups. peers on each
 	// entry is the unbound GetPayload warm-key decision for that escrow.
@@ -385,6 +388,7 @@ func NewHostManager(
 		resolutionFailures: make(map[string]resolutionFailure),
 		escrowLookups:      make(map[string]escrowLookupEntry),
 		escrowLookupPeer:   make(map[string][]time.Time),
+		knownCreators:      make(map[string]time.Time),
 		rosterEscrows:      make(map[string]*rosterEscrow),
 		store:              gate,
 		obsGate:            gate,
@@ -627,6 +631,23 @@ func (m *HostManager) evictSession(escrowID string, stale *transport.Server) {
 	observability.DeleteEscrowMetrics(escrowID)
 }
 
+// ownerEscrow is the chain record for an owner bind with no local session.
+// A fresh escrow_cache row decides the lane before any charge: a row naming
+// another creator refuses without a query, and a row naming addr takes the
+// uncharged fetchOwnerEscrow. Only an id with no row goes through the
+// unknown-id budget.
+func (m *HostManager) ownerEscrow(escrowID, addr string) (*bridge.EscrowInfo, error) {
+	warmed := m.warmedEscrow(escrowID)
+	switch {
+	case warmed == nil || warmed.CreatorAddress == "":
+		return m.fetchEscrowForBind(escrowID, addr)
+	case warmed.CreatorAddress != addr:
+		return nil, nil
+	default:
+		return m.fetchOwnerEscrow(escrowID, addr)
+	}
+}
+
 // sessionForOwner is BindOwnerChat without POST auth: Existing + IsOwner,
 // or CreateSession only when addr is the escrow creator. Slot members
 // get (nil, nil). Chat and height-sync seed use this.
@@ -645,7 +666,11 @@ func (m *HostManager) sessionForOwner(escrowID, addr string) (*transport.Server,
 		return nil, err
 	}
 
-	escrow, err := m.fetchEscrowForBind(escrowID, addr)
+	escrow, err := m.ownerEscrow(escrowID, addr)
+	if errors.Is(err, bridge.ErrEscrowLookupLimited) {
+		logging.Warn("owner escrow lookup limited", inferenceTypes.System,
+			"escrow_id", escrowID, "owner", addr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
 	}
@@ -903,6 +928,7 @@ func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Serve
 	if installed != srv {
 		closeTransportServer(srv)
 	}
+	m.noteKnownCreator(installed.OwnerAddress(), time.Now())
 	return installed, nil
 }
 

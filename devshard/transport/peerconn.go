@@ -588,6 +588,11 @@ func (p *PeerConn) loop() {
 		}
 		p.incAttach(err)
 		if err != nil {
+			logging.Warn("peer rpc attach failed",
+				"subsystem", "transport",
+				"host", p.cfg.HostAddress,
+				"error", err,
+			)
 			p.setState(stateUnauthenticated)
 			p.clearToken()
 			backoff = p.attachBackoff(backoff)

@@ -198,6 +198,55 @@ func TestRPCClient_Send_RequestsDisabledIsUpstreamStatus(t *testing.T) {
 	require.Equal(t, []string{"503 " + DevshardErrorRequestsDisabled + " requests disabled"}, admission.results)
 }
 
+func escrowLookupLimitedError() *connect.Error {
+	err := connect.NewError(connect.CodeResourceExhausted, errors.New("too many escrow lookups"))
+	err.Meta().Set(HeaderDevshardError, DevshardErrorEscrowLookupLimited)
+	return err
+}
+
+func TestRPCClient_Send_EscrowLookupLimitedReachesLimiterOnce(t *testing.T) {
+	handler := &chatStatusHandler{err: escrowLookupLimitedError()}
+	_, h := rpcpbconnect.NewSessionServiceHandler(handler)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	admission := &bodyAdmission{}
+	rpc := readyChatClient(t, srv.URL, admission)
+	_, err := rpc.Send(context.Background(), chatRequest(), nil, nil)
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Equal(t, 1, handler.calls, "chat is not retried on the same host")
+	require.Empty(t, admission.faults)
+	require.Equal(t, []string{"429 " + DevshardErrorEscrowLookupLimited + " too many escrow lookups"}, admission.results,
+		"the limiter needs the devshard code to tell this apart from a host 429")
+}
+
+func TestRPCAttempt_EscrowLookupLimitedIsNotRetried(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	cfg := DefaultClientConfig()
+	cfg.ParticipantKey = "shared-host"
+	admission := &bodyAdmission{}
+	cfg.Admission = admission
+	rpc := &RPCClient{HTTPClient: NewHTTPClient("http://127.0.0.1", "escrow-1", signer, cfg)}
+
+	calls := 0
+	err := rpc.rpcAttempt(context.Background(), rpcpbconnect.SessionServiceGetDiffsProcedure, func() error {
+		calls++
+		return escrowLookupLimitedError()
+	})
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Equal(t, 1, calls)
+	require.Equal(t, []string{"429 " + DevshardErrorEscrowLookupLimited + " too many escrow lookups"}, admission.results)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	calls = 0
+	_ = rpc.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetDiffsProcedure, func() error {
+		calls++
+		return connect.NewError(connect.CodeResourceExhausted, errors.New("too many diffs requests"))
+	})
+	require.Greater(t, calls, 1, "a plain rate limit still retries")
+}
+
 func TestRPCClient_Send_ReadyTimeoutIsTransportFault(t *testing.T) {
 	prev := chatReadyTimeout
 	chatReadyTimeout = 40 * time.Millisecond

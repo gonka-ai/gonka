@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
 	"devshard/host"
@@ -79,6 +81,26 @@ func TestIsRetryableNonInference(t *testing.T) {
 		StatusCode: http.StatusNotFound,
 		Body:       "version v2 is not present in the governance routing catalog",
 	}), "catalog phrase on a non-503 is not retryable")
+}
+
+func TestIsRetryableNonInference_EscrowLookupLimitedFailsFast(t *testing.T) {
+	require.False(t, IsRetryableNonInference(&UpstreamStatusError{
+		StatusCode: http.StatusTooManyRequests, DevshardError: DevshardErrorEscrowLookupLimited,
+	}))
+	limited := connect.NewError(connect.CodeResourceExhausted, errors.New("too many escrow lookups"))
+	limited.Meta().Set(HeaderDevshardError, DevshardErrorEscrowLookupLimited)
+	require.False(t, IsRetryableNonInference(limited))
+	require.False(t, IsRetryableNonInference(fmt.Errorf("seed: %w", limited)))
+	require.True(t, IsRetryableNonInference(&UpstreamStatusError{
+		StatusCode: http.StatusServiceUnavailable, DevshardError: DevshardErrorEscrowLookupLimited,
+	}), "the code only changes a 429")
+}
+
+func TestIsEscrowLookupLimited(t *testing.T) {
+	require.True(t, IsEscrowLookupLimited(http.StatusTooManyRequests, DevshardErrorEscrowLookupLimited))
+	require.True(t, IsEscrowLookupLimited(http.StatusTooManyRequests, " ESCROW_LOOKUP_LIMITED "))
+	require.False(t, IsEscrowLookupLimited(http.StatusTooManyRequests, ""))
+	require.False(t, IsEscrowLookupLimited(http.StatusServiceUnavailable, DevshardErrorEscrowLookupLimited))
 }
 
 func TestHTTPClient_NonInferenceRetries503ThenObservesOnce(t *testing.T) {

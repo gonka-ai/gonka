@@ -75,6 +75,26 @@ func UndeclaredVersionFromError(err error) *UpstreamStatusError {
 	return nil
 }
 
+// IsEscrowLookupLimited is a 429 from a host (or its versiond) whose
+// unknown-escrow lookup budget refused a first bind. The budget refills over
+// a minute, so the call is not retried inside the 5 s non-inference budget.
+func IsEscrowLookupLimited(statusCode int, devshardError string) bool {
+	return statusCode == http.StatusTooManyRequests &&
+		strings.EqualFold(strings.TrimSpace(devshardError), DevshardErrorEscrowLookupLimited)
+}
+
+func isEscrowLookupLimitedError(err error) bool {
+	var status *UpstreamStatusError
+	if errors.As(err, &status) {
+		return IsEscrowLookupLimited(status.StatusCode, status.DevshardError)
+	}
+	var ce *connect.Error
+	if errors.As(err, &ce) && ce.Code() == connect.CodeResourceExhausted {
+		return IsEscrowLookupLimited(http.StatusTooManyRequests, ce.Meta().Get(HeaderDevshardError))
+	}
+	return false
+}
+
 func isInferencePath(path string) bool {
 	return strings.Contains(path, "/chat/completions")
 }
@@ -93,11 +113,12 @@ func isContextFinished(err error) bool {
 // ResourceExhausted from a message-size cap is not retryable: connect-go
 // uses that code for WithReadMaxBytes / WithSendMaxBytes, the same code
 // Phase 4 uses for real rate limits. See isConnectMessageTooLarge.
+// escrow_lookup_limited is not retryable: see IsEscrowLookupLimited.
 func IsRetryableNonInference(err error) bool {
 	if err == nil {
 		return false
 	}
-	if isContextFinished(err) {
+	if isContextFinished(err) || isEscrowLookupLimitedError(err) {
 		return false
 	}
 	var status *UpstreamStatusError

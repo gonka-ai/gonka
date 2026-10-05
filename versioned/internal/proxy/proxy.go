@@ -208,7 +208,7 @@ func serveAcquired(w http.ResponseWriter, r *http.Request, routes routeTableLoad
 		return
 	}
 	defer target.release()
-	reverseProxy(target, rest, nil).ServeHTTP(w, r)
+	reverseProxy(target, rest, nil, nil).ServeHTTP(w, r)
 }
 
 func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routes routeTableLoader, versions []string, rest string) {
@@ -221,7 +221,7 @@ func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routes routeT
 			continue
 		}
 		rec := httptest.NewRecorder()
-		reverseProxy(target, rest, nil).ServeHTTP(rec, r.Clone(r.Context()))
+		reverseProxy(target, rest, nil, nil).ServeHTTP(rec, r.Clone(r.Context()))
 		target.release()
 		switch {
 		case rec.Code == http.StatusNotFound:
@@ -269,15 +269,19 @@ func serveChild(w http.ResponseWriter, r *http.Request, target *Target, rest str
 		writeInvalidSessionToken(w)
 		return
 	}
-	if lim.blocked(r, rest) {
+	release, ok := lim.admit(r, rest)
+	if !ok {
 		w.Header().Set(headerDevshardError, errorEscrowLookupLimited)
 		http.Error(w, "too many escrow lookups", http.StatusTooManyRequests)
 		return
 	}
-	reverseProxy(target, rest, lim).ServeHTTP(w, r)
+	defer release()
+	reverseProxy(target, rest, lim, release).ServeHTTP(w, r)
 }
 
-func reverseProxy(target *Target, rest string, lim *originLookupLimiter) *httputil.ReverseProxy {
+// reverseProxy forwards to the child. release, when set, runs once the
+// child's response headers are observed.
+func reverseProxy(target *Target, rest string, lim *originLookupLimiter, release func()) *httputil.ReverseProxy {
 	targetURL, err := url.Parse("http://" + target.Address())
 	if err != nil {
 		return &httputil.ReverseProxy{
@@ -312,6 +316,9 @@ func reverseProxy(target *Target, rest string, lim *originLookupLimiter) *httput
 		rp.ModifyResponse = func(resp *http.Response) error {
 			if resp != nil && resp.Request != nil {
 				lim.observe(resp.Request, rest, resp)
+			}
+			if release != nil {
+				release()
 			}
 			return nil
 		}

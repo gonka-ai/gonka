@@ -17,6 +17,7 @@ const (
 	defaultUnknownEscrowFloorPerMin   = 300
 	maxEscrowLookupCache              = 4096
 	maxRosterPeerDecisions            = 256
+	maxKnownCreators                  = 4096
 )
 
 var (
@@ -65,10 +66,36 @@ var errPayloadEpochClosed = errors.New("escrow epoch is not open for payload")
 // client onto one 2/min slot. versiond applies that cap on inbound X-Real-IP
 // after it sees a bind miss (X-Devshard-Error escrow_not_found /
 // escrow_lookup_limited). Attach of a warmed id uses warmedEscrow instead
-// (no query, no charge). RecoverSessions and create() with a prefetched
-// escrow do not use this.
+// (no query, no charge). Owner chat of a warmed id uses fetchOwnerEscrow.
+// RecoverSessions and create() with a prefetched escrow do not use this.
+//
+// A known creator (a signer that already owns a session here or proved
+// creatorship on an earlier lookup) is charged per signer only, so strangers
+// filling the process floor cannot refuse its first chat.
 func (m *HostManager) fetchEscrowForBind(escrowID, peer string) (*bridge.EscrowInfo, error) {
 	info, _, err := m.fetchEscrowTracked(escrowID, peer)
+	return info, err
+}
+
+// fetchOwnerEscrow is owner chat on an id whose fresh escrow_cache row names
+// owner as creator. The row already proves the escrow exists, so the lookup
+// is not an unknown-id probe and takes no charge. GetEscrow still runs so
+// settlement and slot changes are read live; the bridge falls back to the
+// row when the chain is down. A cached not-found from before the row landed
+// is skipped.
+func (m *HostManager) fetchOwnerEscrow(escrowID, owner string) (*bridge.EscrowInfo, error) {
+	if m.bridge == nil {
+		return nil, fmt.Errorf("get escrow: bridge is nil")
+	}
+	now := time.Now()
+	if info, err, ok := m.cachedEscrowLookup(escrowID, now); ok && info != nil {
+		return info, err
+	}
+	info, err := m.bridge.GetEscrow(escrowID)
+	m.rememberEscrowLookup(escrowID, info, err, now)
+	if escrowLookupEligible(info, err, owner) && info.CreatorAddress == owner {
+		m.noteKnownCreator(owner, now)
+	}
 	return info, err
 }
 
@@ -88,7 +115,14 @@ func (m *HostManager) fetchEscrowTracked(escrowID, peer string) (*bridge.EscrowI
 		return nil, time.Time{}, err
 	}
 	info, err := m.bridge.GetEscrow(escrowID)
-	if escrowLookupEligible(info, err, peer) {
+	switch {
+	case escrowLookupEligible(info, err, peer):
+		m.refundEscrowLookup(peer, chargedAt)
+		chargedAt = time.Time{}
+		if info.CreatorAddress == peer {
+			m.noteKnownCreator(peer, now)
+		}
+	case errors.Is(err, bridge.ErrChainUnavailable) && m.isKnownCreator(peer):
 		m.refundEscrowLookup(peer, chargedAt)
 		chargedAt = time.Time{}
 	}
@@ -372,8 +406,8 @@ func (m *HostManager) dropRosterBefore(cutoff uint64) {
 // warmedEscrow returns a fresh escrow_cache row without a chain query. First
 // Attach of a warmed escrow (this host in Slots, or any host that saw create)
 // must not look like a cold miss. Unknown ids have no row and still go
-// through fetchEscrowForBind. Owner chat does not use this: it still
-// GetEscrow live (cache only if chain is down).
+// through fetchEscrowForBind. Owner chat uses the row only to pick the
+// uncharged lane; it still GetEscrow live (cache only if chain is down).
 func (m *HostManager) warmedEscrow(escrowID string) *bridge.EscrowInfo {
 	if m.store == nil {
 		return nil
@@ -459,15 +493,52 @@ func (m *HostManager) rememberEscrowLookup(escrowID string, info *bridge.EscrowI
 func (m *HostManager) chargeEscrowLookup(peer string, now time.Time) (time.Time, error) {
 	m.escrowLookupMu.Lock()
 	defer m.escrowLookupMu.Unlock()
-	if countRecent(m.escrowLookupFloor, now) >= unknownEscrowFloorPerMin {
+	_, known := m.knownCreators[peer]
+	known = known && peer != ""
+	if !known && countRecent(m.escrowLookupFloor, now) >= unknownEscrowFloorPerMin {
 		return time.Time{}, bridge.ErrEscrowLookupLimited
 	}
 	if peer != "" && countRecent(m.escrowLookupPeer[peer], now) >= unknownEscrowPerPeerPerMin {
 		return time.Time{}, bridge.ErrEscrowLookupLimited
 	}
-	m.escrowLookupFloor = appendRecent(m.escrowLookupFloor, now)
+	if !known {
+		m.escrowLookupFloor = appendRecent(m.escrowLookupFloor, now)
+	}
 	m.escrowLookupPeer = recordLookupTimes(m.escrowLookupPeer, peer, now)
 	return now, nil
+}
+
+// noteKnownCreator records addr as the creator of a real escrow on this host.
+// The set is bounded; the entry seen longest ago is dropped first.
+func (m *HostManager) noteKnownCreator(addr string, now time.Time) {
+	if addr == "" {
+		return
+	}
+	m.escrowLookupMu.Lock()
+	defer m.escrowLookupMu.Unlock()
+	if m.knownCreators == nil {
+		m.knownCreators = make(map[string]time.Time)
+	}
+	if _, ok := m.knownCreators[addr]; !ok && len(m.knownCreators) >= maxKnownCreators {
+		oldest, oldestAt := "", now
+		for a, at := range m.knownCreators {
+			if oldest == "" || at.Before(oldestAt) {
+				oldest, oldestAt = a, at
+			}
+		}
+		delete(m.knownCreators, oldest)
+	}
+	m.knownCreators[addr] = now
+}
+
+func (m *HostManager) isKnownCreator(addr string) bool {
+	if addr == "" {
+		return false
+	}
+	m.escrowLookupMu.Lock()
+	defer m.escrowLookupMu.Unlock()
+	_, ok := m.knownCreators[addr]
+	return ok
 }
 
 func (m *HostManager) refundEscrowLookup(peer string, at time.Time) {

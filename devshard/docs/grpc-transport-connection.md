@@ -362,15 +362,32 @@ or ineligible ids are charged **before** that query:
 4. A successful load that shows the peer is the **creator or a slot member**
    is **refunded**, so first bind of a real escrow does not consume the miss
    budget. A stranger probing a real id keeps the charge.
-5. Warmed cache (this host already in `Slots`, or any host that saw create)
-   skips `GetEscrow` entirely — no charge.
-6. `ErrChainUnavailable` is not cached. The attempt still charges; a retry can
-   query again.
+5. Warmed cache (this host already in `Slots`, or any host that saw create):
+   Attach / GetPayload skip `GetEscrow` entirely — no charge. Owner chat and
+   height-sync seed still `GetEscrow` live once, but take **no** charge when
+   the row names the caller as creator, and refuse with no query when the row
+   names someone else. A cached `escrow_not_found` from before the row landed
+   is skipped.
+6. **Known creators** skip the process floor. A signer is known once it owns
+   a session on this host (create or recovery) or a lookup showed it is the
+   creator. It still pays the per-peer 2/min, so a key that owns one real
+   escrow cannot fan out over unknown ids. The set is bounded (4096, oldest
+   dropped). Strangers filling the floor therefore cannot refuse an owner's
+   first chat: the owner has a warm row or is known.
+7. `ErrChainUnavailable` is not cached. The attempt still charges a stranger;
+   a known creator is refunded. A retry can query again.
 
 Over budget returns `ErrEscrowLookupLimited`. JSON maps that to HTTP 429 +
 `X-Devshard-Error: escrow_lookup_limited`. Attach maps it to Connect
 `resource_exhausted` with the same header. `escrow_not_found` is the miss
 that **did** query (or hit the 1 min cache).
+
+The gateway does not treat `escrow_lookup_limited` as a host 429. It is not
+retried inside the 5 s non-inference budget (the budget refills over a
+minute), chat is never retried on the same host, and the participant limiter
+records a failure strike instead of the `http_quarantine_ms` quarantine. The
+header is host-set, so a host that keeps answering it reaches that quarantine
+at the strike threshold (3).
 
 The child **must not** key this on origin IP. Mixed fleets and hop-stamped
 `X-Real-IP` would collapse every client onto one 2/min slot.
@@ -403,6 +420,9 @@ POST bind path
     ├─ versiond: this origin IP already has 2 misses in the last minute?
     │     yes → 429, X-Devshard-Error: escrow_lookup_limited, do not proxy
     │
+    ├─ versiond (Attach only): 16 already in flight for this IP?
+    │     yes → wait up to 5 s for a slot, re-check misses, else 429
+    │
     └─ proxy to child
            Attach: process floor → ECDSA → fetchEscrowForBind (per peer)
            JSON chat / height-sync: ECDSA → fetchEscrowForBind
@@ -414,7 +434,15 @@ POST bind path
 
 Two distinct fake ids from `203.0.113.9` still hit the child (and spend the
 peer's 2/min if the recovered key is the same). The third is stopped at
-versiond even if the attacker rotates gonka keys. A second origin IP is
+versiond even if the attacker rotates gonka keys.
+
+A miss is only recorded when the child answers, so a parallel burst would
+otherwise all pass. Attach therefore also holds an **in-flight slot** per
+origin IP (16) until the child's response headers arrive. A call over the
+cap queues up to 5 s and re-checks the miss budget when a slot frees: a burst
+of misses stops at about 16, while a burst of real binds just queues. JSON chat
+and height-sync are not slotted; their responses can take as long as
+inference. A second origin IP is
 unaffected. A well-formed bind that returns 2xx or a 403 (wrong owner on a
 real escrow) does **not** fill the IP bucket.
 
