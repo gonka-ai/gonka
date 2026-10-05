@@ -47,7 +47,8 @@ const (
 
 // originLookupLimiter is the per origin-IP cap for unknown-escrow first bind
 // (owner chat, height-sync seed, Attach) and for a presented session token
-// the child rejects. Both misses share the 2/min budget. It keys on inbound
+// the child rejects. On the bind paths both misses share the 2/min budget;
+// session-token RPCs are refused only on invalid-token misses. It keys on inbound
 // X-Real-IP from versiond-router, not the child's RemoteAddr. Missing header
 // skips the bucket so an old hop that does not forward the client IP cannot
 // collapse the host.
@@ -69,10 +70,15 @@ type originLookupLimiter struct {
 	now          func() time.Time
 }
 
+// originIPNode holds one IP's recent misses. times is every miss and gates
+// the bind paths. tokenTimes is the invalid_session_token subset and alone
+// gates session-token RPCs, so an unknown-escrow miss on one escrow cannot
+// refuse that IP's live sessions on others.
 type originIPNode struct {
-	ip    string
-	times []time.Time
-	el    *list.Element
+	ip         string
+	times      []time.Time
+	tokenTimes []time.Time
+	el         *list.Element
 }
 
 // attachGate is the in-flight Attach count for one origin IP. wake is closed
@@ -126,6 +132,9 @@ func (l *originLookupLimiter) blocked(r *http.Request, rest string) bool {
 	node := l.byIP[ip]
 	if node == nil {
 		return false
+	}
+	if isSessionTokenPath(r.Method, rest) {
+		return countRecent(node.tokenTimes, now) >= defaultUnknownEscrowPerIPPerMin
 	}
 	return countRecent(node.times, now) >= defaultUnknownEscrowPerIPPerMin
 }
@@ -209,7 +218,8 @@ func (l *originLookupLimiter) observe(r *http.Request, rest string, resp *http.R
 	}
 	now := l.clock()
 	token := ""
-	if isSessionTokenPath(r.Method, rest) && isInvalidSessionToken(resp.Header) {
+	tokenMiss := isSessionTokenPath(r.Method, rest) && isInvalidSessionToken(resp.Header)
+	if tokenMiss {
 		token = sessionTokenKey(r.Header)
 	}
 	l.mu.Lock()
@@ -234,6 +244,9 @@ func (l *originLookupLimiter) observe(r *http.Request, rest string, resp *http.R
 		l.byIP[ip] = node
 	}
 	node.times = appendRecent(node.times, now)
+	if tokenMiss {
+		node.tokenTimes = appendRecent(node.tokenTimes, now)
+	}
 	if node.el != nil {
 		l.order.MoveToBack(node.el)
 	}
@@ -424,15 +437,14 @@ func isAttachPath(rest string) bool {
 	return strings.HasSuffix(rest, peerAuthAttachSuffix)
 }
 
+// isUnknownEscrowMiss is a bind the child answered escrow_not_found: that
+// caller named an id the chain does not have. escrow_lookup_limited is the
+// child's process floor and says nothing about the caller, so it is not one.
 func isUnknownEscrowMiss(h http.Header) bool {
 	if h == nil {
 		return false
 	}
-	switch strings.ToLower(strings.TrimSpace(h.Get(headerDevshardError))) {
-	case errorEscrowNotFound, errorEscrowLookupLimited:
-		return true
-	}
-	return false
+	return strings.EqualFold(strings.TrimSpace(h.Get(headerDevshardError)), errorEscrowNotFound)
 }
 
 func originIP(h http.Header) string {

@@ -427,10 +427,17 @@ POST bind path
            Attach: process floor → ECDSA → fetchEscrowForBind (per peer)
            JSON chat / height-sync: ECDSA → fetchEscrowForBind
                 │
-                └─ response X-Devshard-Error in
-                   {escrow_not_found, escrow_lookup_limited}
+                └─ response X-Devshard-Error: escrow_not_found
                       → versiond records one miss for that X-Real-IP
 ```
+
+`escrow_lookup_limited` from the child is **not** a miss. It means the child's
+process floor is full, which says nothing about the caller: a gateway binding
+a cold escrow while strangers hold the floor must not lose its IP.
+
+An escrow miss refuses that IP's next **bind**, not its live sessions.
+Session-token RPCs (Chat, GetSignatures, Watch, …) are refused only on
+`invalid_session_token` misses. On the bind paths both kinds share the 2/min.
 
 Two distinct fake ids from `203.0.113.9` still hit the child (and spend the
 peer's 2/min if the recovered key is the same). The third is stopped at
@@ -542,8 +549,8 @@ The nginx per-IP ceiling disappears for this path. Replace it on the published l
 - HAProxy `maxconn`, Go's stream cap, and the per-peer channel limits.
 
 Unknown-escrow first-bind is already split (see **Rate limits** above): per gonka
-peer in the child, per `X-Real-IP` on versiond after `escrow_not_found` /
-`escrow_lookup_limited`. That is not Attach-flood control and not an allowlist.
+peer in the child, per `X-Real-IP` on versiond after `escrow_not_found`.
+That is not Attach-flood control and not an allowlist.
 The child still must not key any limiter on `RemoteAddr`.
 
 The listen is **not** an admin port and **not** an IP allowlist. It is the same

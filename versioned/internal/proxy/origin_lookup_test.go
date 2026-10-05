@@ -212,10 +212,102 @@ func TestProxy_TokenAndEscrowMissesShareOriginBudget(t *testing.T) {
 		t.Fatal("token miss should reach the child")
 	}
 	if post(chat) != http.StatusTooManyRequests {
-		t.Fatal("third miss of either kind should be limited")
+		t.Fatal("on a bind path, the third miss of either kind should be limited")
 	}
 	if forwarded.Load() != 2 {
 		t.Fatalf("forwarded = %d, want 2", forwarded.Load())
+	}
+	if post(rpc) != http.StatusUnauthorized {
+		t.Fatal("one token miss must not refuse session RPCs; the escrow miss does not count there")
+	}
+	if post(rpc) != http.StatusTooManyRequests {
+		t.Fatal("the second token miss refuses session RPCs")
+	}
+}
+
+// escrow_lookup_limited is the child's full process floor. A gateway that
+// binds a cold escrow while strangers hold that floor must not lose its IP.
+func TestProxy_EscrowLookupLimitedIsNotAMiss(t *testing.T) {
+	var forwarded atomic.Int32
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		w.Header().Set(headerDevshardError, errorEscrowLookupLimited)
+		http.Error(w, "too many escrow lookups", http.StatusTooManyRequests)
+	}))
+	t.Cleanup(backend.Close)
+	srv := httptest.NewServer(Handler(newRoutes(map[string]string{"v1": strings.TrimPrefix(backend.URL, "http://")})))
+	t.Cleanup(srv.Close)
+
+	for i, path := range []string{
+		"/v1/sessions/50/rpc/devshard.transport.v1.PeerAuthService/Attach",
+		"/v1/sessions/51/rpc/devshard.transport.v1.PeerAuthService/Attach",
+		"/v1/sessions/52/chat/completions",
+		"/v1/sessions/53/height-sync",
+		"/v1/sessions/54/rpc/devshard.transport.v1.PeerAuthService/Attach",
+	} {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(originIPHeader, "203.0.113.20")
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if forwarded.Load() != int32(i+1) {
+			t.Fatalf("request %d stopped at versiond: escrow_lookup_limited must not fill the IP bucket", i)
+		}
+	}
+}
+
+// An unknown-escrow miss refuses that IP's next bind, not its live sessions.
+func TestProxy_EscrowMissesDoNotBlockSessionRPCs(t *testing.T) {
+	var forwarded atomic.Int32
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		if strings.Contains(r.URL.Path, "/rpc/") && !strings.HasSuffix(r.URL.Path, peerAuthAttachSuffix) {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set(headerDevshardError, errorEscrowNotFound)
+		http.Error(w, "escrow is not open on this host", http.StatusPreconditionFailed)
+	}))
+	t.Cleanup(backend.Close)
+	srv := httptest.NewServer(Handler(newRoutes(map[string]string{"v1": strings.TrimPrefix(backend.URL, "http://")})))
+	t.Cleanup(srv.Close)
+
+	post := func(path string) int {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(originIPHeader, "203.0.113.21")
+		req.Header.Set(sessionHeader, "live-token")
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	attach := "/v1/sessions/%d/rpc/devshard.transport.v1.PeerAuthService/Attach"
+	post(fmt.Sprintf(attach, 60))
+	post(fmt.Sprintf(attach, 61))
+	if got := post(fmt.Sprintf(attach, 62)); got != http.StatusTooManyRequests {
+		t.Fatalf("third unknown-escrow bind = %d, want 429", got)
+	}
+	for _, rpc := range []string{
+		"/v1/sessions/1/rpc/devshard.transport.v1.SessionService/Chat",
+		"/v1/sessions/1/rpc/devshard.transport.v1.SessionService/GetSignatures",
+		"/v1/sessions/2/rpc/devshard.transport.v1.PeerAuthService/Watch",
+	} {
+		if got := post(rpc); got != http.StatusOK {
+			t.Fatalf("%s = %d, want 200: escrow misses must not refuse live session RPCs", rpc, got)
+		}
 	}
 }
 

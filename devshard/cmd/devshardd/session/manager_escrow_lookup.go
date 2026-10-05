@@ -64,8 +64,8 @@ var errPayloadEpochClosed = errors.New("escrow epoch is not open for payload")
 // refunds a warm-key peer that the slot check missed. Per origin IP is not
 // keyed here: mixed fleets and hop-stamped X-Real-IP would collapse every
 // client onto one 2/min slot. versiond applies that cap on inbound X-Real-IP
-// after it sees a bind miss (X-Devshard-Error escrow_not_found /
-// escrow_lookup_limited). Attach of a warmed id uses warmedEscrow instead
+// after it sees a bind miss (X-Devshard-Error escrow_not_found; a full floor
+// is not the caller's miss). Attach of a warmed id uses warmedEscrow instead
 // (no query, no charge). Owner chat of a warmed id uses fetchOwnerEscrow.
 // RecoverSessions and create() with a prefetched escrow do not use this.
 //
