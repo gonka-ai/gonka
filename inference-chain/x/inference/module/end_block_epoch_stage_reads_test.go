@@ -6,13 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	"cosmossdk.io/collections"
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// The end-of-PoC-validation block forms the next epoch through many handlers; params and
-// the effective epoch index are each read from the store once for the whole EndBlock.
+// Epoch formation reads params, the effective epoch index and the current root
+// epoch group data from the store once for the whole EndBlock.
 func TestEndBlockEpochFormationReadsParamsOnce(t *testing.T) {
 	fixture := newFormationRecoveryFixture(t, noopCollateralKeeper{}, 1, 2)
 	fixture.addFreshPoC(t, 100)
@@ -45,4 +46,8 @@ func TestEndBlockEpochFormationReadsParamsOnce(t *testing.T) {
 	}
 	require.Equal(t, 1, reads(types.ParamsKey))
 	require.Equal(t, 1, reads(types.EffectiveEpochIndexPrefix))
+	m := fixture.keeper.EpochGroupDataMap
+	rootKey, err := collections.EncodeKeyWithPrefix(m.GetPrefix(), m.KeyCodec(), collections.Join(fixture.currentEpoch.Index, ""))
+	require.NoError(t, err)
+	require.Equal(t, 1, reads(rootKey), "current root epoch group data")
 }

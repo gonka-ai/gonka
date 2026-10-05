@@ -49,6 +49,7 @@ type txParamsCache struct {
 	epoch    uint64
 	epochSet bool
 	off      bool
+	egd      egdTxCache // not turned off with the params part
 }
 
 func txCacheFrom(ctx context.Context) *txParamsCache {
