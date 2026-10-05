@@ -490,6 +490,7 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     --network-alias proxy-router \
     -v "$state:/var/lib/gonka-router" \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -e VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
     -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
@@ -1049,6 +1050,7 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     --network-alias proxy-router \
     -v "$state:/var/lib/gonka-router" \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -e VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
     -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \

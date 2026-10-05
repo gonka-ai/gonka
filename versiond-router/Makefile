@@ -1324,7 +1324,7 @@ test-version-routing:
 			| jq -e '.state == "capacity-exhausted"' >/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
-	[ "$$(docker exec gonka-vp-router grep -c '^backend versiond_dynamic_' \
+	[ "$$(docker exec gonka-vp-router grep -c '^backend versiond_dynamic_[0-9]*$$' \
 		/etc/haproxy/haproxy.cfg)" -eq 3 ] \
 		|| fail "accepted LKG routes did not raise the inner router's effective capacity"; \
 	for i in $$(seq 16); do \
@@ -1598,7 +1598,7 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		|| fail "declared versions lack the pre-v5 route-health fallback"; \
 	grep -q '^backend versiond_pool_v5$$' "$$tmpdir/mixed.cfg" \
 		|| fail "no backend for declared version v5"; \
-	[ "$$(grep -c '^backend versiond_dynamic_' "$$tmpdir/mixed.cfg")" -eq 32 ] \
+	[ "$$(grep -c '^backend versiond_dynamic_[0-9]*$$' "$$tmpdir/mixed.cfg")" -eq 32 ] \
 		|| fail "the default dynamic governance capacity is not pre-rendered"; \
 	[ "$$(grep -c '^versiond_dynamic_.* __unassigned__$$' \
 		"$$tmpdir/mixed.cfg.version-slots.map")" -eq 32 ] \
