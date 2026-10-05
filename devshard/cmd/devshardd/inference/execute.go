@@ -37,6 +37,11 @@ func executeInference(
 	seed := int32(req.InferenceID)
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
 
+	// The validator cannot reproduce token-ID sanitization without the pinned bound.
+	// Fail execution rather than turn a local lookup failure into a client-fault Finish.
+	if vocabularySize <= 0 && completionapi.RequestNeedsVocabulary(req.Prompt) {
+		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", completionapi.ErrVocabularyUnknown))
+	}
 	modified, err := completionapi.ModifyRequestBodyForVocabulary(req.Prompt, seed, chainParams.LogprobsMode(), vocabularySize)
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", err))

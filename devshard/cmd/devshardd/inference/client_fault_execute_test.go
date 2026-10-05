@@ -79,31 +79,36 @@ func TestExecuteInferenceFailsWithoutAClientFaultBody(t *testing.T) {
 }
 
 func TestExecuteInferenceSendsOnlyInVocabTokenIDsToTheEngine(t *testing.T) {
-	for _, tc := range []struct {
-		name           string
-		logitBias      string
-		vocabularySize int
-		want           any
-	}{
-		{name: "resolved vocabulary", logitBias: `{"300000":5,"7":1}`, vocabularySize: 200064, want: map[string]any{"7": float64(1)}},
-		{name: "unknown vocabulary drops the reported key", logitBias: `{"999999999":100}`},
+	var sent map[string]any
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &sent)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":1}}`+"\n\ndata: [DONE]\n\n")
+	}
+	prompt := `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}],"logit_bias":{"300000":5,"7":1},"enforced_tokens":{"tokens":[]}}`
+
+	_, _, _, err := executeAgainst(t, handler, prompt, 200064)
+
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"7": float64(1)}, sent["logit_bias"])
+	require.NotContains(t, sent, "enforced_tokens")
+}
+
+func TestExecuteInferenceNeedsTheVocabularyForTokenIDFields(t *testing.T) {
+	for _, prompt := range []string{
+		`{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}],"logit_bias":{"999999999":100}}`,
+		`{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}],"allowed_token_ids":[7]}`,
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var sent map[string]any
-			handler := func(w http.ResponseWriter, r *http.Request) {
-				body, _ := io.ReadAll(r.Body)
-				_ = json.Unmarshal(body, &sent)
-				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = io.WriteString(w, `data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":1}}`+"\n\ndata: [DONE]\n\n")
-			}
-			prompt := `{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}],"logit_bias":` + tc.logitBias + `,"enforced_tokens":{"tokens":[]}}`
+		called := false
+		handler := func(http.ResponseWriter, *http.Request) { called = true }
 
-			_, _, _, err := executeAgainst(t, handler, prompt, tc.vocabularySize)
+		result, store, _, err := executeAgainst(t, handler, prompt, 0)
 
-			require.NoError(t, err)
-			require.Equal(t, tc.want, sent["logit_bias"])
-			require.NotContains(t, sent, "enforced_tokens")
-		})
+		require.ErrorIs(t, err, completionapi.ErrVocabularyUnknown, prompt)
+		require.Nil(t, result)
+		require.Nil(t, store.responsePayload)
+		require.False(t, called, "the engine must not run a request whose sanitizing depends on an unknown vocabulary")
 	}
 }
 

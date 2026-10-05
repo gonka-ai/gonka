@@ -1,6 +1,7 @@
 package completionapi
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"strconv"
@@ -9,6 +10,18 @@ import (
 )
 
 const UnknownVocabularyTokenIDLimit = 9_999_999
+
+var ErrVocabularyUnknown = errors.New("request bounds token ids but the model vocabulary is unknown")
+
+func RequestNeedsVocabulary(requestBytes []byte) bool {
+	var request map[string]interface{}
+	if err := json.Unmarshal(requestBytes, &request); err != nil {
+		return false
+	}
+	bias, _ := request["logit_bias"].(map[string]interface{})
+	ids, _ := request["allowed_token_ids"].([]interface{})
+	return len(bias) > 0 || len(ids) > 0
+}
 
 func TokenIDLimit(vocabularySize int) int64 {
 	if vocabularySize > 0 {

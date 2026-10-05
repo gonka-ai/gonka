@@ -343,28 +343,6 @@ func TestLeaseValidator_InnerError_Releases(t *testing.T) {
 	require.Len(t, store.releaseCalls, 1, "forgotten acquire must not release again")
 }
 
-func TestLeaseValidator_Abstained_MarksSkippedWithoutRelease(t *testing.T) {
-	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
-			return true, nil
-		},
-	}
-	c := newTestLeaseValidator(store, func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
-		return nil, fmt.Errorf("%w: validator served the prompt", devshardpkg.ErrValidationAbstained)
-	})
-
-	result, err := c.Validate(context.Background(), makeReq())
-	require.ErrorIs(t, err, devshardpkg.ErrValidationAbstained)
-	require.ErrorIs(t, err, devshardpkg.ErrValidationSkipped)
-	assert.Nil(t, result)
-	require.Empty(t, store.releaseCalls)
-	require.Len(t, store.setResultCalls, 1)
-	require.Contains(t, store.setResultCalls[0], string(storage.LeaseStatusSkipped))
-
-	require.NoError(t, c.ReleaseValidationLease(context.Background(), "escrow-1", 42))
-	require.Empty(t, store.releaseCalls)
-}
-
 func TestLeaseValidator_Canceled_Releases(t *testing.T) {
 	store := &stubLeases{
 		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
@@ -857,12 +835,11 @@ func TestValidator_Validate_ClientFaultReplayVerdicts(t *testing.T) {
 		name         string
 		stored       []byte
 		replayStatus int
-		wantAbstain  bool
 		wantEnforced bool
 		wantValid    bool
 	}{
 		{name: "replay rejects too", stored: clientFault, replayStatus: http.StatusBadRequest, wantValid: true},
-		{name: "replay serves", stored: clientFault, replayStatus: http.StatusOK, wantAbstain: true},
+		{name: "replay serves", stored: clientFault, replayStatus: http.StatusOK},
 		{name: "hidden output before the fault takes the output replay", stored: hiddenOutputThenFault, replayStatus: http.StatusBadRequest, wantEnforced: true, wantValid: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -877,13 +854,8 @@ func TestValidator_Validate_ClientFaultReplayVerdicts(t *testing.T) {
 			req := faultReq(10)
 			req.InputTokens, req.OutputTokens = 0, 0
 			result, err := newFaultTestValidator(10, true, fetch, executeML, nil).Validate(context.Background(), req)
-			if tc.wantAbstain {
-				require.ErrorIs(t, err, devshardpkg.ErrValidationAbstained)
-				require.Nil(t, result)
-			} else {
-				require.NoError(t, err)
-				require.Equal(t, tc.wantValid, result.Valid)
-			}
+			require.NoError(t, err)
+			require.Equal(t, tc.wantValid, result.Valid)
 			require.NotNil(t, replayed)
 			_, enforced := replayed["enforced_tokens"]
 			require.Equal(t, tc.wantEnforced, enforced)

@@ -222,12 +222,26 @@ func (m *outputMessage) carriesOutput() bool {
 	return m != nil && (m.Content != "" || m.ReasoningContent != "" || m.Reasoning != "" || len(m.ToolCalls) > 0 || m.Refusal != "" || m.FunctionCall != nil)
 }
 
-func StreamedLineCarriesOutput(line string) bool {
+func StreamedLineProvesOutput(line string) bool {
 	payload, isData := sseDataJSON(line)
-	return isData && chunkCarriesOutput(payload)
+	if !isData {
+		return false
+	}
+	carries, decoded := chunkOutput(payload)
+	return decoded && carries
+}
+
+func ResponseProvesOutput(body []byte) bool {
+	carries, decoded := chunkOutput(body)
+	return decoded && carries
 }
 
 func chunkCarriesOutput(payload []byte) bool {
+	carries, decoded := chunkOutput(payload)
+	return carries || !decoded
+}
+
+func chunkOutput(payload []byte) (carries, decoded bool) {
 	var chunk struct {
 		Choices []struct {
 			Delta    *outputMessage `json:"delta"`
@@ -242,18 +256,18 @@ func chunkCarriesOutput(payload []byte) bool {
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(payload, &chunk); err != nil {
-		return true
+		return false, false
 	}
 	if chunk.Usage != nil && chunk.Usage.CompletionTokens > 0 {
-		return true
+		return true, true
 	}
 	for _, choice := range chunk.Choices {
 		if choice.Delta.carriesOutput() || choice.Message.carriesOutput() || choice.Text != "" {
-			return true
+			return true, true
 		}
 		if choice.Logprobs != nil && len(choice.Logprobs.Content) > 0 {
-			return true
+			return true, true
 		}
 	}
-	return false
+	return false, true
 }

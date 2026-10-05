@@ -689,17 +689,22 @@ that `MsgErrorMiss` would refund. It is handled as follows:
   (`host.SiblingServedPrompt`). The check reads only applied state, so every
   verifier reaches the same answer, and a gateway cannot force the miss without
   a host that actually served the prompt. An honest executor whose engine
-  rejects what another host's engine serves, for example after a version skew
-  or a failed vocabulary lookup, takes a miss. That is the outcome every client
-  fault had before this exemption, and it is refundable.
-- A validator that samples it rejects it outright if the Finish billed tokens,
-  and otherwise replays the original prompt without enforced tokens. A 400/422
-  from its own ML node confirms the client fault and passes. A served replay is
-  inconclusive: the validator stops reading at the first output chunk, abstains
-  (`ErrValidationAbstained`) and records the lease as skipped, so the prompt is
-  not replayed again. The executor's refusal is judged through the sibling miss
-  above, never through an Invalid vote. A replay that fails for any other reason
-  is retried, not voted.
+  rejects what another host's engine serves, for example after a version skew,
+  takes a miss. That is the outcome every client fault had before this
+  exemption, and it is refundable.
+- A validator that samples it votes `Valid:false` if the Finish billed tokens.
+  Otherwise it replays the executor's request without enforced tokens. A
+  400/422 from its own ML node confirms the client fault and passes. A replay
+  that produces output, the first output chunk of a stream or a JSON response
+  carrying output, votes `Valid:false`. A replay without observed output, an
+  empty or malformed response, or any other failure is retried, not voted.
+- A `Valid:false` vote is evidence of disagreement, not proof on its own that
+  the executor lied. It moves the inference to Challenged, the other hosts
+  replay and vote, and the inference is invalidated only when the slot weight
+  of invalid votes exceeds `VoteThreshold`. An initial validation that lands
+  after the inference was challenged counts as a vote in that challenge, so
+  validators that sampled the inference concurrently are never dropped from the
+  tally.
 
 Large JSON and streamed 400/422 error bodies are reduced to a bounded error
 envelope before the host signs them (`completionapi.CompactClientFaultBody`).
@@ -720,10 +725,16 @@ Known engine rejections are removed before the request reaches the ML node, on
 the executor and in the validator replay alike (`ModifyRequestBodyForVocabulary`):
 `logit_bias` keys and `allowed_token_ids` outside the model vocabulary are
 dropped and a caller-supplied `enforced_tokens` is stripped. The vocabulary size
-comes from the chain-pinned `config.json`, with a coarse limit when it cannot be
-resolved. The client-fault replay uses the coarse limit only, so a validator
-that resolved the vocabulary never drops a key that an executor without the
-vocabulary forwarded to its engine.
+comes from the chain-pinned `config.json`, so the executor and every validator
+produce the same request. A request carrying `logit_bias` or
+`allowed_token_ids` is never sanitized against a guessed bound: an executor that
+cannot resolve the vocabulary fails it before the engine runs
+(`completionapi.ErrVocabularyUnknown`), and a validator that cannot resolve it
+retries instead of voting. Requests without those fields need no vocabulary.
+If the lookup fails after the inference has started, the executor produces no
+Finish; an execution timeout can then count as `Missed++`. This is an
+availability failure, not a client-fault Finish. Waiving it on the executor's
+claim alone would give a dishonest executor a penalty-free refusal path.
 
 There is no second, independent check behind this predicate. Verifiers run the
 same implementation over the same hash-pinned bytes as the gateway, so they

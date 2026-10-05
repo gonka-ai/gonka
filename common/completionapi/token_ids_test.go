@@ -167,3 +167,35 @@ func TestCompactClientFaultBody(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestNeedsVocabulary(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"logit_bias":{"7":1}}`:                         true,
+		`{"allowed_token_ids":[7]}`:                      true,
+		`{"logit_bias":"bad","allowed_token_ids":[7]}`:   true,
+		`{"logit_bias":{},"allowed_token_ids":[]}`:       false,
+		`{"logit_bias":"bad","allowed_token_ids":"bad"}`: false,
+		`{"messages":[]}`:                                false,
+		`not json`:                                       false,
+	} {
+		require.Equal(t, want, RequestNeedsVocabulary([]byte(body)), body)
+	}
+}
+
+func TestOutputProof(t *testing.T) {
+	for line, want := range map[string]bool{
+		`data: {"choices":[{"delta":{"content":"answer"}}]}`:                       true,
+		`data: {"choices":[{"delta":{},"logprobs":{"content":[{"token":"42"}]}}]}`: true,
+		`data: {"choices":[],"usage":{"completion_tokens":1}}`:                     true,
+		`data: {"choices":[{"delta":{"role":"assistant"}}]}`:                       false,
+		`data: {"choices":"answer"}`:                                               false,
+		`data: {bad`:                                                               false,
+		`data: [DONE]`:                                                             false,
+	} {
+		require.Equal(t, want, StreamedLineProvesOutput(line), line)
+	}
+	require.True(t, ResponseProvesOutput([]byte(`{"choices":[{"message":{"content":"answer"}}]}`)))
+	require.False(t, ResponseProvesOutput([]byte(`{"choices":[{"message":{"content":""}}]}`)))
+	require.False(t, ResponseProvesOutput([]byte(`{"choices":"answer"}`)))
+	require.False(t, ResponseProvesOutput([]byte(`not json`)))
+}

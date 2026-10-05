@@ -376,22 +376,6 @@ func TestRetryStaleValidation_ValidateError_Releases(t *testing.T) {
 	require.Equal(t, []string{"escrow-1/7/3/addr"}, leases.releaseCalls)
 }
 
-func TestRetryStaleValidation_Abstained_MarksSkipped(t *testing.T) {
-	leases := &stubStaleLeaseStore{}
-	inner := &stubEngine{
-		validateFn: func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
-			return nil, fmt.Errorf("%w: validator served the prompt", devshardpkg.ErrValidationAbstained)
-		},
-	}
-	rl := newTestValidationRetryLoop(leases, inferenceSnap(7, types.StatusFinished), inner)
-
-	require.NoError(t, rl.retryStaleValidation(context.Background(), "escrow-1", 7, 3))
-	assert.Equal(t, 1, inner.calls)
-	require.Empty(t, leases.releaseCalls)
-	require.Len(t, leases.setResultCalls, 1)
-	require.Contains(t, leases.setResultCalls[0], string(storage.LeaseStatusSkipped))
-}
-
 func TestRetryStaleValidation_Canceled_Releases(t *testing.T) {
 	leases := &stubStaleLeaseStore{}
 	inner := &stubEngine{

@@ -3,7 +3,6 @@ package devshard
 import (
 	"context"
 	"errors"
-	"fmt"
 )
 
 // ErrValidationAlreadyLeased is returned when another devshardd instance already
@@ -26,8 +25,6 @@ var ErrValidationLeaseTTLExceeded = errors.New("elapsed since acquire exceeds le
 // (the payload has already been pruned). Callers should treat this as a
 // quiet no-op rather than a validation failure.
 var ErrValidationSkipped = errors.New("devshard validation skipped")
-
-var ErrValidationAbstained = fmt.Errorf("%w: validator abstained", ErrValidationSkipped)
 
 // InferenceEngine executes inference on an ML node.
 // Implemented by dapi using existing broker + completionapi.
