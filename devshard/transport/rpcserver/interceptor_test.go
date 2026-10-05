@@ -218,9 +218,9 @@ func TestAdmitSession_LookupUsesRawToken(t *testing.T) {
 }
 
 // handshakeGate admits before Connect reads the body; the interceptor must not
-// repeat that work. LookupToken calls now() once on a hit; the channel limiter
-// also reads Now for the token bucket; minute-bucket recording reads it once
-// more. Nothing else on GetSignatures should.
+// repeat that work. A successful GetSignatures reads Now four times:
+// inspectToken, noteAdmit (eviction stamp), the channel limiter, and traffic
+// accounting. Nothing else on GetSignatures should.
 func TestSessionInterceptor_AdmitsOncePerRPC(t *testing.T) {
 	var nowCalls atomic.Int64
 	auth := newTestAuth(PeerAuthConfig{Now: func() time.Time {
@@ -237,7 +237,7 @@ func TestSessionInterceptor_AdmitsOncePerRPC(t *testing.T) {
 	_, err := client.GetSignatures(context.Background(), withSession(
 		connect.NewRequest(&rpcpb.GetSignaturesRequest{Nonce: 1}), attached.SessionToken))
 	require.NoError(t, err)
-	require.EqualValues(t, 3, nowCalls.Load(), "handshakeGate admits once, limiter + traffic share Now; the interceptor must not look the token up again")
+	require.EqualValues(t, 4, nowCalls.Load(), "handshakeGate admits once: inspectToken, noteAdmit, limiter, and traffic; the interceptor must not look the token up again")
 }
 
 // The interceptor stays a complete gate on a mux built without handshakeGate.

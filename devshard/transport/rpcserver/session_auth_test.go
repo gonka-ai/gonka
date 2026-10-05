@@ -1,7 +1,9 @@
 package rpcserver
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -70,7 +72,7 @@ func TestGossipHandler_InvalidStateSigThroughEnvelope(t *testing.T) {
 	_, err := env.gossip.Nonce(context.Background(), withSession(
 		connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.GossipNonceRequest{
 			Nonce:     1,
-			StateHash: []byte{1},
+			StateHash: bytes.Repeat([]byte{1}, sha256.Size),
 			StateSig:  []byte{1, 2, 3},
 			SlotId:    0,
 		})), env.token))

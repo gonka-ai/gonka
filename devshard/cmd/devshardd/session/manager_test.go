@@ -26,6 +26,10 @@ import (
 type mockBridge struct {
 	escrow       *bridge.EscrowInfo
 	getEscrowErr error
+	// hostURLs overrides GetHostInfo for specific addresses. wireHostToHost
+	// registers a PeerConn from this URL, and a later SelectTransport for the
+	// same host and signer reuses that conn.
+	hostURLs map[string]string
 }
 
 func (b *mockBridge) GetEscrow(_ string) (*bridge.EscrowInfo, error) {
@@ -36,7 +40,13 @@ func (b *mockBridge) GetEscrow(_ string) (*bridge.EscrowInfo, error) {
 }
 
 func (b *mockBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
-	return &bridge.HostInfo{Address: address, URL: "http://localhost"}, nil
+	url := "http://localhost"
+	if b != nil && b.hostURLs != nil {
+		if u := b.hostURLs[address]; u != "" {
+			url = u
+		}
+	}
+	return &bridge.HostInfo{Address: address, URL: url}, nil
 }
 
 func (b *mockBridge) GetValidationThreshold(uint64, string) (*bridge.Decimal, error) {

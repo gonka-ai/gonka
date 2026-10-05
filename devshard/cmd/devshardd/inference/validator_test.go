@@ -936,14 +936,14 @@ func TestExecutorFaultVerdict_DisabledOrCancelled(t *testing.T) {
 func TestLeaseValidator_PeerNotReadyReleasesForNextAcquire(t *testing.T) {
 	held := false
 	store := &stubLeases{
-		acquireFn: func(context.Context, string, uint64, uint64, string) (bool, error) {
+		acquireFn: func(context.Context, string, uint64, uint64, storage.LeaseOwner) (bool, error) {
 			if held {
 				return false, nil
 			}
 			held = true
 			return true, nil
 		},
-		releaseFn: func(context.Context, string, uint64, uint64, string) error {
+		releaseFn: func(context.Context, string, uint64, uint64, storage.LeaseOwner) error {
 			held = false
 			return nil
 		},

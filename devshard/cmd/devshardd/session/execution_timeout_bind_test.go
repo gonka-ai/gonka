@@ -69,7 +69,13 @@ func TestExecutionTimeout_ColdExecutorCreatesSession(t *testing.T) {
 	verStore := newManagerTestStore(t)
 	verMgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(
 		verStore, hosts[2], stub.NewInferenceEngine(), stub.NewValidationEngine(),
-		nil, testutil.RuntimeTestVersion, &mockBridge{escrow: escrow}, nil, nil,
+		nil, testutil.RuntimeTestVersion, &mockBridge{
+			escrow: escrow,
+			// The first SelectTransport for this host wins the shared PeerConn.
+			// wireHostToHost runs inside sessionForOwner, so the executor URL
+			// has to be the httptest server before that call.
+			hostURLs: map[string]string{hosts[1].Address(): ts.URL},
+		}, nil, nil,
 	))
 	srv, err := verMgr.sessionForOwner(escrowID, user.Address())
 	require.NoError(t, err)
