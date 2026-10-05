@@ -22,7 +22,12 @@ func (k Keeper) SetParticipant(ctx context.Context, participant types.Participan
 // or EndBlock and not written since: storedStats is a copy of its CurrentEpochStats as
 // read, so the status check does not read the participant again.
 func (k Keeper) SetParticipantFromStored(ctx context.Context, participant types.Participant, storedStats *types.CurrentEpochStats) error {
-	err := k.updateParticipantStatus(ctx, &participant, storedStats, true)
+	return k.setParticipantAsRead(ctx, participant, storedStats, true)
+}
+
+// setParticipantAsRead also takes found=false for a participant the caller has just found absent.
+func (k Keeper) setParticipantAsRead(ctx context.Context, participant types.Participant, storedStats *types.CurrentEpochStats, found bool) error {
+	err := k.updateParticipantStatus(ctx, &participant, storedStats, found)
 	if err != nil {
 		k.LogError("Failed to update participant status", types.Validation, "error", err)
 		return err

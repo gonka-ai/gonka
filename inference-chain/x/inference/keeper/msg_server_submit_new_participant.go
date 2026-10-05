@@ -16,6 +16,7 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 	// Check if participant already exists. If it does, restrict updates to only
 	// ValidatorKey, WorkerKey, and Url as per requirements.
 	if existing, found := k.GetParticipant(ctx, msg.GetCreator()); found {
+		storedStats := existing.CurrentEpochStats.StoredCopy()
 		// Preserve all existing fields and update only the allowed ones
 		if msg.Url != "" {
 			existing.InferenceUrl = msg.Url
@@ -26,7 +27,7 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 		if msg.WorkerKey != "" {
 			existing.WorkerPublicKey = msg.WorkerKey
 		}
-		if err := k.SetParticipant(ctx, existing); err != nil {
+		if err := k.SetParticipantFromStored(ctx, existing, storedStats); err != nil {
 			return nil, err
 		}
 		return &types.MsgSubmitNewParticipantResponse{}, nil
@@ -34,7 +35,7 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 
 	// If participant does not exist yet, create a new one
 	newParticipant := createNewParticipant(ctx, msg)
-	if err := k.SetParticipant(ctx, newParticipant); err != nil {
+	if err := k.setParticipantAsRead(ctx, newParticipant, nil, false); err != nil {
 		return nil, err
 	}
 	return &types.MsgSubmitNewParticipantResponse{}, nil
