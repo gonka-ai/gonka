@@ -72,6 +72,16 @@ func (k Keeper) GetParticipant(
 	return val, true
 }
 
+// HasParticipant reports whether index is a stored participant without decoding the record.
+func (k Keeper) HasParticipant(ctx context.Context, index string) bool {
+	address, err := sdk.AccAddressFromBech32(index)
+	if err != nil {
+		return false
+	}
+	found, err := k.Participants.Has(ctx, address)
+	return err == nil && found
+}
+
 // RemoveParticipant removes a participant from the store
 func (k Keeper) RemoveParticipant(
 	ctx context.Context,

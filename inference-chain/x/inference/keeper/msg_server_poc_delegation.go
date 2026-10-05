@@ -11,7 +11,7 @@ func (k msgServer) SetPoCDelegation(ctx context.Context, msg *types.MsgSetPoCDel
 		return nil, err
 	}
 
-	if _, found := k.GetGovernanceModel(ctx, msg.ModelId); !found {
+	if !k.IsValidGovernanceModel(ctx, msg.ModelId) {
 		return nil, types.ErrInvalidModel
 	}
 
@@ -19,7 +19,7 @@ func (k msgServer) SetPoCDelegation(ctx context.Context, msg *types.MsgSetPoCDel
 		// Clear delegation
 		_ = k.Keeper.DeletePoCDelegation(ctx, msg.ModelId, msg.Sender)
 	} else {
-		if _, found := k.GetParticipant(ctx, msg.DelegateTo); !found {
+		if !k.HasParticipant(ctx, msg.DelegateTo) {
 			return nil, types.ErrParticipantNotFound
 		}
 		if err := k.Keeper.SetPoCDelegation(ctx, types.PoCDelegation{
@@ -42,7 +42,7 @@ func (k msgServer) RefusePoCDelegation(ctx context.Context, msg *types.MsgRefuse
 		return nil, err
 	}
 
-	if _, found := k.GetGovernanceModel(ctx, msg.ModelId); !found {
+	if !k.IsValidGovernanceModel(ctx, msg.ModelId) {
 		return nil, types.ErrInvalidModel
 	}
 
@@ -61,7 +61,7 @@ func (k msgServer) DeclarePoCIntent(ctx context.Context, msg *types.MsgDeclarePo
 		return nil, err
 	}
 
-	if _, found := k.GetGovernanceModel(ctx, msg.ModelId); !found {
+	if !k.IsValidGovernanceModel(ctx, msg.ModelId) {
 		return nil, types.ErrInvalidModel
 	}
 
