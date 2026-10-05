@@ -1065,10 +1065,23 @@ func TestProcessResponse_NilReturnsNamedError(t *testing.T) {
 	require.Equal(t, uint64(0), session.SnapshotHeightSync().Overlap.Total)
 }
 
+// A response without a state hash is not checked against a root, so a nonce
+// the session never composed must not move the host's cursor.
+func TestProcessResponse_NonceAheadOfSessionIsRejected(t *testing.T) {
+	session, _, _ := setupSession(t, 2, 100000, 100)
+	err := session.ProcessResponse(0, &host.HostResponse{Nonce: session.Nonce() + 1}, 1)
+	require.ErrorIs(t, err, ErrHostNonceAhead)
+
+	session.mu.Lock()
+	cursor := session.hostSyncNonce[0]
+	session.mu.Unlock()
+	require.Zero(t, cursor)
+}
+
 func TestProcessResponse_FailedVerifySkipsContactAndOverlap(t *testing.T) {
 	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithHeightSyncCadence(10, 2))
 	err := session.ProcessResponse(0, &host.HostResponse{
-		Nonce:     99,
+		Nonce:     session.Nonce(),
 		StateHash: []byte{0xde, 0xad},
 	}, 1)
 	require.Error(t, err)

@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"io"
 	"maps"
 	"slices"
@@ -51,7 +52,8 @@ func TestSession_RetainedDiffsAreCappedWithAStore(t *testing.T) {
 
 	requireContiguous(t, session.diffsForHost(0), 1, n)
 
-	root, ok := session.postStateRootForNonce(1)
+	root, ok, err := session.postStateRootForNonce(1)
+	require.NoError(t, err)
 	require.True(t, ok, "a trimmed nonce is verified against the store")
 	require.Equal(t, roots[1], root)
 }
@@ -119,6 +121,57 @@ func TestSession_LateResponseForATrimmedNonceWithAWrongRootIsRejected(t *testing
 	err = session.ProcessResponse(slow.hostIdx, &forged, slow.diff.Nonce)
 	require.ErrorIs(t, err, types.ErrStateHashMismatch,
 		"the stored root of a trimmed nonce is compared exactly")
+}
+
+// failRootReadStore fails the one-nonce read postStateRootForNonce makes.
+type failRootReadStore struct {
+	storage.Storage
+	nonce uint64
+}
+
+var errRootRead = errors.New("store unavailable")
+
+func (s *failRootReadStore) GetDiffs(escrowID string, from, to uint64) ([]types.DiffRecord, error) {
+	if from == s.nonce && to == s.nonce {
+		return nil, errRootRead
+	}
+	return s.Storage.GetDiffs(escrowID, from, to)
+}
+
+// A store that cannot produce the root says nothing about the host, so the
+// response is refused as a local failure, not as a diverged host.
+func TestSession_LateResponseWhenTheStoreFailsIsNotAMismatch(t *testing.T) {
+	store := &failRootReadStore{Storage: storage.NewMemory()}
+	session := setupStoredSession(t, store)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+
+	slow, err := session.PrepareInference(params)
+	require.NoError(t, err)
+	slowResp, err := session.SendOnly(ctx, slow, nil, nil)
+	require.NoError(t, err)
+	for range 3 {
+		_, err := session.SendInference(ctx, params)
+		require.NoError(t, err)
+	}
+	session.mu.Lock()
+	require.Greater(t, session.firstRetainedNonceLocked(), slowResp.Nonce,
+		"precondition: every cursor passed the slow nonce, so it is trimmed")
+	cursorBefore := session.hostSyncNonce[slow.hostIdx]
+	session.mu.Unlock()
+
+	store.nonce = slowResp.Nonce
+	err = session.ProcessResponse(slow.hostIdx, slowResp, slow.diff.Nonce)
+	require.ErrorIs(t, err, ErrLocalRootUnavailable)
+	require.ErrorIs(t, err, errRootRead)
+	require.NotErrorIs(t, err, types.ErrStateHashMismatch)
+
+	session.mu.Lock()
+	require.Equal(t, cursorBefore, session.hostSyncNonce[slow.hostIdx], "an unverified response does not move the cursor")
+	session.mu.Unlock()
 }
 
 func TestSession_RewindWithAStoreReachesTheStartOfTheJournal(t *testing.T) {
