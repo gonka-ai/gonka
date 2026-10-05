@@ -40,16 +40,16 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 	params, err := k.GetParams(ctx)
 	if err != nil {
 		k.LogError("GetParams failed in claim", types.Claims, "error", err, "account", msg.Creator)
-		return &types.MsgClaimRewardsResponse{
+		return k.recordClaimAttempt(ctx, settleAmount, &types.MsgClaimRewardsResponse{
 			Amount: 0,
 			Result: "Internal error loading params",
-		}, nil
+		}), nil
 	}
 	if params.ValidationParams != nil && params.ValidationParams.ClaimValidationEnabled {
 		validationResponse, validationErr := k.validateClaim(ctx, msg, settleAmount)
 		if validationErr != nil {
 			k.LogError("Claim validation failed", types.Claims, "error", validationErr, "account", msg.Creator)
-			return validationResponse, nil
+			return k.recordClaimAttempt(ctx, settleAmount, validationResponse), nil
 		}
 		k.LogDebug("Claim verified", types.Claims, "account", msg.Creator, "seed", msg.Seed)
 	}
@@ -57,7 +57,7 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 	payoutResponse, payoutErr := k.payoutClaim(ctx, msg, settleAmount)
 	if payoutErr != nil {
 		k.LogError("Claim payout failed", types.Claims, "error", payoutErr, "account", msg.Creator)
-		return payoutResponse, nil
+		return k.recordClaimAttempt(ctx, settleAmount, payoutResponse), nil
 	}
 
 	return payoutResponse, nil
@@ -242,22 +242,29 @@ func (k msgServer) validateRequest(ctx sdk.Context, msg *types.MsgClaimRewards) 
 			Result: "Claim rate limited",
 		}
 	}
+	// Stored only by a claim that fails: a paid claim removes the record.
 	settleAmount.LastClaimAttempt = ctx.BlockHeight()
-	if err := k.SetSettleAmount(ctx, settleAmount); err != nil {
-		return nil, &types.MsgClaimRewardsResponse{
+	if settleAmount.GetTotalCoins() == 0 {
+		k.LogInfo("SettleAmount had zero coins", types.Claims, "address", msg.Creator)
+		return nil, k.recordClaimAttempt(ctx, &settleAmount, &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "No rewards for this address",
+		})
+	}
+
+	return &settleAmount, nil
+}
+
+// recordClaimAttempt stores the attempt height that rate-limits a retry of a failed claim.
+func (k msgServer) recordClaimAttempt(ctx sdk.Context, settleAmount *types.SettleAmount, failure *types.MsgClaimRewardsResponse) *types.MsgClaimRewardsResponse {
+	if err := k.SetSettleAmount(ctx, *settleAmount); err != nil {
+		k.LogError("Failed to record claim attempt", types.Claims, "error", err, "account", settleAmount.Participant)
+		return &types.MsgClaimRewardsResponse{
 			Amount: 0,
 			Result: "Internal error updating settle amount",
 		}
 	}
-	if settleAmount.GetTotalCoins() == 0 {
-		k.LogInfo("SettleAmount had zero coins", types.Claims, "address", msg.Creator)
-		return nil, &types.MsgClaimRewardsResponse{
-			Amount: 0,
-			Result: "No rewards for this address",
-		}
-	}
-
-	return &settleAmount, nil
+	return failure
 }
 
 func (k msgServer) validateClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) (*types.MsgClaimRewardsResponse, error) {
