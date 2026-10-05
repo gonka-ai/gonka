@@ -111,7 +111,7 @@ func TestSetParticipantFromStored_MatchesSetParticipant(t *testing.T) {
 		m := &readCountMeter{GasMeter: storetypes.NewInfiniteGasMeter()}
 		c := ctx.WithGasMeter(m)
 		if fromStored {
-			require.NoError(t, keeper.SetParticipantFromStoredForTesting(k, c, read, &stored))
+			require.NoError(t, k.SetParticipantFromStored(c, read, &stored))
 		} else {
 			require.NoError(t, k.SetParticipant(c, read))
 		}

@@ -18,10 +18,10 @@ func (k Keeper) SetParticipant(ctx context.Context, participant types.Participan
 	return k.saveParticipant(ctx, participant)
 }
 
-// setParticipantFromStored is SetParticipant for a participant read earlier in the same tx
-// and not written since: storedStats is a copy of its CurrentEpochStats as read, so the
-// status check does not read the participant again.
-func (k Keeper) setParticipantFromStored(ctx context.Context, participant types.Participant, storedStats *types.CurrentEpochStats) error {
+// SetParticipantFromStored is SetParticipant for a participant read earlier in the same tx
+// or EndBlock and not written since: storedStats is a copy of its CurrentEpochStats as
+// read, so the status check does not read the participant again.
+func (k Keeper) SetParticipantFromStored(ctx context.Context, participant types.Participant, storedStats *types.CurrentEpochStats) error {
 	err := k.updateParticipantStatus(ctx, &participant, storedStats, true)
 	if err != nil {
 		k.LogError("Failed to update participant status", types.Validation, "error", err)
