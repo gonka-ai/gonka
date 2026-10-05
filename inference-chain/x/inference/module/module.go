@@ -404,7 +404,9 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 // errors internally with log+return patterns. A previous-epoch trust-cap
 // membership-read failure is epoch-formation-critical and is propagated to EndBlock.
 func (am AppModule) EndBlock(ctx context.Context) error {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	// Epoch-stage handlers each read params and the effective epoch index; pay the store once.
+	sdkCtx := keeper.WithTxParamsCache(sdk.UnwrapSDKContext(ctx))
+	ctx = sdkCtx
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
 
