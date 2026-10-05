@@ -694,9 +694,9 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 	var rejectCause string
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, st.Config, nowUnix)
+		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		accept, err = host.VerifyExecutionTimeout(c.Request().Context(), st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
+		accept, err = host.VerifyExecutionTimeout(c.Request().Context(), st, req.InferenceID, localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
 	default:
 		return echo.NewHTTPError(http.StatusBadRequest, "unknown reason")
 	}
@@ -713,7 +713,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		resp.Signature = sig
 		resp.VoterSlot = voterSlot
 	} else {
-		mempoolBytes, mErr := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+		mempoolBytes, mErr := DevshardTxsToBytes(host.VerifiedRecoveryTxsFor(st, req.InferenceID, s.host.MempoolTxs(), s.host))
 		if mErr != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, mErr.Error())
 		}

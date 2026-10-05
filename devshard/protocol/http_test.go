@@ -560,9 +560,10 @@ func TestHTTP_RefusedTimeoutChallengeRecoveryLandsInNextDiff(t *testing.T) {
 	_, err = env.hosts[executorIdx].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
 	require.NoError(t, err)
 
-	result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
-	require.NoError(t, err, "reachable executor receipt should recover instead of timing out")
-	require.Equal(t, "refused", result.Reason)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err = env.session.HandleTimeout(timeoutCtx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
+	require.ErrorIs(t, err, context.DeadlineExceeded, "receipt recovery must continue waiting for execution accountability")
 	require.NotNil(t, findConfirmStart(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()),
 		"executor should queue recovery MsgConfirmStart after challenge")
 
@@ -583,8 +584,10 @@ func TestHTTP_RefusedTimeoutRecoveryDeduplicatesAcrossVerifierRejects(t *testing
 	_, err = env.hosts[prepared.HostIdx()].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
 	require.NoError(t, err)
 
-	_, err = env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
-	require.NoError(t, err)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err = env.session.HandleTimeout(timeoutCtx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 
 	diffs = env.session.Diffs()
 	require.GreaterOrEqual(t, len(diffs), 2)
@@ -763,7 +766,9 @@ func TestHTTP_ExecutionTimeoutRejectedWhenExecutorHasFinish(t *testing.T) {
 	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), env.session.Diffs())
 	require.NoError(t, err)
 	require.Empty(t, votes, "executor finish in mempool must reject execution timeout")
-	require.Empty(t, recovery, "execution-timeout rejection should not publish refused-start recovery")
+	recovered := findFinish(recovery, prepared.Nonce())
+	require.NotNil(t, recovered, "a Finish that rejects timeout must reach the sequencer through recovery")
+	require.Equal(t, types.TxHash(findFinish(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce())), types.TxHash(recovered))
 }
 
 func TestHTTP_NextRequestSettlesFinishFromExecutorMempool(t *testing.T) {
@@ -1344,8 +1349,10 @@ func TestHTTP_T1_HonestRecovery_ConfirmStartReachesSessionAndPeer(t *testing.T) 
 	_, err = env.hosts[executorIdx].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
 	require.NoError(t, err)
 
-	_, err = env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
-	require.NoError(t, err, "rejected refused-timeout must recover by publishing ConfirmStart")
+	timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, err = env.session.HandleTimeout(timeoutCtx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
+	require.ErrorIs(t, err, context.DeadlineExceeded, "receipt recovery must continue waiting for execution accountability")
 
 	diffs = env.session.Diffs()
 	require.GreaterOrEqual(t, len(diffs), 2)
