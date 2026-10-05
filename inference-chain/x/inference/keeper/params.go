@@ -39,13 +39,16 @@ func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) 
 	return k.getParamsFromStore(ctx)
 }
 
-// txParamsCache keeps the params bytes (and the SPRT values derived from them) for
-// one tx, so repeated reads pay the store once. Turned off for the rest of the tx
-// by SetParams or PrecomputeSPRTValues.
+// txParamsCache keeps the params bytes (and the SPRT values derived from them) and
+// the effective epoch index for one tx, so repeated reads pay the store once.
+// Turned off for the rest of the tx by SetParams, PrecomputeSPRTValues or
+// SetEffectiveEpochIndex.
 type txParamsCache struct {
-	bz   []byte
-	sprt []byte
-	off  bool
+	bz       []byte
+	sprt     []byte
+	epoch    uint64
+	epochSet bool
+	off      bool
 }
 
 func txCacheFrom(ctx context.Context) *txParamsCache {
@@ -57,7 +60,7 @@ func txCacheFrom(ctx context.Context) *txParamsCache {
 
 func turnOffTxCache(ctx context.Context) {
 	if c, ok := ctx.Value(txParamsCacheKey{}).(*txParamsCache); ok && c != nil {
-		c.bz, c.sprt, c.off = nil, nil, true
+		c.bz, c.sprt, c.epochSet, c.off = nil, nil, false, true
 	}
 }
 

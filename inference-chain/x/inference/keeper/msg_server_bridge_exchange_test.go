@@ -10,6 +10,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/testutil"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -338,10 +339,12 @@ func TestBridgeExchange_ChecksActiveSetOnce(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		activeIn   uint64
+		create     bool
 		epochReads int
 	}{
-		{"current epoch voter", 2, 1},
-		{"previous epoch voter", 1, 2}, // Active miss, then PreviousActive
+		{"current epoch voter", 2, false, 1},
+		{"previous epoch voter", 1, false, 1}, // Active miss, then PreviousActive
+		{"first voter creates the tx", 2, true, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			k, ms, ctx, mocks := setupKeeperWithMocks(t)
@@ -349,6 +352,7 @@ func TestBridgeExchange_ChecksActiveSetOnce(t *testing.T) {
 			addr := sdk.MustAccAddressFromBech32(validator)
 			require.NoError(t, k.SetEffectiveEpochIndex(ctx, 2))
 			k.SetEpochGroupData(ctx, types.EpochGroupData{EpochIndex: 1, EpochGroupId: 1, TotalWeight: 100})
+			k.SetEpochGroupData(ctx, types.EpochGroupData{EpochIndex: 2, EpochGroupId: 1, TotalWeight: 100})
 			require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
 				EpochId:      tc.activeIn,
 				Participants: []*types.ActiveParticipant{{Index: validator}},
@@ -364,9 +368,11 @@ func TestBridgeExchange_ChecksActiveSetOnce(t *testing.T) {
 				BlockNumber: "1000", ReceiptIndex: "1", EpochIndex: 1,
 				Status: types.BridgeTransactionStatus_BRIDGE_PENDING,
 			}
-			k.SetBridgeTransaction(ctx, btx)
+			if !tc.create {
+				k.SetBridgeTransaction(ctx, btx)
+			}
 
-			sdkCtx := sdk.UnwrapSDKContext(ctx).WithGasMeter(storetypes.NewInfiniteGasMeter())
+			sdkCtx := keeper.WithTxParamsCache(sdk.UnwrapSDKContext(ctx).WithGasMeter(storetypes.NewInfiniteGasMeter()))
 			var trace bytes.Buffer
 			sdkCtx.MultiStore().SetTracer(&trace)
 			_, err := ms.BridgeExchange(sdkCtx, &types.MsgBridgeExchange{
@@ -375,7 +381,7 @@ func TestBridgeExchange_ChecksActiveSetOnce(t *testing.T) {
 			})
 			sdkCtx.MultiStore().SetTracer(nil)
 			require.NoError(t, err)
-			t.Logf("BridgeExchange vote gas: %d", sdkCtx.GasMeter().GasConsumed())
+			t.Logf("BridgeExchange %s gas: %d", tc.name, sdkCtx.GasMeter().GasConsumed())
 
 			enc := base64.StdEncoding.EncodeToString(types.EffectiveEpochIndexPrefix)
 			require.Equal(t, tc.epochReads, strings.Count(trace.String(), `"operation":"read","key":"`+enc+`"`))

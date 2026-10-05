@@ -29,7 +29,7 @@ type ValidatedBridgeExchange struct {
 // ActiveParticipantsSet for the current epoch or the previous epoch.
 // Matches MsgBridgeExchange permission OR of Active | PreviousActive.
 func (k Keeper) RequireActiveOrPreviousActiveParticipant(ctx sdk.Context, addr sdk.AccAddress) error {
-	currentEpoch, err := k.EffectiveEpochIndex.Get(ctx)
+	currentEpoch, err := k.effectiveEpochIndex(ctx)
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ func (k Keeper) RequireActiveOrPreviousActiveParticipant(ctx sdk.Context, addr s
 // RequireActiveParticipantAtOffset returns nil if addr is active in
 // currentEpoch - epochOffset. Used by the permission framework.
 func (k Keeper) RequireActiveParticipantAtOffset(ctx sdk.Context, addr sdk.AccAddress, epochOffset uint64) error {
-	currentEpoch, err := k.EffectiveEpochIndex.Get(ctx)
+	currentEpoch, err := k.effectiveEpochIndex(ctx)
 	if err != nil {
 		return err
 	}
