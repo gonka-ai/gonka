@@ -209,13 +209,24 @@ func (k Keeper) SetPocValidationV2(ctx context.Context, validation types.PoCVali
 		"model_id", validation.ModelId,
 		"validator", validation.ValidatorParticipantAddress,
 		"validated_weight", validation.ValidatedWeight)
-	if err := k.PoCValidationsV2.Set(ctx, pk, validation); err != nil {
+	if err := k.PoCValidationsV2.Set(ctx, pk, storedPocValidationV2(validation, participantAddr, validatorAddr)); err != nil {
 		return err
 	}
 	if exists {
 		return nil
 	}
 	return k.adjustPocValidationV2Count(ctx, validation.PocStageStartBlockHeight, validatorAddr, 1)
+}
+
+// storedPocValidationV2 drops the fields the key already holds; GetPoCValidationsV2ByStage
+// restores them. The full record is kept when the key would not restore the same strings
+// (non-canonical bech32) or the value would be empty.
+func storedPocValidationV2(v types.PoCValidationV2, participant, validator sdk.AccAddress) types.PoCValidationV2 {
+	if v.PocStageStartBlockHeight == 0 && v.ValidatedWeight == 0 ||
+		participant.String() != v.ParticipantAddress || validator.String() != v.ValidatorParticipantAddress {
+		return v
+	}
+	return types.PoCValidationV2{PocStageStartBlockHeight: v.PocStageStartBlockHeight, ValidatedWeight: v.ValidatedWeight}
 }
 
 // GetPoCValidationsV2ByStage collects all PoCValidationV2 grouped by participant and model for a specific epoch.
@@ -229,9 +240,16 @@ func (k Keeper) GetPoCValidationsV2ByStage(ctx context.Context, pocStageStartBlo
 	defer iter.Close()
 
 	for ; iter.Valid(); iter.Next() {
-		validation, err := iter.Value()
+		kv, err := iter.KeyValue()
 		if err != nil {
 			return nil, err
+		}
+		validation := kv.Value
+		if validation.ParticipantAddress == "" {
+			validation.ParticipantAddress = kv.Key.K2().String()
+			validation.ModelId = kv.Key.K3().K1()
+			validation.ValidatorParticipantAddress = kv.Key.K3().K2().String()
+			validation.PocStageStartBlockHeight = kv.Key.K1()
 		}
 		key := types.PoCParticipantModelKey{
 			ParticipantAddress: validation.ParticipantAddress,
