@@ -88,8 +88,8 @@ func (k Keeper) GetGroupValidationPartialSignature(
 
 // ListGroupValidationPartialSignatures returns every partial signature
 // collected so far for a new-epoch validation round, in ascending
-// participant-index order. Used by the handler's duplicate-slot check and by
-// the threshold-reached aggregation path.
+// participant-index order. Used by the handler's threshold-reached
+// aggregation path and by genesis export.
 func (k Keeper) ListGroupValidationPartialSignatures(
 	ctx sdk.Context,
 	newEpochID uint64,
@@ -163,13 +163,9 @@ func (k Keeper) SetGroupKeyValidationState(ctx sdk.Context, state *types.GroupKe
 	return store.Set(key, value)
 }
 
-// GetGroupKeyValidationState returns the validation state with
-// PartialSignatures rehydrated from per-participant sub-keys. Pure read:
-// the upgrade handler migrates any pre-split inline entries in a single
-// pass, so this function never writes state.
-//
-// Returns (nil, false, nil) if no state exists for the epoch.
-func (k Keeper) GetGroupKeyValidationState(ctx sdk.Context, newEpochID uint64) (*types.GroupKeyValidationState, bool, error) {
+// GetGroupKeyValidationStateBase returns the validation state without its
+// partial signatures. Returns (nil, false, nil) if no state exists.
+func (k Keeper) GetGroupKeyValidationStateBase(ctx sdk.Context, newEpochID uint64) (*types.GroupKeyValidationState, bool, error) {
 	value, err := k.storeService.OpenKVStore(ctx).Get(types.GroupValidationKey(newEpochID))
 	if err != nil {
 		return nil, false, err
@@ -180,6 +176,20 @@ func (k Keeper) GetGroupKeyValidationState(ctx sdk.Context, newEpochID uint64) (
 	state := &types.GroupKeyValidationState{}
 	if err := k.cdc.Unmarshal(value, state); err != nil {
 		return nil, false, err
+	}
+	return state, true, nil
+}
+
+// GetGroupKeyValidationState returns the validation state with
+// PartialSignatures rehydrated from per-participant sub-keys. Pure read:
+// the upgrade handler migrates any pre-split inline entries in a single
+// pass, so this function never writes state.
+//
+// Returns (nil, false, nil) if no state exists for the epoch.
+func (k Keeper) GetGroupKeyValidationState(ctx sdk.Context, newEpochID uint64) (*types.GroupKeyValidationState, bool, error) {
+	state, found, err := k.GetGroupKeyValidationStateBase(ctx, newEpochID)
+	if err != nil || !found {
+		return nil, found, err
 	}
 	subKeyed, err := k.ListGroupValidationPartialSignatures(ctx, newEpochID)
 	if err != nil {
