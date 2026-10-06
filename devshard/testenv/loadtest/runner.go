@@ -21,12 +21,13 @@ import (
 )
 
 type RunnerConfig struct {
-	ScenarioPath string
-	ProfilesDir  string
-	TestenvDir   string
-	OutputDir    string
-	KeepStack    bool
-	LoadDataset  string
+	ScenarioPath    string
+	ProfilesDir     string
+	TestenvDir      string
+	OutputDir       string
+	KeepStack       bool
+	LoadDataset     string
+	MetricsInterval time.Duration
 }
 
 type RunResult struct {
@@ -39,6 +40,7 @@ type RunResult struct {
 	Allocations  map[string]uint64
 	MLStats      map[string]MLNodeStats
 	GatewayState GatewayStateSizes
+	Metrics      MetricsSummary
 }
 
 type MLNodeStats struct {
@@ -108,6 +110,9 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, fmt.Errorf("scenario path, testenv directory, and output directory are required")
 	}
 	result.OutputDir = opts.OutputDir
+	if opts.MetricsInterval != 0 && opts.MetricsInterval < 100*time.Millisecond {
+		return result, fmt.Errorf("metrics interval must be at least 100ms")
+	}
 	scenario, err := LoadScenario(opts.ScenarioPath)
 	if err != nil {
 		return RunResult{}, err
@@ -233,6 +238,12 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, err
 	}
 	log.Printf("loadtest: stage=gateway_ready secondary_wait_after_winner=%s", scenario.SecondaryWaitAfterWinner())
+	collector, err := startMetricsCollector(ctx, opts, cfg, project, composePath, result.GatewayURL, apiKey)
+	if err != nil {
+		return result, fmt.Errorf("start metrics collector: %w", err)
+	}
+	defer func() { result.Metrics = collector.stop() }()
+	collector.phase.Store("workload")
 
 	log.Printf("loadtest: stage=workload_start scenario=%s", scenario.Scenario)
 	summary, err := RunGenerator(ctx, GeneratorConfig{
@@ -247,6 +258,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, err
 	}
 	result.Summary = summary
+	collector.phase.Store("drain")
 	allocations, err := fetchAllocations(ctx, cfg.MockDapi.HTTPPort)
 	if err != nil {
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)

@@ -21,6 +21,7 @@ func main() {
 	outputDir := flag.String("output", "", "directory for run artifacts")
 	keepStack := flag.Bool("keep-stack", false, "keep the Docker stack and work directory after the run")
 	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
+	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
 	flag.Parse()
 	if *scenarioPath == "" {
 		log.Fatal("provide -scenario")
@@ -41,12 +42,13 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	result, err := loadtest.RunScenario(ctx, loadtest.RunnerConfig{
-		ScenarioPath: *scenarioPath,
-		ProfilesDir:  *profilesDir,
-		TestenvDir:   testenvDir,
-		OutputDir:    *outputDir,
-		KeepStack:    *keepStack,
-		LoadDataset:  *loadDataset,
+		ScenarioPath:    *scenarioPath,
+		ProfilesDir:     *profilesDir,
+		TestenvDir:      testenvDir,
+		OutputDir:       *outputDir,
+		KeepStack:       *keepStack,
+		LoadDataset:     *loadDataset,
+		MetricsInterval: *metricsInterval,
 	})
 	if err != nil {
 		if result.Summary.Requests > 0 {
@@ -88,6 +90,13 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	fmt.Fprintf(os.Stdout, "  p50:              %s\n", summary.P50.String())
 	fmt.Fprintf(os.Stdout, "  p95:              %s\n", summary.P95.String())
 	fmt.Fprintf(os.Stdout, "  workload duration: %s\n", summary.Duration.String())
+	if len(summary.LatencyWindows) > 0 {
+		fmt.Fprintln(os.Stdout, "  Per-minute windows (requests grouped by start time)")
+		fmt.Fprintln(os.Stdout, "    Window  Completed RPS  Failed Dropped       p50       p95       p99")
+		for index, window := range summary.LatencyWindows {
+			fmt.Fprintf(os.Stdout, "    %6d %14.2f %7d %7d %9s %9s %9s\n", index+1, window.CompletedRPS, window.Failed, window.Dropped, window.P50, window.P95, window.P99)
+		}
+	}
 	fmt.Fprintln(os.Stdout)
 
 	fmt.Fprintln(os.Stdout, "DevShard terminal state")
@@ -112,6 +121,8 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	printMLNodeStats(result.MLStats)
 	fmt.Fprintln(os.Stdout)
 	printGatewayStateSizes(result.GatewayState)
+	fmt.Fprintln(os.Stdout)
+	printMetricsSummary(result.Metrics, summary.Completed)
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Artifacts")
 	fmt.Fprintln(os.Stdout, "---------")
@@ -204,4 +215,66 @@ func formatIntCounts(counts map[string]int) string {
 		parts = append(parts, fmt.Sprintf("%s=%d", key, counts[key]))
 	}
 	return strings.Join(parts, ",")
+}
+
+func printMetricsSummary(summary loadtest.MetricsSummary, completed int) {
+	fmt.Fprintln(os.Stdout, "Process memory and CPU")
+	fmt.Fprintln(os.Stdout, "----------------------")
+	if summary.Interval == "" {
+		fmt.Fprintln(os.Stdout, "  unavailable")
+		return
+	}
+	fmt.Fprintf(os.Stdout, "  interval: %s; RSS/heap peaks are sampled; HWM is process-lifetime RSS\n", summary.Interval)
+	for _, process := range summary.Processes {
+		fmt.Fprintf(os.Stdout, "  %s: samples=%d incomplete/failed=%d process changes=%d\n", process.Target, process.Samples, process.FailedSamples, process.ProcessChanges)
+		for _, metric := range []struct{ name, label string }{
+			{"process_resident_memory_bytes", "RSS"},
+			{"go_memstats_heap_alloc_bytes", "heap allocated"},
+			{"go_memstats_heap_inuse_bytes", "heap in use"},
+		} {
+			fmt.Fprintf(os.Stdout, "    %-15s baseline=%s final=%s workload peak=%s all-phase peak=%s\n", metric.label, metricMiB(process.First, metric.name), metricMiB(process.Last, metric.name), metricMiB(process.WorkloadPeaks, metric.name), metricMiB(process.Peaks, metric.name))
+		}
+		fmt.Fprintf(os.Stdout, "    RSS high-water mark: %s\n", metricMiB(process.Peaks, "loadtest_process_rss_hwm_bytes"))
+		fmt.Fprintf(os.Stdout, "    observed CPU: %s s; allocated: %s; GC count: %s; GC pause: %s s\n", metricNumber(process.Deltas, "process_cpu_seconds_total"), metricMiB(process.Deltas, "go_memstats_alloc_bytes_total"), metricNumber(process.Deltas, "go_gc_duration_seconds_count"), metricNumber(process.Deltas, "go_gc_duration_seconds_sum"))
+		if cpu, ok := process.Deltas["process_cpu_seconds_total"]; ok && completed > 0 {
+			fmt.Fprintf(os.Stdout, "    CPU per 1000 completed client requests: %.3f s\n", cpu*1000/float64(completed))
+		}
+		fmt.Fprintf(os.Stdout, "    goroutines final=%s sampled peak=%s\n", metricNumber(process.Last, "go_goroutines"), metricNumber(process.Peaks, "go_goroutines"))
+		if len(process.LastErrors) > 0 {
+			fmt.Fprintf(os.Stdout, "    last collection errors: %s\n", strings.Join(process.LastErrors, "; "))
+		}
+	}
+	fmt.Fprintln(os.Stdout, "  Counter deltas cover observed intervals within each process lifetime.")
+	fmt.Fprintln(os.Stdout, "Escrow history during run")
+	fmt.Fprintln(os.Stdout, "-------------------------")
+	for _, escrow := range summary.Escrows {
+		first, last := "unavailable", "unavailable"
+		if escrow.FirstNonce != nil {
+			first = fmt.Sprint(*escrow.FirstNonce)
+		}
+		if escrow.LastNonce != nil {
+			last = fmt.Sprint(*escrow.LastNonce)
+		}
+		fmt.Fprintf(os.Stdout, "  escrow=%s nonce=%s -> %s samples=%d max retained diffs=%d payload=%.3f MiB max signature nonces=%d\n", escrow.EscrowID, first, last, escrow.Samples, escrow.MaxDiffs, float64(escrow.MaxDiffBytes)/(1<<20), escrow.MaxSignatureNonces)
+		if escrow.First != nil && escrow.Last != nil {
+			fmt.Fprintf(os.Stdout, "    diffs=%d -> %d signatures=%d -> %d nonce states=%d -> %d applied tx keys=%d -> %d pending txs=%d -> %d\n", escrow.First.Diffs, escrow.Last.Diffs, escrow.First.SignatureNonces, escrow.Last.SignatureNonces, escrow.First.NonceStates, escrow.Last.NonceStates, escrow.First.AppliedTxKeys, escrow.Last.AppliedTxKeys, escrow.First.PendingTxs, escrow.Last.PendingTxs)
+		}
+	}
+	if len(summary.CollectionErrors) > 0 {
+		fmt.Fprintf(os.Stdout, "  collection/artifact errors: %d (see metrics-summary.json)\n", len(summary.CollectionErrors))
+	}
+	fmt.Fprintln(os.Stdout, "  artifacts: metrics.jsonl, metrics-summary.json")
+}
+
+func metricMiB(values map[string]float64, name string) string {
+	if value, ok := values[name]; ok {
+		return fmt.Sprintf("%.3f MiB", value/(1<<20))
+	}
+	return "unavailable"
+}
+func metricNumber(values map[string]float64, name string) string {
+	if value, ok := values[name]; ok {
+		return fmt.Sprintf("%.3f", value)
+	}
+	return "unavailable"
 }
