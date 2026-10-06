@@ -15,7 +15,7 @@ pool: [`versiond-host-evacuation.md`](./versiond-host-evacuation.md). Path versi
 [`upgrade.md`](./upgrade.md).
 
 **Status.** Phase 1 ships the server handshake, the fail-closed session interceptor, and the
-`/rpc/` mount (flag off by default). The client attach loop (`PeerConn`) is phase 2. HTTP/2
+`/rpc/` mount (always on). The client attach loop (`PeerConn`) is phase 2. HTTP/2
 is phase 6: deploy publishes `{DEVSHARD_RPC_H2_PORT}` on **`proxy` (proxy-router)** for
 authenticated `/rpc/`, with HTTP/2 through versiond-router (HA) or versiond (non-HA) to
 the child. When InferenceUrl is HTTPS, `proxy` terminates the same nginx cert; nginx
@@ -86,10 +86,11 @@ translator:
 
 The rewrite is a path splice, not a second protocol. Proxies never see the stripped form.
 
-`DEVSHARD_RPC_SERVER_ENABLED` (default **false**) gates the Echo mount. Flag off: the
-`/rpc/` route does not exist (404). Existing JSON session routes are untouched.
-Flag on with no host address (no signer or recorder) panics at `Register`
-instead of mounting a handler that rejects every Attach as a bad peer.
+Connect is always mounted at `/sessions/:id/rpc/`. There is no
+`DEVSHARD_RPC_SERVER_ENABLED`. Retired Echo session routes answer
+`410 http_session_retired` and are not restored. Ops GETs (`diffs`, `mempool`,
+`signatures`) stay. A missing host address (no signer or recorder) panics at
+`Register` instead of mounting a handler that rejects every Attach as a bad peer.
 `Close` / `ClosePeerRPC` ends Watch streams, drops host sessions, and refuses
 new Attach and handshake-gated RPCs with `failed_precondition` `"host shutting
 down"` so `http.Server.Shutdown` can drain.
@@ -210,16 +211,18 @@ unaries fail fast on `tokenRequest` instead of waiting.
 The client opens the Connect channel and picks a random **attachment id** (`attach_nonce`,
 16–32 bytes). This is not an inference or tx nonce; it only names this RPC attach.
 That id is covered by the Attach signature together with the host gonka address and a
-timestamp. The server does **not** mint a session id. `AttachResponse.session_token` is
-the same `attach_nonce`. Replay of a live nonce on this host is **rejected**.
-A dropped nonce stays unrebindable for the ±30 s signature window, so a
-captured Attach cannot evict a newer session. An Attach whose timestamp is
-older than the live session is rejected. A new id from the same peer on this
-host+version replaces the previous host session.
+timestamp. `AttachResponse.session_token` is a stateless HMAC tag over the
+peer, host, version, attach time, expiry, and `sha256(attach_nonce)`
+([HA layout](./high-availability-architecture.md#peer-rpc-sessions-under-ha)).
+The attach time is the earlier of the signed timestamp and the host clock, so
+a future-dated signature does not buy lifetime. A replay of the same signed
+request returns the same token and cannot shorten another one. A new id from
+the same peer adds a token; earlier tokens stay valid until their own expiry.
 
 `Watch` is a server-stream; to nginx it looks like an SSE response and inherits the same
-long transfer timeouts. The server ends that stream when its token is no longer
-current (re-Attach, sweep, evict), not only at the next heartbeat.
+long transfer timeouts. It is liveness only. The server ends it on
+`host shutting down` or when its token reaches `session expired`, not only at
+the next heartbeat.
 
 Attach signature (not `SignRequest`):
 
@@ -234,11 +237,10 @@ that — multiplexing is not peer mTLS.
 
 Server checks: recovered address equals `peer_address` → `host_address` equals this
 process's gonka address → timestamp within ±30 s → `protocol_version` is
-`devshard.transport.v1` (empty and unknown rejected) → `attach_nonce` is not already
-live → `AllowsSender` for the URL escrow unless this is a **live** peer on `_`.
-Then it records one session for that client peer on this host and version.
-On one process that record is this child's memory map. When `GONKA_HA` is
-set, the same row is shared by every child of this version
+`devshard.transport.v1` (empty and unknown rejected) → `AllowsSender` for the
+URL escrow unless this is a **live** peer on `_`. Then it issues the token.
+Nothing is stored: every child of this host and version derives the same key
+and checks the tag
 ([Peer RPC sessions under HA](./high-availability-architecture.md#peer-rpc-sessions-under-ha)).
 A real URL escrow is the door, not the session key; `_` is Watch / live-refresh only.
 
@@ -272,17 +274,17 @@ phases 1–5 on this path. Phase 6 removes it by carrying HTTP/2 on a listen tha
 The router hashes the escrow segment of every `/{version}/sessions/{escrow}/…`
 request, including each HTTP/2 stream. `Attach` uses the door escrow, `Watch`
 and live renewal use `_`, and a later call uses that call's escrow. Those
-three keys do not select the same child. The token is still one per peer per
-host and version, so the child that did not serve `Attach` must already have
-the row.
+three keys do not select the same child. The token is bound to the peer, host,
+and version, and any child of that host and version checks its HMAC with the
+same derived key. No table, barrier, or membership feed is involved, and
+`GONKA_HA` does not change admission.
 
-`GONKA_HA` is the switch. Set, with Postgres and a version, every such child
-admits the token from memory filled by the shared table. Unset, the map stays
-in this process. Shutdown or EOF on `Watch` reopens the stream with the same
-token; `session replaced`, expiry, and other `Unauthenticated` clear it and
-`Attach` again. Refresh does not wait for `Watch` to be up.
+Shutdown or EOF on `Watch` reopens the stream with the same token; expiry and
+other `Unauthenticated` clear it and `Attach` again. Refresh does not wait for
+`Watch` to be up. A renewal on `_` spends a per-peer bucket (burst 4, 4/min)
+before ECDSA instead of the anonymous floor.
 
-Table, barrier, membership publish, and the old-router fallback:
+Token layout, key derivation, and lifetime:
 [Peer RPC sessions under HA](./high-availability-architecture.md#peer-rpc-sessions-under-ha).
 
 ---
@@ -298,7 +300,8 @@ IP on versiond**.
 | Layer | Key | Default | When it fires |
 |---|---|---|---|
 | JSON POSTs after auth (`RateLimitMiddleware`) | recovered sender | 100 rps, burst 200 | Existing session on InferenceUrl. Chat still records `no_receipt_interrupted`. |
-| Attach process floor (`chargeAttach`) | this child | 10_000/min (`MaxSessions`) | **Before ECDSA.** Known-peer renewals are refunded. |
+| Attach process floor (`spendAttachToken`) | this child | 10_000/min (`MaxSessions`) | **Before ECDSA**, on an Attach without a live token. |
+| Attach renewal (`takeRenewal`) | peer in a live token | burst 4, 4/min | **Before ECDSA**, on an Attach that presents a live token. Off when limits are disabled. |
 | RPC peer weight | session address after Attach | **6000/min**, burst 10% (600) | Authenticated RPCs. Watch is a stream cap, not this bucket. |
 | Unknown-escrow first bind (child) | recovered gonka address | **2 unique ids/min**, process floor **300/min** | Cold `GetEscrow` on Attach / owner chat / height-sync seed |
 | Unknown-escrow first bind (versiond) | inbound **`X-Real-IP`** | **2 misses/min** | Same bind paths, after the child names a miss — next try never reaches the child |

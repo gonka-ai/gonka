@@ -29,23 +29,6 @@ func TestPingEndpointReturns204AndHeaders(t *testing.T) {
 	require.Empty(t, rec.Body.Bytes())
 }
 
-func TestHealthzWaitsForPeerRPCSessions(t *testing.T) {
-	lifecycle := newLifecycleState()
-	lifecycle.SetPeerRPCReady(func() bool { return false })
-	e := buildServer(lifecycle)
-
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
-	require.Equal(t, "peer rpc sessions loading", rec.Body.String())
-
-	lifecycle.SetPeerRPCReady(func() bool { return true })
-	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, "ok", rec.Body.String())
-}
-
 func TestHealthzUnchangedAlongsidePing(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)

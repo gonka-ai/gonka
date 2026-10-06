@@ -36,9 +36,6 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	e.GET("/metrics", echo.WrapHandler(observability.MetricsHandler()))
 	e.GET("/stats/memory", echo.WrapHandler(http.HandlerFunc(handleDebugMemory)))
 	e.GET("/healthz", func(c echo.Context) error {
-		if !lifecycle.peerSessionsReady() {
-			return c.String(http.StatusServiceUnavailable, "peer rpc sessions loading")
-		}
 		return c.String(http.StatusOK, "ok")
 	})
 	// Child-only clock contract. Gateway probes {RoutePrefix}/clock; versiond
@@ -158,36 +155,4 @@ type readyStatus struct {
 
 func readyResponse(status drainStatus, storeReady bool, progress session.RecoveryProgress) readyStatus {
 	return readyStatus{drainStatus: status, StorageReady: storeReady, RecoveryProgress: progress}
-}
-
-// registerPeerRPCMembers accepts the membership versiond forwarded from the
-// router. The admin listener is the private port versiond already uses for
-// /drain. No list leaves the child on the member-table barrier.
-func registerPeerRPCMembers(e *echo.Echo, set func(instanceID string, ids []string)) {
-	if e == nil {
-		return
-	}
-	e.PUT("/internal/peer-rpc/members", func(c echo.Context) error {
-		var body struct {
-			InstanceID string `json:"instance_id"`
-			Members    []struct {
-				ID string `json:"id"`
-			} `json:"members"`
-		}
-		dec := json.NewDecoder(http.MaxBytesReader(c.Response(), c.Request().Body, 64<<10))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&body); err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "invalid peer members")
-		}
-		ids := make([]string, 0, len(body.Members))
-		for _, member := range body.Members {
-			if member.ID != "" {
-				ids = append(ids, member.ID)
-			}
-		}
-		if set != nil {
-			set(body.InstanceID, ids)
-		}
-		return c.NoContent(http.StatusNoContent)
-	})
 }

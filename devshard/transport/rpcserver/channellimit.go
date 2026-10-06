@@ -20,6 +20,18 @@ import (
 const (
 	channelLimiterIdleFor    = time.Minute
 	channelLimiterEvictBatch = 32
+	// maxWatchesPerPeer bounds concurrent Watch streams for one peer. A
+	// peer may hold many live tokens, so the process cap alone lets one
+	// peer take every slot. Two covers a reopen that lands while the
+	// previous stream is still unwinding on the server.
+	maxWatchesPerPeer = 2
+	// renewalBurst and renewalPerMin size the per-peer bucket an Attach
+	// with a live token spends before VerifyAttach. A client refreshes at
+	// 75% of a two-minute TTL, so a healthy peer uses well under one per
+	// minute. Each renewal adds a token, so this bucket is what bounds the
+	// ECDSA work one peer can buy without the anonymous floor.
+	renewalBurst  = 4
+	renewalPerMin = 4
 )
 
 type rateLimitZone string
@@ -28,6 +40,7 @@ const (
 	zoneShared      rateLimitZone = "shared"
 	zoneStreams     rateLimitZone = "streams"
 	zoneAttachFloor rateLimitZone = "attach_floor"
+	zoneAttachRenew rateLimitZone = "attach_renew"
 )
 
 type tokenBucket struct {
@@ -87,15 +100,19 @@ type channelLimiter struct {
 
 	sharedMu sync.Mutex
 	shared   map[string]*tokenBucket
+	renewMu  sync.Mutex
+	renew    map[string]*tokenBucket
 	streamMu sync.Mutex
 	streams  map[string]peerStreamCount
 	// procStreams / procChats are child-wide Chat occupancy. Watch does
-	// not spend them. procWatches is capped at maxWatches (MaxSessions).
+	// not spend them. procWatches is capped at maxWatches (MaxSessions),
+	// and peerWatches at maxWatchesPerPeer for each peer.
 	// SETTINGS stays 4096.
 	procStreams int
 	procChats   int
 	procWatches int
 	maxWatches  int
+	peerWatches map[string]int
 	// evictVisited is how many keys the last at-cap idle walk inspected.
 	evictVisited int
 
@@ -115,11 +132,13 @@ func newChannelLimiter(cfg transport.ChannelLimitConfig, now func() time.Time) *
 		now = time.Now
 	}
 	return &channelLimiter{
-		now:        now,
-		cfg:        cfg.WithDefaults(),
-		shared:     make(map[string]*tokenBucket),
-		streams:    make(map[string]peerStreamCount),
-		maxWatches: defaultMaxSessions,
+		now:         now,
+		cfg:         cfg.WithDefaults(),
+		shared:      make(map[string]*tokenBucket),
+		renew:       make(map[string]*tokenBucket),
+		streams:     make(map[string]peerStreamCount),
+		maxWatches:  defaultMaxSessions,
+		peerWatches: make(map[string]int),
 	}
 }
 
@@ -179,12 +198,29 @@ func (l *channelLimiter) charge(ctx context.Context, peer, procedure string) err
 	return err
 }
 
+// takeRenewal charges one Attach that presented a live token for peer.
+// peer comes from a valid HMAC tag, so it is not caller-chosen.
+func (l *channelLimiter) takeRenewal(ctx context.Context, peer string) error {
+	if l == nil || l.cfg.Disabled || peer == "" {
+		return nil
+	}
+	ok, retry := l.take(&l.renewMu, l.renew, peer, renewalPerMin, renewalBurst, l.now(), 1, false)
+	if ok {
+		return nil
+	}
+	l.warnBanned(ctx, rpcpbconnect.PeerAuthServiceAttachProcedure, zoneAttachRenew, peer)
+	if retry <= 0 {
+		retry = time.Second
+	}
+	return rateLimitExhausted("too many attach renewals", retry)
+}
+
 func (l *channelLimiter) acquireStream(ctx context.Context, peer, procedure string) error {
 	if l == nil || l.cfg.Disabled || peer == "" {
 		return nil
 	}
 	if isWatchPath(procedure) {
-		return l.acquireWatch(ctx, procedure)
+		return l.acquireWatch(ctx, peer, procedure)
 	}
 	perPeerUnlimited := transport.IsUnlimitedRPCLimit(l.cfg.EffectiveMaxStreams())
 	procStreams, procChats, procUnlimited := l.cfg.ProcessStreamCaps()
@@ -241,16 +277,22 @@ func (l *channelLimiter) acquireStream(ctx context.Context, peer, procedure stri
 	return nil
 }
 
-// acquireWatch counts a Watch against MaxSessions. It does not take a
-// per-peer or process stream slot, so a full Chat roster cannot refuse
+// acquireWatch counts a Watch against maxWatchesPerPeer and MaxSessions.
+// It does not take a Chat stream slot, so a full Chat roster cannot refuse
 // Watch and a full Watch roster cannot refuse Chat.
-func (l *channelLimiter) acquireWatch(ctx context.Context, procedure string) error {
+func (l *channelLimiter) acquireWatch(ctx context.Context, peer, procedure string) error {
 	l.streamMu.Lock()
+	if l.peerWatches[peer] >= maxWatchesPerPeer {
+		l.streamMu.Unlock()
+		l.warnBanned(ctx, procedure, zoneStreams, peer)
+		return rateLimitExhausted("too many concurrent watches", time.Second)
+	}
 	if l.maxWatches > 0 && l.procWatches >= l.maxWatches {
 		l.streamMu.Unlock()
 		l.warnBanned(ctx, procedure, zoneStreams, "process")
 		return rateLimitExhausted("too many concurrent watches", time.Second)
 	}
+	l.peerWatches[peer]++
 	l.procWatches++
 	l.streamMu.Unlock()
 	return nil
@@ -264,6 +306,11 @@ func (l *channelLimiter) releaseStream(peer, procedure string) {
 		l.streamMu.Lock()
 		if l.procWatches > 0 {
 			l.procWatches--
+		}
+		if n := l.peerWatches[peer]; n <= 1 {
+			delete(l.peerWatches, peer)
+		} else {
+			l.peerWatches[peer] = n - 1
 		}
 		l.streamMu.Unlock()
 		return

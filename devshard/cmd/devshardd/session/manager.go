@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,7 +20,6 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"common/logging"
-	"common/storage/mode"
 	"common/storage/payloads"
 	"common/utils"
 	validationpkg "common/validation"
@@ -36,7 +34,6 @@ import (
 	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
-	"devshard/internal/boolvalue"
 	"devshard/observability"
 	"devshard/runtimeparams"
 	devshardserver "devshard/server"
@@ -118,15 +115,9 @@ type HostManager struct {
 	// scheduler without racing the chain-events goroutine.
 	cometLiveness func(bool)
 
-	rpcServerEnabled bool
-	rpcAuth          atomic.Pointer[rpcserver.PeerAuthHandler]
-	rpcAuthOnce      sync.Once
-	rpcAuthClosed    atomic.Bool
-
-	peerPushMu   sync.Mutex
-	peerPushSet  bool
-	peerInstance string
-	peerMembers  []string
+	rpcAuth       atomic.Pointer[rpcserver.PeerAuthHandler]
+	rpcAuthOnce   sync.Once
+	rpcAuthClosed atomic.Bool
 }
 
 const (
@@ -412,10 +403,6 @@ func NewHostManager(
 // SetAvailabilityProvider gates completion requests on devshard_requests_enabled.
 func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider) {
 	m.availability = p
-}
-
-func (m *HostManager) SetRPCServerEnabled(enabled bool) {
-	m.rpcServerEnabled = enabled
 }
 
 func (m *HostManager) hostRPCAddress() string {
@@ -1549,22 +1536,20 @@ func (m *HostManager) Register(g *echo.Group) {
 	g.GET("/stats/shards", m.handleStatsShards)
 	g.GET("/stats/shards/:escrow_id", m.handleStatsShard)
 	g.GET("/stats/rpc", m.handleStatsRPC)
+	if m.hostRPCAddress() == "" {
+		panic("devshard: peer RPC requires a host address (signer or recorder)")
+	}
 	var opts []devshardserver.RouteOption
-	if m.rpcServerEnabled {
-		if m.hostRPCAddress() == "" {
-			panic("devshard: DEVSHARD_RPC_SERVER_ENABLED requires a host address (signer or recorder)")
-		}
-		if auth := m.peerAuthHandler(); auth != nil {
-			lookup := hostRPCLookup{m: m}
-			payloads := rpcserver.NewPayloadHandler(lookup, m.ServeRPCGetPayload)
-			payloads.SetUnboundGetPayload(m.ServeUnboundGetPayload)
-			opts = append(opts, devshardserver.WithPeerRPC(
-				auth,
-				rpcserver.NewSessionHandler(lookup),
-				rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
-				rpcserver.WithPayloadService(payloads),
-			))
-		}
+	if auth := m.peerAuthHandler(); auth != nil {
+		lookup := hostRPCLookup{m: m}
+		payloads := rpcserver.NewPayloadHandler(lookup, m.ServeRPCGetPayload)
+		payloads.SetUnboundGetPayload(m.ServeUnboundGetPayload)
+		opts = append(opts, devshardserver.WithPeerRPC(
+			auth,
+			rpcserver.NewSessionHandler(lookup),
+			rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
+			rpcserver.WithPayloadService(payloads),
+		))
 	}
 	devshardserver.RegisterLazySessionRoutes(g, m, m, m, opts...)
 }
@@ -1579,6 +1564,16 @@ func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
 			slog.Error("devshardd: peer RPC host address is empty; refusing to construct handler")
 			return
 		}
+		if m.signer == nil {
+			slog.Error("devshardd: host signer is required to derive the peer session key; refusing peer RPC")
+			return
+		}
+		version := strings.TrimSpace(m.boundVersion)
+		sessionKey, err := m.signer.DerivePeerSessionKey(hostAddr, version, rpcserver.SessionKeyID)
+		if err != nil {
+			slog.Error("devshardd: peer session key", "err", err)
+			return
+		}
 		limits := transport.LoadChannelLimitConfig()
 		h := rpcserver.NewPeerAuthHandler(m.verifier, hostAddr, rpcserver.PeerAuthConfig{
 			Allow: m.allowRPCPeer,
@@ -1586,86 +1581,18 @@ func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
 				_, ok := m.existingServer(id)
 				return ok
 			},
-			Limits: &limits,
+			Limits:     &limits,
+			SessionKey: sessionKey,
+			Version:    version,
+			KeyID:      rpcserver.SessionKeyID,
 		})
-		pool := storage.PeerRPCPool(m.store)
-		if peerRPCSharedEnabled(pool != nil, m.boundVersion) {
-			h.EnableShared(rpcserver.OpenSharedSessions(pool, rpcserver.SharedConfig{
-				HostAddress: hostAddr,
-				Version:     strings.TrimSpace(m.boundVersion),
-			}))
-			slog.Info("devshardd: peer rpc sessions are shared", "version", m.boundVersion)
-		} else if pool == nil && peerRPCHARequested() {
-			slog.Error("devshardd: peer rpc sessions stayed process-local",
-				"version", m.boundVersion,
-				"store", fmt.Sprintf("%T", m.store),
-			)
-		}
-		h.StartSweeper()
 		m.rpcAuth.Store(h)
-		m.applyStoredPeerPush(h)
 	})
 	return m.rpcAuth.Load()
 }
 
-// peerRPCSharedEnabled is the in-memory versus shared switch. One process
-// keeps the memory map. GONKA_HA means another devshardd of this version can
-// receive the next call, so the token has to be in Postgres.
-func peerRPCSharedEnabled(hasPool bool, version string) bool {
-	if !hasPool || strings.TrimSpace(version) == "" {
-		return false
-	}
-	return peerRPCHARequested()
-}
-
-func peerRPCHARequested() bool {
-	ha, err := boolvalue.Parse(os.Getenv(mode.EnvHADeployment))
-	return err == nil && ha
-}
-
-// SetPeerRPCMembers installs the membership versiond forwarded from the
-// router. A process that never receives a list keeps the member-table barrier.
-func (m *HostManager) SetPeerRPCMembers(instanceID string, ids []string) {
-	if m == nil {
-		return
-	}
-	cp := append([]string(nil), ids...)
-	m.peerPushMu.Lock()
-	m.peerPushSet = true
-	m.peerInstance = instanceID
-	m.peerMembers = cp
-	m.peerPushMu.Unlock()
-	if h := m.rpcAuth.Load(); h != nil {
-		h.SetPublishedBarrier(instanceID, cp)
-	}
-}
-
-func (m *HostManager) applyStoredPeerPush(h *rpcserver.PeerAuthHandler) {
-	if m == nil || h == nil {
-		return
-	}
-	m.peerPushMu.Lock()
-	defer m.peerPushMu.Unlock()
-	if !m.peerPushSet {
-		return
-	}
-	h.SetPublishedBarrier(m.peerInstance, append([]string(nil), m.peerMembers...))
-}
-
-// PeerRPCSessionsReady is true unless this process is still loading the
-// shared peer-session table. SQLite and RPC-off stay ready.
-func (m *HostManager) PeerRPCSessionsReady() bool {
-	if m == nil || !m.rpcServerEnabled {
-		return true
-	}
-	h := m.rpcAuth.Load()
-	if h == nil {
-		return true
-	}
-	return h.SessionsReady()
-}
-
-// ClosePeerRPC stops the host-level session sweeper. Safe if RPC was never mounted.
+// ClosePeerRPC closes the peer auth handler and ends open Watches.
+// Safe if RPC was never mounted.
 func (m *HostManager) ClosePeerRPC() {
 	m.rpcAuthClosed.Store(true)
 	m.rpcAuthOnce.Do(func() {})

@@ -237,7 +237,7 @@ func admitSession(auth *PeerAuthHandler, ctx context.Context, header http.Header
 		observability.IncPeerRPCGate(gateReasonMissing)
 		return ctx, handshakeRequired()
 	}
-	if len(enc) > maxAttachNonceBytes*2 {
+	if len(enc) > maxSessionTokenBytes*2 {
 		observability.IncPeerRPCGate(gateReasonOversized)
 		return ctx, invalidSessionToken()
 	}
@@ -256,7 +256,6 @@ func admitSession(auth *PeerAuthHandler, ctx context.Context, header http.Header
 		return ctx, invalidSessionToken()
 	}
 	observability.IncPeerRPCGate(gateReasonAdmitted)
-	auth.noteAdmit(raw)
 	ctx = withPeer(ctx, peer)
 	if stashToken {
 		// Watch is the only reader of TokenFromContext.

@@ -77,10 +77,9 @@ var lifecyclePhaseTable = map[lifecyclePhase]lifecyclePhaseSpec{
 }
 
 type lifecycleState struct {
-	mu           sync.Mutex
-	phase        lifecyclePhase
-	inflight     int64
-	peerRPCReady func() bool
+	mu       sync.Mutex
+	phase    lifecyclePhase
+	inflight int64
 }
 
 type drainStatus struct {
@@ -92,29 +91,6 @@ type drainStatus struct {
 func newLifecycleState() *lifecycleState {
 	observability.SetLifecycleInflight(0)
 	return &lifecycleState{phase: lifecyclePhaseStarting}
-}
-
-// SetPeerRPCReady gates /healthz on the shared session load. Nil means ready.
-func (s *lifecycleState) SetPeerRPCReady(fn func() bool) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	s.peerRPCReady = fn
-	s.mu.Unlock()
-}
-
-func (s *lifecycleState) peerSessionsReady() bool {
-	if s == nil {
-		return true
-	}
-	s.mu.Lock()
-	fn := s.peerRPCReady
-	s.mu.Unlock()
-	if fn == nil {
-		return true
-	}
-	return fn()
 }
 
 func (s *lifecycleState) SetReady(ready bool) {

@@ -46,10 +46,7 @@ type runtimeConfig struct {
 	ValidationLeaseTTL      time.Duration
 	VoteFalseOnFetchFailure bool
 	ShutdownGrace           time.Duration
-	// RPCServerEnabled mounts Connect handlers under /sessions/:id/rpc/*.
-	// Env: DEVSHARD_RPC_SERVER_ENABLED, default true (phase 7).
-	RPCServerEnabled bool
-	Node             ChainNodeConfig
+	Node                    ChainNodeConfig
 }
 
 // ChainNodeConfig holds the chain connectivity and signing identity settings
@@ -165,7 +162,6 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		ValidationLeaseTTL:          leaseTTL,
 		VoteFalseOnFetchFailure:     envBoolOr("DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE", true),
 		ShutdownGrace:               shutdownGrace,
-		RPCServerEnabled:            envBoolOr("DEVSHARD_RPC_SERVER_ENABLED", true),
 		Node:                        loadNodeConfigFromEnv(),
 	}, nil
 }

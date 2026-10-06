@@ -19,7 +19,6 @@ import (
 	"versioned/internal/health"
 	"versioned/internal/host"
 	"versioned/internal/oracle"
-	"versioned/internal/peerrpcmembers"
 	"versioned/internal/process"
 	"versioned/internal/proxy"
 	"versioned/internal/sessionversion"
@@ -74,29 +73,6 @@ func run(ctx context.Context) error {
 
 	listenAddr := config.ListenAddr()
 	public := publicHandler(mgr, hostLifecycle, mgr, proxyOpts...)
-	if token := os.Getenv("VERSIOND_CONTROL_TOKEN"); token != "" {
-		store := &peerrpcmembers.Store{}
-		control := peerrpcmembers.Handler(token, store, func(snap peerrpcmembers.Snapshot) {
-			targets := mgr.PeerMemberTargets()
-			go func() {
-				forwardTargets := make([]peerrpcmembers.Target, len(targets))
-				for i, target := range targets {
-					forwardTargets[i] = peerrpcmembers.Target{Version: target.Version, AdminURL: target.AdminURL}
-				}
-				if err := peerrpcmembers.Forward(context.Background(), nil, snap.Members, snap.RecipientID, forwardTargets); err != nil {
-					slog.Warn("peer rpc membership forward", "error", err)
-				}
-			}()
-		})
-		next := public
-		public = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == peerrpcmembers.Path {
-				control.ServeHTTP(w, r)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
 	srv := &http.Server{
 		Addr:    listenAddr,
 		Handler: public,

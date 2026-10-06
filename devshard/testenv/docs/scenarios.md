@@ -95,7 +95,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Height-sync host claims** | Solo oracle overlay: lag / future `\|Δ\|>D` / fabricated `H+1`; chat 200; detection logs + spread | `TestContainerE2E_HeightSync_HostLowerHeightAutoAligns`, `…HostFutureHeightBeyondD`, `…HostFabricatedHashInsideD` |
 | **Baseline smoke** | Pinned 0.2.15-v5 versiond/router, this child, RPC off, no proxy | `TestBaselineSmoke` |
 | **Peer RPC chat** | Gateway chat over Connect HTTP/1.1; child counts Attach and Chat | `TestPeerRPCChat` |
-| **Peer RPC HA session** | Two escrows hashed to different children both seed and chat; shared session, `GONKA_HA` | `TestPeerRPCHASessionSpread` |
+| **Peer RPC HA session** | Two escrows hashed to different children both seed and chat; one stateless token admits on both | `TestPeerRPCHASessionSpread` |
 | **Mixed fleet** | versiond-0 on 0.2.15-v5, versiond-1 and router on this tree, RPC on, both `:8080` HTTP/1.1 | `TestMixedFleetNoProxy` |
 
 Source files under `devshard/testenv/citest/` use the same behavior-oriented
@@ -139,7 +139,7 @@ HTTP/2 and native gRPC are not in this grid. Checklist:
 
 | Column | versiond + router | Client |
 |--------|-------------------|--------|
-| **B1 JSON** | `devshard-versiond:0.2.15-v5` and `devshard-versiond-router:0.2.15-v5` | JSON (`DEVSHARD_RPC_SERVER_ENABLED=false`) |
+| **B1 JSON** | `devshard-versiond:0.2.15-v5` and `devshard-versiond-router:0.2.15-v5` | JSON ops GETs (Connect stays mounted) |
 | **B1+RPC** | same pin | Connect HTTP/1.1 on `versiond-router:8080` |
 | **N0 JSON** | this tree (`:latest`) | JSON |
 
@@ -150,7 +150,6 @@ HTTP/1.1 against those images.
 RPC-on cells set:
 
 ```text
-DEVSHARD_RPC_SERVER_ENABLED=true
 DEVSHARD_RPC_ENDPOINTS=signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat
 ```
 
@@ -158,7 +157,8 @@ DEVSHARD_RPC_ENDPOINTS=signatures,mempool,diffs,gossip,repair,height-sync,verify
 |----------|------------------|------|-----|
 | **Baseline smoke** | Old hop + this child boots; router `/healthz`; gateway chat; record `GET /devshard/stats/rpc` | `TestBaselineSmoke` | `make citest-baseline-smoke` |
 | **Peer RPC chat** | Non-stream and SSE chat; child `Attach` and `Chat` counters | `TestPeerRPCChat` | `make citest-peerrpc-chat` |
-| **Peer RPC HA session** | Height seed and chat on two escrows that hash to different children. The child shares the session only when `GONKA_HA` is set | `TestPeerRPCHASessionSpread` | `make citest-peerrpc-ha-session` |
+| **Peer RPC HA session** | Height seed and chat on two escrows that hash to different children. Every child checks the same HMAC token with its derived key | `TestPeerRPCHASessionSpread` | `make citest-peerrpc-ha-session` |
+| **HAProxy idle h2** | On `haproxy-rpc.cfg`, PING alone does not hold an idle h2 connection past `timeout http-keep-alive`; the client redials. An open Watch-style stream holds the one TCP | `TestProxyHAProxy_H2IdleConnection` | `make citest-proxy-h2-idle` |
 | **Mixed fleet** | versiond-0 pinned to 0.2.15-v5, versiond-1 and the router this tree; Chat+Attach; both images' `/{version}/healthz` | `TestMixedFleetNoProxy` | `make citest-mixed-fleet` |
 
 Height-sync and payload withholding use `citest-height-sync` and

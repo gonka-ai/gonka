@@ -330,7 +330,6 @@ func TestPeerConn_H2RefreshTransportMissCancelsWatch(t *testing.T) {
 	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{
 		Heartbeat:  50 * time.Millisecond,
 		SessionTTL: 4 * time.Second,
-		TokenGrace: 5 * time.Second,
 	})
 	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(nil))
 	var attachN atomic.Int32
@@ -381,7 +380,6 @@ func TestPeerConn_RefreshAttachTimeoutDoesNotPinHTTP11(t *testing.T) {
 	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{
 		Heartbeat:  50 * time.Millisecond,
 		SessionTTL: 20 * time.Second,
-		TokenGrace: 5 * time.Second,
 	})
 	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(nil))
 	var attachN atomic.Int32

@@ -96,7 +96,6 @@ var bindAttachSeq atomic.Uint64
 
 func newBindRPC(t *testing.T, mgr *HostManager) *bindRPC {
 	t.Helper()
-	mgr.SetRPCServerEnabled(true)
 	e := echo.New()
 	mgr.Register(e.Group(""))
 	srv := httptest.NewServer(e)

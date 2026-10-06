@@ -109,15 +109,6 @@ func TestHADiffPersistMetricsIncrement(t *testing.T) {
 		t.Fatalf("reconcile_fast_forward delta want 1")
 	}
 
-	SetPeerRPCSessionCounts(3, 2)
-	if got := testutil.ToFloat64(peerRPCSessions); got != 3 {
-		t.Fatalf("peer_rpc_sessions = %v, want 3", got)
-	}
-	if got := testutil.ToFloat64(peerRPCPeers); got != 2 {
-		t.Fatalf("peer_rpc_peers = %v, want 2", got)
-	}
-	SetPeerRPCSessionCounts(0, 0)
-
 	beforeAttach := testutil.ToFloat64(peerRPCAttachTotal.WithLabelValues("ok"))
 	IncPeerRPCAttach("ok")
 	if testutil.ToFloat64(peerRPCAttachTotal.WithLabelValues("ok"))-beforeAttach != 1 {

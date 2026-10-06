@@ -405,9 +405,8 @@ func TestChannelLimit_ConcurrentStreams(t *testing.T) {
 	t.Cleanup(cancel2)
 	second, err := e.authc.Watch(ctx2, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), e.token))
 	require.NoError(t, err)
-	require.False(t, second.Receive())
-	require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(second.Err()))
-	require.ErrorContains(t, second.Err(), "watch already active")
+	require.True(t, second.Receive(), "a second Watch on the same token stays open: %v", second.Err())
+	cancel2()
 	_ = second.Close()
 
 	cancel()
@@ -629,6 +628,65 @@ func TestChannelLimit_WatchCapIsSeparateFromStreams(t *testing.T) {
 
 	auth := newTestAuth(PeerAuthConfig{MaxSessions: 2})
 	require.Equal(t, 2, auth.limiter.maxWatches)
+}
+
+func TestChannelLimit_WatchCapPerPeer(t *testing.T) {
+	l := newChannelLimiter(transport.ChannelLimitConfig{
+		MaxStreams:     256,
+		MessagesPerMin: 6000,
+		MessagesBurst:  600,
+	}, time.Now)
+	ctx := context.Background()
+	watch := rpcpbconnect.PeerAuthServiceWatchProcedure
+
+	for i := 0; i < maxWatchesPerPeer; i++ {
+		require.NoError(t, l.acquireStream(ctx, "a", watch))
+	}
+	requireResourceExhausted(t, l.acquireStream(ctx, "a", watch), "too many concurrent watches")
+	require.NoError(t, l.acquireStream(ctx, "b", watch), "another peer keeps its own Watch slots")
+	require.Equal(t, maxWatchesPerPeer+1, l.procWatches, "a refused Watch must not spend the process cap")
+
+	l.releaseStream("a", watch)
+	require.NoError(t, l.acquireStream(ctx, "a", watch))
+	for i := 0; i < maxWatchesPerPeer; i++ {
+		l.releaseStream("a", watch)
+	}
+	l.releaseStream("b", watch)
+	require.Empty(t, l.peerWatches, "released peers must not stay in the map")
+	require.Zero(t, l.procWatches)
+}
+
+func TestChannelLimit_WatchCapPerPeerAcrossTokens(t *testing.T) {
+	signer := devtest.MustGenerateKey(t)
+	auth := newTestAuth(PeerAuthConfig{Heartbeat: time.Hour})
+	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
+	t.Cleanup(srv.Close)
+	client := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	for i := 0; i < maxWatchesPerPeer; i++ {
+		token := attach(t, client, signer, []byte(fmt.Sprintf("watch-cap-peer-nonce-%06d", i))).SessionToken
+		stream, err := client.Watch(ctx, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), token))
+		require.NoError(t, err)
+		require.True(t, stream.Receive(), stream.Err())
+		t.Cleanup(func() { _ = stream.Close() })
+	}
+
+	token := attach(t, client, signer, []byte("watch-cap-peer-nonce-extra")).SessionToken
+	extra, err := client.Watch(ctx, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), token))
+	require.NoError(t, err)
+	require.False(t, extra.Receive(), "a fresh token must not buy another Watch slot")
+	requireResourceExhausted(t, extra.Err(), "too many concurrent watches")
+	_ = extra.Close()
+
+	other := devtest.MustGenerateKey(t)
+	otherToken := attach(t, client, other, []byte("watch-cap-other-nonce-0001")).SessionToken
+	otherStream, err := client.Watch(ctx, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), otherToken))
+	require.NoError(t, err)
+	require.True(t, otherStream.Receive(), otherStream.Err())
+	_ = otherStream.Close()
+	cancel()
 }
 
 func TestChannelLimit_ProcessStreamCapRecordsStreamsZone(t *testing.T) {

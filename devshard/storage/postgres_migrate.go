@@ -243,6 +243,8 @@ CREATE TABLE IF NOT EXISTS devshard_validation_credits (
     ON devshard_validation_credits (participant, model, expires_at, id)`,
 		},
 	},
+	// 18 and 19 are unused: peer RPC session tokens are stateless. They stay
+	// so migration IDs are stable; the DDL check forbids a DROP.
 	{
 		ID:   18,
 		Name: "devshard_peer_rpc_sessions",

@@ -110,9 +110,6 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 
 func requireOverlayRPC(t *testing.T) {
 	t.Helper()
-	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_SERVER_ENABLED")) != "true" {
-		t.Fatal("set DEVSHARD_RPC_SERVER_ENABLED=true (make citest-peerrpc-overlay)")
-	}
 	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_PORT")) == "" {
 		t.Fatal("set DEVSHARD_RPC_H2_PORT (make citest-peerrpc-overlay)")
 	}

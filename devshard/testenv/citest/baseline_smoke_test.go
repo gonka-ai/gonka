@@ -35,7 +35,6 @@ const (
 func TestBaselineSmoke(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	requireBaselinePin(t)
-	requireRPCOff(t)
 	harness.RequireDocker(t)
 
 	stack, cfg, eps := harness.BootStack(t, "citest-baseline-smoke-*")
@@ -53,7 +52,6 @@ func TestBaselineSmoke(t *testing.T) {
 	proxyUp, err := stack.ServiceRunning("proxy")
 	require.NoError(t, err)
 	require.False(t, proxyUp, "proxy service must not be running")
-	requireVersiondRPCOn(t, stack)
 
 	version := cfg.Versiond.VersionName
 	logs := waitBaselineChildLogs(t, stack, version)
@@ -101,15 +99,6 @@ func requireBaselinePin(t *testing.T) {
 	require.Equal(t, baselineVersiondRouterImage, router, harness.EnvVersiondRouterImage)
 }
 
-func requireRPCOff(t *testing.T) {
-	t.Helper()
-	switch strings.TrimSpace(os.Getenv("DEVSHARD_RPC_SERVER_ENABLED")) {
-	case "", "true", "1":
-	default:
-		t.Skipf("phase 7 smoke needs the RPC server; DEVSHARD_RPC_SERVER_ENABLED=%q", os.Getenv("DEVSHARD_RPC_SERVER_ENABLED"))
-	}
-}
-
 func requirePinnedCompose(t *testing.T, stack *harness.Stack) {
 	t.Helper()
 	body, err := os.ReadFile(stack.ComposePath)
@@ -119,15 +108,7 @@ func requirePinnedCompose(t *testing.T, stack *harness.Stack) {
 	require.Contains(t, text, "image: "+baselineVersiondRouterImage)
 	require.NotContains(t, text, "image: devshard-versiond:latest")
 	require.NotContains(t, text, "image: devshard-versiond-router:latest")
-	require.Contains(t, text, "DEVSHARD_RPC_SERVER_ENABLED: ${DEVSHARD_RPC_SERVER_ENABLED:-true}")
 	require.NotContains(t, text, "docker-compose.proxy.yml")
-}
-
-func requireVersiondRPCOn(t *testing.T, stack *harness.Stack) {
-	t.Helper()
-	out, err := stack.ComposeExecOutput("versiond-0", "printenv", "DEVSHARD_RPC_SERVER_ENABLED")
-	require.NoError(t, err)
-	require.Equal(t, "true", strings.TrimSpace(out))
 }
 
 func waitBaselineChildLogs(t *testing.T, stack *harness.Stack, version string) string {

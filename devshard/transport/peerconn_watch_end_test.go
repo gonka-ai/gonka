@@ -16,15 +16,15 @@ import (
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
-// beatThenReplacedAuth sends two beats and then ends Watch with session
-// replaced, the order a stolen Attach produces on a live stream.
-type beatThenReplacedAuth struct{}
+// beatThenExpiredAuth sends two beats and then ends Watch with session
+// expired, the order a token reaching its expiry produces on a live stream.
+type beatThenExpiredAuth struct{}
 
-func (beatThenReplacedAuth) Attach(context.Context, *connect.Request[rpcpb.AttachRequest]) (*connect.Response[rpcpb.AttachResponse], error) {
+func (beatThenExpiredAuth) Attach(context.Context, *connect.Request[rpcpb.AttachRequest]) (*connect.Response[rpcpb.AttachResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("attach"))
 }
 
-func (beatThenReplacedAuth) Watch(_ context.Context, _ *connect.Request[rpcpb.WatchRequest], stream *connect.ServerStream[rpcpb.SessionEvent]) error {
+func (beatThenExpiredAuth) Watch(_ context.Context, _ *connect.Request[rpcpb.WatchRequest], stream *connect.ServerStream[rpcpb.SessionEvent]) error {
 	for i := 0; i < 2; i++ {
 		if err := stream.Send(&rpcpb.SessionEvent{
 			Event: &rpcpb.SessionEvent_Beat{Beat: &rpcpb.Heartbeat{UnixSeconds: time.Now().Unix()}},
@@ -32,11 +32,11 @@ func (beatThenReplacedAuth) Watch(_ context.Context, _ *connect.Request[rpcpb.Wa
 			return err
 		}
 	}
-	return connect.NewError(connect.CodeUnauthenticated, errors.New("session replaced"))
+	return connect.NewError(connect.CodeUnauthenticated, errors.New("session expired"))
 }
 
 func TestWatch_EndBehindQueuedBeatIsDelivered(t *testing.T) {
-	path, h := rpcpbconnect.NewPeerAuthServiceHandler(beatThenReplacedAuth{})
+	path, h := rpcpbconnect.NewPeerAuthServiceHandler(beatThenExpiredAuth{})
 	mux := http.NewServeMux()
 	mux.Handle(path, h)
 	srv := httptest.NewServer(mux)
@@ -69,8 +69,9 @@ func TestWatch_EndBehindQueuedBeatIsDelivered(t *testing.T) {
 
 	select {
 	case err := <-done:
-		require.True(t, peerSessionReplaced(err), "watch returned %v", err)
+		require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err), "watch returned %v", err)
+		require.Contains(t, err.Error(), "session expired")
 	case <-time.After(2 * time.Second):
-		t.Fatal("Watch lost session replaced behind a queued beat and waits for WatchStale")
+		t.Fatal("Watch lost session expired behind a queued beat and waits for WatchStale")
 	}
 }

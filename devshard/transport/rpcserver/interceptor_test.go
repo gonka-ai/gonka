@@ -3,7 +3,6 @@ package rpcserver
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -118,7 +117,7 @@ func TestSessionInterceptor_ExpiredTokenDropped(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte{9}, resp.Msg.Signatures[0])
 
-	clock.Advance(31 * time.Second)
+	clock.Advance(30*time.Second + sessionTokenSkew + time.Second)
 	_, err = client.GetSignatures(context.Background(), withSession(
 		connect.NewRequest(&rpcpb.GetSignaturesRequest{Nonce: 1}), attached.SessionToken))
 	requireHandshakeRequired(t, err)
@@ -197,11 +196,11 @@ func TestAdmitSession_LookupUsesRawToken(t *testing.T) {
 	nonce := []byte{0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0x00}
 	signer := testutil.MustGenerateKey(t)
 	auth := newTestAuth(PeerAuthConfig{})
-	_, err := attachDirect(t, auth, signer, nonce)
+	attached, err := attachDirect(t, auth, signer, nonce)
 	require.NoError(t, err)
 
 	header := make(http.Header)
-	SetSessionHeader(header, nonce)
+	SetSessionHeader(header, attached.SessionToken)
 	ctx, err := admitSession(auth, context.Background(), header, false)
 	require.NoError(t, err)
 	require.Equal(t, signer.Address(), PeerFromContext(ctx))
@@ -209,18 +208,13 @@ func TestAdmitSession_LookupUsesRawToken(t *testing.T) {
 
 	ctx, err = admitSession(auth, context.Background(), header, true)
 	require.NoError(t, err)
-	require.Equal(t, nonce, TokenFromContext(ctx))
-
-	auth.mu.RLock()
-	_, hexKey := auth.sessions[hex.EncodeToString(nonce)]
-	auth.mu.RUnlock()
-	require.False(t, hexKey)
+	require.Equal(t, attached.SessionToken, TokenFromContext(ctx))
 }
 
 // handshakeGate admits before Connect reads the body; the interceptor must not
-// repeat that work. A successful GetSignatures reads Now four times:
-// inspectToken, noteAdmit (eviction stamp), the channel limiter, and traffic
-// accounting. Nothing else on GetSignatures should.
+// repeat that work. A successful GetSignatures reads Now three times:
+// inspectToken, the channel limiter, and traffic accounting.
+// Nothing else on GetSignatures should.
 func TestSessionInterceptor_AdmitsOncePerRPC(t *testing.T) {
 	var nowCalls atomic.Int64
 	auth := newTestAuth(PeerAuthConfig{Now: func() time.Time {
@@ -237,7 +231,7 @@ func TestSessionInterceptor_AdmitsOncePerRPC(t *testing.T) {
 	_, err := client.GetSignatures(context.Background(), withSession(
 		connect.NewRequest(&rpcpb.GetSignaturesRequest{Nonce: 1}), attached.SessionToken))
 	require.NoError(t, err)
-	require.EqualValues(t, 4, nowCalls.Load(), "handshakeGate admits once: inspectToken, noteAdmit, limiter, and traffic; the interceptor must not look the token up again")
+	require.EqualValues(t, 3, nowCalls.Load(), "handshakeGate admits once: inspectToken, limiter, and traffic; the interceptor must not look the token up again")
 }
 
 // The interceptor stays a complete gate on a mux built without handshakeGate.
@@ -355,7 +349,7 @@ func TestHandshakeGate_InvalidTokenSetsDevshardError(t *testing.T) {
 func TestSessionInterceptor_OversizedTokenDropped(t *testing.T) {
 	auth := newTestAuth(PeerAuthConfig{})
 	header := make(http.Header)
-	header.Set(SessionHeader, strings.Repeat("aa", maxAttachNonceBytes+1))
+	header.Set(SessionHeader, strings.Repeat("aa", maxSessionTokenBytes+1))
 	_, err := (&sessionInterceptor{auth: auth}).admit(
 		context.Background(),
 		rpcpbconnect.SessionServiceGetSignaturesProcedure,
@@ -385,7 +379,7 @@ func TestAdmitSession_CountsGateReasons(t *testing.T) {
 
 	delta(gateReasonOversized, func() {
 		header := make(http.Header)
-		header.Set(SessionHeader, strings.Repeat("aa", maxAttachNonceBytes+1))
+		header.Set(SessionHeader, strings.Repeat("aa", maxSessionTokenBytes+1))
 		_, err := admitSession(auth, context.Background(), header, false)
 		requireHandshakeRequired(t, err)
 	})
@@ -406,7 +400,7 @@ func TestAdmitSession_CountsGateReasons(t *testing.T) {
 		require.Empty(t, TokenFromContext(ctx))
 	})
 
-	clock.Advance(31 * time.Second)
+	clock.Advance(30*time.Second + sessionTokenSkew + time.Second)
 	delta(gateReasonExpired, func() {
 		header := make(http.Header)
 		SetSessionHeader(header, attached.SessionToken)

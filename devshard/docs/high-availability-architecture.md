@@ -434,43 +434,38 @@ peer's calls are different keys:
 | `Watch` and live token renewal | `_` (`HostRPCEscrowID`) | whichever child `_` hashes to |
 | Later data call | that call's escrow | the child that owns that escrow |
 
-The token is one per peer per host and version, not per escrow. Handshake
+A token is bound to the peer, host, and version, not to an escrow. Handshake
 and renewal are in
 [grpc-transport-connection.md](./grpc-transport-connection.md#handshake-on-that-path).
-A map that exists only inside the child that served `Attach` rejects every
-call the hash sends elsewhere. JSON has no such token: one
+A token that only the child that served `Attach` can check would be rejected
+on every call the hash sends elsewhere. JSON has no such token: one
 `POST /sessions/{id}/height-sync` is handled by the child that owns that
 escrow.
 
-The shared store is on only when `GONKA_HA` is true, the child has a Postgres
-pool, and `boundVersion` is set (`peerRPCSharedEnabled` in
-`devshard/cmd/devshardd/session/manager.go`). versiond copies `GONKA_HA` into
-the child for a version that is not listed in `VERSIOND_NON_HA_VERSIONS`.
-SQLite, and `GONKA_HA` unset or false, keep the in-memory map. Sessions are
-not shared across versions or across participants. The escrow hash is
-unchanged.
+The token is a stateless HMAC tag, so every child of one host and version can
+check it without a shared table. Nothing is written per `Attach`, and HA mode,
+Postgres, and the router play no part in admission. Sessions are not shared
+across versions or across participants. The escrow hash is unchanged.
 
 | Mechanism | Behaviour |
 |-----------|-----------|
-| **Shared row** | Table `devshard_peer_rpc_sessions`. Primary key `token_hash` is `sha256(attach_nonce)`; the raw token is not stored. Columns: `host_address`, `version`, `peer`, `attached_unix`, `expires_at`, `grace_until`, `state` (`live`, `replaced`, `invalidated`, `evicted`), `seq`, `origin`. One transaction holds `pg_advisory_xact_lock` on `hashtextextended` of host, version, and peer joined by `\x1f` (a NUL in that key is invalid UTF-8). Commit, then `NOTIFY`. A replaced token stays admissible until `grace_until` (`TokenGrace`, 5s). A non-`live` `token_hash` blocks nonce replay. |
-| **Memory admission** | Each child `LISTEN`s on its own connection, loads rows still inside `expires_at` or `grace_until`, then applies notifications in `seq` order. A gap or a dropped listen rereads from the last applied `seq`; a 5s poll is the backstop. `admitSession` hashes `X-Devshard-Session` and looks up memory. An unknown or junk token does not query Postgres. `/healthz` waits until that load finishes while the RPC server is enabled. A child applies only its own `host_address` and `version`. |
-| **Attach barrier** | After commit, `Attach` waits until every barrier member has applied `seq`, capped at 1s. Timeout still returns the token; the row is committed and the late child applies it. Progress is `devshard_peer_rpc_members.applied_seq`, with `heartbeat_at` every 1s and `ready` after the initial load. |
-| **Who is in the barrier** | A current router publishes `{id, addr, ready_versions}` to each versiond (`versiond-router/publish-members`, every change and every 10s). versiond keeps the latest snapshot per router and forwards the union to each child at `PUT /internal/peer-rpc/members` on `DEVSHARD_ADMIN_ADDR`, with `instance_id` of `id@version` (`versioned/internal/peerrpcmembers`). The union can only add waiters. The 0.2.15-v5 router does not publish; the child waits on member-table rows with `ready` and a heartbeat under 3s. A published id with no row is waited for once, then marked absent so a mixed fleet does not add 1s to every later `Attach`. A registered member whose `applied_seq` is behind is waited for on every `Attach`. |
-| **Watch** | Any child can serve `Watch` on `/sessions/_/rpc`, because every child has the row. The child that holds the stream ends it on `session replaced` or `session expired` from that row. Shutdown of one child ends only its streams; it does not invalidate the row, and `/rpc/release` does not delete it. The client reopens `Watch` on shutdown or EOF with the same token. `session replaced`, expiry, and other `Unauthenticated` clear the token and `Attach` again. TTL refresh runs on its own timer, including while `Watch` is down. |
+| **Token** | `version ‖ keyID ‖ host ‖ version ‖ peer ‖ attached_unix ‖ expires_unix ‖ sha256(attach_nonce) ‖ HMAC-SHA256`. The three strings are length-prefixed. `attached_unix` is the earlier of the signed Attach timestamp and the host clock, and `expires_unix` adds `SessionTTL` (2 minutes). |
+| **Key** | HKDF-SHA256 over the host's secp256k1 key, with info `devshard/peer-rpc-session/v1|<host>|<version>|<keyID>`. Each child of one host and version derives the same key; another version or host derives a different one. The key never leaves the process. Bumping `SessionKeyID` logs out every peer of that host at once. |
+| **Admission** | `handshakeGate` in the devshardd child opens `X-Devshard-Session`: constant-time MAC check, then key id, host, version, and expiry with a 5s replica skew. Neither the router nor versiond inspects the token. Data RPCs still run `AllowsSender` for their escrow. |
+| **Renewal** | A renewal adds a token; earlier tokens stay valid until their own expiry. The same signed request returns the same bytes. An `Attach` that presents a live token skips the door and the anonymous floor, and spends a per-peer renewal bucket (burst 4, 4/min) before ECDSA. |
+| **Watch** | Any child can serve `Watch` on `/sessions/_/rpc`. It is liveness only and ends on client cancel, `host shutting down`, or `session expired`. A peer holds at most two concurrent Watches per child. The client reopens `Watch` on shutdown or EOF with the same token. Expiry and other `Unauthenticated` clear the token and `Attach` again. TTL refresh runs on its own timer, including while `Watch` is down. `/rpc/release` ends this generation's streams and stops its outbound dials. |
 
-These do not replace the shared row. Attaching once per escrow needs the client
-to know the hash target, and two escrows on one child would replace each
-other's session. Returning a child id from `Attach` fixes `Watch` only.
-A Postgres read on a token miss spends a query per guess. A signed token
-still needs replication for replacement and revocation, and it changes
-`Attach`. The router never takes the hash key from a request header.
+Worst-case lifetime of a captured token is `SessionTTL` plus the replica skew,
+about two minutes. There is no per-token logout short of the key id.
+The router never takes the hash key from a request header.
 
-A wrong presented token is still a memory miss. This tree's versiond counts
-`X-Devshard-Error: invalid_session_token` in the same per-origin budget as an
-unknown escrow; the pin's versiond does not. See
+A forged or expired token fails in the child with
+`X-Devshard-Error: invalid_session_token`. This tree's versiond counts that
+header in the same per-origin budget as an unknown escrow; the pin's versiond
+does not. See
 [grpc-transport-connection.md](./grpc-transport-connection.md#wrong-escrow-id-by-origin-ip-versiond).
-Citest notes for the store:
-[grpc-session-ha.md](./grpc-session-ha.md).
+Citest: `TestPeerRPCHASessionSpread` (`make citest-peerrpc-ha-session`) in
+[scenarios.md](../testenv/docs/scenarios.md).
 
 ---
 

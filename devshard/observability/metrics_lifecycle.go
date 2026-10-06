@@ -52,8 +52,6 @@ var (
 	diffForkDetectedTotal     *prometheus.CounterVec
 	reconcileFastForwardTotal prometheus.Counter
 
-	peerRPCSessions    prometheus.Gauge
-	peerRPCPeers       prometheus.Gauge
 	peerRPCEnabled     prometheus.Gauge
 	peerRPCAttachTotal *prometheus.CounterVec
 	peerRPCGateTotal   *prometheus.CounterVec
@@ -231,14 +229,6 @@ func initRegistry() {
 		Name: "devshard_reconcile_fast_forward_total",
 		Help: "Times a host fast-forwarded in-memory state from durable diffs (HA stale standby).",
 	})
-	peerRPCSessions = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "devshard_peer_rpc_sessions",
-		Help: "Host-level peer RPC sessions (Attach map size) on this child.",
-	})
-	peerRPCPeers = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "devshard_peer_rpc_peers",
-		Help: "Distinct peers with a host-level peer RPC session on this child.",
-	})
 	peerRPCEnabled = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "devshard_peer_rpc_enabled",
 		Help: "Whether the Connect peer-RPC mux is mounted on this child (1) or not (0).",
@@ -327,8 +317,6 @@ func initRegistry() {
 		diffPersistRetryTotal,
 		diffForkDetectedTotal,
 		reconcileFastForwardTotal,
-		peerRPCSessions,
-		peerRPCPeers,
 		peerRPCEnabled,
 		peerRPCAttachTotal,
 		peerRPCGateTotal,
@@ -584,13 +572,6 @@ func IncDiffForkDetected(escrowID string) {
 func IncReconcileFastForward() {
 	ensureMetrics()
 	reconcileFastForwardTotal.Inc()
-}
-
-// SetPeerRPCSessionCounts records host-level Attach map sizes.
-func SetPeerRPCSessionCounts(sessions, peers int) {
-	ensureMetrics()
-	peerRPCSessions.Set(float64(sessions))
-	peerRPCPeers.Set(float64(peers))
 }
 
 // SetPeerRPCEnabled records whether the Connect mux is mounted.

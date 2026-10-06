@@ -5,7 +5,6 @@ package citest
 import (
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,17 +16,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSessionRoutesRetiredKeepsOpsAndConnectChat boots the stack with the
-// RPC server enabled. Catalog, health, clock, and shard stats answer.
-// Gateway chat runs over Connect. Echo chat/completions returns 410.
+// TestSessionRoutesRetiredKeepsOpsAndConnectChat boots the stack.
+// Catalog, health, clock, and shard stats answer. Gateway chat runs over
+// Connect. Echo chat/completions returns 410.
 func TestSessionRoutesRetiredKeepsOpsAndConnectChat(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
-	switch strings.TrimSpace(os.Getenv("DEVSHARD_RPC_SERVER_ENABLED")) {
-	case "", "true", "1":
-	default:
-		t.Fatalf("DEVSHARD_RPC_SERVER_ENABLED must be on for Connect chat, got %q", os.Getenv("DEVSHARD_RPC_SERVER_ENABLED"))
-	}
 
 	stack, cfg, eps := harness.BootStack(t, "citest-session-routes-retired-*")
 	client := harness.GatewayChatClient()

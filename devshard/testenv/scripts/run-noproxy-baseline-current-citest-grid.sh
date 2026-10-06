@@ -64,7 +64,6 @@ for suite in "${JSON_SUITES[@]}"; do
   run_cell "B1-JSON" "$suite" \
     TESTENV_VERSIOND_IMAGE="$B1_VERSIOND" \
     TESTENV_VERSIOND_ROUTER_IMAGE="$B1_ROUTER" \
-    DEVSHARD_RPC_SERVER_ENABLED=false \
     DEVSHARD_RPC_ENDPOINTS=
 done
 
@@ -72,7 +71,6 @@ for suite in "${RPC_SUITES[@]}"; do
   run_cell "B1-RPC" "$suite" \
     TESTENV_VERSIOND_IMAGE="$B1_VERSIOND" \
     TESTENV_VERSIOND_ROUTER_IMAGE="$B1_ROUTER" \
-    DEVSHARD_RPC_SERVER_ENABLED=true \
     DEVSHARD_RPC_ENDPOINTS="$ENDPOINTS"
 done
 
@@ -80,7 +78,6 @@ for suite in "${JSON_SUITES[@]}"; do
   run_cell "N0-JSON" "$suite" \
     TESTENV_VERSIOND_IMAGE= \
     TESTENV_VERSIOND_ROUTER_IMAGE= \
-    DEVSHARD_RPC_SERVER_ENABLED=false \
     DEVSHARD_RPC_ENDPOINTS=
 done
 

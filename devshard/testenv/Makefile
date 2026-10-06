@@ -76,7 +76,7 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-baseline-smoke citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
-.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-legacy-compat test-gateway-smoke
+.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-proxy-h2-idle citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-legacy-compat test-gateway-smoke
 .PHONY: build-baseline-infra fetch-limits-pin build-limits-pin
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
@@ -106,7 +106,7 @@ PEER_RPC_ENDPOINTS := signatures,mempool,diffs,gossip,repair,height-sync,verify-
 # Native gRPC on the no-proxy stack. versiond-router binds proto h2 on 8081.
 # :8080 stays healthz, catalog, and ops. Do not set DEVSHARD_RPC_H2_HOST (that
 # name is the proxy overlay). Pin targets must not inherit this.
-CITEST_RPC_ENV := DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) DEVSHARD_RPC_H2_PORT=8081 DEVSHARD_RPC_H2_UPGRADE=true DEVSHARD_RPC_H2_FRONT_HOST=versiond-router DEVSHARD_RPC_GRPC=true
+CITEST_RPC_ENV := DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) DEVSHARD_RPC_H2_PORT=8081 DEVSHARD_RPC_H2_UPGRADE=true DEVSHARD_RPC_H2_FRONT_HOST=versiond-router DEVSHARD_RPC_GRPC=true
 CITEST_RPC_RUN := env -u TESTENV_PROXY_OVERLAY -u DEVSHARD_RPC_H2_HOST $(CITEST_RPC_ENV) TESTENV_CITEST=1 go test -tags=testenvci ./citest/
 
 build-baseline-infra: ## Build versiond + versiond-router from branch devshard-0.2.15-v5.
@@ -226,13 +226,17 @@ citest-peerrpc-ha-session: citest-images ## HA session spread: height seed + cha
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
 	$(CITEST_RPC_RUN) -run '^TestPeerRPCHASessionSpread$$' -count=1 -v -timeout 45m
 
+# HAProxy only, on haproxy-rpc.cfg. No compose stack.
+citest-proxy-h2-idle: ## HTTP/2 PING alone does not hold an idle mux through HAProxy; an open Watch-style stream does.
+	TESTENV_CITEST=1 go test ./citest/harness/ -run '^TestProxyHAProxy_H2IdleConnection$$' -count=1 -v -timeout 5m
+
 # Current versiond and versiond-router only. A parent B1 pin has no proto h2
 # listen, so the same-make citest-images ifeq must not see it.
 citest-peerrpc-overlay: ## §8.3 proxy overlay hop and escrow stickiness (HTTP/2).
 	$(MAKE) build-devshardd
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
-	DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
+	DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 	DEVSHARD_RPC_H2_PORT=8443 DEVSHARD_RPC_H2_HOST=proxy DEVSHARD_RPC_H2_UPGRADE=true \
 	TESTENV_PROXY_OVERLAY=1 \
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^(TestPeerRPCOverlayHop|TestH2EscrowStickiness)$$' -count=1 -v -timeout 45m
@@ -242,7 +246,7 @@ citest-peerrpc-parity: ## §8.4 JSON / Connect HTTP/2 / native gRPC parity.
 	$(MAKE) build-devshardd
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
-	DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
+	DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 	DEVSHARD_RPC_H2_PORT=8443 DEVSHARD_RPC_H2_HOST=proxy DEVSHARD_RPC_H2_UPGRADE=true \
 	TESTENV_PROXY_OVERLAY=1 \
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestPeerRPCParity$$' -count=1 -v -timeout 45m
@@ -263,7 +267,7 @@ citest-mixed-fleet: ## §8.2 mixed fleet, RPC on, HTTP/1.1, no proxy.
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
 		-u DEVSHARD_RPC_H2_PORT -u DEVSHARD_RPC_H2_HOST -u DEVSHARD_RPC_H2_UPGRADE \
 		-u TESTENV_PROXY_OVERLAY \
-		DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
+		DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 		TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestMixedFleetNoProxy$$' -count=1 -v -timeout 30m
 
 # Manual compatibility gate: it needs both baseline images and a baseline child

@@ -3,14 +3,13 @@ package rpcserver
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -86,15 +85,16 @@ func withSession[T any](req *connect.Request[T], token []byte) *connect.Request[
 	return req
 }
 
-// watchAfterRelease opens a Watch once the previous one has left the slot.
-// Cancelling the client context makes Receive return before the server runs
-// endWatch, so the next Watch can still be "watch already active".
+// watchAfterRelease opens a Watch once the previous ones have left their
+// slots. Cancelling the client context makes Receive return before the
+// server releases the per-peer Watch slot, so the next Watch can still be
+// "too many concurrent watches".
 func watchAfterRelease(t *testing.T, client rpcpbconnect.PeerAuthServiceClient, token []byte) {
 	t.Helper()
 	require.Eventually(t, func() bool {
 		stream, err := client.Watch(context.Background(), withSession(connect.NewRequest(&rpcpb.WatchRequest{}), token))
 		if err != nil {
-			if connect.CodeOf(err) == connect.CodeAlreadyExists {
+			if connect.CodeOf(err) == connect.CodeResourceExhausted {
 				return false
 			}
 			t.Fatalf("reopened Watch: %v", err)
@@ -105,7 +105,7 @@ func watchAfterRelease(t *testing.T, client rpcpbconnect.PeerAuthServiceClient, 
 		}
 		recvErr := stream.Err()
 		_ = stream.Close()
-		if connect.CodeOf(recvErr) == connect.CodeAlreadyExists {
+		if connect.CodeOf(recvErr) == connect.CodeResourceExhausted {
 			return false
 		}
 		t.Fatalf("reopened Watch: %v", recvErr)
@@ -122,7 +122,7 @@ func TestPeerAuth_AttachWatch(t *testing.T) {
 
 	attachNonce := []byte("attach-nonce-bytes-0123456789")
 	attached := attach(t, client, signer, attachNonce)
-	require.Equal(t, attachNonce, attached.SessionToken)
+	require.NotEqual(t, attachNonce, attached.SessionToken)
 	require.Equal(t, defaultMessagesPerMin, attached.Limits.GetMessagesPerMin())
 	require.Equal(t, defaultMessagesPerMin/10, attached.Limits.GetMessagesBurst())
 	require.Equal(t, defaultMaxStreams, attached.Limits.GetMaxStreams())
@@ -146,7 +146,7 @@ func TestPeerAuth_AttachWatch(t *testing.T) {
 	watchAfterRelease(t, client, attached.SessionToken)
 }
 
-func TestPeerAuth_AttachLiveNonceRejected(t *testing.T) {
+func TestPeerAuth_AttachReplayOverHTTPReturnsSameToken(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	auth := newTestAuth(PeerAuthConfig{})
 	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
@@ -154,7 +154,7 @@ func TestPeerAuth_AttachLiveNonceRejected(t *testing.T) {
 	client := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
 
 	attachNonce := []byte("replay-attach-nonce-0123456789")
-	ts := time.Now().Unix()
+	ts := time.Now().Unix() - 1
 	sig, err := transport.SignAttach(signer, testHostAddress, ts, signer.Address(), attachNonce, transport.AttachProtocolVersion, nil)
 	require.NoError(t, err)
 	req := &rpcpb.AttachRequest{
@@ -165,11 +165,11 @@ func TestPeerAuth_AttachLiveNonceRejected(t *testing.T) {
 		Timestamp:       ts,
 		Signature:       sig,
 	}
-	_, err = client.Attach(context.Background(), connect.NewRequest(req))
+	first, err := client.Attach(context.Background(), connect.NewRequest(req))
 	require.NoError(t, err)
-	_, err = client.Attach(context.Background(), connect.NewRequest(req))
-	require.Error(t, err)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	second, err := client.Attach(context.Background(), connect.NewRequest(req))
+	require.NoError(t, err)
+	require.Equal(t, first.Msg.SessionToken, second.Msg.SessionToken)
 }
 
 func TestPeerAuth_AttachCountsOk(t *testing.T) {
@@ -240,12 +240,13 @@ func TestPeerAuth_TokenExpires(t *testing.T) {
 	_, ok := auth.LookupToken(attached.SessionToken)
 	require.True(t, ok)
 
-	clock.Advance(31 * time.Second)
+	clock.Advance(30*time.Second + sessionTokenSkew)
+	_, ok = auth.LookupToken(attached.SessionToken)
+	require.True(t, ok, "a token admits through the replica skew")
+
+	clock.Advance(time.Second)
 	_, ok = auth.LookupToken(attached.SessionToken)
 	require.False(t, ok)
-	require.Equal(t, 1, auth.SessionCount(), "LookupToken must leave expired entries for the sweeper")
-	auth.SweepOnce()
-	require.Equal(t, 0, auth.SessionCount())
 }
 
 func TestPeerAuth_AttachNonceBoundToPeer(t *testing.T) {
@@ -257,11 +258,11 @@ func TestPeerAuth_AttachNonceBoundToPeer(t *testing.T) {
 	client := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
 
 	shared := []byte("shared-attach-nonce-012345678")
-	attach(t, client, first, shared)
+	firstTok := attach(t, client, first, shared)
 	ts := time.Now().Unix()
 	sig, err := transport.SignAttach(second, testHostAddress, ts, second.Address(), shared, transport.AttachProtocolVersion, nil)
 	require.NoError(t, err)
-	_, err = client.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{
+	resp, err := client.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{
 		PeerAddress:     second.Address(),
 		AttachNonce:     shared,
 		ProtocolVersion: transport.AttachProtocolVersion,
@@ -269,11 +270,17 @@ func TestPeerAuth_AttachNonceBoundToPeer(t *testing.T) {
 		Timestamp:       ts,
 		Signature:       sig,
 	}))
-	require.Error(t, err)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.NoError(t, err)
+	require.NotEqual(t, firstTok.SessionToken, resp.Msg.SessionToken)
+	peer, ok := auth.LookupToken(firstTok.SessionToken)
+	require.True(t, ok)
+	require.Equal(t, first.Address(), peer)
+	peer, ok = auth.LookupToken(resp.Msg.SessionToken)
+	require.True(t, ok)
+	require.Equal(t, second.Address(), peer)
 }
 
-func TestPeerAuth_ReattachReplacesSession(t *testing.T) {
+func TestPeerAuth_ReattachAddsToken(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	auth := newTestAuth(PeerAuthConfig{})
 	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
@@ -284,38 +291,34 @@ func TestPeerAuth_ReattachReplacesSession(t *testing.T) {
 	second := attach(t, client, signer, []byte("replace-attach-nonce-bbbbbbb"))
 	require.False(t, bytes.Equal(first.SessionToken, second.SessionToken))
 	_, ok := auth.LookupToken(first.SessionToken)
-	require.True(t, ok, "replaced token stays valid for TokenGrace so in-flight RPCs still admit")
+	require.True(t, ok, "the earlier token stays valid so in-flight RPCs still admit")
 	_, ok = auth.LookupToken(second.SessionToken)
 	require.True(t, ok)
 }
 
-func TestPeerAuth_ReattachGraceExpires(t *testing.T) {
+func TestPeerAuth_LaterAttachDoesNotShortenEarlierToken(t *testing.T) {
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
 	auth := newTestAuth(PeerAuthConfig{SessionTTL: time.Minute, Now: clock.Now})
 	signer := testutil.MustGenerateKey(t)
 
-	first, err := attachDirect(t, auth, signer, []byte("grace-attach-nonce-aaaaaaaa"))
+	first, err := attachDirect(t, auth, signer, []byte("later-attach-nonce-aaaaaaaa"))
 	require.NoError(t, err)
-	second, err := attachDirect(t, auth, signer, []byte("grace-attach-nonce-bbbbbbbb"))
+	second, err := attachDirect(t, auth, signer, []byte("later-attach-nonce-bbbbbbbb"))
 	require.NoError(t, err)
 
 	_, ok := auth.LookupToken(first.SessionToken)
 	require.True(t, ok)
 	_, ok = auth.LookupToken(second.SessionToken)
 	require.True(t, ok)
-	require.Equal(t, 2, auth.SessionCount())
 
-	clock.Advance(defaultTokenGrace + time.Second)
+	clock.Advance(10 * time.Second)
 	_, ok = auth.LookupToken(first.SessionToken)
-	require.False(t, ok)
+	require.True(t, ok, "a later Attach does not shorten the earlier token")
 	_, ok = auth.LookupToken(second.SessionToken)
 	require.True(t, ok)
-	require.Equal(t, 2, auth.SessionCount(), "LookupToken leaves expired grace for the sweeper")
-	auth.SweepOnce()
-	require.Equal(t, 1, auth.SessionCount())
 }
 
-func TestPeerAuth_ReplayDoesNotEvictNewerSession(t *testing.T) {
+func TestPeerAuth_ReplayLeavesNewerTokenLive(t *testing.T) {
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
 	auth := newTestAuth(PeerAuthConfig{SessionTTL: time.Minute, Now: clock.Now})
 	signer := testutil.MustGenerateKey(t)
@@ -324,27 +327,21 @@ func TestPeerAuth_ReplayDoesNotEvictNewerSession(t *testing.T) {
 
 	reqA, err := signedAttach(signer, nonceA, clock.Now().Unix())
 	require.NoError(t, err)
-	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(reqA))
+	first, err := auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(reqA))
 	require.NoError(t, err)
 
 	clock.Advance(time.Second)
 	second, err := attachDirect(t, auth, signer, nonceB)
 	require.NoError(t, err)
 
-	clock.Advance(defaultTokenGrace + time.Second)
-	auth.SweepOnce()
-	_, ok := auth.LookupToken(nonceA)
-	require.False(t, ok)
-
-	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(reqA))
-	require.Error(t, err)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
-	require.Contains(t, err.Error(), "attach_nonce already in use")
-	_, ok = auth.LookupToken(second.SessionToken)
-	require.True(t, ok, "replay of A must not evict B")
+	replay, err := auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(reqA))
+	require.NoError(t, err)
+	require.Equal(t, first.Msg.SessionToken, replay.Msg.SessionToken)
+	_, ok := auth.LookupToken(second.SessionToken)
+	require.True(t, ok, "replay of A leaves B live")
 }
 
-func TestPeerAuth_StaleAttachRejected(t *testing.T) {
+func TestPeerAuth_OlderTimestampAttachStillIssues(t *testing.T) {
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
 	auth := newTestAuth(PeerAuthConfig{SessionTTL: time.Minute, Now: clock.Now})
 	signer := testutil.MustGenerateKey(t)
@@ -358,15 +355,15 @@ func TestPeerAuth_StaleAttachRejected(t *testing.T) {
 
 	req, err := signedAttach(signer, []byte("stale-attach-nonce-cccccccc"), staleTS)
 	require.NoError(t, err)
-	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(req))
-	require.Error(t, err)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
-	require.Contains(t, err.Error(), "attach is not newer than the live session")
+	older, err := auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(req))
+	require.NoError(t, err)
 	_, ok := auth.LookupToken(live.SessionToken)
+	require.True(t, ok)
+	_, ok = auth.LookupToken(older.Msg.SessionToken)
 	require.True(t, ok)
 }
 
-func TestPeerAuth_ExpiredNonceRebindAfterRetiredTTL(t *testing.T) {
+func TestPeerAuth_NonceReuseAfterExpiryIssues(t *testing.T) {
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
 	auth := newTestAuth(PeerAuthConfig{SessionTTL: 30 * time.Second, Now: clock.Now})
 	signer := testutil.MustGenerateKey(t)
@@ -375,62 +372,54 @@ func TestPeerAuth_ExpiredNonceRebindAfterRetiredTTL(t *testing.T) {
 	require.NoError(t, err)
 
 	clock.Advance(31 * time.Second)
-	auth.SweepOnce()
-	_, err = attachDirect(t, auth, signer, nonce)
-	require.Error(t, err)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
-	require.Contains(t, err.Error(), "attach_nonce already in use")
-
-	clock.Advance(retiredNonceTTL + time.Second)
-	_, err = attachDirect(t, auth, signer, nonce)
+	again, err := attachDirect(t, auth, signer, nonce)
 	require.NoError(t, err)
+	_, ok := auth.LookupToken(again.SessionToken)
+	require.True(t, ok)
 }
 
-func TestPeerAuth_RetiredNonceCoversFutureSkew(t *testing.T) {
+func TestPeerAuth_FutureTimestampDoesNotExtendExpiry(t *testing.T) {
 	base := time.Unix(1_800_000_000, 0)
 	clock := &testClock{t: base}
-	auth := newTestAuth(PeerAuthConfig{Now: clock.Now})
+	const ttl = 2 * time.Minute
+	auth := newTestAuth(PeerAuthConfig{SessionTTL: ttl, Now: clock.Now})
 	signer := testutil.MustGenerateKey(t)
-	nonce := []byte("skew-retire-nonce-aaaaaaaa")
 	futureTS := base.Unix() + transport.MaxTimestampDrift
-	req, err := signedAttach(signer, nonce, futureTS)
+	req, err := signedAttach(signer, []byte("future-ts-attach-nonce-aaaa"), futureTS)
 	require.NoError(t, err)
-	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(req))
-	require.NoError(t, err)
+	resp, err := auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(req))
+	require.NoError(t, err, "a timestamp inside the drift window is accepted")
+	require.Equal(t, base.Add(ttl).Unix(), resp.Msg.ExpiresAt, "expiry is anchored to the host clock")
 
-	auth.InvalidateToken(nonce)
-	clock.Advance(time.Duration(transport.MaxTimestampDrift)*time.Second + time.Second)
-	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(req))
-	require.Error(t, err)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err),
-		"a future-skewed Attach must stay retired while its signature still verifies")
-	require.Contains(t, err.Error(), "attach_nonce already in use")
-	_, ok := auth.LookupToken(nonce)
-	require.False(t, ok)
+	clock.Advance(ttl + sessionTokenSkew)
+	_, ok := auth.LookupToken(resp.Msg.SessionToken)
+	require.True(t, ok)
+	clock.Advance(time.Second)
+	_, ok = auth.LookupToken(resp.Msg.SessionToken)
+	require.False(t, ok, "worst-case lifetime is TTL plus the replica skew")
 }
 
-func TestPeerAuth_OnlyOneGraceToken(t *testing.T) {
+func TestPeerAuth_EveryAttachTokenStaysLive(t *testing.T) {
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
 	auth := newTestAuth(PeerAuthConfig{SessionTTL: time.Minute, Now: clock.Now})
 	signer := testutil.MustGenerateKey(t)
 
-	a, err := attachDirect(t, auth, signer, []byte("one-grace-nonce-aaaaaaaaaaa"))
+	a, err := attachDirect(t, auth, signer, []byte("every-token-nonce-aaaaaaaaa"))
 	require.NoError(t, err)
-	b, err := attachDirect(t, auth, signer, []byte("one-grace-nonce-bbbbbbbbbbb"))
+	b, err := attachDirect(t, auth, signer, []byte("every-token-nonce-bbbbbbbbb"))
 	require.NoError(t, err)
-	c, err := attachDirect(t, auth, signer, []byte("one-grace-nonce-ccccccccccc"))
+	c, err := attachDirect(t, auth, signer, []byte("every-token-nonce-ccccccccc"))
 	require.NoError(t, err)
 
 	_, ok := auth.LookupToken(a.SessionToken)
-	require.False(t, ok, "a third Attach must drop the older grace token")
+	require.True(t, ok)
 	_, ok = auth.LookupToken(b.SessionToken)
 	require.True(t, ok)
 	_, ok = auth.LookupToken(c.SessionToken)
 	require.True(t, ok)
-	require.Equal(t, 2, auth.SessionCount())
 }
 
-func TestPeerAuth_GraceAdmitsOldHeader(t *testing.T) {
+func TestPeerAuth_EarlierTokenAdmitsRPCs(t *testing.T) {
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
 	auth := newTestAuth(PeerAuthConfig{SessionTTL: time.Minute, Now: clock.Now})
 	mux := NewMux(auth, NewSessionHandler(stubLookup{core: stubCore{sigs: map[uint32][]byte{0: {7}}}}))
@@ -439,23 +428,23 @@ func TestPeerAuth_GraceAdmitsOldHeader(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	authClient := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
 
-	first := attachAt(t, authClient, signer, []byte("grace-rpc-nonce-aaaaaaaaaaa"), clock.Now().Unix())
-	second := attachAt(t, authClient, signer, []byte("grace-rpc-nonce-bbbbbbbbbbb"), clock.Now().Unix())
+	first := attachAt(t, authClient, signer, []byte("early-rpc-nonce-aaaaaaaaaaa"), clock.Now().Unix())
+	second := attachAt(t, authClient, signer, []byte("early-rpc-nonce-bbbbbbbbbbb"), clock.Now().Unix())
 	client := rpcpbconnect.NewSessionServiceClient(srv.Client(), srv.URL)
 
 	resp, err := client.GetSignatures(context.Background(), withSession(
 		connect.NewRequest(&rpcpb.GetSignaturesRequest{Nonce: 1}), first.SessionToken))
-	require.NoError(t, err, "GetSignatures with the old header must succeed during grace")
+	require.NoError(t, err, "GetSignatures with the earlier header must succeed")
 	require.Equal(t, []byte{7}, resp.Msg.Signatures[0])
 
 	resp, err = client.GetSignatures(context.Background(), withSession(
 		connect.NewRequest(&rpcpb.GetSignaturesRequest{Nonce: 1}), second.SessionToken))
 	require.NoError(t, err)
 
-	clock.Advance(defaultTokenGrace + time.Second)
+	clock.Advance(10 * time.Second)
 	_, err = client.GetSignatures(context.Background(), withSession(
 		connect.NewRequest(&rpcpb.GetSignaturesRequest{Nonce: 1}), first.SessionToken))
-	requireHandshakeRequired(t, err)
+	require.NoError(t, err, "the earlier token stays valid after a later Attach")
 	_, err = client.GetSignatures(context.Background(), withSession(
 		connect.NewRequest(&rpcpb.GetSignaturesRequest{Nonce: 1}), second.SessionToken))
 	require.NoError(t, err)
@@ -658,11 +647,25 @@ func TestPeerAuth_LiveRenewalSkipsDoor(t *testing.T) {
 	first := attach(t, rpcpbconnect.NewPeerAuthServiceClient(door.Client(), door.URL), signer,
 		[]byte("live-renew-door-nonce-012345"))
 	require.Equal(t, int32(1), doorCalls.Load())
-	second := attach(t, rpcpbconnect.NewPeerAuthServiceClient(host.Client(), host.URL), signer,
-		[]byte("live-renew-host-nonce-012345"))
+	hostClient := rpcpbconnect.NewPeerAuthServiceClient(host.Client(), host.URL)
+	renewNonce := []byte("live-renew-host-nonce-012345")
+	ts := time.Now().Unix()
+	sig, err := transport.SignAttach(signer, testHostAddress, ts, signer.Address(), renewNonce, transport.AttachProtocolVersion, nil)
+	require.NoError(t, err)
+	renew := withSession(connect.NewRequest(&rpcpb.AttachRequest{
+		PeerAddress:     signer.Address(),
+		AttachNonce:     renewNonce,
+		ProtocolVersion: transport.AttachProtocolVersion,
+		HostAddress:     testHostAddress,
+		Timestamp:       ts,
+		Signature:       sig,
+	}), first.SessionToken)
+	renewed, err := hostClient.Attach(context.Background(), renew)
+	require.NoError(t, err)
+	second := renewed.Msg
 	require.Equal(t, int32(1), doorCalls.Load(), "live renewal must not re-run AllowsSender")
 	_, ok := auth.LookupToken(first.SessionToken)
-	require.True(t, ok, "replaced token stays valid for TokenGrace")
+	require.True(t, ok, "the renewed-from token stays valid")
 	_, ok = auth.LookupToken(second.SessionToken)
 	require.True(t, ok)
 }
@@ -761,7 +764,7 @@ func TestPeerAuth_WatchOnHostPath(t *testing.T) {
 	require.Truef(t, stream.Receive(), "Watch on /sessions/_/rpc must admit a live token: %v", stream.Err())
 }
 
-func TestPeerAuth_SecondAttachReplacesOnAnyEscrowPath(t *testing.T) {
+func TestPeerAuth_SecondAttachOnAnyEscrowPathAddsToken(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	auth := newTestAuth(PeerAuthConfig{})
 	mux := NewMux(auth, nil)
@@ -778,7 +781,7 @@ func TestPeerAuth_SecondAttachReplacesOnAnyEscrowPath(t *testing.T) {
 		[]byte("per-host-attach-nonce-bbbbbb"))
 
 	_, ok := auth.LookupToken(first.SessionToken)
-	require.True(t, ok, "replaced token stays valid for TokenGrace")
+	require.True(t, ok, "the first token stays valid")
 	_, ok = auth.LookupToken(second.SessionToken)
 	require.True(t, ok)
 }
@@ -925,7 +928,7 @@ func TestPeerAuth_AttachInitializing(t *testing.T) {
 	require.NotContains(t, err.Error(), "rebuilding")
 }
 
-func TestPeerAuth_SecondWatchRejected(t *testing.T) {
+func TestPeerAuth_SecondWatchOnSameTokenStaysOpen(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	auth := newTestAuth(PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
 	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
@@ -939,14 +942,16 @@ func TestPeerAuth_SecondWatchRejected(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, first.Receive(), first.Err())
 
-	second, err := client.Watch(context.Background(), withSession(connect.NewRequest(&rpcpb.WatchRequest{}), token))
+	secondCtx, secondCancel := context.WithCancel(context.Background())
+	defer secondCancel()
+	second, err := client.Watch(secondCtx, withSession(connect.NewRequest(&rpcpb.WatchRequest{}), token))
 	require.NoError(t, err)
-	require.False(t, second.Receive())
-	require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(second.Err()))
-	require.Contains(t, second.Err().Error(), "watch already active")
+	require.True(t, second.Receive(), "a second Watch on the same token stays open: %v", second.Err())
+	secondCancel()
+	_ = second.Close()
 
 	_, ok := auth.LookupToken(token)
-	require.True(t, ok, "rejected second Watch must not drop the session")
+	require.True(t, ok, "closing the second Watch leaves the token live")
 
 	cancel()
 	_ = first.Close()
@@ -973,7 +978,7 @@ func TestPeerAuth_OldWatchEndDoesNotDropReattachedSession(t *testing.T) {
 
 	second := attach(t, client, signer, []byte("old-watch-attach-nonce-bbbb"))
 	_, ok := auth.LookupToken(first.SessionToken)
-	require.True(t, ok, "old token remains for TokenGrace")
+	require.True(t, ok, "the earlier token stays valid")
 	_, ok = auth.LookupToken(second.SessionToken)
 	require.True(t, ok)
 
@@ -1022,9 +1027,9 @@ func TestPeerAuth_CloseEndsWatchAndStopsAdmitting(t *testing.T) {
 	require.Contains(t, err.Error(), "host shutting down")
 }
 
-func TestPeerAuth_WatchEndsOnReattach(t *testing.T) {
+func TestPeerAuth_WatchStaysOpenAcrossReattach(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
-	auth := newTestAuth(PeerAuthConfig{Heartbeat: time.Hour})
+	auth := newTestAuth(PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
 	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
 	t.Cleanup(srv.Close)
 	client := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
@@ -1037,23 +1042,23 @@ func TestPeerAuth_WatchEndsOnReattach(t *testing.T) {
 	require.True(t, stream.Receive(), stream.Err())
 
 	second := attach(t, client, signer, []byte("watch-replace-nonce-bbbbbbb"))
-	require.False(t, stream.Receive(), "Watch must end when its token is no longer current, not at the next heartbeat")
-	require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(stream.Err()))
-	require.Contains(t, stream.Err().Error(), "session replaced")
 	_, ok := auth.LookupToken(second.SessionToken)
 	require.True(t, ok)
 	_, ok = auth.LookupToken(first.SessionToken)
-	require.True(t, ok, "grace token still admits unaries")
+	require.True(t, ok)
+	require.True(t, stream.Receive(), "Watch on the earlier token keeps beating after a renewal: %v", stream.Err())
+	cancel()
+	_ = stream.Close()
 }
 
-func TestPeerAuth_WatchEndsWhenSwept(t *testing.T) {
+func TestPeerAuth_WatchEndsAtTokenExpiry(t *testing.T) {
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
-	auth := newTestAuth(PeerAuthConfig{Heartbeat: time.Hour, SessionTTL: 30 * time.Second, Now: clock.Now})
+	auth := newTestAuth(PeerAuthConfig{Heartbeat: 20 * time.Millisecond, SessionTTL: 30 * time.Second, Now: clock.Now})
 	srv := httptest.NewServer(withTestEscrow(NewMux(auth, nil)))
 	t.Cleanup(srv.Close)
 	client := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
 	signer := testutil.MustGenerateKey(t)
-	token := attachAt(t, client, signer, []byte("watch-sweep-nonce-aaaaaaaa"), clock.Now().Unix()).SessionToken
+	token := attachAt(t, client, signer, []byte("watch-expiry-nonce-aaaaaaa"), clock.Now().Unix()).SessionToken
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	t.Cleanup(cancel)
@@ -1061,9 +1066,13 @@ func TestPeerAuth_WatchEndsWhenSwept(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, stream.Receive(), stream.Err())
 
-	clock.Advance(31 * time.Second)
-	auth.SweepOnce()
-	require.False(t, stream.Receive(), "sweep must end Watch, not wait for Heartbeat")
+	clock.Advance(30*time.Second + sessionTokenSkew + time.Second)
+	require.Eventually(t, func() bool {
+		if stream.Receive() {
+			return false
+		}
+		return strings.Contains(stream.Err().Error(), "session expired")
+	}, time.Second, 10*time.Millisecond)
 }
 
 type writeDeadlineSpy struct {
@@ -1199,141 +1208,21 @@ func signedAttach(signer *signing.Secp256k1Signer, nonce []byte, ts int64) (*rpc
 	}, nil
 }
 
-func TestPeerAuth_MaxSessions(t *testing.T) {
+func TestPeerAuth_MaxSessionsDoesNotCapAttach(t *testing.T) {
 	auth := newTestAuth(PeerAuthConfig{MaxSessions: 1})
 	first := testutil.MustGenerateKey(t)
 	second := testutil.MustGenerateKey(t)
 
 	held, err := attachDirect(t, auth, first, []byte("max-sessions-nonce-aaaaaaa"))
 	require.NoError(t, err)
-	require.Equal(t, 1, auth.SessionCount())
-
 	incoming, err := attachDirect(t, auth, second, []byte("max-sessions-nonce-bbbbbbb"))
-	require.NoError(t, err, "a new peer must evict the oldest idle session, not resource_exhausted")
-	_, ok := auth.LookupToken(held.SessionToken)
-	require.False(t, ok)
-	_, ok = auth.LookupToken(incoming.SessionToken)
-	require.True(t, ok)
-}
-
-func TestPeerAuth_SamePeerReplaceAtCap(t *testing.T) {
-	auth := newTestAuth(PeerAuthConfig{MaxSessions: 1})
-	first := testutil.MustGenerateKey(t)
-	second := testutil.MustGenerateKey(t)
-
-	_, err := attachDirect(t, auth, first, []byte("cap-replace-nonce-aaaaaaaa"))
+	require.NoError(t, err, "MaxSessions caps concurrent Watches; Attach stores nothing")
+	again, err := attachDirect(t, auth, first, []byte("max-sessions-nonce-ccccccc"))
 	require.NoError(t, err)
-	id, _, err := auth.beginWatch([]byte("cap-replace-nonce-aaaaaaaa"))
-	require.NoError(t, err)
-	require.NotZero(t, id)
-
-	_, err = attachDirect(t, auth, second, []byte("cap-replace-nonce-bbbbbbbb"))
-	require.Error(t, err)
-	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err), "a watching session is not idle")
-	require.Contains(t, err.Error(), "too many sessions")
-
-	replaced, err := attachDirect(t, auth, first, []byte("cap-replace-nonce-cccccccc"))
-	require.NoError(t, err, "same peer must replace at the cap")
-	_, ok := auth.LookupToken(replaced.SessionToken)
-	require.True(t, ok)
-}
-
-// A full map is not a live map: LookupToken leaves expired entries for the
-// sweeper, so Attach must sweep before it refuses.
-func TestPeerAuth_MaxSessionsSweepsExpiredBeforeRefusing(t *testing.T) {
-	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
-	auth := newTestAuth(PeerAuthConfig{MaxSessions: 2, SessionTTL: 30 * time.Second, Now: clock.Now})
-
-	_, err := attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("cap-sweep-nonce-aaaaaaaaaa"))
-	require.NoError(t, err)
-	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("cap-sweep-nonce-bbbbbbbbbb"))
-	require.NoError(t, err)
-	require.Equal(t, 2, auth.SessionCount())
-
-	clock.Advance(31 * time.Second)
-	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("cap-sweep-nonce-cccccccccc"))
-	require.NoError(t, err, "a map full of expired sessions must not refuse a new peer")
-	require.Equal(t, 1, auth.SessionCount(), "the expired entries must be gone, not just stepped over")
-}
-
-func TestPeerAuth_MaxSessionsRefusesWhenAllWatching(t *testing.T) {
-	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
-	auth := newTestAuth(PeerAuthConfig{MaxSessions: 2, SessionTTL: 30 * time.Second, Now: clock.Now})
-
-	a := testutil.MustGenerateKey(t)
-	b := testutil.MustGenerateKey(t)
-	first, err := attachDirect(t, auth, a, []byte("cap-watch-nonce-aaaaaaaaaaa"))
-	require.NoError(t, err)
-	second, err := attachDirect(t, auth, b, []byte("cap-watch-nonce-bbbbbbbbbbb"))
-	require.NoError(t, err)
-	_, _, err = auth.beginWatch(first.SessionToken)
-	require.NoError(t, err)
-	_, _, err = auth.beginWatch(second.SessionToken)
-	require.NoError(t, err)
-
-	clock.Advance(10 * time.Second)
-	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("cap-watch-nonce-ccccccccccc"))
-	require.Error(t, err)
-	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
-	_, ok := auth.LookupToken(first.SessionToken)
-	require.True(t, ok)
-	_, ok = auth.LookupToken(second.SessionToken)
-	require.True(t, ok)
-}
-
-func TestPeerAuth_EvictsLeastRecentlyAdmittedIdle(t *testing.T) {
-	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
-	auth := newTestAuth(PeerAuthConfig{MaxSessions: 2, SessionTTL: time.Minute, Now: clock.Now})
-
-	olderKey := testutil.MustGenerateKey(t)
-	newerKey := testutil.MustGenerateKey(t)
-	older, err := attachDirect(t, auth, olderKey, []byte("evict-admit-nonce-aaaaaaaa"))
-	require.NoError(t, err)
-	clock.Advance(time.Second)
-	newer, err := attachDirect(t, auth, newerKey, []byte("evict-admit-nonce-bbbbbbbb"))
-	require.NoError(t, err)
-
-	clock.Advance(time.Second)
-	header := make(http.Header)
-	SetSessionHeader(header, older.SessionToken)
-	_, err = admitSession(auth, context.Background(), header, false)
-	require.NoError(t, err)
-
-	clock.Advance(time.Second)
-	incoming, err := attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("evict-admit-nonce-cccccccc"))
-	require.NoError(t, err)
-	_, ok := auth.LookupToken(older.SessionToken)
-	require.True(t, ok, "the session admitted more recently must stay")
-	_, ok = auth.LookupToken(newer.SessionToken)
-	require.False(t, ok, "the idle session with the older admit stamp must be evicted")
-	_, ok = auth.LookupToken(incoming.SessionToken)
-	require.True(t, ok)
-}
-
-func TestPeerAuth_EvictsOldestIdleFirst(t *testing.T) {
-	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
-	auth := newTestAuth(PeerAuthConfig{MaxSessions: 2, SessionTTL: time.Minute, Now: clock.Now})
-
-	a := testutil.MustGenerateKey(t)
-	b := testutil.MustGenerateKey(t)
-	c := testutil.MustGenerateKey(t)
-	older, err := attachDirect(t, auth, a, []byte("evict-idle-nonce-aaaaaaaaaa"))
-	require.NoError(t, err)
-	clock.Advance(time.Second)
-	newer, err := attachDirect(t, auth, b, []byte("evict-idle-nonce-bbbbbbbbbb"))
-	require.NoError(t, err)
-	_, _, err = auth.beginWatch(newer.SessionToken)
-	require.NoError(t, err)
-
-	clock.Advance(time.Second)
-	incoming, err := attachDirect(t, auth, c, []byte("evict-idle-nonce-cccccccccc"))
-	require.NoError(t, err)
-	_, ok := auth.LookupToken(older.SessionToken)
-	require.False(t, ok, "the idle session must be the one evicted")
-	_, ok = auth.LookupToken(newer.SessionToken)
-	require.True(t, ok, "the watching session must stay")
-	_, ok = auth.LookupToken(incoming.SessionToken)
-	require.True(t, ok)
+	for _, tok := range [][]byte{held.SessionToken, incoming.SessionToken, again.SessionToken} {
+		_, ok := auth.LookupToken(tok)
+		require.True(t, ok)
+	}
 }
 
 type countingVerifier struct {
@@ -1380,25 +1269,25 @@ func TestPeerAuth_AttachFloorBeforeVerify(t *testing.T) {
 	require.NoError(t, err, "the bucket refills within a second")
 }
 
-func TestPeerAuth_FailedKnownPeerAttachConsumesFloor(t *testing.T) {
+func TestPeerAuth_ReplayWithoutTokenSpendsFloor(t *testing.T) {
 	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
 	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
 	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{AttachFloorPerMin: 2, Now: clock.Now})
 	signer := testutil.MustGenerateKey(t)
 	nonce := []byte("failed-known-attach-nonce-aa")
-	_, err := attachDirect(t, auth, signer, nonce)
+	first, err := attachDirect(t, auth, signer, nonce)
 	require.NoError(t, err)
 
 	req, err := signedAttach(signer, nonce, clock.Now().Unix())
 	require.NoError(t, err)
-	_, err = auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(req))
-	require.Error(t, err)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	replayed, err := auth.Attach(WithEscrowID(context.Background(), testEscrowID), connect.NewRequest(req))
+	require.NoError(t, err)
+	require.Equal(t, first.SessionToken, replayed.Msg.SessionToken)
 
 	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("failed-known-attach-nonce-bb"))
 	require.Error(t, err)
 	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err),
-		"a failed Attach from a live peer must keep its floor charge")
+		"a replay without a live token spends the anonymous floor")
 	requireRetryAfter(t, err)
 	require.Greater(t, spy.n.Load(), int32(0))
 }
@@ -1426,6 +1315,85 @@ func TestPeerAuth_KnownPeerReattachDoesNotConsumeFloor(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
 	requireRetryAfter(t, err)
+}
+
+func renewWithToken(auth *PeerAuthHandler, signer *signing.Secp256k1Signer, token, nonce []byte, ts int64) (*rpcpb.AttachResponse, error) {
+	req, err := signedAttach(signer, nonce, ts)
+	if err != nil {
+		return nil, err
+	}
+	creq := connect.NewRequest(req)
+	SetSessionHeader(creq.Header(), token)
+	resp, err := auth.Attach(WithEscrowID(context.Background(), testEscrowID), creq)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg, nil
+}
+
+func TestPeerAuth_RenewalBucketRefusesBeforeVerify(t *testing.T) {
+	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
+	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
+	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{AttachFloorPerMin: 100, Now: clock.Now})
+	signer := testutil.MustGenerateKey(t)
+	first, err := attachDirect(t, auth, signer, []byte("renew-bucket-nonce-0000xxxx"))
+	require.NoError(t, err)
+	token := first.SessionToken
+
+	for i := 1; i <= renewalBurst; i++ {
+		resp, err := renewWithToken(auth, signer, token, []byte(fmt.Sprintf("renew-bucket-nonce-%04dxxxx", i)), clock.Now().Unix())
+		require.NoError(t, err, "renewal %d is inside the burst", i)
+		token = resp.SessionToken
+	}
+	calls := spy.n.Load()
+	_, err = renewWithToken(auth, signer, token, []byte("renew-bucket-nonce-overxxxx"), clock.Now().Unix())
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Contains(t, err.Error(), "too many attach renewals")
+	requireRetryAfter(t, err)
+	require.Equal(t, calls, spy.n.Load(), "the renewal bucket must refuse before ECDSA")
+
+	_, err = attachDirect(t, auth, testutil.MustGenerateKey(t), []byte("renew-bucket-anon-nonce-xxx"))
+	require.NoError(t, err, "an empty renewal bucket leaves the anonymous floor alone")
+
+	clock.Advance(time.Minute / renewalPerMin)
+	_, err = renewWithToken(auth, signer, token, []byte("renew-bucket-nonce-refillxx"), clock.Now().Unix())
+	require.NoError(t, err, "the renewal bucket refills")
+}
+
+func TestPeerAuth_RenewalBucketIsPerPeer(t *testing.T) {
+	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
+	auth := newTestAuth(PeerAuthConfig{AttachFloorPerMin: 100, Now: clock.Now})
+	a := testutil.MustGenerateKey(t)
+	b := testutil.MustGenerateKey(t)
+	tokA, err := attachDirect(t, auth, a, []byte("renew-peer-a-nonce-0000xxx"))
+	require.NoError(t, err)
+	tokB, err := attachDirect(t, auth, b, []byte("renew-peer-b-nonce-0000xxx"))
+	require.NoError(t, err)
+
+	for i := 1; i <= renewalBurst; i++ {
+		_, err := renewWithToken(auth, a, tokA.SessionToken, []byte(fmt.Sprintf("renew-peer-a-nonce-%04dxxx", i)), clock.Now().Unix())
+		require.NoError(t, err)
+	}
+	_, err = renewWithToken(auth, a, tokA.SessionToken, []byte("renew-peer-a-nonce-overxxx"), clock.Now().Unix())
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+
+	_, err = renewWithToken(auth, b, tokB.SessionToken, []byte("renew-peer-b-nonce-0001xxx"), clock.Now().Unix())
+	require.NoError(t, err, "another peer's renewal bucket is untouched")
+}
+
+func TestPeerAuth_RenewalBucketOffWhenLimitsDisabled(t *testing.T) {
+	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
+	auth := newTestAuth(PeerAuthConfig{
+		Limits: &transport.ChannelLimitConfig{Disabled: true},
+		Now:    clock.Now,
+	})
+	signer := testutil.MustGenerateKey(t)
+	first, err := attachDirect(t, auth, signer, []byte("renew-off-nonce-0000xxxxxx"))
+	require.NoError(t, err)
+	for i := 1; i <= 3*renewalBurst; i++ {
+		_, err := renewWithToken(auth, signer, first.SessionToken, []byte(fmt.Sprintf("renew-off-nonce-%04dxxxxxx", i)), clock.Now().Unix())
+		require.NoError(t, err)
+	}
 }
 
 func TestPeerAuth_LiveTokenSkipsEmptyBucket(t *testing.T) {
@@ -1514,47 +1482,6 @@ func TestPeerAuth_LiveTokenBadSignatureChargesBucket(t *testing.T) {
 	require.Equal(t, calls, spy.n.Load(), "a failed signature on a live token keeps the charge")
 }
 
-func TestPeerAuth_SweeperDropsExpired(t *testing.T) {
-	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
-	auth := newTestAuth(PeerAuthConfig{
-		SessionTTL:    30 * time.Second,
-		SweepInterval: 15 * time.Millisecond,
-		Now:           clock.Now,
-	})
-	t.Cleanup(auth.Close)
-	signer := testutil.MustGenerateKey(t)
-	_, err := attachDirect(t, auth, signer, []byte("sweep-attach-nonce-01234567"))
-	require.NoError(t, err)
-	require.Equal(t, 1, auth.SessionCount())
-
-	clock.Advance(31 * time.Second)
-	require.Equal(t, 1, auth.SessionCount())
-	auth.StartSweeper()
-	require.Eventually(t, func() bool {
-		return auth.SessionCount() == 0
-	}, time.Second, 5*time.Millisecond)
-}
-
-func TestPeerAuth_SweepOnceClearsMoreThanOneBatch(t *testing.T) {
-	clock := &testClock{t: time.Unix(1_700_000_000, 0)}
-	const n = sweepBatchSize + 2
-	auth := newTestAuth(PeerAuthConfig{
-		SessionTTL:        30 * time.Second,
-		AttachFloorPerMin: math.MaxInt,
-		MaxSessions:       n,
-		Now:               clock.Now,
-	})
-	for i := 0; i < n; i++ {
-		nonce := []byte(fmt.Sprintf("swp-batch-%016d", i))
-		_, err := attachDirect(t, auth, testutil.MustGenerateKey(t), nonce)
-		require.NoError(t, err)
-	}
-	require.Equal(t, n, auth.SessionCount())
-	clock.Advance(31 * time.Second)
-	auth.SweepOnce()
-	require.Equal(t, 0, auth.SessionCount())
-}
-
 func TestPeerAuth_LookupTokenConcurrent(t *testing.T) {
 	auth := newTestAuth(PeerAuthConfig{})
 	signer := testutil.MustGenerateKey(t)
@@ -1577,23 +1504,18 @@ func TestPeerAuth_LookupTokenConcurrent(t *testing.T) {
 	require.Equal(t, signer.Address(), peer)
 }
 
-func TestPeerAuth_MapsUseRawTokenKeys(t *testing.T) {
+func TestPeerAuth_ReplayReturnsTheSameToken(t *testing.T) {
 	nonce := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 	auth := newTestAuth(PeerAuthConfig{})
 	signer := testutil.MustGenerateKey(t)
-	attached, err := attachDirect(t, auth, signer, nonce)
+	ts := auth.now().Unix()
+	first, err := attachDirectAt(t, auth, signer, nonce, ts)
 	require.NoError(t, err)
-	require.Equal(t, nonce, attached.SessionToken)
-
-	auth.mu.RLock()
-	_, hasRaw := auth.sessions[string(nonce)]
-	_, hasHex := auth.sessions[hex.EncodeToString(nonce)]
-	peerTok := auth.byPeer[signer.Address()]
-	auth.mu.RUnlock()
-	require.True(t, hasRaw, "session map must be keyed by raw attach_nonce")
-	require.False(t, hasHex, "session map must not be keyed by hex(token)")
-	require.Equal(t, string(nonce), peerTok)
-	peer, ok := auth.LookupToken(nonce)
+	second, err := attachDirectAt(t, auth, signer, nonce, ts)
+	require.NoError(t, err)
+	require.Equal(t, first.SessionToken, second.SessionToken)
+	require.NotEqual(t, nonce, first.SessionToken)
+	peer, ok := auth.LookupToken(first.SessionToken)
 	require.True(t, ok)
 	require.Equal(t, signer.Address(), peer)
 }

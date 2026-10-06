@@ -33,16 +33,9 @@ const (
 	tokenRefreshFraction    = 0.75
 	reattachReasonWatch     = "watch"
 	reattachReasonTTL       = "ttl"
-	// sessionReplacedReleaseAfter is how many session-replaced losses a
-	// retiring process absorbs before it stops dialing. A live process
-	// always Attaches again. The count resets after a Watch that stays up
-	// for sessionReplacedHealthyWatch, so two losses with a healthy period
-	// between them do not add up.
-	sessionReplacedReleaseAfter = 2
-	sessionReplacedHealthyWatch = 2 * time.Second
-	defaultAttachTTL            = 5 * time.Minute
-	maxAttachTTL                = time.Hour
-	minAttachTTL                = 30 * time.Second
+	defaultAttachTTL        = 5 * time.Minute
+	maxAttachTTL            = time.Hour
+	minAttachTTL            = 30 * time.Second
 )
 
 // DefaultAttachTimeout bounds one Attach (first handshake or TTL refresh).
@@ -246,10 +239,6 @@ type PeerConn struct {
 	budget  peerRPCBudget
 	streams peerStreamBudget
 	firstOK atomic.Bool
-	// replaced counts Watch endings caused by another Attach of this signer
-	// since the last healthy Watch. A retiring process stops after
-	// sessionReplacedReleaseAfter. A live process Attaches again.
-	replaced atomic.Int32
 
 	// doors are escrow IDs of live RPCClient refs. First Attach (and
 	// re-Attach after a full session loss) must use one of these, not
@@ -384,8 +373,33 @@ func newPeerConnTransports(cfg PeerConnConfig, maxConns int) (*originSwitchTrans
 }
 
 // outboundPeerReleased is process-wide. The retiring child sets it so a
-// later RPC cannot open a new PeerConn and take the identity back.
+// later RPC cannot open a new PeerConn. Live tokens are not revoked; this
+// process stops using them.
 var outboundPeerReleased atomic.Bool
+
+var (
+	peerReleaseMu sync.Mutex
+	peerReleaseCh = make(chan struct{})
+)
+
+func peerReleaseNotify() <-chan struct{} {
+	peerReleaseMu.Lock()
+	defer peerReleaseMu.Unlock()
+	return peerReleaseCh
+}
+
+func signalPeerRelease() {
+	outboundPeerReleased.Store(true)
+	peerReleaseMu.Lock()
+	defer peerReleaseMu.Unlock()
+	select {
+	case <-peerReleaseCh:
+	default:
+		close(peerReleaseCh)
+	}
+}
+
+var errPeerRetired = errors.New("peer generation retired")
 
 // payloadFetchGate cancels payload RPCs that are still on the peer when
 // this generation is released. Replacing the context lets a test clear the
@@ -455,7 +469,7 @@ func WithPayloadFetchCancel(parent context.Context) (context.Context, context.Ca
 // without closing conns already in the registry. Tests defer
 // ResetOutboundPeerReleaseForTest.
 func MarkOutboundPeersReleasedForTest() {
-	outboundPeerReleased.Store(true)
+	signalPeerRelease()
 }
 
 // AcquirePeerConnForTest inserts cfg into the process registry the same
@@ -467,7 +481,10 @@ func AcquirePeerConnForTest(cfg PeerConnConfig) *PeerConn {
 // ResetOutboundPeerReleaseForTest clears the retiring-generation gate.
 // Tests that release outbound peers must defer it.
 func ResetOutboundPeerReleaseForTest() {
+	peerReleaseMu.Lock()
 	outboundPeerReleased.Store(false)
+	peerReleaseCh = make(chan struct{})
+	peerReleaseMu.Unlock()
 	payloadFetchGate.mu.Lock()
 	old := payloadFetchGate.cancel
 	payloadFetchGate.ctx, payloadFetchGate.cancel = context.WithCancel(context.Background())
@@ -483,7 +500,7 @@ func ResetOutboundPeerReleaseForTest() {
 // generation, after validation enqueue has been stopped. Safe to call more
 // than once.
 func ReleaseOutboundPeerConns() {
-	outboundPeerReleased.Store(true)
+	signalPeerRelease()
 	cancelInflightPayloadFetches()
 	peerConnMu.Lock()
 	conns := make([]*PeerConn, 0, len(peerConnRegistry))
@@ -575,7 +592,15 @@ func (p *PeerConn) loop() {
 			backoff = 0
 			continue
 		}
+		if outboundPeerReleased.Load() {
+			p.dropRetired()
+			return
+		}
 		if err := p.cfg.sleep(p.ctx, p.cfg.jitter(backoff)); err != nil {
+			return
+		}
+		if outboundPeerReleased.Load() {
+			p.dropRetired()
 			return
 		}
 		p.setState(stateAttaching)
@@ -607,10 +632,18 @@ func (p *PeerConn) loop() {
 		if p.firstOK.CompareAndSwap(false, true) {
 			RecordPeerReconnect(p.metricPeer(), ReconnectFirstAttach)
 		}
-		watchAt := time.Now()
 		sawBeat, err := p.serveWatch(tok, exp)
 		if err != nil {
 			if p.ctx.Err() != nil {
+				return
+			}
+			if errors.Is(err, errPeerRetired) || outboundPeerReleased.Load() {
+				logging.Warn("peer rpc release: this generation is retiring",
+					"subsystem", "transport",
+					"host", p.cfg.HostAddress,
+					"peer", p.metricPeer(),
+				)
+				p.dropRetired()
 				return
 			}
 			// A Watch that delivered a beat was healthy. The next failure
@@ -618,22 +651,6 @@ func (p *PeerConn) loop() {
 			// growing, including across a successful Attach.
 			if sawBeat {
 				backoff = 0
-			}
-			if peerSessionReplaced(err) {
-				if time.Since(watchAt) >= sessionReplacedHealthyWatch {
-					p.replaced.Store(0)
-				}
-				// Only the retiring generation stops. A live process
-				// Attaches again so two front doors cannot deadlock.
-				if outboundPeerReleased.Load() && p.replaced.Add(1) >= sessionReplacedReleaseAfter {
-					logging.Warn("peer rpc release: another generation owns this host identity",
-						"subsystem", "transport",
-						"host", p.cfg.HostAddress,
-						"peer", p.metricPeer(),
-					)
-					p.dropAfterSessionReplaced()
-					return
-				}
 			}
 			p.setState(stateUnauthenticated)
 			p.clearToken()
@@ -714,8 +731,8 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 	// Refresh is scheduled on its own deadline so it still fires while Watch
 	// is down. Shutting down, EOF, and a local stream-cap refusal reopen
 	// Watch with the same token, on the same exponential backoff as Attach.
-	// session replaced, session expired, and any other Unauthenticated end
-	// the loop so the caller clears the token and Attaches again.
+	// session expired and any other Unauthenticated end the loop so the
+	// caller clears the token and Attaches again.
 	refreshBackoff := time.Duration(0)
 	var reopenBackoff atomic.Int64
 	var sawBeat atomic.Bool
@@ -766,6 +783,11 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 		}
 		refreshTimer := time.NewTimer(refreshWait)
 		select {
+		case <-peerReleaseNotify():
+			stopTimer(refreshTimer)
+			stopTimer(reopenTimer)
+			stopWatch()
+			return sawBeat.Load(), errPeerRetired
 		case <-p.ctx.Done():
 			stopTimer(refreshTimer)
 			stopTimer(reopenTimer)
@@ -879,8 +901,8 @@ func (p *PeerConn) nextRefreshWait(exp time.Time, refreshBackoff time.Duration) 
 	}
 	d := p.refreshDelay(exp)
 	// refreshDelay floors expired / sub-min TTL to BackoffMin so Attach
-	// cannot tight-loop and drop the TokenGrace predecessor. Do not jitter
-	// that floor down to BackoffMin/2.
+	// cannot tight-loop on the host's renewal bucket. Do not jitter that
+	// floor down to BackoffMin/2.
 	if d <= min {
 		return d
 	}
@@ -896,7 +918,7 @@ func (p *PeerConn) refreshDelay(exp time.Time) time.Duration {
 	}
 	// AttachResponse.expires_at is unix seconds, so remaining can collapse
 	// to 0 in the same second. Floor to BackoffMin so we do not tight-loop
-	// Attach and drop the TokenGrace predecessor on the second replace.
+	// Attach.
 	if ttl <= 0 {
 		return min
 	}
@@ -1154,7 +1176,7 @@ func (p *PeerConn) watch(ctx context.Context, token []byte, onBeat func()) error
 	}
 
 	// The stream end has its own slot. A beat still queued in beats must
-	// not push session replaced off the channel: the reader would then
+	// not push session expired off the channel: the reader would then
 	// wait for WatchStale on a token the host no longer serves.
 	beats := make(chan struct{}, 1)
 	ended := make(chan error, 1)
@@ -1451,10 +1473,10 @@ func PeerConnRegistered(hostAddress, version string) bool {
 	return false
 }
 
-// dropAfterSessionReplaced removes this conn from the registry and cancels
-// it. The loop then returns. WaitReady observes the cancelled context.
-// The next SelectTransport does not receive this object.
-func (p *PeerConn) dropAfterSessionReplaced() {
+// dropRetired removes this conn from the registry and cancels it once this
+// generation is released. The loop then returns. WaitReady observes the
+// cancelled context. The next SelectTransport does not receive this object.
+func (p *PeerConn) dropRetired() {
 	p.setState(stateUnauthenticated)
 	p.clearToken()
 	peerConnMu.Lock()
@@ -1496,13 +1518,6 @@ func watchReopen(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "host shutting down")
-}
-
-func peerSessionReplaced(err error) bool {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnauthenticated {
-		return false
-	}
-	return strings.Contains(err.Error(), "session replaced")
 }
 
 func nextAttachBackoff(prev, min, max time.Duration) time.Duration {

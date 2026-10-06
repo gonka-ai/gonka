@@ -113,7 +113,6 @@ func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, es
 	}
 	lookup := e2eHostLookup{escrowID: escrowID, core: core}
 	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddress, rpcserver.PeerAuthConfig{})
-	auth.StartSweeper()
 	devshardserver.RegisterLazySessionRoutes(g, e2eSessionResolver{escrowID: escrowID, srv: srv}, nil, nil,
 		devshardserver.WithPeerRPC(
 			auth,

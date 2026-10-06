@@ -132,10 +132,8 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 			transport.ReleaseOutboundPeerConns()
 			manager.ClosePeerRPC()
 		})
-		registerPeerRPCMembers(admin, manager.SetPeerRPCMembers)
 	}
 	manager.Register(e.Group(""))
-	lifecycle.SetPeerRPCReady(manager.PeerRPCSessionsReady)
 	startMemoryLog(ctx, manager)
 	chainRuntime.chainEvents.OnReady(func(ready bool) {
 		lifecycle.SetReady(ready)
@@ -346,7 +344,6 @@ func buildHostManager(
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
 	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
-	manager.SetRPCServerEnabled(cfg.RPCServerEnabled)
 	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client, mlClient.NodeManagerClient()); err != nil {
 		return nil, fmt.Errorf("height sync oracle: %w", err)
 	}

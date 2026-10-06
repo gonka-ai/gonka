@@ -2,10 +2,10 @@ package rpcserver
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
@@ -23,12 +23,14 @@ import (
 )
 
 const (
-	defaultSessionTTL        = 5 * time.Minute
+	// defaultSessionTTL is how long a token-only read stays usable. Chat,
+	// gossip, and height sync also require the peer's envelope signature.
+	defaultSessionTTL        = 2 * time.Minute
 	defaultHeartbeat         = 30 * time.Second
 	defaultWatchWriteTimeout = 10 * time.Second
 	minAttachNonceBytes      = 16
-	// maxAttachNonceBytes is a UUID or 256-bit id. Larger values become map
-	// keys (raw bytes as string); they are not payloads.
+	// maxAttachNonceBytes is a UUID or 256-bit id. The token carries only
+	// its SHA-256, so the bound is about request size, not token size.
 	maxAttachNonceBytes = 32
 
 	defaultMessagesPerMin = transport.DefaultRPCMessagesPerMin
@@ -47,21 +49,10 @@ const (
 	// defaultAttachInFlight is how many anonymous VerifyAttach calls may run
 	// at once. Renewals that present a live token are not in this count.
 	defaultAttachInFlight = 50
-	// defaultTokenGrace is how long a replaced token still admits RPCs.
-	// Matches transport.nonInferenceRetryBudget: one Attach RTT plus retry.
-	defaultTokenGrace = 5 * time.Second
 	// maxAttachRecvBytes is the HTTP body cap on Attach only. The Connect
 	// mux allows 16 KiB on authenticated RPCs; this
 	// path is unauthenticated and must not buy that read before ECDSA.
 	maxAttachRecvBytes = 4 << 10
-	// retiredNonceTTL is how long a dropped attach_nonce stays unrebindable.
-	// Anchored to max(drop time, attach timestamp) so a future-skewed
-	// signature cannot outlive its retirement.
-	retiredNonceTTL = time.Duration(transport.MaxTimestampDrift) * time.Second
-	// sweepBatchSize is how many expired session / retired-nonce keys SweepOnce
-	// deletes per write-lock hold. Attach's in-lock sweep at the cap is
-	// unchanged (already under mu).
-	sweepBatchSize = 256
 	// attachRetryAfterSec is the Retry-After on an empty anonymous bucket.
 	attachRetryAfterSec = 1
 )
@@ -80,20 +71,24 @@ type PeerAuthConfig struct {
 	SessionTTL        time.Duration
 	Heartbeat         time.Duration
 	WatchWriteTimeout time.Duration
-	// MaxSessions caps distinct peers with a current (non-grace) session.
-	// Zero means defaultMaxSessions. A replaced token kept for TokenGrace
-	// does not consume this cap.
+	// MaxSessions caps concurrent Watch streams. Zero means
+	// defaultMaxSessions. It does not cap Attach or live tokens.
 	MaxSessions int
-	// TokenGrace is how long a replaced token still LookupToken's. Zero
-	// means defaultTokenGrace. In-flight RPCs carry the old header; they are
-	// new HTTP requests, not a connection established at Attach.
-	TokenGrace time.Duration
+	// SessionKey is the HMAC key. Empty means this process generates a
+	// random key, so only this process can admit the tokens it issues.
+	// Production derives it from the host private key and sets it here.
+	SessionKey []byte
+	// Version is bound into every token. Empty matches only an empty version.
+	Version string
+	// KeyID selects the HMAC key. Zero means SessionKeyID.
+	KeyID byte
 	// AttachFloorPerMin sizes the anonymous Attach bucket. Zero means
 	// Limits.AttachFloorPerMin or defaultAttachFloorPerMin. A value below
 	// defaultAttachBurst is the burst (tests). The default and anything
 	// larger use defaultAttachBurst tokens refilled at defaultAttachRefillPerSec.
 	// Not keyed on peer_address: that field is unsigned. A live session token
-	// skips the bucket. math.MaxInt disables it.
+	// skips the bucket and spends the per-peer renewal bucket instead.
+	// math.MaxInt disables it.
 	AttachFloorPerMin int
 	// Limits is advertised on Attach and enforced by the channel interceptor.
 	// Nil uses defaults (not process env — production passes LoadChannelLimitConfig).
@@ -106,11 +101,7 @@ type PeerAuthConfig struct {
 	// — in-memory lookup only (HostManager.existingServer). Nil means no
 	// shard rows (host / peer / IP still record).
 	LiveSession func(escrowID string) bool
-	// SweepInterval is the expired-session ticker. Zero means SessionTTL/2
-	// when StartSweeper runs. Tests that do not call StartSweeper never start
-	// a goroutine.
-	SweepInterval time.Duration
-	Now           func() time.Time
+	Now         func() time.Time
 }
 
 // PeerAuthHandler implements rpcpbconnect.PeerAuthServiceHandler.
@@ -121,16 +112,11 @@ type PeerAuthHandler struct {
 	hostAddress string
 	cfg         PeerAuthConfig
 
-	mu          sync.RWMutex
-	sessions    map[string]*peerSession // raw attach_nonce → session
-	byPeer      map[string]string       // peer address → current token
-	prevByPeer  map[string]string       // peer address → grace token
-	retired     map[string]time.Time    // raw attach_nonce → forget after
-	nextWatchID uint64
+	sessionKey []byte
+	keyID      byte
 
 	closeCh   chan struct{}
 	closeOnce sync.Once
-	sweepOnce sync.Once
 	closed    atomic.Bool
 
 	attachMu     sync.Mutex
@@ -138,50 +124,6 @@ type PeerAuthHandler struct {
 
 	limiter *channelLimiter
 	traffic *transport.RPCTraffic
-
-	// shared is the Postgres record. Nil keeps sessions/byPeer/prevByPeer/retired
-	// as the only copy. byHash is the admission index for rows that arrived
-	// without the raw nonce (NOTIFY does not carry it).
-	shared *SharedSessions
-	byHash map[string]*peerSession
-}
-
-type peerSession struct {
-	peer     string
-	expires  time.Time
-	created  time.Time
-	attached int64 // AttachRequest.timestamp that created this session
-	// lastAdmit is the last time this token passed admitSession or a Watch
-	// heartbeat, in unix nanoseconds. Eviction of an idle session uses it.
-	// lastSeenWrite is the last time this process tried to store that in
-	// Postgres, so the touch stays throttled.
-	lastAdmit     atomic.Int64
-	lastSeenWrite atomic.Int64
-	watching      bool
-	watchID       uint64
-	cancelWatch   chan struct{}
-	// rawKey, tokenHash, current, and seq are set when a shared store is on.
-	// The memory store leaves them empty and keeps using sessions/byPeer.
-	rawKey    string
-	tokenHash string
-	current   bool
-	seq       int64
-}
-
-func (s *peerSession) stopWatchLocked() {
-	if s == nil || s.cancelWatch == nil {
-		return
-	}
-	select {
-	case <-s.cancelWatch:
-	default:
-		close(s.cancelWatch)
-	}
-}
-
-// rawTokenKey is the sessions/byPeer map key: the raw attach_nonce, not hex.
-func rawTokenKey(token []byte) string {
-	return string(token)
 }
 
 func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerAuthConfig) *PeerAuthHandler {
@@ -200,9 +142,6 @@ func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerA
 	if cfg.MaxSessions <= 0 {
 		cfg.MaxSessions = defaultMaxSessions
 	}
-	if cfg.TokenGrace <= 0 {
-		cfg.TokenGrace = defaultTokenGrace
-	}
 	limits := transport.ChannelLimitConfig{}.WithDefaults()
 	if cfg.Limits != nil {
 		limits = cfg.Limits.WithDefaults()
@@ -220,14 +159,23 @@ func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerA
 	}
 	limiter := newChannelLimiter(limits, cfg.Now)
 	limiter.maxWatches = cfg.MaxSessions
+	key := append([]byte(nil), cfg.SessionKey...)
+	if len(key) == 0 {
+		key = make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			panic("devshard: peer session key: " + err.Error())
+		}
+	}
+	keyID := cfg.KeyID
+	if keyID == 0 {
+		keyID = SessionKeyID
+	}
 	return &PeerAuthHandler{
 		verifier:    verifier,
 		hostAddress: hostAddress,
 		cfg:         cfg,
-		sessions:    make(map[string]*peerSession),
-		byPeer:      make(map[string]string),
-		prevByPeer:  make(map[string]string),
-		retired:     make(map[string]time.Time),
+		sessionKey:  key,
+		keyID:       keyID,
 		closeCh:     make(chan struct{}),
 		limiter:     limiter,
 		traffic:     transport.NewRPCTraffic(cfg.Now),
@@ -290,9 +238,6 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	if h.Closed() {
 		return nil, hostShuttingDown()
 	}
-	if h.shared != nil && !h.shared.Ready() {
-		return nil, connect.NewError(connect.CodeUnavailable, errors.New("peer rpc sessions loading"))
-	}
 	msg := req.Msg
 	if msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil attach request"))
@@ -319,11 +264,15 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("unsupported protocol_version"))
 	}
 
-	// A live X-Devshard-Session skips the anonymous bucket. peer_address is
-	// unsigned, so it is not the skip key. sharedPeerLive walks every shared
-	// session and is not used here.
+	// A live X-Devshard-Session skips the anonymous bucket and spends the
+	// token peer's renewal bucket instead. peer_address is unsigned, so it
+	// is not the key for either.
 	tokenPeer, tokenLive := h.liveSessionToken(req.Header())
-	if !tokenLive {
+	if tokenLive {
+		if err := h.limiter.takeRenewal(ctx, tokenPeer); err != nil {
+			return nil, err
+		}
+	} else {
 		if err := h.acquireAttachVerify(); err != nil {
 			return nil, err
 		}
@@ -349,7 +298,7 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	if recovered != msg.PeerAddress {
 		return nil, connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("recovered address %s does not match peer_address", recovered))
 	}
-	wasLive := h.peerSessionLive(recovered) || h.sharedPeerLive(recovered)
+	wasLive := tokenLive && recovered == tokenPeer
 	// Live renewals on /sessions/_/rpc skip the door: the URL is not a
 	// roster. Any real escrow URL is checked even when the peer already
 	// has a host session, so a Watch drop cannot re-Attach on a settled id.
@@ -359,53 +308,19 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 		}
 	}
 
-	token := append([]byte(nil), msg.AttachNonce...)
-	if h.shared != nil {
-		return h.attachShared(ctx, recovered, token, msg.Timestamp)
-	}
-	tok := rawTokenKey(token)
-	expires := h.now().Add(h.cfg.SessionTTL)
-
-	h.mu.Lock()
-	if h.closed.Load() {
-		h.mu.Unlock()
+	if h.Closed() {
 		return nil, hostShuttingDown()
 	}
-	if sess, ok := h.sessions[tok]; ok {
-		if !h.now().After(sess.expires) {
-			h.mu.Unlock()
-			return nil, connect.NewError(connect.CodePermissionDenied, errors.New("attach_nonce already in use"))
-		}
-		h.dropSessionLocked(tok, sess)
+	// A timestamp ahead of this host's clock does not buy extra lifetime.
+	// A past one keeps a replay deterministic: same request, same token.
+	attachedUnix := msg.Timestamp
+	if now := h.now().Unix(); now < attachedUnix {
+		attachedUnix = now
 	}
-	if h.nonceRetiredLocked(tok) {
-		h.mu.Unlock()
-		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("attach_nonce already in use"))
+	token, expires, err := issueSessionToken(h.sessionKey, h.keyID, h.hostAddress, h.cfg.Version, recovered, attachedUnix, h.cfg.SessionTTL, msg.AttachNonce)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	if curTok, ok := h.byPeer[recovered]; ok {
-		if cur := h.sessions[curTok]; cur != nil && msg.Timestamp < cur.attached {
-			h.mu.Unlock()
-			return nil, connect.NewError(connect.CodePermissionDenied, errors.New("attach is not newer than the live session"))
-		}
-	}
-	replacing := false
-	if old, ok := h.byPeer[recovered]; ok && old != tok {
-		replacing = true
-	}
-	// The cap is distinct current peers. LookupToken leaves expired rows
-	// for the sweeper, so sweep before refusing a new peer.
-	if !replacing && len(h.byPeer) >= h.cfg.MaxSessions {
-		h.sweepExpiredLocked(h.now())
-		if len(h.byPeer) >= h.cfg.MaxSessions && !h.evictOldestIdleLocked() {
-			h.observeSizesLocked()
-			h.mu.Unlock()
-			return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("too many sessions"))
-		}
-	}
-	h.replaceSessionLocked(recovered, token, expires, msg.Timestamp)
-	h.observeSizesLocked()
-	h.mu.Unlock()
-
 	return connect.NewResponse(&rpcpb.AttachResponse{
 		SessionToken: token,
 		ExpiresAt:    expires.Unix(),
@@ -416,11 +331,9 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 func (h *PeerAuthHandler) Watch(ctx context.Context, req *connect.Request[rpcpb.WatchRequest], stream *connect.ServerStream[rpcpb.SessionEvent]) error {
 	_ = req
 	token := TokenFromContext(ctx)
-	watchID, stop, err := h.beginWatch(token)
-	if err != nil {
+	if _, _, err := h.openToken(token); err != nil {
 		return err
 	}
-	defer h.endWatch(token, watchID)
 
 	sendBeat := func() error {
 		if err := setWatchWriteDeadline(ctx, h.cfg.WatchWriteTimeout); err != nil {
@@ -443,19 +356,13 @@ func (h *PeerAuthHandler) Watch(ctx context.Context, req *connect.Request[rpcpb.
 			return ctx.Err()
 		case <-h.closeCh:
 			return hostShuttingDown()
-		case <-stop:
-			if h.Closed() {
-				return hostShuttingDown()
-			}
-			return connect.NewError(connect.CodeUnauthenticated, errors.New("session replaced"))
 		case <-ticker.C:
 			if h.Closed() {
 				return hostShuttingDown()
 			}
-			if _, ok := h.LookupToken(token); !ok {
-				return connect.NewError(connect.CodeUnauthenticated, errors.New("session expired"))
+			if _, _, err := h.openToken(token); err != nil {
+				return err
 			}
-			h.noteAdmit(token)
 			if err := sendBeat(); err != nil {
 				return err
 			}
@@ -463,71 +370,15 @@ func (h *PeerAuthHandler) Watch(ctx context.Context, req *connect.Request[rpcpb.
 	}
 }
 
-func (h *PeerAuthHandler) beginWatch(token []byte) (uint64, <-chan struct{}, error) {
-	if len(token) == 0 || len(token) > maxAttachNonceBytes {
-		return 0, nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or expired session token"))
+func (h *PeerAuthHandler) openToken(token []byte) (string, time.Time, error) {
+	peer, exp, expired, err := openSessionToken(h.sessionKey, h.keyID, h.hostAddress, h.cfg.Version, token, h.now(), sessionTokenSkew)
+	if expired {
+		return "", time.Time{}, connect.NewError(connect.CodeUnauthenticated, errors.New("session expired"))
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.closed.Load() {
-		return 0, nil, hostShuttingDown()
+	if err != nil {
+		return "", time.Time{}, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or expired session token"))
 	}
-	tok := rawTokenKey(token)
-	sess, ok := h.sessions[tok]
-	if !ok && h.byHash != nil {
-		if stub := h.byHash[tokenHashHex(token)]; stub != nil {
-			stub.rawKey = tok
-			h.sessions[tok] = stub
-			if stub.current {
-				h.byPeer[stub.peer] = tok
-			}
-			sess = stub
-			ok = true
-		}
-	}
-	if !ok {
-		return 0, nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or expired session token"))
-	}
-	if h.now().After(sess.expires) {
-		h.dropSessionLocked(tok, sess)
-		h.observeSizesLocked()
-		return 0, nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid or expired session token"))
-	}
-	// A replaced token keeps its grace for in-flight unaries only. A Watch
-	// on it would beat until grace ends and then say session expired, so
-	// the peer would never learn another Attach took its identity.
-	if h.byPeer[sess.peer] != tok {
-		return 0, nil, connect.NewError(connect.CodeUnauthenticated, errors.New("session replaced"))
-	}
-	if sess.watching {
-		return 0, nil, connect.NewError(connect.CodeAlreadyExists, errors.New("watch already active"))
-	}
-	h.nextWatchID++
-	sess.watching = true
-	sess.watchID = h.nextWatchID
-	sess.cancelWatch = make(chan struct{})
-	return sess.watchID, sess.cancelWatch, nil
-}
-
-// endWatch clears this Watch. It does not drop the host session: a stream
-// break must not force a fresh Attach for every escrow this child serves.
-// A later Watch on the same token is allowed. Re-Attach, TTL
-// sweep, eviction, and Close still drop. A grace token's Watch is a no-op
-// here if watchID no longer matches.
-func (h *PeerAuthHandler) endWatch(token []byte, watchID uint64) {
-	if len(token) == 0 || len(token) > maxAttachNonceBytes || watchID == 0 {
-		return
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	tok := rawTokenKey(token)
-	sess, ok := h.sessions[tok]
-	if !ok || sess.watchID != watchID {
-		return
-	}
-	sess.watching = false
-	sess.watchID = 0
-	sess.cancelWatch = nil
+	return peer, exp, nil
 }
 
 // LookupToken returns the peer address bound to token if it is still valid
@@ -543,141 +394,17 @@ func (h *PeerAuthHandler) LookupToken(token []byte) (string, bool) {
 // (expired), or unknown. Handshake-gate metrics need the expired/forged split;
 // LookupToken stays a bool so Watch and callers do not change.
 func (h *PeerAuthHandler) inspectToken(token []byte) (peer string, ok, expired bool) {
-	if h == nil || h.Closed() || len(token) == 0 || len(token) > maxAttachNonceBytes {
+	if h == nil || h.Closed() || len(token) == 0 || len(token) > maxSessionTokenBytes {
 		return "", false, false
 	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	sess, exists := h.sessions[rawTokenKey(token)]
-	if !exists && h.byHash != nil {
-		sess, exists = h.byHash[tokenHashHex(token)]
+	peer, _, expired, err := openSessionToken(h.sessionKey, h.keyID, h.hostAddress, h.cfg.Version, token, h.now(), sessionTokenSkew)
+	if expired {
+		return peer, false, true
 	}
-	if !exists {
+	if err != nil {
 		return "", false, false
 	}
-	if h.now().After(sess.expires) {
-		return sess.peer, false, true
-	}
-	return sess.peer, true, false
-}
-
-// InvalidateToken drops a session token. Safe if the token is already gone.
-func (h *PeerAuthHandler) InvalidateToken(token []byte) {
-	if len(token) == 0 || len(token) > maxAttachNonceBytes {
-		return
-	}
-	h.mu.Lock()
-	tok := rawTokenKey(token)
-	if sess, ok := h.sessions[tok]; ok {
-		h.dropSessionLocked(tok, sess)
-		h.observeSizesLocked()
-	}
-	h.mu.Unlock()
-}
-
-func (h *PeerAuthHandler) replaceSessionLocked(peer string, token []byte, expires time.Time, attached int64) {
-	tok := rawTokenKey(token)
-	if old, ok := h.byPeer[peer]; ok && old != tok {
-		if prev, ok := h.prevByPeer[peer]; ok && prev != old && prev != tok {
-			if sess, ok := h.sessions[prev]; ok {
-				h.dropSessionLocked(prev, sess)
-			}
-		}
-		if sess, ok := h.sessions[old]; ok {
-			graceEnd := h.now().Add(h.cfg.TokenGrace)
-			if sess.expires.After(graceEnd) {
-				sess.expires = graceEnd
-			}
-			h.prevByPeer[peer] = old
-			// Token is no longer current. End its Watch now; grace still
-			// admits in-flight unaries until TokenGrace.
-			sess.stopWatchLocked()
-		}
-	}
-	sess := &peerSession{peer: peer, expires: expires, created: h.now(), attached: attached}
-	sess.lastAdmit.Store(h.now().UnixNano())
-	h.sessions[tok] = sess
-	h.byPeer[peer] = tok
-}
-
-func (h *PeerAuthHandler) dropPeerLocked(peer string) {
-	if prev, ok := h.prevByPeer[peer]; ok {
-		if sess, ok := h.sessions[prev]; ok {
-			h.dropSessionLocked(prev, sess)
-		}
-	}
-	if tok, ok := h.byPeer[peer]; ok {
-		if sess, ok := h.sessions[tok]; ok {
-			h.dropSessionLocked(tok, sess)
-		}
-	}
-}
-
-// evictOldestIdleLocked drops the current session that has gone longest
-// without an admitted RPC or a Watch heartbeat. Watching peers are left
-// alone. False if every current session is watching (then Attach is
-// resource_exhausted).
-func (h *PeerAuthHandler) evictOldestIdleLocked() bool {
-	var (
-		oldestPeer string
-		oldestAt   int64
-	)
-	for peer, tok := range h.byPeer {
-		sess := h.sessions[tok]
-		if sess == nil || sess.watching {
-			continue
-		}
-		at := sess.lastAdmit.Load()
-		if at == 0 {
-			at = sess.created.UnixNano()
-		}
-		if oldestPeer == "" || at < oldestAt {
-			oldestPeer = peer
-			oldestAt = at
-		}
-	}
-	if oldestPeer == "" {
-		return false
-	}
-	h.dropPeerLocked(oldestPeer)
-	return true
-}
-
-// noteAdmit records that token was just accepted. The memory cap evicts by
-// this stamp. A shared store also moves last_seen, at most once per
-// lastSeenThrottle, so a Watch or a live unary is not the eviction victim.
-func (h *PeerAuthHandler) noteAdmit(token []byte) {
-	if h == nil || h.Closed() || len(token) == 0 || len(token) > maxAttachNonceBytes {
-		return
-	}
-	now := h.now().UnixNano()
-	h.mu.RLock()
-	sess, ok := h.sessions[rawTokenKey(token)]
-	if !ok && h.byHash != nil {
-		sess, ok = h.byHash[tokenHashHex(token)]
-	}
-	shared := h.shared
-	h.mu.RUnlock()
-	if !ok || sess == nil {
-		return
-	}
-	sess.lastAdmit.Store(now)
-	if shared == nil {
-		return
-	}
-	prev := sess.lastSeenWrite.Load()
-	if prev != 0 && time.Duration(now-prev) < lastSeenThrottle {
-		return
-	}
-	if !sess.lastSeenWrite.CompareAndSwap(prev, now) {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := shared.TouchLastSeen(ctx, tokenHashBytes(token)); err != nil {
-		sess.lastSeenWrite.CompareAndSwap(now, prev)
-		slog.Warn("devshard peer rpc session last_seen", "err", err)
-	}
+	return peer, true, false
 }
 
 // liveSessionToken is the peer bound to a still-valid X-Devshard-Session.
@@ -688,7 +415,7 @@ func (h *PeerAuthHandler) liveSessionToken(header http.Header) (string, bool) {
 		return "", false
 	}
 	enc := header.Get(transport.SessionHeader)
-	if enc == "" || len(enc) > maxAttachNonceBytes*2 {
+	if enc == "" || len(enc) > maxSessionTokenBytes*2 {
 		return "", false
 	}
 	raw, err := hex.DecodeString(enc)
@@ -795,26 +522,6 @@ func (b *attachBucket) refill(now time.Time, burst, perSec float64) {
 	b.last = now
 }
 
-func (h *PeerAuthHandler) peerSessionLive(addr string) bool {
-	if h == nil || addr == "" {
-		return false
-	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	now := h.now()
-	live := func(tok string) bool {
-		sess := h.sessions[tok]
-		return sess != nil && !now.After(sess.expires)
-	}
-	if tok, ok := h.byPeer[addr]; ok && live(tok) {
-		return true
-	}
-	if tok, ok := h.prevByPeer[addr]; ok && live(tok) {
-		return true
-	}
-	return false
-}
-
 func attachFloorExhausted(retryAfterSec int) error {
 	err := connect.NewError(connect.CodeResourceExhausted, errors.New("too many attach attempts"))
 	err.Meta().Set("Retry-After", strconv.Itoa(retryAfterSec))
@@ -832,199 +539,23 @@ func retryAfterSeconds(d time.Duration) int {
 	return sec
 }
 
-func (h *PeerAuthHandler) dropSessionLocked(tok string, sess *peerSession) {
-	delete(h.sessions, tok)
-	var attached int64
-	if sess != nil {
-		attached = sess.attached
-		sess.stopWatchLocked()
-		if h.byPeer[sess.peer] == tok {
-			delete(h.byPeer, sess.peer)
-		}
-		if h.prevByPeer[sess.peer] == tok {
-			delete(h.prevByPeer, sess.peer)
-		}
-		if sess.tokenHash != "" && h.byHash != nil && h.byHash[sess.tokenHash] == sess {
-			delete(h.byHash, sess.tokenHash)
-		}
-	}
-	h.retireNonceLocked(tok, attached)
-}
-
-func (h *PeerAuthHandler) retireNonceLocked(tok string, attached int64) {
-	if tok == "" {
-		return
-	}
-	until := h.now().Add(retiredNonceTTL)
-	if attached > 0 {
-		if t := time.Unix(attached, 0).Add(retiredNonceTTL); t.After(until) {
-			until = t
-		}
-	}
-	h.retired[tok] = until
-}
-
-func (h *PeerAuthHandler) nonceRetiredLocked(tok string) bool {
-	until, ok := h.retired[tok]
-	if !ok {
-		return false
-	}
-	if !h.now().After(until) {
-		return true
-	}
-	delete(h.retired, tok)
-	return false
-}
-
-func (h *PeerAuthHandler) observeSizesLocked() {
-	observability.SetPeerRPCSessionCounts(len(h.sessions), len(h.byPeer))
-}
-
-// SessionCount is the number of live (including unswept-expired) map entries.
-func (h *PeerAuthHandler) SessionCount() int {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return len(h.sessions)
-}
-
-// StartSweeper runs a ticker that drops expired sessions. Safe to call once;
-// tests that never call it do not start a goroutine. Stop with Close.
-func (h *PeerAuthHandler) StartSweeper() {
-	h.sweepOnce.Do(func() {
-		interval := h.cfg.SweepInterval
-		if interval <= 0 {
-			interval = h.cfg.SessionTTL / 2
-		}
-		if interval <= 0 {
-			interval = defaultSessionTTL / 2
-		}
-		go h.sweepLoop(interval)
-	})
-}
-
-// Close stops the sweeper, ends every Watch, drops sessions, and refuses new
-// Attach and handshake-gated RPCs. Safe without StartSweeper. http.Server.Shutdown
-// can then drain the Watch handlers. Closed is FailedPrecondition so the
-// client does not retry it as Unavailable.
+// Close refuses new Attach and handshake-gated RPCs and ends Watch.
+// http.Server.Shutdown can then drain Watch.
 func (h *PeerAuthHandler) Close() {
 	h.closeOnce.Do(func() {
 		h.closed.Store(true)
 		close(h.closeCh)
-		if h.shared != nil {
-			h.shared.Close()
-		}
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		for tok, sess := range h.sessions {
-			h.dropSessionLocked(tok, sess)
-		}
-		h.byHash = nil
-		h.observeSizesLocked()
 	})
-}
-
-// Closed reports whether Close has run. Attach and the handshake gate fail
-// closed; in-flight unaries that already bound a peer still finish.
-func (h *PeerAuthHandler) Closed() bool {
-	return h != nil && h.closed.Load()
 }
 
 func hostShuttingDown() error {
 	return connect.NewError(connect.CodeFailedPrecondition, errors.New("host shutting down"))
 }
 
-// SweepOnce drops expired sessions and retired nonces. Exported for tests;
-// the sweeper calls it. Expired keys are collected under RLock and deleted
-// in sweepBatchSize holds so LookupToken is not blocked for a full 10k scan.
-func (h *PeerAuthHandler) SweepOnce() {
-	now := h.now()
-	for {
-		expired, retired := h.listExpired(now, sweepBatchSize)
-		if len(expired) == 0 && len(retired) == 0 {
-			break
-		}
-		h.deleteExpired(now, expired, retired)
-	}
-	h.sweepSharedCache(now)
-	if h.shared != nil {
-		h.shared.SweepExpired(context.Background())
-	}
-}
-
-func (h *PeerAuthHandler) listExpired(now time.Time, limit int) (sessions, retired []string) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	remaining := limit
-	if remaining <= 0 {
-		return nil, nil
-	}
-	for tok, sess := range h.sessions {
-		if !now.After(sess.expires) {
-			continue
-		}
-		sessions = append(sessions, tok)
-		remaining--
-		if remaining == 0 {
-			return sessions, retired
-		}
-	}
-	for tok, until := range h.retired {
-		if !now.After(until) {
-			continue
-		}
-		retired = append(retired, tok)
-		remaining--
-		if remaining == 0 {
-			return sessions, retired
-		}
-	}
-	return sessions, retired
-}
-
-func (h *PeerAuthHandler) deleteExpired(now time.Time, sessions, retired []string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	for _, tok := range sessions {
-		sess, ok := h.sessions[tok]
-		if !ok || !now.After(sess.expires) {
-			continue
-		}
-		h.dropSessionLocked(tok, sess)
-	}
-	for _, tok := range retired {
-		until, ok := h.retired[tok]
-		if !ok || !now.After(until) {
-			continue
-		}
-		delete(h.retired, tok)
-	}
-	h.observeSizesLocked()
-}
-
-func (h *PeerAuthHandler) sweepExpiredLocked(now time.Time) {
-	for tok, sess := range h.sessions {
-		if now.After(sess.expires) {
-			h.dropSessionLocked(tok, sess)
-		}
-	}
-	for tok, until := range h.retired {
-		if now.After(until) {
-			delete(h.retired, tok)
-		}
-	}
-}
-
-func (h *PeerAuthHandler) sweepLoop(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-h.closeCh:
-			return
-		case <-ticker.C:
-			h.SweepOnce()
-		}
-	}
+// Closed reports whether Close has run. Attach and the handshake gate fail
+// closed; in-flight unaries that already bound a peer still finish.
+func (h *PeerAuthHandler) Closed() bool {
+	return h != nil && h.closed.Load()
 }
 
 func setWatchWriteDeadline(ctx context.Context, d time.Duration) error {

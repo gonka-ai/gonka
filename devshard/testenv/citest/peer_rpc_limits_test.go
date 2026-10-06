@@ -49,7 +49,6 @@ func TestPeerRPCLimitsNoProxy(t *testing.T) {
 	requireImage(t, baselineRouter)
 	t.Setenv(harness.EnvVersiondImage, baselineVersion)
 	t.Setenv(harness.EnvVersiondRouterImage, baselineRouter)
-	t.Setenv("DEVSHARD_RPC_SERVER_ENABLED", "true")
 	t.Setenv("DEVSHARD_RPC_ENDPOINTS", peerRPCEndpoints)
 	t.Setenv("DEVSHARD_RPC_H2_PORT", "")
 	t.Setenv("DEVSHARD_RPC_H2_HOST", "")
@@ -97,7 +96,6 @@ func TestPeerRPCLimitsOverlay(t *testing.T) {
 	if os.Getenv(harness.EnvVersiondImage) != "" || os.Getenv(harness.EnvVersiondRouterImage) != "" {
 		t.Fatal("overlay limits use current versiond and versiond-router; unset TESTENV_VERSIOND_IMAGE and TESTENV_VERSIOND_ROUTER_IMAGE")
 	}
-	t.Setenv("DEVSHARD_RPC_SERVER_ENABLED", "true")
 	t.Setenv("DEVSHARD_RPC_ENDPOINTS", peerRPCEndpoints)
 	t.Setenv("DEVSHARD_RPC_H2_PORT", "8443")
 	t.Setenv("DEVSHARD_RPC_H2_HOST", "proxy")

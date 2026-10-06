@@ -16,37 +16,26 @@ import (
 	"devshard/transport/rpcserver"
 )
 
-func TestHostManager_RPCRoutesGatedByFlag(t *testing.T) {
+func TestHostManager_RegisterMountsPeerRPC(t *testing.T) {
 	mgr := NewHostManager(storage.NewMemory(), mustGenerateKey(t), nil, nil, nil, "v5", nil, nil, nil)
 	t.Cleanup(func() { _ = mgr.Close() })
 
-	eOff := echo.New()
-	mgr.Register(eOff.Group(""))
-	for _, r := range eOff.Routes() {
-		if r.Path == "/stats/rpc" {
-			continue
-		}
-		require.NotContains(t, r.Path, "/rpc", r.Method+" "+r.Path)
-	}
-
-	mgr.SetRPCServerEnabled(true)
-	eOn := echo.New()
-	mgr.Register(eOn.Group(""))
+	e := echo.New()
+	mgr.Register(e.Group(""))
 	found := false
-	for _, r := range eOn.Routes() {
+	for _, r := range e.Routes() {
 		if strings.Contains(r.Path, "/sessions/:id/rpc") {
 			found = true
 			break
 		}
 	}
-	require.True(t, found, "DEVSHARD_RPC_SERVER_ENABLED must mount /sessions/:id/rpc")
+	require.True(t, found, "Register must mount /sessions/:id/rpc")
 	require.Equal(t, 1.0, prometheusGauge(t, "devshard_peer_rpc_enabled"))
 }
 
-func TestHostManager_RPCEnabledEmptyHostPanics(t *testing.T) {
+func TestHostManager_RegisterEmptyHostPanics(t *testing.T) {
 	mgr := NewHostManager(storage.NewMemory(), nil, nil, nil, nil, "v5", nil, nil, nil)
 	t.Cleanup(func() { _ = mgr.Close() })
-	mgr.SetRPCServerEnabled(true)
 
 	defer func() {
 		r := recover()

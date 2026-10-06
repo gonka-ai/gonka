@@ -149,7 +149,6 @@ services:
       # Peers/executors here are compose service names resolving to private IPs,
       # so the dial-time SSRF guard must be off. Production leaves this unset.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
-      DEVSHARD_RPC_SERVER_ENABLED: ${DEVSHARD_RPC_SERVER_ENABLED:-true}
       DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
       DEVSHARD_RPC_MSGS_PER_MIN: ${DEVSHARD_RPC_MSGS_PER_MIN:-}
       DEVSHARD_RPC_MSGS_BURST: ${DEVSHARD_RPC_MSGS_BURST:-}
@@ -164,7 +163,7 @@ services:
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
 {{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
-      # HA replicas declare GONKA_HA so the child shares peer RPC sessions.
+      # HA replicas declare GONKA_HA for the shared-storage guard.
       # The sqlite migration clears this before booting these hosts on sqlite.
       GONKA_HA: "{{ haDeployment $ }}"
       # HA pair shares Postgres (sticky single-writer + lease table).
@@ -175,7 +174,7 @@ services:
       PGUSER: {{ $.Postgres.User }}
       PGPASSWORD: {{ $.Postgres.Password }}
 {{ else if eq $.Versiond.Mode "multi" }}
-      # Solo hosts omit GONKA_HA and keep peer RPC sessions in memory.
+      # Solo hosts omit GONKA_HA.
       # Solo executor: local sqlite so it does not multi-write shared PG diffs.
       DEVSHARD_STORAGE_MODE: sqlite
 {{ end }}
@@ -237,7 +236,7 @@ services:
       VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
       VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
       VERSIOND_ROUTING_ACTIVATION_MIN_READY: "{{ routingActivationMinReady . }}"
-      # HA replicas set GONKA_HA too, so their children share peer RPC sessions.
+      # HA replicas set GONKA_HA too, for the shared-storage guard.
       # Solo sqlite hosts omit it. Scenarios that run the pool on sqlite clear
       # GONKA_HA before boot and still fail at request time on Devshard-Ha.
       GONKA_HA: "{{ haDeployment . }}"

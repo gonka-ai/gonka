@@ -57,7 +57,6 @@ func TestExecutionTimeout_ColdExecutorCreatesSession(t *testing.T) {
 		execStore, hosts[1], stub.NewInferenceEngine(), stub.NewValidationEngine(),
 		nil, testutil.RuntimeTestVersion, &mockBridge{escrow: escrow}, nil, nil,
 	))
-	execMgr.SetRPCServerEnabled(true)
 	e := echo.New()
 	execMgr.Register(e.Group(devshardpkg.DefaultRoutePrefix()))
 	ts := httptest.NewServer(e)

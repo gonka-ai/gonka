@@ -16,8 +16,8 @@ import (
 
 // TestPeerRPCHASessionSpread is the HA session reproduction: two escrows
 // that the router hashes to different children must both complete a height
-// seed and a chat. The shared session store is what makes the second one
-// ready; Watch for `_` does not land on the child that attached the door.
+// seed and a chat. Each child admits the other's token from the host key;
+// Watch for `_` does not land on the child that attached the door.
 func TestPeerRPCHASessionSpread(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
