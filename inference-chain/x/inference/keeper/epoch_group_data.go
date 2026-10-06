@@ -20,9 +20,11 @@ func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.Epoc
 // storedEpochGroupData keeps each seed signature's member address and hex
 // signature, and each validation weight's member address, as raw bytes;
 // restoredEpochGroupData undoes it. A string that does not round-trip stays as
-// it is. The caller's slices are not modified.
+// it is. When every ML node's timeslot_allocation is [true, false], the
+// allocations are left out behind one flag. The caller's slices are not modified.
 func storedEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
 	if len(egd.ValidationWeights) > 0 {
+		egd.DefaultTimeslotAllocations = onlyDefaultTimeslots(egd.ValidationWeights)
 		weights := make([]*types.ValidationWeight, len(egd.ValidationWeights))
 		for i, w := range egd.ValidationWeights {
 			if w == nil {
@@ -31,6 +33,16 @@ func storedEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
 			stored := *w
 			if b, ok := rawAddress(stored.MemberAddress); ok {
 				stored.MemberAddr, stored.MemberAddress = b, ""
+			}
+			if egd.DefaultTimeslotAllocations && len(w.MlNodes) > 0 {
+				stored.MlNodes = make([]*types.MLNodeInfo, len(w.MlNodes))
+				for j, n := range w.MlNodes {
+					if n != nil {
+						node := *n
+						node.TimeslotAllocation = nil
+						stored.MlNodes[j] = &node
+					}
+				}
 			}
 			weights[i] = &stored
 		}
@@ -59,10 +71,21 @@ func storedEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
 
 func restoredEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
 	for _, w := range egd.ValidationWeights {
-		if w != nil && len(w.MemberAddr) > 0 {
+		if w == nil {
+			continue
+		}
+		if len(w.MemberAddr) > 0 {
 			w.MemberAddress, w.MemberAddr = sdk.AccAddress(w.MemberAddr).String(), nil
 		}
+		if egd.DefaultTimeslotAllocations {
+			for _, n := range w.MlNodes {
+				if n != nil {
+					n.TimeslotAllocation = []bool{true, false}
+				}
+			}
+		}
 	}
+	egd.DefaultTimeslotAllocations = false
 	for _, s := range egd.MemberSeedSignatures {
 		if s == nil {
 			continue
@@ -75,6 +98,27 @@ func restoredEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
 		}
 	}
 	return egd
+}
+
+// onlyDefaultTimeslots reports whether there is at least one ML node and every
+// one has timeslot_allocation [true, false], the value model assignment writes.
+func onlyDefaultTimeslots(weights []*types.ValidationWeight) bool {
+	nodes := 0
+	for _, w := range weights {
+		if w == nil {
+			continue
+		}
+		for _, n := range w.MlNodes {
+			if n == nil {
+				continue
+			}
+			if len(n.TimeslotAllocation) != 2 || !n.TimeslotAllocation[0] || n.TimeslotAllocation[1] {
+				return false
+			}
+			nodes++
+		}
+	}
+	return nodes > 0
 }
 
 // rawHex returns the bytes of a non-empty lower-case hex string that encodes back to the same string.
