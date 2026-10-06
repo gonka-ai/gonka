@@ -9,7 +9,6 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -80,20 +79,22 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			return nil, fmt.Errorf("participant %s not found", addr)
 		}
 		participantByAddr[addr] = &participant
-		if participant.CurrentEpochStats != nil {
-			storedStatsByAddr[addr] = proto.Clone(participant.CurrentEpochStats).(*types.CurrentEpochStats)
-		}
+		storedStatsByAddr[addr] = participant.CurrentEpochStats.StoredCopy()
 		if escrow.EpochIndex != currentEpochIndex {
-			treatAsCurrentEpochSettle[addr] = false
-			continue
-		}
-		if _, accountsSettled := k.GetEpochPerformanceSummary(goCtx, currentEpochIndex, addr); accountsSettled {
 			treatAsCurrentEpochSettle[addr] = false
 			continue
 		}
 		participantAddr, err := sdk.AccAddressFromBech32(addr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid participant address %s: %w", addr, err)
+		}
+		accountsSettled, err := k.EpochPerformanceSummaries.Has(ctx, collections.Join(participantAddr, currentEpochIndex))
+		if err != nil {
+			return nil, fmt.Errorf("failed to check epoch performance summary for %s: %w", addr, err)
+		}
+		if accountsSettled {
+			treatAsCurrentEpochSettle[addr] = false
+			continue
 		}
 		active, err := k.ActiveParticipantsSet.Has(ctx, collections.Join(currentEpochIndex, participantAddr))
 		if err != nil {
