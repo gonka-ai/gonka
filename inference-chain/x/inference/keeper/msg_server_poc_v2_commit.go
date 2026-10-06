@@ -168,7 +168,7 @@ func (k msgServer) loadExistingPoCV2StoreCommits(
 		if valueErr != nil {
 			return nil, sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("failed to read existing commit: %v", valueErr))
 		}
-		existingByModel[key.K3()] = value
+		existingByModel[key.K3()] = restoredPoCV2StoreCommit(key, value)
 	}
 
 	return existingByModel, nil
@@ -282,7 +282,7 @@ func (k msgServer) persistPoCV2CommitUpdates(
 			TreeDepth:                update.entry.TreeDepth,
 		}
 
-		if err := k.PoCV2StoreCommits.Set(ctx, pk, commit); err != nil {
+		if err := k.PoCV2StoreCommits.Set(ctx, pk, storedPoCV2StoreCommit(commit, addr)); err != nil {
 			return sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("failed to store commit: %v", err))
 		}
 
@@ -396,7 +396,7 @@ func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.Ms
 			ModelId:                  entry.ModelId,
 		}
 
-		if err := k.MLNodeWeightDistributions.Set(ctx, pk, distribution); err != nil {
+		if err := k.MLNodeWeightDistributions.Set(ctx, pk, storedMLNodeWeightDistribution(distribution, addr)); err != nil {
 			return nil, sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("failed to store distribution: %v", err))
 		}
 
