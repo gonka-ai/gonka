@@ -68,6 +68,10 @@ message ValidationWeight {
 message SeedSignature {
   string member_address = 1;
   string signature = 2;
+  // Storage form set by the keeper: address bytes and the decoded hex
+  // signature. Reads restore the strings; queries never return these.
+  bytes member_addr = 3;
+  bytes signature_raw = 4;
 }
 
 message MLNodeInfo {
