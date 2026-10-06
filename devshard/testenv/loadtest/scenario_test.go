@@ -55,7 +55,7 @@ func TestLoadScenario_SingleFailingMLNode(t *testing.T) {
 	require.Equal(t, "single-failing-ml-node", scenario.Scenario)
 	require.Len(t, scenario.Topology.MockML.Nodes, 4)
 	require.Equal(t, "failing", scenario.Topology.MockML.Nodes[3].Profile)
-	require.Equal(t, 0.15, scenario.Thresholds.ErrorRate)
+	require.Equal(t, 0.15, scenario.Assertions.Requests.ErrorRate)
 	require.Equal(t, "60s", scenario.Workload.Duration)
 	require.Equal(t, "90s", scenario.DrainTimeout)
 }
@@ -66,7 +66,7 @@ func TestLoadScenario_SingleTimeoutMLNode(t *testing.T) {
 	require.Equal(t, "single-timeout-ml-node", scenario.Scenario)
 	require.Len(t, scenario.Topology.MockML.Nodes, 4)
 	require.Equal(t, "timeout", scenario.Topology.MockML.Nodes[3].Profile)
-	require.Equal(t, 0.35, scenario.Thresholds.ErrorRate)
+	require.Equal(t, 0.35, scenario.Assertions.Requests.ErrorRate)
 	require.Equal(t, "30s", scenario.Gateway.Redundancy.SecondaryWaitAfterWinner)
 	require.Equal(t, 30*time.Second, scenario.SecondaryWaitAfterWinner())
 	require.Equal(t, "60s", scenario.DrainTimeout)
@@ -77,6 +77,22 @@ func TestScenario_DefaultSecondaryWaitAfterWinner(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, scenario.Gateway.Redundancy.SecondaryWaitAfterWinner)
 	require.Equal(t, DefaultSecondaryWaitAfterWinner, scenario.SecondaryWaitAfterWinner())
+}
+
+func TestLoadScenario_EscrowRotation(t *testing.T) {
+	scenario, err := LoadScenario(filepath.Join("scenarios", "escrow-rotation.yaml"))
+	require.NoError(t, err)
+	require.True(t, scenario.Gateway.EscrowRotation.Enabled)
+	require.True(t, scenario.Gateway.EscrowRotation.SettlementEnabled)
+	require.Equal(t, int64(1), scenario.Gateway.EscrowRotation.PrePoCBlocks)
+	require.Equal(t, uint64(5_000), scenario.Gateway.EscrowRotation.NonceDeactivationLimit)
+	require.Equal(t, 1, scenario.Gateway.EscrowRotation.TempCount)
+	require.Equal(t, 1, scenario.Gateway.EscrowRotation.TargetCount)
+	require.Equal(t, uint64(5_000_000_000), scenario.Gateway.EscrowRotation.Amount)
+	require.Equal(t, "DEVSHARD_PRIVATE_KEY", scenario.Gateway.EscrowRotation.PrivateKeyEnv)
+	require.Equal(t, "10m", scenario.Workload.Duration)
+	require.Equal(t, 1.0, scenario.Workload.Traffic.RPS)
+	require.True(t, scenario.Assertions.EscrowRotation.RequireNewEscrow)
 }
 
 func TestLoadProfile_Fast(t *testing.T) {

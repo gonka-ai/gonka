@@ -35,14 +35,12 @@ workload:
       - role: user
         content: "single failing ML node request"
 
-thresholds:
-  # One of four nodes fails 33% of its requests; allow routing/retry effects.
-  error_rate: 0.15
-
 assertions:
   requests:
     http_status: 200
     terminal_outcome: completed
+    # One of four nodes fails 33% of its requests; allow routing/retry effects.
+    error_rate: 0.15
   devshard:
     no_orphaned_work: true
     max_ghost_rate: 0.02

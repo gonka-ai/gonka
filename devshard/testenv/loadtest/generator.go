@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -76,7 +77,8 @@ func RunGenerator(ctx context.Context, cfg GeneratorConfig) (Summary, error) {
 	}
 
 	started := time.Now().UTC()
-	deadline := started.Add(cfg.Scenario.Duration())
+	workloadDuration := cfg.Scenario.Duration()
+	deadline := started.Add(workloadDuration)
 	var sequence atomic.Uint64
 	results := make([]RequestResult, 0)
 	var resultsMu sync.Mutex
@@ -85,17 +87,78 @@ func RunGenerator(ctx context.Context, cfg GeneratorConfig) (Summary, error) {
 		results = append(results, result)
 		resultsMu.Unlock()
 	}
+	stopProgress := startWorkloadProgress(ctx, started, workloadDuration)
 	if cfg.Scenario.Workload.Traffic.IsRateBased() {
 		runRateProfile(ctx, cfg, started, deadline, &sequence, record)
 	} else {
 		runClosedLoop(ctx, cfg, deadline, &sequence, record)
 	}
+	stopProgress()
 
 	summary := summarize(cfg.Scenario, started, time.Since(started), results)
 	if err := writeResults(cfg.OutputDir, summary); err != nil {
 		return Summary{}, err
 	}
 	return summary, nil
+}
+
+const workloadProgressSteps = 10
+
+// startWorkloadProgress logs time-based workload progress independently from
+// request throughput. This keeps long or overloaded runs observable even when
+// the generator is dropping requests or waiting for slow responses.
+func startWorkloadProgress(ctx context.Context, started time.Time, duration time.Duration) func() {
+	done := make(chan struct{})
+	stopped := make(chan struct{})
+
+	go func() {
+		defer close(stopped)
+		for step := 1; step <= workloadProgressSteps; step++ {
+			target := started.Add(duration * time.Duration(step) / workloadProgressSteps)
+			timer := time.NewTimer(time.Until(target))
+			select {
+			case <-ctx.Done():
+				stopTimer(timer)
+				return
+			case <-done:
+				stopTimer(timer)
+				return
+			case <-timer.C:
+				elapsed := time.Since(started)
+				if elapsed > duration {
+					elapsed = duration
+				}
+				percent := step * 100 / workloadProgressSteps
+				log.Printf("loadtest: stage=workload_progress progress=%d%% elapsed=%s duration=%s chart=%s", percent, elapsed.Round(time.Millisecond), duration, workloadProgressBar(percent))
+			}
+		}
+	}()
+
+	return func() {
+		close(done)
+		<-stopped
+	}
+}
+
+func stopTimer(timer *time.Timer) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+}
+
+func workloadProgressBar(percent int) string {
+	const width = 20
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	filled := percent * width / 100
+	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", width-filled) + "]"
 }
 
 func runClosedLoop(ctx context.Context, cfg GeneratorConfig, deadline time.Time, sequence *atomic.Uint64, record func(RequestResult)) {

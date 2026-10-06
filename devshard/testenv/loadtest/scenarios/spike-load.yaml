@@ -38,13 +38,11 @@ workload:
       - role: user
         content: "spike-load request"
 
-thresholds:
-  error_rate: 0
-
 assertions:
   requests:
     http_status: 200
     terminal_outcome: completed
+    error_rate: 0
   devshard:
     no_orphaned_work: true
     max_ghost_rate: 0.02
