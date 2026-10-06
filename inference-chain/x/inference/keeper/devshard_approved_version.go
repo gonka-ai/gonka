@@ -36,6 +36,27 @@ func (k Keeper) ApprovedVersionCount(ctx context.Context) (int, error) {
 	return len(versions), nil
 }
 
+// settlementApprovedVersions returns the allowlist entries the version check needs:
+// just the settlement's own version when listed, the whole list otherwise.
+func (k Keeper) settlementApprovedVersions(ctx context.Context, version string) ([]*types.DevshardApprovedVersion, error) {
+	listed, err := k.DevshardApprovedVersionsMap.Has(ctx, version)
+	if err != nil {
+		return nil, err
+	}
+	if listed {
+		return []*types.DevshardApprovedVersion{{Name: version}}, nil
+	}
+	stored, err := k.GetApprovedVersions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	approved := make([]*types.DevshardApprovedVersion, len(stored))
+	for i := range stored {
+		approved[i] = &stored[i]
+	}
+	return approved, nil
+}
+
 func (k Keeper) GetApprovedVersions(ctx context.Context) ([]types.DevshardApprovedVersion, error) {
 	iter, err := k.DevshardApprovedVersionsMap.Iterate(ctx, nil)
 	if err != nil {
