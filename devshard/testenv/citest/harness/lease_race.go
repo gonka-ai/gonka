@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -158,6 +159,53 @@ func RequireLeaseExclusivityPass(t *testing.T, snap LeaseSnapshot, minLeases int
 		snap.Total, minLeases, snap.Pending, snap.Submitted, snap.Skipped)
 	t.Logf("citest: lease exclusivity PASS total=%d pending=%d submitted=%d skipped=%d",
 		snap.Total, snap.Pending, snap.Submitted, snap.Skipped)
+}
+
+// invalidMockVoteMarkers are the versiond log lines of a validator that voted
+// against an honest mock reply: refused before the replay, or replayed and
+// found invalid.
+var invalidMockVoteMarkers = []string{
+	"not sent to the validator node",
+	"validation_result=invalid",
+}
+
+// RequireMockValidationsPassed fails when any versiond voted invalid on a
+// fault-free run. Lease waits only cover in-flight Validate while every mock
+// reply reaches the ML replay and passes it.
+func RequireMockValidationsPassed(t *testing.T, stack *Stack, cfg *config.File) {
+	t.Helper()
+	services := make([]string, 0, len(cfg.Hosts))
+	for _, host := range cfg.Hosts {
+		services = append(services, host.ID)
+	}
+	logs, err := stack.ComposeLogsAll(services...)
+	require.NoError(t, err)
+	lines := strings.Split(logs, "\n")
+	for _, line := range lines {
+		for _, marker := range invalidMockVoteMarkers {
+			if strings.Contains(line, marker) {
+				t.Fatalf("citest: validator voted invalid on a mock reply: %s\n%s", line, validationLinesFor(lines, line))
+			}
+		}
+	}
+}
+
+var voteInferenceID = regexp.MustCompile(`\binference_?[iI]d=(\d+)\b`)
+
+// validationLinesFor returns the versiond lines that name the same inference as
+// vote, so the failure shows that inference's validation and vote.
+func validationLinesFor(lines []string, vote string) string {
+	m := voteInferenceID.FindStringSubmatch(vote)
+	if m == nil {
+		return ""
+	}
+	var out []string
+	for _, line := range lines {
+		if id := voteInferenceID.FindStringSubmatch(line); id != nil && id[1] == m[1] {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // SetValidationRate posts chain params validation_rate (bps) via mock-dapi.
@@ -382,7 +430,8 @@ func WaitLeasePending(t *testing.T, stack *Stack, cfg *config.File, minPending i
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("citest: pending leases=%d < %d after %s (total=%d)", last.Pending, minPending, timeout, last.Total)
+	t.Fatalf("citest: pending leases=%d < %d after %s (total=%d submitted=%d skipped=%d)",
+		last.Pending, minPending, timeout, last.Total, last.Submitted, last.Skipped)
 	return last
 }
 
@@ -444,7 +493,8 @@ func WaitLeasePendingUnderLoad(t *testing.T, stack *Stack, cfg *config.File, min
 	mu.Lock()
 	defer mu.Unlock()
 	if !found {
-		t.Fatalf("citest: pending leases=%d < %d after %s under load (total=%d)", last.Pending, minPending, timeout, last.Total)
+		t.Fatalf("citest: pending leases=%d < %d after %s under load (total=%d submitted=%d skipped=%d)",
+			last.Pending, minPending, timeout, last.Total, last.Submitted, last.Skipped)
 	}
 	return hit
 }

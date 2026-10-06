@@ -247,8 +247,12 @@ const (
 	DefaultNetworkCIDR   = "172.30.0.0/24"
 	DefaultNetworkBaseIP = "172.30.0"
 	DefaultModelID       = "test-model"
-	DefaultAdminAPIKey   = "testenv-citest-admin"
-	DefaultAppHash       = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	// The chain stores the similarity pass bar as value * 10^exponent, like
+	// production's 958e-3; 50e-2 is a 0.50 bar.
+	DefaultValidationThresholdValue    = int64(50)
+	DefaultValidationThresholdExponent = int32(-2)
+	DefaultAdminAPIKey                 = "testenv-citest-admin"
+	DefaultAppHash                     = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 
 // Load reads a YAML config file and applies defaults.
