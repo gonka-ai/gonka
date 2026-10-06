@@ -103,17 +103,13 @@ func (k Keeper) GetAllPoCV2StoreCommitsForStage(ctx context.Context, pocStageSta
 	defer iter.Close()
 
 	for ; iter.Valid(); iter.Next() {
-		key, err := iter.Key()
+		kv, err := iter.KeyValue()
 		if err != nil {
 			return nil, err
 		}
-		value, err := iter.Value()
-		if err != nil {
-			return nil, err
-		}
-		addr := key.K2()
+		value := restoredPoCV2StoreCommit(kv.Key, kv.Value)
 		result[types.PoCParticipantModelKey{
-			ParticipantAddress: addr.String(),
+			ParticipantAddress: kv.Key.K2().String(),
 			ModelID:            value.ModelId,
 		}] = value
 	}
@@ -132,17 +128,13 @@ func (k Keeper) GetAllMLNodeWeightDistributionsForStage(ctx context.Context, poc
 	defer iter.Close()
 
 	for ; iter.Valid(); iter.Next() {
-		key, err := iter.Key()
+		kv, err := iter.KeyValue()
 		if err != nil {
 			return nil, err
 		}
-		value, err := iter.Value()
-		if err != nil {
-			return nil, err
-		}
-		addr := key.K2()
+		value := restoredMLNodeWeightDistribution(kv.Key, kv.Value)
 		result[types.PoCParticipantModelKey{
-			ParticipantAddress: addr.String(),
+			ParticipantAddress: kv.Key.K2().String(),
 			ModelID:            value.ModelId,
 		}] = value
 	}
@@ -157,7 +149,7 @@ func (k Keeper) SetPoCV2StoreCommit(ctx context.Context, commit types.PoCV2Store
 		return err
 	}
 	pk := pocV2StoreCommitKey(commit.PocStageStartBlockHeight, addr, commit.ModelId)
-	return k.PoCV2StoreCommits.Set(ctx, pk, commit)
+	return k.PoCV2StoreCommits.Set(ctx, pk, storedPoCV2StoreCommit(commit, addr))
 }
 
 // SetMLNodeWeightDistribution stores an MLNodeWeightDistribution (for testing). Returns error on invalid address or storage failure.
@@ -167,5 +159,38 @@ func (k Keeper) SetMLNodeWeightDistribution(ctx context.Context, distribution ty
 		return err
 	}
 	pk := pocV2StoreCommitKey(distribution.PocStageStartBlockHeight, addr, distribution.ModelId)
-	return k.MLNodeWeightDistributions.Set(ctx, pk, distribution)
+	return k.MLNodeWeightDistributions.Set(ctx, pk, storedMLNodeWeightDistribution(distribution, addr))
+}
+
+// storedPoCV2StoreCommit and storedMLNodeWeightDistribution drop the fields the key already
+// holds; the restored* functions fill them back. The full record is kept when the key would
+// not restore the same address string or the value would be empty.
+func storedPoCV2StoreCommit(c types.PoCV2StoreCommit, participant sdk.AccAddress) types.PoCV2StoreCommit {
+	if participant.String() != c.ParticipantAddress ||
+		c.Count == 0 && len(c.RootHash) == 0 && c.CommitBlockHeight == 0 && c.TreeDepth == 0 {
+		return c
+	}
+	c.ParticipantAddress, c.PocStageStartBlockHeight, c.ModelId = "", 0, ""
+	return c
+}
+
+func restoredPoCV2StoreCommit(key collections.Triple[int64, sdk.AccAddress, string], c types.PoCV2StoreCommit) types.PoCV2StoreCommit {
+	if c.ParticipantAddress == "" {
+		c.ParticipantAddress, c.PocStageStartBlockHeight, c.ModelId = key.K2().String(), key.K1(), key.K3()
+	}
+	return c
+}
+
+func storedMLNodeWeightDistribution(d types.MLNodeWeightDistribution, participant sdk.AccAddress) types.MLNodeWeightDistribution {
+	if participant.String() != d.ParticipantAddress || len(d.Weights) == 0 {
+		return d
+	}
+	return types.MLNodeWeightDistribution{Weights: d.Weights}
+}
+
+func restoredMLNodeWeightDistribution(key collections.Triple[int64, sdk.AccAddress, string], d types.MLNodeWeightDistribution) types.MLNodeWeightDistribution {
+	if d.ParticipantAddress == "" {
+		d.ParticipantAddress, d.PocStageStartBlockHeight, d.ModelId = key.K2().String(), key.K1(), key.K3()
+	}
+	return d
 }
