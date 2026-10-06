@@ -35,13 +35,9 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	if devshardParams == nil {
 		return nil, fmt.Errorf("devshard escrow params not configured")
 	}
-	stored, err := k.GetApprovedVersions(goCtx)
+	approved, err := k.settlementApprovedVersions(goCtx, msg.StateRootAndProtocolVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get approved devshard versions: %w", err)
-	}
-	approved := make([]*types.DevshardApprovedVersion, len(stored))
-	for i := range stored {
-		approved[i] = &stored[i]
 	}
 	if err := VerifyDevshardSettlement(escrow, msg, devshardParams, approved, warmKeyChecker); err != nil {
 		return nil, err
