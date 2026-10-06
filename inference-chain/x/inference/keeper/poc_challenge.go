@@ -230,7 +230,15 @@ func (k Keeper) ListChallengeCommits(ctx context.Context, target string) ([]type
 		return nil, err
 	}
 	defer iter.Close()
-	return iter.Values()
+	kvs, err := iter.KeyValues()
+	if err != nil {
+		return nil, err
+	}
+	commits := make([]types.PoCV2StoreCommit, len(kvs))
+	for i, kv := range kvs {
+		commits[i] = restoredChallengeCommit(kv.Key, kv.Value)
+	}
+	return commits, nil
 }
 
 func (k Keeper) ListChallengeValidations(ctx context.Context, target string) ([]types.PoCValidationV2, error) {
@@ -243,7 +251,37 @@ func (k Keeper) ListChallengeValidations(ctx context.Context, target string) ([]
 		return nil, err
 	}
 	defer iter.Close()
-	return iter.Values()
+	kvs, err := iter.KeyValues()
+	if err != nil {
+		return nil, err
+	}
+	validations := make([]types.PoCValidationV2, len(kvs))
+	for i, kv := range kvs {
+		v := kv.Value
+		if v.ParticipantAddress == "" {
+			v.ParticipantAddress, v.ModelId, v.ValidatorParticipantAddress = kv.Key.K1().String(), kv.Key.K2(), kv.Key.K3().String()
+		}
+		validations[i] = v
+	}
+	return validations, nil
+}
+
+// storedChallengeCommit drops the participant and model id the key holds; restoredChallengeCommit
+// fills them back. The full record is kept when the key would not restore the same address string.
+func storedChallengeCommit(c types.PoCV2StoreCommit, participant sdk.AccAddress) types.PoCV2StoreCommit {
+	if participant.String() != c.ParticipantAddress ||
+		c.PocStageStartBlockHeight == 0 && c.Count == 0 && len(c.RootHash) == 0 && c.CommitBlockHeight == 0 && c.TreeDepth == 0 {
+		return c
+	}
+	c.ParticipantAddress, c.ModelId = "", ""
+	return c
+}
+
+func restoredChallengeCommit(key collections.Pair[sdk.AccAddress, string], c types.PoCV2StoreCommit) types.PoCV2StoreCommit {
+	if c.ParticipantAddress == "" {
+		c.ParticipantAddress, c.ModelId = key.K1().String(), key.K2()
+	}
+	return c
 }
 
 func (k Keeper) DeleteChallengeSegmentData(ctx context.Context, target string) error {
