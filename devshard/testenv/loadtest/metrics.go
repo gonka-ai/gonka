@@ -102,7 +102,7 @@ func parseRuntimeMetrics(body string) (map[string]float64, []map[string]string, 
 		return nil, nil, err
 	}
 	values := map[string]float64{}
-	for _, name := range append(runtimeMetricNames, "loadtest_process_pid", "loadtest_process_rss_hwm_bytes") {
+	for _, name := range append(runtimeMetricNames, "loadtest_process_pid", "loadtest_process_start_ticks", "loadtest_process_rss_hwm_bytes") {
 		family := families[name]
 		if family == nil || len(family.Metric) != 1 {
 			continue
@@ -153,6 +153,7 @@ for p in /proc/[0-9]*; do
   [ "$name" = "$1" ] || continue
   found=$((found+1))
   printf 'loadtest_process_pid %s\n' "${p##*/}"
+  awk '{printf "loadtest_process_start_ticks %.0f\n", $22}' "$p/stat"
   awk '/^VmHWM:/ {printf "loadtest_process_rss_hwm_bytes %.0f\n", $2*1024}' "$p/status"
 done
 [ "$found" -eq 1 ]`
@@ -240,7 +241,7 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 				if err != nil {
 					sample.Errors = append(sample.Errors, err.Error())
 				}
-				for _, name := range append(append([]string{}, runtimeMetricNames...), "go_gc_duration_seconds_count", "go_gc_duration_seconds_sum", "loadtest_process_pid", "loadtest_process_rss_hwm_bytes") {
+				for _, name := range append(append([]string{}, runtimeMetricNames...), "go_gc_duration_seconds_count", "go_gc_duration_seconds_sum", "loadtest_process_pid", "loadtest_process_start_ticks", "loadtest_process_rss_hwm_bytes") {
 					if _, ok := sample.Values[name]; !ok {
 						sample.Errors = append(sample.Errors, "missing "+name)
 					}
@@ -434,7 +435,15 @@ func metricsRunMetadata(dir string, cfg *config.File) map[string]string {
 }
 
 func processChanged(a, b map[string]float64) bool {
-	for _, name := range []string{"process_start_time_seconds", "loadtest_process_pid"} {
+	// Linux boot wall time can shift after VM clock synchronization. /proc
+	// start ticks remain stable, and also distinguish a reused PID.
+	_, oldTicks := a["loadtest_process_start_ticks"]
+	_, newTicks := b["loadtest_process_start_ticks"]
+	names := []string{"process_start_time_seconds", "loadtest_process_pid"}
+	if oldTicks && newTicks {
+		names = []string{"loadtest_process_start_ticks", "loadtest_process_pid"}
+	}
+	for _, name := range names {
 		x, ok := a[name]
 		y, exists := b[name]
 		if ok && exists && x != y {
