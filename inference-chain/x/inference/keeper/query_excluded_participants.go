@@ -33,11 +33,11 @@ func (k Keeper) ExcludedParticipants(ctx context.Context, req *types.QueryExclud
 	}
 	defer it.Close()
 	for ; it.Valid(); it.Next() {
-		val, err := it.Value()
+		kv, err := it.KeyValue()
 		if err != nil {
 			return nil, err
 		}
-		v := val
+		v := restoredExclusion(kv.Key, kv.Value)
 		items = append(items, &v)
 	}
 
