@@ -2007,7 +2007,8 @@ func (g *Gateway) beginFinalizeGate(rt *devshardRuntime) (bool, string) {
 		return false, "already has a finalize in flight"
 	}
 	if rt.escrowHasBackgroundWork() {
-		return false, "has active requests"
+		return false, fmt.Sprintf("has active requests (active_requests=%d pending_race_cleanup=%d)",
+			rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
 	}
 	rt.finalizing.Store(true)
 	return true, ""
