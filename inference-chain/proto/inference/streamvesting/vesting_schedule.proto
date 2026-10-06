@@ -34,8 +34,8 @@ message VestingSchedule {
   ];
 
   // Storage form set by the keeper when every epoch holds at most one coin of one denom:
-  // the denom once and each epoch's amount ("" for none) instead of epoch_amounts.
+  // the denom once and each epoch's amount (0 for none) instead of epoch_amounts.
   // Reads restore epoch_amounts; queries never return these fields set.
   string denom = 3;
-  repeated string amounts = 4;
+  repeated uint64 amounts = 4;
 } 
