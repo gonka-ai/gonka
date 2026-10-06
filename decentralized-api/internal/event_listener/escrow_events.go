@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"common/logging"
 	"decentralized-api/apiconfig"
@@ -68,7 +69,7 @@ func (e *DevshardEscrowCreatedEventHandler) Handle(event *chainevents.JSONRPCRes
 		Amount:     firstAttr(ev, escrowCreatedEvent+".amount"),
 	}
 
-	hold, ok := el.localHoldsEscrowSlot(strconv.FormatUint(escrowID, 10))
+	hold, ok := el.localHoldsEscrowSlot(strconv.FormatUint(escrowID, 10), false)
 	if ok && !hold {
 		logging.Debug("host_events: skip escrow_created; local node not in slots", types.EventProcessing,
 			"escrow_id", escrowID)
@@ -111,7 +112,7 @@ func (e *DevshardEscrowSettledEventHandler) Handle(event *chainevents.JSONRPCRes
 		Remainder:   firstAttr(ev, escrowSettledEvent+".remainder"),
 	}
 
-	hold, ok := el.localHoldsEscrowSlot(strconv.FormatUint(escrowID, 10))
+	hold, ok := el.localHoldsEscrowSlot(strconv.FormatUint(escrowID, 10), true)
 	if ok && !hold {
 		logging.Debug("host_events: skip escrow_settled; local node not in slots", types.EventProcessing,
 			"escrow_id", escrowID)
@@ -129,9 +130,59 @@ func (e *DevshardEscrowSettledEventHandler) Handle(event *chainevents.JSONRPCRes
 	return nil
 }
 
+// escrowSlotMemoCap bounds memo entries; escrows live <=3 epochs (~1.4k created per epoch on mainnet).
+const escrowSlotMemoCap = 8192
+
+// escrowSlotMemo keeps slot membership from escrow_created until escrow_settled:
+// slots are fixed at create, so settle needs no second chain query.
+type escrowSlotMemo struct {
+	mu    sync.Mutex
+	holds map[string]bool
+	order []string
+}
+
+func (m *escrowSlotMemo) put(escrowID string, holds bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.holds == nil {
+		m.holds = make(map[string]bool)
+	}
+	if _, ok := m.holds[escrowID]; !ok {
+		if len(m.order) >= escrowSlotMemoCap {
+			delete(m.holds, m.order[0])
+			m.order = m.order[1:]
+		}
+		m.order = append(m.order, escrowID)
+	}
+	m.holds[escrowID] = holds
+}
+
+// take returns and forgets the memoized membership; order keeps a stale id until evicted.
+func (m *escrowSlotMemo) take(escrowID string) (holds bool, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	holds, ok = m.holds[escrowID]
+	delete(m.holds, escrowID)
+	return holds, ok
+}
+
 // localHoldsEscrowSlot returns (holds, resolved).
 // resolved=false means GetEscrow failed / querier unset — callers fall back to append.
-func (el *EventListener) localHoldsEscrowSlot(escrowID string) (holds bool, resolved bool) {
+// settled=true consumes the membership memoized at create instead of querying the chain.
+func (el *EventListener) localHoldsEscrowSlot(escrowID string, settled bool) (holds bool, resolved bool) {
+	if settled {
+		if holds, ok := el.escrowSlots.take(escrowID); ok {
+			return holds, true
+		}
+	}
+	holds, resolved = el.queryHoldsEscrowSlot(escrowID)
+	if resolved && !settled {
+		el.escrowSlots.put(escrowID, holds)
+	}
+	return holds, resolved
+}
+
+func (el *EventListener) queryHoldsEscrowSlot(escrowID string) (holds bool, resolved bool) {
 	if el.escrowQuery == nil {
 		return false, false
 	}
