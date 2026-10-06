@@ -111,7 +111,7 @@ func (k Keeper) validateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 		ReceiptsRoot:    msg.ReceiptsRoot,
 	}
 
-	existingTx, found := k.GetBridgeTransactionByContent(ctx, proposedTx)
+	existingTx, found := k.getBridgeTransactionRecord(ctx, proposedTx)
 	if found {
 		if !bridgeTransactionsEqual(existingTx, proposedTx) {
 			k.LogError("Bridge exchange: Content mismatch for existing transaction", types.Messages,
