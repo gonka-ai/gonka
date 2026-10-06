@@ -1381,3 +1381,88 @@ func metricSeriesCount(t *testing.T, families []*dto.MetricFamily, name string) 
 	t.Fatalf("missing metric %s", name)
 	return 0
 }
+
+func TestTrackerReportsHostStatsValidated(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 30, "m")
+	require.NoError(t, tr.SyncState("e1", 5, map[uint32]*types.HostStats{1: {Validated: 7, Invalid: 1}}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 30}), "p1")
+	require.Equal(t, uint64(7), record.ProtocolValidated)
+	require.Equal(t, uint64(7), record.Slots[0].ProtocolValidated)
+
+	require.NoError(t, tr.SyncState("e1", 6, map[uint32]*types.HostStats{1: {Validated: 3, Invalid: 1}}))
+	record = onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 30}), "p1")
+	require.Equal(t, uint64(3), record.ProtocolValidated)
+	require.Equal(t, uint64(3), record.Slots[0].ProtocolValidated)
+	require.Equal(t, uint64(1), record.ProtocolInvalid)
+
+	require.NoError(t, tr.SyncState("e1", 5, map[uint32]*types.HostStats{1: {Validated: 7, Invalid: 0}}))
+	record = onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 30}), "p1")
+	require.Equal(t, uint64(3), record.ProtocolValidated)
+	require.Equal(t, uint64(1), record.ProtocolInvalid)
+}
+
+func TestTrackerReportsHostStatsFinished(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 31, "m")
+	require.NoError(t, tr.SyncState("e1", 5, map[uint32]*types.HostStats{1: {Finished: 4, Validated: 2}}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 31}), "p1")
+	require.Equal(t, uint64(4), record.ProtocolFinished)
+	require.Equal(t, uint64(4), record.Slots[0].ProtocolFinished)
+
+	require.NoError(t, tr.SyncState("e1", 6, map[uint32]*types.HostStats{1: {Finished: 3, Validated: 0, Missed: 1}}))
+	record = onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 31}), "p1")
+	require.Equal(t, uint64(3), record.ProtocolFinished, "an error-miss lowers finished and the preview follows")
+	require.Equal(t, uint64(1), record.ProtocolMisses)
+}
+
+func TestCommittedDiffRefreshesFinishedOnFinish(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 34, "m")
+	state := &fakeProtocolView{
+		phase: types.PhaseActive,
+		inferences: map[uint64]types.InferenceRecord{
+			1: {ExecutorSlot: 1, Status: types.StatusFinished},
+		},
+		hostStats: map[uint32]types.HostStats{1: {Finished: 1}},
+	}
+	recorder := NewRecorder(tr, nil)
+
+	finish := types.Diff{Nonce: 2, Txs: []*types.DevshardTx{{
+		Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1, ExecutorSlot: 1}},
+	}}}
+	recorder.committedDiff("e1", finish, state)
+	require.Equal(t, 1, state.statReads, "a finish reads its own slot only")
+	require.Zero(t, state.snapshots)
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 34}), "p1")
+	require.Equal(t, uint64(1), record.ProtocolFinished)
+	require.Empty(t, tr.escrows["e1"].Events, "a finish is not a verdict")
+}
+
+func TestCommittedDiffFinishDoesNotHideChallengeInSameDiff(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 35, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	state := &fakeProtocolView{
+		phase: types.PhaseActive,
+		inferences: map[uint64]types.InferenceRecord{
+			1: {ExecutorSlot: 1, Status: types.StatusChallenged},
+		},
+		hostStats: map[uint32]types.HostStats{1: {Finished: 1}},
+	}
+	recorder := NewRecorder(tr, nil)
+
+	diff := types.Diff{Nonce: 2, Txs: []*types.DevshardTx{
+		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1, ExecutorSlot: 1}}},
+		{Tx: &types.DevshardTx_Validation{Validation: &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false}}},
+	}}
+	recorder.committedDiff("e1", diff, state)
+	require.Equal(t, 1, state.statReads, "finish and verdict share one slot read")
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 35}), "p1")
+	require.Equal(t, uint64(1), record.ProtocolFinished)
+	require.Equal(t, uint64(1), record.UnresolvedChallenges, "the verdict after a finish must still be recorded")
+}

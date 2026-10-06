@@ -1,6 +1,6 @@
 # What a settlement would record, before settling
 
-A settlement submits `MsgSettleDevshardEscrow`, and the part of it that concerns a host is one `host_stats` entry per slot: `slot_id`, `missed`, `invalid`, `cost`, `required_validations`, `completed_validations`.
+A settlement submits `MsgSettleDevshardEscrow`, and the part of it that concerns a host is one `host_stats` entry per slot: `slot_id`, `missed`, `invalid`, `cost`, `required_validations`, `completed_validations`, `validated`, `finished`.
 
 Every one of those numbers except `cost` is already visible while the escrow is live, per participant and per slot, at
 
@@ -19,9 +19,11 @@ So the question "what happens if we enable settlement" does not need settlement 
 | `invalid` | `protocol_invalid` | the escrow's own host statistics |
 | `required_validations` | `required_validations` | the escrow's own host statistics |
 | `completed_validations` | `completed_validations` | the escrow's own host statistics |
+| `validated` | `protocol_validated` | the escrow's own host statistics |
+| `finished` | `protocol_finished` | the escrow's own host statistics |
 | `cost` | — | tracked internally, deliberately not published |
 
-These are not the gateway's opinion. `missed` moves when an applied timeout lands on the executor slot, `invalid` when a validator's verdict does; both are read back from the state machine on every committed diff that carries one, and re-read in full on each phase change. They are the same numbers the settlement transaction will carry.
+These are not the gateway's opinion. `missed` moves when an applied timeout lands on the executor slot, `invalid` when a validator's verdict does, `validated` when a sampled replay of the slot's inference passes, back down when it is challenged, and up again if the challenge is voted down; all three are read back from the state machine on every committed diff that carries one, and re-read in full on each phase change. They are the same numbers the settlement transaction will carry.
 
 `cost` is the host's reward for the inferences it served. It is accumulated in the state machine but not surfaced here: the question this view answers is who a settlement would penalise, not what it would pay.
 

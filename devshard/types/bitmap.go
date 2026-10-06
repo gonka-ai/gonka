@@ -37,6 +37,10 @@ func (b Bitmap128) Bytes() []byte {
 	return buf
 }
 
+func (b Bitmap128) Count() uint32 {
+	return uint32(bits.OnesCount64(b[0]) + bits.OnesCount64(b[1]))
+}
+
 // SetBits returns the sorted positions of all set bits.
 func (b Bitmap128) SetBits() []uint32 {
 	var out []uint32

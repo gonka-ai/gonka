@@ -89,6 +89,8 @@ func settleParamsFromJSON(settlement SettlementJSON) (chaintx.SettleParams, erro
 			Cost:                 hs.Cost,
 			RequiredValidations:  int32(hs.RequiredValidations),
 			CompletedValidations: int32(hs.CompletedValidations),
+			Validated:            int32(hs.Validated),
+			Finished:             int32(hs.Finished),
 		})
 	}
 	sigs := make([]chaintx.SlotSignature, 0, len(settlement.Signatures))

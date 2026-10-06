@@ -43,7 +43,7 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 			},
 		},
 		HostStats: map[uint32]*HostStats{
-			0: {Missed: 1, Invalid: 2, Cost: 3},
+			0: {Missed: 1, Invalid: 2, Cost: 3, RequiredValidations: 4, CompletedValidations: 5, Validated: 6, Finished: 7},
 		},
 		WarmKeys:                      map[uint32]string{0: "warm-0"},
 		SealedAcc:                     []byte("sealed-acc-bytes"),

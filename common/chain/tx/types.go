@@ -80,6 +80,8 @@ type HostStats struct {
 	Cost                 uint64
 	RequiredValidations  int32
 	CompletedValidations int32
+	Validated            int32
+	Finished             int32
 }
 
 // SlotSignature is one slot signature on a settlement tx.
