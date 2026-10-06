@@ -15,7 +15,7 @@ import (
 )
 
 // A participant serving inference on a preserved node while mining PoC on another
-// has its participant record and seed read once per ComputeNewWeights.
+// has its participant record, seed and the preserved snapshot read once per ComputeNewWeights.
 func TestComputeNewWeightsReadsPreservedCommitterOnce(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
@@ -92,6 +92,9 @@ func TestComputeNewWeightsReadsPreservedCommitterOnce(t *testing.T) {
 		}
 		key, err := base64.StdEncoding.DecodeString(op.Key)
 		require.NoError(t, err)
+		if bytes.Equal(key, types.PreservedNodesSnapshotPrefix) {
+			reads["snapshot"]++
+		}
 		for name, p := range prefixes {
 			if bytes.HasPrefix(key, p) {
 				reads[name]++
@@ -103,4 +106,5 @@ func TestComputeNewWeightsReadsPreservedCommitterOnce(t *testing.T) {
 	require.NotNil(t, computed.participants[0].Seed)
 	require.Equal(t, 1, reads["participant"])
 	require.Equal(t, 1, reads["seed"])
+	require.Equal(t, 1, reads["snapshot"])
 }
