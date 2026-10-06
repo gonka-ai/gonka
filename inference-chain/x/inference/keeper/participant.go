@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/base64"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -48,14 +49,25 @@ func (k Keeper) saveParticipant(ctx context.Context, participant types.Participa
 	return nil
 }
 
-// storedParticipant drops Index and Address, which repeat the key; restoredParticipant fills
-// them back. A record whose fields differ from the key is stored whole.
+// storedParticipant drops Index and Address, which repeat the key, stores the default
+// Weight -1 as absent and canonical base64 32-byte keys as raw bytes; restoredParticipant
+// undoes all three. A record that cannot be trimmed unambiguously is stored whole.
 func storedParticipant(p types.Participant, addr sdk.AccAddress) types.Participant {
-	if p.Index != p.Address || p.Index != addr.String() {
+	if p.Index != p.Address || p.Index != addr.String() || p.Weight == 0 {
 		return p
 	}
 	trimmed := p
 	trimmed.Index, trimmed.Address = "", ""
+	if trimmed.Weight == -1 {
+		trimmed.Weight = 0
+	}
+	var ok bool
+	if trimmed.ValidatorKey, ok = rawKey32(p.ValidatorKey); !ok {
+		return p
+	}
+	if trimmed.WorkerPublicKey, ok = rawKey32(p.WorkerPublicKey); !ok {
+		return p
+	}
 	if trimmed.Size() == 0 {
 		return p
 	}
@@ -66,8 +78,27 @@ func restoredParticipant(addr sdk.AccAddress, p types.Participant) types.Partici
 	if p.Index == "" {
 		p.Index = addr.String()
 		p.Address = p.Index
+		if p.Weight == 0 {
+			p.Weight = -1
+		}
+		if len(p.ValidatorKey) == 32 {
+			p.ValidatorKey = base64.StdEncoding.EncodeToString([]byte(p.ValidatorKey))
+		}
+		if len(p.WorkerPublicKey) == 32 {
+			p.WorkerPublicKey = base64.StdEncoding.EncodeToString([]byte(p.WorkerPublicKey))
+		}
 	}
 	return p
+}
+
+// rawKey32 returns the 32 raw bytes of a canonical base64 key and other values as they are;
+// false for a 32-character value, which would read back as raw bytes.
+func rawKey32(key string) (string, bool) {
+	if raw, err := base64.StdEncoding.DecodeString(key); err == nil && len(raw) == 32 &&
+		base64.StdEncoding.EncodeToString(raw) == key {
+		return string(raw), true
+	}
+	return key, len(key) != 32
 }
 
 func (k Keeper) GetParticipants(
