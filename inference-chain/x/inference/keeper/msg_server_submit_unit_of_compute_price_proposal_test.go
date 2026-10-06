@@ -16,7 +16,6 @@ import (
 func TestMsgServer_SubmitUnitOfComputePriceProposal_RecordsEffectiveEpoch(t *testing.T) {
 	k, ms, ctx, _ := setupPermissionsHarness(t)
 	signer := testutil.Creator
-	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 7, PocStartBlockHeight: 650}))
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 7))
 	require.NoError(t, k.ActiveParticipantsSet.Set(ctx, collections.Join(uint64(7), sdk.MustAccAddressFromBech32(signer))))
 
