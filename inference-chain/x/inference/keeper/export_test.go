@@ -59,3 +59,11 @@ func PlantActiveParticipantsForTest(k Keeper, ctx context.Context, record types.
 	store.Set(types.ActiveParticipantsFullKey(record.EpochId), bz)
 	return nil
 }
+
+func RawParamsForTesting(k Keeper, ctx sdk.Context) []byte {
+	return runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx)).Get(types.ParamsKey)
+}
+
+func SetRawParamsForTesting(k Keeper, ctx sdk.Context, bz []byte) {
+	runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx)).Set(types.ParamsKey, bz)
+}
