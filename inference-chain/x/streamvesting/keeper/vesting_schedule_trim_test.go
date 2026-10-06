@@ -46,7 +46,9 @@ func TestVestingSchedule_ValueOmitsParticipant(t *testing.T) {
 	raw, err := k.VestingSchedules.Get(ctx, addr)
 	require.NoError(t, err)
 	require.Empty(t, raw.ParticipantAddress)
-	require.Equal(t, want.EpochAmounts, raw.EpochAmounts)
+	require.Empty(t, raw.EpochAmounts)
+	require.Equal(t, "ngonka", raw.Denom)
+	require.Len(t, raw.Amounts, len(want.EpochAmounts))
 
 	gctx = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
 	got, found := k.GetVestingSchedule(gctx, testutil.Creator)
@@ -78,7 +80,10 @@ func TestVestingSchedule_LegacyAndNonCanonicalStoredWhole(t *testing.T) {
 	require.NoError(t, k.SetVestingSchedule(ctx, upper))
 	raw, err := k.VestingSchedules.Get(ctx, addr)
 	require.NoError(t, err)
-	require.Equal(t, upper, raw)
+	require.Equal(t, upper.ParticipantAddress, raw.ParticipantAddress)
+	got, found = k.GetVestingSchedule(ctx, testutil.Creator)
+	require.True(t, found)
+	require.Equal(t, upper, got)
 
 	// Nothing but the participant would leave an empty value; it is stored whole.
 	empty := types.VestingSchedule{ParticipantAddress: testutil.Creator}
@@ -107,5 +112,8 @@ func TestVestingSchedule_EpochUnlockPaysRestoredAddress(t *testing.T) {
 	raw, err := k.VestingSchedules.Get(ctx, addr)
 	require.NoError(t, err)
 	require.Empty(t, raw.ParticipantAddress)
-	require.Equal(t, s.EpochAmounts[1:], raw.EpochAmounts)
+	require.Len(t, raw.Amounts, len(s.EpochAmounts)-1)
+	got, found := k.GetVestingSchedule(ctx, testutil.Creator)
+	require.True(t, found)
+	require.Equal(t, s.EpochAmounts[1:], got.EpochAmounts)
 }
