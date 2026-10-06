@@ -40,8 +40,8 @@ func TestVestingSchedule_SingleDenomStoredOnce(t *testing.T) {
 	t.Logf("stored value %d B", raw.Size())
 	require.Empty(t, raw.EpochAmounts)
 	require.Equal(t, "ngonka", raw.Denom)
-	require.Equal(t, "", raw.Amounts[7])
-	require.Equal(t, "1234567890", raw.Amounts[0])
+	require.Zero(t, raw.Amounts[7])
+	require.Equal(t, uint64(1234567890), raw.Amounts[0])
 
 	gctx = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
 	got, found := k.GetVestingSchedule(gctx, testutil.Creator)
@@ -73,9 +73,13 @@ func TestVestingSchedule_OtherShapesKeepEpochs(t *testing.T) {
 	zeroCoin := vestingSchedule(testutil.Creator)
 	zeroCoin.EpochAmounts[3].Coins = sdk.Coins{{Denom: "ngonka", Amount: math.ZeroInt()}}
 	noCoins := types.VestingSchedule{ParticipantAddress: testutil.Creator, EpochAmounts: make([]types.EpochCoins, 3)}
+	aboveUint64 := vestingSchedule(testutil.Creator)
+	big, _ := math.NewIntFromString("18446744073709551616") // 2^64
+	aboveUint64.EpochAmounts[3].Coins = sdk.Coins{{Denom: "ngonka", Amount: big}}
 
 	for name, s := range map[string]types.VestingSchedule{
 		"two coins": twoCoins, "two denoms": twoDenoms, "zero coin": zeroCoin, "no coins": noCoins,
+		"above uint64": aboveUint64,
 	} {
 		require.NoError(t, k.SetVestingSchedule(ctx, s), name)
 		raw, err := k.VestingSchedules.Get(ctx, addr)
@@ -87,6 +91,6 @@ func TestVestingSchedule_OtherShapesKeepEpochs(t *testing.T) {
 		require.Equal(t, s.EpochAmounts, got.EpochAmounts, name)
 	}
 
-	stored := types.VestingSchedule{ParticipantAddress: testutil.Creator, Denom: "ngonka", Amounts: []string{"1"}}
+	stored := types.VestingSchedule{ParticipantAddress: testutil.Creator, Denom: "ngonka", Amounts: []uint64{1}}
 	require.Error(t, k.SetVestingSchedule(ctx, stored))
 }

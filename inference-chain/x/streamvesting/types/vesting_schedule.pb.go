@@ -80,10 +80,10 @@ type VestingSchedule struct {
 	// Each element contains sdk.Coins supporting multiple denominations per epoch
 	EpochAmounts []EpochCoins `protobuf:"bytes,2,rep,name=epoch_amounts,json=epochAmounts,proto3" json:"epoch_amounts"`
 	// Storage form set by the keeper when every epoch holds at most one coin of one denom:
-	// the denom once and each epoch's amount ("" for none) instead of epoch_amounts.
+	// the denom once and each epoch's amount (0 for none) instead of epoch_amounts.
 	// Reads restore epoch_amounts; queries never return these fields set.
 	Denom   string   `protobuf:"bytes,3,opt,name=denom,proto3" json:"denom,omitempty"`
-	Amounts []string `protobuf:"bytes,4,rep,name=amounts,proto3" json:"amounts,omitempty"`
+	Amounts []uint64 `protobuf:"varint,4,rep,packed,name=amounts,proto3" json:"amounts,omitempty"`
 }
 
 func (m *VestingSchedule) Reset()         { *m = VestingSchedule{} }
@@ -140,7 +140,7 @@ func (m *VestingSchedule) GetDenom() string {
 	return ""
 }
 
-func (m *VestingSchedule) GetAmounts() []string {
+func (m *VestingSchedule) GetAmounts() []uint64 {
 	if m != nil {
 		return m.Amounts
 	}
@@ -178,11 +178,11 @@ var fileDescriptor_9eb8c6db5760cec1 = []byte{
 	0x7e, 0x67, 0x85, 0x81, 0x11, 0x49, 0x64, 0x2e, 0xb4, 0xf2, 0x3e, 0x99, 0xd6, 0xff, 0xa2, 0x0f,
 	0x46, 0x87, 0xd6, 0x76, 0xfb, 0xf5, 0xc2, 0x84, 0x6d, 0xec, 0x9b, 0x49, 0xd2, 0xb3, 0x39, 0xdc,
 	0x06, 0xac, 0x45, 0x4c, 0xc8, 0xc4, 0xab, 0x98, 0xba, 0x36, 0x70, 0x3d, 0xf8, 0x65, 0x55, 0xa4,
-	0xda, 0xae, 0x04, 0xf5, 0xc1, 0x2a, 0xb4, 0x7e, 0xfa, 0xc3, 0xd9, 0xc2, 0x07, 0xf3, 0x85, 0x0f,
+	0xda, 0xae, 0x04, 0xd5, 0xc1, 0x2a, 0xb4, 0x7e, 0xfa, 0xc3, 0xd9, 0xc2, 0x07, 0xf3, 0x85, 0x0f,
 	0x1e, 0x17, 0x3e, 0xb8, 0x58, 0xfa, 0xce, 0x7c, 0xe9, 0x3b, 0x77, 0x4b, 0xdf, 0x39, 0xda, 0xdd,
 	0x98, 0x52, 0x9a, 0xc9, 0x28, 0xa7, 0x5a, 0x51, 0x6e, 0xf6, 0x60, 0xbd, 0x11, 0xa7, 0xef, 0x76,
-	0xc2, 0x0c, 0x2f, 0xfc, 0x6c, 0xde, 0x69, 0xfb, 0x25, 0x00, 0x00, 0xff, 0xff, 0x68, 0x1e, 0x1f,
-	0xc2, 0x3b, 0x02, 0x00, 0x00,
+	0xc2, 0x0c, 0x2f, 0xfc, 0x6c, 0xde, 0x69, 0xfb, 0x25, 0x00, 0x00, 0xff, 0xff, 0xd9, 0x32, 0x26,
+	0x39, 0x3b, 0x02, 0x00, 0x00,
 }
 
 func (this *EpochCoins) Equal(that interface{}) bool {
@@ -315,13 +315,22 @@ func (m *VestingSchedule) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	var l int
 	_ = l
 	if len(m.Amounts) > 0 {
-		for iNdEx := len(m.Amounts) - 1; iNdEx >= 0; iNdEx-- {
-			i -= len(m.Amounts[iNdEx])
-			copy(dAtA[i:], m.Amounts[iNdEx])
-			i = encodeVarintVestingSchedule(dAtA, i, uint64(len(m.Amounts[iNdEx])))
-			i--
-			dAtA[i] = 0x22
+		dAtA2 := make([]byte, len(m.Amounts)*10)
+		var j1 int
+		for _, num := range m.Amounts {
+			for num >= 1<<7 {
+				dAtA2[j1] = uint8(uint64(num)&0x7f | 0x80)
+				num >>= 7
+				j1++
+			}
+			dAtA2[j1] = uint8(num)
+			j1++
 		}
+		i -= j1
+		copy(dAtA[i:], dAtA2[:j1])
+		i = encodeVarintVestingSchedule(dAtA, i, uint64(j1))
+		i--
+		dAtA[i] = 0x22
 	}
 	if len(m.Denom) > 0 {
 		i -= len(m.Denom)
@@ -401,10 +410,11 @@ func (m *VestingSchedule) Size() (n int) {
 		n += 1 + l + sovVestingSchedule(uint64(l))
 	}
 	if len(m.Amounts) > 0 {
-		for _, s := range m.Amounts {
-			l = len(s)
-			n += 1 + l + sovVestingSchedule(uint64(l))
+		l = 0
+		for _, e := range m.Amounts {
+			l += sovVestingSchedule(uint64(e))
 		}
+		n += 1 + sovVestingSchedule(uint64(l)) + l
 	}
 	return n
 }
@@ -627,37 +637,81 @@ func (m *VestingSchedule) Unmarshal(dAtA []byte) error {
 			m.Denom = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		case 4:
-			if wireType != 2 {
-				return fmt.Errorf("proto: wrong wireType = %d for field Amounts", wireType)
-			}
-			var stringLen uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return ErrIntOverflowVestingSchedule
+			if wireType == 0 {
+				var v uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowVestingSchedule
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
 				}
-				if iNdEx >= l {
+				m.Amounts = append(m.Amounts, v)
+			} else if wireType == 2 {
+				var packedLen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return ErrIntOverflowVestingSchedule
+					}
+					if iNdEx >= l {
+						return io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					packedLen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if packedLen < 0 {
+					return ErrInvalidLengthVestingSchedule
+				}
+				postIndex := iNdEx + packedLen
+				if postIndex < 0 {
+					return ErrInvalidLengthVestingSchedule
+				}
+				if postIndex > l {
 					return io.ErrUnexpectedEOF
 				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				stringLen |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
+				var elementCount int
+				var count int
+				for _, integer := range dAtA[iNdEx:postIndex] {
+					if integer < 128 {
+						count++
+					}
 				}
+				elementCount = count
+				if elementCount != 0 && len(m.Amounts) == 0 {
+					m.Amounts = make([]uint64, 0, elementCount)
+				}
+				for iNdEx < postIndex {
+					var v uint64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return ErrIntOverflowVestingSchedule
+						}
+						if iNdEx >= l {
+							return io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= uint64(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					m.Amounts = append(m.Amounts, v)
+				}
+			} else {
+				return fmt.Errorf("proto: wrong wireType = %d for field Amounts", wireType)
 			}
-			intStringLen := int(stringLen)
-			if intStringLen < 0 {
-				return ErrInvalidLengthVestingSchedule
-			}
-			postIndex := iNdEx + intStringLen
-			if postIndex < 0 {
-				return ErrInvalidLengthVestingSchedule
-			}
-			if postIndex > l {
-				return io.ErrUnexpectedEOF
-			}
-			m.Amounts = append(m.Amounts, string(dAtA[iNdEx:postIndex]))
-			iNdEx = postIndex
 		default:
 			iNdEx = preIndex
 			skippy, err := skipVestingSchedule(dAtA[iNdEx:])
