@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -195,6 +196,59 @@ func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
 	}
 	require.NotNil(t, got, "verify-timeout mempool must include MsgConfirmStart")
 	requireRecoveryOnlyFor(t, mempool, 1)
+}
+
+func TestHTTPClient_VerifyTimeout_ExecutionOmitsPrompt(t *testing.T) {
+	user := testutil.MustGenerateKey(t)
+	prompt := []byte(`{"messages":[{"role":"user","content":"execution-timeout-prompt-must-stay-off-the-wire"}]}`)
+	payload := &host.InferencePayload{
+		Prompt:      prompt,
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   testutil.TestMaxTokens,
+		StartedAt:   1000,
+	}
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	promptB64 := base64.StdEncoding.EncodeToString(prompt)
+
+	var body []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"accept":true,"voter_slot":1}`))
+	}))
+	t.Cleanup(ts.Close)
+	client := NewHTTPClient(ts.URL, "escrow-1", user, allowRetiredHTTP(DefaultClientConfig()))
+
+	_, _, _, _, _, err := client.VerifyTimeout(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, []types.Diff{diff}, host.TimeoutArtifacts{})
+	require.NoError(t, err)
+	var execution VerifyTimeoutRequest
+	require.NoError(t, json.Unmarshal(body, &execution))
+	require.Equal(t, "execution", execution.Reason)
+	require.Nil(t, execution.Payload)
+	require.Len(t, execution.Diffs, 1)
+	require.NotContains(t, body, []byte(promptB64))
+	wire := VerifyTimeoutRequestToProto(VerifyTimeoutRequest{
+		InferenceID: 1,
+		Reason:      "execution",
+		Payload:     timeoutVotePayload(types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload),
+		Diffs:       execution.Diffs,
+	})
+	raw, err := proto.Marshal(wire)
+	require.NoError(t, err)
+	require.NotContains(t, raw, prompt)
+
+	body = nil
+	_, _, _, _, _, err = client.VerifyTimeout(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, []types.Diff{diff}, host.TimeoutArtifacts{})
+	require.NoError(t, err)
+	var refused VerifyTimeoutRequest
+	require.NoError(t, json.Unmarshal(body, &refused))
+	require.Equal(t, "refused", refused.Reason)
+	require.NotNil(t, refused.Payload)
+	require.Equal(t, prompt, refused.Payload.Prompt)
+	require.Len(t, refused.Diffs, 1)
 }
 
 func TestHTTPClient_Send_ReturnsUpstreamStatusError(t *testing.T) {

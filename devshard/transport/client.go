@@ -1032,7 +1032,7 @@ func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reas
 	resp, err := c.SendVerifyTimeout(ctx, VerifyTimeoutRequest{
 		InferenceID: inferenceID,
 		Reason:      TimeoutReasonToString(reason),
-		Payload:     PayloadToJSON(payload),
+		Payload:     timeoutVotePayload(reason, payload),
 		Diffs:       djList,
 	})
 	if err != nil {

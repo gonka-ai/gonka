@@ -3345,6 +3345,12 @@ func (s *Session) collectTimeoutVotes(
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// An execution vote never reads the prompt. Drop it before any verifier,
+	// including an in-process one, so the body cannot leave this process.
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+		payload = nil
+	}
+
 	// Determine executor slot and resolve its validator address.
 	executorIdx := int(inferenceID % uint64(len(s.group)))
 	executorAddr := s.group[executorIdx].ValidatorAddress

@@ -289,6 +289,17 @@ func TimeoutReasonToString(r types.TimeoutReason) string {
 	}
 }
 
+// timeoutVotePayload is the prompt a verify-timeout message carries.
+// An execution vote checks status and the mempool, so the prompt stays off
+// the wire. A refused vote hashes it against the start diff and challenges
+// the executor with it.
+func timeoutVotePayload(reason types.TimeoutReason, payload *host.InferencePayload) *PayloadJSON {
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+		return nil
+	}
+	return PayloadToJSON(payload)
+}
+
 // PayloadToJSON converts a domain InferencePayload to its JSON wire format.
 func PayloadToJSON(p *host.InferencePayload) *PayloadJSON {
 	if p == nil {
