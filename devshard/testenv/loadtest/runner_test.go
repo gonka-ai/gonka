@@ -2,6 +2,7 @@ package loadtest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -253,4 +254,23 @@ func TestWriteGatewayStateSizes(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(outputDir, "gateway-state.json"))
 	require.NoError(t, err)
 	require.JSONEq(t, `{"diffs":12,"diffs_bytes":12345,"diffs_mb":0.011,"signature_nonces":8,"nonce_states":14,"pending_txs":2,"applied_tx_keys":11}`, string(body))
+}
+
+func TestDisabledRotationStillConfiguresAdmissionLimit(t *testing.T) {
+	scenario := testScenario()
+	scenario.Gateway.EscrowRotation.NonceDeactivationLimit = 1_000_000
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			EscrowRotation struct {
+				Enabled bool   `json:"enabled"`
+				Limit   uint64 `json:"nonce_deactivation_limit"`
+			} `json:"escrow_rotation"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		require.False(t, body.EscrowRotation.Enabled)
+		require.EqualValues(t, 1_000_000, body.EscrowRotation.Limit)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	require.NoError(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, nil))
 }
