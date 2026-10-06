@@ -13,6 +13,8 @@ if [ -z "$runtime_contract" ]; then
 fi
 # shellcheck disable=SC1090,SC1091
 . "$runtime_contract"
+# shellcheck disable=SC1091
+. "$entrypoint_dir/rpc-h2-cert.sh"
 
 TEMPLATE="${PROXY_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 BACKEND_TEMPLATE="${PROXY_ROUTER_BACKEND_TEMPLATE:-/etc/haproxy/versiond-backend.cfg.template}"
@@ -261,9 +263,9 @@ case "$NGINX_MODE" in
             echo "proxy-router: HTTPS InferenceUrl requires SSL_CERT_SOURCE cert.pem and private.key for DEVSHARD_RPC_H2_PORT (looked in $RPC_H2_CERT_DIR)" >&2
             exit 1
         fi
-        mkdir -p "$(dirname "$RPC_H2_PEM")"
-        cat "$cert" "$key" > "$RPC_H2_PEM"
-        chmod 600 "$RPC_H2_PEM"
+        # nginx renewal later replaces cert.pem and private.key. watch_rpc_h2_cert
+        # rebuilds this PEM and commits it on the admin socket.
+        write_rpc_h2_pem "$cert" "$key" "$RPC_H2_PEM"
         # ssl+alpn is HTTP/2 over TLS. proto h2 would be cleartext h2c.
         RPC_H2_BIND=":${RPC_H2_PORT} ssl crt ${RPC_H2_PEM} alpn h2"
         ;;
@@ -618,5 +620,17 @@ run_catalog_reconciler() {
 if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
 fi
+
+case "$NGINX_MODE" in
+    https | both)
+        case "${DEVSHARD_RPC_H2_CERT_POLL_SECONDS:-30}" in
+            ''|*[!0-9]*|0)
+                echo "proxy-router: DEVSHARD_RPC_H2_CERT_POLL_SECONDS must be a positive integer" >&2
+                exit 1
+                ;;
+        esac
+        watch_rpc_h2_cert &
+        ;;
+esac
 
 exec "$HAPROXY_BIN" -W -db -f "$OUT"

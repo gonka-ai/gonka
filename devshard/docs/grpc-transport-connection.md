@@ -516,6 +516,9 @@ SAN). Do not put `proxy` in SNI.
 
 Join's public `:80/:443` stay TCP-to-nginx; they do not carry `/rpc/`. Do not put
 HAProxy inside the versiond image. The cert lives on `proxy`, not on versiond-router.
+nginx renewal replaces `cert.pem` and reloads nginx. proxy-router rebuilds the
+HAProxy PEM from that file and commits it on the admin socket, so `:9443` serves
+the renewed certificate.
 
 **Why not `grpc_pass`.** That was the previous phase 6 shape. nginx `limit_req` still
 counts each stream, and `proxy_pass` cannot multiplex. Skipping nginx removes both the 503

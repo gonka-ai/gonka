@@ -1,4 +1,4 @@
-.PHONY: all build-docker release test-render test-route-status test-h2-upstream-check test-compose test-routing
+.PHONY: all build-docker release test-render test-route-status test-h2-upstream-check test-rpc-h2-cert test-compose test-routing
 
 include ../scripts/blst-portable.mk
 
@@ -10,7 +10,10 @@ test-route-status:
 test-h2-upstream-check:
 	@./h2-upstream-check_test.sh
 
-test-render: test-route-status
+test-rpc-h2-cert:
+	@./rpc-h2-cert_test.sh
+
+test-render: test-route-status test-rpc-h2-cert
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \

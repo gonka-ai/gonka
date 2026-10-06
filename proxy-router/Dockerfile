@@ -16,6 +16,7 @@ COPY proxy-router/grpc-exhausted.http /etc/haproxy/grpc-exhausted.http
 COPY proxy-router/versiond-backend.cfg.template /etc/haproxy/versiond-backend.cfg.template
 COPY proxy-router/rpc-h2-backend.cfg.template /etc/haproxy/rpc-h2-backend.cfg.template
 COPY proxy-router/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY proxy-router/rpc-h2-cert.sh /usr/local/bin/rpc-h2-cert.sh
 COPY proxy-router/route-status /usr/local/lib/proxy-router/route-status
 COPY router-runtime/catalog-cache router-runtime/catalog-reconciler router-runtime/catalog-status router-runtime/version-contract /usr/local/lib/router-runtime/
 RUN chmod +x /usr/local/bin/entrypoint.sh \
