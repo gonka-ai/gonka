@@ -3,6 +3,7 @@ package keeper
 import (
 	"cosmossdk.io/collections"
 	"cosmossdk.io/log"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -36,3 +37,11 @@ func (k Keeper) RemoveFromEpochGroupsForTesting(ctx sdk.Context, participant *ty
 }
 
 func SetLoggerForTesting(k *Keeper, l log.Logger) { k.logger = l }
+
+func RawParamsForTesting(k Keeper, ctx sdk.Context) []byte {
+	return runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx)).Get(types.ParamsKey)
+}
+
+func SetRawParamsForTesting(k Keeper, ctx sdk.Context, bz []byte) {
+	runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx)).Set(types.ParamsKey, bz)
+}
