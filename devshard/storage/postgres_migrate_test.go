@@ -139,6 +139,7 @@ func TestPostgresMigrationSteps_V6IDsStayPut(t *testing.T) {
 	require.Equal(t, "devshard_validation_credits", byID[17])
 	require.Equal(t, "devshard_peer_rpc_sessions", byID[18])
 	require.Equal(t, "devshard_peer_rpc_session_last_seen", byID[19])
+	require.Equal(t, "devshard_validation_credit_holds", byID[20])
 }
 
 func TestMigratePostgres_PeerRPCAppliesAfterV6Ledger(t *testing.T) {

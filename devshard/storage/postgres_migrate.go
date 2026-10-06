@@ -284,6 +284,17 @@ CREATE TABLE IF NOT EXISTS devshard_peer_rpc_members (
 ALTER TABLE devshard_peer_rpc_sessions
     ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ`},
 	},
+	{
+		// A reserved credit stays in the table under a hold. A replica that
+		// dies holding it stops renewing, and the credit becomes spendable
+		// again once reserved_until passes.
+		ID:   20,
+		Name: "devshard_validation_credit_holds",
+		Statements: []string{`
+ALTER TABLE devshard_validation_credits
+    ADD COLUMN IF NOT EXISTS hold_token     UUID,
+    ADD COLUMN IF NOT EXISTS reserved_until TIMESTAMPTZ`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

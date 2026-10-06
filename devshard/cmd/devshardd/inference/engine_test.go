@@ -101,7 +101,7 @@ func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 	eng := newTestEngine(ml, mgr, nil)
 
 	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "42",
-		func(endpoint string, refund func()) (*http.Response, error) {
+		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
 	require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestDoWithLockedNode_UnavailableFallsBack(t *testing.T) {
 	eng := newTestEngine(ml, mgr, nil)
 
 	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-		func(endpoint string, refund func()) (*http.Response, error) {
+		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestDoWithLockedNode_ResourceExhaustedDoesNotFallback(t *testing.T) {
 	defer cancel()
 
 	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "",
-		func(endpoint string, refund func()) (*http.Response, error) {
+		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
 	require.Error(t, err)
@@ -223,7 +223,7 @@ func TestDoWithLockedNode_FallbackRotatesOn5xx(t *testing.T) {
 	eng := newTestEngine(ml, mgr, nil)
 
 	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-		func(endpoint string, refund func()) (*http.Response, error) {
+		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
 	require.NoError(t, err)
@@ -246,7 +246,7 @@ func TestDoWithLockedNode_FallbackEmptyCacheFails(t *testing.T) {
 	eng := newTestEngine(ml, mgr, nil)
 
 	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-		func(endpoint string, refund func()) (*http.Response, error) {
+		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
 	require.Error(t, err)
@@ -312,7 +312,7 @@ func TestFallback_RespectsLocalInFlight(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-				func(endpoint string, refund func()) (*http.Response, error) {
+				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})
 			if err != nil {
@@ -376,7 +376,7 @@ func TestFallback_NoCapacityUnbounded(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-				func(endpoint string, refund func()) (*http.Response, error) {
+				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})
 			if err != nil {
@@ -457,7 +457,7 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-				func(endpoint string, refund func()) (*http.Response, error) {
+				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})
 			if err != nil {
