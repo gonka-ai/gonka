@@ -145,6 +145,9 @@ func (k *Keeper) AggregateMLNodesFromModelSubgroups(ctx context.Context, epochIn
 	if iter, err := k.EpochGroupDataMap.Iterate(ctx, collections.NewPrefixedPairRange[uint64, string](epochIndex)); err == nil {
 		epochGroups, _ = iter.Values()
 	}
+	for i := range epochGroups {
+		epochGroups[i] = restoredEpochGroupData(epochGroups[i])
+	}
 
 	for _, vw := range validationWeights {
 		modelNodes := make(map[string][]*types.MLNodeInfo)

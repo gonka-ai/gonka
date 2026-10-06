@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/hex"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
@@ -21,7 +22,8 @@ func (k Keeper) SetSettleAmount(ctx context.Context, settleAmount types.SettleAm
 	return nil
 }
 
-// storedSettleAmount drops the participant the key holds; restoredSettleAmount fills it back.
+// storedSettleAmount drops the participant the key holds and keeps a hex seed
+// signature as raw bytes; restoredSettleAmount fills them back.
 // The full record is kept when the key would not restore the same address string.
 func storedSettleAmount(s types.SettleAmount, addr sdk.AccAddress) types.SettleAmount {
 	if s.Participant != addr.String() {
@@ -29,6 +31,9 @@ func storedSettleAmount(s types.SettleAmount, addr sdk.AccAddress) types.SettleA
 	}
 	trimmed := s
 	trimmed.Participant = ""
+	if b, ok := rawHex(trimmed.SeedSignature); ok {
+		trimmed.SeedSignatureRaw, trimmed.SeedSignature = b, ""
+	}
 	if trimmed.Size() == 0 {
 		return s
 	}
@@ -38,6 +43,9 @@ func storedSettleAmount(s types.SettleAmount, addr sdk.AccAddress) types.SettleA
 func restoredSettleAmount(addr sdk.AccAddress, s types.SettleAmount) types.SettleAmount {
 	if s.Participant == "" {
 		s.Participant = addr.String()
+	}
+	if len(s.SeedSignatureRaw) > 0 {
+		s.SeedSignature, s.SeedSignatureRaw = hex.EncodeToString(s.SeedSignatureRaw), nil
 	}
 	return s
 }
