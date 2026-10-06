@@ -60,7 +60,10 @@ func TestRPCMount_AttachWatch(t *testing.T) {
 	t.Cleanup(httpSrv.Close)
 	nonce := []byte("echo-attach-nonce-0123456789ab")
 	token := echoAttach(t, httpSrv, httpSrv.URL+"/sessions/1/rpc", host, signer, nonce)
-	require.Equal(t, nonce, token)
+	require.NotEqual(t, nonce, token)
+	peer, ok := auth.LookupToken(token)
+	require.True(t, ok)
+	require.Equal(t, signer.Address(), peer)
 	require.Equal(t, 1.0, rpcEnabledGauge(t))
 	client := rpcpbconnect.NewPeerAuthServiceClient(httpSrv.Client(), httpSrv.URL+"/sessions/1/rpc")
 	watchOnEcho(t, client, token)
@@ -180,7 +183,10 @@ func TestRPCMount_ConnectHandlesItsOwnRequestGzip(t *testing.T) {
 		Signature:       sig,
 	}))
 	require.NoError(t, err)
-	require.Equal(t, attachNonce, attached.Msg.SessionToken)
+	require.NotEqual(t, attachNonce, attached.Msg.SessionToken)
+	peer, ok := auth.LookupToken(attached.Msg.SessionToken)
+	require.True(t, ok)
+	require.Equal(t, signer.Address(), peer)
 
 	// A body that claims gzip but is not must be rejected by Connect, not by
 	// Echo's decompression middleware — proof the middleware never ran here.

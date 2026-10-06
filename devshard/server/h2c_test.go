@@ -312,7 +312,10 @@ func TestH2C_AttachChat(t *testing.T) {
 		Signature:       sig,
 	}))
 	require.NoError(t, err)
-	require.Equal(t, nonce, attached.Msg.SessionToken)
+	require.NotEqual(t, nonce, attached.Msg.SessionToken)
+	peer, ok := auth.LookupToken(attached.Msg.SessionToken)
+	require.True(t, ok)
+	require.Equal(t, signer.Address(), peer)
 
 	session := rpcpbconnect.NewSessionServiceClient(h2, rpcBase)
 	env, err := transport.SignEnvelope(signer, "1", []byte(`{"nonce":1}`), time.Now().Unix())
@@ -355,7 +358,10 @@ func TestH2C_NativeGRPCAttachChatAndGetSignatures(t *testing.T) {
 		Signature:       sig,
 	}))
 	require.NoError(t, err)
-	require.Equal(t, nonce, attached.Msg.SessionToken)
+	require.NotEqual(t, nonce, attached.Msg.SessionToken)
+	peer, ok := auth.LookupToken(attached.Msg.SessionToken)
+	require.True(t, ok)
+	require.Equal(t, signer.Address(), peer)
 
 	session := rpcpbconnect.NewSessionServiceClient(h2, rpcBase, connect.WithGRPC())
 	sigs, err := session.GetSignatures(context.Background(), withH2CSession(
