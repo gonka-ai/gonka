@@ -40,12 +40,34 @@ func (k Keeper) saveParticipant(ctx context.Context, participant types.Participa
 	if err != nil {
 		return err
 	}
-	err = k.Participants.Set(ctx, participantAddress, participant)
+	err = k.Participants.Set(ctx, participantAddress, storedParticipant(participant, participantAddress))
 	if err != nil {
 		return err
 	}
 	k.LogDebug("Saved Participant", types.Participants, "address", participant.Address, "index", participant.Index, "balance", participant.CoinBalance)
 	return nil
+}
+
+// storedParticipant drops Index and Address, which repeat the key; restoredParticipant fills
+// them back. A record whose fields differ from the key is stored whole.
+func storedParticipant(p types.Participant, addr sdk.AccAddress) types.Participant {
+	if p.Index != p.Address || p.Index != addr.String() {
+		return p
+	}
+	trimmed := p
+	trimmed.Index, trimmed.Address = "", ""
+	if trimmed.Size() == 0 {
+		return p
+	}
+	return trimmed
+}
+
+func restoredParticipant(addr sdk.AccAddress, p types.Participant) types.Participant {
+	if p.Index == "" {
+		p.Index = addr.String()
+		p.Address = p.Index
+	}
+	return p
 }
 
 func (k Keeper) GetParticipants(
@@ -74,7 +96,7 @@ func (k Keeper) GetParticipant(
 	if err != nil {
 		return val, false
 	}
-	return val, true
+	return restoredParticipant(address, val), true
 }
 
 // HasParticipant reports whether index is a stored participant without decoding the record.
@@ -109,11 +131,15 @@ func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant
 	if err != nil {
 		return nil
 	}
-	participants, err := iter.Values()
+	kvs, err := iter.KeyValues()
 	if err != nil {
 		return nil
 	}
-	return participants
+	list = make([]types.Participant, len(kvs))
+	for i, kv := range kvs {
+		list[i] = restoredParticipant(kv.Key, kv.Value)
+	}
+	return list
 }
 
 func (k Keeper) CountAllParticipants(ctx context.Context) int64 {
