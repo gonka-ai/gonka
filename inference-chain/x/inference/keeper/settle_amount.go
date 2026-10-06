@@ -15,10 +15,31 @@ func (k Keeper) SetSettleAmount(ctx context.Context, settleAmount types.SettleAm
 	if err != nil {
 		return err
 	}
-	if err := k.SettleAmounts.Set(ctx, addr, settleAmount); err != nil {
+	if err := k.SettleAmounts.Set(ctx, addr, storedSettleAmount(settleAmount, addr)); err != nil {
 		return err
 	}
 	return nil
+}
+
+// storedSettleAmount drops the participant the key holds; restoredSettleAmount fills it back.
+// The full record is kept when the key would not restore the same address string.
+func storedSettleAmount(s types.SettleAmount, addr sdk.AccAddress) types.SettleAmount {
+	if s.Participant != addr.String() {
+		return s
+	}
+	trimmed := s
+	trimmed.Participant = ""
+	if trimmed.Size() == 0 {
+		return s
+	}
+	return trimmed
+}
+
+func restoredSettleAmount(addr sdk.AccAddress, s types.SettleAmount) types.SettleAmount {
+	if s.Participant == "" {
+		s.Participant = addr.String()
+	}
+	return s
 }
 
 // GetSettleAmount returns a settleAmount by participant
@@ -34,7 +55,7 @@ func (k Keeper) GetSettleAmount(
 	if err != nil {
 		return val, false
 	}
-	return v, true
+	return restoredSettleAmount(addr, v), true
 }
 
 // RemoveSettleAmount removes a settleAmount from the store
@@ -55,11 +76,15 @@ func (k Keeper) GetAllSettleAmount(ctx context.Context) (list []types.SettleAmou
 	if err != nil {
 		return nil
 	}
-	vals, err := iter.Values()
+	kvs, err := iter.KeyValues()
 	if err != nil {
 		return nil
 	}
-	return vals
+	list = make([]types.SettleAmount, len(kvs))
+	for i, kv := range kvs {
+		list[i] = restoredSettleAmount(kv.Key, kv.Value)
+	}
+	return list
 }
 
 // transferUnclaimedSettleAmountToGovernance transfers coins from an unclaimed settle amount to governance (internal helper).
