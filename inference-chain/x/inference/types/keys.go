@@ -152,7 +152,8 @@ var (
 	BridgeKeyLinksPrefix = collections.NewPrefix(144)
 	ParamsKey            = []byte("p_inference")
 
-	ReputationAggregatesPrefix = collections.NewPrefix(145)
+	ReputationAggregatesPrefix   = collections.NewPrefix(145)
+	DevshardSettledEscrowsPrefix = collections.NewPrefix(147)
 )
 
 func KeyPrefix(p string) []byte {

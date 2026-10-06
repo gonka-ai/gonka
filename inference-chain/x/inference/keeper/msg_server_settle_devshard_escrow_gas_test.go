@@ -52,3 +52,46 @@ func TestSettleDevshardEscrow_GasIndependentOfPerformanceSummarySize(t *testing.
 	t.Logf("settle gas: small summaries %d, large summaries %d", small, large)
 	require.Equal(t, small, large)
 }
+
+// Settlement is recorded by a key-only mark: the stored escrow is not rewritten, readers still see it settled.
+func TestSettleDevshardEscrow_MarksSettledWithoutRewritingEscrow(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keys := make([]*dcrdsecp.PrivateKey, keeper.DevshardGroupSize)
+	slots := make([]string, keeper.DevshardGroupSize)
+	for i := range keys {
+		key, err := dcrdsecp.GeneratePrivateKey()
+		require.NoError(t, err)
+		keys[i] = key
+		slots[i] = cosmosAddressFromDcrdKey(key).String()
+		setParticipantForDevshardTest(t, k, ctx, slots[i])
+	}
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+	setActiveParticipantsForDevshardTest(t, k, ctx, 5, slots...)
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0xAC
+	escrow := types.DevshardEscrow{Id: 1, Creator: creator.String(), Amount: 7_000_000_000, Slots: slots, EpochIndex: 5}
+	_, err := k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+	stored, err := k.DevshardEscrows.Get(ctx, 1)
+	require.NoError(t, err)
+	msg := buildSettlementTestData(t, escrow, keys, makeHostStats(keeper.DevshardGroupSize, 100_000_000), 200_000_000)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+
+	c := keeper.WithTxParamsCache(ctx.WithGasMeter(storetypes.NewInfiniteGasMeter()))
+	_, err = ms.SettleDevshardEscrow(c, msg)
+	require.NoError(t, err)
+	t.Logf("settle gas, %d slots: %d", keeper.DevshardGroupSize, c.GasMeter().GasConsumed())
+
+	raw, err := k.DevshardEscrows.Get(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, stored, raw)
+	got, found := k.GetDevshardEscrow(ctx, 1)
+	require.True(t, found)
+	require.True(t, got.Settled)
+
+	_, err = ms.SettleDevshardEscrow(ctx, msg)
+	require.ErrorContains(t, err, "already settled")
+}
