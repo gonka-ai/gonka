@@ -79,11 +79,13 @@ class PoCGenerateRequest(BaseModel):
 def _backend_payload(body) -> dict:
     """The request as the vLLM backend gets it. Without a batch_size from the chain
     the decode scheme runs as many nonces at once as the backend holds (0 = AUTO:
-    its poc_max_batch_size, else max_num_seqs); the prefill scheme keeps 32, one
-    forward of 32 x seq_len. Prefill must never get 0."""
+    its poc_max_batch_size, else max_num_seqs); the prefill scheme, mining and
+    validation alike, runs at the backend's POC_BATCH_SIZE_DEFAULT (the join .env,
+    32 when unset). Both run the same forward, so a batch the node cannot hold
+    fails in either. Prefill must never get 0."""
     payload = body.model_dump(exclude_none=True)
-    if body.batch_size is None:
-        payload["batch_size"] = 0 if body.params.decode else 32
+    if body.batch_size is None and body.params.decode:
+        payload["batch_size"] = 0
     return payload
 
 
