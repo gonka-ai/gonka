@@ -228,14 +228,14 @@ citest-peerrpc-ha-session: citest-images ## HA session spread: height seed + cha
 
 # Current versiond and versiond-router only. A parent B1 pin has no proto h2
 # listen, so the same-make citest-images ifeq must not see it.
-citest-peerrpc-overlay: ## §8.3 proxy overlay hop completeness (HTTP/2).
+citest-peerrpc-overlay: ## §8.3 proxy overlay hop and escrow stickiness (HTTP/2).
 	$(MAKE) build-devshardd
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
 	DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 	DEVSHARD_RPC_H2_PORT=8443 DEVSHARD_RPC_H2_HOST=proxy DEVSHARD_RPC_H2_UPGRADE=true \
 	TESTENV_PROXY_OVERLAY=1 \
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestPeerRPCOverlayHop$$' -count=1 -v -timeout 30m
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^(TestPeerRPCOverlayHop|TestH2EscrowStickiness)$$' -count=1 -v -timeout 45m
 
 # Current images only. Same pin drop as the overlay hop.
 citest-peerrpc-parity: ## §8.4 JSON / Connect HTTP/2 / native gRPC parity.
