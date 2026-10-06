@@ -35,12 +35,14 @@ const (
 	limitMsgsPerMin = "600"
 	limitBurst      = "80"
 	limitFloor      = "200"
-	baselineVersion = "devshard-versiond:0.2.15-v5"
-	baselineRouter  = "devshard-versiond-router:0.2.15-v5"
+	// Built by `make build-limits-pin` from branch devshard/v5. Tags cannot contain '/'.
+	baselineVersion = "devshard-versiond:devshard-v5"
+	baselineRouter  = "devshard-versiond-router:devshard-v5"
 )
 
-// TestPeerRPCLimitsNoProxy is §9 R8 (defaults), R1, and R2 on the 0.2.15-v5
-// pin. Peer RPC is Connect over HTTP/1.1. There is no proxy zone.
+// TestPeerRPCLimitsNoProxy is §9 R8 (defaults), R1, and R2 on versiond and
+// versiond-router built from branch devshard/v5. Peer RPC is Connect over
+// HTTP/1.1. There is no proxy zone.
 func TestPeerRPCLimitsNoProxy(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	requireImage(t, baselineVersion)

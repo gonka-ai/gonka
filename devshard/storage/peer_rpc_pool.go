@@ -3,11 +3,17 @@ package storage
 import "github.com/jackc/pgx/v5/pgxpool"
 
 // PeerRPCPool returns the Postgres pool shared HA children use for peer RPC
-// sessions. SQLite, memory, and a hybrid router with no Postgres backend
-// return nil; those processes keep the in-memory session map.
+// sessions. It walks ManagedStorage and ObsRepairGate to the hybrid router
+// or Postgres underneath. SQLite, memory, and a hybrid router with no
+// Postgres backend return nil; those processes keep the in-memory session map.
 func PeerRPCPool(s Storage) *pgxpool.Pool {
 	for i := 0; i < 8 && s != nil; i++ {
 		switch v := s.(type) {
+		case *ManagedStorage:
+			if v == nil {
+				return nil
+			}
+			s = v.inner
 		case *ObsRepairGate:
 			if v == nil {
 				return nil

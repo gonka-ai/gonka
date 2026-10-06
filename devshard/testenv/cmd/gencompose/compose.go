@@ -243,6 +243,9 @@ services:
       GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
+      # proto h2 frontend. Citest dials Connect here; :8080 denies /sessions/*/rpc.
+      # 18082 is the host side so it does not take the gateway's default 8081.
+      - "18082:8081"
     volumes:
       - versiond-router-state:/var/lib/gonka-router
     networks:

@@ -1588,12 +1588,18 @@ func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
 			},
 			Limits: &limits,
 		})
-		if pool := storage.PeerRPCPool(m.store); peerRPCSharedEnabled(pool != nil, m.boundVersion) {
+		pool := storage.PeerRPCPool(m.store)
+		if peerRPCSharedEnabled(pool != nil, m.boundVersion) {
 			h.EnableShared(rpcserver.OpenSharedSessions(pool, rpcserver.SharedConfig{
 				HostAddress: hostAddr,
 				Version:     strings.TrimSpace(m.boundVersion),
 			}))
 			slog.Info("devshardd: peer rpc sessions are shared", "version", m.boundVersion)
+		} else if pool == nil && peerRPCHARequested() {
+			slog.Error("devshardd: peer rpc sessions stayed process-local",
+				"version", m.boundVersion,
+				"store", fmt.Sprintf("%T", m.store),
+			)
 		}
 		h.StartSweeper()
 		m.rpcAuth.Store(h)
@@ -1609,6 +1615,10 @@ func peerRPCSharedEnabled(hasPool bool, version string) bool {
 	if !hasPool || strings.TrimSpace(version) == "" {
 		return false
 	}
+	return peerRPCHARequested()
+}
+
+func peerRPCHARequested() bool {
 	ha, err := boolvalue.Parse(os.Getenv(mode.EnvHADeployment))
 	return err == nil && ha
 }

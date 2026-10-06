@@ -77,7 +77,7 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
 .PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-legacy-compat test-gateway-smoke
-.PHONY: build-baseline-infra
+.PHONY: build-baseline-infra fetch-limits-pin build-limits-pin
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites. citest-baseline-smoke, citest-mixed-fleet,
@@ -111,6 +111,33 @@ CITEST_RPC_RUN := env -u TESTENV_PROXY_OVERLAY -u DEVSHARD_RPC_H2_HOST $(CITEST_
 
 build-baseline-infra: ## Build versiond + versiond-router from branch devshard-0.2.15-v5.
 	./scripts/build-baseline-infra.sh
+
+# No-proxy peer-RPC limits pin versiond and versiond-router to devshard/v5.
+# A GitHub checkout is one commit, so fetch that branch when it is not local.
+# Docker tags cannot contain '/'.
+LIMITS_PIN_BRANCH := devshard/v5
+LIMITS_VERSIOND_IMAGE := devshard-versiond:devshard-v5
+LIMITS_VERSIOND_ROUTER_IMAGE := devshard-versiond-router:devshard-v5
+
+fetch-limits-pin:
+	@if git rev-parse --verify "$(LIMITS_PIN_BRANCH)^{commit}" >/dev/null 2>&1 \
+		|| git rev-parse --verify "origin/$(LIMITS_PIN_BRANCH)^{commit}" >/dev/null 2>&1 \
+		|| git rev-parse --verify "upstream/$(LIMITS_PIN_BRANCH)^{commit}" >/dev/null 2>&1 \
+		|| git rev-parse --verify "product-science/$(LIMITS_PIN_BRANCH)^{commit}" >/dev/null 2>&1; then \
+		echo "limits pin $(LIMITS_PIN_BRANCH) is already local"; \
+	else \
+		git fetch --depth=1 origin "$(LIMITS_PIN_BRANCH):refs/remotes/origin/$(LIMITS_PIN_BRANCH)" \
+			|| git fetch --depth=1 upstream "$(LIMITS_PIN_BRANCH):refs/remotes/upstream/$(LIMITS_PIN_BRANCH)"; \
+	fi
+
+build-limits-pin: fetch-limits-pin
+	BASELINE_BRANCH=$(LIMITS_PIN_BRANCH) \
+	BASELINE_VERSIOND_IMAGE=$(LIMITS_VERSIOND_IMAGE) \
+	BASELINE_VERSIOND_ROUTER_IMAGE=$(LIMITS_VERSIOND_ROUTER_IMAGE) \
+	BASELINE_SKIP_DEVSHARDD=1 \
+	BASELINE_PIN_FILE=$(CURDIR)/baselines/devshard-v5.txt \
+	BASELINE_CHECKOUT=$(CURDIR)/baselines/checkout-devshard-v5 \
+		$(MAKE) build-baseline-infra
 
 citest-images: gen-compose ## Pull hub images and build compose images required for citest.
 	docker compose $(COMPOSE_BASE) pull devshard-postgres
@@ -220,8 +247,8 @@ citest-peerrpc-parity: ## §8.4 JSON / Connect HTTP/2 / native gRPC parity.
 	TESTENV_PROXY_OVERLAY=1 \
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestPeerRPCParity$$' -count=1 -v -timeout 45m
 
-# Current images for the overlay half. The no-proxy half pins 0.2.15-v5 itself.
-citest-peerrpc-limits: ## §9 R1–R8 child budget and proxy zones.
+# Overlay half uses current images. The no-proxy half pins versiond from devshard/v5.
+citest-peerrpc-limits: build-limits-pin ## §9 R1–R8 child budget and proxy zones.
 	$(MAKE) build-devshardd
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
