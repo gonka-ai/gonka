@@ -142,3 +142,11 @@ func TestLatencyWindowsDropsAndPartialMinute(t *testing.T) {
 	require.Equal(t, 1, windows[1].Failed)
 	require.InDelta(t, 1.0/30, windows[1].CompletedRPS, 0.000001)
 }
+
+func TestProcessIdentityIgnoresWallClockShift(t *testing.T) {
+	before := map[string]float64{"loadtest_process_pid": 83, "loadtest_process_start_ticks": 123, "process_start_time_seconds": 1000}
+	after := map[string]float64{"loadtest_process_pid": 83, "loadtest_process_start_ticks": 123, "process_start_time_seconds": 1007}
+	require.False(t, processChanged(before, after))
+	after["loadtest_process_start_ticks"] = 456
+	require.True(t, processChanged(before, after))
+}

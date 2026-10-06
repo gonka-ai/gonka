@@ -41,6 +41,7 @@ type RunResult struct {
 	MLStats      map[string]MLNodeStats
 	GatewayState GatewayStateSizes
 	Metrics      MetricsSummary
+	CPUProfiles  []CPUProfileResult
 }
 
 type MLNodeStats struct {
@@ -244,6 +245,11 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}
 	defer func() { result.Metrics = collector.stop() }()
 	collector.phase.Store("workload")
+	profiler, err := startCPUProfiler(ctx, opts, cfg, project, composePath, result.GatewayURL, apiKey, scenario.Diagnostics.CPUProfiles)
+	if err != nil {
+		return result, fmt.Errorf("start CPU profiler: %w", err)
+	}
+	defer func() { result.CPUProfiles = profiler.stop() }()
 
 	log.Printf("loadtest: stage=workload_start scenario=%s", scenario.Scenario)
 	summary, err := RunGenerator(ctx, GeneratorConfig{
@@ -339,6 +345,12 @@ func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string
 			"pre_poc_blocks":           rotation.PrePoCBlocks,
 			"nonce_deactivation_limit": rotation.NonceDeactivationLimit,
 			"models":                   models,
+		}
+	} else if limit := scenario.Gateway.EscrowRotation.NonceDeactivationLimit; limit > 0 {
+		// Admission still enforces this limit when replacement is disabled.
+		settings["escrow_rotation"] = map[string]any{
+			"enabled":                  false,
+			"nonce_deactivation_limit": limit,
 		}
 	}
 

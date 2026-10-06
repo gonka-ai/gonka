@@ -12,14 +12,23 @@ import (
 )
 
 type Scenario struct {
-	SchemaVersion string     `yaml:"schema_version"`
-	Scenario      string     `yaml:"scenario"`
-	Seed          int64      `yaml:"seed"`
-	Topology      Topology   `yaml:"topology"`
-	Workload      Workload   `yaml:"workload"`
-	Gateway       Gateway    `yaml:"gateway"`
-	Assertions    Assertions `yaml:"assertions"`
-	DrainTimeout  string     `yaml:"drain_timeout"`
+	SchemaVersion string      `yaml:"schema_version"`
+	Scenario      string      `yaml:"scenario"`
+	Seed          int64       `yaml:"seed"`
+	Topology      Topology    `yaml:"topology"`
+	Workload      Workload    `yaml:"workload"`
+	Gateway       Gateway     `yaml:"gateway"`
+	Assertions    Assertions  `yaml:"assertions"`
+	DrainTimeout  string      `yaml:"drain_timeout"`
+	Diagnostics   Diagnostics `yaml:"diagnostics"`
+}
+
+type Diagnostics struct {
+	CPUProfiles []CPUProfileWindow `yaml:"cpu_profiles"`
+}
+type CPUProfileWindow struct {
+	StartAfter string `yaml:"start_after"`
+	Duration   string `yaml:"duration"`
 }
 
 type Gateway struct {
@@ -72,10 +81,11 @@ type MockMLNode struct {
 }
 
 type Workload struct {
-	MaxInFlight int            `yaml:"max_in_flight"`
-	Duration    string         `yaml:"duration"`
-	Traffic     TrafficProfile `yaml:"traffic"`
-	Request     Request        `yaml:"request"`
+	ReportInterval string         `yaml:"report_interval"`
+	MaxInFlight    int            `yaml:"max_in_flight"`
+	Duration       string         `yaml:"duration"`
+	Traffic        TrafficProfile `yaml:"traffic"`
+	Request        Request        `yaml:"request"`
 }
 
 // TrafficProfile describes the rate of new requests over a workload's duration.
@@ -223,6 +233,24 @@ func (s Scenario) Validate() error {
 	if err := s.Workload.Traffic.Validate(duration); err != nil {
 		return fmt.Errorf("workload traffic: %w", err)
 	}
+	if s.Workload.ReportInterval != "" {
+		interval, err := time.ParseDuration(s.Workload.ReportInterval)
+		if err != nil || interval <= 0 {
+			return fmt.Errorf("workload.report_interval must be a positive duration")
+		}
+	}
+	var previousEnd time.Duration
+	for index, window := range s.Diagnostics.CPUProfiles {
+		start, startErr := time.ParseDuration(window.StartAfter)
+		length, lengthErr := time.ParseDuration(window.Duration)
+		if startErr != nil || lengthErr != nil || start < 0 || length < time.Second || length%time.Second != 0 || start+length > duration {
+			return fmt.Errorf("CPU profile window %d must have a non-negative start and whole-second positive duration within workload", index+1)
+		}
+		if index > 0 && start < previousEnd {
+			return fmt.Errorf("CPU profile windows must be ordered and not overlap")
+		}
+		previousEnd = start + length
+	}
 	if s.Workload.Request.Stream {
 		return fmt.Errorf("streaming requests are not supported by the initial runner")
 	}
@@ -276,6 +304,14 @@ func (s Scenario) Validate() error {
 
 func (s Scenario) Duration() time.Duration {
 	d, _ := time.ParseDuration(s.Workload.Duration)
+	return d
+}
+
+func (s Scenario) ReportInterval() time.Duration {
+	if s.Workload.ReportInterval == "" {
+		return time.Minute
+	}
+	d, _ := time.ParseDuration(s.Workload.ReportInterval)
 	return d
 }
 
