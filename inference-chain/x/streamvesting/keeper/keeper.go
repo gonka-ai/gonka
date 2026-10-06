@@ -335,7 +335,28 @@ func (k Keeper) SetVestingSchedule(ctx sdk.Context, schedule types.VestingSchedu
 	if err != nil {
 		return err
 	}
-	return k.VestingSchedules.Set(ctx, addr, schedule)
+	return k.VestingSchedules.Set(ctx, addr, storedVestingSchedule(schedule, addr))
+}
+
+// storedVestingSchedule drops the participant the key holds; restoredVestingSchedule fills it back.
+// The full record is kept when the key would not restore the same address string.
+func storedVestingSchedule(s types.VestingSchedule, addr sdk.AccAddress) types.VestingSchedule {
+	if s.ParticipantAddress != addr.String() {
+		return s
+	}
+	trimmed := s
+	trimmed.ParticipantAddress = ""
+	if trimmed.Size() == 0 {
+		return s
+	}
+	return trimmed
+}
+
+func restoredVestingSchedule(addr sdk.AccAddress, s types.VestingSchedule) types.VestingSchedule {
+	if s.ParticipantAddress == "" {
+		s.ParticipantAddress = addr.String()
+	}
+	return s
 }
 
 // GetVestingSchedule retrieves a vesting schedule for a participant
@@ -348,7 +369,7 @@ func (k Keeper) GetVestingSchedule(ctx sdk.Context, participantAddress string) (
 	if err != nil {
 		return schedule, false
 	}
-	return v, true
+	return restoredVestingSchedule(addr, v), true
 }
 
 // RemoveVestingSchedule removes a vesting schedule for a participant
@@ -366,5 +387,13 @@ func (k Keeper) GetAllVestingSchedules(ctx sdk.Context) ([]types.VestingSchedule
 	if err != nil {
 		return nil, err
 	}
-	return iter.Values()
+	kvs, err := iter.KeyValues()
+	if err != nil {
+		return nil, err
+	}
+	schedules := make([]types.VestingSchedule, len(kvs))
+	for i, kv := range kvs {
+		schedules[i] = restoredVestingSchedule(kv.Key, kv.Value)
+	}
+	return schedules, nil
 }
