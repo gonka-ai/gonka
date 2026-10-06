@@ -29,7 +29,7 @@ import (
 func TestH2CServerAdvertisesStreamCap(t *testing.T) {
 	s := H2CServer()
 	require.Equal(t, transport.DefaultH2MaxConcurrentStreams, s.MaxConcurrentStreams)
-	require.Equal(t, uint32(4096), s.MaxConcurrentStreams)
+	require.Equal(t, uint32(16384), s.MaxConcurrentStreams)
 	require.NotEqual(t, transport.DefaultRPCMaxStreams, s.MaxConcurrentStreams,
 		"SETTINGS is per TCP; interceptor DefaultRPCMaxStreams stays per peer")
 	require.NotZero(t, s.MaxConcurrentStreams, "zero would hide SETTINGS_MAX_CONCURRENT_STREAMS")
@@ -196,7 +196,7 @@ func TestH2C_MultiplexesConcurrentStreams(t *testing.T) {
 }
 
 func TestH2C_MoreThan100StreamsShareOneTCP(t *testing.T) {
-	// The child advertises 4096 streams. Until the client has read that
+	// The child advertises 16384 streams. Until the client has read that
 	// SETTINGS frame it assumes 100 and may dial a second TCP, so the burst
 	// below starts only after one request has completed on this transport.
 	assertH2COverlappingStreamsShareOneTCP(t, 101)

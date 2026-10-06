@@ -32,9 +32,15 @@ func TestRewriteProxyComposeRandomizesHostPort(t *testing.T) {
 	require.Contains(t, text, "ipv4_address: 172.30.0.70")
 	require.NotContains(t, text, "8080:8080")
 
+	require.Contains(t, text, "../../proxy-router/grpc-exhausted.http")
+	_, err = os.Stat(filepath.Join("..", "..", "..", "..", "proxy-router", "grpc-exhausted.http"))
+	require.NoError(t, err)
+
 	got := rewriteProxyCompose(text)
 	require.Contains(t, got, `"127.0.0.1::8443"`)
 	require.NotContains(t, got, `"127.0.0.1:8443:8443"`)
+	require.Contains(t, got, "./proxy/grpc-exhausted.http")
+	require.NotContains(t, got, "../../proxy-router/grpc-exhausted.http")
 }
 
 func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
@@ -42,7 +48,7 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	require.NoError(t, err)
 	text := string(cfg)
 	require.Contains(t, text, "bind *:8443 proto h2")
-	require.Contains(t, text, "tune.h2.max-concurrent-streams 4096")
+	require.Contains(t, text, "tune.h2.max-concurrent-streams 16384")
 	require.Contains(t, text, "versiond-router:8081 proto h2")
 	require.Contains(t, text, "http-request del-header X-Real-IP")
 	require.Contains(t, text, "X-Real-IP %[src]")
@@ -87,7 +93,7 @@ func TestVersiondRouterHasNoPerIPZones(t *testing.T) {
 	require.NotContains(t, string(pool), "conn_rate")
 	require.NotContains(t, string(pool), "sess_rate")
 	require.Contains(t, string(router), "Per-IP zones stay on the published hop (proxy), not here.")
-	require.Contains(t, string(router), "tune.h2.max-concurrent-streams 4096")
+	require.Contains(t, string(router), "tune.h2.max-concurrent-streams 16384")
 	require.Contains(t, string(router), "bind ${FRONT_BIND_ADDRESS}:${H2_PORT} proto h2")
 	require.Contains(t, string(router), "expose-experimental-directives")
 	require.Contains(t, string(router), "normalize-uri percent-decode-unreserved strict")

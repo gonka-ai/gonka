@@ -34,7 +34,7 @@ func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
 	require.NoError(t, err)
 	got := rewriteRPCProxyForTest(string(src), "versiond-router:19081", defaultRPCProxyTestLimits())
 	require.Contains(t, got, "bind *:8443 proto h2")
-	require.Contains(t, got, "tune.h2.max-concurrent-streams 4096")
+	require.Contains(t, got, "tune.h2.max-concurrent-streams 16384")
 	require.Contains(t, got, "http-request del-header X-Real-IP")
 	require.Contains(t, got, "X-Real-IP %[src]")
 	require.Contains(t, got, "path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$")

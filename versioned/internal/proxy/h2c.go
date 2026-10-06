@@ -14,12 +14,13 @@ import (
 // DefaultH2MaxConcurrentStreams is SETTINGS_MAX_CONCURRENT_STREAMS on
 // versiond's public listen and the child h2c listen. One ingress TCP
 // (HAProxy proto h2, then this process, then one mux to the child)
-// carries many peers' Watch streams. Not the per-peer interceptor cap
-// (256). Keep lockstep with transport.DefaultH2MaxConcurrentStreams and
+// carries many peers' Watch streams. This is not the per-peer interceptor
+// cap. Keep lockstep with transport.DefaultH2MaxConcurrentStreams and
 // HAProxy tune.h2.max-concurrent-streams (versioned cannot import
 // devshard). HAProxy's default is 100; below that, golang's
-// http2.Transport silently dials another TCP.
-const DefaultH2MaxConcurrentStreams = 4096
+// http2.Transport silently dials another TCP. This stays above the
+// per-peer non-Watch stream cap so one mux can carry a full chat roster.
+const DefaultH2MaxConcurrentStreams = 16384
 
 // Child h2c reverse-proxy idle / PING — keep in lockstep with
 // transport.DefaultRPCH2ReadIdleTimeout / PingTimeout / IdleConnTimeout
@@ -39,7 +40,7 @@ func H2CServer() *http2.Server {
 // http.Server tracks those connections, so Shutdown sends GOAWAY and waits
 // for the handler. h2c.NewHandler hijacks the conn without that tracking,
 // and Shutdown returns while the stream is still running.
-// MaxConcurrentStreams is applied by ConfigureServer (4096).
+// MaxConcurrentStreams is applied by ConfigureServer (16384).
 func ConfigureCleartextHTTP2(srv *http.Server) error {
 	if srv == nil {
 		return errors.New("nil http server")

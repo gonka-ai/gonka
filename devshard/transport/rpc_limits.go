@@ -15,26 +15,28 @@ const (
 	DefaultRPCMessagesPerMin uint32 = 6000
 	// DefaultRPCMessagesBurst is the peer-bucket pulse (10% of the minute).
 	DefaultRPCMessagesBurst = DefaultRPCMessagesPerMin / 10
-	// DefaultRPCMaxStreams is the per-peer concurrent Watch+Chat cap.
-	// Chat uses at most max-1 when max>1 so Watch always has a slot.
-	// This is the Connect interceptor, not HTTP/2 SETTINGS (per TCP).
-	DefaultRPCMaxStreams uint32 = 256
-	// DefaultRPCMaxStreamsTotal is the child-wide Chat stream ceiling.
-	// Watch does not spend it; Watch is capped at MaxSessions. SETTINGS
-	// stays DefaultH2MaxConcurrentStreams (4096) so one mux can carry
-	// every peer. This is the interceptor backstop that 256-on-the-listen
-	// used to be.
-	DefaultRPCMaxStreamsTotal uint32 = 512
-	// DefaultRPCMaxChatsTotal is the child-wide Chat ceiling: one MLNode
-	// max_num_seqs, not the HTTP/2 mux. Watch does not spend this.
-	DefaultRPCMaxChatsTotal uint32 = 128
+	// DefaultRPCMaxChatsPerPeer is concurrent Chat streams for one peer.
+	// Watch has its own cap and does not spend this.
+	DefaultRPCMaxChatsPerPeer uint32 = 10240
+	// DefaultRPCMaxStreams is the per-peer non-Watch stream cap. Chat
+	// uses at most max-1 when max>1, so this stays one above the chat
+	// cap. This is the Connect interceptor, not HTTP/2 SETTINGS (per TCP).
+	DefaultRPCMaxStreams uint32 = DefaultRPCMaxChatsPerPeer + 1
+	// DefaultRPCMaxStreamsTotal is the child-wide non-Watch stream ceiling.
+	// Watch does not spend it; Watch is capped at MaxSessions. It matches
+	// the per-peer cap so one peer can fill its chat roster. SETTINGS
+	// stays DefaultH2MaxConcurrentStreams so one mux can carry that roster.
+	DefaultRPCMaxStreamsTotal uint32 = DefaultRPCMaxStreams
+	// DefaultRPCMaxChatsTotal is the child-wide Chat ceiling. It matches
+	// the per-peer chat cap. Watch does not spend this.
+	DefaultRPCMaxChatsTotal uint32 = DefaultRPCMaxChatsPerPeer
 	// DefaultH2MaxConcurrentStreams is SETTINGS_MAX_CONCURRENT_STREAMS on
 	// the child h2c listen. Overlay muxes every peer's Watch onto one
 	// (or a few) versiond→child TCP connections, so this must match
 	// versiond's public listen and HAProxy tune.h2.max-concurrent-streams,
-	// not DefaultRPCMaxStreams. versioned copies the same 4096
-	// (versioned cannot import this module).
-	DefaultH2MaxConcurrentStreams uint32 = 4096
+	// and it stays above DefaultRPCMaxStreamsTotal. versioned copies the
+	// same value (versioned cannot import this module).
+	DefaultH2MaxConcurrentStreams uint32 = 16384
 	// DefaultRPCAttachFloorPerMin is the configured Attach ceiling. The
 	// enforced anonymous bucket is smaller: 50 tokens, refilled at 50 per
 	// second. A configured value below 50 is that burst and that refill.
@@ -167,7 +169,7 @@ func IsUnlimitedRPCLimit(n uint32) bool {
 // ProcessStreamCaps is the child-wide Chat stream ceiling and the Chat
 // slice of it (one MLNode). Watch is not part of this ceiling. unlimited
 // is true when the process ceiling is off (DEVSHARD_RPC_LIMITS=off or
-// MAX_STREAMS_TOTAL=-1). SETTINGS stays 4096; this is the interceptor,
+// MAX_STREAMS_TOTAL=-1). SETTINGS stays DefaultH2MaxConcurrentStreams; this is the interceptor,
 // not the mux.
 func (c ChannelLimitConfig) ProcessStreamCaps() (streams, chats uint32, unlimited bool) {
 	if c.Disabled {

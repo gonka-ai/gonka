@@ -14,7 +14,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const proxyComposeFileName = "docker-compose.proxy.yml"
+const (
+	proxyComposeFileName = "docker-compose.proxy.yml"
+	grpcExhaustedFile    = "grpc-exhausted.http"
+)
 
 // ProxyOverlayFromEnv is §9.1. Default citest leaves it unset and stays on
 // versiond-router:8080. The HTTP/2 rerun sets TESTENV_PROXY_OVERLAY=1.
@@ -51,15 +54,25 @@ func (s *Stack) PrepareProxyOverlay(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "copy proxy overlay config: %s", out)
 
+	// The overlay compose file is written into the stack workdir. A
+	// ../../proxy-router mount is correct only while that file stays in
+	// testenv/. From the workdir it misses the repo, HAProxy exits, and
+	// 8443 is never published. Keep the error file beside the copied cfg.
+	exhausted, err := os.ReadFile(filepath.Join(s.TestenvDir, "..", "..", "proxy-router", grpcExhaustedFile))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dstCfg, grpcExhaustedFile), exhausted, 0o644))
+
 	srcCompose, err := os.ReadFile(filepath.Join(s.TestenvDir, proxyComposeFileName))
 	require.NoError(t, err)
 	rewritten := rewriteProxyCompose(string(srcCompose))
+	require.Contains(t, rewritten, "./proxy/"+grpcExhaustedFile)
 	require.NoError(t, os.WriteFile(filepath.Join(s.WorkDir, proxyComposeFileName), []byte(rewritten), 0o644))
 }
 
 func rewriteProxyCompose(src string) string {
 	portRe := regexp.MustCompile(`(?m)^(\s*-\s*")127\.0\.0\.1:[0-9]+:([0-9]+)(".*)$`)
-	return portRe.ReplaceAllString(src, `${1}127.0.0.1::${2}${3}`)
+	out := portRe.ReplaceAllString(src, `${1}127.0.0.1::${2}${3}`)
+	return strings.ReplaceAll(out, "../../proxy-router/"+grpcExhaustedFile, "./proxy/"+grpcExhaustedFile)
 }
 
 // pinProxyOverlayIP moves the overlay's static address onto this stack's

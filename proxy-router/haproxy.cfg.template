@@ -18,8 +18,8 @@ global
     stats timeout 30s
     # SETTINGS_MAX_CONCURRENT_STREAMS on the peer-RPC frontend. HAProxy's
     # default is 100; one TCP carries every Watch. Matches
-    # DefaultH2MaxConcurrentStreams (4096).
-    tune.h2.max-concurrent-streams 4096
+    # DefaultH2MaxConcurrentStreams (16384).
+    tune.h2.max-concurrent-streams 16384
     # normalize-uri is experimental on HAProxy 3.2. The peer-RPC frontend
     # uses it so path zones see the decoded procedure name.
     expose-experimental-directives

@@ -37,8 +37,8 @@ func TestH2CServerAdvertisesStreamCap(t *testing.T) {
 	if s.MaxConcurrentStreams != DefaultH2MaxConcurrentStreams {
 		t.Fatalf("MaxConcurrentStreams = %d, want %d", s.MaxConcurrentStreams, DefaultH2MaxConcurrentStreams)
 	}
-	if s.MaxConcurrentStreams != 4096 {
-		t.Fatalf("MaxConcurrentStreams = %d, want 4096", s.MaxConcurrentStreams)
+	if s.MaxConcurrentStreams != 16384 {
+		t.Fatalf("MaxConcurrentStreams = %d, want 16384", s.MaxConcurrentStreams)
 	}
 	if s.MaxConcurrentStreams == 256 {
 		t.Fatal("SETTINGS must not equal the per-peer interceptor cap")
@@ -114,7 +114,7 @@ func TestProxy_H2C_RPC_OneParentConnNStreams(t *testing.T) {
 
 func TestProxy_H2C_RPC_MoreThan100StreamsShareOneTCP(t *testing.T) {
 	// HAProxy default SETTINGS is 100. Past that, golang dials another TCP
-	// on both the public hop and versiond→child unless SETTINGS is 4096.
+	// on both the public hop and versiond→child unless SETTINGS is 16384.
 	assertProxyH2COverlappingStreamsShareOneTCP(t, 101)
 }
 
