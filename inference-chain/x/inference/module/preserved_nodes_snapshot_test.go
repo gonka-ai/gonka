@@ -101,7 +101,8 @@ func TestGetInferenceServingNodeIdsUsesUpcomingEpochAnchor(t *testing.T) {
 		},
 	}))
 
-	inferenceServingNodeIds := am.getInferenceServingNodeIds(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 100})
+	upcomingEpoch := types.Epoch{Index: 2, PocStartBlockHeight: 100}
+	inferenceServingNodeIds := am.getInferenceServingNodeIds(upcomingEpoch, am.loadPreservedSnapshot(ctx, upcomingEpoch))
 	require.Contains(t, inferenceServingNodeIds, testutil.Executor)
 	require.Contains(t, inferenceServingNodeIds[testutil.Executor], "node-1")
 }
