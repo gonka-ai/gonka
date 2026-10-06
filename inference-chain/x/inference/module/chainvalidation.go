@@ -979,13 +979,20 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 	seeds := make(map[string]types.RandomSeed)
 	allowedCommits := make(map[types.PoCParticipantModelKey]types.PoCV2StoreCommit)
 	allowedDistributions := make(map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution)
+	allowedByAddress := make(map[string]bool)
 
 	sortedCommitKeys := sortedStoreCommitKeys(storeCommits)
 
 	for _, commitKey := range sortedCommitKeys {
 		participantAddress := commitKey.ParticipantAddress
+		// A participant with several models has one commit per model; read its state once.
+		allowed, checked := allowedByAddress[participantAddress]
+		if !checked {
+			allowed = am.keeper.IsParticipantAllowed(ctx, epochStartBlockHeight, participantAddress)
+			allowedByAddress[participantAddress] = allowed
+		}
 		// Check participant allowlist
-		if !am.keeper.IsParticipantAllowed(ctx, epochStartBlockHeight, participantAddress) {
+		if !allowed {
 			am.LogInfo("ComputeNewWeights: Participant not in allowlist, skipping", types.PoC,
 				"address", participantAddress,
 				"modelId", commitKey.ModelID,
@@ -994,7 +1001,10 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 			continue
 		}
 
-		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
+		participant, ok := participants[participantAddress]
+		if !ok {
+			participant, ok = am.keeper.GetParticipant(ctx, participantAddress)
+		}
 		if !ok {
 			am.LogError("ComputeNewWeights: Error getting participant", types.PoC,
 				"address", participantAddress,
@@ -1005,7 +1015,10 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		}
 		participants[participantAddress] = participant
 
-		seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress)
+		seed, found := seeds[participantAddress]
+		if !found {
+			seed, found = am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress)
+		}
 		if !found {
 			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC,
 				"upcomingEpoch.Index", upcomingEpoch.Index,
