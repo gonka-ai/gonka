@@ -24,10 +24,13 @@ message DevshardEscrow {
   int64 refusal_timeout = 17;
   int64 execution_timeout = 18;
 
-  // Storage form of slots set by the keeper: each distinct host once and one
-  // byte per slot indexing it. Reads restore slots; queries never return these.
-  repeated string slot_hosts = 19;
+  // Storage form set by the keeper: each distinct slot host once as address
+  // bytes, one byte per slot indexing it, creator and app hash as raw bytes.
+  // Reads restore the strings; queries never return these.
+  repeated bytes slot_hosts = 19;
   bytes slot_index = 20;
+  bytes creator_addr = 21;
+  bytes app_hash_raw = 22;
 }
 
 message DevshardHostEpochStats {
