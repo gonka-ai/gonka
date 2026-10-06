@@ -335,12 +335,16 @@ func (k Keeper) SetVestingSchedule(ctx sdk.Context, schedule types.VestingSchedu
 	if err != nil {
 		return err
 	}
+	if schedule.Denom != "" || len(schedule.Amounts) > 0 {
+		return fmt.Errorf("vesting schedule %s: denom and amounts are storage-only", schedule.ParticipantAddress)
+	}
 	return k.VestingSchedules.Set(ctx, addr, storedVestingSchedule(schedule, addr))
 }
 
 // storedVestingSchedule drops the participant the key holds; restoredVestingSchedule fills it back.
 // The full record is kept when the key would not restore the same address string.
 func storedVestingSchedule(s types.VestingSchedule, addr sdk.AccAddress) types.VestingSchedule {
+	s = singleDenomVestingSchedule(s)
 	if s.ParticipantAddress != addr.String() {
 		return s
 	}
@@ -352,10 +356,51 @@ func storedVestingSchedule(s types.VestingSchedule, addr sdk.AccAddress) types.V
 	return trimmed
 }
 
-func restoredVestingSchedule(addr sdk.AccAddress, s types.VestingSchedule) types.VestingSchedule {
+func restoredVestingSchedule(addr sdk.AccAddress, s types.VestingSchedule) (types.VestingSchedule, error) {
 	if s.ParticipantAddress == "" {
 		s.ParticipantAddress = addr.String()
 	}
+	if s.Denom == "" {
+		return s, nil
+	}
+	epochs := make([]types.EpochCoins, len(s.Amounts))
+	for i, a := range s.Amounts {
+		if a == "" {
+			continue
+		}
+		amount, ok := math.NewIntFromString(a)
+		if !ok {
+			return s, fmt.Errorf("vesting schedule %s: invalid amount %q", s.ParticipantAddress, a)
+		}
+		epochs[i].Coins = sdk.Coins{{Denom: s.Denom, Amount: amount}}
+	}
+	s.EpochAmounts, s.Denom, s.Amounts = epochs, "", nil
+	return s, nil
+}
+
+// singleDenomVestingSchedule stores the denom once when every epoch holds at most one positive coin of it.
+func singleDenomVestingSchedule(s types.VestingSchedule) types.VestingSchedule {
+	denom := ""
+	amounts := make([]string, len(s.EpochAmounts))
+	for i, e := range s.EpochAmounts {
+		switch len(e.Coins) {
+		case 0:
+			continue
+		case 1:
+		default:
+			return s
+		}
+		c := e.Coins[0]
+		if c.Denom == "" || (denom != "" && c.Denom != denom) || c.Amount.IsNil() || !c.Amount.IsPositive() {
+			return s
+		}
+		denom = c.Denom
+		amounts[i] = c.Amount.String()
+	}
+	if denom == "" {
+		return s
+	}
+	s.Denom, s.Amounts, s.EpochAmounts = denom, amounts, nil
 	return s
 }
 
@@ -369,7 +414,11 @@ func (k Keeper) GetVestingSchedule(ctx sdk.Context, participantAddress string) (
 	if err != nil {
 		return schedule, false
 	}
-	return restoredVestingSchedule(addr, v), true
+	restored, err := restoredVestingSchedule(addr, v)
+	if err != nil {
+		return schedule, false
+	}
+	return restored, true
 }
 
 // RemoveVestingSchedule removes a vesting schedule for a participant
@@ -393,7 +442,9 @@ func (k Keeper) GetAllVestingSchedules(ctx sdk.Context) ([]types.VestingSchedule
 	}
 	schedules := make([]types.VestingSchedule, len(kvs))
 	for i, kv := range kvs {
-		schedules[i] = restoredVestingSchedule(kv.Key, kv.Value)
+		if schedules[i], err = restoredVestingSchedule(kv.Key, kv.Value); err != nil {
+			return nil, err
+		}
 	}
 	return schedules, nil
 }
