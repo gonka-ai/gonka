@@ -99,3 +99,67 @@ func TestParticipant_AddressDifferentFromIndexStoredWhole(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, testutil.Executor2, got.Address)
 }
+
+func TestParticipant_DefaultWeightAndKeysStoredCompact(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	addr := sdk.MustAccAddressFromBech32(testutil.Executor)
+	p := mainnetLikeParticipant(testutil.Executor)
+	p.WorkerPublicKey = "rIWKJvhuGkhYBN0/geWgVIw6CA3rG1b56C7Nkrn47aM="
+	require.NoError(t, k.SetParticipant(ctx, p))
+
+	raw, err := k.Participants.Get(ctx, addr)
+	require.NoError(t, err)
+	require.Zero(t, raw.Weight)
+	require.Len(t, raw.ValidatorKey, 32)
+	require.Len(t, raw.WorkerPublicKey, 32)
+
+	got, found := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, found)
+	require.Equal(t, int32(-1), got.Weight)
+	require.Equal(t, p.ValidatorKey, got.ValidatorKey)
+	require.Equal(t, p.WorkerPublicKey, got.WorkerPublicKey)
+	require.Equal(t, []types.Participant{got}, k.GetAllParticipant(ctx))
+}
+
+func TestParticipant_AmbiguousValuesStoredWhole(t *testing.T) {
+	for name, edit := range map[string]func(*types.Participant){
+		"zero weight":             func(p *types.Participant) { p.Weight = 0 },
+		"32-character key":        func(p *types.Participant) { p.ValidatorKey = "0123456789abcdef0123456789abcdef" },
+		"32-character worker key": func(p *types.Participant) { p.WorkerPublicKey = "0123456789abcdef0123456789abcdef" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			k, ctx := keepertest.InferenceKeeper(t)
+			addr := sdk.MustAccAddressFromBech32(testutil.Executor)
+			p := mainnetLikeParticipant(testutil.Executor)
+			edit(&p)
+			require.NoError(t, k.SetParticipant(ctx, p))
+
+			raw, err := k.Participants.Get(ctx, addr)
+			require.NoError(t, err)
+			require.Equal(t, testutil.Executor, raw.Index)
+			got, found := k.GetParticipant(ctx, testutil.Executor)
+			require.True(t, found)
+			require.Equal(t, p.Weight, got.Weight)
+			require.Equal(t, p.ValidatorKey, got.ValidatorKey)
+			require.Equal(t, p.WorkerPublicKey, got.WorkerPublicKey)
+		})
+	}
+}
+
+func TestParticipant_NonCanonicalKeyKeptAsText(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	addr := sdk.MustAccAddressFromBech32(testutil.Executor)
+	p := mainnetLikeParticipant(testutil.Executor)
+	p.Weight = 5
+	p.ValidatorKey = "/m43OwvHxD3R6BGC9r2GbsT8IRRPiZ7jwkKjA0fC0HV=" // non-zero padding bits
+	require.NoError(t, k.SetParticipant(ctx, p))
+
+	raw, err := k.Participants.Get(ctx, addr)
+	require.NoError(t, err)
+	require.Empty(t, raw.Index)
+	require.Equal(t, p.ValidatorKey, raw.ValidatorKey)
+	got, found := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, found)
+	require.Equal(t, int32(5), got.Weight)
+	require.Equal(t, p.ValidatorKey, got.ValidatorKey)
+}
