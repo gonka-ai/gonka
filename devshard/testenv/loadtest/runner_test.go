@@ -101,7 +101,7 @@ func TestAssertRunReportsExpectedAndActualValues(t *testing.T) {
 		ErrorRate: 0.5,
 	}
 
-	_, checks, err := assertRun(context.Background(), scenario, summary, nil, "", "", nil)
+	_, checks, err := assertRun(context.Background(), scenario, summary, nil, "", "", nil, nil)
 
 	require.Error(t, err)
 	require.Len(t, checks, 1)
@@ -112,6 +112,28 @@ func TestAssertRunReportsExpectedAndActualValues(t *testing.T) {
 	require.Contains(t, checks[0].Details, "http_failures=1")
 	require.Contains(t, err.Error(), "expected")
 	require.Contains(t, err.Error(), "actual")
+}
+
+func TestAssertRunEvaluatesAllEnabledAssertions(t *testing.T) {
+	scenario := testScenario()
+	scenario.Assertions.MockML.RequireEachNodeUsed = true
+	summary := Summary{
+		Requests:  4,
+		Completed: 2,
+		Failed:    2,
+		ErrorRate: 0.5,
+	}
+
+	_, checks, err := assertRun(context.Background(), scenario, summary, nil, "", "", nil, nil)
+
+	require.Error(t, err)
+	require.Len(t, checks, 3)
+	require.Equal(t, []string{
+		"requests.error_rate",
+		"mock_ml.node_used.mock-openai-0",
+		"mock_ml.node_used.mock-openai-1",
+	}, []string{checks[0].Name, checks[1].Name, checks[2].Name})
+	require.Contains(t, err.Error(), "3 assertions failed")
 }
 
 func TestWaitForNoOrphanedWork_AllowsLoggedGhostPendingWithinThreshold(t *testing.T) {
@@ -204,6 +226,16 @@ func TestFetchGatewayStateSizes(t *testing.T) {
 func TestScopedGatewayURL(t *testing.T) {
 	require.Equal(t, "http://127.0.0.1:1234/devshard/7", scopedGatewayURL("http://127.0.0.1:1234/", "7"))
 	require.Equal(t, "http://127.0.0.1:1234", scopedGatewayURL("http://127.0.0.1:1234/", ""))
+}
+
+func TestRotationModelIDsPreferDatasetModels(t *testing.T) {
+	scenario := testScenario()
+	scenario.Gateway.EscrowRotation.Enabled = true
+	cfg := &config.File{
+		Escrows: []config.Escrow{{ModelID: "config-model"}},
+	}
+	got := rotationModelIDs(cfg, []string{"dataset-model", "dataset-model"}, scenario)
+	require.Equal(t, []string{"dataset-model", "config-model", scenario.Workload.Request.Model}, got)
 }
 
 func TestWriteGatewayStateSizes(t *testing.T) {

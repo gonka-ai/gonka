@@ -71,14 +71,22 @@ type AssertionResult struct {
 	Details  string `json:"details,omitempty"`
 }
 
-type assertionFailure struct {
-	Check AssertionResult
+type assertionFailures struct {
+	Checks []AssertionResult
 }
 
-func (e *assertionFailure) Error() string {
-	message := fmt.Sprintf("assertion %s failed: expected %s; actual %s", e.Check.Name, e.Check.Expected, e.Check.Actual)
-	if e.Check.Details != "" {
-		message += "; details: " + e.Check.Details
+func (e *assertionFailures) Error() string {
+	messages := make([]string, 0, len(e.Checks))
+	for _, check := range e.Checks {
+		messages = append(messages, formatAssertionFailure(check))
+	}
+	return fmt.Sprintf("%d assertions failed: %s", len(messages), strings.Join(messages, "; "))
+}
+
+func formatAssertionFailure(check AssertionResult) string {
+	message := fmt.Sprintf("assertion %s failed: expected %s; actual %s", check.Name, check.Expected, check.Actual)
+	if check.Details != "" {
+		message += "; details: " + check.Details
 	}
 	return message
 }
@@ -196,23 +204,31 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return RunResult{}, err
 	}
+	initialEscrowIDs := configuredEscrowIDs(cfg)
 	apiKey, err := envValue(filepath.Join(workDir, ".env"), "TESTENV_ADMIN_API_KEY")
 	if err != nil {
 		return RunResult{}, err
 	}
 	result.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.Port)
-	debugGatewayURL := result.GatewayURL
+	stateGatewayURL := result.GatewayURL
 	if replaySelector != nil {
 		// Replay stacks configure Gateway through DEVSHARDS_JSON, so even a
 		// single dataset model uses the multi-DevShard debug route.
-		debugGatewayURL = scopedGatewayURL(result.GatewayURL, config.PrimaryEscrowID(cfg))
+		stateGatewayURL = scopedGatewayURL(result.GatewayURL, config.PrimaryEscrowID(cfg))
+	}
+	debugGatewayURL := stateGatewayURL
+	if scenario.Gateway.EscrowRotation.Enabled {
+		// Rotation adds runtimes while the test is running. The orphan check
+		// discovers and inspects all of them through the Gateway root.
+		debugGatewayURL = result.GatewayURL
 	}
 	log.Printf("loadtest: waiting for gateway at %s", result.GatewayURL)
 	if err := waitGateway(ctx, result.GatewayURL); err != nil {
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
 		return RunResult{}, err
 	}
-	if err := applyGatewayScenarioSettings(ctx, result.GatewayURL, apiKey, scenario); err != nil {
+	rotationModels := rotationModelIDs(cfg, replayModels, scenario)
+	if err := applyGatewayScenarioSettings(ctx, result.GatewayURL, apiKey, scenario, rotationModels); err != nil {
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
 		return RunResult{}, err
 	}
@@ -244,7 +260,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return RunResult{}, err
 	}
-	terminal, assertions, assertionErr := assertRun(ctx, scenario, summary, allocations, debugGatewayURL, apiKey, ghostIDs)
+	terminal, assertions, assertionErr := assertRun(ctx, scenario, summary, allocations, debugGatewayURL, apiKey, initialEscrowIDs, ghostIDs)
 	result.Terminal = terminal
 	result.Assertions = assertions
 	log.Printf("loadtest: stage=artifacts_collection")
@@ -254,7 +270,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 		log.Printf("loadtest: final Compose log collection failed: %v", err)
 	}
-	gatewayState, stateErr := fetchGatewayStateSizes(ctx, debugGatewayURL, apiKey)
+	gatewayState, stateErr := fetchGatewayStateSizes(ctx, stateGatewayURL, apiKey)
 	if stateErr == nil {
 		result.GatewayState = gatewayState
 		if err := writeGatewayStateSizes(opts.OutputDir, gatewayState); err != nil && assertionErr == nil {
@@ -272,7 +288,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	} else if assertionErr == nil {
 		return RunResult{}, statsErr
 	}
-	_ = writeGatewayInferences(ctx, debugGatewayURL, apiKey, opts.OutputDir)
+	_ = writeGatewayInferences(ctx, stateGatewayURL, apiKey, opts.OutputDir)
 	if assertionErr != nil {
 		return result, assertionErr
 	}
@@ -282,14 +298,39 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	return result, nil
 }
 
-func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string, scenario Scenario) error {
+func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string, scenario Scenario, rotationModels []string) error {
 	duration := scenario.SecondaryWaitAfterWinner()
 
-	body, err := json.Marshal(map[string]any{
+	settings := map[string]any{
 		"redundancy": map[string]any{
 			"secondary_wait_after_winner_ms": duration.Milliseconds(),
 		},
-	})
+	}
+	if scenario.Gateway.EscrowRotation.Enabled {
+		rotation := scenario.Gateway.EscrowRotation
+		models := make([]map[string]any, 0, len(rotationModels))
+		for _, modelID := range rotationModels {
+			models = append(models, map[string]any{
+				"model_id":        modelID,
+				"temp_count":      rotation.TempCount,
+				"target_count":    rotation.TargetCount,
+				"amount":          rotation.Amount,
+				"private_key_env": rotation.PrivateKeyEnv,
+			})
+		}
+		if len(models) == 0 {
+			return fmt.Errorf("gateway.escrow_rotation is enabled but no model IDs were found")
+		}
+		settings["escrow_rotation"] = map[string]any{
+			"enabled":                  true,
+			"settlement_enabled":       rotation.SettlementEnabled,
+			"pre_poc_blocks":           rotation.PrePoCBlocks,
+			"nonce_deactivation_limit": rotation.NonceDeactivationLimit,
+			"models":                   models,
+		}
+	}
+
+	body, err := json.Marshal(settings)
 	if err != nil {
 		return fmt.Errorf("marshal gateway settings: %w", err)
 	}
@@ -311,6 +352,39 @@ func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string
 		return fmt.Errorf("apply gateway settings returned %s: %s", response.Status, strings.TrimSpace(string(reply)))
 	}
 	return nil
+}
+
+func rotationModelIDs(cfg *config.File, replayModels []string, scenario Scenario) []string {
+	if !scenario.Gateway.EscrowRotation.Enabled {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	capacity := len(replayModels) + 1
+	if cfg != nil {
+		capacity += len(cfg.Escrows)
+	}
+	models := make([]string, 0, capacity)
+	add := func(modelID string) {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			return
+		}
+		if _, ok := seen[modelID]; ok {
+			return
+		}
+		seen[modelID] = struct{}{}
+		models = append(models, modelID)
+	}
+	for _, modelID := range replayModels {
+		add(modelID)
+	}
+	if cfg != nil {
+		for _, escrow := range cfg.Escrows {
+			add(escrow.ModelID)
+		}
+	}
+	add(scenario.Workload.Request.Model)
+	return models
 }
 
 func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles map[string]Profile, replayEnabled bool, replayModels []string) error {
@@ -634,53 +708,64 @@ func writeGatewayStateSizes(outputDir string, sizes GatewayStateSizes) error {
 	return os.WriteFile(filepath.Join(outputDir, "gateway-state.json"), append(body, '\n'), 0o644)
 }
 
-func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocations map[string]uint64, gatewayURL, apiKey string, ghostIDs map[string]struct{}) (TerminalSummary, []AssertionResult, error) {
-	checks := make([]AssertionResult, 0, 4)
-	addCheck := func(name, expected, actual, details string, passed bool) error {
+func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocations map[string]uint64, gatewayURL, apiKey string, initialEscrowIDs, ghostIDs map[string]struct{}) (TerminalSummary, []AssertionResult, error) {
+	checks := make([]AssertionResult, 0, 5)
+	failures := make([]AssertionResult, 0)
+	addCheck := func(name, expected, actual, details string, passed bool) {
 		check := AssertionResult{Name: name, Passed: passed, Expected: expected, Actual: actual, Details: details}
 		checks = append(checks, check)
-		if passed {
-			return nil
+		if !passed {
+			failures = append(failures, check)
 		}
-		return &assertionFailure{Check: check}
 	}
 
 	if summary.Requests == 0 {
-		err := addCheck("load.requests_present", "> 0 requests", "0 requests", "the load generator did not produce any request results", false)
-		return TerminalSummary{}, checks, err
-	}
-	attempted := summary.Requests - summary.Dropped
-	httpFailures := attempted - summary.Completed
-	err := addCheck(
-		"requests.error_rate",
-		fmt.Sprintf("<= %.4f (%.2f%%)", scenario.Thresholds.ErrorRate, scenario.Thresholds.ErrorRate*100),
-		fmt.Sprintf("%.4f (%.2f%%)", summary.ErrorRate, summary.ErrorRate*100),
-		fmt.Sprintf("offered=%d attempted=%d completed=%d http_failures=%d dropped=%d", summary.Requests, attempted, summary.Completed, httpFailures, summary.Dropped),
-		summary.ErrorRate <= scenario.Thresholds.ErrorRate,
-	)
-	if err != nil {
-		return TerminalSummary{}, checks, err
+		addCheck("load.requests_present", "> 0 requests", "0 requests", "the load generator did not produce any request results", false)
+	} else {
+		attempted := summary.Requests - summary.Dropped
+		httpFailures := attempted - summary.Completed
+		addCheck(
+			"requests.error_rate",
+			fmt.Sprintf("<= %.4f (%.2f%%)", scenario.Assertions.Requests.ErrorRate, scenario.Assertions.Requests.ErrorRate*100),
+			fmt.Sprintf("%.4f (%.2f%%)", summary.ErrorRate, summary.ErrorRate*100),
+			fmt.Sprintf("offered=%d attempted=%d completed=%d http_failures=%d dropped=%d", summary.Requests, attempted, summary.Completed, httpFailures, summary.Dropped),
+			summary.ErrorRate <= scenario.Assertions.Requests.ErrorRate,
+		)
 	}
 	if scenario.Assertions.MockML.RequireEachNodeUsed {
-		var firstFailure error
 		for _, node := range scenario.Topology.MockML.Nodes {
-			nodeErr := addCheck(
+			addCheck(
 				"mock_ml.node_used."+node.Name,
 				"allocations > 0",
 				fmt.Sprintf("allocations=%d", allocations[node.Name]),
 				fmt.Sprintf("configured node profile=%s", node.Profile),
 				allocations[node.Name] > 0,
 			)
-			if nodeErr != nil && firstFailure == nil {
-				firstFailure = nodeErr
-			}
-		}
-		if firstFailure != nil {
-			return TerminalSummary{}, checks, firstFailure
 		}
 	}
+	if scenario.Assertions.EscrowRotation.RequireNewEscrow {
+		currentEscrowIDs, escrowErr := fetchGatewayDevshardIDs(ctx, gatewayURL, apiKey)
+		newEscrowIDs := difference(currentEscrowIDs, initialEscrowIDs)
+		check := AssertionResult{
+			Name:     "gateway.escrow_rotation.new_escrow",
+			Expected: "new escrow count >= 1",
+			Actual:   fmt.Sprintf("new=%d ids=%s current=%s", len(newEscrowIDs), formatEscrowIDs(newEscrowIDs), formatEscrowIDs(currentEscrowIDs)),
+			Passed:   escrowErr == nil && len(newEscrowIDs) > 0,
+		}
+		if escrowErr != nil {
+			check.Details = escrowErr.Error()
+		} else {
+			check.Details = fmt.Sprintf("initial=%s", formatEscrowIDsFromSet(initialEscrowIDs))
+		}
+		checks = append(checks, check)
+		if !check.Passed {
+			failures = append(failures, check)
+		}
+	}
+	terminal := TerminalSummary{}
 	if scenario.Assertions.Devshard.NoOrphanedWork {
-		terminal, orphanErr := waitForNoOrphanedWork(ctx, gatewayURL, apiKey, scenario.Assertions.Devshard.MaxGhostRate, ghostIDs, scenario.DrainDuration())
+		var orphanErr error
+		terminal, orphanErr = waitForNoOrphanedWork(ctx, gatewayURL, apiKey, scenario.Assertions.Devshard.MaxGhostRate, ghostIDs, scenario.DrainDuration(), scenario.Gateway.EscrowRotation.Enabled)
 		check := AssertionResult{
 			Name:     "devshard.no_orphaned_work",
 			Passed:   orphanErr == nil,
@@ -692,11 +777,13 @@ func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocati
 		}
 		checks = append(checks, check)
 		if orphanErr != nil {
-			return terminal, checks, &assertionFailure{Check: check}
+			failures = append(failures, check)
 		}
-		return terminal, checks, nil
 	}
-	return TerminalSummary{}, checks, nil
+	if len(failures) > 0 {
+		return terminal, checks, &assertionFailures{Checks: failures}
+	}
+	return terminal, checks, nil
 }
 
 func formatTerminalSummary(summary TerminalSummary) string {
@@ -715,8 +802,9 @@ type debugInferencesResponse struct {
 	Inferences map[string]debugInference `json:"inferences"`
 }
 
-func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, maxGhostRate float64, ghostIDs map[string]struct{}, timeout time.Duration) (TerminalSummary, error) {
+func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, maxGhostRate float64, ghostIDs map[string]struct{}, timeout time.Duration, aggregateRuntimeState ...bool) (TerminalSummary, error) {
 	log.Printf("loadtest: stage=devshard_orphan_check_start timeout=%s max_ghost_rate=%.2f%%", timeout, maxGhostRate*100)
+	aggregate := len(aggregateRuntimeState) > 0 && aggregateRuntimeState[0]
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(time.Second)
@@ -726,7 +814,7 @@ func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, maxGh
 	var lastReadErr error
 	observedSnapshot := false
 	for {
-		state, err := fetchDebugInferenceSummary(ctx, client, gatewayURL, apiKey, ghostIDs)
+		state, err := fetchDebugInferenceSummary(ctx, client, gatewayURL, apiKey, ghostIDs, aggregate)
 		if err == nil {
 			observedSnapshot = true
 			lastReadErr = nil
@@ -761,31 +849,156 @@ func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, maxGh
 	}
 }
 
-func fetchDebugInferenceSummary(ctx context.Context, client *http.Client, gatewayURL, apiKey string, ghostIDs map[string]struct{}) (TerminalSummary, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/v1/debug/inferences", nil)
+func fetchDebugInferenceSummary(ctx context.Context, client *http.Client, gatewayURL, apiKey string, ghostIDs map[string]struct{}, aggregate bool) (TerminalSummary, error) {
+	debugURLs := []string{gatewayURL}
+	if aggregate {
+		var err error
+		debugURLs, err = fetchRuntimeDebugURLs(ctx, client, gatewayURL, apiKey)
+		if err != nil {
+			return TerminalSummary{}, err
+		}
+	}
+
+	total := TerminalSummary{Statuses: make(map[string]int)}
+	for _, debugURL := range debugURLs {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, debugURL+"/v1/debug/inferences", nil)
+		if err != nil {
+			return TerminalSummary{}, err
+		}
+		if apiKey != "" {
+			request.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			return TerminalSummary{}, fmt.Errorf("GET /v1/debug/inferences: %w", err)
+		}
+		var body debugInferencesResponse
+		decodeErr := json.NewDecoder(response.Body).Decode(&body)
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			if decodeErr == nil {
+				return TerminalSummary{}, fmt.Errorf("GET /v1/debug/inferences returned %s", response.Status)
+			}
+			return TerminalSummary{}, fmt.Errorf("GET /v1/debug/inferences returned %s (read body: %w)", response.Status, decodeErr)
+		}
+		if decodeErr != nil {
+			return TerminalSummary{}, fmt.Errorf("decode /v1/debug/inferences: %w", decodeErr)
+		}
+		mergeTerminalSummary(&total, summarizeDebugInferences(body.Inferences, ghostIDs))
+	}
+	if total.Total > 0 {
+		total.GhostRate = float64(total.Ghost) / float64(total.Total)
+	}
+	return total, nil
+}
+
+type adminDevshardsResponse struct {
+	Devshards []struct {
+		ID string `json:"id"`
+	} `json:"devshards"`
+}
+
+func configuredEscrowIDs(cfg *config.File) map[string]struct{} {
+	ids := make(map[string]struct{})
+	if cfg == nil {
+		return ids
+	}
+	for _, escrow := range cfg.Escrows {
+		if escrow.ID == 0 {
+			continue
+		}
+		ids[strconv.FormatUint(escrow.ID, 10)] = struct{}{}
+	}
+	return ids
+}
+
+func fetchGatewayDevshardIDs(ctx context.Context, gatewayURL, apiKey string) ([]string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/v1/admin/devshards", nil)
 	if err != nil {
-		return TerminalSummary{}, err
+		return nil, err
 	}
 	if apiKey != "" {
 		request.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	response, err := client.Do(request)
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
 	if err != nil {
-		return TerminalSummary{}, fmt.Errorf("GET /v1/debug/inferences: %w", err)
+		return nil, fmt.Errorf("GET /v1/admin/devshards: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, 4<<10))
-		if readErr != nil {
-			return TerminalSummary{}, fmt.Errorf("GET /v1/debug/inferences returned %s (read body: %w)", response.Status, readErr)
-		}
-		return TerminalSummary{}, fmt.Errorf("GET /v1/debug/inferences returned %s: %s", response.Status, strings.TrimSpace(string(body)))
+		body, _ := io.ReadAll(io.LimitReader(response.Body, 4<<10))
+		return nil, fmt.Errorf("GET /v1/admin/devshards returned %s: %s", response.Status, strings.TrimSpace(string(body)))
 	}
-	var body debugInferencesResponse
+	var body adminDevshardsResponse
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
-		return TerminalSummary{}, fmt.Errorf("decode /v1/debug/inferences: %w", err)
+		return nil, fmt.Errorf("decode /v1/admin/devshards: %w", err)
 	}
-	return summarizeDebugInferences(body.Inferences, ghostIDs), nil
+	ids := make([]string, 0, len(body.Devshards))
+	seen := make(map[string]struct{}, len(body.Devshards))
+	for _, devshard := range body.Devshards {
+		id := strings.TrimSpace(devshard.ID)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("GET /v1/admin/devshards returned no escrow IDs")
+	}
+	return ids, nil
+}
+
+func fetchRuntimeDebugURLs(ctx context.Context, client *http.Client, gatewayURL, apiKey string) ([]string, error) {
+	ids, err := fetchGatewayDevshardIDs(ctx, gatewayURL, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	urls := make([]string, 0, len(ids))
+	for _, id := range ids {
+		urls = append(urls, scopedGatewayURL(gatewayURL, id))
+	}
+	return urls, nil
+}
+
+func difference(values []string, excluded map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := excluded[value]; !ok {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func formatEscrowIDs(ids []string) string {
+	if len(ids) == 0 {
+		return "none"
+	}
+	return strings.Join(ids, ",")
+}
+
+func formatEscrowIDsFromSet(ids map[string]struct{}) string {
+	values := make([]string, 0, len(ids))
+	for id := range ids {
+		values = append(values, id)
+	}
+	sort.Strings(values)
+	return formatEscrowIDs(values)
+}
+
+func mergeTerminalSummary(dst *TerminalSummary, src TerminalSummary) {
+	dst.Finished += src.Finished
+	dst.Ghost += src.Ghost
+	dst.Total += src.Total
+	dst.Orphaned += src.Orphaned
+	for status, count := range src.Statuses {
+		dst.Statuses[status] += count
+	}
 }
 
 func summarizeDebugInferences(inferences map[string]debugInference, ghostIDs map[string]struct{}) TerminalSummary {
@@ -901,7 +1114,9 @@ func writeComposeLogs(outputDir, testenvDir, project, composePath string) error 
 }
 
 func writeComposeLogsTo(outputDir, testenvDir, project, composePath, filename string) error {
-	cmd := exec.Command("docker", "compose", "-p", project, "-f", composePath, "logs", "--no-color")
+	// Long load tests can produce millions of container log lines. The tail is
+	// enough for post-run diagnosis and keeps artifact collection bounded.
+	cmd := exec.Command("docker", "compose", "-p", project, "-f", composePath, "logs", "--no-color", "--tail", "5000")
 	cmd.Dir = testenvDir
 	body, err := cmd.CombinedOutput()
 	if err != nil {
@@ -940,8 +1155,12 @@ func writeAssertions(outputDir string, checks []AssertionResult, assertionErr er
 	report := map[string]any{"passed": assertionErr == nil, "checks": checks}
 	if assertionErr != nil {
 		report["error"] = assertionErr.Error()
-		if failure, ok := assertionErr.(*assertionFailure); ok {
-			report["failed_assertion"] = failure.Check.Name
+		if failures, ok := assertionErr.(*assertionFailures); ok {
+			names := make([]string, 0, len(failures.Checks))
+			for _, check := range failures.Checks {
+				names = append(names, check.Name)
+			}
+			report["failed_assertions"] = names
 		}
 	}
 	body, err := json.MarshalIndent(report, "", "  ")
