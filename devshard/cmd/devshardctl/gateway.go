@@ -877,12 +877,13 @@ func (g *Gateway) outputTokenLimitsForModel(model string) outputTokenLimits {
 }
 
 const (
-	balanceCheckInterval                = 30 * time.Second
-	balanceMinimumThreshold      uint64 = 1_000_000
-	nonceDeactivationLimit       uint64 = 19_800
-	autoSettlementRetryInterval         = 10 * time.Second
-	autoSettlementAttemptTimeout        = 5 * time.Minute
-	autoSettlementMaxAttempts           = 30
+	balanceCheckInterval                 = 30 * time.Second
+	balanceMinimumThreshold       uint64 = 1_000_000
+	defaultNonceDeactivationLimit uint64 = 19_800
+	nonceDeactivationLimit        uint64 = defaultNonceDeactivationLimit
+	autoSettlementRetryInterval          = 10 * time.Second
+	autoSettlementAttemptTimeout         = 5 * time.Minute
+	autoSettlementMaxAttempts            = 30
 )
 
 // checkBalances scans all active runtimes and deactivates any whose
@@ -894,6 +895,7 @@ func (g *Gateway) checkBalances() {
 		g.mu.Unlock()
 		return
 	}
+	nonceLimit := g.nonceDeactivationLimit()
 	runtimes := make([]*devshardRuntime, len(g.runtimeOrder))
 	copy(runtimes, g.runtimeOrder)
 	g.mu.Unlock()
@@ -910,9 +912,9 @@ func (g *Gateway) checkBalances() {
 			continue
 		}
 		nonce := rt.proxy.sm.LatestNonce()
-		if nonce >= nonceDeactivationLimit {
+		if nonce >= nonceLimit {
 			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — scheduling replacement before deactivation",
-				rt.id, nonce, nonceDeactivationLimit)
+				rt.id, nonce, nonceLimit)
 			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "high_nonce")
 		}
 	}
@@ -2015,7 +2017,14 @@ func (g *Gateway) runtimeAtNonceLimit(rt *devshardRuntime) bool {
 		return false
 	}
 	nonce := rt.proxy.sm.LatestNonce()
-	return nonce >= nonceDeactivationLimit
+	return nonce >= g.nonceDeactivationLimit()
+}
+
+func (g *Gateway) nonceDeactivationLimit() uint64 {
+	if g == nil || g.settings.EscrowRotation.NonceDeactivationLimit == 0 {
+		return defaultNonceDeactivationLimit
+	}
+	return g.settings.EscrowRotation.NonceDeactivationLimit
 }
 
 // formatCandidateWeightsLocked returns a compact "id=W(e)" diagnostic
@@ -2650,10 +2659,11 @@ type adminPerfRequest struct {
 }
 
 type adminEscrowRotationRequest struct {
-	Enabled           *bool                          `json:"enabled,omitempty"`
-	SettlementEnabled *bool                          `json:"settlement_enabled,omitempty"`
-	PrePoCBlocks      *int64                         `json:"pre_poc_blocks,omitempty"`
-	Models            *[]EscrowRotationModelSettings `json:"models,omitempty"`
+	Enabled                *bool                          `json:"enabled,omitempty"`
+	SettlementEnabled      *bool                          `json:"settlement_enabled,omitempty"`
+	PrePoCBlocks           *int64                         `json:"pre_poc_blocks,omitempty"`
+	NonceDeactivationLimit *uint64                        `json:"nonce_deactivation_limit,omitempty"`
+	Models                 *[]EscrowRotationModelSettings `json:"models,omitempty"`
 }
 
 func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
@@ -2861,10 +2871,11 @@ func (g *Gateway) handleDebugRotation(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"settings": map[string]any{
-			"enabled":            settings.EscrowRotation.Enabled,
-			"settlement_enabled": settings.EscrowRotation.SettlementEnabled,
-			"pre_poc_blocks":     settings.EscrowRotation.PrePoCBlocks,
-			"models":             settings.EscrowRotation.Models,
+			"enabled":                  settings.EscrowRotation.Enabled,
+			"settlement_enabled":       settings.EscrowRotation.SettlementEnabled,
+			"pre_poc_blocks":           settings.EscrowRotation.PrePoCBlocks,
+			"nonce_deactivation_limit": settings.EscrowRotation.NonceDeactivationLimit,
+			"models":                   settings.EscrowRotation.Models,
 		},
 		"chain": map[string]any{
 			"block_height":               snapshot.BlockHeight,
@@ -2990,6 +3001,9 @@ func applyEscrowRotationRequest(settings *EscrowRotationSettings, req *adminEscr
 	if req.PrePoCBlocks != nil {
 		settings.PrePoCBlocks = *req.PrePoCBlocks
 	}
+	if req.NonceDeactivationLimit != nil {
+		settings.NonceDeactivationLimit = *req.NonceDeactivationLimit
+	}
 	if req.Models != nil {
 		settings.Models = append([]EscrowRotationModelSettings(nil), (*req.Models)...)
 		for i := range settings.Models {
@@ -3111,6 +3125,9 @@ func validateGatewaySettings(settings GatewaySettings) error {
 	if rotation.Enabled {
 		if rotation.PrePoCBlocks <= 0 {
 			return fmt.Errorf("escrow_rotation.pre_poc_blocks must be > 0")
+		}
+		if rotation.NonceDeactivationLimit == 0 {
+			return fmt.Errorf("escrow_rotation.nonce_deactivation_limit must be > 0")
 		}
 		if len(rotation.Models) == 0 {
 			return fmt.Errorf("escrow_rotation.models must contain at least one model when rotation is enabled")

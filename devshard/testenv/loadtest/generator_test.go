@@ -145,6 +145,14 @@ func TestExecuteRequestMeasuresStreamingBodyUntilDone(t *testing.T) {
 	require.GreaterOrEqual(t, result.Duration, bodyDelay)
 }
 
+func TestWorkloadProgressBar(t *testing.T) {
+	require.Equal(t, "[--------------------]", workloadProgressBar(0))
+	require.Equal(t, "[##------------------]", workloadProgressBar(10))
+	require.Equal(t, "[##########----------]", workloadProgressBar(50))
+	require.Equal(t, "[####################]", workloadProgressBar(100))
+	require.Equal(t, "[####################]", workloadProgressBar(150))
+}
+
 func testScenario() Scenario {
 	scenario := Scenario{
 		SchemaVersion: "v1",
