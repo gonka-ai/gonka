@@ -311,21 +311,13 @@ func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.Ms
 			return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight,
 				fmt.Sprintf("confirmation PoC: start block height %d doesn't match event trigger %d", startBlockHeight, activeEvent.TriggerHeight))
 		}
-		confirmParams, err := k.GetParams(ctx)
-		if err != nil {
-			return nil, err
-		}
-		epochParams := confirmParams.EpochParams
+		epochParams := params.EpochParams
 		validationEnd := activeEvent.GetValidationEnd(epochParams)
 		if currentBlockHeight > validationEnd {
 			return nil, sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC validation window closed")
 		}
 	} else {
-		regularParams, err := k.Keeper.GetParams(goCtx)
-		if err != nil {
-			return nil, err
-		}
-		epochParams := regularParams.EpochParams
+		epochParams := params.EpochParams
 		upcomingEpoch, found := k.Keeper.GetUpcomingEpoch(ctx)
 		if !found {
 			return nil, sdkerrors.Wrap(types.ErrUpcomingEpochNotFound, "failed to get upcoming epoch")
