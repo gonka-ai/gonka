@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -25,7 +26,7 @@ func (k Keeper) getParamsFromStore(ctx context.Context) (params types.Params, er
 	if err := k.cdc.Unmarshal(bz, &params); err != nil {
 		return types.Params{}, err
 	}
-	return params, nil
+	return restoredParams(params), nil
 }
 
 // GetParams get all parameters as types.Params
@@ -92,7 +93,7 @@ func (k Keeper) getParamsTxCached(ctx context.Context, c *txParamsCache) (params
 	if err := k.cdc.Unmarshal(c.bz, &params); err != nil {
 		return types.Params{}, err
 	}
-	return params, nil
+	return restoredParams(params), nil
 }
 
 // InjectParamsIntoContext returns a new context with the params cached.
@@ -109,7 +110,11 @@ func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
 	oldParams, _ := k.getParamsFromStore(ctx)
 
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
-	bz, err := k.cdc.Marshal(&params)
+	stored, err := storedParams(params)
+	if err != nil {
+		return err
+	}
+	bz, err := k.cdc.Marshal(&stored)
 	if err != nil {
 		return err
 	}
@@ -130,6 +135,107 @@ func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
 	}
 
 	return nil
+}
+
+// storedParams keeps the creator, developer, transfer agent and guardian
+// allowlists (mainnet: 46 bech32 strings, ~60% of the params bytes) as address
+// bytes; restoredParams undoes it. A list with an entry that does not
+// round-trip stays as strings. The caller's params are not modified.
+func storedParams(p types.Params) (types.Params, error) {
+	if e := p.DevshardEscrowParams; e != nil {
+		if len(e.AllowedCreatorAddrs) > 0 {
+			return p, fmt.Errorf("params: allowed_creator_addrs is storage-only")
+		}
+		if b, ok := rawAddresses(e.AllowedCreatorAddresses, rawAddress); ok {
+			c := *e
+			c.AllowedCreatorAddrs, c.AllowedCreatorAddresses = b, nil
+			p.DevshardEscrowParams = &c
+		}
+	}
+	if d := p.DeveloperAccessParams; d != nil {
+		if len(d.AllowedDeveloperAddrs) > 0 {
+			return p, fmt.Errorf("params: allowed_developer_addrs is storage-only")
+		}
+		if b, ok := rawAddresses(d.AllowedDeveloperAddresses, rawAddress); ok {
+			c := *d
+			c.AllowedDeveloperAddrs, c.AllowedDeveloperAddresses = b, nil
+			p.DeveloperAccessParams = &c
+		}
+	}
+	if t := p.TransferAgentAccessParams; t != nil {
+		if len(t.AllowedTransferAddrs) > 0 {
+			return p, fmt.Errorf("params: allowed_transfer_addrs is storage-only")
+		}
+		if b, ok := rawAddresses(t.AllowedTransferAddresses, rawAddress); ok {
+			c := *t
+			c.AllowedTransferAddrs, c.AllowedTransferAddresses = b, nil
+			p.TransferAgentAccessParams = &c
+		}
+	}
+	if g := p.GenesisGuardianParams; g != nil {
+		if len(g.GuardianAddrs) > 0 {
+			return p, fmt.Errorf("params: guardian_addrs is storage-only")
+		}
+		if b, ok := rawAddresses(g.GuardianAddresses, rawValAddress); ok {
+			c := *g
+			c.GuardianAddrs, c.GuardianAddresses = b, nil
+			p.GenesisGuardianParams = &c
+		}
+	}
+	return p, nil
+}
+
+func restoredParams(p types.Params) types.Params {
+	if e := p.DevshardEscrowParams; e != nil && len(e.AllowedCreatorAddrs) > 0 {
+		e.AllowedCreatorAddresses, e.AllowedCreatorAddrs = accAddressStrings(e.AllowedCreatorAddrs), nil
+	}
+	if d := p.DeveloperAccessParams; d != nil && len(d.AllowedDeveloperAddrs) > 0 {
+		d.AllowedDeveloperAddresses, d.AllowedDeveloperAddrs = accAddressStrings(d.AllowedDeveloperAddrs), nil
+	}
+	if t := p.TransferAgentAccessParams; t != nil && len(t.AllowedTransferAddrs) > 0 {
+		t.AllowedTransferAddresses, t.AllowedTransferAddrs = accAddressStrings(t.AllowedTransferAddrs), nil
+	}
+	if g := p.GenesisGuardianParams; g != nil && len(g.GuardianAddrs) > 0 {
+		addrs := make([]string, len(g.GuardianAddrs))
+		for i, b := range g.GuardianAddrs {
+			addrs[i] = sdk.ValAddress(b).String()
+		}
+		g.GuardianAddresses, g.GuardianAddrs = addrs, nil
+	}
+	return p
+}
+
+// rawAddresses returns the bytes of every address, or false if any of them does not round-trip.
+func rawAddresses(addrs []string, raw func(string) ([]byte, bool)) ([][]byte, bool) {
+	if len(addrs) == 0 {
+		return nil, false
+	}
+	out := make([][]byte, len(addrs))
+	for i, a := range addrs {
+		b, ok := raw(a)
+		if !ok {
+			return nil, false
+		}
+		out[i] = b
+	}
+	return out, true
+}
+
+// rawValAddress returns the bytes of a validator bech32 address that encodes back to the same string.
+func rawValAddress(addr string) ([]byte, bool) {
+	b, err := sdk.ValAddressFromBech32(addr)
+	if err != nil || len(b) == 0 || b.String() != addr {
+		return nil, false
+	}
+	return b, true
+}
+
+func accAddressStrings(raw [][]byte) []string {
+	addrs := make([]string, len(raw))
+	for i, b := range raw {
+		addrs[i] = sdk.AccAddress(b).String()
+	}
+	return addrs
 }
 
 func (k Keeper) GetV1Params(ctx context.Context) (params types.ParamsV1, err error) {
