@@ -38,6 +38,70 @@ post-run inspection.
 synthetic requests for the first comparison; dataset replay can hit the response
 cache and spread traffic across several model escrows.
 
+`long-escrow-64rps-60m` offers 64 RPS for one hour, keeps the concurrency cap at
+64, and raises both chain and gateway admission nonce limits to 1,000,000. Its target is 230,400 requests;
+generator drops are reported when concurrency is exhausted. Run it with
+`make -C devshard/testenv loadtest SCENARIO=long-escrow-64rps-60m` from the
+repository root. The runner's automatic overall timeout is workload + drain +
+ten minutes, with a minimum of twenty minutes. The direct runner accepts
+`-timeout 80m` to override it.
+
+`fresh-escrow-64rps-2m` starts an isolated stack with fresh storage, offers
+64 RPS for two minutes, and keeps the concurrency cap at 64. It reports latency
+in ten-second windows and collects concurrent CPU profiles of gateway and every
+host replica during 5–35s and 80–110s of the workload. Capture all replicas so
+the active HA sibling is included. Host profiles use the child's private admin
+listener inside its container; the versiond session proxy does not serve pprof.
+Run from the repository root:
+
+```bash
+make -C devshard/testenv loadtest SCENARIO=fresh-escrow-64rps-2m
+```
+
+`fresh-escrow-16rps-2m` uses the same fresh-stack configuration, concurrency
+cap, ten-second report windows, and CPU profile windows, offering 16 RPS for
+two minutes (1,920 scheduled requests). Use it to compare early degradation
+against the 64 RPS run:
+
+```bash
+make -C devshard/testenv loadtest SCENARIO=fresh-escrow-16rps-2m
+```
+
+`fresh-escrow-32rps-2m` offers 32 RPS for two minutes (3,840 scheduled
+requests), using the same configuration and diagnostics as the 16 RPS scenario.
+Run from the repository root:
+
+```bash
+make -C devshard/testenv loadtest SCENARIO=fresh-escrow-32rps-2m
+```
+
+`long-escrow-32rps-30m` starts a fresh isolated stack and offers 32 RPS for
+30 minutes (57,600 scheduled requests), with `max_in_flight: 64` and escrow
+rotation disabled. Both nonce limits remain 1,000,000. Latency is reported in
+one-minute windows; process metrics are sampled every second. CPU profiles of
+gateway and all host replicas cover 5–35s, 80–110s, and 29m–29m30s, retaining
+the early windows for comparison with the two-minute runs. Drain is two minutes;
+the automatic overall timeout is 42 minutes. Run from the repository root:
+
+```bash
+make -C devshard/testenv loadtest SCENARIO=long-escrow-32rps-30m
+```
+
+`diagnostics.cpu_profiles` defines ordered, non-overlapping `start_after` and
+`duration` windows within the workload (profile durations are whole seconds).
+Profiles are saved under `profiles/`, with capture times and errors in
+`cpu-profiles.json` and console output. Profiling errors are diagnostic and do
+not change workload assertions. CPU sampling introduces some overhead; use
+matching profile windows when comparing runs. To inspect a captured profile:
+
+```bash
+go tool pprof -top <results-directory>/profiles/gateway-window-01.cpu.pprof
+```
+
+`workload.report_interval` changes the latency window size; its default remains
+one minute. Windows group requests by start time, so they include the eventual
+response latency even when that response arrives after the window ends.
+
 Every scenario collects process metrics and gateway escrow state before load,
 during load and drain, and once at the end. The default interval is one second;
 use `-metrics-interval 2s` with the direct runner to change it (minimum 100ms).
@@ -52,7 +116,7 @@ workload/all-phase sampled peaks, process-lifetime RSS high-water mark from
 Linux `/proc`, CPU seconds, allocated bytes, GC count and pause time, goroutines,
 and escrow nonce/history growth.
 CPU per 1,000 completed client requests includes the collection period through
-drain. PID and process start time distinguish restarts; counter deltas never
+drain. PID and Linux process start ticks distinguish restarts; counter deltas never
 cross process lifetimes. The Go heap samples do not force GC and are not a
 post-GC live-heap measurement. RSS high-water mark may include startup; sampled
 peaks may miss short spikes. Missing metrics are reported as unavailable, and
@@ -332,6 +396,7 @@ records, summaries, state snapshots, and logs:
 | `summary.json` | Client workload counts, latency, duration, and per-minute windows. |
 | `metrics.jsonl` | Process memory/CPU/GC and per-escrow state time series. |
 | `metrics-summary.json` | Sampled peaks, counter deltas, initial/final state, and collection errors. |
+| `cpu-profiles.json`, `profiles/` | Optional CPU profile manifest and binary pprof captures. |
 | `requests.jsonl` | One record per generated request and response outcome. |
 | `assertions.json` | All evaluated assertions and `failed_assertions`. |
 | `ml-stats.json` | Per-node allocations, responses, failures, timeouts, and replay counters. |

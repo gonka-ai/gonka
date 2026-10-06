@@ -56,6 +56,7 @@ type Summary struct {
 	FailureArtifactsOmitted int             `json:"failure_artifacts_omitted,omitempty"`
 	Results                 []RequestResult `json:"-"`
 	LatencyWindows          []LatencyWindow `json:"latency_windows"`
+	LatencyWindowInterval   string          `json:"latency_window_interval"`
 }
 
 // Windows group requests by start time; drops are included in offered RPS,
@@ -424,13 +425,15 @@ func summarize(scenario Scenario, started time.Time, duration time.Duration, res
 	summary.P50 = percentile(latencies, 0.50)
 	summary.P95 = percentile(latencies, 0.95)
 	summary.LatencyWindows = latencyWindows(scenario, started, results)
+	summary.LatencyWindowInterval = scenario.ReportInterval().String()
 	return summary
 }
 
 func latencyWindows(scenario Scenario, started time.Time, results []RequestResult) []LatencyWindow {
+	interval := scenario.ReportInterval()
 	groups := map[int][]RequestResult{}
 	for _, result := range results {
-		index := max(0, int(result.StartedAt.Sub(started)/time.Minute))
+		index := max(0, int(result.StartedAt.Sub(started)/interval))
 		groups[index] = append(groups[index], result)
 	}
 	indices := make([]int, 0, len(groups))
@@ -440,8 +443,8 @@ func latencyWindows(scenario Scenario, started time.Time, results []RequestResul
 	sort.Ints(indices)
 	var windows []LatencyWindow
 	for _, index := range indices {
-		offset := time.Duration(index) * time.Minute
-		window := LatencyWindow{StartedAt: started.Add(offset), Duration: max(time.Duration(0), min(time.Minute, scenario.Duration()-offset))}
+		offset := time.Duration(index) * interval
+		window := LatencyWindow{StartedAt: started.Add(offset), Duration: max(time.Duration(0), min(interval, scenario.Duration()-offset))}
 		var latencies []time.Duration
 		for _, result := range groups[index] {
 			window.Offered++

@@ -22,9 +22,20 @@ func main() {
 	keepStack := flag.Bool("keep-stack", false, "keep the Docker stack and work directory after the run")
 	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
+	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
 	flag.Parse()
 	if *scenarioPath == "" {
 		log.Fatal("provide -scenario")
+	}
+	scenario, err := loadtest.LoadScenario(*scenarioPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *runTimeout < 0 {
+		log.Fatal("timeout must be positive")
+	}
+	if *runTimeout == 0 {
+		*runTimeout = max(20*time.Minute, scenario.Duration()+scenario.DrainDuration()+10*time.Minute)
 	}
 	testenvDir, err := filepath.Abs(".")
 	if err != nil {
@@ -39,7 +50,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), *runTimeout)
 	defer cancel()
 	result, err := loadtest.RunScenario(ctx, loadtest.RunnerConfig{
 		ScenarioPath:    *scenarioPath,
@@ -91,7 +102,7 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	fmt.Fprintf(os.Stdout, "  p95:              %s\n", summary.P95.String())
 	fmt.Fprintf(os.Stdout, "  workload duration: %s\n", summary.Duration.String())
 	if len(summary.LatencyWindows) > 0 {
-		fmt.Fprintln(os.Stdout, "  Per-minute windows (requests grouped by start time)")
+		fmt.Fprintf(os.Stdout, "  Windows of %s (requests grouped by start time)\n", summary.LatencyWindowInterval)
 		fmt.Fprintln(os.Stdout, "    Window  Completed RPS  Failed Dropped       p50       p95       p99")
 		for index, window := range summary.LatencyWindows {
 			fmt.Fprintf(os.Stdout, "    %6d %14.2f %7d %7d %9s %9s %9s\n", index+1, window.CompletedRPS, window.Failed, window.Dropped, window.P50, window.P95, window.P99)
@@ -123,6 +134,17 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	printGatewayStateSizes(result.GatewayState)
 	fmt.Fprintln(os.Stdout)
 	printMetricsSummary(result.Metrics, summary.Completed)
+	if len(result.CPUProfiles) > 0 {
+		fmt.Fprintln(os.Stdout, "CPU profiles")
+		fmt.Fprintln(os.Stdout, "------------")
+		for _, profile := range result.CPUProfiles {
+			if profile.Error != "" {
+				fmt.Fprintf(os.Stdout, "  %s window=%d ERROR: %s\n", profile.Target, profile.Window, profile.Error)
+			} else {
+				fmt.Fprintf(os.Stdout, "  %s window=%d start=%s duration=%s file=%s\n", profile.Target, profile.Window, profile.StartAfter, profile.Duration, profile.File)
+			}
+		}
+	}
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Artifacts")
 	fmt.Fprintln(os.Stdout, "---------")
