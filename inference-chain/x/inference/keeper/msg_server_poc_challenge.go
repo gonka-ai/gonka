@@ -90,7 +90,7 @@ func (k msgServer) loadExistingChallengeCommits(
 		if valueErr != nil {
 			return nil, sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("failed to read existing commit: %v", valueErr))
 		}
-		existingByModel[key.K2()] = value
+		existingByModel[key.K2()] = restoredChallengeCommit(key, value)
 	}
 	return existingByModel, nil
 }
@@ -113,7 +113,7 @@ func (k msgServer) persistChallengeCommitUpdates(
 			ModelId:                  update.modelID,
 			TreeDepth:                update.entry.TreeDepth,
 		}
-		if err := k.PoCChallengeCommits.Set(ctx, collections.Join(addr, update.modelID), commit); err != nil {
+		if err := k.PoCChallengeCommits.Set(ctx, collections.Join(addr, update.modelID), storedChallengeCommit(commit, addr)); err != nil {
 			return sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("failed to store commit: %v", err))
 		}
 		k.LogInfo("[PoCChallengeStoreCommit] Stored", types.PoC,
@@ -207,7 +207,7 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 			ValidatedWeight:             validation.ValidatedWeight,
 			ModelId:                     validation.ModelId,
 		}
-		if err := k.PoCChallengeValidations.Set(goCtx, collections.Join3(targetAddr, validation.ModelId, validatorAddr), stored); err != nil {
+		if err := k.PoCChallengeValidations.Set(goCtx, collections.Join3(targetAddr, validation.ModelId, validatorAddr), storedPocValidationV2(stored, targetAddr, validatorAddr)); err != nil {
 			return nil, sdkerrors.Wrapf(err, "failed to store challenge validation for participant %s", validation.ParticipantAddress)
 		}
 		storedCount++
