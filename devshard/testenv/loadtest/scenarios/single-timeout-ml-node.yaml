@@ -39,14 +39,12 @@ gateway:
   redundancy:
     secondary_wait_after_winner: 30s
 
-thresholds:
-  # One of four nodes intentionally never completes its upstream request.
-  error_rate: 0.35
-
 assertions:
   requests:
     http_status: 200
     terminal_outcome: completed
+    # One of four nodes intentionally never completes its upstream request.
+    error_rate: 0.35
   devshard:
     no_orphaned_work: true
     max_ghost_rate: 0.02

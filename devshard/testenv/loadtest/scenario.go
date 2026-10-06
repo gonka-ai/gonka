@@ -18,17 +18,30 @@ type Scenario struct {
 	Topology      Topology   `yaml:"topology"`
 	Workload      Workload   `yaml:"workload"`
 	Gateway       Gateway    `yaml:"gateway"`
-	Thresholds    Thresholds `yaml:"thresholds"`
 	Assertions    Assertions `yaml:"assertions"`
 	DrainTimeout  string     `yaml:"drain_timeout"`
 }
 
 type Gateway struct {
-	Redundancy GatewayRedundancy `yaml:"redundancy"`
+	Redundancy     GatewayRedundancy     `yaml:"redundancy"`
+	EscrowRotation GatewayEscrowRotation `yaml:"escrow_rotation"`
 }
 
 type GatewayRedundancy struct {
 	SecondaryWaitAfterWinner string `yaml:"secondary_wait_after_winner"`
+}
+
+// GatewayEscrowRotation is scenario-level shorthand. The runner expands it
+// into one Gateway rotation model per configured or replayed model.
+type GatewayEscrowRotation struct {
+	Enabled                bool   `yaml:"enabled"`
+	SettlementEnabled      bool   `yaml:"settlement_enabled"`
+	PrePoCBlocks           int64  `yaml:"pre_poc_blocks"`
+	NonceDeactivationLimit uint64 `yaml:"nonce_deactivation_limit"`
+	TempCount              int    `yaml:"temp_count"`
+	TargetCount            int    `yaml:"target_count"`
+	Amount                 uint64 `yaml:"amount"`
+	PrivateKeyEnv          string `yaml:"private_key_env"`
 }
 
 const DefaultSecondaryWaitAfterWinner = 10 * time.Minute
@@ -99,15 +112,15 @@ type Message struct {
 	Content string `yaml:"content" json:"content"`
 }
 
-type Thresholds struct {
-	ErrorRate float64 `yaml:"error_rate"`
-}
-
 type Assertions struct {
 	Requests struct {
-		HTTPStatus      int    `yaml:"http_status"`
-		TerminalOutcome string `yaml:"terminal_outcome"`
+		HTTPStatus      int     `yaml:"http_status"`
+		TerminalOutcome string  `yaml:"terminal_outcome"`
+		ErrorRate       float64 `yaml:"error_rate"`
 	} `yaml:"requests"`
+	EscrowRotation struct {
+		RequireNewEscrow bool `yaml:"require_new_escrow"`
+	} `yaml:"escrow_rotation"`
 	Devshard struct {
 		NoOrphanedWork bool    `yaml:"no_orphaned_work"`
 		MaxGhostRate   float64 `yaml:"max_ghost_rate"`
@@ -216,8 +229,8 @@ func (s Scenario) Validate() error {
 	if s.Workload.Request.Model == "" || len(s.Workload.Request.Messages) == 0 {
 		return fmt.Errorf("request model and messages are required")
 	}
-	if s.Thresholds.ErrorRate < 0 || s.Thresholds.ErrorRate > 1 {
-		return fmt.Errorf("error_rate must be between 0 and 1")
+	if s.Assertions.Requests.ErrorRate < 0 || s.Assertions.Requests.ErrorRate > 1 {
+		return fmt.Errorf("assertions.requests.error_rate must be between 0 and 1")
 	}
 	if s.Assertions.Requests.HTTPStatus == 0 || s.Assertions.Requests.TerminalOutcome == "" {
 		return fmt.Errorf("request assertions require http_status and terminal_outcome")
@@ -233,6 +246,27 @@ func (s Scenario) Validate() error {
 			}
 			return fmt.Errorf("gateway.redundancy.secondary_wait_after_winner must be positive")
 		}
+	}
+	rotation := s.Gateway.EscrowRotation
+	if rotation.Enabled {
+		if rotation.PrePoCBlocks <= 0 {
+			return fmt.Errorf("gateway.escrow_rotation.pre_poc_blocks must be positive")
+		}
+		if rotation.TempCount <= 0 || rotation.TargetCount <= 0 {
+			return fmt.Errorf("gateway.escrow_rotation temp_count and target_count must be positive")
+		}
+		if rotation.Amount == 0 {
+			return fmt.Errorf("gateway.escrow_rotation.amount must be positive")
+		}
+		if rotation.NonceDeactivationLimit == 0 {
+			return fmt.Errorf("gateway.escrow_rotation.nonce_deactivation_limit must be positive")
+		}
+		if strings.TrimSpace(rotation.PrivateKeyEnv) == "" {
+			return fmt.Errorf("gateway.escrow_rotation.private_key_env must be set")
+		}
+	}
+	if s.Assertions.EscrowRotation.RequireNewEscrow && !rotation.Enabled {
+		return fmt.Errorf("assertions.escrow_rotation.require_new_escrow requires gateway.escrow_rotation.enabled")
 	}
 	if _, err := time.ParseDuration(s.DrainTimeout); err != nil {
 		return fmt.Errorf("drain_timeout: %w", err)

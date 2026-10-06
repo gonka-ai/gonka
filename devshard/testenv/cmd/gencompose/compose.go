@@ -29,6 +29,12 @@ networks:
 volumes:
   versiond-router-state:
 
+x-loadtest-logging: &loadtest-logging
+  driver: json-file
+  options:
+    max-size: "32m"
+    max-file: "3"
+
 services:
 
   mock-chain:
@@ -36,6 +42,7 @@ services:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mock-chain
     image: devshard-mock-chain:latest
+    logging: *loadtest-logging
     environment:
       CONFIG_PATH: "/app/config.yaml"
       MOCK_CHAIN_GRPC_ADDR: ":{{ .MockChain.GRPCPort }}"
@@ -63,6 +70,7 @@ services:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mockdapi
     image: devshard-mock-dapi:latest
+    logging: *loadtest-logging
     environment:
       MOCK_DAPI_GRPC_ADDR: ":{{ .MockDapi.GRPCPort }}"
       MOCK_DAPI_HTTP_ADDR: ":{{ .MockDapi.HTTPPort }}"
@@ -94,6 +102,7 @@ services:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mockopenai
     image: devshard-mock-openai:latest
+    logging: *loadtest-logging
     environment:
       MOCK_OPENAI_ADDR: ":{{ $.MockOpenAI.HTTPPort }}"
       MOCK_OPENAI_TTFT: "{{ .TTFT }}"
@@ -125,6 +134,7 @@ services:
 
   devshard-postgres-{{ .ID }}:
     image: postgres:16-alpine
+    logging: *loadtest-logging
     environment:
       POSTGRES_DB: {{ $.Postgres.Database }}
       POSTGRES_USER: {{ $.Postgres.User }}
@@ -142,6 +152,7 @@ services:
 
   devshard-postgres:
     image: postgres:16-alpine
+    logging: *loadtest-logging
     environment:
       POSTGRES_DB: {{ .Postgres.Database }}
       POSTGRES_USER: {{ .Postgres.User }}
@@ -164,6 +175,7 @@ services:
       context: ../../versioned
       dockerfile: Dockerfile
     image: devshard-versiond:latest
+    logging: *loadtest-logging
     environment:
       VERSIOND_ORACLE_URL: http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions
       VERSIOND_POLL_INTERVAL: "{{ $.Versiond.PollInterval }}"
@@ -267,6 +279,7 @@ services:
       context: ../..
       dockerfile: versiond-router/Dockerfile
     image: devshard-versiond-router:latest
+    logging: *loadtest-logging
     environment:
       VERSIOND_POOL_HOST: "versiond-pool"
       VERSIOND_PORT: "8080"
@@ -311,6 +324,7 @@ services:
       args:
         DEVSHARD_VERSION: "{{ .Versiond.VersionName }}"
     image: devshard-runtime:latest
+    logging: *loadtest-logging
     entrypoint: ["devshardctl"]
     environment:
       DEVSHARD_PORT: "{{ .Devshardctl.Port }}"

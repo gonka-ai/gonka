@@ -15,6 +15,13 @@ make -C devshard/testenv loadtest SCENARIO=normal-load
 
 Run artifacts are written under `loadtest/results/<timestamp>/`.
 
+Run the escrow rotation scenario without a replay dataset:
+
+```bash
+go run ./cmd/loadtest \
+  -scenario loadtest/scenarios/escrow-rotation.yaml
+```
+
 ## Captured request replay
 
 A JSONL capture can provide both the client workload and the response body used
@@ -67,6 +74,10 @@ When `assertions.devshard.no_orphaned_work` is enabled, the runner polls
 the DevShard record count to equal the number of client requests: cache hits
 and speculative attempts make those counts different. An empty successful
 debug snapshot is also considered clean.
+
+For rotation scenarios, `assertions.escrow_rotation.require_new_escrow` compares
+the escrow IDs from the generated initial topology with the Gateway's
+`/v1/admin/devshards` state and requires at least one additional escrow ID.
 
 ## Traffic profiles
 
