@@ -151,14 +151,30 @@ func (k Keeper) recordExclusion(ctx context.Context, participant *types.Particip
 	if epochIndex, ok := k.GetEffectiveEpochIndex(ctx); ok {
 		addr, err := sdk.AccAddressFromBech32(participant.Address)
 		if err == nil {
-			_ = k.ExcludedParticipantsMap.Set(ctx, collections.Join(epochIndex, addr), types.ExcludedParticipant{
+			_ = k.ExcludedParticipantsMap.Set(ctx, collections.Join(epochIndex, addr), storedExclusion(addr, types.ExcludedParticipant{
 				Address:              participant.Address,
 				EpochIndex:           epochIndex,
 				Reason:               string(reason),
 				ExclusionBlockHeight: uint64(sdk.UnwrapSDKContext(ctx).BlockHeight()),
-			})
+			}))
 		} else {
 			k.LogError("Failed to parse participant address for exclusion entry", types.Validation, "address", participant.Address, "error", err)
 		}
 	}
+}
+
+// storedExclusion drops the address and epoch the key holds; restoredExclusion fills them back.
+func storedExclusion(addr sdk.AccAddress, e types.ExcludedParticipant) types.ExcludedParticipant {
+	if e.Address != addr.String() {
+		return e
+	}
+	e.Address, e.EpochIndex = "", 0
+	return e
+}
+
+func restoredExclusion(key collections.Pair[uint64, sdk.AccAddress], e types.ExcludedParticipant) types.ExcludedParticipant {
+	if e.Address == "" {
+		e.Address, e.EpochIndex = key.K2().String(), key.K1()
+	}
+	return e
 }
