@@ -12,11 +12,30 @@ import (
 )
 
 func (k Keeper) GetDevshardHostEpochStats(ctx context.Context, epochIndex uint64, participant sdk.AccAddress) (types.DevshardHostEpochStats, bool) {
-	v, err := k.DevshardHostEpochStatsMap.Get(ctx, collections.Join(epochIndex, participant))
+	key := collections.Join(epochIndex, participant)
+	v, err := k.DevshardHostEpochStatsMap.Get(ctx, key)
 	if err != nil {
 		return types.DevshardHostEpochStats{}, false
 	}
-	return v, true
+	return restoredDevshardHostStats(key, v), true
+}
+
+// storedDevshardHostStats drops the epoch and participant the key holds; restoredDevshardHostStats
+// fills them back. A record with no counters is stored whole so the value is never empty.
+func storedDevshardHostStats(s types.DevshardHostEpochStats) types.DevshardHostEpochStats {
+	trimmed := s
+	trimmed.Participant, trimmed.EpochIndex = "", 0
+	if trimmed == (types.DevshardHostEpochStats{}) {
+		return s
+	}
+	return trimmed
+}
+
+func restoredDevshardHostStats(key collections.Pair[uint64, sdk.AccAddress], s types.DevshardHostEpochStats) types.DevshardHostEpochStats {
+	if s.Participant == "" {
+		s.Participant, s.EpochIndex = key.K2().String(), key.K1()
+	}
+	return s
 }
 
 func (k Keeper) AggregateDevshardHostStats(ctx context.Context, epochIndex uint64, participant sdk.AccAddress, slotStats types.DevshardSettlementHostStats) error {
@@ -69,10 +88,7 @@ func (k Keeper) applyDevshardHostStatsDelta(
 	key := collections.Join(epochIndex, participant)
 	existing, err := k.DevshardHostEpochStatsMap.Get(ctx, key)
 	if err != nil {
-		existing = types.DevshardHostEpochStats{
-			Participant: participant.String(),
-			EpochIndex:  epochIndex,
-		}
+		existing = types.DevshardHostEpochStats{}
 	}
 	if uint64(existing.Missed)+d.missed > math.MaxUint32 {
 		return fmt.Errorf("missed overflow aggregating devshard host stats")
@@ -100,7 +116,7 @@ func (k Keeper) applyDevshardHostStatsDelta(
 		}
 		existing.EscrowCount++
 	}
-	return k.DevshardHostEpochStatsMap.Set(ctx, key, existing)
+	return k.DevshardHostEpochStatsMap.Set(ctx, key, storedDevshardHostStats(restoredDevshardHostStats(key, existing)))
 }
 
 // AggregateDevshardHostStatsIntoCurrentEpochStats merges one slot's devshard
