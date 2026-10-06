@@ -18,9 +18,24 @@ func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.Epoc
 }
 
 // storedEpochGroupData keeps each seed signature's member address and hex
-// signature as raw bytes; restoredEpochGroupData undoes it. A string that does
-// not round-trip stays as it is. The caller's slice is not modified.
+// signature, and each validation weight's member address, as raw bytes;
+// restoredEpochGroupData undoes it. A string that does not round-trip stays as
+// it is. The caller's slices are not modified.
 func storedEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
+	if len(egd.ValidationWeights) > 0 {
+		weights := make([]*types.ValidationWeight, len(egd.ValidationWeights))
+		for i, w := range egd.ValidationWeights {
+			if w == nil {
+				continue
+			}
+			stored := *w
+			if b, ok := rawAddress(stored.MemberAddress); ok {
+				stored.MemberAddr, stored.MemberAddress = b, ""
+			}
+			weights[i] = &stored
+		}
+		egd.ValidationWeights = weights
+	}
 	if len(egd.MemberSeedSignatures) == 0 {
 		return egd
 	}
@@ -43,6 +58,11 @@ func storedEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
 }
 
 func restoredEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
+	for _, w := range egd.ValidationWeights {
+		if w != nil && len(w.MemberAddr) > 0 {
+			w.MemberAddress, w.MemberAddr = sdk.AccAddress(w.MemberAddr).String(), nil
+		}
+	}
 	for _, s := range egd.MemberSeedSignatures {
 		if s == nil {
 			continue

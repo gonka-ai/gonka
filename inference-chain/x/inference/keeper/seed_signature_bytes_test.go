@@ -68,6 +68,10 @@ func TestEpochGroupData_SeedSignaturesStoredAsBytes(t *testing.T) {
 		require.Len(t, s.MemberAddr, 20)
 		require.Len(t, s.SignatureRaw, 64)
 	}
+	for _, w := range raw.ValidationWeights {
+		require.Empty(t, w.MemberAddress)
+		require.Len(t, w.MemberAddr, 20)
+	}
 	rawBytes, err := raw.Marshal()
 	require.NoError(t, err)
 
@@ -105,6 +109,8 @@ func TestEpochGroupData_NonCanonicalSeedStringsKept(t *testing.T) {
 	want.MemberSeedSignatures[0].MemberAddress = strings.ToUpper(want.MemberSeedSignatures[0].MemberAddress)
 	want.MemberSeedSignatures[1].Signature = strings.ToUpper(want.MemberSeedSignatures[1].Signature)
 	want.MemberSeedSignatures[2].Signature = "not-hex"
+	want.ValidationWeights[0].MemberAddress = strings.ToUpper(want.ValidationWeights[0].MemberAddress)
+	want.ValidationWeights[1].MemberAddress = "not-bech32"
 	k.SetEpochGroupData(ctx, cloneGroup(t, want))
 
 	raw, err := k.EpochGroupDataMap.Get(ctx, collections.Join(want.EpochIndex, want.ModelId))
@@ -112,6 +118,10 @@ func TestEpochGroupData_NonCanonicalSeedStringsKept(t *testing.T) {
 	require.Equal(t, want.MemberSeedSignatures[0].MemberAddress, raw.MemberSeedSignatures[0].MemberAddress)
 	require.Equal(t, want.MemberSeedSignatures[1].Signature, raw.MemberSeedSignatures[1].Signature)
 	require.Equal(t, "not-hex", raw.MemberSeedSignatures[2].Signature)
+	require.Equal(t, want.ValidationWeights[0].MemberAddress, raw.ValidationWeights[0].MemberAddress)
+	require.Equal(t, "not-bech32", raw.ValidationWeights[1].MemberAddress)
+	require.Empty(t, raw.ValidationWeights[0].MemberAddr)
+	require.Len(t, raw.ValidationWeights[2].MemberAddr, 20)
 
 	got, found := k.GetEpochGroupData(ctx, want.EpochIndex, want.ModelId)
 	require.True(t, found)
