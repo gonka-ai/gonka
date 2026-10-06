@@ -184,7 +184,7 @@ type LeaseValidator struct {
 // NewLeaseValidator wraps v with Postgres lease deduplication.
 func NewLeaseValidator(v devshardpkg.ValidationEngine, phase *chain.Phase, leases leaseOps, instanceAddr string, leaseTTL time.Duration) *LeaseValidator {
 	if leaseTTL <= 0 {
-		leaseTTL = 30 * time.Minute
+		leaseTTL = 32 * time.Minute
 	}
 	return &LeaseValidator{
 		validator:    v,
