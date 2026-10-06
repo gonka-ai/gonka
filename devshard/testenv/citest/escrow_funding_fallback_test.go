@@ -148,6 +148,7 @@ func TestGatewayReturnsRetryable503WhenNoEscrowCanFundRequest(t *testing.T) {
 
 func bootFundingFallbackEnv(t *testing.T, prefix string, firstBalance, secondBalance uint64) fundingFallbackEnv {
 	t.Helper()
+	requireNoProxyGRPC(t)
 	stack := harness.NewStack(t, prefix)
 	harness.RequireLinuxDevshardd(t, stack.TestenvDir)
 	harness.WriteMultiConfig(t, stack.WorkDir, harness.MultiConfigOpts{

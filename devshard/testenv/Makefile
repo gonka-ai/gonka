@@ -180,7 +180,7 @@ citest-escrow-longpoll: citest-images ## Escrow long-poll warm; first inference 
 	$(CITEST_RPC_RUN) -run '^TestEscrowLongPollWarm' -count=1 -v -timeout 30m
 
 citest-escrow-funding-fallback: citest-images ## Escrow funding fallback: an oversized request moves to another escrow; 503 only once every escrow refuses.
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestGateway(MovesOversizedRequest|ReturnsRetryable503)' -count=1 -v -timeout 30m
+	$(CITEST_RPC_RUN) -run '^TestGateway(MovesOversizedRequest|ReturnsRetryable503)' -count=1 -v -timeout 30m
 
 citest-versiond-rolling-update: citest-images ## Same-version versiond rolling update and fallback.
 	$(CITEST_RPC_RUN) -run 'TestVersiondRollingUpdate' -count=1 -v -timeout 30m

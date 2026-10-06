@@ -339,11 +339,17 @@ func (h *PeerAuthHandler) Watch(ctx context.Context, req *connect.Request[rpcpb.
 		if err := setWatchWriteDeadline(ctx, h.cfg.WatchWriteTimeout); err != nil {
 			return err
 		}
-		return stream.Send(&rpcpb.SessionEvent{
+		if err := stream.Send(&rpcpb.SessionEvent{
 			Event: &rpcpb.SessionEvent_Beat{
 				Beat: &rpcpb.Heartbeat{UnixSeconds: h.now().Unix()},
 			},
-		})
+		}); err != nil {
+			return err
+		}
+		// The deadline is absolute and stays armed after Send. The next
+		// heartbeat is later than WatchWriteTimeout, so leaving it set
+		// resets the HTTP/2 stream in the idle gap.
+		return clearWatchWriteDeadline(ctx)
 	}
 	if err := sendBeat(); err != nil {
 		return err
@@ -562,11 +568,19 @@ func setWatchWriteDeadline(ctx context.Context, d time.Duration) error {
 	if d <= 0 {
 		return nil
 	}
+	return writeDeadline(ctx, time.Now().Add(d))
+}
+
+func clearWatchWriteDeadline(ctx context.Context) error {
+	return writeDeadline(ctx, time.Time{})
+}
+
+func writeDeadline(ctx context.Context, deadline time.Time) error {
 	w := responseWriterFromContext(ctx)
 	if w == nil {
 		return nil
 	}
-	err := http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d))
+	err := http.NewResponseController(w).SetWriteDeadline(deadline)
 	if err == nil || errors.Is(err, http.ErrNotSupported) {
 		return nil
 	}

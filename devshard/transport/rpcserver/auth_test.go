@@ -1118,10 +1118,20 @@ func TestPeerAuth_WatchSetsWriteDeadline(t *testing.T) {
 	}
 
 	require.NotNil(t, spy)
-	spy.mu.Lock()
-	n := len(spy.setAt)
-	spy.mu.Unlock()
-	require.GreaterOrEqual(t, n, 1, "Watch must set a write deadline before Send")
+	require.Eventually(t, func() bool {
+		spy.mu.Lock()
+		defer spy.mu.Unlock()
+		if len(spy.setAt) < 2 {
+			return false
+		}
+		armed := false
+		for _, at := range spy.setAt {
+			if !at.IsZero() {
+				armed = true
+			}
+		}
+		return armed && spy.setAt[len(spy.setAt)-1].IsZero()
+	}, time.Second, 5*time.Millisecond, "Watch must arm a write deadline for Send and clear it afterward")
 }
 
 type stallingWriter struct {
