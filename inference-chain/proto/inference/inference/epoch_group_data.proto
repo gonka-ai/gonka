@@ -38,6 +38,9 @@ message EpochGroupData {
   int64 total_throughput = 18;
   repeated ConfirmationWeightScale confirmation_weight_scales = 19;
   DynamicCoefficientParams dynamic_coefficient_params = 20;
+  // Storage form set by the keeper: every ML node's timeslot_allocation is
+  // [true, false] and is left out. Reads restore it; queries never return this.
+  bool default_timeslot_allocations = 21;
 }
 
 message ConfirmationWeightScale {
