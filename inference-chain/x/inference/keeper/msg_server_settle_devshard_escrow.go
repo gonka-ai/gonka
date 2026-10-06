@@ -268,8 +268,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		}
 	}
 
-	escrow.Settled = true
-	if err := k.SetDevshardEscrow(goCtx, escrow); err != nil {
+	if err := k.MarkDevshardEscrowSettled(goCtx, escrow.Id); err != nil {
 		return nil, fmt.Errorf("failed to update escrow: %w", err)
 	}
 

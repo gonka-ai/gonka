@@ -133,6 +133,7 @@ var (
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
 	ReputationAggregatesPrefix     = collections.NewPrefix(114)
+	DevshardSettledEscrowsPrefix   = collections.NewPrefix(115)
 	ParamsKey                      = []byte("p_inference")
 )
 

@@ -463,6 +463,11 @@ func TestDevshardPruningPostPruneHook(t *testing.T) {
 	require.NoError(t, err)
 	err = k.DevshardEscrowsByEpoch.Set(ctx, collections.Join(prunedEpoch, escrowID), collections.NoValue{})
 	require.NoError(t, err)
+	// Settled by the key-only mark, as SettleDevshardEscrow does: pruning must not distribute it and must drop the mark.
+	markedID := uint64(2)
+	require.NoError(t, k.DevshardEscrows.Set(ctx, markedID, types.DevshardEscrow{Id: markedID, EpochIndex: prunedEpoch}))
+	require.NoError(t, k.DevshardEscrowsByEpoch.Set(ctx, collections.Join(prunedEpoch, markedID), collections.NoValue{}))
+	require.NoError(t, k.MarkDevshardEscrowSettled(ctx, markedID))
 
 	// 2. Configure pruning
 	// DevshardPruningThreshold is 2. currentEpoch = 3 => endEpoch = 3 - 2 = 1.
@@ -476,6 +481,11 @@ func TestDevshardPruningPostPruneHook(t *testing.T) {
 	// Verify escrow is pruned but epoch is not yet marked complete in PruningState (generic Pruner behavior)
 	_, err = k.DevshardEscrows.Get(ctx, escrowID)
 	require.ErrorIs(t, err, collections.ErrNotFound)
+	_, err = k.DevshardEscrows.Get(ctx, markedID)
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	marked, err := k.DevshardSettledEscrows.Has(ctx, markedID)
+	require.NoError(t, err)
+	require.False(t, marked)
 	st, _ := k.PruningState.Get(ctx)
 	require.Equal(t, int64(0), st.DevshardPrunedEpoch)
 

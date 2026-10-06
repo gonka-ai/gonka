@@ -35,7 +35,18 @@ func (k Keeper) GetDevshardEscrow(ctx context.Context, id uint64) (types.Devshar
 	if err != nil {
 		return types.DevshardEscrow{}, false
 	}
+	if !v.Settled {
+		if v.Settled, err = k.DevshardSettledEscrows.Has(ctx, id); err != nil {
+			return types.DevshardEscrow{}, false
+		}
+	}
 	return v, true
+}
+
+// MarkDevshardEscrowSettled records settlement in a key-only set instead of
+// rewriting the whole escrow (~1 KB on mainnet) for one bool.
+func (k Keeper) MarkDevshardEscrowSettled(ctx context.Context, id uint64) error {
+	return k.DevshardSettledEscrows.Set(ctx, id)
 }
 
 func (k Keeper) SetDevshardEscrow(ctx context.Context, escrow types.DevshardEscrow) error {
