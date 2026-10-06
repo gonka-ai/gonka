@@ -10,15 +10,31 @@ import (
 // --- PoCDelegation ---
 
 func (k Keeper) SetPoCDelegation(ctx context.Context, d types.PoCDelegation) error {
-	return k.PoCDelegations.Set(ctx, collections.Join(d.ModelId, d.Delegator), d)
+	return k.PoCDelegations.Set(ctx, collections.Join(d.ModelId, d.Delegator), storedPoCDelegation(d))
+}
+
+// storedPoCDelegation drops the model and delegator the key holds; restoredPoCDelegation fills them back.
+func storedPoCDelegation(d types.PoCDelegation) types.PoCDelegation {
+	if d.DelegateTo == "" || d.Delegator == "" {
+		return d
+	}
+	return types.PoCDelegation{DelegateTo: d.DelegateTo}
+}
+
+func restoredPoCDelegation(key collections.Pair[string, string], d types.PoCDelegation) types.PoCDelegation {
+	if d.Delegator == "" {
+		d.ModelId, d.Delegator = key.K1(), key.K2()
+	}
+	return d
 }
 
 func (k Keeper) GetPoCDelegation(ctx context.Context, modelID, delegator string) (types.PoCDelegation, bool) {
-	v, err := k.PoCDelegations.Get(ctx, collections.Join(modelID, delegator))
+	key := collections.Join(modelID, delegator)
+	v, err := k.PoCDelegations.Get(ctx, key)
 	if err != nil {
 		return types.PoCDelegation{}, false
 	}
-	return v, true
+	return restoredPoCDelegation(key, v), true
 }
 
 func (k Keeper) DeletePoCDelegation(ctx context.Context, modelID, delegator string) error {
@@ -31,12 +47,14 @@ func (k Keeper) GetPoCDelegationsForModel(ctx context.Context, modelID string) (
 	if err != nil {
 		return nil, err
 	}
-	vals, err := iter.Values()
+	kvs, err := iter.KeyValues()
 	if err != nil {
 		return nil, err
 	}
-	result := make([]types.PoCDelegation, len(vals))
-	copy(result, vals)
+	result := make([]types.PoCDelegation, len(kvs))
+	for i, kv := range kvs {
+		result[i] = restoredPoCDelegation(kv.Key, kv.Value)
+	}
 	return result, nil
 }
 
@@ -45,12 +63,14 @@ func (k Keeper) GetAllPoCDelegations(ctx context.Context) ([]types.PoCDelegation
 	if err != nil {
 		return nil, err
 	}
-	vals, err := iter.Values()
+	kvs, err := iter.KeyValues()
 	if err != nil {
 		return nil, err
 	}
-	result := make([]types.PoCDelegation, len(vals))
-	copy(result, vals)
+	result := make([]types.PoCDelegation, len(kvs))
+	for i, kv := range kvs {
+		result[i] = restoredPoCDelegation(kv.Key, kv.Value)
+	}
 	return result, nil
 }
 
