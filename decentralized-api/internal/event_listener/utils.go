@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"sync"
 
+	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
@@ -34,11 +36,18 @@ func getWebsocketUrl(chainNodeUrl string) string {
 	return u.String()
 }
 
+// statusClients keeps one RPC client per node URL: each new client is a new
+// transport, so every status poll (per block and every 5s) opened a TCP connection.
+var statusClients sync.Map
+
 func getStatus(chainNodeUrl string) (*coretypes.ResultStatus, error) {
+	if c, ok := statusClients.Load(chainNodeUrl); ok {
+		return c.(*rpchttp.HTTP).Status(context.Background())
+	}
 	client, err := cosmosclient.NewRpcClient(chainNodeUrl)
 	if err != nil {
 		return nil, err
 	}
-
-	return client.Status(context.Background())
+	c, _ := statusClients.LoadOrStore(chainNodeUrl, client)
+	return c.(*rpchttp.HTTP).Status(context.Background())
 }
