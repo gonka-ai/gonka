@@ -587,3 +587,21 @@ func TestModifyRequestBodyReportsWhetherTheCallerAskedForLogprobs(t *testing.T) 
 		})
 	}
 }
+
+// Nodes run vLLM with --scheduling-policy priority and the PoC plugin queues its rows at -1, ahead of
+// chat at 0. The gateway's parameter whitelist rejects "priority", but the escrow owner can run any
+// gateway, so the executor (and the validator's replay) must not let a request pick its own place in
+// the node's queue: a client value below -1 would schedule ahead of PoC and preempt its rows.
+func TestModifyRequestBodyDropsTheClientSchedulingPriority(t *testing.T) {
+	for _, priority := range []string{"-9223372036854775808", "-2", "0", "5"} {
+		body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"priority":` + priority + `}`)
+
+		r, err := ModifyRequestBodyWithLogprobsMode(body, 7, "processed_logprobs")
+		require.NoError(t, err)
+
+		var m map[string]interface{}
+		require.NoError(t, json.Unmarshal(r.NewBody, &m))
+		_, present := m["priority"]
+		require.False(t, present, "priority %s reached the node", priority)
+	}
+}
