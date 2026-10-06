@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -35,7 +36,8 @@ func TestRandomSeed_ValueOmitsKeyFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, raw.Participant)
 	require.Zero(t, raw.EpochIndex)
-	require.Equal(t, want.Signature, raw.Signature)
+	require.Empty(t, raw.Signature)
+	require.Equal(t, want.Signature, hex.EncodeToString(raw.SignatureRaw))
 
 	gctx = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
 	got, found := k.GetRandomSeed(gctx, 415, testutil.Executor)

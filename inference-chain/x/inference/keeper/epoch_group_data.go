@@ -2,17 +2,68 @@ package keeper
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 
 	"cosmossdk.io/collections"
 	"github.com/cosmos/cosmos-sdk/runtime"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 // SetEpochGroupData set a specific epochGroupData in the store from its index
 func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.EpochGroupData) {
-	k.EpochGroupDataMap.Set(ctx, collections.Join(epochGroupData.EpochIndex, epochGroupData.ModelId), epochGroupData)
+	k.EpochGroupDataMap.Set(ctx, collections.Join(epochGroupData.EpochIndex, epochGroupData.ModelId), storedEpochGroupData(epochGroupData))
 	k.forgetEpochGroupData(ctx, epochGroupData.EpochIndex, epochGroupData.ModelId)
+}
+
+// storedEpochGroupData keeps each seed signature's member address and hex
+// signature as raw bytes; restoredEpochGroupData undoes it. A string that does
+// not round-trip stays as it is. The caller's slice is not modified.
+func storedEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
+	if len(egd.MemberSeedSignatures) == 0 {
+		return egd
+	}
+	sigs := make([]*types.SeedSignature, len(egd.MemberSeedSignatures))
+	for i, s := range egd.MemberSeedSignatures {
+		if s == nil {
+			continue
+		}
+		stored := *s
+		if b, ok := rawAddress(stored.MemberAddress); ok {
+			stored.MemberAddr, stored.MemberAddress = b, ""
+		}
+		if b, ok := rawHex(stored.Signature); ok {
+			stored.SignatureRaw, stored.Signature = b, ""
+		}
+		sigs[i] = &stored
+	}
+	egd.MemberSeedSignatures = sigs
+	return egd
+}
+
+func restoredEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
+	for _, s := range egd.MemberSeedSignatures {
+		if s == nil {
+			continue
+		}
+		if len(s.MemberAddr) > 0 {
+			s.MemberAddress, s.MemberAddr = sdk.AccAddress(s.MemberAddr).String(), nil
+		}
+		if len(s.SignatureRaw) > 0 {
+			s.Signature, s.SignatureRaw = hex.EncodeToString(s.SignatureRaw), nil
+		}
+	}
+	return egd
+}
+
+// rawHex returns the bytes of a non-empty lower-case hex string that encodes back to the same string.
+func rawHex(s string) ([]byte, bool) {
+	b, err := hex.DecodeString(s)
+	if err != nil || len(b) == 0 || hex.EncodeToString(b) != s {
+		return nil, false
+	}
+	return b, true
 }
 
 // GetEpochGroupData returns a epochGroupData from its index
@@ -41,7 +92,7 @@ func (k Keeper) GetEpochGroupDataWithError(
 		}
 		return val, false, err
 	}
-	return val, true, nil
+	return restoredEpochGroupData(val), true, nil
 }
 
 // RemoveEpochGroupData removes a epochGroupData from the store
@@ -115,7 +166,7 @@ func (k Keeper) getEpochGroupDataTxCached(
 	if err != nil {
 		return types.EpochGroupData{}, false, err
 	}
-	return val, true, nil
+	return restoredEpochGroupData(val), true, nil
 }
 
 // GetAllEpochGroupData returns all epochGroupData
@@ -127,6 +178,9 @@ func (k Keeper) GetAllEpochGroupData(ctx context.Context) (list []types.EpochGro
 	epochGroupDataList, err := iter.Values()
 	if err != nil {
 		return nil
+	}
+	for i := range epochGroupDataList {
+		epochGroupDataList[i] = restoredEpochGroupData(epochGroupDataList[i])
 	}
 	return epochGroupDataList
 }
