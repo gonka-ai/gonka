@@ -245,6 +245,7 @@ func (k Keeper) rehydratePartialSignatures(ctx sdk.Context, requestID []byte, re
 		if err := k.cdc.Unmarshal(it.Value(), &ps); err != nil {
 			return fmt.Errorf("unmarshal threshold partial signature: %w", err)
 		}
+		ps.ParticipantAddress = string(it.Key())
 		if existingIdx, ok := bySubmitter[ps.ParticipantAddress]; ok {
 			merged[existingIdx] = ps
 			continue
@@ -719,7 +720,10 @@ func (k Keeper) SetThresholdPartialSignature(ctx sdk.Context, requestID []byte, 
 	if ps.ParticipantAddress == "" {
 		return fmt.Errorf("threshold partial signature missing participant address")
 	}
-	value, err := k.cdc.Marshal(ps)
+	// The sub-key is the submitter address; readers restore it from there.
+	stored := *ps
+	stored.ParticipantAddress = ""
+	value, err := k.cdc.Marshal(&stored)
 	if err != nil {
 		return fmt.Errorf("marshal threshold partial signature: %w", err)
 	}
@@ -739,6 +743,7 @@ func (k Keeper) GetThresholdPartialSignature(ctx sdk.Context, requestID []byte, 
 	if err := k.cdc.Unmarshal(value, &ps); err != nil {
 		return nil, err
 	}
+	ps.ParticipantAddress = submitter
 	return &ps, nil
 }
 
@@ -762,6 +767,7 @@ func (k Keeper) ListThresholdPartialSignatures(ctx sdk.Context, requestID []byte
 		if err := k.cdc.Unmarshal(it.Value(), &ps); err != nil {
 			return nil, fmt.Errorf("unmarshal threshold partial signature: %w", err)
 		}
+		ps.ParticipantAddress = string(it.Key())
 		out = append(out, ps)
 	}
 	return out, nil
