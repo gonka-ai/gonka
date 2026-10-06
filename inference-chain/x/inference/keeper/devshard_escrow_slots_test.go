@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	"strings"
 	"testing"
 
 	storetypes "cosmossdk.io/store/types"
@@ -53,7 +54,12 @@ func TestDevshardEscrow_SlotsStoredOncePerHost(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, raw.Slots)
 	require.Len(t, raw.SlotHosts, 6)
+	require.Len(t, raw.SlotHosts[0], 20)
 	require.Len(t, raw.SlotIndex, keeper.DevshardGroupSize)
+	require.Empty(t, raw.Creator)
+	require.Len(t, raw.CreatorAddr, 20)
+	require.Empty(t, raw.AppHash)
+	require.Len(t, raw.AppHashRaw, 32)
 	rawBytes, err := raw.Marshal()
 	require.NoError(t, err)
 
@@ -72,12 +78,38 @@ func TestDevshardEscrow_SlotsStoredOncePerHost(t *testing.T) {
 	require.Equal(t, want, *resp.Escrow)
 	require.Empty(t, resp.Escrow.SlotHosts)
 	require.Empty(t, resp.Escrow.SlotIndex)
+	require.Empty(t, resp.Escrow.CreatorAddr)
+	require.Empty(t, resp.Escrow.AppHashRaw)
 }
 
-func TestDevshardEscrow_DistinctSlotsKeepLegacyForm(t *testing.T) {
+func TestDevshardEscrow_DistinctSlotsStoredAsBytes(t *testing.T) {
 	k, _, ctx, _ := setupDevshardEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 	escrow := mainnetShapeEscrow(makeDevshardAddrs(1, keeper.DevshardGroupSize))
 	escrow.Slots = makeDevshardAddrs(1, keeper.DevshardGroupSize)
+	want := escrow
+	_, err := k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+	want.Id = 1
+
+	raw, err := k.DevshardEscrows.Get(ctx, 1)
+	require.NoError(t, err)
+	require.Nil(t, raw.Slots)
+	require.Len(t, raw.SlotHosts, keeper.DevshardGroupSize)
+	got, found := k.GetDevshardEscrow(ctx, 1)
+	require.True(t, found)
+	require.Equal(t, want, got)
+}
+
+// Strings that would not come back byte for byte stay as they are.
+func TestDevshardEscrow_NonCanonicalStringsKept(t *testing.T) {
+	k, _, ctx, _ := setupDevshardEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	hosts := makeDevshardAddrs(1, 6)
+	escrow := mainnetShapeEscrow(hosts)
+	escrow.Slots[3] = strings.ToUpper(escrow.Slots[3])
+	escrow.Creator = strings.ToUpper(escrow.Creator)
+	escrow.AppHash = strings.ToUpper(escrow.AppHash)
 	want := escrow
 	_, err := k.StoreDevshardEscrow(ctx, &escrow, 1)
 	require.NoError(t, err)
@@ -105,17 +137,21 @@ func TestDevshardEscrow_StorageFieldsRejected(t *testing.T) {
 	k, _, ctx, _ := setupDevshardEscrowTest(t)
 	escrow := mainnetShapeEscrow(makeDevshardAddrs(1, 6))
 	escrow.Id = 1
-	escrow.SlotHosts = []string{escrow.Slots[0]}
+	escrow.SlotHosts = [][]byte{make([]byte, 20)}
 	require.ErrorContains(t, k.SetDevshardEscrow(ctx, escrow), "storage-only")
 	escrow.SlotHosts, escrow.SlotIndex = nil, []byte{0}
 	_, err := k.StoreDevshardEscrow(ctx, &escrow, 1)
 	require.ErrorContains(t, err, "storage-only")
+	escrow.SlotIndex, escrow.CreatorAddr = nil, make([]byte, 20)
+	require.ErrorContains(t, k.SetDevshardEscrow(ctx, escrow), "storage-only")
+	escrow.CreatorAddr, escrow.AppHashRaw = nil, []byte{1}
+	require.ErrorContains(t, k.SetDevshardEscrow(ctx, escrow), "storage-only")
 }
 
 func TestDevshardEscrow_BadSlotIndexNotFound(t *testing.T) {
 	k, _, ctx, _ := setupDevshardEscrowTest(t)
 	require.NoError(t, k.DevshardEscrows.Set(ctx, 3, types.DevshardEscrow{
-		Id: 3, SlotHosts: []string{"gonka1a"}, SlotIndex: []byte{0, 1},
+		Id: 3, SlotHosts: [][]byte{make([]byte, 20)}, SlotIndex: []byte{0, 1},
 	}))
 	_, found := k.GetDevshardEscrow(ctx, 3)
 	require.False(t, found)
