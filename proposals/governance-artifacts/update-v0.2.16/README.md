@@ -68,7 +68,6 @@ The handler is [`inference-chain/app/upgrades/v0_2_16/upgrades.go`](https://gith
 - Move approved devshard versions from shared escrow params into a separate store without changing the approved list.
 - Start dynamic coefficients from current model scales and apply the ranges and targets above to the upcoming epoch.
 - Initialize PoC Challenge with a payment ratio of 0.1, at most 4 active challenges, and a minimum punishable segment of 300 blocks.
-- Pay 104,150 USDT in bounties from community-sale funds.
 
 The epoch and cosmos fee groups default to 1 ngonka/gas. The software-upgrade proposal info can override the enabled groups and their prices. An explicit empty `enabled_fee_groups` list disables charging.
 
@@ -151,26 +150,3 @@ Compatibility testing covered devshard v4.1 and v5 with both v0.2.15 and v0.2.16
 - @vitaly-andr
 - @x0152
 - @zpoken
-
-## Proposed Bounties
-
-Total: 104,150 USDT from community-sale funds.
-
-| Bounty | GitHub | Amount (USDT) | Explanation | Address |
-|---|---|---|---|---|
-| ML-node observability | kaitaku.ai (@baychak, @clanster) | 12,000 | Development 4,000: ML-node metrics exporter, DAPI federation endpoint, Grafana dashboards, public repo [gonka-grafana](https://github.com/kaitakuai/gonka-grafana). Hosting and maintenance 8,000: [monitoring.kaitaku.ai](https://monitoring.kaitaku.ai), with a commitment to continue. [Report](https://github.com/kaitakuai/experiments/blob/main/reports/2026-07-mlnode-observability.md) | gonka1x45hruazmcqxslj3g8a08988hr5fr3wx33drhp |
-| ML-node observability | @qdanik | 500 | Contribution to the same ML-node observability track. [Report](https://github.com/kaitakuai/experiments/blob/main/reports/2026-07-mlnode-observability.md) | gonka1j3f2xkapx8cmczpjqcsrh7cc3peyj3ngkjv4p8 |
-| decode-PoC experiments | kaitaku.ai (@baychak, @clanster) | 20,000 | vLLM port and experiments across hardware configurations and models. [Report](https://github.com/kaitakuai/experiments/blob/main/reports/2026-06-decode-poc-research-and-integration.md) | gonka1x45hruazmcqxslj3g8a08988hr5fr3wx33drhp |
-| decode-PoC experiments, CUDA graphs | Axel-t | 18,000 | CUDA graph support for decode-PoC experiments. [Report](https://github.com/kaitakuai/experiments/blob/main/reports/2026-06-decode-poc-research-and-integration.md) | gonka1yhdhp4vwsvdsplv4acksntx0zxh8saueq6lj9m |
-| gonka-poc plugin | kaitaku.ai (@baychak, @clanster) | 5,000 | Plugin removing re-porting PoC on every vLLM release. [Report](https://github.com/kaitakuai/experiments/blob/main/reports/2026-07-gonka-poc-plugin-and-residual.md) | gonka1x45hruazmcqxslj3g8a08988hr5fr3wx33drhp |
-| DeepSeek-V4-Flash experiments | kaitaku.ai (@baychak, @clanster) | 5,000 | Experiments and new model proposal. [Report](https://github.com/kaitakuai/experiments/blob/main/reports/2026-07-deepseek-v4-flash-integration.md) | gonka1x45hruazmcqxslj3g8a08988hr5fr3wx33drhp |
-| GLM-5.3-Flash experiments | kaitaku.ai (@baychak, @clanster) | 4,000 | Experiments and new model proposal. [Report](https://github.com/kaitakuai/experiments/blob/main/reports/2026-09-glm-5-3-flash-integration.md) | gonka1x45hruazmcqxslj3g8a08988hr5fr3wx33drhp |
-| GLM-5.2 experiments | kaitaku.ai (@baychak, @clanster) | 2,000 | Experiments and images for B300, B200, and H200. [Report](https://github.com/kaitakuai/experiments/blob/main/reports/2026-06-glm-5-2-bring-up.md) | gonka1x45hruazmcqxslj3g8a08988hr5fr3wx33drhp |
-| Hy3 evaluation | kaitaku.ai (@baychak, @clanster) | 2,000 | Experiments. [Report](https://github.com/kaitakuai/experiments/blob/main/reports/2026-08-hy3-evaluation.md) | gonka1x45hruazmcqxslj3g8a08988hr5fr3wx33drhp |
-| GPU rental reimbursement | kaitaku.ai (@baychak, @clanster) | 9,600 | GPU rentals for model and PoC experiments since 2026-06-01, at cost against billing. | gonka1x45hruazmcqxslj3g8a08988hr5fr3wx33drhp |
-| Release management | @x0152 | 8,000 | PR reviews, HackerOne report reviews, ongoing Trainshards v0 contributions ([#1350](https://github.com/gonka-ai/gonka/pull/1350), [#1618](https://github.com/gonka-ai/gonka/pull/1618)) | gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe |
-| Chain-halt report #1205 | @vitaly-andr | 5,000 | Bug report ([#1205](https://github.com/gonka-ai/gonka/issues/1205), fix [cosmos-sdk#16](https://github.com/gonka-ai/cosmos-sdk/pull/16)). | gonka1uqt4hue8tljwwgdkvtthyl3n8kkkqtydyns4cm |
-| v0.2.16 review | @vitaly-andr | 1,000 | Upgrade review. | gonka1uqt4hue8tljwwgdkvtthyl3n8kkkqtydyns4cm |
-| v0.2.16 review | @bonujel | 1,000 | Upgrade review. | gonka1zqss46r6jf6dhhyaa777kc2ppvjhn0ufkx4y57 |
-| HackerOne reviews | @staaason / @zpoken | 8,050 | HackerOne report reviews plus [#1767](https://github.com/gonka-ai/gonka/pull/1767) and [#1552](https://github.com/gonka-ai/gonka/pull/1552) (landed as [#1623](https://github.com/gonka-ai/gonka/pull/1623)) | gonka1s8zggm642e3kncy48c7vxwmeclt2wxyyd8qtdt |
-| v0.2.16 review and fixes | @cyberdelamain | 3,000 | Upgrade review and fixes [#1828](https://github.com/gonka-ai/gonka/pull/1828), [#1846](https://github.com/gonka-ai/gonka/pull/1846), [#1845](https://github.com/gonka-ai/gonka/pull/1845), [#1859](https://github.com/gonka-ai/gonka/pull/1859) | gonka15u0r3mf6t7zsfuslusnyt7hsjrq357yumpe8st
