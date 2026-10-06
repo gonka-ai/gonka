@@ -55,6 +55,22 @@ type Summary struct {
 	P95                     time.Duration   `json:"p95_latency"`
 	FailureArtifactsOmitted int             `json:"failure_artifacts_omitted,omitempty"`
 	Results                 []RequestResult `json:"-"`
+	LatencyWindows          []LatencyWindow `json:"latency_windows"`
+}
+
+// Windows group requests by start time; drops are included in offered RPS,
+// but excluded from latency. Durations are nanoseconds, as in Summary.
+type LatencyWindow struct {
+	StartedAt    time.Time     `json:"started_at"`
+	Duration     time.Duration `json:"duration"`
+	Offered      int           `json:"offered"`
+	Completed    int           `json:"completed"`
+	Failed       int           `json:"failed"`
+	Dropped      int           `json:"dropped"`
+	CompletedRPS float64       `json:"completed_rps"`
+	P50          time.Duration `json:"p50_latency"`
+	P95          time.Duration `json:"p95_latency"`
+	P99          time.Duration `json:"p99_latency"`
 }
 
 const maxFailureArtifacts = 100
@@ -407,7 +423,51 @@ func summarize(scenario Scenario, started time.Time, duration time.Duration, res
 	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
 	summary.P50 = percentile(latencies, 0.50)
 	summary.P95 = percentile(latencies, 0.95)
+	summary.LatencyWindows = latencyWindows(scenario, started, results)
 	return summary
+}
+
+func latencyWindows(scenario Scenario, started time.Time, results []RequestResult) []LatencyWindow {
+	groups := map[int][]RequestResult{}
+	for _, result := range results {
+		index := max(0, int(result.StartedAt.Sub(started)/time.Minute))
+		groups[index] = append(groups[index], result)
+	}
+	indices := make([]int, 0, len(groups))
+	for index := range groups {
+		indices = append(indices, index)
+	}
+	sort.Ints(indices)
+	var windows []LatencyWindow
+	for _, index := range indices {
+		offset := time.Duration(index) * time.Minute
+		window := LatencyWindow{StartedAt: started.Add(offset), Duration: max(time.Duration(0), min(time.Minute, scenario.Duration()-offset))}
+		var latencies []time.Duration
+		for _, result := range groups[index] {
+			window.Offered++
+			if result.Outcome == "dropped_by_generator" {
+				window.Dropped++
+			} else {
+				if result.Outcome == scenario.Assertions.Requests.TerminalOutcome {
+					window.Completed++
+				} else {
+					window.Failed++
+				}
+				if result.Duration > 0 {
+					latencies = append(latencies, result.Duration)
+				}
+			}
+		}
+		if window.Duration > 0 {
+			window.CompletedRPS = float64(window.Completed) / window.Duration.Seconds()
+		}
+		sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
+		window.P50 = percentile(latencies, 0.5)
+		window.P95 = percentile(latencies, 0.95)
+		window.P99 = percentile(latencies, 0.99)
+		windows = append(windows, window)
+	}
+	return windows
 }
 
 func percentile(values []time.Duration, p float64) time.Duration {

@@ -32,6 +32,42 @@ Run artifacts are written under
 different directory and `-keep-stack` to leave the Docker stack running for
 post-run inspection.
 
+## Memory and CPU comparison
+
+`long-escrow` runs ten minutes at 8 RPS without escrow rotation. Use unique
+synthetic requests for the first comparison; dataset replay can hit the response
+cache and spread traffic across several model escrows.
+
+Every scenario collects process metrics and gateway escrow state before load,
+during load and drain, and once at the end. The default interval is one second;
+use `-metrics-interval 2s` with the direct runner to change it (minimum 100ms).
+Sampling rounds do not overlap; slow probes can reduce the achieved frequency.
+Each sample records its timestamp and phase. Host probes run inside each
+versiond container and scrape that replica's devshardd, including both HA
+siblings. Gateway metrics describe devshardctl. Container-wide memory is not
+used in place of process memory.
+
+The console summary includes baseline/final RSS and Go heap, separate
+workload/all-phase sampled peaks, process-lifetime RSS high-water mark from
+Linux `/proc`, CPU seconds, allocated bytes, GC count and pause time, goroutines,
+and escrow nonce/history growth.
+CPU per 1,000 completed client requests includes the collection period through
+drain. PID and process start time distinguish restarts; counter deltas never
+cross process lifetimes. The Go heap samples do not force GC and are not a
+post-GC live-heap measurement. RSS high-water mark may include startup; sampled
+peaks may miss short spikes. Missing metrics are reported as unavailable, and
+collection errors are displayed even when workload assertions pass.
+
+`metrics.jsonl` contains the time series, process identities, and build-info
+labels where exported. `metrics-summary.json` contains per-process and per-escrow
+aggregates, collection errors, Git revision/dirty status, runner Go version,
+configured versions, and the mounted host binary SHA-256 when readable.
+`summary.json` also includes per-minute p50, p95, p99, completed RPS, failures
+and drops, grouped by request start time.
+Latency includes attempted requests, with generator drops excluded. Gateway
+`diffs_bytes` measures retained serialized payload, not persisted journal size
+or heap usage. All gateway escrow IDs are sampled, including rotated escrows.
+
 ## Scenario file
 
 Each scenario is a self-contained YAML file. The main sections are:
@@ -293,7 +329,9 @@ records, summaries, state snapshots, and logs:
 | Artifact | Contents |
 | --- | --- |
 | `run.yaml` | Exact scenario used for the run. |
-| `summary.json` | Client workload counts, latency, and duration. |
+| `summary.json` | Client workload counts, latency, duration, and per-minute windows. |
+| `metrics.jsonl` | Process memory/CPU/GC and per-escrow state time series. |
+| `metrics-summary.json` | Sampled peaks, counter deltas, initial/final state, and collection errors. |
 | `requests.jsonl` | One record per generated request and response outcome. |
 | `assertions.json` | All evaluated assertions and `failed_assertions`. |
 | `ml-stats.json` | Per-node allocations, responses, failures, timeouts, and replay counters. |
