@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"slices"
@@ -84,12 +85,63 @@ func (sm *StateMachine) updateCommittedEntryLocked(id uint64, rec *types.Inferen
 	if err != nil {
 		return err
 	}
+	if prev, ok := sm.committedEntries[id]; ok {
+		if bytes.Equal(prev, entry) {
+			return nil
+		}
+		sm.xorEntryLocked(prev)
+	}
+	if j := sm.journal; j != nil {
+		j.committed.touch(sm.committedEntries, id)
+	}
+	sm.xorEntryLocked(entry)
 	sm.committedEntries[id] = entry
 	return nil
 }
 
+func (sm *StateMachine) deleteCommittedEntryLocked(id uint64) {
+	prev, ok := sm.committedEntries[id]
+	if !ok {
+		return
+	}
+	if j := sm.journal; j != nil {
+		j.committed.touch(sm.committedEntries, id)
+	}
+	sm.xorEntryLocked(prev)
+	delete(sm.committedEntries, id)
+}
+
+func (sm *StateMachine) xorEntryLocked(entry []byte) {
+	digest := entryFrameDigest(entry)
+	for i := range sm.liveEntryXOR {
+		sm.liveEntryXOR[i] ^= digest[i]
+	}
+}
+
+// applyCommittedMapDiffLocked folds only the ids whose stored bytes differ.
+// Identical blobs are left out of the XOR, so a snapshot refresh of an
+// unchanged record cannot cancel it.
+func (sm *StateMachine) applyCommittedMapDiffLocked(prev, next map[uint64][]byte) {
+	for id, oldEntry := range prev {
+		newEntry, ok := next[id]
+		if !ok {
+			sm.xorEntryLocked(oldEntry)
+			continue
+		}
+		if !bytes.Equal(oldEntry, newEntry) {
+			sm.xorEntryLocked(oldEntry)
+			sm.xorEntryLocked(newEntry)
+		}
+	}
+	for id, newEntry := range next {
+		if _, ok := prev[id]; !ok {
+			sm.xorEntryLocked(newEntry)
+		}
+	}
+}
+
 func (sm *StateMachine) rebuildCommittedEntriesLocked() {
-	sm.committedEntries = make(map[uint64][]byte, len(sm.state.Inferences))
+	next := make(map[uint64][]byte, len(sm.state.Inferences))
 	for id, rec := range sm.state.Inferences {
 		entry, err := marshalInferenceEntry(id, rec)
 		if err != nil {
@@ -100,8 +152,12 @@ func (sm *StateMachine) rebuildCommittedEntriesLocked() {
 			)
 			continue
 		}
-		sm.committedEntries[id] = entry
+		next[id] = entry
 	}
+	// Rebuild is the recovery path: the total is the walk of the new map,
+	// including when a previous total no longer matches the blobs.
+	sm.liveEntryXOR = xorInferencesHashFromEntries(next)
+	sm.committedEntries = next
 }
 
 func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.InferenceRecord, error) {
@@ -119,18 +175,38 @@ func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.Infer
 	return rec, nil
 }
 
+// liveInferencesHashLocked returns the running XOR of the committed frames.
+// The total is maintained when the map changes, so this hashes nothing. The
+// id sets must still match: equal sizes plus every live id present means the
+// total covers exactly the live records. A mismatch is a broken invariant:
+// return it and let the caller roll the diff back.
+func (sm *StateMachine) liveInferencesHashLocked() ([]byte, error) {
+	live := sm.state.Inferences
+	entries := sm.committedEntries
+	if len(entries) != len(live) {
+		return nil, fmt.Errorf("committed inference entries %d != live inferences %d", len(entries), len(live))
+	}
+	for id := range live {
+		if _, ok := entries[id]; !ok {
+			return nil, fmt.Errorf("committed inference entries missing live inference %d", id)
+		}
+	}
+	out := make([]byte, len(sm.liveEntryXOR))
+	copy(out, sm.liveEntryXOR[:])
+	return out, nil
+}
+
 func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {
 	hostStatsHash, err := computeHostStatsHash(sm.state.HostStats)
 	if err != nil {
 		return nil, err
 	}
-
-	acc := sealedAccBytes32(sm.state.SealedAcc)
-	restHash, err := ComputeRestHashV2(sm.state.Balance, acc, sm.state.Inferences, sm.state.WarmKeys)
+	liveHash, err := sm.liveInferencesHashLocked()
 	if err != nil {
 		return nil, err
 	}
-
+	acc := sealedAccBytes32(sm.state.SealedAcc)
+	restHash := restHashV2FromLiveHash(sm.state.Balance, acc, liveHash, sm.state.WarmKeys)
 	return ComputeStateRootFromRestHash(hostStatsHash, restHash, sm.state.Fees, sm.state.Phase, sm.state.StateRootAndProtocolVersion), nil
 }
 
@@ -147,16 +223,21 @@ func (sm *StateMachine) RestoreCommittedEntries(entries map[uint64][]byte) {
 		sm.rebuildCommittedEntriesLocked()
 		return
 	}
-	sm.committedEntries = cloneCommittedInferenceEntries(entries)
+	next := cloneCommittedInferenceEntries(entries)
 	for id, rec := range sm.state.Inferences {
-		if err := sm.updateCommittedEntryLocked(id, rec); err != nil {
+		entry, err := marshalInferenceEntry(id, rec)
+		if err != nil {
 			logging.Error("failed to refresh live committed entry during restore",
 				"subsystem", "state",
 				"inference_id", id,
 				"error", err,
 			)
+			continue
 		}
+		next[id] = entry
 	}
+	sm.applyCommittedMapDiffLocked(sm.committedEntries, next)
+	sm.committedEntries = next
 }
 
 // ExportSealedNonces returns a copy of the per-id seal nonce map for snapshot
@@ -223,25 +304,22 @@ func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
 	}
 	slices.Sort(ids)
 
-	if sm.sealedNonces == nil {
-		sm.sealedNonces = make(map[uint64]uint64, len(ids))
-	}
 	cur := sealedAccBytes32(sm.state.SealedAcc)
 
 	for _, id := range ids {
-		rec := sm.state.Inferences[id]
+		rec, _ := sm.inferenceForWriteLocked(id)
 		sm.settleLiveRecordLocked(rec)
 		if err := sm.updateCommittedEntryLocked(id, rec); err != nil {
 			return fmt.Errorf("drain live inference %d: %w", id, err)
 		}
 		entry := append([]byte(nil), sm.committedEntries[id]...)
 		cur = FoldSealedAccumulator(cur, sealNonce, id, entry)
-		sm.sealedNonces[id] = sealNonce
-		delete(sm.committedEntries, id)
+		sm.setSealedNonceLocked(id, sealNonce)
+		sm.deleteCommittedEntryLocked(id)
 		if err := sm.upsertInferenceObsLocked(id, sealNonce, rec); err != nil {
 			return fmt.Errorf("persist sealed inference %d during drain: %w", id, err)
 		}
-		delete(sm.state.Inferences, id)
+		sm.deleteInferenceLocked(id)
 	}
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
 	return nil
@@ -479,9 +557,6 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 	}
 	slices.Sort(eligible)
 
-	if sm.sealedNonces == nil {
-		sm.sealedNonces = make(map[uint64]uint64, len(eligible))
-	}
 	cur := sealedAccBytes32(sm.state.SealedAcc)
 	for _, id := range eligible {
 		rec := sm.state.Inferences[id]
@@ -490,8 +565,8 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 		}
 		entry := append([]byte(nil), sm.committedEntries[id]...)
 		cur = FoldSealedAccumulator(cur, sealNonce, id, entry)
-		sm.sealedNonces[id] = sealNonce
-		delete(sm.committedEntries, id)
+		sm.setSealedNonceLocked(id, sealNonce)
+		sm.deleteCommittedEntryLocked(id)
 		if err := sm.upsertInferenceObsLocked(id, sealNonce, rec); err != nil {
 			// Observability only; never block or diverge the deterministic seal.
 			logging.Warn("failed to persist sealed inference obs during auto-seal",
@@ -501,7 +576,7 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 				"error", err,
 			)
 		}
-		delete(sm.state.Inferences, id)
+		sm.deleteInferenceLocked(id)
 	}
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
 	sm.logAutoSealDiagnosticLocked(side, sealNonce, clockWin, sealGraceNonces, graceSeconds, stateClock, candidates, eligible)
@@ -521,21 +596,17 @@ func (sm *StateMachine) SealInference(id uint64) error {
 	}
 	entry := append([]byte(nil), sm.committedEntries[id]...)
 	sealedNonce := sm.state.LatestNonce
-	if sm.sealedNonces == nil {
-		sm.sealedNonces = make(map[uint64]uint64)
-	}
-	sm.sealedNonces[id] = sealedNonce
+	sm.setSealedNonceLocked(id, sealedNonce)
 
 	cur := sealedAccBytes32(sm.state.SealedAcc)
 	cur = FoldSealedAccumulator(cur, sealedNonce, id, entry)
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
-	delete(sm.committedEntries, id)
+	sm.deleteCommittedEntryLocked(id)
+	sm.deleteInferenceLocked(id)
 
-	if err := sm.upsertInferenceObsLocked(id, sealedNonce, rec); err != nil {
-		return err
-	}
-	delete(sm.state.Inferences, id)
-	return nil
+	// Observability only: the seal above is already complete, so a failed
+	// write cannot leave the record live without its committed entry.
+	return sm.upsertInferenceObsLocked(id, sealedNonce, rec)
 }
 
 // LookupSealedInference returns the inference record persisted at seal time
