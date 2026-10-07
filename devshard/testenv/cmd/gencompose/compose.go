@@ -276,8 +276,8 @@ services:
 
   versiond-router:
     build:
-      context: ../..
-      dockerfile: versiond-router/Dockerfile
+      context: ../../versiond-router
+      dockerfile: Dockerfile
     image: devshard-versiond-router:latest
     logging: *loadtest-logging
     environment:
