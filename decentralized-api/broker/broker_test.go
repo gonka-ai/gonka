@@ -2870,3 +2870,55 @@ func TestRegisterNode_DoesNotIncrementCountersWhenWorkerExists(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }
+
+func TestCalculateNodesDiff_StatusOnlyChangeWaitsForHold(t *testing.T) {
+	broker := NewTestBroker()
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	chain := convertInferenceNodeToHardwareNode(node, broker.supportedNodeModels(node.Node.Models))
+	chainMap := map[string]*types.HardwareNode{"node-1": chain}
+	local := map[string]*NodeWithState{"node-1": node}
+
+	node.State.CurrentStatus = types.HardwareNodeStatus_FAILED
+	for i := 1; i < hardwareStatusHoldSyncs; i++ {
+		assert.Empty(t, broker.calculateNodesDiff(chainMap, local).NewOrModified, "sync %d", i)
+	}
+	diff := broker.calculateNodesDiff(chainMap, local)
+	require.Len(t, diff.NewOrModified, 1)
+	assert.Equal(t, types.HardwareNodeStatus_FAILED, diff.NewOrModified[0].Status)
+}
+
+func TestCalculateNodesDiff_FlappingStatusIsNotSubmitted(t *testing.T) {
+	broker := NewTestBroker()
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	chain := convertInferenceNodeToHardwareNode(node, broker.supportedNodeModels(node.Node.Models))
+	chainMap := map[string]*types.HardwareNode{"node-1": chain}
+	local := map[string]*NodeWithState{"node-1": node}
+
+	for i := 0; i < 4*hardwareStatusHoldSyncs; i++ {
+		if i%2 == 0 {
+			node.State.CurrentStatus = types.HardwareNodeStatus_FAILED
+		} else {
+			node.State.CurrentStatus = types.HardwareNodeStatus_INFERENCE
+		}
+		assert.Empty(t, broker.calculateNodesDiff(chainMap, local).NewOrModified, "sync %d", i)
+	}
+	assert.Empty(t, broker.statusHold)
+}
+
+func TestCalculateNodesDiff_NonStatusChangeIsSubmittedAtOnce(t *testing.T) {
+	broker := NewTestBroker()
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	chain := convertInferenceNodeToHardwareNode(node, broker.supportedNodeModels(node.Node.Models))
+	chainMap := map[string]*types.HardwareNode{"node-1": chain}
+	local := map[string]*NodeWithState{"node-1": node}
+
+	node.State.CurrentStatus = types.HardwareNodeStatus_FAILED
+	assert.Empty(t, broker.calculateNodesDiff(chainMap, local).NewOrModified)
+
+	node.State.MlNodeVersion = "v9.9.9"
+	diff := broker.calculateNodesDiff(chainMap, local)
+	require.Len(t, diff.NewOrModified, 1)
+	assert.Equal(t, "v9.9.9", diff.NewOrModified[0].Version)
+	assert.Equal(t, types.HardwareNodeStatus_FAILED, diff.NewOrModified[0].Status)
+	assert.Empty(t, broker.statusHold)
+}
