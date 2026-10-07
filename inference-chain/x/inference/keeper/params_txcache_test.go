@@ -87,13 +87,28 @@ func TestTxParamsCache_SPRTValuesReadOnce(t *testing.T) {
 	require.Equal(t, want, k.GetPrecomputedSPRTValues(c))
 	require.Equal(t, before, c.GasMeter().GasConsumed(), "second read must not touch the store")
 
-	// Recomputing in the tx turns the cache off: later reads see the store.
+	// A params change in the tx is seen by the next read.
 	params := types.DefaultParams()
 	params.ValidationParams.FalsePositiveRate = types.DecimalFromFloat(0.2)
-	require.NoError(t, k.SetParams(ctx, params))
-	require.NoError(t, k.PrecomputeSPRTValues(c))
+	require.NoError(t, k.SetParams(c, params))
 	require.NotEqual(t, want, k.GetPrecomputedSPRTValues(c))
 	require.Equal(t, k.GetPrecomputedSPRTValues(ctx), k.GetPrecomputedSPRTValues(c))
+}
+
+func TestSPRTValuesNeedNoBlockPrecompute(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params := types.DefaultParams()
+	params.ValidationParams.FalsePositiveRate = types.DecimalFromFloat(0.07)
+	require.NoError(t, k.SetParams(ctx, params))
+
+	got := k.GetPrecomputedSPRTValues(ctx)
+	vp := params.ValidationParams
+	require.True(t, got.InvalidationLogFail.ToDecimal().Equal(keeper.CalculateLogLLR(vp.BadParticipantInvalidationRate.ToDecimal(), vp.FalsePositiveRate.ToDecimal(), true)))
+
+	params.ValidationParams.FalsePositiveRate = types.DecimalFromFloat(2)
+	require.NoError(t, k.SetParams(ctx, params))
+	require.Error(t, k.PrecomputeSPRTValues(ctx))
+	require.True(t, k.GetPrecomputedSPRTValues(ctx).InvalidationLogFail.ToDecimal().IsZero(), "invalid params turn SPRT off")
 }
 
 func TestTxParamsCache_EffectiveEpochIndexReadOnce(t *testing.T) {

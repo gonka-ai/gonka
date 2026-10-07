@@ -9,14 +9,18 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// PrecomputeSPRTValues calculates the log-likelihood ratios for SPRT based on current parameters
-// and stores them in the transient store for fast access during the block.
+// PrecomputeSPRTValues checks the SPRT params and computes the log-likelihood ratios for them.
+// The values are not stored: GetPrecomputedSPRTValues derives them from the current params.
 func (k Keeper) PrecomputeSPRTValues(ctx context.Context) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}
+	_, err = sprtValuesBytes(params)
+	return err
+}
 
+func sprtValuesBytes(params types.Params) ([]byte, error) {
 	vp := params.ValidationParams
 	if vp == nil {
 		vp = types.DefaultValidationParams()
@@ -24,31 +28,31 @@ func (k Keeper) PrecomputeSPRTValues(ctx context.Context) error {
 
 	// Validate all required parameters
 	if vp.BadParticipantInvalidationRate == nil {
-		return fmt.Errorf("BadParticipantInvalidationRate is nil")
+		return nil, fmt.Errorf("BadParticipantInvalidationRate is nil")
 	}
 	if vp.BadParticipantInvalidationRate.ToDecimal().LessThan(decimal.Zero) || vp.BadParticipantInvalidationRate.ToDecimal().GreaterThan(decimal.NewFromInt(1)) {
-		return fmt.Errorf("BadParticipantInvalidationRate must be between 0 and 1, got: %s", vp.BadParticipantInvalidationRate.String())
+		return nil, fmt.Errorf("BadParticipantInvalidationRate must be between 0 and 1, got: %s", vp.BadParticipantInvalidationRate.String())
 	}
 
 	if vp.FalsePositiveRate == nil {
-		return fmt.Errorf("FalsePositiveRate is nil")
+		return nil, fmt.Errorf("FalsePositiveRate is nil")
 	}
 	if vp.FalsePositiveRate.ToDecimal().LessThan(decimal.Zero) || vp.FalsePositiveRate.ToDecimal().GreaterThan(decimal.NewFromInt(1)) {
-		return fmt.Errorf("FalsePositiveRate must be between 0 and 1, got: %s", vp.FalsePositiveRate.String())
+		return nil, fmt.Errorf("FalsePositiveRate must be between 0 and 1, got: %s", vp.FalsePositiveRate.String())
 	}
 
 	if vp.DowntimeBadPercentage == nil {
-		return fmt.Errorf("DowntimeBadPercentage is nil")
+		return nil, fmt.Errorf("DowntimeBadPercentage is nil")
 	}
 	if vp.DowntimeBadPercentage.ToDecimal().LessThan(decimal.Zero) || vp.DowntimeBadPercentage.ToDecimal().GreaterThan(decimal.NewFromInt(1)) {
-		return fmt.Errorf("DowntimeBadPercentage must be between 0 and 1, got: %s", vp.DowntimeBadPercentage.String())
+		return nil, fmt.Errorf("DowntimeBadPercentage must be between 0 and 1, got: %s", vp.DowntimeBadPercentage.String())
 	}
 
 	if vp.DowntimeGoodPercentage == nil {
-		return fmt.Errorf("DowntimeGoodPercentage is nil")
+		return nil, fmt.Errorf("DowntimeGoodPercentage is nil")
 	}
 	if vp.DowntimeGoodPercentage.ToDecimal().LessThan(decimal.Zero) || vp.DowntimeGoodPercentage.ToDecimal().GreaterThan(decimal.NewFromInt(1)) {
-		return fmt.Errorf("DowntimeGoodPercentage must be between 0 and 1, got: %s", vp.DowntimeGoodPercentage.String())
+		return nil, fmt.Errorf("DowntimeGoodPercentage must be between 0 and 1, got: %s", vp.DowntimeGoodPercentage.String())
 	}
 
 	in := sprtInputs{*vp.BadParticipantInvalidationRate, *vp.FalsePositiveRate, *vp.DowntimeBadPercentage, *vp.DowntimeGoodPercentage}
@@ -62,20 +66,16 @@ func (k Keeper) PrecomputeSPRTValues(ctx context.Context) error {
 		}
 		bz, err := precomputed.Marshal()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		m = &sprtMemo{in: in, bz: bz}
 		lastSPRT.Store(m)
 	}
-	bz := append([]byte(nil), m.bz...)
-
-	transientStore := k.transientStoreService.OpenTransientStore(ctx)
-	turnOffTxCache(ctx)
-	return transientStore.Set(types.TransientSPRTValuesKey, bz)
+	return m.bz, nil
 }
 
 // The values are a pure function of four governance params, so the Ln work is
-// redone only when one of them changes; the transient store still gets them every block.
+// redone only when one of them changes.
 type sprtInputs [4]types.Decimal
 
 type sprtMemo struct {
@@ -85,7 +85,7 @@ type sprtMemo struct {
 
 var lastSPRT atomic.Pointer[sprtMemo]
 
-// In the rare case of some kind of error or not finding this, default to zero
+// In the rare case of some kind of error, default to zero
 // This effectively turns off SPRT tracking, meaning no one will be removed from the network
 // while we figure out what has gone wrong. It's the best alternative to an unlikely
 // situation.
@@ -96,17 +96,27 @@ var zeroSprtValues = types.SPRTPrecomputedValues{
 	InvalidationLogPass: &types.DecimalZero,
 }
 
-// GetPrecomputedSPRTValues retrieves the precomputed SPRT values from the transient store.
+// GetPrecomputedSPRTValues returns the SPRT values for the current params.
 func (k Keeper) GetPrecomputedSPRTValues(ctx context.Context) types.SPRTPrecomputedValues {
-	bz, err := k.precomputedSPRTBytes(ctx)
-	if err != nil || len(bz) == 0 {
-		k.LogError("Failed to get SPRT precomputed values from transient store", types.Validation, "error", err)
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Failed to get params for SPRT values", types.Validation, "error", err)
+		return zeroSprtValues
+	}
+	return k.sprtValuesFor(params)
+}
+
+// sprtValuesFor derives the SPRT values from params the caller already holds.
+func (k Keeper) sprtValuesFor(params types.Params) types.SPRTPrecomputedValues {
+	bz, err := sprtValuesBytes(params)
+	if err != nil {
+		k.LogError("Invalid SPRT params", types.Validation, "error", err)
 		return zeroSprtValues
 	}
 
 	var precomputed types.SPRTPrecomputedValues
 	if err := precomputed.Unmarshal(bz); err != nil {
-		k.LogError("Failed to unmarshal SPRT precomputed values from transient store", types.Validation, "error", err)
+		k.LogError("Failed to unmarshal SPRT precomputed values", types.Validation, "error", err)
 		return zeroSprtValues
 	}
 
@@ -135,16 +145,4 @@ func CalculateLogLLR(p1, p0 decimal.Decimal, isFail bool) decimal.Decimal {
 	}
 	res, _ := one.Sub(p1).Div(one.Sub(p0)).Ln(precision)
 	return res
-}
-
-func (k Keeper) precomputedSPRTBytes(ctx context.Context) ([]byte, error) {
-	c := txCacheFrom(ctx)
-	if c != nil && c.sprt != nil {
-		return c.sprt, nil
-	}
-	bz, err := k.transientStoreService.OpenTransientStore(ctx).Get(types.TransientSPRTValuesKey)
-	if c != nil && err == nil && len(bz) > 0 {
-		c.sprt = append([]byte(nil), bz...)
-	}
-	return bz, err
 }
