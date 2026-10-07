@@ -701,6 +701,9 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 			return nil, fmt.Errorf("rehydrate devshard %s for settlement: %w", id, buildErr)
 		}
 		built.active.Store(false)
+		if built.session != nil && g.store != nil {
+			built.session.SetInferenceCompletionStore(g.store)
+		}
 		rt = built
 		attachAccounting(g.accounting, rt)
 		log.Printf("devshard_settle_rehydrated escrow=%s (transient, non-resident)", id)

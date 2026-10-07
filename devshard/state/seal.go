@@ -668,6 +668,13 @@ func (sm *StateMachine) SealedNonceCount() int {
 	return len(sm.sealedNonces)
 }
 
+func (sm *StateMachine) InferenceSealed(id uint64) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	_, ok := sm.sealedNonces[id]
+	return ok
+}
+
 // FillSealedInferenceIndexGaps inserts a bare index row for each sealed id that
 // has no stored row and is not live. It never deletes and never overwrites an
 // existing row (rich or bare).

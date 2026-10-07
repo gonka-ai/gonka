@@ -45,7 +45,7 @@ var (
 
 const emptyStreamBodySampleLimit = 256 * 1024
 
-const longResponseFailureExemption = 280 * time.Second
+const longResponsePerfExemption = 280 * time.Second
 
 var (
 	InterChunkStallLogThreshold = 30 * time.Second
@@ -3550,7 +3550,7 @@ func skipEmptyStreamTimeout(inf *inflight, session nonceFinishedChecker, errorMi
 	return emptyStreamWithoutWinnerTimeoutSkipReason(inf, session)
 }
 
-func longResponseFailureExempt(inf *inflight, session *user.Session) bool {
+func longResponsePerfExempt(inf *inflight, session *user.Session) bool {
 	if inf == nil || session == nil || inf.probe || inf.sendTime.IsZero() {
 		return false
 	}
@@ -3560,14 +3560,14 @@ func longResponseFailureExempt(inf *inflight, session *user.Session) bool {
 	if inf.contentSource == "" {
 		return false
 	}
-	return time.Since(inf.sendTime) >= longResponseFailureExemption
+	return time.Since(inf.sendTime) >= longResponsePerfExemption
 }
 
-func (e *Redundancy) longResponseFailureExempt(inf *inflight) bool {
+func (e *Redundancy) longResponsePerfExempt(inf *inflight) bool {
 	if e == nil {
 		return false
 	}
-	return longResponseFailureExempt(inf, e.session)
+	return longResponsePerfExempt(inf, e.session)
 }
 
 func attemptCountsAsSuccessfulForPerf(inf *inflight, session *user.Session) bool {
@@ -3790,7 +3790,7 @@ func (e *Redundancy) recordSampleOnce(inf *inflight, params user.InferenceParams
 	if inf != nil && errors.Is(inf.processErr, types.ErrStateHashMismatch) {
 		return
 	}
-	if e.longResponseFailureExempt(inf) {
+	if e.longResponsePerfExempt(inf) {
 		return
 	}
 	inf.sampleOnce.Do(func() {
@@ -3997,7 +3997,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 		// sample for an OpenAI-style error stream.
 		return
 	}
-	if e.longResponseFailureExempt(inf) {
+	if e.longResponsePerfExempt(inf) {
 		return
 	}
 	participantKey := e.participantKeyForHost(inf.hostIdx)
@@ -4034,7 +4034,7 @@ func (e *Redundancy) recordWinnerTerminalFailureOnce(inf *inflight, params user.
 	if inf.contentChunks.Load() == 0 {
 		return
 	}
-	if e.longResponseFailureExempt(inf) {
+	if e.longResponsePerfExempt(inf) {
 		return
 	}
 	if !inf.hasRecordedStall() && (inf.err != nil || inf.processErr != nil) {
@@ -4240,17 +4240,6 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 							e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "nonce_already_finished")
 							return
 						}
-						if e.longResponseFailureExempt(inf) {
-							logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "timeout_skipped",
-								"host", inf.hostID,
-								"reason", "long_response_after_content",
-								"elapsed_ms", time.Since(inf.sendTime).Milliseconds(),
-								"content_chunks", inf.contentChunks.Load(),
-								"output_bytes", inf.outputBytes.Load(),
-							)
-							e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "long_response_after_content")
-							return
-						}
 						e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
 						result, err := e.runHandleTimeout(bgCtx, inf, params, errorMiss)
 						e.recordHandleTimeoutResult(bgCtx, inf, params, result, err, errorMiss, "background_timeout_failed")
@@ -4314,17 +4303,6 @@ func (e *Redundancy) voteTimeoutsForFailedRequest(ctx context.Context, failed []
 			// Only knowable here: at the end of the stream the finish is merely late, not missing.
 			if deliveredWholeAnswer(inf) {
 				logInferenceWarn(ctx, inf.escrowID, inf.nonce, "served_without_finish", "host", inf.hostID)
-			}
-			if e.longResponseFailureExempt(inf) {
-				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
-					"host", inf.hostID,
-					"reason", "long_response_after_content",
-					"elapsed_ms", time.Since(inf.sendTime).Milliseconds(),
-					"content_chunks", inf.contentChunks.Load(),
-					"output_bytes", inf.outputBytes.Load(),
-				)
-				e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "long_response_after_content")
-				return
 			}
 			e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
 			result, err := e.runHandleTimeout(ctx, inf, params, errorMiss)

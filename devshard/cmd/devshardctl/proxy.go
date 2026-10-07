@@ -694,6 +694,11 @@ func (p *Proxy) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := p.session.Finalize(r.Context()); err != nil {
+		if errors.Is(err, user.ErrInferenceCompletionPending) {
+			w.Header().Set("Retry-After", "30")
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
 	}

@@ -395,6 +395,9 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	// inside NewHTTPSession so in-process / E2E stacks keep nonce 1 for
 	// inference. The loop waits for router catalog admission before the
 	// first heartbeat/seed so a cold router cannot 503 those into quarantine.
+	if deps.completionStore != nil {
+		session.SetInferenceCompletionStore(deps.completionStore)
+	}
 	session.StartHeartbeatLoop()
 	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, legacyPerfSourcePath(legacyStoragePath), session.HostParticipantKeyList()); err != nil {
 		log.Printf("runtime %s: backfill legacy perf samples: %v", cfg.ID, err)
@@ -451,11 +454,12 @@ func (g *Gateway) runtimeBuildDepsFromSettings(perf *PerfTracker, settings Gatew
 		params = g.runtimeParams.BindProvider()
 	}
 	return runtimeBuildDeps{
-		bridge:       g.chainBridge(),
-		chainClient:  g.chainClient,
-		defaultModel: firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
-		perf:         perf,
-		params:       params,
+		completionStore: g.store,
+		bridge:          g.chainBridge(),
+		chainClient:     g.chainClient,
+		defaultModel:    firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
+		perf:            perf,
+		params:          params,
 	}
 }
 
@@ -895,6 +899,9 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 	if g == nil || rt == nil {
 		return
+	}
+	if rt.session != nil && g.store != nil {
+		rt.session.SetInferenceCompletionStore(g.store)
 	}
 	if rt.proxy != nil {
 		rt.proxy.phaseGate = g.phaseGate

@@ -296,7 +296,10 @@ type Session struct {
 	// finalizeInFlight guards against concurrent Finalize calls. A second
 	// call while the first is still running returns immediately with an error
 	// instead of spawning duplicate catch-up goroutines to the same hosts.
-	finalizeInFlight atomic.Bool
+	finalizeInFlight        atomic.Bool
+	completionStore         InferenceCompletionStore
+	completionDurabilityErr error
+	activeInferenceSends    int
 
 	// Retry settings for signature collection (handles transient host failures during finalize).
 	signatureCollectMaxRetries  int
@@ -1022,6 +1025,19 @@ func (s *Session) composeDiffLockedInclude(extraTxs []*types.DevshardTx, include
 	candidates = append(candidates, pending...)
 	candidates = append(candidates, extraTxs...)
 
+	hasStart := false
+	for _, tx := range candidates {
+		if tx.GetStartInference() != nil {
+			hasStart = true
+			break
+		}
+	}
+	if !hasStart {
+		if err := s.discardNextCompletionOrphanLocked(nonce); err != nil {
+			return types.Diff{}, 0, err
+		}
+	}
+
 	var diff types.Diff
 	if s.store != nil {
 		warmBefore := s.sm.WarmKeys()
@@ -1153,6 +1169,7 @@ func (s *Session) splitPendingForComposeLocked(includePinned []uint64) (candidat
 // deliberately not remembered: freeing their key lets an honest tx with the
 // same tx_type:id be queued on a later response.
 func (s *Session) retainPendingLocked(held, applied []*types.DevshardTx) {
+	s.resolveAppliedCompletionsLocked(applied)
 	affected := make(map[uint64]struct{})
 	for _, tx := range s.pendingTxs {
 		if tx == nil {
@@ -1421,6 +1438,9 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		s.mu.Unlock()
 		s.publishHeightSyncView()
 	}()
+	if s.finalizeInFlight.Load() {
+		return nil, types.ErrSessionFinalizing
+	}
 
 	nonce := s.nonce + 1
 	hostIdx := int(nonce % uint64(len(s.group)))
@@ -1479,8 +1499,20 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		}
 	}
 
+	if probe {
+		if err := s.discardNextCompletionOrphanLocked(nonce); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.registerCompletionLocked(nonce, params); err != nil {
+			return nil, fmt.Errorf("persist inference completion: %w", err)
+		}
+	}
 	diff, composedIdx, err := s.composeDiffLocked(txsForDiff)
 	if err != nil {
+		if !probe {
+			s.removeUncommittedCompletionLocked(nonce)
+		}
 		return nil, err
 	}
 	if composedIdx != hostIdx {
@@ -1534,6 +1566,18 @@ func (p *PreparedInference) Payload() *host.InferencePayload {
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	s.mu.Lock()
+	if s.finalizeInFlight.Load() {
+		s.mu.Unlock()
+		return nil, types.ErrSessionFinalizing
+	}
+	s.activeInferenceSends++
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.activeInferenceSends--
+		s.mu.Unlock()
+	}()
 	catchUp := p.catchUp
 	if p.farBehind {
 		var err error
@@ -1551,8 +1595,7 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 		Payload:                      p.Payload(),
 		LogprobsOptimizationOverride: p.params.LogprobsOptimizationOverride,
 	}, stream, func(partial *host.HostResponse) {
-		s.confirmStartOnReceipt(p.diff.Nonce, partial)
-		if receiptHandler != nil {
+		if s.confirmStartOnReceipt(p.diff.Nonce, partial) && receiptHandler != nil {
 			receiptHandler()
 		}
 	})
@@ -1566,14 +1609,14 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 // ends. A host that holds an empty stream open can outlast every other nonce on the escrow, and the
 // receipt is only carried to the chain by the next diff: queued late, it can find no diff left to ride,
 // and the nonce stays Pending forever, which is the one state its execution timeout cannot be voted in.
-func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostResponse) {
+func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostResponse) bool {
 	if resp == nil || len(resp.Receipt) == 0 || resp.ConfirmedAt <= 0 {
-		return
+		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sm == nil {
-		return
+		return false
 	}
 	confirm := &types.MsgConfirmStart{
 		InferenceId:       inferenceNonce,
@@ -1582,18 +1625,19 @@ func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostRe
 		ObservedHeight:    resp.ObservedHeight,
 		ObservedBlockHash: resp.ObservedBlockHash,
 	}
-	if err := s.sm.VerifyConfirmStart(confirm); err != nil {
-		return
+	if err := s.sm.VerifyExecutorReceipt(confirm); err != nil {
+		return false
 	}
-	s.addPendingTx(&types.DevshardTx{
-		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm},
-	})
+	if rec, ok := s.sm.Inference(inferenceNonce); ok && rec.Status == types.StatusPending {
+		s.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}})
+	}
 	// Both halves of the receipt move together: the chain learns the inference started, and this session
 	// must vote the execution timeout that matches. Leaving confirmedAt behind makes it vote a refusal
 	// against a record the chain already advanced, which every verifier then rejects.
 	if outcome, tracked := s.nonceStates[inferenceNonce]; tracked && resp.ConfirmedAt > 0 {
 		outcome.confirmedAt = resp.ConfirmedAt
 	}
+	return true
 }
 
 func (s *Session) heightSyncEscrowHints() *heightsync.EscrowHeightSyncHints {
@@ -1958,6 +2002,9 @@ func (s *Session) Finalize(ctx context.Context) error {
 	}
 	if phase == types.PhaseFinalizing {
 		return fmt.Errorf("finalize already in progress (phase=finalizing, nonce=%d)", s.nonce)
+	}
+	if err := s.guardCompletion(ctx); err != nil {
+		return err
 	}
 
 	n := len(s.group)

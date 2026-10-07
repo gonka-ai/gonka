@@ -1334,10 +1334,10 @@ func TestLongResponseAfterContentSkipsParticipantFailureAccounting(t *testing.T)
 		inf := &inflight{
 			hostIdx:  0,
 			nonce:    uint64(i + 1),
-			sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second)),
+			sendTime: time.Now().Add(-(longResponsePerfExemption + time.Second)),
 		}
-		inf.setReceiptAt(time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)))
-		inf.setFirstTokenAt(time.Now().Add(-(longResponseFailureExemption + 800*time.Millisecond)))
+		inf.setReceiptAt(time.Now().Add(-(longResponsePerfExemption + 900*time.Millisecond)))
+		inf.setFirstTokenAt(time.Now().Add(-(longResponsePerfExemption + 800*time.Millisecond)))
 		inf.contentChunks.Store(1)
 		inf.outputChunks.Store(1)
 		inf.contentSource = "delta.content"
@@ -2464,16 +2464,6 @@ func seedFirstTokenFallbackDelay(t *testing.T, perf *PerfTracker, model string, 
 	}
 }
 
-type receiptThenHangClient struct{}
-
-func (receiptThenHangClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
-	if receiptHandler != nil {
-		receiptHandler(&host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
-	}
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
 type hangBeforeReceiptClient struct{}
 
 func (hangBeforeReceiptClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
@@ -2493,11 +2483,13 @@ func TestShouldArmEscalationTimerFailClosedAtAttemptLimit(t *testing.T) {
 func TestRunInference_AllHostsHangAfterReceiptFailsClosed(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	setSpeculativeTiming(t, 50*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
-	env := setupTestProxyWithClients(t, []user.HostClient{
-		receiptThenHangClient{},
-		receiptThenHangClient{},
-		receiptThenHangClient{},
-	})
+	engines := make([]devshard.InferenceEngine, 3)
+	for i := range engines {
+		engine := stub.NewInferenceEngine()
+		engine.BlockUntilContextDone = true
+		engines[i] = engine
+	}
+	env := setupTestProxy(t, 3, engines, true)
 	params := defaultParams()
 	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 20*time.Millisecond)
 
@@ -2553,9 +2545,9 @@ func TestRunInference_OneHostHangAfterReceiptFailovers(t *testing.T) {
 func TestAnEmptyStreamDoesNotEarnTheLongResponseExemption(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
 
-	held := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second))}
+	held := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now().Add(-(longResponsePerfExemption + time.Second))}
 
-	require.False(t, longResponseFailureExempt(held, env.session),
+	require.False(t, longResponsePerfExempt(held, env.session),
 		"holding the stream open without a single content chunk must not buy an exemption")
 }
 
@@ -2563,7 +2555,7 @@ func TestAnEmptyStreamDoesNotEarnTheLongResponseExemption(t *testing.T) {
 // stream open used to earn the same exemption as one that was still generating.
 func TestAnErrorEventDoesNotEarnTheLongResponseExemption(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
-	longAgo := time.Now().Add(-(longResponseFailureExemption + time.Second))
+	longAgo := time.Now().Add(-(longResponsePerfExemption + time.Second))
 
 	generating := &inflight{hostIdx: 0, nonce: 1, sendTime: longAgo, contentSource: "delta.content"}
 	generating.contentChunks.Store(1)
@@ -2571,9 +2563,9 @@ func TestAnErrorEventDoesNotEarnTheLongResponseExemption(t *testing.T) {
 	erroring := &inflight{hostIdx: 0, nonce: 2, sendTime: longAgo}
 	erroring.contentChunks.Store(1)
 
-	require.True(t, longResponseFailureExempt(generating, env.session),
-		"a host still producing content must not be voted against for being slow")
-	require.False(t, longResponseFailureExempt(erroring, env.session),
+	require.True(t, longResponsePerfExempt(generating, env.session),
+		"long content may avoid a performance strike for being slow")
+	require.False(t, longResponsePerfExempt(erroring, env.session),
 		"one error event is not content, and holding the stream after it must not buy an exemption")
 }
 

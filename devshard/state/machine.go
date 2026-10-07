@@ -1293,17 +1293,36 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 // applying it. Timeout verifiers use this before treating a mempool receipt as
 // evidence that the executor accepted the job.
 func (sm *StateMachine) VerifyConfirmStart(msg *types.MsgConfirmStart) error {
+	return sm.verifyExecutorReceipt(msg, true)
+}
+
+func (sm *StateMachine) VerifyExecutorReceipt(msg *types.MsgConfirmStart) error {
+	return sm.verifyExecutorReceipt(msg, false)
+}
+
+func (sm *StateMachine) verifyExecutorReceipt(msg *types.MsgConfirmStart, pendingOnly bool) error {
 	if msg == nil || msg.ConfirmedAt <= 0 {
 		return fmt.Errorf("%w: missing or nonpositive confirmation time", types.ErrInvalidExecutorSig)
 	}
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	rec, ok := sm.state.Inferences[msg.InferenceId]
-	if !ok || rec.Status != types.StatusPending {
+	if !ok || rec.Status != types.StatusPending && (pendingOnly || rec.Status != types.StatusStarted || rec.ConfirmedAt != msg.ConfirmedAt) {
 		return types.ErrInvalidTransition
 	}
-	if err := sm.verifyExecutorEvidenceLogPlaneLocked(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: msg}}); err != nil {
-		return err
+	if rec.Status == types.StatusPending {
+		if err := sm.verifyExecutorEvidenceLogPlaneLocked(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: msg}}); err != nil {
+			return err
+		}
+	} else {
+		// Canonical receipts remain valid after the floor advances.
+		if heightsync.StampPresent(msg.ObservedBlockHash) {
+			if msg.ObservedHeight != rec.ConfirmedAtHeight {
+				return types.ErrInvalidTransition
+			}
+		} else if rec.ConfirmedAtHeight != 0 {
+			return types.ErrInvalidTransition
+		}
 	}
 	return sm.verifyConfirmStartLocked(msg, rec, false)
 }
