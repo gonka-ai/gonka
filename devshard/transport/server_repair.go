@@ -45,31 +45,53 @@ func (s *Server) HandleHeightSyncRepair(c echo.Context) (err error) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid json")
 	}
-	group := s.host.Group()
-	if int(req.RequesterSlot) >= len(group) {
-		return echo.NewHTTPError(http.StatusBadRequest, "invalid requester_slot")
-	}
-	slotKey := group[req.RequesterSlot].ValidatorAddress
-	if err := heightsync.VerifyRepairRequest(s.verifier, &req, slotKey); err != nil {
-		return echo.NewHTTPError(http.StatusForbidden, err.Error())
-	}
-	if !s.senderOwnsSlot(sender, req.RequesterSlot) {
-		return echo.NewHTTPError(http.StatusForbidden, "requester_slot does not match sender")
-	}
 
-	resp, err := s.host.BuildRepairHeightResponse(c.Request().Context(), &req)
+	resp, err := s.ServeHeightSyncRepair(c.Request().Context(), sender, &req)
 	if err != nil {
-		if errors.Is(err, heightsync.ErrRepairUnknownTurn) {
-			return echo.NewHTTPError(http.StatusNotFound, "unknown turn")
-		}
-		if errors.Is(err, heightsync.ErrRepairResponderBudget) {
-			return echo.NewHTTPError(http.StatusTooManyRequests, "repair budget exhausted")
-		}
-		logging.Debug("repair response failed", "subsystem", "heightsync",
-			"escrow", s.host.EscrowID(), "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "repair response failed")
+		return mapRepairHTTP(err)
 	}
 	return writeJSON(c, http.StatusOK, resp)
+}
+
+// ServeHeightSyncRepair is the transport-neutral core behind POST .../heightsync/repair
+// and SessionService.RepairHeightSync. Callers enforce group membership.
+func (s *Server) ServeHeightSyncRepair(ctx context.Context, sender string, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
+	group := s.host.Group()
+	if int(req.RequesterSlot) >= len(group) {
+		return nil, ErrInvalidRequesterSlot
+	}
+	slotKey := group[req.RequesterSlot].ValidatorAddress
+	if err := heightsync.VerifyRepairRequest(s.verifier, req, slotKey); err != nil {
+		return nil, err
+	}
+	if !s.senderOwnsSlot(sender, req.RequesterSlot) {
+		return nil, ErrRequesterSlotMismatch
+	}
+
+	resp, err := s.host.BuildRepairHeightResponse(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func mapRepairHTTP(err error) error {
+	switch {
+	case errors.Is(err, ErrInvalidRequesterSlot):
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	case errors.Is(err, heightsync.ErrRepairUnknownTurn):
+		return echo.NewHTTPError(http.StatusNotFound, "unknown turn")
+	case errors.Is(err, heightsync.ErrRepairResponderBudget):
+		return echo.NewHTTPError(http.StatusTooManyRequests, "repair budget exhausted")
+	case errors.Is(err, ErrRequesterSlotMismatch),
+		errors.Is(err, heightsync.ErrRepairVerify),
+		errors.Is(err, heightsync.ErrRepairNoSig),
+		errors.Is(err, heightsync.ErrRepairEmpty):
+		return echo.NewHTTPError(http.StatusForbidden, err.Error())
+	default:
+		logging.Debug("repair response failed", "subsystem", "heightsync", "error", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "repair response failed")
+	}
 }
 
 func (s *Server) senderOwnsSlot(sender string, slot uint32) bool {
@@ -85,6 +107,9 @@ func (s *Server) senderOwnsSlot(sender string, slot uint32) bool {
 
 // RepairProbe unicasts a signed repair request to targetSlot. Timeout /
 // unsigned / bad signature become an error; the host maps that to UNREACHABLE.
+// CloneWithSigner re-signs with this host key. RPC clients in peerClients
+// must already be attached as s.host.Signer() (SetPeerClients); a
+// user-signed RPCClient clone fails openSigned.
 func (s *Server) RepairProbe(ctx context.Context, targetSlot uint32, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
 	if s.peerClients == nil {
 		return nil, fmt.Errorf("repair: no peer clients")
@@ -99,7 +124,7 @@ func (s *Server) RepairProbe(ctx context.Context, targetSlot uint32, req *height
 			timeout = remain
 		}
 	}
-	client := pc.cloneWithSigner(s.host.Signer(), timeout)
+	client := pc.CloneWithSigner(s.host.Signer(), timeout)
 	resp, err := client.HeightSyncRepair(ctx, req)
 	if err != nil {
 		return nil, err

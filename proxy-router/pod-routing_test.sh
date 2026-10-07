@@ -97,6 +97,7 @@ docker run -d --name "$task_id-router" --network "container:$task_id-pod" \
     --user 99:99 --group-add 99 \
     --cap-drop ALL --cap-add NET_BIND_SERVICE --security-opt no-new-privileges \
     -v "$tmpdir/tls/cert.pem:/fixture/ca.pem:ro" -e NGINX_MODE=both \
+    -v "$tmpdir/tls:/etc/haproxy/ssl:ro" \
     -e PROXY_ROUTER_PUBLIC_BIND_ADDRESS="$pod_ip" \
     -e PROXY_ROUTER_POLICY_BIND_HOST=127.0.0.1 \
     -e PROXY_POLICY_POOL_HOST=127.0.0.1 -e PROXY_POLICY_POOL_SLOTS=1 \

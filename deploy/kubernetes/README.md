@@ -223,9 +223,18 @@ would reach the private PROXY-protocol nginx listener instead. Use an in-cluster
 client or the load balancer for public-route tests. Port forwarding versiond's
 8080 for read-only diagnostics does not have this distinction.
 
-TLS uses a standard Kubernetes TLS Secret, projected read-only into policy pods;
-the existing nginx watcher reloads certificate rotations. With no `tlsSecret`,
-the Service exposes HTTP only. Use a private L4 path or provision TLS before
+TLS uses a standard Kubernetes TLS Secret, projected read-only into the policy
+and proxy-router containers; the existing nginx watcher reloads certificate
+rotations, and proxy-router reloads its own `:9443` listener when the Secret's
+files change. With no `tlsSecret`, the Service exposes HTTP and cleartext HTTP/2
+on `9443`.
+
+Peer RPC (devshard phase 6) is a second published port. Other participants dial
+`{InferenceUrl.host}:9443` with HTTP/2, so the ingress Service must publish
+`9443` next to `80`/`443` on the same address as the InferenceUrl, and the load
+balancer must pass it through as TCP. Inside the cluster the ingress proxy-router
+forwards it to the router pods' `8081` listener; versiond and its children keep
+`8080`. The NetworkPolicy allows both. Use a private L4 path or provision TLS before
 public use. `externalTrafficPolicy: Local` preserves client source IP when the
 load balancer supports it. If the provider sends PROXY protocol, explicitly set
 its trusted CIDRs; leave this empty for direct connections. Generic L7 ingress

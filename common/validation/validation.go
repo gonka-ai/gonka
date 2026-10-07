@@ -19,6 +19,13 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const (
+	// replayTokenIDLimit is the exclusive token id bound used when the model's vocab size is unknown; it sits above any real vocab.
+	replayTokenIDLimit = 9_999_999
+	// maxReplayTopTokensPerPosition is the vLLM plugin's per-position top_tokens limit; wider positions are rejected before replay.
+	maxReplayTopTokensPerPosition = 64
+)
+
 // ErrPayloadUnavailable indicates payloads could not be retrieved after all retries
 // and the inference is post-upgrade (no on-chain fallback available).
 var ErrPayloadUnavailable = errors.New("payload unavailable after all retries")
@@ -135,6 +142,27 @@ func HasNonNumericTokens(et completionapi.EnforcedTokens) bool {
 		}
 	}
 	return false
+}
+
+// hasUnreplayableTokens reports whether replaying the enforced tokens would crash or be refused by the validator node.
+func hasUnreplayableTokens(enforcedTokens completionapi.EnforcedTokens, tokenIDLimit int) bool {
+	for _, enforcedToken := range enforcedTokens.Tokens {
+		tokenID, err := strconv.Atoi(enforcedToken.Token)
+		if err != nil || tokenID >= tokenIDLimit || len(enforcedToken.TopTokens) > maxReplayTopTokensPerPosition {
+			return true
+		}
+	}
+	return false
+}
+
+// rejectsEnforcedTokens reports whether a vLLM error body blames exactly the enforced_tokens field (the plugin's vocab check).
+func rejectsEnforcedTokens(body []byte) bool {
+	var errorBody struct {
+		Error struct {
+			Param string `json:"param"`
+		} `json:"error"`
+	}
+	return json.Unmarshal(body, &errorBody) == nil && errorBody.Error.Param == "enforced_tokens"
 }
 
 func validationReplaySeed(inferenceID string) int32 {
@@ -299,6 +327,7 @@ func DecimalFromFloat(f float64) *inference.Decimal {
 // claimedInputTokens and claimedOutputTokens are what the executor reported; if
 // the validator's re-execution uses fewer tokens, validation fails to catch inflation.
 // Pass 0 for both to skip the token count check.
+// vocabularySize bounds enforced token ids before replay; pass 0 when unknown to use replayTokenIDLimit.
 func ExecuteValidation(
 	ctx context.Context,
 	inferenceID string,
@@ -307,6 +336,7 @@ func ExecuteValidation(
 	execute func(ctx context.Context, body []byte) (*http.Response, error),
 	claimedInputTokens, claimedOutputTokens uint64,
 	logprobsMode string,
+	vocabularySize int,
 ) (ValidationResult, error) {
 	var requestMap map[string]interface{}
 	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
@@ -339,6 +369,24 @@ func ExecuteValidation(
 		return &InvalidInferenceResult{inferenceID, "Logprobs contain decoded text instead of numeric token IDs.", nil}, nil
 	}
 
+	tokenIDLimit := replayTokenIDLimit
+	if vocabularySize > 0 {
+		tokenIDLimit = vocabularySize
+	}
+	if !isEmptySentinel && hasUnreplayableTokens(enforcedTokens, tokenIDLimit) {
+		logging.Warn("validation failed: enforced tokens exceed the replay limits, not sent to the validator node", types.Validation,
+			"inferenceId", inferenceID)
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Enforced tokens exceed the replay limits."}, nil
+	}
+
+	if !isEmptySentinel {
+		if maxTokens, err := completionapi.EffectiveMaxTokens(modifiedRequest.NewBody); err == nil && uint64(len(enforcedTokens.Tokens)) > maxTokens {
+			logging.Warn("validation failed: more output positions than max_tokens, not sent to the validator node", types.Validation,
+				"inferenceId", inferenceID, "positions", len(enforcedTokens.Tokens), "maxTokens", maxTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "More output positions than max_tokens."}, nil
+		}
+	}
+
 	if isEmptySentinel {
 		logging.Info("Detected empty sentinel response; replaying prompt without enforced tokens to verify executor failure", types.Validation,
 			"inferenceId", inferenceID)
@@ -364,6 +412,12 @@ func ExecuteValidation(
 	respBodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	if resp.StatusCode == http.StatusBadRequest && rejectsEnforcedTokens(respBodyBytes) {
+		logging.Warn("validation failed: validator node rejected the executor's enforced tokens", types.Validation,
+			"inferenceId", inferenceID, "status", resp.StatusCode)
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Enforced tokens rejected by validator node."}, nil
 	}
 
 	// A 4xx (400/422) from the validator's own re-execution means the validator

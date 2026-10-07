@@ -11,7 +11,7 @@ import (
 )
 
 // TestA4_BadWarmKey verifies POST /testenv/grantees revokes the configured warm grantee
-// on mock-chain and that devshardd rejects warm-key transport auth via versiond-router afterward.
+// on mock-chain and that Connect gossip then permission-denies that key.
 func TestA4_BadWarmKey(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -50,8 +50,8 @@ func TestA4_BadWarmKey(t *testing.T) {
 	})
 	harness.RequireWarmKeyRevoked(t, eps, granter, warm)
 
-	harness.Step(t, "warm-key signed gossip/nonce via router should be forbidden after revocation")
-	harness.RequireWarmKeyTransportRejected(t, client, cfg, eps, cfg.WarmGrantee.PrivateKeyHex)
+	harness.Step(t, "revoked warm key is permission-denied on Connect gossip")
+	harness.RequireWarmKeyTransportRejected(t, stack, cfg, eps, cfg.WarmGrantee.PrivateKeyHex)
 }
 
 func requireHosts(t *testing.T, cfg *config.File, n int) {

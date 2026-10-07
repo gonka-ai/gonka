@@ -26,6 +26,11 @@ spec:
       port: 443
       targetPort: https
     {{- end }}
+    # Peer RPC over HTTP/2. Peers dial {InferenceUrl.host}:9443; TLS follows
+    # tlsSecret, cleartext h2 otherwise.
+    - name: rpc-h2
+      port: 9443
+      targetPort: rpc-h2
 ---
 apiVersion: v1
 kind: Service
@@ -95,6 +100,8 @@ spec:
               containerPort: 80
             - name: https
               containerPort: 443
+            - name: rpc-h2
+              containerPort: 9443
             - name: metrics
               containerPort: 8405
           env:
@@ -124,6 +131,10 @@ spec:
               value: "8080"
             - name: VERSIOND_ROUTER_ADMIN_PORT
               value: "8404"
+            - name: DEVSHARD_RPC_H2_PORT
+              value: "9443"
+            - name: DEVSHARD_RPC_H2_ROUTER_PORT
+              value: "8081"
             - name: VERSIOND_VERSIONS
               # Admit all allowed names through the ready-router reserve.
               value: ""
@@ -169,6 +180,13 @@ spec:
               readOnly: true
             - name: router-state
               mountPath: /var/lib/gonka-router
+            {{- if .Values.ingress.tlsSecret }}
+            # Same certificate nginx serves. The entrypoint refuses an HTTPS
+            # InferenceUrl without it and reloads :9443 on rotation.
+            - name: tls
+              mountPath: /etc/haproxy/ssl
+              readOnly: true
+            {{- end }}
       containers:
         - name: proxy-policy
           image: {{ required "images.proxyPolicy is required" .Values.images.proxyPolicy | quote }}

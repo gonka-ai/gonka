@@ -1,19 +1,27 @@
 #!/bin/sh
 
-# Own both long-lived processes. Execing HAProxy after forking the reconciler
-# makes its master inherit an unrelated child and wait forever after soft-stop.
-# Keep the restart loop outside HAProxy's process tree and wait for its workers
-# to finish established streams before exiting the container.
+# Own every long-lived process. Execing HAProxy after forking the reconciler
+# (or any other helper) makes its master inherit an unrelated child and wait
+# forever after soft-stop. Keep those loops outside HAProxy's process tree and
+# wait for its workers to finish established streams before exiting the
+# container.
+#
+# The catalog reconciler runs when ROUTING_CATALOG_URL is set.
+# ROUTER_SUPERVISOR_JOB is an optional extra helper, run as `sh -c`, stopped
+# with SIGTERM alongside the reconciler (proxy-router's :9443 certificate
+# watcher).
 set -eu
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 component=${ROUTING_CATALOG_COMPONENT:-router}
 haproxy_pid=
 catalog_pid=
+job_pid=
 shutdown_signal=
 wait_interrupted=0
 
 stop_catalog() {
     [ -z "$catalog_pid" ] || kill -TERM "$catalog_pid" 2>/dev/null || true
+    [ -z "$job_pid" ] || kill -TERM "$job_pid" 2>/dev/null || true
 }
 
 forward_signal() {
@@ -65,8 +73,14 @@ run_catalog_loop() {
 
 "$@" &
 haproxy_pid=$!
-run_catalog_loop &
-catalog_pid=$!
+if [ -n "${ROUTING_CATALOG_URL:-}" ]; then
+    run_catalog_loop &
+    catalog_pid=$!
+fi
+if [ -n "${ROUTER_SUPERVISOR_JOB:-}" ]; then
+    sh -c "$ROUTER_SUPERVISOR_JOB" &
+    job_pid=$!
+fi
 # A signal may arrive between starting a child and recording its PID.
 [ -z "$shutdown_signal" ] || stop_router "$shutdown_signal"
 
@@ -82,7 +96,10 @@ while :; do
 done
 haproxy_pid=
 stop_catalog
-while kill -0 "$catalog_pid" 2>/dev/null; do
-    wait "$catalog_pid" || true
+for helper in "$catalog_pid" "$job_pid"; do
+    [ -n "$helper" ] || continue
+    while kill -0 "$helper" 2>/dev/null; do
+        wait "$helper" || true
+    done
 done
 exit "$status"

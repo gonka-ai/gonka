@@ -1,7 +1,8 @@
 FROM haproxy:3.2-alpine
 
 LABEL ai.gonka.component="proxy-router" \
-      ai.gonka.proxy-policy-contract="1"
+      ai.gonka.proxy-policy-contract="1" \
+      ai.gonka.peer-rpc-h2="1"
 
 USER root
 RUN apk add --no-cache curl jq socat \
@@ -11,8 +12,11 @@ RUN apk add --no-cache curl jq socat \
        /var/lib/gonka-router
 
 COPY proxy-router/haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
+COPY proxy-router/grpc-exhausted.http /etc/haproxy/grpc-exhausted.http
 COPY proxy-router/versiond-backend.cfg.template /etc/haproxy/versiond-backend.cfg.template
+COPY proxy-router/rpc-h2-backend.cfg.template /etc/haproxy/rpc-h2-backend.cfg.template
 COPY proxy-router/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY proxy-router/rpc-h2-cert.sh /usr/local/bin/rpc-h2-cert.sh
 COPY proxy-router/route-status /usr/local/lib/proxy-router/route-status
 COPY router-runtime/catalog-cache router-runtime/catalog-reconciler router-runtime/catalog-status router-runtime/router-supervisor router-runtime/version-contract /usr/local/lib/router-runtime/
 RUN chmod +x /usr/local/bin/entrypoint.sh \
@@ -24,7 +28,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
 
 USER haproxy
 
-EXPOSE 80 443 18081 8404
+EXPOSE 80 443 18081 8404 9443
 
 # Native Kubernetes sidecar ordering stops this after nginx has drained. Keep
 # established public connections alive while the remaining bytes are flushed.

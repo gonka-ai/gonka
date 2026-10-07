@@ -228,6 +228,21 @@ make citest-versiond-host-evacuation
 # or: ./scripts/run-stack-citest.sh
 ```
 
+Peer-RPC Phase 6 keeps **this** gateway and `devshardd` and swaps only
+`versiond` / `versiond-router`. Previous participant images (HTTP/1.1) come from
+branch `devshard-0.2.15-v5`. **Existing `citest-*` stay without `proxy`.**
+
+```bash
+make build-baseline-infra
+make citest-stack \
+  TESTENV_VERSIOND_IMAGE=devshard-versiond:0.2.15-v5 \
+  TESTENV_VERSIOND_ROUTER_IMAGE=devshard-versiond-router:0.2.15-v5
+```
+
+Join-parity (HTTP/2, native gRPC, hop rate limits) is a later **proxy overlay** and
+`citest-peerrpc-parity`. Checklist:
+[`../docs/grpc-transport-phase6-plan.md`](../docs/grpc-transport-phase6-plan.md).
+
 `TestRouterStickiness` checks that repeated requests to
 `/<version>/sessions/<id>/…` land on the same versiond upstream.
 
@@ -252,6 +267,18 @@ recovery through shared Postgres, and admits the host again only after it
 converges.
 
 **Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees, A5 streamed HTTP 200 SSE error envelope accounted as `MsgErrorMiss` (companion to A2; 3-host stack). Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
+
+### Phase 6 RPC/h2 proxy overlay (optional)
+
+Adds a `proxy` service on in-network **`DEVSHARD_RPC_H2_PORT=8443`** that speaks HTTP/2 to `versiond-router:8081` (`proto h2`). JSON and catalog stay on **`http://versiond-router:8080`**. Default `make up` / `make citest-stack` / `make citest-images` **do not** start `proxy`.
+
+```bash
+cd devshard/testenv
+make gen-compose
+docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
+```
+
+Clients that opt in (`DEVSHARD_RPC_H2_UPGRADE=1`, `DEVSHARD_RPC_H2_HOST=proxy`, `DEVSHARD_RPC_H2_PORT=8443`) dial TCP `http://proxy:8443`. `DEVSHARD_RPC_H2_HOST` is a dial name only; HTTPS SNI/verify still use InferenceUrl’s hostname. Against 0.2.15-v5 that hop **fails closed** (versiond is `&http.Server{}` without h2c).
 
 ### Phase 10 observability overlay (optional)
 

@@ -3,11 +3,116 @@ package devshard
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
+	"time"
 )
 
-// ErrValidationAlreadyLeased is returned when another devshardd instance already
-// holds the validation lease for an inference.
-var ErrValidationAlreadyLeased = errors.New("validation leased by another instance")
+// ErrValidationAlreadyLeased is returned when a validation lease row already
+// exists for an inference, so this attempt did not acquire it.
+//
+// It does not mean another instance holds the lease. The acquire is an upsert
+// that reports only that some row was in the way; the row may be this
+// instance's own residue from before a restart, a row a sibling process holds,
+// or a completed row kept to block a duplicate submit. Callers that need to
+// tell those apart must inspect a LeaseConflict.
+var ErrValidationAlreadyLeased = errors.New("validation lease already held")
+
+// Validation lease statuses as carried on LeaseConflict. They mirror the
+// storage-layer values without importing the storage package.
+const (
+	LeaseStatusPending   = "pending"
+	LeaseStatusSubmitted = "submitted"
+	LeaseStatusSkipped   = "skipped"
+)
+
+// LeaseConflict reports what was observed about the lease row that refused an
+// acquire. It wraps ErrValidationAlreadyLeased, so existing errors.Is callers
+// are unaffected.
+//
+// Every field is diagnostic. The row is read after the failed acquire rather
+// than atomically with it, so it may already have moved on, and Status is
+// empty when the row could not be read at all.
+type LeaseConflict struct {
+	// Status is pending, submitted, or skipped; empty when unknown.
+	Status string
+	// Owner is the instance_address on the row. It is the participant signer
+	// address, shared by every instance of one participant. InstanceID is the
+	// process that wrote the row; empty on a row written before process
+	// identity existed. Hostname is the container that wrote it. Empty when
+	// unknown.
+	Owner      string
+	InstanceID string
+	Hostname   string
+	// ClaimedAt is when the row was last claimed; zero when unknown.
+	ClaimedAt time.Time
+	// Stale reports that ClaimedAt is older than the lease TTL, meaning nothing
+	// has reclaimed the row yet. Only meaningful for a pending status.
+	Stale bool
+	// Detail explains an empty Status: the row was gone by the time it was
+	// read, or the read itself failed.
+	Detail string
+}
+
+// LeaseRowAbsentDetail is Detail when Acquire lost to a row that was gone
+// before the follow-up read. The inference can be picked again immediately.
+const LeaseRowAbsentDetail = "row absent when read; already released"
+
+// ReleasedBeforeRead reports that the conflicting row was already gone, so a
+// retry does not need to wait out the validation cooldown.
+func (e *LeaseConflict) ReleasedBeforeRead() bool {
+	return e != nil && !e.Observed() && e.Detail == LeaseRowAbsentDetail
+}
+
+// Observed reports whether the conflicting row was actually read.
+func (e *LeaseConflict) Observed() bool {
+	return e != nil && e.Status != ""
+}
+
+// OwnerIsSelf reports whether this conflict's row was written by the process
+// identified by address and instanceID. Hostname is not consulted. An empty
+// instance id never matches, including a legacy row whose instance id is blank.
+func (e *LeaseConflict) OwnerIsSelf(address, instanceID string) bool {
+	if e == nil || instanceID == "" || e.InstanceID == "" {
+		return false
+	}
+	return e.Owner == address && e.InstanceID == instanceID
+}
+
+func (e *LeaseConflict) Error() string {
+	if e == nil {
+		return ErrValidationAlreadyLeased.Error()
+	}
+	var b strings.Builder
+	b.WriteString(ErrValidationAlreadyLeased.Error())
+	if !e.Observed() {
+		detail := e.Detail
+		if detail == "" {
+			detail = "row not read"
+		}
+		return b.String() + ": " + detail
+	}
+	fmt.Fprintf(&b, ": status=%s", e.Status)
+	if e.Owner != "" {
+		fmt.Fprintf(&b, " owner=%s", e.Owner)
+	}
+	if e.InstanceID != "" {
+		fmt.Fprintf(&b, " instance_id=%s", e.InstanceID)
+	}
+	if e.Hostname != "" {
+		fmt.Fprintf(&b, " hostname=%s", e.Hostname)
+	}
+	if !e.ClaimedAt.IsZero() {
+		fmt.Fprintf(&b, " claimed_at=%s age=%s",
+			e.ClaimedAt.UTC().Format(time.RFC3339), time.Since(e.ClaimedAt).Truncate(time.Second))
+	}
+	if e.Stale {
+		b.WriteString(" stale=true")
+	}
+	return b.String()
+}
+
+func (e *LeaseConflict) Unwrap() error { return ErrValidationAlreadyLeased }
 
 // ErrValidationLeaseAbandoned is returned when this instance must not submit or
 // complete a lease: local acquire TTL exceeded, or the pending lease is no
@@ -18,6 +123,10 @@ var ErrValidationLeaseAbandoned = errors.New("validation lease abandoned")
 // when the refusal is because this instance was too slow, not because someone
 // else owns the work. Callers that release the lease should also back off.
 var ErrValidationLeaseTTLExceeded = errors.New("elapsed since acquire exceeds lease TTL")
+
+// ErrValidationDeferred leaves the obligation retryable when local credits are
+// exhausted. It must never mark a lease skipped.
+var ErrValidationDeferred = errors.New("validation deferred: no credit")
 
 // ErrValidationSkipped signals that a validation attempt was deliberately
 // abandoned without producing a MsgValidation or MsgValidationVote.
@@ -36,6 +145,17 @@ type InferenceEngine interface {
 // Implemented by dapi using existing broker + completionapi.
 type ValidationEngine interface {
 	Validate(ctx context.Context, req ValidateRequest) (*ValidateResult, error)
+}
+
+// ValidationAvailability optionally lets schedulers avoid work without credits.
+type ValidationAvailability interface {
+	CanValidate(model string) bool
+}
+
+// CanValidate is a scheduling hint; execution must still reserve a credit.
+func CanValidate(v ValidationEngine, model string) bool {
+	gate, ok := v.(ValidationAvailability)
+	return !ok || gate.CanValidate(model)
 }
 
 // ValidationCompletionRecorder can be implemented by validation engines that

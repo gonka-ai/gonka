@@ -17,6 +17,9 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+    - name: h2
+      port: 8081
+      targetPort: h2
     - name: admin
       port: 8404
       targetPort: admin
@@ -71,6 +74,9 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            # Peer RPC from the ingress proxy-router (proto h2). :8080 denies /rpc/.
+            - name: h2
+              containerPort: 8081
             - name: admin
               containerPort: 8404
           env:

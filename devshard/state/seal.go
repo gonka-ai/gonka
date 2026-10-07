@@ -134,19 +134,48 @@ func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.Infer
 	return rec, nil
 }
 
+// rootComponents is one pass over the values that enter the state root.
+// The mismatch diagnostic reuses these bytes instead of hashing the live set again.
+type rootComponents struct {
+	hostStatsHash  []byte
+	inferencesHash []byte
+	warmKeysHash   []byte
+	heightSyncHash []byte
+	restHash       []byte
+	root           []byte
+}
+
+func (sm *StateMachine) rootComponentsLocked() (rootComponents, error) {
+	st := sm.state
+	hs := types.HeightSyncEscrowCommitFromState(st)
+	acc := sealedAccBytes32(st.SealedAcc)
+	hostStatsHash, err := computeHostStatsHash(st.HostStats)
+	if err != nil {
+		return rootComponents{}, err
+	}
+	liveHash, err := computeInferencesHash(st.Inferences)
+	if err != nil {
+		return rootComponents{}, err
+	}
+	warmKeysHash := computeWarmKeysHash(st.WarmKeys)
+	heightSyncHash := hashHeightSyncEscrow(hs)
+	restHash := restHashFromV2Parts(st.Balance, acc, liveHash, warmKeysHash, heightSyncHash)
+	return rootComponents{
+		hostStatsHash:  hostStatsHash,
+		inferencesHash: liveHash,
+		warmKeysHash:   warmKeysHash,
+		heightSyncHash: heightSyncHash,
+		restHash:       restHash,
+		root:           ComputeStateRootFromRestHash(hostStatsHash, restHash, st.Fees, st.Phase, st.StateRootAndProtocolVersion),
+	}, nil
+}
+
 func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {
-	hostStatsHash, err := computeHostStatsHash(sm.state.HostStats)
+	parts, err := sm.rootComponentsLocked()
 	if err != nil {
 		return nil, err
 	}
-
-	acc := sealedAccBytes32(sm.state.SealedAcc)
-	restHash, err := ComputeRestHashV2(sm.state.Balance, acc, sm.state.Inferences, sm.state.WarmKeys, types.HeightSyncEscrowCommitFromState(sm.state))
-	if err != nil {
-		return nil, err
-	}
-
-	return ComputeStateRootFromRestHash(hostStatsHash, restHash, sm.state.Fees, sm.state.Phase, sm.state.StateRootAndProtocolVersion), nil
+	return parts.root, nil
 }
 
 func (sm *StateMachine) ExportCommittedEntries() map[uint64][]byte {
@@ -726,7 +755,43 @@ func (sm *StateMachine) RebuildSealedInferenceIndexFromDiffs(store storage.Stora
 	// needs only the group and config captured above plus the slot lookup maps,
 	// which are immutable after construction.
 	folded := sm.foldInferenceRecordsFromDiffs(group, price, threshold, records)
+	return writeFoldedSealedIndex(store, escrowID, sealedNonces, live, folded)
+}
 
+// RebuildSealedInferenceIndexFromRange wipes the escrow's sealed-inference rows
+// and reinserts them from [from, to] plus current live RAM records. The journal
+// is folded one page at a time. The wipe runs only after that fold finishes, so
+// a failed read leaves the existing rows in place.
+func (sm *StateMachine) RebuildSealedInferenceIndexFromRange(store storage.Storage, from, to uint64) error {
+	if store == nil {
+		store = sm.inferenceStore
+	}
+
+	sm.mu.RLock()
+	escrowID := sm.state.EscrowID
+	group := append([]types.SlotAssignment(nil), sm.state.Group...)
+	price := sm.state.Config.TokenPrice
+	threshold := sm.state.Config.VoteThreshold
+	sealedNonces := maps.Clone(sm.sealedNonces)
+	live := make(map[uint64]*types.InferenceRecord, len(sm.state.Inferences))
+	for id, rec := range sm.state.Inferences {
+		live[id] = cloneInferenceRecord(rec)
+	}
+	sm.mu.RUnlock()
+
+	folded := make(map[uint64]*types.InferenceRecord)
+	if len(group) > 0 && from <= to {
+		if err := storage.ReadDiffPages(store, escrowID, from, to, func(page []types.DiffRecord) error {
+			sm.foldInferenceRecordsInto(group, price, threshold, page, folded)
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	return writeFoldedSealedIndex(store, escrowID, sealedNonces, live, folded)
+}
+
+func writeFoldedSealedIndex(store storage.Storage, escrowID string, sealedNonces map[uint64]uint64, live map[uint64]*types.InferenceRecord, folded map[uint64]*types.InferenceRecord) error {
 	if err := store.DeleteSealedInferences(escrowID); err != nil {
 		return err
 	}
@@ -767,8 +832,15 @@ func (sm *StateMachine) RebuildSealedInferenceIndexFromDiffs(store storage.Stora
 // before the walk; everything else it reads is immutable after construction.
 func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignment, price uint64, threshold uint32, records []types.DiffRecord) map[uint64]*types.InferenceRecord {
 	out := make(map[uint64]*types.InferenceRecord)
-	if len(group) == 0 {
-		return out
+	sm.foldInferenceRecordsInto(group, price, threshold, records, out)
+	return out
+}
+
+// foldInferenceRecordsInto replays records into out. A later page continues
+// the same map, so a paged walk matches one pass over the whole journal.
+func (sm *StateMachine) foldInferenceRecordsInto(group []types.SlotAssignment, price uint64, threshold uint32, records []types.DiffRecord, out map[uint64]*types.InferenceRecord) {
+	if len(group) == 0 || out == nil {
+		return
 	}
 	groupLen := uint64(len(group))
 	for _, rec := range records {
@@ -897,7 +969,6 @@ func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignme
 			}
 		}
 	}
-	return out
 }
 
 // persistLiveInferenceObsLocked upserts the current live inference snapshot

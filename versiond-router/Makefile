@@ -1,6 +1,6 @@
 .PHONY: all build-docker release test-render test-compose-contract test-fleet
 .PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose
-.PHONY: test-join-versiond-healthcheck test-pool-status test-endpoints-render
+.PHONY: test-join-versiond-healthcheck test-pool-status test-endpoints-render test-h2-backend-h1-check
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
@@ -53,6 +53,11 @@ test-pool-status:
 # must all render valid pools; the real image validates each shape.
 test-endpoints-render:
 	@HAPROXY_IMAGE=$(HAPROXY_IMAGE) ./endpoints-render_test.sh
+
+# proto h2 toward versiond, with the health check kept on HTTP/1.1. An
+# HTTP/1.1 /readyz becomes UP. A proto h2 line with no check stays "no check".
+test-h2-backend-h1-check:
+	@HAPROXY_IMAGE=$(HAPROXY_IMAGE) ./h2-backend-h1-check_test.sh
 
 # The join deployment temporarily supports both the pinned pre-/readyz image
 # and the replacement built from this release. A 404 means the endpoint does
@@ -196,6 +201,8 @@ test-hash-ring:
 			curl -s -o /dev/null -m 3 \
 				"http://127.0.0.1:18131/v4/sessions/esc-$$escrow/chat" || true; \
 			curl -s -o /dev/null -m 3 \
+				"http://127.0.0.1:18131/v4/sessions/esc-$$escrow/rpc/devshard.transport.v1.PeerAuthService/Attach" || true; \
+			curl -s -o /dev/null -m 3 \
 				"http://127.0.0.1:18131/sessions/esc-$$escrow/diffs" || true; \
 			curl -s -o /dev/null -m 3 \
 				"http://127.0.0.1:18131/stats/shards/esc-$$escrow" || true; \
@@ -207,8 +214,8 @@ test-hash-ring:
 	probe "127.0.0.2 127.0.0.3 127.0.0.4 127.0.0.5" > "$$tmpdir/forward"; \
 	probe "127.0.0.5 127.0.0.4 127.0.0.3 127.0.0.2" > "$$tmpdir/reversed"; \
 	probe "127.0.0.4 127.0.0.2 127.0.0.5 127.0.0.3" > "$$tmpdir/shuffled"; \
-	[ "$$(wc -l < "$$tmpdir/forward")" -eq 24 ] \
-		|| fail "expected three routing decisions per escrow, got: $$(cat "$$tmpdir/forward")"; \
+	[ "$$(wc -l < "$$tmpdir/forward")" -eq 32 ] \
+		|| fail "expected four routing decisions per escrow (chat, rpc, diffs, stats), got: $$(cat "$$tmpdir/forward")"; \
 	awk '{ n=split($$1, p, "/"); \
 		if (p[2] == "sessions") escrow=p[3]; \
 		else if (p[2] == "stats") escrow=p[4]; \
@@ -335,6 +342,8 @@ test-version-routing:
 		for i in $$(seq 80); do \
 			if docker exec gonka-vp-bind-$$name grep -q \
 				"^[[:space:]]*bind $$address:8080" /etc/haproxy/haproxy.cfg \
+				&& docker exec gonka-vp-bind-$$name grep -q \
+				"^[[:space:]]*bind $$address:8081 proto h2" /etc/haproxy/haproxy.cfg \
 				2>/dev/null; then return 0; fi; \
 			sleep 0.1; \
 		done; \
@@ -385,6 +394,7 @@ test-version-routing:
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="$$legacy_versions" \
+		-e VERSIOND_ROUTER_BACKEND_H2=false \
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 60); do \
 		curl -s -o /dev/null -m 2 http://127.0.0.1:18132/v4/sessions/warm/x && break; \
@@ -899,6 +909,7 @@ test-version-routing:
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		-e VERSIOND_ROUTER_BACKEND_H2=false \
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 30); do \
 		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' >/dev/null; then break; fi; \
@@ -1121,6 +1132,7 @@ test-version-routing:
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		-e VERSIOND_ROUTER_BACKEND_H2=false \
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 20); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
@@ -1254,6 +1266,7 @@ test-version-routing:
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=4 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		-e VERSIOND_ROUTER_BACKEND_H2=false \
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 30); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
@@ -1298,6 +1311,7 @@ test-version-routing:
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=1 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		-e VERSIOND_ROUTER_BACKEND_H2=false \
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 20); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
@@ -1305,7 +1319,7 @@ test-version-routing:
 			| jq -e '.state == "capacity-exhausted"' >/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
-	[ "$$(docker exec gonka-vp-router grep -c '^backend versiond_dynamic_' \
+	[ "$$(docker exec gonka-vp-router grep -c '^backend versiond_dynamic_[0-9]*$$' \
 		/etc/haproxy/haproxy.cfg)" -eq 3 ] \
 		|| fail "accepted LKG routes did not raise the inner router's effective capacity"; \
 	for i in $$(seq 16); do \
@@ -1340,6 +1354,7 @@ test-version-routing:
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		-e VERSIOND_ROUTER_BACKEND_H2=false \
 		gonka-versiond-router-probe >/dev/null; \
 	restored_host=; \
 	for i in $$(seq 30); do \
@@ -1371,6 +1386,7 @@ test-version-routing:
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		-e VERSIOND_ROUTER_BACKEND_H2=false \
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 30); do \
 		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' \
@@ -1402,6 +1418,7 @@ test-version-routing:
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		-e VERSIOND_ROUTER_BACKEND_H2=false \
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 30); do \
 		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' \
@@ -1441,6 +1458,7 @@ test-version-routing:
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		-e VERSIOND_ROUTER_BACKEND_H2=false \
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 20); do \
 		normalized_at=$$(docker exec gonka-vp-router \
@@ -1486,6 +1504,25 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		|| fail "HA pool lost consistent hashing"; \
 	grep -q 'set-var(txn.hashkey).*field(3,/).*sessions' "$$tmpdir/mixed.cfg" \
 		|| fail "versionless session routes do not reuse the escrow routing key"; \
+	grep -Fq 'reg ^/[^/]+/sessions/[^/]+' "$$tmpdir/mixed.cfg" \
+		|| fail "session stickiness regex is gone; /rpc/ would no longer hash by escrow"; \
+	grep -q '^[[:space:]]*bind :8080$$' "$$tmpdir/mixed.cfg" \
+		|| fail "HTTP/1.1 JSON/healthz/catalog listener is not on :8080"; \
+	grep -q '^[[:space:]]*bind :8081 proto h2$$' "$$tmpdir/mixed.cfg" \
+		|| fail "published-hop frontend is not proto h2"; \
+	if awk '/^frontend versiond_in$$/{inside=1; next} /^frontend /{inside=0} \
+		inside && /stick-table/ {found=1} END{exit !found}' "$$tmpdir/mixed.cfg"; then \
+		fail "per-IP zones must not be keyed on versiond-router RemoteAddr"; \
+	fi; \
+	awk ' \
+		$$1 == "backend" { json = ($$2 !~ /_rpc$$/); rpc = ($$2 ~ /_rpc$$/); next } \
+		$$1 == "server" || $$1 == "server-template" { \
+			if (json && /proto h2/) json_h2 = 1; \
+			if (rpc) { rpc_n++; if ($$0 !~ /proto h2 check-proto h1/) rpc_plain = 1 } \
+		} \
+		END { if (json_h2 || rpc_plain || rpc_n == 0) exit 1 } \
+	' "$$tmpdir/mixed.cfg" \
+		|| fail "JSON backends must stay HTTP/1.1 and peer-RPC twins must enable proto h2 with an HTTP/1.1 check"; \
 	grep -q '^[[:space:]]*nameserver dns 10.96.0.10:53$$' "$$tmpdir/mixed.cfg" \
 		|| fail "the configured DNS resolver was not rendered"; \
 	grep -q '^[[:space:]]*server-template versiond .*hash-key addr' "$$tmpdir/mixed.cfg" \
@@ -1556,7 +1593,7 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		|| fail "declared versions lack the pre-v5 route-health fallback"; \
 	grep -q '^backend versiond_pool_v5$$' "$$tmpdir/mixed.cfg" \
 		|| fail "no backend for declared version v5"; \
-	[ "$$(grep -c '^backend versiond_dynamic_' "$$tmpdir/mixed.cfg")" -eq 32 ] \
+	[ "$$(grep -c '^backend versiond_dynamic_[0-9]*$$' "$$tmpdir/mixed.cfg")" -eq 32 ] \
 		|| fail "the default dynamic governance capacity is not pre-rendered"; \
 	[ "$$(grep -c '^versiond_dynamic_.* __unassigned__$$' \
 		"$$tmpdir/mixed.cfg.version-slots.map")" -eq 32 ] \
@@ -1674,6 +1711,28 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		|| fail "catalog mode does not fail closed for names absent from governance"; \
 	grep -q '^    server catalog 127\.0\.0\.1:1 disabled$$' "$$tmpdir/catalog-only.cfg" \
 		|| fail "catalog mode starts with a false-green status metric"; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_ROUTER_H2_PORT=8080 \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad-h2-port.cfg" \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "an h2 listen colliding with :8080 was accepted"; \
+	fi; \
+	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_ROUTER_BACKEND_H2=false \
+		VERSIOND_VERSIONS=v4 \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/h1-backend.cfg" \
+		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/h1-backend.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/h1-backend.versions.map" \
+		./entrypoint.sh; \
+	if grep -q '^[[:space:]]*server-template versiond .* proto h2' "$$tmpdir/h1-backend.cfg"; then \
+		fail "VERSIOND_ROUTER_BACKEND_H2=false still rendered proto h2 backends"; \
+	fi; \
+	grep -q '^[[:space:]]*bind :8081 proto h2$$' "$$tmpdir/h1-backend.cfg" \
+		|| fail "HTTP/1.1 backend mode must still accept h2 on the published-hop frontend"; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTING_CATALOG_URL=ftp://catalog/versions \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
@@ -1888,15 +1947,17 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/custom-bind.versions.map" \
 		./entrypoint.sh; \
 	grep -q '^[[:space:]]*bind 192.0.2.10:8080' "$$tmpdir/custom-bind.cfg" \
+		&& grep -q '^[[:space:]]*bind 192.0.2.10:8081 proto h2' "$$tmpdir/custom-bind.cfg" \
 		&& grep -q '^[[:space:]]*bind 127.0.0.1:18404' "$$tmpdir/custom-bind.cfg" \
 		&& grep -q '^[[:space:]]*bind 192.0.2.10:18404' "$$tmpdir/custom-bind.cfg" \
 		&& grep -q '^[[:space:]]*bind 192.0.2.11:8405' "$$tmpdir/custom-bind.cfg" \
 		|| fail "custom router bind settings were not rendered"; \
-	for cfg in mixed allha custom-bind; do \
+	for cfg in mixed allha custom-bind h1-backend; do \
 		docker run --rm --user "$$(id -u):$$(id -g)" -v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \
 			haproxy -c -f "$$tmpdir/$$cfg.cfg" >/dev/null \
 			|| fail "$$cfg.cfg is not valid HAProxy configuration"; \
 	done; \
+	./h2-watch-drain_test.sh || fail "http/2 watch drain"; \
 	echo "test-render: ok"
 
 VERSION ?= $(shell git describe --always)

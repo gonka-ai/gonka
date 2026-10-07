@@ -93,11 +93,12 @@ type EscrowRotationSettings struct {
 }
 
 type EscrowRotationModelSettings struct {
-	ModelID       string `json:"model_id"`
-	TempCount     int    `json:"temp_count"`
-	TargetCount   int    `json:"target_count"`
-	Amount        uint64 `json:"amount"`
-	PrivateKeyEnv string `json:"private_key_env"`
+	ModelID           string `json:"model_id"`
+	TempCount         int    `json:"temp_count"`
+	TargetCount       int    `json:"target_count"`
+	Amount            uint64 `json:"amount"`
+	PrivateKeyEnv     string `json:"private_key_env"`
+	SettlementEnabled *bool  `json:"settlement_enabled,omitempty"`
 }
 
 const (

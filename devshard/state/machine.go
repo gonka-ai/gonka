@@ -7,6 +7,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strings"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -200,6 +201,16 @@ func (sm *StateMachine) HeartbeatConfig() heightsync.HeartbeatConfig {
 	return sm.heartbeatCfg
 }
 
+// ProtocolVersion is the destshard runtime tag stamped at session bind.
+func (sm *StateMachine) ProtocolVersion() string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.state == nil {
+		return ""
+	}
+	return sm.state.StateRootAndProtocolVersion
+}
+
 // EffectiveV2Composition reports whether this session uses Phase 1 v2
 // state-root composition. This binary always returns true (sealed accumulator).
 func (sm *StateMachine) EffectiveV2Composition() bool {
@@ -342,19 +353,7 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 }
 
 func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
-	diffContent := BuildDiffContent(sm.state.EscrowID, diff.Nonce, diff.Txs, diff.PostStateRoot)
-	data, err := deterministicMarshal.Marshal(diffContent)
-	if err != nil {
-		return fmt.Errorf("marshal diff content: %w", err)
-	}
-	recovered, err := sm.verifier.RecoverAddress(data, diff.UserSig)
-	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidUserSig, err)
-	}
-	if recovered != sm.userAddress {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidUserSig, sm.userAddress, recovered)
-	}
-	return nil
+	return VerifyDiffUserSig(sm.verifier, sm.userAddress, sm.state.EscrowID, diff)
 }
 
 // ApplyLocal applies txs without signature verification. Used by the user
@@ -777,15 +776,18 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 		}
 	}
 
-	// 7. Compute state root.
-	root, err := sm.computeStateRootLocked()
+	// 7. Compute state root. Keep the component hashes so a mismatch can
+	// report them without walking the live inference set a second time.
+	parts, err := sm.rootComponentsLocked()
 	if err != nil {
 		sm.restoreMutable(snap)
 		return nil, fmt.Errorf("compute state root: %w", err)
 	}
+	root := parts.root
 
 	// 8. Verify post_state_root if present. On mismatch, roll back everything.
 	if len(postStateRoot) > 0 && !bytes.Equal(root, postStateRoot) {
+		inputs := sm.rootInputsFromComponents(nonce, parts)
 		sm.logStateRootMismatchDiagnosticLocked(StateRootMismatchOpts{
 			Side:          "devshardd",
 			Nonce:         nonce,
@@ -794,7 +796,11 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 			SealClock:     sealClockWin,
 		})
 		sm.restoreMutable(snap)
-		return nil, fmt.Errorf("%w: diff %x, computed %x", types.ErrPostStateRootMismatch, postStateRoot, root)
+		return nil, &RootDivergenceError{
+			Inputs:   inputs,
+			DiffRoot: append([]byte(nil), postStateRoot...),
+			Computed: append([]byte(nil), root...),
+		}
 	}
 
 	logging.Debug("applied diff", "subsystem", "state", "nonce", nonce, "txs", len(txs))
@@ -896,20 +902,26 @@ func (sm *StateMachine) RestoreState(state *types.EscrowState) error {
 }
 
 // RestoreStateWithFloor is RestoreState with an optional snapshot floor.
-// The journal is preferred so the turn tracker is reconstructed. A non-nil
-// floor is installed when GetDiffs fails, which is the restore hole that
-// previously served an empty index and skipped L0. If LatestNonce > 0 and
-// neither source can reconstruct the fold, restore fails rather than splitting
-// the escrow.
+// The journal is preferred so the turn tracker is reconstructed. That read
+// is paged. A non-nil floor is installed when the read fails, which is the
+// restore hole that previously served an empty index and skipped L0. If
+// LatestNonce > 0 and neither source can reconstruct the fold, restore fails
+// rather than splitting the escrow.
+//
+// The fold runs on a private copy without sm.mu. The state, tracker, and
+// floor are swapped in together under the lock, so readers see the previous
+// state until the restore is complete.
 func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *heightsync.FloorIndex) error {
 	if state == nil {
 		return nil
 	}
+	restored := cloneEscrowState(state)
+	hs := foldHeightSync(sm.inferenceStore, restored, sm.heartbeatCfg, floor)
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.state = cloneEscrowState(state)
+	sm.state = restored
 	sm.rebuildCommittedEntriesLocked()
-	return sm.rebuildHeightSyncLocked(floor)
+	return hs.installLocked(sm)
 }
 
 func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
@@ -1168,6 +1180,10 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
 func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error {
 	if sm.state.Phase != types.PhaseActive {
 		return types.ErrSessionFinalizing
+	}
+
+	if v := strings.TrimSpace(msg.GetProtocolVersion()); v != "" && v != sm.state.StateRootAndProtocolVersion {
+		return fmt.Errorf("%w: start %s session %s", types.ErrProtocolVersionMismatch, v, sm.state.StateRootAndProtocolVersion)
 	}
 
 	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit
@@ -1897,6 +1913,19 @@ func (sm *StateMachine) SlotAddress(slotID uint32) string {
 
 func (sm *StateMachine) AddressSlotCount(addr string) uint32 {
 	return sm.addressToSlotCount[addr]
+}
+
+// LiveAndSealedCounts reports how many inferences are in the live map and how
+// many have been folded into the sealed accumulator. Both are map lengths, so
+// the call does not walk the records.
+func (sm *StateMachine) LiveAndSealedCounts() (live, sealed int) {
+	if sm == nil {
+		return 0, 0
+	}
+	sm.mu.RLock()
+	live, sealed = len(sm.state.Inferences), len(sm.sealedNonces)
+	sm.mu.RUnlock()
+	return live, sealed
 }
 
 // LiveInferenceIDs returns the set of inference ids currently in live state.

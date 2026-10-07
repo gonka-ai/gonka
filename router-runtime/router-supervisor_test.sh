@@ -189,7 +189,10 @@ for component in versiond-router proxy-router; do
     docker start "$container" >/dev/null
     for _ in $(seq 60); do ready && break; sleep 0.2; done
     ready || fail "$component did not restart for master-failure test"
-    master_pid=$(docker exec "$container" ps -o pid,ppid,comm | awk '$2 == 1 && $3 == "haproxy" { print $1 }')
+    # The master is the haproxy process whose parent is not haproxy. Its
+    # parent is the supervisor chain (versiond-router adds h2-watch-drain), so
+    # PID 1 is not a reliable anchor.
+    master_pid=$(docker exec "$container" ps -o pid,ppid,comm | awk '$3 == "haproxy" { pid[$1] = $2 } END { for (p in pid) if (!(pid[p] in pid)) print p }')
     [ -n "$master_pid" ] || fail "$component master process is missing"
     docker exec "$container" kill -KILL "$master_pid"
     for _ in $(seq 60); do

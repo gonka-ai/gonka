@@ -96,6 +96,12 @@ spec:
               value: ""
             - name: DEVSHARD_STORAGE_MODE
               value: postgres
+            # Children inherit these and dial every peer's proxy-router HTTP/2
+            # port. HA peers refuse /sessions/.../rpc/ on InferenceUrl :8080.
+            - name: DEVSHARD_RPC_H2_UPGRADE
+              value: "true"
+            - name: DEVSHARD_RPC_H2_PORT
+              value: "9443"
             - name: VERSIOND_HOST_SHUTDOWN_BUDGET
               value: {{ printf "%ds" (int .Values.versiond.hostShutdownBudgetSeconds) | quote }}
             - name: VERSIOND_DRAIN_ANNOUNCE

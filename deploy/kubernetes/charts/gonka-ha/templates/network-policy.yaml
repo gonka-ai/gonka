@@ -1,5 +1,5 @@
 {{- if .Values.networkPolicy.enabled }}
-{{- range $component, $ports := dict "ingress" (list 80 443) "versiond" (list 8080) "router" (list 8080 8404) "edge-api" (list 18080) "oracle" (list 9100) }}
+{{- range $component, $ports := dict "ingress" (list 80 443 9443) "versiond" (list 8080) "router" (list 8080 8081 8404) "edge-api" (list 18080) "oracle" (list 9100) }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
