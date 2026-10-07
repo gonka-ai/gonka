@@ -3,6 +3,7 @@ package testutil
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"testing"
@@ -27,6 +28,17 @@ var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 // >= floor) pass with the StartTx defaults below.
 var TestPrompt = mustTestPrompt(TestMaxTokens)
 var TestPromptHash = mustCanonicalPromptHash(TestPrompt)
+
+// TestResponseHash and TestServedHash are Finish hashes of the length the state machine requires.
+var (
+	TestResponseHash = sha256Of("response")
+	TestServedHash   = sha256Of("served")
+)
+
+func sha256Of(value string) []byte {
+	sum := sha256.Sum256([]byte(value))
+	return sum[:]
+}
 
 func mustTestPrompt(maxTokens uint64) []byte {
 	const total = 100
@@ -234,6 +246,13 @@ func StartTx(inferenceID uint64) *types.DevshardTx {
 		MaxTokens:   TestMaxTokens,
 		StartedAt:   1000,
 	}}}
+}
+
+// StartTxVersioned is StartTx with protocol_version set (gateway start proof).
+func StartTxVersioned(inferenceID uint64, version string) *types.DevshardTx {
+	tx := StartTx(inferenceID)
+	tx.GetStartInference().ProtocolVersion = version
+	return tx
 }
 
 // MustGzip compresses body the way a sender puts it on the wire.

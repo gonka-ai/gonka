@@ -22,10 +22,10 @@ type sessionManager interface {
 
 // staleLeaseStore abstracts storage.LeaseStore for testing.
 type staleLeaseStore interface {
-	AcquireOneStale(ctx context.Context, escrowId, instanceAddr string, ttl time.Duration) (uint64, uint64, error)
-	SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error
-	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error)
-	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
+	AcquireOneStale(ctx context.Context, escrowId string, owner storage.LeaseOwner, ttl time.Duration) (uint64, uint64, error)
+	SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, owner storage.LeaseOwner) error
+	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) (bool, error)
+	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) error
 }
 
 // hostSnap abstracts *host.Host state reads for testing.
@@ -36,21 +36,21 @@ type hostSnap interface {
 
 const (
 	DefaultValidationRetryInterval = 5 * time.Minute
-	DefaultValidationLeaseTTL      = 30 * time.Minute
+	DefaultValidationLeaseTTL      = 32 * time.Minute
 )
 
 // ValidationRetryLoop scans for stale validation leases and re-runs validation for each
 // active in-memory session. A lease is stale when status is pending/submitted and
-// claimed_at < now() - leaseTTL (default 30m). FOR UPDATE SKIP LOCKED in the
+// claimed_at < now() - leaseTTL (default 32m). FOR UPDATE SKIP LOCKED in the
 // underlying query ensures concurrent instances each pick a different row.
 type ValidationRetryLoop struct {
-	leases       staleLeaseStore
-	inner        devshardpkg.ValidationEngine // no lease wrapping: lease already held
-	manager      sessionManager
-	phase        *chain.Phase
-	instanceAddr string
-	leaseTTL     time.Duration
-	interval     time.Duration
+	leases   staleLeaseStore
+	inner    devshardpkg.ValidationEngine // no lease wrapping: lease already held
+	manager  sessionManager
+	phase    *chain.Phase
+	owner    storage.LeaseOwner
+	leaseTTL time.Duration
+	interval time.Duration
 }
 
 // NewValidationRetryLoop recovers stale Postgres validation leases for loaded
@@ -61,16 +61,16 @@ func NewValidationRetryLoop(
 	inner devshardpkg.ValidationEngine,
 	manager *HostManager,
 	phase *chain.Phase,
-	instanceAddr string,
+	owner storage.LeaseOwner,
 ) *ValidationRetryLoop {
 	return &ValidationRetryLoop{
-		leases:       leases,
-		inner:        inner,
-		manager:      manager,
-		phase:        phase,
-		instanceAddr: instanceAddr,
-		leaseTTL:     DefaultValidationLeaseTTL,
-		interval:     DefaultValidationRetryInterval,
+		leases:   leases,
+		inner:    inner,
+		manager:  manager,
+		phase:    phase,
+		owner:    owner,
+		leaseTTL: DefaultValidationLeaseTTL,
+		interval: DefaultValidationRetryInterval,
 	}
 }
 
@@ -110,6 +110,7 @@ func (r *ValidationRetryLoop) retryStaleValidationsOnce(ctx context.Context) {
 // until AcquireOneStale returns none.
 func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context, escrowID string) {
 	caughtUp := false
+	var models map[string]struct{}
 	for {
 		// Don't claim work this process cannot do. The snapshot can still
 		// unload between this check and AcquireOneStale; retryStaleValidation
@@ -118,6 +119,7 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 		if !ok {
 			return
 		}
+
 		if !caughtUp {
 			if live, ok := snap.(*host.Host); ok {
 				if err := live.CatchUpFromStore(ctx); err != nil {
@@ -128,7 +130,25 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 			caughtUp = true
 		}
 
-		inferenceID, leaseEpochID, err := r.leases.AcquireOneStale(ctx, escrowID, r.instanceAddr, r.leaseTTL)
+		if gate, gated := r.inner.(devshardpkg.ValidationAvailability); gated {
+			if models == nil {
+				models = make(map[string]struct{})
+				for _, rec := range snap.SnapshotState().Inferences {
+					models[rec.Model] = struct{}{}
+				}
+			}
+			available := false
+			for model := range models {
+				if gate.CanValidate(model) {
+					available = true
+					break
+				}
+			}
+			if !available {
+				return
+			}
+		}
+		inferenceID, leaseEpochID, err := r.leases.AcquireOneStale(ctx, escrowID, r.owner, r.leaseTTL)
 		if err != nil {
 			slog.Warn("devshardd: validation retry: acquire stale validation failed",
 				"escrow", escrowID, "error", err)
@@ -140,8 +160,10 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 
 		// Sessions are epoch-bounded: validation is no longer useful once the
 		// chain advances beyond the inference epoch. Rows may be retained longer
-		// for history and cleanup, but retry should stop at epoch+1.
-		if r.phase != nil && r.phase.EpochID() > leaseEpochID {
+		// for history and cleanup, but retry should stop after epoch+1: the
+		// phase reaches epoch+1 at poc_start, while escrows of the lease epoch
+		// still serve until set_new_validators.
+		if r.phase != nil && r.phase.EpochID() > leaseEpochID+1 {
 			slog.Info("devshardd: validation retry: epoch stale, skipping validation",
 				"escrow", escrowID, "inference", inferenceID,
 				"lease_epoch", leaseEpochID, "current_epoch", r.phase.EpochID())
@@ -150,6 +172,11 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 		}
 
 		if err := r.retryStaleValidation(ctx, escrowID, inferenceID, leaseEpochID); err != nil {
+			if errors.Is(err, devshardpkg.ErrValidationDeferred) {
+				// The claim is no longer stale, even if release failed. Keep looking
+				// for other models; the availability check stops us once all are empty.
+				continue
+			}
 			slog.Warn("devshardd: validation retry: validation failed",
 				"escrow", escrowID, "inference", inferenceID, "error", err)
 		}
@@ -157,7 +184,7 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 }
 
 func (r *ValidationRetryLoop) markLeaseResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status storage.LeaseStatus) {
-	if err := r.leases.SetResult(ctx, escrowID, inferenceID, epochID, status, r.instanceAddr); err != nil {
+	if err := r.leases.SetResult(ctx, escrowID, inferenceID, epochID, status, r.owner); err != nil {
 		if errors.Is(err, storage.ErrLeaseNotOwned) {
 			slog.Info("devshardd: validation retry: mark result skipped; lease not owned",
 				"escrow", escrowID, "inference", inferenceID, "status", status)
@@ -169,7 +196,7 @@ func (r *ValidationRetryLoop) markLeaseResult(ctx context.Context, escrowID stri
 }
 
 func (r *ValidationRetryLoop) releaseOwnedLease(ctx context.Context, escrowID string, inferenceID, epochID uint64) {
-	if err := r.leases.Release(ctx, escrowID, inferenceID, epochID, r.instanceAddr); err != nil {
+	if err := r.leases.Release(ctx, escrowID, inferenceID, epochID, r.owner); err != nil {
 		slog.Warn("devshardd: validation retry: release lease failed",
 			"escrow", escrowID, "inference", inferenceID, "error", err)
 	}
@@ -233,7 +260,7 @@ func (r *ValidationRetryLoop) retryStaleValidation(ctx context.Context, escrowID
 		r.releaseOwnedLease(ctx, escrowID, inferenceID, epochID)
 		return nil
 	}
-	owned, err := r.leases.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, r.instanceAddr)
+	owned, err := r.leases.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, r.owner)
 	if err != nil {
 		r.releaseOwnedLease(ctx, escrowID, inferenceID, epochID)
 		return fmt.Errorf("owns pending lease: %w", err)
@@ -308,6 +335,7 @@ func lookupValidateTarget(h hostSnap, escrowID string, inferenceID, epochID uint
 		Model:           rec.Model,
 		PromptHash:      rec.PromptHash,
 		ResponseHash:    rec.ResponseHash,
+		ServedHash:      rec.ServedHash,
 		InputTokens:     rec.InputTokens,
 		OutputTokens:    rec.OutputTokens,
 		EscrowID:        escrowID,

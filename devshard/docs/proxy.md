@@ -46,7 +46,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `DEVSHARD_ESCROW_ROTATION_ENABLED` | no | `false` | Enable automatic epoch and depletion escrow rotation |
 | - | `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` | no | `false` | Enable automatic finalization and on-chain settlement for rotated escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | no | `300` | Blocks before the next epoch switch at `set_new_validators` to create temp bridge escrows |
-| - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env` |
+| - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env`, optional `settlement_enabled` (overrides `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` for that model) |
 | - | `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` | no | `30` | After client disconnect, keep draining host SSE for protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) up to this many seconds |
 
 ## Quick start
@@ -189,6 +189,8 @@ controls per-model inference access with `access_mode`: `open`, `api_key`, or
 `admin_only`. If a model has no `access_mode` configured, it defaults to
 `admin_only`.
 
+A model listed in `model_limits` stays offered while none of its runtimes can take a request, for example after its escrows ran out of balance: pooled chat answers `503` with `Retry-After: 10` instead of `400 unsupported model`. Remove the model from `model_limits` to retire it.
+
 ```bash
 curl -X POST http://localhost:8080/v1/admin/settings \
   -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
@@ -309,10 +311,14 @@ false, both epoch rotation and depletion replacement are disabled.
 4. It then deactivates, finalizes, and settles the previous epoch's temp
    escrows.
 
+An escrow counts as high-nonce 200 nonces short of the nonce its hosts stop accepting work at (chain `max_nonce` minus `group size + 1`), read live from the runtime params snapshot. Until that snapshot arrives the gateway stops routing to an escrow at `19800` (the chain's default `max_nonce` of `20000` minus the same 200 margin, with no group reserve) but does not retire or replace it for its nonce, because such an escrow is healthy whenever the chain allows more nonces.
+
 Set `escrow_rotation.settlement_enabled` to `false` to keep automatic creation
 and local deactivation while skipping automatic finalization and on-chain
 settlement. Manual settlement through `POST /v1/admin/devshards/{id}/settle`
 remains available.
+
+A model entry's own `settlement_enabled` overrides the global flag for that model's escrows; when the model omits it, the global `settlement_enabled` (seeded from `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED`) applies. An update that sends `models` replaces the whole list, so a model sent without `settlement_enabled` falls back to the global flag.
 
 Rotation settings are persisted in `gateway.db`. After first boot, update them
 through `POST /v1/admin/settings`:
@@ -331,7 +337,8 @@ curl -X POST http://localhost:8080/v1/admin/settings \
         "temp_count": 8,
         "target_count": 16,
         "amount": 5000000000,
-        "private_key_env": "DEVSHARD_PRIVATE_KEY"
+        "private_key_env": "DEVSHARD_PRIVATE_KEY",
+        "settlement_enabled": true
       }]
     },
     "tx_gas_limit": 700000
@@ -424,7 +431,7 @@ Non-streaming (`"stream": false` or omitted): the proxy buffers all SSE chunks f
 
 Streaming (`"stream": true`): the proxy relays SSE `data:` lines in real time. The stream ends with `data: [DONE]`. Devshard protocol events (receipts, metadata) are filtered out -- only inference data reaches the client.
 
-If the client disconnects before the host finishes, the proxy keeps draining the host SSE stream in the background for up to `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` (default 30s) so protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) can still run. Further writes to the disconnected client are swallowed.
+If the client disconnects before the host finishes, the proxy keeps draining the host SSE stream in the background for up to `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` (default 30s) so protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) can still run. Further writes to the disconnected client are swallowed, and the request starts no further attempt: no hedge, no escalation after a failed or silent attempt, and no retry after a phase transition, since another nonce would only buy an answer nobody reads.
 
 ## Speculative execution
 

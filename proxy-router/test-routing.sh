@@ -284,6 +284,10 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
     -subj /CN=policy-v2 \
     -keyout "$tmpdir/tls/key.pem" -out "$tmpdir/tls/cert.pem" \
     >/dev/null 2>&1
+# NGINX_MODE=both also opens the peer RPC TLS port. It reads the same
+# SSL_CERT_SOURCE names production mounts at /etc/haproxy/ssl.
+cp "$tmpdir/tls/key.pem" "$tmpdir/tls/private.key"
+chmod a+r "$tmpdir/tls/cert.pem" "$tmpdir/tls/key.pem" "$tmpdir/tls/private.key"
 
 mkdir "$tmpdir/catalog"
 printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"}]}' \
@@ -404,9 +408,12 @@ for version in v9 v10; do
         "http://127.0.0.1:8404/readyz?version=$version" >/dev/null \
         || fail "reduced capacity dropped cached route $version"
 done
-[[ $(docker exec gonka-pr-proxy-cache-floor grep -c \
-    '^backend versiond_routers_dynamic_' /etc/haproxy/haproxy.cfg) == 2 ]] \
+[[ $(docker exec gonka-pr-proxy-cache-floor grep -Ec \
+    '^backend versiond_routers_dynamic_[0-9]+$' /etc/haproxy/haproxy.cfg) == 2 ]] \
     || fail "LKG routes did not raise the effective dynamic capacity"
+[[ $(docker exec gonka-pr-proxy-cache-floor grep -Ec \
+    '^backend versiond_routers_dynamic_[0-9]+_rpc$' /etc/haproxy/haproxy.cfg) == 2 ]] \
+    || fail "LKG routes did not render a peer RPC backend per dynamic slot"
 docker rm -f gonka-pr-proxy-cache-floor >/dev/null
 
 # The reversible upgrade keeps a healthy singleton for v4 nginx rollback. Its
@@ -483,6 +490,7 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     --network-alias proxy-router \
     -v "$state:/var/lib/gonka-router" \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -e VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
     -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
@@ -750,6 +758,7 @@ docker run -d --name gonka-pr-proxy-v2 --network "$network" \
     -e PROXY_POLICY_POOL_HOST=proxy-policy-v2 \
     -e NGINX_MODE=both \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -v "$tmpdir/tls:/etc/haproxy/ssl:ro" \
     "$image" >/dev/null
 for _ in $(seq 80); do
     code=$(docker exec gonka-pr-proxy-v2 curl -sS -o /dev/null \
@@ -789,6 +798,7 @@ docker run -d --name gonka-pr-proxy-both --network "$network" \
     -e PROXY_POLICY_POOL_HOST=proxy-policy \
     -e NGINX_MODE=both \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -v "$tmpdir/tls:/etc/haproxy/ssl:ro" \
     "$image" >/dev/null
 for _ in $(seq 60); do
     if docker exec gonka-pr-proxy-both sh -c \
@@ -1040,6 +1050,7 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     --network-alias proxy-router \
     -v "$state:/var/lib/gonka-router" \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -e VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
     -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \

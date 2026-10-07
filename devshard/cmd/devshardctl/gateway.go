@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/metrics"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,6 +35,10 @@ import (
 	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
+)
+
+const (
+	modelUnavailableRetryAfterSeconds = "10"
 )
 
 type RuntimeConfig struct {
@@ -71,6 +76,7 @@ type Gateway struct {
 	rotationBreakers      map[string]*rotationBreaker
 	runtimeParams         *runtimeparams.Managed
 	runtimeParamsClose    func()
+	maxNonce              devshardpkg.MaxNonceProvider
 	chainClient           *chain.Client
 	finalizeMu            sync.Mutex
 	settlementMu          sync.Mutex
@@ -83,6 +89,7 @@ type Gateway struct {
 	suspiciousHosts map[string]struct{}
 
 	hostPing *hostPingJob
+	rpcStats *rpcStatsPoller
 }
 
 type devshardRuntime struct {
@@ -100,6 +107,10 @@ type devshardRuntime struct {
 	// same escrow.
 	participantSlotCounts map[string]int
 
+	// routePrefix is the versioned HTTP mount this escrow talks to
+	// (/devshard/v5). Adoption peer ids are addr@version.
+	routePrefix string
+
 	// stopped closes when this escrow's runtime does, so work that belongs to one escrow -- and only that
 	// escrow -- ends with it, on retire as well as on gateway shutdown.
 	stopped  chan struct{}
@@ -109,8 +120,14 @@ type devshardRuntime struct {
 	activeUserRequests atomic.Int64
 	reservedTokens     atomic.Int64
 
-	// pendingRaceCleanup counts background race cleanups (refund + loser-signature persistence) still in flight
+	// pendingRaceCleanup counts background race cleanups (refund, loser-signature persistence, timeout votes) still in flight
 	pendingRaceCleanup atomic.Int64
+
+	// finalizing marks a runtime whose finalize request is in flight. It is set
+	// in the same g.mu critical section that observed the drain barrier as
+	// quiet, and admission reads it under that same lock, so no new inference
+	// can slip in between the quiescence check and the finalize handler run.
+	finalizing atomic.Bool
 
 	// settlementPending marks an escrow that has been deactivated and must
 	// be settled once its in-flight requests drain. settlementReason is
@@ -230,6 +247,41 @@ func (e *ModelTemporarilyUnavailableError) Error() string {
 	return "model is temporarily unavailable"
 }
 
+// EscrowsCannotFundRequestError reports that every escrow serving the model refused to pay for this
+// request. A replacement escrow or a settling inference restores the balance, so the client may retry.
+type EscrowsCannotFundRequestError struct {
+	EscrowsRefused int
+	wrapped        error
+}
+
+func (e *EscrowsCannotFundRequestError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("no escrow can fund this request (%d refused): %v", e.EscrowsRefused, e.wrapped)
+}
+
+func (e *EscrowsCannotFundRequestError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.wrapped
+}
+
+func withRefusedEscrowCount(err error, refusedWhileServing int) error {
+	var alreadyCounted *EscrowsCannotFundRequestError
+	if errors.As(err, &alreadyCounted) {
+		return &EscrowsCannotFundRequestError{
+			EscrowsRefused: alreadyCounted.EscrowsRefused + refusedWhileServing,
+			wrapped:        alreadyCounted.wrapped,
+		}
+	}
+	if refusedWhileServing == 0 || isParticipantRateLimitError(err) {
+		return err
+	}
+	return &EscrowsCannotFundRequestError{EscrowsRefused: refusedWhileServing, wrapped: err}
+}
+
 type ModelAccessDeniedError struct {
 	Model      string
 	Message    string
@@ -318,15 +370,18 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: height sync: %w", cfg.ID, err)
 	}
-	if extraClient == nil || extraClient.HeightSyncPeerTips == nil {
+	if extraClient == nil {
+		extraClient = &transport.ClientConfig{}
+	}
+	if extraClient.HeightSyncPeerTips == nil {
 		log.Printf("heightsync courier not wired escrow=%s (need NODE_MANAGER_ADDR, NODE_RPC_URL, or DEVSHARD_CHAIN_GRPC)", cfg.ID)
 	} else {
 		log.Printf("heightsync courier wired escrow=%s peer_tips=true", cfg.ID)
 	}
-	compressRequestBodies, err := compressRequestBodiesFromEnv()
-	if err != nil {
-		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, err)
+	if deps.metrics != nil {
+		extraClient.RPCAdoption = deps.metrics.PeerRPCAdoption()
 	}
+	noteRetiredCompressRequestBodies()
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:           keyHex,
 		EscrowID:                cfg.ID,
@@ -335,7 +390,6 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		RoutePrefix:             routePrefix,
 		RequestAdmission:        sharedParticipantRequestLimiter,
 		RequireHeightSeed:       requireHeightSeedFromEnv(),
-		CompressRequestBodies:   compressRequestBodies,
 		Escrow:                  escrow,
 		RefusalTimeoutSeconds:   timeoutOverrides.RefusalTimeoutSeconds,
 		ExecutionTimeoutSeconds: timeoutOverrides.ExecutionTimeoutSeconds,
@@ -381,6 +435,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		session:               session,
 		participantKeys:       session.ParticipantKeys(),
 		participantSlotCounts: hostSlotCounts(session.HostParticipantKeyList()),
+		routePrefix:           routePrefix,
 	}
 	rt.active.Store(true)
 	rt.activeConfigured = true
@@ -410,6 +465,7 @@ func (g *Gateway) runtimeBuildDepsFromSettings(perf *PerfTracker, settings Gatew
 		defaultModel: firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
 		perf:         perf,
 		params:       params,
+		metrics:      g.metrics,
 	}
 }
 
@@ -519,6 +575,7 @@ func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTrac
 		proxy:           proxy,
 		session:         session,
 		participantKeys: session.ParticipantKeys(),
+		routePrefix:     resolveRuntimeRoutePrefix(cfg.RoutePrefix),
 	}
 	rt.active.Store(false)
 	rt.activeConfigured = true
@@ -608,9 +665,17 @@ func (rt *devshardRuntime) close() error {
 		rt.stopOnce.Do(func() { close(rt.stopped) })
 	}
 	if rt.session != nil {
+		// Session.Close Releases PeerConn refs.
 		rt.session.Close()
 	}
 	return nil
+}
+
+func (rt *devshardRuntime) stopRedundancy() {
+	if rt == nil || rt.proxy == nil {
+		return
+	}
+	rt.proxy.redundancy.Stop()
 }
 
 // retireClose flushes a final state snapshot at the current (now frozen) nonce
@@ -620,6 +685,7 @@ func (rt *devshardRuntime) close() error {
 // (deactivate, settle, rotation); plain close() is for transient read-only
 // runtimes and build-failure cleanup, where no snapshot flush is wanted.
 func (rt *devshardRuntime) retireClose(reason string) error {
+	rt.stopRedundancy()
 	if rt.session != nil {
 		if err := rt.session.FlushSnapshot(); err != nil {
 			log.Printf("runtime_retire_flush_snapshot_error escrow=%s reason=%q error=%v", rt.id, reason, err)
@@ -634,6 +700,9 @@ func (rt *devshardRuntime) retireClose(reason string) error {
 func (rt *devshardRuntime) acceptsNewInferences() (bool, string) {
 	if rt == nil || !rt.active.Load() {
 		return false, "inactive"
+	}
+	if rt.finalizing.Load() {
+		return false, "finalize_in_flight"
 	}
 	if rt.proxy == nil || rt.proxy.sm == nil {
 		return true, ""
@@ -785,7 +854,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder) *Gateway {
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder, maxNonce devshardpkg.MaxNonceProvider) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
@@ -793,6 +862,7 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	g.baseStorageDir = baseStorageDir
 	g.store = store
 	g.chainClient = chainClient
+	g.maxNonce = maxNonce
 	if perf != nil {
 		g.perf = perf
 	}
@@ -830,6 +900,8 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	g.startEscrowRotatorIfEnabled()
 	g.hostPing = newHostPingJob(g.metrics, loadHostPingConfig())
 	g.hostPing.start()
+	g.rpcStats = newRPCStatsPoller(g, loadRPCStatsConfig())
+	g.rpcStats.start()
 	go g.balanceCheckLoop()
 	return g
 }
@@ -840,6 +912,7 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 	}
 	if rt.proxy != nil {
 		rt.proxy.phaseGate = g.phaseGate
+		rt.proxy.logprobsOptimizationOverride = g.logprobsOptimizationOverride
 		limits := g.outputTokenLimitsForModel(firstNonEmpty(rt.model, g.settings.DefaultModel))
 		rt.proxy.defaultRequestMaxTokens = limits.DefaultMaxTokens
 		rt.proxy.requestMaxTokensCap = limits.MaxTokensCap
@@ -852,6 +925,15 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 	if g.capacity != nil {
 		g.capacity.SetEscrowMembership(rt.id, rt.participantSlotCounts)
 	}
+}
+
+func (g *Gateway) logprobsOptimizationOverride() *bool {
+	if g == nil {
+		return nil
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.settings.LogprobsOptimizationOverride
 }
 
 func (g *Gateway) outputTokenLimitsForModel(model string) outputTokenLimits {
@@ -901,21 +983,23 @@ func (g *Gateway) checkBalances() {
 	copy(runtimes, g.runtimeOrder)
 	g.mu.Unlock()
 
+	chainMaxNonce := g.chainMaxNonce()
 	for _, rt := range runtimes {
 		if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 			continue
 		}
 		balance := rt.proxy.sm.Balance()
 		if balance < balanceMinimumThreshold {
-			log.Printf("escrow_balance_low escrow=%s balance=%d threshold=%d — scheduling replacement before deactivation",
+			log.Printf("escrow_balance_low escrow=%s balance=%d threshold=%d — deactivating before replacement",
 				rt.id, balance, balanceMinimumThreshold)
 			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "low_balance")
 			continue
 		}
 		nonce := rt.proxy.sm.LatestNonce()
-		if nonce >= nonceDeactivationLimit {
-			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — scheduling replacement before deactivation",
-				rt.id, nonce, nonceDeactivationLimit)
+		nonceLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
+		if chainMaxNonce != 0 && nonce >= nonceLimit {
+			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — deactivating before replacement",
+				rt.id, nonce, nonceLimit)
 			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "high_nonce")
 		}
 	}
@@ -997,6 +1081,11 @@ func (g *Gateway) modelLimitSettings(model string) (GatewayModelLimitSettings, b
 	return GatewayModelLimitSettings{}, false
 }
 
+// isModelListedInLimits reports whether the operator lists the model in model_limits, so the gateway still offers it while no runtime serves it.
+func isModelListedInLimits(limits []GatewayModelLimitSettings, model string) bool {
+	return slices.ContainsFunc(limits, func(entry GatewayModelLimitSettings) bool { return strings.TrimSpace(entry.ModelID) == model })
+}
+
 func (g *Gateway) modelAccessError(r *http.Request, model string) error {
 	if requestHasAdminAuth(r) {
 		return nil
@@ -1064,10 +1153,11 @@ func bearerToken(r *http.Request) (string, bool) {
 		return "", false
 	}
 	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
+	parts := strings.Fields(auth)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
 		return "", false
 	}
-	key := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+	key := strings.TrimSpace(parts[1])
 	return key, key != ""
 }
 
@@ -1323,6 +1413,9 @@ func (g *Gateway) Close() error {
 	if g.hostPing != nil {
 		g.hostPing.stop()
 	}
+	if g.rpcStats != nil {
+		g.rpcStats.stop()
+	}
 	for _, rt := range g.runtimeOrder {
 		if err := rt.close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -1358,6 +1451,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/debug/rotation", g.handleDebugRotation)
 	mux.HandleFunc("/v1/debug/memstats", g.handleDebugMemStats)
 	mux.HandleFunc("/v1/debug/heightsync", g.handleDebugHeightSync)
+	mux.HandleFunc("/v1/debug/rpc-traffic", g.handleDebugRPCTraffic)
 	// Runtime profiling, admin-gated (see isAdminPath). Mounted at the
 	// canonical /debug/pprof/ path so pprof.Index's sub-profile links resolve.
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -1387,26 +1481,71 @@ func (g *Gateway) handleDebugMemStats(w http.ResponseWriter, r *http.Request) {
 	if !allowGetOrHead(w, r) {
 		return
 	}
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
+	mem, err := readGatewayMemory()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	g.mu.Lock()
 	loadedRuntimes := len(g.runtimeOrder)
 	g.mu.Unlock()
-	writeJSON(w, map[string]any{
-		"loaded_runtimes": loadedRuntimes,
-		"num_goroutine":   runtime.NumGoroutine(),
-		"heap_inuse":      m.HeapInuse,
-		"heap_alloc":      m.HeapAlloc,
-		"heap_sys":        m.HeapSys,
-		"heap_idle":       m.HeapIdle,
-		"heap_released":   m.HeapReleased,
-		"heap_objects":    m.HeapObjects,
-		"stack_inuse":     m.StackInuse,
-		"sys":             m.Sys,
-		"next_gc":         m.NextGC,
-		"num_gc":          m.NumGC,
-		"gc_cpu_fraction": m.GCCPUFraction,
-	})
+	mem["loaded_runtimes"] = loadedRuntimes
+	mem["num_goroutine"] = runtime.NumGoroutine()
+	writeJSON(w, mem)
+}
+
+// readGatewayMemory reads the same heap fields the debug endpoint used to take
+// from ReadMemStats. runtime/metrics sums counters the runtime already keeps
+// and does not stop the world. gc_cpu_fraction is GC CPU time divided by total
+// CPU time over the life of the process.
+func readGatewayMemory() (map[string]any, error) {
+	samples := []metrics.Sample{
+		{Name: "/memory/classes/heap/objects:bytes"},
+		{Name: "/memory/classes/heap/unused:bytes"},
+		{Name: "/memory/classes/heap/free:bytes"},
+		{Name: "/memory/classes/heap/released:bytes"},
+		{Name: "/gc/heap/objects:objects"},
+		{Name: "/memory/classes/heap/stacks:bytes"},
+		{Name: "/memory/classes/total:bytes"},
+		{Name: "/gc/heap/goal:bytes"},
+		{Name: "/gc/cycles/total:gc-cycles"},
+		{Name: "/cpu/classes/gc/total:cpu-seconds"},
+		{Name: "/cpu/classes/total:cpu-seconds"},
+	}
+	metrics.Read(samples)
+	for _, sample := range samples[:9] {
+		if sample.Value.Kind() != metrics.KindUint64 {
+			return nil, fmt.Errorf("metric %s kind %v", sample.Name, sample.Value.Kind())
+		}
+	}
+	for _, sample := range samples[9:] {
+		if sample.Value.Kind() != metrics.KindFloat64 {
+			return nil, fmt.Errorf("metric %s kind %v", sample.Name, sample.Value.Kind())
+		}
+	}
+	objects := samples[0].Value.Uint64()
+	unused := samples[1].Value.Uint64()
+	free := samples[2].Value.Uint64()
+	released := samples[3].Value.Uint64()
+	inuse := objects + unused
+	idle := free + released
+	var gcFraction float64
+	if total := samples[10].Value.Float64(); total > 0 {
+		gcFraction = samples[9].Value.Float64() / total
+	}
+	return map[string]any{
+		"heap_inuse":      inuse,
+		"heap_alloc":      objects,
+		"heap_sys":        inuse + idle,
+		"heap_idle":       idle,
+		"heap_released":   released,
+		"heap_objects":    samples[4].Value.Uint64(),
+		"stack_inuse":     samples[5].Value.Uint64(),
+		"sys":             samples[6].Value.Uint64(),
+		"next_gc":         samples[7].Value.Uint64(),
+		"num_gc":          samples[8].Value.Uint64(),
+		"gc_cpu_fraction": gcFraction,
+	}, nil
 }
 
 // handleDebugHeightSync is the last-N cadence ring, sealed-height detail, and
@@ -1487,6 +1626,11 @@ func (g *Gateway) handleSingleOnly(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 	if len(runtimes) == 1 {
 		if r.URL.Path == "/v1/finalize" && r.Method == http.MethodPost {
+			if ok, reason := g.beginFinalizeGate(runtimes[0]); !ok {
+				http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s %s"}}`, runtimes[0].id, reason), http.StatusConflict)
+				return
+			}
+			defer g.endFinalizeGate(runtimes[0])
 			g.finalizeMu.Lock()
 			defer g.finalizeMu.Unlock()
 			log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", runtimes[0].id, r.URL.Path)
@@ -1527,6 +1671,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	cacheKey := chatCacheKey(requestModel, body, clientIntent)
 	stream := chatRequestStream(body)
 	if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
+		g.metrics.RecordChatCache(requestModel, "hit")
 		logRequestStage(ctx, "gateway_cache_hit", "escrow", entry.EscrowID, "model", requestModel, "stream", stream)
 		g.recordCachedAccountingAlias(ctx, entry)
 		serveCachedChatResponse(w, r, entry)
@@ -1549,25 +1694,75 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 		logRequestStage(ctx, "gateway_limiter_bypassed_during_poc", "input_tokens", inputTokens, "reason", currentPoCPhaseReason())
 	}
 
-	rt, err := g.reserveRuntimeForModel(model, inputTokens)
+	cost := newChatRequestCost(body, req, inputTokens)
+	rt, capture, err := g.serveChatAcrossEscrows(model, body, cost, w, r)
 	if err != nil {
-		logRequestStage(ctx, "gateway_runtime_select_failed", "error", err)
+		var unavailableModelErr *ModelTemporarilyUnavailableError
+		var cannotFundErr *EscrowsCannotFundRequestError
+		switch {
+		case errors.As(err, &cannotFundErr):
+			logRequestStage(ctx, "gateway_all_escrows_refused_funding", "model", requestModel, "escrows_refused", cannotFundErr.EscrowsRefused, "retry_after_seconds", modelUnavailableRetryAfterSeconds, "error", err)
+			w.Header().Set("Retry-After", modelUnavailableRetryAfterSeconds)
+		case errors.As(err, &unavailableModelErr):
+			logRequestStage(ctx, "gateway_model_unavailable_retry_later", "model", unavailableModelErr.Model, "retry_after_seconds", modelUnavailableRetryAfterSeconds, "error", err)
+			w.Header().Set("Retry-After", modelUnavailableRetryAfterSeconds)
+		default:
+			logRequestStage(ctx, "gateway_runtime_select_failed", "error", err)
+		}
 		if isParticipantRateLimitError(err) {
 			g.metrics.RecordParticipantLimitRejection("all", normalizeModelID(model), "pooled_route")
 		}
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 		return
 	}
-	defer g.releaseRuntime(rt, inputTokens)
-	logRequestStage(ctx, "gateway_runtime_selected", "escrow", rt.id)
+	defer g.releaseRuntime(rt, cost)
 
-	if capture := g.serveChatToRuntime(rt, "/v1/chat/completions", body, w, r); capture != nil {
+	if capture != nil {
 		sourceRequestID, _ := requestLogFromContext(ctx)
-		if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
-			g.chatCache.Set(cacheKey, entry, time.Now())
-			logRequestStage(ctx, "gateway_cache_stored", "escrow", rt.id, "model", requestModel, "stream", stream, "bytes", len(entry.Body))
+		entry, reason := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err())
+		g.storeChatCache(ctx, "gateway_cache", cacheKey, rt.id, requestModel, stream, entry, reason)
+	}
+}
+
+// serveChatAcrossEscrows hands the request to one escrow after another while each refuses to pay for
+// it before answering the client, and returns the escrow that served it, still reserved for the caller.
+func (g *Gateway) serveChatAcrossEscrows(model string, body []byte, cost chatRequestCost, w http.ResponseWriter, r *http.Request) (*devshardRuntime, *gatewayChatCacheCapture, error) {
+	ctx := r.Context()
+	refusedEscrowIDs := map[string]bool{}
+	for {
+		rt, err := g.reserveRuntimeForModel(model, cost, refusedEscrowIDs)
+		if err != nil {
+			return nil, nil, withRefusedEscrowCount(err, len(refusedEscrowIDs))
+		}
+		logRequestStage(ctx, "gateway_runtime_selected", "escrow", rt.id)
+		capture, served := g.serveChatOnEscrow(rt, body, cost, w, r)
+		if served {
+			return rt, capture, nil
+		}
+		refusedEscrowIDs[rt.id] = true
+		logRequestStage(ctx, "gateway_escrow_refused_funding", "escrow", rt.id, "model", rt.model, "escrows_refused", len(refusedEscrowIDs))
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
 		}
 	}
+}
+
+// serveChatOnEscrow keeps the escrow reserved only when it served the request; a refusal to fund it,
+// or a panic on the way, releases the reservation and clears the header naming this escrow.
+func (g *Gateway) serveChatOnEscrow(rt *devshardRuntime, body []byte, cost chatRequestCost, w http.ResponseWriter, r *http.Request) (capture *gatewayChatCacheCapture, served bool) {
+	defer func() {
+		if !served {
+			g.releaseRuntime(rt, cost)
+		}
+	}()
+
+	verdict := &escrowFundingVerdict{}
+	capture = g.serveChatToRuntime(rt, "/v1/chat/completions", body, w, r.WithContext(withEscrowFundingVerdict(r.Context(), verdict)))
+	if verdict.refused {
+		w.Header().Del("X-Devshard-ID")
+		return nil, false
+	}
+	return capture, true
 }
 
 func (g *Gateway) validatePooledRequestedModel(requestModel string) error {
@@ -1577,8 +1772,9 @@ func (g *Gateway) validatePooledRequestedModel(requestModel string) error {
 	}
 	g.mu.Lock()
 	runtimes := append([]*devshardRuntime(nil), g.runtimeOrder...)
+	listed := isModelListedInLimits(g.settings.ModelLimits, requestModel)
 	g.mu.Unlock()
-	if len(runtimes) == 0 {
+	if len(runtimes) == 0 || listed {
 		return nil
 	}
 	for _, rt := range runtimes {
@@ -1666,6 +1862,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		cacheKey := chatCacheKey(limitModel, body, clientIntent)
 		stream := chatRequestStream(body)
 		if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
+			g.metrics.RecordChatCache(limitModel, "hit")
 			logRequestStage(ctx, "gateway_devshard_cache_hit", "escrow", entry.EscrowID, "model", limitModel, "stream", stream)
 			g.recordCachedAccountingAlias(ctx, entry)
 			g.recordGatewayRequestOutcome(limitModel, "cached", "cache_hit")
@@ -1689,24 +1886,29 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 			logRequestStage(ctx, "gateway_devshard_limiter_bypassed_during_poc", "escrow", devshardID, "input_tokens", inputTokens, "reason", currentPoCPhaseReason())
 		}
 
-		g.reserveRuntime(rt, inputTokens)
-		defer g.releaseRuntime(rt, inputTokens)
+		cost := newChatRequestCost(body, req, inputTokens)
+		if ok, reason := g.reserveRuntimeIfAccepting(rt, cost); !ok {
+			logRequestStage(ctx, "gateway_devshard_unavailable", "escrow", devshardID, "reason", reason)
+			g.recordGatewayRequestOutcome(limitModel, "runtime_unavailable", runtimeSkipReasonKey(reason))
+			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s is unavailable for new inferences: %s"}}`, devshardID, reason), http.StatusConflict)
+			return
+		}
+		defer g.releaseRuntime(rt, cost)
 		logRequestStage(ctx, "gateway_devshard_runtime_selected", "escrow", devshardID, "input_tokens", inputTokens)
 
 		if capture := g.serveChatToRuntime(rt, innerPath, body, w, r); capture != nil {
 			sourceRequestID, _ := requestLogFromContext(ctx)
-			if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
-				g.chatCache.Set(cacheKey, entry, time.Now())
-				logRequestStage(ctx, "gateway_devshard_cache_stored", "escrow", rt.id, "model", limitModel, "stream", stream, "bytes", len(entry.Body))
-			}
+			entry, reason := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err())
+			g.storeChatCache(ctx, "gateway_devshard_cache", cacheKey, rt.id, limitModel, stream, entry, reason)
 		}
 		return
 	}
 	if innerPath == "/v1/finalize" && r.Method == http.MethodPost {
-		if rt.escrowHasBackgroundWork() {
-			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, devshardID), http.StatusConflict)
+		if ok, reason := g.beginFinalizeGate(rt); !ok {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s %s"}}`, devshardID, reason), http.StatusConflict)
 			return
 		}
+		defer g.endFinalizeGate(rt)
 		g.finalizeMu.Lock()
 		defer g.finalizeMu.Unlock()
 		log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", devshardID, r.URL.Path)
@@ -1837,17 +2039,49 @@ func (g *Gateway) serveInactiveDevshardMetadata(w http.ResponseWriter, r *http.R
 	return true
 }
 
+// beginFinalizeGate takes the drain-barrier check and the finalizing mark in a
+// single g.mu critical section -- the same lock admission holds across its own
+// gate check and reservation -- so no request can be admitted after finalize has
+// observed the runtime as quiet. It reports false plus a refusal reason when
+// another finalize is already in flight or background work has not drained; a
+// second finalize is refused rather than queued on finalizeMu, where it would
+// run after the first one reopened admission.
+func (g *Gateway) beginFinalizeGate(rt *devshardRuntime) (bool, string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if rt.finalizing.Load() {
+		return false, "already has a finalize in flight"
+	}
+	if rt.escrowHasBackgroundWork() {
+		return false, fmt.Sprintf("has active requests (active_requests=%d pending_race_cleanup=%d)",
+			rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
+	}
+	rt.finalizing.Store(true)
+	return true, ""
+}
+
+// endFinalizeGate reopens admission. After a successful finalize the runtime is
+// protected by other means -- the /devshard/{id} route deactivates it
+// (markDevshardInactiveAfterFinalize), and on the single-runtime route the
+// settled session phase makes acceptsNewInferences refuse -- so clearing the
+// mark changes nothing there; every failure path -- non-2xx, or a panic in the
+// inner handler -- needs it so the runtime stays usable.
+func (g *Gateway) endFinalizeGate(rt *devshardRuntime) {
+	rt.finalizing.Store(false)
+}
+
 func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRuntime) {
 	rt.active.Store(false)
 	if g.accounting != nil && rt.proxy != nil && rt.proxy.sm != nil {
 		g.accounting.Finalize(id)
 	}
-	if g.store == nil {
-		return
+	if g.store != nil {
+		if err := g.store.SetDevshardActive(id, false); err != nil {
+			log.Printf("finalize: persist deactivation for devshard %s: %v", id, err)
+		}
 	}
-	if err := g.store.SetDevshardActive(id, false); err != nil {
-		log.Printf("finalize: persist deactivation for devshard %s: %v", id, err)
-	}
+	rt.stopRedundancy()
+	g.forgetRetiredEscrowMetrics(id)
 }
 
 func (g *Gateway) serveChatToRuntime(rt *devshardRuntime, path string, body []byte, w http.ResponseWriter, r *http.Request) *gatewayChatCacheCapture {
@@ -1860,6 +2094,19 @@ func (g *Gateway) serveChatToRuntime(rt *devshardRuntime, path string, body []by
 	capture := &gatewayChatCacheCapture{ResponseWriter: w}
 	rt.handler.ServeHTTP(capture, req)
 	return capture
+}
+
+func (g *Gateway) storeChatCache(ctx context.Context, stage, cacheKey, escrow, model string, stream bool, entry cachedChatResponse, reason string) {
+	if reason == "" && !g.chatCache.Set(cacheKey, entry, time.Now()) {
+		reason = "too_large"
+	}
+	if reason != "" {
+		g.metrics.RecordChatCache(model, "skipped_"+reason)
+		logRequestStage(ctx, stage+"_skipped", "escrow", escrow, "model", model, "stream", stream, "reason", reason)
+		return
+	}
+	g.metrics.RecordChatCache(model, "stored")
+	logRequestStage(ctx, stage+"_stored", "escrow", escrow, "model", model, "stream", stream, "bytes", len(entry.Body))
 }
 
 func (g *Gateway) recordGatewayRequestOutcome(model, outcome, reason string) {
@@ -1915,7 +2162,7 @@ func (g *Gateway) recordCachedAccountingAlias(ctx context.Context, entry cachedC
 	logRequestStage(ctx, "gateway_cache_accounting_alias", "escrow", entry.EscrowID, "source_request_id", entry.SourceRequestID)
 }
 
-func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64) (*devshardRuntime, error) {
+func (g *Gateway) reserveRuntimeForModel(requestModel string, cost chatRequestCost, refusedEscrowIDs map[string]bool) (*devshardRuntime, error) {
 	g.mu.Lock()
 	var depletedEscrows []struct {
 		id     string
@@ -1931,9 +2178,10 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 
 	var candidates []*devshardRuntime
 	skipReasonCounts := make(map[string]int)
+	chainMaxNonce := g.chainMaxNonce()
 	for _, rt := range g.runtimeOrder {
-		if g.runtimeAtNonceLimit(rt) {
-			if g.settings.EscrowRotation.Enabled {
+		if runtimeAtNonceLimit(rt, chainMaxNonce) {
+			if g.settings.EscrowRotation.Enabled && chainMaxNonce != 0 {
 				depletedEscrows = append(depletedEscrows, struct {
 					id     string
 					model  string
@@ -1946,6 +2194,10 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 		ok, reason := rt.acceptsNewInferences()
 		if !ok {
 			skipReasonCounts[runtimeSkipReasonKey(reason)]++
+			continue
+		}
+		if refusedEscrowIDs[rt.id] {
+			skipReasonCounts["cannot_fund_request"]++
 			continue
 		}
 		candidates = append(candidates, rt)
@@ -1964,14 +2216,28 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 			}
 		}
 		if len(matching) == 0 {
+			if isModelListedInLimits(g.settings.ModelLimits, requestModel) {
+				return nil, &ModelTemporarilyUnavailableError{Model: requestModel}
+			}
 			return nil, &UnsupportedModelError{Model: requestModel, Supported: supportedModels(candidates)}
 		}
 		candidates = matching
 	}
 
-	bestScore := g.runtimeLoad(candidates[0], requestModel)
-	best := []*devshardRuntime{candidates[0]}
-	for _, rt := range candidates[1:] {
+	affordable := make([]*devshardRuntime, 0, len(candidates))
+	for _, rt := range candidates {
+		if !escrowCanFund(rt, cost) {
+			continue
+		}
+		affordable = append(affordable, rt)
+	}
+	if len(affordable) == 0 {
+		return nil, &EscrowsCannotFundRequestError{EscrowsRefused: len(candidates), wrapped: types.ErrRequestExceedsBalance}
+	}
+
+	bestScore := g.runtimeLoad(affordable[0], requestModel)
+	best := []*devshardRuntime{affordable[0]}
+	for _, rt := range affordable[1:] {
 		score := g.runtimeLoad(rt, requestModel)
 		switch {
 		case score < bestScore:
@@ -1994,8 +2260,8 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 	// below for diagnostics.
 	if math.IsInf(bestScore, +1) {
 		log.Printf(
-			"gateway: all %d candidate escrow(s) at zero capacity, returning 503; per-escrow weights: %s",
-			len(candidates), g.formatCandidateWeightsLocked(candidates, requestModel),
+			"gateway: all %d affordable escrow(s) at zero capacity (%d skipped as unable to fund the request), returning 503; per-escrow weights: %s",
+			len(affordable), len(candidates)-len(affordable), g.formatCandidateWeightsLocked(affordable, requestModel),
 		)
 		return nil, &EscrowParticipantRateLimitError{}
 	}
@@ -2005,19 +2271,18 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 		idx := int(g.roundRobinSeed.Add(1)-1) % len(best)
 		chosen = best[idx]
 	}
-	g.reserveRuntimeLocked(chosen, inputTokens)
+	g.reserveRuntimeLocked(chosen, cost)
 	if g.metrics != nil {
 		g.metrics.RecordPickerChoice(chosen.id, chosen.model)
 	}
 	return chosen, nil
 }
 
-func (g *Gateway) runtimeAtNonceLimit(rt *devshardRuntime) bool {
+func runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32) bool {
 	if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 		return false
 	}
-	nonce := rt.proxy.sm.LatestNonce()
-	return nonce >= nonceDeactivationLimit
+	return rt.proxy.sm.LatestNonce() >= escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
 }
 
 // formatCandidateWeightsLocked returns a compact "id=W(e)" diagnostic
@@ -2057,20 +2322,34 @@ func (g *Gateway) runtimeLoad(rt *devshardRuntime, requestModel string) float64 
 	return rt.load(g.capacity.EscrowWeightForModel(rt.id, firstNonEmpty(requestModel, rt.model)))
 }
 
-func (g *Gateway) reserveRuntime(rt *devshardRuntime, inputTokens int64) {
+// reserveRuntimeIfAccepting re-runs the admission gate and reserves in one g.mu
+// critical section, mirroring reserveRuntimeForModel. The direct /devshard/{id}
+// chat route gates early, before parsing and limiter admission, so it must
+// re-check at reservation time: a finalize may have closed the gate in between.
+func (g *Gateway) reserveRuntimeIfAccepting(rt *devshardRuntime, cost chatRequestCost) (bool, string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.reserveRuntimeLocked(rt, inputTokens)
+	if ok, reason := rt.acceptsNewInferences(); !ok {
+		return false, reason
+	}
+	g.reserveRuntimeLocked(rt, cost)
+	return true, ""
 }
 
-func (g *Gateway) reserveRuntimeLocked(rt *devshardRuntime, inputTokens int64) {
+func (g *Gateway) reserveRuntime(rt *devshardRuntime, cost chatRequestCost) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.reserveRuntimeLocked(rt, cost)
+}
+
+func (g *Gateway) reserveRuntimeLocked(rt *devshardRuntime, cost chatRequestCost) {
 	rt.activeUserRequests.Add(1)
-	rt.reservedTokens.Add(inputTokens)
+	rt.reservedTokens.Add(cost.promptTokens)
 }
 
-func (g *Gateway) releaseRuntime(rt *devshardRuntime, inputTokens int64) {
+func (g *Gateway) releaseRuntime(rt *devshardRuntime, cost chatRequestCost) {
 	remaining := rt.activeUserRequests.Add(-1)
-	rt.reservedTokens.Add(-inputTokens)
+	rt.reservedTokens.Add(-cost.promptTokens)
 	// Stay non-quiet while a background race cleanup is still refunding/persisting; its own releaseRaceCleanup re-checks the drain (whichever hits zero last fires; dedup makes a double-fire harmless).
 	if remaining != 0 || rt.pendingRaceCleanup.Load() != 0 {
 		return
@@ -2261,6 +2540,10 @@ func writeModelListWithCapForModel(w http.ResponseWriter, modelIDs []string, cap
 }
 
 func gatewayStatusCodeForError(err error) int {
+	var cannotFundErr *EscrowsCannotFundRequestError
+	if errors.As(err, &cannotFundErr) {
+		return http.StatusServiceUnavailable
+	}
 	var seedErr *user.HeightSeedError
 	if errors.As(err, &seedErr) {
 		return http.StatusServiceUnavailable
@@ -2300,6 +2583,14 @@ func gatewayStatusCodeForError(err error) int {
 	}
 	if u := transport.UndeclaredVersionFromError(err); u != nil {
 		return http.StatusServiceUnavailable
+	}
+	if status, code, message, ok := transport.ConnectApplicationStatus(err); ok {
+		if transport.IsUndeclaredVersionError(status, message, code) {
+			return http.StatusServiceUnavailable
+		}
+		if isParticipantThrottleStatus(status) {
+			return http.StatusTooManyRequests
+		}
 	}
 	var upstreamErr *transport.UpstreamStatusError
 	if errors.As(err, &upstreamErr) && isParticipantThrottleStatus(upstreamErr.StatusCode) {
@@ -2592,22 +2883,27 @@ type adminSettleEscrowRequest struct {
 }
 
 type adminSettingsRequest struct {
-	ChainREST                      *string                          `json:"chain_rest,omitempty"`
-	PublicAPI                      *string                          `json:"public_api,omitempty"`
-	DefaultModel                   *string                          `json:"default_model,omitempty"`
-	MaxConcurrentRequests          *int64                           `json:"max_concurrent_requests,omitempty"`
-	MaxConcurrentPer10000Weight    *float64                         `json:"max_concurrent_requests_per_10000_weight,omitempty"`
-	PoCMaxConcurrentPer10000Weight *float64                         `json:"poc_max_concurrent_requests_per_10000_weight,omitempty"`
-	MaxInputTokensInFlight         *int64                           `json:"max_input_tokens_in_flight,omitempty"`
-	ModelLimits                    *[]GatewayModelLimitSettings     `json:"model_limits,omitempty"`
-	DefaultRequestMaxTokens        *uint64                          `json:"default_request_max_tokens,omitempty"`
-	RequestMaxTokensCap            *uint64                          `json:"request_max_tokens_cap,omitempty"`
-	TxGasLimit                     *uint64                          `json:"tx_gas_limit,omitempty"`
-	Disabled                       *adminGatewayDisabledRequest     `json:"disabled,omitempty"`
-	ParticipantThrottle            *adminParticipantThrottleRequest `json:"participant_throttle,omitempty"`
-	Redundancy                     *adminRedundancyRequest          `json:"redundancy,omitempty"`
-	Perf                           *adminPerfRequest                `json:"perf,omitempty"`
-	EscrowRotation                 *adminEscrowRotationRequest      `json:"escrow_rotation,omitempty"`
+	ChainREST                      *string                           `json:"chain_rest,omitempty"`
+	PublicAPI                      *string                           `json:"public_api,omitempty"`
+	DefaultModel                   *string                           `json:"default_model,omitempty"`
+	MaxConcurrentRequests          *int64                            `json:"max_concurrent_requests,omitempty"`
+	MaxConcurrentPer10000Weight    *float64                          `json:"max_concurrent_requests_per_10000_weight,omitempty"`
+	PoCMaxConcurrentPer10000Weight *float64                          `json:"poc_max_concurrent_requests_per_10000_weight,omitempty"`
+	MaxInputTokensInFlight         *int64                            `json:"max_input_tokens_in_flight,omitempty"`
+	ModelLimits                    *[]GatewayModelLimitSettings      `json:"model_limits,omitempty"`
+	DefaultRequestMaxTokens        *uint64                           `json:"default_request_max_tokens,omitempty"`
+	RequestMaxTokensCap            *uint64                           `json:"request_max_tokens_cap,omitempty"`
+	TxGasLimit                     *uint64                           `json:"tx_gas_limit,omitempty"`
+	Disabled                       *adminGatewayDisabledRequest      `json:"disabled,omitempty"`
+	ParticipantThrottle            *adminParticipantThrottleRequest  `json:"participant_throttle,omitempty"`
+	Redundancy                     *adminRedundancyRequest           `json:"redundancy,omitempty"`
+	Perf                           *adminPerfRequest                 `json:"perf,omitempty"`
+	EscrowRotation                 *adminEscrowRotationRequest       `json:"escrow_rotation,omitempty"`
+	LogprobsOptimization           *adminLogprobsOptimizationRequest `json:"logprobs_optimization,omitempty"`
+}
+
+type adminLogprobsOptimizationRequest struct {
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 type adminGatewayDisabledRequest struct {
@@ -2758,6 +3054,9 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.ModelLimits != nil {
 			settings.ModelLimits = normalizeGatewayModelLimits(*req.ModelLimits)
+		}
+		if req.LogprobsOptimization != nil {
+			settings.LogprobsOptimizationOverride = req.LogprobsOptimization.Enabled
 		}
 		if req.DefaultRequestMaxTokens != nil {
 			settings.DefaultRequestMaxTokens = *req.DefaultRequestMaxTokens
@@ -3434,6 +3733,21 @@ func runtimeParticipantKeys(rt *devshardRuntime) []string {
 	return keys
 }
 
+func runtimeAdoptionPeers(rt *devshardRuntime) []string {
+	keys := runtimeParticipantKeys(rt)
+	prefix := ""
+	if rt != nil {
+		prefix = rt.routePrefix
+	}
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if id := transport.PeerChildID(key, prefix); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func (g *Gateway) handleAdminSettleDevshard(w http.ResponseWriter, r *http.Request, id string) {
 	if g.store == nil {
 		http.Error(w, `{"error":{"message":"gateway state store unavailable"}}`, http.StatusServiceUnavailable)
@@ -3764,6 +4078,7 @@ func (g *Gateway) handleAdminDeactivateDevshard(w http.ResponseWriter, r *http.R
 		if err := retired.retireClose("deactivated"); err != nil {
 			log.Printf("deactivate_retire_close_error escrow=%s error=%v", id, err)
 		}
+		g.forgetRetiredEscrowMetrics(id)
 	}
 	writeJSON(w, map[string]any{
 		"id":     id,
@@ -3828,6 +4143,16 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 		http.Error(w, `{"error":{"message":"gateway state store unavailable"}}`, http.StatusServiceUnavailable)
 		return
 	}
+	// Both run once g.mu is released: stopping a dispatcher joins its goroutine, and the series must
+	// not be deleted while that goroutine can still record one.
+	var cleanedRuntime *devshardRuntime
+	hasSeriesToForget := false
+	defer func() {
+		cleanedRuntime.stopRedundancy()
+		if hasSeriesToForget {
+			g.forgetRetiredEscrowMetrics(id)
+		}
+	}()
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -3850,18 +4175,19 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if rt, ok := g.runtimes[id]; ok {
-		if rt.activeUserRequests.Load() > 0 {
+		if rt.escrowHasBackgroundWork() {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, id), http.StatusConflict)
 			return
 		}
-		delete(g.runtimes, id)
-		g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
-		if g.capacity != nil {
-			g.capacity.RemoveEscrow(id)
+		if g.unregisterRuntimeLocked(id) != nil {
+			cleanedRuntime = rt
+			hasSeriesToForget = true
+			if err := rt.close(); err != nil {
+				log.Printf("close devshard %s: %v", id, err)
+			}
 		}
-		if err := rt.close(); err != nil {
-			log.Printf("close devshard %s: %v", id, err)
-		}
+	} else {
+		hasSeriesToForget = true
 	}
 	if err := g.store.DeleteDevshard(id); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -4125,8 +4451,35 @@ func (g *Gateway) retireRuntime(id, reason string) bool {
 	if err := rt.retireClose(reason); err != nil {
 		log.Printf("runtime_retire_close_error escrow=%s reason=%q error=%v", id, reason, err)
 	}
+	g.forgetRetiredEscrowMetrics(id)
 	log.Printf("runtime_retired escrow=%s reason=%q", id, reason)
 	return true
+}
+
+// dropRegisteredRuntimeLocked is the single map-removal point for a runtime.
+// Callers must hold g.mu, and must call forgetRetiredEscrowMetrics once the
+// runtime's dispatcher has stopped.
+func (g *Gateway) dropRegisteredRuntimeLocked(id string) *devshardRuntime {
+	rt, ok := g.runtimes[id]
+	if !ok {
+		return nil
+	}
+	delete(g.runtimes, id)
+	g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
+	if g.capacity != nil {
+		g.capacity.RemoveEscrow(id)
+	}
+	return rt
+}
+
+// forgetRetiredEscrowMetrics drops the escrow's Prometheus children. Callers run it after the
+// runtime's dispatcher has stopped and outside g.mu, so a late ghost burn cannot recreate a series
+// that was just deleted, and the per-child scan stays off the routing lock.
+func (g *Gateway) forgetRetiredEscrowMetrics(id string) {
+	if g == nil || g.metrics == nil {
+		return
+	}
+	g.metrics.ForgetEscrow(id)
 }
 
 // retireRuntimeLocked removes the runtime from the registry and returns it so
@@ -4146,15 +4499,24 @@ func (g *Gateway) retireRuntimeLocked(id, reason string) *devshardRuntime {
 			id, reason, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
 		return nil
 	}
-	delete(g.runtimes, id)
-	g.runtimeOrder = removeRuntime(g.runtimeOrder, id)
-	if g.capacity != nil {
-		g.capacity.RemoveEscrow(id)
+	return g.unregisterRuntimeLocked(id)
+}
+
+// unregisterRuntimeLocked drops the runtime from the registry and releases
+// adoption and host-ping. Callers must hold g.mu and have already decided to
+// remove it. Map removal stays in dropRegisteredRuntimeLocked so escrow
+// metrics are forgotten once the dispatcher has stopped.
+func (g *Gateway) unregisterRuntimeLocked(id string) *devshardRuntime {
+	dropped := g.dropRegisteredRuntimeLocked(id)
+	if dropped == nil {
+		return nil
 	}
-	// Admin deactivate may skip deactivateDevshardByIDWithReason; always release
-	// here too. ReleaseEscrow is idempotent.
+	// Admin deactivate may skip deactivateDevshardByIDWithReason; ReleaseEscrow is idempotent.
 	g.releaseHostPing(id)
-	return rt
+	if g.metrics != nil {
+		g.metrics.PeerRPCAdoption().ReleaseEscrow(id)
+	}
+	return dropped
 }
 
 func (g *Gateway) attachMetrics(rt *devshardRuntime) {
@@ -4163,6 +4525,9 @@ func (g *Gateway) attachMetrics(rt *devshardRuntime) {
 	}
 	if g.metrics != nil {
 		rt.proxy.redundancy.metrics = g.metrics
+		// Use the runtime snapshot, not session.ParticipantKeys(): admin-add
+		// and settings-reload call this under g.mu.
+		g.metrics.PeerRPCAdoption().BindEscrowHosts(rt.id, runtimeAdoptionPeers(rt))
 	}
 	rt.proxy.redundancy.devshardID = rt.id
 	escrowID := rt.id
@@ -4270,27 +4635,6 @@ func (g *Gateway) deactivateDevshardByIDWithReason(id, reason string) bool {
 	return true
 }
 
-// deactivateAndSettleDevshardByID stops new traffic to an escrow and settles
-// it. If requests are still in flight it marks the escrow settlement-pending
-// and returns; the drain hook in releaseRuntime settles once the last request
-// finishes. Otherwise it settles immediately.
-func (g *Gateway) deactivateAndSettleDevshardByID(id, reason string) {
-	if !g.deactivateDevshardByIDWithReason(id, reason) {
-		return
-	}
-	g.markSettlementPending(id, reason)
-
-	g.mu.Lock()
-	rt, ok := g.runtimes[id]
-	g.mu.Unlock()
-	if ok && rt.escrowHasBackgroundWork() {
-		log.Printf("settlement_queued_waiting_for_drain escrow=%s reason=%s active_requests=%d pending_race_cleanup=%d",
-			id, reason, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
-		return
-	}
-	g.scheduleAutoSettlement(id, reason)
-}
-
 // markSettlementPending records that an escrow must be settled once its
 // in-flight requests drain. The reason is stored before the flag so the
 // lock-free drain hook in releaseRuntime reads a consistent value.
@@ -4345,18 +4689,13 @@ func (g *Gateway) reconcilePendingSettlements() {
 		}
 		return
 	}
-	// Honor the operator's config: when settlement is disabled, never settle on
-	// startup. Leave the marker intact so a later re-enable still settles it.
-	if !state.Settings.EscrowRotation.SettlementEnabled {
-		for _, devshard := range state.Devshards {
-			if !devshard.Active && devshard.SettlementPending {
-				log.Printf("settlement_reconcile_skipped escrow=%s reason=settlement_disabled", devshard.ID)
-			}
-		}
-		return
-	}
 	for _, devshard := range state.Devshards {
 		if devshard.Active || !devshard.SettlementPending {
+			continue
+		}
+		// A disabled model keeps its marker, so a later re-enable still settles it.
+		if !settlementEnabledForModel(state.Settings, devshard.Model) {
+			log.Printf("settlement_reconcile_skipped escrow=%s model=%q reason=settlement_disabled", devshard.ID, devshard.Model)
 			continue
 		}
 		g.mu.Lock()
@@ -4373,8 +4712,8 @@ func (g *Gateway) reconcilePendingSettlements() {
 	}
 }
 
-func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, settings GatewaySettings) (bool, error) {
-	if !settings.EscrowRotation.SettlementEnabled {
+func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, modelID, reason string, settings GatewaySettings) (bool, error) {
+	if !settlementEnabledForModel(settings, modelID) {
 		if g.deactivateDevshardByIDWithReason(id, reason) {
 			log.Printf("escrow_rotation_deactivated_without_settlement escrow=%s reason=%q", id, reason)
 		}
@@ -4431,6 +4770,7 @@ func (g *Gateway) scheduleDepletedEscrowReplacement(id, modelID, reason string) 
 	}()
 }
 
+// replaceDepletedEscrow takes a depleted escrow that rotation can replace out of service, then tries one replacement for it and does not retry a failed one.
 func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason string) error {
 	g.mu.Lock()
 	settings := g.settings
@@ -4441,6 +4781,18 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	model, ok := replacementModelForDepletedEscrow(settings, modelID)
 	if !ok {
 		return fmt.Errorf("no escrow rotation model configured for %q", modelID)
+	}
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(ctx, id, modelID, reason, settings)
+	if err != nil {
+		return fmt.Errorf("deactivate depleted escrow: %w", err)
+	}
+	if !isTakenOutOfService {
+		return nil
+	}
+	// Before the chain call: a replacement that fails to broadcast must not leave the escrow it
+	// replaces resident, holding its session and its series.
+	if !settings.EscrowRotation.SettlementEnabled {
+		g.retireRuntime(id, reason)
 	}
 
 	var epoch uint64
@@ -4457,11 +4809,6 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	}
 	log.Printf("escrow_depletion_replacement_created old_escrow=%s new_escrow=%d model=%q reason=%q tx_hash=%s",
 		id, result.EscrowID, model.ModelID, reason, result.TxHash)
-	if !settings.EscrowRotation.SettlementEnabled {
-		g.deactivateDevshardByIDWithReason(id, reason)
-	} else {
-		g.deactivateAndSettleDevshardByID(id, reason)
-	}
 	return nil
 }
 
@@ -4476,6 +4823,42 @@ func replacementModelForDepletedEscrow(settings GatewaySettings, modelID string)
 		}
 	}
 	return EscrowRotationModelSettings{}, false
+}
+
+// deactivateDepletedEscrow saves the escrow inactive, with its settlement mark when settlement is enabled for its model, before stopping its traffic in memory, and reports whether this call took it out of service.
+func (g *Gateway) deactivateDepletedEscrow(ctx context.Context, id, modelID, reason string, settings GatewaySettings) (bool, error) {
+	isSettlementEnabled := settlementEnabledForModel(settings, modelID)
+	var isDeactivatedInStore bool
+	if err := withDBRetry(ctx, func() error {
+		var err error
+		isDeactivatedInStore, err = g.store.DeactivateDevshardIfActive(id, isSettlementEnabled)
+		return err
+	}); err != nil {
+		return false, err
+	}
+	isSettlementDue := isSettlementEnabled && isDeactivatedInStore
+	g.mu.Lock()
+	depletedRuntime, isResident := g.runtimes[id]
+	if isResident {
+		depletedRuntime.active.Store(false)
+		g.releaseHostPing(id)
+		if isSettlementDue {
+			depletedRuntime.settlementReason = reason
+			depletedRuntime.settlementPending.Store(true)
+		}
+	}
+	g.mu.Unlock()
+	log.Printf("escrow_depletion_deactivated escrow=%s reason=%q deactivated_in_store=%t settlement_due=%t", id, reason, isDeactivatedInStore, isSettlementDue)
+	if !isSettlementDue {
+		return isDeactivatedInStore, nil
+	}
+	if isResident && depletedRuntime.escrowHasBackgroundWork() {
+		log.Printf("settlement_queued_waiting_for_drain escrow=%s reason=%s active_requests=%d pending_race_cleanup=%d",
+			id, reason, depletedRuntime.activeUserRequests.Load(), depletedRuntime.pendingRaceCleanup.Load())
+		return isDeactivatedInStore, nil
+	}
+	g.scheduleAutoSettlement(id, reason)
+	return isDeactivatedInStore, nil
 }
 
 func (g *Gateway) scheduleAutoSettlement(id, reason string) {

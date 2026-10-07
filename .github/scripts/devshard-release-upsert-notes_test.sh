@@ -134,6 +134,7 @@ export GH_PATH=$state/bin/gh
 	--body-line "devshardd v5 protocol v5 binary stamp v5.0.0" \
 	--image ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5 \
 	--image ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5 \
+	--image ghcr.io/gonka-ai/proxy-router:0.2.15-devshard-v5 \
 	|| fail "create failed"
 
 python3 - "$state/releases.json" <<'PY' || fail "create body"
@@ -146,6 +147,7 @@ assert "devshardd v5 protocol v5 binary stamp v5.0.0" in body
 assert "## Images" in body
 assert "ghcr.io/gonka-ai/versiond:0.2.15-devshard-v5" in body
 assert "ghcr.io/gonka-ai/versiond-router:0.2.15-devshard-v5" in body
+assert "ghcr.io/gonka-ai/proxy-router:0.2.15-devshard-v5" in body
 assert rel[0]["target"] == "abc"
 assert body.count("## Images") == 1
 PY

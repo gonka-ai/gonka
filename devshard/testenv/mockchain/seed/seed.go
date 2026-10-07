@@ -74,8 +74,8 @@ func Defaults() *store.Store {
 		ModelSnapshot: &inferencetypes.Model{
 			Id: "test-model",
 			ValidationThreshold: &inferencetypes.Decimal{
-				Value:    50,
-				Exponent: 0,
+				Value:    config.DefaultValidationThresholdValue,
+				Exponent: config.DefaultValidationThresholdExponent,
 			},
 		},
 	}
@@ -233,9 +233,9 @@ func FromFile(f *config.File) (*store.Store, error) {
 		if epoch == 0 {
 			epoch = s.Epoch.Index
 		}
-		val := eg.ValidationThreshold
+		val, exponent := eg.ValidationThreshold, eg.ValidationExponent
 		if val == 0 {
-			val = 50
+			val, exponent = config.DefaultValidationThresholdValue, config.DefaultValidationThresholdExponent
 		}
 		s.EpochGroupData[store.EpochGroupKey{EpochIndex: epoch, ModelID: eg.ModelID}] = &inferencetypes.EpochGroupData{
 			EpochIndex: epoch,
@@ -244,7 +244,7 @@ func FromFile(f *config.File) (*store.Store, error) {
 				Id: eg.ModelID,
 				ValidationThreshold: &inferencetypes.Decimal{
 					Value:    val,
-					Exponent: eg.ValidationExponent,
+					Exponent: exponent,
 				},
 			},
 		}

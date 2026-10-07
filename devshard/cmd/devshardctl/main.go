@@ -20,6 +20,7 @@ import (
 	"devshard/bridge"
 	"devshard/internal/boolvalue"
 	"devshard/logging"
+	"devshard/runtimeparams"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -227,6 +228,7 @@ func mustLoadBootstrapOptions(flags cliFlags, baseStorageDir string) bootstrapOp
 		PoCMaxConcurrentPer10000Weight: readFloat64Env("GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT", defaultPoCMaxConcurrentPer10000Weight),
 		MaxInputTokensInFlight:         readInt64Env("GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT", 0),
 		TxGasLimit:                     uint64(readInt64Env("DEVSHARD_TX_GAS_LIMIT", 0)),
+		LogprobsOptimizationOverride:   readOptionalBoolEnv("GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE"),
 		Disabled: GatewayDisabledSettings{
 			Enabled: readBoolEnv("DEVSHARD_GATEWAY_DISABLED", false),
 			Message: os.Getenv("DEVSHARD_GATEWAY_DISABLED_MESSAGE"),
@@ -463,7 +465,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		gatewayState.Settings.ModelLimits,
 	)
 	recorder := accounting.NewRecorder(accountingTracker, currentPoCPhaseReason)
-	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder)
+	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder, runtimeparams.MaxNonceFromSnapshot(runtimeParams.Provider))
 	if accountingTracker != nil {
 		if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingTracker, accountingCurrentEpoch(gateway))); err != nil {
 			log.Printf("register accounting metrics: %v (accounting metrics disabled)", err)
@@ -747,10 +749,8 @@ func isAdminPath(path string) bool {
 
 func adminAuthMiddleware(adminKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		adminAuthenticated := adminKey != "" &&
-			strings.HasPrefix(auth, "Bearer ") &&
-			strings.TrimPrefix(auth, "Bearer ") == adminKey
+		key, ok := bearerToken(r)
+		adminAuthenticated := adminKey != "" && ok && key == adminKey
 		if adminAuthenticated {
 			r = r.WithContext(context.WithValue(r.Context(), adminAuthContextKey{}, true))
 			r = r.WithContext(context.WithValue(r.Context(), adminAPIKeySuffixContextKey{}, apiKeySuffix(adminKey)))
@@ -813,6 +813,19 @@ func readFloat64Env(name string, fallback float64) float64 {
 		return fallback
 	}
 	return v
+}
+
+func readOptionalBoolEnv(name string) *bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	parsed, err := boolvalue.Parse(raw)
+	if err != nil {
+		log.Printf("invalid %s=%q, leaving it unset", name, raw)
+		return nil
+	}
+	return &parsed
 }
 
 func readBoolEnv(name string, fallback bool) bool {

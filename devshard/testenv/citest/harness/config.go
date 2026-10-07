@@ -16,7 +16,12 @@ import (
 type MultiConfigOpts struct {
 	Hosts          int
 	EscrowSlots    int
+	EscrowAmount   uint64 // 0 = default; else the seed escrow's balance (gencompose default: 1_000_000)
 	ValidationRate uint32 // 0 = default; else params + seed escrow snapshot
+	// RefusalTimeout and ExecutionTimeout are seconds; 0 = default. Both reach
+	// params and the seed escrow, so the escrow live at boot already has them.
+	RefusalTimeout   int64
+	ExecutionTimeout int64
 }
 
 // WriteStackConfig writes the standard two-versiond stack config.
@@ -71,11 +76,23 @@ func WriteMultiConfig(t *testing.T, dir string, opts MultiConfigOpts) {
 	routerPort := pickFreePort(t)
 	gatewayPort := pickFreePort(t)
 
-	paramsRate := ""
-	escrowRate := ""
+	paramsExtra := ""
+	escrowExtra := ""
+	escrowAmount := ""
 	if opts.ValidationRate > 0 {
-		paramsRate = fmt.Sprintf("\n  validation_rate: %d", opts.ValidationRate)
-		escrowRate = fmt.Sprintf("\n    validation_rate: %d", opts.ValidationRate)
+		paramsExtra = fmt.Sprintf("\n  validation_rate: %d", opts.ValidationRate)
+		escrowExtra = fmt.Sprintf("\n    validation_rate: %d", opts.ValidationRate)
+	}
+	if opts.EscrowAmount > 0 {
+		escrowAmount = fmt.Sprintf("\n    amount: %d", opts.EscrowAmount)
+	}
+	if opts.RefusalTimeout > 0 {
+		paramsExtra += fmt.Sprintf("\n  refusal_timeout: %d", opts.RefusalTimeout)
+		escrowExtra += fmt.Sprintf("\n    refusal_timeout: %d", opts.RefusalTimeout)
+	}
+	if opts.ExecutionTimeout > 0 {
+		paramsExtra += fmt.Sprintf("\n  execution_timeout: %d", opts.ExecutionTimeout)
+		escrowExtra += fmt.Sprintf("\n    execution_timeout: %d", opts.ExecutionTimeout)
 	}
 
 	var hosts strings.Builder
@@ -122,12 +139,12 @@ warm_grantee:
   private_key_hex: TODO
 escrows:
   - id: 1
-    model_id: test-model%s
+    model_id: test-model%s%s
 grantees:
   - granter_address: ""
     message_type_url: /inference.inference.MsgStartInference
     grantees: [""]
-`, paramsRate, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, routerPort, gatewayPort, opts.EscrowSlots, hosts.String(), escrowRate)
+`, paramsExtra, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, routerPort, gatewayPort, opts.EscrowSlots, hosts.String(), escrowAmount, escrowExtra)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(skeleton), 0o644))
 }
 

@@ -85,6 +85,15 @@ func (g *ObsRepairGate) StorageProof(ctx context.Context, operation ProofOperati
 	return provider.StorageProof(ctx, operation, nonce)
 }
 
+// CurrentEpochID forwards the managed-storage epoch clock. HostManager uses
+// it for the in-memory escrow roster (current epoch and the two before it).
+func (g *ObsRepairGate) CurrentEpochID() uint64 {
+	if h, ok := g.Storage.(interface{ CurrentEpochID() uint64 }); ok {
+		return h.CurrentEpochID()
+	}
+	return 0
+}
+
 // PruneCutoff forwards the managed-storage retention horizon so recovery can
 // skip prune-bound sessions without unwrapping the gate.
 func (g *ObsRepairGate) PruneCutoff() uint64 {

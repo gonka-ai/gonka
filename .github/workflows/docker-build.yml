@@ -1,11 +1,12 @@
 # Build and push Docker images to this repo's GHCR (ghcr.io/<owner>/…).
-# Tag push of release/vX.Y.Z-devshard-vA.B.C builds versiond and versiond-router
-# as <chain>-devshard-<leftover-major> (e.g. 0.2.15-devshard-v5). If that tag
-# already exists on GHCR, skip the rebuild. Tag runs also upsert the same
-# GitHub Release as the host zip (Devshard Release vX.Y.Z).
+# Tag push of release/vX.Y.Z-devshard-vA.B.C builds versiond, versiond-router,
+# proxy, and proxy-router as <chain>-devshard-<leftover-major>
+# (e.g. 0.2.15-devshard-v5). If that tag already exists on GHCR, skip the
+# rebuild. Tag runs also upsert the same GitHub Release as the host zip
+# (Devshard Release vX.Y.Z).
 #
 # workflow_dispatch can select any subset of decentralized-api, inference-chain,
-# versiond, versiond-router, and proxy.
+# versiond, versiond-router, proxy, and proxy-router.
 name: Build Docker images
 
 on:
@@ -32,6 +33,10 @@ on:
         default: false
       build_proxy:
         description: 'Build proxy'
+        type: boolean
+        default: false
+      build_proxy_router:
+        description: 'Build proxy-router'
         type: boolean
         default: false
       version_tag:
@@ -64,11 +69,14 @@ jobs:
       release_body_line: ${{ steps.out.outputs.release_body_line }}
       image_versiond: ${{ steps.out.outputs.image_versiond }}
       image_versiond_router: ${{ steps.out.outputs.image_versiond_router }}
+      image_proxy: ${{ steps.out.outputs.image_proxy }}
+      image_proxy_router: ${{ steps.out.outputs.image_proxy_router }}
       build_decentralized_api: ${{ steps.out.outputs.build_decentralized_api }}
       build_inference_chain: ${{ steps.out.outputs.build_inference_chain }}
       build_versiond: ${{ steps.out.outputs.build_versiond }}
       build_versiond_router: ${{ steps.out.outputs.build_versiond_router }}
       build_proxy: ${{ steps.out.outputs.build_proxy }}
+      build_proxy_router: ${{ steps.out.outputs.build_proxy_router }}
       owner_type: ${{ steps.out.outputs.owner_type }}
     steps:
       - name: Checkout code
@@ -85,6 +93,7 @@ jobs:
           IN_VERSIOND: ${{ github.event.inputs.build_versiond }}
           IN_ROUTER: ${{ github.event.inputs.build_versiond_router }}
           IN_PROXY: ${{ github.event.inputs.build_proxy }}
+          IN_PROXY_ROUTER: ${{ github.event.inputs.build_proxy_router }}
           IN_VERSION_TAG: ${{ github.event.inputs.version_tag }}
           IN_PUSH: ${{ github.event.inputs.push_to_registry }}
         run: |
@@ -107,7 +116,8 @@ jobs:
               echo 'build_inference_chain=false'
               echo 'build_versiond=true'
               echo 'build_versiond_router=true'
-              echo 'build_proxy=false'
+              echo 'build_proxy=true'
+              echo 'build_proxy_router=true'
             } >> "$GITHUB_OUTPUT"
           else
             dapi=false
@@ -115,12 +125,14 @@ jobs:
             versiond=false
             router=false
             proxy=false
+            proxy_router=false
             [ "${IN_DAPI:-false}" = true ] && dapi=true
             [ "${IN_INFERENCE:-false}" = true ] && inference=true
             [ "${IN_VERSIOND:-false}" = true ] && versiond=true
             [ "${IN_ROUTER:-false}" = true ] && router=true
             [ "${IN_PROXY:-false}" = true ] && proxy=true
-            if [ "$dapi" = false ] && [ "$inference" = false ] && [ "$versiond" = false ] && [ "$router" = false ] && [ "$proxy" = false ]; then
+            [ "${IN_PROXY_ROUTER:-false}" = true ] && proxy_router=true
+            if [ "$dapi" = false ] && [ "$inference" = false ] && [ "$versiond" = false ] && [ "$router" = false ] && [ "$proxy" = false ] && [ "$proxy_router" = false ]; then
               echo 'select at least one image' >&2
               exit 1
             fi
@@ -137,11 +149,14 @@ jobs:
               echo 'release_body_line='
               echo "image_versiond=ghcr.io/${OWNER}/versiond:${image_tag}"
               echo "image_versiond_router=ghcr.io/${OWNER}/versiond-router:${image_tag}"
+              echo "image_proxy=ghcr.io/${OWNER}/proxy:${image_tag}"
+              echo "image_proxy_router=ghcr.io/${OWNER}/proxy-router:${image_tag}"
               echo "build_decentralized_api=$dapi"
               echo "build_inference_chain=$inference"
               echo "build_versiond=$versiond"
               echo "build_versiond_router=$router"
               echo "build_proxy=$proxy"
+              echo "build_proxy_router=$proxy_router"
             } >> "$GITHUB_OUTPUT"
           fi
 
@@ -225,7 +240,7 @@ jobs:
 
   build-join:
     needs: classify
-    if: needs.classify.outputs.build_versiond == 'true' || needs.classify.outputs.build_versiond_router == 'true' || needs.classify.outputs.build_proxy == 'true'
+    if: needs.classify.outputs.build_versiond == 'true' || needs.classify.outputs.build_versiond_router == 'true' || needs.classify.outputs.build_proxy == 'true' || needs.classify.outputs.build_proxy_router == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -243,6 +258,10 @@ jobs:
             package: proxy
             file: ./proxy/Dockerfile
             context: ./proxy
+          - id: proxy-router
+            package: proxy-router
+            file: ./proxy-router/Dockerfile
+            context: .
     steps:
       - name: Decide whether to build
         id: select
@@ -257,6 +276,9 @@ jobs:
               ;;
             proxy)
               [ "${{ needs.classify.outputs.build_proxy }}" = true ] || skip=true
+              ;;
+            proxy-router)
+              [ "${{ needs.classify.outputs.build_proxy_router }}" = true ] || skip=true
               ;;
           esac
           echo "skip=$skip" >> "$GITHUB_OUTPUT"
@@ -339,7 +361,9 @@ jobs:
             --target "${{ github.sha }}" \
             --body-line "${{ needs.classify.outputs.release_body_line }}" \
             --image "${{ needs.classify.outputs.image_versiond }}" \
-            --image "${{ needs.classify.outputs.image_versiond_router }}"
+            --image "${{ needs.classify.outputs.image_versiond_router }}" \
+            --image "${{ needs.classify.outputs.image_proxy }}" \
+            --image "${{ needs.classify.outputs.image_proxy_router }}"
 
   summary:
     needs: [classify, build-decentralized-api, build-inference-chain, build-join, upsert-release]
@@ -368,5 +392,8 @@ jobs:
             echo "- \`${{ needs.classify.outputs.image_versiond_router }}\`" >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ "${{ needs.classify.outputs.build_proxy }}" = true ]; then
-            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/proxy:${{ needs.classify.outputs.image_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "- \`${{ needs.classify.outputs.image_proxy }}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${{ needs.classify.outputs.build_proxy_router }}" = true ]; then
+            echo "- \`${{ needs.classify.outputs.image_proxy_router }}\`" >> "$GITHUB_STEP_SUMMARY"
           fi

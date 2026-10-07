@@ -674,15 +674,29 @@ func classifySeedVerdict(ok bool, err error) (seedVerdict, string) {
 	if err == nil {
 		return seedRetryLater, "omit"
 	}
+	if errors.Is(err, transport.ErrHTTPSessionRetired) {
+		return seedDeclined, err.Error()
+	}
+	if status, code, _, ok := transport.ConnectApplicationStatus(err); ok {
+		if seedHostDeclined(status, code) {
+			return seedDeclined, err.Error()
+		}
+	}
 	var status *transport.UpstreamStatusError
 	if errors.As(err, &status) {
-		if status.StatusCode == http.StatusNotFound ||
-			status.StatusCode == http.StatusNotImplemented ||
-			strings.EqualFold(strings.TrimSpace(status.DevshardError), transport.DevshardErrorNotImplemented) {
+		if seedHostDeclined(status.StatusCode, status.DevshardError) {
 			return seedDeclined, status.Error()
 		}
 	}
 	return seedRetryLater, err.Error()
+}
+
+func seedHostDeclined(status int, devshardError string) bool {
+	return status == http.StatusNotFound ||
+		status == http.StatusNotImplemented ||
+		status == http.StatusGone ||
+		strings.EqualFold(strings.TrimSpace(devshardError), transport.DevshardErrorNotImplemented) ||
+		strings.EqualFold(strings.TrimSpace(devshardError), transport.DevshardErrorHTTPSessionRetired)
 }
 
 func applySeedOutcomes(escrow string, okSlots map[int]struct{}, last map[int]seedSlotRecord, out []seedOutcome) {

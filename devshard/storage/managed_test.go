@@ -86,6 +86,9 @@ func (s *legacyOnlyStorage) AppendDiff(escrowID string, rec types.DiffRecord) er
 func (s *legacyOnlyStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	return s.inner.GetDiffs(escrowID, fromNonce, toNonce)
 }
+func (s *legacyOnlyStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	return s.inner.DiffSizes(escrowID, fromNonce, toNonce, limit)
+}
 func (s *legacyOnlyStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	return s.inner.AddSignature(escrowID, nonce, slotID, sig)
 }
@@ -127,6 +130,15 @@ func (s *legacyOnlyStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint
 }
 func (s *legacyOnlyStorage) ClearValidationObs(escrowID string) error {
 	return s.inner.ClearValidationObs(escrowID)
+}
+func (s *legacyOnlyStorage) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	return s.inner.SetValidationObsRebuildPending(escrowID, pending)
+}
+func (s *legacyOnlyStorage) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	return s.inner.ValidationObsRebuildPending(escrowID)
+}
+func (s *legacyOnlyStorage) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	return s.inner.LockValidationObsRebuild(escrowID)
 }
 func (s *legacyOnlyStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
 	return s.inner.RecordValidationsAppliedOnce(escrowID, entries)

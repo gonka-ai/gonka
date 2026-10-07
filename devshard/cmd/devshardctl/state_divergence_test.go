@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
+	"devshard/user"
 )
 
 func divergenceError() error {
@@ -21,6 +25,30 @@ func divergentInflight(env *testProxyEnv, hostIdx int) *inflight {
 		nonce:    7,
 		escrowID: env.proxy.redundancy.devshardID,
 		err:      divergenceError(),
+	}
+}
+
+// A response refused because the gateway could not read its own root is not
+// the host's fault, so it records no sample, like a state-hash mismatch.
+func TestStateDivergence_LocalRootFailureRecordsNoSample(t *testing.T) {
+	cases := []struct {
+		name    string
+		err     error
+		samples int
+	}{
+		{name: "local root unavailable", err: fmt.Errorf("process response: %w", user.ErrLocalRootUnavailable), samples: 0},
+		{name: "state hash mismatch", err: fmt.Errorf("process response: %w", types.ErrStateHashMismatch), samples: 0},
+		{name: "generic process error", err: errors.New("process response: malformed terminal chunk"), samples: 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			redundancy := &Redundancy{perf: NewPerfTracker(nil)}
+			inf := &inflight{hostIdx: 0, nonce: 7, sendTime: time.Now(), processErr: tc.err}
+
+			redundancy.recordSampleOnce(inf, user.InferenceParams{InputLength: 1}, false)
+
+			require.Equal(t, tc.samples, redundancy.perf.Stats(0).TotalSamples)
+		})
 	}
 }
 

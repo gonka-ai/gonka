@@ -326,18 +326,22 @@ func TestUser_Finalize_DiffCount(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
+	var composed int
+	session.SetDiffObserver(func(types.Diff) { composed++ })
 	for i := 0; i < 3; i++ {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
-	preFinalize := len(session.Diffs())
+	preFinalize := composed
 
 	err := session.Finalize(ctx)
 	require.NoError(t, err)
 
 	// Finalize adds N (Phase A) + 1 (drain) = N + 1. Phase B sends catch-up only.
+	// sess.diffs drops a prefix every host has applied, so the count is the
+	// composed journal, not the catch-up suffix.
 	expected := preFinalize + numHosts + 1
-	require.Equal(t, expected, len(session.Diffs()),
+	require.Equal(t, expected, composed,
 		"total diffs = pre-finalize(%d) + N+1(%d)", preFinalize, numHosts+1)
 }
 
@@ -382,7 +386,7 @@ func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 		{
 			name: "finish",
 			tx: &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-				FinishInference: &types.MsgFinishInference{InferenceId: 7},
+				FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7},
 			}},
 			key: "finish:7",
 		},
@@ -500,7 +504,7 @@ func TestHostMayProposeTx(t *testing.T) {
 	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{}}),
 		"nil inner Finish must not pass the allowlist")
 	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{InferenceId: 1},
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1},
 	}}))
 	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
 		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1},
@@ -526,7 +530,7 @@ func TestDevshardTxKey_NilInnerDoesNotPanic(t *testing.T) {
 	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_RevealSeed{}}))
 	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{}}))
 	require.Equal(t, "finish:7", devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{InferenceId: 7},
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7},
 	}}))
 }
 
@@ -881,7 +885,7 @@ func TestProcessResponse_DropsFinishNotSignedByExecutor(t *testing.T) {
 	execIdx := int(nonce % uint64(len(session.group)))
 
 	unsigned := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash,
 			InferenceId: nonce, ExecutorSlot: uint32(execIdx), EscrowId: "escrow-1",
 		},
 	}}
@@ -938,7 +942,7 @@ func TestHandleTimeout_RecoveryDropsInjectedStartAndUnsignedFinish(t *testing.T)
 	require.NotNil(t, confirmTx)
 
 	unsignedFinish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash,
 			InferenceId: nonce, ExecutorSlot: uint32(execIdx), EscrowId: "escrow-1",
 		},
 	}}
@@ -1044,7 +1048,7 @@ func signedFinishTx(t *testing.T, hosts []*signing.Secp256k1Signer, nonce uint64
 	t.Helper()
 	msg := &types.MsgFinishInference{
 		InferenceId:  nonce,
-		ResponseHash: []byte("hash"),
+		ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  80,
 		OutputTokens: 40,
 		ExecutorSlot: uint32(executorSlot),
@@ -1061,10 +1065,23 @@ func TestProcessResponse_NilReturnsNamedError(t *testing.T) {
 	require.Equal(t, uint64(0), session.SnapshotHeightSync().Overlap.Total)
 }
 
+// A response without a state hash is not checked against a root, so a nonce
+// the session never composed must not move the host's cursor.
+func TestProcessResponse_NonceAheadOfSessionIsRejected(t *testing.T) {
+	session, _, _ := setupSession(t, 2, 100000, 100)
+	err := session.ProcessResponse(0, &host.HostResponse{Nonce: session.Nonce() + 1}, 1)
+	require.ErrorIs(t, err, ErrHostNonceAhead)
+
+	session.mu.Lock()
+	cursor := session.hostSyncNonce[0]
+	session.mu.Unlock()
+	require.Zero(t, cursor)
+}
+
 func TestProcessResponse_FailedVerifySkipsContactAndOverlap(t *testing.T) {
 	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithHeightSyncCadence(10, 2))
 	err := session.ProcessResponse(0, &host.HostResponse{
-		Nonce:     99,
+		Nonce:     session.Nonce(),
 		StateHash: []byte{0xde, 0xad},
 	}, 1)
 	require.Error(t, err)
@@ -1158,6 +1175,43 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 	}
 	require.True(t, totalWeight > config.VoteThreshold,
 		"accumulated weight %d should exceed threshold %d", totalWeight, config.VoteThreshold)
+}
+
+func TestCollectTimeoutVotes_ExecutionDropsPrompt(t *testing.T) {
+	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithVerifierQueue(newVerifierHostQueue()))
+	payload := &host.InferencePayload{
+		Prompt:      []byte("execution-timeout-prompt-must-not-reach-the-verifier"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   testutil.TestMaxTokens,
+		StartedAt:   1000,
+	}
+	// Nonce 1 is hosted by slot 1, so slot 0 is a verifier.
+	verifier := &payloadRecordingVerifier{}
+	verifiers := map[int]TimeoutVerifier{0: verifier}
+
+	_, _, _, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, verifiers, nil)
+	require.NoError(t, err)
+	require.Nil(t, verifier.payload)
+
+	verifier.payload = payload
+	_, _, _, err = session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, verifiers, nil)
+	require.NoError(t, err)
+	require.NotNil(t, verifier.payload)
+	require.Equal(t, payload.Prompt, verifier.payload.Prompt)
+}
+
+type payloadRecordingVerifier struct {
+	payload *host.InferencePayload
+}
+
+func (v *payloadRecordingVerifier) VerifyTimeout(_ context.Context, _ uint64, _ types.TimeoutReason, payload *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	v.payload = payload
+	return false, nil, 0, nil, "", nil
+}
+
+func (v *payloadRecordingVerifier) VerifyErrorMiss(context.Context, uint64, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
 }
 
 type mockTimeoutVerifier struct {
@@ -1893,11 +1947,11 @@ func TestFinalize_SettlementRerun_EmptyDiffsCollectsFromHosts(t *testing.T) {
 	require.True(t, session.HasQuorumAt(session.Nonce()))
 
 	finalNonce := session.Nonce()
-	// Sign over the ORIGINAL final-diff post-state-root (what a real host signed
-	// at finalize time), captured before wiping diffs. Verifying these against
-	// the post-recovery live ComputeStateRoot proves the two roots are equal.
-	diffs := session.Diffs()
-	originalRoot := append([]byte(nil), diffs[len(diffs)-1].PostStateRoot...)
+	// Sign over the final post-state-root. The catch-up suffix may already
+	// have dropped that diff once every host applied it; the state machine
+	// still holds the root the hosts signed.
+	originalRoot, err := session.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
 	require.NotEmpty(t, originalRoot)
 
 	// Default in-process test hosts have no signature store (GET fails). Inject
@@ -2063,7 +2117,7 @@ func TestCollectTimeoutVotes_DeduplicatesRejectRecoveryTxs(t *testing.T) {
 	}}}
 	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: []byte("done"),
+		ResponseHash: []byte("done"), ServedHash: testutil.TestServedHash,
 	}}}
 
 	verifiers := map[int]TimeoutVerifier{
@@ -2094,7 +2148,7 @@ func TestCollectTimeoutVotes_DropsMalformedOrNilRecoveryTxs(t *testing.T) {
 	}}}
 	unrelatedFinish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
 		InferenceId:  99,
-		ResponseHash: []byte("other"),
+		ResponseHash: []byte("other"), ServedHash: testutil.TestServedHash,
 	}}}
 	timeoutTx := &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{
 		InferenceId: 1,

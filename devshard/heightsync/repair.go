@@ -1,6 +1,7 @@
 package heightsync
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -52,6 +53,21 @@ type RepairResponse struct {
 	SyncState         types.SyncState     `json:"sync_state,omitempty"`
 	Ack               *types.MsgHeightAck `json:"ack,omitempty"`
 	ResponderSig      []byte              `json:"responder_sig"`
+}
+
+// cloneRepairResponse is a deep copy. The responder budget retains one signed
+// body per admitted (turn, requester) and hands callers their own bytes.
+func cloneRepairResponse(resp *RepairResponse) *RepairResponse {
+	if resp == nil {
+		return nil
+	}
+	out := *resp
+	out.ObservedBlockHash = bytes.Clone(resp.ObservedBlockHash)
+	out.ResponderSig = bytes.Clone(resp.ResponderSig)
+	if resp.Ack != nil {
+		out.Ack = proto.Clone(resp.Ack).(*types.MsgHeightAck)
+	}
+	return &out
 }
 
 // RepairProbeFn is the unicast send. Host injects Server.RepairProbe.

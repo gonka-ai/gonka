@@ -10,3 +10,10 @@ type Signer interface {
 type Verifier interface {
 	RecoverAddress(message []byte, signature []byte) (string, error)
 }
+
+// PeerSessionKeyDeriver derives the HMAC key for peer RPC session tokens.
+// Replicas that hold the same host private key derive the same key. A signer
+// that cannot derive one must not issue tokens.
+type PeerSessionKeyDeriver interface {
+	DerivePeerSessionKey(host, version string, keyID byte) ([]byte, error)
+}

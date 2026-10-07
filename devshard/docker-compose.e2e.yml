@@ -4,6 +4,8 @@ services:
     working_dir: /app
     volumes:
       - .:/app
+      # Module root is /app, so the go.mod replace common => ../common is /common.
+      - ../common:/common
       - /var/run/docker.sock:/var/run/docker.sock
     extra_hosts:
       - host.docker.internal:host-gateway
