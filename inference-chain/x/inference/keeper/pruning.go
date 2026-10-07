@@ -249,13 +249,7 @@ func (k Keeper) GetPoCBatchesPruner(params types.Params) Pruner[collections.Trip
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.PoCBatches,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[int64, sdk.AccAddress, string]] {
-			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
-			if !found {
-				// Impossible as far as I know.
-				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
-				return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](0)
-			}
-			return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](epoch.PocStartBlockHeight)
+			return pocStageRanger[sdk.AccAddress, string](k.pocStagePruneBound(ctx, epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.PocBatchesPrunedEpoch
@@ -396,13 +390,7 @@ func (k Keeper) GetPoCValidationsPruner(params types.Params) Pruner[collections.
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.PoCValidations,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress]] {
-			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
-			if !found {
-				// Impossible?
-				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
-				return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, sdk.AccAddress](0)
-			}
-			return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, sdk.AccAddress](epoch.PocStartBlockHeight)
+			return pocStageRanger[sdk.AccAddress, sdk.AccAddress](k.pocStagePruneBound(ctx, epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.PocValidationsPrunedEpoch
