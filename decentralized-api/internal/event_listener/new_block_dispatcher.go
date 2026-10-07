@@ -91,13 +91,28 @@ type OnNewBlockDispatcher struct {
 
 	seedSubmissionMu   sync.Mutex
 	seedAttemptHeight  int64
+	seedAttemptEpoch   uint64
+	seedAttempts       int
 	seedConfirmedEpoch uint64
 	seedEnsureInFlight atomic.Bool
 
 	applyFeeTree func(*types.FeeParams)
 }
 
-const seedRetryCooldownBlocks int64 = 2
+const (
+	seedRetryCooldownBlocks    int64 = 2
+	seedRetryMaxCooldownBlocks int64 = 32
+)
+
+// seedRetryCooldown doubles with each attempt that did not land: a missing
+// authz grant fails on-chain every time, so a fixed 2-block retry spams the PoC window.
+func seedRetryCooldown(attempts int) int64 {
+	cooldown := seedRetryCooldownBlocks
+	for i := 1; i < attempts && cooldown < seedRetryMaxCooldownBlocks; i++ {
+		cooldown *= 2
+	}
+	return min(cooldown, seedRetryMaxCooldownBlocks)
+}
 
 // StatusResponse matches the structure expected by getStatus function
 type StatusResponse struct {
@@ -635,8 +650,12 @@ func (d *OnNewBlockDispatcher) ensureSeedSubmitted(
 	if d.seedConfirmedEpoch >= epochIndex {
 		return
 	}
+	if d.seedAttemptEpoch != epochIndex {
+		d.seedAttemptEpoch = epochIndex
+		d.seedAttempts = 0
+	}
 	// Avoid resubmitting while the previous async SubmitSeed may still be in flight.
-	if d.seedAttemptHeight > 0 && blockHeight-d.seedAttemptHeight < seedRetryCooldownBlocks {
+	if d.seedAttempts > 0 && blockHeight-d.seedAttemptHeight < seedRetryCooldown(d.seedAttempts) {
 		return
 	}
 
@@ -658,8 +677,9 @@ func (d *OnNewBlockDispatcher) ensureSeedSubmitted(
 		"epochIndex", epochIndex,
 		"participant", participantAddress,
 		"blockHeight", blockHeight,
-		"retry", d.seedAttemptHeight > 0)
+		"retry", d.seedAttempts > 0)
 	d.seedAttemptHeight = blockHeight
+	d.seedAttempts++
 	d.randomSeedManager.GenerateSeedInfo(epochIndex)
 }
 
