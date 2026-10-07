@@ -30,7 +30,7 @@ func (s *stubStaleLeaseStore) AcquireOneStale(ctx context.Context, escrowId, ins
 	return s.acquireFn(ctx, escrowId, instanceAddr, ttl)
 }
 
-func (s *stubStaleLeaseStore) SetResult(ctx context.Context, escrowId string, inferenceId uint64, status storage.LeaseStatus, instanceAddr string) error {
+func (s *stubStaleLeaseStore) SetResult(ctx context.Context, escrowId string, inferenceId, epochID uint64, status storage.LeaseStatus, instanceAddr string) error {
 	s.setResultCalls = append(s.setResultCalls, fmt.Sprintf("%s/%d/%s", escrowId, inferenceId, status))
 	if s.setResultFn != nil {
 		return s.setResultFn(ctx, escrowId, inferenceId, status, instanceAddr)
@@ -38,13 +38,12 @@ func (s *stubStaleLeaseStore) SetResult(ctx context.Context, escrowId string, in
 	return nil
 }
 
-func (s *stubStaleLeaseStore) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId uint64, instanceAddr string) (bool, error) {
+func (s *stubStaleLeaseStore) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochID uint64, instanceAddr string) (bool, error) {
 	if s.ownsFn != nil {
 		return s.ownsFn(ctx, escrowId, inferenceId, instanceAddr)
 	}
 	return true, nil
 }
-
 
 type stubSessionManager struct {
 	ids []string
@@ -143,7 +142,8 @@ func TestRetryForEscrow_NoStaleLeases(t *testing.T) {
 	}
 	rl := &RetryLoop{
 		leases:       leases,
-		manager:      &stubSessionManager{},
+		manager:      creditRetryManager{newRetryTestServer(t, 11, nil)},
+		phase:        retryTestPhase(11),
 		instanceAddr: "addr",
 		leaseTTL:     DefaultLeaseTTL,
 		interval:     DefaultRetryInterval,
@@ -162,7 +162,8 @@ func TestRetryForEscrow_AcquireError_Stops(t *testing.T) {
 	}
 	rl := &RetryLoop{
 		leases:       leases,
-		manager:      &stubSessionManager{},
+		manager:      creditRetryManager{newRetryTestServer(t, 11, nil)},
+		phase:        retryTestPhase(11),
 		instanceAddr: "addr",
 		leaseTTL:     DefaultLeaseTTL,
 	}
@@ -182,10 +183,10 @@ func TestRetryForEscrow_LeaseFromPreviousEpochIsSkipped(t *testing.T) {
 		},
 	}
 	phase := new(chain.Phase)
-	phase.Update(11, 0)
+	phase.SetEpoch(11)
 	rl := &RetryLoop{
 		leases:       leases,
-		manager:      &stubSessionManager{},
+		manager:      creditRetryManager{newRetryTestServer(t, 11, nil)},
 		phase:        phase,
 		instanceAddr: "addr",
 		leaseTTL:     DefaultLeaseTTL,
@@ -198,7 +199,7 @@ func TestRetryForEscrow_LeaseFromPreviousEpochIsSkipped(t *testing.T) {
 	assert.Equal(t, "escrow-1/1/skipped", leases.setResultCalls[0])
 }
 
-func TestRetryForEscrow_SessionNotLoaded_LogsAndContinues(t *testing.T) {
+func TestRetryForEscrow_SessionNotLoaded_DoesNotClaim(t *testing.T) {
 	// First call returns a stale inference; second returns empty (done).
 	callCount := 0
 	leases := &stubStaleLeaseStore{
@@ -218,8 +219,7 @@ func TestRetryForEscrow_SessionNotLoaded_LogsAndContinues(t *testing.T) {
 		instanceAddr: "addr",
 		leaseTTL:     DefaultLeaseTTL,
 	}
-	// Should not panic; logs the error and tries next iteration.
+	// No local host means no work can be recovered.
 	rl.retryForEscrow(context.Background(), "escrow-1")
-	// callCount should be 2: first acquire returned 1 (retryOne failed), second returned 0.
-	assert.Equal(t, 2, callCount)
+	assert.Zero(t, callCount)
 }

@@ -297,7 +297,8 @@ func DecimalFromFloat(f float64) *inference.Decimal {
 // then compares logits. execute receives the constructed JSON body and should POST
 // it to the validator's ML node; the response is compared against the original.
 // claimedInputTokens and claimedOutputTokens are what the executor reported; if
-// the validator's re-execution uses fewer tokens, validation fails to catch inflation.
+// the validator's re-execution uses fewer tokens, validation checks for inflation.
+// DeepSeek V4 Flash 0731 permits the known 78/79-token input prefix difference.
 // Pass 0 for both to skip the token count check.
 func ExecuteValidation(
 	ctx context.Context,
@@ -396,12 +397,19 @@ func ExecuteValidation(
 	}
 
 	if validationUsage, err := responseValidation.GetUsage(); err == nil {
-		if TokenCountInflated(claimedInputTokens, validationUsage.PromptTokens) ||
-			TokenCountInflated(claimedOutputTokens, validationUsage.CompletionTokens) {
+		inputInflated := TokenCountInflated(claimedInputTokens, validationUsage.PromptTokens)
+		suspectedCause := ""
+		if inputInflated {
+			var exempt bool
+			exempt, suspectedCause = handleDeepSeekFormatterException(inferenceID, requestMap, claimedInputTokens, claimedOutputTokens, validationUsage)
+			inputInflated = !exempt
+		}
+		if inputInflated || TokenCountInflated(claimedOutputTokens, validationUsage.CompletionTokens) {
 			logging.Warn("validation failed: inflated token counts", types.Validation,
 				"inferenceId", inferenceID,
 				"claimedInput", claimedInputTokens, "validationInput", validationUsage.PromptTokens,
-				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens)
+				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens,
+				"suspected_cause", suspectedCause, "resolution", "invalid")
 			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts."}, nil
 		}
 	}
@@ -472,4 +480,58 @@ func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionR
 		logging.Error("Failed to unmarshal responsePayload into StreamedResponse or JsonResponse", types.Validation)
 	}
 	return resp, err
+}
+
+// handleDeepSeekFormatterException checks two known DeepSeek V4 Flash 0731 issues.
+// We expect these to be rare and caused by an old MLNode on either the executor
+// or validator. These checks do not confirm which MLNode version is running.
+//
+//   - Extra instruction: old and new formatters can differ by 78 or 79 input tokens.
+//     We allow this difference and log the exception. Output counts and logits
+//     still go through the normal checks.
+//   - Missing history: old formatters can leave out reasoning from earlier messages.
+//     We suspect this when the input difference is larger, output counts match,
+//     and the request contains earlier assistant reasoning. We log the suspected
+//     cause but still reject the inference because the input histories are too
+//     different to reliably compare model outputs.
+func handleDeepSeekFormatterException(
+	inferenceID string,
+	request map[string]interface{},
+	claimedInput, claimedOutput uint64,
+	usage *completionapi.Usage,
+) (exempt bool, suspectedCause string) {
+	model, _ := request["model"].(string)
+	if model != "deepseek-ai/DeepSeek-V4-Flash-0731" || claimedInput <= usage.PromptTokens {
+		return false, ""
+	}
+	delta := claimedInput - usage.PromptTokens
+	if delta == 78 || delta == 79 {
+		logging.Warn("validation input usage exception applied", types.Validation,
+			"inferenceId", inferenceID, "model", model,
+			"exception", "deepseek_formatter_prefix", "input_delta", delta,
+			"claimedInput", claimedInput, "validationInput", usage.PromptTokens,
+			"resolution", "continue_validation")
+		return true, ""
+	}
+	// A heuristic only: different thinking defaults can omit historical reasoning.
+	if delta > 79 && claimedOutput == usage.CompletionTokens && hasAssistantReasoning(request) {
+		return false, "deepseek_formatter_history"
+	}
+	return false, ""
+}
+
+// hasAssistantReasoning checks for history that thinking and chat modes may render differently.
+func hasAssistantReasoning(request map[string]interface{}) bool {
+	messages, _ := request["messages"].([]interface{})
+	for _, raw := range messages {
+		message, _ := raw.(map[string]interface{})
+		if message["role"] != "assistant" {
+			continue
+		}
+		reasoning, _ := message["reasoning_content"].(string)
+		if reasoning != "" {
+			return true
+		}
+	}
+	return false
 }

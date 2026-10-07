@@ -7,6 +7,14 @@ import (
 	"strings"
 )
 
+const (
+	// An ordinary chunk fits in here.
+	initialSSELineBytes = 64 << 10
+
+	// MaxSSELineBytes bounds one line: the first chunk carries one id per prompt token.
+	MaxSSELineBytes = 16 << 20
+)
+
 // ProcessHTTPResponse reads an HTTP response body, detects SSE vs JSON from Content-Type,
 // and feeds the data through the given ResponseProcessor.
 // For SSE: uses bufio.Scanner line-by-line on non-empty lines.
@@ -21,6 +29,7 @@ func ProcessHTTPResponse(resp *http.Response, processor ResponseProcessor) error
 
 func processSSE(body io.Reader, processor ResponseProcessor) error {
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, initialSSELineBytes), MaxSSELineBytes)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {

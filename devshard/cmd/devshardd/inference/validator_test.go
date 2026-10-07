@@ -28,7 +28,7 @@ func (s *stubLeases) Acquire(ctx context.Context, escrowId string, inferenceId u
 	return s.acquireFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
 }
 
-func (s *stubLeases) SetResult(ctx context.Context, escrowId string, inferenceId uint64, status storage.LeaseStatus, instanceAddr string) error {
+func (s *stubLeases) SetResult(ctx context.Context, escrowId string, inferenceId, epochID uint64, status storage.LeaseStatus, instanceAddr string) error {
 	s.setResultCalls = append(s.setResultCalls, fmt.Sprintf("%s/%d/%s", escrowId, inferenceId, status))
 	if s.setResultFn != nil {
 		return s.setResultFn(ctx, escrowId, inferenceId, status, instanceAddr)
@@ -36,7 +36,7 @@ func (s *stubLeases) SetResult(ctx context.Context, escrowId string, inferenceId
 	return nil
 }
 
-func (s *stubLeases) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId uint64, instanceAddr string) (bool, error) {
+func (s *stubLeases) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochID uint64, instanceAddr string) (bool, error) {
 	if s.ownsFn != nil {
 		return s.ownsFn(ctx, escrowId, inferenceId, instanceAddr)
 	}
@@ -61,9 +61,9 @@ func (s *stubValidator) Validate(ctx context.Context, req devshardpkg.ValidateRe
 }
 
 // newTestLeaseValidator builds a LeaseValidator wrapping a stub ValidationEngine.
-// phase is always a zero *chain.Phase (EpochID returns 0).
+// Tests start with a known current epoch.
 func newTestLeaseValidator(leases leaseOps, innerFn func(context.Context, devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error)) *LeaseValidator {
-	return NewLeaseValidator(&stubValidator{fn: innerFn}, new(chain.Phase), leases, "validator-addr", time.Hour)
+	return NewLeaseValidator(&stubValidator{fn: innerFn}, testPhase(1), leases, "validator-addr", time.Hour)
 }
 
 // successInner returns a valid result.
@@ -162,9 +162,9 @@ func (s stubThresholdResolver) Resolve(_ context.Context, _ uint64, _ string) (f
 
 type unknownValidationResult struct{}
 
-func (unknownValidationResult) IsSuccessful() bool                     { return true }
-func (unknownValidationResult) GetInferenceId() string               { return "unknown" }
-func (unknownValidationResult) GetValidationResponseBytes() []byte   { return nil }
+func (unknownValidationResult) IsSuccessful() bool                 { return true }
+func (unknownValidationResult) GetInferenceId() string             { return "unknown" }
+func (unknownValidationResult) GetValidationResponseBytes() []byte { return nil }
 
 func TestEvaluateValidationResult_UsesModelThreshold(t *testing.T) {
 	resolver := stubThresholdResolver{threshold: 0.90}
@@ -241,7 +241,7 @@ func TestLeaseValidator_AllowValidationSubmit_TTLExceeded(t *testing.T) {
 			return true, nil
 		},
 	}
-	c := NewLeaseValidator(&stubValidator{fn: successInner}, new(chain.Phase), store, "validator-addr", time.Millisecond)
+	c := NewLeaseValidator(&stubValidator{fn: successInner}, testPhase(1), store, "validator-addr", time.Millisecond)
 	_, err := c.Validate(context.Background(), makeReq())
 	require.NoError(t, err)
 	time.Sleep(2 * time.Millisecond)
@@ -266,4 +266,10 @@ func TestLeaseValidator_AllowValidationSubmit_NotOwned(t *testing.T) {
 
 	err = c.AllowValidationSubmit(context.Background(), "escrow-1", 42)
 	require.ErrorIs(t, err, devshardpkg.ErrValidationLeaseAbandoned)
+}
+
+func testPhase(epoch uint64) *chain.Phase {
+	phase := new(chain.Phase)
+	phase.SetEpoch(epoch)
+	return phase
 }
