@@ -85,7 +85,7 @@ func TestLoadScenario_EscrowRotation(t *testing.T) {
 	require.True(t, scenario.Gateway.EscrowRotation.Enabled)
 	require.True(t, scenario.Gateway.EscrowRotation.SettlementEnabled)
 	require.Equal(t, int64(1), scenario.Gateway.EscrowRotation.PrePoCBlocks)
-	require.Equal(t, uint64(5_000), scenario.Gateway.EscrowRotation.NonceDeactivationLimit)
+	require.Equal(t, uint64(200), scenario.Gateway.EscrowRotation.NonceDeactivationLimit)
 	require.Equal(t, 1, scenario.Gateway.EscrowRotation.TempCount)
 	require.Equal(t, 1, scenario.Gateway.EscrowRotation.TargetCount)
 	require.Equal(t, uint64(5_000_000_000), scenario.Gateway.EscrowRotation.Amount)

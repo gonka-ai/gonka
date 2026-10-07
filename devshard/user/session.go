@@ -1644,7 +1644,9 @@ func (s *Session) StateSizes() StateSizes {
 		SignatureNonces: len(s.signatures),
 		NonceStates:     len(s.nonceStates),
 		PendingTxs:      len(s.pendingTxs),
-		AppliedTxKeys:   len(s.appliedTxKeys),
+		// v4.2 does not keep the v5 applied-tx index. Keep the field in the
+		// diagnostic response for schema compatibility and report zero.
+		AppliedTxKeys: 0,
 	}
 }
 
@@ -1654,7 +1656,16 @@ func (s *Session) StateSizes() StateSizes {
 func (s *Session) FinishTxFor(inferenceID uint64) []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return MarshalFinishTx(s.pendingTxs, inferenceID)
+	for _, tx := range s.pendingTxs {
+		if finish := tx.GetFinishInference(); finish != nil && finish.InferenceId == inferenceID {
+			data, err := proto.Marshal(tx)
+			if err != nil {
+				return nil
+			}
+			return data
+		}
+	}
+	return nil
 }
 
 func (s *Session) StateMachine() *state.StateMachine { return s.sm }
