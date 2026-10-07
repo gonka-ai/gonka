@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/metrics"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,9 +23,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	devshardpkg "devshard"
 	"common/chain"
 	chaintx "common/chain/tx"
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/runtimeparams"
 	"devshard/storage"
@@ -1299,26 +1300,71 @@ func (g *Gateway) handleDebugMemStats(w http.ResponseWriter, r *http.Request) {
 	if !allowGetOrHead(w, r) {
 		return
 	}
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
+	mem, err := readGatewayMemory()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	g.mu.Lock()
 	loadedRuntimes := len(g.runtimeOrder)
 	g.mu.Unlock()
-	writeJSON(w, map[string]any{
-		"loaded_runtimes": loadedRuntimes,
-		"num_goroutine":   runtime.NumGoroutine(),
-		"heap_inuse":      m.HeapInuse,
-		"heap_alloc":      m.HeapAlloc,
-		"heap_sys":        m.HeapSys,
-		"heap_idle":       m.HeapIdle,
-		"heap_released":   m.HeapReleased,
-		"heap_objects":    m.HeapObjects,
-		"stack_inuse":     m.StackInuse,
-		"sys":             m.Sys,
-		"next_gc":         m.NextGC,
-		"num_gc":          m.NumGC,
-		"gc_cpu_fraction": m.GCCPUFraction,
-	})
+	mem["loaded_runtimes"] = loadedRuntimes
+	mem["num_goroutine"] = runtime.NumGoroutine()
+	writeJSON(w, mem)
+}
+
+// readGatewayMemory reads the same heap fields the debug endpoint used to take
+// from ReadMemStats. runtime/metrics sums counters the runtime already keeps
+// and does not stop the world. gc_cpu_fraction is GC CPU time divided by total
+// CPU time over the life of the process.
+func readGatewayMemory() (map[string]any, error) {
+	samples := []metrics.Sample{
+		{Name: "/memory/classes/heap/objects:bytes"},
+		{Name: "/memory/classes/heap/unused:bytes"},
+		{Name: "/memory/classes/heap/free:bytes"},
+		{Name: "/memory/classes/heap/released:bytes"},
+		{Name: "/gc/heap/objects:objects"},
+		{Name: "/memory/classes/heap/stacks:bytes"},
+		{Name: "/memory/classes/total:bytes"},
+		{Name: "/gc/heap/goal:bytes"},
+		{Name: "/gc/cycles/total:gc-cycles"},
+		{Name: "/cpu/classes/gc/total:cpu-seconds"},
+		{Name: "/cpu/classes/total:cpu-seconds"},
+	}
+	metrics.Read(samples)
+	for _, sample := range samples[:9] {
+		if sample.Value.Kind() != metrics.KindUint64 {
+			return nil, fmt.Errorf("metric %s kind %v", sample.Name, sample.Value.Kind())
+		}
+	}
+	for _, sample := range samples[9:] {
+		if sample.Value.Kind() != metrics.KindFloat64 {
+			return nil, fmt.Errorf("metric %s kind %v", sample.Name, sample.Value.Kind())
+		}
+	}
+	objects := samples[0].Value.Uint64()
+	unused := samples[1].Value.Uint64()
+	free := samples[2].Value.Uint64()
+	released := samples[3].Value.Uint64()
+	inuse := objects + unused
+	idle := free + released
+	var gcFraction float64
+	if total := samples[10].Value.Float64(); total > 0 {
+		gcFraction = samples[9].Value.Float64() / total
+	}
+	return map[string]any{
+		"heap_inuse":      inuse,
+		"heap_alloc":      objects,
+		"heap_sys":        inuse + idle,
+		"heap_idle":       idle,
+		"heap_released":   released,
+		"heap_objects":    samples[4].Value.Uint64(),
+		"stack_inuse":     samples[5].Value.Uint64(),
+		"sys":             samples[6].Value.Uint64(),
+		"next_gc":         samples[7].Value.Uint64(),
+		"num_gc":          samples[8].Value.Uint64(),
+		"gc_cpu_fraction": gcFraction,
+	}, nil
 }
 
 func (g *Gateway) handlePooledModels(w http.ResponseWriter, r *http.Request) {
@@ -2387,11 +2433,11 @@ func legacyPerfSourcePath(storagePath string) string {
 }
 
 type adminDevshardRequest struct {
-	ID              string `json:"id"`
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Model           string `json:"model,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
+	ID            string `json:"id"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Model         string `json:"model,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
 	RoutePrefix   string `json:"route_prefix,omitempty"`
 }
 
@@ -2402,17 +2448,17 @@ type adminImportDevshardRequest struct {
 }
 
 type adminCreateEscrowRequest struct {
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Amount          uint64 `json:"amount"`
-	ModelID         string `json:"model_id,omitempty"`
-	Register        *bool  `json:"register,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
-	RoutePrefix     string `json:"route_prefix,omitempty"`
-	ChainID         string `json:"chain_id,omitempty"`
-	FeeDenom        string `json:"fee_denom,omitempty"`
-	FeeAmount       uint64 `json:"fee_amount,omitempty"`
-	GasLimit        uint64 `json:"gas_limit,omitempty"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Amount        uint64 `json:"amount"`
+	ModelID       string `json:"model_id,omitempty"`
+	Register      *bool  `json:"register,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
+	RoutePrefix   string `json:"route_prefix,omitempty"`
+	ChainID       string `json:"chain_id,omitempty"`
+	FeeDenom      string `json:"fee_denom,omitempty"`
+	FeeAmount     uint64 `json:"fee_amount,omitempty"`
+	GasLimit      uint64 `json:"gas_limit,omitempty"`
 }
 
 type adminSettleEscrowRequest struct {
@@ -3063,10 +3109,10 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              strconv.FormatUint(result.EscrowID, 10),
-			Model:           modelID,
-			StoragePath:     strings.TrimSpace(req.StoragePath),
-			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
+			ID:          strconv.FormatUint(result.EscrowID, 10),
+			Model:       modelID,
+			StoragePath: strings.TrimSpace(req.StoragePath),
+			RoutePrefix: strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: true,
 	}
@@ -3376,11 +3422,11 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              req.ID,
-			PrivateKeyHex:   strings.TrimSpace(req.PrivateKey),
-			PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
-			Model:           strings.TrimSpace(req.Model),
-			StoragePath:     req.StoragePath,
+			ID:            req.ID,
+			PrivateKeyHex: strings.TrimSpace(req.PrivateKey),
+			PrivateKeyEnv: strings.TrimSpace(req.PrivateKeyEnv),
+			Model:         strings.TrimSpace(req.Model),
+			StoragePath:   req.StoragePath,
 			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: active,
