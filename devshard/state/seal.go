@@ -176,24 +176,25 @@ func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.Infer
 }
 
 // liveInferencesHashLocked returns the running XOR of the committed frames.
-// The total is maintained when the map changes, so this hashes nothing. The
-// id sets must still match: equal sizes plus every live id present means the
-// total covers exactly the live records. A mismatch is a broken invariant:
-// return it and let the caller roll the diff back.
+// The total is maintained when the map changes, so this hashes nothing. Only
+// the sizes are checked here, per apply; verifyLiveIDsLocked walks the ids.
 func (sm *StateMachine) liveInferencesHashLocked() ([]byte, error) {
-	live := sm.state.Inferences
-	entries := sm.committedEntries
-	if len(entries) != len(live) {
-		return nil, fmt.Errorf("committed inference entries %d != live inferences %d", len(entries), len(live))
-	}
-	for id := range live {
-		if _, ok := entries[id]; !ok {
-			return nil, fmt.Errorf("committed inference entries missing live inference %d", id)
-		}
+	if len(sm.committedEntries) != len(sm.state.Inferences) {
+		return nil, fmt.Errorf("committed inference entries %d != live inferences %d", len(sm.committedEntries), len(sm.state.Inferences))
 	}
 	out := make([]byte, len(sm.liveEntryXOR))
 	copy(out, sm.liveEntryXOR[:])
 	return out, nil
+}
+
+// verifyLiveIDsLocked checks every live id has a committed entry, which with equal sizes means the id sets match.
+func (sm *StateMachine) verifyLiveIDsLocked() error {
+	for id := range sm.state.Inferences {
+		if _, ok := sm.committedEntries[id]; !ok {
+			return fmt.Errorf("committed inference entries missing live inference %d", id)
+		}
+	}
+	return nil
 }
 
 func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {

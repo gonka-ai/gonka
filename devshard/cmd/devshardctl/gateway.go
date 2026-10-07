@@ -64,6 +64,7 @@ type Gateway struct {
 	store                        *GatewayStore
 	perf                         *PerfTracker
 	perfStore                    *PerfStore
+	perfPruner                   *perfPruner
 	accounting                   *accounting.Recorder
 	chatCache                    *chatResponseCache
 	apiKeys                      map[string]struct{}
@@ -714,7 +715,7 @@ func (rt *devshardRuntime) snapshot() runtimeStatus {
 	if rt.proxy != nil && rt.proxy.sm != nil && rt.proxy.session != nil {
 		phase := rt.proxy.sm.Phase()
 		status.Phase = sessionPhaseLabel(phase)
-		st := rt.proxy.sm.SnapshotState()
+		st := rt.proxy.sm.SnapshotStateNoInferences()
 		status.Nonce = rt.proxy.session.Nonce()
 		status.Balance = st.Balance
 		status.SessionVersion = st.StateRootAndProtocolVersion
@@ -1349,6 +1350,9 @@ func (g *Gateway) Close() error {
 		if err := rt.close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
+	}
+	if g.perfPruner != nil {
+		g.perfPruner.stopAndWait()
 	}
 	if g.perfStore != nil {
 		if err := g.perfStore.Close(); err != nil && firstErr == nil {

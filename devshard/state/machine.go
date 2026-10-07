@@ -827,6 +827,9 @@ func (sm *StateMachine) isInferenceEvictedFromLive(id uint64) bool {
 func (sm *StateMachine) ComputeStateRoot() ([]byte, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
+	if err := sm.verifyLiveIDsLocked(); err != nil {
+		return nil, err
+	}
 	return sm.computeStateRootLocked()
 }
 
