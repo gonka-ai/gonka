@@ -15,4 +15,6 @@ func TestParseUintAfterMarkerByteExpandingUnicode(t *testing.T) {
 	require.EqualValues(t, 0, parseContextTotalRequested("Ⱥfor a total of at least "))
 	require.EqualValues(t, 4096, parseContextLengthLimit("Ⱥmaximum context length is 4096 tokens"))
 	require.EqualValues(t, 131072, parseContextLengthLimit("This model's maximum context length is 131072 tokens."))
+	require.EqualValues(t, 4096, parseContextLengthLimit("maximum context length is 4096"), "a limit that ends the message must still parse")
+	require.EqualValues(t, 4096, parseContextLengthLimit("Ⱥmaximum context length is 4096"))
 }
