@@ -181,6 +181,10 @@ func readBoundedResponseBody(body io.Reader, max int64) ([]byte, error) {
 // metric label and a log line, none of which a host's error page should be free to size.
 const maxErrorBodyBytes = 64 << 10
 
+// maxPeerReplyBodyBytes caps peer replies other than inference and diffs; the largest honest
+// one, the mempool, already fits the 16 MiB SSE tail of every inference.
+const maxPeerReplyBodyBytes = MaxJSONResponseBytes
+
 func readErrorBody(body io.Reader) string {
 	if body == nil {
 		return ""
@@ -477,10 +481,15 @@ func (c *HTTPClient) postJSON(ctx context.Context, path string, timeout time.Dur
 
 // get sends a GET request and unmarshals the response into resp.
 func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration, resp any) error {
+	return c.getBounded(ctx, path, timeout, 0, resp)
+}
+
+// getBounded is get with the response body capped at maxBody bytes (0 = no cap).
+func (c *HTTPClient) getBounded(ctx context.Context, path string, timeout time.Duration, maxBody int64, resp any) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	url := fmt.Sprintf("%s%s%s", c.baseURL, c.routePrefix, path)
-	body, err := c.doGet(ctx, url)
+	body, err := c.doGet(ctx, url, maxBody)
 	if err != nil {
 		return err
 	}
@@ -975,7 +984,7 @@ func (c *HTTPClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Dif
 func (c *HTTPClient) GetSignatures(ctx context.Context, nonce uint64) (map[uint32][]byte, error) {
 	var resp SignaturesResponse
 	path := fmt.Sprintf("/sessions/%s/signatures?nonce=%d", c.escrowID, nonce)
-	if err := c.get(ctx, path, c.config.QueryTimeout, &resp); err != nil {
+	if err := c.getBounded(ctx, path, c.config.QueryTimeout, maxPeerReplyBodyBytes, &resp); err != nil {
 		return nil, fmt.Errorf("get signatures: %w", err)
 	}
 	return resp.Signatures, nil
@@ -987,7 +996,7 @@ func (c *HTTPClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error
 		Txs [][]byte `json:"txs"`
 	}
 	path := fmt.Sprintf("/sessions/%s/mempool", c.escrowID)
-	if err := c.get(ctx, path, c.config.QueryTimeout, &result); err != nil {
+	if err := c.getBounded(ctx, path, c.config.QueryTimeout, maxPeerReplyBodyBytes, &result); err != nil {
 		return nil, fmt.Errorf("get mempool: %w", err)
 	}
 	return DevshardTxsFromBytes(result.Txs)
@@ -1125,7 +1134,7 @@ func (c *HTTPClient) doPost(ctx context.Context, path string, body []byte) ([]by
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return readBoundedResponseBody(resp.Body, maxPeerReplyBodyBytes)
 }
 
 func (c *HTTPClient) doPostOnce(ctx context.Context, path string, body []byte) ([]byte, error) {
@@ -1134,14 +1143,14 @@ func (c *HTTPClient) doPostOnce(ctx context.Context, path string, body []byte) (
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return readBoundedResponseBody(resp.Body, maxPeerReplyBodyBytes)
 }
 
 // doGet sends a GET request and returns the response body.
 // No auth signing -- GET endpoints skip auth on the server side for now.
-func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
+func (c *HTTPClient) doGet(ctx context.Context, url string, maxBody int64) ([]byte, error) {
 	if isInferencePath(url) {
-		return c.doGetOnce(ctx, url, true)
+		return c.doGetOnce(ctx, url, true, maxBody)
 	}
 	// See doPostRaw: admit once per logical request, and never attribute a local
 	// limiter rejection to the host.
@@ -1152,7 +1161,7 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	delay := nonInferenceRetryInitial
 	var lastRetryable error
 	for {
-		body, err := c.getAttempt(ctx, url, false)
+		body, err := c.getAttempt(ctx, url, false, maxBody)
 		if err == nil {
 			c.observeResult(url, http.StatusOK)
 			return body, nil
@@ -1186,15 +1195,15 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	}
 }
 
-func (c *HTTPClient) doGetOnce(ctx context.Context, url string, observe bool) ([]byte, error) {
+func (c *HTTPClient) doGetOnce(ctx context.Context, url string, observe bool, maxBody int64) ([]byte, error) {
 	if err := c.allowRequest(url); err != nil {
 		return nil, err
 	}
-	return c.getAttempt(ctx, url, observe)
+	return c.getAttempt(ctx, url, observe, maxBody)
 }
 
 // getAttempt is one GET with no admission check. See postRawAttempt.
-func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) ([]byte, error) {
+func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool, maxBody int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -1226,6 +1235,9 @@ func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) (
 	}
 	if observe {
 		c.observeResult(url, resp.StatusCode)
+	}
+	if maxBody > 0 {
+		return readBoundedResponseBody(resp.Body, maxBody)
 	}
 	return io.ReadAll(resp.Body)
 }
