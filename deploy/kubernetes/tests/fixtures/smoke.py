@@ -102,6 +102,46 @@ def main():
     print("PASS stable escrow placement after supervisor PodIP change and router/ingress replacement", flush=True)
     wait_json("/proxy/ingress/devshard/v6/sessions/after-replacement/chat/completions",
               lambda body: body.get("component") == "versiond")
+
+    # Peer RPC (devshard phase 6): peers dial {InferenceUrl.host}:9443 with
+    # HTTP/2 over TLS. The hop is ingress proxy-router :9443 -> router :8081
+    # (proto h2) -> versiond. It must share escrow placement with the JSON hop,
+    # and the JSON hop must refuse /rpc/. curl runs inside a router pod: the
+    # Python client here has no HTTP/2.
+    ingress_host = f"{args.prefix}-ingress.{args.namespace}.svc.cluster.local"
+    rpc_path = "/v6/sessions/{escrow}/rpc/devshard.transport.v1.SessionService/Chat"
+
+    def curl(*argv):
+        result = subprocess.run(
+            kubectl + ["exec", f"{args.prefix}-router-0", "-c", "router", "--", "curl", "-sS", "-o", "/dev/stderr",
+                       "-w", "%{http_version} %{http_code}", "--max-time", "15", *argv],
+            text=True, capture_output=True, timeout=60)
+        return result.returncode, result.stdout.strip(), result.stderr
+
+    def peer_rpc(escrow):
+        deadline = time.monotonic() + 90
+        while True:
+            code, status, body = curl("-k", "--http2", "-X", "POST", "--data", "{}",
+                                      f"https://{ingress_host}:9443" + rpc_path.format(escrow=escrow))
+            if code == 0 and status == "2 200":
+                return json.loads(body)
+            if time.monotonic() > deadline:
+                raise AssertionError(f"peer RPC hop did not answer over HTTP/2: exit={code} status={status!r} body={body!r}")
+            time.sleep(1)
+
+    first = peer_rpc("peer-rpc-smoke")
+    assert first["component"] == "versiond", first
+    assert first["path"] == rpc_path.format(escrow="peer-rpc-smoke"), first
+    for session in list(placements)[:8]:
+        assert peer_rpc(f"sticky-{session}")["owner"] == placements[session], session
+    print("PASS peer RPC :9443 is HTTP/2 over TLS end to end and shares escrow placement with the JSON hop", flush=True)
+
+    code, status, _ = curl("--http2-prior-knowledge", "-X", "POST",
+                           f"http://{ingress_host}:9443" + rpc_path.format(escrow="cleartext"))
+    assert code != 0 or not status.endswith(" 200"), f"cleartext HTTP/2 must not be served on :9443 with tlsSecret: {status}"
+    code, status, _ = curl("-X", "POST", f"http://{ingress_host}:80/devshard" + rpc_path.format(escrow="json-hop"))
+    assert status.endswith(" 404"), f"/rpc/ must be refused on the JSON hop: exit={code} status={status!r}"
+    print("PASS peer RPC is refused on the JSON hop and on cleartext :9443", flush=True)
     print("PASS Kubernetes boundary smoke (mock applications; no inference, PostgreSQL, or network-policy enforcement proof)", flush=True)
 
 

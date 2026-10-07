@@ -87,10 +87,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(200, {"component": MODE, "owner": OWNER})
             return
         if parsed.path == "/readyz" or parsed.path in ("/v6/healthz", "/v7/healthz"):
-            version = urllib.parse.parse_qs(parsed.query).get("version", [""])[0]
+            query = urllib.parse.parse_qs(parsed.query)
+            version = query.get("version", [""])[0]
             if parsed.path != "/readyz":
                 version = parsed.path.split("/")[1]
             ready = READY.is_set() and (not version or version in served_protocols())
+            if ready and query.get("peer-rpc") == ["1"]:
+                # versiond-router's peer-RPC twin admits a versiond only on this
+                # body (versiond-router/entrypoint.sh). The mock speaks HTTP/1.1,
+                # so the smoke sets VERSIOND_ROUTER_BACKEND_H2=false.
+                data = b"peer-rpc-ok\n"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             self.reply(200 if ready else 503, {"ready": ready})
             return
         if MODE == "versiond" and not READY.is_set() and not STOPPING.is_set():
@@ -106,6 +118,7 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(200, {
             "component": MODE, "owner": OWNER, "path": parsed.path,
             "ha": self.headers.get("Devshard-Ha"),
+            "proto": self.request_version,
         })
 
     def stream(self, parsed):

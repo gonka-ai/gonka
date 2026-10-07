@@ -161,19 +161,23 @@ def main():
         return True
 
     def placement(size):
+        def router_pools(ordinal):
+            """Per version: {server: (status, addr)} for the JSON pool on one router."""
+            pod = f"{args.prefix}-router-{ordinal}"
+            def runtime(command):
+                return kube("exec", pod, "-c", "router", "--", "/bin/sh", "-ec",
+                            f"printf '%s\\n' '{command}' | socat stdio /var/run/haproxy/haproxy.sock").stdout
+            mapping = {fields[1]: fields[2] for line in runtime("show map /etc/haproxy/versions.map").splitlines()
+                       if len(fields := line.split()) == 3}
+            stats = list(csv.DictReader(io.StringIO(runtime("show stat").removeprefix("# "))))
+            return {version: {row["svname"]: (row["status"], row.get("addr", ""))
+                              for row in stats if row["pxname"] == mapping.get(version) and row["svname"] != "BACKEND"}
+                    for version in ("v6", "v7")}
+
         def every_backend_healthy():
             for ordinal in range(3):
-                pod = f"{args.prefix}-router-{ordinal}"
-                def runtime(command):
-                    return kube("exec", pod, "-c", "router", "--", "/bin/sh", "-ec",
-                                f"printf '%s\\n' '{command}' | socat stdio /var/run/haproxy/haproxy.sock").stdout
-                mapping = {fields[1]: fields[2] for line in runtime("show map /etc/haproxy/versions.map").splitlines()
-                           if len(fields := line.split()) == 3}
-                stats = list(csv.DictReader(io.StringIO(runtime("show stat").removeprefix("# "))))
-                for version in ("v6", "v7"):
-                    admitted = {row["svname"] for row in stats
-                                if row["pxname"] == mapping.get(version) and row["svname"] != "BACKEND"
-                                and row["status"].startswith("UP")}
+                for servers in router_pools(ordinal).values():
+                    admitted = {name for name, (status, _) in servers.items() if status.startswith("UP")}
                     if len(admitted) != size:
                         return False
             return True
@@ -189,7 +193,12 @@ def main():
             responses = list(workers.map(get, paths))
         for session in range(64):
             results = responses[session * 3:session * 3 + 3]
-            assert len({result["owner"] for result in results}) == 1, results
+            if len({result["owner"] for result in results}) != 1:
+                # Same escrow, different owner: the routers' rings differ. Dump
+                # each router's pool so the cause (a server that flapped or
+                # has no address yet) is visible without reproducing.
+                pools = {f"router-{ordinal}": router_pools(ordinal)["v6"] for ordinal in range(3)}
+                raise AssertionError(f"routers disagree on coordinated-{session}: {results}\nv6 pools: {json.dumps(pools, indent=1)}")
             owners.add(results[0]["owner"])
         expected = {f"{args.prefix}-versiond-{ordinal}" for ordinal in range(size)}
         assert owners == expected, (owners, expected)

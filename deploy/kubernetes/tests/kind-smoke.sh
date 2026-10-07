@@ -11,7 +11,7 @@ kind_bin=${KIND_BIN:-kind}
 helm_bin=${HELM_BIN:-helm}
 smoke_suite=${SMOKE_SUITE:-all}
 case "$smoke_suite" in all|completion) ;; *) echo "unknown SMOKE_SUITE: $smoke_suite" >&2; exit 1 ;; esac
-for command in docker kubectl python3 timeout "$kind_bin" "$helm_bin"; do
+for command in docker kubectl python3 timeout openssl "$kind_bin" "$helm_bin"; do
     command -v "$command" >/dev/null || { echo "required command missing: $command" >&2; exit 1; }
 done
 docker info >/dev/null
@@ -89,6 +89,13 @@ docker build -q -t "$policy_image" "$repo_dir/proxy"
 kube create namespace "$namespace"
 kube create secret generic fixture-keyring --from-literal=dummy=fixture
 kube create secret generic fixture-password --from-literal=password=fixture-not-a-real-secret
+# tlsSecret switches the ingress to NGINX_MODE=both: nginx serves :443 and
+# proxy-router serves peer RPC on :9443 with the same certificate.
+mkdir -p "$scratch/tls"
+openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=smoke-ingress \
+    -addext "subjectAltName=DNS:$prefix-ingress,DNS:$prefix-ingress.$namespace.svc.cluster.local" \
+    -keyout "$scratch/tls/tls.key" -out "$scratch/tls/tls.crt" >/dev/null 2>&1
+kube create secret tls smoke-tls --cert="$scratch/tls/tls.crt" --key="$scratch/tls/tls.key"
 cat > "$scratch/external.yaml" <<YAML
 apiVersion: apps/v1
 kind: Deployment
@@ -166,7 +173,11 @@ values = {
     'identity': {'keyName': 'fixture', 'accountPubKey': 'fixture', 'keyringSecret': 'fixture-keyring',
                  'passwordSecret': 'fixture-password'},
     'postgres': {'host': 'fixture', 'credentialsSecret': 'fixture-password'},
-    'ingress': {'service': {'type': 'ClusterIP'}},
+    'ingress': {'service': {'type': 'ClusterIP'}, 'tlsSecret': 'smoke-tls'},
+    # The mock versiond speaks HTTP/1.1 only; the router's peer-RPC twin dials
+    # it on HTTP/1.1 as the entrypoint allows for stubs. The public :9443 hop
+    # and the router :8081 listen stay HTTP/2.
+    'router': {'extraEnv': [{'name': 'VERSIOND_ROUTER_BACKEND_H2', 'value': 'false'}]},
 }
 for component in ('versiond', 'router', 'edgeApi', 'oracle', 'ingress'):
     values.setdefault(component, {})['resources'] = {'requests': {'cpu': '25m', 'memory': '64Mi'}}

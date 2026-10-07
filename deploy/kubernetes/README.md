@@ -229,6 +229,10 @@ rotations, and proxy-router reloads its own `:9443` listener when the Secret's
 files change. With no `tlsSecret`, the Service exposes HTTP and cleartext HTTP/2
 on `9443`.
 
+Helm 3 is the supported client; CI and the kind smoke test use v3.19. Helm 4
+applies with server-side apply by default and refuses to upgrade an object
+whose fields were last written by another manager such as `kubectl patch`.
+
 Peer RPC (devshard phase 6) is a second published port. Other participants dial
 `{InferenceUrl.host}:9443` with HTTP/2, so the ingress Service must publish
 `9443` next to `80`/`443` on the same address as the InferenceUrl, and the load
