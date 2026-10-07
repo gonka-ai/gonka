@@ -678,7 +678,7 @@ func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutRe
 		Reason:      reason,
 		Accept:      true,
 	}
-	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
+	voteData, err := types.CanonicalSignedBytes(voteContent)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal vote: %w", err)
 	}
@@ -696,7 +696,7 @@ func signErrorMissVote(escrowID string, inferenceID uint64, signer signing.Signe
 		Accept:       true,
 		ResponseHash: responseHash,
 	}
-	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
+	voteData, err := types.CanonicalSignedBytes(voteContent)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal vote: %w", err)
 	}
@@ -921,8 +921,8 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 		return ErrGossipInvalidSlot
 	}
 
-	expectedAddr := s.host.Group()[req.SlotID].ValidatorAddress
-
+	// Verify stateSig recovers to an actor for the claimed slot.
+	// SlotIDs are compact 0..len(group)-1 so direct index is safe after bounds check above.
 	sigContent := &types.StateSignatureContent{
 		StateRoot: req.StateHash,
 		EscrowId:  s.host.EscrowID(),
@@ -936,10 +936,8 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 	if err != nil {
 		return ErrGossipInvalidStateSig
 	}
-	if addr != expectedAddr {
-		if !s.host.IsWarmKeyForSlot(addr, req.SlotID) {
-			return ErrGossipInvalidStateSig
-		}
+	if !s.host.SlotActors().Allows(req.SlotID, addr) {
+		return ErrGossipInvalidStateSig
 	}
 
 	if s.gossip != nil {
