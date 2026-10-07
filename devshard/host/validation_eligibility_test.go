@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"devshard"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/types"
@@ -75,4 +76,32 @@ func TestHost_QueuedValidationRechecksEligibility(t *testing.T) {
 			require.Len(t, h.MempoolTxs(), before+tc.wantCalls)
 		})
 	}
+}
+
+type v4CreditValidator struct {
+	*trackingValidationEngine
+	ready bool
+}
+
+func (v *v4CreditValidator) CanValidate(string) bool { return v.ready }
+func TestV4CreditGateBeforeQueueAndWorker(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	h := newTestHost(t, 0, hosts, testutil.MustGenerateKey(t), 100000, 10)
+	v := &v4CreditValidator{trackingValidationEngine: &trackingValidationEngine{valid: true}}
+	h.validator = v
+	h.validationQueue = make(chan validateJob, 10)
+	snapshot := h.sm.SnapshotState()
+	snapshot.Inferences[1] = &types.InferenceRecord{Status: types.StatusChallenged, ExecutorSlot: 1, Model: "m"}
+	h.sm.RestoreState(&snapshot)
+	require.Empty(t, h.collectValidationJobs())
+	v.ready = true
+	jobs := h.collectValidationJobs()
+	require.Len(t, jobs, 1)
+	v.ready = false
+	h.validateAsync(context.Background(), jobs[0])
+	require.Empty(t, v.getCalls())
+	require.Empty(t, h.validating)
+	require.False(t, devshard.CanValidate(v, "m"))
+	v.ready = true
+	require.Len(t, h.collectValidationJobs(), 1)
 }

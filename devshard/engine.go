@@ -14,6 +14,17 @@ var ErrValidationAlreadyLeased = errors.New("validation leased by another instan
 // longer owned (stolen / completed).
 var ErrValidationLeaseAbandoned = errors.New("validation lease abandoned")
 
+// ErrValidationDeferred keeps work retryable when its model has no credit.
+var ErrValidationDeferred = errors.New("validation deferred: no credit")
+
+// ValidationAvailability lets scheduling skip exhausted models before work starts.
+type ValidationAvailability interface{ CanValidate(model string) bool }
+
+func CanValidate(v ValidationEngine, model string) bool {
+	gate, ok := v.(ValidationAvailability)
+	return !ok || gate.CanValidate(model)
+}
+
 // ErrValidationSkipped signals that a validation attempt was deliberately
 // abandoned without producing a MsgValidation or MsgValidationVote.
 // The canonical trigger is the executor returning 404 for the payload

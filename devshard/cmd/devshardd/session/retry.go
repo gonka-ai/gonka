@@ -110,7 +110,30 @@ func (r *RetryLoop) runOnce(ctx context.Context) {
 
 // retryForEscrow loops until no more stale leases exist for this escrow.
 func (r *RetryLoop) retryForEscrow(ctx context.Context, escrowID string) {
+	var models map[string]struct{}
 	for {
+		if gate, ok := r.inner.(devshardpkg.ValidationAvailability); ok {
+			if models == nil {
+				srv, loaded := r.manager.existingServer(escrowID)
+				if !loaded {
+					return
+				}
+				models = make(map[string]struct{})
+				for _, rec := range srv.Host().SnapshotState().Inferences {
+					models[rec.Model] = struct{}{}
+				}
+			}
+			available := false
+			for model := range models {
+				if gate.CanValidate(model) {
+					available = true
+					break
+				}
+			}
+			if !available {
+				return
+			}
+		}
 		inferenceID, leaseEpochID, err := r.leases.AcquireOneStale(ctx, escrowID, r.instanceAddr, r.leaseTTL)
 		if err != nil {
 			slog.Warn("devshardd: retry: acquire stale validation failed",
@@ -133,6 +156,9 @@ func (r *RetryLoop) retryForEscrow(ctx context.Context, escrowID string) {
 		}
 
 		if err := r.retryOne(ctx, escrowID, inferenceID, leaseEpochID); err != nil {
+			if errors.Is(err, devshardpkg.ErrValidationDeferred) {
+				continue
+			}
 			slog.Warn("devshardd: retry: validation failed",
 				"escrow", escrowID, "inference", inferenceID, "error", err)
 			// Leave lease pending; another instance can acquire it after TTL.

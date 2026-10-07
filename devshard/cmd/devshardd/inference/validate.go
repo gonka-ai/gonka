@@ -141,6 +141,9 @@ func fetchPayloadsFromExecutor(
 }
 
 func classifyExecuteValidationErr(err error) error {
+	if errors.Is(err, devshardpkg.ErrValidationDeferred) {
+		return err
+	}
 	if err == nil {
 		return nil
 	}

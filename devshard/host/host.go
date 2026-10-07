@@ -954,6 +954,9 @@ func (h *Host) collectValidationJobs() []validateJob {
 	var jobs []validateJob
 
 	for infID, rec := range st.Inferences {
+		if !devshard.CanValidate(h.validator, rec.Model) {
+			continue
+		}
 		if rec.Status != types.StatusFinished && rec.Status != types.StatusChallenged {
 			continue
 		}
@@ -1110,7 +1113,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	rec, exists := h.sm.GetInference(job.inferenceID)
 	eligible := exists && h.inferenceValidatable(&rec) && !h.hasMempoolValidationOrVote(job.inferenceID)
 	h.mu.Unlock()
-	if !eligible {
+	if !eligible || !devshard.CanValidate(h.validator, job.model) {
 		return
 	}
 
@@ -1134,6 +1137,10 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		EpochID:         job.epochID,
 	})
 	if err != nil {
+		if errors.Is(err, devshard.ErrValidationDeferred) {
+			observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusDeferred)
+			return
+		}
 		// Payload already pruned on the executor: the validation window is
 		// effectively over for us. Drop silently -- no MsgValidation, no
 		// challenge, no error in the executor receipt path.

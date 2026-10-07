@@ -147,10 +147,11 @@ const (
 )
 
 const (
-	MetricStatusOK     MetricStatus = "ok"
-	MetricStatusError  MetricStatus = "error"
-	MetricStatusQueued MetricStatus = "queued"
-	MetricStatusCached MetricStatus = "cached"
+	MetricStatusOK       MetricStatus = "ok"
+	MetricStatusDeferred MetricStatus = "deferred"
+	MetricStatusError    MetricStatus = "error"
+	MetricStatusQueued   MetricStatus = "queued"
+	MetricStatusCached   MetricStatus = "cached"
 )
 
 const (
