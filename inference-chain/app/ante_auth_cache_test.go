@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"cosmossdk.io/x/feegrant"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	abci "github.com/cometbft/cometbft/abci/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
@@ -101,4 +102,18 @@ func TestAnteAuthCache_SequentialAndUnorderedGrantedTxs(t *testing.T) {
 	require.Equal(t, uint32(0), resp.Code, "unordered granted CheckTx log=%q", resp.Log)
 	finalizeTxs(t, a, bz)
 	require.Equal(t, start+3, a.AccountKeeper.GetAccount(a.NewContext(true), f.granter).GetSequence(), "unordered tx keeps the sequence")
+}
+
+// The tx position counter must stay out of the persistent wasm store.
+func TestCountTX_NoPersistentCounterWrite(t *testing.T) {
+	f := setupMsgExecCheckTx(t, true)
+	a := f.testApp
+	bz := signAuthTx(t, a, []sdk.Msg{f.seedMsg}, f.granter, f.granterKey, authTxOpts{})
+	resp, err := a.FinalizeBlock(&abci.RequestFinalizeBlock{Height: a.LastBlockHeight() + 1, Time: time.Now().UTC(), Txs: [][]byte{bz}})
+	require.NoError(t, err)
+	require.Equal(t, uint32(0), resp.TxResults[0].Code, resp.TxResults[0].Log)
+	t.Logf("seed tx gas used: %d", resp.TxResults[0].GasUsed)
+	_, err = a.Commit()
+	require.NoError(t, err)
+	require.False(t, a.NewContext(true).KVStore(a.GetKey(wasmtypes.StoreKey)).Has(wasmtypes.TXCounterPrefix))
 }

@@ -36,15 +36,15 @@ import (
 type HandlerOptions struct {
 	ante.HandlerOptions
 
-	IBCKeeper             *keeper.Keeper
-	NodeConfig            *wasmtypes.NodeConfig
-	WasmKeeper            *wasmkeeper.Keeper
-	TXCounterStoreService corestoretypes.KVStoreService
-	FeegrantStoreService  corestoretypes.KVStoreService
-	CircuitKeeper         *circuitkeeper.Keeper
-	InferenceKeeper       *inferencemodulekeeper.Keeper
-	Codec                 codec.Codec
-	AuthzKeeper           AuthzAuthorizationKeeper
+	IBCKeeper            *keeper.Keeper
+	NodeConfig           *wasmtypes.NodeConfig
+	WasmKeeper           *wasmkeeper.Keeper
+	TXCounterStoreKey    storetypes.StoreKey
+	FeegrantStoreService corestoretypes.KVStoreService
+	CircuitKeeper        *circuitkeeper.Keeper
+	InferenceKeeper      *inferencemodulekeeper.Keeper
+	Codec                codec.Codec
+	AuthzKeeper          AuthzAuthorizationKeeper
 }
 
 // Gas is still charged against the tx's gas limit; this only bypasses fee checks.
@@ -194,8 +194,8 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	if options.NodeConfig == nil {
 		return nil, errors.New("node config is required for ante builder")
 	}
-	if options.TXCounterStoreService == nil {
-		return nil, errors.New("wasm store service is required for ante builder")
+	if options.TXCounterStoreKey == nil {
+		return nil, errors.New("tx counter store key is required for ante builder")
 	}
 	if options.CircuitKeeper == nil {
 		return nil, errors.New("circuit keeper is required for ante builder")
@@ -206,8 +206,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
 		TxParamsCacheDecorator{},        // inference params, auth params and signer accounts read once per tx
 		wasmkeeper.NewLimitSimulationGasDecorator(options.NodeConfig.SimulationGasLimit), // after setup context to enforce limits early
-		// wasmd CountTX skips KV in Simulate; this wrapper meters it. Remove when wasmd does.
-		NewCountTXSimulateGasDecorator(options.TXCounterStoreService),
+		NewCountTXDecorator(options.TXCounterStoreKey),                                   // wasm env.transaction.index from a transient counter
 		wasmkeeper.NewGasRegisterDecorator(options.WasmKeeper.GetGasRegister()),
 		circuitante.NewCircuitBreakerDecorator(options.CircuitKeeper),
 		ante.NewExtensionOptionsDecorator(options.ExtensionOptionChecker),
@@ -397,7 +396,7 @@ func (k txFeegrantKeeper) UseGrantedFees(ctx context.Context, granter, grantee s
 	return nil
 }
 
-func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.NodeConfig, txCounterStoreKey *storetypes.KVStoreKey) {
+func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.NodeConfig, txCounterStoreKey storetypes.StoreKey) {
 	anteHandler, err := NewAnteHandler(
 		HandlerOptions{
 			HandlerOptions: ante.HandlerOptions{
@@ -410,15 +409,15 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 					ante.WithUnorderedTxGasCost(0),
 				},
 			},
-			IBCKeeper:             app.IBCKeeper,
-			NodeConfig:            &nodeConfig,
-			WasmKeeper:            &app.WasmKeeper,
-			InferenceKeeper:       &app.InferenceKeeper,
-			Codec:                 app.appCodec,
-			AuthzKeeper:           &app.AuthzKeeper,
-			TXCounterStoreService: runtime.NewKVStoreService(txCounterStoreKey),
-			FeegrantStoreService:  runtime.NewKVStoreService(app.GetKey(feegrant.StoreKey)),
-			CircuitKeeper:         &app.CircuitBreakerKeeper,
+			IBCKeeper:            app.IBCKeeper,
+			NodeConfig:           &nodeConfig,
+			WasmKeeper:           &app.WasmKeeper,
+			InferenceKeeper:      &app.InferenceKeeper,
+			Codec:                app.appCodec,
+			AuthzKeeper:          &app.AuthzKeeper,
+			TXCounterStoreKey:    txCounterStoreKey,
+			FeegrantStoreService: runtime.NewKVStoreService(app.GetKey(feegrant.StoreKey)),
+			CircuitKeeper:        &app.CircuitBreakerKeeper,
 		},
 	)
 	if err != nil {
