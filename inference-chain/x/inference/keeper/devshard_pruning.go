@@ -2,6 +2,8 @@ package keeper
 
 import (
 	"context"
+	"fmt"
+	"math"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -25,6 +27,16 @@ func (k Keeper) distributeUnsettledEscrow(ctx context.Context, escrow types.Devs
 		return nil
 	}
 
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get params: %w", err)
+	}
+	if params.TokenomicsParams == nil {
+		return fmt.Errorf("tokenomics params not configured")
+	}
+	// Host shares vest over WorkVestingPeriod. A period of 0 remains a liquid transfer.
+	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
+
 	// Aggregate the per-slot share by recipient (a validator in N slots is owed N shares),
 	// preserving deterministic slot order for the first appearance of each address.
 	amountByAddr := make(map[string]uint64)
@@ -43,11 +55,13 @@ func (k Keeper) distributeUnsettledEscrow(ctx context.Context, escrow types.Devs
 				"escrow_id", escrow.Id, "address", addr, "epoch", escrow.EpochIndex, "error", err)
 			continue
 		}
-		coins, err := types.GetCoins(int64(amountByAddr[addr]))
-		if err != nil {
+		amount := amountByAddr[addr]
+		if amount > math.MaxInt64 {
+			k.LogError("unsettled escrow share exceeds max int64", types.Pruning,
+				"escrow_id", escrow.Id, "address", addr, "amount", amount)
 			continue
 		}
-		err = k.BankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, recipient, coins, "devshard_escrow_unsettled_distribution")
+		err = k.PayParticipantFromModule(ctx, recipient.String(), int64(amount), types.ModuleName, "devshard_escrow_unsettled_distribution", workVestingPeriod)
 		if err != nil {
 			k.LogError("failed to distribute unsettled escrow funds", types.Pruning,
 				"escrow_id", escrow.Id, "address", addr, "error", err)

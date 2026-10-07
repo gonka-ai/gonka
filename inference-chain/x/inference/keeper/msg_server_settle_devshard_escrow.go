@@ -35,6 +35,10 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	if devshardParams == nil {
 		return nil, fmt.Errorf("devshard escrow params not configured")
 	}
+	if params.TokenomicsParams == nil {
+		return nil, fmt.Errorf("tokenomics params not configured")
+	}
+	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
 	stored, err := k.GetApprovedVersions(goCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get approved devshard versions: %w", err)
@@ -179,7 +183,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			if err != nil {
 				return nil, fmt.Errorf("failed to resolve validator recipient %s for epoch %d: %w", addr, escrow.EpochIndex, err)
 			}
-			if err := k.payCoinsDirectly(goCtx, payout, recipientAddr); err != nil {
+			if err := k.payCoinsDirectly(goCtx, payout, recipientAddr, workVestingPeriod); err != nil {
 				return nil, err
 			}
 		}
@@ -274,16 +278,13 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	return &types.MsgSettleDevshardEscrowResponse{}, nil
 }
 
-func (k Keeper) payCoinsDirectly(goCtx context.Context, payout uint64, recipientAddr sdk.AccAddress) error {
+// payCoinsDirectly pays a host who cannot wait for ClaimRewards. The payout still
+// vests over WorkVestingPeriod; a period of 0 remains a liquid transfer.
+func (k Keeper) payCoinsDirectly(goCtx context.Context, payout uint64, recipientAddr sdk.AccAddress, vestingPeriods *uint64) error {
 	if payout > math.MaxInt64 {
 		return fmt.Errorf("payout amount %d exceeds max int64", payout)
 	}
-	coins, err := types.GetCoins(int64(payout))
-	if err != nil {
-		return fmt.Errorf("invalid payout amount: %w", err)
-	}
-	err = k.BankKeeper.SendCoinsFromModuleToAccount(goCtx, types.ModuleName, recipientAddr, coins, "devshard_escrow_payment")
-	if err != nil {
+	if err := k.PayParticipantFromModule(goCtx, recipientAddr.String(), int64(payout), types.ModuleName, "devshard_escrow_payment", vestingPeriods); err != nil {
 		return fmt.Errorf("failed to pay validator %s: %w", recipientAddr.String(), err)
 	}
 	return nil
