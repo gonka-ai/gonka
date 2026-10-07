@@ -255,6 +255,51 @@ func TestPruneDevshardData_UnsettledDistributionUsesClaimRecipient(t *testing.T)
 	require.NoError(t, pruneDevshard(k, ctx, 5))
 }
 
+func TestPruneDevshardData_UnsettledDistributionVestsWorkCoins(t *testing.T) {
+	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, params.TokenomicsParams)
+	params.TokenomicsParams.WorkVestingPeriod = 180
+	require.NoError(t, k.SetParams(ctx, params))
+
+	participant := sdk.AccAddress(make([]byte, 20))
+	participant[0] = 0x01
+	recipient := sdk.AccAddress(make([]byte, 20))
+	recipient[0] = 0x09
+
+	slots := make([]string, keeper.DevshardGroupSize)
+	for i := range slots {
+		slots[i] = participant.String()
+	}
+
+	escrow := &types.DevshardEscrow{
+		Creator:    "gonka1creator",
+		Amount:     8_000_000_000,
+		Slots:      slots,
+		EpochIndex: 3,
+		Settled:    false,
+	}
+	_, err = k.StoreDevshardEscrow(ctx, escrow, 1)
+	require.NoError(t, err)
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, participant, escrow.EpochIndex, recipient.String()))
+
+	expectedShare, err := types.GetCoins(8_000_000_000)
+	require.NoError(t, err)
+	vestingPeriod := uint64(180)
+	mock.StreamVestingKeeper.EXPECT().
+		AddVestedRewards(gomock.Any(), recipient.String(), types.ModuleName, expectedShare, &vestingPeriod, "devshard_escrow_unsettled_distribution_vested").
+		Return(nil)
+
+	require.NoError(t, pruneDevshard(k, ctx, 5))
+
+	_, found := k.GetDevshardEscrow(ctx, 1)
+	require.False(t, found)
+}
+
 func TestPruneDevshardData_TracksProgress(t *testing.T) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
