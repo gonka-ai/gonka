@@ -22,11 +22,10 @@ import (
 	"devshard/types"
 )
 
-// A missing MsgFinishInference is checked by forwarding the creator-signed
-// diffs to the executor. That must CreateSession on a host that has never
-// bound the escrow, the same way a refused ChallengeReceipt does, and it
-// must not start execution (nil payload).
-func TestExecutionTimeout_ColdExecutorCreatesSession(t *testing.T) {
+// An execution vote challenges the executor once and sends no diffs.
+// A host that has never bound the escrow stays unbound, and the timeout
+// still stands when that host has no finish to return.
+func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 	const escrowID = "9730"
 	const inferenceID uint64 = 1
 
@@ -122,19 +121,6 @@ func TestExecutionTimeout_ColdExecutorCreatesSession(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.Accept, "no finish on the cold executor, so the timeout stands")
 
-	meta, err := execStore.GetSessionMeta(escrowID)
-	require.NoError(t, err, "execution-timeout challenge must CreateSession from the creator-signed diffs")
-	require.Equal(t, user.Address(), meta.CreatorAddr)
-	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
-
-	execSrv, err := execMgr.SessionServerExisting(escrowID)
-	require.NoError(t, err)
-	st := execSrv.Host().SnapshotState()
-	require.Equal(t, types.StatusStarted, st.Inferences[inferenceID].Status)
-	for _, tx := range execSrv.Host().MempoolTxs() {
-		require.Nil(t, tx.GetFinishInference(), "nil payload must not run the inference")
-		if cs := tx.GetConfirmStart(); cs != nil {
-			require.NotEqual(t, inferenceID, cs.InferenceId, "nil payload must not sign a new receipt")
-		}
-	}
+	_, err = execStore.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound, "execution timeout must not bind a cold executor")
 }

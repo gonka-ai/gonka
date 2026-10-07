@@ -45,11 +45,11 @@ type ExecutorClient interface {
 	// it verifies the payload, returns a signed receipt, and triggers
 	// execution. A nil payload only binds and catches up: no receipt, no
 	// execution. mempool is the executor pool after that (ConfirmStart and
-	// FinishInference for this inference). Refused timeout copies those txs
-	// rather than synthesizing ConfirmStart from the receipt. A refused vote
-	// challenges once and passes no diffs. Execution timeout sends the same
-	// diffs with a nil payload and rejects when the returned pool contains
-	// MsgFinishInference.
+	// FinishInference for this inference). A refused vote challenges once,
+	// with the payload and no diffs, and copies those txs rather than
+	// synthesizing ConfirmStart from the receipt. An execution vote
+	// challenges once, with a nil payload and no diffs, and rejects when
+	// the returned pool contains MsgFinishInference.
 	ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) (receipt []byte, mempool []*types.DevshardTx, err error)
 }
 
@@ -196,17 +196,14 @@ func challengeRefused(
 //  1. Check local state: inference must be started (has receipt, no finish).
 //  2. Check deadline has passed.
 //  3. Check local mempool for MsgFinishInference -- if found, reject.
-//  4. Forward creator-signed diffs to the executor via ChallengeReceipt with
-//     a nil payload. A cold host CreateSession from that gateway signature,
-//     the same way a refused challenge does, then returns its mempool.
-//     MsgFinishInference in that pool -> reject. The nil payload does not
-//     sign a receipt or start execution.
+//  4. Challenge the executor once, with a nil payload and no diffs.
+//     MsgFinishInference in the returned pool -> reject. The nil payload
+//     does not sign a receipt or start execution.
 //  5. If the executor is unreachable -> accept.
 func VerifyExecutionTimeout(
 	ctx context.Context,
 	st types.EscrowState,
 	inferenceID uint64,
-	storedDiffs []types.Diff,
 	localMempool []*types.DevshardTx,
 	executorClient ExecutorClient,
 	config types.SessionConfig,
@@ -233,10 +230,11 @@ func VerifyExecutionTimeout(
 		}
 	}
 
-	// Same bind as a refused challenge: creator-signed diffs let a cold host
-	// CreateSession. Nil payload so an already-started inference is not executed.
+	// One challenge, no journal. A nil payload does not sign a receipt or
+	// start execution. A host that never applied the start has no finish
+	// to return, and the timeout stands.
 	if executorClient != nil {
-		_, executorMempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, nil, storedDiffs)
+		_, executorMempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, nil, nil)
 		if err == nil {
 			for _, tx := range executorMempool {
 				if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {

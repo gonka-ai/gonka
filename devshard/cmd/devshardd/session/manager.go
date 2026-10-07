@@ -2288,8 +2288,8 @@ func closeTransportServer(srv *transport.Server) {
 
 // wireHostToHost stores host-signed SelectTransport clients so repair probes
 // and timeout verify exist on a production child. Refused and execution
-// timeouts both ChallengeReceipt the executor with the creator-signed diffs,
-// so a cold host can CreateSession. Attach identity is m.signer. Gossip stays
+// timeouts both ChallengeReceipt the executor once and pass no diffs.
+// Attach identity is m.signer. Gossip stays
 // unwired: s.gossip is nil, so inbound gossip nonces and txs are dropped and
 // nothing is broadcast.
 func (m *HostManager) wireHostToHost(srv *transport.Server, escrowID string, group []types.SlotAssignment) error {

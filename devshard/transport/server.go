@@ -643,19 +643,7 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
 		accept, err = host.VerifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, st.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		// Creator-signed diffs (the gateway start lives in nonce 1) let a cold
-		// executor CreateSession. A refused vote challenges once and sends none.
-		var storedDiffs []types.Diff
-		if s.store != nil && st.LatestNonce > 0 {
-			records, dErr := s.store.GetDiffs(s.host.EscrowID(), 1, st.LatestNonce)
-			if dErr == nil {
-				storedDiffs = make([]types.Diff, len(records))
-				for i, r := range records {
-					storedDiffs[i] = r.Diff
-				}
-			}
-		}
-		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, storedDiffs, localMempool, executorClient, st.Config, nowUnix)
+		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
 	default:
 		return nil, clientRequest(fmt.Sprintf("unknown timeout reason: %s", req.Reason))
 	}
