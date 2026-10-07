@@ -402,8 +402,8 @@ records, summaries, state snapshots, and logs:
 | `ml-stats.json` | Per-node allocations, responses, failures, timeouts, and replay counters. |
 | `gateway-inferences.json` | Gateway inference records collected for diagnosis. |
 | `gateway-state.json` | Gateway diff, nonce, pending transaction, and applied-key counts. |
-| `compose-pre-drain.log` | Container logs captured before the drain check. |
-| `compose.log` | Final container logs captured after the drain check. |
+| `compose-pre-drain.log` | Container logs captured before the drain check; last 20,000 lines per service. |
+| `compose.log` | Final container logs captured after the drain check; last 20,000 lines per service. |
 | `failures/` | Individual failed-request bundles, subject to the runner's artifact cap. |
 
 The two Compose log snapshots are intentional: the pre-drain snapshot shows

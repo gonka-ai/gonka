@@ -1,0 +1,68 @@
+schema_version: v1
+scenario: long-escrow-32rps-8m
+seed: 42
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    # Keep the active escrow funded and below its nonce limit throughout the run.
+    escrow_amount: 2000000000000000
+    max_nonce: 1000000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: fast
+      - name: mock-openai-1
+        profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: fast
+
+workload:
+  max_in_flight: 64
+  duration: 8m
+  report_interval: 1m
+  traffic:
+    type: constant
+    rps: 32
+  request:
+    model: test-model
+    stream: false
+    max_tokens: 64
+    messages:
+      - role: user
+        content: "long escrow load test request"
+
+gateway:
+  redundancy:
+    secondary_wait_after_winner: 30s
+  escrow_rotation:
+    enabled: false
+    # Gateway admission has its own limit, independent of chain max_nonce.
+    nonce_deactivation_limit: 1000000
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.02
+  mock_ml:
+    require_each_node_used: true
+
+drain_timeout: 2m
+
+diagnostics:
+  cpu_profiles:
+    - start_after: 5s
+      duration: 30s
+    - start_after: 80s
+      duration: 30s
+    - start_after: 7m
+      duration: 30s

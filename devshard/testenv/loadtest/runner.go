@@ -1139,8 +1139,8 @@ func writeComposeLogs(outputDir, testenvDir, project, composePath string) error 
 
 func writeComposeLogsTo(outputDir, testenvDir, project, composePath, filename string) error {
 	// Long load tests can produce millions of container log lines. The tail is
-	// enough for post-run diagnosis and keeps artifact collection bounded.
-	cmd := exec.Command("docker", "compose", "-p", project, "-f", composePath, "logs", "--no-color", "--tail", "5000")
+	// retains recent history for post-run diagnosis and bounds collection by line count.
+	cmd := exec.Command("docker", "compose", "-p", project, "-f", composePath, "logs", "--no-color", "--tail", "20000")
 	cmd.Dir = testenvDir
 	body, err := cmd.CombinedOutput()
 	if err != nil {
