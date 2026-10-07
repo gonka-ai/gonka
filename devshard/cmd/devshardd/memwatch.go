@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"runtime"
+	"runtime/metrics"
 	"sort"
 	"strings"
 	"sync"
@@ -17,8 +19,9 @@ import (
 )
 
 // memoryLogInterval is how often the process records what its memory is.
-// The snapshot copies sampled profile rows and map lengths. It does not walk
-// the heap, so it does not stall requests the way a heap dump would.
+// Byte totals come from runtime/metrics, which sums per-processor counters
+// without stopping the world. The heap profile is a sample, and the session
+// fields are map lengths.
 const memoryLogInterval = 10 * time.Minute
 
 const memoryHeapTopN = 12
@@ -67,21 +70,99 @@ var (
 	latestSnapshot memorySnapshot
 )
 
+// processMemory is the whole-process portion of a snapshot. The byte fields
+// match the MemStats names the log already uses:
+//
+//	heap_alloc    live heap objects, including objects not yet marked free
+//	heap_inuse    spans that hold heap objects
+//	heap_idle     heap spans with no objects, including memory returned to the OS
+//	heap_released idle heap already returned to the OS
+//	heap_objects  live heap objects
+//	stack_inuse   goroutine stacks allocated from the heap
+//	sys           bytes obtained from the OS
+//
+// These are read from runtime/metrics. That path sums counters the runtime
+// already keeps and does not stop the world. Bytes still sitting in a
+// processor's cache may be missing until the cache is flushed.
+type processMemory struct {
+	HeapAlloc    uint64
+	HeapInuse    uint64
+	HeapIdle     uint64
+	HeapReleased uint64
+	HeapObjects  uint64
+	StackInuse   uint64
+	Sys          uint64
+	Goroutines   int
+	NumGC        uint32
+}
+
+const (
+	metricHeapObjectsBytes = "/memory/classes/heap/objects:bytes"
+	metricHeapUnusedBytes  = "/memory/classes/heap/unused:bytes"
+	metricHeapFreeBytes    = "/memory/classes/heap/free:bytes"
+	metricHeapReleased     = "/memory/classes/heap/released:bytes"
+	metricHeapObjects      = "/gc/heap/objects:objects"
+	metricHeapStacks       = "/memory/classes/heap/stacks:bytes"
+	metricMemoryTotal      = "/memory/classes/total:bytes"
+	metricGoroutines       = "/sched/goroutines:goroutines"
+	metricGCCycles         = "/gc/cycles/total:gc-cycles"
+)
+
+func readProcessMemory() (processMemory, error) {
+	samples := []metrics.Sample{
+		{Name: metricHeapObjectsBytes},
+		{Name: metricHeapUnusedBytes},
+		{Name: metricHeapFreeBytes},
+		{Name: metricHeapReleased},
+		{Name: metricHeapObjects},
+		{Name: metricHeapStacks},
+		{Name: metricMemoryTotal},
+		{Name: metricGoroutines},
+		{Name: metricGCCycles},
+	}
+	metrics.Read(samples)
+	vals := make([]uint64, len(samples))
+	for i, sample := range samples {
+		if sample.Value.Kind() != metrics.KindUint64 {
+			return processMemory{}, fmt.Errorf("metric %s kind %v", sample.Name, sample.Value.Kind())
+		}
+		vals[i] = sample.Value.Uint64()
+	}
+	objects := vals[0]
+	unused := vals[1]
+	free := vals[2]
+	released := vals[3]
+	return processMemory{
+		HeapAlloc:    objects,
+		HeapInuse:    objects + unused,
+		HeapIdle:     free + released,
+		HeapReleased: released,
+		HeapObjects:  vals[4],
+		StackInuse:   vals[5],
+		Sys:          vals[6],
+		Goroutines:   int(vals[7]),
+		NumGC:        uint32(vals[8]),
+	}, nil
+}
+
 func logMemory(manager *session.HostManager) {
-	var stats runtime.MemStats
-	runtime.ReadMemStats(&stats)
+	proc, err := readProcessMemory()
+	if err != nil {
+		slog.Error("memory snapshot", "error", err)
+		return
+	}
 	sessions := manager.SessionMemoryCounts()
 	snap := memorySnapshot{
 		At:               time.Now().UTC(),
-		HeapAlloc:        stats.HeapAlloc,
-		HeapInuse:        stats.HeapInuse,
-		HeapIdle:         stats.HeapIdle,
-		HeapReleased:     stats.HeapReleased,
-		HeapObjects:      stats.HeapObjects,
-		StackInuse:       stats.StackInuse,
-		Sys:              stats.Sys,
-		Goroutines:       runtime.NumGoroutine(),
-		NumGC:            stats.NumGC,
+		HeapAlloc:        proc.HeapAlloc,
+		HeapInuse:        proc.HeapInuse,
+		HeapIdle:         proc.HeapIdle,
+		HeapReleased:     proc.HeapReleased,
+		HeapObjects:      proc.HeapObjects,
+		StackInuse:       proc.StackInuse,
+		Sys:              proc.Sys,
+		Goroutines:       proc.Goroutines,
+		NumGC:            proc.NumGC,
 		Sessions:         sessions.Sessions,
 		LiveInferences:   sessions.Live,
 		SealedInferences: sessions.Sealed,
@@ -106,15 +187,15 @@ func logMemory(manager *session.HostManager) {
 		FattestLive: snap.FattestLive,
 	})
 	slog.Info("memory snapshot",
-		"heap_alloc", stats.HeapAlloc,
-		"heap_inuse", stats.HeapInuse,
-		"heap_idle", stats.HeapIdle,
-		"heap_released", stats.HeapReleased,
-		"heap_objects", stats.HeapObjects,
-		"stack_inuse", stats.StackInuse,
-		"sys", stats.Sys,
-		"goroutines", runtime.NumGoroutine(),
-		"num_gc", stats.NumGC,
+		"heap_alloc", proc.HeapAlloc,
+		"heap_inuse", proc.HeapInuse,
+		"heap_idle", proc.HeapIdle,
+		"heap_released", proc.HeapReleased,
+		"heap_objects", proc.HeapObjects,
+		"stack_inuse", proc.StackInuse,
+		"sys", proc.Sys,
+		"goroutines", proc.Goroutines,
+		"num_gc", proc.NumGC,
 		"sessions", sessions.Sessions,
 		"live_inferences", sessions.Live,
 		"sealed_inferences", sessions.Sealed,
@@ -159,10 +240,11 @@ type heapTop struct {
 }
 
 // topHeapInUse ranks sampled heap by the stack that allocated it, so retained
-// escrow state shows up under state.snapshotMutable (copyInferences,
-// cloneCommittedInferenceEntries). ValidateDiff and PreviewLocalBestEffort
-// build the post-state as a copy and CommitValidated installs that copy as the
-// live state. Those stacks are mostly live inferences, not snapshot garbage.
+// escrow state shows up under the apply path that wrote it: the record copies
+// in state.inferenceForWriteLocked and the committed blobs in
+// marshalInferenceEntry. ValidateDiff and PreviewLocalBestEffort keep those
+// copies in the detached journal and CommitValidated installs them as live
+// state.
 func topHeapInUse(limit int) []heapTop {
 	if limit <= 0 {
 		return nil

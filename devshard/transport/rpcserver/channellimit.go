@@ -107,7 +107,7 @@ type channelLimiter struct {
 	// procStreams / procChats are child-wide Chat occupancy. Watch does
 	// not spend them. procWatches is capped at maxWatches (MaxSessions),
 	// and peerWatches at maxWatchesPerPeer for each peer.
-	// SETTINGS stays 4096.
+	// SETTINGS stays DefaultH2MaxConcurrentStreams.
 	procStreams int
 	procChats   int
 	procWatches int

@@ -313,7 +313,7 @@ not the unknown-id budget and they do not key on gonka address.
 ### RPC channel weights
 
 One token bucket after handshake. Watch/Chat stay a **concurrent slot cap** (`max_streams`,
-default 256). Weights are protocol constants (not env). Effective max if that
+default 10241, with Chat stopped at 10240). Weights are protocol constants (not env). Effective max if that
 event is the only traffic is `floor(budget / weight)`.
 
 | Bucket | Key | Default | Env |

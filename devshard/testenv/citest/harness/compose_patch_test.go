@@ -137,6 +137,33 @@ services:
 	require.NotContains(t, text, `GONKA_HA: "true"`)
 }
 
+func TestPatchComposeEnvKeyReplacesLimitInterpolation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  versiond-0:
+    environment:
+      DEVSHARD_RPC_MSGS_PER_MIN: ${DEVSHARD_RPC_MSGS_PER_MIN:-}
+      DEVSHARD_RPC_MSGS_BURST: ${DEVSHARD_RPC_MSGS_BURST:-}
+  versiond-1:
+    environment:
+      DEVSHARD_RPC_MSGS_PER_MIN: ${DEVSHARD_RPC_MSGS_PER_MIN:-}
+      DEVSHARD_RPC_MSGS_BURST: ${DEVSHARD_RPC_MSGS_BURST:-}
+`), 0o644))
+
+	PatchComposeEnvKey(t, path, "DEVSHARD_RPC_MSGS_PER_MIN", "600")
+	PatchComposeEnvKey(t, path, "DEVSHARD_RPC_MSGS_BURST", "80")
+
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "DEVSHARD_RPC_MSGS_PER_MIN: 600")
+	require.Contains(t, text, "DEVSHARD_RPC_MSGS_BURST: 80")
+	require.NotContains(t, text, "${DEVSHARD_RPC_MSGS_")
+	require.Equal(t, 2, strings.Count(text, "DEVSHARD_RPC_MSGS_BURST: 80"))
+}
+
 func TestPatchComposeInsertEnvAfterAll(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "docker-compose.yml")

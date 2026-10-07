@@ -641,21 +641,9 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	var accept bool
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = host.VerifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, st.Config, nowUnix)
+		accept, err = host.VerifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		// Creator-signed diffs (the gateway start lives in nonce 1) let a cold
-		// executor CreateSession. A refused vote challenges once and sends none.
-		var storedDiffs []types.Diff
-		if s.store != nil && st.LatestNonce > 0 {
-			records, dErr := s.store.GetDiffs(s.host.EscrowID(), 1, st.LatestNonce)
-			if dErr == nil {
-				storedDiffs = make([]types.Diff, len(records))
-				for i, r := range records {
-					storedDiffs[i] = r.Diff
-				}
-			}
-		}
-		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, storedDiffs, localMempool, executorClient, st.Config, nowUnix)
+		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, localMempool, executorClient, s.host, st.Config, nowUnix)
 	default:
 		return nil, clientRequest(fmt.Sprintf("unknown timeout reason: %s", req.Reason))
 	}
@@ -690,7 +678,7 @@ func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutRe
 		Reason:      reason,
 		Accept:      true,
 	}
-	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
+	voteData, err := types.CanonicalSignedBytes(voteContent)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal vote: %w", err)
 	}
@@ -708,7 +696,7 @@ func signErrorMissVote(escrowID string, inferenceID uint64, signer signing.Signe
 		Accept:       true,
 		ResponseHash: responseHash,
 	}
-	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
+	voteData, err := types.CanonicalSignedBytes(voteContent)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal vote: %w", err)
 	}
@@ -827,6 +815,9 @@ func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {
 // ServeChallengeReceipt is the transport-neutral core behind POST .../challenge-receipt
 // and SessionService.ChallengeReceipt. Callers enforce owner-or-group.
 func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceiptRequest) (*ChallengeReceiptResponse, error) {
+	if forged, ok := forgedChallengeReceipt(s.host, req.InferenceID); ok {
+		return forged, nil
+	}
 	diffs, err := decodeDiffsJSON(req.Diffs)
 	if err != nil {
 		return nil, err
@@ -930,8 +921,8 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 		return ErrGossipInvalidSlot
 	}
 
-	expectedAddr := s.host.Group()[req.SlotID].ValidatorAddress
-
+	// Verify stateSig recovers to an actor for the claimed slot.
+	// SlotIDs are compact 0..len(group)-1 so direct index is safe after bounds check above.
 	sigContent := &types.StateSignatureContent{
 		StateRoot: req.StateHash,
 		EscrowId:  s.host.EscrowID(),
@@ -945,10 +936,8 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 	if err != nil {
 		return ErrGossipInvalidStateSig
 	}
-	if addr != expectedAddr {
-		if !s.host.IsWarmKeyForSlot(addr, req.SlotID) {
-			return ErrGossipInvalidStateSig
-		}
+	if !s.host.SlotActors().Allows(req.SlotID, addr) {
+		return ErrGossipInvalidStateSig
 	}
 
 	if s.gossip != nil {

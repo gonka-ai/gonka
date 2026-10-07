@@ -74,7 +74,7 @@ dev-logs: ## Follow dev overlay logs.
 	docker compose $(DEV_OVERLAY) logs -f
 
 .PHONY: citest-images citest-stack citest-baseline-smoke citest-stack-build list-citest-targets
-.PHONY: citest-validation-lease-race citest-escrow-longpoll
+.PHONY: citest-validation-lease-race citest-escrow-longpoll citest-timeout-evidence
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
 .PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-proxy-h2-idle citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-legacy-compat test-gateway-smoke
 .PHONY: build-baseline-infra fetch-limits-pin build-limits-pin
@@ -174,6 +174,10 @@ citest-validation-lease-race: citest-images ## Validation lease race, pending st
 citest-payload-withholding: citest-images ## Executor payload 500 → challenge/invalidate and D7-off lease release.
 	$(MAKE) build-devshardd
 	$(CITEST_RPC_RUN) -run '^TestPayloadWithholding' -count=1 -v -timeout 45m
+
+citest-timeout-evidence: citest-images ## Refusal and execution timeouts against honest and forging executors.
+	$(MAKE) build-devshardd
+	$(CITEST_RPC_RUN) -run '^TestTimeoutEvidence$$' -count=1 -v -timeout 45m
 
 citest-escrow-longpoll: citest-images ## Escrow long-poll warm; first inference without live escrow fetch (v4-deploy-test-plan §6).
 	$(MAKE) build-devshardd

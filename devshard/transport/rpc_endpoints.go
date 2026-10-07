@@ -26,10 +26,11 @@ const (
 )
 
 // DefaultRPCMaxConnsPerPeer is MaxIdleConnsPerHost / MaxConnsPerHost on a
-// PeerConn. Matches DefaultRPCMaxStreams so Watch + concurrent Chats are
-// not queued behind the HTTP/1.1 pool (finding 5). Advertised max_streams
-// is still min(MaxStreams, MaxConns) if either env is lowered.
-const DefaultRPCMaxConnsPerPeer = 256
+// PeerConn. Matches DefaultRPCMaxStreams so concurrent Chats are not
+// queued behind the HTTP/1.1 pool, and so EffectiveMaxStreams is not
+// clamped below the chat cap. Advertised max_streams is still
+// min(MaxStreams, MaxConns) if either env is lowered.
+const DefaultRPCMaxConnsPerPeer = int(DefaultRPCMaxStreams)
 
 // HostRPCEscrowID is the URL escrow for Watch and live-session Attach
 // renewals. It is not a real escrow: the path keeps /sessions/:id/rpc/ so

@@ -275,6 +275,7 @@ func TestApplyLocalBestEffort_SiblingWarmAckApplies(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, applied, 1)
+	require.NotContains(t, sm.WarmKeys(), uint32(1), "sibling acceptance must not write a new binding")
 }
 
 func TestValidateDiff_WarmAckWithoutCachedBinding(t *testing.T) {
@@ -310,7 +311,7 @@ func TestValidateDiff_WarmAckWithoutCachedBinding(t *testing.T) {
 	_, applied, err := composer.ApplyLocalBestEffort(2, []*types.DevshardTx{ackTx})
 	require.NoError(t, err)
 	require.Len(t, applied, 1)
-	require.Equal(t, warm.Address(), composer.WarmKeys()[0], "applyHeightAck must cache the live binding")
+	require.Equal(t, warm.Address(), composer.WarmKeys()[0], "apply-path identity must cache the live binding")
 
 	d2 := testutil.SignDiff(t, user, "escrow-1", 2, applied)
 	vd, err := hostSM.ValidateDiff(d2)
@@ -451,8 +452,11 @@ func TestValidateDiff_SiblingWarmAckFromCachedSiblingSlot(t *testing.T) {
 	require.Len(t, applied, 1)
 
 	d2 := testutil.SignDiff(t, user, "escrow-1", 2, applied)
-	_, err = hostSM.ValidateDiff(d2)
+	vd, err := hostSM.ValidateDiff(d2)
 	require.NoError(t, err, "L2 must accept a warm key already bound on a sibling slot")
+	require.NotContains(t, vd.WarmAfter, uint32(1), "sibling acceptance must not write a new binding")
+	require.True(t, hostSM.CommitValidated(vd))
+	require.NotContains(t, hostSM.WarmKeys(), uint32(1))
 }
 
 func dualWarmSMs(t *testing.T, hosts []*signing.Secp256k1Signer, resolver WarmKeyResolver) (composer, hostSM *StateMachine, user *signing.Secp256k1Signer) {

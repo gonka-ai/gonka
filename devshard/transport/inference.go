@@ -88,6 +88,9 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	}
 	s.recordEnvelopeBinding(req, unwrapped.HeightSync, oracleHdr, call.Evidence)
 
+	if req.Payload != nil && executorDropsPayload() {
+		req.Payload = nil
+	}
 	resp, err := s.host.HandleRequest(ctx, req)
 	if err != nil {
 		reason, where := observability.ErrorReason(err, observability.ReasonHandleRequestErr, observability.WhereTransportHandleInference)

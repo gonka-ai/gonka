@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"devshard"
 	"devshard/observability"
 	"devshard/storage"
 )
@@ -23,6 +24,10 @@ type creditProbe struct {
 }
 
 const defaultValidationCreditTTL = 60 * time.Minute
+
+// defaultValidationCreditHold is how long a reserved shared credit stays out
+// of the siblings' reach without a renewal.
+const defaultValidationCreditHold = 2 * time.Minute
 
 // validationBudget is shared by all escrows using this process's Engine.
 // Credits expire individually and are spent oldest first. The process-local
@@ -69,8 +74,8 @@ func (b *validationBudget) available(model string) bool {
 	return true
 }
 
-// reserve takes a credit before node acquisition. Refund failures before HTTP
-// dispatch; dispatched requests spend the credit regardless of their outcome.
+// reserve takes a credit before node acquisition. The credit is spent unless
+// refund runs.
 func (b *validationBudget) reserve(model string) (refund func(), ok bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -165,34 +170,103 @@ func (e *Engine) dropCreditProbe(model string) {
 	e.creditMu.Unlock()
 }
 
-func (e *Engine) reserveValidationCredit(ctx context.Context, path observability.Path, model string) (func(), bool) {
+// validationCredit is one reserved credit. The first of spend and refund
+// settles it and the other becomes a no-op. A nil credit costs nothing.
+type validationCredit struct {
+	once     sync.Once
+	spendFn  func()
+	refundFn func()
+}
+
+func (c *validationCredit) spend() {
+	if c != nil {
+		c.once.Do(c.spendFn)
+	}
+}
+
+func (c *validationCredit) refund() {
+	if c != nil {
+		c.once.Do(c.refundFn)
+	}
+}
+
+func (e *Engine) sharedCreditHold() time.Duration {
+	if e.creditHold > 0 {
+		return e.creditHold
+	}
+	return defaultValidationCreditHold
+}
+
+// reserveValidationCredit takes one credit for a validation before node
+// acquisition. The caller spends it once an ML node answers and refunds it
+// otherwise. Paths other than validation get a nil credit.
+// ErrValidationDeferred means there is no credit to take.
+func (e *Engine) reserveValidationCredit(ctx context.Context, path observability.Path, model string) (*validationCredit, error) {
 	if path != observability.PathValidate {
-		return func() {}, true
+		return nil, nil
 	}
 	if e.sharedCredits == nil {
-		return e.validationBudget.reserve(model)
+		refund, ok := e.validationBudget.reserve(model)
+		if !ok {
+			return nil, devshard.ErrValidationDeferred
+		}
+		return &validationCredit{spendFn: func() {}, refundFn: refund}, nil
 	}
+	hold := e.sharedCreditHold()
 	reserveCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	expiresAt, ok, err := e.sharedCredits.ReserveValidationCredit(reserveCtx, e.participant, model)
+	h, ok, err := e.sharedCredits.ReserveValidationCredit(reserveCtx, e.participant, model, hold)
 	cancel()
+	e.dropCreditProbe(model)
 	if err != nil {
-		slog.Warn("devshardd: validation credit reserve failed", "participant", e.participant, "model", model, "error", err)
-		return nil, false
+		return nil, err
 	}
 	if !ok {
-		e.dropCreditProbe(model)
-		return nil, false
+		return nil, devshard.ErrValidationDeferred
 	}
-	e.dropCreditProbe(model)
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			refundCtx, refundCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
-			defer refundCancel()
-			if refundErr := e.sharedCredits.RefundValidationCredit(refundCtx, e.participant, model, expiresAt); refundErr != nil {
-				slog.Warn("devshardd: validation credit refund failed", "participant", e.participant, "model", model, "error", refundErr)
+	stopRenew := e.renewValidationCredit(h, model, hold)
+	settle := func(op string, apply func(context.Context, storage.ValidationCreditHold) error) func() {
+		return func() {
+			stopRenew()
+			opCtx, opCancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer opCancel()
+			if err := apply(opCtx, h); err != nil {
+				slog.Warn("devshardd: validation credit "+op+" failed", "participant", e.participant, "model", model, "error", err)
 			}
 			e.dropCreditProbe(model)
-		})
-	}, true
+		}
+	}
+	return &validationCredit{
+		spendFn:  settle("spend", e.sharedCredits.SpendValidationCredit),
+		refundFn: settle("refund", e.sharedCredits.RefundValidationCredit),
+	}, nil
+}
+
+// renewValidationCredit keeps h held until the returned stop runs. An ML call
+// may outlast many holds; a replica that dies stops renewing and the credit
+// returns to its siblings once the hold lapses.
+func (e *Engine) renewValidationCredit(h storage.ValidationCreditHold, model string, hold time.Duration) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(hold / 3)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			held, err := e.sharedCredits.RenewValidationCredit(ctx, h, hold)
+			cancel()
+			if err != nil {
+				slog.Warn("devshardd: validation credit renew failed", "participant", e.participant, "model", model, "error", err)
+				continue
+			}
+			if !held {
+				return
+			}
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
 }

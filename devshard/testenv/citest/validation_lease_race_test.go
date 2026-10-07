@@ -16,7 +16,8 @@ import (
 )
 
 // TestValidationLeaseRaceCore drives chat load under HA + 100% validation_rate,
-// monitors Postgres leases in parallel, and PASS/FAILs on uniqueness (manual plan §§4–6).
+// monitors Postgres leases in parallel, and PASS/FAILs on uniqueness and on
+// every validator replaying and passing the mock replies (manual plan §§4–6).
 func TestValidationLeaseRaceCore(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -86,6 +87,7 @@ func TestValidationLeaseRaceCore(t *testing.T) {
 
 	final := harness.WaitLeaseTerminal(t, stack, cfg, 1, 2*time.Minute)
 	harness.RequireLeaseExclusivityPass(t, final, 5)
+	harness.RequireMockValidationsPassed(t, stack, cfg)
 }
 
 // TestValidationLeaseRacePendingStretch covers manual plan §7a: slow ML keeps

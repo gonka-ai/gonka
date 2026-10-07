@@ -85,7 +85,9 @@ func assertH2EscrowStickiness(t *testing.T, client *http.Client, base, version, 
 }
 
 func h2SessionRPC(base, version, escrow, procedure string) string {
-	return base + "/" + version + "/sessions/" + escrow + procedure
+	// procedure is the Connect path (/pkg.Service/Method). The proxy
+	// admits only /sessions/{escrow}/rpc/ before that suffix.
+	return base + "/" + version + "/sessions/" + escrow + "/rpc" + procedure
 }
 
 func h2StickyUpstream(t *testing.T, client *http.Client, rawURL string) string {

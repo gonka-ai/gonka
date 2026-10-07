@@ -99,6 +99,14 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 // Optional cfgs override the default SessionConfig.
 func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...types.SessionConfig) *httpTestEnv {
 	t.Helper()
+	return setupHTTPEnvWiring(t, numHosts, balance, grace, true, cfgs...)
+}
+
+// setupHTTPEnvWiring is setupHTTPEnv with the host signature verifier
+// optional. devshardd never passes host.WithVerifier, so hostVerifier=false is
+// the production wiring.
+func setupHTTPEnvWiring(t *testing.T, numHosts int, balance, grace uint64, hostVerifier bool, cfgs ...types.SessionConfig) *httpTestEnv {
+	t.Helper()
 	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hostSigners {
 		hostSigners[i] = testutil.MustGenerateKey(t)
@@ -130,8 +138,11 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		}))
 		stores[i] = store
 
-		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil,
-			host.WithGrace(grace), host.WithStorage(store), host.WithVerifier(verifier))
+		hostOpts := []host.HostOption{host.WithGrace(grace), host.WithStorage(store)}
+		if hostVerifier {
+			hostOpts = append(hostOpts, host.WithVerifier(verifier))
+		}
+		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil, hostOpts...)
 		require.NoError(t, err)
 		hosts[i] = h
 

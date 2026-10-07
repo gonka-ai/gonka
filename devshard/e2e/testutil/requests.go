@@ -314,12 +314,12 @@ func GetGossipNonceStatus(t *testing.T, client *http.Client, hostURL, routePrefi
 }
 
 // The gateway refuses finalize with 409 while the escrow still has work in
-// flight, including the background race cleanup that outlives the winning
-// completion response, so a finalize issued right after a completion can be
-// refused for a moment. Retry that case briefly instead of failing the test.
+// flight. Race cleanup outlives the winning completion and may wait out a
+// loser host call, which after an all-host restart can take longer than the
+// response itself. Wait for the drain, then finalize.
 const (
-	finalizeConflictRetryFor      = 2 * time.Second
-	finalizeConflictRetryInterval = 100 * time.Millisecond
+	finalizeDrainWait = 30 * time.Second
+	finalizeDrainPoll = 100 * time.Millisecond
 )
 
 func FinalizeSession(t *testing.T, client *http.Client, clientURL string) map[string]any {
@@ -334,7 +334,7 @@ func FinalizeSession(t *testing.T, client *http.Client, clientURL string) map[st
 
 func postFinalizeRetryingConflict(t *testing.T, client *http.Client, url string) map[string]any {
 	t.Helper()
-	deadline := time.Now().Add(finalizeConflictRetryFor)
+	deadline := time.Now().Add(finalizeDrainWait)
 	for {
 		resp := PostJSONRaw(t, client, url, map[string]any{}, AdminAPIKey)
 		if resp.StatusCode != http.StatusConflict || !time.Now().Before(deadline) {
@@ -343,6 +343,6 @@ func postFinalizeRetryingConflict(t *testing.T, client *http.Client, url string)
 			return resp.JSON
 		}
 		DebugLogf(t, "finalize refused with 409, retrying: %s", resp.Body)
-		time.Sleep(finalizeConflictRetryInterval)
+		time.Sleep(finalizeDrainPoll)
 	}
 }
