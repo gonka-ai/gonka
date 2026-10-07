@@ -72,18 +72,38 @@ func (k Keeper) PruneWithParams(ctx context.Context, params types.Params, curren
 	return nil
 }
 
+// pocStagePruneBound returns the first PoC stage kept when pruning epochID: the next
+// epoch's PoC start. Confirmation PoC data is keyed by trigger height, which lies between
+// the two regular stages, so pruning by the epoch's own stage alone never removes it.
+// Without the next epoch only the epoch's own stage is pruned, as before.
+func (k Keeper) pocStagePruneBound(ctx context.Context, epochID int64) (stage int64, before bool) {
+	next, found := k.GetEpoch(ctx, uint64(epochID+1))
+	if found && next.PocStartBlockHeight > 0 {
+		return next.PocStartBlockHeight, true
+	}
+	epoch, found := k.GetEpoch(ctx, uint64(epochID))
+	if !found {
+		k.LogError("Failed to get epoch", types.Pruning, "epoch", epochID)
+		return 0, false
+	}
+	return epoch.PocStartBlockHeight, false
+}
+
+// pocStageRanger covers every stage below stage when before is set, otherwise stage only.
+func pocStageRanger[K2, K3 any](stage int64, before bool) collections.Ranger[collections.Triple[int64, K2, K3]] {
+	if before {
+		return collections.NewPrefixUntilTripleRange[int64, K2, K3](stage - 1)
+	}
+	return collections.NewPrefixedTripleRange[int64, K2, K3](stage)
+}
+
 func (k Keeper) GetPoCValidationsV2Pruner(params types.Params) Pruner[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2] {
 	return Pruner[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2]{
 		Threshold:  params.PocParams.PocDataPruningEpochThreshold,
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.PoCValidationsV2,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]]] {
-			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
-			if !found {
-				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
-				return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]](0)
-			}
-			return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]](epoch.PocStartBlockHeight)
+			return pocStageRanger[sdk.AccAddress, collections.Pair[string, sdk.AccAddress]](k.pocStagePruneBound(ctx, epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.PocValidationsV2PrunedEpoch
@@ -104,12 +124,7 @@ func (k Keeper) GetPoCV2StoreCommitPruner(params types.Params) Pruner[collection
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.PoCV2StoreCommits,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[int64, sdk.AccAddress, string]] {
-			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
-			if !found {
-				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
-				return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](0)
-			}
-			return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](epoch.PocStartBlockHeight)
+			return pocStageRanger[sdk.AccAddress, string](k.pocStagePruneBound(ctx, epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.PocV2StoreCommitsPrunedEpoch
@@ -130,12 +145,7 @@ func (k Keeper) GetMLNodeWeightDistributionPruner(params types.Params) Pruner[co
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.MLNodeWeightDistributions,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[int64, sdk.AccAddress, string]] {
-			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
-			if !found {
-				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
-				return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](0)
-			}
-			return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](epoch.PocStartBlockHeight)
+			return pocStageRanger[sdk.AccAddress, string](k.pocStagePruneBound(ctx, epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.MlnodeWeightDistributionsPrunedEpoch
