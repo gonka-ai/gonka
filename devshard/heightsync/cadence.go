@@ -10,6 +10,13 @@ func ComputeCadenceSwallow(forcedStart, forcedEnd, anchorK, slotsNum uint64) (sw
 	// Periodic windows i>=1: [i*K, i*K + slotsNum - 1]
 	for i := uint64(1); ; i++ {
 		pStart := i * anchorK
+		// i*anchorK can overflow uint64 for a large anchorK. Once it wraps,
+		// every subsequent periodic window starts beyond the uint64 nonce range
+		// and cannot intersect the bounded [forcedStart, forcedEnd] window, so
+		// stop rather than looping forever. anchorK != 0 is guaranteed above.
+		if pStart/anchorK != i {
+			break
+		}
 		pEnd := pStart + slotsNum - 1
 		if pStart > forcedEnd+anchorK {
 			break
