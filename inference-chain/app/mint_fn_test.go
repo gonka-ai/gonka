@@ -6,6 +6,7 @@ import (
 
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
+	abci "github.com/cometbft/cometbft/abci/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	mintkeeper "github.com/cosmos/cosmos-sdk/x/mint/keeper"
@@ -78,4 +79,35 @@ func TestGonkaMintFn_MatchesDefault(t *testing.T) {
 			}
 		})
 	}
+}
+
+// With inflation zeroed (mainnet since v0.2.14) an empty block leaves the mint store untouched.
+func TestGonkaMintFn_ZeroInflationSkipsMinterWrite(t *testing.T) {
+	testApp := createTestApp(t)
+	k := &testApp.MintKeeper
+	ctx := testApp.BaseApp.NewUncachedContext(false, cmtproto.Header{ChainID: TallyTestChainID, Height: 2})
+	params, err := k.Params.Get(ctx)
+	require.NoError(t, err)
+	params.InflationMax, params.InflationMin, params.InflationRateChange = math.LegacyZeroDec(), math.LegacyZeroDec(), math.LegacyZeroDec()
+	require.NoError(t, k.Params.Set(ctx, params))
+	require.NoError(t, k.Minter.Set(ctx, minttypes.NewMinter(math.LegacyZeroDec(), math.LegacyZeroDec())))
+
+	mintHash := func() []byte {
+		return testApp.CommitMultiStore().GetCommitKVStore(testApp.GetKey(minttypes.StoreKey)).LastCommitID().Hash
+	}
+	commit := func(h int64) {
+		_, err := testApp.FinalizeBlock(&abci.RequestFinalizeBlock{Height: h})
+		require.NoError(t, err)
+		_, err = testApp.Commit()
+		require.NoError(t, err)
+	}
+	commit(2) // commits the zeroed params
+	prev := mintHash()
+	for h := int64(3); h <= 5; h++ {
+		commit(h)
+		require.Equal(t, prev, mintHash(), "mint store written at %d", h)
+	}
+	minter, err := k.Minter.Get(testApp.BaseApp.NewUncachedContext(false, cmtproto.Header{}))
+	require.NoError(t, err)
+	require.True(t, minter.Inflation.IsZero())
 }
