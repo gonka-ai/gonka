@@ -3072,9 +3072,10 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	}
 
 	recovery = host.RecoveryTxsFor(recovery, nonce)
-	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && len(recovery) > 0 {
+	relevant := recoveryTxsForReason(reason, recovery)
+	if len(relevant) > 0 {
 		s.mu.Lock()
-		for _, tx := range recovery {
+		for _, tx := range relevant {
 			s.addPendingFromHostLocked(recoveryHostIdx, nil, tx)
 		}
 		s.mu.Unlock()
@@ -3082,8 +3083,12 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 			logging.Stage(ctx, "timeout_recovery_send_failed", logFields("reason", result.Reason, "error", err)...)
 			return result, fmt.Errorf("publish timeout recovery: %w", err)
 		}
-		logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
-		return result, nil
+		if s.recoveryLanded(nonce, reason) {
+			logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
+			return result, nil
+		}
+		// The txs were returned but did not apply. They are not evidence the
+		// work completed, so the vote stands.
 	}
 
 	if verifierError != "" {
@@ -3098,6 +3103,51 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	}
 	logging.Stage(ctx, "timeout_insufficient_votes", logFields("reason", result.Reason)...)
 	return result, fmt.Errorf("inference %d timed out but insufficient votes", nonce)
+}
+
+// recoveryTxsForReason keeps the transactions a rejected vote can still
+// sequence. A refusal carries the receipt (and a finish, when one verified).
+// An execution timeout carries only a finish: a ConfirmStart cannot move a
+// record that is already Started.
+func recoveryTxsForReason(reason types.TimeoutReason, recovery []*types.DevshardTx) []*types.DevshardTx {
+	var out []*types.DevshardTx
+	for _, tx := range recovery {
+		if tx == nil {
+			continue
+		}
+		switch reason {
+		case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
+			if tx.GetFinishInference() != nil {
+				out = append(out, tx)
+			}
+		case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
+			out = append(out, tx)
+		}
+	}
+	return out
+}
+
+// recoveryLanded reports whether the published recovery changed the inference
+// the way that reason requires. A finish that was copied but rejected by
+// apply leaves the record Started, which is not recovery.
+func (s *Session) recoveryLanded(nonce uint64, reason types.TimeoutReason) bool {
+	rec, ok := s.sm.GetInference(nonce)
+	if !ok {
+		return false
+	}
+	switch reason {
+	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
+		switch rec.Status {
+		case types.StatusFinished, types.StatusChallenged, types.StatusValidated, types.StatusInvalidated:
+			return true
+		default:
+			return false
+		}
+	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
+		return rec.Status != types.StatusPending && rec.Status != types.StatusTimedOut
+	default:
+		return false
+	}
 }
 
 // refusalDeadlineUnreachable reports whether a refusal vote is already lost. A verifier measures the

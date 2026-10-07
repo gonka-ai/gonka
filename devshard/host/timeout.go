@@ -10,6 +10,7 @@ import (
 
 	"common/completionapi"
 
+	"devshard/state"
 	"devshard/types"
 )
 
@@ -86,7 +87,7 @@ func verifiedConfirm(ev EvidenceVerifier, inferenceID uint64, rec *types.Inferen
 
 // verifiedFinish returns the first Finish for this escrow, inference, and
 // executor slot in pool whose proposer signature verifies.
-func verifiedFinish(ev EvidenceVerifier, escrowID string, inferenceID uint64, rec *types.InferenceRecord, pool []*types.DevshardTx) *types.DevshardTx {
+func verifiedFinish(ev EvidenceVerifier, escrowID string, inferenceID uint64, rec *types.InferenceRecord, tokenPrice uint64, pool []*types.DevshardTx) *types.DevshardTx {
 	if ev == nil || rec == nil {
 		return nil
 	}
@@ -100,11 +101,23 @@ func verifiedFinish(ev EvidenceVerifier, escrowID string, inferenceID uint64, re
 			return nil
 		}
 		checks++
-		if ev.CheckFinishProposerSig(fi) == nil {
+		if ev.CheckFinishProposerSig(fi) == nil && finishApplicable(fi, tokenPrice) {
 			return tx
 		}
 	}
 	return nil
+}
+
+// finishApplicable reports whether a signature-valid finish can be applied.
+// applyFinish rejects any other hash length, and a token count whose cost
+// overflows. A finish that cannot land must not block the timeout: nothing
+// would sequence it.
+func finishApplicable(fi *types.MsgFinishInference, tokenPrice uint64) bool {
+	if fi == nil || len(fi.ResponseHash) != sha256.Size || len(fi.ServedHash) != sha256.Size {
+		return false
+	}
+	_, err := state.TokenCost(fi.InputTokens, fi.OutputTokens, tokenPrice)
+	return err == nil
 }
 
 // ExecutorClient contacts the executor host to check inference status.
@@ -124,7 +137,9 @@ type ExecutorClient interface {
 	// the receipt verifies for this escrow, this inference, and this executor.
 	// An execution vote challenges once, with a nil payload and no diffs, and
 	// rejects only when the returned pool contains a MsgFinishInference for
-	// this escrow and inference whose proposer signature recovers to the executor.
+	// this escrow and inference whose proposer signature recovers to the
+	// executor and whose hashes and token cost can be applied. That finish is
+	// copied into the caller's sink so the user can sequence it.
 	ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) (receipt []byte, mempool []*types.DevshardTx, err error)
 }
 
@@ -214,7 +229,7 @@ func verifyRefusedTimeout(
 
 	// Fast path: a verified MsgConfirmStart or MsgFinishInference in the local mempool.
 	if verifiedConfirm(ev, inferenceID, rec, nil, localMempool) != nil ||
-		verifiedFinish(ev, st.EscrowID, inferenceID, rec, localMempool) != nil {
+		verifiedFinish(ev, st.EscrowID, inferenceID, rec, config.TokenPrice, localMempool) != nil {
 		return false, nil
 	}
 
@@ -231,7 +246,7 @@ func verifyRefusedTimeout(
 	if executorClient == nil {
 		return true, nil
 	}
-	return finishRefusedChallenge(challengeRefused(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev))
+	return finishRefusedChallenge(challengeRefused(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev, config.TokenPrice))
 }
 
 func finishRefusedChallenge(outcome refusedChallenge) (bool, error) {
@@ -248,6 +263,7 @@ func challengeRefused(
 	executorClient ExecutorClient,
 	ingest TxSink,
 	ev EvidenceVerifier,
+	tokenPrice uint64,
 ) refusedChallenge {
 	receipt, mempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, diffs)
 	if err != nil {
@@ -267,7 +283,7 @@ func challengeRefused(
 	// new ConfirmStart from the receipt, and do not copy anything unverified.
 	if ingest != nil {
 		ingest.AddTx(confirmTx)
-		if finishTx := verifiedFinish(ev, escrowID, inferenceID, rec, mempool); finishTx != nil {
+		if finishTx := verifiedFinish(ev, escrowID, inferenceID, rec, tokenPrice, mempool); finishTx != nil {
 			ingest.AddTx(finishTx)
 		}
 	}
@@ -282,9 +298,10 @@ func challengeRefused(
 //  3. Check local mempool for a verified MsgFinishInference -- if found, reject.
 //  4. Challenge the executor once, with a nil payload and no diffs.
 //     A MsgFinishInference in the returned pool rejects the timeout only
-//     when it is for this escrow and this inference and its proposer
-//     signature recovers to the executor. The nil payload does not sign a
-//     receipt or start execution.
+//     when it is for this escrow and this inference, its proposer signature
+//     recovers to the executor, and its hashes and token cost can be applied. That finish
+//     is copied into ingest so the reject reply carries it and the user can
+//     sequence it. The nil payload does not sign a receipt or start execution.
 //  5. If the executor is unreachable, or the finish does not verify -> accept.
 func VerifyExecutionTimeout(
 	ctx context.Context,
@@ -292,6 +309,7 @@ func VerifyExecutionTimeout(
 	inferenceID uint64,
 	localMempool []*types.DevshardTx,
 	executorClient ExecutorClient,
+	ingest TxSink,
 	ev EvidenceVerifier,
 	config types.SessionConfig,
 	nowUnix int64,
@@ -311,7 +329,7 @@ func VerifyExecutionTimeout(
 	}
 
 	// Fast path: a verified MsgFinishInference in the local mempool.
-	if verifiedFinish(ev, st.EscrowID, inferenceID, rec, localMempool) != nil {
+	if verifiedFinish(ev, st.EscrowID, inferenceID, rec, config.TokenPrice, localMempool) != nil {
 		return false, nil
 	}
 
@@ -320,8 +338,13 @@ func VerifyExecutionTimeout(
 	// to return, and the timeout stands.
 	if executorClient != nil {
 		_, executorMempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, nil, nil)
-		if err == nil && verifiedFinish(ev, st.EscrowID, inferenceID, rec, executorMempool) != nil {
-			return false, nil
+		if err == nil {
+			if finishTx := verifiedFinish(ev, st.EscrowID, inferenceID, rec, config.TokenPrice, executorMempool); finishTx != nil {
+				if ingest != nil {
+					ingest.AddTx(finishTx)
+				}
+				return false, nil
+			}
 		}
 		// An unreachable executor supports the timeout claim, and a finish
 		// that does not verify is not evidence the work completed.

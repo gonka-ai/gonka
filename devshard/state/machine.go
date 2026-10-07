@@ -38,6 +38,12 @@ func safeAdd(a, b uint64) (uint64, bool) {
 	return result, true
 }
 
+// TokenCost is the cost applyFinishInference charges: (input + output) * price.
+// An error means the sum or the product does not fit in uint64.
+func TokenCost(inputTokens, outputTokens, tokenPrice uint64) (uint64, error) {
+	return tokenCost(inputTokens, outputTokens, tokenPrice)
+}
+
 // tokenCost computes (a + b) * price with overflow checks.
 func tokenCost(a, b, price uint64) (uint64, error) {
 	sum, ok := safeAdd(a, b)

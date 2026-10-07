@@ -776,7 +776,8 @@ func TestHTTP_ExecutionTimeoutRejectedWhenExecutorHasFinish(t *testing.T) {
 	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), env.session.Diffs())
 	require.NoError(t, err)
 	require.Empty(t, votes, "executor finish in mempool must reject execution timeout")
-	require.Empty(t, recovery, "execution-timeout rejection should not publish refused-start recovery")
+	require.Nil(t, findConfirmStart(recovery, prepared.Nonce()), "execution-timeout rejection must not carry the receipt")
+	require.NotNil(t, findFinish(recovery, prepared.Nonce()), "the verified finish is what the user sequences")
 }
 
 func TestHTTP_NextRequestSettlesFinishFromExecutorMempool(t *testing.T) {
