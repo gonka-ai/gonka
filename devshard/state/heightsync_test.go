@@ -660,3 +660,18 @@ func TestValidateDiff_MarksFlushOnlyOnCommit(t *testing.T) {
 	}
 	require.Contains(t, kinds, heightsync.MarkVectorContradiction)
 }
+
+func TestApplyForceHeightSyncTurn_RejectsOversizedAnchorK(t *testing.T) {
+	newState := func() *types.EscrowState {
+		return &types.EscrowState{Phase: types.PhaseActive, Group: make([]types.SlotAssignment, 3)}
+	}
+	newMsg := func(anchorK uint64) *types.MsgForceHeightSyncTurn {
+		return &types.MsgForceHeightSyncTurn{TriggerNonce: 1, EndNonce: 3, SlotsNum: 3, AnchorK: anchorK, Reason: "heartbeat"}
+	}
+	// Control: an in-range anchorK is accepted.
+	require.NoError(t, applyForceHeightSyncTurnTo(newState(), newMsg(10), 1))
+	// anchorK beyond the uint32 nonce space (including the overflow value) is rejected at the boundary.
+	for _, anchorK := range []uint64{1 << 32, 1 << 63, 1<<64 - 1} {
+		require.ErrorIs(t, applyForceHeightSyncTurnTo(newState(), newMsg(anchorK), 1), heightsync.ErrInvalidConfig, "anchorK=%d", anchorK)
+	}
+}

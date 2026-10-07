@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"devshard/heightsync"
 	"devshard/logging"
@@ -80,6 +81,13 @@ func applyForceHeightSyncTurnTo(st *types.EscrowState, msg *types.MsgForceHeight
 		return fmt.Errorf("MsgForceHeightSyncTurn slots_num %d must equal group size %d", msg.SlotsNum, slots)
 	}
 	if msg.AnchorK < msg.SlotsNum {
+		return heightsync.ErrInvalidConfig
+	}
+	// Diff nonces are uint32-bounded (the chain's devshard max_nonce is uint32),
+	// so a cadence period beyond that range can never align with a real nonce
+	// window. Reject it at the boundary; this also keeps obviously-oversized
+	// values out of the periodic-window computation.
+	if msg.AnchorK > math.MaxUint32 {
 		return heightsync.ErrInvalidConfig
 	}
 	expectedEnd := msg.TriggerNonce + msg.SlotsNum - 1
