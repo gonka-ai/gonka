@@ -28,7 +28,11 @@ import (
 )
 
 const (
-	childLoopbackHost      = "127.0.0.1"
+	childLoopbackHost = "127.0.0.1"
+	// peerReleasePath is the retiring child's admin endpoint. It stops that
+	// process from signing Attach as this host. Old binaries answer 404;
+	// callers log and continue.
+	peerReleasePath        = "/rpc/release"
 	maxChildPort           = 65535
 	storageModePostgres    = "postgres"
 	installedVersionRetain = 3
@@ -50,6 +54,9 @@ type child struct {
 	archiveSHA256 string
 	binaryVersion string
 	storageMode   string
+	// childH2C is set from --print-child-h2c. False dials the child over HTTP/1.1.
+	childH2C    bool
+	fleetCompat string
 	// haDeployment is populated by binary preflight. Nil means the generation
 	// has not yet established whether it belongs to the HA PostgreSQL set.
 	haDeployment    *bool
@@ -305,6 +312,39 @@ func (m *Manager) ServesVersion(name string) bool {
 	running := c != nil && c.status == statusRunning
 	m.mu.Unlock()
 	return running && c.servingFresh()
+}
+
+// ServesPeerRPC reports whether the child serving version accepts
+// prior-knowledge HTTP/2. Connect is hashed only onto that child. A binary
+// that rejects --print-child-h2c stays on HTTP/1.1 and is not a peer-RPC target.
+func (m *Manager) ServesPeerRPC(name string) bool {
+	if !m.ServesVersion(name) {
+		return false
+	}
+	m.mu.Lock()
+	c := m.processes[name]
+	h2c := c != nil && c.childH2C
+	m.mu.Unlock()
+	return h2c
+}
+
+// PeerRPCHostReady is the host-level peer-RPC answer. Every running child
+// must have advertised h2c. One HTTP/1.1 child keeps the host out of the
+// coarse peer pool so versionless Connect is not hashed onto it.
+func (m *Manager) PeerRPCHostReady() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	anyRunning := false
+	for _, c := range m.processes {
+		if c == nil || c.status != statusRunning || !c.servingFresh() {
+			continue
+		}
+		anyRunning = true
+		if !c.childH2C {
+			return false
+		}
+	}
+	return anyRunning
 }
 
 // watchChildReadiness keeps one generation's serving flag current. It is bound to
@@ -993,7 +1033,7 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		m.mu.Unlock()
 		return fmt.Errorf("preflight replacement version %s: %w", v.Name, err)
 	}
-	if !m.rollingOverlapAllowed(v.Name, old, preflight.storageMode) {
+	if !m.rollingOverlapAllowed(v.Name, old, preflight.storageMode, preflight.fleetCompat) {
 		slog.Warn("rolling overlap disabled without shared storage; falling back to stop/start swap", "version", v.Name)
 		m.mu.Lock()
 		if m.hostDraining {
@@ -1124,6 +1164,11 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	m.mu.Unlock()
 
 	slog.Info("swapped child route; old child draining", "version", v.Name, "old_port", old.port, "new_port", newChild.child.port)
+	// The new child is the only process that may sign as this host. Release
+	// after the route is published so peers reconnect onto it.
+	if err := m.requestPeerRelease(context.Background(), old); err != nil {
+		slog.Warn("peer identity release failed", "version", v.Name, "port", old.port, "error", err)
+	}
 	go m.drainAfterProxy(old, proxyDrained)
 	return nil
 }
@@ -1356,9 +1401,42 @@ func (m *Manager) BeginHostDrain() {
 	m.cancelOperations()
 }
 
-// RequestChildrenDrain removes every child route before issuing lifecycle
-// drain requests. Calls run concurrently and never hold m.mu during network I/O.
+// ReleasePeers tells every live child to stop Attach and Watch. Host drain
+// calls this before WaitIdle: an open Watch otherwise holds the host until
+// the drain budget is gone and child /drain is skipped. Old binaries answer
+// 404; the caller logs and continues.
+func (m *Manager) ReleasePeers(ctx context.Context) error {
+	children := m.snapshotChildren()
+	errCh := make(chan error, len(children))
+	var wg sync.WaitGroup
+	for _, c := range children {
+		if childDone(c) {
+			continue
+		}
+		wg.Add(1)
+		go func(c *child) {
+			defer wg.Done()
+			if err := m.requestPeerRelease(ctx, c); err != nil {
+				errCh <- fmt.Errorf("release peers for %s: %w", c.version.Name, err)
+			}
+		}(c)
+	}
+	wg.Wait()
+	close(errCh)
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// RequestChildrenDrain drops peer identity, then removes every child route
+// before issuing lifecycle drain requests. Calls run concurrently and never
+// hold m.mu during network I/O.
 func (m *Manager) RequestChildrenDrain(ctx context.Context) error {
+	if err := m.ReleasePeers(ctx); err != nil {
+		slog.Warn("peer identity release failed", "error", err)
+	}
 	children := m.prepareChildrenForDrain()
 	errCh := make(chan error, len(children))
 	var wg sync.WaitGroup
@@ -1511,6 +1589,35 @@ func (m *Manager) snapshotChildren() []*child {
 	return m.allChildrenLocked()
 }
 
+// PeerMemberTarget is one local devshardd the membership forwarder can reach.
+type PeerMemberTarget struct {
+	Version  string
+	AdminURL string
+}
+
+// PeerMemberTargets lists children that have an admin listener. versiond
+// forwards the router membership to each of them.
+func (m *Manager) PeerMemberTargets() []PeerMemberTarget {
+	if m == nil {
+		return nil
+	}
+	var out []PeerMemberTarget
+	for _, c := range m.snapshotChildren() {
+		if c == nil || childDone(c) {
+			continue
+		}
+		addr := c.adminAddr()
+		if addr == "" || c.version.Name == "" {
+			continue
+		}
+		out = append(out, PeerMemberTarget{
+			Version:  c.version.Name,
+			AdminURL: "http://" + addr,
+		})
+	}
+	return out
+}
+
 func (m *Manager) ForceStopChildren() {
 	m.cancelOperations()
 	m.cancelChildren()
@@ -1638,6 +1745,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
+	c.childH2C = preflight.childH2C
+	c.fleetCompat = preflight.fleetCompat
 	if preflight.haDeployment != nil {
 		ha := *preflight.haDeployment
 		c.haDeployment = &ha
@@ -1754,7 +1863,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		m.nextProofGeneration++
 		c.proofGeneration = m.nextProofGeneration
 		transitionGenerationLocked(c, statusRunning)
-		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
+		c.proxyTarget = proxy.NewChildTarget(fmt.Sprintf("localhost:%d", c.port), c.childH2C)
 		c.readyOnce.Do(func() { close(c.ready) })
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
 			m.rebuildRoutes()
@@ -1988,7 +2097,7 @@ func (m *Manager) childStopTimeout() time.Duration {
 	return m.cfg.ChildShutdownGrace
 }
 
-func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newMode string) bool {
+func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newMode, newCompat string) bool {
 	name := strings.ToLower(m.cfg.BinaryName)
 	if name != "devshard" && name != "devshardd" {
 		return true
@@ -1996,8 +2105,10 @@ func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newMode 
 
 	m.mu.Lock()
 	oldMode := ""
+	oldCompat := ""
 	if old != nil {
 		oldMode = old.storageMode
+		oldCompat = old.fleetCompat
 	}
 	m.mu.Unlock()
 
@@ -2014,6 +2125,15 @@ func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newMode 
 			"rolling overlap disabled: new devshard storage mode is not postgres",
 			"version", versionName,
 			"storage_mode", newMode,
+		)
+		return false
+	}
+	if oldCompat != newCompat {
+		slog.Warn(
+			"rolling overlap disabled: fleet compat differs, so the binaries must not share an escrow",
+			"version", versionName,
+			"running", oldCompat,
+			"incoming", newCompat,
 		)
 		return false
 	}
@@ -2336,6 +2456,32 @@ func (m *Manager) requestDrain(ctx context.Context, c *child) error {
 	return nil
 }
 
+// requestPeerRelease tells the retiring child to stop Attach/Watch. Both
+// generations sign with the same host key; the one still dialing wins the
+// single peer session. A child that does not know the endpoint is ignored
+// by the caller.
+func (m *Manager) requestPeerRelease(ctx context.Context, c *child) error {
+	if c == nil {
+		return nil
+	}
+	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, c.lifecyclePort(), peerReleasePath)
+	requestCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("peer release returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (m *Manager) drainAfterProxy(c *child, proxyDrained <-chan struct{}) {
 	// Proxy admission and child lifecycle draining share one safety deadline.
 	deadline := time.Now().Add(m.cfg.DrainTimeout)
@@ -2443,6 +2589,12 @@ func (m *Manager) stopRetiredChild(
 	c *child,
 	proxyDrained <-chan struct{},
 ) error {
+	// Drop this generation's peer identity before waiting. An open Watch
+	// from this child is an acquired request on the peer's proxy; leaving
+	// it up stalls the other host's stop/start.
+	if err := m.requestPeerRelease(context.Background(), c); err != nil {
+		slog.Warn("peer identity release failed", "version", c.version.Name, "port", c.port, "error", err)
+	}
 	timer := time.NewTimer(m.cfg.DrainTimeout)
 	defer timer.Stop()
 	select {
@@ -2549,7 +2701,7 @@ func (m *Manager) rebuildRoutes() {
 	for _, c := range m.processes {
 		if c.status == statusRunning {
 			if c.proxyTarget == nil {
-				c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
+				c.proxyTarget = proxy.NewChildTarget(fmt.Sprintf("localhost:%d", c.port), c.childH2C)
 			}
 			routes[c.version.Name] = c.proxyTarget
 		}

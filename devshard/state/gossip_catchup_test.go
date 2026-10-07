@@ -97,7 +97,7 @@ func TestGossip_V2_CatchUpAcrossSealBoundary(t *testing.T) {
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
 	})})
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: uint32(executorSlotIdx),
 		EscrowId: escrowID,
 	}

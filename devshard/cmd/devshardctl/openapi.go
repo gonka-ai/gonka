@@ -284,6 +284,16 @@ const openapiSpec = `{
         }
       }
     },
+    "/v1/debug/rpc-traffic": {
+      "get": {
+        "summary": "RPC traffic operator debug",
+        "description": "Admin endpoint. Last scraped GET /devshard/stats/rpc snapshot per chain participant InferenceUrl. Same family as /v1/debug/heightsync. Prometheus /metrics has aggregates only; banned peer/IP identities are on the closed-minute warn (tag=rpc_stats, rpc_stats_join=host/minute_unix).",
+        "security": [{ "AdminBearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Per-host RPC traffic snapshots (last closed minute)" }
+        }
+      }
+    },
     "/v1/debug/pending": {
       "get": {
         "summary": "Pending transactions",

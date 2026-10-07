@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -42,9 +43,24 @@ type StreamResponse struct {
 
 func SendStreamingCompletion(t *testing.T, client *http.Client, clientURL, content string) StreamResponse {
 	t.Helper()
-	DebugLogf(t, "sending streaming completion request content=%q", content)
+	return SendStreamingBody(t, client, clientURL, ChatCompletionBody(content, true))
+}
 
-	data, err := json.Marshal(ChatCompletionBody(content, true))
+// SendStreamingCompletionWithLogprobs asks for the host's own positions, which a plain request never does.
+func SendStreamingCompletionWithLogprobs(t *testing.T, client *http.Client, clientURL, content string, topLogprobs int) StreamResponse {
+	t.Helper()
+	body := ChatCompletionBody(content, true)
+	body["logprobs"] = true
+	body["top_logprobs"] = topLogprobs
+	return SendStreamingBody(t, client, clientURL, body)
+}
+
+// SendStreamingBody streams whatever body the caller composed, for requests ChatCompletionBody cannot express.
+func SendStreamingBody(t *testing.T, client *http.Client, clientURL string, body map[string]any) StreamResponse {
+	t.Helper()
+	DebugLogf(t, "sending streaming completion request body=%v", body)
+
+	data, err := json.Marshal(body)
 	require.NoError(t, err)
 
 	req, err := http.NewRequest(http.MethodPost, clientURL+"/v1/chat/completions", strings.NewReader(string(data)))
@@ -56,9 +72,9 @@ func SendStreamingCompletion(t *testing.T, client *http.Client, clientURL, conte
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	body, events := readSSEEvents(t, resp.Body)
-	DebugLogf(t, "streaming completion status=%d content_type=%q body=%s", resp.StatusCode, resp.Header.Get("Content-Type"), body)
-	require.Less(t, resp.StatusCode, 300, "streaming completion returned %d: %s", resp.StatusCode, body)
+	rawBody, events := readSSEEvents(t, resp.Body)
+	DebugLogf(t, "streaming completion status=%d content_type=%q body=%s", resp.StatusCode, resp.Header.Get("Content-Type"), rawBody)
+	require.Less(t, resp.StatusCode, 300, "streaming completion returned %d: %s", resp.StatusCode, rawBody)
 
 	return StreamResponse{
 		ContentType: resp.Header.Get("Content-Type"),
@@ -223,7 +239,25 @@ type TimeoutInferenceTransaction struct {
 
 func FindTimeoutInferenceTransaction(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64) (TimeoutInferenceTransaction, bool) {
 	t.Helper()
-	diffs := GetJSONArray(t, client, fmt.Sprintf("%s%s/sessions/%s/diffs?from=1&to=%d", hostURL, routePrefix, escrowID, toNonce))
+	for from := uint64(1); from <= toNonce; {
+		to := from + uint64(storage.DiffPageMaxNonces) - 1
+		if to > toNonce {
+			to = toNonce
+		}
+		diffs := GetJSONArray(t, client, fmt.Sprintf("%s%s/sessions/%s/diffs?from=%d&to=%d", hostURL, routePrefix, escrowID, from, to))
+		if tx, found := timeoutInferenceInDiffs(t, diffs); found {
+			return tx, true
+		}
+		if to == toNonce {
+			break
+		}
+		from = to + 1
+	}
+	return TimeoutInferenceTransaction{}, false
+}
+
+func timeoutInferenceInDiffs(t *testing.T, diffs []any) (TimeoutInferenceTransaction, bool) {
+	t.Helper()
 	for _, raw := range diffs {
 		record, ok := raw.(map[string]any)
 		require.True(t, ok, "host diff record should be an object")
@@ -278,13 +312,14 @@ func GetGossipNonceStatus(t *testing.T, client *http.Client, hostURL, routePrefi
 		SenderSlot: NumericField(t, status, "sender_slot"),
 	}
 }
+
 // The gateway refuses finalize with 409 while the escrow still has work in
-// flight, including the background race cleanup that outlives the winning
-// completion response, so a finalize issued right after a completion can be
-// refused for a moment. Retry that case briefly instead of failing the test.
+// flight. Race cleanup outlives the winning completion and may wait out a
+// loser host call, which after an all-host restart can take longer than the
+// response itself. Wait for the drain, then finalize.
 const (
-	finalizeConflictRetryFor      = 2 * time.Second
-	finalizeConflictRetryInterval = 100 * time.Millisecond
+	finalizeDrainWait = 30 * time.Second
+	finalizeDrainPoll = 100 * time.Millisecond
 )
 
 func FinalizeSession(t *testing.T, client *http.Client, clientURL string) map[string]any {
@@ -299,7 +334,7 @@ func FinalizeSession(t *testing.T, client *http.Client, clientURL string) map[st
 
 func postFinalizeRetryingConflict(t *testing.T, client *http.Client, url string) map[string]any {
 	t.Helper()
-	deadline := time.Now().Add(finalizeConflictRetryFor)
+	deadline := time.Now().Add(finalizeDrainWait)
 	for {
 		resp := PostJSONRaw(t, client, url, map[string]any{}, AdminAPIKey)
 		if resp.StatusCode != http.StatusConflict || !time.Now().Before(deadline) {
@@ -308,6 +343,6 @@ func postFinalizeRetryingConflict(t *testing.T, client *http.Client, url string)
 			return resp.JSON
 		}
 		DebugLogf(t, "finalize refused with 409, retrying: %s", resp.Body)
-		time.Sleep(finalizeConflictRetryInterval)
+		time.Sleep(finalizeDrainPoll)
 	}
 }

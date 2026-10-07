@@ -228,6 +228,7 @@ func mustLoadBootstrapOptions(flags cliFlags, baseStorageDir string) bootstrapOp
 		PoCMaxConcurrentPer10000Weight: readFloat64Env("GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT", defaultPoCMaxConcurrentPer10000Weight),
 		MaxInputTokensInFlight:         readInt64Env("GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT", 0),
 		TxGasLimit:                     uint64(readInt64Env("DEVSHARD_TX_GAS_LIMIT", 0)),
+		LogprobsOptimizationOverride:   readOptionalBoolEnv("GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE"),
 		Disabled: GatewayDisabledSettings{
 			Enabled: readBoolEnv("DEVSHARD_GATEWAY_DISABLED", false),
 			Message: os.Getenv("DEVSHARD_GATEWAY_DISABLED_MESSAGE"),
@@ -812,6 +813,19 @@ func readFloat64Env(name string, fallback float64) float64 {
 		return fallback
 	}
 	return v
+}
+
+func readOptionalBoolEnv(name string) *bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	parsed, err := boolvalue.Parse(raw)
+	if err != nil {
+		log.Printf("invalid %s=%q, leaving it unset", name, raw)
+		return nil
+	}
+	return &parsed
 }
 
 func readBoolEnv(name string, fallback bool) bool {

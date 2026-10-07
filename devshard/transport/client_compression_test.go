@@ -2,13 +2,10 @@ package transport
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
-	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -16,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/internal/testutil"
-	"devshard/signing"
 )
 
 const compressionTestEscrowID = "escrow-compression"
@@ -28,14 +24,6 @@ type capturedRequest struct {
 	signature       string
 	timestamp       string
 	readErr         error
-}
-
-// compressingClient has the write side turned on.
-func compressingClient(t *testing.T, baseURL string, signer signing.Signer) *HTTPClient {
-	t.Helper()
-	config := DefaultClientConfig()
-	config.CompressRequestBodies = true
-	return NewHTTPClient(baseURL, compressionTestEscrowID, signer, config)
 }
 
 func captureOnePost(t *testing.T) (*httptest.Server, *capturedRequest) {
@@ -53,67 +41,6 @@ func captureOnePost(t *testing.T) (*httptest.Server, *capturedRequest) {
 	}))
 	t.Cleanup(server.Close)
 	return server, captured
-}
-
-// Compression after signing, unwrap before verifying; anything else is 403.
-func TestHTTPClient_Post_CompressesALargeBodyAndStillSignsThePlaintext(t *testing.T) {
-	signer := testutil.MustGenerateKey(t)
-	server, captured := captureOnePost(t)
-
-	client := compressingClient(t, server.URL, signer)
-
-	body := []byte(`{"diffs":[],"nonce":7,"payload":{"prompt":"` + strings.Repeat("A", 8192) + `"}}`)
-	response, err := client.doPostRawOnce(context.Background(), "/sessions/1/chat/completions", body, "application/octet-stream", false)
-	require.NoError(t, err)
-	require.NoError(t, response.Body.Close())
-
-	require.Equal(t, gzipEncoding, captured.contentEncoding)
-	require.NoError(t, captured.readErr)
-	require.Less(t, len(captured.wire), len(body)/4, "the compressed body should be a fraction of the envelope")
-
-	reader, err := gzip.NewReader(bytes.NewReader(captured.wire))
-	require.NoError(t, err)
-	defer reader.Close()
-	decompressed, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	require.Equal(t, string(body), string(decompressed))
-
-	signature, err := hex.DecodeString(captured.signature)
-	require.NoError(t, err)
-	timestamp, err := strconv.ParseInt(captured.timestamp, 10, 64)
-	require.NoError(t, err)
-	sender, err := VerifyRequest(signing.NewSecp256k1Verifier(), compressionTestEscrowID, decompressed, signature, timestamp, timestamp)
-	require.NoError(t, err)
-	require.Equal(t, signer.Address(), sender, "the signature must cover the plaintext, not the encoding")
-}
-
-func TestHTTPClient_Post_LeavesASmallBodyUncompressed(t *testing.T) {
-	signer := testutil.MustGenerateKey(t)
-	server, captured := captureOnePost(t)
-
-	client := compressingClient(t, server.URL, signer)
-
-	body := make([]byte, minCompressedBodyBytes-1)
-	response, err := client.doPostRawOnce(context.Background(), "/sessions/1/gossip/nonce", body, "application/json", false)
-	require.NoError(t, err)
-	require.NoError(t, response.Body.Close())
-
-	require.Empty(t, captured.contentEncoding, "gzip costs more than it saves on a gossip-sized body")
-	require.Equal(t, string(body), string(captured.wire))
-}
-
-func TestHTTPClient_Post_CompressesFromTheThresholdUp(t *testing.T) {
-	signer := testutil.MustGenerateKey(t)
-	server, captured := captureOnePost(t)
-
-	client := compressingClient(t, server.URL, signer)
-
-	body := make([]byte, minCompressedBodyBytes)
-	response, err := client.doPostRawOnce(context.Background(), "/sessions/1/gossip/nonce", body, "application/json", false)
-	require.NoError(t, err)
-	require.NoError(t, response.Body.Close())
-
-	require.Equal(t, gzipEncoding, captured.contentEncoding, "the threshold is inclusive")
 }
 
 // Go asks for gzip and unwraps it, so the parser never sees an encoded byte.
@@ -161,6 +88,6 @@ func TestHTTPClient_Post_StaysUncompressedUntilItIsTurnedOn(t *testing.T) {
 	require.NoError(t, response.Body.Close())
 
 	require.Empty(t, captured.contentEncoding,
-		"a host that cannot decompress must be reachable until the whole network has the read side")
+		"phase 7 retired request-body gzip; the POST body is the signed bytes")
 	require.Equal(t, string(body), string(captured.wire))
 }

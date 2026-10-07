@@ -25,6 +25,7 @@ const (
 	LevelInfo  Level = "info"
 	LevelWarn  Level = "warn"
 	LevelError Level = "error"
+	LevelDebug Level = "debug"
 )
 
 const (
@@ -62,6 +63,8 @@ const (
 	WhereManagerPayloads            Where = "manager.payloads"
 	WhereRuntimeExecute             Where = "runtime.execute"
 	WhereRuntimeValidate            Where = "runtime.validate"
+	WherePeerRPCGate                Where = "rpc.handshake_gate"
+	WhereGatewayRPCStats            Where = "gateway.rpc_stats"
 )
 
 const (
@@ -96,6 +99,7 @@ const (
 	ReasonReceiptSignErr              Reason = "receipt_sign_err"
 	ReasonQueueFull                   Reason = "queue_full"
 	ReasonValidateErr                 Reason = "validate_err"
+	ReasonValidationLeased            Reason = "validation_leased"
 	ReasonInferenceDisappeared        Reason = "inference_disappeared"
 	ReasonSignValidationErr           Reason = "sign_validation_err"
 	ReasonSignVoteErr                 Reason = "sign_vote_err"
@@ -150,10 +154,15 @@ const (
 )
 
 const (
-	MetricStatusOK     MetricStatus = "ok"
-	MetricStatusError  MetricStatus = "error"
-	MetricStatusQueued MetricStatus = "queued"
-	MetricStatusCached MetricStatus = "cached"
+	MetricStatusOK       MetricStatus = "ok"
+	MetricStatusDeferred MetricStatus = "deferred"
+	MetricStatusError    MetricStatus = "error"
+	MetricStatusQueued   MetricStatus = "queued"
+	MetricStatusCached   MetricStatus = "cached"
+	// MetricStatusLeased marks an attempt that stopped because a lease row was
+	// already in place. Distinct from error: most of these are the dedup guard
+	// working as intended.
+	MetricStatusLeased MetricStatus = "leased"
 )
 
 const (
@@ -289,6 +298,8 @@ func Log(ctx context.Context, level Level, msg string, stage Stage, where Where,
 		logging.Error(msg, fields...)
 	case LevelWarn:
 		logging.Warn(msg, fields...)
+	case LevelDebug:
+		logging.Debug(msg, fields...)
 	default:
 		logging.Info(msg, fields...)
 	}

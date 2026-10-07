@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -24,9 +26,11 @@ import (
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
+	"devshard/storage"
 	"devshard/types"
 
 	"common/chainoracle/blocks"
+	"common/completionapi"
 	"common/httpguard"
 
 	devshardpkg "devshard"
@@ -85,7 +89,7 @@ const DefaultHeightSeedTimeout = 5 * time.Second
 
 // ClientConfig holds per-endpoint timeout settings.
 type ClientConfig struct {
-	InferenceTimeout time.Duration // /chat/completions, default 20m
+	InferenceTimeout time.Duration // /chat/completions, default 30m
 	GossipTimeout    time.Duration // gossip/nonce, gossip/txs, default 10s
 	VerifyTimeout    time.Duration // verify-timeout, default 3m
 	QueryTimeout     time.Duration // diffs, mempool GETs, default 30s
@@ -94,8 +98,6 @@ type ClientConfig struct {
 	HeightSeedTimeout time.Duration
 	StreamCallback    func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
 	RoutePrefix       string                          // path prefix for all session routes; default /devshard/<version>
-	// CompressRequestBodies gzips a POST body; safe once every host decompresses.
-	CompressRequestBodies bool
 	// MaxSSEEventBytes caps a single SSE line (including the trailing newline).
 	// Zero means DefaultMaxSSEEventBytes. Oversize lines abort with
 	// ErrSSEEventTooLarge; they are never silently truncated.
@@ -126,6 +128,20 @@ type ClientConfig struct {
 	// HeightSyncRequestMutateHook runs after Decide and peer-tip carry-forward,
 	// before the request is marshaled. Tests / debug only.
 	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
+
+	// RPCEndpoints names to send over Connect. A partial list or "off" is
+	// ignored by ResolveRPCEndpoints: every retired session method uses
+	// Connect. Empty means "not set".
+	RPCEndpoints EndpointSet
+	// AllowRetiredHTTPSession lets HTTPClient post the retired Echo session
+	// routes. Test servers that still mount those handlers set it. Production
+	// leaves it false, and the methods return ErrHTTPSessionRetired.
+	AllowRetiredHTTPSession bool
+	// RPCMaxConnsPerPeer is MaxConnsPerHost on the PeerConn pool. Zero uses
+	// DEVSHARD_RPC_MAX_CONNS_PER_PEER or DefaultRPCMaxConnsPerPeer.
+	RPCMaxConnsPerPeer int
+	// RPCAdoption is the gateway adoption tracker. Nil on hosts.
+	RPCAdoption *PeerRPCAdoption
 }
 
 // RequestAdmissionController can reject participant-bound transport
@@ -217,9 +233,16 @@ func (e *UpstreamStatusError) Error() string {
 	return fmt.Sprintf("http %s: status %d: %s", e.Path, e.StatusCode, e.Body)
 }
 
-// IsUpstreamEscrowNotFound returns true if err is an UpstreamStatusError
-// whose body indicates the host could not find the escrow on chain.
+// IsUpstreamEscrowNotFound reports a host that could not find the escrow on
+// chain. HTTP sends 500 with that phrase. Connect sends FailedPrecondition
+// and X-Devshard-Error: escrow_not_found.
 func IsUpstreamEscrowNotFound(err error) bool {
+	if status, code, message, ok := ConnectApplicationStatus(err); ok {
+		if strings.EqualFold(strings.TrimSpace(code), DevshardErrorEscrowNotFound) {
+			return true
+		}
+		return status == http.StatusInternalServerError && strings.Contains(message, "escrow not found")
+	}
 	var ue *UpstreamStatusError
 	if !errors.As(err, &ue) {
 		return false
@@ -228,9 +251,13 @@ func IsUpstreamEscrowNotFound(err error) bool {
 		strings.Contains(ue.Body, "escrow not found")
 }
 
-// IsSessionNotFound returns true if err is an UpstreamStatusError from a host that does not hold the
-// escrow at all, as opposed to holding it and disagreeing about a nonce.
+// IsSessionNotFound reports a host that does not hold the escrow at all, as
+// opposed to holding it and disagreeing about a nonce. HTTP and Connect both
+// use 404 and the phrase "session not found".
 func IsSessionNotFound(err error) bool {
+	if status, _, message, ok := ConnectApplicationStatus(err); ok {
+		return status == http.StatusNotFound && strings.Contains(message, "session not found")
+	}
 	var ue *UpstreamStatusError
 	if !errors.As(err, &ue) {
 		return false
@@ -253,9 +280,16 @@ func IsTransientWriteError(err error) bool {
 		errors.Is(err, syscall.ECONNREFUSED)
 }
 
-// IsUpstreamEscrowSettled returns true if err is an UpstreamStatusError whose
-// body indicates the host refused to serve an escrow already settled on chain.
+// IsUpstreamEscrowSettled reports a host that refused an escrow already
+// settled on chain. The header is escrow_settled. HTTP also uses 409 and
+// the phrase "escrow already settled".
 func IsUpstreamEscrowSettled(err error) bool {
+	if status, code, message, ok := ConnectApplicationStatus(err); ok {
+		if strings.EqualFold(strings.TrimSpace(code), DevshardErrorEscrowSettled) {
+			return true
+		}
+		return status == http.StatusConflict && strings.Contains(message, "escrow already settled")
+	}
 	var ue *UpstreamStatusError
 	if !errors.As(err, &ue) {
 		return false
@@ -346,7 +380,8 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		escrowID:    escrowID,
 		signer:      signer,
 		http: &http.Client{
-			Transport: DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
+			Transport:     DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
+			CheckRedirect: noFollowRedirects,
 		},
 		config:              cfg,
 		heightSync:          cfg.HeightSync,
@@ -363,6 +398,12 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		hc.heightSyncPeerTips = NewHeightSyncPeerTips()
 	}
 	return hc
+}
+
+// noFollowRedirects stops Go from forwarding Authorization / session headers
+// to a different host.
+func noFollowRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // cloneSharing returns a copy that shares this client's HTTP transport,
@@ -387,6 +428,10 @@ func (c *HTTPClient) cloneSharing() *HTTPClient {
 	cp.admissionOff.Store(c.admissionOff.Load())
 	return cp
 }
+
+// Close is a no-op. HTTPClient does not own a PeerConn; *RPCClient.Close
+// releases the handshake. HostPeerClient.Close is this method or the RPC override.
+func (c *HTTPClient) Close() {}
 
 // BaseURL returns the dial base URL for this host (no route prefix).
 func (c *HTTPClient) BaseURL() string {
@@ -441,6 +486,8 @@ func (c *HTTPClient) timestampHeader() string {
 	return HeaderTimestamp
 }
 
+// cloneWithSigner is a new HTTP client with signer. There is no Attach
+// identity, so a different key just re-signs JSON POSTs.
 func (c *HTTPClient) cloneWithSigner(signer signing.Signer, timeout time.Duration) *HTTPClient {
 	cfg := c.config
 	cfg.Admission = nil
@@ -487,10 +534,16 @@ func (c *HTTPClient) postJSON(ctx context.Context, path string, timeout time.Dur
 
 // get sends a GET request and unmarshals the response into resp.
 func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration, resp any) error {
+	return c.getBounded(ctx, path, timeout, 0, resp)
+}
+
+// getBounded is get with the success body capped at maxBody bytes. A body past
+// the cap is ErrResponseBodyTooLarge; maxBody 0 reads the whole body.
+func (c *HTTPClient) getBounded(ctx context.Context, path string, timeout time.Duration, maxBody int64, resp any) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	url := fmt.Sprintf("%s%s%s", c.baseURL, c.routePrefix, path)
-	body, err := c.doGet(ctx, url)
+	body, err := c.doGet(ctx, url, maxBody)
 	if err != nil {
 		return err
 	}
@@ -498,7 +551,17 @@ func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration
 }
 
 // Send implements user.HostClient.
+func (c *HTTPClient) errIfRetiredHTTP() error {
+	if c == nil || c.config.AllowRetiredHTTPSession {
+		return nil
+	}
+	return ErrHTTPSessionRetired
+}
+
 func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
 	timeout := c.config.InferenceTimeout
 	if req.Payload == nil {
 		// Finalize/catch-up sends only exchange protocol state, so a dead host
@@ -586,6 +649,8 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 	var unexpectedLineLogged bool
 	var sawTerminator bool // true once we observe [DONE] or a devshard_receipt event
 	var sawMeta bool       // true once we observe a devshard_meta tail
+	received := completionapi.NewReceivedResponseHasher()
+	defer func() { result.ReceivedResponseHashes = received.Sums() }()
 
 	for {
 		raw, readErr := readBoundedSSELine(br, maxLine)
@@ -593,7 +658,7 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 			streamBytes += int64(len(raw))
 			line := string(bytes.TrimRight(raw, "\r\n"))
 			// Handled before the bound: the line arrived whole.
-			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &sawMeta)
+			c.handleSSELine(line, stream, received, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &sawMeta)
 			if streamBytes > maxStream {
 				logging.Warn("sse_stream_too_large", "subsystem", "transport", "escrow", c.escrowID, "limit_bytes", maxStream)
 				return &result, fmt.Errorf("%w: %d byte limit", ErrSSEStreamTooLarge, maxStream)
@@ -653,6 +718,7 @@ func (c *HTTPClient) maxSSEStreamBytes() int64 {
 // readBoundedSSELine reads up to and including the next '\n', aborting as soon
 // as the accumulated line would exceed max bytes. On oversize it returns
 // ErrSSEEventTooLarge and drops the partial buffer rather than retaining it.
+// A line that fits the reader's buffer is returned as a view valid only until the next read.
 func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
 	if max <= 0 {
 		max = DefaultMaxSSEEventBytes
@@ -662,6 +728,12 @@ func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
 		// ReadSlice returns a view into the reader's own buffer, valid only until
 		// the next read, so every fragment is copied out before looping.
 		fragment, err := br.ReadSlice('\n')
+		if err == nil && buf == nil {
+			if len(fragment) > max {
+				return nil, fmt.Errorf("%w: %d byte limit", ErrSSEEventTooLarge, max)
+			}
+			return fragment, nil
+		}
 		if len(fragment) > 0 {
 			if len(buf)+len(fragment) > max {
 				return nil, fmt.Errorf("%w: %d byte limit", ErrSSEEventTooLarge, max)
@@ -692,11 +764,20 @@ func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
 func (c *HTTPClient) handleSSELine(
 	line string,
 	stream io.Writer,
+	received *completionapi.ReceivedResponseHasher,
 	receiptHandler func(*host.HostResponse),
 	result *host.HostResponse,
 	writeErrLogged, unexpectedLineLogged, sawTerminator, sawMeta *bool,
 ) {
+	forward := func(event string) {
+		received.Add(line)
+		if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
+			*writeErrLogged = true
+			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", event, "error", err)
+		}
+	}
 	if !strings.HasPrefix(line, "data: ") {
+		received.Add(line)
 		if line != "" && !strings.HasPrefix(line, ":") && !*unexpectedLineLogged {
 			lineLen, lineHex := sseLineBytesForLog(line)
 			if strings.HasPrefix(line, "data:") {
@@ -713,21 +794,19 @@ func (c *HTTPClient) handleSSELine(
 	data := strings.TrimPrefix(line, "data: ")
 	if data == "[DONE]" {
 		*sawTerminator = true
-		if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
-			*writeErrLogged = true
-			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "[DONE]", "error", err)
-		}
+		forward("[DONE]")
 		return
 	}
 
-	// Try to parse as devshard protocol envelope.
+	// Only a line that could spell a devshard_ key, literally or escaped, is decoded as an envelope.
+	if !strings.Contains(data, "devshard_") && !strings.Contains(data, `\u`) {
+		forward("data")
+		return
+	}
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(data), &envelope); err != nil {
 		// Not JSON -- forward as-is.
-		if werr := writeSSELine(stream, line); werr != nil && !*writeErrLogged {
-			*writeErrLogged = true
-			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", werr)
-		}
+		forward("data")
 		return
 	}
 
@@ -784,6 +863,7 @@ func (c *HTTPClient) handleSSELine(
 		if sawMeta != nil {
 			*sawMeta = true
 		}
+		received.MarkComplete()
 		var meta DevshardMetaEvent
 		if err := json.Unmarshal(raw, &meta); err != nil {
 			logging.Warn("sse_meta_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "event_key", key, "error", err)
@@ -799,10 +879,7 @@ func (c *HTTPClient) handleSSELine(
 	}
 
 	// Inference data line -- forward to callback.
-	if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
-		*writeErrLogged = true
-		logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", err)
-	}
+	forward("data")
 }
 
 func (c *HTTPClient) protocolEnvelope(envelope map[string]json.RawMessage, suffix string) (json.RawMessage, string, bool) {
@@ -853,12 +930,18 @@ func sseLineBytesForLog(line string) (int, string) {
 
 // GossipNonce sends a nonce notification to a peer.
 func (c *HTTPClient) GossipNonce(ctx context.Context, nonce uint64, stateHash, stateSig []byte, slotID uint32) error {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return err
+	}
 	return c.post(ctx, "/sessions/"+c.escrowID+"/gossip/nonce", c.config.GossipTimeout,
 		GossipNonceRequest{Nonce: nonce, StateHash: stateHash, StateSig: stateSig, SlotID: slotID}, nil)
 }
 
 // GossipTxs sends transactions to a peer.
 func (c *HTTPClient) GossipTxs(ctx context.Context, txs []*types.DevshardTx) error {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return err
+	}
 	txBytes, err := DevshardTxsToBytes(txs)
 	if err != nil {
 		return fmt.Errorf("encode txs: %w", err)
@@ -869,6 +952,9 @@ func (c *HTTPClient) GossipTxs(ctx context.Context, txs []*types.DevshardTx) err
 
 // SendVerifyTimeout asks a peer to verify a timeout (raw transport).
 func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutRequest) (*VerifyTimeoutResponse, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
 	var resp VerifyTimeoutResponse
 	if err := c.post(ctx, "/sessions/"+c.escrowID+"/verify-timeout", c.config.VerifyTimeout, req, &resp); err != nil {
 		return nil, err
@@ -877,6 +963,9 @@ func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutReq
 }
 
 func (c *HTTPClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMissRequest) (*VerifyErrorMissResponse, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
 	var resp VerifyErrorMissResponse
 	if err := c.post(ctx, "/sessions/"+c.escrowID+"/verify-error-miss", c.config.VerifyTimeout, req, &resp); err != nil {
 		return nil, err
@@ -887,6 +976,9 @@ func (c *HTTPClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMis
 // ChallengeReceipt forwards diffs + payload to the executor and returns the
 // receipt plus a snapshot of the executor mempool (recovery txs).
 func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
 
@@ -900,9 +992,10 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	}
 
 	req := ChallengeReceiptRequest{
-		InferenceID: inferenceID,
-		Payload:     PayloadToJSON(payload),
-		Diffs:       djList,
+		InferenceID:     inferenceID,
+		Payload:         PayloadToJSON(payload),
+		Diffs:           djList,
+		ProtocolVersion: types.StartProtocolVersion(diffs),
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -939,7 +1032,7 @@ func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reas
 	resp, err := c.SendVerifyTimeout(ctx, VerifyTimeoutRequest{
 		InferenceID: inferenceID,
 		Reason:      TimeoutReasonToString(reason),
-		Payload:     PayloadToJSON(payload),
+		Payload:     timeoutVotePayload(reason, payload),
 		Diffs:       djList,
 	})
 	if err != nil {
@@ -980,16 +1073,101 @@ func (c *HTTPClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, di
 	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
 }
 
-// GetDiffs fetches stored diffs from a peer.
+// GetDiffs fetches one page of stored diffs. A range wider than one page
+// returns ErrDiffPageLimit. Walk a longer journal with GetDiffPages.
 func (c *HTTPClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff, error) {
+	diffs, err := c.getDiffWindow(ctx, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("get diffs: %w", err)
+	}
+	return diffs, nil
+}
+
+// GetDiffPages fetches stored diffs from a peer and passes each page to fn
+// before the next request, so the range is never held in one slice. Each
+// request asks for at most one nonce page. A byte-budget rejection halves the
+// window until it fits; a single diff is always one page. Windows the peer
+// stores no diffs for are skipped. An error from fn stops the walk and is
+// returned unwrapped.
+func (c *HTTPClient) GetDiffPages(ctx context.Context, fromNonce, toNonce uint64, fn func([]types.Diff) error) error {
+	for from := fromNonce; from <= toNonce; {
+		hi := diffPageEnd(from, toNonce, storage.DiffPageMaxNonces)
+		page, err := c.getDiffWindow(ctx, from, hi)
+		for err != nil && errors.Is(err, storage.ErrDiffPageLimit) && hi > from {
+			hi = from + (hi-from)/2
+			page, err = c.getDiffWindow(ctx, from, hi)
+		}
+		if err != nil {
+			return fmt.Errorf("get diffs %d..%d: %w", from, hi, err)
+		}
+		if len(page) > 0 {
+			if err := fn(page); err != nil {
+				return err
+			}
+		}
+		if hi == toNonce {
+			break
+		}
+		from = hi + 1
+	}
+	return nil
+}
+
+func diffPageEnd(from, to uint64, maxNonces int) uint64 {
+	if maxNonces <= 1 || to-from < uint64(maxNonces-1) {
+		return to
+	}
+	return from + uint64(maxNonces) - 1
+}
+
+// ErrDiffPageOversized is a diffs response that breaks the page rule the
+// server enforces: more than DiffPageMaxNonces records, or several records
+// over DiffPageMaxBytes. Only a faulty or hostile peer sends one.
+var ErrDiffPageOversized = errors.New("diffs response exceeds one page")
+
+const (
+	// diffRecordJSONOverhead bounds what one record adds to the body beyond
+	// its base64 txs: field names, nonce, user_sig, post_state_root and
+	// state_hash.
+	diffRecordJSONOverhead = 4 << 10
+	// diffWireNonceBytes is the nonce field DiffToJSON adds to the stored
+	// txs_proto: one tag byte and a varint.
+	diffWireNonceBytes = 1 + binary.MaxVarintLen64
+)
+
+// maxDiffPageBodyBytes caps a diffs response body. A packed page is at most
+// DiffPageMaxBytes of txs. A single larger diff reached the host in a request
+// body of at most DefaultMaxBodySize, so the larger of the two covers it.
+var maxDiffPageBodyBytes = int64(max(
+	base64.StdEncoding.EncodedLen(storage.DiffPageMaxBytes+storage.DiffPageMaxNonces*diffWireNonceBytes),
+	int(DefaultMaxBodySize),
+) + storage.DiffPageMaxNonces*diffRecordJSONOverhead)
+
+func (c *HTTPClient) getDiffWindow(ctx context.Context, from, to uint64) ([]types.Diff, error) {
 	type diffRecordJSON struct {
 		DiffJSON  `json:"diff"`
 		StateHash []byte `json:"state_hash"`
 	}
 	var records []diffRecordJSON
 	path := fmt.Sprintf("/sessions/%s/diffs?from=%d&to=%d", c.escrowID, from, to)
-	if err := c.get(ctx, path, c.config.QueryTimeout, &records); err != nil {
-		return nil, fmt.Errorf("get diffs: %w", err)
+	if err := c.getBounded(ctx, path, c.config.QueryTimeout, maxDiffPageBodyBytes, &records); err != nil {
+		var status *UpstreamStatusError
+		if errors.As(err, &status) && strings.Contains(status.Body, storage.ErrDiffPageLimit.Error()) {
+			return nil, fmt.Errorf("%w: %s", storage.ErrDiffPageLimit, status.Body)
+		}
+		return nil, err
+	}
+	if len(records) > storage.DiffPageMaxNonces {
+		return nil, fmt.Errorf("%w: %d records, at most %d", ErrDiffPageOversized, len(records), storage.DiffPageMaxNonces)
+	}
+	if len(records) > 1 {
+		total := 0
+		for _, rec := range records {
+			total += len(rec.Txs)
+		}
+		if limit := storage.DiffPageMaxBytes + len(records)*diffWireNonceBytes; total > limit {
+			return nil, fmt.Errorf("%w: %d records carry %d txs bytes, at most %d", ErrDiffPageOversized, len(records), total, limit)
+		}
 	}
 
 	diffs := make([]types.Diff, len(records))
@@ -1101,18 +1279,13 @@ func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byt
 		return nil, fmt.Errorf("sign request: %w", err)
 	}
 
-	wireBody, contentEncoding := c.encodeRequestBody(body)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(wireBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
-	if contentEncoding != "" {
-		req.Header.Set("Content-Encoding", contentEncoding)
-	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -1176,9 +1349,9 @@ func (c *HTTPClient) doPostOnce(ctx context.Context, path string, body []byte) (
 
 // doGet sends a GET request and returns the response body.
 // No auth signing -- GET endpoints skip auth on the server side for now.
-func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
+func (c *HTTPClient) doGet(ctx context.Context, url string, maxBody int64) ([]byte, error) {
 	if isInferencePath(url) {
-		return c.doGetOnce(ctx, url, true)
+		return c.doGetOnce(ctx, url, true, maxBody)
 	}
 	// See doPostRaw: admit once per logical request, and never attribute a local
 	// limiter rejection to the host.
@@ -1189,7 +1362,7 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	delay := nonInferenceRetryInitial
 	var lastRetryable error
 	for {
-		body, err := c.getAttempt(ctx, url, false)
+		body, err := c.getAttempt(ctx, url, false, maxBody)
 		if err == nil {
 			c.observeResult(url, http.StatusOK)
 			return body, nil
@@ -1223,15 +1396,15 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	}
 }
 
-func (c *HTTPClient) doGetOnce(ctx context.Context, url string, observe bool) ([]byte, error) {
+func (c *HTTPClient) doGetOnce(ctx context.Context, url string, observe bool, maxBody int64) ([]byte, error) {
 	if err := c.allowRequest(url); err != nil {
 		return nil, err
 	}
-	return c.getAttempt(ctx, url, observe)
+	return c.getAttempt(ctx, url, observe, maxBody)
 }
 
 // getAttempt is one GET with no admission check. See postRawAttempt.
-func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) ([]byte, error) {
+func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool, maxBody int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -1263,6 +1436,9 @@ func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) (
 	}
 	if observe {
 		c.observeResult(url, resp.StatusCode)
+	}
+	if maxBody > 0 {
+		return readBoundedResponseBody(resp.Body, maxBody)
 	}
 	return io.ReadAll(resp.Body)
 }

@@ -4,12 +4,13 @@ import (
 	"testing"
 
 	"devshard/host"
+	"devshard/internal/testutil"
 	"devshard/types"
 )
 
 func finishTx(nonce uint64) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{InferenceId: nonce},
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: nonce},
 	}}
 }
 

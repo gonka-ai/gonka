@@ -59,10 +59,10 @@ func TestFinalizeInFlightBlocksNewInferences(t *testing.T) {
 	require.False(t, ok, "a runtime with finalize in flight must not accept new inferences")
 	require.Equal(t, "finalize_in_flight", reason)
 
-	_, err := g.reserveRuntimeForModel("Qwen/Test", 1)
+	_, err := g.reserveRuntimeForModel("Qwen/Test", chatRequestCost{promptTokens: 1}, nil)
 	require.Error(t, err, "pooled admission must not pick a runtime whose finalize is in flight")
 
-	admitted, reason := g.reserveRuntimeIfAccepting(rt, 1)
+	admitted, reason := g.reserveRuntimeIfAccepting(rt, chatRequestCost{promptTokens: 1})
 	require.False(t, admitted, "direct devshard admission must not reserve a runtime whose finalize is in flight")
 	require.Equal(t, "finalize_in_flight", reason)
 	require.Zero(t, rt.activeUserRequests.Load(), "no request may be reserved while finalize runs")
@@ -87,7 +87,7 @@ func TestSingleOnlyFinalizeInFlightBlocksNewInferences(t *testing.T) {
 	}()
 	<-entered
 
-	_, err := g.reserveRuntimeForModel("Qwen/Test", 1)
+	_, err := g.reserveRuntimeForModel("Qwen/Test", chatRequestCost{promptTokens: 1}, nil)
 	require.Error(t, err, "single-runtime admission must not pick a runtime whose finalize is in flight")
 	require.Zero(t, rt.activeUserRequests.Load())
 
@@ -114,6 +114,7 @@ func TestSingleOnlyFinalizeRequiresNoActiveRequests(t *testing.T) {
 	rec := httptest.NewRecorder()
 	g.handleSingleOnly(rec, httptest.NewRequest(http.MethodPost, "/v1/finalize", nil))
 	require.Equal(t, http.StatusConflict, rec.Code)
+	require.Contains(t, rec.Body.String(), "active_requests=1 pending_race_cleanup=0")
 	require.False(t, forwarded)
 	require.False(t, rt.finalizing.Load(), "a refused finalize must leave the gate open")
 
@@ -226,9 +227,9 @@ func TestFailedFinalizeAllowsRetry(t *testing.T) {
 	g.handleDevshard(rec, httptest.NewRequest(http.MethodPost, "/devshard/12/v1/finalize", nil))
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 
-	admitted, reason := g.reserveRuntimeIfAccepting(rt, 1)
+	admitted, reason := g.reserveRuntimeIfAccepting(rt, chatRequestCost{promptTokens: 1})
 	require.True(t, admitted, "a failed finalize must reopen admission, refused with %q", reason)
-	g.releaseRuntime(rt, 1)
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 1})
 
 	rec = httptest.NewRecorder()
 	g.handleDevshard(rec, httptest.NewRequest(http.MethodPost, "/devshard/12/v1/finalize", nil))

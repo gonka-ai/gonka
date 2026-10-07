@@ -2,7 +2,9 @@ package inference
 
 import (
 	"bufio"
+	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -15,7 +17,10 @@ import (
 const (
 	defaultScannerBufferSize = 64 * 1024 // 64KB initial scanner buffer
 
-	mlNodeHTTPTimeout = 5 * time.Minute
+	// mlNodeHTTPTimeout covers the full ML-node chat completion, including
+	// streaming the response body. It matches the 32-minute session
+	// ExecutionTimeout so the HTTP client does not abort a live inference.
+	mlNodeHTTPTimeout = 32 * time.Minute
 )
 
 // NewNoRedirectClient returns an HTTP client that does not follow redirects.
@@ -61,10 +66,14 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 	scanner := bufio.NewScanner(completionapi.NewCappedResponseReader(resp.Body))
 	scanner.Buffer(make([]byte, 0, defaultScannerBufferSize), completionapi.MaxSSELineBytes)
 	clientGone := false
+	flusher, canFlush := w.(http.Flusher)
+	isDebugLogged := slog.Default().Enabled(context.Background(), slog.LevelDebug)
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		logging.Debug("Chunk", types.Inferences, "inferenceId", inferenceId, "line", line)
+		if isDebugLogged {
+			logging.Debug("Chunk", types.Inferences, "inferenceId", inferenceId, "line", line)
+		}
 
 		lineToProxy := line
 		if responseProcessor != nil && line != "" {
@@ -79,7 +88,9 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 			}
 		}
 
-		logging.Debug("Chunk to proxy", types.Inferences, "inference_id", inferenceId, "line", lineToProxy)
+		if isDebugLogged {
+			logging.Debug("Chunk to proxy", types.Inferences, "inference_id", inferenceId, "line", lineToProxy)
+		}
 
 		if clientGone {
 			continue
@@ -91,9 +102,13 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 			clientGone = true
 			continue
 		}
-		if flusher, ok := w.(http.Flusher); ok {
+		// An event ends at its blank line, so flushing there sends it whole in one write.
+		if canFlush && line == "" {
 			flusher.Flush()
 		}
+	}
+	if canFlush && !clientGone {
+		flusher.Flush()
 	}
 
 	if err := scanner.Err(); err != nil {

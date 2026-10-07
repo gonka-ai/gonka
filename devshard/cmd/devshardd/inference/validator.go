@@ -10,12 +10,15 @@ import (
 	"devshard/bridge"
 	"devshard/logging"
 	"devshard/observability"
+	"devshard/signing"
 	"devshard/storage"
+	"devshard/transport"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,10 +27,11 @@ import (
 
 // leaseOps is satisfied by storage.LeaseStore; extracted as interface for testing.
 type leaseOps interface {
-	Acquire(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, instanceAddr string) (bool, error)
-	SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error
-	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error)
-	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
+	Acquire(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, owner storage.LeaseOwner) (bool, error)
+	DescribeLease(ctx context.Context, escrowId string, inferenceId, epochId uint64) (storage.LeaseInfo, bool, error)
+	SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, owner storage.LeaseOwner) error
+	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) (bool, error)
+	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) error
 }
 
 type acquireKey struct {
@@ -46,8 +50,13 @@ type Validator struct {
 	boundVersion            string
 	chainParams             ChainParamsProvider
 	thresholds              ValidationThresholdResolver
+	vocabularySizes         VocabularyResolver
 	voteFalseOnFetchFailure bool
 	payloadHTTPClient       *http.Client
+	payloadSigner           signing.Signer
+	rpcEndpoints            transport.EndpointSet
+	payloadRPCMu            sync.Mutex
+	payloadRPCs             map[string]*transport.RPCClient
 	fetchPayloads           payloadFetchFunc
 	executeML               mlExecuteFunc
 }
@@ -59,6 +68,7 @@ type mlExecuteFunc func(ctx context.Context, model, escrowID string, body []byte
 // NewValidator creates a Validator. boundVersion is the runtime version string used
 // to construct the payload request path. thresholds resolves the per-model
 // similarity pass threshold (long-poll snapshot first, chain fallback).
+// vocabularySizes bounds enforced token ids by the model's vocab before the replay reaches the ML node.
 // voteFalseOnFetchFailure converts executor-attributable payload failures into
 // Valid:false instead of abandoning the attempt.
 func NewValidator(
@@ -69,6 +79,7 @@ func NewValidator(
 	boundVersion string,
 	chainParams ChainParamsProvider,
 	thresholds ValidationThresholdResolver,
+	vocabularySizes VocabularyResolver,
 	voteFalseOnFetchFailure bool,
 ) *Validator {
 	return &Validator{
@@ -79,12 +90,22 @@ func NewValidator(
 		boundVersion:            boundVersion,
 		chainParams:             chainParams,
 		thresholds:              thresholds,
+		vocabularySizes:         vocabularySizes,
 		voteFalseOnFetchFailure: voteFalseOnFetchFailure,
 		payloadHTTPClient:       newPayloadFetchClient(),
 	}
 }
 
+func (v *Validator) CanValidate(model string) bool {
+	return v.engine == nil || v.engine.creditAvailable(model)
+}
+
 func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+	// Reject exhausted models before payload fetching. Acquisition later reserves
+	// atomically, since another escrow may spend the credit during the fetch.
+	if !v.CanValidate(req.Model) {
+		return nil, devshardpkg.ErrValidationDeferred
+	}
 	inferenceID := strconv.FormatUint(req.InferenceID, 10)
 
 	epochID := resolveValidationEpoch(v.phase, req.EpochID)
@@ -130,6 +151,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		},
 		req.InputTokens, req.OutputTokens,
 		v.chainParams.LogprobsMode(),
+		v.vocabularySizes.Resolve(ctx, epochID, req.Model),
 	)
 	if err != nil {
 		return nil, classifyExecuteValidationErr(err)
@@ -151,7 +173,63 @@ func (v *Validator) fetchPayloadsFor(ctx context.Context, req devshardpkg.Valida
 		ctx, v.bridge, v.recorder, req, inferenceID, epochID,
 		devshardpkg.VersionedSessionPayloadPath(v.boundVersion, req.EscrowID),
 		v.payloadHTTPClient,
+		v.payloadRPC,
 	)
+}
+
+// SetPayloadRPC enables Connect GetPayload. signer is the host identity
+// used for Attach. Payload is always a Connect method; there is no HTTP GET.
+func (v *Validator) SetPayloadRPC(signer signing.Signer, endpoints transport.EndpointSet) {
+	if v == nil {
+		return
+	}
+	v.payloadSigner = signer
+	v.rpcEndpoints = endpoints
+}
+
+// ClosePayloadClients releases cached executor PeerConns. Safe if unused.
+func (v *Validator) ClosePayloadClients() {
+	if v == nil {
+		return
+	}
+	v.payloadRPCMu.Lock()
+	defer v.payloadRPCMu.Unlock()
+	for k, c := range v.payloadRPCs {
+		c.Close()
+		delete(v.payloadRPCs, k)
+	}
+}
+
+func (v *Validator) payloadRPC(executorURL, executorAddr, escrowID string) *transport.RPCClient {
+	if v == nil || v.payloadSigner == nil || !v.rpcEndpoints.Has(transport.EndpointPayload) {
+		return nil
+	}
+	executorURL = strings.TrimSpace(executorURL)
+	executorAddr = strings.TrimSpace(executorAddr)
+	escrowID = strings.TrimSpace(escrowID)
+	if executorURL == "" || executorAddr == "" || escrowID == "" {
+		return nil
+	}
+	key := executorAddr + "\x00" + executorURL + "\x00" + escrowID
+	v.payloadRPCMu.Lock()
+	defer v.payloadRPCMu.Unlock()
+	if c := v.payloadRPCs[key]; c != nil {
+		return c
+	}
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = devshardpkg.VersionedRoutePrefix(v.boundVersion)
+	cfg.QueryTimeout = payloadFetchTimeout
+	httpClient := transport.NewHTTPClient(executorURL, escrowID, v.payloadSigner, cfg)
+	selected := transport.SelectTransport(httpClient, executorAddr, v.rpcEndpoints, nil)
+	rpc, ok := selected.(*transport.RPCClient)
+	if !ok || rpc == nil || !rpc.Uses(transport.EndpointPayload) {
+		return nil
+	}
+	if v.payloadRPCs == nil {
+		v.payloadRPCs = make(map[string]*transport.RPCClient)
+	}
+	v.payloadRPCs[key] = rpc
+	return rpc
 }
 
 const executorPayloadUnavailableReason = "executor_payload_unavailable"
@@ -179,9 +257,14 @@ func executorFaultVerdict(ctx context.Context, phase *chain.Phase, req devshardp
 	if !enabled || err == nil || ctx.Err() != nil {
 		return nil
 	}
+	// phase follows LatestEpoch (moves at poc_start), the escrow epoch follows
+	// EffectiveEpoch (moves at set_new_validators), so escrows of epoch E keep
+	// serving at phase E+1 through the PoC window. The executor stores under
+	// its phase and the payload handler also looks up epochID+1, so at phase
+	// E+1 a 404 is never an honest prune.
 	inWindow := true
 	if phase != nil {
-		inWindow = phase.EpochID() <= epochID
+		inWindow = phase.EpochID() <= epochID+1
 	}
 	reason := observability.ReasonPayloadFetchErr
 	switch {
@@ -262,6 +345,10 @@ func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string
 	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		// NewRequest also accepts URLs that the HTTP transport cannot dispatch.
+		if reqErr == nil && (httpReq.URL.Host == "" || (httpReq.URL.Scheme != "http" && httpReq.URL.Scheme != "https")) {
+			reqErr = fmt.Errorf("invalid ML node HTTP endpoint %q", endpoint)
+		}
 		if reqErr != nil {
 			return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
 		}
@@ -282,12 +369,12 @@ var _ devshardpkg.ValidationEngine = (*Validator)(nil)
 // that only one devshardd instance validates each (escrow_id, inference_id) pair.
 // The retry loop uses the inner Validator directly because it already holds the lease.
 type LeaseValidator struct {
-	validator    devshardpkg.ValidationEngine
-	phase        *chain.Phase
-	leases       leaseOps
-	instanceAddr string
-	leaseTTL     time.Duration
-	acquires     sync.Map // acquireKey -> acquireRec
+	validator devshardpkg.ValidationEngine
+	phase     *chain.Phase
+	leases    leaseOps
+	owner     storage.LeaseOwner
+	leaseTTL  time.Duration
+	acquires  sync.Map // acquireKey -> acquireRec
 }
 
 type acquireRec struct {
@@ -296,16 +383,16 @@ type acquireRec struct {
 }
 
 // NewLeaseValidator wraps v with Postgres lease deduplication.
-func NewLeaseValidator(v devshardpkg.ValidationEngine, phase *chain.Phase, leases leaseOps, instanceAddr string, leaseTTL time.Duration) *LeaseValidator {
+func NewLeaseValidator(v devshardpkg.ValidationEngine, phase *chain.Phase, leases leaseOps, owner storage.LeaseOwner, leaseTTL time.Duration) *LeaseValidator {
 	if leaseTTL <= 0 {
-		leaseTTL = 30 * time.Minute
+		leaseTTL = 32 * time.Minute
 	}
 	return &LeaseValidator{
-		validator:    v,
-		phase:        phase,
-		leases:       leases,
-		instanceAddr: instanceAddr,
-		leaseTTL:     leaseTTL,
+		validator: v,
+		phase:     phase,
+		leases:    leases,
+		owner:     owner,
+		leaseTTL:  leaseTTL,
 	}
 }
 
@@ -326,15 +413,22 @@ func (c *LeaseValidator) loadAcquire(escrowID string, inferenceID uint64) (acqui
 	return rec, ok
 }
 
+func (c *LeaseValidator) CanValidate(model string) bool {
+	return devshardpkg.CanValidate(c.validator, model)
+}
+
 func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+	if !c.CanValidate(req.Model) {
+		return nil, devshardpkg.ErrValidationDeferred
+	}
 	epochID := resolveValidationEpoch(c.phase, req.EpochID)
-	acquired, err := c.leases.Acquire(ctx, req.EscrowID, req.InferenceID, epochID, c.instanceAddr)
+	acquired, err := c.leases.Acquire(ctx, req.EscrowID, req.InferenceID, epochID, c.owner)
 	if err != nil {
 		slog.Warn("devshardd: validation lease failed",
 			"escrow", req.EscrowID, "inference", req.InferenceID, "error", err)
 		return nil, fmt.Errorf("acquire validation: %w", err)
 	} else if !acquired {
-		return nil, devshardpkg.ErrValidationAlreadyLeased
+		return nil, c.describeConflict(ctx, req.EscrowID, req.InferenceID, epochID)
 	}
 	c.rememberAcquire(req.EscrowID, req.InferenceID, epochID, time.Now())
 
@@ -345,6 +439,32 @@ func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateR
 	}
 
 	return result, nil
+}
+
+// describeConflict turns a refused acquire into an error that says what was in
+// the way. The extra read costs one query on a path that has already given up
+// on validating. The caller logs it, and stamps the validation cooldown unless
+// ReleasedBeforeRead says the row is already gone.
+func (c *LeaseValidator) describeConflict(ctx context.Context, escrowID string, inferenceID, epochID uint64) error {
+	conflict := &devshardpkg.LeaseConflict{}
+	info, found, err := c.leases.DescribeLease(ctx, escrowID, inferenceID, epochID)
+	switch {
+	case err != nil:
+		conflict.Detail = fmt.Sprintf("lease read failed: %v", err)
+	case !found:
+		// Released or pruned between the acquire and this read, so the
+		// inference is already re-pickable.
+		conflict.Detail = devshardpkg.LeaseRowAbsentDetail
+	default:
+		conflict.Status = string(info.Status)
+		conflict.Owner = info.InstanceAddr
+		conflict.InstanceID = info.InstanceID
+		conflict.Hostname = info.Hostname
+		conflict.ClaimedAt = info.ClaimedAt
+		conflict.Stale = info.Status == storage.LeaseStatusPending &&
+			!info.ClaimedAt.IsZero() && time.Since(info.ClaimedAt) > c.leaseTTL
+	}
+	return conflict
 }
 
 // AllowValidationSubmit gates MsgValidation publish: TTL since acquire and
@@ -362,7 +482,7 @@ func (c *LeaseValidator) MarkValidationSubmitted(ctx context.Context, escrowID s
 		c.forgetAcquire(escrowID, inferenceID)
 		return err
 	}
-	err = c.leases.SetResult(ctx, escrowID, inferenceID, rec.epochID, storage.LeaseStatusSubmitted, c.instanceAddr)
+	err = c.leases.SetResult(ctx, escrowID, inferenceID, rec.epochID, storage.LeaseStatusSubmitted, c.owner)
 	c.forgetAcquire(escrowID, inferenceID)
 	if errors.Is(err, storage.ErrLeaseNotOwned) {
 		return fmt.Errorf("%w: %v", devshardpkg.ErrValidationLeaseAbandoned, err)
@@ -377,7 +497,7 @@ func (c *LeaseValidator) ReleaseValidationLease(ctx context.Context, escrowID st
 	}
 	releaseCtx, cancel := leaseReleaseContext(ctx)
 	defer cancel()
-	err := c.leases.Release(releaseCtx, escrowID, inferenceID, rec.epochID, c.instanceAddr)
+	err := c.leases.Release(releaseCtx, escrowID, inferenceID, rec.epochID, c.owner)
 	c.forgetAcquire(escrowID, inferenceID)
 	return err
 }
@@ -385,7 +505,7 @@ func (c *LeaseValidator) ReleaseValidationLease(ctx context.Context, escrowID st
 func (c *LeaseValidator) releaseAndForget(ctx context.Context, escrowID string, inferenceID, epochID uint64) {
 	releaseCtx, cancel := leaseReleaseContext(ctx)
 	defer cancel()
-	if err := c.leases.Release(releaseCtx, escrowID, inferenceID, epochID, c.instanceAddr); err != nil {
+	if err := c.leases.Release(releaseCtx, escrowID, inferenceID, epochID, c.owner); err != nil {
 		slog.Warn("devshardd: validation lease release failed",
 			"escrow", escrowID, "inference", inferenceID, "error", err)
 	}
@@ -414,7 +534,7 @@ func (c *LeaseValidator) ensureLeaseStillValid(ctx context.Context, escrowID str
 			"escrow", escrowID, "inference", inferenceID, "lease_ttl", c.leaseTTL)
 		return rec, fmt.Errorf("%w: %w", devshardpkg.ErrValidationLeaseAbandoned, devshardpkg.ErrValidationLeaseTTLExceeded)
 	}
-	owned, err := c.leases.OwnsPendingLease(ctx, escrowID, inferenceID, rec.epochID, c.instanceAddr)
+	owned, err := c.leases.OwnsPendingLease(ctx, escrowID, inferenceID, rec.epochID, c.owner)
 	if err != nil {
 		return rec, err
 	}
