@@ -6,10 +6,10 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
-	"devshard/internal/boolvalue"
 	"devshard/testenv/mockopenai"
 )
 
@@ -94,6 +94,10 @@ func intFromEnv(key string) int {
 }
 
 func envTruthy(key string) bool {
-	enabled, err := boolvalue.Parse(os.Getenv(key))
-	return err == nil && enabled
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }
