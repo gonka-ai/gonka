@@ -452,7 +452,6 @@ func logDroppedTx(nonce uint64, tx *types.DevshardTx, err error) {
 	}
 	logging.Debug("dropped tx", "subsystem", "state", "nonce", nonce, "error", err)
 }
-
 // localBestEffortLocked implements ApplyLocalBestEffort. It applies txs one by
 // one (skipping non-mandatory failures) and, on success, leaves the mutable
 // state advanced to nonce. On any error it undoes its journal before returning.
