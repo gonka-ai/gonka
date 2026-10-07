@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	nmgen "common/nodemanager/gen"
 	"devshard"
 	"devshard/observability"
+	"devshard/storage"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -60,62 +62,166 @@ func TestValidationBudgetHasNoBalanceOrConcurrencyCap(t *testing.T) {
 	require.False(t, spendCredit(b, "m"))
 }
 
-func TestValidationDispatchChargesRetriesAcrossEscrows(t *testing.T) {
-	for _, fallback := range []bool{false, true} {
-		t.Run(fmt.Sprintf("fallback=%t", fallback), func(t *testing.T) {
-			var hits, releases, acquisitions atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if hits.Add(1) == 1 {
-					w.WriteHeader(http.StatusServiceUnavailable)
-					return
+// creditTestEngine returns an engine spending from the process-local budget
+// or from a shared store, and a count of the credits free to reserve.
+func creditTestEngine(t *testing.T, shared bool, ml *mlnodeclient.Client, mgr *mlnodeclient.Manager) (*Engine, *sharedCreditFake, func() int) {
+	t.Helper()
+	e := newTestEngine(ml, mgr, nil)
+	e.validationBudget = newValidationBudget(time.Hour)
+	if !shared {
+		return e, nil, func() int { return len(e.validationBudget.credits["m"]) }
+	}
+	store := &sharedCreditFake{}
+	e.UseSharedValidationCredits(store, "gonka1p")
+	return e, store, func() int { return store.free(creditKey("gonka1p", "m")) }
+}
+
+func TestValidationDispatchSpendsOneCreditPerAnswer(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		for _, fallback := range []bool{false, true} {
+			t.Run(fmt.Sprintf("shared=%t/fallback=%t", shared, fallback), func(t *testing.T) {
+				var hits, acquisitions atomic.Int32
+				replies := make(chan int, 4)
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					hits.Add(1)
+					code := http.StatusServiceUnavailable
+					select {
+					case code = <-replies:
+					default:
+					}
+					w.WriteHeader(code)
+				}))
+				defer srv.Close()
+				ml := startEngineMLClient(t, &engineMockNM{
+					acquireFunc: func(_ context.Context, req *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+						acquisitions.Add(1)
+						if fallback {
+							return nil, status.Error(codes.Unavailable, "offline")
+						}
+						return &nmgen.AcquireMLNodeResponse{LockId: "lock", NodeId: fmt.Sprint(len(req.ExcludedNodes)), Endpoint: srv.URL}, nil
+					},
+				})
+				mgr := mlnodeclient.NewManager(time.Hour)
+				mgr.Observe("m", "one", srv.URL)
+				mgr.Observe("m", "two", srv.URL)
+				e, store, free := creditTestEngine(t, shared, ml, mgr)
+				v := &Validator{engine: e}
+				earn := func() { e.earnValidationCredit(context.Background(), "m") }
+
+				// A 5xx rotates to the next node under the same credit.
+				earn()
+				replies <- http.StatusServiceUnavailable
+				replies <- http.StatusOK
+				resp, err := v.executeMLRequest(context.Background(), "m", "escrow-1", []byte(`{}`))
+				require.NoError(t, err)
+				require.NoError(t, resp.Body.Close())
+				require.Equal(t, int32(2), hits.Load())
+				require.Zero(t, free(), "the answered validation spent its one credit")
+
+				before := acquisitions.Load()
+				_, err = v.executeMLRequest(context.Background(), "m", "escrow-2", []byte(`{}`))
+				require.ErrorIs(t, err, devshard.ErrValidationDeferred)
+				require.Equal(t, before, acquisitions.Load(), "a validation without a credit never acquires a node")
+
+				// A 4xx is an answer and spends the credit.
+				earn()
+				replies <- http.StatusBadRequest
+				resp, err = v.executeMLRequest(context.Background(), "m", "escrow-3", []byte(`{}`))
+				require.NoError(t, err)
+				require.NoError(t, resp.Body.Close())
+				require.Zero(t, free())
+
+				// No node answers: the credit returns.
+				earn()
+				_, err = v.executeMLRequest(context.Background(), "m", "escrow-4", []byte(`{}`))
+				require.Error(t, err)
+				require.NotErrorIs(t, err, devshard.ErrValidationDeferred)
+				require.Equal(t, 1, free())
+				if store != nil {
+					require.Equal(t, 1, store.total(creditKey("gonka1p", "m")))
 				}
-				_, _ = io.WriteString(w, "ok")
+			})
+		}
+	}
+}
+
+func TestValidationCanceledDispatchRefundsCredit(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		t.Run(fmt.Sprintf("shared=%t", shared), func(t *testing.T) {
+			dispatched := make(chan struct{}, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// The server sees the client go away only after the body is read.
+				_, _ = io.Copy(io.Discard, r.Body)
+				dispatched <- struct{}{}
+				<-r.Context().Done()
 			}))
 			defer srv.Close()
 			ml := startEngineMLClient(t, &engineMockNM{
-				acquireFunc: func(_ context.Context, req *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
-					acquisitions.Add(1)
-					if fallback {
-						return nil, status.Error(codes.Unavailable, "offline")
-					}
-					return &nmgen.AcquireMLNodeResponse{LockId: "lock", NodeId: fmt.Sprint(len(req.ExcludedNodes)), Endpoint: srv.URL}, nil
-				},
-				releaseFunc: func(_ context.Context, req *nmgen.ReleaseMLNodeRequest) (*nmgen.ReleaseMLNodeResponse, error) {
-					releases.Add(1)
-					return &nmgen.ReleaseMLNodeResponse{}, nil
+				acquireFunc: func(context.Context, *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+					return &nmgen.AcquireMLNodeResponse{LockId: "lock", NodeId: "node", Endpoint: srv.URL}, nil
 				},
 			})
-			mgr := mlnodeclient.NewManager(time.Hour)
-			mgr.Observe("m", "one", srv.URL)
-			mgr.Observe("m", "two", srv.URL)
-			e := newTestEngine(ml, mgr, nil)
-			e.validationBudget = newValidationBudget(time.Hour)
+			e, _, free := creditTestEngine(t, shared, ml, nil)
+			e.earnValidationCredit(context.Background(), "m")
 			v := &Validator{engine: e}
-			// Failed first HTTP attempt spends the only credit; the retry must defer.
-			e.validationBudget.earn("m")
-			_, err := v.executeMLRequest(context.Background(), "m", "escrow-1", []byte(`{}`))
-			require.ErrorIs(t, err, devshard.ErrValidationDeferred)
-			require.Equal(t, int32(1), hits.Load())
-			require.Empty(t, e.validationBudget.credits["m"])
-			e.validationBudget.earn("m")
-			e.validationBudget.earn("m")
-			resp, err := v.executeMLRequest(context.Background(), "m", "escrow-2", []byte(`{}`))
-			require.NoError(t, err)
-			// The remaining credit may be spent concurrently by a different escrow.
-			other, err := v.executeMLRequest(context.Background(), "m", "escrow-3", []byte(`{}`))
-			require.NoError(t, err)
-			require.NoError(t, resp.Body.Close())
-			require.NoError(t, other.Body.Close())
-			_, err = v.executeMLRequest(context.Background(), "m", "escrow-4", []byte(`{}`))
-			require.ErrorIs(t, err, devshard.ErrValidationDeferred, "all escrows share the same credits")
-			require.Equal(t, int32(3), hits.Load())
-			require.Empty(t, e.validationBudget.credits["m"])
-			require.Equal(t, int32(3), acquisitions.Load())
-			if !fallback {
-				require.Equal(t, int32(3), releases.Load(), "exhausted requests and retries must never acquire a node")
-			}
+			ctx, cancel := context.WithCancel(context.Background())
+			go func() {
+				<-dispatched
+				cancel()
+			}()
+			_, err := v.executeMLRequest(ctx, "m", "escrow", []byte(`{}`))
+			var classified *observability.ClassifiedError
+			require.ErrorAs(t, err, &classified)
+			require.Equal(t, observability.ReasonTimeout, classified.Reason)
+			require.NotErrorIs(t, err, devshard.ErrValidationDeferred, "a canceled validation is not a missing credit")
+			require.Equal(t, 1, free(), "a dispatch canceled before the ML node answered returns its credit")
 		})
 	}
+}
+
+func TestSharedCreditHoldIsRenewedWhileDispatching(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer srv.Close()
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(context.Context, *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock", NodeId: "node", Endpoint: srv.URL}, nil
+		},
+	})
+	e, store, free := creditTestEngine(t, true, ml, nil)
+	e.creditHold = 30 * time.Millisecond
+	e.earnValidationCredit(context.Background(), "m")
+	v := &Validator{engine: e}
+	done := make(chan error, 1)
+	go func() {
+		resp, err := v.executeMLRequest(context.Background(), "m", "escrow", []byte(`{}`))
+		if err == nil {
+			err = resp.Body.Close()
+		}
+		done <- err
+	}()
+	require.Eventually(t, func() bool { return store.renewCount() >= 3 }, 5*time.Second, 5*time.Millisecond)
+	require.Zero(t, free(), "a renewed hold keeps the credit away from siblings")
+	close(release)
+	require.NoError(t, <-done)
+	require.Zero(t, store.total(creditKey("gonka1p", "m")), "the answered validation spent the credit")
+	renews := store.renewCount()
+	time.Sleep(100 * time.Millisecond)
+	require.Equal(t, renews, store.renewCount(), "settling the credit stops the renewal")
+}
+
+func TestSharedCreditStoreErrorIsNotDeferral(t *testing.T) {
+	// No ML client: attempting acquisition would panic.
+	e := newTestEngine(nil, nil, nil)
+	e.UseSharedValidationCredits(&sharedCreditFake{reserveErr: errors.New("db down")}, "gonka1p")
+	v := &Validator{engine: e}
+	_, err := v.executeMLRequest(context.Background(), "m", "escrow", []byte(`{}`))
+	var classified *observability.ClassifiedError
+	require.ErrorAs(t, err, &classified)
+	require.Equal(t, observability.ReasonStorageErr, classified.Reason)
+	require.NotErrorIs(t, err, devshard.ErrValidationDeferred)
 }
 
 func TestValidationFailedAcquisitionCostsNothing(t *testing.T) {
@@ -250,44 +356,133 @@ func TestValidationRequestBuildFailureRefundsCredit(t *testing.T) {
 	}
 }
 
+// sharedCreditFake mirrors the Postgres credit table: a reserved credit stays
+// as a row under a hold until it is spent, refunded, or the hold lapses.
 type sharedCreditFake struct {
-	mu   sync.Mutex
-	live map[string]int
+	mu         sync.Mutex
+	nextID     int64
+	rows       map[int64]*fakeCreditRow
+	renews     int
+	reserveErr error
+}
+
+type fakeCreditRow struct {
+	key   string
+	token string
+	until time.Time
 }
 
 func creditKey(participant, model string) string { return participant + "\x00" + model }
 
+// freeRow must be called with mu held.
+func (s *sharedCreditFake) freeRow(key string) (int64, bool) {
+	var found int64
+	for id, row := range s.rows {
+		if row.key == key && (row.token == "" || !row.until.After(time.Now())) && (found == 0 || id < found) {
+			found = id
+		}
+	}
+	return found, found != 0
+}
+
+func (s *sharedCreditFake) free(key string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, row := range s.rows {
+		if row.key == key && (row.token == "" || !row.until.After(time.Now())) {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *sharedCreditFake) total(key string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, row := range s.rows {
+		if row.key == key {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *sharedCreditFake) renewCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.renews
+}
+
 func (s *sharedCreditFake) EarnValidationCredit(_ context.Context, participant, model string, _ time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.live == nil {
-		s.live = make(map[string]int)
+	if s.rows == nil {
+		s.rows = make(map[int64]*fakeCreditRow)
 	}
-	s.live[creditKey(participant, model)]++
+	s.nextID++
+	s.rows[s.nextID] = &fakeCreditRow{key: creditKey(participant, model)}
 	return nil
 }
 
 func (s *sharedCreditFake) ValidationCreditAvailable(_ context.Context, participant, model string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.live[creditKey(participant, model)] > 0, nil
+	_, ok := s.freeRow(creditKey(participant, model))
+	return ok, nil
 }
 
-func (s *sharedCreditFake) ReserveValidationCredit(_ context.Context, participant, model string) (time.Time, bool, error) {
+func (s *sharedCreditFake) ReserveValidationCredit(_ context.Context, participant, model string, hold time.Duration) (storage.ValidationCreditHold, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := creditKey(participant, model)
-	if s.live[key] == 0 {
-		return time.Time{}, false, nil
+	if s.reserveErr != nil {
+		return storage.ValidationCreditHold{}, false, s.reserveErr
 	}
-	s.live[key]--
-	return time.Now().Add(time.Hour), true, nil
+	id, ok := s.freeRow(creditKey(participant, model))
+	if !ok {
+		return storage.ValidationCreditHold{}, false, nil
+	}
+	s.nextID++
+	row := s.rows[id]
+	row.token = fmt.Sprint("hold-", s.nextID)
+	row.until = time.Now().Add(hold)
+	return storage.ValidationCreditHold{ID: id, Token: row.token}, true, nil
 }
 
-func (s *sharedCreditFake) RefundValidationCredit(_ context.Context, participant, model string, _ time.Time) error {
+func (s *sharedCreditFake) held(h storage.ValidationCreditHold) (*fakeCreditRow, bool) {
+	row, ok := s.rows[h.ID]
+	return row, ok && row.token == h.Token
+}
+
+func (s *sharedCreditFake) RenewValidationCredit(_ context.Context, h storage.ValidationCreditHold, hold time.Duration) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.live[creditKey(participant, model)]++
+	row, ok := s.held(h)
+	if !ok {
+		return false, nil
+	}
+	s.renews++
+	row.until = time.Now().Add(hold)
+	return true, nil
+}
+
+func (s *sharedCreditFake) SpendValidationCredit(_ context.Context, h storage.ValidationCreditHold) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.held(h); ok {
+		delete(s.rows, h.ID)
+	}
+	return nil
+}
+
+func (s *sharedCreditFake) RefundValidationCredit(_ context.Context, h storage.ValidationCreditHold) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if row, ok := s.held(h); ok {
+		row.token = ""
+		row.until = time.Time{}
+	}
 	return nil
 }
 
@@ -307,13 +502,35 @@ func TestSharedValidationCreditIsSpendableByTheOtherReplica(t *testing.T) {
 	late.UseSharedValidationCredits(store, "gonka1pair")
 	require.True(t, late.creditAvailable("m"))
 
-	refund, ok := late.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
+	credit, err := late.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
+	require.NoError(t, err)
+	_, err = earner.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
+	require.ErrorIs(t, err, devshard.ErrValidationDeferred, "the sibling holds the only credit")
+	credit.refund()
+	credit, err = earner.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
+	require.NoError(t, err, "a refund returns the credit to the shared balance")
+	credit.spend()
+	require.Zero(t, store.total(creditKey("gonka1pair", "m")))
+}
+
+func TestSharedCreditOfADeadReplicaReturnsWhenTheHoldLapses(t *testing.T) {
+	store := &sharedCreditFake{}
+	store.EarnValidationCredit(context.Background(), "gonka1pair", "m", time.Hour)
+	// The dead replica reserved and never renewed, spent or refunded.
+	dead, ok, err := store.ReserveValidationCredit(context.Background(), "gonka1pair", "m", 20*time.Millisecond)
+	require.NoError(t, err)
 	require.True(t, ok)
-	_, ok = earner.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
-	require.False(t, ok, "the sibling already spent the only credit")
-	refund()
-	_, ok = earner.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
-	require.True(t, ok, "a refund returns the credit to the shared balance")
+	survivor := NewEngine(nil, nil, nil, nil, nil, nil, false)
+	survivor.UseSharedValidationCredits(store, "gonka1pair")
+	_, err = survivor.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
+	require.ErrorIs(t, err, devshard.ErrValidationDeferred)
+	time.Sleep(30 * time.Millisecond)
+	credit, err := survivor.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
+	require.NoError(t, err, "a lapsed hold makes the credit spendable again")
+	require.NoError(t, store.SpendValidationCredit(context.Background(), dead))
+	require.Equal(t, 1, store.total(creditKey("gonka1pair", "m")), "the stale holder cannot spend the survivor's credit")
+	credit.spend()
+	require.Zero(t, store.total(creditKey("gonka1pair", "m")))
 }
 
 func TestLeaseValidatorNoCreditsDoesNotAcquire(t *testing.T) {

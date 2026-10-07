@@ -10,12 +10,15 @@ import (
 	"devshard/bridge"
 	"devshard/logging"
 	"devshard/observability"
+	"devshard/signing"
 	"devshard/storage"
+	"devshard/transport"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -50,6 +53,10 @@ type Validator struct {
 	vocabularySizes         VocabularyResolver
 	voteFalseOnFetchFailure bool
 	payloadHTTPClient       *http.Client
+	payloadSigner           signing.Signer
+	rpcEndpoints            transport.EndpointSet
+	payloadRPCMu            sync.Mutex
+	payloadRPCs             map[string]*transport.RPCClient
 	fetchPayloads           payloadFetchFunc
 	executeML               mlExecuteFunc
 }
@@ -166,7 +173,63 @@ func (v *Validator) fetchPayloadsFor(ctx context.Context, req devshardpkg.Valida
 		ctx, v.bridge, v.recorder, req, inferenceID, epochID,
 		devshardpkg.VersionedSessionPayloadPath(v.boundVersion, req.EscrowID),
 		v.payloadHTTPClient,
+		v.payloadRPC,
 	)
+}
+
+// SetPayloadRPC enables Connect GetPayload. signer is the host identity
+// used for Attach. Payload is always a Connect method; there is no HTTP GET.
+func (v *Validator) SetPayloadRPC(signer signing.Signer, endpoints transport.EndpointSet) {
+	if v == nil {
+		return
+	}
+	v.payloadSigner = signer
+	v.rpcEndpoints = endpoints
+}
+
+// ClosePayloadClients releases cached executor PeerConns. Safe if unused.
+func (v *Validator) ClosePayloadClients() {
+	if v == nil {
+		return
+	}
+	v.payloadRPCMu.Lock()
+	defer v.payloadRPCMu.Unlock()
+	for k, c := range v.payloadRPCs {
+		c.Close()
+		delete(v.payloadRPCs, k)
+	}
+}
+
+func (v *Validator) payloadRPC(executorURL, executorAddr, escrowID string) *transport.RPCClient {
+	if v == nil || v.payloadSigner == nil || !v.rpcEndpoints.Has(transport.EndpointPayload) {
+		return nil
+	}
+	executorURL = strings.TrimSpace(executorURL)
+	executorAddr = strings.TrimSpace(executorAddr)
+	escrowID = strings.TrimSpace(escrowID)
+	if executorURL == "" || executorAddr == "" || escrowID == "" {
+		return nil
+	}
+	key := executorAddr + "\x00" + executorURL + "\x00" + escrowID
+	v.payloadRPCMu.Lock()
+	defer v.payloadRPCMu.Unlock()
+	if c := v.payloadRPCs[key]; c != nil {
+		return c
+	}
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = devshardpkg.VersionedRoutePrefix(v.boundVersion)
+	cfg.QueryTimeout = payloadFetchTimeout
+	httpClient := transport.NewHTTPClient(executorURL, escrowID, v.payloadSigner, cfg)
+	selected := transport.SelectTransport(httpClient, executorAddr, v.rpcEndpoints, nil)
+	rpc, ok := selected.(*transport.RPCClient)
+	if !ok || rpc == nil || !rpc.Uses(transport.EndpointPayload) {
+		return nil
+	}
+	if v.payloadRPCs == nil {
+		v.payloadRPCs = make(map[string]*transport.RPCClient)
+	}
+	v.payloadRPCs[key] = rpc
+	return rpc
 }
 
 const executorPayloadUnavailableReason = "executor_payload_unavailable"
@@ -279,7 +342,7 @@ func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string
 	if v.executeML != nil {
 		return v.executeML(ctx, model, escrowID, body)
 	}
-	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string, refund func()) (*http.Response, error) {
+	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		// NewRequest also accepts URLs that the HTTP transport cannot dispatch.
@@ -287,16 +350,11 @@ func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string
 			reqErr = fmt.Errorf("invalid ML node HTTP endpoint %q", endpoint)
 		}
 		if reqErr != nil {
-			refund()
 			return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		observability.InjectRequestContext(ctx, httpReq.Header)
 		observability.AttachRequestID(httpReq)
-		if err := ctx.Err(); err != nil {
-			refund()
-			return nil, err
-		}
 		return v.engine.httpClient.Do(httpReq)
 	})
 	if err != nil {

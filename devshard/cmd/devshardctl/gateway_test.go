@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,6 +21,7 @@ import (
 
 	"devshard/user"
 
+	"connectrpc.com/connect"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -3507,6 +3509,21 @@ func TestGatewayStatusCodeForErrorMapsUndeclaredVersionTo503(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, code)
 }
 
+func TestGatewayStatusCodeForErrorMapsConnectThrottleTo429(t *testing.T) {
+	disabled := connect.NewError(connect.CodeUnavailable, errors.New("requests disabled"))
+	disabled.Meta().Set(transport.HeaderDevshardError, transport.DevshardErrorRequestsDisabled)
+	require.Equal(t, http.StatusTooManyRequests, gatewayStatusCodeForError(fmt.Errorf("chat: %w", disabled)))
+
+	quota := connect.NewError(connect.CodeResourceExhausted, errors.New("too many sessions"))
+	require.Equal(t, http.StatusTooManyRequests, gatewayStatusCodeForError(quota))
+
+	tooBig := connect.NewError(connect.CodeResourceExhausted, errors.New("message size 99 is larger than configured max 10"))
+	require.Equal(t, http.StatusBadGateway, gatewayStatusCodeForError(tooBig))
+
+	missing := connect.NewError(connect.CodeNotFound, errors.New("session not found"))
+	require.Equal(t, http.StatusBadGateway, gatewayStatusCodeForError(missing))
+}
+
 func TestGatewayStatusCodeForErrorMapsZeroLiveWeightTo503(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, gatewayStatusCodeForError(&LimiterRejection{
 		Kind: LimitedByZeroLiveWeight, Limit: 0,
@@ -3614,6 +3631,20 @@ func requireMetricGaugeValue(t *testing.T, families []*dto.MetricFamily, name st
 		}
 	}
 	t.Fatalf("metric %s with labels %v not found", name, labels)
+}
+
+func requireMetricGaugeAbsent(t *testing.T, families []*dto.MetricFamily, name string, labels map[string]string) {
+	t.Helper()
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			if metricLabelsMatch(metric, labels) {
+				t.Fatalf("metric %s with labels %v still present", name, labels)
+			}
+		}
+	}
 }
 
 func requireChatCacheCount(t *testing.T, g *Gateway, result string, want float64) {

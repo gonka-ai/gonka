@@ -72,6 +72,7 @@ const httpTestRoutePrefix = "/devshard/v2"
 
 func httpTestClient(baseURL string, escrowID string, signer signing.Signer) *transport.HTTPClient {
 	cfg := transport.DefaultClientConfig()
+	cfg.AllowRetiredHTTPSession = true
 	cfg.RoutePrefix = httpTestRoutePrefix
 	return transport.NewHTTPClient(baseURL, escrowID, signer, cfg)
 }
@@ -97,6 +98,14 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 // sig accumulation, and mempool sink wired together.
 // Optional cfgs override the default SessionConfig.
 func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...types.SessionConfig) *httpTestEnv {
+	t.Helper()
+	return setupHTTPEnvWiring(t, numHosts, balance, grace, true, cfgs...)
+}
+
+// setupHTTPEnvWiring is setupHTTPEnv with the host signature verifier
+// optional. devshardd never passes host.WithVerifier, so hostVerifier=false is
+// the production wiring.
+func setupHTTPEnvWiring(t *testing.T, numHosts int, balance, grace uint64, hostVerifier bool, cfgs ...types.SessionConfig) *httpTestEnv {
 	t.Helper()
 	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hostSigners {
@@ -129,8 +138,11 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		}))
 		stores[i] = store
 
-		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil,
-			host.WithGrace(grace), host.WithStorage(store), host.WithVerifier(verifier))
+		hostOpts := []host.HostOption{host.WithGrace(grace), host.WithStorage(store)}
+		if hostVerifier {
+			hostOpts = append(hostOpts, host.WithVerifier(verifier))
+		}
+		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil, hostOpts...)
 		require.NoError(t, err)
 		hosts[i] = h
 
@@ -163,7 +175,7 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		for j, c := range clients {
 			peers[j] = c
 		}
-		srv.SetPeerClients(peers)
+		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
 	// Wire gossip instances with host-authenticated peers and sig accumulation.
@@ -693,6 +705,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 	t.Cleanup(slowExecutor.Close)
 
 	slowCfg := transport.DefaultClientConfig()
+	slowCfg.AllowRetiredHTTPSession = true
 	slowCfg.RoutePrefix = httpTestRoutePrefix
 	slowCfg.VerifyTimeout = 100 * time.Millisecond
 	slowClient := transport.NewHTTPClient(slowExecutor.URL, "escrow-1", env.userSigner, slowCfg)
@@ -703,7 +716,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 			peers[i] = c
 		}
 		peers[executorIdx] = slowClient
-		srv.SetPeerClients(peers)
+		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
 	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
@@ -724,7 +737,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 		for i, c := range env.clients {
 			peers[i] = c
 		}
-		srv.SetPeerClients(peers)
+		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
 	votes, recovery, _, err = env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())

@@ -608,6 +608,7 @@ func (m *Memory) PutEscrowCache(info EscrowCacheInfo) error {
 	if info.Slots != nil {
 		cp.Slots = append([]string(nil), info.Slots...)
 	}
+	cp.SlotURLs = cloneSlotURLs(info.SlotURLs)
 	m.escrowCache[info.EscrowID] = cp
 	return nil
 }
@@ -626,6 +627,7 @@ func (m *Memory) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
 	if info.Slots != nil {
 		cp.Slots = append([]string(nil), info.Slots...)
 	}
+	cp.SlotURLs = cloneSlotURLs(info.SlotURLs)
 	return &cp, nil
 }
 

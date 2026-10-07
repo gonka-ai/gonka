@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +37,10 @@ type LeaseRow struct {
 	ClaimedAt       string
 }
 
+// leaseSnapshotExecTimeout bounds each psql so the under-load poller can
+// observe the ~500ms D7-off pending window instead of blocking on a 2m exec.
+const leaseSnapshotExecTimeout = 5 * time.Second
+
 // PostgresLeaseSnapshot queries shared Postgres for lease exclusivity evidence.
 func (s *Stack) PostgresLeaseSnapshot(t *testing.T, cfg *config.File) LeaseSnapshot {
 	t.Helper()
@@ -46,7 +52,7 @@ func (s *Stack) PostgresLeaseSnapshot(t *testing.T, cfg *config.File) LeaseSnaps
 // TryPostgresLeaseSnapshot is safe to call from worker goroutines (no testing.T).
 func (s *Stack) TryPostgresLeaseSnapshot(cfg *config.File) (LeaseSnapshot, error) {
 	user, db, pass := postgresCreds(cfg)
-	dupRaw, err := s.ComposeExecOutput("devshard-postgres",
+	dupRaw, err := s.ComposeExecOutputTimeout(leaseSnapshotExecTimeout, "devshard-postgres",
 		"env", "PGPASSWORD="+pass,
 		"psql", "-U", user, "-d", db, "-At",
 		"-c", `SELECT COUNT(*) FROM (
@@ -63,7 +69,7 @@ func (s *Stack) TryPostgresLeaseSnapshot(cfg *config.File) (LeaseSnapshot, error
 		return LeaseSnapshot{}, fmt.Errorf("parse duplicate_groups %q: %w", dupRaw, err)
 	}
 
-	countsRaw, err := s.ComposeExecOutput("devshard-postgres",
+	countsRaw, err := s.ComposeExecOutputTimeout(leaseSnapshotExecTimeout, "devshard-postgres",
 		"env", "PGPASSWORD="+pass,
 		"psql", "-U", user, "-d", db, "-At", "-F", ",",
 		"-c", `SELECT
@@ -84,7 +90,7 @@ func (s *Stack) TryPostgresLeaseSnapshot(cfg *config.File) (LeaseSnapshot, error
 	submitted, _ := strconv.Atoi(parts[2])
 	skipped, _ := strconv.Atoi(parts[3])
 
-	rowsRaw, err := s.ComposeExecOutput("devshard-postgres",
+	rowsRaw, err := s.ComposeExecOutputTimeout(leaseSnapshotExecTimeout, "devshard-postgres",
 		"env", "PGPASSWORD="+pass,
 		"psql", "-U", user, "-d", db, "-At", "-F", "|",
 		"-c", `SELECT inference_id, instance_address, status, claimed_at
@@ -153,6 +159,53 @@ func RequireLeaseExclusivityPass(t *testing.T, snap LeaseSnapshot, minLeases int
 		snap.Total, minLeases, snap.Pending, snap.Submitted, snap.Skipped)
 	t.Logf("citest: lease exclusivity PASS total=%d pending=%d submitted=%d skipped=%d",
 		snap.Total, snap.Pending, snap.Submitted, snap.Skipped)
+}
+
+// invalidMockVoteMarkers are the versiond log lines of a validator that voted
+// against an honest mock reply: refused before the replay, or replayed and
+// found invalid.
+var invalidMockVoteMarkers = []string{
+	"not sent to the validator node",
+	"validation_result=invalid",
+}
+
+// RequireMockValidationsPassed fails when any versiond voted invalid on a
+// fault-free run. Lease waits only cover in-flight Validate while every mock
+// reply reaches the ML replay and passes it.
+func RequireMockValidationsPassed(t *testing.T, stack *Stack, cfg *config.File) {
+	t.Helper()
+	services := make([]string, 0, len(cfg.Hosts))
+	for _, host := range cfg.Hosts {
+		services = append(services, host.ID)
+	}
+	logs, err := stack.ComposeLogsAll(services...)
+	require.NoError(t, err)
+	lines := strings.Split(logs, "\n")
+	for _, line := range lines {
+		for _, marker := range invalidMockVoteMarkers {
+			if strings.Contains(line, marker) {
+				t.Fatalf("citest: validator voted invalid on a mock reply: %s\n%s", line, validationLinesFor(lines, line))
+			}
+		}
+	}
+}
+
+var voteInferenceID = regexp.MustCompile(`\binference_?[iI]d=(\d+)\b`)
+
+// validationLinesFor returns the versiond lines that name the same inference as
+// vote, so the failure shows that inference's validation and vote.
+func validationLinesFor(lines []string, vote string) string {
+	m := voteInferenceID.FindStringSubmatch(vote)
+	if m == nil {
+		return ""
+	}
+	var out []string
+	for _, line := range lines {
+		if id := voteInferenceID.FindStringSubmatch(line); id != nil && id[1] == m[1] {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // SetValidationRate posts chain params validation_rate (bps) via mock-dapi.
@@ -377,8 +430,73 @@ func WaitLeasePending(t *testing.T, stack *Stack, cfg *config.File, minPending i
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("citest: pending leases=%d < %d after %s (total=%d)", last.Pending, minPending, timeout, last.Total)
+	t.Fatalf("citest: pending leases=%d < %d after %s (total=%d submitted=%d skipped=%d)",
+		last.Pending, minPending, timeout, last.Total, last.Submitted, last.Skipped)
 	return last
+}
+
+// WaitLeasePendingUnderLoad is WaitLeasePending for work that holds the row
+// only while traffic is in flight. D7-off payload 500 acquires then DELETE's
+// after the fetch retry (~500ms); polling after chats return misses that
+// window. load must return when stop is closed (finish the in-flight call).
+func WaitLeasePendingUnderLoad(t *testing.T, stack *Stack, cfg *config.File, minPending int, timeout time.Duration, load func(stop <-chan struct{})) LeaseSnapshot {
+	t.Helper()
+	stop := make(chan struct{})
+	var stopOnce sync.Once
+	stopLoad := func() { stopOnce.Do(func() { close(stop) }) }
+	t.Cleanup(stopLoad)
+
+	var mu sync.Mutex
+	var last, hit LeaseSnapshot
+	var found bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer stopLoad()
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			snap, err := stack.TryPostgresLeaseSnapshot(cfg)
+			if err != nil {
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
+			mu.Lock()
+			last = snap
+			if snap.Pending >= minPending {
+				hit = snap
+				found = true
+				mu.Unlock()
+				return
+			}
+			mu.Unlock()
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
+
+	loadDone := make(chan struct{})
+	go func() {
+		defer close(loadDone)
+		load(stop)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(timeout + 15*time.Second):
+		stopLoad()
+	}
+	select {
+	case <-loadDone:
+	case <-time.After(5 * time.Second):
+		t.Logf("citest: load still running after stop")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !found {
+		t.Fatalf("citest: pending leases=%d < %d after %s under load (total=%d submitted=%d skipped=%d)",
+			last.Pending, minPending, timeout, last.Total, last.Submitted, last.Skipped)
+	}
+	return hit
 }
 
 // WaitLeasePendingZero polls until pending==0 (released rows are deleted).

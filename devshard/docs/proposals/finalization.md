@@ -13,7 +13,7 @@ It is designed to:
 
 Related proposals:
 
-- [Height sync protocol](https://github.com/gonka-ai/gonka/discussions/1340) — one optional way to obtain the **collector randomness beacon** (see **Collector randomness beacon**).
+- [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) — log-plane evidence for `USER_TIMEOUT` / `USER_CHEATING`, and one optional way to obtain the **collector randomness beacon** (see **Collector randomness beacon**).
 - Pedersen-style deterministic randomness (another beacon source).
 
 ---
@@ -26,7 +26,7 @@ Related proposals:
 
 3. **State sharing is separate.** Finalization needs an explicit **state sharing** protocol (what to exchange, who proves what, how to detect lag or fork). This proposal describes **vote / commit / mainnet** only **after** state sharing has succeeded.
 
-4. **Collector randomness is separate from state sharing.** Before phases 2–4, participants must agree on a **collector randomness beacon** — public material mixed into the collector-selection seed so no single initiator can pick favorable aggregators. **Height sync is not a general finalization prerequisite.** When [Height sync protocol](https://github.com/gonka-ai/gonka/discussions/1340) is used, its role here is **only** to produce that beacon (typically the **aligned mainnet height** after verified `LightBlock`s). Other **deterministic randomness** schemes are equally valid if they meet the requirements in **Collector randomness beacon** (e.g. opened values from **Pedersen commitments** collected during the session).
+4. **Collector randomness is separate from state sharing.** Before phases 2–4, participants must agree on a **collector randomness beacon** — public material mixed into the collector-selection seed so no single initiator can pick favorable aggregators. **Height sync is not a general finalization prerequisite.** When [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) is used, its role here is **only** to produce that beacon (typically the **aligned mainnet height** after verified `LightBlock`s). Other **deterministic randomness** schemes are equally valid if they meet the requirements in **Collector randomness beacon** (e.g. opened values from **Pedersen commitments** collected during the session).
 
 5. **Phase order for finalization.** End-to-end finalization is:
 
@@ -68,7 +68,12 @@ Required evidence:
 - one or more user-signed messages proving protocol violation, for example:
   - conflicting signed fragments at same nonce (fork/equivocation),
   - invalid sequence transition with user signature,
-  - malformed signed user request that cannot be repaired by later diffs.
+  - malformed signed user request that cannot be repaired by later diffs,
+  - `sync_vector` claiming `ACKED` at a nonce whose `Diff` entry has no matching `MsgHeightAck` ([`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) §11.1). This is a contradiction against the log the user signed, not a probe-derived "dropped ack".
+
+A missing `MsgHeightAck` in `Diff` is **not** `USER_CHEATING` evidence.
+The user↔host hop has no receipt; a later host-signed ack recovered by
+a repair probe does not prove the sequencer ever received one (height-sync §11.3).
 
 Each evidence item must include:
 
@@ -90,16 +95,21 @@ This uses **mainnet header proofs for the trigger**, not the collector randomnes
 
 Required evidence:
 
-- latest **user** `HeightSyncSection` (section 1 of the user–host envelope) observed in communication, with valid CometBFT `LightBlock` and sender signature,
-- per-host highest observed response/request height for the same session (from validated section 1 on both directions),
+- latest **user-signed** height claim for the session — `MsgHeartbeat.observed_height`, covered by the user's diff signature and durable in `Diff` ([`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) §10.5),
+- per-host highest observed response/request height for the same session (from validated `MsgHeightAck` entries and section 1 on both directions),
+- per-host `close-ready` evidence: `(slot, last_signal_height, armed_at_height, last complete turn_seq, degraded turns)` from `CloseReadyView` (height-sync §12.4),
 - timeout window in blocks.
 
 Timeout is computed against:
 
 - `max(user_height_seen, host_response_height_seen)` and current mainnet tip.
 
+> **Do not read this evidence off the request-leg `HeightSyncSection`.** Height-sync §15 signs the **response** leg only; the request-leg section carries **no** sender signature, so a "user `HeightSyncSection` … with sender signature" does not exist on the transport plane. The attributable user height claim lives in the **log plane** (`MsgHeartbeat`, height-sync §10.4–§10.5), which is why the heartbeat is a mandatory part of height sync rather than an optimization.
+>
+> **Voting rule.** A host that is **armed** close-ready MAY vote `AGREE` on a `USER_TIMEOUT` `FinalizeInit`; a host that is **not armed** MUST vote `REJECT` — an unarmed host is one the user is still serving, so the timeout claim is false from its view. Arming itself emits nothing (height-sync §12.2), so a partitioned minority that all sees silence still cannot reach `2f + 1`.
+
 Envelope format, proofs, and signatures are defined in:
-[Height sync protocol](https://github.com/gonka-ai/gonka/discussions/1340) (structured HTTP body: height section + message section).
+[`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) (structured HTTP body: height section + message section; log-plane messages in §10).
 
 **Note:** Height sync here proves **user liveness failure** for the trigger. It does **not** by itself justify treating aligned mainnet height as a global finalization clock unless that same value is also adopted as **`collector_randomness_beacon`** under **`randomness_source = HEIGHT_SYNC_ALIGNED_HEIGHT`**.
 
@@ -107,7 +117,7 @@ Envelope format, proofs, and signatures are defined in:
 
 ## Epoch-bound escrow: L1 validators from epoch participants
 
-When subnet **life is limited to one mainnet epoch** and the subnet is **finalized on epoch switch** (aligned with `EPOCH_CHANGE_IMMINENT` / epoch transition policy), **escrow start need not include the L1 validator set.** The **CometBFT validators that may sign blocks during that epoch** are defined by **mainnet epoch participants** (canonical on-chain state; exact module/query TBD). Each host **loads that participant list once per epoch**, converts entries to **Cosmos / CometBFT consensus validator addresses** (same derivation as in blocks), caches them, and uses the result to compute the **expected** `validators_hash` at height `H` when verifying **`LightBlock`s** (e.g. in **`USER_TIMEOUT`** evidence or when **`randomness_source = HEIGHT_SYNC_ALIGNED_HEIGHT`**) per **Step 3b** in [Height sync protocol](https://github.com/gonka-ai/gonka/discussions/1340), so peer `LightBlock`s cannot use a fabricated validator set.
+When subnet **life is limited to one mainnet epoch** and the subnet is **finalized on epoch switch** (aligned with `EPOCH_CHANGE_IMMINENT` / epoch transition policy), **escrow start need not include the L1 validator set.** The **CometBFT validators that may sign blocks during that epoch** are defined by **mainnet epoch participants** (canonical on-chain state; exact module/query TBD). Each host **loads that participant list once per epoch**, converts entries to **Cosmos / CometBFT consensus validator addresses** (same derivation as in blocks), caches them, and uses the result to compute the **expected** `validators_hash` at height `H` when verifying **`LightBlock`s** (e.g. in **`USER_TIMEOUT`** evidence or when **`randomness_source = HEIGHT_SYNC_ALIGNED_HEIGHT`**) per **Step 3b** in [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md), so peer `LightBlock`s cannot use a fabricated validator set.
 
 Escrow creation may still fix **which epoch** applies (e.g. via creation height or an optional `epoch_id` field) without duplicating validator keys on the start message.
 
@@ -144,6 +154,8 @@ When finalization starts (terminal state is fixed for the round), the protocol a
 
 These rules apply during **state sharing** when building the terminal view that feeds `FinalizationHash`. All hosts must apply the same defaults so `nonce_merkle_root` and payout fields match. Post-settlement correctness disputes (if any) are out of scope for this vote/commit protocol.
 
+Keep these defaults aligned with [`VALIDATION_PROTOCOL_PROPOSAL.md`](./VALIDATION_PROTOCOL_PROPOSAL.md) (Step 7 / unfinished validations) once validation timing is fixed.
+
 ---
 
 ## Collector randomness beacon
@@ -155,7 +167,7 @@ Deterministic collectors need a **shared source of pseudorandomness** that:
 3. **Mainnet can verify** the beacon was produced correctly for the declared **`randomness_source`**.
 4. **Is independent of `FinalizationHash`** so settlement content and shuffle seed are separate commitments (see above).
 
-Height sync satisfies (1)–(3) **when used only as a randomness source**: parties run the height-sync convergence rules from [Height sync protocol](https://github.com/gonka-ai/gonka/discussions/1340) and take the resulting **aligned mainnet height** as beacon material. That height is **not** required for finalization because hosts must “agree on L1 tip” in general — it is required **only** insofar as the chosen randomness scheme uses it.
+Height sync satisfies (1)–(3) **when used only as a randomness source**: parties run the height-sync convergence rules from [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) and take the resulting **aligned mainnet height** as beacon material. That height is **not** required for finalization because hosts must “agree on L1 tip” in general — it is required **only** insofar as the chosen randomness scheme uses it.
 
 ### Supported sources (extensible enum)
 
@@ -187,7 +199,7 @@ Parameters:
 
 The hash `H` is the same function used elsewhere in this proposal (e.g. `FinalizationHash`). **Deterministic “random” shuffle:** the seed fixes a pseudorandom permutation of slots; all verifiers derive the **same** collector set without extra messaging.
 
-**Reference encoding for height sync:** when `randomness_source = HEIGHT_SYNC_ALIGNED_HEIGHT`, `collector_randomness_beacon` MUST be the 8-byte big-endian `aligned_mainnet_height` from [Height sync protocol](https://github.com/gonka-ai/gonka/discussions/1340).
+**Reference encoding for height sync:** when `randomness_source = HEIGHT_SYNC_ALIGNED_HEIGHT`, `collector_randomness_beacon` MUST be the 8-byte big-endian `aligned_mainnet_height` from [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md).
 
 Algorithm:
 
@@ -282,7 +294,7 @@ Fields:
 
 **Advancing rounds:** To open **`round = r_new > 1`**, the initiator includes **`unlock_timeout_certificate`** for the **prior** attempt (typically **`r_new - 1`**) unless chain policy defines a different mapping. Hosts verify the certificate before accepting the new `FinalizeInit` if they hold a **lock** from an earlier round.
 
-**Height sync alias:** when `randomness_source = HEIGHT_SYNC_ALIGNED_HEIGHT`, `collector_randomness_beacon` is **`uint64_be(aligned_mainnet_height)`** from [Height sync protocol](https://github.com/gonka-ai/gonka/discussions/1340). Older drafts named this field `aligned_mainnet_height` on the message; the beacon bytes are the canonical encoding.
+**Height sync alias:** when `randomness_source = HEIGHT_SYNC_ALIGNED_HEIGHT`, `collector_randomness_beacon` is **`uint64_be(aligned_mainnet_height)`** from [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md). Older drafts named this field `aligned_mainnet_height` on the message; the beacon bytes are the canonical encoding.
 
 ### `FinalizeVote`
 
@@ -414,7 +426,7 @@ Mainnet handler must reject finalize submissions unless:
 
 1. `finalization_hash` recomputes exactly from payload and evidence.
 2. `randomness_source` and `collector_randomness_beacon` are present; beacon verifies under the declared source; optional **strict** check that signers in `VoteQC` / `CommitQC` are exactly the collector set from **`H(FinalizationHash || randomness_source || collector_randomness_beacon || "collectors")`** if the chain verifies collector membership.
-3. Trigger evidence is valid for the declared reason (independent checks — e.g. `USER_TIMEOUT` height-sync sections, `EPOCH_CHANGE_IMMINENT` header proof).
+3. Trigger evidence is valid for the declared reason (independent checks — e.g. `USER_TIMEOUT` heartbeat / close-ready evidence and the armed-host vote rule, `USER_CHEATING` signed contradictions, `EPOCH_CHANGE_IMMINENT` header proof).
 4. `VoteQC` is valid and meets threshold `2f+1`.
 5. `CommitQC` is valid, references `VoteQC`, and meets threshold `2f+1` (or configured commit threshold).
 6. Round and replay checks pass (`escrow_id`, `round` monotonicity, no duplicate finalization hash).

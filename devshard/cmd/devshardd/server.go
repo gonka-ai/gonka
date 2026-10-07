@@ -14,6 +14,7 @@ import (
 	"devshard/cmd/devshardd/session"
 	"devshard/heightsync"
 	"devshard/observability"
+	devshardserver "devshard/server"
 	"devshard/storage"
 )
 
@@ -24,6 +25,7 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	e.HideBanner = true
 	e.HidePort = true
 	e.Use(middleware.Recover())
+	e.Use(devshardserver.RetiredPeerHTTPMiddleware())
 	e.Use(haStorageGuard())
 	e.Use(lifecycle.middleware)
 
@@ -33,11 +35,14 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	_ = heightsync.RegisterLogPlaneMetrics(observability.Registry())
 	e.GET("/metrics", echo.WrapHandler(observability.MetricsHandler()))
 	e.GET("/stats/memory", echo.WrapHandler(http.HandlerFunc(handleDebugMemory)))
-	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/healthz", func(c echo.Context) error {
+		return c.String(http.StatusOK, "ok")
+	})
 	// Child-only clock contract. Gateway probes {RoutePrefix}/clock; versiond
 	// strips the version segment. Do not mount this on versiond's mux.
 	e.GET("/clock", echo.WrapHandler(wrapClockHandler(probe.Handler(nil), clockFaultActive)))
 
+	devshardserver.EnableH2C(e)
 	return e
 }
 
@@ -48,6 +53,7 @@ func buildAdminServer(
 	storageReady func() bool,
 	storageProof storageProofFunc,
 	recovery func() session.RecoveryProgress,
+	releasePeer func(),
 ) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
@@ -75,6 +81,15 @@ func buildAdminServer(
 	e.POST("/drain", func(c echo.Context) error {
 		lifecycle.StartDrain()
 		return c.JSON(http.StatusOK, lifecycle.Status())
+	})
+	// versiond calls this on the generation it just retired. Stop signing
+	// as this host and end inbound Watch. User requests already accepted
+	// keep running; this does not start drain.
+	e.POST("/rpc/release", func(c echo.Context) error {
+		if releasePeer != nil {
+			releasePeer()
+		}
+		return c.NoContent(http.StatusNoContent)
 	})
 	e.GET("/drain/status", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, lifecycle.Status())

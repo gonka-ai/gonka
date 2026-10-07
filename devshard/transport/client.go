@@ -89,7 +89,7 @@ const DefaultHeightSeedTimeout = 5 * time.Second
 
 // ClientConfig holds per-endpoint timeout settings.
 type ClientConfig struct {
-	InferenceTimeout time.Duration // /chat/completions, default 20m
+	InferenceTimeout time.Duration // /chat/completions, default 30m
 	GossipTimeout    time.Duration // gossip/nonce, gossip/txs, default 10s
 	VerifyTimeout    time.Duration // verify-timeout, default 3m
 	QueryTimeout     time.Duration // diffs, mempool GETs, default 30s
@@ -98,8 +98,6 @@ type ClientConfig struct {
 	HeightSeedTimeout time.Duration
 	StreamCallback    func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
 	RoutePrefix       string                          // path prefix for all session routes; default /devshard/<version>
-	// CompressRequestBodies gzips a POST body; safe once every host decompresses.
-	CompressRequestBodies bool
 	// MaxSSEEventBytes caps a single SSE line (including the trailing newline).
 	// Zero means DefaultMaxSSEEventBytes. Oversize lines abort with
 	// ErrSSEEventTooLarge; they are never silently truncated.
@@ -130,6 +128,20 @@ type ClientConfig struct {
 	// HeightSyncRequestMutateHook runs after Decide and peer-tip carry-forward,
 	// before the request is marshaled. Tests / debug only.
 	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
+
+	// RPCEndpoints names to send over Connect. A partial list or "off" is
+	// ignored by ResolveRPCEndpoints: every retired session method uses
+	// Connect. Empty means "not set".
+	RPCEndpoints EndpointSet
+	// AllowRetiredHTTPSession lets HTTPClient post the retired Echo session
+	// routes. Test servers that still mount those handlers set it. Production
+	// leaves it false, and the methods return ErrHTTPSessionRetired.
+	AllowRetiredHTTPSession bool
+	// RPCMaxConnsPerPeer is MaxConnsPerHost on the PeerConn pool. Zero uses
+	// DEVSHARD_RPC_MAX_CONNS_PER_PEER or DefaultRPCMaxConnsPerPeer.
+	RPCMaxConnsPerPeer int
+	// RPCAdoption is the gateway adoption tracker. Nil on hosts.
+	RPCAdoption *PeerRPCAdoption
 }
 
 // RequestAdmissionController can reject participant-bound transport
@@ -221,9 +233,16 @@ func (e *UpstreamStatusError) Error() string {
 	return fmt.Sprintf("http %s: status %d: %s", e.Path, e.StatusCode, e.Body)
 }
 
-// IsUpstreamEscrowNotFound returns true if err is an UpstreamStatusError
-// whose body indicates the host could not find the escrow on chain.
+// IsUpstreamEscrowNotFound reports a host that could not find the escrow on
+// chain. HTTP sends 500 with that phrase. Connect sends FailedPrecondition
+// and X-Devshard-Error: escrow_not_found.
 func IsUpstreamEscrowNotFound(err error) bool {
+	if status, code, message, ok := ConnectApplicationStatus(err); ok {
+		if strings.EqualFold(strings.TrimSpace(code), DevshardErrorEscrowNotFound) {
+			return true
+		}
+		return status == http.StatusInternalServerError && strings.Contains(message, "escrow not found")
+	}
 	var ue *UpstreamStatusError
 	if !errors.As(err, &ue) {
 		return false
@@ -232,9 +251,13 @@ func IsUpstreamEscrowNotFound(err error) bool {
 		strings.Contains(ue.Body, "escrow not found")
 }
 
-// IsSessionNotFound returns true if err is an UpstreamStatusError from a host that does not hold the
-// escrow at all, as opposed to holding it and disagreeing about a nonce.
+// IsSessionNotFound reports a host that does not hold the escrow at all, as
+// opposed to holding it and disagreeing about a nonce. HTTP and Connect both
+// use 404 and the phrase "session not found".
 func IsSessionNotFound(err error) bool {
+	if status, _, message, ok := ConnectApplicationStatus(err); ok {
+		return status == http.StatusNotFound && strings.Contains(message, "session not found")
+	}
 	var ue *UpstreamStatusError
 	if !errors.As(err, &ue) {
 		return false
@@ -257,9 +280,16 @@ func IsTransientWriteError(err error) bool {
 		errors.Is(err, syscall.ECONNREFUSED)
 }
 
-// IsUpstreamEscrowSettled returns true if err is an UpstreamStatusError whose
-// body indicates the host refused to serve an escrow already settled on chain.
+// IsUpstreamEscrowSettled reports a host that refused an escrow already
+// settled on chain. The header is escrow_settled. HTTP also uses 409 and
+// the phrase "escrow already settled".
 func IsUpstreamEscrowSettled(err error) bool {
+	if status, code, message, ok := ConnectApplicationStatus(err); ok {
+		if strings.EqualFold(strings.TrimSpace(code), DevshardErrorEscrowSettled) {
+			return true
+		}
+		return status == http.StatusConflict && strings.Contains(message, "escrow already settled")
+	}
 	var ue *UpstreamStatusError
 	if !errors.As(err, &ue) {
 		return false
@@ -350,7 +380,8 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		escrowID:    escrowID,
 		signer:      signer,
 		http: &http.Client{
-			Transport: DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
+			Transport:     DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
+			CheckRedirect: noFollowRedirects,
 		},
 		config:              cfg,
 		heightSync:          cfg.HeightSync,
@@ -367,6 +398,12 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		hc.heightSyncPeerTips = NewHeightSyncPeerTips()
 	}
 	return hc
+}
+
+// noFollowRedirects stops Go from forwarding Authorization / session headers
+// to a different host.
+func noFollowRedirects(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // cloneSharing returns a copy that shares this client's HTTP transport,
@@ -391,6 +428,10 @@ func (c *HTTPClient) cloneSharing() *HTTPClient {
 	cp.admissionOff.Store(c.admissionOff.Load())
 	return cp
 }
+
+// Close is a no-op. HTTPClient does not own a PeerConn; *RPCClient.Close
+// releases the handshake. HostPeerClient.Close is this method or the RPC override.
+func (c *HTTPClient) Close() {}
 
 // BaseURL returns the dial base URL for this host (no route prefix).
 func (c *HTTPClient) BaseURL() string {
@@ -445,6 +486,8 @@ func (c *HTTPClient) timestampHeader() string {
 	return HeaderTimestamp
 }
 
+// cloneWithSigner is a new HTTP client with signer. There is no Attach
+// identity, so a different key just re-signs JSON POSTs.
 func (c *HTTPClient) cloneWithSigner(signer signing.Signer, timeout time.Duration) *HTTPClient {
 	cfg := c.config
 	cfg.Admission = nil
@@ -508,7 +551,17 @@ func (c *HTTPClient) getBounded(ctx context.Context, path string, timeout time.D
 }
 
 // Send implements user.HostClient.
+func (c *HTTPClient) errIfRetiredHTTP() error {
+	if c == nil || c.config.AllowRetiredHTTPSession {
+		return nil
+	}
+	return ErrHTTPSessionRetired
+}
+
 func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
 	timeout := c.config.InferenceTimeout
 	if req.Payload == nil {
 		// Finalize/catch-up sends only exchange protocol state, so a dead host
@@ -877,12 +930,18 @@ func sseLineBytesForLog(line string) (int, string) {
 
 // GossipNonce sends a nonce notification to a peer.
 func (c *HTTPClient) GossipNonce(ctx context.Context, nonce uint64, stateHash, stateSig []byte, slotID uint32) error {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return err
+	}
 	return c.post(ctx, "/sessions/"+c.escrowID+"/gossip/nonce", c.config.GossipTimeout,
 		GossipNonceRequest{Nonce: nonce, StateHash: stateHash, StateSig: stateSig, SlotID: slotID}, nil)
 }
 
 // GossipTxs sends transactions to a peer.
 func (c *HTTPClient) GossipTxs(ctx context.Context, txs []*types.DevshardTx) error {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return err
+	}
 	txBytes, err := DevshardTxsToBytes(txs)
 	if err != nil {
 		return fmt.Errorf("encode txs: %w", err)
@@ -893,6 +952,9 @@ func (c *HTTPClient) GossipTxs(ctx context.Context, txs []*types.DevshardTx) err
 
 // SendVerifyTimeout asks a peer to verify a timeout (raw transport).
 func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutRequest) (*VerifyTimeoutResponse, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
 	var resp VerifyTimeoutResponse
 	if err := c.post(ctx, "/sessions/"+c.escrowID+"/verify-timeout", c.config.VerifyTimeout, req, &resp); err != nil {
 		return nil, err
@@ -901,6 +963,9 @@ func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutReq
 }
 
 func (c *HTTPClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMissRequest) (*VerifyErrorMissResponse, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
 	var resp VerifyErrorMissResponse
 	if err := c.post(ctx, "/sessions/"+c.escrowID+"/verify-error-miss", c.config.VerifyTimeout, req, &resp); err != nil {
 		return nil, err
@@ -911,6 +976,9 @@ func (c *HTTPClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMis
 // ChallengeReceipt forwards diffs + payload to the executor and returns the
 // receipt plus a snapshot of the executor mempool (recovery txs).
 func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
 
@@ -924,9 +992,10 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	}
 
 	req := ChallengeReceiptRequest{
-		InferenceID: inferenceID,
-		Payload:     PayloadToJSON(payload),
-		Diffs:       djList,
+		InferenceID:     inferenceID,
+		Payload:         PayloadToJSON(payload),
+		Diffs:           djList,
+		ProtocolVersion: types.StartProtocolVersion(diffs),
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -963,7 +1032,7 @@ func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reas
 	resp, err := c.SendVerifyTimeout(ctx, VerifyTimeoutRequest{
 		InferenceID: inferenceID,
 		Reason:      TimeoutReasonToString(reason),
-		Payload:     PayloadToJSON(payload),
+		Payload:     timeoutVotePayload(reason, payload),
 		Diffs:       djList,
 	})
 	if err != nil {
@@ -1002,6 +1071,16 @@ func (c *HTTPClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, di
 		return false, nil, 0, nil, "", fmt.Errorf("decode mempool: %w", err)
 	}
 	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
+}
+
+// GetDiffs fetches one page of stored diffs. A range wider than one page
+// returns ErrDiffPageLimit. Walk a longer journal with GetDiffPages.
+func (c *HTTPClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff, error) {
+	diffs, err := c.getDiffWindow(ctx, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("get diffs: %w", err)
+	}
+	return diffs, nil
 }
 
 // GetDiffPages fetches stored diffs from a peer and passes each page to fn
@@ -1200,18 +1279,13 @@ func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byt
 		return nil, fmt.Errorf("sign request: %w", err)
 	}
 
-	wireBody, contentEncoding := c.encodeRequestBody(body)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(wireBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
-	if contentEncoding != "" {
-		req.Header.Set("Content-Encoding", contentEncoding)
-	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {

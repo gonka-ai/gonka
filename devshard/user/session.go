@@ -1440,12 +1440,13 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		return nil, fmt.Errorf("canonical prompt hash: %w", err)
 	}
 	start := &types.MsgStartInference{
-		InferenceId: nonce,
-		Model:       params.Model,
-		PromptHash:  promptHash,
-		InputLength: params.InputLength,
-		MaxTokens:   params.MaxTokens,
-		StartedAt:   params.StartedAt,
+		InferenceId:     nonce,
+		Model:           params.Model,
+		PromptHash:      promptHash,
+		InputLength:     params.InputLength,
+		MaxTokens:       params.MaxTokens,
+		StartedAt:       params.StartedAt,
+		ProtocolVersion: s.sm.ProtocolVersion(),
 	}
 	if h, hash, ok := s.referenceStampLocked(nonce); ok {
 		start.ObservedHeight = h
@@ -3232,16 +3233,29 @@ func shortAddress(addr string) string {
 	return addr[len(addr)-8:]
 }
 
-// Close stops the heartbeat loop (if started) and releases the underlying
-// storage, if any. Safe to call multiple times.
+// Close stops the heartbeat loop (if started), releases host clients
+// (PeerConn Attach/Watch), and closes the underlying storage, if any.
+// Safe to call multiple times.
 func (s *Session) Close() error {
 	s.StopHeartbeatLoop()
 	s.stopHeightSeedLoop()
 	s.stopHeightSyncFlush()
+	closeHostClients(s.clients)
 	if s.store != nil {
 		return s.store.Close()
 	}
 	return nil
+}
+
+// closeHostClients Releases each unique RPCClient. HTTPClient and in-process
+// stubs have no Close. RPCClient.Close is idempotent, so a shared pointer
+// in several slots is safe to Close more than once.
+func closeHostClients(clients []HostClient) {
+	for _, c := range clients {
+		if closer, ok := c.(interface{ Close() }); ok {
+			closer.Close()
+		}
+	}
 }
 
 // TimeoutVerifier contacts a host for timeout verification votes.
@@ -3330,6 +3344,12 @@ func (s *Session) collectTimeoutVotes(
 	// outbound connections we no longer need.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// An execution vote never reads the prompt. Drop it before any verifier,
+	// including an in-process one, so the body cannot leave this process.
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+		payload = nil
+	}
 
 	// Determine executor slot and resolve its validator address.
 	executorIdx := int(inferenceID % uint64(len(s.group)))

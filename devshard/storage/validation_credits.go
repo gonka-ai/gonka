@@ -12,13 +12,25 @@ import (
 // ValidationCreditStore is the shared balance of validation credits for one
 // participant. HA replicas of the same key spend from this table, so a credit
 // earned by the replica that executed survives that process stopping.
-// Reserve takes the oldest live credit; a second replica cannot take the same
-// one.
+//
+// Reserve puts a hold on the oldest live credit; a second replica cannot take
+// a held credit. The holder renews the hold while its ML call runs and then
+// spends or refunds it. A hold that is not renewed lapses, so a credit held by
+// a replica that died becomes spendable again. Renew, Spend and Refund act only
+// while the caller's hold token is still on the row.
 type ValidationCreditStore interface {
 	EarnValidationCredit(ctx context.Context, participant, model string, ttl time.Duration) error
 	ValidationCreditAvailable(ctx context.Context, participant, model string) (bool, error)
-	ReserveValidationCredit(ctx context.Context, participant, model string) (expiresAt time.Time, ok bool, err error)
-	RefundValidationCredit(ctx context.Context, participant, model string, expiresAt time.Time) error
+	ReserveValidationCredit(ctx context.Context, participant, model string, hold time.Duration) (ValidationCreditHold, bool, error)
+	RenewValidationCredit(ctx context.Context, h ValidationCreditHold, hold time.Duration) (bool, error)
+	SpendValidationCredit(ctx context.Context, h ValidationCreditHold) error
+	RefundValidationCredit(ctx context.Context, h ValidationCreditHold) error
+}
+
+// ValidationCreditHold identifies one reserved credit row and the hold on it.
+type ValidationCreditHold struct {
+	ID    int64
+	Token string
 }
 
 // AsValidationCreditStore finds the Postgres credit table behind a storage
@@ -76,6 +88,7 @@ func (s *Postgres) ValidationCreditAvailable(ctx context.Context, participant, m
 		`SELECT EXISTS (
 		    SELECT 1 FROM devshard_validation_credits
 		    WHERE participant = $1 AND model = $2 AND expires_at > now()
+		      AND (reserved_until IS NULL OR reserved_until <= now())
 		 )`,
 		participant, model,
 	).Scan(&ok)
@@ -85,45 +98,79 @@ func (s *Postgres) ValidationCreditAvailable(ctx context.Context, participant, m
 	return ok, nil
 }
 
-func (s *Postgres) ReserveValidationCredit(ctx context.Context, participant, model string) (time.Time, bool, error) {
+func (s *Postgres) ReserveValidationCredit(ctx context.Context, participant, model string, hold time.Duration) (ValidationCreditHold, bool, error) {
 	if err := s.WaitReady(ctx); err != nil {
-		return time.Time{}, false, err
+		return ValidationCreditHold{}, false, err
 	}
-	var expiresAt time.Time
+	var h ValidationCreditHold
 	err := s.pool.QueryRow(ctx,
-		`DELETE FROM devshard_validation_credits
+		`UPDATE devshard_validation_credits
+		 SET hold_token = gen_random_uuid(),
+		     reserved_until = now() + make_interval(secs => $3)
 		 WHERE id = (
 		     SELECT id FROM devshard_validation_credits
 		     WHERE participant = $1 AND model = $2 AND expires_at > now()
+		       AND (reserved_until IS NULL OR reserved_until <= now())
 		     ORDER BY expires_at, id
 		     FOR UPDATE SKIP LOCKED
 		     LIMIT 1
 		 )
-		 RETURNING expires_at`,
-		participant, model,
-	).Scan(&expiresAt)
+		 RETURNING id, hold_token::text`,
+		participant, model, hold.Seconds(),
+	).Scan(&h.ID, &h.Token)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return time.Time{}, false, nil
+			return ValidationCreditHold{}, false, nil
 		}
-		return time.Time{}, false, fmt.Errorf("validation credits: reserve %s/%s: %w", participant, model, err)
+		return ValidationCreditHold{}, false, fmt.Errorf("validation credits: reserve %s/%s: %w", participant, model, err)
 	}
-	return expiresAt, true, nil
+	return h, true, nil
 }
 
-func (s *Postgres) RefundValidationCredit(ctx context.Context, participant, model string, expiresAt time.Time) error {
+// RenewValidationCredit extends the hold. It reports false once the hold is
+// gone: the credit was spent, refunded, or taken by another replica after the
+// hold lapsed.
+func (s *Postgres) RenewValidationCredit(ctx context.Context, h ValidationCreditHold, hold time.Duration) (bool, error) {
+	if err := s.WaitReady(ctx); err != nil {
+		return false, err
+	}
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE devshard_validation_credits
+		 SET reserved_until = now() + make_interval(secs => $3)
+		 WHERE id = $1 AND hold_token = $2::uuid`,
+		h.ID, h.Token, hold.Seconds(),
+	)
+	if err != nil {
+		return false, fmt.Errorf("validation credits: renew %d: %w", h.ID, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (s *Postgres) SpendValidationCredit(ctx context.Context, h ValidationCreditHold) error {
 	if err := s.WaitReady(ctx); err != nil {
 		return err
 	}
-	if !expiresAt.After(time.Now()) {
-		return nil
+	if _, err := s.pool.Exec(ctx,
+		`DELETE FROM devshard_validation_credits
+		 WHERE id = $1 AND hold_token = $2::uuid`,
+		h.ID, h.Token,
+	); err != nil {
+		return fmt.Errorf("validation credits: spend %d: %w", h.ID, err)
+	}
+	return nil
+}
+
+func (s *Postgres) RefundValidationCredit(ctx context.Context, h ValidationCreditHold) error {
+	if err := s.WaitReady(ctx); err != nil {
+		return err
 	}
 	if _, err := s.pool.Exec(ctx,
-		`INSERT INTO devshard_validation_credits (participant, model, expires_at)
-		 VALUES ($1, $2, $3)`,
-		participant, model, expiresAt,
+		`UPDATE devshard_validation_credits
+		 SET hold_token = NULL, reserved_until = NULL
+		 WHERE id = $1 AND hold_token = $2::uuid`,
+		h.ID, h.Token,
 	); err != nil {
-		return fmt.Errorf("validation credits: refund %s/%s: %w", participant, model, err)
+		return fmt.Errorf("validation credits: refund %d: %w", h.ID, err)
 	}
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strings"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -206,6 +207,16 @@ func (sm *StateMachine) HeartbeatConfig() heightsync.HeartbeatConfig {
 	return sm.heartbeatCfg
 }
 
+// ProtocolVersion is the destshard runtime tag stamped at session bind.
+func (sm *StateMachine) ProtocolVersion() string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.state == nil {
+		return ""
+	}
+	return sm.state.StateRootAndProtocolVersion
+}
+
 // EffectiveV2Composition reports whether this session uses Phase 1 v2
 // state-root composition. This binary always returns true (sealed accumulator).
 func (sm *StateMachine) EffectiveV2Composition() bool {
@@ -346,19 +357,7 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 }
 
 func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
-	diffContent := BuildDiffContent(sm.state.EscrowID, diff.Nonce, diff.Txs, diff.PostStateRoot)
-	data, err := deterministicMarshal.Marshal(diffContent)
-	if err != nil {
-		return fmt.Errorf("marshal diff content: %w", err)
-	}
-	recovered, err := sm.verifier.RecoverAddress(data, diff.UserSig)
-	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidUserSig, err)
-	}
-	if recovered != sm.userAddress {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidUserSig, sm.userAddress, recovered)
-	}
-	return nil
+	return VerifyDiffUserSig(sm.verifier, sm.userAddress, sm.state.EscrowID, diff)
 }
 
 // ApplyLocal applies txs without signature verification. Used by the user
@@ -1102,6 +1101,10 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 		return types.ErrSessionFinalizing
 	}
 
+	if v := strings.TrimSpace(msg.GetProtocolVersion()); v != "" && v != sm.state.StateRootAndProtocolVersion {
+		return fmt.Errorf("%w: start %s session %s", types.ErrProtocolVersionMismatch, v, sm.state.StateRootAndProtocolVersion)
+	}
+
 	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit
 	// pending until seal. Rejecting here keeps it out of state and off the balance.
 	if !sm.replayingPersisted && msg.MaxTokens < completionapi.MinTokensFloor {
@@ -1716,6 +1719,73 @@ func (sm *StateMachine) RejectFinishProposerSigLocal(msg *types.MsgFinishInferen
 		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
 	}
 	return nil
+}
+
+// CheckExecutorReceipt reports whether confirm.ExecutorSig is the executor's
+// signature over ExecutorReceiptContent for this escrow, built from rec the way
+// applyConfirmStart builds it. rec is the inference record the receipt confirms.
+// It never caches a warm binding: WarmKeys is part of the state root.
+func (sm *StateMachine) CheckExecutorReceipt(rec *types.InferenceRecord, confirm *types.MsgConfirmStart) error {
+	if rec == nil || confirm == nil {
+		return fmt.Errorf("%w: incomplete receipt", types.ErrInvalidExecutorSig)
+	}
+	sm.mu.RLock()
+	escrowID := sm.state.EscrowID
+	sm.mu.RUnlock()
+	receiptData, err := deterministicMarshal.Marshal(&types.ExecutorReceiptContent{
+		InferenceId:       confirm.InferenceId,
+		PromptHash:        rec.PromptHash,
+		Model:             rec.Model,
+		InputLength:       rec.InputLength,
+		MaxTokens:         rec.MaxTokens,
+		StartedAt:         rec.StartedAt,
+		EscrowId:          escrowID,
+		ConfirmedAt:       confirm.ConfirmedAt,
+		ObservedHeight:    confirm.ObservedHeight,
+		ObservedBlockHash: confirm.ObservedBlockHash,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal executor receipt: %w", err)
+	}
+	recovered, err := sm.verifier.RecoverAddress(receiptData, confirm.ExecutorSig)
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidExecutorSig, err)
+	}
+	return sm.checkSlotSigner(rec.ExecutorSlot, recovered, types.ErrInvalidExecutorSig)
+}
+
+// CheckFinishProposerSig is VerifyFinishProposerSig without caching a warm
+// binding, for evidence that may never be sequenced into a diff.
+func (sm *StateMachine) CheckFinishProposerSig(msg *types.MsgFinishInference) error {
+	recovered, err := sm.recoveredProposerAddress(msg)
+	if err != nil {
+		return err
+	}
+	return sm.checkSlotSigner(msg.ExecutorSlot, recovered, types.ErrInvalidProposerSig)
+}
+
+// checkSlotSigner accepts the slot's cold key, the warm key already bound in
+// state, or, when none is bound, a key the resolver authorizes. The resolver
+// runs without sm.mu held.
+func (sm *StateMachine) checkSlotSigner(slot uint32, recovered string, sigErr error) error {
+	expected, ok := sm.slotToAddress[slot]
+	if !ok {
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, slot)
+	}
+	if recovered == expected {
+		return nil
+	}
+	sm.mu.RLock()
+	bound, hasBound := sm.state.WarmKeys[slot]
+	sm.mu.RUnlock()
+	if hasBound {
+		if bound == recovered {
+			return nil
+		}
+	} else if sm.CheckWarmKey(recovered, expected) {
+		return nil
+	}
+	return fmt.Errorf("%w: expected %s (slot %d), got %s", sigErr, expected, slot, recovered)
 }
 
 func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) (string, error) {

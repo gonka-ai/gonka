@@ -1177,6 +1177,43 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 		"accumulated weight %d should exceed threshold %d", totalWeight, config.VoteThreshold)
 }
 
+func TestCollectTimeoutVotes_ExecutionDropsPrompt(t *testing.T) {
+	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithVerifierQueue(newVerifierHostQueue()))
+	payload := &host.InferencePayload{
+		Prompt:      []byte("execution-timeout-prompt-must-not-reach-the-verifier"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   testutil.TestMaxTokens,
+		StartedAt:   1000,
+	}
+	// Nonce 1 is hosted by slot 1, so slot 0 is a verifier.
+	verifier := &payloadRecordingVerifier{}
+	verifiers := map[int]TimeoutVerifier{0: verifier}
+
+	_, _, _, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, verifiers, nil)
+	require.NoError(t, err)
+	require.Nil(t, verifier.payload)
+
+	verifier.payload = payload
+	_, _, _, err = session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, verifiers, nil)
+	require.NoError(t, err)
+	require.NotNil(t, verifier.payload)
+	require.Equal(t, payload.Prompt, verifier.payload.Prompt)
+}
+
+type payloadRecordingVerifier struct {
+	payload *host.InferencePayload
+}
+
+func (v *payloadRecordingVerifier) VerifyTimeout(_ context.Context, _ uint64, _ types.TimeoutReason, payload *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	v.payload = payload
+	return false, nil, 0, nil, "", nil
+}
+
+func (v *payloadRecordingVerifier) VerifyErrorMiss(context.Context, uint64, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
+}
+
 type mockTimeoutVerifier struct {
 	accept      bool
 	signer      *signing.Secp256k1Signer

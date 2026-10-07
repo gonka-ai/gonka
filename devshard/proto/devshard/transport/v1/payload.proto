@@ -1,0 +1,23 @@
+syntax = "proto3";
+package devshard.transport.v1;
+option go_package = "devshard/transport/rpcpb";
+
+// GetPayload mirrors GET /sessions/:id/payloads plus the validator-auth headers.
+message GetPayloadRequest {
+  string inference_id      = 1;
+  string validator_address = 2;
+  int64  timestamp          = 3; // unix nanoseconds
+  uint64 epoch_id         = 4;
+  bytes  signature         = 5;
+}
+
+message GetPayloadResponse {
+  string inference_id       = 1;
+  bytes  prompt_payload     = 2;
+  bytes  response_payload  = 3;
+  string executor_signature = 4;
+}
+
+service PayloadService {
+  rpc GetPayload(GetPayloadRequest) returns (GetPayloadResponse);
+}
