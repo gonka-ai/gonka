@@ -212,7 +212,8 @@ func finishTx(t *testing.T, hosts []*signing.Secp256k1Signer, escrowID string, i
 	slot := uint32(id % uint64(len(hosts)))
 	msg := &types.MsgFinishInference{
 		InferenceId:  id,
-		ResponseHash: []byte("response"),
+		ResponseHash: testutil.TestResponseHash,
+		ServedHash:   testutil.TestServedHash,
 		InputTokens:  80,
 		OutputTokens: 40,
 		ExecutorSlot: slot,
@@ -345,7 +346,7 @@ func errorMissTx(t *testing.T, hosts []*signing.Secp256k1Signer, escrowID string
 	t.Helper()
 	votes := make([]*types.ErrorMissVote, 0, 2)
 	for _, slot := range []uint32{0, 1} {
-		v := testutil.SignErrorMissVote(t, hosts[slot], escrowID, id, true, []byte("response"))
+		v := testutil.SignErrorMissVote(t, hosts[slot], escrowID, id, true, testutil.TestResponseHash)
 		v.VoterSlot = slot
 		votes = append(votes, v)
 	}
