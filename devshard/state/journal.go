@@ -25,8 +25,12 @@ type mutationJournal struct {
 	inferences journalMap[uint64, *types.InferenceRecord]
 	committed  journalMap[uint64, []byte]
 	sealed     journalMap[uint64, uint64]
-	hostStats  journalMap[uint32, *types.HostStats]
-	warmKeys   journalMap[uint32, string]
+	// owed is the host-local validation-obligation set. It is not part of
+	// post_state_root; it is journaled so a rejected or trial apply cannot
+	// leave a stale id behind.
+	owed      journalMap[uint64, struct{}]
+	hostStats journalMap[uint32, *types.HostStats]
+	warmKeys  journalMap[uint32, string]
 
 	// kept is set when the apply succeeded. closeJournalLocked undoes an
 	// apply that returned without setting it.
@@ -152,6 +156,8 @@ func (sm *StateMachine) undoJournalLocked(j *mutationJournal) {
 	j.inferences.undo(sm.state.Inferences)
 	j.committed.undo(sm.committedEntries)
 	j.sealed.undo(sm.sealedNonces)
+	sm.ensureOwedMapLocked(j.owed.pre)
+	j.owed.undo(sm.owed)
 	j.hostStats.undo(sm.state.HostStats)
 	j.warmKeys.undo(sm.state.WarmKeys)
 	sm.writeScalarsLocked(j.pre)
@@ -164,6 +170,7 @@ func (sm *StateMachine) detachJournalLocked(j *mutationJournal) {
 	j.inferences.capture(sm.state.Inferences)
 	j.committed.capture(sm.committedEntries)
 	j.sealed.capture(sm.sealedNonces)
+	j.owed.capture(sm.owed)
 	j.hostStats.capture(sm.state.HostStats)
 	j.warmKeys.capture(sm.state.WarmKeys)
 	sm.undoJournalLocked(j)
@@ -178,9 +185,26 @@ func (sm *StateMachine) redoJournalLocked(j *mutationJournal) {
 	j.inferences.redo(sm.state.Inferences)
 	j.committed.redo(sm.committedEntries)
 	j.sealed.redo(sm.sealedNonces)
+	sm.ensureOwedMapLocked(j.owed.post)
+	j.owed.redo(sm.owed)
 	j.hostStats.redo(sm.state.HostStats)
 	j.warmKeys.redo(sm.state.WarmKeys)
 	sm.writeScalarsLocked(j.post)
+	sm.publishOwedIfTouchedLocked(j)
+}
+
+// ensureOwedMapLocked allocates the owed set before undo or redo writes a key
+// that was present. delete on a nil map is a no-op; assigning to one panics.
+func (sm *StateMachine) ensureOwedMapLocked(slots map[uint64]journalSlot[struct{}]) {
+	if sm.owed != nil {
+		return
+	}
+	for _, s := range slots {
+		if s.ok {
+			sm.owed = make(map[uint64]struct{}, len(slots))
+			return
+		}
+	}
 }
 
 // inferenceForWriteLocked returns the live record for id, ready to mutate. On
@@ -214,6 +238,7 @@ func (sm *StateMachine) deleteInferenceLocked(id uint64) {
 		j.inferences.touch(sm.state.Inferences, id)
 	}
 	delete(sm.state.Inferences, id)
+	sm.syncOwedLocked(id)
 }
 
 // hostStatsForWriteLocked is inferenceForWriteLocked for one host-stats slot.
