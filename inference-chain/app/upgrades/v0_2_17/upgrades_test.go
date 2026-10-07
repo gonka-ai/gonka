@@ -3,6 +3,9 @@ package v0_2_17
 import (
 	"testing"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	clienttypes "github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
+	ibcexported "github.com/cosmos/ibc-go/v8/modules/core/exported"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -150,4 +153,19 @@ func TestPostV016ParamsRoundTripModelCoefficient(t *testing.T) {
 	require.Equal(t, coefficient, decoded.Models[0].DynamicCoefficient)
 	require.Empty(t, decoded.Models[0].Schemes)
 	require.NotNil(t, decoded.DynamicCoefficientParams)
+}
+
+type recordingClientKeeper struct{ params []clienttypes.Params }
+
+func (r *recordingClientKeeper) SetParams(_ sdk.Context, p clienttypes.Params) {
+	r.params = append(r.params, p)
+}
+
+func TestDisableLocalhostClientAllowsOnlyTendermint(t *testing.T) {
+	_, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	r := &recordingClientKeeper{}
+	disableLocalhostClient(ctx, r)
+	require.Len(t, r.params, 1)
+	require.True(t, r.params[0].IsAllowedClient(ibcexported.Tendermint))
+	require.False(t, r.params[0].IsAllowedClient(ibcexported.Localhost))
 }
