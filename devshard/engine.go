@@ -5,9 +5,8 @@ import (
 	"errors"
 )
 
-// ErrValidationAlreadyLeased is returned when another devshardd instance already
-// holds the validation lease for an inference.
-var ErrValidationAlreadyLeased = errors.New("validation leased by another instance")
+// ErrValidationAlreadyLeased means a validation lease row already exists.
+var ErrValidationAlreadyLeased = errors.New("validation lease already exists")
 
 // ErrValidationLeaseAbandoned is returned when this instance must not submit or
 // complete a lease: local acquire TTL exceeded, or the pending lease is no
@@ -51,4 +50,19 @@ type ValidationCompletionRecorder interface {
 	// ErrValidationLeaseAbandoned means skip submit and do not mark submitted.
 	AllowValidationSubmit(ctx context.Context, escrowID string, inferenceID uint64) error
 	MarkValidationSubmitted(ctx context.Context, escrowID string, inferenceID uint64) error
+	// CheckValidationLease checks only local epoch and TTL; safe under the host lock.
+	CheckValidationLease(escrowID string, inferenceID uint64) error
+	ForgetValidation(escrowID string, inferenceID uint64)
 }
+
+// ValidationEpochAvailability lets scheduling stop work outside the escrow epoch.
+type ValidationEpochAvailability interface {
+	CanValidateEpoch(epochID uint64) bool
+}
+
+func CanValidateEpoch(v ValidationEngine, epochID uint64) bool {
+	gate, ok := v.(ValidationEpochAvailability)
+	return !ok || gate.CanValidateEpoch(epochID)
+}
+
+var ErrValidationEpochUnavailable = errors.New("validation epoch is not current")

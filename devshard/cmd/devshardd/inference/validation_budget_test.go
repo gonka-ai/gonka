@@ -89,23 +89,23 @@ func TestValidationDispatchChargesRetriesAcrossEscrows(t *testing.T) {
 			mgr.Observe("m", "two", srv.URL)
 			e := newTestEngine(ml, mgr, nil)
 			e.validationBudget = newValidationBudget(time.Hour)
-			v := &Validator{engine: e}
+			v := &Validator{phase: testPhase(1), engine: e}
 			// Failed first HTTP attempt spends the only credit; the retry must defer.
 			e.validationBudget.earn("m")
-			_, err := v.executeMLRequest(context.Background(), "m", "escrow-1", []byte(`{}`))
+			_, err := v.executeMLRequest(context.Background(), "m", "escrow-1", []byte(`{}`), 1)
 			require.ErrorIs(t, err, devshard.ErrValidationDeferred)
 			require.Equal(t, int32(1), hits.Load())
 			require.Empty(t, e.validationBudget.credits["m"])
 			e.validationBudget.earn("m")
 			e.validationBudget.earn("m")
-			resp, err := v.executeMLRequest(context.Background(), "m", "escrow-2", []byte(`{}`))
+			resp, err := v.executeMLRequest(context.Background(), "m", "escrow-2", []byte(`{}`), 1)
 			require.NoError(t, err)
 			// The remaining credit may be spent concurrently by a different escrow.
-			other, err := v.executeMLRequest(context.Background(), "m", "escrow-3", []byte(`{}`))
+			other, err := v.executeMLRequest(context.Background(), "m", "escrow-3", []byte(`{}`), 1)
 			require.NoError(t, err)
 			require.NoError(t, resp.Body.Close())
 			require.NoError(t, other.Body.Close())
-			_, err = v.executeMLRequest(context.Background(), "m", "escrow-4", []byte(`{}`))
+			_, err = v.executeMLRequest(context.Background(), "m", "escrow-4", []byte(`{}`), 1)
 			require.ErrorIs(t, err, devshard.ErrValidationDeferred, "all escrows share the same credits")
 			require.Equal(t, int32(3), hits.Load())
 			require.Empty(t, e.validationBudget.credits["m"])
@@ -126,8 +126,8 @@ func TestValidationFailedAcquisitionCostsNothing(t *testing.T) {
 	e := newTestEngine(ml, nil, nil)
 	e.validationBudget = newValidationBudget(60 * time.Minute)
 	e.validationBudget.earn("m")
-	v := &Validator{engine: e}
-	_, err := v.executeMLRequest(context.Background(), "m", "escrow", []byte(`{}`))
+	v := &Validator{phase: testPhase(1), engine: e}
+	_, err := v.executeMLRequest(context.Background(), "m", "escrow", []byte(`{}`), 1)
 	require.Error(t, err)
 	require.Len(t, e.validationBudget.credits["m"], 1)
 }
@@ -202,8 +202,8 @@ func TestValidationRequestBuildFailureRefundsCredit(t *testing.T) {
 			e := newTestEngine(ml, nil, nil)
 			e.validationBudget = newValidationBudget(time.Hour)
 			e.validationBudget.earn("m")
-			v := &Validator{engine: e}
-			_, err := v.executeMLRequest(context.Background(), "m", "escrow", []byte(`{}`))
+			v := &Validator{phase: testPhase(1), engine: e}
+			_, err := v.executeMLRequest(context.Background(), "m", "escrow", []byte(`{}`), 1)
 			require.Error(t, err)
 			require.NotErrorIs(t, err, devshard.ErrValidationDeferred)
 			require.Len(t, e.validationBudget.credits["m"], 1, "no HTTP dispatch means no credit spent")
@@ -212,9 +212,9 @@ func TestValidationRequestBuildFailureRefundsCredit(t *testing.T) {
 }
 
 func TestLeaseValidatorNoCreditsDoesNotAcquire(t *testing.T) {
-	v := &Validator{engine: &Engine{validationBudget: newValidationBudget(defaultValidationCreditTTL)}}
+	v := &Validator{phase: testPhase(1), engine: &Engine{validationBudget: newValidationBudget(defaultValidationCreditTTL)}}
 	leases := &stubLeases{} // Acquire would panic: it must not be called.
-	c := NewLeaseValidator(v, new(chain.Phase), leases, "host", time.Hour)
+	c := NewLeaseValidator(v, testPhase(1), leases, "host", time.Hour)
 	require.False(t, c.CanValidate("m"))
 	_, err := c.Validate(context.Background(), devshard.ValidateRequest{Model: "m"})
 	require.ErrorIs(t, err, devshard.ErrValidationDeferred)
@@ -237,7 +237,7 @@ func TestValidationBudgetSpendsOldestFirst(t *testing.T) {
 }
 
 func TestValidatorNoCreditsDefersBeforeFetching(t *testing.T) {
-	v := &Validator{engine: &Engine{validationBudget: newValidationBudget(defaultValidationCreditTTL)}}
+	v := &Validator{phase: testPhase(1), engine: &Engine{validationBudget: newValidationBudget(defaultValidationCreditTTL)}}
 	// No payload client: attempting a fetch would panic.
 	result, err := v.Validate(context.Background(), devshard.ValidateRequest{Model: "m"})
 	require.Nil(t, result)

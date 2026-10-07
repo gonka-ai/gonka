@@ -98,8 +98,6 @@ const (
 	ReasonValidateErr                 Reason = "validate_err"
 	ReasonInferenceDisappeared        Reason = "inference_disappeared"
 	ReasonSignValidationErr           Reason = "sign_validation_err"
-	ReasonSignVoteErr                 Reason = "sign_vote_err"
-	ReasonValidationStatusChanged     Reason = "validation_status_changed"
 	ReasonPartialResponseInterrupted  Reason = "partial_response_after_interruption"
 	ReasonApplicationErr              Reason = "application_err"
 	ReasonTransportErr                Reason = "transport_err"

@@ -119,6 +119,7 @@ type Host struct {
 
 	sortedSlots        []uint32            // deterministic slot order for this host
 	executing          map[uint64]struct{} // inference IDs with in-flight execution
+	validationRetryAt  map[uint64]time.Time
 	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
 	validationQueue    chan validateJob
 	completedResponses map[uint64][]byte // inference ID -> cached ML response body
@@ -247,6 +248,9 @@ func (h *Host) Close() {
 			h.validationQueue = nil
 		}
 	})
+	h.mu.Lock()
+	clear(h.validationRetryAt)
+	h.mu.Unlock()
 }
 
 // HostMempool returns the host's mempool. Use this to construct a
@@ -946,7 +950,17 @@ func (h *Host) collectValidationJobs() []validateJob {
 		return nil
 	}
 
+	if !devshard.CanValidateEpoch(h.validator, h.epochID) {
+		clear(h.validationRetryAt)
+		return nil
+	}
 	st := h.sm.SnapshotState()
+	now := time.Now()
+	for id, until := range h.validationRetryAt {
+		if !until.After(now) || !h.inferenceValidatable(st.Inferences[id]) {
+			delete(h.validationRetryAt, id)
+		}
+	}
 	available := cap(q) - len(q)
 	if available <= 0 {
 		return nil
@@ -954,6 +968,9 @@ func (h *Host) collectValidationJobs() []validateJob {
 	var jobs []validateJob
 
 	for infID, rec := range st.Inferences {
+		if now.Before(h.validationRetryAt[infID]) {
+			continue
+		}
 		if !devshard.CanValidate(h.validator, rec.Model) {
 			continue
 		}
@@ -1111,9 +1128,9 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	// acquiring a lease, fetching payloads, or dispatching to MLNode.
 	h.mu.Lock()
 	rec, exists := h.sm.GetInference(job.inferenceID)
-	eligible := exists && h.inferenceValidatable(&rec) && !h.hasMempoolValidationOrVote(job.inferenceID)
+	eligible := exists && h.inferenceValidatable(&rec) && !h.hasMempoolValidationOrVote(job.inferenceID) && !time.Now().Before(h.validationRetryAt[job.inferenceID])
 	h.mu.Unlock()
-	if !eligible || !devshard.CanValidate(h.validator, job.model) {
+	if !eligible || !devshard.CanValidateEpoch(h.validator, job.epochID) || !devshard.CanValidate(h.validator, job.model) {
 		return
 	}
 
@@ -1136,8 +1153,25 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		ExecutorAddress: job.executorAddress,
 		EpochID:         job.epochID,
 	})
+	if h.validationRecorder != nil {
+		defer h.validationRecorder.ForgetValidation(h.escrowID, job.inferenceID)
+	}
 	if err != nil {
-		if errors.Is(err, devshard.ErrValidationDeferred) {
+		if errors.Is(err, devshard.ErrValidationAlreadyLeased) {
+			h.mu.Lock()
+			h.validationLifecycleMu.RLock()
+			if !h.validationClosed {
+				if h.validationRetryAt == nil {
+					h.validationRetryAt = make(map[uint64]time.Time)
+				}
+				h.validationRetryAt[job.inferenceID] = time.Now().Add(30 * time.Second)
+			}
+			h.validationLifecycleMu.RUnlock()
+			h.mu.Unlock()
+			observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusDeferred)
+			return
+		}
+		if errors.Is(err, devshard.ErrValidationDeferred) || errors.Is(err, devshard.ErrValidationEpochUnavailable) {
 			observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusDeferred)
 			return
 		}
@@ -1162,104 +1196,25 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		return
 	}
 
-	rec, ok := h.sm.GetInference(job.inferenceID)
-	if !ok {
-		observability.FailValidationFinished(ctx, h.escrowID,
-			observability.ReasonInferenceDisappeared, observability.WhereHostValidate,
-			"validate: inference disappeared", nil,
-			"inference_id", job.inferenceID,
-			"executor_address", job.executorAddress,
-			"validator_slot", job.validatorSlot,
-			"validation_flow", string(job.flow))
-		return
-	}
 	observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusOK)
-
-	var tx *types.DevshardTx
-	var validationTx string
-	switch rec.Status {
-	case types.StatusFinished:
-		// TODO: if this MsgValidation lands after another host has already
-		// challenged the inference, the state machine records participation
-		// without vote weight. Counting that requires a coordinated upgrade.
-		msg := &types.MsgValidation{
-			InferenceId:   job.inferenceID,
-			ValidatorSlot: job.validatorSlot,
-			Valid:         result.Valid,
-			EscrowId:      h.escrowID,
-		}
-		proposerSig, err := h.signProposer(msg)
-		if err != nil {
-			observability.LogValidationOrphan(ctx, h.escrowID,
-				observability.ReasonSignValidationErr, observability.WhereHostPublishValidation,
-				observability.StageVotePublished, "sign validation msg failed", err,
-				"inference_id", job.inferenceID,
-				"executor_address", job.executorAddress,
-				"validator_slot", job.validatorSlot,
-				"validation_flow", string(job.flow),
-				"validation_result", validationResultLabel(result.Valid),
-				"validation_reason", result.Reason,
-				"result_valid", result.Valid)
-			return
-		}
-		msg.ProposerSig = proposerSig
-		tx = &types.DevshardTx{Tx: &types.DevshardTx_Validation{Validation: msg}}
-		validationTx = "validation"
-	case types.StatusChallenged:
-		msg := &types.MsgValidationVote{
-			InferenceId: job.inferenceID,
-			VoterSlot:   job.validatorSlot,
-			VoteValid:   result.Valid,
-			EscrowId:    h.escrowID,
-		}
-		proposerSig, err := h.signProposer(msg)
-		if err != nil {
-			observability.LogValidationOrphan(ctx, h.escrowID,
-				observability.ReasonSignVoteErr, observability.WhereHostPublishValidation,
-				observability.StageVotePublished, "sign validation vote failed", err,
-				"inference_id", job.inferenceID,
-				"executor_address", job.executorAddress,
-				"validator_slot", job.validatorSlot,
-				"validation_flow", string(job.flow),
-				"validation_result", validationResultLabel(result.Valid),
-				"validation_reason", result.Reason,
-				"vote_valid", result.Valid)
-			return
-		}
-		msg.ProposerSig = proposerSig
-		tx = &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{ValidationVote: msg}}
-		validationTx = "validation_vote"
-	default:
-		observability.IncValidation(observability.StageVotePublished, observability.MetricStatusError)
-		observability.Log(ctx, observability.LevelInfo, "validation skipped after status changed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonValidationStatusChanged, nil,
-			"inference_id", job.inferenceID,
-			"executor_address", job.executorAddress,
-			"validator_slot", job.validatorSlot,
-			"validation_flow", string(job.flow),
-			"validation_result", validationResultLabel(result.Valid),
-			"validation_reason", result.Reason,
-			"result_valid", result.Valid)
-		return
-	}
-
+	var guard func() error
 	if h.validationRecorder != nil {
 		if err := h.validationRecorder.AllowValidationSubmit(ctx, h.escrowID, job.inferenceID); err != nil {
-			logging.Info("validation submit abandoned after lease check",
-				"subsystem", "host",
-				"inference_id", job.inferenceID,
-				"error", err,
-			)
 			return
 		}
+		guard = func() error { return h.validationRecorder.CheckValidationLease(h.escrowID, job.inferenceID) }
 	}
-
-	h.mu.Lock()
-	h.mempool.Add(MempoolEntry{
-		Tx:         tx,
-		ProposedAt: h.sm.LatestNonce(),
-	})
-	observability.SetMempoolSize(h.escrowID, h.mempool.Len())
-	h.mu.Unlock()
+	validationTx, err := h.PublishValidation(job.inferenceID, result.Valid, guard)
+	if err != nil {
+		if !errors.Is(err, devshard.ErrValidationEpochUnavailable) && !errors.Is(err, devshard.ErrValidationLeaseAbandoned) {
+			observability.LogValidationOrphan(ctx, h.escrowID, observability.ReasonSignValidationErr, observability.WhereHostPublishValidation,
+				observability.StageVotePublished, "publish validation failed", err, "inference_id", job.inferenceID)
+		}
+		return
+	}
+	if validationTx == "" {
+		return
+	}
 	observability.IncValidation(observability.StageVotePublished, observability.MetricStatusOK)
 	fields := []any{
 		"inference_id", job.inferenceID,

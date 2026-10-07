@@ -25,8 +25,8 @@ import (
 // leaseOps is satisfied by storage.LeaseStore; extracted as interface for testing.
 type leaseOps interface {
 	Acquire(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, instanceAddr string) (bool, error)
-	SetResult(ctx context.Context, escrowId string, inferenceId uint64, status storage.LeaseStatus, instanceAddr string) error
-	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId uint64, instanceAddr string) (bool, error)
+	SetResult(ctx context.Context, escrowId string, inferenceId, epochID uint64, status storage.LeaseStatus, instanceAddr string) error
+	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochID uint64, instanceAddr string) (bool, error)
 }
 
 type acquireKey struct {
@@ -75,17 +75,18 @@ func (v *Validator) CanValidate(model string) bool {
 }
 
 func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+	req.EpochID = resolveValidationEpoch(v.phase, req.EpochID)
+	if !v.CanValidateEpoch(req.EpochID) {
+		return nil, devshardpkg.ErrValidationEpochUnavailable
+	}
 	if !v.CanValidate(req.Model) {
 		return nil, devshardpkg.ErrValidationDeferred
 	}
 	inferenceID := strconv.FormatUint(req.InferenceID, 10)
 
 	epochID := req.EpochID
-	if epochID == 0 {
-		epochID = v.phase.EpochID()
-	}
-	promptPayload, responsePayload, err := fetchPayloadsFromExecutor(
-		ctx, v.bridge, v.recorder, req, inferenceID, epochID, devshardpkg.VersionedSessionPayloadPath(v.boundVersion, req.EscrowID),
+	promptPayload, responsePayload, err := v.fetchPayloadsFromExecutor(
+		ctx, req, inferenceID, epochID, devshardpkg.VersionedSessionPayloadPath(v.boundVersion, req.EscrowID),
 	)
 	if err != nil {
 		if errors.Is(err, commonvalidation.ErrPayloadGone) {
@@ -113,7 +114,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		promptPayload,
 		responsePayload,
 		func(ctx context.Context, body []byte) (*http.Response, error) {
-			return v.executeMLRequest(ctx, req.Model, req.EscrowID, body)
+			return v.executeMLRequest(ctx, req.Model, req.EscrowID, body, epochID)
 		},
 		req.InputTokens, req.OutputTokens,
 		v.chainParams.LogprobsMode(),
@@ -156,7 +157,13 @@ func evaluateValidationResult(
 	}
 }
 
-func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
+func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string, body []byte, epochID uint64) (*http.Response, error) {
+	guard := func() error {
+		if !v.CanValidateEpoch(epochID) {
+			return devshardpkg.ErrValidationEpochUnavailable
+		}
+		return nil
+	}
 	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string, refund func()) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -175,8 +182,12 @@ func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string
 			refund()
 			return nil, err
 		}
+		if err := guard(); err != nil {
+			refund()
+			return nil, err
+		}
 		return v.engine.httpClient.Do(httpReq)
-	})
+	}, guard)
 	if err != nil {
 		return nil, fmt.Errorf("validate inference: %w", err)
 	}
@@ -192,7 +203,7 @@ type LeaseValidator struct {
 	leases       leaseOps
 	instanceAddr string
 	leaseTTL     time.Duration
-	acquires     sync.Map // acquireKey -> time.Time
+	acquires     sync.Map // acquireKey -> validationAcquire
 }
 
 // NewLeaseValidator wraps v with Postgres lease deduplication.
@@ -209,21 +220,45 @@ func NewLeaseValidator(v devshardpkg.ValidationEngine, phase *chain.Phase, lease
 	}
 }
 
-func (c *LeaseValidator) rememberAcquire(escrowID string, inferenceID uint64, at time.Time) {
-	c.acquires.Store(acquireKey{escrowID: escrowID, inferenceID: inferenceID}, at)
+type validationAcquire struct {
+	epochID uint64
+	at      time.Time
+}
+
+func (c *LeaseValidator) rememberAcquire(escrowID string, inferenceID, epochID uint64, at time.Time) {
+	c.acquires.Store(acquireKey{escrowID, inferenceID}, validationAcquire{epochID, at})
+}
+
+func (c *LeaseValidator) ForgetValidation(escrowID string, inferenceID uint64) {
+	c.forgetAcquire(escrowID, inferenceID)
 }
 
 func (c *LeaseValidator) forgetAcquire(escrowID string, inferenceID uint64) {
-	c.acquires.Delete(acquireKey{escrowID: escrowID, inferenceID: inferenceID})
+	c.acquires.Delete(acquireKey{escrowID, inferenceID})
 }
 
-func (c *LeaseValidator) acquiredAt(escrowID string, inferenceID uint64) (time.Time, bool) {
-	v, ok := c.acquires.Load(acquireKey{escrowID: escrowID, inferenceID: inferenceID})
+func (c *LeaseValidator) acquired(escrowID string, inferenceID uint64) (validationAcquire, bool) {
+	v, ok := c.acquires.Load(acquireKey{escrowID, inferenceID})
 	if !ok {
-		return time.Time{}, false
+		return validationAcquire{}, false
 	}
-	at, ok := v.(time.Time)
-	return at, ok
+	rec, ok := v.(validationAcquire)
+	return rec, ok
+}
+
+func (c *LeaseValidator) CanValidateEpoch(epochID uint64) bool {
+	return c.phase != nil && epochID != 0 && c.phase.EpochID() == epochID
+}
+
+func (v *Validator) CanValidateEpoch(epochID uint64) bool {
+	return v.phase != nil && epochID != 0 && v.phase.EpochID() == epochID
+}
+
+func resolveValidationEpoch(phase *chain.Phase, epochID uint64) uint64 {
+	if epochID == 0 && phase != nil {
+		return phase.EpochID()
+	}
+	return epochID
 }
 
 func (c *LeaseValidator) CanValidate(model string) bool {
@@ -231,10 +266,14 @@ func (c *LeaseValidator) CanValidate(model string) bool {
 }
 
 func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+	req.EpochID = resolveValidationEpoch(c.phase, req.EpochID)
+	if !c.CanValidateEpoch(req.EpochID) {
+		return nil, devshardpkg.ErrValidationEpochUnavailable
+	}
 	if !c.CanValidate(req.Model) {
 		return nil, devshardpkg.ErrValidationDeferred
 	}
-	epochID := c.phase.EpochID()
+	epochID := req.EpochID
 	acquired, err := c.leases.Acquire(ctx, req.EscrowID, req.InferenceID, epochID, c.instanceAddr)
 	if err != nil {
 		slog.Warn("devshardd: validation lease failed",
@@ -243,7 +282,7 @@ func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateR
 	} else if !acquired {
 		return nil, devshardpkg.ErrValidationAlreadyLeased
 	}
-	c.rememberAcquire(req.EscrowID, req.InferenceID, time.Now())
+	c.rememberAcquire(req.EscrowID, req.InferenceID, epochID, time.Now())
 
 	result, err := c.validator.Validate(ctx, req)
 	if err != nil {
@@ -271,11 +310,12 @@ func (c *LeaseValidator) AllowValidationSubmit(ctx context.Context, escrowID str
 }
 
 func (c *LeaseValidator) MarkValidationSubmitted(ctx context.Context, escrowID string, inferenceID uint64) error {
+	rec, _ := c.acquired(escrowID, inferenceID)
 	if err := c.ensureLeaseStillValid(ctx, escrowID, inferenceID); err != nil {
 		c.forgetAcquire(escrowID, inferenceID)
 		return err
 	}
-	err := c.leases.SetResult(ctx, escrowID, inferenceID, storage.LeaseStatusSubmitted, c.instanceAddr)
+	err := c.leases.SetResult(ctx, escrowID, inferenceID, rec.epochID, storage.LeaseStatusSubmitted, c.instanceAddr)
 	c.forgetAcquire(escrowID, inferenceID)
 	if errors.Is(err, storage.ErrLeaseNotOwned) {
 		return fmt.Errorf("%w: %v", devshardpkg.ErrValidationLeaseAbandoned, err)
@@ -283,17 +323,28 @@ func (c *LeaseValidator) MarkValidationSubmitted(ctx context.Context, escrowID s
 	return err
 }
 
-func (c *LeaseValidator) ensureLeaseStillValid(ctx context.Context, escrowID string, inferenceID uint64) error {
-	at, ok := c.acquiredAt(escrowID, inferenceID)
+func (c *LeaseValidator) CheckValidationLease(escrowID string, inferenceID uint64) error {
+	rec, ok := c.acquired(escrowID, inferenceID)
 	if !ok {
 		return fmt.Errorf("%w: missing local acquire time", devshardpkg.ErrValidationLeaseAbandoned)
 	}
-	if time.Since(at) > c.leaseTTL {
+	if !c.CanValidateEpoch(rec.epochID) {
+		return devshardpkg.ErrValidationEpochUnavailable
+	}
+	if time.Since(rec.at) > c.leaseTTL {
 		slog.Info("devshardd: validation lease TTL exceeded; abandon submit",
 			"escrow", escrowID, "inference", inferenceID, "lease_ttl", c.leaseTTL)
 		return fmt.Errorf("%w: elapsed since acquire exceeds lease TTL", devshardpkg.ErrValidationLeaseAbandoned)
 	}
-	owned, err := c.leases.OwnsPendingLease(ctx, escrowID, inferenceID, c.instanceAddr)
+	return nil
+}
+
+func (c *LeaseValidator) ensureLeaseStillValid(ctx context.Context, escrowID string, inferenceID uint64) error {
+	if err := c.CheckValidationLease(escrowID, inferenceID); err != nil {
+		return err
+	}
+	rec, _ := c.acquired(escrowID, inferenceID)
+	owned, err := c.leases.OwnsPendingLease(ctx, escrowID, inferenceID, rec.epochID, c.instanceAddr)
 	if err != nil {
 		return err
 	}

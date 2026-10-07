@@ -62,7 +62,7 @@ type sessionData struct {
 type Memory struct {
 	mu               sync.RWMutex
 	sessions         map[string]*sessionData
-	validationLeases map[string]map[uint64]memoryLease
+	validationLeases map[string]map[[2]uint64]memoryLease
 	escrowCache      map[string]EscrowCacheInfo
 }
 
