@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"common/storage/pgpool"
 	"common/storage/pgtimeouts"
 
 	"github.com/jackc/pgx/v5"
@@ -35,6 +36,10 @@ func NewPostgresGatewayStore(ctx context.Context) (*PostgresGatewayStore, error)
 	// Fail-closed open: a blackholed host must not hang boot; statement/lock
 	// timeouts are the server-side backstop when PG_OPERATION_TIMEOUT=0.
 	pgtimeouts.ApplyConnConfig(cfg.ConnConfig)
+	// Same cap as the session pool. An uncapped pool follows the CPU count.
+	if err := pgpool.ConfigureMaxConns(cfg); err != nil {
+		return nil, err
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

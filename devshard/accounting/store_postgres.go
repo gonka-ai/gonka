@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"common/storage/pgpool"
 	"common/storage/pgtimeouts"
 
 	"github.com/jackc/pgx/v5"
@@ -49,6 +50,10 @@ func openPostgresBackend(ctx context.Context) (*postgresBackend, error) {
 		return nil, fmt.Errorf("parse accounting postgres config: %w", err)
 	}
 	pgtimeouts.ApplyConnConfig(cfg.ConnConfig)
+	// Same cap as the session pool. An uncapped pool follows the CPU count.
+	if err := pgpool.ConfigureMaxConns(cfg); err != nil {
+		return nil, err
+	}
 
 	pool, err := pgxpool.NewWithConfig(connectCtx, cfg)
 	if err != nil {

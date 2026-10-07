@@ -53,6 +53,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `PGDATABASE` | when `PGHOST` set | - | Postgres database name |
 | - | `PGUSER` | when `PGHOST` set | - | Postgres user |
 | - | `PGPASSWORD` | when `PGHOST` set | - | Postgres password |
+| - | `PG_POOL_MAX_CONNS` | when `PGHOST` set | `4` | Max connections in each gateway and accounting pool (`common/storage/pgpool`). Unset uses 4 instead of pgx's CPU-sized default |
 | - | `PG_CONNECT_TIMEOUT` | when `PGHOST` set | `2s` | Dial/auth timeout for each new Postgres connection (`common/storage/pgtimeouts`) |
 | - | `PG_OPERATION_TIMEOUT` | when `PGHOST` set | `2s` | Per-call Go context deadline for gateway/accounting Postgres ops; `0` disables. Does **not** disable server-side `statement_timeout` / `lock_timeout` |
 | - | `PG_IMPORT_TIMEOUT` | when `PGHOST` set | `5m` | Boot-time SQLite→Postgres import (+ leftover journal drain) budget |
