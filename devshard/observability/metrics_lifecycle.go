@@ -35,6 +35,13 @@ var (
 	lifecycleInflight      prometheus.Gauge
 	fallbackDivisor        *prometheus.GaugeVec
 	sessionRecovery        *prometheus.GaugeVec
+	memorySessions         prometheus.Gauge
+	memoryLiveInferences   prometheus.Gauge
+	memorySealedInferences prometheus.Gauge
+	memoryMempool          prometheus.Gauge
+	memoryExecuting        prometheus.Gauge
+	memoryValidating       prometheus.Gauge
+	memoryFattestLive      *prometheus.GaugeVec
 
 	// HA diff/persist consistency (see docs/proposals/ha-diff-persist-consistency.md).
 	diffPersistRetryTotal     *prometheus.CounterVec
@@ -145,6 +152,34 @@ func initRegistry() {
 		Name: "devshardd_session_recovery",
 		Help: "Devshardd session recovery progress: total, recovered, failed, version_skipped, pending, complete.",
 	}, []string{"kind"})
+	memorySessions = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_sessions",
+		Help: "Escrows loaded in this process at the latest memory snapshot.",
+	})
+	memoryLiveInferences = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_live_inferences",
+		Help: "Live inference records across loaded escrows at the latest memory snapshot.",
+	})
+	memorySealedInferences = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_sealed_inferences",
+		Help: "Sealed inference records across loaded escrows at the latest memory snapshot.",
+	})
+	memoryMempool = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_mempool_entries",
+		Help: "Host mempool transactions across loaded escrows at the latest memory snapshot.",
+	})
+	memoryExecuting = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_executing",
+		Help: "Inferences claimed for execution at the latest memory snapshot.",
+	})
+	memoryValidating = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_validating",
+		Help: "Inferences claimed for validation at the latest memory snapshot.",
+	})
+	memoryFattestLive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "devshard_memory_fattest_live_inferences",
+		Help: "Live inference count of the escrow that holds the most. One series, replaced each snapshot.",
+	}, []string{"escrow_id"})
 
 	diffPersistRetryTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "devshard_diff_persist_retry_total",
@@ -180,6 +215,13 @@ func initRegistry() {
 		lifecycleInflight,
 		fallbackDivisor,
 		sessionRecovery,
+		memorySessions,
+		memoryLiveInferences,
+		memorySealedInferences,
+		memoryMempool,
+		memoryExecuting,
+		memoryValidating,
+		memoryFattestLive,
 		diffPersistRetryTotal,
 		diffForkDetectedTotal,
 		reconcileFastForwardTotal,
@@ -201,6 +243,35 @@ func RegisterRuntimeCollectors() {
 			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 		)
 	})
+}
+
+// MemoryInventory is the session-map portion of a memory snapshot.
+// Byte totals stay on the standard Go collectors (go_memstats_*).
+type MemoryInventory struct {
+	Sessions    int
+	Live        int
+	Sealed      int
+	Mempool     int
+	Executing   int
+	Validating  int
+	Fattest     string
+	FattestLive int
+}
+
+// SetMemoryInventory publishes the latest 10-minute snapshot. The fattest
+// series is replaced, so a previous escrow id does not linger.
+func SetMemoryInventory(inv MemoryInventory) {
+	ensureMetrics()
+	memorySessions.Set(float64(inv.Sessions))
+	memoryLiveInferences.Set(float64(inv.Live))
+	memorySealedInferences.Set(float64(inv.Sealed))
+	memoryMempool.Set(float64(inv.Mempool))
+	memoryExecuting.Set(float64(inv.Executing))
+	memoryValidating.Set(float64(inv.Validating))
+	memoryFattestLive.Reset()
+	if inv.Fattest != "" {
+		memoryFattestLive.WithLabelValues(inv.Fattest).Set(float64(inv.FattestLive))
+	}
 }
 
 func IncInflight(stage Stage) func() {
@@ -368,5 +439,3 @@ func IncReconcileFastForward() {
 	ensureMetrics()
 	reconcileFastForwardTotal.Inc()
 }
-
-

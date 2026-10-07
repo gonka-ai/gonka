@@ -335,7 +335,36 @@ func (h *Host) MempoolTxs() []*types.DevshardTx {
 	return h.mempool.Txs()
 }
 
-func (h *Host) EscrowID() string              { return h.escrowID }
+func (h *Host) EscrowID() string { return h.escrowID }
+
+// MemoryCounts is the size of the maps that retain an escrow in this process.
+// Lengths only: nothing is copied and no record is visited.
+type MemoryCounts struct {
+	EscrowID   string
+	Live       int
+	Sealed     int
+	Mempool    int
+	Executing  int
+	Validating int
+}
+
+func (h *Host) MemoryCounts() MemoryCounts {
+	if h == nil {
+		return MemoryCounts{}
+	}
+	out := MemoryCounts{EscrowID: h.escrowID}
+	if h.sm != nil {
+		out.Live, out.Sealed = h.sm.LiveAndSealedCounts()
+	}
+	if h.mempool != nil {
+		out.Mempool = h.mempool.Len()
+	}
+	h.mu.Lock()
+	out.Executing = len(h.executing)
+	out.Validating = len(h.validating)
+	h.mu.Unlock()
+	return out
+}
 func (h *Host) EpochID() uint64               { return h.epochID }
 func (h *Host) Group() []types.SlotAssignment { return h.group }
 func (h *Host) SlotIDs() map[uint32]bool      { return h.slotIDs }

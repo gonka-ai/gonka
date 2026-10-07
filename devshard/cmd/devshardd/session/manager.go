@@ -1269,6 +1269,53 @@ func (m *HostManager) signPayloadResponse(inferenceID string, promptPayload, res
 	return calculations.Sign(accountSigner, components, calculations.Developer)
 }
 
+// SessionMemory is the retained-map sizes across loaded sessions.
+type SessionMemory struct {
+	Sessions    int
+	Live        int
+	Sealed      int
+	Mempool     int
+	Executing   int
+	Validating  int
+	Fattest     string
+	FattestLive int
+}
+
+// SessionMemoryCounts sums map lengths across loaded sessions. It copies the
+// server list under the session lock, then reads each host after releasing it,
+// so a large live map is never walked and the session lock is not held across
+// host locks.
+func (m *HostManager) SessionMemoryCounts() SessionMemory {
+	if m == nil {
+		return SessionMemory{}
+	}
+	m.sessionsMutex.RLock()
+	servers := make([]*transport.Server, 0, len(m.sessions))
+	for _, srv := range m.sessions {
+		servers = append(servers, srv)
+	}
+	m.sessionsMutex.RUnlock()
+
+	var out SessionMemory
+	out.Sessions = len(servers)
+	for _, srv := range servers {
+		if srv == nil || srv.Host() == nil {
+			continue
+		}
+		c := srv.Host().MemoryCounts()
+		out.Live += c.Live
+		out.Sealed += c.Sealed
+		out.Mempool += c.Mempool
+		out.Executing += c.Executing
+		out.Validating += c.Validating
+		if c.Live > out.FattestLive {
+			out.FattestLive = c.Live
+			out.Fattest = c.EscrowID
+		}
+	}
+	return out
+}
+
 // ActiveEscrowIDs returns the escrow IDs of all currently loaded sessions.
 // The returned slice is a snapshot; the set may change after this call.
 func (m *HostManager) ActiveEscrowIDs() []string {
