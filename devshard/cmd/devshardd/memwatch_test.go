@@ -63,6 +63,21 @@ func TestDebugMemoryServesTheStoredSnapshot(t *testing.T) {
 	}
 }
 
+func TestReadProcessMemorySeesLiveHeap(t *testing.T) {
+	buf := make([]byte, 8<<20)
+	proc, err := readProcessMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if proc.HeapAlloc == 0 || proc.HeapInuse < proc.HeapAlloc || proc.Sys < proc.HeapInuse {
+		t.Fatalf("process memory %+v", proc)
+	}
+	if proc.Goroutines < 1 || proc.HeapObjects == 0 {
+		t.Fatalf("process memory %+v", proc)
+	}
+	runtime.KeepAlive(buf)
+}
+
 func TestStackLineCapsDepth(t *testing.T) {
 	pcs := make([]uintptr, 32)
 	n := runtime.Callers(0, pcs)
