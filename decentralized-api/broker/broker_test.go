@@ -80,6 +80,14 @@ func (m *MockBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) 
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
 }
 
+func (m *MockBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
+	args := m.Called(stageHeight)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryPocStageRecipeResponse), args.Error(1)
+}
+
 func NewTestBroker() *Broker {
 	participantInfo := participant.CosmosInfo{
 		Address: "cosmos1dummyaddress",
@@ -124,6 +132,7 @@ func NewTestBroker() *Broker {
 	}
 
 	mockChainBridge.On("GetCurrentEpochGroupData").Return(parentEpochData, nil)
+	mockChainBridge.On("GetPocStageRecipe", mock.Anything).Return(&types.QueryPocStageRecipeResponse{}, nil).Maybe()
 	// Mock for parent group query (empty modelId) - returns SubGroupModels list
 	parentGroupResp := &types.QueryGetEpochGroupDataResponse{
 		EpochGroupData: types.EpochGroupData{

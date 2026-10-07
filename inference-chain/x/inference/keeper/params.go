@@ -68,6 +68,20 @@ func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
 		}
 	}
 
+	oldScheme := types.PocScheme_POC_SCHEME_PREFILL
+	if oldParams.PocParams != nil {
+		oldScheme = oldParams.PocParams.PocScheme
+	}
+	newScheme := types.PocScheme_POC_SCHEME_PREFILL
+	if params.PocParams != nil {
+		newScheme = params.PocParams.PocScheme
+	}
+	if oldScheme != newScheme {
+		if epoch, found := k.GetEffectiveEpochIndex(ctx); found {
+			_ = k.SetPocSchemeEnabledEpoch(ctx, epoch)
+		}
+	}
+
 	return nil
 }
 

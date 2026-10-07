@@ -68,17 +68,36 @@ func TestEarlyShareGuardDefaults(t *testing.T) {
 }
 
 func TestNewPoCParamsCache(t *testing.T) {
-	cache := apiconfig.NewPoCParamsCache([]*types.PoCModelConfig{
+	cache := apiconfig.NewPoCParamsCache(&types.PocParams{Models: []*types.PoCModelConfig{
 		nil,
 		{ModelId: "", SeqLen: 128},
 		{ModelId: "model-a", SeqLen: 256},
 		{ModelId: "model-b", SeqLen: 512},
-	})
+	}})
 
 	require.Equal(t, apiconfig.PoCParamsCache{
 		Models: []apiconfig.PoCModelConfigCache{
 			{ModelId: "model-a", SeqLen: 256},
 			{ModelId: "model-b", SeqLen: 512},
+		},
+	}, cache)
+}
+
+func TestNewPoCParamsCache_LiveSchemeBlock(t *testing.T) {
+	cache := apiconfig.NewPoCParamsCache(&types.PocParams{
+		PocScheme: types.PocScheme_POC_SCHEME_DECODE,
+		Models: []*types.PoCModelConfig{{
+			ModelId: "model-a",
+			Schemes: []*types.PocSchemeParams{
+				{Scheme: types.PocScheme_POC_SCHEME_PREFILL, SeqLen: 1024},
+				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256},
+			},
+		}},
+	})
+
+	require.Equal(t, apiconfig.PoCParamsCache{
+		Models: []apiconfig.PoCModelConfigCache{
+			{ModelId: "model-a", SeqLen: 256, DecodeMaxTokens: 256},
 		},
 	}, cache)
 }

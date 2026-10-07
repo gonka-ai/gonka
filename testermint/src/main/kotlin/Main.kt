@@ -504,12 +504,16 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
                 this[PocParams::models] = listOf(
                     PoCModelConfig(
                         modelId = defaultModel,
-                        seqLen = 256L,
-                        dynamicCoefficient = DynamicCoefficientModelConfig(
-                            coeffMin = Decimal.fromDouble(1.0),
-                            coeffMax = Decimal.fromDouble(1.0),
-                            relativeDifficulty = Decimal.fromDouble(1.0),
-                            targetShareBps = 10000,
+                        schemes = listOf(
+                            PocSchemeParams(
+                                seqLen = 256L,
+                                dynamicCoefficient = DynamicCoefficientModelConfig(
+                                    coeffMin = Decimal.fromDouble(1.0),
+                                    coeffMax = Decimal.fromDouble(1.0),
+                                    relativeDifficulty = Decimal.fromDouble(1.0),
+                                    targetShareBps = 10000,
+                                ),
+                            ),
                         ),
                     )
                 )

@@ -45,6 +45,7 @@ type BrokerChainBridge interface {
 	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
 	GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error)
 	GetParams() (*types.QueryParamsResponse, error)
+	GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error)
 }
 
 type BrokerChainBridgeImpl struct {
@@ -120,6 +121,11 @@ func (b *BrokerChainBridgeImpl) GetPreservedNodesSnapshot() (*types.QueryPreserv
 func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) {
 	queryClient := b.client.NewInferenceQueryClient()
 	return queryClient.Params(b.client.GetContext(), &types.QueryParamsRequest{})
+}
+
+func (b *BrokerChainBridgeImpl) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	return queryClient.PocStageRecipe(b.client.GetContext(), &types.QueryPocStageRecipeRequest{StageHeight: stageHeight})
 }
 
 type Broker struct {
@@ -412,6 +418,29 @@ func (b *Broker) GetChainBridge() BrokerChainBridge {
 
 func (b *Broker) GetPhaseTracker() *chainphase.ChainPhaseTracker {
 	return b.phaseTracker
+}
+
+func (b *Broker) StageRecipe(stageHeight int64) (*types.PocStageRecipe, error) {
+	var event *types.ConfirmationPoCEvent
+	if b.phaseTracker != nil {
+		if st := b.phaseTracker.GetCurrentEpochState(); st != nil {
+			event = st.ActiveConfirmationPoCEvent
+		}
+	}
+	if event != nil && event.Recipe != nil && event.TriggerHeight == stageHeight {
+		return event.Recipe, nil
+	}
+	if b.chainBridge == nil {
+		return nil, fmt.Errorf("missing PocStageRecipe for height %d", stageHeight)
+	}
+	resp, err := b.chainBridge.GetPocStageRecipe(stageHeight)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil || !resp.Found || resp.Recipe == nil {
+		return nil, fmt.Errorf("missing PocStageRecipe for height %d", stageHeight)
+	}
+	return resp.Recipe, nil
 }
 
 func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan NodeCommandResponse {
@@ -912,6 +941,7 @@ type pocParams struct {
 	startPoCBlockHash   string
 	models              map[string]apiconfig.PoCModelConfigCache
 	pocStrongerRng      bool
+	scheme              types.PocScheme
 }
 
 const reconciliationInterval = 30 * time.Second
@@ -1235,7 +1265,10 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 				startPoCBlockHeight: event.TriggerHeight,
 				startPoCBlockHash:   event.PocSeedBlockHash,
 			}
-			b.loadPoCModels(params)
+			if err := b.applyFrozenRecipe(params, event); err != nil {
+				logging.Error("Failed to load frozen confirmation PoC recipe", types.PoC, "error", err, "height", event.TriggerHeight)
+				return nil, err
+			}
 			return params, nil
 		}
 
@@ -1259,7 +1292,7 @@ func (b *Broker) loadPoCModels(params *pocParams) {
 	}
 
 	if paramsResp.Params.PocParams != nil {
-		cachedParams := apiconfig.NewPoCParamsCache(paramsResp.Params.PocParams.GetModelConfigs())
+		cachedParams := apiconfig.NewPoCParamsCache(paramsResp.Params.PocParams)
 		params.models = make(map[string]apiconfig.PoCModelConfigCache, len(cachedParams.Models))
 		for _, modelConfig := range cachedParams.Models {
 			params.models[modelConfig.ModelId] = modelConfig
@@ -1268,6 +1301,7 @@ func (b *Broker) loadPoCModels(params *pocParams) {
 			_ = b.configManager.SetPoCParams(cachedParams)
 		}
 		params.pocStrongerRng = paramsResp.Params.PocParams.PocStrongerRngEnabled
+		params.scheme = paramsResp.Params.PocParams.PocScheme
 		logging.Info("Using PoC params", types.PoC,
 			"models_count", len(cachedParams.Models),
 			"poc_stronger_rng", params.pocStrongerRng)
@@ -1399,6 +1433,8 @@ func (b *Broker) getCommandForState(
 					Model:                modelConfig.ModelId,
 					SeqLen:               modelConfig.SeqLen,
 					PocStrongerRng:       pocGenParams.pocStrongerRng,
+					DecodeMaxTokens:      modelConfig.DecodeMaxTokens,
+					Scheme:               pocGenParams.scheme,
 					WindDown:             windDown,
 					LastPocV2BlockHeight: nodeState.LastPocV2BlockHeight,
 					LastPocV2BlockHash:   nodeState.LastPocV2BlockHash,
@@ -1431,9 +1467,59 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 		startPoCBlockHeight: epochPoCStartHeight,
 		startPoCBlockHash:   hash,
 	}
-
-	b.loadPoCModels(params)
+	if err := b.applyFrozenRecipe(params, nil); err != nil {
+		return nil, err
+	}
 	return params, nil
+}
+
+func stagePromptAndSteps(model *types.PoCModelConfig, scheme types.PocScheme) (int64, int64) {
+	if block, ok := model.SchemeParams(scheme); ok && block != nil {
+		if scheme == types.PocScheme_POC_SCHEME_DECODE {
+			return block.SeqLen, block.MaxTokens
+		}
+		return block.SeqLen, 0
+	}
+	if scheme == types.PocScheme_POC_SCHEME_DECODE {
+		return 0, 0
+	}
+	return model.SeqLen, 0
+}
+
+func applyStageRecipe(params *pocParams, recipe *types.PocStageRecipe) {
+	params.scheme = recipe.Scheme
+	params.pocStrongerRng = recipe.PocStrongerRngEnabled
+	params.models = make(map[string]apiconfig.PoCModelConfigCache, len(recipe.Models))
+	for _, modelConfig := range recipe.Models {
+		if modelConfig == nil {
+			continue
+		}
+		seqLen, maxTokens := stagePromptAndSteps(modelConfig, recipe.Scheme)
+		params.models[modelConfig.ModelId] = apiconfig.PoCModelConfigCache{
+			ModelId:         modelConfig.ModelId,
+			SeqLen:          seqLen,
+			DecodeMaxTokens: maxTokens,
+		}
+	}
+}
+
+func (b *Broker) applyFrozenRecipe(params *pocParams, event *types.ConfirmationPoCEvent) error {
+	if event != nil && event.Recipe != nil && event.TriggerHeight == params.startPoCBlockHeight {
+		applyStageRecipe(params, event.Recipe)
+		return nil
+	}
+	if b.chainBridge == nil {
+		return fmt.Errorf("missing PocStageRecipe for height %d", params.startPoCBlockHeight)
+	}
+	resp, err := b.chainBridge.GetPocStageRecipe(params.startPoCBlockHeight)
+	if err != nil {
+		return err
+	}
+	if resp == nil || !resp.Found || resp.Recipe == nil {
+		return fmt.Errorf("missing PocStageRecipe for height %d", params.startPoCBlockHeight)
+	}
+	applyStageRecipe(params, resp.Recipe)
+	return nil
 }
 
 func nodeStatusQueryWorker(broker *Broker) {
