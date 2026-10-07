@@ -574,6 +574,7 @@ func fixComposePaths(composePath, testenvDir string) error {
 	}
 	text := string(body)
 	for _, replacement := range [][2]string{
+		{"context: ../../versiond-router", "context: " + filepath.Join(repoRoot, "versiond-router")},
 		{"context: ../../versioned", "context: " + filepath.Join(repoRoot, "versioned")},
 		{"context: ../..", "context: " + repoRoot},
 		{"- ../../build/devshardd:", "- " + filepath.Join(repoRoot, "build", "devshardd") + ":"},
