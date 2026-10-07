@@ -641,9 +641,9 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	var accept bool
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = host.VerifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, st.Config, nowUnix)
+		accept, err = host.VerifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
+		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, localMempool, executorClient, s.host, st.Config, nowUnix)
 	default:
 		return nil, clientRequest(fmt.Sprintf("unknown timeout reason: %s", req.Reason))
 	}
@@ -815,6 +815,9 @@ func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {
 // ServeChallengeReceipt is the transport-neutral core behind POST .../challenge-receipt
 // and SessionService.ChallengeReceipt. Callers enforce owner-or-group.
 func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceiptRequest) (*ChallengeReceiptResponse, error) {
+	if forged, ok := forgedChallengeReceipt(s.host, req.InferenceID); ok {
+		return forged, nil
+	}
 	diffs, err := decodeDiffsJSON(req.Diffs)
 	if err != nil {
 		return nil, err

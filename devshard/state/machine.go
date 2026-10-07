@@ -1721,6 +1721,73 @@ func (sm *StateMachine) RejectFinishProposerSigLocal(msg *types.MsgFinishInferen
 	return nil
 }
 
+// CheckExecutorReceipt reports whether confirm.ExecutorSig is the executor's
+// signature over ExecutorReceiptContent for this escrow, built from rec the way
+// applyConfirmStart builds it. rec is the inference record the receipt confirms.
+// It never caches a warm binding: WarmKeys is part of the state root.
+func (sm *StateMachine) CheckExecutorReceipt(rec *types.InferenceRecord, confirm *types.MsgConfirmStart) error {
+	if rec == nil || confirm == nil {
+		return fmt.Errorf("%w: incomplete receipt", types.ErrInvalidExecutorSig)
+	}
+	sm.mu.RLock()
+	escrowID := sm.state.EscrowID
+	sm.mu.RUnlock()
+	receiptData, err := deterministicMarshal.Marshal(&types.ExecutorReceiptContent{
+		InferenceId:       confirm.InferenceId,
+		PromptHash:        rec.PromptHash,
+		Model:             rec.Model,
+		InputLength:       rec.InputLength,
+		MaxTokens:         rec.MaxTokens,
+		StartedAt:         rec.StartedAt,
+		EscrowId:          escrowID,
+		ConfirmedAt:       confirm.ConfirmedAt,
+		ObservedHeight:    confirm.ObservedHeight,
+		ObservedBlockHash: confirm.ObservedBlockHash,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal executor receipt: %w", err)
+	}
+	recovered, err := sm.verifier.RecoverAddress(receiptData, confirm.ExecutorSig)
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidExecutorSig, err)
+	}
+	return sm.checkSlotSigner(rec.ExecutorSlot, recovered, types.ErrInvalidExecutorSig)
+}
+
+// CheckFinishProposerSig is VerifyFinishProposerSig without caching a warm
+// binding, for evidence that may never be sequenced into a diff.
+func (sm *StateMachine) CheckFinishProposerSig(msg *types.MsgFinishInference) error {
+	recovered, err := sm.recoveredProposerAddress(msg)
+	if err != nil {
+		return err
+	}
+	return sm.checkSlotSigner(msg.ExecutorSlot, recovered, types.ErrInvalidProposerSig)
+}
+
+// checkSlotSigner accepts the slot's cold key, the warm key already bound in
+// state, or, when none is bound, a key the resolver authorizes. The resolver
+// runs without sm.mu held.
+func (sm *StateMachine) checkSlotSigner(slot uint32, recovered string, sigErr error) error {
+	expected, ok := sm.slotToAddress[slot]
+	if !ok {
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, slot)
+	}
+	if recovered == expected {
+		return nil
+	}
+	sm.mu.RLock()
+	bound, hasBound := sm.state.WarmKeys[slot]
+	sm.mu.RUnlock()
+	if hasBound {
+		if bound == recovered {
+			return nil
+		}
+	} else if sm.CheckWarmKey(recovered, expected) {
+		return nil
+	}
+	return fmt.Errorf("%w: expected %s (slot %d), got %s", sigErr, expected, slot, recovered)
+}
+
 func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) (string, error) {
 	if msg == nil {
 		return "", fmt.Errorf("%w: nil finish", types.ErrInvalidProposerSig)
