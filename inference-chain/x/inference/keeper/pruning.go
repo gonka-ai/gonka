@@ -12,6 +12,9 @@ const (
 	LookbackMultiplier               = int64(5)
 	ClaimRecipientPruningThreshold   = uint64(5)
 	ClaimRecipientPruningMaxPerBlock = int64(1000)
+	// Seeds and CPoC events are read only for the current or upcoming epoch.
+	EpochRecordPruningThreshold   = uint64(5)
+	EpochRecordPruningMaxPerBlock = int64(1000)
 )
 
 func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
@@ -66,6 +69,14 @@ func (k Keeper) PruneWithParams(ctx context.Context, params types.Params, curren
 		return err
 	}
 	err = k.GetClaimRecipientPruner(params).pruneFrom(ctx, k, currentEpochIndex, pruningState)
+	if err != nil {
+		return err
+	}
+	err = k.GetRandomSeedPruner().pruneFrom(ctx, k, currentEpochIndex, pruningState)
+	if err != nil {
+		return err
+	}
+	err = k.GetConfirmationPoCEventPruner().pruneFrom(ctx, k, currentEpochIndex, pruningState)
 	if err != nil {
 		return err
 	}
@@ -337,6 +348,48 @@ func (k Keeper) GetClaimRecipientPruner(params types.Params) Pruner[collections.
 	}
 }
 
+func (k Keeper) GetRandomSeedPruner() Pruner[collections.Pair[uint64, sdk.AccAddress], types.RandomSeed] {
+	return Pruner[collections.Pair[uint64, sdk.AccAddress], types.RandomSeed]{
+		Threshold:  EpochRecordPruningThreshold,
+		PruningMax: EpochRecordPruningMaxPerBlock,
+		List:       k.RandomSeeds,
+		Ranger: func(ctx context.Context, epoch int64) collections.Ranger[collections.Pair[uint64, sdk.AccAddress]] {
+			return collections.NewPrefixedPairRange[uint64, sdk.AccAddress](uint64(epoch))
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.RandomSeedsPrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.RandomSeedsPrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Pair[uint64, sdk.AccAddress]) error {
+			return k.RandomSeeds.Remove(ctx, key)
+		},
+		Logger: k,
+	}
+}
+
+func (k Keeper) GetConfirmationPoCEventPruner() Pruner[collections.Pair[uint64, uint64], types.ConfirmationPoCEvent] {
+	return Pruner[collections.Pair[uint64, uint64], types.ConfirmationPoCEvent]{
+		Threshold:  EpochRecordPruningThreshold,
+		PruningMax: EpochRecordPruningMaxPerBlock,
+		List:       k.ConfirmationPoCEvents,
+		Ranger: func(ctx context.Context, epoch int64) collections.Ranger[collections.Pair[uint64, uint64]] {
+			return collections.NewPrefixedPairRange[uint64, uint64](uint64(epoch))
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.ConfirmationPocEventsPrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.ConfirmationPocEventsPrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Pair[uint64, uint64]) error {
+			return k.ConfirmationPoCEvents.Remove(ctx, key)
+		},
+		Logger: k,
+	}
+}
+
 func (k Keeper) GetPoCValidationsPruner(params types.Params) Pruner[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation] {
 	return Pruner[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]{
 		Threshold:  params.PocParams.PocDataPruningEpochThreshold,
@@ -470,6 +523,11 @@ func (p Pruner[K, V]) pruneFrom(ctx context.Context, k Keeper, currentEpochIndex
 			}
 		} else {
 			p.Logger.LogInfo("Items pruned for epoch", types.Pruning, "epoch", epoch, "pruned", prunedForEpoch, "list", p.List.GetName())
+			// PruningMax bounds the block, not each epoch: a backlog of many epochs is spread over blocks.
+			prunedCount += prunedForEpoch
+			if p.PruningMax > 0 && prunedCount >= p.PruningMax {
+				break
+			}
 		}
 	}
 	return nil
