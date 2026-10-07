@@ -33,10 +33,14 @@ func GonkaMintFn() mintkeeper.MintFn {
 			}
 		}
 
+		prevInflation, prevProvisions := minter.Inflation, minter.AnnualProvisions
 		minter.Inflation = minttypes.DefaultInflationCalculationFn(ctx, minter, params, bondedRatio)
 		minter.AnnualProvisions = minter.NextAnnualProvisions(params, totalStakingSupply)
-		if err = k.Minter.Set(ctx, minter); err != nil {
-			return err
+		// With inflation at zero the Minter never changes; rewriting it still writes the mint store every block.
+		if !minter.Inflation.Equal(prevInflation) || !minter.AnnualProvisions.Equal(prevProvisions) {
+			if err = k.Minter.Set(ctx, minter); err != nil {
+				return err
+			}
 		}
 
 		mintedCoin := minter.BlockProvision(params)
