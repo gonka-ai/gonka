@@ -130,6 +130,42 @@ class ChartContract(unittest.TestCase):
         self.assertIn("STOPSIGNAL SIGQUIT", (repository / "proxy/Dockerfile").read_text())
         self.assertIn("STOPSIGNAL SIGUSR1", (repository / "proxy-router/Dockerfile").read_text())
 
+    def test_peer_rpc_h2_hop_is_published_and_allowed(self):
+        """devshard phase 6: peers dial {InferenceUrl.host}:9443 (HTTP/2); the proxy
+        forwards to the routers' 8081 listen; children inherit the dial settings."""
+        ingress = self.pod("ingress")
+        sidecar = ingress["initContainers"][0]
+        self.assertIn(9443, [p["containerPort"] for p in sidecar["ports"]])
+        self.assertEqual(env(sidecar)["DEVSHARD_RPC_H2_PORT"], "9443")
+        self.assertEqual(env(sidecar)["DEVSHARD_RPC_H2_ROUTER_PORT"], "8081")
+        public = self.objects[("Service", "test-gonka-ha-ingress")]["spec"]["ports"]
+        self.assertIn(("rpc-h2", 9443), [(p["name"], p["port"]) for p in public])
+        router = self.pod("router")["containers"][0]
+        self.assertIn(8081, [p["containerPort"] for p in router["ports"]])
+        router_service = self.objects[("Service", "test-gonka-ha-router")]["spec"]["ports"]
+        self.assertIn(8081, [p["port"] for p in router_service])
+        supervisor = env(self.pod("versiond")["containers"][0])
+        self.assertEqual(supervisor["DEVSHARD_RPC_H2_UPGRADE"], "true")
+        self.assertEqual(supervisor["DEVSHARD_RPC_H2_PORT"], "9443")
+        allowed = {}
+        for policy in (x for x in self.docs if x["kind"] == "NetworkPolicy"):
+            component = policy["spec"]["podSelector"]["matchLabels"]["app.kubernetes.io/component"]
+            allowed[component] = {rule["port"] for rule in policy["spec"]["ingress"][0]["ports"]}
+        self.assertIn(9443, allowed["ingress"])
+        self.assertIn(8081, allowed["router"])
+        # The proxy-router entrypoint refuses an HTTPS InferenceUrl without
+        # cert.pem and private.key, so the TLS Secret must reach it too.
+        for secret, expected in (("edge-tls", True), (None, False)):
+            with self.subTest(tlsSecret=secret):
+                result = render({"ingress": {"tlsSecret": secret}})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                docs = [x for x in yaml.load_all(result.stdout, Loader=UniqueKeyLoader) if x]
+                pod = next(x for x in docs if x["kind"] == "StatefulSet"
+                           and x["metadata"]["name"] == "test-gonka-ha-ingress")["spec"]["template"]["spec"]
+                mounts = {m["mountPath"] for m in pod["initContainers"][0]["volumeMounts"]}
+                self.assertEqual("/etc/haproxy/ssl" in mounts, expected)
+                self.assertEqual(env(pod["initContainers"][0])["NGINX_MODE"], "both" if expected else "http")
+
     def test_no_control_plane_workloads_or_cluster_permissions(self):
         for item in self.docs:
             self.assertNotIn(item["kind"], ["ClusterRole", "ClusterRoleBinding", "Role", "RoleBinding", "Secret"])
