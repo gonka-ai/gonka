@@ -757,7 +757,7 @@ func (rt *devshardRuntime) snapshot() runtimeStatus {
 	if rt.proxy != nil && rt.proxy.sm != nil && rt.proxy.session != nil {
 		phase := rt.proxy.sm.Phase()
 		status.Phase = sessionPhaseLabel(phase)
-		st := rt.proxy.sm.SnapshotState()
+		st := rt.proxy.sm.SnapshotStateNoInferences()
 		status.Nonce = rt.proxy.session.Nonce()
 		status.Balance = st.Balance
 		status.SessionVersion = st.StateRootAndProtocolVersion
