@@ -252,12 +252,37 @@ func TestRetireRotatedDevshardRetiresWithoutSettlement(t *testing.T) {
 	g, _ := newRetireTestGateway("12")
 	settings := GatewaySettings{EscrowRotation: EscrowRotationSettings{SettlementEnabled: false}}
 
-	settled, err := g.retireRotatedDevshard(context.Background(), "12", "rotated", settings)
+	settled, err := g.retireRotatedDevshard(context.Background(), "12", "m", "rotated", settings)
 	require.NoError(t, err)
 	require.False(t, settled)
 
 	_, stillRegistered := g.runtimes["12"]
 	require.False(t, stillRegistered, "no-settle rotation must retire the runtime")
+}
+
+func TestRetireRotatedDevshardHonorsAModelThatDisablesSettlement(t *testing.T) {
+	// Test flow:
+	// 1. Enable settlement globally but disable it for the rotated escrow's model.
+	// 2. Retire the rotated escrow.
+	// 3. It is retired without a settlement broadcast.
+	g, _ := newRetireTestGateway("12")
+	settings := GatewaySettings{EscrowRotation: EscrowRotationSettings{
+		SettlementEnabled: true,
+		Models:            []EscrowRotationModelSettings{{ModelID: "m", SettlementEnabled: boolPtr(false)}},
+	}}
+	oldSettle := gatewaySettleDevshardOnChain
+	gatewaySettleDevshardOnChain = func(*Gateway, context.Context, string, adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+		t.Fatal("a model that opted out of settlement must not be settled")
+		return nil, nil
+	}
+	t.Cleanup(func() { gatewaySettleDevshardOnChain = oldSettle })
+
+	settled, err := g.retireRotatedDevshard(context.Background(), "12", "m", "rotated", settings)
+
+	require.NoError(t, err)
+	require.False(t, settled)
+	_, stillRegistered := g.runtimes["12"]
+	require.False(t, stillRegistered)
 }
 
 func TestRetireRotatedDevshardRetiresWhenAlreadySettled(t *testing.T) {
@@ -270,7 +295,7 @@ func TestRetireRotatedDevshardRetiresWhenAlreadySettled(t *testing.T) {
 	}
 	t.Cleanup(func() { gatewaySettleDevshardOnChain = oldSettle })
 
-	settled, err := g.retireRotatedDevshard(context.Background(), "12", "rotated", settings)
+	settled, err := g.retireRotatedDevshard(context.Background(), "12", "m", "rotated", settings)
 	require.NoError(t, err)
 	require.True(t, settled)
 
@@ -294,7 +319,7 @@ func TestRetireRotatedDevshardRetiresAfterSettlement(t *testing.T) {
 	}
 	t.Cleanup(func() { gatewaySettleDevshardOnChain = oldSettle })
 
-	settled, err := g.retireRotatedDevshard(context.Background(), "12", "rotated", settings)
+	settled, err := g.retireRotatedDevshard(context.Background(), "12", "m", "rotated", settings)
 	require.NoError(t, err)
 	require.True(t, settled)
 

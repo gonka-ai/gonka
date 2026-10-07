@@ -37,6 +37,14 @@ import (
 
 const hsAnchorE2EEscrowID = "9001"
 
+// echoHTTPEndpoints keeps these Echo servers on HTTPClient. An empty set
+// does not override RPCEndpointsFromEnv, which wraps every peer method in
+// Connect. Attach never becomes ready against these routes, SeedHeightSync
+// stays retryable, and the seed loop runs until the package timeout.
+func echoHTTPEndpoints() transport.EndpointSet {
+	return transport.EndpointSet{"echo-http": {}}
+}
+
 // hsE2ERoutePrefix tracks RuntimeTestVersion so the user session (which binds
 // SM version from the route) and host SMs (EffectiveStateRootAndProtocolVersion)
 // compute the same state root.
@@ -436,6 +444,8 @@ func setupFourHostHTTPHeightSyncFromChainOracles(t *testing.T, hostSchedOracle, 
 			f(&cc)
 		}
 	}
+	cc.AllowRetiredHTTPSession = true
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	extra := &cc
 	storagePath := filepath.Join(t.TempDir(), "session.db")
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
@@ -477,6 +487,8 @@ func (st *fourHostStack) newHTTPSession(t *testing.T) *user.Session {
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = st.Oracle
+	cc.AllowRetiredHTTPSession = true
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     st.PrivateKeyHex,
 		EscrowID:          st.Bridge.escrow.EscrowID,
@@ -602,6 +614,8 @@ func (st *oneHostRestartStack) newHTTPSession(t *testing.T) *user.Session {
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = st.Oracle
+	cc.AllowRetiredHTTPSession = true
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     st.PrivateKeyHex,
 		EscrowID:          st.Bridge.escrow.EscrowID,
@@ -719,11 +733,12 @@ func (st *repairTimingStack) wireRepairPeersFrom(prober int) {
 	peers := make(map[int]*transport.HTTPClient, len(st.httpSrvs))
 	for slot, ts := range st.httpSrvs {
 		peers[slot] = transport.NewHTTPClient(ts.URL, "9003", st.user, transport.ClientConfig{
-			QueryTimeout: 200 * time.Millisecond,
-			RoutePrefix:  hsE2ERoutePrefix,
+			AllowRetiredHTTPSession: true,
+			QueryTimeout:            200 * time.Millisecond,
+			RoutePrefix:             hsE2ERoutePrefix,
 		})
 	}
-	st.servers[prober].SetPeerClients(peers)
+	st.servers[prober].SetPeerClients(transport.HTTPPeerClients(peers))
 }
 
 func (st *repairTimingStack) applyDiffsToHosts(t *testing.T, diffs ...types.Diff) {
@@ -775,6 +790,23 @@ func syncHostsFromSession(t *testing.T, st *fourHostStack) {
 	diffs := st.Session.Diffs()
 	for _, srv := range st.Servers {
 		srv.Host().ApplyCatchUpDiffs(diffs)
+	}
+}
+
+// observeComposedDiffs records every diff the session composes from now on.
+// Diffs() is only the retained suffix, which empties once every host answers.
+func observeComposedDiffs(session *user.Session) func() []types.Diff {
+	var mu sync.Mutex
+	var diffs []types.Diff
+	session.SetDiffObserver(func(d types.Diff) {
+		mu.Lock()
+		diffs = append(diffs, d)
+		mu.Unlock()
+	})
+	return func() []types.Diff {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]types.Diff(nil), diffs...)
 	}
 }
 
@@ -1477,7 +1509,12 @@ func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotCompatibility(t *testing.
 	require.Equal(t, uint64(1), resp.Nonce)
 	rootBefore, err := st.Session.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
+	var bare types.EscrowState
 	bareSnapshot, err := json.Marshal(st.Session.StateMachine().SnapshotState())
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(bareSnapshot, &bare))
+	bare.Balance++
+	bareSnapshot, err = json.Marshal(bare)
 	require.NoError(t, err)
 
 	require.NoError(t, st.Session.Close())
@@ -1491,10 +1528,11 @@ func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotCompatibility(t *testing.
 	st.Session = recovered
 	require.Equal(t, uint64(1), recovered.Nonce())
 	require.Len(t, recovered.Diffs(), 1,
-		"legacy bare snapshots have no host cursor, so recovery must backfill pre-snapshot diffs")
+		"a bare snapshot is ignored, so recovery replays the journal into sess.diffs")
 	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
 	require.Equal(t, rootBefore, rootAfter)
+	require.NotEqual(t, bare.Balance, recovered.StateMachine().SnapshotState().Balance)
 
 	upgradedStore, err := storage.NewSQLite(st.StoragePath)
 	require.NoError(t, err)
@@ -1506,7 +1544,8 @@ func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotCompatibility(t *testing.
 		HostSyncNonce map[int]uint64     `json:"host_sync_nonce,omitempty"`
 	}
 	require.NoError(t, json.Unmarshal(upgradedData, &upgraded))
-	require.NotNil(t, upgraded.State, "legacy snapshot must be upgraded to the wrapped format")
+	require.NotNil(t, upgraded.State, "replaying from nonce 1 replaces the bare blob with a wrapper")
+	require.NotEqual(t, bare.Balance, upgraded.State.Balance)
 
 	resp, err = recovered.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -1538,7 +1577,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotUpgradeBecomesSnapshotOnl
 	st.Session = firstRecover
 	require.Equal(t, uint64(1), firstRecover.Nonce())
 	require.Len(t, firstRecover.Diffs(), 1,
-		"first legacy recovery must keep full pre-snapshot backfill for unknown host cursors")
+		"a bare snapshot is ignored, so the first recovery replays the journal")
 
 	resp, err = firstRecover.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -1678,6 +1717,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartHostLowerNonceCatchesUpFromSnapshot(t *
 	ctx := context.Background()
 	st := setupOneHostHTTPHeightSyncRestartStack(t)
 	params := defaultInferenceParams()
+	composed := observeComposedDiffs(st.Session)
 
 	for nonce := uint64(1); nonce <= 2; nonce++ {
 		resp, err := st.Session.SendInference(ctx, params)
@@ -1685,7 +1725,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartHostLowerNonceCatchesUpFromSnapshot(t *
 		require.Equal(t, nonce, resp.Nonce)
 	}
 	require.Equal(t, uint64(2), st.Server.Host().SnapshotState().LatestNonce)
-	diffs := append([]types.Diff(nil), st.Session.Diffs()...)
+	diffs := composed()
 	require.Equal(t, []uint64{1, 2}, diffNonces(diffs))
 	stateSnapshot := st.Session.StateMachine().SnapshotState()
 	rootBefore, err := st.Session.StateMachine().ComputeStateRoot()
@@ -1734,6 +1774,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	require.NoError(t, st.Session.Close())
 	st.Heartbeat = &heightsync.HeartbeatConfig{Interval: 20 * time.Millisecond}
 	st.Session = st.newHTTPSession(t)
+	composed := observeComposedDiffs(st.Session)
 
 	_, err := st.Session.SendInference(ctx, defaultInferenceParams())
 	require.NoError(t, err)
@@ -1742,7 +1783,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	time.Sleep(40 * time.Millisecond)
 
 	require.NoError(t, st.Session.MaybeHeartbeat(ctx))
-	ackDiffs := st.Session.Diffs()
+	ackDiffs := composed()
 	acks := heightAcksInScenarioDiffs(ackDiffs)
 	require.Len(t, acks, 1)
 	require.Equal(t, uint32(0), acks[0].SlotId)
@@ -1767,12 +1808,13 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	require.Empty(t, heightAcksInScenarioTxs(recovered.PendingTxs()),
 		"late duplicate durable height_ack must not re-enter pending after recovery")
 
+	recoveredComposed := observeComposedDiffs(recovered)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
 	var oldTurnAcks []*types.MsgHeightAck
 	var newTurnAcks []*types.MsgHeightAck
 	// ref_nonce names the turn now. The pre-restart ack answers the heartbeat at
 	// acks[0].RefNonce; anything answering a later nonce belongs to the fresh turn.
-	for _, ack := range heightAcksInScenarioDiffs(recovered.Diffs()) {
+	for _, ack := range heightAcksInScenarioDiffs(recoveredComposed()) {
 		if ack.RefNonce == acks[0].RefNonce {
 			oldTurnAcks = append(oldTurnAcks, ack)
 			continue
@@ -2110,6 +2152,8 @@ func setupFourHostHTTPHeightSyncWithToggleableClient(t *testing.T, hostOracles [
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = clientOracle
+	cc.AllowRetiredHTTPSession = true
+	cc.RPCEndpoints = echoHTTPEndpoints()
 	extra := &cc
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     userSigner.PrivateKeyHex(),
@@ -2651,7 +2695,7 @@ func TestHeightSyncAnchor_E2E_StaleOriginRejected(t *testing.T) {
 // originator section replayed after freshness budget F expires.
 func TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected(t *testing.T) {
 	if testing.Short() {
-		t.Skip("held-originator replay requires 70s wall-clock hold (run without -short)")
+		t.Skip("held-originator replay requires 130s wall-clock hold (run without -short)")
 	}
 	ctx := context.Background()
 	logs := installCaptureLogger(t)
@@ -2668,7 +2712,8 @@ func TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected(t *testing.T) {
 	}
 	st, peerTips := setupFourHostHTTPHeightSyncCourier(t, hostOracles, func(cc *transport.ClientConfig) {
 		// Courier cache F is widened so the held originator is still emitted after
-		// the 70s wait (the attack is replay). Host inbound F stays 60s and must reject.
+		// the wait (the attack is replay). Host inbound F stays at
+		// DefaultOriginatorFreshness and must reject.
 		if cc.HeightSyncPeerTips != nil {
 			cc.HeightSyncPeerTips.Freshness = 24 * time.Hour
 			cc.HeightSync = heightsync.MustNewAnchorScheduler(8, 4,
@@ -2681,7 +2726,7 @@ func TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected(t *testing.T) {
 	require.NotNil(t, peerTips.MaxFresh(time.Now(), peerTips.Freshness),
 		"sync turn must warm courier cache before hold")
 
-	time.Sleep(70 * time.Second)
+	time.Sleep(heightsync.DefaultOriginatorFreshness + 10*time.Second)
 
 	staleBefore := heightsync.StaleOriginRejectedTotal()
 	lazyBefore := heightsync.LazyAnchorTotal()

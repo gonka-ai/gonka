@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"common/logging"
+	"common/storage/pgpool"
 	"common/storage/pgtimeouts"
 
 	"github.com/jackc/pgx/v5"
@@ -49,6 +50,11 @@ func newPostgresStorage(ctx context.Context) (*postgresStorage, error) {
 		return nil, fmt.Errorf("parse postgres config: %w", err)
 	}
 	pgtimeouts.ApplyConnConfig(cfg.ConnConfig)
+	// Same cap as the session pool. An uncapped pool follows the CPU count,
+	// and every HA version holds one.
+	if err := pgpool.ConfigureMaxConns(cfg); err != nil {
+		return nil, err
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to postgres: %w", err)

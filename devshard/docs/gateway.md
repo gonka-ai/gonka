@@ -46,7 +46,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `DEVSHARD_ESCROW_ROTATION_ENABLED` | no | `false` | Enable automatic epoch and depletion escrow rotation |
 | - | `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` | no | `false` | Enable automatic finalization and on-chain settlement for rotated escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | no | `300` | Blocks before the next epoch switch at `set_new_validators` to create temp bridge escrows |
-| - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env` |
+| - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env`, optional `settlement_enabled` (overrides `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` for that model) |
 | - | `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` | no | `30` | After client disconnect, keep draining host SSE for protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) up to this many seconds |
 | - | `PGHOST` | no | - | When set (or `DEVSHARD_STORAGE_MODE` is `hybrid`/`postgres`), gateway settings and epoch accounting use Postgres only. Local `{baseStorageDir}/gateway.db` / `accounting.db` are migration sources, not runtime fallbacks |
 | - | `PGPORT` | when `PGHOST` set | `5432` | Postgres port |
@@ -519,6 +519,8 @@ and local deactivation while skipping automatic finalization and on-chain
 settlement. Manual settlement through `POST /v1/admin/devshards/{id}/settle`
 remains available.
 
+A model entry's own `settlement_enabled` overrides the global flag for that model's escrows; when the model omits it, the global `settlement_enabled` (seeded from `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED`) applies. An update that sends `models` replaces the whole list, so a model sent without `settlement_enabled` falls back to the global flag.
+
 Rotation settings are persisted in `gateway.db`. After first boot, update them
 through `POST /v1/admin/settings`:
 
@@ -536,7 +538,8 @@ curl -X POST http://localhost:8080/v1/admin/settings \
         "temp_count": 8,
         "target_count": 16,
         "amount": 5000000000,
-        "private_key_env": "DEVSHARD_PRIVATE_KEY"
+        "private_key_env": "DEVSHARD_PRIVATE_KEY",
+        "settlement_enabled": true
       }]
     },
     "tx_gas_limit": 700000

@@ -69,6 +69,10 @@ type Storage interface {
 	// different payload at the same nonce returns ErrDiffFork.
 	AppendDiff(escrowID string, rec types.DiffRecord) error
 	GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error)
+	// DiffSizes lists stored nonces in [fromNonce, toNonce] in ascending
+	// order, at most limit of them, with the stored txs_proto length. It is
+	// one indexed read and does not decode transactions.
+	DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error)
 	AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error
 	GetSignatures(escrowID string, nonce uint64) (map[uint32][]byte, error)
 	GetSessionMeta(escrowID string) (*SessionMeta, error)
@@ -99,6 +103,17 @@ type Storage interface {
 	// ClearValidationObs removes all live and sealed validation observability
 	// rows for an escrow. Used when rebuilding obs from the diff journal.
 	ClearValidationObs(escrowID string) error
+	// SetValidationObsRebuildPending marks whether the escrow's obs rows are
+	// mid-rebuild. It is stored on the session row, so it survives a restart
+	// and is dropped with the session.
+	SetValidationObsRebuildPending(escrowID string, pending bool) error
+	// ValidationObsRebuildPending reports a rebuild that cleared the obs rows
+	// and has not finished. A session without the mark reads false.
+	ValidationObsRebuildPending(escrowID string) (bool, error)
+	// LockValidationObsRebuild takes the escrow's rebuild lock without
+	// waiting. acquired is false when another process holds it. The lock is
+	// released by unlock or by the holder's death, never by a stale row.
+	LockValidationObsRebuild(escrowID string) (unlock func(), acquired bool, err error)
 	// RecordValidationsAppliedOnce records required+completed=1 for each
 	// (inference_id, slot_id) entry at most once per escrow epoch, reusing the
 	// devshard_inference_validation_obs unique key as the dedup ledger via
@@ -144,6 +159,10 @@ type EscrowCacheInfo struct {
 	RefusalTimeout            int64    `json:"refusal_timeout,omitempty"`
 	ExecutionTimeout          int64    `json:"execution_timeout,omitempty"`
 	EpochID                   uint64   `json:"epoch_id"`
+	// SlotURLs is {validator address → InferenceUrl} captured at warm time
+	// when this host is in Slots. Local directory metadata, not the state
+	// root. Empty when this process is not a group member.
+	SlotURLs map[string]string `json:"slot_urls,omitempty"`
 	// CachedAt is the unix time the row was written, stamped by the store.
 	// Readers use it to refuse a row that is too old to stand in for the chain;
 	// rows written before this field existed read as 0 and count as stale.

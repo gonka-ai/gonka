@@ -8,6 +8,7 @@ import (
 
 	"devshard/bridge"
 	"devshard/storage"
+	"devshard/transport"
 	"devshard/types"
 
 	"github.com/stretchr/testify/require"
@@ -142,4 +143,112 @@ func (httpsessionTestBridge) GetValidationThreshold(uint64, string) (*bridge.Dec
 func (httpsessionTestBridge) VerifyWarmKey(string, string) (bool, error) { return true, nil }
 func (httpsessionTestBridge) SubmitDisputeState(string, []byte, uint64, map[uint32][]byte) error {
 	return nil
+}
+
+type rpcLifecycleBridge struct {
+	httpsessionTestBridge
+	slots    []string
+	failHost string
+}
+
+func (b rpcLifecycleBridge) GetEscrow(id string) (*bridge.EscrowInfo, error) {
+	info, err := b.httpsessionTestBridge.GetEscrow(id)
+	if err != nil {
+		return nil, err
+	}
+	info.EscrowID = id
+	if len(b.slots) > 0 {
+		info.Slots = append([]string(nil), b.slots...)
+	}
+	return info, nil
+}
+
+func (b rpcLifecycleBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
+	if b.failHost != "" && address == b.failHost {
+		return nil, errors.New("host info failed")
+	}
+	return &bridge.HostInfo{Address: address, URL: "http://127.0.0.1:1"}, nil
+}
+
+func rpcSignaturesConfig() *transport.ClientConfig {
+	return &transport.ClientConfig{RPCEndpoints: transport.ParseRPCEndpoints(transport.EndpointSignatures)}
+}
+
+func TestNewHTTPSession_GetHostInfoErrorReleasesPeerConn(t *testing.T) {
+	const privateKeyHex = "0000000000000000000000000000000000000000000000000000000000000001"
+	hostA := "host-rpc-a"
+	hostB := "host-rpc-b"
+	_, _, err := NewHTTPSession(HTTPSessionConfig{
+		PrivateKeyHex: privateKeyHex,
+		EscrowID:      "9801",
+		Bridge: rpcLifecycleBridge{
+			slots:    []string{hostA, hostB},
+			failHost: hostB,
+		},
+		StoragePath:       filepath.Join(t.TempDir(), "session"),
+		RoutePrefix:       "/devshard/dev",
+		ExtraClientConfig: rpcSignaturesConfig(),
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "get host info")
+	require.False(t, transport.PeerConnRegistered(hostA, "dev"))
+}
+
+func TestNewHTTPSession_RecoverErrorReleasesPeerConn(t *testing.T) {
+	const privateKeyHex = "0000000000000000000000000000000000000000000000000000000000000001"
+	host := "host-rpc-recover"
+	storagePath := filepath.Join(t.TempDir(), "session")
+	store, err := storage.NewSQLite(storagePath)
+	require.NoError(t, err)
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "9801",
+		EpochID:        7,
+		Version:        "dev",
+		CreatorAddr:    "creator",
+		Group:          []types.SlotAssignment{{SlotID: 0, ValidatorAddress: host}},
+		InitialBalance: 1_000_000,
+	}))
+	require.NoError(t, store.AppendDiff("9801", types.DiffRecord{Diff: types.Diff{Nonce: 1}}))
+	require.NoError(t, store.AppendDiff("9801", types.DiffRecord{Diff: types.Diff{Nonce: 3}}))
+	require.NoError(t, store.Close())
+
+	_, _, err = NewHTTPSession(HTTPSessionConfig{
+		PrivateKeyHex:     privateKeyHex,
+		EscrowID:          "9801",
+		Bridge:            rpcLifecycleBridge{slots: []string{host}},
+		StoragePath:       storagePath,
+		RoutePrefix:       "/devshard/dev",
+		ExtraClientConfig: rpcSignaturesConfig(),
+	})
+	require.ErrorIs(t, err, ErrLocalStateUnrecoverable)
+	require.False(t, transport.PeerConnRegistered(host, "dev"))
+}
+
+func TestSession_Close_SharedPeerConnStaysUntilLast(t *testing.T) {
+	const privateKeyHex = "0000000000000000000000000000000000000000000000000000000000000001"
+	host := "host-rpc-share"
+	br := rpcLifecycleBridge{slots: []string{host}}
+	s1, _, err := NewHTTPSession(HTTPSessionConfig{
+		PrivateKeyHex:     privateKeyHex,
+		EscrowID:          "9801",
+		Bridge:            br,
+		StoragePath:       filepath.Join(t.TempDir(), "s1"),
+		RoutePrefix:       "/devshard/dev",
+		ExtraClientConfig: rpcSignaturesConfig(),
+	})
+	require.NoError(t, err)
+	s2, _, err := NewHTTPSession(HTTPSessionConfig{
+		PrivateKeyHex:     privateKeyHex,
+		EscrowID:          "9802",
+		Bridge:            br,
+		StoragePath:       filepath.Join(t.TempDir(), "s2"),
+		RoutePrefix:       "/devshard/dev",
+		ExtraClientConfig: rpcSignaturesConfig(),
+	})
+	require.NoError(t, err)
+	require.True(t, transport.PeerConnRegistered(host, "dev"))
+	require.NoError(t, s1.Close())
+	require.True(t, transport.PeerConnRegistered(host, "dev"), "first Close must keep the shared PeerConn")
+	require.NoError(t, s2.Close())
+	require.False(t, transport.PeerConnRegistered(host, "dev"))
 }

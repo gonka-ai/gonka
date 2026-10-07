@@ -15,15 +15,29 @@ import (
 
 type sinkFakeBridge struct {
 	bridge.MainnetBridge
-	escrow *bridge.EscrowInfo
-	err    error
+	escrow  *bridge.EscrowInfo
+	err     error
+	hosts   map[string]string
+	escrowN int
+	hostN   int
 }
 
 func (f *sinkFakeBridge) GetEscrow(string) (*bridge.EscrowInfo, error) {
+	f.escrowN++
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.escrow, nil
+}
+
+func (f *sinkFakeBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
+	f.hostN++
+	if f.hosts != nil {
+		if url, ok := f.hosts[address]; ok {
+			return &bridge.HostInfo{Address: address, URL: url}, nil
+		}
+	}
+	return nil, bridge.ErrParticipantNotFound
 }
 
 func TestEscrowWarmSink_WarmEscrowPopulatesCache(t *testing.T) {
@@ -31,7 +45,7 @@ func TestEscrowWarmSink_WarmEscrowPopulatesCache(t *testing.T) {
 	br := &sinkFakeBridge{escrow: &bridge.EscrowInfo{
 		EscrowID: "1", CreatorAddress: "gonka1owner", EpochID: 3, Amount: 100, VoteThresholdFactor: 2,
 	}}
-	sink := newEscrowWarmSink(br, store, nil, nil)
+	sink := newEscrowWarmSink(br, store, nil, nil, "")
 
 	require.NoError(t, sink.WarmEscrow("1"))
 
@@ -40,17 +54,98 @@ func TestEscrowWarmSink_WarmEscrowPopulatesCache(t *testing.T) {
 	require.Equal(t, "gonka1owner", got.CreatorAddress)
 	require.Equal(t, uint64(3), got.EpochID)
 	require.Equal(t, uint32(2), got.VoteThresholdFactor)
+	require.Empty(t, got.SlotURLs, "URLs are only stored when this host is in Slots")
 }
 
 func TestEscrowWarmSink_WarmEscrowChainErrorDoesNotCache(t *testing.T) {
 	store := devshardstorage.NewMemory()
 	br := &sinkFakeBridge{err: errors.New("chain down")}
-	sink := newEscrowWarmSink(br, store, nil, nil)
+	sink := newEscrowWarmSink(br, store, nil, nil, "")
 
 	require.Error(t, sink.WarmEscrow("1"))
 
 	_, err := store.GetEscrowCache("1")
 	require.ErrorIs(t, err, devshardstorage.ErrEscrowCacheNotFound)
+}
+
+func TestEscrowWarmSink_WarmFromInfoSkipsGetEscrow(t *testing.T) {
+	store := devshardstorage.NewMemory()
+	br := &sinkFakeBridge{err: errors.New("chain must not be queried")}
+	sink := newEscrowWarmSink(br, store, nil, nil, "")
+
+	require.NoError(t, sink.WarmFromInfo(&bridge.EscrowInfo{
+		EscrowID: "2", CreatorAddress: "gonka1owner", EpochID: 4, Amount: 50, Slots: []string{"a"},
+	}))
+	require.Equal(t, 0, br.escrowN)
+
+	got, err := store.GetEscrowCache("2")
+	require.NoError(t, err)
+	require.Equal(t, "gonka1owner", got.CreatorAddress)
+	require.Empty(t, got.SlotURLs)
+}
+
+func TestEscrowWarmSink_StoresSlotURLsWhenLocalMember(t *testing.T) {
+	store := devshardstorage.NewMemory()
+	local := "gonka1us"
+	br := &sinkFakeBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID: "3", CreatorAddress: "gonka1owner", EpochID: 1,
+			Slots: []string{local, "gonka1peer"},
+		},
+		hosts: map[string]string{
+			local:        "http://us:8080",
+			"gonka1peer": "http://peer:8080",
+		},
+	}
+	sink := newEscrowWarmSink(br, store, nil, nil, local)
+
+	require.NoError(t, sink.WarmEscrow("3"))
+	require.Equal(t, 1, br.escrowN)
+	require.Equal(t, 2, br.hostN)
+
+	got, err := store.GetEscrowCache("3")
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{
+		local:        "http://us:8080",
+		"gonka1peer": "http://peer:8080",
+	}, got.SlotURLs)
+}
+
+func TestEscrowWarmSink_NoSlotURLsWhenNotMember(t *testing.T) {
+	store := devshardstorage.NewMemory()
+	br := &sinkFakeBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID: "4", CreatorAddress: "gonka1owner", EpochID: 1,
+			Slots: []string{"gonka1a", "gonka1b"},
+		},
+		hosts: map[string]string{"gonka1a": "http://a"},
+	}
+	sink := newEscrowWarmSink(br, store, nil, nil, "gonka1other")
+
+	require.NoError(t, sink.WarmEscrow("4"))
+	require.Equal(t, 0, br.hostN)
+	got, err := store.GetEscrowCache("4")
+	require.NoError(t, err)
+	require.Empty(t, got.SlotURLs)
+}
+
+func TestEscrowWarmSink_PartialSlotURLsStillCache(t *testing.T) {
+	store := devshardstorage.NewMemory()
+	local := "gonka1us"
+	br := &sinkFakeBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID: "5", CreatorAddress: "gonka1owner", EpochID: 1,
+			Slots: []string{local, "gonka1missing"},
+		},
+		hosts: map[string]string{local: "http://us:8080"},
+	}
+	sink := newEscrowWarmSink(br, store, nil, nil, local)
+
+	require.NoError(t, sink.WarmEscrow("5"))
+	got, err := store.GetEscrowCache("5")
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{local: "http://us:8080"}, got.SlotURLs)
+	require.Equal(t, "gonka1owner", got.CreatorAddress)
 }
 
 func TestEscrowWarmSink_WarmSettledEscrowDoesNotCache(t *testing.T) {
@@ -63,7 +158,7 @@ func TestEscrowWarmSink_WarmSettledEscrowDoesNotCache(t *testing.T) {
 	sink := newEscrowWarmSink(br, store, nil, func(id string) error {
 		finalized = append(finalized, id)
 		return nil
-	})
+	}, "")
 
 	require.NoError(t, sink.WarmEscrow("1"))
 
@@ -78,7 +173,7 @@ func TestEscrowWarmSink_OnEscrowSettledFinalizesSession(t *testing.T) {
 	sink := newEscrowWarmSink(&sinkFakeBridge{}, store, nil, func(id string) error {
 		finalized = append(finalized, id)
 		return nil
-	})
+	}, "")
 
 	require.NoError(t, sink.OnEscrowSettled("7"))
 	require.Equal(t, []string{"7"}, finalized)
@@ -88,7 +183,7 @@ func TestEscrowWarmSink_OnEscrowSettledPropagatesFinalizeError(t *testing.T) {
 	store := devshardstorage.NewMemory()
 	sink := newEscrowWarmSink(&sinkFakeBridge{}, store, nil, func(string) error {
 		return errors.New("mark settled failed")
-	})
+	}, "")
 
 	require.Error(t, sink.OnEscrowSettled("7"))
 }
@@ -96,7 +191,7 @@ func TestEscrowWarmSink_OnEscrowSettledPropagatesFinalizeError(t *testing.T) {
 func TestEscrowWarmSink_OnEscrowSettledDropsCache(t *testing.T) {
 	store := devshardstorage.NewMemory()
 	require.NoError(t, store.PutEscrowCache(devshardstorage.EscrowCacheInfo{EscrowID: "1", EpochID: 1}))
-	sink := newEscrowWarmSink(&sinkFakeBridge{}, store, nil, nil)
+	sink := newEscrowWarmSink(&sinkFakeBridge{}, store, nil, nil, "")
 
 	require.NoError(t, sink.OnEscrowSettled("1"))
 
@@ -164,7 +259,7 @@ func TestEscrowWarmSink_RehydrateFinalizesChainSettledSessions(t *testing.T) {
 	sink := newEscrowWarmSink(br, store, nil, func(id string) error {
 		finalized = append(finalized, id)
 		return store.MarkSettled(id)
-	})
+	}, "")
 
 	sink.RehydrateOpenEscrows()
 
@@ -182,7 +277,7 @@ func TestEscrowWarmSink_RehydrateKeepsSessionsWhenChainUnreachable(t *testing.T)
 	sink := newEscrowWarmSink(br, store, nil, func(id string) error {
 		finalized = append(finalized, id)
 		return nil
-	})
+	}, "")
 
 	sink.RehydrateOpenEscrows()
 
@@ -197,7 +292,7 @@ func TestEscrowWarmSink_RehydrateKeepsSessionsWhenChainUnreachable(t *testing.T)
 func TestEscrowWarmSink_RehydrateThrottlesRepeatSweeps(t *testing.T) {
 	store := newActiveSessionStore(t, "1")
 	br := &perEscrowBridge{}
-	sink := newEscrowWarmSink(br, store, nil, nil)
+	sink := newEscrowWarmSink(br, store, nil, nil, "")
 
 	sink.RehydrateOpenEscrows()
 	require.Equal(t, 1, br.callCount())
@@ -211,7 +306,7 @@ func TestEscrowWarmSink_RehydrateThrottlesRepeatSweeps(t *testing.T) {
 func TestEscrowWarmSink_RehydrateRetriesAfterIncompleteSweep(t *testing.T) {
 	store := newActiveSessionStore(t, "1")
 	br := &perEscrowBridge{errs: map[string]error{"1": errors.New("chain down")}}
-	sink := newEscrowWarmSink(br, store, nil, store.MarkSettled)
+	sink := newEscrowWarmSink(br, store, nil, store.MarkSettled, "")
 
 	sink.RehydrateOpenEscrows()
 	require.Equal(t, 1, br.callCount())
@@ -238,7 +333,7 @@ func TestEscrowWarmSink_RehydrateHungChainDoesNotStallEventLoop(t *testing.T) {
 	sink := newEscrowWarmSink(br, store, nil, func(id string) error {
 		finalized = append(finalized, id)
 		return nil
-	})
+	}, "")
 
 	done := make(chan struct{})
 	go func() {

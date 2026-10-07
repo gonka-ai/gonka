@@ -553,6 +553,10 @@ func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey
 			participantKey, statusCode, participantPathKind(path))
 		return
 	}
+	if transport.IsEscrowLookupLimited(statusCode, devshardError) {
+		l.observeEscrowLookupLimited(participantKey, modelID, path)
+		return
+	}
 	quarantineFor := l.participantHTTPQuarantine(path, statusCode, body)
 	if quarantineFor == 0 {
 		return
@@ -568,6 +572,40 @@ func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey
 		participantKey, statusCode, participantPathKind(path))
 
 	l.persistThrottledStateLocked(participantKey, l.participants[participantKey], statusCode)
+}
+
+// observeEscrowLookupLimited is a host that refused a first bind because its
+// unknown-escrow lookup budget was full. That budget is spent by other
+// callers, so a refusal is a strike, not the 429 quarantine. X-Devshard-Error
+// is host-set: a host that keeps answering it still reaches the 429
+// quarantine at the strike threshold.
+func (l *ParticipantRequestLimiter) observeEscrowLookupLimited(participantKey, modelID, path string) {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	state := l.ensureStateLocked(participantKey, now)
+	l.clearExpiredQuarantineIfAnyLocked(participantKey, state, now)
+	state, ok := l.participants[participantKey]
+	if !ok {
+		state = l.ensureStateLocked(participantKey, now)
+	}
+	if l.inQuarantineLocked(state, now) {
+		return
+	}
+	l.addModelLocked(state, modelID)
+	state.failureStrikes++
+	if state.failureStrikes >= l.failureStrikeThreshold {
+		l.applyQuarantineLocked(participantKey, modelID, now.Add(l.httpThrottleQuarantine), now, participantQuarantineProbe)
+		l.recordQuarantineTransition(participantKey, modelID, participantQuarantineProbe.String(), "escrow_lookup_limited_quarantine")
+		log.Printf("participant_limit_escrow_lookup_limited_quarantine participant_key=%s model_id=%q path_kind=%s strikes=%d threshold=%d",
+			participantKey, normalizeModelID(modelID), participantPathKind(path), state.failureStrikes, l.failureStrikeThreshold)
+		l.persistThrottledStateLocked(participantKey, state, http.StatusTooManyRequests)
+		return
+	}
+	log.Printf("participant_limit_escrow_lookup_limited participant_key=%s model_id=%q path_kind=%s strikes=%d threshold=%d",
+		participantKey, normalizeModelID(modelID), participantPathKind(path), state.failureStrikes, l.failureStrikeThreshold)
+	l.persistThrottledStateLocked(participantKey, state, participantStatusTransport)
 }
 
 // ObserveTransportFailure records that a request to this host never received an

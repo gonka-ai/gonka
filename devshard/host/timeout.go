@@ -19,6 +19,20 @@ type FinishProposerVerifier interface {
 	VerifyFinishProposerSig(msg *types.MsgFinishInference) error
 }
 
+// EvidenceVerifier checks a ConfirmStart or Finish before it can reject a
+// refused or execution timeout. Both must be signed by the executor slot,
+// and the signed content binds this escrow and this inference. Neither check
+// caches a warm binding. *state.StateMachine and *Host implement this. With a
+// nil verifier nothing is evidence, and the timeout stands.
+type EvidenceVerifier interface {
+	CheckExecutorReceipt(rec *types.InferenceRecord, confirm *types.MsgConfirmStart) error
+	CheckFinishProposerSig(msg *types.MsgFinishInference) error
+}
+
+// maxEvidenceChecks bounds signature recoveries per mempool scan. An honest
+// pool holds one ConfirmStart and at most one Finish per inference.
+const maxEvidenceChecks = 4
+
 // TimeoutArtifacts is evidence forwarded with an error-miss verification RPC.
 // Required for MsgErrorMiss (finish_tx + response_payload). Unused for
 // refused/execution timeout votes.
@@ -31,22 +45,86 @@ func (h *Host) VerifyFinishProposerSig(msg *types.MsgFinishInference) error {
 	return h.sm.VerifyFinishProposerSig(msg)
 }
 
-var _ FinishProposerVerifier = (*Host)(nil)
+func (h *Host) CheckExecutorReceipt(rec *types.InferenceRecord, confirm *types.MsgConfirmStart) error {
+	return h.sm.CheckExecutorReceipt(rec, confirm)
+}
+
+func (h *Host) CheckFinishProposerSig(msg *types.MsgFinishInference) error {
+	return h.sm.CheckFinishProposerSig(msg)
+}
+
+var (
+	_ FinishProposerVerifier = (*Host)(nil)
+	_ EvidenceVerifier       = (*Host)(nil)
+)
+
+// verifiedConfirm returns the first ConfirmStart for inferenceID in pool whose
+// executor signature verifies. A non-nil receipt must equal its ExecutorSig.
+func verifiedConfirm(ev EvidenceVerifier, inferenceID uint64, rec *types.InferenceRecord, receipt []byte, pool []*types.DevshardTx) *types.DevshardTx {
+	if ev == nil || rec == nil {
+		return nil
+	}
+	checks := 0
+	for _, tx := range pool {
+		cs := tx.GetConfirmStart()
+		if cs == nil || cs.InferenceId != inferenceID || len(cs.ExecutorSig) == 0 {
+			continue
+		}
+		if receipt != nil && !bytes.Equal(receipt, cs.ExecutorSig) {
+			continue
+		}
+		if checks == maxEvidenceChecks {
+			return nil
+		}
+		checks++
+		if ev.CheckExecutorReceipt(rec, cs) == nil {
+			return tx
+		}
+	}
+	return nil
+}
+
+// verifiedFinish returns the first Finish for this escrow, inference, and
+// executor slot in pool whose proposer signature verifies.
+func verifiedFinish(ev EvidenceVerifier, escrowID string, inferenceID uint64, rec *types.InferenceRecord, pool []*types.DevshardTx) *types.DevshardTx {
+	if ev == nil || rec == nil {
+		return nil
+	}
+	checks := 0
+	for _, tx := range pool {
+		fi := tx.GetFinishInference()
+		if fi == nil || fi.InferenceId != inferenceID || fi.EscrowId != escrowID || fi.ExecutorSlot != rec.ExecutorSlot {
+			continue
+		}
+		if checks == maxEvidenceChecks {
+			return nil
+		}
+		checks++
+		if ev.CheckFinishProposerSig(fi) == nil {
+			return tx
+		}
+	}
+	return nil
+}
 
 // ExecutorClient contacts the executor host to check inference status.
 type ExecutorClient interface {
-	// GetMempool returns the executor's pending transactions.
-	// Used by VerifyExecutionTimeout to check for MsgFinishInference.
+	// GetMempool returns the executor's pending transactions for an
+	// already-bound session. It cannot CreateSession.
 	GetMempool(ctx context.Context) ([]*types.DevshardTx, error)
 
-	// ChallengeReceipt forwards diffs + payload to the executor.
-	// The executor applies missing diffs, verifies the payload, and returns
-	// a signed receipt if it can produce one. Also triggers execution so
-	// the inference actually completes. Returns nil receipt if executor
-	// cannot produce one (not the executor, inference not pending, etc).
-	// mempool is a snapshot of the executor's pool after the challenge
-	// (typically including MsgConfirmStart). Callers must copy those txs
-	// rather than synthesizing ConfirmStart from the receipt.
+	// ChallengeReceipt forwards creator-signed diffs to the executor.
+	// The host CreateSession from the gateway signature in those diffs when
+	// it has not bound the escrow, then applies missing diffs. With a payload
+	// it verifies the payload, returns a signed receipt, and triggers
+	// execution. A nil payload only binds and catches up: no receipt, no
+	// execution. mempool is the executor pool after that (ConfirmStart and
+	// FinishInference for this inference). A refused vote challenges once,
+	// with the payload and no diffs, and copies a ConfirmStart only after
+	// the receipt verifies for this escrow, this inference, and this executor.
+	// An execution vote challenges once, with a nil payload and no diffs, and
+	// rejects only when the returned pool contains a MsgFinishInference for
+	// this escrow and inference whose proposer signature recovers to the executor.
 	ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) (receipt []byte, mempool []*types.DevshardTx, err error)
 }
 
@@ -80,20 +158,44 @@ func RecoveryTxsFor(txs []*types.DevshardTx, inferenceID uint64) []*types.Devsha
 // Flow:
 //  1. Check local state: inference must be pending (no receipt).
 //  2. Check deadline has passed.
-//  3. Check local mempool for MsgConfirmStart -- if found, reject.
+//  3. Check local mempool for a verified MsgConfirmStart or MsgFinishInference -- if found, reject.
 //  4. Validate payload against on-chain record (same checks executor does).
-//  5. Challenge executor: forward diffs + payload in one call.
-//  6. If executor produces receipt -> reject (it received data and will compute).
-//  7. If executor unreachable or no receipt -> accept.
+//  5. Challenge the executor once, with the payload and no diffs.
+//  6. If the executor produces a receipt signed for this escrow and this
+//     inference by the executor -> reject (it has the inference and will compute).
+//  7. If the executor is unreachable, or the receipt does not verify -> accept.
 func VerifyRefusedTimeout(
 	ctx context.Context,
 	st types.EscrowState,
 	inferenceID uint64,
 	payload *InferencePayload,
-	storedDiffs []types.Diff,
 	localMempool []*types.DevshardTx,
 	executorClient ExecutorClient,
 	ingest TxSink,
+	ev EvidenceVerifier,
+	config types.SessionConfig,
+	nowUnix int64,
+) (bool, error) {
+	return verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, executorClient, ingest, ev, config, nowUnix)
+}
+
+type refusedChallenge int
+
+const (
+	refusedUnreachable refusedChallenge = iota
+	refusedReceipt
+	refusedNoReceipt
+)
+
+func verifyRefusedTimeout(
+	ctx context.Context,
+	st types.EscrowState,
+	inferenceID uint64,
+	payload *InferencePayload,
+	localMempool []*types.DevshardTx,
+	executorClient ExecutorClient,
+	ingest TxSink,
+	ev EvidenceVerifier,
 	config types.SessionConfig,
 	nowUnix int64,
 ) (bool, error) {
@@ -110,14 +212,10 @@ func VerifyRefusedTimeout(
 		return false, nil
 	}
 
-	// Fast path: check local mempool for MsgConfirmStart or MsgFinishInference.
-	for _, tx := range localMempool {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
-			return false, nil // executor already confirmed
-		}
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
-			return false, nil // executor already finished
-		}
+	// Fast path: a verified MsgConfirmStart or MsgFinishInference in the local mempool.
+	if verifiedConfirm(ev, inferenceID, rec, nil, localMempool) != nil ||
+		verifiedFinish(ev, st.EscrowID, inferenceID, rec, localMempool) != nil {
+		return false, nil
 	}
 
 	// Reject if no payload provided.
@@ -130,27 +228,50 @@ func VerifyRefusedTimeout(
 		return false, nil // bad payload -> reject timeout
 	}
 
-	// Challenge executor: one call that applies diffs + verifies payload + returns receipt.
-	if executorClient != nil {
-		receipt, mempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, storedDiffs)
-		if err != nil {
-			// Executor unreachable or internal error -> accept timeout.
-			return true, nil
-		}
-		if len(receipt) > 0 {
-			// Copy executor recovery txs into the verifier pool. Same bytes as
-			// the executor queued — do not mint a new ConfirmStart from receipt.
-			if ingest != nil {
-				for _, tx := range RecoveryTxsFor(mempool, inferenceID) {
-					ingest.AddTx(tx)
-				}
-			}
-			return false, nil // executor produced receipt -> reject timeout
-		}
-		// Executor reachable but no receipt (refusing to work) -> accept timeout.
+	if executorClient == nil {
+		return true, nil
 	}
+	return finishRefusedChallenge(challengeRefused(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev))
+}
 
-	return true, nil
+func finishRefusedChallenge(outcome refusedChallenge) (bool, error) {
+	return outcome != refusedReceipt, nil
+}
+
+func challengeRefused(
+	ctx context.Context,
+	escrowID string,
+	inferenceID uint64,
+	rec *types.InferenceRecord,
+	payload *InferencePayload,
+	diffs []types.Diff,
+	executorClient ExecutorClient,
+	ingest TxSink,
+	ev EvidenceVerifier,
+) refusedChallenge {
+	receipt, mempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, diffs)
+	if err != nil {
+		// Executor unreachable or internal error -> accept timeout.
+		return refusedUnreachable
+	}
+	if len(receipt) == 0 {
+		return refusedNoReceipt
+	}
+	// The receipt counts only as the ExecutorSig of a queued ConfirmStart
+	// that verifies for this escrow and this inference.
+	confirmTx := verifiedConfirm(ev, inferenceID, rec, receipt, mempool)
+	if confirmTx == nil {
+		return refusedNoReceipt
+	}
+	// Copy the verified txs. Same bytes the executor queued — do not mint a
+	// new ConfirmStart from the receipt, and do not copy anything unverified.
+	if ingest != nil {
+		ingest.AddTx(confirmTx)
+		if finishTx := verifiedFinish(ev, escrowID, inferenceID, rec, mempool); finishTx != nil {
+			ingest.AddTx(finishTx)
+		}
+	}
+	return refusedReceipt
 }
 
 // VerifyExecutionTimeout checks if an execution timeout is valid.
@@ -158,15 +279,20 @@ func VerifyRefusedTimeout(
 // Flow:
 //  1. Check local state: inference must be started (has receipt, no finish).
 //  2. Check deadline has passed.
-//  3. Check local mempool for MsgFinishInference -- if found, reject.
-//  4. Check executor mempool for MsgFinishInference -- if found, reject.
-//  5. If executor unreachable or no result -> accept.
+//  3. Check local mempool for a verified MsgFinishInference -- if found, reject.
+//  4. Challenge the executor once, with a nil payload and no diffs.
+//     A MsgFinishInference in the returned pool rejects the timeout only
+//     when it is for this escrow and this inference and its proposer
+//     signature recovers to the executor. The nil payload does not sign a
+//     receipt or start execution.
+//  5. If the executor is unreachable, or the finish does not verify -> accept.
 func VerifyExecutionTimeout(
 	ctx context.Context,
 	st types.EscrowState,
 	inferenceID uint64,
 	localMempool []*types.DevshardTx,
 	executorClient ExecutorClient,
+	ev EvidenceVerifier,
 	config types.SessionConfig,
 	nowUnix int64,
 ) (bool, error) {
@@ -184,24 +310,21 @@ func VerifyExecutionTimeout(
 		return false, nil
 	}
 
-	// Fast path: check local mempool for MsgFinishInference.
-	for _, tx := range localMempool {
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
-			return false, nil // executor already finished
-		}
+	// Fast path: a verified MsgFinishInference in the local mempool.
+	if verifiedFinish(ev, st.EscrowID, inferenceID, rec, localMempool) != nil {
+		return false, nil
 	}
 
-	// Contact executor.
+	// One challenge, no journal. A nil payload does not sign a receipt or
+	// start execution. A host that never applied the start has no finish
+	// to return, and the timeout stands.
 	if executorClient != nil {
-		executorMempool, err := executorClient.GetMempool(ctx)
-		if err == nil {
-			for _, tx := range executorMempool {
-				if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
-					return false, nil // executor has the finish, reject timeout
-				}
-			}
+		_, executorMempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, nil, nil)
+		if err == nil && verifiedFinish(ev, st.EscrowID, inferenceID, rec, executorMempool) != nil {
+			return false, nil
 		}
-		// err != nil means executor unreachable, which supports the timeout claim.
+		// An unreachable executor supports the timeout claim, and a finish
+		// that does not verify is not evidence the work completed.
 	}
 
 	return true, nil

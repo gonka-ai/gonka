@@ -222,7 +222,7 @@ func TestPayloadResponseByteLimit_ScalesWithOutputTokens(t *testing.T) {
 	small := PayloadResponseByteLimit(32)
 	large := PayloadResponseByteLimit(16_384)
 	assert.Greater(t, large, small)
-	assert.Equal(t, int64(maxPayloadResponseBytesHard), PayloadResponseByteLimit(200_000))
+	assert.Equal(t, int64(MaxPayloadResponseBytesHard), PayloadResponseByteLimit(200_000))
 }
 
 // A claimed output-token count near the uint64 ceiling must clip to the hard
@@ -239,16 +239,16 @@ func TestPayloadResponseByteLimit_HugeTokenCountsClipAndStayMonotonic(t *testing
 		^uint64(0),
 	} {
 		got := PayloadResponseByteLimit(out)
-		assert.Equal(t, int64(maxPayloadResponseBytesHard), got, "outputTokens=%d must clip", out)
+		assert.Equal(t, int64(MaxPayloadResponseBytesHard), got, "outputTokens=%d must clip", out)
 		assert.Greater(t, got, modest, "outputTokens=%d must not undercut a modest request", out)
 	}
 }
 
 func TestPayloadReadLimit_ZeroUsesDefault(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, int64(MaxPayloadResponseBytes), payloadReadLimit(0))
-	assert.Equal(t, int64(1<<20), payloadReadLimit(1<<20))
-	assert.Equal(t, int64(maxPayloadResponseBytesHard), payloadReadLimit(maxPayloadResponseBytesHard+1))
+	assert.Equal(t, int64(MaxPayloadResponseBytes), PayloadReadLimit(0))
+	assert.Equal(t, int64(1<<20), PayloadReadLimit(1<<20))
+	assert.Equal(t, int64(MaxPayloadResponseBytesHard), PayloadReadLimit(MaxPayloadResponseBytesHard+1))
 }
 
 func TestFetchPayloadsHTTP_ValidResponseDecodes(t *testing.T) {
