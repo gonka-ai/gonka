@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -27,7 +28,6 @@ import (
 )
 
 type adminAuthContextKey struct{}
-type adminAPIKeySuffixContextKey struct{}
 
 const (
 	defaultChainGRPCURL            = "localhost:9090"
@@ -679,9 +679,27 @@ func buildGatewayHandler(gateway *Gateway, opts runtimeOptions) http.Handler {
 		gateway.mu.Unlock()
 	}
 	log.Printf("gateway API keys loaded (%d key(s)); per-model access modes are configured in gateway settings", len(opts.apiKeys))
+	warnShortGatewayKeys(opts.apiKeys, opts.adminAPIKey)
 	handler = adminAuthMiddleware(opts.adminAPIKey, handler)
 	handler = gateway.disabledMiddleware(handler)
 	return gateway.metrics.Wrap(handler)
+}
+
+const minRecommendedGatewayKeyLength = 32
+
+func warnShortGatewayKeys(apiKeys map[string]struct{}, adminKey string) {
+	short := 0
+	for key := range apiKeys {
+		if len(key) < minRecommendedGatewayKeyLength {
+			short++
+		}
+	}
+	if short > 0 {
+		log.Printf("WARNING: %d gateway API key(s) shorter than %d characters; generate keys with `openssl rand -hex 24`", short, minRecommendedGatewayKeyLength)
+	}
+	if adminKey != "" && len(adminKey) < minRecommendedGatewayKeyLength {
+		log.Printf("WARNING: gateway admin API key shorter than %d characters; generate it with `openssl rand -hex 24`", minRecommendedGatewayKeyLength)
+	}
 }
 
 func serveGateway(handler http.Handler, port string, runtimeCount int) {
@@ -751,10 +769,9 @@ func adminAuthMiddleware(adminKey string, next http.Handler) http.Handler {
 		auth := r.Header.Get("Authorization")
 		adminAuthenticated := adminKey != "" &&
 			strings.HasPrefix(auth, "Bearer ") &&
-			strings.TrimPrefix(auth, "Bearer ") == adminKey
+			subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, "Bearer ")), []byte(adminKey)) == 1
 		if adminAuthenticated {
 			r = r.WithContext(context.WithValue(r.Context(), adminAuthContextKey{}, true))
-			r = r.WithContext(context.WithValue(r.Context(), adminAPIKeySuffixContextKey{}, apiKeySuffix(adminKey)))
 		}
 		if !isAdminPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
@@ -780,14 +797,6 @@ func requestHasAdminAuth(r *http.Request) bool {
 	}
 	ok, _ := r.Context().Value(adminAuthContextKey{}).(bool)
 	return ok
-}
-
-func requestAdminAPIKeySuffix(r *http.Request) (string, bool) {
-	if r == nil {
-		return "", false
-	}
-	suffix, ok := r.Context().Value(adminAPIKeySuffixContextKey{}).(string)
-	return suffix, ok && suffix != ""
 }
 
 func readInt64Env(name string, fallback int64) int64 {
