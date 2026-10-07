@@ -209,7 +209,12 @@ func (k Keeper) SetPocValidationV2(ctx context.Context, validation types.PoCVali
 		"model_id", validation.ModelId,
 		"validator", validation.ValidatorParticipantAddress,
 		"validated_weight", validation.ValidatedWeight)
-	if err := k.PoCValidationsV2.Set(ctx, pk, storedPocValidationV2(validation, participantAddr, validatorAddr)); err != nil {
+	stored := storedPocValidationV2(validation, participantAddr, validatorAddr)
+	// The stage is the key's first part; keep it only where the value would be empty.
+	if stored.ParticipantAddress == "" && stored.ValidatedWeight != 0 {
+		stored.PocStageStartBlockHeight = 0
+	}
+	if err := k.PoCValidationsV2.Set(ctx, pk, stored); err != nil {
 		return err
 	}
 	if exists {
