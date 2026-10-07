@@ -898,6 +898,7 @@ func (g *Gateway) outputTokenLimitsForModel(model string) outputTokenLimits {
 const (
 	balanceCheckInterval                = 30 * time.Second
 	balanceMinimumThreshold      uint64 = 1_000_000
+	nonceDeactivationLimit       uint64 = 19_800
 	autoSettlementRetryInterval         = 10 * time.Second
 	autoSettlementAttemptTimeout        = 5 * time.Minute
 	autoSettlementMaxAttempts           = 30
