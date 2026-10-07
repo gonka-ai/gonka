@@ -299,8 +299,9 @@ StatusStarted
 
 Net ledger: the client is made whole for the full `ReservedCost`, the
 executor earns nothing and takes one `Missed`. `StatusTimedOut` is
-not sampled for validation (`collectValidationJobs` only considers
-`StatusFinished`) and is already seal-eligible.
+not sampled for validation (the owed-validation set that
+`collectValidationJobs` walks holds only `StatusFinished` and
+`StatusChallenged` records) and is already seal-eligible.
 
 Gateway emit is always on for a terminal error stream (`errorTerminal`),
 including when content preceded the error. Apply and verify are

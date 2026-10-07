@@ -136,6 +136,13 @@ type StateMachine struct {
 	// journal is the undo log of the apply in progress, nil between applies.
 	// Set only while sm.mu is held.
 	journal *mutationJournal
+
+	// owedPredicate, when set, maintains owed: live inference ids this host
+	// still owes a validation for. Nil on user sequencers and on machines no
+	// host has attached. The set is host-local bookkeeping, not part of the
+	// state root, and is journaled with the inference map.
+	owedPredicate OwedValidationPredicate
+	owed          map[uint64]struct{}
 }
 
 // deferredObsWrite is a single observability-store write captured during a
@@ -478,7 +485,8 @@ func heightSyncTraffic(tx *types.DevshardTx) bool {
 // preview/undo-on-success and warm-key capture that persist-first needs are
 // handled by the PreviewLocalBestEffort wrapper.
 func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, error) {
-	root, applied, _, err := sm.localBestEffortJournaled(nonce, txs)
+	root, applied, j, err := sm.localBestEffortJournaled(nonce, txs)
+	sm.publishOwedIfTouchedLocked(j)
 	return root, applied, err
 }
 
@@ -677,7 +685,8 @@ func (s *markScope) commit() {
 // If postStateRoot is non-nil, the computed root must match; on mismatch the entire
 // operation is rolled back (including nonce) and an error is returned.
 func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postStateRoot []byte, side string) ([]byte, error) {
-	root, _, err := sm.applyCoreJournaled(nonce, txs, postStateRoot, side)
+	root, j, err := sm.applyCoreJournaled(nonce, txs, postStateRoot, side)
+	sm.publishOwedIfTouchedLocked(j)
 	return root, err
 }
 

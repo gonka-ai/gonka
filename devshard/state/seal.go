@@ -102,6 +102,7 @@ func (sm *StateMachine) updateCommittedEntryLocked(id uint64, rec *types.Inferen
 	}
 	if prev, ok := sm.committedEntries[id]; ok {
 		if bytes.Equal(prev, entry) {
+			sm.syncOwedLocked(id)
 			return nil
 		}
 		sm.xorEntryLocked(prev)
@@ -111,6 +112,7 @@ func (sm *StateMachine) updateCommittedEntryLocked(id uint64, rec *types.Inferen
 	}
 	sm.xorEntryLocked(entry)
 	sm.committedEntries[id] = entry
+	sm.syncOwedLocked(id)
 	return nil
 }
 
@@ -173,6 +175,7 @@ func (sm *StateMachine) rebuildCommittedEntriesLocked() {
 	// including when a previous total no longer matches the blobs.
 	sm.liveEntryXOR = xorInferencesHashFromEntries(next)
 	sm.committedEntries = next
+	sm.rebuildOwedLocked()
 }
 
 func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.InferenceRecord, error) {
