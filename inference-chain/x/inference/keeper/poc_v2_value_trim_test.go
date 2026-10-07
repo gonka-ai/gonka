@@ -85,7 +85,7 @@ func TestSubmitPocValidationsV2_ValueHoldsOnlyWeight(t *testing.T) {
 
 		raw, err := k.PoCValidationsV2.Get(ctx, collectionsKey(addr, testutil.Validator))
 		require.NoError(t, err)
-		require.Equal(t, types.PoCValidationV2{PocStageStartBlockHeight: 100, ValidatedWeight: int64(1000 + i)}, raw)
+		require.Equal(t, types.PoCValidationV2{ValidatedWeight: int64(1000 + i)}, raw)
 	}
 
 	// The trimmed value still counts as present: a repeat vote is skipped.
@@ -131,6 +131,31 @@ func TestSetPocValidationV2_ZeroRecordKeepsFields(t *testing.T) {
 	byStage, err := k.GetPoCValidationsV2ByStage(ctx, 0)
 	require.NoError(t, err)
 	require.Equal(t, []types.PoCValidationV2{v}, byStage[types.PoCParticipantModelKey{ParticipantAddress: testutil.Executor, ModelID: mainnetPoCModelID}])
+}
+
+// A zero weight keeps the stage so the value is never empty; a negative weight drops it.
+func TestSetPocValidationV2_StageKeptOnlyForZeroWeight(t *testing.T) {
+	k, ctx, _ := setupPocValidationsV2Test(t)
+	for _, w := range []int64{0, -1} {
+		v := types.PoCValidationV2{
+			ParticipantAddress:          testutil.Executor,
+			ValidatorParticipantAddress: testutil.Validator,
+			PocStageStartBlockHeight:    100,
+			ModelId:                     mainnetPoCModelID,
+			ValidatedWeight:             w,
+		}
+		require.NoError(t, k.SetPocValidationV2(ctx, v))
+		raw, err := k.PoCValidationsV2.Get(ctx, collectionsKey(testutil.Executor, testutil.Validator))
+		require.NoError(t, err)
+		want := types.PoCValidationV2{ValidatedWeight: w}
+		if w == 0 {
+			want.PocStageStartBlockHeight = 100
+		}
+		require.Equal(t, want, raw)
+		byStage, err := k.GetPoCValidationsV2ByStage(ctx, 100)
+		require.NoError(t, err)
+		require.Equal(t, []types.PoCValidationV2{v}, byStage[types.PoCParticipantModelKey{ParticipantAddress: testutil.Executor, ModelID: mainnetPoCModelID}])
+	}
 }
 
 // Upper-case bech32 is accepted; such a record keeps every field and reads back as submitted.
