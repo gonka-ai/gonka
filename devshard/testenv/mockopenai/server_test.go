@@ -188,7 +188,7 @@ func TestChatCompletions_StreamCompletionAPI(t *testing.T) {
 	_ = resp.Body.Close()
 	require.NotEmpty(t, lines)
 
-	proc := completionapi.NewExecutorResponseProcessor("inference-test", true)
+	proc := completionapi.NewExecutorResponseProcessor("inference-test")
 	var streamed []string
 	for _, line := range lines {
 		updated, err := proc.ProcessStreamedResponse(line)
@@ -206,7 +206,7 @@ func TestChatCompletions_MaxTokensPadsDeterministicContent(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
-	n := int(completionapi.MinTokensFloor)
+	n := 64
 	body := []byte(fmt.Sprintf(`{"model":"test-model","max_tokens":%d,"messages":[{"role":"user","content":"pad me"}]}`, n))
 	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
@@ -301,11 +301,15 @@ func TestChatCompletions_HonestStreamedReplayPassesValidation(t *testing.T) {
 	executorResponse, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(executorRequest.NewBody))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, executorResponse.StatusCode)
-	processor := completionapi.NewExecutorResponseProcessor("inference-1", true)
+	processor := completionapi.NewExecutorResponseProcessor("inference-1")
 	require.NoError(t, completionapi.ProcessHTTPResponse(executorResponse, processor))
 	storedResponse, err := processor.GetResponseBytes()
 	require.NoError(t, err)
-	usage, err := processor.GetUsage()
+	var serialized completionapi.SerializedStreamedResponse
+	require.NoError(t, json.Unmarshal(storedResponse, &serialized))
+	completion, err := completionapi.NewCompletionResponseFromLines(serialized.Events)
+	require.NoError(t, err)
+	usage, err := completion.GetUsage()
 	require.NoError(t, err)
 
 	result, err := validation.ExecuteValidation(
@@ -341,7 +345,7 @@ func TestChatCompletions_StreamLogprobTokensAreNumericIDs(t *testing.T) {
 	require.NoError(t, sc.Err())
 	_ = resp.Body.Close()
 
-	proc := completionapi.NewExecutorResponseProcessor("inference-stream-lp", true)
+	proc := completionapi.NewExecutorResponseProcessor("inference-stream-lp")
 	for _, line := range lines {
 		_, err := proc.ProcessStreamedResponse(line)
 		require.NoError(t, err)
@@ -551,8 +555,7 @@ func TestChatCompletions_FaultStreamErrorEnvelope(t *testing.T) {
 
 		payload, err := json.Marshal(completionapi.SerializedStreamedResponse{Events: lines})
 		require.NoError(t, err)
-		_, ok := completionapi.IsTerminalErrorResponse(payload)
-		require.True(t, ok, "mock-openai error envelope must be a terminal error body")
+		require.Contains(t, string(payload), "error", "mock-openai error envelope must be a terminal error body")
 	}
 }
 

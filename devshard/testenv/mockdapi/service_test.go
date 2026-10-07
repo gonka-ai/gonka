@@ -30,7 +30,7 @@ type testBed struct {
 	cleanup  func()
 }
 
-func startBed(t *testing.T) testBed {
+func startBed(t *testing.T, configure ...func(*mockdapi.Config)) testBed {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	st := seed.Defaults()
@@ -47,6 +47,9 @@ func startBed(t *testing.T) testBed {
 	// Disable background poll; tests drive RefreshRuntimeConfig explicitly via /testenv/*.
 	cfg.ChainPollInterval = time.Hour
 	cfg.BlockInterval = 50 * time.Millisecond
+	for _, apply := range configure {
+		apply(&cfg)
+	}
 
 	svc, err := mockdapi.New(ctx, cfg)
 	require.NoError(t, err)
