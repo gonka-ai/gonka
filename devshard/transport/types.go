@@ -290,3 +290,9 @@ type DevshardReceiptEvent struct {
 type DevshardMetaEvent struct {
 	Mempool [][]byte `json:"mempool,omitempty"`
 }
+
+// StateResponse describes the host's current local state.
+type StateResponse struct {
+	Nonce     uint64 `json:"nonce"`
+	StateRoot []byte `json:"state_root"`
+}

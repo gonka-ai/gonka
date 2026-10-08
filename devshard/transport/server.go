@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -553,18 +554,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 	var accept bool
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		// Fetch stored diffs to forward to executor during challenge.
-		var storedDiffs []types.Diff
-		if s.store != nil && st.LatestNonce > 0 {
-			records, dErr := s.store.GetDiffs(s.host.EscrowID(), 1, st.LatestNonce)
-			if dErr == nil {
-				storedDiffs = make([]types.Diff, len(records))
-				for i, r := range records {
-					storedDiffs[i] = r.Diff
-				}
-			}
-		}
-		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, st.Config, nowUnix)
+		accept, err = s.verifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, s.peerClients[executorIdx], nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		accept, err = host.VerifyExecutionTimeout(c.Request().Context(), st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
 	default:
@@ -584,6 +574,97 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		resp.VoterSlot = voterSlot
 	}
 	return writeJSON(c, http.StatusOK, resp)
+}
+
+func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState, inferenceID uint64, payload *host.InferencePayload, mempool []*types.DevshardTx, client *HTTPClient, nowUnix int64) (bool, error) {
+	requestCtx := ctx
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	var executor host.ExecutorClient
+	if client != nil {
+		executor = client
+	}
+	verify := func(ctx context.Context, diffs []types.Diff) (bool, error) {
+		return host.VerifyRefusedTimeout(ctx, st, inferenceID, payload, diffs, mempool, executor, st.Config, nowUnix)
+	}
+	if client == nil || st.LatestNonce == 0 {
+		accept, err := verify(ctx, nil)
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return accept, err
+	}
+	if s.store == nil {
+		return false, fmt.Errorf("missing refusal diff storage")
+	}
+	load := func(from uint64) ([]types.Diff, error) {
+		if from > st.LatestNonce {
+			return nil, nil
+		}
+		records, err := s.store.GetDiffs(s.host.EscrowID(), from, st.LatestNonce)
+		if err != nil {
+			return nil, err
+		}
+		if uint64(len(records)) != st.LatestNonce-from+1 {
+			return nil, fmt.Errorf("incomplete refusal diff range")
+		}
+		diffs := make([]types.Diff, len(records))
+		for i, r := range records {
+			if r.Diff.Nonce != from+uint64(i) {
+				return nil, fmt.Errorf("noncontiguous refusal diffs")
+			}
+			diffs[i] = r.Diff
+		}
+		return diffs, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, client.config.VerifyTimeout)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	budget := time.Until(deadline)
+	queryCtx, queryCancel := context.WithTimeout(ctx, min(client.config.QueryTimeout, budget/4))
+	head, queryErr := client.GetState(queryCtx)
+	queryCancel()
+	if queryErr == nil && head.Nonce > 0 && head.Nonce <= st.LatestNonce && len(head.StateRoot) == 32 {
+		anchor, err := s.store.GetDiffs(s.host.EscrowID(), head.Nonce, head.Nonce)
+		if err != nil {
+			return false, err
+		}
+		if len(anchor) == 1 && anchor[0].Diff.Nonce == head.Nonce && bytes.Equal(anchor[0].StateHash, head.StateRoot) {
+			var diffs []types.Diff
+			if head.Nonce < st.LatestNonce {
+				diffs, err = load(head.Nonce + 1)
+				if err != nil {
+					return false, err
+				}
+			}
+			// Reserve time for a full retry if another executor instance is behind.
+			shortCtx, shortCancel := context.WithTimeout(ctx, budget/4)
+			accept, err := verify(shortCtx, diffs)
+			shortCancel()
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			if err == nil && !accept {
+				return false, nil
+			}
+		}
+	}
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	diffs, err := load(1)
+	if err != nil {
+		return false, err
+	}
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+	accept, err := verify(ctx, diffs)
+	if requestCtx.Err() != nil {
+		return false, requestCtx.Err()
+	}
+	return accept, err
 }
 
 // signTimeoutVote marshals and signs a TimeoutVoteContent, returning the
@@ -839,4 +920,24 @@ func (s *Server) HandleGetMempool(c echo.Context) (err error) {
 	}
 	observability.Request.SetResponseContentLength(op, len(data))
 	return writeJSON(c, http.StatusOK, map[string]interface{}{"txs": data})
+}
+
+func (s *Server) HandleGetState(c echo.Context) error {
+	// This GET requires authentication.
+	addr, _, err := VerifyPOSTAuth(c, s.verifier, s.host.EscrowID(), s.maxBodySize)
+	if err != nil {
+		return err
+	}
+	if !s.isAllowedSender(addr) {
+		return echo.NewHTTPError(http.StatusForbidden, "sender not in group")
+	}
+	if c.Param("id") != s.host.EscrowID() {
+		return echo.NewHTTPError(http.StatusNotFound, "session not found")
+	}
+	nonce, root, err := s.host.StateHead()
+	if err != nil {
+		return err
+	}
+	c.Response().Header().Set("Cache-Control", "no-store")
+	return c.JSON(http.StatusOK, StateResponse{Nonce: nonce, StateRoot: root})
 }
