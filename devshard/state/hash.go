@@ -272,7 +272,8 @@ func computeInferencesHash(inferences map[uint64]*types.InferenceRecord) ([]byte
 		entries[id] = entry
 	}
 	sum := sumLivePointsFromEntries(entries)
-	return append([]byte(nil), sum[:]...), nil
+	enc := encodeLivePoint(&sum)
+	return append([]byte(nil), enc[:]...), nil
 }
 
 func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) {

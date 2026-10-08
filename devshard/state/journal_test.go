@@ -4,6 +4,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/gtank/ristretto255"
 	"github.com/stretchr/testify/require"
 
 	"devshard/internal/testutil"
@@ -95,7 +96,7 @@ type machineView struct {
 	state     types.EscrowState
 	committed map[uint64][]byte
 	sealed    map[uint64]uint64
-	sum       [32]byte
+	sum       ristretto255.Element
 	tracker   any
 	floor     *types.FloorIndexProto
 	root      []byte

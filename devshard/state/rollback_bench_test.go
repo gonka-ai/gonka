@@ -5,6 +5,8 @@ import (
 	"maps"
 	"testing"
 
+	"github.com/gtank/ristretto255"
+
 	"devshard/heightsync"
 	"devshard/types"
 )
@@ -129,7 +131,8 @@ func benchRollbackCheck(b *testing.B, sm *StateMachine, votes uint32) {
 			b.Fatalf("inference %d votes %d, want %d", k+1, got, votes)
 		}
 	}
-	if sm.liveEntrySum != sumLivePointsFromEntries(sm.committedEntries) {
+	fresh := sumLivePointsFromEntries(sm.committedEntries)
+	if sm.liveEntrySum.Equal(&fresh) != 1 {
 		b.Fatal("running point sum does not match committed entries")
 	}
 }
@@ -140,7 +143,7 @@ func benchRollbackCheck(b *testing.B, sm *StateMachine, votes uint32) {
 type copyRollback struct {
 	balance, fees, finalizeNonce, latestNonce uint64
 	phase                                     types.SessionPhase
-	liveEntrySum                              [32]byte
+	liveEntrySum                              ristretto255.Element
 	inferences                                map[uint64]*types.InferenceRecord
 	committed                                 map[uint64][]byte
 	hostStats                                 map[uint32]*types.HostStats

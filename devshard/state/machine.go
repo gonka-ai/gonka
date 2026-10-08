@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/gtank/ristretto255"
 	"google.golang.org/protobuf/proto"
 
 	"common/completionapi"
@@ -90,11 +91,12 @@ type StateMachine struct {
 	// committedEntries keeps the canonical protobuf bytes for each live
 	// inference: the same bytes a fresh marshal of Inferences would produce.
 	// Seal and settlement drain delete an id from this map and from Inferences
-	// together. liveEntrySum is the 32-byte encoding of the Ristretto255 sum
-	// of those framed blobs. It changes only when a blob is inserted,
-	// replaced, or removed.
+	// together. liveEntrySum is that Ristretto255 sum kept as a point, so an
+	// insert or delete does not decode and encode it. The 32-byte encoding
+	// is produced when the state root is read. It changes only when a blob
+	// is inserted, replaced, or removed.
 	committedEntries map[uint64][]byte
-	liveEntrySum     [32]byte
+	liveEntrySum     ristretto255.Element
 	// sealedNonces remembers the nonce at which each evicted inference was
 	// sealed. It is the only piece of per-id seal metadata that survives in
 	// the durable sealed-inference index; everything else needed for cold-path
@@ -280,6 +282,7 @@ func NewStateMachine(
 		heartbeatCfg:       heightsync.DefaultHeartbeatConfig(),
 		heightSyncMarks:    heightsync.NewMarkLog(),
 	}
+	sm.liveEntrySum.Zero()
 	for _, o := range opts {
 		o(sm)
 	}
