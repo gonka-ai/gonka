@@ -117,7 +117,7 @@ func (e benchApplyEnv) machine(b *testing.B, n int) *StateMachine {
 	inferences, entries := benchFinishedSet(b, n)
 	sm.state.Inferences = inferences
 	sm.committedEntries = entries
-	sm.liveEntryXOR = xorInferencesHashFromEntries(entries)
+	sm.liveEntrySum = sumLivePointsFromEntries(entries)
 	for id := uint64(n + 1); id <= uint64(2*n); id++ {
 		sm.sealedNonces[id] = id
 	}

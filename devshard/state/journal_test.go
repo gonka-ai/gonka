@@ -94,7 +94,7 @@ type machineView struct {
 	state     types.EscrowState
 	committed map[uint64][]byte
 	sealed    map[uint64]uint64
-	xor       [32]byte
+	sum       [32]byte
 	root      []byte
 }
 
@@ -103,13 +103,13 @@ func viewOf(t *testing.T, sm *StateMachine) machineView {
 	root, err := sm.ComputeStateRoot()
 	require.NoError(t, err)
 	sm.mu.RLock()
-	xor := sm.liveEntryXOR
+	sum := sm.liveEntrySum
 	sm.mu.RUnlock()
 	return machineView{
 		state:     sm.SnapshotState(),
 		committed: sm.ExportCommittedEntries(),
 		sealed:    sm.ExportSealedNonces(),
-		xor:       xor,
+		sum:       sum,
 		root:      root,
 	}
 }
