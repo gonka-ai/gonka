@@ -9,23 +9,26 @@ import (
 	usecases "trainshard/internal/application/coord/assembly/use_cases"
 	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/ports"
+	"trainshard/internal/domain/shared/vo"
 	"trainshard/internal/utils/clix"
 )
 
 type Commands struct {
 	prepare   *usecases.PrepareMeshUseCase
 	lifecycle shard.ChainLifecycle
+	submitter shard.ChainSubmitter
 	clock     ports.Clock
 	out       io.Writer
 }
 
-func New(prepare *usecases.PrepareMeshUseCase, lifecycle shard.ChainLifecycle, clock ports.Clock, out io.Writer) *Commands {
-	return &Commands{prepare: prepare, lifecycle: lifecycle, clock: clock, out: out}
+func New(prepare *usecases.PrepareMeshUseCase, lifecycle shard.ChainLifecycle, submitter shard.ChainSubmitter, clock ports.Clock, out io.Writer) *Commands {
+	return &Commands{prepare: prepare, lifecycle: lifecycle, submitter: submitter, clock: clock, out: out}
 }
 
 func (c *Commands) Register(commands map[string]func(context.Context, []string) error) {
 	commands["assemble"] = c.Assemble
 	commands["prepare"] = c.Prepare
+	commands["kick"] = c.Kick
 	commands["settle"] = c.Settle
 }
 
@@ -61,6 +64,24 @@ func (c *Commands) Settle(ctx context.Context, args []string) error {
 		return err
 	}
 	return c.lifecycle.Settle(ctx, shardID)
+}
+
+func (c *Commands) Kick(ctx context.Context, args []string) error {
+	rest, err := clix.Parse(clix.Command("kick <shard> <participant>/<node>",
+		"Takes one node out of the shard and hands it back to its host, for a node whose daemon\nis down and cannot release it. The run keeps its other nodes; kicking the last one closes the shard.",
+		"trainshardctl kick 1 gonka1.../node1"), args, "shard", "node")
+	if err != nil {
+		return err
+	}
+	shardID, err := toShardID(rest)
+	if err != nil {
+		return err
+	}
+	node, err := toNodeRef(rest[1])
+	if err != nil {
+		return err
+	}
+	return c.submitter.Release(ctx, shardID, node, vo.ReleaseManualKick)
 }
 
 func (c *Commands) Prepare(ctx context.Context, args []string) error {

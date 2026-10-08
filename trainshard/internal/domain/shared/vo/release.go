@@ -7,4 +7,5 @@ const (
 	ReleaseFailedRun     ReleaseReason = "failed_run"
 	ReleaseUnreachable   ReleaseReason = "unreachable"
 	ReleaseOperatorAbort ReleaseReason = "operator_abort"
+	ReleaseManualKick    ReleaseReason = "manual_kick"
 )
