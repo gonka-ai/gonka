@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 
-	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
 	"devshard/types"
@@ -27,7 +26,7 @@ var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 //	fees_be         = uint64 fees in big-endian            -- 8 bytes
 //	version_hash    = sha256(protocol version tag)       -- 32 bytes
 //	warm_keys_hash  = sha256(sorted slot_id_be || addr_bytes)
-//	inferences_hash = sha256(proto(sorted inference records))
+//	live_hash       = Ristretto255 sum of hash-to-curve(framed entry)
 //	phase_byte      = uint8(phase): 0x00=Active, 0x01=Finalizing, 0x02=Settlement
 //
 // All components have fixed, known lengths (32 + 8 + 32 + 32 + 1), so the
@@ -74,9 +73,10 @@ func ComputeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecor
 	return computeRestHash(balance, inferences, warmKeys)
 }
 
-// ComputeInferencesHashV2 returns sha256(sealed_acc || live_inferences_hash)
-// where live_inferences_hash is the same encoding as v1's inference-set hash
-// over the live map only (sorted by inference id).
+// ComputeInferencesHashV2 returns sha256(sealed_acc || live_inferences_hash).
+// live_inferences_hash is the 32-byte encoding of the sum of one Ristretto255
+// point per live record. The frame is the protowire tag, varint length, and
+// canonical protobuf entry, hashed to the curve with RFC 9380.
 func ComputeInferencesHashV2(sealedAcc [32]byte, liveInferences map[uint64]*types.InferenceRecord) ([]byte, error) {
 	liveHash, err := computeInferencesHash(liveInferences)
 	if err != nil {
@@ -271,7 +271,9 @@ func computeInferencesHash(inferences map[uint64]*types.InferenceRecord) ([]byte
 		}
 		entries[id] = entry
 	}
-	return computeInferencesHashFromEntries(entries), nil
+	sum := sumLivePointsFromEntries(entries)
+	enc := encodeLivePoint(&sum)
+	return append([]byte(nil), enc[:]...), nil
 }
 
 func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) {
@@ -328,23 +330,4 @@ func unmarshalInferenceEntry(data []byte) (uint64, *types.InferenceRecord, error
 		ValidatedBy:       types.Bitmap128FromBytes(msg.ValidatedBy),
 	}
 	return msg.InferenceId, rec, nil
-}
-
-func computeInferencesHashFromEntries(entries map[uint64][]byte) []byte {
-	ids := make([]uint64, 0, len(entries))
-	for id := range entries {
-		ids = append(ids, id)
-	}
-	slices.SortFunc(ids, func(a, b uint64) int { return cmp.Compare(a, b) })
-
-	buf := make([]byte, 0, len(entries)*64)
-	for _, id := range ids {
-		entry := entries[id]
-		buf = protowire.AppendTag(buf, 1, protowire.BytesType)
-		buf = protowire.AppendVarint(buf, uint64(len(entry)))
-		buf = append(buf, entry...)
-	}
-
-	sum := sha256.Sum256(buf)
-	return sum[:]
 }

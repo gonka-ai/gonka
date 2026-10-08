@@ -211,14 +211,43 @@ func RecoverSession(
 			if restErr := sm.RestoreStateWithFloor(snapState, floor); restErr != nil {
 				return nil, nil, fmt.Errorf("restore snapshot nonce %d: %w", snapNonce, restErr)
 			}
-			sm.RestoreCommittedEntries(committedEntries)
-			sm.RestoreSealedNonces(sealedNonces)
-			replayFrom = snapNonce + 1
-			sess.nonce = snapNonce
-			snapshotCursor = restoredHostCursor(cursor, len(group), snapNonce)
-			snapshotRestored = true
-			log.Printf("recover_session escrow=%s snapshot_restored nonce=%d replay_from=%d total=%d skipped=%d host_cursors=%d",
-				escrowID, snapNonce, replayFrom, meta.LatestNonce, snapNonce, len(cursor))
+			// A rejected blob has already advanced the machine, so replay from 1
+			// needs a fresh one. The snapshot root is not compared to the diff
+			// hash: a seal can fold into that nonce after the diff was stored,
+			// and replaying the diffs would drop it.
+			recreate := func() error {
+				fresh, ferr := state.NewStateMachine(
+					escrowID, meta.Config, meta.Group, meta.InitialBalance,
+					meta.CreatorAddr, verifier, store,
+					stateOpts...,
+				)
+				if ferr != nil {
+					return fmt.Errorf("recreate state machine: %w", ferr)
+				}
+				freshSess, ferr := NewSession(fresh, signer, escrowID, meta.Group, clients, verifier,
+					WithStorage(store), WithHeartbeatConfig(fresh.HeartbeatConfig()))
+				if ferr != nil {
+					return fmt.Errorf("recreate session: %w", ferr)
+				}
+				sm = fresh
+				sess = freshSess
+				return nil
+			}
+			if commitErr := sm.RestoreCommittedEntries(committedEntries); commitErr != nil {
+				log.Printf("recover_session escrow=%s snapshot_nonce=%d committed_entries_rejected=%v (replaying from 1)",
+					escrowID, snapNonce, commitErr)
+				if recErr := recreate(); recErr != nil {
+					return nil, nil, recErr
+				}
+			} else {
+				sm.RestoreSealedNonces(sealedNonces)
+				replayFrom = snapNonce + 1
+				sess.nonce = snapNonce
+				snapshotCursor = restoredHostCursor(cursor, len(group), snapNonce)
+				snapshotRestored = true
+				log.Printf("recover_session escrow=%s snapshot_restored nonce=%d replay_from=%d total=%d skipped=%d host_cursors=%d",
+					escrowID, snapNonce, replayFrom, meta.LatestNonce, snapNonce, len(cursor))
+			}
 		}
 	} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
 		log.Printf("recover_session escrow=%s snapshot_load_error=%v (replaying from 1)", escrowID, snapErr)

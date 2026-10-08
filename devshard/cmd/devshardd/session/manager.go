@@ -23,8 +23,6 @@ import (
 	"common/utils"
 	validationpkg "common/validation"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 
@@ -1158,8 +1156,13 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 					if sm, err = newStateMachine(); err != nil {
 						return nil, nil, fmt.Errorf("recreate state machine after snapshot restore failure: %w", err)
 					}
+				} else if commitErr := sm.RestoreCommittedEntries(committedEntries); commitErr != nil {
+					logging.Error("devshard snapshot committed entries failed audit, replaying full history", inferenceTypes.System,
+						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", commitErr)
+					if sm, err = newStateMachine(); err != nil {
+						return nil, nil, fmt.Errorf("recreate state machine after committed-entry audit: %w", err)
+					}
 				} else {
-					sm.RestoreCommittedEntries(committedEntries)
 					sm.RestoreSealedNonces(sealedNonces)
 					if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
 						// Restore already mutated sm, so the rejected state has to
@@ -1531,17 +1534,7 @@ func (m *HostManager) signPayloadResponse(inferenceID string, promptPayload, res
 		ExecutorAddress: "",
 	}
 
-	signerAddressStr := m.recorder.GetSignerAddress()
-	signerAddress, err := sdk.AccAddressFromBech32(signerAddressStr)
-	if err != nil {
-		return "", err
-	}
-	accountSigner := &cmd.AccountSigner{
-		Addr:    signerAddress,
-		Keyring: m.recorder.GetKeyring(),
-	}
-
-	return calculations.Sign(accountSigner, components, calculations.Developer)
+	return calculations.Sign(m.recorder, components, calculations.Developer)
 }
 
 // SessionMemory is the retained-map sizes across loaded sessions.

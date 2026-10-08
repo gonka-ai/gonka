@@ -240,10 +240,11 @@ type heapTop struct {
 }
 
 // topHeapInUse ranks sampled heap by the stack that allocated it, so retained
-// escrow state shows up under state.snapshotMutable (copyInferences,
-// cloneCommittedInferenceEntries). ValidateDiff and PreviewLocalBestEffort
-// build the post-state as a copy and CommitValidated installs that copy as the
-// live state. Those stacks are mostly live inferences, not snapshot garbage.
+// escrow state shows up under the apply path that wrote it: the record copies
+// in state.inferenceForWriteLocked and the committed blobs in
+// marshalInferenceEntry. ValidateDiff and PreviewLocalBestEffort keep those
+// copies in the detached journal and CommitValidated installs them as live
+// state.
 func topHeapInUse(limit int) []heapTop {
 	if limit <= 0 {
 		return nil

@@ -242,6 +242,7 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 	if sm.turnTracker == nil {
 		return
 	}
+	sm.journalHeightSyncLocked(txs)
 	observeHeightSync(sm.state, sm.turnTracker, sm.heightSyncFloor, nonce, txs)
 }
 
