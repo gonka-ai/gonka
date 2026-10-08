@@ -73,9 +73,12 @@ func (k Keeper) Hooks() types.BlsHooks {
 	return k.hooksState.hooks
 }
 
+// SetHooks installs hooks in the state shared by every copy of this keeper.
+// A keeper not built by NewKeeper has no shared state: hooks set on it would
+// stay on this copy only and never run, so that is an error.
 func (k *Keeper) SetHooks(hooks types.BlsHooks) error {
 	if k.hooksState == nil {
-		k.hooksState = &blsHooksState{}
+		return fmt.Errorf("cannot set bls hooks: keeper was not created by NewKeeper")
 	}
 	if k.hooksState.hooks != nil {
 		return fmt.Errorf("cannot set bls hooks twice")
