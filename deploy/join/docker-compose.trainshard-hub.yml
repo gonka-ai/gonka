@@ -3,7 +3,7 @@
 # address the GPU machines alone are on, never a shared LAN.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.trainshard-hub.yml up -d
-#   (plus -f docker-compose.trainshard.yml when this machine leases GPUs of its own)
+#   (plus -f docker-compose.trainshard.yml when this machine offers GPUs of its own)
 services:
   api:
     ports:

@@ -357,12 +357,14 @@ func TestPlan(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			observed := preparedObserved()
 			tc.observe(&observed)
 
+			// act
 			got := run.Plan(tc.desired(), observed)
 
+			// assert
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}
@@ -371,7 +373,7 @@ func TestPlan(t *testing.T) {
 }
 
 func TestPlanIsIdempotent(t *testing.T) {
-
+	// arrange
 	desired := reservedDesired()
 	desired.Run, desired.Start = runSpec(), true
 	observed := preparedObserved()
@@ -379,9 +381,11 @@ func TestPlanIsIdempotent(t *testing.T) {
 	observed.Container = vo.ContainerRunning
 	observed.ContainerImage = runImage
 
+	// act
 	first := run.Plan(desired, observed)
 	second := run.Plan(desired, observed)
 
+	// assert
 	if len(first) != 0 || len(second) != 0 {
 		t.Fatalf("a settled run must plan nothing twice: %v then %v", first, second)
 	}
@@ -403,12 +407,14 @@ func TestPrepared(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			observed := preparedObserved()
 			tc.observe(&observed)
 
+			// act
 			got := run.Prepared(reservedDesired(), observed)
 
+			// assert
 			if got != tc.want {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}

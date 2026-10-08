@@ -28,11 +28,12 @@ type RunSpec struct {
 
 func (r RunSpec) IsZero() bool { return r.Image.IsZero() }
 
-// NamesHostEnv reports whether the run sets a variable the host owns: its place on the mesh, or
-// the NVIDIA_ ones the runtime reads to decide which cards the container sees
+// NamesHostEnv covers the run's place on the mesh and the NVIDIA_ variables the runtime reads to
+// pick the cards; a name is read up to its first '=', the way the container's environment reads it
 func (r RunSpec) NamesHostEnv() bool {
 	placement := PlacementEnv(vo.Placement{Interface: "any"})
-	for name := range r.Env {
+	for key := range r.Env {
+		name, _, _ := strings.Cut(key, "=")
 		if _, owned := placement[name]; owned || strings.HasPrefix(name, "NVIDIA_") {
 			return true
 		}
@@ -50,8 +51,8 @@ func (r RunSpec) WithEnv(over map[string]string) RunSpec {
 	return r
 }
 
-// PlacementEnv is what a training image needs to find the others. The names are node level on
-// purpose: a launcher inside the container derives the per-process rank from them
+// PlacementEnv names are node level on purpose: a launcher inside the container derives the
+// per-process rank from them
 func PlacementEnv(p vo.Placement) map[string]string {
 	env := map[string]string{
 		"NODE_RANK":   strconv.Itoa(p.Rank),
@@ -67,6 +68,8 @@ func PlacementEnv(p vo.Placement) map[string]string {
 	return env
 }
 
+// String counts env keys and never prints a value: values carry the run's tokens, and this text
+// reaches the logs
 func (r RunSpec) String() string {
 	return fmt.Sprintf("RunSpec{image:%s command:%v env_keys:%d sources:%v gpus:%d disk:%d}",
 		r.Image, r.Command, len(r.Env), r.Sources, r.Resources.GPUs, r.Resources.DiskBytes)

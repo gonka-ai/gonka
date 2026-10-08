@@ -22,12 +22,14 @@ func logsCommand() usecases.LogsCommand {
 }
 
 func TestLogsReachTheContainerWithWhatWasAskedFor(t *testing.T) {
-
+	// arrange
 	chain, streams := newChainStub(), &streamsStub{output: "step 1\nstep 2\n"}
 	var out bytes.Buffer
 
+	// act
 	err := usecases.NewStreamLogsUseCase(chain, streams).Execute(context.Background(), logsCommand(), &out)
 
+	// assert
 	if err != nil {
 		t.Fatalf("stream: %v", err)
 	}
@@ -74,14 +76,16 @@ func TestAStreamIsRefusedBeforeAnyOutputLeavesTheHost(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			chain, streams := newChainStub(), &streamsStub{output: "secret"}
 			cmd := logsCommand()
 			tc.mutate(&cmd, chain)
 			var out bytes.Buffer
 
+			// act
 			err := usecases.NewStreamLogsUseCase(chain, streams).Execute(context.Background(), cmd, &out)
 
+			// assert
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("got %v, want %v", err, tc.want)
 			}
@@ -93,14 +97,16 @@ func TestAStreamIsRefusedBeforeAnyOutputLeavesTheHost(t *testing.T) {
 }
 
 func TestShellIsAuthorizedTheSameWayAndOpensInsideTheRun(t *testing.T) {
-
+	// arrange
 	chain, streams, log := newChainStub(), &streamsStub{}, newSessionLogStub()
 	session := strings.NewReader("whoami\n")
 	var out bytes.Buffer
 	shell := usecases.NewOpenShellUseCase(chain, streams, log, timex.NewFrozen(since))
 
+	// act
 	err := shell.Execute(context.Background(), logsCommand().SessionCommand, pipe{session, &out})
 
+	// assert
 	if err != nil {
 		t.Fatalf("open shell: %v", err)
 	}
@@ -123,14 +129,16 @@ func TestShellIsAuthorizedTheSameWayAndOpensInsideTheRun(t *testing.T) {
 }
 
 func TestTheHostKeepsWhatCrossedAShell(t *testing.T) {
-
+	// arrange
 	chain, streams, log := newChainStub(), &streamsStub{}, newSessionLogStub()
 	session := strings.NewReader("whoami\n")
 	var out bytes.Buffer
 
+	// act
 	err := usecases.NewOpenShellUseCase(chain, streams, log, timex.NewFrozen(since)).
 		Execute(context.Background(), logsCommand().SessionCommand, pipe{session, &out})
 
+	// assert
 	if err != nil {
 		t.Fatalf("open shell: %v", err)
 	}
@@ -143,14 +151,16 @@ func TestTheHostKeepsWhatCrossedAShell(t *testing.T) {
 }
 
 func TestAShellThatCannotBeRecordedIsNotOpened(t *testing.T) {
-
+	// arrange
 	chain, streams, log := newChainStub(), &streamsStub{}, newSessionLogStub()
 	log.err = errors.New("no room for the record")
 	var out bytes.Buffer
 
+	// act
 	err := usecases.NewOpenShellUseCase(chain, streams, log, timex.NewFrozen(since)).
 		Execute(context.Background(), logsCommand().SessionCommand, pipe{strings.NewReader("whoami\n"), &out})
 
+	// assert
 	if !errors.Is(err, log.err) {
 		t.Fatalf("got %v, want the reason the record could not be opened", err)
 	}

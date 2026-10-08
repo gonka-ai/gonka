@@ -45,7 +45,7 @@ func identityOf(node vo.NodeRef) mesh.Identity {
 		Member: mesh.Member{
 			Node:      node,
 			Address:   "10.0.0." + string(node.NodeID[len(node.NodeID)-1]),
-			PublicKey: "key-" + string(node.NodeID),
+			PublicKey: "key-" + string(node.Participant) + "-" + string(node.NodeID),
 		},
 
 		Signature: []byte(node.Participant),
@@ -116,17 +116,15 @@ func (c *chainStub) Release(_ context.Context, _ vo.ShardID, node vo.NodeRef, re
 }
 
 type hostsStub struct {
-	mu         sync.Mutex
-	identities map[vo.Participant][]mesh.Identity
-	applied    []vo.NodeRef
-	failed     map[vo.NodeRef][]mesh.Pair
-	heals      bool
-	// secondProbe fails only the second probe a node answers: a handshake lost right after
-	// the peers were reshaped
-	secondProbe map[vo.NodeRef][]mesh.Pair
-	probes      map[vo.NodeRef]int
-	refuses     map[vo.NodeRef]bool
-	silent      map[vo.Participant]bool
+	mu                 sync.Mutex
+	identities         map[vo.Participant][]mesh.Identity
+	applied            []vo.NodeRef
+	failed             map[vo.NodeRef][]mesh.Pair
+	heals              bool
+	failsOnSecondProbe map[vo.NodeRef][]mesh.Pair
+	probes             map[vo.NodeRef]int
+	refuses            map[vo.NodeRef]bool
+	silent             map[vo.Participant]bool
 }
 
 func newHostsStub() *hostsStub {
@@ -135,11 +133,11 @@ func newHostsStub() *hostsStub {
 			hostA: {identityOf(nodeA)},
 			hostB: {identityOf(nodeB), identityOf(nodeC)},
 		},
-		failed:      map[vo.NodeRef][]mesh.Pair{},
-		secondProbe: map[vo.NodeRef][]mesh.Pair{},
-		probes:      map[vo.NodeRef]int{},
-		refuses:     map[vo.NodeRef]bool{},
-		silent:      map[vo.Participant]bool{},
+		failed:             map[vo.NodeRef][]mesh.Pair{},
+		failsOnSecondProbe: map[vo.NodeRef][]mesh.Pair{},
+		probes:             map[vo.NodeRef]int{},
+		refuses:            map[vo.NodeRef]bool{},
+		silent:             map[vo.Participant]bool{},
 	}
 }
 
@@ -168,7 +166,7 @@ func (h *hostsStub) Probe(_ context.Context, cfg mesh.Config, _ vo.Host, node vo
 	h.probes[node]++
 	failing := h.failed[node]
 	if h.probes[node] == 2 {
-		failing = append(slices.Clone(failing), h.secondProbe[node]...)
+		failing = append(slices.Clone(failing), h.failsOnSecondProbe[node]...)
 	}
 	pairs := make([]mesh.Pair, 0)
 	for _, pair := range failing {

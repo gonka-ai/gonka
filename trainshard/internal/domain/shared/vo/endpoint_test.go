@@ -35,7 +35,10 @@ func TestParseEndpointTakesAnHTTPBaseAndNothingElse(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// act
 			got, err := vo.ParseEndpoint(tc.raw)
+
+			// assert
 			if tc.valid {
 				if err != nil || string(got) != tc.raw {
 					t.Fatalf("got %q, %v; want %q accepted", got, err, tc.raw)

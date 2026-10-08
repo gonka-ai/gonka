@@ -31,9 +31,10 @@ func TestParseNodeRefKeepsANodeIDToOneNameOnDisk(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-
+			// act
 			got, err := vo.ParseNodeRef(participant, tc.id)
 
+			// assert
 			if tc.ok && (err != nil || got.NodeID != vo.NodeID(strings.TrimSpace(tc.id))) {
 				t.Fatalf("got %+v %v, want the id kept as it is", got, err)
 			}

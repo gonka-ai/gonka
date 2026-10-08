@@ -25,6 +25,18 @@ import (
 
 var errForeignLink = errors.New("link on the host is not this daemon's")
 
+var errNotSandbox = errors.New("sandbox pid names the host's network namespace")
+
+type nsID struct{ dev, ino uint64 }
+
+// a flush or a link move in the host's namespace would take down its firewall and network
+func confined(pid int, sandbox nsID, outside ...nsID) error {
+	if slices.Contains(outside, sandbox) {
+		return fmt.Errorf("sandbox %d: %w, its container is gone and the pid reused", pid, errNotSandbox)
+	}
+	return nil
+}
+
 type Config struct {
 	Nodes []vo.NodeRef
 
@@ -127,7 +139,7 @@ func (n *Network) Apply(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 		}
 	}
 
-	config, err := peerConfig(shardID, others)
+	config, err := peerConfig(shardID, others, n.cfg.Private)
 	if err != nil {
 		return err
 	}
@@ -193,16 +205,22 @@ func (n *Network) Reach(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 	if err != nil {
 		return false, err
 	}
+	key, err := wgtypes.ParseKey(peer.PublicKey)
+	if err != nil {
+		n.log.Info("mesh peer not reached", "node_id", node.NodeID, "peer", peer.Node.String(), "reason", "peer key is not a wireguard key")
+		return false, nil
+	}
 	pid, running, err := n.sandbox.SandboxPID(ctx, shardID, node)
 	if err != nil {
 		return false, err
 	}
 	if !running {
+		n.log.Info("mesh peer not reached", "node_id", node.NodeID, "peer", peer.Node.String(), "reason", "no mesh sandbox on this node")
 		return false, nil
 	}
 	device := iface(slot)
 
-	seen, err := n.handshake(pid, device, peer.PublicKey)
+	seen, err := n.handshake(pid, device, key)
 	if err != nil || seen {
 		return seen, err
 	}
@@ -214,7 +232,12 @@ func (n *Network) Reach(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 		return false, ctx.Err()
 	case <-settle.C:
 	}
-	return n.handshake(pid, device, peer.PublicKey)
+	seen, err = n.handshake(pid, device, key)
+	if err == nil && !seen {
+		n.log.Info("mesh peer not reached", "node_id", node.NodeID, "peer", peer.Node.String(),
+			"peer_address", peer.Address, "reason", "no handshake", "waited", n.cfg.Settle)
+	}
+	return seen, err
 }
 
 func (n *Network) Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error {
@@ -227,12 +250,11 @@ func (n *Network) Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 		return err
 	}
 	if running {
-		if err := remove(pid, iface(slot)); err != nil {
+		if err := remove(pid, iface(slot)); err != nil && !errors.Is(err, errNotSandbox) {
 			return err
 		}
 	}
-	// a sandbox that is gone took its link with it, but one stranded on the host outlives it;
-	// one that is not ours has nothing of this run in it and is left to the operator
+	// a gone sandbox took its link with it, but one stranded on the host outlives it
 	if err := discard(iface(slot)); err != nil && !errors.Is(err, errForeignLink) {
 		return err
 	}
@@ -248,9 +270,8 @@ func (n *Network) Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 	return nil
 }
 
-// Between docker starting the sandbox on a bridge and the ruleset landing the namespace is open.
-// Nothing can use that window: the sandbox holds a pause process and the run container is not
-// created until Allow has returned, so never move Allow after container create
+// Allow leaves the sandbox open until the ruleset lands, which is safe only while the run container
+// is created after Allow returns: never move Allow after container create
 func (n *Network) Allow(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, sources []vo.Source) ([]run.PinnedHost, error) {
 	slot, err := n.slot(node)
 	if err != nil {
@@ -330,14 +351,23 @@ func (n *Network) dialable(ctx context.Context) error {
 		addresses = found
 	}
 	for _, address := range addresses {
-		if address.IsLoopback() || address.IsUnspecified() {
-			return fmt.Errorf("mesh endpoint %s is %s, which no other host reaches", n.cfg.Endpoint, address)
-		}
-		if address.IsPrivate() && !n.cfg.Private {
-			return fmt.Errorf("mesh endpoint %s is %s, which peers outside this network cannot reach; a private mesh has to be asked for", n.cfg.Endpoint, address)
+		if reason := unreachable(address, n.cfg.Private); reason != "" {
+			return fmt.Errorf("mesh endpoint %s is %s, %s", n.cfg.Endpoint, address, reason)
 		}
 	}
 	return nil
+}
+
+// unreachable is the one rule for where a mesh endpoint may be, held to this host's own and to every
+// peer's it dials alike; "" when a peer can stand there
+func unreachable(address net.IP, private bool) string {
+	switch {
+	case address == nil, address.IsLoopback(), address.IsUnspecified(), address.IsMulticast(), address.IsLinkLocalUnicast():
+		return "which no other host reaches"
+	case address.IsPrivate() && !private:
+		return "which peers outside this network cannot reach; a private mesh has to be asked for"
+	}
+	return ""
 }
 
 func (n *Network) bindable(ctx context.Context) error {
@@ -364,12 +394,7 @@ func (n *Network) create(shardID vo.ShardID, node vo.NodeRef, device string, por
 	return build(device, wgtypes.Config{PrivateKey: &private, ListenPort: &port}, pid)
 }
 
-func (n *Network) handshake(pid int, device, peer string) (bool, error) {
-	key, err := wgtypes.ParseKey(peer)
-	if err != nil {
-		return false, fmt.Errorf("peer key %q: %w", peer, err)
-	}
-
+func (n *Network) handshake(pid int, device string, key wgtypes.Key) (bool, error) {
 	var last time.Time
 	if err := withWG(pid, func(wg *wgctrl.Client) error {
 		found, err := wg.Device(device)
@@ -469,30 +494,44 @@ func (n *Network) slot(node vo.NodeRef) (int, error) {
 
 // peerConfig replaces the peer list instead of adding to it, so a node dropped from the mesh
 // stops being a peer of the nodes that stayed
-func peerConfig(shardID vo.ShardID, peers []mesh.Peer) (wgtypes.Config, error) {
+func peerConfig(shardID vo.ShardID, peers []mesh.Peer, private bool) (wgtypes.Config, error) {
 	keepalive := 25 * time.Second
 	config, err := wanted(shardID, peers)
 	if err != nil {
 		return wgtypes.Config{}, err
 	}
-	for index, peer := range peers {
-		endpoint, err := net.ResolveUDPAddr("udp", peer.Address)
-		if err != nil {
-			return wgtypes.Config{}, fmt.Errorf("peer address %q: %w", peer.Address, err)
+	addresses := make(map[wgtypes.Key]string, len(peers))
+	for _, peer := range peers {
+		if key, err := wgtypes.ParseKey(peer.PublicKey); err == nil {
+			addresses[key] = peer.Address
 		}
-		config.Peers[index].Endpoint = endpoint
+	}
+	for index := range config.Peers {
+		config.Peers[index].Endpoint = dialed(addresses[config.Peers[index].PublicKey], private)
 		config.Peers[index].PersistentKeepaliveInterval = &keepalive
 	}
 	return config, nil
 }
 
-// wanted is keys and mesh addresses only, so a check every tick does not hang on dns
+// dialed is nil for an address that does not parse, does not resolve or is not one a peer could
+// stand on; the peer can still call in. Failing the list instead would cost every honest node its
+// mesh for one member's address
+func dialed(address string, private bool) *net.UDPAddr {
+	endpoint, err := net.ResolveUDPAddr("udp", address)
+	if err != nil || unreachable(endpoint.IP, private) != "" {
+		return nil
+	}
+	return endpoint
+}
+
+// wanted is keys and mesh addresses only, so a check every tick does not hang on dns. A key that
+// does not parse leaves its peer out, unreachable and kicked, rather than failing the whole list
 func wanted(shardID vo.ShardID, peers []mesh.Peer) (wgtypes.Config, error) {
 	configured := make([]wgtypes.PeerConfig, 0, len(peers))
 	for _, peer := range peers {
 		key, err := wgtypes.ParseKey(peer.PublicKey)
 		if err != nil {
-			return wgtypes.Config{}, fmt.Errorf("peer key %q: %w", peer.PublicKey, err)
+			continue
 		}
 		own, err := mesh.Address(shardID, peer.Rank)
 		if err != nil {

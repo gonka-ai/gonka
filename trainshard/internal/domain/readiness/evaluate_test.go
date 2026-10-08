@@ -16,12 +16,14 @@ func allPassed() []readiness.Check {
 }
 
 func TestEvaluateNeedsEveryRequiredCheck(t *testing.T) {
-
+	// arrange
 	partial := allPassed()[1:]
 
+	// act
 	full := readiness.Evaluate(allPassed())
 	missing := readiness.Evaluate(partial)
 
+	// assert
 	if !full.Ready {
 		t.Fatalf("all checks passed but node is not ready: %s", full.Reason())
 	}
@@ -34,12 +36,14 @@ func TestEvaluateNeedsEveryRequiredCheck(t *testing.T) {
 }
 
 func TestEvaluateReportsWhyANodeIsNotPicked(t *testing.T) {
-
+	// arrange
 	checks := allPassed()
 	checks[0] = readiness.Failed(readiness.CheckDockerGPU, "no nvidia runtime")
 
+	// act
 	result := readiness.Evaluate(checks)
 
+	// assert
 	if result.Ready {
 		t.Fatal("a failed check must keep the node out")
 	}
@@ -49,11 +53,13 @@ func TestEvaluateReportsWhyANodeIsNotPicked(t *testing.T) {
 }
 
 func TestEvaluateIgnoresChecksItDoesNotRequire(t *testing.T) {
-
+	// arrange
 	checks := append(allPassed(), readiness.Failed("something_else", "irrelevant"))
 
+	// act
 	result := readiness.Evaluate(checks)
 
+	// assert
 	if !result.Ready {
 		t.Fatalf("unknown checks must not affect readiness: %s", result.Reason())
 	}

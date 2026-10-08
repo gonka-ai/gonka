@@ -27,9 +27,10 @@ func TestParseSource(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-
+			// act
 			got, err := vo.ParseSource(tc.text)
 
+			// assert
 			if tc.ok && (err != nil || got != tc.want) {
 				t.Fatalf("got %+v %v, want %+v", got, err, tc.want)
 			}
@@ -41,9 +42,10 @@ func TestParseSource(t *testing.T) {
 }
 
 func TestASourceReadsBackTheWayItWasWritten(t *testing.T) {
-
+	// act
 	text := vo.Source{Host: "s3.amazonaws.com", Port: 443}.String()
 
+	// assert
 	if text != "s3.amazonaws.com:443" {
 		t.Fatalf("got %q, want the host and port a rule is built from", text)
 	}

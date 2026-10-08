@@ -27,6 +27,7 @@ var (
 	}
 	actor    = shard.Actor{Address: "gonka1creator"}
 	deadline = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	latest   = deadline.Add(time.Hour)
 	digest   = "ghcr.io/gonka/train@sha256:" + strings.Repeat("a", 64)
 )
 
@@ -56,21 +57,29 @@ func TestToNodesCommand(t *testing.T) {
 		{name: "node the participant keeps on another machine", path: "7", mutate: func(c *contract.Command) { c.NodeIDs = []string{"node-c"} }},
 		{name: "no request id", path: "7", mutate: func(c *contract.Command) { c.RequestID = "" }},
 		{name: "deadline is not a timestamp", path: "7", mutate: func(c *contract.Command) { c.Deadline = "tomorrow" }},
+		{name: "deadline at the furthest the request log remembers", path: "7", mutate: func(c *contract.Command) {
+			c.Deadline = latest.Format(time.RFC3339)
+		}, valid: true},
+		{name: "deadline past what the request log remembers", path: "7", mutate: func(c *contract.Command) {
+			c.Deadline = latest.Add(time.Second).Format(time.RFC3339)
+		}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			dto := command()
 			tc.mutate(&dto)
 
-			cmd, err := api.ToNodesCommand(host, actor, tc.path, dto)
+			// act
+			cmd, err := api.ToNodesCommand(host, actor, tc.path, dto, latest)
 
+			// assert
 			if tc.valid {
 				if err != nil {
 					t.Fatalf("got %v, want no error", err)
 				}
-				if cmd.Shard != 7 || !cmd.Deadline.Equal(deadline) || cmd.Actor != actor {
+				if cmd.Shard != 7 || cmd.Deadline.Format(time.RFC3339) != dto.Deadline || cmd.Actor != actor {
 					t.Fatalf("got %+v, want the parsed command", cmd)
 				}
 				return
@@ -83,12 +92,14 @@ func TestToNodesCommand(t *testing.T) {
 }
 
 func TestToNodesCommandNamesNodesUnderTheHostItRunsOn(t *testing.T) {
-
+	// arrange
 	dto := command()
 	dto.NodeIDs = []string{"node-a", "node-a", "node-b"}
 
-	cmd, err := api.ToNodesCommand(host, actor, "7", dto)
+	// act
+	cmd, err := api.ToNodesCommand(host, actor, "7", dto, latest)
 
+	// assert
 	if err != nil {
 		t.Fatalf("map: %v", err)
 	}
@@ -111,11 +122,13 @@ func TestToDeployCommandNeedsADigest(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			dto := contract.DeployRequest{Command: command(), ImageDigest: tc.image, GPUs: 8, DiskBytes: 1 << 30}
 
-			cmd, err := api.ToDeployCommand(host, actor, "7", dto)
+			// act
+			cmd, err := api.ToDeployCommand(host, actor, "7", dto, latest)
 
+			// assert
 			if tc.valid {
 				if err != nil || cmd.Run.Image.String() != tc.image {
 					t.Fatalf("got %+v (%v), want the digest kept", cmd.Run, err)
@@ -145,14 +158,55 @@ func TestToDeployCommandParsesTheSourcesTheRunDeclares(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			dto := contract.DeployRequest{Command: command(), ImageDigest: digest, Sources: tc.sources, GPUs: 8, DiskBytes: 1 << 30}
 
-			cmd, err := api.ToDeployCommand(host, actor, "7", dto)
+			// act
+			cmd, err := api.ToDeployCommand(host, actor, "7", dto, latest)
 
+			// assert
 			if tc.valid {
 				if err != nil || len(cmd.Run.Sources) != tc.want {
 					t.Fatalf("got %v (%v), want %d sources", cmd.Run.Sources, err, tc.want)
+				}
+				return
+			}
+			if !errors.Is(err, shared.ErrValidation) {
+				t.Fatalf("got %v, want a validation error", err)
+			}
+		})
+	}
+}
+
+func TestToDeployCommandTakesOnlyEnvNamesAContainerReadsAsGiven(t *testing.T) {
+	cases := []struct {
+		name  string
+		env   map[string]string
+		valid bool
+	}{
+		{name: "none", valid: true},
+		{name: "letters, digits and underscores", env: map[string]string{"HF_TOKEN": "x", "epochs2": "3", "_x": ""}, valid: true},
+		{name: "an empty name", env: map[string]string{"": "x"}},
+		{name: "a name that sets another through '='", env: map[string]string{"A=NODE_RANK": "0"}},
+		{name: "a name with a NUL", env: map[string]string{"A\x00B": "x"}},
+		{name: "a name with a dash", env: map[string]string{"MY-VAR": "x"}},
+		{name: "a name with a space", env: map[string]string{"MY VAR": "x"}},
+		{name: "a name outside ascii", env: map[string]string{"NÄME": "x"}},
+		{name: "a value with a NUL", env: map[string]string{"TOKEN": "a\x00b"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// arrange
+			dto := contract.DeployRequest{Command: command(), ImageDigest: digest, Env: tc.env, GPUs: 8, DiskBytes: 1 << 30}
+
+			// act
+			cmd, err := api.ToDeployCommand(host, actor, "7", dto, latest)
+
+			// assert
+			if tc.valid {
+				if err != nil || len(cmd.Run.Env) != len(tc.env) {
+					t.Fatalf("got %d env entries (%v), want %d", len(cmd.Run.Env), err, len(tc.env))
 				}
 				return
 			}
@@ -174,11 +228,13 @@ func meshRequest() contract.MeshRequest {
 }
 
 func TestToMeshCommandRebuildsTheOrderingItWasHanded(t *testing.T) {
-
+	// arrange
 	dto := meshRequest()
 
-	cmd, err := api.ToMeshCommand(host, actor, "7", dto)
+	// act
+	cmd, err := api.ToMeshCommand(host, actor, "7", dto, latest)
 
+	// assert
 	if err != nil {
 		t.Fatalf("map: %v", err)
 	}
@@ -216,12 +272,14 @@ func TestToMeshCommandRefusesRanksItCannotDeriveItself(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			dto := meshRequest()
 			tc.mutate(&dto)
 
-			_, err := api.ToMeshCommand(host, actor, "7", dto)
+			// act
+			_, err := api.ToMeshCommand(host, actor, "7", dto, latest)
 
+			// assert
 			if !errors.Is(err, shared.ErrValidation) {
 				t.Fatalf("got %v, want a validation error", err)
 			}
@@ -230,10 +288,11 @@ func TestToMeshCommandRefusesRanksItCannotDeriveItself(t *testing.T) {
 }
 
 func TestToNodesOutputAlwaysCarriesAList(t *testing.T) {
-
+	// act
 	empty := api.ToNodesOutput(nil)
 	failed := api.ToNodesOutput([]run.NodeResult{run.Failed(vo.NodeRef{NodeID: "node-a"}, mesh.ErrNodeNotInMesh)})
 
+	// assert
 	if empty.Items == nil {
 		t.Fatal("items must serialize as an empty list, never null")
 	}

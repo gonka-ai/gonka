@@ -77,12 +77,15 @@ func TestRefreshOptInLetsAnUnhealthyNodeLapse(t *testing.T) {
 }
 
 func TestRefreshOptInWaitsForTheKeyToBeGranted(t *testing.T) {
+	// arrange
 	f := newFixture()
 	f.keys.missing = []string{"/inference.inference.MsgRefreshTrainingNodeOptIn"}
 	refresh := f.refresh()
 
+	// act
 	result, err := refresh.Execute(context.Background(), nodeA)
 
+	// assert
 	if err != nil {
 		t.Fatalf("refresh must not fail: %v", err)
 	}

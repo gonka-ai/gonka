@@ -9,9 +9,6 @@ import (
 	"trainshard/internal/domain/shared/vo"
 )
 
-// The chain and the daemon each hold a copy of the endpoint grammar: the chain refuses what it
-// will not store, the daemon refuses what it will not publish, and the coordinator parses what the
-// chain stored. The two have to agree, or an address the chain accepted fails the shard read
 func TestTheChainAndTheDaemonAgreeOnWhatAnEndpointIs(t *testing.T) {
 	vectors := []string{
 		"https://gpu.example",
@@ -42,14 +39,14 @@ func TestTheChainAndTheDaemonAgreeOnWhatAnEndpointIs(t *testing.T) {
 	}
 	for _, raw := range vectors {
 		t.Run(raw, func(t *testing.T) {
+			// act
 			_, daemonErr := vo.ParseEndpoint(raw)
-			// an empty endpoint is a withdrawal on the chain and "unset" on the daemon; both sides
-			// take it without a grammar check, the way MsgRefreshTrainingNodeOptIn.ValidateBasic does
 			var chainErr error
 			if raw != "" {
 				chainErr = types.ValidateTrainingEndpoint(raw)
 			}
 
+			// assert
 			if (daemonErr == nil) != (chainErr == nil) {
 				t.Fatalf("daemon says %v, chain says %v: the two grammars have drifted", daemonErr, chainErr)
 			}

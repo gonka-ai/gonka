@@ -52,10 +52,14 @@ func (c Config) PeersFor(node vo.NodeRef) []Peer {
 	return peers
 }
 
-// Address is the mesh address a rank answers on. The coordinator hands out the rank, the host
-// raises its interface with it and the run inside reads it back, so all three derive it here
+// a mesh holds 254 ranks, the last octet of 10.<shard>.0.x; lifting it means spreading ranks into
+// the third octet, here and nowhere else
+const maxRank = 253
+
+// Address is derived here and nowhere else: the coordinator hands out the rank, the host raises its
+// interface with it and the run inside reads it back
 func Address(shardID vo.ShardID, rank int) (string, error) {
-	if rank < 0 || rank > 253 {
+	if rank < 0 || rank > maxRank {
 		return "", ErrRankOffMesh
 	}
 	return fmt.Sprintf("10.%d.0.%d", uint64(shardID)%256, rank+1), nil
@@ -75,8 +79,8 @@ func (c Config) Placement(node vo.NodeRef) (vo.Placement, error) {
 	return vo.Placement{}, ErrNodeNotInMesh
 }
 
-// Rebuilds reports whether a node's place on the mesh differs between two peer lists. A
-// container is built with its rank, so a new place is a new container
+// Rebuilds reports whether a node's place differs between two peer lists: a container is built with
+// its rank, so a new place is a new container
 func Rebuilds(previous, next Config, node vo.NodeRef) bool {
 	before, err := previous.Placement(node)
 	if err != nil {

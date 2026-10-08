@@ -9,7 +9,7 @@ import (
 )
 
 func TestAbortGivesTheReservationBackAndLeavesCleanupToTheLoop(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.prepared(ctx); err != nil {
@@ -17,8 +17,10 @@ func TestAbortGivesTheReservationBackAndLeavesCleanupToTheLoop(t *testing.T) {
 	}
 	f.rec.reset()
 
+	// act
 	err := f.abort().Execute(ctx, nodeA)
 
+	// assert
 	if err != nil {
 		t.Fatalf("abort: %v", err)
 	}
@@ -39,12 +41,14 @@ func TestAbortGivesTheReservationBackAndLeavesCleanupToTheLoop(t *testing.T) {
 }
 
 func TestAbortRefusesANodeThatIsNotWorkingForAnyone(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	delete(f.chain.reservations, nodeA)
 
+	// act
 	err := f.abort().Execute(context.Background(), nodeA)
 
+	// assert
 	if !errors.Is(err, shard.ErrNodeNotReserved) {
 		t.Fatalf("got %v, want a refusal", err)
 	}

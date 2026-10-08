@@ -10,7 +10,7 @@ import (
 )
 
 func TestReportTellsEveryImageTheNodeRan(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -25,8 +25,10 @@ func TestReportTellsEveryImageTheNodeRan(t *testing.T) {
 		}
 	}
 
+	// act
 	reports, err := f.report().Execute(ctx, nodesCommand())
 
+	// assert
 	if err != nil {
 		t.Fatalf("report: %v", err)
 	}
@@ -42,7 +44,7 @@ func TestReportTellsEveryImageTheNodeRan(t *testing.T) {
 }
 
 func TestReportStillTellsTheImagesWhileTheGPUsAndTheDapiCannotBeRead(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -52,8 +54,10 @@ func TestReportStillTellsTheImagesWhileTheGPUsAndTheDapiCannotBeRead(t *testing.
 	f.gpu.err = errors.New("nvidia-smi: driver not loaded")
 	f.control.unreadable = errors.New("dapi is restarting")
 
+	// act
 	reports, err := f.report().Execute(ctx, nodesCommand())
 
+	// assert
 	if err != nil {
 		t.Fatalf("report: %v", err)
 	}
@@ -63,12 +67,14 @@ func TestReportStillTellsTheImagesWhileTheGPUsAndTheDapiCannotBeRead(t *testing.
 }
 
 func TestReportHidesWhatTheShardBeforeLeftOnTheNode(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	f.runs.states[nodeA] = run.RunState{Shard: shardID - 1, Images: []run.ImageRun{{Image: runImage, At: now}}, Fault: &oldFault}
 
+	// act
 	reports, err := f.report().Execute(context.Background(), nodesCommand())
 
+	// assert
 	if err != nil {
 		t.Fatalf("report: %v", err)
 	}
@@ -78,13 +84,15 @@ func TestReportHidesWhatTheShardBeforeLeftOnTheNode(t *testing.T) {
 }
 
 func TestReportKeepsARefusalInTheNodeEntry(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	cmd := nodesCommand()
 	cmd.Actor = shard.Actor{Address: stranger}
 
+	// act
 	reports, err := f.report().Execute(context.Background(), cmd)
 
+	// assert
 	if err != nil {
 		t.Fatalf("a per-node refusal must not fail the request: %v", err)
 	}

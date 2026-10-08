@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -65,6 +66,10 @@ func New(cfg Config, log *slog.Logger) *Volumes {
 }
 
 func (v *Volumes) Ensure(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, quotaBytes int64) error {
+	// xfs reads a hard limit of zero as no limit at all
+	if blocks(quotaBytes) == 0 {
+		return fmt.Errorf("volume quota of %d bytes: %w", quotaBytes, shared.ErrValidation)
+	}
 	path := v.path(shardID, node)
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return err
@@ -93,8 +98,7 @@ func (v *Volumes) Usage(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 		return 0, 0, false, err
 	}
 
-	// the report is asked for every project, since the tool says nothing about one that holds no
-	// blocks yet, and a run that has written nothing still has a disk it was given
+	// asked for every project: the tool skips one that holds no blocks yet
 	out, err := v.report(ctx, "report -p -N -n -b")
 	if err != nil {
 		return 0, 0, false, err
@@ -114,7 +118,7 @@ func (v *Volumes) Wipe(ctx context.Context, shardID vo.ShardID, node vo.NodeRef)
 	if err := os.RemoveAll(path); err != nil {
 		return err
 	}
-	// the shard's directory goes with its last volume; one another node still uses stays
+	// the shard's directory stays while another node's volume is still in it
 	if err := os.Remove(filepath.Dir(path)); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {
 		return err
 	}
@@ -180,7 +184,7 @@ func projectID(shardID vo.ShardID, node vo.NodeRef) uint32 {
 	return sum.Sum32()%(1<<24) + 1
 }
 
-// The report holds a line per project: the id, the blocks used, the soft limit, then the hard one
+// a report line is the project id, the blocks used, the soft limit, then the hard one
 func parseQuota(out string, project uint32) (used int64, quota int64, err error) {
 	for line := range strings.Lines(out) {
 		fields := strings.Fields(line)

@@ -25,7 +25,7 @@ func (uc *CollectIdentitiesUseCase) Execute(ctx context.Context, shardID vo.Shar
 		return nil, err
 	}
 
-	// 2. Allow creator only
+	// 2. Refuse a closed shard and anyone but its creator or run key
 	if !record.IsActive(height) {
 		return nil, shard.ErrShardClosed
 	}
@@ -33,7 +33,7 @@ func (uc *CollectIdentitiesUseCase) Execute(ctx context.Context, shardID vo.Shar
 		return nil, shard.ErrNotAuthorized
 	}
 
-	// 3. Skip nodes with no key; return the rest
+	// 3. Return the identity of every reserved node that has one yet
 	identities := make([]mesh.Identity, 0, len(uc.nodes))
 	for _, node := range uc.nodes {
 		if !record.Reserves(node) {

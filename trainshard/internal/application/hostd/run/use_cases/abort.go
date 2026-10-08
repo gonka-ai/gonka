@@ -17,7 +17,7 @@ func NewAbortUseCase(chain shard.ChainReader, submitter shard.ChainSubmitter) *A
 }
 
 func (uc *AbortUseCase) Execute(ctx context.Context, node vo.NodeRef) error {
-	// 1. Load reservation, or fail
+	// 1. Read the node's reservation from chain, or refuse an unreserved node
 	shardID, reserved, err := uc.chain.Reservation(ctx, node)
 	if err != nil {
 		return err

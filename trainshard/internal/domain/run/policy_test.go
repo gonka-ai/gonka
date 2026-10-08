@@ -89,6 +89,12 @@ func TestCanDeploy(t *testing.T) {
 			wantErr:   run.ErrEnvReserved,
 		},
 		{
+			name:      "environment ranks the run itself through a name that carries an equals sign",
+			mutate:    func(s *run.RunSpec) { s.Env["NODE_RANK=0"] = "x" },
+			container: vo.ContainerCreated,
+			wantErr:   run.ErrEnvReserved,
+		},
+		{
 			name:      "environment picks the cards itself",
 			mutate:    func(s *run.RunSpec) { s.Env["NVIDIA_VISIBLE_DEVICES"] = "all" },
 			container: vo.ContainerCreated,
@@ -98,12 +104,14 @@ func TestCanDeploy(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			spec := runSpec()
 			tc.mutate(&spec)
 
+			// act
 			err := run.CanDeploy(spec, limits, tc.container)
 
+			// assert
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("got %v, want %v", err, tc.wantErr)
 			}
@@ -112,11 +120,12 @@ func TestCanDeploy(t *testing.T) {
 }
 
 func TestVerifyImage(t *testing.T) {
-
+	// act
 	derived := run.VerifyImage(runLayers, baseLayers)
 	unrelated := run.VerifyImage(vo.ImageLayers{"other"}, baseLayers)
 	unknownBase := run.VerifyImage(runLayers, nil)
 
+	// assert
 	if derived != nil {
 		t.Fatalf("an image built on the base must pass, got %v", derived)
 	}
@@ -126,12 +135,13 @@ func TestVerifyImage(t *testing.T) {
 }
 
 func TestCanStartAndCanStopRequireAContainer(t *testing.T) {
-
+	// act
 	startAbsent := run.CanStart(vo.ContainerAbsent)
 	startCreated := run.CanStart(vo.ContainerCreated)
 	stopAbsent := run.CanStop(vo.ContainerAbsent)
 	stopRunning := run.CanStop(vo.ContainerRunning)
 
+	// assert
 	if !errors.Is(startAbsent, run.ErrContainerMissing) || !errors.Is(stopAbsent, run.ErrContainerMissing) {
 		t.Fatalf("absent container must be refused: start=%v stop=%v", startAbsent, stopAbsent)
 	}
@@ -170,9 +180,10 @@ func TestSameImage(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// act
 			got, err := run.SameImage(tc.nodes)
 
+			// assert
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("got error %v, want %v", err, tc.wantErr)
 			}
@@ -184,7 +195,7 @@ func TestSameImage(t *testing.T) {
 }
 
 func TestAutokick(t *testing.T) {
-	reserved := run.Desired{Reservation: run.Reservation{BaseImage: baseImage}, Reserved: true}
+	reserved := run.Desired{Reservation: run.Reservation{BaseImage: baseImage, Active: true}, Reserved: true}
 	ready := run.Observed{Drained: true, Images: []vo.ImageDigest{baseImage}, MeshKey: true, MeshIdentity: true}
 	patience := time.Hour
 
@@ -262,13 +273,15 @@ func TestAutokick(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			reservedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 			state := tc.state
 			state.ReservedAt, state.FaultAt = reservedAt, reservedAt
 
+			// act
 			reason, kick := run.Autokick(reserved, tc.observed, state, reservedAt.Add(tc.waited), patience)
 
+			// assert
 			if kick != tc.wantKick || (kick && reason != tc.wantReason) {
 				t.Fatalf("got %q %v, want %q %v", reason, kick, tc.wantReason, tc.wantKick)
 			}
@@ -276,22 +289,53 @@ func TestAutokick(t *testing.T) {
 	}
 }
 
-func TestAutokickLeavesANodeTheChainNoLongerHoldsToCleanup(t *testing.T) {
-
+func TestAutokickLeavesANodeOnItsWayOutToCleanup(t *testing.T) {
 	reservedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
-	state := run.RunState{ReservedAt: reservedAt}
 
-	_, kick := run.Autokick(run.Desired{}, run.Observed{}, state, reservedAt.Add(10*time.Hour), time.Hour)
+	expired := run.Desired{Reservation: run.Reservation{Shard: 7, BaseImage: baseImage}, Reserved: true}
+	ready := run.Observed{Drained: true, Images: []vo.ImageDigest{baseImage}, MeshKey: true, MeshIdentity: true}
 
-	if kick {
-		t.Fatal("an unreserved node has nothing left to release; it is on its way out already")
+	cases := []struct {
+		name     string
+		desired  run.Desired
+		observed run.Observed
+		state    run.RunState
+	}{
+		{
+			name:  "the chain no longer holds the node",
+			state: run.RunState{ReservedAt: reservedAt},
+		},
+		{
+			name:    "the shard is past its expiry and still listed, unready for longer than the host waits",
+			desired: expired,
+			state:   run.RunState{ReservedAt: reservedAt, UnpreparedAt: reservedAt},
+		},
+		{
+			name:     "the shard is past its expiry and still listed, its run broken for longer than the host waits",
+			desired:  expired,
+			observed: ready,
+			state:    run.RunState{ReservedAt: reservedAt, Fault: &shared.Fault{Code: "PULL_FAILED"}, FaultAt: reservedAt},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// act
+			_, kick := run.Autokick(tc.desired, tc.observed, tc.state, reservedAt.Add(10*time.Hour), time.Hour)
+
+			// assert
+			if kick {
+				t.Fatal("got a release, want the node left to cleanup")
+			}
+		})
 	}
 }
 
 func TestRunSpecKeepsEnvironmentValuesOutOfText(t *testing.T) {
-
+	// act
 	text := runSpec().String()
 
+	// assert
 	if strings.Contains(text, "secret") {
 		t.Fatalf("run spec text leaked an environment value: %s", text)
 	}

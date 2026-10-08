@@ -6,8 +6,7 @@ const (
 	HeaderTimestamp = "X-Trainshard-Timestamp"
 )
 
-// ShellProtocol is what a shell request asks to switch to; a proxy tunnels the connection
-// both ways only after a 101 for an Upgrade, and holds back bytes sent after a plain request
+// a proxy tunnels both ways only after a 101 for an Upgrade, so a shell is an upgrade, not a plain request
 const ShellProtocol = "trainshard-shell"
 
 const (

@@ -33,8 +33,8 @@ func Plan(d Desired, o Observed) []Action {
 	if d.Run.IsZero() {
 		return actions
 	}
-	// A container is built with the rank the peer list gives it, so it cannot exist before one;
-	// its image can already be refused, while the deploy that brought it still waits for the answer
+	// a container is built with the rank the peer list gives it, so it cannot exist before one;
+	// its image can be refused already, while the deploy that brought it waits for the answer
 	if !d.MeshConfigured {
 		return append(actions, checkRunImage(d, o)...)
 	}

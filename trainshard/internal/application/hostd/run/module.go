@@ -38,10 +38,11 @@ type Module struct {
 func New(cfg Config, deps Deps) *Module {
 	converge := run.NewConverger(deps.Reservations, deps.Runs, deps.Machine, deps.Clock, cfg.Patience)
 	once := run.NewOnce(deps.Requests)
+	host := vo.Host{Participant: cfg.Participant, Nodes: cfg.Nodes}
 
 	return &Module{
-		admin: api.NewAdmin(cfg.Participant, usecases.NewAbortUseCase(deps.Chain, deps.Submitter)),
-		endpoints: api.NewEndpoints(vo.Host{Participant: cfg.Participant, Nodes: cfg.Nodes}, api.UseCases{
+		admin: api.NewAdmin(host, usecases.NewAbortUseCase(deps.Chain, deps.Submitter)),
+		endpoints: api.NewEndpoints(host, deps.Clock, cfg.RequestTTL, api.UseCases{
 			Deploy:     usecases.NewDeployUseCase(deps.Chain, deps.Runs, once, deps.Machine.Containers, converge, deps.Clock, cfg.Limits),
 			Start:      usecases.NewStartUseCase(deps.Chain, deps.Runs, once, deps.Machine.Containers, converge, deps.Clock),
 			Stop:       usecases.NewStopUseCase(deps.Chain, deps.Runs, once, deps.Machine.Containers, converge, deps.Clock),

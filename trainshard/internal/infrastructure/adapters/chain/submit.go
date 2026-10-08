@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"time"
 
+	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/client"
 	clienttx "github.com/cosmos/cosmos-sdk/client/tx"
@@ -14,11 +16,13 @@ import (
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	signingtypes "github.com/cosmos/cosmos-sdk/types/tx/signing"
 	authsigning "github.com/cosmos/cosmos-sdk/x/auth/signing"
 	authtx "github.com/cosmos/cosmos-sdk/x/auth/tx"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -28,8 +32,7 @@ import (
 )
 
 const (
-	denom = "ngonka"
-	// what a transaction goes out on when the chain will not say what it costs
+	denom       = "ngonka"
 	gasFallback = 400_000
 )
 
@@ -44,7 +47,8 @@ const (
 	blockTime      = 5 * time.Second
 )
 
-// Signer submits what the shard's own actor is allowed to ask of the chain
+var accountTypes = accountRegistry()
+
 type Signer struct {
 	*Client
 	key      Key
@@ -75,13 +79,11 @@ func NewSigner(client *Client, key Key, chainID string, landing time.Duration) *
 	}
 }
 
-// OptIn is a host's offer to lend a node, which a coordinator never makes
 func (s *Signer) OptIn(context.Context, vo.NodeRef, time.Duration) error {
-	return shared.New("NOT_A_HOST", shared.ErrConflict, "a coordinator lends no nodes of its own")
+	return shared.New("NOT_A_HOST", shared.ErrConflict, "a coordinator has no nodes of its own to offer for a shard")
 }
 
-// Release drops the node from the run. Whoever the shard answers to may ask, and the id is the same
-// on every retry so a repeat of one that already landed changes nothing
+// the request id is derived, not random, so a retry of a release that already landed is a no-op on chain
 func (s *Signer) Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, reason vo.ReleaseReason) error {
 	return s.send(ctx, &types.MsgAutokickTrainshardNode{
 		Creator:      string(s.key.Address()),
@@ -93,8 +95,7 @@ func (s *Signer) Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 	})
 }
 
-// Assemble reserves the nodes. The chain names the shard in its answer, which is the only place
-// that number exists until the shard is on chain
+// the chain names the new shard only in its answer to this transaction
 func (s *Signer) Assemble(ctx context.Context, proposal uint64) (vo.ShardID, error) {
 	answer, err := s.submit(ctx, &types.MsgAssembleTrainshard{Creator: string(s.key.Address()), ProposalId: proposal})
 	if err != nil {
@@ -119,8 +120,7 @@ func (s *Signer) send(ctx context.Context, msg sdk.Msg) error {
 	return err
 }
 
-// gas asks the chain what the message costs, because no fixed number covers it: an assemble writes
-// an entry per node it reserves, and a settle hands each of them back
+// no fixed gas covers every message: an assemble and a settle grow with the nodes in the shard
 func (s *Signer) gas(ctx context.Context, builder client.TxBuilder) (uint64, error) {
 	encoded, err := s.config.TxEncoder()(builder.GetTx())
 	if err != nil {
@@ -156,7 +156,7 @@ func (s *Signer) submit(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, erro
 
 	at, err := s.Height(ctx)
 	if err != nil {
-		return nil, shared.New("CHAIN_UNREACHABLE", shared.ErrUnavailable, err.Error())
+		return nil, err
 	}
 
 	builder := s.config.NewTxBuilder()
@@ -201,17 +201,16 @@ func (s *Signer) submit(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, erro
 		Mode:    txtypes.BroadcastMode_BROADCAST_MODE_SYNC,
 	})
 	if err != nil {
-		return nil, shared.New("CHAIN_UNREACHABLE", shared.ErrUnavailable, err.Error())
+		return nil, unreachable(err)
 	}
 	if answer.TxResponse.Code != 0 {
-		return nil, refused(msg, answer.TxResponse.Code, answer.TxResponse.RawLog)
+		return nil, Refused(msg, answer.TxResponse.Codespace, answer.TxResponse.Code, answer.TxResponse.RawLog)
 	}
 	return s.landed(ctx, msg, answer.TxResponse.TxHash)
 }
 
-// landed waits for the block that runs the message. The chain answers a broadcast the moment it takes
-// the transaction, so without this the next one would sign with a sequence the account no longer has,
-// and a message the chain then refused would read as done
+// a broadcast is answered when the chain takes the transaction, not when it runs it: without this wait
+// the next one signs with a stale sequence and a message the chain then refused reads as done
 func (s *Signer) landed(ctx context.Context, msg sdk.Msg, hash string) (*sdk.TxResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.landing)
 	defer cancel()
@@ -221,7 +220,7 @@ func (s *Signer) landed(ctx context.Context, msg sdk.Msg, hash string) (*sdk.TxR
 		answer, err := s.sender.GetTx(ctx, &txtypes.GetTxRequest{Hash: hash})
 		switch {
 		case err == nil && answer.TxResponse.Code != 0:
-			return nil, refused(msg, answer.TxResponse.Code, answer.TxResponse.RawLog)
+			return nil, Refused(msg, answer.TxResponse.Codespace, answer.TxResponse.Code, answer.TxResponse.RawLog)
 		case err == nil:
 			return answer.TxResponse, nil
 		case status.Code(err) != codes.NotFound:
@@ -247,25 +246,57 @@ func slow(msg sdk.Msg, hash string, waited time.Duration, last error) error {
 	return shared.New("CHAIN_SLOW", shared.ErrUnavailable, reason)
 }
 
-func refused(msg sdk.Msg, code uint32, log string) error {
-	return shared.New("CHAIN_REFUSED", shared.ErrUnavailable,
-		fmt.Sprintf("the chain refused %s with code %d: %s", sdk.MsgTypeURL(msg), code, log))
+// Refused reads a refusal by its codespace and code alone, never by its log, whose wording is no contract.
+// Out of gas and a low fee stay unavailable: every submit simulates gas and reads the price again.
+func Refused(msg sdk.Msg, codespace string, code uint32, log string) error {
+	return shared.New("CHAIN_REFUSED", refusal(codespace, code),
+		fmt.Sprintf("the chain refused %s with code %d in codespace %q: %s", sdk.MsgTypeURL(msg), code, codespace, log))
+}
+
+func refusal(codespace string, code uint32) error {
+	switch {
+	case codespace == types.ModuleName:
+		return shared.ErrConflict
+	case among(codespace, code, sdkerrors.ErrInsufficientFunds):
+		return shared.ErrConflict
+	default:
+		return shared.ErrUnavailable
+	}
+}
+
+func among(codespace string, code uint32, known ...*errorsmod.Error) bool {
+	return slices.ContainsFunc(known, func(e *errorsmod.Error) bool {
+		return e.Codespace() == codespace && e.ABCICode() == code
+	})
 }
 
 func (s *Signer) account(ctx context.Context) (number, sequence uint64, err error) {
 	answer, err := s.accounts.Account(ctx, &authtypes.QueryAccountRequest{Address: string(s.key.Address())})
-	if err != nil {
+	if status.Code(err) == codes.NotFound {
 		return 0, 0, shared.New("ACCOUNT_UNKNOWN", shared.ErrNotFound,
 			fmt.Sprintf("the chain holds no account for %s: it needs funds before it can sign", s.key.Address()))
 	}
-	var held authtypes.BaseAccount
-	if err := held.Unmarshal(answer.Account.Value); err != nil {
-		return 0, 0, err
+	if err != nil {
+		return 0, 0, unreachable(err)
 	}
-	return held.AccountNumber, held.Sequence, nil
+	var held sdk.AccountI
+	if err := accountTypes.UnpackAny(answer.Account, &held); err != nil || held == nil {
+		return 0, 0, shared.New("ACCOUNT_UNREADABLE", shared.ErrConflict,
+			fmt.Sprintf("the chain holds %s as %q, an account type this coordinator cannot sign for", s.key.Address(), answer.Account.GetTypeUrl()))
+	}
+	return held.GetAccountNumber(), held.GetSequence(), nil
 }
 
-// price is what the chain charges per unit of gas; a chain that does not say charges nothing
+// the chain hands out a vesting account as its own type, with the base account nested inside
+func accountRegistry() codectypes.InterfaceRegistry {
+	registry := codectypes.NewInterfaceRegistry()
+	cryptocodec.RegisterInterfaces(registry)
+	authtypes.RegisterInterfaces(registry)
+	vestingtypes.RegisterInterfaces(registry)
+	return registry
+}
+
+// a chain that does not say its gas price is taken to charge nothing
 func (s *Signer) price(ctx context.Context) int64 {
 	answer, err := s.query.Params(ctx, &types.QueryParamsRequest{})
 	if err != nil || answer.Params.FeeParams == nil {

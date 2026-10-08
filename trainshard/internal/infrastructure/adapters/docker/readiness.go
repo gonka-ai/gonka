@@ -12,8 +12,7 @@ import (
 	"trainshard/internal/domain/shared"
 )
 
-// the name is fixed so that a box left behind by a daemon that died mid-check is cleared away by the
-// next one rather than holding a card for good
+// fixed, so a box left by a daemon that died mid-check is cleared by the next one instead of holding a card
 const readinessName = "trainshard-readiness"
 
 func (c *Client) GPUContainer(ctx context.Context) error {
@@ -32,9 +31,7 @@ func (c *Client) GPUContainer(ctx context.Context) error {
 	return unanswered(c.startByName(ctx, readinessName))
 }
 
-// unanswered marks an engine that failed to reach a verdict rather than reaching a bad one: it ran
-// out of time, or it is still clearing away what the last check left behind. Neither says anything
-// about the cards, and the caller holds a standing answer through them
+// a timeout or a box still being cleared says nothing about the cards, so the caller keeps its last verdict
 func unanswered(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) || cerrdefs.IsConflict(err) {
 		return fmt.Errorf("%w: %w", shared.ErrUnavailable, err)
@@ -55,16 +52,21 @@ func (c *Client) createReadiness(ctx context.Context) error {
 		},
 	}
 
-	if err := c.create(ctx, options); !cerrdefs.IsNotFound(err) {
-		return err
-	}
-	if err := c.pull(ctx, c.cfg.SandboxImage); err != nil {
-		return err
-	}
 	return c.create(ctx, options)
 }
 
+// pulls only an image the engine lacks, so a cached one needs no registry
 func (c *Client) create(ctx context.Context, options client.ContainerCreateOptions) error {
+	if err := c.createOnce(ctx, options); !cerrdefs.IsNotFound(err) {
+		return err
+	}
+	if err := c.pull(ctx, options.Config.Image); err != nil {
+		return err
+	}
+	return c.createOnce(ctx, options)
+}
+
+func (c *Client) createOnce(ctx context.Context, options client.ContainerCreateOptions) error {
 	ctx, cancel := c.bounded(ctx)
 	defer cancel()
 

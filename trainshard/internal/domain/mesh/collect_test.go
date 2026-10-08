@@ -11,12 +11,14 @@ import (
 )
 
 func TestCollectTakesOneMemberPerReservedNode(t *testing.T) {
-
+	// arrange
 	hosts := newHostsStub()
 
+	// act
 	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
 		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
+	// assert
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -31,15 +33,17 @@ func TestCollectTakesOneMemberPerReservedNode(t *testing.T) {
 }
 
 func TestCollectTakesAMemberFromTheHostTheChainPlacesItOnOnly(t *testing.T) {
-
+	// arrange
 	hosts := newHostsStub()
 	forged := identityOf(nodeA)
 	forged.Member.Address = "10.9.9.9:51820"
 	hosts.identities[hostB] = []mesh.Identity{identityOf(nodeB), identityOf(nodeC), forged}
 
+	// act
 	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
 		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
+	// assert
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -52,6 +56,7 @@ func TestCollectTakesAMemberFromTheHostTheChainPlacesItOnOnly(t *testing.T) {
 }
 
 func TestCollectRefusesAMemberAHostHasNoRightToOffer(t *testing.T) {
+	// arrange
 	cases := map[string]struct {
 		arrange func(*hostsStub, *verifierStub, *delegationStub)
 		want    error
@@ -97,13 +102,15 @@ func TestCollectRefusesAMemberAHostHasNoRightToOffer(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-
+			// arrange
 			hosts, verifier, delegation := newHostsStub(), &verifierStub{}, &delegationStub{}
 			tc.arrange(hosts, verifier, delegation)
 
+			// act
 			_, _, err := mesh.Collect(context.Background(), hosts, verifier, delegation, shardID,
 				machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
+			// assert
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("got %v, want %v", err, tc.want)
 			}
@@ -112,16 +119,18 @@ func TestCollectRefusesAMemberAHostHasNoRightToOffer(t *testing.T) {
 }
 
 func TestCollectTakesAMemberSignedByTheHostsWarmKey(t *testing.T) {
-
+	// arrange
 	hosts := newHostsStub()
 	warm := identityOf(nodeA)
 	warm.Signature = []byte("gonka1warm")
 	hosts.identities[hostA] = []mesh.Identity{warm}
 	delegation := &delegationStub{warm: map[vo.Address]vo.Participant{"gonka1warm": hostA}}
 
+	// act
 	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, delegation, shardID,
 		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
+	// assert
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
@@ -131,13 +140,15 @@ func TestCollectTakesAMemberSignedByTheHostsWarmKey(t *testing.T) {
 }
 
 func TestCollectReportsANodeThatHasNotPreparedYetAsMissing(t *testing.T) {
-
+	// arrange
 	hosts := newHostsStub()
 	hosts.identities[hostA] = nil
 
+	// act
 	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
 		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
+	// assert
 	if err != nil {
 		t.Fatalf("a node that is not ready yet is not a failure: %v", err)
 	}
@@ -147,13 +158,15 @@ func TestCollectReportsANodeThatHasNotPreparedYetAsMissing(t *testing.T) {
 }
 
 func TestCollectKeepsGoingWhenOneHostCannotBeAsked(t *testing.T) {
-
+	// arrange
 	hosts := newHostsStub()
 	hosts.silent[hostB] = true
 
+	// act
 	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
 		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
+	// assert
 	if err != nil {
 		t.Fatalf("one silent host must not sink the mesh: %v", err)
 	}
@@ -163,13 +176,15 @@ func TestCollectKeepsGoingWhenOneHostCannotBeAsked(t *testing.T) {
 }
 
 func TestCollectStopsWhenNoHostAnswersAtAll(t *testing.T) {
-
+	// arrange
 	hosts := newHostsStub()
 	hosts.silent[hostA], hosts.silent[hostB] = true, true
 
+	// act
 	_, _, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
 		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
+	// assert
 	if !errors.Is(err, errHost) {
 		t.Fatalf("got %v, want the failure reported as ours rather than every node's", err)
 	}

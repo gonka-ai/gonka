@@ -45,16 +45,18 @@ func newBlockingWriter() *blockingWriter {
 }
 
 func TestBoundedPassesEverythingThroughToAReaderThatKeepsUp(t *testing.T) {
-
+	// arrange
 	var out bytes.Buffer
 	bounded := streamx.NewBounded(context.Background(), &out, 1<<20)
 
+	// act
 	for range 100 {
 		if _, err := bounded.Write([]byte("line of output\n")); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 	}
 
+	// assert
 	if err := bounded.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -67,14 +69,15 @@ func TestBoundedPassesEverythingThroughToAReaderThatKeepsUp(t *testing.T) {
 }
 
 func TestBoundedTellsASlowReaderHowMuchItLost(t *testing.T) {
-
+	// arrange
 	out := newBlockingWriter()
 	bounded := streamx.NewBounded(context.Background(), out, 64)
-
 	if _, err := bounded.Write([]byte("first")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	<-out.arrived
+
+	// act
 	for range 100 {
 		if _, err := bounded.Write(bytes.Repeat([]byte("x"), 32)); err != nil {
 			t.Fatalf("write: %v", err)
@@ -82,6 +85,7 @@ func TestBoundedTellsASlowReaderHowMuchItLost(t *testing.T) {
 	}
 	close(out.release)
 
+	// assert
 	if err := bounded.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -94,28 +98,33 @@ func TestBoundedTellsASlowReaderHowMuchItLost(t *testing.T) {
 }
 
 func TestBoundedReportsWhatTheReaderRefused(t *testing.T) {
-
+	// arrange
 	out := newBlockingWriter()
 	out.err = errors.New("the coordinator hung up")
 	bounded := streamx.NewBounded(context.Background(), out, 1<<20)
 
+	// act
 	if _, err := bounded.Write([]byte("output")); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	<-out.arrived
 	close(out.release)
 
+	// assert
 	if err := bounded.Close(); !errors.Is(err, out.err) {
 		t.Fatalf("got %v, want the reader's own failure", err)
 	}
 }
 
 func TestBoundedStopsWhenTheRequestIsCancelled(t *testing.T) {
-
+	// arrange
 	ctx, cancel := context.WithCancel(context.Background())
 	bounded := streamx.NewBounded(ctx, &bytes.Buffer{}, 1<<20)
+
+	// act
 	cancel()
 
+	// assert
 	if err := bounded.Close(); err != nil && !errors.Is(err, context.Canceled) {
 		t.Fatalf("got %v, want the stream to end with the request", err)
 	}

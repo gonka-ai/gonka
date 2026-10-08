@@ -2,12 +2,15 @@ package xfsquota
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 
+	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -114,9 +117,7 @@ func TestBlocksRoundUp(t *testing.T) {
 	}
 }
 
-// The project id is how a quota is found again after a restart, so it must be stable and never 0,
-// which xfs reads as "no project"
-func TestProjectID(t *testing.T) {
+func TestProjectIDIsStableNonZeroAndOwnToTheVolume(t *testing.T) {
 	// act
 	first := projectID(shard, ref("a"))
 	again := projectID(shard, ref("a"))
@@ -187,6 +188,34 @@ func TestUsageOfAMissingVolume(t *testing.T) {
 	}
 	if present || used != 0 || quota != 0 {
 		t.Fatalf("present = %v, used = %d, quota = %d", present, used, quota)
+	}
+}
+
+func TestEnsureRefusesAVolumeWithoutAQuota(t *testing.T) {
+	// arrange
+	cases := []struct {
+		name  string
+		bytes int64
+	}{
+		{name: "zero", bytes: 0},
+		{name: "negative", bytes: -1},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := New(Config{Root: t.TempDir(), Tool: filepath.Join(t.TempDir(), "no-xfs-quota")}, slog.New(slog.DiscardHandler))
+
+			// act
+			err := v.Ensure(context.Background(), shard, ref("a"), tc.bytes)
+
+			// assert
+			if !errors.Is(err, shared.ErrValidation) {
+				t.Fatalf("err = %v, want a validation error", err)
+			}
+			if _, statErr := os.Stat(v.path(shard, ref("a"))); !errors.Is(statErr, fs.ErrNotExist) {
+				t.Fatalf("the volume was made without a quota: %v", statErr)
+			}
+		})
 	}
 }
 

@@ -3,6 +3,7 @@ package usecases_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ func meshConfig(t *testing.T, nodes ...vo.NodeRef) mesh.Config {
 	t.Helper()
 	members := make([]mesh.Member, 0, len(nodes))
 	for i, node := range nodes {
-		members = append(members, mesh.Member{Node: node, Address: "10.0.0." + string(rune('1'+i)), PublicKey: "public-key"})
+		members = append(members, mesh.Member{Node: node, Address: "10.0.0." + string(rune('1'+i)), PublicKey: "public-key-" + string(rune('1'+i))})
 	}
 	config, err := mesh.Order(shardID, members)
 	if err != nil {
@@ -31,11 +32,13 @@ func meshCommand(t *testing.T, nodes ...vo.NodeRef) usecases.MeshCommand {
 }
 
 func TestApplyMeshRejectsAPeerOutsideTheShard(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 
+	// act
 	_, err := f.applyMesh().Execute(context.Background(), meshCommand(t, nodeA, nodeB))
 
+	// assert
 	if !errors.Is(err, shard.ErrNodeNotReserved) {
 		t.Fatalf("got %v, want %v", err, shard.ErrNodeNotReserved)
 	}
@@ -44,8 +47,42 @@ func TestApplyMeshRejectsAPeerOutsideTheShard(t *testing.T) {
 	}
 }
 
-func TestApplyMeshRefusesANodeMissingFromThePeerList(t *testing.T) {
+func TestApplyMeshAnswersARepeatWithTheRecordedResultAfterAPeerIsKicked(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	record := activeShard()
+	record.Nodes = append(record.Nodes, shard.ReservedNode{Ref: nodeB, ModelID: "model-1"})
+	f.chain.shards[shardID] = record
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	cmd := meshCommand(t, nodeA, nodeB)
+	first, err := f.applyMesh().Execute(ctx, cmd)
+	if err != nil {
+		t.Fatalf("apply mesh: %v", err)
+	}
+	f.chain.shards[shardID] = activeShard()
+	fresh := cmd
+	fresh.RequestID = "req-2"
+	if _, err := f.applyMesh().Execute(ctx, fresh); !errors.Is(err, shard.ErrNodeNotReserved) {
+		t.Fatalf("got %v, want a new request naming the kicked peer refused", err)
+	}
 
+	// act
+	again, err := f.applyMesh().Execute(ctx, cmd)
+
+	// assert
+	if err != nil {
+		t.Fatalf("got %v, want the recorded answer to a request that already succeeded", err)
+	}
+	if !reflect.DeepEqual(again, first) {
+		t.Fatalf("got %+v, want the recorded %+v", again, first)
+	}
+}
+
+func TestApplyMeshRefusesANodeMissingFromThePeerList(t *testing.T) {
+	// arrange
 	f := newFixture()
 	record := activeShard()
 	record.Nodes = append(record.Nodes, shard.ReservedNode{Ref: nodeB, ModelID: "model-1"})
@@ -53,8 +90,10 @@ func TestApplyMeshRefusesANodeMissingFromThePeerList(t *testing.T) {
 	cmd := meshCommand(t, nodeB)
 	cmd.Nodes = []vo.NodeRef{nodeA}
 
+	// act
 	results, err := f.applyMesh().Execute(context.Background(), cmd)
 
+	// assert
 	if err != nil {
 		t.Fatalf("a per-node refusal must not fail the request: %v", err)
 	}
@@ -64,11 +103,13 @@ func TestApplyMeshRefusesANodeMissingFromThePeerList(t *testing.T) {
 }
 
 func TestApplyMeshRefusesANodeThatIsStillServingInference(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 
+	// act
 	results, err := f.applyMesh().Execute(context.Background(), meshCommand(t, nodeA))
 
+	// assert
 	if err != nil {
 		t.Fatalf("a per-node refusal must not fail the request: %v", err)
 	}
@@ -78,18 +119,20 @@ func TestApplyMeshRefusesANodeThatIsStillServingInference(t *testing.T) {
 }
 
 func TestApplyMeshBringsTheInterfaceUpBeforeItAnswers(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.prepared(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 
+	// act
 	results, err := f.applyMesh().Execute(ctx, meshCommand(t, nodeA))
 	if err != nil {
 		t.Fatalf("apply mesh: %v", err)
 	}
 
+	// assert
 	if len(results) != 1 || !results[0].OK() {
 		t.Fatalf("got %+v, want one accepted node", results)
 	}
@@ -99,7 +142,7 @@ func TestApplyMeshBringsTheInterfaceUpBeforeItAnswers(t *testing.T) {
 }
 
 func TestApplyMeshTakesTheListWhenOnlyTheRunIsRefused(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.prepared(ctx); err != nil {
@@ -115,8 +158,10 @@ func TestApplyMeshTakesTheListWhenOnlyTheRunIsRefused(t *testing.T) {
 	}
 	f.images.pullErr = nil
 
+	// act
 	results, err := f.applyMesh().Execute(ctx, meshCommand(t, nodeA))
 
+	// assert
 	if err != nil || len(results) != 1 || !results[0].OK() {
 		t.Fatalf("got %+v %v, want the peer list taken: a refused image is not a node that failed its mesh", results, err)
 	}
@@ -129,7 +174,7 @@ func TestApplyMeshTakesTheListWhenOnlyTheRunIsRefused(t *testing.T) {
 }
 
 func TestApplyMeshRebuildsAContainerWhosePlaceOnTheMeshMoved(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	record := activeShard()
@@ -144,10 +189,12 @@ func TestApplyMeshRebuildsAContainerWhosePlaceOnTheMeshMoved(t *testing.T) {
 	revision := f.runs.states[nodeA].Revision
 	f.rec.reset()
 
+	// act
 	smaller := meshCommand(t, nodeA)
 	smaller.RequestID = "req-2"
 	results, err := f.applyMesh().Execute(ctx, smaller)
 
+	// assert
 	if err != nil || len(results) != 1 || !results[0].OK() {
 		t.Fatalf("got %+v %v, want the smaller list accepted", results, err)
 	}
@@ -160,7 +207,7 @@ func TestApplyMeshRebuildsAContainerWhosePlaceOnTheMeshMoved(t *testing.T) {
 }
 
 func TestApplyMeshLeavesTheContainerAloneWhenTheListIsTheSame(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.prepared(ctx); err != nil {
@@ -172,12 +219,14 @@ func TestApplyMeshLeavesTheContainerAloneWhenTheListIsTheSame(t *testing.T) {
 	revision := f.runs.states[nodeA].Revision
 	f.rec.reset()
 
+	// act
 	again := meshCommand(t, nodeA)
 	again.RequestID = "req-2"
 	if _, err := f.applyMesh().Execute(ctx, again); err != nil {
 		t.Fatalf("apply mesh: %v", err)
 	}
 
+	// assert
 	if f.runs.states[nodeA].Revision != revision {
 		t.Fatalf("got revision %d, want %d unchanged", f.runs.states[nodeA].Revision, revision)
 	}

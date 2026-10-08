@@ -14,7 +14,6 @@ type keyedLock struct {
 	holders int
 }
 
-// Lock blocks until the key is free and returns the release
 func (k *Keyed[K]) Lock(key K) func() {
 	k.mu.Lock()
 	if k.locks == nil {

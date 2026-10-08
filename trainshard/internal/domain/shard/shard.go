@@ -62,10 +62,8 @@ type machine struct {
 	endpoint    vo.Endpoint
 }
 
-// Hosts groups the reserved nodes by the machine that serves them: nodes of one participant
-// living behind different endpoints are different hosts, and nodes that published no endpoint
-// form a host of their own that no address reaches. Hosts come in the order their first node
-// was named
+// Hosts splits one participant's nodes by endpoint, and nodes that published none form a host no
+// address reaches; hosts keep the order their first node was named in, so answers read the same twice
 func (s Shard) Hosts() []vo.Host {
 	order := make([]machine, 0, len(s.Nodes))
 	nodes := make(map[machine][]vo.NodeRef, len(s.Nodes))
@@ -88,9 +86,7 @@ func (s Shard) HostOf(ref vo.NodeRef) (vo.Host, bool) {
 	return vo.HostOf(s.Hosts(), ref)
 }
 
-// Unaddressed names the reserved nodes whose host published no endpoint. Nothing a coordinator
-// does reaches them, and nothing within the shard changes that: the address is copied in at
-// assemble
+// Unaddressed nodes stay that way for the life of the shard: the address is copied in at assemble
 func (s Shard) Unaddressed() []vo.NodeRef {
 	refs := make([]vo.NodeRef, 0)
 	for _, n := range s.Nodes {

@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"time"
 
@@ -25,11 +26,12 @@ type Machine struct {
 
 func (m Machine) Observe(ctx context.Context, node vo.NodeRef, desired Desired) (Observed, error) {
 	shardID := desired.Shard
+	serving := desired.Reserved && desired.Active
 
 	// cleanup must not wait on the dapi or the gpus: a run never outlives its reservation
 	var drained, foreign bool
 	var inUse int
-	if desired.Reserved {
+	if serving {
 		var err error
 		if drained, err = m.Control.Drained(ctx, node); err != nil {
 			return Observed{}, err
@@ -47,7 +49,7 @@ func (m Machine) Observe(ctx context.Context, node vo.NodeRef, desired Desired) 
 	}
 	leftovers, err := m.GPU.TrainingProcesses(ctx, shardID, node)
 	if err != nil {
-		if desired.Reserved {
+		if serving {
 			return Observed{}, err
 		}
 		// processes that cannot be counted are taken to be there, so the container is still
@@ -95,8 +97,8 @@ func (m Machine) Observe(ctx context.Context, node vo.NodeRef, desired Desired) 
 	}, nil
 }
 
-// Sweep wipes what a shard this node no longer serves left behind, so a run that outlived
-// the state describing it cannot follow the node into the next one
+// Sweep goes by what the machine holds, not by the stored state, so a run that outlived its state
+// cannot follow the node into the next shard
 func (m Machine) Sweep(ctx context.Context, node vo.NodeRef, serving vo.ShardID) error {
 	held, err := m.leftovers(ctx, node)
 	if err != nil {
@@ -221,7 +223,11 @@ func (m Machine) createContainer(ctx context.Context, node vo.NodeRef, desired D
 	if err := m.Containers.Create(ctx, spec); err != nil {
 		return err
 	}
-	return RecordImage(ctx, m.Runs, node, desired.Run.Image, m.Clock.Now())
+	// a standing container is never built again, so it goes with the record it missed
+	if err := RecordImage(ctx, m.Runs, node, desired.Run.Image, m.Clock.Now()); err != nil {
+		return errors.Join(err, m.Containers.Remove(ctx, desired.Shard, node))
+	}
+	return nil
 }
 
 func (m Machine) verifyImage(ctx context.Context, desired Desired) error {

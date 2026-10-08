@@ -25,6 +25,7 @@ import (
 	"trainshard/internal/infrastructure/adapters/hosts"
 	"trainshard/internal/infrastructure/adapters/signing/cosmos"
 	"trainshard/internal/utils/clix"
+	"trainshard/internal/utils/logger"
 )
 
 var version = "dev"
@@ -34,8 +35,7 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}
-		// a refusal is named by its code, the same way a per-node fault is, or the caller is left
-		// with prose where the contract promised a code
+		// the code is the contract a caller branches on; the message is only prose
 		if code := shared.CodeOf(err); code != shared.CodeInternal {
 			fmt.Fprintf(os.Stderr, "%s: %s\n", code, err)
 		} else {
@@ -88,8 +88,7 @@ func drive() error {
 	}
 	defer outside.close()
 
-	// a signed request is for the address the chain names and no other: a host that answers
-	// with a redirect is refused rather than followed to wherever it points
+	// a signed request goes to the address the chain names only, so a redirect is refused, not followed
 	hosts := hosts.New(&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}, signer, clock, cfg.timeout)
@@ -136,7 +135,7 @@ type outside struct {
 }
 
 func connect(ctx context.Context, cfg config, signer keys) (outside, error) {
-	client, err := chain.Dial(chain.Config{Address: cfg.chainGRPC, Timeout: cfg.chainTimeout})
+	client, err := chain.Dial(chain.Config{Address: cfg.chainGRPC, Timeout: cfg.chainTimeout}, logger.New(os.Stderr, "warn", "text"))
 	if err != nil {
 		return outside{}, err
 	}
@@ -164,7 +163,7 @@ func catalog() map[string]func(context.Context, []string) error {
 
 func usage() string {
 	return "trainshardctl drives one training run.\n\n" +
-		"  trainshardctl <command> <shard> [flags]\n" +
+		"  trainshardctl <command> <shard|proposal> [flags]\n" +
 		"  trainshardctl <command> --help\n\n" +
 		"commands: " + strings.Join(slices.Sorted(maps.Keys(catalog())), " ") + "\n"
 }

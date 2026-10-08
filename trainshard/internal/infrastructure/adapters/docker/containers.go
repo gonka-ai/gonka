@@ -79,8 +79,10 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 		ShmSize:        c.cfg.ShmBytes,
 		RestartPolicy:  container.RestartPolicy{Name: container.RestartPolicyDisabled},
 		LogConfig:      c.rolled(),
+		// MemorySwap equal to Memory, or the engine lets the run swap as much again
 		Resources: container.Resources{
 			Memory:         c.cfg.MemoryBytes,
+			MemorySwap:     c.cfg.MemoryBytes,
 			NanoCPUs:       c.cfg.NanoCPUs,
 			PidsLimit:      &pids,
 			Ulimits:        []*container.Ulimit{{Name: "core", Soft: 0, Hard: 0}},
@@ -88,14 +90,19 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 		},
 	}
 
-	ctx, cancel := c.bounded(ctx)
+	bounded, cancel := c.bounded(ctx)
 	defer cancel()
 
-	if _, err := c.engine.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Name:       containerName(spec.Shard, spec.Node),
+	name := containerName(spec.Shard, spec.Node)
+	if _, err := c.engine.ContainerCreate(bounded, client.ContainerCreateOptions{
+		Name:       name,
 		Config:     config,
 		HostConfig: host,
 	}); err != nil {
+		// an engine that timed out may still have made the container, and its /etc files live here
+		if _, present, inspectErr := c.inspectContainer(ctx, name); present || inspectErr != nil {
+			return err
+		}
 		return errors.Join(err, os.RemoveAll(c.mountsPath(spec.Shard, spec.Node)))
 	}
 	c.log.Info("created container", "node_id", spec.Node.NodeID, "image_digest", spec.Run.Image.Short(), "network", mode)
@@ -106,8 +113,7 @@ func (c *Client) Start(ctx context.Context, shardID vo.ShardID, node vo.NodeRef)
 	ctx, cancel := c.bounded(ctx)
 	defer cancel()
 
-	_, err := c.engine.ContainerStart(ctx, containerName(shardID, node), client.ContainerStartOptions{})
-	if !settled(err) {
+	if _, err := c.engine.ContainerStart(ctx, containerName(shardID, node), client.ContainerStartOptions{}); err != nil && !cerrdefs.IsNotModified(err) {
 		return err
 	}
 	c.log.Info("started container", "node_id", node.NodeID)
@@ -115,7 +121,8 @@ func (c *Client) Start(ctx context.Context, shardID vo.ShardID, node vo.NodeRef)
 }
 
 func (c *Client) Stop(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, grace time.Duration) error {
-	ctx, cancel := c.bounded(ctx)
+	// the engine answers only once the run is down, which can take the whole grace
+	ctx, cancel := context.WithTimeout(ctx, grace+c.cfg.Timeout)
 	defer cancel()
 
 	seconds := int(grace.Round(time.Second).Seconds())
@@ -213,7 +220,7 @@ func (c *Client) removeByName(ctx context.Context, name string) error {
 	return err
 }
 
-// mountsPath sits beside the volume rather than in it, out of the run's own reach
+// beside the volume rather than in it, out of the run's own reach
 func (c *Client) mountsPath(shardID vo.ShardID, node vo.NodeRef) string {
 	return c.volumePath(shardID, node) + ".mounts"
 }
@@ -222,8 +229,7 @@ func (c *Client) volumePath(shardID vo.ShardID, node vo.NodeRef) string {
 	return filepath.Join(c.cfg.VolumeRoot, shardID.String(), string(node.NodeID))
 }
 
-// environment points the home directory at the workspace: the root is read only, and the caches a
-// training image keeps under the home would otherwise have nowhere to go
+// HOME is the workspace: the root is read only, and a training image keeps its caches under the home
 func environment(values map[string]string) []string {
 	merged := map[string]string{"HOME": workdir}
 	maps.Copy(merged, values)
@@ -236,17 +242,16 @@ func environment(values map[string]string) []string {
 	return env
 }
 
-// scratch gives the run the writable places outside its volume that it still needs, in memory,
-// where they are held against the run's own memory limit and never reach the host disk
+// in memory, so scratch counts against the run's memory limit and never reaches the host disk;
+// /tmp is exec because jit compilers load what they build there
 func (c *Client) scratch() map[string]string {
 	return map[string]string{
-		tmpdir: fmt.Sprintf("size=%d,mode=1777", c.cfg.TmpBytes),
+		tmpdir: fmt.Sprintf("size=%d,mode=1777,exec", c.cfg.TmpBytes),
 		rundir: fmt.Sprintf("size=%d,mode=755", runBytes),
 	}
 }
 
-// rolled bounds what the engine keeps of everything a run prints, which it otherwise stores whole
-// and unmetered on the host disk
+// the engine otherwise keeps everything a run prints, whole and unmetered, on the host disk
 func (c *Client) rolled() container.LogConfig {
 	return container.LogConfig{Type: "json-file", Config: map[string]string{
 		"max-size": strconv.FormatInt(c.cfg.LogFileBytes, 10),
@@ -254,8 +259,7 @@ func (c *Client) rolled() container.LogConfig {
 	}}
 }
 
-// binds hands the run its workspace, and read only copies of the files the engine would otherwise
-// give it writable on the host disk and outside its quota
+// the engine would otherwise hand the run its /etc files writable, on the host disk and outside its quota
 func (c *Client) binds(spec run.ContainerSpec) ([]string, error) {
 	dir := c.mountsPath(spec.Shard, spec.Node)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -273,8 +277,7 @@ func (c *Client) binds(spec run.ContainerSpec) ([]string, error) {
 	return binds, nil
 }
 
-// sealed covers the volumes an image declares of its own, which the engine would otherwise back
-// with storage it manages and nobody meters
+// the engine would otherwise back an image's own volumes with storage nobody meters
 func (c *Client) sealed(ctx context.Context, spec run.ContainerSpec) ([]string, error) {
 	image, present, err := c.inspectImage(ctx, spec.Run.Image.String())
 	if err != nil || !present || image.Config == nil || len(image.Config.Volumes) == 0 {
@@ -298,8 +301,7 @@ type etcFile struct {
 	body string
 }
 
-// etcFiles carry the names a run may reach, and an empty resolver, which is what a run with no
-// dns of its own is meant to have
+// the resolver stays empty: the run has no dns, only the names egress pinned
 func etcFiles(spec run.ContainerSpec) []etcFile {
 	hosts := []string{"127.0.0.1\tlocalhost", "::1\tlocalhost ip6-localhost ip6-loopback"}
 	for _, host := range spec.Hosts {
@@ -312,10 +314,8 @@ func etcFiles(spec run.ContainerSpec) []etcFile {
 	}
 }
 
-// gpuRequests asks for cards the way `docker run --gpus` does, leaving the engine to name the vendor:
-// engines from 28 on hand that to the device interface the driver installs, and naming a driver
-// ourselves gets the run refused there. A kind names the devices outright, for a host whose engine
-// only knows them by name
+// no driver named, the way `docker run --gpus` asks: engines from 28 on refuse a request that names one.
+// A kind names the devices by cdi id, for an engine that only knows them that way
 func (c *Client) gpuRequests(count int) []container.DeviceRequest {
 	if count <= 0 {
 		return nil

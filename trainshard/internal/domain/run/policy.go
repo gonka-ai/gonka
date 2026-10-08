@@ -6,12 +6,11 @@ import (
 	"trainshard/internal/domain/shared/vo"
 )
 
-// Autokick returns why a reserved node has to be handed back, or false while it still has time.
-// The wait for readiness counts from when it was lost, not from the reservation: counted from
-// the reservation, a node an hour into a run would be handed back on the first busy card. A
-// handback already asked for is given the same wait to land before it is asked for again.
+// Autokick times readiness from when it was lost, not from the reservation, or a node an hour into
+// a run would be handed back on the first busy card
 func Autokick(d Desired, o Observed, state RunState, now time.Time, patience time.Duration) (vo.ReleaseReason, bool) {
-	if !d.Reserved || state.ReservedAt.IsZero() {
+	// a shard past its expiry is cleanup's: a release sent first only holds the wipe back
+	if !d.Reserved || !d.Active || state.ReservedAt.IsZero() {
 		return "", false
 	}
 	if !state.ReleasedAt.IsZero() && now.Sub(state.ReleasedAt) < patience {
@@ -24,8 +23,8 @@ func Autokick(d Desired, o Observed, state RunState, now time.Time, patience tim
 		}
 		return vo.ReleaseFailedPrepare, now.Sub(since) >= patience
 	}
-	// an image refused for not deriving from the base is the tenant's to replace with a deploy, not
-	// a node that fails; it only turns up here when the pull outlasted the deploy that asked for it
+	// an image that does not derive from the base is the tenant's to replace with a deploy, not a
+	// failing node
 	if state.Fault == nil || state.Fault.Code == ErrImageNotDerived.Code {
 		return "", false
 	}

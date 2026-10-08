@@ -10,8 +10,8 @@ import (
 	"trainshard/internal/domain/shared/ports"
 )
 
-// ProofKeeps is how long an answer stands. The runtime check costs a container, and asking at
-// every refresh loads the engine it judges
+// ProofKeeps spares the engine: the runtime check costs a container, and asking at every refresh
+// loads the engine it judges
 const ProofKeeps = 10 * time.Minute
 
 type Proof struct{ at time.Time }
@@ -20,12 +20,12 @@ func (p Proof) Holds(now time.Time) bool {
 	return !p.at.IsZero() && now.Sub(p.at) < ProofKeeps
 }
 
-// After keeps a standing proof through ErrUnavailable: a busy engine has not answered no
+// After keeps a proof through ErrUnavailable only while it holds: a busy engine has not answered no
 func (p Proof) After(now time.Time, err error) (Proof, error) {
 	switch {
 	case err == nil:
 		return Proof{at: now}, nil
-	case errors.Is(err, shared.ErrUnavailable) && !p.at.IsZero():
+	case errors.Is(err, shared.ErrUnavailable) && p.Holds(now):
 		return p, nil
 	default:
 		return Proof{}, err
@@ -43,7 +43,7 @@ func NewProver(probe ports.Probe, clock ports.Clock) *Prover {
 	return &Prover{probe: probe, clock: clock}
 }
 
-// The engine is asked under the lock because the check's container has a fixed name
+// GPUContainer asks the engine under the lock because the check's container has a fixed name
 func (p *Prover) GPUContainer(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

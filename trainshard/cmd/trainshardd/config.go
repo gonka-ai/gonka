@@ -221,6 +221,8 @@ func (c config) validate() error {
 
 	case c.refreshInterval >= c.optInTTL:
 		return fmt.Errorf("TRAINSHARD_REFRESH_INTERVAL must be shorter than TRAINSHARD_OPT_IN_TTL")
+	case c.requestTTL < 2*c.signatureWindow:
+		return fmt.Errorf("TRAINSHARD_REQUEST_TTL is %s and must be at least %s, twice TRAINSHARD_SIGNATURE_WINDOW: a signature passes for the window either side of its timestamp, and a request id forgotten sooner runs again when replayed", c.requestTTL, 2*c.signatureWindow)
 	}
 	return nil
 }
@@ -342,6 +344,9 @@ func duration(name string, fallback time.Duration) (time.Duration, error) {
 	value, err := time.ParseDuration(raw)
 	if err != nil {
 		return 0, fmt.Errorf("TRAINSHARD_%s: %w", name, err)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("TRAINSHARD_%s must be a positive duration, such as %s", name, fallback)
 	}
 	return value, nil
 }

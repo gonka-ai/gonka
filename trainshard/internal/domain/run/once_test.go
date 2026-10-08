@@ -2,6 +2,7 @@ package run_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -35,11 +36,11 @@ func TestOnceAppliesTheSameRequestOnlyOnceEvenWhenItArrivesTwiceAtOnce(t *testin
 	ref := run.RequestRef{Op: run.OpDeploy, Shard: 7, Actor: "gonka1creator", ID: "req-1"}
 	var applied atomic.Int32
 	entered, release := make(chan struct{}), make(chan struct{})
-	apply := func(context.Context) []run.NodeResult {
+	apply := func(context.Context) ([]run.NodeResult, error) {
 		applied.Add(1)
 		close(entered)
 		<-release
-		return []run.NodeResult{{Node: nodeA, State: vo.ContainerCreated}}
+		return []run.NodeResult{{Node: nodeA, State: vo.ContainerCreated}}, nil
 	}
 
 	// act
@@ -50,9 +51,9 @@ func TestOnceAppliesTheSameRequestOnlyOnceEvenWhenItArrivesTwiceAtOnce(t *testin
 	}()
 	<-entered
 	go func() {
-		results, _ := once.Do(context.Background(), ref, func(context.Context) []run.NodeResult {
+		results, _ := once.Do(context.Background(), ref, func(context.Context) ([]run.NodeResult, error) {
 			applied.Add(1)
-			return nil
+			return nil, nil
 		})
 		answers <- results
 	}()
@@ -65,5 +66,27 @@ func TestOnceAppliesTheSameRequestOnlyOnceEvenWhenItArrivesTwiceAtOnce(t *testin
 	}
 	if len(first) != 1 || len(second) != 1 || first[0] != second[0] {
 		t.Fatalf("got %v and %v, want both callers handed the one recorded answer", first, second)
+	}
+}
+
+func TestOnceRecordsNothingForARefusedRequest(t *testing.T) {
+	// arrange
+	once := run.NewOnce(&requestLogStub{results: map[string][]run.NodeResult{}})
+	ref := run.RequestRef{Op: run.OpMesh, Shard: 7, Actor: "gonka1creator", ID: "req-1"}
+	refused := errors.New("refused")
+	if _, err := once.Do(context.Background(), ref, func(context.Context) ([]run.NodeResult, error) {
+		return nil, refused
+	}); !errors.Is(err, refused) {
+		t.Fatalf("got %v, want the refusal returned", err)
+	}
+
+	// act
+	results, err := once.Do(context.Background(), ref, func(context.Context) ([]run.NodeResult, error) {
+		return []run.NodeResult{{Node: nodeA, State: vo.ContainerCreated}}, nil
+	})
+
+	// assert
+	if err != nil || len(results) != 1 {
+		t.Fatalf("got %v %v, want a repeat of a refused request applied afresh", results, err)
 	}
 }

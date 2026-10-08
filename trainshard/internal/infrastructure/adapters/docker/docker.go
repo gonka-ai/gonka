@@ -82,8 +82,8 @@ type Client struct {
 	engine *client.Client
 }
 
-// New holds no timeout on the engine client: a log follow, a shell session and an image pull
-// all outlive cfg.Timeout, which is applied per call by the operations that do return
+// no timeout on the engine client: an image pull and a shell session outlive cfg.Timeout, which
+// bounds each call that does return
 func New(cfg Config, log *slog.Logger) (*Client, error) {
 	cfg = cfg.withDefaults()
 
@@ -107,8 +107,6 @@ func (c *Client) bounded(ctx context.Context) (context.Context, context.CancelFu
 	return context.WithTimeout(ctx, c.cfg.Timeout)
 }
 
-// settled reports an engine answer that leaves the machine in the state we asked for:
-// the container is already there, already gone, or already in that state
 func settled(err error) bool {
 	return err == nil || cerrdefs.IsNotFound(err) || cerrdefs.IsNotModified(err)
 }

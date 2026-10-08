@@ -395,7 +395,7 @@ func (m *meshNetworkStub) Shards(context.Context, vo.NodeRef) ([]vo.ShardID, err
 func (m *meshNetworkStub) Identity(_ context.Context, shardID vo.ShardID, node vo.NodeRef) (mesh.Member, error) {
 	m.rec.record("mesh.identity")
 	m.keys[shardID] = true
-	return mesh.Member{Node: node, Address: "10.0.0.1", PublicKey: "public-key"}, nil
+	return mesh.Member{Node: node, Address: "10.0.0.1", PublicKey: "public-key-" + string(node.Participant) + "-" + string(node.NodeID)}, nil
 }
 
 func (m *meshNetworkStub) Apply(_ context.Context, _ vo.ShardID, _ vo.NodeRef, peers []mesh.Peer) error {
@@ -605,8 +605,6 @@ func (f *fixture) prepared(ctx context.Context) error {
 	return nil
 }
 
-// meshed takes the node all the way a coordinator would before it deploys: prepared, and holding
-// the peer list a container needs to be given its rank
 func (f *fixture) meshed(ctx context.Context) error {
 	if err := f.prepared(ctx); err != nil {
 		return err

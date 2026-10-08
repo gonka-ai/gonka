@@ -2,6 +2,7 @@ package netns
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
@@ -23,8 +24,6 @@ func ref(id string) vo.NodeRef {
 	return vo.NodeRef{Participant: "gonka1abc", NodeID: vo.NodeID(id)}
 }
 
-// network builds the adapter with a key directory of its own. The sandbox and the clock stay nil:
-// every function reached from here is one that never enters a namespace
 func network(t *testing.T, cfg Config) *Network {
 	t.Helper()
 
@@ -32,7 +31,42 @@ func network(t *testing.T, cfg Config) *Network {
 	return New(cfg, nil, nil, slog.New(slog.DiscardHandler))
 }
 
-// Two nodes of the same shard on one host must not land on the same interface
+type runningSandbox struct{ Sandboxes }
+
+func (runningSandbox) SandboxPID(context.Context, vo.ShardID, vo.NodeRef) (int, bool, error) {
+	return 1, true, nil
+}
+
+func TestConfined(t *testing.T) {
+	// arrange
+	host, daemon := nsID{dev: 4, ino: 4026531840}, nsID{dev: 4, ino: 4026532001}
+	cases := []struct {
+		name    string
+		sandbox nsID
+		refused bool
+	}{
+		{name: "a namespace of its own", sandbox: nsID{dev: 4, ino: 4026532500}},
+		{name: "the host's namespace under a reused pid", sandbox: host, refused: true},
+		{name: "the daemon's own namespace", sandbox: daemon, refused: true},
+		{name: "the host's inode on another device", sandbox: nsID{dev: 5, ino: host.ino}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// act
+			err := confined(1234, tc.sandbox, host, daemon)
+
+			// assert
+			if tc.refused && !errors.Is(err, errNotSandbox) {
+				t.Fatalf("err = %v, want the sandbox refused before anything is written", err)
+			}
+			if !tc.refused && err != nil {
+				t.Fatalf("a sandbox in its own namespace was refused: %v", err)
+			}
+		})
+	}
+}
+
 func TestSlotsDoNotCollide(t *testing.T) {
 	// assert
 	if iface(0) == iface(1) {
@@ -113,7 +147,7 @@ func TestPeerConfig(t *testing.T) {
 	}}
 
 	// act
-	cfg, err := peerConfig(shard, peers)
+	cfg, err := peerConfig(shard, peers, false)
 
 	// assert
 	if err != nil {
@@ -169,31 +203,109 @@ func TestWantedPeersNeedNoLookup(t *testing.T) {
 	}
 }
 
-func TestPeerConfigRefusesUnusablePeers(t *testing.T) {
+func TestPeerConfigRefusesARankOffTheMesh(t *testing.T) {
 	// arrange
-	good, err := wgtypes.GeneratePrivateKey()
-	if err != nil {
-		t.Fatal(err)
+	peer := mesh.Peer{Rank: 999, Address: "203.0.113.9:51821", PublicKey: mustKey(t).String()}
+
+	// act
+	_, err := peerConfig(shard, []mesh.Peer{peer}, false)
+
+	// assert
+	if err == nil {
+		t.Fatal("want an error rather than a half-configured mesh")
 	}
+}
+
+func TestPeerConfigLeavesOutAPeerWithAnUnusableKey(t *testing.T) {
+	// arrange
+	good := mustKey(t)
+	peers := []mesh.Peer{
+		{Rank: 1, Node: ref("b"), Address: "203.0.113.9:51821", PublicKey: "nope"},
+		{Rank: 2, Node: ref("c"), Address: "203.0.113.10:51820", PublicKey: good.String()},
+	}
+
+	// act
+	cfg, err := peerConfig(shard, peers, false)
+	want, wantErr := wanted(shard, peers)
+
+	// assert
+	if err != nil || wantErr != nil {
+		t.Fatalf("one member's bad key must not cost this node its mesh: %v, %v", err, wantErr)
+	}
+	if len(cfg.Peers) != 1 || cfg.Peers[0].PublicKey != good {
+		t.Fatalf("peers = %+v, want only the peer with a usable key", cfg.Peers)
+	}
+	if cfg.Peers[0].Endpoint == nil || cfg.Peers[0].Endpoint.String() != "203.0.113.10:51820" {
+		t.Fatalf("endpoint = %v, want the good peer's own", cfg.Peers[0].Endpoint)
+	}
+	if !samePeers(asPeers(cfg.Peers), want.Peers) {
+		t.Fatal("what is applied and what is checked as up must leave out the same peers")
+	}
+}
+
+func TestPeerConfigDialsOnlyWhereAPeerCanStand(t *testing.T) {
+	// arrange
 	cases := []struct {
-		name string
-		peer mesh.Peer
+		name    string
+		address string
+		private bool
+		dialed  string
 	}{
-		{name: "key that is not a wireguard key", peer: mesh.Peer{Rank: 1, Address: "203.0.113.9:51821", PublicKey: "nope"}},
-		{name: "address without a port", peer: mesh.Peer{Rank: 1, Address: "203.0.113.9", PublicKey: good.PublicKey().String()}},
-		{name: "rank with no address on the mesh", peer: mesh.Peer{Rank: 999, Address: "203.0.113.9:51821", PublicKey: good.PublicKey().String()}},
+		{name: "public address", address: "203.0.113.9:51821", dialed: "203.0.113.9:51821"},
+		{name: "public ipv6 address", address: "[2001:db8::9]:51821", dialed: "[2001:db8::9]:51821"},
+		{name: "address without a port", address: "203.0.113.9"},
+		{name: "port off the range", address: "203.0.113.9:70000"},
+		{name: "no host", address: ":51821"},
+		{name: "loopback", address: "127.0.0.1:22"},
+		{name: "loopback on a private mesh", address: "127.0.0.1:22", private: true},
+		{name: "unspecified", address: "0.0.0.0:51821"},
+		{name: "link-local", address: "169.254.169.254:51821"},
+		{name: "multicast", address: "224.0.0.1:51821"},
+		{name: "private address on a public mesh", address: "10.1.2.3:51821"},
+		{name: "private address on a private mesh", address: "10.1.2.3:51821", private: true, dialed: "10.1.2.3:51821"},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// arrange
+			peers := []mesh.Peer{{Rank: 1, Node: ref("b"), Address: tc.address, PublicKey: mustKey(t).String()}}
+
 			// act
-			_, err := peerConfig(shard, []mesh.Peer{tc.peer})
+			cfg, err := peerConfig(shard, peers, tc.private)
 
 			// assert
-			if err == nil {
-				t.Fatal("want an error rather than a half-configured mesh")
+			if err != nil {
+				t.Fatalf("one member's address must not cost this node its mesh: %v", err)
+			}
+			if len(cfg.Peers) != 1 {
+				t.Fatalf("peers = %d, want the peer kept so it can still call in", len(cfg.Peers))
+			}
+			got := ""
+			if cfg.Peers[0].Endpoint != nil {
+				got = cfg.Peers[0].Endpoint.String()
+			}
+			if got != tc.dialed {
+				t.Fatalf("endpoint = %q, want %q", got, tc.dialed)
 			}
 		})
+	}
+}
+
+func TestReachTakesAnUnusablePeerKeyAsUnreached(t *testing.T) {
+	// arrange
+	n := network(t, Config{Nodes: []vo.NodeRef{ref("a")}})
+	n.sandbox = runningSandbox{}
+	peer := mesh.Peer{Rank: 1, Node: ref("b"), Address: "203.0.113.9:51821", PublicKey: "nope"}
+
+	// act
+	reached, err := n.Reach(context.Background(), shard, ref("a"), peer)
+
+	// assert
+	if err != nil {
+		t.Fatalf("a bad peer key must read as not reached, or every node probing it is cut off: %v", err)
+	}
+	if reached {
+		t.Fatal("a peer with no usable key cannot have been reached")
 	}
 }
 
@@ -344,6 +456,7 @@ func TestDialable(t *testing.T) {
 		{name: "private address", endpoint: "10.1.2.3", refused: true},
 		{name: "loopback", endpoint: "127.0.0.1", refused: true},
 		{name: "unspecified", endpoint: "0.0.0.0", refused: true},
+		{name: "link-local", endpoint: "169.254.1.1", private: true, refused: true},
 		{name: "name of a public address", endpoint: "mesh.example.com"},
 		{name: "name of a private address", endpoint: "10-1-2-3.sslip.io", refused: true},
 		{name: "name with a private address among others", endpoint: "split.example.com", refused: true},
@@ -448,6 +561,14 @@ func mustKey(t *testing.T) wgtypes.Key {
 		t.Fatal(err)
 	}
 	return key.PublicKey()
+}
+
+func asPeers(configured []wgtypes.PeerConfig) []wgtypes.Peer {
+	peers := make([]wgtypes.Peer, 0, len(configured))
+	for _, peer := range configured {
+		peers = append(peers, wgtypes.Peer{PublicKey: peer.PublicKey, AllowedIPs: peer.AllowedIPs})
+	}
+	return peers
 }
 
 func cidr(s string) net.IPNet {

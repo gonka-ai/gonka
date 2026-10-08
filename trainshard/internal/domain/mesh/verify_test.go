@@ -8,16 +8,18 @@ import (
 )
 
 func TestNewPairIsOrderIndependent(t *testing.T) {
-
+	// act
 	forward := mesh.NewPair(nodeA, nodeB)
 	backward := mesh.NewPair(nodeB, nodeA)
 
+	// assert
 	if forward != backward {
 		t.Fatalf("got %v and %v, want the same pair", forward, backward)
 	}
 }
 
 func TestFullyConnected(t *testing.T) {
+	// arrange
 	nodes := []vo.NodeRef{nodeA, nodeB, nodeC}
 	outsider := vo.NodeRef{Participant: "gonka1zzz", NodeID: "node-9"}
 
@@ -37,9 +39,10 @@ func TestFullyConnected(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// act
 			got := mesh.FullyConnected(nodes, tc.failed)
 
+			// assert
 			if got != tc.want {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}
@@ -48,43 +51,49 @@ func TestFullyConnected(t *testing.T) {
 }
 
 func TestWorstPicksTheNodeWithMoreFailedPairs(t *testing.T) {
-
+	// arrange
 	nodes := []vo.NodeRef{nodeA, nodeB, nodeC}
 	failed := []mesh.Pair{mesh.NewPair(nodeC, nodeA), mesh.NewPair(nodeC, nodeB)}
 
+	// act
 	worst, found := mesh.Worst(nodes, failed)
 
+	// assert
 	if !found || worst != nodeC {
 		t.Fatalf("got %v found=%v, want %v", worst, found, nodeC)
 	}
 }
 
 func TestWorstBreaksTiesTheSameWayEveryTime(t *testing.T) {
-
+	// arrange
 	nodes := []vo.NodeRef{nodeC, nodeB, nodeA}
 	failed := []mesh.Pair{mesh.NewPair(nodeA, nodeB)}
 
+	// act
 	first, _ := mesh.Worst(nodes, failed)
 	second, _ := mesh.Worst([]vo.NodeRef{nodeA, nodeB, nodeC}, failed)
 
+	// assert
 	if first != nodeA || second != nodeA {
 		t.Fatalf("got %v and %v, want %v both times", first, second, nodeA)
 	}
 }
 
 func TestWorstBlamesNeitherOfTwoNodes(t *testing.T) {
-
+	// act
 	_, found := mesh.Worst([]vo.NodeRef{nodeA, nodeB}, []mesh.Pair{mesh.NewPair(nodeA, nodeB)})
 
+	// assert
 	if found {
 		t.Fatal("a broken link between two nodes must not autokick either of them")
 	}
 }
 
 func TestWorstFindsNothingWithoutFailures(t *testing.T) {
-
+	// act
 	_, found := mesh.Worst([]vo.NodeRef{nodeA, nodeB}, nil)
 
+	// assert
 	if found {
 		t.Fatal("a fully connected mesh must not autokick anyone")
 	}

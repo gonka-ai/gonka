@@ -19,10 +19,8 @@ import (
 	"trainshard/internal/domain/shared/vo"
 )
 
-// endOfInput is what a terminal sends for ctrl-d: the shell runs on a pty, which reads it as the end
-// of its input, so a script piped in without an exit still ends. It goes three times: the first
-// only hands over a line left without its newline, the shell takes the next as the end of that line
-// rather than of its input, and a program the shell runs may take one for itself
+// ctrl-d three times on the pty: the first only flushes a line left without its newline, the shell
+// may take the second as the end of that line, and a program it runs may take one for itself
 var endOfInput = []byte{0x04, 0x04, 0x04}
 
 func (c *Client) Logs(ctx context.Context, host vo.Host, req run.LogRequest, out io.Writer) error {
@@ -70,8 +68,7 @@ func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, s
 		return err
 	}
 
-	// the output that came in with the answer is already in this reader, and a 101 has no body
-	// to read it from, so the session is read from here rather than from the answer
+	// output sent right behind the 101 is already buffered here, and a 101 has no body to read it from
 	reader := bufio.NewReader(conn)
 	answer, err := http.ReadResponse(reader, request)
 	if err != nil {
@@ -80,7 +77,7 @@ func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, s
 	defer answer.Body.Close()
 	if answer.StatusCode != http.StatusSwitchingProtocols {
 		var envelope contract.Envelope
-		if err := json.NewDecoder(answer.Body).Decode(&envelope); err != nil {
+		if err := json.NewDecoder(io.LimitReader(answer.Body, maxAnswerBytes)).Decode(&envelope); err != nil {
 			return toError(answer.StatusCode, nil)
 		}
 		return toError(answer.StatusCode, envelope.Error)
@@ -89,8 +86,8 @@ func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, s
 		return shared.New("HOST_ANSWER", shared.ErrUnavailable, fmt.Sprintf("host switched to %q, not a shell", answer.Header.Get("Upgrade")))
 	}
 
-	// the end of the input travels inside the stream rather than as a half close: a proxy tunnels an
-	// upgraded connection as a whole and drops it at the first half close, output still on its way
+	// the end of input goes inside the stream, never as a half close: a proxy drops an upgraded
+	// connection at the first half close, output still on its way
 	go func() {
 		if _, err := io.Copy(conn, session); err == nil {
 			_, _ = conn.Write(endOfInput)

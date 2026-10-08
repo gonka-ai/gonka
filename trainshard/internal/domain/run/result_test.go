@@ -31,7 +31,7 @@ func answered(nodes []vo.NodeRef) []run.NodeResult {
 }
 
 func TestPerHostFailsOnlyTheNodesOfASilentHost(t *testing.T) {
-
+	// act
 	results := run.PerHost(context.Background(), []vo.Host{aliceHost, bobHost}, run.Failed,
 		func(_ context.Context, host vo.Host) ([]run.NodeResult, error) {
 			if host.Participant == alice {
@@ -40,6 +40,7 @@ func TestPerHostFailsOnlyTheNodesOfASilentHost(t *testing.T) {
 			return answered(host.Nodes), nil
 		})
 
+	// assert
 	if len(results) != 3 {
 		t.Fatalf("got %d results, want the silent host's nodes reported too", len(results))
 	}
@@ -54,14 +55,16 @@ func TestPerHostFailsOnlyTheNodesOfASilentHost(t *testing.T) {
 }
 
 func TestPerHostAnswersForTheNodesItAskedAboutAndNoOthers(t *testing.T) {
-
+	// arrange
 	stranger := vo.NodeRef{Participant: bob, NodeID: "node-x"}
 
+	// act
 	results := run.PerHost(context.Background(), []vo.Host{aliceHost, bobHost}, run.Failed,
 		func(_ context.Context, host vo.Host) ([]run.NodeResult, error) {
 			return answered([]vo.NodeRef{host.Nodes[0], stranger}), nil
 		})
 
+	// assert
 	if len(results) != 3 {
 		t.Fatalf("got %d results, want one per node asked about", len(results))
 	}
@@ -76,7 +79,7 @@ func TestPerHostAnswersForTheNodesItAskedAboutAndNoOthers(t *testing.T) {
 }
 
 func TestPerHostFailsANodeItsHostAnsweredForTwice(t *testing.T) {
-
+	// act
 	results := run.PerHost(context.Background(), []vo.Host{{Participant: alice, Nodes: []vo.NodeRef{first}}, bobHost}, run.Failed,
 		func(_ context.Context, host vo.Host) ([]run.NodeResult, error) {
 			if host.Participant == bob {
@@ -85,6 +88,7 @@ func TestPerHostFailsANodeItsHostAnsweredForTwice(t *testing.T) {
 			return answered([]vo.NodeRef{first, first}), nil
 		})
 
+	// assert
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want one per node asked about", len(results))
 	}
@@ -99,9 +103,10 @@ func TestPerHostFailsANodeItsHostAnsweredForTwice(t *testing.T) {
 }
 
 func TestPerHostAnswersInTheOrderTheHostsWereGiven(t *testing.T) {
-
+	// arrange
 	answeredFirst := make(chan struct{})
 
+	// act
 	results := run.PerHost(context.Background(), []vo.Host{bobHost, aliceHost}, run.Failed,
 		func(_ context.Context, host vo.Host) ([]run.NodeResult, error) {
 			if host.Participant != bob {
@@ -114,6 +119,7 @@ func TestPerHostAnswersInTheOrderTheHostsWereGiven(t *testing.T) {
 			return answered(host.Nodes), nil
 		})
 
+	// assert
 	want := []vo.NodeRef{second, first, third}
 	if len(results) != len(want) {
 		t.Fatalf("got %d results, want one per node", len(results))
@@ -126,7 +132,7 @@ func TestPerHostAnswersInTheOrderTheHostsWereGiven(t *testing.T) {
 }
 
 func TestPerHostAsksEveryHostAtTheSameTime(t *testing.T) {
-
+	// arrange
 	arrived := make(chan vo.Participant, 2)
 	both := make(chan struct{})
 	go func() {
@@ -135,6 +141,7 @@ func TestPerHostAsksEveryHostAtTheSameTime(t *testing.T) {
 		close(both)
 	}()
 
+	// act
 	run.PerHost(context.Background(), []vo.Host{aliceHost, bobHost}, run.Failed,
 		func(_ context.Context, host vo.Host) ([]run.NodeResult, error) {
 			arrived <- host.Participant
@@ -155,10 +162,11 @@ func waitFor(done chan struct{}) bool {
 }
 
 func TestANodeThatAnsweredWithTheFaultOfItsRunStillAnswered(t *testing.T) {
-
+	// act
 	faulted := run.StatusOf(first, run.Desired{}, run.Observed{Container: vo.ContainerAbsent}, &shared.Fault{Code: "IMAGE_NOT_DERIVED"})
 	unreached := run.FailedStatus(first, errHost)
 
+	// assert
 	if faulted.Unanswered() {
 		t.Fatalf("got %+v, want a node that said what it holds counted as an answer", faulted)
 	}
@@ -168,11 +176,12 @@ func TestANodeThatAnsweredWithTheFaultOfItsRunStillAnswered(t *testing.T) {
 }
 
 func TestAReportOfARunThatFailedStillAnswered(t *testing.T) {
-
+	// act
 	faulted := run.ReportOf(first, run.RunState{Fault: &shared.Fault{Code: "IMAGE_NOT_DERIVED"}}, nil)
 	unreached := run.FailedReport(first, errHost)
 	fromAnOlderHost := run.NodeReport{Node: first, Fault: &shared.Fault{Code: "IMAGE_NOT_DERIVED"}}
 
+	// assert
 	if faulted.Unanswered() {
 		t.Fatalf("got %+v, want a report drawn from the host's records counted as an answer", faulted)
 	}

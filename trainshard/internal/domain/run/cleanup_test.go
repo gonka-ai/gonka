@@ -11,7 +11,7 @@ import (
 var cleaning = run.Desired{Reservation: run.Reservation{Shard: 7}}
 
 func TestCleanupPlanKeepsTheSameOrder(t *testing.T) {
-
+	// arrange
 	observed := run.Observed{
 		Drained:           true,
 		Container:         vo.ContainerRunning,
@@ -21,8 +21,10 @@ func TestCleanupPlanKeepsTheSameOrder(t *testing.T) {
 		TrainingProcesses: true,
 	}
 
+	// act
 	got := run.CleanupPlan(cleaning, observed)
 
+	// assert
 	want := []run.Action{
 		{Kind: run.ActionStopContainer},
 		{Kind: run.ActionKillGPUProcesses},
@@ -88,9 +90,10 @@ func TestCleanupPlanHandsTheNodeBackOnlyWhenNothingIsLeft(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// act
 			got := run.CleanupPlan(tc.desired, tc.observed)
 
+			// assert
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}
@@ -98,12 +101,14 @@ func TestCleanupPlanHandsTheNodeBackOnlyWhenNothingIsLeft(t *testing.T) {
 	}
 }
 
-func TestCleanupPlanStopsBeforeRemovingAStoppedContainer(t *testing.T) {
-
+func TestCleanupPlanRemovesAStoppedContainerWithoutStoppingItAgain(t *testing.T) {
+	// arrange
 	observed := run.Observed{Drained: true, Container: vo.ContainerExited}
 
+	// act
 	got := run.CleanupPlan(cleaning, observed)
 
+	// assert
 	want := []run.Action{{Kind: run.ActionRemoveContainer}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)

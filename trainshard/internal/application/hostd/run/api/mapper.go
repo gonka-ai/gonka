@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	usecases "trainshard/internal/application/hostd/run/use_cases"
@@ -19,9 +20,14 @@ var (
 	errNoNodes       = shared.New("NO_NODES", shared.ErrValidation, "no node ids in the request")
 	errMeshRanks     = shared.New("MESH_RANKS", shared.ErrValidation, "peer ranks do not match the agreed ordering")
 	errGrace         = shared.New("BAD_GRACE", shared.ErrValidation, "grace period cannot be negative")
+	errDeadlineFar   = shared.New("DEADLINE_TOO_FAR", shared.ErrValidation, "deadline is later than this daemon keeps a request's answer")
+	errEnvName       = shared.New("BAD_ENV_NAME", shared.ErrValidation, "env names are letters, digits and underscores")
+	errEnvValue      = shared.New("BAD_ENV_VALUE", shared.ErrValidation, "env values cannot hold a NUL byte")
 )
 
-func toNodesCommand(host vo.Host, actor shard.Actor, path string, dto contract.Command) (usecases.NodesCommand, error) {
+// latest is the furthest deadline taken: a retry with the same request id past the request log's
+// memory would run again
+func toNodesCommand(host vo.Host, actor shard.Actor, path string, dto contract.Command, latest time.Time) (usecases.NodesCommand, error) {
 	shardID, err := vo.ParseShardID(path)
 	if err != nil {
 		return usecases.NodesCommand{}, err
@@ -42,6 +48,9 @@ func toNodesCommand(host vo.Host, actor shard.Actor, path string, dto contract.C
 	if err != nil {
 		return usecases.NodesCommand{}, fmt.Errorf("deadline %q: %w", dto.Deadline, shared.ErrValidation)
 	}
+	if deadline.After(latest) {
+		return usecases.NodesCommand{}, errDeadlineFar
+	}
 
 	return usecases.NodesCommand{
 		Shard:     shardID,
@@ -52,8 +61,8 @@ func toNodesCommand(host vo.Host, actor shard.Actor, path string, dto contract.C
 	}, nil
 }
 
-func toDeployCommand(host vo.Host, actor shard.Actor, path string, dto contract.DeployRequest) (usecases.DeployCommand, error) {
-	base, err := toNodesCommand(host, actor, path, dto.Command)
+func toDeployCommand(host vo.Host, actor shard.Actor, path string, dto contract.DeployRequest, latest time.Time) (usecases.DeployCommand, error) {
+	base, err := toNodesCommand(host, actor, path, dto.Command, latest)
 	if err != nil {
 		return usecases.DeployCommand{}, err
 	}
@@ -63,6 +72,9 @@ func toDeployCommand(host vo.Host, actor shard.Actor, path string, dto contract.
 	}
 	sources, err := toSources(dto.Sources)
 	if err != nil {
+		return usecases.DeployCommand{}, err
+	}
+	if err := checkEnv(dto.Env); err != nil {
 		return usecases.DeployCommand{}, err
 	}
 
@@ -95,8 +107,28 @@ func toSources(declared []string) ([]vo.Source, error) {
 	return sources, nil
 }
 
-func toStopCommand(host vo.Host, actor shard.Actor, path string, dto contract.StopRequest) (usecases.StopCommand, error) {
-	base, err := toNodesCommand(host, actor, path, dto.Command)
+// a name is cut at its first '=' when the container reads it, so a name holding one would set a
+// variable the host-owned check never saw
+func checkEnv(env map[string]string) error {
+	for name, value := range env {
+		if name == "" {
+			return errEnvName
+		}
+		for i := 0; i < len(name); i++ {
+			c := name[i]
+			if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
+				return errEnvName
+			}
+		}
+		if strings.IndexByte(value, 0) >= 0 {
+			return errEnvValue
+		}
+	}
+	return nil
+}
+
+func toStopCommand(host vo.Host, actor shard.Actor, path string, dto contract.StopRequest, latest time.Time) (usecases.StopCommand, error) {
+	base, err := toNodesCommand(host, actor, path, dto.Command, latest)
 	if err != nil {
 		return usecases.StopCommand{}, err
 	}
@@ -106,8 +138,8 @@ func toStopCommand(host vo.Host, actor shard.Actor, path string, dto contract.St
 	return usecases.StopCommand{NodesCommand: base, Grace: time.Duration(dto.GraceSeconds) * time.Second}, nil
 }
 
-func toMeshCommand(host vo.Host, actor shard.Actor, path string, dto contract.MeshRequest) (usecases.MeshCommand, error) {
-	base, err := toNodesCommand(host, actor, path, dto.Command)
+func toMeshCommand(host vo.Host, actor shard.Actor, path string, dto contract.MeshRequest, latest time.Time) (usecases.MeshCommand, error) {
+	base, err := toNodesCommand(host, actor, path, dto.Command, latest)
 	if err != nil {
 		return usecases.MeshCommand{}, err
 	}

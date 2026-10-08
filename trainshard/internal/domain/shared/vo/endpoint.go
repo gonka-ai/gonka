@@ -12,9 +12,8 @@ const maxEndpointLen = 256
 
 var ErrEndpointInvalid = shared.New("ENDPOINT_INVALID", shared.ErrValidation, "endpoint must be an absolute http(s) base: scheme, host, optional port in 1..65535 and path, no trailing slash")
 
-// Endpoint is where a daemon answers a coordinator, as the host published it on chain. A request
-// path is appended to it as is, so it carries nothing a signed path could not: no query, no
-// fragment, no credentials
+// Endpoint has a request path appended to it as is, so it carries nothing a signed path could not:
+// no query, no fragment, no credentials
 type Endpoint string
 
 func ParseEndpoint(raw string) (Endpoint, error) {

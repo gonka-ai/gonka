@@ -26,7 +26,7 @@ func NewStatusUseCase(
 }
 
 func (uc *StatusUseCase) Execute(ctx context.Context, cmd NodesCommand) ([]run.NodeStatus, error) {
-	// 1. Authorize the read
+	// 1. Read the shard from chain
 	record, height, err := shard.Read(ctx, uc.chain, cmd.Shard)
 	if err != nil {
 		return nil, err
@@ -35,7 +35,7 @@ func (uc *StatusUseCase) Execute(ctx context.Context, cmd NodesCommand) ([]run.N
 	// 2. Take from the record only what a run needs from it
 	reservation := run.Reservation{Shard: record.ID, BaseImage: record.BaseImage, Active: record.IsActive(height)}
 
-	// 3. Return what the machine holds
+	// 3. Return what the machine holds for each authorized node
 	return run.PerNode(cmd.Nodes, run.FailedStatus, func(node vo.NodeRef) (run.NodeStatus, error) {
 		if err := shard.CanObserve(cmd.forNode(node), record, height); err != nil {
 			return run.NodeStatus{}, err

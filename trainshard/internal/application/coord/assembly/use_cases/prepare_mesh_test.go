@@ -28,11 +28,13 @@ func prepareWithin(chain *chainStub, hosts *hostsStub, verifier *verifierStub, s
 }
 
 func TestPrepareHandsEveryNodeItsPeerList(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 
+	// act
 	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
 
+	// assert
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -48,14 +50,16 @@ func TestPrepareHandsEveryNodeItsPeerList(t *testing.T) {
 }
 
 func TestPrepareReleasesTheWorstNodeAndBuildsTheMeshAgain(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
 	hosts.failed[nodeB] = []mesh.Pair{mesh.NewPair(nodeB, nodeA)}
 	hosts.failed[nodeC] = []mesh.Pair{mesh.NewPair(nodeC, nodeA)}
 
+	// act
 	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
 
+	// assert
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -71,15 +75,17 @@ func TestPrepareReleasesTheWorstNodeAndBuildsTheMeshAgain(t *testing.T) {
 }
 
 func TestPrepareGivesTheTunnelsTimeToComeUpBeforeCuttingAnyone(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 	hosts.heals = true
 	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
 	hosts.failed[nodeB] = []mesh.Pair{mesh.NewPair(nodeB, nodeA)}
 	hosts.failed[nodeC] = []mesh.Pair{mesh.NewPair(nodeC, nodeA)}
 
+	// act
 	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
 
+	// assert
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -92,14 +98,16 @@ func TestPrepareGivesTheTunnelsTimeToComeUpBeforeCuttingAnyone(t *testing.T) {
 }
 
 func TestPrepareWaitsForAHostThatHasNotTakenThePeerListYet(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 	hosts.refuses[nodeA] = true
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
+	// act
 	_, err := prepare(chain, hosts, &verifierStub{}).Execute(ctx, shardID, forever)
 
+	// assert
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("got %v, want prepare still offering the peer list", err)
 	}
@@ -109,12 +117,14 @@ func TestPrepareWaitsForAHostThatHasNotTakenThePeerListYet(t *testing.T) {
 }
 
 func TestPrepareGoesOnWithoutAHostThatKeepsRefusingThePeerList(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 	hosts.refuses[nodeA] = true
 
+	// act
 	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
 
+	// assert
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -127,13 +137,15 @@ func TestPrepareGoesOnWithoutAHostThatKeepsRefusingThePeerList(t *testing.T) {
 }
 
 func TestPrepareWaitsForTheReleaseToLandAndCarriesOn(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 	chain.lag = 2
 	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
 
+	// act
 	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
 
+	// assert
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -146,13 +158,15 @@ func TestPrepareWaitsForTheReleaseToLandAndCarriesOn(t *testing.T) {
 }
 
 func TestPrepareStopsWhenTheChainNeverGivesTheReleasedNodeBack(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 	chain.applies = false
 	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
 
+	// act
 	_, err := prepareWithin(chain, hosts, &verifierStub{}, 0).Execute(context.Background(), shardID, expired)
 
+	// assert
 	if !errors.Is(err, shard.ErrReleasePending) {
 		t.Fatalf("got %v, want the run to stop rather than release the node twice", err)
 	}
@@ -196,12 +210,14 @@ func TestPrepareRefusesWhatItCannotBuildAMeshFrom(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-
+			// arrange
 			chain, hosts, verifier := newChainStub(), newHostsStub(), &verifierStub{}
 			tc.arrange(chain, hosts, verifier)
 
+			// act
 			_, err := prepare(chain, hosts, verifier).Execute(context.Background(), shardID, forever)
 
+			// assert
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("got %v, want %v", err, tc.want)
 			}
@@ -210,14 +226,16 @@ func TestPrepareRefusesWhatItCannotBuildAMeshFrom(t *testing.T) {
 }
 
 func TestPrepareWaitsForANodeThatHasNotReportedAnIdentityYet(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 	hosts.identities[hostA] = nil
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
+	// act
 	_, err := prepare(chain, hosts, &verifierStub{}).Execute(ctx, shardID, forever)
 
+	// assert
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("got %v, want prepare still waiting on the quiet node", err)
 	}
@@ -227,12 +245,14 @@ func TestPrepareWaitsForANodeThatHasNotReportedAnIdentityYet(t *testing.T) {
 }
 
 func TestPrepareGoesOnWithoutANodeThatStaysQuietPastTheDeadline(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 	hosts.identities[hostA] = nil
 
+	// act
 	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
 
+	// assert
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -245,12 +265,14 @@ func TestPrepareGoesOnWithoutANodeThatStaysQuietPastTheDeadline(t *testing.T) {
 }
 
 func TestPrepareDropsANodeTheChainHoldsNoAddressForWithoutWaiting(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 	chain.record.Nodes[0].Endpoint = ""
 
+	// act
 	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
 
+	// assert
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -263,13 +285,15 @@ func TestPrepareDropsANodeTheChainHoldsNoAddressForWithoutWaiting(t *testing.T) 
 }
 
 func TestPrepareGivesTheMeshLeftAfterAKickTimeToHandshake(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
-	hosts.secondProbe[nodeB] = []mesh.Pair{mesh.NewPair(nodeB, nodeC)}
+	hosts.failsOnSecondProbe[nodeB] = []mesh.Pair{mesh.NewPair(nodeB, nodeC)}
 
+	// act
 	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
 
+	// assert
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -282,14 +306,16 @@ func TestPrepareGivesTheMeshLeftAfterAKickTimeToHandshake(t *testing.T) {
 }
 
 func TestPrepareStopsReleasingAtTwoNodes(t *testing.T) {
-
+	// arrange
 	chain, hosts := newChainStub(), newHostsStub()
 	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
 	hosts.failed[nodeB] = []mesh.Pair{mesh.NewPair(nodeB, nodeA), mesh.NewPair(nodeB, nodeC)}
 	hosts.failed[nodeC] = []mesh.Pair{mesh.NewPair(nodeC, nodeA), mesh.NewPair(nodeC, nodeB)}
 
+	// act
 	result, err := prepareWithin(chain, hosts, &verifierStub{}, 0).Execute(context.Background(), shardID, expired)
 
+	// assert
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}

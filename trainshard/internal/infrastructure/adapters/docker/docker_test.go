@@ -1,13 +1,17 @@
 package docker
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
@@ -221,7 +225,6 @@ func TestGPURequests(t *testing.T) {
 	}
 }
 
-// An engine that only knows a card by name is asked for it by name, one device per card
 func TestGPURequestsNameTheDevicesWhenTheEngineNeedsThem(t *testing.T) {
 	// act
 	got := (&Client{cfg: Config{GPUKind: "nvidia.com/gpu"}}).gpuRequests(2)
@@ -235,7 +238,6 @@ func TestGPURequestsNameTheDevicesWhenTheEngineNeedsThem(t *testing.T) {
 	}
 }
 
-// Cleanup finds a run's leftovers by name and label, so both are a contract and not cosmetics
 func TestNamesAndLabelsIdentifyTheRun(t *testing.T) {
 	// arrange
 	shardID := vo.ShardID(42)
@@ -257,8 +259,6 @@ func TestNamesAndLabelsIdentifyTheRun(t *testing.T) {
 	}
 }
 
-// The workspace is the one place a run may write, and the files the engine would hand it writable
-// on the host disk are handed read only instead, carrying the sources it named and no resolver
 func TestTheRunWritesOnlyToItsWorkspace(t *testing.T) {
 	// arrange
 	client := &Client{cfg: Config{VolumeRoot: t.TempDir()}}
@@ -304,8 +304,6 @@ func TestTheRunWritesOnlyToItsWorkspace(t *testing.T) {
 	}
 }
 
-// Everything a run writes has to land somewhere the host counts, and the engine counts neither the
-// log it keeps of what a run prints nor the memory it hands out as scratch
 func TestNothingTheRunProducesGrowsUnmetered(t *testing.T) {
 	// arrange
 	client := &Client{cfg: Config{}.withDefaults()}
@@ -321,6 +319,22 @@ func TestNothingTheRunProducesGrowsUnmetered(t *testing.T) {
 	}
 	if rolled.Config["max-size"] == "" || rolled.Config["max-file"] == "" {
 		t.Fatalf("log config = %v, want a rolled log", rolled.Config)
+	}
+}
+
+func TestOnlyTmpLetsTheRunLoadWhatItBuilt(t *testing.T) {
+	// arrange
+	client := &Client{cfg: Config{}.withDefaults()}
+
+	// act
+	scratch := client.scratch()
+
+	// assert
+	if !slices.Contains(strings.Split(scratch[tmpdir], ","), "exec") {
+		t.Fatalf("%s = %q, want exec for what a jit compiler builds there", tmpdir, scratch[tmpdir])
+	}
+	if slices.Contains(strings.Split(scratch[rundir], ","), "exec") {
+		t.Fatalf("%s = %q, want the engine's noexec kept", rundir, scratch[rundir])
 	}
 }
 
@@ -345,5 +359,244 @@ func TestConfigDefaults(t *testing.T) {
 	// assert
 	if kept.Socket != "/run/docker.sock" || kept.PidsLimit != 16 {
 		t.Fatalf("defaults overwrote a set value: %+v", kept)
+	}
+}
+
+func runSpec() run.ContainerSpec {
+	return run.ContainerSpec{Shard: vo.ShardID(42), Node: node(), Run: run.RunSpec{Image: digest, Command: []string{"train"}}}
+}
+
+func TestCreateKeepsTheMountsOfAContainerTheEngineMayHaveMade(t *testing.T) {
+	// arrange
+	created := answer{status: http.StatusOK, body: container.InspectResponse{
+		ID:     "abc",
+		Name:   "/trainshard-42-node-7",
+		State:  &container.State{Status: container.StateCreated},
+		Config: &container.Config{Image: digest},
+	}}
+	cases := []struct {
+		name    string
+		create  answer
+		inspect answer
+		kept    bool
+	}{
+		{name: "the engine refused and made nothing", create: missing, inspect: missing, kept: false},
+		{name: "the engine timed out after making it", create: answer{err: context.DeadlineExceeded}, inspect: created, kept: true},
+		{name: "the engine cannot say", create: answer{status: http.StatusInternalServerError, body: map[string]string{"message": "down"}}, inspect: answer{status: http.StatusInternalServerError, body: map[string]string{"message": "down"}}, kept: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine, _ := stubbed(t, Config{VolumeRoot: t.TempDir()}, func(method, path string) answer {
+				switch {
+				case method == http.MethodPost && strings.HasSuffix(path, "/containers/create"):
+					return tc.create
+				case strings.HasSuffix(path, "/containers/trainshard-42-node-7/json"):
+					return tc.inspect
+				default:
+					return missing
+				}
+			})
+			spec := runSpec()
+
+			// act
+			err := engine.Create(context.Background(), spec)
+
+			// assert
+			if err == nil {
+				t.Fatal("want the failed create reported")
+			}
+			_, statErr := os.Stat(engine.mountsPath(spec.Shard, spec.Node))
+			if kept := statErr == nil; kept != tc.kept {
+				t.Fatalf("mounts kept = %v, want %v", kept, tc.kept)
+			}
+		})
+	}
+}
+
+func TestCreateHoldsTheRunToItsMemoryWithoutSwap(t *testing.T) {
+	// arrange
+	cases := []struct {
+		name   string
+		memory int64
+		swap   int64
+	}{
+		{name: "no memory limit asks for no swap limit", memory: 0, swap: 0},
+		{name: "a memory limit leaves no swap above it", memory: 8 << 30, swap: 8 << 30},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine, stub := stubbed(t, Config{VolumeRoot: t.TempDir(), MemoryBytes: tc.memory}, func(method, path string) answer {
+				if method == http.MethodPost && strings.HasSuffix(path, "/containers/create") {
+					return answer{status: http.StatusCreated, body: container.CreateResponse{ID: "abc"}}
+				}
+				return missing
+			})
+
+			// act
+			err := engine.Create(context.Background(), runSpec())
+
+			// assert
+			if err != nil {
+				t.Fatal(err)
+			}
+			sent, found := stub.sent(http.MethodPost, "/containers/create")
+			if !found {
+				t.Fatal("no create reached the engine")
+			}
+			var request container.CreateRequest
+			if err := json.Unmarshal(sent.body, &request); err != nil {
+				t.Fatal(err)
+			}
+			if request.HostConfig.Memory != tc.memory || request.HostConfig.MemorySwap != tc.swap {
+				t.Fatalf("memory = %d, swap = %d, want %d and %d", request.HostConfig.Memory, request.HostConfig.MemorySwap, tc.memory, tc.swap)
+			}
+		})
+	}
+}
+
+func TestCreateIsolatesTheRun(t *testing.T) {
+	// arrange
+	engine, stub := stubbed(t, Config{VolumeRoot: t.TempDir()}, func(method, path string) answer {
+		if method == http.MethodPost && strings.HasSuffix(path, "/containers/create") {
+			return answer{status: http.StatusCreated, body: container.CreateResponse{ID: "abc"}}
+		}
+		return missing
+	})
+
+	// act
+	err := engine.Create(context.Background(), runSpec())
+
+	// assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent, _ := stub.sent(http.MethodPost, "/containers/create")
+	var request container.CreateRequest
+	if err := json.Unmarshal(sent.body, &request); err != nil {
+		t.Fatal(err)
+	}
+	host := request.HostConfig
+	switch {
+	case request.User != "1000:1000":
+		t.Fatalf("user = %q, want the unprivileged default", request.User)
+	case host.Privileged || len(host.CapAdd) != 0 || !slices.Equal(host.CapDrop, []string{"ALL"}):
+		t.Fatalf("privileged = %v, cap add = %v, cap drop = %v", host.Privileged, host.CapAdd, host.CapDrop)
+	case !slices.Contains(host.SecurityOpt, "no-new-privileges"):
+		t.Fatalf("security opts = %v", host.SecurityOpt)
+	case !host.ReadonlyRootfs:
+		t.Fatal("the root is writable")
+	case host.NetworkMode != "none":
+		t.Fatalf("network = %q, want none without a running sandbox", host.NetworkMode)
+	case host.PidMode != "" || host.IpcMode != container.IPCModePrivate || host.PidsLimit == nil:
+		t.Fatalf("pid mode = %q, ipc mode = %q, pids limit = %v", host.PidMode, host.IpcMode, host.PidsLimit)
+	}
+}
+
+func TestStartOfAContainerThatIsGoneFails(t *testing.T) {
+	// arrange
+	cases := []struct {
+		name  string
+		start answer
+		gone  bool
+	}{
+		{name: "already running", start: answer{status: http.StatusNotModified}},
+		{name: "gone", start: missing, gone: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			engine, _ := stubbed(t, Config{}, func(string, string) answer { return tc.start })
+
+			// act
+			err := engine.Start(context.Background(), vo.ShardID(42), node())
+
+			// assert
+			if tc.gone != cerrdefs.IsNotFound(err) || (!tc.gone && err != nil) {
+				t.Fatalf("err = %v, want gone = %v", err, tc.gone)
+			}
+		})
+	}
+}
+
+func TestSandboxPullsOnlyAnImageTheEngineLacks(t *testing.T) {
+	// arrange
+	running := answer{status: http.StatusOK, body: container.InspectResponse{
+		ID:     "net",
+		State:  &container.State{Status: container.StateRunning, Running: true, Pid: 4242},
+		Config: &container.Config{Image: "registry.k8s.io/pause:3.9"},
+	}}
+	cases := []struct {
+		name   string
+		cached bool
+	}{
+		{name: "cached", cached: true},
+		{name: "not cached", cached: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			creates, inspects := 0, 0
+			engine, stub := stubbed(t, Config{}, func(method, path string) answer {
+				switch {
+				case strings.HasSuffix(path, "/containers/create"):
+					creates++
+					if !tc.cached && creates == 1 {
+						return missing
+					}
+					return answer{status: http.StatusCreated, body: container.CreateResponse{ID: "net"}}
+				case strings.HasSuffix(path, "/images/create"):
+					return answer{status: http.StatusOK, body: map[string]string{"status": "pulled"}}
+				case strings.HasSuffix(path, "/start"):
+					return answer{status: http.StatusNoContent}
+				case strings.HasSuffix(path, "/json"):
+					inspects++
+					if inspects == 1 {
+						return missing
+					}
+					return running
+				default:
+					return missing
+				}
+			})
+
+			// act
+			pid, err := engine.Sandbox(context.Background(), vo.ShardID(42), node())
+
+			// assert
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pid != 4242 {
+				t.Fatalf("pid = %d, want the sandbox's", pid)
+			}
+			if _, pulled := stub.sent(http.MethodPost, "/images/create"); pulled == tc.cached {
+				t.Fatalf("pulled = %v with the image cached = %v", pulled, tc.cached)
+			}
+		})
+	}
+}
+
+func TestStopWaitsOutTheGrace(t *testing.T) {
+	// arrange
+	engine, stub := stubbed(t, Config{Timeout: time.Second}, func(string, string) answer {
+		return answer{status: http.StatusNoContent}
+	})
+	grace := 10 * time.Second
+
+	// act
+	err := engine.Stop(context.Background(), vo.ShardID(42), node(), grace)
+
+	// assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent, found := stub.sent(http.MethodPost, "/stop")
+	if !found {
+		t.Fatal("no stop reached the engine")
+	}
+	if sent.remaining <= grace {
+		t.Fatalf("the stop had %s left, want more than the %s grace", sent.remaining, grace)
 	}
 }

@@ -10,8 +10,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-// Namespaces, wireguard links and nftables rules exist on linux only, which is where the daemon
-// runs. The rest of the module stays buildable and testable elsewhere
+// off linux every stub refuses, so a namespace is never reported set up when nothing happened
 var errPlatform = errors.New("mesh networking needs linux")
 
 func present(int, string) (bool, error) { return false, errPlatform }

@@ -22,22 +22,27 @@ const (
 )
 
 func TestASignatureNamesTheAccountThatMadeIt(t *testing.T) {
+	// arrange
 	key, err := cosmos.FromHex(alice)
 	if err != nil {
 		t.Fatalf("got %v, want a key", err)
 	}
+	payload := []byte("POST /shards/1/deploy")
+
+	// act
+	signed, err := cosmos.Recover(payload, key.Sign(payload))
+
+	// assert
 	if !strings.HasPrefix(string(key.Address()), "gonka1") {
 		t.Fatalf("got %q, want the address the chain knows this key by", key.Address())
 	}
-
-	payload := []byte("POST /shards/1/deploy")
-	signed, err := cosmos.Recover(payload, key.Sign(payload))
 	if err != nil || signed != key.Address() {
 		t.Fatalf("got %q %v, want %q", signed, err, key.Address())
 	}
 }
 
 func TestASignatureIsWorthNothingOnAnotherMessage(t *testing.T) {
+	// arrange
 	key, err := cosmos.FromHex(alice)
 	if err != nil {
 		t.Fatalf("got %v, want a key", err)
@@ -47,8 +52,11 @@ func TestASignatureIsWorthNothingOnAnotherMessage(t *testing.T) {
 		t.Fatalf("got %v, want a key", err)
 	}
 
+	// act
 	signature := key.Sign([]byte("POST /shards/1/deploy"))
 	recovered, err := cosmos.Recover([]byte("POST /shards/1/abort"), signature)
+
+	// assert
 	if err == nil && recovered == key.Address() {
 		t.Fatal("a signature over one request must not stand for another")
 	}
@@ -57,9 +65,6 @@ func TestASignatureIsWorthNothingOnAnotherMessage(t *testing.T) {
 	}
 }
 
-// The daemon takes the participant's key from the keyring the machine already has, on the file
-// backend a join deployment uses. This is the one path between an operator's config and a daemon
-// that starts at all, and the backend asks for the passphrase on its own terms
 func TestTheParticipantsKeyIsTakenFromTheKeyringOnDisk(t *testing.T) {
 	for _, backend := range []string{"test", "file"} {
 		t.Run(backend, func(t *testing.T) {
@@ -87,10 +92,15 @@ func TestTheParticipantsKeyIsTakenFromTheKeyringOnDisk(t *testing.T) {
 }
 
 func TestAKeyringWithoutThatKeyIsNotAKey(t *testing.T) {
+	// arrange
 	dir := t.TempDir()
 	writeKey(t, dir, "test", "keyring-password", "host")
 
-	if _, err := cosmos.FromKeyring(dir, "test", "keyring-password", "someone-else"); err == nil {
+	// act
+	_, err := cosmos.FromKeyring(dir, "test", "keyring-password", "someone-else")
+
+	// assert
+	if err == nil {
 		t.Fatal("a name the keyring does not hold must not produce a key")
 	}
 }
@@ -119,8 +129,6 @@ func writeKey(t *testing.T, dir, backend, password, name string) vo.Address {
 	return vo.Address(encoded)
 }
 
-// the file backend prompts once per read and takes the answer from the reader it was built with,
-// and how many times it asks is its business, not ours
 func prompts(password string) string {
 	return strings.Repeat(password+"\n", 16)
 }
@@ -135,7 +143,11 @@ func TestNothingSignsWithSomethingThatIsNotAKey(t *testing.T) {
 		"odd length": "abc",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := cosmos.FromHex(raw); err == nil {
+			// act
+			_, err := cosmos.FromHex(raw)
+
+			// assert
+			if err == nil {
 				t.Fatalf("%q was taken as a key", raw)
 			}
 		})

@@ -10,11 +10,13 @@ import (
 )
 
 func TestStartRefusesANodeWithoutAContainer(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 
+	// act
 	results, err := f.start().Execute(context.Background(), nodesCommand())
 
+	// assert
 	if err != nil {
 		t.Fatalf("a missing container is a per-node refusal: %v", err)
 	}
@@ -24,7 +26,7 @@ func TestStartRefusesANodeWithoutAContainer(t *testing.T) {
 }
 
 func TestStartAnswersWithTheContainerItActuallyStarted(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -34,8 +36,10 @@ func TestStartAnswersWithTheContainerItActuallyStarted(t *testing.T) {
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
 	f.images.present[runImage] = true
 
+	// act
 	results, err := f.start().Execute(ctx, nodesCommand())
 
+	// assert
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -48,7 +52,7 @@ func TestStartAnswersWithTheContainerItActuallyStarted(t *testing.T) {
 }
 
 func TestStartRefusesANodeWhoseContainerHasAlreadyRun(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.prepared(ctx); err != nil {
@@ -58,8 +62,10 @@ func TestStartRefusesANodeWhoseContainerHasAlreadyRun(t *testing.T) {
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
 	f.images.present[runImage] = true
 
+	// act
 	results, err := f.start().Execute(ctx, nodesCommand())
 
+	// assert
 	if err != nil {
 		t.Fatalf("a container that has run is a per-node refusal: %v", err)
 	}
@@ -72,7 +78,7 @@ func TestStartRefusesANodeWhoseContainerHasAlreadyRun(t *testing.T) {
 }
 
 func TestStopAnswersWithTheContainerItActuallyStopped(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -84,8 +90,10 @@ func TestStopAnswersWithTheContainerItActuallyStopped(t *testing.T) {
 	cmd := stopCommand()
 	cmd.Grace = 5 * time.Second
 
+	// act
 	results, err := f.stop().Execute(ctx, cmd)
 
+	// assert
 	if err != nil {
 		t.Fatalf("stop: %v", err)
 	}
@@ -105,7 +113,7 @@ func TestStopAnswersWithTheContainerItActuallyStopped(t *testing.T) {
 }
 
 func TestStopClampsAGraceLongerThanTheDaemonAllows(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -117,10 +125,12 @@ func TestStopClampsAGraceLongerThanTheDaemonAllows(t *testing.T) {
 	cmd := stopCommand()
 	cmd.Grace = time.Hour
 
+	// act
 	if _, err := f.stop().Execute(ctx, cmd); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 
+	// assert
 	if f.containers.grace != time.Minute {
 		t.Fatalf("got %v, want the daemon's own limit", f.containers.grace)
 	}

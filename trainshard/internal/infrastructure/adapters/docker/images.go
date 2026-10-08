@@ -27,8 +27,7 @@ func (c *Client) Pull(ctx context.Context, digest vo.ImageDigest) error {
 	return c.pull(ctx, digest.String())
 }
 
-// pull holds no timeout of its own: an image is gigabytes and the caller's context is the
-// only sensible bound on how long that may take
+// no timeout of its own: an image is gigabytes, and only the caller knows how long it may take
 func (c *Client) pull(ctx context.Context, reference string) error {
 	response, err := c.engine.ImagePull(ctx, reference, client.ImagePullOptions{})
 	if err != nil {
@@ -70,8 +69,7 @@ func (c *Client) inspectImage(ctx context.Context, reference string) (client.Ima
 	return image, true, nil
 }
 
-// pinned refuses an image the proposal cannot have pinned: without a digest the same name can
-// resolve to different bytes on two nodes of the same run
+// a tag can resolve to different bytes on two nodes of one run, and a bare digest cannot be pulled
 func pinned(digest vo.ImageDigest) error {
 	if !strings.Contains(digest.String(), "@") {
 		return fmt.Errorf("image %q must be named as repository@sha256:...: %w", digest, shared.ErrValidation)

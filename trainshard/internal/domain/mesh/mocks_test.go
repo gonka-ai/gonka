@@ -28,7 +28,7 @@ func identityOf(node vo.NodeRef) mesh.Identity {
 		Member: mesh.Member{
 			Node:      node,
 			Address:   "10.0.0.1",
-			PublicKey: "key-" + string(node.NodeID),
+			PublicKey: "key-" + string(node.Participant) + "-" + string(node.NodeID),
 		},
 
 		Signature: []byte(node.Participant),
@@ -99,12 +99,11 @@ func (d *delegationStub) Speaks(_ context.Context, participant vo.Participant, s
 func configOf(nodes ...vo.NodeRef) mesh.Config {
 	peers := make([]mesh.Peer, 0, len(nodes))
 	for rank, node := range nodes {
-		peers = append(peers, mesh.Peer{Rank: rank, Node: node, Address: "10.0.0.1", PublicKey: "key"})
+		peers = append(peers, mesh.Peer{Rank: rank, Node: node, Address: "10.0.0.1", PublicKey: "key-" + string(node.Participant) + "-" + string(node.NodeID)})
 	}
 	return mesh.Config{Shard: shardID, Peers: peers}
 }
 
-// emptyStore holds nothing, so every read answers "not here"
 type emptyStore struct{ mesh.Store }
 
 func (emptyStore) Config(context.Context, vo.ShardID, vo.NodeRef) (mesh.Config, bool, error) {
