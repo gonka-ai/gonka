@@ -39,6 +39,19 @@ func (d downStub) HardwareNodes(context.Context, *types.QueryHardwareNodesReques
 	return nil, d.err
 }
 
+func (d downStub) EpochInfo(context.Context, *types.QueryEpochInfoRequest, ...grpc.CallOption) (*types.QueryEpochInfoResponse, error) {
+	return nil, d.err
+}
+
+type epochStub struct {
+	types.QueryClient
+	info *types.QueryEpochInfoResponse
+}
+
+func (e epochStub) EpochInfo(context.Context, *types.QueryEpochInfoRequest, ...grpc.CallOption) (*types.QueryEpochInfoResponse, error) {
+	return e.info, nil
+}
+
 type activeStub struct {
 	types.QueryClient
 	shards []*types.Trainshard
@@ -140,6 +153,42 @@ func TestActiveShardsLeavesOutARecordThatDoesNotParse(t *testing.T) {
 	}
 }
 
+func TestAnAssembleWaitsForEveryPoCItCouldLandIn(t *testing.T) {
+	// default epoch params: PoC of epoch 3 runs 100..117, the next one 140..157
+	cases := []struct {
+		name     string
+		height   int64
+		lifetime int64
+		want     vo.Height
+	}{
+		{"inside PoC", 105, 5, 118},
+		{"lands before the next PoC", 130, 5, 130},
+		{"could land once the next PoC starts", 136, 5, 158},
+		{"PoC ends too close to the next one to land between", 105, 25, 158},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// arrange
+			client := &Client{query: epochStub{info: &types.QueryEpochInfoResponse{
+				BlockHeight: tc.height,
+				Params:      types.DefaultParams(),
+				LatestEpoch: types.Epoch{Index: 3, PocStartBlockHeight: 100},
+			}}}
+
+			// act
+			now, opens, err := client.assemblyWindow(context.Background(), tc.lifetime)
+
+			// assert
+			if err != nil {
+				t.Fatalf("assembly window: %v", err)
+			}
+			if now != vo.Height(tc.height) || opens != tc.want {
+				t.Fatalf("got now %d opens %d, want %d and %d", now, opens, tc.height, tc.want)
+			}
+		})
+	}
+}
+
 func TestAChainThatCannotBeReadIsUnavailable(t *testing.T) {
 	node := vo.NodeRef{Participant: "gonka1host", NodeID: "node-1"}
 	cases := []struct {
@@ -151,6 +200,7 @@ func TestAChainThatCannotBeReadIsUnavailable(t *testing.T) {
 		{"active shards", func(c *Client) error { _, err := c.ActiveShards(context.Background()); return err }},
 		{"reservation", func(c *Client) error { _, _, err := c.Reserved(context.Background(), node); return err }},
 		{"hardware", func(c *Client) error { _, err := c.Hardware(context.Background(), node); return err }},
+		{"assembly window", func(c *Client) error { _, _, err := c.assemblyWindow(context.Background(), 0); return err }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

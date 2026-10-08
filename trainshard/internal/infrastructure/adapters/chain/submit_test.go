@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 )
@@ -242,6 +243,19 @@ func TestLandedKeepsTheCodespaceOfARefusalThatRan(t *testing.T) {
 	// assert
 	if !errors.Is(err, shared.ErrConflict) || shared.CodeOf(err) != "CHAIN_REFUSED" {
 		t.Fatalf("got %v (%s), want a final CHAIN_REFUSED", err, shared.CodeOf(err))
+	}
+}
+
+func TestAnAssembleRefusedForPoCReadsAsAClosedWindow(t *testing.T) {
+	// arrange
+	sender := &senderStub{ran: refusedBy(types.ErrTrainshardAssemblyDuringPoC)}
+
+	// act
+	_, err := signerOver(sender, time.Second).landed(context.Background(), &types.MsgAssembleTrainshard{}, "ABCD")
+
+	// assert
+	if !errors.Is(err, shard.ErrAssemblyClosed) {
+		t.Fatalf("got %v (%s), want ASSEMBLY_CLOSED so the coordinator waits and asks again", err, shared.CodeOf(err))
 	}
 }
 

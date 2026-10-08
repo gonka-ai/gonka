@@ -360,7 +360,7 @@ func TestSetTrainingNodeOptIn_OptInIsRejectedAndStoresNothing(t *testing.T) {
 	hardware, found := k.GetHardwareNodes(ctx, creator)
 	require.True(t, found)
 	hardware.HardwareNodes = append(hardware.HardwareNodes, &types.HardwareNode{
-		LocalId:   "node-c",
+		LocalId:  "node-c",
 		Hardware: []*types.Hardware{{Type: "NVIDIA H100", Count: 8}},
 	})
 	require.NoError(t, k.SetHardwareNodes(ctx, hardware))

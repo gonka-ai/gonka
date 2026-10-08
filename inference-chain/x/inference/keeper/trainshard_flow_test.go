@@ -142,6 +142,33 @@ func TestAssembleTrainshard_RespectsCapacityBuffer(t *testing.T) {
 	require.ErrorContains(t, err, "1 over the profile share cap (1)")
 }
 
+func TestAssembleTrainshard_WaitsOutPoC(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 7, PocStartBlockHeight: 45}))
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardAssemblyDuringPoC)
+	require.ErrorContains(t, err, "assemble at height 63 or later")
+	require.False(t, k.IsNodeReserved(ctx, creator, "node-a"))
+
+	_, err = ms.AssembleTrainshard(ctx.WithBlockHeight(63), &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+}
+
+func TestAssembleTrainshard_WaitsOutConfirmationPoC(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 7, PocStartBlockHeight: 10}))
+	require.NoError(t, k.SetActiveConfirmationPoCEvent(ctx, types.ConfirmationPoCEvent{
+		EpochIndex:            7,
+		GenerationStartHeight: 52,
+		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_GRACE_PERIOD,
+	}))
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardAssemblyDuringPoC)
+	require.ErrorContains(t, err, "assemble at height 71 or later")
+}
+
 func TestEpochReservationView_TimeLocalFullReservation(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	const epoch = uint64(7)

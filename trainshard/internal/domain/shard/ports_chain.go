@@ -41,10 +41,18 @@ type ChainSubmitter interface {
 	Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, reason vo.ReleaseReason) error
 }
 
+// AssemblyWindow is when the chain takes an assemble: never while PoC or confirmation PoC runs
+type AssemblyWindow interface {
+	// AssemblyOpensAt returns the current height and the first height from which an assemble sent
+	// lands outside a known PoC at every height it may still land at; the current one when it does now
+	AssemblyOpensAt(ctx context.Context) (now, opens vo.Height, err error)
+}
+
 // ChainLifecycle is what only the shard's own creator may ask: where a run begins and where it ends
 type ChainLifecycle interface {
 	// Assemble turns a passed proposal into a shard that holds its nodes, and returns the shard id
-	// the chain gave it
+	// the chain gave it. ErrAssemblyClosed means nothing was assembled: the window was closed when
+	// it was about to send, or a confirmation PoC started before the chain ran it
 	Assemble(ctx context.Context, proposal uint64) (vo.ShardID, error)
 	// Settle closes the run and hands every node back
 	Settle(ctx context.Context, shardID vo.ShardID) error

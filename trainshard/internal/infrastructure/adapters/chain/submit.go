@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 )
@@ -96,9 +97,22 @@ func (s *Signer) Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 	})
 }
 
-// the chain names the new shard only in its answer to this transaction
+func (s *Signer) AssemblyOpensAt(ctx context.Context) (vo.Height, vo.Height, error) {
+	return s.assemblyWindow(ctx, int64(s.blocksToLand()))
+}
+
+// the window is read again at the height the transaction's timeout counts from, so a regular PoC
+// cannot start before the transaction lands or expires. The chain names the new shard only in its
+// answer to this transaction
 func (s *Signer) Assemble(ctx context.Context, proposal uint64) (vo.ShardID, error) {
-	answer, err := s.submit(ctx, &types.MsgAssembleTrainshard{Creator: string(s.key.Address()), ProposalId: proposal})
+	at, opens, err := s.AssemblyOpensAt(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if at < opens {
+		return 0, fmt.Errorf("assembly opens at height %d, now %d: %w", opens, at, shard.ErrAssemblyClosed)
+	}
+	answer, err := s.submitAt(ctx, &types.MsgAssembleTrainshard{Creator: string(s.key.Address()), ProposalId: proposal}, at)
 	if err != nil {
 		return 0, err
 	}
@@ -150,12 +164,16 @@ func response(answer *sdk.TxResponse, out interface{ Unmarshal([]byte) error }) 
 }
 
 func (s *Signer) submit(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, error) {
-	number, sequence, err := s.account(ctx)
+	at, err := s.Height(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return s.submitAt(ctx, msg, at)
+}
 
-	at, err := s.Height(ctx)
+// submitAt lets the transaction land up to blocksToLand blocks after at and never later
+func (s *Signer) submitAt(ctx context.Context, msg sdk.Msg, at vo.Height) (*sdk.TxResponse, error) {
+	number, sequence, err := s.account(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -250,8 +268,11 @@ func slow(msg sdk.Msg, hash string, waited time.Duration, last error) error {
 // Refused reads a refusal by its codespace and code alone, never by its log, whose wording is no contract.
 // Out of gas and a low fee stay unavailable: every submit simulates gas and reads the price again.
 func Refused(msg sdk.Msg, codespace string, code uint32, log string) error {
-	return shared.New("CHAIN_REFUSED", refusal(codespace, code),
-		fmt.Sprintf("the chain refused %s with code %d in codespace %q: %s", sdk.MsgTypeURL(msg), code, codespace, log))
+	reason := fmt.Sprintf("the chain refused %s with code %d in codespace %q: %s", sdk.MsgTypeURL(msg), code, codespace, log)
+	if among(codespace, code, types.ErrTrainshardAssemblyDuringPoC) {
+		return fmt.Errorf("%s: %w", reason, shard.ErrAssemblyClosed)
+	}
+	return shared.New("CHAIN_REFUSED", refusal(codespace, code), reason)
 }
 
 func refusal(codespace string, code uint32) error {

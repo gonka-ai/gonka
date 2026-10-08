@@ -195,6 +195,17 @@ trainshardctl prepare $shard --wait 5m        # default: 30m
 trainshardctl status $shard                   # PREPARED true; REASON says what a false one waits on
 ```
 
+The chain does not assemble a shard while PoC or confirmation PoC is running.
+`assemble` waits until it ends, then sends the transaction. It also waits when
+the next PoC would start before the transaction could land. While it waits it
+prints the height it waits for on stderr; stdout still carries only the shard
+id. If a confirmation PoC starts while the transaction is on its way, the chain
+refuses it and `assemble` waits and sends it again.
+
+A shard that is already assembled is not affected by PoC: the hosts' API nodes
+keep reserved nodes out of PoC, confirmation PoC and inference until the shard
+lets them go.
+
 2. Place and start the run:
 
 ```

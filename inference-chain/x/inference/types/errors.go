@@ -122,4 +122,5 @@ var (
 	ErrTrainshardBaseImageInvalid            = sdkerrors.Register(ModuleName, 1316, "base image must be pinned as repository@sha256:<digest>")
 	ErrTrainshardOptInRequest                = sdkerrors.Register(ModuleName, 1317, "invalid training opt-in request")
 	ErrTrainshardAutokickRequestReused       = sdkerrors.Register(ModuleName, 1318, "autokick request id was already used for a different node")
+	ErrTrainshardAssemblyDuringPoC           = sdkerrors.Register(ModuleName, 1319, "a trainshard is not assembled while PoC or confirmation PoC is running")
 )

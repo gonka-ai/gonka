@@ -162,6 +162,26 @@ func (c *Client) Hardware(ctx context.Context, node vo.NodeRef) (vo.GPUInventory
 	return vo.GPUInventory{}, nil
 }
 
+// assemblyWindow reads when an assemble that may land up to lifetime blocks after it is sent is
+// taken. The next PoC is known ahead: one that starts before the transaction lands or expires would
+// refuse it, so the assemble waits that PoC out too. A confirmation PoC is random and still can
+func (c *Client) assemblyWindow(ctx context.Context, lifetime int64) (vo.Height, vo.Height, error) {
+	info, err := c.query.EpochInfo(ctx, &types.QueryEpochInfoRequest{})
+	if err != nil {
+		return 0, 0, unreachable(err)
+	}
+	if info.Params.EpochParams == nil {
+		return 0, 0, fmt.Errorf("the chain answered without epoch params")
+	}
+	params := *info.Params.EpochParams
+	opens := types.TrainshardAssemblyOpensAt(info.BlockHeight, info.LatestEpoch, params, info.ActiveConfirmationPocEvent)
+	epoch := types.NewEpochContext(info.LatestEpoch, params)
+	if next := epoch.NextEpochContext(); opens+lifetime >= next.StartOfPoC() && opens < next.EndOfPoCValidation() {
+		opens = next.EndOfPoCValidation()
+	}
+	return vo.Height(info.BlockHeight), vo.Height(opens), nil
+}
+
 func (c *Client) Watch(ctx context.Context) (<-chan struct{}, error) {
 	hints := make(chan struct{}, 1)
 	go func() {

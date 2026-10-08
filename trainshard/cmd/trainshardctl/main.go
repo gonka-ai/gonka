@@ -100,8 +100,9 @@ func drive() error {
 		Delegation: outside.delegation,
 		Submitter:  outside.submitter,
 		Lifecycle:  outside.lifecycle,
+		Window:     outside.window,
 		Clock:      clock,
-	}, os.Stdout).Register(commands)
+	}, os.Stdout, os.Stderr).Register(commands)
 	ops.New(ops.Config{Timeout: cfg.timeout}, ops.Deps{
 		Chain:   outside.chain,
 		Hosts:   hosts,
@@ -131,6 +132,7 @@ type outside struct {
 	delegation ports.Delegation
 	submitter  shard.ChainSubmitter
 	lifecycle  shard.ChainLifecycle
+	window     shard.AssemblyWindow
 	close      func() error
 }
 
@@ -151,12 +153,12 @@ func connect(ctx context.Context, cfg config, signer keys) (outside, error) {
 		return outside{}, errors.Join(fmt.Errorf("TRAINSHARDCTL_CHAIN_ID is %q and the chain at %s calls itself %q", cfg.chainID, cfg.chainGRPC, chainID), client.Close())
 	}
 	creator := chain.NewSigner(client, account, chainID, cfg.chainLanding)
-	return outside{chain: client, delegation: client, submitter: creator, lifecycle: creator, close: client.Close}, nil
+	return outside{chain: client, delegation: client, submitter: creator, lifecycle: creator, window: creator, close: client.Close}, nil
 }
 
 func catalog() map[string]func(context.Context, []string) error {
 	commands := map[string]func(context.Context, []string) error{}
-	assembly.New(assembly.Config{}, assembly.Deps{}, io.Discard).Register(commands)
+	assembly.New(assembly.Config{}, assembly.Deps{}, io.Discard, io.Discard).Register(commands)
 	ops.New(ops.Config{}, ops.Deps{}, io.Discard, nil).Register(commands)
 	return commands
 }
