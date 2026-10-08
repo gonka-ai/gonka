@@ -303,6 +303,9 @@ func TestLiveHashRejectsSwappedCommittedIDs(t *testing.T) {
 
 	_, err := sm.ComputeStateRoot()
 	require.ErrorContains(t, err, "missing live inference 1")
+	_, err = sm.ApplyLocal(3, []*types.DevshardTx{startTx(3)})
+	require.ErrorContains(t, err, "missing live inference 1")
+	require.Equal(t, uint64(2), sm.LatestNonce())
 
 	sm.RestoreCommittedEntries(nil)
 	assertCommittedMatchesMarshalPath(t, sm)

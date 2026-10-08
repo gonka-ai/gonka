@@ -179,11 +179,13 @@ func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.Infer
 }
 
 // liveInferencesHashLocked returns the running XOR of the committed frames.
-// The total is maintained when the map changes, so this hashes nothing. Only
-// the sizes are checked here, per apply; verifyLiveIDsLocked walks the ids.
+// Check that the running hash covers exactly the live inference IDs.
 func (sm *StateMachine) liveInferencesHashLocked() ([]byte, error) {
 	if len(sm.committedEntries) != len(sm.state.Inferences) {
 		return nil, fmt.Errorf("committed inference entries %d != live inferences %d", len(sm.committedEntries), len(sm.state.Inferences))
+	}
+	if err := sm.verifyLiveIDsLocked(); err != nil {
+		return nil, err
 	}
 	out := make([]byte, len(sm.liveEntryXOR))
 	copy(out, sm.liveEntryXOR[:])
