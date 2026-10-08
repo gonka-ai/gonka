@@ -62,6 +62,7 @@ define DOCKER_BUILD_UPGRADE
 		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
+		--build-arg BLST_PORTABLE=$(BLST_PORTABLE) \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
 		--target binary-exporter \
 		-f $(DOCKER_FILE) \
