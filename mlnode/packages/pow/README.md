@@ -100,16 +100,6 @@ volumes:
 ```
 
 
-#### User and Group
-For convenience, the user and group are created in the container with the same UID and GID as the host user.
-It allows the container to write to the `scripts` and `notebooks` folders without changing the permissions on your local machine.  
-
-To use the same UID and GID as your host user, run the following command:
-```bash
-echo "HOST_UID=$(id -u)" >> .env
-echo "HOST_GID=$(id -g)" >> .env
-```
-
 #### Jupyter
 
 ```bash

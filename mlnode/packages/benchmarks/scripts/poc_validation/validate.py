@@ -808,7 +808,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"    python3 {Path(__file__).parent / 'make_artifact.py'} \\\n"
             f"        --mlnode-url <trusted_mlnode_url> \\\n"
             f"        --model {args.model!r} \\\n"
-            f"        --num-nonces 32 --batch-size 32 \\\n"
+            f"        --num-nonces 32 \\\n"
             f"        --out {reference_path}\n"
         )
         return 1
