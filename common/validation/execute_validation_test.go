@@ -530,13 +530,14 @@ func TestExecuteValidation_DeepSeekInputUsageException(t *testing.T) {
 			}
 			prompt, err := json.Marshal(map[string]interface{}{"model": model, "messages": messages})
 			require.NoError(t, err)
-			token := "42"
+			original := responsePayloadTokensWithUsage(100, 100, 100)
+			validatorResponse := original
 			if tc.wrongToken {
-				token = "43"
+				validatorResponse = bytes.ReplaceAll(original, []byte(`"token":"42"`), []byte(`"token":"43"`))
 			}
 			calls := 0
-			execute := staticExecutor(http.StatusOK, responsePayloadJSONWithUsage(token, -0.5, 100, 100))
-			result, err := ExecuteValidation(context.Background(), "inf-1", prompt, responsePayloadJSON("42", -0.5),
+			execute := staticExecutor(http.StatusOK, validatorResponse)
+			result, err := ExecuteValidation(context.Background(), "inf-1", prompt, original,
 				func(ctx context.Context, body []byte) (*http.Response, error) {
 					calls++
 					return execute(ctx, body)
