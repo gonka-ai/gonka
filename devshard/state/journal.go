@@ -44,7 +44,7 @@ type journalScalars struct {
 	phase         types.SessionPhase
 	finalizeNonce uint64
 	latestNonce   uint64
-	liveEntryXOR  [32]byte
+	liveEntrySum  [32]byte
 	sealedAcc     []byte
 }
 
@@ -58,7 +58,7 @@ func (sm *StateMachine) readScalarsLocked() journalScalars {
 		phase:         st.Phase,
 		finalizeNonce: st.FinalizeNonce,
 		latestNonce:   st.LatestNonce,
-		liveEntryXOR:  sm.liveEntryXOR,
+		liveEntrySum:  sm.liveEntrySum,
 		sealedAcc:     st.SealedAcc,
 	}
 }
@@ -70,7 +70,7 @@ func (sm *StateMachine) writeScalarsLocked(s journalScalars) {
 	st.Phase = s.phase
 	st.FinalizeNonce = s.finalizeNonce
 	st.LatestNonce = s.latestNonce
-	sm.liveEntryXOR = s.liveEntryXOR
+	sm.liveEntrySum = s.liveEntrySum
 	st.SealedAcc = s.sealedAcc
 }
 

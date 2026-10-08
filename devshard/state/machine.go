@@ -83,10 +83,11 @@ type StateMachine struct {
 	// committedEntries keeps the canonical protobuf bytes for each live
 	// inference: the same bytes a fresh marshal of Inferences would produce.
 	// Seal and settlement drain delete an id from this map and from Inferences
-	// together. liveEntryXOR is the XOR of sha256(frame) for those blobs.
-	// It changes only when a blob is inserted, replaced, or removed.
+	// together. liveEntrySum is the 32-byte encoding of the Ristretto255 sum
+	// of those framed blobs. It changes only when a blob is inserted,
+	// replaced, or removed.
 	committedEntries map[uint64][]byte
-	liveEntryXOR     [32]byte
+	liveEntrySum     [32]byte
 	// sealedNonces remembers the nonce at which each evicted inference was
 	// sealed. It is the only piece of per-id seal metadata that survives in
 	// the durable sealed-inference index; everything else needed for cold-path
