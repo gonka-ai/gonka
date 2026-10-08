@@ -1,6 +1,8 @@
 package keeper_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -107,6 +109,43 @@ func TestPruneEpochZeroInferencesScanBound(t *testing.T) {
 	_, found = k.GetInference(ctx, "z-orphan")
 	require.False(t, found)
 	state, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.True(t, state.EpochZeroInferencesPruned)
+}
+
+// A removal failing mid-pass leaves the cursor where it was, so the next block scans the
+// same range again and nothing is skipped.
+func TestPruneEpochZeroInferencesFailureKeepsCursor(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	current := int64(params.EpochParams.InferencePruningEpochThreshold) + 1
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("orphan-%02d", i)
+		require.NoError(t, k.SetInference(ctx, types.Inference{Index: id, Status: types.InferenceStatus_EXPIRED}))
+	}
+
+	removed := 0
+	failAfter := func(ctx context.Context, id string) error {
+		if removed == 4 {
+			return errors.New("injected")
+		}
+		removed++
+		return k.Inferences.Remove(ctx, id)
+	}
+	require.Error(t, keeper.PruneEpochZeroInferencesForTesting(k, ctx, current, failAfter))
+	state, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.Empty(t, state.EpochZeroInferencesCursor)
+	require.False(t, state.EpochZeroInferencesPruned)
+
+	require.NoError(t, keeper.PruneEpochZeroInferencesForTesting(k, ctx, current, nil))
+	for i := 0; i < 10; i++ {
+		_, found := k.GetInference(ctx, fmt.Sprintf("orphan-%02d", i))
+		require.False(t, found, "orphan-%02d", i)
+	}
+	state, err = k.PruningState.Get(ctx)
 	require.NoError(t, err)
 	require.True(t, state.EpochZeroInferencesPruned)
 }

@@ -1,6 +1,8 @@
 package keeper
 
 import (
+	"context"
+
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -27,4 +29,16 @@ func SetPoCV2StoreCommitRawBytesForTesting(k Keeper, ctx sdk.Context, startHeigh
 		return err
 	}
 	return k.storeService.OpenKVStore(ctx).Set(keyBz, bz)
+}
+
+// PruneEpochZeroInferencesForTesting runs the epoch-0 pass alone with remove in place of
+// Inferences.Remove.
+func PruneEpochZeroInferencesForTesting(k Keeper, ctx sdk.Context, currentEpochIndex int64, remove func(ctx context.Context, id string) error) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	p := k.GetEpochZeroInferencePruner(params)
+	p.remove = remove
+	return p.prune(ctx, k, currentEpochIndex, nil)
 }

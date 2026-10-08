@@ -14,7 +14,8 @@ const (
 	LookbackMultiplier               = int64(5)
 	ClaimRecipientPruningThreshold   = uint64(5)
 	ClaimRecipientPruningMaxPerBlock = int64(1000)
-	// PruneWorkPerBlock caps deletion work of all pruners in one EndBlock.
+	// PruneWorkPerBlock caps removals of all pruners in one EndBlock. Reads are not
+	// charged; the epoch-0 pass bounds its reads separately.
 	PruneWorkPerBlock = int64(5000)
 	// InferenceRemoveCost: an inference removal also deletes the record at a random key.
 	InferenceRemoveCost = int64(3)
@@ -62,6 +63,7 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 // It runs once epoch 0 is past the inference threshold, a bounded slice per block.
 type epochZeroInferencePruner struct {
 	params types.Params
+	remove func(ctx context.Context, id string) error // nil: k.Inferences.Remove
 }
 
 func (k Keeper) GetEpochZeroInferencePruner(params types.Params) epochZeroInferencePruner {
@@ -114,8 +116,14 @@ func (p epochZeroInferencePruner) prune(ctx context.Context, k Keeper, currentEp
 	if budget != nil {
 		*budget -= int64(len(toRemove))
 	}
+	remove := p.remove
+	if remove == nil {
+		remove = k.Inferences.Remove
+	}
+	// The cursor is saved only after every removal succeeded; on error it stays put
+	// and the next block scans the same range again.
 	for _, id := range toRemove {
-		if err := k.Inferences.Remove(ctx, id); err != nil {
+		if err := remove(ctx, id); err != nil {
 			return err
 		}
 	}
