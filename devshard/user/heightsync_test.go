@@ -1254,3 +1254,32 @@ func TestHeartbeatBackoff_DoublesUpToEightIntervals(t *testing.T) {
 	}
 	require.Equal(t, 8*interval, heartbeatBackoff(1_000_000, interval), "heartbeatBackoff(1000000) must stay at the cap")
 }
+
+type deadlineProbeClient struct {
+	*spanProbeClient
+	sendBudget time.Duration
+}
+
+func (c *deadlineProbeClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		c.sendBudget = time.Until(deadline)
+	}
+	return c.spanProbeClient.Send(ctx, req, stream, receiptHandler)
+}
+
+// Test flow:
+//  1. Build a session whose host 1 records the deadline of the context it is sent on.
+//  2. Send host 1 a heartbeat on a context without a deadline.
+//  3. The send carries a deadline of at most heartbeatSendTimeout, well under the heartbeat interval.
+func TestHeartbeat_SendIsBoundedByTheHeartbeatSendTimeout(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	session, probes := setupHeartbeatSessionWithProbedHosts(t, &now)
+	recorder := &deadlineProbeClient{spanProbeClient: probes[1]}
+	session.Clients()[1] = recorder
+
+	require.NoError(t, session.sendComposedDiff(context.Background(), composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 1}))
+
+	require.Positive(t, recorder.sendBudget, "heartbeat send carried no deadline")
+	require.LessOrEqual(t, recorder.sendBudget, heartbeatSendTimeout)
+	require.Less(t, heartbeatSendTimeout, session.heartbeat.Config().Interval)
+}

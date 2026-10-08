@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -15,6 +16,8 @@ const (
 	heartbeatForceReason = "heartbeat"
 	// heartbeatBackoffMaxIntervals caps how many heartbeat intervals a failing host is skipped for.
 	heartbeatBackoffMaxIntervals = 8
+	// heartbeatSendTimeout bounds one heartbeat send well under the heartbeat interval.
+	heartbeatSendTimeout = 5 * time.Second
 )
 
 type composedDiff struct {
@@ -484,21 +487,23 @@ func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error
 		return nil
 	}
 
-	client := s.clients[item.hostIdx]
-	catchUp, err := s.catchUpForRequest(ctx, item.hostIdx, client, item.diff.Nonce)
-	var resp *host.HostResponse
-	if err == nil {
-		resp, err = client.Send(ctx, host.HostRequest{
-			Diffs:            catchUp,
-			Nonce:            item.diff.Nonce,
-			HeightSyncEscrow: s.heightSyncEscrowHints(),
-		}, nil, nil)
-	}
+	s.mu.Lock()
+	catchUp := s.diffsForHost(item.hostIdx)
+	s.mu.Unlock()
+
+	sendCtx, cancel := context.WithTimeout(ctx, heartbeatSendTimeout)
+	resp, err := s.clients[item.hostIdx].Send(sendCtx, host.HostRequest{
+		Diffs:            catchUp,
+		Nonce:            item.diff.Nonce,
+		HeightSyncEscrow: s.heightSyncEscrowHints(),
+	}, nil, nil)
+	cancel()
 	if err != nil {
 		backoff := s.noteHeartbeatSendFailure(item.hostIdx)
-		logging.Warn("heartbeat host dead", "subsystem", "heightsync",
+		logging.Warn("heartbeat send failed", "subsystem", "heightsync",
 			"escrow", s.escrowID, "nonce", item.diff.Nonce, "host", item.hostIdx,
-			"catch_up", len(catchUp), "backoff", backoff, "error", err)
+			"catch_up", len(catchUp), "timed_out", errors.Is(err, context.DeadlineExceeded),
+			"backoff", backoff, "error", err)
 		return nil
 	}
 	s.mu.Lock()
