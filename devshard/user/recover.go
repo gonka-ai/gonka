@@ -87,6 +87,63 @@ func decodeSnapshot(data []byte) (*types.EscrowState, map[int]uint64, error) {
 	return &bare, nil, nil
 }
 
+// restoredRootMatchesJournal checks the restored state against the root the journal recorded for nonce.
+// A mismatch, or a root that cannot be checked, is logged and means the caller replays from the start instead.
+func restoredRootMatchesJournal(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) bool {
+	records, err := store.GetDiffs(escrowID, nonce, nonce)
+	if err != nil || len(records) != 1 || len(records[0].StateHash) == 0 {
+		log.Printf("recover_session escrow=%s snapshot_nonce=%d restored_root_unverifiable records=%d error=%v (replaying from 1)", escrowID, nonce, len(records), err)
+		return false
+	}
+	root, err := sm.ComputeStateRoot()
+	if err == nil && bytes.Equal(root, records[0].StateHash) {
+		return true
+	}
+	log.Printf("recover_session escrow=%s snapshot_nonce=%d restored_root_mismatch error=%v (replaying from 1)", escrowID, nonce, err)
+	return false
+}
+
+// recoveryPoint is a decoded state to restore from, or the error that made it unusable.
+type recoveryPoint struct {
+	state *types.EscrowState
+	err   error
+}
+
+// loadRecoveryPoint picks the newer of the state written with the diffs and the legacy snapshot.
+// A missing snapshot is reported as storage.ErrSnapshotNotFound.
+func loadRecoveryPoint(store storage.Storage, escrowID string) (uint64, recoveryPoint, map[int]uint64, error) {
+	snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID)
+	if stateStore, ok := store.(storage.SessionStateStore); ok {
+		stored, err := stateStore.LoadSessionState(escrowID)
+		switch {
+		case err == nil && (snapErr != nil || stored.Nonce >= snapNonce):
+			restored, cursor, decodeErr := decodeSessionState(stored)
+			return stored.Nonce, recoveryPoint{state: restored, err: decodeErr}, cursor, nil
+		case err != nil && !errors.Is(err, storage.ErrSessionStateNotFound):
+			log.Printf("recover_session escrow=%s session_state_load_error=%v (using snapshot)", escrowID, err)
+		}
+	}
+	if snapErr != nil {
+		return 0, recoveryPoint{}, nil, snapErr
+	}
+	restored, cursor, decodeErr := decodeSnapshot(snapData)
+	return snapNonce, recoveryPoint{state: restored, err: decodeErr}, cursor, nil
+}
+
+// decodeSessionState rebuilds the escrow state from the stored header and live inference entries.
+func decodeSessionState(stored storage.SessionState) (*types.EscrowState, map[int]uint64, error) {
+	restored, cursor, err := decodeSnapshot(stored.Header)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode session state header: %w", err)
+	}
+	records, err := state.DecodeInferenceEntries(stored.Entries)
+	if err != nil {
+		return nil, nil, err
+	}
+	restored.Inferences = records
+	return restored, cursor, nil
+}
+
 // minHostSyncNonce returns the smallest cursor value across all hosts
 // in the group. Any host not present in the cursor map is treated as
 // "unknown" -> 0, which forces full diff backfill on recovery.
@@ -176,13 +233,14 @@ func RecoverSession(
 	legacySnapshot := false
 	snapshotRestored := false
 	replayFrom := uint64(1)
-	snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID)
+	snapNonce, snapState, cursor, snapErr := loadRecoveryPoint(store, escrowID)
 	if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
-		snapState, cursor, decodeErr := decodeSnapshot(snapData)
-		if decodeErr != nil {
+		initialState := sm.ExportState()
+		if decodeErr := snapState.err; decodeErr != nil {
 			log.Printf("recover_session escrow=%s snapshot_nonce=%d unmarshal_failed=%v (replaying from 1)", escrowID, snapNonce, decodeErr)
+		} else if sm.RestoreState(snapState.state); !restoredRootMatchesJournal(store, sm, escrowID, snapNonce) {
+			sm.RestoreState(initialState)
 		} else {
-			sm.RestoreState(snapState)
 			replayFrom = snapNonce + 1
 			sess.nonce = snapNonce
 			snapshotCursor = cursor
@@ -200,41 +258,29 @@ func RecoverSession(
 		sess.hostSyncNonce[h] = n
 	}
 
-	// Backfill sess.diffs with pre-snapshot diffs that some host may still
-	// need. sess.diffs must contain a contiguous range covering every
-	// host's expected next-nonce, otherwise diffsForHost produces a
-	// non-contiguous slice and the host rejects (it requires sequential
-	// nonces, only silent-skipping diffs <= its currentNonce).
-	//
-	// For a fresh new-format snapshot all hosts are typically at or near
-	// snapNonce, so backfillFrom is close to snapNonce and the load is
-	// small. For a legacy snapshot (cursor unknown) min returns 0 and we
-	// load the entire pre-snapshot history once -- a one-time slow
-	// recovery that self-heals stranded hosts.
-	//
-	// Gated on snapshotRestored, not snapNonce: an ignored snapshot (future
-	// nonce, decode failure) replays from 1, which already covers the range.
+	// Backfill the in-memory window of pre-snapshot diffs a lagging host needs; closeStoredGap reads anything
+	// older from the store. Gated on snapshotRestored: an ignored snapshot replays from 1 instead.
 	if snapshotRestored {
 		backfillFrom := minHostSyncNonce(sess.hostSyncNonce, len(group)) + 1
+		if snapNonce >= uint64(sess.diffsKeptInMemory) {
+			backfillFrom = max(backfillFrom, snapNonce-uint64(sess.diffsKeptInMemory)+1)
+		}
 		if backfillFrom <= snapNonce {
-			backfillRecords, berr := store.GetDiffs(escrowID, backfillFrom, snapNonce)
-			if berr != nil {
-				return nil, nil, fmt.Errorf("get backfill diffs %d..%d: %w", backfillFrom, snapNonce, berr)
-			}
-			if verr := validateDiffRange(backfillRecords, backfillFrom, snapNonce); verr != nil {
-				return nil, nil, fmt.Errorf("backfill diffs %d..%d: %w", backfillFrom, snapNonce, verr)
+			backfillErr := forEachDiffPage(store, escrowID, backfillFrom, snapNonce, func(pageFrom, pageTo uint64, records []types.DiffRecord) error {
+				if err := validateDiffRange(records, pageFrom, pageTo); err != nil {
+					return err
+				}
+				for _, record := range records {
+					sess.diffs = append(sess.diffs, record.Diff)
+					restoreRecordSignatures(sess, record)
+				}
+				return nil
+			})
+			if backfillErr != nil {
+				return nil, nil, fmt.Errorf("backfill diffs %d..%d: %w", backfillFrom, snapNonce, backfillErr)
 			}
 			log.Printf("recover_session escrow=%s diff_backfill from=%d to=%d count=%d",
-				escrowID, backfillFrom, snapNonce, len(backfillRecords))
-			for _, rec := range backfillRecords {
-				sess.diffs = append(sess.diffs, rec.Diff)
-				for slotID, sig := range rec.Signatures {
-					if _, ok := sess.signatures[rec.Nonce]; !ok {
-						sess.signatures[rec.Nonce] = make(map[uint32][]byte)
-					}
-					sess.signatures[rec.Nonce][slotID] = sig
-				}
-			}
+				escrowID, backfillFrom, snapNonce, len(sess.diffs))
 		}
 	}
 
@@ -255,42 +301,38 @@ func RecoverSession(
 		return finishRecover(sess, sm)
 	}
 
-	records, err := store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
-	if err != nil {
-		return nil, nil, fmt.Errorf("get diffs: %w", err)
-	}
-	if err := validateDiffRange(records, replayFrom, meta.LatestNonce); err != nil {
-		return nil, nil, fmt.Errorf("replay diffs %d..%d: %w", replayFrom, meta.LatestNonce, err)
-	}
+	log.Printf("recover_session escrow=%s replaying diffs %d..%d (%d records)", escrowID, replayFrom, meta.LatestNonce, meta.LatestNonce-replayFrom+1)
 
-	log.Printf("recover_session escrow=%s replaying diffs %d..%d (%d records)", escrowID, replayFrom, meta.LatestNonce, len(records))
-
-	for _, rec := range records {
-		sm.InjectWarmKeys(rec.WarmKeyDelta)
-		root, applyErr := sm.ApplyLocal(rec.Nonce, rec.Txs)
-		if applyErr != nil {
-			if errors.Is(applyErr, types.ErrInvalidNonce) {
-				return nil, nil, fmt.Errorf("%w: replay nonce %d: %w",
-					ErrLocalStateUnrecoverable, rec.Nonce, applyErr)
-			}
-			return nil, nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
+	replayErr := forEachDiffPage(store, escrowID, replayFrom, meta.LatestNonce, func(pageFrom, pageTo uint64, records []types.DiffRecord) error {
+		if err := validateDiffRange(records, pageFrom, pageTo); err != nil {
+			return fmt.Errorf("replay diffs %d..%d: %w", replayFrom, meta.LatestNonce, err)
 		}
-		if len(rec.StateHash) > 0 && len(root) > 0 {
-			if !bytes.Equal(root, rec.StateHash) {
-				return nil, nil, fmt.Errorf("%w: state root mismatch at nonce %d",
-					ErrLocalStateUnrecoverable, rec.Nonce)
+		for _, rec := range records {
+			sm.InjectWarmKeys(rec.WarmKeyDelta)
+			root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+			if applyErr != nil {
+				if errors.Is(applyErr, types.ErrInvalidNonce) {
+					return fmt.Errorf("%w: replay nonce %d: %w",
+						ErrLocalStateUnrecoverable, rec.Nonce, applyErr)
+				}
+				return fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 			}
-		}
-
-		sess.diffs = append(sess.diffs, rec.Diff)
-		sess.nonce = rec.Nonce
-
-		for slotID, sig := range rec.Signatures {
-			if _, ok := sess.signatures[rec.Nonce]; !ok {
-				sess.signatures[rec.Nonce] = make(map[uint32][]byte)
+			if len(rec.StateHash) > 0 && len(root) > 0 {
+				if !bytes.Equal(root, rec.StateHash) {
+					return fmt.Errorf("%w: state root mismatch at nonce %d",
+						ErrLocalStateUnrecoverable, rec.Nonce)
+				}
 			}
-			sess.signatures[rec.Nonce][slotID] = sig
+
+			sess.diffs = append(sess.diffs, rec.Diff)
+			sess.trimDiffsLocked()
+			sess.nonce = rec.Nonce
+			restoreRecordSignatures(sess, rec)
 		}
+		return nil
+	})
+	if replayErr != nil {
+		return nil, nil, replayErr
 	}
 
 	// Save a snapshot at the latest nonce so subsequent restarts are fast.
@@ -298,7 +340,7 @@ func RecoverSession(
 	// upgraded to the new wrapper format on the very first restart with
 	// this code, removing the "bare EscrowState" footgun without manual
 	// snapshot deletion on the server.
-	if replayFrom == 1 || uint64(len(records)) >= snapshotInterval || legacySnapshot {
+	if replayFrom == 1 || meta.LatestNonce-replayFrom+1 >= snapshotInterval || legacySnapshot {
 		saveSnapshot(store, sm, escrowID, meta.LatestNonce, sess.hostSyncNonce)
 	}
 
@@ -342,22 +384,41 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 	if err != nil {
 		return nil, nil, fmt.Errorf("get session meta for validation obs rebuild: %w", err)
 	}
-	var records []types.DiffRecord
-	if meta.LatestNonce > 0 {
-		records, err = sess.store.GetDiffs(sess.escrowID, 1, meta.LatestNonce)
-		if err != nil {
-			return nil, nil, fmt.Errorf("get diffs for validation obs rebuild: %w", err)
-		}
+	eachPage := func(add func([]types.DiffRecord) error) error {
+		return forEachDiffPage(sess.store, sess.escrowID, 1, meta.LatestNonce, func(_, _ uint64, records []types.DiffRecord) error {
+			return add(records)
+		})
 	}
-	if err := storage.RebuildValidationObsFromDiffs(
-		sess.store,
-		sess.escrowID,
-		records,
-		storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
-	); err != nil {
+	sealed := storage.SealedInferenceIDsSorted(sm.ExportSealedNonces())
+	if err := storage.RebuildValidationObs(sess.store, sess.escrowID, eachPage, sealed); err != nil {
 		return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
 	}
 	return sess, sm, nil
+}
+
+// restoreRecordSignatures copies a stored diff's host signatures into the session.
+func restoreRecordSignatures(sess *Session, record types.DiffRecord) {
+	for slotID, signature := range record.Signatures {
+		if _, ok := sess.signatures[record.Nonce]; !ok {
+			sess.signatures[record.Nonce] = make(map[uint32][]byte)
+		}
+		sess.signatures[record.Nonce][slotID] = signature
+	}
+}
+
+// forEachDiffPage reads diffs fromNonce..toNonce from the store one page at a time.
+func forEachDiffPage(store storage.Storage, escrowID string, fromNonce, toNonce uint64, visit func(pageFrom, pageTo uint64, records []types.DiffRecord) error) error {
+	for pageFrom := fromNonce; pageFrom <= toNonce; pageFrom += diffPageSize {
+		pageTo := min(pageFrom+diffPageSize-1, toNonce)
+		records, err := store.GetDiffs(escrowID, pageFrom, pageTo)
+		if err != nil {
+			return fmt.Errorf("get diffs %d..%d: %w", pageFrom, pageTo, err)
+		}
+		if err := visit(pageFrom, pageTo, records); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // saveSnapshot is the synchronous snapshot writer used during recovery.

@@ -3,6 +3,7 @@ package mlnodeclient
 import (
 	"common/logging"
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
@@ -201,6 +202,7 @@ func (m *MockClient) NodeState(ctx context.Context) (*StateResponse, error) {
 	return &StateResponse{
 		State:                  m.CurrentState,
 		PoCValidationInference: m.PoCValidationInference,
+		LoadedModel:            m.LastInferenceModel,
 	}, nil
 }
 
@@ -231,7 +233,20 @@ func (m *MockClient) InferenceUp(ctx context.Context, model string, args []strin
 func (m *MockClient) GetLoadedModels(ctx context.Context) ([]string, error) {
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
-	// Return the last inference model that was loaded, if any
+	for i, arg := range m.LastInferenceArgs {
+		if arg == "--served-model-name" && i+1 < len(m.LastInferenceArgs) {
+			var models []string
+			for j := i + 1; j < len(m.LastInferenceArgs) && !strings.HasPrefix(m.LastInferenceArgs[j], "--"); j++ {
+				models = append(models, m.LastInferenceArgs[j])
+			}
+			if len(models) > 0 {
+				return models, nil
+			}
+		}
+		if strings.HasPrefix(arg, "--served-model-name=") {
+			return []string{strings.TrimPrefix(arg, "--served-model-name=")}, nil
+		}
+	}
 	if m.LastInferenceModel != "" {
 		return []string{m.LastInferenceModel}, nil
 	}

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,10 +18,13 @@ import (
 	"testing"
 	"time"
 
+	"devshard/user"
+
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
@@ -30,6 +35,11 @@ import (
 	"devshard/types"
 
 	_ "modernc.org/sqlite"
+)
+
+const (
+	testReservationLength = 1_100
+	testTokenPrice        = 10
 )
 
 func gatewayTestStateMachineInPhase(t *testing.T, phase types.SessionPhase) *state.StateMachine {
@@ -122,7 +132,7 @@ func gatewayTestDepletionGateway(t *testing.T, rt *devshardRuntime, modifySettin
 	oldCreate := gatewayCreateDepletionEscrow
 	oldSettle := gatewaySettleDevshardOnChain
 	gatewayCreateDepletionEscrow = func(_ *Gateway, _ context.Context, _ GatewaySettings, model EscrowRotationModelSettings, role string, _ uint64) (*CreateDevshardEscrowResult, error) {
-		require.Equal(t, "m", model.ModelID)
+		require.Equal(t, rt.model, model.ModelID)
 		require.Equal(t, rotationRoleRegular, role)
 		created.Add(1)
 		return &CreateDevshardEscrowResult{EscrowID: 99, TxHash: "OK"}, nil
@@ -161,9 +171,30 @@ func TestGatewayCheckBalancesReplacesAndDeactivatesLowBalance(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 }
 
+func TestGatewayCheckBalancesSkipsReplacementWhenModelAlreadyAtTarget(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.Models[0].TargetCount = 1
+	})
+	require.NoError(t, g.store.UpsertDevshard(GatewayDevshardState{
+		RuntimeConfig: RuntimeConfig{ID: "13", PrivateKeyHex: "secret", Model: "m"},
+		Active:        true,
+		RotationRole:  rotationRoleRegular,
+		RotationEpoch: 0, // replaceDepletedEscrow reads g.phaseGate.Snapshot().EpochIndex; this fixture's Gateway has no phaseGate, so epoch is always 0 here.
+	}))
+
+	runBalanceTick(t, g, rt.id)
+
+	require.Eventually(t, func() bool { return settled.Load() == 1 }, time.Second, 10*time.Millisecond, "the depleted escrow must still be settled")
+	require.False(t, rt.active.Load())
+	require.EqualValues(t, 0, created.Load(), "a model already at its rotation target must not mint another replacement")
+}
+
 func TestGatewayCheckBalancesReplacesAndDeactivatesHighNonce(t *testing.T) {
-	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit)
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, 999_796)
+	require.EqualValues(t, 3, rt.proxy.sm.TotalSlots(), "the nonce above assumes a three-slot group: 1_000_000 - (3+1) - 200")
 	g, created, settled := gatewayTestDepletionGateway(t, rt)
+	g.maxNonce = devshardpkg.StaticMaxNonce(1_000_000)
 
 	g.checkBalances()
 
@@ -194,7 +225,10 @@ func TestGatewayCheckBalancesReplacesAndDeactivatesWithoutSettlement(t *testing.
 	g.checkBalances()
 
 	require.Eventually(t, func() bool {
-		return created.Load() == 1 && !rt.active.Load()
+		g.mu.Lock()
+		_, stillRegistered := g.runtimes[rt.id]
+		g.mu.Unlock()
+		return created.Load() == 1 && !rt.active.Load() && !stillRegistered
 	}, time.Second, 10*time.Millisecond)
 	require.EqualValues(t, 0, settled.Load())
 }
@@ -234,7 +268,9 @@ func TestEnqueueSettlementWaitsForActiveRequests(t *testing.T) {
 	// One request in flight → settlement must NOT fire yet, but escrow is
 	// deactivated and marked pending (in-memory + persisted).
 	g.reserveRuntime(rt, 1)
-	g.deactivateAndSettleDevshardByID("12", "low_balance")
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "m", "low_balance", g.settings)
+	require.NoError(t, err)
+	require.True(t, isTakenOutOfService, "an active escrow was not reported as taken out of service")
 
 	require.False(t, rt.active.Load())
 	require.True(t, rt.settlementPending.Load())
@@ -261,7 +297,9 @@ func TestEnqueueSettlementSettlesImmediatelyWhenDrained(t *testing.T) {
 	g, _, settled := gatewayTestDepletionGateway(t, rt)
 
 	// No active requests → settle right away.
-	g.deactivateAndSettleDevshardByID("12", "low_balance")
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "m", "low_balance", g.settings)
+	require.NoError(t, err)
+	require.True(t, isTakenOutOfService, "an active escrow was not reported as taken out of service")
 
 	require.Eventually(t, func() bool {
 		return settled.Load() == 1 && !rt.active.Load()
@@ -301,6 +339,103 @@ func TestReconcilePendingSettlementsSkipsWhenSettlementDisabled(t *testing.T) {
 
 	// Inactive escrow flagged pending, but settlement is disabled → reconcile
 	// must not settle, and the marker is preserved for a later re-enable.
+	rt.active.Store(false)
+	require.NoError(t, g.store.SetDevshardActive("12", false))
+	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
+
+	g.reconcilePendingSettlements()
+
+	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+}
+
+func TestSettlementEnabledForModelFallsBackToTheGlobalFlag(t *testing.T) {
+	// Test flow:
+	// 1. Build rotation settings with a global flag and one model that may or may not set its own.
+	// 2. Ask whether a model's escrows are settled.
+	// 3. A model's own flag wins; an unset flag or an unknown model takes the global one.
+	testCases := []struct {
+		name          string
+		globalEnabled bool
+		modelEnabled  *bool
+		modelID       string
+		expected      bool
+	}{
+		{name: "unset model takes enabled global", globalEnabled: true, modelEnabled: nil, modelID: "m", expected: true},
+		{name: "unset model takes disabled global", globalEnabled: false, modelEnabled: nil, modelID: "m", expected: false},
+		{name: "model disables over enabled global", globalEnabled: true, modelEnabled: boolPtr(false), modelID: "m", expected: false},
+		{name: "model enables over disabled global", globalEnabled: false, modelEnabled: boolPtr(true), modelID: "m", expected: true},
+		{name: "model id is trimmed", globalEnabled: false, modelEnabled: boolPtr(true), modelID: " m ", expected: true},
+		{name: "unknown model takes global", globalEnabled: true, modelEnabled: boolPtr(false), modelID: "other", expected: true},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			settings := GatewaySettings{EscrowRotation: EscrowRotationSettings{
+				SettlementEnabled: testCase.globalEnabled,
+				Models:            []EscrowRotationModelSettings{{ModelID: "m", SettlementEnabled: testCase.modelEnabled}},
+			}}
+
+			require.Equal(t, testCase.expected, settlementEnabledForModel(settings, testCase.modelID))
+		})
+	}
+}
+
+func TestDepletionHonorsAModelThatDisablesSettlement(t *testing.T) {
+	// Test flow:
+	// 1. Enable settlement globally but disable it for the escrow's model.
+	// 2. Take the depleted escrow out of service.
+	// 3. It is deactivated without a settlement mark and never settled.
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.Models[0].SettlementEnabled = boolPtr(false)
+	})
+
+	isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), "12", "m", "low_balance", g.settings)
+
+	require.NoError(t, err)
+	require.True(t, isTakenOutOfService)
+	require.False(t, rt.settlementPending.Load())
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending,
+		"a model that opted out must not leave a mark a restart would settle")
+	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+}
+
+func TestReconcileSettlesAModelThatEnablesSettlement(t *testing.T) {
+	// Test flow:
+	// 1. Disable settlement globally but enable it for the escrow's model, and leave a pending mark from before a restart.
+	// 2. Reconcile pending settlements.
+	// 3. The escrow is settled.
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.SettlementEnabled = false
+		settings.EscrowRotation.Models[0].SettlementEnabled = boolPtr(true)
+	})
+	rt.active.Store(false)
+	require.NoError(t, g.store.SetDevshardActive("12", false))
+	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
+
+	g.reconcilePendingSettlements()
+
+	require.Eventually(t, func() bool {
+		return settled.Load() == 1 && !rt.settlementPending.Load()
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestReconcileKeepsTheMarkOfAModelThatDisablesSettlement(t *testing.T) {
+	// Test flow:
+	// 1. Enable settlement globally but disable it for the escrow's model, and leave a pending mark from before a restart.
+	// 2. Reconcile pending settlements.
+	// 3. The escrow is not settled and keeps its mark for a later re-enable.
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.Models[0].SettlementEnabled = boolPtr(false)
+	})
 	rt.active.Store(false)
 	require.NoError(t, g.store.SetDevshardActive("12", false))
 	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
@@ -354,7 +489,7 @@ func TestGatewayChooseRuntimeUsesLowestLoad(t *testing.T) {
 	b.activeUserRequests.Store(1)
 
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 	require.EqualValues(t, 2, chosen.activeUserRequests.Load())
@@ -804,6 +939,51 @@ func TestGatewayModelsEndpointRejectsUnsupportedMethod(t *testing.T) {
 	require.Equal(t, "GET, HEAD", rec.Header().Get("Allow"))
 }
 
+func TestAdminStateRedactsPrivateKey(t *testing.T) {
+	const privateKey = "super-secret-private-key"
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, []GatewayDevshardState{
+		{
+			RuntimeConfig: RuntimeConfig{
+				ID:            "12",
+				PrivateKeyHex: privateKey,
+				PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
+				Model:         "Qwen/Test",
+			},
+			Active: true,
+		},
+	}))
+
+	g := NewGateway(nil, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/state", nil)
+	rec := httptest.NewRecorder()
+	g.handleAdminState(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), privateKey)
+
+	var body struct {
+		Devshards []map[string]any `json:"devshards"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Devshards, 1)
+	require.NotContains(t, body.Devshards[0], "private_key")
+	require.Equal(t, "DEVSHARD_PRIVATE_KEY", body.Devshards[0]["private_key_env"])
+}
+
 func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
@@ -854,6 +1034,103 @@ func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T
 
 	require.Equal(t, http.StatusConflict, chatRec.Code)
 	require.False(t, forwarded)
+}
+
+func TestAdminDeactivateIdleDevshardDropsSlotDecisionSeries(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "Qwen/Test"}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
+	}))
+
+	rt := &devshardRuntime{id: "12", model: "Qwen/Test"}
+	rt.active.Store(true)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+	g.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "12",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/devshards/12/deactivate", nil)
+	rec := httptest.NewRecorder()
+	g.handleAdminDeactivateDevshard(rec, req, "12")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	families, err := g.metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "12"})
+}
+
+func TestAdminCleanDevshardDropsSlotDecisionSeries(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "Qwen/Test"}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: false},
+	}))
+
+	rt := &devshardRuntime{id: "12", model: "Qwen/Test"}
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+	g.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "12",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/devshards/12/clean", nil)
+	rec := httptest.NewRecorder()
+	g.handleAdminCleanDevshard(rec, req, "12")
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	families, err := g.metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "12"})
+}
+
+func TestAdminCleanDevshardRejectsBackgroundRaceCleanup(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "Qwen/Test"}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: false},
+	}))
+
+	rt := &devshardRuntime{id: "12", model: "Qwen/Test"}
+	rt.pendingRaceCleanup.Store(1)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+	g.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "12",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/devshards/12/clean", nil)
+	rec := httptest.NewRecorder()
+	g.handleAdminCleanDevshard(rec, req, "12")
+	require.Equal(t, http.StatusConflict, rec.Code)
+	_, stillRegistered := g.runtimes["12"]
+	require.True(t, stillRegistered, "clean must not drop a runtime with race cleanup in flight")
+
+	families, err := g.metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterValue(t, families, "devshard_gateway_slot_decisions_total", map[string]string{
+		"participant_key": "participant-1", "model": "Qwen/Test", "escrow_id": "12",
+		"decision": "real_send", "reason": "primary", "quarantine_mode": "none",
+	}, 1)
 }
 
 func TestAdminDevshardParticipantsShowsQuarantineState(t *testing.T) {
@@ -1018,24 +1295,14 @@ func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
 	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
 }
 
-func TestResolveGatewayRoutePrefixDefaultsToBuildVersion(t *testing.T) {
-	oldVersion := Version
-	t.Cleanup(func() { Version = oldVersion })
-	Version = "v2"
-
+func TestRuntimeRoutePrefixDefaultsToV4(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
-	got, err := resolveGatewayRoutePrefix()
-	require.NoError(t, err)
-	require.Equal(t, "/devshard/v2", got)
+	require.Equal(t, "/devshard/v4", resolveRuntimeRoutePrefix(""))
+}
 
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/v1/devshard")
-	_, err = resolveGatewayRoutePrefix()
-	require.ErrorContains(t, err, "unsupported devshard route prefix")
-
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", " /devshard/test ")
-	got, err = resolveGatewayRoutePrefix()
-	require.NoError(t, err)
-	require.Equal(t, "/devshard/test", got)
+func TestRuntimeRoutePrefixPreservesExplicitDev(t *testing.T) {
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/dev")
+	require.Equal(t, "/devshard/dev", resolveRuntimeRoutePrefix(""))
 }
 
 // TestEscrowCheckerUsesBridgeGetEscrow replaces the 0.2.14 REST-bridge path
@@ -1293,6 +1560,16 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 	rt.activeUserRequests.Store(1)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.store = store
+	g.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "12",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	})
+	g.metrics.RecordPickerChoice("12", "Qwen/Test")
+	g.metrics.RecordStartupSkippedEscrow("12", "Qwen/Test", "local_recovery_failed")
 
 	req := httptest.NewRequest(http.MethodPost, "/devshard/12/v1/finalize", nil)
 	rec := httptest.NewRecorder()
@@ -1309,12 +1586,152 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, rec.Code)
 	require.True(t, forwarded)
 	require.False(t, rt.active.Load())
+	_, stillRegistered := g.runtimes["12"]
+	require.True(t, stillRegistered, "successful finalize must keep the runtime registered")
+
+	families, err := g.metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "12"})
+	requireMetricCounterMissing(t, families, "devshard_gateway_picker_choice_total", map[string]string{"devshard_id": "12"})
+	requireMetricGaugeMissing(t, families, "devshard_gateway_startup_skipped_escrow", map[string]string{"escrow_id": "12"})
+
+	rec = httptest.NewRecorder()
+	g.handleDevshard(rec, req)
+	require.NotEqual(t, http.StatusNotFound, rec.Code, "repeated finalize must not 404")
 
 	state, ok, err := store.LoadState()
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, state.Devshards, 1)
 	require.False(t, state.Devshards[0].Active)
+}
+
+// blockingFinalizeHandler answers /v1/finalize by reporting entry on
+// entered, then waiting for release before returning.
+func blockingFinalizeHandler(entered chan<- string, release <-chan struct{}, escrowID string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entered <- escrowID
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func newFinalizeTestGateway(t *testing.T, runtimes ...*devshardRuntime) *Gateway {
+	t.Helper()
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	devshards := make([]GatewayDevshardState, 0, len(runtimes))
+	for _, rt := range runtimes {
+		devshards = append(devshards, GatewayDevshardState{RuntimeConfig: RuntimeConfig{ID: rt.id, PrivateKeyHex: "secret", Model: rt.model}, Active: true})
+	}
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, devshards))
+	g := NewGateway(runtimes, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+	return g
+}
+
+func finalizeRequest(escrowID string) *http.Request {
+	return httptest.NewRequest(http.MethodPost, "/devshard/"+escrowID+"/v1/finalize", nil)
+}
+
+func waitForDone(t *testing.T, done <-chan struct{}, message string) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal(message)
+	}
+}
+
+func TestGatewayFinalizeDoesNotSerializeAcrossEscrows(t *testing.T) {
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	rtA := &devshardRuntime{id: "A", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "A")}
+	rtB := &devshardRuntime{id: "B", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "B")}
+	g := newFinalizeTestGateway(t, rtA, rtB)
+
+	doneA := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("A"))
+		close(doneA)
+	}()
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "A", escrowID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("escrow A finalize never entered its handler")
+	}
+
+	doneB := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("B"))
+		close(doneB)
+	}()
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "B", escrowID, "escrow B must finalize while escrow A is still finalizing")
+	case <-time.After(2 * time.Second):
+		t.Fatal("escrow B finalize blocked behind escrow A's finalize")
+	}
+
+	close(release)
+	waitForDone(t, doneA, "escrow A finalize never returned")
+	waitForDone(t, doneB, "escrow B finalize never returned")
+}
+
+func TestGatewayFinalizeStillSerializesSameEscrow(t *testing.T) {
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	rt := &devshardRuntime{id: "A", model: "Qwen/Test", handler: blockingFinalizeHandler(entered, release, "A")}
+	g := newFinalizeTestGateway(t, rt)
+
+	doneFirst := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("A"))
+		close(doneFirst)
+	}()
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "A", escrowID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("escrow A finalize never entered its handler")
+	}
+
+	doneSecond := make(chan struct{})
+	go func() {
+		g.handleDevshard(httptest.NewRecorder(), finalizeRequest("A"))
+		close(doneSecond)
+	}()
+
+	select {
+	case <-entered:
+		t.Fatal("a second finalize for the same escrow must wait for the first to finish")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(release)
+	waitForDone(t, doneFirst, "the first finalize for escrow A never returned")
+
+	select {
+	case escrowID := <-entered:
+		require.Equal(t, "A", escrowID)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second finalize for escrow A never ran after the first released")
+	}
+	waitForDone(t, doneSecond, "the second finalize for escrow A never returned")
 }
 
 func TestGatewayHandlePooledChatSetsChosenDevshardHeader(t *testing.T) {
@@ -1604,7 +2021,6 @@ func TestGatewayHandlePooledChatRejectsUnsupportedModel(t *testing.T) {
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.settings.ModelLimits = []GatewayModelLimitSettings{
 		{ModelID: "Qwen/Test", AccessMode: string(gatewayAccessModeOpen)},
-		{ModelID: "Nope/Unsupported", AccessMode: string(gatewayAccessModeOpen)},
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
@@ -1856,7 +2272,7 @@ func TestGatewayChooseRuntimeSkipsInactiveDevshard(t *testing.T) {
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
 	b.active.Store(false)
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, "6", chosen.id)
 }
@@ -1866,7 +2282,7 @@ func TestGatewayChooseRuntimeSkipsHighNonceBeforeRouting(t *testing.T) {
 	available := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
 	g := NewGateway([]*devshardRuntime{highNonce, available}, NewGatewayLimiter(0, 0), "m")
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 	require.True(t, highNonce.active.Load())
@@ -1876,11 +2292,166 @@ func TestGatewayChooseRuntimeFailsWhenAllDevshardsHighNonce(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "6", balanceMinimumThreshold, nonceDeactivationLimit)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
 
-	_, err := g.reserveRuntimeForModel("m", 5)
+	_, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no devshard runtimes available for new inferences")
 	require.Contains(t, err.Error(), "skipped: high_nonce=1")
 	require.True(t, rt.active.Load())
+}
+
+func gatewayTestRuntimeWithBalanceAndPrice(t *testing.T, id string, balance, tokenPrice uint64) *devshardRuntime {
+	t.Helper()
+	rt := gatewayTestRuntimeForLimits(t, id, balance, nonceDeactivationLimit-1)
+	state := rt.proxy.sm.ExportState()
+	state.Config.TokenPrice = tokenPrice
+	rt.proxy.sm.RestoreState(state)
+	return rt
+}
+
+// Test flow:
+//  1. Register an idle escrow that can fund one attempt of the request but not two, and a funded one.
+//  2. Pick an escrow for the request three times; each pick adds load to the funded escrow.
+//  3. Expect every pick to land on the funded escrow even once it is the busier one.
+func TestGatewayChooseRuntimeSkipsEscrowThatCannotFundTwoAttempts(t *testing.T) {
+	shortOfTwoAttempts := gatewayTestRuntimeWithBalanceAndPrice(t, "6", 2*testReservationLength*testTokenPrice-1, testTokenPrice)
+	funded := gatewayTestRuntimeWithBalanceAndPrice(t, "12", 1_000_000, testTokenPrice)
+	g := NewGateway([]*devshardRuntime{shortOfTwoAttempts, funded}, NewGatewayLimiter(0, 0), "m")
+
+	for pick := 0; pick < 3; pick++ {
+		chosen, err := g.reserveRuntimeForModel("m", 5, testReservationLength, nil)
+		require.NoError(t, err)
+		require.Equal(t, "12", chosen.id)
+	}
+}
+
+// Test flow:
+//  1. Register a single escrow that can fund one attempt of the request but not two.
+//  2. Pick an escrow for the request.
+//  3. Expect that escrow to be picked: the request runs without a hedge rather than being refused.
+func TestGatewayChooseRuntimeFallsBackToAnEscrowThatFundsOneAttempt(t *testing.T) {
+	rt := gatewayTestRuntimeWithBalanceAndPrice(t, "6", 2*testReservationLength*testTokenPrice-1, testTokenPrice)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
+
+	chosen, err := g.reserveRuntimeForModel("m", 5, testReservationLength, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "6", chosen.id)
+}
+
+// Test flow:
+//  1. Register an escrow that funds every attempt but whose only host PoC excludes, and a healthy escrow that funds one attempt.
+//  2. Pick an escrow for the request.
+//  3. Expect the healthy one-attempt escrow, not a 429 for the escrow that has money but no capacity.
+func TestGatewayChooseRuntimeFallsBackToAOneAttemptEscrowWhenTheFundedOnesHaveNoCapacity(t *testing.T) {
+	funded := gatewayTestRuntimeWithBalanceAndPrice(t, "funded", 1_000_000, testTokenPrice)
+	funded.active.Store(true)
+	oneAttempt := gatewayTestRuntimeWithBalanceAndPrice(t, "one-attempt", 2*testReservationLength*testTokenPrice-1, testTokenPrice)
+	oneAttempt.active.Store(true)
+	g := NewGateway([]*devshardRuntime{funded, oneAttempt}, NewGatewayLimiter(0, 0), "m")
+	g.capacity = NewCapacityState()
+	g.capacity.SetEscrowMembership("one-attempt", map[string]int{"A": 1})
+	g.capacity.SetEscrowMembership("funded", map[string]int{"B": 1})
+	g.capacity.SetHostWeights(map[string]float64{"A": 1, "B": 1}, false)
+	g.capacity.SetPoCPreserved([]string{"A"})
+
+	chosen, err := g.reserveRuntimeForModel("m", 5, testReservationLength, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "one-attempt", chosen.id)
+}
+
+// Test flow:
+//  1. Register a single escrow that cannot fund even one attempt of the request.
+//  2. Pick an escrow for the request.
+//  3. Expect the funding refusal the pooled route answers with 503 and Retry-After, not a generic no-runtime error.
+func TestGatewayChooseRuntimeRefusesWhenNoEscrowCanFundOneAttempt(t *testing.T) {
+	rt := gatewayTestRuntimeWithBalanceAndPrice(t, "6", testReservationLength*testTokenPrice-1, testTokenPrice)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
+
+	_, err := g.reserveRuntimeForModel("m", 5, testReservationLength, nil)
+
+	var cannotFundErr *EscrowsCannotFundRequestError
+	require.ErrorAs(t, err, &cannotFundErr)
+	require.Equal(t, 1, cannotFundErr.EscrowsRefused)
+}
+
+// Test flow:
+//  1. Set the speculative attempt cap, restoring the previous value afterwards.
+//  2. Register an escrow that funds exactly two attempts of the request and one that funds three, then pick three times; each pick adds load to the escrow it chose.
+//  3. Expect the two-attempt escrow to share the load under a cap of two or a whole-group cap (0), which funds DefaultMaxSpeculativeAttempts, and to be passed over under a cap of three.
+func TestGatewayChooseRuntimeFundsTheSpeculativeAttemptCap(t *testing.T) {
+	for _, testCase := range []struct {
+		name                       string
+		attemptCap                 int
+		isTwoAttemptEscrowPickable bool
+	}{
+		{name: "whole_group_cap_funds_the_default_of_two", attemptCap: 0, isTwoAttemptEscrowPickable: true},
+		{name: "cap_of_two_fits", attemptCap: 2, isTwoAttemptEscrowPickable: true},
+		{name: "cap_of_three_does_not_fit", attemptCap: 3, isTwoAttemptEscrowPickable: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			saved := CurrentMaxSpeculativeAttempts()
+			SetMaxSpeculativeAttempts(testCase.attemptCap)
+			t.Cleanup(func() { SetMaxSpeculativeAttempts(saved) })
+			twoAttempts := gatewayTestRuntimeWithBalanceAndPrice(t, "6", 2*testReservationLength*testTokenPrice, testTokenPrice)
+			threeAttempts := gatewayTestRuntimeWithBalanceAndPrice(t, "12", 3*testReservationLength*testTokenPrice, testTokenPrice)
+			g := NewGateway([]*devshardRuntime{twoAttempts, threeAttempts}, NewGatewayLimiter(0, 0), "m")
+
+			chosenIDs := map[string]bool{}
+			for pick := 0; pick < 3; pick++ {
+				chosen, err := g.reserveRuntimeForModel("m", 5, testReservationLength, nil)
+				require.NoError(t, err)
+				chosenIDs[chosen.id] = true
+			}
+
+			require.Equal(t, testCase.isTwoAttemptEscrowPickable, chosenIDs["6"], "picked: %v", chosenIDs)
+			require.True(t, chosenIDs["12"], "picked: %v", chosenIDs)
+		})
+	}
+}
+
+// Test flow:
+//  1. Register one escrow of the given model, token price and balance, with rotation able to replace it and no money in flight.
+//  2. Run a balance tick and wait for any replacement it schedules.
+//  3. Expect the escrow replaced exactly when its balance is under max(balanceMinimumThreshold, max_model_len * estimatedPromptBytesPerToken * token_price), and kept at the floor itself.
+func TestGatewayCheckBalancesReplacesEscrowShortOfAFullContextRequest(t *testing.T) {
+	const minimaxModel, deepseekModel, unknownModel = "MiniMaxAI/MiniMax-M2.7", "deepseek-ai/DeepSeek-V4-Flash-0731", "m"
+	for _, testCase := range []struct {
+		name       string
+		modelID    string
+		tokenPrice uint64
+		balance    uint64
+		isReplaced bool
+	}{
+		{name: "minimax_under_one_full_context_request", modelID: minimaxModel, tokenPrice: 10, balance: 7_199_999, isReplaced: true},
+		{name: "minimax_at_one_full_context_request", modelID: minimaxModel, tokenPrice: 10, balance: 7_200_000, isReplaced: false},
+		{name: "deepseek_under_one_full_context_request", modelID: deepseekModel, tokenPrice: 10, balance: 15_999_999, isReplaced: true},
+		{name: "deepseek_at_one_full_context_request", modelID: deepseekModel, tokenPrice: 10, balance: 16_000_000, isReplaced: false},
+		{name: "unknown_model_keeps_the_minimum_threshold", modelID: unknownModel, tokenPrice: 10, balance: balanceMinimumThreshold, isReplaced: false},
+		{name: "unknown_model_under_the_minimum_threshold", modelID: unknownModel, tokenPrice: 10, balance: balanceMinimumThreshold - 1, isReplaced: true},
+		{name: "cheap_context_never_lowers_the_minimum_threshold", modelID: minimaxModel, tokenPrice: 1, balance: balanceMinimumThreshold - 1, isReplaced: true},
+		{name: "cheap_context_at_the_minimum_threshold", modelID: minimaxModel, tokenPrice: 1, balance: balanceMinimumThreshold, isReplaced: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			rt := gatewayTestRuntimeWithBalanceAndPrice(t, "12", testCase.balance, testCase.tokenPrice)
+			rt.model = testCase.modelID
+			g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+				settings.DefaultModel = testCase.modelID
+				settings.EscrowRotation.Models[0].ModelID = testCase.modelID
+			})
+
+			runBalanceTick(t, g, rt.id)
+
+			if testCase.isReplaced {
+				require.Eventually(t, func() bool {
+					return created.Load() == 1 && settled.Load() == 1 && !rt.active.Load()
+				}, 2*time.Second, 10*time.Millisecond)
+				return
+			}
+			require.EqualValues(t, 0, created.Load(), "an escrow at the floor was replaced")
+			require.True(t, rt.active.Load(), "an escrow at the floor was taken out of service")
+		})
+	}
 }
 
 func TestGatewayChooseRuntimeSkipsNonActivePhaseDevshard(t *testing.T) {
@@ -1889,7 +2460,7 @@ func TestGatewayChooseRuntimeSkipsNonActivePhaseDevshard(t *testing.T) {
 	active := &devshardRuntime{id: "12", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseActive)}}
 	g := NewGateway([]*devshardRuntime{finalizing, settlement, active}, NewGatewayLimiter(0, 0), "m")
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 }
@@ -1899,7 +2470,7 @@ func TestGatewayChooseRuntimeFailsWhenOnlyNonActivePhaseDevshardsRemain(t *testi
 	settlement := &devshardRuntime{id: "12", model: "m", proxy: &Proxy{sm: gatewayTestStateMachineInPhase(t, types.PhaseSettlement)}}
 	g := NewGateway([]*devshardRuntime{finalizing, settlement}, NewGatewayLimiter(0, 0), "m")
 
-	_, err := g.reserveRuntimeForModel("m", 5)
+	_, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "no devshard runtimes available for new inferences")
 	require.Contains(t, err.Error(), "skipped: finalizing=1, settlement=1")
@@ -1960,7 +2531,7 @@ func TestGatewayChooseRuntimeSkipsParticipantLimitedDevshard(t *testing.T) {
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
-	chosen, err := g.reserveRuntimeForModel("m", 5)
+	chosen, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
 }
@@ -1988,7 +2559,7 @@ func TestGatewayChooseRuntimePrefersHealthyEscrowWithoutBenchingPartial(t *testi
 
 	counts := map[string]int{}
 	for i := 0; i < 60; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1)
+		rt, err := g.reserveRuntimeForModel("m", 1, 0, nil)
 		require.NoError(t, err)
 		counts[rt.id]++
 	}
@@ -2014,7 +2585,7 @@ func TestGatewayChooseRuntimeFailsWhenAllDevshardsParticipantLimited(t *testing.
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
-	_, err := g.reserveRuntimeForModel("m", 5)
+	_, err := g.reserveRuntimeForModel("m", 5, 0, nil)
 	require.Error(t, err)
 	require.True(t, isParticipantRateLimitError(err))
 }
@@ -2043,7 +2614,7 @@ func TestGatewayChooseRuntimeReactsToRecoveryWithoutPhasePoll(t *testing.T) {
 
 	// Immediately after 503: a is dead (W=0), picks must hit b only.
 	for i := 0; i < 5; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1)
+		rt, err := g.reserveRuntimeForModel("m", 1, 0, nil)
 		require.NoError(t, err)
 		require.Equal(t, "b", rt.id, "iteration %d before recovery", i)
 		g.releaseRuntime(rt, 1)
@@ -2059,7 +2630,7 @@ func TestGatewayChooseRuntimeReactsToRecoveryWithoutPhasePoll(t *testing.T) {
 	// should receive at least one request.
 	counts := map[string]int{}
 	for i := 0; i < 20; i++ {
-		rt, err := g.reserveRuntimeForModel("m", 1)
+		rt, err := g.reserveRuntimeForModel("m", 1, 0, nil)
 		require.NoError(t, err)
 		counts[rt.id]++
 		g.releaseRuntime(rt, 1)
@@ -2614,18 +3185,18 @@ func TestGatewayParseChatReservationUsesPerModelTokenLimits(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"Kimi/Test","max_tokens":4096,"messages":[{"role":"user","content":"hello"}]}`))
-	body, model, _, err := g.parseChatReservation(req, g.settings.DefaultModel)
+	body, parsed, _, err := g.parseChatReservation(req, g.settings.DefaultModel)
 
 	require.NoError(t, err)
-	require.Equal(t, "Kimi/Test", model)
+	require.Equal(t, "Kimi/Test", parsed.Model)
 	require.Contains(t, string(body), `"max_tokens":3584`)
 
 	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"Kimi/Test","messages":[{"role":"user","content":"hello"}]}`))
-	body, model, _, err = g.parseChatReservation(req, g.settings.DefaultModel)
+	body, parsed, _, err = g.parseChatReservation(req, g.settings.DefaultModel)
 
 	require.NoError(t, err)
-	require.Equal(t, "Kimi/Test", model)
+	require.Equal(t, "Kimi/Test", parsed.Model)
 	require.Contains(t, string(body), `"max_tokens":2048`)
 }
 
@@ -2829,7 +3400,7 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 			Message: "please use http://.../v1/ base url",
 			NewURL:  "http://.../v1/chat/completions",
 		},
-	}, t.TempDir(), store, dialTestChainGRPC(t))
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"chain_rest":"http://node:2317","public_api":"http://api:9900","default_model":"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8","max_concurrent_requests":7,"max_input_tokens_in_flight":700,"default_request_max_tokens":3072,"request_max_tokens_cap":4096,"tx_gas_limit":700000,"model_limits":[{"model_id":"moonshotai/Kimi-K2.6","access_mode":"admin_only","access_message":"Kimi temporarily unavailable"}],"disabled":{"enabled":true,"message":"please use ... base url","new_url":"https://.../v1/chat/completions"},"participant_throttle":{"request_burst":42,"recovery_per_minute":7,"http_quarantine_ms":1100,"transport_failure_quarantine_ms":1200,"empty_stream_quarantine_ms":1300,"stalled_winner_quarantine_ms":1400,"empty_stream_threshold":2},"redundancy":{"receipt_timeout_ms":1500,"first_token_timeout_floor_ms":1600,"per_input_token_first_token_lag_ms":17,"inter_chunk_stall_timeout_ms":1800,"streaming_attempt_hard_timeout_ms":1810,"non_stream_response_floor_ms":1900,"non_stream_no_content_timeout_ms":2200,"non_stream_max_attempt_wait_ms":2600,"per_input_token_response_lag_ms":20,"secondary_wait_after_winner_ms":2100,"parallel_advantage_threshold":0.4,"unresponsive_threshold":0.8}}`))
@@ -2868,14 +3439,10 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 	require.EqualValues(t, 1500, state.Settings.Redundancy.ReceiptTimeoutMS)
 	require.EqualValues(t, 17, state.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
 	require.EqualValues(t, 1810, state.Settings.Redundancy.StreamingAttemptHardTimeoutMS)
-	require.EqualValues(t, 2200, state.Settings.Redundancy.NonStreamNoContentTimeoutMS)
-	require.EqualValues(t, 2600, state.Settings.Redundancy.NonStreamMaxAttemptWaitMS)
 	require.Equal(t, 0.4, state.Settings.Redundancy.ParallelAdvantageThreshold)
 	require.Equal(t, 1500*time.Millisecond, ReceiptTimeout)
 	require.Equal(t, 17*time.Millisecond, PerInputTokenFirstTokenLag)
 	require.Equal(t, 1810*time.Millisecond, StreamingAttemptHardTimeout)
-	require.Equal(t, 2200*time.Millisecond, nonStreamingNoContentTimeout)
-	require.Equal(t, 2600*time.Millisecond, nonStreamingMaxAttemptWait)
 }
 
 func TestAdminSettingsRejectsInvalidTuning(t *testing.T) {
@@ -2902,7 +3469,7 @@ func TestAdminSettingsRejectsInvalidTuning(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		MaxInputTokensInFlight:  200,
-	}, t.TempDir(), store, dialTestChainGRPC(t))
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"participant_throttle":{"empty_stream_threshold":0}}`))
@@ -2935,7 +3502,7 @@ func TestAdminSettingsUpdatesEscrowRotationSettlementEnabled(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		MaxInputTokensInFlight:  200,
-	}, t.TempDir(), store, dialTestChainGRPC(t))
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"escrow_rotation":{"settlement_enabled":true}}`))
@@ -3191,4 +3758,30 @@ func metricLabelsMatch(metric *dto.Metric, want map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// One stalled winner is one event. The strike sits outside the sample's once-guard so the settle path
+// cannot skip it, which leaves the call reachable twice per request -- once from the race and once from
+// the settle -- and each application slides the quarantine window forward.
+func TestStalledWinnerStrikeAppliesOncePerAttempt(t *testing.T) {
+	perf := NewPerfTracker(nil)
+	for range 2 {
+		perf.Record(RequestSample{ParticipantKey: "host:0", Responsive: false, SendTime: time.Now()})
+	}
+	require.True(t, perf.ParticipantFailureThresholdExceeded("host:0"), "precondition: the participant is past the failure threshold")
+
+	redundancy := &Redundancy{perf: perf, participantLimiter: NewParticipantRequestLimiter(10, 10)}
+	inf := &inflight{hostID: "host-A", escrowID: "escrow-x", nonce: 1}
+	inf.contentChunks.Store(1)
+
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	redundancy.recordPostContentWinnerFailureOnce(inf, user.InferenceParams{Model: "m"})
+	redundancy.recordPostContentWinnerFailureOnce(inf, user.InferenceParams{Model: "m"})
+
+	if applied := strings.Count(logs.String(), "participant_limit_stalled_winner_quarantine"); applied != 1 {
+		t.Fatalf("stalled-winner quarantine applied %d times for one attempt, want 1", applied)
+	}
 }

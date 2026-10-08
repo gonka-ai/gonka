@@ -53,6 +53,7 @@ type sessionData struct {
 	lastFinalized          uint64
 	status                 string // "active", "settled"
 	snapshot               *snapshotData
+	sessionState           *SessionState
 	inferences             map[uint64]InferenceRow
 	inferenceValidationObs map[uint64]map[uint32]SlotValidationObs
 	sealedValidationObs    map[uint64]map[uint32]SlotValidationObs
@@ -163,10 +164,47 @@ func (m *Memory) AppendDiff(escrowID string, rec types.DiffRecord) error {
 
 	rec.Signatures = copySignatures(rec.Signatures)
 	rec.WarmKeyDelta = copyWarmKeyDelta(rec.WarmKeyDelta)
+	if delta := rec.SessionState; delta != nil {
+		s.applySessionState(rec.Nonce, delta)
+		rec.SessionState = nil
+	}
 
 	s.diffs = append(s.diffs, rec)
 	s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
 	return nil
+}
+
+// applySessionState mirrors SQLite's writeSessionStateTx. Caller holds m.mu.
+func (s *sessionData) applySessionState(nonce uint64, delta *types.SessionStateDelta) {
+	if s.sessionState == nil || delta.ReplaceAll {
+		s.sessionState = &SessionState{Entries: make(map[uint64][]byte, len(delta.Upserts))}
+	}
+	for id, entry := range delta.Upserts {
+		s.sessionState.Entries[id] = append([]byte(nil), entry...)
+	}
+	for _, id := range delta.Deletes {
+		delete(s.sessionState.Entries, id)
+	}
+	s.sessionState.Nonce = nonce
+	s.sessionState.Header = append([]byte(nil), delta.Header...)
+}
+
+// LoadSessionState returns a copy of the state written with the session's diffs.
+func (m *Memory) LoadSessionState(escrowID string) (SessionState, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return SessionState{}, fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
+	}
+	if s.sessionState == nil {
+		return SessionState{}, ErrSessionStateNotFound
+	}
+	loaded := SessionState{Nonce: s.sessionState.Nonce, Header: append([]byte(nil), s.sessionState.Header...), Entries: make(map[uint64][]byte, len(s.sessionState.Entries))}
+	for id, entry := range s.sessionState.Entries {
+		loaded.Entries[id] = append([]byte(nil), entry...)
+	}
+	return loaded, nil
 }
 
 // AppendDiffs appends many diffs under one lock (used by HA migrate).

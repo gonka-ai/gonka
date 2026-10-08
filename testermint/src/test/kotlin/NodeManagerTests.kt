@@ -1,3 +1,4 @@
+import com.google.gson.JsonObject
 import com.productscience.NodeManagerClient
 import com.productscience.data.InferenceNode
 import com.productscience.data.ModelConfig
@@ -32,6 +33,15 @@ class NodeManagerTests : TestermintTest() {
     fun `acquire and release node over gRPC`() {
         val (_, genesis) = initCluster()
         waitForInferenceState(genesis)
+
+        val versions = genesis.api.get<JsonObject>(genesis.api.getPublicUrl(), "v1/versions")
+        val apiVersion = versions.getAsJsonObject("api_version")
+        assertThat(apiVersion.get("application_name").asString).isEqualTo("decentralized-api")
+        assertThat(apiVersion.get("version").asString).isNotBlank()
+        assertThat(apiVersion.get("commit").asString).isNotBlank()
+        val mlnodes = versions.getAsJsonArray("mlnodes")
+        assertThat(mlnodes.size()).isGreaterThan(0)
+        assertThat(mlnodes.all { it.asJsonObject.has("poc_validation_inference") }).isTrue()
 
         nodeManagerClient(genesis).use { client ->
             val acquireResp = client.acquireMLNode(defaultModel)

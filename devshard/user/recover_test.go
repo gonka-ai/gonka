@@ -35,6 +35,11 @@ func newTestStateMachine(
 	return sm
 }
 
+// snapshotOnlyStore hides the state written with diffs, so a test exercises the snapshot path alone.
+type snapshotOnlyStore struct {
+	storage.Storage
+}
+
 func newTestStore(t *testing.T) *storage.SQLite {
 	t.Helper()
 	db, err := storage.NewSQLite(filepath.Join(t.TempDir(), "test.db"))
@@ -87,7 +92,7 @@ func setupRecoverableSession(
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
 	for i := 0; i < numInferences; i++ {
@@ -99,7 +104,7 @@ func setupRecoverableSession(
 }
 
 func TestRecoverSession_HappyPath(t *testing.T) {
-	store := newTestStore(t)
+	store := snapshotOnlyStore{newTestStore(t)}
 	numHosts := 3
 	numInferences := 5
 
@@ -128,11 +133,63 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	resp, err := session.SendInference(ctx, params)
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences+1), resp.Nonce)
+}
+
+// Production reproduction: a node that had served sub-floor reservations could not restart once the
+// floor landed, because replaying its own persisted diffs re-ran a rule written after they were made.
+func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+	hosts := make([]*signing.Secp256k1Signer, numHosts)
+	for i := range hosts {
+		hosts[i] = testutil.MustGenerateKey(t)
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(numHosts)
+	verifier := signing.NewSecp256k1Verifier()
+
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
+
+	subFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+	}}}}
+
+	writerSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	_, err := writerSM.ApplyLocal(1, subFloor)
+	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the fixture must be a diff this build refuses to author")
+	root, err := writerSM.ApplyLocalPersisted(1, subFloor)
+	require.NoError(t, err)
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff:      testutil.SignDiffWithRoot(t, user, "escrow-1", 1, subFloor, root),
+		StateHash: root,
+	}))
+
+	clients := make([]HostClient, numHosts)
+	for i := range hosts {
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), session.Nonce())
+	require.Len(t, session.Diffs(), 1)
 }
 
 func TestRecoverSession_EmptySession(t *testing.T) {
@@ -208,7 +265,7 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 
 	// Nonce 1: StartInference + ConfirmStart (status -> Started). No warm keys yet.
 	confirmSig := testutil.SignExecutorReceipt(t, hosts[executorSlot], "escrow-1", 1,
-		testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
 	txs1 := []*types.DevshardTx{
 		testutil.StartTx(1),
 		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
@@ -424,7 +481,7 @@ func buildRecoveryClients(t *testing.T, hosts []*signing.Secp256k1Signer, group 
 // This is the primary fix for the post-restart "invalid nonce: must be
 // sequential" cascade observed on mainnet 2026-04-24.
 func TestRecoverSession_NewFormatSnapshot_RestoresHostCursor(t *testing.T) {
-	store := newTestStore(t)
+	store := snapshotOnlyStore{newTestStore(t)}
 	numHosts := 3
 	numInferences := 4
 
@@ -546,7 +603,7 @@ func TestRecoverSession_NewFormatSnapshot_ProcessResponseUsesActualDiffNonce(t *
 // upgraded to the new wrapper format on disk so subsequent restarts
 // pay the full-backfill cost only once.
 func TestRecoverSession_LegacySnapshot_BackwardCompat(t *testing.T) {
-	store := newTestStore(t)
+	store := snapshotOnlyStore{newTestStore(t)}
 	numHosts := 3
 	numInferences := 5
 
@@ -724,15 +781,21 @@ func TestRecoverSession_BackfillGapUnrecoverable(t *testing.T) {
 		InitialBalance: 100000,
 	}))
 	// Diff 3 is lost; latest_nonce lands on 4.
+	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	snapshotRoot, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
 	for _, n := range []uint64{1, 2, 4} {
-		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: types.Diff{Nonce: n}}))
+		record := types.DiffRecord{Diff: types.Diff{Nonce: n}}
+		if n == 4 {
+			record.StateHash = snapshotRoot
+		}
+		require.NoError(t, store.AppendDiff("escrow-1", record))
 	}
 	// Snapshot is current at 4, so nothing is replayed. Host 0 is stranded at
 	// nonce 2 and needs the backfill range 3..4, which has a hole.
-	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 	saveSnapshot(store, sm, "escrow-1", 4, map[int]uint64{0: 2, 1: 4, 2: 4})
 
-	_, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+	_, _, err = RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
 		buildRecoveryClients(t, hosts, group, user))
 
 	require.ErrorIs(t, err, ErrLocalStateUnrecoverable)
@@ -779,4 +842,40 @@ func TestRecoverSession_IgnoredFutureSnapshotRecovers(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(3), session.Nonce())
 	require.Len(t, session.Diffs(), 3)
+}
+
+// The production failure this guards: a gateway built after the min_tokens floor could not start at
+// all, because recovery replays diffs an earlier build wrote and one of them reserved a single token.
+// "create runtimes: runtime 51153: create session: recover session: replay nonce 1003:
+// max_tokens below min_tokens floor: max_tokens 1, floor 64".
+func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T) {
+	store := newTestStore(t)
+	group, hosts, user := setupRecoverableSession(t, 2, 0, store)
+	verifier := signing.NewSecp256k1Verifier()
+	config := testutil.DefaultConfig(len(hosts))
+
+	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	belowFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{
+		StartInference: &types.MsgStartInference{
+			InferenceId: 1,
+			PromptHash:  testutil.TestPromptHash[:],
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   1,
+			StartedAt:   1000,
+		},
+	}}}
+	root, err := sm.ApplyLocalPersisted(1, belowFloor)
+	require.NoError(t, err, "seeding the diff an earlier build would have written")
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff:      testutil.SignDiffWithRoot(t, user, "escrow-1", 1, belowFloor, root),
+		StateHash: root,
+	}))
+
+	clients := make([]HostClient, len(hosts))
+	session, recovered, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+
+	require.NoError(t, err, "recovery must replay history the running policy would no longer create")
+	require.NotNil(t, session)
+	require.Equal(t, types.StatusPending, recovered.SnapshotState().Inferences[1].Status)
 }

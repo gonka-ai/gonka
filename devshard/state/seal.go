@@ -179,24 +179,27 @@ func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.Infer
 }
 
 // liveInferencesHashLocked returns the running XOR of the committed frames.
-// The total is maintained when the map changes, so this hashes nothing. The
-// id sets must still match: equal sizes plus every live id present means the
-// total covers exactly the live records. A mismatch is a broken invariant:
-// return it and let the caller roll the diff back.
+// Check that the running hash covers exactly the live inference IDs.
 func (sm *StateMachine) liveInferencesHashLocked() ([]byte, error) {
-	live := sm.state.Inferences
-	entries := sm.committedEntries
-	if len(entries) != len(live) {
-		return nil, fmt.Errorf("committed inference entries %d != live inferences %d", len(entries), len(live))
+	if len(sm.committedEntries) != len(sm.state.Inferences) {
+		return nil, fmt.Errorf("committed inference entries %d != live inferences %d", len(sm.committedEntries), len(sm.state.Inferences))
 	}
-	for id := range live {
-		if _, ok := entries[id]; !ok {
-			return nil, fmt.Errorf("committed inference entries missing live inference %d", id)
-		}
+	if err := sm.verifyLiveIDsLocked(); err != nil {
+		return nil, err
 	}
 	out := make([]byte, len(sm.liveEntryXOR))
 	copy(out, sm.liveEntryXOR[:])
 	return out, nil
+}
+
+// verifyLiveIDsLocked checks every live id has a committed entry, which with equal sizes means the id sets match.
+func (sm *StateMachine) verifyLiveIDsLocked() error {
+	for id := range sm.state.Inferences {
+		if _, ok := sm.committedEntries[id]; !ok {
+			return fmt.Errorf("committed inference entries missing live inference %d", id)
+		}
+	}
+	return nil
 }
 
 func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {
@@ -670,6 +673,19 @@ func cloneInferenceRecord(rec *types.InferenceRecord) *types.InferenceRecord {
 func (sm *StateMachine) RebuildSealedInferenceIndex() error {
 	_, err := sm.FillSealedInferenceIndexGaps()
 	return err
+}
+
+// SealedAtOrBefore returns which of ids were sealed at or before nonce.
+func (sm *StateMachine) SealedAtOrBefore(ids []uint64, nonce uint64) map[uint64]struct{} {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	sealed := make(map[uint64]struct{})
+	for _, id := range ids {
+		if sealNonce, ok := sm.sealedNonces[id]; ok && sealNonce <= nonce {
+			sealed[id] = struct{}{}
+		}
+	}
+	return sealed
 }
 
 // SealedNonceCount returns the size of the seal set. Callers that only need the

@@ -459,6 +459,34 @@ func TestGatewayDashboardUsesEscrowFilterForDevshardDiagnostics(t *testing.T) {
 	}
 }
 
+func TestGatewayDashboardSlotDecisionDiagnosticsHonorEscrowID(t *testing.T) {
+	path := gatewayDashboardPath(t)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	var dashboard map[string]any
+	require.NoError(t, json.Unmarshal(data, &dashboard))
+
+	for _, title := range []string{
+		"Ghost or No-Send Slots per User Request",
+		"Top Skipped-Slot Reasons",
+		"Model x Escrow No-Send Pressure",
+	} {
+		panel := dashboardPanelByTitle(t, dashboard, title)
+		expr := strings.Join(panelTargetExprs(panel), "\n")
+		require.Contains(t, expr, "devshard_gateway_slot_decisions_total", "panel %q must use slot decision metrics", title)
+		require.Contains(t, expr, `escrow_id=~"$escrow_id"`, "panel %q must keep per-escrow slot diagnosis", title)
+	}
+
+	pressure := dashboardPanelByTitle(t, dashboard, "Model x Escrow No-Send Pressure")
+	require.Contains(t, strings.Join(panelTargetExprs(pressure), "\n"), "by (model, escrow_id, reason)")
+
+	variables := dashboardVariables(t, dashboard)
+	definition, _ := variables["escrow_id"]["definition"].(string)
+	require.Contains(t, definition, "devshard_gateway_slot_decisions_total", "$escrow_id must discover ids from slot decisions")
+	require.Contains(t, definition, "escrow_id", "$escrow_id must read the slot-decision escrow_id label")
+}
+
 func TestGatewayDashboardSeparatesInferenceTransportErrors(t *testing.T) {
 	path := gatewayDashboardPath(t)
 	data, err := os.ReadFile(path)

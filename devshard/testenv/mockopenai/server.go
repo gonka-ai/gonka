@@ -80,31 +80,38 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 
 	text := completionText(body)
 	if req.Stream {
-		return s.streamCompletion(c, req.Model, text, body, f)
+		return s.streamCompletion(c, req, text, body, f)
 	}
-	return s.jsonCompletion(c, req.Model, text, body)
+	return s.jsonCompletion(c, req, text, body)
 }
 
-func (s *Server) jsonCompletion(c echo.Context, model, text string, body []byte) error {
+func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, body []byte) error {
 	promptTok := promptTokenEstimate(body)
 	completionTok := len(text) / 4
 	if completionTok < 1 {
 		completionTok = 1
 	}
+	choice := map[string]any{
+		"index": 0,
+		"message": map[string]any{
+			"role":    "assistant",
+			"content": text,
+		},
+		"finish_reason": "stop",
+	}
+	if req.Logprobs {
+		choice["logprobs"] = map[string]any{
+			"content": buildLogprobContent(text, req.TopLogprobs),
+		}
+	} else {
+		choice["logprobs"] = nil
+	}
 	resp := map[string]any{
 		"id":      "chatcmpl-mockopenai",
 		"object":  "chat.completion",
 		"created": time.Now().Unix(),
-		"model":   model,
-		"choices": []map[string]any{{
-			"index": 0,
-			"message": map[string]any{
-				"role":    "assistant",
-				"content": text,
-			},
-			"logprobs":       nil,
-			"finish_reason":  "stop",
-		}},
+		"model":   req.Model,
+		"choices": []map[string]any{choice},
 		"usage": map[string]any{
 			"prompt_tokens":     promptTok,
 			"completion_tokens": completionTok,
@@ -114,7 +121,7 @@ func (s *Server) jsonCompletion(c echo.Context, model, text string, body []byte)
 	return c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) streamCompletion(c echo.Context, model, text string, body []byte, f FaultConfig) error {
+func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig) error {
 	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
 	c.Response().Header().Set("Connection", "keep-alive")
@@ -124,9 +131,10 @@ func (s *Server) streamCompletion(c echo.Context, model, text string, body []byt
 	flusher, _ := w.(http.Flusher)
 	created := time.Now().Unix()
 	id := "chatcmpl-mockopenai"
+	model := req.Model
 
-	writeChunk := func(delta map[string]any, finish *string) error {
-		choice := map[string]any{"index": 0, "delta": delta, "logprobs": nil}
+	writeChunk := func(delta map[string]any, finish *string, logprobs any) error {
+		choice := map[string]any{"index": 0, "delta": delta, "logprobs": logprobs}
 		if finish != nil {
 			choice["finish_reason"] = *finish
 		} else {
@@ -163,7 +171,14 @@ func (s *Server) streamCompletion(c echo.Context, model, text string, body []byt
 			continue
 		}
 		first = false
-		if err := writeChunk(map[string]any{"content": string(r)}, nil); err != nil {
+		tok := string(r)
+		var lp any
+		if req.Logprobs {
+			lp = map[string]any{
+				"content": buildLogprobContent(tok, req.TopLogprobs),
+			}
+		}
+		if err := writeChunk(map[string]any{"content": tok}, nil, lp); err != nil {
 			return err
 		}
 		if f.PartialStream && i == len(tokens)/2 {
@@ -174,7 +189,7 @@ func (s *Server) streamCompletion(c echo.Context, model, text string, body []byt
 		return nil
 	}
 	stop := "stop"
-	if err := writeChunk(map[string]any{"content": ""}, &stop); err != nil {
+	if err := writeChunk(map[string]any{"content": ""}, &stop, nil); err != nil {
 		return err
 	}
 	promptTok := promptTokenEstimate(body)

@@ -139,7 +139,7 @@ func populateFinishedAndSeal(t *testing.T, store storage.Storage) ([]types.SlotA
 	start := startTx(1)
 	apply(1, []*types.DevshardTx{start})
 	execSig := testutil.SignExecutorReceipt(t, hosts[1], "1", 1, start.GetStartInference().GetPromptHash(),
-		"llama", 100, 50, 1000, 2000)
+		"llama", 100, testutil.TestMaxTokens, 1000, 2000)
 	apply(2, []*types.DevshardTx{&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	}}}})

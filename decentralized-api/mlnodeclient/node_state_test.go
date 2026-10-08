@@ -13,7 +13,7 @@ func TestNodeState_ParsesPocValidationInference(t *testing.T) {
 			http.Error(w, "bad path", http.StatusNotFound)
 			return
 		}
-		w.Write([]byte(`{"state":"INFERENCE","version":"0.2.0","poc_validation_inference":true}`))
+		w.Write([]byte(`{"state":"INFERENCE","version":"0.2.0","poc_validation_inference":true,"loaded_model":"host/custom-minimax"}`))
 	}))
 	defer srv.Close()
 
@@ -24,6 +24,9 @@ func TestNodeState_ParsesPocValidationInference(t *testing.T) {
 	}
 	if !resp.PoCValidationInference {
 		t.Fatalf("expected poc_validation_inference=true: %+v", resp)
+	}
+	if resp.LoadedModel != "host/custom-minimax" {
+		t.Fatalf("expected loaded_model to be parsed: %+v", resp)
 	}
 }
 

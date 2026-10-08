@@ -187,7 +187,7 @@ func startTx(id uint64) *types.DevshardTx {
 		PromptHash:  []byte("prompt"),
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	})
 }
@@ -195,7 +195,7 @@ func startTx(id uint64) *types.DevshardTx {
 func confirmTx(t *testing.T, hosts []*signing.Secp256k1Signer, escrowID string, id uint64) *types.DevshardTx {
 	t.Helper()
 	slot := uint32(id % uint64(len(hosts)))
-	sig := testutil.SignExecutorReceipt(t, hosts[slot], escrowID, id, []byte("prompt"), "llama", 100, 50, 1000, 1000)
+	sig := testutil.SignExecutorReceipt(t, hosts[slot], escrowID, id, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 	return txConfirm(&types.MsgConfirmStart{
 		InferenceId: id,
 		ExecutorSig: sig,

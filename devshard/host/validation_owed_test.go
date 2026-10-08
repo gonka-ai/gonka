@@ -99,7 +99,7 @@ func TestHost_CollectValidationJobs_MatchesFullScan(t *testing.T) {
 	confirmTx := func(id uint64) *types.DevshardTx {
 		confirmedAt := int64(2000 + 100*id)
 		sig := testutil.SignExecutorReceipt(t, slotSigners[executorOf(id)], escrowID, id,
-			testutil.TestPromptHash[:], "llama", 100, 50, 1000, confirmedAt)
+			testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, confirmedAt)
 		return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			InferenceId: id, ExecutorSig: sig, ConfirmedAt: confirmedAt,
 		}}}

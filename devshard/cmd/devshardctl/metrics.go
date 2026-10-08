@@ -31,14 +31,12 @@ type DevshardMetrics struct {
 	speculativeAttempts        *prometheus.CounterVec
 	inferenceTimeouts          *prometheus.CounterVec
 	pickerChoices              *prometheus.CounterVec
-	hostReceiptSeconds         *prometheus.HistogramVec
-	hostFirstTokenSeconds      *prometheus.HistogramVec
-	hostCTTFLSecondsPerToken   *prometheus.HistogramVec
-	hostTotalSeconds           *prometheus.HistogramVec
 	participantReceiptSeconds  *prometheus.HistogramVec
 	participantFirstContent    *prometheus.HistogramVec
 	participantPrefillPerToken *prometheus.HistogramVec
 	participantTotalSeconds    *prometheus.HistogramVec
+	participantMaxChunkGap     *prometheus.HistogramVec
+	participantMeanChunkGap    *prometheus.HistogramVec
 
 	gatewayRequests       *prometheus.CounterVec
 	criticalUserFailures  *prometheus.CounterVec
@@ -174,38 +172,6 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"devshard_id", "model"},
 		),
-		hostReceiptSeconds: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_receipt_seconds",
-				Help:    "Time from inference send until host receipt confirmation.",
-				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
-		),
-		hostFirstTokenSeconds: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_first_token_seconds",
-				Help:    "Time from inference send until first streamed token.",
-				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
-		),
-		hostCTTFLSecondsPerToken: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_cttfl_seconds_per_input_token",
-				Help:    "Prefill time per input token, computed from receipt to first token.",
-				Buckets: prometheus.ExponentialBuckets(0.0001, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
-		),
-		hostTotalSeconds: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_total_time_seconds",
-				Help:    "Total inference time observed per host.",
-				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
-		),
 		participantReceiptSeconds: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "devshard_gateway_participant_receipt_seconds",
@@ -235,6 +201,22 @@ func NewDevshardMetrics() *DevshardMetrics {
 				Name:    "devshard_gateway_participant_total_attempt_seconds",
 				Help:    "Total inference attempt time observed by the gateway, by participant and model.",
 				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
+			},
+			[]string{"participant_key", "model"},
+		),
+		participantMaxChunkGap: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_max_inter_chunk_seconds",
+				Help:    "Longest silence between two streamed chunks within one attempt, by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.005, 2, 15),
+			},
+			[]string{"participant_key", "model"},
+		),
+		participantMeanChunkGap: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_inter_chunk_seconds",
+				Help:    "Mean silence between streamed chunks within one attempt, by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.005, 2, 15),
 			},
 			[]string{"participant_key", "model"},
 		),
@@ -328,14 +310,12 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.speculativeAttempts,
 		m.inferenceTimeouts,
 		m.pickerChoices,
-		m.hostReceiptSeconds,
-		m.hostFirstTokenSeconds,
-		m.hostCTTFLSecondsPerToken,
-		m.hostTotalSeconds,
 		m.participantReceiptSeconds,
 		m.participantFirstContent,
 		m.participantPrefillPerToken,
 		m.participantTotalSeconds,
+		m.participantMaxChunkGap,
+		m.participantMeanChunkGap,
 		m.gatewayRequests,
 		m.criticalUserFailures,
 		m.hiddenFailures,
@@ -351,6 +331,13 @@ func NewDevshardMetrics() *DevshardMetrics {
 
 	m.handler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	return m
+}
+
+func (m *DevshardMetrics) RegisterCollector(collector prometheus.Collector) error {
+	if m == nil || m.registry == nil || collector == nil {
+		return nil
+	}
+	return m.registry.Register(collector)
 }
 
 func (m *DevshardMetrics) AttachGateway(g *Gateway) {
@@ -500,6 +487,21 @@ func (m *DevshardMetrics) RecordGatewaySlotDecision(decision GatewaySlotDecision
 	).Inc()
 }
 
+// ForgetEscrow drops escrow-labelled children the dashboard still uses:
+// slot_decisions_total, picker_choice_total, and startup_skipped_escrow.
+func (m *DevshardMetrics) ForgetEscrow(escrowID string) {
+	if m == nil {
+		return
+	}
+	escrowID = strings.TrimSpace(escrowID)
+	if escrowID == "" {
+		return
+	}
+	m.slotDecisions.DeletePartialMatch(prometheus.Labels{"escrow_id": escrowID})
+	m.pickerChoices.DeletePartialMatch(prometheus.Labels{"devshard_id": escrowID})
+	m.startupSkippedEscrows.DeletePartialMatch(prometheus.Labels{"escrow_id": escrowID})
+}
+
 func (m *DevshardMetrics) RecordGatewayAttemptStarted(start GatewayAttemptStartMetric) {
 	if m == nil {
 		return
@@ -576,32 +578,42 @@ func (m *DevshardMetrics) RecordGatewayTimeoutAction(action GatewayTimeoutAction
 	).Inc()
 }
 
-func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample RequestSample) {
+func (m *DevshardMetrics) ObserveRequestSample(sample RequestSample) {
 	if m == nil {
 		return
 	}
-
-	labels := []string{devshardID, strconv.Itoa(sample.HostIdx)}
 	participantLabels := []string{
 		metricLabel(sample.ParticipantKey, "unknown"),
 		metricLabel(sample.Model, "unknown"),
 	}
 	if receiptSeconds := sample.ReceiptMs() / 1000; receiptSeconds > 0 {
-		m.hostReceiptSeconds.WithLabelValues(labels...).Observe(receiptSeconds)
 		m.participantReceiptSeconds.WithLabelValues(participantLabels...).Observe(receiptSeconds)
 	}
-	if !sample.SendTime.IsZero() && !sample.FirstToken.IsZero() {
-		firstContentSeconds := sample.FirstToken.Sub(sample.SendTime).Seconds()
-		m.hostFirstTokenSeconds.WithLabelValues(labels...).Observe(firstContentSeconds)
-		m.participantFirstContent.WithLabelValues(participantLabels...).Observe(firstContentSeconds)
+	// Fed from the first CONTENT chunk, which is what this metric is named for: FirstToken fires on
+	// a role-only chunk and made it report a prefill no client ever waited for.
+	if !sample.SendTime.IsZero() && !sample.FirstContent.IsZero() {
+		m.participantFirstContent.WithLabelValues(participantLabels...).Observe(sample.FirstContent.Sub(sample.SendTime).Seconds())
 	}
 	if cttfl := sample.CTTFL() / 1000; cttfl > 0 {
-		m.hostCTTFLSecondsPerToken.WithLabelValues(labels...).Observe(cttfl)
 		m.participantPrefillPerToken.WithLabelValues(participantLabels...).Observe(cttfl)
 	}
 	if sample.TotalTime > 0 {
-		m.hostTotalSeconds.WithLabelValues(labels...).Observe(sample.TotalTime.Seconds())
 		m.participantTotalSeconds.WithLabelValues(participantLabels...).Observe(sample.TotalTime.Seconds())
+	}
+}
+
+// ObserveStreamCadence separates a host that streams slowly from one that streams then stops: the
+// two are indistinguishable in a per-chunk distribution, where a single 60s gap sits below p99.9.
+func (m *DevshardMetrics) ObserveStreamCadence(participantKey, model string, maxGap, meanGap time.Duration) {
+	if m == nil {
+		return
+	}
+	labels := []string{metricLabel(participantKey, "unknown"), metricLabel(model, "unknown")}
+	if maxGap > 0 {
+		m.participantMaxChunkGap.WithLabelValues(labels...).Observe(maxGap.Seconds())
+	}
+	if meanGap > 0 {
+		m.participantMeanChunkGap.WithLabelValues(labels...).Observe(meanGap.Seconds())
 	}
 }
 
@@ -965,7 +977,7 @@ type nonceFinishedChecker interface {
 	IsNonceFinished(uint64) bool
 }
 
-func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) string {
+func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker, model string) string {
 	if inf == nil {
 		return "unknown"
 	}
@@ -974,6 +986,8 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) st
 		return "phase_transition_aborted"
 	case isErrorStreamAttempt(inf):
 		return "error_stream"
+	case isModelBurnEmpty(inf, model):
+		return "model_burn_empty"
 	case isEmptyStreamAttempt(inf):
 		return "empty_stream"
 	}
@@ -982,8 +996,16 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) st
 		switch {
 		case errors.As(inf.err, &upstreamErr):
 			return gatewayHTTPFailureReason(upstreamErr.StatusCode)
+		case errors.Is(inf.err, ErrAggregateResponseTooLarge):
+			return "aggregate_response_too_large"
+		case errors.Is(inf.err, ErrAggregateFoldTooLarge):
+			return "aggregate_fold_too_large"
 		case errors.Is(inf.err, transport.ErrSSEStreamTruncated):
 			return "sse_truncated"
+		case errors.Is(inf.err, transport.ErrSSEEventTooLarge):
+			return "sse_event_too_large"
+		case errors.Is(inf.err, transport.ErrResponseBodyTooLarge):
+			return "response_body_too_large"
 		case errors.Is(inf.err, io.EOF), errors.Is(inf.err, io.ErrUnexpectedEOF), strings.Contains(strings.ToLower(inf.err.Error()), "eof"):
 			return "eof_transport"
 		case errors.Is(inf.err, context.Canceled), errors.Is(inf.err, context.DeadlineExceeded):
@@ -1082,17 +1104,23 @@ func normalizeMetricsPath(path string) string {
 	}
 }
 
+// limiterRejectionLogFields says how full the gateway was, not only that it was full.
+func limiterRejectionLogFields(err error) []any {
+	fields := []any{"reason", limiterReasonLabel(err)}
+	var rejection *LimiterRejection
+	if errors.As(err, &rejection) {
+		return append(fields, "in_flight", rejection.InFlight, "limit", rejection.Limit)
+	}
+	return fields
+}
+
 func limiterReasonLabel(err error) string {
 	if err == nil {
 		return "unknown"
 	}
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "concurrent requests"):
-		return "max_concurrent_requests"
-	case strings.Contains(msg, "input tokens in flight"):
-		return "max_input_tokens_in_flight"
-	default:
-		return "unknown"
+	var rejection *LimiterRejection
+	if errors.As(err, &rejection) && rejection.Kind != "" {
+		return rejection.Kind
 	}
+	return "unknown"
 }

@@ -10,6 +10,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"common/completionapi"
+
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/storage"
@@ -91,6 +93,8 @@ type StateMachine struct {
 	// validation lives in committedEntries (and on disk in the snapshot).
 	sealedNonces   map[uint64]uint64
 	inferenceStore storage.Storage
+	// replayingPersisted is written only under mu, by ApplyLocalPersisted.
+	replayingPersisted bool
 
 	// Lookup maps derived from group at construction time.
 	slotToAddress      map[uint32]string
@@ -138,10 +142,12 @@ type deferredObsWrite struct {
 type ValidatedDiff struct {
 	Root      []byte
 	WarmAfter map[uint32]string
-	Applied   []*types.DevshardTx // populated for the best-effort (gateway) path
-	nonce     uint64
-	journal   *mutationJournal
-	obs       []deferredObsWrite
+	// StateAfter is the post-state without inferences, set by PreviewLocalBestEffort.
+	StateAfter types.EscrowState
+	Applied    []*types.DevshardTx // populated for the best-effort (gateway) path
+	nonce      uint64
+	journal    *mutationJournal
+	obs        []deferredObsWrite
 }
 
 // Nonce reports the nonce this validated diff will commit.
@@ -323,6 +329,16 @@ func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byt
 	return sm.applyCore(nonce, txs, nil, "user")
 }
 
+// ApplyLocalPersisted replays a diff this node already accepted and persisted. It is the only path that
+// relaxes policy, and it relaxes it only for checks that guard the creation of new work.
+func (sm *StateMachine) ApplyLocalPersisted(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.replayingPersisted = true
+	defer func() { sm.replayingPersisted = false }()
+	return sm.applyCore(nonce, txs, nil, "user")
+}
+
 // ApplyLocalBestEffort applies txs one by one, skipping any that fail.
 // Returns the post-state root and the subset of txs that were applied.
 // Used by the user to compose diffs from pending txs that may be stale.
@@ -350,8 +366,26 @@ func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.Devsha
 		return nil, err
 	}
 	warmAfter := copyStringMap(sm.state.WarmKeys)
+	stateAfter := sm.stateNoInferencesLocked()
 	sm.detachJournalLocked(j)
-	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, Applied: applied, nonce: nonce, journal: j, obs: obs}, nil
+	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, StateAfter: stateAfter, Applied: applied, nonce: nonce, journal: j, obs: obs}, nil
+}
+
+// InferenceEntryChanges returns the canonical entries the previewed diff wrote
+// and the ids it removed from the live set. Entries are never mutated in place.
+func (vd *ValidatedDiff) InferenceEntryChanges() (upserts map[uint64][]byte, deletes []uint64) {
+	if vd == nil || vd.journal == nil {
+		return nil, nil
+	}
+	upserts = make(map[uint64][]byte, len(vd.journal.committed.post))
+	for id, slot := range vd.journal.committed.post {
+		if slot.ok {
+			upserts[id] = slot.v
+		} else {
+			deletes = append(deletes, id)
+		}
+	}
+	return upserts, deletes
 }
 
 // CommitValidated installs a previously validated diff's post-state and flushes
@@ -401,6 +435,18 @@ func (sm *StateMachine) flushDeferredObsLocked(writes []deferredObsWrite) {
 			}
 		}
 	}
+}
+
+// logDroppedTx reports what best-effort composition discarded. A dropped ConfirmStart is queued once
+// per inference and leaves it pending forever, so it warns; mempool txs are gossiped repeatedly and
+// stale ones are ordinary, so they stay at debug.
+func logDroppedTx(nonce uint64, tx *types.DevshardTx, err error) {
+	if confirm := tx.GetConfirmStart(); confirm != nil {
+		logging.Warn("dropped confirm start", "subsystem", "state",
+			"nonce", nonce, "inference_id", confirm.InferenceId, "error", err)
+		return
+	}
+	logging.Debug("dropped tx", "subsystem", "state", "nonce", nonce, "error", err)
 }
 
 // localBestEffortLocked implements ApplyLocalBestEffort. It applies txs one by
@@ -453,6 +499,7 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 			if tx.GetStartInference() != nil {
 				return nil, nil, nil, fmt.Errorf("mandatory start inference: %w", err)
 			}
+			logDroppedTx(nonce, tx, err)
 			continue
 		}
 		applied = append(applied, tx)
@@ -679,6 +726,11 @@ func (sm *StateMachine) SnapshotState() types.EscrowState {
 func (sm *StateMachine) SnapshotStateNoInferences() types.EscrowState {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
+	return sm.stateNoInferencesLocked()
+}
+
+// stateNoInferencesLocked is SnapshotStateNoInferences for a caller that holds sm.mu.
+func (sm *StateMachine) stateNoInferencesLocked() types.EscrowState {
 	src := sm.state
 	// Shallow struct copy; SealedAcc ([]byte) is shared deliberately: it is
 	// only ever replaced wholesale (append to a nil slice), never mutated in
@@ -699,6 +751,19 @@ func (sm *StateMachine) SnapshotStateNoInferences() types.EscrowState {
 	maps.Copy(s.WarmKeys, src.WarmKeys)
 
 	return s
+}
+
+// HostStatsFor returns one slot's tallies. Use it instead of
+// SnapshotStateNoInferences, which copies every slot plus the group and warm-key
+// maps, when a caller needs a single slot on a hot path.
+func (sm *StateMachine) HostStatsFor(slot uint32) (types.HostStats, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	stats, ok := sm.state.HostStats[slot]
+	if !ok || stats == nil {
+		return types.HostStats{}, false
+	}
+	return *stats, true
 }
 
 // ExportState returns a deep-copied pointer form used by recovery snapshots.
@@ -851,6 +916,12 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 		return types.ErrSessionFinalizing
 	}
 
+	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit
+	// pending until seal. Rejecting here keeps it out of state and off the balance.
+	if !sm.replayingPersisted && msg.MaxTokens < completionapi.MinTokensFloor {
+		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, completionapi.MinTokensFloor)
+	}
+
 	// Duplicate inference ID guard.
 	if sm.isDuplicateInferenceID(msg.InferenceId) {
 		return types.ErrDuplicateInferenceID
@@ -865,7 +936,7 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 		return err
 	}
 	if sm.state.Balance < reservedCost {
-		return types.ErrInsufficientBalance
+		return types.ErrRequestExceedsBalance
 	}
 
 	sm.state.Balance -= reservedCost

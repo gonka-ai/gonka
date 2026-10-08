@@ -156,6 +156,8 @@ func NewServer(
 	// marked Deprecation: true. Prefer edge-api for new proxy configs.
 	s.mountDeprecatedQueryAPIRoutes(e)
 
+	e.GET("/v1/versions", s.getVersions)
+
 	e.Any(deprecatedDevshardV1Prefix, legacyDevshardDeprecated)
 	e.Any(deprecatedDevshardV1Prefix+"/*", legacyDevshardDeprecated)
 	return s
