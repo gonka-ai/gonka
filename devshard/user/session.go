@@ -75,6 +75,9 @@ const defaultDiffsKeptInMemory = 1024
 // diffPageSize is how many diffs one store read takes, for recovery and for a host caught up from the store.
 var diffPageSize uint64 = 1024
 
+// sessionHistoryRetention is how many recent nonces keep their host signatures in memory; the store keeps all of them.
+const sessionHistoryRetention = 1024
+
 // nonceOutcome tracks protocol-relevant facts observed for a single inference nonce.
 type nonceOutcome struct {
 	confirmedAt int64
@@ -230,6 +233,10 @@ type Session struct {
 	// pile up duplicate saves. See maybeSaveSnapshotLocked.
 	snapshotInFlight atomic.Bool
 
+	// sigsTrimmedThrough is the highest nonce whose signatures may be missing
+	// from s.signatures. signaturesAtLocked reads those nonces from the store.
+	sigsTrimmedThrough uint64
+
 	// stateBaselined is set once the store holds this process's full live set; until then a diff replaces it whole.
 	stateBaselined bool
 
@@ -369,6 +376,78 @@ func (s *Session) storedGapLocked(hostIdx int) (fromNonce, toNonce uint64, hasGa
 		return 0, 0, false
 	}
 	return nextNonce, firstInMemory - 1, true
+}
+
+// pruneSessionHistoryLocked drops signatures every host has moved past, at most sessionHistoryRetention
+// nonces back with a store, and the outcomes of sealed inferences. Caller must hold s.mu.
+func (s *Session) pruneSessionHistoryLocked() {
+	floor := minHostSyncNonce(s.hostSyncNonce, len(s.group))
+	if s.store != nil && s.nonce > sessionHistoryRetention {
+		floor = max(floor, s.nonce-sessionHistoryRetention)
+	}
+	s.dropSignaturesThroughLocked(floor)
+	live := s.sm.LiveInferenceIDs()
+	for nonce := range s.nonceStates {
+		if _, stillLive := live[nonce]; !stillLive {
+			delete(s.nonceStates, nonce)
+		}
+	}
+}
+
+// dropSignaturesThroughLocked drops signature entries at or below floor.
+// The current nonce is never dropped: settlement reads it from
+// Signatures(). A nonce that holds some validator's highest signature also
+// stays, so signatureStatusLocked, which credits a validator at every nonce
+// up to its highest, reports the same quorum. That keeps at most one entry
+// per validator below floor. Caller must hold s.mu.
+func (s *Session) dropSignaturesThroughLocked(floor uint64) {
+	if s.nonce == 0 {
+		return
+	}
+	floor = min(floor, s.nonce-1)
+	if floor <= s.sigsTrimmedThrough {
+		return
+	}
+	s.sigsTrimmedThrough = floor
+	highest := make(map[string]uint64, len(s.addrToSlots))
+	for nonce, slotSigs := range s.signatures {
+		for slotID := range slotSigs {
+			addr := s.sm.SlotAddress(slotID)
+			highest[addr] = max(highest[addr], nonce)
+		}
+	}
+	keep := make(map[uint64]struct{}, len(highest))
+	for _, nonce := range highest {
+		keep[nonce] = struct{}{}
+	}
+	for nonce := range s.signatures {
+		if _, ok := keep[nonce]; nonce <= floor && !ok {
+			delete(s.signatures, nonce)
+		}
+	}
+}
+
+// signaturesAtLocked returns the signatures held for nonce. A nonce at or
+// below sigsTrimmedThrough is read from the store and merged with what memory
+// still holds. The result must not be mutated. Caller must hold s.mu.
+func (s *Session) signaturesAtLocked(nonce uint64) map[uint32][]byte {
+	held := s.signatures[nonce]
+	if s.store == nil || nonce == 0 || nonce > s.sigsTrimmedThrough {
+		return held
+	}
+	stored, err := s.store.GetSignatures(s.escrowID, nonce)
+	if err != nil {
+		logging.Warn("read trimmed signatures from store", "subsystem", "session",
+			"escrow", s.escrowID, "nonce", nonce, "error", err)
+		return held
+	}
+	if len(stored) == 0 {
+		return held
+	}
+	merged := make(map[uint32][]byte, len(stored)+len(held))
+	maps.Copy(merged, stored)
+	maps.Copy(merged, held)
+	return merged
 }
 
 // trimDiffsLocked keeps the newest diffsKeptInMemory diffs of a stored session; the rest stay in the store.
@@ -777,6 +856,9 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	s.diffs = append(s.diffs, diff)
 	s.trimDiffsLocked()
 	s.nonce = nonce
+	if s.nonce%sessionHistoryRetention == 0 {
+		s.pruneSessionHistoryLocked()
+	}
 	s.clearPendingTxs()
 	if s.store != nil {
 		s.maybeSaveSnapshotLocked()
@@ -1559,8 +1641,8 @@ func (s *Session) sigWeight(sigs map[uint32][]byte) uint32 {
 func (s *Session) hasQuorum(nonce uint64, threshold uint32) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sigs, ok := s.signatures[nonce]
-	if !ok {
+	sigs := s.signaturesAtLocked(nonce)
+	if len(sigs) == 0 {
 		return false
 	}
 	return s.sigWeight(sigs) >= threshold
@@ -1796,7 +1878,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 	s.mu.Lock()
 	for _, h := range hosts {
 		hasSig := false
-		if sigs, ok := s.signatures[nonce]; ok {
+		if sigs := s.signaturesAtLocked(nonce); len(sigs) > 0 {
 			for _, slot := range s.addrToSlots[h.addr] {
 				if _, ok := sigs[slot]; ok {
 					hasSig = true
@@ -1844,7 +1926,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 				// Already got it on a previous retry?
 				s.mu.Lock()
 				hasSig := false
-				if sigs, ok := s.signatures[nonce]; ok {
+				if sigs := s.signaturesAtLocked(nonce); len(sigs) > 0 {
 					for _, slot := range s.addrToSlots[h.addr] {
 						if _, ok := sigs[slot]; ok {
 							hasSig = true
@@ -1883,7 +1965,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if sigs, ok := s.signatures[nonce]; ok {
+	if sigs := s.signaturesAtLocked(nonce); len(sigs) > 0 {
 		weight = s.sigWeight(sigs)
 	}
 
@@ -1892,7 +1974,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 		var missing []string
 		for _, h := range hosts {
 			hasSig := false
-			if sigs, ok := s.signatures[nonce]; ok {
+			if sigs := s.signaturesAtLocked(nonce); len(sigs) > 0 {
 				for _, slot := range s.addrToSlots[h.addr] {
 					if _, ok := sigs[slot]; ok {
 						hasSig = true
@@ -1981,8 +2063,8 @@ func (s *Session) signatureStatusLocked() (entries []SignatureStatusEntry, highe
 // logSignatureProgress logs signature weight at the given nonce.
 // Caller must hold s.mu.
 func (s *Session) logSignatureProgress(nonce uint64) {
-	slotSigs, ok := s.signatures[nonce]
-	if !ok {
+	slotSigs := s.signaturesAtLocked(nonce)
+	if len(slotSigs) == 0 {
 		return
 	}
 	weight := s.sigWeight(slotSigs)
