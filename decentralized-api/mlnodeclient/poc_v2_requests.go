@@ -118,23 +118,27 @@ type BackendPoCConfigV2 struct {
 	BlockHash   string `json:"block_hash"`
 }
 
-// GeneratingStage returns the stage every backend is generating for.
-// ok is false when any backend does not report its stage or backends disagree.
+// GeneratingStage returns the stage every GENERATING backend is generating for;
+// idle backends (MIXED) are ignored. ok is false when no backend is generating,
+// one of them does not report its stage, or they disagree.
 func (r *PoCStatusResponseV2) GeneratingStage() (height int64, hash string, ok bool) {
-	if r == nil || len(r.Backends) == 0 {
+	if r == nil {
 		return 0, "", false
 	}
-	for i, b := range r.Backends {
+	for _, b := range r.Backends {
+		if b.Status != "GENERATING" {
+			continue
+		}
 		if b.Config == nil || b.Config.BlockHeight <= 0 {
 			return 0, "", false
 		}
-		if i == 0 {
-			height, hash = b.Config.BlockHeight, b.Config.BlockHash
+		if !ok {
+			height, hash, ok = b.Config.BlockHeight, b.Config.BlockHash, true
 		} else if b.Config.BlockHeight != height || b.Config.BlockHash != hash {
 			return 0, "", false
 		}
 	}
-	return height, hash, true
+	return height, hash, ok
 }
 
 // PoCInitGenerateResponseV2 represents the response from /api/v1/inference/pow/init/generate.

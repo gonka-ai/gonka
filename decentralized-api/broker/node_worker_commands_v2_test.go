@@ -344,6 +344,44 @@ func TestStartPoCNodeCommandV2_UnknownLastKeepsReportedSameStage(t *testing.T) {
 	assert.Equal(t, 0, mockClient.InitGenerateV2Called)
 }
 
+// A MIXED node after a DAPI restart: the idle backend reports no stage, the
+// generating one reports the stage it was started with. A stale one must be
+// stopped before init (it would answer 409 and stay on the old stage); a
+// matching one keeps the re-init without stop.
+func TestStartPoCNodeCommandV2_UnknownLastMixedChecksGeneratingBackends(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		genHeight int64
+		genHash   string
+		wantStop  int
+	}{
+		{"stale generating backend", 1000, "old-hash", 1},
+		{"generating backend on the requested stage", 2000, "new-hash", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			node := createTestNode("test-node-v2-mixed")
+			mockClient := mlnodeclient.NewMockClient()
+			mockClient.SetV2Status("MIXED")
+			mockClient.PowStatusV2Backends = []mlnodeclient.BackendStatusV2{
+				{Port: 5001, Status: "GENERATING", Config: &mlnodeclient.BackendPoCConfigV2{BlockHeight: tc.genHeight, BlockHash: tc.genHash}},
+				{Port: 5002, Status: "IDLE"},
+			}
+			b := NewTestBroker2(1)
+			worker := NewNodeWorkerWithClient("test-node-v2-mixed", node, mockClient, b)
+			defer worker.Shutdown()
+
+			cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "new-hash", Model: "test-model", SeqLen: 256}
+			result := cmd.Execute(context.Background(), worker)
+			assert.True(t, result.Succeeded, result.Error)
+			assert.Equal(t, int64(2000), result.PocV2BlockHeight)
+			mockClient.Mu.Lock()
+			defer mockClient.Mu.Unlock()
+			assert.Equal(t, tc.wantStop, mockClient.StopPowV2Called)
+			assert.Equal(t, 1, mockClient.InitGenerateV2Called)
+		})
+	}
+}
+
 func TestStartPoCNodeCommandV2_ValidatingSameParamsStopsThenInit(t *testing.T) {
 	node := createTestNode("test-node-v2-gen")
 	mockClient := mlnodeclient.NewMockClient()

@@ -64,6 +64,7 @@ type MockClient struct {
 	// PoC v2 state
 	PowStatusV2            string // "IDLE", "GENERATING", etc.
 	PowStatusV2Config      *BackendPoCConfigV2
+	PowStatusV2Backends    []BackendStatusV2 // overrides the single backend when set
 	PoCValidationInference bool
 
 	// PoC v2 fan-out responses; nil means every backend succeeded
@@ -185,6 +186,7 @@ func (m *MockClient) Reset() {
 	m.LastModelDelete = nil
 	m.PowStatusV2 = ""
 	m.PowStatusV2Config = nil
+	m.PowStatusV2Backends = nil
 	m.PoCValidationInference = false
 	m.InitGenerateV2Resp = nil
 	m.StopPowV2Resp = nil
@@ -484,12 +486,11 @@ func (m *MockClient) GetPowStatusV2(ctx context.Context) (*PoCStatusResponseV2, 
 	if status == "" {
 		status = "IDLE"
 	}
-	return &PoCStatusResponseV2{
-		Status: status,
-		Backends: []BackendStatusV2{
-			{Port: 8000, Status: status, Config: m.PowStatusV2Config},
-		},
-	}, nil
+	backends := m.PowStatusV2Backends
+	if backends == nil {
+		backends = []BackendStatusV2{{Port: 8000, Status: status, Config: m.PowStatusV2Config}}
+	}
+	return &PoCStatusResponseV2{Status: status, Backends: backends}, nil
 }
 
 func (m *MockClient) StopPowV2(ctx context.Context) (*PoCStopResponseV2, error) {
