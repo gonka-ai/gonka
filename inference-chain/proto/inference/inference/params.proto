@@ -468,7 +468,7 @@ message DevshardEscrowParams {
   uint32 vote_threshold_factor = 17; // percent, e.g. 50 == 50%
   uint32 default_auto_seal_every_n_nonces = 18;
   // Storage only: allowed_creator_addresses as address bytes.
-  repeated bytes allowed_creator_addrs = 19;
+  repeated bytes allowed_creator_addrs = 20;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

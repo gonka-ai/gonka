@@ -58,49 +58,49 @@ func (x *_DevshardEscrow_4_list) IsValid() bool {
 	return x.list != nil
 }
 
-var _ protoreflect.List = (*_DevshardEscrow_19_list)(nil)
+var _ protoreflect.List = (*_DevshardEscrow_20_list)(nil)
 
-type _DevshardEscrow_19_list struct {
+type _DevshardEscrow_20_list struct {
 	list *[][]byte
 }
 
-func (x *_DevshardEscrow_19_list) Len() int {
+func (x *_DevshardEscrow_20_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_DevshardEscrow_19_list) Get(i int) protoreflect.Value {
+func (x *_DevshardEscrow_20_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfBytes((*x.list)[i])
 }
 
-func (x *_DevshardEscrow_19_list) Set(i int, value protoreflect.Value) {
+func (x *_DevshardEscrow_20_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Bytes()
 	concreteValue := valueUnwrapped
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_DevshardEscrow_19_list) Append(value protoreflect.Value) {
+func (x *_DevshardEscrow_20_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Bytes()
 	concreteValue := valueUnwrapped
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_DevshardEscrow_19_list) AppendMutable() protoreflect.Value {
+func (x *_DevshardEscrow_20_list) AppendMutable() protoreflect.Value {
 	panic(fmt.Errorf("AppendMutable can not be called on message DevshardEscrow at list field SlotHosts as it is not of Message kind"))
 }
 
-func (x *_DevshardEscrow_19_list) Truncate(n int) {
+func (x *_DevshardEscrow_20_list) Truncate(n int) {
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_DevshardEscrow_19_list) NewElement() protoreflect.Value {
+func (x *_DevshardEscrow_20_list) NewElement() protoreflect.Value {
 	var v []byte
 	return protoreflect.ValueOfBytes(v)
 }
 
-func (x *_DevshardEscrow_19_list) IsValid() bool {
+func (x *_DevshardEscrow_20_list) IsValid() bool {
 	return x.list != nil
 }
 
@@ -331,7 +331,7 @@ func (x *fastReflection_DevshardEscrow) Range(f func(protoreflect.FieldDescripto
 		}
 	}
 	if len(x.SlotHosts) != 0 {
-		value := protoreflect.ValueOfList(&_DevshardEscrow_19_list{list: &x.SlotHosts})
+		value := protoreflect.ValueOfList(&_DevshardEscrow_20_list{list: &x.SlotHosts})
 		if !f(fd_DevshardEscrow_slot_hosts, value) {
 			return
 		}
@@ -548,9 +548,9 @@ func (x *fastReflection_DevshardEscrow) Get(descriptor protoreflect.FieldDescrip
 		return protoreflect.ValueOfInt64(value)
 	case "inference.inference.DevshardEscrow.slot_hosts":
 		if len(x.SlotHosts) == 0 {
-			return protoreflect.ValueOfList(&_DevshardEscrow_19_list{})
+			return protoreflect.ValueOfList(&_DevshardEscrow_20_list{})
 		}
-		listValue := &_DevshardEscrow_19_list{list: &x.SlotHosts}
+		listValue := &_DevshardEscrow_20_list{list: &x.SlotHosts}
 		return protoreflect.ValueOfList(listValue)
 	case "inference.inference.DevshardEscrow.slot_index":
 		value := x.SlotIndex
@@ -621,7 +621,7 @@ func (x *fastReflection_DevshardEscrow) Set(fd protoreflect.FieldDescriptor, val
 		x.ExecutionTimeout = value.Int()
 	case "inference.inference.DevshardEscrow.slot_hosts":
 		lv := value.List()
-		clv := lv.(*_DevshardEscrow_19_list)
+		clv := lv.(*_DevshardEscrow_20_list)
 		x.SlotHosts = *clv.list
 	case "inference.inference.DevshardEscrow.slot_index":
 		x.SlotIndex = value.Bytes()
@@ -659,7 +659,7 @@ func (x *fastReflection_DevshardEscrow) Mutable(fd protoreflect.FieldDescriptor)
 		if x.SlotHosts == nil {
 			x.SlotHosts = [][]byte{}
 		}
-		value := &_DevshardEscrow_19_list{list: &x.SlotHosts}
+		value := &_DevshardEscrow_20_list{list: &x.SlotHosts}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.DevshardEscrow.id":
 		panic(fmt.Errorf("field id of message inference.inference.DevshardEscrow is not mutable"))
@@ -753,7 +753,7 @@ func (x *fastReflection_DevshardEscrow) NewField(fd protoreflect.FieldDescriptor
 		return protoreflect.ValueOfInt64(int64(0))
 	case "inference.inference.DevshardEscrow.slot_hosts":
 		list := [][]byte{}
-		return protoreflect.ValueOfList(&_DevshardEscrow_19_list{list: &list})
+		return protoreflect.ValueOfList(&_DevshardEscrow_20_list{list: &list})
 	case "inference.inference.DevshardEscrow.slot_index":
 		return protoreflect.ValueOfBytes(nil)
 	case "inference.inference.DevshardEscrow.creator_addr":
@@ -943,7 +943,7 @@ func (x *fastReflection_DevshardEscrow) ProtoMethods() *protoiface.Methods {
 			i--
 			dAtA[i] = 0x1
 			i--
-			dAtA[i] = 0xb2
+			dAtA[i] = 0xba
 		}
 		if len(x.CreatorAddr) > 0 {
 			i -= len(x.CreatorAddr)
@@ -952,7 +952,7 @@ func (x *fastReflection_DevshardEscrow) ProtoMethods() *protoiface.Methods {
 			i--
 			dAtA[i] = 0x1
 			i--
-			dAtA[i] = 0xaa
+			dAtA[i] = 0xb2
 		}
 		if len(x.SlotIndex) > 0 {
 			i -= len(x.SlotIndex)
@@ -961,7 +961,7 @@ func (x *fastReflection_DevshardEscrow) ProtoMethods() *protoiface.Methods {
 			i--
 			dAtA[i] = 0x1
 			i--
-			dAtA[i] = 0xa2
+			dAtA[i] = 0xaa
 		}
 		if len(x.SlotHosts) > 0 {
 			for iNdEx := len(x.SlotHosts) - 1; iNdEx >= 0; iNdEx-- {
@@ -971,7 +971,7 @@ func (x *fastReflection_DevshardEscrow) ProtoMethods() *protoiface.Methods {
 				i--
 				dAtA[i] = 0x1
 				i--
-				dAtA[i] = 0x9a
+				dAtA[i] = 0xa2
 			}
 		}
 		if x.ExecutionTimeout != 0 {
@@ -1529,7 +1529,7 @@ func (x *fastReflection_DevshardEscrow) ProtoMethods() *protoiface.Methods {
 						break
 					}
 				}
-			case 19:
+			case 20:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SlotHosts", wireType)
 				}
@@ -1561,7 +1561,7 @@ func (x *fastReflection_DevshardEscrow) ProtoMethods() *protoiface.Methods {
 				x.SlotHosts = append(x.SlotHosts, make([]byte, postIndex-iNdEx))
 				copy(x.SlotHosts[len(x.SlotHosts)-1], dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
-			case 20:
+			case 21:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SlotIndex", wireType)
 				}
@@ -1595,7 +1595,7 @@ func (x *fastReflection_DevshardEscrow) ProtoMethods() *protoiface.Methods {
 					x.SlotIndex = []byte{}
 				}
 				iNdEx = postIndex
-			case 21:
+			case 22:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field CreatorAddr", wireType)
 				}
@@ -1629,7 +1629,7 @@ func (x *fastReflection_DevshardEscrow) ProtoMethods() *protoiface.Methods {
 					x.CreatorAddr = []byte{}
 				}
 				iNdEx = postIndex
-			case 22:
+			case 23:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field AppHashRaw", wireType)
 				}
@@ -3607,10 +3607,10 @@ type DevshardEscrow struct {
 	// Storage form set by the keeper: each distinct slot host once as address
 	// bytes, one byte per slot indexing it, creator and app hash as raw bytes.
 	// Reads restore the strings; queries never return these.
-	SlotHosts   [][]byte `protobuf:"bytes,19,rep,name=slot_hosts,json=slotHosts,proto3" json:"slot_hosts,omitempty"`
-	SlotIndex   []byte   `protobuf:"bytes,20,opt,name=slot_index,json=slotIndex,proto3" json:"slot_index,omitempty"`
-	CreatorAddr []byte   `protobuf:"bytes,21,opt,name=creator_addr,json=creatorAddr,proto3" json:"creator_addr,omitempty"`
-	AppHashRaw  []byte   `protobuf:"bytes,22,opt,name=app_hash_raw,json=appHashRaw,proto3" json:"app_hash_raw,omitempty"`
+	SlotHosts   [][]byte `protobuf:"bytes,20,rep,name=slot_hosts,json=slotHosts,proto3" json:"slot_hosts,omitempty"`
+	SlotIndex   []byte   `protobuf:"bytes,21,opt,name=slot_index,json=slotIndex,proto3" json:"slot_index,omitempty"`
+	CreatorAddr []byte   `protobuf:"bytes,22,opt,name=creator_addr,json=creatorAddr,proto3" json:"creator_addr,omitempty"`
+	AppHashRaw  []byte   `protobuf:"bytes,23,opt,name=app_hash_raw,json=appHashRaw,proto3" json:"app_hash_raw,omitempty"`
 }
 
 func (x *DevshardEscrow) Reset() {
@@ -4047,13 +4047,13 @@ var file_inference_inference_devshard_escrow_proto_rawDesc = []byte{
 	0x2b, 0x0a, 0x11, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x69, 0x6d,
 	0x65, 0x6f, 0x75, 0x74, 0x18, 0x12, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x65, 0x78, 0x65, 0x63,
 	0x75, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x12, 0x1d, 0x0a, 0x0a,
-	0x73, 0x6c, 0x6f, 0x74, 0x5f, 0x68, 0x6f, 0x73, 0x74, 0x73, 0x18, 0x13, 0x20, 0x03, 0x28, 0x0c,
+	0x73, 0x6c, 0x6f, 0x74, 0x5f, 0x68, 0x6f, 0x73, 0x74, 0x73, 0x18, 0x14, 0x20, 0x03, 0x28, 0x0c,
 	0x52, 0x09, 0x73, 0x6c, 0x6f, 0x74, 0x48, 0x6f, 0x73, 0x74, 0x73, 0x12, 0x1d, 0x0a, 0x0a, 0x73,
-	0x6c, 0x6f, 0x74, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x14, 0x20, 0x01, 0x28, 0x0c, 0x52,
+	0x6c, 0x6f, 0x74, 0x5f, 0x69, 0x6e, 0x64, 0x65, 0x78, 0x18, 0x15, 0x20, 0x01, 0x28, 0x0c, 0x52,
 	0x09, 0x73, 0x6c, 0x6f, 0x74, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x12, 0x21, 0x0a, 0x0c, 0x63, 0x72,
-	0x65, 0x61, 0x74, 0x6f, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x18, 0x15, 0x20, 0x01, 0x28, 0x0c,
+	0x65, 0x61, 0x74, 0x6f, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x18, 0x16, 0x20, 0x01, 0x28, 0x0c,
 	0x52, 0x0b, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x41, 0x64, 0x64, 0x72, 0x12, 0x20, 0x0a,
-	0x0c, 0x61, 0x70, 0x70, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x5f, 0x72, 0x61, 0x77, 0x18, 0x16, 0x20,
+	0x0c, 0x61, 0x70, 0x70, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x5f, 0x72, 0x61, 0x77, 0x18, 0x17, 0x20,
 	0x01, 0x28, 0x0c, 0x52, 0x0a, 0x61, 0x70, 0x70, 0x48, 0x61, 0x73, 0x68, 0x52, 0x61, 0x77, 0x22,
 	0xac, 0x02, 0x0a, 0x16, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x48, 0x6f, 0x73, 0x74,
 	0x45, 0x70, 0x6f, 0x63, 0x68, 0x53, 0x74, 0x61, 0x74, 0x73, 0x12, 0x20, 0x0a, 0x0b, 0x70, 0x61,
