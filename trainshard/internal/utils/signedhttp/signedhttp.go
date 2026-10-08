@@ -36,10 +36,12 @@ type Guard struct {
 	clock    ports.Clock
 	window   time.Duration
 	audience vo.Address
+	endpoint vo.Endpoint
 }
 
-func New(verifier ports.Verifier, clock ports.Clock, window time.Duration, audience vo.Address) *Guard {
-	return &Guard{verifier: verifier, clock: clock, window: window, audience: audience}
+// endpoint is the one this daemon publishes on chain, the coordinator signs the one it took from there
+func New(verifier ports.Verifier, clock ports.Clock, window time.Duration, audience vo.Address, endpoint vo.Endpoint) *Guard {
+	return &Guard{verifier: verifier, clock: clock, window: window, audience: audience, endpoint: endpoint}
 }
 
 func (g *Guard) Wrap(next http.Handler) http.Handler {
@@ -78,7 +80,7 @@ func (g *Guard) authenticate(r *http.Request) (vo.Address, []byte, time.Time, er
 		return "", nil, time.Time{}, errBadSignature
 	}
 
-	payload := contract.SigningPayload(string(g.audience), r.Method, r.URL.Path, r.URL.RawQuery, timestamp, string(requestID), body)
+	payload := contract.SigningPayload(string(g.audience), string(g.endpoint), r.Method, r.URL.Path, r.URL.RawQuery, timestamp, string(requestID), body)
 	address, err := g.verifier.Recover(payload, signature)
 	if err != nil {
 		return "", nil, time.Time{}, errBadSignature

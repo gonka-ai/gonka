@@ -93,7 +93,7 @@ func (c *Client) request(ctx context.Context, participant vo.Participant, method
 	}
 
 	timestamp := c.clock.Now().UTC().Format(time.RFC3339)
-	signature := c.signer.Sign(contract.SigningPayload(string(participant), method, path, request.URL.RawQuery, timestamp, string(requestID), payload))
+	signature := c.signer.Sign(contract.SigningPayload(string(participant), base, method, path, request.URL.RawQuery, timestamp, string(requestID), payload))
 
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(contract.HeaderTimestamp, timestamp)

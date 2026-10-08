@@ -148,7 +148,7 @@ func serve() error {
 	})
 
 	mux := http.NewServeMux()
-	guard, logged := signedhttp.New(signer, clock, cfg.signatureWindow, vo.Address(cfg.participant)).Wrap, httpx.Log(log, clock)
+	guard, logged := signedhttp.New(signer, clock, cfg.signatureWindow, vo.Address(cfg.participant), cfg.endpoint).Wrap, httpx.Log(log, clock)
 	boundary := func(next http.Handler) http.Handler { return logged(guard(next)) }
 	runs.Mount(mux, boundary)
 	nodes.Mount(mux, boundary)

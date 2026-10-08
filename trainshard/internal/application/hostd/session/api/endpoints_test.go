@@ -122,7 +122,7 @@ func newServer(t *testing.T, chain *chainStub, streams *streamsStub) *httptest.S
 		Served:   servedStub{spent: map[string]bool{}},
 		Clock:    timex.NewFrozen(now),
 	})
-	module.Mount(mux, signedhttp.New(verifierStub{}, timex.NewFrozen(now), time.Minute, vo.Address(participant)).Wrap)
+	module.Mount(mux, signedhttp.New(verifierStub{}, timex.NewFrozen(now), time.Minute, vo.Address(participant), vo.Endpoint("http://host.example:8000")).Wrap)
 
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
