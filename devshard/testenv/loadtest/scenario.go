@@ -24,7 +24,8 @@ type Scenario struct {
 }
 
 type Diagnostics struct {
-	CPUProfiles []CPUProfileWindow `yaml:"cpu_profiles"`
+	CPUProfiles              []CPUProfileWindow `yaml:"cpu_profiles"`
+	DisablePeriodicSnapshots bool               `yaml:"disable_periodic_snapshots"`
 }
 type CPUProfileWindow struct {
 	StartAfter string `yaml:"start_after"`

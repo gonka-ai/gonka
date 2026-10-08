@@ -134,14 +134,15 @@ type MockOpenAINodeCfg struct {
 
 // VersiondCfg holds versiond supervisor defaults for compose.
 type VersiondCfg struct {
-	Mode            string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
-	VersionName     string `yaml:"version_name"`
-	HostBinaryMount string `yaml:"host_binary_mount"`
-	OverridePath    string `yaml:"override_path"`
-	PollInterval    string `yaml:"poll_interval"`
-	BinaryVersion   string `yaml:"binary_version"`
-	KeyringDir      string `yaml:"keyring_dir"`
-	KeyringPassword string `yaml:"keyring_password"`
+	Mode                     string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
+	VersionName              string `yaml:"version_name"`
+	HostBinaryMount          string `yaml:"host_binary_mount"`
+	OverridePath             string `yaml:"override_path"`
+	PollInterval             string `yaml:"poll_interval"`
+	BinaryVersion            string `yaml:"binary_version"`
+	KeyringDir               string `yaml:"keyring_dir"`
+	KeyringPassword          string `yaml:"keyring_password"`
+	DisablePeriodicSnapshots bool   `yaml:"disable_periodic_snapshots,omitempty"`
 }
 
 // VersiondRouterCfg is the sticky nginx router in front of versiond instances.

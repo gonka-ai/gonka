@@ -1,5 +1,5 @@
 schema_version: v1
-scenario: long-escrow-32rps-30m
+scenario: long-escrow-32rps-30m-no-snapshots
 seed: 42
 
 topology:
@@ -42,7 +42,6 @@ gateway:
     secondary_wait_after_winner: 30s
   escrow_rotation:
     enabled: false
-    # Gateway admission has its own limit, independent of chain max_nonce.
     nonce_deactivation_limit: 1000000
 
 assertions:
@@ -59,9 +58,8 @@ assertions:
 drain_timeout: 2m
 
 diagnostics:
+  disable_periodic_snapshots: true
   cpu_profiles:
-    # Capture the baseline, then comparable snapshots at 10, 20 and 30 minutes.
-    # The last window ends at the workload boundary.
     - start_after: 0s
       duration: 30s
     - start_after: 10m

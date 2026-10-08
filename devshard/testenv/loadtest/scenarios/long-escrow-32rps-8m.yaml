@@ -59,6 +59,7 @@ assertions:
 drain_timeout: 2m
 
 diagnostics:
+  disable_periodic_snapshots: true
   cpu_profiles:
     - start_after: 5s
       duration: 30s

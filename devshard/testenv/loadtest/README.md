@@ -79,12 +79,24 @@ make -C devshard/testenv loadtest SCENARIO=fresh-escrow-32rps-2m
 30 minutes (57,600 scheduled requests), with `max_in_flight: 64` and escrow
 rotation disabled. Both nonce limits remain 1,000,000. Latency is reported in
 one-minute windows; process metrics are sampled every second. CPU profiles of
-gateway and all host replicas cover 5–35s, 80–110s, and 29m–29m30s, retaining
-the early windows for comparison with the two-minute runs. Drain is two minutes;
-the automatic overall timeout is 42 minutes. Run from the repository root:
+gateway and all host replicas cover 0–30s, 10m–10m30s, 20m–20m30s, and
+29m30s–30m. This provides a baseline plus snapshots at approximately 10, 20,
+and 30 minutes while keeping every profile window inside the workload. Drain is
+two minutes; the automatic overall timeout is 42 minutes. Run from the
+repository root:
 
 ```bash
 make -C devshard/testenv loadtest SCENARIO=long-escrow-32rps-30m
+```
+
+`long-escrow-32rps-30m-no-snapshots` is the diagnostic A/B variant of the
+30-minute run. It keeps the same `32 RPS` and `max_in_flight: 64`, but disables
+runtime DevShard host snapshots through a test-only switch. Use it only to
+measure whether snapshot preparation contributes to late latency growth; it
+does not represent production recovery or durability behavior. Run it with:
+
+```bash
+make -C devshard/testenv loadtest SCENARIO=long-escrow-32rps-30m-no-snapshots
 ```
 
 `diagnostics.cpu_profiles` defines ordered, non-overlapping `start_after` and

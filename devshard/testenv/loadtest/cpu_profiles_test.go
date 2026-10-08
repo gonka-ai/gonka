@@ -104,6 +104,27 @@ func TestFreshScenarioAndProfileWindows(t *testing.T) {
 	require.ErrorContains(t, scenario.Validate(), "within workload")
 }
 
+func TestLongRunProfileWindows(t *testing.T) {
+	scenario, err := LoadScenario("scenarios/long-escrow-32rps-30m.yaml")
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Minute, scenario.Duration())
+	require.Equal(t, []CPUProfileWindow{
+		{StartAfter: "0s", Duration: "30s"},
+		{StartAfter: "10m", Duration: "30s"},
+		{StartAfter: "20m", Duration: "30s"},
+		{StartAfter: "29m30s", Duration: "30s"},
+	}, scenario.Diagnostics.CPUProfiles)
+}
+
+func TestLongRunNoSnapshotsScenario(t *testing.T) {
+	scenario, err := LoadScenario("scenarios/long-escrow-32rps-30m-no-snapshots.yaml")
+	require.NoError(t, err)
+	require.True(t, scenario.Diagnostics.DisablePeriodicSnapshots)
+	require.Equal(t, 64, scenario.Workload.MaxInFlight)
+	require.Equal(t, 32.0, scenario.Workload.Traffic.RPS)
+	require.Len(t, scenario.Diagnostics.CPUProfiles, 4)
+}
+
 func TestTenSecondLatencyWindows(t *testing.T) {
 	scenario := testScenario()
 	scenario.Workload.Duration = "25s"

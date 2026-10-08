@@ -417,6 +417,7 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 		return err
 	}
 	cfg.Versiond.Mode = scenario.Topology.VersiondMode
+	cfg.Versiond.DisablePeriodicSnapshots = scenario.Diagnostics.DisablePeriodicSnapshots
 	cfg.Postgres.PerParticipant = scenario.Topology.Storage == "per_participant"
 	configureParticipants(cfg, scenario.Topology.Participants)
 	cfg.Params.MaxNonce = scenario.Topology.Chain.MaxNonce
