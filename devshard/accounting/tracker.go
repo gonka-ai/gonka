@@ -521,6 +521,17 @@ func (t *Tracker) ErrorCounts() (recording, writer uint64) {
 	return t.errCount, t.wrCount
 }
 
+// RetainsEscrow reports whether the escrow is still in the ledger, which retention and purges shrink.
+func (t *Tracker) RetainsEscrow(escrowID string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	_, retained := t.escrows[escrowID]
+	return retained
+}
+
 func (t *Tracker) withEscrow(escrowID string, fn func(*escrowState) error) error {
 	return t.withWrite(func() error {
 		escrowID = strings.TrimSpace(escrowID)

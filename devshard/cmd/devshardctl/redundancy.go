@@ -59,6 +59,8 @@ var (
 	StreamingAttemptHardTimeout = 30 * time.Minute
 )
 
+const DefaultMaxSpeculativeAttempts = 2
+
 const toolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
 
 // modelContextLimits mirrors each model's --max-model-len in the chain's model_args.
@@ -501,7 +503,11 @@ func normalizeRedundancySpeedPolicy(policy string) string {
 	}
 }
 
-var maxSpeculativeAttempts atomic.Int64
+var maxSpeculativeAttempts = func() *atomic.Int64 {
+	attempts := new(atomic.Int64)
+	attempts.Store(DefaultMaxSpeculativeAttempts)
+	return attempts
+}()
 
 func SetMaxSpeculativeAttempts(v int) {
 	maxSpeculativeAttempts.Store(int64(v))
@@ -3941,7 +3947,7 @@ func contextRefusalBeyondModelLimit(message string, modelContextLimit uint64) bo
 	if modelContextLimit == 0 || hostContextLimit == 0 {
 		return false
 	}
-	return hostContextLimit >= modelContextLimit || parseContextTotalRequested(message) > modelContextLimit
+	return hostContextLimit >= modelContextLimit || max(parseContextTotalRequested(message), parseContextRequested(message)) > modelContextLimit
 }
 
 func isToolChoiceCapabilityError(msg string) bool {
@@ -3973,6 +3979,10 @@ func parseContextLengthLimit(msg string) uint64 {
 
 func parseContextTotalRequested(msg string) uint64 {
 	return parseUintAfterMarker(msg, "for a total of at least ")
+}
+
+func parseContextRequested(msg string) uint64 {
+	return parseUintAfterMarker(msg, "you requested ")
 }
 
 func parseUintAfterMarker(msg, marker string) uint64 {

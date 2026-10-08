@@ -14,17 +14,19 @@ import (
 	"devshard/accounting"
 )
 
+const defaultAccountingRetentionEpochs = 2
+
 // openAccountingTracker returns nil when stats are off, which switches off the whole subsystem rather
 // than just the listener: the snapshots, the metrics collector and the API all hang off the tracker,
 // and every one of them already handles its absence.
-func openAccountingTracker(baseStorageDir string) *accounting.Tracker {
+func openAccountingTracker(baseStorageDir string, retentionEpochs uint64) *accounting.Tracker {
 	if !readBoolEnv("DEVSHARD_STATS_ENABLED", true) {
 		log.Printf("devshard accounting disabled by DEVSHARD_STATS_ENABLED")
 		return nil
 	}
 	tracker, err := accounting.OpenTracker(
 		filepath.Join(baseStorageDir, "accounting.db"),
-		accountingRetentionEpochs(),
+		retentionEpochs,
 		accountingSnapshotInterval(),
 	)
 	if err != nil {
@@ -35,10 +37,10 @@ func openAccountingTracker(baseStorageDir string) *accounting.Tracker {
 }
 
 func accountingRetentionEpochs() uint64 {
-	value := readInt64Env("DEVSHARD_STATS_RETENTION_EPOCHS", 0)
+	value := readInt64Env("DEVSHARD_STATS_RETENTION_EPOCHS", defaultAccountingRetentionEpochs)
 	if value < 0 {
-		log.Printf("invalid DEVSHARD_STATS_RETENTION_EPOCHS=%d, using 0", value)
-		return 0
+		log.Printf("invalid DEVSHARD_STATS_RETENTION_EPOCHS=%d, using %d", value, defaultAccountingRetentionEpochs)
+		return defaultAccountingRetentionEpochs
 	}
 	return uint64(value)
 }
