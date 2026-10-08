@@ -161,7 +161,7 @@ func assertCommittedMatchesMarshalPath(t *testing.T, sm *StateMachine) {
 	}
 	fromStructs, err := computeInferencesHash(st.Inferences)
 	require.NoError(t, err)
-	folded := xorInferencesHashFromEntries(entries)
+	folded := sumLivePointsFromEntries(entries)
 	require.Equal(t, fromStructs, folded[:])
 
 	hs := types.HeightSyncEscrowCommitFromState(&st)
@@ -261,31 +261,31 @@ func timeoutTx(t *testing.T, hosts []*signing.Secp256k1Signer, escrowID string, 
 	})
 }
 
-func TestLiveXORFoldsOnlyChangedEntries(t *testing.T) {
+func TestLiveSumFoldsOnlyChangedEntries(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, _ := newTestSM(t, hosts, 10000)
 	_, err := sm.ApplyLocal(1, []*types.DevshardTx{startTx(1)})
 	require.NoError(t, err)
 
 	sm.mu.Lock()
-	before := sm.liveEntryXOR
+	before := sm.liveEntrySum
 	require.NoError(t, sm.updateCommittedEntryLocked(1, sm.state.Inferences[1]))
-	require.Equal(t, before, sm.liveEntryXOR, "rewriting the same bytes must not fold")
+	require.Equal(t, before, sm.liveEntrySum, "rewriting the same bytes must not fold")
 
 	j, err := sm.beginJournalLocked()
 	require.NoError(t, err)
 	changed := *sm.state.Inferences[1]
 	changed.Model = "other-model"
 	require.NoError(t, sm.updateCommittedEntryLocked(1, &changed))
-	require.NotEqual(t, before, sm.liveEntryXOR)
+	require.NotEqual(t, before, sm.liveEntrySum)
 	sm.closeJournalLocked(j)
-	require.Equal(t, before, sm.liveEntryXOR)
-	require.Equal(t, before, xorInferencesHashFromEntries(sm.committedEntries))
+	require.Equal(t, before, sm.liveEntrySum)
+	require.Equal(t, before, sumLivePointsFromEntries(sm.committedEntries))
 	sm.mu.Unlock()
 
 	require.NoError(t, sm.SealInference(1))
 	sm.mu.Lock()
-	require.Equal(t, [32]byte{}, sm.liveEntryXOR)
+	require.Equal(t, [32]byte{}, sm.liveEntrySum)
 	require.Empty(t, sm.committedEntries)
 	sm.mu.Unlock()
 }
@@ -316,7 +316,7 @@ func TestLiveHashRejectsSwappedCommittedIDs(t *testing.T) {
 }
 
 // A failed observability write happens after the seal is complete, so the
-// record, its committed entry, and its XOR digest are all gone together.
+// record, its committed entry, and its point in the live sum are all gone together.
 func TestSealInferenceObsFailureKeepsLiveSetConsistent(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
@@ -333,7 +333,7 @@ func TestSealInferenceObsFailureKeepsLiveSetConsistent(t *testing.T) {
 	require.Empty(t, liveIDs(sm))
 	require.Empty(t, sm.ExportCommittedEntries())
 	sm.mu.RLock()
-	require.Equal(t, [32]byte{}, sm.liveEntryXOR)
+	require.Equal(t, [32]byte{}, sm.liveEntrySum)
 	sm.mu.RUnlock()
 
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{startTx(2)})

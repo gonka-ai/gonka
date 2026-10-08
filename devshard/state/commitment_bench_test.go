@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"hash"
 	"testing"
-
-	"google.golang.org/protobuf/encoding/protowire"
 )
 
 const (
@@ -223,13 +221,6 @@ func benchFrames(b *testing.B, n int) [][]byte {
 		frames[i] = frameEntry(entries[uint64(i+1)])
 	}
 	return frames
-}
-
-func frameEntry(entry []byte) []byte {
-	buf := make([]byte, 0, len(entry)+4)
-	buf = protowire.AppendTag(buf, 1, protowire.BytesType)
-	buf = protowire.AppendVarint(buf, uint64(len(entry)))
-	return append(buf, entry...)
 }
 
 func hashFrames(frames [][]byte) [32]byte {

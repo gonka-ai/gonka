@@ -105,12 +105,12 @@ func (sm *StateMachine) updateCommittedEntryLocked(id uint64, rec *types.Inferen
 			sm.syncOwedLocked(id)
 			return nil
 		}
-		sm.xorEntryLocked(prev)
+		sm.subLiveEntryLocked(prev)
 	}
 	if j := sm.journal; j != nil {
 		j.committed.touch(sm.committedEntries, id)
 	}
-	sm.xorEntryLocked(entry)
+	sm.addLiveEntryLocked(entry)
 	sm.committedEntries[id] = entry
 	sm.syncOwedLocked(id)
 	return nil
@@ -124,35 +124,36 @@ func (sm *StateMachine) deleteCommittedEntryLocked(id uint64) {
 	if j := sm.journal; j != nil {
 		j.committed.touch(sm.committedEntries, id)
 	}
-	sm.xorEntryLocked(prev)
+	sm.subLiveEntryLocked(prev)
 	delete(sm.committedEntries, id)
 }
 
-func (sm *StateMachine) xorEntryLocked(entry []byte) {
-	digest := entryFrameDigest(entry)
-	for i := range sm.liveEntryXOR {
-		sm.liveEntryXOR[i] ^= digest[i]
-	}
+func (sm *StateMachine) addLiveEntryLocked(entry []byte) {
+	sm.liveEntrySum = addLivePoint(sm.liveEntrySum, entry)
+}
+
+func (sm *StateMachine) subLiveEntryLocked(entry []byte) {
+	sm.liveEntrySum = subLivePoint(sm.liveEntrySum, entry)
 }
 
 // applyCommittedMapDiffLocked folds only the ids whose stored bytes differ.
-// Identical blobs are left out of the XOR, so a snapshot refresh of an
+// Identical blobs are left out of the sum, so a snapshot refresh of an
 // unchanged record cannot cancel it.
 func (sm *StateMachine) applyCommittedMapDiffLocked(prev, next map[uint64][]byte) {
 	for id, oldEntry := range prev {
 		newEntry, ok := next[id]
 		if !ok {
-			sm.xorEntryLocked(oldEntry)
+			sm.subLiveEntryLocked(oldEntry)
 			continue
 		}
 		if !bytes.Equal(oldEntry, newEntry) {
-			sm.xorEntryLocked(oldEntry)
-			sm.xorEntryLocked(newEntry)
+			sm.subLiveEntryLocked(oldEntry)
+			sm.addLiveEntryLocked(newEntry)
 		}
 	}
 	for id, newEntry := range next {
 		if _, ok := prev[id]; !ok {
-			sm.xorEntryLocked(newEntry)
+			sm.addLiveEntryLocked(newEntry)
 		}
 	}
 }
@@ -173,7 +174,7 @@ func (sm *StateMachine) rebuildCommittedEntriesLocked() {
 	}
 	// Rebuild is the recovery path: the total is the walk of the new map,
 	// including when a previous total no longer matches the blobs.
-	sm.liveEntryXOR = xorInferencesHashFromEntries(next)
+	sm.liveEntrySum = sumLivePointsFromEntries(next)
 	sm.committedEntries = next
 	sm.rebuildOwedLocked()
 }
@@ -229,8 +230,8 @@ func (sm *StateMachine) rootComponentsLocked() (rootComponents, error) {
 	}, nil
 }
 
-// liveInferencesHashLocked returns the running XOR of the committed frames.
-// The total is maintained when the map changes, so this hashes nothing. The
+// liveInferencesHashLocked returns the running point-sum of the committed
+// frames. The total is maintained when the map changes, so this hashes nothing. The
 // id sets must still match: equal sizes plus every live id present means the
 // total covers exactly the live records. A mismatch is a broken invariant:
 // return it and let the caller roll the diff back.
@@ -245,8 +246,8 @@ func (sm *StateMachine) liveInferencesHashLocked() ([]byte, error) {
 			return nil, fmt.Errorf("committed inference entries missing live inference %d", id)
 		}
 	}
-	out := make([]byte, len(sm.liveEntryXOR))
-	copy(out, sm.liveEntryXOR[:])
+	out := make([]byte, len(sm.liveEntrySum))
+	copy(out, sm.liveEntrySum[:])
 	return out, nil
 }
 
