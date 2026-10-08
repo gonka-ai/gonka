@@ -98,11 +98,13 @@ func TestExecutorFault_ForgedChallengeFailsEvidenceChecks(t *testing.T) {
 	require.NotNil(t, confirm)
 	require.Equal(t, uint64(1), confirm.InferenceId)
 	require.Equal(t, resp.Receipt, confirm.ExecutorSig, "the forged confirm matches the forged receipt, so verifiers reach the signature check")
-	require.ErrorIs(t, env.server.host.CheckExecutorReceipt(record, confirm), types.ErrInvalidExecutorSig)
+	require.ErrorIs(t, env.server.host.CheckEvidence(record, txs[0]), types.ErrInvalidExecutorSig)
 
 	finish := txs[1].GetFinishInference()
 	require.NotNil(t, finish)
 	require.Equal(t, "escrow-1", finish.EscrowId)
 	require.Equal(t, record.ExecutorSlot, finish.ExecutorSlot)
-	require.Error(t, env.server.host.CheckFinishProposerSig(finish))
+	started := *record
+	started.Status = types.StatusStarted
+	require.Error(t, env.server.host.CheckEvidence(&started, txs[1]))
 }

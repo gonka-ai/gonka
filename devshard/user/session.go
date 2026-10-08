@@ -947,25 +947,10 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		})
 	}
 
-	// Gossiped mempool may carry finishes for other nonces; a timed-out record
-	// is not treated as finished.
-	for _, tx := range resp.Mempool {
-		finish := tx.GetFinishInference()
-		if finish == nil {
-			continue
-		}
-		outcome, tracked := s.nonceStates[finish.InferenceId]
-		if !tracked {
-			continue
-		}
-		timedOut := false
-		if s.sm != nil {
-			if rec, ok := s.sm.Inference(finish.InferenceId); ok && rec.Status == types.StatusTimedOut {
-				timedOut = true
-			}
-		}
-		outcome.finished = !timedOut
-	}
+	// Gossiped mempool may carry finishes for other nonces. Only a finish that
+	// closes its record counts: one apply would reject must not skip the
+	// timeout.
+	s.markFinishedLocked(s.finishProbesLocked(resp.Mempool))
 
 	if outcome, ok := s.nonceStates[inferenceNonce]; ok && resp.Receipt != nil && resp.ConfirmedAt > 0 {
 		outcome.confirmedAt = resp.ConfirmedAt
@@ -2176,6 +2161,124 @@ func (s *Session) rejectUnverifiedHostTx(tx *types.DevshardTx) error {
 	return s.sm.RejectFinishProposerSigLocal(fi)
 }
 
+// finishProbe is one mempool Finish whose nonce the gateway tracks. closed is
+// set when the record is already past the timeout states. Otherwise rec and
+// confirm are the inputs CheckEvidence shares with verifiers.
+type finishProbe struct {
+	id          uint64
+	rec         *types.InferenceRecord
+	confirm, tx *types.DevshardTx
+	closed      bool
+}
+
+// finishProbesLocked snapshots the finishes in mempool that can close a tracked
+// nonce. Caller must hold s.mu.
+func (s *Session) finishProbesLocked(mempool []*types.DevshardTx) []finishProbe {
+	var out []finishProbe
+	for _, tx := range mempool {
+		fi := tx.GetFinishInference()
+		if fi == nil || s.sm == nil {
+			continue
+		}
+		outcome, tracked := s.nonceStates[fi.InferenceId]
+		if !tracked || outcome.finished {
+			continue
+		}
+		rec, ok := s.sm.Inference(fi.InferenceId)
+		if !ok {
+			continue
+		}
+		p := finishProbe{id: fi.InferenceId, tx: tx, rec: rec}
+		switch rec.Status {
+		case types.StatusFinished, types.StatusChallenged, types.StatusValidated, types.StatusInvalidated:
+			p.closed = true
+		case types.StatusStarted:
+		case types.StatusPending:
+			p.confirm = s.pendingConfirmLocked(fi.InferenceId)
+		default:
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// markFinishedLocked sets the nonce finished when the record is already closed
+// or the finish would apply. Caller must hold s.mu. The decision is
+// CheckEvidenceCached: the same checks a verifier runs, without the warm-key
+// resolver, so a host response never waits on a chain query.
+func (s *Session) markFinishedLocked(probes []finishProbe) {
+	for _, p := range probes {
+		outcome, tracked := s.nonceStates[p.id]
+		if !tracked || outcome.finished {
+			continue
+		}
+		outcome.finished = p.closed || s.evidenceApplies(p.rec, p.confirm, p.tx)
+	}
+}
+
+// evidenceApplies reports whether tx would apply to rec. confirm is the
+// ConfirmStart sequenced ahead of a finish when rec is still pending. The
+// sequence and the checks are the ones verifiers use. The resolver stays off:
+// an unbound warm key does not close the nonce, and the timeout vote asks the
+// resolver instead.
+func (s *Session) evidenceApplies(rec *types.InferenceRecord, confirm, tx *types.DevshardTx) bool {
+	if s.sm == nil {
+		return false
+	}
+	seq := state.EvidenceSequence(rec, confirm, tx)
+	if len(seq) == 0 {
+		return false
+	}
+	return s.sm.CheckEvidenceCached(rec, seq...) == nil
+}
+
+// pendingConfirmForLocked is the queued ConfirmStart a pending finish is
+// checked behind. Caller must hold s.mu.
+func (s *Session) pendingConfirmForLocked(rec *types.InferenceRecord, tx *types.DevshardTx) *types.DevshardTx {
+	fi := tx.GetFinishInference()
+	if fi == nil || rec == nil || rec.Status != types.StatusPending {
+		return nil
+	}
+	return s.pendingConfirmLocked(fi.InferenceId)
+}
+
+// pendingConfirmLocked returns the queued ConfirmStart for inferenceID, if any.
+// Caller must hold s.mu.
+func (s *Session) pendingConfirmLocked(inferenceID uint64) *types.DevshardTx {
+	for _, tx := range s.pendingTxs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+// nonceClosed reports whether the live record for nonce has left the states a
+// timeout acts on: it finished or already timed out.
+func (s *Session) nonceClosed(nonce uint64) bool {
+	rec, ok := s.sm.GetInference(nonce)
+	return ok && rec.Status != types.StatusPending && rec.Status != types.StatusStarted
+}
+
+func (s *Session) nonceStarted(nonce uint64) bool {
+	rec, ok := s.sm.GetInference(nonce)
+	return ok && rec.Status == types.StatusStarted
+}
+
+// closedByPendingFinish publishes a queued Finish for nonce and reports whether
+// the record is closed afterwards. A failed send leaves the finish queued for
+// the check after the deadline.
+func (s *Session) closedByPendingFinish(ctx context.Context, nonce uint64) bool {
+	s.mu.Lock()
+	queued := HasMsgFinish(s.pendingTxs, nonce)
+	s.mu.Unlock()
+	if !queued || s.SendPendingDiff(ctx) != nil {
+		return false
+	}
+	return s.nonceClosed(nonce)
+}
+
 // recoveryHostIdx marks a tx recovered from a timeout vote rather than read off
 // one host's response, so there is no response envelope or owning slot set.
 const recoveryHostIdx = -1
@@ -2203,8 +2306,12 @@ func (s *Session) addPendingFromHostLocked(hostIdx int, resp *host.HostResponse,
 	// signature recovery is far more expensive than the map lookup that would
 	// discard the result anyway. The envelope filter below can swap tx for a
 	// stamped copy, but never changes its dedup key.
-	if key := devshardTxKey(tx); key != "" && s.txKeyQueuedOrApplied(key) {
-		return
+	key := devshardTxKey(tx)
+	replace := -1
+	if key != "" && s.txKeyQueuedOrApplied(key) {
+		if replace = s.replaceableQueuedLocked(key, tx); replace < 0 {
+			return
+		}
 	}
 	if err := s.rejectUnverifiedHostTx(tx); err != nil {
 		// A tx for an inference the sequencer no longer tracks is ordinary
@@ -2234,7 +2341,42 @@ func (s *Session) addPendingFromHostLocked(hostIdx int, resp *host.HostResponse,
 		}
 		tx = kept[0]
 	}
+	if replace >= 0 {
+		s.pendingTxs[replace] = tx
+		return
+	}
 	s.addPendingTx(tx)
+}
+
+// replaceableQueuedLocked returns the index of the queued tx with key when tx
+// should take its place, or -1. The first copy of a ConfirmStart or Finish
+// holds its key until compose, so a copy apply would reject must not shadow
+// one apply would accept: the rejected copy is dropped at compose and the
+// accepted one is gone. Byte-equal copies, the common case, cost no signature
+// check. Caller must hold s.mu.
+func (s *Session) replaceableQueuedLocked(key string, tx *types.DevshardTx) int {
+	if _, applied := s.appliedTxKeys[key]; applied || s.sm == nil {
+		return -1
+	}
+	if tx.GetConfirmStart() == nil && tx.GetFinishInference() == nil {
+		return -1
+	}
+	for i, queued := range s.pendingTxs {
+		if devshardTxKey(queued) != key {
+			continue
+		}
+		if proto.Equal(queued, tx) {
+			return -1
+		}
+		inferenceID, _ := hostTxInferenceID(tx)
+		rec, ok := s.sm.Inference(inferenceID)
+		if !ok || s.evidenceApplies(rec, s.pendingConfirmForLocked(rec, queued), queued) ||
+			!s.evidenceApplies(rec, s.pendingConfirmForLocked(rec, tx), tx) {
+			return -1
+		}
+		return i
+	}
+	return -1
 }
 
 func (s *Session) ownSlotsLocked(hostIdx int) map[uint32]struct{} {
@@ -2941,8 +3083,9 @@ func (s *Session) hostParticipantKeyLocked(hostIdx int) string {
 	return strings.TrimSpace(s.group[hostIdx].ValidatorAddress)
 }
 
-// IsNonceFinished returns true if ProcessResponse observed MsgFinishInference
-// for the given nonce. Must be called after ProcessResponse.
+// IsNonceFinished returns true if ProcessResponse observed a Finish that closes
+// the nonce's record: one already applied, or one CheckEvidence accepts now.
+// Must be called after ProcessResponse.
 func (s *Session) IsNonceFinished(nonce uint64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2967,11 +3110,14 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		base := []any{"escrow", s.escrowID, "nonce", nonce, "host", hostID}
 		return append(base, extra...)
 	}
+	closed := func() (TimeoutResult, error) {
+		logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_closed")...)
+		return TimeoutResult{Outcome: "skipped", DetailReason: "nonce_closed"}, nil
+	}
+	if s.nonceClosed(nonce) {
+		return closed()
+	}
 
-	// A canceled wait leaves Reason empty, because Reason means the deadline was
-	// reached and callers count an inference timeout from it. Outcome and
-	// DetailReason still report the skip.
-	var reason types.TimeoutReason
 	if reasonLabel == "execution" {
 		// A receipt moves the inference to Started. Publish its pending
 		// ConfirmStart before asking peers to verify an execution timeout so
@@ -2984,20 +3130,50 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 				return TimeoutResult{}, fmt.Errorf("publish receipt before execution timeout: %w", err)
 			}
 		}
+	}
+	if s.closedByPendingFinish(ctx, nonce) {
+		return closed()
+	}
 
+	// A canceled wait leaves Reason empty, because Reason means the deadline was
+	// reached and callers count an inference timeout from it. Outcome and
+	// DetailReason still report the skip.
+	var reason types.TimeoutReason
+	// A finish can land while the deadline is still ahead. The wait rechecks the
+	// record and publishes a queued finish so the record can close before the
+	// deadline; the check below then skips the vote.
+	recordClosed := func() bool {
+		if s.nonceClosed(nonce) {
+			return true
+		}
+		s.mu.Lock()
+		queued := HasMsgFinish(s.pendingTxs, nonce)
+		s.mu.Unlock()
+		return queued && s.closedByPendingFinish(ctx, nonce)
+	}
+	if reasonLabel == "execution" {
 		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
 			logging.Stage(ctx, "timeout_waiting", logFields("reason", "execution", "remaining_ms", time.Until(deadline).Milliseconds())...)
-		}) {
+		}, recordClosed) {
 			return TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
 	} else {
 		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
 			logging.Stage(ctx, "timeout_waiting", logFields("reason", "refused", "remaining_ms", time.Until(deadline).Milliseconds())...)
-		}) {
+		}, recordClosed) {
 			return TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
+	}
+
+	if s.nonceClosed(nonce) {
+		return closed()
+	}
+	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && s.nonceStarted(nonce) {
+		// The receipt landed while waiting. The executor now owes a finish,
+		// so the execution deadline applies instead.
+		return s.HandleTimeout(ctx, nonce, sendTime, payload)
 	}
 
 	result := TimeoutResult{Reason: timeoutReasonLogLabel(reason)}
@@ -3021,8 +3197,12 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 				logging.Stage(ctx, "timeout_recovery_send_failed", logFields("reason", result.Reason, "error", err)...)
 				return result, fmt.Errorf("publish pending finish before execution timeout: %w", err)
 			}
-			logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
-			return result, nil
+			if s.recoveryLanded(nonce, reason) {
+				logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
+				return result, nil
+			}
+			// The pending finish did not apply. It is not evidence the work
+			// completed, so the vote still runs.
 		}
 	}
 
@@ -3072,9 +3252,10 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	}
 
 	recovery = host.RecoveryTxsFor(recovery, nonce)
-	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && len(recovery) > 0 {
+	relevant := recoveryTxsForReason(reason, recovery)
+	if len(relevant) > 0 {
 		s.mu.Lock()
-		for _, tx := range recovery {
+		for _, tx := range relevant {
 			s.addPendingFromHostLocked(recoveryHostIdx, nil, tx)
 		}
 		s.mu.Unlock()
@@ -3082,8 +3263,17 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 			logging.Stage(ctx, "timeout_recovery_send_failed", logFields("reason", result.Reason, "error", err)...)
 			return result, fmt.Errorf("publish timeout recovery: %w", err)
 		}
-		logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
-		return result, nil
+		if s.recoveryLanded(nonce, reason) {
+			logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
+			if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && s.nonceStarted(nonce) {
+				// A recovered receipt starts the record, and the executor
+				// still owes a finish by the execution deadline.
+				return s.HandleTimeout(ctx, nonce, sendTime, payload)
+			}
+			return result, nil
+		}
+		// The txs were returned but did not apply. They are not evidence the
+		// work completed, so the vote stands.
 	}
 
 	if verifierError != "" {
@@ -3098,6 +3288,51 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	}
 	logging.Stage(ctx, "timeout_insufficient_votes", logFields("reason", result.Reason)...)
 	return result, fmt.Errorf("inference %d timed out but insufficient votes", nonce)
+}
+
+// recoveryTxsForReason keeps the transactions a rejected vote can still
+// sequence. A refusal carries the receipt (and a finish, when one verified).
+// An execution timeout carries only a finish: a ConfirmStart cannot move a
+// record that is already Started.
+func recoveryTxsForReason(reason types.TimeoutReason, recovery []*types.DevshardTx) []*types.DevshardTx {
+	var out []*types.DevshardTx
+	for _, tx := range recovery {
+		if tx == nil {
+			continue
+		}
+		switch reason {
+		case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
+			if tx.GetFinishInference() != nil {
+				out = append(out, tx)
+			}
+		case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
+			out = append(out, tx)
+		}
+	}
+	return out
+}
+
+// recoveryLanded reports whether the published recovery changed the inference
+// the way that reason requires. A finish that was copied but rejected by
+// apply leaves the record Started, which is not recovery.
+func (s *Session) recoveryLanded(nonce uint64, reason types.TimeoutReason) bool {
+	rec, ok := s.sm.GetInference(nonce)
+	if !ok {
+		return false
+	}
+	switch reason {
+	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
+		switch rec.Status {
+		case types.StatusFinished, types.StatusChallenged, types.StatusValidated, types.StatusInvalidated:
+			return true
+		default:
+			return false
+		}
+	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
+		return rec.Status != types.StatusPending && rec.Status != types.StatusTimedOut
+	default:
+		return false
+	}
 }
 
 // refusalDeadlineUnreachable reports whether a refusal vote is already lost. A verifier measures the
@@ -3116,10 +3351,18 @@ func (s *Session) TimeoutDeadline(nonce uint64, sendTime time.Time) (string, tim
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cfg := s.sm.Config()
-	if outcome := s.nonceStates[nonce]; outcome != nil && outcome.confirmedAt > 0 {
-		return "execution", time.Unix(outcome.confirmedAt, 0).Add(
+	executionFrom := func(confirmedAt int64) (string, time.Time) {
+		return "execution", time.Unix(confirmedAt, 0).Add(
 			time.Duration(cfg.ExecutionTimeout)*time.Second + TimeoutBuffer,
 		)
+	}
+	if outcome := s.nonceStates[nonce]; outcome != nil && outcome.confirmedAt > 0 {
+		return executionFrom(outcome.confirmedAt)
+	}
+	// A receipt recovered through a timeout vote reaches state without a host
+	// response, so the applied record carries the only confirmed_at.
+	if rec, ok := s.sm.GetInference(nonce); ok && rec.Status == types.StatusStarted {
+		return executionFrom(rec.ConfirmedAt)
 	}
 	return "refused", sendTime.Add(
 		time.Duration(cfg.RefusalTimeout)*time.Second + TimeoutBuffer,
@@ -3199,7 +3442,14 @@ func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, r
 // TimeoutHeartbeatInterval controls how often timeout_waiting logs are emitted.
 var TimeoutHeartbeatInterval = time.Minute
 
-func sleepUntilDeadlineWithHeartbeat(ctx context.Context, deadline time.Time, heartbeat func()) bool {
+// timeoutClosePollInterval is how often a deadline wait rechecks whether the
+// record has already closed. Zero disables the recheck.
+var timeoutClosePollInterval = 250 * time.Millisecond
+
+// sleepUntilDeadlineWithHeartbeat waits until deadline and returns true. It
+// returns false when ctx ends first. done, when set, is polled; once it
+// reports, the wait also returns true and the caller rechecks the record.
+func sleepUntilDeadlineWithHeartbeat(ctx context.Context, deadline time.Time, heartbeat func(), done func() bool) bool {
 	d := time.Until(deadline)
 	if d <= 0 {
 		return true
@@ -3212,12 +3462,25 @@ func sleepUntilDeadlineWithHeartbeat(ctx context.Context, deadline time.Time, he
 		defer ticker.Stop()
 		heartbeatC = ticker.C
 	}
+	var doneC <-chan time.Time
+	if done != nil && timeoutClosePollInterval > 0 {
+		if done() {
+			return true
+		}
+		ticker := time.NewTicker(timeoutClosePollInterval)
+		defer ticker.Stop()
+		doneC = ticker.C
+	}
 	for {
 		select {
 		case <-timer.C:
 			return true
 		case <-heartbeatC:
 			heartbeat()
+		case <-doneC:
+			if done() {
+				return true
+			}
 		case <-ctx.Done():
 			return false
 		}
