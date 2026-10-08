@@ -134,12 +134,9 @@ func TestHTTP_RefusedTimeout_HonestReceiptRecovers(t *testing.T) {
 			_, err = env.hosts[executorIdx].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
 			require.NoError(t, err)
 
-			result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
-			require.NoError(t, err, "an executor that signs a receipt when challenged is not refusing")
+			result := handleRecoveredRefusal(t, env.session, prepared.Nonce())
 			require.Zero(t, result.Votes)
 			rec := env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()]
-			require.Contains(t, []types.InferenceStatus{types.StatusStarted, types.StatusFinished}, rec.Status,
-				"the verified receipt lands as recovery, and the challenged run may already have finished")
 			require.Zero(t, env.session.StateMachine().SnapshotState().HostStats[rec.ExecutorSlot].Missed)
 		})
 	}

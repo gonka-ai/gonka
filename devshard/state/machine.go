@@ -38,12 +38,6 @@ func safeAdd(a, b uint64) (uint64, bool) {
 	return result, true
 }
 
-// TokenCost is the cost applyFinishInference charges: (input + output) * price.
-// An error means the sum or the product does not fit in uint64.
-func TokenCost(inputTokens, outputTokens, tokenPrice uint64) (uint64, error) {
-	return tokenCost(inputTokens, outputTokens, tokenPrice)
-}
-
 // tokenCost computes (a + b) * price with overflow checks.
 func tokenCost(a, b, price uint64) (uint64, error) {
 	sum, ok := safeAdd(a, b)
@@ -1172,8 +1166,27 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 	if rec.Status != types.StatusPending {
 		return fmt.Errorf("%w: expected pending, got %d", types.ErrInvalidTransition, rec.Status)
 	}
+	if err := sm.checkReceiptLocked(rec, msg, sm.hostSignerAllowedLocked); err != nil {
+		return err
+	}
 
-	// Verify executor receipt (includes confirmed_at from the executor's wall clock).
+	rec.Status = types.StatusStarted
+	rec.ConfirmedAt = msg.ConfirmedAt
+	if heightsync.StampPresent(msg.ObservedBlockHash) {
+		rec.ConfirmedAtHeight = msg.ObservedHeight
+	}
+	logging.Debug("inference pending -> started", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", rec.ExecutorSlot,
+		"confirmed_at", msg.ConfirmedAt,
+	)
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+// checkReceiptLocked verifies msg.ExecutorSig over the receipt that rec and
+// msg describe (confirmed_at is the executor's wall clock), and asks allowed
+// whether the recovered key may act for the executor slot. Caller holds sm.mu.
+func (sm *StateMachine) checkReceiptLocked(rec *types.InferenceRecord, msg *types.MsgConfirmStart, allowed func(uint32, string) bool) error {
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId:       msg.InferenceId,
 		PromptHash:        rec.PromptHash,
@@ -1196,23 +1209,11 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 		return fmt.Errorf("%w: %v", types.ErrInvalidExecutorSig, err)
 	}
 
-	expectedAddr := sm.slotToAddress[rec.ExecutorSlot]
-	if !sm.hostSignerAllowedLocked(rec.ExecutorSlot, recovered) {
+	if !allowed(rec.ExecutorSlot, recovered) {
 		return fmt.Errorf("%w: expected executor %s (slot %d), got %s",
-			types.ErrInvalidExecutorSig, expectedAddr, rec.ExecutorSlot, recovered)
+			types.ErrInvalidExecutorSig, sm.slotToAddress[rec.ExecutorSlot], rec.ExecutorSlot, recovered)
 	}
-
-	rec.Status = types.StatusStarted
-	rec.ConfirmedAt = msg.ConfirmedAt
-	if heightsync.StampPresent(msg.ObservedBlockHash) {
-		rec.ConfirmedAtHeight = msg.ObservedHeight
-	}
-	logging.Debug("inference pending -> started", "subsystem", "state",
-		"inference_id", msg.InferenceId,
-		"executor_slot", rec.ExecutorSlot,
-		"confirmed_at", msg.ConfirmedAt,
-	)
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	return nil
 }
 
 func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) error {
@@ -1226,32 +1227,9 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	if rec.Status != types.StatusStarted {
 		return fmt.Errorf("%w: expected started, got %d", types.ErrInvalidTransition, rec.Status)
 	}
-
-	// Verify executor slot.
-	if msg.ExecutorSlot != rec.ExecutorSlot {
-		return fmt.Errorf("%w: expected %d, got %d", types.ErrWrongExecutorSlot, rec.ExecutorSlot, msg.ExecutorSlot)
-	}
-
-	if len(msg.ResponseHash) != sha256.Size || len(msg.ServedHash) != sha256.Size {
-		return fmt.Errorf("%w: response %d bytes, served %d bytes", types.ErrInvalidFinishHash, len(msg.ResponseHash), len(msg.ServedHash))
-	}
-
-	if err := sm.verifyFinishProposerSigLocked(msg); err != nil {
-		return err
-	}
-
-	// Cross-session replay protection.
-	if msg.EscrowId != sm.state.EscrowID {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.EscrowId)
-	}
-
-	// Compute actual cost.
-	actualCost, err := tokenCost(msg.InputTokens, msg.OutputTokens, sm.state.Config.TokenPrice)
+	actualCost, err := sm.checkFinishLocked(rec, msg, sm.hostSignerAllowedLocked)
 	if err != nil {
 		return err
-	}
-	if actualCost > rec.ReservedCost {
-		actualCost = rec.ReservedCost
 	}
 
 	// Release surplus.
@@ -1276,6 +1254,39 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 		"actual_cost", actualCost,
 	)
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+// checkFinishLocked runs applyFinishInference's checks of msg against the
+// started record rec, with allowed deciding whether the recovered proposer may
+// act for the executor slot. It returns the cost to charge, capped at the
+// reservation. Caller holds sm.mu.
+func (sm *StateMachine) checkFinishLocked(rec *types.InferenceRecord, msg *types.MsgFinishInference, allowed func(uint32, string) bool) (uint64, error) {
+	if msg.ExecutorSlot != rec.ExecutorSlot {
+		return 0, fmt.Errorf("%w: expected %d, got %d", types.ErrWrongExecutorSlot, rec.ExecutorSlot, msg.ExecutorSlot)
+	}
+	if len(msg.ResponseHash) != sha256.Size || len(msg.ServedHash) != sha256.Size {
+		return 0, fmt.Errorf("%w: response %d bytes, served %d bytes", types.ErrInvalidFinishHash, len(msg.ResponseHash), len(msg.ServedHash))
+	}
+	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
+	if !ok {
+		return 0, fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
+	}
+	recovered, err := sm.recoveredProposerAddress(msg)
+	if err != nil {
+		return 0, err
+	}
+	if !allowed(msg.ExecutorSlot, recovered) {
+		return 0, fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
+	}
+	// Cross-session replay protection.
+	if msg.EscrowId != sm.state.EscrowID {
+		return 0, fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.EscrowId)
+	}
+	actualCost, err := tokenCost(msg.InputTokens, msg.OutputTokens, sm.state.Config.TokenPrice)
+	if err != nil {
+		return 0, err
+	}
+	return min(actualCost, rec.ReservedCost), nil
 }
 
 func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
@@ -1658,7 +1669,6 @@ func BuildDiffContent(escrowID string, nonce uint64, txs []*types.DevshardTx, po
 // bound warm key, or a sibling slot's binding) take only a read lock; a
 // warm-key miss takes the write lock because ResolveWarmKey writes
 // sm.state.WarmKeys and may call the bridge.
-// Callers that already hold sm.mu must use verifyFinishProposerSigLocked.
 func (sm *StateMachine) VerifyFinishProposerSig(msg *types.MsgFinishInference) error {
 	recovered, err := sm.recoveredProposerAddress(msg)
 	if err != nil {
@@ -1724,73 +1734,6 @@ func (sm *StateMachine) RejectFinishProposerSigLocal(msg *types.MsgFinishInferen
 	return nil
 }
 
-// CheckExecutorReceipt reports whether confirm.ExecutorSig is the executor's
-// signature over ExecutorReceiptContent for this escrow, built from rec the way
-// applyConfirmStart builds it. rec is the inference record the receipt confirms.
-// It never caches a warm binding: WarmKeys is part of the state root.
-func (sm *StateMachine) CheckExecutorReceipt(rec *types.InferenceRecord, confirm *types.MsgConfirmStart) error {
-	if rec == nil || confirm == nil {
-		return fmt.Errorf("%w: incomplete receipt", types.ErrInvalidExecutorSig)
-	}
-	sm.mu.RLock()
-	escrowID := sm.state.EscrowID
-	sm.mu.RUnlock()
-	receiptData, err := deterministicMarshal.Marshal(&types.ExecutorReceiptContent{
-		InferenceId:       confirm.InferenceId,
-		PromptHash:        rec.PromptHash,
-		Model:             rec.Model,
-		InputLength:       rec.InputLength,
-		MaxTokens:         rec.MaxTokens,
-		StartedAt:         rec.StartedAt,
-		EscrowId:          escrowID,
-		ConfirmedAt:       confirm.ConfirmedAt,
-		ObservedHeight:    confirm.ObservedHeight,
-		ObservedBlockHash: confirm.ObservedBlockHash,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal executor receipt: %w", err)
-	}
-	recovered, err := sm.verifier.RecoverAddress(receiptData, confirm.ExecutorSig)
-	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidExecutorSig, err)
-	}
-	return sm.checkSlotSigner(rec.ExecutorSlot, recovered, types.ErrInvalidExecutorSig)
-}
-
-// CheckFinishProposerSig is VerifyFinishProposerSig without caching a warm
-// binding, for evidence that may never be sequenced into a diff.
-func (sm *StateMachine) CheckFinishProposerSig(msg *types.MsgFinishInference) error {
-	recovered, err := sm.recoveredProposerAddress(msg)
-	if err != nil {
-		return err
-	}
-	return sm.checkSlotSigner(msg.ExecutorSlot, recovered, types.ErrInvalidProposerSig)
-}
-
-// checkSlotSigner accepts the slot's cold key, the warm key already bound in
-// state, or, when none is bound, a key the resolver authorizes. The resolver
-// runs without sm.mu held.
-func (sm *StateMachine) checkSlotSigner(slot uint32, recovered string, sigErr error) error {
-	expected, ok := sm.slotToAddress[slot]
-	if !ok {
-		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, slot)
-	}
-	if recovered == expected {
-		return nil
-	}
-	sm.mu.RLock()
-	bound, hasBound := sm.state.WarmKeys[slot]
-	sm.mu.RUnlock()
-	if hasBound {
-		if bound == recovered {
-			return nil
-		}
-	} else if sm.CheckWarmKey(recovered, expected) {
-		return nil
-	}
-	return fmt.Errorf("%w: expected %s (slot %d), got %s", sigErr, expected, slot, recovered)
-}
-
 func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) (string, error) {
 	if msg == nil {
 		return "", fmt.Errorf("%w: nil finish", types.ErrInvalidProposerSig)
@@ -1806,19 +1749,6 @@ func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) 
 		return "", fmt.Errorf("%w: %v", types.ErrInvalidProposerSig, err)
 	}
 	return recovered, nil
-}
-
-func (sm *StateMachine) verifyFinishProposerSigLocked(msg *types.MsgFinishInference) error {
-	if msg == nil {
-		return fmt.Errorf("%w: nil finish", types.ErrInvalidProposerSig)
-	}
-	addr, ok := sm.slotToAddress[msg.ExecutorSlot]
-	if !ok {
-		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
-	}
-	cloned := proto.Clone(msg).(*types.MsgFinishInference)
-	cloned.ProposerSig = nil
-	return sm.verifyProposerSig(cloned, msg.ProposerSig, addr, msg.ExecutorSlot)
 }
 
 // verifyProposerSig verifies that sig over msgWithoutSig (the proto message

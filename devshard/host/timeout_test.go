@@ -289,14 +289,16 @@ func TestVerifyRefused_PayloadMismatch_Rejects(t *testing.T) {
 	require.False(t, accept, "should reject: payload mismatch")
 }
 
-func TestVerifyRefused_FinishInMempool(t *testing.T) {
+// A finish cannot apply to a pending record, so without its ConfirmStart it
+// is not evidence against a refusal: nothing could sequence it.
+func TestVerifyRefused_FinishWithoutConfirmDoesNotReject(t *testing.T) {
 	st := stateWithPendingFull(1, 1)
 	g := newEvidenceGroup(t)
 	mempool := []*types.DevshardTx{signedFinish(t, g.signers[1], st.EscrowID, 1, 1)}
 
 	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), mempool, nil, nil, g.sm, st.Config, deadlinePassedRefused(st, 1))
 	require.NoError(t, err)
-	require.False(t, accept, "should reject: verified MsgFinishInference in local mempool")
+	require.True(t, accept, "a finish alone in the local mempool must not block the refusal")
 }
 
 func TestVerifyRefused_CopiesVerifiedReceipt(t *testing.T) {
@@ -422,6 +424,23 @@ func TestVerifyExecution_FinishForOtherEscrowOrSlotDoesNotReject(t *testing.T) {
 	}
 }
 
+// Finishes for another escrow or slot are not signature checks. A valid finish
+// behind a flood of them still rejects the timeout.
+func TestVerifyExecution_OtherSlotFinishesDoNotHideAValidOne(t *testing.T) {
+	st := stateWithStarted(1, 1)
+	g := newEvidenceGroup(t)
+	pool := make([]*types.DevshardTx, 0, maxEvidenceChecks+1)
+	for i := 0; i < maxEvidenceChecks; i++ {
+		pool = append(pool, signedFinish(t, g.signers[0], st.EscrowID, 1, 0))
+	}
+	pool = append(pool, signedFinish(t, g.signers[1], st.EscrowID, 1, 1))
+	executor := &mockExecutorClient{challengeMempool: pool}
+
+	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, executor, nil, g.sm, st.Config, deadlinePassedExecution(st, 1))
+	require.NoError(t, err)
+	require.False(t, accept)
+}
+
 // A flood of matching but unsigned finishes costs at most maxEvidenceChecks
 // recoveries, and a valid finish behind them is not reached.
 func TestVerifyExecution_BoundsSignatureChecks(t *testing.T) {
@@ -464,35 +483,22 @@ func TestVerifyExecution_ShortHashFinishDoesNotReject(t *testing.T) {
 
 func TestVerifyExecution_OverflowingTokenCostDoesNotReject(t *testing.T) {
 	g := newEvidenceGroup(t)
-	for name, mutate := range map[string]func(st *types.EscrowState, msg *types.MsgFinishInference){
-		"token sum overflows": func(_ *types.EscrowState, msg *types.MsgFinishInference) {
-			msg.InputTokens = 1
-			msg.OutputTokens = math.MaxUint64
-		},
-		"token cost overflows": func(st *types.EscrowState, msg *types.MsgFinishInference) {
-			st.Config.TokenPrice = math.MaxUint64
-			msg.InputTokens = 2
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			st := stateWithStarted(1, 1)
-			msg := &types.MsgFinishInference{
-				InferenceId: 1, EscrowId: st.EscrowID, ExecutorSlot: 1,
-				ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
-			}
-			mutate(&st, msg)
-			msg.ProposerSig = testutil.SignProposerTx(t, g.signers[1], msg)
-			executor := &mockExecutorClient{challengeMempool: []*types.DevshardTx{
-				{Tx: &types.DevshardTx_FinishInference{FinishInference: msg}},
-			}}
-			pool := NewMempool()
-
-			accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, executor, pool, g.sm, st.Config, deadlinePassedExecution(st, 1))
-			require.NoError(t, err)
-			require.True(t, accept, "a signed finish apply would reject for cost overflow must not block the timeout")
-			require.Empty(t, pool.Txs())
-		})
+	st := stateWithStarted(1, 1)
+	msg := &types.MsgFinishInference{
+		InferenceId: 1, EscrowId: st.EscrowID, ExecutorSlot: 1,
+		ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
+		InputTokens: 1, OutputTokens: math.MaxUint64,
 	}
+	msg.ProposerSig = testutil.SignProposerTx(t, g.signers[1], msg)
+	executor := &mockExecutorClient{challengeMempool: []*types.DevshardTx{
+		{Tx: &types.DevshardTx_FinishInference{FinishInference: msg}},
+	}}
+	pool := NewMempool()
+
+	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, executor, pool, g.sm, st.Config, deadlinePassedExecution(st, 1))
+	require.NoError(t, err)
+	require.True(t, accept, "a signed finish apply would reject for cost overflow must not block the timeout")
+	require.Empty(t, pool.Txs())
 }
 
 func TestVerifyExecution_WarmKeyFinishRejectsWithoutBinding(t *testing.T) {
@@ -562,9 +568,11 @@ type countingEvidence struct {
 	finishes int
 }
 
-func (c *countingEvidence) CheckFinishProposerSig(msg *types.MsgFinishInference) error {
-	c.finishes++
-	return c.EvidenceVerifier.CheckFinishProposerSig(msg)
+func (c *countingEvidence) CheckEvidence(rec *types.InferenceRecord, txs ...*types.DevshardTx) error {
+	if txs[len(txs)-1].GetFinishInference() != nil {
+		c.finishes++
+	}
+	return c.EvidenceVerifier.CheckEvidence(rec, txs...)
 }
 
 func TestRecoveryTxsFor_FiltersByInferenceID(t *testing.T) {

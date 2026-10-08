@@ -572,15 +572,13 @@ func TestHTTP_RefusedTimeoutChallengeRecoveryLandsInNextDiff(t *testing.T) {
 	_, err = env.hosts[executorIdx].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
 	require.NoError(t, err)
 
-	result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
-	require.NoError(t, err, "reachable executor receipt should recover instead of timing out")
-	require.Equal(t, "refused", result.Reason)
+	handleRecoveredRefusal(t, env.session, prepared.Nonce())
 	require.NotNil(t, findConfirmStart(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()),
 		"executor should queue recovery MsgConfirmStart after challenge")
 
 	diffs = env.session.Diffs()
 	require.GreaterOrEqual(t, len(diffs), 2)
-	require.NotNil(t, findConfirmStart(diffs[len(diffs)-1].Txs, prepared.Nonce()),
+	require.NotNil(t, findConfirmStart(diffs[1].Txs, prepared.Nonce()),
 		"recovery MsgConfirmStart from challenge should land in the next user diff")
 }
 
@@ -595,12 +593,9 @@ func TestHTTP_RefusedTimeoutRecoveryDeduplicatesAcrossVerifierRejects(t *testing
 	_, err = env.hosts[prepared.HostIdx()].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
 	require.NoError(t, err)
 
-	_, err = env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
-	require.NoError(t, err)
+	handleRecoveredRefusal(t, env.session, prepared.Nonce())
 
-	diffs = env.session.Diffs()
-	require.GreaterOrEqual(t, len(diffs), 2)
-	recovery := diffs[len(diffs)-1]
+	recovery := confirmDiff(t, env.session.Diffs(), prepared.Nonce())
 	require.Equal(t, 1, countConfirmStart(recovery.Txs, prepared.Nonce()),
 		"multiple verifier rejects must not duplicate the executor ConfirmStart in the recovery diff")
 }
@@ -844,7 +839,8 @@ func TestHTTP_ExecutionTimeoutAfterFinishPulledPendingDoesNotTimeout(t *testing.
 
 	result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), nil)
 	require.NoError(t, err, "pending FinishInference should be published instead of timing out the started inference")
-	require.Equal(t, "execution", result.Reason)
+	require.Equal(t, "nonce_closed", result.DetailReason)
+	require.Empty(t, result.Reason, "the closing finish lands before the deadline")
 	require.Equal(t, types.StatusFinished, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
 }
 
@@ -1358,12 +1354,10 @@ func TestHTTP_T1_HonestRecovery_ConfirmStartReachesSessionAndPeer(t *testing.T) 
 	_, err = env.hosts[executorIdx].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
 	require.NoError(t, err)
 
-	_, err = env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
-	require.NoError(t, err, "rejected refused-timeout must recover by publishing ConfirmStart")
+	handleRecoveredRefusal(t, env.session, prepared.Nonce())
 
 	diffs = env.session.Diffs()
-	require.GreaterOrEqual(t, len(diffs), 2)
-	recovery := diffs[len(diffs)-1]
+	recovery := confirmDiff(t, diffs, 1)
 	require.Equal(t, 1, countConfirmStart(recovery.Txs, 1), "recovery diff must carry exactly one ConfirmStart for inference 1")
 	got := findConfirmStart(recovery.Txs, 1)
 	require.NotNil(t, got)
@@ -1471,6 +1465,38 @@ func refusedPayload() *host.InferencePayload {
 		MaxTokens:   p.MaxTokens,
 		StartedAt:   p.StartedAt,
 	}
+}
+
+// handleRecoveredRefusal runs a refused timeout whose receipt recovers. When
+// the executor already finished, the recovery or a queued finish closes the
+// record. Otherwise the started record waits on the execution deadline, so the
+// wait is bounded and ends canceled.
+func handleRecoveredRefusal(t *testing.T, session *user.Session, nonce uint64) user.TimeoutResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, err := session.HandleTimeout(ctx, nonce, time.Unix(0, 0), refusedPayload())
+	rec := session.StateMachine().SnapshotState().Inferences[nonce]
+	if err == nil {
+		require.Equal(t, types.StatusFinished, rec.Status, "%+v", result)
+		return result
+	}
+	require.ErrorIs(t, err, context.DeadlineExceeded, "a recovered receipt is not a timeout failure")
+	require.Equal(t, "context_canceled", result.DetailReason)
+	require.Equal(t, types.StatusStarted, rec.Status)
+	return result
+}
+
+// confirmDiff returns the first diff carrying the inference's ConfirmStart.
+func confirmDiff(t *testing.T, diffs []types.Diff, inferenceID uint64) types.Diff {
+	t.Helper()
+	for _, d := range diffs {
+		if findConfirmStart(d.Txs, inferenceID) != nil {
+			return d
+		}
+	}
+	require.FailNow(t, "no diff carries ConfirmStart", "inference %d", inferenceID)
+	return types.Diff{}
 }
 
 func findConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
