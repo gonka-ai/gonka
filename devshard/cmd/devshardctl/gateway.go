@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/metrics"
 	"slices"
 	"strconv"
 	"strings"
@@ -63,6 +64,7 @@ type Gateway struct {
 	store                        *GatewayStore
 	perf                         *PerfTracker
 	perfStore                    *PerfStore
+	perfPruner                   *perfPruner
 	accounting                   *accounting.Recorder
 	chatCache                    *chatResponseCache
 	apiKeys                      map[string]struct{}
@@ -713,7 +715,7 @@ func (rt *devshardRuntime) snapshot() runtimeStatus {
 	if rt.proxy != nil && rt.proxy.sm != nil && rt.proxy.session != nil {
 		phase := rt.proxy.sm.Phase()
 		status.Phase = sessionPhaseLabel(phase)
-		st := rt.proxy.sm.SnapshotState()
+		st := rt.proxy.sm.SnapshotStateNoInferences()
 		status.Nonce = rt.proxy.session.Nonce()
 		status.Balance = st.Balance
 		status.SessionVersion = st.StateRootAndProtocolVersion
@@ -1349,6 +1351,9 @@ func (g *Gateway) Close() error {
 			firstErr = err
 		}
 	}
+	if g.perfPruner != nil {
+		g.perfPruner.stopAndWait()
+	}
 	if g.perfStore != nil {
 		if err := g.perfStore.Close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -1407,26 +1412,71 @@ func (g *Gateway) handleDebugMemStats(w http.ResponseWriter, r *http.Request) {
 	if !allowGetOrHead(w, r) {
 		return
 	}
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
+	mem, err := readGatewayMemory()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	g.mu.Lock()
 	loadedRuntimes := len(g.runtimeOrder)
 	g.mu.Unlock()
-	writeJSON(w, map[string]any{
-		"loaded_runtimes": loadedRuntimes,
-		"num_goroutine":   runtime.NumGoroutine(),
-		"heap_inuse":      m.HeapInuse,
-		"heap_alloc":      m.HeapAlloc,
-		"heap_sys":        m.HeapSys,
-		"heap_idle":       m.HeapIdle,
-		"heap_released":   m.HeapReleased,
-		"heap_objects":    m.HeapObjects,
-		"stack_inuse":     m.StackInuse,
-		"sys":             m.Sys,
-		"next_gc":         m.NextGC,
-		"num_gc":          m.NumGC,
-		"gc_cpu_fraction": m.GCCPUFraction,
-	})
+	mem["loaded_runtimes"] = loadedRuntimes
+	mem["num_goroutine"] = runtime.NumGoroutine()
+	writeJSON(w, mem)
+}
+
+// readGatewayMemory reads the same heap fields the debug endpoint used to take
+// from ReadMemStats. runtime/metrics sums counters the runtime already keeps
+// and does not stop the world. gc_cpu_fraction is GC CPU time divided by total
+// CPU time over the life of the process.
+func readGatewayMemory() (map[string]any, error) {
+	samples := []metrics.Sample{
+		{Name: "/memory/classes/heap/objects:bytes"},
+		{Name: "/memory/classes/heap/unused:bytes"},
+		{Name: "/memory/classes/heap/free:bytes"},
+		{Name: "/memory/classes/heap/released:bytes"},
+		{Name: "/gc/heap/objects:objects"},
+		{Name: "/memory/classes/heap/stacks:bytes"},
+		{Name: "/memory/classes/total:bytes"},
+		{Name: "/gc/heap/goal:bytes"},
+		{Name: "/gc/cycles/total:gc-cycles"},
+		{Name: "/cpu/classes/gc/total:cpu-seconds"},
+		{Name: "/cpu/classes/total:cpu-seconds"},
+	}
+	metrics.Read(samples)
+	for _, sample := range samples[:9] {
+		if sample.Value.Kind() != metrics.KindUint64 {
+			return nil, fmt.Errorf("metric %s kind %v", sample.Name, sample.Value.Kind())
+		}
+	}
+	for _, sample := range samples[9:] {
+		if sample.Value.Kind() != metrics.KindFloat64 {
+			return nil, fmt.Errorf("metric %s kind %v", sample.Name, sample.Value.Kind())
+		}
+	}
+	objects := samples[0].Value.Uint64()
+	unused := samples[1].Value.Uint64()
+	free := samples[2].Value.Uint64()
+	released := samples[3].Value.Uint64()
+	inuse := objects + unused
+	idle := free + released
+	var gcFraction float64
+	if total := samples[10].Value.Float64(); total > 0 {
+		gcFraction = samples[9].Value.Float64() / total
+	}
+	return map[string]any{
+		"heap_inuse":      inuse,
+		"heap_alloc":      objects,
+		"heap_sys":        inuse + idle,
+		"heap_idle":       idle,
+		"heap_released":   released,
+		"heap_objects":    samples[4].Value.Uint64(),
+		"stack_inuse":     samples[5].Value.Uint64(),
+		"sys":             samples[6].Value.Uint64(),
+		"next_gc":         samples[7].Value.Uint64(),
+		"num_gc":          samples[8].Value.Uint64(),
+		"gc_cpu_fraction": gcFraction,
+	}, nil
 }
 
 func (g *Gateway) handlePooledModels(w http.ResponseWriter, r *http.Request) {

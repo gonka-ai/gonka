@@ -164,6 +164,18 @@ type DiffRecord struct {
 	Signatures   map[uint32][]byte
 	WarmKeyDelta map[uint32]string // warm key bindings introduced at this nonce
 	CreatedAt    int64
+	// SessionState, when set, is written in the same transaction as the diff so the stored state never lags the journal.
+	SessionState *SessionStateDelta
+}
+
+// SessionStateDelta is the state a diff leaves behind: the live inference
+// entries it wrote or removed and the session header as of its nonce.
+// ReplaceAll means Upserts is the whole live set and older rows are dropped.
+type SessionStateDelta struct {
+	Header     []byte
+	Upserts    map[uint64][]byte
+	Deletes    []uint64
+	ReplaceAll bool
 }
 
 // ComputeWarmKeyDelta returns entries in after that are not in before.

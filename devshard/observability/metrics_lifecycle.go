@@ -30,10 +30,19 @@ var (
 	httpConnections        *prometheus.GaugeVec
 	httpConnectionsTotal   *prometheus.CounterVec
 	validationQueueDepth   *prometheus.GaugeVec
+	validationOwed         *prometheus.GaugeVec
 	mempoolSize            *prometheus.GaugeVec
 	buildInfo              *prometheus.GaugeVec
 	lifecycleInflight      prometheus.Gauge
 	fallbackDivisor        *prometheus.GaugeVec
+	sessionRecovery        *prometheus.GaugeVec
+	memorySessions         prometheus.Gauge
+	memoryLiveInferences   prometheus.Gauge
+	memorySealedInferences prometheus.Gauge
+	memoryMempool          prometheus.Gauge
+	memoryExecuting        prometheus.Gauge
+	memoryValidating       prometheus.Gauge
+	memoryFattestLive      *prometheus.GaugeVec
 
 	// HA diff/persist consistency (see docs/proposals/ha-diff-persist-consistency.md).
 	diffPersistRetryTotal     *prometheus.CounterVec
@@ -124,6 +133,10 @@ func initRegistry() {
 		Name: "devshard_validation_queue_depth",
 		Help: "Current validation queue depth per devshard session.",
 	}, []string{"escrow_id"})
+	validationOwed = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "devshard_validation_owed",
+		Help: "Live inferences this host still owes a validation for.",
+	}, []string{"escrow_id"})
 	mempoolSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "devshard_mempool_size",
 		Help: "Current devshard mempool size per session.",
@@ -140,6 +153,38 @@ func initRegistry() {
 		Name: "devshardd_fallback_divisor",
 		Help: "Fallback capacity divisor (max(active_escrows, 4)); source is load_map or floor4.",
 	}, []string{"source"})
+	sessionRecovery = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "devshardd_session_recovery",
+		Help: "Devshardd session recovery progress: total, recovered, failed, version_skipped, pending, complete.",
+	}, []string{"kind"})
+	memorySessions = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_sessions",
+		Help: "Escrows loaded in this process at the latest memory snapshot.",
+	})
+	memoryLiveInferences = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_live_inferences",
+		Help: "Live inference records across loaded escrows at the latest memory snapshot.",
+	})
+	memorySealedInferences = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_sealed_inferences",
+		Help: "Sealed inference records across loaded escrows at the latest memory snapshot.",
+	})
+	memoryMempool = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_mempool_entries",
+		Help: "Host mempool transactions across loaded escrows at the latest memory snapshot.",
+	})
+	memoryExecuting = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_executing",
+		Help: "Inferences claimed for execution at the latest memory snapshot.",
+	})
+	memoryValidating = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_memory_validating",
+		Help: "Inferences claimed for validation at the latest memory snapshot.",
+	})
+	memoryFattestLive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "devshard_memory_fattest_live_inferences",
+		Help: "Live inference count of the escrow that holds the most. One series, replaced each snapshot.",
+	}, []string{"escrow_id"})
 
 	diffPersistRetryTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "devshard_diff_persist_retry_total",
@@ -170,10 +215,19 @@ func initRegistry() {
 		httpConnections,
 		httpConnectionsTotal,
 		validationQueueDepth,
+		validationOwed,
 		mempoolSize,
 		buildInfo,
 		lifecycleInflight,
 		fallbackDivisor,
+		sessionRecovery,
+		memorySessions,
+		memoryLiveInferences,
+		memorySealedInferences,
+		memoryMempool,
+		memoryExecuting,
+		memoryValidating,
+		memoryFattestLive,
 		diffPersistRetryTotal,
 		diffForkDetectedTotal,
 		reconcileFastForwardTotal,
@@ -197,6 +251,35 @@ func RegisterRuntimeCollectors() {
 	})
 }
 
+// MemoryInventory is the session-map portion of a memory snapshot.
+// Byte totals stay on the standard Go collectors (go_memstats_*).
+type MemoryInventory struct {
+	Sessions    int
+	Live        int
+	Sealed      int
+	Mempool     int
+	Executing   int
+	Validating  int
+	Fattest     string
+	FattestLive int
+}
+
+// SetMemoryInventory publishes the latest 10-minute snapshot. The fattest
+// series is replaced, so a previous escrow id does not linger.
+func SetMemoryInventory(inv MemoryInventory) {
+	ensureMetrics()
+	memorySessions.Set(float64(inv.Sessions))
+	memoryLiveInferences.Set(float64(inv.Live))
+	memorySealedInferences.Set(float64(inv.Sealed))
+	memoryMempool.Set(float64(inv.Mempool))
+	memoryExecuting.Set(float64(inv.Executing))
+	memoryValidating.Set(float64(inv.Validating))
+	memoryFattestLive.Reset()
+	if inv.Fattest != "" {
+		memoryFattestLive.WithLabelValues(inv.Fattest).Set(float64(inv.FattestLive))
+	}
+}
+
 func IncInflight(stage Stage) func() {
 	ensureMetrics()
 	inflight.WithLabelValues(string(stage)).Inc()
@@ -206,6 +289,20 @@ func IncInflight(stage Stage) func() {
 func SetLifecycleInflight(n int64) {
 	ensureMetrics()
 	lifecycleInflight.Set(float64(n))
+}
+
+func SetSessionRecovery(total, recovered, failed, versionSkipped, pending int64, complete bool) {
+	ensureMetrics()
+	sessionRecovery.WithLabelValues("total").Set(float64(total))
+	sessionRecovery.WithLabelValues("recovered").Set(float64(recovered))
+	sessionRecovery.WithLabelValues("failed").Set(float64(failed))
+	sessionRecovery.WithLabelValues("version_skipped").Set(float64(versionSkipped))
+	sessionRecovery.WithLabelValues("pending").Set(float64(pending))
+	completeVal := 0.0
+	if complete {
+		completeVal = 1
+	}
+	sessionRecovery.WithLabelValues("complete").Set(completeVal)
 }
 
 func IncTerminal(terminal Terminal, reason Reason) {
@@ -292,6 +389,17 @@ func SetValidationQueueDepth(escrowID string, depth int) {
 	validationQueueDepth.WithLabelValues(escrowID).Set(float64(depth))
 }
 
+// SetValidationOwed records how many live inferences this host still owes a
+// validation for. A series that grows for the whole escrow lifetime is a leak
+// in the owed set.
+func SetValidationOwed(escrowID string, n int) {
+	ensureMetrics()
+	if escrowID == "" {
+		return
+	}
+	validationOwed.WithLabelValues(escrowID).Set(float64(n))
+}
+
 func SetMempoolSize(escrowID string, size int) {
 	ensureMetrics()
 	mempoolSize.WithLabelValues(escrowID).Set(float64(size))
@@ -305,6 +413,7 @@ func DeleteEscrowMetrics(escrowID string) {
 		return
 	}
 	validationQueueDepth.DeleteLabelValues(escrowID)
+	validationOwed.DeleteLabelValues(escrowID)
 	mempoolSize.DeleteLabelValues(escrowID)
 }
 
@@ -348,5 +457,3 @@ func IncReconcileFastForward() {
 	ensureMetrics()
 	reconcileFastForwardTotal.Inc()
 }
-
-

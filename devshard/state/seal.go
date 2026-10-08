@@ -1,8 +1,9 @@
 package state
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
+	"maps"
 	"slices"
 
 	"devshard/logging"
@@ -84,12 +85,65 @@ func (sm *StateMachine) updateCommittedEntryLocked(id uint64, rec *types.Inferen
 	if err != nil {
 		return err
 	}
+	if prev, ok := sm.committedEntries[id]; ok {
+		if bytes.Equal(prev, entry) {
+			sm.syncOwedLocked(id)
+			return nil
+		}
+		sm.xorEntryLocked(prev)
+	}
+	if j := sm.journal; j != nil {
+		j.committed.touch(sm.committedEntries, id)
+	}
+	sm.xorEntryLocked(entry)
 	sm.committedEntries[id] = entry
+	sm.syncOwedLocked(id)
 	return nil
 }
 
+func (sm *StateMachine) deleteCommittedEntryLocked(id uint64) {
+	prev, ok := sm.committedEntries[id]
+	if !ok {
+		return
+	}
+	if j := sm.journal; j != nil {
+		j.committed.touch(sm.committedEntries, id)
+	}
+	sm.xorEntryLocked(prev)
+	delete(sm.committedEntries, id)
+}
+
+func (sm *StateMachine) xorEntryLocked(entry []byte) {
+	digest := entryFrameDigest(entry)
+	for i := range sm.liveEntryXOR {
+		sm.liveEntryXOR[i] ^= digest[i]
+	}
+}
+
+// applyCommittedMapDiffLocked folds only the ids whose stored bytes differ.
+// Identical blobs are left out of the XOR, so a snapshot refresh of an
+// unchanged record cannot cancel it.
+func (sm *StateMachine) applyCommittedMapDiffLocked(prev, next map[uint64][]byte) {
+	for id, oldEntry := range prev {
+		newEntry, ok := next[id]
+		if !ok {
+			sm.xorEntryLocked(oldEntry)
+			continue
+		}
+		if !bytes.Equal(oldEntry, newEntry) {
+			sm.xorEntryLocked(oldEntry)
+			sm.xorEntryLocked(newEntry)
+		}
+	}
+	for id, newEntry := range next {
+		if _, ok := prev[id]; !ok {
+			sm.xorEntryLocked(newEntry)
+		}
+	}
+}
+
 func (sm *StateMachine) rebuildCommittedEntriesLocked() {
-	sm.committedEntries = make(map[uint64][]byte, len(sm.state.Inferences))
+	next := make(map[uint64][]byte, len(sm.state.Inferences))
 	for id, rec := range sm.state.Inferences {
 		entry, err := marshalInferenceEntry(id, rec)
 		if err != nil {
@@ -100,8 +154,13 @@ func (sm *StateMachine) rebuildCommittedEntriesLocked() {
 			)
 			continue
 		}
-		sm.committedEntries[id] = entry
+		next[id] = entry
 	}
+	// Rebuild is the recovery path: the total is the walk of the new map,
+	// including when a previous total no longer matches the blobs.
+	sm.liveEntryXOR = xorInferencesHashFromEntries(next)
+	sm.committedEntries = next
+	sm.rebuildOwedLocked()
 }
 
 func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.InferenceRecord, error) {
@@ -119,18 +178,39 @@ func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.Infer
 	return rec, nil
 }
 
+// liveInferencesHashLocked returns the running XOR of the committed frames.
+// The total is maintained when the map changes, so this hashes nothing. Only
+// the sizes are checked here, per apply; verifyLiveIDsLocked walks the ids.
+func (sm *StateMachine) liveInferencesHashLocked() ([]byte, error) {
+	if len(sm.committedEntries) != len(sm.state.Inferences) {
+		return nil, fmt.Errorf("committed inference entries %d != live inferences %d", len(sm.committedEntries), len(sm.state.Inferences))
+	}
+	out := make([]byte, len(sm.liveEntryXOR))
+	copy(out, sm.liveEntryXOR[:])
+	return out, nil
+}
+
+// verifyLiveIDsLocked checks every live id has a committed entry, which with equal sizes means the id sets match.
+func (sm *StateMachine) verifyLiveIDsLocked() error {
+	for id := range sm.state.Inferences {
+		if _, ok := sm.committedEntries[id]; !ok {
+			return fmt.Errorf("committed inference entries missing live inference %d", id)
+		}
+	}
+	return nil
+}
+
 func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {
 	hostStatsHash, err := computeHostStatsHash(sm.state.HostStats)
 	if err != nil {
 		return nil, err
 	}
-
-	acc := sealedAccBytes32(sm.state.SealedAcc)
-	restHash, err := ComputeRestHashV2(sm.state.Balance, acc, sm.state.Inferences, sm.state.WarmKeys)
+	liveHash, err := sm.liveInferencesHashLocked()
 	if err != nil {
 		return nil, err
 	}
-
+	acc := sealedAccBytes32(sm.state.SealedAcc)
+	restHash := restHashV2FromLiveHash(sm.state.Balance, acc, liveHash, sm.state.WarmKeys)
 	return ComputeStateRootFromRestHash(hostStatsHash, restHash, sm.state.Fees, sm.state.Phase, sm.state.StateRootAndProtocolVersion), nil
 }
 
@@ -147,16 +227,21 @@ func (sm *StateMachine) RestoreCommittedEntries(entries map[uint64][]byte) {
 		sm.rebuildCommittedEntriesLocked()
 		return
 	}
-	sm.committedEntries = cloneCommittedInferenceEntries(entries)
+	next := cloneCommittedInferenceEntries(entries)
 	for id, rec := range sm.state.Inferences {
-		if err := sm.updateCommittedEntryLocked(id, rec); err != nil {
+		entry, err := marshalInferenceEntry(id, rec)
+		if err != nil {
 			logging.Error("failed to refresh live committed entry during restore",
 				"subsystem", "state",
 				"inference_id", id,
 				"error", err,
 			)
+			continue
 		}
+		next[id] = entry
 	}
+	sm.applyCommittedMapDiffLocked(sm.committedEntries, next)
+	sm.committedEntries = next
 }
 
 // ExportSealedNonces returns a copy of the per-id seal nonce map for snapshot
@@ -223,25 +308,22 @@ func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
 	}
 	slices.Sort(ids)
 
-	if sm.sealedNonces == nil {
-		sm.sealedNonces = make(map[uint64]uint64, len(ids))
-	}
 	cur := sealedAccBytes32(sm.state.SealedAcc)
 
 	for _, id := range ids {
-		rec := sm.state.Inferences[id]
+		rec, _ := sm.inferenceForWriteLocked(id)
 		sm.settleLiveRecordLocked(rec)
 		if err := sm.updateCommittedEntryLocked(id, rec); err != nil {
 			return fmt.Errorf("drain live inference %d: %w", id, err)
 		}
 		entry := append([]byte(nil), sm.committedEntries[id]...)
 		cur = FoldSealedAccumulator(cur, sealNonce, id, entry)
-		sm.sealedNonces[id] = sealNonce
-		delete(sm.committedEntries, id)
+		sm.setSealedNonceLocked(id, sealNonce)
+		sm.deleteCommittedEntryLocked(id)
 		if err := sm.upsertInferenceObsLocked(id, sealNonce, rec); err != nil {
 			return fmt.Errorf("persist sealed inference %d during drain: %w", id, err)
 		}
-		delete(sm.state.Inferences, id)
+		sm.deleteInferenceLocked(id)
 	}
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
 	return nil
@@ -350,7 +432,7 @@ func (sm *StateMachine) AutoSealStateClock() StateClockWindow {
 }
 
 // autoSealCandidate is one seal-eligible live inference and how the grace gates
-// evaluated at this seal nonce. Emitted in auto-seal info logs on host/user.
+// evaluated at this seal nonce.
 type autoSealCandidate struct {
 	ID               uint64 `json:"id"`
 	Status           uint8  `json:"status"`
@@ -375,10 +457,6 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 	if len(candidates) == 0 && len(sealed) == 0 {
 		return
 	}
-	candidatesJSON, err := json.Marshal(candidates)
-	if err != nil {
-		candidatesJSON = []byte(fmt.Sprintf("marshal error: %v", err))
-	}
 	args := []any{
 		"subsystem", side,
 		"diagnostic", "auto_seal",
@@ -388,8 +466,7 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 		"inference_seal_grace_nonces", sealGraceNonces,
 		"inference_seal_grace_seconds", graceSeconds,
 		"state_clock_confirmed_at", stateClock,
-		"candidates", string(candidatesJSON),
-		"sealed_ids", sealed,
+		"candidates_count", len(candidates),
 		"sealed_count", len(sealed),
 		"live_inferences_count", len(sm.state.Inferences),
 	}
@@ -484,9 +561,6 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 	}
 	slices.Sort(eligible)
 
-	if sm.sealedNonces == nil {
-		sm.sealedNonces = make(map[uint64]uint64, len(eligible))
-	}
 	cur := sealedAccBytes32(sm.state.SealedAcc)
 	for _, id := range eligible {
 		rec := sm.state.Inferences[id]
@@ -495,8 +569,8 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 		}
 		entry := append([]byte(nil), sm.committedEntries[id]...)
 		cur = FoldSealedAccumulator(cur, sealNonce, id, entry)
-		sm.sealedNonces[id] = sealNonce
-		delete(sm.committedEntries, id)
+		sm.setSealedNonceLocked(id, sealNonce)
+		sm.deleteCommittedEntryLocked(id)
 		if err := sm.upsertInferenceObsLocked(id, sealNonce, rec); err != nil {
 			// Observability only; never block or diverge the deterministic seal.
 			logging.Warn("failed to persist sealed inference obs during auto-seal",
@@ -506,7 +580,7 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 				"error", err,
 			)
 		}
-		delete(sm.state.Inferences, id)
+		sm.deleteInferenceLocked(id)
 	}
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
 	sm.logAutoSealDiagnosticLocked(side, sealNonce, clockWin, sealGraceNonces, graceSeconds, stateClock, candidates, eligible)
@@ -526,21 +600,17 @@ func (sm *StateMachine) SealInference(id uint64) error {
 	}
 	entry := append([]byte(nil), sm.committedEntries[id]...)
 	sealedNonce := sm.state.LatestNonce
-	if sm.sealedNonces == nil {
-		sm.sealedNonces = make(map[uint64]uint64)
-	}
-	sm.sealedNonces[id] = sealedNonce
+	sm.setSealedNonceLocked(id, sealedNonce)
 
 	cur := sealedAccBytes32(sm.state.SealedAcc)
 	cur = FoldSealedAccumulator(cur, sealedNonce, id, entry)
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
-	delete(sm.committedEntries, id)
+	sm.deleteCommittedEntryLocked(id)
+	sm.deleteInferenceLocked(id)
 
-	if err := sm.upsertInferenceObsLocked(id, sealedNonce, rec); err != nil {
-		return err
-	}
-	delete(sm.state.Inferences, id)
-	return nil
+	// Observability only: the seal above is already complete, so a failed
+	// write cannot leave the record live without its committed entry.
+	return sm.upsertInferenceObsLocked(id, sealedNonce, rec)
 }
 
 // LookupSealedInference returns the inference record persisted at seal time
@@ -584,37 +654,305 @@ func (sm *StateMachine) lookupSealedInferenceLocked(id uint64) (types.InferenceR
 	return inferenceRecordFromObsRow(row), true
 }
 
-func (sm *StateMachine) RebuildSealedInferenceIndex() error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	if err := sm.inferenceStore.DeleteSealedInferences(sm.state.EscrowID); err != nil {
-		return err
+func cloneInferenceRecord(rec *types.InferenceRecord) *types.InferenceRecord {
+	if rec == nil {
+		return nil
 	}
-	ids := make([]uint64, 0, len(sm.sealedNonces))
-	for id := range sm.sealedNonces {
+	cp := *rec
+	if len(rec.PromptHash) > 0 {
+		cp.PromptHash = append([]byte(nil), rec.PromptHash...)
+	}
+	if len(rec.ResponseHash) > 0 {
+		cp.ResponseHash = append([]byte(nil), rec.ResponseHash...)
+	}
+	return &cp
+}
+
+func (sm *StateMachine) RebuildSealedInferenceIndex() error {
+	_, err := sm.FillSealedInferenceIndexGaps()
+	return err
+}
+
+// SealedAtOrBefore returns which of ids were sealed at or before nonce.
+func (sm *StateMachine) SealedAtOrBefore(ids []uint64, nonce uint64) map[uint64]struct{} {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	sealed := make(map[uint64]struct{})
+	for _, id := range ids {
+		if sealNonce, ok := sm.sealedNonces[id]; ok && sealNonce <= nonce {
+			sealed[id] = struct{}{}
+		}
+	}
+	return sealed
+}
+
+// SealedNonceCount returns the size of the seal set. Callers that only need the
+// count must not use ExportSealedNonces, which clones the whole map.
+func (sm *StateMachine) SealedNonceCount() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.sealedNonces)
+}
+
+// FillSealedInferenceIndexGaps inserts a bare index row for each sealed id that
+// has no stored row and is not live. It never deletes and never overwrites an
+// existing row (rich or bare).
+//
+// The seal set is snapshotted under the lock and the storage work runs without
+// it: listing every stored id and inserting the gaps would otherwise hold the
+// state machine for the length of the batch. An id sealed after the snapshot
+// writes its own row on the live path, so it is not a gap this pass has to see.
+func (sm *StateMachine) FillSealedInferenceIndexGaps() (int, error) {
+	sm.mu.RLock()
+	store := sm.inferenceStore
+	escrowID := sm.state.EscrowID
+	sealedNonces := maps.Clone(sm.sealedNonces)
+	live := make(map[uint64]struct{}, len(sm.state.Inferences))
+	for id := range sm.state.Inferences {
+		live[id] = struct{}{}
+	}
+	sm.mu.RUnlock()
+
+	existing, err := store.SealedInferenceIDs(escrowID)
+	if err != nil {
+		return 0, err
+	}
+	ids := make([]uint64, 0, len(sealedNonces))
+	for id := range sealedNonces {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
+
+	// Count first so the row slice is allocated exactly once. The common case
+	// is zero gaps over a seal set in the millions, where growing a slice of
+	// InferenceRow by doubling would copy hundreds of MB for nothing.
+	missing := 0
+	isGap := func(id uint64) bool {
+		if _, isLive := live[id]; isLive {
+			return false
+		}
+		_, stored := existing[id]
+		return !stored
+	}
 	for _, id := range ids {
-		if _, live := sm.state.Inferences[id]; live {
-			continue
-		}
-		nonce, ok := sm.sealedNonces[id]
-		if !ok {
-			nonce = sm.state.LatestNonce
-		}
-		row := storage.InferenceRow{InferenceID: id, SealedNonce: nonce}
-		if cached, ok := sm.committedEntries[id]; ok {
-			if entryID, rec, err := unmarshalInferenceEntry(cached); err == nil && entryID == id {
-				row = inferenceObsRow(id, nonce, rec)
-			}
-		}
-		if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, row); err != nil {
-			return err
+		if isGap(id) {
+			missing++
 		}
 	}
-	return nil
+	if missing == 0 {
+		return 0, nil
+	}
+	rows := make([]storage.InferenceRow, 0, missing)
+	for _, id := range ids {
+		if isGap(id) {
+			rows = append(rows, storage.InferenceRow{InferenceID: id, SealedNonce: sealedNonces[id]})
+		}
+	}
+	if err := store.InsertSealedInferences(escrowID, rows); err != nil {
+		return 0, err
+	}
+	return len(rows), nil
+}
+
+// RebuildSealedInferenceIndexFromDiffs wipes the escrow's sealed-inference rows
+// and reinserts them from the diff journal plus current live RAM records.
+// store should be the underlying store when called inside ObsRepairGate so the
+// wipe bypasses the live-write queue.
+func (sm *StateMachine) RebuildSealedInferenceIndexFromDiffs(store storage.Storage, records []types.DiffRecord) error {
+	if store == nil {
+		store = sm.inferenceStore
+	}
+
+	sm.mu.RLock()
+	escrowID := sm.state.EscrowID
+	group := append([]types.SlotAssignment(nil), sm.state.Group...)
+	price := sm.state.Config.TokenPrice
+	threshold := sm.state.Config.VoteThreshold
+	sealedNonces := maps.Clone(sm.sealedNonces)
+	live := make(map[uint64]*types.InferenceRecord, len(sm.state.Inferences))
+	for id, rec := range sm.state.Inferences {
+		live[id] = cloneInferenceRecord(rec)
+	}
+	sm.mu.RUnlock()
+
+	// Fold outside the lock. This walks the whole journal, and ApplyDiff takes
+	// the write lock, so holding the read lock here would stall the apply path
+	// of an already-published session for the length of the replay. The fold
+	// needs only the group and config captured above plus the slot lookup maps,
+	// which are immutable after construction.
+	folded := sm.foldInferenceRecordsFromDiffs(group, price, threshold, records)
+
+	if err := store.DeleteSealedInferences(escrowID); err != nil {
+		return err
+	}
+
+	ids := make([]uint64, 0, len(sealedNonces))
+	for id := range sealedNonces {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	rows := make([]storage.InferenceRow, 0, len(sealedNonces)+len(live))
+	for _, id := range ids {
+		if _, isLive := live[id]; isLive {
+			continue
+		}
+		nonce := sealedNonces[id]
+		if rec, ok := folded[id]; ok {
+			rows = append(rows, inferenceObsRow(id, nonce, rec))
+		} else {
+			rows = append(rows, storage.InferenceRow{InferenceID: id, SealedNonce: nonce})
+		}
+	}
+	liveIDs := make([]uint64, 0, len(live))
+	for id := range live {
+		liveIDs = append(liveIDs, id)
+	}
+	slices.Sort(liveIDs)
+	for _, id := range liveIDs {
+		rows = append(rows, inferenceObsRow(id, 0, live[id]))
+	}
+	// The wipe above emptied the escrow, so this is a load into empty space
+	// rather than an upsert. On Postgres that is the difference between COPY
+	// and a per-row conflict probe.
+	return store.BulkInsertSealedInferences(escrowID, rows)
+}
+
+// foldInferenceRecordsFromDiffs replays the journal into inference records.
+// group, price and threshold are passed in so the caller can release sm.mu
+// before the walk; everything else it reads is immutable after construction.
+func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignment, price uint64, threshold uint32, records []types.DiffRecord) map[uint64]*types.InferenceRecord {
+	out := make(map[uint64]*types.InferenceRecord)
+	if len(group) == 0 {
+		return out
+	}
+	groupLen := uint64(len(group))
+	for _, rec := range records {
+		for _, tx := range rec.Txs {
+			switch inner := tx.GetTx().(type) {
+			case *types.DevshardTx_StartInference:
+				msg := inner.StartInference
+				if msg == nil {
+					continue
+				}
+				if _, exists := out[msg.InferenceId]; exists {
+					continue
+				}
+				reserved, err := tokenCost(msg.InputLength, msg.MaxTokens, price)
+				if err != nil {
+					continue
+				}
+				out[msg.InferenceId] = &types.InferenceRecord{
+					Status:       types.StatusPending,
+					ExecutorSlot: group[msg.InferenceId%groupLen].SlotID,
+					Model:        msg.Model,
+					PromptHash:   append([]byte(nil), msg.PromptHash...),
+					InputLength:  msg.InputLength,
+					MaxTokens:    msg.MaxTokens,
+					ReservedCost: reserved,
+					StartedAt:    msg.StartedAt,
+				}
+			case *types.DevshardTx_ConfirmStart:
+				msg := inner.ConfirmStart
+				if msg == nil {
+					continue
+				}
+				inf := out[msg.InferenceId]
+				if inf == nil {
+					continue
+				}
+				inf.Status = types.StatusStarted
+				inf.ConfirmedAt = msg.ConfirmedAt
+			case *types.DevshardTx_FinishInference:
+				msg := inner.FinishInference
+				if msg == nil {
+					continue
+				}
+				inf := out[msg.InferenceId]
+				if inf == nil {
+					continue
+				}
+				actual, err := tokenCost(msg.InputTokens, msg.OutputTokens, price)
+				if err != nil {
+					continue
+				}
+				if actual > inf.ReservedCost {
+					actual = inf.ReservedCost
+				}
+				inf.Status = types.StatusFinished
+				inf.ResponseHash = append([]byte(nil), msg.ResponseHash...)
+				inf.InputTokens = msg.InputTokens
+				inf.OutputTokens = msg.OutputTokens
+				inf.ActualCost = actual
+			case *types.DevshardTx_TimeoutInference:
+				msg := inner.TimeoutInference
+				if msg == nil {
+					continue
+				}
+				inf := out[msg.InferenceId]
+				if inf == nil {
+					continue
+				}
+				inf.Status = types.StatusTimedOut
+			case *types.DevshardTx_Validation:
+				msg := inner.Validation
+				if msg == nil {
+					continue
+				}
+				inf := out[msg.InferenceId]
+				if inf == nil {
+					continue
+				}
+				if found, _ := sm.addressHasValidated(inf, msg.ValidatorSlot); found {
+					continue
+				}
+				inf.ValidatedBy.Set(msg.ValidatorSlot)
+				if inf.Status != types.StatusFinished {
+					continue
+				}
+				weight := sm.addressToSlotCount[sm.slotToAddress[msg.ValidatorSlot]]
+				if msg.Valid {
+					inf.VotesValid += weight
+				} else {
+					inf.VotesInvalid += weight
+					inf.Status = types.StatusChallenged
+				}
+			case *types.DevshardTx_ValidationVote:
+				msg := inner.ValidationVote
+				if msg == nil {
+					continue
+				}
+				inf := out[msg.InferenceId]
+				if inf == nil {
+					continue
+				}
+				if inf.Status == types.StatusValidated || inf.Status == types.StatusInvalidated {
+					continue
+				}
+				if inf.Status != types.StatusChallenged {
+					continue
+				}
+				if found, _ := sm.addressHasValidated(inf, msg.VoterSlot); found {
+					continue
+				}
+				voterAddr := sm.slotToAddress[msg.VoterSlot]
+				weight := sm.addressToSlotCount[voterAddr]
+				for _, slot := range sm.addressToSlots[voterAddr] {
+					inf.ValidatedBy.Set(slot)
+				}
+				if msg.VoteValid {
+					inf.VotesValid += weight
+				} else {
+					inf.VotesInvalid += weight
+				}
+				if inf.VotesInvalid > threshold {
+					inf.Status = types.StatusInvalidated
+				} else if inf.VotesValid > threshold {
+					inf.Status = types.StatusValidated
+				}
+			}
+		}
+	}
+	return out
 }
 
 // persistLiveInferenceObsLocked upserts the current live inference snapshot

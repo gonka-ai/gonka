@@ -137,7 +137,7 @@ services:
       # Multi/HA: hosts[0]+hosts[1] share KEY_NAME=hosts[0]; solo hosts (2+)
       # keep their own key. Other keys remain in the shared keyring.
       KEY_NAME: {{ versiondKeyName $ . }}
-      DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-30m}
+      DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-32m}
       DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}

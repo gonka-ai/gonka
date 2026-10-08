@@ -58,9 +58,9 @@ func TestMemoryLease_AcquireOneStale_PicksStale(t *testing.T) {
 	require.NoError(t, err)
 
 	store.mu.Lock()
-	lease := store.validationLeases["escrow-1"][1]
+	lease := store.validationLeases["escrow-1"][[2]uint64{10, 1}]
 	lease.claimedAt = time.Now().Add(-time.Hour)
-	store.validationLeases["escrow-1"][1] = lease
+	store.validationLeases["escrow-1"][[2]uint64{10, 1}] = lease
 	store.mu.Unlock()
 
 	inferenceID, epochID, err := store.AcquireOneStale(ctx, "escrow-1", "instance-2", 30*time.Minute)
@@ -76,15 +76,15 @@ func TestMemoryLease_SetResult_RequiresOwner(t *testing.T) {
 	_, err := store.Acquire(ctx, "escrow-1", 1, 10, "instance-1")
 	require.NoError(t, err)
 
-	err = store.SetResult(ctx, "escrow-1", 1, LeaseStatusSubmitted, "instance-2")
+	err = store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-2")
 	require.ErrorIs(t, err, ErrLeaseNotOwned)
 
-	owned, err := store.OwnsPendingLease(ctx, "escrow-1", 1, "instance-1")
+	owned, err := store.OwnsPendingLease(ctx, "escrow-1", 1, 10, "instance-1")
 	require.NoError(t, err)
 	require.True(t, owned)
 
-	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, LeaseStatusSubmitted, "instance-1"))
-	owned, err = store.OwnsPendingLease(ctx, "escrow-1", 1, "instance-1")
+	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-1"))
+	owned, err = store.OwnsPendingLease(ctx, "escrow-1", 1, 10, "instance-1")
 	require.NoError(t, err)
 	require.False(t, owned)
 }
@@ -97,17 +97,17 @@ func TestMemoryLease_SetResult_RejectsAfterStaleSteal(t *testing.T) {
 	require.NoError(t, err)
 
 	store.mu.Lock()
-	lease := store.validationLeases["escrow-1"][1]
+	lease := store.validationLeases["escrow-1"][[2]uint64{10, 1}]
 	lease.claimedAt = time.Now().Add(-time.Hour)
-	store.validationLeases["escrow-1"][1] = lease
+	store.validationLeases["escrow-1"][[2]uint64{10, 1}] = lease
 	store.mu.Unlock()
 
 	_, _, err = store.AcquireOneStale(ctx, "escrow-1", "instance-2", 30*time.Minute)
 	require.NoError(t, err)
 
-	err = store.SetResult(ctx, "escrow-1", 1, LeaseStatusSubmitted, "instance-1")
+	err = store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-1")
 	require.ErrorIs(t, err, ErrLeaseNotOwned)
-	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, LeaseStatusSubmitted, "instance-2"))
+	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-2"))
 }
 
 // SQLite is single-instance, so its lease store is a deliberate no-op: Acquire
@@ -151,5 +151,47 @@ func TestSQLiteLease_SetResult_NoOp(t *testing.T) {
 	store := newTestSQLite(t)
 	ctx := context.Background()
 
-	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, LeaseStatusSubmitted, "instance-1"))
+	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-1"))
+}
+
+func TestMemoryLeaseEpochIsolation(t *testing.T)   { testLeaseEpochIsolation(t, NewMemory()) }
+func TestPostgresLeaseEpochIsolation(t *testing.T) { testLeaseEpochIsolation(t, newTestPostgres(t)) }
+
+func testLeaseEpochIsolation(t *testing.T, store LeaseStore) {
+	t.Helper()
+	ctx := context.Background()
+	for _, epoch := range []uint64{416, 417} {
+		won, err := store.Acquire(ctx, "115309", 5117, epoch, "host")
+		require.NoError(t, err)
+		require.True(t, won)
+	}
+	require.NoError(t, store.SetResult(ctx, "115309", 5117, 416, LeaseStatusSkipped, "host"))
+	owned, err := store.OwnsPendingLease(ctx, "115309", 5117, 417, "host")
+	require.NoError(t, err)
+	require.True(t, owned)
+	owned, err = store.OwnsPendingLease(ctx, "115309", 5117, 416, "host")
+	require.NoError(t, err)
+	require.False(t, owned)
+	require.ErrorIs(t, store.SetResult(ctx, "115309", 5117, 418, LeaseStatusSkipped, "host"), ErrLeaseNotOwned)
+	const workers = 8
+	var wg sync.WaitGroup
+	wins := make(chan bool, workers)
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			won, err := store.Acquire(ctx, "115309", 5118, 417, "host")
+			require.NoError(t, err)
+			wins <- won
+		}()
+	}
+	wg.Wait()
+	close(wins)
+	count := 0
+	for won := range wins {
+		if won {
+			count++
+		}
+	}
+	require.Equal(t, 1, count)
 }
