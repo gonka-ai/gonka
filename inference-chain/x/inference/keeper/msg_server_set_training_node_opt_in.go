@@ -3,7 +3,6 @@ package keeper
 import (
 	"context"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -16,14 +15,7 @@ func (k msgServer) SetTrainingNodeOptIn(goCtx context.Context, msg *types.MsgSet
 	}
 
 	if msg.OptIn {
-		hardware, found := k.GetHardwareNodes(goCtx, msg.Creator)
-		if !found || !hasHardwareNode(hardware, msg.NodeId) {
-			return nil, types.ErrTrainshardNodeNotOwned.Wrapf("node %s not owned by %s", msg.NodeId, msg.Creator)
-		}
-		if _, err := k.setTrainingOptIn(goCtx, msg.Creator, msg.NodeId, sdk.UnwrapSDKContext(goCtx).BlockHeight()); err != nil {
-			return nil, err
-		}
-		return &types.MsgSetTrainingNodeOptInResponse{}, nil
+		return nil, types.ErrTrainshardOptInRequest.Wrap("no manual opt-in: trainshardd opts the node in once its checks pass")
 	}
 
 	if k.IsNodeActivelyReserved(goCtx, msg.Creator, msg.NodeId) {

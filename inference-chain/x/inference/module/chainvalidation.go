@@ -967,11 +967,31 @@ func (am AppModule) mergeReservedNodesIntoPreserved(ctx context.Context, endingE
 			return strings.Compare(a.NodeId, b.NodeId)
 		})
 		for _, n := range nodes {
+			// one node seats in one model; a second model would pick its weight by model name
+			if model, found := modelHoldingNode(p, n.NodeId); found && model != n.ModelId {
+				am.LogWarn("mergeReservedNodesIntoPreserved: node already counted under another model", types.Training,
+					"participant", addr, "node_id", n.NodeId, "model_id", n.ModelId, "counted_under", model)
+				continue
+			}
 			addReservedNodeToParticipant(p, n)
 		}
 		p.Weight = RecalculateWeight(p)
 	}
 	return preserved
+}
+
+func modelHoldingNode(p *types.ActiveParticipant, nodeId string) (string, bool) {
+	for i, model := range p.Models {
+		if i >= len(p.MlNodes) || p.MlNodes[i] == nil {
+			continue
+		}
+		for _, existing := range p.MlNodes[i].MlNodes {
+			if existing != nil && existing.NodeId == nodeId {
+				return model, true
+			}
+		}
+	}
+	return "", false
 }
 
 func addReservedNodeToParticipant(p *types.ActiveParticipant, n *types.TrainshardReservedNode) {

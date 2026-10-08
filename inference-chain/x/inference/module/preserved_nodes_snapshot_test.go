@@ -314,6 +314,38 @@ func TestMergeReservedNodesIntoPreservedDedupsExistingNode(t *testing.T) {
 	require.Equal(t, int64(7), result[0].Weight)
 }
 
+func TestMergeReservedNodesIntoPreservedCountsANodeUnderOneModel(t *testing.T) {
+	for _, weights := range [][2]int64{{10, 20}, {20, 10}} {
+		k, ctx := newMinimalInferenceKeeper(t)
+		am := NewAppModule(nil, k, nil, nil, nil, nil)
+
+		require.NoError(t, k.SetParticipant(ctx, types.Participant{
+			Index:        testutil.Executor,
+			Address:      testutil.Executor,
+			ValidatorKey: "validator-key",
+			InferenceUrl: "http://executor",
+			Status:       types.ParticipantStatus_ACTIVE,
+		}))
+		require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+			TrainshardId:    1,
+			Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+			CreatedAtHeight: 10,
+			ExpiresAtHeight: 1000,
+			Nodes: []*types.TrainshardReservedNode{
+				{Participant: testutil.Executor, NodeId: "node-1", ModelId: "model-a", PocWeight: weights[0]},
+				{Participant: testutil.Executor, NodeId: "node-1", ModelId: "model-b", PocWeight: weights[1]},
+			},
+		}))
+
+		result := am.mergeReservedNodesIntoPreserved(ctx, 5, nil)
+		require.Len(t, result, 1)
+		require.Equal(t, []string{"model-a"}, result[0].Models)
+		require.Len(t, result[0].MlNodes, 1)
+		require.Len(t, result[0].MlNodes[0].MlNodes, 1)
+		require.Equal(t, weights[0], result[0].Weight)
+	}
+}
+
 func TestEpochBoundaryReservationViewsStaySymmetric(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
