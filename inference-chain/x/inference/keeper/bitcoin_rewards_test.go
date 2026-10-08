@@ -2316,52 +2316,127 @@ func TestCalculateParticipantBitcoinRewards_SkipsExcludedCoefficientState(t *tes
 	require.Equal(t, uint64(1000), results[0].Settle.RewardCoins)
 }
 
-func TestApplyTrainingReservationAdjustment(t *testing.T) {
-	t.Run("mid-epoch reserved node strips numerator, no denominator addend", func(t *testing.T) {
-		participantWeights := map[string]uint64{"host": 100}
-		mlNodes := map[string]map[string][]*types.MLNodeInfo{
-			"host": {"m": {{NodeId: "free", PocWeight: 60}, {NodeId: "resv", PocWeight: 40}}},
+func TestTakeTrainingReservedShare(t *testing.T) {
+	reservedAs := func(entries ...string) []*types.TrainshardReservedNode {
+		nodes := make([]*types.TrainshardReservedNode, 0, len(entries))
+		for _, model := range entries {
+			nodes = append(nodes, &types.TrainshardReservedNode{Participant: "host", ModelId: model, NodeId: "resv", PocWeight: 40})
 		}
-		reserved := map[string][]*types.TrainshardReservedNode{
-			"host": {{Participant: "host", ModelId: "m", NodeId: "resv", PocWeight: 40}},
-		}
-		extra := applyTrainingReservationAdjustment(participantWeights, mlNodes, reserved, nil)
-		require.Equal(t, uint64(0), extra)
-		require.Equal(t, uint64(60), participantWeights["host"])
-	})
+		return nodes
+	}
+	withReserved := map[string][]*types.MLNodeInfo{"m": {{NodeId: "free", PocWeight: 60}, {NodeId: "resv", PocWeight: 40}}}
+	withoutReserved := map[string][]*types.MLNodeInfo{"m": {{NodeId: "free", PocWeight: 60}}}
+	cases := []struct {
+		name                       string
+		capped, full               uint64
+		effective                  int64
+		nodes                      map[string][]*types.MLNodeInfo
+		reserved                   []*types.TrainshardReservedNode
+		wantShare, wantLeft, extra uint64
+	}{
+		{"a reserved node the epoch counts takes its part of the host's weight", 100, 100, 100, withReserved, reservedAs("m"), 40, 60, 0},
+		{"a fully reserved host's weight is all reserved share", 100, 100, 100,
+			map[string][]*types.MLNodeInfo{"m": {{NodeId: "resv", PocWeight: 40}}}, reservedAs("m"), 100, 0, 0},
+		{"a node reserved under two models is one node", 100, 100, 100, withReserved, reservedAs("m", "other"), 40, 60, 0},
+		{"a reserved node the epoch does not count earns nothing and joins the denominator", 60, 60, 60, withoutReserved, reservedAs("m"), 0, 60, 40},
+		{"it joins the denominator once whatever models it lists", 60, 60, 60, withoutReserved, reservedAs("m", "other"), 0, 60, 40},
+		{"a cPoC cut stays with the free nodes", 60, 100, 60, withReserved, reservedAs("m"), 40, 20, 0},
+		{"the power cap scales the reserved share like the rest", 50, 100, 100, withReserved, reservedAs("m"), 20, 30, 0},
+		{"a cPoC cut and the power cap together", 30, 100, 60, withReserved, reservedAs("m"), 20, 10, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			weights := map[string]uint64{"host": tc.capped}
 
-	t.Run("pre-formation reserved node adds frozen weight to denominator, numerator untouched", func(t *testing.T) {
-		participantWeights := map[string]uint64{"host": 60}
-		mlNodes := map[string]map[string][]*types.MLNodeInfo{
-			"host": {"m": {{NodeId: "free", PocWeight: 60}}},
-		}
-		reserved := map[string][]*types.TrainshardReservedNode{
-			"host": {{Participant: "host", ModelId: "m", NodeId: "resv", PocWeight: 40}},
-		}
-		extra := applyTrainingReservationAdjustment(participantWeights, mlNodes, reserved, nil)
-		require.Equal(t, uint64(40), extra)
-		require.Equal(t, uint64(60), participantWeights["host"])
-	})
+			share, extra := takeTrainingReservedShare(weights, map[string]uint64{"host": tc.full}, map[string]int64{"host": tc.effective},
+				map[string]map[string][]*types.MLNodeInfo{"host": tc.nodes}, map[string][]*types.TrainshardReservedNode{"host": tc.reserved}, nil)
 
-	t.Run("fully reserved host has its numerator zeroed", func(t *testing.T) {
-		participantWeights := map[string]uint64{"host": 100}
-		mlNodes := map[string]map[string][]*types.MLNodeInfo{
-			"host": {"m": {{NodeId: "resv", PocWeight: 100}}},
-		}
-		reserved := map[string][]*types.TrainshardReservedNode{
-			"host": {{Participant: "host", ModelId: "m", NodeId: "resv", PocWeight: 100}},
-		}
-		extra := applyTrainingReservationAdjustment(participantWeights, mlNodes, reserved, nil)
-		require.Equal(t, uint64(0), extra)
-		require.Equal(t, uint64(0), participantWeights["host"])
-	})
+			require.Equal(t, tc.wantShare, share["host"], "reserved share")
+			require.Equal(t, tc.wantLeft, weights["host"], "weight left to the free nodes")
+			require.Equal(t, tc.extra, extra, "denominator addend")
+		})
+	}
 
 	t.Run("no reservations is a no-op", func(t *testing.T) {
-		participantWeights := map[string]uint64{"host": 100}
-		extra := applyTrainingReservationAdjustment(participantWeights, nil, nil, nil)
+		weights := map[string]uint64{"host": 100}
+		share, extra := takeTrainingReservedShare(weights, nil, nil, nil, nil, nil)
 		require.Equal(t, uint64(0), extra)
-		require.Equal(t, uint64(100), participantWeights["host"])
+		require.Empty(t, share)
+		require.Equal(t, uint64(100), weights["host"])
 	})
+}
+
+func TestBitcoinRewards_AReservedNodeEarnsByFrozenWeight(t *testing.T) {
+	data := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: "host", Weight: 1000, MlNodes: []*types.MLNodeInfo{
+				{NodeId: "free", PocWeight: 600}, {NodeId: "resv", PocWeight: 400},
+			}},
+			{MemberAddress: "other", Weight: 1000},
+		},
+	}
+	params := &types.BitcoinRewardParams{InitialEpochReward: 1000, DecayRate: types.DecimalFromFloat(0), GenesisEpoch: 1}
+	reserved := map[string][]*types.TrainshardReservedNode{
+		"host": {{Participant: "host", ModelId: "model-a", NodeId: "resv", PocWeight: 400}},
+	}
+	participants := func(hostMissed uint64) []types.Participant {
+		return []types.Participant{
+			{Address: "host", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100 - hostMissed, MissedRequests: hostMissed}},
+			{Address: "other", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}},
+		}
+	}
+	cases := []struct {
+		name       string
+		hostMissed uint64
+		reserved   map[string][]*types.TrainshardReservedNode
+		want       uint64
+	}{
+		{"a host with a reserved node earns as if it worked", 0, reserved, 500},
+		{"missed requests on the free nodes leave the reserved node its share", 90, reserved, 200},
+		{"without a reservation the missed requests cost the host everything", 90, nil, 0},
+		{"a node reserved under two models is paid once", 0, map[string][]*types.TrainshardReservedNode{"host": {
+			{Participant: "host", ModelId: "model-a", NodeId: "resv", PocWeight: 400},
+			{Participant: "host", ModelId: "model-b", NodeId: "resv", PocWeight: 400},
+		}}, 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			results, _, err := CalculateParticipantBitcoinRewards(participants(tc.hostMissed), data, params, nil,
+				modelNodesFromVW(data.ValidationWeights), tc.reserved, createTestLogger(t))
+
+			require.NoError(t, err)
+			require.Equal(t, tc.want, results[0].Settle.RewardCoins)
+			require.Equal(t, uint64(500), results[1].Settle.RewardCoins)
+		})
+	}
+}
+
+func TestBitcoinRewards_AFailedConfirmationOfTheFreeNodesLeavesTheReservedShare(t *testing.T) {
+	// the free nodes confirmed nothing and missed requests: only the reserved 400 is left, in full
+	data := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: "host", Weight: 1000, ConfirmationWeight: 400, MlNodes: []*types.MLNodeInfo{
+				{NodeId: "free", PocWeight: 600}, {NodeId: "resv", PocWeight: 400},
+			}},
+			{MemberAddress: "other", Weight: 400, ConfirmationWeight: 400, MlNodes: []*types.MLNodeInfo{{NodeId: "other-node", PocWeight: 400}}},
+		},
+	}
+	params := &types.BitcoinRewardParams{InitialEpochReward: 1400, DecayRate: types.DecimalFromFloat(0), GenesisEpoch: 1}
+	reserved := map[string][]*types.TrainshardReservedNode{
+		"host": {{Participant: "host", ModelId: "model-a", NodeId: "resv", PocWeight: 400}},
+	}
+	participants := []types.Participant{
+		{Address: "host", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 10, MissedRequests: 90}},
+		{Address: "other", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}},
+	}
+
+	results, _, err := CalculateParticipantBitcoinRewards(participants, data, params, nil, modelNodesAndScales(data), reserved, createTestLogger(t))
+
+	require.NoError(t, err)
+	require.Equal(t, uint64(400), results[0].Settle.RewardCoins)
+	require.Equal(t, uint64(400), results[1].Settle.RewardCoins)
 }
 
 func TestGetDynamicP0(t *testing.T) {

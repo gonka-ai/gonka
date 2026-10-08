@@ -437,7 +437,7 @@ func (am AppModule) evaluateConfirmation(
 	// a node reserved at any point before generation ends cannot be held to the event, so the ratio
 	// judges the host's free nodes alone: reserved nodes leave both the expected weight and the
 	// preserved reading. Their weight still counts toward the ConfirmationWeight, since settlement
-	// strips a reserved node's share itself and would otherwise cut the host's free nodes too
+	// pays a reserved node by its frozen weight
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		return fmt.Errorf("evaluateConfirmation: failed to get params: %w", err)

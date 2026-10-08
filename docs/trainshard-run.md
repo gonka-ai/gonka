@@ -83,6 +83,11 @@ docker compose -f docker-compose.yml -f docker-compose.trainshard.yml stop train
 inferenced tx inference set-training-node-opt-in node1 false --from <account-key> --gas auto --gas-adjustment 1.5 --yes
 ```
 
+A reserved node earns its reward every epoch by the weight it had when the shard
+was assembled, as if it worked. It runs no inference, PoC or confirmation PoC.
+Requests your other nodes miss and confirmation PoC they fail do not cut its share. A node that leaves the
+shard is paid for that epoch, then passes confirmation PoC like any other.
+
 ### More than one GPU machine
 
 One daemon per GPU machine, next to that machine's mlnode. On the machine that
