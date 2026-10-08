@@ -3,6 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1145,29 +1149,37 @@ func bearerToken(r *http.Request) (string, bool) {
 	return key, key != ""
 }
 
-func apiKeySuffix(key string) string {
-	key = strings.TrimSpace(key)
-	if len(key) <= 8 {
-		return key
+var apiKeyLogSalt = mustRandomBytes(32)
+
+func mustRandomBytes(n int) []byte {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("read random bytes: %v", err))
 	}
-	return key[len(key)-8:]
+	return b
+}
+
+func apiKeyID(key string) string {
+	mac := hmac.New(sha256.New, apiKeyLogSalt)
+	mac.Write([]byte(key))
+	return hex.EncodeToString(mac.Sum(nil)[:8])
 }
 
 func (g *Gateway) apiKeyLogFields(r *http.Request) []any {
-	if suffix, ok := requestAdminAPIKeySuffix(r); ok {
-		return []any{"api_key_suffix", suffix, "api_key_kind", "admin"}
+	if requestHasAdminAuth(r) {
+		return []any{"api_key_kind", "admin"}
 	}
 	key, ok := bearerToken(r)
 	if !ok {
 		return nil
 	}
-	kind := "unknown"
 	g.mu.Lock()
-	if _, valid := g.apiKeys[key]; valid {
-		kind = "api"
-	}
+	_, valid := g.apiKeys[key]
 	g.mu.Unlock()
-	return []any{"api_key_suffix", apiKeySuffix(key), "api_key_kind", kind}
+	if !valid {
+		return []any{"api_key_kind", "unknown"}
+	}
+	return []any{"api_key_id", apiKeyID(key), "api_key_kind", "api"}
 }
 
 func (g *Gateway) statusModels(runtimes []*devshardRuntime) []string {

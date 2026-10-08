@@ -705,24 +705,63 @@ func TestGatewayModelAccessUnknownModeFallsBackToAPIKey(t *testing.T) {
 	require.Equal(t, 1, forwarded)
 }
 
-func TestGatewayAPIKeyLogFieldsUsesLastEightCharacters(t *testing.T) {
+func TestGatewayAPIKeyLogFieldsDoNotLeakKeyMaterial(t *testing.T) {
 	g := NewGateway(nil, NewGatewayLimiter(0, 0), "Kimi/Test")
-	g.apiKeys = map[string]struct{}{"client-key-12345678": {}}
+	g.apiKeys = map[string]struct{}{"client-key-12345678": {}, "k4807": {}}
+
+	apiFields := func(key string) []any {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+		req.Header.Set("Authorization", "Bearer "+key)
+		return g.apiKeyLogFields(req)
+	}
+
+	fields := apiFields("client-key-12345678")
+	require.Len(t, fields, 4)
+	require.Equal(t, "api_key_id", fields[0])
+	require.Equal(t, []any{"api_key_kind", "api"}, fields[2:])
+	id := fields[1].(string)
+	require.Len(t, id, 16)
+	require.NotContains(t, id, "12345678")
+	require.Equal(t, fields, apiFields("client-key-12345678"))
+
+	shortFields := apiFields("k4807")
+	require.NotEqual(t, id, shortFields[1])
+	require.NotContains(t, shortFields[1].(string), "k4807")
+
+	require.Equal(t, []any{"api_key_kind", "unknown"}, apiFields("unknown-key-87654321"))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req.Header.Set("Authorization", "Bearer client-key-12345678")
-	require.Equal(t, []any{"api_key_suffix", "12345678", "api_key_kind", "api"}, g.apiKeyLogFields(req))
+	require.Nil(t, g.apiKeyLogFields(req))
 
-	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req.Header.Set("Authorization", "Bearer unknown-key-87654321")
-	require.Equal(t, []any{"api_key_suffix", "87654321", "api_key_kind", "unknown"}, g.apiKeyLogFields(req))
-
-	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	called := false
 	handler := adminAuthMiddleware("admin-key-abcdefgh", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		require.Equal(t, []any{"api_key_suffix", "abcdefgh", "api_key_kind", "admin"}, g.apiKeyLogFields(r))
+		called = true
+		require.Equal(t, []any{"api_key_kind", "admin"}, g.apiKeyLogFields(r))
 	}))
+	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	req.Header.Set("Authorization", "Bearer admin-key-abcdefgh")
 	handler.ServeHTTP(httptest.NewRecorder(), req)
+	require.True(t, called)
+}
+
+func TestAdminAuthMiddlewareRejectsWrongAdminKey(t *testing.T) {
+	handler := adminAuthMiddleware("admin-key-abcdefgh", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	for _, auth := range []string{"", "Bearer admin-key-abcdefgX", "Bearer admin-key-abcdefg", "Bearer admin-key-abcdefghh"} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/debug/memstats", nil)
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusUnauthorized, rec.Code, auth)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/debug/memstats", nil)
+	req.Header.Set("Authorization", "Bearer admin-key-abcdefgh")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNoContent, rec.Code)
 }
 
 func TestGatewayModelAccessDefaultsToAdminOnly(t *testing.T) {
