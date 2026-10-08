@@ -21592,49 +21592,49 @@ func (x *_DevshardEscrowParams_7_list) IsValid() bool {
 	return x.list != nil
 }
 
-var _ protoreflect.List = (*_DevshardEscrowParams_19_list)(nil)
+var _ protoreflect.List = (*_DevshardEscrowParams_20_list)(nil)
 
-type _DevshardEscrowParams_19_list struct {
+type _DevshardEscrowParams_20_list struct {
 	list *[][]byte
 }
 
-func (x *_DevshardEscrowParams_19_list) Len() int {
+func (x *_DevshardEscrowParams_20_list) Len() int {
 	if x.list == nil {
 		return 0
 	}
 	return len(*x.list)
 }
 
-func (x *_DevshardEscrowParams_19_list) Get(i int) protoreflect.Value {
+func (x *_DevshardEscrowParams_20_list) Get(i int) protoreflect.Value {
 	return protoreflect.ValueOfBytes((*x.list)[i])
 }
 
-func (x *_DevshardEscrowParams_19_list) Set(i int, value protoreflect.Value) {
+func (x *_DevshardEscrowParams_20_list) Set(i int, value protoreflect.Value) {
 	valueUnwrapped := value.Bytes()
 	concreteValue := valueUnwrapped
 	(*x.list)[i] = concreteValue
 }
 
-func (x *_DevshardEscrowParams_19_list) Append(value protoreflect.Value) {
+func (x *_DevshardEscrowParams_20_list) Append(value protoreflect.Value) {
 	valueUnwrapped := value.Bytes()
 	concreteValue := valueUnwrapped
 	*x.list = append(*x.list, concreteValue)
 }
 
-func (x *_DevshardEscrowParams_19_list) AppendMutable() protoreflect.Value {
+func (x *_DevshardEscrowParams_20_list) AppendMutable() protoreflect.Value {
 	panic(fmt.Errorf("AppendMutable can not be called on message DevshardEscrowParams at list field AllowedCreatorAddrs as it is not of Message kind"))
 }
 
-func (x *_DevshardEscrowParams_19_list) Truncate(n int) {
+func (x *_DevshardEscrowParams_20_list) Truncate(n int) {
 	*x.list = (*x.list)[:n]
 }
 
-func (x *_DevshardEscrowParams_19_list) NewElement() protoreflect.Value {
+func (x *_DevshardEscrowParams_20_list) NewElement() protoreflect.Value {
 	var v []byte
 	return protoreflect.ValueOfBytes(v)
 }
 
-func (x *_DevshardEscrowParams_19_list) IsValid() bool {
+func (x *_DevshardEscrowParams_20_list) IsValid() bool {
 	return x.list != nil
 }
 
@@ -21859,7 +21859,7 @@ func (x *fastReflection_DevshardEscrowParams) Range(f func(protoreflect.FieldDes
 		}
 	}
 	if len(x.AllowedCreatorAddrs) != 0 {
-		value := protoreflect.ValueOfList(&_DevshardEscrowParams_19_list{list: &x.AllowedCreatorAddrs})
+		value := protoreflect.ValueOfList(&_DevshardEscrowParams_20_list{list: &x.AllowedCreatorAddrs})
 		if !f(fd_DevshardEscrowParams_allowed_creator_addrs, value) {
 			return
 		}
@@ -22049,9 +22049,9 @@ func (x *fastReflection_DevshardEscrowParams) Get(descriptor protoreflect.FieldD
 		return protoreflect.ValueOfUint32(value)
 	case "inference.inference.DevshardEscrowParams.allowed_creator_addrs":
 		if len(x.AllowedCreatorAddrs) == 0 {
-			return protoreflect.ValueOfList(&_DevshardEscrowParams_19_list{})
+			return protoreflect.ValueOfList(&_DevshardEscrowParams_20_list{})
 		}
-		listValue := &_DevshardEscrowParams_19_list{list: &x.AllowedCreatorAddrs}
+		listValue := &_DevshardEscrowParams_20_list{list: &x.AllowedCreatorAddrs}
 		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
@@ -22115,7 +22115,7 @@ func (x *fastReflection_DevshardEscrowParams) Set(fd protoreflect.FieldDescripto
 		x.DefaultAutoSealEveryNNonces = uint32(value.Uint())
 	case "inference.inference.DevshardEscrowParams.allowed_creator_addrs":
 		lv := value.List()
-		clv := lv.(*_DevshardEscrowParams_19_list)
+		clv := lv.(*_DevshardEscrowParams_20_list)
 		x.AllowedCreatorAddrs = *clv.list
 	default:
 		if fd.IsExtension() {
@@ -22153,7 +22153,7 @@ func (x *fastReflection_DevshardEscrowParams) Mutable(fd protoreflect.FieldDescr
 		if x.AllowedCreatorAddrs == nil {
 			x.AllowedCreatorAddrs = [][]byte{}
 		}
-		value := &_DevshardEscrowParams_19_list{list: &x.AllowedCreatorAddrs}
+		value := &_DevshardEscrowParams_20_list{list: &x.AllowedCreatorAddrs}
 		return protoreflect.ValueOfList(value)
 	case "inference.inference.DevshardEscrowParams.min_amount":
 		panic(fmt.Errorf("field min_amount of message inference.inference.DevshardEscrowParams is not mutable"))
@@ -22240,7 +22240,7 @@ func (x *fastReflection_DevshardEscrowParams) NewField(fd protoreflect.FieldDesc
 		return protoreflect.ValueOfUint32(uint32(0))
 	case "inference.inference.DevshardEscrowParams.allowed_creator_addrs":
 		list := [][]byte{}
-		return protoreflect.ValueOfList(&_DevshardEscrowParams_19_list{list: &list})
+		return protoreflect.ValueOfList(&_DevshardEscrowParams_20_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -22413,7 +22413,7 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 				i--
 				dAtA[i] = 0x1
 				i--
-				dAtA[i] = 0x9a
+				dAtA[i] = 0xa2
 			}
 		}
 		if x.DefaultAutoSealEveryNNonces != 0 {
@@ -22952,7 +22952,7 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 						break
 					}
 				}
-			case 19:
+			case 20:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field AllowedCreatorAddrs", wireType)
 				}
@@ -29810,7 +29810,7 @@ type DevshardEscrowParams struct {
 	VoteThresholdFactor              uint32                     `protobuf:"varint,17,opt,name=vote_threshold_factor,json=voteThresholdFactor,proto3" json:"vote_threshold_factor,omitempty"` // percent, e.g. 50 == 50%
 	DefaultAutoSealEveryNNonces      uint32                     `protobuf:"varint,18,opt,name=default_auto_seal_every_n_nonces,json=defaultAutoSealEveryNNonces,proto3" json:"default_auto_seal_every_n_nonces,omitempty"`
 	// Storage only: allowed_creator_addresses as address bytes.
-	AllowedCreatorAddrs [][]byte `protobuf:"bytes,19,rep,name=allowed_creator_addrs,json=allowedCreatorAddrs,proto3" json:"allowed_creator_addrs,omitempty"`
+	AllowedCreatorAddrs [][]byte `protobuf:"bytes,20,rep,name=allowed_creator_addrs,json=allowedCreatorAddrs,proto3" json:"allowed_creator_addrs,omitempty"`
 }
 
 func (x *DevshardEscrowParams) Reset() {
@@ -31317,7 +31317,7 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x75, 0x6c, 0x74, 0x41, 0x75, 0x74, 0x6f, 0x53, 0x65, 0x61, 0x6c, 0x45, 0x76, 0x65, 0x72, 0x79,
 	0x4e, 0x4e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x32, 0x0a, 0x15, 0x61, 0x6c, 0x6c, 0x6f, 0x77,
 	0x65, 0x64, 0x5f, 0x63, 0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x73,
-	0x18, 0x13, 0x20, 0x03, 0x28, 0x0c, 0x52, 0x13, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x43,
+	0x18, 0x14, 0x20, 0x03, 0x28, 0x0c, 0x52, 0x13, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x43,
 	0x72, 0x65, 0x61, 0x74, 0x6f, 0x72, 0x41, 0x64, 0x64, 0x72, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f,
 	0x01, 0x22, 0x82, 0x02, 0x0a, 0x09, 0x46, 0x65, 0x65, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12,
 	0x2f, 0x0a, 0x14, 0x6d, 0x69, 0x6e, 0x5f, 0x67, 0x61, 0x73, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65,
