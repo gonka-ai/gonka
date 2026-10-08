@@ -96,3 +96,26 @@ func TestDeveloperStatsPruningRunsFromKeeperPrune(t *testing.T) {
 	_, found := k.GetDevelopersStatsByEpoch(ctx, "developer", 1)
 	require.False(t, found)
 }
+
+func TestDeveloperStatsPruningChargesSharedBudget(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	setDeveloperStatsForPruning(t, ctx, k, 1)
+
+	// Three index keys take 3 units; the ByEpoch record needs 400 more.
+	budget := int64(3 + keeper.DeveloperStatsByEpochRemoveCost - 1)
+	require.NoError(t, keeper.PruneDeveloperStatsWithBudgetForTesting(k, ctx, &budget))
+	require.Equal(t, keeper.DeveloperStatsByEpochRemoveCost-1, budget)
+	require.Empty(t, k.GetDeveloperStatsByTime(ctx, "developer", 0, 2))
+	_, found := k.GetDevelopersStatsByEpoch(ctx, "developer", 1)
+	require.True(t, found)
+
+	budget = keeper.DeveloperStatsByEpochRemoveCost
+	require.NoError(t, keeper.PruneDeveloperStatsWithBudgetForTesting(k, ctx, &budget))
+	require.Zero(t, budget)
+	_, found = k.GetDevelopersStatsByEpoch(ctx, "developer", 1)
+	require.False(t, found)
+
+	budget = 0
+	require.NoError(t, keeper.PruneDeveloperStatsWithBudgetForTesting(k, ctx, &budget))
+	require.Zero(t, budget)
+}
