@@ -11,4 +11,5 @@ var (
 	ErrDeadlinePassed  = shared.New("DEADLINE_PASSED", shared.ErrValidation, "request deadline has passed")
 	ErrNodeNotPrepared = shared.New("NODE_NOT_PREPARED", shared.ErrConflict, "node is not prepared")
 	ErrReleasePending  = shared.New("RELEASE_PENDING", shared.ErrUnavailable, "chain still reserves a node that was released")
+	ErrAssemblyClosed  = shared.New("ASSEMBLY_CLOSED", shared.ErrUnavailable, "chain takes no assemble while PoC or confirmation PoC runs")
 )

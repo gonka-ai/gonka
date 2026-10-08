@@ -43,6 +43,7 @@ type BrokerChainBridge interface {
 	GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error)
 	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
 	GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error)
+	GetActiveTrainshards() (*types.QueryActiveTrainshardsResponse, error)
 	GetParams() (*types.QueryParamsResponse, error)
 }
 
@@ -114,6 +115,11 @@ func (b *BrokerChainBridgeImpl) GetEpochGroupDataByModelId(epochIndex uint64, mo
 func (b *BrokerChainBridgeImpl) GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error) {
 	queryClient := b.client.NewInferenceQueryClient()
 	return queryClient.PreservedNodesSnapshot(b.client.GetContext(), &types.QueryPreservedNodesSnapshotRequest{})
+}
+
+func (b *BrokerChainBridgeImpl) GetActiveTrainshards() (*types.QueryActiveTrainshardsResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	return queryClient.ActiveTrainshards(b.client.GetContext(), &types.QueryActiveTrainshardsRequest{})
 }
 
 func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) {
@@ -231,6 +237,8 @@ type NodeState struct {
 	FailureReason   string     `json:"failure_reason"`
 	StatusTimestamp time.Time  `json:"status_timestamp"`
 	AdminState      AdminState `json:"admin_state"`
+	// Reserved is whether an active trainshard holds the node, read from the chain every block
+	Reserved bool `json:"reserved"`
 	// Self-reported by the node. Informational only — do not use for authorization or capability gating.
 	MlNodeVersion string `json:"ml_node_version"`
 	// Self-reported by the node. Informational only - can serve inference while PoC validation runs inside vLLM.
@@ -300,6 +308,12 @@ func (s *NodeState) Failure(reason string) {
 func (s *NodeState) pinStopped() {
 	s.IntendedStatus = types.HardwareNodeStatus_STOPPED
 	s.PocIntendedStatus = PocStatusIdle
+}
+
+// HeldOut is whether the node stays stopped, out of inference, PoC and validation: the operator
+// stopped it, or a trainshard reserves it
+func (s *NodeState) HeldOut() bool {
+	return s.AdminState.Stopped || s.Reserved
 }
 
 func (s *NodeState) IsOperational() bool {
@@ -638,7 +652,7 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 			released = true
 		}
 	}
-	stopPending := ok && released && node.State.LockCount == 0 && node.State.AdminState.Stopped
+	stopPending := ok && released && node.State.LockCount == 0 && node.State.HeldOut()
 	b.mu.Unlock()
 
 	if !ok {
@@ -1375,7 +1389,7 @@ func (b *Broker) getCommandForState(
 			return nil // No action for other phases if status is POC
 		}
 	case types.HardwareNodeStatus_STOPPED:
-		if !nodeState.AdminState.Stopped {
+		if !nodeState.HeldOut() {
 			return nil
 		}
 		if nodeState.LockCount > 0 {
@@ -1778,6 +1792,59 @@ func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochSta
 				node.State.PreservedModels[modelNodes.ModelId] = true
 			}
 		}
+	}
+	return nil
+}
+
+// EnsureReservedNodesCached holds every node an active trainshard reserves out of inference and
+// PoC, read from the chain before the block's phase commands. The trainshard daemon stops it too,
+// but only once it polls: a phase command in between would start PoC on the cards the run takes.
+// A node whose reservation ends goes back to inference unless the operator still holds it stopped
+func (b *Broker) EnsureReservedNodesCached() error {
+	resp, err := b.chainBridge.GetActiveTrainshards()
+	if err != nil {
+		return err
+	}
+	participantAddr := b.GetParticipantAddress()
+	if participantAddr == "" {
+		return fmt.Errorf("participant address unavailable for trainshard reservations")
+	}
+
+	reserved := make(map[string]bool)
+	for _, shard := range resp.GetTrainshards() {
+		if shard == nil || shard.Status != types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE {
+			continue
+		}
+		for _, node := range shard.Nodes {
+			if node != nil && node.Participant == participantAddr &&
+				node.Status == types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE {
+				reserved[node.NodeId] = true
+			}
+		}
+	}
+
+	changed := false
+	b.mu.Lock()
+	for id, node := range b.nodes {
+		held := reserved[id]
+		if node.State.Reserved == held {
+			continue
+		}
+		node.State.Reserved = held
+		changed = true
+		switch {
+		case held:
+			node.State.pinStopped()
+		case !node.State.AdminState.Stopped:
+			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+			node.State.PocIntendedStatus = PocStatusIdle
+		}
+		logging.Info("Trainshard reservation changed", types.Nodes, "node_id", id, "reserved", held)
+	}
+	b.mu.Unlock()
+
+	if changed {
+		b.TriggerReconciliation()
 	}
 	return nil
 }

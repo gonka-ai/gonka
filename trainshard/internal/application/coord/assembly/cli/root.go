@@ -8,6 +8,7 @@ import (
 
 	usecases "trainshard/internal/application/coord/assembly/use_cases"
 	"trainshard/internal/domain/shared/ports"
+	"trainshard/internal/domain/shared/vo"
 	"trainshard/internal/utils/clix"
 )
 
@@ -18,14 +19,16 @@ type UseCases struct {
 	Kick     *usecases.KickUseCase
 }
 
+// Commands print results to out and progress to notes, so a script that reads out gets the result only
 type Commands struct {
 	uc    UseCases
 	clock ports.Clock
 	out   io.Writer
+	notes io.Writer
 }
 
-func New(uc UseCases, clock ports.Clock, out io.Writer) *Commands {
-	return &Commands{uc: uc, clock: clock, out: out}
+func New(uc UseCases, clock ports.Clock, out, notes io.Writer) *Commands {
+	return &Commands{uc: uc, clock: clock, out: out, notes: notes}
 }
 
 func (c *Commands) Register(commands map[string]func(context.Context, []string) error) {
@@ -37,7 +40,7 @@ func (c *Commands) Register(commands map[string]func(context.Context, []string) 
 
 func (c *Commands) Assemble(ctx context.Context, args []string) error {
 	rest, err := clix.Parse(clix.Command("assemble <proposal>",
-		"Turns a passed proposal into a shard: the chain reserves nodes of the proposal's gpu\nprofile. Prints the shard id the other commands take.",
+		"Turns a passed proposal into a shard: the chain reserves nodes of the proposal's gpu\nprofile. Prints the shard id the other commands take. The chain assembles nothing while\nPoC or confirmation PoC runs: the command waits until it ends and says so on stderr.",
 		"trainshardctl assemble 3"), args, "proposal")
 	if err != nil {
 		return err
@@ -47,7 +50,9 @@ func (c *Commands) Assemble(ctx context.Context, args []string) error {
 		return err
 	}
 
-	shardID, err := c.uc.Assemble.Execute(ctx, usecases.AssembleCommand{Proposal: proposal})
+	shardID, err := c.uc.Assemble.Execute(ctx, usecases.AssembleCommand{Proposal: proposal, Waiting: func(now, opens vo.Height) {
+		fmt.Fprintf(c.notes, "PoC or confirmation PoC is running: assembling at height %d, now %d (%d blocks left)\n", opens, now, opens-now)
+	}})
 	if err != nil {
 		return err
 	}

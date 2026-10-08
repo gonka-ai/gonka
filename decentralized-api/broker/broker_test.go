@@ -72,6 +72,14 @@ func (m *MockBrokerChainBridge) GetPreservedNodesSnapshot() (*types.QueryPreserv
 	return args.Get(0).(*types.QueryPreservedNodesSnapshotResponse), args.Error(1)
 }
 
+func (m *MockBrokerChainBridge) GetActiveTrainshards() (*types.QueryActiveTrainshardsResponse, error) {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryActiveTrainshardsResponse), args.Error(1)
+}
+
 func (m *MockBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
 	args := m.Called()
 	if args.Get(0) == nil {

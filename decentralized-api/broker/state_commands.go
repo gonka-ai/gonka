@@ -67,7 +67,7 @@ func (c StartPocCommand) Execute(b *Broker) {
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
-		if node.State.AdminState.Stopped {
+		if node.State.HeldOut() {
 			node.State.pinStopped()
 			continue
 		}
@@ -103,7 +103,7 @@ func (c StartPocCommand) shouldMutateState(b *Broker, epochState *chainphase.Epo
 	defer b.mu.RUnlock()
 
 	for _, node := range b.nodes {
-		if node.State.AdminState.Stopped {
+		if node.State.HeldOut() {
 			if node.State.IntendedStatus != types.HardwareNodeStatus_STOPPED {
 				return true
 			}
@@ -184,7 +184,7 @@ func (c InitValidateCommand) Execute(b *Broker) {
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
-		if node.State.AdminState.Stopped {
+		if node.State.HeldOut() {
 			node.State.pinStopped()
 			continue
 		}
@@ -219,7 +219,7 @@ func (c InitValidateCommand) shouldMutateState(b *Broker, epochState *chainphase
 	defer b.mu.RUnlock()
 
 	for _, node := range b.nodes {
-		if node.State.AdminState.Stopped {
+		if node.State.HeldOut() {
 			if node.State.IntendedStatus != types.HardwareNodeStatus_STOPPED {
 				return true
 			}
@@ -291,7 +291,7 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
-		if node.State.AdminState.Stopped {
+		if node.State.HeldOut() {
 			node.State.pinStopped()
 			continue
 		}
@@ -315,7 +315,7 @@ func (c InferenceUpAllCommand) shouldMutateState(b *Broker, epochState *chainpha
 	defer b.mu.RUnlock()
 
 	for _, node := range b.nodes {
-		if node.State.AdminState.Stopped {
+		if node.State.HeldOut() {
 			if node.State.IntendedStatus != types.HardwareNodeStatus_STOPPED {
 				return true
 			}

@@ -35,6 +35,13 @@ func (k msgServer) AssembleTrainshard(goCtx context.Context, msg *types.MsgAssem
 	}
 
 	height := ctx.BlockHeight()
+	opens, err := k.trainshardAssemblyOpensAt(goCtx, height)
+	if err != nil {
+		return nil, err
+	}
+	if height < opens {
+		return nil, types.ErrTrainshardAssemblyDuringPoC.Wrapf("assemble at height %d or later", opens)
+	}
 	if until := k.creatorCooldownUntil(goCtx, msg.Creator); height < until {
 		return nil, types.ErrTrainshardCooldown.Wrapf("until height %d", until)
 	}
@@ -106,4 +113,23 @@ func (k msgServer) AssembleTrainshard(goCtx context.Context, msg *types.MsgAssem
 	}
 
 	return &types.MsgAssembleTrainshardResponse{TrainshardId: trainshardId}, nil
+}
+
+func (k Keeper) trainshardAssemblyOpensAt(ctx context.Context, height int64) (int64, error) {
+	latest, found := k.GetLatestEpoch(ctx)
+	if !found || latest == nil {
+		return height, nil
+	}
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if params.EpochParams == nil {
+		return height, nil
+	}
+	event, _, err := k.GetActiveConfirmationPoCEvent(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return types.TrainshardAssemblyOpensAt(height, *latest, *params.EpochParams, event), nil
 }

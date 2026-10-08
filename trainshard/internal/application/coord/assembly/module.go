@@ -24,6 +24,7 @@ type Deps struct {
 	Delegation ports.Delegation
 	Submitter  shard.ChainSubmitter
 	Lifecycle  shard.ChainLifecycle
+	Window     shard.AssemblyWindow
 	Clock      ports.Clock
 }
 
@@ -31,14 +32,14 @@ type Module struct {
 	commands *cli.Commands
 }
 
-func New(cfg Config, deps Deps, out io.Writer) *Module {
+func New(cfg Config, deps Deps, out, notes io.Writer) *Module {
 	prepare := usecases.NewPrepareMeshUseCase(deps.Chain, deps.Hosts, deps.Verifier, deps.Delegation, deps.Submitter, deps.Clock, cfg.Poll, cfg.Settle)
 	return &Module{commands: cli.New(cli.UseCases{
 		Prepare:  prepare,
-		Assemble: usecases.NewAssembleUseCase(deps.Lifecycle),
+		Assemble: usecases.NewAssembleUseCase(deps.Lifecycle, deps.Window, cfg.Poll),
 		Settle:   usecases.NewSettleUseCase(deps.Lifecycle),
 		Kick:     usecases.NewKickUseCase(deps.Submitter),
-	}, deps.Clock, out)}
+	}, deps.Clock, out, notes)}
 }
 
 func (m *Module) Register(commands map[string]func(context.Context, []string) error) {

@@ -1156,6 +1156,11 @@ func filterNodesForValidation(nodes []broker.NodeResponse, latestEpoch uint64, c
 			continue
 		}
 
+		if node.State.HeldOut() {
+			logging.Debug("filterNodesForValidation: Skipping stopped or trainshard-reserved node", types.PoC, "node_id", node.Node.Id)
+			continue
+		}
+
 		// Exclude nodes that are not operational for the current epoch/phase.
 		if !node.State.ShouldBeOperational(latestEpoch, currentPhase) {
 			logging.Debug("filterNodesForValidation: Skipping non-operational node", types.PoC,

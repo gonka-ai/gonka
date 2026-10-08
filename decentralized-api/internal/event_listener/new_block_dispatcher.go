@@ -424,6 +424,9 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(ctx context.Context, epoch
 	blockHeight := epochState.CurrentBlock.Height
 	blockHash := epochState.CurrentBlock.Hash
 
+	if err := d.nodeBroker.EnsureReservedNodesCached(); err != nil {
+		logging.Warn("Failed to refresh trainshard reservations; continuing with cached ones", types.Stages, "error", err)
+	}
 	// Sync broker node state with the latest epoch data at the start of a transition check
 	if err := d.nodeBroker.UpdateNodeWithEpochData(&epochState); err != nil {
 		logging.Error("Failed to update node with epoch data, skipping phase transitions.", types.Stages, "error", err)

@@ -44,11 +44,26 @@ func (s *submitterStub) Release(_ context.Context, shardID vo.ShardID, node vo.N
 	return nil
 }
 
+type openWindow struct{}
+
+func (openWindow) AssemblyOpensAt(context.Context) (vo.Height, vo.Height, error) { return 10, 10, nil }
+
+// pocWindow opens at opens and moves one block per read
+type pocWindow struct {
+	now, opens vo.Height
+}
+
+func (w *pocWindow) AssemblyOpensAt(context.Context) (vo.Height, vo.Height, error) {
+	now := w.now
+	w.now++
+	return now, max(now, w.opens), nil
+}
+
 func TestAssemblingAProposalAnswersWithTheShardTheChainNamed(t *testing.T) {
 	// arrange
 	lifecycle := &lifecycleStub{assigned: 7}
 	out := &bytes.Buffer{}
-	commands := cli.New(cli.UseCases{Assemble: usecases.NewAssembleUseCase(lifecycle)}, nil, out)
+	commands := cli.New(cli.UseCases{Assemble: usecases.NewAssembleUseCase(lifecycle, openWindow{}, time.Millisecond)}, nil, out, &bytes.Buffer{})
 
 	// act
 	err := commands.Assemble(context.Background(), []string{"3"})
@@ -65,10 +80,33 @@ func TestAssemblingAProposalAnswersWithTheShardTheChainNamed(t *testing.T) {
 	}
 }
 
+func TestAssemblingDuringPoCSaysSoOnNotesAndKeepsOutForTheShard(t *testing.T) {
+	// arrange
+	lifecycle := &lifecycleStub{assigned: 7}
+	out, notes := &bytes.Buffer{}, &bytes.Buffer{}
+	window := &pocWindow{now: 100, opens: 103}
+	commands := cli.New(cli.UseCases{Assemble: usecases.NewAssembleUseCase(lifecycle, window, time.Millisecond)}, nil, out, notes)
+
+	// act
+	err := commands.Assemble(context.Background(), []string{"3"})
+
+	// assert
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if out.String() != "7\n" {
+		t.Fatalf("got %q on out, want only the shard id a script reads", out.String())
+	}
+	want := "PoC or confirmation PoC is running: assembling at height 103, now 100 (3 blocks left)\n"
+	if notes.String() != want {
+		t.Fatalf("got %q on notes, want one line naming the height: %q", notes.String(), want)
+	}
+}
+
 func TestSettlingClosesTheShardItWasGiven(t *testing.T) {
 	// arrange
 	lifecycle := &lifecycleStub{}
-	commands := cli.New(cli.UseCases{Settle: usecases.NewSettleUseCase(lifecycle)}, nil, &bytes.Buffer{})
+	commands := cli.New(cli.UseCases{Settle: usecases.NewSettleUseCase(lifecycle)}, nil, &bytes.Buffer{}, &bytes.Buffer{})
 
 	// act
 	err := commands.Settle(context.Background(), []string{"7"})
@@ -85,7 +123,7 @@ func TestSettlingClosesTheShardItWasGiven(t *testing.T) {
 func TestKickingReleasesTheNodeItNamesFromTheShardItNames(t *testing.T) {
 	// arrange
 	submitter := &submitterStub{}
-	commands := cli.New(cli.UseCases{Kick: usecases.NewKickUseCase(submitter)}, nil, &bytes.Buffer{})
+	commands := cli.New(cli.UseCases{Kick: usecases.NewKickUseCase(submitter)}, nil, &bytes.Buffer{}, &bytes.Buffer{})
 
 	// act
 	err := commands.Kick(context.Background(), []string{"7", "gonka1host/node1"})
@@ -111,7 +149,7 @@ func TestAKickThatDoesNotNameANodeIsRefusedBeforeTheChainIsAsked(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// arrange
 			submitter := &submitterStub{}
-			commands := cli.New(cli.UseCases{Kick: usecases.NewKickUseCase(submitter)}, nil, &bytes.Buffer{})
+			commands := cli.New(cli.UseCases{Kick: usecases.NewKickUseCase(submitter)}, nil, &bytes.Buffer{}, &bytes.Buffer{})
 
 			// act
 			err := commands.Kick(context.Background(), args)
@@ -130,7 +168,7 @@ func TestAKickThatDoesNotNameANodeIsRefusedBeforeTheChainIsAsked(t *testing.T) {
 func TestAProposalThatIsNotANumberIsRefusedBeforeTheChainIsAsked(t *testing.T) {
 	// arrange
 	lifecycle := &lifecycleStub{}
-	commands := cli.New(cli.UseCases{Assemble: usecases.NewAssembleUseCase(lifecycle)}, nil, &bytes.Buffer{})
+	commands := cli.New(cli.UseCases{Assemble: usecases.NewAssembleUseCase(lifecycle, openWindow{}, time.Millisecond)}, nil, &bytes.Buffer{}, &bytes.Buffer{})
 
 	// act
 	err := commands.Assemble(context.Background(), []string{"seven"})
