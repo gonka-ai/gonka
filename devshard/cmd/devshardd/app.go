@@ -172,7 +172,16 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("chain id: %w", err)
 	}
 
-	identity, err := newChainIdentity(chainClient, apiAccount, kr)
+	infoPath, err := signerInfoPath(nodeConfig, apiAccount.SignerRecord.Name)
+	if err != nil {
+		return nil, fmt.Errorf("keyring file: %w", err)
+	}
+	payloadSigner, err := signing.NewCachedCosmosSigner(kr, apiAccount.SignerRecord.Name, infoPath)
+	if err != nil {
+		return nil, fmt.Errorf("payload signer: %w", err)
+	}
+
+	identity, err := newChainIdentity(chainClient, apiAccount, payloadSigner)
 	if err != nil {
 		return nil, fmt.Errorf("chain identity: %w", err)
 	}
