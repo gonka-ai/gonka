@@ -3,6 +3,8 @@ package state
 import (
 	"fmt"
 
+	"github.com/gtank/ristretto255"
+
 	"devshard/types"
 )
 
@@ -44,7 +46,7 @@ type journalScalars struct {
 	phase         types.SessionPhase
 	finalizeNonce uint64
 	latestNonce   uint64
-	liveEntrySum  [32]byte
+	liveEntrySum  ristretto255.Element
 	sealedAcc     []byte
 }
 

@@ -30,26 +30,25 @@ func liveEntryPoint(entry []byte) *ristretto255.Element {
 }
 
 // sumLivePointsFromEntries is the live-set commitment: one point per id,
-// added in the Ristretto255 group. An empty map encodes as 32 zero bytes,
-// the group identity. Order does not matter.
-func sumLivePointsFromEntries(entries map[uint64][]byte) [32]byte {
+// added in the Ristretto255 group. An empty map is the group identity, which
+// encodes as 32 zero bytes. Order does not matter.
+func sumLivePointsFromEntries(entries map[uint64][]byte) ristretto255.Element {
 	acc := ristretto255.NewElement()
 	for _, entry := range entries {
 		acc.Add(acc, liveEntryPoint(entry))
 	}
-	return encodeLivePoint(acc)
+	return *acc
 }
 
-func addLivePoint(sum [32]byte, entry []byte) [32]byte {
-	acc := decodeLivePoint(sum)
-	acc.Add(acc, liveEntryPoint(entry))
-	return encodeLivePoint(acc)
+// addLivePoint adds one record's point into sum. sum is the running total in
+// point form, so this does not decode or encode it.
+func addLivePoint(sum *ristretto255.Element, entry []byte) {
+	sum.Add(sum, liveEntryPoint(entry))
 }
 
-func subLivePoint(sum [32]byte, entry []byte) [32]byte {
-	acc := decodeLivePoint(sum)
-	acc.Subtract(acc, liveEntryPoint(entry))
-	return encodeLivePoint(acc)
+// subLivePoint subtracts one record's point from sum.
+func subLivePoint(sum *ristretto255.Element, entry []byte) {
+	sum.Subtract(sum, liveEntryPoint(entry))
 }
 
 func encodeLivePoint(e *ristretto255.Element) [32]byte {
@@ -61,14 +60,6 @@ func encodeLivePoint(e *ristretto255.Element) [32]byte {
 	var out [32]byte
 	copy(out[:], encoded)
 	return out
-}
-
-func decodeLivePoint(sum [32]byte) *ristretto255.Element {
-	e := ristretto255.NewElement()
-	if err := e.Decode(sum[:]); err != nil {
-		panic("devshard live-set commitment: " + err.Error())
-	}
-	return e
 }
 
 // expandMessageXMD is RFC 9380 expand_message_xmd. newHash is H, and

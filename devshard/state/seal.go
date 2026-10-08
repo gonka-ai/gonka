@@ -114,11 +114,11 @@ func (sm *StateMachine) deleteCommittedEntryLocked(id uint64) {
 }
 
 func (sm *StateMachine) addLiveEntryLocked(entry []byte) {
-	sm.liveEntrySum = addLivePoint(sm.liveEntrySum, entry)
+	addLivePoint(&sm.liveEntrySum, entry)
 }
 
 func (sm *StateMachine) subLiveEntryLocked(entry []byte) {
-	sm.liveEntrySum = subLivePoint(sm.liveEntrySum, entry)
+	subLivePoint(&sm.liveEntrySum, entry)
 }
 
 // applyCommittedMapDiffLocked folds only the ids whose stored bytes differ.
@@ -179,7 +179,7 @@ func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.Infer
 	return rec, nil
 }
 
-// liveInferencesHashLocked returns the running point sum of the committed frames.
+// liveInferencesHashLocked encodes the running point sum of the committed frames.
 // Check that the running hash covers exactly the live inference IDs.
 func (sm *StateMachine) liveInferencesHashLocked() ([]byte, error) {
 	if len(sm.committedEntries) != len(sm.state.Inferences) {
@@ -188,8 +188,9 @@ func (sm *StateMachine) liveInferencesHashLocked() ([]byte, error) {
 	if err := sm.verifyLiveIDsLocked(); err != nil {
 		return nil, err
 	}
-	out := make([]byte, len(sm.liveEntrySum))
-	copy(out, sm.liveEntrySum[:])
+	enc := encodeLivePoint(&sm.liveEntrySum)
+	out := make([]byte, len(enc))
+	copy(out, enc[:])
 	return out, nil
 }
 

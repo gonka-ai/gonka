@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/gtank/ristretto255"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,36 +22,56 @@ func TestExpandMessageXMD_RFC9380SHA256(t *testing.T) {
 }
 
 func TestLivePointIdentityAndOrder(t *testing.T) {
-	require.Equal(t, [32]byte{}, sumLivePointsFromEntries(nil))
-	require.Equal(t, [32]byte{}, sumLivePointsFromEntries(map[uint64][]byte{}))
+	empty := sumLivePointsFromEntries(nil)
+	require.Equal(t, [32]byte{}, encodeLivePoint(&empty))
+	empty = sumLivePointsFromEntries(map[uint64][]byte{})
+	require.Equal(t, [32]byte{}, encodeLivePoint(&empty))
 
 	a := []byte("record-a")
 	b := []byte("record-b")
 	c := []byte("record-c")
 	forward := sumLivePointsFromEntries(map[uint64][]byte{1: a, 2: b, 3: c})
 	backward := sumLivePointsFromEntries(map[uint64][]byte{3: c, 1: a, 2: b})
-	require.Equal(t, forward, backward)
+	require.Equal(t, encodeLivePoint(&forward), encodeLivePoint(&backward))
 
-	added := addLivePoint(addLivePoint(addLivePoint([32]byte{}, a), b), c)
-	require.Equal(t, forward, added)
+	var added ristretto255.Element
+	added.Zero()
+	addLivePoint(&added, a)
+	addLivePoint(&added, b)
+	addLivePoint(&added, c)
+	require.Equal(t, encodeLivePoint(&forward), encodeLivePoint(&added))
 
-	withoutB := subLivePoint(forward, b)
-	require.Equal(t, sumLivePointsFromEntries(map[uint64][]byte{1: a, 3: c}), withoutB)
-	require.Equal(t, [32]byte{}, subLivePoint(addLivePoint([32]byte{}, a), a))
+	withoutB := forward
+	subLivePoint(&withoutB, b)
+	rest := sumLivePointsFromEntries(map[uint64][]byte{1: a, 3: c})
+	require.Equal(t, encodeLivePoint(&rest), encodeLivePoint(&withoutB))
 
-	replaced := addLivePoint(subLivePoint(forward, b), []byte("record-b-prime"))
-	require.Equal(t, sumLivePointsFromEntries(map[uint64][]byte{
+	var one ristretto255.Element
+	one.Zero()
+	addLivePoint(&one, a)
+	subLivePoint(&one, a)
+	require.Equal(t, [32]byte{}, encodeLivePoint(&one))
+
+	replaced := forward
+	subLivePoint(&replaced, b)
+	addLivePoint(&replaced, []byte("record-b-prime"))
+	want := sumLivePointsFromEntries(map[uint64][]byte{
 		1: a, 2: []byte("record-b-prime"), 3: c,
-	}), replaced)
-	require.NotEqual(t, forward, replaced)
+	})
+	require.Equal(t, encodeLivePoint(&want), encodeLivePoint(&replaced))
+	require.NotEqual(t, encodeLivePoint(&forward), encodeLivePoint(&replaced))
 }
 
 func TestLiveEntryPointKnownAnswer(t *testing.T) {
 	// Frozen so a DST, framing, or hash-to-curve change fails closed.
 	got := encodeLivePoint(liveEntryPoint([]byte("devshard-live-set-kat")))
-	sum := addLivePoint(addLivePoint([32]byte{}, []byte("left")), []byte("right"))
+	var sum ristretto255.Element
+	sum.Zero()
+	addLivePoint(&sum, []byte("left"))
+	addLivePoint(&sum, []byte("right"))
+	encoded := encodeLivePoint(&sum)
 	require.Equal(t, "165a952d0a282c3595c432451c4b4642de1f764059a00eaf87e3c6644e671679", hex.EncodeToString(got[:]))
-	require.Equal(t, "92c963f8e881ac9c23bdc987e15f0f9f199dd94eb013ba1f9bd4abfd57f55d19", hex.EncodeToString(sum[:]))
+	require.Equal(t, "92c963f8e881ac9c23bdc987e15f0f9f199dd94eb013ba1f9bd4abfd57f55d19", hex.EncodeToString(encoded[:]))
 }
 
 // TestLiveSumRejectsXORCollision is the attack on the old combiner.
@@ -89,7 +110,9 @@ func TestLiveSumRejectsXORCollision(t *testing.T) {
 	}
 	require.NotZero(t, flips)
 	require.Equal(t, xorA, xorFlip, "the constructed sequences must share an XOR")
-	require.NotEqual(t, sumLivePointsFromEntries(allA), sumLivePointsFromEntries(flipped))
+	sumA := sumLivePointsFromEntries(allA)
+	sumFlip := sumLivePointsFromEntries(flipped)
+	require.NotEqual(t, encodeLivePoint(&sumA), encodeLivePoint(&sumFlip))
 }
 
 func shaFrame(entry []byte) [32]byte {
