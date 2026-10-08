@@ -15,6 +15,6 @@ message PruningState {
   int64 poc_validations_v2_pruned_epoch = 8;
   int64 poc_validation_snapshots_pruned_epoch = 9;
   int64 claim_recipients_pruned_epoch = 10;
-  int64 random_seeds_pruned_epoch = 11;
-  int64 confirmation_poc_events_pruned_epoch = 12;
+  int64 random_seeds_pruned_epoch = 12;
+  int64 confirmation_poc_events_pruned_epoch = 13;
 }
