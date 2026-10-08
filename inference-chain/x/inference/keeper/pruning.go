@@ -59,7 +59,7 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 }
 
 // epochZeroInferencePruner removes finished or expired inferences left with EpochId 0
-// (started or finished without the other half), which InferencesToPrune never indexes.
+// (started or finished without the other half), which the indexed pruner never reaches.
 // It runs once epoch 0 is past the inference threshold, a bounded slice per block.
 type epochZeroInferencePruner struct {
 	params types.Params
@@ -88,6 +88,15 @@ func (p epochZeroInferencePruner) prune(ctx context.Context, k Keeper, currentEp
 	if state.EpochZeroInferencesPruned {
 		return nil
 	}
+	// Early records were indexed under epoch 0, which the indexed pruner never visits.
+	dropped, err := k.pruneEpochZeroIndex(ctx, limit)
+	if budget != nil {
+		*budget -= dropped
+	}
+	if err != nil || dropped >= limit {
+		return err
+	}
+	limit -= dropped
 	rng := new(collections.Range[string])
 	if state.EpochZeroInferencesCursor != "" {
 		rng = rng.StartExclusive(state.EpochZeroInferencesCursor)
@@ -134,6 +143,30 @@ func (p epochZeroInferencePruner) prune(ctx context.Context, k Keeper, currentEp
 		k.LogInfo("Epoch-0 inference pruning complete", types.Pruning)
 	}
 	return k.PruningState.Set(ctx, state)
+}
+
+// pruneEpochZeroIndex removes up to max InferencesToPrune keys of epoch 0.
+func (k Keeper) pruneEpochZeroIndex(ctx context.Context, max int64) (int64, error) {
+	iter, err := k.InferencesToPrune.Iterate(ctx, collections.NewPrefixedPairRange[int64, string](0))
+	if err != nil {
+		return 0, err
+	}
+	var keys []collections.Pair[int64, string]
+	for ; iter.Valid() && int64(len(keys)) < max; iter.Next() {
+		key, err := iter.Key()
+		if err != nil {
+			iter.Close()
+			return 0, err
+		}
+		keys = append(keys, key)
+	}
+	iter.Close()
+	for i, key := range keys {
+		if err := k.InferencesToPrune.Remove(ctx, key); err != nil {
+			return int64(i), err
+		}
+	}
+	return int64(len(keys)), nil
 }
 
 func (k Keeper) GetPoCValidationsV2Pruner(params types.Params) Pruner[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2] {

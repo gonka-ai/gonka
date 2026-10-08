@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"cosmossdk.io/collections"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -148,4 +149,44 @@ func TestPruneEpochZeroInferencesFailureKeepsCursor(t *testing.T) {
 	state, err = k.PruningState.Get(ctx)
 	require.NoError(t, err)
 	require.True(t, state.EpochZeroInferencesPruned)
+}
+
+func TestPruneEpochZeroInferencesIndex(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	current := int64(params.EpochParams.InferencePruningEpochThreshold) + 1
+
+	// Early records indexed under epoch 0 (mainnet: 293 keys), plus a live index entry.
+	const indexed = keeper.EpochZeroInferencePruningMaxPerBlock + 10
+	for i := 0; i < indexed; i++ {
+		id := fmt.Sprintf("early-%05d", i)
+		require.NoError(t, k.Inferences.Set(ctx, id, types.Inference{Index: id, Status: types.InferenceStatus_EXPIRED}))
+		require.NoError(t, k.InferencesToPrune.Set(ctx, collections.Join(int64(0), id), collections.NoValue{}))
+	}
+	require.NoError(t, k.SetInference(ctx, types.Inference{Index: "live", EpochId: uint64(current), Status: types.InferenceStatus_FINISHED}))
+
+	indexCount := func(epoch int64) int {
+		it, err := k.InferencesToPrune.Iterate(ctx, collections.NewPrefixedPairRange[int64, string](epoch))
+		require.NoError(t, err)
+		defer it.Close()
+		n := 0
+		for ; it.Valid(); it.Next() {
+			n++
+		}
+		return n
+	}
+
+	require.NoError(t, k.Prune(ctx, current))
+	require.Equal(t, 10, indexCount(0), "index removals count against the per-block budget")
+	for i := 0; i < 4; i++ {
+		require.NoError(t, k.Prune(ctx, current))
+	}
+	require.Zero(t, indexCount(0))
+	require.Equal(t, 1, indexCount(current))
+	_, found := k.GetInference(ctx, "early-00000")
+	require.False(t, found)
+	_, found = k.GetInference(ctx, "live")
+	require.True(t, found)
 }
