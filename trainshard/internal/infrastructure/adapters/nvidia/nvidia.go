@@ -167,27 +167,51 @@ func parseComputeApps(lines []string) []computeApp {
 	apps := make([]computeApp, 0, len(lines))
 	for _, line := range lines {
 		raw, uuid, found := strings.Cut(line, ",")
-		if !found {
+		uuid = strings.TrimSpace(uuid)
+		if !found || !namesACard(uuid) {
 			continue
 		}
 		pid, err := strconv.Atoi(strings.TrimSpace(raw))
-		if err != nil {
-			continue
+		if err != nil || pid <= 0 {
+			pid = unknownPID
 		}
-		apps = append(apps, computeApp{pid: pid, uuid: strings.TrimSpace(uuid)})
+		apps = append(apps, computeApp{pid: pid, uuid: uuid})
 	}
 	return apps
+}
+
+const unknownPID = -1
+
+func namesACard(uuid string) bool {
+	return strings.HasPrefix(uuid, "GPU-") || strings.HasPrefix(uuid, "MIG-")
 }
 
 func (g *GPUs) query(ctx context.Context, what string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, g.cfg.Timeout)
 	defer cancel()
 
-	out, err := exec.CommandContext(ctx, g.cfg.SMI, what, "--format=csv,noheader,nounits").Output()
+	command := exec.CommandContext(ctx, g.cfg.SMI, what, "--format=csv,noheader,nounits")
+	command.WaitDelay = time.Second
+	out, err := command.Output()
 	if err != nil {
-		return nil, fmt.Errorf("%s %s: %w", g.cfg.SMI, what, err)
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("%s %s: no answer within %s: %w", g.cfg.SMI, what, g.cfg.Timeout, err)
+		}
+		return nil, fmt.Errorf("%s %s: %w", g.cfg.SMI, what, failed(err, out))
 	}
 	return scan(out)
+}
+
+func failed(err error, out []byte) error {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		return err
+	}
+	said := strings.TrimSpace(strings.TrimSpace(string(exit.Stderr)) + " " + strings.TrimSpace(string(out)))
+	if said == "" {
+		said = "no output"
+	}
+	return fmt.Errorf("%w: %s; if the cards answer on the host, trainshardd lost access to them and needs a restart", err, said)
 }
 
 func scan(out []byte) ([]string, error) {
@@ -201,7 +225,11 @@ func scan(out []byte) ([]string, error) {
 	return lines, scanner.Err()
 }
 
+// what belongs to the run gets killed, and kill(-1) is everyone
 func (g *GPUs) belongsTo(pid int, container string) bool {
+	if pid <= 0 || container == "" {
+		return false
+	}
 	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
 	if err != nil {
 		return false
