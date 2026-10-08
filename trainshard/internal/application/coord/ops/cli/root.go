@@ -158,7 +158,7 @@ func (c *Commands) Status(ctx context.Context, args []string) error {
 			silent++
 		}
 		fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%t\t%t\t%s\t%d\t%d\t%d\t%s\n",
-			node.Node, node.State, node.Image, exit(node.ExitCode), node.Prepared, node.MeshUp, peers(node.MeshSilent), node.GPUsInUse, node.DiskBytes, node.DiskQuotaBytes, why)
+			node.Node, node.State, node.Image, exit(node.ExitCode), node.Prepared, node.MeshUp, notHeard(node), node.GPUsInUse, node.DiskBytes, node.DiskQuotaBytes, why)
 	}
 	if err := out.Flush(); err != nil {
 		return err

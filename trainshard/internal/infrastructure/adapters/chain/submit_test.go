@@ -3,6 +3,7 @@ package chain
 import (
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
@@ -20,6 +22,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"trainshard/internal/domain/shard"
@@ -32,6 +35,7 @@ type senderStub struct {
 	answers []error
 	ran     sdk.TxResponse
 	asked   int
+	sent    []byte
 }
 
 func (s *senderStub) GetTx(context.Context, *txtypes.GetTxRequest, ...grpc.CallOption) (*txtypes.GetTxResponse, error) {
@@ -42,17 +46,58 @@ func (s *senderStub) GetTx(context.Context, *txtypes.GetTxRequest, ...grpc.CallO
 	return nil, s.answers[s.asked-1]
 }
 
+func (s *senderStub) Simulate(context.Context, *txtypes.SimulateRequest, ...grpc.CallOption) (*txtypes.SimulateResponse, error) {
+	return nil, errors.New("no simulation here")
+}
+
+func (s *senderStub) BroadcastTx(_ context.Context, request *txtypes.BroadcastTxRequest, _ ...grpc.CallOption) (*txtypes.BroadcastTxResponse, error) {
+	s.sent = request.TxBytes
+	return &txtypes.BroadcastTxResponse{TxResponse: &sdk.TxResponse{TxHash: "ABCD"}}, nil
+}
+
+// chainStub is a chain at height now whose epoch info was read at an earlier height
+type chainStub struct {
+	types.QueryClient
+	now   int64
+	epoch *types.QueryEpochInfoResponse
+}
+
+func stamp(opts []grpc.CallOption, at int64) {
+	for _, opt := range opts {
+		if header, ok := opt.(grpc.HeaderCallOption); ok {
+			*header.HeaderAddr = metadata.Pairs(grpctypes.GRPCBlockHeightHeader, strconv.FormatInt(at, 10))
+		}
+	}
+}
+
+func (c chainStub) Params(_ context.Context, _ *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error) {
+	stamp(opts, c.now)
+	return &types.QueryParamsResponse{}, nil
+}
+
+func (c chainStub) EpochInfo(context.Context, *types.QueryEpochInfoRequest, ...grpc.CallOption) (*types.QueryEpochInfoResponse, error) {
+	return c.epoch, nil
+}
+
 type accountsStub struct {
 	authtypes.QueryClient
 	held *codectypes.Any
+	at   int64
 	err  error
 }
 
-func (a accountsStub) Account(context.Context, *authtypes.QueryAccountRequest, ...grpc.CallOption) (*authtypes.QueryAccountResponse, error) {
+func (a accountsStub) Account(_ context.Context, _ *authtypes.QueryAccountRequest, opts ...grpc.CallOption) (*authtypes.QueryAccountResponse, error) {
 	if a.err != nil {
 		return nil, a.err
 	}
+	stamp(opts, a.at)
 	return &authtypes.QueryAccountResponse{Account: a.held}, nil
+}
+
+// heldAt is an account read at height at whose next transaction signs with sequence
+func heldAt(t *testing.T, sequence uint64, at int64) accountsStub {
+	key := cosmossecp.GenPrivKey().PubKey()
+	return accountsStub{held: onWire(t, authtypes.NewBaseAccount(sdk.AccAddress(key.Address()), key, 7, sequence)), at: at}
 }
 
 type keyStub struct{}
@@ -60,9 +105,22 @@ type keyStub struct{}
 func (keyStub) Address() vo.Address          { return "gonka1creator" }
 func (keyStub) Account() cryptotypes.PrivKey { return cosmossecp.GenPrivKey() }
 
-func signerOver(sender *senderStub, landing time.Duration) *Signer {
-	return &Signer{Client: &Client{poll: time.Millisecond}, sender: sender, landing: landing}
+// a chain at height 100, far below the timeout heights the tests send with, where the transaction
+// waited on signed with sequence 3 has not run yet
+func signerOver(t *testing.T, sender *senderStub, landing time.Duration) *Signer {
+	return &Signer{
+		Client:   &Client{query: chainStub{now: 100}, poll: time.Millisecond},
+		key:      keyStub{},
+		accounts: heldAt(t, sent, 100),
+		sender:   sender,
+		landing:  landing,
+	}
 }
+
+const (
+	farTimeout = vo.Height(1000)
+	sent       = uint64(3)
+)
 
 func TestLandedWaitsThroughNotFoundUntilTheBlockRuns(t *testing.T) {
 	// arrange
@@ -70,7 +128,7 @@ func TestLandedWaitsThroughNotFoundUntilTheBlockRuns(t *testing.T) {
 	sender := &senderStub{answers: []error{notFound, notFound, errors.New("blip")}}
 
 	// act
-	answer, err := signerOver(sender, time.Second).landed(context.Background(), &types.MsgSettleTrainshard{}, "ABCD")
+	answer, err := signerOver(t, sender, time.Second).landed(context.Background(), &types.MsgSettleTrainshard{}, "ABCD", sent, farTimeout)
 
 	// assert
 	if err != nil || answer == nil {
@@ -90,7 +148,7 @@ func TestLandedGivesUpAfterTheLandingWindow(t *testing.T) {
 	}
 
 	// act
-	_, err := signerOver(sender, 20*time.Millisecond).landed(context.Background(), &types.MsgSettleTrainshard{}, "ABCD")
+	_, err := signerOver(t, sender, 20*time.Millisecond).landed(context.Background(), &types.MsgSettleTrainshard{}, "ABCD", sent, farTimeout)
 
 	// assert
 	if shared.CodeOf(err) != "CHAIN_SLOW" {
@@ -98,9 +156,76 @@ func TestLandedGivesUpAfterTheLandingWindow(t *testing.T) {
 	}
 }
 
+func TestLandedStopsWaitingOnlyForATransactionTheChainCanNoLongerRun(t *testing.T) {
+	// the account is read at height 100
+	cases := []struct {
+		name     string
+		sequence uint64
+		timeout  vo.Height
+		want     string
+	}{
+		{"past the timeout with the sequence unmoved, it never ran", sent, 99, codeExpired},
+		{"at the timeout block, it may still run in it", sent, 100, "CHAIN_SLOW"},
+		{"past the timeout with the sequence moved, it ran and is not indexed yet", sent + 1, 50, "CHAIN_SLOW"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// arrange
+			notFound := status.Error(codes.NotFound, "tx not found")
+			sender := &senderStub{}
+			for range 100000 {
+				sender.answers = append(sender.answers, notFound)
+			}
+			signer := signerOver(t, sender, 50*time.Millisecond)
+			signer.accounts = heldAt(t, tc.sequence, 100)
+
+			// act
+			_, err := signer.landed(context.Background(), &types.MsgSettleTrainshard{}, "ABCD", sent, tc.timeout)
+
+			// assert
+			if shared.CodeOf(err) != tc.want {
+				t.Fatalf("got %v (%s), want %s", err, shared.CodeOf(err), tc.want)
+			}
+		})
+	}
+}
+
+func TestAnAssembleExpiresBeforeTheNextPoCAndGoesBackToWaiting(t *testing.T) {
+	// arrange: default epoch params put the next PoC at 140, sent at 118 with 25 blocks to land
+	notFound := status.Error(codes.NotFound, "tx not found")
+	sender := &senderStub{}
+	for range 100000 {
+		sender.answers = append(sender.answers, notFound)
+	}
+	chain := chainStub{now: 141, epoch: &types.QueryEpochInfoResponse{
+		BlockHeight: 118,
+		Params:      types.DefaultParams(),
+		LatestEpoch: types.Epoch{Index: 3, PocStartBlockHeight: 100},
+	}}
+	signer := NewSigner(&Client{query: chain, poll: time.Millisecond}, keyStub{}, "gonka-test", 2*time.Minute)
+	signer.sender = sender
+	signer.accounts = heldAt(t, sent, 141)
+
+	// act
+	_, err := signer.Assemble(context.Background(), 1)
+
+	// assert
+	if !errors.Is(err, shard.ErrAssemblyClosed) {
+		t.Fatalf("got %v (%s), want ASSEMBLY_CLOSED so the coordinator waits for the next window", err, shared.CodeOf(err))
+	}
+	sent, err := signer.config.TxDecoder()(sender.sent)
+	if err != nil {
+		t.Fatalf("decode the sent transaction: %v", err)
+	}
+	timed, ok := sent.(interface{ GetTimeoutHeight() uint64 })
+	if !ok || timed.GetTimeoutHeight() != 139 {
+		t.Fatalf("got a transaction %T, want one that expires at 139, the block before the next PoC", sent)
+	}
+}
+
 func TestBlocksToLandCoverTheLandingWindow(t *testing.T) {
 	// act
-	long, short := signerOver(nil, 2*time.Minute).blocksToLand(), signerOver(nil, time.Second).blocksToLand()
+	long, short := signerOver(t, nil, 2*time.Minute).blocksToLand(), signerOver(t, nil, time.Second).blocksToLand()
 
 	// assert
 	if long != 25 || short != 2 {
@@ -238,7 +363,7 @@ func TestLandedKeepsTheCodespaceOfARefusalThatRan(t *testing.T) {
 	sender := &senderStub{ran: refusedBy(types.ErrTrainshardNotCreator)}
 
 	// act
-	_, err := signerOver(sender, time.Second).landed(context.Background(), &types.MsgSettleTrainshard{}, "ABCD")
+	_, err := signerOver(t, sender, time.Second).landed(context.Background(), &types.MsgSettleTrainshard{}, "ABCD", sent, farTimeout)
 
 	// assert
 	if !errors.Is(err, shared.ErrConflict) || shared.CodeOf(err) != "CHAIN_REFUSED" {
@@ -251,7 +376,7 @@ func TestAnAssembleRefusedForPoCReadsAsAClosedWindow(t *testing.T) {
 	sender := &senderStub{ran: refusedBy(types.ErrTrainshardAssemblyDuringPoC)}
 
 	// act
-	_, err := signerOver(sender, time.Second).landed(context.Background(), &types.MsgAssembleTrainshard{}, "ABCD")
+	_, err := signerOver(t, sender, time.Second).landed(context.Background(), &types.MsgAssembleTrainshard{}, "ABCD", sent, farTimeout)
 
 	// assert
 	if !errors.Is(err, shard.ErrAssemblyClosed) {

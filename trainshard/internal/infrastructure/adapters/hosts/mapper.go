@@ -69,14 +69,15 @@ func toNodeStatuses(participant vo.Participant, items []contract.NodeStatus) []r
 	statuses := make([]run.NodeStatus, 0, len(items))
 	for _, item := range items {
 		statuses = append(statuses, run.NodeStatus{
-			NodeResult:     toNodeResult(participant, item.NodeResult),
-			Prepared:       item.Prepared,
-			Waiting:        item.Waiting,
-			MeshUp:         item.MeshUp,
-			MeshSilent:     toPeers(item.MeshSilent),
-			GPUsInUse:      item.GPUsInUse,
-			DiskBytes:      item.DiskBytes,
-			DiskQuotaBytes: item.DiskQuotaBytes,
+			NodeResult:        toNodeResult(participant, item.NodeResult),
+			Prepared:          item.Prepared,
+			Waiting:           item.Waiting,
+			MeshUp:            item.MeshUp,
+			MeshSilent:        toPeers(item.MeshSilent),
+			MeshSilentUnknown: item.MeshSilentUnknown,
+			GPUsInUse:         item.GPUsInUse,
+			DiskBytes:         item.DiskBytes,
+			DiskQuotaBytes:    item.DiskQuotaBytes,
 		})
 	}
 	return statuses

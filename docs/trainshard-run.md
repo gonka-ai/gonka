@@ -26,6 +26,11 @@ export TRAINSHARD_CONTAINER_NANO_CPUS=8000000000
 A private `TRAINSHARD_MESH_ENDPOINT` is refused unless `TRAINSHARD_MESH_PRIVATE=true`,
 which only works when every peer of a shard is on the same network.
 
+A shard keeps the `TRAINSHARD_ENDPOINT` it was assembled with, and a coordinator
+signs its requests for exactly that string. Do not change it while a node of the
+machine is in a shard, not even to a form that reaches the same place (another
+case, an explicit default port). The daemon refuses such requests as not authorized.
+
 The daemon signs with the key the api uses (`KEY_NAME` from `.inference`). If
 that is a warm key rather than the participant's own, it needs the ML ops
 grants from the participant, the same ones the api runs on:
@@ -201,11 +206,12 @@ trainshardctl status $shard                   # PREPARED true; REASON says what 
 ```
 
 The chain does not assemble a shard while PoC or confirmation PoC is running.
-`assemble` waits until it ends, then sends the transaction. It also waits when
-the next PoC would start before the transaction could land. While it waits it
-prints the height it waits for on stderr; stdout still carries only the shard
-id. If a confirmation PoC starts while the transaction is on its way, the chain
-refuses it and `assemble` waits and sends it again.
+`assemble` waits until it ends, then sends the transaction. The transaction
+expires in the block before the next PoC, so PoC never refuses it; if it does
+not land by then, `assemble` waits that PoC out and sends it again. While it
+waits it prints the height it waits for on stderr; stdout still carries only the
+shard id. If a confirmation PoC starts while the transaction is on its way, the
+chain refuses it and `assemble` waits and sends it again.
 
 A shard that is already assembled is not affected by PoC: the hosts' API nodes
 keep reserved nodes out of PoC, confirmation PoC and inference until the shard
@@ -259,7 +265,8 @@ disk of a node that left is wiped.
 
 A run that hangs with every node running may have lost a mesh link. `status`
 lists under `NOT_HEARD` the peers a node has heard nothing from for 3 min, while
-`MESH` stays true: the link is configured but carries nothing. NCCL gives up on
+`MESH` stays true: the link is configured but carries nothing. A `?` there means
+the host could not read its peers, not that it hears them all. NCCL gives up on
 its own after its timeout.
 
 If trainshardd on a machine is down, nothing hands its node back. The creator

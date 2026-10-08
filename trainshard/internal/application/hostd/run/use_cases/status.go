@@ -57,7 +57,8 @@ func (uc *StatusUseCase) Execute(ctx context.Context, cmd NodesCommand) ([]run.N
 		status := run.StatusOf(node, desired, observed, state.Fault)
 		// only shown to the researcher: start reads this status and must not fail on it
 		if observed.MeshUp {
-			status.MeshSilent, _ = uc.machine.Mesh.Silent(ctx, record.ID, node)
+			silent, err := uc.machine.Mesh.Silent(ctx, record.ID, node)
+			status.MeshSilent, status.MeshSilentUnknown = silent, err != nil
 		}
 		return status, nil
 	}), nil

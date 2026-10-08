@@ -25,7 +25,9 @@ import (
 	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
 	authz "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"trainshard/internal/domain/shard"
@@ -98,21 +100,26 @@ func (s *Signer) Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 }
 
 func (s *Signer) AssemblyOpensAt(ctx context.Context) (vo.Height, vo.Height, error) {
-	return s.assemblyWindow(ctx, int64(s.blocksToLand()))
+	now, opens, _, err := s.assemblyWindow(ctx)
+	return now, opens, err
 }
 
-// the window is read again at the height the transaction's timeout counts from, so a regular PoC
-// cannot start before the transaction lands or expires. The chain names the new shard only in its
-// answer to this transaction
+// the transaction expires in the block before the next PoC, so a regular PoC never refuses it; one
+// that expired is sent back to waiting, it can no longer run. The chain names the new shard only in
+// its answer to this transaction
 func (s *Signer) Assemble(ctx context.Context, proposal uint64) (vo.ShardID, error) {
-	at, opens, err := s.AssemblyOpensAt(ctx)
+	at, opens, closes, err := s.assemblyWindow(ctx)
 	if err != nil {
 		return 0, err
 	}
 	if at < opens {
 		return 0, fmt.Errorf("assembly opens at height %d, now %d: %w", opens, at, shard.ErrAssemblyClosed)
 	}
-	answer, err := s.submitAt(ctx, &types.MsgAssembleTrainshard{Creator: string(s.key.Address()), ProposalId: proposal}, at)
+	timeout := min(at+vo.Height(s.blocksToLand()), closes-1)
+	answer, err := s.submitUntil(ctx, &types.MsgAssembleTrainshard{Creator: string(s.key.Address()), ProposalId: proposal}, timeout)
+	if shared.CodeOf(err) == codeExpired {
+		return 0, fmt.Errorf("%w: %w", err, shard.ErrAssemblyClosed)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -168,11 +175,11 @@ func (s *Signer) submit(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, erro
 	if err != nil {
 		return nil, err
 	}
-	return s.submitAt(ctx, msg, at)
+	return s.submitUntil(ctx, msg, at+vo.Height(s.blocksToLand()))
 }
 
-// submitAt lets the transaction land up to blocksToLand blocks after at and never later
-func (s *Signer) submitAt(ctx context.Context, msg sdk.Msg, at vo.Height) (*sdk.TxResponse, error) {
+// submitUntil lets the transaction land up to the timeout height and never later
+func (s *Signer) submitUntil(ctx context.Context, msg sdk.Msg, timeout vo.Height) (*sdk.TxResponse, error) {
 	number, sequence, err := s.account(ctx)
 	if err != nil {
 		return nil, err
@@ -182,7 +189,7 @@ func (s *Signer) submitAt(ctx context.Context, msg sdk.Msg, at vo.Height) (*sdk.
 	if err := builder.SetMsgs(msg); err != nil {
 		return nil, err
 	}
-	builder.SetTimeoutHeight(uint64(at) + s.blocksToLand())
+	builder.SetTimeoutHeight(uint64(timeout))
 	// what is signed covers who signs it, so the key and the sequence go in before the signature that
 	// then replaces this blank one
 	blank := signingtypes.SignatureV2{
@@ -225,12 +232,12 @@ func (s *Signer) submitAt(ctx context.Context, msg sdk.Msg, at vo.Height) (*sdk.
 	if answer.TxResponse.Code != 0 {
 		return nil, Refused(msg, answer.TxResponse.Codespace, answer.TxResponse.Code, answer.TxResponse.RawLog)
 	}
-	return s.landed(ctx, msg, answer.TxResponse.TxHash)
+	return s.landed(ctx, msg, answer.TxResponse.TxHash, sequence, timeout)
 }
 
 // a broadcast is answered when the chain takes the transaction, not when it runs it: without this wait
 // the next one signs with a stale sequence and a message the chain then refused reads as done
-func (s *Signer) landed(ctx context.Context, msg sdk.Msg, hash string) (*sdk.TxResponse, error) {
+func (s *Signer) landed(ctx context.Context, msg sdk.Msg, hash string, sequence uint64, timeout vo.Height) (*sdk.TxResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.landing)
 	defer cancel()
 
@@ -244,6 +251,10 @@ func (s *Signer) landed(ctx context.Context, msg sdk.Msg, hash string) (*sdk.TxR
 			return answer.TxResponse, nil
 		case status.Code(err) != codes.NotFound:
 			last = err
+		default:
+			if s.expiredUnrun(ctx, sequence, timeout) {
+				return nil, expired(msg, hash, timeout)
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -263,6 +274,25 @@ func slow(msg sdk.Msg, hash string, waited time.Duration, last error) error {
 		reason += ": " + last.Error()
 	}
 	return shared.New("CHAIN_SLOW", shared.ErrUnavailable, reason)
+}
+
+// the transaction index may lag the blocks, the account sequence is chain state: still at the
+// transaction's own past its timeout height, it never ran and no longer can
+func (s *Signer) expiredUnrun(ctx context.Context, sequence uint64, timeout vo.Height) bool {
+	var stamp metadata.MD
+	_, next, err := s.account(ctx, grpc.Header(&stamp))
+	if err != nil || next > sequence {
+		return false
+	}
+	at, err := height(stamp)
+	return err == nil && at > timeout
+}
+
+const codeExpired = "CHAIN_EXPIRED"
+
+func expired(msg sdk.Msg, hash string, timeout vo.Height) error {
+	return shared.New(codeExpired, shared.ErrUnavailable,
+		fmt.Sprintf("the chain took %s as %s and passed its timeout height %d without running it", sdk.MsgTypeURL(msg), hash, timeout))
 }
 
 // Refused reads a refusal by its codespace and code alone, never by its log, whose wording is no contract.
@@ -305,8 +335,8 @@ func among(codespace string, code uint32, known ...*errorsmod.Error) bool {
 	})
 }
 
-func (s *Signer) account(ctx context.Context) (number, sequence uint64, err error) {
-	answer, err := s.accounts.Account(ctx, &authtypes.QueryAccountRequest{Address: string(s.key.Address())})
+func (s *Signer) account(ctx context.Context, opts ...grpc.CallOption) (number, sequence uint64, err error) {
+	answer, err := s.accounts.Account(ctx, &authtypes.QueryAccountRequest{Address: string(s.key.Address())}, opts...)
 	if status.Code(err) == codes.NotFound {
 		return 0, 0, shared.New("ACCOUNT_UNKNOWN", shared.ErrNotFound,
 			fmt.Sprintf("the chain holds no account for %s: it needs funds before it can sign", s.key.Address()))

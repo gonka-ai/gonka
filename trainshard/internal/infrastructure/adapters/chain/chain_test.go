@@ -153,18 +153,18 @@ func TestActiveShardsLeavesOutARecordThatDoesNotParse(t *testing.T) {
 	}
 }
 
-func TestAnAssembleWaitsForEveryPoCItCouldLandIn(t *testing.T) {
-	// default epoch params: PoC of epoch 3 runs 100..117, the next one 140..157
+func TestAnAssembleIsTakenBetweenOnePoCAndTheNext(t *testing.T) {
+	// default epoch params: PoC of epoch 3 runs 100..117, the next one 140..157, the one after 180
 	cases := []struct {
-		name     string
-		height   int64
-		lifetime int64
-		want     vo.Height
+		name         string
+		height       int64
+		opens, close vo.Height
 	}{
-		{"inside PoC", 105, 5, 118},
-		{"lands before the next PoC", 130, 5, 130},
-		{"could land once the next PoC starts", 136, 5, 158},
-		{"PoC ends too close to the next one to land between", 105, 25, 158},
+		{"inside PoC", 105, 118, 140},
+		{"between two PoCs", 130, 130, 140},
+		{"one block left before the next PoC", 138, 138, 140},
+		{"no block left before the next PoC", 139, 158, 180},
+		{"the first block of the next PoC, its epoch not stored yet", 140, 158, 180},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -176,16 +176,35 @@ func TestAnAssembleWaitsForEveryPoCItCouldLandIn(t *testing.T) {
 			}}}
 
 			// act
-			now, opens, err := client.assemblyWindow(context.Background(), tc.lifetime)
+			now, opens, closes, err := client.assemblyWindow(context.Background())
 
 			// assert
 			if err != nil {
 				t.Fatalf("assembly window: %v", err)
 			}
-			if now != vo.Height(tc.height) || opens != tc.want {
-				t.Fatalf("got now %d opens %d, want %d and %d", now, opens, tc.height, tc.want)
+			if now != vo.Height(tc.height) || opens != tc.opens || closes != tc.close {
+				t.Fatalf("got now %d opens %d closes %d, want %d, %d and %d", now, opens, closes, tc.height, tc.opens, tc.close)
 			}
 		})
+	}
+}
+
+func TestAnAssembleWindowNeedsAnEpochLength(t *testing.T) {
+	// arrange
+	params := types.DefaultParams()
+	params.EpochParams.EpochLength = 0
+	client := &Client{query: epochStub{info: &types.QueryEpochInfoResponse{
+		BlockHeight: 130,
+		Params:      params,
+		LatestEpoch: types.Epoch{Index: 3, PocStartBlockHeight: 100},
+	}}}
+
+	// act
+	_, _, _, err := client.assemblyWindow(context.Background())
+
+	// assert
+	if err == nil {
+		t.Fatal("got no error, want a chain with no epoch length refused rather than searched forever")
 	}
 }
 
@@ -200,7 +219,7 @@ func TestAChainThatCannotBeReadIsUnavailable(t *testing.T) {
 		{"active shards", func(c *Client) error { _, err := c.ActiveShards(context.Background()); return err }},
 		{"reservation", func(c *Client) error { _, _, err := c.Reserved(context.Background(), node); return err }},
 		{"hardware", func(c *Client) error { _, err := c.Hardware(context.Background(), node); return err }},
-		{"assembly window", func(c *Client) error { _, _, err := c.assemblyWindow(context.Background(), 0); return err }},
+		{"assembly window", func(c *Client) error { _, _, _, err := c.assemblyWindow(context.Background()); return err }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

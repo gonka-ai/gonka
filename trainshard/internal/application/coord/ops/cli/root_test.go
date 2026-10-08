@@ -76,6 +76,30 @@ func TestStatusNamesThePeersANodeHasNotHeardFrom(t *testing.T) {
 	}
 }
 
+func TestStatusMarksPeersTheHostCouldNotRead(t *testing.T) {
+	// arrange
+	nodeA := vo.NodeRef{Participant: "gonka1hosta", NodeID: "node-a"}
+	hosts := hostsStub{statuses: map[vo.NodeRef]run.NodeStatus{
+		nodeA: {NodeResult: run.NodeResult{Node: nodeA, State: vo.ContainerRunning}, MeshUp: true, MeshSilentUnknown: true},
+	}}
+	chain := chainStub{nodes: []vo.NodeRef{nodeA}}
+	out := &bytes.Buffer{}
+	commands := cli.New(cli.UseCases{Status: usecases.NewStatusUseCase(chain, hosts)},
+		timex.NewFrozen(time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)), time.Minute, out, nil)
+
+	// act
+	err := commands.Status(context.Background(), []string{"7"})
+
+	// assert
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[1], " ? ") {
+		t.Fatalf("got %q, want ? under NOT_HEARD rather than an empty column that reads as all heard", out.String())
+	}
+}
+
 type stopHostsStub struct {
 	call run.StopCall
 }

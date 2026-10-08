@@ -104,13 +104,14 @@ func matched[T Answer](asked []vo.NodeRef, answered []T, failed func(vo.NodeRef,
 
 type NodeStatus struct {
 	NodeResult
-	Prepared       bool
-	Waiting        string
-	MeshUp         bool
-	MeshSilent     []vo.NodeRef
-	GPUsInUse      int
-	DiskBytes      int64
-	DiskQuotaBytes int64
+	Prepared          bool
+	Waiting           string
+	MeshUp            bool
+	MeshSilent        []vo.NodeRef
+	MeshSilentUnknown bool
+	GPUsInUse         int
+	DiskBytes         int64
+	DiskQuotaBytes    int64
 }
 
 func FailedStatus(node vo.NodeRef, err error) NodeStatus {

@@ -68,6 +68,36 @@ func TestASignedRequestIsGoodOnce(t *testing.T) {
 	}
 }
 
+func TestASpentRequestIDSpelledAnotherWayIsNotANewRequest(t *testing.T) {
+	cases := []struct {
+		name   string
+		suffix string
+	}{
+		{"a no-break space", "\u00a0"},
+		{"a tab", "\t"},
+		{"a zero-width space", "\u200b"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// arrange
+			store := newServedStub()
+			request := newSignedRequest()
+			if code, _ := served(t, "gonka1creator", store, request); code != http.StatusOK {
+				t.Fatalf("got %d, want the first request through", code)
+			}
+			request.requestID += tc.suffix
+
+			// act
+			code, _ := served(t, "gonka1creator", store, request)
+
+			// assert
+			if code == http.StatusOK {
+				t.Fatal("got the repeat through, want the same signed request refused however its id is spelled")
+			}
+		})
+	}
+}
+
 func TestARequestFromAClockAheadIsHeldUntilItsSignatureDies(t *testing.T) {
 	// arrange
 	store := newServedStub()
