@@ -784,19 +784,6 @@ func (k Keeper) forEachEpochReservedNode(ctx context.Context, epochIndex uint64,
 	}
 }
 
-func (k Keeper) CollectEpochReservedNodeIds(ctx context.Context, epochIndex uint64, scope ReservationScope) map[string]map[string]struct{} {
-	result := make(map[string]map[string]struct{})
-	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, _, _ int64) {
-		set, ok := result[n.Participant]
-		if !ok {
-			set = make(map[string]struct{})
-			result[n.Participant] = set
-		}
-		set[n.NodeId] = struct{}{}
-	})
-	return result
-}
-
 func (k Keeper) CollectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {
 	return k.collectEpochReservedNodeWeights(ctx, epochIndex, scope, nil)
 }

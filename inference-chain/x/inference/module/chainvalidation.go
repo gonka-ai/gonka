@@ -875,14 +875,14 @@ func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoc
 		}
 	}
 
-	for participant, nodes := range am.keeper.CollectEpochReservedNodeIds(ctx, upcomingEpoch.Index-1, keeper.ReservationScopeShield) {
+	for participant, nodes := range am.reservedAtPoCStart(ctx, upcomingEpoch) {
 		nodeSet, ok := inferenceServingNodeIds[participant]
 		if !ok {
 			nodeSet = make(map[string]struct{})
 			inferenceServingNodeIds[participant] = nodeSet
 		}
-		for nodeID := range nodes {
-			nodeSet[nodeID] = struct{}{}
+		for _, n := range nodes {
+			nodeSet[n.NodeId] = struct{}{}
 		}
 	}
 
@@ -923,8 +923,17 @@ func participantNodeIDs(participants []*types.ActiveParticipant) map[string]map[
 	return nodeIDs
 }
 
-func (am AppModule) mergeReservedNodesIntoPreserved(ctx context.Context, endingEpochIndex uint64, preserved []*types.ActiveParticipant) []*types.ActiveParticipant {
-	reserved := am.keeper.CollectEpochReservedNodeWeights(ctx, endingEpochIndex, keeper.ReservationScopeShield)
+// reservedAtPoCStart is the nodes that could not run the upcoming PoC: reserved, or still returning,
+// when it starts. Assembly is closed through PoC, so none becomes reserved later in it. The frozen
+// weight carry and the dropped fresh PoC both read it, so a node is counted exactly once. A returning
+// node keeps its frozen weight even if it made the PoC: taking whichever exists would let the host
+// pick the higher of the two by skipping it
+func (am AppModule) reservedAtPoCStart(ctx context.Context, upcomingEpoch types.Epoch) map[string][]*types.TrainshardReservedNode {
+	return am.keeper.CollectEpochReservedNodeWeightsAtHeight(ctx, upcomingEpoch.Index, upcomingEpoch.PocStartBlockHeight, keeper.ReservationScopeShield)
+}
+
+func (am AppModule) mergeReservedNodesIntoPreserved(ctx context.Context, upcomingEpoch types.Epoch, preserved []*types.ActiveParticipant) []*types.ActiveParticipant {
+	reserved := am.reservedAtPoCStart(ctx, upcomingEpoch)
 	if len(reserved) == 0 {
 		return preserved
 	}
@@ -1040,7 +1049,7 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		"numPreservedParticipants", len(preservedParticipants))
 
 	if upcomingEpoch.Index > 1 {
-		preservedParticipants = am.mergeReservedNodesIntoPreserved(ctx, upcomingEpoch.Index-1, preservedParticipants)
+		preservedParticipants = am.mergeReservedNodesIntoPreserved(ctx, upcomingEpoch, preservedParticipants)
 	}
 
 	// Get off-chain store commits (replaces on-chain batches)
