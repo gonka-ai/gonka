@@ -1156,8 +1156,13 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 					if sm, err = newStateMachine(); err != nil {
 						return nil, nil, fmt.Errorf("recreate state machine after snapshot restore failure: %w", err)
 					}
+				} else if commitErr := sm.RestoreCommittedEntries(committedEntries); commitErr != nil {
+					logging.Error("devshard snapshot committed entries failed audit, replaying full history", inferenceTypes.System,
+						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", commitErr)
+					if sm, err = newStateMachine(); err != nil {
+						return nil, nil, fmt.Errorf("recreate state machine after committed-entry audit: %w", err)
+					}
 				} else {
-					sm.RestoreCommittedEntries(committedEntries)
 					sm.RestoreSealedNonces(sealedNonces)
 					if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
 						// Restore already mutated sm, so the rejected state has to

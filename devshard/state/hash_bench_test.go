@@ -11,7 +11,7 @@ import (
 var benchHashSink []byte
 
 // BenchmarkLiveInferenceHash compares recomputing the point sum from marshaled
-// records with the hot path, which checks the id sets and returns the
+// records with the hot path, which checks equal map lengths and returns the
 // running total.
 //
 // Sizes are 10^3, 10^4, and the 30-minute shape: 32 RPS for 30 minutes,

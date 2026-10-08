@@ -232,25 +232,95 @@ func (sm *StateMachine) rootComponentsLocked() (rootComponents, error) {
 
 // liveInferencesHashLocked returns the 32-byte encoding of the running point
 // sum. The point is maintained when the map changes, so this hashes no
-// records: it encodes the sum once. The id sets must still match: equal
-// sizes plus every live id present means the total covers exactly the live
-// records. A mismatch is a broken invariant: return it and let the caller
-// roll the diff back.
+// records: it encodes the sum once.
+//
+// Membership of the two maps is checked cheaply on the hot path: equal
+// lengths, and when an apply journal is open, matching presence and bytes
+// for every id that apply touched. Untouched ids stay equal only when the
+// sets were equal at the start of the apply. A full key-set walk is
+// auditLiveCommittedLocked, run before a restored blob is installed and
+// from tests. An edit made outside an apply is not re-scanned on the next root.
 func (sm *StateMachine) liveInferencesHashLocked() ([]byte, error) {
 	live := sm.state.Inferences
 	entries := sm.committedEntries
 	if len(entries) != len(live) {
 		return nil, fmt.Errorf("committed inference entries %d != live inferences %d", len(entries), len(live))
 	}
-	for id := range live {
-		if _, ok := entries[id]; !ok {
-			return nil, fmt.Errorf("committed inference entries missing live inference %d", id)
+	if j := sm.journal; j != nil {
+		if err := sm.checkTouchedLiveCommittedLocked(j); err != nil {
+			return nil, err
 		}
 	}
 	enc := encodeLivePoint(&sm.liveEntrySum)
 	out := make([]byte, len(enc))
 	copy(out, enc[:])
 	return out, nil
+}
+
+// checkTouchedLiveCommittedLocked reports whether every inference id this
+// apply wrote is present in both live and committed maps, or in neither.
+// An id still in both must carry the canonical bytes of the live record.
+// An id removed from both (seal, drain) is a presence check only.
+// Caller must hold sm.mu.
+func (sm *StateMachine) checkTouchedLiveCommittedLocked(j *mutationJournal) error {
+	check := func(id uint64) error {
+		rec, liveOK := sm.state.Inferences[id]
+		entry, entryOK := sm.committedEntries[id]
+		if liveOK != entryOK {
+			if liveOK {
+				return fmt.Errorf("committed inference entries missing live inference %d", id)
+			}
+			return fmt.Errorf("committed inference entries has orphan inference %d not in live set", id)
+		}
+		if !liveOK {
+			return nil
+		}
+		if rec == nil {
+			return fmt.Errorf("committed inference entries missing live inference %d", id)
+		}
+		want, err := marshalInferenceEntry(id, rec)
+		if err != nil {
+			return fmt.Errorf("marshal live inference %d: %w", id, err)
+		}
+		if !bytes.Equal(want, entry) {
+			return fmt.Errorf("committed inference entry for %d does not match live record", id)
+		}
+		return nil
+	}
+	for id := range j.inferences.pre {
+		if err := check(id); err != nil {
+			return err
+		}
+	}
+	for id := range j.committed.pre {
+		if j.inferences.seen(id) {
+			continue
+		}
+		if err := check(id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// auditLiveCommittedLocked walks every live id and checks that
+// committedEntries holds the same key set. Equal lengths plus this scan
+// mean the sets are equal, including equal-size id swaps. Caller must
+// hold sm.mu.
+func (sm *StateMachine) auditLiveCommittedLocked() error {
+	return auditLiveAgainst(sm.state.Inferences, sm.committedEntries)
+}
+
+func auditLiveAgainst(live map[uint64]*types.InferenceRecord, entries map[uint64][]byte) error {
+	if len(entries) != len(live) {
+		return fmt.Errorf("committed inference entries %d != live inferences %d", len(entries), len(live))
+	}
+	for id := range live {
+		if _, ok := entries[id]; !ok {
+			return fmt.Errorf("committed inference entries missing live inference %d", id)
+		}
+	}
+	return nil
 }
 
 func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {
@@ -267,12 +337,18 @@ func (sm *StateMachine) ExportCommittedEntries() map[uint64][]byte {
 	return cloneCommittedInferenceEntries(sm.committedEntries)
 }
 
-func (sm *StateMachine) RestoreCommittedEntries(entries map[uint64][]byte) {
+// RestoreCommittedEntries installs snapshot blobs for the live set. Every live
+// id is overwritten with a fresh marshal. The key sets are audited before the
+// running sum is folded, so a mismatch leaves the map RestoreStateWithFloor
+// rebuilt and returns an error. An empty entries map rebuilds from the live
+// records; if that rebuild cannot cover every live id, the machine is dirty
+// and the caller must discard it.
+func (sm *StateMachine) RestoreCommittedEntries(entries map[uint64][]byte) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	if len(entries) == 0 {
 		sm.rebuildCommittedEntriesLocked()
-		return
+		return sm.auditLiveCommittedLocked()
 	}
 	next := cloneCommittedInferenceEntries(entries)
 	for id, rec := range sm.state.Inferences {
@@ -287,8 +363,12 @@ func (sm *StateMachine) RestoreCommittedEntries(entries map[uint64][]byte) {
 		}
 		next[id] = entry
 	}
+	if err := auditLiveAgainst(sm.state.Inferences, next); err != nil {
+		return err
+	}
 	sm.applyCommittedMapDiffLocked(sm.committedEntries, next)
 	sm.committedEntries = next
+	return nil
 }
 
 // ExportSealedNonces returns a copy of the per-id seal nonce map for snapshot
