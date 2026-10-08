@@ -50,7 +50,11 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 		}
 
 		// 2. Wait until releases land; the chain needs a block or two to catch up
-		if record.ReservesAny(refs(released)) {
+		releasedNodes := make([]vo.NodeRef, 0, len(released))
+		for _, entry := range released {
+			releasedNodes = append(releasedNodes, entry.Node)
+		}
+		if record.ReservesAny(releasedNodes) {
 			if !uc.clock.Now().Before(kicked.Add(uc.settle)) {
 				return PrepareResult{}, shard.ErrReleasePending
 			}
@@ -62,9 +66,12 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 
 		// 3. Drop a node the chain holds no address for at once; a shard never gains one later
 		if unaddressed := record.Unaddressed(); len(unaddressed) > 0 {
-			gone, err := kick(ctx, uc.submitter, shardID, unaddressed, vo.ReleaseUnreachable)
-			if err != nil {
-				return PrepareResult{}, err
+			gone := make([]Released, 0, len(unaddressed))
+			for _, node := range unaddressed {
+				if err := uc.submitter.Release(ctx, shardID, node, vo.ReleaseUnreachable); err != nil {
+					return PrepareResult{}, err
+				}
+				gone = append(gone, Released{Node: node, Reason: vo.ReleaseUnreachable})
 			}
 			released, kicked = append(released, gone...), uc.clock.Now()
 			continue
@@ -84,9 +91,12 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 				}
 				continue
 			}
-			gone, err := kick(ctx, uc.submitter, shardID, missing, vo.ReleaseFailedPrepare)
-			if err != nil {
-				return PrepareResult{}, err
+			gone := make([]Released, 0, len(missing))
+			for _, node := range missing {
+				if err := uc.submitter.Release(ctx, shardID, node, vo.ReleaseFailedPrepare); err != nil {
+					return PrepareResult{}, err
+				}
+				gone = append(gone, Released{Node: node, Reason: vo.ReleaseFailedPrepare})
 			}
 			released, kicked = append(released, gone...), uc.clock.Now()
 			continue
@@ -120,9 +130,12 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 				}
 				continue
 			}
-			gone, err := kick(ctx, uc.submitter, shardID, refused, vo.ReleaseFailedPrepare)
-			if err != nil {
-				return PrepareResult{}, err
+			gone := make([]Released, 0, len(refused))
+			for _, node := range refused {
+				if err := uc.submitter.Release(ctx, shardID, node, vo.ReleaseFailedPrepare); err != nil {
+					return PrepareResult{}, err
+				}
+				gone = append(gone, Released{Node: node, Reason: vo.ReleaseFailedPrepare})
 			}
 			released, kicked = append(released, gone...), uc.clock.Now()
 			continue
@@ -147,29 +160,10 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 		if !found {
 			return PrepareResult{Released: released, Failed: failed}, nil
 		}
-		gone, err := kick(ctx, uc.submitter, shardID, []vo.NodeRef{worst}, vo.ReleaseUnreachable)
-		if err != nil {
+		if err := uc.submitter.Release(ctx, shardID, worst, vo.ReleaseUnreachable); err != nil {
 			return PrepareResult{}, err
 		}
-		released, kicked = append(released, gone...), uc.clock.Now()
+		released = append(released, Released{Node: worst, Reason: vo.ReleaseUnreachable})
+		kicked = uc.clock.Now()
 	}
-}
-
-func kick(ctx context.Context, submitter shard.ChainSubmitter, shardID vo.ShardID, nodes []vo.NodeRef, reason vo.ReleaseReason) ([]Released, error) {
-	released := make([]Released, 0, len(nodes))
-	for _, node := range nodes {
-		if err := submitter.Release(ctx, shardID, node, reason); err != nil {
-			return nil, err
-		}
-		released = append(released, Released{Node: node, Reason: reason})
-	}
-	return released, nil
-}
-
-func refs(released []Released) []vo.NodeRef {
-	nodes := make([]vo.NodeRef, 0, len(released))
-	for _, entry := range released {
-		nodes = append(nodes, entry.Node)
-	}
-	return nodes
 }

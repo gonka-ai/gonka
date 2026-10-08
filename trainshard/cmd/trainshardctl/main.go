@@ -65,7 +65,7 @@ func drive() error {
 	if !found {
 		return fmt.Errorf("unknown command %q\n\n%s", command, usage())
 	}
-	if slices.ContainsFunc(args, clix.Asked) {
+	if clix.Wants(args) {
 		return run(context.Background(), args)
 	}
 

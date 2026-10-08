@@ -255,7 +255,7 @@ func TestARunIsDrivenOverHTTPFromEndToEnd(t *testing.T) {
 	waitFor(t, "the container to be running", func(s run.NodeStatus) bool { return s.State.Running() }, client)
 
 	// act
-	stopped, err := client.Stop(ctx, client.machine, run.StopCall{HostCommand: command(node), Grace: time.Second})
+	stopped, err := client.Stop(ctx, client.machine, run.StopCall{HostCommand: command(node), Grace: time.Second, GraceGiven: true})
 
 	// assert
 	if err != nil {
@@ -421,6 +421,35 @@ func TestAShellCrossesTheWireBothWays(t *testing.T) {
 		t.Fatalf("got %q, want every line answered and the session closed when typing stops", got)
 	}
 }
+
+func TestAShellEndsWithTheErrorWhenItsInputCannotBeRead(t *testing.T) {
+	// arrange
+	silent := silentStreams{released: make(chan struct{})}
+	client := shellHost(t, silent)
+	t.Cleanup(func() { close(silent.released) })
+	broken := errors.New("input device gone")
+	typed := &terminal{in: io.MultiReader(strings.NewReader("whoami\n"), failingReader{broken})}
+	done := make(chan error, 1)
+
+	// act
+	go func() {
+		done <- client.Shell(context.Background(), client.machine, run.ExecRequest{Shard: shardID, Node: node}, typed)
+	}()
+
+	// assert
+	select {
+	case err := <-done:
+		if !errors.Is(err, broken) {
+			t.Fatalf("got %v, want the input failure", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the shell stayed open on input that can no longer be read")
+	}
+}
+
+type failingReader struct{ err error }
+
+func (f failingReader) Read([]byte) (int, error) { return 0, f.err }
 
 func strictProxy(t *testing.T, target string) string {
 	t.Helper()

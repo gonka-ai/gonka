@@ -73,12 +73,30 @@ func toNodeStatuses(participant vo.Participant, items []contract.NodeStatus) []r
 			Prepared:       item.Prepared,
 			Waiting:        item.Waiting,
 			MeshUp:         item.MeshUp,
+			MeshSilent:     toPeers(item.MeshSilent),
 			GPUsInUse:      item.GPUsInUse,
 			DiskBytes:      item.DiskBytes,
 			DiskQuotaBytes: item.DiskQuotaBytes,
 		})
 	}
 	return statuses
+}
+
+// what is not a node ref is left out: it would reach the researcher's terminal as the host wrote it
+func toPeers(items []string) []vo.NodeRef {
+	var peers []vo.NodeRef
+	for _, item := range items {
+		participant, nodeID, _ := strings.Cut(item, "/")
+		peer, err := vo.ParseNodeRef(participant, nodeID)
+		if err == nil && !strings.ContainsFunc(participant, notBech32) {
+			peers = append(peers, peer)
+		}
+	}
+	return peers
+}
+
+func notBech32(r rune) bool {
+	return (r < 'a' || r > 'z') && (r < '0' || r > '9')
 }
 
 func toReports(participant vo.Participant, items []contract.NodeReport) ([]run.NodeReport, error) {

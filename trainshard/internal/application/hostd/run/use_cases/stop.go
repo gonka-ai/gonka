@@ -53,7 +53,7 @@ func (uc *StopUseCase) Execute(ctx context.Context, cmd StopCommand) ([]run.Node
 				if err := run.CanStop(container.State); err != nil {
 					return err
 				}
-				return run.RecordStop(ctx, uc.runs, node, cmd.Grace)
+				return run.RecordStop(ctx, uc.runs, node, cmd.Grace, cmd.GraceGiven)
 			}
 			if err := uc.converge.Record(ctx, node, write); err != nil {
 				return run.NodeResult{}, err

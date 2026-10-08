@@ -23,7 +23,7 @@ type StartRequest struct {
 
 type StopRequest struct {
 	Command
-	GraceSeconds int `json:"grace_seconds"`
+	GraceSeconds *int `json:"grace_seconds,omitempty"`
 }
 
 type StatusRequest struct {

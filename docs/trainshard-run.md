@@ -1,6 +1,6 @@
 # Running a trainshard
 
-How to lease GPUs and train on them: what each machine sets, what the
+How to reserve GPUs and train on them: what each machine sets, what the
 coordinator puts on chain, and how a run is driven and given back. The example
 is a small GPT trained across the shard, one card to a node, from
 [`trainshard/example/train.py`](../trainshard/example/train.py).
@@ -17,7 +17,7 @@ export TRAINSHARD_PARTICIPANT=gonka1...          # your address
 export TRAINSHARD_NODES=node1                    # the node this machine's mlnode is registered as
 export TRAINSHARD_ENDPOINT=http://host1.example.com:8000   # where a coordinator reaches you: the proxy
 export TRAINSHARD_MESH_ENDPOINT=203.0.113.10     # public address peers reach you at
-export TRAINSHARD_MESH_PORTS=51820-51827         # one per leased node, udp; behind nat, forwarded on the same numbers
+export TRAINSHARD_MESH_PORTS=51820-51827         # one per reserved node, udp; behind nat, forwarded on the same numbers
 export TRAINSHARD_STATE_DIR=/mnt/xfs/trainshardd # xfs with prjquota
 export TRAINSHARD_CONTAINER_MEMORY_BYTES=137438953472
 export TRAINSHARD_CONTAINER_NANO_CPUS=8000000000
@@ -40,6 +40,11 @@ inferenced tx inference grant-ml-ops-permissions <account-key> <warm-address> --
 docker compose -f docker-compose.yml -f docker-compose.trainshard.yml up -d
 ```
 
+Install Docker from Docker's apt repository, not snap. A snap refresh re-applies
+device rules to running containers and trainshardd loses `/dev/nvidia*`
+(`nvidia-smi` fails with exit status 255). The node is not handed back, restart
+trainshardd and the cards are back.
+
 3. Check the node is ready. The daemon runs its checks every 5 min (GPUs match
    what the api put on chain, key granted, disk, mesh port, version) and only
    refreshes the opt-in when all pass; a failed check is logged with its reason:
@@ -61,14 +66,21 @@ INFO node prepared node_id=node1
 A node that waits on the same thing for longer than the daemon's patience
 (`TRAINSHARD_PREPARE_DEADLINE`, default 30m) is handed back to the chain.
 
-4. To stop leasing, stop the daemon. It is what keeps the node opted in, so an
-   opt-out sent while it runs is undone at its next refresh. Once it is stopped the
-   opt-in lapses on its own after `training_params.opt_in_ttl_blocks`; starting it
-   again opts the node back in. Do not stop it while the node is reserved: wait
-   until the shard is settled.
+4. To stop offering the node, stop the daemon. It is what keeps the node opted in. Once it
+   is stopped the opt-in lapses on its own after `training_params.opt_in_ttl_blocks`;
+   starting it again opts the node back in. Do not stop it while the node is
+   reserved: wait until the shard is settled.
 
 ```
 docker compose -f docker-compose.yml -f docker-compose.trainshard.yml stop trainshardd
+```
+
+   To take the node out at once, send an opt-out after the daemon is stopped. A
+   daemon still running opts the node back in at its next refresh. There is no
+   manual opt-in: the daemon opts the node in by itself once its checks pass.
+
+```
+inferenced tx inference set-training-node-opt-in node1 false --from <account-key> --gas auto --gas-adjustment 1.5 --yes
 ```
 
 ### More than one GPU machine
@@ -85,7 +97,7 @@ export TRAINSHARD_ROUTES="node2=10.0.0.12:9700 node3=10.0.0.13:9700"  # name=dae
 docker compose -f docker-compose.yml -f docker-compose.trainshard.yml -f docker-compose.trainshard-hub.yml up -d
 ```
 
-Leave `docker-compose.trainshard.yml` out when this machine leases no GPUs of
+Leave `docker-compose.trainshard.yml` out when this machine offers no GPUs of
 its own. On each GPU machine, with a warm key of its own in `.inference`:
 
 ```
@@ -159,7 +171,11 @@ inferenced tx gov vote $(inferenced query gov proposals -o json | jq -r '.propos
   --from <key> --gas auto --gas-adjustment 1.5 --yes
 ```
 
-4. Point trainshardctl at the chain; the hosts' addresses come from the shard record:
+4. Point trainshardctl at the chain; the hosts' addresses come from the shard record.
+   `TRAINSHARD_CHAIN_GRPC` is the gRPC port of a chain node (9090), not the proxy:
+   the proxy's `/chain-grpc/` cannot serve a gRPC client and is off by default
+   (`DISABLE_CHAIN_GRPC=true`). The join compose does not publish 9090 either, so
+   the node you point at has to open it itself. `devshardctl` needs the same:
 
 ```
 export TRAINSHARD_CHAIN_GRPC=chain-host:9090
@@ -213,3 +229,29 @@ trainshardctl stop $shard --grace 30s         # default: 30s
 trainshardctl settle $shard
 inferenced query inference show-trainshard $shard -o json | jq -r '.trainshard.status'   # SETTLED
 ```
+
+## When a node drops out
+
+A node that fails prepare, or whose host hands it back, leaves the shard and the
+shard goes on with the rest. Nothing takes its place yet.
+
+A plain NCCL job aborts on the other nodes too, because it cannot lose a rank. Run
+`prepare` again, then `deploy` and `start` with the smaller number of nodes. Each
+container gets the new `NNODES`, `NODE_RANK` and `MASTER_ADDR`, so the job has to
+save checkpoints and load the last one at start. A node that stays keeps its disk. A new node starts with an empty one, and the
+disk of a node that left is wiped.
+
+A run that hangs with every node running may have lost a mesh link. `status`
+lists under `NOT_HEARD` the peers a node has heard nothing from for 3 min, while
+`MESH` stays true: the link is configured but carries nothing. NCCL gives up on
+its own after its timeout.
+
+If trainshardd on a machine is down, nothing hands its node back. The creator
+does it by hand:
+
+```
+trainshardctl kick $shard gonka1host1.../node1
+```
+
+The container keeps running on that machine. Cleanup and the return to
+inference happen when trainshardd starts again.

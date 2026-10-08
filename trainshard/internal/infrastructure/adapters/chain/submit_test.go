@@ -15,6 +15,7 @@ import (
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
+	authz "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
@@ -195,6 +196,18 @@ func TestARefusalIsFinalOnlyWhenItsCodespaceAndCodeSaySo(t *testing.T) {
 	}{
 		{"the inference module: only the creator may do this", types.ModuleName, types.ErrTrainshardNotCreator.ABCICode(), shared.ErrConflict},
 		{"the inference module: the shard is not active", types.ModuleName, types.ErrTrainshardNotActive.ABCICode(), shared.ErrConflict},
+		{"insufficient funds", sdkerrors.RootCodespace, sdkerrors.ErrInsufficientFunds.ABCICode(), shared.ErrConflict},
+		{"unauthorized signer or permission", sdkerrors.RootCodespace, sdkerrors.ErrUnauthorized.ABCICode(), shared.ErrConflict},
+		{"invalid address", sdkerrors.RootCodespace, sdkerrors.ErrInvalidAddress.ABCICode(), shared.ErrConflict},
+		{"invalid request", sdkerrors.RootCodespace, sdkerrors.ErrInvalidRequest.ABCICode(), shared.ErrConflict},
+		{"unknown request", sdkerrors.RootCodespace, sdkerrors.ErrUnknownRequest.ABCICode(), shared.ErrConflict},
+		{"tx decode failed", sdkerrors.RootCodespace, sdkerrors.ErrTxDecode.ABCICode(), shared.ErrConflict},
+		{"invalid public key", sdkerrors.RootCodespace, sdkerrors.ErrInvalidPubKey.ABCICode(), shared.ErrConflict},
+		{"invalid coins", sdkerrors.RootCodespace, sdkerrors.ErrInvalidCoins.ABCICode(), shared.ErrConflict},
+		{"no signatures", sdkerrors.RootCodespace, sdkerrors.ErrNoSignatures.ABCICode(), shared.ErrConflict},
+		{"too many signatures", sdkerrors.RootCodespace, sdkerrors.ErrTooManySignatures.ABCICode(), shared.ErrConflict},
+		{"authz authorization missing", authz.ModuleName, authz.ErrNoAuthorizationFound.ABCICode(), shared.ErrConflict},
+		{"authz authorization expired", authz.ModuleName, authz.ErrAuthorizationExpired.ABCICode(), shared.ErrConflict},
 		{"account sequence mismatch", sdkerrors.RootCodespace, sdkerrors.ErrWrongSequence.ABCICode(), shared.ErrUnavailable},
 		{"mempool full", sdkerrors.RootCodespace, sdkerrors.ErrMempoolIsFull.ABCICode(), shared.ErrUnavailable},
 		{"already in the mempool", sdkerrors.RootCodespace, sdkerrors.ErrTxInMempoolCache.ABCICode(), shared.ErrUnavailable},
@@ -202,9 +215,8 @@ func TestARefusalIsFinalOnlyWhenItsCodespaceAndCodeSaySo(t *testing.T) {
 		{"timeout timestamp passed", sdkerrors.RootCodespace, sdkerrors.ErrTxTimeout.ABCICode(), shared.ErrUnavailable},
 		{"out of gas, simulated again on the retry", sdkerrors.RootCodespace, sdkerrors.ErrOutOfGas.ABCICode(), shared.ErrUnavailable},
 		{"insufficient fee, priced again on the retry", sdkerrors.RootCodespace, sdkerrors.ErrInsufficientFee.ABCICode(), shared.ErrUnavailable},
-		{"insufficient funds", sdkerrors.RootCodespace, sdkerrors.ErrInsufficientFunds.ABCICode(), shared.ErrConflict},
-		{"an sdk code not named", sdkerrors.RootCodespace, sdkerrors.ErrUnauthorized.ABCICode(), shared.ErrUnavailable},
-		{"another module's codespace", "authz", 2, shared.ErrUnavailable},
+		{"an sdk code not named", sdkerrors.RootCodespace, 9999, shared.ErrUnavailable},
+		{"another module's unnamed code", authz.ModuleName, 9999, shared.ErrUnavailable},
 		{"an inference code with no codespace", "", types.ErrTrainshardNotCreator.ABCICode(), shared.ErrUnavailable},
 	}
 	for _, tc := range cases {

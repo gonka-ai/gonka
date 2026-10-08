@@ -70,6 +70,14 @@ func exit(code *int) string {
 	return strconv.Itoa(*code)
 }
 
+func peers(nodes []vo.NodeRef) string {
+	names := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		names = append(names, node.String())
+	}
+	return strings.Join(names, ",")
+}
+
 type envFlag map[string]string
 
 func (e envFlag) String() string { return "" }

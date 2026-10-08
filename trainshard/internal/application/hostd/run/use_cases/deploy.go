@@ -69,7 +69,7 @@ func (uc *DeployUseCase) Execute(ctx context.Context, cmd DeployCommand) ([]run.
 				}
 				return run.RecordDeploy(ctx, uc.runs, node, cmd.Shard, cmd.Run)
 			}
-			undo := func(ctx context.Context) error { return run.UndoDeploy(ctx, uc.runs, node, before) }
+			undo := func(ctx context.Context) error { return run.UndoDeploy(ctx, uc.runs, node, before, uc.clock.Now()) }
 			if err := uc.converge.Attempt(ctx, node, write, undo); err != nil {
 				return run.NodeResult{}, err
 			}

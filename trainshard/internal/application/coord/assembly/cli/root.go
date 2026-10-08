@@ -7,22 +7,25 @@ import (
 	"time"
 
 	usecases "trainshard/internal/application/coord/assembly/use_cases"
-	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/ports"
-	"trainshard/internal/domain/shared/vo"
 	"trainshard/internal/utils/clix"
 )
 
-type Commands struct {
-	prepare   *usecases.PrepareMeshUseCase
-	lifecycle shard.ChainLifecycle
-	submitter shard.ChainSubmitter
-	clock     ports.Clock
-	out       io.Writer
+type UseCases struct {
+	Prepare  *usecases.PrepareMeshUseCase
+	Assemble *usecases.AssembleUseCase
+	Settle   *usecases.SettleUseCase
+	Kick     *usecases.KickUseCase
 }
 
-func New(prepare *usecases.PrepareMeshUseCase, lifecycle shard.ChainLifecycle, submitter shard.ChainSubmitter, clock ports.Clock, out io.Writer) *Commands {
-	return &Commands{prepare: prepare, lifecycle: lifecycle, submitter: submitter, clock: clock, out: out}
+type Commands struct {
+	uc    UseCases
+	clock ports.Clock
+	out   io.Writer
+}
+
+func New(uc UseCases, clock ports.Clock, out io.Writer) *Commands {
+	return &Commands{uc: uc, clock: clock, out: out}
 }
 
 func (c *Commands) Register(commands map[string]func(context.Context, []string) error) {
@@ -44,7 +47,7 @@ func (c *Commands) Assemble(ctx context.Context, args []string) error {
 		return err
 	}
 
-	shardID, err := c.lifecycle.Assemble(ctx, proposal)
+	shardID, err := c.uc.Assemble.Execute(ctx, usecases.AssembleCommand{Proposal: proposal})
 	if err != nil {
 		return err
 	}
@@ -63,7 +66,7 @@ func (c *Commands) Settle(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return c.lifecycle.Settle(ctx, shardID)
+	return c.uc.Settle.Execute(ctx, usecases.SettleCommand{Shard: shardID})
 }
 
 func (c *Commands) Kick(ctx context.Context, args []string) error {
@@ -81,7 +84,7 @@ func (c *Commands) Kick(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return c.submitter.Release(ctx, shardID, node, vo.ReleaseManualKick)
+	return c.uc.Kick.Execute(ctx, usecases.KickCommand{Shard: shardID, Node: node})
 }
 
 func (c *Commands) Prepare(ctx context.Context, args []string) error {
@@ -99,7 +102,7 @@ func (c *Commands) Prepare(ctx context.Context, args []string) error {
 		return err
 	}
 
-	result, err := c.prepare.Execute(ctx, shardID, c.clock.Now().Add(*wait))
+	result, err := c.uc.Prepare.Execute(ctx, shardID, c.clock.Now().Add(*wait))
 	if err != nil {
 		return err
 	}

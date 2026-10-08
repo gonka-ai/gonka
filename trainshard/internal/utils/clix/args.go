@@ -12,6 +12,14 @@ import (
 
 func Asked(arg string) bool { return arg == "-h" || arg == "--help" }
 
+// Wants looks for help only before "--": what follows is the container's own command
+func Wants(args []string) bool {
+	if end := slices.Index(args, "--"); end >= 0 {
+		args = args[:end]
+	}
+	return slices.ContainsFunc(args, Asked)
+}
+
 // Command is a flag set whose help says what the command does and how it is called, so a command
 // without flags does not answer with a bare usage line
 func Command(use, summary string, examples ...string) *flag.FlagSet {
@@ -36,11 +44,7 @@ func Command(use, summary string, examples ...string) *flag.FlagSet {
 }
 
 func Parse(flags *flag.FlagSet, args []string, targets ...string) ([]string, error) {
-	own := args
-	if end := slices.Index(args, "--"); end >= 0 {
-		own = args[:end]
-	}
-	if slices.ContainsFunc(own, Asked) {
+	if Wants(args) {
 		flags.Usage()
 		return nil, flag.ErrHelp
 	}

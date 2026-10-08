@@ -22,6 +22,9 @@ type Network interface {
 	// Reach returns whether this node shook hands with the peer recently; not reached, or a peer
 	// that cannot be one, is false, not an error. An error means the interface could not be asked
 	Reach(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, peer Peer) (bool, error)
+	// Silent returns the peers this node has not shaken hands with recently, one never reached
+	// too; with no interface there are none. An error means the interface could not be asked
+	Silent(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, peers []Peer) ([]vo.NodeRef, error)
 	// Remove drops the interface, the namespace that holds it and the key; ok if already gone
 	Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error
 	// Shards returns every shard this node still holds a key for, so cleanup finds them after a restart

@@ -22,7 +22,8 @@ type DeployCall struct {
 
 type StopCall struct {
 	HostCommand
-	Grace time.Duration
+	Grace      time.Duration
+	GraceGiven bool
 }
 
 // HostCommands is one signed call per machine, at the endpoint the chain names for its nodes. The

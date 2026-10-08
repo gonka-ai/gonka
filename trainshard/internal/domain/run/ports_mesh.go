@@ -19,6 +19,9 @@ type RunNetwork interface {
 	// Present returns whether the key exists and whether the interface is up with the accepted
 	// peer list; an interface holding an older list is not up
 	Present(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (key bool, up bool, err error)
+	// Silent returns the peers on the accepted list this node has not heard from recently; an
+	// interface that is up says nothing about whether its links still carry anything
+	Silent(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) ([]vo.NodeRef, error)
 	// Placement returns this node's rank on the mesh; an error until a peer list was accepted
 	Placement(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (vo.Placement, error)
 	// Apply brings the interface up from the accepted list, an error if none was accepted; a repeat

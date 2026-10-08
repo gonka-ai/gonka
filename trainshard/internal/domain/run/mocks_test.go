@@ -198,6 +198,10 @@ func (n *networkStub) Present(context.Context, vo.ShardID, vo.NodeRef) (bool, bo
 	return n.key, n.up, nil
 }
 
+func (n *networkStub) Silent(context.Context, vo.ShardID, vo.NodeRef) ([]vo.NodeRef, error) {
+	return nil, nil
+}
+
 func (n *networkStub) Placement(context.Context, vo.ShardID, vo.NodeRef) (vo.Placement, error) {
 	return vo.Placement{Size: 1, Master: "10.7.0.1"}, nil
 }

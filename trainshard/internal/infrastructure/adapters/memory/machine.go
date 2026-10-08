@@ -259,6 +259,10 @@ func (n network) Reach(_ context.Context, _ vo.ShardID, node vo.NodeRef, _ mesh.
 	return up, nil
 }
 
+func (n network) Silent(context.Context, vo.ShardID, vo.NodeRef, []mesh.Peer) ([]vo.NodeRef, error) {
+	return nil, nil
+}
+
 func (n network) Remove(_ context.Context, _ vo.ShardID, node vo.NodeRef) error {
 	m := n.machine
 	m.mu.Lock()

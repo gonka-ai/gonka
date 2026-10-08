@@ -74,6 +74,30 @@ func TestAHelpFlagAfterTheSeparatorBelongsToTheContainersCommand(t *testing.T) {
 	}
 }
 
+func TestHelpIsWantedOnlyBeforeTheSeparator(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"help for the command", []string{"1", "-h"}, true},
+		{"help after the separator", []string{"1", "--", "python", "x.py", "--help"}, false},
+		{"help before the separator", []string{"--help", "--", "python"}, true},
+		{"no help", []string{"1", "--", "python"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// act
+			got := clix.Wants(tc.args)
+
+			// assert
+			if got != tc.want {
+				t.Fatalf("got %t for %v, want %t", got, tc.args, tc.want)
+			}
+		})
+	}
+}
+
 func TestAFlagThatDoesNotParseIsAnsweredWhereTheCallerAsked(t *testing.T) {
 	// arrange
 	flags := clix.Command("stop <shard> [flags]", "Stops the run.")

@@ -38,7 +38,8 @@ type DeployCommand struct {
 
 type StopCommand struct {
 	NodesCommand
-	Grace time.Duration
+	Grace      time.Duration
+	GraceGiven bool
 }
 
 type MeshCommand struct {

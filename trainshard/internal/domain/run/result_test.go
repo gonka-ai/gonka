@@ -3,6 +3,7 @@ package run_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -187,5 +188,21 @@ func TestAReportOfARunThatFailedStillAnswered(t *testing.T) {
 	}
 	if !unreached.Unanswered() || !fromAnOlderHost.Unanswered() {
 		t.Fatalf("want a node the call never reached, and a fault from a host that does not say, counted as silent")
+	}
+}
+
+func TestAStartIsRefusedWithTheReasonTheNodeGave(t *testing.T) {
+	// arrange
+	statuses := []run.NodeStatus{run.FailedStatus(first, errors.New("nvidia-smi exit status 255, restart trainshardd"))}
+
+	// act
+	err := run.ReadyToStart(statuses)
+
+	// assert
+	if !errors.Is(err, run.ErrStatusUnknown) {
+		t.Fatalf("got %v, want the run refused as a status it cannot trust", err)
+	}
+	if !strings.Contains(err.Error(), "node-a") || !strings.Contains(err.Error(), "restart trainshardd") {
+		t.Fatalf("got %q, want the node and its reason", err)
 	}
 }

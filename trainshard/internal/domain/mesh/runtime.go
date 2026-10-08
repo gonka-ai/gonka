@@ -62,6 +62,14 @@ func (r Runtime) Present(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 	return r.Network.Present(ctx, shardID, node, config.Peers)
 }
 
+func (r Runtime) Silent(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) ([]vo.NodeRef, error) {
+	config, found, err := r.Store.Config(ctx, shardID, node)
+	if err != nil || !found {
+		return nil, err
+	}
+	return r.Network.Silent(ctx, shardID, node, config.Peers)
+}
+
 func (r Runtime) Apply(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error {
 	config, found, err := r.Store.Config(ctx, shardID, node)
 	if err != nil {

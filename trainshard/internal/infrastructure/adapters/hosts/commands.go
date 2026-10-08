@@ -3,6 +3,7 @@ package hosts
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"trainshard/internal/contract"
 	"trainshard/internal/domain/run"
@@ -31,8 +32,15 @@ func (c *Client) Start(ctx context.Context, host vo.Host, call run.HostCommand) 
 
 func (c *Client) Stop(ctx context.Context, host vo.Host, call run.StopCall) ([]run.NodeResult, error) {
 	body := contract.StopRequest{
-		Command:      fromCommand(call.HostCommand),
-		GraceSeconds: int(call.Grace.Seconds()),
+		Command: fromCommand(call.HostCommand),
+	}
+	if call.GraceGiven {
+		// rounded up: a part of a second sent as 0 would stop the container at once
+		seconds := int(call.Grace / time.Second)
+		if call.Grace%time.Second > 0 {
+			seconds++
+		}
+		body.GraceSeconds = &seconds
 	}
 
 	var result contract.NodesResult
