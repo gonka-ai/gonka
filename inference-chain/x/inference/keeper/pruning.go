@@ -482,12 +482,16 @@ func (p Pruner[K, V]) pruneFrom(ctx context.Context, k Keeper, currentEpochIndex
 	for epoch := startEpoch; epoch <= endEpoch; epoch++ {
 		prunesLeft := p.PruningMax - prunedCount
 		prunedForEpoch, err := p.PruneEpoch(ctx, epoch, prunesLeft)
+		prunedCount += prunedForEpoch
 		if err != nil {
 			p.Logger.LogError("Failed to prune epoch", types.Pruning,
 				"epoch", epoch,
 				"error", err,
 			)
-			continue
+			return err
+		}
+		if p.PruningMax > 0 && prunedCount >= p.PruningMax {
+			return nil
 		}
 		if prunedForEpoch == 0 {
 			p.Logger.LogInfo("Pruning epoch complete", types.Pruning, "epoch", epoch, "list", p.List.GetName())
@@ -523,11 +527,6 @@ func (p Pruner[K, V]) pruneFrom(ctx context.Context, k Keeper, currentEpochIndex
 			}
 		} else {
 			p.Logger.LogInfo("Items pruned for epoch", types.Pruning, "epoch", epoch, "pruned", prunedForEpoch, "list", p.List.GetName())
-			// PruningMax bounds the block, not each epoch: a backlog of many epochs is spread over blocks.
-			prunedCount += prunedForEpoch
-			if p.PruningMax > 0 && prunedCount >= p.PruningMax {
-				break
-			}
 		}
 	}
 	return nil
