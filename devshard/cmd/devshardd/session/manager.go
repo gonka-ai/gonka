@@ -21,8 +21,6 @@ import (
 	"common/utils"
 	validationpkg "common/validation"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 
@@ -1256,17 +1254,7 @@ func (m *HostManager) signPayloadResponse(inferenceID string, promptPayload, res
 		ExecutorAddress: "",
 	}
 
-	signerAddressStr := m.recorder.GetSignerAddress()
-	signerAddress, err := sdk.AccAddressFromBech32(signerAddressStr)
-	if err != nil {
-		return "", err
-	}
-	accountSigner := &cmd.AccountSigner{
-		Addr:    signerAddress,
-		Keyring: m.recorder.GetKeyring(),
-	}
-
-	return calculations.Sign(accountSigner, components, calculations.Developer)
+	return calculations.Sign(m.recorder, components, calculations.Developer)
 }
 
 // SessionMemory is the retained-map sizes across loaded sessions.
