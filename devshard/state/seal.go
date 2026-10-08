@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"slices"
@@ -84,8 +85,27 @@ func (sm *StateMachine) updateCommittedEntryLocked(id uint64, rec *types.Inferen
 	if err != nil {
 		return err
 	}
+	if prev, ok := sm.committedEntries[id]; ok {
+		if bytes.Equal(prev, entry) {
+			return nil
+		}
+	}
+	if j := sm.journal; j != nil {
+		j.committed.touch(sm.committedEntries, id)
+	}
 	sm.committedEntries[id] = entry
 	return nil
+}
+
+func (sm *StateMachine) deleteCommittedEntryLocked(id uint64) {
+	_, ok := sm.committedEntries[id]
+	if !ok {
+		return
+	}
+	if j := sm.journal; j != nil {
+		j.committed.touch(sm.committedEntries, id)
+	}
+	delete(sm.committedEntries, id)
 }
 
 func (sm *StateMachine) rebuildCommittedEntriesLocked() {
@@ -119,18 +139,30 @@ func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.Infer
 	return rec, nil
 }
 
+// liveInferencesHashLocked reuses canonical entries with the v4.1 hash.
+func (sm *StateMachine) liveInferencesHashLocked() ([]byte, error) {
+	if len(sm.committedEntries) != len(sm.state.Inferences) {
+		return computeInferencesHash(sm.state.Inferences)
+	}
+	for id := range sm.state.Inferences {
+		if _, ok := sm.committedEntries[id]; !ok {
+			return computeInferencesHash(sm.state.Inferences)
+		}
+	}
+	return computeInferencesHashFromEntries(sm.committedEntries), nil
+}
+
 func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {
 	hostStatsHash, err := computeHostStatsHash(sm.state.HostStats)
 	if err != nil {
 		return nil, err
 	}
-
-	acc := sealedAccBytes32(sm.state.SealedAcc)
-	restHash, err := ComputeRestHashV2(sm.state.Balance, acc, sm.state.Inferences, sm.state.WarmKeys)
+	liveHash, err := sm.liveInferencesHashLocked()
 	if err != nil {
 		return nil, err
 	}
-
+	acc := sealedAccBytes32(sm.state.SealedAcc)
+	restHash := restHashV2FromLiveHash(sm.state.Balance, acc, liveHash, sm.state.WarmKeys)
 	return ComputeStateRootFromRestHash(hostStatsHash, restHash, sm.state.Fees, sm.state.Phase, sm.state.StateRootAndProtocolVersion), nil
 }
 
@@ -223,25 +255,22 @@ func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
 	}
 	slices.Sort(ids)
 
-	if sm.sealedNonces == nil {
-		sm.sealedNonces = make(map[uint64]uint64, len(ids))
-	}
 	cur := sealedAccBytes32(sm.state.SealedAcc)
 
 	for _, id := range ids {
-		rec := sm.state.Inferences[id]
+		rec, _ := sm.inferenceForWriteLocked(id)
 		sm.settleLiveRecordLocked(rec)
 		if err := sm.updateCommittedEntryLocked(id, rec); err != nil {
 			return fmt.Errorf("drain live inference %d: %w", id, err)
 		}
 		entry := append([]byte(nil), sm.committedEntries[id]...)
 		cur = FoldSealedAccumulator(cur, sealNonce, id, entry)
-		sm.sealedNonces[id] = sealNonce
-		delete(sm.committedEntries, id)
+		sm.setSealedNonceLocked(id, sealNonce)
+		sm.deleteCommittedEntryLocked(id)
 		if err := sm.upsertInferenceObsLocked(id, sealNonce, rec); err != nil {
 			return fmt.Errorf("persist sealed inference %d during drain: %w", id, err)
 		}
-		delete(sm.state.Inferences, id)
+		sm.deleteInferenceLocked(id)
 	}
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
 	return nil
@@ -479,9 +508,6 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 	}
 	slices.Sort(eligible)
 
-	if sm.sealedNonces == nil {
-		sm.sealedNonces = make(map[uint64]uint64, len(eligible))
-	}
 	cur := sealedAccBytes32(sm.state.SealedAcc)
 	for _, id := range eligible {
 		rec := sm.state.Inferences[id]
@@ -490,8 +516,8 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 		}
 		entry := append([]byte(nil), sm.committedEntries[id]...)
 		cur = FoldSealedAccumulator(cur, sealNonce, id, entry)
-		sm.sealedNonces[id] = sealNonce
-		delete(sm.committedEntries, id)
+		sm.setSealedNonceLocked(id, sealNonce)
+		sm.deleteCommittedEntryLocked(id)
 		if err := sm.upsertInferenceObsLocked(id, sealNonce, rec); err != nil {
 			// Observability only; never block or diverge the deterministic seal.
 			logging.Warn("failed to persist sealed inference obs during auto-seal",
@@ -501,7 +527,7 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 				"error", err,
 			)
 		}
-		delete(sm.state.Inferences, id)
+		sm.deleteInferenceLocked(id)
 	}
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
 	sm.logAutoSealDiagnosticLocked(side, sealNonce, clockWin, sealGraceNonces, graceSeconds, stateClock, candidates, eligible)

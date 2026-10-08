@@ -86,20 +86,11 @@ func ComputeInferencesHashV2(sealedAcc [32]byte, liveInferences map[uint64]*type
 // ComputeRestHashV2 returns sha256(balance_be || inferences_hash_v2 || warm_keys_hash)
 // for Phase 1 v2 sessions (sealed accumulator + live inference set).
 func ComputeRestHashV2(balance uint64, sealedAcc [32]byte, liveInferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string) ([]byte, error) {
-	infHash, err := ComputeInferencesHashV2(sealedAcc, liveInferences)
+	liveHash, err := computeInferencesHash(liveInferences)
 	if err != nil {
 		return nil, err
 	}
-	warmKeysHash := computeWarmKeysHash(warmKeys)
-
-	balBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(balBytes, balance)
-
-	h := sha256.New()
-	h.Write(balBytes)
-	h.Write(infHash)
-	h.Write(warmKeysHash)
-	return h.Sum(nil), nil
+	return restHashV2FromLiveHash(balance, sealedAcc, liveHash, warmKeys), nil
 }
 
 func sealedAccBytes32(b []byte) [32]byte {
@@ -312,4 +303,21 @@ func computeInferencesHashFromEntries(entries map[uint64][]byte) []byte {
 
 	sum := sha256.Sum256(buf)
 	return sum[:]
+}
+
+func restHashV2FromLiveHash(balance uint64, sealedAcc [32]byte, liveHash []byte, warmKeys map[uint32]string) []byte {
+	inner := sha256.New()
+	inner.Write(sealedAcc[:])
+	inner.Write(liveHash)
+	infHash := inner.Sum(nil)
+
+	warmKeysHash := computeWarmKeysHash(warmKeys)
+	balBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(balBytes, balance)
+
+	h := sha256.New()
+	h.Write(balBytes)
+	h.Write(infHash)
+	h.Write(warmKeysHash)
+	return h.Sum(nil)
 }

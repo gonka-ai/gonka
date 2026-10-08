@@ -80,7 +80,7 @@ list-citest-targets: ## Print runnable citest suite targets (one per line) for t
 CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl versiond-router versiond-0
 STACK_CITEST_PATTERN := ^Test(StackSmoke|RouterStickiness|ParamsLongPoll|EpochSwitch|GatewayChat|Versiond.*|HAStaleStandbyCatchupIdempotent|LegacyVersionPinnedToSingleHost|SQLiteToPostgresHAMigration|ValidationLeaseRace.*)$$
 
-citest-images: ## Pull hub images and build all compose images required for citest.
+citest-images: gen-compose ## Pull hub images and build all compose images required for citest.
 	docker compose $(COMPOSE_BASE) pull devshard-postgres
 	docker compose $(COMPOSE_BASE) build $(CITEST_BUILD_SERVICES)
 
