@@ -276,7 +276,7 @@ func (k Keeper) selectTrainshardNodes(
 	ctx context.Context,
 	trainshardId uint64,
 	gpuProfileId string,
-	maxNodes uint32,
+	nodeCount uint32,
 	params *types.TrainingParams,
 ) ([]*types.TrainshardReservedNode, error) {
 	view, err := k.buildTrainingEpochView(ctx)
@@ -349,10 +349,10 @@ func (k Keeper) selectTrainshardNodes(
 	takenModel := make(map[string]int)
 	takenProfile := 0
 	takenTotal := 0
-	picked := make([]*types.TrainshardReservedNode, 0, maxNodes)
+	picked := make([]*types.TrainshardReservedNode, 0, nodeCount)
 
 	for i, node := range candidates {
-		if uint32(takenTotal) >= maxNodes {
+		if uint32(takenTotal) >= nodeCount {
 			break
 		}
 		if reserved.total+takenTotal+1 > int(params.MaxTotalReservedNodes) {
@@ -397,12 +397,12 @@ func (k Keeper) selectTrainshardNodes(
 		takenTotal++
 	}
 
-	if uint32(takenTotal) < maxNodes {
+	if uint32(takenTotal) < nodeCount {
 		return nil, types.ErrTrainshardCapacity.Wrapf(
 			"found %d of %d needed among %d nodes of profile %s; skipped: %d guardian, %d without a live opt-in, "+
 				"%d without an endpoint, %d already reserved, %d over the total reserve cap (%d), "+
 				"%d over the profile share cap (%d), %d over a model share cap or its last free node",
-			takenTotal, maxNodes, ofProfile, gpuProfileId, skipped.guardian, skipped.optIn,
+			takenTotal, nodeCount, ofProfile, gpuProfileId, skipped.guardian, skipped.optIn,
 			skipped.endpoint, skipped.reserved, skipped.totalCap, params.MaxTotalReservedNodes,
 			skipped.profileCap, profileCap, skipped.modelCap)
 	}

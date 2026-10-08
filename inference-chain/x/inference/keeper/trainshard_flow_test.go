@@ -19,7 +19,7 @@ const (
 	trainshardOptInExpiry = int64(1000)
 )
 
-func setupTrainshardFlow(t *testing.T, maxNodes uint32) (keeper.Keeper, types.MsgServer, sdk.Context, string) {
+func setupTrainshardFlow(t *testing.T, nodeCount uint32) (keeper.Keeper, types.MsgServer, sdk.Context, string) {
 	t.Helper()
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 	ms := keeper.NewMsgServerImpl(k)
@@ -58,7 +58,7 @@ func setupTrainshardFlow(t *testing.T, maxNodes uint32) (keeper.Keeper, types.Ms
 	require.NoError(t, k.TrainshardProposals.Set(ctx, 1, types.TrainshardProposal{
 		Creator:           creator,
 		GpuProfileId:      trainshardTestProfile,
-		MaxNodes:          maxNodes,
+		NodeCount:         nodeCount,
 		MaxDurationBlocks: 100,
 		Id:                1,
 		Status:            types.TrainshardProposalStatus_TRAINSHARD_PROPOSAL_STATUS_OPEN,
@@ -302,7 +302,7 @@ func TestTrainshardLifecycle_E2E(t *testing.T) {
 	require.NoError(t, k.TrainshardProposals.Set(ctx, 2, types.TrainshardProposal{
 		Creator:           creator,
 		GpuProfileId:      trainshardTestProfile,
-		MaxNodes:          1,
+		NodeCount:         1,
 		MaxDurationBlocks: 100,
 		Id:                2,
 		Status:            types.TrainshardProposalStatus_TRAINSHARD_PROPOSAL_STATUS_OPEN,
@@ -362,7 +362,7 @@ func TestTrainshardFullReservation_ShieldsPocAndUnfreezes(t *testing.T) {
 	require.NoError(t, k.TrainingNodeOptIns.Set(ctx, collections.Join(hostA, "node-a"), trainshardOptInExpiry))
 	require.NoError(t, k.TrainingNodeEndpoints.Set(ctx, collections.Join(hostA, "node-a"), "https://a.example.com"))
 	require.NoError(t, k.TrainshardProposals.Set(ctx, 1, types.TrainshardProposal{
-		Creator: hostA, GpuProfileId: trainshardTestProfile, MaxNodes: 1, MaxDurationBlocks: 100, Id: 1,
+		Creator: hostA, GpuProfileId: trainshardTestProfile, NodeCount: 1, MaxDurationBlocks: 100, Id: 1,
 		Status: types.TrainshardProposalStatus_TRAINSHARD_PROPOSAL_STATUS_OPEN,
 	}))
 
@@ -396,6 +396,16 @@ func TestTrainshardFullReservation_ShieldsPocAndUnfreezes(t *testing.T) {
 	require.Empty(t, k.CollectReservedNodeIds(ctx))
 }
 
+func TestAssembleTrainshard_WrongCreatorRejected(t *testing.T) {
+	k, ms, ctx, _ := setupTrainshardFlow(t, 1)
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: sample.AccAddress(), ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardNotCreator)
+	require.ErrorContains(t, err, "assemble of proposal 1")
+
+	require.Empty(t, k.CollectReservedNodeIds(ctx))
+}
+
 func TestSettleTrainshard_WrongCreatorRejected(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 
@@ -404,6 +414,7 @@ func TestSettleTrainshard_WrongCreatorRejected(t *testing.T) {
 
 	_, err = ms.SettleTrainshard(ctx, &types.MsgSettleTrainshard{Creator: sample.AccAddress(), TrainshardId: 1})
 	require.ErrorIs(t, err, types.ErrTrainshardNotCreator)
+	require.ErrorContains(t, err, "settle of shard 1")
 
 	shard, err := k.Trainshards.Get(ctx, 1)
 	require.NoError(t, err)

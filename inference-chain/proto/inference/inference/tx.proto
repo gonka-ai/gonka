@@ -499,7 +499,7 @@ message MsgCreateTrainshardProposal {
   string authority = 1;
   string creator = 2;
   string gpu_profile_id = 3;
-  uint32 max_nodes = 4;
+  uint32 node_count = 4;
   int64 max_duration_blocks = 5;
   string base_image = 6;
   string run_key = 7;

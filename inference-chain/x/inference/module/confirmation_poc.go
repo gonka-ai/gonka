@@ -434,7 +434,7 @@ func (am AppModule) evaluateConfirmation(
 	preserved := preservedWeightByParticipant(activeParticipants, &preservedSnapshot, presentScales)
 	totalExpected := weightByParticipant(activeParticipants, presentScales)
 
-	// a node lent at any point before generation ends cannot be held to the event, so the ratio
+	// a node reserved at any point before generation ends cannot be held to the event, so the ratio
 	// judges the host's free nodes alone: reserved nodes leave both the expected weight and the
 	// preserved reading. Their weight still counts toward the ConfirmationWeight, since settlement
 	// strips a reserved node's share itself and would otherwise cut the host's free nodes too

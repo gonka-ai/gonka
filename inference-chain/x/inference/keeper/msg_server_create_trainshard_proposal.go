@@ -16,7 +16,7 @@ func (k msgServer) CreateTrainshardProposal(goCtx context.Context, msg *types.Ms
 	}
 
 	params := k.GetTrainingParams(goCtx)
-	if err := validateTrainshardStaticLimits(params, msg.GpuProfileId, msg.MaxNodes, msg.MaxDurationBlocks); err != nil {
+	if err := validateTrainshardStaticLimits(params, msg.GpuProfileId, msg.NodeCount, msg.MaxDurationBlocks); err != nil {
 		return nil, err
 	}
 	if _, err := sdk.AccAddressFromBech32(msg.Creator); err != nil {
@@ -39,7 +39,7 @@ func (k msgServer) CreateTrainshardProposal(goCtx context.Context, msg *types.Ms
 		Id:                id,
 		Creator:           msg.Creator,
 		GpuProfileId:      msg.GpuProfileId,
-		MaxNodes:          msg.MaxNodes,
+		NodeCount:         msg.NodeCount,
 		MaxDurationBlocks: msg.MaxDurationBlocks,
 		Status:            types.TrainshardProposalStatus_TRAINSHARD_PROPOSAL_STATUS_OPEN,
 		BaseImage:         msg.BaseImage,
@@ -61,15 +61,15 @@ func (k msgServer) CreateTrainshardProposal(goCtx context.Context, msg *types.Ms
 	return &types.MsgCreateTrainshardProposalResponse{ProposalId: id}, nil
 }
 
-func validateTrainshardStaticLimits(params *types.TrainingParams, gpuProfileId string, maxNodes uint32, maxDuration int64) error {
+func validateTrainshardStaticLimits(params *types.TrainingParams, gpuProfileId string, nodeCount uint32, maxDuration int64) error {
 	if strings.TrimSpace(gpuProfileId) == "" {
 		return types.ErrTrainshardProfileEmpty
 	}
 	if len(params.AllowedGpuProfileIds) > 0 && !slices.Contains(params.AllowedGpuProfileIds, gpuProfileId) {
 		return types.ErrTrainshardProfileNotAllowed.Wrap(gpuProfileId)
 	}
-	if maxNodes == 0 || maxNodes > params.MaxNodesPerShard {
-		return types.ErrTrainshardProposalLimits.Wrapf("max_nodes %d not in (0, %d]", maxNodes, params.MaxNodesPerShard)
+	if nodeCount == 0 || nodeCount > params.MaxNodesPerShard {
+		return types.ErrTrainshardProposalLimits.Wrapf("node_count %d not in (0, %d]", nodeCount, params.MaxNodesPerShard)
 	}
 	if maxDuration < params.MinDurationBlocks || maxDuration > params.MaxDurationBlocks {
 		return types.ErrTrainshardProposalLimits.Wrapf("max_duration_blocks %d not in [%d, %d]", maxDuration, params.MinDurationBlocks, params.MaxDurationBlocks)

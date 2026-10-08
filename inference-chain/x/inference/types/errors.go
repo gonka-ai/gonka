@@ -106,7 +106,7 @@ var (
 	ErrTrainshardProposalLimits              = sdkerrors.Register(ModuleName, 1204, "training proposal violates static caps")
 	ErrTrainshardCapacity                    = sdkerrors.Register(ModuleName, 1205, "insufficient free training capacity for request")
 	ErrTrainshardNotFound                    = sdkerrors.Register(ModuleName, 1206, "trainshard not found")
-	ErrTrainshardNotCreator                  = sdkerrors.Register(ModuleName, 1207, "only the shard creator may settle it")
+	ErrTrainshardNotCreator                  = sdkerrors.Register(ModuleName, 1207, "only the creator may do this")
 	ErrTrainshardCooldown                    = sdkerrors.Register(ModuleName, 1208, "creator is within training cooldown window")
 	ErrTrainshardActiveLimit                 = sdkerrors.Register(ModuleName, 1209, "active shard limit reached")
 	ErrTrainshardNodeReserved                = sdkerrors.Register(ModuleName, 1210, "node is reserved by an active trainshard")
