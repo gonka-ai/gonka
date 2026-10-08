@@ -53,6 +53,11 @@ type mockKeeperForModelAssigner struct {
 	// member addresses.
 	guardianAddresses  []string
 	activeParticipants map[uint64]types.ActiveParticipants
+	reserved           map[string]map[string]struct{} // participant -> node ids held by training
+}
+
+func (m *mockKeeperForModelAssigner) CollectReservedNodeIds(ctx context.Context) map[string]map[string]struct{} {
+	return m.reserved
 }
 
 func (m *mockKeeperForModelAssigner) GetGovernanceModelsSorted(ctx context.Context) ([]*types.Model, error) {
@@ -683,6 +688,61 @@ func TestSamplePreservedForEpisode_FiltersDeadSubGroupMembers(t *testing.T) {
 
 	preserved := collectPreservedParticipants(snapshot)
 	require.False(t, preserved["participant-dead"], "dead subgroup member must be filtered out before sampling")
+}
+
+// A node held by training, reserved or returning, trains through the episode: sampled
+// into the slot, the host would be sent requests nobody answers
+func TestSamplePreservedForEpisode_SkipsNodesHeldByTraining(t *testing.T) {
+	ctx := context.Background()
+	modelID := "model-reserved-test"
+
+	addrs := []string{"participant-0", "participant-1", "participant-2"}
+	participants := make([]*types.ActiveParticipant, 0, len(addrs))
+	subgroupWeights := make([]*types.ValidationWeight, 0, len(addrs))
+	perfSummaries := make(map[string]map[uint64]types.EpochPerformanceSummary, len(addrs))
+	reserved := make(map[string]map[string]struct{}, len(addrs))
+	for _, addr := range addrs {
+		nodes := []*types.MLNodeInfo{
+			{NodeId: fmt.Sprintf("%s-n1", addr), PocWeight: 10},
+			{NodeId: fmt.Sprintf("%s-n2", addr), PocWeight: 10},
+			{NodeId: fmt.Sprintf("%s-n3", addr), PocWeight: 10},
+		}
+		subgroupWeights = append(subgroupWeights, &types.ValidationWeight{MemberAddress: addr, MlNodes: nodes})
+		participants = append(participants, &types.ActiveParticipant{
+			Index:   addr,
+			Models:  []string{modelID},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: nodes}},
+		})
+		perfSummaries[addr] = map[uint64]types.EpochPerformanceSummary{
+			0: {ParticipantId: addr, EpochIndex: 0, RewardedCoins: 1},
+		}
+		reserved[addr] = map[string]struct{}{fmt.Sprintf("%s-n1", addr): {}}
+	}
+
+	mockKeeper := &mockKeeperForModelAssigner{
+		governanceModels: []types.Model{{Id: modelID, ThroughputPerNonce: 1000, VRam: 32}},
+		epochGroupData:   map[string]map[uint64]types.EpochGroupData{modelID: {0: {ValidationWeights: subgroupWeights}}},
+		perfSummaries:    perfSummaries,
+		params:           &types.Params{EpochParams: &types.EpochParams{PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1}}},
+		reserved:         reserved,
+	}
+	assigner := NewModelAssigner(mockKeeper, mockLogger{})
+	epoch := types.Epoch{Index: 1}
+	mockKeeper.populateSubgroupsFromParticipants(epoch.Index, participants)
+
+	snapshot, err := assigner.SamplePreservedForEpisode(ctx, epoch, 4321)
+	require.NoError(t, err)
+
+	sampled := 0
+	for _, mp := range snapshot.ModelPreservedNodes {
+		for _, pp := range mp.Participants {
+			for _, id := range pp.NodeIds {
+				require.NotContains(t, reserved[pp.ParticipantId], id, "a node held by training must not be sampled")
+				sampled++
+			}
+		}
+	}
+	require.Greater(t, sampled, 0, "free nodes take the slot instead")
 }
 
 func TestSamplePreservedForEpisode_AnchorInfluencesSelection(t *testing.T) {
