@@ -17,6 +17,7 @@ type Desired struct {
 	Revision       int
 	Start          bool
 	StopGrace      time.Duration
+	StopGraceGiven bool
 }
 
 func DesiredFor(reservation Reservation, state RunState, meshConfigured bool) Desired {
@@ -28,6 +29,7 @@ func DesiredFor(reservation Reservation, state RunState, meshConfigured bool) De
 		Revision:       state.Revision,
 		Start:          state.Start,
 		StopGrace:      state.StopGrace,
+		StopGraceGiven: state.StopGraceGiven,
 	}
 }
 

@@ -2,10 +2,13 @@ package usecases_test
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"testing"
 
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shard"
+	"trainshard/internal/domain/shared/vo"
 )
 
 func TestStatusReportsWhatTheMachineHoldsAndWhyItStopped(t *testing.T) {
@@ -34,6 +37,69 @@ func TestStatusReportsWhatTheMachineHoldsAndWhyItStopped(t *testing.T) {
 	}
 	if item.Fault == nil || item.Fault.Code != oldFault.Code {
 		t.Fatalf("got %+v, want the recorded reason reported back", item.Fault)
+	}
+}
+
+func TestStatusNamesThePeersAMeshThatIsUpHasNotHeardFrom(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("mesh: %v", err)
+	}
+	f.network.silent = []vo.NodeRef{nodeB}
+
+	// act
+	items, err := f.status().Execute(ctx, nodesCommand())
+
+	// assert
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if len(items) != 1 || !items[0].MeshUp || !slices.Equal(items[0].MeshSilent, []vo.NodeRef{nodeB}) {
+		t.Fatalf("got %+v, want a mesh that is up and node-b named as not heard from", items)
+	}
+}
+
+func TestStatusStaysAnAnswerWhenThePeersCannotBeRead(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("mesh: %v", err)
+	}
+	f.network.silentErr = errors.New("wireguard device gone")
+
+	// act
+	items, err := f.status().Execute(ctx, nodesCommand())
+
+	// assert
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if len(items) != 1 || !items[0].OK() || !items[0].MeshUp || len(items[0].MeshSilent) != 0 {
+		t.Fatalf("got %+v, want the node's status with no peers named", items)
+	}
+}
+
+func TestStatusAsksNoPeersOfAMeshThatIsNotUp(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.network.silent = []vo.NodeRef{nodeB}
+
+	// act
+	items, err := f.status().Execute(ctx, nodesCommand())
+
+	// assert
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if len(items) != 1 || items[0].MeshUp || len(items[0].MeshSilent) != 0 {
+		t.Fatalf("got %+v, want a mesh that is down and no peers named", items)
 	}
 }
 

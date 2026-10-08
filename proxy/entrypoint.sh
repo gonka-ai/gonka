@@ -652,6 +652,13 @@ export LIMIT_REQ_ZONE_METRICS="limit_req_zone \$\$whitelist_limit_key zone=metri
 export LIMIT_REQ_ZONE_EXEMPT="limit_req_zone \$\$whitelist_limit_key zone=exempt_zone:10m rate=${EXEMPT_RATE_LIMIT_VAL}r/${EXEMPT_RATE_UNIT};"
 export LIMIT_REQ_ZONE_DEVSHARD_OBS="limit_req_zone \$\$whitelist_limit_key zone=devshard_obs:10m rate=${DEVSHARD_OBS_RATE_LIMIT_VAL}r/${DEVSHARD_OBS_RATE_UNIT};"
 export LIMIT_REQ_ZONE_TRAINSHARD="limit_req_zone \$\$whitelist_limit_key zone=trainshard_zone:10m rate=${TRAINSHARD_RATE_LIMIT_VAL}r/${TRAINSHARD_RATE_UNIT};"
+# A routed machine gets a zone of its own: a coordinator fans out to all of them at once and
+# holds log and shell streams, so one shared budget per client would starve the later ones.
+for route in ${TRAINSHARD_ROUTES}; do
+    route_name="${route%%=*}"
+    export LIMIT_REQ_ZONE_TRAINSHARD="${LIMIT_REQ_ZONE_TRAINSHARD}
+    limit_req_zone \$\$whitelist_limit_key zone=trainshard_${route_name}_zone:2m rate=${TRAINSHARD_RATE_LIMIT_VAL}r/${TRAINSHARD_RATE_UNIT};"
+done
 export LIMIT_REQ_ZONE_CHAIN_API="limit_req_zone \$\$whitelist_limit_key zone=chain_api_zone:10m rate=${CHAIN_API_RATE_LIMIT_VAL}r/${CHAIN_API_RATE_UNIT};"
 export LIMIT_REQ_ZONE_CHAIN_RPC="limit_req_zone \$\$whitelist_limit_key zone=rpc_zone:10m rate=${CHAIN_RPC_RATE_LIMIT_VAL}r/${CHAIN_RPC_RATE_UNIT};"
 export LIMIT_REQ_ZONE_CHAIN_GRPC="limit_req_zone \$\$whitelist_limit_key zone=grpc_zone:10m rate=${CHAIN_GRPC_RATE_LIMIT_VAL}r/${CHAIN_GRPC_RATE_UNIT};"
@@ -673,6 +680,11 @@ export LIMIT_CONN_ZONE_GONKA_API="limit_conn_zone \$\$whitelist_limit_key zone=c
 export LIMIT_CONN_ZONE_METRICS="limit_conn_zone \$\$whitelist_limit_key zone=conn_metrics:10m;"
 export LIMIT_CONN_ZONE_EXEMPT="limit_conn_zone \$\$whitelist_limit_key zone=conn_exempt:10m;"
 export LIMIT_CONN_ZONE_TRAINSHARD="limit_conn_zone \$\$whitelist_limit_key zone=conn_trainshard:10m;"
+for route in ${TRAINSHARD_ROUTES}; do
+    route_name="${route%%=*}"
+    export LIMIT_CONN_ZONE_TRAINSHARD="${LIMIT_CONN_ZONE_TRAINSHARD}
+    limit_conn_zone \$\$whitelist_limit_key zone=conn_trainshard_${route_name}:2m;"
+done
 export LIMIT_CONN_ZONE_CHAIN_RPC="limit_conn_zone \$\$whitelist_limit_key zone=conn_rpc:10m;"
 export LIMIT_CONN_ZONE_CHAIN_API="limit_conn_zone \$\$whitelist_limit_key zone=conn_chain_api:10m;"
 export LIMIT_CONN_ZONE_CHAIN_GRPC="limit_conn_zone \$\$whitelist_limit_key zone=conn_grpc:10m;"
@@ -829,11 +841,15 @@ fi
 # signed, so the signature still holds and the daemon needs to know nothing about the proxy.
 for route in ${TRAINSHARD_ROUTES}; do
     route_name="${route%%=*}"
+    route_conn_rule=""
+    if [ "$ENABLE_CONN_LIMITS" = "true" ]; then
+        route_conn_rule="limit_conn conn_trainshard_${route_name} ${TRAINSHARD_CONN_LIMIT};"
+    fi
     export TRAINSHARD_LOCATION="${TRAINSHARD_LOCATION}
         location /trainshard-${route_name}/ {
             set \$limit_zone_name \"TRAINSHARD\";
-            limit_req zone=trainshard_zone burst=${TRAINSHARD_BURST} nodelay;
-            ${LIMIT_CONN_RULE_TRAINSHARD}
+            limit_req zone=trainshard_${route_name}_zone burst=${TRAINSHARD_BURST} nodelay;
+            ${route_conn_rule}
             proxy_pass http://trainshard_${route_name}_backend/;
             proxy_set_header Host \$\$host;
             proxy_set_header X-Real-IP \$\$remote_addr;

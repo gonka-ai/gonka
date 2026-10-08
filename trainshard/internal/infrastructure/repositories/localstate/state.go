@@ -24,7 +24,7 @@ type nodeFile struct {
 	DiskBytes int64      `json:"disk_bytes,omitempty"`
 	Revision  int        `json:"revision,omitempty"`
 	Start     bool       `json:"start"`
-	StopGrace int        `json:"stop_grace_seconds,omitempty"`
+	StopGrace *int       `json:"stop_grace_seconds,omitempty"`
 	Images    []imageRun `json:"images,omitempty"`
 	Fault     *fault     `json:"fault,omitempty"`
 	Mesh      *meshState `json:"mesh,omitempty"`
@@ -86,9 +86,12 @@ func toRunState(file nodeFile) (run.RunState, error) {
 			Command:   file.Command,
 			Resources: run.Resources{GPUs: file.GPUs, DiskBytes: file.DiskBytes},
 		},
-		Revision:  file.Revision,
-		Start:     file.Start,
-		StopGrace: time.Duration(file.StopGrace) * time.Second,
+		Revision: file.Revision,
+		Start:    file.Start,
+	}
+	if file.StopGrace != nil {
+		state.StopGrace = time.Duration(*file.StopGrace) * time.Second
+		state.StopGraceGiven = true
 	}
 
 	if len(file.Env) > 0 {
@@ -127,8 +130,11 @@ func fromRunState(state run.RunState, keep *meshState) nodeFile {
 		DiskBytes: state.Spec.Resources.DiskBytes,
 		Revision:  state.Revision,
 		Start:     state.Start,
-		StopGrace: int(state.StopGrace.Seconds()),
 		Mesh:      keep,
+	}
+	if state.StopGraceGiven {
+		seconds := int(state.StopGrace.Seconds())
+		file.StopGrace = &seconds
 	}
 
 	for name, value := range state.Spec.Env {

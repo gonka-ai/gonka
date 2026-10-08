@@ -2,6 +2,8 @@ package localstate_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +36,7 @@ func TestADeployedRunSurvivesARestartOfTheDaemon(t *testing.T) {
 	if err := run.RecordDeploy(ctx, openRuns(t, dir), node, 7, spec); err != nil {
 		t.Fatalf("deploy: %v", err)
 	}
-	if err := run.RecordStop(ctx, openRuns(t, dir), node, time.Minute); err != nil {
+	if err := run.RecordStop(ctx, openRuns(t, dir), node, time.Minute, true); err != nil {
 		t.Fatalf("stop: %v", err)
 	}
 
@@ -51,8 +53,51 @@ func TestADeployedRunSurvivesARestartOfTheDaemon(t *testing.T) {
 	if state.Revision != 1 {
 		t.Fatalf("got revision %d, want the deploy the container was built for kept, or a restart rebuilds it", state.Revision)
 	}
-	if state.Start || state.StopGrace != time.Minute {
+	if state.Start || !state.StopGraceGiven || state.StopGrace != time.Minute {
 		t.Fatalf("got %+v, want the run left stopped with its grace", state)
+	}
+}
+
+func TestAnExplicitZeroStopGraceSurvivesARestart(t *testing.T) {
+	// arrange
+	dir, ctx := t.TempDir(), context.Background()
+	if err := run.RecordDeploy(ctx, openRuns(t, dir), node, 7, run.RunSpec{Image: vo.ImageDigest("run@sha256:" + strings.Repeat("b", 64))}); err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	if err := run.RecordStop(ctx, openRuns(t, dir), node, 0, true); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	// act
+	state, found, err := openRuns(t, dir).Load(ctx, node)
+
+	// assert
+	if err != nil || !found {
+		t.Fatalf("got found=%v err=%v, want the run to outlive the process", found, err)
+	}
+	if !state.StopGraceGiven || state.StopGrace != 0 {
+		t.Fatalf("got %+v, want explicit zero grace preserved", state)
+	}
+}
+
+func TestAnOldStateFileWithoutStopGraceLoadsAsGraceNotGiven(t *testing.T) {
+	// arrange
+	dir, ctx := t.TempDir(), context.Background()
+	raw := []byte(`{"shard_id":7,"start":false}`)
+	path := filepath.Join(dir, "gonka1host_node-1.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// act
+	state, found, err := openRuns(t, dir).Load(ctx, node)
+
+	// assert
+	if err != nil || !found {
+		t.Fatalf("got found=%v err=%v, want the file loaded", found, err)
+	}
+	if state.StopGraceGiven || state.StopGrace != 0 {
+		t.Fatalf("got %+v, want grace left not given", state)
 	}
 }
 

@@ -600,3 +600,25 @@ func TestStopWaitsOutTheGrace(t *testing.T) {
 		t.Fatalf("the stop had %s left, want more than the %s grace", sent.remaining, grace)
 	}
 }
+
+func TestStopPassesAnExplicitZeroGraceToTheEngine(t *testing.T) {
+	// arrange
+	engine, stub := stubbed(t, Config{Timeout: time.Second}, func(string, string) answer {
+		return answer{status: http.StatusNoContent}
+	})
+
+	// act
+	err := engine.Stop(context.Background(), vo.ShardID(42), node(), 0)
+
+	// assert
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent, found := stub.sent(http.MethodPost, "/stop")
+	if !found {
+		t.Fatal("no stop reached the engine")
+	}
+	if !strings.Contains(sent.query, "t=0") {
+		t.Fatalf("got query %q, want t=0", sent.query)
+	}
+}

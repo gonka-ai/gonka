@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	grantKeeps   = 10 * time.Minute
+	grantKeeps   = 2 * time.Minute
 	refusalKeeps = 30 * time.Second
 )
 

@@ -33,7 +33,12 @@ type Module struct {
 
 func New(cfg Config, deps Deps, out io.Writer) *Module {
 	prepare := usecases.NewPrepareMeshUseCase(deps.Chain, deps.Hosts, deps.Verifier, deps.Delegation, deps.Submitter, deps.Clock, cfg.Poll, cfg.Settle)
-	return &Module{commands: cli.New(prepare, deps.Lifecycle, deps.Submitter, deps.Clock, out)}
+	return &Module{commands: cli.New(cli.UseCases{
+		Prepare:  prepare,
+		Assemble: usecases.NewAssembleUseCase(deps.Lifecycle),
+		Settle:   usecases.NewSettleUseCase(deps.Lifecycle),
+		Kick:     usecases.NewKickUseCase(deps.Submitter),
+	}, deps.Clock, out)}
 }
 
 func (m *Module) Register(commands map[string]func(context.Context, []string) error) {

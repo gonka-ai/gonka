@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -9,6 +10,7 @@ import (
 
 	usecases "trainshard/internal/application/coord/ops/use_cases"
 	"trainshard/internal/domain/run"
+	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/ports"
 	"trainshard/internal/utils/clix"
 )
@@ -106,12 +108,21 @@ func (c *Commands) Stop(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if *grace < 0 {
+		return fmt.Errorf("grace must not be negative: %w", shared.ErrValidation)
+	}
 	command, err := toRunCommand(rest, c.timeout, c.clock.Now())
 	if err != nil {
 		return err
 	}
+	graceGiven := false
+	flags.Visit(func(entry *flag.Flag) {
+		if entry.Name == "grace" {
+			graceGiven = true
+		}
+	})
 
-	results, err := c.uc.Stop.Execute(ctx, usecases.StopCommand{RunCommand: command, Grace: *grace})
+	results, err := c.uc.Stop.Execute(ctx, usecases.StopCommand{RunCommand: command, Grace: *grace, GraceGiven: graceGiven})
 	if err != nil {
 		return err
 	}
@@ -120,7 +131,7 @@ func (c *Commands) Stop(ctx context.Context, args []string) error {
 
 func (c *Commands) Status(ctx context.Context, args []string) error {
 	rest, err := clix.Parse(clix.Command("status <shard>",
-		"Shows each node's container state, image and exit code, whether it is prepared and on\nthe mesh, its gpu and disk use, and why a node is not ready yet.",
+		"Shows each node's container state, image and exit code, whether it is prepared and on\nthe mesh, the peers it has not heard from for 3 min, its gpu and disk use, and why a\nnode is not ready yet.",
 		"trainshardctl status 1"), args, "shard")
 	if err != nil {
 		return err
@@ -136,7 +147,7 @@ func (c *Commands) Status(ctx context.Context, args []string) error {
 	}
 
 	out := tabwriter.NewWriter(c.out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(out, "NODE\tSTATE\tIMAGE\tEXIT\tPREPARED\tMESH\tGPUS\tDISK\tQUOTA\tREASON")
+	fmt.Fprintln(out, "NODE\tSTATE\tIMAGE\tEXIT\tPREPARED\tMESH\tNOT_HEARD\tGPUS\tDISK\tQUOTA\tREASON")
 	silent := 0
 	for _, node := range statuses {
 		why := node.Waiting
@@ -146,8 +157,8 @@ func (c *Commands) Status(ctx context.Context, args []string) error {
 		if node.Unanswered() {
 			silent++
 		}
-		fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%t\t%t\t%d\t%d\t%d\t%s\n",
-			node.Node, node.State, node.Image, exit(node.ExitCode), node.Prepared, node.MeshUp, node.GPUsInUse, node.DiskBytes, node.DiskQuotaBytes, why)
+		fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%t\t%t\t%s\t%d\t%d\t%d\t%s\n",
+			node.Node, node.State, node.Image, exit(node.ExitCode), node.Prepared, node.MeshUp, peers(node.MeshSilent), node.GPUsInUse, node.DiskBytes, node.DiskQuotaBytes, why)
 	}
 	if err := out.Flush(); err != nil {
 		return err
@@ -158,7 +169,7 @@ func (c *Commands) Status(ctx context.Context, args []string) error {
 // a fault is still an answer; only a run where no node answered fails the exit code
 func told(silent, asked int) error {
 	if asked > 0 && silent == asked {
-		return fmt.Errorf("none of %d nodes answered", asked)
+		return fmt.Errorf("none of %d nodes gave an answer, see the reasons above", asked)
 	}
 	return nil
 }

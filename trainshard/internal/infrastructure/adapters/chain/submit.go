@@ -23,6 +23,7 @@ import (
 	authtx "github.com/cosmos/cosmos-sdk/x/auth/tx"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
+	authz "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -257,7 +258,20 @@ func refusal(codespace string, code uint32) error {
 	switch {
 	case codespace == types.ModuleName:
 		return shared.ErrConflict
-	case among(codespace, code, sdkerrors.ErrInsufficientFunds):
+	case among(codespace, code,
+		sdkerrors.ErrInsufficientFunds,
+		sdkerrors.ErrUnauthorized,
+		sdkerrors.ErrInvalidAddress,
+		sdkerrors.ErrInvalidRequest,
+		sdkerrors.ErrUnknownRequest,
+		sdkerrors.ErrTxDecode,
+		sdkerrors.ErrInvalidPubKey,
+		sdkerrors.ErrInvalidCoins,
+		sdkerrors.ErrNoSignatures,
+		sdkerrors.ErrTooManySignatures,
+		authz.ErrNoAuthorizationFound,
+		authz.ErrAuthorizationExpired,
+	):
 		return shared.ErrConflict
 	default:
 		return shared.ErrUnavailable

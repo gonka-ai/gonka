@@ -32,12 +32,13 @@ type NodesResult struct {
 
 type NodeStatus struct {
 	NodeResult
-	Prepared       bool   `json:"prepared"`
-	Waiting        string `json:"waiting,omitempty"`
-	MeshUp         bool   `json:"mesh_up"`
-	GPUsInUse      int    `json:"gpus_in_use"`
-	DiskBytes      int64  `json:"disk_bytes"`
-	DiskQuotaBytes int64  `json:"disk_quota_bytes"`
+	Prepared       bool     `json:"prepared"`
+	Waiting        string   `json:"waiting,omitempty"`
+	MeshUp         bool     `json:"mesh_up"`
+	MeshSilent     []string `json:"mesh_silent,omitempty"`
+	GPUsInUse      int      `json:"gpus_in_use"`
+	DiskBytes      int64    `json:"disk_bytes"`
+	DiskQuotaBytes int64    `json:"disk_quota_bytes"`
 }
 
 type StatusResult struct {

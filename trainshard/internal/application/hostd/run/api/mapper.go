@@ -132,10 +132,16 @@ func toStopCommand(host vo.Host, actor shard.Actor, path string, dto contract.St
 	if err != nil {
 		return usecases.StopCommand{}, err
 	}
-	if dto.GraceSeconds < 0 {
+	command := usecases.StopCommand{NodesCommand: base}
+	if dto.GraceSeconds == nil {
+		return command, nil
+	}
+	if *dto.GraceSeconds < 0 {
 		return usecases.StopCommand{}, errGrace
 	}
-	return usecases.StopCommand{NodesCommand: base, Grace: time.Duration(dto.GraceSeconds) * time.Second}, nil
+	command.Grace = time.Duration(*dto.GraceSeconds) * time.Second
+	command.GraceGiven = true
+	return command, nil
 }
 
 func toMeshCommand(host vo.Host, actor shard.Actor, path string, dto contract.MeshRequest, latest time.Time) (usecases.MeshCommand, error) {
@@ -241,11 +247,16 @@ func toNodesOutput(results []run.NodeResult) contract.NodesResult {
 func toStatusOutput(statuses []run.NodeStatus) contract.StatusResult {
 	items := make([]contract.NodeStatus, 0, len(statuses))
 	for _, status := range statuses {
+		silent := make([]string, 0, len(status.MeshSilent))
+		for _, peer := range status.MeshSilent {
+			silent = append(silent, peer.String())
+		}
 		items = append(items, contract.NodeStatus{
 			NodeResult:     toNodeResult(status.NodeResult),
 			Prepared:       status.Prepared,
 			Waiting:        status.Waiting,
 			MeshUp:         status.MeshUp,
+			MeshSilent:     silent,
 			GPUsInUse:      status.GPUsInUse,
 			DiskBytes:      status.DiskBytes,
 			DiskQuotaBytes: status.DiskQuotaBytes,

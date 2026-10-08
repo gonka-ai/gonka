@@ -185,7 +185,7 @@ func (m Machine) Apply(ctx context.Context, node vo.NodeRef, desired Desired, ac
 }
 
 func (m Machine) grace(desired Desired) time.Duration {
-	if desired.StopGrace <= 0 || desired.StopGrace > m.StopGrace {
+	if !desired.StopGraceGiven || desired.StopGrace < 0 || desired.StopGrace > m.StopGrace {
 		return m.StopGrace
 	}
 	return desired.StopGrace

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"trainshard/internal/application/coord/assembly/cli"
+	usecases "trainshard/internal/application/coord/assembly/use_cases"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -47,7 +48,7 @@ func TestAssemblingAProposalAnswersWithTheShardTheChainNamed(t *testing.T) {
 	// arrange
 	lifecycle := &lifecycleStub{assigned: 7}
 	out := &bytes.Buffer{}
-	commands := cli.New(nil, lifecycle, nil, nil, out)
+	commands := cli.New(cli.UseCases{Assemble: usecases.NewAssembleUseCase(lifecycle)}, nil, out)
 
 	// act
 	err := commands.Assemble(context.Background(), []string{"3"})
@@ -67,7 +68,7 @@ func TestAssemblingAProposalAnswersWithTheShardTheChainNamed(t *testing.T) {
 func TestSettlingClosesTheShardItWasGiven(t *testing.T) {
 	// arrange
 	lifecycle := &lifecycleStub{}
-	commands := cli.New(nil, lifecycle, nil, nil, &bytes.Buffer{})
+	commands := cli.New(cli.UseCases{Settle: usecases.NewSettleUseCase(lifecycle)}, nil, &bytes.Buffer{})
 
 	// act
 	err := commands.Settle(context.Background(), []string{"7"})
@@ -84,7 +85,7 @@ func TestSettlingClosesTheShardItWasGiven(t *testing.T) {
 func TestKickingReleasesTheNodeItNamesFromTheShardItNames(t *testing.T) {
 	// arrange
 	submitter := &submitterStub{}
-	commands := cli.New(nil, nil, submitter, nil, &bytes.Buffer{})
+	commands := cli.New(cli.UseCases{Kick: usecases.NewKickUseCase(submitter)}, nil, &bytes.Buffer{})
 
 	// act
 	err := commands.Kick(context.Background(), []string{"7", "gonka1host/node1"})
@@ -110,7 +111,7 @@ func TestAKickThatDoesNotNameANodeIsRefusedBeforeTheChainIsAsked(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// arrange
 			submitter := &submitterStub{}
-			commands := cli.New(nil, nil, submitter, nil, &bytes.Buffer{})
+			commands := cli.New(cli.UseCases{Kick: usecases.NewKickUseCase(submitter)}, nil, &bytes.Buffer{})
 
 			// act
 			err := commands.Kick(context.Background(), args)
@@ -129,7 +130,7 @@ func TestAKickThatDoesNotNameANodeIsRefusedBeforeTheChainIsAsked(t *testing.T) {
 func TestAProposalThatIsNotANumberIsRefusedBeforeTheChainIsAsked(t *testing.T) {
 	// arrange
 	lifecycle := &lifecycleStub{}
-	commands := cli.New(nil, lifecycle, nil, nil, &bytes.Buffer{})
+	commands := cli.New(cli.UseCases{Assemble: usecases.NewAssembleUseCase(lifecycle)}, nil, &bytes.Buffer{})
 
 	// act
 	err := commands.Assemble(context.Background(), []string{"seven"})

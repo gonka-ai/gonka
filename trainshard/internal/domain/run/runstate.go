@@ -49,12 +49,16 @@ func RecordDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, shardID v
 }
 
 // UndoDeploy puts the revision back too, so the container a refused deploy left on the node is not
-// rebuilt for nothing
-func UndoDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, before RunState) error {
+// rebuilt for nothing. A fault put back is timed from now: its old time would count the patience
+// of a node that was only waiting on a deploy the tenant got refused
+func UndoDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, before RunState, now time.Time) error {
 	return runs.Update(ctx, node, func(state *RunState) {
 		was := before.For(state.Shard)
 		state.Spec, state.Revision, state.Start = was.Spec, was.Revision, was.Start
-		state.Fault, state.FaultAt = was.Fault, was.FaultAt
+		state.Fault, state.FaultAt = was.Fault, time.Time{}
+		if was.Fault != nil {
+			state.FaultAt = now
+		}
 	})
 }
 
@@ -72,8 +76,13 @@ func RecordStart(ctx context.Context, runs RunStore, node vo.NodeRef) error {
 	return runs.Update(ctx, node, func(state *RunState) { state.Start = true })
 }
 
-func RecordStop(ctx context.Context, runs RunStore, node vo.NodeRef, grace time.Duration) error {
-	return runs.Update(ctx, node, func(state *RunState) { state.Start, state.StopGrace = false, grace })
+func RecordStop(ctx context.Context, runs RunStore, node vo.NodeRef, grace time.Duration, given bool) error {
+	if !given {
+		grace = 0
+	}
+	return runs.Update(ctx, node, func(state *RunState) {
+		state.Start, state.StopGrace, state.StopGraceGiven = false, grace, given
+	})
 }
 
 func RecordImage(ctx context.Context, runs RunStore, node vo.NodeRef, image vo.ImageDigest, at time.Time) error {

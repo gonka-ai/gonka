@@ -89,6 +89,7 @@ func TestStopAnswersWithTheContainerItActuallyStopped(t *testing.T) {
 	f.images.present[runImage] = true
 	cmd := stopCommand()
 	cmd.Grace = 5 * time.Second
+	cmd.GraceGiven = true
 
 	// act
 	results, err := f.stop().Execute(ctx, cmd)
@@ -107,8 +108,66 @@ func TestStopAnswersWithTheContainerItActuallyStopped(t *testing.T) {
 	if state.Start {
 		t.Fatal("the run must be recorded as wanted stopped")
 	}
+	if !state.StopGraceGiven || state.StopGrace != 5*time.Second {
+		t.Fatalf("got %+v, want the given grace recorded", state)
+	}
 	if state.Spec.Image != runImage {
 		t.Fatal("stopping must keep the deployed image so the node still holds the run it was given")
+	}
+}
+
+func TestStopUsesTheDaemonGraceWhenTheCallerDidNotSetOne(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.containers.infos[nodeA] = run.ContainerInfo{State: vo.ContainerRunning, Image: runImage}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Start: true}
+	f.images.present[runImage] = true
+
+	// act
+	if _, err := f.stop().Execute(ctx, stopCommand()); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	// assert
+	if f.containers.grace != time.Minute {
+		t.Fatalf("got %v, want the daemon's own limit", f.containers.grace)
+	}
+	state := f.runs.states[nodeA]
+	if state.StopGraceGiven || state.StopGrace != 0 {
+		t.Fatalf("got %+v, want grace left not given", state)
+	}
+}
+
+func TestStopKeepsAnExplicitZeroGrace(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.containers.infos[nodeA] = run.ContainerInfo{State: vo.ContainerRunning, Image: runImage}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Start: true}
+	f.images.present[runImage] = true
+	cmd := stopCommand()
+	cmd.Grace = 0
+	cmd.GraceGiven = true
+
+	// act
+	if _, err := f.stop().Execute(ctx, cmd); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+
+	// assert
+	if f.containers.grace != 0 {
+		t.Fatalf("got %v, want explicit zero grace kept", f.containers.grace)
+	}
+	state := f.runs.states[nodeA]
+	if !state.StopGraceGiven || state.StopGrace != 0 {
+		t.Fatalf("got %+v, want explicit zero grace recorded", state)
 	}
 }
 
@@ -124,6 +183,7 @@ func TestStopClampsAGraceLongerThanTheDaemonAllows(t *testing.T) {
 	f.images.present[runImage] = true
 	cmd := stopCommand()
 	cmd.Grace = time.Hour
+	cmd.GraceGiven = true
 
 	// act
 	if _, err := f.stop().Execute(ctx, cmd); err != nil {

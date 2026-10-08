@@ -22,6 +22,7 @@ type answer struct {
 type call struct {
 	method    string
 	path      string
+	query     string
 	body      []byte
 	remaining time.Duration
 }
@@ -36,7 +37,7 @@ func (e *engineStub) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Body != nil {
 		body, _ = io.ReadAll(r.Body)
 	}
-	recorded := call{method: r.Method, path: r.URL.Path, body: body}
+	recorded := call{method: r.Method, path: r.URL.Path, query: r.URL.RawQuery, body: body}
 	if deadline, found := r.Context().Deadline(); found {
 		recorded.remaining = time.Until(deadline)
 	}

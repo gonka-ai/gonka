@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"trainshard/internal/domain/shared"
@@ -106,6 +107,7 @@ type NodeStatus struct {
 	Prepared       bool
 	Waiting        string
 	MeshUp         bool
+	MeshSilent     []vo.NodeRef
 	GPUsInUse      int
 	DiskBytes      int64
 	DiskQuotaBytes int64
@@ -121,7 +123,7 @@ func ReadyToStart(statuses []NodeStatus) error {
 	held := make([]NodeImage, 0, len(statuses))
 	for _, status := range statuses {
 		if !status.OK() {
-			return ErrStatusUnknown
+			return fmt.Errorf("%w: node %s: %s", ErrStatusUnknown, status.Node, status.Fault.Reason)
 		}
 		if !status.Prepared {
 			return ErrNodeNotPrepared
@@ -187,15 +189,16 @@ func ReportOf(node vo.NodeRef, state RunState, exitCode *int) NodeReport {
 }
 
 type RunState struct {
-	Shard        vo.ShardID
-	ReservedAt   time.Time
-	Spec         RunSpec
-	Revision     int
-	Start        bool
-	StopGrace    time.Duration
-	Images       []ImageRun
-	Fault        *shared.Fault
-	FaultAt      time.Time
-	UnpreparedAt time.Time
-	ReleasedAt   time.Time
+	Shard          vo.ShardID
+	ReservedAt     time.Time
+	Spec           RunSpec
+	Revision       int
+	Start          bool
+	StopGrace      time.Duration
+	StopGraceGiven bool
+	Images         []ImageRun
+	Fault          *shared.Fault
+	FaultAt        time.Time
+	UnpreparedAt   time.Time
+	ReleasedAt     time.Time
 }

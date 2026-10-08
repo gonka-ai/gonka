@@ -376,10 +376,12 @@ func (g *gpuStub) KillTraining(context.Context, vo.ShardID, vo.NodeRef) error {
 }
 
 type meshNetworkStub struct {
-	rec     *recorder
-	keys    map[vo.ShardID]bool
-	up      bool
-	applied []mesh.Peer
+	rec       *recorder
+	keys      map[vo.ShardID]bool
+	up        bool
+	applied   []mesh.Peer
+	silent    []vo.NodeRef
+	silentErr error
 }
 
 func (m *meshNetworkStub) Shards(context.Context, vo.NodeRef) ([]vo.ShardID, error) {
@@ -414,6 +416,10 @@ func (m *meshNetworkStub) Present(_ context.Context, shardID vo.ShardID, _ vo.No
 
 func (m *meshNetworkStub) Reach(context.Context, vo.ShardID, vo.NodeRef, mesh.Peer) (bool, error) {
 	return true, nil
+}
+
+func (m *meshNetworkStub) Silent(context.Context, vo.ShardID, vo.NodeRef, []mesh.Peer) ([]vo.NodeRef, error) {
+	return m.silent, m.silentErr
 }
 
 func (m *meshNetworkStub) Interface(vo.NodeRef) (string, error) { return "ts0", nil }

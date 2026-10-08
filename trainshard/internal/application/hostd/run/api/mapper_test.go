@@ -217,6 +217,53 @@ func TestToDeployCommandTakesOnlyEnvNamesAContainerReadsAsGiven(t *testing.T) {
 	}
 }
 
+func TestToStopCommandLeavesGraceUnsetWhenTheCallerDidNotGiveOne(t *testing.T) {
+	// arrange
+	dto := contract.StopRequest{Command: command()}
+
+	// act
+	cmd, err := api.ToStopCommand(host, actor, "7", dto, latest)
+
+	// assert
+	if err != nil {
+		t.Fatalf("map: %v", err)
+	}
+	if cmd.GraceGiven || cmd.Grace != 0 {
+		t.Fatalf("got %+v, want grace left unset", cmd)
+	}
+}
+
+func TestToStopCommandKeepsAnExplicitZeroGrace(t *testing.T) {
+	// arrange
+	zero := 0
+	dto := contract.StopRequest{Command: command(), GraceSeconds: &zero}
+
+	// act
+	cmd, err := api.ToStopCommand(host, actor, "7", dto, latest)
+
+	// assert
+	if err != nil {
+		t.Fatalf("map: %v", err)
+	}
+	if !cmd.GraceGiven || cmd.Grace != 0 {
+		t.Fatalf("got %+v, want explicit zero grace kept", cmd)
+	}
+}
+
+func TestToStopCommandRefusesNegativeGrace(t *testing.T) {
+	// arrange
+	negative := -1
+	dto := contract.StopRequest{Command: command(), GraceSeconds: &negative}
+
+	// act
+	_, err := api.ToStopCommand(host, actor, "7", dto, latest)
+
+	// assert
+	if !errors.Is(err, shared.ErrValidation) {
+		t.Fatalf("got %v, want a validation error", err)
+	}
+}
+
 func meshRequest() contract.MeshRequest {
 	return contract.MeshRequest{
 		Command: command(),

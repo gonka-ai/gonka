@@ -240,6 +240,34 @@ func (n *Network) Reach(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 	return seen, err
 }
 
+func (n *Network) Silent(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, peers []mesh.Peer) ([]vo.NodeRef, error) {
+	slot, err := n.slot(node)
+	if err != nil {
+		return nil, err
+	}
+	_, others, err := split(node, peers)
+	if err != nil {
+		return nil, err
+	}
+	pid, running, err := n.sandbox.SandboxPID(ctx, shardID, node)
+	if err != nil || !running {
+		return nil, err
+	}
+	last, err := handshakes(pid, iface(slot))
+	if err != nil {
+		return nil, err
+	}
+
+	var silent []vo.NodeRef
+	for _, peer := range others {
+		key, err := wgtypes.ParseKey(peer.PublicKey)
+		if err != nil || !n.recent(last[key]) {
+			silent = append(silent, peer.Node)
+		}
+	}
+	return silent, nil
+}
+
 func (n *Network) Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error {
 	slot, err := n.slot(node)
 	if err != nil {
@@ -395,26 +423,31 @@ func (n *Network) create(shardID vo.ShardID, node vo.NodeRef, device string, por
 }
 
 func (n *Network) handshake(pid int, device string, key wgtypes.Key) (bool, error) {
-	var last time.Time
-	if err := withWG(pid, func(wg *wgctrl.Client) error {
+	last, err := handshakes(pid, device)
+	if err != nil {
+		return false, err
+	}
+	return n.recent(last[key]), nil
+}
+
+// a live link shakes hands every two minutes: the keepalive makes sure there is always traffic
+func (n *Network) recent(at time.Time) bool {
+	return !at.IsZero() && n.clock.Now().Sub(at) < n.cfg.Handshake
+}
+
+func handshakes(pid int, device string) (map[wgtypes.Key]time.Time, error) {
+	last := make(map[wgtypes.Key]time.Time)
+	err := withWG(pid, func(wg *wgctrl.Client) error {
 		found, err := wg.Device(device)
 		if err != nil {
 			return err
 		}
 		for _, known := range found.Peers {
-			if known.PublicKey == key {
-				last = known.LastHandshakeTime
-			}
+			last[known.PublicKey] = known.LastHandshakeTime
 		}
 		return nil
-	}); err != nil {
-		return false, err
-	}
-
-	if last.IsZero() {
-		return false, nil
-	}
-	return n.clock.Now().Sub(last) < n.cfg.Handshake, nil
+	})
+	return last, err
 }
 
 func (n *Network) key(shardID vo.ShardID, node vo.NodeRef) (wgtypes.Key, error) {

@@ -16,6 +16,7 @@ import (
 
 	"trainshard/internal/domain/mesh"
 	"trainshard/internal/domain/shared/vo"
+	"trainshard/internal/utils/timex"
 )
 
 const shard = vo.ShardID(42)
@@ -306,6 +307,55 @@ func TestReachTakesAnUnusablePeerKeyAsUnreached(t *testing.T) {
 	}
 	if reached {
 		t.Fatal("a peer with no usable key cannot have been reached")
+	}
+}
+
+func TestAHandshakeIsRecentOnlyWithinTheWindow(t *testing.T) {
+	now := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		at   time.Time
+		want bool
+	}{
+		{"never", time.Time{}, false},
+		{"a minute ago", now.Add(-time.Minute), true},
+		{"at the window's edge", now.Add(-3 * time.Minute), false},
+		{"long ago", now.Add(-time.Hour), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// arrange
+			n := New(Config{}, nil, timex.NewFrozen(now), slog.New(slog.DiscardHandler))
+
+			// act
+			got := n.recent(tc.at)
+
+			// assert
+			if got != tc.want {
+				t.Fatalf("recent(%v) = %t, want %t", tc.at, got, tc.want)
+			}
+		})
+	}
+}
+
+type goneSandbox struct{ Sandboxes }
+
+func (goneSandbox) SandboxPID(context.Context, vo.ShardID, vo.NodeRef) (int, bool, error) {
+	return 0, false, nil
+}
+
+func TestSilentNamesNoPeerWithoutAnInterface(t *testing.T) {
+	// arrange
+	n := network(t, Config{Nodes: []vo.NodeRef{ref("a")}})
+	n.sandbox = goneSandbox{}
+	peers := []mesh.Peer{{Rank: 0, Node: ref("a")}, {Rank: 1, Node: ref("b")}}
+
+	// act
+	silent, err := n.Silent(context.Background(), shard, ref("a"), peers)
+
+	// assert
+	if err != nil || len(silent) != 0 {
+		t.Fatalf("got %v, %v, want no peers named for a node with no interface", silent, err)
 	}
 }
 

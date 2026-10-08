@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"trainshard/internal/contract"
@@ -88,14 +89,42 @@ func (c *Client) Shell(ctx context.Context, host vo.Host, req run.ExecRequest, s
 
 	// the end of input goes inside the stream, never as a half close: a proxy drops an upgraded
 	// connection at the first half close, output still on its way
+	typed := &failureNoted{Reader: session}
 	go func() {
-		if _, err := io.Copy(conn, session); err == nil {
+		if _, err := io.Copy(conn, typed); err == nil {
 			_, _ = conn.Write(endOfInput)
+		} else if typed.failure() != nil {
+			// a shell with no input left is hung, not finished: end it where the caller can see why
+			_ = conn.Close()
 		}
 	}()
 
 	_, err = io.Copy(session, reader)
+	if failure := typed.failure(); failure != nil {
+		return fmt.Errorf("reading what was typed: %w", failure)
+	}
 	return err
+}
+
+// failureNoted remembers a read that failed, which a copy cannot tell from a write that did
+type failureNoted struct {
+	io.Reader
+	failed atomic.Pointer[error]
+}
+
+func (f *failureNoted) Read(p []byte) (int, error) {
+	n, err := f.Reader.Read(p)
+	if err != nil && err != io.EOF {
+		f.failed.Store(&err)
+	}
+	return n, err
+}
+
+func (f *failureNoted) failure() error {
+	if err := f.failed.Load(); err != nil {
+		return *err
+	}
+	return nil
 }
 
 func dial(ctx context.Context, address string, secure bool) (net.Conn, error) {
