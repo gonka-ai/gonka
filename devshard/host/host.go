@@ -1638,3 +1638,10 @@ func verifyPayloadWorkload(p *InferencePayload) error {
 	}
 	return nil
 }
+
+func (h *Host) StateHead() (uint64, []byte, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	root, err := h.sm.ComputeStateRoot()
+	return h.sm.LatestNonce(), root, err
+}

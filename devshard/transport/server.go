@@ -840,3 +840,23 @@ func (s *Server) HandleGetMempool(c echo.Context) (err error) {
 	observability.Request.SetResponseContentLength(op, len(data))
 	return writeJSON(c, http.StatusOK, map[string]interface{}{"txs": data})
 }
+
+func (s *Server) HandleGetState(c echo.Context) error {
+	// This GET requires authentication.
+	addr, _, err := VerifyPOSTAuth(c, s.verifier, s.host.EscrowID(), s.maxBodySize)
+	if err != nil {
+		return err
+	}
+	if !s.isAllowedSender(addr) {
+		return echo.NewHTTPError(http.StatusForbidden, "sender not in group")
+	}
+	if c.Param("id") != s.host.EscrowID() {
+		return echo.NewHTTPError(http.StatusNotFound, "session not found")
+	}
+	nonce, root, err := s.host.StateHead()
+	if err != nil {
+		return err
+	}
+	c.Response().Header().Set("Cache-Control", "no-store")
+	return c.JSON(http.StatusOK, StateResponse{Nonce: nonce, StateRoot: root})
+}

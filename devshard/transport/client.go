@@ -302,7 +302,7 @@ func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	url := fmt.Sprintf("%s%s%s", c.baseURL, c.routePrefix, path)
-	body, err := c.doGet(ctx, url)
+	body, err := c.doGet(ctx, url, false)
 	if err != nil {
 		return err
 	}
@@ -640,6 +640,21 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
 
+	start := 0
+	if len(diffs) > 0 {
+		queryCtx, queryCancel := context.WithTimeout(ctx, min(c.config.QueryTimeout, c.config.VerifyTimeout/4))
+		head, err := c.GetState(queryCtx)
+		queryCancel()
+		if err == nil && len(head.StateRoot) == 32 {
+			for i, diff := range diffs {
+				if head.Nonce == diff.Nonce && bytes.Equal(head.StateRoot, diff.PostStateRoot) {
+					start = i + 1
+					break
+				}
+			}
+		}
+	}
+
 	djList := make([]DiffJSON, len(diffs))
 	for i, d := range diffs {
 		dj, err := DiffToJSON(d)
@@ -649,22 +664,18 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 		djList[i] = dj
 	}
 
-	req := ChallengeReceiptRequest{
-		InferenceID: inferenceID,
-		Payload:     PayloadToJSON(payload),
-		Diffs:       djList,
+	req := ChallengeReceiptRequest{InferenceID: inferenceID, Payload: PayloadToJSON(payload), Diffs: djList[start:]}
+	path := "/sessions/" + c.escrowID + "/challenge-receipt"
+	var resp ChallengeReceiptResponse
+	err := c.post(ctx, path, c.config.VerifyTimeout, req, &resp)
+	if start > 0 && (err != nil || len(resp.Receipt) == 0) {
+		// Another instance may be behind the queried host.
+		req.Diffs = djList
+		resp = ChallengeReceiptResponse{}
+		err = c.post(ctx, path, c.config.VerifyTimeout, req, &resp)
 	}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal: %w", err)
-	}
-	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
 		return nil, err
-	}
-	var resp ChallengeReceiptResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal: %w", err)
 	}
 	return resp.Receipt, nil
 }
@@ -793,14 +804,23 @@ func (c *HTTPClient) doPost(ctx context.Context, path string, body []byte) ([]by
 }
 
 // doGet sends a GET request and returns the response body.
-// No auth signing -- GET endpoints skip auth on the server side for now.
-func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
+func (c *HTTPClient) doGet(ctx context.Context, url string, authenticated bool) ([]byte, error) {
 	if err := c.allowRequest(url); err != nil {
 		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if authenticated {
+		ts := time.Now().Unix()
+		sig, err := SignRequest(c.signer, c.escrowID, nil, ts)
+		if err != nil {
+			return nil, fmt.Errorf("sign request: %w", err)
+		}
+		req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
+		req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
 	}
 
 	resp, err := c.http.Do(req)
@@ -860,4 +880,19 @@ func (c *HTTPClient) observeTransportFailure(path string, err error) {
 		return
 	}
 	c.config.Admission.ObserveTransportFailure(c.config.ParticipantKey, path, err)
+}
+
+func (c *HTTPClient) GetState(ctx context.Context) (*StateResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.config.QueryTimeout)
+	defer cancel()
+	url := c.baseURL + c.routePrefix + fmt.Sprintf("/sessions/%s/state", c.escrowID)
+	body, err := c.doGet(ctx, url, true)
+	if err != nil {
+		return nil, err
+	}
+	var result StateResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
